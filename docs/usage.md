@@ -412,10 +412,11 @@ After destroy succeeds, the namespace, encryption key, and persistent volumes re
 
 ## Destroy
 
-Destroy removes all bound sandboxes, provider registrations and profiles, and managed process containers.
+Destroy removes all bound sandboxes, provider registrations and profiles, the OpenShell workspace, and managed process containers.
 **Sandbox writable layers and in-memory conversations are deleted.**
 Files on caller-supplied mounted volumes remain under the platform's control; the platform owns their backup and transfer.
-The workspace, model downloads, prepared data, gateway database and keys, gateway bridge, stopped initializer, images, and local deployment state remain.
+Model downloads, prepared data, the gateway database and keys, the gateway bridge, the stopped initializer, images, and local deployment state remain.
+Re-applying the same configuration reinstalls a managed gateway on its retained storage and recreates the workspace.
 Service-owned networks are removed with disposable compute.
 Persistent resources stay tracked; retained image bytes do not require retained image-resource bindings.
 
@@ -442,7 +443,7 @@ OpenShell deletes by name without an ID/version condition, so a concurrent repla
 ### Remove Retained Resources
 
 This procedure removes what destroy retains on Docker engines when you retire a deployment.
-It does not cover a Podman, Kubernetes, or OpenShift gateway, or the workspace on an external gateway; keep the state directory for those ([#12640](https://github.com/NVIDIA/NemoClaw/issues/12640)).
+It does not cover a Podman, Kubernetes, or OpenShift gateway; keep the state directory for those ([#12640](https://github.com/NVIDIA/NemoClaw/issues/12640)).
 
 **Removal permanently deletes the managed gateway's database, workspace, and keys, plus model downloads, prepared data, and managed vLLM and Ollama proxy credentials.**
 It does not revoke upstream keys or remove images, external gateways, or engines.

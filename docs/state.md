@@ -182,7 +182,7 @@ The current CLI has no snapshot or lost-state adoption command.
 **Destroy deletes the sandbox's writable layer and its in-memory conversation history.**
 Files on caller-supplied mounted volumes remain under the platform's control; preserve or retire them separately.
 The [destroy guide](usage.md#destroy) owns the workload removal, retained-storage, and recovery procedure.
-The retained OpenShell workspace resource does not imply that sandbox files survive.
+Destroy also deletes the OpenShell workspace; re-applying the same configuration recreates it.
 
 Credentials can also remain in retained runtime storage.
 See [managed vLLM authentication](inference.md#authenticate-a-managed-vllm-service), [Ollama proxy credentials](inference.md#use-external-ollama-through-a-managed-proxy), and [security](security.md) before retiring storage.
@@ -196,7 +196,7 @@ To retire a deployment whose retained resources are on Docker engines, follow [R
 | Sandbox writable layer and in-memory conversation history | Deleted; caller-supplied mounted volumes remain under platform control |
 | Deployment provider profiles and registrations, including declared Brave integration resources | Removed; upstream keys are not revoked |
 | External gateway, inference service, external Ollama daemon/model, and externally owned engine/network | Remain under their operators' control |
-| OpenShell workspace | Retained and tracked; does not preserve the deleted sandbox's files |
+| OpenShell workspace | Deleted; re-applying the configuration recreates it |
 | Managed vLLM/Ollama process containers and service-owned networks | Removed; model storage remains tracked |
 | Managed model downloads and prepared data | Native Docker volumes retained by default; missing caches may be reconstructed separately from credentials |
 | Managed vLLM credentials | Separate tracked credential volume retained |
@@ -217,12 +217,9 @@ Their names start with the deployment's workspace, `WS` below: `nc-` followed by
 | `plan --destroy` entry | Docker objects |
 |---|---|
 | `gateway storage` | Volume `WS-gateway-data`, network `WS-network`, and exited container `WS-gateway-initialize` |
-| `OpenShell workspace` on a managed gateway | Volume `WS-gateway-data`, shared with `gateway storage` |
 | `model cache/NAME` | Volume `WS-inference-NAME-data` for vLLM, or `WS-ollama-NAME-data` for Ollama |
 | `inference credentials/NAME` | Volume `WS-inference-NAME-auth` |
 | `proxy credentials/NAME` | Volume `WS-ollama-proxy-NAME-auth` |
-
-On an external gateway, the `OpenShell workspace` entry stays on that gateway.
 
 ## Recovery and Transfer
 

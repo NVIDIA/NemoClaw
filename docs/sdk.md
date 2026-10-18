@@ -155,7 +155,7 @@ For each resource, `existed` means it appeared in retained state or the refreshe
 `drifted` records OpenTofu refresh differences, including computed metadata; it can be true with `plannedActions: ["no-op"]` and does not mean the caller requested a configuration change.
 `retained` identifies an established resource retained by the owning teardown compiler, and `reusePlanned` means its plan is unchanged with no reported drift.
 These entries contain no resource IDs, specifications, or credential values.
-Retaining an OpenShell workspace does not preserve sandbox files; mount agent-data volumes separately and follow the [retention rules](state.md#deletion-and-retention).
+Destroy deletes the OpenShell workspace and sandbox writable layers; caller-supplied mounted volumes follow the [retention rules](state.md#deletion-and-retention).
 Always inspect the operation's `deferred` list before treating the resource preview as complete.
 `OperationResult.resource_sources` maps opaque scoped provider registrations to their authored `name` and definition `path`, including route-inline providers.
 These source entries describe intent and can precede resource creation; they contain no credential references or values.

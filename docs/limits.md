@@ -75,7 +75,7 @@ Other pages state a limit where it affects a procedure and link the same issue.
 | Backup, restore, snapshots and transfer of mounted agent data | [Platform-owned storage](state.md#keep-agent-files-on-mounted-volumes); no NemoClaw command |
 | Moving data from the earlier product to v1 and back | [#12639](https://github.com/NVIDIA/NemoClaw/issues/12639) |
 | A purge command | [#12640](https://github.com/NVIDIA/NemoClaw/issues/12640) |
-| Removing retained Podman, Kubernetes, and external-gateway workspace resources | [#12640](https://github.com/NVIDIA/NemoClaw/issues/12640) |
+| Removing retained Podman and Kubernetes gateway resources | [#12640](https://github.com/NVIDIA/NemoClaw/issues/12640) |
 | Verified removal of managed service volumes and of objects on SSH engines | [#12640](https://github.com/NVIDIA/NemoClaw/issues/12640) |
 
 ## Security
