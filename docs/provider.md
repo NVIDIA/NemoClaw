@@ -906,6 +906,7 @@ Supported HCL examples, import, adoption, remote-state backends and compatibilit
 Every resource and data source takes inputs that can be written in HCL.
 [`examples/hcl/travel`](../examples/hcl/travel/main.tf) is a complete hand-written configuration: a Pi agent in an OpenShell sandbox, answering with a local Ollama server placed with Docker, and allowed only HTTPS `GET` requests to one site.
 A system test applies it unchanged against the bundle's providers.
+[`examples/hcl/travel-team`](../examples/hcl/travel-team/README.md) scales the same pattern to a team of six agents with their own sandboxes, models, and grants.
 Writing one by hand:
 
 - Install the providers from a bundle: name its `providers` directory as a filesystem mirror, and pin each NVIDIA provider to the bundle's version. Development bundles carry pre-release versions, which OpenTofu selects only when pinned exactly.
