@@ -16,8 +16,11 @@ runs:
         package-manager-cache: false
     - name: Install reviewed npm
       uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
+    # Restore the Linux dependencies that CI / Bundle saves on every v1 push
+    # rather than keeping a docs cache: rust-cache never saved one from this
+    # nested action, so every docs build compiled all dependencies.
     - uses: ./.github/actions/setup-rust
       if: inputs.rust == 'true'
       with:
         platform: linux_amd64
-        cache-prefix: docs-v1
+        save-cache: "false"
