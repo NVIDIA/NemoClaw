@@ -112,6 +112,22 @@ Paths:
 |---|---|---|---|---|
 | `allow` | array of string | Yes | — | Native tool identifiers. Fabric validates availability and semantics. Constraints: minimum items 1; maximum items 128; items: pattern `^[^\u0000-\u001f\u007f]+$(?![\s\S])`; minimum characters 1; maximum characters 256. |
 
+## ApiAuthStyle
+
+How an API key is sent.
+
+Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.integrations.{key}.authStyle`
+- `spec.sandboxes[].agent.integrations.{key}.authStyle`
+- `spec.sandboxes[].integrations.{key}.authStyle`
+
+Accepted input: string.
+
+Constraints: `"bearer"` or `"header"`.
+
 ## AuthMethod
 
 Authentication method supported through the OpenShell provider.
@@ -557,6 +573,19 @@ Web search with gateway-held credentials and explicit agent grants.
 | `credential` | [Credential](#credential) | Yes | — | Host environment reference. OpenShell supplies the search provider's placeholder to the sandbox. |
 | `kind` | string | Yes | — | Integration implementation selected by this definition. Constraints: `"webSearch"`. |
 | `provider` | [SearchProvider](#searchprovider) | Yes | — | Supported search service. |
+
+### Alternative 2
+
+A key-authenticated HTTP API, such as an MCP service, with a gateway-held key.
+
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `authStyle` | [ApiAuthStyle](#apiauthstyle) | No | — | How the key is sent: bearer, the default, as a bearer token, or header, as the raw value of headerName. |
+| `credential` | [Credential](#credential) | Yes | — | Host environment reference holding the API key. |
+| `endpoint` | string | Yes | — | The API's HTTPS URL. |
+| `headerName` | string | No | — | The header that carries the key. Defaults to Authorization for bearer; required for header. |
+| `kind` | string | Yes | — | Integration implementation selected by this definition. Constraints: `"api"`. |
 
 ## KubernetesAuthentication
 

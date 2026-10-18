@@ -10,6 +10,59 @@ use std::collections::{BTreeMap, BTreeSet};
 pub enum Integration {
     /// Web search with gateway-held credentials and explicit agent grants.
     WebSearch(WebSearch),
+    /// A key-authenticated HTTP API, such as an MCP service, with a gateway-held key.
+    Api(Api),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+/// A key-authenticated HTTP API. OpenShell injects the key into requests to the endpoint's host, port and path subtree from the harness's executables.
+pub struct Api {
+    /// The API's HTTPS URL.
+    pub endpoint: String,
+    /// Host environment reference holding the API key.
+    pub credential: Credential,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "ApiAuthStyle")]
+    /// How the key is sent: bearer, the default, as a bearer token, or header, as the raw value of headerName.
+    pub auth_style: Option<ApiAuthStyle>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "String")]
+    /// The header that carries the key. Defaults to Authorization for bearer; required for header.
+    pub header_name: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+/// How an API key is sent.
+pub enum ApiAuthStyle {
+    Bearer,
+    Header,
+}
+
+impl ApiAuthStyle {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Bearer => "bearer",
+            Self::Header => "header",
+        }
+    }
+}
+
+/// An API definition attached to a sandbox.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RuntimeApi {
+    pub name: String,
+    pub api: Api,
+    pub agent_refs: Vec<String>,
+}
+
+impl RuntimeApi {
+    /// The OpenShell registration: one per definition and image scope, since
+    /// its executables come from the sandbox's harness.
+    pub(crate) fn registration(&self, image_scope: &str) -> String {
+        format!("{}-{}", self.name, &image_scope[..12])
+    }
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -122,6 +175,7 @@ impl Document {
         let mut selected = None;
         for binding in sandbox.integration_bindings(&self.spec.integrations)? {
             match binding.definition {
+                Integration::Api(_) => {}
                 Integration::WebSearch(search) => {
                     if selected.is_some() {
                         return Err(ConfigError::new(
@@ -140,6 +194,27 @@ impl Document {
             search.agent_refs.sort();
         }
         Ok(selected)
+    }
+}
+
+impl Document {
+    /// The APIs attached to a sandbox's agent.
+    pub(crate) fn apis(&self, sandbox: &super::Sandbox) -> Result<Vec<RuntimeApi>, ConfigError> {
+        let mut apis = Vec::new();
+        for binding in sandbox.integration_bindings(&self.spec.integrations)? {
+            if let Integration::Api(api) = binding.definition {
+                let mut agent_refs: Vec<String> =
+                    binding.agent_refs.into_iter().map(str::to_owned).collect();
+                agent_refs.sort();
+                apis.push(RuntimeApi {
+                    name: binding.name.to_owned(),
+                    api: api.clone(),
+                    agent_refs,
+                });
+            }
+        }
+        apis.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(apis)
     }
 }
 

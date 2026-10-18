@@ -453,6 +453,26 @@ async fn web_search_cli_export_reapply_and_registration_drift() {
     lifecycle.destroy();
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
+async fn api_integration_applies_exports_and_reapplies_unchanged() {
+    // A key-authenticated API registers one OpenShell provider the sandbox
+    // attaches, like web search, and survives export and re-apply.
+    let mut document =
+        Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes()).unwrap();
+    document.spec.integrations = serde_json::from_value(serde_json::json!({
+        "bookings":{"kind":"api","endpoint":"https://bookings.example.com/mcp",
+            "credential":{"env":"BOOKINGS_API_KEY"}}
+    }))
+    .unwrap();
+    document.spec.sandboxes[0].agent.integration_refs = vec!["bookings".into()];
+    let lifecycle = Lifecycle::start(&document.yaml().unwrap()).await;
+    let effects = lifecycle.apply().await;
+    assert_eq!(effects, lifecycle.document.spec.sandboxes.len() + 5);
+    lifecycle.export_and_reapply_unchanged(effects).await;
+    lifecycle.destroy();
+}
+
 /// Progress events that the deployment's callback records.
 type Recorded<T> = std::sync::Arc<std::sync::Mutex<Vec<T>>>;
 
@@ -485,7 +505,7 @@ impl Lifecycle {
         struct FixtureSecrets;
         impl nemoclaw_sdk::Secrets for FixtureSecrets {
             fn resolve(&self, name: &str) -> Result<String, nemoclaw_sdk::ObservationError> {
-                assert!(["NOUS_API_KEY", "SEARCH_KEY"].contains(&name));
+                assert!(["NOUS_API_KEY", "SEARCH_KEY", "BOOKINGS_API_KEY"].contains(&name));
                 Ok("fixture-only-inference-key".into())
             }
         }
@@ -603,9 +623,10 @@ impl Lifecycle {
         let search_provider = self.document.spec.sandboxes[0]
             .integration_bindings(&self.document.spec.integrations)
             .unwrap()
-            .first()
-            .map(|binding| match binding.definition {
-                nemoclaw_sdk::config::Integration::WebSearch(search) => search.provider,
+            .iter()
+            .find_map(|binding| match binding.definition {
+                nemoclaw_sdk::config::Integration::WebSearch(search) => Some(search.provider),
+                _ => None,
             })
             .unwrap();
         let state_bytes = fs::read(self.directory.path().join("terraform.tfstate")).unwrap();

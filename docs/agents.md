@@ -119,6 +119,27 @@ The managed binding does not enable a native search tool.
 Declare its native plugin or public Fabric MCP configuration separately and validate it against the selected adapter.
 A deployment credential grant is not a native capability claim.
 
+## Key-Authenticated APIs
+
+Use `kind: api` when an agent calls an HTTP API, such as an MCP service, with a key the gateway holds:
+
+```yaml
+agent:
+  name: buyer
+  integrations:
+    bookings:
+      kind: api
+      endpoint: https://bookings.example.com/mcp
+      credential:
+        env: BOOKINGS_API_KEY
+```
+
+NemoClaw registers the API with OpenShell for each image and harness that attaches it, as `openshell_api` does in HCL.
+OpenShell injects the key into requests to the endpoint's host, port and path subtree, from the harness's executables only, and the sandbox never sees the value.
+The key goes in `Authorization` as a bearer token by default; set `authStyle: header` and `headerName` to send the raw value in another header.
+Set the referenced variable on the applying host; exported YAML and OpenTofu state retain only the reference.
+Whether the harness sends the placeholder depends on the harness; Hermes doesn't yet send it to MCP servers ([#13313](https://github.com/NVIDIA/NemoClaw/issues/13313)).
+
 ## Skills on a Mounted Volume
 
 Fabric reads skills from the paths in `fabric_agent`'s `skills` block.

@@ -126,6 +126,14 @@
       ],
       "type": "object"
     },
+    "ApiAuthStyle": {
+      "description": "How an API key is sent.",
+      "enum": [
+        "bearer",
+        "header"
+      ],
+      "type": "string"
+    },
     "AuthMethod": {
       "description": "Authentication method supported through the OpenShell provider.",
       "enum": [
@@ -1146,6 +1154,39 @@
           "required": [
             "kind",
             "provider",
+            "credential"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A key-authenticated HTTP API, such as an MCP service, with a gateway-held key.",
+          "properties": {
+            "authStyle": {
+              "$ref": "#/$defs/ApiAuthStyle",
+              "description": "How the key is sent: bearer, the default, as a bearer token, or header, as the raw value of headerName."
+            },
+            "credential": {
+              "$ref": "#/$defs/Credential",
+              "description": "Host environment reference holding the API key."
+            },
+            "endpoint": {
+              "description": "The API's HTTPS URL.",
+              "type": "string"
+            },
+            "headerName": {
+              "description": "The header that carries the key. Defaults to Authorization for bearer; required for header.",
+              "type": "string"
+            },
+            "kind": {
+              "const": "api",
+              "description": "Integration implementation selected by this definition.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "endpoint",
             "credential"
           ],
           "type": "object"
