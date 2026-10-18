@@ -16,8 +16,14 @@ runs:
         package-manager-cache: false
     - name: Install reviewed npm
       uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
+    # Restore the cache that CI / Bundle saves on every v1 push rather than
+    # keeping a docs cache: rust-cache never saved one from this nested action.
+    # The bundle job builds `--package nemoclaw-build` with the same resolved
+    # features as the docs build; the test job's workspace build unifies dev
+    # features such as tokio's test-util, so about 50 crates would rebuild.
     - uses: ./.github/actions/setup-rust
       if: inputs.rust == 'true'
       with:
         platform: linux_amd64
-        cache-prefix: docs-v1
+        cache-prefix: native-bundle-v1
+        save-cache: "false"
