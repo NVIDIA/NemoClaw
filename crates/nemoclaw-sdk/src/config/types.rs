@@ -85,7 +85,7 @@ pub struct Registry {
     /// Registry address, such as nvcr.io or registry.example.com:5000, matching its entry in the Docker configuration file.
     pub address: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(length(min = 1, max = 4096))]
+    #[schemars(default, with = "String", length(min = 1, max = 4096))]
     /// Absolute path of the Docker configuration file that holds the login, on the machine running OpenTofu. Defaults to `.docker/config.json` in the user's home directory; `DOCKER_CONFIG` is not read.
     pub config_file: Option<String>,
 }
