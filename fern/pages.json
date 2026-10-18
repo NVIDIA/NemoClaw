@@ -23,6 +23,8 @@
         {"title": "Locate and preserve state", "source": "docs/state.md", "slug": "state"},
         {"title": "Troubleshoot deployment operations", "source": "docs/troubleshooting.md", "slug": "troubleshooting"},
         {"title": "Security and credential ownership", "source": "docs/security.md", "slug": "security"},
+        {"title": "Threat model", "source": "docs/threat-model.md", "slug": "threat-model"},
+        {"title": "Rotate credentials", "source": "docs/credential-rotation.md", "slug": "credential-rotation"},
         {"title": "Sandbox policy", "source": "docs/sandbox-network.md", "slug": "sandbox-network"}
       ]
     },

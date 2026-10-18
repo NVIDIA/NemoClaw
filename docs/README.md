@@ -28,6 +28,8 @@ These guides describe the v1 development branch.
 | Locate deployment state and understand backup limits | [Deployment state](state.md) |
 | Diagnose a failed operation | [Troubleshooting](troubleshooting.md) |
 | Review trust, credential storage and access, and isolation | [Security](security.md) |
+| Understand what a deployment protects, and from whom | [Threat model](threat-model.md) |
+| Rotate a credential | [Rotate credentials](credential-rotation.md) |
 | Declare sandbox filesystem, process, and egress settings | [Sandbox policy](sandbox-network.md) |
 
 ## Agents and Inference
