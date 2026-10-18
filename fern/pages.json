@@ -32,6 +32,7 @@
         {"title": "Configure inference", "source": "docs/inference.md", "slug": "inference"},
         {"title": "Access agent interfaces", "source": "docs/interfaces.md", "slug": "interfaces"},
         {"title": "Agent runtimes", "source": "docs/agents.md", "slug": "agents"},
+        {"title": "Use OAuth-refresh providers", "source": "docs/oauth-refresh.md", "slug": "oauth-refresh"},
         {"title": "Select a managed model", "source": "docs/models.md", "slug": "models"},
         {"title": "Inline model recipes", "source": "docs/recipes.md", "slug": "recipes"},
         {"title": "Configure an SSH model service", "source": "docs/remote-service.md", "slug": "remote-service"}
