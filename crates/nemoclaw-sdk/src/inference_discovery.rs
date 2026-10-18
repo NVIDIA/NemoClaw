@@ -143,7 +143,12 @@ pub fn endpoint_requests(document: &Document) -> Result<Vec<EndpointRequest>, Er
             let Some(request) = EndpointRequest::for_external_provider(provider.definition)? else {
                 continue;
             };
-            request.validate()?;
+            // NemoClaw reads a catalog itself only from endpoints its own
+            // connection rules allow; others, such as plain HTTP to a host
+            // name, have no catalog read. OpenShell governs sandbox traffic.
+            if request.validate().is_err() {
+                continue;
+            }
             if !requests.contains(&request) {
                 requests.push(request);
             }

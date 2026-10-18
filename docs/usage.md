@@ -146,7 +146,7 @@ See [sandbox policy configuration](sandbox-network.md) for changes and [security
 
 ## Control Container Image Downloads
 
-Set `imagePullPolicy` beside `image` under `spec.gateway` or `spec.services.<name>`.
+Set `imagePullPolicy` under `spec.gateway`, or beside `image` under `spec.services.<name>`.
 The service setting applies to `kind: vllm`, `ollama`, and `ollamaProxy`.
 The setting controls image acquisition on that container's engine, including an SSH Docker engine selected by the service's `placement.engine`.
 Images still require immutable SHA-256 references.
@@ -168,6 +168,8 @@ imagePullPolicy: Never
 
 Docker-managed gateways use the same `IfNotPresent` and `Never` modes as services; `Always` is rejected.
 Podman gateways retain their existing image policy: omission means `IfNotPresent`, and `Always` contacts the registry before creation or restart, including its credential initializer.
+The SDK pins the gateway image, so documents and exports do not name it.
+A Docker or Podman deployment keeps the gateway image pin of the bundle that created it; see the [change path](#choose-the-change-path).
 Service acquisition does not promise a registry request on every restart or complete layer progress.
 Export preserves the declared setting.
 Downloaded service images remain on the selected engine after destroy, although their disposable provider resource bindings are removed.
@@ -177,6 +179,39 @@ If acquisition fails, retain the state directory, restore image availability, an
 Switching between managed acquisition and local-only lookup changes image resource declarations; review its plan.
 This setting does not control model downloads or sandbox images acquired by OpenShell.
 The pinned OpenShell API has no per-sandbox pull-policy field; external gateways and sandboxes reject this YAML field.
+
+### Pull from Private Registries
+
+Each image authenticates through whatever pulls it, and the configuration names registries, never credentials:
+
+| Image | Pulled by | Authenticates with |
+|---|---|---|
+| Managed gateway and service images on Docker | NemoClaw, through the Docker provider | Logins in the Docker configuration file on the machine running OpenTofu, for each registry listed in `spec.registries` |
+| Podman gateway image | Podman | Podman's own login on the engine's host |
+| Agent images on Docker or Podman | OpenShell's driver | The container runtime's login on the engine's host |
+| Images on Kubernetes or OpenShift | The cluster | Image-pull Secrets; see [Kubernetes and OpenShift](kubernetes.md) |
+
+To have NemoClaw's pulls authenticate, log in on the machine running OpenTofu, for example with `docker login nvcr.io`, and list the registry:
+
+```yaml
+spec:
+  registries:
+    - address: nvcr.io
+```
+
+For each listed address, the Docker provider reads `.docker/config.json` in the home directory of the user running OpenTofu, including a `credsStore` credential store, even when the engine is reached over SSH.
+It doesn't read `DOCKER_CONFIG`; to use another file, set its absolute path as `configFile`:
+
+```yaml
+spec:
+  registries:
+    - address: nvcr.io
+      configFile: /srv/ci/docker/config.json
+```
+
+The address must match the file's entry for that registry, such as `registry.example.com:5000`.
+The provider documents `auths` entries and `credsStore`; if your file uses per-registry `credHelpers`, check that a pull succeeds before relying on it.
+The configuration, the compiled graph, and OpenTofu state hold only the addresses.
 
 ## Resource Ownership
 
@@ -232,7 +267,7 @@ Reordering declarations is not an update.
 Each sandbox receives only its selected inference provider policies, while shared definitions reuse one provider registration.
 Sandbox-local definitions are visible only to their enclosing sandbox.
 Sandboxes can select distinct Brave credential references; shared references reuse one registration.
-Removing or replacing a sandbox deletes its files and conversation history, and the plan shows it; keep data that must survive on a [mounted volume](agents.md#skills-on-a-mounted-volume).
+Removing or replacing a sandbox deletes its writable layer and in-memory conversation, and the plan shows it; keep files that must survive on [mounted agent-data volumes](state.md#keep-agent-files-on-mounted-volumes).
 
 ### Choose the Change Path
 
@@ -245,6 +280,7 @@ Removing or replacing a sandbox deletes its files and conversation history, and 
 | Managed vLLM or Ollama image, container limits, or serving specification | Replaces the Docker container. Service-level `updatePolicy: Preserve` blocks replacement of a running Docker container; set `Recreate` only when accepting sequential replacement and downtime. Review the plan, [container limits and update policy](inference.md#set-container-limits-and-update-policy), and [model constraints](models.md) |
 | Ollama proxy image or serving specification | Docker-provider reconciliation may replace the proxy container while retaining its independently bound credential storage |
 | Deployment UID, established gateway endpoint, or bound credential/gateway engine | Cannot retarget the existing state; create a separate deployment |
+| A bundle with a different gateway image pin than the bundle that created a Docker or Podman deployment | Plan, apply, export, and destroy refuse, because deployment state binds the gateway to its original image pin. Keep operating the deployment with its original bundle, or create a separate deployment |
 | Remove an unused inference provider definition | Changes the desired document only; the SDK creates registrations for selected definitions, so unused definitions have no resources to delete |
 | Remove a sandbox | Deletes it, with its files and conversations |
 | Remove retained storage or a protected gateway binding | Apply refuses removal; assess a separate deployment and explicit retirement of the original |
@@ -347,7 +383,8 @@ The [reported malformed-request failure](agents.md#run-one-headless-openclaw-req
 The CLI has no targeted sandbox replacement or runtime-reset command.
 Its supported replacement path is whole-deployment destroy followed by reapplying the original configuration.
 
-**Destroy deletes every bound sandbox's files and conversation history, including those of other agents in this deployment.**
+**Destroy deletes every bound sandbox's writable layer and in-memory conversation, including those of other agents in this deployment.**
+Files on caller-supplied mounted volumes remain under the platform's control; see [agent-data retention](state.md#keep-agent-files-on-mounted-volumes).
 Preserve any native data you need before choosing removal; configuration export does not back it up.
 Managed model and credential storage remain tracked; that storage does not preserve sandbox files.
 Keep the original YAML, matching bundle, credential references, and entire state directory.
@@ -411,9 +448,11 @@ After destroy succeeds, the namespace, encryption key, and persistent volumes re
 
 ## Destroy
 
-Destroy removes all bound sandboxes, provider registrations and profiles, and managed process containers.
-**Sandbox files and conversation history are deleted.** Back up native agent data separately when needed.
-The workspace, model downloads, prepared data, gateway database and keys, gateway bridge, stopped initializer, images, and local deployment state remain.
+Destroy removes all bound sandboxes, provider registrations and profiles, the OpenShell workspace, and managed process containers.
+**Sandbox writable layers and in-memory conversations are deleted.**
+Files on caller-supplied mounted volumes remain under the platform's control; the platform owns their backup and transfer.
+Model downloads, prepared data, the gateway database and keys, the gateway bridge, the stopped initializer, images, and local deployment state remain.
+Re-applying the same configuration reinstalls a managed gateway on its retained storage and recreates the workspace.
 Service-owned networks are removed with disposable compute.
 Persistent resources stay tracked; retained image bytes do not require retained image-resource bindings.
 
@@ -439,13 +478,14 @@ OpenShell deletes by name without an ID/version condition, so a concurrent repla
 
 ### Remove Retained Resources
 
-This procedure removes what destroy retains on Docker engines when you retire a deployment.
-It does not cover a Podman, Kubernetes, or OpenShift gateway, or the workspace on an external gateway; keep the state directory for those ([#12640](https://github.com/NVIDIA/NemoClaw/issues/12640)).
+NemoClaw has no purge command: you remove what destroy retains with each platform's own commands, below.
+Finish destroy first: `nemoclaw plan --destroy --state-dir .local/deployment` must print `No resource changes planned.`, then the entries to remove under `Retained resources:`.
 
 **Removal permanently deletes the managed gateway's database, workspace, and keys, plus model downloads, prepared data, and managed vLLM and Ollama proxy credentials.**
-It does not revoke upstream keys or remove images, external gateways, or engines.
+It does not revoke upstream keys or remove images, external gateways, engines, or clusters.
 
-Finish destroy first: `nemoclaw plan --destroy --state-dir .local/deployment` must print `No resource changes planned.`, then the entries to remove under `Retained resources:`.
+#### On Docker
+
 The commands select objects by UID alone, so confirm that no other deployment, including one copied from the same example, uses this `metadata.uid`.
 Run the commands with Docker access to each engine the deployment selects: the managed gateway's `spec.gateway.engine`, each service's `placement.engine`, and each Ollama proxy's `engine`.
 For SSH placement, connect to that host using the already configured SSH identity; do not substitute the client's local Docker daemon.
@@ -478,4 +518,38 @@ When every entry's objects are gone, remove the `.local/deployment` directory.
 To deploy again, use a fresh `metadata.uid` and a new state directory; apply refuses a state directory whose gateway storage or credentials were removed.
 
 The [live Docker suite](contributing/testing.md) removes its gateways' UID-labelled objects and fails if any remain.
-Removal of managed service volumes and of objects on SSH engines is not verified, and there is no purge command ([#12640](https://github.com/NVIDIA/NemoClaw/issues/12640)).
+
+#### On Podman
+
+A managed Podman gateway keeps the same objects, with the same names and label, as on Docker ([retained Docker objects](state.md#find-retained-docker-objects)).
+Follow the Docker steps with `podman --url "$deployment_engine"` in place of `docker --host "$deployment_engine"`, where `deployment_engine` is the gateway's `spec.gateway.engine`, such as `unix:///run/user/1000/podman/podman.sock`.
+This procedure has not yet been run against a Podman gateway ([current limits](limits.md#data-and-cleanup)).
+
+#### On Kubernetes or OpenShift
+
+Destroy keeps the deployment's namespace, the gateway's key Secret and its persistent volume claims ([retained Kubernetes objects](state.md#find-retained-kubernetes-objects)).
+Deleting the namespace removes them all.
+Use the kubeconfig and context the deployment uses, and set `deployment_namespace` to its `gateway.kubernetes.namespace`:
+
+```sh
+deployment_context=my-cluster
+deployment_namespace=nemoclaw-development
+kubectl --context "$deployment_context" --namespace "$deployment_namespace" \
+  get pods,secrets,persistentvolumeclaims
+kubectl --context "$deployment_context" --namespace "$deployment_namespace" \
+  get persistentvolumeclaims -o jsonpath='{range .items[*]}{.spec.volumeName}{"\n"}{end}'
+```
+
+Continue only if no pods remain, and nothing other than this deployment uses the namespace.
+Note the volume names the second command prints, then delete the namespace and wait for it to go:
+
+```sh
+kubectl --context "$deployment_context" delete namespace "$deployment_namespace" --wait=true
+```
+
+If `kubectl get namespace "$deployment_namespace"` reports it not found, the namespace and its objects are gone.
+Whether the noted volumes go too depends on their StorageClass: with the `Delete` reclaim policy, the cluster removes them and their data; with `Retain`, they remain `Released`, and you delete them and their storage with your platform's tools.
+On OpenShift, `oc delete project` does the same as deleting the namespace.
+When the namespace and the volumes are gone, remove the state directory, which holds the cluster receipt and any development issuer keys.
+
+The [live Kubernetes suite](contributing/live-tests.md) deletes a retained namespace this way and checks that the namespace and its volumes are gone.

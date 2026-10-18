@@ -29,6 +29,9 @@ pub struct Spec {
     pub owner: String,
     pub generation: String,
     pub gateway: ManagedGateway,
+    /// The managed gateway's image, pinned by the SDK; services carry theirs in `process`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub image: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub process: Option<Process>,
 }
@@ -266,7 +269,7 @@ impl Spec {
                 self.compute_driver.as_str(),
                 &self.gateway.engine,
                 &self.gateway.endpoint,
-                &self.gateway.image,
+                &self.image,
                 &self.gateway.network_cidr,
             ])
             .filter(|(attribute, _)| !(docker_storage && *attribute == "endpoint"))
@@ -321,11 +324,11 @@ impl Spec {
                 },
                 endpoint,
                 engine: get("engine")?,
-                image: get("image")?,
                 image_pull_policy: None,
                 network_cidr: get("network_cidr")?,
                 kubernetes: None,
             },
+            image: get("image")?,
             process: None,
         };
         spec.validate()?;
@@ -400,7 +403,18 @@ impl Spec {
             self.gateway.validate_managed()?;
         }
         if self.kind == GATEWAY_KIND && self.process.is_none() && matches!(self.layout, 0..=2) {
+            // The gateway runs the SDK's pinned image; nothing authors it.
+            if self.image != crate::config::DEFAULT_GATEWAY_IMAGE {
+                return Err(Error::Conflict(
+                    "the managed gateway image must be this SDK's pinned image",
+                ));
+            }
             return Ok(());
+        }
+        if !self.image.is_empty() {
+            return Err(Error::Conflict(
+                "a managed service carries its image in its process",
+            ));
         }
         if self.kind != GATEWAY_KIND
             && self.layout == 0
@@ -544,7 +558,7 @@ impl Spec {
         self.process
             .as_ref()
             .map(|process| process.image.as_str())
-            .unwrap_or(&self.gateway.image)
+            .unwrap_or(&self.image)
     }
     /// Compile the container launch configuration for the runtime.
     ///

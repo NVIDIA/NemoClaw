@@ -276,9 +276,20 @@ fn validate_projection(target: &Target, observed: &Value) -> Result<(), Error> {
                         .unwrap_or_default();
                     (expected, observed)
                 }
+                // Other typed inputs, such as an OIDC profile's settings, are
+                // observed as JSON text under their attribute name.
                 None => (
                     expected.clone(),
-                    observed[field].as_str().unwrap_or("").to_owned(),
+                    observed
+                        .get(field)
+                        .or_else(|| {
+                            field
+                                .strip_suffix("_json")
+                                .and_then(|name| observed.get(name))
+                        })
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_owned(),
                 ),
             };
             // An omitted optional input is empty on both sides.

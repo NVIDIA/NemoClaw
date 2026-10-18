@@ -127,6 +127,7 @@ The fixtures return protocol responses; they do not establish agent inference, n
 | `fabric_bridge` | The provider's `fabric-agent-ctl` client: the image's own command and environment, input on stdin, and uncertain invocations never replayed |
 | `remote_service` | Services on simulated SSH hosts; see [SSH service fixtures](#ssh-service-fixtures) |
 | `travel_example` | `examples/hcl/travel` applied unchanged as plain HCL from the bundle's provider mirror: Ollama placed from its runtime launch on a simulated SSH engine, endpoint readiness against a fake model server, OpenShell objects and the Pi agent on the fixture gateway, agent readiness, and an unchanged second plan |
+| `travel_team_example` | `examples/hcl/travel-team` applied the same way: six Hermes agents in `for_each` sandboxes with per-role providers, grants, toolsets, and models; an unchanged second plan; a hosted-model change replacing only the scheduler's and buyer's sandboxes; and teardown that fails without `destroy = true` and removes everything with it. It reports each OpenTofu command's duration |
 | `helm_recovery` | On Unix, destroy and its recovery against an in-memory Kubernetes API, after failures, a second destroy, and cancellation; see [below](#helm-release-recovery) |
 
 In `deployment`, `cli_terminal_outputs_preserve_lifecycle_and_json_contract` checks text plans, JSON apply, unchanged text apply, JSON plan completeness, text destroy, and repeated JSON destroy against one fixture state.

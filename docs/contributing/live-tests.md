@@ -25,8 +25,13 @@ The agent test uses the public SDK to deploy a gateway and sandbox from that ima
 It supplies a caller-relative kubeconfig and expects apply to complete with the agent started.
 Export must reproduce the authored configuration; destroy then retains gateway storage.
 The OpenShift-profile test supplies namespace UID-range annotations on kind and checks that gateway and sandbox pods use the assigned UID through the same SDK flow.
-These three live tests request no inference and need no GPU or credentials.
-The two render tests check the Kubernetes gateway UID and observed OpenShift namespace UID and group, with `runAsNonRoot` retained.
+The registry test starts a pinned, authenticated registry on the run's kind network and uploads only the run's agent fixture there.
+It checks anonymous and wrong-credential rejection, then deploys an agent with a caller-managed image pull Secret provisioned after namespace creation.
+A new image-index digest prevents cached image metadata from bypassing the pull; the agent's layers and configuration remain unchanged.
+Apply, export and destroy must preserve the authored references, keep registry values out of OpenTofu state, and retain the caller-managed Secret.
+The fixture removes its registry afterward; HTTP configuration is confined to that registry on the disposable node.
+These live tests request no inference and need no GPU or user registry credentials.
+The render tests check the Kubernetes gateway UID, observed OpenShift UID and group, and image pull references in gateway/helper pods and sandbox-driver configuration.
 Kind does not enforce OpenShift security context constraints; these checks do not establish OpenShift admission or platform compatibility.
 
 The runner deletes its cluster and removes its built image tag after success or failure; pulled images and build caches remain.
@@ -256,7 +261,7 @@ Use an owned native Linux Docker daemon, a fresh deployment UID, an available ga
 Supply `NVIDIA_INFERENCE_API_KEY` through the process environment; never put its value in YAML, arguments, state, or repository files.
 The test installs that credential in OpenShell and does not revoke the upstream key.
 Keep the fixture's provider, sandbox, and agent names; the expected results name those resources.
-Build a matching bundle and load the YAML's immutable gateway and agent images, including the Hermes image for the Hermes test, into the selected daemon.
+Build a matching bundle and load the gateway image pinned in [versions.json](../../versions.json) and the YAML's immutable agent images, including the Hermes image for the Hermes test, into the selected daemon.
 A GPU is not required.
 
 From the repository root, with absolute paths and one test selected:

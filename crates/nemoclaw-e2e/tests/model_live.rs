@@ -194,8 +194,10 @@ async fn exercise(fresh: bool) {
     );
     deployment.apply(&document, &cancel).await.unwrap();
     let recovered = bindings(&directory);
+    // OpenShell objects and the model cache volume are durable; the
+    // container may be replaced.
     for (address, id) in before.iter().filter(|(address, _)| {
-        address.starts_with("nemoclaw_") || address.starts_with("openshell_")
+        address.starts_with("openshell_") || address.starts_with("docker_volume.")
     }) {
         assert_eq!(
             recovered.get(address),
@@ -216,15 +218,15 @@ async fn exercise(fresh: bool) {
     deployment.destroy(&cancel).await.unwrap();
     // Destroy removes disposable compute while retaining durable storage bindings.
     assert!(engine.container(&container).await.unwrap().is_none());
+    // Destroy deletes the workspace with the gateway; only data remains.
     let retained = bindings(&directory);
-    assert_eq!(retained.len(), 3);
+    assert_eq!(retained.len(), 2);
     for address in [
-        "openshell_workspace.deployment",
         "openshell_gateway_storage.runtime",
         before
             .keys()
-            .find(|address| address.starts_with("vllm_credential_storage."))
-            .unwrap()
+            .find(|address| address.starts_with("docker_volume.inference_storage_"))
+            .expect("a model cache volume")
             .as_str(),
     ] {
         assert_eq!(retained.get(address), before.get(address));

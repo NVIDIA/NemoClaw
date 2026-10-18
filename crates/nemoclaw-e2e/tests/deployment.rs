@@ -96,10 +96,6 @@ async fn cli_terminal_outputs_preserve_lifecycle_and_json_contract() {
     let summary = String::from_utf8(destroyed.stdout).unwrap();
     assert!(summary.contains("Destroy complete"), "{summary}");
     assert!(summary.contains("Sandbox files and conversation history deleted"));
-    assert!(summary.contains("OpenShell workspace"));
-    assert!(summary.contains(
-        "Retaining the workspace does not preserve sandbox files or conversation history."
-    ));
     let repeated = invoke("destroy", "json");
     let result: serde_json::Value = serde_json::from_slice(&repeated.stdout).unwrap();
     assert_eq!(result["outcome"], "destroyed");
@@ -107,7 +103,7 @@ async fn cli_terminal_outputs_preserve_lifecycle_and_json_contract() {
     let observed = fixture.state.lock().unwrap();
     assert!(observed.sandboxes.is_empty());
     assert!(observed.providers.is_empty());
-    assert_eq!(observed.workspaces.len(), 1);
+    assert!(observed.workspaces.is_empty());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -203,7 +199,7 @@ async fn independent_sandboxes_reconcile_concurrently_and_retain_shared_dependen
     let state = fixture.state.lock().unwrap();
     assert!(state.sandboxes.is_empty());
     assert!(state.providers.is_empty());
-    assert_eq!(state.workspaces.len(), 1);
+    assert!(state.workspaces.is_empty());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -292,7 +288,7 @@ async fn gateway_change_between_plan_and_apply_preserves_resources_and_allows_te
     );
     fixture.state.lock().unwrap().driver = Some("podman".into());
     deployment.destroy(&cancel).await.unwrap();
-    assert_eq!(fixture.state.lock().unwrap().workspaces.len(), 1);
+    assert!(fixture.state.lock().unwrap().workspaces.is_empty());
     assert!(fixture.state.lock().unwrap().sandboxes.is_empty());
 }
 
@@ -331,8 +327,9 @@ async fn interrupted_create_preserves_pending_targets_allows_unrelated_intent_an
     let effects = fixture.state.lock().unwrap().effects;
     assert_eq!(effects, 4);
     let preview = deployment.plan_destroy(&cancel).await.unwrap();
-    // Destroy also removes the agent configuration that replaces the sandbox.
-    assert_eq!(preview.changes.len(), 4);
+    // Destroy also removes the agent configuration that replaces the sandbox,
+    // and the workspace.
+    assert_eq!(preview.changes.len(), 5);
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
     let destroyed = Command::new(
         bundle
@@ -357,8 +354,9 @@ async fn interrupted_create_preserves_pending_targets_allows_unrelated_intent_an
             .changes
             .is_empty()
     );
-    assert_eq!(fixture.state.lock().unwrap().workspaces.len(), 1);
-    // The registration, sandbox, agent, and the agent's configuration.
+    assert!(fixture.state.lock().unwrap().workspaces.is_empty());
+    // The workspace, registration, sandbox, agent, and the agent's
+    // configuration: re-apply after destroy recreates the workspace too.
     assert_eq!(
         deployment
             .apply(&document, &cancel)
@@ -366,7 +364,7 @@ async fn interrupted_create_preserves_pending_targets_allows_unrelated_intent_an
             .unwrap()
             .changes
             .len(),
-        4
+        5
     );
 }
 
@@ -453,6 +451,47 @@ async fn web_search_cli_export_reapply_and_registration_drift() {
     lifecycle.destroy();
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
+async fn api_integration_applies_exports_and_reapplies_unchanged() {
+    // A key-authenticated API registers one OpenShell provider the sandbox
+    // attaches, like web search, and survives export and re-apply.
+    let mut document =
+        Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes()).unwrap();
+    document.spec.integrations = serde_json::from_value(serde_json::json!({
+        "bookings":{"kind":"api","endpoint":"https://bookings.example.com/mcp",
+            "credential":{"env":"BOOKINGS_API_KEY"}}
+    }))
+    .unwrap();
+    document.spec.sandboxes[0].agent.integration_refs = vec!["bookings".into()];
+    let lifecycle = Lifecycle::start(&document.yaml().unwrap()).await;
+    let effects = lifecycle.apply().await;
+    assert_eq!(effects, lifecycle.document.spec.sandboxes.len() + 5);
+    lifecycle.export_and_reapply_unchanged(effects).await;
+    lifecycle.destroy();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
+async fn network_grants_apply_export_and_reapply_unchanged() {
+    // Grants added to the isolated preset reach the sandbox's managed policy
+    // and survive export and re-apply.
+    let mut document =
+        Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes()).unwrap();
+    document.spec.sandboxes[0].network = serde_json::from_value(serde_json::json!({
+        "tier": "isolated",
+        "grants": {"docs": {"endpoints": [{
+            "host": "docs.example.com", "port": 443, "protocol": "rest", "enforcement": "enforce",
+            "rules": [{"allow": {"method": "GET", "path": "/**"}}]
+        }]}}
+    }))
+    .unwrap();
+    let lifecycle = Lifecycle::start(&document.yaml().unwrap()).await;
+    let effects = lifecycle.apply().await;
+    lifecycle.export_and_reapply_unchanged(effects).await;
+    lifecycle.destroy();
+}
+
 /// Progress events that the deployment's callback records.
 type Recorded<T> = std::sync::Arc<std::sync::Mutex<Vec<T>>>;
 
@@ -485,7 +524,7 @@ impl Lifecycle {
         struct FixtureSecrets;
         impl nemoclaw_sdk::Secrets for FixtureSecrets {
             fn resolve(&self, name: &str) -> Result<String, nemoclaw_sdk::ObservationError> {
-                assert!(["NOUS_API_KEY", "SEARCH_KEY"].contains(&name));
+                assert!(["NOUS_API_KEY", "SEARCH_KEY", "BOOKINGS_API_KEY"].contains(&name));
                 Ok("fixture-only-inference-key".into())
             }
         }
@@ -603,9 +642,10 @@ impl Lifecycle {
         let search_provider = self.document.spec.sandboxes[0]
             .integration_bindings(&self.document.spec.integrations)
             .unwrap()
-            .first()
-            .map(|binding| match binding.definition {
-                nemoclaw_sdk::config::Integration::WebSearch(search) => search.provider,
+            .iter()
+            .find_map(|binding| match binding.definition {
+                nemoclaw_sdk::config::Integration::WebSearch(search) => Some(search.provider),
+                _ => None,
             })
             .unwrap();
         let state_bytes = fs::read(self.directory.path().join("terraform.tfstate")).unwrap();
@@ -791,7 +831,7 @@ impl Lifecycle {
         }
     }
 
-    /// The CLI destroys the deployment, leaving only the workspace on the gateway.
+    /// The CLI destroys the deployment and its workspace on the gateway.
     fn destroy(self) {
         let destroyed = Command::new(
             self.bundle
@@ -808,7 +848,7 @@ impl Lifecycle {
             String::from_utf8_lossy(&destroyed.stderr)
         );
         let state = self.fixture.state.lock().unwrap();
-        assert_eq!(state.workspaces.len(), 1);
+        assert!(state.workspaces.is_empty());
         assert!(state.sandboxes.is_empty());
         assert!(state.providers.is_empty());
         assert!(state.profiles.is_empty());
@@ -906,7 +946,7 @@ async fn startup_and_observation_failures_retain_bindings_and_recover() {
         deployment.destroy(&cancel).await.unwrap().outcome,
         Outcome::Destroyed
     );
-    assert_eq!(fixture.state.lock().unwrap().workspaces.len(), 1);
+    assert!(fixture.state.lock().unwrap().workspaces.is_empty());
     assert!(fixture.state.lock().unwrap().providers.is_empty());
     assert!(fixture.state.lock().unwrap().sandboxes.is_empty());
 }
@@ -933,7 +973,7 @@ async fn destroy_waits_for_graceful_sandbox_stop_without_retrying() {
     );
     let state = fixture.state.lock().unwrap();
     assert!(state.sandboxes.is_empty());
-    assert_eq!(state.workspaces.len(), 1); // Destroy retains the owned workspace.
+    assert!(state.workspaces.is_empty()); // Destroy deletes the workspace too.
     assert_eq!(state.delete_calls, 1);
 }
 
@@ -1109,7 +1149,7 @@ async fn failed_first_apply_can_destroy_bound_resources_without_successful_reapp
         assert!(state.sandboxes.is_empty());
         assert!(state.providers.is_empty());
         assert!(state.profiles.is_empty());
-        assert_eq!(state.workspaces.len(), 1);
+        assert!(state.workspaces.is_empty());
     }
 }
 

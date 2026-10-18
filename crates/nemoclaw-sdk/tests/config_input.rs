@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use nemoclaw_sdk::config::{DEFAULT_AGENT_IMAGE, Document};
+use nemoclaw_sdk::config::{DEFAULT_AGENT_IMAGE, DEFAULT_GATEWAY_IMAGE, Document};
 use serde_json::{Value, json};
 
 fn input(name: &str) -> Value {
@@ -47,6 +47,27 @@ fn omitted_image_uses_the_pin_for_the_selected_harness() {
     );
 }
 
+/// The SDK pins the managed gateway image, so neither a defaulted document nor
+/// its export names it, and both stay valid when that pin changes.
+#[test]
+fn defaulted_and_exported_documents_name_no_gateway_image() {
+    for name in [
+        "spark/vllm.yaml",
+        "managed-ollama.yaml",
+        "managed-podman.yaml",
+    ] {
+        let document = parse(&input(name)).unwrap();
+        let defaulted = serde_json::to_value(&document).unwrap();
+        assert!(
+            defaulted["spec"]["gateway"].get("image").is_none(),
+            "{name}"
+        );
+        let exported = document.yaml().unwrap();
+        assert!(!exported.contains(DEFAULT_GATEWAY_IMAGE), "{name}");
+        assert_eq!(Document::parse(exported.as_bytes()).unwrap(), document);
+    }
+}
+
 #[test]
 fn application_references_do_not_enable_yaml_anchors_aliases_or_merges() {
     let original = include_str!("../../../examples/fabric-openclaw.yaml");
@@ -63,7 +84,7 @@ fn application_references_do_not_enable_yaml_anchors_aliases_or_merges() {
 #[test]
 fn omitted_empty_and_zero_values_produce_the_same_defaults() {
     let mut omitted = input("spark/spark-inline.yaml");
-    for key in ["endpoint", "engine", "image", "networkCIDR"] {
+    for key in ["endpoint", "engine", "networkCIDR"] {
         omitted["spec"]["gateway"]
             .as_object_mut()
             .unwrap()
@@ -83,7 +104,7 @@ fn omitted_empty_and_zero_values_produce_the_same_defaults() {
     }
     let expected = parse(&omitted).unwrap();
     let mut explicit = omitted.clone();
-    for key in ["endpoint", "engine", "image", "networkCIDR"] {
+    for key in ["endpoint", "engine", "networkCIDR"] {
         explicit["spec"]["gateway"][key] = json!("");
     }
     explicit["spec"]["sandboxes"][0]["image"] = json!({"ref": ""});

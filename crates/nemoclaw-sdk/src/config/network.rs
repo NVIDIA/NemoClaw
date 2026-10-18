@@ -8,6 +8,7 @@
 // redundant external-proxy ownership annotation.
 // 2026-09-21: made policy selection exclusive in Rust while preserving the input shape.
 // 2026-09-28: use owner policy types independently of the transport client.
+// 2026-10-17: added named grants on top of the isolated preset.
 use super::ConfigError;
 pub use nemoclaw_openshell::policy::{
     ExplicitPolicy, PolicyAllowRule, PolicyAnyMatcher, PolicyBinary, PolicyEndpoint,
@@ -16,6 +17,7 @@ pub use nemoclaw_openshell::policy::{
 };
 use openshell_core::proto;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 /// Sandbox policy selection.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -24,6 +26,19 @@ use serde::{Deserialize, Serialize};
 pub struct Network {
     /// Isolated preset or a complete authored policy; the two cannot coexist.
     pub policy: NetworkPolicy,
+    /// Named grants added to the isolated preset.
+    pub grants: BTreeMap<String, Grant>,
+}
+
+/// Endpoint grants added to the isolated preset, restricted to executables.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Grant {
+    /// Allowed destinations and optional application-protocol restrictions, in OpenShell's endpoint shape.
+    pub endpoints: Vec<PolicyEndpoint>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    /// Executables allowed to use the endpoints. Omitted or empty selects the harness's executables.
+    pub binaries: Vec<PolicyBinary>,
 }
 
 /// Sandbox policy source. Explicit policies replace the isolated preset completely.
@@ -52,6 +67,10 @@ struct NetworkInput {
     #[schemars(default, with = "ExplicitPolicySelection")]
     /// Complete authored OpenShell policy, replacing the isolated preset.
     policy: Option<ExplicitPolicySelection>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[schemars(default)]
+    /// Named grants added to the isolated preset, each like an OpenShell network policy rule without its name. An explicit policy holds its own grants.
+    grants: BTreeMap<String, Grant>,
 }
 
 impl TryFrom<NetworkInput> for Network {
@@ -67,7 +86,15 @@ impl TryFrom<NetworkInput> for Network {
                 ));
             }
         };
-        Ok(Self { policy })
+        if !input.grants.is_empty() && matches!(policy, NetworkPolicy::Explicit(_)) {
+            return Err(ConfigError::new(
+                "network grants add to the isolated preset; list them in policy.explicit instead",
+            ));
+        }
+        Ok(Self {
+            policy,
+            grants: input.grants,
+        })
     }
 }
 
@@ -79,7 +106,11 @@ impl From<Network> for NetworkInput {
                 (String::new(), Some(ExplicitPolicySelection { explicit }))
             }
         };
-        Self { tier, policy }
+        Self {
+            tier,
+            policy,
+            grants: network.grants,
+        }
     }
 }
 

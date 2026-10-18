@@ -28,9 +28,8 @@ Other pages state a limit where it affects a procedure and link the same issue.
 | Distributed inference across several Sparks or Stations | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
 | Podman beyond a local rootless Linux gateway: managed inference, rootful operation and remote engines | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
 | OpenShift admitting the gateway and sandbox pods; kind runs the OpenShift profile but does not enforce its security constraints | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
-| Managed model services with a Kubernetes or OpenShift gateway | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
-| A managed Kubernetes gateway authenticating through an existing identity provider; only the development profile exists | [#12692](https://github.com/NVIDIA/NemoClaw/issues/12692) |
-| Images from private registries; every runtime pulls anonymously, so images must be public or already present | [#12709](https://github.com/NVIDIA/NemoClaw/issues/12709) |
+| Model services that NemoClaw places with a Kubernetes or OpenShift gateway; sandboxes can use [a server you run in the cluster](kubernetes.md#use-a-model-server-in-the-cluster) | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
+| [A model server you run in the cluster](kubernetes.md#use-a-model-server-in-the-cluster) has been tried only with NemoClaw's vLLM and Ollama runtimes on one kind cluster; OpenShift and other network plugins are untested | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
 | Live GPU inference, tools and replies through managed Ollama | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
 | Gated repositories, custom remote-code models, GGUF in vLLM, and nested Hugging Face checkpoints | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
 | A tested matrix of harness, model, provider and platform combinations | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
@@ -71,12 +70,10 @@ Other pages state a limit where it affects a procedure and link the same issue.
 
 | Limit | Issue |
 |---|---|
-| Backup, restore, snapshots and transfer of native agent data | [#12639](https://github.com/NVIDIA/NemoClaw/issues/12639) |
-| File locations for harnesses other than OpenClaw, Hermes and Pi | [#12639](https://github.com/NVIDIA/NemoClaw/issues/12639) |
+| Native conversation continuity across runtime replacement | [Per-harness limits](state.md#choose-what-to-retain-for-each-harness); [#12639](https://github.com/NVIDIA/NemoClaw/issues/12639) |
+| Backup, restore, snapshots and transfer of mounted agent data | [Platform-owned storage](state.md#keep-agent-files-on-mounted-volumes); no NemoClaw command |
 | Moving data from the earlier product to v1 and back | [#12639](https://github.com/NVIDIA/NemoClaw/issues/12639) |
-| A purge command | [#12640](https://github.com/NVIDIA/NemoClaw/issues/12640) |
-| Removing retained Podman, Kubernetes, and external-gateway workspace resources | [#12640](https://github.com/NVIDIA/NemoClaw/issues/12640) |
-| Verified removal of managed service volumes and of objects on SSH engines | [#12640](https://github.com/NVIDIA/NemoClaw/issues/12640) |
+| Verified removal of retained objects on Podman, of managed service volumes, and of objects on SSH engines; the [procedures](usage.md#remove-retained-resources) cover them | [#12640](https://github.com/NVIDIA/NemoClaw/issues/12640) |
 
 ## Security
 
@@ -86,7 +83,7 @@ Other pages state a limit where it affects a procedure and link the same issue.
 | Corporate CA provisioning across the client, image builds, gateway and native runtimes | [#12643](https://github.com/NVIDIA/NemoClaw/issues/12643) |
 | A rotation runbook for every credential type | [#12643](https://github.com/NVIDIA/NemoClaw/issues/12643) |
 | Privacy review and retention guidance for production tracing | [#12643](https://github.com/NVIDIA/NemoClaw/issues/12643) |
-| Okta and Entra runtime identity | [#12652](https://github.com/NVIDIA/NemoClaw/issues/12652) |
+| OAuth-refresh credentials have no NemoClaw YAML wrapper; use [operator-managed OpenShell providers](oauth-refresh.md), with separate sandbox attachments | [#12652](https://github.com/NVIDIA/NemoClaw/issues/12652) |
 | Interactive network-request approval, named policy presets, and explaining policy to an agent | [#12651](https://github.com/NVIDIA/NemoClaw/issues/12651) |
 
 ## SDK and Provider

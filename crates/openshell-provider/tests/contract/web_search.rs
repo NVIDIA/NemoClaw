@@ -17,6 +17,7 @@ variable "binaries" { type = list(string) }
 variable "enabled" { default = true }
 variable "sandbox" { default = true }
 variable "destroy" { default = false }
+variable "sandbox_env" { default = null }
 provider "openshell" { destroy = var.destroy }
 locals {
   gateway = {
@@ -43,6 +44,7 @@ resource "openshell_web_search" "brave" {
   name           = "brave"
   provider_type  = "brave"
   credential_env = "NEMOCLAW_TEST_BRAVE_KEY"
+  sandbox_env    = var.sandbox_env
   binaries       = var.binaries
 }
 resource "openshell_sandbox" "agent" {
@@ -169,4 +171,32 @@ async fn web_search_owns_its_profile_and_registration() {
     assert!(state.providers.is_empty());
     assert!(state.profiles.is_empty());
     assert_eq!(state.workspaces.len(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated OpenShell fixture"]
+async fn web_search_names_the_variable_sandboxes_see() {
+    // Harnesses read the search key from different variables; Hermes's Brave
+    // plugin reads BRAVE_SEARCH_API_KEY rather than the default.
+    let fixture = Fixture::start().await;
+    let root = workspace(&fixture.endpoint);
+    let named = "-var=sandbox_env=BRAVE_SEARCH_API_KEY";
+    run(&root, &["apply", "-auto-approve", "-input=false", named]);
+    {
+        let state = fixture.state.lock().unwrap();
+        let profile = state.profiles.values().next().unwrap();
+        assert_eq!(profile.credentials.len(), 1);
+        assert_eq!(profile.credentials[0].env_vars, ["BRAVE_SEARCH_API_KEY"]);
+        let provider = state.providers.values().next().unwrap();
+        assert!(
+            provider.credentials.contains_key("BRAVE_SEARCH_API_KEY"),
+            "{:?}",
+            provider.credentials.keys()
+        );
+    }
+    // Applied state matches the configuration.
+    run(
+        &root,
+        &["plan", "-input=false", "-detailed-exitcode", named],
+    );
 }

@@ -609,6 +609,29 @@ fn add_dependencies(attrs: &mut Value, dependencies: &[Value]) {
     attrs["depends_on"] = json!(all);
 }
 
+/// Have every Docker provider authenticate to the listed registries with the
+/// logins of the machine running OpenTofu. The provider reads its Docker
+/// configuration file; the graph holds only addresses.
+pub(crate) fn authenticate(graph: &mut Value, registries: &[crate::config::Registry]) {
+    if registries.is_empty() {
+        return;
+    }
+    let auth = json!(
+        registries
+            .iter()
+            .map(|registry| match &registry.config_file {
+                Some(file) => json!({"address": registry.address, "config_file": file}),
+                None => json!({"address": registry.address}),
+            })
+            .collect::<Vec<_>>()
+    );
+    if let Some(providers) = graph["provider"]["docker"].as_array_mut() {
+        for provider in providers {
+            provider["registry_auth"] = auth.clone();
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

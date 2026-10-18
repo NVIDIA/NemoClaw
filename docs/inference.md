@@ -85,6 +85,7 @@ The current tests establish configuration, compilation, API attachment, and drif
 | You already operate a compatible endpoint or have a hosted API | External `endpoint`, matching `provider`/`api`, and a credential reference when required | [OpenClaw external endpoint](../examples/inference-tuning.yaml), [Hermes authentication](../examples/hermes-auth.yaml) |
 | NemoClaw should run Ollama on a declared NVIDIA GPU | Declare a service with `kind: ollama`, hardware requirements, a pinned runtime image, a model name and digest, memory, and serving settings | [Managed Ollama](#run-managed-ollama) |
 | Ollama and its model already run locally and must remain external | Declare a service with `kind: ollamaProxy` to manage an authenticated proxy for one installed model digest | [Proxy configuration](#use-external-ollama-through-a-managed-proxy) |
+| You run a model server in a Kubernetes or OpenShift gateway's cluster | External `endpoint` naming its Service, `http://<service>.<namespace>.svc.cluster.local:<port>/v1`, and an optional credential reference; follow [in-cluster model servers](kubernetes.md#use-a-model-server-in-the-cluster) | [In-cluster vLLM](../examples/kubernetes/in-cluster-vllm.yaml), [in-cluster Ollama](../examples/kubernetes/in-cluster-ollama.yaml) |
 | NemoClaw should download and serve a pinned public model with vLLM | Declare a service with `kind: vllm`, the runtime image, repository revision, capacity, and serving settings; see [managed models](models.md) | [Generic vLLM](../examples/spark/vllm.yaml) |
 | The Docker daemon running a managed service is reached through SSH | Set `placement.engine` to the SSH endpoint, then declare the private network and `publication` endpoint on the named service; follow [remote service](remote-service.md) | [Remote vLLM](../examples/spark/remote-vllm.yaml) |
 | The model requires preparation tools or runtime patches | Package reviewed tools in an immutable image and declare an [inline recipe](recipes.md) | [Inline Qwen3.8 recipe](../examples/spark/spark-inline.yaml) |
@@ -152,7 +153,8 @@ For example, a Nous endpoint using the OpenAI protocol still uses `provider: ope
 Before writing its provider declaration, obtain the base URL, API, exact model ID, required credential, and model limits from the endpoint operator.
 Confirm that the selected image's Fabric descriptor accepts that API.
 Catalog metadata and `/models` responses do not establish successful inference.
-For a credentialed endpoint, declare an HTTPS URL and an environment reference; [credential ownership](security.md#credentials-and-authentication) describes where the resolved key persists.
+For a credentialed endpoint, declare an environment reference; [credential ownership](security.md#credentials-and-authentication) describes where the resolved key persists.
+Prefer HTTPS: over plain HTTP, the key crosses the network unencrypted.
 OpenShell decides which inference destinations a sandbox can reach.
 
 The endpoint must be reachable from the sandbox's OpenShell proxy, not just from your client terminal.
@@ -339,6 +341,7 @@ env:
 
 Register the server with OpenShell using the same key: give `openshell_inference` a `server` object whose `credential_env` names a variable holding the key where OpenTofu runs.
 Readiness on those platforms is the platform's job; point its readiness probe at `GET /health`, which needs no key.
+In YAML, set the provider's `credential` to that variable; [Use a Model Server in the Cluster](kubernetes.md#use-a-model-server-in-the-cluster) shows a Kubernetes example.
 
 ## Use External Ollama through a Managed Proxy
 
@@ -412,6 +415,11 @@ overrides:
   model: example-reasoning-model
   maxTokens: 8192
 ```
+
+A route can also set `temperature` and `topP`, which the SDK passes to Fabric's `temperature` and `top_p`.
+`harnessProvider` sets the Fabric model provider the harness uses; without it, the SDK uses the inference provider's API family, `openai` or `anthropic`.
+For example, Hermes's `custom` provider turns reasoning off by default, which a hosted reasoning model may need to answer within Fabric's invocation deadline.
+Fabric validates these values when it configures the agent.
 
 The pinned OpenClaw adapter takes no native model settings, so its routes leave `overrides.settings` unset.
 For adapters that take them, the SDK forwards `settings` unchanged into the public Fabric model configuration, keeping nested null values intact.

@@ -25,6 +25,8 @@ mod fabric_deployment;
 #[path = "fabric_live.rs"]
 mod fabric_live;
 // Unix only, as before it moved here from nemoclaw-sdk.
+#[cfg(target_os = "linux")]
+mod docker_registry;
 #[cfg(unix)]
 #[path = "helm_recovery.rs"]
 mod helm_recovery;
@@ -48,6 +50,7 @@ mod model_live;
 mod multiple_providers;
 #[path = "openshell_contract_fixtures.rs"]
 mod openshell_contract_fixtures;
+mod registry_fixture;
 #[path = "remote_service.rs"]
 mod remote_service;
 #[path = "spark.rs"]
@@ -58,6 +61,7 @@ mod tls;
 mod transport;
 #[path = "travel_example.rs"]
 mod travel_example;
+mod travel_team_example;
 #[path = "web_search.rs"]
 mod web_search;
 

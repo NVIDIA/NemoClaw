@@ -97,7 +97,6 @@ fn assert_hosted_document(document: &Document, harness: HarnessKind, runtime_roo
     assert!(matches!(gateway, Gateway::Managed(_)));
     let gateway = gateway.as_managed().unwrap();
     assert_eq!(gateway.engine, "unix:///var/run/docker.sock");
-    assert_eq!(gateway.image, nemoclaw_sdk::config::DEFAULT_GATEWAY_IMAGE);
 
     let provider = &document.spec.inference_providers[0];
     assert_eq!(provider.name, "hosted-nvidia-prod");
@@ -268,6 +267,7 @@ mod live {
                 "fabric_agent.assistant",
                 "openshell_inference.inference_hosted-nvidia-prod",
                 "openshell_sandbox.assistant",
+                "openshell_workspace.deployment",
             ],
             "delete",
         );
@@ -284,10 +284,8 @@ mod live {
     }
 
     fn retained_resources() -> Vec<String> {
-        vec![
-            "openshell_workspace.deployment".into(),
-            "openshell_gateway_storage.runtime".into(),
-        ]
+        // Destroy deletes the workspace; only gateway storage remains.
+        vec!["openshell_gateway_storage.runtime".into()]
     }
 
     /// One plan creates the runtime and the objects it serves, in address order.

@@ -73,6 +73,25 @@ impl Document {
                     sandbox.agent.tools.as_ref(),
                 )))?;
             }
+            let image_scope = self.image_scope(sandbox)?;
+            for api in self.apis(sandbox)? {
+                require(
+                    !api.agent_refs.is_empty()
+                        && api
+                            .agent_refs
+                            .iter()
+                            .all(|name| name == &sandbox.agent.name),
+                    "an api integration requires references to the sandbox's agent",
+                )?;
+                credential(&Some(api.api.credential.clone()))?;
+                let registration = api.registration(&image_scope);
+                require(
+                    selected_providers
+                        .iter()
+                        .all(|provider| provider.name != registration),
+                    "an inference provider name collides with an api integration's registration",
+                )?;
+            }
             let agent = &sandbox.agent;
 
             if let Some(tools) = &agent.tools {
@@ -117,7 +136,7 @@ impl super::ManagedGateway {
         require(
             bind.is_some_and(|a| a.port() >= 1024)
                 && crate::config::validate_engine_endpoint(&self.engine).is_ok(),
-            "managed gateway requires pinned image, a local engine socket, and unprivileged loopback HTTP port without credentials",
+            "managed gateway requires a local engine socket and an unprivileged loopback HTTP port without credentials",
         )?;
         let net = self.network_cidr.parse::<ipnet::Ipv4Net>().ok();
         require(

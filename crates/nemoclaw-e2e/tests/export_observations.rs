@@ -188,8 +188,8 @@ async fn credentialed_inference_applies_without_probes_then_exports_and_destroys
         }));
     assert_eq!(
         teardown.plan_destroy(&cancel).await.unwrap().changes.len(),
-        // Destroy also removes the agent configuration.
-        4
+        // Destroy also removes the agent configuration and the workspace.
+        5
     );
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
     // One initialization reads bindings; the other plans the teardown graph.
@@ -206,6 +206,7 @@ async fn credentialed_inference_applies_without_probes_then_exports_and_destroys
     );
     assert!(fixture.state.lock().unwrap().providers.is_empty());
     assert!(fixture.state.lock().unwrap().sandboxes.is_empty());
+    assert!(fixture.state.lock().unwrap().workspaces.is_empty());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

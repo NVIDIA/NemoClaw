@@ -44,6 +44,14 @@ impl FromStr for InferenceProviderKind {
 
 /// Build the endpoint and credential projection for a native inference provider.
 /// The caller must supply image-resolved binaries before importing the profile.
+/// The variable sandboxes see an inference registration's key in.
+pub fn inference_key_env(name: &str) -> String {
+    format!(
+        "NEMOCLAW_INFERENCE_{}_KEY",
+        name.replace('-', "_").to_ascii_uppercase()
+    )
+}
+
 pub fn definition(
     name: &str,
     endpoint: &str,
@@ -129,10 +137,7 @@ fn profile(
     let host = url.host_str().ok_or(ObservationError::Query)?;
     let port = url.port_or_known_default().ok_or(ObservationError::Query)?;
     let id = format!("nemoclaw-inference-{name}");
-    let key = format!(
-        "NEMOCLAW_INFERENCE_{}_KEY",
-        name.replace('-', "_").to_ascii_uppercase()
-    );
+    let key = inference_key_env(name);
     let path = format!("{}/**", url.path().trim_end_matches('/'));
     // Private addresses require an explicit destination-validation grant. Grant
     // only the selected literal address, never a whole private network.

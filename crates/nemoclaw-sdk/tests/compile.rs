@@ -486,3 +486,136 @@ fn adding_an_image_keeps_existing_registration_and_separates_executable_scopes()
         assert!(binaries.ends_with(".binaries_json)}"));
     }
 }
+
+#[test]
+fn sandboxes_pass_driver_configuration_through() {
+    let generations: nemoclaw_sdk::compile::Generations = ["workspace", "provider", "sandbox"]
+        .map(|key| (key.into(), "a".repeat(32)))
+        .into();
+    let mut value: serde_json::Value =
+        serde_saphyr::from_str(include_str!("../../../examples/fabric-openclaw.yaml")).unwrap();
+    let doc = nemoclaw_sdk::config::Document::parse(value.to_string().as_bytes()).unwrap();
+    let name = doc.spec.sandboxes[0].name.clone();
+    let graph = nemoclaw_sdk::compile::compile(&doc, &generations, "0.1.0").unwrap();
+    assert!(
+        graph["resource"]["openshell_sandbox"][&name]
+            .get("driver_config")
+            .is_none()
+    );
+
+    let mounts = serde_json::json!({"docker": {"mounts": [
+        {"type": "volume", "source": "skills", "target": "/sandbox/skills"}
+    ]}});
+    value["spec"]["sandboxes"][0]["driverConfig"] = mounts.clone();
+    let doc = nemoclaw_sdk::config::Document::parse(value.to_string().as_bytes())
+        .expect("driverConfig must parse");
+    let graph = nemoclaw_sdk::compile::compile(&doc, &generations, "0.1.0").unwrap();
+    // However OpenTofu takes it, OpenShell receives it unchanged.
+    let attribute = &graph["resource"]["openshell_sandbox"][&name]["driver_config"];
+    let decoded: serde_json::Value = match attribute.as_str() {
+        Some(text) => serde_json::from_str(text).unwrap(),
+        None => attribute.clone(),
+    };
+    assert_eq!(decoded, mounts, "{attribute}");
+    // The document round-trips with it.
+    assert_eq!(
+        nemoclaw_sdk::config::Document::parse(doc.yaml().unwrap().as_bytes()).unwrap(),
+        doc
+    );
+}
+
+#[test]
+fn isolated_sandboxes_take_extra_network_grants() {
+    let generations: nemoclaw_sdk::compile::Generations = ["workspace", "provider", "sandbox"]
+        .map(|key| (key.into(), "a".repeat(32)))
+        .into();
+    let mut value: serde_json::Value =
+        serde_saphyr::from_str(include_str!("../../../examples/fabric-openclaw.yaml")).unwrap();
+    let grant = serde_json::json!({"endpoints": [{
+        "host": "docs.example.com", "port": 443, "protocol": "rest", "enforcement": "enforce",
+        "rules": [{"allow": {"method": "GET", "path": "/**"}}]
+    }]});
+    value["spec"]["sandboxes"][0]["network"] =
+        serde_json::json!({"tier": "isolated", "grants": {"docs": grant}});
+    let doc = nemoclaw_sdk::config::Document::parse(value.to_string().as_bytes())
+        .expect("grants must parse");
+    assert_eq!(
+        nemoclaw_sdk::config::Document::parse(doc.yaml().unwrap().as_bytes()).unwrap(),
+        doc
+    );
+    let rows = nemoclaw_sdk::compile::targets(&doc, &generations).unwrap();
+    let sandbox = rows.iter().find(|r| r.kind == "sandbox").unwrap();
+    let input: serde_json::Value = serde_json::from_str(&sandbox.values["policy_json"]).unwrap();
+    // The grant joins the managed rules, on top of the isolated preset, and
+    // without executables it takes the harness's.
+    assert!(input["explicit"].is_null(), "{input}");
+    let rules: Vec<_> = input["managed"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|rule| rule["name"] == "docs")
+        .collect();
+    assert_eq!(rules.len(), 1, "{input}");
+    assert_eq!(rules[0]["endpoints"][0]["host"], "docs.example.com");
+    assert_eq!(rules[0]["binaries"], serde_json::json!([]));
+
+    // An explicit policy already holds every grant.
+    value["spec"]["sandboxes"][0]["network"] = serde_json::json!({
+        "policy": {"explicit": {"version": 1}},
+        "grants": {"docs": grant}
+    });
+    assert!(nemoclaw_sdk::config::Document::parse(value.to_string().as_bytes()).is_err());
+}
+
+#[test]
+fn docker_providers_authenticate_to_listed_registries() {
+    let generations: nemoclaw_sdk::compile::Generations = [
+        "workspace",
+        "provider",
+        "sandbox",
+        "managed_gateway",
+        "inference_service",
+        "ollama_service",
+    ]
+    .map(|key| (key.into(), "a".repeat(32)))
+    .into();
+    let mut value: serde_json::Value =
+        serde_saphyr::from_str(include_str!("../../../examples/managed-ollama.yaml")).unwrap();
+    let doc = nemoclaw_sdk::config::Document::parse(value.to_string().as_bytes()).unwrap();
+    let graph = nemoclaw_sdk::compile::compile(&doc, &generations, "0.1.0").unwrap();
+    let providers = graph["provider"]["docker"]
+        .as_array()
+        .expect("Docker providers");
+    assert!(
+        providers
+            .iter()
+            .all(|provider| provider.get("registry_auth").is_none())
+    );
+
+    value["spec"]["registries"] = serde_json::json!([
+        {"address": "nvcr.io"},
+        {"address": "registry.example.com:5000", "configFile": "/srv/ci/docker/config.json"}
+    ]);
+    let doc = nemoclaw_sdk::config::Document::parse(value.to_string().as_bytes())
+        .expect("registries must parse");
+    assert_eq!(
+        nemoclaw_sdk::config::Document::parse(doc.yaml().unwrap().as_bytes()).unwrap(),
+        doc
+    );
+    let graph = nemoclaw_sdk::compile::compile(&doc, &generations, "0.1.0").unwrap();
+    // Every Docker provider reads the logins of the machine running OpenTofu;
+    // the graph names only the registries.
+    for provider in graph["provider"]["docker"].as_array().unwrap() {
+        assert_eq!(
+            provider["registry_auth"],
+            serde_json::json!([
+                {"address": "nvcr.io"},
+                {"address": "registry.example.com:5000", "config_file": "/srv/ci/docker/config.json"}
+            ]),
+            "{provider}"
+        );
+    }
+
+    value["spec"]["registries"] = serde_json::json!([{"address": "nvcr.io", "password": "x"}]);
+    assert!(nemoclaw_sdk::config::Document::parse(value.to_string().as_bytes()).is_err());
+}

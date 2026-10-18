@@ -58,6 +58,10 @@ impl ConnectedOpenShellGateway {
     async fn provider(&self, want: &Row) -> Result<proto::Provider, ObservationError> {
         let search = SearchProvider::from_name(value(want, "provider_type"));
         let api = value(want, "provider_type") == "api";
+        // The variable sandboxes see a search key in.
+        let search_key = search
+            .map(|provider| profile::sandbox_env(provider, want))
+            .unwrap_or_default();
         let (kind, endpoint_key, secret_key) = match value(want, "provider_type") {
             "api"
                 if value(want, "profile_name")
@@ -84,8 +88,7 @@ impl ConnectedOpenShellGateway {
                         && !value(want, "credential_env").is_empty()
                 }) =>
             {
-                let search = search.unwrap();
-                (value(want, "profile_name"), "", search.credential_env())
+                (value(want, "profile_name"), "", search_key.as_str())
             }
             _ => return Err(ObservationError::Query),
         };
@@ -433,6 +436,7 @@ mod tests {
         };
         let client = ConnectedOpenShellGateway::connect(
             &connection,
+            &SearchSecrets,
             Arc::new(SearchSecrets),
             Arc::new(crate::DockerServices),
         )

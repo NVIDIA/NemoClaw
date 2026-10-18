@@ -3,6 +3,7 @@
 //! SDK integration tests, linked into one binary so the SDK links once.
 //! Each file is a module; helpers under support/ are shared by all of them.
 
+mod api_integration;
 #[path = "support/bundle.rs"]
 mod bundle;
 #[path = "support/examples.rs"]
@@ -24,6 +25,7 @@ mod scripted_tofu;
 mod support;
 #[path = "../../test-support/http.rs"]
 mod transport;
+mod travel_team;
 
 #[path = "agent_tools.rs"]
 mod agent_tools;
@@ -103,6 +105,8 @@ mod kubernetes_corrupt_receipt;
 mod kubernetes_expired_authentication;
 #[path = "kubernetes_gateway.rs"]
 mod kubernetes_gateway;
+#[path = "kubernetes_inference.rs"]
+mod kubernetes_inference;
 #[path = "kubernetes_interruption.rs"]
 mod kubernetes_interruption;
 #[path = "kubernetes_lost_create_response.rs"]

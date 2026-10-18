@@ -4,6 +4,11 @@
 //! and providers, with no Helm executable on PATH. Requires an owned cluster
 //! with Agent Sandbox, its explicit kubeconfig/context, and a verified bundle.
 
+#[path = "kubernetes_oidc.rs"]
+mod oidc;
+#[path = "kubernetes_registry.rs"]
+mod registry;
+
 use k8s_openapi::api::{
     apps::v1::StatefulSet,
     core::v1::{Namespace, PersistentVolumeClaim, Secret},
@@ -478,6 +483,44 @@ async fn the_gateway_installs_authenticates_and_is_removed_keeping_storage() {
             );
         }
     }
+    // Removing what destroy retains: deleting the namespace removes the key
+    // and claims, and with kind's Delete reclaim policy, their volumes.
+    let volumes: Vec<String> =
+        Api::<PersistentVolumeClaim>::namespaced(operations.client.clone(), &namespace)
+            .list(&ListParams::default())
+            .await
+            .unwrap()
+            .items
+            .into_iter()
+            .filter_map(|claim| claim.spec.and_then(|spec| spec.volume_name))
+            .collect();
+    assert!(
+        !volumes.is_empty(),
+        "the gateway's claims are bound to volumes"
+    );
+    let namespaces = Api::<Namespace>::all(operations.client.clone());
+    namespaces
+        .delete(&namespace, &kube::api::DeleteParams::foreground())
+        .await
+        .unwrap();
+    let persistent =
+        Api::<k8s_openapi::api::core::v1::PersistentVolume>::all(operations.client.clone());
+    let deadline = std::time::Instant::now() + Duration::from_secs(120);
+    loop {
+        let namespace_gone = namespaces.get_opt(&namespace).await.unwrap().is_none();
+        let mut volumes_gone = true;
+        for volume in &volumes {
+            volumes_gone &= persistent.get_opt(volume).await.unwrap().is_none();
+        }
+        if namespace_gone && volumes_gone {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "deleting the namespace removes the deployment's retained resources"
+        );
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
 }
 
 /// A full deployment on a real cluster through the public SDK: the managed
@@ -492,6 +535,23 @@ async fn the_gateway_installs_authenticates_and_is_removed_keeping_storage() {
 /// - `NEMOCLAW_TEST_AGENT_HARNESS`: its Fabric adapter
 /// - `NEMOCLAW_TEST_AGENT_METADATA`: its metadata bundle
 async fn deploy_and_export(provider: &str, while_applying: impl AsyncFnOnce(&str)) {
+    let _ = deploy_image_and_export(
+        provider,
+        &required("NEMOCLAW_TEST_AGENT_IMAGE"),
+        &required("NEMOCLAW_TEST_AGENT_METADATA"),
+        &[],
+        while_applying,
+    )
+    .await;
+}
+
+async fn deploy_image_and_export(
+    provider: &str,
+    image: &str,
+    metadata: &str,
+    pull_secrets: &[&str],
+    while_applying: impl AsyncFnOnce(&str),
+) -> Vec<u8> {
     use nemoclaw_sdk::{CancellationToken, Deployment, config::Document};
     let mut uid = [0u8; 16];
     getrandom::fill(&mut uid).unwrap();
@@ -530,6 +590,7 @@ spec:
       context: {context}
       namespace: {namespace}
       authentication: {{profile: development}}
+      imagePullSecrets: {pull_secrets}
   inferenceProviders:
     - name: hosted
       provider: openai
@@ -554,7 +615,8 @@ spec:
                 maxTokens: 2048{extensions}
 ",
         context = required("NEMOCLAW_TEST_KUBE_CONTEXT"),
-        image = required("NEMOCLAW_TEST_AGENT_IMAGE"),
+        image = image,
+        pull_secrets = serde_json::to_string(pull_secrets).unwrap(),
         harness = harness,
         // Pi needs a context window for a model it does not ship; OpenClaw
         // declares no model extensions.
@@ -577,10 +639,7 @@ spec:
             "NEMOCLAW_TEST_KUBECONFIG".into(),
             relative.to_string_lossy().into_owned(),
         ),
-        (
-            "NEMOCLAW_TEST_AGENT_METADATA".into(),
-            required("NEMOCLAW_TEST_AGENT_METADATA"),
-        ),
+        ("NEMOCLAW_TEST_AGENT_METADATA".into(), metadata.to_owned()),
     ]));
     let deployment = Deployment::new(
         state.path(),
@@ -594,6 +653,7 @@ spec:
         while_applying(&namespace)
     );
     applied.expect("the agent starts through fabric-agent-ctl");
+    let state_snapshot = fs::read(state.path().join("terraform.tfstate")).unwrap();
 
     // A complete deployment must be exportable. Clean up before asserting so a
     // failed export retains no live workload after this test.
@@ -611,12 +671,7 @@ spec:
         document,
         "export recovers the authored configuration without readiness checks"
     );
-}
-
-#[tokio::test]
-#[ignore = "needs a Kubernetes cluster with Agent Sandbox and a loaded agent image; run through cargo ci live-kind"]
-async fn an_agent_sandbox_starts_and_destroy_keeps_storage() {
-    deploy_and_export("kubernetes", async |_| {}).await;
+    state_snapshot
 }
 
 /// The OpenShift profile on kind. kind does not enforce OpenShift's security

@@ -24,6 +24,47 @@ fn document() -> Document {
 }
 
 #[test]
+fn managed_cluster_pulls_reference_existing_secrets_for_gateway_and_sandbox_images() {
+    let generations = ["kubernetes_gateway", "kubernetes_storage"]
+        .map(|kind| (kind.into(), "a".repeat(32)))
+        .into();
+    for provider in ["kubernetes", "openshift"] {
+        let mut input = serde_json::to_value(document()).unwrap();
+        input["spec"]["gateway"]["runtime"]["provider"] = json!(provider);
+        let baseline = Document::parse(input.to_string().as_bytes()).unwrap();
+        input["spec"]["gateway"]["kubernetes"]["imagePullSecrets"] =
+            json!(["registry-team", "registry.backup"]);
+        let document = Document::parse(input.to_string().as_bytes())
+            .expect("managed clusters accept existing image pull Secret names");
+        assert_eq!(serde_json::to_value(&document).unwrap(), input);
+        assert_eq!(
+            runtime_targets(&document, &generations).unwrap(),
+            runtime_targets(&baseline, &generations).unwrap(),
+            "pull Secret references change Helm values, not platform resource identities"
+        );
+        assert_eq!(
+            document.credential_names(),
+            ["TEST_IMAGE_METADATA", "TEST_KUBECONFIG"]
+        );
+        let graph = compile_runtime(&document, &generations, "0.1.0").unwrap();
+        let values: serde_json::Value = serde_json::from_str(
+            graph["resource"]["helm_release"]["gateway"]["values"][0]
+                .as_str()
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            values["imagePullSecrets"],
+            json!([{"name": "registry-team"}, {"name": "registry.backup"}])
+        );
+        assert_eq!(
+            values["gatewayConfig"]["openshell.drivers.kubernetes"]["image_pull_secrets"],
+            json!(["registry-team", "registry.backup"])
+        );
+    }
+}
+
+#[test]
 fn managed_gateway_uses_a_pinned_helm_provider_between_auth_and_readiness() {
     let generations = [
         "workspace",
@@ -293,6 +334,7 @@ fn kubernetes_attributes_reproduce_each_resource_specification() {
     for document in [
         document(),
         Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap(),
+        oidc_document(),
     ] {
         for target in runtime_targets(&document, &generations)
             .unwrap()
@@ -333,4 +375,74 @@ fn kubernetes_attributes_reproduce_each_resource_specification() {
             assert!(Spec::from_row("managed_gateway", &target.values).is_err());
         }
     }
+}
+
+fn oidc_document() -> Document {
+    let mut value = serde_json::to_value(document()).unwrap();
+    value["spec"]["gateway"]["kubernetes"]["authentication"] = json!({
+        "profile": "oidc",
+        "issuer": "https://login.example.com/realms/openshell",
+        "audience": "openshell",
+        "rolesClaim": "groups",
+        "adminRole": "openshell-admins",
+        "userRole": "openshell-users",
+        "caConfigMap": "issuer-ca",
+        "tokenEnv": "OPENSHELL_TOKEN"
+    });
+    Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap()
+}
+
+#[test]
+fn an_existing_oidc_issuer_replaces_the_development_issuer() {
+    let generations = ["kubernetes_gateway", "kubernetes_storage"]
+        .map(|kind| (kind.into(), "a".repeat(32)))
+        .into();
+    let document = oidc_document();
+    // The token's variable reaches OpenTofu with the other credentials.
+    assert_eq!(
+        document.credential_names(),
+        ["OPENSHELL_TOKEN", "TEST_IMAGE_METADATA", "TEST_KUBECONFIG"]
+    );
+    let graph = compile_runtime(&document, &generations, "0.1.0").unwrap();
+    let values: serde_json::Value = serde_json::from_str(
+        graph["resource"]["helm_release"]["gateway"]["values"][0]
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        values["gatewayConfig"]["openshell.gateway.oidc"],
+        json!({
+            "issuer": "https://login.example.com/realms/openshell",
+            "audience": "openshell",
+            "jwks_ttl_secs": 3600,
+            "dangerously_allow_insecure_http": false,
+            "roles_claim": "groups",
+            "admin_role": "openshell-admins",
+            "user_role": "openshell-users",
+        })
+    );
+    assert_eq!(values["server"]["oidc"]["caConfigMapName"], "issuer-ca");
+    assert!(!values.to_string().contains("nemoclaw-development"));
+    let auth = &graph["resource"]["openshell_kubernetes_auth"]["runtime"];
+    assert_eq!(auth["authentication_profile"], "oidc");
+    let oidc: serde_json::Value = serde_json::from_str(auth["oidc"].as_str().unwrap()).unwrap();
+    assert_eq!(oidc["tokenEnv"], "OPENSHELL_TOKEN");
+    assert_eq!(oidc["issuer"], "https://login.example.com/realms/openshell");
+
+    // Without a CA ConfigMap, the chart mounts none.
+    let mut value = serde_json::to_value(oidc_document()).unwrap();
+    value["spec"]["gateway"]["kubernetes"]["authentication"]
+        .as_object_mut()
+        .unwrap()
+        .remove("caConfigMap");
+    let document = Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap();
+    let graph = compile_runtime(&document, &generations, "0.1.0").unwrap();
+    let values: serde_json::Value = serde_json::from_str(
+        graph["resource"]["helm_release"]["gateway"]["values"][0]
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(values["server"]["oidc"]["caConfigMapName"], "");
 }

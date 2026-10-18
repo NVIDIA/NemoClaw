@@ -44,6 +44,7 @@ default-filter = '''
     | test(/^multiple_providers::/) | test(/^remote_service::/)
     | test(/^inference_discovery::/) | test(/^helm_recovery::/)
     | test(/^travel_example::/)
+    | test(/^travel_team_example::/)
 ))
 '''
 
@@ -81,7 +82,7 @@ default-filter = '''
     | test(a_new_fabric_archive_cannot_reuse_an_older_compiled_core)
 ))
 | (package(nemoclaw-e2e) & binary(=integration) & (
-    test(/^cache_provider::/) | test(/^docker_provider_proxy::/)
+    test(/^cache_provider::/) | test(/^docker_provider_proxy::/) | test(/^docker_registry::/)
     | test(/^managed_gateway::/) | test(/^dummy_agent::/)
 ))
 | (package(nemoclaw-sdk) & test(the_issuer_image_serves_both_documents_over_https))

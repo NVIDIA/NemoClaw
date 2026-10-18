@@ -1,0 +1,35 @@
+{
+  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. SPDX-License-Identifier: Apache-2.0",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Booking",
+  "type": "object",
+  "required": ["booked", "not_booked"],
+  "additionalProperties": false,
+  "properties": {
+    "booked": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["option", "confirmation", "price"],
+        "additionalProperties": false,
+        "properties": {
+          "option": { "type": "string" },
+          "confirmation": { "type": "string" },
+          "price": { "type": "number", "minimum": 0 }
+        }
+      }
+    },
+    "not_booked": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["option", "reason"],
+        "additionalProperties": false,
+        "properties": {
+          "option": { "type": "string" },
+          "reason": { "type": "string" }
+        }
+      }
+    }
+  }
+}

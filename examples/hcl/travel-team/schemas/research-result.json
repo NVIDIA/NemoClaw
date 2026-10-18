@@ -1,0 +1,48 @@
+{
+  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. SPDX-License-Identifier: Apache-2.0",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Research result",
+  "type": "object",
+  "required": ["topic", "stops"],
+  "additionalProperties": false,
+  "properties": {
+    "topic": { "type": "string" },
+    "stops": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["city", "options"],
+        "additionalProperties": false,
+        "properties": {
+          "city": { "type": "string" },
+          "options": {
+            "type": "array",
+            "maxItems": 5,
+            "items": {
+              "type": "object",
+              "required": ["id", "summary", "price", "source"],
+              "additionalProperties": false,
+              "properties": {
+                "id": { "type": "string", "description": "Unique within the result; the scheduler and buyer refer to it." },
+                "summary": { "type": "string" },
+                "start": { "type": "string", "format": "date-time" },
+                "end": { "type": "string", "format": "date-time" },
+                "price": {
+                  "type": "object",
+                  "required": ["amount", "currency"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "amount": { "type": "number", "minimum": 0 },
+                    "currency": { "type": "string", "pattern": "^[A-Z]{3}$" }
+                  }
+                },
+                "source": { "type": "string", "format": "uri" },
+                "notes": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
