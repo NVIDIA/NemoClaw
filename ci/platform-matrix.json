@@ -208,7 +208,7 @@
     {
       "name": "Managed inference",
       "status": "tested",
-      "notes": "Provider-routed model calls through OpenShell, transparent to the agent. NVIDIA Endpoints and supported fixed hosted providers use native endpoints through sandbox-attached OpenShell providers. New Deep Agents Code selections of Ollama, standalone vLLM, llama.cpp, and qualifying local compatible endpoints use sandbox-attached providers for their qualified host-local endpoints. OpenClaw, Pi, Hermes, owned Local NVIDIA NIM, and other custom or local selections retain the shared `inference.local` route. OpenShell keeps provider credentials outside the sandbox. Supports every entry in the Providers table."
+      "notes": "Provider-routed model calls through OpenShell, transparent to the agent. NVIDIA Endpoints and supported fixed hosted providers use native endpoints through sandbox-attached OpenShell providers. New Deep Agents Code selections of Ollama, standalone vLLM, llama.cpp, and qualifying local compatible endpoints use sandbox-attached providers for their qualified host-local endpoints. Hermes implements the same attachment path, with live qualification for its new local lifecycle pending. OpenClaw, Pi, owned Local NVIDIA NIM, and other custom or local selections retain the shared `inference.local` route. OpenShell keeps provider credentials outside the sandbox. Supports every entry in the Providers table."
     },
     {
       "name": "Declarative network policy",

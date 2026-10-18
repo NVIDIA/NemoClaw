@@ -328,6 +328,7 @@ describe("Pi managed model catalog generation", () => {
     ["vllm-local", "http://host.docker.internal:8000/v1", true],
     ["llama-cpp-local", "http://192.168.1.2:8080/v1", true],
     ["compatible-endpoint", "http://10.0.0.2:11434/v1", true],
+    ["compatible-endpoint", "http://192.168.1.20:9001/v1", true],
     ["compatible-endpoint", "https://inference.local/v1", false],
     ["compatible-endpoint", "https://api.example.com/v1", false],
     ["nvidia", "http://host.openshell.internal:8000/v1", false],

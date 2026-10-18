@@ -461,7 +461,7 @@ export function getSandboxInferenceConfig(
     useNativeProvider &&
     nativeEndpointUrl &&
     usesNativeLocalInferenceForAgent(agentName, provider, nativeEndpointUrl) &&
-    nativeLocalCredentialReference(provider, nativeEndpointUrl)
+    nativeLocalCredentialReference(provider, nativeEndpointUrl, agentName)
   ) {
     inferenceBaseUrl = nativeEndpointUrl;
     inferenceApi = "openai-completions";

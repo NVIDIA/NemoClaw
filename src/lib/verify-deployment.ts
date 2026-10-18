@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { nativeLocalAttachmentMatchesHostLocalReceipt } from "./state/registry/host-local-inference";
+
 /**
  * Post-deployment verification — confirms the full delivery chain is
  * operational before printing "YOUR AGENT IS LIVE". All deps injected
@@ -1017,6 +1019,7 @@ export function onboardInferenceVerificationContext(
         endpointUrl?: string | null;
         createdAt?: string | null;
         pendingRouteReservation?: boolean;
+        hostLocalInferenceReceipt?: string | null;
       })
     | null,
 ): { route: InferenceRouteContext; invocation: InferenceInvocationContext } {
@@ -1032,10 +1035,23 @@ export function onboardInferenceVerificationContext(
       ? undefined
       : attachment?.nativeLocalProviderAttachment;
   const nativeHostedProviderAttachment = attachment?.nativeHostedProviderAttachment;
+  const endpointUrl =
+    agentName === "hermes" &&
+    nativeLocalExpected &&
+    nativeLocalProviderAttachment?.agent === "hermes" &&
+    attachment?.provider === flow.provider &&
+    attachment?.model === flow.model &&
+    nativeLocalAttachmentMatchesHostLocalReceipt(
+      attachment?.endpointUrl,
+      nativeLocalProviderAttachment.endpointUrl,
+      attachment?.hostLocalInferenceReceipt,
+    )
+      ? attachment.endpointUrl
+      : (flow.endpointUrl ?? null);
   return {
     route: {
       provider: flow.provider,
-      endpointUrl: flow.endpointUrl ?? null,
+      endpointUrl,
       gatewayName,
       nativeLocalExpected,
       nativeLocalProviderAttachment,
@@ -1047,7 +1063,7 @@ export function onboardInferenceVerificationContext(
       agentName,
       model: flow.model,
       provider: flow.provider,
-      endpointUrl: flow.endpointUrl ?? null,
+      endpointUrl,
       preferredInferenceApi: flow.preferredInferenceApi,
       nativeLocalExpected,
       nativeLocalProviderAttachment,

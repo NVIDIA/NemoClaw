@@ -93,7 +93,7 @@ function prepareProfile(
   return runtime.ensurePreparedProfile({ source: { kind: "managed-image" } } as never);
 }
 
-describe.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
+describe.each(["openclaw", "langchain-deepagents-code"] as const)(
   "%s managed startup inference",
   (agentName) => {
     it.each(routes)("keeps $name on its selected transport (#12558)", (route) => {
@@ -162,6 +162,17 @@ it("routes new OpenClaw Ollama through its sandbox attachment", () => {
     upstreamProvider: "ollama-local",
     routedBaseUrl: localBinding.endpointUrl,
     upstreamEndpointUrl: null,
+  });
+});
+
+it("projects the Hermes-scoped native attachment into managed startup", () => {
+  const binding = { ...nativeBinding, agent: "hermes" as const };
+  const attachment = { ...nativeAttachment, ...binding, ...nativeLocalIdentity(binding) };
+  const prepared = prepareProfile("hermes", { endpointUrl: null, attachment });
+  expect(prepared?.profile.inference).toMatchObject({
+    model: "fixture-model",
+    upstreamProvider: "compatible-endpoint",
+    routedBaseUrl: nativeBinding.endpointUrl,
   });
 });
 

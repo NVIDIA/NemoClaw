@@ -142,7 +142,11 @@ function buildModel(settings: Settings): Record<string, unknown> {
 
 function buildConfig(settings: Settings): ManagedPiConfig {
   const nativeHosted = nativeHostedAgentConfig(settings.upstreamProvider, settings.baseUrl);
-  const nativeLocal = nativeLocalCredentialReference(settings.upstreamProvider, settings.baseUrl);
+  const nativeLocal = nativeLocalCredentialReference(
+    settings.upstreamProvider,
+    settings.baseUrl,
+    "pi",
+  );
   const credentialEnv =
     settings.baseUrl === NVIDIA_HOSTED_NATIVE_ENDPOINT
       ? NVIDIA_HOSTED_CREDENTIAL_ENV

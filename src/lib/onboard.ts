@@ -3145,11 +3145,11 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             recordStepFailed,
             skippedStepMessage,
           }),
-          ensureAgentDashboardForward: (name, selectedAgent) =>
+          ensureAgentDashboardForward: (name, selectedAgent, revalidateIdentity) =>
             ensureFinalizationAgentDashboardForward(
               name,
               selectedAgent,
-              undefined,
+              revalidateIdentity,
               hermesApiPortReservationScope,
             ),
           persistDashboardPort: (name, port) =>

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import errno
+import ipaddress
 import json
 import os
 import re
@@ -57,6 +58,44 @@ def _string_list(value: object, label: str) -> list[str]:
         raise ManagedPolicyError(f"{label} must be a non-empty list of unique strings")
     return value
 
+
+
+def _native_local_placeholder(config: dict, base_url: str) -> str | None:
+    upstream = config.get("_nemoclaw_upstream")
+    provider = upstream.get("provider") if isinstance(upstream, dict) else None
+    if provider not in (
+        "ollama-local", "vllm-local", "llama-cpp-local", "compatible-endpoint"
+    ):
+        return None
+    # Match the qualified local endpoint used by the TypeScript policy writer.
+    # The immutable policy contains a template; startup materializes a
+    # fresh supervisor-issued handle into the mutable managed credential slots.
+    url = urlsplit(base_url)
+    if (
+        url.scheme != "http"
+        or "@" in url.netloc
+        or "?" in base_url
+        or "#" in base_url
+        or re.search(r"[\\\s]", base_url)
+        or url.port is None
+        or url.port < 1024
+        or re.fullmatch(r"/(?:[a-zA-Z0-9_-]+/)*[a-zA-Z0-9_-]+/?", url.path) is None
+    ):
+        return None
+    if url.hostname not in {"host.openshell.internal", "host.docker.internal"}:
+        # Custom private addresses belong to canonical hosted selection; only
+        # dedicated local providers consume private bridge credentials.
+        if provider == "compatible-endpoint":
+            return None
+        try:
+            address = ipaddress.IPv4Address(url.hostname)
+        except ipaddress.AddressValueError:
+            return None
+        if not any(address in ipaddress.IPv4Network(cidr) for cidr in (
+            "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"
+        )):
+            return None
+    return "${NEMOCLAW_LOCAL_INFERENCE_TOKEN}"
 
 
 def _native_hosted_placeholder(config: dict, base_url: str) -> str | None:
@@ -190,6 +229,7 @@ def load_managed_policy(path: Path = MANAGED_POLICY_PATH) -> dict:
         expected_key = NVIDIA_INFERENCE_PLACEHOLDER if native_nvidia else HERMES_PROXY_REWRITE_SENTINEL
         api_key = policy_value(config, "model.api_key")
         hosted_placeholder = _native_hosted_placeholder(config, base_url)
+        local_placeholder = None if native_nvidia else _native_local_placeholder(config, base_url)
         scoped_nvidia_handle = (
             native_nvidia
             and isinstance(api_key, str)
@@ -198,6 +238,7 @@ def load_managed_policy(path: Path = MANAGED_POLICY_PATH) -> dict:
         if (
             api_key != expected_key
             and (hosted_placeholder is None or api_key != hosted_placeholder)
+            and (local_placeholder is None or api_key != local_placeholder)
             and not scoped_nvidia_handle
         ):
             raise ManagedPolicyError(

@@ -842,9 +842,9 @@ Its mock rejects a missing or incorrect credential, and the existing sandbox req
 The config probe validates the scoped Anthropic credential reference inside the sandbox before redaction.
 The native NVIDIA destination uses the public endpoint and its public credential only after switching.
 Route assertions use JSON fields so terminal column alignment does not affect the result.
-Hermes native installation uses the public NVIDIA provider before its same-provider model switch.
-The Hermes native switch derives its baseline model expectation from the environment passed to installation.
-Its later proxy-resolution probe pairs the public NVIDIA credential with the public endpoint.
+Hermes inference-switch installation uses an authenticated local fixture before its model-only switch.
+The baseline model expectation comes from the environment passed to installation.
+The native NVIDIA variant then switches to the public endpoint with its public credential.
 
 Most entries use one ID for catalogue selection, evidence, and artifacts.
 Matrix-style targets use one target ID for evidence and artifacts, with separate catalogue IDs and shards for each concrete execution.
@@ -1294,8 +1294,20 @@ completed onboarding session remains unchanged as historical onboarding
 evidence. Deterministic startup and action tests own the corresponding launch
 environment and session non-rewrite checks.
 
-The native switch must restart the gateway to refresh provider credentials;
-the compatible fixture preserves its gateway process. The live lane requires
+The local baseline uses an authenticated fixture on port 11434.
+Real Hermes gateway requests must reach that endpoint with the selected model at startup and after a model-only switch.
+The `double-onboard-hermes` lane requires sibling denial and an authenticated request from the owning sandbox.
+OpenClaw retains its existing shared-route scenario.
+Deterministic startup and action tests own reference rotation, schema validation, guarded writes, and failure compensation.
+
+Seven redundant Hermes switch assertions are removed: four model-field projections and the obsolete `models` map belong to configuration tests; two hash-tool success strings duplicate checked exit statuses.
+The live dashboard, API, CLI, hash exit status, file permissions, and credential isolation checks remain.
+Double-onboard retains one registry observation after both read-only stale commands because neither command can recreate registration.
+Managed-image cleanup retains the polling predicate that requires successful inventories and absence from both OpenShell and the container runtime; repeated post-poll checks add no evidence.
+The managed-image Hermes turns additionally require a fresh authenticated completion for the selected model from the responder on port 8000.
+OpenClaw and Deep Agents Code retain their current main qualification scenarios.
+
+The native switch restarts the gateway to refresh provider credentials. The live lane requires
 successful probes that each identify one gateway PID before comparing its lifecycle.
 Support tests reject failed, empty, and ambiguous PID probes.
 

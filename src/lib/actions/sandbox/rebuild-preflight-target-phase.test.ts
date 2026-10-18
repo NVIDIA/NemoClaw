@@ -239,6 +239,13 @@ describe("stageRebuildBaseImageResolutionHandoff", () => {
 
 describe("rebuild legacy local route preflight", () => {
   it.each([
+    { agent: "hermes", provider: "ollama-local", createdAt: "2026-09-01T00:00:00Z" },
+    {
+      agent: "hermes",
+      provider: "compatible-endpoint",
+      endpointUrl: "http://localhost:8000/v1",
+      createdAt: "2026-09-01T00:00:00Z",
+    },
     { agent: "pi", provider: "ollama-local", createdAt: undefined },
     {
       agent: "pi",

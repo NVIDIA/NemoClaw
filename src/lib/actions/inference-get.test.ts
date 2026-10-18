@@ -35,7 +35,10 @@ function configuredRoute(provider: string, model: string): OpenShellInferenceRou
   return { ok: true, value: { state: "configured", route: { provider, model } } };
 }
 
-function nativeLocalSandbox(overrides: Record<string, unknown> = {}) {
+function nativeLocalSandbox(
+  overrides: Record<string, unknown> = {},
+  agent: "langchain-deepagents-code" | "hermes" | "openclaw" = "langchain-deepagents-code",
+) {
   const binding: NativeLocalBinding = {
     provider: "ollama-local",
     endpointUrl: "http://host.openshell.internal:11435/v1",
@@ -43,10 +46,11 @@ function nativeLocalSandbox(overrides: Record<string, unknown> = {}) {
     authMode: "authenticated",
     gatewayName: "nemoclaw",
     sandboxName: "alpha",
+    ...(agent !== "langchain-deepagents-code" ? { agent } : {}),
   };
   return {
     name: "alpha",
-    agent: "langchain-deepagents-code",
+    agent,
     provider: binding.provider,
     model: "qwen2.5:7b",
     gatewayName: binding.gatewayName,
@@ -219,17 +223,24 @@ describe("runInferenceGet", () => {
       sandboxName: "alpha",
       endpointUrl: "http://10.42.0.3:8999/v1",
     },
+    {
+      agent: "hermes",
+      provider: "ollama-local",
+      sandboxName: "alpha",
+      endpointUrl: "http://host.openshell.internal:11435/v1",
+    },
+    {
+      agent: "hermes",
+      provider: "compatible-endpoint",
+      sandboxName: undefined,
+      endpointUrl: "http://host.openshell.internal:11434/v1",
+    },
   ] as const)(
     "reads a recorded native-local $agent route without consulting the shared gateway (#12975)",
     async ({ agent, provider, sandboxName, endpointUrl }) => {
       const deps = createDeps(configuredRoute("stale-shared-provider", "stale-shared-model"));
-      const sandbox = nativeLocalSandbox();
-      const binding = {
-        ...sandbox.nativeLocalProviderAttachment,
-        provider,
-        endpointUrl,
-        ...(agent === "openclaw" ? { agent: "openclaw" as const } : {}),
-      };
+      const sandbox = nativeLocalSandbox({}, agent);
+      const binding = { ...sandbox.nativeLocalProviderAttachment, provider, endpointUrl };
       deps.getSandbox = () =>
         nativeLocalSandbox({
           agent,
@@ -292,6 +303,10 @@ describe("runInferenceGet", () => {
   it.each([
     { label: "invalid attachment", overrides: { nativeLocalProviderAttachment: {} } },
     { label: "provider mismatch", overrides: { provider: "vllm-local" } },
+    {
+      label: "Hermes provider mismatch",
+      overrides: nativeLocalSandbox({ provider: "vllm-local" }, "hermes"),
+    },
     { label: "sandbox mismatch", overrides: { name: "beta" } },
     { label: "gateway mismatch", overrides: { gatewayName: "nemoclaw-19090" } },
     {
@@ -299,6 +314,11 @@ describe("runInferenceGet", () => {
       overrides: { gatewayName: undefined, gatewayPort: 8080 },
     },
     { label: "agent mismatch", overrides: { agent: "hermes" } },
+    { label: "OpenClaw with an untagged DCode attachment", overrides: { agent: "openclaw" } },
+    {
+      label: "Hermes attachment assigned to another agent",
+      overrides: nativeLocalSandbox({ agent: "langchain-deepagents-code" }, "hermes"),
+    },
     {
       label: "credential boundary mismatch",
       overrides: {

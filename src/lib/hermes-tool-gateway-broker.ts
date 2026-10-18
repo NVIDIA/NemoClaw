@@ -16,8 +16,12 @@ const { getCredsDir } = require("./credentials/store");
 const oauth = require("./oauth-device-code");
 const onboardProviders = require("./onboard/providers");
 const {
-  matchesGatewayCredentialOnlyProviderBinding,
-} = require("./onboard/gateway-provider-metadata");
+  HERMES_TOOL_GATEWAY_PROVIDER_PROFILE_TYPE,
+  HERMES_TOOL_GATEWAY_REFRESH_CREDENTIAL_ENV,
+  LEGACY_HERMES_TOOL_GATEWAY_PROVIDER_TYPE,
+  importHermesToolGatewayProfile,
+  matchHermesToolGatewayProviderType,
+} = require("./hermes-tool-gateway-provider-profile");
 const { createCliOpenShellProviderAdapter } = require("./adapters/openshell/provider-adapter-cli");
 const {
   HERMES_CLONE_CONTROL_CLIENT_TIMEOUT_MS,
@@ -28,8 +32,6 @@ const {
   newControlDeadline,
 } = require(path.join(ROOT, "agents", "hermes", "host", "tool-gateway-control-contract.ts"));
 
-const HERMES_TOOL_GATEWAY_REFRESH_CREDENTIAL_ENV = "NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN";
-const HERMES_TOOL_GATEWAY_PROVIDER_PROFILE_TYPE = "nemoclaw-hermes-tool-gateway-v1";
 const HERMES_TOOL_GATEWAY_PORT = 11436;
 const HERMES_TOOL_GATEWAY_STATE_DIR = path.join(getCredsDir(), "hermes-tool-gateway");
 const HERMES_TOOL_GATEWAY_PID_PATH = path.join(getCredsDir(), "hermes-tool-gateway-broker.pid");
@@ -342,16 +344,7 @@ function brokerRuntimeFileHash(file) {
 async function inspectHermesToolGatewayRefreshProvider(sandboxName, runOpenshell) {
   const providerName = getHermesToolGatewayProviderName(sandboxName);
   const adapter = createCliOpenShellProviderAdapter({ run: runOpenshell });
-  const profile = await adapter.importProviderProfile({
-    target: { kind: "selected" },
-    profilePath: path.join(
-      ROOT,
-      "agents",
-      "hermes",
-      "host",
-      `${HERMES_TOOL_GATEWAY_PROVIDER_PROFILE_TYPE}.yaml`,
-    ),
-  });
+  const profile = await importHermesToolGatewayProfile(adapter, { kind: "selected" }, ROOT);
   if (!profile.ok) {
     if (profile.error.kind === "command" && profile.error.reason === "profile_incompatible") {
       throw new Error(
@@ -366,23 +359,10 @@ async function inspectHermesToolGatewayRefreshProvider(sandboxName, runOpenshell
     target: { kind: "selected" },
     providerName,
   });
-  const providerType =
-    observed.ok &&
-    matchesGatewayCredentialOnlyProviderBinding(observed.value, {
-      name: providerName,
-      type: "generic",
-      credentialKey: HERMES_TOOL_GATEWAY_REFRESH_CREDENTIAL_ENV,
-    })
-      ? "generic"
-      : HERMES_TOOL_GATEWAY_PROVIDER_PROFILE_TYPE;
-  if (
-    observed.ok &&
-    !matchesGatewayCredentialOnlyProviderBinding(observed.value, {
-      name: providerName,
-      type: providerType,
-      credentialKey: HERMES_TOOL_GATEWAY_REFRESH_CREDENTIAL_ENV,
-    })
-  ) {
+  const matchedType = observed.ok
+    ? matchHermesToolGatewayProviderType(observed.value, providerName)
+    : null;
+  if (observed.ok && !matchedType) {
     throw new Error(
       `Existing provider '${providerName}' does not match the Hermes tool gateway credential binding. Ask the gateway operator to inspect its attachments before retrying.`,
     );
@@ -393,6 +373,7 @@ async function inspectHermesToolGatewayRefreshProvider(sandboxName, runOpenshell
   ) {
     throw new Error(`Could not inspect provider '${providerName}' before Hermes tool setup.`);
   }
+  const providerType = matchedType ?? HERMES_TOOL_GATEWAY_PROVIDER_PROFILE_TYPE;
   return { adapter, exists: observed.ok, providerName, providerType };
 }
 
@@ -420,7 +401,7 @@ async function registerHermesToolGatewayRefreshProvider(sandboxName, refreshToke
     {
       requireExactBinding: true,
       providerAdapter: adapter,
-      ...(providerType === "generic" ? { knownExists: true } : {}),
+      ...(providerType === LEGACY_HERMES_TOOL_GATEWAY_PROVIDER_TYPE ? { knownExists: true } : {}),
     },
   );
   if (!result.ok) {

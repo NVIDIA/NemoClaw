@@ -7,8 +7,8 @@ import {
   isLocalInferenceProvider,
   usesNativeLocalInference,
   usesNativeLocalInferenceForAgent,
-  type NativeLocalProviderAttachment,
-} from "../../inference/native-local/contract";
+} from "../../inference/native-local/eligibility";
+import type { NativeLocalProviderAttachment } from "../../inference/native-local/profile";
 export { isLocalInferenceProvider };
 import type { ResolvedCorporateCa } from "../corporate-ca-types";
 import type { DcodeAutoApprovalMode } from "../dcode-auto-approval";
@@ -123,6 +123,9 @@ export function resolveManagedStartupInferenceEndpoint(input: {
   localNimSelected?: boolean;
   nativeLocalProviderAttachment?: { endpointUrl: string };
 }): string | null {
+  if (input.agentName === "hermes") {
+    return input.nativeLocalProviderAttachment?.endpointUrl ?? input.endpointUrl;
+  }
   if (input.agentName === "langchain-deepagents-code") {
     if (input.provider === "vllm-local" && input.localNimSelected) return input.endpointUrl;
     if (

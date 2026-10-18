@@ -1323,6 +1323,7 @@ export function createSetupInference(
                 !options.reservationSessionId ||
                 (recorded.agent !== "langchain-deepagents-code" &&
                   recorded.agent !== "openclaw" &&
+                  recorded.agent !== "hermes" &&
                   recorded.agent !== "pi")
               ) {
                 throw new Error("Recreate this beta sandbox before using native local inference.");
@@ -1339,7 +1340,9 @@ export function createSetupInference(
               adapter: deps.providerAdapter,
               binding: {
                 provider: name as NativeLocalProvider,
-                ...(nativeLocalAgent === "openclaw" || nativeLocalAgent === "pi"
+                ...(nativeLocalAgent === "openclaw" ||
+                nativeLocalAgent === "pi" ||
+                nativeLocalAgent === "hermes"
                   ? { agent: nativeLocalAgent }
                   : {}),
                 endpointUrl: hostReachableEndpoint,
@@ -2004,12 +2007,14 @@ export function createSetupInference(
         /* An unreadable registry skips GPU release; it must not fail onboarding. */
       }
       nativeLocalAgent = selectedAgent ?? recordedAgent;
-      selectingNativeLocal = usesNativeLocalInferenceForAgent(
-        nativeLocalAgent,
-        provider,
-        endpointUrl,
-        options.localNimSelected ?? (provider === "vllm-local" && Boolean(recordedNimContainer)),
-      );
+      selectingNativeLocal =
+        !options.hostLocalInference?.sharedInferenceRoute &&
+        usesNativeLocalInferenceForAgent(
+          nativeLocalAgent,
+          provider,
+          endpointUrl,
+          options.localNimSelected ?? (provider === "vllm-local" && Boolean(recordedNimContainer)),
+        );
       const preservingLegacyPiRoute =
         options.preserveLegacyPiSharedLocalRoute === true &&
         isPersistedPiSharedLocalInferenceRoute(

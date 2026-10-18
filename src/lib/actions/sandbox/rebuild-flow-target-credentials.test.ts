@@ -34,7 +34,7 @@ describe("rebuildSandbox flow: target credentials", () => {
 
   it("rejects recorded web search when the target agent does not support it", async () => {
     const harness = createRebuildFlowHarness({
-      sandboxEntry: { agent: "hermes", webSearchEnabled: true },
+      sandboxEntry: { agent: "hermes", provider: "nvidia-router", webSearchEnabled: true },
     });
 
     await expect(

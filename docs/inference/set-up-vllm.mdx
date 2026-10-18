@@ -33,13 +33,16 @@ Do not expose the port to your LAN or the internet.
 An authenticated fixed profile publishes the configured host port on exactly two host addresses: `127.0.0.1` and the private IPv4 gateway of the `openshell-docker` bridge. The container continues to listen on its recipe-owned internal port `8000`.
 It never publishes that host port on `0.0.0.0` or `::`.
 OpenShell reaches the server through the private bridge binding.
-<AgentOnly variant="openclaw,hermes">
+<AgentOnly variant="openclaw">
 The provider route remains `https://inference.local` inside the sandbox.
 </AgentOnly>
-<AgentOnly variant="deepagents">
-New Deep Agents Code vLLM selections use the recorded local endpoint through a sandbox-attached OpenShell provider.
+<AgentOnly variant="hermes,deepagents">
+New Deep Agents Code and Hermes standalone vLLM selections use the recorded local endpoint through a sandbox-attached OpenShell provider.
 OpenShell supplies the credential at egress; the sandbox receives only a credential reference.
 Refer to [How Inference Routing Works](../about-inference-routing) for qualification and existing-sandbox boundaries.
+</AgentOnly>
+<AgentOnly variant="hermes">
+Live qualification of the Hermes native local lifecycle is pending.
 </AgentOnly>
 The managed Muse Glimmer profile uses the same bearer-protected listener and two-address publication boundary.
 

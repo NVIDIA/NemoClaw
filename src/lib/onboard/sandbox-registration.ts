@@ -31,6 +31,7 @@ import {
   cloneSandboxHostLocalInferenceProvenance,
   cloneSandboxHostLocalInferenceReceipt,
   requireSandboxHostLocalInferenceProvenance,
+  nativeLocalAttachmentMatchesSelectedEndpoint,
 } from "../state/registry/host-local-inference";
 import { cloneSandboxHostMounts } from "../state/registry/host-mount";
 import {
@@ -253,6 +254,25 @@ export function buildCreatedSandboxRegistryEntry(
   );
   if (input.nativeLocalProviderAttachment !== undefined && !nativeLocalProviderAttachment)
     throw new Error("Invalid native local provider attachment.");
+  if (
+    nativeLocalProviderAttachment &&
+    (requestedAgent === "hermes" || nativeLocalProviderAttachment.agent === "hermes") &&
+    !(
+      requestedAgent === "hermes" &&
+      nativeLocalProviderAttachment.agent === "hermes" &&
+      nativeLocalProviderAttachment.sandboxName === input.sandboxName &&
+      nativeLocalProviderAttachment.gatewayName === input.gatewayName &&
+      nativeLocalProviderAttachment.provider === input.inferenceSelection.provider &&
+      nativeLocalAttachmentMatchesSelectedEndpoint(
+        input.inferenceSelection.provider,
+        input.inferenceSelection.endpointUrl,
+        nativeLocalProviderAttachment.endpointUrl,
+        hostLocalInferenceReceipt,
+      )
+    )
+  ) {
+    throw new Error("Native local provider attachment does not match the selected Hermes sandbox.");
+  }
   const nativeHostedProviderAttachment = requireHostedProviderAttachment(
     input.nativeHostedProviderAttachment,
     input.inferenceSelection.provider,

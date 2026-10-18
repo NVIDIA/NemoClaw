@@ -254,3 +254,59 @@ describe("legacy native-local recreation", () => {
     },
   );
 });
+
+describe("Hermes native provider ownership", () => {
+  it("selects a Hermes-scoped provider without mutating a shared route", async () => {
+    const harness = createDirectSetupInferenceHarness({
+      overrides: { applyLocalInferenceRoute: undefined },
+    });
+    await expect(
+      harness.setupInference("test-box", "meta-llama", "vllm-local", null, null, null, [], {
+        agentName: "hermes",
+      }),
+    ).resolves.toEqual({ ok: true });
+    expect(harness.native.adapter.createProvider).toHaveBeenCalledOnce();
+    expect([...harness.native.authorities.values()]).toEqual([
+      expect.objectContaining({ agent: "hermes", sandboxName: "test-box", provider: "vllm-local" }),
+    ]);
+    expect(harness.commands.some(({ command }) => command.startsWith("inference set"))).toBe(false);
+  });
+
+  it("retires an unattached Hermes provider after host validation fails", async () => {
+    const harness = createDirectSetupInferenceHarness({
+      overrides: {
+        applyLocalInferenceRoute: undefined,
+        isNonInteractive: () => true,
+        verifyOnboardInferenceSmoke: async () => {
+          throw new Error("host smoke refused");
+        },
+      },
+    });
+    await expect(
+      harness.setupInference("test-box", "meta-llama", "vllm-local", null, null, null, [], {
+        agentName: "hermes",
+      }),
+    ).rejects.toThrow("host smoke refused");
+    expect(harness.native.adapter.createProvider).toHaveBeenCalledOnce();
+    expect(harness.updateSandbox).not.toHaveBeenCalled();
+    expect(harness.native.providers.size).toBe(0);
+    expect(harness.native.authorities.size).toBe(0);
+  });
+});
+
+it("stages explicit legacy Hermes recreation with a Hermes-scoped receipt", async () => {
+  const { row, before, harness, run } = legacyRecreationHarness("vllm-local", "hermes");
+  const result = await run(true);
+  expect(result.stagedNativeLocalRecreation).toEqual({
+    source: before,
+    attachment: expect.objectContaining({
+      agent: "hermes",
+      sandboxName: row.name,
+      gatewayName: "nemoclaw",
+    }),
+  });
+  expect(harness.native.adapter.createProvider).toHaveBeenCalledOnce();
+  expect(harness.updateSandbox).not.toHaveBeenCalled();
+  expect(row).toEqual(before);
+  expect(harness.commands.some(({ command }) => command.startsWith("inference set"))).toBe(false);
+});
