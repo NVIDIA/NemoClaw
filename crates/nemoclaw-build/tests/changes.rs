@@ -157,7 +157,7 @@ fn template() -> std::path::PathBuf {
         .collect();
     let root = Path::new(env!("CARGO_TARGET_TMPDIR"));
     let template = root.join(format!("changes-fixture-{key}"));
-    if template.join(".git").is_dir() {
+    if complete(&template) {
         return template;
     }
     let building = tempfile::tempdir_in(root).unwrap();
@@ -172,12 +172,51 @@ fn template() -> std::path::PathBuf {
     succeed(building.path(), "git", &["init", "-q"]);
     succeed(building.path(), "git", &["add", "-A"]);
     succeed(building.path(), "git", &["commit", "-q", "-m", "base"]);
-    // A concurrent test may finish first; the copies are equivalent.
+    fs::write(building.path().join(".git").join(COMPLETE), "").unwrap();
+    // A cache can restore an incomplete template; replace it. A concurrent
+    // test may finish first; the copies are equivalent.
+    if template.exists() && !complete(&template) {
+        let _ = fs::remove_dir_all(&template);
+    }
     let building = building.keep();
     if fs::rename(&building, &template).is_err() {
         let _ = fs::remove_dir_all(&building);
     }
+    assert!(
+        complete(&template),
+        "the changes fixture template is incomplete"
+    );
     template
+}
+
+/// Marks a template whose build finished; inside `.git`, so copies don't see
+/// it as an untracked file.
+const COMPLETE: &str = "nemoclaw-fixture-complete";
+
+/// Whether `template` finished building and is still a usable Git repository.
+/// A restored cache can keep directories but drop files, so `.git` existing
+/// isn't enough.
+fn complete(template: &Path) -> bool {
+    template.join(".git").join(COMPLETE).is_file()
+        && std::process::Command::new("git")
+            .args(["rev-parse", "--verify", "--quiet", "HEAD"])
+            .current_dir(template)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success())
+}
+
+#[test]
+fn an_incomplete_template_is_not_reused() {
+    let partial = tempfile::tempdir().unwrap();
+    fs::create_dir_all(partial.path().join(".git").join("objects")).unwrap();
+    fs::write(partial.path().join(".git").join(COMPLETE), "").unwrap();
+    assert!(
+        !complete(partial.path()),
+        "an empty .git must not count as a template"
+    );
+    assert!(complete(&template()));
 }
 
 /// Copy a directory tree, Git metadata included.

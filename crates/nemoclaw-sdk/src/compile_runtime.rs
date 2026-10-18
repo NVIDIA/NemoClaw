@@ -170,11 +170,10 @@ pub(crate) fn runtime_graph(
             let (kind, name) = target.address.split_once('.').unwrap();
             graph["resource"][kind][name] = attributes;
         }
-        let gateway = targets
-            .iter()
-            .find(|target| target.kind == crate::kubernetes::GATEWAY_KIND)
-            .expect("Kubernetes gateway target");
-        let spec = crate::kubernetes::Spec::from_row(&gateway.kind, &gateway.values)?;
+        // Helm also consumes settings that the platform resources do not need.
+        let spec = crate::kubernetes::gateway_spec(document, generations)?.ok_or(Error::State(
+            "managed Kubernetes gateway settings are missing",
+        ))?;
         crate::kubernetes::gateway::configure(&mut graph, &spec)?;
         return Ok((graph, targets));
     }

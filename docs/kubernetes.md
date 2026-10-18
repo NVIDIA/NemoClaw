@@ -82,6 +82,44 @@ Apply creates the gateway and every sandbox, and starts each agent.
 Keep the state directory: it holds the cluster ownership receipt and the development issuer's keys, and destroy needs both.
 [Managed Kubernetes ownership](design/architecture.md#managed-kubernetes-ownership) describes which component owns each resource.
 
+### Reference Registry Credentials
+
+For a managed gateway, `gateway.kubernetes.imagePullSecrets` names Kubernetes Secrets in the deployment's namespace.
+The pinned chart attaches these references to gateway and helper pods and configures OpenShell to attach them to sandbox pods.
+Credential values stay in Kubernetes; NemoClaw does not read, create, rotate, or remove these Secrets.
+
+Add the names to the managed gateway settings:
+
+```yaml
+spec:
+  gateway:
+    kubernetes:
+      imagePullSecrets:
+        - registry-credentials
+```
+
+The namespace must be created by NemoClaw, so arrange for your platform to provision the Secrets after namespace creation.
+If a Secret is missing or its credentials are wrong, image acquisition can fail and apply stops; keep the deployment state and UID.
+After the namespace exists, provision or repair the Secret there, then rerun apply with the same configuration and state directory.
+Do not create the namespace yourself or substitute another namespace to bypass ownership checks.
+
+For the following example, install `kubectl` and prepare a protected Docker configuration file containing registry `auths` entries, as described in [Kubernetes registry authentication](https://kubernetes.io/docs/tasks/configure-pod-container/pull-image-private-registry/).
+Entries that only name a `credsStore` or `credHelpers` helper cannot supply credentials to the kubelet; it cannot run your client machine's helper.
+From the directory holding `deployment.yaml`, create the registry Secret:
+
+```sh
+kubectl --kubeconfig "$NEMOCLAW_CLUSTER_KUBECONFIG" --context my-cluster \
+  --namespace nemoclaw-development create secret generic registry-credentials \
+  --type=kubernetes.io/dockerconfigjson \
+  --from-file=.dockerconfigjson=/private/registry/config.json
+nemoclaw apply --state-dir .local/kubernetes deployment.yaml
+```
+
+Use the deployment's context and namespace, and keep that credential file out of source control and shared diagnostics.
+Check the pod events if a pull still fails; a configured reference does not establish registry access.
+Retire upstream registry credentials separately; destroy retains the namespace and caller-managed Secrets.
+Docker/Podman credential delivery and private-registry qualification across all runtimes remain tracked in [#12709](https://github.com/NVIDIA/NemoClaw/issues/12709).
+
 ## Deploy to OpenShift
 
 Set `gateway.runtime.provider: openshift`; everything else matches the managed Kubernetes deployment above.

@@ -219,6 +219,58 @@ async fn the_pinned_chart_renders_with_the_sdk_values() {
     );
 }
 
+/// The chart carries references into pods and the native driver configuration.
+#[tokio::test]
+#[ignore = "pulls the pinned chart; needs NEMOCLAW_TEST_BUNDLE"]
+async fn the_pinned_chart_passes_pull_secret_names_to_pods_and_the_sandbox_driver() {
+    let mut spec = spec();
+    spec.settings
+        .kubernetes
+        .as_mut()
+        .unwrap()
+        .image_pull_secrets = vec!["registry-team".into(), "registry.backup".into()];
+    let rendered = render(&spec, gateway::CHART, None).await.unwrap();
+    let objects: Vec<Value> = serde_saphyr::from_multiple(&rendered).unwrap();
+    let mut pods = 0;
+    for object in &objects {
+        if matches!(object["kind"].as_str(), Some("StatefulSet" | "Job")) {
+            assert_eq!(
+                object["spec"]["template"]["spec"]["imagePullSecrets"],
+                json!([{"name": "registry-team"}, {"name": "registry.backup"}])
+            );
+            pods += 1;
+        }
+    }
+    assert!(
+        pods >= 2,
+        "the gateway and helper pod templates are checked"
+    );
+    let config = objects
+        .iter()
+        .find(|object| object["kind"] == "ConfigMap" && object["data"]["gateway.toml"].is_string())
+        .unwrap();
+    let config: toml::Value =
+        toml::from_str(config["data"]["gateway.toml"].as_str().unwrap()).unwrap();
+    let names = config["openshell"]["drivers"]["kubernetes"]["image_pull_secrets"]
+        .as_array()
+        .unwrap();
+    assert_eq!(
+        names
+            .iter()
+            .map(|name| name.as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["registry-team", "registry.backup"]
+    );
+    for name in ["registry-team", "registry.backup"] {
+        assert!(
+            objects
+                .iter()
+                .all(|object| object["kind"] != "Secret" || object["metadata"]["name"] != name),
+            "the chart must not own the caller's registry Secret"
+        );
+    }
+}
+
 /// OpenShift assigns the gateway a UID from its namespace's range.
 #[tokio::test]
 #[ignore = "pulls the pinned chart; needs NEMOCLAW_TEST_BUNDLE"]

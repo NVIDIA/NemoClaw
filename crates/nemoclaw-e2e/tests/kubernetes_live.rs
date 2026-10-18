@@ -4,6 +4,9 @@
 //! and providers, with no Helm executable on PATH. Requires an owned cluster
 //! with Agent Sandbox, its explicit kubeconfig/context, and a verified bundle.
 
+#[path = "kubernetes_registry.rs"]
+mod registry;
+
 use k8s_openapi::api::{
     apps::v1::StatefulSet,
     core::v1::{Namespace, PersistentVolumeClaim, Secret},
@@ -492,6 +495,23 @@ async fn the_gateway_installs_authenticates_and_is_removed_keeping_storage() {
 /// - `NEMOCLAW_TEST_AGENT_HARNESS`: its Fabric adapter
 /// - `NEMOCLAW_TEST_AGENT_METADATA`: its metadata bundle
 async fn deploy_and_export(provider: &str, while_applying: impl AsyncFnOnce(&str)) {
+    let _ = deploy_image_and_export(
+        provider,
+        &required("NEMOCLAW_TEST_AGENT_IMAGE"),
+        &required("NEMOCLAW_TEST_AGENT_METADATA"),
+        &[],
+        while_applying,
+    )
+    .await;
+}
+
+async fn deploy_image_and_export(
+    provider: &str,
+    image: &str,
+    metadata: &str,
+    pull_secrets: &[&str],
+    while_applying: impl AsyncFnOnce(&str),
+) -> Vec<u8> {
     use nemoclaw_sdk::{CancellationToken, Deployment, config::Document};
     let mut uid = [0u8; 16];
     getrandom::fill(&mut uid).unwrap();
@@ -530,6 +550,7 @@ spec:
       context: {context}
       namespace: {namespace}
       authentication: {{profile: development}}
+      imagePullSecrets: {pull_secrets}
   inferenceProviders:
     - name: hosted
       provider: openai
@@ -554,7 +575,8 @@ spec:
                 maxTokens: 2048{extensions}
 ",
         context = required("NEMOCLAW_TEST_KUBE_CONTEXT"),
-        image = required("NEMOCLAW_TEST_AGENT_IMAGE"),
+        image = image,
+        pull_secrets = serde_json::to_string(pull_secrets).unwrap(),
         harness = harness,
         // Pi needs a context window for a model it does not ship; OpenClaw
         // declares no model extensions.
@@ -577,10 +599,7 @@ spec:
             "NEMOCLAW_TEST_KUBECONFIG".into(),
             relative.to_string_lossy().into_owned(),
         ),
-        (
-            "NEMOCLAW_TEST_AGENT_METADATA".into(),
-            required("NEMOCLAW_TEST_AGENT_METADATA"),
-        ),
+        ("NEMOCLAW_TEST_AGENT_METADATA".into(), metadata.to_owned()),
     ]));
     let deployment = Deployment::new(
         state.path(),
@@ -594,6 +613,7 @@ spec:
         while_applying(&namespace)
     );
     applied.expect("the agent starts through fabric-agent-ctl");
+    let state_snapshot = fs::read(state.path().join("terraform.tfstate")).unwrap();
 
     // A complete deployment must be exportable. Clean up before asserting so a
     // failed export retains no live workload after this test.
@@ -611,6 +631,7 @@ spec:
         document,
         "export recovers the authored configuration without readiness checks"
     );
+    state_snapshot
 }
 
 #[tokio::test]

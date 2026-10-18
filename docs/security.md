@@ -91,10 +91,12 @@ The [subprocess tests](../crates/nemoclaw-sdk/src/process.rs) and [bundled CLI f
 | Connection | Current configuration boundary |
 |---|---|
 | Client to OpenShell gateway | HTTPS uses trust verification; optional `gateway.tls` selects CA, client certificate, and key through environment references to file paths |
-| OpenShell to external inference | Caller-provided inference keys require HTTPS, except to an in-cluster Service endpoint, where the key crosses the cluster network over plain HTTP; an accepted URL does not configure a corporate CA across all containers |
+| Client to inference catalog during onboarding | Uses the client machine's trust store or `SSL_CERT_FILE`; this trust does not configure the inference path |
+| OpenShell to external inference | NemoClaw accepts HTTP and HTTPS URLs; OpenShell checks destinations when a sandbox connects. Use HTTPS for credentialed endpoints; a key for an in-cluster Service endpoint crosses the cluster network over plain HTTP |
 | Managed vLLM or Ollama proxy private endpoint | Optional/generated bearer authentication does not add TLS to the private HTTP transport |
 | Client to native dashboard | Authenticated OpenShell forwarding carries the connection to the sandbox-local listener; keep the local bind on loopback |
 
+For an inference endpoint with an internal CA, follow [custom CA trust](inference.md#trust-a-custom-certificate-authority) for the client and the OpenShell images.
 Do not reuse gateway mTLS settings as an assumed trust configuration for model downloads, image builds, or native agents.
 Those layers need their own corporate-CA procedure ([#12643](https://github.com/NVIDIA/NemoClaw/issues/12643)).
 

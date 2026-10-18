@@ -153,6 +153,18 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
         defs["ManagedKubernetes"]["properties"]["kubeconfig"]["properties"]["env"]["not"].clone();
     property(
         &mut defs["ManagedKubernetes"],
+        "imagePullSecrets",
+        json!({
+            "uniqueItems": true,
+            "items": {
+                "type": "string", "minLength": 1, "maxLength": 253,
+                "pattern": r"^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\.[a-z0-9](?:[-a-z0-9]*[a-z0-9])?)*$(?![\s\S])"
+            },
+            "x-nemoclaw-error": "image pull Secret references must be unique Kubernetes Secret names"
+        }),
+    );
+    property(
+        &mut defs["ManagedKubernetes"],
         "environment",
         json!({
             "uniqueItems": true,

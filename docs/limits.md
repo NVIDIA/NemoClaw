@@ -31,7 +31,7 @@ Other pages state a limit where it affects a procedure and link the same issue.
 | Model services that NemoClaw places with a Kubernetes or OpenShift gateway; sandboxes can use [a server you run in the cluster](kubernetes.md#use-a-model-server-in-the-cluster) | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
 | [A model server you run in the cluster](kubernetes.md#use-a-model-server-in-the-cluster) has been tried only with NemoClaw's vLLM runtime on one kind cluster; the Ollama steps, OpenShift and other network plugins are untested | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
 | A managed Kubernetes gateway authenticating through an existing identity provider; only the development profile exists | [#12692](https://github.com/NVIDIA/NemoClaw/issues/12692) |
-| Images from private registries; every runtime pulls anonymously, so images must be public or already present | [#12709](https://github.com/NVIDIA/NemoClaw/issues/12709) |
+| Docker/Podman private image pulls and qualification across all runtimes; managed Kubernetes/OpenShift gateways can [reference existing pull Secrets](kubernetes.md#reference-registry-credentials) | [#12709](https://github.com/NVIDIA/NemoClaw/issues/12709) |
 | Live GPU inference, tools and replies through managed Ollama | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
 | Gated repositories, custom remote-code models, GGUF in vLLM, and nested Hugging Face checkpoints | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
 | A tested matrix of harness, model, provider and platform combinations | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
@@ -87,7 +87,7 @@ Other pages state a limit where it affects a procedure and link the same issue.
 | Corporate CA provisioning across the client, image builds, gateway and native runtimes | [#12643](https://github.com/NVIDIA/NemoClaw/issues/12643) |
 | A rotation runbook for every credential type | [#12643](https://github.com/NVIDIA/NemoClaw/issues/12643) |
 | Privacy review and retention guidance for production tracing | [#12643](https://github.com/NVIDIA/NemoClaw/issues/12643) |
-| Okta and Entra runtime identity | [#12652](https://github.com/NVIDIA/NemoClaw/issues/12652) |
+| OAuth-refresh credentials have no NemoClaw YAML wrapper; use [operator-managed OpenShell providers](oauth-refresh.md), with separate sandbox attachments | [#12652](https://github.com/NVIDIA/NemoClaw/issues/12652) |
 | Interactive network-request approval, named policy presets, and explaining policy to an agent | [#12651](https://github.com/NVIDIA/NemoClaw/issues/12651) |
 
 ## SDK and Provider
