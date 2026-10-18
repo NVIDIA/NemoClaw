@@ -24,6 +24,47 @@ fn document() -> Document {
 }
 
 #[test]
+fn managed_cluster_pulls_reference_existing_secrets_for_gateway_and_sandbox_images() {
+    let generations = ["kubernetes_gateway", "kubernetes_storage"]
+        .map(|kind| (kind.into(), "a".repeat(32)))
+        .into();
+    for provider in ["kubernetes", "openshift"] {
+        let mut input = serde_json::to_value(document()).unwrap();
+        input["spec"]["gateway"]["runtime"]["provider"] = json!(provider);
+        let baseline = Document::parse(input.to_string().as_bytes()).unwrap();
+        input["spec"]["gateway"]["kubernetes"]["imagePullSecrets"] =
+            json!(["registry-team", "registry.backup"]);
+        let document = Document::parse(input.to_string().as_bytes())
+            .expect("managed clusters accept existing image pull Secret names");
+        assert_eq!(serde_json::to_value(&document).unwrap(), input);
+        assert_eq!(
+            runtime_targets(&document, &generations).unwrap(),
+            runtime_targets(&baseline, &generations).unwrap(),
+            "pull Secret references change Helm values, not platform resource identities"
+        );
+        assert_eq!(
+            document.credential_names(),
+            ["TEST_IMAGE_METADATA", "TEST_KUBECONFIG"]
+        );
+        let graph = compile_runtime(&document, &generations, "0.1.0").unwrap();
+        let values: serde_json::Value = serde_json::from_str(
+            graph["resource"]["helm_release"]["gateway"]["values"][0]
+                .as_str()
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            values["imagePullSecrets"],
+            json!([{"name": "registry-team"}, {"name": "registry.backup"}])
+        );
+        assert_eq!(
+            values["gatewayConfig"]["openshell.drivers.kubernetes"]["image_pull_secrets"],
+            json!(["registry-team", "registry.backup"])
+        );
+    }
+}
+
+#[test]
 fn managed_gateway_uses_a_pinned_helm_provider_between_auth_and_readiness() {
     let generations = [
         "workspace",

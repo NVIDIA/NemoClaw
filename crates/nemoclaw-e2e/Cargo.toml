@@ -54,6 +54,8 @@ time.workspace = true
 url.workspace = true
 serde-saphyr.workspace = true
 getrandom.workspace = true
+reqwest.workspace = true
+toml = { version = "1.1", default-features = false, features = ["parse", "serde"] }
 
 [lints]
 workspace = true
