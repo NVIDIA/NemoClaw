@@ -25,5 +25,5 @@ runs:
       if: inputs.rust == 'true'
       with:
         platform: linux_amd64
-        cache-prefix: native-bundle-v1
+        cache-prefix: native-bundle-v2
         save-cache: "false"

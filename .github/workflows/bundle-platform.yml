@@ -117,7 +117,7 @@ jobs:
       - uses: ./.github/actions/setup-rust
         with:
           platform: ${{ inputs.platform }}
-          cache-prefix: native-bundle-v1
+          cache-prefix: native-bundle-v2
       - name: Clear cached build timings
         id: timings
         run: rm -rf target/cargo-timings
