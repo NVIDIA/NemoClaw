@@ -184,12 +184,25 @@ fn analyze_many(
     }
     let paths = Utf8Paths0::from_bytes(changed).map_err(|_| "a changed path is not UTF-8")?;
     let new = graph(root)?;
-    let base_tree = tempfile::tempdir().map_err(|e| e.to_string())?;
-    let archive = git(root, &["archive", "--format=tar", &base])?;
-    tar::Archive::new(archive.as_slice())
-        .unpack(base_tree.path())
-        .map_err(|e| e.to_string())?;
-    let old = graph(base_tree.path())?;
+    // The package graph depends only on Cargo's manifests, lockfile, toolchain
+    // and configuration. When none changed, the base graph is the same, so
+    // reuse it rather than extract the base and run Cargo again.
+    let base_tree;
+    let base_graph;
+    let old = if (&paths)
+        .into_iter()
+        .any(|path| affects_graph(path.as_str()))
+    {
+        base_tree = tempfile::tempdir().map_err(|e| e.to_string())?;
+        let archive = git(root, &["archive", "--format=tar", &base])?;
+        tar::Archive::new(archive.as_slice())
+            .unpack(base_tree.path())
+            .map_err(|e| e.to_string())?;
+        base_graph = graph(base_tree.path())?;
+        &base_graph
+    } else {
+        &new
+    };
     workflows
         .iter()
         .map(|workflow| {
@@ -197,7 +210,7 @@ fn analyze_many(
                 fs::read_to_string(root.join(workflow.rules())).map_err(|e| e.to_string())?;
             let rules =
                 DeterminatorRules::parse(&rules).map_err(|e| format!("invalid path rules: {e}"))?;
-            let mut determinator = Determinator::new(&old, &new);
+            let mut determinator = Determinator::new(old, &new);
             determinator.set_rules(&rules).map_err(|e| e.to_string())?;
             determinator.add_changed_paths(&paths);
             // These decisions concern specific feature sets, not every possible
@@ -226,7 +239,7 @@ fn analyze_many(
                     });
                 }
             }
-            if summary(&build) != summary(&build_for(&old)?) {
+            if summary(&build) != summary(&build_for(old)?) {
                 return Ok(Decision {
                     run: true,
                     reason: format!("the {subject} build's dependencies or features changed"),
@@ -292,6 +305,22 @@ fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>> {
         ));
     }
     Ok(output.stdout)
+}
+
+/// Whether a changed path can change Cargo's package graph.
+fn affects_graph(path: &str) -> bool {
+    let path = Path::new(path);
+    path.starts_with(".cargo")
+        || path.file_name().is_some_and(|name| {
+            [
+                "Cargo.toml",
+                "Cargo.lock",
+                "rust-toolchain",
+                "rust-toolchain.toml",
+            ]
+            .iter()
+            .any(|graph_input| name == *graph_input)
+        })
 }
 
 fn graph(root: &Path) -> Result<PackageGraph> {
