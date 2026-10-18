@@ -619,7 +619,10 @@ pub(crate) fn authenticate(graph: &mut Value, registries: &[crate::config::Regis
     let auth = json!(
         registries
             .iter()
-            .map(|registry| json!({"address": registry.address}))
+            .map(|registry| match &registry.config_file {
+                Some(file) => json!({"address": registry.address, "config_file": file}),
+                None => json!({"address": registry.address}),
+            })
             .collect::<Vec<_>>()
     );
     if let Some(providers) = graph["provider"]["docker"].as_array_mut() {

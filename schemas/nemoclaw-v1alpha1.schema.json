@@ -2294,6 +2294,15 @@
           "maxLength": 253,
           "minLength": 1,
           "type": "string"
+        },
+        "configFile": {
+          "description": "Absolute path of the Docker configuration file that holds the login, on the machine running OpenTofu. Defaults to `.docker/config.json` in the user's home directory; `DOCKER_CONFIG` is not read.",
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [

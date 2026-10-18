@@ -594,7 +594,7 @@ fn docker_providers_authenticate_to_listed_registries() {
 
     value["spec"]["registries"] = serde_json::json!([
         {"address": "nvcr.io"},
-        {"address": "registry.example.com:5000"}
+        {"address": "registry.example.com:5000", "configFile": "/srv/ci/docker/config.json"}
     ]);
     let doc = nemoclaw_sdk::config::Document::parse(value.to_string().as_bytes())
         .expect("registries must parse");
@@ -610,7 +610,7 @@ fn docker_providers_authenticate_to_listed_registries() {
             provider["registry_auth"],
             serde_json::json!([
                 {"address": "nvcr.io"},
-                {"address": "registry.example.com:5000"}
+                {"address": "registry.example.com:5000", "config_file": "/srv/ci/docker/config.json"}
             ]),
             "{provider}"
         );

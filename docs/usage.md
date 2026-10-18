@@ -197,7 +197,16 @@ spec:
     - address: nvcr.io
 ```
 
-The Docker provider then reads `~/.docker/config.json`, or the file `DOCKER_CONFIG` names, for each listed address, including a `credsStore` credential store, even when the engine is reached over SSH.
+For each listed address, the Docker provider reads `.docker/config.json` in the home directory of the user running OpenTofu, including a `credsStore` credential store, even when the engine is reached over SSH.
+It doesn't read `DOCKER_CONFIG`; to use another file, set its absolute path as `configFile`:
+
+```yaml
+spec:
+  registries:
+    - address: nvcr.io
+      configFile: /srv/ci/docker/config.json
+```
+
 The address must match the file's entry for that registry, such as `registry.example.com:5000`.
 The provider documents `auths` entries and `credsStore`; if your file uses per-registry `credHelpers`, check that a pull succeeds before relying on it.
 The configuration, the compiled graph, and OpenTofu state hold only the addresses.
