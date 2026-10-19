@@ -141,6 +141,12 @@ Pinned archives and wheels do not make the whole image bit-reproducible: Debian 
 
 Run [image checks](contributing/testing.md#image-source-checks) before changing or using an image recipe, and follow the [native fixture procedures](contributing/integration-tests.md#inference-api-fixtures) for behavior qualification.
 
+### Update the OpenClaw Pin
+
+OpenClaw's npm package has no lockfile, so the agent image copies `/app` from OpenClaw's published image, pinned by digest in `OPENCLAW_IMAGE` in [the Dockerfile](../image/fabric/Dockerfile).
+When an agent starts, Fabric's OpenClaw adapter refuses versions outside `SUPPORTED_OPENCLAW_VERSIONS` in the pinned Fabric source.
+When you change the Fabric pin, check that set; if it changed, pin the digest of OpenClaw's published image for a supported version, then rebuild and qualify the OpenClaw image.
+
 ### Regenerate the Bundled Catalog
 
 The SDK build fails with `stale Fabric catalog` when `image/fabric/catalog.json` no longer matches the Fabric pin in the Dockerfile.

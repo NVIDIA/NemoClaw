@@ -58,10 +58,15 @@ File a `v1` issue, add the limit to [current limits](../limits.md), and ask upst
 Setting configuration that an upstream component documents is not a workaround.
 An exception needs its reason recorded here and an issue that tracks its removal.
 
+NemoClaw keeps these by decision, as its own promises:
+
+- Managed Docker and Podman gateways, so that one file can create a working local deployment ([#13474](https://github.com/NVIDIA/NemoClaw/issues/13474)). An OpenShell-installed gateway with `gateway.management: external` remains the alternative.
+- The vLLM supervisor's route allowlist, which is the reverse proxy that vLLM's [security guide](https://github.com/vllm-project/vllm/blob/v0.32.0/docs/usage/security.md) asks deployers to provide ([#13471](https://github.com/NVIDIA/NemoClaw/issues/13471)).
+- The OpenClaw image pin: OpenClaw's npm package has no lockfile, so the agent image copies OpenClaw's published image by digest, and Fabric's adapter refuses versions it doesn't support ([#13476](https://github.com/NVIDIA/NemoClaw/issues/13476)). See [updating the pin](../build.md#update-the-openclaw-pin).
+
 These exceptions are recorded until their issues are decided:
 
-- Managed Docker and Podman gateways write OpenShell's configuration file ([#13473](https://github.com/NVIDIA/NemoClaw/issues/13473)), and NemoClaw installs them ([#13474](https://github.com/NVIDIA/NemoClaw/issues/13474)).
-- The vLLM runtime filters routes in front of vLLM's authentication ([#13471](https://github.com/NVIDIA/NemoClaw/issues/13471)).
+- Managed gateways write OpenShell's configuration file field by field ([#13473](https://github.com/NVIDIA/NemoClaw/issues/13473)).
 - `runtimes/qwen38` maintains model-specific vLLM patches ([#13472](https://github.com/NVIDIA/NemoClaw/issues/13472)).
 
 ## Ownership and Recovery

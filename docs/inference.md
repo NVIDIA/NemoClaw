@@ -282,12 +282,13 @@ Do not supply `inferenceProviders[].credential` for a managed service.
 
 The supervisor creates a mode-0600 key in `/credentials/inference-key` on a separate credential volume under its own writer lock and reuses it after restart.
 It passes the key only to the vLLM child process through `VLLM_API_KEY`, then verifies `/v1/models` through the route filter below, using bearer authentication, before reporting readiness.
-Recipe environment maps cannot set `VLLM_API_KEY`.
+Recipe environment maps cannot set `VLLM_API_KEY`, or `VLLM_SERVER_DEV_MODE`, which enables vLLM's unauthenticated development routes.
 The OpenShell provider reads the key through the verified runtime container identity and installs it in OpenShell's provider credential store.
 Agent requests use their OpenShell placeholder credential.
 YAML, plans, container launch settings, and OpenTofu state contain no generated key.
 The runtime's root user and Docker administrators can read the key and child environment.
 The key authenticates the `/v1` requests below and does not provide TLS.
+vLLM's key protects only some path prefixes, and its [security guide](https://github.com/vllm-project/vllm/blob/v0.32.0/docs/usage/security.md) asks deployers to allowlist routes in a reverse proxy; for a managed service, the supervisor is that proxy.
 In bearer mode, the supervisor serves the published port with HTTP/1.1 and forwards only these requests to vLLM:
 
 - `GET /v1/models` and `POST` to `/v1/chat/completions`, `/v1/completions`, `/v1/responses`, `/v1/messages`, or `/v1/messages/count_tokens`, each of which requires the key.

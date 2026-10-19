@@ -3653,7 +3653,10 @@
           "description": "Literal VLLM_* environment values for serving. Do not place credentials here.",
           "propertyNames": {
             "not": {
-              "const": "VLLM_API_KEY"
+              "enum": [
+                "VLLM_API_KEY",
+                "VLLM_SERVER_DEV_MODE"
+              ]
             },
             "pattern": "^VLLM_[A-Z0-9_]*$"
           },
@@ -3706,7 +3709,10 @@
           "description": "VLLM_* variables mapped to paths beneath verified prepared data; . selects its root. Names must not also appear in environment.",
           "propertyNames": {
             "not": {
-              "const": "VLLM_API_KEY"
+              "enum": [
+                "VLLM_API_KEY",
+                "VLLM_SERVER_DEV_MODE"
+              ]
             },
             "pattern": "^VLLM_[A-Z0-9_]*$"
           },

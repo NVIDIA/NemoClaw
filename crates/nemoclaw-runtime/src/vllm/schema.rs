@@ -236,7 +236,7 @@ fn recipe(defs: &mut serde_json::Map<String, Value>) {
         property(
             settings,
             field,
-            json!({"propertyNames": {"pattern": "^VLLM_[A-Z0-9_]*$", "not":{"const":"VLLM_API_KEY"}}, "default": {}}),
+            json!({"propertyNames": {"pattern": "^VLLM_[A-Z0-9_]*$", "not":{"enum":["VLLM_API_KEY","VLLM_SERVER_DEV_MODE"]}}, "default": {}}),
         );
     }
     property(
