@@ -177,10 +177,10 @@ function validatedVllmModelIdentity(
   managedBinding: ManagedVllmProviderBinding | null | undefined,
 ): string | null {
   const root = reportedModelRoot(findVllmModelEntry(models, detectedModel));
-  const registeredModel = requestedModel ? resolveVllmModelAlias(requestedModel) : null;
+  const registeredModel = resolveVllmModelAlias(requestedModel ?? detectedModel);
   if (
     root?.startsWith("/") &&
-    requestedModel === detectedModel &&
+    (requestedModel === null || requestedModel === detectedModel) &&
     managedBinding?.serving &&
     registeredModel?.runtimeVariants?.some(
       (variant) =>

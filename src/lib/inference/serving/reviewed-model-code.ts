@@ -75,8 +75,10 @@ import hashlib, json, os, pathlib, re, shutil, signal, subprocess, sys, tempfile
 
 model_id, revision, encoded = sys.argv[1:4]
 manifest = json.loads(encoded)
-root = pathlib.Path(os.environ['HF_HOME']) / 'hub' / ('models--' + model_id.replace('/', '--'))
-root = root.resolve(strict=True)
+hub = (pathlib.Path(os.environ['HF_HOME']) / 'hub').resolve(strict=True)
+root = hub / ('models--' + model_id.replace('/', '--'))
+# Do not resolve this directory; redirected blob directories must not expand the trusted cache.
+shared_blobs = hub / 'blobs'
 source = root / 'snapshots' / revision
 if source.is_symlink() or source.resolve(strict=True) != source:
     raise RuntimeError('reviewed model snapshot is not a canonical directory')
@@ -121,7 +123,7 @@ try:
         signal.signal(signum, forward_signal)
     for path in entries:
         target = path.resolve(strict=True)
-        if not target.is_relative_to(root) or not target.is_file():
+        if not (target.is_relative_to(root) or target.is_relative_to(shared_blobs)) or not target.is_file():
             raise RuntimeError('reviewed model file escapes its cache or is not regular')
         destination = snapshot / path.name
         if path.name in expected:

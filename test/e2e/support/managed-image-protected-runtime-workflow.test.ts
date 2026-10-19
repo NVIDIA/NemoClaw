@@ -118,27 +118,47 @@ describe("protected managed-image runtime workflow", () => {
     expect(validateManagedImageProtectedRuntimeWorkflow(value)).not.toEqual([]);
   });
 
-  it("rejects missing source verification", () => {
-    const value = workflow();
-    const step = namedStep(
-      value,
+  it.each([
+    ["Verify reviewed candidate OpenShell runtime before consumption", "run", "echo bypass"],
+    ["Verify reviewed candidate OpenShell runtime before consumption", "if", "false"],
+    ["Verify reviewed candidate OpenShell runtime before consumption", "continue-on-error", true],
+    ["Verify reviewed candidate OpenShell runtime before consumption", "env", {}],
+    ["Verify reviewed candidate OpenShell runtime", "run", "echo bypass"],
+    ["Verify reviewed candidate OpenShell runtime", "if", "false"],
+    ["Verify reviewed candidate OpenShell runtime", "continue-on-error", true],
+    ["Verify reviewed candidate OpenShell runtime", "env", {}],
+    [
       "Run all-agent GPU, local inference, rollback, and cleanup qualification",
+      "env",
+      { GITHUB_TOKEN: "${{ github.token }}" },
+    ],
+  ])("rejects admission step %s with altered %s", (name, field, replacement) => {
+    const value = workflow();
+    namedStep(value, String(name))[String(field)] = replacement;
+    expect(validateManagedImageProtectedRuntimeWorkflow(value)).not.toEqual([]);
+  });
+
+  it("rejects consuming projected sources before verifying approval", () => {
+    const value = workflow();
+    const job = runtimeJob(value);
+    const steps = job.steps as Array<Record<string, unknown>>;
+    const verify = namedStep(
+      value,
+      "Verify reviewed candidate OpenShell runtime before consumption",
     );
-    const command =
-      'node tools/e2e/protected-openshell-workspace.mts verify > "$E2E_ARTIFACT_DIR/openshell-projection-verified.json"';
-    step.run = String(step.run).replace(command, "");
+    const install = namedStep(value, "Install reviewed OpenShell SDK from trusted controller");
+    const withoutVerify = steps.filter((step) => step !== verify);
+    const index = withoutVerify.indexOf(install);
+    job.steps = [...withoutVerify.slice(0, index + 1), verify, ...withoutVerify.slice(index + 1)];
     expect(validateManagedImageProtectedRuntimeWorkflow(value)).not.toEqual([]);
   });
 
   it("rejects source verification after qualification", () => {
     const value = workflow();
-    const step = namedStep(
-      value,
-      "Run all-agent GPU, local inference, rollback, and cleanup qualification",
-    );
-    const command =
-      'node tools/e2e/protected-openshell-workspace.mts verify > "$E2E_ARTIFACT_DIR/openshell-projection-verified.json"';
-    step.run = `${String(step.run).replace(command, "")}\n${command}\n`;
+    const job = runtimeJob(value);
+    const steps = job.steps as Array<Record<string, unknown>>;
+    const verify = namedStep(value, "Verify reviewed candidate OpenShell runtime");
+    job.steps = [...steps.filter((step) => step !== verify), verify];
     expect(validateManagedImageProtectedRuntimeWorkflow(value)).not.toEqual([]);
   });
 
@@ -793,12 +813,12 @@ describe("protected managed-image runtime workflow", () => {
     );
   });
 
-  it("rejects protected runtime permissions beyond same-run artifact access", () => {
+  it("rejects protected runtime permissions beyond source and approval reads", () => {
     const value = workflow();
     runtimeJob(value).permissions = { actions: "read", contents: "read" };
 
     expect(validateManagedImageProtectedRuntimeWorkflow(value)).toContain(
-      "managed-image-protected-runtime permissions must be exactly contents: read",
+      "managed-image-protected-runtime permissions must be exactly contents: read and pull-requests: read",
     );
   });
 

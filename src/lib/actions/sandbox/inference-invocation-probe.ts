@@ -145,7 +145,8 @@ function buildProbeRequest(input: SandboxInferenceInvocationInput): {
         ? nativeHosted.endpoint
         : isNativeNvidiaProvider(input.provider) || hosted
           ? "https://inference.local/v1"
-          : config.inferenceBaseUrl
+          : // A native local attachment is the route, whichever agent the caller names.
+            (local?.endpointUrl ?? config.inferenceBaseUrl)
   ).replace(/\/+$/u, "");
   // Gemini's existing OpenAI-compatible API ends in /v1beta/openai, not /v1.
   const apiBaseUrl =
