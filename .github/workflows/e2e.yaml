@@ -5213,6 +5213,7 @@ jobs:
     timeout-minutes: 75
     permissions:
       contents: read
+      pull-requests: read
     env:
       CHECKOUT_SHA: ${{ inputs.checkout_sha || github.sha }}
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/managed-image-protected-runtime
@@ -5361,9 +5362,21 @@ jobs:
       - id: openshell-projection
         name: Bind reviewed candidate OpenShell runtime
         shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          UPGRADE_PR_NUMBER: ${{ inputs.pr_number }}
         run: |
           set -euo pipefail
           node tools/e2e/protected-openshell-workspace.mts prepare > "$E2E_ARTIFACT_DIR/openshell-projection.json"
+
+      - name: Verify reviewed candidate OpenShell runtime before consumption
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          UPGRADE_PR_NUMBER: ${{ inputs.pr_number }}
+        run: |
+          set -euo pipefail
+          node tools/e2e/protected-openshell-workspace.mts verify > "$E2E_ARTIFACT_DIR/openshell-projection-initially-verified.json"
 
       - name: Download reviewed OpenShell SDK archive
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -5500,6 +5513,15 @@ jobs:
         shell: bash
         run: env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
 
+      - name: Verify reviewed candidate OpenShell runtime
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          UPGRADE_PR_NUMBER: ${{ inputs.pr_number }}
+        run: |
+          set -euo pipefail
+          node tools/e2e/protected-openshell-workspace.mts verify > "$E2E_ARTIFACT_DIR/openshell-projection-verified.json"
+
       - name: Run all-agent GPU, local inference, rollback, and cleanup qualification
         env:
           NVIDIA_API_KEY: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.NVIDIA_API_KEY || '' }}
@@ -5510,7 +5532,6 @@ jobs:
             echo "::error::Protected NIM qualification must execute trusted workflow code" >&2
             exit 1
           }
-          node tools/e2e/protected-openshell-workspace.mts verify > "$E2E_ARTIFACT_DIR/openshell-projection-verified.json"
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
           OPENSHELL_BIN="$(command -v openshell)"
           export OPENSHELL_BIN
@@ -5546,6 +5567,9 @@ jobs:
       - name: Restore trusted OpenShell sources
         if: ${{ always() && steps.openshell-projection.outcome == 'success' }}
         shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          UPGRADE_PR_NUMBER: ${{ inputs.pr_number }}
         run: |
           set -euo pipefail
           node tools/e2e/protected-openshell-workspace.mts restore > "$E2E_ARTIFACT_DIR/openshell-projection-restored.json"

@@ -4,6 +4,7 @@
 import {
   validateInstallerSources,
   validateOpenShellFeatureGateSource,
+  type OpenShellReleaseTrust,
 } from "../../scripts/checks/extract-installer-pins.mts";
 import { isDeepStrictEqual } from "node:util";
 import { parseAuditConfig } from "../../scripts/audit-reviewed-npm-graph.mts";
@@ -28,9 +29,10 @@ function replaceOne(source: string, pattern: RegExp, replacement: string, label:
 export function projectProtectedOpenShellSources(
   candidate: ProtectedOpenShellCandidateSources,
   trusted: { blueprintSource: string; versionSource: string },
+  releases?: readonly OpenShellReleaseTrust[],
 ): { releaseVersion: string; files: Record<string, string> } {
-  const { releaseVersion } = validateInstallerSources(candidate);
-  validateOpenShellFeatureGateSource(candidate.featureGateSource, releaseVersion);
+  const { releaseVersion } = validateInstallerSources(candidate, releases);
+  validateOpenShellFeatureGateSource(candidate.featureGateSource, releaseVersion, releases);
   const qualified = [
     ...candidate.supervisorRuntimeSource.matchAll(
       /^const QUALIFIED_STABLE_OPENSHELL_VERSION = "([0-9]+\.[0-9]+\.[0-9]+)";$/gm,
