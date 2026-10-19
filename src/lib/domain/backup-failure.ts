@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-/** Failure cause: tar reported "Permission denied" while reading the dir. */
+/** Failure cause: tar or the OpenClaw database copy reported "Permission denied". */
 export const BACKUP_FAILURE_PERMISSION_DENIED = "permission denied";
 /** Failure cause: tar reported other read errors for the dir. */
 export const BACKUP_FAILURE_TAR_READ_ERROR = "tar read error";

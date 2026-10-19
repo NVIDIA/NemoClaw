@@ -11,6 +11,7 @@ import { restoreEnvBulk } from "../../../../test/helpers/env-test-helpers";
 import * as dockerImage from "../../adapters/docker/image";
 import * as agentDefs from "../../agent/defs";
 import * as agentOnboard from "../../agent/onboard";
+import { CLI_NAME } from "../../cli/branding";
 import * as gatewayRuntime from "../../gateway-runtime-action";
 import type { SandboxBaseImageResolutionMetadata } from "../../sandbox-base-image";
 import * as sandboxState from "../../state/sandbox";
@@ -812,6 +813,99 @@ describe("backupSandboxStateForRebuild failure safety", () => {
     const warnLines = warnSpy.mock.calls.map((args: unknown[]) => String(args[0]));
     expect(warnLines.some((line: string) => line.includes("Rebuild will continue"))).toBe(false);
   });
+
+  it.each([
+    [
+      "a denied native-home backup with a legacy Shields record",
+      {
+        failedDirs: ["."],
+        failedDirReasons: { ".": "permission denied" } as Record<string, string> | undefined,
+        failedFiles: [] as string[],
+        error:
+          "Native home/workspace capture failed: tar: ./.openclaw/credentials: Cannot open: Permission denied",
+      },
+      "  Failed: . (permission denied)",
+      true,
+    ],
+    [
+      "a denied native-home backup without a legacy Shields record",
+      {
+        failedDirs: ["."],
+        failedDirReasons: { ".": "permission denied" } as Record<string, string> | undefined,
+        failedFiles: [] as string[],
+        error:
+          "Native home/workspace capture failed: tar: ./.openclaw/credentials: Cannot open: Permission denied",
+      },
+      "  Failed: . (permission denied)",
+      false,
+    ],
+    [
+      "a failed state-file backup with a legacy Shields record",
+      {
+        failedDirs: [] as string[],
+        failedDirReasons: undefined,
+        failedFiles: ["kanban.db"],
+        error: undefined,
+      },
+      "  Failed files: kanban.db",
+      true,
+    ],
+    [
+      "a failed state-file backup without a legacy Shields record",
+      {
+        failedDirs: [] as string[],
+        failedDirReasons: undefined,
+        failedFiles: ["kanban.db"],
+        error: undefined,
+      },
+      "  Failed files: kanban.db",
+      false,
+    ],
+  ] as const)(
+    "prints replacement steps only when a legacy Shields record is present for %s",
+    async (_condition, failure, expectedFailedLine, removedImmutabilityStateRecord) => {
+      backupSpy.mockReturnValue({
+        success: false,
+        backedUpDirs: [],
+        backedUpFiles: [],
+        ...failure,
+      });
+
+      await expect(
+        backupSandboxStateForRebuild(
+          "alpha",
+          makeSandboxEntry(),
+          false,
+          () => undefined,
+          makeBail(),
+          undefined,
+          removedImmutabilityStateRecord,
+        ),
+      ).rejects.toThrow("bail: Failed to back up sandbox state.");
+
+      const errorLines = errorSpy.mock.calls.map((args: unknown[]) => String(args[0]));
+      expect(errorLines.some((line) => line.includes("wrong ownership or permissions"))).toBe(
+        failure.failedDirs.length > 0,
+      );
+      expect(errorLines).toContain(expectedFailedLine);
+      expect(errorLines.some((line) => line.includes("./.openclaw/credentials: Cannot open"))).toBe(
+        failure.failedDirs.length > 0,
+      );
+      expect(errorLines).toContain("  Aborting rebuild to prevent data loss.");
+      const replacementLines = [
+        "  Sandbox 'alpha' also has a state record from the removed Shields feature.",
+        "  Shields can leave state that only root can read, and this release cannot unlock it.",
+        "  If you cannot restore read access, replace the sandbox. Copy only reviewed, credential-free files that the sandbox user can read:",
+        `    1. ${CLI_NAME} alpha download <sandbox-path> <host-dir>`,
+        `    2. ${CLI_NAME} alpha destroy --yes`,
+        `    3. ${CLI_NAME} onboard --name alpha`,
+        `    4. ${CLI_NAME} alpha upload <host-path> <sandbox-dir>`,
+      ];
+      expect(errorLines.filter((line) => replacementLines.includes(line))).toEqual(
+        removedImmutabilityStateRecord ? replacementLines : [],
+      );
+    },
+  );
 
   it("aborts with an unstable-mount hint when every dir was absent after extraction (#6972)", async () => {
     backupSpy.mockReturnValue({
