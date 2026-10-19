@@ -377,6 +377,14 @@ export function createManagedWorkloadOnboardRuntime(
             : null,
         });
     const prepared = await preparedWorkloadPromise;
+    // Dockerfile builds cannot carry extra dashboard origins; refuse them
+    // instead of silently dropping the setting (#13177).
+    if (prepared.source.kind !== "managed-image" && input.startupProfile.dashboardOrigins?.length) {
+      throw new Error(
+        "--dashboard-origin requires a managed OpenClaw image. Remove --dashboard-origin " +
+          "(or NEMOCLAW_DASHBOARD_ORIGINS), or onboard without --from so the managed image is used.",
+      );
+    }
     if (prepared.fallbackDiagnostic && !fallbackReported) {
       fallbackReported = true;
       input.note("  Managed image unavailable; using the trusted Dockerfile recipe.");

@@ -78,6 +78,7 @@ export interface OnboardCommandOptions {
   fromImage?: string | null;
   sandboxName: string | null;
   hostMounts?: import("../state/registry/types").SandboxHostMount[];
+  dashboardOrigins?: string[];
   sandboxGpu: "enable" | "disable" | null;
   sandboxGpuDevice: string | null;
   vllmGpuDevice: string | null;
@@ -106,6 +107,11 @@ export interface ResolveOnboardOptionsDeps {
   arch?: NodeJS.Architecture;
   runtimeProviders?: import("./runtime-provider/access").RuntimeProviderBundleRegistry;
   listAgents?: () => string[];
+  /** Combine `--dashboard-origin` values with NEMOCLAW_DASHBOARD_ORIGINS; throws on an invalid origin. */
+  resolveDashboardOrigins?: (
+    values: readonly string[] | undefined,
+    env: NodeJS.ProcessEnv,
+  ) => string[];
   listServingProfiles?: () => ServingProfileListEntry[];
   loadServingCatalog?: () => CompiledServingCatalog;
   loadSession?: () => {
@@ -256,6 +262,33 @@ function resolveHostMounts(
     fail(deps, `  ${error instanceof Error ? error.message : String(error)}`);
   }
   return mounts;
+}
+
+function resolveDashboardOrigins(
+  values: readonly string[] | undefined,
+  agent: string | null,
+  deps: ResolveOnboardOptionsDeps,
+): string[] {
+  const requested = Boolean(values?.length || deps.env.NEMOCLAW_DASHBOARD_ORIGINS?.trim());
+  if (!requested) return [];
+  if (!deps.resolveDashboardOrigins) {
+    fail(deps, "  --dashboard-origin is not available in this onboarding context.");
+  }
+  const requestedAgent = agent ?? deps.env.NEMOCLAW_AGENT?.trim() ?? "";
+  // NEMOCLAW_AGENT reaches here uncanonicalized, so map an OpenClaw alias
+  // such as `nemoclaw` before the OpenClaw-only check.
+  const selectedAgent = resolveAgentNameAlias(requestedAgent, ["openclaw"]) ?? requestedAgent;
+  if (selectedAgent && !isOpenclawAgent(selectedAgent)) {
+    fail(
+      deps,
+      `  --dashboard-origin is supported only for OpenClaw sandboxes, not ${selectedAgent}. Remove --dashboard-origin (or NEMOCLAW_DASHBOARD_ORIGINS).`,
+    );
+  }
+  try {
+    return deps.resolveDashboardOrigins(values, deps.env);
+  } catch (error) {
+    return fail(deps, `  ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 function validateObservabilityAgent(
@@ -498,6 +531,7 @@ export function resolveOnboardOptions(
   validateObservabilityAgent(flags.observability, agent, deps);
   const toolDisclosure = resolveOnboardToolDisclosure(flags, experimentalProfile, resume, deps);
   const hostMounts = resolveHostMounts(flags["host-mount"], experimentalProfile, deps);
+  const dashboardOrigins = resolveDashboardOrigins(flags["dashboard-origin"], agent, deps);
   if (flags.from !== undefined && flags["from-image"] !== undefined) {
     fail(deps, "  --from and --from-image cannot both be set.");
   }
@@ -522,6 +556,7 @@ export function resolveOnboardOptions(
     ...(fromImage ? { fromImage } : {}),
     sandboxName: flags.name ?? null,
     ...(hostMounts.length > 0 ? { hostMounts } : {}),
+    ...(dashboardOrigins.length > 0 ? { dashboardOrigins } : {}),
     sandboxGpu: resolveSandboxGpu(flags),
     sandboxGpuDevice: flags["sandbox-gpu-device"] ?? null,
     vllmGpuDevice,

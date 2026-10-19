@@ -32,6 +32,7 @@ import type {
   CheckpointPortableRuntimeAuthority,
 } from "../state/onboard-checkpoint-types";
 import type { Session } from "../state/onboard-session";
+import type { SandboxHostMount } from "../state/registry/types";
 import type { SandboxEntry } from "../state/registry/types";
 import {
   DEFAULT_TOOL_DISCLOSURE,
@@ -67,6 +68,22 @@ export {
   verifyReadOnlyHostMountSources,
 } from "./host-mount";
 export { requireReadOnlyHostMountRuntimeSupport };
+
+/** Session inputs for the requested host mounts and dashboard origins (#13177). */
+export function requestedSandboxAccessInput(opts: {
+  readonly hostMounts?: readonly SandboxHostMount[];
+  readonly dashboardOrigins?: readonly string[];
+}): Pick<OnboardSessionBootstrapInput, "requestedHostMounts" | "requestedDashboardOrigins"> {
+  return { requestedHostMounts: opts.hostMounts, requestedDashboardOrigins: opts.dashboardOrigins };
+}
+
+/** Sandbox inputs from the session; resume replays the recorded dashboard origins. */
+export function sessionSandboxAccess(
+  hostMounts: readonly SandboxHostMount[],
+  session: Session | null,
+): { hostMounts: readonly SandboxHostMount[]; dashboardOrigins?: string[] } {
+  return { hostMounts, dashboardOrigins: session?.metadata.dashboardOrigins };
+}
 export {
   isOnboardResumeIntentRaceError,
   OnboardResumeIntentError,
@@ -491,6 +508,8 @@ export interface OnboardSessionBootstrapInput {
   apfInterceptorRequested?: boolean | null;
   stationExpressIntent?: StationExpressResumeIntent | null;
   requestedHostMounts?: readonly import("../state/registry/types").SandboxHostMount[];
+  /** Extra OpenClaw dashboard origins from this command; resume reuses the recorded list. */
+  requestedDashboardOrigins?: readonly string[];
   servingProfileProvenance?: ServingProfileProvenance | null;
   checkpointProfile?: CheckpointOnboardProfile;
   portableRuntimeAuthority?: CheckpointPortableRuntimeAuthority | null;
@@ -515,6 +534,7 @@ export interface OnboardSessionBootstrapDeps {
       toolDisclosure?: ToolDisclosure | null;
       observabilityEnabled?: boolean | null;
       hostMounts?: readonly import("../state/registry/types").SandboxHostMount[];
+      dashboardOrigins?: readonly string[];
       authoritativeResumeConfig?: boolean;
     },
   ): ResumeConfigConflict[];
@@ -771,6 +791,7 @@ async function prepareResumeSession(
     toolDisclosure: input.requestedToolDisclosure ?? null,
     observabilityEnabled: input.requestedObservabilityEnabled ?? null,
     hostMounts: input.requestedHostMounts,
+    dashboardOrigins: input.requestedDashboardOrigins,
     authoritativeResumeConfig: input.authoritativeResumeConfig,
   });
   if (resumeConflicts.length > 0) {
@@ -835,6 +856,9 @@ function prepareFreshSession(
       fromImage,
       ...(input.requestedHostMounts && input.requestedHostMounts.length > 0
         ? { hostMounts: input.requestedHostMounts.map((mount) => ({ ...mount })) }
+        : {}),
+      ...(input.requestedDashboardOrigins?.length
+        ? { dashboardOrigins: [...input.requestedDashboardOrigins] }
         : {}),
     },
   });

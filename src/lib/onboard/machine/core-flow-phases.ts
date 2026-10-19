@@ -83,6 +83,7 @@ export interface SandboxOnboardFlowPhaseOptions<
   requestedDcodeAutoApprovalMode?: DcodeAutoApprovalMode | null;
   rebuildPolicySourcePath?: string;
   hostMounts?: readonly import("../../state/registry/types").SandboxHostMount[];
+  dashboardOrigins?: readonly string[];
   endpointProvenance: EndpointProvenanceOptions;
   recreateSandbox: (requested?: boolean) => boolean;
   controlUiPort: number | null;
@@ -353,6 +354,7 @@ export function createSandboxOnboardFlowPhase<
       requestedDcodeAutoApprovalMode: options.requestedDcodeAutoApprovalMode,
       rebuildPolicySourcePath: options.rebuildPolicySourcePath,
       hostMounts: options.hostMounts,
+      dashboardOrigins: options.dashboardOrigins,
       recreateSandbox: options.recreateSandbox,
       session: context.session,
       sandboxName: context.sandboxName,

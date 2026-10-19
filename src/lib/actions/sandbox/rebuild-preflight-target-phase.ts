@@ -301,6 +301,7 @@ export async function prepareRebuildTargetPreflights(args: {
         recreateOptions,
         messagingPlan,
         recordedDashboardExternalUrl: sandboxEntry.dashboardExternalUrl,
+        recordedDashboardOrigins: sandboxEntry.dashboardOrigins,
       });
     } catch (error) {
       bail(error instanceof Error ? error.message : String(error));

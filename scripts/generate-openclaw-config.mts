@@ -16,7 +16,7 @@
 //   NEMOCLAW_TOOL_DISCLOSURE,
 //   NEMOCLAW_AGENT_TIMEOUT, NEMOCLAW_AGENT_HEARTBEAT_EVERY,
 //   NEMOCLAW_INFERENCE_COMPAT_B64,
-//   NEMOCLAW_DASHBOARD_BIND, NEMOCLAW_WSL_DASHBOARD_EXPOSURE,
+//   NEMOCLAW_DASHBOARD_BIND, NEMOCLAW_WSL_DASHBOARD_EXPOSURE, NEMOCLAW_DASHBOARD_ORIGINS,
 //   NEMOCLAW_DISABLE_DEVICE_AUTH,
 //   NEMOCLAW_DEVICE_AUTH_OPT_OUT_SOURCE,
 //   NEMOCLAW_EXTRA_AGENTS_JSON_B64,
@@ -32,6 +32,7 @@ import { nativeLocalCredentialReference } from "../src/lib/inference/native-loca
 
 import { hasProviderlessInferenceEnvironment } from "../src/lib/providerless-inference.ts";
 import { managedInferenceApiKey } from "../src/lib/inference-credential.ts";
+import { DASHBOARD_ORIGINS_ENV, parseDashboardOrigins } from "../src/lib/dashboard/url.ts";
 
 import {
   chmodSync,
@@ -155,6 +156,33 @@ function resolveWebSearchProvider(env: Env): WebSearchProvider {
 
 function unique<T>(values: Iterable<T>): T[] {
   return [...new Set(values)];
+}
+
+/**
+ * Read extra dashboard browser origins (#13177) with the same parser that
+ * onboarding and the managed startup profile use. A rejected entry is named by
+ * position: the parser's message can echo the value, which may hold user
+ * information.
+ */
+function readDashboardOriginsEnv(env: Env): string[] {
+  const entries = (env[DASHBOARD_ORIGINS_ENV] ?? "").split(",");
+  for (const [index, entry] of entries.entries()) {
+    try {
+      parseDashboardOrigins([entry]);
+    } catch {
+      throw new Error(
+        `${DASHBOARD_ORIGINS_ENV} entry ${String(index + 1)} must be a bare https origin, or http on loopback.`,
+      );
+    }
+  }
+  try {
+    return parseDashboardOrigins(entries);
+  } catch (error) {
+    // Every entry parsed, so only the origin-count limit remains.
+    throw new Error(
+      `${DASHBOARD_ORIGINS_ENV}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 }
 
 function expandUser(pathValue: string): string {
@@ -905,7 +933,11 @@ export function buildConfig(env: Env = process.env): JsonObject {
     parsed.scheme && parsed.hostname && parsed.port !== null && !isLoopback(parsed.hostname)
       ? `${parsed.scheme}://${hostForOrigin(parsed.hostname)}`
       : null;
-  const origins = unique([loopbackOrigin, chatOrigin, portlessOrigin].filter(Boolean) as string[]);
+  const origins = unique(
+    [loopbackOrigin, chatOrigin, portlessOrigin, ...readDashboardOriginsEnv(env)].filter(
+      Boolean,
+    ) as string[],
+  );
 
   const isRemote = !isLoopback(parsed.hostname || "");
   const dashboardBind = readOptionalEnumEnv(

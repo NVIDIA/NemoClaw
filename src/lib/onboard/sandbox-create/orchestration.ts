@@ -105,6 +105,23 @@ import {
   readValidatedRebuildPolicySource,
 } from "./rebuild-policy-handoff";
 
+/**
+ * Return requested extra dashboard origins for OpenClaw, and refuse them for
+ * any other agent instead of silently dropping the setting (#13177).
+ */
+export function requireOpenClawDashboardOrigins(
+  agentName: string,
+  dashboardOrigins: readonly string[] | undefined,
+): readonly string[] | undefined {
+  if (!dashboardOrigins?.length) return undefined;
+  if (agentName !== "openclaw") {
+    throw new Error(
+      `--dashboard-origin is supported only for OpenClaw sandboxes, not ${agentName}. Remove --dashboard-origin (or NEMOCLAW_DASHBOARD_ORIGINS).`,
+    );
+  }
+  return dashboardOrigins;
+}
+
 function recordedOpenShellGatewayStateDir(
   resolveStateDir: () => string,
   checkpoint: PendingSandboxCreateIdentity | null,
@@ -2139,6 +2156,10 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             manageDashboard,
             dashboardBindAddress: process.env.NEMOCLAW_DASHBOARD_BIND,
             wslExposure: requestedAgentName === "openclaw" && isWsl(),
+            dashboardOrigins: requireOpenClawDashboardOrigins(
+              requestedAgentName,
+              createIntent?.dashboardOrigins,
+            ),
             hermesDashboardState,
             webSearch: webSearchConfig,
             toolDisclosure: effectiveToolDisclosure,
@@ -2309,6 +2330,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         releaseDashboardPort: dashboardPortReservationScope.release,
         revalidateSandboxIdentity: (operation) => revalidateSandboxIdentity(true, operation),
         cliName: cliName(),
+        dashboardOrigins: createIntent?.dashboardOrigins,
       }));
     };
     if (recreateRuntime.acceptedTarget && !resumingVerifiedCreate) {
