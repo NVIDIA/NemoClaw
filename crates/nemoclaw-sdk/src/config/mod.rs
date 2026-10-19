@@ -155,7 +155,13 @@ impl Document {
         if let Some(kubernetes) = g.as_kubernetes() {
             names.push(kubernetes.kubeconfig.env.as_str());
             names.extend(kubernetes.environment.iter().map(String::as_str));
-            names.extend(kubernetes.authentication.token_env.as_deref());
+            names.extend(
+                kubernetes
+                    .authentication
+                    .token
+                    .as_ref()
+                    .map(|token| token.env.as_str()),
+            );
         }
         if let Some(c) = g.credential() {
             names.push(c.env.as_str());

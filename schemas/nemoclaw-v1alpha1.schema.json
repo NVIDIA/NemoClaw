@@ -1230,7 +1230,7 @@
                 },
                 {
                   "required": [
-                    "tokenEnv"
+                    "token"
                   ]
                 }
               ]
@@ -1250,7 +1250,7 @@
             "required": [
               "issuer",
               "audience",
-              "tokenEnv"
+              "token"
             ]
           }
         }
@@ -1320,13 +1320,12 @@
           "minLength": 1,
           "type": "string"
         },
-        "tokenEnv": {
-          "description": "Environment variable holding the bearer token NemoClaw sends to the gateway. Required for `oidc`; your identity provider's tooling obtains and refreshes it.",
-          "maxLength": 253,
-          "minLength": 1,
-          "not": {
-            "anyOf": [
-              {
+        "token": {
+          "$ref": "#/$defs/SecretRef",
+          "description": "Environment reference holding the bearer token NemoClaw sends to the gateway. Required for `oidc`; your identity provider's tooling obtains and refreshes it.",
+          "properties": {
+            "env": {
+              "not": {
                 "anyOf": [
                   {
                     "enum": [
@@ -1364,17 +1363,9 @@
                   }
                 ]
               },
-              {
-                "const": "NEMOCLAW_KUBERNETES_STATE"
-              },
-              {
-                "pattern": "^(?:NEMOCLAW_MANAGED_K8S_|HELM_|KUBE_)"
-              }
-            ]
-          },
-          "pattern": "^[A-Z_][A-Z0-9_]{0,127}$",
-          "type": "string",
-          "x-nemoclaw-error": "tokenEnv must be an environment variable name that does not shadow process, trust, proxy, or cluster controls"
+              "x-nemoclaw-error": "token environment reference must not shadow process, trust, proxy, or cluster controls"
+            }
+          }
         },
         "userRole": {
           "description": "Role that grants user access; set together with `adminRole`, or neither for authentication only.",

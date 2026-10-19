@@ -1334,7 +1334,7 @@ fn an_existing_issuers_token_reaches_gateway_only_runs() {
         "profile": "oidc",
         "issuer": "https://login.example.com",
         "audience": "openshell",
-        "tokenEnv": "OIDC_TOKEN"
+        "token": {"env": "OIDC_TOKEN"}
     });
     let document = Document::parse(value.to_string().as_bytes()).unwrap();
     let environment = gateway_environment(&document, &OidcValues, Path::new("state")).unwrap();

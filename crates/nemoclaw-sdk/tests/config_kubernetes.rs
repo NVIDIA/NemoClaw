@@ -577,6 +577,14 @@ fn a_reserved_reference_name_states_whether_the_reference_holds_a_secret_or_a_fi
     });
     external["spec"]["sandboxes"][0]["agent"]["integrationRefs"] = json!(["search", "bookings"]);
     Document::parse(external.to_string().as_bytes()).unwrap();
+    let mut oidc = managed_document();
+    oidc["spec"]["gateway"]["kubernetes"]["authentication"] = json!({
+        "profile": "oidc",
+        "issuer": "https://login.example.com/realms/openshell",
+        "audience": "openshell",
+        "token": {"env": "OPENSHELL_TOKEN"}
+    });
+    Document::parse(oidc.to_string().as_bytes()).unwrap();
     for (mut input, pointer, path, rule) in [
         (
             external.clone(),
@@ -625,6 +633,12 @@ fn a_reserved_reference_name_states_whether_the_reference_holds_a_secret_or_a_fi
             "/spec/sandboxes/0/image/metadata",
             "spec.sandboxes[0].image.metadata.env",
             file,
+        ),
+        (
+            oidc,
+            "/spec/gateway/kubernetes/authentication/token",
+            "spec.gateway.kubernetes.authentication.token.env",
+            secret,
         ),
         (
             managed_document(),
@@ -703,7 +717,7 @@ fn an_oidc_profile_requires_its_issuer_and_development_takes_no_oidc_settings() 
         "profile": "oidc",
         "issuer": "https://login.example.com/realms/openshell",
         "audience": "openshell",
-        "tokenEnv": "OPENSHELL_TOKEN"
+        "token": {"env": "OPENSHELL_TOKEN"}
     });
     let mut input = managed_document();
     input["spec"]["gateway"]["kubernetes"]["authentication"] = oidc.clone();
@@ -712,7 +726,7 @@ fn an_oidc_profile_requires_its_issuer_and_development_takes_no_oidc_settings() 
     assert_eq!(serde_json::to_value(&document).unwrap(), input);
 
     let mut invalid: Vec<(&str, Value)> = Vec::new();
-    for field in ["issuer", "audience", "tokenEnv"] {
+    for field in ["issuer", "audience", "token"] {
         let mut missing = oidc.clone();
         missing.as_object_mut().unwrap().remove(field);
         invalid.push((field, missing));
@@ -721,8 +735,10 @@ fn an_oidc_profile_requires_its_issuer_and_development_takes_no_oidc_settings() 
         ("issuer", json!("http://login.example.com")),
         ("issuer", json!("https://user:password@login.example.com")),
         ("issuer", json!("https://login.example.com/?tenant=x")),
-        ("tokenEnv", json!("KUBECONFIG")),
-        ("tokenEnv", json!("lowercase")),
+        ("token", json!({"env": "KUBECONFIG"})),
+        ("token", json!({"env": "lowercase"})),
+        ("token", json!("OPENSHELL_TOKEN")),
+        ("tokenEnv", json!("OPENSHELL_TOKEN")),
         ("caConfigMap", json!("Issuer_CA")),
         ("adminRole", json!("openshell-admins")),
     ] {

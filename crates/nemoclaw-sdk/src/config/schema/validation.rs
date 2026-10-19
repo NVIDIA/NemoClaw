@@ -192,7 +192,7 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
         "userRole",
         "scopesClaim",
         "caConfigMap",
-        "tokenEnv",
+        "token",
     ];
     let reserved_names =
         defs["ManagedKubernetes"]["properties"]["kubeconfig"]["properties"]["env"]["not"].clone();
@@ -210,25 +210,22 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
             "x-nemoclaw-error": "caConfigMap must be a Kubernetes ConfigMap name"
         }),
     );
+    // The token reaches OpenTofu beside the kubeconfig, so it follows the
+    // kubeconfig reference's rules in addition to SecretRef's.
     property(
         authentication,
-        "tokenEnv",
-        json!({
-            "pattern": c::ENV,
-            "not": {"anyOf": [
-                reserved_names,
-                {"const": "NEMOCLAW_KUBERNETES_STATE"},
-                {"pattern": "^(?:NEMOCLAW_MANAGED_K8S_|HELM_|KUBE_)"}
-            ]},
-            "x-nemoclaw-error": "tokenEnv must be an environment variable name that does not shadow process, trust, proxy, or cluster controls"
-        }),
+        "token",
+        json!({"properties": {"env": {
+            "not": reserved_names,
+            "x-nemoclaw-error": "token environment reference must not shadow process, trust, proxy, or cluster controls"
+        }}}),
     );
     authentication["dependentRequired"] =
         json!({"adminRole": ["userRole"], "userRole": ["adminRole"]});
     authentication["allOf"] = json!([
         {
             "if": {"properties": {"profile": {"const": "oidc"}}, "required": ["profile"]},
-            "then": {"required": ["issuer", "audience", "tokenEnv"]},
+            "then": {"required": ["issuer", "audience", "token"]},
             "else": {"not": {"anyOf": oidc_fields.iter().map(|field| json!({"required": [field]})).collect::<Vec<_>>()}}
         }
     ]);

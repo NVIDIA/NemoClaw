@@ -387,7 +387,7 @@ fn oidc_document() -> Document {
         "adminRole": "openshell-admins",
         "userRole": "openshell-users",
         "caConfigMap": "issuer-ca",
-        "tokenEnv": "OPENSHELL_TOKEN"
+        "token": {"env": "OPENSHELL_TOKEN"}
     });
     Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap()
 }
@@ -427,7 +427,7 @@ fn an_existing_oidc_issuer_replaces_the_development_issuer() {
     let auth = &graph["resource"]["openshell_kubernetes_auth"]["runtime"];
     assert_eq!(auth["authentication_profile"], "oidc");
     let oidc: serde_json::Value = serde_json::from_str(auth["oidc"].as_str().unwrap()).unwrap();
-    assert_eq!(oidc["tokenEnv"], "OPENSHELL_TOKEN");
+    assert_eq!(oidc["token"]["env"], "OPENSHELL_TOKEN");
     assert_eq!(oidc["issuer"], "https://login.example.com/realms/openshell");
 
     // Without a CA ConfigMap, the chart mounts none.
