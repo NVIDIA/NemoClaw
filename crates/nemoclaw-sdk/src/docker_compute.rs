@@ -239,7 +239,7 @@ fn container(target: &Target) -> Result<Value, Error> {
         .as_ref()
         .ok_or(Error::State("missing runtime process"))?;
     let launch = spec.container("/data")?;
-    let mut attrs = json!({"name":spec.name,"labels":[{"label":crate::managed::OWNER_LABEL,"value":spec.owner}],"entrypoint":launch.entrypoint,"command":launch.cmd,"env":launch.env,"network_mode":spec.network(),"mounts":[{"type":"volume","source":spec.volume(),"target":process.mount_target}],"capabilities":[{"drop":["ALL"]}],"security_opts":["no-new-privileges"],"restart":"no","memory":process.memory_bytes/(1<<20),"memory_swap":process.memory_bytes/(1<<20),"shm_size":process.shared_memory_bytes/(1<<20),"ipc_mode":if process.host_ipc {"host"} else {"private"},"ulimit":[{"name":"memlock","soft":-1,"hard":-1},{"name":"stack","soft":67108864,"hard":67108864}],"ports":[{"internal":process.port,"external":process.port,"ip":process.bind_address,"protocol":"tcp"}],"log_driver":"json-file","log_opts":{"max-size":"32m","max-file":"3"},"must_run":true,"wait":false,"remove_volumes":false,"destroy_grace_seconds":60});
+    let mut attrs = json!({"name":spec.name,"labels":[{"label":crate::managed::OWNER_LABEL,"value":spec.owner}],"entrypoint":launch.entrypoint,"command":launch.cmd,"env":launch.env,"network_mode":spec.network(),"mounts":[{"type":"volume","source":spec.volume(),"target":process.mount_target}],"capabilities":[{"drop":["ALL"]}],"security_opts":if process.host_ipc {json!(["no-new-privileges","label=disable"])} else {json!(["no-new-privileges"])},"restart":"no","memory":process.memory_bytes/(1<<20),"memory_swap":process.memory_bytes/(1<<20),"shm_size":process.shared_memory_bytes/(1<<20),"ipc_mode":if process.host_ipc {"host"} else {"private"},"ulimit":[{"name":"memlock","soft":-1,"hard":-1},{"name":"stack","soft":67108864,"hard":67108864}],"ports":[{"internal":process.port,"external":process.port,"ip":process.bind_address,"protocol":"tcp"}],"log_driver":"json-file","log_opts":{"max-size":"32m","max-file":"3"},"must_run":true,"wait":false,"remove_volumes":false,"destroy_grace_seconds":60});
     if let Some(image) = &process.image_owned {
         let attrs_map = attrs.as_object_mut().unwrap();
         attrs_map.remove("entrypoint");
@@ -662,6 +662,36 @@ mod tests {
             "docker_volume.inference_storage_inference_qwen"
         ));
     }
+    #[test]
+    fn host_ipc_declares_the_security_option_docker_adds() {
+        // Docker adds `label=disable` to a container that shares the host's IPC
+        // namespace. Declaring it keeps a running service from planning a
+        // replacement on every later apply.
+        for (host_ipc, expected) in [
+            (true, json!(["no-new-privileges", "label=disable"])),
+            (false, json!(["no-new-privileges"])),
+        ] {
+            let mut value: Value =
+                serde_saphyr::from_str(include_str!("../tests/fixtures/config/spark.yaml"))
+                    .unwrap();
+            if host_ipc {
+                value["spec"]["services"]["qwen"]["container"] = json!({"ipc": "host"});
+            }
+            let document = Document::parse(value.to_string().as_bytes()).unwrap();
+            let generations = crate::state::Record::new(document.clone())
+                .unwrap()
+                .generations;
+            let graph = crate::compile::compile_runtime(&document, &generations, "0.1.0").unwrap();
+            let container =
+                &graph["resource"]["docker_container"]["inference_service_inference_qwen"];
+            assert_eq!(
+                container["ipc_mode"],
+                if host_ipc { "host" } else { "private" }
+            );
+            assert_eq!(container["security_opts"], expected, "host_ipc={host_ipc}");
+        }
+    }
+
     #[test]
     fn authenticated_service_separates_cache_and_credential_mounts() {
         let mut value: Value =
