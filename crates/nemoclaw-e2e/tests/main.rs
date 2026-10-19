@@ -46,6 +46,8 @@ mod managed;
 mod managed_gateway;
 #[path = "model_live.rs"]
 mod model_live;
+#[path = "multi_agent.rs"]
+mod multi_agent;
 #[path = "multiple_providers.rs"]
 mod multiple_providers;
 #[path = "openshell_contract_fixtures.rs"]

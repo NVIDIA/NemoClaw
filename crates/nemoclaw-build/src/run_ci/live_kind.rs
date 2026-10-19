@@ -46,7 +46,7 @@ struct Cluster {
 
 impl Drop for Cluster {
     fn drop(&mut self) {
-        // Keep a failed run's cluster for inspection when asked to.
+        // Keep the cluster for inspection when asked to, whatever the outcome.
         if std::env::var_os("NEMOCLAW_KEEP_KIND_CLUSTER").is_some() {
             eprintln!(
                 "Kept kind cluster {}; delete it with: kind delete cluster --name {}",

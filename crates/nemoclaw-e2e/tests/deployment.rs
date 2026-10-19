@@ -498,21 +498,21 @@ type Recorded<T> = std::sync::Arc<std::sync::Mutex<Vec<T>>>;
 /// A deployment through the SDK and the bundle's CLI against the fixture gateway.
 /// Fields drop in declaration order: the deployment before the image engine,
 /// gateway, and state directory.
-struct Lifecycle {
-    cancel: CancellationToken,
-    deployment: Deployment,
+pub(crate) struct Lifecycle {
+    pub(crate) cancel: CancellationToken,
+    pub(crate) deployment: Deployment,
     resource_events: Recorded<(&'static str, &'static str, &'static str)>,
     timings: Recorded<(&'static str, nemoclaw_sdk::StepOutcome)>,
     _image_engine: nemoclaw_e2e::http_fixture::Fixture,
-    document: Document,
-    fixture: Fixture,
-    directory: tempfile::TempDir,
-    bundle: PathBuf,
+    pub(crate) document: Document,
+    pub(crate) fixture: Fixture,
+    pub(crate) directory: tempfile::TempDir,
+    pub(crate) bundle: PathBuf,
 }
 
 impl Lifecycle {
     /// Start the fixture gateway and image engine, and create a deployment of `input`.
-    async fn start(input: &str) -> Self {
+    pub(crate) async fn start(input: &str) -> Self {
         let bundle =
             PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").expect("explicit bundle path"));
         assert!(bundle.is_absolute());
@@ -566,7 +566,7 @@ impl Lifecycle {
 
     /// Plan without effects, then apply and check its events, health, and timings.
     /// Returns the gateway's effect count after the apply.
-    async fn apply(&self) -> usize {
+    pub(crate) async fn apply(&self) -> usize {
         let planning = self
             .deployment
             .plan(&self.document, &self.cancel)
@@ -608,7 +608,7 @@ impl Lifecycle {
     }
 
     /// The CLI exports the applied document, and reapplying the export changes nothing.
-    async fn export_and_reapply_unchanged(&self, effects: usize) {
+    pub(crate) async fn export_and_reapply_unchanged(&self, effects: usize) {
         let exported = Command::new(
             self.bundle
                 .join("bin")
@@ -832,7 +832,7 @@ impl Lifecycle {
     }
 
     /// The CLI destroys the deployment and its workspace on the gateway.
-    fn destroy(self) {
+    pub(crate) fn destroy(self) {
         let destroyed = Command::new(
             self.bundle
                 .join("bin")
