@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use nemoclaw_e2e::{
-    assert_same_deployment_state, assert_same_managed_resources, openshell::Fixture,
-};
+use nemoclaw_e2e::{assert_same_managed_resources, openshell::Fixture};
 use nemoclaw_sdk::{CancellationToken, Deployment, Outcome, config::Document};
 use std::{fs, path::PathBuf, process::Command};
 
@@ -901,7 +899,6 @@ async fn startup_and_observation_failures_retain_bindings_and_recover() {
         assert_eq!(state.sandboxes.len(), 1);
         assert!(state.exec_calls.is_empty());
     }
-    let effects = fixture.state.lock().unwrap().effects;
     fixture.state.lock().unwrap().sandbox_phase = None;
     for sandbox in fixture.state.lock().unwrap().sandboxes.values_mut() {
         sandbox.status.as_mut().unwrap().phase = openshell_core::proto::SandboxPhase::Ready as i32;
