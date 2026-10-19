@@ -24,7 +24,7 @@ async fn retained_gateway_storage_requires_complete_owned_credentials_without_mu
     )));
     let shared = state.clone();
     let configuration = Arc::new(Mutex::new(Some(
-        spec.gateway_config(data_path).into_bytes(),
+        spec.gateway_config(data_path).unwrap().into_bytes(),
     )));
     let configured = configuration.clone();
     let fixture = Fixture::engine(move |request| {

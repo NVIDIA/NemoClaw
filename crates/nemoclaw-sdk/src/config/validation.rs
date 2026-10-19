@@ -118,6 +118,14 @@ impl Document {
 impl super::ManagedGateway {
     pub fn validate_managed(&self) -> Result<(), ConfigError> {
         schema::validate_definition("Gateway", &Gateway::Managed(self.clone()))?;
+        if let Some(config) = &self.config {
+            let driver = if self.kubernetes.is_some() {
+                "kubernetes"
+            } else {
+                self.runtime.provider.as_str()
+            };
+            crate::managed::gateway_config::check(config, driver).map_err(ConfigError)?;
+        }
         if self.kubernetes.is_some() {
             return validate_endpoint(&self.endpoint, true);
         }

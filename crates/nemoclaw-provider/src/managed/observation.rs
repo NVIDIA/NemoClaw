@@ -419,7 +419,7 @@ impl Engine {
                 )
                 .await?
                 .as_deref()
-                != Some(spec.gateway_config(&volume.mountpoint).as_bytes())
+                != Some(spec.gateway_config(&volume.mountpoint)?.as_bytes())
             {
                 return Err(Error::Conflict(
                     "managed gateway configuration changed or is unobservable",

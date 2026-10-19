@@ -22,8 +22,8 @@ pub(crate) fn definitions() -> [crate::Definition; 2] {
         // Omitting image_pull_policy selects the runtime's default policy, not
         // the previous selection.
         Definition::new(kind, &fields, mutable)
-            .optional(&["image_pull_policy", DRIVER_CONFIG_ATTRIBUTE])
-            .reset_when_omitted(&["image_pull_policy", DRIVER_CONFIG_ATTRIBUTE])
+            .optional(&["image_pull_policy", CONFIG_ATTRIBUTE])
+            .reset_when_omitted(&["image_pull_policy", CONFIG_ATTRIBUTE])
             .validate_attribute(|attribute, value| {
                 check_gateway_attribute(attribute, value).map_err(Into::into)
             })
@@ -33,14 +33,14 @@ pub(crate) fn definitions() -> [crate::Definition; 2] {
     [
         definition(
             GATEWAY_KIND,
-            &["running", "image_pull_policy", DRIVER_CONFIG_ATTRIBUTE],
+            &["running", "image_pull_policy", CONFIG_ATTRIBUTE],
             &["running", "image_pull_policy"],
         )
         .computed("running", rerun_when_stopped),
         // Docker gateway data does not depend on the listen endpoint.
         definition(
             GATEWAY_STORAGE_KIND,
-            &["image_pull_policy", DRIVER_CONFIG_ATTRIBUTE],
+            &["image_pull_policy", CONFIG_ATTRIBUTE],
             &["image_pull_policy"],
         )
         .optional(&["endpoint"])

@@ -447,36 +447,80 @@ fn an_existing_oidc_issuer_replaces_the_development_issuer() {
     assert_eq!(values["server"]["oidc"]["caConfigMapName"], "");
 }
 
-#[test]
-fn sandbox_driver_config_reaches_the_kubernetes_chart() {
+fn chart_values(config: Option<serde_json::Value>) -> Result<serde_json::Value, String> {
     let generations = ["kubernetes_gateway", "kubernetes_storage"]
         .map(|kind| (kind.into(), "a".repeat(32)))
         .into();
-    let values_of = |setting: Option<serde_json::Value>| {
-        let mut value = serde_json::to_value(document()).unwrap();
-        if let Some(setting) = setting {
-            value["spec"]["gateway"]["sandboxDriverConfig"] = setting;
-        }
-        let document = Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap();
-        let graph = compile_runtime(&document, &generations, "0.1.0").unwrap();
-        serde_json::from_str::<serde_json::Value>(
-            graph["resource"]["helm_release"]["gateway"]["values"][0]
-                .as_str()
-                .unwrap(),
-        )
-        .unwrap()
-    };
-    let values = values_of(Some(json!({
-        "allow": true,
-        "resourceAdmission": {"requiredLabels": {"team.example/attachable": "true"}}
-    })));
+    let mut value = serde_json::to_value(document()).unwrap();
+    if let Some(config) = config {
+        value["spec"]["gateway"]["config"] = config;
+    }
+    let document = Document::parse(serde_json::to_vec(&value).unwrap().as_slice())
+        .map_err(|error| error.to_string())?;
+    let graph = compile_runtime(&document, &generations, "0.1.0").unwrap();
+    Ok(serde_json::from_str(
+        graph["resource"]["helm_release"]["gateway"]["values"][0]
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap())
+}
+
+#[test]
+fn authored_tables_reach_the_chart_gateway_config() {
+    let values = chart_values(Some(json!({
+        "openshell.drivers.kubernetes": {"allow_driver_config": true, "workspace_mode": "managed"},
+        "openshell.drivers.kubernetes.resource_admission": {
+            "required_labels": {"team.example/attachable": "true"}
+        },
+        "openshell.gateway.otlp": {"endpoint": "http://collector.example:4317"}
+    })))
+    .unwrap();
+    let config = &values["gatewayConfig"];
+    let kubernetes = &config["openshell.drivers.kubernetes"];
+    assert_eq!(kubernetes["allow_driver_config"], true);
+    // NemoClaw's workspace settings are defaults that authored tables override.
+    assert_eq!(kubernetes["workspace_mode"], "managed");
+    assert_eq!(kubernetes["workspace_default_storage_size"], "2Gi");
     assert_eq!(
-        values["server"]["drivers"]["kubernetes"],
-        json!({
-            "allowDriverConfig": true,
-            "resourceAdmission": {"requiredLabels": {"team.example/attachable": "true"}}
-        })
+        config["openshell.drivers.kubernetes.resource_admission"]["required_labels"]["team.example/attachable"],
+        "true"
     );
-    // Without the setting, the chart keeps its own defaults.
-    assert!(values_of(None)["server"].get("drivers").is_none());
+    assert_eq!(
+        config["openshell.gateway.otlp"]["endpoint"],
+        "http://collector.example:4317"
+    );
+    assert_eq!(
+        config["openshell.gateway.auth"]["allow_unauthenticated_users"],
+        false
+    );
+    // Driver settings use gatewayConfig, not the chart's deprecated aliases.
+    assert!(values["server"].get("drivers").is_none());
+    assert!(
+        chart_values(None).unwrap()["server"]
+            .get("drivers")
+            .is_none()
+    );
+}
+
+#[test]
+fn chart_keys_nemoclaw_owns_are_rejected() {
+    for (config, key) in [
+        (
+            json!({"openshell.gateway.auth": {"allow_unauthenticated_users": true}}),
+            "openshell.gateway.auth.allow_unauthenticated_users",
+        ),
+        (
+            json!({"openshell.gateway.oidc": {"issuer": "https://issuer.example"}}),
+            "openshell.gateway.oidc",
+        ),
+        (
+            json!({"openshell.drivers.kubernetes": {"image_pull_secrets": ["other"]}}),
+            "openshell.drivers.kubernetes.image_pull_secrets",
+        ),
+    ] {
+        let error = chart_values(Some(config)).unwrap_err();
+        assert!(error.contains("spec.gateway.config"), "{error}");
+        assert!(error.contains(key), "{key}: {error}");
+    }
 }

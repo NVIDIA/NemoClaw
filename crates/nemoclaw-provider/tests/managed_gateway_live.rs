@@ -78,6 +78,7 @@ async fn start(api: &Docker, engine: &Engine, spec: &Spec) -> OpenShellClient {
     // Never run a gateway with OpenShell's shared default namespace on this daemon.
     assert!(
         spec.gateway_config("/owned")
+            .unwrap()
             .contains(&format!("sandbox_label = {:?}", spec.name))
     );
     let mut storage = spec.clone();

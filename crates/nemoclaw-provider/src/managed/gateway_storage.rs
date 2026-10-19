@@ -203,7 +203,7 @@ impl Engine {
         let config = config.ok_or(Error::Conflict(
             "gateway storage configuration is missing; resources retained",
         ))?;
-        if config != spec.gateway_config(data_path).as_bytes() {
+        if config != spec.gateway_config(data_path)?.as_bytes() {
             return Err(Error::Conflict(
                 "gateway storage configuration differs from this bundle; retain the original bundle and state, and use a fresh deployment UID and state directory",
             ));
@@ -333,7 +333,7 @@ impl Engine {
             data_path,
             &[(
                 "gateway.toml",
-                spec.gateway_config(data_path).as_bytes(),
+                spec.gateway_config(data_path)?.as_bytes(),
                 0o600,
             )],
         )

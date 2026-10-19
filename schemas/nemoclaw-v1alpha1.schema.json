@@ -615,6 +615,26 @@
             ]
           },
           "properties": {
+            "config": {
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "type": "object"
+                  },
+                  {
+                    "items": {
+                      "type": "object"
+                    },
+                    "type": "array"
+                  }
+                ]
+              },
+              "description": "OpenShell gateway settings in the OpenShell Helm chart's gatewayConfig format: each key names a TOML table, such as openshell.drivers.docker, and holds its fields; nested maps are inline tables, and a list of maps is an array of tables. Docker and Podman gateways write it into their configuration file, kept in retained storage, so it is fixed when the deployment is created; Kubernetes passes it to the chart's gatewayConfig. OpenShell validates the settings; keys NemoClaw manages are rejected. Must not contain secrets.",
+              "type": [
+                "object",
+                "null"
+              ]
+            },
             "endpoint": {
               "default": "http://127.0.0.1:17681",
               "description": "Local engine gateways use an HTTP origin with an unprivileged loopback port. Kubernetes requires `https://127.0.0.1:PORT` with an explicit nonzero port and no trailing slash; providers forward free local ports of their own to the owned gateway, so this port is not bound.",
@@ -648,10 +668,6 @@
             "runtime": {
               "$ref": "#/$defs/Runtime",
               "description": "Compute driver the gateway runs every sandbox with; omission selects Docker."
-            },
-            "sandboxDriverConfig": {
-              "$ref": "#/$defs/SandboxDriverConfig",
-              "description": "OpenShell's setting that lets sandboxes use driverConfig, such as mounted volumes, passed through unchanged to the gateway's compute driver. Docker and Podman gateways keep it in their retained storage, so it is fixed when the deployment is created; Kubernetes applies a change through the chart."
             }
           },
           "required": [
@@ -2443,31 +2459,6 @@
       ],
       "type": "object"
     },
-    "ResourceAdmission": {
-      "additionalProperties": false,
-      "description": "OpenShell's resource admission settings, passed through unchanged.",
-      "properties": {
-        "enabled": {
-          "description": "Require approval labels on external resources; omission keeps OpenShell's default, enabled.",
-          "type": [
-            "boolean",
-            "null"
-          ]
-        },
-        "requiredLabels": {
-          "additionalProperties": {
-            "type": "string"
-          },
-          "description": "Labels an external resource must carry, replacing OpenShell's built-in approval labels. Must not be empty.",
-          "minProperties": 1,
-          "type": [
-            "object",
-            "null"
-          ]
-        }
-      },
-      "type": "object"
-    },
     "Resources": {
       "additionalProperties": false,
       "description": "Resource declarations checked against host observations and produced data.",
@@ -2703,21 +2694,6 @@
         "name",
         "agent"
       ],
-      "type": "object"
-    },
-    "SandboxDriverConfig": {
-      "additionalProperties": false,
-      "description": "OpenShell's driver configuration admission for a managed gateway's compute driver.",
-      "properties": {
-        "allow": {
-          "description": "Accept sandboxes' driverConfig (OpenShell's allow_driver_config). Defaults to false, OpenShell's default.",
-          "type": "boolean"
-        },
-        "resourceAdmission": {
-          "$ref": "#/$defs/ResourceAdmission",
-          "description": "OpenShell's resource admission for external resources such as volumes; omission keeps OpenShell's defaults."
-        }
-      },
       "type": "object"
     },
     "SearchProvider": {

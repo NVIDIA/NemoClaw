@@ -29,6 +29,7 @@ resource openshell_gateway_storage (version 0)
   data_path: string, computed
   endpoint: string, optional, computed
   engine: string, required
+  gateway_config: string, optional, computed
   generation: string, optional, computed
   id: string, computed
   image: string, required
@@ -36,7 +37,6 @@ resource openshell_gateway_storage (version 0)
   name: string, required
   network_cidr: string, required
   owner: string, optional, computed
-  sandbox_driver_config: string, optional, computed
 
 resource openshell_inference (version 2)
   api: string, required
@@ -103,6 +103,7 @@ resource openshell_podman_gateway (version 0)
   compute_driver: string, required
   endpoint: string, required
   engine: string, required
+  gateway_config: string, optional, computed
   generation: string, optional, computed
   id: string, computed
   image: string, required
@@ -111,7 +112,6 @@ resource openshell_podman_gateway (version 0)
   network_cidr: string, required
   owner: string, optional, computed
   running: string, computed
-  sandbox_driver_config: string, optional, computed
 
 resource openshell_sandbox (version 2)
   driver_config: string, optional

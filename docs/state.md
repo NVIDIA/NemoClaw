@@ -83,8 +83,9 @@ For a managed Docker gateway, merge this fragment into the deployment YAML: the 
 ```yaml
 gateway:
   management: managed
-  sandboxDriverConfig:
-    allow: true
+  config:
+    openshell.drivers.docker:
+      allow_driver_config: true
 sandboxes:
   - name: assistant
     driverConfig:
@@ -105,8 +106,8 @@ Default admission requires `openshell.ai/sandbox-attachable=true` and `openshell
 Use the authorized OpenShell workspace name, not the sandbox name or Kubernetes namespace; see [external resource admission](https://github.com/NVIDIA/OpenShell/blob/5a7728c304b5528e954e9ae900cf21f84e1a12b1/docs/how-it-works/gateways/configuration.mdx#external-resource-admission).
 The bundled images use UID/GID `10001:10001`; check the identity for a custom image or OpenShift namespace.
 The gateway must allow driver configuration, and the sandbox's filesystem policy must allow writes to both target paths.
-For a managed gateway, set `spec.gateway.sandboxDriverConfig.allow: true`, as above. Docker and Podman gateways keep this setting in their retained storage, so set it when you create the deployment; changing it later requires a fresh deployment UID and state directory. Managed Kubernetes gateways apply a change through the gateway chart.
-`sandboxDriverConfig.resourceAdmission` passes OpenShell's admission settings through, such as a replacement `requiredLabels` map.
+For a managed gateway, set `allow_driver_config: true` in the compute driver's table of [`spec.gateway.config`](usage.md#configure-a-managed-gateway), as above; Podman and Kubernetes gateways use `openshell.drivers.podman` and `openshell.drivers.kubernetes`. Docker and Podman gateways keep this setting in their retained storage, so set it when you create the deployment; changing it later requires a fresh deployment UID and state directory. Managed Kubernetes gateways apply a change through the gateway chart.
+OpenShell's admission settings use the same format, such as a replacement label map in an `openshell.drivers.docker.resource_admission.required_labels` table.
 For an external gateway, its administrator enables OpenShell's `allow_driver_config` for the compute driver.
 Mounts default to read-only, so `read_only: false` is required for agent writes.
 Do not mount over `/sandbox` or the image's working directory: OpenShell protects its workspace root and control paths.

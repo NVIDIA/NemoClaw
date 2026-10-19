@@ -246,7 +246,9 @@ async fn gateway_failed_startup_and_explicit_recovery_keep_container_and_storage
     let shared = state.clone();
     let required_labels = std::collections::HashMap::<String, String>::new();
     let template = container.clone();
-    let gateway_config = spec.gateway_config("/var/lib/docker/volumes/fixture/_data");
+    let gateway_config = spec
+        .gateway_config("/var/lib/docker/volumes/fixture/_data")
+        .unwrap();
     let fixture=Fixture::engine(move |request|{
         let mut state=shared.lock().unwrap();
         if request.path.contains("/archive?") {

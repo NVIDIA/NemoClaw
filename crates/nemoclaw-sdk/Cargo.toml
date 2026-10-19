@@ -70,6 +70,8 @@ base64 = "0.22.1"
 # Development issuer certificates and token signing.
 rcgen = { version = "0.14.10", default-features = false, features = ["crypto", "pem", "ring"] }
 ring = "0.17.14"
+# Managed Docker and Podman gateway configuration files.
+toml = { version = "1.1", default-features = false, features = ["display", "serde"] }
 
 [target.'cfg(windows)'.dependencies]
 widestring = "1"

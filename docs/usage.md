@@ -114,6 +114,31 @@ This data is disposable: destroy removes the owned volume.
 See the [container contract](design/container-contract.md) for the explicit managed-model form and the manual VoiceClaw interface.
 The typed `ollama` and `vllm` kinds retain their current policies and use this same assembly base.
 
+### Configure a Managed Gateway
+
+`spec.gateway.config` passes OpenShell gateway settings to a managed gateway in the format of the OpenShell Helm chart's `gatewayConfig` value.
+Each key names a table of OpenShell's [gateway configuration](https://github.com/NVIDIA/OpenShell/blob/5a7728c304b5528e954e9ae900cf21f84e1a12b1/docs/how-it-works/gateways/configuration.mdx) and holds that table's fields; nested maps become inline tables, and a list of maps becomes an array of tables.
+
+```yaml
+gateway:
+  management: managed
+  config:
+    openshell.gateway:
+      log_level: debug
+    openshell.gateway.otlp:
+      endpoint: http://otel-collector.example.internal:4317
+    openshell.drivers.docker:
+      allow_driver_config: true
+```
+
+Docker and Podman gateways write these tables into their configuration file beside the keys NemoClaw sets.
+Kubernetes and OpenShift gateways pass them to the chart's `gatewayConfig`, where they can override NemoClaw's `workspace_mode` and `workspace_default_storage_size` defaults, and the chart keeps the settings it derives from Kubernetes resources; see OpenShell's [chart configuration guide](https://github.com/NVIDIA/OpenShell/blob/5a7728c304b5528e954e9ae900cf21f84e1a12b1/docs/kubernetes/migrate-gateway-config.mdx).
+Plan rejects a setting that replaces a key NemoClaw manages, such as the gateway's authentication, signing paths, or the driver's images.
+OpenShell validates the rest when the gateway starts: an unknown or misplaced field in the selected driver's table stops the gateway, and tables for other drivers are ignored.
+Docker and Podman gateways keep the file in retained storage, so set the configuration when you create the deployment.
+Do not put secrets in it: plans and state show it.
+An external gateway takes no `config`; its operator configures it.
+
 ### Supply Credential References
 
 Use [definitions and references](configuration-references.md) to choose shared or inline configuration.

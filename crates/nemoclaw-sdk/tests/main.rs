@@ -125,7 +125,7 @@ mod kubernetes_receipt;
 mod kubernetes_storage;
 #[path = "managed_auth.rs"]
 mod managed_auth;
-mod managed_driver_config;
+mod managed_gateway_config;
 #[path = "managed_hermes.rs"]
 mod managed_hermes;
 #[path = "managed_live.rs"]
