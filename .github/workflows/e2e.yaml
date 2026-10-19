@@ -5848,6 +5848,8 @@ jobs:
         shell: /bin/bash --noprofile --norc -e -o pipefail {0}
         run: |
           set -euo pipefail
+          # The shared setup action is pinned and runs before candidate checkout.
+          # Keep this Portable Hermes setting in trusted, job-specific workflow code.
           config="$RUNNER_TEMP/native-podman-e2e-containers.conf"
           [[ "${CONTAINERS_CONF:?}" == "$config" && -f "$config" && ! -L "$config" ]]
           [[ "$(grep -Fxc '[containers]' "$config")" == 1 ]]
@@ -5887,7 +5889,7 @@ jobs:
             group=/
           fi
           depth=0
-          while [[ "$group" != / ]] && (( depth < 24 )); do
+          while (( depth < 24 )); do
             current="$(cat "/sys/fs/cgroup$group/pids.current" 2>/dev/null || true)"
             maximum="$(cat "/sys/fs/cgroup$group/pids.max" 2>/dev/null || true)"
             cgroups="$(jq -cn --argjson rows "$cgroups" \
@@ -5898,11 +5900,12 @@ jobs:
                 { [[ ! "$maximum" =~ ^[0-9]+$ ]] || (( maximum - current < minimum )); }; }; then
               failure=cgroup_pids
             fi
+            [[ "$group" != / ]] || break
             group="${group%/*}"
             [[ -n "$group" ]] || group=/
             depth=$((depth + 1))
           done
-          if (( depth == 24 )); then failure=cgroup_depth; fi
+          if [[ "$group" != / ]]; then failure=cgroup_depth; fi
           jq -n --arg failure "$failure" --argjson minimum "$minimum" \
             --arg tasksMax "$tasks_max" --arg tasksCurrent "$tasks_current" \
             --arg limitNproc "$limit_nproc" \

@@ -1027,6 +1027,7 @@ exec /bin/bash "$@"
     expect(headroom?.run).toContain("pids_limit = 128");
     expect(headroom?.run).toContain('cgroup_manager = "systemd"');
     expect(headroom?.run).toContain("/sys/fs/cgroup$group/pids.max");
+    expect(headroom?.run).toContain('[[ "$group" != / ]] || break');
     expect(retainHeadroom?.if).toBe("always()");
     expect(retainHeadroom?.run).toContain("portable-podman-process-headroom.json");
     expect(retainHeadroomIndex).toBeGreaterThan(job.steps?.indexOf(live!) ?? -1);
