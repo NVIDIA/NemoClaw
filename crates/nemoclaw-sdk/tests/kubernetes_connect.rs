@@ -54,6 +54,25 @@ fn free_port() -> u16 {
 }
 
 fn spec(kind: &str, port: u16) -> Spec {
+    authenticated(kind, port, json!({"profile": "development"}))
+}
+
+/// A spec whose gateway trusts an existing OIDC issuer, with its token in
+/// the variable `token_env` names.
+fn oidc_spec(token_env: &str) -> impl Fn(&str, u16) -> Spec {
+    move |kind, port| {
+        authenticated(
+            kind,
+            port,
+            json!({
+                "profile": "oidc", "issuer": "https://login.example.com",
+                "audience": "openshell", "tokenEnv": token_env
+            }),
+        )
+    }
+}
+
+fn authenticated(kind: &str, port: u16, authentication: serde_json::Value) -> Spec {
     serde_json::from_value(json!({
         "layout": 1, "kind": kind, "name": NAME, "owner": OWNER,
         "generation": "0123456789abcdef0123456789abcdef",
@@ -62,15 +81,20 @@ fn spec(kind: &str, port: u16) -> Spec {
             "endpoint": format!("https://127.0.0.1:{port}"),
             "kubernetes": {
                 "kubeconfig": {"env": "TEST_CLUSTER_CONFIG"}, "context": "selected", "namespace": "agents",
-                "authentication": {"profile": "development"}
+                "authentication": authentication
             }
         }
     }))
     .unwrap()
 }
 
-/// A cluster with a running gateway and the chart's client TLS Secret.
-async fn running(objects: &Objects, directory: &Path) -> (crate::transport::Fixture, Operations) {
+/// A cluster with a running gateway and the chart's client TLS Secret, each
+/// resource prepared from `spec`.
+async fn running(
+    objects: &Objects,
+    directory: &Path,
+    spec: impl Fn(&str, u16) -> Spec,
+) -> (crate::transport::Fixture, Operations) {
     for object in [
         json!({"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": "kube-system", "uid": "system-1"}}),
         json!({"apiVersion": "storage.k8s.io/v1", "kind": "StorageClass",
@@ -120,7 +144,7 @@ async fn running(objects: &Objects, directory: &Path) -> (crate::transport::Fixt
 async fn a_connection_supplies_private_client_credentials_and_a_token() {
     let objects = Objects::default();
     let directory = tempfile::tempdir().unwrap();
-    let (_fixture, operations) = running(&objects, directory.path()).await;
+    let (_fixture, operations) = running(&objects, directory.path(), spec).await;
     let connection = operations
         .connect(&spec(GATEWAY_KIND, free_port()))
         .await
@@ -167,7 +191,7 @@ async fn a_connection_supplies_private_client_credentials_and_a_token() {
 async fn connections_do_not_need_the_authored_loopback_port() {
     let objects = Objects::default();
     let directory = tempfile::tempdir().unwrap();
-    let (_fixture, operations) = running(&objects, directory.path()).await;
+    let (_fixture, operations) = running(&objects, directory.path(), spec).await;
     let held = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let authored = held.local_addr().unwrap().port();
     let first = operations
@@ -186,7 +210,7 @@ async fn connections_do_not_need_the_authored_loopback_port() {
 async fn a_gateway_that_is_not_running_cannot_be_connected() {
     let objects = Objects::default();
     let directory = tempfile::tempdir().unwrap();
-    let (_fixture, operations) = running(&objects, directory.path()).await;
+    let (_fixture, operations) = running(&objects, directory.path(), spec).await;
     objects.insert(json!({"apiVersion": "apps/v1", "kind": "StatefulSet",
         "metadata": {"name": NAME, "namespace": "agents", "uid": "gateway-uid", "generation": 2},
         "status": {"readyReplicas": 0, "observedGeneration": 2}}));
@@ -196,4 +220,86 @@ async fn a_gateway_that_is_not_running_cannot_be_connected() {
             .await
             .is_err()
     );
+}
+
+/// Every regular file under `directory`.
+fn files(directory: &Path) -> Vec<std::path::PathBuf> {
+    std::fs::read_dir(directory)
+        .unwrap()
+        .flat_map(|entry| {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                files(&path)
+            } else {
+                vec![path]
+            }
+        })
+        .collect()
+}
+
+/// A connection takes its token from the variable tokenEnv names when it
+/// opens, and no state file keeps a copy.
+#[tokio::test]
+async fn an_oidc_connection_passes_the_variable_tokenenv_names() {
+    // A test cannot set a variable safely while other tests run, so tokenEnv
+    // names one Cargo and nextest set for every test process. PATH and HOME
+    // are reserved names that tokenEnv may not use.
+    let name = "CARGO_MANIFEST_DIR";
+    let token = std::env::var(name).unwrap();
+    assert!(!token.is_empty());
+    let objects = Objects::default();
+    let directory = tempfile::tempdir().unwrap();
+    let spec = oidc_spec(name);
+    let (_fixture, operations) = running(&objects, directory.path(), &spec).await;
+    let connection = operations
+        .connect(&spec(GATEWAY_KIND, free_port()))
+        .await
+        .unwrap();
+    let environment = connection.environment();
+    assert_eq!(environment[TOKEN_ENV], token);
+    let state = files(&directory.path().join("state"));
+    assert!(!state.is_empty());
+    for file in state {
+        let content = std::fs::read(&file).unwrap();
+        assert!(
+            !content
+                .windows(token.len())
+                .any(|window| window == token.as_bytes()),
+            "{} holds the token",
+            file.display()
+        );
+    }
+}
+
+/// An unset or empty variable holds no token.
+#[tokio::test]
+async fn an_oidc_connection_without_its_token_names_tokenenv() {
+    let unset = "NEMOCLAW_TEST_UNSET_OIDC_TOKEN";
+    assert!(std::env::var_os(unset).is_none());
+    // Cargo and nextest set this empty: the package declares an SPDX license,
+    // not a license file.
+    let empty = "CARGO_PKG_LICENSE_FILE";
+    assert_eq!(std::env::var(empty).as_deref(), Ok(""));
+    for name in [unset, empty] {
+        let objects = Objects::default();
+        let directory = tempfile::tempdir().unwrap();
+        let spec = oidc_spec(name);
+        let (_fixture, operations) = running(&objects, directory.path(), &spec).await;
+        let Err(error) = operations.connect(&spec(GATEWAY_KIND, free_port())).await else {
+            panic!("a connection without its token in {name}");
+        };
+        assert!(
+            matches!(
+                error,
+                nemoclaw_sdk::Error::Observation(nemoclaw_sdk::ObservationError::Backend(_))
+            ),
+            "{name}: {error}"
+        );
+        assert!(
+            error
+                .to_string()
+                .starts_with("the variable tokenEnv names holds no OIDC token"),
+            "{name}: {error}"
+        );
+    }
 }

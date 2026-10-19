@@ -763,13 +763,15 @@ async fn native_provider_union_is_attached_and_attachment_drift_is_rejected() {
     assert!(client.read("sandbox", &row, false).await.is_err());
 }
 
-/// The bearer token the forward below supplies.
+/// The bearer token the gateway from `forwarded` requires.
 const FORWARD_TOKEN: &str = "forward-token-sentinel";
 
 /// A forward that supplies a bearer token and TLS files, as `SdkKubernetes`
 /// does, to a fixture gateway that requires them.
+#[derive(Clone)]
 struct Forward {
     endpoint: String,
+    token: String,
     tls: [String; 3],
 }
 
@@ -778,17 +780,28 @@ impl KubernetesConnector for Forward {
     async fn open(&self, _: &str) -> Result<KubernetesConnection, ObservationError> {
         Ok(KubernetesConnection {
             endpoint: self.endpoint.clone(),
-            token: Some(FORWARD_TOKEN.into()),
+            token: Some(self.token.clone()),
             tls: Some(self.tls.clone()),
             forward: Box::new(()),
         })
     }
 }
 
-/// A fixture gateway that requires mutual TLS and the forward's token, and a
-/// client that reaches it as a managed Kubernetes gateway. The TLS files are
-/// written to `directory`.
-async fn forwarded(directory: &std::path::Path) -> (Fixture, OpenShell) {
+impl Forward {
+    /// The client a new provider process opens to the gateway through this
+    /// forward.
+    async fn client(self) -> OpenShell {
+        GatewayClient::default()
+            .with_kubernetes(Arc::new(self))
+            .connect(&GatewayConnection::Kubernetes("{}".into()))
+            .await
+            .unwrap()
+    }
+}
+
+/// A fixture gateway that requires mutual TLS and `FORWARD_TOKEN`, and a
+/// forward that supplies them. The TLS files are written to `directory`.
+async fn forwarded(directory: &std::path::Path) -> (Fixture, Forward) {
     use rcgen::{
         BasicConstraints, CertificateParams, ExtendedKeyUsagePurpose, IsCa, Issuer, KeyPair,
         KeyUsagePurpose,
@@ -830,14 +843,10 @@ async fn forwarded(directory: &std::path::Path) -> (Fixture, OpenShell) {
     });
     let forward = Forward {
         endpoint: fixture.endpoint.clone(),
+        token: FORWARD_TOKEN.into(),
         tls,
     };
-    let client = GatewayClient::default()
-        .with_kubernetes(Arc::new(forward))
-        .connect(&GatewayConnection::Kubernetes("{}".into()))
-        .await
-        .unwrap();
-    (fixture, client)
+    (fixture, forward)
 }
 
 /// A provider's credential variable through a managed Kubernetes gateway
@@ -850,7 +859,8 @@ async fn a_managed_kubernetes_gateway_resolves_provider_credentials_from_the_env
     let value = std::env::var("PATH").unwrap();
     assert!(!value.is_empty());
     let directory = tempfile::tempdir().unwrap();
-    let (fixture, client) = forwarded(directory.path()).await;
+    let (fixture, forward) = forwarded(directory.path()).await;
+    let client = forward.client().await;
     let mut rows = fixture_rows("hermes-auth");
     let (_, registration) = rows
         .iter_mut()
@@ -876,7 +886,8 @@ async fn a_managed_kubernetes_gateway_resolves_provider_credentials_from_the_env
 #[tokio::test]
 async fn a_providers_credential_variable_never_resolves_to_the_forwards_credentials() {
     let directory = tempfile::tempdir().unwrap();
-    let (fixture, client) = forwarded(directory.path()).await;
+    let (fixture, forward) = forwarded(directory.path()).await;
+    let client = forward.client().await;
     let rows = fixture_rows("hermes-auth");
     let [(_, workspace), (_, profile), (_, registration), ..] = rows.as_slice() else {
         panic!("hermes-auth declares a workspace, a profile, and a registration");
@@ -901,4 +912,40 @@ async fn a_providers_credential_variable_never_resolves_to_the_forwards_credenti
         );
     }
     assert!(fixture.state.lock().unwrap().providers.is_empty());
+}
+
+/// A managed gateway that refuses the forward's token refuses every call, so
+/// nothing changes, and the provider reports an authentication failure without
+/// state. A `GatewayClient` keeps the client it opened for its process's
+/// lifetime, so a refreshed token takes effect in the next command's provider
+/// process, modeled here by a new one.
+#[tokio::test]
+async fn a_refused_forward_token_is_an_authentication_failure_without_effects() {
+    let directory = tempfile::tempdir().unwrap();
+    let (fixture, forward) = forwarded(directory.path()).await;
+    fixture.state.lock().unwrap().expected_bearer = Some("Bearer fresh-token-sentinel".into());
+    let rows = fixture_rows("hermes-auth");
+    let (_, workspace) = rows.iter().find(|(kind, _)| *kind == "workspace").unwrap();
+    let stale = Forward {
+        token: "stale-token-sentinel".into(),
+        ..forward.clone()
+    }
+    .client()
+    .await;
+    // An authentication failure carries no gateway text, so it cannot echo
+    // the token.
+    assert_eq!(
+        stale.ensure("workspace", workspace).await.into_parts(),
+        (None, Some(ObservationError::Authentication))
+    );
+    assert_eq!(fixture.state.lock().unwrap().effects, 0);
+    let fresh = Forward {
+        token: "fresh-token-sentinel".into(),
+        ..forward
+    }
+    .client()
+    .await;
+    let result = fresh.ensure("workspace", workspace).await;
+    assert!(result.error().is_none(), "{:?}", result.error());
+    assert_eq!(fixture.state.lock().unwrap().effects, 1);
 }
