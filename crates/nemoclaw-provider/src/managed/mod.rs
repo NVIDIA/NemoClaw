@@ -18,12 +18,16 @@ pub use backend::{ManagedBackend, connection_endpoint, runtime_engine};
 pub(crate) fn definitions() -> [crate::Definition; 2] {
     use crate::{Definition, carry_prior, rerun_when_stopped};
     let definition = |kind, fields: &[&'static str], mutable: &[&'static str]| {
+        let optional: Vec<_> = ["image_pull_policy", CONFIG_ATTRIBUTE]
+            .into_iter()
+            .filter(|attribute| fields.contains(attribute))
+            .collect();
         let fields: Vec<_> = GATEWAY_ATTRIBUTES.iter().chain(fields).copied().collect();
         // Omitting image_pull_policy selects the runtime's default policy, not
         // the previous selection.
         Definition::new(kind, &fields, mutable)
-            .optional(&["image_pull_policy", CONFIG_ATTRIBUTE])
-            .reset_when_omitted(&["image_pull_policy", CONFIG_ATTRIBUTE])
+            .optional(&optional)
+            .reset_when_omitted(&optional)
             .validate_attribute(|attribute, value| {
                 check_gateway_attribute(attribute, value).map_err(Into::into)
             })
