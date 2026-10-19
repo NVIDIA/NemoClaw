@@ -594,6 +594,7 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 5] {
             "driver_config_json",
             services::FIELD,
             POLICY_HASH,
+            EXITED,
         ])
         .validate_inputs(network::validate_grant_names)
         // The URLs of the sandbox's exposures, which are part of its creation.
