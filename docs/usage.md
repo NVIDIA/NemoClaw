@@ -403,8 +403,11 @@ Destroy uses native provider compute/cache state and separately verified credent
 
 ### Replace Workloads After an Unusable Runtime
 
-Use this path when an agent runtime is unusable after an invocation failure, or its sandbox exited and plans fail with `sandbox unavailable: SANDBOX_PHASE_ERROR`, and you choose to replace it.
-First read why the sandbox exited with `openshell logs SANDBOX --source sandbox`; see [native logs](troubleshooting.md#read-native-service-logs).
+When OpenShell reports that a sandbox exited, for example after its gateway restarted, `nemoclaw plan` replaces that sandbox and says why, such as `sandbox exited: SANDBOX_PHASE_ERROR, reason ContainerExited, exit code 1`.
+Read why it exited with `openshell logs SANDBOX --source sandbox` before applying; see [native logs](troubleshooting.md#read-native-service-logs).
+**The replacement deletes that sandbox's files and conversation history.**
+
+Use the rest of this path when an agent runtime is unusable after an invocation failure while its sandbox still runs, and you choose to replace it.
 The CLI has no targeted sandbox replacement or runtime-reset command.
 Its supported replacement path is whole-deployment destroy followed by reapplying the original configuration.
 

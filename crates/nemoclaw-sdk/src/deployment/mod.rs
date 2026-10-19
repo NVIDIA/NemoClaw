@@ -83,6 +83,10 @@ pub enum Outcome {
 pub struct Change {
     pub resource: String,
     pub actions: Vec<String>,
+    /// Why the resource is replaced, when the plan observed a reason, such as
+    /// a sandbox that exited.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 /// Gateway and workspace selectors from validated intent, not proof of access.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

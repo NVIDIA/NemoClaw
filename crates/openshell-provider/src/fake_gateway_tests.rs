@@ -450,6 +450,57 @@ async fn owning_api_reconciles_lost_create_reply_and_checks_conditional_updates(
     );
 }
 
+/// A sandbox in a terminal phase is observed, with the reason it exited, so
+/// the plan can replace it; a running sandbox reports no exit.
+#[tokio::test]
+async fn an_exited_sandbox_is_observed_with_its_exit() {
+    let fixture = Fixture::start().await;
+    let client = client(&fixture, Arc::new(EnvironmentSecrets));
+    let sandbox = create_sandbox(&client, "local").await;
+    let observed = client
+        .read("sandbox", &sandbox, false)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(observed[crate::EXITED], "");
+    {
+        let mut state = fixture.state.lock().unwrap();
+        let status = state
+            .sandboxes
+            .get_mut(&key(&sandbox))
+            .unwrap()
+            .status
+            .as_mut()
+            .unwrap();
+        status.phase = proto::SandboxPhase::Error as i32;
+        status.exit_code = Some(1);
+        status.conditions = vec![proto::SandboxCondition {
+            r#type: "Ready".into(),
+            status: "False".into(),
+            reason: "ContainerExited".into(),
+            message: "secret-bearing backend text".into(),
+            ..Default::default()
+        }];
+    }
+    let observed = client
+        .read("sandbox", &sandbox, false)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        observed[crate::EXITED],
+        "SANDBOX_PHASE_ERROR, reason ContainerExited, exit code 1"
+    );
+    // Teardown still observes the sandbox so it can delete it.
+    assert!(
+        client
+            .read("sandbox", &sandbox, true)
+            .await
+            .unwrap()
+            .is_some()
+    );
+}
+
 #[tokio::test]
 async fn sandbox_launch_policy_and_provider_identity_survive_read_failures() {
     let fixture = Fixture::start().await;

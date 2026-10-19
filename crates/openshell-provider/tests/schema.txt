@@ -115,6 +115,7 @@ resource openshell_podman_gateway (version 0)
 
 resource openshell_sandbox (version 2)
   driver_config: string, optional
+  exited: string, computed
   gateway: object({ credential_env = string, endpoint = string, kubernetes = string, tls_ca_env = string, tls_certificate_env = string, tls_key_env = string, type = string }), required
   generation: string, optional, computed
   id: string, computed

@@ -343,6 +343,9 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
             if context.verbose && label != change.resource {
                 output.push_str(&format!("    {}\n", terminal_text(&change.resource)));
             }
+            if let Some(reason) = &change.reason {
+                output.push_str(&format!("    {}\n", terminal_text(reason)));
+            }
             if change.resource.starts_with("openshell_sandbox.")
                 && change.actions.iter().any(|action| action == "delete")
             {
@@ -898,6 +901,17 @@ mod tests {
         }
         let verbose = render(&["nemoclaw", "plan", "spark.yaml", "--verbose"], result);
         assert!(verbose.contains("openshell_sandbox.assistant"));
+    }
+
+    #[test]
+    fn a_planned_replacement_shows_its_reason() {
+        let reason = "sandbox exited: SANDBOX_PHASE_ERROR, reason ContainerExited, exit code 1";
+        let text = render(
+            &["nemoclaw", "plan", "spark.yaml"],
+            json!({"outcome":"planned","changes":[
+                {"resource":"openshell_sandbox.assistant","actions":["delete","create"],"reason":reason}]}),
+        );
+        assert!(text.contains(reason), "{text}");
     }
 
     #[test]

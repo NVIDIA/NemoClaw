@@ -70,6 +70,9 @@ pub struct Definition {
     pub bound_fields: Vec<&'static str>,
     /// Attributes the backend observes, with their update planning rule.
     pub computed: Vec<(&'static str, PlanComputed)>,
+    /// Computed attributes whose planned change requires replacement, such as
+    /// an observation that the object can no longer run.
+    pub replace_on_change: Vec<&'static str>,
     /// Optional inputs the provider generates on create when omitted, then
     /// keeps in state.
     pub generated: Vec<(&'static str, Generate)>,
@@ -111,6 +114,7 @@ impl Definition {
             reset_when_omitted: Vec::new(),
             bound_fields: Vec::new(),
             computed: Vec::new(),
+            replace_on_change: Vec::new(),
             generated: Vec::new(),
             protection: Protection::None,
             refuse_replacement: false,
@@ -139,6 +143,10 @@ impl Definition {
     }
     pub fn bound_fields(mut self, fields: &[&'static str]) -> Self {
         self.bound_fields.extend_from_slice(fields);
+        self
+    }
+    pub fn replace_on_change(mut self, names: &[&'static str]) -> Self {
+        self.replace_on_change.extend(names);
         self
     }
     pub fn computed(mut self, name: &'static str, plan: PlanComputed) -> Self {
@@ -297,6 +305,16 @@ pub fn rerun_when_stopped(name: &str, prior: &State) -> Option<Value<String>> {
     }
 }
 
+/// Carry an empty observation forward, but plan a replacement's unknown value
+/// when the prior observation reported a reason to replace the object.
+pub fn replace_when_observed(name: &str, prior: &State) -> Option<Value<String>> {
+    match prior.get(name) {
+        Some(Value::Value(value)) if !value.is_empty() => Some(Value::Unknown),
+        Some(other) => Some(other.clone()),
+        None => Some(Value::Unknown),
+    }
+}
+
 /// Preserve established computed identity; mark immutable configuration changes
 /// for replacement. The resource adapter protects retained and stateful resources.
 pub fn plan_update(
@@ -327,6 +345,13 @@ pub fn plan_update(
                     .is_some_and(|replaces| replaces(field, prior, &proposed)))
                 && proposed.get(*field) != prior.get(*field)
         })
+        .chain(
+            definition
+                .replace_on_change
+                .iter()
+                .copied()
+                .filter(|name| proposed.get(*name) != prior.get(*name)),
+        )
         .collect();
     (proposed, replacements)
 }
