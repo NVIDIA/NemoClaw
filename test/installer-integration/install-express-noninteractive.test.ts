@@ -6,10 +6,60 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
+import { defaultVllmModelForPlatform } from "../../src/lib/inference/vllm-models";
+import {
+  assertStationExpressInstallerResumeMatches,
+  getStationExpressResumeIntent,
+  retireStationExpressInstallerResume,
+} from "../../src/lib/onboard/station-express-resume";
 import { runInstallerSourced } from "../helpers/installer-express-prompt-harness";
 import { INSTALLER_PAYLOAD } from "../helpers/installer-sourced-env";
 
 describe("non-interactive Station Express selection", () => {
+  it.each(["fresh", "resumed"])(
+    "passes automatic Station Express selection to onboarding on %s entry",
+    (entry) => {
+      const { home, result, output } = runInstallerSourced(
+        `
+station_installer_revision() { printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'; }
+activate_express_install 'DGX Station'
+save_station_express_resume
+if [[ "$TEST_ENTRY" == resumed ]]; then
+  unset NEMOCLAW_STATION_EXPRESS NEMOCLAW_PROVIDER NEMOCLAW_SANDBOX_NAME
+  load_station_express_resume
+  resume_loaded_station_install 'DGX Station'
+fi
+"$TEST_NODE" -e '
+  const env = Object.fromEntries(Object.entries(process.env).filter(
+    ([name]) => name === "HOME" || name.startsWith("NEMOCLAW_")
+  ));
+  console.log("ONBOARD_ENV=" + JSON.stringify(env));
+'
+`,
+        { TEST_ENTRY: entry, TEST_NODE: process.execPath },
+      );
+      onTestFinished(() => fs.rmSync(home, { recursive: true, force: true }));
+      expect(result.status, output).toBe(0);
+      const serialized = result.stdout.split("\n").find((line) => line.startsWith("ONBOARD_ENV="));
+      expect(serialized, output).toBeDefined();
+      const env = JSON.parse(serialized!.slice("ONBOARD_ENV=".length)) as NodeJS.ProcessEnv;
+      const receipt = path.join(home, ".nemoclaw/station-express-resume");
+      const generation = fs.readFileSync(receipt, "utf8").match(/^generation=(.+)$/mu)?.[1] ?? "";
+      expect(getStationExpressResumeIntent(env, env.NEMOCLAW_SANDBOX_NAME ?? null)).toEqual({
+        ok: true,
+        intent: {
+          version: 1,
+          model: defaultVllmModelForPlatform("station", "arm64").envValue,
+          sandboxName: "my-assistant",
+          receiptGeneration: generation,
+        },
+      });
+      assertStationExpressInstallerResumeMatches(generation, env);
+      retireStationExpressInstallerResume(generation, { env });
+      expect(fs.existsSync(receipt)).toBe(false);
+    },
+  );
+
   it.each(["express", "provider"])(
     "leaves the catalog default unforced across %s reboot resume",
     (mode) => {
