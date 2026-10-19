@@ -240,7 +240,7 @@ The [runtime reporter](../crates/nemoclaw-runtime/src/vllm/runtime/mod.rs), [sup
 ## Configure Nemotron on an AMD64 GPU Host
 
 [The Nemotron example](../examples/nemotron-amd64.yaml) declares the pinned NVIDIA Nemotron 3.5 Lightning 30B-A3B NVFP4 model, served name, native parsers, 65,536-token context, one sequence, and 4,096-token batch.
-Its source pins and adaptation are recorded in the [AMD64 runtime notice](../runtimes/vllm-amd64/NOTICE.md).
+Its source pins and adaptation are recorded in the [vLLM runtime notice](../runtimes/vllm/NOTICE.md).
 It uses ordinary `kind: vllm` serving with no preparation recipe.
 
 The example requires an existing OpenShell gateway and a Linux AMD64 Docker host reached through SSH.

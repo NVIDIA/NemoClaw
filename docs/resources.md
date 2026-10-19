@@ -77,7 +77,7 @@ Read the notices for components and derived code:
 - [Agent runtime sources](../image/NOTICE.md).
 - [Runtime memory and serving policy attribution](../crates/nemoclaw-runtime/NOTICE.md).
 - [Generic vLLM runtime](../runtimes/vllm/NOTICE.md).
-- [AMD64 vLLM runtime and Nemotron configuration sources](../runtimes/vllm-amd64/NOTICE.md).
+- [vLLM runtime and Nemotron configuration sources](../runtimes/vllm/NOTICE.md).
 - [Qwen3.8 sources and AGPL-3.0-or-later adaptations](../runtimes/qwen38/NOTICE.md).
 
 ## Report a Security Issue

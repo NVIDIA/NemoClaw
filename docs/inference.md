@@ -194,19 +194,16 @@ Use the [hardware profile reference](models.md#choose-a-hardware-profile) for ot
 Local placement uses the managed gateway's Docker engine; [SSH placement](remote-service.md) uses the same `placement` and `publication` fields as vLLM.
 
 Build the supervisor image from this checkout using the [runtime build prerequisites](build.md#build-a-runtime-image).
-From the repository root, select the command matching the build host:
+From the repository root, on a Linux ARM64 or AMD64 build host matching the model host:
 
 ```sh
-# Linux ARM64:
 cargo run -p nemoclaw-build --no-default-features -- runtime runtimes/ollama/build.json
-# Linux AMD64:
-cargo run -p nemoclaw-build --no-default-features -- runtime runtimes/ollama-amd64/build.json
 ```
 
-Each command builds and loads a local image and retains its OCI archive under `.build/ollama` or `.build/ollama-amd64`.
+The command builds and loads a local image for the build host's architecture and retains its OCI archive under `.build/ollama`.
 Use the immutable image digest from that build in `spec.services.<name>.image` and make the image available on the selected engine.
 The example image digest is a placeholder; a bare upstream `ollama/ollama` image lacks the required supervisor.
-The [ARM64 notice](../runtimes/ollama/NOTICE.md) and [AMD64 notice](../runtimes/ollama-amd64/NOTICE.md) identify the pinned upstream image and retained sources.
+The [runtime notice](../runtimes/ollama/NOTICE.md) identifies the pinned upstream image and retained sources.
 
 The provider uses `provider: openai` and `api: openai-completions`.
 Select an adapter whose Fabric contract accepts that protocol.

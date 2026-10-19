@@ -29,9 +29,9 @@ spec:
     nemotron:
       kind: vllm
       authentication: bearer
-      # Build runtimes/vllm-amd64/build.json on the model host and select its immutable digest.
+      # Build runtimes/vllm/build.json on the model host and select its immutable digest.
       image:
-        nc-prototype-vllm-amd64@sha256:0000000000000000000000000000000000000000000000000000000000000000
+        nc-prototype-vllm@sha256:0000000000000000000000000000000000000000000000000000000000000000
       placement:
         engine: ssh://gpu-box
         networkCidr: 172.30.119.0/24

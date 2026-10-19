@@ -15,8 +15,8 @@ spec:
   services:
     nemotron:
       kind: vllm
-      # Build runtimes/vllm-amd64/build.json on AMD64 and replace this placeholder.
-      image: nc-prototype-vllm-amd64@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      # Build runtimes/vllm/build.json on AMD64 and replace this placeholder.
+      image: nc-prototype-vllm@sha256:0000000000000000000000000000000000000000000000000000000000000000
       authentication: bearer
       placement:
         engine: ssh://gpu-box

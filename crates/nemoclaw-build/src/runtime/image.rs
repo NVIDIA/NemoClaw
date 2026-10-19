@@ -24,6 +24,7 @@ pub(super) fn require_containerd(docker: &Path) -> Result<()> {
 pub(super) fn export_and_load(
     docker: &Path,
     recipe: &RuntimeArtifact,
+    platform: &str,
     context: &Path,
     archive: &Path,
 ) -> Result<String> {
@@ -31,7 +32,7 @@ pub(super) fn export_and_load(
         tempfile::NamedTempFile::new_in(archive.parent().ok_or("archive directory missing")?)?;
     run(Command::new(docker)
         .args(["buildx", "build", "--provenance=false"])
-        .arg(format!("--platform={}", recipe.platform.replace('_', "/")))
+        .arg(format!("--platform={}", platform.replace('_', "/")))
         .arg("--output")
         .arg(format!(
             "type=oci,dest={},rewrite-timestamp=true",
@@ -65,7 +66,7 @@ pub(super) fn export_and_load(
     let pinned = inspect(docker, reference)?;
     if loaded.id.is_empty()
         || loaded.id != pinned.id
-        || format!("{}_{}", pinned.os, pinned.architecture) != recipe.platform
+        || format!("{}_{}", pinned.os, pinned.architecture) != platform
     {
         return Err(
             "loaded runtime image does not match the exported identity and platform".into(),
@@ -124,7 +125,7 @@ mod tests {
         fs::write(root.path().join("payload"), &name).unwrap();
         let recipe = RuntimeArtifact::parse(
             &serde_json::to_vec(&serde_json::json!({
-                "name":name,"image":image,"platform":nemoclaw_build::native_runtime_platform().unwrap(),
+                "name":name,"image":image,"platforms":[nemoclaw_build::native_runtime_platform().unwrap()],
                 "sourceDateEpoch":1789516800_u64,"files":["Dockerfile"],"downloads":{}
             }))
             .unwrap(),
@@ -133,6 +134,7 @@ mod tests {
         let result = export_and_load(
             docker,
             &recipe,
+            nemoclaw_build::native_runtime_platform().unwrap(),
             root.path(),
             &root.path().join("runtime.tar"),
         );
@@ -269,7 +271,7 @@ mod fixture_tests {
             fs::write(root.path().join("digest.json"), pinned.to_string()).unwrap();
             let recipe = RuntimeArtifact::parse(
                 &serde_json::to_vec(&serde_json::json!({
-                    "name":"fixture", "image":"fixture:test", "platform":"linux_arm64",
+                    "name":"fixture", "image":"fixture:test", "platforms":["linux_arm64"],
                     "sourceDateEpoch":1234, "files":["Dockerfile"], "downloads":{}
                 }))
                 .unwrap(),
@@ -278,6 +280,7 @@ mod fixture_tests {
             let result = export_and_load(
                 &docker,
                 &recipe,
+                "linux_arm64",
                 root.path(),
                 &root.path().join("runtime.tar"),
             );

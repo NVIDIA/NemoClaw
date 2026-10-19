@@ -217,24 +217,15 @@ It downloads pinned sources and dependencies, builds locally, and loads the imag
 
 It does not launch inference or publish an image.
 
-For ordinary safetensors models on Linux ARM64, run:
+For ordinary safetensors models, run on a Linux ARM64 or AMD64 build host matching the model host:
 
 ```sh
 cargo run -p nemoclaw-build --no-default-features -- runtime runtimes/vllm/build.json
 ```
 
 This build exports `.build/vllm/runtime.tar` and loads `nc-prototype-vllm:rust-v1`.
-The image contains the shared supervisor and pinned vLLM base, without Qwen3.8 patches or preparation tools.
+The image contains the shared supervisor and the pinned multi-platform vLLM base for the build host's architecture, without Qwen3.8 patches or preparation tools; the [Nemotron example](models.md#configure-nemotron-on-an-amd64-gpu-host) uses the AMD64 build.
 Select the model through [model configuration](models.md).
-
-For the AMD64 vLLM base used by the [Nemotron example](models.md#configure-nemotron-on-an-amd64-gpu-host), run on a Linux AMD64 build host:
-
-```sh
-cargo run -p nemoclaw-build --no-default-features -- runtime runtimes/vllm-amd64/build.json
-```
-
-This build exports `.build/vllm-amd64/runtime.tar` and loads `nc-prototype-vllm-amd64:rust-v1`.
-It adds the same supervisor to the pinned AMD64 vLLM 0.32.0 base and includes no preparation tools or model weights.
 Selecting this artifact does not qualify GPU inference on the host.
 
 For Qwen3.8 preparation on Linux ARM64, run:
@@ -264,7 +255,7 @@ Each image separately retains its selected Dockerfile and build manifest under `
 The Qwen3.8 image also retains its preparation tools, upstream recipe, licenses, and modified vLLM sources.
 The build excludes dependency paths and parent Git metadata from compiler inputs.
 
-The [ARM64 vLLM notice](../runtimes/vllm/NOTICE.md), [AMD64 vLLM notice](../runtimes/vllm-amd64/NOTICE.md), and [Qwen3.8 notice](../runtimes/qwen38/NOTICE.md) identify retained sources and licenses.
+The [vLLM notice](../runtimes/vllm/NOTICE.md) and [Qwen3.8 notice](../runtimes/qwen38/NOTICE.md) identify retained sources and licenses.
 
 Generated bundles, build inputs, and images are ignored by Git.
 Model snapshots and prepared data belong to the deployment’s persistent volume, outside the build context.

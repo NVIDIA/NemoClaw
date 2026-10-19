@@ -23,7 +23,8 @@ fn vendor_files(directory: &Path, root: &Path, files: &mut Vec<(String, PathBuf)
 }
 pub(super) async fn build_runtime(pins: &Pins, manifest: &Path) -> Result<()> {
     let recipe = nemoclaw_build::RuntimeArtifact::parse(&fs::read(manifest)?)?;
-    recipe.require_native_host(nemoclaw_build::native_runtime_platform()?)?;
+    let platform = nemoclaw_build::native_runtime_platform()?;
+    recipe.require_native_host(platform)?;
     image::require_containerd(Path::new("docker"))?;
     let inputs = manifest.parent().ok_or("artifact directory missing")?;
     let root = PathBuf::from(".build").join(&recipe.name);
@@ -37,7 +38,7 @@ pub(super) async fn build_runtime(pins: &Pins, manifest: &Path) -> Result<()> {
     let binary = build_retained_source(
         root,
         &context.join("supervisor-source.tar.gz"),
-        target(&recipe.platform)?,
+        target(platform)?,
     )?;
     for name in &recipe.files {
         let source = inputs.join(name);
@@ -67,7 +68,8 @@ pub(super) async fn build_runtime(pins: &Pins, manifest: &Path) -> Result<()> {
         &nemoclaw_build::runtime_source_inputs(Path::new("."))?,
     )?;
     let output = root.join("runtime.tar");
-    let reference = image::export_and_load(Path::new("docker"), &recipe, &context, &output)?;
+    let reference =
+        image::export_and_load(Path::new("docker"), &recipe, platform, &context, &output)?;
     println!("Runtime image loaded: {reference}");
     Ok(())
 }
