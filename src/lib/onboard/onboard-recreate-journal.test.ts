@@ -549,7 +549,7 @@ describe("restored selection override admission", () => {
       label: "changed model",
       agent: "openclaw",
       custom: false,
-      forced: false,
+      recreateTransaction: { freshOnboard: true as const },
       unknown: false,
       providerChanged: false,
       modelChanged: true,
@@ -559,7 +559,7 @@ describe("restored selection override admission", () => {
       label: "changed provider",
       agent: "openclaw",
       custom: false,
-      forced: false,
+      recreateTransaction: undefined,
       unknown: false,
       providerChanged: true,
       modelChanged: false,
@@ -569,7 +569,7 @@ describe("restored selection override admission", () => {
       label: "unchanged intent with native edits",
       agent: "openclaw",
       custom: false,
-      forced: false,
+      recreateTransaction: undefined,
       unknown: false,
       providerChanged: false,
       modelChanged: false,
@@ -579,7 +579,7 @@ describe("restored selection override admission", () => {
       label: "unknown intent",
       agent: "openclaw",
       custom: false,
-      forced: false,
+      recreateTransaction: undefined,
       unknown: true,
       providerChanged: true,
       modelChanged: true,
@@ -589,7 +589,7 @@ describe("restored selection override admission", () => {
       label: "rebuild",
       agent: "openclaw",
       custom: false,
-      forced: true,
+      recreateTransaction: {},
       unknown: false,
       providerChanged: true,
       modelChanged: true,
@@ -599,7 +599,7 @@ describe("restored selection override admission", () => {
       label: "custom image",
       agent: "openclaw",
       custom: true,
-      forced: false,
+      recreateTransaction: undefined,
       unknown: false,
       providerChanged: true,
       modelChanged: true,
@@ -609,7 +609,7 @@ describe("restored selection override admission", () => {
       label: "Hermes",
       agent: "hermes",
       custom: false,
-      forced: false,
+      recreateTransaction: undefined,
       unknown: false,
       providerChanged: true,
       modelChanged: true,
@@ -617,8 +617,10 @@ describe("restored selection override admission", () => {
     },
   ])(
     "bounds reconciliation for $label (#12667)",
-    ({ agent, custom, forced, expected, ...drift }) => {
-      expect(shouldReconcileRestoredOpenClawSelection(agent, custom, forced, drift)).toBe(expected);
+    ({ agent, custom, recreateTransaction, expected, ...drift }) => {
+      expect(
+        shouldReconcileRestoredOpenClawSelection(agent, custom, recreateTransaction, drift),
+      ).toBe(expected);
     },
   );
 });

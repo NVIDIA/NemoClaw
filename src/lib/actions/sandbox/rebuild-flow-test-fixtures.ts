@@ -4,7 +4,15 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { vi } from "vitest";
 import { fixedNativeProvider } from "../../inference/native-provider/fixed";
+import { nativeProviderLifecycle } from "../../inference/native-provider";
+import type { OpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter";
+import {
+  preflightAuthoritativeRebuildTarget,
+  type AuthoritativeRebuildTarget,
+  type AuthoritativeRebuildTargetDeps,
+} from "../../onboard/authoritative-rebuild-target";
 
 export function makeActiveTeamsMessagingPlan() {
   return {
@@ -176,4 +184,61 @@ export function nativeProviderRebuildScenario(replaced: boolean, provider = "nvi
     },
   };
   return { overrides, reads, providerName };
+}
+
+/** Exercise rebuild readiness and native verification with external OpenShell observations. */
+export function nativeProviderRebuildReadiness(
+  source: "present" | "missing" | "unknown",
+  getSandbox: AuthoritativeRebuildTargetDeps["getSandbox"],
+  attached = true,
+) {
+  const definition = fixedNativeProvider("nvidia-prod")!;
+  const attachments = vi.fn(async () => ({
+    ok: true as const,
+    value: { names: attached ? [definition.providerName] : [] },
+  }));
+  const adapter = {
+    importProviderProfile: async () => ({ ok: true }),
+    getProvider: async () => ({
+      ok: true,
+      value: {
+        name: definition.providerName,
+        type: definition.profileId,
+        credentialKeys: [definition.credentialEnv],
+        configKeys: [],
+        revision: { id: "11111111-2222-4333-8444-555555555555", resourceVersion: 1 },
+      },
+    }),
+    listProviderAttachments: attachments,
+  } as unknown as OpenShellProviderAdapter;
+  return {
+    attachments,
+    preflightAuthoritativeRebuildTarget: (options: Record<string, unknown>) =>
+      preflightAuthoritativeRebuildTarget(
+        { ...options, controlUiPort: null } as AuthoritativeRebuildTarget,
+        {
+          resolveBaselinePolicy: () => ({}),
+          bindGatewayAuthority: () => undefined,
+          runFatalRuntimePreflight: () => undefined,
+          ensureOpenshell: () => undefined,
+          assertGatewayReadiness: () => undefined,
+          getSandbox,
+          observeSandboxPresence: () => {
+            if (source === "unknown")
+              throw new Error("OpenShell reported neither presence nor explicit absence.");
+            return source;
+          },
+          verifyNativeProviderAttachment: async (input) => {
+            await nativeProviderLifecycle(definition).verifyNativeProviderAttachment({
+              adapter,
+              target: { kind: "named", gatewayName: input.gatewayName },
+              sandboxName: input.sandboxName,
+              expected: input.expected,
+            });
+          },
+          inferenceRouteState: () => "matched",
+          observeForwardPorts: async () => [],
+        },
+      ),
+  };
 }

@@ -16,6 +16,7 @@ import {
   openClawLifecycle,
   snapshotBackup,
   pairingSettlement,
+  registry,
 } from "../../../../test/helpers/rebuild-flow-harness";
 import os from "node:os";
 import * as sandboxState from "../../state/sandbox";
@@ -24,6 +25,8 @@ import { fingerprintSandboxLiveIdentity } from "../../onboard/sandbox-recreate-t
 import {
   makeActiveTeamsMessagingPlan,
   makePreparedRecoveryManifest,
+  nativeProviderRebuildReadiness,
+  nativeProviderRebuildScenario,
 } from "./rebuild-flow-test-fixtures";
 import {
   configureDcodeSession,
@@ -519,7 +522,9 @@ describe("rebuildSandbox flow: recovery", () => {
     return interrupted.session.checkpoint;
   }
 
-  it("retains the exact policy handoff across a failed recreate and consumes it on retry", async () => {
+  it("recovers a native sandbox after source deletion using the retained policy and journal", async () => {
+    const native = nativeProviderRebuildScenario(false);
+    const present = nativeProviderRebuildReadiness("present", (name) => registry.getSandbox(name));
     const policyDocument = "version: 1\nnetwork_policies:\n  host_preserved: {}";
     const mcpEntry = {
       server: "github",
@@ -534,6 +539,8 @@ describe("rebuildSandbox flow: recovery", () => {
       source: "native" as const,
     };
     const interrupted = createRebuildFlowHarness({
+      ...native.overrides,
+      preflightAuthoritativeRebuildTarget: present.preflightAuthoritativeRebuildTarget,
       captureOpenshell: sandboxGetProbes([SOURCE_PROBE, null]),
       mcpPreparation: {
         entries: [mcpEntry],
@@ -547,6 +554,8 @@ describe("rebuildSandbox flow: recovery", () => {
     await expect(
       interrupted.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
     ).rejects.toThrow("Recreate failed");
+
+    expect(present.attachments).toHaveBeenCalled();
 
     const persistedManifest = JSON.parse(
       fs.readFileSync(path.join(interrupted.backupPath, "rebuild-manifest.json"), "utf8"),
@@ -564,7 +573,10 @@ describe("rebuildSandbox flow: recovery", () => {
       fs.existsSync(path.join(interrupted.backupPath, ".nemoclaw-rebuild-recovery.json")),
     ).toBe(true);
     let recreatedPolicy = "";
+    const absent = nativeProviderRebuildReadiness("missing", (name) => registry.getSandbox(name));
     const restarted = createRebuildFlowHarness({
+      ...native.overrides,
+      preflightAuthoritativeRebuildTarget: absent.preflightAuthoritativeRebuildTarget,
       staleRecovery: true,
       captureOpenshell: sandboxGetProbes([null]),
       mcpPreparation: {
@@ -585,6 +597,9 @@ describe("rebuildSandbox flow: recovery", () => {
       }),
     ).resolves.toBeUndefined();
 
+    expect(absent.attachments).not.toHaveBeenCalled();
+    expectNoSandboxDelete(restarted.runOpenshellSpy);
+    expect(restarted.restoreSandboxStateSpy).toHaveBeenCalled();
     expect(recreatedPolicy).toBe(policyDocument);
     expect(restarted.prepareMcpBridgesForAbsentSandboxRebuildSpy).toHaveBeenCalledWith(
       "alpha",
