@@ -67,8 +67,10 @@ capture_process registry "$registry_pid"
 user_tasks=$(ps -u "$uid" -L --no-headers 2>/dev/null | wc -l | tr -d ' ' || true)
 printf 'user_tasks=%s\n' "\${user_tasks:-unavailable}"
 host_threads_max=$(cat /proc/sys/kernel/threads-max 2>/dev/null) || host_threads_max=unavailable
+host_pid_max=$(cat /proc/sys/kernel/pid_max 2>/dev/null) || host_pid_max=unavailable
 host_tasks=$(awk '{ split($4, tasks, "/"); print tasks[2] }' /proc/loadavg 2>/dev/null) || host_tasks=unavailable
 printf 'host_threads_max=%s\n' "\${host_threads_max:-unavailable}"
+printf 'host_pid_max=%s\n' "\${host_pid_max:-unavailable}"
 printf 'host_tasks=%s\n' "\${host_tasks:-unavailable}"
 `;
 
@@ -194,8 +196,8 @@ async function captureRegistryFailureDiagnostics(shellProbe: ShellProbe): Promis
     },
   ] as const;
   // Capture headroom before the other probes add processes to a constrained runner.
-  await Promise.allSettled([
-    shellProbe.run(
+  await shellProbe
+    .run(
       trustedShellCommand({
         command: "bash",
         args: ["-e", "-u", "-o", "pipefail", "-c", PROCESS_HEADROOM_DIAGNOSTIC],
@@ -207,8 +209,8 @@ async function captureRegistryFailureDiagnostics(shellProbe: ShellProbe): Promis
         env,
         timeoutMs: 10_000,
       },
-    ),
-  ]);
+    )
+    .catch(() => undefined);
   await Promise.allSettled(
     commands.map((command) =>
       shellProbe.run(

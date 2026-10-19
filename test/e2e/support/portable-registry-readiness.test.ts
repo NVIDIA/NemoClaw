@@ -198,6 +198,7 @@ describe("portable registry readiness policy", () => {
       expect(headroomScript).toContain("rlimit_nproc_soft");
       expect(headroomScript).toContain("pids_current=");
       expect(headroomScript).toContain("pids_events_max=");
+      expect(headroomScript).toContain("host_pid_max=");
       expect(headroomScript).toContain("host_tasks=");
       expect(headroomOptions.artifactName).toBe("portable-registry-process-headroom");
       const expectedOptions = expect.objectContaining({
