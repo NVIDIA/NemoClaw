@@ -227,6 +227,17 @@ describe("LangChain Deep Agents Code config generator", () => {
     expect(config).not.toContain("[models.providers.openrouter]");
   });
 
+  it("keeps the compatible credential when its endpoint equals the native NVIDIA URL", () => {
+    const config = runGenerator({
+      NEMOCLAW_UPSTREAM_PROVIDER: "compatible-endpoint",
+      NEMOCLAW_UPSTREAM_ENDPOINT_URL: "https://integrate.api.nvidia.com/v1",
+      NEMOCLAW_INFERENCE_BASE_URL: "https://integrate.api.nvidia.com/v1",
+    });
+
+    expect(config).toContain('api_key_env = "COMPATIBLE_API_KEY"');
+    expect(config).not.toContain('api_key_env = "NVIDIA_INFERENCE_API_KEY"');
+  });
+
   it("rejects upstream endpoint URLs with control characters before writing config", () => {
     const result = runGeneratorProcess({
       NEMOCLAW_UPSTREAM_PROVIDER: "compatible-endpoint",
