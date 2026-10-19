@@ -991,6 +991,10 @@ async function main(
     const podmanInfo = JSON.parse(run("podman", ["info", "--format", "json"]));
     assert.equal(podmanInfo.host?.security?.rootless, true, "Podman must be rootless");
     run("docker", ["version"]);
+    // The trusted GPU runner creates this registry with pids.max=1. Bound it to
+    // enough tasks for the pinned Go registry before testing HTTP readiness.
+    run("podman", ["update", "--pids-limit", "128", "nemoclaw-portable-registry"]);
+    run("podman", ["restart", "nemoclaw-portable-registry"]);
     await waitForRegistry(artifacts, shellProbe);
 
     progress.phase("verify immutable non-force network removal");
