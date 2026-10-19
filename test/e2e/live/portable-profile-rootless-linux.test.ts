@@ -1036,9 +1036,13 @@ async function main(
       "disposable network inspection",
     );
     assert.equal(disposableNetwork.dns_enabled, true);
+    assert.match(String(disposableNetwork.network_interface), /^podman(?:0|[1-9][0-9]{0,8})$/u);
     assert.equal(Object.hasOwn(disposableNetwork, "network_dns_servers"), false);
-    const disposableSubnets = disposableNetwork.subnets as Record<string, unknown>[];
-    const disposableSubnet = disposableSubnets[0]!;
+    assert.match(String(disposableNetwork.id), /^[a-f0-9]{64}$/u);
+    assert.ok(Array.isArray(disposableNetwork.subnets));
+    assert.equal(disposableNetwork.subnets.length, 1);
+    const disposableSubnet = disposableNetwork.subnets[0] as Record<string, unknown>;
+    assert.equal(typeof disposableSubnet.subnet, "string");
     assert.equal(Object.hasOwn(disposableSubnet, "lease_range"), false);
     assert.notEqual(disposableSubnet.subnet, "169.254.1.0/24");
     disposableNetworkId = String(disposableNetwork.id);
