@@ -33,6 +33,7 @@
     },
     {
       "live": "test/e2e/live/portable-profile-rootless-linux.test.ts",
+      "liveSources": ["test/e2e/fixtures/portable-registry-readiness.ts"],
       "fast": [
         "src/lib/onboard/experimental/hermes-portable-container.test.ts",
         "src/lib/onboard/experimental/hermes-portable-lifecycle.test.ts",
@@ -41,6 +42,7 @@
         "src/lib/onboard/experimental/portable-host-preparation.test.ts",
         "src/lib/onboard/sandbox-prebuild.test.ts",
         "test/agents/hermes/hermes-start.test.ts",
+        "test/e2e/support/portable-registry-readiness.test.ts",
         "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts"
       ]
     },
@@ -602,9 +604,11 @@
     },
     {
       "live": "test/e2e/live/gpu-double-onboard.test.ts",
+      "liveSources": ["test/e2e/fixtures/native-local-chat.ts"],
       "fast": [
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/gpu-e2e-helpers.test.ts",
         "test/helpers/e2e-answer-assertions.test.ts"
       ]
     },
@@ -612,7 +616,8 @@
       "live": "test/e2e/live/gpu-e2e.test.ts",
       "liveSources": [
         "test/e2e/live/gpu-e2e-helpers.ts",
-        "test/e2e/live/hermes-cli-adapter-live.ts"
+        "test/e2e/live/hermes-cli-adapter-live.ts",
+        "test/e2e/fixtures/native-local-chat.ts"
       ],
       "fast": [
         "src/lib/adapters/config/live-export-source-ollama.test.ts",
