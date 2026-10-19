@@ -1,7 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+
+const sessionHome = await vi.hoisted(async () => {
+  const fs = await import("node:fs");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-provider-session-"));
+  vi.stubEnv("HOME", directory);
+  vi.resetModules();
+  return directory;
+});
 
 import {
   clearSession,
@@ -17,6 +28,15 @@ import { checkpointSandboxName } from "../../session-bootstrap";
 import { withStationExpressResumeEnvironment } from "../../station-express-resume";
 import { handleProviderInferenceState } from "./provider-inference";
 import { baseOptions, baseSelection, createDeps } from "./provider-inference.test-support";
+
+beforeEach(() => {
+  vi.stubEnv("HOME", sessionHome);
+});
+
+afterAll(() => {
+  vi.unstubAllEnvs();
+  fs.rmSync(sessionHome, { recursive: true, force: true });
+});
 
 describe("Station Express provider binding (#7048)", () => {
   it("revalidates the model after selection fails while committing a reviewed provider", async () => {

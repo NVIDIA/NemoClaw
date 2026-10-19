@@ -1,7 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+
+const sessionHome = await vi.hoisted(async () => {
+  const fs = await import("node:fs");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-preflight-session-"));
+  vi.stubEnv("HOME", directory);
+  vi.resetModules();
+  return directory;
+});
 
 import type { GpuDetection } from "../../../inference/nim";
 import {
@@ -20,6 +31,15 @@ import {
   type SandboxGpuMode,
 } from "../../sandbox-gpu-mode";
 import { handlePreflightState, type PreflightStateOptions } from "./preflight";
+
+beforeEach(() => {
+  vi.stubEnv("HOME", sessionHome);
+});
+
+afterAll(() => {
+  vi.unstubAllEnvs();
+  fs.rmSync(sessionHome, { recursive: true, force: true });
+});
 
 type Gpu = GpuDetection | null;
 type SandboxEntry = {
