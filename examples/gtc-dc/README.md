@@ -1,11 +1,23 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# GTC DC Planned Examples
+# GTC DC Examples
 
 These nine templates cover Hermes, OpenClaw, and LangChain Deep Agents on the three GTC DC target environments.
 Each declares one agent, a local managed Docker gateway, and one managed vLLM service.
-They are planned configurations; successful model loading, agent replies, and lifecycle behavior have not been established for these combinations.
+On DGX Spark, the Hermes and Deep Agents templates are verified; the other combinations are untested.
+
+| Template | DGX Spark result |
+|---|---|
+| Hermes | Applies and answers, including tool calls |
+| Deep Agents | Applies and answers, including file tool calls |
+| OpenClaw | Agent start fails, because the OpenClaw adapter can't run `setpriv` in OpenShell sandboxes ([#13372](https://github.com/NVIDIA/NemoClaw/issues/13372)) |
+
+The first apply downloads the 74.8 GiB model; on the verified DGX Spark the download took about 55 minutes and loading about 15.
+After the model loaded, a short question took about 5 seconds, a five-point itinerary about 15–18 seconds, and a task with a tool call 17–29 seconds.
+The model's reasoning left room for complete answers within the templates' 1,024-token limit.
+Switching a deployment from one harness to another replaces only the sandbox, while the model service keeps running.
+DGX Station and Windows WSL2 RTX Spark remain untested.
 
 | Harness | Linux ARM64 DGX Station | Linux ARM64 DGX Spark | Windows ARM64 with WSL2 and RTX Spark |
 |---|---|---|---|
@@ -76,7 +88,6 @@ For a Windows target, copy its corresponding `*-windows-wsl2-rtx-spark.yaml` fil
 
 Plan observes the selected environment without creating deployment resources or requesting inference.
 Follow [the deployment workflow](../../docs/usage.md) for apply, recovery, and retained teardown, and verify [model and agent responses](../../docs/inference.md#verify-the-result) separately.
-At the current Fabric pin, production adapters report unsupported health, so apply fails its agent health check after preserving completed resource changes and state.
 
 ## Sources and Adaptation
 
@@ -86,7 +97,7 @@ The changes select Nemotron Super NVFP4, one agent per file, target-specific har
 The [upstream vLLM Nemotron Super recipe](https://github.com/vllm-project/recipes/blob/d80a1692a40e79bc6a5dc77e5a2d71c32e3d4b37/models/nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16.yaml), pinned to recipes commit `d80a1692a40e79bc6a5dc77e5a2d71c32e3d4b37`, informs the model and native parser choices.
 Its DGX Spark and Station commands use vLLM 0.28.0 with settings these templates do not select, such as an FP8 KV cache and MTP speculative decoding.
 These templates use only fields that this checkout's schema accepts.
-The pinned ARM64 runtime image builds on the upstream `vllm/vllm-openai` image currently tagged `qwen38-flash-next`, not a vLLM release; whether it serves this model is untested.
+The pinned runtime image builds on the upstream `vllm/vllm-openai` v0.32.0 release image, pinned by digest.
 They do not reproduce or qualify the upstream recipe.
 The [ARM64 runtime notice](../../runtimes/vllm/NOTICE.md) describes retained upstream sources and licenses.
 The model is distributed under the [NVIDIA Nemotron Open Model License](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-nemotron-open-model-license/); the pinned snapshot contains no separate license or notice file.
