@@ -17,9 +17,22 @@ import {
   NVIDIA_HOSTED_NATIVE_ENDPOINT,
 } from "../../src/lib/inference/native-nvidia/contract.ts";
 
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import {
+  chmodSync,
+  closeSync,
+  fchmodSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  readlinkSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, isAbsolute, join } from "node:path";
 
 const SUPPORTED_INFERENCE_API = "openai-completions";
 const MANAGED_PROVIDER_ID = "openshell";
@@ -184,6 +197,28 @@ function buildConfig(settings: Settings): ManagedPiConfig {
   };
 }
 
+function resolveSettingsDestination(settingsPath: string): string {
+  let destination = settingsPath;
+  for (;;) {
+    try {
+      return realpathSync.native(destination);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    let target: string;
+    try {
+      target = readlinkSync(destination);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        return join(realpathSync.native(dirname(destination)), basename(destination));
+      }
+      throw error;
+    }
+    // Keep .. intact until the filesystem resolves intervening directory links.
+    destination = isAbsolute(target) ? target : `${dirname(destination)}/${target}`;
+  }
+}
+
 function syncManagedDefaults(configDir: string, model: string, nativeLocal: boolean): void {
   const settingsPath = join(configDir, "settings.json");
   const defaults = { defaultProvider: MANAGED_PROVIDER_ID, defaultModel: model };
@@ -202,10 +237,44 @@ function syncManagedDefaults(configDir: string, model: string, nativeLocal: bool
     if (!nativeLocal) return;
     existing = {};
   }
-  writeFileSync(settingsPath, `${JSON.stringify({ ...existing, ...defaults }, null, 2)}\n`, {
-    mode: 0o600,
-  });
-  chmodSync(settingsPath, 0o600);
+  const destination = resolveSettingsDestination(settingsPath);
+  const stagedPath = join(dirname(destination), `.settings.json.${randomUUID()}.tmp`);
+  let staged = false;
+  let descriptor: number | null = null;
+  try {
+    descriptor = openSync(stagedPath, "wx", 0o600);
+    staged = true;
+    writeFileSync(descriptor, `${JSON.stringify({ ...existing, ...defaults }, null, 2)}\n`);
+    fchmodSync(descriptor, 0o600);
+    const completedDescriptor = descriptor;
+    descriptor = null;
+    closeSync(completedDescriptor);
+    renameSync(stagedPath, destination);
+    staged = false;
+  } catch (error) {
+    const cleanupFailures: unknown[] = [];
+    if (descriptor !== null) {
+      try {
+        closeSync(descriptor);
+      } catch (cleanupError) {
+        cleanupFailures.push(cleanupError);
+      }
+    }
+    if (staged) {
+      try {
+        rmSync(stagedPath, { force: true });
+      } catch (cleanupError) {
+        cleanupFailures.push(cleanupError);
+      }
+    }
+    if (cleanupFailures.length > 0) {
+      throw new AggregateError(
+        [error, ...cleanupFailures],
+        `Pi settings staging failed; cleanup also failed for ${stagedPath}.`,
+      );
+    }
+    throw error;
+  }
 }
 
 function main(): void {
@@ -215,9 +284,30 @@ function main(): void {
 
   const configPath = join(configDir, "models.json");
   const config = buildConfig(settings);
-  writeFileSync(configPath, config.text, { mode: 0o600 });
-  chmodSync(configPath, 0o600);
-  syncManagedDefaults(configDir, config.model, config.nativeLocal);
+  let previousCatalog: Buffer | null;
+  try {
+    previousCatalog = readFileSync(configPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    previousCatalog = null;
+  }
+  try {
+    writeFileSync(configPath, config.text, { mode: 0o600 });
+    chmodSync(configPath, 0o600);
+    syncManagedDefaults(configDir, config.model, config.nativeLocal);
+  } catch (error) {
+    try {
+      if (previousCatalog === null) {
+        rmSync(configPath, { force: true });
+      } else {
+        writeFileSync(configPath, previousCatalog, { mode: 0o600 });
+        chmodSync(configPath, 0o600);
+      }
+    } catch (rollbackError) {
+      throw new AggregateError([error, rollbackError], "Pi catalog rollback failed.");
+    }
+    throw error;
+  }
 
   console.log(`[config] Wrote ${configPath} (model=${config.model}, base_url=${config.baseUrl})`);
 }
