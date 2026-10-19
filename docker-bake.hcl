@@ -22,16 +22,16 @@ variable "PLATFORM_HARNESSES" {
 
 variable "HARNESSES" {
   default = {
-    deepagents     = { stage = "generic", adapter = "deepagents", adapter_id = "nvidia.fabric.langchain.deepagents" }
-    claude         = { stage = "generic", adapter = "claude", adapter_id = "nvidia.fabric.claude" }
-    codex          = { stage = "generic", adapter = "codex", adapter_id = "nvidia.fabric.codex" }
-    mini-swe-agent = { stage = "generic", adapter = "mini-swe-agent", adapter_id = "nvidia.fabric.mini-swe-agent" }
-    nooa           = { stage = "generic", adapter = "nooa", adapter_id = "nvidia.fabric.nooa" }
-    nooa-bench     = { stage = "generic", adapter = "nooa", adapter_id = "nvidia.fabric.nooa.bench-agent" }
-    remote-agent   = { stage = "generic", adapter = "remote-agent", adapter_id = "nvidia.fabric.remote-agent" }
-    openclaw       = { stage = "openclaw", adapter = "openclaw", adapter_id = "nvidia.fabric.openclaw" }
-    hermes         = { stage = "hermes", adapter = "hermes", adapter_id = "nvidia.fabric.hermes" }
-    pi             = { stage = "pi", adapter = "", adapter_id = "nvidia.fabric.pi" }
+    deepagents     = { stage = "generic", adapter = "deepagents", adapter_id = "nvidia.fabric.langchain.deepagents", extra = "deepagents" }
+    claude         = { stage = "generic", adapter = "claude", adapter_id = "nvidia.fabric.claude", extra = "claude" }
+    codex          = { stage = "generic", adapter = "codex", adapter_id = "nvidia.fabric.codex", extra = "codex" }
+    mini-swe-agent = { stage = "generic", adapter = "mini-swe-agent", adapter_id = "nvidia.fabric.mini-swe-agent", extra = "mini-swe-agent" }
+    nooa           = { stage = "generic", adapter = "nooa", adapter_id = "nvidia.fabric.nooa", extra = "nooa" }
+    nooa-bench     = { stage = "generic", adapter = "nooa", adapter_id = "nvidia.fabric.nooa.bench-agent", extra = "nooa" }
+    remote-agent   = { stage = "generic", adapter = "remote-agent", adapter_id = "nvidia.fabric.remote-agent", extra = "remote-agent" }
+    openclaw       = { stage = "openclaw", adapter = "openclaw", adapter_id = "nvidia.fabric.openclaw", extra = "openclaw" }
+    hermes         = { stage = "hermes", adapter = "hermes", adapter_id = "nvidia.fabric.hermes", extra = "hermes-agent" }
+    pi             = { stage = "pi", adapter = "", adapter_id = "nvidia.fabric.pi", extra = "" }
   }
 }
 
@@ -53,6 +53,8 @@ target "agents" {
   args = {
     HARNESS = harness
     ADAPTER = HARNESSES[harness].adapter
+    # The Fabric extra whose locked dependencies the image installs.
+    EXTRA = HARNESSES[harness].extra
     ADAPTER_ID = HARNESSES[harness].adapter_id
   }
   tags = ["${IMAGE_PREFIX}:${harness}"]

@@ -61,13 +61,13 @@ RUN --mount=type=cache,target=/root/.cache/uv --mount=type=cache,target=/usr/loc
 FROM common-wheels AS harness-wheels
 ARG HARNESS
 ARG ADAPTER
+ARG EXTRA
 COPY image/fabric/ /build/
 COPY image/NOTICE.md docker-bake.hcl .dockerignore /build/
 RUN --mount=type=cache,target=/root/.cache/uv \
     if [ -n "$ADAPTER" ]; then uv build --python /usr/local/bin/python3 --wheel --out-dir /wheels "/src/fabric/adapters/python/$ADAPTER"; fi \
     && python3 /build/wheel_lock.py /wheels > /own-requirements.txt \
-    && if [ "$HARNESS" = hermes ]; then cp /build/hermes-dependencies.lock /requirements.txt; \
-       else uv export --project /src/fabric --frozen --no-default-groups --no-emit-local ${ADAPTER:+--extra=$ADAPTER} --output-file /requirements.txt; fi \
+    && uv export --project /src/fabric --frozen --no-default-groups --no-emit-local ${EXTRA:+--extra=$EXTRA} --output-file /requirements.txt \
     && cat /own-requirements.txt >> /requirements.txt \
     && uv pip install --python /opt/fabric/bin/python --require-hashes --find-links /wheels -r /requirements.txt \
     && python3 /build/provenance.py > /provenance.json
@@ -103,8 +103,9 @@ RUN printf '%s\n' '{"nvidia.fabric.openclaw": {"files": ["/app"], "binaries": ["
 USER node
 
 FROM base AS hermes-assets
-ARG HERMES_REVISION=29112bef099274229cadff79cdff7bf7b99c4b77
-ARG HERMES_SHA256=76b99a8be9b77d66833c3cfe2b35c6d6f6a58e4ff9637ef8effcfc1f420ab35a
+# Hermes Agent release v2026.9.24, which Fabric documents for ordinary runs.
+ARG HERMES_REVISION=f97608f178d1ffeca59860195ab7da295f7c8e5f
+ARG HERMES_SHA256=babbdb9706ad1c96708d75914afb45d809cd4b73dec1ceae233a6814f5ed97e3
 ADD --checksum=sha256:${HERMES_SHA256} https://codeload.github.com/NousResearch/hermes-agent/tar.gz/${HERMES_REVISION} /sources/hermes.tar.gz
 COPY image/fabric/HERMES-NOTICE.md /sources/HERMES-NOTICE.md
 RUN mkdir -p /opt/hermes && tar -xzf /sources/hermes.tar.gz -C /opt/hermes --strip-components=1 \
@@ -113,9 +114,14 @@ RUN mkdir -p /opt/hermes && tar -xzf /sources/hermes.tar.gz -C /opt/hermes --str
 FROM interactive AS hermes
 COPY --from=hermes-assets /opt/hermes /opt/hermes
 COPY --from=hermes-assets --chmod=0644 /sources/hermes.tar.gz /opt/nemoclaw/source/
+# Hermes owns its dependencies: its own lock, with the mcp extra, settles the
+# packages it shares with Fabric, as Fabric installs into Hermes's environment.
 # Hermes resolves bundled assets relative to its source checkout.
-RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
-    uv pip install --python /opt/fabric/bin/python --offline --no-deps --no-build-isolation -e /opt/hermes --config-settings editable_mode=compat
+RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv --mount=type=cache,target=/root/.cache/uv \
+    uv export --project /opt/hermes --frozen --no-dev --extra mcp --no-emit-project --format requirements-txt --output-file /opt/nemoclaw/source/hermes-requirements.txt \
+    && uv pip install --python /opt/fabric/bin/python --require-hashes -r /opt/nemoclaw/source/hermes-requirements.txt \
+    && uv pip install --python /opt/fabric/bin/python --no-deps -e /opt/hermes --config-settings editable_mode=compat \
+    && uv pip check --python /opt/fabric/bin/python
 ENV HERMES_DISABLE_LAZY_INSTALLS=1
 RUN printf '%s\n' '{"nvidia.fabric.hermes": {"files": ["/opt/hermes"], "binaries": []}}' > /opt/nemoclaw/adapters.json
 USER node

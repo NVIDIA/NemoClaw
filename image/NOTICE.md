@@ -10,10 +10,10 @@ NemoClaw doesn't patch the Fabric runtime or its adapter implementations.
 Upstream notices remain in installed wheels and the retained source archive under `/opt/nemoclaw/source/`.
 See [Fabric's license](fabric/FABRIC-LICENSE) and the notices beside its adapter sources.
 
-Except Hermes, image dependency installation exports Fabric's pinned root `uv.lock` with `uv export --frozen --no-default-groups --no-emit-local`, selecting the Python adapter's extra when present.
+Image dependency installation exports Fabric's pinned root `uv.lock` with `uv export --frozen --no-default-groups --no-emit-local`, selecting the Python adapter's extra when present.
 These images install Fabric's locally built wheels alongside the export without independently resolving dependency versions.
-Hermes retains `fabric/hermes-dependencies.lock` because Fabric's Hermes extra excludes the native checkout, its build dependencies, and Hermes's `mcp` extra, which MCP servers configured through Fabric need.
-Its image applies Fabric's exact upstream patch; [the Hermes source notice](fabric/HERMES-NOTICE.md) records the revisions and modification.
+Fabric's Hermes extra doesn't install Hermes Agent, so the Hermes image then installs Hermes Agent's own `uv.lock` with its `mcp` extra, which MCP servers configured through Fabric need, and Hermes from its release source.
+Hermes's lock settles the packages it shares with Fabric; [the Hermes source notice](fabric/HERMES-NOTICE.md) records the release.
 
 OpenClaw installs the pinned search plugin archives through its native installer; the image packages them in OpenClaw’s bundled-plugin directory.
 Examples select plugin IDs without filesystem paths.
