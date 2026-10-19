@@ -979,14 +979,18 @@ describe("Hermes portable finalization readiness", () => {
     );
   });
 
-  it("preserves a readable receipt and registry disagreement for diagnosis (#11892)", async () => {
+  it.each([
+    "qualifyPortableAgentLifecycleAuthority",
+    "assertHermesPortableAgentLifecycleAuthority",
+  ] as const)("preserves registry disagreement from %s (#11892)", async (method) => {
     const harness = installPortableReadinessHarness(async () => undefined);
-    harness.qualifyPortableAgentLifecycleAuthority.mockImplementation(() => {
+    const refuse = () => {
       throw new HermesPortableLifecycleAuthorityError(
         "receipt-registry-disagreement",
         "untrusted authority diagnostic",
       );
-    });
+    };
+    harness[method].mockImplementation(refuse);
 
     await expect(
       finalizationHandlerDeps.checkHermesPortableSandboxReadiness("alpha", {
@@ -996,7 +1000,9 @@ describe("Hermes portable finalization readiness", () => {
       ready: false,
       reason: "portable-hermes-registry-authority-unavailable",
     });
-    expect(harness.assertHermesPortableAgentLifecycleAuthority).not.toHaveBeenCalled();
+    expect(harness.assertHermesPortableAgentLifecycleAuthority).toHaveBeenCalledTimes(
+      method === "assertHermesPortableAgentLifecycleAuthority" ? 1 : 0,
+    );
   });
 
   it("fails closed when portable Hermes readiness is unavailable (#11892)", async () => {

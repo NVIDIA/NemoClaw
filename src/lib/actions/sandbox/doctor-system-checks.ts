@@ -64,7 +64,7 @@ export async function observeSandboxDoctorHermesReadiness(
   sandboxName: string,
   authority: HermesPortableDoctorAuthority,
   readRegistry: (sandboxName: string) => SandboxEntry | null,
-): Promise<"ready" | "unavailable" | null> {
+): Promise<"ready" | "unavailable" | "authority-unavailable" | null> {
   if (authority.phase !== "active" || !authority.entry) return null;
   try {
     await assertHermesPortableAgentLifecycleAuthority(
@@ -79,8 +79,10 @@ export async function observeSandboxDoctorHermesReadiness(
       { readRegistry },
     );
     return "ready";
-  } catch {
-    return "unavailable";
+  } catch (error) {
+    return error instanceof HermesPortableLifecycleAuthorityError
+      ? "authority-unavailable"
+      : "unavailable";
   }
 }
 

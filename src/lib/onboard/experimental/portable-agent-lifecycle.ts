@@ -12,6 +12,7 @@ import {
   assertHermesPortableSandboxLifecycleAuthority,
   buildHermesPortableOpenShellCommandAuthority,
   buildHermesPortableOpenShellEnv,
+  HermesPortableLifecycleAuthorityError,
   recoverHermesPortableSandboxLifecycle,
   requalifyHermesPortableSandboxAuthority,
   retainRequalifiedOperatingAuthority,
@@ -40,6 +41,10 @@ import { resolveHermesPortableLifecycleLockOptions } from "./portable-lifecycle-
 import { defaultPortableDemoStateDir } from "./portable-runtime-receipt-readiness";
 
 export { defaultPortableDemoStateDir };
+export {
+  HermesPortableLifecycleAuthorityError,
+  type HermesPortableLifecycleAuthorityFailure,
+} from "./hermes-portable-lifecycle";
 
 /** Resolve the shared lifecycle-lock root for a retained Hermes portable sandbox. */
 export function hermesPortableLifecycleLockOptions(
@@ -200,23 +205,6 @@ export interface PortableAgentLifecycleAuthorityDeps {
   readonly stateDir?: string;
   readonly inspectReceiptDisposition?: (sandboxName: string) => PortableAgentReceiptDisposition;
   readonly readRegistry: (sandboxName: string) => SandboxEntry | null;
-}
-
-export type HermesPortableLifecycleAuthorityFailure =
-  | "registry-reader-unavailable"
-  | "active-registry-missing"
-  | "receipt-registry-disagreement"
-  | "pending-registry-conflict";
-
-/** Classify a receipt-qualified Hermes authority failure without exposing state details. */
-export class HermesPortableLifecycleAuthorityError extends Error {
-  constructor(
-    readonly reason: HermesPortableLifecycleAuthorityFailure,
-    message: string,
-  ) {
-    super(message);
-    this.name = "HermesPortableLifecycleAuthorityError";
-  }
 }
 
 function receiptDisposition(

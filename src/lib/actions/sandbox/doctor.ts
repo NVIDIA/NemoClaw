@@ -107,8 +107,10 @@ const sandboxCommandExecutor = createCliOpenShellSandboxCommandExecutor({ hostCw
 function hermesPortableDoctorReport(
   sandboxName: string,
   phase: "pending" | "configuring" | "active",
-  readiness: "ready" | "unavailable" | null,
+  readiness: "ready" | "unavailable" | "authority-unavailable" | null,
 ): DoctorReport {
+  if (readiness === "authority-unavailable")
+    return hermesPortableAuthorityFailureReport(sandboxName);
   const active = phase === "active";
   const checks: DoctorCheck[] = [
     {

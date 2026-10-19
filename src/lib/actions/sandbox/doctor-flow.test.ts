@@ -34,7 +34,7 @@ type DoctorHarnessOptions = {
   registryAgent?: "openclaw" | "hermes";
   registryOverrides?: Record<string, unknown>;
   withMcpLifecycleLock?: WithMcpLifecycleLock;
-  portableReadiness?: "ready" | "unavailable";
+  portableReadiness?: "ready" | "unavailable" | "authority-unavailable";
 };
 
 const requireDist = createRequire(import.meta.url);
@@ -94,6 +94,12 @@ function createDoctorHarness(
   const qualifyPortableAgentLifecycleAuthority =
     portableAgentLifecycle.qualifyPortableAgentLifecycleAuthority;
   const portableReadinessImplementations = {
+    "authority-unavailable": async () => {
+      throw new portableAgentLifecycle.HermesPortableLifecycleAuthorityError(
+        "receipt-registry-disagreement",
+        "untrusted authority diagnostic",
+      );
+    },
     ready: async () => undefined,
     unavailable: async () => {
       throw new Error("untrusted runtime diagnostic");
@@ -394,6 +400,31 @@ describe("runSandboxDoctor flow", () => {
     });
     expect(JSON.stringify(report)).not.toContain("untrusted runtime diagnostic");
     expect(harness.captureHostCommandSpy).not.toHaveBeenCalled();
+    expect(harness.recoverNamedGatewayRuntimeSpy).not.toHaveBeenCalled();
+  });
+
+  it("preserves authority failures discovered during Hermes readiness (#11892)", async () => {
+    const harness = createDoctorHarness("ollama-local", {
+      portableDisposition: hermesPortableDisposition("active"),
+      registryAgent: "hermes",
+      portableReadiness: "authority-unavailable",
+    });
+
+    const report = await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
+
+    expect(report).toMatchObject({
+      status: "fail",
+      checks: [
+        {
+          label: "Portable lifecycle authority",
+          status: "fail",
+          hint: expect.stringContaining("preserve the registry and lifecycle receipt files"),
+        },
+      ],
+    });
+    expect(JSON.stringify(report)).not.toContain("untrusted authority diagnostic");
+    expect(JSON.stringify(report)).not.toContain("recover");
+    expect(harness.assertHermesPortableAgentLifecycleAuthoritySpy).toHaveBeenCalledOnce();
     expect(harness.recoverNamedGatewayRuntimeSpy).not.toHaveBeenCalled();
   });
 
