@@ -70,6 +70,7 @@ export async function preparePolicyPresetResumeSelection(
     webSearchSupported?: boolean | null;
     env?: NodeJS.ProcessEnv;
     tierName?: string | null;
+    pendingPolicyPresets?: string[] | null;
   },
 ): Promise<PreparedPolicyResumeSelection> {
   const supportOptions = { webSearchSupported: options.webSearchSupported, agent: options.agent };
@@ -98,8 +99,19 @@ export async function preparePolicyPresetResumeSelection(
       name,
     })),
   ];
+  if (
+    options.pendingPolicyPresets?.some(
+      (name) =>
+        !selectablePolicyPresets.some((preset) => preset.name === name) &&
+        !customPolicyPresetNames.has(name),
+    )
+  ) {
+    throw new Error(
+      "The saved policy selection contains an unavailable preset; policy recovery is incomplete.",
+    );
+  }
   const clampedLivePolicyPresets = deps.policies.clampSetupPolicyPresetNames(
-    appliedPolicyPresets,
+    options.pendingPolicyPresets ?? appliedPolicyPresets,
     selectablePolicyPresets,
     supportOptions,
     customPolicyPresetNames,

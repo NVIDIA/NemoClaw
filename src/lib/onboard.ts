@@ -2473,8 +2473,8 @@ const {
   waitForSandboxControlPlaneReady: finalizationHandlerDeps.waitForSandboxControlPlaneReady,
   parsePolicyPresetEnv,
   env: process.env,
+  pendingSelection: onboardSession.createPendingPolicySelectionStore(registry.getSandbox),
 });
-
 const startRecordedStep = onboardRuntimeBoundary.startRecordedStep.bind(onboardRuntimeBoundary);
 const recordStepComplete = onboardRuntimeBoundary.recordStepComplete.bind(onboardRuntimeBoundary);
 const recordStepRejected = onboardRuntimeBoundary.recordStepRejected.bind(onboardRuntimeBoundary);

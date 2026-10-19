@@ -29,6 +29,64 @@ vi.mock("./policy-context-seed", () => ({ seedInitialPolicyContext }));
 vi.mock("./policy-preset-sync", () => ({ syncPresetSelection }));
 
 describe("onboarding policy application", () => {
+  it("keeps a refused selection pending and clears it only after live preset readback", async () => {
+    let pending = false;
+    const record = vi.fn(() => {
+      pending = true;
+    });
+    const clear = vi.fn(() => {
+      pending = false;
+    });
+    vi.mocked(policies.getAppliedPresets).mockResolvedValue([]);
+    const application = createOnboardPolicyApplication({
+      localInferenceProviders: [],
+      step: vi.fn(),
+      note: vi.fn(),
+      isNonInteractive: vi.fn(() => true),
+      prompt: vi.fn(async () => ""),
+      selectFromNumberedMenuOrExit,
+      makeOnboardCancelExit: (rollback, cleanup) => () => {
+        cleanup();
+        rollback.markCancelled();
+      },
+      sandboxCancelRollback: { markCancelled: vi.fn() },
+      useColor: false,
+      withSandboxMutationLock: async (_sandboxName, action) => await action(),
+      waitForSandboxReady: vi.fn(async () => ({
+        ready: true as const,
+        reason: "ready" as const,
+        error: null,
+      })),
+      waitForSandboxControlPlaneReady: vi.fn(async () => true),
+      parsePolicyPresetEnv: vi.fn(() => []),
+      env: {},
+      pendingSelection: { record, clear, hasPending: () => pending },
+    });
+
+    syncPresetSelection
+      .mockRejectedValueOnce(new Error("policy refused"))
+      .mockResolvedValue(undefined);
+    await expect(
+      application.setupPoliciesWithSelection("alpha", { selectedPresets: ["npm"] }),
+    ).rejects.toThrow("policy refused");
+    expect(record).toHaveBeenCalledWith("alpha", null, ["npm"]);
+    expect(clear).not.toHaveBeenCalled();
+    expect(pending).toBe(true);
+
+    await expect(
+      application.setupPoliciesWithSelection("alpha", { selectedPresets: ["npm"] }),
+    ).rejects.toThrow("live OpenShell policy does not confirm");
+    expect(pending).toBe(true);
+    expect(clear).not.toHaveBeenCalled();
+    vi.mocked(policies.getAppliedPresets).mockResolvedValue(["npm"]);
+    await expect(
+      application.setupPoliciesWithSelection("alpha", { selectedPresets: ["npm"] }),
+    ).resolves.toEqual(["npm"]);
+    expect(pending).toBe(false);
+    expect(clear).toHaveBeenCalledOnce();
+    vi.mocked(policies.getAppliedPresets).mockResolvedValue([]);
+  });
+
   it("runs policy application while holding the sandbox mutation lock", async () => {
     const events: string[] = [];
     const withSandboxMutationLock: OnboardPolicyApplicationDeps["withSandboxMutationLock"] = vi.fn(

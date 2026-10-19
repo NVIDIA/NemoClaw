@@ -68,6 +68,7 @@ import {
   isPolicyObject,
   isPresetPolicyMap,
   materializeLocalInferencePresetPorts,
+  materializeOpenClawPricingPins,
   type PolicyDocument,
   type PolicyObject,
   type PolicyValue,
@@ -2346,10 +2347,10 @@ async function applyPresetContent(
     }
   }
 
-  const effectivePresetContent = options.custom
+  let effectivePresetContent = options.custom
     ? namespaceCustomPresetContent(presetName, presetContent)
     : presetContent;
-  const presetEntries = extractPresetEntries(effectivePresetContent);
+  let presetEntries = extractPresetEntries(effectivePresetContent);
   if (!presetEntries) {
     console.error(`  Preset ${presetName} has no network_policies section.`);
     return false;
@@ -2380,6 +2381,22 @@ async function applyPresetContent(
       `  Could not read the current policy for sandbox '${sandboxName}'; refusing to apply '${presetName}' to avoid overwriting it.`,
     );
     return false;
+  }
+  if (!options.custom && presetName === "openclaw-pricing") {
+    try {
+      effectivePresetContent = materializeOpenClawPricingPins(
+        currentPolicy,
+        effectivePresetContent,
+      );
+      const materializedEntries = extractPresetEntries(effectivePresetContent);
+      if (!materializedEntries) throw new Error("The built-in OpenClaw pricing preset is invalid.");
+      presetEntries = materializedEntries;
+    } catch (error) {
+      console.error(
+        `  ${error instanceof Error ? error.message : "Cannot apply OpenClaw pricing."}`,
+      );
+      return false;
+    }
   }
   if (Object.prototype.hasOwnProperty.call(options, "expectedExistingNetworkPolicyContent")) {
     let collision: string | null = null;
@@ -2581,9 +2598,25 @@ async function applyPresets(sandboxName: string, presetNames: string[]): Promise
   const originalPolicy = merged;
 
   for (const preset of preparedPresets) {
-    const state = classifyPresetEntries(merged, preset.entries);
-    presetContents.push({ content: preset.content, name: preset.name, state });
-    merged = mergePresetIntoPolicy(merged, preset.entries);
+    let content = preset.content;
+    let entries = preset.entries;
+    if (preset.name === "openclaw-pricing") {
+      try {
+        content = materializeOpenClawPricingPins(merged, content);
+        const materializedEntries = extractPresetEntries(content);
+        if (!materializedEntries)
+          throw new Error("The built-in OpenClaw pricing preset is invalid.");
+        entries = materializedEntries;
+      } catch (error) {
+        console.error(
+          `  ${error instanceof Error ? error.message : "Cannot apply OpenClaw pricing."}`,
+        );
+        return false;
+      }
+    }
+    const state = classifyPresetEntries(merged, entries);
+    presetContents.push({ content, name: preset.name, state });
+    merged = mergePresetIntoPolicy(merged, entries);
   }
   if (uniquePresetNames.some((name) => name === "teams" || name === "outlook")) {
     try {
@@ -2874,6 +2907,14 @@ async function getGatewayPresets(
       content: await loadPresetForSandbox(sandboxName, preset.name, { sandbox, gatewayName }),
     });
   }
+  for (const source of sources) {
+    if (source.name !== "openclaw-pricing" || !source.content) continue;
+    try {
+      source.content = materializeOpenClawPricingPins(document, source.content);
+    } catch {
+      source.content = null;
+    }
+  }
   const builtins = inspectGatewayPresetNames({
     readPolicy: () => document,
     parseCurrentPolicy: parseCurrentPolicyOrEmpty,
@@ -2906,11 +2947,20 @@ async function getPresetContentGatewayState(
     runtimeSelection,
     timeoutMs,
   );
+  let expectedContent = presetContent;
+  try {
+    const parsed = YAML.parse(presetContent);
+    if (parsed?.preset?.name === "openclaw-pricing") {
+      expectedContent = materializeOpenClawPricingPins(document ?? "", presetContent);
+    }
+  } catch {
+    return null;
+  }
   return inspectPresetContentGatewayState({
     readPolicy: () => document ?? "",
     parseCurrentPolicy: parseCurrentPolicyOrEmpty,
     extractPresetEntries,
-    presetContent,
+    presetContent: expectedContent,
     policyKey,
   });
 }

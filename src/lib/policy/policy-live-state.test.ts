@@ -48,6 +48,8 @@ import {
   excludeBaselineEntry,
   inspectPolicyMutationContext,
   loadPresetForSandbox,
+  getGatewayPresets,
+  getPresetContentGatewayState,
   removePreset,
   restoreBaselineEntry,
   setPolicyDocument,
@@ -104,6 +106,34 @@ describe("live OpenShell policy mutations", () => {
     expect(await inspectPolicyMutationContext(sandboxName, "inspect policy")).not.toHaveProperty(
       "authority",
     );
+  });
+
+  it("applies and recognizes a pricing preset with the custom provider's exact pins", async () => {
+    const pins = ["34.117.59.81", "104.18.8.134"];
+    const endpoint = {
+      host: "openrouter.ai",
+      port: 443,
+      protocol: "rest",
+      enforcement: "enforce",
+      allowed_ips: pins,
+      rules: [{ allow: { method: "POST", path: "/api/v1/chat/completions" } }],
+    };
+    livePolicy = YAML.stringify({
+      version: 1,
+      network_policies: {
+        _provider_nemoclaw_custom_openrouter_v1: { name: "provider", endpoints: [endpoint] },
+        native_hosted_inference: { name: "native_hosted_inference", endpoints: [endpoint] },
+      },
+    });
+
+    await expect(applyPresets(sandboxName, ["openclaw-pricing"])).resolves.toBe(true);
+    const pricing = YAML.parse(livePolicy).network_policies["openclaw-pricing"].endpoints[1];
+    expect(pricing.allowed_ips).toEqual([...pins].sort());
+    expect(pricing.rules).toEqual([{ allow: { method: "GET", path: "/api/v1/models" } }]);
+    expect(await getGatewayPresets(sandboxName)).toContain("openclaw-pricing");
+    const content = await loadPresetForSandbox(sandboxName, "openclaw-pricing");
+    expect(content).not.toBeNull();
+    expect(await getPresetContentGatewayState(sandboxName, content!)).toBe("match");
   });
 
   it("pins recorded policy reads to the supplied operation target (#10514)", async () => {

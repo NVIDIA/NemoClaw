@@ -12,6 +12,10 @@ function policies(
 ) {
   const setupPresets = [
     "npm",
+    "pypi",
+    "huggingface",
+    "brew-balanced",
+    "openclaw-pricing",
     "brave",
     "tavily",
     "slack",
@@ -56,6 +60,28 @@ async function prepare(
 }
 
 describe("preparePolicyPresetResumeSelection web search reconciliation", () => {
+  it("retains a failed first-write selection instead of accepting an empty live policy", async () => {
+    const pendingPolicyPresets = [
+      "npm",
+      "pypi",
+      "huggingface",
+      "brew-balanced",
+      "openclaw-pricing",
+    ];
+    const result = await preparePolicyPresetResumeSelection(
+      { policies: policies({ applied: [] }) },
+      "alpha",
+      {
+        agent: "openclaw",
+        tierName: "balanced",
+        pendingPolicyPresets,
+        webSearchConfig: null,
+      },
+    );
+    expect(result.policyPresets).toEqual(pendingPolicyPresets);
+    expect(result.livePolicyPresetsNeedUpdate).toBe(true);
+  });
+
   it("replaces stale Brave policy with Tavily during a provider switch", async () => {
     const result = await prepare(["brave"], "tavily");
 

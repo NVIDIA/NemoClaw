@@ -69,6 +69,13 @@ export type OnboardPolicyApplicationDeps = Omit<
   waitForSandboxControlPlaneReady(sandboxName: string): Promise<boolean>;
   parsePolicyPresetEnv(raw: string): string[];
   env: NodeJS.ProcessEnv;
+  pendingSelection?: PendingPolicySelectionStore;
+};
+
+type PendingPolicySelectionStore = {
+  record: NonNullable<SetupPolicySelectionDeps["recordPendingSelection"]>;
+  hasPending: (sandboxName: string) => boolean;
+  clear: (sandboxName: string) => void;
 };
 
 type Preset = { name: string; access?: string };
@@ -132,6 +139,12 @@ export type SetupPolicySelectionOptions = {
 
 export type SetupPolicySelectionDeps = {
   rememberAppliedTier?: (sandboxName: string, tierName: string | null) => void;
+  recordPendingSelection?: (
+    sandboxName: string,
+    tierName: string | null,
+    presets: string[],
+  ) => void;
+  clearPendingSelection?: (sandboxName: string, presets: string[]) => Promise<void>;
   policies: PoliciesApi;
   tiers: TiersApi;
   localInferenceProviders: readonly string[];
@@ -157,6 +170,7 @@ export type SetupPolicySelectionDeps = {
 };
 
 export function createOnboardPolicyApplication(deps: OnboardPolicyApplicationDeps) {
+  const pendingSelection = deps.pendingSelection;
   const promptHelpers = () =>
     createPolicySelectionPromptHelpers({
       ...deps,
@@ -174,6 +188,15 @@ export function createOnboardPolicyApplication(deps: OnboardPolicyApplicationDep
     initialSelected: string[],
   ) => promptHelpers().presetsCheckboxSelector(allPresets, initialSelected);
   const setupDeps: SetupPolicySelectionDeps = {
+    recordPendingSelection: pendingSelection?.record,
+    clearPendingSelection: async (sandboxName, presetNames) => {
+      if (!pendingSelection?.hasPending(sandboxName)) return;
+      const applied = new Set(await policies.getAppliedPresets(sandboxName));
+      if (presetNames.some((name) => !applied.has(name))) {
+        throw new Error("The live OpenShell policy does not confirm every selected preset.");
+      }
+      pendingSelection.clear(sandboxName);
+    },
     rememberAppliedTier: (sandboxName, tierName) => {
       const receipt = readAppliedPolicySelection({
         schemaVersion: 1,
@@ -529,9 +552,11 @@ async function setupPoliciesWithSelectionInner(
     options.revalidateSandboxIdentity?.(
       `reapply selected policy presets to sandbox '${sandboxName}'`,
     );
+    deps.recordPendingSelection?.(sandboxName, requestedTierName, resumeSelection);
     await deps.syncPresetSelection(sandboxName, currentAppliedPresets, resumeSelection);
     await requireSandboxReady(deps, sandboxName, "after");
     deps.rememberAppliedTier?.(sandboxName, requestedTierName);
+    await deps.clearPendingSelection?.(sandboxName, resumeSelection);
     if (onSelection) onSelection(resumeSelection);
     return resumeSelection;
   }
@@ -610,9 +635,11 @@ async function setupPoliciesWithSelectionInner(
         options.revalidateSandboxIdentity?.(
           `apply retained policy presets to sandbox '${sandboxName}'`,
         );
+        deps.recordPendingSelection?.(sandboxName, tierName, retainedPresets);
         await deps.syncPresetSelection(sandboxName, currentAppliedPresets, retainedPresets);
         await requireSandboxReady(deps, sandboxName, "after");
         deps.rememberAppliedTier?.(sandboxName, tierName);
+        await deps.clearPendingSelection?.(sandboxName, retainedPresets);
         if (onSelection) onSelection(retainedPresets);
         return retainedPresets;
       }
@@ -698,9 +725,11 @@ async function setupPoliciesWithSelectionInner(
     options.revalidateSandboxIdentity?.(
       `apply non-interactive policy presets to sandbox '${sandboxName}'`,
     );
+    deps.recordPendingSelection?.(sandboxName, tierName, chosen);
     await deps.syncPresetSelection(sandboxName, currentAppliedPresets, chosen);
     await requireSandboxReady(deps, sandboxName, "after");
     deps.rememberAppliedTier?.(sandboxName, tierName);
+    await deps.clearPendingSelection?.(sandboxName, chosen);
     if (onSelection) onSelection(chosen);
     return chosen;
   }
@@ -748,6 +777,7 @@ async function setupPoliciesWithSelectionInner(
     if (interactiveChoiceNames.has(preset.name)) accessByName[preset.name] = preset.access;
   }
   options.revalidateSandboxIdentity?.(`apply policy presets to sandbox '${sandboxName}'`);
+  deps.recordPendingSelection?.(sandboxName, tierName, interactiveChoice);
   await deps.syncPresetSelection(
     sandboxName,
     currentAppliedPresets,
@@ -756,6 +786,7 @@ async function setupPoliciesWithSelectionInner(
   );
   await requireSandboxReady(deps, sandboxName, "after");
   deps.rememberAppliedTier?.(sandboxName, tierName);
+  await deps.clearPendingSelection?.(sandboxName, interactiveChoice);
   if (onSelection) onSelection(interactiveChoice);
   return interactiveChoice;
 }
