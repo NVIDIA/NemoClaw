@@ -424,8 +424,8 @@ The selected adapter's model schema and implementation own the meanings, accepte
 These settings do not resize a managed inference server; configure that service's limits separately.
 The SDK does not infer native support from an adapter name or from accepting the YAML structure.
 
-The managed Ollama examples set the service's `serving.contextTokens` to `32768`.
-That suits OpenClaw; [Hermes needs at least `64000`](#size-the-context-for-hermes).
+The managed Ollama examples for OpenClaw set the service's `serving.contextTokens` to `32768`.
+The [managed Hermes example](../examples/managed-hermes.yaml) sets `65536`, because [Hermes needs at least `64000`](#size-the-context-for-hermes).
 An operator-reported OpenClaw prompt used 19,947 tokens in one setup, before allowing space for a reply.
 Size the model, KV cache, and GPU memory for the selected context.
 The OpenClaw adapter owns how it uses the context window; NemoClaw does not assess an OpenClaw route's context budget.
@@ -435,10 +435,13 @@ The OpenClaw adapter owns how it uses the context window; NemoClaw does not asse
 The pinned Hermes Agent requires a model context window of at least 64,000 tokens.
 It reads the window from the model server; route settings do not change it.
 For a Hermes route to managed vLLM or Ollama, set `serving.contextTokens` between `64000` and the schema maximum, `65536`, and choose a model that supports that context.
-The models in the managed Ollama examples and the [Spark vLLM example](../examples/spark/vllm.yaml), `qwen3:0.6b` and `Qwen/Qwen3-4B`, have 40,960-token native context windows and cannot serve Hermes.
+The [managed Hermes example](../examples/managed-hermes.yaml) serves `nemotron-3-nano:4b`, whose 256K-token native window covers that range.
+`qwen3:0.6b` and `Qwen/Qwen3-4B`, used by the other managed Ollama examples and the [Spark vLLM example](../examples/spark/vllm.yaml), have 40,960-token native windows and cannot serve Hermes.
 In one operator test, Hermes answered a request through cluster vLLM serving `Qwen/Qwen3-4B-Instruct-2507` with `serving.contextTokens: 65536`; that test does not qualify the model.
 
-Plan and apply warn when a Hermes route uses a managed vLLM or Ollama service whose `serving.contextTokens` is below `64000`; the warning does not reject the configuration.
+NemoClaw doesn't check the window for Hermes.
+Hermes checks the window the model server reports when the agent starts, and its error names the server setting to raise, which for a managed service is `serving.contextTokens`.
+Ollama reports the model's native window rather than `serving.contextTokens`, so Hermes doesn't reject a smaller managed Ollama window, and longer conversations are cut off at that window instead ([current limits](limits.md#inference)).
 
 ## Authenticate Hermes through the Provider
 

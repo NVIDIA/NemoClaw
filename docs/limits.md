@@ -39,6 +39,7 @@ Other pages state a limit where it affects a procedure and link the same issue.
 | Limit | Issue |
 |---|---|
 | Fabric reports no runtime status, so a stopped agent runtime is found only at its [next invocation](usage.md#agent-runtimes-during-apply) | [NVIDIA/NeMo-Fabric#420](https://github.com/NVIDIA/NeMo-Fabric/issues/420) |
+| Hermes doesn't reject a managed Ollama window below its 64,000-token minimum, because Ollama reports the model's native window; see [sizing the context for Hermes](inference.md#size-the-context-for-hermes) | [NousResearch/hermes-agent#141641](https://github.com/NousResearch/hermes-agent/issues/141641) |
 | Managed llama.cpp, Model Router and Gemini | [#12035](https://github.com/NVIDIA/NemoClaw/issues/12035) |
 | Guides for named hosted providers such as NVIDIA, OpenAI, Anthropic, OpenRouter and Nous | [#12038](https://github.com/NVIDIA/NemoClaw/issues/12038) |
 | Managed NVIDIA NIM service | [#12649](https://github.com/NVIDIA/NemoClaw/issues/12649) |

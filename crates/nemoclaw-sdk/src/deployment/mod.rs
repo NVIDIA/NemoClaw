@@ -4,7 +4,6 @@
 #[cfg(test)]
 mod tests;
 
-mod context_advisory;
 mod export;
 mod opentofu;
 mod plan;
@@ -192,9 +191,6 @@ impl Deployment {
         document.validate()?;
         if cancel.is_cancelled() {
             return Err(Error::Cancelled);
-        }
-        for message in context_advisory::context_warnings(&document)? {
-            (self.progress)(Progress::Warning { message });
         }
         let (bundle, store) = self.open()?;
         let prior = store.load()?;
