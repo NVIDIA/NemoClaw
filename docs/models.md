@@ -76,10 +76,10 @@ There are no shell hooks, extra command arguments, or implicit model-specific se
 
 Snapshot directories include both repository and revision in their identity.
 Each directory stores one `.nemoclaw-manifest.json` with format `version: 1`, repository, revision, and expected files.
-Each file entry contains its name, size, SHA-256, and a `modified` timestamp after verification; `null` means unfinished.
+Each file entry contains its name, size, SHA-256, and a `modified` timestamp recorded once Hugging Face's client has downloaded it and its size matches; `null` means unfinished.
 Download progress does not change the model's identity.
 
-The runtime saves the manifest atomically after each file passes checksum verification.
+The runtime saves the manifest atomically once the download completes.
 Interrupted downloads retain partial files for explicit apply to resume.
 If a file was renamed before its manifest update was saved, apply verifies its checksum again without downloading it.
 There are no separate per-file verification records or completion files.
@@ -115,6 +115,7 @@ GB200/GB300 profiles describe one observed GPU in a Grace Blackwell system; they
 | Profile | Hardware identity | Host architecture |
 |---|---|---|
 | `dgx-spark` | GB10 with unified host/GPU memory | ARM64 |
+| `rtx-spark` | RTX Spark N1X with unified host/GPU memory | ARM64 |
 | `dgx-station` | GB300 GPU on ARM64; intended for current DGX Station | ARM64 |
 | `gb200`, `gb300`, `gh200` | Corresponding Grace Blackwell or Grace Hopper GPU family | ARM64 |
 | `h100`, `h200`, `a100`, `a10`, `a10g`, `a40` | Corresponding NVIDIA GPU family | Explicit `amd64` or `arm64` |
@@ -127,6 +128,11 @@ They check GPU family and CPU architecture, not chassis identity; `dgx-station` 
 GPU-only profiles require `architecture` because GPU identity does not determine the host CPU.
 There are no `spark`, `gb100`, or B100/B200/B300 profile names.
 
+The `rtx-spark` profile accepts the base `NVIDIA RTX Spark N1X` identity and the documented 5120-core and 6144-core GPU names from NVIDIA's [GPU identification guide](https://docs.nvidia.com/rtx-spark/rtx-spark-porting-guide/latest/gpu-identification.html) and [pinned system-readiness reference](https://github.com/NVIDIA/NemoClaw/blob/4ce30c292c0a518ee713f2d10460d473bb904637/docs/reference/system-readiness.mdx).
+Its compute-capability minimum is 12.1, as listed in NVIDIA's [CUDA GPU table](https://developer.nvidia.com/cuda/gpus).
+The profile does not assume that every N1X configuration has 128 GB of memory; the service's serving budget and host reserve must fit observed RAM.
+Accepting this hardware contract does not qualify a Windows/WSL deployment or establish successful model inference.
+
 For example, declare an H100 on an AMD64 host and a fixed serving budget:
 
 ```yaml
@@ -138,7 +144,7 @@ memory:
   gpuMemoryGiB: 48
 ```
 
-Every named profile requires an observed compute capability that meets its catalog minimum, including 12.1 for `dgx-spark`.
+Every named profile requires an observed compute capability that meets its catalog minimum, including 12.1 for `dgx-spark` and `rtx-spark`.
 The runtime queries compute capability independently of GPU memory counters on its execution host.
 Missing, unsupported, or malformed compute capability stops the operation.
 
@@ -146,7 +152,7 @@ The profile's memory architecture determines capacity accounting:
 
 | Memory architecture | Serving budget and observations |
 |---|---|
-| Unified (`dgx-spark`) | CPU and GPU share system RAM; use host total/available memory and preserve the host reserve. Dedicated framebuffer counters may report `N/A`. |
+| Unified (`dgx-spark`, `rtx-spark`) | CPU and GPU share system RAM; use host total/available memory and preserve the host reserve. Dedicated framebuffer counters may report `N/A`. |
 | Dedicated (the other current profiles) | Use GPU total/free counters for serving and measure host RAM separately, including on ARM64 Grace systems. Unsupported GPU counters reject the configuration; host RAM is never substituted. |
 
 The collectors preserve an explicit unsupported-counter result; they do not infer unified memory from `N/A` or from a GPU name.
@@ -234,7 +240,7 @@ The [runtime reporter](../crates/nemoclaw-runtime/src/vllm/runtime/mod.rs), [sup
 ## Configure Nemotron on an AMD64 GPU Host
 
 [The Nemotron example](../examples/nemotron-amd64.yaml) declares the pinned NVIDIA Nemotron 3.5 Lightning 30B-A3B NVFP4 model, served name, native parsers, 65,536-token context, one sequence, and 4,096-token batch.
-Its source pins and adaptation are recorded in the [AMD64 runtime notice](../runtimes/vllm-amd64/NOTICE.md).
+Its source pins and adaptation are recorded in the [vLLM runtime notice](../runtimes/vllm/NOTICE.md).
 It uses ordinary `kind: vllm` serving with no preparation recipe.
 
 The example requires an existing OpenShell gateway and a Linux AMD64 Docker host reached through SSH.

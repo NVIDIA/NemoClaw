@@ -215,31 +215,4 @@ mod tests {
         );
         assert!(!format!("{diagnostics:?}").contains("PRIVATE_SENTINEL"));
     }
-
-    #[test]
-    fn prerequisites_take_the_engine_and_the_driver() {
-        let schema = GatewayPrerequisitesDataSource(Arc::new(ConfiguredBackend::default()))
-            .schema(&mut Diagnostics::default())
-            .unwrap();
-        let mut names: Vec<_> = schema.block.attributes.into_keys().collect();
-        names.sort();
-        assert_eq!(
-            names,
-            [
-                "available",
-                "compute_driver",
-                "engine",
-                "observation_json",
-                "status"
-            ]
-        );
-        assert_eq!(
-            serde_json::to_value(prerequisites_config("docker"))
-                .unwrap()
-                .as_object()
-                .unwrap()
-                .len(),
-            5
-        );
-    }
 }

@@ -7,7 +7,7 @@ The desired-state SDK, schema, and state format do not promise compatibility wit
 The current CLI has no general state adoption or migration command.
 Keep the earlier deployment's tooling, configuration, and state while evaluating a separate v1 deployment.
 
-There is no rehearsed upgrade, native-data transfer or rollback procedure yet ([#12639](https://github.com/NVIDIA/NemoClaw/issues/12639)).
+NemoClaw has no upgrade, native-data transfer or rollback procedure: native data belongs to the harness, and moving its storage belongs to the platform.
 The evaluation steps below create a separate deployment; they do not provide an in-place upgrade or data conversion.
 
 ## Map the User Task
@@ -22,11 +22,11 @@ The evaluation steps below create a separate deployment; they do not provide an 
 | Configure agents, dashboards, tools, or heartbeats | [Agent runtimes](agents.md) and [interfaces](interfaces.md) |
 | Integrate the TypeScript lifecycle package | [Rust SDK](sdk.md); no compatible TypeScript package is provided |
 | Install policy presets, approve network requests interactively, or explain policy to an agent | Declare the [isolated preset or an explicit policy](sandbox-network.md#choose-a-policy); managed approval and explanation: [#12651](https://github.com/NVIDIA/NemoClaw/issues/12651) |
-| Use Okta/Entra runtime identity and OAuth refresh | [#12652](https://github.com/NVIDIA/NemoClaw/issues/12652); provider authentication references do not replace it |
-| Snapshot, restore, upload/download, or transfer history | No v1 equivalent yet ([#12639](https://github.com/NVIDIA/NemoClaw/issues/12639)); see [agent-data preservation](state.md#configuration-export-and-agent-data) |
+| Use Okta/Entra runtime identity and OAuth refresh | [Register an OpenShell OAuth-refresh provider](oauth-refresh.md); its manual attachments and refresh material are outside exported deployment YAML |
+| Snapshot, restore, upload/download, or transfer history | The platform owns backup and transfer of [mounted agent-data volumes](state.md#keep-agent-files-on-mounted-volumes); native conversation continuity has harness-specific limits |
 | Manage messaging, MCP servers, or arbitrary plugins | Messaging: [#12037](https://github.com/NVIDIA/NemoClaw/issues/12037); MCP servers: [#12137](https://github.com/NVIDIA/NemoClaw/issues/12137); see [additional agent integrations](agents.md#additional-agent-integrations) |
 | Provision a model router, managed NIM/llama.cpp, or distributed inference | Model Router and llama.cpp: [#12035](https://github.com/NVIDIA/NemoClaw/issues/12035); distributed inference: [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641); managed NIM: [#12649](https://github.com/NVIDIA/NemoClaw/issues/12649) |
-| Install a telemetry collector or reuse Deep Agents trace-export setup | [#12144](https://github.com/NVIDIA/NemoClaw/issues/12144); [OpenClaw tracing](agents.md#openclaw-tracing) selects an existing collector |
+| Install a telemetry collector or reuse Deep Agents trace-export setup | [#12144](https://github.com/NVIDIA/NemoClaw/issues/12144); [Hermes Relay tracing](agents.md#hermes-relay-tracing) writes trace artifacts in the sandbox |
 
 ## Keep Deployment Identities Separate
 
@@ -53,16 +53,17 @@ These checks are not a conversion mechanism.
    Preview any v1 teardown separately and retain data needed for investigation before destroying its sandbox.
 
 Continuing to use an untouched earlier deployment is not a rollback of data written in v1.
-Transferring those changes back to the earlier runtime is tracked in [#12639](https://github.com/NVIDIA/NemoClaw/issues/12639).
+NemoClaw has no procedure to transfer those changes back to the earlier runtime.
 Do not retire the old deployment when the required native-data backup, transfer, or return path is unverified.
 
 ## Preserve Data before Retirement
 
 Export is a configuration operation; it does not back up agent files or history.
-**Destroy deletes sandbox files and conversation history.**
+**Destroy deletes sandbox writable layers and in-memory conversations.**
+Caller-supplied mounted volumes remain under platform control; file retention does not establish native conversation continuity.
 Read [state and retention](state.md) before retiring either deployment.
 
-Backup and restore of native agent data are tracked in [#12639](https://github.com/NVIDIA/NemoClaw/issues/12639).
+The platform owns backup, restore and transfer of mounted native data; see the [per-harness retention limits](state.md#choose-what-to-retain-for-each-harness).
 Retain the earlier deployment until the required continuity has been verified.
 
 ## Find Earlier Documentation

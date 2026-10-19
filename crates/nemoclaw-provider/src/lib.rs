@@ -12,14 +12,15 @@ mod discovery;
 mod executable;
 mod gateway;
 pub mod hardware;
+mod host_container_health;
 mod host_engine;
+mod host_image;
 pub mod kubernetes;
 mod ollama_model;
 mod provider;
 mod readiness;
 mod runtime_contract;
-mod runtime_image;
-pub use provider::{GatewayInstallation, HostProvider, NemoClawProvider, ServiceProvider};
+pub use provider::{GatewayInstallation, HostProvider, ServiceProvider};
 
 /// The definition this crate implements for a resource kind, whichever
 /// provider serves it.

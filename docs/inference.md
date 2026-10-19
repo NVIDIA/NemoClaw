@@ -85,6 +85,7 @@ The current tests establish configuration, compilation, API attachment, and drif
 | You already operate a compatible endpoint or have a hosted API | External `endpoint`, matching `provider`/`api`, and a credential reference when required | [OpenClaw external endpoint](../examples/inference-tuning.yaml), [Hermes authentication](../examples/hermes-auth.yaml) |
 | NemoClaw should run Ollama on a declared NVIDIA GPU | Declare a service with `kind: ollama`, hardware requirements, a pinned runtime image, a model name and digest, memory, and serving settings | [Managed Ollama](#run-managed-ollama) |
 | Ollama and its model already run locally and must remain external | Declare a service with `kind: ollamaProxy` to manage an authenticated proxy for one installed model digest | [Proxy configuration](#use-external-ollama-through-a-managed-proxy) |
+| You run a model server in a Kubernetes or OpenShift gateway's cluster | External `endpoint` naming its Service, `http://<service>.<namespace>.svc.cluster.local:<port>/v1`, and an optional credential reference; follow [in-cluster model servers](kubernetes.md#use-a-model-server-in-the-cluster) | [In-cluster vLLM](../examples/kubernetes/in-cluster-vllm.yaml), [in-cluster Ollama](../examples/kubernetes/in-cluster-ollama.yaml) |
 | NemoClaw should download and serve a pinned public model with vLLM | Declare a service with `kind: vllm`, the runtime image, repository revision, capacity, and serving settings; see [managed models](models.md) | [Generic vLLM](../examples/spark/vllm.yaml) |
 | The Docker daemon running a managed service is reached through SSH | Set `placement.engine` to the SSH endpoint, then declare the private network and `publication` endpoint on the named service; follow [remote service](remote-service.md) | [Remote vLLM](../examples/spark/remote-vllm.yaml) |
 | The model requires preparation tools or runtime patches | Package reviewed tools in an immutable image and declare an [inline recipe](recipes.md) | [Inline Qwen3.8 recipe](../examples/spark/spark-inline.yaml) |
@@ -136,12 +137,12 @@ OpenShell authorizes native endpoint access and substitutes the provider credent
 | `anthropic` | `anthropic-messages` |
 
 An explicit `api` can select `openai-completions`, `openai-responses`, or `anthropic-messages` with the matching provider transport.
-For example, configure `api: openai-responses` explicitly when an adapter expects the Responses protocol.
+NemoClaw uses it to read the endpoint's model catalog.
 The harness name does not change these defaults.
-The selected image's Fabric metadata supplies adapter capabilities; known conflicts stop planning, and missing metadata leaves compatibility unverified.
-Fabric validates its own configuration against the installed descriptor.
-The SDK forwards the selected protocol as the public model `api` extension.
-Fabric validates that extension against its canonical descriptor; a missing extension contract remains unknown, while an explicitly excluded protocol is unsupported.
+
+Agents use the protocol their harness's adapter selects for the provider transport.
+Fabric v0.5.0 has no per-model API setting, so an endpoint that accepts only a protocol the adapter doesn't select can't serve that agent ([#13320](https://github.com/NVIDIA/NemoClaw/issues/13320)).
+Fabric validates the rest of its configuration when the agent is configured.
 
 Use `provider: anthropic` with `anthropic-messages` and `provider: openai` with either OpenAI API.
 The provider name is the local reference used by routes; it does not select a vendor.
@@ -152,8 +153,9 @@ For example, a Nous endpoint using the OpenAI protocol still uses `provider: ope
 Before writing its provider declaration, obtain the base URL, API, exact model ID, required credential, and model limits from the endpoint operator.
 Confirm that the selected image's Fabric descriptor accepts that API.
 Catalog metadata and `/models` responses do not establish successful inference.
-For a credentialed endpoint, declare an HTTPS URL and an environment reference; [credential ownership](security.md#credentials-and-authentication) describes where the resolved key persists.
-Uncredentialed HTTP inference endpoints must use literal private or loopback addresses.
+For a credentialed endpoint, declare an environment reference; [credential ownership](security.md#credentials-and-authentication) describes where the resolved key persists.
+Prefer HTTPS: over plain HTTP, the key crosses the network unencrypted.
+OpenShell decides which inference destinations a sandbox can reach.
 
 The endpoint must be reachable from the sandbox's OpenShell proxy, not just from your client terminal.
 A loopback URL refers to the network namespace making the request.
@@ -163,6 +165,17 @@ Use the route's `overrides.model` for the upstream model ID.
 Native agents send the configured model ID to the native endpoint using an OpenShell placeholder credential; they do not need the real upstream key in their YAML or sandbox environment.
 Confirm a native agent reply after apply using [verification levels](#verify-the-result).
 Guides for named hosted providers are tracked in [#12038](https://github.com/NVIDIA/NemoClaw/issues/12038).
+
+### Trust a Custom Certificate Authority
+
+An endpoint whose certificate comes from an internal certificate authority, such as an organization's LiteLLM proxy, needs that CA trusted in two places:
+
+- **The machine running NemoClaw** reads the endpoint's model catalog during onboarding, using its system trust store.
+  Add the CA there, or set `SSL_CERT_FILE` to a PEM bundle that includes it in the environment that runs `nemoclaw`.
+- **The OpenShell gateway and sandboxes** carry the inference traffic, so their images must trust the CA too.
+  NemoClaw does not configure that trust; OpenShell uses its images' own trust stores.
+
+If the machine running NemoClaw does not trust the certificate, onboarding reports that the server's certificate is not trusted rather than that the endpoint is unreachable.
 
 ## Use an Image Built from This Revision
 
@@ -181,19 +194,16 @@ Use the [hardware profile reference](models.md#choose-a-hardware-profile) for ot
 Local placement uses the managed gateway's Docker engine; [SSH placement](remote-service.md) uses the same `placement` and `publication` fields as vLLM.
 
 Build the supervisor image from this checkout using the [runtime build prerequisites](build.md#build-a-runtime-image).
-From the repository root, select the command matching the build host:
+From the repository root, on a Linux ARM64 or AMD64 build host matching the model host:
 
 ```sh
-# Linux ARM64:
 cargo run -p nemoclaw-build --no-default-features -- runtime runtimes/ollama/build.json
-# Linux AMD64:
-cargo run -p nemoclaw-build --no-default-features -- runtime runtimes/ollama-amd64/build.json
 ```
 
-Each command builds and loads a local image and retains its OCI archive under `.build/ollama` or `.build/ollama-amd64`.
+The command builds and loads a local image for the build host's architecture and retains its OCI archive under `.build/ollama`.
 Use the immutable image digest from that build in `spec.services.<name>.image` and make the image available on the selected engine.
 The example image digest is a placeholder; a bare upstream `ollama/ollama` image lacks the required supervisor.
-The [ARM64 notice](../runtimes/ollama/NOTICE.md) and [AMD64 notice](../runtimes/ollama-amd64/NOTICE.md) identify the pinned upstream image and retained sources.
+The [runtime notice](../runtimes/ollama/NOTICE.md) identifies the pinned upstream image and retained sources.
 
 The provider uses `provider: openai` and `api: openai-completions`.
 Select an adapter whose Fabric contract accepts that protocol.
@@ -272,12 +282,13 @@ Do not supply `inferenceProviders[].credential` for a managed service.
 
 The supervisor creates a mode-0600 key in `/credentials/inference-key` on a separate credential volume under its own writer lock and reuses it after restart.
 It passes the key only to the vLLM child process through `VLLM_API_KEY`, then verifies `/v1/models` through the route filter below, using bearer authentication, before reporting readiness.
-Recipe environment maps cannot set `VLLM_API_KEY`.
+Recipe environment maps cannot set `VLLM_API_KEY`, or `VLLM_SERVER_DEV_MODE`, which enables vLLM's unauthenticated development routes.
 The OpenShell provider reads the key through the verified runtime container identity and installs it in OpenShell's provider credential store.
 Agent requests use their OpenShell placeholder credential.
 YAML, plans, container launch settings, and OpenTofu state contain no generated key.
 The runtime's root user and Docker administrators can read the key and child environment.
 The key authenticates the `/v1` requests below and does not provide TLS.
+vLLM's key protects only some path prefixes, and its [security guide](https://github.com/vllm-project/vllm/blob/v0.32.0/docs/usage/security.md) asks deployers to allowlist routes in a reverse proxy; for a managed service, the supervisor is that proxy.
 In bearer mode, the supervisor serves the published port with HTTP/1.1 and forwards only these requests to vLLM:
 
 - `GET /v1/models` and `POST` to `/v1/chat/completions`, `/v1/completions`, `/v1/responses`, `/v1/messages`, or `/v1/messages/count_tokens`, each of which requires the key.
@@ -294,7 +305,7 @@ A client must send its request headers within 30 seconds.
 A client that closes its sending side before the response arrives is treated as disconnected.
 The supervisor serves at most 256 connections at a time, or fewer when the container's maximum open-file limit is below 640; later connections wait to be accepted.
 If the route filter fails, the supervisor stops vLLM and reports the failure.
-This restriction closes an upstream gap: the [native vLLM authentication middleware](https://github.com/vllm-project/vllm/blob/v0.27.1/vllm/entrypoints/serve/utils/server_utils.py) leaves `/invocations` unguarded, and an operator's test of an earlier image returned a chat completion through that route without a key.
+This restriction closes an upstream gap: the [native vLLM authentication middleware](https://github.com/vllm-project/vllm/blob/v0.32.0/vllm/entrypoints/serve/middleware/authenticate.py) leaves `/invocations` unguarded, and an operator's test of an earlier image returned a chat completion through that route without a key.
 Omitting `authentication: bearer` leaves the upstream route behavior unchanged; vLLM then serves the published port itself.
 Keep the whole listener on a trusted private network, including when `authentication: bearer` is enabled.
 For Docker, restrict access through the host's network controls.
@@ -306,6 +317,30 @@ Retire model data and credentials separately; removing the model volume does not
 To retire both with the deployment, see [Remove Retained Resources](usage.md#remove-retained-resources).
 Changing an existing service to enable authentication follows the normal runtime replacement rules; YAML does not reconfigure a running server in place.
 
+### Supply the Key on Other Platforms
+
+The generated key lives in a Docker volume, so NemoClaw generates keys only for services it places on Docker.
+On another platform, such as Kubernetes or Podman, supply the key yourself and keep it in the platform's secret store.
+With `authentication` set, `vllm_runtime`'s `launch.key_env` names the variable to set, `NEMOCLAW_INFERENCE_KEY`.
+When it is set, the runtime uses that key instead of generating one, needs no credential volume, and passes the key to vLLM only as `VLLM_API_KEY`.
+The key must be 16 to 4096 printable characters without whitespace.
+A supplied key without `authentication` stops startup, so the server never runs unauthenticated by mistake.
+
+On Kubernetes, for example, store the key in a Secret and set the variable from it:
+
+```yaml
+env:
+  - name: NEMOCLAW_INFERENCE_KEY
+    valueFrom:
+      secretKeyRef:
+        name: vllm-inference-key
+        key: key
+```
+
+Register the server with OpenShell using the same key: give `openshell_inference` a `server` object whose `credential_env` names a variable holding the key where OpenTofu runs.
+Readiness on those platforms is the platform's job; point its readiness probe at `GET /health`, which needs no key.
+In YAML, set the provider's `credential` to that variable; [Use a Model Server in the Cluster](kubernetes.md#use-a-model-server-in-the-cluster) shows a Kubernetes example.
+
 ## Use External Ollama through a Managed Proxy
 
 Run the proxy on the same Linux Docker host as the existing Ollama daemon and installed model.
@@ -315,7 +350,6 @@ Ollama must listen only on a loopback address.
 NemoClaw observes its model inventory and never installs, stops, or deletes the daemon or model.
 The proxy exposes `openai-completions`; its service contract does not restrict the harness identifier.
 The selected adapter must accept that protocol and model configuration.
-For Pi models absent from its native registry, supply `overrides.settings.model_metadata` as shown in the [Pi example](../examples/fabric-pi.yaml).
 
 Use a Docker image store that records a repository digest for locally built images, as described in the [image build prerequisites](build.md#build-agent-images).
 Build the proxy image from the repository root, explicitly selecting the native host platform (`linux/arm64` below, or `linux/amd64`):
@@ -371,49 +405,36 @@ When retiring the deployment, remove the retained credential volume with [Remove
 
 ## Tune OpenClaw's Primary Route
 
-Set the public model output limit with `maxTokens`; put native model settings in `overrides.settings`.
+Set the public model output limit with `maxTokens`.
 The [tuning example](../examples/inference-tuning.yaml) uses:
 
 ```yaml
 overrides:
   model: example-reasoning-model
   maxTokens: 8192
-  settings:
-    model_metadata:
-      contextWindow: 65536
-      reasoning: true
-    reasoning_effort: high
 ```
 
-The SDK forwards `settings` unchanged into the public Fabric model configuration.
+A route can also set `temperature` and `topP`, which the SDK passes to Fabric's `temperature` and `top_p`.
+`harnessProvider` sets the Fabric model provider the harness uses; without it, the SDK uses the inference provider's API family, `openai` or `anthropic`.
+For example, Hermes's `custom` provider turns reasoning off by default, which a hosted reasoning model may need to answer within Fabric's invocation deadline.
+Fabric validates these values when it configures the agent.
+
+The pinned OpenClaw adapter takes no native model settings, so its routes leave `overrides.settings` unset.
+For adapters that take them, the SDK forwards `settings` unchanged into the public Fabric model configuration, keeping nested null values intact.
 The selected adapter's model schema and implementation own the meanings, accepted values, and defaults.
 These settings do not resize a managed inference server; configure that service's limits separately.
 The SDK does not infer native support from an adapter name or from accepting the YAML structure.
 
-The managed Ollama examples set both the service's `serving.contextTokens` and the route's `overrides.settings.model_metadata.contextWindow` to `32768`.
+The managed Ollama examples set the service's `serving.contextTokens` to `32768`.
 That suits OpenClaw; [Hermes needs at least `64000`](#size-the-context-for-hermes).
-An operator-reported prompt used 19,947 tokens in one setup, before allowing space for a reply.
-Keep the two limits aligned and size the model, KV cache, and GPU memory for the selected context.
-
-For an OpenClaw route to managed vLLM or Ollama, plan and apply compare the smaller of the service context and the effective route context window with `20000` plus the effective reply allowance.
-At the pinned adapter revision, omitted route context defaults to `32768`; `overrides.settings.model_metadata.contextWindow` replaces that default.
-The reply allowance defaults to `4096`; `overrides.maxTokens` replaces that default, and `overrides.settings.model_metadata.maxTokens` takes precedence over both.
-A smaller available context produces a budget warning; explicit token metadata that cannot be assessed instead produces a warning without substituting defaults.
-The `20000`-token prompt allowance is an estimate from the report; longer prompts and conversations need more.
-Plan and apply also warn whenever the effective route context window exceeds the managed service's `serving.contextTokens`, even when the initial prompt and reply allowance fit.
-For example, a service context of `24576` with the default route window of `32768` can permit longer conversations to exceed the server limit.
-Set `overrides.settings.model_metadata.contextWindow` no higher than the service context, or increase the service context and size memory for it.
-This mismatch warning can appear alongside the budget warning, or alongside the cannot-assess warning when the route window is valid but the reply allowance is not.
-The advisories appear in text output and the JSON result's `warnings` field; they neither reject the configuration nor measure the current prompt or available memory.
-These budgets do not qualify a model, GPU, or deployment path.
-
-Pi's native model metadata likewise belongs in `overrides.settings.model_metadata`; see the [Pi example](../examples/fabric-pi.yaml).
-Nested null values remain intact in opaque native settings.
+An operator-reported OpenClaw prompt used 19,947 tokens in one setup, before allowing space for a reply.
+Size the model, KV cache, and GPU memory for the selected context.
+The OpenClaw adapter owns how it uses the context window; NemoClaw does not assess an OpenClaw route's context budget.
 
 ## Size the Context for Hermes
 
 The pinned Hermes Agent requires a model context window of at least 64,000 tokens.
-It reads the window from the model server; route settings such as `overrides.settings.model_metadata` do not change it.
+It reads the window from the model server; route settings do not change it.
 For a Hermes route to managed vLLM or Ollama, set `serving.contextTokens` between `64000` and the schema maximum, `65536`, and choose a model that supports that context.
 The models in the managed Ollama examples and the [Spark vLLM example](../examples/spark/vllm.yaml), `qwen3:0.6b` and `Qwen/Qwen3-4B`, have 40,960-token native context windows and cannot serve Hermes.
 In one operator test, Hermes answered a request through cluster vLLM serving `Qwen/Qwen3-4B-Instruct-2507` with `serving.contextTokens: 65536`; that test does not qualify the model.
@@ -492,12 +513,12 @@ Choose the budget for the phase that failed; extending an agent turn does not ex
 | Managed service readiness from the SDK, including model preparation | Fixed 9-hour wait; expiration leaves the owned container and data in place |
 | Each packaged recipe preparation or verification execution | Fixed 8-hour limit; staged data remains after failure |
 | Managed gateway readiness | Fixed 90-second wait |
-| Sandbox/agent readiness | Fixed 300-second wait |
+| Agent start | Waits up to 120 seconds for the sandbox to serve `fabric-agent-ctl` |
 
 These are phase limits, not a promised total duration for apply.
 Other bounded observations can fail earlier, and request or transport failures are not automatically retried as mutations.
 The old onboarding timeout environment variables are not configuration inputs for these SDK paths.
-Use the [field reference](reference/configuration.md), [bound execution](../crates/openshell-provider/src/transport.rs), [agent configuration](../crates/fabric-provider/src/configuration.rs), [agent readiness](../crates/fabric-provider/src/bridge.rs), [deployment readiness](../crates/nemoclaw-sdk/src/deployment/runtime.rs), and [recipe runner](../crates/nemoclaw-runtime/src/vllm/runtime/inline_recipe.rs) for the current boundaries.
+Use the [field reference](reference/configuration.md), [bound execution](../crates/openshell-provider/src/transport.rs), [agent configuration](../crates/fabric-provider/src/configuration.rs), [agent start](../crates/fabric-provider/src/bridge.rs), [deployment readiness](../crates/nemoclaw-sdk/src/deployment/runtime.rs), and [recipe runner](../crates/nemoclaw-runtime/src/vllm/runtime/inline_recipe.rs) for the current boundaries.
 For a stopped managed service, inspect its [retained status](models.md#diagnose-and-recover-a-stopped-runtime) before choosing recovery.
 
 ## Verify the Result
@@ -526,11 +547,28 @@ Use [change constraints](usage.md#choose-the-change-path) before changing the AP
 The lifecycle fixture exercises apply, CLI export, unchanged reapply, drift rejection, and destroy.
 The [offline harness fixture](contributing/integration-tests.md#inference-api-fixtures) checks actual request paths with local protocol servers; it does not qualify a public endpoint, model quality, or live Nous authentication.
 
+## Onboarding Model Catalogs
+
+Guided onboarding offers curated models for NVIDIA Endpoints, OpenRouter, OpenAI, Anthropic, Google Gemini, and Nous Research.
+The [provider presets](../crates/nemoclaw-authoring/src/provider_presets.rs) own these reviewed lists; they are available without credentials or endpoint discovery.
+The selected model is checked for catalog membership.
+An unlisted identifier remains a custom model and produces an informational notice rather than a deployment restriction.
+SDK and Fabric validation still apply.
+
+The menu keeps an authored model selected, including a custom identifier.
+You can choose **Type another model**; generic OpenAI-compatible and Anthropic-compatible endpoints have no vendor catalog.
+Changing a vendor or endpoint recomputes the recommendations and membership check for the selected route.
+
+Endpoint discovery can add advertised identifiers without changing the curated list.
+A missing catalog credential leaves offline recommendations available and reports the missing credential; it does not allow bulk acceptance without the existing target and endpoint evidence.
+Catalog membership does not verify account access, current availability, API compatibility, tool support, or successful inference.
+Use an explicit request to qualify inference.
+
 ## Additional Inference Workflows
 
 The documented service paths are external API endpoints, managed Ollama, [external Ollama through a managed proxy](#use-external-ollama-through-a-managed-proxy), and [managed vLLM](models.md).
 Use [inline recipes](recipes.md) for declared model preparation and [SSH placement](remote-service.md) for the implemented remote-engine contract.
 
 Managed llama.cpp, Model Router and Gemini are tracked in [#12035](https://github.com/NVIDIA/NemoClaw/issues/12035), hosted-provider guides in [#12038](https://github.com/NVIDIA/NemoClaw/issues/12038), and distributed inference, separate inference hosts and other model formats in [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641).
-A managed NVIDIA NIM service is tracked in [#12649](https://github.com/NVIDIA/NemoClaw/issues/12649), and vendor model catalogs in [#12650](https://github.com/NVIDIA/NemoClaw/issues/12650).
+A managed NVIDIA NIM service is tracked in [#12649](https://github.com/NVIDIA/NemoClaw/issues/12649).
 None of these limits prevents using a separately verified external endpoint with an accepted API.

@@ -14,31 +14,16 @@ impl Secrets for Key {
 }
 #[tokio::test]
 async fn search_preserves_credentials_on_unchanged_ensure_and_removes_owned_registrations() {
-    for (provider_type, profile_address, profile_name, credential_env) in [
-        (
-            "brave",
-            "openshell_provider_profile.web_search",
-            "nemoclaw-brave",
-            "BRAVE_API_KEY",
-        ),
-        (
-            "tavily",
-            "openshell_provider_profile.web_search_tavily",
-            "nemoclaw-tavily",
-            "TAVILY_API_KEY",
-        ),
-    ] {
-        search_credential_lifecycle(provider_type, profile_address, profile_name, credential_env)
-            .await;
+    for (provider_type, credential_env) in
+        [("brave", "BRAVE_API_KEY"), ("tavily", "TAVILY_API_KEY")]
+    {
+        search_credential_lifecycle(provider_type, credential_env).await;
     }
 }
 
-async fn search_credential_lifecycle(
-    provider_type: &str,
-    profile_address: &str,
-    _profile_name: &str,
-    credential_env: &str,
-) {
+/// The profile and registration an `openshell_web_search` resource owns,
+/// exercised through the OpenShell client directly.
+async fn search_credential_lifecycle(provider_type: &str, credential_env: &str) {
     let fixture = Fixture::start().await;
     let mut doc =
         Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes()).unwrap();
@@ -64,11 +49,13 @@ async fn search_credential_lifecycle(
             .error()
             .is_none()
     );
-    let profile = &targets
+    let search = &targets
         .iter()
-        .find(|t| t.address.starts_with(&format!("{profile_address}_")))
+        .find(|t| t.kind == "web_search" && t.values["provider_type"] == provider_type)
         .unwrap()
         .values;
+    let (profile, target) = openshell_provider::web_search_rows(search).unwrap();
+    let profile = &profile;
     fixture.state.lock().unwrap().lose_create = true;
     assert!(
         client
@@ -80,16 +67,7 @@ async fn search_credential_lifecycle(
     let recovered = client.ensure("provider_profile", profile).await;
     assert!(recovered.error().is_none(), "{:?}", recovered.error());
     let profile = recovered.into_parts().0.unwrap();
-    let target = &targets
-        .iter()
-        .find(|t| {
-            t.kind == "provider"
-                && t.values
-                    .get("provider_type")
-                    .is_some_and(|v| v == provider_type)
-        })
-        .unwrap()
-        .values;
+    let target = &target;
     let result = client.ensure("provider", target).await;
     assert!(result.error().is_none(), "{:?}", result.error());
     let provider = result.into_parts().0.unwrap();
@@ -190,24 +168,39 @@ async fn separate_search_credentials_reach_only_their_selected_sandbox_attachmen
         .into();
     let targets = targets(&doc, &generations).unwrap();
     let client = OpenShell::connect(&doc.spec.gateway.connection(), Arc::new(Keys)).unwrap();
-    for kind in ["workspace", "provider_profile", "provider", "sandbox"] {
+    // Web search targets expand to the profile and registration they own.
+    for kind in [
+        "workspace",
+        "provider_profile",
+        "provider",
+        "web_search",
+        "sandbox",
+    ] {
         for target in targets.iter().filter(|t| t.kind == kind) {
-            let result = client.ensure(kind, &target.values).await;
-            assert!(result.error().is_none(), "{kind}: {:?}", result.error());
+            let rows = if kind == "web_search" {
+                let (profile, registration) =
+                    openshell_provider::web_search_rows(&target.values).unwrap();
+                vec![("provider_profile", profile), ("provider", registration)]
+            } else {
+                vec![(kind, target.values.clone())]
+            };
+            for (kind, row) in rows {
+                let result = client.ensure(kind, &row).await;
+                assert!(result.error().is_none(), "{kind}: {:?}", result.error());
+            }
         }
     }
     let state = fixture.state.lock().unwrap();
     for (sandbox, reference) in doc.spec.sandboxes.iter().zip(["SEARCH_A", "SEARCH_B"]) {
-        let provider = targets
+        let search = targets
             .iter()
-            .find(|t| {
-                t.kind == "provider"
-                    && t.values
-                        .get("credential_env")
-                        .is_some_and(|v| v == reference)
-            })
+            .find(|t| t.kind == "web_search" && t.values["credential_env"] == reference)
             .unwrap();
-        let stored = &state.providers[&format!("{}/{}", doc.workspace(), provider.values["name"])];
+        let registration = openshell_provider::web_search_rows(&search.values)
+            .unwrap()
+            .1["name"]
+            .clone();
+        let stored = &state.providers[&format!("{}/{}", doc.workspace(), registration)];
         assert_eq!(
             stored.credentials["BRAVE_API_KEY"],
             format!("fixture-{reference}")
@@ -222,7 +215,7 @@ async fn separate_search_credentials_reach_only_their_selected_sandbox_attachmen
                 .iter()
                 .filter(|name| name.starts_with("brave-search-"))
                 .collect::<Vec<_>>(),
-            vec![&provider.values["name"]]
+            vec![&registration]
         );
     }
 }

@@ -217,10 +217,13 @@ pub(crate) async fn run_with_progress(
 fn secret_values(overrides: &BTreeMap<String, String>) -> Vec<String> {
     let mut secrets = Vec::new();
     for (name, value) in overrides.iter().filter(|(_, value)| !value.is_empty()) {
+        // The diagnostics directory is named in errors so users can find
+        // Fabric's message; it is a path in the caller's own state.
         if !matches!(
             name.as_str(),
             "TF_IN_AUTOMATION" | "TF_INPUT" | "TF_CLI_CONFIG_FILE" | "CHECKPOINT_DISABLE"
-        ) {
+        ) && name != nemoclaw_backend::DIAGNOSTICS_ENV
+        {
             secrets.push(value.clone());
         }
     }
@@ -408,6 +411,11 @@ mod environment_tests {
         let secrets = secret_values(&BTreeMap::from([
             ("TF_IN_AUTOMATION".into(), "1".into()),
             ("CUSTOM_CREDENTIAL".into(), "a-long-credential".into()),
+            // Errors name files in it, so it stays readable.
+            (
+                nemoclaw_backend::DIAGNOSTICS_ENV.into(),
+                "/state/diagnostics".into(),
+            ),
         ]));
         assert_eq!(secrets, ["a-long-credential"]);
     }
@@ -690,6 +698,85 @@ async fn json_diagnostics_preserve_failures_and_redact_credentials() {
     assert!(error.to_string().contains("provider failed"));
     assert!(error.to_string().contains("[redacted]"));
     assert!(!error.to_string().contains("secret-sentinel"));
+}
+
+// An unrelated credential must not erase a safe diagnostic produced by a
+// provider. The native CLI tests retain the untrusted-response/redaction boundary.
+#[cfg(all(test, any(unix, windows)))]
+#[tokio::test]
+async fn unrelated_credentials_preserve_native_context_through_json_capture() {
+    let directory = tempfile::tempdir().unwrap();
+    let summary = "Fabric configuration failed";
+    let detail = "sandbox/assistant start failed (lifecycle_adapter_start_failed); agent runtime is unavailable; resources retained";
+    let lines = [
+        serde_json::json!({"type": "version", "ui": "1.0"}).to_string(),
+        serde_json::json!({
+            "type": "diagnostic",
+            "diagnostic": {"severity": "error", "summary": summary, "detail": detail}
+        })
+        .to_string(),
+    ];
+    #[cfg(unix)]
+    let binary = {
+        let path = directory.path().join("diagnostic-child");
+        crate::executable::write_executable(
+            &path,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' '{}' '{}'\nexit 1\n",
+                lines[0], lines[1]
+            ),
+        );
+        path
+    };
+    #[cfg(windows)]
+    let binary = {
+        let path = directory.path().join("diagnostic-child.cmd");
+        std::fs::write(
+            &path,
+            format!(
+                "@echo off\r\necho {}\r\necho {}\r\nexit /b 1\r\n",
+                lines[0], lines[1]
+            ),
+        )
+        .unwrap();
+        path
+    };
+    let received = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let events = received.clone();
+    let error = run_with_progress(
+        directory.path(),
+        &binary,
+        &["apply", "-json"],
+        &[(
+            "CUSTOM_CREDENTIAL".into(),
+            "inert-credential-for-context-check".into(),
+        )]
+        .into(),
+        &CancellationToken::new(),
+        Some(std::sync::Arc::new(move |event| {
+            events.lock().unwrap().push(event)
+        })),
+    )
+    .await
+    .unwrap_err();
+    let Error::Execution {
+        operation,
+        diagnostic,
+        postcondition_failures,
+    } = error
+    else {
+        panic!("expected the child execution failure");
+    };
+    assert_eq!(operation, "apply");
+    assert_eq!(diagnostic, format!("{summary}\n{detail}"));
+    assert!(postcondition_failures.is_none());
+    assert!(
+        received
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|event| matches!(event, crate::Progress::MutationStarted))
+    );
 }
 
 #[cfg(all(test, unix))]

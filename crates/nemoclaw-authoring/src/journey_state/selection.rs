@@ -63,6 +63,21 @@ impl SelectionView<'_> {
                 })
             })
     }
+
+    fn catalog_preset(&self) -> Option<ProviderPreset> {
+        let preset = self.current_preset()?;
+        let profile = preset.profile();
+        let (_, index) = self.route_provider()?;
+        let provider = self
+            .values
+            .pointer(&format!("/spec/inferenceProviders/{index}"))?;
+        // Editing the endpoint can leave the earlier preset decision in the
+        // journey. A vendor catalog must not follow it to a different server.
+        (provider.get("endpoint")?.as_str()? == profile.endpoint
+            && provider.get("provider")?.as_str()? == profile.kind.as_str()
+            && !preset.recommended_models().is_empty())
+        .then_some(preset)
+    }
 }
 
 impl JourneyState {
@@ -82,6 +97,10 @@ impl JourneyState {
     pub(super) fn current_preset(&self) -> Option<ProviderPreset> {
         self.selection().current_preset()
     }
+
+    pub(super) fn catalog_preset(&self) -> Option<ProviderPreset> {
+        self.selection().catalog_preset()
+    }
 }
 
 impl super::resolver::QuestionResolver<'_> {
@@ -100,5 +119,9 @@ impl super::resolver::QuestionResolver<'_> {
     }
     pub(super) fn current_preset(&self) -> Option<ProviderPreset> {
         self.selection().current_preset()
+    }
+
+    pub(super) fn catalog_preset(&self) -> Option<ProviderPreset> {
+        self.selection().catalog_preset()
     }
 }

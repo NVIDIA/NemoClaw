@@ -69,7 +69,7 @@ fn production_capacity_data_blocks_overcommit_defers_unknowns_and_preserves_stat
         "condition":format!("${{{capacity}.compatible}}"),
         "error_message":format!("Combined service memory requires ${{{capacity}.required_bytes}} bytes; observed ${{{capacity}.observed_bytes}} bytes.")
     }]});
-    let mut graph = json!({"terraform":{"required_version":"= 1.12.6", "required_providers":{"vllm":{"source":"registry.opentofu.org/nvidia/vllm"}}}, "provider":{"vllm":{}}, "data":{"vllm_capacity":{"selected":{"engine":"ssh://operator@gpu-box","contracts":contracts}}}, "resource":{"terraform_data":{"consumer":{"input":"capacity checked", "lifecycle":condition}}}});
+    let mut graph = json!({"terraform":{"required_providers":{"vllm":{"source":"registry.opentofu.org/nvidia/vllm"}}}, "provider":{"vllm":{}}, "data":{"vllm_capacity":{"selected":{"engine":"ssh://operator@gpu-box","contracts":contracts}}}, "resource":{"terraform_data":{"consumer":{"input":"capacity checked", "lifecycle":condition}}}});
     let write_graph =
         |graph: &Value| fs::write(root.join("main.tf.json"), graph.to_string()).unwrap();
     let control = |value: Value| fs::write(root.join("control.json"), value.to_string()).unwrap();
@@ -200,7 +200,7 @@ fn ollama_reads_reject_a_vllm_contract() {
         ),
     ] {
         let graph = json!({
-            "terraform":{"required_version":"= 1.12.6", "required_providers":{"ollama":{"source":"registry.opentofu.org/nvidia/ollama"}}},
+            "terraform":{"required_providers":{"ollama":{"source":"registry.opentofu.org/nvidia/ollama"}}},
             "provider":{"ollama":{}},
             "data":{source:{"selected":inputs}}
         });

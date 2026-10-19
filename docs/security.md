@@ -15,8 +15,10 @@ An explicit policy replaces the preset, and apply rejects policy changes that re
 The isolated preset uses Landlock `best_effort`; unavailable restrictions are not enforced.
 Each declared agent has its own OpenShell sandbox; tool grants do not further isolate processes or files within that sandbox.
 See [agent tool restrictions](agents.md#agent-tool-restrictions).
+Fabric's Hermes adapter defaults `HERMES_YOLO_MODE` and `HERMES_ACCEPT_HOOKS` to `1`, so Hermes runs commands and hooks without asking for approval; rely on the sandbox policy for isolation.
 
-A threat model, host-specific security qualification and hardening profiles are tracked in [#12643](https://github.com/NVIDIA/NemoClaw/issues/12643).
+See the [threat model](threat-model.md) for what a deployment protects and from whom, and the [hardening checklist](#harden-a-deployment) for reducing the remaining risks.
+Host-specific security qualification is part of [qualification](https://github.com/NVIDIA/NemoClaw/issues/12641).
 
 ### Identify the Trust Boundaries
 
@@ -42,20 +44,23 @@ Use the owning guide for the selected credential type:
 | Credential or connection | Storage, access, and retirement | Owning procedure |
 |---|---|---|
 | Gateway bearer credential and mTLS files | Caller supplies environment values and local files; SDK/provider need access; gateway operator owns revocation, while the caller removes local values/files when no longer needed | [Configuration and credentials](usage.md#configuration-and-credentials) |
+| Literal application-container environment key | Caller places the value in private YAML; it enters plans/state, exports, and Docker configuration; the application and engine administrators can read it; caller owns artifact cleanup and upstream revocation | [Application environment](design/container-contract.md#application-environment) |
 | External inference key, including Hermes provider authentication | Caller resolves the reference; OpenShell retains the installed value for routing; destroy removes the provider registration, not the upstream account/key | [Inference authentication](inference.md#authenticate-hermes-through-the-provider) |
+| Key for a model server you run in a Kubernetes or OpenShift cluster | Caller supplies the value where `nemoclaw` runs, and a Kubernetes Secret supplies it to the server; principals who can read Secrets or create Pods in the server's namespace, or exec into the server's Pod, and node administrators can read it; OpenShell retains the installed value for routing; destroy removes the provider registration, not the Secret or the server's key | [In-cluster model server](kubernetes.md#use-a-model-server-in-the-cluster) |
 | Generated managed vLLM key | Private file in a separate retained credential volume, available to runtime root and engine administrators; recreation reuses it; retiring the container does not erase the key | [Managed service authentication](inference.md#authenticate-a-managed-vllm-service) |
 | Generated external-Ollama proxy key | Private credential volume, available to proxy root and engine administrators; retained across destroy/recreation and never forwarded to Ollama | [Ollama proxy](inference.md#use-external-ollama-through-a-managed-proxy) |
-| Brave or Tavily search key | Caller supplies the value; OpenShell holds it and replaces the agent's placeholder; destroy removes managed registrations but does not revoke the upstream key | [Brave web search](agents.md#brave-web-search), [Tavily web search](agents.md#tavily-web-search) |
-| Native OpenClaw/local Hermes interface tokens | Sandbox-user-readable native files; retained across process restarts, deleted with sandbox data; replace compromised credentials through a fresh deployment | [Agent interfaces](interfaces.md) |
+| Brave or Tavily search key | Caller supplies the value; OpenShell holds it and replaces the agent's placeholder; destroy removes managed registrations but does not revoke the upstream key | [Web search](agents.md#web-search) |
 
 Removing a caller's environment variable does not revoke an upstream key or erase a credential retained by a gateway.
 Unchanged apply does not automatically detect changed values behind the same reference.
 Managed private HTTP endpoints with bearer authentication do not provide TLS.
 
-Corporate CA provisioning across the client, images, gateway and native runtimes, and a rotation runbook for every credential type, are tracked in [#12643](https://github.com/NVIDIA/NemoClaw/issues/12643).
-Use each existing guide's current lifecycle constraints; do not infer a rotation command.
+To rotate any of these credentials, follow the [rotation runbook](credential-rotation.md).
+For a corporate CA, see [Trust a Corporate Certificate Authority](#trust-a-corporate-certificate-authority).
 
-Keep credential values out of YAML, shell arguments, shared URLs, and published diagnostics.
+Keep credential values out of committed or shared YAML, shell arguments, shared URLs, and published diagnostics.
+Generic application containers currently have no protected credential delivery; their temporary literal-environment approach exposes values in configuration and state.
+Use credential references where the selected provider supports them, rather than copying that plaintext approach into gateway or inference settings.
 The example authoring TUI saves credential references and never resolves their values.
 Authoring and lifecycle operations are separate commands; accepting an authored document does not authorize apply.
 Inspect a secret-free plan before invoking apply.
@@ -67,7 +72,8 @@ Retiring a deployment requires separate decisions about upstream revocation, ret
 
 ### Diagnostic Disclosure
 
-The SDK keeps credentials out of its own error construction and filters child-process errors and progress as a backstop.
+The SDK keeps resolved credential-reference values out of its own error construction and filters child-process errors and progress as a backstop.
+Arbitrary literal container environment values are not automatically registered for this protection; treat resulting diagnostics as potentially sensitive.
 For values of at least eight Unicode characters, the filter replaces matching spans in one pass, merging overlaps without rescanning `[redacted]` markers.
 This exact-value filter does not cover encoded or transformed secrets; providers must still avoid putting credentials in diagnostics.
 
@@ -86,25 +92,51 @@ The [subprocess tests](../crates/nemoclaw-sdk/src/process.rs) and [bundled CLI f
 | Connection | Current configuration boundary |
 |---|---|
 | Client to OpenShell gateway | HTTPS uses trust verification; optional `gateway.tls` selects CA, client certificate, and key through environment references to file paths |
-| OpenShell to external inference | Caller-provided inference keys require HTTPS; an accepted URL does not configure a corporate CA across all containers |
+| Client to inference catalog during onboarding | Uses the client machine's trust store or `SSL_CERT_FILE`; this trust does not configure the inference path |
+| OpenShell to external inference | NemoClaw accepts HTTP and HTTPS URLs, with or without a credential; OpenShell checks destinations when a sandbox connects. Prefer HTTPS for credentialed endpoints: over plain HTTP, the key crosses the network unencrypted |
 | Managed vLLM or Ollama proxy private endpoint | Optional/generated bearer authentication does not add TLS to the private HTTP transport |
 | Client to native dashboard | Authenticated OpenShell forwarding carries the connection to the sandbox-local listener; keep the local bind on loopback |
 
-Do not reuse gateway mTLS settings as an assumed trust configuration for model downloads, image builds, or native agents.
-Those layers need their own corporate-CA procedure ([#12643](https://github.com/NVIDIA/NemoClaw/issues/12643)).
+### Trust a Corporate Certificate Authority
+
+Each layer that makes outbound TLS connections has its own trust store:
+
+| Layer | How it trusts a corporate CA |
+|---|---|
+| The machine running NemoClaw: catalog reads during onboarding, and OpenTofu's providers | The system trust store, or `SSL_CERT_FILE`; see [custom CA trust](inference.md#trust-a-custom-certificate-authority) |
+| The engine pulling images | The Docker or Podman daemon's own registry trust, configured on the engine host |
+| The OIDC issuer of a managed Kubernetes gateway | `caConfigMap` in the [OIDC profile](kubernetes.md) |
+| OpenShell's gateway and sandbox egress | OpenShell's images' trust store. NemoClaw can't configure it; OpenShell support is in progress ([NVIDIA/OpenShell#3292](https://github.com/NVIDIA/OpenShell/pull/3292)) |
+| Model downloads inside managed vLLM and Ollama | The runtime image's trust store; not configurable |
+| Image builds (`docker buildx bake`) | Not supported behind TLS-intercepting proxies; build on a network that doesn't intercept TLS |
+
+Don't reuse gateway mTLS settings as a trust configuration for any other layer.
 
 ## Retained Data and Telemetry
 
 Read [state and retention](state.md) before deleting a deployment or disposing of its storage.
-For tracing, review the [existing collector requirement](agents.md#openclaw-tracing) and the collector operator's data access and retention policy.
+For tracing, review [Hermes Relay tracing](agents.md#hermes-relay-tracing) and, for any collector, its operator's data access and retention policy.
 Before enabling export, identify who can read the collector's stored data and how long it is retained.
 The current integration selects an existing collector; it does not provision or manage that retention policy.
 Experimental [Hermes Relay tracing](agents.md#hermes-relay-tracing) instead writes local sandbox artifacts without adding a collector or egress rule.
 Its full-payload setting is disabled, but trace contents still need privacy review before sharing; deleting the sandbox deletes those files.
-Relay with both explicit `interfaces` and Tavily search omitted selects the upstream adapter, which defaults to `HERMES_YOLO_MODE=1` and accepted hooks when unset; the local Hermes adapter's manual-approval configuration does not apply.
-Review this change in native control behavior before enabling the experimental mode.
 
-Privacy review and retention guidance for production tracing are tracked in [#12643](https://github.com/NVIDIA/NemoClaw/issues/12643).
+Traces can contain prompts, model output, tool calls and their arguments, and file contents, so treat them like agent data:
+
+- **Local traces:** Hermes Relay writes them into the sandbox. Destroying or replacing the sandbox deletes them, unless they're on a [mounted volume](state.md#keep-agent-files-on-mounted-volumes), where the volume's owner controls their retention.
+- **Collectors:** retention and access are the collector operator's policy; NemoClaw doesn't configure them.
+- **Before sharing a trace:** review it for credentials, personal data, and confidential files. Keep the full-payload setting disabled unless you need it.
+
+## Harden a Deployment
+
+- **Give each agent its own sandbox and volumes,** and grant only the hosts, methods, and tools its task needs.
+- **Use rootless Podman or a dedicated Docker host,** and limit who administers the engine; administrators can read every container's data.
+- **Run on hosts with Landlock support,** so the isolated preset's filesystem restrictions are enforced.
+- **Use HTTPS** for credentialed endpoints, external gateways, and model servers on other hosts.
+- **Prefer credential references** to literal values, and keep the state directory private.
+- **Use the OIDC profile** for managed Kubernetes gateways in shared clusters.
+- **Pin images by digest,** and use a fresh `metadata.uid` for each deployment.
+- **Rotate keys** on a schedule with the [rotation runbook](credential-rotation.md), and revoke old keys once their sandboxes are replaced.
 
 ## Report a Vulnerability
 

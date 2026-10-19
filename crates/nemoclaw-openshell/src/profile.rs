@@ -44,13 +44,22 @@ impl FromStr for InferenceProviderKind {
 
 /// Build the endpoint and credential projection for a native inference provider.
 /// The caller must supply image-resolved binaries before importing the profile.
+/// The variable sandboxes see an inference registration's key in.
+pub fn inference_key_env(name: &str) -> String {
+    format!(
+        "NEMOCLAW_INFERENCE_{}_KEY",
+        name.replace('-', "_").to_ascii_uppercase()
+    )
+}
+
 pub fn definition(
     name: &str,
     endpoint: &str,
     kind: InferenceProviderKind,
     authenticated: bool,
 ) -> Result<proto::ProviderProfile, ObservationError> {
-    nemoclaw_backend::validate_endpoint(endpoint, false).map_err(|_| ObservationError::Query)?;
+    // OpenShell checks the destination when sandboxes connect.
+    nemoclaw_backend::validate_endpoint_url(endpoint).map_err(|_| ObservationError::Query)?;
     let url = url::Url::parse(endpoint).map_err(|_| ObservationError::Query)?;
     let allowed_ips = url
         .host_str()
@@ -128,10 +137,7 @@ fn profile(
     let host = url.host_str().ok_or(ObservationError::Query)?;
     let port = url.port_or_known_default().ok_or(ObservationError::Query)?;
     let id = format!("nemoclaw-inference-{name}");
-    let key = format!(
-        "NEMOCLAW_INFERENCE_{}_KEY",
-        name.replace('-', "_").to_ascii_uppercase()
-    );
+    let key = inference_key_env(name);
     let path = format!("{}/**", url.path().trim_end_matches('/'));
     // Private addresses require an explicit destination-validation grant. Grant
     // only the selected literal address, never a whole private network.
@@ -327,6 +333,22 @@ mod tests {
             "file:///tmp/model",
         ] {
             assert!(definition("local", endpoint, InferenceProviderKind::Openai, true).is_err());
+        }
+    }
+
+    #[test]
+    fn profiles_leave_destination_checks_to_openshell() {
+        // OpenShell validates destinations when sandboxes connect, so a profile
+        // takes any well-formed endpoint: its gateway-host alias, container
+        // names, and public hosts. Only literal IP hosts are pinned.
+        for endpoint in [
+            "http://host.openshell.internal:11434/v1",
+            "http://ollama:11434/v1",
+            "http://inference.example.com/v1",
+        ] {
+            let profile =
+                definition("local", endpoint, InferenceProviderKind::Openai, true).unwrap();
+            assert!(profile.endpoints[0].allowed_ips.is_empty(), "{endpoint}");
         }
     }
 }

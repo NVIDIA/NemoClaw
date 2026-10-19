@@ -12,11 +12,9 @@ use crate::{
 };
 use async_trait::async_trait;
 use nemoclaw_sdk::kubernetes::{
-    AUTH_KIND, ClusterTarget, GATEWAY_KIND, STATE_ENV, STORAGE_KIND, Spec, connect,
+    AUTH_KIND, GATEWAY_KIND, STORAGE_KIND, Spec,
     operations::{Operations, Response},
-    server,
 };
-use std::path::PathBuf;
 
 #[derive(Default)]
 pub struct KubernetesBackend;
@@ -56,6 +54,9 @@ fn row(spec: &Spec, response: Response) -> Result<Option<Row>, ObservationError>
     result
         .entry(nemoclaw_sdk::kubernetes::ENVIRONMENT_FIELD.into())
         .or_default();
+    result
+        .entry(nemoclaw_sdk::kubernetes::OIDC_FIELD.into())
+        .or_default();
     result.insert("id".into(), id);
     result.insert("running".into(), running.to_string());
     if spec.kind == AUTH_KIND {
@@ -74,30 +75,7 @@ fn row(spec: &Spec, response: Response) -> Result<Option<Row>, ObservationError>
 }
 
 async fn operations(spec: &Spec) -> Result<Operations, ObservationError> {
-    let target = spec
-        .settings
-        .kubernetes
-        .as_ref()
-        .ok_or(ObservationError::Query)?;
-    let kubeconfig: PathBuf = std::env::var_os(&target.kubeconfig.env)
-        .filter(|path| !path.is_empty())
-        .ok_or(ObservationError::Authentication)?
-        .into();
-    let state: PathBuf = std::env::var_os(STATE_ENV)
-        .ok_or(ObservationError::Incomplete)?
-        .into();
-    let cluster = ClusterTarget {
-        kubeconfig: kubeconfig.clone(),
-        context: target.context.clone(),
-    };
-    let server = server(&cluster)?;
-    let client = connect(&cluster).await?;
-    Ok(Operations {
-        server,
-        client,
-        state,
-        openshift_wait: nemoclaw_sdk::kubernetes::operations::OPENSHIFT_WAIT,
-    })
+    Operations::from_environment(spec).await
 }
 
 fn failed_mutation(
@@ -194,16 +172,17 @@ impl Backend for KubernetesBackend {
 /// Kubernetes platform resources and their planning rules.
 pub(crate) fn definitions() -> [crate::Definition; 3] {
     use crate::{Protection, carry_prior, rerun_when_stopped};
-    use nemoclaw_sdk::kubernetes::{ENVIRONMENT_FIELD, check_attribute};
+    use nemoclaw_sdk::kubernetes::{ENVIRONMENT_FIELD, OIDC_FIELD, check_attribute};
     use nemoclaw_tofu::shape::Shape;
     let typed = |kind| {
         crate::services::schema_definition(kind)
-            .optional(&[ENVIRONMENT_FIELD])
+            .optional(&[ENVIRONMENT_FIELD, OIDC_FIELD])
             .structured(
                 "environment",
                 ENVIRONMENT_FIELD,
                 Shape::List(Box::new(Shape::String)),
             )
+            .structured("oidc", OIDC_FIELD, Shape::Json)
             .validate_attribute(|attribute, value| {
                 check_attribute(attribute, value).map_err(Into::into)
             })

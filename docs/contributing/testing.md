@@ -12,8 +12,9 @@ Before pushing, choose checks that cover the changed behavior and its affected c
 | Prose or documentation | Review the changed text; run the [documentation check](documentation-build.md#validate-locally) for documentation changes. |
 | Declarative configuration or workflow triggers | Run the applicable schema or lint checks; test affected execution paths when their behavior changes. |
 | Isolated code change | Run focused behavioral tests and nearby regression checks, plus formatting and lint checks for the affected code. |
-| Bundle construction, provider contracts, lifecycle behavior, or broad workspace dependencies | Run `cargo ci --full`. |
-| Impact is unclear or narrower checks cannot establish confidence | Run `cargo ci --full`. |
+| Bundle construction, provider contracts, lifecycle behavior, or broad workspace dependencies | Run `cargo ci`; it [selects](#select-expensive-local-checks) bundle and lifecycle checks from the changed inputs. |
+| Images or Kubernetes deployment | Also run `cargo ci live-docker` or `cargo ci live-kind`; see [live tests](live-tests.md). |
+| Impact is unclear or narrower checks cannot establish confidence | Run `cargo ci`. |
 
 For changes spanning categories, combine the applicable checks.
 A YAML or configuration file can change runtime behavior; choose by impact rather than extension.
@@ -125,7 +126,7 @@ The profile also selects one ignored test each in `nemoclaw-test-fixtures` and `
 
 Live tests use real Docker engines, kind clusters, images, or remote hosts, and touch only resources they own.
 The `live-docker` profile selects the Docker tests in `nemoclaw-runtime`, `nemoclaw-build`, `nemoclaw-e2e`, `nemoclaw-sdk`, and `nemoclaw-provider`; the `live-kind` profile selects `nemoclaw-e2e`'s `kubernetes_live` and `kubernetes_chart` tests.
-The `live-docker` profile's `managed_gateway` test in `nemoclaw-e2e` runs a managed gateway's runtime stage with real Docker; [Docker Gateway Recovery](live-tests.md#docker-gateway-recovery) gives its inputs.
+The `live-docker` profile's `managed_gateway` test in `nemoclaw-e2e` plans and applies only a managed gateway's runtime resources with real Docker; [Docker Gateway Recovery](live-tests.md#docker-gateway-recovery) gives its inputs.
 Other ignored tests, such as the Brev, Spark, and hosted-model tests, run only when selected by hand or by the Live / Brev workflow.
 [Run live tests](live-tests.md) gives each test's prerequisites and the state it retains.
 
@@ -169,6 +170,9 @@ It deletes the cluster and its image tag whether or not the tests pass; set `NEM
 
 To build the live images once for both suites, run `cargo ci live-images`.
 It builds the agent image, the reference dummy image, and both proxy images under `nc-live-images`, saves them to `.build/ci/live-images.tar.zst` through the `zstd` command, and removes the local names.
+The command exports directly from Docker's local containerd store before compression.
+This requires Docker to report its containerd address and namespace, `sudo -n ctr` access, and temporary disk space for the uncompressed archive.
+The archive retains the image contents, names, digests, and attestations; the job logs archive size and export, compression, and cleanup timings.
 Then pass `--images .build/ci/live-images.tar.zst` to `cargo ci live-docker` or `cargo ci live-kind`: each loads the archive and names the images it needs under its own fresh prefix instead of building them, so its cleanup still removes only what it created.
 
 ## Budgets and Per-Test Limits
@@ -409,11 +413,9 @@ Native adapter implementation and its behavioral tests live in Fabric and use Fa
 The [image workflow](../../.github/workflows/images.yml) builds the selected platform's agent images plus the proxy, verifies retained source hashes, and checks installed discovery metadata.
 It first builds and qualifies the separate dummy image, then runs the same [command contract suite](../../image/test_agent_contract.py) against every selected agent image.
 Use the [reference image procedure](../build.md#reference-contract-image) to run that suite locally against explicit image references.
-The suite tests real entrypoints, file and stdin inputs, exit codes, capability labels, standalone validation, host startup and shutdown, and retained files.
-The dummy, OpenClaw, Hermes, and Pi also run shared configuration, generation, no-op, invocation, and preparation assertions, using the lifecycle profiles in the reference image procedure.
+The suite checks each image's runtime command and catalog, then starts, invokes, and stops one runtime through `fabric-agent-ctl` in a network-isolated container.
+The dummy, OpenClaw, Hermes, and Pi run that lifecycle, using the lifecycle profiles in the reference image procedure.
 Native profiles use isolated local inference; images without a selected profile report lifecycle coverage as skipped.
-Readiness qualification is separate and reports unsupported native health as skipped unless `--require-ready` requires it to pass.
-The workflow requires dummy readiness and retains the dummy-specific readiness-failure test; it separately checks OpenClaw reconfiguration and Hermes security.
 
 The image workflow obtains its image decision from the shared validation plan and skips image steps when their inputs are unaffected; the `Build` checks still report.
 A failed planning job fails those checks instead of skipping them.
@@ -457,7 +459,7 @@ Profiles live in `.cargo/config.toml`, whose hash and the current month are part
 Changing a profile, or starting a new month, therefore starts a fresh cache with a one-time dependency rebuild.
 Before saving, the cache action keeps target artifacts by crate name only, so a cache that extended an older one would keep every earlier version and profile of each crate.
 Within a month, manifest and lockfile changes restore the platform's previous cache and rebuild only the changed dependencies.
-The test job's cache keeps third-party debug build artifacts; the bundle job's `native-bundle-v1` cache keeps those of its debug build tool and the target-specific release profile.
+The test job's cache keeps third-party debug build artifacts; the bundle job's `native-bundle-v2` cache keeps those of its debug build tool and the target-specific release profile.
 Workspace libraries, test executables, workspace binaries, and installed Cargo binaries are excluded.
 Only `v1` writes Rust dependency caches; PRs restore the base branch cache and skip uploads.
 This avoids spending PR time saving caches scoped to individual pull requests.

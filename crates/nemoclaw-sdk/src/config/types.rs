@@ -71,6 +71,23 @@ pub struct Spec {
     #[serde(rename = "sandboxes")]
     /// One to 32 uniquely named sandboxes. Each runs one agent through its selected Fabric adapter. Declaration order does not select a default sandbox or agent.
     pub sandboxes: Vec<Sandbox>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[schemars(default, length(max = 32))]
+    /// Registries whose images NemoClaw pulls through Docker with the logins of the machine running OpenTofu, from its Docker configuration file. Lists addresses only; credentials stay in that file or its credential store.
+    pub registries: Vec<Registry>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+/// A registry NemoClaw authenticates to when pulling images through Docker.
+pub struct Registry {
+    #[schemars(length(min = 1, max = 253))]
+    /// Registry address, such as nvcr.io or registry.example.com:5000, matching its entry in the Docker configuration file.
+    pub address: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "String", length(min = 1, max = 4096))]
+    /// Absolute path of the Docker configuration file that holds the login, on the machine running OpenTofu. Defaults to `.docker/config.json` in the user's home directory; `DOCKER_CONFIG` is not read.
+    pub config_file: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -113,7 +130,7 @@ pub struct TLS {
 #[serde(tag = "management", rename_all = "lowercase")]
 /// Install a local or explicitly configured Kubernetes gateway, or connect to an existing gateway.
 pub enum Gateway {
-    /// A gateway installed and managed by this deployment.
+    /// A gateway installed and managed by this deployment. The SDK pins its image.
     /// Managed Podman targets local rootless Linux; rootful, remote, and other platforms are unqualified.
     #[schemars(title = "Managed gateway")]
     Managed(ManagedGateway),
@@ -139,16 +156,12 @@ pub struct ManagedGateway {
     pub runtime: Runtime,
     #[serde(rename = "endpoint")]
     #[schemars(default)]
-    /// Local engine gateways use an HTTP origin with an unprivileged loopback port. Kubernetes requires `https://127.0.0.1:PORT` with an explicit nonzero port and no trailing slash; commands forward that local port to the owned gateway.
+    /// Local engine gateways use an HTTP origin with an unprivileged loopback port. Kubernetes requires `https://127.0.0.1:PORT` with an explicit nonzero port and no trailing slash; providers forward free local ports of their own to the owned gateway, so this port is not bound.
     pub endpoint: String,
     #[serde(rename = "engine", skip_serializing_if = "String::is_empty")]
     #[schemars(default)]
     /// Managed local gateway Unix engine socket; Podman requires its API service socket. Excluded by kubernetes.
     pub engine: String,
-    #[serde(rename = "image", skip_serializing_if = "String::is_empty")]
-    #[schemars(default)]
-    /// Managed local gateway image pinned by the SDK. Excluded by kubernetes, whose component images are also SDK-pinned.
-    pub image: String,
     #[serde(
         rename = "imagePullPolicy",
         default,
@@ -163,8 +176,45 @@ pub struct ManagedGateway {
     pub network_cidr: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "super::ManagedKubernetes")]
-    /// Explicit Kubernetes provisioning target. Excludes local engine, image, imagePullPolicy, and networkCIDR settings and requires Kubernetes sandboxes without managed inference services.
-    pub kubernetes: Option<super::ManagedKubernetes>,
+    /// Explicit Kubernetes provisioning target. Excludes local engine, imagePullPolicy, and networkCIDR settings and requires Kubernetes sandboxes without managed inference services.
+    pub kubernetes: Option<Box<super::ManagedKubernetes>>,
+    #[serde(
+        rename = "sandboxDriverConfig",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(default, with = "SandboxDriverConfig")]
+    /// OpenShell's setting that lets sandboxes use driverConfig, such as mounted volumes, passed through unchanged to the gateway's compute driver. Docker and Podman gateways keep it in their retained storage, so it is fixed when the deployment is created; Kubernetes applies a change through the chart.
+    pub sandbox_driver_config: Option<SandboxDriverConfig>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[schemars(!default)]
+#[serde(default, deny_unknown_fields)]
+/// OpenShell's driver configuration admission for a managed gateway's compute driver.
+pub struct SandboxDriverConfig {
+    #[serde(rename = "allow")]
+    #[schemars(default)]
+    /// Accept sandboxes' driverConfig (OpenShell's allow_driver_config). Defaults to false, OpenShell's default.
+    pub allow: bool,
+    #[serde(rename = "resourceAdmission", skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "ResourceAdmission")]
+    /// OpenShell's resource admission for external resources such as volumes; omission keeps OpenShell's defaults.
+    pub resource_admission: Option<ResourceAdmission>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[schemars(!default)]
+#[serde(default, deny_unknown_fields)]
+/// OpenShell's resource admission settings, passed through unchanged.
+pub struct ResourceAdmission {
+    #[serde(rename = "enabled", skip_serializing_if = "Option::is_none")]
+    #[schemars(default)]
+    /// Require approval labels on external resources; omission keeps OpenShell's default, enabled.
+    pub enabled: Option<bool>,
+    #[serde(rename = "requiredLabels", skip_serializing_if = "Option::is_none")]
+    #[schemars(default, extend("minProperties" = 1))]
+    /// Labels an external resource must carry, replacing OpenShell's built-in approval labels. Must not be empty.
+    pub required_labels: Option<std::collections::BTreeMap<String, String>>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -204,7 +254,7 @@ pub struct InferenceProvider {
     pub provider: super::InferenceProviderKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "super::InferenceApi")]
-    /// Request API. Omission selects anthropic-messages for Anthropic providers and openai-completions for OpenAI providers; explicit values are preserved for Fabric validation.
+    /// Request API. Omission selects anthropic-messages for Anthropic providers and openai-completions for OpenAI providers. NemoClaw uses it to read the endpoint's model catalog; agents use the protocol their adapter selects for the provider.
     pub api: Option<super::InferenceApi>,
     #[serde(default, rename = "endpoint", skip_serializing_if = "String::is_empty")]
     #[schemars(default)]
@@ -274,6 +324,14 @@ pub struct Sandbox {
     #[schemars(default)]
     /// Sandbox network policy; omission selects isolated egress with grants for declared inference.
     pub network: super::Network,
+    #[serde(
+        rename = "driverConfig",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(default, with = "serde_json::Map<String, serde_json::Value>")]
+    /// OpenShell's per-driver sandbox configuration, such as mounts, passed through unchanged. NemoClaw sets nothing in it; the gateway must allow driver configuration.
+    pub driver_config: Option<serde_json::Map<String, serde_json::Value>>,
     #[serde(rename = "agent")]
     /// The configured agent hosted by this sandbox in one Fabric runtime. Deploy additional agents in separate sandboxes.
     pub agent: Agent,
@@ -398,10 +456,22 @@ pub struct Overrides {
     #[serde(flatten)]
     /// Shared public model limits. Native model settings belong in settings.
     pub tuning: super::RouteTuning,
+    #[serde(
+        rename = "harnessProvider",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(default, with = "String")]
+    /// Fabric model provider the harness uses, such as custom. Defaults to the inference provider's API family.
+    pub harness_provider: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "serde_json::Map<String, serde_json::Value>")]
     /// Opaque native model settings validated by Fabric's selected model schema.
     pub settings: Option<serde_json::Map<String, serde_json::Value>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "serde_json::Map<String, serde_json::Value>")]
+    /// Model fields the selected adapter declares as extensions, such as Pi's context_window; Fabric validates them.
+    pub extensions: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

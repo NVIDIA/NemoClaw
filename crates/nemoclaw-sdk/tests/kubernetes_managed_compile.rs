@@ -24,6 +24,47 @@ fn document() -> Document {
 }
 
 #[test]
+fn managed_cluster_pulls_reference_existing_secrets_for_gateway_and_sandbox_images() {
+    let generations = ["kubernetes_gateway", "kubernetes_storage"]
+        .map(|kind| (kind.into(), "a".repeat(32)))
+        .into();
+    for provider in ["kubernetes", "openshift"] {
+        let mut input = serde_json::to_value(document()).unwrap();
+        input["spec"]["gateway"]["runtime"]["provider"] = json!(provider);
+        let baseline = Document::parse(input.to_string().as_bytes()).unwrap();
+        input["spec"]["gateway"]["kubernetes"]["imagePullSecrets"] =
+            json!(["registry-team", "registry.backup"]);
+        let document = Document::parse(input.to_string().as_bytes())
+            .expect("managed clusters accept existing image pull Secret names");
+        assert_eq!(serde_json::to_value(&document).unwrap(), input);
+        assert_eq!(
+            runtime_targets(&document, &generations).unwrap(),
+            runtime_targets(&baseline, &generations).unwrap(),
+            "pull Secret references change Helm values, not platform resource identities"
+        );
+        assert_eq!(
+            document.credential_names(),
+            ["TEST_IMAGE_METADATA", "TEST_KUBECONFIG"]
+        );
+        let graph = compile_runtime(&document, &generations, "0.1.0").unwrap();
+        let values: serde_json::Value = serde_json::from_str(
+            graph["resource"]["helm_release"]["gateway"]["values"][0]
+                .as_str()
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            values["imagePullSecrets"],
+            json!([{"name": "registry-team"}, {"name": "registry.backup"}])
+        );
+        assert_eq!(
+            values["gatewayConfig"]["openshell.drivers.kubernetes"]["image_pull_secrets"],
+            json!(["registry-team", "registry.backup"])
+        );
+    }
+}
+
+#[test]
 fn managed_gateway_uses_a_pinned_helm_provider_between_auth_and_readiness() {
     let generations = [
         "workspace",
@@ -158,7 +199,6 @@ fn managed_kubernetes_stages_owned_platform_before_authenticated_agents() {
     );
     // The platform stage installs the gateway: openshell serves the Kubernetes
     // gateway types; fabric needs a running gateway, so the stage omits it.
-    assert_eq!(platform["provider"]["nemoclaw"], json!({}));
     assert_eq!(platform["provider"]["openshell"], json!({}));
     assert!(platform["provider"].get("fabric").is_none());
     assert!(
@@ -208,26 +248,38 @@ fn managed_kubernetes_stages_owned_platform_before_authenticated_agents() {
         assert!(resource.get("environment").is_none(), "{kind}");
     }
     let agents = compile(&document, &generations, "0.1.0").unwrap();
-    // The managed gateway's credentials reach the gateway data source, whose
-    // ref every object takes.
-    for (field, expected) in [
-        ("credential_env", "NEMOCLAW_MANAGED_K8S_TOKEN"),
-        ("tls_ca_env", "NEMOCLAW_MANAGED_K8S_CA"),
-        ("tls_certificate_env", "NEMOCLAW_MANAGED_K8S_CERT"),
-        ("tls_key_env", "NEMOCLAW_MANAGED_K8S_KEY"),
+    // The gateway data source, whose ref every object takes, carries the
+    // managed gateway's specification. Providers connect to the gateway with
+    // it, so no connection variables are named.
+    let gateway = &agents["data"]["openshell_gateway"]["current"];
+    for field in [
+        "credential_env",
+        "tls_ca_env",
+        "tls_certificate_env",
+        "tls_key_env",
     ] {
-        assert_eq!(
-            agents["data"]["openshell_gateway"]["current"][field], expected,
-            "{field}"
-        );
+        assert!(gateway.get(field).is_none(), "{field}");
     }
-    for provider in ["nemoclaw", "openshell", "fabric"] {
+    let spec: nemoclaw_sdk::kubernetes::Spec =
+        serde_json::from_str(gateway["kubernetes"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        Some(spec),
+        nemoclaw_sdk::kubernetes::gateway_spec(&document, &generations).unwrap()
+    );
+    for provider in ["openshell", "fabric"] {
         assert_eq!(agents["provider"][provider], json!({}), "{provider}");
     }
+    // One graph installs the gateway and creates the objects it serves; the
+    // gateway read waits for the installation.
+    assert_eq!(
+        gateway["depends_on"],
+        json!(["openshell_kubernetes_gateway.runtime"])
+    );
     assert!(
-        agents["resource"]
-            .get("openshell_kubernetes_gateway")
-            .is_none()
+        agents["data"]["openshell_gateway"]["apply"]["depends_on"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("openshell_kubernetes_gateway.runtime"))
     );
     assert!(agents["provider"].get("docker").is_none());
 }
@@ -282,6 +334,7 @@ fn kubernetes_attributes_reproduce_each_resource_specification() {
     for document in [
         document(),
         Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap(),
+        oidc_document(),
     ] {
         for target in runtime_targets(&document, &generations)
             .unwrap()
@@ -322,4 +375,108 @@ fn kubernetes_attributes_reproduce_each_resource_specification() {
             assert!(Spec::from_row("managed_gateway", &target.values).is_err());
         }
     }
+}
+
+fn oidc_document() -> Document {
+    let mut value = serde_json::to_value(document()).unwrap();
+    value["spec"]["gateway"]["kubernetes"]["authentication"] = json!({
+        "profile": "oidc",
+        "issuer": "https://login.example.com/realms/openshell",
+        "audience": "openshell",
+        "rolesClaim": "groups",
+        "adminRole": "openshell-admins",
+        "userRole": "openshell-users",
+        "caConfigMap": "issuer-ca",
+        "tokenEnv": "OPENSHELL_TOKEN"
+    });
+    Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap()
+}
+
+#[test]
+fn an_existing_oidc_issuer_replaces_the_development_issuer() {
+    let generations = ["kubernetes_gateway", "kubernetes_storage"]
+        .map(|kind| (kind.into(), "a".repeat(32)))
+        .into();
+    let document = oidc_document();
+    // The token's variable reaches OpenTofu with the other credentials.
+    assert_eq!(
+        document.credential_names(),
+        ["OPENSHELL_TOKEN", "TEST_IMAGE_METADATA", "TEST_KUBECONFIG"]
+    );
+    let graph = compile_runtime(&document, &generations, "0.1.0").unwrap();
+    let values: serde_json::Value = serde_json::from_str(
+        graph["resource"]["helm_release"]["gateway"]["values"][0]
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        values["gatewayConfig"]["openshell.gateway.oidc"],
+        json!({
+            "issuer": "https://login.example.com/realms/openshell",
+            "audience": "openshell",
+            "jwks_ttl_secs": 3600,
+            "dangerously_allow_insecure_http": false,
+            "roles_claim": "groups",
+            "admin_role": "openshell-admins",
+            "user_role": "openshell-users",
+        })
+    );
+    assert_eq!(values["server"]["oidc"]["caConfigMapName"], "issuer-ca");
+    assert!(!values.to_string().contains("nemoclaw-development"));
+    let auth = &graph["resource"]["openshell_kubernetes_auth"]["runtime"];
+    assert_eq!(auth["authentication_profile"], "oidc");
+    let oidc: serde_json::Value = serde_json::from_str(auth["oidc"].as_str().unwrap()).unwrap();
+    assert_eq!(oidc["tokenEnv"], "OPENSHELL_TOKEN");
+    assert_eq!(oidc["issuer"], "https://login.example.com/realms/openshell");
+
+    // Without a CA ConfigMap, the chart mounts none.
+    let mut value = serde_json::to_value(oidc_document()).unwrap();
+    value["spec"]["gateway"]["kubernetes"]["authentication"]
+        .as_object_mut()
+        .unwrap()
+        .remove("caConfigMap");
+    let document = Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap();
+    let graph = compile_runtime(&document, &generations, "0.1.0").unwrap();
+    let values: serde_json::Value = serde_json::from_str(
+        graph["resource"]["helm_release"]["gateway"]["values"][0]
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(values["server"]["oidc"]["caConfigMapName"], "");
+}
+
+#[test]
+fn sandbox_driver_config_reaches_the_kubernetes_chart() {
+    let generations = ["kubernetes_gateway", "kubernetes_storage"]
+        .map(|kind| (kind.into(), "a".repeat(32)))
+        .into();
+    let values_of = |setting: Option<serde_json::Value>| {
+        let mut value = serde_json::to_value(document()).unwrap();
+        if let Some(setting) = setting {
+            value["spec"]["gateway"]["sandboxDriverConfig"] = setting;
+        }
+        let document = Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap();
+        let graph = compile_runtime(&document, &generations, "0.1.0").unwrap();
+        serde_json::from_str::<serde_json::Value>(
+            graph["resource"]["helm_release"]["gateway"]["values"][0]
+                .as_str()
+                .unwrap(),
+        )
+        .unwrap()
+    };
+    let values = values_of(Some(json!({
+        "allow": true,
+        "resourceAdmission": {"requiredLabels": {"team.example/attachable": "true"}}
+    })));
+    assert_eq!(
+        values["server"]["drivers"]["kubernetes"],
+        json!({
+            "allowDriverConfig": true,
+            "resourceAdmission": {"requiredLabels": {"team.example/attachable": "true"}}
+        })
+    );
+    // Without the setting, the chart keeps its own defaults.
+    assert!(values_of(None)["server"].get("drivers").is_none());
 }

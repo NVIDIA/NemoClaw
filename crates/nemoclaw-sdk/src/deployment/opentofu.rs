@@ -122,18 +122,34 @@ impl Deployment {
         name: &str,
         cancel: &CancellationToken,
     ) -> Result<Plan, Error> {
-        self.tofu(
-            bundle,
-            store,
-            document,
-            &["plan", "-input=false", "-no-color", &format!("-out={name}")],
-            cancel,
-        )
-        .await?;
-        let bytes = self
-            .tofu(bundle, store, document, &["show", "-json", name], cancel)
-            .await?;
-        serde_json::from_slice(&bytes).map_err(|_| Error::State("invalid OpenTofu plan"))
+        let out = format!("-out={name}");
+        let mut arguments = vec![
+            "plan".to_owned(),
+            "-input=false".into(),
+            "-no-color".into(),
+            out,
+        ];
+        let mut replaced = false;
+        loop {
+            let args: Vec<&str> = arguments.iter().map(String::as_str).collect();
+            self.tofu(bundle, store, document, &args, cancel).await?;
+            let bytes = self
+                .tofu(bundle, store, document, &["show", "-json", name], cancel)
+                .await?;
+            let plan: Plan = serde_json::from_slice(&bytes)
+                .map_err(|_| Error::State("invalid OpenTofu plan"))?;
+            let sandboxes = super::plan::sandboxes_for_new_agents(&plan);
+            // Plan once more at most: the replaced sandboxes are created anew.
+            if replaced || sandboxes.is_empty() {
+                return Ok(plan);
+            }
+            arguments.extend(
+                sandboxes
+                    .iter()
+                    .map(|sandbox| format!("-replace={sandbox}")),
+            );
+            replaced = true;
+        }
     }
     pub(super) fn provider_environment(
         &self,
@@ -146,6 +162,15 @@ impl Deployment {
         } else {
             command_environment(document, self.secrets.as_ref(), directory)?
         };
+        // Providers keep backends' own messages about failed operations here,
+        // in the deployment's private state, and diagnostics name the file.
+        let diagnostics = std::path::absolute(&self.state_directory)
+            .map_err(|_| Error::State("cannot resolve the deployment's state directory"))?
+            .join("diagnostics");
+        environment.insert(
+            nemoclaw_backend::DIAGNOSTICS_ENV.into(),
+            diagnostics.to_string_lossy().into_owned(),
+        );
         if let Some(target) = document.spec.gateway.as_kubernetes() {
             let state = std::path::absolute(&self.state_directory)
                 .map_err(|_| Error::State("cannot resolve Kubernetes state directory"))?
@@ -154,7 +179,6 @@ impl Deployment {
                 crate::kubernetes::STATE_ENV.into(),
                 state.to_string_lossy().into_owned(),
             );
-            environment.extend(self.operation_environment.clone());
             let kubeconfig = crate::kubernetes::kubeconfig_path(
                 environment
                     .get(&target.kubeconfig.env)
@@ -190,6 +214,8 @@ pub(super) fn gateway_environment(
     if let Some(kubernetes) = gateway.as_kubernetes() {
         names.insert(kubernetes.kubeconfig.env.as_str());
         names.extend(kubernetes.environment.iter().map(String::as_str));
+        // An existing issuer's token authenticates every gateway request.
+        names.extend(kubernetes.authentication.token_env.as_deref());
     }
     if let Some(credential) = gateway.credential() {
         names.insert(credential.env.as_str());

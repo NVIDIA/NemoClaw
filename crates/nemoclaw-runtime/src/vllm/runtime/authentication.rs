@@ -3,6 +3,24 @@
 use crate::Error;
 use std::path::Path;
 
+/// The key a platform supplied through [`crate::INFERENCE_KEY_ENV`], if any: a
+/// bearer token of 16 to 4096 printable characters without whitespace. Errors
+/// never include the value.
+pub(crate) fn supplied(value: Option<std::ffi::OsString>) -> Result<Option<String>, Error> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let key = value.into_string().map_err(|_| {
+        Error::State("the supplied inference key must be printable text without whitespace")
+    })?;
+    if !(16..=4096).contains(&key.len()) || !key.bytes().all(|byte| byte.is_ascii_graphic()) {
+        return Err(Error::State(
+            "the supplied inference key must be 16 to 4096 printable characters without whitespace",
+        ));
+    }
+    Ok(Some(key))
+}
+
 // The caller holds the volume writer lock throughout initialization and use.
 // Publish the key before the marker: a crash may recover that exact key, never
 // silently generate a replacement for an initialized volume.
@@ -149,6 +167,32 @@ mod tests {
                 _ => unreachable!(),
             }
             assert!(load(root.path()).is_err(), "{corrupt}");
+        }
+    }
+
+    #[test]
+    fn a_supplied_key_is_used_only_when_it_is_a_usable_token() {
+        use std::ffi::OsString;
+        assert_eq!(supplied(None).unwrap(), None);
+        let key = "sk-0123456789abcdef0123456789abcdef";
+        assert_eq!(
+            supplied(Some(OsString::from(key))).unwrap().as_deref(),
+            Some(key)
+        );
+        for invalid in [
+            "",
+            "too-short",
+            "has a space 0123456789",
+            "tab\t0123456789abcdef",
+            "line\n0123456789abcdef",
+        ] {
+            let error = supplied(Some(OsString::from(invalid)))
+                .unwrap_err()
+                .to_string();
+            assert!(
+                !invalid.is_empty() && !error.contains(invalid) || invalid.is_empty(),
+                "{error}"
+            );
         }
     }
 }

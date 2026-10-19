@@ -4,7 +4,7 @@
 mod hardware;
 mod observation;
 mod process;
-mod recipe;
+mod pull;
 
 use crate::execution::supervisor::{self, Monitors};
 use crate::{
@@ -47,7 +47,9 @@ async fn run_owned(
     cancel: &CancellationToken,
     trip: &CancellationToken,
 ) -> Result<(), Error> {
-    let model = recipe::prepare(service, Path::new(ROOT), cancel).await?;
+    // Ollama owns its model storage on the retained volume.
+    let model = Path::new(ROOT).join("ollama");
+    fs::create_dir_all(&model).map_err(|_| Error::State("cannot create Ollama model storage"))?;
     if trip.is_cancelled() {
         return Err(Error::Conflict(
             "memory protection tripped by operator; reapply required",
@@ -59,6 +61,18 @@ async fn run_owned(
     let mut child = command
         .spawn()
         .map_err(|_| Error::State("Ollama process could not start"))?;
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .connect_timeout(Duration::from_secs(2))
+        .redirect(reqwest::redirect::Policy::none())
+        .retry(reqwest::retry::never())
+        .build()
+        .map_err(|_| Error::State("cannot initialize the Ollama client"))?;
+    let endpoint = format!("http://127.0.0.1:{}", service.serving.port);
+    if let Err(error) = pull::ensure(&client, &endpoint, service, cancel, &report).await {
+        supervisor::terminate(child.as_mut()).await;
+        return Err(error);
+    }
     if let Err(error) = report(
         "loading",
         "waiting for Ollama readiness",

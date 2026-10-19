@@ -69,15 +69,9 @@ spec:
               overrides:
                 model: nvidia/Qwen3.8-27B-NVFP4
                 maxTokens: 2048
-                settings:
-                  model_metadata:
-                    contextWindow: 32768
             - name: hosted
               providerRef: hosted
               overrides:
                 model: replace-with-your-hosted-model
                 maxTokens: 2048
-                settings:
-                  model_metadata:
-                    contextWindow: 32768
           default: local

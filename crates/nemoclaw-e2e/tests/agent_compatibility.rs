@@ -7,25 +7,23 @@ fn policy_matches(actual: &openshell_core::proto::SandboxPolicy) -> bool {
 }
 
 #[test]
-fn fabric_launch_preserves_caller_identity_without_selecting_or_invoking_an_adapter() {
+fn fabric_launch_serves_without_selecting_or_invoking_an_agent() {
     let binding = binding("fixture");
-    let launch = binding.command("serve", &["--agent", "researcher"]);
-    assert!(launch.ends_with(&["serve".into(), "--agent".into(), "researcher".into()]));
-    assert!(
-        !launch
-            .iter()
-            .any(|arg| matches!(arg.as_str(), "invoke" | "probe" | "--message"))
-    );
-    for name in ["researcher", "writer"] {
-        let env = binding.environment(name);
-        assert_eq!(env["NEMOCLAW_AGENT_NAME"], name);
-        assert_eq!(env["NEMOCLAW_ANONYMOUS_API_KEY"], "unused");
-        for secret in ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "NVIDIA_API_KEY"] {
-            assert!(!env.contains_key(secret));
-        }
-        assert!(!env.contains_key("NEMOCLAW_FABRIC_HARNESS"));
-        assert!(!env.contains_key("MSWEA_COST_TRACKING"));
+    // The sandbox serves Fabric's bridge; each operation names the agent.
+    let launch = binding.launch("researcher").command;
+    assert!(launch.ends_with(&["serve".into()]));
+    assert!(!launch.iter().any(|arg| matches!(
+        arg.as_str(),
+        "invoke" | "probe" | "--message" | "--agent" | "researcher"
+    )));
+    let env = binding.environment();
+    assert!(!env.contains_key("NEMOCLAW_AGENT_NAME"));
+    assert_eq!(env["NEMOCLAW_ANONYMOUS_API_KEY"], "unused");
+    for secret in ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "NVIDIA_API_KEY"] {
+        assert!(!env.contains_key(secret));
     }
+    assert!(!env.contains_key("NEMOCLAW_FABRIC_HARNESS"));
+    assert!(!env.contains_key("MSWEA_COST_TRACKING"));
 }
 
 #[test]

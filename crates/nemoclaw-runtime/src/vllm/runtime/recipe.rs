@@ -32,16 +32,25 @@ pub(crate) async fn prepare(
             tokio::select! { ()=cancel.cancelled()=>return Err(Error::Cancelled), m=hf::resolve_manifest(service)=>m? }
         }
     };
-    report("downloading", "verifying selected model snapshot", 0)?;
-    let client = snapshot::Client::new()?;
-    tokio::time::timeout(
-        Duration::from_secs(8 * 3600),
-        client.ensure(&model, &manifest, cancel, &|file| {
-            let _ = report("downloading", file, 0);
-        }),
-    )
-    .await
-    .map_err(|_| Error::State("model download exceeded budget; partial data retained"))??;
+    let verified = snapshot::ModelManifest::read(&model)?
+        .is_some_and(|local| local.files.iter().all(|entry| entry.modified.is_some()));
+    if verified {
+        report("downloading", "verifying selected model snapshot", 0)?;
+        snapshot::observe(&model, &manifest)?;
+    } else {
+        report(
+            "downloading",
+            "Hugging Face is downloading the selected model snapshot",
+            0,
+        )?;
+        tokio::time::timeout(
+            Duration::from_secs(8 * 3600),
+            super::download::fetch(&model, &manifest, cancel),
+        )
+        .await
+        .map_err(|_| Error::State("model download exceeded budget; partial data retained"))??;
+        snapshot::record(&model, &manifest)?;
+    }
     let mut environment: std::collections::BTreeMap<String, std::ffi::OsString> = [
         ("HF_HUB_OFFLINE", "1"),
         ("TRANSFORMERS_OFFLINE", "1"),

@@ -41,7 +41,7 @@ async fn discovery_plan_reads_target_metadata_without_gateway_or_mutations() {
         "ssh://127.0.0.1:1".to_owned()
     };
     let config = json!({
-        "terraform":{"required_version":"= 1.12.6","required_providers":{"host":{"source":"nvidia/host"},"fabric":{"source":"nvidia/fabric"}}},
+        "terraform":{"required_providers":{"host":{"source":"nvidia/host"},"fabric":{"source":"nvidia/fabric"}}},
         "provider":{"host":{},"fabric":{}},
         "data":{
             "host_engine":{
@@ -190,7 +190,7 @@ output "status" {{
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated Docker fixture"]
-async fn compiled_discovery_requires_runtime_metadata_but_allows_unknown_capabilities() {
+async fn compiled_discovery_requires_the_image_runtime_metadata() {
     use nemoclaw_sdk::{compile::compile, config::Document};
     let document =
         Document::parse(include_bytes!("../../../../examples/onboarding/openclaw.yaml").as_slice())
@@ -216,10 +216,6 @@ async fn compiled_discovery_requires_runtime_metadata_but_allows_unknown_capabil
                 },
                 2=>return Some((200,br#"{"Id":"sha256:unlabeled","Config":{"Labels":{}}}"#.to_vec())),
                 3=>return Some((404,br#"{"message":"not found"}"#.to_vec())),
-                4=>{
-                    catalog.adapters.iter_mut().find(|adapter|adapter.adapter_id()=="nvidia.fabric.openclaw")
-                        .unwrap().descriptor.as_object_mut().unwrap().remove("extension_schemas");
-                },
                 _=>{}
             }
             json!({"Id":"sha256:fixture", "Architecture":"arm64", "Os":"linux", "RepoDigests":[image], "Config":{"Labels":{IMAGE_CATALOG_LABEL:serde_json::to_string(&catalog).unwrap()}}})
@@ -251,7 +247,7 @@ async fn compiled_discovery_requires_runtime_metadata_but_allows_unknown_capabil
                 && !name.starts_with("endpoint_")
         });
     let graph = json!({
-        "terraform":{"required_version":"= 1.12.6","required_providers":{"host":{"source":"nvidia/host"},"fabric":{"source":"nvidia/fabric"}}},
+        "terraform":{"required_providers":{"host":{"source":"nvidia/host"},"fabric":{"source":"nvidia/fabric"}}},
         "provider":{"host":{},"fabric":{}},
         "data":{
             "host_engine":compiled["data"]["host_engine"],
@@ -262,7 +258,7 @@ async fn compiled_discovery_requires_runtime_metadata_but_allows_unknown_capabil
     let directory = crate::workspace();
     let root = directory.path();
     fs::write(root.join("main.tf.json"), graph.to_string()).unwrap();
-    for selected in 0..5 {
+    for selected in 0..4 {
         mode.store(selected, Ordering::SeqCst);
         let result = directory
             .command()
@@ -276,7 +272,6 @@ async fn compiled_discovery_requires_runtime_metadata_but_allows_unknown_capabil
         );
         let compatible = match selected {
             0 => Some("supported"),
-            4 => Some("unknown"),
             _ => None,
         };
         assert_eq!(
@@ -304,7 +299,7 @@ async fn compiled_discovery_requires_runtime_metadata_but_allows_unknown_capabil
                     .as_array()
                     .unwrap()
                     .iter()
-                    .any(|check| check["requirement"] == "fabric_plan"
+                    .any(|check| check["requirement"] == "fabric_adapter"
                         && check["status"] == expected)
             );
         } else if selected == 1 {
@@ -323,6 +318,7 @@ async fn compiled_discovery_requires_runtime_metadata_but_allows_unknown_capabil
             );
         }
     }
-    assert_eq!(requests.load(Ordering::SeqCst), 15);
+    // Three engine requests per case.
+    assert_eq!(requests.load(Ordering::SeqCst), 12);
     assert!(!root.join("terraform.tfstate").exists());
 }

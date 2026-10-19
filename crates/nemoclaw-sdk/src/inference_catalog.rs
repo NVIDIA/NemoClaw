@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Advertised model catalogs, not inference probes or sandbox reachability.
-//! Protocols: https://platform.openai.com/docs/api-reference/models/list and
-//! https://platform.claude.com/docs/en/api/models/list.
+//! Protocols: <https://platform.openai.com/docs/api-reference/models/list> and
+//! <https://platform.claude.com/docs/en/api/models/list>.
 use crate::{
     Secrets,
     config::InferenceApi,
@@ -74,6 +74,29 @@ fn model_request(
         }
     }
 }
+/// Whether a request failed because the server presented a certificate the
+/// system trust store does not accept. TLS errors arrive inside nested I/O
+/// errors, whose `source` skips the error each one wraps.
+fn untrusted_certificate(error: &reqwest::Error) -> bool {
+    let mut current: Option<&(dyn std::error::Error + 'static)> = Some(error);
+    while let Some(error) = current {
+        if matches!(
+            error.downcast_ref::<rustls::Error>(),
+            Some(rustls::Error::InvalidCertificate(_))
+        ) {
+            return true;
+        }
+        current = match error
+            .downcast_ref::<std::io::Error>()
+            .and_then(std::io::Error::get_ref)
+        {
+            Some(inner) => Some(inner as &(dyn std::error::Error + 'static)),
+            None => error.source(),
+        };
+    }
+    false
+}
+
 async fn read_catalog(request: &EndpointRequest, secrets: &dyn Secrets) -> EndpointObservation {
     let mut observed = EndpointObservation::unknown("inference catalog could not be observed");
     let Ok(client) = reqwest::Client::builder()
@@ -100,6 +123,13 @@ async fn read_catalog(request: &EndpointRequest, secrets: &dyn Secrets) -> Endpo
             .await
         {
             Ok(response) => response,
+            Err(error) if untrusted_certificate(&error) => {
+                observed.reason = Some(
+                    "the inference server's certificate is not trusted by the control host; add its CA to the system trust store or set SSL_CERT_FILE to a bundle that includes it"
+                        .into(),
+                );
+                return observed;
+            }
             Err(_) => {
                 observed.reason =
                     Some("inference endpoint could not be reached from the control host".into());
@@ -211,6 +241,53 @@ async fn read_catalog(request: &EndpointRequest, secrets: &dyn Secrets) -> Endpo
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A server whose certificate no system trust store holds. It only needs
+    /// to present the certificate; the client rejects it during the handshake.
+    fn untrusted_server() -> u16 {
+        let key = rcgen::KeyPair::generate().unwrap();
+        let certificate = rcgen::CertificateParams::new(vec!["localhost".into()])
+            .unwrap()
+            .self_signed(&key)
+            .unwrap();
+        let config = std::sync::Arc::new(
+            rustls::ServerConfig::builder_with_provider(std::sync::Arc::new(
+                rustls::crypto::ring::default_provider(),
+            ))
+            .with_safe_default_protocol_versions()
+            .unwrap()
+            .with_no_client_auth()
+            .with_single_cert(
+                vec![certificate.der().clone()],
+                rustls::pki_types::PrivateKeyDer::Pkcs8(key.serialize_der().into()),
+            )
+            .unwrap(),
+        );
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for mut stream in listener.incoming().flatten() {
+                let mut connection = rustls::ServerConnection::new(config.clone()).unwrap();
+                let _ = connection.complete_io(&mut stream);
+            }
+        });
+        port
+    }
+
+    #[tokio::test]
+    async fn an_untrusted_certificate_names_how_to_trust_it() {
+        let request = EndpointRequest {
+            endpoint: format!("https://localhost:{}/v1", untrusted_server()),
+            api: InferenceApi::OpenaiCompletions,
+            credential_env: None,
+        };
+        let observed = observe_endpoint(&request, &crate::EnvironmentSecrets).await;
+        assert_eq!(observed.status, ObservationStatus::Unknown);
+        let reason = observed.reason.unwrap();
+        assert!(reason.contains("certificate is not trusted"), "{reason}");
+        assert!(reason.contains("SSL_CERT_FILE"), "{reason}");
+    }
+
     #[tokio::test]
     async fn invalid_requests_are_unknown_without_contacting_the_endpoint() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

@@ -30,6 +30,247 @@ fn choose_preset(preset: ProviderPreset) -> nemoclaw_authoring::JourneyState {
 }
 
 #[test]
+fn a_vendor_offers_curated_models_without_endpoint_discovery() {
+    let capabilities = Capabilities::available();
+    let state = choose_preset(ProviderPreset::OpenAi);
+    let resolution = state.resolve(&capabilities).unwrap();
+    let question = resolution
+        .question("/spec/sandboxes/0/agent/inference/routes/0/overrides/model")
+        .unwrap();
+    assert!(question.choices().contains(&json!("gpt-5.4")));
+    assert!(question.choices().contains(&json!("gpt-5.4-mini")));
+    assert!(question.allows_custom_answer());
+}
+
+#[test]
+fn a_missing_catalog_key_keeps_offline_recommendations_without_verifying_access() {
+    use nemoclaw_sdk::{
+        discovery::{
+            DiscoveryObservation, DiscoveryObservations, DiscoveryQuery, ObservationStatus,
+        },
+        inference_discovery::{AuthenticationStatus, EndpointObservation},
+    };
+    let capabilities = Capabilities::available();
+    let state = choose_preset(ProviderPreset::OpenAi);
+    let resolution = state.resolve(&capabilities).unwrap();
+    let request = nemoclaw_authoring::inference_request_for_document(
+        resolution.assessment().document().unwrap(),
+        state.current_route(),
+    )
+    .unwrap()
+    .unwrap();
+    let observations = DiscoveryObservations::new().with(
+        DiscoveryQuery::Inference(request),
+        DiscoveryObservation::Inference(EndpointObservation {
+            status: ObservationStatus::Unavailable,
+            reachable: Some(true),
+            authentication: AuthenticationStatus::Required,
+            models: Vec::new(),
+            reason: None,
+            source: "fixture".into(),
+            api_verified: false,
+        }),
+    );
+    let resolution = state
+        .resolve_with_observations(&capabilities, &observations)
+        .unwrap();
+    let question = resolution
+        .question("/spec/sandboxes/0/agent/inference/routes/0/overrides/model")
+        .unwrap();
+    assert!(question.choices().contains(&json!("gpt-5.4-mini")));
+    assert!(
+        resolution
+            .information()
+            .iter()
+            .any(|note| note.contains("Model catalog needs credential"))
+    );
+    assert!(
+        state
+            .delegate_remaining(&capabilities, &observations)
+            .is_err()
+    );
+}
+
+#[test]
+fn catalog_membership_is_checked_without_blocking_or_echoing_custom_models() {
+    let capabilities = Capabilities::available();
+    let mut state = choose_preset(ProviderPreset::OpenAi);
+    let path = "/spec/sandboxes/0/agent/inference/routes/0/overrides/model";
+    for (model, outside) in [
+        ("gpt-5.4-mini", false),
+        ("PRIVATE_SENTINEL/custom-model", true),
+    ] {
+        state
+            .answer(&capabilities, path, Some(json!(model)))
+            .unwrap();
+        let resolution = state.resolve(&capabilities).unwrap();
+        let information = resolution.information().join(" ");
+        assert_eq!(
+            information.contains("outside the curated OpenAI catalog"),
+            outside
+        );
+        assert!(!information.contains("PRIVATE_SENTINEL"));
+        assert_eq!(state.values().pointer(path), Some(&json!(model)));
+        assert!(resolution.assessment().document().is_some());
+    }
+}
+
+#[test]
+fn vendor_catalogs_follow_the_endpoint_and_preserve_an_unlisted_suggestion() {
+    let capabilities = Capabilities::available();
+    let model = "/spec/sandboxes/0/agent/inference/routes/0/overrides/model";
+    let base =
+        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    let mut state = JourneyDefinition::new("editable-endpoint", base)
+        .ask(["inference:preset", "/spec/inferenceProviders/0/endpoint"])
+        .ask([JourneyScope::RouteModels])
+        .start(&capabilities)
+        .unwrap();
+    state
+        .answer(&capabilities, "inference:preset", Some(json!("openai")))
+        .unwrap();
+    state
+        .answer(&capabilities, model, Some(json!("custom/model")))
+        .unwrap();
+    // Revisit the accepted model through a fresh journey to check menu behavior.
+    let state_with_supplied = JourneyDefinition::new(
+        "supplied",
+        PartialDocument::from_yaml(&serde_json::to_vec(state.values()).unwrap()).unwrap(),
+    )
+    .ask([JourneyScope::RouteModels])
+    .start(&capabilities)
+    .unwrap();
+    let resolution = state_with_supplied.resolve(&capabilities).unwrap();
+    let question = resolution.question(model).unwrap();
+    assert_eq!(question.suggestion(), Some(&json!("custom/model")));
+    assert!(question.choices().contains(&json!("custom/model")));
+    assert!(question.choices().contains(&json!("gpt-5.4-mini")));
+    state
+        .answer(
+            &capabilities,
+            "/spec/inferenceProviders/0/endpoint",
+            Some(json!("https://private.example/v1")),
+        )
+        .unwrap();
+    let resolution = state.resolve(&capabilities).unwrap();
+    assert!(resolution.question(model).unwrap().choices().is_empty());
+    assert!(
+        !resolution
+            .information()
+            .iter()
+            .any(|note| note.contains("curated OpenAI"))
+    );
+}
+
+#[test]
+fn vendor_catalogs_are_not_applied_to_generic_endpoints() {
+    let capabilities = Capabilities::available();
+    for preset in [
+        ProviderPreset::OpenAiCompatible,
+        ProviderPreset::AnthropicCompatible,
+    ] {
+        let mut state = choose_preset(preset);
+        state
+            .answer(
+                &capabilities,
+                "/spec/inferenceProviders/0/endpoint",
+                Some(json!("https://private.example/v1")),
+            )
+            .unwrap();
+        let model = "/spec/sandboxes/0/agent/inference/routes/0/overrides/model";
+        let resolution = state.resolve(&capabilities).unwrap();
+        assert!(resolution.question(model).unwrap().choices().is_empty());
+        state
+            .answer(&capabilities, model, Some(json!("private/custom")))
+            .unwrap();
+        assert!(
+            !state
+                .resolve(&capabilities)
+                .unwrap()
+                .information()
+                .iter()
+                .any(|note| note.contains("curated"))
+        );
+    }
+}
+
+#[test]
+fn every_named_vendor_offers_its_default_and_catalog_alternatives() {
+    let capabilities = Capabilities::available();
+    for preset in ProviderPreset::ALL
+        .into_iter()
+        .filter(|preset| !preset.recommended_models().is_empty())
+    {
+        let state = choose_preset(preset);
+        let resolution = state.resolve(&capabilities).unwrap();
+        let question = resolution
+            .question("/spec/sandboxes/0/agent/inference/routes/0/overrides/model")
+            .unwrap();
+        assert!(question.choices().len() > 1, "{}", preset.id());
+        assert!(question.choices().contains(question.suggestion().unwrap()));
+        for model in preset.recommended_models() {
+            assert!(
+                question.choices().contains(&json!(model)),
+                "{}",
+                preset.id()
+            );
+        }
+        let unique = question
+            .choices()
+            .iter()
+            .map(Value::to_string)
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(unique.len(), question.choices().len());
+    }
+}
+
+#[test]
+fn endpoint_discovery_supplements_the_curated_menu_without_duplicates() {
+    use nemoclaw_sdk::{
+        discovery::{
+            DiscoveryObservation, DiscoveryObservations, DiscoveryQuery, ObservationStatus,
+        },
+        inference_discovery::{AuthenticationStatus, EndpointObservation},
+    };
+    let capabilities = Capabilities::available();
+    let state = choose_preset(ProviderPreset::OpenAi);
+    let resolution = state.resolve(&capabilities).unwrap();
+    let request = nemoclaw_authoring::inference_request_for_document(
+        resolution.assessment().document().unwrap(),
+        state.current_route(),
+    )
+    .unwrap()
+    .unwrap();
+    let observations = DiscoveryObservations::new().with(
+        DiscoveryQuery::Inference(request),
+        DiscoveryObservation::Inference(EndpointObservation {
+            status: ObservationStatus::Available,
+            reachable: Some(true),
+            authentication: AuthenticationStatus::Accepted,
+            models: vec!["gpt-5.4-mini".into(), "vendor/new-model".into()],
+            reason: None,
+            source: "fixture".into(),
+            api_verified: false,
+        }),
+    );
+    let resolution = state
+        .resolve_with_observations(&capabilities, &observations)
+        .unwrap();
+    let question = resolution
+        .question("/spec/sandboxes/0/agent/inference/routes/0/overrides/model")
+        .unwrap();
+    assert!(question.choices().contains(&json!("gpt-5.4-nano")));
+    assert!(question.choices().contains(&json!("vendor/new-model")));
+    let unique = question
+        .choices()
+        .iter()
+        .map(Value::to_string)
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(unique.len(), question.choices().len());
+}
+
+#[test]
 fn the_journey_advertises_every_fabric_harness_and_curated_provider() {
     let capabilities = Capabilities::available();
     let state = guided();

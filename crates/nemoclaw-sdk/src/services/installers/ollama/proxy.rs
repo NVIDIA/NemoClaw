@@ -14,7 +14,7 @@ pub const STORAGE: &str = "ollama_proxy_storage";
 pub const MODEL: &str = "ollama_model";
 /// Data source that computes the proxy's `NEMOCLAW_OLLAMA_PROXY` contract.
 pub const RUNTIME_DATA_SOURCE: &str = "ollama_proxy_runtime";
-/// Kinds the NemoClaw provider owns; the proxy container belongs to the Docker provider.
+/// Kinds the ollama provider owns; the proxy container belongs to the Docker provider.
 pub fn supports(kind: &str) -> bool {
     kind == STORAGE
 }

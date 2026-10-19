@@ -19,6 +19,9 @@ See [migration](migration.md) for where each earlier task lives now, and [state]
 Recent development changes that affect existing deployments:
 
 - Docker-managed vLLM and Ollama services default to [`updatePolicy: Preserve`](inference.md#set-container-limits-and-update-policy), which refuses an image, model, serving, or container-limit change that would replace a running container; set `spec.services.<name>.updatePolicy: Recreate` to permit the replacement and its downtime.
+- `spec.gateway.image` is removed: the SDK pins the managed gateway image, and defaulted and exported documents no longer name it.
+  - Remove the field from documents; the parser rejects it as an unknown field.
+  - In the Rust SDK, `ManagedGateway` has no `image` field; `managed::Spec.image` carries the managed gateway's pin.
 
 ## Qualification and Known Issues
 

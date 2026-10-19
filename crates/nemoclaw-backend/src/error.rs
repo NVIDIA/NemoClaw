@@ -14,13 +14,6 @@ pub enum Error {
     #[error("{0}")]
     Conflict(&'static str),
     #[error(
-        "apply cannot {action} sandbox '{sandbox}'; its files and conversation history are not separately retained"
-    )]
-    SandboxChangeRefused {
-        sandbox: String,
-        action: &'static str,
-    },
-    #[error(
         "Docker model service '{service}' is preserved by updatePolicy: Preserve; replacing a running or incompletely observed container requires explicit updatePolicy: Recreate, which permits downtime if the replacement cannot start; resources retained"
     )]
     DockerModelUpdateRefused { service: String },
@@ -111,6 +104,35 @@ pub(crate) fn sandbox_startup_guidance(reason: &str) -> &'static str {
         "ControlSupervisorStartFailed" => {
             "; control supervisor could not start; check the sandbox policy and attached providers"
         }
-        _ => "",
+        // OpenShell's own log shows why the process exited, for example an
+        // image without the launch command its harness declares.
+        _ => "; `openshell logs SANDBOX --source sandbox` shows why its process exited",
+    }
+}
+
+#[cfg(test)]
+mod sandbox_startup_tests {
+    use super::*;
+
+    #[test]
+    fn an_unexplained_sandbox_exit_points_to_openshell_logs() {
+        let message = Error::SandboxStartup {
+            phase: "SANDBOX_PHASE_ERROR",
+            reason: "unknown",
+            exit_code: "1".into(),
+        }
+        .to_string();
+        assert!(
+            message.contains("openshell logs SANDBOX --source sandbox"),
+            "{message}"
+        );
+        // A recognized reason keeps its specific guidance.
+        let identity = Error::SandboxStartup {
+            phase: "SANDBOX_PHASE_ERROR",
+            reason: "IdentityResolutionFailed",
+            exit_code: "1".into(),
+        }
+        .to_string();
+        assert!(identity.contains("run_as_user"), "{identity}");
     }
 }

@@ -4,6 +4,11 @@
 //! and providers, with no Helm executable on PATH. Requires an owned cluster
 //! with Agent Sandbox, its explicit kubeconfig/context, and a verified bundle.
 
+#[path = "kubernetes_oidc.rs"]
+mod oidc;
+#[path = "kubernetes_registry.rs"]
+mod registry;
+
 use k8s_openapi::api::{
     apps::v1::StatefulSet,
     core::v1::{Namespace, PersistentVolumeClaim, Secret},
@@ -220,42 +225,73 @@ struct Retained {
     claims: BTreeMap<String, String>,
 }
 
-async fn retained(client: &kube::Client, namespace: &str, release: &str) -> Retained {
-    let namespace_object = Api::<Namespace>::all(client.clone())
+/// Only the chart's claims count: the StatefulSet controller labels them with
+/// the release's selector, while an agent sandbox's workspace claim in the
+/// same namespace, which destroy deletes, carries only Agent Sandbox labels.
+/// A namespace or claim that is being deleted is not retained, although its
+/// finalizers keep it readable with the same UID for a while. Errors do not
+/// panic, so a caller can still clean up; each names the failed check
+/// without cluster values.
+async fn retained(
+    client: &kube::Client,
+    namespace: &str,
+    release: &str,
+) -> Result<Retained, &'static str> {
+    let observed = Api::<Namespace>::all(client.clone())
         .get(namespace)
         .await
-        .unwrap_or_else(|_| panic!("cannot observe the retained namespace"));
+        .map_err(|_| "cannot observe the retained namespace")?
+        .metadata;
+    if observed.deletion_timestamp.is_some() {
+        return Err("the retained namespace is being deleted");
+    }
+    let namespace_uid = observed.uid.ok_or("the retained namespace has no UID")?;
     let key = Api::<Secret>::namespaced(client.clone(), namespace)
         .get(&format!("{release}-kek"))
         .await
-        .unwrap_or_else(|_| panic!("cannot observe the retained encryption key"));
-    let key_bytes = &key.data.as_ref().expect("missing key data")["key-encryption-key"].0;
+        .map_err(|_| "cannot observe the retained encryption key")?;
+    let key_digest = key
+        .data
+        .as_ref()
+        .and_then(|data| data.get("key-encryption-key"))
+        .map(|bytes| Sha256::digest(&bytes.0).to_vec())
+        .ok_or("the retained encryption key has no key data")?;
     let claims = Api::<PersistentVolumeClaim>::namespaced(client.clone(), namespace)
-        .list(&ListParams::default())
+        .list(&ListParams::default().labels(&format!("app.kubernetes.io/instance={release}")))
         .await
-        .unwrap_or_else(|_| panic!("cannot observe retained persistent volume claims"));
-    assert!(
-        !claims.items.is_empty(),
-        "the gateway created persistent storage"
-    );
-    assert!(
-        claims.items.iter().all(|claim| claim
+        .map_err(|_| "cannot observe the gateway's persistent volume claims")?
+        .items;
+    if claims.is_empty() {
+        return Err("no gateway persistent volume claim exists");
+    }
+    if claims
+        .iter()
+        .any(|claim| claim.metadata.deletion_timestamp.is_some())
+    {
+        return Err("a gateway persistent volume claim is being deleted");
+    }
+    if !claims.iter().all(|claim| {
+        claim
             .status
             .as_ref()
             .and_then(|status| status.phase.as_deref())
-            == Some("Bound")),
-        "all gateway persistent volume claims are bound",
-    );
-    Retained {
-        namespace_uid: namespace_object.metadata.uid.unwrap(),
-        key_uid: key.metadata.uid.unwrap(),
-        key_digest: Sha256::digest(key_bytes).to_vec(),
-        claims: claims
-            .items
-            .into_iter()
-            .map(|claim| (claim.metadata.name.unwrap(), claim.metadata.uid.unwrap()))
-            .collect(),
+            == Some("Bound")
+    }) {
+        return Err("a gateway persistent volume claim is not bound");
     }
+    Ok(Retained {
+        namespace_uid,
+        key_uid: key
+            .metadata
+            .uid
+            .ok_or("the retained encryption key has no UID")?,
+        key_digest,
+        claims: claims
+            .into_iter()
+            .map(|claim| claim.metadata.name.zip(claim.metadata.uid))
+            .collect::<Option<_>>()
+            .ok_or("a gateway persistent volume claim has no name or UID")?,
+    })
 }
 
 async fn release_count(client: &kube::Client, namespace: &str, release: &str) -> usize {
@@ -426,7 +462,9 @@ async fn the_gateway_installs_authenticates_and_is_removed_keeping_storage() {
     tofu.apply().await;
     assert_eq!(tofu.addresses().await, all.map(str::to_owned).into());
     tofu.plan(&BTreeMap::new()).await;
-    let kept = retained(&operations.client, &namespace, &spec.name).await;
+    let kept = retained(&operations.client, &namespace, &spec.name)
+        .await
+        .unwrap();
 
     for cycle in 0..2 {
         assert_eq!(
@@ -440,11 +478,14 @@ async fn the_gateway_installs_authenticates_and_is_removed_keeping_storage() {
             &generations,
             &tofu.bundle.manifest.version,
             &tofu.addresses().await,
-            true,
         )
         .unwrap();
         assert_eq!(teardown.retained, storage);
+        // The teardown graph comes from the deployment's whole graph, so it
+        // can require more providers than the runtime graph; the SDK
+        // initializes before every plan, and so does this test.
         tofu.graph(&teardown.graph);
+        tofu.success(&["init", "-input=false", "-no-color"]).await;
         tofu.plan(&actions(workloads, "delete")).await;
         tofu.apply().await;
         assert_eq!(tofu.addresses().await, storage);
@@ -462,35 +503,95 @@ async fn the_gateway_installs_authenticates_and_is_removed_keeping_storage() {
             "the gateway StatefulSet is gone"
         );
         assert!(
-            kept == retained(&operations.client, &namespace, &spec.name).await,
+            kept == retained(&operations.client, &namespace, &spec.name)
+                .await
+                .unwrap(),
             "namespace, encryption key and PVC identities survive removal"
         );
         if cycle == 0 {
             tofu.graph(&graph);
+            tofu.success(&["init", "-input=false", "-no-color"]).await;
             tofu.plan(&actions(workloads, "create")).await;
             tofu.apply().await;
             tofu.plan(&BTreeMap::new()).await;
             assert!(
-                kept == retained(&operations.client, &namespace, &spec.name).await,
+                kept == retained(&operations.client, &namespace, &spec.name)
+                    .await
+                    .unwrap(),
                 "reapply reuses retained storage and encryption key"
             );
         }
+    }
+    // Removing what destroy retains: deleting the namespace removes the key
+    // and claims, and with kind's Delete reclaim policy, their volumes.
+    let volumes: Vec<String> =
+        Api::<PersistentVolumeClaim>::namespaced(operations.client.clone(), &namespace)
+            .list(&ListParams::default())
+            .await
+            .unwrap()
+            .items
+            .into_iter()
+            .filter_map(|claim| claim.spec.and_then(|spec| spec.volume_name))
+            .collect();
+    assert!(
+        !volumes.is_empty(),
+        "the gateway's claims are bound to volumes"
+    );
+    let namespaces = Api::<Namespace>::all(operations.client.clone());
+    namespaces
+        .delete(&namespace, &kube::api::DeleteParams::foreground())
+        .await
+        .unwrap();
+    let persistent =
+        Api::<k8s_openapi::api::core::v1::PersistentVolume>::all(operations.client.clone());
+    let deadline = std::time::Instant::now() + Duration::from_secs(120);
+    loop {
+        let namespace_gone = namespaces.get_opt(&namespace).await.unwrap().is_none();
+        let mut volumes_gone = true;
+        for volume in &volumes {
+            volumes_gone &= persistent.get_opt(volume).await.unwrap().is_none();
+        }
+        if namespace_gone && volumes_gone {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "deleting the namespace removes the deployment's retained resources"
+        );
+        tokio::time::sleep(Duration::from_secs(1)).await;
     }
 }
 
 /// A full deployment on a real cluster through the public SDK: the managed
 /// gateway, then an agent sandbox from an image built from this checkout.
-/// Apply stops at the agent's health check, which the pinned Fabric reports
-/// as unsupported (#13031); export must still recover the authored document,
-/// and destroy then removes everything but the gateway's storage.
+/// Apply starts the agent through `fabric-agent-ctl`; export must recover the
+/// authored document, and destroy must keep the gateway's storage: its
+/// namespace, encryption key and claims keep their UIDs.
 ///
 /// `cargo ci live-kind` also provides:
 /// - `NEMOCLAW_TEST_BUNDLE`: the verified bundle
 /// - `NEMOCLAW_TEST_AGENT_IMAGE`: the agent image by digest, loaded into kind
 /// - `NEMOCLAW_TEST_AGENT_HARNESS`: its Fabric adapter
 /// - `NEMOCLAW_TEST_AGENT_METADATA`: its metadata bundle
-async fn deploy_to_the_health_check(provider: &str, while_applying: impl AsyncFnOnce(&str)) {
-    use nemoclaw_sdk::{CancellationToken, Deployment, Error, config::Document};
+async fn deploy_and_export(provider: &str, while_applying: impl AsyncFnOnce(&str)) {
+    let _ = deploy_image_and_export(
+        provider,
+        &required("NEMOCLAW_TEST_AGENT_IMAGE"),
+        &required("NEMOCLAW_TEST_AGENT_METADATA"),
+        &[],
+        while_applying,
+    )
+    .await;
+}
+
+async fn deploy_image_and_export(
+    provider: &str,
+    image: &str,
+    metadata: &str,
+    pull_secrets: &[&str],
+    while_applying: impl AsyncFnOnce(&str),
+) -> Vec<u8> {
+    use nemoclaw_sdk::{CancellationToken, Deployment, config::Document};
     let mut uid = [0u8; 16];
     getrandom::fill(&mut uid).unwrap();
     uid[6] = (uid[6] & 0x0f) | 0x40;
@@ -510,6 +611,7 @@ async fn deploy_to_the_health_check(provider: &str, while_applying: impl AsyncFn
         .local_addr()
         .unwrap()
         .port();
+    let harness = required("NEMOCLAW_TEST_AGENT_HARNESS");
     let yaml = format!(
         "apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
@@ -527,6 +629,7 @@ spec:
       context: {context}
       namespace: {namespace}
       authentication: {{profile: development}}
+      imagePullSecrets: {pull_secrets}
   inferenceProviders:
     - name: hosted
       provider: openai
@@ -548,20 +651,23 @@ spec:
               providerRef: hosted
               overrides:
                 model: fixture-model
-                settings:
-                  model_metadata:
-                    api: openai-completions
-                    contextWindow: 8192
-                    maxTokens: 2048
-                    reasoning: false
-                    input:
-                    - text
+                maxTokens: 2048{extensions}
 ",
         context = required("NEMOCLAW_TEST_KUBE_CONTEXT"),
-        image = required("NEMOCLAW_TEST_AGENT_IMAGE"),
-        harness = required("NEMOCLAW_TEST_AGENT_HARNESS"),
+        image = image,
+        pull_secrets = serde_json::to_string(pull_secrets).unwrap(),
+        harness = harness,
+        // Pi needs a context window for a model it does not ship; OpenClaw
+        // declares no model extensions.
+        extensions = if harness == "nvidia.fabric.pi" {
+            "\n                extensions:\n                  context_window: 8192"
+        } else {
+            ""
+        },
     );
     let document = Document::parse(yaml.as_bytes()).unwrap();
+    // The SDK names the gateway's Helm release from metadata.uid alone.
+    let release = format!("{}-gateway", document.workspace());
     let state = tempfile::tempdir().unwrap();
     // Live kind runs on Linux. Supply a caller-relative kubeconfig through
     // the public SDK while keeping the private fixture outside the checkout.
@@ -569,15 +675,19 @@ spec:
     let from_root: PathBuf = caller.ancestors().skip(1).map(|_| "..").collect();
     let kubeconfig = std::path::absolute(required("NEMOCLAW_TEST_KUBECONFIG")).unwrap();
     let relative = from_root.join(kubeconfig.strip_prefix("/").unwrap());
+    // Connect before deploying, so a bad kubeconfig leaves nothing to remove.
+    let cluster = connect(&ClusterTarget {
+        kubeconfig,
+        context: required("NEMOCLAW_TEST_KUBE_CONTEXT"),
+    })
+    .await
+    .unwrap();
     let credentials = Values(BTreeMap::from([
         (
             "NEMOCLAW_TEST_KUBECONFIG".into(),
             relative.to_string_lossy().into_owned(),
         ),
-        (
-            "NEMOCLAW_TEST_AGENT_METADATA".into(),
-            required("NEMOCLAW_TEST_AGENT_METADATA"),
-        ),
+        ("NEMOCLAW_TEST_AGENT_METADATA".into(), metadata.to_owned()),
     ]));
     let deployment = Deployment::new(
         state.path(),
@@ -590,24 +700,17 @@ spec:
         deployment.apply(&document, &cancel),
         while_applying(&namespace)
     );
-    let error = applied.expect_err("the agent's health is unsupported at this Fabric pin");
-    match &error {
-        Error::Execution {
-            postcondition_failures: Some(failures),
-            ..
-        } => assert_eq!(
-            failures,
-            &["data.fabric_agent_readiness.assistant".to_owned()],
-            "apply must stop only at the agent's health check"
-        ),
-        other => panic!("apply must stop at the agent's health check, not earlier: {other}"),
-    }
+    applied.expect("the agent starts through fabric-agent-ctl");
+    let state_snapshot = fs::read(state.path().join("terraform.tfstate")).unwrap();
 
-    // A readiness failure retains a complete deployment that must be
-    // exportable. Clean up before asserting so failed export retains no live
-    // workload after this test.
+    // A complete deployment must be exportable. Clean up before asserting so a
+    // failed export or storage observation retains no live workload after this
+    // test. Storage is observed after export, which only refreshes, so the
+    // comparison spans destroy alone.
     let exported = deployment.export(&cancel).await;
+    let kept = retained(&cluster, &namespace, &release).await;
     let destroyed = deployment.destroy(&cancel).await.unwrap();
+    let remaining = retained(&cluster, &namespace, &release).await;
     for change in &destroyed.changes {
         assert!(
             !change.resource.contains("kubernetes_storage"),
@@ -616,16 +719,16 @@ spec:
         );
     }
     assert_eq!(
-        exported.expect("export after the expected health-check failure must succeed"),
+        exported.expect("export of the applied deployment must succeed"),
         document,
         "export recovers the authored configuration without readiness checks"
     );
-}
-
-#[tokio::test]
-#[ignore = "needs a Kubernetes cluster with Agent Sandbox and a loaded agent image; run through cargo ci live-kind"]
-async fn an_agent_sandbox_reaches_its_health_check_and_destroy_keeps_storage() {
-    deploy_to_the_health_check("kubernetes", async |_| {}).await;
+    assert!(
+        kept.expect("the gateway's storage is observable before destroy")
+            == remaining.expect("the gateway's storage is observable after destroy"),
+        "namespace, encryption key and gateway PVC identities survive SDK destroy"
+    );
+    state_snapshot
 }
 
 /// The OpenShift profile on kind. kind does not enforce OpenShift's security
@@ -655,7 +758,7 @@ async fn on_openshift_the_sandbox_runs_as_the_namespace_uid() {
     )
     .unwrap();
     let observed = std::sync::Mutex::new(None::<(Option<i64>, Option<i64>)>);
-    deploy_to_the_health_check("openshift", async |namespace| {
+    deploy_and_export("openshift", async |namespace| {
         // Annotate the namespace as soon as the SDK creates it, as OpenShift
         // does when a project is created.
         let namespaces: Api<Namespace> = Api::all(client.clone());

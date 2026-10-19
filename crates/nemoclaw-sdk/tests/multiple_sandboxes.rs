@@ -53,7 +53,7 @@ fn different_adapters_separate_provider_grants_and_ignore_declaration_order() {
         2
     );
     assert_eq!(
-        before["resource"]["openshell_provider_registration"]
+        before["resource"]["openshell_inference"]
             .as_object()
             .unwrap()
             .len(),
@@ -104,7 +104,7 @@ fn sandbox_local_provider_and_inference_names_do_not_escape_their_scope() {
         .unwrap()
         .push(other);
     let before = graph(&value);
-    let providers = before["resource"]["openshell_provider_registration"]
+    let providers = before["resource"]["openshell_inference"]
         .as_object()
         .unwrap();
     assert_eq!(providers.len(), 2);
@@ -179,7 +179,7 @@ fn five_agent_example_compiles_to_five_independent_sandboxes_sharing_inference()
     let rows = nemoclaw_sdk::compile::targets(&document, &generations()).unwrap();
     let sandboxes: Vec<_> = rows.iter().filter(|row| row.kind == "sandbox").collect();
     assert_eq!(sandboxes.len(), 5);
-    assert_eq!(rows.iter().filter(|row| row.kind == "provider").count(), 3);
+    assert_eq!(rows.iter().filter(|row| row.kind == "inference").count(), 3);
     let mut counts = std::collections::BTreeMap::new();
     let mut names = std::collections::BTreeSet::new();
     for sandbox in &document.spec.sandboxes {

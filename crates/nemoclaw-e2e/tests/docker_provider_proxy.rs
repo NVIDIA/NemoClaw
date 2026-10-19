@@ -11,14 +11,29 @@ use std::{fs, path::PathBuf, process::Command};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 fn assert_same_bindings(actual: &[u8], expected: &[u8]) {
-    fn bindings(bytes: &[u8]) -> std::collections::BTreeMap<String, Value> {
-        let state: Value = serde_json::from_slice(bytes).unwrap();
-        state["resources"].as_array().unwrap().iter().filter(|r| r["mode"] == "managed").map(|r| {
+    assert_eq!(bindings(actual), bindings(expected));
+}
+
+/// The same bindings, except the agent and the sandbox a retried start replaces.
+fn assert_same_bindings_outside_the_agent(actual: &[u8], expected: &[u8]) {
+    let outside = |bytes: &[u8]| {
+        let mut all = bindings(bytes);
+        all.retain(|address, _| {
+            !["openshell_sandbox.", "fabric_agent."]
+                .iter()
+                .any(|prefix| address.starts_with(prefix))
+        });
+        all
+    };
+    assert_eq!(outside(actual), outside(expected));
+}
+
+fn bindings(bytes: &[u8]) -> std::collections::BTreeMap<String, Value> {
+    let state: Value = serde_json::from_slice(bytes).unwrap();
+    state["resources"].as_array().unwrap().iter().filter(|r| r["mode"] == "managed").map(|r| {
             let attrs = &r["instances"][0]["attributes"];
             (format!("{}.{}", r["type"].as_str().unwrap(), r["name"].as_str().unwrap()), json!({"id":attrs["id"],"owner":attrs["owner"],"generation":attrs["generation"],"labels":attrs["labels"]}))
         }).collect()
-    }
-    assert_eq!(bindings(actual), bindings(expected));
 }
 
 const ENGINE: &str = "unix:///var/run/docker.sock";
@@ -160,9 +175,10 @@ async fn sdk_docker_proxy_lifecycle_preserves_readiness_and_storage_guards() {
     let cancel = CancellationToken::new();
     let state_path = directory.path().join("terraform.tfstate");
 
-    // Fail agent health after proxy creation; no proxy process failure is simulated.
-    fixture.state.lock().unwrap().health_report =
-        Some(json!({"supported":true,"report":null,"reason_code":"fabric_health_timeout"}));
+    // Fail the agent's start after proxy creation; Fabric rejects the
+    // configuration without starting anything. No proxy failure is simulated.
+    fixture.state.lock().unwrap().configuration_error =
+        Some(json!({"error":{"code":"validation_failed","stage":"validation"}}));
     let error = deployment.apply(&document, &cancel).await.unwrap_err();
     assert!(
         matches!(error, nemoclaw_sdk::Error::Execution { .. }),
@@ -170,9 +186,9 @@ async fn sdk_docker_proxy_lifecycle_preserves_readiness_and_storage_guards() {
     );
     let id = engine.container(&name).await.unwrap().unwrap().id.unwrap();
     let failed = fs::read(&state_path).unwrap();
-    let effects = fixture.state.lock().unwrap().effects;
+    // The retry starts the agent in a new sandbox; the proxy keeps its bindings.
     assert!(deployment.apply(&document, &cancel).await.is_err());
-    assert_same_bindings(&fs::read(&state_path).unwrap(), &failed);
+    assert_same_bindings_outside_the_agent(&fs::read(&state_path).unwrap(), &failed);
     assert_eq!(
         engine
             .container(&name)
@@ -183,15 +199,9 @@ async fn sdk_docker_proxy_lifecycle_preserves_readiness_and_storage_guards() {
             .as_deref(),
         Some(id.as_str())
     );
-    fixture.state.lock().unwrap().health_report = None;
-    assert!(
-        deployment
-            .apply(&document, &cancel)
-            .await
-            .unwrap()
-            .changes
-            .is_empty()
-    );
+    fixture.state.lock().unwrap().configuration_error = None;
+    deployment.apply(&document, &cancel).await.unwrap();
+    let effects = fixture.state.lock().unwrap().effects;
     let established = fs::read(&state_path).unwrap();
     assert!(
         deployment
@@ -257,9 +267,7 @@ async fn sdk_docker_proxy_lifecycle_preserves_readiness_and_storage_guards() {
         change
             .resource
             .starts_with("ollama_proxy_credential_storage.")
-            || change
-                .resource
-                .starts_with("openshell_provider_registration.")
+            || change.resource.starts_with("openshell_inference.")
     }));
     let image_id = engine.container(&name).await.unwrap().unwrap().id.unwrap();
     assert_ne!(image_id, id);

@@ -115,7 +115,7 @@ fn hermes_auth_uses_the_selected_inline_provider_without_a_second_reference() {
     assert_eq!(
         settings[0],
         rows.iter()
-            .find(|row| row.kind == "provider")
+            .find(|row| row.kind == "inference")
             .unwrap()
             .values["name"]
     );

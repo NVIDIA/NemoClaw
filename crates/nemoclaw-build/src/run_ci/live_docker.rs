@@ -209,7 +209,13 @@ fn prepare(
         }
     }
     let agent = by_digest(&prefix, target)?;
-    let dummy = by_digest(&prefix, live_images::DUMMY)?;
+    // The lifecycle runs an image derived from the reference image, so it
+    // also checks that derived images deploy.
+    live_images::build_derived(&prefix)?;
+    owned
+        .images
+        .push(format!("{prefix}:{}", live_images::DERIVED));
+    let dummy = by_digest(&prefix, live_images::DERIVED)?;
 
     let used: Vec<String> = docker_output(&["network", "ls", "--quiet"])?
         .lines()
@@ -272,7 +278,6 @@ fn prepare(
     let path = |path: &Path| path.display().to_string();
     Ok(vec![
         ("NEMOCLAW_TEST_BUNDLE".into(), path(bundle)),
-        ("NEMOCLAW_TEST_OLLAMA_CACHE".into(), "1".into()),
         ("NEMOCLAW_TEST_RUNTIME_IMAGE".into(), "1".into()),
         ("NEMOCLAW_TEST_CACHE_ENGINE".into(), ENGINE.into()),
         ("NEMOCLAW_TEST_CACHE_IMAGE".into(), agent.clone()),

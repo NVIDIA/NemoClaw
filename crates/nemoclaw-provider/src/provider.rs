@@ -83,54 +83,6 @@ impl Backend for ConfiguredBackend {
             .await
     }
 }
-#[derive(Default)]
-pub struct NemoClawProvider {
-    backend: Arc<ConfiguredBackend>,
-    destroying: Arc<AtomicBool>,
-}
-#[async_trait]
-impl Provider for NemoClawProvider {
-    type Config<'a> = ProviderConfig;
-    type MetaState<'a> = ValueEmpty;
-    fn get_data_sources(
-        &self,
-        _: &mut Diagnostics,
-    ) -> Option<HashMap<String, Box<dyn DynamicDataSource>>> {
-        Some(HashMap::from([(
-            "runtime_image".into(),
-            Box::new(crate::runtime_image::RuntimeImageDataSource(
-                self.backend.clone(),
-            )) as Box<dyn DynamicDataSource>,
-        )]))
-    }
-    fn schema(&self, _: &mut Diagnostics) -> Option<Schema> {
-        Some(destroy_schema())
-    }
-    async fn configure<'a>(
-        &self,
-        _: &mut Diagnostics,
-        _: String,
-        config: ProviderConfig,
-    ) -> Option<()> {
-        configure_destroy(&self.destroying, &config);
-        Some(())
-    }
-    fn get_resources(
-        &self,
-        _: &mut Diagnostics,
-    ) -> Option<HashMap<String, Box<dyn DynamicResource>>> {
-        Some(
-            definitions()
-                .into_iter()
-                .map(|definition| {
-                    let name = definition.kind.into();
-                    (name, adapter(definition, &self.backend, &self.destroying))
-                })
-                .collect(),
-        )
-    }
-}
-
 /// A resource for `definition`, reconciled by `backend`.
 fn adapter(
     definition: Definition,
@@ -197,17 +149,8 @@ fn runtime_type(definition: &Definition) -> Option<&'static str> {
     nemoclaw_sdk::services::provider_types::runtime_type(definition.kind)
 }
 
-/// Resource definitions served by this provider.
-pub(crate) fn definitions() -> Vec<Definition> {
-    all_definitions()
-        .into_iter()
-        .filter(|definition| !installs_gateway(definition) && runtime_type(definition).is_none())
-        .collect()
-}
-
-/// The `vllm` or `ollama` provider: one runtime's credential storage, runtime
-/// contracts, readiness, and capacity.
-/// The `host` provider: read-only observations of a container engine.
+/// The `host` provider: read-only observations of a container engine, its
+/// images, and container health.
 #[derive(Default)]
 pub struct HostProvider {
     backend: Arc<ConfiguredBackend>,
@@ -235,15 +178,30 @@ impl Provider for HostProvider {
         &self,
         _: &mut Diagnostics,
     ) -> Option<HashMap<String, Box<dyn DynamicDataSource>>> {
-        Some(HashMap::from([(
-            "engine".into(),
-            Box::new(crate::host_engine::HostEngineDataSource(
-                self.backend.clone(),
-            )) as Box<dyn DynamicDataSource>,
-        )]))
+        Some(HashMap::from([
+            (
+                "engine".into(),
+                Box::new(crate::host_engine::HostEngineDataSource(
+                    self.backend.clone(),
+                )) as Box<dyn DynamicDataSource>,
+            ),
+            (
+                "image".into(),
+                Box::new(crate::host_image::HostImageDataSource(self.backend.clone()))
+                    as Box<dyn DynamicDataSource>,
+            ),
+            (
+                "container_health".into(),
+                Box::new(crate::host_container_health::HostContainerHealthDataSource(
+                    self.backend.clone(),
+                )) as Box<dyn DynamicDataSource>,
+            ),
+        ]))
     }
 }
 
+/// The `vllm` or `ollama` provider: one runtime's credential storage, runtime
+/// contracts, readiness, and capacity.
 pub struct ServiceProvider {
     name: &'static str,
     backend: Arc<ConfiguredBackend>,
@@ -436,7 +394,7 @@ mod tests {
 
     #[tokio::test]
     async fn configuration_only_grants_or_withdraws_teardown_permission() {
-        let provider = NemoClawProvider::default();
+        let provider = ServiceProvider::vllm();
         let mut diagnostics = Diagnostics::default();
         let schema = provider.schema(&mut diagnostics).unwrap();
         assert_eq!(

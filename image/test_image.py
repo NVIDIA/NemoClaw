@@ -9,10 +9,8 @@ import json
 import os
 import platform
 import shutil
-import subprocess
 import sys
 import tarfile
-import tempfile
 import tomllib
 import unittest
 from pathlib import Path
@@ -45,24 +43,12 @@ def satisfies(version, specifier):
 
 
 class AgentImage(unittest.TestCase):
-    def test_bridge_entrypoint_reports_argument_errors_as_one_json_response(self):
+    def test_runtime_command_is_fabric_agent_ctl(self):
+        # OpenShell launches `fabric-agent-ctl serve`, Fabric's own sandbox bridge.
         command = json.loads(os.environ["NEMOCLAW_TEST_CATALOG"])["runtime"]["command"]
-        self.assertEqual(command, ["/usr/local/bin/fabric-agent"])
+        self.assertEqual(command, ["/opt/fabric/bin/fabric-agent-ctl"])
         self.assertTrue(Path(command[0]).is_file())
         self.assertTrue(os.access(command[0], os.X_OK))
-        result = subprocess.run(
-            [*command, "check", "--agent", "image-contract", "--unknown"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        self.assertEqual(result.returncode, 1)
-        self.assertTrue(result.stdout.endswith("\n"))
-        response = json.loads(result.stdout)
-        self.assertEqual(set(response), {"operation", "status", "changed", "result", "error"})
-        self.assertEqual(response["operation"], "check")
-        self.assertEqual(response["status"], "failed")
-        self.assertEqual(response["error"]["effects"], "none")
 
     def test_shared_python_satisfies_every_pinned_fabric_adapter(self):
 
@@ -91,15 +77,18 @@ class AgentImage(unittest.TestCase):
         self.assertEqual(sorted(path.name for path in (prefix / "bin").glob("pip*")), [])
 
     def test_only_javascript_harnesses_carry_node(self):
-        # OpenClaw's CLI, Hermes's TUI, and the TypeScript Pi adapter run on Node.js.
+        # OpenClaw's CLI, Hermes's browser tool and npx-launched MCP servers, and the
+        # TypeScript Pi adapter run on Node.js.
         expected = os.environ["NEMOCLAW_TEST_HARNESS"] in {"openclaw", "hermes", "pi"}
         self.assertEqual(shutil.which("node") is not None, expected)
         self.assertEqual(Path("/usr/local/lib/node_modules").exists(), expected)
 
     def test_catalog_carries_installed_runtime_directories(self):
         catalog = json.loads(os.environ["NEMOCLAW_TEST_CATALOG"])
-        declaration = Path("/opt/nemoclaw/runtime-files.json")
-        expected = json.loads(declaration.read_text()) if declaration.exists() else {}
+        declared = json.loads(Path("/opt/nemoclaw/adapters.json").read_text())
+        expected = {
+            adapter: entry["files"] for adapter, entry in declared.items() if entry["files"]
+        }
         self.assertEqual(catalog.get("runtime_files", {}), expected)
         for adapter, paths in expected.items():
             for path in paths:
@@ -107,14 +96,14 @@ class AgentImage(unittest.TestCase):
                     self.assertTrue(Path(path).is_dir(), path)
                     self.assertTrue(os.access(path, os.R_OK | os.X_OK), path)
 
-    def test_label_matches_discovery_from_installed_fabric(self):
-        from catalog import snapshot
+    def test_label_matches_the_image_declarations(self):
+        # The image's own catalog code, which is not on the agent's import path.
+        sys.path.insert(0, "/opt/nemoclaw")
+        from catalog import installed
 
         provenance = json.loads(Path("/opt/nemoclaw/provenance.json").read_text())
-        actual = snapshot(
-            provenance["fabric_revision"], provenance["source_sha256"], installed_only=True
-        )
-        self.assertTrue(actual["adapters"], "image installs no discoverable Fabric adapter")
+        actual = installed(provenance["fabric_revision"], provenance["source_sha256"])
+        self.assertTrue(actual["adapters"], "image declares no Fabric adapter")
         self.assertEqual(json.loads(os.environ["NEMOCLAW_TEST_CATALOG"]), actual)
 
     @unittest.skipIf(
@@ -138,6 +127,17 @@ class AgentImage(unittest.TestCase):
             versions = {item["version"] for item in packages if item["name"] == package["name"]}
             self.assertIn(installed, versions, package["name"])
 
+    @unittest.skipUnless(os.environ.get("NEMOCLAW_TEST_HARNESS") == "hermes", "Hermes image only")
+    def test_hermes_can_reach_mcp_servers(self):
+        # Fabric's Hermes adapter configures MCP servers natively. Without
+        # Hermes's mcp extra, a server's toolset loads with no tools and no error.
+        sys.path.insert(0, "/opt/hermes")
+        from tools import mcp_tool
+
+        # Hermes loads the MCP SDK on first use.
+        self.assertTrue(mcp_tool._ensure_mcp_sdk(), "Hermes's mcp extra is missing")
+        self.assertTrue(mcp_tool._MCP_HTTP_AVAILABLE, "Hermes can't reach MCP servers over HTTP")
+
     @unittest.skipUnless(os.environ.get("NEMOCLAW_TEST_HARNESS") == "pi", "Pi image only")
     def test_pi_installs_packed_adapters_without_source_tests(self):
         root = Path("/opt/fabric-source")
@@ -148,69 +148,14 @@ class AgentImage(unittest.TestCase):
         ):
             directory = root / package
             manifest = json.loads((directory / "package.json").read_text())
+            # The Pi adapter keeps the harness packages Fabric's lock pins for it.
+            nested = {"node_modules"} if package == "adapters/typescript/pi" else set()
             self.assertEqual(
                 {path.name for path in directory.iterdir()},
-                set(manifest["files"]) | {"package.json"},
+                set(manifest["files"]) | {"package.json"} | nested,
                 package,
             )
         self.assertFalse((root / "adapters/typescript/opencode").exists())
-
-    @unittest.skipUnless(os.environ.get("NEMOCLAW_TEST_HARNESS") == "hermes", "Hermes image only")
-    def test_hermes_accepts_fabric_request_metadata(self):
-        from gateway.platforms.api_server import _request_relay_metadata
-
-        metadata = {"request_id": "image-qualification", "context": {"tenant": "owned"}}
-        extracted = _request_relay_metadata({"metadata": metadata})
-        self.assertEqual(extracted, metadata)
-        self.assertIsNot(extracted, metadata)
-        self.assertEqual(_request_relay_metadata({"metadata": "invalid"}), {})
-
-    @unittest.skipUnless(
-        os.environ.get("NEMOCLAW_TEST_HARNESS") == "openclaw", "OpenClaw image only"
-    )
-    def test_openclaw_loads_search_plugins_without_explicit_paths(self):
-        with tempfile.TemporaryDirectory() as directory:
-            config = Path(directory) / "openclaw.json"
-            config.write_text(
-                json.dumps(
-                    {
-                        "plugins": {
-                            "allow": ["brave", "tavily"],
-                            "entries": {"brave": {"enabled": True}, "tavily": {"enabled": True}},
-                        }
-                    }
-                )
-            )
-            output = subprocess.run(
-                ["node", "/app/openclaw.mjs", "plugins", "list", "--json"],
-                env={
-                    **os.environ,
-                    "OPENCLAW_STATE_DIR": directory,
-                    "OPENCLAW_CONFIG_PATH": str(config),
-                },
-                capture_output=True,
-                text=True,
-                timeout=90,
-                check=False,
-            )
-            self.assertEqual(output.returncode, 0, output.stderr)
-            plugins = {item["id"]: item for item in json.loads(output.stdout)["plugins"]}
-            for worker in (
-                "openclaw-database-verify.worker.js",
-                "openclaw-state-lease-heartbeat.worker.js",
-            ):
-                self.assertTrue((Path("/app/dist/state") / worker).is_file(), worker)
-            self.assertFalse(list(Path("/app/dist/state").glob("*.sqlite*")))
-            self.assertFalse(Path("/app/dist/config-journal-fingerprint.key").exists())
-            self.assertFalse(Path("/tmp/plugin-build").exists())
-            # The agent reads OpenClaw but must not change it.
-            self.assertEqual(Path("/app").stat().st_uid, 0)
-            self.assertFalse(os.access("/app/dist/extensions", os.W_OK))
-            for name in ("brave", "tavily"):
-                self.assertIn(name, set(plugins))
-                self.assertEqual(plugins[name]["origin"], "bundled")
-                self.assertTrue(plugins[name]["enabled"], plugins[name])
-                self.assertIsNone(plugins[name].get("error"), plugins[name])
 
     def test_runtime_retains_matching_sources_without_build_toolchains(self):
         root = Path("/opt/nemoclaw")

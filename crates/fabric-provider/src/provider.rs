@@ -2,9 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The `fabric` provider's configuration, resources, and data sources.
 
-use crate::{
-    AgentBackend, AgentReadinessDataSource, FabricCapabilitiesDataSource, FabricHarnessDataSource,
-};
+use crate::{AgentBackend, FabricCapabilitiesDataSource, FabricHarnessDataSource};
 use async_trait::async_trait;
 use nemoclaw_backend::{Backend, Error, Mutation, ObservationError, Row};
 use nemoclaw_tofu::{ResourceAdapter, StructuredAdapter};
@@ -24,7 +22,7 @@ struct FabricBackend(Arc<GatewayClient>);
 #[async_trait]
 impl Backend for FabricBackend {
     async fn plan(&self, kind: &str, desired: &Row, prior: Option<&Row>) -> Result<(), Error> {
-        AgentBackend(self.0.planning_client(desired)?)
+        AgentBackend(self.0.planning_client(desired).await?)
             .plan(kind, desired, prior)
             .await
     }
@@ -34,12 +32,12 @@ impl Backend for FabricBackend {
         prior: &Row,
         removing: bool,
     ) -> Result<Option<Row>, ObservationError> {
-        AgentBackend(self.0.client_for(prior)?)
+        AgentBackend(self.0.client_for(prior).await?)
             .read(kind, prior, removing)
             .await
     }
     async fn ensure(&self, kind: &str, desired: &Row) -> Mutation {
-        match self.0.client_for(desired) {
+        match self.0.client_for(desired).await {
             Ok(client) => AgentBackend(client).ensure(kind, desired).await,
             Err(error) => Mutation::failed(error),
         }
@@ -50,7 +48,7 @@ impl Backend for FabricBackend {
         prior: &Row,
         destroying: bool,
     ) -> Result<(), ObservationError> {
-        AgentBackend(self.0.client_for(prior)?)
+        AgentBackend(self.0.client_for(prior).await?)
             .remove(kind, prior, destroying)
             .await
     }
@@ -123,11 +121,6 @@ impl Provider for FabricProvider {
         _: &mut Diagnostics,
     ) -> Option<HashMap<String, Box<dyn DynamicDataSource>>> {
         Some(HashMap::from([
-            (
-                "agent_readiness".into(),
-                Box::new(AgentReadinessDataSource(self.client.clone()))
-                    as Box<dyn DynamicDataSource>,
-            ),
             (
                 "harnesses".into(),
                 Box::new(FabricCapabilitiesDataSource::default()) as Box<dyn DynamicDataSource>,
@@ -223,10 +216,13 @@ mod tests {
         let services = Arc::new(FixtureServices::default());
         let creator = GatewayClient::with_services(services.clone());
         let creator = creator
-            .connect(&nemoclaw_openshell::Connection {
-                endpoint: fixture.endpoint.clone(),
-                ..Default::default()
-            })
+            .connect(&openshell_provider::GatewayConnection::Direct(
+                nemoclaw_openshell::Connection {
+                    endpoint: fixture.endpoint.clone(),
+                    ..Default::default()
+                },
+            ))
+            .await
             .unwrap();
         let rows = contract_rows("fabric-openclaw");
         let row = |kind: &str| {
@@ -266,6 +262,7 @@ mod tests {
         let observed = provider
             .client
             .client_for(&[("gateway_endpoint".to_owned(), fixture.endpoint.clone())].into())
+            .await
             .unwrap()
             .read("provider", &saved, false)
             .await;
@@ -323,10 +320,13 @@ mod tests {
         let services = Arc::new(ClusterServices::default());
         let creator = GatewayClient::with_services(services.clone());
         let creator = creator
-            .connect(&nemoclaw_openshell::Connection {
-                endpoint: fixture.endpoint.clone(),
-                ..Default::default()
-            })
+            .connect(&openshell_provider::GatewayConnection::Direct(
+                nemoclaw_openshell::Connection {
+                    endpoint: fixture.endpoint.clone(),
+                    ..Default::default()
+                },
+            ))
+            .await
             .unwrap();
         let rows = contract_rows("fabric-openclaw");
         let row = |kind: &str| {
@@ -373,6 +373,7 @@ mod tests {
         let observed = provider
             .client
             .client_for(&[("gateway_endpoint".to_owned(), fixture.endpoint.clone())].into())
+            .await
             .unwrap()
             .read("provider_profile", &saved, false)
             .await;

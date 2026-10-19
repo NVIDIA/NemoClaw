@@ -181,3 +181,51 @@ async fn dropping_the_forwarder_cancels_an_unfinished_dial() {
         .await
         .expect("dropping the forwarder must cancel unfinished dials");
 }
+
+/// A gateway reply can reach the forwarder in pieces, such as a gRPC response's
+/// frames. Each piece must reach the client at once, not wait for the client's
+/// delayed acknowledgment of the previous one (about 40 ms on Linux).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn forwarded_replies_arriving_in_pieces_reach_the_client_promptly() {
+    use nemoclaw_sdk::kubernetes::connection::forward;
+    use std::time::{Duration, Instant};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio_util::task::AbortOnDropHandle;
+
+    let upstream = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let target = upstream.local_addr().unwrap();
+    let _gateway = AbortOnDropHandle::new(tokio::spawn(async move {
+        let (mut stream, _) = upstream.accept().await.unwrap();
+        stream.set_nodelay(true).unwrap();
+        let mut request = [0; 1];
+        while stream.read_exact(&mut request).await.is_ok() {
+            stream.write_all(b"head").await.unwrap();
+            tokio::time::sleep(Duration::from_millis(1)).await;
+            stream.write_all(b"body").await.unwrap();
+        }
+    }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let local = listener.local_addr().unwrap();
+    let _forwarding = forward(listener, move || async move {
+        let stream = tokio::net::TcpStream::connect(target).await?;
+        stream.set_nodelay(true)?;
+        Ok(stream)
+    });
+    let mut client = tokio::net::TcpStream::connect(local).await.unwrap();
+    client.set_nodelay(true).unwrap();
+    let mut round_trips = Vec::new();
+    for _ in 0..21 {
+        let started = Instant::now();
+        client.write_all(b"?").await.unwrap();
+        let mut reply = [0; 8];
+        client.read_exact(&mut reply).await.unwrap();
+        assert_eq!(&reply, b"headbody");
+        round_trips.push(started.elapsed());
+    }
+    round_trips.sort();
+    let median = round_trips[round_trips.len() / 2];
+    assert!(
+        median < Duration::from_millis(20),
+        "forwarded replies waited {median:?} per round trip"
+    );
+}

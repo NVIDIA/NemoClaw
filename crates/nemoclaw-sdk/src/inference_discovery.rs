@@ -43,8 +43,7 @@ impl EndpointRequest {
             credential_env: credential.map(|credential| credential.env.clone()),
         }))
     }
-    pub fn validate(&self) -> Result<(), Error> {
-        crate::config::validate_endpoint(&self.endpoint, false)?;
+    fn validate_credential(&self) -> Result<(), Error> {
         if let Some(reference) = &self.credential_env {
             crate::config::schema::validate_definition(
                 "SecretRef",
@@ -54,6 +53,10 @@ impl EndpointRequest {
             )?;
         }
         Ok(())
+    }
+    pub fn validate(&self) -> Result<(), Error> {
+        crate::config::validate_endpoint(&self.endpoint, false)?;
+        self.validate_credential()
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -129,28 +132,6 @@ pub fn observe_credentials(
         .map(|reference| observe_credential(secrets, reference))
         .collect())
 }
-/// Read every external endpoint's model catalog, named `endpoint_0`,
-/// `endpoint_1`, ... in [`endpoint_requests`] order. Reads run together, each
-/// bounded by its own timeout, and report failures as observations; only an
-/// invalid document fails.
-pub async fn observe_endpoints(
-    document: &Document,
-    secrets: &dyn Secrets,
-) -> Result<Vec<(String, EndpointRequest, EndpointObservation)>, Error> {
-    let requests = endpoint_requests(document)?;
-    let observed = futures_util::future::join_all(
-        requests
-            .iter()
-            .map(|request| observe_endpoint(request, secrets)),
-    )
-    .await;
-    Ok(requests
-        .into_iter()
-        .zip(observed)
-        .enumerate()
-        .map(|(index, (request, observation))| (format!("endpoint_{index}"), request, observation))
-        .collect())
-}
 /// Resolve every selected route through the configuration owner's scoped providers.
 /// Shared external endpoint/API/reference tuples are read only once. Managed
 /// services retain their owning readiness checks and generated credentials.
@@ -162,7 +143,12 @@ pub fn endpoint_requests(document: &Document) -> Result<Vec<EndpointRequest>, Er
             let Some(request) = EndpointRequest::for_external_provider(provider.definition)? else {
                 continue;
             };
-            request.validate()?;
+            // NemoClaw reads a catalog itself only from endpoints its own
+            // connection rules allow; others, such as plain HTTP to a host
+            // name, have no catalog read. OpenShell governs sandbox traffic.
+            if request.validate().is_err() {
+                continue;
+            }
             if !requests.contains(&request) {
                 requests.push(request);
             }

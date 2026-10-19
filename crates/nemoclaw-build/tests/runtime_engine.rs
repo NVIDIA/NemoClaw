@@ -32,7 +32,7 @@ fn unsupported_image_stores_fail_before_compilation_or_downloads() {
             r#"{"rust":"1.98.1","protobuf":"36.1","nextest":"0.9.144","opentofu":"1.12.6","dockerProvider":"4.6.0","helmProvider":"3.3.0","platforms":{}}"#,
         )
         .unwrap();
-        let manifest = serde_json::json!({"name":"fixture","platform":nemoclaw_build::native_runtime_platform().unwrap(),"image":"fixture:test","sourceDateEpoch":1234,"files":["Dockerfile"],"downloads":{}});
+        let manifest = serde_json::json!({"name":"fixture","platforms":[nemoclaw_build::native_runtime_platform().unwrap()],"image":"fixture:test","sourceDateEpoch":1234,"files":["Dockerfile"],"downloads":{}});
         fs::write(root.path().join("runtime.json"), manifest.to_string()).unwrap();
         let bin = root.path().join("bin");
         executable(

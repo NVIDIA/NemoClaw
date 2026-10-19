@@ -72,11 +72,12 @@ async fn cli_terminal_outputs_preserve_lifecycle_and_json_contract() {
     let result: serde_json::Value = serde_json::from_slice(&planned.stdout).unwrap();
     assert_eq!(result["complete"], true);
     assert!(result.get("deferred").is_none());
-    assert!(!result["unverified"].as_array().unwrap().is_empty());
+    // Plans read no inference catalogs; OpenShell carries inference traffic.
+    assert!(result.get("unverified").is_none());
     let planned = invoke("plan", "text");
     let preview = String::from_utf8(planned.stdout).unwrap();
     assert!(preview.contains("No resource changes planned."));
-    assert!(preview.contains("Unverified checks:"));
+    assert!(!preview.contains("Unverified checks:"));
     assert!(
         !result["discovery"]["targets"]
             .as_object()
@@ -95,10 +96,6 @@ async fn cli_terminal_outputs_preserve_lifecycle_and_json_contract() {
     let summary = String::from_utf8(destroyed.stdout).unwrap();
     assert!(summary.contains("Destroy complete"), "{summary}");
     assert!(summary.contains("Sandbox files and conversation history deleted"));
-    assert!(summary.contains("OpenShell workspace"));
-    assert!(summary.contains(
-        "Retaining the workspace does not preserve sandbox files or conversation history."
-    ));
     let repeated = invoke("destroy", "json");
     let result: serde_json::Value = serde_json::from_slice(&repeated.stdout).unwrap();
     assert_eq!(result["outcome"], "destroyed");
@@ -106,7 +103,7 @@ async fn cli_terminal_outputs_preserve_lifecycle_and_json_contract() {
     let observed = fixture.state.lock().unwrap();
     assert!(observed.sandboxes.is_empty());
     assert!(observed.providers.is_empty());
-    assert_eq!(observed.workspaces.len(), 1);
+    assert!(observed.workspaces.is_empty());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -134,13 +131,15 @@ async fn missing_selected_provider_reconciles_without_sandbox_changes() {
         initial
             .changes
             .iter()
-            .find(|change| change
-                .resource
-                .starts_with("openshell_provider_registration."))
+            .find(|change| change.resource.starts_with("openshell_inference."))
             .unwrap()
             .resource
     );
-    assert_eq!(recreated.changes[0].actions, ["create"]);
+    // The profile survived without its registration, so the inference
+    // resource is replaced: removal deletes the profile and creation
+    // recreates both, identically because the graph sets the generation.
+    // The sandbox is unaffected.
+    assert_eq!(recreated.changes[0].actions, ["delete", "create"]);
     assert_eq!(fixture.state.lock().unwrap().sandboxes, sandbox);
     assert_eq!(fixture.state.lock().unwrap().profiles, profile);
     assert_eq!(fixture.state.lock().unwrap().providers.len(), 1);
@@ -200,7 +199,7 @@ async fn independent_sandboxes_reconcile_concurrently_and_retain_shared_dependen
     let state = fixture.state.lock().unwrap();
     assert!(state.sandboxes.is_empty());
     assert!(state.providers.is_empty());
-    assert_eq!(state.workspaces.len(), 1);
+    assert!(state.workspaces.is_empty());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -289,7 +288,7 @@ async fn gateway_change_between_plan_and_apply_preserves_resources_and_allows_te
     );
     fixture.state.lock().unwrap().driver = Some("podman".into());
     deployment.destroy(&cancel).await.unwrap();
-    assert_eq!(fixture.state.lock().unwrap().workspaces.len(), 1);
+    assert!(fixture.state.lock().unwrap().workspaces.is_empty());
     assert!(fixture.state.lock().unwrap().sandboxes.is_empty());
 }
 
@@ -313,15 +312,9 @@ async fn interrupted_create_preserves_pending_targets_allows_unrelated_intent_an
     assert!(deployment.plan_destroy(&cancel).await.is_err());
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
     assert_apply_unfinished(&deployment, &cancel).await;
+    // The lost reply was the inference registration's: its target cannot change.
     let mut changed = document.clone();
-    changed.spec.sandboxes[0]
-        .agent
-        .inference
-        .as_mut()
-        .unwrap()
-        .routes[0]
-        .overrides
-        .model = "changed".into();
+    changed.spec.inference_providers[0].endpoint = "http://172.20.0.1:11437/v1".into();
     let error = deployment.apply(&changed, &cancel).await.unwrap_err();
     assert!(
         error
@@ -334,7 +327,9 @@ async fn interrupted_create_preserves_pending_targets_allows_unrelated_intent_an
     let effects = fixture.state.lock().unwrap().effects;
     assert_eq!(effects, 4);
     let preview = deployment.plan_destroy(&cancel).await.unwrap();
-    assert_eq!(preview.changes.len(), 4);
+    // Destroy also removes the agent configuration that replaces the sandbox,
+    // and the workspace.
+    assert_eq!(preview.changes.len(), 5);
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
     let destroyed = Command::new(
         bundle
@@ -359,7 +354,9 @@ async fn interrupted_create_preserves_pending_targets_allows_unrelated_intent_an
             .changes
             .is_empty()
     );
-    assert_eq!(fixture.state.lock().unwrap().workspaces.len(), 1);
+    assert!(fixture.state.lock().unwrap().workspaces.is_empty());
+    // The workspace, registration, sandbox, agent, and the agent's
+    // configuration: re-apply after destroy recreates the workspace too.
     assert_eq!(
         deployment
             .apply(&document, &cancel)
@@ -367,7 +364,7 @@ async fn interrupted_create_preserves_pending_targets_allows_unrelated_intent_an
             .unwrap()
             .changes
             .len(),
-        4
+        5
     );
 }
 
@@ -409,7 +406,7 @@ async fn separate_agent_sandboxes_cli_export_reapply_and_policy_drift() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
-async fn tool_disclosure_cli_export_reapply_and_native_settings_drift() {
+async fn tool_disclosure_cli_export_reapply_and_configuration_on_stdin() {
     // Disclosure modes are opaque native settings; agent_tools in the SDK owns
     // both modes, so one deployment covers their drift detection.
     let mut document =
@@ -430,7 +427,7 @@ async fn tool_disclosure_cli_export_reapply_and_native_settings_drift() {
     let effects = lifecycle.apply().await;
     assert_eq!(effects, lifecycle.document.spec.sandboxes.len() + 3);
     lifecycle.export_and_reapply_unchanged(effects).await;
-    lifecycle.assert_native_settings_drift(effects).await;
+    lifecycle.assert_configuration_on_stdin().await;
     lifecycle.destroy();
 }
 
@@ -451,6 +448,47 @@ async fn web_search_cli_export_reapply_and_registration_drift() {
     assert_eq!(effects, lifecycle.document.spec.sandboxes.len() + 5);
     lifecycle.export_and_reapply_unchanged(effects).await;
     lifecycle.assert_search_registration_drift().await;
+    lifecycle.destroy();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
+async fn api_integration_applies_exports_and_reapplies_unchanged() {
+    // A key-authenticated API registers one OpenShell provider the sandbox
+    // attaches, like web search, and survives export and re-apply.
+    let mut document =
+        Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes()).unwrap();
+    document.spec.integrations = serde_json::from_value(serde_json::json!({
+        "bookings":{"kind":"api","endpoint":"https://bookings.example.com/mcp",
+            "credential":{"env":"BOOKINGS_API_KEY"}}
+    }))
+    .unwrap();
+    document.spec.sandboxes[0].agent.integration_refs = vec!["bookings".into()];
+    let lifecycle = Lifecycle::start(&document.yaml().unwrap()).await;
+    let effects = lifecycle.apply().await;
+    assert_eq!(effects, lifecycle.document.spec.sandboxes.len() + 5);
+    lifecycle.export_and_reapply_unchanged(effects).await;
+    lifecycle.destroy();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
+async fn network_grants_apply_export_and_reapply_unchanged() {
+    // Grants added to the isolated preset reach the sandbox's managed policy
+    // and survive export and re-apply.
+    let mut document =
+        Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes()).unwrap();
+    document.spec.sandboxes[0].network = serde_json::from_value(serde_json::json!({
+        "tier": "isolated",
+        "grants": {"docs": {"endpoints": [{
+            "host": "docs.example.com", "port": 443, "protocol": "rest", "enforcement": "enforce",
+            "rules": [{"allow": {"method": "GET", "path": "/**"}}]
+        }]}}
+    }))
+    .unwrap();
+    let lifecycle = Lifecycle::start(&document.yaml().unwrap()).await;
+    let effects = lifecycle.apply().await;
+    lifecycle.export_and_reapply_unchanged(effects).await;
     lifecycle.destroy();
 }
 
@@ -486,7 +524,7 @@ impl Lifecycle {
         struct FixtureSecrets;
         impl nemoclaw_sdk::Secrets for FixtureSecrets {
             fn resolve(&self, name: &str) -> Result<String, nemoclaw_sdk::ObservationError> {
-                assert!(["NOUS_API_KEY", "SEARCH_KEY"].contains(&name));
+                assert!(["NOUS_API_KEY", "SEARCH_KEY", "BOOKINGS_API_KEY"].contains(&name));
                 Ok("fixture-only-inference-key".into())
             }
         }
@@ -550,13 +588,7 @@ impl Lifecycle {
                 .unwrap()
                 .contains(&("sandbox", "create", "complete"))
         );
-        let health = applied.unwrap().health;
-        assert_eq!(health.len(), self.document.spec.sandboxes.len());
-        assert!(
-            health
-                .iter()
-                .all(|entry| entry.health.allows_apply_completion())
-        );
+        applied.unwrap();
         for operation in [
             "bundle.verify",
             "tofu.init",
@@ -610,9 +642,10 @@ impl Lifecycle {
         let search_provider = self.document.spec.sandboxes[0]
             .integration_bindings(&self.document.spec.integrations)
             .unwrap()
-            .first()
-            .map(|binding| match binding.definition {
-                nemoclaw_sdk::config::Integration::WebSearch(search) => search.provider,
+            .iter()
+            .find_map(|binding| match binding.definition {
+                nemoclaw_sdk::config::Integration::WebSearch(search) => Some(search.provider),
+                _ => None,
             })
             .unwrap();
         let state_bytes = fs::read(self.directory.path().join("terraform.tfstate")).unwrap();
@@ -703,8 +736,9 @@ impl Lifecycle {
         );
     }
 
-    /// Broadening one sandbox's tools plans one update, and a failed observation
-    /// stops plan and export without effects or state changes.
+    /// Broadening one sandbox's tools replaces its agent with its sandbox, and
+    /// a failed observation stops plan and export without effects or state
+    /// changes.
     async fn assert_tool_policy_drift(&self, effects: usize) {
         let state = fs::read(self.directory.path().join("terraform.tfstate")).unwrap();
         let mut broadened = self.document.clone();
@@ -714,17 +748,29 @@ impl Lifecycle {
             .plan(&broadened, &self.cancel)
             .await
             .unwrap();
-        assert_eq!(plan.changes.len(), 1);
-        assert!(plan.changes[0].resource.starts_with("fabric_agent."));
-        assert_eq!(plan.changes[0].actions, ["update"]);
+        assert_eq!(plan.changes.len(), 3, "{:?}", plan.changes);
+        let actions = |prefix: &str| {
+            plan.changes
+                .iter()
+                .find(|change| change.resource.starts_with(prefix))
+                .unwrap()
+                .actions
+                .clone()
+        };
+        assert_eq!(actions("terraform_data."), ["update"]);
+        assert_eq!(actions("openshell_sandbox."), ["delete", "create"]);
+        assert_eq!(actions("fabric_agent."), ["delete", "create"]);
+        // Reading an agent runs nothing in its sandbox, so a failing exec
+        // fails neither a plan nor an export, and changes nothing.
         self.fixture.state.lock().unwrap().exec_exit = 2;
-        assert!(
-            self.deployment
-                .plan(&self.document, &self.cancel)
-                .await
-                .is_err()
+        self.deployment
+            .plan(&self.document, &self.cancel)
+            .await
+            .unwrap();
+        assert_eq!(
+            self.deployment.export(&self.cancel).await.unwrap(),
+            self.document
         );
-        assert!(self.deployment.export(&self.cancel).await.is_err());
         assert_eq!(self.fixture.state.lock().unwrap().effects, effects);
         assert_eq!(
             fs::read(self.directory.path().join("terraform.tfstate")).unwrap(),
@@ -738,8 +784,9 @@ impl Lifecycle {
     }
 
     /// The first sandbox's Fabric configuration arrives on stdin without the
-    /// credential, and its drift is planned without effects.
-    async fn assert_native_settings_drift(&self, effects: usize) {
+    /// credential. A configuration changed inside the sandbox outside OpenTofu
+    /// is not reported: Fabric reports no applied configuration.
+    async fn assert_configuration_on_stdin(&self) {
         let key = format!(
             "{}/{}",
             self.document.workspace(),
@@ -763,7 +810,7 @@ impl Lifecycle {
         );
         assert!(!original.to_string().contains("fixture-only-inference-key"));
         {
-            // Configuration travels on the configure command's stdin, not a staged file.
+            // Configuration travels on fabric-agent-ctl start's stdin, not a staged file.
             let state = self.fixture.state.lock().unwrap();
             assert!(
                 state
@@ -771,12 +818,9 @@ impl Lifecycle {
                     .iter()
                     .zip(&state.exec_stdin)
                     .any(|(command, stdin)| {
-                        command
-                            .first()
-                            .is_some_and(|entrypoint| entrypoint == "/usr/local/bin/fabric-agent")
-                            && command
-                                .get(1)
-                                .is_some_and(|operation| operation == "configure")
+                        command.first().is_some_and(|entrypoint| {
+                            entrypoint == "/opt/fabric/bin/fabric-agent-ctl"
+                        }) && command.get(1).is_some_and(|operation| operation == "start")
                             && command
                                 .windows(2)
                                 .any(|args| args[0] == "--config" && args[1] == "-")
@@ -785,36 +829,9 @@ impl Lifecycle {
                     })
             );
         }
-        // Native settings belong to the owned Fabric configuration. Refresh must
-        // detect drift without mutating either the host or durable deployment.
-        self.fixture
-            .state
-            .lock()
-            .unwrap()
-            .fabric_configurations
-            .get_mut(&sandbox_id)
-            .unwrap()["models"]["default"]["model"] = serde_json::json!("foreign-model");
-        assert!(self.deployment.export(&self.cancel).await.is_err());
-        let plan = self
-            .deployment
-            .plan(&self.document, &self.cancel)
-            .await
-            .unwrap();
-        assert!(
-            plan.changes
-                .iter()
-                .any(|change| change.resource.starts_with("fabric_agent."))
-        );
-        assert_eq!(self.fixture.state.lock().unwrap().effects, effects);
-        self.fixture
-            .state
-            .lock()
-            .unwrap()
-            .fabric_configurations
-            .insert(sandbox_id, original);
     }
 
-    /// The CLI destroys the deployment, leaving only the workspace on the gateway.
+    /// The CLI destroys the deployment and its workspace on the gateway.
     fn destroy(self) {
         let destroyed = Command::new(
             self.bundle
@@ -831,7 +848,7 @@ impl Lifecycle {
             String::from_utf8_lossy(&destroyed.stderr)
         );
         let state = self.fixture.state.lock().unwrap();
-        assert_eq!(state.workspaces.len(), 1);
+        assert!(state.workspaces.is_empty());
         assert!(state.sandboxes.is_empty());
         assert!(state.providers.is_empty());
         assert!(state.profiles.is_empty());
@@ -840,7 +857,7 @@ impl Lifecycle {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
-async fn readiness_and_observation_failures_retain_bindings_and_recover_without_recreation() {
+async fn startup_and_observation_failures_retain_bindings_and_recover() {
     let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
     let directory = tempfile::tempdir().unwrap();
     let fixture = Fixture::start().await;
@@ -882,34 +899,35 @@ async fn readiness_and_observation_failures_retain_bindings_and_recover_without_
     assert_same_deployment_state(&fs::read(&state_path).unwrap(), &established);
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
     assert!(fixture.state.lock().unwrap().exec_calls.is_empty());
+    fixture.state.lock().unwrap().sandbox_phase = None;
     for sandbox in fixture.state.lock().unwrap().sandboxes.values_mut() {
         sandbox.status.as_mut().unwrap().phase = openshell_core::proto::SandboxPhase::Ready as i32;
     }
     let recovery = deployment.apply(&document, &cancel).await.unwrap();
-    assert_eq!(recovery.changes.len(), 1);
-    assert!(recovery.changes[0].resource.contains("agent"));
+    // The failed start may have used the sandbox's one runtime, so the retry
+    // creates the agent in a new sandbox.
+    let action = |prefix: &str| {
+        recovery
+            .changes
+            .iter()
+            .find(|change| change.resource.starts_with(prefix))
+            .map(|change| change.actions.clone())
+    };
+    assert_eq!(
+        action("openshell_sandbox."),
+        Some(vec!["delete".into(), "create".into()])
+    );
+    assert_eq!(action("fabric_agent."), Some(vec!["create".into()]));
     let recovered = fs::read(&state_path).unwrap();
     let observed: serde_json::Value = serde_json::from_slice(&recovered).unwrap();
-    let mut existing_resources = observed.clone();
-    let resources = existing_resources["resources"].as_array_mut().unwrap();
-    let configuration_count = resources
+    let configuration_count = observed["resources"]
+        .as_array()
+        .unwrap()
         .iter()
         .filter(|resource| resource["type"] == "fabric_agent")
         .count();
     assert_eq!(configuration_count, 1);
-    resources.retain(|resource| resource["type"] != "fabric_agent");
-    assert_same_managed_resources(
-        &serde_json::to_vec(&existing_resources).unwrap(),
-        &established,
-    );
-    let readiness = observed["resources"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|resource| resource["type"] == "fabric_agent_readiness")
-        .unwrap();
-    assert_eq!(readiness["instances"][0]["attributes"]["ready"], true);
-    assert!(readiness["instances"][0]["attributes"]["error_message"].is_null());
+    let effects = fixture.state.lock().unwrap().effects;
     fixture.state.lock().unwrap().fail_read = Some(("provider", tonic::Code::Unavailable));
     assert!(deployment.export(&cancel).await.is_err());
     assert!(deployment.plan(&document, &cancel).await.is_err());
@@ -917,10 +935,10 @@ async fn readiness_and_observation_failures_retain_bindings_and_recover_without_
     assert_eq!(fs::read(&state_path).unwrap(), recovered);
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
     fixture.state.lock().unwrap().fail_read = None;
+    // Exporting reads agents without running anything in their sandboxes.
     fixture.state.lock().unwrap().exec_truncated = true;
-    assert!(deployment.export(&cancel).await.is_err());
-    fixture.state.lock().unwrap().exec_truncated = false;
     assert_eq!(deployment.export(&cancel).await.unwrap(), document);
+    fixture.state.lock().unwrap().exec_truncated = false;
     fixture.state.lock().unwrap().lose_delete = true;
     assert!(deployment.destroy(&cancel).await.is_err());
     assert!(deployment.apply(&document, &cancel).await.is_err());
@@ -928,148 +946,9 @@ async fn readiness_and_observation_failures_retain_bindings_and_recover_without_
         deployment.destroy(&cancel).await.unwrap().outcome,
         Outcome::Destroyed
     );
-    assert_eq!(fixture.state.lock().unwrap().workspaces.len(), 1);
+    assert!(fixture.state.lock().unwrap().workspaces.is_empty());
     assert!(fixture.state.lock().unwrap().providers.is_empty());
     assert!(fixture.state.lock().unwrap().sandboxes.is_empty());
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
-async fn destroy_does_not_require_the_inference_credential_or_rewrite_its_reference() {
-    struct Credential;
-    impl nemoclaw_sdk::Secrets for Credential {
-        fn resolve(&self, name: &str) -> Result<String, nemoclaw_sdk::ObservationError> {
-            assert_eq!(name, "NEMOCLAW_TEST_REMOVED_INFERENCE_KEY");
-            Ok("fixture-inference-secret".into())
-        }
-    }
-    let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
-    let directory = tempfile::tempdir().unwrap();
-    let fixture = Fixture::start().await;
-    let mut document = Document::parse(
-        include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
-    )
-    .unwrap();
-    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
-    let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
-    document.spec.inference_providers[0].endpoint = "https://inference.example.test/v1".into();
-    document.spec.inference_providers[0].credential = Some(nemoclaw_sdk::config::SecretRef {
-        env: "NEMOCLAW_TEST_REMOVED_INFERENCE_KEY".into(),
-    });
-    let cancel = CancellationToken::new();
-    Deployment::new(directory.path(), &bundle)
-        .with_secrets(std::sync::Arc::new(Credential))
-        .apply(&document, &cancel)
-        .await
-        .unwrap();
-    let initializations = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let counted = initializations.clone();
-    let deployment = Deployment::new(directory.path(), &bundle).with_progress(std::sync::Arc::new(
-        move |event| {
-            if let nemoclaw_sdk::Progress::Completed {
-                operation: "tofu.init",
-                ..
-            } = event
-            {
-                counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            }
-        },
-    ));
-    let effects = fixture.state.lock().unwrap().effects;
-    assert_eq!(
-        deployment
-            .plan_destroy(&cancel)
-            .await
-            .unwrap()
-            .changes
-            .len(),
-        4
-    );
-    assert_eq!(fixture.state.lock().unwrap().effects, effects);
-    // Teardown initializes the stage once to read its bindings and once for
-    // its teardown graph; it does not read the same state again.
-    assert_eq!(
-        initializations.swap(0, std::sync::atomic::Ordering::SeqCst),
-        2
-    );
-    assert_eq!(
-        deployment.destroy(&cancel).await.unwrap().outcome,
-        Outcome::Destroyed
-    );
-    assert_eq!(initializations.load(std::sync::atomic::Ordering::SeqCst), 2);
-    let error = deployment.export(&cancel).await.unwrap_err().to_string();
-    assert!(
-        error.contains("cannot export a destroyed deployment"),
-        "{error}"
-    );
-    assert!(fixture.state.lock().unwrap().providers.is_empty());
-    assert!(fixture.state.lock().unwrap().sandboxes.is_empty());
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
-async fn apply_preserves_bindings_without_generating_inference() {
-    struct Secret;
-    impl nemoclaw_sdk::Secrets for Secret {
-        fn resolve(&self, reference: &str) -> Result<String, nemoclaw_sdk::ObservationError> {
-            assert_eq!(reference, "MODEL_TOKEN");
-            Ok("fixture-remote-model-token".into())
-        }
-    }
-    let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
-    let directory = tempfile::tempdir().unwrap();
-    let fixture = Fixture::start().await;
-    let mut document = Document::parse(
-        include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
-    )
-    .unwrap();
-    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
-    let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
-    document.spec.inference_providers[0].endpoint = "https://unreachable.invalid/v1".into();
-    document.spec.inference_providers[0].credential = Some(nemoclaw_sdk::config::SecretRef {
-        env: "MODEL_TOKEN".into(),
-    });
-    let deployment =
-        Deployment::new(directory.path(), &bundle).with_secrets(std::sync::Arc::new(Secret));
-    let cancel = CancellationToken::new();
-    fixture.state.lock().unwrap().inference_exit = 1;
-    deployment.plan(&document, &cancel).await.unwrap();
-    assert_eq!(fixture.state.lock().unwrap().effects, 0);
-    assert!(
-        fixture.state.lock().unwrap().exec_calls.is_empty(),
-        "plan ran an active inference probe"
-    );
-    deployment.apply(&document, &cancel).await.unwrap();
-    let state_path = directory.path().join("terraform.tfstate");
-    let bound = fs::read(&state_path).unwrap();
-    assert!(!String::from_utf8_lossy(&bound).contains("fixture-remote-model-token"));
-    let effects = fixture.state.lock().unwrap().effects;
-    assert_eq!(effects, 4);
-    assert!(
-        deployment
-            .apply(&document, &cancel)
-            .await
-            .unwrap()
-            .changes
-            .is_empty()
-    );
-    assert_same_deployment_state(&fs::read(&state_path).unwrap(), &bound);
-    assert_eq!(fixture.state.lock().unwrap().effects, effects);
-    assert_eq!(deployment.export(&cancel).await.unwrap(), document);
-    assert!(
-        !fixture
-            .state
-            .lock()
-            .unwrap()
-            .exec_calls
-            .iter()
-            .flatten()
-            .any(|arg| arg.contains("inference-probe")
-                || arg.contains("pi-probe")
-                || arg == "probe"
-                || arg == "--message")
-    );
-    deployment.destroy(&cancel).await.unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1094,143 +973,8 @@ async fn destroy_waits_for_graceful_sandbox_stop_without_retrying() {
     );
     let state = fixture.state.lock().unwrap();
     assert!(state.sandboxes.is_empty());
-    assert_eq!(state.workspaces.len(), 1); // Destroy retains the owned workspace.
+    assert!(state.workspaces.is_empty()); // Destroy deletes the workspace too.
     assert_eq!(state.delete_calls, 1);
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
-async fn apply_health_failure_retains_resources_and_unchanged_apply_checks_again() {
-    let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
-    let directory = tempfile::tempdir().unwrap();
-    let fixture = Fixture::start().await;
-    let mut document = Document::parse(
-        include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
-    )
-    .unwrap();
-    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
-    let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
-    // Keep passive discovery identical across applies. An unroutable endpoint can
-    // fail as either a transport error or a timeout.
-    document.spec.inference_providers[0].endpoint = "http://127.0.0.1:9/v1".into();
-    let deployment = Deployment::new(directory.path(), &bundle);
-    let cancel = CancellationToken::new();
-    fixture.state.lock().unwrap().health_report = Some(serde_json::json!({
-        "supported": true, "report": null, "reason_code": "fabric_health_timeout"
-    }));
-    let error = deployment.apply(&document, &cancel).await.unwrap_err();
-    assert!(matches!(error, nemoclaw_sdk::Error::Execution { .. }));
-    // A later gateway failure must not be mistaken for this stored failed
-    // health report, nor clear a mutation guard based on stale observations.
-    let fixture_state = fixture.state.clone();
-    let interrupted = Deployment::new(directory.path(), &bundle).with_progress(
-        std::sync::Arc::new(move |event| {
-            if event == nemoclaw_sdk::Progress::Applying {
-                fixture_state.lock().unwrap().driver = Some("podman".into());
-            }
-        }),
-    );
-    let unrelated = interrupted.apply(&document, &cancel).await.unwrap_err();
-    assert!(matches!(unrelated, nemoclaw_sdk::Error::Execution { .. }));
-    fixture.state.lock().unwrap().driver = None;
-    assert!(matches!(
-        deployment.apply(&document, &cancel).await.unwrap_err(),
-        nemoclaw_sdk::Error::Execution { .. }
-    ));
-    let before = fs::read(directory.path().join("terraform.tfstate")).unwrap();
-    let effects = fixture.state.lock().unwrap().effects;
-    assert_eq!(effects, 4);
-    assert_eq!(fixture.state.lock().unwrap().delete_calls, 0);
-    let calls = fixture.state.lock().unwrap().exec_calls.len();
-    assert!(
-        deployment
-            .plan(&document, &cancel)
-            .await
-            .unwrap()
-            .health
-            .is_empty()
-    );
-    assert!(
-        fixture.state.lock().unwrap().exec_calls[calls..]
-            .iter()
-            .all(|cmd| !cmd.iter().any(|part| matches!(
-                part.as_str(),
-                "--active" | "--ready" | "--operational" | "invoke"
-            )))
-    );
-    assert!(deployment.apply(&document, &cancel).await.is_err());
-    assert_same_deployment_state(
-        &fs::read(directory.path().join("terraform.tfstate")).unwrap(),
-        &before,
-    );
-    let input = directory.path().join("deployment.yaml");
-    fs::write(&input, document.yaml().unwrap()).unwrap();
-    let failed = Command::new(
-        bundle
-            .join("bin")
-            .join(nemoclaw_sdk::bundle::executable("nemoclaw")),
-    )
-    .args(["apply", "-o", "json", "--progress", "off"])
-    .arg(&input)
-    .arg("--state-dir")
-    .arg(directory.path())
-    .output()
-    .unwrap();
-    assert_eq!(failed.status.code(), Some(1));
-    assert!(failed.stderr.is_empty());
-    let diagnostic: serde_json::Value = serde_json::from_slice(&failed.stdout).unwrap();
-    assert_eq!(diagnostic["outcome"], "failed");
-    assert!(diagnostic["error"].get("health").is_none());
-    assert!(!String::from_utf8_lossy(&failed.stdout).contains("fabric_health_timeout"));
-    assert!(
-        diagnostic["remainingState"]
-            .as_str()
-            .unwrap()
-            .contains("preserve the deployment state directory")
-    );
-    fixture.state.lock().unwrap().health_report = None;
-    let result = deployment.apply(&document, &cancel).await.unwrap();
-    assert!(result.changes.is_empty());
-    assert!(result.health[0].health.allows_apply_completion());
-    assert_eq!(fixture.state.lock().unwrap().effects, effects);
-    let native_report =
-        serde_json::json!({"fixture_check":{"outcome":"failed","reason":"fixture_probe_failed"}});
-    fixture.state.lock().unwrap().health_report = Some(serde_json::json!({
-        "supported": true, "reason_code": "fixture_probe_failed", "report": native_report
-    }));
-    let before_failed_report = fs::read(directory.path().join("terraform.tfstate")).unwrap();
-    assert!(matches!(
-        deployment.apply(&document, &cancel).await.unwrap_err(),
-        nemoclaw_sdk::Error::Execution { .. }
-    ));
-    let rejected = fs::read(directory.path().join("terraform.tfstate")).unwrap();
-    assert_same_managed_resources(&rejected, &before_failed_report);
-    let rejected: serde_json::Value = serde_json::from_slice(&rejected).unwrap();
-    let readiness = rejected["resources"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|resource| resource["type"] == "fabric_agent_readiness")
-        .unwrap();
-    let observation = &readiness["instances"][0]["attributes"];
-    assert_eq!(observation["ready"], false);
-    let reported: nemoclaw_sdk::RuntimeHealth =
-        serde_json::from_str(observation["health_json"].as_str().unwrap()).unwrap();
-    assert_eq!(reported.report, Some(native_report));
-    assert_eq!(
-        reported.reason_code.as_deref(),
-        Some("fabric_health_failed")
-    );
-    assert!(!reported.allows_apply_completion());
-    assert!(observation["error_message"].is_null());
-    let state = fixture.state.lock().unwrap();
-    assert_eq!(state.effects, effects);
-    assert_eq!(state.delete_calls, 0);
-    assert!(
-        !state.exec_calls.iter().flatten().any(|arg| arg == "probe"
-            || arg.contains("inference-probe")
-            || arg.contains("pi-probe"))
-    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1252,11 +996,11 @@ async fn mixed_sandboxes_reorder_add_recover_export_and_destroy_independently() 
     let deployment = Deployment::new(directory.path(), &bundle);
     let cancel = CancellationToken::new();
     let preview = deployment.plan(&document, &cancel).await.unwrap();
-    // Each image/adapter scope owns its provider registration and executable grants.
+    // Each image/adapter scope owns its provider registration and executable
+    // grants; each agent's configuration replaces its sandbox.
     assert_eq!(preview.changes.len(), 9);
     assert_eq!(fixture.state.lock().unwrap().effects, 0);
-    let applied = deployment.apply(&document, &cancel).await.unwrap();
-    assert_eq!(applied.health.len(), 2);
+    deployment.apply(&document, &cancel).await.unwrap();
     let before: serde_json::Value =
         serde_json::from_slice(&fs::read(directory.path().join("terraform.tfstate")).unwrap())
             .unwrap();
@@ -1280,7 +1024,8 @@ async fn mixed_sandboxes_reorder_add_recover_export_and_destroy_independently() 
     other.name = "third".into();
     document.spec.sandboxes.push(other);
     let added = deployment.plan(&document, &cancel).await.unwrap();
-    assert_eq!(added.changes.len(), 2);
+    // The sandbox, its agent, and the agent's configuration.
+    assert_eq!(added.changes.len(), 3);
     assert!(
         added
             .changes
@@ -1303,15 +1048,7 @@ async fn mixed_sandboxes_reorder_add_recover_export_and_destroy_independently() 
                 openshell_core::proto::SandboxPhase::Ready as i32;
         }
     }
-    assert_eq!(
-        deployment
-            .apply(&document, &cancel)
-            .await
-            .unwrap()
-            .health
-            .len(),
-        3
-    );
+    deployment.apply(&document, &cancel).await.unwrap();
     let after: serde_json::Value =
         serde_json::from_slice(&fs::read(directory.path().join("terraform.tfstate")).unwrap())
             .unwrap();
@@ -1339,67 +1076,6 @@ async fn mixed_sandboxes_reorder_add_recover_export_and_destroy_independently() 
     );
     deployment.destroy(&cancel).await.unwrap();
     assert!(fixture.state.lock().unwrap().sandboxes.is_empty());
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
-async fn successful_apply_checkpoints_mutations_before_reading_health() {
-    use nemoclaw_sdk::{Progress, StepOutcome};
-    use std::sync::{Arc, Mutex};
-    let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
-    let directory = tempfile::tempdir().unwrap();
-    let fixture = Fixture::start().await;
-    let mut document = Document::parse(
-        include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
-    )
-    .unwrap();
-    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
-    let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
-    let cancel = CancellationToken::new();
-    let interrupt = cancel.clone();
-    let observed = Arc::new(Mutex::new((false, false)));
-    let captured = observed.clone();
-    let deployment =
-        Deployment::new(directory.path(), &bundle).with_progress(Arc::new(move |event| {
-            let mut observed = captured.lock().unwrap();
-            match event {
-                Progress::Completed {
-                    operation: "tofu.apply",
-                    outcome: StepOutcome::Succeeded,
-                    ..
-                } => observed.0 = true,
-                Progress::Waiting {
-                    operation: "tofu.show",
-                    ..
-                } if observed.0 => {
-                    observed.1 = true;
-                    interrupt.cancel();
-                }
-                _ => {}
-            }
-        }));
-    assert!(matches!(
-        deployment.apply(&document, &cancel).await,
-        Err(nemoclaw_sdk::Error::Cancelled)
-    ));
-    assert!(observed.lock().unwrap().1, "post-apply health observation");
-    let effects = fixture.state.lock().unwrap().effects;
-    // Export refuses an unfinished apply, so exporting shows that the mutation
-    // checkpoint preceded the health read.
-    assert_eq!(
-        Deployment::new(directory.path(), &bundle)
-            .export(&CancellationToken::new())
-            .await
-            .expect("mutation checkpoint must precede the health read"),
-        document
-    );
-    assert_eq!(fixture.state.lock().unwrap().effects, effects);
-    let result = Deployment::new(directory.path(), &bundle)
-        .apply(&document, &CancellationToken::new())
-        .await
-        .unwrap();
-    assert!(result.changes.is_empty());
-    assert_eq!(fixture.state.lock().unwrap().effects, effects);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1473,13 +1149,13 @@ async fn failed_first_apply_can_destroy_bound_resources_without_successful_reapp
         assert!(state.sandboxes.is_empty());
         assert!(state.providers.is_empty());
         assert!(state.profiles.is_empty());
-        assert_eq!(state.workspaces.len(), 1);
+        assert!(state.workspaces.is_empty());
     }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
-async fn failed_first_configuration_accepts_corrected_intent_without_recreating_sandbox() {
+async fn failed_first_configuration_accepts_corrected_intent_by_replacing_the_sandbox() {
     let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
     let directory = tempfile::tempdir().unwrap();
     let fixture = Fixture::start().await;
@@ -1494,7 +1170,6 @@ async fn failed_first_configuration_accepts_corrected_intent_without_recreating_
     fixture.state.lock().unwrap().exec_exit = 1;
     assert!(deployment.apply(&document, &cancel).await.is_err());
     let sandboxes = fixture.state.lock().unwrap().sandboxes.clone();
-    let effects = fixture.state.lock().unwrap().effects;
     document.spec.sandboxes[0]
         .agent
         .inference
@@ -1507,9 +1182,10 @@ async fn failed_first_configuration_accepts_corrected_intent_without_recreating_
     deployment
         .apply(&document, &cancel)
         .await
-        .expect("configuration recovery uses the bound parent sandbox");
-    assert_eq!(fixture.state.lock().unwrap().effects, effects);
-    assert_eq!(fixture.state.lock().unwrap().sandboxes, sandboxes);
+        .expect("a corrected agent replaces the sandbox");
+    let replaced = fixture.state.lock().unwrap().sandboxes.clone();
+    assert_eq!(replaced.len(), 1);
+    assert_ne!(replaced, sandboxes);
     let exported = deployment.export(&cancel).await.unwrap();
     assert_eq!(exported, document);
     assert!(
@@ -1575,7 +1251,6 @@ async fn cli_redaction_preserves_failures_and_recovery_with_short_and_colliding_
         String::from_utf8_lossy(&applied.stdout)
     );
     let original = fixture.state.lock().unwrap().sandboxes.clone();
-    let effects = fixture.state.lock().unwrap().effects;
     document.spec.sandboxes[0]
         .agent
         .inference
@@ -1586,15 +1261,11 @@ async fn cli_redaction_preserves_failures_and_recovery_with_short_and_colliding_
         .model = "changed-model".into();
     fs::write(&input, document.yaml().unwrap()).unwrap();
     fixture.state.lock().unwrap().configuration_error = Some(serde_json::json!({
-        "error": {"stage":"start", "code":"lifecycle_adapter_start_failed", "runtime_state":"unavailable", "message":"native-secret-must-not-escape"}
+        "error": {"stage":"start", "code":"start_failed", "message":"native-secret-must-not-escape"}
     }));
-    // Redaction rules belong to nemoclaw-sdk's process tests; this checks
-    // that each rule reaches both output formats of a failed apply.
-    for (secret, format) in [
-        ("a", "text"),
-        ("lifecycle_adapter_start_failed", "json"),
-        ("inert-credential-for-context-check", "text"),
-    ] {
+    // The process tests own the credential/context matrix. Keep the native
+    // withholding and collision paths here, including failure recovery.
+    for (secret, format) in [("a", "text"), ("start_failed", "json")] {
         let failed = invoke("apply", format, secret);
         assert_eq!(failed.status.code(), Some(1));
         let stdout = String::from_utf8(failed.stdout).unwrap();
@@ -1617,29 +1288,15 @@ async fn cli_redaction_preserves_failures_and_recovery_with_short_and_colliding_
                 !message.contains("[redacted]"),
                 "short-value character matches must not escape"
             );
-        } else if secret == "lifecycle_adapter_start_failed" {
-            assert!(message.contains("[redacted]"), "{message}");
-            assert!(
-                message.contains("agent runtime is unavailable"),
-                "{message}"
-            );
-            assert!(!message.contains(secret));
         } else {
             assert!(message.contains("sandbox/assistant"), "{message}");
-            assert!(
-                message.contains("lifecycle_adapter_start_failed"),
-                "{message}"
-            );
-            assert!(
-                message.contains("agent runtime is unavailable"),
-                "{message}"
-            );
+            assert!(message.contains("[redacted]"), "{message}");
+            assert!(message.contains("agent runtime is unknown"), "{message}");
+            assert!(!message.contains(secret));
         }
         assert!(!message.contains("[[redacted]]"));
         assert!(!stdout.contains("native-secret-must-not-escape"));
         assert!(!stderr.contains("native-secret-must-not-escape"));
-        assert_eq!(fixture.state.lock().unwrap().sandboxes, original);
-        assert_eq!(fixture.state.lock().unwrap().effects, effects);
     }
     fixture.state.lock().unwrap().configuration_error = None;
     let recovered = invoke("apply", "json", "a");
@@ -1648,8 +1305,10 @@ async fn cli_redaction_preserves_failures_and_recovery_with_short_and_colliding_
         "{}",
         String::from_utf8_lossy(&recovered.stdout)
     );
-    assert_eq!(fixture.state.lock().unwrap().sandboxes, original);
-    assert_eq!(fixture.state.lock().unwrap().effects, effects);
+    // The changed agent runs in a new sandbox.
+    let recovered_sandboxes = fixture.state.lock().unwrap().sandboxes.clone();
+    assert_eq!(recovered_sandboxes.len(), 1);
+    assert_ne!(recovered_sandboxes, original);
     let destroyed = invoke("destroy", "json", "a");
     assert!(
         destroyed.status.success(),
@@ -1731,28 +1390,31 @@ async fn rejected_policy_fails_promptly_with_context_and_allows_recovery_or_dest
             "known rejection must not wait for the startup deadline"
         );
         let sandboxes = fixture.state.lock().unwrap().sandboxes.clone();
-        let effects = fixture.state.lock().unwrap().effects;
         assert_eq!(sandboxes.len(), 1);
         assert!(fixture.state.lock().unwrap().exec_calls.is_empty());
         if recover {
-            // Simulate upstream repair and acknowledgement, then retry using
-            // the original sandbox and its retained identity.
+            // Once OpenShell accepts the policy, the retry creates the agent
+            // in a new sandbox: every new agent gets one, even where an
+            // earlier start never ran.
             {
                 let mut state = fixture.state.lock().unwrap();
-                for sandbox in state.sandboxes.values_mut() {
-                    let status = sandbox.status.as_mut().unwrap();
-                    status.phase = SandboxPhase::Ready as i32;
-                    let admission = status.configuration_admission.as_mut().unwrap();
-                    admission.state = ConfigurationAdmissionState::Accepted as i32;
-                    admission.error.clear();
-                }
+                state.sandbox_phase = None;
+                state.configuration_admission = None;
             }
-            deployment.apply(&document, &cancel).await.unwrap();
-            assert_eq!(fixture.state.lock().unwrap().effects, effects);
-            for (key, sandbox) in &sandboxes {
-                assert_eq!(
-                    fixture.state.lock().unwrap().sandboxes[key].metadata,
-                    sandbox.metadata
+            let retried = deployment.apply(&document, &cancel).await.unwrap();
+            {
+                let state = fixture.state.lock().unwrap();
+                assert_eq!(state.sandboxes.len(), 1);
+                let id = |sandbox: &openshell_core::proto::Sandbox| {
+                    sandbox.metadata.as_ref().unwrap().id.clone()
+                };
+                assert!(
+                    state
+                        .sandboxes
+                        .values()
+                        .all(|current| sandboxes.values().all(|old| id(old) != id(current))),
+                    "the retry replaces the rejected sandbox: {:?}",
+                    retried.changes
                 );
             }
             let exported = deployment.export(&cancel).await.unwrap();
@@ -1769,90 +1431,88 @@ async fn rejected_policy_fails_promptly_with_context_and_allows_recovery_or_dest
         deployment.plan_destroy(&cancel).await.unwrap();
         deployment.destroy(&cancel).await.unwrap();
         assert!(fixture.state.lock().unwrap().sandboxes.is_empty());
-        assert_eq!(fixture.state.lock().unwrap().delete_calls, 1);
+        let deletes = if recover { 2 } else { 1 };
+        assert_eq!(fixture.state.lock().unwrap().delete_calls, deletes);
     }
 }
 
+// Text/JSON presentation is checked at the CLI renderer boundary. This native
+// case keeps the diagnostic producer, private-detail suppression, retained
+// resources, and successful cleanup through the actual executable stack.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
-async fn pi_start_failure_names_the_sandbox_in_cli_text_and_json_and_allows_destroy() {
+async fn pi_start_failure_names_the_sandbox_in_json_and_allows_destroy() {
     let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
-    for format in ["text", "json"] {
-        let directory = tempfile::tempdir().unwrap();
-        let fixture = Fixture::start().await;
-        let mut input: serde_json::Value = serde_saphyr::from_str(include_str!(
-            "../../nemoclaw-sdk/tests/fixtures/config/local.yaml"
-        ))
-        .unwrap();
-        input["spec"]["gateway"]["endpoint"] = fixture.endpoint.clone().into();
-        input["spec"]["sandboxes"][0]["name"] = "coder".into();
-        input["spec"]["sandboxes"][0]["harness"]["kind"] = "nvidia.fabric.pi".into();
-        let mut document = Document::parse(input.to_string().as_bytes()).unwrap();
-        let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
-        let input = directory.path().join("input.yaml");
-        fs::write(&input, document.yaml().unwrap()).unwrap();
-        let state = directory.path().join("state");
-        fixture.state.lock().unwrap().configuration_error = Some(serde_json::json!({
-            "error": {"stage":"start", "code":"pi_model_unknown", "runtime_state":"unavailable", "message":"PRIVATE_SENTINEL", "details":{"token":"PRIVATE_SENTINEL"}}
-        }));
-        let invoke = |operation: &str| {
-            let mut command = Command::new(
-                bundle
-                    .join("bin")
-                    .join(nemoclaw_sdk::bundle::executable("nemoclaw")),
-            );
-            command
-                .arg("--bundle")
-                .arg(&bundle)
-                .arg("--state-dir")
-                .arg(&state)
-                .args(["--progress", "off", operation, "-o", format]);
-            if operation == "apply" {
-                command.arg(&input).arg("--non-interactive");
-            }
-            command.output().unwrap()
-        };
-        let failed = invoke("apply");
-        assert_eq!(failed.status.code(), Some(1));
-        let stdout = String::from_utf8(failed.stdout).unwrap();
-        let stderr = String::from_utf8(failed.stderr).unwrap();
-        let rendered = if format == "json" { &stdout } else { &stderr };
-        assert!(
-            rendered.contains("Changes may already have been made"),
-            "{rendered}"
+    let directory = tempfile::tempdir().unwrap();
+    let fixture = Fixture::start().await;
+    let mut input: serde_json::Value = serde_saphyr::from_str(include_str!(
+        "../../nemoclaw-sdk/tests/fixtures/config/local.yaml"
+    ))
+    .unwrap();
+    input["spec"]["gateway"]["endpoint"] = fixture.endpoint.clone().into();
+    input["spec"]["sandboxes"][0]["name"] = "coder".into();
+    input["spec"]["sandboxes"][0]["harness"]["kind"] = "nvidia.fabric.pi".into();
+    let mut document = Document::parse(input.to_string().as_bytes()).unwrap();
+    let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
+    let input = directory.path().join("input.yaml");
+    fs::write(&input, document.yaml().unwrap()).unwrap();
+    let state = directory.path().join("state");
+    fixture.state.lock().unwrap().configuration_error = Some(serde_json::json!({
+        "error": {"stage":"start", "code":"start_failed", "message":"PRIVATE_SENTINEL", "details":{"token":"PRIVATE_SENTINEL"}}
+    }));
+    let invoke = |operation: &str| {
+        let mut command = Command::new(
+            bundle
+                .join("bin")
+                .join(nemoclaw_sdk::bundle::executable("nemoclaw")),
         );
-        assert!(
-            !rendered.contains("No runtime resources changed"),
-            "{rendered}"
-        );
-        let message = if format == "json" {
-            let report: serde_json::Value = serde_json::from_str(&stdout).unwrap();
-            assert_eq!(report["outcome"], "failed");
-            report["error"]["message"].as_str().unwrap().to_owned()
-        } else {
-            stderr.clone()
-        };
-        for expected in [
-            "sandbox/coder",
-            "start",
-            "pi_model_unknown",
-            "agent runtime is unavailable",
-            "resources retained",
-        ] {
-            assert!(message.contains(expected), "{message}");
+        command
+            .arg("--bundle")
+            .arg(&bundle)
+            .arg("--state-dir")
+            .arg(&state)
+            .args(["--progress", "off", operation, "-o", "json"]);
+        if operation == "apply" {
+            command.arg(&input).arg("--non-interactive");
         }
-        assert!(!stdout.contains("PRIVATE_SENTINEL") && !stderr.contains("PRIVATE_SENTINEL"));
-        assert_eq!(fixture.state.lock().unwrap().sandboxes.len(), 1);
-        assert!(state.join("terraform.tfstate").exists());
-        let destroyed = invoke("destroy");
-        assert!(
-            destroyed.status.success(),
-            "{} {}",
-            String::from_utf8_lossy(&destroyed.stdout),
-            String::from_utf8_lossy(&destroyed.stderr)
-        );
-        assert!(fixture.state.lock().unwrap().sandboxes.is_empty());
+        command.output().unwrap()
+    };
+    let failed = invoke("apply");
+    assert_eq!(failed.status.code(), Some(1));
+    let stdout = String::from_utf8(failed.stdout).unwrap();
+    let stderr = String::from_utf8(failed.stderr).unwrap();
+    let report: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(report["outcome"], "failed");
+    let remaining = report["remainingState"].as_str().unwrap();
+    assert!(
+        remaining.contains("Changes may already have been made"),
+        "{remaining}"
+    );
+    assert!(
+        !remaining.contains("No runtime resources changed"),
+        "{remaining}"
+    );
+    let message = report["error"]["message"].as_str().unwrap();
+    for expected in [
+        "sandbox/coder",
+        "start",
+        "start_failed",
+        "agent runtime is unknown",
+        "resources retained",
+    ] {
+        assert!(message.contains(expected), "{message}");
     }
+    assert!(!stdout.contains("PRIVATE_SENTINEL") && !stderr.contains("PRIVATE_SENTINEL"));
+    assert_eq!(fixture.state.lock().unwrap().sandboxes.len(), 1);
+    assert!(state.join("terraform.tfstate").exists());
+    let destroyed = invoke("destroy");
+    assert!(
+        destroyed.status.success(),
+        "{} {}",
+        String::from_utf8_lossy(&destroyed.stdout),
+        String::from_utf8_lossy(&destroyed.stderr)
+    );
+    assert!(fixture.state.lock().unwrap().sandboxes.is_empty());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1957,7 +1617,7 @@ async fn sandbox_startup_failure_names_reason_and_guidance_and_allows_destroy() 
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
-async fn scoped_provider_labels_and_stopped_runtime_plans_preserve_authored_identity() {
+async fn scoped_provider_labels_preserve_authored_identity() {
     let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
     let directory = tempfile::tempdir().unwrap();
     let fixture = Fixture::start().await;
@@ -2008,84 +1668,4 @@ async fn scoped_provider_labels_and_stopped_runtime_plans_preserve_authored_iden
     assert!(!text.contains("provider/local-"), "{text}");
     assert_eq!(fixture.state.lock().unwrap().effects, 0);
     deployment.apply(&document, &cancel).await.unwrap();
-    let effects = fixture.state.lock().unwrap().effects;
-    let sandbox_id = fixture
-        .state
-        .lock()
-        .unwrap()
-        .sandboxes
-        .values()
-        .next()
-        .unwrap()
-        .metadata
-        .as_ref()
-        .unwrap()
-        .id
-        .clone();
-    fixture
-        .state
-        .lock()
-        .unwrap()
-        .fabric_stopped
-        .insert(sandbox_id.clone());
-    for format in ["text", "json"] {
-        let output = Command::new(
-            bundle
-                .join("bin")
-                .join(nemoclaw_sdk::bundle::executable("nemoclaw")),
-        )
-        .args(["--progress", "off", "--state-dir"])
-        .arg(&state)
-        .args(["plan", "--non-interactive", "-o", format])
-        .arg(&input)
-        .output()
-        .unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        let text = String::from_utf8(output.stdout).unwrap();
-        if format == "text" {
-            assert!(text.contains("agent runtime/assistant"), "{text}");
-            assert!(
-                text.contains("Agent runtime is not running; apply restarts it."),
-                "{text}"
-            );
-        } else {
-            let result: serde_json::Value = serde_json::from_str(&text).unwrap();
-            let sources = result["resourceSources"].as_object().unwrap();
-            assert_eq!(sources.len(), 2);
-            assert!(sources.values().all(|source| source["name"] == "responses"
-                && source["path"] == "spec.sandboxes[assistant].inferenceProviders[responses]"));
-            let resource = result["discovery"]["resources"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .find(|resource| resource["address"] == "fabric_agent.assistant")
-                .unwrap();
-            assert_eq!(resource["agentRunning"], false);
-            assert_eq!(resource["plannedActions"], serde_json::json!(["update"]));
-        }
-        assert!(
-            fixture
-                .state
-                .lock()
-                .unwrap()
-                .fabric_stopped
-                .contains(&sandbox_id)
-        );
-        assert_eq!(fixture.state.lock().unwrap().effects, effects);
-    }
-    let repaired = deployment.apply(&document, &cancel).await.unwrap();
-    assert_eq!(repaired.changes.len(), 1);
-    assert!(
-        !fixture
-            .state
-            .lock()
-            .unwrap()
-            .fabric_stopped
-            .contains(&sandbox_id)
-    );
-    deployment.destroy(&cancel).await.unwrap();
 }

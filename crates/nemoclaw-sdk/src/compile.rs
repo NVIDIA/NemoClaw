@@ -4,13 +4,12 @@ use crate::config::InferenceProviderKind;
 
 use crate::{
     backend::Row,
-    config::{ConfigError, Document, InferenceProvider, SearchProvider},
+    config::{ConfigError, Document, InferenceProvider},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const PROVIDER_ADDRESS: &str = "registry.opentofu.org/nvidia/nemoclaw";
 /// Registry address of the provider that reconciles OpenShell objects.
 pub const OPENSHELL_PROVIDER_ADDRESS: &str = "registry.opentofu.org/nvidia/openshell";
 /// Registry address of the provider that configures Fabric agents in sandboxes.
@@ -20,8 +19,18 @@ pub const OLLAMA_PROVIDER_ADDRESS: &str = "registry.opentofu.org/nvidia/ollama";
 /// Registry address of the provider that observes container engines; it has
 /// no settings, so it is not one of [`NEMOCLAW_PROVIDERS`].
 pub const HOST_PROVIDER_ADDRESS: &str = "registry.opentofu.org/nvidia/host";
-/// This repository's providers; each takes `destroy`.
-pub const NEMOCLAW_PROVIDERS: [&str; 5] = ["nemoclaw", "openshell", "fabric", "vllm", "ollama"];
+/// This repository's providers that take `destroy`.
+pub const NEMOCLAW_PROVIDERS: [&str; 4] = ["openshell", "fabric", "vllm", "ollama"];
+
+/// The kind of the `terraform_data` that holds an agent's configuration. A
+/// changed configuration replaces the agent's sandbox through
+/// `replace_triggered_by`, because Fabric starts one agent runtime per sandbox.
+pub const AGENT_CONFIGURATION: &str = "agent_configuration";
+
+/// The address of the `terraform_data` holding a sandbox's agent configuration.
+pub fn agent_configuration_address(sandbox: &str) -> String {
+    format!("terraform_data.agent_{sandbox}")
+}
 
 /// The OpenTofu resource type that reconciles a resource kind.
 pub fn resource_type(kind: &str) -> String {
@@ -30,6 +39,7 @@ pub fn resource_type(kind: &str) -> String {
         .or_else(|| crate::services::provider_types::runtime_type(kind).map(str::to_owned))
         .unwrap_or_else(|| match kind {
             "agent" => nemoclaw_fabric::agent::RESOURCE_TYPE.to_owned(),
+            AGENT_CONFIGURATION => "terraform_data".to_owned(),
             _ => format!("nemoclaw_{kind}"),
         })
 }
@@ -118,11 +128,18 @@ fn targets_with_plans(
             .map(|provider| provider.key.clone())
             .collect::<Vec<_>>();
         if let Some(search) = &web_search {
-            provider_names.push(crate::config::search_provider_name(
-                search.provider,
-                &search.credential.env,
-                &search.provider.image_profile(&image_scope),
-            ));
+            provider_names.push(
+                nemoclaw_openshell::search::web_search_names(
+                    search.provider,
+                    &search.credential.env,
+                    &image_scope,
+                )
+                .1,
+            );
+        }
+        let apis = document.apis(sandbox)?;
+        for api in &apis {
+            provider_names.push(api.registration(&image_scope));
         }
 
         let mut values: Row = [
@@ -148,12 +165,17 @@ fn targets_with_plans(
             serde_json::to_string(&crate::image_runtime::policy_input(document, sandbox)?)
                 .expect("policy input"),
         );
+        if let Some(config) = &sandbox.driver_config {
+            values.insert(
+                "driver_config_json".into(),
+                serde_json::to_string(config).expect("driver configuration"),
+            );
+        }
         {
             // The agent's inputs are Fabric's configuration sections; the
             // sandbox fields name the sandbox whose ref the graph passes.
-            let mut values = nemoclaw_fabric::agent::decompose(&crate::fabric_config::for_sandbox(
-                document, sandbox,
-            )?);
+            let configuration = crate::fabric_config::for_sandbox(document, sandbox)?;
+            let mut values = nemoclaw_fabric::agent::decompose(&configuration);
             values.extend([
                 ("workspace".into(), workspace.clone()),
                 (nemoclaw_fabric::agent::SANDBOX.into(), sandbox.name.clone()),
@@ -172,66 +194,90 @@ fn targets_with_plans(
                 address: format!("{}.{}", nemoclaw_fabric::agent::RESOURCE_TYPE, sandbox.name),
                 values,
             });
+            result.push(Target {
+                kind: AGENT_CONFIGURATION.into(),
+                address: agent_configuration_address(&sandbox.name),
+                values: [("input".into(), configuration.to_string())].into(),
+            });
         }
         result.push(Target {
             kind: "sandbox".into(),
             address: format!("openshell_sandbox.{}", sandbox.name),
             values,
         });
+        // One web search resource per provider, credential reference, and
+        // image: sandboxes sharing all three share it.
         if let Some(search) = web_search {
-            let profile_name = search.provider.image_profile(&image_scope);
-            let provider_name = crate::config::search_provider_name(
-                search.provider,
-                &search.credential.env,
-                &profile_name,
-            );
-            for (kind, name) in [
-                ("provider_profile", profile_name.as_str()),
-                ("provider", provider_name.as_str()),
-            ] {
-                let mut values: Row = [
+            let mut target = Target {
+                kind: "web_search".into(),
+                address: format!(
+                    "openshell_web_search.{}_{}_{}",
+                    search.provider.name(),
+                    image_scope,
+                    search.credential.env.to_ascii_lowercase()
+                ),
+                values: [
                     ("workspace".into(), workspace.clone()),
-                    ("name".into(), name.into()),
+                    ("name".into(), image_scope.clone()),
                     ("owner".into(), document.metadata.uid.clone()),
                     (
                         "generation".into(),
                         generation(generations, "provider")?.into(),
                     ),
+                    ("provider_type".into(), search.provider.name().into()),
+                    ("credential_env".into(), search.credential.env.clone()),
                 ]
-                .into();
-                if kind == "provider" {
-                    values.extend([
-                        ("endpoint".into(), search.provider.endpoint().into()),
-                        ("credential_env".into(), search.credential.env.clone()),
-                        ("provider_type".into(), search.provider.name().into()),
-                        ("profile_name".into(), profile_name.clone()),
-                    ]);
+                .into(),
+            };
+            if let Some(name) = &search.sandbox_env {
+                target.values.insert("sandbox_env".into(), name.clone());
+            }
+            if let Some(previous) = result.iter().find(|t| t.address == target.address) {
+                if previous != &target {
+                    return Err(ConfigError::new(
+                        "web search provider registration conflicts with an existing target",
+                    ));
                 }
-                let target = Target {
-                    kind: kind.into(),
-                    address: if kind == "provider" {
-                        let logical = crate::config::profile_address(search.provider)
-                            .strip_prefix("openshell_provider_profile.")
-                            .unwrap();
-                        let prefix = format!("{}-search-", search.provider.name());
-                        format!(
-                            "openshell_provider_registration.{logical}_{}",
-                            provider_name.strip_prefix(&prefix).unwrap()
-                        )
-                    } else {
-                        crate::config::image_profile_address(search.provider, &image_scope)
-                    },
-                    values,
-                };
-                if let Some(previous) = result.iter().find(|t| t.address == target.address) {
-                    if previous != &target {
-                        return Err(ConfigError::new(
-                            "web search provider registration conflicts with an existing target",
-                        ));
-                    }
-                } else {
-                    result.push(target);
+            } else {
+                result.push(target);
+            }
+        }
+        // One API resource per definition and image: sandboxes sharing both
+        // share it.
+        for api in apis {
+            let registration = api.registration(&image_scope);
+            let mut target = Target {
+                kind: "api".into(),
+                address: format!("openshell_api.{}", registration.replace('-', "_")),
+                values: [
+                    ("workspace".into(), workspace.clone()),
+                    ("name".into(), registration),
+                    ("owner".into(), document.metadata.uid.clone()),
+                    (
+                        "generation".into(),
+                        generation(generations, "provider")?.into(),
+                    ),
+                    ("endpoint".into(), api.api.endpoint.clone()),
+                    ("credential_env".into(), api.api.credential.env.clone()),
+                ]
+                .into(),
+            };
+            if let Some(style) = api.api.auth_style {
+                target
+                    .values
+                    .insert("auth_style".into(), style.name().into());
+            }
+            if let Some(header) = &api.api.header_name {
+                target.values.insert("header_name".into(), header.clone());
+            }
+            if let Some(previous) = result.iter().find(|t| t.address == target.address) {
+                if previous != &target {
+                    return Err(ConfigError::new(
+                        "api registration conflicts with an existing target",
+                    ));
                 }
+            } else {
+                result.push(target);
             }
         }
     }
@@ -241,14 +287,14 @@ fn targets_with_plans(
         {
             result
                 .iter_mut()
-                .find(|r| r.kind == "provider" && r.values["name"] == provider.key)
+                .find(|r| r.kind == "inference" && r.values["name"] == provider.key)
                 .unwrap()
                 .values
                 .insert("credential_source".into(), source);
         }
     }
     // OpenShell objects and Fabric configurations name their gateway.
-    let gateway = gateway_values(&document.spec.gateway);
+    let gateway = gateway_values(document, generations)?;
     for target in &mut result {
         if nemoclaw_openshell::references(&target.kind)
             .iter()
@@ -266,7 +312,7 @@ fn inference_targets(
     provider: &InferenceProvider,
     key: &str,
     generations: &Generations,
-) -> Result<[Target; 2], ConfigError> {
+) -> Result<[Target; 1], ConfigError> {
     let connection = document.provider_connection(provider)?;
     let logical = format!("inference_{key}");
     let values: Row = [
@@ -287,33 +333,19 @@ fn inference_targets(
                 .unwrap_or_default(),
         ),
         (
-            "provider_type".into(),
+            "api".into(),
             match provider.provider {
-                InferenceProviderKind::Anthropic => "anthropic".into(),
-                InferenceProviderKind::Openai => String::new(),
+                InferenceProviderKind::Anthropic => "anthropic-messages".into(),
+                InferenceProviderKind::Openai => "openai-completions".into(),
             },
         ),
     ]
     .into();
-    let mut profile = values.clone();
-    profile.insert("name".into(), format!("nemoclaw-inference-{key}"));
-    profile.remove("credential_env");
-    profile.insert(
-        "authenticated".into(),
-        crate::services::provider_authenticated(document, provider)?.to_string(),
-    );
-    Ok([
-        Target {
-            kind: "provider_profile".into(),
-            address: format!("openshell_provider_profile.{logical}"),
-            values: profile,
-        },
-        Target {
-            kind: "provider".into(),
-            address: format!("openshell_provider_registration.{logical}"),
-            values,
-        },
-    ])
+    Ok([Target {
+        kind: "inference".into(),
+        address: format!("openshell_inference.{logical}"),
+        values,
+    }])
 }
 
 /// Compile only data. No filesystem access, backend calls, or runtime effects.
@@ -321,11 +353,137 @@ pub fn compile(
     document: &Document,
     generations: &Generations,
     version: &str,
-) -> Result<Value, ConfigError> {
-    deployment_graph(document, generations, version).map(|(graph, _)| graph)
+) -> Result<Value, crate::Error> {
+    deployment_graph(document, generations, version).map(|compiled| compiled.graph)
+}
+
+/// One deployment's graph: the runtime NemoClaw manages and the OpenShell and
+/// Fabric objects it serves, planned and applied together.
+pub(crate) struct Compiled {
+    pub graph: Value,
+    /// OpenShell and Fabric objects, and the containers that serve them.
+    pub objects: Vec<Target>,
+    /// The managed gateway, model servers, and their storage.
+    pub runtime: Vec<Target>,
 }
 
 pub(crate) fn deployment_graph(
+    document: &Document,
+    generations: &Generations,
+    version: &str,
+) -> Result<Compiled, crate::Error> {
+    let (mut graph, objects) = objects_graph(document, generations, version)?;
+    let runtime = if document.has_runtime() {
+        let (runtime_graph, runtime) = compiled_runtime(document, generations, version)?;
+        join(&mut graph, runtime_graph)?;
+        runtime
+    } else {
+        Vec::new()
+    };
+    Ok(Compiled {
+        graph,
+        objects,
+        runtime,
+    })
+}
+
+/// Add the runtime graph to the objects graph. Objects change only after the
+/// runtime settles: each waits on the apply-time gateway read, which waits on
+/// every runtime resource and readiness read.
+fn join(graph: &mut Value, mut runtime: Value) -> Result<(), crate::Error> {
+    let conflict =
+        || crate::Error::State("runtime and objects graphs declare the same address differently");
+    // The runtime graph's gateway read waits for the gateway it installs, so it
+    // replaces the plan-time read of the same gateway.
+    let current = runtime["data"]["openshell_gateway"]
+        .as_object_mut()
+        .and_then(|reads| reads.remove("current"));
+    let mut gates: Vec<Value> = Vec::new();
+    for section in ["resource", "data"] {
+        for (kind, instances) in runtime[section].as_object().into_iter().flatten() {
+            for (name, value) in instances.as_object().into_iter().flatten() {
+                let slot = &mut graph[section][kind][name];
+                if !slot.is_null() && slot != value {
+                    return Err(conflict());
+                }
+                *slot = value.clone();
+                let prefix = if section == "data" { "data." } else { "" };
+                gates.push(json!(format!("{prefix}{kind}.{name}")));
+            }
+        }
+    }
+    for (name, value) in runtime["terraform"]["required_providers"]
+        .as_object()
+        .into_iter()
+        .flatten()
+    {
+        let slot = &mut graph["terraform"]["required_providers"][name];
+        if !slot.is_null() && slot != value {
+            return Err(conflict());
+        }
+        *slot = value.clone();
+    }
+    for (name, value) in runtime["provider"].as_object().into_iter().flatten() {
+        let slot = &mut graph["provider"][name];
+        // Docker providers are aliased per engine; both graphs may reach one.
+        if let (true, Some(added)) = (slot.is_array(), value.as_array()) {
+            let existing = slot.as_array_mut().expect("provider list");
+            for provider in added {
+                if !existing.contains(provider) {
+                    existing.push(provider.clone());
+                }
+            }
+        } else if slot.is_null() || slot == value {
+            *slot = value.clone();
+        } else {
+            return Err(conflict());
+        }
+    }
+    // Variables, locals, outputs, and checks are maps of named blocks.
+    for (block, entries) in runtime.as_object().into_iter().flatten() {
+        if matches!(
+            block.as_str(),
+            "resource" | "data" | "terraform" | "provider"
+        ) {
+            continue;
+        }
+        for (name, value) in entries.as_object().into_iter().flatten() {
+            let slot = &mut graph[block.as_str()][name];
+            if !slot.is_null() && slot != value {
+                return Err(conflict());
+            }
+            *slot = value.clone();
+        }
+    }
+    let reads = &mut graph["data"]["openshell_gateway"];
+    if let Some(current) = current {
+        reads["current"] = current;
+    } else {
+        // A Kubernetes gateway's read waits for its installation instead.
+        let installed: Vec<Value> = gates
+            .iter()
+            .filter(|gate| {
+                gate.as_str().is_some_and(|address| {
+                    address.starts_with(&format!(
+                        "{}.",
+                        resource_type(crate::kubernetes::GATEWAY_KIND)
+                    ))
+                })
+            })
+            .cloned()
+            .collect();
+        if !installed.is_empty() {
+            reads["current"]["depends_on"] = json!(installed);
+        }
+    }
+    let apply = &mut reads["apply"];
+    let mut dependencies = apply["depends_on"].as_array().cloned().unwrap_or_default();
+    dependencies.extend(gates);
+    apply["depends_on"] = json!(dependencies);
+    Ok(())
+}
+
+fn objects_graph(
     document: &Document,
     generations: &Generations,
     version: &str,
@@ -337,10 +495,11 @@ pub(crate) fn deployment_graph(
         crate::services::InstallStage::Deployment,
     )?;
     let raw = targets_with_plans(document, generations, &service_plans)?;
-    let mut graph = compile_with_plans(document, version, &service_plans, &raw)?;
+    let mut graph = compile_with_plans(document, generations, version, &service_plans, &raw)?;
     crate::docker_compute::configure(&mut graph, &raw)
         .map_err(|_| ConfigError::new("invalid Docker compute graph"))?;
-    crate::services::configure_proxy_readiness(&mut graph, &raw)
+    crate::docker_compute::authenticate(&mut graph, &document.spec.registries);
+    crate::services::configure_readiness(&mut graph, &raw)
         .map_err(|_| ConfigError::new("invalid proxy readiness graph"))?;
     let targets = crate::docker_compute::targets(&raw)
         .map_err(|_| ConfigError::new("invalid Docker compute plan"))?;
@@ -384,9 +543,12 @@ fn gateway_data(connection: &Value, drivers: Value) -> Value {
 }
 
 /// The gateway connection a deployment's objects carry in their rows.
-fn gateway_values(gateway: &crate::config::Gateway) -> BTreeMap<String, String> {
-    let connection = gateway_provider(gateway);
-    nemoclaw_openshell::GATEWAY_FIELDS
+fn gateway_values(
+    document: &Document,
+    generations: &Generations,
+) -> Result<BTreeMap<String, String>, ConfigError> {
+    let connection = gateway_connection(document, generations)?;
+    Ok(nemoclaw_openshell::GATEWAY_FIELDS
         .iter()
         .map(|(attribute, field)| {
             (
@@ -397,11 +559,25 @@ fn gateway_values(gateway: &crate::config::Gateway) -> BTreeMap<String, String> 
                     .to_owned(),
             )
         })
-        .collect()
+        .collect())
 }
 
-pub(crate) fn gateway_provider(gateway: &crate::config::Gateway) -> Value {
+/// How a deployment's objects reach its gateway: an endpoint and the
+/// variables naming its credentials, or a managed Kubernetes gateway's
+/// specification, from which providers connect themselves.
+pub(crate) fn gateway_connection(
+    document: &Document,
+    generations: &Generations,
+) -> Result<Value, ConfigError> {
+    let gateway = &document.spec.gateway;
     let mut provider = json!({"endpoint":gateway.endpoint()});
+    let invalid = || ConfigError::new("invalid managed Kubernetes gateway");
+    if let Some(spec) =
+        crate::kubernetes::gateway_spec(document, generations).map_err(|_| invalid())?
+    {
+        provider["kubernetes"] = json!(serde_json::to_string(&spec).map_err(|_| invalid())?);
+        return Ok(provider);
+    }
     if let Some(c) = gateway.credential() {
         provider["credential_env"] = json!(c.env);
     }
@@ -410,18 +586,17 @@ pub(crate) fn gateway_provider(gateway: &crate::config::Gateway) -> Value {
         provider["tls_certificate_env"] = json!(tls.certificate.env);
         provider["tls_key_env"] = json!(tls.key.env);
     }
-    if gateway.as_kubernetes().is_some() {
-        provider["credential_env"] = json!("NEMOCLAW_MANAGED_K8S_TOKEN");
-        provider["tls_ca_env"] = json!("NEMOCLAW_MANAGED_K8S_CA");
-        provider["tls_certificate_env"] = json!("NEMOCLAW_MANAGED_K8S_CERT");
-        provider["tls_key_env"] = json!("NEMOCLAW_MANAGED_K8S_KEY");
-    }
-    provider
+    Ok(provider)
 }
 
-/// The gateway's `ref` as a literal object, for graphs without its data source.
-pub(crate) fn gateway_ref(gateway: &crate::config::Gateway) -> Value {
-    let connection = gateway_provider(gateway);
+/// The gateway's `ref` as a literal object, equal to what the gateway data
+/// source exports. Objects take it so their gateway is known while planning,
+/// even when the read waits for apply.
+pub(crate) fn gateway_ref(
+    document: &Document,
+    generations: &Generations,
+) -> Result<Value, ConfigError> {
+    let connection = gateway_connection(document, generations)?;
     let mut reference = serde_json::Map::new();
     reference.insert(
         nemoclaw_tofu::REF_TYPE.into(),
@@ -433,20 +608,18 @@ pub(crate) fn gateway_ref(gateway: &crate::config::Gateway) -> Value {
             json!(connection[attribute].as_str().unwrap_or_default()),
         );
     }
-    Value::Object(reference)
+    Ok(Value::Object(reference))
 }
 
-/// The expression every OpenShell object and Fabric configuration takes as `gateway`.
-pub(crate) fn gateway_ref_expression() -> String {
-    format!("${{{GATEWAY_CAPABILITIES_ADDRESS}.ref}}")
-}
-
-fn graph_base(document: &Document, version: &str) -> Result<Value, ConfigError> {
-    let connection = gateway_provider(&document.spec.gateway);
+fn graph_base(
+    document: &Document,
+    generations: &Generations,
+    version: &str,
+) -> Result<Value, ConfigError> {
+    let connection = gateway_connection(document, generations)?;
     let drivers = [document.spec.gateway.runtime().provider.openshell_driver()];
     let mut graph = json!({
-        "terraform":{"required_version":format!("= {OPENTOFU_VERSION}"),"required_providers":{
-            "nemoclaw":{"source":PROVIDER_ADDRESS,"version":format!("= {version}")},
+        "terraform":{"required_providers":{
             "openshell":{"source":OPENSHELL_PROVIDER_ADDRESS,"version":format!("= {version}")},
             "fabric":{"source":FABRIC_PROVIDER_ADDRESS,"version":format!("= {version}")},
             "vllm":{"source":VLLM_PROVIDER_ADDRESS,"version":format!("= {version}")},
@@ -454,8 +627,8 @@ fn graph_base(document: &Document, version: &str) -> Result<Value, ConfigError> 
             "host":{"source":HOST_PROVIDER_ADDRESS,"version":format!("= {version}")}
         }},
         // Each provider reaches the engines, clusters, and gateways named on
-        // its resources; providers take only `destroy`.
-        "provider":{"nemoclaw":{},"openshell":{},"fabric":{},"vllm":{},"ollama":{},"host":{}}, "resource":{},
+        // its resources; providers take at most `destroy`.
+        "provider":{"openshell":{},"fabric":{},"vllm":{},"ollama":{},"host":{}}, "resource":{},
         "data":{"openshell_gateway":{"current":gateway_data(&connection, json!(drivers))}}
     });
     crate::discovery_graph::populate(&mut graph, document)?;
@@ -464,17 +637,23 @@ fn graph_base(document: &Document, version: &str) -> Result<Value, ConfigError> 
 
 fn compile_with_plans(
     document: &Document,
+    generations: &Generations,
     version: &str,
     service_plans: &crate::services::InstallPlans,
     targets: &[Target],
 ) -> Result<Value, ConfigError> {
     let providers = document.selected_providers()?;
-    let mut graph = graph_base(document, version)?;
+    let mut graph = graph_base(document, generations, version)?;
     let mut resources = json!({});
+    // Objects take the gateway's ref as a literal, known while planning; the
+    // gateway reads gate them through depends_on and a precondition.
+    let gateway = gateway_ref(document, generations)?;
     let provider_dependencies: BTreeMap<_, _> = targets
         .iter()
-        .filter(|target| target.kind == "provider")
-        .map(|target| (target.values["name"].clone(), target.address.clone()))
+        .filter_map(|target| {
+            nemoclaw_openshell::registration_name(&target.kind, &target.values)
+                .map(|name| (name, target.address.clone()))
+        })
         .collect();
     let mut runtime_sources = BTreeMap::new();
     let mut profile_sources = BTreeMap::new();
@@ -488,17 +667,42 @@ fn compile_with_plans(
                 .entry(format!("nemoclaw-inference-{}", provider.key))
                 .or_insert_with(|| source.clone());
         }
-        if let Some(search) = document.web_search(sandbox)? {
+        if document.web_search(sandbox)?.is_some() {
             profile_sources
-                .entry(
-                    search
-                        .provider
-                        .image_profile(&document.image_scope(sandbox)?),
-                )
-                .or_insert(source);
+                .entry(format!("web_search:{}", document.image_scope(sandbox)?))
+                .or_insert_with(|| source.clone());
+        }
+        for api in document.apis(sandbox)? {
+            profile_sources
+                .entry(format!(
+                    "api:{}",
+                    api.registration(&document.image_scope(sandbox)?)
+                ))
+                .or_insert_with(|| source.clone());
         }
     }
     for target in targets {
+        if target.kind == AGENT_CONFIGURATION {
+            // Only OpenTofu reads it, so it takes no OpenShell rules; like the
+            // objects, it waits for the apply-time gateway check, so a failed
+            // runtime leaves none behind.
+            let (kind, name) = target
+                .address
+                .split_once('.')
+                .expect("internal resource address");
+            let input = target.values["input"]
+                .replace("${", "$${")
+                .replace("%{", "%%{");
+            resources
+                .as_object_mut()
+                .unwrap()
+                .entry(kind)
+                .or_insert_with(|| json!({}))[name] = json!({
+                "input": input,
+                "depends_on": [GATEWAY_APPLY_CAPABILITIES_ADDRESS],
+            });
+            continue;
+        }
         let mut attributes = serde_json::to_value(&target.values).expect("string map");
         if let Some(value) = attributes["credential_source"].as_str() {
             attributes["credential_source"] =
@@ -537,7 +741,7 @@ fn compile_with_plans(
                 let mut value = input.configuration(encoded).map_err(ConfigError::new)?;
                 // Values are still OpenTofu templates; keep literal policy
                 // paths and matchers intact through that interpretation.
-                crate::docker_compute::literal(&mut value);
+                crate::services::literal(&mut value);
                 attributes[input.attribute] = value;
             }
         }
@@ -556,7 +760,18 @@ fn compile_with_plans(
                 .filter_map(|(_, field)| object.remove(*field))
                 .collect();
             if reference.kind == nemoclaw_openshell::GATEWAY_TYPE {
-                attributes[reference.attribute] = json!(gateway_ref_expression());
+                attributes[reference.attribute] = gateway.clone();
+                continue;
+            }
+            // The server a registration reaches, as the ref a readiness read
+            // would export for it.
+            if reference.kind == nemoclaw_openshell::INFERENCE_SERVER_TYPE {
+                let mut server = json!({"type": nemoclaw_openshell::INFERENCE_SERVER_TYPE});
+                for (attribute, field) in &reference.fields {
+                    let value = target.values.get(*field).cloned().unwrap_or_default();
+                    server[*attribute] = json!(value.replace("${", "$${").replace("%{", "%%{"));
+                }
+                attributes[reference.attribute] = server;
                 continue;
             }
             // An agent's harness is the one its sandbox's image read selects.
@@ -577,8 +792,17 @@ fn compile_with_plans(
                 targets
                     .iter()
                     .find(|candidate| {
-                        nemoclaw_openshell::type_name(&candidate.kind) == reference.kind
-                            && candidate.values.get("name").map(String::as_str) == Some(name)
+                        nemoclaw_openshell::ref_type(&candidate.kind) == reference.kind
+                            && if reference.kind == nemoclaw_openshell::PROVIDER_TYPE {
+                                nemoclaw_openshell::registration_name(
+                                    &candidate.kind,
+                                    &candidate.values,
+                                )
+                                .as_deref()
+                                    == Some(name)
+                            } else {
+                                candidate.values.get("name").map(String::as_str) == Some(name)
+                            }
                     })
                     .map(|candidate| format!("${{{}.ref}}", candidate.address))
                     .ok_or_else(|| {
@@ -600,10 +824,22 @@ fn compile_with_plans(
                 json!(address(encoded)?)
             };
         }
-        if target.kind == "provider_profile" {
+        if target.kind == "inference" {
             attributes["binaries"] = json!(format!(
                 "${{jsondecode({}.binaries_json)}}",
-                profile_sources[&target.values["name"]]
+                profile_sources[&format!("nemoclaw-inference-{}", target.values["name"])]
+            ));
+        }
+        if target.kind == "web_search" {
+            attributes["binaries"] = json!(format!(
+                "${{jsondecode({}.binaries_json)}}",
+                profile_sources[&format!("web_search:{}", target.values["name"])]
+            ));
+        }
+        if target.kind == "api" {
+            attributes["binaries"] = json!(format!(
+                "${{jsondecode({}.binaries_json)}}",
+                profile_sources[&format!("api:{}", target.values["name"])]
             ));
         }
         if target.kind == "sandbox" {
@@ -622,28 +858,25 @@ fn compile_with_plans(
                 .map(|provider| provider_dependencies[&provider.key].clone())
                 .collect();
             if let Some(search) = document.web_search(sandbox)? {
-                let name = crate::config::search_provider_name(
+                let name = nemoclaw_openshell::search::web_search_names(
                     search.provider,
                     &search.credential.env,
-                    &search
-                        .provider
-                        .image_profile(&document.image_scope(sandbox)?),
-                );
+                    &document.image_scope(sandbox)?,
+                )
+                .1;
                 dependencies.push(provider_dependencies[&name].clone());
+            }
+            let image_scope = document.image_scope(sandbox)?;
+            for api in document.apis(sandbox)? {
+                dependencies.push(provider_dependencies[&api.registration(&image_scope)].clone());
             }
             attributes["depends_on"] = json!(dependencies);
         }
         if let Some(dependencies) = service_plans.dependencies(&target.address) {
             attributes["depends_on"] = json!(dependencies);
         }
-        if target.kind == "provider"
-            && target
-                .values
-                .get("provider_type")
-                .is_none_or(|kind| SearchProvider::from_name(kind).is_none())
-        {
-            let logical = target.address.split_once('.').unwrap().1;
-            let mut dependencies = vec![format!("openshell_provider_profile.{logical}")];
+        if target.kind == "inference" {
+            let mut dependencies = Vec::new();
             if let Some(selected) = providers
                 .iter()
                 .find(|provider| provider.key == target.values["name"])
@@ -652,22 +885,6 @@ fn compile_with_plans(
                 dependencies.extend(service.resource_dependencies);
             }
             attributes["depends_on"] = json!(dependencies);
-        }
-        if target.kind == "provider"
-            && target
-                .values
-                .get("provider_type")
-                .and_then(|kind| SearchProvider::from_name(kind))
-                .is_some()
-        {
-            let profile = targets
-                .iter()
-                .find(|candidate| {
-                    candidate.kind == "provider_profile"
-                        && candidate.values["name"] == target.values["profile_name"]
-                })
-                .expect("search profile target");
-            attributes["depends_on"] = json!([profile.address]);
         }
         attributes
             .as_object_mut()
@@ -686,6 +903,14 @@ fn compile_with_plans(
         {
             attributes["lifecycle"]["prevent_destroy"] = json!(true);
         }
+        if target.kind == "sandbox" {
+            let (_, name) = target
+                .address
+                .split_once('.')
+                .expect("internal resource address");
+            attributes["lifecycle"]["replace_triggered_by"] =
+                json!([agent_configuration_address(name)]);
+        }
         let (kind, name) = target
             .address
             .split_once('.')
@@ -699,36 +924,21 @@ fn compile_with_plans(
     // timestamp() is unknown while planning. Its nonempty test becomes a
     // stable true at apply, forcing a fresh read without perpetual state drift.
     let mut apply_readiness = gateway_data(
-        &gateway_provider(&document.spec.gateway),
+        &gateway_connection(document, generations)?,
         graph["data"]["openshell_gateway"]["current"]["required_compute_drivers"].clone(),
     );
     apply_readiness["read_trigger"] = json!("${timestamp() != \"\"}");
+    // A managed gateway may have started moments earlier in this apply, and
+    // a Podman gateway has no other readiness check, so the read waits for it
+    // as the plan-time read does.
+    if document.spec.gateway.as_managed().is_some() {
+        apply_readiness["wait_timeout_seconds"] = json!(90);
+    }
     apply_readiness["lifecycle"] = json!({"postcondition":[{
         "condition":"${self.compatible}",
         "error_message":gateway_error_message("self")
     }]});
-    let agent_readiness: BTreeMap<_, _> = document
-        .spec
-        .sandboxes
-        .iter()
-        .map(|sandbox| {
-            // The agent's ref names its sandbox and the document it applied.
-            let readiness = json!({
-                "gateway": gateway_ref_expression(),
-                "agent": format!("${{{}.{}.ref}}", nemoclaw_fabric::agent::RESOURCE_TYPE, sandbox.name),
-                // uuid() is unknown in a saved plan and records a unique observation
-                // token, so failed applies cannot report stale health as a new result.
-                "read_trigger": "${uuid()}",
-                "lifecycle": {"postcondition":[{
-                    "condition":"${self.ready}",
-                    "error_message":"${self.error_message != null ? self.error_message : \"Fabric readiness could not be established; resources retained\"}"
-                }]},
-            });
-            (sandbox.name.clone(), readiness)
-        })
-        .collect();
     graph["resource"] = resources;
-    graph["data"]["fabric_agent_readiness"] = json!(agent_readiness);
     graph["data"]["openshell_gateway"]["apply"] = apply_readiness;
     Ok(graph)
 }

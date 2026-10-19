@@ -15,7 +15,7 @@ pub type ClusterGrants = BTreeMap<String, Vec<String>>;
 #[serde(deny_unknown_fields)]
 pub struct ImageRuntime {
     pub schema_version: u32,
-    /// Prefix prepended to a packaged bridge operation.
+    /// Fabric's `fabric-agent-ctl`, prepended to each operation.
     pub command: Vec<String>,
     pub environment: BTreeMap<String, String>,
     pub required_paths: Vec<String>,
@@ -136,7 +136,8 @@ impl Launch {
     /// plus managed grants that allow this launch's executables.
     pub fn policy(&self, input: &PolicyInput) -> Result<proto::SandboxPolicy, ObservationError> {
         let mut policy = input.explicit.as_ref().unwrap_or(&self.policy).clone();
-        for (name, rule) in &input.managed {
+        for rule in &input.managed {
+            let name = &rule.name;
             if policy.network_policies.contains_key(name) {
                 return Err(ObservationError::BindingMismatch);
             }
@@ -181,7 +182,7 @@ impl Launch {
                     return Err(ObservationError::BindingMismatch);
                 }
             }
-            if !input.managed.contains_key(name) {
+            if !input.managed.iter().any(|rule| rule.name == *name) {
                 return Err(ObservationError::BindingMismatch);
             }
             let rule = policy
@@ -202,18 +203,29 @@ impl Launch {
 #[serde(deny_unknown_fields)]
 pub struct PolicyInput {
     pub explicit: Option<ExplicitPolicy>,
-    pub managed: BTreeMap<String, PolicyRule>,
+    /// Deployment-owned grants, each named by its rule; names are unique.
+    pub managed: Vec<PolicyRule>,
     /// Managed rule names whose exact addresses must come from verified Services.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub cluster_grants: BTreeSet<String>,
 }
+impl PolicyInput {
+    /// Whether two managed grants share a name.
+    pub fn has_duplicate_grant(&self) -> bool {
+        let mut names = BTreeSet::new();
+        !self
+            .managed
+            .iter()
+            .all(|rule| names.insert(rule.name.as_str()))
+    }
+}
 impl RuntimeBinding {
-    /// The generic launch for `agent`: the bridge serving it, its runtime's
-    /// policy and executables, and this binding in metadata for Fabric.
+    /// The generic launch for `agent`: Fabric's `fabric-agent-ctl serve`,
+    /// its runtime's policy and executables, and this binding in metadata.
     pub fn launch(&self, agent: &str) -> Launch {
         Launch {
-            command: self.command("serve", &["--agent", agent]),
-            environment: self.environment(agent),
+            command: self.command("serve", &[]),
+            environment: self.environment(),
             policy: self.runtime.policy.clone(),
             binaries: self.binaries().to_vec(),
             metadata: [
@@ -254,10 +266,8 @@ impl RuntimeBinding {
             .chain(arguments.iter().map(|value| (*value).into()))
             .collect()
     }
-    pub fn environment(&self, name: &str) -> BTreeMap<String, String> {
-        let mut environment = self.runtime.environment.clone();
-        environment.insert("NEMOCLAW_AGENT_NAME".into(), name.into());
-        environment
+    pub fn environment(&self) -> BTreeMap<String, String> {
+        self.runtime.environment.clone()
     }
     pub fn binaries(&self) -> &[String] {
         &self.runtime.binaries[&self.adapter_id]
@@ -317,7 +327,7 @@ mod tests {
     fn retained_image_layout_controls_launch_user_and_managed_executables() {
         let binding = RuntimeBinding::from_json(&serde_json::json!({
             "adapter_id":"org.fixture.bun", "runtime":{
-                "schema_version":1,"command":["/srv/python3.99","-I","/srv/bridge.py"],
+                "schema_version":1,"command":["/srv/fabric-agent-ctl"],
                 "environment":{"ADAPTER_PYTHON":"/srv/python3.99","HOME":"/work","PATH":"/srv"},
                 "required_paths":["/srv"],
                 "policy":{"version":1,"filesystem_policy":{"read_only":["/srv"],"read_write":["/work"]},"process":{"run_as_user":"1234","run_as_group":"1234"},"network_policies":{}},
@@ -325,19 +335,15 @@ mod tests {
             }
         }).to_string()).unwrap();
         assert_eq!(
-            binding.command("configure", &["main", "{}"]),
-            [
-                "/srv/python3.99",
-                "-I",
-                "/srv/bridge.py",
-                "configure",
-                "main",
-                "{}"
-            ]
+            binding.command("start", &["--agent", "main"]),
+            ["/srv/fabric-agent-ctl", "start", "--agent", "main"]
         );
-        assert_eq!(binding.environment("main")["HOME"], "/work");
-        assert_eq!(binding.environment("main")["NEMOCLAW_AGENT_NAME"], "main");
-        let input: PolicyInput = serde_json::from_value(serde_json::json!({"explicit":null,"managed":{"model":{"name":"model","endpoints":[{"host":"api.example.com","port":443}],"binaries":[]}}})).unwrap();
+        // The sandbox serves Fabric's bridge; the agent is named per operation.
+        let launch = binding.launch("main");
+        assert_eq!(launch.command, ["/srv/fabric-agent-ctl", "serve"]);
+        assert_eq!(launch.environment["HOME"], "/work");
+        assert!(!launch.environment.contains_key("NEMOCLAW_AGENT_NAME"));
+        let input: PolicyInput = serde_json::from_value(serde_json::json!({"explicit":null,"managed":[{"name":"model","endpoints":[{"host":"api.example.com","port":443}],"binaries":[]}]})).unwrap();
         let policy = binding.policy(&input).unwrap();
         assert_eq!(policy.process.unwrap().run_as_user, "1234");
         assert_eq!(policy.filesystem.unwrap().read_write, ["/work"]);

@@ -46,7 +46,7 @@ mod durable_source_tests {
         crate::compile::targets(document, &generations)
             .unwrap()
             .into_iter()
-            .find(|target| target.kind == "provider")
+            .find(|target| target.kind == "inference")
             .unwrap()
             .values
     }

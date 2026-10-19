@@ -40,7 +40,7 @@ Do not attach environment dumps, TLS private keys, interface tokens, or the enti
 | `state is bound to a different deployment UID or gateway` | Restore the original UID and gateway endpoint; a new target needs separate state and resources |
 | `unfinished apply has different intent` | Reapply the exact YAML from the unfinished operation before trying another configuration |
 | Deployment lock error | Check for another operation using the same state directory; a lock failure does not authorize state deletion |
-| Authentication, transport, or incomplete-observation error | Restore access to the selected service; failed observation does not establish absence or authorize recreation. For a persistently unknown OpenClaw runtime after an invocation failure, follow the [replacement procedure](usage.md#replace-workloads-after-an-unusable-openclaw-runtime) |
+| Authentication, transport, or incomplete-observation error | Restore access to the selected service; failed observation does not establish absence or authorize recreation. For a persistently unknown runtime after an invocation failure, follow the [replacement procedure](usage.md#replace-workloads-after-an-unusable-runtime) |
 | Ownership, generation, or durable identity mismatch | Inspect the selected gateway/engine and retained deployment identity; do not adopt or replace a different resource |
 | Provider-profile identity mismatch after upgrading a bundle | Check the [gateway profile format break](provider.md#gateway-profile-format-upgrade); old `profile-v1` profiles require the original bundle for teardown or a separate deployment |
 | Plan would remove or replace a resource | Check [update constraints](usage.md#updates-and-recovery) and the relevant configuration guide before choosing a new deployment |
@@ -48,11 +48,13 @@ Do not attach environment dumps, TLS private keys, interface tokens, or the enti
 | Interrupted apply | Resolve the cause and reapply the original YAML with its retained state |
 | Unfinished destroy | Resume destroy with the same state; other operations refuse unfinished teardown |
 | `adapter/<id> compatibility rejected` | Read the named sandbox and canonical field; for `models.<role>.max_tokens`, remove that route's `overrides.maxTokens` or choose an adapter that accepts it, then plan again |
+| `Fabric runtime operation failed at STAGE (CODE)` | Read Fabric's message in the file the error names, in the state directory's `diagnostics` directory; it can contain secrets, so read it privately. Then follow [agent interface diagnosis](interfaces.md#diagnose-failures) |
 | Public Fabric configuration mismatch or native startup rejection | Follow [agent interface diagnosis](interfaces.md#diagnose-failures); retained public configuration checks do not audit native files or tokens |
-| After a malformed OpenClaw request: `runtime_unavailable`, bridge `runtime_state: unknown`, then `observation is incomplete` | Apply cannot recover the unknown runtime, including through configuration edits; review the [reported failure and whole-deployment replacement procedure](usage.md#replace-workloads-after-an-unusable-openclaw-runtime), including loss of all sandbox files and history |
+| `runtime_unavailable`, or `sandbox unavailable: SANDBOX_PHASE_ERROR` | The runtime is unusable or its sandbox exited; read why with `openshell logs SANDBOX --source sandbox`. Only a new sandbox recovers it: change the agent's configuration, or follow the [whole-deployment replacement procedure](usage.md#replace-workloads-after-an-unusable-runtime), including loss of sandbox files and history |
 
-For proxy policies, the pinned OpenShell supervisor can add read-only `/var/log` access to the loaded policy.
-NemoClaw accepts that runtime addition while preserving the authored policy; other loaded-policy differences still fail observation.
+OpenShell can add paths of its own, such as read-only `/var/log`, when it loads a sandbox policy.
+NemoClaw accepts those additions when the policy first loads, as long as every declared rule is intact, and records the loaded policy's hash.
+Any later change to the loaded policy, including new additions, fails observation as drift.
 
 The [SDK errors](../crates/nemoclaw-backend/src/error.rs), [plan checks](../crates/nemoclaw-sdk/src/deployment/plan.rs), and [lifecycle tests](../crates/nemoclaw-sdk/tests/deployment.rs) define these failure boundaries.
 
@@ -99,9 +101,9 @@ For an external Ollama digest mismatch, use [the proxy guide](inference.md#use-e
 | Observation | What it establishes | Next check |
 |---|---|---|
 | Model appears in the endpoint inventory | The service reports that model | Confirm API compatibility and an inference request |
-| Apply succeeds | Declared resources and agent configuration pass readiness checks | Verify inference and a native agent turn through the intended interface |
-| Agent configuration drift | Native settings differ from retained intent | Restore expected settings; checks do not overwrite them |
-| Dashboard cannot connect | Native service, forwarding, authentication, or browser pairing may be incomplete | Follow [interface diagnosis](interfaces.md#diagnose-failures); keep local forwarding ports consistent |
+| Apply succeeds | Declared resources pass readiness checks and each agent started | Verify inference and a native agent turn through the intended interface |
+| Agent configuration changed inside the sandbox | Not reported: Fabric reports no applied configuration | Change the configuration in the deployment and apply, which replaces the sandbox |
+| Forwarded native service cannot connect | Native service, forwarding, or authentication may be incomplete | Follow [interface diagnosis](interfaces.md#diagnose-failures); keep local forwarding ports consistent |
 | Managed runtime stopped after a protection trip | The independent supervisor stopped inference | Inspect [retained status and logs](models.md#diagnose-and-recover-a-stopped-runtime) and correct capacity/startup conditions before explicit recovery |
 
 Terminal sandbox apply errors name the sandbox and report the OpenShell phase, a recognized failure reason, and the main process exit code, or `unknown` when unavailable.
@@ -116,7 +118,7 @@ For example, a network endpoint ambiguity can report conflicting `allowed_ips` m
 Credential-bearing provider creation and update requests, status reads, and exec failures retain category-only diagnostics.
 This rejection reporting applies to Docker, Podman, and cluster gateways.
 Use the OpenShell inspection and log collection procedure below before cleanup.
-If startup requires a different image or policy, follow the [sandbox change procedure](usage.md#choose-the-change-path); apply protects the existing sandbox from replacement.
+If startup requires a different image or policy, change it and apply; that replaces the sandbox, deleting its files ([change paths](usage.md#choose-the-change-path)).
 A failed first apply can be [destroyed](usage.md#destroy) when the retained state accounts for its resource identities.
 
 The current CLI has no `doctor`, `status`, or diagnostic-bundle command.
@@ -166,35 +168,31 @@ NemoClaw does not reconnect OpenShell's internal transport or automatically repl
 ## Read Native Service Logs
 
 For a reachable sandbox, [select its gateway and workspace](interfaces.md#select-the-gateway-and-workspace) on the client host.
-Run the command for its harness from any directory, replacing `assistant` with the declared sandbox name.
-These commands read native process output without restarting it.
 Logs can contain prompts, responses, and native errors that have not passed through the SDK's secret redaction; inspect them privately before sharing excerpts.
 
-OpenClaw writes gateway stdout and stderr to its retained native home:
+Three sources cover most failures:
 
-```sh
-openshell sandbox exec -n assistant -- tail -n 100 /sandbox/.openclaw/gateway.log
-```
+- **OpenShell's sandbox log** shows the sandbox supervisor's messages, each process's network requests with the policy decision, and why a sandbox process exited. It works on a running sandbox and on one that exited, replacing `assistant` with the declared sandbox name:
 
-The Hermes service mode writes its Fabric-owned API process output separately from dashboard sessions:
+  ```sh
+  openshell logs assistant --source sandbox -n 100
+  ```
 
-```sh
-openshell sandbox exec -n assistant -- tail -n 100 /sandbox/.hermes/api.log
-```
+- **An invocation's result** names the files Fabric kept for that request in `result.artifacts`, such as the adapter's output. Read one without restarting the agent:
 
-Expect the latest process output, which may be empty before the process emits a message.
-A missing file can mean startup stopped before opening the log; it does not establish that the sandbox or its data is absent.
+  ```sh
+  openshell sandbox exec -n assistant --no-tty -- tail -n 100 REPLACE_WITH_ARTIFACT_PATH
+  ```
+
+- **Fabric's own message** about a failed start or other runtime operation is in the state directory's `diagnostics/fabric-SANDBOX.json`, which the apply error names; see [failure messages](#identify-the-failure).
+
+The selected Fabric adapter owns where its harness writes anything else.
 Use the original apply error and the [failure table](#identify-the-failure) to choose recovery.
 Do not replay an uncertain native invocation merely to reproduce a log entry.
-The [OpenClaw](https://github.com/NVIDIA/NeMo-Fabric/tree/24f068c895e5cbc30286bc743498be4e5014d658/adapters/python/openclaw) and [Hermes](https://github.com/NVIDIA/NeMo-Fabric/tree/24f068c895e5cbc30286bc743498be4e5014d658/adapters/python/hermes) adapters define these paths and append behavior.
-The selected Fabric settings determine Hermes' native runtime mode.
-[Relay trace artifacts](agents.md#hermes-relay-tracing) alone do not establish a native API process or `api.log`.
-
-Log collection for other harnesses, Hermes dashboard logs and an inaccessible sandbox is tracked in [#12642](https://github.com/NVIDIA/NemoClaw/issues/12642).
 
 ## Traces and Web Search
 
-OpenClaw tracing and Brave search have their own [configuration and verification limits](agents.md#openclaw-tracing).
+[Hermes Relay tracing](agents.md#hermes-relay-tracing) and [web search](agents.md#web-search) have their own configuration and verification limits.
 Configuration readiness does not prove collector delivery, a valid Brave credential, or available quota.
 
 Troubleshooting a production collector is tracked in [#12144](https://github.com/NVIDIA/NemoClaw/issues/12144), and testing hosted search live in [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641).

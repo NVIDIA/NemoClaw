@@ -58,6 +58,17 @@ fn runtime_rejects_unsafe_recipe_paths_and_protected_environment_before_work() {
 }
 
 #[test]
+fn runtime_rejects_recipes_that_enable_vllm_development_routes() {
+    let original: serde_json::Value =
+        serde_saphyr::from_str(include_str!("fixtures/vllm.yaml")).unwrap();
+    for (field, value) in [("environment", "1"), ("preparedEnvironment", ".")] {
+        let mut input = original.clone();
+        input["recipe"]["serving"][field] = json!({ "VLLM_SERVER_DEV_MODE": value });
+        assert!(RuntimeSpec::decode(&input.to_string()).is_err(), "{field}");
+    }
+}
+
+#[test]
 fn direct_recipe_validation_rejects_structurally_invalid_preparation_limits() {
     let input: serde_json::Value =
         serde_saphyr::from_str(include_str!("fixtures/vllm.yaml")).unwrap();

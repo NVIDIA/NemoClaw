@@ -24,18 +24,25 @@ data vllm_capacity (version 0)
   required_bytes: number, computed
 
 data vllm_readiness (version 0)
-  container_id: string, required
+  container_id: string, optional
   contract: string, required
-  engine: string, required
-  name: string, required
+  endpoint: string, optional
+  engine: string, optional
+  name: string, optional
   read_trigger: bool, optional
   ready: bool, computed
+  ref: object({ credential_env = string, credential_source = string, endpoint = string, model = string, type = string }), computed
+  sandbox_endpoint: string, optional
   wait_timeout_seconds: number, optional
 
 data vllm_runtime (version 0)
   > Computes a runtime contract from typed settings without contacting any host.
   authentication: string, optional
-    > Optional native bearer authentication. The runtime generates and retains the key; omission preserves unauthenticated serving.
+    > Optional native bearer authentication. The runtime uses a key supplied in NEMOCLAW_INFERENCE_KEY, or generates and retains one in its credential storage; omission preserves unauthenticated serving.
+  launch: object({ command = list(string), data_path = string, entrypoint = list(string), environment = map(string), key_env = string, port = number }), computed
+    > What any platform runs: entrypoint, command, environment (including the contract), the port the server listens on, the path for its data, and key_env, the variable an authenticated server reads a supplied API key from (empty without authentication). Place it with any container platform.
+  requirements: object({ gpu = bool, shared_memory_bytes = number, ulimits = map(number) }), computed
+    > What the runtime needs from its platform: a GPU, shared memory (a recommended minimum), and process limits by name, where -1 is unlimited. Platforms that cannot set process limits leave them to the node.
   spec: string, computed
     > Validated runtime specification for the container's NEMOCLAW_RUNTIME_SPEC environment variable.
   block hardware: optional

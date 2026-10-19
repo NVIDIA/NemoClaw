@@ -3,7 +3,7 @@
     "fabric_harnesses": {
       "sandbox_0": {
         "architecture": "${jsondecode(data.host_engine.current.engine_json).architecture}",
-        "config_json": "{\"environment\":{\"provider\":\"local\",\"workspace\":\"/sandbox/workspace\"},\"harness\":{\"adapter_id\":\"nvidia.fabric.openclaw\",\"settings\":{}},\"metadata\":{\"name\":\"primary\"},\"models\":{\"default\":{\"api\":\"openai-completions\",\"api_key_env\":\"NEMOCLAW_INFERENCE_NVIDIA_PROD_32AAE74F8CBCD339756C6BC7_KEY\",\"base_url\":\"https://integrate.api.nvidia.com/v1\",\"model\":\"nvidia/nemotron-3-super-120b-a12b\",\"provider\":\"openai\",\"settings\":{}},\"primary\":{\"api\":\"openai-completions\",\"api_key_env\":\"NEMOCLAW_INFERENCE_NVIDIA_PROD_32AAE74F8CBCD339756C6BC7_KEY\",\"base_url\":\"https://integrate.api.nvidia.com/v1\",\"model\":\"nvidia/nemotron-3-super-120b-a12b\",\"provider\":\"openai\",\"settings\":{}}},\"runtime\":{\"artifacts\":\"/sandbox/artifacts\"},\"schema_version\":\"fabric.agent/v1alpha1\"}",
+        "config_json": "{\"environment\":{\"provider\":\"local\",\"workspace\":\"/sandbox/workspace\"},\"harness\":{\"adapter_id\":\"nvidia.fabric.openclaw\",\"settings\":{}},\"metadata\":{\"name\":\"primary\"},\"models\":{\"default\":{\"api_key_env\":\"NEMOCLAW_INFERENCE_NVIDIA_PROD_32AAE74F8CBCD339756C6BC7_KEY\",\"base_url\":\"https://integrate.api.nvidia.com/v1\",\"model\":\"nvidia/nemotron-3-super-120b-a12b\",\"provider\":\"openai\",\"settings\":{}},\"primary\":{\"api_key_env\":\"NEMOCLAW_INFERENCE_NVIDIA_PROD_32AAE74F8CBCD339756C6BC7_KEY\",\"base_url\":\"https://integrate.api.nvidia.com/v1\",\"model\":\"nvidia/nemotron-3-super-120b-a12b\",\"provider\":\"openai\",\"settings\":{}}},\"runtime\":{\"artifacts\":\"/sandbox/artifacts\"},\"schema_version\":\"fabric.agent/v1alpha1\"}",
         "engine": "unix:///var/run/docker.sock",
         "image": "nc-fabric-owner-20260924@sha256:c4c0d3add3869e49d0ce8d03bd7e41bbe2682d0df285ef6fde5f181b123cf83e",
         "lifecycle": {
@@ -14,7 +14,7 @@
             },
             {
               "condition": "${self.runtime_json != \"\"}",
-              "error_message": "sandbox/assistant: image runtime metadata is unavailable. Set spec.gateway.engine to the sandbox image engine, load an image built with its runtime manifest, and use its immutable digest. Resources retained."
+              "error_message": "sandbox/assistant: image runtime metadata is unavailable. Set spec.gateway.engine to the sandbox image engine, and use an image built with its runtime manifest, its io.nemoclaw.fabric.catalog label, by its immutable digest; a derived image must keep its base image's labels. Resources retained."
             }
           ]
         },

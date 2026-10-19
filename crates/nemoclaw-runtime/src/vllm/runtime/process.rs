@@ -29,7 +29,8 @@ pub(crate) fn launch(
         total_memory,
     )?;
     let command = CommandWrap::with_new("python3", |cmd| {
-        cmd.env_remove("VLLM_API_KEY");
+        cmd.env_remove("VLLM_API_KEY")
+            .env_remove(crate::INFERENCE_KEY_ENV);
         if let Some(key) = &credential {
             cmd.env("VLLM_API_KEY", key);
         }

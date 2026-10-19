@@ -5,14 +5,18 @@
 
 use std::sync::LazyLock;
 
-use nemoclaw_sdk::config::{Document, parse_yaml_value, schema::input_schema};
+use nemoclaw_sdk::config::{
+    Document, parse_yaml_value,
+    schema::{input_schema, select_variant},
+};
 use serde_json::Value;
 
 use crate::{Diagnostics, diagnostics::diagnostic};
 use jsonschema::error::ValidationErrorKind as Kind;
 
+static INPUT_SCHEMA: LazyLock<Value> = LazyLock::new(input_schema);
 static INPUT_VALIDATOR: LazyLock<jsonschema::Validator> = LazyLock::new(|| {
-    jsonschema::validator_for(&input_schema()).expect("SDK input schema must compile")
+    jsonschema::validator_for(&INPUT_SCHEMA).expect("SDK input schema must compile")
 });
 
 /// Authored values before SDK defaults or required-field validation.
@@ -86,12 +90,7 @@ impl PartialDocument {
     /// Inspect the current sparse input. Compound rules remain deferred until
     /// a partial evaluator can prove whether a branch is impossible or incomplete.
     pub fn assess(&self) -> PartialAssessment {
-        let mut issues = INPUT_VALIDATOR
-            .iter_errors(&self.supplied)
-            .flat_map(|error| tagged_branch(&error).unwrap_or_else(|| vec![issue(&error)]))
-            .collect::<Vec<_>>();
-        issues.sort_by(|left, right| (&left.path, &left.rule).cmp(&(&right.path, &right.rule)));
-        issues.dedup();
+        let issues = schema_issues(&INPUT_SCHEMA, &INPUT_VALIDATOR, &self.supplied);
         if !issues.is_empty() {
             return PartialAssessment {
                 issues,
@@ -131,26 +130,43 @@ fn issue(error: &jsonschema::ValidationError<'_>) -> PartialIssue {
     }
 }
 
-/// For a tagged union such as the gateway, whose `management` names its
-/// kind, report the errors inside the branch the input selects, so an
-/// invalid field is attributed to that field rather than to the whole union.
-fn tagged_branch(error: &jsonschema::ValidationError<'_>) -> Option<Vec<PartialIssue>> {
+fn schema_issues(
+    schema: &Value,
+    validator: &jsonschema::Validator,
+    supplied: &Value,
+) -> Vec<PartialIssue> {
+    let mut issues = validator
+        .iter_errors(supplied)
+        .flat_map(|error| attributed(schema, &error))
+        .collect::<Vec<_>>();
+    issues.sort_by(|left, right| (&left.path, &left.rule).cmp(&(&right.path, &right.rule)));
+    issues.dedup();
+    issues
+}
+
+fn attributed(schema: &Value, error: &jsonschema::ValidationError<'_>) -> Vec<PartialIssue> {
+    tagged_branch(schema, error).unwrap_or_else(|| vec![issue(error)])
+}
+
+/// For a union whose input names one branch, such as the gateway's
+/// `management` or the single key of an externally tagged object, report the
+/// errors inside that branch, so an invalid field is attributed to that field
+/// rather than to the whole union. Unions nested in the branch resolve the same way.
+fn tagged_branch(
+    schema: &Value,
+    error: &jsonschema::ValidationError<'_>,
+) -> Option<Vec<PartialIssue>> {
     let Kind::OneOfNotValid { context } = error.kind() else {
         return None;
     };
-    let tag = ["management", "kind"]
-        .into_iter()
-        .find_map(|tag| error.instance().get(tag).and_then(Value::as_str))?;
-    let schema = input_schema();
-    let branches = schema
-        .pointer(&error.schema_path().to_string())?
-        .as_array()?;
-    let selected = branches.iter().zip(context).find(|(branch, _)| {
-        ["management", "kind"]
+    let branches = schema.pointer(error.schema_path().as_str())?.as_array()?;
+    let selected = context.get(select_variant(branches, error.instance())?)?;
+    Some(
+        selected
             .iter()
-            .any(|key| branch["properties"][key]["const"].as_str() == Some(tag))
-    })?;
-    Some(selected.1.iter().map(issue).collect())
+            .flat_map(|error| attributed(schema, error))
+            .collect(),
+    )
 }
 
 fn classify(kind: &Kind) -> PartialIssueKind {
@@ -171,5 +187,64 @@ fn classify(kind: &Kind) -> PartialIssueKind {
         Kind::OneOfMultipleValid { .. } => PartialIssueKind::Deferred,
         Kind::Not { schema } if schema.get("required").is_none() => PartialIssueKind::Deferred,
         _ => PartialIssueKind::Invalid,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn keyed(key: &str, schema: Value) -> Value {
+        json!({"type": "object", "properties": {key: schema}, "required": [key], "additionalProperties": false})
+    }
+
+    #[test]
+    fn issues_inside_a_keyed_variant_of_the_selected_branch_name_their_field() {
+        let schema = json!({
+            "type": "object",
+            "properties": {"gateway": {"oneOf": [
+                {
+                    "type": "object",
+                    "properties": {
+                        "management": {"const": "managed"},
+                        "target": {"oneOf": [
+                            keyed("docker", json!({"type": "object"})),
+                            keyed("podman", json!({
+                                "type": "object",
+                                "properties": {"engine": {"type": "string", "minLength": 1}},
+                                "required": ["engine"]
+                            })),
+                        ]}
+                    },
+                    "required": ["management"]
+                },
+                {
+                    "type": "object",
+                    "properties": {"management": {"const": "external"}},
+                    "required": ["management"]
+                }
+            ]}}
+        });
+        let validator = jsonschema::validator_for(&schema).unwrap();
+        for (podman, kind, rule) in [
+            (
+                json!({"engine": ""}),
+                PartialIssueKind::Invalid,
+                "minLength",
+            ),
+            (json!({}), PartialIssueKind::Missing, "required"),
+        ] {
+            let supplied =
+                json!({"gateway": {"management": "managed", "target": {"podman": podman}}});
+            assert_eq!(
+                schema_issues(&schema, &validator, &supplied),
+                [PartialIssue {
+                    path: "/gateway/target/podman/engine".into(),
+                    kind,
+                    rule: rule.into(),
+                }]
+            );
+        }
     }
 }

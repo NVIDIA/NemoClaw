@@ -65,9 +65,8 @@ impl Ui {
         let resource = match kind {
             Some("openshell_workspace") => "workspace",
             Some("openshell_sandbox") => "sandbox",
-            Some("fabric_agent_readiness") => "sandbox readiness",
-            Some("openshell_provider_registration") => "provider",
-            Some("openshell_provider_profile") => "provider profile",
+            Some("openshell_web_search") => "web search",
+            Some("openshell_inference") => "inference provider",
             Some("openshell_podman_gateway") => "gateway",
             Some("openshell_gateway_storage") => "gateway storage",
             Some("docker_container") => "container",
@@ -174,24 +173,24 @@ mod tests {
     use std::sync::Mutex;
 
     #[test]
-    fn sandbox_observation_waits_remain_visible_without_forwarding_health_details() {
+    fn long_waits_remain_visible_without_forwarding_details() {
         let received = Arc::new(Mutex::new(Vec::new()));
         let events = received.clone();
         let mut ui = Ui::new(Arc::new(move |event| events.lock().unwrap().push(event)));
         ui.feed(b"{\"type\":\"version\",\"ui\":\"1.0\"}\n");
         let line = serde_json::json!({
-            "type":"apply_progress", "@message":"private-health-detail",
-            "hook":{"resource":{"resource_type":"fabric_agent_readiness", "addr":"data.fabric_agent_readiness.private-name"},
-                "action":"read", "elapsed_seconds":30}
+            "type":"apply_progress", "@message":"private-detail",
+            "hook":{"resource":{"resource_type":"openshell_sandbox", "addr":"openshell_sandbox.private-name"},
+                "action":"create", "elapsed_seconds":30}
         }).to_string() + "\n";
         ui.feed(line.as_bytes());
         ui.finish().unwrap();
         assert_eq!(
             *received.lock().unwrap(),
             [Progress::Resource {
-                resource: "sandbox readiness",
-                address: Some("data.fabric_agent_readiness.private-name".into()),
-                action: "read",
+                resource: "sandbox",
+                address: Some("openshell_sandbox.private-name".into()),
+                action: "create",
                 status: "waiting",
                 elapsed: Duration::from_secs(30)
             }]
@@ -207,33 +206,33 @@ mod tests {
         for (kind, address, timestamp) in [
             (
                 "apply_start",
-                "openshell_provider_registration.fast",
+                "openshell_inference.fast",
                 "2026-09-17T00:00:00.000Z",
             ),
             (
                 "apply_start",
-                "openshell_provider_registration.smart",
+                "openshell_inference.smart",
                 "2026-09-17T00:00:00.100Z",
             ),
             (
                 "apply_complete",
-                "openshell_provider_registration.fast",
+                "openshell_inference.fast",
                 "2026-09-17T00:00:00.125Z",
             ),
             (
                 "apply_complete",
-                "openshell_provider_registration.smart",
+                "openshell_inference.smart",
                 "2026-09-17T00:00:00.350Z",
             ),
         ] {
-            let mut line = serde_json::json!({"type":kind, "@timestamp":timestamp, "hook":{"resource":{"resource_type":"openshell_provider_registration", "addr":address}, "action":"create", "elapsed_seconds":0}}).to_string();
+            let mut line = serde_json::json!({"type":kind, "@timestamp":timestamp, "hook":{"resource":{"resource_type":"openshell_inference", "addr":address}, "action":"create", "elapsed_seconds":0}}).to_string();
             line.push('\n');
             ui.feed(line.as_bytes());
         }
         ui.finish().unwrap();
         let events = received.lock().unwrap();
-        assert!(format!("{:?}", events[0]).contains("openshell_provider_registration.fast"));
-        assert!(format!("{:?}", events[1]).contains("openshell_provider_registration.smart"));
+        assert!(format!("{:?}", events[0]).contains("openshell_inference.fast"));
+        assert!(format!("{:?}", events[1]).contains("openshell_inference.smart"));
         assert!(
             matches!(events[2], Progress::Resource { elapsed, .. } if elapsed == std::time::Duration::from_millis(125))
         );

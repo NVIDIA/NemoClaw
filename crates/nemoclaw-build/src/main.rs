@@ -176,12 +176,9 @@ enum ImageAction {
     Qualify {
         #[arg(required = true)]
         images: Vec<String>,
-        /// Also run the shared configure, invoke and prepare assertions with this adapter's offline configuration.
+        /// Also start, invoke and stop a runtime through fabric-agent-ctl with this adapter's offline configuration.
         #[arg(long, value_enum)]
         lifecycle: Option<nemoclaw_build::images::Lifecycle>,
-        /// Fail when native readiness is unsupported instead of reporting it as skipped.
-        #[arg(long, requires = "lifecycle")]
-        require_ready: bool,
     },
     /// Write the metadata bundle a Kubernetes sandbox names in image.metadata.
     ExportMetadata {
@@ -218,8 +215,25 @@ struct Pins {
     #[serde(default)]
     images: std::collections::BTreeMap<String, String>,
 }
+/// A Cargo command without the package description that `cargo run` gives this
+/// tool. Cargo sets those variables per package, but some build scripts, such
+/// as ring's, rerun when an inherited CARGO_MANIFEST_DIR differs from the
+/// environment their cached output was built in.
 fn cargo() -> Command {
-    Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()))
+    let mut command = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()));
+    for (name, _) in std::env::vars_os() {
+        let Some(name) = name.to_str() else { continue };
+        if name == "CARGO_MANIFEST_DIR"
+            || name == "CARGO_MANIFEST_PATH"
+            || name.starts_with("CARGO_PKG_")
+            || name.starts_with("CARGO_BIN_")
+            || name == "CARGO_CRATE_NAME"
+            || name == "CARGO_PRIMARY_PACKAGE"
+        {
+            command.env_remove(name);
+        }
+    }
+    command
 }
 fn run(command: &mut Command) -> Result<()> {
     if !command
@@ -358,8 +372,6 @@ async fn bundle(pins: &Pins, platform: &str) -> Result<()> {
     let root = temporary.path();
     fs::create_dir_all(root.join("bin"))?;
     fs::create_dir_all(root.join("libexec"))?;
-    let provider = format!("providers/registry.opentofu.org/nvidia/nemoclaw/{version}/{platform}");
-    fs::create_dir_all(root.join(&provider))?;
     let openshell =
         format!("providers/registry.opentofu.org/nvidia/openshell/{version}/{platform}");
     fs::create_dir_all(root.join(&openshell))?;
@@ -389,10 +401,6 @@ async fn bundle(pins: &Pins, platform: &str) -> Result<()> {
         (
             format!("nemoclaw{extension}"),
             format!("bin/nemoclaw{extension}"),
-        ),
-        (
-            format!("terraform-provider-nemoclaw{extension}"),
-            format!("{provider}/terraform-provider-nemoclaw_v{version}{extension}"),
         ),
         (
             format!("terraform-provider-openshell{extension}"),
@@ -519,13 +527,9 @@ async fn main() -> Result<()> {
             ImageAction::Build { platform, targets } => {
                 nemoclaw_build::images::build(root, &platform, &targets)
             }
-            ImageAction::Qualify {
-                images,
-                lifecycle,
-                require_ready,
-            } => images.iter().try_for_each(|image| {
+            ImageAction::Qualify { images, lifecycle } => images.iter().try_for_each(|image| {
                 eprintln!("Qualifying {image}");
-                nemoclaw_build::images::qualify(root, image, lifecycle, require_ready)
+                nemoclaw_build::images::qualify(root, image, lifecycle)
             }),
             ImageAction::ExportMetadata {
                 image,

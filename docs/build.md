@@ -8,8 +8,9 @@ Native bundles also require Protocol Buffers compiler 36.1.
 Native builds also require a C toolchain for TLS dependencies.
 Run `cargo ci tools` to install the pinned compiler in `.tools/protoc-36.1`; the bundle builder and `cargo ci` find it there.
 Otherwise, set `PROTOC` to the compiler’s path if it is outside `PATH`.
-[versions.json](../versions.json) records tool versions, download checksums, and the SDK's default agent, gateway, sandbox runtime, and supervisor image pins.
+[versions.json](../versions.json) records tool versions, download checksums, and the SDK's image pins: the default agent image, which `image.ref` replaces, and the gateway, sandbox runtime, and supervisor images, which documents do not name.
 The SDK generates its artifact constants from that manifest at build time.
+A Docker or Podman deployment keeps the gateway image pin of the bundle that created it; see [the change path](usage.md#choose-the-change-path) before operating it with a bundle built from a different pin.
 
 ## Build a Native Bundle
 
@@ -75,7 +76,7 @@ Direct Bake checks and proxy builds require the corresponding `AGENT_PLATFORM` e
 ARM64 selects all ten harnesses; AMD64 selects Deep Agents and OpenClaw.
 The remaining harnesses are ARM64-only until their pinned native dependencies have matching AMD64 artifacts and qualification.
 Agent images share a Python 3.13.15 base without pip.
-Only OpenClaw, Hermes, and Pi, whose harnesses run JavaScript, add Node.js 24.21.0 LTS.
+Only OpenClaw, Hermes, and Pi add Node.js 24.21.0 LTS: OpenClaw's CLI and Pi's adapter run on it, and Hermes's browser tool and `npx`-launched MCP servers require it.
 Image qualification checks that interpreter against every Python adapter’s declared version range in the pinned Fabric source.
 Build stages use pinned Rust, Node, Python, and uv images, so the host needs no language toolchains for image assembly.
 Initial builds need network access to fetch the pinned base images, source archives, and package dependencies.
@@ -102,7 +103,7 @@ Installed discovery also requires the image-owned runtime manifest and resolves 
 If catalog generation reports a missing runtime manifest, required path, or executable, correct the image recipe before retrying.
 See the [image metadata contract](design/fabric-management.md#image-metadata) before changing the image layout.
 
-Plan requires the selected image's runtime metadata to supply its bridge command, environment, default policy, and executable grants.
+Plan requires the selected image's runtime metadata to supply its `fabric-agent-ctl` command, environment, default policy, and executable grants.
 For an external gateway, also set `spec.gateway.engine` to the engine containing that same immutable sandbox image; NemoClaw does not assume the client host's Docker socket.
 This engine is used only for image inspection and does not authorize managing the external gateway.
 A missing image, missing metadata, or omitted external engine stops planning with a diagnostic; load a matching image or rebuild it, then retry.
@@ -140,6 +141,12 @@ Pinned archives and wheels do not make the whole image bit-reproducible: Debian 
 
 Run [image checks](contributing/testing.md#image-source-checks) before changing or using an image recipe, and follow the [native fixture procedures](contributing/integration-tests.md#inference-api-fixtures) for behavior qualification.
 
+### Update the OpenClaw Pin
+
+OpenClaw's npm package has no lockfile, so the agent image copies `/app` from OpenClaw's published image, pinned by digest in `OPENCLAW_IMAGE` in [the Dockerfile](../image/fabric/Dockerfile).
+When an agent starts, Fabric's OpenClaw adapter refuses versions outside `SUPPORTED_OPENCLAW_VERSIONS` in the pinned Fabric source.
+When you change the Fabric pin, check that set; if it changed, pin the digest of OpenClaw's published image for a supported version, then rebuild and qualify the OpenClaw image.
+
 ### Regenerate the Bundled Catalog
 
 The SDK build fails with `stale Fabric catalog` when `image/fabric/catalog.json` no longer matches the Fabric pin in the Dockerfile.
@@ -154,22 +161,22 @@ The snapshot holds canonical descriptors and provenance only; it does not change
 
 ### Reference Contract Image
 
-Build the dummy `fabric-agent` image to exercise the provisioning interface without Fabric, a native agent, credentials, or a model.
-It uses the same command host as all ten interim adapter images and supplies a deterministic reference backend.
+Build the dummy image to exercise the provisioning interface with Fabric's real runtime and `fabric-agent-ctl`, but no native agent, credentials, or model.
+It installs NemoClaw's test-only Fabric adapter, a deterministic agent, the way the production images install Fabric's adapters.
 It is a test fixture, excluded from the production `agents` target and the bundled catalog.
-Its image catalog lists one [explicit descriptor](../image/fabric/dummy.fabric-adapter.json), so a deployment can run it by setting `harness.kind: org.nemoclaw.dummy` and the image's immutable reference; the [Docker live suite](contributing/live-tests.md#dummy-agent-lifecycle) deploys it that way.
+Its image catalog lists the adapter's [descriptor](../image/fabric/test-adapter/dummy.fabric-adapter.json), so a deployment can run it by setting `harness.kind: org.nemoclaw.dummy` and the image's immutable reference; the [Docker live suite](contributing/live-tests.md#dummy-agent-lifecycle) deploys it that way.
 On Linux ARM64, run from the repository root:
 
 ```sh
 IMAGE_PREFIX=nc-contract cargo images build --platform linux/arm64 dummy
-cargo images qualify nc-contract:dummy --lifecycle dummy --require-ready
+cargo images qualify nc-contract:dummy --lifecycle dummy
 ```
 
 Use `linux/amd64` on a native AMD64 host.
 The qualifier uses the inspected image ID and an owned disposable container with networking disabled, a read-only root filesystem, and temporary writable sandbox storage.
 It removes that container on success, failure, or timeout; the built image remains local.
-The suite exercises standalone validation and all six commands, including generation conflicts and readiness failure that preserves the configured runtime.
-The [contract description](design/fabric-management.md#image-contract-and-reference-implementation) defines the dummy's settings and the real adapter backend boundary.
+The suite starts, invokes, and stops one runtime through `fabric-agent-ctl`, and checks that the image refuses a second runtime.
+The [contract description](design/fabric-management.md#image-contract-and-reference-implementation) defines the dummy's settings.
 
 To roll the same interface into all ten production adapter images on a native Linux ARM64 host, run:
 
@@ -189,17 +196,16 @@ cargo images qualify nc-contract:deepagents
 cargo images qualify nc-contract:openclaw --lifecycle openclaw
 ```
 
-The build adds a versioned `io.nemoclaw.fabric.bridge` label to every image, matching `/opt/nemoclaw/bridge.json`.
-Production images additionally retain their Fabric discovery catalog.
+The build adds the `io.nemoclaw.fabric.catalog` label to every image.
 The `--lifecycle` profile selects adapter configuration and invocation input; the lifecycle assertions are shared with the dummy.
 OpenClaw, Hermes, and Pi run their installed native adapters against an owned loopback inference server inside the network-isolated container.
-The suite checks configuration, generation conflicts, unchanged configuration, two native replies, and explicit preparation without bypassing the image's command entrypoint.
-Other production images run command conformance only and report the unselected lifecycle scenario as skipped.
+The suite starts one runtime through `fabric-agent-ctl`, checks a native reply, stops it, and checks that the image refuses a second runtime.
+Other production images report the unselected lifecycle scenario as skipped.
 The dummy selects its lifecycle profile automatically; an explicit profile makes the intended coverage visible in CI.
-Native readiness is a separate test: an image without ready-health support reports that test as skipped, while `--require-ready` makes missing support fail qualification.
-The dummy-only readiness-failure scenario remains separate because its failure controls are not native adapter settings.
-A passing command contract does not establish native readiness: production backends still report unsupported health at the pinned Fabric revision.
+A passing lifecycle does not establish that a runtime stays healthy: Fabric reports no runtime status.
 See [upstream ownership](design/fabric-management.md#upstream-ownership) for the remaining Fabric and OpenShell work.
+
+To extend an agent image with your own skills and tools, see [derived agent images](derived-images.md).
 
 ## Build a Runtime Image
 
@@ -217,24 +223,15 @@ It downloads pinned sources and dependencies, builds locally, and loads the imag
 
 It does not launch inference or publish an image.
 
-For ordinary safetensors models on Linux ARM64, run:
+For ordinary safetensors models, run on a Linux ARM64 or AMD64 build host matching the model host:
 
 ```sh
 cargo run -p nemoclaw-build --no-default-features -- runtime runtimes/vllm/build.json
 ```
 
 This build exports `.build/vllm/runtime.tar` and loads `nc-prototype-vllm:rust-v1`.
-The image contains the shared supervisor and pinned vLLM base, without Qwen3.8 patches or preparation tools.
+The image contains the shared supervisor and the pinned multi-platform vLLM base for the build host's architecture, without Qwen3.8 patches or preparation tools; the [Nemotron example](models.md#configure-nemotron-on-an-amd64-gpu-host) uses the AMD64 build.
 Select the model through [model configuration](models.md).
-
-For the AMD64 vLLM base used by the [Nemotron example](models.md#configure-nemotron-on-an-amd64-gpu-host), run on a Linux AMD64 build host:
-
-```sh
-cargo run -p nemoclaw-build --no-default-features -- runtime runtimes/vllm-amd64/build.json
-```
-
-This build exports `.build/vllm-amd64/runtime.tar` and loads `nc-prototype-vllm-amd64:rust-v1`.
-It adds the same supervisor to the pinned AMD64 vLLM 0.27.1 base and includes no preparation tools or model weights.
 Selecting this artifact does not qualify GPU inference on the host.
 
 For Qwen3.8 preparation on Linux ARM64, run:
@@ -248,8 +245,7 @@ Its Dockerfile applies pinned patches and retains original and modified sources.
 Use [the inline recipe guide](recipes.md) to declare preparation and serving requirements.
 
 The builder exports an OCI archive, loads it, and verifies access by its exported digest and target platform.
-It sets `org.nemoclaw.runtime.spec=v1` from the shared runtime contract and verifies that label on the loaded image.
-The retained `supervisor.json` records the same `runtimeSpecVersion` alongside the runtime source version.
+The retained `supervisor.json` records the runtime contract version, `runtimeSpecVersion`, alongside the runtime source version.
 Use the immutable image reference printed as `Runtime image loaded: NAME@sha256:DIGEST` for `spec.services.<name>.image`.
 Do not substitute a mutable tag or a digest copied from another build.
 If deployment uses a different Docker daemon, load the archive into that daemon before apply; images are not transferred automatically.
@@ -265,7 +261,7 @@ Each image separately retains its selected Dockerfile and build manifest under `
 The Qwen3.8 image also retains its preparation tools, upstream recipe, licenses, and modified vLLM sources.
 The build excludes dependency paths and parent Git metadata from compiler inputs.
 
-The [ARM64 vLLM notice](../runtimes/vllm/NOTICE.md), [AMD64 vLLM notice](../runtimes/vllm-amd64/NOTICE.md), and [Qwen3.8 notice](../runtimes/qwen38/NOTICE.md) identify retained sources and licenses.
+The [vLLM notice](../runtimes/vllm/NOTICE.md) and [Qwen3.8 notice](../runtimes/qwen38/NOTICE.md) identify retained sources and licenses.
 
 Generated bundles, build inputs, and images are ignored by Git.
 Model snapshots and prepared data belong to the deployment’s persistent volume, outside the build context.
@@ -274,14 +270,15 @@ The image contains `nemoclaw-runtime`.
 The inline recipe supplies preparation and verification tools; `kind: vllm` selects the service installer and serving behavior.
 Managed containers use `/usr/local/bin/nemoclaw-runtime` and `NEMOCLAW_RUNTIME_SPEC`.
 
-The SDK checks a managed vLLM or Ollama image's runtime-spec label, required backend/recipe/authentication labels, and platform through the provider before creating runtime resources.
+The SDK checks a managed vLLM or Ollama image's required backend/recipe/authentication labels and platform with `host_image` before creating runtime resources.
 Bearer vLLM also requires `org.nemoclaw.inference.routes=openai-v2`, which identifies a supervisor that serves the published port and forwards only authenticated inference requests and public `GET /health` to vLLM on loopback.
 Rebuild earlier bearer images that lack this label; do not add the label to an image whose supervisor was built from an earlier revision.
-An already loaded image with a missing or incompatible runtime-spec label fails plan and apply with rebuild guidance.
+An already loaded image with a missing or incompatible required label fails plan and apply, naming the label.
 When the image must be acquired, plan reports compatibility as deferred; apply may pull the image, then checks it before creating storage, networks, or containers.
-A matching label establishes the declared runtime contract, not successful model loading or inference.
+Matching labels establish the declared backend, recipe, and authentication, not successful model loading or inference.
 
-For a runtime-spec mismatch, rebuild the selected artifact from the bundle's source revision using the matching vLLM platform/recipe command above or the [managed Ollama build instructions](inference.md#run-managed-ollama).
+An image built by a different NemoClaw revision may carry the right labels yet reject the runtime contract when its runtime starts, after the deployment has created the service's storage and network.
+In either case, rebuild the selected artifact from the bundle's source revision using the matching vLLM platform/recipe command above or the [managed Ollama build instructions](inference.md#run-managed-ollama).
 Load the rebuilt image on the execution daemon and update `spec.services.<name>.image` to the newly printed digest.
 Keep the deployment state and reapply; existing model and credential storage remain subject to their retention and identity checks.
 Destroy omits image compatibility gates so a mismatched image alone does not prevent cleanup.

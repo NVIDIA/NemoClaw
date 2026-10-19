@@ -12,11 +12,11 @@
             },
             {
               "condition": "${self.runtime_json != \"\"}",
-              "error_message": "sandbox/assistant: image runtime metadata is unavailable. Set spec.gateway.engine to the sandbox image engine, load an image built with its runtime manifest, and use its immutable digest. Resources retained."
+              "error_message": "sandbox/assistant: image runtime metadata is unavailable. Set spec.gateway.engine to the sandbox image engine, and use an image built with its runtime manifest, its io.nemoclaw.fabric.catalog label, by its immutable digest; a derived image must keep its base image's labels. Resources retained."
             }
           ]
         },
-        "config_json": "{\"environment\":{\"provider\":\"local\",\"workspace\":\"/sandbox/workspace\"},\"harness\":{\"adapter_id\":\"nvidia.fabric.openclaw\",\"settings\":{}},\"metadata\":{\"name\":\"assistant\"},\"models\":{\"default\":{\"api\":\"openai-completions\",\"api_key_env\":\"NEMOCLAW_ANONYMOUS_API_KEY\",\"base_url\":\"http://192.168.1.50:18888/v1\",\"model\":\"fixture-model\",\"provider\":\"openai\",\"settings\":{}},\"primary\":{\"api\":\"openai-completions\",\"api_key_env\":\"NEMOCLAW_ANONYMOUS_API_KEY\",\"base_url\":\"http://192.168.1.50:18888/v1\",\"model\":\"fixture-model\",\"provider\":\"openai\",\"settings\":{}}},\"runtime\":{\"artifacts\":\"/sandbox/artifacts\"},\"schema_version\":\"fabric.agent/v1alpha1\"}"
+        "config_json": "{\"environment\":{\"provider\":\"local\",\"workspace\":\"/sandbox/workspace\"},\"harness\":{\"adapter_id\":\"nvidia.fabric.openclaw\",\"settings\":{}},\"metadata\":{\"name\":\"assistant\"},\"models\":{\"default\":{\"api_key_env\":\"NEMOCLAW_ANONYMOUS_API_KEY\",\"base_url\":\"http://192.168.1.50:18888/v1\",\"model\":\"fixture-model\",\"provider\":\"openai\",\"settings\":{}},\"primary\":{\"api_key_env\":\"NEMOCLAW_ANONYMOUS_API_KEY\",\"base_url\":\"http://192.168.1.50:18888/v1\",\"model\":\"fixture-model\",\"provider\":\"openai\",\"settings\":{}}},\"runtime\":{\"artifacts\":\"/sandbox/artifacts\"},\"schema_version\":\"fabric.agent/v1alpha1\"}"
       }
     },
     "host_engine": {

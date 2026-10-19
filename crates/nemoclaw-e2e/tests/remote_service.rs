@@ -39,7 +39,7 @@ async fn run(root: &Path, bundle: &Path, command: &str, file: &str, success: boo
     if output.status.success() != success {
         let shown = tokio::process::Command::new(bundle.join("libexec/tofu"))
             .args(["show", "-json", "apply.plan"])
-            .current_dir(root.join("deployment/runtime"))
+            .current_dir(root.join("deployment"))
             .output()
             .await
             .unwrap();
@@ -147,7 +147,7 @@ impl Scenario {
         save(
             root,
             "fixture.json",
-            &json!({"files":files,"stats":stats,"image_refs":[service["image"]],"image":{"Id":"sha256:runtime","Architecture":"arm64","Os":"linux","Config":{"Env":[],"Labels":{"org.nemoclaw.runtime.spec":"v1","org.nemoclaw.recipe.protocol":"v1","org.nemoclaw.inference.authentication":"bearer-v1","org.nemoclaw.inference.routes":"openai-v2","org.nemoclaw.backend":kind,"org.nemoclaw.model":service["model"]["revision"].as_str().or(service["model"]["digest"].as_str()).unwrap()}}}}),
+            &json!({"files":files,"stats":stats,"image_refs":[service["image"]],"image":{"Id":"sha256:runtime","Architecture":"arm64","Os":"linux","Config":{"Env":[],"Labels":{"org.nemoclaw.recipe.protocol":"v1","org.nemoclaw.inference.authentication":"bearer-v1","org.nemoclaw.inference.routes":"openai-v2","org.nemoclaw.backend":kind,"org.nemoclaw.model":service["model"]["revision"].as_str().or(service["model"]["digest"].as_str()).unwrap()}}}}),
         );
         save(
             root,
@@ -212,7 +212,7 @@ impl Scenario {
     }
 
     fn runtime_state(&self) -> Vec<u8> {
-        fs::read(self.root.join("deployment/runtime/terraform.tfstate")).unwrap()
+        fs::read(self.root.join("deployment/terraform.tfstate")).unwrap()
     }
 }
 
@@ -313,12 +313,13 @@ async fn managed_bearer_cleanup_recovers_damage_keeps_bindings_and_teardown_acce
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated SSH/Docker and OpenShell fixtures"]
-async fn managed_pi_applies_without_generation_and_refused_sandbox_changes_keep_intent() {
+async fn managed_pi_applies_without_generation_and_failed_sandbox_changes_keep_intent() {
     let s = Scenario::new("nvidia.fabric.pi", false, "vllm").await;
     present_incompatible_images_fail_before_effects(&s).await;
     plan_collects_no_host_capacity(&s).await;
     s.apply().await;
-    refused_sandbox_changes_preserve_retained_intent(&s.root, &s.bundle, &s.gateway).await;
+    failed_sandbox_and_runtime_change_preserves_retained_intent(&s.root, &s.bundle, &s.gateway)
+        .await;
     s.run("destroy", "", true).await;
     assert!(read(&s.root, "engine.json")["container"].is_null());
 }
@@ -359,7 +360,7 @@ async fn unverified_ollama_images_are_checked_after_pull_before_storage() {
 async fn pulled_incompatible_image_fails_before_storage(s: &Scenario) {
     let root = s.root.as_path();
     let mut stale = read(root, "fixture.json");
-    stale["image"]["Config"]["Labels"]["org.nemoclaw.runtime.spec"] = json!("v0");
+    stale["image"]["Config"]["Labels"]["org.nemoclaw.backend"] = json!("other");
     save(root, "fixture.json", &stale);
     let plan: Value = serde_json::from_slice(&s.run("plan", "config.yaml", true).await).unwrap();
     assert_eq!(plan["complete"], false);
@@ -376,7 +377,7 @@ async fn pulled_incompatible_image_fails_before_storage(s: &Scenario) {
     );
     assert_eq!(read(root, "engine.json")["effects"], 0);
     let error = String::from_utf8(s.run("apply", "config.yaml", false).await).unwrap();
-    assert!(error.contains("runtime specification"), "{error}");
+    assert!(error.contains("org.nemoclaw.backend"), "{error}");
     let engine = read(root, "engine.json");
     assert_eq!(engine["pulls"], 1);
     assert_eq!(engine["effects"], 1);
@@ -389,7 +390,8 @@ async fn pulled_incompatible_image_fails_before_storage(s: &Scenario) {
     assert_eq!(read(root, "engine.json")["effects"], 1);
 }
 
-// An already present incompatible image must fail before any owned resources exist.
+// The fast host-image matrix owns label variations. Each backend keeps this
+// native check that a private invalid value is rejected before any mutation.
 async fn present_incompatible_images_fail_before_effects(s: &Scenario) {
     let root = s.root.as_path();
     let original = read(root, "fixture.json");
@@ -399,22 +401,15 @@ async fn present_incompatible_images_fail_before_effects(s: &Scenario) {
         "engine.json",
         &json!({"effects":0,"creates":0,"image_missing":false,"pulls":0}),
     );
-    for version in [None, Some("v0"), Some("PRIVATE_IMAGE_SENTINEL")] {
-        let mut stale = original.clone();
-        let labels = stale["image"]["Config"]["Labels"].as_object_mut().unwrap();
-        labels.remove("org.nemoclaw.runtime.spec");
-        if let Some(version) = version {
-            labels.insert("org.nemoclaw.runtime.spec".into(), json!(version));
-        }
-        save(root, "fixture.json", &stale);
-        for command in ["plan", "apply"] {
-            let error = String::from_utf8(s.run(command, "config.yaml", false).await).unwrap();
-            assert!(error.contains("runtime specification"), "{error}");
-            assert!(error.contains("rebuild"), "{error}");
-            assert!(!error.contains("PRIVATE_IMAGE_SENTINEL"), "{error}");
-            assert_eq!(read(root, "engine.json")["effects"], 0);
-            assert_eq!(s.gateway.state.lock().unwrap().effects, 0);
-        }
+    let mut stale = original.clone();
+    stale["image"]["Config"]["Labels"]["org.nemoclaw.backend"] = json!("PRIVATE_IMAGE_SENTINEL");
+    save(root, "fixture.json", &stale);
+    for command in ["plan", "apply"] {
+        let error = String::from_utf8(s.run(command, "config.yaml", false).await).unwrap();
+        assert!(error.contains("org.nemoclaw.backend"), "{error}");
+        assert!(!error.contains("PRIVATE_IMAGE_SENTINEL"), "{error}");
+        assert_eq!(read(root, "engine.json")["effects"], 0);
+        assert_eq!(s.gateway.state.lock().unwrap().effects, 0);
     }
     save(root, "fixture.json", &original);
     save(root, "engine.json", &engine);
@@ -447,9 +442,9 @@ async fn partial_destroy_retains_storage(s: &Scenario) {
     // compute or deleting retained data after a failed runtime operation.
     // Recovery uses current bindings and a fresh teardown plan even when
     // the failed operation's plan artifact is no longer available.
-    fs::remove_file(root.join("deployment/runtime/apply.plan")).unwrap();
+    fs::remove_file(root.join("deployment/apply.plan")).unwrap();
     let result: Value = serde_json::from_slice(&s.run("destroy", "", true).await).unwrap();
-    let graph = read(root, "deployment/runtime/main.tf.json");
+    let graph = read(root, "deployment/main.tf.json");
     let mut retained: Vec<String> = graph["resource"]
         .as_object()
         .unwrap()
@@ -493,9 +488,14 @@ async fn recover_failed_creation_and_startup(s: &Scenario) -> Value {
     save(root, "control.json", &json!({"startup_failure":true}));
     s.run("apply", "config.yaml", false).await;
     assert_eq!(read(root, "engine.json")["creates"], 1);
+    // The failed apply never reached an object whose creation reply could be
+    // lost, so nothing is pending; export still refuses the unbound resources.
     let refusal = s.export_refusal().await;
-    assert!(refusal.contains("apply is unfinished"), "{refusal}");
-    let runtime_state = read(root, "deployment/runtime/terraform.tfstate");
+    assert!(
+        refusal.contains("export requires all declared resource bindings"),
+        "{refusal}"
+    );
+    let runtime_state = read(root, "deployment/terraform.tfstate");
     let resources = runtime_state["resources"].as_array().unwrap();
     for expected in ["docker_container", "docker_network"] {
         assert!(
@@ -533,7 +533,7 @@ fn bearer_is_registered_once_outside_state(s: &Scenario) {
         );
     }
     for name in [
-        "deployment/runtime/terraform.tfstate",
+        "deployment/terraform.tfstate",
         "deployment/terraform.tfstate",
         "config.yaml",
     ] {
@@ -815,7 +815,7 @@ async fn removed_pull_policy_reapplies_without_pulling(s: &Scenario, stable: &Va
     );
     let shown = tokio::process::Command::new(s.bundle.join("libexec/tofu"))
         .args(["show", "-json", "apply.plan"])
-        .current_dir(root.join("deployment/runtime"))
+        .current_dir(root.join("deployment"))
         .output()
         .await
         .unwrap();
@@ -873,7 +873,7 @@ async fn incompatible_image_blocks_changes_but_not_teardown(s: &Scenario, volume
     stale["image"]["Config"]["Labels"]
         .as_object_mut()
         .unwrap()
-        .remove("org.nemoclaw.runtime.spec");
+        .remove("org.nemoclaw.backend");
     save(root, "fixture.json", &stale);
     let before = read(root, "engine.json");
     let bindings = s.runtime_state();
@@ -905,7 +905,7 @@ async fn destroy_retains_storage(s: &Scenario, volume: &Value) {
 // its current object but fails to delete the old one. Only this owned fixture
 // writes the private state format; the SDK must consume OpenTofu's public JSON.
 fn interrupt_cleanup(root: &Path, old_present: bool) {
-    let mut state = read(root, "deployment/runtime/terraform.tfstate");
+    let mut state = read(root, "deployment/terraform.tfstate");
     let container = state["resources"]
         .as_array_mut()
         .unwrap()
@@ -917,7 +917,7 @@ fn interrupt_cleanup(root: &Path, old_present: bool) {
     old["attributes"]["id"] = json!("old-container");
     old["attributes"]["name"] = json!("old-container");
     container["instances"].as_array_mut().unwrap().push(old);
-    save(root, "deployment/runtime/terraform.tfstate", &state);
+    save(root, "deployment/terraform.tfstate", &state);
     let mut engine = read(root, "engine.json");
     let mut old = engine["container"].clone();
     old["Id"] = json!("old-container");
@@ -933,7 +933,7 @@ async fn replacement_cleanup(root: &Path, bundle: &Path) {
     save(root, "control.json", &json!({"cleanup_failure":true}));
     run(root, bundle, "apply", "config.yaml", false).await;
     assert!(read(root, "engine.json")["deposed_container"].is_object());
-    let state = read(root, "deployment/runtime/terraform.tfstate");
+    let state = read(root, "deployment/terraform.tfstate");
     assert!(
         state["resources"]
             .as_array()
@@ -960,7 +960,7 @@ async fn replacement_cleanup(root: &Path, bundle: &Path) {
     assert_eq!(read(root, "engine.json")["container"], before["container"]);
 }
 
-async fn refused_sandbox_changes_preserve_retained_intent(
+async fn failed_sandbox_and_runtime_change_preserves_retained_intent(
     root: &Path,
     bundle: &Path,
     gateway: &Fixture,
@@ -974,76 +974,50 @@ async fn refused_sandbox_changes_preserve_retained_intent(
         .push(reviewer);
     save(root, "config.yaml", &original);
     run(root, bundle, "apply", "config.yaml", true).await;
-    let before = [
-        "intent.json",
-        "terraform.tfstate",
-        "runtime/terraform.tfstate",
-    ]
-    .map(|path| fs::read(root.join("deployment").join(path)).unwrap());
+    let before = ["intent.json", "terraform.tfstate"]
+        .map(|path| fs::read(root.join("deployment").join(path)).unwrap());
     let engine = read(root, "engine.json");
     let effects = gateway.state.lock().unwrap().effects;
-    for change in ["remove", "image", "policy", "image-with-runtime-change"] {
-        let mut rejected = original.clone();
-        match change {
-            "remove" => {
-                rejected["spec"]["sandboxes"].as_array_mut().unwrap().pop();
-            }
-            "policy" => {
-                rejected["spec"]["sandboxes"][1]["network"] =
-                    json!({"policy":{"explicit":{"version":1,"network_policies":{}}}});
-            }
-            _ => {
-                rejected["spec"]["sandboxes"][1]["image"]["ref"] =
-                    json!(format!("sandbox@sha256:{}", "c".repeat(64)));
-                if change == "image-with-runtime-change" {
-                    rejected["spec"]["services"]["qwen"]["image"] =
-                        json!(format!("runtime@sha256:{}", "f".repeat(64)));
-                }
-            }
+    // The SDK integration matrix covers individual sandbox edits. This native
+    // case proves a replacement whose new images fail their checks stops before
+    // any change, without partially updating its model runtime.
+    let mut rejected = original.clone();
+    rejected["spec"]["sandboxes"][1]["image"]["ref"] =
+        json!(format!("sandbox@sha256:{}", "c".repeat(64)));
+    rejected["spec"]["services"]["qwen"]["image"] =
+        json!(format!("runtime@sha256:{}", "f".repeat(64)));
+    save(root, "rejected.yaml", &rejected);
+    for operation in ["apply", "plan"] {
+        let result: Value =
+            serde_json::from_slice(&run(root, bundle, operation, "rejected.yaml", false).await)
+                .unwrap();
+        for (path, saved) in ["intent.json", "terraform.tfstate"].iter().zip(&before) {
+            assert_eq!(
+                fs::read(root.join("deployment").join(path)).unwrap(),
+                *saved,
+                "{operation} changed {path}"
+            );
         }
-        save(root, "rejected.yaml", &rejected);
-        for operation in ["apply", "plan"] {
-            let result: Value =
-                serde_json::from_slice(&run(root, bundle, operation, "rejected.yaml", false).await)
-                    .unwrap();
-            for (path, saved) in [
-                "intent.json",
-                "terraform.tfstate",
-                "runtime/terraform.tfstate",
-            ]
-            .iter()
-            .zip(&before)
-            {
-                assert_eq!(
-                    fs::read(root.join("deployment").join(path)).unwrap(),
-                    *saved,
-                    "{change}: {operation} changed {path}"
-                );
-            }
-            assert_eq!(read(root, "engine.json"), engine, "{change}: {operation}");
-            assert_eq!(gateway.state.lock().unwrap().effects, effects);
-            let message = result["error"]["message"].as_str().unwrap();
-            assert!(message.contains("reviewer"), "{result}");
-            assert!(message.contains("apply cannot"), "{result}");
-            assert!(!message.contains("ordinary"), "{result}");
-            // Only operations that can mutate resources report remaining state.
-            if operation == "apply" {
-                assert_eq!(result["remainingState"], "No runtime resources changed.");
-            } else {
-                assert!(result.get("remainingState").is_none(), "{result}");
-            }
-            assert!(result["help"].as_str().unwrap().contains("docs/usage.md"));
+        assert_eq!(read(root, "engine.json"), engine, "{operation}");
+        assert_eq!(gateway.state.lock().unwrap().effects, effects);
+        let message = result["error"]["message"].as_str().unwrap();
+        assert!(message.contains("reviewer"), "{result}");
+        // Only operations that can mutate resources report remaining state.
+        if operation == "apply" {
+            assert_eq!(result["remainingState"], "No runtime resources changed.");
+        } else {
+            assert!(result.get("remainingState").is_none(), "{result}");
         }
     }
-    // The saved intent is byte-identical after each refusal, so one export
+    // The saved intent is byte-identical after each failure, so one export
     // shows it still reproduces the accepted document.
     let exported = run(root, bundle, "export", "", true).await;
     assert_eq!(
         Document::parse(exported.as_slice()).unwrap(),
         Document::parse(serde_json::to_vec(&original).unwrap().as_slice()).unwrap()
     );
-    // A root observation failure after runtime planning must not save a new
-    // document either, even when its sandbox changes would otherwise be valid.
+    // An observation failure must not save a new document either, even when
+    // its sandbox changes would otherwise be valid.
     let mut revised = original.clone();
     revised["metadata"]["name"] = json!("unaccepted-display-name");
     save(root, "unaccepted.yaml", &revised);

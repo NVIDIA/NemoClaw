@@ -17,11 +17,14 @@ fn express() -> JourneyDefinition {
         PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
     JourneyDefinition::new("express", base).omit([
-        "adapter:nvidia.fabric.openclaw:/agent_name",
-        "adapter:nvidia.fabric.openclaw:/cli",
-        "adapter:nvidia.fabric.openclaw:/home",
-        "adapter:nvidia.fabric.openclaw:/native_config",
-        "adapter:nvidia.fabric.openclaw:/timeout_seconds",
+        "adapter:nvidia.fabric.openclaw:/agent_id",
+        "adapter:nvidia.fabric.openclaw:/channel_config",
+        "adapter:nvidia.fabric.openclaw:/connect_timeout_seconds",
+        "adapter:nvidia.fabric.openclaw:/openclaw_command",
+        "adapter:nvidia.fabric.openclaw:/port_range",
+        "adapter:nvidia.fabric.openclaw:/read_timeout_seconds",
+        "adapter:nvidia.fabric.openclaw:/shutdown_timeout_seconds",
+        "adapter:nvidia.fabric.openclaw:/startup_timeout_seconds",
     ])
 }
 

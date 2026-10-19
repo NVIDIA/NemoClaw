@@ -22,11 +22,16 @@ cargo ci live-kind
 The runner builds Pi on ARM64 or OpenClaw on AMD64, exports its metadata bundle, loads it by digest, and installs the pinned Agent Sandbox prerequisite.
 The gateway test checks authentication, forged-token rejection, repeated install/removal, and retained storage without a Helm executable on `PATH`.
 The agent test uses the public SDK to deploy a gateway and sandbox from that image.
-It supplies a caller-relative kubeconfig and expects apply to fail only at `data.fabric_agent_readiness.assistant`, because the pinned Fabric reports agent health as unsupported ([#13031](https://github.com/NVIDIA/NemoClaw/issues/13031)).
-Export must still reproduce the authored configuration without readiness checks; destroy then retains gateway storage.
+It supplies a caller-relative kubeconfig and expects apply to complete with the agent started.
+Export must reproduce the authored configuration; destroy then keeps the namespace, encryption key, and gateway PVC with unchanged UIDs.
 The OpenShift-profile test supplies namespace UID-range annotations on kind and checks that gateway and sandbox pods use the assigned UID through the same SDK flow.
-These three live tests request no inference and need no GPU or credentials.
-The two render tests check the Kubernetes gateway UID and observed OpenShift namespace UID and group, with `runAsNonRoot` retained.
+The registry test starts a pinned, authenticated registry on the run's kind network and uploads only the run's agent fixture there.
+It checks anonymous and wrong-credential rejection, then deploys an agent with a caller-managed image pull Secret provisioned after namespace creation.
+A new image-index digest prevents cached image metadata from bypassing the pull; the agent's layers and configuration remain unchanged.
+Apply, export and destroy must preserve the authored references, keep registry values out of OpenTofu state, and retain the caller-managed Secret.
+The fixture removes its registry afterward; HTTP configuration is confined to that registry on the disposable node.
+These live tests request no inference and need no GPU or user registry credentials.
+The render tests check the Kubernetes gateway UID, observed OpenShift UID and group, and image pull references in gateway/helper pods and sandbox-driver configuration.
 Kind does not enforce OpenShift security context constraints; these checks do not establish OpenShift admission or platform compatibility.
 
 The runner deletes its cluster and removes its built image tag after success or failure; pulled images and build caches remain.
@@ -102,10 +107,10 @@ Run it explicitly for candidate dependency upgrades, outside the default build; 
 
 ## Retained Storage Observations
 
-The read-only live storage test requires an explicit OpenTofu runtime state file containing the test deployment's retained inference credential-volume binding from an authenticated vLLM service:
+The read-only live storage test requires an explicit OpenTofu state file containing the test deployment's retained inference credential-volume binding from an authenticated vLLM service:
 
 ```sh
-NEMOCLAW_TEST_RUNTIME_STATE=/absolute/path/to/runtime/terraform.tfstate \
+NEMOCLAW_TEST_RUNTIME_STATE=/absolute/path/to/deployment-state/terraform.tfstate \
   cargo test -p nemoclaw-sdk --test integration \
   managed_live::retained_inference_credentials_preserve_their_reference_binding -- --ignored
 ```
@@ -256,7 +261,7 @@ Use an owned native Linux Docker daemon, a fresh deployment UID, an available ga
 Supply `NVIDIA_INFERENCE_API_KEY` through the process environment; never put its value in YAML, arguments, state, or repository files.
 The test installs that credential in OpenShell and does not revoke the upstream key.
 Keep the fixture's provider, sandbox, and agent names; the expected results name those resources.
-Build a matching bundle and load the YAML's immutable gateway and agent images, including the Hermes image for the Hermes test, into the selected daemon.
+Build a matching bundle and load the gateway image pinned in [versions.json](../../versions.json) and the YAML's immutable agent images, including the Hermes image for the Hermes test, into the selected daemon.
 A GPU is not required.
 
 From the repository root, with absolute paths and one test selected:
@@ -297,40 +302,8 @@ The test checks managed runtime bindings as well as the hosted agent identity ac
 
 ## Docker Live Suite
 
-`cargo ci live-docker` builds the images and writes the owned inputs for the Ollama cache, runtime image, Docker provider, standalone cache, dummy agent, and Docker gateway tests below, then runs them; see [Run each layer](testing.md#run-each-layer).
+`cargo ci live-docker` builds the images and writes the owned inputs for the runtime image, Docker provider, standalone cache, dummy agent, and Docker gateway tests below, then runs them; see [Run each layer](testing.md#run-each-layer).
 To run one of them by hand, supply its inputs as its section describes.
-
-## Model Cache Compatibility
-
-On native Linux with local Docker, pull the Ollama base image pinned in this checkout before selecting the opt-in cache test.
-The test creates a temporary cache and one container, exposes its inventory API on an ephemeral loopback port, and removes both afterward.
-It resumes complete synthetic files through NemoClaw's verifier, then checks the actual Ollama inventory and version.
-It downloads no model and exposes no GPU.
-From the repository root:
-
-```sh
-ollama_base=$(awk '$1 == "FROM" { print $2; exit }' runtimes/ollama/Dockerfile)
-docker pull "$ollama_base"
-NEMOCLAW_TEST_OLLAMA_CACHE=1 cargo test -p nemoclaw-runtime --test integration ollama_cache:: -- --ignored --nocapture
-```
-
-A failure identifies either the cache contract or a mismatch between the runtime image and `versions.json`.
-Correct the runtime pin or adapter before rerunning; never point the fixture at a deployment's cache.
-If the test process is forcibly killed, inspect containers with label `org.nemoclaw.test=ollama-cache` and remove only the container created by that run.
-
-Evaluate the Hugging Face client shipped in the vLLM base image with a private loopback server:
-
-```sh
-vllm_base=$(awk '$1 == "FROM" { print $2; exit }' runtimes/vllm/Dockerfile)
-docker pull "$vllm_base"
-docker run --rm --runtime=runc --network none --env HF_HUB_DISABLE_PROGRESS_BARS=1 \
-  --volume "$PWD/runtimes/vllm/test_download.py:/test_download.py:ro" \
-  --entrypoint python3 "$vllm_base" /test_download.py
-```
-
-This test documents why post-download verification cannot preserve bounded writes with the evaluated client.
-It expects the client to write an oversized fixture before raising a size error; if that behavior changes, reevaluate whether the owner client can replace NemoClaw's downloader.
-
 
 ## Runtime Image Loading
 
@@ -388,9 +361,9 @@ The container's Python process simulates model reconstruction and a credential; 
 ## Dummy Agent Lifecycle
 
 nemoclaw-e2e's `dummy_agent::the_dummy_agent_completes_a_managed_docker_lifecycle` test deploys the [reference dummy image](../build.md#reference-contract-image) through a managed Docker gateway.
-The dummy reports native health without Fabric, a model, or credentials, so apply completes its readiness check.
-The test checks plan, a successful bundled-CLI apply with supported health, an invocation that returns the configured `reply` setting, unchanged apply, export/reapply with the same runtime identity, and destroy, after which Docker holds no sandbox containers or volumes but still holds the gateway's storage.
-It requests no inference and does not qualify a production adapter's health.
+The dummy runs Fabric's real `fabric-agent-ctl` with NemoClaw's test adapter, so it needs no model or credentials.
+The test checks plan, a successful bundled-CLI apply, an invocation that returns the configured `reply` setting, unchanged apply that keeps the same runtime, export/reapply, and destroy, after which Docker holds no sandbox containers or volumes but still holds the gateway's storage.
+It requests no inference and does not qualify a production adapter.
 
 Supply a verified bundle and an owned document like the gateway tests', with a fresh UID, free gateway port and subnet, the local dummy image by digest, `harness.kind: org.nemoclaw.dummy`, and a `harness.settings.reply` string:
 
@@ -408,8 +381,8 @@ To remove the retained storage after a manual run, follow [Remove Retained Resou
 
 ## Docker Gateway Recovery
 
-nemoclaw-e2e's `managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu` test exercises only the managed runtime stage with a real gateway, Docker, both providers, and OpenTofu.
-It reaches that stage through the SDK's `test-scenarios` setup, which only nemoclaw-e2e enables, then destroys through the public API.
+nemoclaw-e2e's `managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu` test exercises only the managed gateway's runtime resources with a real gateway, Docker, both providers, and OpenTofu.
+It plans and applies them through the SDK's `test-scenarios` setup, which only nemoclaw-e2e enables, then destroys through the public API.
 Supply a verified bundle and an owned configuration with a fresh UID, free gateway port/subnet, Docker sandboxes, external inference, and no managed services.
 The test does not create sandboxes or request inference.
 It removes its gateway process on completion but retains the database, keys, initializer, bridge, and state.

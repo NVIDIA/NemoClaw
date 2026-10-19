@@ -17,12 +17,15 @@
       "title": "Build and deploy",
       "pages": [
         {"title": "Build local artifacts", "source": "docs/build.md", "slug": "build"},
+        {"title": "Build a derived agent image", "source": "docs/derived-images.md", "slug": "derived-images"},
         {"title": "Use desired state", "source": "docs/usage.md", "slug": "usage"},
         {"title": "Deploy to Kubernetes or OpenShift", "source": "docs/kubernetes.md", "slug": "kubernetes"},
         {"title": "Definitions and references", "source": "docs/configuration-references.md", "slug": "configuration-references"},
         {"title": "Locate and preserve state", "source": "docs/state.md", "slug": "state"},
         {"title": "Troubleshoot deployment operations", "source": "docs/troubleshooting.md", "slug": "troubleshooting"},
         {"title": "Security and credential ownership", "source": "docs/security.md", "slug": "security"},
+        {"title": "Threat model", "source": "docs/threat-model.md", "slug": "threat-model"},
+        {"title": "Rotate credentials", "source": "docs/credential-rotation.md", "slug": "credential-rotation"},
         {"title": "Sandbox policy", "source": "docs/sandbox-network.md", "slug": "sandbox-network"}
       ]
     },
@@ -32,6 +35,7 @@
         {"title": "Configure inference", "source": "docs/inference.md", "slug": "inference"},
         {"title": "Access agent interfaces", "source": "docs/interfaces.md", "slug": "interfaces"},
         {"title": "Agent runtimes", "source": "docs/agents.md", "slug": "agents"},
+        {"title": "Use OAuth-refresh providers", "source": "docs/oauth-refresh.md", "slug": "oauth-refresh"},
         {"title": "Select a managed model", "source": "docs/models.md", "slug": "models"},
         {"title": "Inline model recipes", "source": "docs/recipes.md", "slug": "recipes"},
         {"title": "Configure an SSH model service", "source": "docs/remote-service.md", "slug": "remote-service"}
@@ -42,6 +46,8 @@
       "pages": [
         {"title": "Use the Rust SDK", "source": "docs/sdk.md", "slug": "sdk"},
         {"title": "OpenTofu provider", "source": "docs/provider.md", "slug": "provider"},
+        {"title": "Compatibility across releases", "source": "docs/compatibility.md", "slug": "compatibility"},
+        {"title": "Container service contract", "source": "docs/design/container-contract.md", "slug": "container-contract"},
         {"title": "CLI reference", "source": "docs/reference/cli.md", "slug": "reference/cli"},
         {"title": "YAML configuration reference", "source": "docs/reference/configuration.md", "slug": "reference/configuration"},
         {"title": "Fabric harnesses", "source": "docs/reference/fabric-harnesses.md", "slug": "reference/fabric-harnesses"},

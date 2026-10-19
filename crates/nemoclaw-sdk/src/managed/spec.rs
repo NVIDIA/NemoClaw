@@ -14,9 +14,6 @@ use std::collections::HashMap;
 pub const GATEWAY_KIND: &str = "managed_gateway";
 use super::GATEWAY_STORAGE_KIND;
 pub use nemoclaw_docker::{GENERATION_LABEL, OWNER_LABEL};
-pub use nemoclaw_runtime::{
-    SPEC_VERSION as RUNTIME_SPEC_VERSION, SPEC_VERSION_LABEL as RUNTIME_SPEC_VERSION_LABEL,
-};
 pub const SPEC_LABEL: &str = "nemoclaw.nvidia.com/runtime-spec";
 pub use crate::artifact_pins::SANDBOX_RUNTIME_IMAGE;
 pub use crate::artifact_pins::SUPERVISOR_IMAGE;
@@ -32,12 +29,15 @@ pub struct Spec {
     pub owner: String,
     pub generation: String,
     pub gateway: ManagedGateway,
+    /// The managed gateway's image, pinned by the SDK; services carry theirs in `process`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub image: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub process: Option<Process>,
 }
 
 /// Package-neutral container process compiled by a service installer.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Process {
     pub engine: String,
@@ -55,6 +55,8 @@ pub struct Process {
     pub entrypoint: Vec<String>,
     #[serde(default)]
     pub command: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_owned: Option<ImageLaunch>,
     pub mount_target: String,
     pub bind_address: String,
     pub port: u16,
@@ -65,8 +67,35 @@ pub struct Process {
     pub memory_bytes: u64,
     pub gpu: bool,
 }
+
+/// Launch settings when the image owns its entrypoint, command, and health check.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ImageLaunch {
+    pub user: String,
+    pub environment: std::collections::BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub files: std::collections::BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub ulimits: std::collections::BTreeMap<String, i64>,
+}
 /// CFS period for container CPU limits, matching kubelet and `docker --cpus`.
 pub(crate) const CPU_PERIOD_MICROS: u64 = 100_000;
+/// The supervisor every managed vLLM and Ollama image runs.
+pub const RUNTIME_ENTRYPOINT: &str = "/usr/local/bin/nemoclaw-runtime";
+/// Where a runtime keeps its data, such as downloaded models.
+pub const RUNTIME_DATA_PATH: &str = "/data";
+/// The environment variable that carries a runtime's contract.
+pub const RUNTIME_SPEC_ENV: &str = "NEMOCLAW_RUNTIME_SPEC";
+/// Process limits a runtime needs: unlimited locked memory for GPU transfers,
+/// and a 64 MiB stack. `-1` means unlimited.
+pub const RUNTIME_ULIMITS: [(&str, i64); 2] = [("memlock", -1), ("stack", 67_108_864)];
+/// Shared memory a runtime gets unless its service sets its own.
+pub fn default_shared_memory_bytes() -> u64 {
+    crate::services::installers::vllm::ServiceContainer::resources(None).shared_memory_bytes
+}
 /// The kernel's minimum CFS quota; kubelet raises smaller CPU limits to it.
 const MIN_CPU_QUOTA_MICROS: u64 = 1000;
 
@@ -154,6 +183,9 @@ pub const GATEWAY_ATTRIBUTES: [&str; 8] = [
     "image",
     "network_cidr",
 ];
+/// OpenShell's sandbox driver configuration setting, as JSON, when the
+/// deployment sets it; absent otherwise, so existing rows are unchanged.
+pub const DRIVER_CONFIG_ATTRIBUTE: &str = "sandbox_driver_config";
 /// Docker gateway data does not depend on the listen port, so its storage
 /// records this endpoint instead of the gateway's.
 const DOCKER_STORAGE_ENDPOINT: &str = "http://127.0.0.1:8080";
@@ -174,6 +206,20 @@ pub fn check_gateway_attribute(attribute: &str, value: &str) -> Result<(), &'sta
         "engine" => {
             return crate::config::validate_engine_endpoint(value)
                 .map_err(|_| "must be a local Unix engine socket");
+        }
+        DRIVER_CONFIG_ATTRIBUTE => {
+            return match serde_json::from_str::<crate::config::SandboxDriverConfig>(value) {
+                Ok(setting)
+                    if setting
+                        .resource_admission
+                        .as_ref()
+                        .and_then(|admission| admission.required_labels.as_ref())
+                        .is_none_or(|labels| !labels.is_empty()) =>
+                {
+                    Ok(())
+                }
+                _ => Err("must be a sandboxDriverConfig object with non-empty requiredLabels"),
+            };
         }
         _ => return Ok(()),
     };
@@ -231,7 +277,7 @@ impl Spec {
     pub fn gateway_row(&self, kind: &str) -> Result<crate::backend::Row, Error> {
         self.validate()?;
         let docker_storage = kind == GATEWAY_STORAGE_KIND && self.layout == 1;
-        Ok(GATEWAY_ATTRIBUTES
+        let mut row: crate::backend::Row = GATEWAY_ATTRIBUTES
             .into_iter()
             .zip([
                 self.name.as_str(),
@@ -240,12 +286,20 @@ impl Spec {
                 self.compute_driver.as_str(),
                 &self.gateway.engine,
                 &self.gateway.endpoint,
-                &self.gateway.image,
+                &self.image,
                 &self.gateway.network_cidr,
             ])
             .filter(|(attribute, _)| !(docker_storage && *attribute == "endpoint"))
             .map(|(attribute, value)| (attribute.to_owned(), value.to_owned()))
-            .collect())
+            .collect();
+        if let Some(setting) = &self.gateway.sandbox_driver_config {
+            row.insert(
+                DRIVER_CONFIG_ATTRIBUTE.into(),
+                serde_json::to_string(setting)
+                    .map_err(|_| Error::State("cannot encode sandboxDriverConfig"))?,
+            );
+        }
+        Ok(row)
     }
     /// Gateway or storage specification named by resource attributes.
     ///
@@ -259,8 +313,14 @@ impl Spec {
                 .cloned()
                 .ok_or(crate::ObservationError::Incomplete)
         };
-        for attribute in GATEWAY_ATTRIBUTES {
-            if let Some(value) = row.get(attribute) {
+        for attribute in GATEWAY_ATTRIBUTES
+            .into_iter()
+            .chain([DRIVER_CONFIG_ATTRIBUTE])
+        {
+            if let Some(value) = row
+                .get(attribute)
+                .filter(|value| !value.is_empty() || attribute != DRIVER_CONFIG_ATTRIBUTE)
+            {
                 check_gateway_attribute(attribute, value)
                     .map_err(|_| Error::Conflict("invalid managed gateway attribute"))?;
             }
@@ -295,11 +355,21 @@ impl Spec {
                 },
                 endpoint,
                 engine: get("engine")?,
-                image: get("image")?,
                 image_pull_policy: None,
                 network_cidr: get("network_cidr")?,
                 kubernetes: None,
+                sandbox_driver_config: match row
+                    .get(DRIVER_CONFIG_ATTRIBUTE)
+                    .filter(|value| !value.is_empty())
+                {
+                    Some(value) => Some(
+                        serde_json::from_str(value)
+                            .map_err(|_| Error::Conflict("invalid managed gateway attribute"))?,
+                    ),
+                    None => None,
+                },
             },
+            image: get("image")?,
             process: None,
         };
         spec.validate()?;
@@ -318,6 +388,24 @@ fn hex(bytes: impl AsRef<[u8]>) -> String {
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect()
+}
+impl Process {
+    fn valid_launch(&self) -> bool {
+        if let Some(image) = &self.image_owned {
+            !image.user.is_empty()
+                && self.configuration.is_empty()
+                && self.entrypoint.is_empty()
+                && self.command.is_empty()
+        } else {
+            !self.configuration.is_empty()
+                && !self.configuration.contains(['\0', '\r', '\n'])
+                && self.configuration.len() <= 1 << 20
+                && !self.entrypoint.is_empty()
+                && !self.bind_address.is_empty()
+                && self.port != 0
+                && !self.architecture.is_empty()
+        }
+    }
 }
 impl Spec {
     /// Validate ownership, configuration, runtime kind, and layout.
@@ -356,7 +444,18 @@ impl Spec {
             self.gateway.validate_managed()?;
         }
         if self.kind == GATEWAY_KIND && self.process.is_none() && matches!(self.layout, 0..=2) {
+            // The gateway runs the SDK's pinned image; nothing authors it.
+            if self.image != crate::config::DEFAULT_GATEWAY_IMAGE {
+                return Err(Error::Conflict(
+                    "the managed gateway image must be this SDK's pinned image",
+                ));
+            }
             return Ok(());
+        }
+        if !self.image.is_empty() {
+            return Err(Error::Conflict(
+                "a managed service carries its image in its process",
+            ));
         }
         if self.kind != GATEWAY_KIND
             && self.layout == 0
@@ -372,15 +471,11 @@ impl Spec {
                 && crate::config::validate_engine_endpoint(&process.engine).is_ok()
                 && (process.engine.starts_with("unix://") || process.engine.starts_with("ssh://"))
                 && process.image.contains("@sha256:")
-                && valid_token(&process.configuration)
-                && !process.entrypoint.is_empty()
+                && process.valid_launch()
                 && process.entrypoint.iter().all(|value| valid_token(value))
                 && process.command.iter().all(|value| valid_token(value))
                 && process.mount_target.starts_with('/')
                 && !process.mount_target.contains("..")
-                && !process.bind_address.is_empty()
-                && process.port != 0
-                && !process.architecture.is_empty()
                 && process.memory_bytes > 0
                 && process.cpu_limit_millis != Some(0)
             {
@@ -451,6 +546,7 @@ impl Spec {
         self.validate_runtime()?;
         self.process
             .as_ref()
+            .filter(|process| process.image_owned.is_none())
             .map(|process| process.configuration.as_str())
             .ok_or(Error::Conflict(
                 "runtime specification has no managed service process",
@@ -470,13 +566,23 @@ impl Spec {
     /// # Errors
     /// Returns validation or serialization errors from `json`.
     pub fn labels(&self) -> Result<HashMap<String, String>, Error> {
-        let mut identity = self.clone();
-        identity.gateway.image_pull_policy = None;
+        self.validate()?;
+        let identity = if self.process.is_some() {
+            let mut identity = serde_json::to_value(self)
+                .map_err(|_| Error::State("cannot serialize process identity"))?;
+            identity.as_object_mut().unwrap().remove("gateway");
+            serde_json::to_string(&identity)
+                .map_err(|_| Error::State("cannot serialize process identity"))?
+        } else {
+            let mut identity = self.clone();
+            identity.gateway.image_pull_policy = None;
+            identity.json()?
+        };
 
         Ok([
             (OWNER_LABEL.into(), self.owner.clone()),
             (GENERATION_LABEL.into(), self.generation.clone()),
-            (SPEC_LABEL.into(), hex(Sha256::digest(identity.json()?))),
+            (SPEC_LABEL.into(), hex(Sha256::digest(identity))),
         ]
         .into())
     }
@@ -493,7 +599,7 @@ impl Spec {
         self.process
             .as_ref()
             .map(|process| process.image.as_str())
-            .unwrap_or(&self.gateway.image)
+            .unwrap_or(&self.image)
     }
     /// Compile the container launch configuration for the runtime.
     ///
@@ -543,12 +649,35 @@ impl Spec {
             let process = self.process.as_ref().ok_or(Error::Conflict(
                 "runtime specification has no managed service process",
             ))?;
-            config["Entrypoint"] = json!(process.entrypoint);
-            config["Cmd"] = json!(process.command);
-            config["Env"] = json!([format!(
-                "NEMOCLAW_RUNTIME_SPEC={}",
-                self.runtime_configuration()?
-            )]);
+            if let Some(image) = &process.image_owned {
+                config["User"] = json!(image.user);
+                if let Some(command) = &image.command {
+                    config["Cmd"] = json!(command);
+                }
+                if !image.ulimits.is_empty() {
+                    host["Ulimits"] = json!(
+                        image
+                            .ulimits
+                            .iter()
+                            .map(|(name, limit)| json!({"Name":name,"Soft":limit,"Hard":limit}))
+                            .collect::<Vec<_>>()
+                    );
+                }
+                config["Env"] = json!(
+                    image
+                        .environment
+                        .iter()
+                        .map(|(key, value)| format!("{key}={value}"))
+                        .collect::<Vec<_>>()
+                );
+            } else {
+                config["Entrypoint"] = json!(process.entrypoint);
+                config["Cmd"] = json!(process.command);
+                config["Env"] = json!([format!(
+                    "{RUNTIME_SPEC_ENV}={}",
+                    self.runtime_configuration()?
+                )]);
+            }
             host["NetworkMode"] = json!(self.network());
             host["Mounts"] =
                 json!([{"Type":"volume","Source":self.volume(),"Target":process.mount_target}]);
@@ -565,8 +694,17 @@ impl Spec {
             if process.gpu {
                 host["DeviceRequests"] = json!([{"Driver":"","Count":-1,"Capabilities":[["gpu"]]}]);
             }
-            host["Ulimits"] = json!([{"Name":"memlock","Soft":-1,"Hard":-1},{"Name":"stack","Soft":67108864,"Hard":67108864}]);
-            host["PortBindings"] = json!({format!("{}/tcp",process.port):[{"HostIp":process.bind_address,"HostPort":process.port.to_string()}]});
+            if process.image_owned.is_none() {
+                host["Ulimits"] = json!(
+                    RUNTIME_ULIMITS
+                        .iter()
+                        .map(|(name, limit)| json!({"Name": name, "Soft": limit, "Hard": limit}))
+                        .collect::<Vec<_>>()
+                );
+            }
+            if process.port != 0 && !process.bind_address.is_empty() {
+                host["PortBindings"] = json!({format!("{}/tcp",process.port):[{"HostIp":process.bind_address,"HostPort":process.port.to_string()}]});
+            }
         }
         config["HostConfig"] = host;
         serde_json::from_value(config)
@@ -586,7 +724,7 @@ impl Spec {
         } else {
             format!("network_name = {:?}\n", self.network())
         };
-        format!(
+        let config = format!(
             "[openshell]\nversion = 2\n\n[openshell.gateway]\ncompute_driver = {:?}\ndisable_tls = true\n\n[openshell.drivers.{}]{}\n{}sandbox_runtime_image = {:?}\nsupervisor_image = {:?}\n{}\n[openshell.gateway.gateway_jwt]\nsigning_key_path = {:?}\npublic_key_path = {:?}\nkid_path = {:?}\ngateway_id = {:?}\n\n[openshell.gateway.auth]\nallow_unauthenticated_users = true\n",
             self.compute_driver.as_str(),
             self.compute_driver,
@@ -603,6 +741,39 @@ impl Spec {
             format!("{data_path}/tls/jwt/public.pem"),
             format!("{data_path}/tls/jwt/kid"),
             self.name
-        )
+        );
+        self.with_driver_admission(config)
+    }
+    /// OpenShell's driver configuration admission, when the deployment sets
+    /// it: `allow_driver_config` joins the driver's table, and admission
+    /// settings follow as its subtables. Without the setting the file is
+    /// unchanged, so existing gateway storage still matches.
+    fn with_driver_admission(&self, mut config: String) -> String {
+        let Some(setting) = &self.gateway.sandbox_driver_config else {
+            return config;
+        };
+        let driver = self.compute_driver.as_str();
+        let header = format!("[openshell.drivers.{driver}]");
+        if let Some(at) = config.find(&header) {
+            let line = format!("\nallow_driver_config = {}", setting.allow);
+            config.insert_str(at + header.len(), &line);
+        }
+        if let Some(admission) = &setting.resource_admission {
+            config.push_str(&format!(
+                "\n[openshell.drivers.{driver}.resource_admission]\n"
+            ));
+            if let Some(enabled) = admission.enabled {
+                config.push_str(&format!("enabled = {enabled}\n"));
+            }
+            if let Some(labels) = &admission.required_labels {
+                config.push_str(&format!(
+                    "\n[openshell.drivers.{driver}.resource_admission.required_labels]\n"
+                ));
+                for (key, value) in labels {
+                    config.push_str(&format!("{key:?} = {value:?}\n"));
+                }
+            }
+        }
+        config
     }
 }

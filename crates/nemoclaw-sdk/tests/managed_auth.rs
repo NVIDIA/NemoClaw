@@ -31,19 +31,8 @@ fn bearer_auth_compiles_a_managed_credential_reference_without_a_secret() {
     let targets = compile::targets(&doc, &generations).unwrap();
     let provider = targets
         .iter()
-        .find(|t| {
-            t.address
-                .starts_with("openshell_provider_registration.inference_qwen-")
-        })
+        .find(|t| t.address.starts_with("openshell_inference.inference_qwen-"))
         .unwrap();
-    let profile = targets
-        .iter()
-        .find(|t| {
-            t.address
-                .starts_with("openshell_provider_profile.inference_qwen-")
-        })
-        .unwrap();
-    assert_eq!(profile.values["authenticated"], "true");
     let source: Value = serde_json::from_str(&provider.values["credential_source"]).unwrap();
     assert_eq!(source["kind"], "managedService");
     assert_eq!(source["storage"]["Owner"], doc.metadata.uid);
@@ -87,10 +76,8 @@ fn runtime_preserves_literal_recipe_environment_without_copying_it_into_credenti
     .into();
     let graph = compile::compile(&doc, &generations, "0.1.0").unwrap();
     let runtime = compile::compile_runtime(&doc, &generations, "0.1.0").unwrap();
-    let credential = provider_scope::resource(
-        &graph["resource"]["openshell_provider_registration"],
-        "qwen",
-    )["credential_source"]
+    let credential = provider_scope::resource(&graph["resource"]["openshell_inference"], "qwen")
+        ["server"]["credential_source"]
         .as_str()
         .unwrap();
     assert!(!credential.contains("VLLM_LITERAL"));

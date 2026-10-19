@@ -32,14 +32,14 @@ impl Experiment {
             spec["process"]["configuration"] = json!(service.to_string());
         }
         fs::write(self.dir.path().join("main.tf.json"), json!({
-            "terraform":{"required_version":"= 1.12.6", "required_providers":{"nemoclaw":{"source":"registry.opentofu.org/nvidia/nemoclaw"}}},
+            "terraform":{"required_providers":{"nemoclaw":{"source":"registry.opentofu.org/nvidia/nemoclaw"}}},
             "provider":{"nemoclaw":{}},
             "resource":{"nemoclaw_inference_service":{"gpu":{"spec":spec.to_string().replace("${", "$${").replace("%{", "%%{")}}}
         }).to_string()).unwrap();
     }
     fn new(provider: impl AsRef<Path>) -> Self {
         let this = Self {
-            dir: TofuWorkspace::new(&nemoclaw_test_fixtures::Bundle::from_env(), provider),
+            dir: TofuWorkspace::with_fixture(&nemoclaw_test_fixtures::Bundle::from_env(), provider),
         };
         this.config("https://initial.example/v1");
         this.mode("normal");
@@ -47,7 +47,7 @@ impl Experiment {
     }
     fn config(&self, endpoint: &str) {
         fs::write(self.dir.path().join("main.tf.json"), json!({
-            "terraform": {"required_version":"= 1.12.6", "required_providers":{"nemoclaw":{"source":"registry.opentofu.org/nvidia/nemoclaw"}}},
+            "terraform": {"required_providers":{"nemoclaw":{"source":"registry.opentofu.org/nvidia/nemoclaw"}}},
             "provider":{"nemoclaw":{}},
             "resource":{"nemoclaw_provider":{"inference":{"name":"inference", "owner":"deployment", "generation":"generation", "endpoint":endpoint}}}
         }).to_string()).unwrap();

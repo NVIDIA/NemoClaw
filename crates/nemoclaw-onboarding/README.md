@@ -171,7 +171,7 @@ An Anthropic-compatible endpoint uses the Anthropic protocol; the selected Fabri
 
 Provider presets supply endpoint, model, and credential-reference suggestions.
 NemoClaw owns these editable onboarding suggestions, including API base paths and model choices.
-OpenShell v0.1.3 supplies [example egress-policy profiles](https://github.com/NVIDIA/OpenShell/blob/e1f3c82caa3ed3b65de22889ae7ef32a774878ef/crates/openshell-providers/src/example_profiles.rs) for explicit import; it does not expose a built-in provider-defaults catalog.
+OpenShell v0.1.4 supplies [example egress-policy profiles](https://github.com/NVIDIA/OpenShell/blob/5a7728c304b5528e954e9ae900cf21f84e1a12b1/crates/openshell-providers/src/example_profiles.rs) for explicit import; it does not expose a built-in provider-defaults catalog.
 Those examples omit some providers and API base paths used here.
 NVIDIA's suggested credential reference follows the upstream `NVIDIA_API_KEY` name.
 The suggestions do not restrict existing provider names, endpoint URLs, or credential environment-variable references.

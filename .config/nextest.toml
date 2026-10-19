@@ -19,6 +19,12 @@ slow-timeout = { period = "8s", terminate-after = 3 }
 [profile.ci.junit]
 path = "test.xml"
 
+# These fixtures spawn Git, Cargo and Bake processes. Limit their contention
+# on CI runners without serializing tests in the other binaries.
+[[profile.ci.overrides]]
+filter = 'binary_id(=nemoclaw-build::integration)'
+test-group = "build-integration"
+
 [profile.lifecycle]
 inherits = "ci"
 test-threads = 4
@@ -37,6 +43,8 @@ default-filter = '''
     | test(/^export_observations::/) | test(/^fabric_deployment::/)
     | test(/^multiple_providers::/) | test(/^remote_service::/)
     | test(/^inference_discovery::/) | test(/^helm_recovery::/)
+    | test(/^travel_example::/)
+    | test(/^travel_team_example::/)
 ))
 '''
 
@@ -48,15 +56,15 @@ path = "lifecycle.xml"
 # tests.
 [[profile.lifecycle.overrides]]
 filter = 'binary_id(=fabric-provider::contract)'
-slow-timeout = { period = "22s", terminate-after = 2 }
-
-[[profile.lifecycle.overrides]]
-filter = 'binary_id(=nemoclaw-provider::contract)'
 slow-timeout = { period = "10s", terminate-after = 2 }
 
 [[profile.lifecycle.overrides]]
+filter = 'binary_id(=nemoclaw-provider::contract)'
+slow-timeout = { period = "8s", terminate-after = 2 }
+
+[[profile.lifecycle.overrides]]
 filter = 'binary_id(=openshell-provider::contract)'
-slow-timeout = { period = "12s", terminate-after = 2 }
+slow-timeout = { period = "6s", terminate-after = 2 }
 
 # Real Docker and OpenTofu; run through `cargo ci live-docker`, which builds the
 # images and owned inputs these tests read. The Docker tests share one engine,
@@ -67,14 +75,13 @@ inherits = "ci"
 test-threads = 2
 slow-timeout = { period = "180s", terminate-after = 2 }
 default-filter = '''
-(package(nemoclaw-runtime) & test(/^ollama_cache::/))
-| (package(nemoclaw-build) & (
+(package(nemoclaw-build) & (
     test(runtime_archive_loads_with_its_exported_digest)
     | test(retained_runtime_rebuilds_offline_without_protobuf_or_a_dependency_cache)
     | test(a_new_fabric_archive_cannot_reuse_an_older_compiled_core)
 ))
 | (package(nemoclaw-e2e) & binary(=integration) & (
-    test(/^cache_provider::/) | test(/^docker_provider_proxy::/)
+    test(/^cache_provider::/) | test(/^docker_provider_proxy::/) | test(/^docker_registry::/)
     | test(/^managed_gateway::/) | test(/^dummy_agent::/)
 ))
 | (package(nemoclaw-sdk) & test(the_issuer_image_serves_both_documents_over_https))
@@ -83,11 +90,19 @@ default-filter = '''
 
 [profile.live-kind]
 inherits = "ci"
-test-threads = 1
+test-threads = 4
 slow-timeout = { period = "120s", terminate-after = 2 }
 default-filter = '''
 package(nemoclaw-e2e) & binary(=integration) & (test(/^kubernetes_live::/) | test(/^kubernetes_chart::/))
 '''
+
+# The cluster tests use separate namespaces, releases and ports, so they run
+# side by side while each waits on its pods. The registry test seeds its
+# registry by tagging and untagging the node's shared agent image, which other
+# sandboxes pull from at the same moment, so it runs alone.
+[[profile.live-kind.overrides]]
+filter = 'test(/^kubernetes_live::registry::/)'
+threads-required = "num-test-threads"
 
 [profile.live-kind.junit]
 path = "live-kind.xml"
@@ -97,6 +112,7 @@ path = "live-docker.xml"
 
 [test-groups]
 docker-engine = { max-threads = 1 }
+build-integration = { max-threads = 2 }
 
 # Everything but the rebuild uses the engine.
 [[profile.live-docker.overrides]]

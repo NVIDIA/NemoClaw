@@ -75,13 +75,11 @@ fn configure(
         format!(
             r#"terraform {{
   required_providers {{
-    nemoclaw = {{ source = "registry.opentofu.org/nvidia/nemoclaw" }}
     vllm     = {{ source = "registry.opentofu.org/nvidia/vllm" }}
     ollama   = {{ source = "registry.opentofu.org/nvidia/ollama" }}
   }}
 }}
 
-provider "nemoclaw" {{}}
 provider "vllm" {{}}
 provider "ollama" {{}}
 

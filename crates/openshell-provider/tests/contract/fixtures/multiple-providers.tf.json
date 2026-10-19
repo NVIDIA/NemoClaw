@@ -30,65 +30,24 @@
     }
   },
   "resource": {
-    "openshell_provider_profile": {
+    "openshell_inference": {
       "inference_hosted-4df6a0a09c020309380f8e47": {
-        "authenticated": "true",
+        "api": "anthropic-messages",
         "binaries": [
           "/usr/local/bin/python3.99"
         ],
         "depends_on": [
           "data.openshell_gateway.apply"
         ],
-        "endpoint": "https://hosted.example/v1",
-        "gateway": "${data.openshell_gateway.current.ref}",
-        "generation": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "lifecycle": {
-          "precondition": [
-            {
-              "condition": "${data.openshell_gateway.current.compatible}",
-              "error_message": "${format(\"Gateway is incompatible with this configuration: %s. Retain state, correct the gateway or the configuration, and reapply.\", data.openshell_gateway.current.incompatibility)}"
-            }
-          ]
+        "gateway": {
+          "credential_env": "",
+          "endpoint": "${var.endpoint}",
+          "kubernetes": "",
+          "tls_ca_env": "",
+          "tls_certificate_env": "",
+          "tls_key_env": "",
+          "type": "openshell_gateway"
         },
-        "name": "nemoclaw-inference-hosted-4df6a0a09c020309380f8e47",
-        "owner": "cb18eaf0-1a4e-47b8-b254-6fe4e49bc360",
-        "provider_type": "anthropic",
-        "workspace": "${openshell_workspace.deployment.ref}"
-      },
-      "inference_local-5834fdcc94534d6506776906": {
-        "authenticated": "false",
-        "binaries": [
-          "/usr/local/bin/python3.99"
-        ],
-        "depends_on": [
-          "data.openshell_gateway.apply"
-        ],
-        "endpoint": "http://172.20.0.1:11434/v1",
-        "gateway": "${data.openshell_gateway.current.ref}",
-        "generation": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "lifecycle": {
-          "precondition": [
-            {
-              "condition": "${data.openshell_gateway.current.compatible}",
-              "error_message": "${format(\"Gateway is incompatible with this configuration: %s. Retain state, correct the gateway or the configuration, and reapply.\", data.openshell_gateway.current.incompatibility)}"
-            }
-          ]
-        },
-        "name": "nemoclaw-inference-local-5834fdcc94534d6506776906",
-        "owner": "cb18eaf0-1a4e-47b8-b254-6fe4e49bc360",
-        "provider_type": "",
-        "workspace": "${openshell_workspace.deployment.ref}"
-      }
-    },
-    "openshell_provider_registration": {
-      "inference_hosted-4df6a0a09c020309380f8e47": {
-        "credential_env": "HOSTED_API_KEY",
-        "depends_on": [
-          "openshell_provider_profile.inference_hosted-4df6a0a09c020309380f8e47",
-          "data.openshell_gateway.apply"
-        ],
-        "endpoint": "https://hosted.example/v1",
-        "gateway": "${data.openshell_gateway.current.ref}",
         "generation": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "lifecycle": {
           "precondition": [
@@ -99,18 +58,31 @@
           ]
         },
         "name": "hosted-4df6a0a09c020309380f8e47",
-        "owner": "cb18eaf0-1a4e-47b8-b254-6fe4e49bc360",
-        "provider_type": "anthropic",
+        "server": {
+          "credential_env": "HOSTED_API_KEY",
+          "credential_source": "",
+          "endpoint": "https://hosted.example/v1",
+          "type": "inference_server"
+        },
         "workspace": "${openshell_workspace.deployment.ref}"
       },
       "inference_local-5834fdcc94534d6506776906": {
-        "credential_env": "",
+        "api": "openai-completions",
+        "binaries": [
+          "/usr/local/bin/python3.99"
+        ],
         "depends_on": [
-          "openshell_provider_profile.inference_local-5834fdcc94534d6506776906",
           "data.openshell_gateway.apply"
         ],
-        "endpoint": "http://172.20.0.1:11434/v1",
-        "gateway": "${data.openshell_gateway.current.ref}",
+        "gateway": {
+          "credential_env": "",
+          "endpoint": "${var.endpoint}",
+          "kubernetes": "",
+          "tls_ca_env": "",
+          "tls_certificate_env": "",
+          "tls_key_env": "",
+          "type": "openshell_gateway"
+        },
         "generation": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "lifecycle": {
           "precondition": [
@@ -121,36 +93,51 @@
           ]
         },
         "name": "local-5834fdcc94534d6506776906",
-        "owner": "cb18eaf0-1a4e-47b8-b254-6fe4e49bc360",
-        "provider_type": "",
+        "server": {
+          "credential_env": "",
+          "credential_source": "",
+          "endpoint": "http://172.20.0.1:11434/v1",
+          "type": "inference_server"
+        },
         "workspace": "${openshell_workspace.deployment.ref}"
       }
     },
     "openshell_sandbox": {
       "researcher": {
         "depends_on": [
-          "openshell_provider_registration.inference_hosted-4df6a0a09c020309380f8e47",
-          "openshell_provider_registration.inference_local-5834fdcc94534d6506776906",
+          "openshell_inference.inference_hosted-4df6a0a09c020309380f8e47",
+          "openshell_inference.inference_local-5834fdcc94534d6506776906",
           "data.openshell_gateway.apply"
         ],
-        "gateway": "${data.openshell_gateway.current.ref}",
+        "gateway": {
+          "credential_env": "",
+          "endpoint": "${var.endpoint}",
+          "kubernetes": "",
+          "tls_ca_env": "",
+          "tls_certificate_env": "",
+          "tls_key_env": "",
+          "type": "openshell_gateway"
+        },
         "generation": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "image": "nc-fabric-owner-20260924@sha256:c4c0d3add3869e49d0ce8d03bd7e41bbe2682d0df285ef6fde5f181b123cf83e",
-        "launch_json": "{\"command\":[\"/usr/local/bin/fabric-agent\",\"serve\",\"--agent\",\"researcher\"],\"environment\":{\"ADAPTER_PYTHON\":\"/opt/fabric/bin/python\",\"HOME\":\"/sandbox\",\"NEMOCLAW_AGENT_NAME\":\"researcher\",\"NEMOCLAW_ANONYMOUS_API_KEY\":\"unused\",\"NODE_EXTRA_CA_CERTS\":\"/etc/ssl/certs/ca-certificates.crt\",\"PATH\":\"/opt/fabric/bin:/usr/local/bin:/usr/bin:/bin\",\"PYTHONDONTWRITEBYTECODE\":\"1\",\"SSL_CERT_FILE\":\"/etc/ssl/certs/ca-certificates.crt\",\"TMPDIR\":\"/sandbox/tmp\",\"XDG_CACHE_HOME\":\"/sandbox/.cache\"},\"policy\":{\"version\":1,\"filesystem_policy\":{\"include_workdir\":false,\"read_only\":[\"/usr\",\"/bin\",\"/sbin\",\"/lib\",\"/lib64\",\"/etc\",\"/app\",\"/opt\",\"/proc\"],\"read_write\":[\"/sandbox\",\"/tmp\",\"/dev/null\",\"/dev/urandom\",\"/home/node\"]},\"landlock\":{\"compatibility\":\"best_effort\"},\"process\":{\"run_as_user\":\"10001\",\"run_as_group\":\"10001\"},\"network_policies\":{}},\"binaries\":[\"/usr/local/bin/python3.99\"],\"metadata\":{\"nemoclaw.nvidia.com/agent\":\"researcher\",\"nemoclaw.nvidia.com/agent-runtime\":\"fabric\",\"nemoclaw.nvidia.com/runtime\":\"{\\\"runtime\\\":{\\\"schema_version\\\":1,\\\"command\\\":[\\\"/usr/local/bin/fabric-agent\\\"],\\\"environment\\\":{\\\"ADAPTER_PYTHON\\\":\\\"/opt/fabric/bin/python\\\",\\\"HOME\\\":\\\"/sandbox\\\",\\\"NEMOCLAW_ANONYMOUS_API_KEY\\\":\\\"unused\\\",\\\"NODE_EXTRA_CA_CERTS\\\":\\\"/etc/ssl/certs/ca-certificates.crt\\\",\\\"PATH\\\":\\\"/opt/fabric/bin:/usr/local/bin:/usr/bin:/bin\\\",\\\"PYTHONDONTWRITEBYTECODE\\\":\\\"1\\\",\\\"SSL_CERT_FILE\\\":\\\"/etc/ssl/certs/ca-certificates.crt\\\",\\\"TMPDIR\\\":\\\"/sandbox/tmp\\\",\\\"XDG_CACHE_HOME\\\":\\\"/sandbox/.cache\\\"},\\\"required_paths\\\":[\\\"/opt/fabric\\\",\\\"/opt/nemoclaw\\\"],\\\"policy\\\":{\\\"version\\\":1,\\\"filesystem_policy\\\":{\\\"include_workdir\\\":false,\\\"read_only\\\":[\\\"/usr\\\",\\\"/bin\\\",\\\"/sbin\\\",\\\"/lib\\\",\\\"/lib64\\\",\\\"/etc\\\",\\\"/app\\\",\\\"/opt\\\",\\\"/proc\\\"],\\\"read_write\\\":[\\\"/sandbox\\\",\\\"/tmp\\\",\\\"/dev/null\\\",\\\"/dev/urandom\\\",\\\"/home/node\\\"]},\\\"landlock\\\":{\\\"compatibility\\\":\\\"best_effort\\\"},\\\"process\\\":{\\\"run_as_user\\\":\\\"10001\\\",\\\"run_as_group\\\":\\\"10001\\\"},\\\"network_policies\\\":{}},\\\"binaries\\\":{\\\"nvidia.fabric.openclaw\\\":[\\\"/usr/local/bin/python3.99\\\"]}},\\\"adapter_id\\\":\\\"nvidia.fabric.openclaw\\\"}\"}}",
+        "launch_json": "{\"command\":[\"/opt/fabric/bin/fabric-agent-ctl\",\"serve\"],\"environment\":{\"ADAPTER_PYTHON\":\"/opt/fabric/bin/python\",\"HOME\":\"/sandbox\",\"NEMOCLAW_ANONYMOUS_API_KEY\":\"unused\",\"NODE_EXTRA_CA_CERTS\":\"/etc/ssl/certs/ca-certificates.crt\",\"PATH\":\"/opt/fabric/bin:/usr/local/bin:/usr/bin:/bin\",\"PYTHONDONTWRITEBYTECODE\":\"1\",\"SSL_CERT_FILE\":\"/etc/ssl/certs/ca-certificates.crt\",\"TMPDIR\":\"/sandbox/tmp\",\"XDG_CACHE_HOME\":\"/sandbox/.cache\"},\"policy\":{\"version\":1,\"filesystem_policy\":{\"include_workdir\":false,\"read_only\":[\"/usr\",\"/bin\",\"/sbin\",\"/lib\",\"/lib64\",\"/etc\",\"/app\",\"/opt\",\"/proc\"],\"read_write\":[\"/sandbox\",\"/tmp\",\"/dev/null\",\"/dev/urandom\",\"/home/node\"]},\"landlock\":{\"compatibility\":\"best_effort\"},\"process\":{\"run_as_user\":\"10001\",\"run_as_group\":\"10001\"},\"network_policies\":{}},\"binaries\":[\"/usr/local/bin/python3.99\"],\"metadata\":{\"nemoclaw.nvidia.com/agent\":\"researcher\",\"nemoclaw.nvidia.com/agent-runtime\":\"fabric\",\"nemoclaw.nvidia.com/runtime\":\"{\\\"runtime\\\":{\\\"schema_version\\\":1,\\\"command\\\":[\\\"/opt/fabric/bin/fabric-agent-ctl\\\"],\\\"environment\\\":{\\\"ADAPTER_PYTHON\\\":\\\"/opt/fabric/bin/python\\\",\\\"HOME\\\":\\\"/sandbox\\\",\\\"NEMOCLAW_ANONYMOUS_API_KEY\\\":\\\"unused\\\",\\\"NODE_EXTRA_CA_CERTS\\\":\\\"/etc/ssl/certs/ca-certificates.crt\\\",\\\"PATH\\\":\\\"/opt/fabric/bin:/usr/local/bin:/usr/bin:/bin\\\",\\\"PYTHONDONTWRITEBYTECODE\\\":\\\"1\\\",\\\"SSL_CERT_FILE\\\":\\\"/etc/ssl/certs/ca-certificates.crt\\\",\\\"TMPDIR\\\":\\\"/sandbox/tmp\\\",\\\"XDG_CACHE_HOME\\\":\\\"/sandbox/.cache\\\"},\\\"required_paths\\\":[\\\"/opt/fabric\\\"],\\\"policy\\\":{\\\"version\\\":1,\\\"filesystem_policy\\\":{\\\"include_workdir\\\":false,\\\"read_only\\\":[\\\"/usr\\\",\\\"/bin\\\",\\\"/sbin\\\",\\\"/lib\\\",\\\"/lib64\\\",\\\"/etc\\\",\\\"/app\\\",\\\"/opt\\\",\\\"/proc\\\"],\\\"read_write\\\":[\\\"/sandbox\\\",\\\"/tmp\\\",\\\"/dev/null\\\",\\\"/dev/urandom\\\",\\\"/home/node\\\"]},\\\"landlock\\\":{\\\"compatibility\\\":\\\"best_effort\\\"},\\\"process\\\":{\\\"run_as_user\\\":\\\"10001\\\",\\\"run_as_group\\\":\\\"10001\\\"},\\\"network_policies\\\":{}},\\\"binaries\\\":{\\\"nvidia.fabric.openclaw\\\":[\\\"/usr/local/bin/python3.99\\\"]}},\\\"adapter_id\\\":\\\"nvidia.fabric.openclaw\\\"}\"}}",
         "lifecycle": {
           "precondition": [
             {
               "condition": "${data.openshell_gateway.current.compatible}",
               "error_message": "${format(\"Gateway is incompatible with this configuration: %s. Retain state, correct the gateway or the configuration, and reapply.\", data.openshell_gateway.current.incompatibility)}"
             }
+          ],
+          "replace_triggered_by": [
+            "terraform_data.agent_researcher"
           ]
         },
         "name": "researcher",
         "owner": "cb18eaf0-1a4e-47b8-b254-6fe4e49bc360",
         "policy": {
           "explicit": null,
-          "managed": {
-            "nemoclaw-inference-hosted-4df6a0a09c020309380f8e47": {
+          "managed": [
+            {
               "binaries": [],
               "endpoints": [
                 {
@@ -163,7 +150,7 @@
               ],
               "name": "nemoclaw-inference-hosted-4df6a0a09c020309380f8e47"
             },
-            "nemoclaw-inference-local-5834fdcc94534d6506776906": {
+            {
               "binaries": [],
               "endpoints": [
                 {
@@ -179,37 +166,48 @@
               ],
               "name": "nemoclaw-inference-local-5834fdcc94534d6506776906"
             }
-          }
+          ]
         },
         "providers": [
-          "${openshell_provider_registration.inference_hosted-4df6a0a09c020309380f8e47.ref}",
-          "${openshell_provider_registration.inference_local-5834fdcc94534d6506776906.ref}"
+          "${openshell_inference.inference_hosted-4df6a0a09c020309380f8e47.ref}",
+          "${openshell_inference.inference_local-5834fdcc94534d6506776906.ref}"
         ],
         "workspace": "${openshell_workspace.deployment.ref}"
       },
       "writer": {
         "depends_on": [
-          "openshell_provider_registration.inference_local-5834fdcc94534d6506776906",
+          "openshell_inference.inference_local-5834fdcc94534d6506776906",
           "data.openshell_gateway.apply"
         ],
-        "gateway": "${data.openshell_gateway.current.ref}",
+        "gateway": {
+          "credential_env": "",
+          "endpoint": "${var.endpoint}",
+          "kubernetes": "",
+          "tls_ca_env": "",
+          "tls_certificate_env": "",
+          "tls_key_env": "",
+          "type": "openshell_gateway"
+        },
         "generation": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "image": "nc-fabric-owner-20260924@sha256:c4c0d3add3869e49d0ce8d03bd7e41bbe2682d0df285ef6fde5f181b123cf83e",
-        "launch_json": "{\"command\":[\"/usr/local/bin/fabric-agent\",\"serve\",\"--agent\",\"writer\"],\"environment\":{\"ADAPTER_PYTHON\":\"/opt/fabric/bin/python\",\"HOME\":\"/sandbox\",\"NEMOCLAW_AGENT_NAME\":\"writer\",\"NEMOCLAW_ANONYMOUS_API_KEY\":\"unused\",\"NODE_EXTRA_CA_CERTS\":\"/etc/ssl/certs/ca-certificates.crt\",\"PATH\":\"/opt/fabric/bin:/usr/local/bin:/usr/bin:/bin\",\"PYTHONDONTWRITEBYTECODE\":\"1\",\"SSL_CERT_FILE\":\"/etc/ssl/certs/ca-certificates.crt\",\"TMPDIR\":\"/sandbox/tmp\",\"XDG_CACHE_HOME\":\"/sandbox/.cache\"},\"policy\":{\"version\":1,\"filesystem_policy\":{\"include_workdir\":false,\"read_only\":[\"/usr\",\"/bin\",\"/sbin\",\"/lib\",\"/lib64\",\"/etc\",\"/app\",\"/opt\",\"/proc\"],\"read_write\":[\"/sandbox\",\"/tmp\",\"/dev/null\",\"/dev/urandom\",\"/home/node\"]},\"landlock\":{\"compatibility\":\"best_effort\"},\"process\":{\"run_as_user\":\"10001\",\"run_as_group\":\"10001\"},\"network_policies\":{}},\"binaries\":[\"/usr/local/bin/python3.99\"],\"metadata\":{\"nemoclaw.nvidia.com/agent\":\"writer\",\"nemoclaw.nvidia.com/agent-runtime\":\"fabric\",\"nemoclaw.nvidia.com/runtime\":\"{\\\"runtime\\\":{\\\"schema_version\\\":1,\\\"command\\\":[\\\"/usr/local/bin/fabric-agent\\\"],\\\"environment\\\":{\\\"ADAPTER_PYTHON\\\":\\\"/opt/fabric/bin/python\\\",\\\"HOME\\\":\\\"/sandbox\\\",\\\"NEMOCLAW_ANONYMOUS_API_KEY\\\":\\\"unused\\\",\\\"NODE_EXTRA_CA_CERTS\\\":\\\"/etc/ssl/certs/ca-certificates.crt\\\",\\\"PATH\\\":\\\"/opt/fabric/bin:/usr/local/bin:/usr/bin:/bin\\\",\\\"PYTHONDONTWRITEBYTECODE\\\":\\\"1\\\",\\\"SSL_CERT_FILE\\\":\\\"/etc/ssl/certs/ca-certificates.crt\\\",\\\"TMPDIR\\\":\\\"/sandbox/tmp\\\",\\\"XDG_CACHE_HOME\\\":\\\"/sandbox/.cache\\\"},\\\"required_paths\\\":[\\\"/opt/fabric\\\",\\\"/opt/nemoclaw\\\"],\\\"policy\\\":{\\\"version\\\":1,\\\"filesystem_policy\\\":{\\\"include_workdir\\\":false,\\\"read_only\\\":[\\\"/usr\\\",\\\"/bin\\\",\\\"/sbin\\\",\\\"/lib\\\",\\\"/lib64\\\",\\\"/etc\\\",\\\"/app\\\",\\\"/opt\\\",\\\"/proc\\\"],\\\"read_write\\\":[\\\"/sandbox\\\",\\\"/tmp\\\",\\\"/dev/null\\\",\\\"/dev/urandom\\\",\\\"/home/node\\\"]},\\\"landlock\\\":{\\\"compatibility\\\":\\\"best_effort\\\"},\\\"process\\\":{\\\"run_as_user\\\":\\\"10001\\\",\\\"run_as_group\\\":\\\"10001\\\"},\\\"network_policies\\\":{}},\\\"binaries\\\":{\\\"nvidia.fabric.openclaw\\\":[\\\"/usr/local/bin/python3.99\\\"]}},\\\"adapter_id\\\":\\\"nvidia.fabric.openclaw\\\"}\"}}",
+        "launch_json": "{\"command\":[\"/opt/fabric/bin/fabric-agent-ctl\",\"serve\"],\"environment\":{\"ADAPTER_PYTHON\":\"/opt/fabric/bin/python\",\"HOME\":\"/sandbox\",\"NEMOCLAW_ANONYMOUS_API_KEY\":\"unused\",\"NODE_EXTRA_CA_CERTS\":\"/etc/ssl/certs/ca-certificates.crt\",\"PATH\":\"/opt/fabric/bin:/usr/local/bin:/usr/bin:/bin\",\"PYTHONDONTWRITEBYTECODE\":\"1\",\"SSL_CERT_FILE\":\"/etc/ssl/certs/ca-certificates.crt\",\"TMPDIR\":\"/sandbox/tmp\",\"XDG_CACHE_HOME\":\"/sandbox/.cache\"},\"policy\":{\"version\":1,\"filesystem_policy\":{\"include_workdir\":false,\"read_only\":[\"/usr\",\"/bin\",\"/sbin\",\"/lib\",\"/lib64\",\"/etc\",\"/app\",\"/opt\",\"/proc\"],\"read_write\":[\"/sandbox\",\"/tmp\",\"/dev/null\",\"/dev/urandom\",\"/home/node\"]},\"landlock\":{\"compatibility\":\"best_effort\"},\"process\":{\"run_as_user\":\"10001\",\"run_as_group\":\"10001\"},\"network_policies\":{}},\"binaries\":[\"/usr/local/bin/python3.99\"],\"metadata\":{\"nemoclaw.nvidia.com/agent\":\"writer\",\"nemoclaw.nvidia.com/agent-runtime\":\"fabric\",\"nemoclaw.nvidia.com/runtime\":\"{\\\"runtime\\\":{\\\"schema_version\\\":1,\\\"command\\\":[\\\"/opt/fabric/bin/fabric-agent-ctl\\\"],\\\"environment\\\":{\\\"ADAPTER_PYTHON\\\":\\\"/opt/fabric/bin/python\\\",\\\"HOME\\\":\\\"/sandbox\\\",\\\"NEMOCLAW_ANONYMOUS_API_KEY\\\":\\\"unused\\\",\\\"NODE_EXTRA_CA_CERTS\\\":\\\"/etc/ssl/certs/ca-certificates.crt\\\",\\\"PATH\\\":\\\"/opt/fabric/bin:/usr/local/bin:/usr/bin:/bin\\\",\\\"PYTHONDONTWRITEBYTECODE\\\":\\\"1\\\",\\\"SSL_CERT_FILE\\\":\\\"/etc/ssl/certs/ca-certificates.crt\\\",\\\"TMPDIR\\\":\\\"/sandbox/tmp\\\",\\\"XDG_CACHE_HOME\\\":\\\"/sandbox/.cache\\\"},\\\"required_paths\\\":[\\\"/opt/fabric\\\"],\\\"policy\\\":{\\\"version\\\":1,\\\"filesystem_policy\\\":{\\\"include_workdir\\\":false,\\\"read_only\\\":[\\\"/usr\\\",\\\"/bin\\\",\\\"/sbin\\\",\\\"/lib\\\",\\\"/lib64\\\",\\\"/etc\\\",\\\"/app\\\",\\\"/opt\\\",\\\"/proc\\\"],\\\"read_write\\\":[\\\"/sandbox\\\",\\\"/tmp\\\",\\\"/dev/null\\\",\\\"/dev/urandom\\\",\\\"/home/node\\\"]},\\\"landlock\\\":{\\\"compatibility\\\":\\\"best_effort\\\"},\\\"process\\\":{\\\"run_as_user\\\":\\\"10001\\\",\\\"run_as_group\\\":\\\"10001\\\"},\\\"network_policies\\\":{}},\\\"binaries\\\":{\\\"nvidia.fabric.openclaw\\\":[\\\"/usr/local/bin/python3.99\\\"]}},\\\"adapter_id\\\":\\\"nvidia.fabric.openclaw\\\"}\"}}",
         "lifecycle": {
           "precondition": [
             {
               "condition": "${data.openshell_gateway.current.compatible}",
               "error_message": "${format(\"Gateway is incompatible with this configuration: %s. Retain state, correct the gateway or the configuration, and reapply.\", data.openshell_gateway.current.incompatibility)}"
             }
+          ],
+          "replace_triggered_by": [
+            "terraform_data.agent_writer"
           ]
         },
         "name": "writer",
         "owner": "cb18eaf0-1a4e-47b8-b254-6fe4e49bc360",
         "policy": {
           "explicit": null,
-          "managed": {
-            "nemoclaw-inference-local-5834fdcc94534d6506776906": {
+          "managed": [
+            {
               "binaries": [],
               "endpoints": [
                 {
@@ -225,10 +223,10 @@
               ],
               "name": "nemoclaw-inference-local-5834fdcc94534d6506776906"
             }
-          }
+          ]
         },
         "providers": [
-          "${openshell_provider_registration.inference_local-5834fdcc94534d6506776906.ref}"
+          "${openshell_inference.inference_local-5834fdcc94534d6506776906.ref}"
         ],
         "workspace": "${openshell_workspace.deployment.ref}"
       }
@@ -238,7 +236,15 @@
         "depends_on": [
           "data.openshell_gateway.apply"
         ],
-        "gateway": "${data.openshell_gateway.current.ref}",
+        "gateway": {
+          "credential_env": "",
+          "endpoint": "${var.endpoint}",
+          "kubernetes": "",
+          "tls_ca_env": "",
+          "tls_certificate_env": "",
+          "tls_key_env": "",
+          "type": "openshell_gateway"
+        },
         "generation": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "lifecycle": {
           "precondition": [
@@ -251,6 +257,20 @@
         "name": "nc-09fae1b508fa21be",
         "owner": "cb18eaf0-1a4e-47b8-b254-6fe4e49bc360"
       }
+    },
+    "terraform_data": {
+      "agent_researcher": {
+        "depends_on": [
+          "data.openshell_gateway.apply"
+        ],
+        "input": "{\"environment\":{\"provider\":\"local\",\"workspace\":\"/sandbox/workspace\"},\"harness\":{\"adapter_id\":\"nvidia.fabric.openclaw\",\"settings\":{}},\"metadata\":{\"name\":\"researcher\"},\"models\":{\"default\":{\"api_key_env\":\"NEMOCLAW_INFERENCE_HOSTED_4DF6A0A09C020309380F8E47_KEY\",\"base_url\":\"https://hosted.example/v1\",\"model\":\"replace-with-supported-model\",\"provider\":\"anthropic\",\"settings\":{}},\"fast\":{\"api_key_env\":\"NEMOCLAW_ANONYMOUS_API_KEY\",\"base_url\":\"http://172.20.0.1:11434/v1\",\"model\":\"qwen3:4b\",\"provider\":\"openai\",\"settings\":{}},\"smart\":{\"api_key_env\":\"NEMOCLAW_INFERENCE_HOSTED_4DF6A0A09C020309380F8E47_KEY\",\"base_url\":\"https://hosted.example/v1\",\"model\":\"replace-with-supported-model\",\"provider\":\"anthropic\",\"settings\":{}}},\"runtime\":{\"artifacts\":\"/sandbox/artifacts\"},\"schema_version\":\"fabric.agent/v1alpha1\"}"
+      },
+      "agent_writer": {
+        "depends_on": [
+          "data.openshell_gateway.apply"
+        ],
+        "input": "{\"environment\":{\"provider\":\"local\",\"workspace\":\"/sandbox/workspace\"},\"harness\":{\"adapter_id\":\"nvidia.fabric.openclaw\",\"settings\":{}},\"metadata\":{\"name\":\"writer\"},\"models\":{\"default\":{\"api_key_env\":\"NEMOCLAW_ANONYMOUS_API_KEY\",\"base_url\":\"http://172.20.0.1:11434/v1\",\"model\":\"qwen3:4b\",\"provider\":\"openai\",\"settings\":{}},\"fast\":{\"api_key_env\":\"NEMOCLAW_ANONYMOUS_API_KEY\",\"base_url\":\"http://172.20.0.1:11434/v1\",\"model\":\"qwen3:4b\",\"provider\":\"openai\",\"settings\":{}}},\"runtime\":{\"artifacts\":\"/sandbox/artifacts\"},\"schema_version\":\"fabric.agent/v1alpha1\"}"
+      }
     }
   },
   "terraform": {
@@ -258,8 +278,7 @@
       "openshell": {
         "source": "registry.opentofu.org/nvidia/openshell"
       }
-    },
-    "required_version": "= 1.12.6"
+    }
   },
   "variable": {
     "destroying": {

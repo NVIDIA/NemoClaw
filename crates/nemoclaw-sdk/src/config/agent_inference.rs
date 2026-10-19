@@ -28,6 +28,14 @@ pub struct RouteTuning {
     #[schemars(default, with = "u32", range(min = 1, max = 4294967295u32))]
     /// Maximum output tokens requested from the native adapter.
     pub max_tokens: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "f64")]
+    /// Sampling temperature, passed to Fabric's temperature; Fabric validates the range.
+    pub temperature: Option<serde_json::Number>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "f64")]
+    /// Nucleus sampling probability, passed to Fabric's top_p; Fabric validates the range.
+    pub top_p: Option<serde_json::Number>,
 }
 impl RouteTuning {
     pub fn validate(&self) -> Result<(), ConfigError> {

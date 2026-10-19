@@ -3,10 +3,7 @@
 
 # Hermes Image Source
 
-Hermes Agent source is pinned to `29112bef099274229cadff79cdff7bf7b99c4b77` from [NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent).
+Hermes Agent source is pinned to release [v2026.9.24](https://github.com/NousResearch/hermes-agent/releases/tag/v2026.9.24) (`f97608f178d1ffeca59860195ab7da295f7c8e5f`) from [NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent).
+Its dependencies come from that release's own `uv.lock`.
 Its upstream license and notices remain in `/opt/hermes` and the retained source archive.
-
-2026-09-28: apply the unmodified `adapters/python/hermes/metadata-propagate.patch` from NeMo Fabric `24f068c895e5cbc30286bc743498be4e5014d658`, matching Fabric's `install-hermes-agent` recipe.
-The patch forwards OpenAI request metadata into Hermes Relay turn metadata.
-The retained Fabric source archive includes the exact patch and its upstream notices.
-Remove this patch step when the pinned Hermes source includes the behavior, as directed by Fabric's recipe.
+NemoClaw installs the source unmodified.

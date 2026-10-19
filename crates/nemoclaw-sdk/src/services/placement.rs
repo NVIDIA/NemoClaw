@@ -121,7 +121,8 @@ impl ServicePlacement {
 
 impl ServicePublication {
     fn validate(&self, network: &ipnet::Ipv4Net, port: i64) -> Result<(), ConfigError> {
-        crate::config::validate_endpoint(&self.endpoint, false)?;
+        // Sandboxes reach the published endpoint; OpenShell checks it.
+        crate::config::validate_endpoint_url(&self.endpoint)?;
         let endpoint = url::Url::parse(&self.endpoint)
             .map_err(|_| ConfigError::new("invalid service publication"))?;
         let bind_address: std::net::Ipv4Addr = self

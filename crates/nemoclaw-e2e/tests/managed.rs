@@ -25,7 +25,7 @@ fn provider_refreshes_retained_storage_without_changes() {
         2,
         "requires the two retained storage resources"
     );
-    let directory = TofuWorkspace::new(&bundle, bundle.provider("nemoclaw"));
+    let directory = TofuWorkspace::new(&bundle);
     let mut graph = json!({"terraform":{"required_providers":{
         "openshell":{"source":"registry.opentofu.org/nvidia/openshell","version":"0.1.0"},
         "vllm":{"source":"registry.opentofu.org/nvidia/vllm","version":"0.1.0"}

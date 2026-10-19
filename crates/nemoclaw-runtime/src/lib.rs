@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /// Increment when the serialized runtime contract changes incompatibly.
 pub const SPEC_VERSION: &str = "v1";
-pub const SPEC_VERSION_LABEL: &str = "org.nemoclaw.runtime.spec";
 pub mod config;
 mod error;
 pub use error::Error;
@@ -23,6 +22,10 @@ mod execution;
 mod http_fixture;
 #[cfg(all(feature = "execution", target_os = "linux"))]
 pub use execution::run;
+
+/// The launch environment variable holding a user-supplied API key for an
+/// authenticated server. When set, the runtime uses it instead of generating one.
+pub const INFERENCE_KEY_ENV: &str = "NEMOCLAW_INFERENCE_KEY";
 #[derive(
     Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
 )]

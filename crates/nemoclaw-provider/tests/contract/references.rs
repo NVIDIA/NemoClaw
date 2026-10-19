@@ -14,7 +14,7 @@ struct References {
 impl References {
     fn new() -> Self {
         let this = Self {
-            dir: TofuWorkspace::new(
+            dir: TofuWorkspace::with_fixture(
                 &nemoclaw_test_fixtures::Bundle::from_env(),
                 nemoclaw_test_fixtures::fixture_executable("nemoclaw-fixture-provider"),
             ),
@@ -26,7 +26,7 @@ impl References {
     /// workspace's `ref` unless a literal object is given).
     fn config(&self, label: &str, workspace: Option<Value>) {
         fs::write(self.dir.path().join("main.tf.json"), json!({
-            "terraform": {"required_version": "= 1.12.6", "required_providers": {"nemoclaw": {"source": "registry.opentofu.org/nvidia/nemoclaw"}}},
+            "terraform": {"required_providers": {"nemoclaw": {"source": "registry.opentofu.org/nvidia/nemoclaw"}}},
             "provider": {"nemoclaw": {}},
             "resource": {
                 "nemoclaw_workspace": {"team": {"name": "team", "label": label}},

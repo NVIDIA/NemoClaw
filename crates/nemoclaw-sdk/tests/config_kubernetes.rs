@@ -29,6 +29,42 @@ fn managed_document() -> Value {
 }
 
 #[test]
+fn image_pull_references_accept_only_unique_kubernetes_secret_names() {
+    let validator = jsonschema::validator_for(&schema::input_schema()).unwrap();
+    for invalid in [
+        json!([""]),
+        json!(["Uppercase"]),
+        json!(["registry/token"]),
+        json!(["registry..token"]),
+        json!(["-registry"]),
+        json!(["registry."]),
+        json!(["registry\n"]),
+        json!(["a".repeat(254)]),
+        json!(["registry", "registry"]),
+        json!([{"name": "registry", "password": "registry-password-sentinel"}]),
+        json!(null),
+    ] {
+        let mut input = managed_document();
+        input["spec"]["gateway"]["kubernetes"]["imagePullSecrets"] = invalid;
+        assert!(!validator.is_valid(&input));
+        let error = Document::parse(input.to_string().as_bytes()).unwrap_err();
+        assert!(error.to_string().contains("imagePullSecrets"));
+        assert!(!error.to_string().contains("registry-password-sentinel"));
+    }
+    let mut document = Document::parse(managed_document().to_string().as_bytes()).unwrap();
+    document
+        .spec
+        .gateway
+        .as_managed_mut()
+        .unwrap()
+        .kubernetes
+        .as_mut()
+        .unwrap()
+        .image_pull_secrets = vec!["registry..token".into()];
+    assert!(document.validate().is_err());
+}
+
+#[test]
 fn managed_kubernetes_preserves_explicit_target_and_has_no_local_engine_defaults() {
     {
         let input = managed_document();
@@ -82,7 +118,6 @@ fn a_managed_gateway_schema_still_states_its_local_defaults() {
         managed["properties"]["endpoint"]["default"],
         "http://127.0.0.1:17681"
     );
-    assert!(managed["properties"]["image"]["default"].is_string());
 }
 
 /// A kubeconfig's exec plugin, such as a cloud CLI, may need the caller's
@@ -244,7 +279,6 @@ fn managed_kubernetes_rejects_other_transports_targets_and_implicit_authenticati
         ("engine", json!("unix:///var/run/docker.sock")),
         ("engine", json!("")),
         ("networkCIDR", json!("172.30.1.0/24")),
-        ("image", json!(nemoclaw_sdk::config::DEFAULT_GATEWAY_IMAGE)),
         ("imagePullPolicy", json!("Never")),
         ("credential", json!({"env":"GATEWAY_TOKEN"})),
         (
@@ -534,9 +568,14 @@ fn a_reserved_reference_name_states_whether_the_reference_holds_a_secret_or_a_fi
     external["spec"]["inferenceProviders"][0]["endpoint"] = json!("https://inference.example/v1");
     external["spec"]["inferenceProviders"][0]["credential"] = json!({"env": "HOSTED_API_KEY"});
     external["spec"]["sandboxes"][0]["integrations"] = json!({
-        "search": {"kind": "webSearch", "provider": "brave", "credential": {"env": "SEARCH_KEY"}}
+        "search": {"kind": "webSearch", "provider": "brave", "credential": {"env": "SEARCH_KEY"}},
+        "bookings": {
+            "kind": "api",
+            "endpoint": "https://bookings.example.com/mcp",
+            "credential": {"env": "BOOKINGS_API_KEY"}
+        }
     });
-    external["spec"]["sandboxes"][0]["agent"]["integrationRefs"] = json!(["search"]);
+    external["spec"]["sandboxes"][0]["agent"]["integrationRefs"] = json!(["search", "bookings"]);
     Document::parse(external.to_string().as_bytes()).unwrap();
     for (mut input, pointer, path, rule) in [
         (
@@ -555,6 +594,12 @@ fn a_reserved_reference_name_states_whether_the_reference_holds_a_secret_or_a_fi
             external.clone(),
             "/spec/sandboxes/0/integrations/search/credential",
             "spec.sandboxes[0].integrations.search.credential.env",
+            secret,
+        ),
+        (
+            external.clone(),
+            "/spec/sandboxes/0/integrations/bookings/credential",
+            "spec.sandboxes[0].integrations.bookings.credential.env",
             secret,
         ),
         (
@@ -601,5 +646,100 @@ fn a_reserved_reference_name_states_whether_the_reference_holds_a_secret_or_a_fi
             .unwrap_err()
             .to_string();
         assert!(error.contains(rule), "{error}");
+    }
+}
+
+#[test]
+fn managed_kubernetes_endpoint_and_local_field_errors_state_the_target_rule() {
+    let rule = "managed Kubernetes requires an explicit HTTPS 127.0.0.1 endpoint with a nonzero port and excludes local engine settings";
+    let mut endpoint = managed_document();
+    endpoint["spec"]["gateway"]["endpoint"] = json!("http://127.0.0.1:17671");
+    let mut local = managed_document();
+    local["spec"]["gateway"]["networkCIDR"] = json!("172.30.1.0/24");
+    for (input, path) in [(endpoint, "spec.gateway.endpoint"), (local, "spec.gateway")] {
+        let error = schema_error(&input);
+        assert!(
+            error.contains(&format!("schema at {path} (line")) && error.contains(rule),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn a_reserved_kubernetes_environment_name_states_the_naming_rule() {
+    let mut input = managed_document();
+    input["spec"]["gateway"]["kubernetes"]["environment"] = json!(["AWS_PROFILE", "KUBECONFIG"]);
+    let error = schema_error(&input);
+    assert!(
+        error.contains("schema at spec.gateway.kubernetes.environment[1] (line")
+            && error.contains(
+                "Kubernetes environment names must be unique variable names that do not shadow process, trust, proxy, or cluster controls"
+            ),
+        "{error}"
+    );
+    assert!(!error.contains("KUBECONFIG"), "{error}");
+}
+
+#[test]
+fn managed_services_with_a_kubernetes_runtime_state_the_cluster_rule() {
+    let managed =
+        Document::parse(include_bytes!("fixtures/config/managed-ollama.yaml").as_slice()).unwrap();
+    let mut input = external_document();
+    input["spec"]["services"] = serde_json::to_value(managed.spec.services).unwrap();
+    let error = schema_error(&input);
+    assert!(
+        error.contains("schema at spec.services (line")
+            && error.contains(
+                "Kubernetes requires an external gateway or an explicit managed Kubernetes target, and external inference endpoints; managed services are not supported"
+            ),
+        "{error}"
+    );
+}
+
+#[test]
+fn an_oidc_profile_requires_its_issuer_and_development_takes_no_oidc_settings() {
+    let validator = jsonschema::validator_for(&schema::input_schema()).unwrap();
+    let oidc = json!({
+        "profile": "oidc",
+        "issuer": "https://login.example.com/realms/openshell",
+        "audience": "openshell",
+        "tokenEnv": "OPENSHELL_TOKEN"
+    });
+    let mut input = managed_document();
+    input["spec"]["gateway"]["kubernetes"]["authentication"] = oidc.clone();
+    let document =
+        Document::parse(input.to_string().as_bytes()).expect("a minimal oidc profile is valid");
+    assert_eq!(serde_json::to_value(&document).unwrap(), input);
+
+    let mut invalid: Vec<(&str, Value)> = Vec::new();
+    for field in ["issuer", "audience", "tokenEnv"] {
+        let mut missing = oidc.clone();
+        missing.as_object_mut().unwrap().remove(field);
+        invalid.push((field, missing));
+    }
+    for (field, value) in [
+        ("issuer", json!("http://login.example.com")),
+        ("issuer", json!("https://user:password@login.example.com")),
+        ("issuer", json!("https://login.example.com/?tenant=x")),
+        ("tokenEnv", json!("KUBECONFIG")),
+        ("tokenEnv", json!("lowercase")),
+        ("caConfigMap", json!("Issuer_CA")),
+        ("adminRole", json!("openshell-admins")),
+    ] {
+        let mut changed = oidc.clone();
+        changed[field] = value;
+        invalid.push((field, changed));
+    }
+    let mut development = json!({"profile": "development"});
+    development["issuer"] = oidc["issuer"].clone();
+    invalid.push(("development", development));
+    for (field, authentication) in invalid {
+        let mut input = managed_document();
+        input["spec"]["gateway"]["kubernetes"]["authentication"] = authentication;
+        assert!(!validator.is_valid(&input), "accepted invalid {field}");
+        assert!(
+            Document::parse(input.to_string().as_bytes()).is_err(),
+            "parsed invalid {field}"
+        );
     }
 }

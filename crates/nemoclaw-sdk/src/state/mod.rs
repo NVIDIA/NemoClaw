@@ -9,7 +9,7 @@ pub(crate) use observations::parse_resources;
 use crate::{Error, compile::Generations, config::Document};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs::{self, File, OpenOptions},
     io::ErrorKind,
     path::{Path, PathBuf},
@@ -22,8 +22,6 @@ pub(crate) struct Record {
     pub document: Document,
     pub generations: Generations,
     pending: bool,
-    #[serde(skip_serializing_if = "is_false")]
-    runtime_pending: bool,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pending_creations: BTreeMap<String, crate::backend::Row>,
     succeeded: bool,
@@ -32,8 +30,6 @@ pub(crate) struct Record {
     destroying: bool,
     #[serde(skip_serializing_if = "is_false")]
     destroyed: bool,
-    #[serde(skip_serializing_if = "is_false")]
-    destroy_runtime: bool,
 }
 fn is_false(value: &bool) -> bool {
     !*value
@@ -100,7 +96,7 @@ impl Record {
         let mut generations = Generations::new();
         allocate_missing_generation_values(&mut generations, &document)?;
         Ok(Self {
-            version: 13,
+            version: 15,
             digest: document.digest(),
             document,
             generations,
@@ -108,7 +104,7 @@ impl Record {
         })
     }
     pub fn reconcile_pending_creations(&mut self, bindings: &BTreeMap<String, StateBinding>) {
-        if !self.pending || self.runtime_pending {
+        if !self.pending {
             return;
         }
         self.pending_creations.retain(|address, desired| {
@@ -142,16 +138,7 @@ impl Record {
         // validated plan must still verify live ownership before any mutation.
     }
     pub fn validate_pending_intent(&self, document: &Document) -> Result<(), Error> {
-        if self.pending
-            && self.runtime_pending
-            && self.document.spec.gateway.as_kubernetes().is_some()
-            && self.digest != document.digest()
-        {
-            return Err(Error::Conflict(
-                "unfinished Kubernetes platform apply requires its original configuration and state for recovery",
-            ));
-        }
-        if !self.pending || self.runtime_pending {
+        if !self.pending {
             return Ok(());
         }
         let targets = crate::compile::targets(document, &self.generations)?;
@@ -164,40 +151,6 @@ impl Record {
                 "unfinished creation requires its original resource configuration; retain the pending resource while revising unrelated intent",
             ));
         }
-        Ok(())
-    }
-    pub fn validate_bound_sandboxes(
-        &self,
-        document: &Document,
-        bindings: &BTreeMap<String, StateBinding>,
-    ) -> Result<(), Error> {
-        if !bindings
-            .keys()
-            .any(|address| address.starts_with("openshell_sandbox."))
-        {
-            return Ok(());
-        }
-        let before = crate::compile::targets(&self.document, &self.generations)?;
-        let after = crate::compile::targets(document, &self.generations)?;
-        for prior in before
-            .iter()
-            .filter(|target| target.kind == "sandbox" && bindings.contains_key(&target.address))
-        {
-            let next = after.iter().find(|target| target.address == prior.address);
-            // Every compiled sandbox attribute is immutable. Model and adapter
-            // settings live in the separate agent-configuration target.
-            let action = match next {
-                None => "remove",
-                Some(next) if next.values != prior.values => "replace",
-                _ => continue,
-            };
-            return Err(Error::SandboxChangeRefused {
-                sandbox: prior.values["name"].clone(),
-                action,
-            });
-        }
-        // This only rejects authored changes before runtime reconciliation.
-        // Provider refresh and plan still own live identity and drift checks.
         Ok(())
     }
     pub fn begin_apply(
@@ -217,25 +170,30 @@ impl Record {
             self.pending_creations.entry(address).or_insert(desired);
         }
         self.pending = true;
-        self.runtime_pending = false;
     }
     pub fn finish_apply(&mut self) {
         self.pending = false;
-        self.runtime_pending = false;
         self.pending_creations.clear();
     }
-    pub fn begin_runtime_apply(&mut self, document: &Document) {
-        self.prepare_apply(document);
-        // Runtime recovery must not clear an earlier ambiguous OpenShell mutation.
-        if !self.pending {
-            self.pending = true;
-            self.runtime_pending = true;
-        }
+
+    /// The creations whose resource bindings are not yet known.
+    pub fn pending_creation_addresses(&self) -> BTreeSet<String> {
+        self.pending_creations.keys().cloned().collect()
     }
-    pub fn finish_runtime_apply(&mut self) {
-        if self.runtime_pending {
-            self.pending = false;
-            self.runtime_pending = false;
+
+    /// After a failed apply, forget the creations it added that OpenTofu never
+    /// started: a failure stops OpenTofu before resources that depend on what
+    /// failed. Creations an earlier apply left unresolved stay until bindings
+    /// resolve them.
+    pub fn forget_unstarted_creations(
+        &mut self,
+        earlier: &BTreeSet<String>,
+        started: &BTreeSet<String>,
+    ) {
+        self.pending_creations
+            .retain(|address, _| earlier.contains(address) || started.contains(address));
+        if self.pending_creations.is_empty() {
+            self.finish_apply();
         }
     }
     // Keep the authored intent and recovery flags at the same checkpoint.
@@ -244,7 +202,6 @@ impl Record {
         self.digest = document.digest();
         self.succeeded = false;
         self.destroyed = false;
-        self.destroy_runtime = false;
     }
 
     // Durable mutations settle before health observations establish success.
@@ -252,15 +209,11 @@ impl Record {
         self.succeeded = true;
     }
 
-    // Call only after both teardown plans account for the saved identities.
+    // Call only after the teardown plan accounts for the saved identities.
     pub fn begin_destroy(&mut self) {
         self.destroying = true;
         self.pending = false;
         self.succeeded = false;
-    }
-
-    pub fn finish_root_destroy(&mut self) {
-        self.destroy_runtime = true;
     }
 
     pub fn finish_destroy(&mut self) {
@@ -272,9 +225,6 @@ impl Record {
     pub fn pending(&self) -> bool {
         self.pending
     }
-    pub fn runtime_pending(&self) -> bool {
-        self.runtime_pending
-    }
     pub fn succeeded(&self) -> bool {
         self.succeeded
     }
@@ -284,13 +234,10 @@ impl Record {
     pub fn destroyed(&self) -> bool {
         self.destroyed
     }
-    pub fn root_destroyed(&self) -> bool {
-        self.destroy_runtime
-    }
     fn validate(&self) -> Result<(), Error> {
-        if self.version != 13 {
+        if self.version != 15 {
             return Err(Error::State(
-                "deployment predates the ollama_model data source; retain state and use the original NemoClaw version for recovery or teardown",
+                "deployment predates openshell_inference; retain state and use the original NemoClaw version for recovery or teardown",
             ));
         }
         let generations_valid = required_generation_kinds(&self.document).is_ok_and(|kinds| {
@@ -303,8 +250,7 @@ impl Record {
                     .all(|(kind, value)| supported_generation_kind(kind) && valid_generation(value))
         });
         let has_pending_creations = !self.pending_creations.is_empty();
-        if has_pending_creations != (self.pending && !self.runtime_pending)
-            || (self.runtime_pending && !self.document.has_runtime())
+        if has_pending_creations != self.pending
             || self.validate_pending_intent(&self.document).is_err()
         {
             return Err(Error::State("pending resource recovery intent is invalid"));

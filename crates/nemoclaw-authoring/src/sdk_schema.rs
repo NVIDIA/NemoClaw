@@ -6,7 +6,7 @@
 use std::sync::OnceLock;
 
 use crate::fingerprint::sha256;
-use nemoclaw_sdk::config::schema::input_schema;
+use nemoclaw_sdk::config::schema::{input_schema, select_variant};
 use nemoclaw_sdk::json_schema::schema_accepts;
 use serde_json::{Value, json};
 
@@ -88,7 +88,10 @@ pub(crate) fn sdk_schema_identity() -> String {
 }
 
 pub(crate) fn sdk_field_schema_for(values: &Value, path: &str) -> Option<(Value, bool)> {
-    let root = schema_root();
+    field_schema_in(schema_root(), values, path)
+}
+
+fn field_schema_in(root: &Value, values: &Value, path: &str) -> Option<(Value, bool)> {
     let mut node = root;
     let mut required = false;
     let mut current_path = String::new();
@@ -108,6 +111,17 @@ pub(crate) fn sdk_field_schema_for(values: &Value, path: &str) -> Option<(Value,
                 return Some((field, true));
             }
             node = sdk_selected_branch(node, values.pointer(&current_path)?)?;
+        } else if node
+            .get("properties")
+            .and_then(|properties| properties.get(&name))
+            .is_none()
+            && let Some(branch) = values
+                .pointer(&current_path)
+                .and_then(|value| sdk_selected_branch(node, value))
+        {
+            // A sparse value can still name its branch, such as the single key
+            // of an externally tagged object, before that branch is complete.
+            node = branch;
         }
         if node
             .get("properties")
@@ -284,10 +298,16 @@ pub(crate) fn sdk_exclusive_required_fields(schema: &Value) -> Option<Vec<String
     found.next().is_none().then_some(fields)
 }
 
+/// The `oneOf` branch that the supplied value selects: by its discriminator
+/// constant, or otherwise as SDK schema diagnostics select one, such as the
+/// single key of an externally tagged object.
 pub(crate) fn sdk_selected_branch<'a>(schema: &'a Value, supplied: &Value) -> Option<&'a Value> {
-    let (discriminator, _) = sdk_discriminator(schema)?;
+    let branches = schema.get("oneOf")?.as_array()?;
+    let Some((discriminator, _)) = sdk_discriminator(schema) else {
+        return branches.get(select_variant(branches, supplied)?);
+    };
     let selected = supplied.get(&discriminator)?;
-    schema.get("oneOf")?.as_array()?.iter().find(|branch| {
+    branches.iter().find(|branch| {
         branch
             .get("properties")
             .and_then(|properties| properties.get(&discriminator))
@@ -344,4 +364,45 @@ fn follow_ref<'a>(root: &'a Value, mut node: &'a Value) -> Option<&'a Value> {
         node = root.pointer(reference.strip_prefix('#')?)?;
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn keyed(key: &str, schema: Value) -> Value {
+        json!({"type": "object", "properties": {key: schema}, "required": [key], "additionalProperties": false})
+    }
+
+    #[test]
+    fn a_field_inside_the_supplied_keyed_variant_has_that_variant_schema() {
+        let root = json!({
+            "type": "object",
+            "properties": {"target": {"$ref": "#/$defs/Target"}},
+            "$defs": {
+                "Target": {"oneOf": [
+                    keyed("docker", json!({"$ref": "#/$defs/Docker"})),
+                    keyed("podman", json!({"$ref": "#/$defs/Podman"})),
+                ]},
+                "Docker": {
+                    "type": "object",
+                    "properties": {"engine": {"type": "string"}},
+                    "additionalProperties": false
+                },
+                "Podman": {
+                    "type": "object",
+                    "properties": {"engine": {"type": "string", "minLength": 1}},
+                    "required": ["engine"],
+                    "additionalProperties": false
+                }
+            }
+        });
+        let values = json!({"target": {"podman": {}}});
+        let (schema, required) = field_schema_in(&root, &values, "/target/podman/engine").unwrap();
+        assert_eq!(schema["minLength"], 1);
+        assert!(required);
+        // Another variant's fields do not apply while the input names this one.
+        let values = json!({"target": {"docker": {}}});
+        assert!(field_schema_in(&root, &values, "/target/podman/engine").is_none());
+    }
 }

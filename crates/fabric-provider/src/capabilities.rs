@@ -238,7 +238,7 @@ impl DataSource for FabricCapabilitiesDataSource {
                         adapter_id: adapter_id.into(),
                     };
                     config.runtime_json = Value::Value(serde_json::to_string(&binding).ok()?);
-                    // The configured agent's name selects what the bridge serves.
+                    // The agent's name is recorded in the launch for the provider.
                     let agent = requirements.configuration["metadata"]["name"]
                         .as_str()
                         .unwrap_or("");
@@ -446,7 +446,7 @@ impl DataSource for FabricHarnessDataSource {
         if matches!(&config.launch_json, Value::Value(launch) if launch.is_empty()) {
             diags.root_error(
                 "Harness unavailable",
-                "The image declares no runtime for this adapter; select an image that installs it",
+                "The image's io.nemoclaw.fabric.catalog label declares no runtime for this adapter. Select an image that installs it; an image derived from a NemoClaw agent image must keep its base image's labels.",
             );
             return None;
         }
@@ -521,31 +521,16 @@ mod tests {
     }
     #[cfg(unix)]
     #[tokio::test]
-    async fn selected_image_checks_fabric_plan_platform_and_missing_metadata_without_starting_containers()
+    async fn selected_image_checks_the_adapter_platform_and_missing_metadata_without_starting_containers()
      {
-        use nemoclaw_fabric::catalog::{BridgeCapabilities, FabricCatalog, IMAGE_CATALOG_LABEL};
+        use nemoclaw_fabric::catalog::{FabricCatalog, IMAGE_CATALOG_LABEL};
         let mut catalog = FabricCatalog::bundled();
-        catalog.bridge = Some(BridgeCapabilities {
-            interface_version: 1,
-            operations: [
-                "validate",
-                "prepare",
-                "configure",
-                "check",
-                "invoke",
-                "serve",
-            ]
-            .into_iter()
-            .map(String::from)
-            .collect(),
-            health_checks: Vec::new(),
-        });
         catalog
             .adapters
             .retain(|adapter| adapter.adapter_id() == "nvidia.fabric.langchain.deepagents");
         let mut runtime: serde_json::Value =
             serde_json::from_str(include_str!("../../../image/fabric/runtime.json")).unwrap();
-        runtime["command"] = serde_json::json!(["/srv/python3.99", "-I", "/srv/bridge.py"]);
+        runtime["command"] = serde_json::json!(["/srv/fabric-agent-ctl"]);
         runtime["binaries"] = serde_json::json!({"nvidia.fabric.langchain.deepagents":["/srv/python3.99","/srv/bun"]});
         catalog.runtime = Some(serde_json::from_value(runtime).unwrap());
         let label = serde_json::to_string(&catalog).unwrap();
@@ -567,11 +552,12 @@ mod tests {
                 digest.as_str(),
                 "supported",
             ),
+            // Settings are Fabric's to check, when the agent is configured.
             (
                 serde_json::json!({"unknown_setting":true}),
                 "aarch64",
                 digest.as_str(),
-                "unsupported",
+                "supported",
             ),
             (
                 serde_json::json!({}),
@@ -608,7 +594,7 @@ mod tests {
                 .unwrap();
                 assert_eq!(
                     retained.command("status", &[]),
-                    ["/srv/python3.99", "-I", "/srv/bridge.py", "status"]
+                    ["/srv/fabric-agent-ctl", "status"]
                 );
                 assert_eq!(
                     serde_json::from_str::<Vec<String>>(known(&output.binaries_json).unwrap())
@@ -640,26 +626,6 @@ mod tests {
 
     #[test]
     fn requirements_are_the_configuration_and_the_policy_reads_as_separate_inputs() {
-        let schema = FabricCapabilitiesDataSource::default()
-            .schema(&mut Diagnostics::default())
-            .unwrap();
-        let attribute = |name: &str| {
-            schema
-                .block
-                .attributes
-                .get(name)
-                .map(|a| (format!("{:?}", a.attr_type), format!("{:?}", a.constraint)))
-        };
-        assert!(!schema.block.attributes.contains_key("requirements_json"));
-        assert_eq!(
-            attribute("config_json"),
-            Some(("String".into(), "Optional".into()))
-        );
-        assert_eq!(
-            attribute("filesystem_read"),
-            Some(("List(String)".into(), "Optional".into()))
-        );
-
         let mut config = fabric_config();
         config.config_json = Value::Value(r#"{"harness":{"adapter_id":"a"}}"#.into());
         config.filesystem_read = Value::Value(vec![Value::Value("/srv".into())]);
@@ -678,34 +644,52 @@ mod tests {
         assert!(requirements(&config).is_err(), "an adapter_id is required");
     }
 
+    // An image without NemoClaw's catalog label, such as a derived image that
+    // dropped its base's labels, fails with an error naming the label.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_image_without_the_catalog_label_names_it() {
+        let digest = format!("registry/agent@sha256:{}", "b".repeat(64));
+        let served = digest.clone();
+        let fixture = crate::fixture::Fixture::start(move |_| {
+            let image = serde_json::json!({"Id":"sha256:config", "Architecture":"arm64", "Os":"linux", "RepoDigests":[served], "Config":{"Labels":{}}});
+            Some((200, serde_json::to_vec(&image).unwrap()))
+        })
+        .await;
+        let source = FabricHarnessDataSource::default();
+        let mut diagnostics = Diagnostics::default();
+        let output = source
+            .read(
+                &mut diagnostics,
+                FabricHarnessState {
+                    engine: Value::Value(fixture.endpoint.clone()),
+                    image: Value::Value(digest.clone()),
+                    adapter_id: Value::Value("nvidia.fabric.pi".into()),
+                    agent_name: Value::Value("travel".into()),
+                    ..Default::default()
+                },
+                ValueEmpty::default(),
+            )
+            .await;
+        assert!(output.is_none());
+        let errors = format!("{diagnostics:?}");
+        assert!(errors.contains("io.nemoclaw.fabric.catalog"), "{errors}");
+        assert!(errors.contains("keep its base image's labels"), "{errors}");
+    }
+
     // The fake engine listens on a Unix socket, as the test above.
     #[cfg(unix)]
     #[tokio::test]
     async fn a_harness_selects_one_adapter_and_launches_the_named_agent() {
-        use nemoclaw_fabric::catalog::{BridgeCapabilities, FabricCatalog, IMAGE_CATALOG_LABEL};
+        use nemoclaw_fabric::catalog::{FabricCatalog, IMAGE_CATALOG_LABEL};
         let mut catalog = FabricCatalog::bundled();
-        catalog.bridge = Some(BridgeCapabilities {
-            interface_version: 1,
-            operations: [
-                "validate",
-                "prepare",
-                "configure",
-                "check",
-                "invoke",
-                "serve",
-            ]
-            .into_iter()
-            .map(String::from)
-            .collect(),
-            health_checks: Vec::new(),
-        });
         // The image runtime lists executables for every adapter it installs.
         catalog
             .adapters
             .retain(|adapter| adapter.adapter_id() == "nvidia.fabric.pi");
         let mut runtime: serde_json::Value =
             serde_json::from_str(include_str!("../../../image/fabric/runtime.json")).unwrap();
-        runtime["command"] = serde_json::json!(["/srv/python3.99", "-I", "/srv/bridge.py"]);
+        runtime["command"] = serde_json::json!(["/srv/fabric-agent-ctl"]);
         runtime["binaries"] = serde_json::json!({"nvidia.fabric.pi":["/srv/python3.99","/srv/pi"]});
         catalog.runtime = Some(serde_json::from_value(runtime).unwrap());
         let label = serde_json::to_string(&catalog).unwrap();
@@ -737,17 +721,7 @@ mod tests {
         let launch =
             nemoclaw_openshell::runtime::Launch::from_json(known(&output.launch_json).unwrap())
                 .unwrap();
-        assert_eq!(
-            launch.command,
-            [
-                "/srv/python3.99",
-                "-I",
-                "/srv/bridge.py",
-                "serve",
-                "--agent",
-                "travel"
-            ]
-        );
+        assert_eq!(launch.command, ["/srv/fabric-agent-ctl", "serve"]);
         assert_eq!(launch.binaries, ["/srv/python3.99", "/srv/pi"]);
         let Value::Value(reference) = &output.reference else {
             panic!("the harness has a ref")

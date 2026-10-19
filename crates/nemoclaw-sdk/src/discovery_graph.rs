@@ -166,7 +166,7 @@ pub(crate) fn populate(graph: &mut Value, document: &Document) -> Result<(), Con
                         "error_message": if metadata_env.is_some() || document.spec.gateway.runtime().provider.is_kubernetes() {
                             format!("sandbox/{}: image runtime metadata is unavailable. Set image.metadata.env to an absolute metadata bundle path and verify that it matches the immutable image digest. Resources retained.", sandbox.name)
                         } else {
-                            format!("sandbox/{}: image runtime metadata is unavailable. Set spec.gateway.engine to the sandbox image engine, load an image built with its runtime manifest, and use its immutable digest. Resources retained.", sandbox.name)
+                            format!("sandbox/{}: image runtime metadata is unavailable. Set spec.gateway.engine to the sandbox image engine, and use an image built with its runtime manifest, its io.nemoclaw.fabric.catalog label, by its immutable digest; a derived image must keep its base image's labels. Resources retained.", sandbox.name)
                         }
                     }] });
                 })?;

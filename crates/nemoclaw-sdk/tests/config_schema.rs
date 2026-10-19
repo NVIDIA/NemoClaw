@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 use crate::examples;
 
-use nemoclaw_sdk::config::{Document, schema::input_schema};
+use nemoclaw_sdk::config::{DEFAULT_GATEWAY_IMAGE, Document, schema::input_schema};
 use serde_json::{Value, json};
 
 fn input(name: &str) -> Value {
@@ -132,10 +132,10 @@ fn input_schema_rejects_missing_required_fields_and_structural_nulls() {
 }
 
 #[test]
-fn input_schema_preserves_defaults_strict_objects_and_opaque_pi_metadata() {
+fn input_schema_preserves_defaults_strict_objects_and_opaque_route_settings() {
     let validator = jsonschema::validator_for(&input_schema()).unwrap();
     let mut value = input("spark/spark-inline.yaml");
-    for key in ["endpoint", "engine", "image", "networkCIDR"] {
+    for key in ["endpoint", "engine", "networkCIDR"] {
         value["spec"]["gateway"]
             .as_object_mut()
             .unwrap()
@@ -157,6 +157,9 @@ fn input_schema_preserves_defaults_strict_objects_and_opaque_pi_metadata() {
     value["spec"]["gateway"]["surprise"] = json!(true);
     agrees(&validator, &value, false);
     let mut value = input("fabric-pi.yaml");
+    value
+        .pointer_mut("/spec/sandboxes/0/agent/inference/routes/0/overrides")
+        .unwrap()["settings"] = json!({});
     let path = "/spec/sandboxes/0/agent/inference/routes/0/overrides/settings";
     *value.pointer_mut(path).unwrap() = json!({"future": [null, {"value": null}]});
     agrees(&validator, &value, true);
@@ -412,13 +415,19 @@ fn documented_parser_checks_remain_required_after_schema_validation() {
 }
 
 #[test]
-fn example_discovery_includes_nested_yaml_and_excludes_other_files() {
+fn example_discovery_includes_nested_yaml_and_yml_and_excludes_other_files() {
     let root = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(root.path().join("nested/deeper")).unwrap();
-    let expected: std::collections::BTreeSet<_> =
-        ["top.yaml", "nested/child.yaml", "nested/deeper/leaf.yaml"]
-            .map(|name| root.path().join(name))
-            .into();
+    let expected: std::collections::BTreeSet<_> = [
+        "top.yaml",
+        "top.yml",
+        "nested/child.yaml",
+        "nested/child.yml",
+        "nested/deeper/leaf.yaml",
+        "nested/deeper/leaf.yml",
+    ]
+    .map(|name| root.path().join(name))
+    .into();
     for path in &expected {
         std::fs::write(path, "name: fixture\n").unwrap();
     }
@@ -449,7 +458,6 @@ fn every_sandbox_requires_one_agent() {
 fn gateway_variants_reject_fields_owned_by_the_other_mode() {
     let validator = jsonschema::validator_for(&input_schema()).unwrap();
     for (field, value) in [
-        ("image", json!("")),
         ("networkCIDR", json!("")),
         ("imagePullPolicy", json!("Never")),
     ] {
@@ -467,6 +475,38 @@ fn gateway_variants_reject_fields_owned_by_the_other_mode() {
         let mut managed = input("spark/spark-inline.yaml");
         managed["spec"]["gateway"][field] = value;
         agrees(&validator, &managed, false);
+    }
+}
+
+/// The SDK owns the gateway image pin, so editors and generated references
+/// never offer a digest that a later SDK would reject.
+#[test]
+fn the_input_schema_names_no_gateway_image_pin() {
+    assert!(!input_schema().to_string().contains(DEFAULT_GATEWAY_IMAGE));
+}
+
+#[test]
+fn a_gateway_image_is_rejected_as_an_unknown_field() {
+    let validator = jsonschema::validator_for(&input_schema()).unwrap();
+    for (file, image) in [
+        ("spark/vllm.yaml", json!(DEFAULT_GATEWAY_IMAGE)),
+        ("managed-podman.yaml", json!("")),
+        (
+            "kubernetes/managed-development.yaml",
+            json!(DEFAULT_GATEWAY_IMAGE),
+        ),
+        ("local.yaml", json!("")),
+    ] {
+        let mut value = input(file);
+        value["spec"]["gateway"]["image"] = image;
+        agrees_at(&validator, &value, false, file, "/spec/gateway/image");
+        let error = Document::parse(value.to_string().as_bytes())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("at spec.gateway") && error.ends_with("unknown fields are not allowed"),
+            "{file}: {error}"
+        );
     }
 }
 
@@ -508,6 +548,14 @@ fn managed_podman_requires_an_explicit_engine() {
 
     value["spec"]["gateway"]["engine"] = json!("");
     agrees(&validator, &value, false);
+    let error = Document::parse(value.to_string().as_bytes())
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("schema at spec.gateway.engine (line")
+            && error.contains("Podman requires spec.gateway.engine"),
+        "{error}"
+    );
 }
 
 #[test]

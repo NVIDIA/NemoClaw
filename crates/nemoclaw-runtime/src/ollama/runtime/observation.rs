@@ -11,7 +11,7 @@ use serde::Deserialize;
 use serde_json::json;
 use std::time::Duration;
 
-async fn response(mut response: reqwest::Response) -> Result<Vec<u8>, Error> {
+pub(super) async fn response(mut response: reqwest::Response) -> Result<Vec<u8>, Error> {
     if response.status() != reqwest::StatusCode::OK {
         return Err(Error::State("Ollama observation was rejected"));
     }

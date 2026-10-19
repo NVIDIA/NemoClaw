@@ -1,9 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 terraform {
-  required_version = "= 1.12.6"
   required_providers {
-    nemoclaw = { source = "registry.opentofu.org/nvidia/nemoclaw", version = "@PROVIDER_VERSION@" }
     openshell = { source = "registry.opentofu.org/nvidia/openshell", version = "@PROVIDER_VERSION@" }
     docker = { source = "registry.opentofu.org/kreuzwerker/docker", version = "4.6.0" }
   }
@@ -13,7 +11,6 @@ variable "owner" { type = string }
 variable "port" { type = number }
 variable "subnet" { type = string }
 provider "docker" { host = "@ENGINE@" }
-provider "nemoclaw" {}
 provider "openshell" {}
 data "docker_image" "gateway" { name = "@GATEWAY_IMAGE@" }
 resource "openshell_gateway_storage" "gateway" {

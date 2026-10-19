@@ -120,8 +120,7 @@ mod tests {
         };
 
         let document =
-            Document::parse(include_bytes!("../../../examples/openclaw-dashboard.yaml").as_slice())
-                .unwrap();
+            Document::parse(include_bytes!("../../../examples/openclaw.yaml").as_slice()).unwrap();
         let nemoclaw_sdk::config::Gateway::External(gateway) = &document.spec.gateway else {
             panic!("the walkthrough uses an operator-owned gateway");
         };

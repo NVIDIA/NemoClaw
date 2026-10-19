@@ -7,8 +7,11 @@ inputs:
     description: Bundle platform.
     required: true
   cache-prefix:
+    # Bump a prefix's version to discard caches whose artifacts every build
+    # would recompile; v3 and native-bundle-v2 drop artifacts that ring rebuilt
+    # when `cargo ci` passed `cargo run`'s CARGO_MANIFEST_DIR to Cargo.
     description: Separate dependency caches for distinct build jobs.
-    default: native-deps-v2
+    default: native-deps-v3
   save-cache:
     description: Write Rust dependencies on v1; live jobs only restore the native cache.
     default: "true"

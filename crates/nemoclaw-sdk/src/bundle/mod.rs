@@ -235,13 +235,6 @@ pub fn required_files(version: &str) -> Result<Vec<String>, Error> {
         format!("libexec/{}", executable("tofu")),
         format!(
             "providers/{}/{}/{}/{}",
-            crate::compile::PROVIDER_ADDRESS,
-            version,
-            platform()?,
-            executable(&format!("terraform-provider-nemoclaw_v{version}"))
-        ),
-        format!(
-            "providers/{}/{}/{}/{}",
             crate::compile::OPENSHELL_PROVIDER_ADDRESS,
             version,
             platform()?,

@@ -34,11 +34,17 @@ async fn shared_service_preserves_consumers_and_export_reapply() {
 
     let original = document.clone();
     document.spec.sandboxes.remove(0);
-    let error = deployment.apply(&document, &cancel).await.unwrap_err();
-    assert!(
-        matches!(error, nemoclaw_sdk::Error::SandboxChangeRefused { sandbox, action: "remove" } if sandbox == "assistant-0")
-    );
+    // Removing a consumer deletes only its sandbox; the shared service and the
+    // other consumer are untouched.
+    deployment.apply(&document, &cancel).await.unwrap();
+    scenario.assert_agent_absent("assistant-0");
+    assert_eq!(scenario.agent_identity("assistant-1"), survivor);
+    assert_eq!(scenario.service_identity(&document), service);
+    scenario.assert_agent_service_access("assistant-1");
+    scenario.assert_agent_responds("assistant-1");
+    // Adding it back creates a new sandbox for it.
     document = original;
+    deployment.apply(&document, &cancel).await.unwrap();
     scenario.assert_agent_service_access("assistant-0");
     scenario.assert_agent_responds("assistant-0");
     assert_eq!(scenario.agent_identity("assistant-1"), survivor);

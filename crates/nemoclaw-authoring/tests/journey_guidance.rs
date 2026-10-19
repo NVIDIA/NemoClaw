@@ -299,7 +299,7 @@ fn missing_adapter_schema_keeps_independent_deployment_questions_available() {
         .unwrap();
 
     let resolution = state.resolve(&capabilities).unwrap();
-    assert!(resolution.question("/spec/gateway/image").is_some());
+    assert!(resolution.question("/spec/gateway/engine").is_some());
     assert!(
         resolution
             .unverified()

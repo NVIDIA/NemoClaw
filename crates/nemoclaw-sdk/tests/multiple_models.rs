@@ -38,7 +38,7 @@ fn multiple_models_preserve_named_choices_and_each_agents_default() {
         .map(|key| (key.into(), "a".repeat(32)))
         .into();
     let rows = targets(&doc, &generations).unwrap();
-    assert_eq!(rows.iter().filter(|row| row.kind == "provider").count(), 1);
+    assert_eq!(rows.iter().filter(|row| row.kind == "inference").count(), 1);
     let runtime: Value = nemoclaw_fabric::agent::compose(
         &rows.iter().find(|row| row.kind == "agent").unwrap().values,
     )
@@ -121,7 +121,7 @@ fn pi_choices_preserve_native_metadata_and_provider_credentials() {
         format!(
             "NEMOCLAW_INFERENCE_{}_KEY",
             rows.iter()
-                .find(|row| row.kind == "provider" && row.values["name"].starts_with("hosted-"))
+                .find(|row| row.kind == "inference" && row.values["name"].starts_with("hosted-"))
                 .unwrap()
                 .values["name"]
                 .replace('-', "_")

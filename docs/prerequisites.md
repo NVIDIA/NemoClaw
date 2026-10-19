@@ -31,12 +31,13 @@ Prepare these inputs before running apply:
 - An authenticated OpenShell CLI for native access, configured for the same gateway and the deployment's workspace.
 - A fresh deployment UUID, a separate state directory, and resources you control.
 
-Use OpenShell **0.1.3** for the gateway and native CLI.
-The client, gateway, and supervisor are pinned to commit `e1f3c82caa3ed3b65de22889ae7ef32a774878ef`, the v0.1.3 release.
+Use OpenShell **0.1.4** for the gateway and native CLI.
+The client, gateway, and supervisor are pinned to commit `5a7728c304b5528e954e9ae900cf21f84e1a12b1`, the v0.1.4 release.
 The gateway check verifies version and compute driver.
 Select a compatible [inference API](inference.md) and verify an actual agent reply; endpoint reachability alone is insufficient.
 
-The guides assume an operator provides the external gateway and OpenShell CLI credentials; provisioning them from a clean host is tracked in [#12642](https://github.com/NVIDIA/NemoClaw/issues/12642).
+Install the OpenShell CLI release with [OpenShell's installer](https://github.com/NVIDIA/OpenShell/blob/5a7728c304b5528e954e9ae900cf21f84e1a12b1/docs/about/installation.mdx), setting `OPENSHELL_VERSION=v0.1.4`.
+The guides assume an operator provides the external gateway and its credentials; register an authenticated gateway in the CLI as [OpenShell's authentication guide](https://github.com/NVIDIA/OpenShell/blob/5a7728c304b5528e954e9ae900cf21f84e1a12b1/docs/how-it-works/gateways/authentication.mdx) describes, with `openshell gateway add` for mTLS or OIDC.
 For an existing profile or plaintext loopback gateway, use [gateway/workspace selection](interfaces.md#select-the-gateway-and-workspace).
 See the [first-deployment guide](get-started.md) for its rehearsal status.
 
@@ -58,7 +59,7 @@ There are no release downloads or installer yet ([#12638](https://github.com/NVI
 | Fabric agent image | Deep Agents and OpenClaw use a native Linux ARM64 or AMD64 Docker builder with Buildx; other agent targets use ARM64; see [image prerequisites](build.md#build-agent-images) |
 | Managed vLLM | Matching runtime image, pinned model revision, and storage/capacity for the selected hardware contract; see [managed models](models.md) and [AMD64 Nemotron configuration](models.md#configure-nemotron-on-an-amd64-gpu-host) |
 | Managed Ollama | Matching runtime image, pinned model digest, one NVIDIA GPU, and the same hardware/placement/capacity contract as vLLM; see [managed Ollama](inference.md#run-managed-ollama) |
-| Managed rootless Podman gateway | Local Linux API socket, reported `pasta` networking, a private IPv4 default-route interface, and images in the selected Podman store; see [Podman setup](usage.md#use-a-managed-podman-gateway) |
+| Managed rootless Podman gateway | Podman 5 or later, local Linux API socket, reported `pasta` networking, a private IPv4 default-route interface, and images in the selected Podman store; see [Podman setup](usage.md#use-a-managed-podman-gateway) |
 | External Ollama with managed proxy | Managed local Docker gateway, loopback-only daemon on that same Linux host, installed model digest, and a reachable private proxy endpoint; see [proxy setup](inference.md#use-external-ollama-through-a-managed-proxy) |
 | SSH-managed model service | Trusted noninteractive SSH access and the documented model-host tools; see [remote service](remote-service.md) |
 

@@ -37,7 +37,6 @@ impl Installation {
             self.dir.path().join("main.tf"),
             format!(
                 r#"terraform {{
-  required_version = "= 1.12.6"
   required_providers {{
     openshell = {{ source = "registry.opentofu.org/nvidia/openshell" }}
   }}
@@ -109,7 +108,6 @@ async fn podman_gateway_rechecks_network_and_image_prerequisites_before_saved_pl
             e.dir.path().join("main.tf"),
             format!(
                 r#"terraform {{
-  required_version = "= 1.12.6"
   required_providers {{
     openshell = {{ source = "registry.opentofu.org/nvidia/openshell" }}
   }}

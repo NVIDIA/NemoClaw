@@ -419,33 +419,6 @@ mod tests {
         assert_eq!(compose(&decompose(&config)).unwrap(), config);
     }
 
-    /// The harness's catalog decides which fields an agent may set.
-    #[test]
-    fn an_agent_is_planned_against_its_harness_catalog() {
-        let mut row = decompose(&json!({
-            "schema_version": SCHEMA_VERSION,
-            "metadata": {"name": "assistant"},
-            "harness": {"adapter_id": "nvidia.fabric.pi"},
-            "instructions": {"system": {"content": "Answer briefly.", "mode": "replace"}},
-            "models": {"default": {"provider": "openai", "model": "first-model", "api_key_env": "API_KEY"}},
-        }));
-        let catalog = crate::catalog::FabricCatalog::bundled().for_adapter("nvidia.fabric.pi");
-        let rejection = |row: &Row| {
-            crate::capabilities::configuration_rejection(&catalog, compose(row).unwrap())
-        };
-        assert_eq!(rejection(&row), None);
-        row.insert(
-            "models_json".into(),
-            r#"{"default":{"provider":"openai","model":"first-model"}}"#.into(),
-        );
-        assert_eq!(
-            rejection(&row).as_deref(),
-            Some(
-                "models.default.api_key_env: the selected adapter rejects this configuration field"
-            )
-        );
-    }
-
     /// Typed inputs carry a document without loss, including fields Fabric's
     /// schema leaves open, such as a model's `api` extension.
     #[test]

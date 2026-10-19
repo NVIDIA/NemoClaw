@@ -12,7 +12,7 @@ pub(crate) fn require(valid: bool, reason: &'static str) -> Result<(), ConfigErr
     }
 }
 
-pub use nemoclaw_backend::validate_endpoint;
+pub use nemoclaw_backend::{validate_endpoint, validate_endpoint_url};
 
 pub fn is_fabric_harness(harness: &str) -> bool {
     harness.parse::<super::HarnessKind>().is_ok()
@@ -69,6 +69,25 @@ impl Document {
                     sandbox.agent.tools.as_ref(),
                 )))?;
             }
+            let image_scope = self.image_scope(sandbox)?;
+            for api in self.apis(sandbox)? {
+                require(
+                    !api.agent_refs.is_empty()
+                        && api
+                            .agent_refs
+                            .iter()
+                            .all(|name| name == &sandbox.agent.name),
+                    "an api integration requires references to the sandbox's agent",
+                )?;
+                schema::validate_definition("SecretRef", &api.api.credential)?;
+                let registration = api.registration(&image_scope);
+                require(
+                    selected_providers
+                        .iter()
+                        .all(|provider| provider.name != registration),
+                    "an inference provider name collides with an api integration's registration",
+                )?;
+            }
             let agent = &sandbox.agent;
 
             if let Some(tools) = &agent.tools {
@@ -113,7 +132,7 @@ impl super::ManagedGateway {
         require(
             bind.is_some_and(|a| a.port() >= 1024)
                 && crate::config::validate_engine_endpoint(&self.engine).is_ok(),
-            "managed gateway requires pinned image, a local engine socket, and unprivileged loopback HTTP port without credentials",
+            "managed gateway requires a local engine socket and an unprivileged loopback HTTP port without credentials",
         )?;
         let net = self.network_cidr.parse::<ipnet::Ipv4Net>().ok();
         require(
@@ -127,7 +146,8 @@ impl super::ManagedGateway {
 impl Document {
     fn validate_provider(&self, provider: &InferenceProvider) -> Result<(), ConfigError> {
         match provider.target()? {
-            InferenceTarget::External { endpoint, .. } => validate_endpoint(endpoint, false)?,
+            // OpenShell checks the destination when sandboxes connect.
+            InferenceTarget::External { endpoint, .. } => validate_endpoint_url(endpoint)?,
             InferenceTarget::Service { .. } => {
                 crate::services::validate_provider(self, provider)?;
             }

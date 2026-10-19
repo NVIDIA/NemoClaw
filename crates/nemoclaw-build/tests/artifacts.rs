@@ -46,7 +46,9 @@ fn pinned_archive_extracts_only_the_exact_native_binary() {
 fn every_bundle_platform_pins_the_official_helm_provider_archive() {
     let pins: serde_json::Value =
         serde_json::from_str(include_str!("../../../versions.json")).unwrap();
-    assert_eq!(pins["helmProvider"], "3.3.0");
+    let version = pins["helmProvider"]
+        .as_str()
+        .expect("pinned Helm provider version");
     for platform in [
         "linux_arm64",
         "linux_amd64",
@@ -58,7 +60,7 @@ fn every_bundle_platform_pins_the_official_helm_provider_archive() {
         assert_eq!(
             artifact["url"],
             format!(
-                "https://releases.hashicorp.com/terraform-provider-helm/3.3.0/terraform-provider-helm_3.3.0_{platform}.zip"
+                "https://releases.hashicorp.com/terraform-provider-helm/{version}/terraform-provider-helm_{version}_{platform}.zip"
             )
         );
         let checksum = artifact["sha256"].as_str().unwrap();
@@ -171,7 +173,7 @@ fn extracted_sources_build_without_git_and_ignore_generated_outputs() {
 
 #[test]
 fn runtime_build_inputs_are_selected_by_the_artifact_manifest() {
-    let input = br#"{"name":"fixture","platform":"linux_arm64","image":"local/fixture:test","sourceDateEpoch":1234,"files":["Dockerfile","NOTICE.md"],"downloads":{}}"#;
+    let input = br#"{"name":"fixture","platforms":["linux_arm64"],"image":"local/fixture:test","sourceDateEpoch":1234,"files":["Dockerfile","NOTICE.md"],"downloads":{}}"#;
     let recipe = nemoclaw_build::RuntimeArtifact::parse(input).unwrap();
     assert_eq!(recipe.name, "fixture");
     assert_eq!(recipe.files, ["Dockerfile", "NOTICE.md"]);
@@ -209,7 +211,7 @@ fn runtime_manifest_errors_distinguish_json_identity_paths_and_downloads() {
     let error = RuntimeArtifact::parse(b"{").err().unwrap();
     assert!(matches!(error, RuntimeArtifactError::Json(_)));
     assert!(error.source().unwrap().is::<serde_json::Error>());
-    let valid = serde_json::json!({"name":"fixture","platform":"linux_arm64","image":"local/fixture:test","sourceDateEpoch":1234,"files":["Dockerfile"],"downloads":{}});
+    let valid = serde_json::json!({"name":"fixture","platforms":["linux_arm64"],"image":"local/fixture:test","sourceDateEpoch":1234,"files":["Dockerfile"],"downloads":{}});
     let mut invalid = valid.clone();
     invalid["name"] = "".into();
     assert!(matches!(
@@ -277,22 +279,34 @@ fn supervisor_archive_contains_only_runtime_owned_sources_and_notices() {
 
 #[test]
 fn artifact_inputs_cannot_overwrite_the_retained_build_manifest() {
-    let input = br#"{"name":"fixture","platform":"linux_arm64","image":"local/fixture:test","sourceDateEpoch":1234,"files":["Dockerfile","build.json"],"downloads":{}}"#;
+    let input = br#"{"name":"fixture","platforms":["linux_arm64"],"image":"local/fixture:test","sourceDateEpoch":1234,"files":["Dockerfile","build.json"],"downloads":{}}"#;
     assert!(nemoclaw_build::RuntimeArtifact::parse(input).is_err());
 }
 
 #[test]
-fn runtime_artifacts_can_select_native_linux_amd64() {
-    let input = serde_json::json!({"name":"vllm-amd64","platform":"linux_amd64","image":"nc-vllm-amd64:test","sourceDateEpoch":1789516800,"files":["Dockerfile","NOTICE.md"],"downloads":{}});
+fn runtime_artifacts_build_on_any_listed_native_platform() {
+    let input = serde_json::json!({"name":"vllm","platforms":["linux_arm64","linux_amd64"],"image":"nc-vllm:test","sourceDateEpoch":1789516800,"files":["Dockerfile","NOTICE.md"],"downloads":{}});
     let artifact = nemoclaw_build::RuntimeArtifact::parse(&serde_json::to_vec(&input).unwrap())
-        .expect("AMD64 runtime manifest must parse");
+        .expect("multi-platform runtime manifest must parse");
     artifact.require_native_host("linux_amd64").unwrap();
-    assert!(artifact.require_native_host("linux_arm64").is_err());
-    let mut invalid = input;
-    invalid["platform"] = "darwin_arm64".into();
-    assert!(
-        nemoclaw_build::RuntimeArtifact::parse(&serde_json::to_vec(&invalid).unwrap()).is_err()
-    );
+    artifact.require_native_host("linux_arm64").unwrap();
+    let mut single = input.clone();
+    single["platforms"] = serde_json::json!(["linux_arm64"]);
+    let single =
+        nemoclaw_build::RuntimeArtifact::parse(&serde_json::to_vec(&single).unwrap()).unwrap();
+    assert!(single.require_native_host("linux_amd64").is_err());
+    for platforms in [
+        serde_json::json!([]),
+        serde_json::json!(["darwin_arm64"]),
+        serde_json::json!(["linux_arm64", "linux_arm64"]),
+    ] {
+        let mut invalid = input.clone();
+        invalid["platforms"] = platforms.clone();
+        assert!(
+            nemoclaw_build::RuntimeArtifact::parse(&serde_json::to_vec(&invalid).unwrap()).is_err(),
+            "{platforms}"
+        );
+    }
 }
 
 #[test]

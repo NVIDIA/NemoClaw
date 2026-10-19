@@ -7,8 +7,8 @@ ARG RUST_IMAGE=rust@sha256:ce84a5edd80c5f91e05c5533b1e53eb1da54028f33734dc06aa6b
 ARG UV_IMAGE=ghcr.io/astral-sh/uv@sha256:3d868e555f8f1dbc324afa005066cd11e1053fc4743b9808ca8025283e65efa5
 # The Fabric source every harness installs; the reference dummy's descriptor
 # follows the adapter contract at the same revision.
-ARG FABRIC_REVISION=24f068c895e5cbc30286bc743498be4e5014d658
-ARG FABRIC_SHA256=77f78f66a24a8cd8e6f33f9cf49f3db8c5de39e12e095f5599cb63909a05865f
+ARG FABRIC_REVISION=5574117feb4be948c1b03f4c36a2fe9a11af910d
+ARG FABRIC_SHA256=b1a7f2759ea26fd3dcf8136be30045897fa5d7c38a7b96e81afaecdde798e523
 ARG OPENCLAW_IMAGE=ghcr.io/openclaw/openclaw@sha256:cc596b846506a5f4cfcee111394a2725f375f01cca2ebb492a161fd1b747f101
 FROM ${RUST_IMAGE} AS rust
 FROM ${UV_IMAGE} AS uv
@@ -45,36 +45,29 @@ ARG SOURCE_DATE_EPOCH=1789516800
 ARG FABRIC_REVISION
 ARG FABRIC_SHA256
 ADD --checksum=sha256:${FABRIC_SHA256} https://codeload.github.com/NVIDIA/NeMo-Fabric/tar.gz/${FABRIC_REVISION} /sources/fabric.tar.gz
-COPY image/fabric/fabric-error-codes.patch /build-patches/fabric-error-codes.patch
-RUN apt-get update && apt-get install -y --no-install-recommends build-essential pkg-config libssl-dev patch \
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential pkg-config libssl-dev \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /src/fabric /wheels \
-    && tar -xzf /sources/fabric.tar.gz -C /src/fabric --strip-components=1 \
-    && patch --batch --fuzz=0 -d /src/fabric -p1 < /build-patches/fabric-error-codes.patch
+    && tar -xzf /sources/fabric.tar.gz -C /src/fabric --strip-components=1
 # Archive extraction gives every Fabric revision the same paths and timestamps,
 # so a shared Cargo target cache can link a newer binding against an older core.
 # Share downloads only; compiled artifacts stay in this source-specific layer.
 RUN --mount=type=cache,target=/root/.cache/uv --mount=type=cache,target=/usr/local/cargo/registry \
     uv build --python /usr/local/bin/python3 --wheel --out-dir /wheels --config-setting build-args=--locked /src/fabric/sdk/python/nemo-fabric-runtime \
     && uv build --python /usr/local/bin/python3 --wheel --out-dir /wheels /src/fabric/adapter-contract/python \
-    && uv build --python /usr/local/bin/python3 --wheel --out-dir /wheels /src/fabric/adapters/python/common
+    && uv build --python /usr/local/bin/python3 --wheel --out-dir /wheels /src/fabric/adapters/python/common \
+    && uv build --python /usr/local/bin/python3 --wheel --out-dir /wheels /src/fabric/sdk/python/nemo-fabric-adapter-catalog
 
 FROM common-wheels AS harness-wheels
 ARG HARNESS
 ARG ADAPTER
+ARG EXTRA
 COPY image/fabric/ /build/
 COPY image/NOTICE.md docker-bake.hcl .dockerignore /build/
-RUN if [ "$ADAPTER" = openclaw ]; then \
-        apt-get update && apt-get install -y --no-install-recommends patch \
-        && rm -rf /var/lib/apt/lists/* \
-        && patch --batch --fuzz=0 -d /src/fabric -p1 < /build/openclaw-reconfigure.patch \
-        && cp /build/openclaw_configuration.py /src/fabric/adapters/python/openclaw/src/nemo_fabric_adapters/openclaw/configuration.py; \
-    fi
 RUN --mount=type=cache,target=/root/.cache/uv \
     if [ -n "$ADAPTER" ]; then uv build --python /usr/local/bin/python3 --wheel --out-dir /wheels "/src/fabric/adapters/python/$ADAPTER"; fi \
     && python3 /build/wheel_lock.py /wheels > /own-requirements.txt \
-    && if [ "$HARNESS" = hermes ]; then cp /build/hermes-dependencies.lock /requirements.txt; \
-       else uv export --project /src/fabric --frozen --no-default-groups --no-emit-local ${ADAPTER:+--extra=$ADAPTER} --output-file /requirements.txt; fi \
+    && uv export --project /src/fabric --frozen --no-default-groups --no-emit-local ${EXTRA:+--extra=$EXTRA} --output-file /requirements.txt \
     && cat /own-requirements.txt >> /requirements.txt \
     && uv pip install --python /opt/fabric/bin/python --require-hashes --find-links /wheels -r /requirements.txt \
     && python3 /build/provenance.py > /provenance.json
@@ -85,12 +78,18 @@ COPY --from=harness-wheels /requirements.txt /opt/nemoclaw/source/requirements.t
 COPY --from=harness-wheels --chmod=0644 /sources/fabric.tar.gz /opt/nemoclaw/source/
 COPY --from=harness-wheels /build /opt/nemoclaw/source/local/
 COPY --from=harness-wheels /provenance.json /opt/nemoclaw/provenance.json
-COPY image/fabric/backend.py image/fabric/fabric.py image/fabric/bridge_contract.py image/fabric/bridge_protocol.py image/fabric/catalog.py image/fabric/runtime_metadata.py image/fabric/runtime.json /opt/nemoclaw/
-COPY --chmod=0755 image/fabric/fabric-agent /usr/local/bin/fabric-agent
-ENV PYTHONPATH=/opt/nemoclaw ADAPTER_PYTHON=/opt/fabric/bin/python
-RUN /opt/fabric/bin/python /opt/nemoclaw/bridge_contract.py > /opt/nemoclaw/bridge.json
+COPY image/fabric/catalog.py image/fabric/runtime_metadata.py image/fabric/runtime.json /opt/nemoclaw/
+# Commands run in the sandbox, such as through openshell sandbox exec, find
+# Fabric's sandbox host on the default PATH.
+RUN ln -s /opt/fabric/bin/fabric-agent-ctl /usr/local/bin/fabric-agent-ctl
+# Fabric runs Python adapters with this interpreter.
+ENV ADAPTER_PYTHON=/opt/fabric/bin/python
 
 FROM runtime-base AS generic
+ARG ADAPTER_ID
+# catalog.py publishes the adapters each harness stage declares here.
+RUN test -n "$ADAPTER_ID" \
+    && printf '{"%s": {"files": [], "binaries": []}}\n' "$ADAPTER_ID" > /opt/nemoclaw/adapters.json
 USER node
 
 FROM runtime-base AS interactive
@@ -101,54 +100,33 @@ FROM interactive AS openclaw
 # Upstream owns /app as its own user; the sandbox only reads it.
 COPY --from=openclaw-upstream --chown=0:0 /app /app
 RUN ln -s /app/openclaw.mjs /usr/local/bin/openclaw
-ADD --chown=node:node --checksum=sha256:2b403a4b2d2be7a793235a458e2d376f38588fd913f41b92e208e8421a2a1617 https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.9.4.tgz /tmp/brave.tgz
-ADD --chown=node:node --checksum=sha256:9b250b5ed8660247947701c4df3fb8b1c6b32fd7e30b7a186c7ae763e30c29e8 https://registry.npmjs.org/@openclaw/tavily-plugin/-/tavily-plugin-2026.9.4.tgz /tmp/tavily.tgz
-# catalog.py records this layout so planning checks explicit filesystem grants.
-RUN printf '%s\n' '{"nvidia.fabric.openclaw": ["/app"]}' > /opt/nemoclaw/runtime-files.json
-USER node
-# Native installation owns extraction and peer dependencies; package its output
-# in OpenClaw's bundled-plugin directory so each runtime discovers it naturally.
-RUN --network=none OPENCLAW_STATE_DIR=/tmp/plugin-build OPENCLAW_CONFIG_PATH=/tmp/plugin-build/config.json \
-    node /app/openclaw.mjs plugins install --force --accept-capabilities /tmp/brave.tgz \
-    && OPENCLAW_STATE_DIR=/tmp/plugin-build OPENCLAW_CONFIG_PATH=/tmp/plugin-build/config.json \
-    node /app/openclaw.mjs plugins install --force --accept-capabilities /tmp/tavily.tgz \
-    && rm -f /tmp/brave.tgz /tmp/tavily.tgz
-USER root
-RUN mv /tmp/plugin-build/extensions/brave /tmp/plugin-build/extensions/tavily /app/dist/extensions/ \
-    && chown -R 0:0 /app/dist/extensions/brave /app/dist/extensions/tavily \
-    && chmod -R u+rwX,go+rX,go-w /app/dist/extensions/brave /app/dist/extensions/tavily \
-    && rm -rf /tmp/plugin-build
-COPY image/fabric/BRAVE-LICENSE /app/dist/extensions/brave/LICENSE
-COPY image/fabric/BRAVE-NOTICE.md /app/dist/extensions/brave/NOTICE.md
-COPY image/fabric/TAVILY-LICENSE /app/dist/extensions/tavily/LICENSE
-COPY image/fabric/TAVILY-NOTICE.md /app/dist/extensions/tavily/NOTICE.md
+# catalog.py publishes this declaration: the files the adapter reads, which
+# explicit filesystem grants must allow, and the executables it runs.
+RUN printf '%s\n' '{"nvidia.fabric.openclaw": {"files": ["/app"], "binaries": ["node"]}}' > /opt/nemoclaw/adapters.json
 USER node
 
 FROM base AS hermes-assets
-COPY --from=node /node/ /
-ARG HERMES_REVISION=29112bef099274229cadff79cdff7bf7b99c4b77
-ARG HERMES_SHA256=76b99a8be9b77d66833c3cfe2b35c6d6f6a58e4ff9637ef8effcfc1f420ab35a
+# Hermes Agent release v2026.9.24, which Fabric documents for ordinary runs.
+ARG HERMES_REVISION=f97608f178d1ffeca59860195ab7da295f7c8e5f
+ARG HERMES_SHA256=babbdb9706ad1c96708d75914afb45d809cd4b73dec1ceae233a6814f5ed97e3
 ADD --checksum=sha256:${HERMES_SHA256} https://codeload.github.com/NousResearch/hermes-agent/tar.gz/${HERMES_REVISION} /sources/hermes.tar.gz
-COPY --from=common-wheels /src/fabric/adapters/python/hermes/metadata-propagate.patch /sources/metadata-propagate.patch
 COPY image/fabric/HERMES-NOTICE.md /sources/HERMES-NOTICE.md
-RUN apt-get update && apt-get install -y --no-install-recommends patch && rm -rf /var/lib/apt/lists/* \
-    && mkdir -p /opt/hermes && tar -xzf /sources/hermes.tar.gz -C /opt/hermes --strip-components=1 \
-    && patch --batch --fuzz=0 -d /opt/hermes -p1 < /sources/metadata-propagate.patch \
+RUN mkdir -p /opt/hermes && tar -xzf /sources/hermes.tar.gz -C /opt/hermes --strip-components=1 \
     && cp /sources/HERMES-NOTICE.md /opt/hermes/NEMOCLAW-NOTICE.md
-RUN --mount=type=cache,target=/root/.npm \
-    npm install --global npm@11.17.0 \
-    && cd /opt/hermes/web && npm ci --ignore-scripts && npm run build \
-    && cd /opt/hermes/ui-tui && npm ci --ignore-scripts && npm run build:ink && npm run build
 
 FROM interactive AS hermes
 COPY --from=hermes-assets /opt/hermes /opt/hermes
 COPY --from=hermes-assets --chmod=0644 /sources/hermes.tar.gz /opt/nemoclaw/source/
+# Hermes owns its dependencies: its own lock, with the mcp extra, settles the
+# packages it shares with Fabric, as Fabric installs into Hermes's environment.
 # Hermes resolves bundled assets relative to its source checkout.
-RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
-    uv pip install --python /opt/fabric/bin/python --offline --no-deps --no-build-isolation -e /opt/hermes --config-settings editable_mode=compat
-COPY --from=common-wheels /src/fabric/adapters/python/hermes/src/nemo_fabric_adapters/hermes/plugins/tavily/ /opt/hermes/plugins/web/tavily/
+RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv --mount=type=cache,target=/root/.cache/uv \
+    uv export --project /opt/hermes --frozen --no-dev --extra mcp --no-emit-project --format requirements-txt --output-file /opt/nemoclaw/source/hermes-requirements.txt \
+    && uv pip install --python /opt/fabric/bin/python --require-hashes -r /opt/nemoclaw/source/hermes-requirements.txt \
+    && uv pip install --python /opt/fabric/bin/python --no-deps -e /opt/hermes --config-settings editable_mode=compat \
+    && uv pip check --python /opt/fabric/bin/python
 ENV HERMES_DISABLE_LAZY_INSTALLS=1
-RUN printf '%s\n' '{"nvidia.fabric.hermes": ["/opt/hermes"]}' > /opt/nemoclaw/runtime-files.json
+RUN printf '%s\n' '{"nvidia.fabric.hermes": {"files": ["/opt/hermes"], "binaries": []}}' > /opt/nemoclaw/adapters.json
 USER node
 
 FROM common-wheels AS pi-build
@@ -171,7 +149,10 @@ RUN mkdir -p /opt/pi/adapters/typescript \
         && (cd "/opt/fabric-source/$package" && npm pack --ignore-scripts --pack-destination "/opt/pi/$package") \
         && tar -xzf /opt/pi/$package/*.tgz -C "/opt/pi/$package" --strip-components=1 \
         && rm /opt/pi/$package/*.tgz || exit 1; \
-    done
+    done \
+    # npm nests the Pi harness Fabric's lock pins (pi-coding-agent) under the
+    # adapter package, which packing drops; keep it beside the packed adapter.
+    && cp -a /opt/fabric-source/adapters/typescript/pi/node_modules /opt/pi/adapters/typescript/pi/
 
 FROM runtime-base AS pi
 COPY --from=node /node/ /
@@ -181,7 +162,7 @@ COPY --from=pi-build /opt/pi /opt/fabric-source
 RUN mkdir -p /opt/fabric/share/nemo-fabric/adapters/pi \
     && ln -s /opt/fabric-source/adapters/typescript/pi/pi.fabric-adapter.json \
         /opt/fabric/share/nemo-fabric/adapters/pi/pi.fabric-adapter.json \
-    && printf '%s\n' '{"nvidia.fabric.pi": ["/opt/fabric-source"]}' > /opt/nemoclaw/runtime-files.json
+    && printf '%s\n' '{"nvidia.fabric.pi": {"files": ["/opt/fabric-source"], "binaries": ["node"]}}' > /opt/nemoclaw/adapters.json
 USER node
 
 FROM base AS lint
@@ -194,32 +175,27 @@ RUN --mount=type=cache,target=/root/.cache/uv uv tool run --from ruff==0.16.7 ru
 
 FROM common-wheels AS unit-tests
 COPY image/fabric/ /catalog/image/fabric/
-RUN uv pip install --python /opt/fabric/bin/python /wheels/nemo_fabric_runtime-*.whl /wheels/nemo_fabric_adapter_contract-*.whl /wheels/nemo_fabric_adapters_common-*.whl /src/fabric/tests/fixtures/discovery \
+RUN uv pip install --python /opt/fabric/bin/python /wheels/nemo_fabric_runtime-*.whl /wheels/nemo_fabric_adapter_contract-*.whl /wheels/nemo_fabric_adapters_common-*.whl /wheels/nemo_fabric_adapter_catalog-*.whl \
     && uv pip install --python /opt/fabric/bin/python PyYAML==6.0.3
 COPY image/fabric/ /tests/
-ENV ADAPTER_PYTHON=/opt/fabric/bin/python NEMOCLAW_FABRIC_SOURCE=/src/fabric NEMOCLAW_TEST_FABRIC_DESCRIPTOR=/src/fabric/tests/fixtures/discovery/future.fabric-adapter.json
 RUN --network=none /opt/fabric/bin/python -B -m unittest discover -s /tests -p 'test_*.py'
 
-# A small executable specification with no native agent or model dependencies.
-FROM ${PYTHON_IMAGE} AS dummy
-RUN groupadd --gid 10001 node && useradd --uid 10001 --gid node --create-home node \
-    && python3 -m venv --without-pip /opt/fabric \
-    && install -d -m 0755 -o 10001 -g 10001 /sandbox /sandbox/tmp
-ARG FABRIC_REVISION
-ARG FABRIC_SHA256
-COPY image/fabric/fabric.py image/fabric/bridge_contract.py image/fabric/bridge_protocol.py image/fabric/runtime.json image/fabric/runtime_metadata.py image/fabric/dummy_catalog.py image/fabric/dummy.fabric-adapter.json /opt/nemoclaw/
-COPY image/fabric/dummy_backend.py /opt/nemoclaw/backend.py
-COPY --chmod=0755 image/fabric/fabric-agent /usr/local/bin/fabric-agent
-ENV PYTHONPATH=/opt/nemoclaw ADAPTER_PYTHON=/opt/fabric/bin/python PYTHONDONTWRITEBYTECODE=1 HOME=/sandbox
-RUN /opt/fabric/bin/python /opt/nemoclaw/bridge_contract.py > /opt/nemoclaw/bridge.json \
-    && /opt/fabric/bin/python -c 'import json, os; print(json.dumps({"fabric_revision": os.environ["FABRIC_REVISION"], "source_sha256": os.environ["FABRIC_SHA256"]}))' > /opt/nemoclaw/contract.json
+# NemoClaw's test-only adapter, packaged and installed like Fabric's own.
+FROM harness-wheels AS dummy-wheels
+COPY image/fabric/test-adapter /src/test-adapter
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv build --python /usr/local/bin/python3 --wheel --out-dir /test-wheels /src/test-adapter \
+    && uv pip install --python /opt/fabric/bin/python --no-deps /test-wheels/*.whl
+
+# The reference agent: Fabric's runtime and fabric-agent-ctl, with only
+# NemoClaw's test adapter, which needs no model or native harness.
+FROM runtime-base AS dummy
+COPY --from=dummy-wheels /opt/fabric /opt/fabric
+RUN printf '%s\n' '{"org.nemoclaw.dummy": {"files": [], "binaries": [], "descriptor": "/opt/fabric/share/nemo-fabric/adapters/nemoclaw-dummy/dummy.fabric-adapter.json"}}' > /opt/nemoclaw/adapters.json
 LABEL io.nemoclaw.fabric.reference="dummy"
 USER node
-HEALTHCHECK NONE
-ENTRYPOINT ["/usr/local/bin/fabric-agent"]
-CMD ["serve", "--agent", "main"]
 
 FROM dummy AS reference-tests
-COPY image/fabric/test_reference.py image/fabric/test_protocol.py image/fabric/test_dummy_catalog.py image/fabric/dummy_backend.py /tests/
+COPY image/fabric/test_reference.py /tests/
 ENV NEMOCLAW_REFERENCE_TESTS=1
 RUN --network=none /opt/fabric/bin/python -B -m unittest discover -s /tests -p 'test_*.py'

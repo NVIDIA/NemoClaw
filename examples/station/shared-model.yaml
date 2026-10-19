@@ -15,8 +15,6 @@ spec:
       provider: docker
     endpoint: http://127.0.0.1:17697
     engine: unix:///var/run/docker.sock
-    image:
-      ghcr.io/nvidia/openshell/gateway@sha256:ea14aa4db0980fab4769fb6b5509ac42ae3dc8495e645b1ba1fe1ada49892fa6
     networkCIDR: 172.30.132.0/24
   services:
     shared:
@@ -68,9 +66,6 @@ spec:
               overrides:
                 model: Qwen/Qwen3-4B
                 maxTokens: 2048
-                settings:
-                  model_metadata:
-                    contextWindow: 32768
     - name: pi
       image:
         ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
@@ -88,11 +83,3 @@ spec:
               providerRef: shared
               overrides:
                 model: Qwen/Qwen3-4B
-                settings:
-                  model_metadata:
-                    api: openai-completions
-                    contextWindow: 32768
-                    maxTokens: 2048
-                    reasoning: false
-                    input:
-                      - text

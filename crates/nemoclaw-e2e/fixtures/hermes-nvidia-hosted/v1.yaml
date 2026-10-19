@@ -15,7 +15,6 @@ spec:
       provider: docker
     endpoint: http://127.0.0.1:17692
     engine: unix:///var/run/docker.sock
-    image: ghcr.io/nvidia/openshell/gateway@sha256:ea14aa4db0980fab4769fb6b5509ac42ae3dc8495e645b1ba1fe1ada49892fa6
     networkCIDR: 172.30.187.0/24
   inferenceProviders:
     - name: hosted-nvidia-prod
@@ -28,11 +27,6 @@ spec:
     - name: assistant
       harness:
         kind: nvidia.fabric.hermes
-        settings:
-          mode: service
-          interfaces:
-            api:
-              port: 8643
       image:
         ref: nc-fabric@sha256:f7a96a028a031048e6b3919b85cad253ec584e0df86011a5937ae8ff5c1125d8
       network:

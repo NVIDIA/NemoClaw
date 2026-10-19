@@ -50,8 +50,13 @@ impl ManagedBackend {
             Some(storage) => storage.row()?,
             None => gateway_row(kind, row)?,
         };
-        if let Some(policy) = row.get("image_pull_policy") {
-            result.insert("image_pull_policy".into(), policy.clone());
+        for attribute in [
+            "image_pull_policy",
+            nemoclaw_sdk::managed::DRIVER_CONFIG_ATTRIBUTE,
+        ] {
+            if let Some(value) = row.get(attribute) {
+                result.insert(attribute.into(), value.clone());
+            }
         }
         let identity = if let Some(spec) = storage {
             let engine = &self.engine;
@@ -312,6 +317,7 @@ mod tests {
                     // The observation adds the identity and acquisition policy.
                     if !definition.is_computed(attribute)
                         && !matches!(attribute, "id" | "image_pull_policy")
+                        && attribute != nemoclaw_sdk::managed::DRIVER_CONFIG_ATTRIBUTE
                     {
                         assert!(
                             observed.contains_key(attribute),

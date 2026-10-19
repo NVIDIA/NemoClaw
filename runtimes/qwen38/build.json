@@ -1,6 +1,8 @@
 {
   "name": "qwen38",
-  "platform": "linux_arm64",
+  "platforms": [
+    "linux_arm64"
+  ],
   "image": "nc-prototype-qwen38:spark-rust-v1",
   "sourceDateEpoch": 1788974180,
   "files": [

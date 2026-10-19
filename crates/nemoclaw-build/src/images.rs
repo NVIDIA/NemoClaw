@@ -18,7 +18,6 @@ use std::{
 type Result<T> = std::result::Result<T, String>;
 
 pub const PLATFORMS: [&str; 2] = ["linux/arm64", "linux/amd64"];
-const BRIDGE_LABEL: &str = "io.nemoclaw.fabric.bridge";
 const CATALOG_LABEL: &str = "io.nemoclaw.fabric.catalog";
 const REFERENCE_LABEL: &str = "io.nemoclaw.fabric.reference";
 /// The adapter the reference dummy image implements.
@@ -323,16 +322,12 @@ fn read_metadata(image: &str, args: &[&str]) -> Result<Value> {
     serde_json::from_slice(&bytes).map_err(|_| "image metadata is not JSON".into())
 }
 
-/// Labels that publish the image's bridge capabilities and its catalog: the
-/// installed Fabric discovery for harnesses, the explicit descriptor for the
-/// reference dummy.
-pub fn labels(name: &str, bridge: Value, catalog: Value) -> Result<Vec<(String, String)>> {
+/// The label that publishes the image's catalog: its installed adapters with
+/// their descriptors, and its runtime.
+pub fn labels(name: &str, catalog: Value) -> Result<Vec<(String, String)>> {
     let compact = |value: &Value| {
         serde_json::to_string(value).map_err(|_| "unserializable metadata".to_owned())
     };
-    if catalog["bridge"] != bridge {
-        return Err("catalog and executable bridge capabilities disagree".into());
-    }
     // Only the reference image publishes the reference adapter, and it
     // publishes nothing else, so neither can pass for the other.
     let adapters: Vec<&str> = catalog["adapters"]
@@ -352,10 +347,7 @@ pub fn labels(name: &str, bridge: Value, catalog: Value) -> Result<Vec<(String, 
             "{name} lists {REFERENCE_ADAPTER}, which only the reference image may publish"
         ));
     }
-    Ok(vec![
-        (BRIDGE_LABEL.to_owned(), compact(&bridge)?),
-        (CATALOG_LABEL.to_owned(), compact(&catalog)?),
-    ])
+    Ok(vec![(CATALOG_LABEL.to_owned(), compact(&catalog)?)])
 }
 
 /// Build each target under a temporary tag, read its metadata, then publish
@@ -374,29 +366,16 @@ pub fn build(root: &Path, platform: &str, selection: &[String]) -> Result<()> {
                     .arg(format!("{name}.tags={temporary}")),
                 &format!("build {name}"),
             )?;
-            let bridge = read_metadata(
-                &temporary,
-                &[
-                    "-c",
-                    "from pathlib import Path; print(Path('/opt/nemoclaw/bridge.json').read_text())",
-                ],
-            )?;
-            // The reference image has no Fabric to discover with, so it
-            // publishes its one explicit descriptor in the same catalog form.
             let catalog = read_metadata(
                 &temporary,
-                if name == "dummy" {
-                    &["/opt/nemoclaw/dummy_catalog.py"]
-                } else {
-                    &[
-                        "/opt/nemoclaw/catalog.py",
-                        "--installed",
-                        "--provenance",
-                        "/opt/nemoclaw/provenance.json",
-                    ]
-                },
+                &[
+                    "/opt/nemoclaw/catalog.py",
+                    "--installed",
+                    "--provenance",
+                    "/opt/nemoclaw/provenance.json",
+                ],
             )?;
-            let labels = labels(&name, bridge, catalog)?;
+            let labels = labels(&name, catalog)?;
             let context = tempfile::tempdir().map_err(|_| "cannot create a label context")?;
             fs::write(
                 context.path().join("Dockerfile"),
@@ -451,10 +430,8 @@ pub fn qualify_arguments(
     root: &Path,
     name: &str,
     id: &str,
-    bridge: &str,
     reference: &str,
     lifecycle: Option<Lifecycle>,
-    require_ready: bool,
 ) -> Vec<String> {
     let mount = |file: &str, destination: &str| {
         format!(
@@ -478,13 +455,11 @@ pub fn qualify_arguments(
     .map(String::from)
     .to_vec();
     for variable in [
-        format!("NEMOCLAW_TEST_BRIDGE={bridge}"),
         format!("NEMOCLAW_TEST_REFERENCE={reference}"),
         format!(
             "NEMOCLAW_TEST_LIFECYCLE={}",
             lifecycle.map(Lifecycle::name).unwrap_or("")
         ),
-        format!("NEMOCLAW_TEST_REQUIRE_READY={}", u8::from(require_ready)),
         "FABRIC_NATIVE_TEST_KEY=fabric-native-key".into(),
         "HOME=/sandbox".into(),
     ] {
@@ -506,12 +481,7 @@ pub fn qualify_arguments(
     arguments
 }
 
-pub fn qualify(
-    root: &Path,
-    image: &str,
-    lifecycle: Option<Lifecycle>,
-    require_ready: bool,
-) -> Result<()> {
+pub fn qualify(root: &Path, image: &str, lifecycle: Option<Lifecycle>) -> Result<()> {
     let inspected = output(
         docker().args(["image", "inspect", image]),
         "inspect the image",
@@ -519,9 +489,11 @@ pub fn qualify(
     let inspected: Value =
         serde_json::from_slice(&inspected).map_err(|_| "unreadable image inspection")?;
     let labels = &inspected[0]["Config"]["Labels"];
-    let bridge = labels[BRIDGE_LABEL].as_str().ok_or_else(|| {
-        format!("{image} has no {BRIDGE_LABEL} label; build it with cargo images build")
-    })?;
+    if labels[CATALOG_LABEL].as_str().is_none() {
+        return Err(format!(
+            "{image} has no {CATALOG_LABEL} label; build it with cargo images build"
+        ));
+    }
     let reference = labels[REFERENCE_LABEL].as_str().unwrap_or("");
     let id = inspected[0]["Id"].as_str().ok_or("image has no ID")?;
     let root = std::path::absolute(root).map_err(|_| "cannot locate the repository")?;
@@ -529,15 +501,7 @@ pub fn qualify(
     getrandom::fill(&mut nonce).map_err(|_| "cannot name the qualification container")?;
     let name = format!("nemoclaw-contract-{}", crate::hex(&nonce));
     let mut child = docker()
-        .args(qualify_arguments(
-            &root,
-            &name,
-            id,
-            bridge,
-            reference,
-            lifecycle,
-            require_ready,
-        ))
+        .args(qualify_arguments(&root, &name, id, reference, lifecycle))
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
         .spawn()

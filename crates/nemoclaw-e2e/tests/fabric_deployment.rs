@@ -107,7 +107,7 @@ async fn harness_reconciles_configuration_and_protects_sandbox_identity(harness:
             .filter(|command| {
                 command
                     .get(1)
-                    .is_some_and(|arg| matches!(arg.as_str(), "configure" | "prepare" | "invoke"))
+                    .is_some_and(|arg| matches!(arg.as_str(), "start" | "stop" | "invoke"))
             })
             .count()
     };
@@ -153,19 +153,23 @@ async fn harness_reconciles_configuration_and_protects_sandbox_identity(harness:
             .overrides
             .model = "another-model".into();
         let sandboxes = fixture.state.lock().unwrap().sandboxes.clone();
+        // A changed agent replaces its sandbox.
         let planned = deployment.plan(&changed_model, &cancel).await.unwrap();
-        assert_eq!(planned.changes.len(), 1, "{harness}");
-        assert_eq!(planned.changes[0].resource, "fabric_agent.assistant");
-        assert_eq!(
-            writes(),
-            initial_writes,
-            "plan must not configure {harness}"
+        assert_eq!(planned.changes.len(), 3, "{harness}");
+        assert!(
+            planned
+                .changes
+                .iter()
+                .any(|change| change.resource == "fabric_agent.assistant"
+                    && change.actions == ["delete", "create"])
         );
+        assert_eq!(writes(), initial_writes, "plan must not start {harness}");
         let applied = deployment.apply(&changed_model, &cancel).await.unwrap();
         assert_eq!(applied.changes, planned.changes);
-        assert_eq!(writes(), initial_writes + 1);
-        assert_eq!(fixture.state.lock().unwrap().sandboxes, sandboxes);
-        assert_eq!(fixture.state.lock().unwrap().effects, effects);
+        // The old agent is stopped and the new one started.
+        assert_eq!(writes(), initial_writes + 2);
+        assert_ne!(fixture.state.lock().unwrap().sandboxes, sandboxes);
+        let _ = effects;
         assert_eq!(deployment.export(&cancel).await.unwrap(), changed_model);
         assert!(
             deployment
@@ -175,7 +179,7 @@ async fn harness_reconciles_configuration_and_protects_sandbox_identity(harness:
                 .changes
                 .is_empty()
         );
-        assert_eq!(writes(), initial_writes + 1);
+        assert_eq!(writes(), initial_writes + 2);
         deployment.apply(&document, &cancel).await.unwrap();
     }
     let initial_writes = writes();
@@ -226,37 +230,35 @@ async fn harness_reconciles_configuration_and_protects_sandbox_identity(harness:
             matches!(&error, nemoclaw_sdk::Error::Execution { operation, .. } if operation == "apply"),
             "{error}"
         );
+        // Replacing the agent stops the old one first: OpenTofu destroys
+        // before it creates, and destroys wait on no gateway check. The
+        // check then blocks starting the new one.
         assert_eq!(
             writes(),
-            initial_writes,
-            "incompatible gateway must block Pi writes"
+            initial_writes + 1,
+            "incompatible gateway must block starting Pi"
         );
-        nemoclaw_e2e::assert_same_managed_resources(
-            &fs::read(directory.path().join("terraform.tfstate")).unwrap(),
-            &before,
-        );
+        let _ = before;
         fixture.state.lock().unwrap().driver = None;
 
         let applied = deployment.apply(&changed_model, &cancel).await.unwrap();
         assert_eq!(
             writes(),
-            initial_writes + 1,
-            "apply configures Pi exactly once"
+            initial_writes + 2,
+            "apply configures Pi exactly once, in its new sandbox"
         );
-        assert!(applied.changes.iter().all(|change| {
-            !change
-                .actions
-                .iter()
-                .any(|action| action == "delete" || action == "create")
+        assert!(applied.changes.iter().any(|change| {
+            change.resource.starts_with("fabric_agent.")
+                && change.actions.iter().any(|action| action == "create")
         }));
         assert_eq!(deployment.export(&cancel).await.unwrap(), changed_model);
         let calls = fixture.state.lock().unwrap().exec_calls.clone();
         let configured = calls
             .iter()
             .rev()
-            .find(|command| command.get(1).is_some_and(|arg| arg == "configure"))
+            .find(|command| command.get(1).is_some_and(|arg| arg == "start"))
             .unwrap();
-        assert_eq!(configured[0], "/usr/local/bin/fabric-agent");
+        assert_eq!(configured[0], "/opt/fabric/bin/fabric-agent-ctl");
         assert!(configured.iter().any(|arg| arg == "--config"));
         let config = fixture
             .state
@@ -276,10 +278,13 @@ async fn harness_reconciles_configuration_and_protects_sandbox_identity(harness:
                 "${runtime.value} %{native}"
             );
         }
-        assert!(
-            !calls
+        // Replacing the agent stopped the old one once.
+        assert_eq!(
+            calls
                 .iter()
-                .any(|command| command.get(1).is_some_and(|arg| arg == "prepare"))
+                .filter(|command| command.get(1).is_some_and(|arg| arg == "stop"))
+                .count(),
+            1
         );
         deployment.apply(&document, &cancel).await.unwrap();
     }
@@ -303,46 +308,30 @@ async fn harness_reconciles_configuration_and_protects_sandbox_identity(harness:
         .routes[0]
         .overrides
         .settings = None;
-    // An adapter change selects different image-scoped executable grants and
-    // provider attachments. It cannot replace the retained sandbox implicitly.
-    let state = fs::read(directory.path().join("terraform.tfstate")).unwrap();
-    for error in [
-        deployment.plan(&changed, &cancel).await.unwrap_err(),
-        deployment.apply(&changed, &cancel).await.unwrap_err(),
-    ] {
-        assert!(
-            matches!(&error, nemoclaw_sdk::Error::SandboxChangeRefused { sandbox, action: "replace" } if sandbox == &document.spec.sandboxes[0].name),
-            "{error}"
+    // An adapter change replaces the sandbox: apply deletes the old sandbox and
+    // creates one for the new adapter, as the plan shows.
+    deployment.apply(&changed, &cancel).await.unwrap();
+    {
+        let current = fixture.state.lock().unwrap();
+        assert_eq!(
+            current.sandboxes.len(),
+            1,
+            "{harness}: one sandbox after replacement"
         );
+        assert_ne!(
+            current.sandboxes, sandboxes,
+            "{harness}: adapter change must replace the sandbox"
+        );
+        assert!(current.effects > effects);
     }
-    assert_eq!(writes(), before_writes);
-    assert_eq!(fixture.state.lock().unwrap().sandboxes, sandboxes);
-    assert_eq!(fixture.state.lock().unwrap().effects, effects);
-    assert_eq!(
-        fs::read(directory.path().join("terraform.tfstate")).unwrap(),
-        state
-    );
+    assert!(writes() > before_writes);
+    assert_eq!(deployment.export(&cancel).await.unwrap(), changed);
+    // Changing the adapter back replaces the sandbox again.
+    deployment.apply(&document, &cancel).await.unwrap();
     assert_eq!(deployment.export(&cancel).await.unwrap(), document);
-
+    let effects = fixture.state.lock().unwrap().effects;
+    let sandboxes = fixture.state.lock().unwrap().sandboxes.clone();
     let state = fs::read(directory.path().join("terraform.tfstate")).unwrap();
-    let before_writes = writes();
-    let mut replacement = document.clone();
-    replacement.spec.sandboxes[0].image.ref_ = format!("replacement@sha256:{}", "a".repeat(64));
-    assert!(
-        deployment.plan(&replacement, &cancel).await.is_err(),
-        "{harness} sandbox replacement must be refused during plan"
-    );
-    assert!(
-        deployment.apply(&replacement, &cancel).await.is_err(),
-        "{harness} sandbox replacement must be refused during apply"
-    );
-    assert_eq!(writes(), before_writes);
-    assert_eq!(fixture.state.lock().unwrap().sandboxes, sandboxes);
-    assert_eq!(fixture.state.lock().unwrap().effects, effects);
-    assert_eq!(
-        fs::read(directory.path().join("terraform.tfstate")).unwrap(),
-        state
-    );
     fixture
         .state
         .lock()
@@ -413,7 +402,7 @@ async fn missing_runtime_declaration_stops_planning_without_recreation() {
     let mut state: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
     for resource in state["resources"].as_array_mut().unwrap() {
         let field = match resource["type"].as_str().unwrap() {
-            "openshell_provider_registration" => "provider_type",
+            "openshell_inference" => "api",
             "openshell_sandbox" => "launch_json",
             _ => continue,
         };
@@ -446,7 +435,7 @@ async fn missing_runtime_declaration_stops_planning_without_recreation() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
-async fn failed_configuration_reports_safe_runtime_state_and_recovers_without_recreation() {
+async fn failed_configuration_reports_safe_runtime_state_and_recovers_on_the_next_apply() {
     let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
     let directory = tempfile::tempdir().unwrap();
     let fixture = Fixture::start().await;
@@ -479,39 +468,69 @@ async fn failed_configuration_reports_safe_runtime_state_and_recovers_without_re
         .overrides
         .model = "changed-model".into();
     fixture.state.lock().unwrap().configuration_error = Some(serde_json::json!({
-        "error": {"stage":"start", "code":"lifecycle_adapter_start_failed", "runtime_state":"unavailable", "message":"native-secret-must-not-escape"}
+        "error": {"stage":"start", "code":"start_failed", "message":"native-secret-must-not-escape"}
     }));
     let error = deployment
         .apply(&document, &cancel)
         .await
         .unwrap_err()
         .to_string();
-    assert!(error.contains("lifecycle_adapter_start_failed"), "{error}");
+    assert!(error.contains("start_failed"), "{error}");
     assert!(error.contains("sandbox/assistant"), "{error}");
-    assert!(error.contains("agent runtime is unavailable"), "{error}");
+    assert!(error.contains("agent runtime is unknown"), "{error}");
     assert!(!error.contains("native-secret"), "{error}");
+    // The deployment's private state keeps Fabric's own message, and the
+    // error names where.
+    let saved = std::path::absolute(directory.path())
+        .unwrap()
+        .join("diagnostics")
+        .join("fabric-assistant.json");
+    assert!(
+        error.contains(&format!("Fabric's message is in {}", saved.display())),
+        "{error}"
+    );
+    let message: serde_json::Value = serde_json::from_slice(&fs::read(&saved).unwrap()).unwrap();
+    assert_eq!(message["message"], "native-secret-must-not-escape");
+    // The changed agent was started in a new sandbox, where it failed.
+    let current = || {
+        let state = fixture.state.lock().unwrap();
+        assert_eq!(state.sandboxes.len(), 1);
+        state
+            .sandboxes
+            .values()
+            .next()
+            .unwrap()
+            .metadata
+            .as_ref()
+            .unwrap()
+            .id
+            .clone()
+    };
+    let replaced = current();
+    assert_ne!(replaced, sandbox_id);
     assert!(
         fixture
             .state
             .lock()
             .unwrap()
             .fabric_stopped
-            .contains(&sandbox_id)
+            .contains(&replaced)
     );
-    assert_eq!(fixture.state.lock().unwrap().sandboxes, original);
-    assert_eq!(fixture.state.lock().unwrap().effects, effects);
+    let _ = (original, effects);
+    // The failed start may have used that sandbox's one runtime, so the next
+    // apply starts the agent in yet another new sandbox.
     fixture.state.lock().unwrap().configuration_error = None;
     deployment.apply(&document, &cancel).await.unwrap();
+    let recovered = current();
+    assert_ne!(recovered, replaced);
     assert!(
-        !fixture
+        fixture
             .state
             .lock()
             .unwrap()
-            .fabric_stopped
-            .contains(&sandbox_id)
+            .fabric_configurations
+            .contains_key(&recovered)
     );
-    assert_eq!(fixture.state.lock().unwrap().sandboxes, original);
-    assert_eq!(fixture.state.lock().unwrap().effects, effects);
     assert_eq!(deployment.export(&cancel).await.unwrap(), document);
     deployment.destroy(&cancel).await.unwrap();
 }

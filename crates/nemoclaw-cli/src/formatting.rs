@@ -192,10 +192,12 @@ pub(crate) fn resource_label(address: &str) -> String {
         "openshell_gateway_storage.runtime" => "gateway storage".to_owned(),
         "openshell_workspace.deployment" => "OpenShell workspace".to_owned(),
         _ => {
-            // Search registration hashes distinguish credentials in state. The
-            // default label names the integration; verbose retains its address.
-            if address.starts_with("openshell_provider_registration.web_search_tavily_") {
-                return "web search provider/tavily".into();
+            // Web search addresses carry an image scope and credential reference
+            // to distinguish them in state. The default label names the search
+            // provider; verbose retains the address.
+            if let Some(rest) = address.strip_prefix("openshell_web_search.") {
+                let provider = rest.split('_').next().unwrap_or_default();
+                return terminal_text(&format!("web search/{provider}"));
             }
             if let Some(name) = address
                 .strip_prefix("vllm_credential_storage.inference_")
@@ -205,10 +207,6 @@ pub(crate) fn resource_label(address: &str) -> String {
             }
             let mappings = [
                 ("fabric_agent.", "agent runtime/"),
-                (
-                    "openshell_provider_profile.web_search_",
-                    "web search profile/",
-                ),
                 ("data.ollama_model.", "Ollama model/"),
                 ("ollama_proxy_credential_storage.", "proxy credentials/"),
                 ("docker_container.ollama_proxy_", "ollama proxy/"),
@@ -224,9 +222,7 @@ pub(crate) fn resource_label(address: &str) -> String {
                 ),
                 ("docker_volume.inference_storage_inference_", "model cache/"),
                 ("openshell_sandbox.", "sandbox/"),
-                ("data.fabric_agent_readiness.", "sandbox readiness/"),
-                ("openshell_provider_registration.inference_", "provider/"),
-                ("openshell_provider_profile.inference_", "provider profile/"),
+                ("openshell_inference.inference_", "provider/"),
                 ("docker_image.", "image binding/"),
             ];
             mappings
@@ -267,11 +263,7 @@ fn styled_action(actions: &[String], palette: Palette) -> String {
 
 fn result_resource_label(result: &OperationResult, address: &str) -> String {
     if let Some(source) = result.resource_sources.get(address) {
-        let kind = if address.starts_with("openshell_provider_profile.") {
-            "provider profile"
-        } else {
-            "provider"
-        };
+        let kind = "provider";
         format!(
             "{kind}/{} at {}",
             terminal_text(&source.name),
@@ -351,13 +343,6 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
             if context.verbose && label != change.resource {
                 output.push_str(&format!("    {}\n", terminal_text(&change.resource)));
             }
-            if planned
-                && result.discovery.resources.iter().any(|resource| {
-                    resource.address == change.resource && resource.agent_running == Some(false)
-                })
-            {
-                output.push_str("    Agent runtime is not running; apply restarts it.\n");
-            }
             if change.resource.starts_with("openshell_sandbox.")
                 && change.actions.iter().any(|action| action == "delete")
             {
@@ -388,26 +373,6 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
                 "  {}  {count} image binding{}\n",
                 styled_action(&actions, context.output_palette),
                 if count == 1 { "" } else { "s" }
-            ));
-        }
-    }
-    if !result.deferred_resources.is_empty() {
-        output.push_str("\nResources awaiting a complete plan:\n");
-        let mut images = 0;
-        for address in &result.deferred_resources {
-            if !context.verbose && address.starts_with("docker_image.") {
-                images += 1;
-                continue;
-            }
-            output.push_str(&format!("  {}\n", result_resource_label(result, address)));
-            if context.verbose {
-                output.push_str(&format!("    {}\n", terminal_text(address)));
-            }
-        }
-        if images > 0 {
-            output.push_str(&format!(
-                "  {images} image binding{}\n",
-                if images == 1 { "" } else { "s" }
             ));
         }
     }
@@ -497,15 +462,6 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
         for resource in &result.retained {
             let label = resource_label(resource);
             output.push_str(&format!("  {label}\n"));
-            if resource == "openshell_workspace.deployment" {
-                output.push_str(&format!(
-                    "    {}\n",
-                    context.output_palette.paint(
-                        "Retaining the workspace does not preserve sandbox files or conversation history.",
-                        Tone::Warning
-                    )
-                ));
-            }
             if context.verbose && label != *resource {
                 output.push_str(&format!("    {}\n", terminal_text(resource)));
             }
@@ -534,18 +490,6 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
         for reason in &result.unverified {
             output.push_str(&format!("  {}\n", terminal_text(reason)));
         }
-    }
-    for health in &result.health {
-        let runtime = &health.health;
-        let status = context.output_palette.paint("unsupported", Tone::Warning);
-        output.push_str(&format!(
-            "\nFabric health · sandbox/{}: {status}",
-            terminal_text(&health.sandbox)
-        ));
-        if let Some(reason) = &runtime.reason_code {
-            output.push_str(&format!(" ({})", terminal_text(reason)));
-        }
-        output.push('\n');
     }
     if planned {
         output.push_str("\nNo runtime resources changed.\n");
@@ -634,9 +578,6 @@ pub(crate) fn render_error(
         details["remainingState"] = serde_json::json!(remaining);
     }
     let help = match sdk {
-        Some(Error::SandboxChangeRefused { .. }) => Some(Cow::Borrowed(
-            "Keep this deployment's state. Use a separate deployment with a fresh UID and state directory; see docs/usage.md#choose-the-change-path. Export and destroy still use the retained configuration.",
-        )),
         Some(Error::SandboxStartup { .. }) => Some(Cow::Borrowed(
             "Inspect the sandbox with OpenShell using this deployment's gateway and workspace; collect gateway and supervisor logs before cleanup.",
         )),
@@ -784,7 +725,7 @@ mod tests {
         let value = json!({
             "outcome": "destroyed",
             "changes": [{"resource": "openshell_sandbox.assistant", "actions": ["delete"]}],
-            "retained": ["openshell_workspace.deployment"]
+            "retained": ["docker_volume.inference_storage_inference_qwen"]
         });
         let colored = super::render(
             CommandResult::Operation(serde_json::from_value(value.clone()).unwrap()),
@@ -795,7 +736,6 @@ mod tests {
         assert!(colored.contains("\x1b[38;2;118;185;0mDestroy complete"));
         assert!(colored.contains("\x1b[33mdelete\x1b[0m  sandbox/assistant"));
         assert!(colored.contains("\x1b[33mSandbox files and conversation history deleted.\x1b[0m"));
-        assert!(colored.contains("\x1b[33mRetaining the workspace does not preserve sandbox files or conversation history.\x1b[0m"));
         let machine = super::render(
             CommandResult::Operation(serde_json::from_value(value).unwrap()),
             OutputFormat::Json,
@@ -813,33 +753,28 @@ mod tests {
     fn resource_results_name_authored_sources_and_separate_deferred_work() {
         let result = json!({"outcome":"planned", "changes":[
             {"resource":"fabric_agent.host", "actions":["update"]},
-            {"resource":"openshell_provider_registration.inference_local-1234", "actions":["update"]},
-            {"resource":"openshell_provider_registration.web_search_tavily_1234", "actions":["create"]},
-            {"resource":"openshell_provider_profile.web_search_tavily", "actions":["create"]},
-            {"resource":"vllm_credential_storage.inference_tiny_auth", "actions":["create"]}
+            {"resource":"openshell_inference.inference_local-1234", "actions":["update"]},
+            {"resource":"openshell_web_search.tavily_1234_search_key", "actions":["create"]},
+            {"resource":"vllm_credential_storage.inference_tiny_auth", "actions":["create"]},
+            {"resource":"docker_container.ollama_proxy_local", "actions":["create"]},
+            {"resource":"ollama_proxy_credential_storage.local", "actions":["create"]}
         ], "resourceSources": {
-            "openshell_provider_registration.inference_local-1234":{"name":"responses", "path":"spec.sandboxes[host].inferenceProviders[responses]"}
-        }, "deferred":["Gateway is required"], "deferredResources":[
-            "docker_container.ollama_proxy_local", "data.ollama_model.local", "ollama_proxy_credential_storage.local", "docker_image.image_1234"
-        ], "discovery":{"resources":[
-            {"address":"fabric_agent.host", "scope":"deployment", "existed":true, "plannedActions":["update"], "drifted":true, "retained":false, "reusePlanned":false, "agentRunning":false},
-            {"address":"openshell_provider_registration.inference_local-1234", "scope":"deployment", "existed":true, "plannedActions":["update"], "drifted":false, "retained":false, "reusePlanned":false},
+            "openshell_inference.inference_local-1234":{"name":"responses", "path":"spec.sandboxes[host].inferenceProviders[responses]"}
+        }, "deferred":["Gateway is required"], "discovery":{"resources":[
+            {"address":"fabric_agent.host", "scope":"deployment", "existed":true, "plannedActions":["update"], "drifted":true, "retained":false, "reusePlanned":false},
+            {"address":"openshell_inference.inference_local-1234", "scope":"deployment", "existed":true, "plannedActions":["update"], "drifted":false, "retained":false, "reusePlanned":false},
             {"address":"docker_container.managed_gateway_runtime", "scope":"runtime", "existed":true, "plannedActions":["no-op"], "drifted":true, "retained":false, "reusePlanned":false}
         ]}});
         let text = render(&["nemoclaw", "plan", "spark.yaml"], result.clone());
         for expected in [
             "agent runtime/host",
             "provider/responses at spec.sandboxes[host].inferenceProviders[responses]",
-            "web search provider/tavily",
-            "web search profile/tavily",
+            "web search/tavily",
             "inference credentials/tiny",
             "ollama proxy/local",
-            "Ollama model/local",
             "proxy credentials/local",
-            "Agent runtime is not running; apply restarts it.",
             "Resources: 3 established (1 unchanged, 2 with planned changes); 0 new.",
             "Refresh differences: 2 resources; may include computed metadata.",
-            "Resources awaiting a complete plan:",
         ] {
             assert!(text.contains(expected), "missing {expected}: {text}");
         }
@@ -849,15 +784,13 @@ mod tests {
             &["nemoclaw", "plan", "spark.yaml", "--verbose"],
             result.clone(),
         );
-        assert!(verbose.contains("openshell_provider_registration.inference_local-1234"));
+        assert!(verbose.contains("openshell_inference.inference_local-1234"));
         let json: Value = serde_json::from_str(&render(
             &["nemoclaw", "plan", "spark.yaml", "-o", "json"],
             result.clone(),
         ))
         .unwrap();
-        assert_eq!(json["deferredResources"], result["deferredResources"]);
         assert_eq!(json["resourceSources"], result["resourceSources"]);
-        assert_eq!(json["discovery"]["resources"][0]["agentRunning"], false);
     }
 
     #[test]
@@ -989,28 +922,22 @@ mod tests {
     }
 
     #[test]
-    fn destroy_separates_sandbox_loss_from_retained_workspace() {
+    fn destroy_separates_sandbox_loss_from_retained_data() {
         let text = render(
             &["nemoclaw", "plan", "--destroy"],
-            json!({"outcome":"planned","changes":[{"resource":"openshell_sandbox.assistant","actions":["delete"]}],"retained":["openshell_workspace.deployment","docker_volume.inference_storage_inference_qwen"]}),
+            json!({"outcome":"planned","changes":[{"resource":"openshell_sandbox.assistant","actions":["delete"]}],"retained":["docker_volume.inference_storage_inference_qwen"]}),
         );
         let (remove, keep) = text.split_once("Retained resources:").unwrap();
         assert!(remove.contains("Deletes sandbox files"));
-        assert!(keep.contains("OpenShell workspace\n"));
-        assert!(keep.contains(
-            "Retaining the workspace does not preserve sandbox files or conversation history."
-        ));
         assert!(keep.contains("model cache/qwen"));
     }
 
     #[test]
-    fn unsupported_health_is_not_healthy_and_json_keeps_sdk_facts() {
-        let result = json!({"outcome":"succeeded","changes":[],"health":[{"sandbox":"assistant","agents":[],"supported":false,"report":null,"reason_code":"fabric_health_unsupported"}]});
+    fn a_completed_apply_does_not_claim_responses_and_json_keeps_sdk_facts() {
+        let result = json!({"outcome":"succeeded","changes":[]});
         let text = render(&["nemoclaw", "apply", "spark.yaml"], result.clone());
         assert!(text.contains("Apply complete"));
-        assert!(text.contains("unsupported"));
         assert!(text.contains("responses were not tested"));
-        assert!(!text.contains("readiness confirmed"));
         let json: Value = serde_json::from_str(&render(
             &["nemoclaw", "apply", "spark.yaml", "-o", "json"],
             result.clone(),
@@ -1079,33 +1006,6 @@ mod tests {
     }
 
     #[test]
-    fn sandbox_refusal_reports_unchanged_resources_and_retained_configuration() {
-        let cli = Cli::try_parse_from(["nemoclaw", "apply", "spark.yaml"]).unwrap();
-        let context = RenderContext::new(&cli);
-        let error = Error::SandboxChangeRefused {
-            sandbox: "reviewer".into(),
-            action: "remove",
-        };
-        let text = render_error(&error, OutputFormat::Text, &context);
-        // One apply mode exists; the message must not imply a stronger one.
-        assert!(text.contains("apply cannot remove sandbox 'reviewer'"));
-        assert!(!text.contains("ordinary"), "{text}");
-        assert!(text.contains("No runtime resources changed."));
-        assert!(text.contains("fresh UID and state directory"));
-        assert!(!text.contains("Changes may already have been made"));
-        let json: Value =
-            serde_json::from_str(&render_error(&error, OutputFormat::Json, &context)).unwrap();
-        assert_eq!(json["outcome"], "failed");
-        assert_eq!(json["remainingState"], "No runtime resources changed.");
-        assert!(
-            json["help"]
-                .as_str()
-                .unwrap()
-                .contains("docs/usage.md#choose-the-change-path")
-        );
-    }
-
-    #[test]
     fn docker_model_refusal_names_the_service_update_policy_field() {
         for command in ["plan", "apply"] {
             let cli = Cli::try_parse_from(["nemoclaw", command, "spark.yaml"]).unwrap();
@@ -1124,6 +1024,74 @@ mod tests {
             }
             let text = render_error(&error, OutputFormat::Text, &context);
             assert!(text.contains(help), "{text}");
+        }
+    }
+
+    /// Safe native diagnostics must survive either presentation independently
+    /// of the progress display. Native failure tests establish their producer.
+    #[test]
+    fn native_execution_failure_context_and_mutation_facts_survive_both_formats() {
+        let error = Error::Execution {
+            operation: "apply".into(),
+            diagnostic: "sandbox/coder start failed (pi_model_unknown); agent runtime is unavailable; resources retained".into(),
+            postcondition_failures: None,
+        };
+        for mutated in [false, true] {
+            let cli =
+                Cli::try_parse_from(["nemoclaw", "apply", "pi.yaml", "--progress", "off"]).unwrap();
+            let context = RenderContext::new(&cli);
+            if mutated {
+                context.progress(Arc::new(|_| {}))(nemoclaw_sdk::Progress::MutationStarted);
+            }
+            assert_eq!(error_exit_code(&error), 1);
+            for format in [OutputFormat::Text, OutputFormat::Json] {
+                let rendered = render_error(&error, format, &context);
+                let (message, remaining) = match format {
+                    OutputFormat::Json => {
+                        let report: Value = serde_json::from_str(&rendered).unwrap();
+                        assert_eq!(report["outcome"], "failed");
+                        assert_eq!(report["operation"], "Apply");
+                        assert_eq!(report["input"], "pi.yaml");
+                        (
+                            report["error"]["message"].as_str().unwrap().to_owned(),
+                            report["remainingState"].as_str().unwrap().to_owned(),
+                        )
+                    }
+                    OutputFormat::Text => {
+                        assert!(rendered.contains("Apply failed"), "{rendered}");
+                        assert!(rendered.contains("Input: pi.yaml"), "{rendered}");
+                        (rendered.clone(), rendered)
+                    }
+                };
+                for expected in [
+                    "sandbox/coder",
+                    "start",
+                    "pi_model_unknown",
+                    "agent runtime is unavailable",
+                    "resources retained",
+                ] {
+                    assert!(message.contains(expected), "missing {expected}: {message}");
+                }
+                if mutated {
+                    assert!(
+                        remaining.contains("Changes may already have been made"),
+                        "{remaining}"
+                    );
+                    assert!(
+                        !remaining.contains("No runtime resources changed"),
+                        "{remaining}"
+                    );
+                } else {
+                    assert!(
+                        remaining.contains("No runtime resources changed"),
+                        "{remaining}"
+                    );
+                    assert!(
+                        !remaining.contains("Changes may already have been made"),
+                        "{remaining}"
+                    );
+                }
+            }
         }
     }
 

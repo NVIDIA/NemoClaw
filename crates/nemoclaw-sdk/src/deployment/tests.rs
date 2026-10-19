@@ -113,6 +113,43 @@ fn relative_kubeconfig_keeps_its_callers_meaning_in_provider_directories() {
     }
 }
 
+/// Providers keep Fabric's own messages about failed agent operations in the
+/// deployment's private state, wherever an operation runs OpenTofu.
+#[test]
+fn providers_keep_agent_diagnostics_in_the_state_directory() {
+    struct Any;
+    impl Secrets for Any {
+        fn resolve(&self, _: &str) -> Result<String, crate::ObservationError> {
+            Ok("a-long-test-credential".into())
+        }
+    }
+    let document =
+        Document::parse(include_bytes!("../../tests/fixtures/config/local.yaml").as_slice())
+            .unwrap();
+    let temporary = tempfile::tempdir().unwrap();
+    let deployment =
+        Deployment::new(temporary.path(), Path::new("unused-bundle")).with_secrets(Arc::new(Any));
+    let expected = std::path::absolute(temporary.path())
+        .unwrap()
+        .join("diagnostics")
+        .to_string_lossy()
+        .into_owned();
+    for (directory, gateway_only) in [
+        (temporary.path().to_path_buf(), false),
+        (temporary.path().join(".export-copy"), true),
+    ] {
+        let environment = deployment
+            .provider_environment(&document, &directory, gateway_only)
+            .unwrap();
+        assert_eq!(environment[nemoclaw_backend::DIAGNOSTICS_ENV], expected);
+    }
+    // Configurations can't name it.
+    assert!(matches!(
+        credential_environment([nemoclaw_backend::DIAGNOSTICS_ENV], &Any, temporary.path()),
+        Err(Error::Conflict(_))
+    ));
+}
+
 #[test]
 fn kubernetes_environment_is_operation_scoped_and_stable_across_export_directories() {
     struct ProvisioningOnly;
@@ -130,7 +167,7 @@ fn kubernetes_environment_is_operation_scoped_and_stable_across_export_directori
         env: "UNREAD_INFERENCE_KEY".into(),
     });
     let temporary = tempfile::tempdir().unwrap();
-    let mut deployment = Deployment::new(temporary.path(), Path::new("unused-bundle"))
+    let deployment = Deployment::new(temporary.path(), Path::new("unused-bundle"))
         .with_secrets(Arc::new(ProvisioningOnly));
     let expected = temporary
         .path()
@@ -143,7 +180,7 @@ fn kubernetes_environment_is_operation_scoped_and_stable_across_export_directori
         .to_string_lossy()
         .into_owned();
     for directory in [
-        temporary.path().join("runtime"),
+        temporary.path().to_path_buf(),
         temporary.path().join(".export-copy"),
     ] {
         let environment = deployment
@@ -160,14 +197,8 @@ fn kubernetes_environment_is_operation_scoped_and_stable_across_export_directori
         assert!(!environment.contains_key(crate::kubernetes::TOKEN_ENV));
         assert!(!environment.contains_key("UNREAD_INFERENCE_KEY"));
     }
-    deployment.operation_environment.insert(
-        crate::kubernetes::TOKEN_ENV.into(),
-        "synthetic-token".into(),
-    );
-    let environment = deployment
-        .provider_environment(&document, temporary.path(), true)
-        .unwrap();
-    assert_eq!(environment[crate::kubernetes::TOKEN_ENV], "synthetic-token");
+    // Providers open their own connections; the reserved names stay
+    // unavailable to configurations.
     for name in [
         crate::kubernetes::STATE_ENV,
         crate::kubernetes::TOKEN_ENV,
@@ -198,7 +229,7 @@ fn gateway_observations_are_read_only_in_plans_and_discardable_during_teardown()
                     .is_empty()
             );
             assert!(
-                runtime::check_runtime_plan(&plan, &declared, &BTreeMap::new())
+                crate::deployment::plan::check_plan(&plan, &declared, &BTreeMap::new())
                     .unwrap()
                     .is_empty()
             );
@@ -218,7 +249,9 @@ fn gateway_observations_are_read_only_in_plans_and_discardable_during_teardown()
             let value = json!({"mode":mode, "address":address, "change":{"actions":[action]}});
             let plan: Plan = serde_json::from_value(json!({"resource_changes":[value]})).unwrap();
             assert!(check_plan(&plan, &declared, &BTreeMap::new()).is_err());
-            assert!(runtime::check_runtime_plan(&plan, &declared, &BTreeMap::new()).is_err());
+            assert!(
+                crate::deployment::plan::check_plan(&plan, &declared, &BTreeMap::new()).is_err()
+            );
         }
         let change = json!({"mode":"data", "address":address, "change":{"actions":["read"]}});
         let duplicate: Plan =
@@ -251,7 +284,7 @@ fn ordinary_plan_cannot_delete_replace_or_recreate_a_bound_resource() {
 fn reconstructible_recreation_uses_opentofu_state_after_refresh_only() {
     // After OpenTofu commits refresh, its next plan need not report absence again.
     // Supplied bindings must not override OpenTofu's reconstructible transitions.
-    let address = "openshell_provider_registration.example";
+    let address = "openshell_inference.example";
     let allowed = [(address.into(), Row::new())].into();
     let bindings = [(
         address.into(),
@@ -273,7 +306,7 @@ fn reconstructible_recreation_uses_opentofu_state_after_refresh_only() {
 
 #[test]
 fn reconstructible_resources_support_removal_replacement_and_confirmed_absence() {
-    for kind in ["provider", "provider_profile", "agent"] {
+    for kind in ["inference", "web_search", "agent"] {
         let address = format!("{}.example", crate::compile::resource_type(kind));
         let expected = [(address.clone(), Row::new())].into();
         let bindings = [(
@@ -318,7 +351,7 @@ fn reconstructible_resources_support_removal_replacement_and_confirmed_absence()
 
 #[test]
 fn reconstructible_resource_plans_keep_scope_without_rechecking_provider_identity() {
-    let address = "openshell_provider_registration.example";
+    let address = "openshell_inference.example";
     let expected = [(address.into(), Row::new())].into();
     let bindings = [(
         address.into(),
@@ -345,8 +378,8 @@ fn reconstructible_resource_plans_keep_scope_without_rechecking_provider_identit
 #[test]
 fn teardown_delegates_reconstructible_and_disposable_recovery_to_opentofu() {
     for address in [
-        "openshell_provider_registration.example",
-        "openshell_provider_profile.example",
+        "openshell_inference.example",
+        "openshell_web_search.example",
         "fabric_agent.example",
         "docker_container.runtime",
     ] {
@@ -674,15 +707,15 @@ fn gateway_replacement_preserves_the_old_binding_and_rejects_other_actions() {
     .into();
     let plan:Plan = serde_json::from_value(json!({"resource_changes":[{"address":address,"change":{"actions":["delete","create"],"before":{"id":"physical","spec":"old"}}}]})).unwrap();
     assert_eq!(
-        runtime::check_runtime_plan(&plan, &expected, &bindings)
+        crate::deployment::plan::check_plan(&plan, &expected, &bindings)
             .unwrap()
             .len(),
         1
     );
     let mut wrong:Plan = serde_json::from_value(json!({"resource_changes":[{"address":address,"change":{"actions":["delete","create"],"before":{"id":"other","spec":"old"}}}]})).unwrap();
-    assert!(runtime::check_runtime_plan(&wrong, &expected, &bindings).is_err());
+    assert!(crate::deployment::plan::check_plan(&wrong, &expected, &bindings).is_err());
     wrong.resource_changes.clear();
-    assert!(runtime::check_runtime_plan(&wrong, &expected, &bindings).is_err());
+    assert!(crate::deployment::plan::check_plan(&wrong, &expected, &bindings).is_err());
     for action in [
         vec!["create"],
         vec!["delete"],
@@ -690,7 +723,7 @@ fn gateway_replacement_preserves_the_old_binding_and_rejects_other_actions() {
         vec!["create", "delete"],
     ] {
         let plan:Plan=serde_json::from_value(json!({"resource_changes":[{"address":address,"change":{"actions":action,"before":{"id":"physical","spec":"old"}}}]})).unwrap();
-        assert!(runtime::check_runtime_plan(&plan, &expected, &bindings).is_err());
+        assert!(crate::deployment::plan::check_plan(&plan, &expected, &bindings).is_err());
     }
 }
 
@@ -760,7 +793,7 @@ fn public_operation_futures_fit_the_async_callers_stack_budget() {
 
 #[test]
 fn destroy_drift_errors_distinguish_undeclared_resources_from_missing_saved_ids() {
-    let address = "openshell_sandbox.assistant";
+    let address = "openshell_workspace.workspace";
     let plan: Plan = serde_json::from_value(json!({
         "resource_drift":[{
             "address": address, "change": {"actions":["update"], "before":{"id":"saved-id"}}
@@ -821,7 +854,7 @@ fn runtime_plans_accept_only_declared_local_image_observations_and_teardown_dele
         }
         let plan: Plan = serde_json::from_value(json!({"resource_changes":changes})).unwrap();
         assert_eq!(
-            runtime::check_runtime_plan(&plan, &allowed, &BTreeMap::new()).is_ok(),
+            crate::deployment::plan::check_plan(&plan, &allowed, &BTreeMap::new()).is_ok(),
             valid
         );
     }
@@ -892,7 +925,7 @@ fn removed_disposable_compute_accepts_confirmed_absence() {
             .is_empty()
     );
     assert!(
-        runtime::check_runtime_plan(&plan, &BTreeMap::new(), &bindings)
+        crate::deployment::plan::check_plan(&plan, &BTreeMap::new(), &bindings)
             .unwrap()
             .is_empty()
     );
@@ -973,7 +1006,7 @@ fn replacement_cleanup_reports_opentofu_objects_within_deployment_scope() {
     let apply = plan(json!([current, old]));
     assert_eq!(check_plan(&apply, &allowed, &bindings).unwrap().len(), 1);
     assert_eq!(
-        runtime::check_runtime_plan(&apply, &allowed, &bindings)
+        crate::deployment::plan::check_plan(&apply, &allowed, &bindings)
             .unwrap()
             .len(),
         1
@@ -1047,7 +1080,7 @@ fn replacement_cleanup_reports_opentofu_objects_within_deployment_scope() {
     }
 }
 
-fn example_documents() -> Vec<(String, Document)> {
+pub(super) fn example_documents() -> Vec<(String, Document)> {
     fn walk(directory: &std::path::Path, found: &mut Vec<std::path::PathBuf>) {
         for entry in fs::read_dir(directory).unwrap() {
             let path = entry.unwrap().path();
@@ -1055,7 +1088,7 @@ fn example_documents() -> Vec<(String, Document)> {
                 walk(&path, found);
             } else if path
                 .extension()
-                .is_some_and(|extension| extension == "yaml")
+                .is_some_and(|extension| extension == "yaml" || extension == "yml")
             {
                 found.push(path);
             }
@@ -1081,15 +1114,18 @@ fn compiled_examples() -> Vec<(String, Value, BTreeMap<String, Row>)> {
     let mut compiled = Vec::new();
     for (name, document) in example_documents() {
         let generations = Record::new(document.clone()).unwrap().generations;
-        let (graph, targets) = compile::deployment_graph(&document, &generations, "0.0.0").unwrap();
-        let expected = with_observations(&allowed(&targets), &compile::observations(&graph));
-        compiled.push((format!("{name} deployment"), graph, expected));
-        if document.has_runtime() {
-            let (graph, targets) =
-                compile::compiled_runtime(&document, &generations, "0.0.0").unwrap();
-            let expected = with_observations(&allowed(&targets), &compile::observations(&graph));
-            compiled.push((format!("{name} runtime"), graph, expected));
-        }
+        let deployment = compile::deployment_graph(&document, &generations, "0.0.0").unwrap();
+        let targets: Vec<_> = deployment
+            .objects
+            .iter()
+            .chain(&deployment.runtime)
+            .cloned()
+            .collect();
+        let expected = with_observations(
+            &allowed(&targets),
+            &compile::observations(&deployment.graph),
+        );
+        compiled.push((name, deployment.graph, expected));
     }
     compiled
 }
@@ -1133,7 +1169,7 @@ const UNDECLARED_OBSERVATIONS: [&str; 5] = [
     "data.host_engine.target_99",
     "data.host_engine.current",
     compile::GATEWAY_APPLY_CAPABILITIES_ADDRESS,
-    "data.nemoclaw_runtime_image.runtime_image_present_managed_gateway_runtime",
+    "data.host_image.runtime_image_present_managed_gateway_runtime",
 ];
 
 #[test]
@@ -1186,23 +1222,17 @@ fn teardown_discards_only_observations_the_applied_graph_read() {
     let mut rejected = 0;
     for (name, document) in example_documents() {
         let generations = Record::new(document.clone()).unwrap().generations;
-        for runtime in [false, true] {
-            if runtime && !document.has_runtime() {
-                continue;
-            }
-            let compiled = compile::compile_teardown(
-                &document,
-                &generations,
-                "0.0.0",
-                &BTreeSet::new(),
-                runtime,
-            )
-            .unwrap();
-            let (applied, targets) = if runtime {
-                compile::compiled_runtime(&document, &generations, "0.0.0").unwrap()
-            } else {
-                compile::deployment_graph(&document, &generations, "0.0.0").unwrap()
-            };
+        for runtime in [false] {
+            let compiled =
+                compile::compile_teardown(&document, &generations, "0.0.0", &BTreeSet::new())
+                    .unwrap();
+            let deployment = compile::deployment_graph(&document, &generations, "0.0.0").unwrap();
+            let applied = deployment.graph;
+            let targets: Vec<_> = deployment
+                .objects
+                .into_iter()
+                .chain(deployment.runtime)
+                .collect();
             assert_eq!(
                 compiled.observations,
                 declared_reads(&applied),
@@ -1288,4 +1318,25 @@ fn declared_observations_still_reject_deposed_objects_and_unsupported_modes() {
             "plan contains an unsupported resource mode"
         ))
     ));
+}
+
+#[test]
+fn an_existing_issuers_token_reaches_gateway_only_runs() {
+    struct OidcValues;
+    impl Secrets for OidcValues {
+        fn resolve(&self, name: &str) -> Result<String, crate::ObservationError> {
+            Ok(format!("test-{name}"))
+        }
+    }
+    let (document, _) = kubernetes_context();
+    let mut value = serde_json::to_value(&document).unwrap();
+    value["spec"]["gateway"]["kubernetes"]["authentication"] = json!({
+        "profile": "oidc",
+        "issuer": "https://login.example.com",
+        "audience": "openshell",
+        "tokenEnv": "OIDC_TOKEN"
+    });
+    let document = Document::parse(value.to_string().as_bytes()).unwrap();
+    let environment = gateway_environment(&document, &OidcValues, Path::new("state")).unwrap();
+    assert_eq!(environment["OIDC_TOKEN"], "test-OIDC_TOKEN");
 }
