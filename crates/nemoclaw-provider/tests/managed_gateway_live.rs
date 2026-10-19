@@ -100,6 +100,17 @@ async fn start(api: &Docker, engine: &Engine, spec: &Spec) -> OpenShellClient {
         )
         .await
         .unwrap();
+    // As the Docker provider's upload does, give the new container its
+    // configuration file before it starts.
+    let config = spec.gateway_config(&volume.mountpoint).unwrap();
+    engine
+        .write_files(
+            &created.id,
+            &volume.mountpoint,
+            &[("gateway.toml", config.as_bytes(), 0o600)],
+        )
+        .await
+        .unwrap();
     api.start_container(&created.id, None).await.unwrap();
     let client = client(spec);
     ready(api, spec, &client).await;
