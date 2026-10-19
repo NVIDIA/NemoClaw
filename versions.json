@@ -2,7 +2,7 @@
   "opentofu": "1.12.6",
   "openshell": "0.1.4",
   "openclaw": "2026.9.4",
-  "ollama": "0.34.0",
+  "ollama": "0.40.6",
   "platforms": {
     "linux_arm64": {
       "kind": {

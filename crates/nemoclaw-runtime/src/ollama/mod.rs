@@ -4,9 +4,7 @@ mod config;
 pub use config::{ManagedOllama, OllamaMemory, OllamaModel, OllamaServing};
 pub mod constraints;
 pub mod hardware_capacity;
-pub mod model_source;
 pub mod policy;
-pub mod registry;
 #[cfg(all(feature = "execution", target_os = "linux"))]
 pub mod runtime;
 pub const MODEL_PATTERN: &str = r"^[a-z0-9][a-z0-9._-]*:[a-z0-9][a-z0-9._-]*$";

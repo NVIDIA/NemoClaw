@@ -9,7 +9,5 @@ mod contract;
 mod dependencies;
 #[path = "entrypoint.rs"]
 mod entrypoint;
-#[path = "ollama_cache.rs"]
-mod ollama_cache;
 #[path = "rtx_spark.rs"]
 mod rtx_spark;

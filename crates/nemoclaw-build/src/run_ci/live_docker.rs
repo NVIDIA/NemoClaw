@@ -278,7 +278,6 @@ fn prepare(
     let path = |path: &Path| path.display().to_string();
     Ok(vec![
         ("NEMOCLAW_TEST_BUNDLE".into(), path(bundle)),
-        ("NEMOCLAW_TEST_OLLAMA_CACHE".into(), "1".into()),
         ("NEMOCLAW_TEST_RUNTIME_IMAGE".into(), "1".into()),
         ("NEMOCLAW_TEST_CACHE_ENGINE".into(), ENGINE.into()),
         ("NEMOCLAW_TEST_CACHE_IMAGE".into(), agent.clone()),
