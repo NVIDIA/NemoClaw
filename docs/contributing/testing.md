@@ -117,7 +117,7 @@ A coverage test in each binary requires a contract test for every type the provi
 ### System
 
 A system test runs the SDK or the bundled CLI through a whole lifecycle over a bundle: export, unchanged reapply, interrupted creation, failed readiness, and destroy with retained storage.
-System tests live in `nemoclaw-e2e`'s `integration` binary; the `lifecycle` profile in [`.config/nextest.toml`](../../.config/nextest.toml) selects its `deployment`, `export_observations`, `fabric_deployment`, `multi_agent`, `multiple_providers`, `remote_service`, `helm_recovery`, `travel_example`, and `travel_team_example` modules.
+System tests live in `nemoclaw-e2e`'s `integration` binary; the `lifecycle` profile in [`.config/nextest.toml`](../../.config/nextest.toml) selects its `deployment`, `export_observations`, `fabric_deployment`, `kubernetes_agents`, `multi_agent`, `multiple_providers`, `remote_service`, `helm_recovery`, `travel_example`, and `travel_team_example` modules.
 On Unix, `helm_recovery` runs the bundle's OpenTofu and Helm provider against an in-memory Kubernetes API.
 The profile also selects one ignored test each in `nemoclaw-test-fixtures` and `nemoclaw-fixture-provider`, so that `cargo ci archive` packages their fixture executables with the tests.
 [Run integration tests](integration-tests.md#system-tests) describes the scenarios.

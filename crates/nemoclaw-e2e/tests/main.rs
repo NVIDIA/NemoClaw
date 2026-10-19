@@ -35,6 +35,8 @@ mod hosted_parity;
 #[cfg(unix)]
 #[path = "../../test-support/kube_api.rs"]
 mod kube_api;
+#[path = "kubernetes_agents.rs"]
+mod kubernetes_agents;
 #[path = "kubernetes_chart.rs"]
 mod kubernetes_chart;
 #[path = "kubernetes_live.rs"]
