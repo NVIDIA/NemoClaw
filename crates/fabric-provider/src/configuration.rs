@@ -8,8 +8,14 @@ use openshell_provider::{OpenShell, verify_identity};
 use serde_json::Value;
 
 /// A failed bridge operation as a public diagnostic: only Fabric's fixed
-/// stages and codes cross the boundary, never its message.
-pub(crate) fn configuration_failure(stage: &str, code: &str, effects: &str) -> ObservationError {
+/// stages and codes cross the boundary, never its message. `message_file`
+/// names the private file that keeps the message, if one was saved.
+pub(crate) fn configuration_failure(
+    stage: &str,
+    code: &str,
+    effects: &str,
+    message_file: Option<Box<str>>,
+) -> ObservationError {
     let stage = match stage {
         "request" => "request",
         "transport" => "transport",
@@ -50,6 +56,7 @@ pub(crate) fn configuration_failure(stage: &str, code: &str, effects: &str) -> O
         stage,
         code,
         runtime_state,
+        message_file,
     }
 }
 
@@ -243,17 +250,18 @@ mod tests {
 
     #[test]
     fn configuration_diagnostics_preserve_only_known_fields() {
-        let failure = super::configuration_failure("start", "start_failed", "none");
+        let failure = super::configuration_failure("start", "start_failed", "none", None);
         let text = failure.to_string();
         assert!(text.contains("start_failed"));
         assert!(text.contains("agent runtime is unavailable"));
         assert!(!text.contains("private-value"));
         assert_eq!(
-            super::configuration_failure("private-value", "private-value", "private-value"),
+            super::configuration_failure("private-value", "private-value", "private-value", None),
             nemoclaw_backend::ObservationError::FabricConfiguration {
                 stage: "unknown",
                 code: "fabric_configuration_failed",
                 runtime_state: "unknown",
+                message_file: None,
             }
         );
     }
@@ -264,7 +272,7 @@ mod tests {
             ("start", "start_failed", "coder"),
             ("validation", "validation_failed", "assistant"),
         ] {
-            let error = super::configuration_failure(stage, code, "none");
+            let error = super::configuration_failure(stage, code, "none", None);
             let message = nemoclaw_tofu::observation_message(error, Some(sandbox));
             assert!(message.contains(&format!("sandbox/{sandbox}")), "{message}");
             for expected in [

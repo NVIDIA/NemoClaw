@@ -74,6 +74,8 @@ pub enum ObservationError {
         stage: &'static str,
         code: &'static str,
         runtime_state: &'static str,
+        /// The private file that keeps Fabric's own message, when one was saved.
+        message_file: Option<Box<str>>,
     },
     SandboxConfigurationRejected {
         reason: &'static str,
@@ -111,10 +113,17 @@ impl fmt::Display for ObservationError {
                 stage,
                 code,
                 runtime_state,
-            } => write!(
-                f,
-                "Fabric runtime operation failed at {stage} ({code}); agent runtime is {runtime_state}; resources retained"
-            ),
+                message_file,
+            } => {
+                write!(
+                    f,
+                    "Fabric runtime operation failed at {stage} ({code}); agent runtime is {runtime_state}"
+                )?;
+                if let Some(path) = message_file {
+                    write!(f, "; Fabric's message is in {path}")?;
+                }
+                f.write_str("; resources retained")
+            }
             Self::Hardware(diagnostic) => diagnostic.fmt(f),
             Self::Backend(message) => f.write_str(message),
             Self::Authentication => f.write_str("observation authentication failed"),

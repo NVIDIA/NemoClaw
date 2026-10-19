@@ -270,6 +270,64 @@ async fn a_changed_agent_without_a_new_sandbox_is_refused() {
     assert_eq!(sandbox_id(&fixture), sandbox);
 }
 
+/// Fabric's own message about a failed start can repeat the harness's output,
+/// so the diagnostic leaves it out and names the private file that keeps it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; fake OpenShell gateway"]
+async fn a_failed_start_keeps_fabrics_message_in_a_private_file() {
+    let fixture = Fixture::start().await;
+    fixture.state.lock().unwrap().configuration_error = Some(json!({
+        "error": {"stage": "start", "code": "start_failed", "message": "harness said PRIVATE_SENTINEL"}
+    }));
+    let tofu = Standalone::new(&fixture.endpoint, &[]);
+    let diagnostics = tofu.root.path().join("diagnostics");
+    let output = tofu
+        .root
+        .command()
+        .args(["apply", "-auto-approve", "-input=false", "-no-color"])
+        .env("NEMOCLAW_TEST_REGISTRATION_KEY", "fixture-secret")
+        .env("NEMOCLAW_TEST_ROTATED_KEY", "rotated-fixture-secret")
+        .env(nemoclaw_backend::DIAGNOSTICS_ENV, &diagnostics)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    // OpenTofu wraps diagnostic text.
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(stderr.contains("start_failed"), "{stderr}");
+    assert!(!stderr.contains("PRIVATE_SENTINEL"), "{stderr}");
+    let saved: Vec<PathBuf> = fs::read_dir(&diagnostics)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect();
+    let [saved] = saved.as_slice() else {
+        panic!("one message file: {saved:?}");
+    };
+    assert!(
+        stderr.contains(&format!("Fabric's message is in {}", saved.display())),
+        "{stderr}"
+    );
+    let message: Value = serde_json::from_slice(&fs::read(saved).unwrap()).unwrap();
+    assert_eq!(
+        message,
+        json!({"stage": "start", "code": "start_failed", "effects": "unknown", "message": "harness said PRIVATE_SENTINEL"})
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            fs::metadata(saved).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert_eq!(
+            fs::metadata(&diagnostics).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+    }
+}
+
 /// The only sandbox's ID in the fake gateway.
 fn sandbox_id(fixture: &Fixture) -> String {
     fixture

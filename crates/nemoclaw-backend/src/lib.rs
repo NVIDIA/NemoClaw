@@ -17,3 +17,9 @@ pub use identity::{generate_generation, generate_owner};
 pub use nemoclaw_runtime::config::ConfigError;
 pub use observation::{Binding, Bound, Observation, ObservationError, ObservationStatus, refresh};
 pub use secrets::{EnvironmentSecrets, Secrets};
+
+/// Names the directory, in the deployment's private state, where providers
+/// keep a backend's own message about a failed operation. Only the SDK sets
+/// it: configurations can't name variables with the `NEMOCLAW_INTERNAL_`
+/// prefix.
+pub const DIAGNOSTICS_ENV: &str = "NEMOCLAW_INTERNAL_DIAGNOSTICS";

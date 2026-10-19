@@ -113,6 +113,43 @@ fn relative_kubeconfig_keeps_its_callers_meaning_in_provider_directories() {
     }
 }
 
+/// Providers keep Fabric's own messages about failed agent operations in the
+/// deployment's private state, wherever an operation runs OpenTofu.
+#[test]
+fn providers_keep_agent_diagnostics_in_the_state_directory() {
+    struct Any;
+    impl Secrets for Any {
+        fn resolve(&self, _: &str) -> Result<String, crate::ObservationError> {
+            Ok("a-long-test-credential".into())
+        }
+    }
+    let document =
+        Document::parse(include_bytes!("../../tests/fixtures/config/local.yaml").as_slice())
+            .unwrap();
+    let temporary = tempfile::tempdir().unwrap();
+    let deployment =
+        Deployment::new(temporary.path(), Path::new("unused-bundle")).with_secrets(Arc::new(Any));
+    let expected = std::path::absolute(temporary.path())
+        .unwrap()
+        .join("diagnostics")
+        .to_string_lossy()
+        .into_owned();
+    for (directory, gateway_only) in [
+        (temporary.path().to_path_buf(), false),
+        (temporary.path().join(".export-copy"), true),
+    ] {
+        let environment = deployment
+            .provider_environment(&document, &directory, gateway_only)
+            .unwrap();
+        assert_eq!(environment[nemoclaw_backend::DIAGNOSTICS_ENV], expected);
+    }
+    // Configurations can't name it.
+    assert!(matches!(
+        credential_environment([nemoclaw_backend::DIAGNOSTICS_ENV], &Any, temporary.path()),
+        Err(Error::Conflict(_))
+    ));
+}
+
 #[test]
 fn kubernetes_environment_is_operation_scoped_and_stable_across_export_directories() {
     struct ProvisioningOnly;

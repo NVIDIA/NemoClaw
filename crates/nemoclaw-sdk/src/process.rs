@@ -217,10 +217,13 @@ pub(crate) async fn run_with_progress(
 fn secret_values(overrides: &BTreeMap<String, String>) -> Vec<String> {
     let mut secrets = Vec::new();
     for (name, value) in overrides.iter().filter(|(_, value)| !value.is_empty()) {
+        // The diagnostics directory is named in errors so users can find
+        // Fabric's message; it is a path in the caller's own state.
         if !matches!(
             name.as_str(),
             "TF_IN_AUTOMATION" | "TF_INPUT" | "TF_CLI_CONFIG_FILE" | "CHECKPOINT_DISABLE"
-        ) {
+        ) && name != nemoclaw_backend::DIAGNOSTICS_ENV
+        {
             secrets.push(value.clone());
         }
     }
@@ -408,6 +411,11 @@ mod environment_tests {
         let secrets = secret_values(&BTreeMap::from([
             ("TF_IN_AUTOMATION".into(), "1".into()),
             ("CUSTOM_CREDENTIAL".into(), "a-long-credential".into()),
+            // Errors name files in it, so it stays readable.
+            (
+                nemoclaw_backend::DIAGNOSTICS_ENV.into(),
+                "/state/diagnostics".into(),
+            ),
         ]));
         assert_eq!(secrets, ["a-long-credential"]);
     }

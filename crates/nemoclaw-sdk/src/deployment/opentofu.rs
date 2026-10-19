@@ -162,6 +162,15 @@ impl Deployment {
         } else {
             command_environment(document, self.secrets.as_ref(), directory)?
         };
+        // Providers keep backends' own messages about failed operations here,
+        // in the deployment's private state, and diagnostics name the file.
+        let diagnostics = std::path::absolute(&self.state_directory)
+            .map_err(|_| Error::State("cannot resolve the deployment's state directory"))?
+            .join("diagnostics");
+        environment.insert(
+            nemoclaw_backend::DIAGNOSTICS_ENV.into(),
+            diagnostics.to_string_lossy().into_owned(),
+        );
         if let Some(target) = document.spec.gateway.as_kubernetes() {
             let state = std::path::absolute(&self.state_directory)
                 .map_err(|_| Error::State("cannot resolve Kubernetes state directory"))?

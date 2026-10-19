@@ -84,5 +84,9 @@ A working forward does not establish that the native service has valid authentic
 
 NemoClaw compares the retained public Fabric configuration with the runtime host's configuration and preserves resource identities on failure.
 Fabric owns configuration validation and native diagnostics.
-Configuration failures name the sandbox and report a fixed stage, code, and runtime state; raw exception messages and details are omitted.
+Configuration failures name the sandbox and report a fixed stage, code, and runtime state.
+Fabric's own message is left out of the output, because it can repeat what the harness printed, including secrets NemoClaw can't recognize to redact.
+NemoClaw keeps it in `diagnostics/fabric-SANDBOX.json` in the deployment's state directory, and the error names that file: `Fabric's message is in PATH`.
+On Linux and macOS, only the state directory's owner can read the file.
+Inspect it privately before sharing excerpts; a later failure in the same sandbox replaces it.
 Correct the reported conflict before reapplying; do not delete retained state to hide drift.

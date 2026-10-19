@@ -127,8 +127,9 @@ async fn run_input(
     run(client, binding, arguments, payload).await
 }
 
-/// A failed operation as a public diagnostic built from Fabric's fixed codes.
-fn failure(response: &Response) -> Error {
+/// A failed operation as a public diagnostic built from Fabric's fixed codes,
+/// naming the private file that keeps Fabric's own message about it.
+fn failure(binding: &Row, response: &Response) -> Error {
     let Some(error) = response.error() else {
         return invalid();
     };
@@ -139,7 +140,56 @@ fn failure(response: &Response) -> Error {
         )
         .into();
     }
-    crate::configuration::configuration_failure(&error.stage, &error.code, &error.effects).into()
+    crate::configuration::configuration_failure(
+        &error.stage,
+        &error.code,
+        &error.effects,
+        save_message(binding, error),
+    )
+    .into()
+}
+
+/// Keep Fabric's own message about a failed operation in the directory the
+/// SDK names in the deployment's private state, as `fabric-SANDBOX.json`, and
+/// return its path. The message can repeat what the harness printed,
+/// including secrets NemoClaw can't recognize to redact, so diagnostics name
+/// the file instead. A later failure in the same sandbox replaces it. Without
+/// the directory, or if writing fails, the diagnostic names no file.
+fn save_message(binding: &Row, error: &Failure) -> Option<Box<str>> {
+    let directory = std::path::PathBuf::from(std::env::var_os(nemoclaw_backend::DIAGNOSTICS_ENV)?);
+    let sandbox = value(binding, "name");
+    if sandbox.is_empty()
+        || !sandbox
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+    {
+        return None;
+    }
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    builder.create(&directory).ok()?;
+    let path = directory.join(format!("fabric-{sandbox}.json"));
+    let mut options = std::fs::OpenOptions::new();
+    options.create(true).truncate(true).write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let saved = serde_json::json!({
+        "stage": error.stage,
+        "code": error.code,
+        "effects": error.effects,
+        "message": error.message,
+    });
+    let mut file = options.open(&path).ok()?;
+    std::io::Write::write_all(&mut file, saved.to_string().as_bytes()).ok()?;
+    Some(path.to_string_lossy().into())
 }
 
 /// The operations NemoClaw runs through a Fabric sandbox's bridge.
@@ -182,7 +232,7 @@ impl AgentBridge for OpenShell {
                     if !response.error().is_some_and(|error| {
                         error.code == "host_unavailable" && error.effects == "none"
                     }) {
-                        return Err(failure(&response));
+                        return Err(failure(binding, &response));
                     }
                 }
                 tokio::time::sleep(Duration::from_secs(1)).await;
@@ -210,7 +260,7 @@ impl AgentBridge for OpenShell {
         ];
         let response = run_input(self, binding, &arguments, input).await?;
         if response.status != "succeeded" {
-            return Err(failure(&response));
+            return Err(failure(binding, &response));
         }
         response.result.ok_or_else(invalid)
     }
@@ -229,7 +279,7 @@ impl AgentBridge for OpenShell {
             {
                 Ok(())
             }
-            Some(_) => Err(failure(&response)),
+            Some(_) => Err(failure(binding, &response)),
         }
     }
 }

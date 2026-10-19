@@ -48,6 +48,7 @@ Do not attach environment dumps, TLS private keys, interface tokens, or the enti
 | Interrupted apply | Resolve the cause and reapply the original YAML with its retained state |
 | Unfinished destroy | Resume destroy with the same state; other operations refuse unfinished teardown |
 | `adapter/<id> compatibility rejected` | Read the named sandbox and canonical field; for `models.<role>.max_tokens`, remove that route's `overrides.maxTokens` or choose an adapter that accepts it, then plan again |
+| `Fabric runtime operation failed at STAGE (CODE)` | Read Fabric's message in the file the error names, in the state directory's `diagnostics` directory; it can contain secrets, so read it privately. Then follow [agent interface diagnosis](interfaces.md#diagnose-failures) |
 | Public Fabric configuration mismatch or native startup rejection | Follow [agent interface diagnosis](interfaces.md#diagnose-failures); retained public configuration checks do not audit native files or tokens |
 | After a malformed OpenClaw request: `runtime_unavailable` | The runtime is unusable and only a new sandbox recovers it; change the agent's configuration, or follow the [whole-deployment replacement procedure](usage.md#replace-workloads-after-an-unusable-openclaw-runtime), including loss of sandbox files and history |
 

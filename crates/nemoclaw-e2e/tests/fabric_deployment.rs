@@ -479,6 +479,18 @@ async fn failed_configuration_reports_safe_runtime_state_and_recovers_on_the_nex
     assert!(error.contains("sandbox/assistant"), "{error}");
     assert!(error.contains("agent runtime is unknown"), "{error}");
     assert!(!error.contains("native-secret"), "{error}");
+    // The deployment's private state keeps Fabric's own message, and the
+    // error names where.
+    let saved = std::path::absolute(directory.path())
+        .unwrap()
+        .join("diagnostics")
+        .join("fabric-assistant.json");
+    assert!(
+        error.contains(&format!("Fabric's message is in {}", saved.display())),
+        "{error}"
+    );
+    let message: serde_json::Value = serde_json::from_slice(&fs::read(&saved).unwrap()).unwrap();
+    assert_eq!(message["message"], "native-secret-must-not-escape");
     // The changed agent was started in a new sandbox, where it failed.
     let current = || {
         let state = fixture.state.lock().unwrap();

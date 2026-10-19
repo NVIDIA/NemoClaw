@@ -913,11 +913,17 @@ impl tonic::server::ServerStreamingService<p::ExecSandboxRequest> for Exec {
                             if effects != "none" {
                                 state.fabric_stopped.insert(sandbox_id.clone());
                             }
-                            error = Some(failure(
+                            let mut rejection = failure(
                                 code,
                                 rejected["error"]["stage"].as_str().unwrap_or("start"),
                                 effects,
-                            ));
+                            );
+                            // Fabric's own message, which can repeat what
+                            // the harness printed.
+                            if let Some(message) = rejected["error"]["message"].as_str() {
+                                rejection["message"] = message.into();
+                            }
+                            error = Some(rejection);
                         } else {
                             result = serde_json::json!({
                                 "runtime_id": runtime_id,
