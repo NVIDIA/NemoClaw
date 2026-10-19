@@ -3,8 +3,42 @@
 //! Several OpenClaw agents in one deployment, each in its own sandbox, through
 //! the SDK and the bundle's CLI against the fixture gateway.
 use crate::deployment::Lifecycle;
+use nemoclaw_e2e::openshell::State;
 use nemoclaw_sdk::config::{AgentTools, Document};
 use std::{collections::BTreeMap, fs, process::Command};
+
+/// Three OpenClaw agents from the example, each in its own sandbox and with
+/// its own model: assistant, researcher, and reviewer.
+fn three_agents() -> Document {
+    let mut document =
+        Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes()).unwrap();
+    let primary = document.spec.sandboxes[0].clone();
+    for (name, model) in [("researcher", "qwen3:8b"), ("reviewer", "qwen3:14b")] {
+        let mut sandbox = primary.clone();
+        sandbox.name = name.into();
+        sandbox.agent.name = name.into();
+        sandbox.agent.inference.as_mut().unwrap().routes[0]
+            .overrides
+            .model = model.into();
+        document.spec.sandboxes.push(sandbox);
+    }
+    document
+}
+
+/// The `start` and `stop` operations run in sandboxes since exec call `from`,
+/// as (sandbox, operation).
+fn lifecycle_calls(state: &State, from: usize) -> Vec<(&str, &str)> {
+    state.exec_sandboxes[from..]
+        .iter()
+        .zip(&state.exec_calls[from..])
+        .filter_map(|(sandbox, command)| {
+            command
+                .get(1)
+                .filter(|operation| ["start", "stop"].contains(&operation.as_str()))
+                .map(|operation| (sandbox.as_str(), operation.as_str()))
+        })
+        .collect()
+}
 
 /// Each sandbox's id on the gateway, by sandbox name.
 fn sandbox_ids(lifecycle: &Lifecycle) -> BTreeMap<String, String> {
@@ -29,16 +63,7 @@ fn sandbox_ids(lifecycle: &Lifecycle) -> BTreeMap<String, String> {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
 async fn one_failed_agent_is_reported_alone_and_its_retry_replaces_only_it() {
-    let mut document =
-        Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes()).unwrap();
-    let primary = document.spec.sandboxes[0].clone();
-    for name in ["researcher", "reviewer"] {
-        let mut sandbox = primary.clone();
-        sandbox.name = name.into();
-        sandbox.agent.name = name.into();
-        document.spec.sandboxes.push(sandbox);
-    }
-    let mut lifecycle = Lifecycle::start(&document.yaml().unwrap()).await;
+    let mut lifecycle = Lifecycle::start(&three_agents().yaml().unwrap()).await;
     lifecycle.apply().await;
     let applied = sandbox_ids(&lifecycle);
     let (configurations, calls) = {
@@ -131,16 +156,7 @@ async fn one_failed_agent_is_reported_alone_and_its_retry_replaces_only_it() {
         );
         // Both replaced agents are started; the assistant's is neither
         // started nor stopped.
-        let lifecycle_calls: Vec<_> = state.exec_sandboxes[calls..]
-            .iter()
-            .zip(&state.exec_calls[calls..])
-            .filter_map(|(sandbox, command)| {
-                command
-                    .get(1)
-                    .filter(|operation| ["start", "stop"].contains(&operation.as_str()))
-                    .map(|operation| (sandbox.as_str(), operation.as_str()))
-            })
-            .collect();
+        let lifecycle_calls = lifecycle_calls(&state, calls);
         for name in ["researcher", "reviewer"] {
             assert!(
                 lifecycle_calls.contains(&(name, "start")),
@@ -194,5 +210,175 @@ async fn one_failed_agent_is_reported_alone_and_its_retry_replaces_only_it() {
     lifecycle.document = changed;
     let effects = lifecycle.fixture.state.lock().unwrap().effects;
     lifecycle.export_and_reapply_unchanged(effects).await;
+    lifecycle.destroy();
+}
+
+// The three agents share one provider registration and the workspace. Removing
+// one agent's sandbox must stop only that agent and keep what the others use.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
+async fn removing_one_agent_stops_only_its_runtime_and_keeps_shared_registrations() {
+    let mut lifecycle = Lifecycle::start(&three_agents().yaml().unwrap()).await;
+    lifecycle.apply().await;
+    let applied = sandbox_ids(&lifecycle);
+    let workspace = lifecycle.document.workspace();
+    let (configurations, providers, profiles, workspaces, calls) = {
+        let state = lifecycle.fixture.state.lock().unwrap();
+        let registrations: Vec<_> = state
+            .providers
+            .values()
+            .map(|provider| provider.metadata.as_ref().unwrap().name.clone())
+            .collect();
+        assert_eq!(registrations.len(), 1, "{registrations:?}");
+        // Each sandbox runs its own agent with its own model, and attaches the
+        // shared registration.
+        for sandbox in &lifecycle.document.spec.sandboxes {
+            let configuration = &state.fabric_configurations[&applied[&sandbox.name]];
+            assert_eq!(configuration["metadata"]["name"], sandbox.agent.name);
+            let model = &sandbox.agent.inference.as_ref().unwrap().routes[0]
+                .overrides
+                .model;
+            assert_eq!(configuration["models"]["default"]["model"], *model);
+            let key = format!("{workspace}/{}", sandbox.name);
+            assert_eq!(
+                state.sandboxes[&key].spec.as_ref().unwrap().providers,
+                registrations
+            );
+        }
+        (
+            state.fabric_configurations.clone(),
+            state.providers.clone(),
+            state.profiles.clone(),
+            state.workspaces.clone(),
+            state.exec_calls.len(),
+        )
+    };
+
+    let mut reduced = lifecycle.document.clone();
+    reduced
+        .spec
+        .sandboxes
+        .retain(|sandbox| sandbox.name != "researcher");
+    let plan = lifecycle
+        .deployment
+        .plan(&reduced, &lifecycle.cancel)
+        .await
+        .unwrap();
+    let changes: BTreeMap<_, _> = plan
+        .changes
+        .iter()
+        .map(|change| (change.resource.as_str(), change.actions.clone()))
+        .collect();
+    let delete = vec!["delete".to_owned()];
+    assert_eq!(
+        changes,
+        BTreeMap::from([
+            ("fabric_agent.researcher", delete.clone()),
+            ("openshell_sandbox.researcher", delete.clone()),
+            ("terraform_data.agent_researcher", delete),
+        ])
+    );
+    lifecycle
+        .deployment
+        .apply(&reduced, &lifecycle.cancel)
+        .await
+        .unwrap();
+
+    let mut remaining = applied.clone();
+    remaining.remove("researcher");
+    assert_eq!(sandbox_ids(&lifecycle), remaining);
+    let effects = {
+        let state = lifecycle.fixture.state.lock().unwrap();
+        assert_eq!(
+            lifecycle_calls(&state, calls),
+            [("researcher", "stop")],
+            "only the researcher's agent may be stopped or started"
+        );
+        for id in remaining.values() {
+            assert_eq!(
+                state.fabric_configurations.get(id),
+                Some(&configurations[id])
+            );
+            assert!(!state.fabric_stopped.contains(id), "{id} was stopped");
+        }
+        assert!(
+            state.providers == providers,
+            "provider registrations changed"
+        );
+        assert!(state.profiles == profiles, "provider profiles changed");
+        assert!(state.workspaces == workspaces, "the workspace changed");
+        state.effects
+    };
+    lifecycle.document = reduced;
+    lifecycle.export_and_reapply_unchanged(effects).await;
+    lifecycle.destroy();
+}
+
+// The relabeled sandbox is the gateway's report of another owner's object at
+// the researcher's address. Every operation that reads it must stop before it
+// changes anything, including the other two agents.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
+async fn a_foreign_owner_on_one_agent_stops_planning_without_touching_the_others() {
+    let lifecycle = Lifecycle::start(&three_agents().yaml().unwrap()).await;
+    let effects = lifecycle.apply().await;
+    let saved = |file: &str| fs::read(lifecycle.directory.path().join(file)).unwrap();
+    let (tofu_state, intent) = (saved("terraform.tfstate"), saved("intent.json"));
+    let key = format!("{}/researcher", lifecycle.document.workspace());
+    let (owned, relabeled, calls) = {
+        let mut state = lifecycle.fixture.state.lock().unwrap();
+        let owned = state.sandboxes.clone();
+        state
+            .sandboxes
+            .get_mut(&key)
+            .unwrap()
+            .metadata
+            .as_mut()
+            .unwrap()
+            .labels
+            .insert("nemoclaw.nvidia.com/uid".into(), "foreign".into());
+        (owned, state.sandboxes.clone(), state.exec_calls.len())
+    };
+
+    // Each operation stops at the researcher's observation, before it changes
+    // the saved state, the gateway, or any sandbox.
+    let refused = |operation: &str, error: Option<nemoclaw_sdk::Error>| {
+        let error = error.unwrap_or_else(|| panic!("{operation} accepted a foreign owner"));
+        assert!(
+            error.to_string().contains("observed ownership"),
+            "{operation}: {error}"
+        );
+        assert!(
+            saved("terraform.tfstate") == tofu_state,
+            "{operation} changed terraform.tfstate"
+        );
+        assert!(
+            saved("intent.json") == intent,
+            "{operation} changed intent.json"
+        );
+        let state = lifecycle.fixture.state.lock().unwrap();
+        assert_eq!(state.effects, effects, "{operation} changed the gateway");
+        assert!(
+            state.sandboxes == relabeled,
+            "{operation} changed a sandbox"
+        );
+        assert_eq!(
+            state.exec_calls.len(),
+            calls,
+            "{operation} ran a command in a sandbox"
+        );
+    };
+    let (deployment, document, cancel) = (
+        &lifecycle.deployment,
+        &lifecycle.document,
+        &lifecycle.cancel,
+    );
+    refused("plan", deployment.plan(document, cancel).await.err());
+    refused("plan_destroy", deployment.plan_destroy(cancel).await.err());
+    refused("export", deployment.export(cancel).await.err());
+    refused("apply", deployment.apply(document, cancel).await.err());
+    refused("destroy", deployment.destroy(cancel).await.err());
+
+    lifecycle.fixture.state.lock().unwrap().sandboxes = owned;
     lifecycle.destroy();
 }
