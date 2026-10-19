@@ -311,7 +311,7 @@ pub fn replace_when_observed(name: &str, prior: &State) -> Option<Value<String>>
     match prior.get(name) {
         Some(Value::Value(value)) if !value.is_empty() => Some(Value::Unknown),
         Some(other) => Some(other.clone()),
-        None => Some(Value::Unknown),
+        None => None,
     }
 }
 
