@@ -278,8 +278,7 @@
       "openshell": {
         "source": "registry.opentofu.org/nvidia/openshell"
       }
-    },
-    "required_version": "= 1.12.8"
+    }
   },
   "variable": {
     "destroying": {

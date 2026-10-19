@@ -12,7 +12,6 @@ fn workspace(resources: &str) -> TofuWorkspace {
         workspace.path().join("main.tf"),
         format!(
             r#"terraform {{
-  required_version = "= 1.12.8"
   required_providers {{
     openshell = {{ source = "registry.opentofu.org/nvidia/openshell" }}
   }}

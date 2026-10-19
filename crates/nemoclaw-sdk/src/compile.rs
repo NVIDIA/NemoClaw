@@ -619,7 +619,7 @@ fn graph_base(
     let connection = gateway_connection(document, generations)?;
     let drivers = [document.spec.gateway.runtime().provider.openshell_driver()];
     let mut graph = json!({
-        "terraform":{"required_version":format!("= {OPENTOFU_VERSION}"),"required_providers":{
+        "terraform":{"required_providers":{
             "openshell":{"source":OPENSHELL_PROVIDER_ADDRESS,"version":format!("= {version}")},
             "fabric":{"source":FABRIC_PROVIDER_ADDRESS,"version":format!("= {version}")},
             "vllm":{"source":VLLM_PROVIDER_ADDRESS,"version":format!("= {version}")},

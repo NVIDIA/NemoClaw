@@ -143,7 +143,6 @@ fn fixture(mut document: Document) -> Option<String> {
     openshell.as_object_mut().unwrap().remove("version");
     let fixture = json!({
         "terraform": {
-            "required_version": graph["terraform"]["required_version"],
             "required_providers": {"openshell": openshell},
         },
         "variable": {"endpoint": {"type": "string"}, "destroying": {"default": false}},
