@@ -385,24 +385,20 @@ pub(super) fn decode_sandbox_phase(
     {
         return Err(Error::SandboxStartup {
             phase: phase.as_str_name(),
-            // Conditions are backend-controlled. Only fixed known reasons may
-            // cross the diagnostic boundary; messages can contain credentials.
+            // OpenShell's reason code passes through as it reports it. The
+            // condition's message stays private: it can contain credentials,
+            // so text that isn't shaped like a reason code doesn't cross.
             reason: status
                 .conditions
                 .iter()
-                .find_map(|condition| {
-                    if condition.r#type != "Ready" || condition.status != "False" {
-                        return None;
-                    }
-                    match condition.reason.as_str() {
-                        "ControlSupervisorExited" => Some("ControlSupervisorExited"),
-                        "ContainerExited" => Some("ContainerExited"),
-                        "ControlSupervisorStartFailed" => Some("ControlSupervisorStartFailed"),
-                        "IdentityResolutionFailed" => Some("IdentityResolutionFailed"),
-                        _ => None,
-                    }
+                .find(|condition| condition.r#type == "Ready" && condition.status == "False")
+                .map(|condition| condition.reason.as_str())
+                .filter(|reason| {
+                    (1..=64).contains(&reason.len())
+                        && reason.bytes().all(|byte| byte.is_ascii_alphanumeric())
                 })
-                .unwrap_or("unknown"),
+                .unwrap_or("unknown")
+                .to_owned(),
             exit_code: status
                 .exit_code
                 .map_or_else(|| "unknown".into(), |code| code.to_string()),
@@ -710,7 +706,12 @@ mod tests {
                 "IdentityResolutionFailed",
                 "IdentityResolutionFailed",
             ),
+            // OpenShell's reason codes pass through, including ones NemoClaw
+            // doesn't explain; text that isn't a reason code doesn't.
+            ("Ready", "False", "ImagePullBackOff", "ImagePullBackOff"),
             ("Ready", "False", "secret-sentinel", "unknown"),
+            ("Ready", "False", "token abc123", "unknown"),
+            ("Ready", "False", &"A".repeat(65), "unknown"),
             ("Ready", "True", "ControlSupervisorExited", "unknown"),
             ("Other", "False", "ControlSupervisorExited", "unknown"),
         ] {
