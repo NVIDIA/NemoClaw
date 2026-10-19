@@ -1084,6 +1084,15 @@ function canResumeProviderSelection(
   provider: string | null,
   model: string | null,
 ): boolean {
+  // An interrupted Station review has a provider/model but no validated model
+  // identity yet. Retry selection so its checkpoint can bind that identity.
+  if (
+    session?.stationExpressIntent &&
+    session.stationExpressIntent.kind !== "spark" &&
+    session.steps.provider_selection.status !== "complete"
+  ) {
+    return false;
+  }
   return (
     !forceProviderSelection &&
     effectiveResume &&

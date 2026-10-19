@@ -1102,7 +1102,7 @@ def managed_inference_api_key(base_url: str) -> str:
         ) is None:
             raise RuntimeError("native local inference requires an issued OpenShell credential reference")
         return value
-    if base_url == "https://integrate.api.nvidia.com/v1":
+    if base_url == "https://integrate.api.nvidia.com/v1" and upstream_provider != "compatible-endpoint":
         name = "NVIDIA_INFERENCE_API_KEY"
         provider = "NVIDIA"
     elif base_url == "https://openrouter.ai/api/v1" and upstream_provider in (
@@ -1114,6 +1114,11 @@ def managed_inference_api_key(base_url: str) -> str:
             else "OPENROUTER_API_KEY"
         )
         provider = "OpenRouter"
+    elif upstream_provider == "compatible-endpoint" and host not in {
+        "inference.local", "localhost", "127.0.0.1", "::1"
+    }:
+        name = "COMPATIBLE_API_KEY"
+        provider = "compatible endpoint"
     else:
         return "nemoclaw-managed-inference"
     value = os.environ.get(name, "")

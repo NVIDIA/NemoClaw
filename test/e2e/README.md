@@ -350,11 +350,10 @@ The API credential is limited to trusted preparation and removed before npm runs
 If CI starts before the approved artifact exists, wait for the admission workflow's
 SDK job, then rerun CI. Changed or revoked approval cannot reuse the older artifact.
 
-This does not yet extend the protected runtime's source projection, permit a new
-SDK graph on protected E2E hosts, qualify Pi, or pass candidate catalogs to the Jetson operator. A data-admission
-comment is not permission to execute arbitrary candidate code on a protected
-host. Those boundaries require their own supported implementation and validation;
-passing the hash check is not full E2E qualification.
+The protected runtime controller uses candidate approval for source projection as described under [Push and Manual PR E2E](#push-and-manual-pr-e2e).
+Approval does not permit a new SDK dependency graph on protected E2E hosts, qualify Pi, or pass candidate catalogs to the Jetson operator.
+Those boundaries require their own supported implementation and validation.
+Passing the hash check is not full E2E qualification.
 
 Unchanged runs pass the selected base revision and complete cohort receipt to every stock-onboarding consumer.
 Changed-input runs pass the authenticated candidate catalog separately to those consumers.
@@ -2274,9 +2273,20 @@ Leave `targets` empty.
 Keep `include_staging_brev_launchable=false`.
 The candidate must contain `ci/protected-managed-image-multiarch-activation-v1.json` and `ci/protected-managed-image-runtime-activation-v1.json`.
 The GPU job reads OpenShell sources from the candidate commit as data, then validates their pins and operational templates.
+When the candidate needs trust absent from the controller's registry, preparation, both verifications, and restoration recheck the [candidate approval](#candidate-openshell-release-admission).
+The approval must match the open PR, candidate commit, and base commit.
+The approved registry and installer sources must match the candidate's committed files.
+Candidates covered by the controller's registry need no additional approval.
+The job exposes its GitHub token as `GITHUB_TOKEN` only to the four trusted source-projection steps, with `contents: read` and `pull-requests: read` permissions.
+The token exists in those step environments and is absent from the live qualification environment.
 It projects only the reviewed installer, supervisor and feature-check modules, plus version literals, into the trusted controller checkout.
-It builds that controller after projection and verifies the projected sources before qualification.
+It verifies the projected sources before installing the SDK or building the controller, then rechecks them before qualification.
 The job restores the trusted sources after qualification and retains source-digest records with its artifacts.
+An admission rejection changes no files.
+A failed verification blocks qualification.
+A failed restoration fails the job.
+If admission fails after preparation, the projected checkout remains for diagnosis.
+Inspect the job log and projection artifacts before recovering the runner or dispatching another run.
 Those records identify tested inputs; they do not prove live E2E success.
 The job also selects the candidate OpenShell SDK from the controller's reviewed current or replacement archives.
 It projects the SDK identity into the trusted manifest and lockfile, then installs the verified archive before building the CLI.
