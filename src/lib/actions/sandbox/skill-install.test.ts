@@ -218,16 +218,18 @@ describe("stateless sandbox skill orchestration", () => {
     ["openclaw", "/usr/local/bin/openclaw", OPENCLAW],
     ["hermes", "/usr/local/bin/hermes", HERMES],
   ] as const)(
-    "uses only %s's canonical writable root when native remove is absent",
+    "removes legacy-length names only from %s's canonical writable root",
     async (name, binary, integration) => {
       selectAgent(name, binary, integration);
 
-      await removeSandboxSkill("alpha", { name: "demo-skill" });
+      const skillName = "a".repeat(65);
+      await removeSandboxSkill("alpha", { name: skillName });
 
       const command = sdkCommandExecutor.runStreaming.mock.calls[0]?.[0].command as string[];
       const script = command.at(-1) ?? "";
       expect(command.slice(-3, -1)).toEqual(["/bin/sh", "-c"]);
       expect(script).toContain(integration.writableRoot);
+      expect(script).toContain(`name='${skillName}'`);
       expect(script).toContain("Native skill list remains authoritative");
     },
   );
@@ -241,21 +243,24 @@ describe("stateless sandbox skill orchestration", () => {
         "/usr/local/bin/dcode",
         "skills",
         "delete",
-        "demo-skill",
+        "a".repeat(65),
         "--agent",
         "agent",
         "--force",
         "--json",
       ],
     ],
-  ] as const)("uses unmodified %s native remove", async (name, binary, integration, command) => {
-    selectAgent(name, binary, integration);
+  ] as const)(
+    "removes legacy-length names through %s",
+    async (name, binary, integration, command) => {
+      selectAgent(name, binary, integration);
 
-    await removeSandboxSkill("alpha", { name: "demo-skill" });
+      await removeSandboxSkill("alpha", { name: "a".repeat(65) });
 
-    const request = sdkCommandExecutor.runStreaming.mock.calls[0]?.[0];
-    expect(request.command.slice(-command.length)).toEqual(command);
-  });
+      const request = sdkCommandExecutor.runStreaming.mock.calls[0]?.[0];
+      expect(request.command.slice(-command.length)).toEqual(command);
+    },
+  );
 
   it("adds through OpenClaw's unmodified native command", async () => {
     selectAgent("openclaw", "/usr/local/bin/openclaw", OPENCLAW);

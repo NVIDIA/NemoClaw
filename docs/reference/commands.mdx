@@ -2907,7 +2907,9 @@ Removal delegates to `dcode skills delete <name> --agent agent --force --json`.
 $$nemoclaw my-assistant skill remove my-skill
 ```
 
-Use the skill name from the `SKILL.md` frontmatter, not the local directory name. Skill names must be non-empty, contain only alphanumeric characters, dots, hyphens, and underscores, cannot be `.` or `..`, and cannot exceed 64 characters.
+Use the skill name from the `SKILL.md` frontmatter, not the local directory name.
+Skill names must be non-empty, contain only alphanumeric characters, dots, hyphens, and underscores, and cannot be `.` or `..`.
+Removal accepts previously installed names longer than 64 characters; new installations enforce the 64-character limit.
 
 <AgentOnly variant="openclaw">
 

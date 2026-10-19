@@ -87,6 +87,8 @@ describe("stateless skill snapshots", () => {
   it("accepts a 64-character name and rejects a 65-character name", () => {
     expect(validateSkillName("a".repeat(64))).toBe(true);
     expect(validateSkillName("a".repeat(65))).toBe(false);
+    expect(validateSkillName("a".repeat(65), { allowLegacyLength: false })).toBe(false);
+    expect(validateSkillName("a".repeat(65), { allowLegacyLength: true })).toBe(true);
     expect(() => parseFrontmatter(`---\nname: ${"a".repeat(65)}\n---\n`)).toThrow("64");
   });
 
@@ -356,6 +358,37 @@ describe("canonical writable-root fallbacks", () => {
     expect(script).not.toContain("/sandbox/.openclaw/skills");
     expect(script).not.toContain("find /sandbox");
   });
+
+  it.runIf(process.platform === "linux")(
+    "removes a legacy-length skill and preserves its sibling",
+    () => {
+      const root = skill();
+      const skillName = "a".repeat(65);
+      const destination = path.join(root, ".hermes/skills", skillName);
+      const sibling = path.join(root, ".hermes/skills/keep-me");
+      fs.mkdirSync(destination, { recursive: true });
+      fs.mkdirSync(sibling);
+      fs.writeFileSync(path.join(destination, "SKILL.md"), "legacy skill");
+      const command = buildCanonicalSkillRemoveCommand("/sandbox/.hermes/skills", skillName);
+
+      const result = spawnSync(command[0], [command[1], command[2].replaceAll("/sandbox", root)], {
+        encoding: "utf8",
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.existsSync(destination)).toBe(false);
+      expect(fs.existsSync(sibling)).toBe(true);
+    },
+  );
+
+  it.each(["", ".", "..", "../escape", "space name", "parent/child"])(
+    "rejects unsafe removal name %j",
+    (name) => {
+      expect(() => buildCanonicalSkillRemoveCommand("/sandbox/.hermes/skills", name)).toThrow(
+        "Invalid skill name",
+      );
+    },
+  );
 
   it.each(["/tmp/skills", "/sandbox/a/../skills", "/sandbox/a b"])(
     "rejects unsafe declared root %j",

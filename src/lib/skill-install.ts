@@ -450,7 +450,9 @@ export function buildCanonicalSkillRemoveCommand(
   writableRoot: string,
   skillName: string,
 ): string[] {
-  if (!validateSkillName(skillName)) throw new Error("Invalid skill name");
+  if (!validateSkillName(skillName, { allowLegacyLength: true })) {
+    throw new Error("Invalid skill name");
+  }
   assertCanonicalSkillRoot(writableRoot);
   return [
     "/bin/sh",
