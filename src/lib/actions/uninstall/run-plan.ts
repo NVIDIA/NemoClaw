@@ -1552,13 +1552,17 @@ function writeUninstallStateAtomic(home: string, filePath: string, value: unknow
 
 function pruneSelectedRowsFromRegistry(
   paths: UninstallPaths,
-  expectedSelectedNames: readonly string[],
+  expectedSelectedRegistrations: SelectedRegistrySandboxState["registrations"],
   runtime: UninstallRuntime,
 ): boolean {
   const sharedRoot = path.dirname(paths.managedSwapMarkerPath);
   const home = path.dirname(sharedRoot);
   const registryFile = path.join(paths.nemoclawStateDir, "sandboxes.json");
-  if (!pathEntryExists(registryFile, runtime) && expectedSelectedNames.length === 0) return true;
+  if (
+    !pathEntryExists(registryFile, runtime) &&
+    Object.keys(expectedSelectedRegistrations).length === 0
+  )
+    return true;
   try {
     assertGatewayStatePathSafe(home, `${registryFile}.lock`);
     // The canonical registry lock owns this directory: it writes an owner file,
@@ -1566,14 +1570,16 @@ function pruneSelectedRowsFromRegistry(
     return withRegistryLockAt(registryFile, () => {
       const registry = readGatewayRegistryFile(home, registryFile);
       if (!registry) throw new Error(`${registryFile} disappeared during scoped uninstall`);
-      const selectedNames = Object.entries(registry.sandboxes)
-        .filter(([, entry]) => registryEntryGatewayPort(entry) === GATEWAY_PORT)
-        .map(([name]) => name)
-        .sort();
-      if (JSON.stringify(selectedNames) !== JSON.stringify([...expectedSelectedNames].sort())) {
+      const selectedRegistrations = Object.fromEntries(
+        Object.entries(registry.sandboxes).filter(
+          ([, entry]) => registryEntryGatewayPort(entry) === GATEWAY_PORT,
+        ),
+      );
+      if (!isDeepStrictEqual(selectedRegistrations, expectedSelectedRegistrations)) {
         throw new Error(`${registryFile} changed during scoped uninstall`);
       }
 
+      const selectedNames = Object.keys(selectedRegistrations);
       if (selectedNames.length === 0) return true;
       const remainingSandboxes = Object.fromEntries(
         Object.entries(registry.sandboxes).filter(
@@ -1606,12 +1612,12 @@ async function finishScopedOpenShellCleanup(
   paths: UninstallPaths,
   options: UninstallRunOptions,
   runtime: UninstallRuntime,
-  sandboxNames: readonly string[],
+  sandboxRegistrations: SelectedRegistrySandboxState["registrations"],
   externallySupervised: boolean,
 ): Promise<boolean> {
   // Removing selected rows checkpoints successful sandbox deletion, so a retry
   // can skip sandbox deletion after gateway registration cleanup has started.
-  if (!pruneSelectedRowsFromRegistry(paths, sandboxNames, runtime)) return false;
+  if (!pruneSelectedRowsFromRegistry(paths, sandboxRegistrations, runtime)) return false;
   return removeGatewayRegistration(
     runtime,
     options.gatewayName || resolveGatewayName(GATEWAY_PORT),
@@ -3374,7 +3380,7 @@ async function executeOpenShellResourceCleanup(
       paths,
       options,
       runtime,
-      sandboxNames,
+      sandboxRegistrations,
       externallySupervised,
     ))
   ) {

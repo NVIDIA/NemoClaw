@@ -513,3 +513,55 @@ it.each([
     }
   },
 );
+
+it("retains a changed same-name registration before scoped pruning (#13470)", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-row-change-"));
+  try {
+    const registryFile = writeFullCleanupState(home);
+    const registry = JSON.parse(fs.readFileSync(registryFile, "utf8"));
+    registry.sandboxes.sibling = {
+      name: "sibling",
+      gatewayName: "nemoclaw-9125",
+      gatewayPort: 9125,
+    };
+    registry.nativeNvidiaProviderAuthorities = {
+      nemoclaw: {
+        schemaVersion: 1,
+        profileId: "nemoclaw-nvidia-inference-v1",
+        providerName: "nemoclaw-nvidia-prod-v1",
+        providerId: "original-provider",
+      },
+    };
+    fs.writeFileSync(registryFile, JSON.stringify(registry));
+    const deps = fullCleanupDeps(home, [], "No sandboxes found.\n");
+    const overrides: Record<string, (() => RunResult) | undefined> = {
+      "sandbox list": () => ok("[]"),
+      "sandbox delete": () => {
+        const changed = JSON.parse(fs.readFileSync(registryFile, "utf8"));
+        changed.sandboxes["my-assistant"].gpuEnabled = true;
+        fs.writeFileSync(registryFile, JSON.stringify(changed));
+        return ok();
+      },
+    };
+    const result = await runUninstallPlan(
+      { assumeYes: true, deleteModels: false, destroyUserData: true, keepOpenShell: false },
+      {
+        ...deps,
+        env: { ...deps.env, OPENSHELL_GATEWAY_ENDPOINT: undefined },
+        retainedGatewayPorts: [9125],
+        run: (command, args, options) =>
+          overrides[args.slice(0, 2).join(" ")]?.() ?? deps.run(command, args, options),
+      },
+    );
+    expect(result.otherGatewayEnvironmentsRemain).toBe(true);
+    expect(result.exitCode).toBe(1);
+    expect(deps.error.mock.calls.flat().join("\n")).toContain(
+      "Could not safely update the sandbox registry",
+    );
+    const retained = JSON.parse(fs.readFileSync(registryFile, "utf8"));
+    expect(retained.sandboxes["my-assistant"].gpuEnabled).toBe(true);
+    expect(retained.nativeNvidiaProviderAuthorities.nemoclaw.providerId).toBe("original-provider");
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
