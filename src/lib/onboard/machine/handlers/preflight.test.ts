@@ -4,13 +4,29 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { GpuDetection } from "../../../inference/nim";
-import { createSession, type Session } from "../../../state/onboard-session";
+import {
+  clearSession,
+  createSession,
+  loadSession,
+  markStepComplete,
+  saveSession,
+  updateSession,
+  type Session,
+} from "../../../state/onboard-session";
 import { persistedProviderNameToSelectionKey } from "../../inference-providers/provider-selection-keys";
-import { resolveSandboxGpuConfig } from "../../sandbox-gpu-mode";
+import {
+  getResumeSandboxGpuOverrides as resolveResumeSandboxGpuOverrides,
+  resolveSandboxGpuConfig,
+  type SandboxGpuMode,
+} from "../../sandbox-gpu-mode";
 import { handlePreflightState, type PreflightStateOptions } from "./preflight";
 
 type Gpu = GpuDetection | null;
-type SandboxEntry = { sandboxGpuEnabled?: boolean };
+type SandboxEntry = {
+  sandboxGpuEnabled?: boolean;
+  sandboxGpuMode?: SandboxGpuMode;
+  sandboxGpuDevice?: string | null;
+};
 type Host = { cdiNvidiaGpuSpecMissing?: boolean };
 
 function createDeps(
@@ -45,9 +61,14 @@ function createDeps(
       getResumeSandboxGpuOverrides: (
         sandbox: SandboxEntry | null,
         sessionGpuPassthrough: boolean | null | undefined,
+        sessionSelection?: Session["sandboxGpuSelection"],
       ) => {
         if (overrides.getResumeSandboxGpuOverrides) {
-          return overrides.getResumeSandboxGpuOverrides(sandbox, sessionGpuPassthrough);
+          return overrides.getResumeSandboxGpuOverrides(
+            sandbox,
+            sessionGpuPassthrough,
+            sessionSelection,
+          );
         }
         return { flag: "enable" as const, device: "0" };
       },
@@ -606,7 +627,11 @@ describe("handlePreflightState", () => {
     });
 
     expect(getSandbox).toHaveBeenCalledWith("saved");
-    expect(getResumeSandboxGpuOverrides).toHaveBeenCalledWith({ sandboxGpuEnabled: true }, true);
+    expect(getResumeSandboxGpuOverrides).toHaveBeenCalledWith(
+      { sandboxGpuEnabled: true },
+      true,
+      undefined,
+    );
     expect(result.resumeHasResolvedGpuIntent).toBe(true);
     expect(result.effectiveSandboxGpuFlag).toBe("enable");
     expect(result.effectiveSandboxGpuDevice).toBe("1");
@@ -632,4 +657,40 @@ describe("handlePreflightState", () => {
     expect(result.session?.gpuPassthrough).toBe(true);
     expect(harness.deps.updateSession).toHaveBeenCalledOnce();
   });
+
+  it.each([
+    { mode: "auto", flag: null, device: null },
+    { mode: "1", flag: "enable", device: "nvidia.com/gpu=0" },
+    { mode: "0", flag: "disable", device: null },
+  ] as const)(
+    "retains GPU mode $mode through a saved preflight before sandbox creation",
+    async (choice) => {
+      const initial = saveSession(createSession({ sandboxName: "my-assistant" }));
+      const harness = createDeps({
+        getSandbox: () => null,
+        getResumeSandboxGpuOverrides: (entry, passthrough, selection) =>
+          resolveResumeSandboxGpuOverrides(entry, passthrough ?? undefined, selection),
+        resolveSandboxGpuConfig,
+        recordStepComplete: async () => markStepComplete("preflight"),
+        recordStateSkipped: async () => loadSession()!,
+        updateSession,
+      });
+      try {
+        const first = await handlePreflightState({
+          ...baseOptions(harness.deps, initial),
+          explicitSandboxGpuFlag: choice.flag,
+          sandboxGpuDevice: choice.device,
+        });
+        const saved = loadSession()!;
+        const resumed = await handlePreflightState({
+          ...baseOptions(harness.deps, saved),
+          resume: true,
+        });
+        expect(resumed.sandboxGpuConfig).toEqual(first.sandboxGpuConfig);
+        expect(resumed.sandboxGpuConfig.mode).toBe(choice.mode);
+      } finally {
+        clearSession();
+      }
+    },
+  );
 });

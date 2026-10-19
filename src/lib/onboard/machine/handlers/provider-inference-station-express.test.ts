@@ -3,12 +3,93 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { createSession } from "../../../state/onboard-session";
+import {
+  clearSession,
+  createSession,
+  loadSession,
+  markStepComplete,
+  markStepFailed,
+  markStepStarted,
+  saveSession,
+  updateSession,
+} from "../../../state/onboard-session";
+import { checkpointSandboxName } from "../../session-bootstrap";
 import { withStationExpressResumeEnvironment } from "../../station-express-resume";
 import { handleProviderInferenceState } from "./provider-inference";
-import { baseOptions, createDeps } from "./provider-inference.test-support";
+import { baseOptions, baseSelection, createDeps } from "./provider-inference.test-support";
 
 describe("Station Express provider binding (#7048)", () => {
+  it("revalidates the model after selection fails while committing a reviewed provider", async () => {
+    const selection = {
+      ...baseSelection,
+      provider: "vllm-local",
+      model: "nvidia-nemotron-3.5-super-vl-120b-a12b-nvfp4",
+      endpointUrl: null,
+      credentialEnv: null,
+      preferredInferenceApi: "openai-completions",
+      vllmModelIdentity: "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4",
+    };
+    const setupNim = vi
+      .fn()
+      .mockResolvedValue(selection)
+      .mockResolvedValueOnce({
+        ...selection,
+        vllmModelIdentity: "/tmp/nemoclaw-reviewed-model/snapshot",
+      });
+    const { deps, calls } = createDeps({
+      setupNim,
+      startRecordedStep: async (step, updates) => {
+        markStepStarted(step);
+        updateSession((current) => Object.assign(current, updates));
+      },
+      recordStepComplete: async (step, updates) => markStepComplete(step, updates),
+      checkpointSandboxIdentity: (name, agent) => checkpointSandboxName(name, agent, updateSession),
+    });
+    const session = saveSession(
+      createSession({
+        mode: "non-interactive",
+        stationExpressIntent: {
+          version: 1,
+          model: "nemotron-3.5-super-vl-120b",
+          sandboxName: "my-assistant",
+        },
+      }),
+    );
+    try {
+      await expect(
+        handleProviderInferenceState({
+          ...baseOptions(deps, session),
+          sandboxName: "my-assistant",
+        }),
+      ).rejects.toThrow("Cannot record an invalid DGX Station Express provider selection.");
+      markStepFailed("provider_selection", "Model identity rejected");
+      const saved = loadSession()!;
+      expect(saved).toMatchObject({
+        provider: selection.provider,
+        model: selection.model,
+        sandboxPromptProgress: { sandboxName: true },
+        steps: { provider_selection: { status: "failed" } },
+      });
+
+      await handleProviderInferenceState({
+        ...baseOptions(deps, saved),
+        resume: true,
+        sandboxName: "my-assistant",
+      });
+      expect(setupNim).toHaveBeenCalledTimes(2);
+      expect(calls.skipped).not.toHaveBeenCalledWith("provider_selection", expect.anything());
+      expect(loadSession()).toMatchObject({
+        steps: { provider_selection: { status: "complete" } },
+        stationExpressIntent: {
+          servedModel: selection.model,
+          checkpointModel: selection.vllmModelIdentity,
+        },
+      });
+    } finally {
+      clearSession();
+    }
+  });
+
   it("carries validated vLLM checkpoint identity into the atomic session update", async () => {
     const setupNim = vi.fn(async () => ({
       model: "nemotron-ultra",
