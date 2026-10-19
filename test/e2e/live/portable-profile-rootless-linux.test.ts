@@ -991,14 +991,21 @@ async function main(
     const podmanInfo = JSON.parse(run("podman", ["info", "--format", "json"]));
     assert.equal(podmanInfo.host?.security?.rootless, true, "Podman must be rootless");
     run("docker", ["version"]);
+    const verifiedPodmanUrl = String(process.env.DOCKER_HOST);
     // The trusted GPU runner creates this registry with pids.max=1. Bound it to
-    // enough tasks for the pinned Go registry before testing HTTP readiness.
-    run("podman", ["update", "--pids-limit", "128", "nemoclaw-portable-registry"]);
-    run("podman", ["restart", "nemoclaw-portable-registry"]);
+    // enough tasks for the pinned Go registry through the configured service.
+    run("podman", [
+      "--url",
+      verifiedPodmanUrl,
+      "update",
+      "--pids-limit",
+      "128",
+      "nemoclaw-portable-registry",
+    ]);
+    run("podman", ["--url", verifiedPodmanUrl, "restart", "nemoclaw-portable-registry"]);
     await waitForRegistry(artifacts, shellProbe);
 
     progress.phase("verify immutable non-force network removal");
-    const verifiedPodmanUrl = String(process.env.DOCKER_HOST);
     // Netavark rejects the retired link-local subnet before this pinned runtime can create it.
     // Deterministic tests own that state; this live boundary proves the emitted full-ID form.
     run("podman", ["--url", verifiedPodmanUrl, "network", "create", disposableNetworkName]);
