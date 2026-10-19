@@ -374,3 +374,142 @@ describe("full uninstall bulk sandbox cleanup", () => {
     }
   });
 });
+
+describe("native NVIDIA provider authority after uninstall", () => {
+  it("allows provider creation on the same empty gateway after uninstall (#13470)", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-reinstall-"));
+    try {
+      const registryFile = writeFullCleanupState(home);
+      const authority = {
+        schemaVersion: 1,
+        profileId: "nemoclaw-nvidia-inference-v1",
+        providerName: "nemoclaw-nvidia-prod-v1",
+        providerId: "removed-provider-id",
+      };
+      fs.writeFileSync(
+        registryFile,
+        JSON.stringify({
+          defaultSandbox: null,
+          defaultSelectionRevision: 3,
+          sandboxes: {},
+          nativeNvidiaProviderAuthorities: { nemoclaw: authority },
+        }),
+      );
+      const backup = path.join(home, ".nemoclaw", "backups", "workspace.tar");
+      fs.mkdirSync(path.dirname(backup), { recursive: true });
+      fs.writeFileSync(backup, "preserved workspace backup");
+      const result = await runUninstallPlan(
+        { assumeYes: true, deleteModels: false, destroyUserData: false, keepOpenShell: false },
+        fullCleanupDeps(home, [], "No sandboxes found.\n"),
+      );
+      expect(result.exitCode).toBe(0);
+      const registry = JSON.parse(fs.readFileSync(registryFile, "utf8"));
+      const { ensureNativeNvidiaProvider } = await import("../../inference/native-nvidia");
+      const getProvider = vi
+        .fn()
+        .mockResolvedValueOnce({
+          ok: false,
+          error: { kind: "command", reason: "not_found", message: "not found" },
+        })
+        .mockResolvedValue({
+          ok: true,
+          value: {
+            name: authority.providerName,
+            type: authority.profileId,
+            credentialKeys: ["NVIDIA_INFERENCE_API_KEY"],
+            configKeys: [],
+            revision: { id: "new-provider-id", resourceVersion: 1 },
+          },
+        });
+      const adapter = {
+        getProvider,
+        createProvider: vi.fn(async () => ({ ok: true })),
+        importProviderProfile: vi.fn(async () => ({ ok: true })),
+        ensureProviderPolicyComposition: vi.fn(async () => ({ ok: true })),
+      } as unknown as import("../../adapters/openshell/provider-adapter").OpenShellProviderAdapter;
+      await expect(
+        ensureNativeNvidiaProvider({
+          adapter,
+          target: { kind: "named", gatewayName: "nemoclaw" },
+          credentialValue: "test-credential",
+          expected: registry.nativeNvidiaProviderAuthorities?.nemoclaw,
+        }),
+      ).resolves.toMatchObject({ providerId: "new-provider-id" });
+      expect(adapter.createProvider).toHaveBeenCalledOnce();
+      expect(registry.defaultSelectionRevision).toBe(3);
+      expect(fs.readFileSync(backup, "utf8")).toBe("preserved workspace backup");
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
+it.each([
+  {
+    scenario: "gateway-failure",
+    responses: { "gateway remove": { status: 1, stdout: "", stderr: "permission denied" } },
+    remove: fs.rmSync,
+    keepOpenShell: false,
+    expectedExit: 1,
+  },
+  {
+    scenario: "unknown-inventory",
+    responses: { "sandbox list": { status: 1, stdout: "", stderr: "connection closed" } },
+    remove: fs.rmSync,
+    keepOpenShell: false,
+    expectedExit: 1,
+  },
+  {
+    scenario: "state-removal-failure",
+    responses: {},
+    remove: () => undefined,
+    keepOpenShell: false,
+    expectedExit: 1,
+  },
+  {
+    scenario: "kept-gateway",
+    responses: {},
+    remove: fs.rmSync,
+    keepOpenShell: true,
+    expectedExit: 0,
+  },
+])(
+  "retains native authority after $scenario (#13470)",
+  async ({ responses, remove, keepOpenShell, expectedExit }) => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-retain-"));
+    try {
+      const registryFile = writeFullCleanupState(home);
+      const authority = {
+        schemaVersion: 1,
+        profileId: "nemoclaw-nvidia-inference-v1",
+        providerName: "nemoclaw-nvidia-prod-v1",
+        providerId: "original-provider",
+      };
+      fs.writeFileSync(
+        registryFile,
+        JSON.stringify({
+          defaultSandbox: null,
+          sandboxes: {},
+          nativeNvidiaProviderAuthorities: { nemoclaw: authority },
+        }),
+      );
+      const deps = fullCleanupDeps(home, [], "No sandboxes found.\n");
+      const overrides: Record<string, RunResult | undefined> = responses;
+      const result = await runUninstallPlan(
+        { assumeYes: true, deleteModels: false, destroyUserData: false, keepOpenShell },
+        {
+          ...deps,
+          run: (command, args, options) =>
+            overrides[args.slice(0, 2).join(" ")] ?? deps.run(command, args, options),
+          rmSync: remove,
+        },
+      );
+      expect(result.exitCode).toBe(expectedExit);
+      expect(
+        JSON.parse(fs.readFileSync(registryFile, "utf8")).nativeNvidiaProviderAuthorities.nemoclaw,
+      ).toEqual(authority);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  },
+);

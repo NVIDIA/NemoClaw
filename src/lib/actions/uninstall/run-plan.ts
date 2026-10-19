@@ -91,6 +91,7 @@ import {
 } from "../../onboard/host-gateway-process";
 import {
   assertGatewayStatePathSafe,
+  prepareGatewayProviderAuthorityRetirement,
   GATEWAYS_SUBDIR,
   type GatewayRegistryEntry,
   listGatewayStateRoots,
@@ -4460,6 +4461,33 @@ async function executePreparedPlan(
   interruptedOnboardLock?: OnboardStateLockHandle,
 ): Promise<{ ok: boolean; scopedToSelectedGateway: boolean }> {
   const externallySupervised = isExternallySupervised(teardownAuthority);
+  const retireProviderAuthority =
+    openShellCleanup === "normal" &&
+    !portableRuntimeCleanup &&
+    !options.keepOpenShell &&
+    !externallySupervised
+      ? prepareGatewayProviderAuthorityRetirement({
+          home: runtime.env.HOME || os.homedir(),
+          registryFile: path.join(paths.nemoclawStateDir, "sandboxes.json"),
+          gatewayName: options.gatewayName || resolveGatewayName(GATEWAY_PORT),
+          gatewayPort: GATEWAY_PORT,
+          writeAtomic: writeUninstallStateAtomic,
+        })
+      : undefined;
+  const finishProviderAuthorityCleanup = (): boolean => {
+    if (!retireProviderAuthority) return true;
+    try {
+      // Failed state removal must retain provider ownership for recovery.
+      if (pathEntryExists(paths.selectedGatewayLocalStateDir, runtime)) {
+        throw new Error("Gateway state remains after uninstall; retained provider authority.");
+      }
+      retireProviderAuthority(scopedToSelectedGateway);
+      return true;
+    } catch (error) {
+      runtime.warn(formatError(error));
+      return false;
+    }
+  };
   let ok = true;
   let scopedToSelectedGateway = initialScopedToSelectedGateway;
   let sharedRegistryMustBePreserved = initialSharedRegistryMustBePreserved;
@@ -4775,7 +4803,7 @@ async function executePreparedPlan(
         ok = false;
     }
   }
-  return { ok, scopedToSelectedGateway };
+  return { ok: ok && finishProviderAuthorityCleanup(), scopedToSelectedGateway };
 }
 
 async function completePortablePlan(
