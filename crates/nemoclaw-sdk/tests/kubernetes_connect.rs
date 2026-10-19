@@ -66,7 +66,7 @@ fn oidc_spec(token_env: &str) -> impl Fn(&str, u16) -> Spec {
             port,
             json!({
                 "profile": "oidc", "issuer": "https://login.example.com",
-                "audience": "openshell", "tokenEnv": token_env
+                "audience": "openshell", "token": {"env": token_env}
             }),
         )
     }
@@ -237,13 +237,13 @@ fn files(directory: &Path) -> Vec<std::path::PathBuf> {
         .collect()
 }
 
-/// A connection takes its token from the variable tokenEnv names when it
+/// A connection takes its token from the variable token.env names when it
 /// opens, and no state file keeps a copy.
 #[tokio::test]
 async fn an_oidc_connection_passes_the_variable_tokenenv_names() {
-    // A test cannot set a variable safely while other tests run, so tokenEnv
+    // A test cannot set a variable safely while other tests run, so token.env
     // names one Cargo and nextest set for every test process. PATH and HOME
-    // are reserved names that tokenEnv may not use.
+    // are reserved names that token.env may not use.
     let name = "CARGO_MANIFEST_DIR";
     let token = std::env::var(name).unwrap();
     assert!(!token.is_empty());
@@ -298,7 +298,7 @@ async fn an_oidc_connection_without_its_token_names_tokenenv() {
         assert!(
             error
                 .to_string()
-                .starts_with("the variable tokenEnv names holds no OIDC token"),
+                .starts_with("the variable token.env names holds no OIDC token"),
             "{name}: {error}"
         );
     }
