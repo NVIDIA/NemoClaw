@@ -23,7 +23,7 @@ The profile's endpoint must match `spec.gateway.endpoint` in the deployment YAML
 Its stored authentication must grant access to the deployment workspace.
 The endpoint override takes precedence over the profile, which is why this example clears it.
 NemoClaw's YAML credential and TLS environment references do not configure the OpenShell CLI's stored profile or credentials.
-Creating a new authenticated profile, including its issuer or mTLS client certificates, is tracked in [#12642](https://github.com/NVIDIA/NemoClaw/issues/12642).
+To create a profile for an authenticated gateway, including its issuer or mTLS client certificates, follow [OpenShell's authentication guide](https://github.com/NVIDIA/OpenShell/blob/5a7728c304b5528e954e9ae900cf21f84e1a12b1/docs/how-it-works/gateways/authentication.mdx).
 
 For an existing plaintext loopback gateway instead, select its actual endpoint directly:
 

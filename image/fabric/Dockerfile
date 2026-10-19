@@ -79,6 +79,9 @@ COPY --from=harness-wheels --chmod=0644 /sources/fabric.tar.gz /opt/nemoclaw/sou
 COPY --from=harness-wheels /build /opt/nemoclaw/source/local/
 COPY --from=harness-wheels /provenance.json /opt/nemoclaw/provenance.json
 COPY image/fabric/catalog.py image/fabric/runtime_metadata.py image/fabric/runtime.json /opt/nemoclaw/
+# Commands run in the sandbox, such as through openshell sandbox exec, find
+# Fabric's sandbox host on the default PATH.
+RUN ln -s /opt/fabric/bin/fabric-agent-ctl /usr/local/bin/fabric-agent-ctl
 # Fabric runs Python adapters with this interpreter.
 ENV ADAPTER_PYTHON=/opt/fabric/bin/python
 

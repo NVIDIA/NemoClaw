@@ -47,7 +47,8 @@ Use `--input -` to read the value from stdin instead; see the [bridge commands](
 Fabric receives the value unchanged; the bundled adapters use a string as the prompt and send any other value as its JSON text.
 A request can incur inference charges and affect retained agent history.
 Do not assume a universal result shape.
-No request walkthrough has been rehearsed yet ([#12642](https://github.com/NVIDIA/NemoClaw/issues/12642)).
+Check `result.status` as well as the outer `status`: the outer one only reports that `fabric-agent-ctl` completed the call, while a failed run reports `result.status: failed` with Fabric's error in `result.error`.
+`result.artifacts` names the files Fabric kept for that request, such as the adapter's output.
 
 ### Run One Headless OpenClaw Request
 
@@ -66,8 +67,7 @@ JSON
 
 The command's `--agent` selects the deployment's YAML `agent.name`; the input is one JSON value, here the prompt string.
 On success, inspect `result.status` and `result.output.response`; a successful command does not establish general model compatibility.
-If later invocations fail with `runtime_unavailable`, replace the sandbox using the [CLI replacement procedure](usage.md#replace-workloads-after-an-unusable-openclaw-runtime).
-Host-side invocation tooling remains follow-up work ([#12642](https://github.com/NVIDIA/NemoClaw/issues/12642)).
+If later invocations fail with `runtime_unavailable`, replace the sandbox using the [CLI replacement procedure](usage.md#replace-workloads-after-an-unusable-runtime).
 To reach an agent from the client host, see [agent interfaces](interfaces.md).
 
 ## Native Controls at Initialization
@@ -237,7 +237,8 @@ The [managed search tests](../crates/nemoclaw-sdk/tests/web_search.rs) cover pro
 ## Pi Model Selection
 
 The [Pi example](../examples/fabric-pi.yaml) selects a model by name.
-For a model Pi does not ship, which includes every model served through OpenShell's inference gateway, Pi needs the model's API, context window, and output limit:
+For a model Pi does not ship, which includes every model served through OpenShell's inference gateway, Pi needs the model's API, context window, and output limit.
+With the pinned Fabric, Pi also fails a request with `pi_model_error` unless `input` and `cost` are set, although Fabric's schema lists them as optional:
 
 ```yaml
 overrides:
@@ -245,6 +246,8 @@ overrides:
   maxTokens: 4096
   extensions:
     context_window: 32768
+    input: ["text"]
+    cost: {input: 0, output: 0, cacheRead: 0, cacheWrite: 0}
 ```
 
 NemoClaw sends the provider's API to any adapter whose Fabric descriptor declares a model `api`; set it in `extensions` only to override that.

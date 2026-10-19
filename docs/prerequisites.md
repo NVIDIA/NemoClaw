@@ -36,7 +36,8 @@ The client, gateway, and supervisor are pinned to commit `5a7728c304b5528e954e9a
 The gateway check verifies version and compute driver.
 Select a compatible [inference API](inference.md) and verify an actual agent reply; endpoint reachability alone is insufficient.
 
-The guides assume an operator provides the external gateway and OpenShell CLI credentials; provisioning them from a clean host is tracked in [#12642](https://github.com/NVIDIA/NemoClaw/issues/12642).
+Install the OpenShell CLI release with [OpenShell's installer](https://github.com/NVIDIA/OpenShell/blob/5a7728c304b5528e954e9ae900cf21f84e1a12b1/docs/about/installation.mdx), setting `OPENSHELL_VERSION=v0.1.4`.
+The guides assume an operator provides the external gateway and its credentials; register an authenticated gateway in the CLI as [OpenShell's authentication guide](https://github.com/NVIDIA/OpenShell/blob/5a7728c304b5528e954e9ae900cf21f84e1a12b1/docs/how-it-works/gateways/authentication.mdx) describes, with `openshell gateway add` for mTLS or OIDC.
 For an existing profile or plaintext loopback gateway, use [gateway/workspace selection](interfaces.md#select-the-gateway-and-workspace).
 See the [first-deployment guide](get-started.md) for its rehearsal status.
 

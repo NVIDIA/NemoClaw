@@ -205,8 +205,9 @@ pub trait AgentBridge {
         runtime_id: &str,
         input: &Value,
     ) -> Result<Value, Error>;
-    /// Stop the runtime. One that is already gone, or a bridge that no longer
-    /// answers, counts as stopped.
+    /// Stop the runtime. One that is already gone, a bridge that no longer
+    /// answers, or a sandbox that has exited, which took its runtime with it,
+    /// counts as stopped.
     async fn stop_agent(&self, binding: &Row, runtime_id: &str) -> Result<(), Error>;
 }
 
@@ -266,6 +267,11 @@ impl AgentBridge for OpenShell {
     }
 
     async fn stop_agent(&self, binding: &Row, runtime_id: &str) -> Result<(), Error> {
+        match self.sandbox_phase(binding, false).await {
+            Err(Error::SandboxStartup { .. }) => return Ok(()),
+            Err(error) => return Err(error),
+            Ok(_) => {}
+        }
         let name = value(binding, "agent_name");
         let arguments = ["stop", "--agent", name, "--runtime-id", runtime_id];
         let response = run(self, binding, &arguments, Vec::new()).await?;

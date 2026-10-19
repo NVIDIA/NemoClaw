@@ -137,6 +137,44 @@ async fn an_agent_starts_once_its_bridge_serves_and_stops_when_removed() {
 }
 
 #[tokio::test]
+async fn removing_an_agent_whose_sandbox_exited_stops_nothing() {
+    for phase in [proto::SandboxPhase::Error, proto::SandboxPhase::Completed] {
+        let fixture = Fixture::start().await;
+        let client = client(&fixture);
+        let sandbox = create_sandbox(&client, "fabric-openclaw").await;
+        let mut desired = nemoclaw_fabric::agent::decompose(&config());
+        desired.extend(
+            [
+                ("workspace", sandbox["workspace"].as_str()),
+                ("sandbox", sandbox["name"].as_str()),
+                ("owner", sandbox["owner"].as_str()),
+                ("generation", sandbox["generation"].as_str()),
+                ("sandbox_id", sandbox["id"].as_str()),
+            ]
+            .map(|(key, value)| (key.to_owned(), value.to_owned())),
+        );
+        let fabric = AgentBackend(client.clone());
+        let started = fabric.ensure("agent", &desired).await;
+        assert!(started.error().is_none(), "{:?}", started.error());
+        let agent = started.into_parts().0.unwrap();
+        // The sandbox exits on its own, taking its runtime with it.
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .sandboxes
+            .get_mut(&key(&sandbox))
+            .unwrap()
+            .status
+            .as_mut()
+            .unwrap()
+            .phase = phase as i32;
+        fabric.remove("agent", &agent, true).await.unwrap();
+        assert_eq!(operations(&fixture, "stop"), 0, "{}", phase.as_str_name());
+    }
+}
+
+#[tokio::test]
 async fn terminal_startup_reports_phase_and_exit_without_echoing_backend_text() {
     let fixture = Fixture::start().await;
     let client = client(&fixture);

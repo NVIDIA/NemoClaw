@@ -286,7 +286,7 @@ Removing or replacing a sandbox deletes its writable layer and in-memory convers
 | Remove retained storage or a protected gateway binding | Apply refuses removal; assess a separate deployment and explicit retirement of the original |
 | Change a credential value behind the same environment reference | Unchanged apply does not detect rotation; see [credential lifecycle](security.md#credentials-and-authentication) |
 
-A runtime that stopped or became unusable recovers only in a new sandbox: changing the agent's configuration replaces it, or see [replacement after an unusable OpenClaw runtime](#replace-workloads-after-an-unusable-openclaw-runtime).
+A runtime that stopped or became unusable recovers only in a new sandbox: changing the agent's configuration replaces it, or see [replacement after an unusable runtime](#replace-workloads-after-an-unusable-runtime).
 
 For OpenClaw model and native-setting updates, use an [agent image built from this revision](build.md#build-agent-images).
 Rebuilding the CLI bundle alone does not update the adapter in an existing sandbox image; changing that image replaces the sandbox.
@@ -338,7 +338,7 @@ Start failures report a fixed stage, failure code, and agent runtime state witho
 A sandbox runs one agent runtime, and a failed start may have used it, so the next apply creates the agent in a new sandbox and deletes the old sandbox's files.
 When Fabric rejected the configuration, correct the settings before reapplying.
 An invocation failure can also leave a runtime unusable; NemoClaw cannot detect that, and an unchanged apply leaves it alone.
-For the operator-reported OpenClaw failure, see [workload replacement](#replace-workloads-after-an-unusable-openclaw-runtime).
+To recover from that, or from a sandbox that exited, see [workload replacement](#replace-workloads-after-an-unusable-runtime).
 A sandbox in `Error` can still block apply, but its saved identity permits [teardown](#destroy) without a successful reapply.
 Changing a rejected sandbox policy or image does not authorize replacement; follow the [change constraints](#choose-the-change-path).
 
@@ -376,10 +376,10 @@ The installer contract has no separate recovery operation and does not create an
 Export preserves retained intent and validates required resource bindings without another readiness or model-inventory check.
 Destroy uses native provider compute/cache state and separately verified credential and gateway storage; it does not inspect model inventories.
 
-### Replace Workloads After an Unusable OpenClaw Runtime
+### Replace Workloads After an Unusable Runtime
 
-Use this path when an OpenClaw runtime is unusable after an invocation failure and you choose to replace its sandbox.
-The [reported malformed-request failure](agents.md#run-one-headless-openclaw-request) required sandbox replacement; the exact inputs that trigger it and recovery inside the existing sandbox remain unqualified ([#12642](https://github.com/NVIDIA/NemoClaw/issues/12642)).
+Use this path when an agent runtime is unusable after an invocation failure, or its sandbox exited and plans fail with `sandbox unavailable: SANDBOX_PHASE_ERROR`, and you choose to replace it.
+First read why the sandbox exited with `openshell logs SANDBOX --source sandbox`; see [native logs](troubleshooting.md#read-native-service-logs).
 The CLI has no targeted sandbox replacement or runtime-reset command.
 Its supported replacement path is whole-deployment destroy followed by reapplying the original configuration.
 
@@ -414,7 +414,7 @@ nemoclaw apply --state-dir .local/deployment deployment.yaml
 
 This procedure follows the implemented CLI lifecycle; recovery from arbitrary malformed inputs remains unqualified.
 Recreation starts the runtime but does not check that it answers.
-Check the recreated runtime before using the [exact OpenClaw request](agents.md#run-one-headless-openclaw-request); do not replay an invocation whose effects are unknown merely to test recovery.
+Check the recreated runtime with one [request](agents.md#run-one-deep-agents-or-pi-request) before relying on it; do not replay an invocation whose effects are unknown merely to test recovery.
 
 ### Recover an Interrupted Helm Removal
 

@@ -40,7 +40,7 @@ Do not attach environment dumps, TLS private keys, interface tokens, or the enti
 | `state is bound to a different deployment UID or gateway` | Restore the original UID and gateway endpoint; a new target needs separate state and resources |
 | `unfinished apply has different intent` | Reapply the exact YAML from the unfinished operation before trying another configuration |
 | Deployment lock error | Check for another operation using the same state directory; a lock failure does not authorize state deletion |
-| Authentication, transport, or incomplete-observation error | Restore access to the selected service; failed observation does not establish absence or authorize recreation. For a persistently unknown OpenClaw runtime after an invocation failure, follow the [replacement procedure](usage.md#replace-workloads-after-an-unusable-openclaw-runtime) |
+| Authentication, transport, or incomplete-observation error | Restore access to the selected service; failed observation does not establish absence or authorize recreation. For a persistently unknown runtime after an invocation failure, follow the [replacement procedure](usage.md#replace-workloads-after-an-unusable-runtime) |
 | Ownership, generation, or durable identity mismatch | Inspect the selected gateway/engine and retained deployment identity; do not adopt or replace a different resource |
 | Provider-profile identity mismatch after upgrading a bundle | Check the [gateway profile format break](provider.md#gateway-profile-format-upgrade); old `profile-v1` profiles require the original bundle for teardown or a separate deployment |
 | Plan would remove or replace a resource | Check [update constraints](usage.md#updates-and-recovery) and the relevant configuration guide before choosing a new deployment |
@@ -50,7 +50,7 @@ Do not attach environment dumps, TLS private keys, interface tokens, or the enti
 | `adapter/<id> compatibility rejected` | Read the named sandbox and canonical field; for `models.<role>.max_tokens`, remove that route's `overrides.maxTokens` or choose an adapter that accepts it, then plan again |
 | `Fabric runtime operation failed at STAGE (CODE)` | Read Fabric's message in the file the error names, in the state directory's `diagnostics` directory; it can contain secrets, so read it privately. Then follow [agent interface diagnosis](interfaces.md#diagnose-failures) |
 | Public Fabric configuration mismatch or native startup rejection | Follow [agent interface diagnosis](interfaces.md#diagnose-failures); retained public configuration checks do not audit native files or tokens |
-| After a malformed OpenClaw request: `runtime_unavailable` | The runtime is unusable and only a new sandbox recovers it; change the agent's configuration, or follow the [whole-deployment replacement procedure](usage.md#replace-workloads-after-an-unusable-openclaw-runtime), including loss of sandbox files and history |
+| `runtime_unavailable`, or `sandbox unavailable: SANDBOX_PHASE_ERROR` | The runtime is unusable or its sandbox exited; read why with `openshell logs SANDBOX --source sandbox`. Only a new sandbox recovers it: change the agent's configuration, or follow the [whole-deployment replacement procedure](usage.md#replace-workloads-after-an-unusable-runtime), including loss of sandbox files and history |
 
 OpenShell can add paths of its own, such as read-only `/var/log`, when it loads a sandbox policy.
 NemoClaw accepts those additions when the policy first loads, as long as every declared rule is intact, and records the loaded policy's hash.
@@ -170,18 +170,25 @@ NemoClaw does not reconnect OpenShell's internal transport or automatically repl
 For a reachable sandbox, [select its gateway and workspace](interfaces.md#select-the-gateway-and-workspace) on the client host.
 Logs can contain prompts, responses, and native errors that have not passed through the SDK's secret redaction; inspect them privately before sharing excerpts.
 
-The selected Fabric adapter owns where its harness writes process output; see the [OpenClaw](https://github.com/NVIDIA/NeMo-Fabric/tree/5574117feb4be948c1b03f4c36a2fe9a11af910d/adapters/python/openclaw) and [Hermes](https://github.com/NVIDIA/NeMo-Fabric/tree/5574117feb4be948c1b03f4c36a2fe9a11af910d/adapters/python/hermes) adapters.
-Read a file the adapter documents without restarting the process, replacing `assistant` with the declared sandbox name:
+Three sources cover most failures:
 
-```sh
-openshell sandbox exec -n assistant -- tail -n 100 REPLACE_WITH_LOG_PATH
-```
+- **OpenShell's sandbox log** shows the sandbox supervisor's messages, each process's network requests with the policy decision, and why a sandbox process exited. It works on a running sandbox and on one that exited, replacing `assistant` with the declared sandbox name:
 
-A missing file can mean startup stopped before opening the log; it does not establish that the sandbox or its data is absent.
+  ```sh
+  openshell logs assistant --source sandbox -n 100
+  ```
+
+- **An invocation's result** names the files Fabric kept for that request in `result.artifacts`, such as the adapter's output. Read one without restarting the agent:
+
+  ```sh
+  openshell sandbox exec -n assistant --no-tty -- tail -n 100 REPLACE_WITH_ARTIFACT_PATH
+  ```
+
+- **Fabric's own message** about a failed start or other runtime operation is in the state directory's `diagnostics/fabric-SANDBOX.json`, which the apply error names; see [failure messages](#identify-the-failure).
+
+The selected Fabric adapter owns where its harness writes anything else.
 Use the original apply error and the [failure table](#identify-the-failure) to choose recovery.
 Do not replay an uncertain native invocation merely to reproduce a log entry.
-
-Log collection and an inaccessible sandbox are tracked in [#12642](https://github.com/NVIDIA/NemoClaw/issues/12642).
 
 ## Traces and Web Search
 

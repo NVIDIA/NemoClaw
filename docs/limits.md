@@ -61,10 +61,8 @@ Other pages state a limit where it affects a procedure and link the same issue.
 
 | Limit | Issue |
 |---|---|
-| Native login, browser pairing and token rotation, rehearsed from apply to a first reply for each harness | [#12642](https://github.com/NVIDIA/NemoClaw/issues/12642) |
-| A headless request walkthrough, and Hermes Relay tracing with retained sessions | [#12642](https://github.com/NVIDIA/NemoClaw/issues/12642) |
-| Log collection and an inaccessible sandbox | [#12642](https://github.com/NVIDIA/NemoClaw/issues/12642) |
-| Creating an authenticated OpenShell CLI profile for an external gateway | [#12642](https://github.com/NVIDIA/NemoClaw/issues/12642) |
+| The OpenClaw request walkthrough, rehearsed once OpenClaw starts in a sandbox | [#13372](https://github.com/NVIDIA/NemoClaw/issues/13372) |
+| A live rehearsal against an external gateway that requires an issuer or mTLS client certificates | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
 
 ## Data and Cleanup
 

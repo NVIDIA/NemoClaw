@@ -5,7 +5,7 @@
 
 Create one OpenClaw sandbox using an existing OpenShell gateway and inference endpoint, then send its agent a request.
 This development procedure uses a source-built bundle and agent image.
-This guide builds NemoClaw from source because there are no releases yet ([#12638](https://github.com/NVIDIA/NemoClaw/issues/12638)); its access steps have not been rehearsed end to end ([#12642](https://github.com/NVIDIA/NemoClaw/issues/12642)).
+This guide builds NemoClaw from source because there are no releases yet ([#12638](https://github.com/NVIDIA/NemoClaw/issues/12638)).
 With the pinned Fabric, OpenClaw can't start in an OpenShell sandbox, so apply stops at the agent until [#13372](https://github.com/NVIDIA/NemoClaw/issues/13372) is fixed.
 
 ## 1. Prepare the Hosts and Bundle
@@ -139,10 +139,9 @@ JSON
 ```
 
 The first command reads the agent's runtime ID from the deployment's state with `jq`.
-Verify an agent reply in `result.output`; it tests this endpoint, model, and harness together.
+Verify that `result.status` is `succeeded` and read the reply in `result.output`; it tests this endpoint, model, and harness together.
 It does not establish general model quality or tool reliability.
 The request may incur inference charges and is added to the agent's conversation history.
-A rehearsed procedure is tracked in [#12642](https://github.com/NVIDIA/NemoClaw/issues/12642).
 
 ## 6. Preview Cleanup
 
