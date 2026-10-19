@@ -65,8 +65,7 @@ fn oidc_spec(token_env: &str) -> impl Fn(&str, u16) -> Spec {
             kind,
             port,
             json!({
-                "profile": "oidc", "issuer": "https://login.example.com",
-                "audience": "openshell", "token": {"env": token_env}
+                "profile": "oidc", "token": {"env": token_env}
             }),
         )
     }

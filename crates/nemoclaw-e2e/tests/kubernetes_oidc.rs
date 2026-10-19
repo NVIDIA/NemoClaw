@@ -119,15 +119,17 @@ spec:
       namespace: {namespace}
       authentication:
         profile: oidc
-        issuer: {issuer}
-        audience: {audience}
-        rolesClaim: roles
-        adminRole: {ADMIN_ROLE}
-        userRole: {USER_ROLE}
-        scopesClaim: scope
         caConfigMap: {CA_CONFIG_MAP}
         token:
           env: {TOKEN_ENV}
+    config:
+      openshell.gateway.oidc:
+        issuer: {issuer}
+        audience: {audience}
+        roles_claim: roles
+        admin_role: {ADMIN_ROLE}
+        user_role: {USER_ROLE}
+        scopes_claim: scope
   inferenceProviders:
     - name: hosted
       provider: openai

@@ -23,6 +23,20 @@ impl Document {
         let gateway = &self.spec.gateway;
         if let Gateway::Managed(gateway) = gateway {
             gateway.validate_managed()?;
+            // The oidc profile takes OpenShell's OIDC settings from the
+            // authored gateway configuration; OpenShell validates them.
+            let table = crate::managed::gateway_config::OIDC_TABLE;
+            if gateway.kubernetes.as_ref().is_some_and(|target| {
+                target.authentication.profile == super::KubernetesAuthenticationProfile::Oidc
+            }) && !gateway
+                .config
+                .as_ref()
+                .is_some_and(|config| crate::managed::gateway_config::defines(config, table))
+            {
+                return Err(ConfigError(format!(
+                    "the oidc authentication profile requires spec.gateway.config to define {table}, OpenShell's OIDC settings such as issuer and audience"
+                )));
+            }
         }
         if let Gateway::External(gateway) = gateway
             && !gateway.engine.is_empty()
@@ -119,8 +133,11 @@ impl super::ManagedGateway {
     pub fn validate_managed(&self) -> Result<(), ConfigError> {
         schema::validate_definition("Gateway", &Gateway::Managed(self.clone()))?;
         if let Some(config) = &self.config {
-            let driver = if self.kubernetes.is_some() {
-                "kubernetes"
+            let driver = if let Some(target) = &self.kubernetes {
+                match target.authentication.profile {
+                    super::KubernetesAuthenticationProfile::Oidc => "kubernetes-oidc",
+                    super::KubernetesAuthenticationProfile::Development => "kubernetes",
+                }
             } else {
                 self.runtime.provider.as_str()
             };

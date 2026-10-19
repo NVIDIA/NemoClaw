@@ -381,15 +381,22 @@ fn oidc_document() -> Document {
     let mut value = serde_json::to_value(document()).unwrap();
     value["spec"]["gateway"]["kubernetes"]["authentication"] = json!({
         "profile": "oidc",
-        "issuer": "https://login.example.com/realms/openshell",
-        "audience": "openshell",
-        "rolesClaim": "groups",
-        "adminRole": "openshell-admins",
-        "userRole": "openshell-users",
         "caConfigMap": "issuer-ca",
         "token": {"env": "OPENSHELL_TOKEN"}
     });
+    value["spec"]["gateway"]["config"] = json!({"openshell.gateway.oidc": oidc_table()});
     Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap()
+}
+
+/// OpenShell's OIDC settings, as authored in OpenShell's names.
+fn oidc_table() -> serde_json::Value {
+    json!({
+        "issuer": "https://login.example.com/realms/openshell",
+        "audience": "openshell",
+        "roles_claim": "groups",
+        "admin_role": "openshell-admins",
+        "user_role": "openshell-users",
+    })
 }
 
 #[test]
@@ -410,17 +417,10 @@ fn an_existing_oidc_issuer_replaces_the_development_issuer() {
             .unwrap(),
     )
     .unwrap();
+    // The authored table reaches the chart as written.
     assert_eq!(
         values["gatewayConfig"]["openshell.gateway.oidc"],
-        json!({
-            "issuer": "https://login.example.com/realms/openshell",
-            "audience": "openshell",
-            "jwks_ttl_secs": 3600,
-            "dangerously_allow_insecure_http": false,
-            "roles_claim": "groups",
-            "admin_role": "openshell-admins",
-            "user_role": "openshell-users",
-        })
+        oidc_table()
     );
     assert_eq!(values["server"]["oidc"]["caConfigMapName"], "issuer-ca");
     assert!(!values.to_string().contains("nemoclaw-development"));
@@ -428,7 +428,10 @@ fn an_existing_oidc_issuer_replaces_the_development_issuer() {
     assert_eq!(auth["authentication_profile"], "oidc");
     let oidc: serde_json::Value = serde_json::from_str(auth["oidc"].as_str().unwrap()).unwrap();
     assert_eq!(oidc["token"]["env"], "OPENSHELL_TOKEN");
-    assert_eq!(oidc["issuer"], "https://login.example.com/realms/openshell");
+    // The provider needs only the token reference and the CA ConfigMap.
+    let mut fields: Vec<_> = oidc.as_object().unwrap().keys().cloned().collect();
+    fields.sort();
+    assert_eq!(fields, ["caConfigMap", "token"]);
 
     // Without a CA ConfigMap, the chart mounts none.
     let mut value = serde_json::to_value(oidc_document()).unwrap();

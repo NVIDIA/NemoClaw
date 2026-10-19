@@ -182,26 +182,12 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
             "x-nemoclaw-error": "Kubernetes environment names must be unique variable names that do not shadow process, trust, proxy, or cluster controls"
         }),
     );
-    // OIDC settings belong to the oidc profile, which requires the issuer,
-    // audience, and token variable; roles come in pairs, as in OpenShell.
-    let oidc_fields = [
-        "issuer",
-        "audience",
-        "rolesClaim",
-        "adminRole",
-        "userRole",
-        "scopesClaim",
-        "caConfigMap",
-        "token",
-    ];
+    // The oidc profile requires the token variable; OpenShell's OIDC settings
+    // come from spec.gateway.config.
+    let oidc_fields = ["caConfigMap", "token"];
     let reserved_names =
         defs["ManagedKubernetes"]["properties"]["kubeconfig"]["properties"]["env"]["not"].clone();
     let authentication = &mut defs["KubernetesAuthentication"];
-    property(
-        authentication,
-        "issuer",
-        json!({"pattern": r"^https://[^\s/?#@]+(?:/[^\s?#]*)?$(?![\s\S])", "x-nemoclaw-error": "the OIDC issuer must be an https URL without credentials, query, or fragment"}),
-    );
     property(
         authentication,
         "caConfigMap",
@@ -220,12 +206,10 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
             "x-nemoclaw-error": "token environment reference must not shadow process, trust, proxy, or cluster controls"
         }}}),
     );
-    authentication["dependentRequired"] =
-        json!({"adminRole": ["userRole"], "userRole": ["adminRole"]});
     authentication["allOf"] = json!([
         {
             "if": {"properties": {"profile": {"const": "oidc"}}, "required": ["profile"]},
-            "then": {"required": ["issuer", "audience", "token"]},
+            "then": {"required": ["token"]},
             "else": {"not": {"anyOf": oidc_fields.iter().map(|field| json!({"required": [field]})).collect::<Vec<_>>()}}
         }
     ]);

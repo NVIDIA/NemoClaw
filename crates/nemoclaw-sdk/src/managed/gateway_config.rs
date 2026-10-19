@@ -42,11 +42,23 @@ const KUBERNETES_KEYS: [&str; 3] = [
     "openshell.drivers.kubernetes.image_pull_secrets",
 ];
 
-/// Keys NemoClaw manages for a gateway with this compute driver.
+/// The table holding OpenShell's OIDC settings. NemoClaw owns it under the
+/// development profile, whose issuer it runs; the oidc profile authors it.
+pub const OIDC_TABLE: &str = "openshell.gateway.oidc";
+
+/// Keys NemoClaw manages for a gateway with this compute driver;
+/// `kubernetes-oidc` is a Kubernetes gateway whose OIDC settings are authored.
 fn owned(driver: &str) -> Vec<String> {
     let driver_keys: &[&str] = match driver {
         "docker" => &DOCKER_DRIVER_KEYS,
         "podman" => &PODMAN_DRIVER_KEYS,
+        "kubernetes-oidc" => {
+            return KUBERNETES_KEYS
+                .into_iter()
+                .filter(|key| *key != OIDC_TABLE)
+                .map(String::from)
+                .collect();
+        }
         _ => return KUBERNETES_KEYS.map(String::from).to_vec(),
     };
     LOCAL_KEYS
@@ -165,6 +177,22 @@ fn insert(
         toml::Value::Table(child) => insert(child, rest, value, name),
         _ => Err(twice()),
     }
+}
+
+/// Whether the authored tables define `table`, in either the dotted or the
+/// nested form.
+pub fn defines(config: &GatewayConfig, table: &str) -> bool {
+    let Ok(root) = render(toml::Table::new(), config) else {
+        return false;
+    };
+    let mut value = &toml::Value::Table(root);
+    for segment in table.split('.') {
+        match value.get(segment) {
+            Some(child) => value = child,
+            None => return false,
+        }
+    }
+    value.is_table()
 }
 
 /// Merge authored tables into a gateway file's owned keys.

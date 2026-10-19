@@ -93,18 +93,19 @@ spec:
     kubernetes:
       authentication:
         profile: oidc
-        issuer: https://login.example.com/realms/openshell
-        audience: openshell
-        rolesClaim: groups
-        adminRole: openshell-admins
-        userRole: openshell-users
         caConfigMap: issuer-ca
         token:
           env: NEMOCLAW_GATEWAY_TOKEN
+    config:
+      openshell.gateway.oidc:
+        issuer: https://login.example.com/realms/openshell
+        audience: openshell
+        roles_claim: groups
+        admin_role: openshell-admins
+        user_role: openshell-users
 ```
 
-- `issuer` and `audience` are passed to OpenShell, which validates every request's bearer token against them.
-- `rolesClaim`, `adminRole` and `userRole` map the token's roles to OpenShell's administrator and user access. Set both roles or neither; with neither, any valid token is accepted. `scopesClaim` names a scopes claim, if your tokens carry one.
+- `openshell.gateway.oidc` in [`spec.gateway.config`](usage.md#configure-a-managed-gateway) holds OpenShell's OIDC settings in OpenShell's names, as its [gateway authentication guide](https://github.com/NVIDIA/OpenShell/blob/5a7728c304b5528e954e9ae900cf21f84e1a12b1/docs/how-it-works/gateways/authentication.mdx#oidc) describes for Helm deployments. OpenShell validates every request's bearer token against the issuer and audience, and maps the token's roles to administrator and user access; omitted settings take OpenShell's defaults. The `oidc` profile requires the table; under `development`, NemoClaw writes it for its own issuer.
 - `caConfigMap` names a ConfigMap in the deployment's namespace whose `ca.crt` verifies the issuer's certificate. Omit it for a publicly trusted issuer. Like registry Secrets, create it after NemoClaw creates the namespace, then rerun apply with the same state directory.
 - `token.env` names the variable holding the bearer token NemoClaw sends to the gateway.
 

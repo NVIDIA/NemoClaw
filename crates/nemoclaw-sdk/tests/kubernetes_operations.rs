@@ -42,8 +42,7 @@ fn spec_on(kind: &str, provider: &str) -> Spec {
 fn oidc_spec(kind: &str) -> Spec {
     let mut spec = spec(kind);
     spec.settings.kubernetes.as_mut().unwrap().authentication = serde_json::from_value(json!({
-        "profile": "oidc", "issuer": "https://login.example.com",
-        "audience": "openshell", "token": {"env": "OIDC_TOKEN"}
+        "profile": "oidc", "token": {"env": "OIDC_TOKEN"}
     }))
     .unwrap();
     spec

@@ -1211,36 +1211,6 @@
               "anyOf": [
                 {
                   "required": [
-                    "issuer"
-                  ]
-                },
-                {
-                  "required": [
-                    "audience"
-                  ]
-                },
-                {
-                  "required": [
-                    "rolesClaim"
-                  ]
-                },
-                {
-                  "required": [
-                    "adminRole"
-                  ]
-                },
-                {
-                  "required": [
-                    "userRole"
-                  ]
-                },
-                {
-                  "required": [
-                    "scopesClaim"
-                  ]
-                },
-                {
-                  "required": [
                     "caConfigMap"
                   ]
                 },
@@ -1264,35 +1234,13 @@
           },
           "then": {
             "required": [
-              "issuer",
-              "audience",
               "token"
             ]
           }
         }
       ],
-      "dependentRequired": {
-        "adminRole": [
-          "userRole"
-        ],
-        "userRole": [
-          "adminRole"
-        ]
-      },
       "description": "Authentication provisioned for a managed Kubernetes gateway.",
       "properties": {
-        "adminRole": {
-          "description": "Role that grants administrator access; set together with `userRole`, or neither for authentication only.",
-          "maxLength": 253,
-          "minLength": 1,
-          "type": "string"
-        },
-        "audience": {
-          "description": "Audience the gateway requires in tokens. Required for `oidc`.",
-          "maxLength": 253,
-          "minLength": 1,
-          "type": "string"
-        },
         "caConfigMap": {
           "description": "Existing ConfigMap in this deployment's namespace whose `ca.crt` verifies the issuer's TLS certificate; omit for a publicly trusted issuer.",
           "maxLength": 253,
@@ -1301,16 +1249,8 @@
           "type": "string",
           "x-nemoclaw-error": "caConfigMap must be a Kubernetes ConfigMap name"
         },
-        "issuer": {
-          "description": "HTTPS URL of the existing OIDC issuer. Required for `oidc`.",
-          "maxLength": 2048,
-          "minLength": 9,
-          "pattern": "^https://[^\\s/?#@]+(?:/[^\\s?#]*)?$(?![\\s\\S])",
-          "type": "string",
-          "x-nemoclaw-error": "the OIDC issuer must be an https URL without credentials, query, or fragment"
-        },
         "profile": {
-          "description": "`development` generates a scoped local issuer for isolated qualification; `oidc` uses an existing OIDC issuer.",
+          "description": "`development` generates a scoped local issuer for isolated qualification; `oidc` uses an existing OIDC issuer, configured in spec.gateway.config's openshell.gateway.oidc table.",
           "oneOf": [
             {
               "const": "development",
@@ -1323,18 +1263,6 @@
               "type": "string"
             }
           ]
-        },
-        "rolesClaim": {
-          "description": "Dot-separated path to the roles array in token claims, such as `groups` or `realm_access.roles`.",
-          "maxLength": 253,
-          "minLength": 1,
-          "type": "string"
-        },
-        "scopesClaim": {
-          "description": "Dot-separated path to the scopes array in token claims.",
-          "maxLength": 253,
-          "minLength": 1,
-          "type": "string"
         },
         "token": {
           "$ref": "#/$defs/SecretRef",
@@ -1382,12 +1310,6 @@
               "x-nemoclaw-error": "token environment reference must not shadow process, trust, proxy, or cluster controls"
             }
           }
-        },
-        "userRole": {
-          "description": "Role that grants user access; set together with `adminRole`, or neither for authentication only.",
-          "maxLength": 253,
-          "minLength": 1,
-          "type": "string"
         }
       },
       "required": [

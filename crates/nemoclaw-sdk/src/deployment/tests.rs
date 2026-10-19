@@ -1332,10 +1332,12 @@ fn an_existing_issuers_token_reaches_gateway_only_runs() {
     let mut value = serde_json::to_value(&document).unwrap();
     value["spec"]["gateway"]["kubernetes"]["authentication"] = json!({
         "profile": "oidc",
-        "issuer": "https://login.example.com",
-        "audience": "openshell",
         "token": {"env": "OIDC_TOKEN"}
     });
+    value["spec"]["gateway"]["config"] = json!({"openshell.gateway.oidc": {
+        "issuer": "https://login.example.com",
+        "audience": "openshell"
+    }});
     let document = Document::parse(value.to_string().as_bytes()).unwrap();
     let environment = gateway_environment(&document, &OidcValues, Path::new("state")).unwrap();
     assert_eq!(environment["OIDC_TOKEN"], "test-OIDC_TOKEN");

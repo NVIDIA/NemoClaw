@@ -580,10 +580,12 @@ fn a_reserved_reference_name_states_whether_the_reference_holds_a_secret_or_a_fi
     let mut oidc = managed_document();
     oidc["spec"]["gateway"]["kubernetes"]["authentication"] = json!({
         "profile": "oidc",
-        "issuer": "https://login.example.com/realms/openshell",
-        "audience": "openshell",
         "token": {"env": "OPENSHELL_TOKEN"}
     });
+    oidc["spec"]["gateway"]["config"] = json!({"openshell.gateway.oidc": {
+        "issuer": "https://login.example.com/realms/openshell",
+        "audience": "openshell"
+    }});
     Document::parse(oidc.to_string().as_bytes()).unwrap();
     for (mut input, pointer, path, rule) in [
         (
@@ -711,51 +713,87 @@ fn managed_services_with_a_kubernetes_runtime_state_the_cluster_rule() {
 }
 
 #[test]
-fn an_oidc_profile_requires_its_issuer_and_development_takes_no_oidc_settings() {
+fn an_oidc_profile_takes_openshells_oidc_table_and_development_takes_none() {
     let validator = jsonschema::validator_for(&schema::input_schema()).unwrap();
-    let oidc = json!({
-        "profile": "oidc",
+    let oidc = json!({"profile": "oidc", "token": {"env": "OPENSHELL_TOKEN"}});
+    let table = json!({
         "issuer": "https://login.example.com/realms/openshell",
-        "audience": "openshell",
-        "token": {"env": "OPENSHELL_TOKEN"}
+        "audience": "openshell"
     });
-    let mut input = managed_document();
-    input["spec"]["gateway"]["kubernetes"]["authentication"] = oidc.clone();
+    let input = |authentication: &Value, config: Option<Value>| {
+        let mut input = managed_document();
+        input["spec"]["gateway"]["kubernetes"]["authentication"] = authentication.clone();
+        if let Some(config) = config {
+            input["spec"]["gateway"]["config"] = config;
+        }
+        input
+    };
+    let valid = input(&oidc, Some(json!({"openshell.gateway.oidc": table})));
     let document =
-        Document::parse(input.to_string().as_bytes()).expect("a minimal oidc profile is valid");
-    assert_eq!(serde_json::to_value(&document).unwrap(), input);
+        Document::parse(valid.to_string().as_bytes()).expect("a minimal oidc profile is valid");
+    assert_eq!(serde_json::to_value(&document).unwrap(), valid);
+    // The chart's nested form names the same table.
+    let nested = input(&oidc, Some(json!({"openshell.gateway": {"oidc": table}})));
+    Document::parse(nested.to_string().as_bytes()).expect("the nested form is valid");
 
+    // Authentication keeps only the profile, token, and CA ConfigMap.
     let mut invalid: Vec<(&str, Value)> = Vec::new();
-    for field in ["issuer", "audience", "token"] {
-        let mut missing = oidc.clone();
-        missing.as_object_mut().unwrap().remove(field);
-        invalid.push((field, missing));
-    }
+    let mut missing = oidc.clone();
+    missing.as_object_mut().unwrap().remove("token");
+    invalid.push(("token", missing));
     for (field, value) in [
-        ("issuer", json!("http://login.example.com")),
-        ("issuer", json!("https://user:password@login.example.com")),
-        ("issuer", json!("https://login.example.com/?tenant=x")),
         ("token", json!({"env": "KUBECONFIG"})),
         ("token", json!({"env": "lowercase"})),
         ("token", json!("OPENSHELL_TOKEN")),
         ("tokenEnv", json!("OPENSHELL_TOKEN")),
         ("caConfigMap", json!("Issuer_CA")),
+        (
+            "issuer",
+            json!("https://login.example.com/realms/openshell"),
+        ),
+        ("audience", json!("openshell")),
         ("adminRole", json!("openshell-admins")),
     ] {
         let mut changed = oidc.clone();
         changed[field] = value;
         invalid.push((field, changed));
     }
-    let mut development = json!({"profile": "development"});
-    development["issuer"] = oidc["issuer"].clone();
-    invalid.push(("development", development));
+    for field in ["token", "caConfigMap"] {
+        let mut development = json!({"profile": "development"});
+        development[field] = oidc["token"].clone();
+        invalid.push(("development", development));
+    }
     for (field, authentication) in invalid {
-        let mut input = managed_document();
-        input["spec"]["gateway"]["kubernetes"]["authentication"] = authentication;
+        let config =
+            (authentication["profile"] == "oidc").then(|| json!({"openshell.gateway.oidc": table}));
+        let input = input(&authentication, config);
         assert!(!validator.is_valid(&input), "accepted invalid {field}");
         assert!(
             Document::parse(input.to_string().as_bytes()).is_err(),
             "parsed invalid {field}"
+        );
+    }
+
+    // The oidc profile requires OpenShell's table; development owns it.
+    let development = json!({"profile": "development"});
+    for (authentication, config) in [
+        (&oidc, None),
+        (
+            &oidc,
+            Some(json!({"openshell.gateway": {"log_level": "debug"}})),
+        ),
+        (&development, Some(json!({"openshell.gateway.oidc": table}))),
+        (
+            &development,
+            Some(json!({"openshell.gateway": {"oidc": table}})),
+        ),
+    ] {
+        let error = Document::parse(input(authentication, config.clone()).to_string().as_bytes())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("openshell.gateway.oidc"),
+            "{config:?}: {error}"
         );
     }
 }

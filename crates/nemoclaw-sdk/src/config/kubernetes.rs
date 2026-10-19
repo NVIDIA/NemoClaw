@@ -38,32 +38,8 @@ pub struct ManagedKubernetes {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct KubernetesAuthentication {
-    /// `development` generates a scoped local issuer for isolated qualification; `oidc` uses an existing OIDC issuer.
+    /// `development` generates a scoped local issuer for isolated qualification; `oidc` uses an existing OIDC issuer, configured in spec.gateway.config's openshell.gateway.oidc table.
     pub profile: KubernetesAuthenticationProfile,
-    /// HTTPS URL of the existing OIDC issuer. Required for `oidc`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(default, with = "String", length(min = 9, max = 2048))]
-    pub issuer: Option<String>,
-    /// Audience the gateway requires in tokens. Required for `oidc`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(default, with = "String", length(min = 1, max = 253))]
-    pub audience: Option<String>,
-    /// Dot-separated path to the roles array in token claims, such as `groups` or `realm_access.roles`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(default, with = "String", length(min = 1, max = 253))]
-    pub roles_claim: Option<String>,
-    /// Role that grants administrator access; set together with `userRole`, or neither for authentication only.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(default, with = "String", length(min = 1, max = 253))]
-    pub admin_role: Option<String>,
-    /// Role that grants user access; set together with `adminRole`, or neither for authentication only.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(default, with = "String", length(min = 1, max = 253))]
-    pub user_role: Option<String>,
-    /// Dot-separated path to the scopes array in token claims.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(default, with = "String", length(min = 1, max = 253))]
-    pub scopes_claim: Option<String>,
     /// Existing ConfigMap in this deployment's namespace whose `ca.crt` verifies the issuer's TLS certificate; omit for a publicly trusted issuer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "String", length(min = 1, max = 253))]
