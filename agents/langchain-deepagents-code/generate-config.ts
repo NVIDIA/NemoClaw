@@ -6,6 +6,10 @@
 // SECURITY: this file writes only non-secret provider/model metadata. Real
 // provider credentials stay outside ~/.deepagents files.
 
+import {
+  nativeLocalCredentialReference,
+  NATIVE_LOCAL_CREDENTIAL_ENV,
+} from "../../src/lib/inference/native-local/agent-config.ts";
 import { nativeHostedAgentConfig } from "../../src/lib/inference/native-provider/agent-config.ts";
 
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
@@ -166,8 +170,9 @@ function providerConfigLines(
   upstreamProvider: string,
 ): string[] {
   const nativeHosted = nativeHostedAgentConfig(upstreamProvider, baseUrl);
-  const apiKeyEnv =
-    baseUrl === NVIDIA_HOSTED_NATIVE_ENDPOINT
+  const apiKeyEnv = nativeLocalCredentialReference(upstreamProvider, baseUrl)
+    ? NATIVE_LOCAL_CREDENTIAL_ENV
+    : baseUrl === NVIDIA_HOSTED_NATIVE_ENDPOINT
       ? ATTACHED_PROVIDER_API_KEY_ENV
       : (nativeHosted?.credentialEnv ?? MANAGED_INFERENCE_API_KEY_ENV);
   return [

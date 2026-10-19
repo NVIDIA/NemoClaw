@@ -6,11 +6,15 @@ import {
   normalizeNativeNvidiaProviderAttachment,
 } from "../native-nvidia/contract";
 import { requireHostedProviderAttachment } from "./hosted-attachment";
+import { normalizeProviderBaseUrl } from "../../core/provider-endpoint";
 import type { NativeProviderAttachment } from "./contract";
 
 /** Persisted authority selects the route; a logical provider name alone does not. */
 export function recordedNativeProviderAttachment(selection: {
   provider?: string | null;
+  endpointUrl?: string | null;
+  credentialEnv?: string | null;
+  preferredInferenceApi?: string | null;
   nativeNvidiaProviderAttachment?: unknown;
   nativeHostedProviderAttachment?: unknown;
 }): NativeProviderAttachment | undefined {
@@ -18,6 +22,25 @@ export function recordedNativeProviderAttachment(selection: {
     selection.nativeHostedProviderAttachment,
     selection.provider,
   );
+  if (hosted?.custom) {
+    const binding = hosted.custom;
+    const api =
+      selection.preferredInferenceApi === "responses"
+        ? "openai-responses"
+        : selection.preferredInferenceApi;
+    if (
+      (api && api !== binding.api) ||
+      (selection.credentialEnv && selection.credentialEnv !== binding.credentialEnv) ||
+      (selection.endpointUrl &&
+        normalizeProviderBaseUrl(
+          selection.endpointUrl,
+          binding.provider === "compatible-anthropic-endpoint" ? "anthropic" : "openai",
+        ) !== binding.endpointUrl)
+    )
+      throw new Error(
+        "Recorded custom native selection does not match its endpoint, API or credential authority",
+      );
+  }
   if (selection.nativeNvidiaProviderAttachment !== undefined) {
     const nvidia = normalizeNativeNvidiaProviderAttachment(
       selection.nativeNvidiaProviderAttachment,

@@ -387,7 +387,7 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     '[[ -z "$extra" &&',
     '"$cached_revision" == "$CHECKOUT_SHA"',
     '"$cached_platform" == "linux/amd64"',
-    "node scripts/checks/protected-dcode-base-receipt.mts verify",
+    "node scripts/checks/protected-dcode-base-receipt.mts verify-reusable",
     '"$NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE/${name}-base"',
     '"$NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE/${name}-base-receipt.json" "$agent"',
     '"$verified" == "$reference"',

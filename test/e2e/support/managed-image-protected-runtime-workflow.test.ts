@@ -187,7 +187,7 @@ describe("protected managed-image runtime workflow", () => {
   });
 
   it.each([
-    "node scripts/checks/protected-dcode-base-receipt.mts verify",
+    "node scripts/checks/protected-dcode-base-receipt.mts verify-reusable",
     '"$verified" == "$reference"',
     '"$NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE/${name}-base-receipt.json" "$agent"',
     '"$CANDIDATE_BASES" == false',

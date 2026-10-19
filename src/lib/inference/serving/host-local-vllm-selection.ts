@@ -77,6 +77,7 @@ export function materializeHostLocalVllmModel(
     downloadSizeBytes: recipe.spec.model.downloadSizeBytes,
     maxModelLen: positiveIntegerArgument(recipe, "--max-model-len"),
     revision: recipe.spec.model.revision,
+    reviewedCode: recipe.spec.model.reviewedCode,
     servedModelId: recipe.spec.model.servedName,
     modelArgs: hostLocalVllmModelArguments(recipe),
     gated: recipe.spec.model.gated,
@@ -140,6 +141,8 @@ export function materializeHostLocalVllmSelection(
     throw new Error("host-local vLLM recipe is missing required runtime or model fields");
   }
   const model = materializeHostLocalVllmModel(recipe, directInstall, baseProfile.platform);
+  // Preserve platform GPU selection when the installer applies the recipe's container arguments.
+  model.runtime = { ...model.runtime!, catalogPresetId: preset.metadata.id };
   const gpuMemoryUtilization = hostLocalVllmGpuMemoryUtilization(recipe);
   return {
     displayName: preset.metadata.displayName,

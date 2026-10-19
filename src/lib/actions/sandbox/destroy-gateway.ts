@@ -59,6 +59,9 @@ interface ResolveGatewayCleanupRuntimeProviderDeps extends Pick<
   "resolveOwnedRuntimeProviderId"
 > {
   configuredRuntimeProviderId?: string | null;
+  requireOwnedRuntime?: boolean;
+  recoveryRecordedAt?: string;
+  requireDefaultDockerDaemon?: boolean;
 }
 
 // Compute the Docker-driver gateway state directory that belongs to
@@ -96,8 +99,13 @@ export function resolveGatewayCleanupRuntimeProviderId(
       gatewayName,
       gatewayPort: perGatewayState.port,
       stateDir: perGatewayState.stateDir,
+      ...(deps.recoveryRecordedAt !== undefined
+        ? { recoveryRecordedAt: deps.recoveryRecordedAt }
+        : {}),
+      ...(deps.requireDefaultDockerDaemon ? { requireDefaultDockerDaemon: true } : {}),
     },
   );
+  if (deps.requireOwnedRuntime && !recorded) return null;
   if (registered && recorded && registered !== recorded) {
     throw new Error(
       `Refusing cleanup for gateway '${gatewayName}': registered runtime provider '${registered}' does not match recorded gateway runtime provider '${recorded}'.`,

@@ -5,6 +5,96 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { expect, it, vi } from "vitest";
+import type { SandboxEntry } from "./registry/types";
+
+it.each([
+  {
+    provider: "llama-cpp-local",
+    endpointUrl: "http://host.openshell.internal:8000/v1",
+    agent: undefined,
+  },
+  {
+    provider: "compatible-endpoint",
+    endpointUrl: "http://host.openshell.internal:12345/v1",
+    agent: "pi",
+  },
+] as const)(
+  "retains a $provider attachment even when an unrelated NIM marker is stale",
+  async (selection) => {
+    const { nativeLocalIdentity } = await import("../inference/native-local/contract");
+    const { retainedNativeLocalProviderAttachment } = await import("./registry/route-reservation");
+    const binding = {
+      ...selection,
+      credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+      authMode: "sentinel",
+      gatewayName: "nemoclaw",
+      sandboxName: "alpha",
+    } as const;
+    const attachment = {
+      ...binding,
+      ...nativeLocalIdentity(binding),
+      schemaVersion: 1 as const,
+      providerId: "llama-provider",
+    };
+    const existing = {
+      name: "alpha",
+      model: "model-a",
+      ...binding,
+      nimContainer: "stale-nim-marker",
+      nativeLocalProviderAttachment: attachment,
+    } as SandboxEntry;
+
+    expect(retainedNativeLocalProviderAttachment(existing, binding)).toEqual(attachment);
+  },
+);
+
+it("drops a stale vLLM attachment when reserving an owned Local NIM shared route", async () => {
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-nim-attachment-"));
+  vi.stubEnv("HOME", home);
+  vi.resetModules();
+  try {
+    const registry = await import("./registry");
+    const { nativeLocalIdentity } = await import("../inference/native-local/contract");
+    const binding = {
+      provider: "vllm-local",
+      endpointUrl: "http://host.openshell.internal:8000/v1",
+      credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+      authMode: "sentinel",
+      gatewayName: "nemoclaw",
+      sandboxName: "alpha",
+    } as const;
+    const attachment = {
+      ...binding,
+      ...nativeLocalIdentity(binding),
+      schemaVersion: 1 as const,
+      providerId: "stale-provider",
+    };
+    registry.registerSandbox({
+      name: "alpha",
+      provider: "vllm-local",
+      model: "model-a",
+      endpointUrl: "http://127.0.0.1:8000/v1",
+      gatewayName: "nemoclaw",
+      nimContainer: "nemoclaw-nim-owned",
+      nativeLocalProviderAttachment: attachment,
+    });
+    registry.reserveSandboxInferenceRoute("alpha", {
+      provider: "vllm-local",
+      model: "model-b",
+      endpointUrl: "http://127.0.0.1:8000/v1",
+      credentialEnv: null,
+      preferredInferenceApi: "openai-completions",
+      gatewayName: "nemoclaw",
+    });
+
+    const entry = registry.getSandbox("alpha");
+    expect(entry?.nimContainer).toBe("nemoclaw-nim-owned");
+    expect(entry?.nativeLocalProviderAttachment).toBeUndefined();
+  } finally {
+    await fs.rm(home, { recursive: true, force: true });
+    vi.unstubAllEnvs();
+  }
+});
 
 it("admits a pending route reservation without per-sandbox provider authority", async () => {
   const { classifySandboxInferenceRouteReservation } = await import("./registry/route-reservation");
@@ -120,3 +210,59 @@ it("lists registered sandboxes that retain native NVIDIA provider ownership", as
     vi.unstubAllEnvs();
   }
 });
+
+it.each([
+  ["unchanged binding", {}, true],
+  ["model change", { model: "model-b" }, true],
+  ["endpoint change", { endpointUrl: "https://other.example/v1" }, false],
+  ["API change", { preferredInferenceApi: "openai-responses" }, false],
+  ["credential change", { credentialEnv: "OTHER_KEY" }, false],
+  ["gateway change", { gatewayName: "other-gateway" }, false],
+] as const)(
+  "preserves custom native reservation authority only for its binding: %s",
+  async (_label, changes, retained) => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-custom-reservation-"));
+    vi.stubEnv("HOME", home);
+    vi.resetModules();
+    try {
+      const registry = await import("./registry");
+      const { customNativeProvider } = await import("../inference/native-provider/custom");
+      const route = {
+        provider: "compatible-endpoint",
+        model: "model-a",
+        endpointUrl: "https://custom.example/v1",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        preferredInferenceApi: "openai-completions",
+        gatewayName: "nemoclaw",
+      };
+      const definition = customNativeProvider({
+        provider: route.provider,
+        endpointUrl: route.endpointUrl,
+        credentialEnv: route.credentialEnv,
+        api: route.preferredInferenceApi,
+        allowedIps: ["8.8.8.8"],
+      });
+      const receipt = {
+        schemaVersion: 1 as const,
+        profileId: definition.profileId,
+        providerName: definition.providerName,
+        providerId: "owned-provider-id",
+        endpointUrl: definition.endpointUrl,
+        allowedIps: definition.allowedIps,
+        custom: definition.custom,
+      };
+      registry.registerSandbox({
+        name: "alpha",
+        ...route,
+        nativeHostedProviderAttachment: receipt,
+      });
+      expect(registry.reserveSandboxInferenceRoute("alpha", { ...route, ...changes })).toBe(true);
+      expect(registry.getSandbox("alpha")?.nativeHostedProviderAttachment).toEqual(
+        retained ? receipt : undefined,
+      );
+    } finally {
+      await fs.rm(home, { recursive: true, force: true });
+      vi.unstubAllEnvs();
+    }
+  },
+);

@@ -21,6 +21,8 @@ const lifecycle = nativeProviderLifecycle({
 });
 
 export const nativeNvidiaProviderProfilePath = lifecycle.nativeProviderProfilePath.bind(lifecycle);
+export const requireNativeNvidiaProviderProfileBoundary =
+  lifecycle.requireNativeProviderProfileBoundary.bind(lifecycle);
 export const isNativeNvidiaProvider = lifecycle.isNativeProvider.bind(lifecycle);
 export const resolveGatewayNativeNvidiaProviderAuthority =
   lifecycle.resolveGatewayNativeProviderAuthority.bind(lifecycle);

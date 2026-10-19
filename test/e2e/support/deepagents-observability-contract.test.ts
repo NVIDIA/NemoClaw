@@ -310,6 +310,19 @@ describe("Deep Agents observability policy proof", () => {
 });
 
 describe("bounded private OTLP capture server", () => {
+  it.each(["null", "[]"])("rejects malformed capture metadata (%s)", (metadata) => {
+    const captureDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-otlp-invalid-metadata-"));
+    try {
+      fs.writeFileSync(path.join(captureDir, "invalid.json"), metadata);
+      fs.writeFileSync(path.join(captureDir, "invalid.body"), "allow-probe");
+      expect(() => validateCaptureDirectory(captureDir, 4318, "allow-probe", expectations)).toThrow(
+        /accepted|records a rejected request/,
+      );
+    } finally {
+      fs.rmSync(captureDir, { recursive: true, force: true });
+    }
+  });
+
   it("accepts only approved host bridge addresses unless a hermetic test opts into loopback", () => {
     expect(isPrivateBridgeIpv4("10.1.2.3")).toBe(true);
     expect(isPrivateBridgeIpv4("172.31.0.1")).toBe(true);

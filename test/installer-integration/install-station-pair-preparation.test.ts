@@ -1191,9 +1191,8 @@ node() {
 station_installer_revision() { printf '%s' "$PAIR_REVISION"; }
 station_dual_pair_resume_pending() { return 0; }
 _SELECTED_EXPRESS_PLATFORM='DGX Station'
-_STATION_EXPRESS_MODEL_WAS_EXPLICIT=0
-NEMOCLAW_VLLM_MODEL='nemotron-3-ultra-550b-a55b'
-NEMOCLAW_MODEL='nvidia/nemotron-3-ultra-550b-a55b'
+_STATION_INSTALL_MODE=express
+configure_station_express_model
 unset NEMOCLAW_DGX_STATION_PEER NEMOCLAW_DGX_STATION_SSH_BINDING
 ensure_station_express_pair
 printf 'RESULT peer=%s model=%s selector=%s binding=%s\n' "\${NEMOCLAW_DGX_STATION_PEER:-}" "\${NEMOCLAW_MODEL:-}" "\${NEMOCLAW_VLLM_MODEL:-}" "\${NEMOCLAW_DGX_STATION_SSH_BINDING:-}"
@@ -1281,8 +1280,8 @@ station_installer_revision() { printf '%s' "$PAIR_REVISION"; }
 station_express_resume_generation() { printf '0123456789abcdef0123456789abcdef'; }
 _SELECTED_EXPRESS_PLATFORM='DGX Station'
 _STATION_EXPRESS_MODEL_WAS_EXPLICIT=0
-NEMOCLAW_VLLM_MODEL='nemotron-3-ultra-550b-a55b'
-NEMOCLAW_MODEL='nvidia/nemotron-3-ultra-550b-a55b'
+_STATION_INSTALL_MODE=express
+unset NEMOCLAW_VLLM_MODEL NEMOCLAW_MODEL
 unset NEMOCLAW_DGX_STATION_PEER
 NEMOCLAW_DGX_STATION_SSH_BINDING='stale'
 ensure_station_express_pair
@@ -1294,7 +1293,7 @@ printf 'RESULT peer=%s model=%s selector=%s binding=%s receipt=%s\n' "\${NEMOCLA
       expect(result.status, output).toBe(0);
       expect(output).toContain("No eligible reciprocal dual-DGX Station pair is available");
       expect(output).toContain(
-        "RESULT peer= model=nvidia/nemotron-3-ultra-550b-a55b selector=nemotron-3-ultra-550b-a55b binding= receipt=generation=0123456789abcdef0123456789abcdef",
+        "RESULT peer= model= selector= binding= receipt=generation=0123456789abcdef0123456789abcdef",
       );
     } finally {
       fs.rmSync(home, { recursive: true, force: true });

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { recordedNativeProviderAttachment } from "../../inference/native-provider/recorded-selection";
+import { exportNativeInferenceReceipt } from "../../domain/config/export-evidence";
 import { fixedNativeProviderForAttachment } from "../../inference/native-provider/fixed";
 import { isDeepStrictEqual } from "node:util";
 import { VLLM_LOCAL_CREDENTIAL_ENV } from "../../inference/serving/vllm-credential-contract";
@@ -9,7 +10,10 @@ import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../../inference/ollama/contract";
 import type { NativeProviderAttachment } from "../../inference/native-provider/contract";
 import type { Provider } from "../openshell/providers";
 import type { SandboxEntry } from "../../state/registry/types";
-import { normalizeInferenceSelection } from "../../inference/selection";
+import {
+  normalizeInferenceSelection,
+  normalizeNativeLocalProviderAttachment,
+} from "../../inference/selection";
 
 export function providerContract(api: string | null | undefined) {
   if (api?.startsWith("anthropic")) {
@@ -37,6 +41,7 @@ function matchesNativeProviderMetadata(
   routeProvider: string,
   receipt: NativeInferenceReceipt,
 ): boolean {
+  const local = normalizeNativeLocalProviderAttachment(receipt);
   return isDeepStrictEqual(
     [
       provider.name,
@@ -50,7 +55,7 @@ function matchesNativeProviderMetadata(
       routeProvider,
       receipt.providerId,
       receipt.profileId,
-      [fixedNativeProviderForAttachment(receipt).credentialEnv],
+      [local?.credentialEnv ?? fixedNativeProviderForAttachment(receipt).credentialEnv],
       [],
       receipt.profileId,
     ],
@@ -94,8 +99,14 @@ export function matchesProviderMetadata(
 }
 
 export function resolveExportInferenceSelection(entry: Readonly<SandboxEntry>) {
+  const local =
+    entry.nativeLocalProviderAttachment !== undefined
+      ? exportNativeInferenceReceipt(entry)
+      : undefined;
+  if (entry.nativeLocalProviderAttachment !== undefined && !local)
+    throw new Error("The native local export binding is invalid or unsupported.");
   return {
     normalized: normalizeInferenceSelection(entry),
-    nativeReceipt: recordedNativeProviderAttachment(entry),
+    nativeReceipt: local ?? recordedNativeProviderAttachment(entry),
   };
 }

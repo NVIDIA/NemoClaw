@@ -130,6 +130,75 @@ describe("applyReusedSandboxDashboardState", () => {
     );
   });
 
+  describe("OpenClaw dashboard origin change (#13177)", () => {
+    const sandboxGpuConfig: SandboxGpuConfig = {
+      hostGpuDetected: false,
+      hostGpuPlatform: null,
+      sandboxGpuEnabled: false,
+      mode: "auto",
+      sandboxGpuDevice: null,
+      errors: [],
+    };
+
+    /** Reuse a sandbox with the requested and recorded origins; return the note spy. */
+    async function reuseWith(
+      requested: string | undefined,
+      recorded: string | null | undefined,
+      agentName = "openclaw",
+    ): Promise<ReturnType<typeof vi.fn>> {
+      const note = vi.fn();
+      await applyReusedSandboxDashboardState({
+        sandboxName: "reuse-me",
+        chatUiUrl: "http://127.0.0.1:18789",
+        env: requested === undefined ? {} : { CHAT_UI_URL: requested },
+        agent: loadAgent(agentName),
+        model: "test-model",
+        provider: "nvidia-prod",
+        selectionVerified: true,
+        sandboxGpuConfig,
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        getSandbox: () => ({ name: "reuse-me", dashboardExternalUrl: recorded }) as never,
+        ensureDashboardForward: vi.fn(() => 18789),
+        hermesDashboardForwarding: {
+          resolveStateForPort: vi.fn(() => ({ enabled: false, config: null })),
+          ensureForState: vi.fn(),
+        },
+        updateSandbox: vi.fn(),
+        updateReusedSandboxMetadata: vi.fn(),
+        note,
+        cliName: "nemoclaw",
+      });
+      return note;
+    }
+
+    it("tells the operator that a rebuild applies a new origin", async () => {
+      const note = await reuseWith("https://launchpad.example.test", undefined);
+
+      expect(note).toHaveBeenCalledWith(
+        "  Dashboard origin changed to https://launchpad.example.test:18789. The running sandbox still allows only its previous origins; run: nemoclaw reuse-me rebuild",
+      );
+    });
+
+    it("tells the operator that a rebuild removes a cleared origin", async () => {
+      const note = await reuseWith(undefined, "https://launchpad.example.test:18789");
+
+      expect(note).toHaveBeenCalledWith(
+        "  Dashboard origin https://launchpad.example.test:18789 was removed. The running sandbox still allows it until you run: nemoclaw reuse-me rebuild",
+      );
+    });
+
+    it("stays quiet when the recorded origin does not change", async () => {
+      expect(
+        await reuseWith("https://launchpad.example.test", "https://launchpad.example.test:18789"),
+      ).not.toHaveBeenCalled();
+      expect(await reuseWith(undefined, undefined)).not.toHaveBeenCalled();
+      expect(
+        await reuseWith("https://launchpad.example.test", undefined, "hermes"),
+      ).not.toHaveBeenCalled();
+    });
+  });
+
   it("skips dashboard forwarding while preserving reuse metadata for terminal agents", async () => {
     const updateSandbox = vi.fn();
     const env: NodeJS.ProcessEnv = { CHAT_UI_URL: "https://chat.example.test:19000" };

@@ -28,6 +28,12 @@ vi.mock("../sandbox/mcp-bridge-provider-inspection", async (importOriginal) => (
 import { collectOperationSnapshot } from "./snapshot";
 import { collectOperationEvent } from "./send";
 import { isOperationEvent } from "../../domain/telemetry/schema";
+import {
+  dcodeImageRef,
+  dcodeProfileInput,
+  managedWorkload,
+} from "../../domain/config/export-source-test-fixture";
+import type { SandboxEntry } from "../../state/registry/types";
 
 beforeEach(() => {
   mocks.listRoots.mockReset();
@@ -275,11 +281,16 @@ const nativeModelCases = [
   },
 ] as const;
 
-async function collectNativeConfiguration(agent: string, configPath: string, rawConfig: string) {
+async function collectNativeConfiguration(
+  agent: string,
+  configPath: string,
+  rawConfig: string,
+  entryOverrides: Partial<SandboxEntry> = {},
+) {
   mocks.readRegistry.mockReturnValue({
     defaultSandbox: null,
     sandboxes: {
-      native: { name: "native", agent, gatewayPort: 8080 },
+      native: { name: "native", agent, gatewayPort: 8080, ...entryOverrides },
     },
   });
   const responses: Record<string, string> = {
@@ -321,9 +332,32 @@ async function collectNativeConfiguration(agent: string, configPath: string, raw
     expect.objectContaining({ sandboxName: "native", command: ["cat", configPath] }),
     expect.objectContaining({ workspace: "native" }),
   );
-  expect(read).toHaveBeenCalledTimes(2);
+  expect(read).toHaveBeenCalledTimes(entryOverrides.workload ? 1 : 2);
   return event;
 }
+
+it.each([
+  ["0.1.71", "0.1.71", "reported"],
+  ["private-build", "other", "unapproved"],
+])(
+  "reports managed Deep Agents version %s as %s (#12376)",
+  async (agentVersion, managedAgentVersion, managedAgentVersionStatus) => {
+    const { agent, configPath, validConfig } = nativeModelCases[1];
+    const event = await collectNativeConfiguration(agent, configPath, validConfig, {
+      agentVersion,
+      imageTag: dcodeImageRef,
+      workload: managedWorkload(dcodeProfileInput(), dcodeImageRef),
+    });
+    expect(event.parameters.configurations[0]).toMatchObject({
+      agentHarnessId: agent,
+      managedAgentVersion,
+      managedAgentVersionStatus,
+      settings: { imageOwnership: "managed", imageOwnershipStatus: "reported" },
+      agents: [{ managedAgentVersion, managedAgentVersionStatus }],
+    });
+    expect(isOperationEvent(event)).toBe(true);
+  },
+);
 
 it.each(nativeModelCases)(
   "reports the $agent native model, provider, and API family (#12859)",

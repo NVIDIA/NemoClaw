@@ -86,3 +86,23 @@ export function runPortableDoctor(
     timeout: 240_000,
   }).status;
 }
+
+export function withoutPodmanConnectionSelectors(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const blocked = new Set([
+    "CONTAINER_CONNECTION",
+    "CONTAINER_CERT_PATH",
+    "CONTAINER_HOST",
+    "CONTAINER_SSHKEY",
+    "CONTAINER_TLS_VERIFY",
+    "CONTAINERS_CONF",
+    "CONTAINERS_STORAGE_CONF",
+    "DOCKER_CONTEXT",
+    "DOCKER_HOST",
+    "DOCKER_TLS",
+    "DOCKER_TLS_VERIFY",
+    "DOCKER_CERT_PATH",
+    "PODMAN_CONNECTIONS_CONF",
+    "REGISTRY_AUTH_FILE",
+  ]);
+  return Object.fromEntries(Object.entries(env).filter(([name]) => !blocked.has(name)));
+}

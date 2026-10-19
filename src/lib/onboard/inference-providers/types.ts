@@ -23,11 +23,19 @@ import type { OpenShellProviderAdapter } from "../../adapters/openshell/provider
 import type { HermesAuthMethod } from "../hermes-auth";
 import type { OnboardInferenceCapabilityCache } from "../inference-capability-cache";
 
+/** Process-local replacement prepared while the published legacy source stays intact. */
+export interface StagedNativeLocalRecreation {
+  source: import("../../state/registry").SandboxEntry;
+  attachment: import("../../inference/native-local/contract").NativeLocalProviderAttachment;
+}
+
 export type SetupInferenceResult =
   | {
       ok: true;
       retry?: undefined;
       nativeInference?: { endpointUrl: string; credentialEnv: string };
+      stagedNativeLocalRecreation?: StagedNativeLocalRecreation;
+      deferredInferenceRoute?: (reserve: () => void) => Promise<void>;
     }
   | { retry: "selection" };
 
@@ -97,6 +105,7 @@ export type Registry = {
 };
 
 export type CommonDeps = {
+  nativeLocalInference?: boolean;
   runOpenshell: RunOpenshell;
   upsertProvider: UpsertProvider;
   verifyInferenceRoute: VerifyInferenceRoute;
@@ -220,8 +229,11 @@ export type HermesDeps = CommonDeps &
     };
     getHermesToolGatewayBroker: () => {
       getHermesToolGatewayProviderName(sandboxName: string): string;
+      isHermesToolGatewayRefreshProviderRegistered(
+        sandboxName: string,
+        runOpenshell: any,
+      ): Promise<boolean>;
     };
-    providerExistsInGateway: (name: string) => Promise<boolean>;
     normalizeHermesAuthMethod: (m: HermesAuthMethod | string | null) => HermesAuthMethod | null;
     resolveHermesNousApiKey: () => any;
     checkHermesProviderStoreReachable: (

@@ -40,6 +40,32 @@ describe("Hermes portable Dockerfile settings", () => {
     expect(rendered).toContain("ARG TARGETARCH=amd64\nARG BASE_IMAGE=");
   });
 
+  it.each(["compatible-endpoint", "compatible-anthropic-endpoint"])(
+    "preserves shared routing for %s without a native attachment",
+    (provider) => {
+      const rendered = renderHermesPortableDockerfileBuildSettings(DOCKERFILE, {
+        ...SETTINGS,
+        provider,
+        model: "custom-model",
+      });
+
+      expect(rendered).toContain("ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1");
+      expect(rendered).toContain("ARG NEMOCLAW_INFERENCE_API=openai-completions");
+    },
+  );
+
+  it("uses the recorded native-local endpoint when an attachment is present", () => {
+    const rendered = renderHermesPortableDockerfileBuildSettings(DOCKERFILE, {
+      ...SETTINGS,
+      nativeEndpointUrl: "http://host.docker.internal:11434/v1",
+    });
+
+    expect(rendered).toContain(
+      "ARG NEMOCLAW_INFERENCE_BASE_URL=http://host.docker.internal:11434/v1",
+    );
+    expect(rendered).toContain("ARG NEMOCLAW_INFERENCE_API=openai-completions");
+  });
+
   it("rejects injected or incomplete schema-5 settings (#9203)", () => {
     expect(() =>
       renderHermesPortableDockerfileBuildSettings(DOCKERFILE, {

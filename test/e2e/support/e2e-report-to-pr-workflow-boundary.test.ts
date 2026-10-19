@@ -976,7 +976,7 @@ const HOSTED_CANDIDATE_ENV: ReportEnv = {
   WORKFLOW_SHA: "c".repeat(40),
   MATRIX_RESULT: "success",
   SELECTED_WORKFLOW_JOBS: '["catalogue-hosted-inference"]',
-  JOB_TARGETS: "hosted-inference-openai",
+  JOB_TARGETS: "hosted-inference-openrouter",
 };
 
 function hostedCandidatePr() {
@@ -986,6 +986,37 @@ function hostedCandidatePr() {
     base: { sha: "b".repeat(40), ref: "main", repo: { full_name: "NVIDIA/NemoClaw" } },
   };
 }
+
+it.each(["failure", "cancelled"])(
+  "reports the Spark plan %s alongside a skipped runner for the exact PR",
+  async (result) => {
+    const env = {
+      ...HOSTED_CANDIDATE_ENV,
+      SELECTED_WORKFLOW_JOBS: '["llama-cpp-dgx-spark-qualification"]',
+      JOB_TARGETS: "",
+      JOBS: "llama-cpp-dgx-spark-qualification",
+    };
+    const core = { info: vi.fn(), setFailed: vi.fn(), warning: vi.fn() };
+    const github = reportGithub({ get: vi.fn(async () => ({ data: hostedCandidatePr() })) });
+    expect(await resolveReportPr({ github, context: REPORT_CONTEXT, core, env })).toBe(12886);
+    const report = renderE2eReport({
+      context: REPORT_CONTEXT,
+      env,
+      apiJobs: [],
+      apiJobsLoaded: true,
+      needs: {
+        "generate-matrix": { result: "success" },
+        "llama-cpp-dgx-spark-plan": { result },
+        "llama-cpp-dgx-spark-qualification": { result: "skipped" },
+      },
+    });
+    expect(report.body).toContain("llama-cpp-dgx-spark-plan");
+    expect(report.body).toContain(` ${result} |`);
+    expect(report.body).toContain("llama-cpp-dgx-spark-qualification");
+    expect(report.body).not.toContain("All selected tests passed");
+    expect(core.setFailed).not.toHaveBeenCalled();
+  },
+);
 
 it.each(["success", "failure", "skipped"])(
   "binds a hosted candidate report to its commit and retains %s results",
@@ -1004,7 +1035,7 @@ it.each(["success", "failure", "skipped"])(
     });
     expect(report.body).toContain(`**Candidate commit:** \`${"a".repeat(40)}\``);
     expect(report.body).toContain(`**Trusted workflow commit:** \`${"c".repeat(40)}\``);
-    expect(report.body).toContain("hosted-inference-openai");
+    expect(report.body).toContain("hosted-inference-openrouter");
     expect(report.body).toContain(` ${result} |`);
     expect(report.body).toContain("cleanup.json");
     expect(report.body.includes("All selected tests passed")).toBe(result === "success");

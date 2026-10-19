@@ -20,10 +20,14 @@ import {
   createPersistedEngineAuthority,
 } from "../../onboard/runtime-provider/persisted-engine-authority";
 import { requireRuntimeProviderHostLocalInferenceOperation } from "../../onboard/runtime-provider/registry";
+import { isDgxStationGb300GpuName } from "../dgx-station-identity";
+import type { GpuDetection } from "../nim";
 import { isLlamaCppServingRecipe } from "../serving/adapter-registry";
+import { servingCatalogDigest } from "../serving/catalog";
 import { loadManagedInferenceCatalog } from "../serving/catalog-loader";
-import type { ResolvedLlamaCppInferenceSelection } from "../serving/types";
+import type { LlamaCppServingRecipe, ResolvedLlamaCppInferenceSelection } from "../serving/types";
 import { buildVllmDockerEnv } from "../vllm-docker-env";
+import { formatStorageBytes } from "../vllm-storage";
 import { LLAMA_CPP_CREDENTIAL_ENV } from "./contract";
 import { acquireVerifiedLlamaCppGguf, verifyLlamaCppGgufCacheEntry } from "./gguf-acquisition";
 import { compileLlamaCppGgufCachePlan } from "./gguf-cache-plan";
@@ -32,12 +36,14 @@ import type {
   VerifiedLocalModelArtifact,
 } from "./host-local-runtime";
 import {
+  bindLegacyManagedLlamaCppOwnerGpu,
   claimManagedLlamaCppOwner,
   createManagedLlamaCppReceiptWriter,
   loadManagedLlamaCppApiKey,
   loadManagedLlamaCppOwner,
   loadManagedLlamaCppReceipt,
   loadOrCreateManagedLlamaCppApiKey,
+  type ManagedLlamaCppOwner,
   type ManagedLlamaCppStatePaths,
   managedLlamaCppStatePaths,
 } from "./managed-state";
@@ -49,10 +55,37 @@ export const MANAGED_LLAMA_CPP_OWNER_VALUE = "true" as const;
 
 const IMAGE_PULL_TIMEOUT_MS = 30 * 60 * 1000;
 const DOCKER_INSPECT_TIMEOUT_MS = 15_000;
+const HISTORIC_WSL_RECIPE_ID = "llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1";
+const HISTORIC_WSL_RECIPE_DIGEST =
+  "sha256:b1032bb63f7f0772ddc96576219269fe42a086814eca561d1b28d69394dc72e1";
+// Bind the retained native fields separately from the unchanged recorded owner digest.
+const HISTORIC_WSL_NATIVE_FIELDS_DIGEST =
+  "sha256:b95c26fc6299831763be6bbd85b7735229dba91ed91f977fb3af9dff10f6a2ae";
+const HISTORIC_WSL_IMAGE =
+  "ghcr.io/nvidia/nemoclaw/llama-cpp-server@sha256:9d0cddd7bcaf98d3b75a7fc8c7ce3af3a9973b5f23a8092e7e93a9afc473a675";
+const HISTORIC_WSL_IMAGE_DOWNLOAD_SIZE_BYTES = 1_827_478_485;
+
+/** Reconstruct only the prior published WSL recipe, without changing its runtime identity. */
+function historicalWslRecipe(recipe: LlamaCppServingRecipe): LlamaCppServingRecipe | null {
+  if (recipe.metadata.id !== HISTORIC_WSL_RECIPE_ID) return null;
+  const historical: LlamaCppServingRecipe = {
+    ...recipe,
+    spec: {
+      ...recipe.spec,
+      runtime: {
+        ...recipe.spec.runtime,
+        image: HISTORIC_WSL_IMAGE,
+        imageDownloadSizeBytes: HISTORIC_WSL_IMAGE_DOWNLOAD_SIZE_BYTES,
+      },
+    },
+  };
+  return servingCatalogDigest(historical) === HISTORIC_WSL_NATIVE_FIELDS_DIGEST ? historical : null;
+}
 
 export interface ManagedLlamaCppInstallOptions {
   readonly sandboxName: string;
   readonly runtimeProvider: RuntimeProviderBundle;
+  readonly gpu?: GpuDetection | null;
   readonly gatewayPort?: number;
   readonly homeDir?: string;
   readonly env?: NodeJS.ProcessEnv;
@@ -372,13 +405,8 @@ function launchContract(
       idleSleepSeconds: recipe.spec.serve.idleSleepSeconds,
       kvCache: recipe.spec.serve.kvCache,
       limits: {
-        maxRequestBodyBytes: recipe.spec.serve.limits.maxRequestBodyBytes,
-        maxRequestHeaderBytes: recipe.spec.serve.limits.maxRequestHeaderBytes,
-        maxOutputTokens: recipe.spec.serve.limits.maxOutputTokens,
         requestTimeoutSeconds: recipe.spec.serve.limits.requestTimeoutSeconds,
-        shutdownTimeoutSeconds: recipe.spec.serve.limits.shutdownTimeoutSeconds,
       },
-      requestGuard: { upstreamPort: recipe.spec.serve.requestGuard.upstreamPort },
       microBatchSize: recipe.spec.serve.microBatchSize,
       port: recipe.spec.serve.port,
       protocol: recipe.spec.serve.protocol,
@@ -431,9 +459,6 @@ export function resolveManagedLlamaCppOwnerSelection(
   owner: NonNullable<ReturnType<typeof loadManagedLlamaCppOwner>>,
 ): ResolvedLlamaCppInferenceSelection {
   const catalog = loadManagedInferenceCatalog();
-  if (catalog.catalogDigest !== owner.catalogDigest) {
-    throw new Error("Managed llama.cpp catalog authority changed; rerun onboarding.");
-  }
   const recipe = catalog.recipes.find(({ metadata }) => metadata.id === owner.recipeId);
   const candidatePresets = catalog.presets.filter(
     ({ spec }) =>
@@ -460,18 +485,35 @@ export function resolveManagedLlamaCppOwnerSelection(
   const presetDigest = catalog.sources.find(
     ({ kind, id }) => kind === "ServingPreset" && id === preset.metadata.id,
   )?.digest;
-  if (recipeDigest !== owner.recipeDigest || presetDigest !== owner.presetDigest) {
+  if (presetDigest !== owner.presetDigest) {
+    throw new Error("Managed llama.cpp recipe authority changed; rerun onboarding.");
+  }
+  const current =
+    catalog.catalogDigest === owner.catalogDigest && recipeDigest === owner.recipeDigest;
+  const historical =
+    owner.recipeDigest === HISTORIC_WSL_RECIPE_DIGEST ? historicalWslRecipe(recipe) : null;
+  if (!current && historical === null) {
     throw new Error("Managed llama.cpp recipe authority changed; rerun onboarding.");
   }
   return {
     outcome: "selected",
     selection: "explicit",
-    catalogDigest: catalog.catalogDigest,
-    recipeDigest,
+    catalogDigest: current ? catalog.catalogDigest : owner.catalogDigest,
+    recipeDigest: current ? recipeDigest : owner.recipeDigest,
     presetDigest,
-    recipe,
+    recipe: historical ?? recipe,
     preset,
   };
+}
+
+export function assertManagedLlamaCppResumeSupported(
+  selection: ResolvedLlamaCppInferenceSelection,
+): void {
+  if (selection.recipeDigest === HISTORIC_WSL_RECIPE_DIGEST) {
+    throw new Error(
+      "The former WSL managed llama.cpp image cannot resume. Remove the exact owned runtime, then onboard with a qualified native image.",
+    );
+  }
 }
 
 function lifecycleFor(input: {
@@ -480,6 +522,7 @@ function lifecycleFor(input: {
   readonly cacheRoot: string;
   readonly artifact: VerifiedLocalModelArtifact;
   readonly operation: HostLocalInferenceOperation;
+  readonly gpuDeviceUuid?: string;
 }): HostLocalLlamaCppLifecycle {
   const identity = runtimeIdentity();
   const recipe = input.selection.recipe;
@@ -492,13 +535,22 @@ function lifecycleFor(input: {
       containerName: MANAGED_LLAMA_CPP_CONTAINER_NAME,
       hostPort: recipe.spec.serve.port,
       imageReference: recipe.spec.runtime.image,
+      ...(input.gpuDeviceUuid ? { gpuDeviceUuid: input.gpuDeviceUuid } : {}),
       model: input.artifact,
-      network: { isolation: "docker-internal", name: MANAGED_LLAMA_CPP_NETWORK_NAME },
+      network: {
+        isolation: "docker-internal",
+        name: MANAGED_LLAMA_CPP_NETWORK_NAME,
+      },
       ownerLabel: {
         name: MANAGED_LLAMA_CPP_OWNER_LABEL,
         value: MANAGED_LLAMA_CPP_OWNER_VALUE,
       },
-      identityLabels: [{ name: "io.nvidia.nemoclaw.llama-cpp.recipe", value: recipe.metadata.id }],
+      identityLabels: [
+        {
+          name: "io.nvidia.nemoclaw.llama-cpp.recipe",
+          value: recipe.metadata.id,
+        },
+      ],
       runtimeGid: identity.gid,
       runtimeUid: identity.uid,
     },
@@ -512,10 +564,78 @@ function lifecycleFor(input: {
   });
 }
 
+const STATION_GB300_WSL_PRESET_ID = "llama-cpp.station-gb300-wsl-arm64.single.qwen3-6-35b-a3b";
+
+function isStationGb300Selection(selection: ResolvedLlamaCppInferenceSelection): boolean {
+  return selection.preset.metadata.id === STATION_GB300_WSL_PRESET_ID;
+}
+
+/** An unbound Station owner may be inspected and destroyed, but must never start again. */
+export function requireStationGb300StartupGpuAuthority(
+  owner: ManagedLlamaCppOwner,
+  selection: ResolvedLlamaCppInferenceSelection,
+): void {
+  if (isStationGb300Selection(selection) && owner.gpuDeviceUuid === undefined) {
+    throw new Error(
+      `Managed llama.cpp Station runtime for '${owner.sandboxName}' has a legacy unbound GPU request. Run 'nemoclaw ${owner.sandboxName} destroy --yes' to remove its exact owned runtime, then onboard again after the qualified GB300 image is available.`,
+    );
+  }
+}
+
+/**
+ * Claim the owner. An owner saved before UUID persistence has no GPU binding: its runtime was
+ * created with the unbound single-GPU request, so keep that authority while a receipt or unfinished
+ * transaction exists. Startup rejects that owner and directs exact cleanup. Only an owner with no
+ * runtime authority is upgraded to the proved UUID.
+ */
+function claimStationAwareOwner(
+  paths: ManagedLlamaCppStatePaths,
+  desired: Omit<ManagedLlamaCppOwner, "gpuDeviceUuid">,
+  provedGpuDeviceUuid: string | undefined,
+): ReturnType<typeof claimManagedLlamaCppOwner> {
+  const existing = loadManagedLlamaCppOwner(paths);
+  if (provedGpuDeviceUuid && existing && existing.gpuDeviceUuid === undefined) {
+    const { gpuDeviceUuid: _unbound, ...existingKey } = existing;
+    if (JSON.stringify(existingKey) === JSON.stringify(desired)) {
+      const owner = bindLegacyManagedLlamaCppOwnerGpu(paths, existing, provedGpuDeviceUuid);
+      if (owner.gpuDeviceUuid !== undefined && owner.gpuDeviceUuid !== provedGpuDeviceUuid) {
+        throw new Error("Managed llama.cpp proved GPU changed during owner binding.");
+      }
+      return Object.freeze({
+        owner,
+        created: false,
+      });
+    }
+  }
+  return claimManagedLlamaCppOwner(paths, {
+    ...desired,
+    ...(provedGpuDeviceUuid ? { gpuDeviceUuid: provedGpuDeviceUuid } : {}),
+  });
+}
+
+/** Select only the uniquely proved GB300 from the active Docker provider. */
+export function selectStationGb300GpuUuid(
+  selection: ResolvedLlamaCppInferenceSelection,
+  gpu: GpuDetection | null | undefined,
+): string | undefined {
+  if (!isStationGb300Selection(selection)) return undefined;
+  if (gpu?.containerGpuProof?.providerId !== "docker" || !gpu.containerGpuProof.passed) {
+    throw new Error("Station GB300 llama.cpp requires the Docker-bound CUDA proof.");
+  }
+  const devices = gpu.provedGpuDevices?.filter(({ name }) => isDgxStationGb300GpuName(name));
+  if (devices?.length !== 1 || !/^GPU-[0-9a-f-]+$/iu.test(devices[0]?.uuid ?? "")) {
+    throw new Error("Station GB300 llama.cpp requires exactly one proved GB300 GPU UUID.");
+  }
+  return devices[0]!.uuid;
+}
+
 function currentManagedLlamaCppArtifact(
   selection: ResolvedLlamaCppInferenceSelection,
   homeDir: string,
-): { readonly artifact: VerifiedLocalModelArtifact; readonly cacheRoot: string } {
+): {
+  readonly artifact: VerifiedLocalModelArtifact;
+  readonly cacheRoot: string;
+} {
   const cacheRoot = sharedHuggingFaceCacheRoot(homeDir);
   const plan = compileLlamaCppGgufCachePlan(selection.recipe);
   const source = plan.acquisition.source;
@@ -587,6 +707,7 @@ export function rehydrateManagedLlamaCppLifecycle(
       cacheRoot: current.cacheRoot,
       artifact: current.artifact,
       operation,
+      gpuDeviceUuid: owner.gpuDeviceUuid,
     }),
     operation,
     owner,
@@ -607,7 +728,45 @@ export function inspectManagedLlamaCppRuntimeExact(
     cacheRoot: current.cacheRoot,
     artifact: current.artifact,
     operation: options.operation,
+    gpuDeviceUuid: loadManagedLlamaCppOwner(options.paths)?.gpuDeviceUuid,
   }).runtime.inspectManaged(options.receipt);
+}
+
+/** Total pinned size of the GGUF files this recipe downloads. */
+function llamaCppModelDownloadSizeBytes(selection: ResolvedLlamaCppInferenceSelection): number {
+  return selection.recipe.spec.model.files.reduce((total, file) => total + file.sizeBytes, 0);
+}
+
+/**
+ * Declare the selected profile and its pinned download sizes before the first
+ * acquisition effect.
+ *
+ * The onboarding review screen carries the same facts, but it prints after the
+ * provider step already downloaded the image and the model, so it cannot
+ * inform the operator's capacity and time decision (#12207).
+ */
+function printManagedLlamaCppInstallPlan(
+  selection: ResolvedLlamaCppInferenceSelection,
+  log: (message: string) => void,
+): void {
+  const { preset, recipe } = selection;
+  log("");
+  log("  Managed llama.cpp:");
+  log(`    Serving profile: ${preset.metadata.id}`);
+  log(`    Recipe: ${recipe.metadata.id}`);
+  log(`    Image: ${recipe.spec.runtime.image}`);
+  log(`    Model: ${recipe.spec.model.id}`);
+  log(
+    `    Image download on first run (${formatStorageBytes(
+      BigInt(recipe.spec.runtime.imageDownloadSizeBytes),
+    )}), cached after`,
+  );
+  log(
+    `    Model download on first run (${formatStorageBytes(
+      BigInt(llamaCppModelDownloadSizeBytes(selection)),
+    )}), cached after`,
+  );
+  log("");
 }
 
 /** Activate one catalog-selected managed llama.cpp runtime for a gateway owner. */
@@ -630,6 +789,7 @@ export async function installManagedLlamaCpp(
   let ownerCreated = false;
 
   try {
+    const provedGpuDeviceUuid = selectStationGb300GpuUuid(selection, options.gpu);
     operation = requireRuntimeProviderHostLocalInferenceOperation(
       options.runtimeProvider,
       "llama-cpp",
@@ -637,16 +797,21 @@ export async function installManagedLlamaCpp(
     );
     engine = operation.engine;
     options.revalidateSandboxIdentity?.("reserve the managed llama.cpp runtime");
-    const reservation = claimManagedLlamaCppOwner(paths, {
-      schemaVersion: 1,
-      sandboxName: options.sandboxName,
-      catalogDigest: selection.catalogDigest,
-      presetDigest: selection.presetDigest,
-      recipeDigest: selection.recipeDigest,
-      recipeId: recipe.metadata.id,
-    });
+    const reservation = claimStationAwareOwner(
+      paths,
+      {
+        schemaVersion: 1,
+        sandboxName: options.sandboxName,
+        catalogDigest: selection.catalogDigest,
+        presetDigest: selection.presetDigest,
+        recipeDigest: selection.recipeDigest,
+        recipeId: recipe.metadata.id,
+      },
+      provedGpuDeviceUuid,
+    );
     owner = reservation.owner;
     ownerCreated = reservation.created;
+    requireStationGb300StartupGpuAuthority(owner, selection);
     createFilePersistedEngineAuthorityStore(paths.stateDir).record(
       createPersistedEngineAuthority(operation.providerId, engine, operation.bindingSha256),
     );
@@ -681,6 +846,7 @@ export async function installManagedLlamaCpp(
       delete dockerEnv[name];
     }
     const cacheRoot = ensureSharedHuggingFaceCache(homeDir);
+    printManagedLlamaCppInstallPlan(selection, log);
     let artifact: VerifiedLocalModelArtifact | null = null;
     let acquireModel = false;
     try {
@@ -729,6 +895,7 @@ export async function installManagedLlamaCpp(
       cacheRoot,
       artifact,
       operation,
+      gpuDeviceUuid: owner.gpuDeviceUuid,
     });
 
     if (pending.length === 1) {
@@ -795,6 +962,8 @@ export async function resumeManagedLlamaCppRuntime(
   }
 
   const selection = resolveManagedLlamaCppOwnerSelection(owner);
+  assertManagedLlamaCppResumeSupported(selection);
+  requireStationGb300StartupGpuAuthority(owner, selection);
   const operation = requireRuntimeProviderHostLocalInferenceOperation(
     options.runtimeProvider,
     "llama-cpp",
@@ -836,6 +1005,7 @@ export async function resumeManagedLlamaCppRuntime(
     cacheRoot,
     artifact,
     operation,
+    gpuDeviceUuid: owner.gpuDeviceUuid,
   });
   options.revalidateSandboxIdentity?.("recover the managed llama.cpp runtime");
   if (pending.length === 1) {

@@ -3,11 +3,18 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import n1xPciPolicy from "../../../../bin/lib/n1x-pci-policy.json";
 
 export const N1X_FASTOS_RELEASE_MAX_BYTES = 4096;
 // Bound discovery so malformed sysfs state cannot create unbounded work.
 const N1X_PCI_SCAN_MAX_DEVICES = 256;
 const N1X_PCI_FIELD_MAX_BYTES = 64;
+// Published RTX Spark variants, plus prototype devices recorded in #8574 and #10076.
+// Prototype IDs are best-effort identity evidence; N1x remains a Deferred preview.
+const N1X_PCI_GPU_DEVICES = new Set([
+  ...n1xPciPolicy.documentedDeviceIds,
+  ...n1xPciPolicy.prototypeDeviceIds,
+]);
 const N1X_WSL_GPU_NAME_MAX_BYTES = 256;
 const N1X_WSL_GPU_NAMES = new Set([
   "NVIDIA RTX Spark N1X",
@@ -20,6 +27,7 @@ export interface N1xIdentityEvidence {
   fastOsMarker: boolean | undefined;
   fastOsPlatform?: "n1x" | "spark";
   pciGpu: boolean | undefined;
+  pciDevice?: string;
   qualified: boolean;
 }
 
@@ -101,6 +109,10 @@ export function isN1xPciDisplayDevice(
   return vendor?.toLowerCase() === "0x10de" && /^0x03[0-9a-f]{4}$/i.test(pciClass ?? "");
 }
 
+export function isKnownN1xPciDevice(device: string | undefined): boolean {
+  return N1X_PCI_GPU_DEVICES.has(device?.toLowerCase() ?? "");
+}
+
 function readOpenedFile(fileDescriptor: number, maxBytes: number): string {
   const contents = Buffer.alloc(maxBytes + 1);
   const bytesRead = fs.readSync(fileDescriptor, contents, 0, contents.length, 0);
@@ -125,7 +137,8 @@ function collectN1xPciGpu(
   readFile: (filePath: string) => string,
   readdir: (directory: string) => readonly string[],
   pciDevicesPath: string,
-): boolean | undefined {
+  requireKnownDevice = false,
+): Pick<N1xIdentityEvidence, "pciGpu" | "pciDevice"> {
   try {
     const entries = readdir(pciDevicesPath);
     let incompleteEvidence = entries.length > N1X_PCI_SCAN_MAX_DEVICES;
@@ -133,14 +146,21 @@ function collectN1xPciGpu(
       const devicePath = path.join(pciDevicesPath, entry);
       const vendor = readBoundedOptional(readFile, path.join(devicePath, "vendor"));
       const pciClass = readBoundedOptional(readFile, path.join(devicePath, "class"));
-      if (isN1xPciDisplayDevice(vendor, pciClass)) return true;
+      if (isN1xPciDisplayDevice(vendor, pciClass)) {
+        if (!requireKnownDevice) return { pciGpu: true };
+        const device = readBoundedOptional(readFile, path.join(devicePath, "device"));
+        if (isKnownN1xPciDevice(device)) {
+          return { pciGpu: true, pciDevice: device?.toLowerCase() };
+        }
+        if (device === undefined) incompleteEvidence = true;
+      }
       if (vendor === undefined || pciClass === undefined) {
         incompleteEvidence = true;
       }
     }
-    return incompleteEvidence ? undefined : false;
+    return { pciGpu: incompleteEvidence ? undefined : false };
   } catch {
-    return undefined;
+    return { pciGpu: undefined };
   }
 }
 
@@ -179,6 +199,15 @@ export function collectN1xIdentity(options: N1xIdentityOptions = {}): N1xIdentit
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
     if (code === "ENOENT") {
+      const pciIdentity = collectN1xPciGpu(
+        readFile,
+        readdir,
+        options.pciDevicesPath ?? "/sys/bus/pci/devices",
+        true,
+      );
+      if (pciIdentity.pciGpu === true) {
+        return { candidate: true, fastOsMarker: false, ...pciIdentity, qualified: true };
+      }
       fastOsMarker = false;
     } else if (code === "ELOOP" || code === "EMLINK") {
       candidate = true;
@@ -192,10 +221,16 @@ export function collectN1xIdentity(options: N1xIdentityOptions = {}): N1xIdentit
   if (fastOsMarker !== true) {
     return { candidate, fastOsMarker, fastOsPlatform, pciGpu: undefined, qualified: false };
   }
-  const pciGpu = collectN1xPciGpu(
+  const pciIdentity = collectN1xPciGpu(
     readFile,
     readdir,
     options.pciDevicesPath ?? "/sys/bus/pci/devices",
   );
-  return { candidate, fastOsMarker, fastOsPlatform, pciGpu, qualified: pciGpu === true };
+  return {
+    candidate,
+    fastOsMarker,
+    fastOsPlatform,
+    ...pciIdentity,
+    qualified: pciIdentity.pciGpu === true,
+  };
 }

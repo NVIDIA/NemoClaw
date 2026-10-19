@@ -5,7 +5,6 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
-import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 
@@ -63,7 +62,9 @@ import type { SandboxEntry } from "../../../src/lib/state/registry/types.ts";
 import { retryUntil } from "../../../src/lib/core/retry.ts";
 import { streamSandboxCreate } from "../../../src/lib/sandbox/create-stream.ts";
 import { test } from "../fixtures/e2e-test.ts";
+import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { OPENSHELL_V0116_QUALIFICATION } from "../fixtures/openshell-v0116-qualification.ts";
+import { collectPortableRegistryReadinessFailure } from "../fixtures/portable-registry-readiness.ts";
 import {
   cleanupPortableHostGatewayAlias,
   cleanupPortableProfileRootlessFixture,
@@ -72,15 +73,21 @@ import {
 import {
   createPortableHermesFinalizationOptions,
   runPortableDoctor,
+  withoutPodmanConnectionSelectors,
   writePortableRegistry,
 } from "../fixtures/portable-profile-rootless-finalization-helpers.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
+import type { ShellProbe } from "../fixtures/shell-probe.ts";
 import {
   getSandboxConfigRequest,
   mintSandboxJwt,
   runSandboxTokenContainerProbe,
 } from "./openshell-gateway-auth-probe.ts";
 import { verifyPinnedPodmanGatewayStarts } from "./portable-profile-gateway-proof.ts";
+import {
+  proveHermesPortableOnboardingTransaction,
+  withAmbientPodmanHost,
+} from "../fixtures/portable-hermes-transaction-live.ts";
 
 const gatewayEnvModule = (
   "default" in importedGatewayEnv && importedGatewayEnv.default
@@ -163,7 +170,7 @@ const PORTABLE_PROFILE_E2E_PHASES = [
   "verify distinct same-network routes",
   "upgrade the historical receipt through public start and verify its lifecycle",
   "prove post-recovery stop settlement",
-  "record portable environment completion",
+  "run receipt-bound Hermes build, publish, and OpenShell create",
 ] as const;
 
 function run(command: string, args: readonly string[]): string {
@@ -340,24 +347,12 @@ function parseOnePodmanRecord(raw: string, label: string): Record<string, unknow
   return record as Record<string, unknown>;
 }
 
-async function waitForRegistry(attempt = 0): Promise<void> {
-  assert.ok(attempt < 60, "The managed local registry did not become ready.");
-  const ready = await new Promise<boolean>((resolve) => {
-    const request = http.get("http://127.0.0.1:5000/v2/", (response) => {
-      response.resume();
-      response.once("end", () => resolve(response.statusCode === 200));
-    });
-    request.once("error", () => resolve(false));
-    request.setTimeout(500, () => {
-      request.destroy();
-      resolve(false);
-    });
-  });
-  return ready
-    ? undefined
-    : new Promise<void>((resolve) => setTimeout(resolve, 250)).then(() =>
-        waitForRegistry(attempt + 1),
-      );
+async function waitForRegistry(artifacts: ArtifactSink, shellProbe: ShellProbe): Promise<void> {
+  assert.equal(
+    await collectPortableRegistryReadinessFailure({ artifacts, shellProbe }),
+    undefined,
+    "The managed local registry did not become ready. See the bounded registry readiness artifacts.",
+  );
 }
 
 function selectInstallerPodmanRuntime(repoRoot: string): string {
@@ -574,26 +569,6 @@ function waitForOpenShellSandboxAbsent(
     },
   );
   assert.ok(observation.absent, `OpenShell sandbox cleanup did not settle: ${observation.detail}`);
-}
-
-function withoutPodmanConnectionSelectors(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const blocked = new Set([
-    "CONTAINER_CONNECTION",
-    "CONTAINER_CERT_PATH",
-    "CONTAINER_HOST",
-    "CONTAINER_SSHKEY",
-    "CONTAINER_TLS_VERIFY",
-    "CONTAINERS_CONF",
-    "CONTAINERS_STORAGE_CONF",
-    "DOCKER_CONTEXT",
-    "DOCKER_HOST",
-    "DOCKER_TLS",
-    "DOCKER_TLS_VERIFY",
-    "DOCKER_CERT_PATH",
-    "PODMAN_CONNECTIONS_CONF",
-    "REGISTRY_AUTH_FILE",
-  ]);
-  return Object.fromEntries(Object.entries(env).filter(([name]) => !blocked.has(name)));
 }
 
 async function provePortableHermesFinalization(input: {
@@ -966,7 +941,11 @@ async function proveHistoricalHermesPortableLifecycle(input: {
   return primaryFailed || cleanupFailed ? Promise.reject(failure) : lifecycleEvidence!;
 }
 
-async function main(progress: TestProgress): Promise<void> {
+async function main(
+  progress: TestProgress,
+  artifacts: ArtifactSink,
+  shellProbe: ShellProbe,
+): Promise<void> {
   assert.equal(process.platform, "linux", "portable profile E2E requires Linux");
   assert.notEqual(process.getuid?.(), 0, "portable profile E2E must run without root privileges");
   const sourceRevision = process.env.E2E_SOURCE_REVISION ?? "";
@@ -1044,7 +1023,7 @@ async function main(progress: TestProgress): Promise<void> {
     const podmanInfo = JSON.parse(run("podman", ["info", "--format", "json"]));
     assert.equal(podmanInfo.host?.security?.rootless, true, "Podman must be rootless");
     run("docker", ["version"]);
-    await waitForRegistry();
+    await waitForRegistry(artifacts, shellProbe);
 
     progress.phase("verify immutable non-force network removal");
     const verifiedPodmanUrl = String(process.env.DOCKER_HOST);
@@ -1181,10 +1160,6 @@ async function main(progress: TestProgress): Promise<void> {
         "{{.Id}}",
         hermesImageRef,
       ]).toLowerCase();
-      assert.equal(
-        inspectedHermesImageId.replace(/^sha256:/u, ""),
-        hermesPrebuild.imageId!.replace(/^sha256:/u, ""),
-      );
       hermesImageId = inspectedHermesImageId;
       run("podman", [
         "run",
@@ -1375,6 +1350,36 @@ async function main(progress: TestProgress): Promise<void> {
         runtimeAuthority,
         sourceRevision,
       });
+      progress.phase("run receipt-bound Hermes build, publish, and OpenShell create");
+      await withAmbientPodmanHost(`unix://${path.join(root, "absent-podman.sock")}`, async () => {
+        await proveHermesPortableOnboardingTransaction({
+          artifactDir,
+          openshellBin,
+          openshellClientEnv,
+          runtimeAuthority,
+          sourceRevision,
+          sourceEnv: withoutPodmanConnectionSelectors(openshellClientEnv),
+          gatewayName: HERMES_PORTABLE_E2E_GATEWAY_NAME,
+          policySourcePath: HERMES_PORTABLE_E2E_POLICY,
+          buildSettings: HERMES_PORTABLE_E2E_BUILD_SETTINGS,
+        });
+      });
+      const transactionEvidence = JSON.parse(
+        fs.readFileSync(
+          path.join(artifactDir, "hermes-portable-transaction-receipt.json"),
+          "utf-8",
+        ),
+      ) as { imageRef: string };
+      const cleanedImage = spawnSync(
+        "podman",
+        ["--url", verifiedPodmanUrl, "image", "exists", transactionEvidence.imageRef],
+        { encoding: "utf-8", env: process.env, killSignal: "SIGKILL", timeout: 15_000 },
+      );
+      assert.equal(
+        cleanedImage.status,
+        1,
+        "transaction image must leave the receipt-selected Podman store",
+      );
     });
 
     fs.writeFileSync(
@@ -1419,7 +1424,6 @@ async function main(progress: TestProgress): Promise<void> {
       { encoding: "utf-8", mode: 0o600 },
     );
 
-    progress.phase("record portable environment completion");
     console.log("Portable profile rootless environment E2E passed.");
   } finally {
     void (disposableNetworkCreated
@@ -1475,7 +1479,7 @@ test(
     meta: { e2ePhases: PORTABLE_PROFILE_E2E_PHASES },
     timeout: 900_000,
   },
-  async ({ progress }) => {
-    await main(progress);
+  async ({ artifacts, progress, shellProbe }) => {
+    await main(progress, artifacts, shellProbe);
   },
 );

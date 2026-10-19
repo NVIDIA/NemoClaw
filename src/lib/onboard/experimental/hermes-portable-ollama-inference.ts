@@ -1693,6 +1693,7 @@ export function createHermesPortableOllamaInferenceResolver(
       redactOnboardCommandDiagnosticText,
     );
     const selection: HostLocalInferenceStartupSelection = Object.freeze({
+      sharedInferenceRoute: true,
       runtimeProviderId: "podman",
       request: Object.freeze({
         application: "hermes" as const,

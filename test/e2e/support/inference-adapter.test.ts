@@ -21,6 +21,18 @@ import {
 } from "../fixtures/inference-adapter.ts";
 import { startTestProgress } from "../fixtures/progress.ts";
 
+// Protected image qualification imports the fixture before CLI artifacts exist.
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  const readFileSync = new Proxy(actual.readFileSync, {
+    apply(target, thisArg, args) {
+      expect(String(args[0])).not.toMatch(/\/dist\/managed-inference\/catalog\.json$/u);
+      return Reflect.apply(target, thisArg, args);
+    },
+  });
+  return { ...actual, readFileSync, default: { ...actual, readFileSync } };
+});
+
 const adapters: E2EInferenceAdapter[] = [];
 const NOOP_PROGRESS = startTestProgress(
   "inference adapter support",
@@ -363,6 +375,31 @@ describe("E2E inference adapter", () => {
       expect.any(String),
       expect.objectContaining({ method: "POST", signal: chatSignal }),
     );
+  });
+
+  it("keeps mock response bodies out of persisted inference artifacts", async () => {
+    const artifactSink = artifacts();
+    const modelReply = { data: [{ id: "network-controlled-model-marker" }] };
+    const chatReply = { choices: [{ message: { content: "network-controlled-chat-marker" } }] };
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify(modelReply)))
+      .mockResolvedValueOnce(new Response(JSON.stringify(chatReply)));
+    const adapter = await createAdapter({ artifacts: artifactSink, env: {} });
+
+    expect(await adapter.probeModels("mock-models-private")).toEqual(modelReply);
+    expect(await adapter.directChat("Reply PONG", { artifactName: "mock-chat-private" })).toEqual(
+      chatReply,
+    );
+    expect(
+      JSON.parse(
+        fs.readFileSync(path.join(artifactSink.rootDir, "mock-models-private.json"), "utf8"),
+      ),
+    ).toEqual({ mode: "mock", probe: "models", responseReceived: true });
+    expect(
+      JSON.parse(
+        fs.readFileSync(path.join(artifactSink.rootDir, "mock-chat-private.json"), "utf8"),
+      ),
+    ).toEqual({ mode: "mock", probe: "direct-chat", responseReceived: true });
   });
 
   it("centralizes public NVIDIA nvapi validation", async () => {
