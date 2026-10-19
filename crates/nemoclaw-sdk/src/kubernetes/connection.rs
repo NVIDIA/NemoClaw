@@ -67,6 +67,12 @@ where
                     let Ok((mut local, _)) = accepted else {
                         continue;
                     };
+                    // A reply can arrive from the cluster in pieces, such as a
+                    // gRPC response's frames; without TCP_NODELAY, each piece
+                    // after the first waits for the client's delayed
+                    // acknowledgment, about 40 ms on Linux. A stream that
+                    // refuses the option still works, only slower.
+                    let _ = local.set_nodelay(true);
                     let dial = dial.clone();
                     streams.spawn(async move {
                         if let Ok(mut remote) = dial().await {
