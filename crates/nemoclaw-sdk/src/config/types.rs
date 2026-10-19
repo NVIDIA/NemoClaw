@@ -180,7 +180,7 @@ pub struct ManagedGateway {
     pub kubernetes: Option<Box<super::ManagedKubernetes>>,
     #[serde(rename = "config", skip_serializing_if = "Option::is_none")]
     #[schemars(default, extend("additionalProperties" = {"anyOf": [{"type": "object"}, {"type": "array", "items": {"type": "object"}}]}))]
-    /// OpenShell gateway settings in the OpenShell Helm chart's gatewayConfig format: each key names a TOML table, such as openshell.drivers.docker, and holds its fields; nested maps are inline tables, and a list of maps is an array of tables. Docker and Podman gateways write it into their configuration file, kept in retained storage, so it is fixed when the deployment is created; Kubernetes passes it to the chart's gatewayConfig. OpenShell validates the settings; keys NemoClaw manages are rejected. Must not contain secrets.
+    /// OpenShell gateway settings in the OpenShell Helm chart's gatewayConfig format: each key names a TOML table, such as openshell.drivers.docker, and holds its fields; nested maps are inline tables, and a list of maps is an array of tables. Docker and Podman gateways write it into the configuration file of each new gateway container, so a change replaces the container and keeps its data; Kubernetes passes it to the chart's gatewayConfig. OpenShell validates the settings; keys NemoClaw manages are rejected. Must not contain secrets.
     pub config: Option<crate::managed::gateway_config::GatewayConfig>,
 }
 

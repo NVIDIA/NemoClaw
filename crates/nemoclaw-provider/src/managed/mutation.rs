@@ -88,6 +88,20 @@ impl Engine {
                 "runtime changed before start; retained for inspection",
             ))?;
         if !observed.running {
+            // The configuration file belongs to the container, not to storage:
+            // write it before each start so it always matches this
+            // specification. A changed configuration replaces the container.
+            let volume = self
+                .volume(&spec.volume())
+                .await?
+                .ok_or(ObservationError::Incomplete)?;
+            let config = spec.gateway_config(&volume.mountpoint)?;
+            self.write_files(
+                &observed.container_id,
+                &volume.mountpoint,
+                &[("gateway.toml", config.as_bytes(), 0o600)],
+            )
+            .await?;
             self.api
                 .start_container(&observed.container_id, None)
                 .await

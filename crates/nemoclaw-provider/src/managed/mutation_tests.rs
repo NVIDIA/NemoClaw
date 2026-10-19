@@ -14,6 +14,8 @@ struct State {
     removes: usize,
     exit_on_start: bool,
     lose_create: bool,
+    /// Archive uploads: the start count at the time, the request path, and the archive.
+    writes: Vec<(usize, String, Vec<u8>)>,
 }
 
 #[tokio::test]
@@ -249,8 +251,14 @@ async fn gateway_failed_startup_and_explicit_recovery_keep_container_and_storage
     let gateway_config = spec
         .gateway_config("/var/lib/docker/volumes/fixture/_data")
         .unwrap();
+    let gateway_config_text = gateway_config.clone();
     let fixture=Fixture::engine(move |request|{
         let mut state=shared.lock().unwrap();
+        if request.method == "PUT" && request.path.contains("/archive?") {
+            let starts = state.starts;
+            state.writes.push((starts, request.path.clone(), request.body.to_vec()));
+            return Some((200, Vec::new()));
+        }
         if request.path.contains("/archive?") {
             let url = url::Url::parse(&format!("http://fixture{}", request.path)).unwrap();
             let path = url.query_pairs().find(|(key, _)| key == "path").unwrap().1.into_owned();
@@ -285,11 +293,29 @@ async fn gateway_failed_startup_and_explicit_recovery_keep_container_and_storage
     let first = engine.ensure_gateway(&spec, "").await.unwrap();
     assert!(!first.running);
     assert_eq!(state.lock().unwrap().starts, 1);
+    // The gateway receives its configuration file before each start.
+    let written = |index: usize| {
+        let state = state.lock().unwrap();
+        let (starts, path, body) = state.writes[index].clone();
+        let mut archive = tar::Archive::new(body.as_slice());
+        let mut entry = archive.entries().unwrap().next().unwrap().unwrap();
+        let name = entry.path().unwrap().to_string_lossy().into_owned();
+        let mut content = String::new();
+        std::io::Read::read_to_string(&mut entry, &mut content).unwrap();
+        (starts, path, name, content)
+    };
+    let (starts, path, name, content) = written(0);
+    assert_eq!(starts, 0);
+    assert!(path.contains("/containers/container/archive?"), "{path}");
+    assert!(path.contains("_data"), "{path}");
+    assert_eq!(name, "gateway.toml");
+    assert_eq!(content, gateway_config_text);
     engine.observe_gateway(&spec, &first.id).await.unwrap();
     assert_eq!(state.lock().unwrap().starts, 1);
     state.lock().unwrap().exit_on_start = false;
     let recovered = engine.ensure_gateway(&spec, &first.id).await.unwrap();
     assert!(recovered.running);
+    assert_eq!(written(1).0, 1);
     assert_eq!(recovered.id, first.id);
     engine.ensure_gateway(&spec, &first.id).await.unwrap();
     assert_eq!(state.lock().unwrap().starts, 2);

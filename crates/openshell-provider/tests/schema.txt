@@ -29,7 +29,6 @@ resource openshell_gateway_storage (version 0)
   data_path: string, computed
   endpoint: string, optional, computed
   engine: string, required
-  gateway_config: string, optional, computed
   generation: string, optional, computed
   id: string, computed
   image: string, required
@@ -376,6 +375,10 @@ data openshell_docker_gateway_runtime (version 0)
   > Computes a Docker gateway container's launch from typed settings without contacting any host.
   command: list(string), computed
     > The container's command.
+  config: string, optional
+    > Authored OpenShell gateway tables as JSON, in the chart's gatewayConfig format.
+  config_file: string, computed
+    > The gateway's OpenShell configuration file.
   data_path: string, required
     > Absolute data path returned by the gateway's storage.
   endpoint: string, required

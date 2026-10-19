@@ -40,7 +40,7 @@ pub(crate) fn definitions() -> [crate::Definition; 2] {
         // Docker gateway data does not depend on the listen endpoint.
         definition(
             GATEWAY_STORAGE_KIND,
-            &["image_pull_policy", CONFIG_ATTRIBUTE],
+            &["image_pull_policy"],
             &["image_pull_policy"],
         )
         .optional(&["endpoint"])

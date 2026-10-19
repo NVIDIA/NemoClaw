@@ -410,21 +410,8 @@ impl Engine {
                 volume.created_at.ok_or(ObservationError::Incomplete)?,
                 network.id.ok_or(ObservationError::Incomplete)?
             );
-
-            if self
-                .read_file(
-                    &container_id,
-                    &format!("{}/gateway.toml", volume.mountpoint),
-                    128 << 10,
-                )
-                .await?
-                .as_deref()
-                != Some(spec.gateway_config(&volume.mountpoint)?.as_bytes())
-            {
-                return Err(Error::Conflict(
-                    "managed gateway configuration changed or is unobservable",
-                ));
-            }
+            // The configuration file is written before each start from this
+            // specification; a change to it replaces the container.
             let signing = self
                 .read_file(
                     &container_id,

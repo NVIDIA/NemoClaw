@@ -288,7 +288,13 @@ impl Spec {
             .filter(|(attribute, _)| !(docker_storage && *attribute == "endpoint"))
             .map(|(attribute, value)| (attribute.to_owned(), value.to_owned()))
             .collect();
-        if let Some(config) = &self.gateway.config {
+        // Storage holds no configuration: the gateway container receives it.
+        if let Some(config) = self
+            .gateway
+            .config
+            .as_ref()
+            .filter(|_| kind == GATEWAY_KIND)
+        {
             row.insert(
                 CONFIG_ATTRIBUTE.into(),
                 serde_json::to_string(config)
@@ -707,70 +713,120 @@ impl Spec {
     /// Returns a conflict if the authored tables are malformed or replace an
     /// owned key; validation rejects both before a specification exists.
     pub fn gateway_config(&self, data_path: &str) -> Result<String, Error> {
-        use toml::{Table, Value};
-        fn table<const N: usize>(entries: [(&str, Value); N]) -> Value {
-            Value::Table(
-                entries
-                    .into_iter()
-                    .map(|(key, value)| (key.to_owned(), value))
-                    .collect(),
-            )
-        }
-        let text = |value: &str| Value::String(value.to_owned());
-        // Docker supervisors use host networking and derive the loopback callback
-        // from the runtime listen port. Storage normalizes that port separately.
-        // Scope startup cleanup by gateway instead of using the shared default.
-        let mut driver = match self.compute_driver {
-            ComputeDriver::Docker => table([("sandbox_label", text(&self.name))]),
-            _ => table([
-                ("socket_path", text("/var/run/docker.sock")),
-                ("network_name", text(&self.network())),
-                ("grpc_endpoint", text(&self.gateway.endpoint)),
-            ]),
+        let network = match self.compute_driver {
+            ComputeDriver::Docker => String::new(),
+            _ => self.network(),
         };
-        if let Value::Table(driver) = &mut driver {
-            driver.insert("sandbox_runtime_image".into(), text(SANDBOX_RUNTIME_IMAGE));
-            driver.insert("supervisor_image".into(), text(SUPERVISOR_IMAGE));
-        }
-        let gateway = table([
-            ("compute_driver", text(self.compute_driver.as_str())),
-            ("disable_tls", Value::Boolean(true)),
-            (
-                "gateway_jwt",
-                table([
-                    (
-                        "signing_key_path",
-                        text(&format!("{data_path}/tls/jwt/signing.pem")),
-                    ),
-                    (
-                        "public_key_path",
-                        text(&format!("{data_path}/tls/jwt/public.pem")),
-                    ),
-                    ("kid_path", text(&format!("{data_path}/tls/jwt/kid"))),
-                    ("gateway_id", text(&self.name)),
-                ]),
-            ),
-            (
-                "auth",
-                table([("allow_unauthenticated_users", Value::Boolean(true))]),
-            ),
-        ]);
-        let mut drivers = Table::new();
-        drivers.insert(self.compute_driver.as_str().into(), driver);
-        let mut root = Table::new();
-        root.insert(
-            "openshell".into(),
-            table([
-                ("version", Value::Integer(2)),
-                ("gateway", gateway),
-                ("drivers", Value::Table(drivers)),
-            ]),
-        );
-        let root = match &self.gateway.config {
-            Some(config) => super::gateway_config::render(root, config)
-                .map_err(|_| Error::Conflict("invalid managed gateway configuration"))?,
-            None => root,
-        };
-        toml::to_string(&root).map_err(|_| Error::State("cannot encode gateway configuration"))
+        gateway_file(
+            self.compute_driver,
+            &self.name,
+            &network,
+            &self.gateway.endpoint,
+            data_path,
+            self.gateway.config.as_ref(),
+        )
     }
+}
+
+/// A Docker gateway's configuration file from its name, the data path its
+/// storage returns, and the authored tables as JSON, empty when none.
+///
+/// # Errors
+/// Returns a conflict naming the invalid setting.
+pub fn docker_gateway_config(name: &str, data_path: &str, config: &str) -> Result<String, Error> {
+    let config = if config.is_empty() {
+        None
+    } else {
+        let config: super::gateway_config::GatewayConfig = serde_json::from_str(config)
+            .map_err(|_| Error::Conflict("config must be a JSON object of gateway tables"))?;
+        super::gateway_config::check(&config, "docker").map_err(|_| {
+            Error::Conflict("config must be valid gateway tables without keys NemoClaw manages")
+        })?;
+        Some(config)
+    };
+    gateway_file(
+        ComputeDriver::Docker,
+        name,
+        "",
+        "",
+        data_path,
+        config.as_ref(),
+    )
+}
+
+/// The OpenShell configuration file of a managed Docker or Podman gateway:
+/// the keys NemoClaw owns, with the authored tables merged in.
+fn gateway_file(
+    compute_driver: ComputeDriver,
+    name: &str,
+    network: &str,
+    endpoint: &str,
+    data_path: &str,
+    config: Option<&super::gateway_config::GatewayConfig>,
+) -> Result<String, Error> {
+    use toml::{Table, Value};
+    fn table<const N: usize>(entries: [(&str, Value); N]) -> Value {
+        Value::Table(
+            entries
+                .into_iter()
+                .map(|(key, value)| (key.to_owned(), value))
+                .collect(),
+        )
+    }
+    let text = |value: &str| Value::String(value.to_owned());
+    // Docker supervisors use host networking and derive the loopback callback
+    // from the runtime listen port. Storage normalizes that port separately.
+    // Scope startup cleanup by gateway instead of using the shared default.
+    let mut driver = match compute_driver {
+        ComputeDriver::Docker => table([("sandbox_label", text(name))]),
+        _ => table([
+            ("socket_path", text("/var/run/docker.sock")),
+            ("network_name", text(network)),
+            ("grpc_endpoint", text(endpoint)),
+        ]),
+    };
+    if let Value::Table(driver) = &mut driver {
+        driver.insert("sandbox_runtime_image".into(), text(SANDBOX_RUNTIME_IMAGE));
+        driver.insert("supervisor_image".into(), text(SUPERVISOR_IMAGE));
+    }
+    let gateway = table([
+        ("compute_driver", text(compute_driver.as_str())),
+        ("disable_tls", Value::Boolean(true)),
+        (
+            "gateway_jwt",
+            table([
+                (
+                    "signing_key_path",
+                    text(&format!("{data_path}/tls/jwt/signing.pem")),
+                ),
+                (
+                    "public_key_path",
+                    text(&format!("{data_path}/tls/jwt/public.pem")),
+                ),
+                ("kid_path", text(&format!("{data_path}/tls/jwt/kid"))),
+                ("gateway_id", text(name)),
+            ]),
+        ),
+        (
+            "auth",
+            table([("allow_unauthenticated_users", Value::Boolean(true))]),
+        ),
+    ]);
+    let mut drivers = Table::new();
+    drivers.insert(compute_driver.as_str().into(), driver);
+    let mut root = Table::new();
+    root.insert(
+        "openshell".into(),
+        table([
+            ("version", Value::Integer(2)),
+            ("gateway", gateway),
+            ("drivers", Value::Table(drivers)),
+        ]),
+    );
+    let root = match config {
+        Some(config) => super::gateway_config::render(root, config)
+            .map_err(|_| Error::Conflict("invalid managed gateway configuration"))?,
+        None => root,
+    };
+    toml::to_string(&root).map_err(|_| Error::State("cannot encode gateway configuration"))
 }

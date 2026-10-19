@@ -135,7 +135,8 @@ Docker and Podman gateways write these tables into their configuration file besi
 Kubernetes and OpenShift gateways pass them to the chart's `gatewayConfig`, where they can override NemoClaw's `workspace_mode` and `workspace_default_storage_size` defaults, and the chart keeps the settings it derives from Kubernetes resources; see OpenShell's [chart configuration guide](https://github.com/NVIDIA/OpenShell/blob/5a7728c304b5528e954e9ae900cf21f84e1a12b1/docs/kubernetes/migrate-gateway-config.mdx).
 Plan rejects a setting that replaces a key NemoClaw manages, such as the gateway's authentication, signing paths, or the driver's images.
 OpenShell validates the rest when the gateway starts: an unknown or misplaced field in the selected driver's table stops the gateway, and tables for other drivers are ignored.
-Docker and Podman gateways keep the file in retained storage, so set the configuration when you create the deployment.
+A change replaces a Docker or Podman gateway's container, which receives the new file and keeps the gateway's data, and upgrades a Kubernetes gateway's chart release.
+Sandboxes keep running while the gateway restarts.
 Do not put secrets in it: plans and state show it.
 An external gateway takes no `config`; its operator configures it.
 
