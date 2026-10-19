@@ -116,8 +116,12 @@ describe("protected OpenShell workspace", () => {
     await manageProtectedOpenShellWorkspace("prepare", input);
     const before = git(input.trustedRoot, "diff", "--no-ext-diff");
     approval.approvals[0]!.body = `NemoClaw-Upgrade-E2E: revoke ${input.candidateSha} ${identity.baseSha}`;
-    await expect(manageProtectedOpenShellWorkspace("verify", input)).rejects.toThrow();
-    await expect(manageProtectedOpenShellWorkspace("restore", input)).rejects.toThrow();
+    await expect(manageProtectedOpenShellWorkspace("verify", input)).rejects.toThrow(
+      "Candidate upgrade needs an independent maintainer's current commit-bound E2E approval",
+    );
+    await expect(manageProtectedOpenShellWorkspace("restore", input)).rejects.toThrow(
+      "Candidate upgrade needs an independent maintainer's current commit-bound E2E approval",
+    );
     expect(git(input.trustedRoot, "diff", "--no-ext-diff")).toBe(before);
   });
 
