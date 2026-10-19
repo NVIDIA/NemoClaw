@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { nativeLocalAttachmentMatchesHostLocalReceipt } from "./state/registry/host-local-inference";
+
 /**
  * Post-deployment verification — confirms the full delivery chain is
  * operational before printing "YOUR AGENT IS LIVE". All deps injected
@@ -34,6 +36,7 @@ import { retryUntilAsync } from "./core/retry";
 import { isNativeNvidiaProvider } from "./inference/native-nvidia";
 import { requireHostedProviderAttachment } from "./inference/native-provider/hosted-attachment";
 import {
+  isPersistedPiSharedLocalInferenceRoute,
   normalizeNativeLocalBinding,
   normalizeNativeLocalProviderAttachment,
   usesNativeLocalInferenceForAgent,
@@ -45,6 +48,7 @@ import {
   type SandboxCommandExecutor,
 } from "./onboard/custom-openclaw-runtime-diagnosis";
 import { GATEWAY_PORT, resolveGatewayLogPathForPort } from "./onboard/gateway/state-dir";
+import { gatewayReachableCompatibleEndpointUrl } from "./onboard/inference-providers/compatible-endpoint-gateway-route";
 import { getMessagingProviderNamesForChannel } from "./onboard/messaging-reuse";
 import { HOST_LOCAL_INFERENCE_APPLICATION_BASE_URL } from "./onboard/runtime-provider/host-local-inference-routing";
 
@@ -438,7 +442,7 @@ function matchesNativeLocalVerificationRoute(
     return true;
   const selected = normalizeNativeLocalBinding({
     ...attachment,
-    endpointUrl: context.endpointUrl,
+    endpointUrl: gatewayReachableCompatibleEndpointUrl(attachment.provider, context.endpointUrl),
   });
   return selected?.endpointUrl === attachment.endpointUrl;
 }
@@ -1001,6 +1005,7 @@ export function onboardInferenceVerificationContext(
   agentName: string,
   flow: Pick<InferenceInvocationContext, "model" | "provider" | "preferredInferenceApi"> & {
     endpointUrl?: string | null;
+    nimContainer?: string | null;
   },
   attachment?:
     | (Pick<
@@ -1008,24 +1013,45 @@ export function onboardInferenceVerificationContext(
         "nativeLocalProviderAttachment" | "nativeHostedProviderAttachment"
       > & {
         nimContainer?: string | null;
+        agent?: string | null;
+        provider?: string | null;
+        model?: string | null;
+        endpointUrl?: string | null;
+        createdAt?: string | null;
+        pendingRouteReservation?: boolean;
+        hostLocalInferenceReceipt?: string | null;
       })
     | null,
 ): { route: InferenceRouteContext; invocation: InferenceInvocationContext } {
-  const nativeLocalExpected = usesNativeLocalInferenceForAgent(
-    agentName,
-    flow.provider,
-    flow.endpointUrl,
-    flow.provider === "vllm-local" && Boolean(attachment?.nimContainer),
-  );
+  const nativeLocalExpected =
+    usesNativeLocalInferenceForAgent(
+      agentName,
+      flow.provider,
+      flow.endpointUrl,
+      flow.provider === "vllm-local" && Boolean(attachment?.nimContainer),
+    ) && !isPersistedPiSharedLocalInferenceRoute(attachment, flow);
   const nativeLocalProviderAttachment =
     flow.provider === "vllm-local" && attachment?.nimContainer
       ? undefined
       : attachment?.nativeLocalProviderAttachment;
   const nativeHostedProviderAttachment = attachment?.nativeHostedProviderAttachment;
+  const endpointUrl =
+    agentName === "hermes" &&
+    nativeLocalExpected &&
+    nativeLocalProviderAttachment?.agent === "hermes" &&
+    attachment?.provider === flow.provider &&
+    attachment?.model === flow.model &&
+    nativeLocalAttachmentMatchesHostLocalReceipt(
+      attachment?.endpointUrl,
+      nativeLocalProviderAttachment.endpointUrl,
+      attachment?.hostLocalInferenceReceipt,
+    )
+      ? attachment.endpointUrl
+      : (flow.endpointUrl ?? null);
   return {
     route: {
       provider: flow.provider,
-      endpointUrl: flow.endpointUrl ?? null,
+      endpointUrl,
       gatewayName,
       nativeLocalExpected,
       nativeLocalProviderAttachment,
@@ -1037,7 +1063,7 @@ export function onboardInferenceVerificationContext(
       agentName,
       model: flow.model,
       provider: flow.provider,
-      endpointUrl: flow.endpointUrl ?? null,
+      endpointUrl,
       preferredInferenceApi: flow.preferredInferenceApi,
       nativeLocalExpected,
       nativeLocalProviderAttachment,

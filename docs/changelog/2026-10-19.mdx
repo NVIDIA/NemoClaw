@@ -1,0 +1,33 @@
+{/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */}
+
+## v0.0.136
+
+NemoClaw v0.0.136 expands sandbox-attached inference routes and adds an experimental Super VL profile for a 128 GB DGX Spark.
+It also repairs DGX Station Express recovery and strengthens provider ownership checks.
+
+- Fresh custom hosted endpoint selections bind the validated endpoint, API, and credential source to a provider attached to the selected sandbox.
+  Inference status, health checks, switching, and rebuilds use that recorded route. Existing shared-route selections remain on their recorded path.
+  Related change: [PR #13201](https://github.com/NVIDIA/NemoClaw/pull/13201).
+- New Deep Agents Code, OpenClaw, and Pi local selections use sandbox-attached providers for qualified local endpoints.
+  Hermes native-local startup, switching, and rebuild refresh supervisor-issued credential references while preserving the selected route and unrelated settings.
+  Related changes: [PR #13203](https://github.com/NVIDIA/NemoClaw/pull/13203), [PR #13293](https://github.com/NVIDIA/NemoClaw/pull/13293), [PR #13007](https://github.com/NVIDIA/NemoClaw/pull/13007), and [PR #13292](https://github.com/NVIDIA/NemoClaw/pull/13292).
+- For OpenClaw native-local routes, `status`, `connect`, and `start` now send health requests to the provider recorded for the sandbox.
+  They no longer probe an unconfigured shared route for those selections.
+  Related change: [PR #13447](https://github.com/NVIDIA/NemoClaw/pull/13447).
+- An explicit Experimental Nemotron 3.5 Super VL profile serves one 128 GB DGX Spark with native five-token MTP.
+  It rejects 64 GB or unknown-memory systems before installation, retains the Spark Qwen default, and has software validation with limited direct model smoke results. Complete managed lifecycle qualification remains pending.
+  Related change: [PR #13357](https://github.com/NVIDIA/NemoClaw/pull/13357).
+- DGX Station Express keeps automatic model selection under the serving catalog.
+  Installation and resume now retain the selected GPU and model, accept the catalog's automatic receipt, verify an owned vLLM server before reuse, and preserve an unchanged sandbox route.
+  Related changes: [PR #13305](https://github.com/NVIDIA/NemoClaw/pull/13305) and [PR #13480](https://github.com/NVIDIA/NemoClaw/pull/13480).
+- Credential registration inspects existing operator profiles before changing provider state.
+  Sandbox creation verifies NemoClaw-owned extra profiles, and messaging setup rejects a fallback to a provider profile it does not own.
+  Related changes: [PR #13353](https://github.com/NVIDIA/NemoClaw/pull/13353), [PR #13356](https://github.com/NVIDIA/NemoClaw/pull/13356), and [PR #13351](https://github.com/NVIDIA/NemoClaw/pull/13351).
+- OpenClaw rebuild keeps the recorded dashboard origin when it restores a sandbox.
+  The `nemoclaw sandbox mcp` usage message now lists the existing `update` action.
+  Related changes: [PR #13198](https://github.com/NVIDIA/NemoClaw/pull/13198) and [PR #12384](https://github.com/NVIDIA/NemoClaw/pull/12384).
+- Release validation retains PR image contracts for delayed E2E checks and expands native inference, Pi, DCode, and portable runtime assertions.
+  Related changes: [PR #13417](https://github.com/NVIDIA/NemoClaw/pull/13417), [PR #13367](https://github.com/NVIDIA/NemoClaw/pull/13367), [PR #13363](https://github.com/NVIDIA/NemoClaw/pull/13363), and [PR #13352](https://github.com/NVIDIA/NemoClaw/pull/13352).

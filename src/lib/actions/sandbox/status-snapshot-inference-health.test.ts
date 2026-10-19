@@ -9,6 +9,9 @@ import type { SandboxEntry } from "../../state/registry";
 import type { SandboxInferenceInvocationResult } from "./inference-invocation-probe";
 import type { SandboxInferenceRouteHealth } from "./inference-route-health";
 import { collectSandboxStatusSnapshot } from "./status-snapshot";
+import { probeSandboxInferenceInvocation } from "./inference-invocation-probe";
+import { recordingProbeShell } from "../../../../test/helpers/native-local-probe-shell";
+import { nativeLocalTestReceipt } from "../../../../test/helpers/inference-set";
 
 // Direct, unmocked coverage of `buildSandboxInferenceRouteHealth` through the
 // exported `collectSandboxStatusSnapshot` entry point (it is not itself
@@ -962,7 +965,7 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
     expect(delayInferenceRecoveryProbe).toHaveBeenCalledOnce();
     expect(snapshot.inferenceHealth).toMatchObject({
       ok: false,
-      detail: brokenRoute.detail,
+      detail: expect.stringContaining(brokenRoute.detail),
       failureLabel: "unreachable",
     });
   });
@@ -1157,4 +1160,52 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
     expect(delayInferenceRecoveryProbe).not.toHaveBeenCalled();
     expect(snapshot.inferenceHealth).toMatchObject({ ok: false, failureLabel: "unhealthy" });
   });
+});
+
+describe("status native local request identity (#13338)", () => {
+  it.each(["openclaw", undefined] as const)(
+    "probes and reports the recorded OpenClaw endpoint when the registry agent is %s",
+    async (agent) => {
+      const receipt = nativeLocalTestReceipt(
+        "vllm-local",
+        "http://host.openshell.internal:18000/v1",
+        {
+          agent: "openclaw",
+          authMode: "sentinel",
+        },
+      );
+      const options = snapshotDeps(
+        null,
+        null,
+        { ok: true },
+        {
+          agent,
+          provider: "vllm-local",
+          model: "local-model",
+          gatewayName: "nemoclaw",
+          nativeLocalProviderAttachment: receipt,
+        },
+      );
+      const shell = recordingProbeShell("503");
+      const snapshot = await collectSandboxStatusSnapshot("alpha", {
+        ...options,
+        deps: {
+          ...options.deps,
+          inferenceRouteObserver: { observeInferenceRoute: vi.fn() },
+          verifyNativeLocalProviderAttachmentImpl: async () => undefined,
+          probeSandboxInferenceInvocationImpl: (input, _deps, timeoutMs) =>
+            probeSandboxInferenceInvocation(input, { execute: shell.execute }, timeoutMs),
+          delayInferenceRecoveryProbe: async () => undefined,
+        },
+      });
+      expect(shell.destinations().length).toBeGreaterThan(0);
+      expect(new Set(shell.destinations())).toEqual(
+        new Set(["http://host.openshell.internal:18000/v1/chat/completions"]),
+      );
+      expect(snapshot.inferenceHealth).toMatchObject({
+        ok: false,
+        endpoint: shell.destinations()[0],
+      });
+    },
+  );
 });

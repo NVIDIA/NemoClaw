@@ -21,6 +21,7 @@ export type NativeProfileBoundary<Id extends string = string> = Readonly<{
   headerName: string;
   host: string;
   port?: number;
+  tls?: "terminate";
   allowedIps?: readonly string[];
   binaries?: readonly string[];
   rules: readonly Readonly<{ method: "GET" | "POST"; path: string }>[];
@@ -103,7 +104,7 @@ function nativeEndpoint(value: unknown, expected: NativeProfileBoundary): boolea
     endpoint.port === (expected.port ?? 443) &&
     emptyArray(endpoint.ports) &&
     endpoint.protocol === "rest" &&
-    endpoint.tls === "" &&
+    endpoint.tls === (expected.tls ?? "") &&
     endpoint.enforcement === "enforce" &&
     endpoint.access === "" &&
     Array.isArray(rules) &&

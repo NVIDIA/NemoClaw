@@ -4,6 +4,7 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import path from "node:path";
+import yaml from "js-yaml";
 import { describe, expect, it } from "vitest";
 
 const SOURCE_REQUIRE_HOOK = path.join(
@@ -13,10 +14,31 @@ const SOURCE_REQUIRE_HOOK = path.join(
 );
 
 describe("Hermes host config transaction wiring", () => {
-  it("passes the exact read digest and serialized update to the sealed write transaction", () => {
-    const rawConfig = "model:\n  default: trusted-model\n";
-    const expectedDigest = createHash("sha256").update(rawConfig).digest("hex");
-    const script = String.raw`
+  const handle = "openshell:resolve:env:v7_NEMOCLAW_LOCAL_INFERENCE_TOKEN";
+  it.each([
+    { update: "model", expected: { model: { default: "trusted-model-v2" } } },
+    {
+      update: "restored-native-local",
+      expected: {
+        model: { default: "trusted-model-v2", api_key: handle },
+        providers: { "vllm-local": { api_key: handle } },
+        custom_providers: [{ api_key: handle }],
+      },
+    },
+    {
+      update: "native-local",
+      expected: {
+        model: { default: "trusted-model-v2", api_key: handle },
+        providers: { "vllm-local": { api_key: handle } },
+        custom_providers: [{ api_key: handle }],
+      },
+    },
+  ])(
+    "passes the read digest and $update update to the sanitized write transaction",
+    ({ update, expected }) => {
+      const rawConfig = "model:\n  default: trusted-model\n";
+      const expectedDigest = createHash("sha256").update(rawConfig).digest("hex");
+      const script = String.raw`
 const Module = require("node:module");
 const path = require("node:path");
 const root = process.cwd();
@@ -64,55 +86,71 @@ const config = require(source("sandbox", "config.js"));
 const target = config.resolveAgentConfig("alpha");
 const parsed = config.readSandboxConfig("alpha", target);
 parsed.model.default = "trusted-model-v2";
-config.writeSandboxConfig("alpha", target, parsed);
+if (${JSON.stringify(update)} !== "model") {
+  const { applyHermesManagedRoute } = require(source("hermes-managed-route.js"));
+  applyHermesManagedRoute(parsed, {
+    model: "trusted-model-v2",
+    upstreamProvider: "vllm-local",
+    baseUrl: "http://host.openshell.internal:8000/v1",
+    inferenceApi: "openai-completions",
+    nativeCredentialHandle: "openshell:resolve:env:v7_NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+  });
+}
+config.writeSandboxConfig("alpha", target, parsed, ${JSON.stringify(update === "restored-native-local" ? { restoreNativeLocalCredential: true } : {})});
 process.stdout.write(JSON.stringify({ ...captured, privilegedExec: capturedPrivilegedExec }));
 `;
 
-    const result = spawnSync(process.execPath, ["--require", SOURCE_REQUIRE_HOOK, "-e", script], {
-      cwd: path.join(import.meta.dirname, "../../.."),
-      encoding: "utf-8",
-      env: { ...process.env, NODE_OPTIONS: "" },
-      timeout: 5000,
-    });
+      const result = spawnSync(process.execPath, ["--require", SOURCE_REQUIRE_HOOK, "-e", script], {
+        cwd: path.join(import.meta.dirname, "../../.."),
+        encoding: "utf-8",
+        env: { ...process.env, NODE_OPTIONS: "" },
+        timeout: 5000,
+      });
 
-    expect(result.status, result.stderr).toBe(0);
-    const captured = JSON.parse(result.stdout) as {
-      argv: string[];
-      options: { input: string; timeout: number; sanitizeEnvironment: boolean };
-      privilegedExec: { command: string[]; sanitizeEnvironment: boolean };
-    };
-    const digestFlag = captured.argv.indexOf("--expected-config-sha256");
-    expect(captured.argv).toEqual(
-      expect.arrayContaining([
-        "timeout",
-        "--signal=TERM",
-        "--kill-after=5s",
-        "2m",
-        "/opt/hermes/.venv/bin/python",
-        "-I",
-        "/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py",
-        "write-config",
-        "--hermes-dir",
-        "/sandbox/.hermes",
-        "--hash-file",
-        "/etc/nemoclaw/hermes.config-hash",
-        "--state-file",
-        "/run/nemoclaw/hermes-restart-seal.json",
-      ]),
-    );
-    expect(digestFlag).toBeGreaterThanOrEqual(0);
-    expect(captured.argv[digestFlag + 1]).toBe(expectedDigest);
-    expect(captured.options.input).toContain("default: trusted-model-v2");
-    expect(captured.options.timeout).toBe(150000);
-    expect(captured.options.sanitizeEnvironment).toBe(true);
-    expect(captured.privilegedExec.sanitizeEnvironment).toBe(true);
-    expect(captured.privilegedExec.command).toEqual(
-      expect.arrayContaining([
-        "/opt/hermes/.venv/bin/python",
-        "-I",
-        "/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py",
-        "write-config",
-      ]),
-    );
-  });
+      expect(result.status, result.stderr).toBe(0);
+      const captured = JSON.parse(result.stdout) as {
+        argv: string[];
+        options: { input: string; timeout: number; sanitizeEnvironment: boolean };
+        privilegedExec: { command: string[]; sanitizeEnvironment: boolean };
+      };
+      const digestFlag = captured.argv.indexOf("--expected-config-sha256");
+      expect(captured.argv.includes("--restore-native-local-credential")).toBe(
+        update === "restored-native-local",
+      );
+      expect(captured.argv).toEqual(
+        expect.arrayContaining([
+          "timeout",
+          "--signal=TERM",
+          "--kill-after=5s",
+          "2m",
+          "/opt/hermes/.venv/bin/python",
+          "-I",
+          "/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py",
+          "write-config",
+          "--hermes-dir",
+          "/sandbox/.hermes",
+          "--hash-file",
+          "/etc/nemoclaw/hermes.config-hash",
+          "--state-file",
+          "/run/nemoclaw/hermes-restart-seal.json",
+        ]),
+      );
+      expect(digestFlag).toBeGreaterThanOrEqual(0);
+      expect(captured.argv[digestFlag + 1]).toBe(expectedDigest);
+      expect(captured.options.input).toContain("default: trusted-model-v2");
+      expect(yaml.load(captured.options.input)).toMatchObject(expected);
+      expect(captured.argv.join(" ")).not.toContain(handle);
+      expect(captured.options.timeout).toBe(150000);
+      expect(captured.options.sanitizeEnvironment).toBe(true);
+      expect(captured.privilegedExec.sanitizeEnvironment).toBe(true);
+      expect(captured.privilegedExec.command).toEqual(
+        expect.arrayContaining([
+          "/opt/hermes/.venv/bin/python",
+          "-I",
+          "/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py",
+          "write-config",
+        ]),
+      );
+    },
+  );
 });

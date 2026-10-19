@@ -382,6 +382,8 @@ jobs:
       selected_workflow_jobs: ${{ steps.matrix.outputs.selected_workflow_jobs }}
       managed_image_required: ${{ steps.matrix.outputs.managed_image_required }}
       openshell_version: ${{ steps.openshell_version.outputs.version }}
+      openshell_supervisor_image: ${{ steps.openshell_version.outputs.supervisor_image }}
+      openshell_runtime_provenance: ${{ steps.openshell_version.outputs.runtime_provenance }}
       catalogue_standard_matrix: ${{ steps.matrix.outputs.catalogue_standard_matrix }}
       catalogue_nvidia_api_matrix: ${{ steps.matrix.outputs.catalogue_nvidia_api_matrix }}
       catalogue_nvidia_inference_matrix: ${{ steps.matrix.outputs.catalogue_nvidia_inference_matrix }}
@@ -733,8 +735,9 @@ jobs:
 
       - id: openshell_version
         name: Resolve reviewed candidate OpenShell version
-        if: ${{ contains(fromJSON(steps.matrix.outputs.selected_jobs), 'openshell-gateway-auth-contract') || contains(fromJSON(steps.matrix.outputs.selected_jobs), 'external-gateway-health') }}
+        if: ${{ contains(fromJSON(steps.matrix.outputs.selected_jobs), 'openshell-gateway-auth-contract') || contains(fromJSON(steps.matrix.outputs.selected_jobs), 'external-gateway-health') || contains(fromJSON(steps.matrix.outputs.selected_jobs), 'mcp-bridge') || contains(fromJSON(steps.matrix.outputs.selected_jobs), 'openshell-credential-generation-window') }}
         env:
+          MCP_RUNTIME_REQUIRED: ${{ contains(fromJSON(steps.matrix.outputs.selected_jobs), 'mcp-bridge') || contains(fromJSON(steps.matrix.outputs.selected_jobs), 'openshell-credential-generation-window') }}
           CANDIDATE_REPOSITORY: ${{ inputs.checkout_repository || github.repository }}
           CANDIDATE_SHA: ${{ inputs.checkout_sha || github.sha }}
           UPGRADE_PR_NUMBER: ${{ inputs.pr_number }}
@@ -3519,7 +3522,7 @@ jobs:
     secrets:
       DOCKERHUB_USERNAME: ${{ github.ref == 'refs/heads/main' && github.workflow_ref == 'NVIDIA/NemoClaw/.github/workflows/e2e.yaml@refs/heads/main' && github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.DOCKERHUB_USERNAME || '' }}
       DOCKERHUB_TOKEN: ${{ github.ref == 'refs/heads/main' && github.workflow_ref == 'NVIDIA/NemoClaw/.github/workflows/e2e.yaml@refs/heads/main' && github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.DOCKERHUB_TOKEN || '' }}
-      HOSTED_INFERENCE_API_KEY: ${{ github.ref == 'refs/heads/main' && github.workflow_ref == 'NVIDIA/NemoClaw/.github/workflows/e2e.yaml@refs/heads/main' && github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && (matrix.id == 'hosted-inference-openai' && secrets.OPENAI_API_KEY || matrix.id == 'hosted-inference-anthropic' && secrets.ANTHROPIC_API_KEY || matrix.id == 'hosted-inference-gemini' && secrets.GEMINI_API_KEY || matrix.id == 'hosted-inference-openrouter' && secrets.OPENROUTER_API_KEY || matrix.id == 'hosted-inference-hermes' && secrets.NOUS_API_KEY) || '' }}
+      HOSTED_INFERENCE_API_KEY: ${{ github.ref == 'refs/heads/main' && github.workflow_ref == 'NVIDIA/NemoClaw/.github/workflows/e2e.yaml@refs/heads/main' && github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && matrix.id == 'hosted-inference-openrouter' && secrets.OPENROUTER_API_KEY || '' }}
 
   catalogue-standard:
     name: ${{ matrix.display_name }} (${{ matrix.runtime_provider }})
@@ -3894,7 +3897,7 @@ jobs:
       NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF: ${{ matrix.runtime_provider == 'docker' && '1' || '0' }}
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_GATEWAY_RUNTIME: ${{ matrix.runtime_provider }}
-      OPENSHELL_DOCKER_SUPERVISOR_IMAGE: ghcr.io/nvidia/openshell/supervisor@sha256:c8c42aef16c200063e32cbf72e553e4ead027085427b555efafd95063ecead42
+      OPENSHELL_DOCKER_SUPERVISOR_IMAGE: ${{ needs.generate-matrix.outputs.openshell_supervisor_image }}
     steps:
       - id: trusted_hermes_swap
         name: Provision trusted Hermes E2E swap
@@ -4160,22 +4163,32 @@ jobs:
       - name: Install OpenShell CLI
         env:
           NEMOCLAW_OPENSHELL_FORCE_INSTALL: "1"
+          OPENSHELL_RUNTIME_PROVENANCE: ${{ needs.generate-matrix.outputs.openshell_runtime_provenance }}
         run: |
           set -euo pipefail
           bash scripts/install-openshell.sh
+          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
+          node --input-type=module - "$(command -v openshell)" <<'NODE'
+          import { createHash } from 'node:crypto';
+          import { readFileSync } from 'node:fs';
+          import { dirname, join } from 'node:path';
+          const directory = dirname(process.argv[2]);
+          const expected = JSON.parse(process.env.OPENSHELL_RUNTIME_PROVENANCE);
+          for (const [role, binary] of [
+            ['cli', 'openshell'],
+            ['gateway', 'openshell-gateway'],
+            ['standaloneSandbox', 'openshell-sandbox'],
+          ]) {
+            const bytes = readFileSync(join(directory, binary));
+            const actual = createHash('sha256').update(bytes).digest('hex');
+            if (actual !== expected.artifacts?.[role]?.binarySha256) {
+              throw new Error(`Installed OpenShell ${role} differs from reviewed provenance`);
+            }
+          }
+          NODE
           if [[ "$NEMOCLAW_MCP_BRIDGE_AGENT" == "deepagents" ]]; then
             mkdir -p "$E2E_ARTIFACT_DIR/mcp-bridge-deepagents"
-            jq -n '{
-              schemaVersion: 1,
-              sourceRepository: "NVIDIA/OpenShell",
-              releaseTag: "v0.0.116",
-              sourceSha: "d1155aa70042d3e2ee49dbfa15346b108b7c1d92",
-              artifacts: {
-                cli: {binarySha256: "24e85062073d512d1951c76cd3890b7bce1ab01cc36a08f88b3b43c067a402da"},
-                gateway: {binarySha256: "780fc7ad871e2163f3fb866a2d0254ee682fc0d83e6261a84b350c8dcdd9f47b"},
-                standaloneSandbox: {binarySha256: "326ee26df8f8575ba761470757a12fe5c1cdc904ba064b81946692dd0328dd40"}
-              }
-            }' > "$E2E_ARTIFACT_DIR/mcp-bridge-deepagents/openshell-exact-main-provenance.json"
+            printf '%s\n' "$OPENSHELL_RUNTIME_PROVENANCE" > "$E2E_ARTIFACT_DIR/mcp-bridge-deepagents/openshell-exact-main-provenance.json"
           fi
 
       - name: Run MCP OpenShell provider live test
@@ -4256,7 +4269,7 @@ jobs:
       NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF: "1"
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_GATEWAY_RUNTIME: ${{ matrix.runtime_provider }}
-      OPENSHELL_DOCKER_SUPERVISOR_IMAGE: ghcr.io/nvidia/openshell/supervisor@sha256:c8c42aef16c200063e32cbf72e553e4ead027085427b555efafd95063ecead42
+      OPENSHELL_DOCKER_SUPERVISOR_IMAGE: ${{ needs.generate-matrix.outputs.openshell_supervisor_image }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -4307,21 +4320,31 @@ jobs:
       - name: Install OpenShell CLI
         env:
           NEMOCLAW_OPENSHELL_FORCE_INSTALL: "1"
+          OPENSHELL_RUNTIME_PROVENANCE: ${{ needs.generate-matrix.outputs.openshell_runtime_provenance }}
         run: |
           set -euo pipefail
           bash scripts/install-openshell.sh
-          mkdir -p "$E2E_ARTIFACT_DIR/openshell-credential-generation-window"
-          jq -n '{
-            schemaVersion: 1,
-            sourceRepository: "NVIDIA/OpenShell",
-            releaseTag: "v0.0.116",
-            sourceSha: "d1155aa70042d3e2ee49dbfa15346b108b7c1d92",
-            artifacts: {
-              cli: {binarySha256: "24e85062073d512d1951c76cd3890b7bce1ab01cc36a08f88b3b43c067a402da"},
-              gateway: {binarySha256: "780fc7ad871e2163f3fb866a2d0254ee682fc0d83e6261a84b350c8dcdd9f47b"},
-              standaloneSandbox: {binarySha256: "326ee26df8f8575ba761470757a12fe5c1cdc904ba064b81946692dd0328dd40"}
+          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
+          node --input-type=module - "$(command -v openshell)" <<'NODE'
+          import { createHash } from 'node:crypto';
+          import { readFileSync } from 'node:fs';
+          import { dirname, join } from 'node:path';
+          const directory = dirname(process.argv[2]);
+          const expected = JSON.parse(process.env.OPENSHELL_RUNTIME_PROVENANCE);
+          for (const [role, binary] of [
+            ['cli', 'openshell'],
+            ['gateway', 'openshell-gateway'],
+            ['standaloneSandbox', 'openshell-sandbox'],
+          ]) {
+            const bytes = readFileSync(join(directory, binary));
+            const actual = createHash('sha256').update(bytes).digest('hex');
+            if (actual !== expected.artifacts?.[role]?.binarySha256) {
+              throw new Error(`Installed OpenShell ${role} differs from reviewed provenance`);
             }
-          }' > "$E2E_ARTIFACT_DIR/openshell-credential-generation-window/openshell-exact-main-provenance.json"
+          }
+          NODE
+          mkdir -p "$E2E_ARTIFACT_DIR/openshell-credential-generation-window"
+          printf '%s\n' "$OPENSHELL_RUNTIME_PROVENANCE" > "$E2E_ARTIFACT_DIR/openshell-credential-generation-window/openshell-exact-main-provenance.json"
 
       - name: Run OpenShell credential generation-window live test
         run: |

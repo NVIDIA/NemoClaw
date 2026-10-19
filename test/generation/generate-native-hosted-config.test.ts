@@ -4,10 +4,27 @@
 import { describe, expect, it } from "vitest";
 import { buildConfig } from "../../scripts/generate-openclaw-config.mts";
 import { applyHermesManagedRoute } from "../../src/lib/hermes-managed-route";
+import { customNativeProvider } from "../../src/lib/inference/native-provider/custom";
 import { HOSTED_NATIVE_PROVIDERS } from "../../src/lib/inference/native-provider/hosted";
 import { baseOpenClawGenerationEnv } from "../helpers/openclaw-env-fixture";
 
-describe.each(HOSTED_NATIVE_PROVIDERS)("native $label agent configuration", (provider) => {
+describe.each([
+  ...HOSTED_NATIVE_PROVIDERS,
+  ...[
+    ["compatible-endpoint", "openai-completions", "https://custom.example/team/v1"],
+    ["compatible-endpoint", "openai-responses", "https://custom.example/team/v1"],
+    ["compatible-anthropic-endpoint", "anthropic-messages", "https://custom.example/team"],
+    ["compatible-anthropic-endpoint", "openai-completions", "https://custom.example/team"],
+  ].map(([provider, api, endpointUrl]) =>
+    customNativeProvider({
+      provider,
+      api,
+      endpointUrl,
+      credentialEnv: "HOST_KEY",
+      allowedIps: ["8.8.8.8"],
+    }),
+  ),
+])("native $label agent configuration", (provider) => {
   it("renders OpenClaw credentials as placeholders and keeps the native protocol (#12589)", () => {
     const config = buildConfig({
       ...baseOpenClawGenerationEnv(),

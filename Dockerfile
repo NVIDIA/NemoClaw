@@ -684,13 +684,8 @@ COPY scripts/verify-wechat-runtime-lock.mts /usr/local/lib/nemoclaw/verify-wecha
 
 FROM scratch AS openclaw-runtime-payload
 
-COPY scripts/lib/sandbox-init.sh /usr/local/lib/nemoclaw/sandbox-init.sh
+COPY scripts/lib/sandbox-init.sh scripts/lib/entrypoint-env-wrapper.sh scripts/lib/sandbox-rlimits.sh scripts/lib/openclaw_device_approval_policy.py scripts/lib/openclaw_pairing_state.py scripts/lib/refresh-openclaw-wechat-placeholder.py /usr/local/lib/nemoclaw/
 COPY --chmod=0444 scripts/lib/corporate-ca-runtime.sh /usr/local/lib/nemoclaw/corporate-ca-runtime.sh
-COPY scripts/lib/entrypoint-env-wrapper.sh /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh
-COPY scripts/lib/sandbox-rlimits.sh /usr/local/lib/nemoclaw/sandbox-rlimits.sh
-COPY scripts/lib/openclaw_device_approval_policy.py /usr/local/lib/nemoclaw/openclaw_device_approval_policy.py
-COPY scripts/lib/openclaw_pairing_state.py /usr/local/lib/nemoclaw/openclaw_pairing_state.py
-COPY scripts/lib/refresh-openclaw-wechat-placeholder.py /usr/local/lib/nemoclaw/refresh-openclaw-wechat-placeholder.py
 COPY scripts/nemoclaw-start.sh /usr/local/bin/nemoclaw-start
 COPY scripts/managed-startup-hold.sh /usr/local/bin/nemoclaw-managed-startup-hold
 COPY nemoclaw-blueprint/scripts/*.js /usr/local/lib/nemoclaw/preloads/
@@ -699,6 +694,8 @@ COPY scripts/codex-acp-wrapper.sh /usr/local/bin/nemoclaw-codex-acp
 COPY scripts/generate-openclaw-config.mts scripts/validate-openclaw-tool-search.mts /scripts/
 COPY --from=managed-startup-runtime-builder /out/managed-startup-image-runtime.cjs /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs
 COPY src/lib/extra-agents-validation.ts src/lib/tool-disclosure.ts src/lib/providerless-inference.ts src/lib/inference-credential.ts /src/lib/
+COPY src/lib/core/endpoint-url-safety.ts /src/lib/core/
+COPY src/lib/inference/native-local/agent-config.ts /src/lib/inference/native-local/
 COPY src/lib/inference/native-provider/agent-config.ts src/lib/inference/native-provider/hosted.ts src/lib/inference/native-provider/contract.ts /src/lib/inference/native-provider/
 COPY nemoclaw-blueprint/openclaw-plugins/ /usr/local/share/nemoclaw/openclaw-plugins/
 COPY --from=mcp-tool-discovery-runtime /opt/mcp-tool-discovery-runtime/dist/ /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime/

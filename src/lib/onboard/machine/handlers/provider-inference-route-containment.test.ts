@@ -3,9 +3,11 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import type {
-  CurrentGatewayRouteCompatibilityCheck,
-  CurrentGatewayRouteDiscoveryPreflight,
+import {
+  checkGatewayRouteCompatibility,
+  preflightGatewayRouteDiscovery,
+  type CurrentGatewayRouteCompatibilityCheck,
+  type CurrentGatewayRouteDiscoveryPreflight,
 } from "../../../inference/gateway-route-compatibility";
 import { createSession, type Session, type SessionUpdates } from "../../../state/onboard-session";
 import {
@@ -571,36 +573,83 @@ it.each([undefined, "2026-10-01T00:00:00Z"])(
   },
 );
 
-it("resumes an owned Local NIM DCode shared route without requiring a native attachment", async () => {
-  const { deps, calls } = createDeps();
-  deps.getSandboxRegistryEntry = () => ({
-    name: "target-sandbox",
-    agent: "langchain-deepagents-code",
-    provider: "vllm-local",
-    model: "fixture-model",
-    endpointUrl: "https://inference.local/v1",
-    gatewayName: "nemoclaw-9090",
-    nimContainer: "nemoclaw-nim-owned",
-  });
-  const session = createSession();
-  session.provider = "vllm-local";
-  session.model = "fixture-model";
-  session.endpointUrl = "https://inference.local/v1";
-  session.nimContainer = "nemoclaw-nim-owned";
-  session.steps.provider_selection.status = "complete";
+it.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
+  "resumes an owned Local NIM %s shared route without requiring a native attachment",
+  async (agentName) => {
+    const { deps, calls } = createDeps();
+    deps.getSandboxRegistryEntry = () => ({
+      name: "target-sandbox",
+      agent: agentName,
+      provider: "vllm-local",
+      model: "fixture-model",
+      endpointUrl: "https://inference.local/v1",
+      gatewayName: "nemoclaw-9090",
+      nimContainer: "nemoclaw-nim-owned",
+    });
+    const session = createSession();
+    session.provider = "vllm-local";
+    session.model = "fixture-model";
+    session.endpointUrl = "https://inference.local/v1";
+    session.nimContainer = "nemoclaw-nim-owned";
+    session.steps.provider_selection.status = "complete";
 
-  const options = resumeOptions(deps, session);
-  options.agent = { name: "langchain-deepagents-code" } as never;
-  options.forceInferenceSetup = true;
-  await expect(handleProviderInferenceState(options)).resolves.toMatchObject({
-    provider: "vllm-local",
+    const options = resumeOptions(deps, session);
+    options.agent = { name: agentName } as never;
+    options.forceInferenceSetup = true;
+    await expect(handleProviderInferenceState(options)).resolves.toMatchObject({
+      provider: "vllm-local",
+      model: "fixture-model",
+    });
+    expect(calls.error).not.toHaveBeenCalled();
+    expect(calls.setupNim).not.toHaveBeenCalled();
+    expect(calls.setupInference).toHaveBeenCalledOnce();
+    expect(calls.setupInference.mock.calls[0]?.at(-1)).toMatchObject({
+      agentName,
+      localNimSelected: true,
+    });
+  },
+);
+
+it("keeps a fresh OpenClaw native local endpoint independent of a shared peer", async () => {
+  const { deps, calls } = createDeps();
+  const selection = {
+    ...fallbackSelection,
+    provider: "llama-cpp-local",
     model: "fixture-model",
+    endpointUrl: "http://host.openshell.internal:8081/v1",
+    credentialEnv: "NEMOCLAW_LLAMACPP_LOCAL_TOKEN",
+    preferredInferenceApi: "openai-completions",
+  };
+  const peers = [
+    {
+      name: "shared-peer",
+      agent: "openclaw",
+      gatewayName: "nemoclaw-9090",
+      provider: selection.provider,
+      model: selection.model,
+      endpointUrl: "http://host.openshell.internal:8082/v1",
+      credentialEnv: selection.credentialEnv,
+      preferredInferenceApi: selection.preferredInferenceApi,
+    },
+  ];
+  calls.preflightGatewayRouteDiscovery.mockImplementation((request) =>
+    preflightGatewayRouteDiscovery({ ...request, sandboxes: peers }),
+  );
+  calls.checkGatewayRouteCompatibility.mockImplementation((request) =>
+    checkGatewayRouteCompatibility({ ...request, sandboxes: peers }),
+  );
+  calls.setupNim.mockImplementation(async (_gpu, _sandbox, _agent, _recover, _gateway, guard) => {
+    guard?.(selection);
+    return selection;
   });
-  expect(calls.error).not.toHaveBeenCalled();
-  expect(calls.setupNim).not.toHaveBeenCalled();
+  const options = resumeOptions(deps, createSession());
+  await expect(
+    handleProviderInferenceState({
+      ...options,
+      resume: false,
+      agent: { name: "openclaw" } as never,
+    }),
+  ).resolves.toMatchObject({ provider: "llama-cpp-local", model: "fixture-model" });
   expect(calls.setupInference).toHaveBeenCalledOnce();
-  expect(calls.setupInference.mock.calls[0]?.at(-1)).toMatchObject({
-    agentName: "langchain-deepagents-code",
-    localNimSelected: true,
-  });
+  expect(calls.error).not.toHaveBeenCalled();
 });

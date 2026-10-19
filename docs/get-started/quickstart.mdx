@@ -382,7 +382,8 @@ Use these details when your first-run path needs more control.
   <Accordion title="Web Search Messaging and Network Policies">
     After confirmation, NemoClaw registers the selected provider with OpenShell.
     NVIDIA Endpoints and supported fixed hosted providers use native endpoints through sandbox-attached OpenShell providers.
-    Custom and local providers retain the shared `inference.local` route.
+    New Ollama, standalone vLLM, and llama.cpp selections also use sandbox-attached providers for their host-local endpoints.
+    Local NVIDIA NIM, custom endpoints, and earlier local selections without a sandbox-attached provider retain the shared `inference.local` route.
     The wizard asks whether to enable web search and offers Brave Search or Tavily Search.
     Provide `BRAVE_API_KEY` for Brave Search or `TAVILY_API_KEY` for Tavily Search when prompted.
     NemoClaw validates the selected key before it creates the sandbox, registers a sandbox-scoped OpenShell provider, and writes only an OpenShell resolver placeholder into the OpenClaw configuration.

@@ -30,6 +30,32 @@ function googleChatPlan(): SandboxMessagingPlan {
 describe("policy channel provider refresh", () => {
   afterEach(() => vi.restoreAllMocks());
 
+  it("rejects an untyped channel provider before gateway application (#13344)", async () => {
+    const apply = vi.spyOn(MessagingSetupApplier, "applyCredentialsAtOpenShell");
+    const secret = "channel-secret-do-not-disclose";
+    let failure: unknown;
+    try {
+      policyChannelDependencies.upsertMessagingProviders(
+        [{ name: "alpha-telegram-bridge", envKey: "TELEGRAM_BOT_TOKEN", token: secret }],
+        "nemoclaw",
+        undefined,
+        {
+          plan: googleChatPlan(),
+          channelName: "telegram",
+          sandboxAgent: "openclaw",
+          sandboxName: "alpha",
+          revalidateSandboxIdentity: vi.fn(),
+        },
+      );
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toContain("Re-run channel setup with a supported profile.");
+    expect((failure as Error).message).not.toContain(secret);
+    expect(apply).not.toHaveBeenCalled();
+  });
+
   it("forwards Google Chat refresh material to the messaging applier (#9806)", async () => {
     const privateKey = "test-google-chat-private-key";
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);

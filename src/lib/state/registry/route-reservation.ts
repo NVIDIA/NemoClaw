@@ -4,11 +4,13 @@
 import {
   normalizeNativeLocalProviderAttachment,
   usesNativeLocalInference,
+  usesNativeLocalInferenceForAgent,
 } from "../../inference/native-local/contract";
 
 import { isDeepStrictEqual } from "node:util";
 
 import { normalizeInferenceSelection, type InferenceSelection } from "../../inference/selection";
+import { recordedNativeProviderAttachment } from "../../inference/native-provider/recorded-selection";
 import { hostedNativeProvider } from "../../inference/native-provider/hosted";
 import { requireHostedProviderAttachment } from "../../inference/native-provider/hosted-attachment";
 import { normalizeNativeNvidiaProviderAttachment } from "../../inference/native-nvidia";
@@ -406,7 +408,12 @@ export function retainedNativeLocalProviderAttachment(
 ): SandboxEntry["nativeLocalProviderAttachment"] {
   return existing &&
     !(selection.provider === "vllm-local" && existing.nimContainer) &&
-    usesNativeLocalInference(selection.provider, selection.endpointUrl) &&
+    (usesNativeLocalInference(selection.provider, selection.endpointUrl) ||
+      usesNativeLocalInferenceForAgent(
+        existing.agent,
+        selection.provider,
+        selection.endpointUrl,
+      )) &&
     selection.provider === existing.provider &&
     selection.endpointUrl === existing.endpointUrl &&
     selection.gatewayName === existing.gatewayName
@@ -419,12 +426,35 @@ export function nativeHostedReservationAttachment(
   value: unknown,
   provider: string | null | undefined,
   previous?: SandboxEntry,
+  selection?: Pick<
+    SandboxEntry,
+    "provider" | "endpointUrl" | "credentialEnv" | "preferredInferenceApi" | "gatewayName"
+  >,
 ) {
   const receipt = requireHostedProviderAttachment(value, provider);
-  return hostedNativeProvider(provider)
-    ? (receipt ??
-        (previous && previous.provider === provider
-          ? previous.nativeHostedProviderAttachment
-          : undefined))
-    : undefined;
+  if (receipt) return receipt;
+  if (!previous || previous.provider !== provider) return undefined;
+  const retained = requireHostedProviderAttachment(
+    previous.nativeHostedProviderAttachment,
+    provider,
+  );
+  if (retained?.custom) {
+    if (
+      !selection?.endpointUrl ||
+      !selection.credentialEnv ||
+      !selection.preferredInferenceApi ||
+      selection.gatewayName !== previous.gatewayName
+    )
+      return undefined;
+    try {
+      return recordedNativeProviderAttachment({
+        ...selection,
+        nativeHostedProviderAttachment: retained,
+      });
+    } catch {
+      // A changed binding needs new authority from provider setup.
+      return undefined;
+    }
+  }
+  return hostedNativeProvider(provider) ? retained : undefined;
 }

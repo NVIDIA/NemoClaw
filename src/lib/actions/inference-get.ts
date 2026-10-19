@@ -21,7 +21,10 @@ import {
 } from "../inference/gateway-route-compatibility";
 import { parseHttpsPinRouteId } from "../inference/https-pin-runtime";
 import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "../inference/native-nvidia";
-import { NATIVE_LOCAL_CREDENTIAL_ENV } from "../inference/native-local/agent-config";
+import {
+  isLocalInferenceProvider,
+  NATIVE_LOCAL_CREDENTIAL_ENV,
+} from "../inference/native-local/agent-config";
 import { normalizeNativeLocalProviderAttachment } from "../inference/selection";
 import { recordedNativeProviderAttachment } from "../inference/native-provider/recorded-selection";
 import { hostedNativeProvider } from "../inference/native-provider/hosted";
@@ -313,19 +316,21 @@ export async function runInferenceGet(
   const selectedSandbox = selectedSandboxName
     ? (deps.getSandbox ?? getKnownSandboxTarget)(selectedSandboxName)
     : null;
-  if (
+  const nativeAttachment =
     selectedSandbox &&
     selectedSandbox.nativeLocalProviderAttachment === undefined &&
-    recordedNativeProviderAttachment(selectedSandbox)
-  ) {
+    recordedNativeProviderAttachment(selectedSandbox);
+  if (selectedSandbox && nativeAttachment) {
     const payload: InferenceGetResult = {
       provider: selectedSandbox.provider ?? null,
       model: selectedSandbox.model ?? null,
       endpointUrl:
+        nativeAttachment.endpointUrl ??
         hostedNativeProvider(
           selectedSandbox.provider,
           selectedSandbox.nativeHostedProviderAttachment?.endpointUrl,
-        )?.endpoint ?? NVIDIA_HOSTED_NATIVE_ENDPOINT,
+        )?.endpoint ??
+        NVIDIA_HOSTED_NATIVE_ENDPOINT,
     };
     if (!options.quiet) {
       if (options.json) {
@@ -361,7 +366,14 @@ export async function runInferenceGet(
       attachment.credentialEnv !== NATIVE_LOCAL_CREDENTIAL_ENV ||
       typeof selectedSandbox.model !== "string" ||
       !selectedSandbox.model.trim() ||
-      selectedSandbox.agent !== "langchain-deepagents-code"
+      !(selectedSandbox.agent === "langchain-deepagents-code"
+        ? attachment.agent === undefined
+        : selectedSandbox.agent === "hermes"
+          ? attachment.agent === "hermes"
+          : selectedSandbox.agent === "openclaw" &&
+            attachment.agent === "openclaw" &&
+            isLocalInferenceProvider(selectedSandbox.provider) &&
+            !selectedSandbox.nimContainer)
     ) {
       throw new InferenceGetError(
         "Invalid native local provider attachment for the recorded inference selection",

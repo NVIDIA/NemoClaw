@@ -84,6 +84,7 @@ describe("composeSandboxConfigBody", () => {
         provider: "custom",
         base_url: "https://inference.local/v1",
       },
+      tools: { tool_search: { enabled: "on" } },
     };
 
     const written = composeSandboxConfigBody(config, HERMES_TARGET);
@@ -102,6 +103,8 @@ describe("composeSandboxConfigBody", () => {
       provider: "custom",
       base_url: "https://inference.local/v1",
     });
+    // Hermes/PyYAML uses YAML 1.1; unquoted "on" becomes true there.
+    expect(YAML.parse(written, { version: "1.1" })).toEqual(config);
   });
 
   it("does not prepend the header for non-Hermes targets", () => {
@@ -229,12 +232,112 @@ describe("composeSandboxConfigBody", () => {
   });
 
   it.each([
-    { value: undefined, expectedStatus: 75 },
-    { value: "nvapi-do-not-write", expectedStatus: 1 },
-    { value: "openshell:resolve:env:NVIDIA_INFERENCE_API_KEY", expectedStatus: 1 },
+    [
+      "compatible-endpoint",
+      "inference",
+      "COMPATIBLE_API_KEY",
+      "http://10.1.1.225:8123/v1",
+      "openai-completions",
+    ],
+    [
+      "compatible-endpoint",
+      "inference",
+      "COMPATIBLE_API_KEY",
+      "https://fixture.example/v1",
+      "openai-responses",
+    ],
+    [
+      "compatible-anthropic-endpoint",
+      "inference",
+      "COMPATIBLE_ANTHROPIC_API_KEY",
+      "https://fixture.example/openai/v1",
+      "openai-completions",
+    ],
+    [
+      "compatible-anthropic-endpoint",
+      "inference",
+      "COMPATIBLE_ANTHROPIC_API_KEY",
+      "https://fixture.example/openai/v1",
+      "openai-responses",
+    ],
+    [
+      "compatible-anthropic-endpoint",
+      "anthropic",
+      "COMPATIBLE_ANTHROPIC_API_KEY",
+      "https://fixture.example",
+      "anthropic-messages",
+    ],
+    ["openai-api", "openai", "OPENAI_API_KEY", "https://api.openai.com/v1", "openai-completions"],
+    [
+      "anthropic-prod",
+      "anthropic",
+      "ANTHROPIC_API_KEY",
+      "https://api.anthropic.com",
+      "anthropic-messages",
+    ],
+    [
+      "hermes-provider",
+      "inference",
+      "OPENAI_API_KEY",
+      "https://hermes.example/v1",
+      "openai-completions",
+    ],
   ])(
-    "refuses invalid native NVIDIA handle $value before config mutation",
-    ({ value, expectedStatus }) => {
+    "materializes %s native credentials at %s from %s before the atomic config write",
+    (logicalProvider, provider, key, baseUrl, api) => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-config-"));
+      try {
+        fs.writeFileSync(path.join(directory, "openclaw"), '#!/bin/sh\ncat "$4"\n', {
+          mode: 0o700,
+        });
+        const canonical = `openshell:resolve:env:${key}`;
+        const headers = { "X-NemoClaw-Upstream-Provider": logicalProvider };
+        const handle = `openshell:resolve:env:s${"a".repeat(64)}_${key}`;
+        const updates = [
+          { dotpath: "agents.defaults.model.primary", value: `${provider}/model-a` },
+          {
+            dotpath: `models.providers.${provider}`,
+            value: { baseUrl, api, headers, apiKey: canonical, models: [{ id: "model-a" }] },
+          },
+          { dotpath: "channels.telegram.botToken", value: canonical },
+        ];
+        const invocation = buildOpenClawNativeConfigBatchInvocation("alpha", updates);
+        const command = invocation.args.slice(invocation.args.indexOf("--") + 1);
+        const result = spawnSync(command[0]!, command.slice(1), {
+          input: invocation.input,
+          encoding: "utf8",
+          timeout: 5_000,
+          env: { ...process.env, PATH: `${directory}:${process.env.PATH ?? ""}`, [key]: handle },
+        });
+        expect(result.status, result.stderr).toBe(0);
+        expect(JSON.parse(result.stdout)).toEqual([
+          { path: updates[0]!.dotpath, value: updates[0]!.value },
+          {
+            path: updates[1]!.dotpath,
+            value: { baseUrl, api, headers, apiKey: handle, models: [{ id: "model-a" }] },
+          },
+          { path: updates[2]!.dotpath, value: canonical },
+        ]);
+        expect(invocation.input).not.toContain(handle);
+        expect(invocation.args.join(" ")).not.toContain(handle);
+      } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.each(
+    [
+      { value: undefined, expectedStatus: 75 },
+      { value: "nvapi-do-not-write", expectedStatus: 1 },
+      { value: "openshell:resolve:env:NVIDIA_INFERENCE_API_KEY", expectedStatus: 1 },
+      { value: "openshell:resolve:env:v43_OTHER_API_KEY", expectedStatus: 1 },
+    ].flatMap((scenario) =>
+      ["NVIDIA_INFERENCE_API_KEY", "COMPATIBLE_API_KEY"].map((key) => ({ ...scenario, key })),
+    ),
+  )(
+    "refuses invalid native $key handle $value before config mutation",
+    ({ value, expectedStatus, key }) => {
       const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-config-"));
       try {
         fs.writeFileSync(path.join(directory, "openclaw"), '#!/bin/sh\ncat "$4"\n', {
@@ -243,7 +346,18 @@ describe("composeSandboxConfigBody", () => {
         const invocation = buildOpenClawNativeConfigBatchInvocation("alpha", [
           {
             dotpath: "models.providers.inference",
-            value: { baseUrl: NVIDIA_HOSTED_NATIVE_ENDPOINT, apiKey: NVIDIA_INFERENCE_PLACEHOLDER },
+            value: {
+              baseUrl: NVIDIA_HOSTED_NATIVE_ENDPOINT,
+              apiKey:
+                key === "NVIDIA_INFERENCE_API_KEY"
+                  ? NVIDIA_INFERENCE_PLACEHOLDER
+                  : `openshell:resolve:env:${key}`,
+              api: "openai-completions",
+              headers: {
+                "X-NemoClaw-Upstream-Provider":
+                  key === "NVIDIA_INFERENCE_API_KEY" ? "nvidia-prod" : "compatible-endpoint",
+              },
+            },
           },
         ]);
         const command = invocation.args.slice(invocation.args.indexOf("--") + 1);
@@ -254,7 +368,7 @@ describe("composeSandboxConfigBody", () => {
           env: {
             ...process.env,
             PATH: `${directory}:${process.env.PATH ?? ""}`,
-            NVIDIA_INFERENCE_API_KEY: value,
+            [key]: value,
           },
         });
         expect(failed.status).toBe(expectedStatus);
@@ -403,7 +517,54 @@ describe("composeSandboxConfigBody", () => {
     ).toThrow("Native provider config path does not match its identity");
   });
 
-  it("keeps compatible endpoint resolver placeholders outside hosted handle pinning (#13040)", () => {
+  it.each([
+    {
+      label: "credential from another provider",
+      patch: { apiKey: "openshell:resolve:env:ANTHROPIC_API_KEY" },
+    },
+    {
+      label: "endpoint with embedded credentials",
+      patch: { baseUrl: "https://user:secret@fixture.example/v1" },
+    },
+    { label: "endpoint with a query", patch: { baseUrl: "https://fixture.example/v1?key=secret" } },
+  ])("rejects custom native $label before config mutation (#13195)", ({ patch }) => {
+    expect(() =>
+      buildOpenClawNativeConfigBatchInvocation("alpha", [
+        {
+          dotpath: "models.providers.inference",
+          value: {
+            baseUrl: "https://fixture.example/v1",
+            api: "openai-completions",
+            apiKey: "openshell:resolve:env:COMPATIBLE_API_KEY",
+            headers: { "X-NemoClaw-Upstream-Provider": "compatible-endpoint" },
+            ...patch,
+          },
+        },
+      ]),
+    ).toThrow();
+  });
+
+  it("rejects a custom native path mismatch or ambiguous batch before config mutation (#13195)", () => {
+    const update = {
+      dotpath: "models.providers.anthropic",
+      value: {
+        baseUrl: "https://fixture.example",
+        api: "anthropic-messages",
+        apiKey: "openshell:resolve:env:COMPATIBLE_ANTHROPIC_API_KEY",
+        headers: { "X-NemoClaw-Upstream-Provider": "compatible-anthropic-endpoint" },
+      },
+    };
+    expect(() =>
+      buildOpenClawNativeConfigBatchInvocation("alpha", [
+        { ...update, dotpath: "models.providers.inference" },
+      ]),
+    ).toThrow("Native provider config path does not match its identity");
+    expect(() => buildOpenClawNativeConfigBatchInvocation("alpha", [update, update])).toThrow(
+      "Expected one native provider config update",
+    );
+  });
+
+  it("keeps shared-route compatible endpoint placeholders outside native handle pinning (#13040, #13195)", () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-compatible-config-"));
     try {
       fs.writeFileSync(path.join(directory, "openclaw"), '#!/bin/sh\ncat "$4"\n', {
@@ -413,7 +574,7 @@ describe("composeSandboxConfigBody", () => {
         {
           dotpath: "models.providers.inference",
           value: {
-            baseUrl: "https://compatible.example/v1",
+            baseUrl: "https://inference.local/v1",
             apiKey: "openshell:resolve:env:COMPATIBLE_API_KEY",
             headers: { "X-NemoClaw-Upstream-Provider": "compatible-endpoint" },
           },

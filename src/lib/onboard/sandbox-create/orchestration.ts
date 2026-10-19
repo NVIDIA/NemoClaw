@@ -1784,23 +1784,17 @@ function directCreateHermesToolGatewayProfile(input: {
   readonly providerNames: readonly string[];
   readonly getBroker: () => {
     getHermesToolGatewayProviderName(sandboxName: string): string;
-    HERMES_TOOL_GATEWAY_PROVIDER_PROFILE_TYPE: string;
-    HERMES_TOOL_GATEWAY_REFRESH_CREDENTIAL_ENV: string;
   };
 }): { readonly hermesToolGateway?: ProviderPreparationInput["hermesToolGateway"] } {
   if (!input.enabled) return {};
-  const broker = input.getBroker();
-  const providerName = broker.getHermesToolGatewayProviderName(input.sandboxName);
-  if (!input.providerNames.includes(providerName)) return {};
-  return {
-    hermesToolGateway: {
-      providerName,
-      profileType: broker.HERMES_TOOL_GATEWAY_PROVIDER_PROFILE_TYPE,
-      credentialEnv: broker.HERMES_TOOL_GATEWAY_REFRESH_CREDENTIAL_ENV,
-    },
-  };
+  const providerName = input.getBroker().getHermesToolGatewayProviderName(input.sandboxName);
+  return input.providerNames.includes(providerName) ? { hermesToolGateway: { providerName } } : {};
 }
 
+/**
+ * Return the create-or-reuse step for one onboard run. The post-create retry
+ * owner is installed once here and serves every call of the returned step.
+ */
 export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrchestrationRuntime) {
   const postCreateRecoveryRetryOwner = installPostCreateRecoveryRetryOwner();
   return async function createSandboxWithBaseImageResolution(
@@ -2314,6 +2308,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         updateReusedSandboxMetadata,
         releaseDashboardPort: dashboardPortReservationScope.release,
         revalidateSandboxIdentity: (operation) => revalidateSandboxIdentity(true, operation),
+        cliName: cliName(),
       }));
     };
     if (recreateRuntime.acceptedTarget && !resumingVerifiedCreate) {
@@ -3878,6 +3873,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           }),
         sourceRoot: ROOT,
         buildContextSettings: {
+          nativeEndpointUrl: resolvedCreateIntent.nativeLocalProviderAttachment?.endpointUrl,
           model,
           provider,
           preferredInferenceApi,

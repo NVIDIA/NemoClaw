@@ -11,8 +11,10 @@ import {
   CANDIDATE_AGENT_FEATURE_ENV,
   CANDIDATE_QUALIFICATION_RECEIPT_ENV,
 } from "../../../src/lib/agent/candidate.ts";
+import { PI_QUALIFICATION_TEST_TIMEOUT_MS } from "../../../tools/e2e/onboard-timeout-contract.mts";
 import { runBoundedRetry } from "../../../tools/e2e/retry-evidence.mts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
+import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { outputContainsSandbox, resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import {
@@ -40,8 +42,8 @@ import {
 const GATEWAY = "nemoclaw";
 const MODEL = "nvidia/nemotron-3-super-120b-a12b";
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-pi-qual";
-const TASK_VERSION = "pi-read-v2";
-const LIVE_TIMEOUT_MS = 90 * 60_000;
+const TASK_VERSION = "pi-read-v3";
+const LIVE_TIMEOUT_MS = PI_QUALIFICATION_TEST_TIMEOUT_MS;
 const PI_COMMAND_TIMEOUT_MS = 5 * 60_000;
 const PI_PROVIDER_MAX_ATTEMPTS = 2;
 const PI_PROVIDER_RETRY_DELAY_MS = 10_000;
@@ -229,7 +231,7 @@ async function persistentStateInventory(
   options: { seedNativeState?: boolean } = {},
 ) {
   const stateFixture = options.seedNativeState
-    ? `printf '%s\\n' '{"defaultProjectTrust":"always","futurePiSetting":{"enabled":true},"theme":"nvidia-dark"}' > /sandbox/.pi/agent/settings.json; printf '%s\\n' '{"nemoclawE2E":"${PI_TRUST_PRESERVATION_MARKER}"}' > /sandbox/.pi/agent/trust.json; chmod 600 /sandbox/.pi/agent/settings.json /sandbox/.pi/agent/trust.json; `
+    ? `printf '%s\\n' '${JSON.stringify({ defaultProjectTrust: "always", futurePiSetting: { enabled: true }, theme: "nvidia-dark", defaultProvider: "openshell", defaultModel: MODEL }, null, 2)}' > /sandbox/.pi/agent/settings.json; printf '%s\\n' '{"nemoclawE2E":"${PI_TRUST_PRESERVATION_MARKER}"}' > /sandbox/.pi/agent/trust.json; chmod 600 /sandbox/.pi/agent/settings.json /sandbox/.pi/agent/trust.json; `
     : "";
   const result = await execPiShell(
     sandbox,
@@ -295,6 +297,8 @@ test(
         "recover Pi after sandbox and gateway restarts",
         "prove Pi policy and credential boundaries",
         "destroy Pi and publish bounded evidence",
+        "prove Pi native-local inference and credential isolation",
+        "rebuild Pi with its native-local model and credential",
       ],
     },
   },
@@ -336,7 +340,7 @@ test(
       platform,
       taskVersion: TASK_VERSION,
       contract:
-        "exact candidate onboarding, tool execution, lifecycle recovery, policy denial, and credential isolation",
+        "exact candidate onboarding, native-local rebuild, tool execution, lifecycle recovery, policy denial, and credential isolation",
     });
 
     progress.phase("validate the exact Pi candidate receipt");
@@ -536,10 +540,6 @@ test(
       },
     );
     expect(logs.exitCode, resultText(logs)).toBe(0);
-    const trace = fs.readFileSync(guard.tracePath, "utf8");
-    expect(trace.trim(), "Docker build guard trace").not.toBe("");
-    assertNoDockerfileBuild(trace);
-    await artifacts.writeText("docker-argv.log", trace);
     const inferenceConfig = await execPiShell(
       sandbox,
       trustedSandboxShellScript("cat /sandbox/.pi/agent/models.json"),
@@ -580,6 +580,164 @@ test(
     expect(openshellAfterDestroy.exitCode, resultText(openshellAfterDestroy)).toBe(0);
     expect(outputContainsSandbox(openshellAfterDestroy, SANDBOX_NAME)).toBe(false);
 
+    // Distinct live boundary: a fresh Pi process must use its attached local
+    // provider. The existing hosted phase above continues to qualify rebuild
+    // and recovery without repeating them for this transport.
+    progress.phase("prove Pi native-local inference and credential isolation");
+    const nativeModel = "pi-native-qualification";
+    const nativeKey = "nvapi-PiNativeQualificationFixtureOnly123456";
+    const nativeEndpoint = await startFakeOpenAiCompatibleServer({
+      apiKey: nativeKey,
+      chatContent: "PONG",
+      host: "0.0.0.0",
+      model: nativeModel,
+      // Avoid the reserved proxy port 11435.
+      port: 11434,
+      progress,
+      publicHost: "host.openshell.internal",
+      requireAuth: true,
+      requireAuthModels: true,
+    });
+    cleanup.trackDisposable("close Pi native endpoint", async () => {
+      try {
+        await artifacts.writeJson("pi-native-endpoint-requests.json", nativeEndpoint.requests());
+      } finally {
+        await nativeEndpoint.close();
+      }
+    });
+    const nativeEnv = {
+      ...env,
+      NEMOCLAW_PROVIDER: "custom",
+      NEMOCLAW_MODEL: nativeModel,
+      NEMOCLAW_ENDPOINT_URL: nativeEndpoint.baseUrl,
+      NEMOCLAW_PREFERRED_API: "openai-completions",
+      COMPATIBLE_API_KEY: nativeKey,
+    };
+    const nativeOnboard = await host.nemoclaw(
+      [
+        "onboard",
+        "--temp-managed-runtime",
+        "--temp-managed-runtime-catalog",
+        catalogPath,
+        "--non-interactive",
+        "--yes",
+        "--yes-i-accept-third-party-software",
+        "--no-gpu",
+        "--agent",
+        "pi",
+        "--name",
+        SANDBOX_NAME,
+      ],
+      {
+        artifactName: "pi-native-onboard",
+        env: nativeEnv,
+        redactionValues: [...inference.redactionValues(), nativeKey],
+        timeoutMs: 20 * 60_000,
+      },
+    );
+    expect(nativeOnboard.exitCode, resultText(nativeOnboard)).toBe(0);
+    const requestOffset = nativeEndpoint.requests().length;
+    const nativeTurn = await sandbox.exec(
+      SANDBOX_NAME,
+      [
+        "pi",
+        "--no-approve",
+        "--no-context-files",
+        "--mode",
+        "json",
+        "--print",
+        "Reply with PONG. Do not use tools.",
+      ],
+      {
+        artifactName: "pi-native-turn",
+        env: sandboxAccessEnv(),
+        redactionValues: [nativeKey],
+        timeoutMs: PI_COMMAND_TIMEOUT_MS,
+      },
+    );
+    expect(nativeTurn.exitCode, resultText(nativeTurn)).toBe(0);
+    expect(
+      nativeEndpoint
+        .requests()
+        .slice(requestOffset)
+        .some(
+          (request) =>
+            request.auth === "ok" &&
+            request.method === "POST" &&
+            request.path === "/v1/chat/completions" &&
+            request.model === nativeModel,
+        ),
+    ).toBe(true);
+    progress.phase("rebuild Pi with its native-local model and credential");
+    const nativeRebuild = await host.nemoclaw([SANDBOX_NAME, "rebuild", "--yes"], {
+      artifactName: "pi-native-rebuild",
+      env: nativeEnv,
+      redactionValues: [...inference.redactionValues(), nativeKey],
+      timeoutMs: 20 * 60_000,
+    });
+    expect(nativeRebuild.exitCode, resultText(nativeRebuild)).toBe(0);
+    const rebuiltRequestOffset = nativeEndpoint.requests().length;
+    const rebuiltTurn = await sandbox.exec(
+      SANDBOX_NAME,
+      [
+        "pi",
+        "--no-approve",
+        "--no-context-files",
+        "--mode",
+        "json",
+        "--print",
+        "Reply with PONG. Do not use tools.",
+      ],
+      {
+        artifactName: "pi-native-turn-after-rebuild",
+        env: sandboxAccessEnv(),
+        redactionValues: [nativeKey],
+        timeoutMs: PI_COMMAND_TIMEOUT_MS,
+      },
+    );
+    expect(rebuiltTurn.exitCode, resultText(rebuiltTurn)).toBe(0);
+    expect(
+      nativeEndpoint
+        .requests()
+        .slice(rebuiltRequestOffset)
+        .some(
+          (request) =>
+            request.auth === "ok" &&
+            request.method === "POST" &&
+            request.path === "/v1/chat/completions" &&
+            request.model === nativeModel,
+        ),
+    ).toBe(true);
+    const nativeSecurity = await sandbox.exec(SANDBOX_NAME, ["node", "-e", SECURITY_PROBE], {
+      artifactName: "pi-native-credential-boundary",
+      env: sandboxAccessEnv(),
+      redactionValues: [nativeKey],
+      timeoutMs: 60_000,
+    });
+    expect(nativeSecurity.exitCode, resultText(nativeSecurity)).toBe(0);
+    const nativeDestroy = await host.nemoclaw(
+      [SANDBOX_NAME, "destroy", "--yes", "--no-cleanup-gateway"],
+      {
+        artifactName: "pi-native-destroy",
+        env: nativeEnv,
+        redactionValues: [...inference.redactionValues(), nativeKey],
+        timeoutMs: 5 * 60_000,
+      },
+    );
+    expect(nativeDestroy.exitCode, resultText(nativeDestroy)).toBe(0);
+    const nativeAbsent = await sandbox.list({
+      artifactName: "pi-native-list-after-destroy",
+      env,
+      timeoutMs: 30_000,
+    });
+    expect(nativeAbsent.exitCode, resultText(nativeAbsent)).toBe(0);
+    expect(outputContainsSandbox(nativeAbsent, SANDBOX_NAME)).toBe(false);
+
+    const trace = fs.readFileSync(guard.tracePath, "utf8");
+    expect(trace.trim(), "Docker build guard trace").not.toBe("");
+    assertNoDockerfileBuild(trace);
+    await artifacts.writeText("docker-argv.log", trace);
+
     await artifacts.writeJson("pi-agent-qualification.json", {
       kind: "nemoclaw-pi-agent-qualification-v1",
       candidate: {
@@ -599,6 +757,15 @@ test(
         provider: inference.expectedRouteProvider,
         ...inferenceEvidence,
       },
+      nativeLocal: {
+        model: nativeModel,
+        freshPiTurn: true,
+        authenticatedRequest: true,
+        rebuiltPiTurn: true,
+        rebuiltAuthenticatedRequest: true,
+        upstreamCredentialAbsent: true,
+        destroyed: true,
+      },
       policy: {
         upstreamCredentialEnvironmentAbsent: true,
         credentialFilesAbsent: true,
@@ -614,7 +781,7 @@ test(
         interactive: true,
         nativeDefaultProjectTrustPreservedAcrossRebuild: true,
         nativeSettingsPreservedAcrossRebuild: true,
-        perPathTrustExcludedAcrossRebuild: true,
+        trustFileMarkerPreservedAcrossRebuild: true,
         sessionStatePreservedAcrossRebuild: true,
       },
       lifecycle: ["onboard", "interactive", "rebuild", "gateway-recovery", "destroy"],

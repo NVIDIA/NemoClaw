@@ -329,10 +329,14 @@ describe("fixed catalog vLLM installs", () => {
     expect(mocks.dockerRunDetached).toHaveBeenCalledOnce();
   });
 
-  it.each(["", "nemotron-3.5-super-vl-120b"])(
-    "carries the reviewed model guard through native installation with model intent '%s'",
-    async (modelIntent) => {
-      process.env.NEMOCLAW_VLLM_MODEL = modelIntent;
+  it.each([
+    ["", undefined],
+    ["nemotron-3.5-super-vl-120b", undefined],
+    ["nemotron-3.5-super-vl-120b", "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4"],
+  ])(
+    "carries the reviewed model guard for selection '%s' and checkpoint '%s'",
+    async (requestedModel, checkpointModel) => {
+      process.env.NEMOCLAW_VLLM_MODEL = requestedModel;
       process.env.HF_TOKEN = "hf_fixture_download_only";
       mocks.getGpuIndicesByName.mockReturnValue([0]);
       const profile = detectVllmProfile({ platform: "station", type: "nvidia" })!;
@@ -356,6 +360,7 @@ describe("fixed catalog vLLM installs", () => {
         hasImage: true,
         nonInteractive: true,
         promptFn: vi.fn(),
+        modelIntent: checkpointModel,
         readinessReports,
         resolveManagedBridgeHost: () => "172.18.0.1",
       });
@@ -492,6 +497,25 @@ describe("fixed catalog vLLM installs", () => {
       expect.stringContaining("the resumed model 'qwen3.6-35b-a3b-nvfp4' does not match"),
     );
     expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
+  });
+
+  it("rejects a different model override before resuming vLLM", async () => {
+    process.env.NEMOCLAW_VLLM_MODEL = "nemotron-3-ultra-550b-a55b";
+    mocks.getGpuIndicesByName.mockReturnValue([0]);
+    const profile = detectVllmProfile({ platform: "station", type: "nvidia" })!;
+
+    const result = await installVllm(profile, {
+      hasImage: true,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+      modelIntent: "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4",
+    });
+
+    expect(result).toEqual({ ok: false });
+    expect(spies.errSpy).toHaveBeenCalledWith(
+      expect.stringContaining("the resumed model conflicts with NEMOCLAW_VLLM_MODEL"),
+    );
+    expect(mocks.dockerRunDetached).not.toHaveBeenCalled();
   });
 
   it("still rejects an operator model override against a serving preset", async () => {

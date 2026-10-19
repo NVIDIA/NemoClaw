@@ -434,11 +434,17 @@ describe("sandbox route publication", () => {
   });
 });
 
-function nativeRecreationHarness() {
+function nativeRecreationHarness(
+  agentName:
+    | "langchain-deepagents-code"
+    | "openclaw"
+    | "hermes"
+    | "pi" = "langchain-deepagents-code",
+) {
   const session = createSession({ sandboxName: "saved" });
   const row: SandboxEntry = {
     name: "saved",
-    agent: "langchain-deepagents-code",
+    agent: agentName,
     provider: "vllm-local",
     model: "meta-llama",
     endpointUrl: "http://host.openshell.internal:8000/v1",
@@ -447,6 +453,7 @@ function nativeRecreationHarness() {
   };
   const source = structuredClone(row);
   const attachment = nativeLocalSetupReceipt({
+    ...(agentName === "langchain-deepagents-code" ? {} : { agent: agentName }),
     provider: "vllm-local",
     sandboxName: "saved",
     gatewayName: "nemoclaw",
@@ -468,7 +475,7 @@ function nativeRecreationHarness() {
     ...(await resolve(input)),
     nativeLocalProviderAttachment: input.nativeLocalProviderAttachment,
   });
-  const run = () =>
+  const run = (overrides: Partial<ReturnType<typeof baseOptions>> = {}) =>
     handleSandboxState({
       ...baseOptions(deps, session),
       sandboxName: row.name,
@@ -478,53 +485,100 @@ function nativeRecreationHarness() {
       endpointUrl: row.endpointUrl!,
       recreateSandbox: () => true,
       stagedNativeLocalRecreation: { source, attachment },
+      ...overrides,
     });
   return { row, source, attachment, session, reserve, deps, calls, run };
 }
 
-describe("legacy DCode recreation publication", () => {
-  it("publishes the native attachment only at the post-backup replacement seam (#13197)", async () => {
-    const { row, source, attachment, session, reserve, deps, run } = nativeRecreationHarness();
-    deps.createSandbox = async (...args: unknown[]) => {
-      expect(row).toEqual(source);
-      expect(reserve).not.toHaveBeenCalled();
-      const intent = args.at(-2) as {
-        resolved: { inferenceProvider: string; nativeLocalProviderAttachment: unknown };
-        reservePublishedRouteAfterBackup: () => Promise<void>;
+describe.each(["langchain-deepagents-code", "openclaw", "hermes", "pi"] as const)(
+  "legacy %s recreation publication",
+  (agentName) => {
+    it("publishes the native attachment only at the post-backup replacement seam (#13197)", async () => {
+      const { row, source, attachment, session, reserve, deps, run } =
+        nativeRecreationHarness(agentName);
+      deps.createSandbox = async (...args: unknown[]) => {
+        expect(row).toEqual(source);
+        expect(reserve).not.toHaveBeenCalled();
+        const intent = args.at(-2) as {
+          resolved: { inferenceProvider: string; nativeLocalProviderAttachment: unknown };
+          reservePublishedRouteAfterBackup: () => Promise<void>;
+        };
+        expect(intent.resolved).toMatchObject({
+          inferenceProvider: attachment.providerName,
+          nativeLocalProviderAttachment: attachment,
+        });
+        await intent.reservePublishedRouteAfterBackup();
+        expect(row.nativeLocalProviderAttachment).toEqual(attachment);
+        return "saved";
       };
-      expect(intent.resolved).toMatchObject({
-        inferenceProvider: attachment.providerName,
-        nativeLocalProviderAttachment: attachment,
-      });
-      await intent.reservePublishedRouteAfterBackup();
-      expect(row.nativeLocalProviderAttachment).toEqual(attachment);
-      return "saved";
-    };
-    await run();
-    expect(reserve).toHaveBeenCalledExactlyOnceWith(
-      "saved",
-      expect.objectContaining({
-        nativeLocalProviderAttachment: attachment,
-        reservationSessionId: session.sessionId,
-      }),
-    );
-  });
+      await run();
+      expect(reserve).toHaveBeenCalledExactlyOnceWith(
+        "saved",
+        expect.objectContaining({
+          nativeLocalProviderAttachment: attachment,
+          reservationSessionId: session.sessionId,
+        }),
+      );
+    });
 
-  it("preserves the legacy source when backup rejects recreation (#13197)", async () => {
-    const { row, source, reserve, deps, run } = nativeRecreationHarness();
-    deps.createSandbox = async () => {
-      throw new Error("backup refused");
-    };
-    await expect(run()).rejects.toThrow("backup refused");
-    expect(reserve).not.toHaveBeenCalled();
-    expect(row).toEqual(source);
-  });
+    it("preserves the legacy source when backup rejects recreation (#13197)", async () => {
+      const { row, source, reserve, deps, run } = nativeRecreationHarness(agentName);
+      deps.createSandbox = async () => {
+        throw new Error("backup refused");
+      };
+      await expect(run()).rejects.toThrow("backup refused");
+      expect(reserve).not.toHaveBeenCalled();
+      expect(row).toEqual(source);
+    });
 
-  it("rejects a changed legacy source before starting recreation (#13197)", async () => {
-    const { row, reserve, calls, run } = nativeRecreationHarness();
-    row.model = "another-model";
+    it("rejects a changed legacy source before starting recreation (#13197)", async () => {
+      const { row, reserve, calls, run } = nativeRecreationHarness(agentName);
+      row.model = "another-model";
+      await expect(run()).rejects.toThrow("legacy route ownership changed");
+      expect(reserve).not.toHaveBeenCalled();
+      expect(calls.createSandbox).not.toHaveBeenCalled();
+    });
+  },
+);
+
+describe("Hermes staged recreation authority", () => {
+  it.each([
+    { label: "another consumer", receipt: { agent: undefined } },
+    { label: "sibling sandbox", receipt: { sandboxName: "sibling" } },
+    { label: "foreign gateway", receipt: { gatewayName: "foreign" } },
+    { label: "different provider", receipt: { provider: "ollama-local" } },
+  ])("rejects $label before recreation or reservation", async ({ receipt }) => {
+    const { row, source, attachment, reserve, calls, run } = nativeRecreationHarness("hermes");
+    Object.assign(attachment, receipt);
     await expect(run()).rejects.toThrow("legacy route ownership changed");
     expect(reserve).not.toHaveBeenCalled();
     expect(calls.createSandbox).not.toHaveBeenCalled();
+    expect(row).toEqual(source);
+  });
+
+  it.each([
+    { label: "resume", options: { resume: true } },
+    { label: "no recreate intent", options: { recreateSandbox: () => false } },
+    { label: "missing session", options: { session: null } },
+  ])("retains the $label refusal", async ({ options }) => {
+    const { row, source, reserve, calls, run } = nativeRecreationHarness("hermes");
+    await expect(run(options)).rejects.toThrow("legacy route ownership changed");
+    expect(reserve).not.toHaveBeenCalled();
+    expect(calls.createSandbox).not.toHaveBeenCalled();
+    expect(row).toEqual(source);
+  });
+
+  it("revalidates the legacy source again at the post-backup reservation seam", async () => {
+    const { row, reserve, deps, run } = nativeRecreationHarness("hermes");
+    deps.createSandbox = async (...args: unknown[]) => {
+      const intent = args.at(-2) as { reservePublishedRouteAfterBackup: () => Promise<void> };
+      row.model = "concurrent-selection";
+      await intent.reservePublishedRouteAfterBackup();
+      throw new Error("must not reserve a changed source");
+    };
+    await expect(run()).rejects.toThrow("legacy route ownership changed");
+    expect(reserve).not.toHaveBeenCalled();
+    expect(row.model).toBe("concurrent-selection");
+    expect(row.nativeLocalProviderAttachment).toBeUndefined();
   });
 });

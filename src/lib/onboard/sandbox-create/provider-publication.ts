@@ -1,8 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import path from "node:path";
-
+import {
+  importHermesToolGatewayProfile,
+  LEGACY_HERMES_TOOL_GATEWAY_PROVIDER_TYPE,
+  matchHermesToolGatewayProviderType,
+} from "../../hermes-tool-gateway-provider-profile";
 import { ensureNativeLocalProviderAttached } from "../../inference/native-local/profile";
 import { isNativeHostedProviderName } from "../../inference/native-provider/hosted-attachment";
 import { hostedNativeProviderForAttachment } from "../../inference/native-provider/hosted-attachment";
@@ -12,17 +15,21 @@ import type { SandboxCreateOrchestrationRuntime } from "../../onboard";
 import type {
   OpenShellProviderAdapter,
   OpenShellProviderError,
+  OpenShellProviderProfileMutationResult,
 } from "../../adapters/openshell/provider-adapter";
 import {
   createCliOpenShellProviderAdapter,
   type CliOpenShellProviderAdapter,
 } from "../../adapters/openshell/provider-adapter-cli";
 import type { OpenShellGatewayEndpointEnvironment } from "../../adapters/openshell/gateway-scope";
+import { endpointlessProviderProfilePath } from "../../adapters/openshell/provider-profile";
 import { namedOpenShellGateway } from "../../adapters/openshell/sandbox-observer";
 import { REPOSITORY_ROOT } from "../../core/repository-root";
 import { messagingProviderProfileForType } from "../../messaging/applier/provider-application";
 import {
   ensureNativeNvidiaProviderAttached,
+  nativeNvidiaProviderProfilePath,
+  NVIDIA_HOSTED_NATIVE_PROFILE_ID,
   NVIDIA_HOSTED_NATIVE_PROVIDER,
   requireNativeNvidiaProviderProfileBoundary,
 } from "../../inference/native-nvidia";
@@ -32,10 +39,7 @@ import {
 } from "../../messaging/provider-profile";
 import { listMessagingBridgeProfiles } from "../messaging-bridge-provider";
 import type { SandboxEntry } from "../../state/registry";
-import {
-  matchesGatewayCredentialFamilyProviderBinding,
-  matchesGatewayCredentialOnlyProviderBinding,
-} from "../gateway-provider-metadata";
+import { matchesGatewayCredentialFamilyProviderBinding } from "../gateway-provider-metadata";
 import { resolveRegisteredRuntimeProvider } from "../runtime-provider/selection";
 import type { SandboxCreateIntent } from "../sandbox-create-intent-types";
 
@@ -48,11 +52,7 @@ type ProviderPreparationInput = {
   readonly extraProviders: readonly string[];
   readonly gatewayName: string;
   readonly directCreateProviderNames?: readonly string[];
-  readonly hermesToolGateway?: Readonly<{
-    providerName: string;
-    profileType: string;
-    credentialEnv: string;
-  }>;
+  readonly hermesToolGateway?: Readonly<{ providerName: string }>;
 };
 
 type ProviderPreparationDeps = Pick<SandboxCreateOrchestrationRuntime, "runOpenshell"> & {
@@ -77,7 +77,38 @@ function expectedMessagingBindings(input: ProviderPreparationInput) {
   );
 }
 
-/** Recheck only profiles already owned by messaging or web-search setup. */
+function ownedProfileFailureDetail(
+  failure: Extract<OpenShellProviderProfileMutationResult, { ok: false }>,
+): string {
+  const { error, operation = "verify" } = failure;
+  const classification = "reason" in error ? `${error.kind}/${error.reason}` : error.kind;
+  const guidance = (() => {
+    if (error.kind === "command" && error.reason === "profile_incompatible") {
+      return "Resolve the conflicting same-ID profile on the selected gateway, then retry.";
+    }
+    if (error.kind === "command" && error.reason === "not_found") {
+      return "Inspect the selected gateway's provider profile and resolve the missing resource, then retry.";
+    }
+    if (error.kind === "validation" && operation === "read") {
+      return "Restore the bundled provider profile from this NemoClaw release, then retry.";
+    }
+    return {
+      authentication: "Restore authentication for the selected OpenShell gateway, then retry.",
+      schema:
+        "Use this NemoClaw release's supported OpenShell CLI and gateway versions, then retry.",
+      timeout: "Confirm the selected OpenShell gateway is available, then retry verification.",
+      validation:
+        "Check the selected gateway configuration and provider-profile inputs, then retry.",
+      transport:
+        "Check the OpenShell CLI and the selected gateway's identity and connectivity, then retry.",
+      command:
+        "Inspect the selected gateway's provider profile and resolve the OpenShell command failure, then retry.",
+    }[error.kind];
+  })();
+  return `Profile ${operation} failed (${classification}). ${guidance}`;
+}
+
+/** Recheck known owned profiles before binding previously registered providers. */
 export async function validateAttachedOwnedProfilesBeforeSandboxCreation(
   input: ProviderPreparationInput,
   deps: ProviderPreparationDeps,
@@ -109,11 +140,23 @@ export async function validateAttachedOwnedProfilesBeforeSandboxCreation(
       );
     }
     if (observed.value.type === "generic") continue;
-    const directProfile = messagingProviderProfileForType(
+    let directProfile = messagingProviderProfileForType(
       REPOSITORY_ROOT,
       observed.value.type,
       undefined,
     );
+    if (observed.value.type === "langfuse-hermes-v1") {
+      directProfile = {
+        profileType: observed.value.type,
+        profilePath: endpointlessProviderProfilePath(REPOSITORY_ROOT, observed.value.type),
+      };
+    }
+    if (observed.value.type === NVIDIA_HOSTED_NATIVE_PROFILE_ID) {
+      directProfile = {
+        profileType: NVIDIA_HOSTED_NATIVE_PROFILE_ID,
+        profilePath: nativeNvidiaProviderProfilePath(),
+      };
+    }
     if (!directProfile) {
       bridgeProfiles ??= new Map(
         listMessagingBridgeProfiles({ root: REPOSITORY_ROOT }).map((entry) => [
@@ -137,7 +180,7 @@ export async function validateAttachedOwnedProfilesBeforeSandboxCreation(
     if (!imported.ok) {
       throwAfterCleanup(
         deps,
-        `Could not verify provider profile '${profile.profileType}' before sandbox creation.`,
+        `Could not verify provider profile '${profile.profileType}' before sandbox creation. ${ownedProfileFailureDetail(imported)}`,
       );
     }
     profileIds.add(profile.profileType);
@@ -161,37 +204,22 @@ export async function validateAttachedHermesToolGatewayProfileBeforeSandboxCreat
       `Could not inspect Hermes tool gateway provider before sandbox creation.`,
     );
   }
-  if (
-    ![expected.profileType, "generic"].includes(observed.value.type) ||
-    !matchesGatewayCredentialOnlyProviderBinding(observed.value, {
-      name: expected.providerName,
-      type: observed.value.type,
-      credentialKey: expected.credentialEnv,
-    })
-  ) {
+  const providerType = matchHermesToolGatewayProviderType(observed.value, expected.providerName);
+  if (!providerType) {
     throwAfterCleanup(
       deps,
       `Hermes tool gateway provider binding changed before sandbox creation.`,
     );
   }
-  if (observed.value.type === "generic") return null;
-  const profile = await adapter.importProviderProfile({
-    target,
-    profilePath: path.join(
-      REPOSITORY_ROOT,
-      "agents",
-      "hermes",
-      "host",
-      `${expected.profileType}.yaml`,
-    ),
-  });
+  if (providerType === LEGACY_HERMES_TOOL_GATEWAY_PROVIDER_TYPE) return null;
+  const profile = await importHermesToolGatewayProfile(adapter, target, REPOSITORY_ROOT);
   if (!profile.ok) {
     throwAfterCleanup(
       deps,
       `Could not verify Hermes tool gateway profile before sandbox creation.`,
     );
   }
-  return expected.profileType;
+  return providerType;
 }
 
 export function resolveProviderAdapter(

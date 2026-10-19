@@ -17,6 +17,39 @@ vi.mock("./sandbox-lifecycle", async (importOriginal) => ({
   releaseAbandonedRouteReservation: vi.fn(() => false),
 }));
 
+describe("recorded Pi local inference route", () => {
+  it("rejects a changed selection before invoking a provider or gateway", async () => {
+    const getSandbox = vi.fn(() => ({
+      agent: "pi",
+      provider: "ollama-local",
+      model: "qwen3:8b",
+      endpointUrl: "http://host.openshell.internal:11435/v1",
+      createdAt: "2026-09-01T00:00:00Z",
+    }));
+    const requireNativeProviderPolicy = vi.fn();
+    const setup = createSetupInference({
+      getGatewayName: () => "nemoclaw",
+      getSandbox,
+      withSandboxMutationLock: (_name: string, operation: () => unknown) => operation(),
+      requireNativeProviderPolicy,
+    } as unknown as SetupInferenceDeps);
+
+    await expect(
+      setup(
+        "alpha",
+        "different-model",
+        "ollama-local",
+        "http://host.openshell.internal:11435/v1",
+        null,
+        null,
+        [],
+        { agentName: "pi", preserveLegacyPiSharedLocalRoute: true },
+      ),
+    ).rejects.toThrow("Recorded Pi shared local inference route changed before setup");
+    expect(requireNativeProviderPolicy).not.toHaveBeenCalled();
+  });
+});
+
 describe("createProviderReviewDeps", () => {
   it("prepares the Ollama proxy after review acceptance", async () => {
     const updateSession = vi.fn();

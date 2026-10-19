@@ -133,7 +133,12 @@ function nativeProviderHandleUpdate(updates: readonly OpenClawConfigUpdate[]) {
       return false;
     const headers = isConfigObject(value.headers) ? value.headers : {};
     const provider = headers["X-NemoClaw-Upstream-Provider"];
-    return typeof provider === "string" && Boolean(fixedNativeProvider(provider));
+    return (
+      typeof provider === "string" &&
+      (Boolean(fixedNativeProvider(provider)) ||
+        (typeof value.baseUrl === "string" &&
+          Boolean(nativeHostedAgentConfig(provider, value.baseUrl))))
+    );
   });
   if (matching.length === 0) return undefined;
   if (matching.length !== 1) throw new Error("Expected one native provider config update");
@@ -175,7 +180,10 @@ function nativeProviderHandleUpdate(updates: readonly OpenClawConfigUpdate[]) {
       : typeof provider === "string"
         ? provider
         : null;
-  const providerKey = nativeOpenClawProviderKey(logicalProvider);
+  const providerKey = nativeOpenClawProviderKey(
+    logicalProvider,
+    typeof value.api === "string" ? value.api : null,
+  );
   if (!providerKey)
     throw new Error("Native provider identity does not match its credential placeholder");
   const expectedPath = `models.providers.${providerKey}`;

@@ -337,6 +337,8 @@ export interface Session {
   /** Non-secret names of credential providers registered before sandbox setup completed. */
   stagedCredentialProviders: string[];
   gpuPassthrough: boolean;
+  /** Requested GPU mode/device, retained before a sandbox registry entry exists. */
+  sandboxGpuSelection?: { mode: "auto" | "1" | "0"; device: string | null };
   telegramConfig: TelegramConfig | null;
   wechatConfig: WechatConfig | null;
   metadata: SessionMetadata;
@@ -715,6 +717,14 @@ function parseSessionMetadata(value: SessionJsonValue | undefined): SessionMetad
   };
 }
 
+function parseSandboxGpuSelection(value: unknown): Session["sandboxGpuSelection"] {
+  if (!isObject(value)) return undefined;
+  const mode = value.mode;
+  if (mode !== "auto" && mode !== "1" && mode !== "0") return undefined;
+  if (value.device != null && typeof value.device !== "string") return undefined;
+  return { mode, device: readString(value.device) };
+}
+
 function parseStepState(value: SessionJsonValue | undefined): StepState | null {
   if (!isObject(value)) return null;
   const status = readStepStatus(value.status);
@@ -1051,6 +1061,9 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     messagingPlan: parseSandboxMessagingPlan(overrides.messagingPlan),
     stagedCredentialProviders: readStringArray(overrides.stagedCredentialProviders) ?? [],
     gpuPassthrough: overrides.gpuPassthrough === true,
+    ...(parseSandboxGpuSelection(overrides.sandboxGpuSelection)
+      ? { sandboxGpuSelection: parseSandboxGpuSelection(overrides.sandboxGpuSelection) }
+      : {}),
     telegramConfig: parseTelegramConfig(overrides.telegramConfig),
     wechatConfig: parseWechatConfig(overrides.wechatConfig),
     metadata: {
@@ -1193,6 +1206,7 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     messagingPlan: parseSandboxMessagingPlan(data.messagingPlan),
     stagedCredentialProviders: readStringArray(data.stagedCredentialProviders) ?? [],
     gpuPassthrough: data.gpuPassthrough === true,
+    sandboxGpuSelection: parseSandboxGpuSelection(data.sandboxGpuSelection),
     telegramConfig: parseTelegramConfig(data.telegramConfig),
     wechatConfig: parseWechatConfig(data.wechatConfig),
     lastStepStarted: readString(data.lastStepStarted),

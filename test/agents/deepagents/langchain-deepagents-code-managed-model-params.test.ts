@@ -132,11 +132,18 @@ for upstream in ("ollama-local", "vllm-local", "llama-cpp-local", "compatible-en
         else:
             raise AssertionError("invalid native-local reference accepted")
 
-# Ambient local credentials cannot replace the managed hosted-route token.
+# Ambient local credentials cannot replace a hosted compatible reference.
 os.environ[name] = "openshell:resolve:env:v42_" + name
-for endpoint in ("https://inference.local/v1", "https://host.openshell.internal:8000/v1", "http://172.32.2.3:8000/v1"):
+write_owned(${JSON.stringify(routeFile)}, "https://inference.local/v1")
+assert config._get_provider_kwargs("openai")["api_key"] == "nemoclaw-managed-inference"
+for endpoint in ("https://host.openshell.internal:8000/v1", "http://172.32.2.3:8000/v1"):
     write_owned(${JSON.stringify(routeFile)}, endpoint)
-    assert config._get_provider_kwargs("openai")["api_key"] == "nemoclaw-managed-inference"
+    try:
+        config._get_provider_kwargs("openai")
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("local token replaced a hosted compatible reference")
 write_owned(${JSON.stringify(routeFile)}, "http://host.openshell.internal:8000/v1")
 write_owned(${JSON.stringify(providerFile)}, "nvidia-prod")
 assert config._get_provider_kwargs("openai")["api_key"] == "nemoclaw-managed-inference"
@@ -202,6 +209,66 @@ print("native-managed-constructor-placeholder-ok")
       encoding: "utf8",
     });
     expect(output).toContain("native-managed-constructor-placeholder-ok");
+  });
+
+  it("passes the issued compatible placeholder to the hosted DCode constructor (#13164)", () => {
+    const tempDir = createPackageFixture();
+    patchFixture(tempDir);
+    const routeFile = path.join(tempDir, "managed-inference-base-url");
+    const providerFile = managedUpstreamProviderPath(tempDir);
+    const validation = `
+import os
+from pathlib import Path
+from deepagents_code import config
+
+def write_owned(file, value):
+    path = Path(file)
+    path.chmod(0o644)
+    path.write_text(value + "\\n")
+    path.chmod(0o444)
+
+write_owned(${JSON.stringify(providerFile)}, "compatible-endpoint")
+name = "COMPATIBLE_API_KEY"
+os.environ["NEMOCLAW_LOCAL_INFERENCE_TOKEN"] = "openshell:resolve:env:v42_NEMOCLAW_LOCAL_INFERENCE_TOKEN"
+for endpoint in ("https://inference-api.nvidia.com/v1", "https://integrate.api.nvidia.com/v1", "https://compatible.example/v1"):
+    write_owned(${JSON.stringify(routeFile)}, endpoint)
+    for reference in (
+        "openshell:resolve:env:" + name,
+        "openshell:resolve:env:v12_" + name,
+        "openshell:resolve:env:s" + "a" * 64 + "_" + name,
+    ):
+        os.environ[name] = reference
+        for adapter in ("openai", "openrouter"):
+            resolved = config._get_provider_kwargs(adapter)
+            assert resolved["api_key"] == reference
+            assert resolved["base_url"] == endpoint
+
+    for invalid in ("", "raw-secret", "nemoclaw-managed-inference", "openshell:resolve:env:v12_OTHER_KEY"):
+        os.environ[name] = invalid
+        try:
+            config._get_provider_kwargs("openai")
+        except RuntimeError as error:
+            assert not invalid or invalid not in str(error)
+        else:
+            raise AssertionError("hosted compatible route accepted an invalid reference")
+    del os.environ[name]
+    try:
+        config._get_provider_kwargs("openai")
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("hosted compatible route accepted a missing reference")
+
+for endpoint in ("https://inference.local/v1", "http://localhost:8000/v1"):
+    write_owned(${JSON.stringify(routeFile)}, endpoint)
+    assert config._get_provider_kwargs("openai")["api_key"] == "nemoclaw-managed-inference"
+print("native-compatible-constructor-placeholder-ok")
+`;
+    const output = execFileSync("python3", ["-c", validation], {
+      env: { PATH: process.env.PATH, PYTHONPATH: tempDir },
+      encoding: "utf8",
+    });
+    expect(output).toContain("native-compatible-constructor-placeholder-ok");
   });
 
   it("uses only the native OpenRouter resolver handle for Deep Code requests (#13045)", () => {
