@@ -136,7 +136,6 @@ Kubernetes and OpenShift gateways pass them to the chart's `gatewayConfig`, wher
 Plan rejects a setting that replaces a key NemoClaw manages, such as the gateway's authentication, signing paths, or the driver's images.
 OpenShell validates the rest when the gateway starts: an unknown or misplaced field in the selected driver's table stops the gateway, and tables for other drivers are ignored.
 A change replaces a Docker or Podman gateway's container, which receives the new file and keeps the gateway's data, and upgrades a Kubernetes gateway's chart release.
-Sandboxes keep running while the gateway restarts.
 Do not put secrets in it: plans and state show it.
 An external gateway takes no `config`; its operator configures it.
 
