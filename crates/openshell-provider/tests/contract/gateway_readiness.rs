@@ -33,7 +33,7 @@ async fn managed_gateway_exit_preserves_bootstrap_state_and_allows_recovery_or_t
     let directory = crate::workspace();
     let root = directory.path();
     let mut graph = json!({
-        "terraform":{"required_version":"= 1.12.6","required_providers":{
+        "terraform":{"required_version":"= 1.12.8","required_providers":{
             "openshell":{"source":"registry.opentofu.org/nvidia/openshell"}
         }},
         "provider":{"openshell":{}},

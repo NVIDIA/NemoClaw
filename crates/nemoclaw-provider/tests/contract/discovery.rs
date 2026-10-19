@@ -41,7 +41,7 @@ async fn discovery_plan_reads_target_metadata_without_gateway_or_mutations() {
         "ssh://127.0.0.1:1".to_owned()
     };
     let config = json!({
-        "terraform":{"required_version":"= 1.12.6","required_providers":{"host":{"source":"nvidia/host"},"fabric":{"source":"nvidia/fabric"}}},
+        "terraform":{"required_version":"= 1.12.8","required_providers":{"host":{"source":"nvidia/host"},"fabric":{"source":"nvidia/fabric"}}},
         "provider":{"host":{},"fabric":{}},
         "data":{
             "host_engine":{
@@ -247,7 +247,7 @@ async fn compiled_discovery_requires_the_image_runtime_metadata() {
                 && !name.starts_with("endpoint_")
         });
     let graph = json!({
-        "terraform":{"required_version":"= 1.12.6","required_providers":{"host":{"source":"nvidia/host"},"fabric":{"source":"nvidia/fabric"}}},
+        "terraform":{"required_version":"= 1.12.8","required_providers":{"host":{"source":"nvidia/host"},"fabric":{"source":"nvidia/fabric"}}},
         "provider":{"host":{},"fabric":{}},
         "data":{
             "host_engine":compiled["data"]["host_engine"],

@@ -52,7 +52,7 @@ fn bundle_requires_all_native_binaries_and_checks_every_digest() {
     let mut manifest = Manifest {
         version: "0.1.0".into(),
         rust: "1.98.1".into(),
-        opentofu: "1.12.6".into(),
+        opentofu: "1.12.8".into(),
         files: Default::default(),
     };
     for name in required_files("0.1.0").unwrap() {

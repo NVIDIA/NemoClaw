@@ -735,12 +735,12 @@ fn local_execution_skips_bundle_and_lifecycle_but_keeps_ordinary_checks() {
     let repo = Repo::new();
     let tools = tempfile::tempdir().unwrap();
     for (name, script) in [
-        ("protoc", "#!/bin/sh\necho 'libprotoc 36.1'\n"),
+        ("protoc", "#!/bin/sh\necho 'libprotoc 36.2'\n"),
         (
             "cargo",
             r#"#!/bin/sh
 if [ "$1" = metadata ]; then exec "$REAL_CARGO" "$@"; fi
-if [ "$1 $2" = 'nextest --version' ]; then echo 'cargo-nextest 0.9.144'; exit 0; fi
+if [ "$1 $2" = 'nextest --version' ]; then echo 'cargo-nextest 0.9.148'; exit 0; fi
 printf '%s\n' "$*" >> "$CHECK_LOG"
 if [ "$1" = build ]; then
   mkdir -p target/debug

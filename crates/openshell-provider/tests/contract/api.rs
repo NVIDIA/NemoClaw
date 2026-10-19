@@ -6,7 +6,7 @@ use serde_json::json;
 
 const SECRET: &str = "booking-fixture-secret";
 const CONFIG: &str = r#"terraform {
-  required_version = "= 1.12.6"
+  required_version = "= 1.12.8"
   required_providers {
     openshell = { source = "registry.opentofu.org/nvidia/openshell" }
   }

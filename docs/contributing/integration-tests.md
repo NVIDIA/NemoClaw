@@ -10,7 +10,7 @@ Complete the [build prerequisites](../build.md) first.
 ## OpenTofu and Bundle Lifecycle
 
 The contract and system tests take one input: `NEMOCLAW_TEST_BUNDLE`, the absolute path of a bundle such as the `dist/PLATFORM` directory that `cargo ci bundle` writes.
-The bundle supplies OpenTofu 1.12.6, the CLI, and the providers.
+The bundle supplies OpenTofu 1.12.8, the CLI, and the providers.
 Each provider's contract tests run instead the provider Cargo built with them, so they test the checkout without a new bundle; the other providers they need come from the bundle.
 System tests run the bundle's CLI and providers, so rebuild the bundle after changing either.
 

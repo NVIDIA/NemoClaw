@@ -43,12 +43,12 @@ impl Fixture {
         let bin = root.path().join("bin");
         fs::create_dir(&bin).unwrap();
         for (name, script) in [
-            ("protoc", "#!/bin/sh\nprintf 'libprotoc 36.1\\n'\n"),
+            ("protoc", "#!/bin/sh\nprintf 'libprotoc 36.2\\n'\n"),
             (
                 "cargo",
                 r#"#!/bin/sh
 if [ "$1 $2" = 'nextest --version' ]; then
-    printf 'cargo-nextest 0.9.144\n'
+    printf 'cargo-nextest 0.9.148\n'
     exit 0
 fi
 printf '%s\n' "$@" > arguments
@@ -228,8 +228,8 @@ fi
         for path in [
             "dist/linux_arm64/bin/nemoclaw",
             "dist/linux_arm64/libexec/tofu",
-            ".tools/protoc-36.1/bin/protoc",
-            ".tools/nextest-0.9.144/cargo-nextest",
+            ".tools/protoc-36.2/bin/protoc",
+            ".tools/nextest-0.9.148/cargo-nextest",
             "target/debug/terraform-provider-openshell",
             "target/debug/terraform-provider-fabric",
             "target/debug/terraform-provider-vllm",
@@ -373,7 +373,7 @@ fn archive_packages_tools_and_the_ssh_relay_but_leaves_providers_to_the_bundle_a
         assert!(!unpacked.path().join(&path).exists(), "{path}");
     }
     for path in [
-        ".tools/nextest-0.9.144/cargo-nextest",
+        ".tools/nextest-0.9.148/cargo-nextest",
         "target/debug/nemoclaw-fixture-ssh",
     ] {
         let file = unpacked.path().join(path);

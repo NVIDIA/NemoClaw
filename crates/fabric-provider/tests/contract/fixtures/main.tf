@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 terraform {
-  required_version = "= 1.12.6"
+  required_version = "= 1.12.8"
   required_providers {
     openshell = { source = "registry.opentofu.org/nvidia/openshell" }
     fabric    = { source = "registry.opentofu.org/nvidia/fabric" }
