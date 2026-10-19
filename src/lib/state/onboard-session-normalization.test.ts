@@ -48,6 +48,16 @@ describe("onboard session normalization", () => {
       ),
     ) as ReturnType<typeof createSession>;
     expect(normalizeSession(saved)?.pendingPolicySelection).toEqual(pendingPolicySelection);
+    const longPresetName = `custom-${"a".repeat(65)}`;
+    expect(
+      normalizeSession({
+        ...saved,
+        pendingPolicySelection: {
+          ...pendingPolicySelection,
+          presetNames: [longPresetName],
+        },
+      } as Parameters<typeof normalizeSession>[0])?.pendingPolicySelection?.presetNames,
+    ).toEqual([longPresetName]);
     expect(() =>
       normalizeSession({
         ...saved,

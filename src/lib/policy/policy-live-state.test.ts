@@ -108,33 +108,76 @@ describe("live OpenShell policy mutations", () => {
     );
   });
 
-  it("applies and recognizes a pricing preset with the custom provider's exact pins", async () => {
-    const pins = ["34.117.59.81", "104.18.8.134"];
-    const endpoint = {
-      host: "openrouter.ai",
-      port: 443,
-      protocol: "rest",
-      enforcement: "enforce",
-      allowed_ips: pins,
-      rules: [{ allow: { method: "POST", path: "/api/v1/chat/completions" } }],
-    };
-    livePolicy = YAML.stringify({
-      version: 1,
-      network_policies: {
-        _provider_nemoclaw_custom_openrouter_v1: { name: "provider", endpoints: [endpoint] },
-        native_hosted_inference: { name: "native_hosted_inference", endpoints: [endpoint] },
-      },
-    });
+  it.each(["batch", "direct"] as const)(
+    "applies and recognizes a pricing preset with the custom provider's exact pins (%s)",
+    async (path) => {
+      const pins = ["34.117.59.81", "104.18.8.134"];
+      const endpoint = {
+        host: "openrouter.ai",
+        port: 443,
+        protocol: "rest",
+        enforcement: "enforce",
+        allowed_ips: pins,
+        rules: [{ allow: { method: "POST", path: "/api/v1/chat/completions" } }],
+      };
+      livePolicy = YAML.stringify({
+        version: 1,
+        network_policies: {
+          _provider_nemoclaw_custom_openrouter_v1: { name: "provider", endpoints: [endpoint] },
+          native_hosted_inference: { name: "native_hosted_inference", endpoints: [endpoint] },
+        },
+      });
 
-    await expect(applyPresets(sandboxName, ["openclaw-pricing"])).resolves.toBe(true);
-    const pricing = YAML.parse(livePolicy).network_policies["openclaw-pricing"].endpoints[1];
-    expect(pricing.allowed_ips).toEqual([...pins].sort());
-    expect(pricing.rules).toEqual([{ allow: { method: "GET", path: "/api/v1/models" } }]);
-    expect(await getGatewayPresets(sandboxName)).toContain("openclaw-pricing");
-    const content = await loadPresetForSandbox(sandboxName, "openclaw-pricing");
-    expect(content).not.toBeNull();
-    expect(await getPresetContentGatewayState(sandboxName, content!)).toBe("match");
-  });
+      const content = await loadPresetForSandbox(sandboxName, "openclaw-pricing");
+      expect(content).not.toBeNull();
+      await expect(
+        path === "direct"
+          ? applyPresetContent(sandboxName, "openclaw-pricing", content!, { nonFatal: true })
+          : applyPresets(sandboxName, ["openclaw-pricing"]),
+      ).resolves.toBe(true);
+      const pricing = YAML.parse(livePolicy).network_policies["openclaw-pricing"].endpoints[1];
+      expect(pricing.allowed_ips).toEqual([...pins].sort());
+      expect(pricing.rules).toEqual([{ allow: { method: "GET", path: "/api/v1/models" } }]);
+      expect(await getGatewayPresets(sandboxName)).toContain("openclaw-pricing");
+      expect(await getPresetContentGatewayState(sandboxName, content!)).toBe("match");
+    },
+  );
+
+  it.each([
+    { routes: [{ key: "_provider_nemoclaw_custom_openrouter_v1", pins: undefined }] },
+    {
+      routes: [
+        { key: "_provider_nemoclaw_custom_openrouter_v1", pins: ["34.117.59.81"] },
+        { key: "native_hosted_inference", pins: ["104.18.8.134"] },
+      ],
+    },
+  ])(
+    "does not submit direct pricing when live provider pins are invalid ($#)",
+    async ({ routes }) => {
+      livePolicy = YAML.stringify({
+        version: 1,
+        network_policies: Object.fromEntries(
+          routes.map(({ key, pins }) => [
+            key,
+            {
+              endpoints: [
+                { host: "openrouter.ai", port: 443, ...(pins ? { allowed_ips: pins } : {}) },
+              ],
+            },
+          ]),
+        ),
+      });
+      const original = livePolicy;
+      const content = await loadPresetForSandbox(sandboxName, "openclaw-pricing");
+      expect(content).not.toBeNull();
+
+      await expect(
+        applyPresetContent(sandboxName, "openclaw-pricing", content!, { nonFatal: true }),
+      ).resolves.toBe(false);
+      expect(mocks.setSandboxPolicy).not.toHaveBeenCalled();
+      expect(livePolicy).toBe(original);
+    },
+  );
 
   it("pins recorded policy reads to the supplied operation target (#10514)", async () => {
     const runtimeSelection = {

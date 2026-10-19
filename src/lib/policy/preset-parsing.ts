@@ -70,11 +70,6 @@ export function materializeOpenClawPricingPins(
       "Cannot apply OpenClaw pricing: the current policy has no valid network policies.",
     );
   }
-  const pricing = preset?.network_policies?.["openclaw-pricing"]?.endpoints?.find(
-    (endpoint) => endpoint.host === "openrouter.ai" && endpoint.port === 443,
-  );
-  if (!pricing) throw new Error("The built-in OpenClaw pricing preset is invalid.");
-
   const overlapping = Object.entries(current.network_policies ?? {})
     .filter(([key]) => key !== "openclaw-pricing")
     .flatMap(([key, policy]) =>
@@ -83,6 +78,11 @@ export function materializeOpenClawPricingPins(
         .map((endpoint) => ({ key, endpoint })),
     );
   if (overlapping.length === 0) return presetContent;
+
+  const pricing = preset?.network_policies?.["openclaw-pricing"]?.endpoints?.find(
+    (endpoint) => endpoint.host === "openrouter.ai" && endpoint.port === 443,
+  );
+  if (!pricing) throw new Error("The built-in OpenClaw pricing preset is invalid.");
 
   const authorities = overlapping.filter(
     ({ key }) => key.startsWith("_provider_nemoclaw_custom_") || key === "native_hosted_inference",

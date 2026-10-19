@@ -41,6 +41,10 @@ describe("OpenClaw pricing with a pinned custom OpenRouter provider", () => {
     expect(materializeOpenClawPricingPins("version: 1\nnetwork_policies: {}\n", preset)).toBe(
       preset,
     );
+    const agentAlias = `preset:\n  name: openclaw-pricing\nnetwork_policies:\n  agent-pricing-alias:\n    endpoints:\n      - host: metadata.example.test\n        port: 443\n`;
+    expect(materializeOpenClawPricingPins("version: 1\nnetwork_policies: {}\n", agentAlias)).toBe(
+      agentAlias,
+    );
   });
 
   it("fails closed for an unpinned or conflicting overlap", () => {

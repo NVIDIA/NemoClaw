@@ -203,7 +203,9 @@ function parsePendingPolicySelection(value: unknown): PendingPolicySelection | n
     /[\r\n\0]/u.test(sandboxIdentity) ||
     (tierName !== null && (typeof tierName !== "string" || !/^[a-z0-9-]{1,64}$/u.test(tierName))) ||
     !Array.isArray(presetNames) ||
-    presetNames.some((name) => typeof name !== "string" || !/^[a-z0-9-]{1,64}$/u.test(name))
+    presetNames.some(
+      (name) => typeof name !== "string" || !/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/u.test(name),
+    )
   )
     return null;
   return {

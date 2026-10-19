@@ -2362,7 +2362,18 @@ class SandboxStateFlow<
     sandboxName: string,
     createIntent: CompleteSandboxCreateIntent,
   ): Session {
+    const created = this.deps.getSandboxRegistryEntry(sandboxName);
+    const createdIdentity =
+      created?.lifecycleLiveIdentityFingerprint ??
+      (created?.createdAt ? `created:${created.createdAt}` : null);
     const recordedSession = this.deps.updateSession((current) => {
+      if (
+        current.pendingPolicySelection?.sandboxName === sandboxName &&
+        createdIdentity &&
+        current.pendingPolicySelection.sandboxIdentity !== createdIdentity
+      ) {
+        current.pendingPolicySelection = null;
+      }
       recordCheckpointEffectGroup(
         current,
         "sandbox_create",
