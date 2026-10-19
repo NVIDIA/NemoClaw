@@ -45,16 +45,14 @@ capture_process() {
     return
   fi
   printf '%s_pid=%s\n' "$label" "$pid"
-  awk -v label="$label" '$1 == "Max" && $2 == "processes" { printf "%s_rlimit_nproc_soft=%s hard=%s\\n", label, $3, $4 }' "/proc/$pid/limits"
-  group=$(awk -F: '$1 == "0" { print $3; exit }' "/proc/$pid/cgroup")
+  awk -v label="$label" '$1 == "Max" && $2 == "processes" { printf "%s_rlimit_nproc_soft=%s hard=%s\\n", label, $3, $4 }' "/proc/$pid/limits" || printf '%s_rlimit_nproc=unavailable\n' "$label"
+  group=$(awk -F: '$1 == "0" { print $3; exit }' "/proc/$pid/cgroup" 2>/dev/null) || group=
   [[ $group == /* ]] || { printf '%s_cgroup=unavailable\n' "$label"; return; }
   while (( depth < 24 )); do
-    if [[ -r /sys/fs/cgroup$group/pids.max ]]; then
-      current=$(cat "/sys/fs/cgroup$group/pids.current")
-      max=$(cat "/sys/fs/cgroup$group/pids.max")
-      events=$(awk '$1 == "max" { print $2; exit }' "/sys/fs/cgroup$group/pids.events")
-      printf '%s_cgroup=%s pids_current=%s pids_max=%s pids_events_max=%s\n' "$label" "$group" "$current" "$max" "$events"
-    fi
+    current=$(cat "/sys/fs/cgroup$group/pids.current" 2>/dev/null) || current=unavailable
+    max=$(cat "/sys/fs/cgroup$group/pids.max" 2>/dev/null) || max=unavailable
+    events=$(awk '$1 == "max" { print $2; exit }' "/sys/fs/cgroup$group/pids.events" 2>/dev/null) || events=unavailable
+    printf '%s_cgroup=%s pids_current=%s pids_max=%s pids_events_max=%s\n' "$label" "$group" "\${current:-unavailable}" "\${max:-unavailable}" "\${events:-unavailable}"
     [[ $group == / ]] && break
     group=\${group%/*}
     [[ -n $group ]] || group=/
@@ -68,8 +66,10 @@ capture_process service "$service_pid"
 capture_process registry "$registry_pid"
 user_tasks=$(ps -u "$uid" -L --no-headers 2>/dev/null | wc -l | tr -d ' ' || true)
 printf 'user_tasks=%s\n' "\${user_tasks:-unavailable}"
-printf 'host_threads_max=%s\n' "$(cat /proc/sys/kernel/threads-max)"
-printf 'host_tasks=%s\n' "$(awk '{ split($4, tasks, "/"); print tasks[2] }' /proc/loadavg)"
+host_threads_max=$(cat /proc/sys/kernel/threads-max 2>/dev/null) || host_threads_max=unavailable
+host_tasks=$(awk '{ split($4, tasks, "/"); print tasks[2] }' /proc/loadavg 2>/dev/null) || host_tasks=unavailable
+printf 'host_threads_max=%s\n' "\${host_threads_max:-unavailable}"
+printf 'host_tasks=%s\n' "\${host_tasks:-unavailable}"
 `;
 
 function retryableTransport(observation: PortableRegistryReadinessObservation): boolean {

@@ -190,6 +190,16 @@ describe("portable registry readiness policy", () => {
         "port",
         "logs",
       ]);
+      const [headroomCommand, headroomOptions] = run.mock.calls[0]!;
+      expect(headroomCommand.command).toBe("bash");
+      expect(headroomCommand.args.slice(0, 5)).toEqual(["-e", "-u", "-o", "pipefail", "-c"]);
+      const headroomScript = headroomCommand.args[5]!;
+      expect(headroomScript).toContain("systemctl --user show");
+      expect(headroomScript).toContain("rlimit_nproc_soft");
+      expect(headroomScript).toContain("pids_current=");
+      expect(headroomScript).toContain("pids_events_max=");
+      expect(headroomScript).toContain("host_tasks=");
+      expect(headroomOptions.artifactName).toBe("portable-registry-process-headroom");
       const expectedOptions = expect.objectContaining({
         captureLimitBytes: 32 * 1024,
         env: expect.objectContaining({
