@@ -298,7 +298,6 @@ export function parseMcpAddArgs(argv: string[]): ParsedMcpAddArgs {
   let rawUrl = "";
   let serverIdentity = "";
   let transport: "sse" | "stdio" | undefined;
-  let requireOAuth = false;
 
   for (let i = 0; i < argv.length; i++) {
     const token = argv[i];
@@ -431,8 +430,10 @@ export function parseMcpAddArgs(argv: string[]): ParsedMcpAddArgs {
       continue;
     }
     if (token === "--require-oauth") {
-      requireOAuth = true;
-      continue;
+      throw new McpBridgeError(
+        "--require-oauth is not supported because MCP provider-boundary OAuth verification is unavailable.",
+        2,
+      );
     }
     if (token?.startsWith("-")) {
       throw new McpBridgeError(`Unknown mcp add option: ${token}`, 2);
@@ -443,14 +444,14 @@ export function parseMcpAddArgs(argv: string[]): ParsedMcpAddArgs {
       continue;
     }
     throw new McpBridgeError(
-      "Usage: nemoclaw <sandbox> mcp add <server> --url <https-mcp-url> --env KEY [--deny-tool TOOL ...] [--allow-tool TOOL ...] [--trusted-private-host HOST] [--server-identity sha256:...] [--transport sse|stdio] [--require-oauth]",
+      "Usage: nemoclaw <sandbox> mcp add <server> --url <https-mcp-url> --env KEY [--deny-tool TOOL ...] [--allow-tool TOOL ...] [--trusted-private-host HOST] [--server-identity sha256:...] [--transport sse|stdio]",
       2,
     );
   }
 
   if (!server) {
     throw new McpBridgeError(
-      "Usage: nemoclaw <sandbox> mcp add <server> --url <https-mcp-url> --env KEY [--deny-tool TOOL ...] [--allow-tool TOOL ...] [--trusted-private-host HOST] [--server-identity sha256:...] [--transport sse|stdio] [--require-oauth]",
+      "Usage: nemoclaw <sandbox> mcp add <server> --url <https-mcp-url> --env KEY [--deny-tool TOOL ...] [--allow-tool TOOL ...] [--trusted-private-host HOST] [--server-identity sha256:...] [--transport sse|stdio]",
       2,
     );
   }
@@ -494,10 +495,6 @@ export function parseMcpAddArgs(argv: string[]): ParsedMcpAddArgs {
       2,
     );
   }
-  if (requireOAuth && !url.startsWith("https://")) {
-    throw new McpBridgeError("--require-oauth is only valid for HTTPS MCP endpoints.", 2);
-  }
-
   const normalizedDenyTools = normalizeMcpDenyTools(denyTools);
   const normalizedAllowTools = allowTools.length > 0 ? [...new Set(allowTools)].sort() : undefined;
 
@@ -510,7 +507,6 @@ export function parseMcpAddArgs(argv: string[]): ParsedMcpAddArgs {
     ...(trustedPrivateHosts.length > 0 ? { trustedPrivateHosts } : {}),
     ...(serverIdentity ? { serverIdentity } : {}),
     ...(transport ? { transport } : {}),
-    ...(requireOAuth ? { requireOAuth: true } : {}),
   };
 }
 

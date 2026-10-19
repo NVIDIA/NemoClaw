@@ -56,6 +56,14 @@ export async function verifyMcpServerIdentity(
  * enforceTransportTrust.
  */
 export function enforceTransportTrust(entry: McpSourceEntry, requireOAuth: boolean): void {
+  if (requireOAuth) {
+    throw new McpBridgeError(
+      "--require-oauth is not supported because MCP provider-boundary OAuth verification is unavailable.",
+      2,
+      "supply-chain",
+    );
+  }
+
   const inferred = inferTransportFromUrl(entry.url);
   const transport = entry.transport ?? inferred;
 
@@ -79,18 +87,6 @@ export function enforceTransportTrust(entry: McpSourceEntry, requireOAuth: boole
     console.warn(
       `  WARNING: MCP server '${entry.server}' uses STDIO transport. This bypasses OpenShell network policies and credential boundaries. Prefer SSE (--transport sse) for production.`,
     );
-  }
-
-  // --require-oauth requires SSE transport; HTTPS is validated at the add action boundary.
-  // OAuth exchange verification is NOT yet implemented at the credential boundary.
-  // The --require-oauth flag is recorded for future enforcement at the provider boundary.
-  if (requireOAuth && transport !== "sse") {
-    throw new McpBridgeError(
-      "--require-oauth requires SSE transport (--transport sse) with an HTTPS endpoint.",
-      2,
-      "supply-chain",
-    );
-  }
 }
 
 /**

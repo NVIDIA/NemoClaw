@@ -31,6 +31,19 @@ const CHILD_VISIBLE_CREDENTIAL_CASES = [
 );
 
 describe("MCP CLI input validation", () => {
+  it("rejects OAuth requirements until provider-boundary verification is supported", () => {
+    expect(() =>
+      parseMcpAddArgs([
+        "github",
+        "--url",
+        "https://mcp.example.test/mcp",
+        "--env",
+        "GITHUB_TOKEN",
+        "--require-oauth",
+      ]),
+    ).toThrow(/provider-boundary OAuth verification/);
+  });
+
   it("parses server, URL, and env references", () => {
     const parsed = parseMcpAddArgs([
       "github",

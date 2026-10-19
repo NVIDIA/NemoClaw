@@ -7,6 +7,19 @@ import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import { enforceTransportTrust } from "./mcp-bridge-supply-chain";
 
 describe("enforceTransportTrust", () => {
+  it("rejects OAuth requirements until provider-boundary verification is supported", () => {
+    const entry: McpSourceEntry = {
+      server: "github",
+      agent: "openclaw",
+      url: "https://mcp.example.test/mcp",
+      env: ["GITHUB_TOKEN"],
+      policyName: "mcp-bridge-github",
+      transport: "sse",
+    };
+
+    expect(() => enforceTransportTrust(entry, true)).toThrow(/provider-boundary OAuth verification/);
+  });
+
   it("rejects an explicit STDIO transport on an HTTPS URL before warning", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
