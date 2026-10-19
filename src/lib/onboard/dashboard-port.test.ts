@@ -10,6 +10,8 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
+import { GATEWAY_PORT } from "../core/ports";
+import { nemoclawStateRoot } from "../state/state-root";
 import type {
   OpenShellForwardAdapter,
   OpenShellForwardObservation,
@@ -31,6 +33,7 @@ import {
   withDashboardPortReservationLock,
   withDashboardPortReservationScope,
 } from "./dashboard-port";
+import { resolveGatewayName } from "./gateway-binding/identity";
 
 describe("dashboard-port override intent", () => {
   it.each([
@@ -873,18 +876,19 @@ describe("getRegistryOccupiedDashboardPorts", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dashboard-host-index-"));
     try {
       vi.stubEnv("HOME", home);
-      const defaultRoot = path.join(home, ".nemoclaw");
-      const siblingRoot = path.join(defaultRoot, "gateways", "9123");
+      const currentRoot = nemoclawStateRoot(home, GATEWAY_PORT);
+      const siblingRoot = nemoclawStateRoot(home, 9123);
+      fs.mkdirSync(currentRoot, { recursive: true });
       fs.mkdirSync(siblingRoot, { recursive: true });
       fs.writeFileSync(
-        path.join(defaultRoot, "sandboxes.json"),
+        path.join(currentRoot, "sandboxes.json"),
         JSON.stringify({
           defaultSandbox: "instance-b",
           sandboxes: {
             "instance-b": {
               name: "instance-b",
-              gatewayName: "nemoclaw",
-              gatewayPort: 8080,
+              gatewayName: resolveGatewayName(GATEWAY_PORT),
+              gatewayPort: GATEWAY_PORT,
               dashboardPort: 18790,
             },
           },
