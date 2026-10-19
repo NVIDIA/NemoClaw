@@ -12,8 +12,9 @@ Before pushing, choose checks that cover the changed behavior and its affected c
 | Prose or documentation | Review the changed text; run the [documentation check](documentation-build.md#validate-locally) for documentation changes. |
 | Declarative configuration or workflow triggers | Run the applicable schema or lint checks; test affected execution paths when their behavior changes. |
 | Isolated code change | Run focused behavioral tests and nearby regression checks, plus formatting and lint checks for the affected code. |
-| Bundle construction, provider contracts, lifecycle behavior, or broad workspace dependencies | Run `cargo ci --full`. |
-| Impact is unclear or narrower checks cannot establish confidence | Run `cargo ci --full`. |
+| Bundle construction, provider contracts, lifecycle behavior, or broad workspace dependencies | Run `cargo ci`; it [selects](#select-expensive-local-checks) bundle and lifecycle checks from the changed inputs. |
+| Images or Kubernetes deployment | Also run `cargo ci live-docker` or `cargo ci live-kind`; see [live tests](live-tests.md). |
+| Impact is unclear or narrower checks cannot establish confidence | Run `cargo ci`. |
 
 For changes spanning categories, combine the applicable checks.
 A YAML or configuration file can change runtime behavior; choose by impact rather than extension.
