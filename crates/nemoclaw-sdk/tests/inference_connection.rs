@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 use nemoclaw_sdk::config::ComputeDriver;
-use nemoclaw_sdk::config::{Credential, Document};
+use nemoclaw_sdk::config::{Document, SecretRef};
 
 #[test]
 fn missing_inference_provider_does_not_panic() {
@@ -34,7 +34,7 @@ fn inference_connection_is_resolved_independently_of_the_sandbox_engine() {
     let mut remote =
         Document::parse(include_str!("fixtures/config/local.yaml").as_bytes()).unwrap();
     remote.spec.inference_providers[0].endpoint = "https://inference.example.test:9443/v1".into();
-    remote.spec.inference_providers[0].credential = Some(Credential {
+    remote.spec.inference_providers[0].credential = Some(SecretRef {
         env: "MODEL_TOKEN".into(),
     });
     let first = remote.inference_connection().unwrap();

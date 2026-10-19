@@ -167,6 +167,8 @@ impl Backend for OpenShell {
         {
             return Err(ObservationError::BindingMismatch);
         }
+        // Why OpenShell reports the sandbox exited, if it did.
+        let mut exited = String::new();
         if kind == "sandbox"
             && !removing
             && let Some(row) = &observed
@@ -183,13 +185,20 @@ impl Backend for OpenShell {
             {
                 return Err(ObservationError::BindingMismatch);
             }
-            self.check_sandbox_phase(row)
-                .await
-                .map_err(nemoclaw_backend::Error::into_observation)?;
+            match self.check_sandbox_phase(row).await {
+                Ok(()) => {}
+                Err(nemoclaw_backend::Error::SandboxStartup {
+                    phase,
+                    reason,
+                    exit_code,
+                }) => exited = format!("{phase}, reason {reason}, exit code {exit_code}"),
+                Err(error) => return Err(error.into_observation()),
+            }
         }
         if kind == "sandbox"
             && let Some(row) = &mut observed
         {
+            row.insert(crate::EXITED.into(), exited);
             // Teardown, or a sandbox that isn't ready yet, doesn't observe the
             // loaded policy, so the recorded hash still stands.
             if row.get(crate::POLICY_HASH).is_none_or(String::is_empty)

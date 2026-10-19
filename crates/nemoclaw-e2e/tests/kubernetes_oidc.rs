@@ -126,7 +126,8 @@ spec:
         userRole: {USER_ROLE}
         scopesClaim: scope
         caConfigMap: {CA_CONFIG_MAP}
-        tokenEnv: {TOKEN_ENV}
+        token:
+          env: {TOKEN_ENV}
   inferenceProviders:
     - name: hosted
       provider: openai

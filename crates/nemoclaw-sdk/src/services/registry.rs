@@ -183,15 +183,6 @@ pub(crate) fn constrain_schema(
 }
 
 impl ServiceDefinition {
-    /// Context tokens a managed model serves; none for a proxy or application.
-    pub(crate) fn context_tokens(&self) -> Option<i64> {
-        match self {
-            Self::Ollama(service) => Some(service.serving.context_tokens),
-            Self::Vllm(service) => Some(service.serving.context_tokens),
-            Self::OllamaProxy(_) | Self::Container(_) => None,
-        }
-    }
-
     /// Update policy of a managed model; none for a proxy or application.
     pub(crate) fn update_policy(&self) -> Option<super::ServiceUpdatePolicy> {
         match self {

@@ -240,33 +240,6 @@ Paths:
 | `runtimeStatus` | any JSON value | No | — | Managed-runtime status file containing phase and updated. Requires a ready report from this container start, not an old volume's report. |
 | `timeoutSeconds` | integer | No | — | Startup wait in seconds, 1–3600. Omission selects 300. Constraints: minimum 1; maximum 3600. |
 
-## Credential
-
-A reference to a caller-provided environment variable; the configuration contains no credential value.
-
-Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
-
-Paths:
-
-- `spec.gateway.credential`
-- `spec.gateway.kubernetes.kubeconfig`
-- `spec.gateway.tls.ca`
-- `spec.gateway.tls.certificate`
-- `spec.gateway.tls.key`
-- `spec.inferenceProviders[].credential`
-- `spec.inferences.{key}.routes[].provider.credential`
-- `spec.integrations.{key}.credential`
-- `spec.sandboxes[].agent.inference.routes[].provider.credential`
-- `spec.sandboxes[].agent.integrations.{key}.credential`
-- `spec.sandboxes[].image.metadata`
-- `spec.sandboxes[].inferenceProviders[].credential`
-- `spec.sandboxes[].inferences.{key}.routes[].provider.credential`
-- `spec.sandboxes[].integrations.{key}.credential`
-
-| Field | Input type | Required | Default | Description and constraints |
-|---|---|---|---|---|
-| `env` | string | Yes | — | Uppercase environment variable name. For TLS and kubeconfig fields, its value is a local file path; otherwise it is a bearer/API credential. NEMOCLAW_KUBERNETES_STATE and the NEMOCLAW_MANAGED_K8S_, HELM_, and KUBE_ prefixes are reserved for runtime controls. Constraints: pattern `^[A-Z_][A-Z0-9_]{0,127}$`. |
-
 ## DedicatedHardware
 
 Requirements for one NVIDIA GPU with dedicated memory on Linux AMD64. Declaring requirements does not qualify a model or host.
@@ -362,6 +335,24 @@ Paths:
 | `sha256` | string | Yes | — | Lowercase SHA-256 of the complete file. Constraints: pattern `^[a-f0-9]{64}$`. |
 | `size` | integer | Yes | — | Expected file length in bytes; zero is rejected. Constraints: minimum 1. |
 
+## FileRef
+
+Environment variable whose value is the path of a local file; the configuration holds neither the path nor the file.
+
+Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.gateway.kubernetes.kubeconfig`
+- `spec.gateway.tls.ca`
+- `spec.gateway.tls.certificate`
+- `spec.gateway.tls.key`
+- `spec.sandboxes[].image.metadata`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `env` | string | Yes | — | Uppercase name of the caller environment variable that holds the local file path. NEMOCLAW_KUBERNETES_STATE and the NEMOCLAW_MANAGED_K8S_, HELM_, and KUBE_ prefixes are reserved for runtime controls. Constraints: pattern `^[A-Z_][A-Z0-9_]{0,127}$`. |
+
 ## Gateway
 
 Install a local or explicitly configured Kubernetes gateway, or connect to an existing gateway.
@@ -382,6 +373,7 @@ Managed Podman targets local rootless Linux; rootful, remote, and other platform
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
+| `config` | any JSON value | No | — | OpenShell gateway settings in the OpenShell Helm chart's gatewayConfig format: each key names a TOML table, such as openshell.drivers.docker, and holds its fields; nested maps are inline tables, and a list of maps is an array of tables. Docker and Podman gateways write it into the configuration file of each new gateway container, so a change replaces the container and keeps its data; Kubernetes passes it to the chart's gatewayConfig. OpenShell validates the settings; keys NemoClaw manages are rejected. Must not contain secrets. |
 | `endpoint` | string | No | `"http://127.0.0.1:17681"` | Local engine gateways use an HTTP origin with an unprivileged loopback port. Kubernetes requires `https://127.0.0.1:PORT` with an explicit nonzero port and no trailing slash; providers forward free local ports of their own to the owned gateway, so this port is not bound. Without kubernetes, omitted or empty selects the local HTTP endpoint. Kubernetes requires an explicit HTTPS loopback endpoint and port. |
 | `engine` | string | No | `"unix:///var/run/docker.sock"` | Managed local gateway Unix engine socket; Podman requires its API service socket. Excluded by kubernetes. With runtime.provider docker, omitted or empty selects Docker's default socket. Podman requires its API service socket. Excluded by kubernetes. |
 | `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Image acquisition before local container creation. Docker accepts IfNotPresent (the default) or Never; Podman also accepts Always before creation or restart. Excluded by kubernetes. |
@@ -389,7 +381,6 @@ Managed Podman targets local rootless Linux; rootful, remote, and other platform
 | `management` | string | Yes | — | Whether this deployment manages the gateway. Constraints: `"managed"`. |
 | `networkCIDR` | string | No | — | Canonical private IPv4 /24 for a managed local gateway. Excluded by kubernetes. Without kubernetes, omitted or empty selects 172.30.N.0/24, where N is the first byte of SHA-256(metadata.uid). Excluded by kubernetes. |
 | `runtime` | [Runtime](#runtime) | No | — | Compute driver the gateway runs every sandbox with; omission selects Docker. |
-| `sandboxDriverConfig` | [SandboxDriverConfig](#sandboxdriverconfig) | No | — | OpenShell's setting that lets sandboxes use driverConfig, such as mounted volumes, passed through unchanged to the gateway's compute driver. Docker and Podman gateways keep it in their retained storage, so it is fixed when the deployment is created; Kubernetes applies a change through the chart. |
 
 ### Alternative 2
 
@@ -398,7 +389,7 @@ An existing gateway managed outside this deployment.
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `credential` | [Credential](#credential) | No | — | Optional bearer credential reference for an external HTTPS gateway. |
+| `credential` | [SecretRef](#secretref) | No | — | Optional bearer credential reference for an external HTTPS gateway. |
 | `endpoint` | string | Yes | — | Gateway HTTP(S) origin, without a path. Constraints: pattern `^https?://`. |
 | `engine` | string | No | — | Engine containing Docker or Podman sandbox images, used only for image metadata inspection. Required for their deployment planning; omission permits retained-state teardown. Kubernetes and OpenShift use image.metadata instead. |
 | `management` | string | Yes | — | Whether this deployment manages the gateway. Constraints: `"external"`. |
@@ -465,7 +456,7 @@ Paths:
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `metadata` | [Credential](#credential) | No | — | Environment reference to the absolute path of a local OCI metadata bundle for `ref`; required for Kubernetes and OpenShift, where no local engine can be inspected. Destroy does not read it. Its index, manifest, configuration, and Fabric catalog are verified against `ref` before use. The bundle holds no image layers or credentials. Docker and Podman inspect their engine instead. |
+| `metadata` | [FileRef](#fileref) | No | — | Environment reference to the absolute path of a local OCI metadata bundle for `ref`; required for Kubernetes and OpenShift, where no local engine can be inspected. Destroy does not read it. Its index, manifest, configuration, and Fabric catalog are verified against `ref` before use. The bundle holds no image layers or credentials. Docker and Podman inspect their engine instead. |
 | `ref` | string | For Kubernetes sandboxes | — | Immutable image reference. Kubernetes and OpenShift require an explicit nonempty reference. For other drivers, omitted or empty selects the generic SDK agent image pin; verify that it contains the selected Fabric adapter. Constraints: `""` or pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. Kubernetes and OpenShift require an explicit immutable image reference. For other drivers, omitted or empty selects the generic SDK agent image pin; verify that it contains the selected Fabric adapter. |
 
 ## ImagePullPolicy
@@ -535,7 +526,7 @@ Paths:
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `api` | [InferenceApi](#inferenceapi) | No | — | Request API. Omission selects anthropic-messages for Anthropic providers and openai-completions for OpenAI providers. NemoClaw uses it to read the endpoint's model catalog; agents use the protocol their adapter selects for the provider. |
-| `credential` | [Credential](#credential) | No | — | Optional API credential reference for an external HTTPS endpoint. Excluded by serviceRef. |
+| `credential` | [SecretRef](#secretref) | No | — | Optional API credential reference for an external HTTPS endpoint. Excluded by serviceRef. |
 | `endpoint` | string | Without serviceRef | — | Inference HTTP(S) URL owned outside the deployment. Required without serviceRef and excluded with serviceRef. |
 | `name` | string | Yes | — | Provider name referenced by model choices. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `provider` | string | Yes | — | OpenShell provider implementation. Must match the selected API family. Constraints: `"openai"` or `"anthropic"`. |
@@ -585,7 +576,7 @@ Web search with gateway-held credentials and explicit agent grants.
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `credential` | [Credential](#credential) | Yes | — | Host environment reference. OpenShell supplies the search provider's placeholder to the sandbox. |
+| `credential` | [SecretRef](#secretref) | Yes | — | Host environment reference. OpenShell supplies the search provider's placeholder to the sandbox. |
 | `kind` | string | Yes | — | Integration implementation selected by this definition. Constraints: `"webSearch"`. |
 | `provider` | [SearchProvider](#searchprovider) | Yes | — | Supported search service. |
 | `sandboxEnv` | string | No | — | Variable name the sandbox sees for the key, such as BRAVE_SEARCH_API_KEY for Hermes's Brave plugin. Defaults to the credential's variable. Constraints: pattern `^[A-Z_][A-Z0-9_]{0,127}$`. |
@@ -598,7 +589,7 @@ A key-authenticated HTTP API, such as an MCP service, with a gateway-held key.
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `authStyle` | [ApiAuthStyle](#apiauthstyle) | No | — | How the key is sent: bearer, the default, as a bearer token, or header, as the raw value of headerName. |
-| `credential` | [Credential](#credential) | Yes | — | Host environment reference holding the API key. |
+| `credential` | [SecretRef](#secretref) | Yes | — | Host environment reference holding the API key. |
 | `endpoint` | string | Yes | — | The API's HTTPS URL. |
 | `headerName` | string | No | — | The header that carries the key. Defaults to Authorization for bearer; required for header. |
 | `kind` | string | Yes | — | Integration implementation selected by this definition. Constraints: `"api"`. |
@@ -622,7 +613,7 @@ Paths:
 | `profile` | string | Yes | — | `development` generates a scoped local issuer for isolated qualification; `oidc` uses an existing OIDC issuer. Constraints: `"development"` or `"oidc"`. |
 | `rolesClaim` | string | No | — | Dot-separated path to the roles array in token claims, such as `groups` or `realm_access.roles`. Constraints: minimum characters 1; maximum characters 253. |
 | `scopesClaim` | string | No | — | Dot-separated path to the scopes array in token claims. Constraints: minimum characters 1; maximum characters 253. |
-| `tokenEnv` | string | No | — | Environment variable holding the bearer token NemoClaw sends to the gateway. Required for `oidc`; your identity provider's tooling obtains and refreshes it. Constraints: pattern `^[A-Z_][A-Z0-9_]{0,127}$`; minimum characters 1; maximum characters 253. |
+| `token` | [SecretRef](#secretref) | No | — | Environment reference holding the bearer token NemoClaw sends to the gateway. Required for `oidc`; your identity provider's tooling obtains and refreshes it. |
 | `userRole` | string | No | — | Role that grants user access; set together with `adminRole`, or neither for authentication only. Constraints: minimum characters 1; maximum characters 253. |
 
 ## ManagedKubernetes
@@ -641,7 +632,7 @@ Paths:
 | `context` | string | Yes | — | Exact kubeconfig context used for every cluster operation. Constraints: pattern `^[^\x00-\x20\x7f]+$(?![\s\S])`; minimum characters 1; maximum characters 253. |
 | `environment` | array of string | No | — | Caller environment variables that the kubeconfig's exec credential plugin needs, such as `AWS_PROFILE` for an EKS cluster. Cluster operations receive only platform variables and these; they are resolved like credential references and never written to configuration or state. Constraints: maximum items 32; items: pattern `^[A-Z_][A-Z0-9_]{0,127}$`. |
 | `imagePullSecrets` | array of string | No | — | Names of caller-managed registry Secrets in this deployment's namespace, used by gateway/helper and sandbox pods. Values stay in Kubernetes; NemoClaw does not create, read, rotate, or remove these Secrets. Provision them after the SDK creates the namespace, before its pods need to pull images. Constraints: maximum items 32; items: pattern `^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\.[a-z0-9](?:[-a-z0-9]*[a-z0-9])?)*$(?![\s\S])`; minimum characters 1; maximum characters 253. |
-| `kubeconfig` | [Credential](#credential) | Yes | — | Environment reference whose value is the local kubeconfig file path. The file and its credentials remain outside configuration and exported state. Process, loader, trust, proxy, cluster, Python, Helm, OpenTofu, and SDK control variable names are reserved. |
+| `kubeconfig` | [FileRef](#fileref) | Yes | — | Environment reference whose value is the local kubeconfig file path. The file and its credentials remain outside configuration and exported state. Process, loader, trust, proxy, cluster, Python, Helm, OpenTofu, and SDK control variable names are reserved. |
 | `namespace` | string | Yes | — | Namespace for this deployment's gateway and generated development authentication resources. Constraints: pattern `^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$(?![\s\S])`; minimum characters 1; maximum characters 63. |
 
 ## Manifest
@@ -1032,21 +1023,6 @@ Paths:
 | `address` | string | Yes | — | Registry address, such as nvcr.io or registry.example.com:5000, matching its entry in the Docker configuration file. Constraints: minimum characters 1; maximum characters 253. |
 | `configFile` | string | No | — | Absolute path of the Docker configuration file that holds the login, on the machine running OpenTofu. Defaults to `.docker/config.json` in the user's home directory; `DOCKER_CONFIG` is not read. Constraints: minimum characters 1; maximum characters 4096. |
 
-## ResourceAdmission
-
-OpenShell's resource admission settings, passed through unchanged.
-
-Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
-
-Paths:
-
-- `spec.gateway.sandboxDriverConfig.resourceAdmission`
-
-| Field | Input type | Required | Default | Description and constraints |
-|---|---|---|---|---|
-| `enabled` | any JSON value | No | — | Require approval labels on external resources; omission keeps OpenShell's default, enabled. |
-| `requiredLabels` | any JSON value | No | — | Labels an external resource must carry, replacing OpenShell's built-in approval labels. Must not be empty. |
-
 ## Resources
 
 Resource declarations checked against host observations and produced data.
@@ -1136,21 +1112,6 @@ Paths:
 | `name` | string | Yes | — | Lowercase sandbox name. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `network` | [Network](#network) | No | — | Sandbox network policy; omission selects isolated egress with grants for declared inference. |
 
-## SandboxDriverConfig
-
-OpenShell's driver configuration admission for a managed gateway's compute driver.
-
-Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
-
-Paths:
-
-- `spec.gateway.sandboxDriverConfig`
-
-| Field | Input type | Required | Default | Description and constraints |
-|---|---|---|---|---|
-| `allow` | boolean | No | — | Accept sandboxes' driverConfig (OpenShell's allow_driver_config). Defaults to false, OpenShell's default. |
-| `resourceAdmission` | [ResourceAdmission](#resourceadmission) | No | — | OpenShell's resource admission for external resources such as volumes; omission keeps OpenShell's defaults. |
-
 ## SearchProvider
 
 Search provider supported by the managed profile.
@@ -1166,6 +1127,29 @@ Paths:
 Accepted input: string.
 
 Constraints: `"brave"` or `"tavily"`.
+
+## SecretRef
+
+Environment variable whose value is a bearer or API credential; the configuration holds no credential value.
+
+Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.gateway.credential`
+- `spec.gateway.kubernetes.authentication.token`
+- `spec.inferenceProviders[].credential`
+- `spec.inferences.{key}.routes[].provider.credential`
+- `spec.integrations.{key}.credential`
+- `spec.sandboxes[].agent.inference.routes[].provider.credential`
+- `spec.sandboxes[].agent.integrations.{key}.credential`
+- `spec.sandboxes[].inferenceProviders[].credential`
+- `spec.sandboxes[].inferences.{key}.routes[].provider.credential`
+- `spec.sandboxes[].integrations.{key}.credential`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `env` | string | Yes | — | Uppercase name of the caller environment variable that holds the credential. NEMOCLAW_KUBERNETES_STATE and the NEMOCLAW_MANAGED_K8S_, HELM_, and KUBE_ prefixes are reserved for runtime controls. Constraints: pattern `^[A-Z_][A-Z0-9_]{0,127}$`. |
 
 ## ServiceAuthentication
 
@@ -1444,9 +1428,9 @@ Paths:
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `ca` | [Credential](#credential) | Yes | — | Environment variable whose value names the local CA certificate file. |
-| `certificate` | [Credential](#credential) | Yes | — | Environment variable whose value names the local client certificate file. |
-| `key` | [Credential](#credential) | Yes | — | Environment variable whose value names the local client private-key file. |
+| `ca` | [FileRef](#fileref) | Yes | — | Environment variable whose value names the local CA certificate file. |
+| `certificate` | [FileRef](#fileref) | Yes | — | Environment variable whose value names the local client certificate file. |
+| `key` | [FileRef](#fileref) | Yes | — | Environment variable whose value names the local client private-key file. |
 
 ## Tool
 

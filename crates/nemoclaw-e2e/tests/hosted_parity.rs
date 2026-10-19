@@ -193,6 +193,7 @@ mod live {
             .map(|resource| Change {
                 resource: (*resource).into(),
                 actions: vec![action.into()],
+                reason: None,
             })
             .collect()
     }

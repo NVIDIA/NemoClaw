@@ -93,10 +93,20 @@ pub struct Registry {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[schemars(!default)]
 #[serde(default, deny_unknown_fields)]
-/// A reference to a caller-provided environment variable; the configuration contains no credential value.
-pub struct Credential {
+/// Environment variable whose value is a bearer or API credential; the configuration holds no credential value.
+pub struct SecretRef {
     #[serde(rename = "env")]
-    /// Uppercase environment variable name. For TLS and kubeconfig fields, its value is a local file path; otherwise it is a bearer/API credential. NEMOCLAW_KUBERNETES_STATE and the NEMOCLAW_MANAGED_K8S_, HELM_, and KUBE_ prefixes are reserved for runtime controls.
+    /// Uppercase name of the caller environment variable that holds the credential. NEMOCLAW_KUBERNETES_STATE and the NEMOCLAW_MANAGED_K8S_, HELM_, and KUBE_ prefixes are reserved for runtime controls.
+    pub env: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[schemars(!default)]
+#[serde(default, deny_unknown_fields)]
+/// Environment variable whose value is the path of a local file; the configuration holds neither the path nor the file.
+pub struct FileRef {
+    #[serde(rename = "env")]
+    /// Uppercase name of the caller environment variable that holds the local file path. NEMOCLAW_KUBERNETES_STATE and the NEMOCLAW_MANAGED_K8S_, HELM_, and KUBE_ prefixes are reserved for runtime controls.
     pub env: String,
 }
 
@@ -107,13 +117,13 @@ pub struct Credential {
 pub struct TLS {
     #[serde(rename = "ca")]
     /// Environment variable whose value names the local CA certificate file.
-    pub ca: Credential,
+    pub ca: FileRef,
     #[serde(rename = "certificate")]
     /// Environment variable whose value names the local client certificate file.
-    pub certificate: Credential,
+    pub certificate: FileRef,
     #[serde(rename = "key")]
     /// Environment variable whose value names the local client private-key file.
-    pub key: Credential,
+    pub key: FileRef,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -168,43 +178,10 @@ pub struct ManagedGateway {
     #[schemars(default, with = "super::ManagedKubernetes")]
     /// Explicit Kubernetes provisioning target. Excludes local engine, imagePullPolicy, and networkCIDR settings and requires Kubernetes sandboxes without managed inference services.
     pub kubernetes: Option<Box<super::ManagedKubernetes>>,
-    #[serde(
-        rename = "sandboxDriverConfig",
-        skip_serializing_if = "Option::is_none"
-    )]
-    #[schemars(default, with = "SandboxDriverConfig")]
-    /// OpenShell's setting that lets sandboxes use driverConfig, such as mounted volumes, passed through unchanged to the gateway's compute driver. Docker and Podman gateways keep it in their retained storage, so it is fixed when the deployment is created; Kubernetes applies a change through the chart.
-    pub sandbox_driver_config: Option<SandboxDriverConfig>,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[schemars(!default)]
-#[serde(default, deny_unknown_fields)]
-/// OpenShell's driver configuration admission for a managed gateway's compute driver.
-pub struct SandboxDriverConfig {
-    #[serde(rename = "allow")]
-    #[schemars(default)]
-    /// Accept sandboxes' driverConfig (OpenShell's allow_driver_config). Defaults to false, OpenShell's default.
-    pub allow: bool,
-    #[serde(rename = "resourceAdmission", skip_serializing_if = "Option::is_none")]
-    #[schemars(default, with = "ResourceAdmission")]
-    /// OpenShell's resource admission for external resources such as volumes; omission keeps OpenShell's defaults.
-    pub resource_admission: Option<ResourceAdmission>,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[schemars(!default)]
-#[serde(default, deny_unknown_fields)]
-/// OpenShell's resource admission settings, passed through unchanged.
-pub struct ResourceAdmission {
-    #[serde(rename = "enabled", skip_serializing_if = "Option::is_none")]
-    #[schemars(default)]
-    /// Require approval labels on external resources; omission keeps OpenShell's default, enabled.
-    pub enabled: Option<bool>,
-    #[serde(rename = "requiredLabels", skip_serializing_if = "Option::is_none")]
-    #[schemars(default, extend("minProperties" = 1))]
-    /// Labels an external resource must carry, replacing OpenShell's built-in approval labels. Must not be empty.
-    pub required_labels: Option<std::collections::BTreeMap<String, String>>,
+    #[serde(rename = "config", skip_serializing_if = "Option::is_none")]
+    #[schemars(default, extend("additionalProperties" = {"anyOf": [{"type": "object"}, {"type": "array", "items": {"type": "object"}}]}))]
+    /// OpenShell gateway settings in the OpenShell Helm chart's gatewayConfig format: each key names a TOML table, such as openshell.drivers.docker, and holds its fields; nested maps are inline tables, and a list of maps is an array of tables. Docker and Podman gateways write it into the configuration file of each new gateway container, so a change replaces the container and keeps its data; Kubernetes passes it to the chart's gatewayConfig. OpenShell validates the settings; keys NemoClaw manages are rejected. Must not contain secrets.
+    pub config: Option<crate::managed::gateway_config::GatewayConfig>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -223,9 +200,9 @@ pub struct ExternalGateway {
     /// Gateway HTTP(S) origin, without a path.
     pub endpoint: String,
     #[serde(rename = "credential", skip_serializing_if = "Option::is_none")]
-    #[schemars(default, with = "Credential")]
+    #[schemars(default, with = "SecretRef")]
     /// Optional bearer credential reference for an external HTTPS gateway.
-    pub credential: Option<Credential>,
+    pub credential: Option<SecretRef>,
     #[serde(rename = "tls", skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "TLS")]
     /// Optional mutual TLS references for an external HTTPS gateway.
@@ -252,9 +229,9 @@ pub struct InferenceProvider {
     #[schemars(extend("x-nemoclaw-required" = "Without serviceRef"))]
     pub endpoint: String,
     #[serde(rename = "credential", skip_serializing_if = "Option::is_none")]
-    #[schemars(default, with = "Credential")]
+    #[schemars(default, with = "SecretRef")]
     /// Optional API credential reference for an external HTTPS endpoint. Excluded by serviceRef.
-    pub credential: Option<Credential>,
+    pub credential: Option<SecretRef>,
     #[serde(
         rename = "serviceRef",
         default,
@@ -338,9 +315,9 @@ pub struct Image {
     /// Immutable image reference. Kubernetes and OpenShift require an explicit nonempty reference. For other drivers, omitted or empty selects the generic SDK agent image pin; verify that it contains the selected Fabric adapter.
     pub ref_: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(default, with = "Credential")]
+    #[schemars(default, with = "FileRef")]
     /// Environment reference to the absolute path of a local OCI metadata bundle for `ref`; required for Kubernetes and OpenShift, where no local engine can be inspected. Destroy does not read it. Its index, manifest, configuration, and Fabric catalog are verified against `ref` before use. The bundle holds no image layers or credentials. Docker and Podman inspect their engine instead.
-    pub metadata: Option<Credential>,
+    pub metadata: Option<FileRef>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

@@ -99,16 +99,17 @@ spec:
         adminRole: openshell-admins
         userRole: openshell-users
         caConfigMap: issuer-ca
-        tokenEnv: NEMOCLAW_GATEWAY_TOKEN
+        token:
+          env: NEMOCLAW_GATEWAY_TOKEN
 ```
 
 - `issuer` and `audience` are passed to OpenShell, which validates every request's bearer token against them.
 - `rolesClaim`, `adminRole` and `userRole` map the token's roles to OpenShell's administrator and user access. Set both roles or neither; with neither, any valid token is accepted. `scopesClaim` names a scopes claim, if your tokens carry one.
 - `caConfigMap` names a ConfigMap in the deployment's namespace whose `ca.crt` verifies the issuer's certificate. Omit it for a publicly trusted issuer. Like registry Secrets, create it after NemoClaw creates the namespace, then rerun apply with the same state directory.
-- `tokenEnv` names the variable holding the bearer token NemoClaw sends to the gateway.
+- `token.env` names the variable holding the bearer token NemoClaw sends to the gateway.
 
 NemoClaw runs no sign-in flow and stores no token.
-Before each plan, apply or destroy, get an access token for the audience from your identity provider, for example with its command-line tool, and put it in the variable `tokenEnv` names:
+Before each plan, apply or destroy, get an access token for the audience from your identity provider, for example with its command-line tool, and put it in the variable `token.env` names:
 
 ```sh
 export NEMOCLAW_GATEWAY_TOKEN="$(your-identity-provider-cli token --audience openshell)"

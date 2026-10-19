@@ -18,7 +18,7 @@ use nemoclaw_sdk::{
     ObservationError,
     bundle::Bundle,
     compile::{Generations, compile_runtime, compile_teardown, runtime_targets},
-    config::{ComputeDriver, Credential, Document, ExternalGateway, Gateway, TLS},
+    config::{ComputeDriver, Document, ExternalGateway, FileRef, Gateway, SecretRef, TLS},
     kubernetes::{
         CA_ENV, CERT_ENV, ClusterTarget, GATEWAY_KIND, KEY_ENV, STATE_ENV, STORAGE_KIND, Spec,
         TOKEN_ENV, connect, operations::Operations, server,
@@ -305,14 +305,16 @@ async fn release_count(client: &kube::Client, namespace: &str, release: &str) ->
 
 async fn authenticated_gateway(operations: &Operations, spec: &Spec) {
     let connection = operations.connect(spec).await.unwrap();
-    let reference = |env: &str| Credential { env: env.into() };
+    let file = |env: &str| FileRef { env: env.into() };
     let gateway = Gateway::External(ExternalGateway {
         endpoint: connection.endpoint().to_owned(),
-        credential: Some(reference(TOKEN_ENV)),
+        credential: Some(SecretRef {
+            env: TOKEN_ENV.into(),
+        }),
         tls: Some(TLS {
-            ca: reference(CA_ENV),
-            certificate: reference(CERT_ENV),
-            key: reference(KEY_ENV),
+            ca: file(CA_ENV),
+            certificate: file(CERT_ENV),
+            key: file(KEY_ENV),
         }),
         ..Default::default()
     });

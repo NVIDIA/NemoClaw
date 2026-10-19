@@ -101,7 +101,7 @@ async fn credentialed_inference_applies_without_probes_then_exports_and_destroys
     *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
     let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
     document.spec.inference_providers[0].endpoint = "https://unreachable.invalid/v1".into();
-    document.spec.inference_providers[0].credential = Some(nemoclaw_sdk::config::Credential {
+    document.spec.inference_providers[0].credential = Some(nemoclaw_sdk::config::SecretRef {
         env: REFERENCE.into(),
     });
     let cancel = CancellationToken::new();

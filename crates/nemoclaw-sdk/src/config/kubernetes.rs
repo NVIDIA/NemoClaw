@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use super::Credential;
+use super::{FileRef, SecretRef};
 use serde::{Deserialize, Serialize};
 
 /// Explicit existing-cluster target for a managed development gateway. The SDK does not create a cluster or select an ambient context, and installs nothing cluster-wide: Agent Sandbox and a default StorageClass must already exist. `runtime.provider: openshift` selects the OpenShift profile.
@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ManagedKubernetes {
     /// Environment reference whose value is the local kubeconfig file path. The file and its credentials remain outside configuration and exported state. Process, loader, trust, proxy, cluster, Python, Helm, OpenTofu, and SDK control variable names are reserved.
-    pub kubeconfig: Credential,
+    pub kubeconfig: FileRef,
     /// Exact kubeconfig context used for every cluster operation.
     #[schemars(
         length(min = 1, max = 253),
@@ -68,10 +68,10 @@ pub struct KubernetesAuthentication {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "String", length(min = 1, max = 253))]
     pub ca_config_map: Option<String>,
-    /// Environment variable holding the bearer token NemoClaw sends to the gateway. Required for `oidc`; your identity provider's tooling obtains and refreshes it.
+    /// Environment reference holding the bearer token NemoClaw sends to the gateway. Required for `oidc`; your identity provider's tooling obtains and refreshes it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(default, with = "String", length(min = 1, max = 253))]
-    pub token_env: Option<String>,
+    #[schemars(default, with = "SecretRef")]
+    pub token: Option<SecretRef>,
 }
 
 /// Supported managed gateway authentication profile.

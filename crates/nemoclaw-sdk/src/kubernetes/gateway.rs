@@ -133,18 +133,23 @@ pub fn values(spec: &Spec) -> Result<Value, Error> {
         values["server"]["oidc"]["caConfigMapName"] =
             json!(authentication.ca_config_map.clone().unwrap_or_default());
     }
-    // OpenShell's driver configuration admission, passed through unchanged.
-    if let Some(setting) = &spec.settings.sandbox_driver_config {
-        let mut driver = json!({"allowDriverConfig": setting.allow});
-        if let Some(admission) = &setting.resource_admission {
-            if let Some(enabled) = admission.enabled {
-                driver["resourceAdmission"]["enabled"] = json!(enabled);
-            }
-            if let Some(labels) = &admission.required_labels {
-                driver["resourceAdmission"]["requiredLabels"] = json!(labels);
+    // Authored tables pass through to the chart. Their fields override
+    // NemoClaw's defaults in the same table; validation rejects the keys
+    // NemoClaw owns.
+    if let Some(config) = &spec.settings.config {
+        let tables = values["gatewayConfig"]
+            .as_object_mut()
+            .expect("gateway configuration tables");
+        for (name, fields) in config {
+            match (tables.get_mut(name), fields) {
+                (Some(Value::Object(defaults)), Value::Object(fields)) => {
+                    defaults.extend(fields.clone());
+                }
+                _ => {
+                    tables.insert(name.clone(), fields.clone());
+                }
             }
         }
-        values["server"]["drivers"]["kubernetes"] = driver;
     }
     Ok(values)
 }

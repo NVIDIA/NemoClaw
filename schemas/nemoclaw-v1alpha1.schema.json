@@ -349,32 +349,6 @@
       },
       "type": "object"
     },
-    "Credential": {
-      "additionalProperties": false,
-      "description": "A reference to a caller-provided environment variable; the configuration contains no credential value.",
-      "properties": {
-        "env": {
-          "description": "Uppercase environment variable name. For TLS and kubeconfig fields, its value is a local file path; otherwise it is a bearer/API credential. NEMOCLAW_KUBERNETES_STATE and the NEMOCLAW_MANAGED_K8S_, HELM_, and KUBE_ prefixes are reserved for runtime controls.",
-          "not": {
-            "anyOf": [
-              {
-                "const": "NEMOCLAW_KUBERNETES_STATE"
-              },
-              {
-                "pattern": "^(?:NEMOCLAW_MANAGED_K8S_|HELM_|KUBE_)"
-              }
-            ]
-          },
-          "pattern": "^[A-Z_][A-Z0-9_]{0,127}$",
-          "type": "string",
-          "x-nemoclaw-error": "credential environment reference must be valid and must not shadow managed Kubernetes runtime controls"
-        }
-      },
-      "required": [
-        "env"
-      ],
-      "type": "object"
-    },
     "DedicatedHardware": {
       "additionalProperties": false,
       "description": "Requirements for one NVIDIA GPU with dedicated memory on Linux AMD64. Declaring requirements does not qualify a model or host.",
@@ -533,6 +507,32 @@
       ],
       "type": "object"
     },
+    "FileRef": {
+      "additionalProperties": false,
+      "description": "Environment variable whose value is the path of a local file; the configuration holds neither the path nor the file.",
+      "properties": {
+        "env": {
+          "description": "Uppercase name of the caller environment variable that holds the local file path. NEMOCLAW_KUBERNETES_STATE and the NEMOCLAW_MANAGED_K8S_, HELM_, and KUBE_ prefixes are reserved for runtime controls.",
+          "not": {
+            "anyOf": [
+              {
+                "const": "NEMOCLAW_KUBERNETES_STATE"
+              },
+              {
+                "pattern": "^(?:NEMOCLAW_MANAGED_K8S_|HELM_|KUBE_)"
+              }
+            ]
+          },
+          "pattern": "^[A-Z_][A-Z0-9_]{0,127}$",
+          "type": "string",
+          "x-nemoclaw-error": "file reference must name a valid environment variable that does not shadow managed Kubernetes runtime controls"
+        }
+      },
+      "required": [
+        "env"
+      ],
+      "type": "object"
+    },
     "Gateway": {
       "description": "Install a local or explicitly configured Kubernetes gateway, or connect to an existing gateway.",
       "oneOf": [
@@ -615,6 +615,26 @@
             ]
           },
           "properties": {
+            "config": {
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "type": "object"
+                  },
+                  {
+                    "items": {
+                      "type": "object"
+                    },
+                    "type": "array"
+                  }
+                ]
+              },
+              "description": "OpenShell gateway settings in the OpenShell Helm chart's gatewayConfig format: each key names a TOML table, such as openshell.drivers.docker, and holds its fields; nested maps are inline tables, and a list of maps is an array of tables. Docker and Podman gateways write it into the configuration file of each new gateway container, so a change replaces the container and keeps its data; Kubernetes passes it to the chart's gatewayConfig. OpenShell validates the settings; keys NemoClaw manages are rejected. Must not contain secrets.",
+              "type": [
+                "object",
+                "null"
+              ]
+            },
             "endpoint": {
               "default": "http://127.0.0.1:17681",
               "description": "Local engine gateways use an HTTP origin with an unprivileged loopback port. Kubernetes requires `https://127.0.0.1:PORT` with an explicit nonzero port and no trailing slash; providers forward free local ports of their own to the owned gateway, so this port is not bound.",
@@ -648,10 +668,6 @@
             "runtime": {
               "$ref": "#/$defs/Runtime",
               "description": "Compute driver the gateway runs every sandbox with; omission selects Docker."
-            },
-            "sandboxDriverConfig": {
-              "$ref": "#/$defs/SandboxDriverConfig",
-              "description": "OpenShell's setting that lets sandboxes use driverConfig, such as mounted volumes, passed through unchanged to the gateway's compute driver. Docker and Podman gateways keep it in their retained storage, so it is fixed when the deployment is created; Kubernetes applies a change through the chart."
             }
           },
           "required": [
@@ -709,7 +725,7 @@
           },
           "properties": {
             "credential": {
-              "$ref": "#/$defs/Credential",
+              "$ref": "#/$defs/SecretRef",
               "description": "Optional bearer credential reference for an external HTTPS gateway."
             },
             "endpoint": {
@@ -846,7 +862,7 @@
       "description": "Sandbox image identity.",
       "properties": {
         "metadata": {
-          "$ref": "#/$defs/Credential",
+          "$ref": "#/$defs/FileRef",
           "description": "Environment reference to the absolute path of a local OCI metadata bundle for `ref`; required for Kubernetes and OpenShift, where no local engine can be inspected. Destroy does not read it. Its index, manifest, configuration, and Fabric catalog are verified against `ref` before use. The bundle holds no image layers or credentials. Docker and Podman inspect their engine instead."
         },
         "ref": {
@@ -993,7 +1009,7 @@
           "description": "Request API. Omission selects anthropic-messages for Anthropic providers and openai-completions for OpenAI providers. NemoClaw uses it to read the endpoint's model catalog; agents use the protocol their adapter selects for the provider."
         },
         "credential": {
-          "$ref": "#/$defs/Credential",
+          "$ref": "#/$defs/SecretRef",
           "description": "Optional API credential reference for an external HTTPS endpoint. Excluded by serviceRef."
         },
         "endpoint": {
@@ -1125,7 +1141,7 @@
           "description": "Web search with gateway-held credentials and explicit agent grants.",
           "properties": {
             "credential": {
-              "$ref": "#/$defs/Credential",
+              "$ref": "#/$defs/SecretRef",
               "description": "Host environment reference. OpenShell supplies the search provider's placeholder to the sandbox."
             },
             "kind": {
@@ -1160,7 +1176,7 @@
               "description": "How the key is sent: bearer, the default, as a bearer token, or header, as the raw value of headerName."
             },
             "credential": {
-              "$ref": "#/$defs/Credential",
+              "$ref": "#/$defs/SecretRef",
               "description": "Host environment reference holding the API key."
             },
             "endpoint": {
@@ -1230,7 +1246,7 @@
                 },
                 {
                   "required": [
-                    "tokenEnv"
+                    "token"
                   ]
                 }
               ]
@@ -1250,7 +1266,7 @@
             "required": [
               "issuer",
               "audience",
-              "tokenEnv"
+              "token"
             ]
           }
         }
@@ -1320,13 +1336,12 @@
           "minLength": 1,
           "type": "string"
         },
-        "tokenEnv": {
-          "description": "Environment variable holding the bearer token NemoClaw sends to the gateway. Required for `oidc`; your identity provider's tooling obtains and refreshes it.",
-          "maxLength": 253,
-          "minLength": 1,
-          "not": {
-            "anyOf": [
-              {
+        "token": {
+          "$ref": "#/$defs/SecretRef",
+          "description": "Environment reference holding the bearer token NemoClaw sends to the gateway. Required for `oidc`; your identity provider's tooling obtains and refreshes it.",
+          "properties": {
+            "env": {
+              "not": {
                 "anyOf": [
                   {
                     "enum": [
@@ -1364,17 +1379,9 @@
                   }
                 ]
               },
-              {
-                "const": "NEMOCLAW_KUBERNETES_STATE"
-              },
-              {
-                "pattern": "^(?:NEMOCLAW_MANAGED_K8S_|HELM_|KUBE_)"
-              }
-            ]
-          },
-          "pattern": "^[A-Z_][A-Z0-9_]{0,127}$",
-          "type": "string",
-          "x-nemoclaw-error": "tokenEnv must be an environment variable name that does not shadow process, trust, proxy, or cluster controls"
+              "x-nemoclaw-error": "token environment reference must not shadow process, trust, proxy, or cluster controls"
+            }
+          }
         },
         "userRole": {
           "description": "Role that grants user access; set together with `adminRole`, or neither for authentication only.",
@@ -1476,7 +1483,7 @@
           "x-nemoclaw-error": "image pull Secret references must be unique Kubernetes Secret names"
         },
         "kubeconfig": {
-          "$ref": "#/$defs/Credential",
+          "$ref": "#/$defs/FileRef",
           "description": "Environment reference whose value is the local kubeconfig file path. The file and its credentials remain outside configuration and exported state. Process, loader, trust, proxy, cluster, Python, Helm, OpenTofu, and SDK control variable names are reserved.",
           "properties": {
             "env": {
@@ -2452,31 +2459,6 @@
       ],
       "type": "object"
     },
-    "ResourceAdmission": {
-      "additionalProperties": false,
-      "description": "OpenShell's resource admission settings, passed through unchanged.",
-      "properties": {
-        "enabled": {
-          "description": "Require approval labels on external resources; omission keeps OpenShell's default, enabled.",
-          "type": [
-            "boolean",
-            "null"
-          ]
-        },
-        "requiredLabels": {
-          "additionalProperties": {
-            "type": "string"
-          },
-          "description": "Labels an external resource must carry, replacing OpenShell's built-in approval labels. Must not be empty.",
-          "minProperties": 1,
-          "type": [
-            "object",
-            "null"
-          ]
-        }
-      },
-      "type": "object"
-    },
     "Resources": {
       "additionalProperties": false,
       "description": "Resource declarations checked against host observations and produced data.",
@@ -2714,21 +2696,6 @@
       ],
       "type": "object"
     },
-    "SandboxDriverConfig": {
-      "additionalProperties": false,
-      "description": "OpenShell's driver configuration admission for a managed gateway's compute driver.",
-      "properties": {
-        "allow": {
-          "description": "Accept sandboxes' driverConfig (OpenShell's allow_driver_config). Defaults to false, OpenShell's default.",
-          "type": "boolean"
-        },
-        "resourceAdmission": {
-          "$ref": "#/$defs/ResourceAdmission",
-          "description": "OpenShell's resource admission for external resources such as volumes; omission keeps OpenShell's defaults."
-        }
-      },
-      "type": "object"
-    },
     "SearchProvider": {
       "description": "Search provider supported by the managed profile.",
       "enum": [
@@ -2736,6 +2703,32 @@
         "tavily"
       ],
       "type": "string"
+    },
+    "SecretRef": {
+      "additionalProperties": false,
+      "description": "Environment variable whose value is a bearer or API credential; the configuration holds no credential value.",
+      "properties": {
+        "env": {
+          "description": "Uppercase name of the caller environment variable that holds the credential. NEMOCLAW_KUBERNETES_STATE and the NEMOCLAW_MANAGED_K8S_, HELM_, and KUBE_ prefixes are reserved for runtime controls.",
+          "not": {
+            "anyOf": [
+              {
+                "const": "NEMOCLAW_KUBERNETES_STATE"
+              },
+              {
+                "pattern": "^(?:NEMOCLAW_MANAGED_K8S_|HELM_|KUBE_)"
+              }
+            ]
+          },
+          "pattern": "^[A-Z_][A-Z0-9_]{0,127}$",
+          "type": "string",
+          "x-nemoclaw-error": "secret reference must name a valid environment variable that does not shadow managed Kubernetes runtime controls"
+        }
+      },
+      "required": [
+        "env"
+      ],
+      "type": "object"
     },
     "ServiceAuthentication": {
       "description": "Bearer authentication for a managed inference service.",
@@ -3836,15 +3829,15 @@
       "description": "Gateway mutual TLS file references. All three references are required when TLS is declared.",
       "properties": {
         "ca": {
-          "$ref": "#/$defs/Credential",
+          "$ref": "#/$defs/FileRef",
           "description": "Environment variable whose value names the local CA certificate file."
         },
         "certificate": {
-          "$ref": "#/$defs/Credential",
+          "$ref": "#/$defs/FileRef",
           "description": "Environment variable whose value names the local client certificate file."
         },
         "key": {
-          "$ref": "#/$defs/Credential",
+          "$ref": "#/$defs/FileRef",
           "description": "Environment variable whose value names the local client private-key file."
         }
       },

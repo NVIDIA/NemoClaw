@@ -4,7 +4,6 @@
 #[cfg(test)]
 mod tests;
 
-mod context_advisory;
 mod export;
 mod opentofu;
 mod plan;
@@ -20,7 +19,7 @@ use crate::{
     backend::Row,
     bundle::Bundle,
     compile::{self, Target},
-    config::{Credential, Document},
+    config::{Document, SecretRef},
     state::{Record, StateBinding, Store, atomic_write, save_json},
 };
 use plan::{Plan, check_destroy_plan, check_plan};
@@ -84,6 +83,10 @@ pub enum Outcome {
 pub struct Change {
     pub resource: String,
     pub actions: Vec<String>,
+    /// Why the resource is replaced, when the plan observed a reason, such as
+    /// a sandbox that exited.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 /// Gateway and workspace selectors from validated intent, not proof of access.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -192,9 +195,6 @@ impl Deployment {
         document.validate()?;
         if cancel.is_cancelled() {
             return Err(Error::Cancelled);
-        }
-        for message in context_advisory::context_warnings(&document)? {
-            (self.progress)(Progress::Warning { message });
         }
         let (bundle, store) = self.open()?;
         let prior = store.load()?;

@@ -43,6 +43,7 @@ fn creates(resources: &[&str]) -> Vec<Change> {
         .map(|resource| Change {
             resource: (*resource).into(),
             actions: vec!["create".into()],
+            reason: None,
         })
         .collect()
 }
@@ -134,6 +135,7 @@ async fn spark_image_change_plans_and_applies_replacement() {
     let mut expected_changes = vec![Change {
         resource: "docker_container.inference_service_inference_qwen".into(),
         actions: vec!["delete".into(), "create".into()],
+        reason: None,
     }];
     let generations = [
         "workspace",
@@ -153,6 +155,7 @@ async fn spark_image_change_plans_and_applies_replacement() {
             expected_changes.push(Change {
                 resource: target.address,
                 actions: vec![action.into()],
+                reason: None,
             });
         }
     }

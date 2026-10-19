@@ -398,7 +398,7 @@ fn export_provider(document: &mut Document, expected: &Row, observed: &Row) -> R
         return Err(Error::Conflict("managed inference registration drifted"));
     }
     let provider = document.selected_provider_mut(&expected["name"])?;
-    provider.credential = (!observed["credential_env"].is_empty()).then(|| Credential {
+    provider.credential = (!observed["credential_env"].is_empty()).then(|| SecretRef {
         env: observed["credential_env"].clone(),
     });
     Ok(())
@@ -752,7 +752,7 @@ mod tests {
             Document::parse(include_str!("../../tests/fixtures/config/local.yaml").as_bytes())
                 .unwrap();
         document.spec.inference_providers[0].endpoint = "https://models.example/v1".into();
-        document.spec.inference_providers[0].credential = Some(Credential {
+        document.spec.inference_providers[0].credential = Some(SecretRef {
             env: "OLD_KEY".into(),
         });
         let expected = provider_row(&document);

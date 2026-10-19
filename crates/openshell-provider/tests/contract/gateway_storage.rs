@@ -249,7 +249,6 @@ async fn gateway_storage_initializes_once_rejects_drift_and_refuses_deletion() {
                 "POST /containers/container-0/start",
                 "POST /containers/container-0/wait",
                 "PUT /containers/container-0/archive",
-                "PUT /containers/container-0/archive",
             ]
         );
         assert_eq!(
@@ -258,7 +257,9 @@ async fn gateway_storage_initializes_once_rejects_drift_and_refuses_deletion() {
                 .len(),
             32
         );
-        assert!(engine.files.contains_key(&format!("{data}/gateway.toml")));
+        // Storage holds data and credentials; each gateway container
+        // receives its own configuration file.
+        assert!(!engine.files.contains_key(&format!("{data}/gateway.toml")));
     }
     let output: Value =
         serde_json::from_str(&run(&workspace, &["output", "-json", "data_path"], true)).unwrap();
@@ -279,21 +280,18 @@ async fn gateway_storage_initializes_once_rejects_drift_and_refuses_deletion() {
     assert!(unchanged.contains("No changes"), "{unchanged}");
     let bound = fs::read(&state_path).unwrap();
 
-    // Changed configuration or a missing dependency fails the refresh, keeps
-    // the binding, and recreates nothing.
-    let configuration = format!("{data}/gateway.toml");
-    let original = engine.lock().unwrap().files[&configuration].clone();
+    // A gateway configuration file in storage is the container's, not
+    // storage's: a different one leaves storage unchanged.
     engine
         .lock()
         .unwrap()
         .files
-        .insert(configuration.clone(), b"changed = true\n".to_vec());
-    let drift = run(&workspace, &["plan", "-input=false", "-no-color"], false);
-    assert!(
-        drift.contains("gateway storage configuration differs from this bundle"),
-        "{drift}"
-    );
-    engine.lock().unwrap().files.insert(configuration, original);
+        .insert(format!("{data}/gateway.toml"), b"changed = true\n".to_vec());
+    let configured = run(&workspace, &["plan", "-input=false", "-no-color"], true);
+    assert!(configured.contains("No changes"), "{configured}");
+
+    // A missing dependency fails the refresh, keeps the binding, and
+    // recreates nothing.
     let volume = engine
         .lock()
         .unwrap()

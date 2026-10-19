@@ -78,6 +78,7 @@ async fn start(api: &Docker, engine: &Engine, spec: &Spec) -> OpenShellClient {
     // Never run a gateway with OpenShell's shared default namespace on this daemon.
     assert!(
         spec.gateway_config("/owned")
+            .unwrap()
             .contains(&format!("sandbox_label = {:?}", spec.name))
     );
     let mut storage = spec.clone();
@@ -96,6 +97,17 @@ async fn start(api: &Docker, engine: &Engine, spec: &Spec) -> OpenShellClient {
                 ..Default::default()
             }),
             spec.container(&volume.mountpoint).unwrap(),
+        )
+        .await
+        .unwrap();
+    // As the Docker provider's upload does, give the new container its
+    // configuration file before it starts.
+    let config = spec.gateway_config(&volume.mountpoint).unwrap();
+    engine
+        .write_files(
+            &created.id,
+            &volume.mountpoint,
+            &[("gateway.toml", config.as_bytes(), 0o600)],
         )
         .await
         .unwrap();
