@@ -119,6 +119,10 @@ describe("protected managed-image runtime workflow", () => {
   });
 
   it.each([
+    ["Verify reviewed candidate OpenShell runtime before consumption", "run", "echo bypass"],
+    ["Verify reviewed candidate OpenShell runtime before consumption", "if", "false"],
+    ["Verify reviewed candidate OpenShell runtime before consumption", "continue-on-error", true],
+    ["Verify reviewed candidate OpenShell runtime before consumption", "env", {}],
     ["Verify reviewed candidate OpenShell runtime", "run", "echo bypass"],
     ["Verify reviewed candidate OpenShell runtime", "if", "false"],
     ["Verify reviewed candidate OpenShell runtime", "continue-on-error", true],
@@ -131,6 +135,21 @@ describe("protected managed-image runtime workflow", () => {
   ])("rejects admission step %s with altered %s", (name, field, replacement) => {
     const value = workflow();
     namedStep(value, String(name))[String(field)] = replacement;
+    expect(validateManagedImageProtectedRuntimeWorkflow(value)).not.toEqual([]);
+  });
+
+  it("rejects consuming projected sources before verifying approval", () => {
+    const value = workflow();
+    const job = runtimeJob(value);
+    const steps = job.steps as Array<Record<string, unknown>>;
+    const verify = namedStep(
+      value,
+      "Verify reviewed candidate OpenShell runtime before consumption",
+    );
+    const install = namedStep(value, "Install reviewed OpenShell SDK from trusted controller");
+    const withoutVerify = steps.filter((step) => step !== verify);
+    const index = withoutVerify.indexOf(install);
+    job.steps = [...withoutVerify.slice(0, index + 1), verify, ...withoutVerify.slice(index + 1)];
     expect(validateManagedImageProtectedRuntimeWorkflow(value)).not.toEqual([]);
   });
 

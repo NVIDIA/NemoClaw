@@ -265,6 +265,11 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
   );
   if (projection?.id !== "openshell-projection")
     errors.push(`${JOB_ID} must identify the OpenShell projection`);
+  const verifyBeforeUse = requireStep(
+    errors,
+    workflowSteps,
+    "Verify reviewed candidate OpenShell runtime before consumption",
+  );
   const verify = requireStep(errors, workflowSteps, "Verify reviewed candidate OpenShell runtime");
   const restore = requireStep(errors, workflowSteps, "Restore trusted OpenShell sources");
   const admissionEnv = {
@@ -276,17 +281,19 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     jobEnv.GH_TOKEN !== undefined ||
     workflowSteps.some(
       (step) =>
-        ![projection, verify, restore].includes(step) &&
+        ![projection, verifyBeforeUse, verify, restore].includes(step) &&
         (record(step.env).GITHUB_TOKEN !== undefined || record(step.env).GH_TOKEN !== undefined),
     )
   )
     errors.push(`${JOB_ID} must expose GitHub credentials only to candidate admission operations`);
-  if (verify?.if !== undefined) errors.push(`${JOB_ID} must not skip OpenShell verification`);
+  if (verifyBeforeUse?.if !== undefined || verify?.if !== undefined)
+    errors.push(`${JOB_ID} must not skip OpenShell verification`);
   if (restore?.if !== "${{ always() && steps.openshell-projection.outcome == 'success' }}") {
     errors.push(`${JOB_ID} must restore sources after a successful OpenShell projection`);
   }
   for (const [step, operation, output] of [
     [projection, "prepare", "openshell-projection.json"],
+    [verifyBeforeUse, "verify", "openshell-projection-initially-verified.json"],
     [verify, "verify", "openshell-projection-verified.json"],
     [restore, "restore", "openshell-projection-restored.json"],
   ] as const) {
@@ -531,6 +538,7 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     "Prepare E2E workspace",
     "Validate protected runtime activation contract",
     "Bind reviewed candidate OpenShell runtime",
+    "Verify reviewed candidate OpenShell runtime before consumption",
     "Download reviewed OpenShell SDK archive",
     "Install reviewed OpenShell SDK from trusted controller",
     "Build trusted CLI with reviewed OpenShell runtime",
