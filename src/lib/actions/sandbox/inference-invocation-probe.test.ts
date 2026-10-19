@@ -29,9 +29,9 @@ import {
 } from "./inference-invocation-probe";
 import {
   NATIVE_LOCAL_CREDENTIAL_HANDLE,
-  nativeLocalReceipt,
   recordingProbeShell,
 } from "../../../../test/helpers/native-local-probe-shell";
+import { nativeLocalTestReceipt } from "../../../../test/helpers/inference-set";
 
 const input = {
   sandboxName: "dcode-workspace",
@@ -1004,15 +1004,11 @@ describe("OpenClaw native local probe routing (#13338)", () => {
       provider,
       model: "local-model",
       preferredInferenceApi: "openai-completions",
-      nativeLocalProviderAttachment: nativeLocalReceipt({
+      nativeLocalProviderAttachment: nativeLocalTestReceipt(
         provider,
-        ...(agent ? { agent } : {}),
         endpointUrl,
-        credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
-        authMode: "authenticated",
-        gatewayName: "nemoclaw",
-        sandboxName: "alpha",
-      }),
+        agent ? { agent } : {},
+      ),
     };
   }
 

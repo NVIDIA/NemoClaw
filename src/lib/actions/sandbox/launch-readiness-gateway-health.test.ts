@@ -20,9 +20,9 @@ import { probeSandboxInferenceInvocation } from "./inference-invocation-probe";
 import { runSandboxInferenceInvocationProbe } from "./inference-route-health";
 import {
   NATIVE_LOCAL_CREDENTIAL_HANDLE,
-  nativeLocalReceipt,
   recordingProbeShell,
 } from "../../../../test/helpers/native-local-probe-shell";
+import { nativeLocalTestReceipt } from "../../../../test/helpers/inference-set";
 import {
   isSandboxGatewayRunningForStatus,
   waitForStartedHermesGatewayProcess,
@@ -464,15 +464,14 @@ describe("OpenClaw native-local readiness identity (#13338)", () => {
   ])(
     "sends the health request to the recorded endpoint (selected $agentName, recorded $agent)",
     async ({ agentName, agent }) => {
-      const receipt = nativeLocalReceipt({
-        provider: "llama-cpp-local",
-        agent: "openclaw",
-        endpointUrl: "http://host.openshell.internal:8081/v1",
-        credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
-        authMode: "authenticated",
-        gatewayName: "selected",
-        sandboxName: "alpha",
-      });
+      const receipt = nativeLocalTestReceipt(
+        "llama-cpp-local",
+        "http://host.openshell.internal:8081/v1",
+        {
+          agent: "openclaw",
+          gatewayName: "selected",
+        },
+      );
       const shell = recordingProbeShell("200", '{"choices":[{"message":{"content":"OK"}}]}');
       await expect(
         requireNativeInferenceHealth({

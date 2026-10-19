@@ -6,25 +6,11 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import {
-  nativeLocalIdentity,
-  type NativeLocalBinding,
-  type NativeLocalProviderAttachment,
-} from "../../src/lib/inference/native-local/contract";
 import type { SandboxInferenceInvocationDeps } from "../../src/lib/actions/sandbox/inference-invocation-probe";
 
 /** The shape OpenShell issues for an attached native local provider credential. */
 export const NATIVE_LOCAL_CREDENTIAL_HANDLE =
   "openshell:resolve:env:v7_NEMOCLAW_LOCAL_INFERENCE_TOKEN";
-
-export function nativeLocalReceipt(binding: NativeLocalBinding): NativeLocalProviderAttachment {
-  return {
-    ...binding,
-    ...nativeLocalIdentity(binding),
-    schemaVersion: 1,
-    providerId: "fixture-local-provider",
-  };
-}
 
 /**
  * Run each generated probe command in a real shell whose curl records its

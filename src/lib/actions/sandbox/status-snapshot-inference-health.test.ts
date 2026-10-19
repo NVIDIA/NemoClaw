@@ -10,10 +10,8 @@ import type { SandboxInferenceInvocationResult } from "./inference-invocation-pr
 import type { SandboxInferenceRouteHealth } from "./inference-route-health";
 import { collectSandboxStatusSnapshot } from "./status-snapshot";
 import { probeSandboxInferenceInvocation } from "./inference-invocation-probe";
-import {
-  nativeLocalReceipt,
-  recordingProbeShell,
-} from "../../../../test/helpers/native-local-probe-shell";
+import { recordingProbeShell } from "../../../../test/helpers/native-local-probe-shell";
+import { nativeLocalTestReceipt } from "../../../../test/helpers/inference-set";
 
 // Direct, unmocked coverage of `buildSandboxInferenceRouteHealth` through the
 // exported `collectSandboxStatusSnapshot` entry point (it is not itself
@@ -1168,15 +1166,14 @@ describe("status native local request identity (#13338)", () => {
   it.each(["openclaw", undefined] as const)(
     "probes and reports the recorded OpenClaw endpoint when the registry agent is %s",
     async (agent) => {
-      const receipt = nativeLocalReceipt({
-        provider: "vllm-local",
-        agent: "openclaw",
-        endpointUrl: "http://host.openshell.internal:18000/v1",
-        credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
-        authMode: "sentinel",
-        gatewayName: "nemoclaw",
-        sandboxName: "alpha",
-      });
+      const receipt = nativeLocalTestReceipt(
+        "vllm-local",
+        "http://host.openshell.internal:18000/v1",
+        {
+          agent: "openclaw",
+          authMode: "sentinel",
+        },
+      );
       const options = snapshotDeps(
         null,
         null,
