@@ -29,6 +29,41 @@ Fabric configurations and Fabric runtime bindings remain JSON strings, because t
 Add a crate only for an existing consumer and a justified dependency or deployment boundary.
 Backward compatibility with earlier schemas, SDK APIs, or state formats is not required; reject unsupported state without adopting, replacing, or deleting its resources.
 
+## Upstream Boundaries
+
+NemoClaw composes OpenShell, OpenTofu, Fabric, agent harnesses, inference servers, container engines, and Kubernetes; it must not reimplement what they provide.
+NemoClaw's own promises are mapping desired state to resources, deployment state and durable identities, ownership checks before mutation, data retained on destroy, hardware fit and memory protection for managed model services, and documentation of how the components fit together.
+
+| Upstream | NemoClaw relies on it for |
+|---|---|
+| OpenTofu | Graph execution and resource state |
+| OpenShell | Gateway configuration, sandbox isolation, network policy enforcement and destination checks, and credential storage and delivery |
+| Fabric | Adapter discovery, native configuration validation and mapping, the agent process, and the harness versions its adapters support |
+| Agent harnesses | Their own settings, limits, and dependency locks |
+| Ollama | Model pulls, model storage, and reported digests |
+| vLLM and Hugging Face | Serving, health, and authentication; snapshot downloads and their checksums |
+| Docker, Podman, and Kubernetes | Container lifecycle, restarts, resource limits, image pulls, and registry authentication |
+| Platform operators | Secret stores, host and cluster recovery, and cluster prerequisites |
+
+Before adding behavior, answer these questions in its issue or pull request:
+
+1. Does an upstream component already provide it? Rely on that component, and check only what NemoClaw needs to proceed.
+2. Is NemoClaw the right place to observe or do it? A check from the OpenTofu host does not establish what a sandbox can reach.
+3. Would an experienced OpenTofu user expect NemoClaw to do it?
+4. Does it need a patch, a workaround, or a reimplementation of another component's format beyond its documented inputs? If so, stop and discuss it first.
+5. Which NemoClaw promise does it serve?
+
+When an upstream gap blocks a feature, leave the feature unavailable instead of working around it.
+File a `v1` issue, add the limit to [current limits](../limits.md), and ask upstream only when the gap is theirs to fix.
+Setting configuration that an upstream component documents is not a workaround.
+An exception needs its reason recorded here and an issue that tracks its removal.
+
+These exceptions are recorded until their issues are decided:
+
+- Managed Docker and Podman gateways write OpenShell's configuration file ([#13473](https://github.com/NVIDIA/NemoClaw/issues/13473)), and NemoClaw installs them ([#13474](https://github.com/NVIDIA/NemoClaw/issues/13474)).
+- The vLLM runtime filters routes in front of vLLM's authentication ([#13471](https://github.com/NVIDIA/NemoClaw/issues/13471)).
+- `runtimes/qwen38` maintains model-specific vLLM patches ([#13472](https://github.com/NVIDIA/NemoClaw/issues/13472)).
+
 ## Ownership and Recovery
 
 - Validate configuration strictly; retain intent, digests, secret references, and durable data bindings.
@@ -67,3 +102,4 @@ Exercise SDK apply, CLI export, SDK unchanged apply, and CLI destroy against the
 Qualify the provider against pinned OpenTofu and use an explicitly verified bundle for deployment tests.
 Keep tests that need live resources opt-in; record a live run's revision, platform, and environment in its CI results or the commit that relies on it.
 Compilation alone does not qualify migration or platforms.
+Tests cover NemoClaw's promises, not whether upstream components enforce their own behavior.
