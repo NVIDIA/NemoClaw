@@ -816,6 +816,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     installMode: "authenticated",
     restoreCli: true,
     exposeCliBin: true,
+    owningPaths: ["test/e2e/fixtures/native-local-chat.ts"],
     environment: {
       ...nonInteractive,
       NEMOCLAW_MODEL: "qwen3.5:9b",
@@ -836,6 +837,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     exposeCliBin: true,
     owningPaths: [
       "test/e2e/live/gpu-e2e-helpers.ts",
+      "test/e2e/fixtures/native-local-chat.ts",
       "test/e2e/live/hermes-cli-adapter-live.ts",
       "src/lib/inference/ollama/proxy.ts",
       "src/lib/inference/ollama/proxy-observation.ts",
@@ -1058,6 +1060,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       "src/lib/onboard/openclaw/initial-inference-route.ts",
       "src/lib/onboard/setup-inference.ts",
       "src/lib/actions/sandbox/rebuild-preflight-guards.ts",
+      "src/lib/actions/sandbox/inference-invocation-probe.ts",
+      "src/lib/actions/sandbox/inference-route-health.ts",
       "test/e2e/fixtures/inference-routing-openclaw-native.ts",
       "tools/e2e/onboard-timeout-contract.mts",
     ],

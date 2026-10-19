@@ -69,6 +69,10 @@ The install refuses package removals, preserving the runner's Docker and contain
   `jobs=portable-hermes-finalization`; the job selects Podman 5.7 regardless of
   gateway-runtime inputs. The live scenario also runs the receipt-bound Hermes
   build, registry publication, and OpenShell create transaction against those services.
+  Its managed-registry HTTP readiness check uses a bounded read-only policy with
+  attempt evidence. A failure attempts to retain redacted container state, the
+  published port mapping, and a bounded registry log tail before cleanup.
+  Unavailable diagnostics do not suppress the readiness failure.
 - `.github/workflows/podman-cpu-proof.yaml` publishes PR-only experimental runtime evidence.
 - `.github/workflows/sandbox-images.yaml` provides reusable sandbox-image build and test evidence.
   `.github/workflows/e2e.yaml` selects free-standing jobs, including `whatsapp-qr-compact` and `ollama-auth-proxy`.
@@ -259,6 +263,8 @@ No matching successful run, invalid or duplicated run metadata, or incomplete, d
 Manual PR E2E does not fall back to local Dockerfile builds.
 
 PR image publication builds each shipped agent on native AMD64 and ARM64 runners.
+The workflow retains PR all-agent image contracts for seven days so manual PR E2E can bind them
+after review. An expired contract blocks live E2E before candidate execution.
 Each platform retains its own digest contract and runs the direct startup checks.
 For OpenClaw, those checks also run the shared agent-reload proof against the image's generated
 gateway policy and installed distribution. The proof checks live named-agent discovery, gateway

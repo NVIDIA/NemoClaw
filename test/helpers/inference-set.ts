@@ -292,6 +292,7 @@ export type CaptureOpenshell = (
 export function nativeLocalTestReceipt(
   provider: NativeLocalBinding["provider"] = "ollama-local",
   endpointUrl = "http://host.openshell.internal:11435/v1",
+  overrides: Partial<NativeLocalBinding> = {},
 ) {
   const binding: NativeLocalBinding = {
     provider,
@@ -300,6 +301,7 @@ export function nativeLocalTestReceipt(
     gatewayName: "nemoclaw",
     credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
     authMode: "authenticated",
+    ...overrides,
   };
   return {
     ...binding,

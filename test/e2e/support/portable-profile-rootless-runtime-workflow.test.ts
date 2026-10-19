@@ -318,8 +318,14 @@ ${serviceIdentityCheck}`,
     const selects = (event: "pull_request" | "push", changedPath: string) =>
       workflow.on[event].paths.some((pattern) => matchesGlob(changedPath, pattern));
     const transactionFixture = "test/e2e/fixtures/portable-hermes-transaction-live.ts";
+    const readinessFixture = "test/e2e/fixtures/portable-registry-readiness.ts";
+    const readinessSupportTest = "test/e2e/support/portable-registry-readiness.test.ts";
     expect.soft(selects("pull_request", transactionFixture)).toBe(true);
     expect.soft(selects("push", transactionFixture)).toBe(true);
+    expect.soft(selects("pull_request", readinessFixture)).toBe(true);
+    expect.soft(selects("push", readinessFixture)).toBe(true);
+    expect.soft(selects("pull_request", readinessSupportTest)).toBe(true);
+    expect.soft(selects("push", readinessSupportTest)).toBe(true);
     expect.soft(selects("pull_request", "src/lib/domain/sandbox/image-tag.ts")).toBe(true);
     expect.soft(selects("push", "src/lib/domain/sandbox/image-tag.ts")).toBe(true);
     expect.soft(selects("pull_request", "src/lib/onboard/session-bootstrap.ts")).toBe(true);
