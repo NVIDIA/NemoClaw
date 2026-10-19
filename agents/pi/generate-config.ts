@@ -17,9 +17,21 @@ import {
   NVIDIA_HOSTED_NATIVE_ENDPOINT,
 } from "../../src/lib/inference/native-nvidia/contract.ts";
 
-import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import {
+  chmodSync,
+  closeSync,
+  fchmodSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 const SUPPORTED_INFERENCE_API = "openai-completions";
 const MANAGED_PROVIDER_ID = "openshell";
@@ -188,6 +200,7 @@ function syncManagedDefaults(configDir: string, model: string, nativeLocal: bool
   const settingsPath = join(configDir, "settings.json");
   const defaults = { defaultProvider: MANAGED_PROVIDER_ID, defaultModel: model };
   let existing: Record<string, unknown>;
+  let destination = settingsPath;
   try {
     const content = readFileSync(settingsPath, "utf8");
     const parsed: unknown = content.length === 0 ? {} : JSON.parse(content);
@@ -195,6 +208,7 @@ function syncManagedDefaults(configDir: string, model: string, nativeLocal: bool
       throw new Error("Pi settings.json must contain an object.");
     }
     existing = parsed as Record<string, unknown>;
+    destination = realpathSync(settingsPath);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     // Hosted startup did not previously create settings.json. Native-local
@@ -202,10 +216,23 @@ function syncManagedDefaults(configDir: string, model: string, nativeLocal: bool
     if (!nativeLocal) return;
     existing = {};
   }
-  writeFileSync(settingsPath, `${JSON.stringify({ ...existing, ...defaults }, null, 2)}\n`, {
-    mode: 0o600,
-  });
-  chmodSync(settingsPath, 0o600);
+  const stagedPath = join(dirname(destination), `.settings.json.${randomUUID()}.tmp`);
+  let staged = false;
+  let descriptor: number | null = null;
+  try {
+    descriptor = openSync(stagedPath, "wx", 0o600);
+    staged = true;
+    writeFileSync(descriptor, `${JSON.stringify({ ...existing, ...defaults }, null, 2)}\n`);
+    fchmodSync(descriptor, 0o600);
+    const completedDescriptor = descriptor;
+    descriptor = null;
+    closeSync(completedDescriptor);
+    renameSync(stagedPath, destination);
+    staged = false;
+  } finally {
+    if (descriptor !== null) closeSync(descriptor);
+    if (staged) rmSync(stagedPath, { force: true });
+  }
 }
 
 function main(): void {

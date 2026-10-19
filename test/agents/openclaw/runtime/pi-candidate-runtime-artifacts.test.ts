@@ -299,6 +299,90 @@ describe("Pi managed model catalog generation", () => {
     }
   });
 
+  it("preserves both Pi files when settings permission update fails (#13362)", () => {
+    const selected = {
+      NEMOCLAW_MODEL: "previous-model",
+      NEMOCLAW_UPSTREAM_PROVIDER: "compatible-endpoint",
+      NEMOCLAW_INFERENCE_BASE_URL: "http://host.openshell.internal:11434/v1",
+    };
+    const { home, status, stderr } = generate(selected);
+    try {
+      expect(status, stderr).toBe(0);
+      const configDir = path.join(home, ".pi/agent");
+      const modelsPath = path.join(configDir, "models.json");
+      const settingsPath = path.join(configDir, "settings.json");
+      const previousCatalog = fs.readFileSync(modelsPath);
+      const previousSettings = fs.readFileSync(settingsPath);
+      const shimPath = path.join(home, "fail-settings-permissions.cjs");
+      fs.writeFileSync(
+        shimPath,
+        `const fs = require("node:fs");
+const { syncBuiltinESMExports } = require("node:module");
+const chmodSync = fs.chmodSync;
+fs.chmodSync = (target, mode) => {
+  if (String(target).includes("settings.json")) throw new Error("simulated settings chmod failure");
+  return chmodSync(target, mode);
+};
+fs.fchmodSync = () => { throw new Error("simulated settings chmod failure"); };
+syncBuiltinESMExports();\n`,
+      );
+
+      const failed = spawnSync(
+        process.execPath,
+        ["--require", shimPath, path.join(root, "agents/pi/generate-config.ts")],
+        {
+          cwd: root,
+          encoding: "utf8",
+          env: {
+            PATH: process.env.PATH ?? "",
+            HOME: home,
+            ...selected,
+            NEMOCLAW_MODEL: "next-model",
+          },
+        },
+      );
+      expect(failed.status).not.toBe(0);
+      expect(failed.stderr).toContain("simulated settings chmod failure");
+      expect(fs.readFileSync(modelsPath)).toEqual(previousCatalog);
+      expect(fs.readFileSync(settingsPath)).toEqual(previousSettings);
+      expect(fs.readdirSync(configDir).sort()).toEqual(["models.json", "settings.json"]);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("updates the target of an existing Pi settings symlink (#13362)", () => {
+    const { home, status, stderr } = generate(
+      {
+        NEMOCLAW_MODEL: "selected-model",
+        NEMOCLAW_UPSTREAM_PROVIDER: "compatible-endpoint",
+        NEMOCLAW_INFERENCE_BASE_URL: "http://host.openshell.internal:11434/v1",
+      },
+      (home) => {
+        const configDir = path.join(home, ".pi/agent");
+        fs.mkdirSync(configDir, { recursive: true });
+        fs.writeFileSync(path.join(home, "user-settings.json"), '{"theme":"dark"}\n');
+        fs.symlinkSync(
+          path.join(home, "user-settings.json"),
+          path.join(configDir, "settings.json"),
+        );
+      },
+    );
+    try {
+      expect(status, stderr).toBe(0);
+      const settingsPath = path.join(home, ".pi/agent/settings.json");
+      expect(fs.lstatSync(settingsPath).isSymbolicLink()).toBe(true);
+      expect(JSON.parse(fs.readFileSync(path.join(home, "user-settings.json"), "utf8"))).toEqual({
+        theme: "dark",
+        defaultProvider: "openshell",
+        defaultModel: "selected-model",
+      });
+      expect(fs.statSync(settingsPath).mode & 0o777).toBe(0o600);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("updates Pi's managed defaults when the native-local model changes and preserves other settings", () => {
     const selected = {
       NEMOCLAW_MODEL: "selected-local-model",
