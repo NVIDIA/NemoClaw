@@ -886,19 +886,22 @@ async fn startup_and_observation_failures_retain_bindings_and_recover() {
     assert!(error.contains("ControlSupervisorExited"), "{error}");
     assert!(!error.contains("private-backend-diagnostic"));
     let state_path = directory.path().join("terraform.tfstate");
-    let established = fs::read(&state_path).unwrap();
-    let effects = fixture.state.lock().unwrap().effects;
-    assert_eq!(effects, 4);
+    assert_eq!(fixture.state.lock().unwrap().effects, 4);
     assert_apply_unfinished(&deployment, &cancel).await;
+    // Reapplying replaces the exited sandbox; the replacement fails the same way.
     let error = deployment
         .apply(&document, &cancel)
         .await
         .unwrap_err()
         .to_string();
     assert!(error.contains("ControlSupervisorExited"), "{error}");
-    assert_same_deployment_state(&fs::read(&state_path).unwrap(), &established);
-    assert_eq!(fixture.state.lock().unwrap().effects, effects);
-    assert!(fixture.state.lock().unwrap().exec_calls.is_empty());
+    {
+        let state = fixture.state.lock().unwrap();
+        assert_eq!(state.delete_calls, 1);
+        assert_eq!(state.sandboxes.len(), 1);
+        assert!(state.exec_calls.is_empty());
+    }
+    let effects = fixture.state.lock().unwrap().effects;
     fixture.state.lock().unwrap().sandbox_phase = None;
     for sandbox in fixture.state.lock().unwrap().sandboxes.values_mut() {
         sandbox.status.as_mut().unwrap().phase = openshell_core::proto::SandboxPhase::Ready as i32;
@@ -1575,8 +1578,7 @@ async fn sandbox_startup_failure_names_reason_and_guidance_and_allows_destroy() 
             }
             command.output().unwrap()
         };
-        for operation in ["apply", "plan"] {
-            let before = fixture.state.lock().unwrap().effects;
+        for operation in ["apply"] {
             let failed = invoke(operation);
             assert_eq!(failed.status.code(), Some(1));
             let stdout = String::from_utf8(failed.stdout).unwrap();
@@ -1600,10 +1602,18 @@ async fn sandbox_startup_failure_names_reason_and_guidance_and_allows_destroy() 
             assert!(!stdout.contains("PRIVATE_SENTINEL") && !stderr.contains("PRIVATE_SENTINEL"));
             assert_eq!(fixture.state.lock().unwrap().sandboxes.len(), 1);
             assert!(state.join("terraform.tfstate").exists());
-            if operation == "plan" {
-                assert_eq!(fixture.state.lock().unwrap().effects, before);
-            }
         }
+        // The plan replaces the exited sandbox and says why, without the
+        // backend's private message.
+        let before = fixture.state.lock().unwrap().effects;
+        let planned = invoke("plan");
+        let stdout = String::from_utf8(planned.stdout).unwrap();
+        let stderr = String::from_utf8(planned.stderr).unwrap();
+        assert!(planned.status.success(), "{stdout} {stderr}");
+        let exited = format!("sandbox exited: SANDBOX_PHASE_ERROR, reason {reason}");
+        assert!(stdout.contains(&exited), "{stdout}");
+        assert!(!stdout.contains("PRIVATE_SENTINEL") && !stderr.contains("PRIVATE_SENTINEL"));
+        assert_eq!(fixture.state.lock().unwrap().effects, before);
         let destroyed = invoke("destroy");
         assert!(
             destroyed.status.success(),
