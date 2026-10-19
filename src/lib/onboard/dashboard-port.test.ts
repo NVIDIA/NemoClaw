@@ -877,7 +877,9 @@ describe("getRegistryOccupiedDashboardPorts", () => {
     try {
       vi.stubEnv("HOME", home);
       const currentRoot = nemoclawStateRoot(home, GATEWAY_PORT);
-      const siblingRoot = nemoclawStateRoot(home, 9123);
+      const siblingPort = GATEWAY_PORT === 9123 ? 9124 : 9123;
+      const siblingRoot = nemoclawStateRoot(home, siblingPort);
+      assert.notEqual(currentRoot, siblingRoot);
       fs.mkdirSync(currentRoot, { recursive: true });
       fs.mkdirSync(siblingRoot, { recursive: true });
       fs.writeFileSync(
@@ -901,8 +903,8 @@ describe("getRegistryOccupiedDashboardPorts", () => {
           sandboxes: {
             "instance-a": {
               name: "instance-a",
-              gatewayName: "nemoclaw-9123",
-              gatewayPort: 9123,
+              gatewayName: resolveGatewayName(siblingPort),
+              gatewayPort: siblingPort,
               dashboardPort: 18789,
             },
           },
@@ -910,7 +912,7 @@ describe("getRegistryOccupiedDashboardPorts", () => {
       );
 
       const occupied = getRegistryOccupiedDashboardPorts("instance-b");
-      assert.equal(occupied.get("18789"), "instance-a (gateway 9123)");
+      assert.equal(occupied.get("18789"), `instance-a (gateway ${siblingPort})`);
       assert.equal(
         findAvailableDashboardPortFromObservations(
           "instance-b",
