@@ -32,6 +32,46 @@ const PORTABLE_REGISTRY_DIAGNOSTIC_ENV_KEYS = [
   "XDG_RUNTIME_DIR",
 ] as const;
 
+const PROCESS_HEADROOM_DIAGNOSTIC = `
+service=nemoclaw-native-podman-e2e.service
+uid=$(id -u)
+systemctl --user show "$service" --property=MainPID,TasksCurrent,TasksMax,LimitNPROC,ControlGroup --no-pager 2>/dev/null || true
+systemctl show "user@\${uid}.service" "user-\${uid}.slice" --property=Id,TasksCurrent,TasksMax,LimitNPROC,ControlGroup --no-pager 2>/dev/null || true
+
+capture_process() {
+  local label=$1 pid=$2 group current max events depth=0
+  if [[ ! $pid =~ ^[1-9][0-9]*$ || ! -r /proc/$pid/limits || ! -r /proc/$pid/cgroup ]]; then
+    printf '%s_pid=unavailable\n' "$label"
+    return
+  fi
+  printf '%s_pid=%s\n' "$label" "$pid"
+  awk -v label="$label" '$1 == "Max" && $2 == "processes" { printf "%s_rlimit_nproc_soft=%s hard=%s\\n", label, $3, $4 }' "/proc/$pid/limits"
+  group=$(awk -F: '$1 == "0" { print $3; exit }' "/proc/$pid/cgroup")
+  [[ $group == /* ]] || { printf '%s_cgroup=unavailable\n' "$label"; return; }
+  while (( depth < 24 )); do
+    if [[ -r /sys/fs/cgroup$group/pids.max ]]; then
+      current=$(cat "/sys/fs/cgroup$group/pids.current")
+      max=$(cat "/sys/fs/cgroup$group/pids.max")
+      events=$(awk '$1 == "max" { print $2; exit }' "/sys/fs/cgroup$group/pids.events")
+      printf '%s_cgroup=%s pids_current=%s pids_max=%s pids_events_max=%s\n' "$label" "$group" "$current" "$max" "$events"
+    fi
+    [[ $group == / ]] && break
+    group=\${group%/*}
+    [[ -n $group ]] || group=/
+    ((depth += 1))
+  done
+}
+
+service_pid=$(systemctl --user show "$service" --property=MainPID --value 2>/dev/null || true)
+registry_pid=$(podman container inspect --format '{{.State.Pid}}' nemoclaw-portable-registry 2>/dev/null || true)
+capture_process service "$service_pid"
+capture_process registry "$registry_pid"
+user_tasks=$(ps -u "$uid" -L --no-headers 2>/dev/null | wc -l | tr -d ' ' || true)
+printf 'user_tasks=%s\n' "\${user_tasks:-unavailable}"
+printf 'host_threads_max=%s\n' "$(cat /proc/sys/kernel/threads-max)"
+printf 'host_tasks=%s\n' "$(awk '{ split($4, tasks, "/"); print tasks[2] }' /proc/loadavg)"
+`;
+
 function retryableTransport(observation: PortableRegistryReadinessObservation): boolean {
   return observation.kind === "transport" && observation.code !== "unexpected";
 }
@@ -153,6 +193,22 @@ async function captureRegistryFailureDiagnostics(shellProbe: ShellProbe): Promis
       reason: "capture a bounded managed registry log tail after readiness failure",
     },
   ] as const;
+  // Capture headroom before the other probes add processes to a constrained runner.
+  await Promise.allSettled([
+    shellProbe.run(
+      trustedShellCommand({
+        command: "bash",
+        args: ["-e", "-u", "-o", "pipefail", "-c", PROCESS_HEADROOM_DIAGNOSTIC],
+        reason: "capture bounded process and cgroup headroom after registry readiness failure",
+      }),
+      {
+        artifactName: "portable-registry-process-headroom",
+        captureLimitBytes: 32 * 1024,
+        env,
+        timeoutMs: 10_000,
+      },
+    ),
+  ]);
   await Promise.allSettled(
     commands.map((command) =>
       shellProbe.run(

@@ -162,6 +162,7 @@ describe("portable registry readiness policy", () => {
           artifacts: { stdout: "", stderr: "", result: "" },
         }),
       );
+      run.mockRejectedValueOnce(new Error("headroom probe unavailable"));
       const result = await collectPortableRegistryReadinessFailure({
         artifacts: new ArtifactSink(root),
         probe: async () => probePortableRegistry(`http://127.0.0.1:${address.port}/v2/`),
@@ -182,8 +183,9 @@ describe("portable registry readiness policy", () => {
           fs.readFileSync(path.join(root, "portable-registry-readiness-failure.json"), "utf8"),
         ),
       ).toEqual({ observation: { kind: "transport", code: "unexpected" } });
-      expect(run).toHaveBeenCalledTimes(3);
+      expect(run).toHaveBeenCalledTimes(4);
       expect(run.mock.calls.map(([command]) => command.args[0])).toEqual([
+        "-e",
         "container",
         "port",
         "logs",
@@ -200,9 +202,11 @@ describe("portable registry readiness policy", () => {
       expect(run).toHaveBeenNthCalledWith(1, expect.anything(), expectedOptions);
       expect(run).toHaveBeenNthCalledWith(2, expect.anything(), expectedOptions);
       expect(run).toHaveBeenNthCalledWith(3, expect.anything(), expectedOptions);
+      expect(run).toHaveBeenNthCalledWith(4, expect.anything(), expectedOptions);
       expect(run.mock.calls[0]![1].env).not.toHaveProperty("UNRELATED_API_KEY");
       expect(run.mock.calls[1]![1].env).not.toHaveProperty("UNRELATED_API_KEY");
       expect(run.mock.calls[2]![1].env).not.toHaveProperty("UNRELATED_API_KEY");
+      expect(run.mock.calls[3]![1].env).not.toHaveProperty("UNRELATED_API_KEY");
     } finally {
       server.closeAllConnections();
       await new Promise<void>((resolve, reject) => {
