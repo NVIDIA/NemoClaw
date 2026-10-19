@@ -74,8 +74,9 @@ fn live_kind_requires_its_bundle_before_downloading_tools_or_creating_a_cluster(
 }
 
 // `cargo ci` runs this tool through `cargo run`, which describes the tool's own
-// package in the environment. Build scripts such as ring's rerun when
-// CARGO_MANIFEST_DIR changes, so passing it on would rebuild them.
+// package in the environment and, because the tool has a build script, sets
+// OUT_DIR. Build scripts such as ring's rerun when CARGO_MANIFEST_DIR or
+// OUT_DIR changes, so passing either on would rebuild them.
 #[cfg(target_os = "linux")]
 #[test]
 fn cargo_steps_do_not_inherit_the_package_description_from_cargo_run() {
@@ -117,6 +118,10 @@ fn cargo_steps_do_not_inherit_the_package_description_from_cargo_run() {
             "/workspace/crates/nemoclaw-build/Cargo.toml",
         )
         .env("CARGO_PKG_NAME", "nemoclaw-build")
+        .env(
+            "OUT_DIR",
+            "/workspace/target/debug/build/nemoclaw-build-0/out",
+        )
         .env("CARGO_HOME", "/cargo-home")
         .env_remove("GITHUB_ENV")
         .env_remove("GITHUB_PATH")
@@ -136,6 +141,7 @@ fn cargo_steps_do_not_inherit_the_package_description_from_cargo_run() {
         "CARGO_MANIFEST_DIR",
         "CARGO_MANIFEST_PATH",
         "CARGO_PKG_NAME",
+        "OUT_DIR",
     ] {
         assert!(!names.contains(&removed), "cargo received {removed}");
     }
