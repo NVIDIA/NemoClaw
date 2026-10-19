@@ -1669,7 +1669,22 @@ class SandboxStateFlow<
     state: SandboxStepState<WebSearchConfig>,
     sandboxName: string,
   ): SandboxStepState<WebSearchConfig> {
-    if (!this.resumesSandboxPrompts) return { ...state, sandboxName };
+    if (!this.resumesSandboxPrompts) {
+      const pendingSelection = state.session?.pendingPolicySelection;
+      if (pendingSelection && pendingSelection.sandboxName !== sandboxName) {
+        const session = this.deps.updateSession((current) => {
+          if (
+            current.pendingPolicySelection &&
+            current.pendingPolicySelection.sandboxName !== sandboxName
+          ) {
+            current.pendingPolicySelection = null;
+          }
+          return current;
+        });
+        return { ...state, session, sandboxName };
+      }
+      return { ...state, sandboxName };
+    }
     let messagingInvalidated = false;
     const session = this.deps.updateSession((current) => {
       const recordedNameChanged =

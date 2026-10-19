@@ -439,6 +439,36 @@ describe("sandbox create intent machine boundary", () => {
     expect(durableSession.sandboxPromptProgress.messaging).toBe(false);
   });
 
+  it("clears a stale policy choice when a Hermes resume changes sandbox name", async () => {
+    const session = createSession({
+      sandboxName: "old-name",
+      pendingPolicySelection: {
+        sandboxName: "old-name",
+        sandboxIdentity: "created:2026-10-18T00:00:00.000Z",
+        tierName: null,
+        presetNames: ["github"],
+      },
+    });
+    const { deps } = createDeps(
+      {
+        getStoredMessagingChannelConfig: () => {
+          throw new Error("stop after name checkpoint");
+        },
+      },
+      session,
+    );
+
+    await expect(
+      handleSandboxState({
+        ...baseOptions(deps, session),
+        agent: { name: "hermes" },
+        resume: true,
+        sandboxName: "new-name",
+      }),
+    ).rejects.toThrow("stop after name checkpoint");
+    expect(session.pendingPolicySelection).toBeNull();
+  });
+
   it("resumes at the interrupted resource prompt after checkpointing earlier choices (#6743)", async () => {
     const braveCredential = "brave-secret-value";
     const telegramCredential = "telegram-secret-value";
