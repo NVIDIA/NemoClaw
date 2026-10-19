@@ -73,6 +73,11 @@ The install refuses package removals, preserving the runner's Docker and contain
   attempt evidence. A failure attempts to retain redacted container state, the
   published port mapping, and a bounded registry log tail before cleanup.
   Unavailable diagnostics do not suppress the readiness failure.
+  Trusted Portable Podman setup configures a finite 128-task container limit
+  before registry creation. It records service, user, host, and cgroup headroom
+  in `portable-podman-process-headroom.json` and fails setup if less than 128
+  tasks remain. The live scenario requires registry HTTP 200 and retains
+  container-cgroup diagnostics if readiness fails.
 - `.github/workflows/podman-cpu-proof.yaml` publishes PR-only experimental runtime evidence.
 - `.github/workflows/sandbox-images.yaml` provides reusable sandbox-image build and test evidence.
   `.github/workflows/e2e.yaml` selects free-standing jobs, including `whatsapp-qr-compact` and `ollama-auth-proxy`.
