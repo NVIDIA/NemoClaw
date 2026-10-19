@@ -3,7 +3,7 @@
 
 # Linux AMD64 vLLM Runtime
 
-This artifact packages the shared NemoClaw supervisor with the pinned Linux AMD64 vLLM 0.27.1 image.
+This artifact packages the shared NemoClaw supervisor with the pinned Linux AMD64 vLLM 0.32.0 image.
 It applies no vLLM source patches and contains no model weights or preparation tools.
 It retains the supervisor source archive, locked dependency sources and original licenses, Dockerfile, build manifest, and build hashes under `/opt/nemoclaw/source/`, as described by the [generic runtime notice](../vllm/NOTICE.md).
 The upstream image retains its installed vLLM and dependency notices.

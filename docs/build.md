@@ -234,7 +234,7 @@ cargo run -p nemoclaw-build --no-default-features -- runtime runtimes/vllm-amd64
 ```
 
 This build exports `.build/vllm-amd64/runtime.tar` and loads `nc-prototype-vllm-amd64:rust-v1`.
-It adds the same supervisor to the pinned AMD64 vLLM 0.27.1 base and includes no preparation tools or model weights.
+It adds the same supervisor to the pinned AMD64 vLLM 0.32.0 base and includes no preparation tools or model weights.
 Selecting this artifact does not qualify GPU inference on the host.
 
 For Qwen3.8 preparation on Linux ARM64, run:
