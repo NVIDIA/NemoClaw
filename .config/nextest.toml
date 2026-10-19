@@ -91,11 +91,19 @@ default-filter = '''
 
 [profile.live-kind]
 inherits = "ci"
-test-threads = 1
+test-threads = 4
 slow-timeout = { period = "120s", terminate-after = 2 }
 default-filter = '''
 package(nemoclaw-e2e) & binary(=integration) & (test(/^kubernetes_live::/) | test(/^kubernetes_chart::/))
 '''
+
+# The cluster tests use separate namespaces, releases and ports, so they run
+# side by side while each waits on its pods. The registry test seeds its
+# registry by tagging and untagging the node's shared agent image, which other
+# sandboxes pull from at the same moment, so it runs alone.
+[[profile.live-kind.overrides]]
+filter = 'test(/^kubernetes_live::registry::/)'
+threads-required = "num-test-threads"
 
 [profile.live-kind.junit]
 path = "live-kind.xml"
