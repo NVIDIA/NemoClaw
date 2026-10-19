@@ -377,6 +377,12 @@ describe("sandbox create intent machine boundary", () => {
     const oldPlan = makeMinimalPlan("old-name");
     const durableSession = createSession({
       sandboxName: "old-name",
+      pendingPolicySelection: {
+        sandboxName: "old-name",
+        sandboxIdentity: "created:2026-10-18T00:00:00.000Z",
+        tierName: null,
+        presetNames: ["openclaw-pricing"],
+      },
       webSearchConfig: null,
       messagingPlan: oldPlan,
       resourceProfile: null,
@@ -428,6 +434,7 @@ describe("sandbox create intent machine boundary", () => {
     );
     expect(calls.setupMessaging).toHaveBeenCalledWith(null, null, "new-name");
     expect(durableSession.sandboxName).toBe("new-name");
+    expect(durableSession.pendingPolicySelection).toBeNull();
     expect(durableSession.messagingPlan).toBeNull();
     expect(durableSession.sandboxPromptProgress.messaging).toBe(false);
   });

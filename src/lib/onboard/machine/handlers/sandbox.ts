@@ -1681,6 +1681,12 @@ class SandboxStateFlow<
         current.sandboxPromptProgress.messaging = false;
         messagingInvalidated = true;
       }
+      if (
+        current.pendingPolicySelection &&
+        current.pendingPolicySelection.sandboxName !== sandboxName
+      ) {
+        current.pendingPolicySelection = null;
+      }
       current.sandboxName = sandboxName;
       current.sandboxPromptProgress.sandboxName = true;
       recordCheckpointSandboxIdentity(
