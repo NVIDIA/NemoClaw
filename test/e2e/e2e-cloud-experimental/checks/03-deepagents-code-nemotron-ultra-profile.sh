@@ -20,8 +20,10 @@
 set -euo pipefail
 
 SANDBOX_NAME="${SANDBOX_NAME:-${NEMOCLAW_SANDBOX_NAME:-}}"
+REPO="${REPO:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)}"
 PREFIX="03-deepagents-code-nemotron-ultra-profile"
 HOSTED_ENDPOINT="${NEMOCLAW_ENDPOINT_URL:-https://inference-api.nvidia.com/v1}"
+HOSTED_ENDPOINT="$(node --no-warnings "${REPO}/test/e2e/e2e-cloud-experimental/normalize-hosted-endpoint.ts" "$HOSTED_ENDPOINT")"
 
 fail() {
   printf '%s: FAIL: %s\n' "$PREFIX" "$1" >&2
