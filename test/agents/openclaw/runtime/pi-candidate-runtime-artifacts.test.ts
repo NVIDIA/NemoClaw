@@ -351,6 +351,85 @@ syncBuiltinESMExports();\n`,
     }
   });
 
+  it.each(["close", "remove"])(
+    "retains the staging failure when %s cleanup fails (#13362)",
+    (failedCleanup) => {
+      const selected = {
+        NEMOCLAW_MODEL: "previous-model",
+        NEMOCLAW_UPSTREAM_PROVIDER: "compatible-endpoint",
+        NEMOCLAW_INFERENCE_BASE_URL: "http://host.openshell.internal:11434/v1",
+      };
+      const { home, status, stderr } = generate(selected);
+      try {
+        expect(status, stderr).toBe(0);
+        const configDir = path.join(home, ".pi/agent");
+        const modelsPath = path.join(configDir, "models.json");
+        const settingsPath = path.join(configDir, "settings.json");
+        const previousCatalog = fs.readFileSync(modelsPath);
+        const previousSettings = fs.readFileSync(settingsPath);
+        const removalMarker = path.join(home, "staged-removal-attempt.txt");
+        const shimPath = path.join(home, "fail-staged-cleanup.cjs");
+        fs.writeFileSync(
+          shimPath,
+          `const fs = require("node:fs");
+const { syncBuiltinESMExports } = require("node:module");
+const originalOpen = fs.openSync;
+const originalClose = fs.closeSync;
+const originalRemove = fs.rmSync;
+let stagedDescriptor;
+fs.openSync = (target, ...args) => {
+  const descriptor = originalOpen(target, ...args);
+  if (String(target).includes(".settings.json.")) stagedDescriptor = descriptor;
+  return descriptor;
+};
+fs.fchmodSync = () => { throw new Error("simulated staging failure"); };
+fs.closeSync = (descriptor) => {
+  if (${JSON.stringify(failedCleanup)} === "close" && descriptor === stagedDescriptor) {
+    throw new Error("simulated close failure");
+  }
+  return originalClose(descriptor);
+};
+fs.rmSync = (target, options) => {
+  if (String(target).includes(".settings.json.")) {
+    fs.writeFileSync(${JSON.stringify(removalMarker)}, String(target));
+    if (${JSON.stringify(failedCleanup)} === "remove") {
+      throw new Error("simulated remove failure");
+    }
+  }
+  return originalRemove(target, options);
+};
+syncBuiltinESMExports();\n`,
+        );
+
+        const failed = spawnSync(
+          process.execPath,
+          ["--require", shimPath, path.join(root, "agents/pi/generate-config.ts")],
+          {
+            cwd: root,
+            encoding: "utf8",
+            env: {
+              PATH: process.env.PATH ?? "",
+              HOME: home,
+              ...selected,
+              NEMOCLAW_MODEL: "next-model",
+            },
+          },
+        );
+        expect(failed.status).not.toBe(0);
+        expect(failed.stderr).toContain("simulated staging failure");
+        expect(failed.stderr).toContain(`simulated ${failedCleanup} failure`);
+        expect(fs.readFileSync(modelsPath)).toEqual(previousCatalog);
+        expect(fs.readFileSync(settingsPath)).toEqual(previousSettings);
+        const stagedPath = fs.readFileSync(removalMarker, "utf8");
+        expect(stagedPath).toContain(".settings.json.");
+        expect(failed.stderr).toContain(stagedPath);
+        expect(fs.existsSync(stagedPath)).toBe(failedCleanup === "remove");
+      } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("updates the target of an existing Pi settings symlink (#13362)", () => {
     const { home, status, stderr } = generate(
       {

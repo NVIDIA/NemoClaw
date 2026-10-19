@@ -229,9 +229,29 @@ function syncManagedDefaults(configDir: string, model: string, nativeLocal: bool
     closeSync(completedDescriptor);
     renameSync(stagedPath, destination);
     staged = false;
-  } finally {
-    if (descriptor !== null) closeSync(descriptor);
-    if (staged) rmSync(stagedPath, { force: true });
+  } catch (error) {
+    const cleanupFailures: unknown[] = [];
+    if (descriptor !== null) {
+      try {
+        closeSync(descriptor);
+      } catch (cleanupError) {
+        cleanupFailures.push(cleanupError);
+      }
+    }
+    if (staged) {
+      try {
+        rmSync(stagedPath, { force: true });
+      } catch (cleanupError) {
+        cleanupFailures.push(cleanupError);
+      }
+    }
+    if (cleanupFailures.length > 0) {
+      throw new AggregateError(
+        [error, ...cleanupFailures],
+        `Pi settings staging failed; cleanup also failed for ${stagedPath}.`,
+      );
+    }
+    throw error;
   }
 }
 
