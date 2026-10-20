@@ -3,7 +3,9 @@
 # Stage a v1 release from a semver tag such as v1.0.0-rc1. Promote the images
 # CI checked on the tagged v1 history to v1/<image>:<tag>, build the runtime
 # images, and create a draft release listing every digest. Nothing here makes a
-# package or the release public.
+# package or the release public, and nothing pushes to a package an
+# administrator hasn't created as internal: packages a workflow creates inherit
+# this public repository's visibility.
 name: Release / Stage
 on:
   push:
@@ -92,6 +94,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Require internal packages
+        uses: ./.github/actions/internal-packages
+        with:
+          namespace: ${{ env.CI_NAMESPACE }}
+          names: vllm ollama
+          required: "true"
+          token: ${{ github.token }}
       - name: Build and push the vLLM and Ollama runtime images
         env:
           GH_TOKEN: ${{ github.token }}
@@ -118,14 +127,24 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: List the release images
+        id: images
+        run: echo "names=$(docker buildx bake --print agents | jq -er '.target | keys[]' | xargs) ollama-proxy vllm ollama" >> "$GITHUB_OUTPUT"
+      - name: Require internal packages
+        uses: ./.github/actions/internal-packages
+        with:
+          namespace: ${{ env.RELEASE_NAMESPACE }}
+          names: ${{ steps.images.outputs.names }}
+          required: "true"
+          token: ${{ github.token }}
       - name: Join each image's platforms and draft the release
         env:
+          NAMES: ${{ steps.images.outputs.names }}
           GH_TOKEN: ${{ github.token }}
           SOURCE: ${{ needs.select.outputs.source }}
           TAG: ${{ github.ref_name }}
         run: |
           printf '%s\n' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-          agents=$(docker buildx bake --print agents | jq -er '.target | keys[]')
           notes="$RUNNER_TEMP/notes.md"
           {
             echo "Staged from \`$GITHUB_SHA\`. The agent and proxy images are the ones CI checked at \`$SOURCE\`."
@@ -133,7 +152,7 @@ jobs:
             echo "| Image | Reference |"
             echo "|---|---|"
           } > "$notes"
-          for image in $agents ollama-proxy vllm ollama; do
+          for image in $NAMES; do
             case "$image" in
               vllm|ollama) from=$GITHUB_SHA ;;
               *) from=$SOURCE ;;
@@ -142,12 +161,6 @@ jobs:
             docker buildx imagetools create --tag "$target" \
               "$CI_NAMESPACE/$image:$from-arm64" "$CI_NAMESPACE/$image:$from-amd64"
             digest=$(docker buildx imagetools inspect "$target" --format '{{.Manifest.Digest}}')
-            package="${RELEASE_NAMESPACE#ghcr.io/nvidia/}/$image"
-            visibility=$(gh api "/orgs/NVIDIA/packages/container/${package//\//%2F}" --jq .visibility 2> /dev/null || echo unknown)
-            if [ "$visibility" = public ]; then
-              echo "::error::$package is public; packages become public only when the release is published"
-              exit 1
-            fi
             echo "| \`$image\` | \`$RELEASE_NAMESPACE/$image@$digest\` |" >> "$notes"
           done
           docker logout ghcr.io

@@ -86,10 +86,23 @@ jobs:
               --entrypoint /opt/fabric/bin/python "$image" -B /test.py
           done < .build-image-list
       # Pushing doesn't change a digest: Docker's containerd store pushes the
-      # manifest it built. A release promotes these digests; new packages must
-      # not be public before a release makes them so.
-      - name: Push the checked images for this commit
+      # manifest it built. A release promotes these digests. Until an
+      # administrator creates the packages as internal, v1 pushes skip this.
+      - name: List the images to push
+        id: push-list
         if: inputs.run && inputs.push
+        run: echo "names=$(cut -f1 .build-image-list | xargs) ollama-proxy" >> "$GITHUB_OUTPUT"
+      - name: Require internal packages
+        id: packages
+        if: inputs.run && inputs.push
+        uses: ./.github/actions/internal-packages
+        with:
+          namespace: ${{ inputs.namespace }}
+          names: ${{ steps.push-list.outputs.names }}
+          required: "false"
+          token: ${{ github.token }}
+      - name: Push the checked images for this commit
+        if: inputs.run && inputs.push && steps.packages.outputs.ready == 'true'
         env:
           NAMESPACE: ${{ inputs.namespace }}
           GH_TOKEN: ${{ github.token }}
@@ -112,13 +125,6 @@ jobs:
             docker push --quiet "$target" > /dev/null
             digest=$(docker buildx imagetools inspect "$target" --format '{{.Manifest.Digest}}')
             echo "| \`$name\` | \`$digest\` | $(( $(date +%s) - start )) s |" >> "$GITHUB_STEP_SUMMARY"
-            package="${NAMESPACE#ghcr.io/nvidia/}/$name"
-            visibility=$(gh api "/orgs/NVIDIA/packages/container/${package//\//%2F}" --jq .visibility 2>/dev/null || echo unknown)
-            echo "$target $digest visibility=$visibility"
-            if [ "$visibility" = public ]; then
-              echo "::error::$package is public; per-commit images must stay internal until a release"
-              exit 1
-            fi
           done < .build-image-list
           echo >> "$GITHUB_STEP_SUMMARY"
           echo "Pushed $(wc -l < .build-image-list) images in $(( $(date +%s) - total )) s." >> "$GITHUB_STEP_SUMMARY"
