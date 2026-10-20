@@ -405,6 +405,7 @@ it("retains native authority when service cleanup fails after gateway state remo
       }),
     );
     const deps = fullCleanupDeps(home, [], "No sandboxes found.\n");
+    deps.env.XDG_CONFIG_HOME = path.join(home, ".config");
     const servicePath = getNemoclawOpenShellGatewayUserServicePath(home, deps.env);
     fs.mkdirSync(path.dirname(servicePath), { recursive: true });
     fs.writeFileSync(
