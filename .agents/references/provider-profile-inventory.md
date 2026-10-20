@@ -76,7 +76,7 @@ evidence that its create branch works with an empty catalog.
 | [vllm-local.ts](../../src/lib/onboard/inference-providers/vllm-local.ts) | Standalone native vLLM is intercepted. Local NIM is deliberately excluded and retains the shared route, owned by #13116 and #12975. It still depends on `openai`. |
 | [bedrock-runtime.ts](../../src/lib/onboard/bedrock-runtime.ts) | Legacy pending retirement for existing shared-route custom sandboxes. Fresh hosted Bedrock uses native custom setup, including a profile check before adapter startup. The leaf `openai` upsert is not evidence of a fresh native gap. |
 | [openrouter-runtime.ts](../../src/lib/onboard/openrouter-runtime.ts) | Legacy runtime-adapter branch. The fixed hosted OpenRouter selection returns through native setup first. The retained branch uses catalog type `openai`. |
-| [routed-inference.ts](../../src/lib/onboard/routed-inference.ts) | Retained experimental Model Router route with no owner. #12558 has no Model Router slice, and this inventory found no issue that plans its native migration or retirement. It can create `nvidia-router` with catalog type `openai`; it has no owned import here. A maintainer decision must assign an owner or retire the route before the selected release. |
+| [routed-inference.ts](../../src/lib/onboard/routed-inference.ts) | Retained experimental Model Router route. It can create `nvidia-router` with catalog type `openai`; it has no owned import here. #12558 has no Model Router slice. [#13560](https://github.com/NVIDIA/NemoClaw/issues/13560) owns the disposition: import and verify a restricted owned profile before creation, or retire or refuse the selection before creation. The path stays catalog-dependent until #13560 records and delivers that choice. |
 | [compatible-endpoint-gateway-route.ts](../../src/lib/onboard/inference-providers/compatible-endpoint-gateway-route.ts) | Legacy recovered-provider URL repair. It first checks that the provider exists; a later disappearance can still expose the helper's create branch. No owned profile import is established by this wrapper. |
 | [hermes-provider-auth.ts](../../src/lib/hermes-provider-auth.ts) | Native Hermes setup injects a native credential registrar. The fallback `openai` create remains for explicit custom Hermes endpoints and legacy rebuilds without a native receipt. The [rebuild credential preflight](../../src/lib/actions/sandbox/rebuild-credential-preflight.ts) reaches it when the Hermes Provider is missing before rebuild. These are retained legacy catalog paths. |
 | [hermes-tool-gateway-broker.ts](../../src/lib/hermes-tool-gateway-broker.ts) | Supported owned-profile create, imported before upsert. Exact legacy `generic` reuse passes `knownExists: true`; it does not create a new unowned profile. |
@@ -121,6 +121,7 @@ used commit `19d994a0086c59e945a2456b1264ca1444a37fc7`.
   retains its recorded separate disposition and catalog dependency. Runtime identity uses its separate verified path.
 - Pending #13528 owns Personal-tier custom routing; pending #13556 owns credential mismatch diagnostics.
   Their proposed behavior is absent from this baseline. #13504 owns native-provider authority cleanup.
+- [#13560](https://github.com/NVIDIA/NemoClaw/issues/13560) owns the Model Router profile disposition.
 
 ## Warning evidence and focused follow-up
 
