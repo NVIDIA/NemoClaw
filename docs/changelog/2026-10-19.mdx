@@ -5,8 +5,9 @@
 
 ## v0.0.136
 
-NemoClaw v0.0.136 expands sandbox-attached inference routes and adds an experimental Super VL profile for a 128 GB DGX Spark.
-It also repairs DGX Station Express recovery and strengthens provider ownership checks.
+NemoClaw v0.0.136 expands sandbox-attached inference and adds hosted image input and an experimental local profile for Super VL.
+It repairs onboarding and DGX Station Express recovery and strengthens provider ownership checks.
+Ordinary operation telemetry now uses the fixed TEST receiver.
 
 - Fresh custom hosted endpoint selections bind the validated endpoint, API, and credential source to a provider attached to the selected sandbox.
   Inference status, health checks, switching, and rebuilds use that recorded route.
@@ -22,6 +23,12 @@ It also repairs DGX Station Express recovery and strengthens provider ownership 
   It rejects 64 GB or unknown-memory systems before installation and retains the Spark Qwen default.
   Physical serving and managed-installer smoke tests passed; complete agent onboarding and sustained-load qualification remain pending.
   Related change: [PR #13357](https://github.com/NVIDIA/NemoClaw/pull/13357).
+- The NVIDIA Endpoints model picker includes hosted `nvidia/nemotron-3.5-super-vl-120b-a12b` for OpenClaw.
+  Interactive and unattended onboarding enable text and image input for that selection unless an explicit valid input override is set.
+  Related change: [PR #13371](https://github.com/NVIDIA/NemoClaw/pull/13371).
+- Fresh Model Router onboarding waits for the selected OpenClaw gateway to accept connections before requesting its native restart.
+  If startup does not settle within the existing bound or the sandbox identity changes, setup stops before restart.
+  Related change: [PR #13481](https://github.com/NVIDIA/NemoClaw/pull/13481).
 - DGX Station Express keeps automatic model selection under the serving catalog.
   Installation and resume now retain the selected GPU and model, accept the catalog's automatic receipt, verify an owned vLLM server before reuse, and preserve an unchanged sandbox route.
   Related changes: [PR #13305](https://github.com/NVIDIA/NemoClaw/pull/13305) and [PR #13480](https://github.com/NVIDIA/NemoClaw/pull/13480).
@@ -31,3 +38,6 @@ It also repairs DGX Station Express recovery and strengthens provider ownership 
 - OpenClaw rebuild keeps the recorded dashboard origin when it restores a sandbox.
   The `nemoclaw sandbox mcp` usage message now lists the existing `update` action.
   Related changes: [PR #13198](https://github.com/NVIDIA/NemoClaw/pull/13198) and [PR #12384](https://github.com/NVIDIA/NemoClaw/pull/12384).
+- The installer and supported CLI operations now attempt anonymous completion telemetry by default through NVIDIA's fixed TEST receiver.
+  QA runs can still add a valid test label; `NEMOCLAW_DISABLE_TELEMETRY=1` suppresses collection and delivery, and Production delivery remains disabled.
+  Related change: [PR #13494](https://github.com/NVIDIA/NemoClaw/pull/13494).

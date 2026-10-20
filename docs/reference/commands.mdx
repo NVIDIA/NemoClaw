@@ -16,6 +16,11 @@ content:
   type: "reference"
 ---
 
+The installer and supported CLI operations attempt anonymous completion telemetry to NVIDIA's fixed TEST receiver by default.
+Run `export NEMOCLAW_DISABLE_TELEMETRY=1` in this shell before installing or rerunning it to suppress collection and delivery.
+Repeat it in any new shell used for NemoClaw CLI commands.
+Refer to [Operation Telemetry](/user-guide/openclaw/security/best-practices#operation-telemetry) for details.
+
 <AgentOnly variant="openclaw">
 
 The `$$nemoclaw` CLI is the primary interface for managing NemoClaw sandboxes. It is installed automatically by the installer (`curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash`). For guidance on when to use `$$nemoclaw` versus the underlying `openshell` CLI, refer to [CLI Selection Guide](cli-selection-guide).
@@ -4361,7 +4366,7 @@ The following variables let you tune onboarding without editing the Dockerfile o
 
 <AgentOnly variant="openclaw">
   | `NEMOCLAW_INFERENCE_INPUTS` | comma-separated list of `text` and/or `image` | OpenClaw only.
-  Declares model input modalities. Unsupported or duplicate values are rejected. An explicit valid value takes precedence; unattended onboarding defaults to `text,image` for registered multimodal managed-vLLM models such as Super VL. | |
+  Declares model input modalities. Unsupported or duplicate values are rejected. An explicit valid value takes precedence. Hosted `nvidia/nemotron-3.5-super-vl-120b-a12b` defaults to `text,image` in both interactive and unattended onboarding. Unattended onboarding also selects `text,image` for registered multimodal managed-vLLM models such as Super VL. | |
   `NEMOCLAW_OPENCLAW_OTEL` | `1` to enable | Enables OpenClaw conversation diagnostics export
   through the `diagnostics-otel` plugin. Disabled by default. | | `NEMOCLAW_OPENCLAW_OTEL_ENDPOINT`
   | OTLP/HTTP URL | Sets the OpenTelemetry collector endpoint for OpenClaw diagnostics. Defaults to

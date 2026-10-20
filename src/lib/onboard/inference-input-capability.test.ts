@@ -5,6 +5,21 @@ import { describe, expect, it, vi } from "vitest";
 import { maybePromptForInferenceInputCapability } from "./inference-input-capability";
 
 describe("catalog inference inputs for unattended onboarding", () => {
+  it.each([true, false])(
+    "defaults hosted Super VL to text and image with unattended=%s",
+    async (unattended) => {
+      const env: NodeJS.ProcessEnv = {};
+      const prompt = vi.fn();
+      await maybePromptForInferenceInputCapability("nvidia/nemotron-3.5-super-vl-120b-a12b", {
+        env,
+        isNonInteractive: () => unattended,
+        prompt,
+      });
+      expect(env.NEMOCLAW_INFERENCE_INPUTS).toBe("text,image");
+      expect(prompt).not.toHaveBeenCalled();
+    },
+  );
+
   it.each([
     "nemotron-3.5-super-vl-120b",
     "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4",
@@ -27,6 +42,8 @@ describe("catalog inference inputs for unattended onboarding", () => {
     { model: null, inputs: undefined },
     { model: "nemotron-3.5-super-vl-120b", inputs: "text" },
     { model: "nemotron-3.5-super-vl-120b", inputs: "image,text" },
+    { model: "nvidia/nemotron-3.5-super-vl-120b-a12b", inputs: "text" },
+    { model: "nvidia/nemotron-3.5-super-vl-120b-a12b", inputs: "image,text" },
   ])(
     "preserves explicit inputs or unknown capability: $model / $inputs",
     async ({ model, inputs }) => {
