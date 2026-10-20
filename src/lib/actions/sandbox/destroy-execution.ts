@@ -11,7 +11,7 @@ import { isDeepStrictEqual } from "node:util";
 import { buildSelectedOpenShellSubprocessEnv } from "../../adapters/openshell/command-argv";
 import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import { resolveRegisteredAgentDefinition } from "../../agent/runtime";
-import { DEEP_AGENTS_CODE_SANDBOX_USER } from "../../agent/deep-agents-code-runtime-identity";
+import { managedImageRuntimeIdentity } from "../../onboard/managed-image/agents";
 import {
   createCliOpenShellSandboxLifecycleFromRunner,
   createCliOpenShellSandboxLookupFromRunner,
@@ -263,11 +263,11 @@ export function wipeAgentNativeHome(
       }
       throw error;
     }
-    // Deep Agents' native tree contains both sandbox-owned state and root-owned
-    // managed files. Rootless Podman cannot always remove the former as root.
-    // Complete the same validated wipe as the image's pinned sandbox user.
+    // Rootless Podman root may lack permission to remove sandbox-user state,
+    // including OpenClaw SQLite files. Finish the validated wipe as the image's
+    // pinned sandbox user before attempting stopped-volume cleanup.
     if (
-      agentName === "langchain-deepagents-code" &&
+      (agentName === "langchain-deepagents-code" || agentName === "openclaw") &&
       result.status === 1 &&
       !result.error &&
       runAsSandboxUser
@@ -816,6 +816,7 @@ export async function executeSandboxDestroy({
       (expectedContainerIdentities === undefined && sandboxConfirmedAbsent);
     if (sandbox && !sandboxRuntimeConfirmedAbsent) {
       try {
+        const agentName = sandbox.agent || "openclaw";
         const registeredSandboxNames = new Set([sandboxName]);
         for (const entry of listSandboxes?.().sandboxes ?? []) {
           if (typeof entry.name === "string" && entry.name) registeredSandboxNames.add(entry.name);
@@ -847,13 +848,17 @@ export async function executeSandboxDestroy({
                 ? { expectedResourceHandle: expectedRuntimeProviderIdentity.resourceHandle }
                 : {}),
             });
-          if (sandbox.agent === "langchain-deepagents-code" && control.executeAsSandboxUser) {
+          if (
+            (agentName === "langchain-deepagents-code" || agentName === "openclaw") &&
+            control.executeAsSandboxUser
+          ) {
+            const identity = managedImageRuntimeIdentity(agentName);
             runAsSandboxUser = (command) =>
               control.executeAsSandboxUser!({
                 sandbox,
                 sandboxName,
                 registeredSandboxNames: [...registeredSandboxNames],
-                sandboxUser: DEEP_AGENTS_CODE_SANDBOX_USER,
+                sandboxUser: `${identity.uid}:${identity.gid}`,
                 command,
                 sanitizeEnvironment: true,
                 timeoutMs: SANDBOX_DESTROY_TIMEOUT_MS,
@@ -880,7 +885,7 @@ export async function executeSandboxDestroy({
         markMutationStarted();
         (deps.wipeAgentNativeHome ?? wipeAgentNativeHome)(
           sandboxName,
-          sandbox.agent || "openclaw",
+          agentName,
           selectedRunOpenshell,
           sandbox.hostMounts,
           runPrivileged,
