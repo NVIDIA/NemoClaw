@@ -1,0 +1,166 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# Stage a v1 release from a semver tag such as v1.0.0-rc1. Promote the images
+# CI checked on the tagged v1 history to v1/<image>:<tag>, build the runtime
+# images, and create a draft release listing every digest. Nothing here makes a
+# package or the release public.
+name: Release / Stage
+on:
+  push:
+    tags: ["v1.*"]
+permissions:
+  contents: read
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+env:
+  CI_NAMESPACE: ghcr.io/nvidia/nemoclaw/v1-ci
+  RELEASE_NAMESPACE: ghcr.io/nvidia/nemoclaw/v1
+jobs:
+  select:
+    name: Select checked images
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      source: ${{ steps.select.outputs.source }}
+      rebuild: ${{ steps.select.outputs.rebuild }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      # CI pushes each checked v1 commit's images; later commits that can't
+      # affect the images reuse them, as the image workflow itself does.
+      - name: Find the latest checked commit whose images still apply
+        id: select
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          printf '%s\n' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          source=
+          for commit in $(git rev-list --first-parent --max-count=200 "$GITHUB_SHA"); do
+            if docker buildx imagetools inspect "$CI_NAMESPACE/openclaw:$commit-arm64" > /dev/null 2>&1 &&
+              docker buildx imagetools inspect "$CI_NAMESPACE/openclaw:$commit-amd64" > /dev/null 2>&1; then
+              source=$commit
+              break
+            fi
+          done
+          docker logout ghcr.io
+          rebuild=true
+          if [ -n "$source" ]; then
+            decision=$(cargo run --locked --quiet -p nemoclaw-build --no-default-features --target-dir target/ci-runner -- \
+              changes images --base "$source")
+            [ "$decision" = images=false ] && rebuild=false
+          fi
+          [ "$rebuild" = true ] && source=$GITHUB_SHA
+          echo "source=$source" >> "$GITHUB_OUTPUT"
+          echo "rebuild=$rebuild" >> "$GITHUB_OUTPUT"
+          echo "Agent and proxy images from \`$source\`; rebuilt: $rebuild." >> "$GITHUB_STEP_SUMMARY"
+  build:
+    needs: select
+    if: needs.select.outputs.rebuild == 'true'
+    name: Build
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/image-build.yml
+    with:
+      plan: success
+      run: true
+      push: true
+  # Runtime images build reproducibly for each host's platform, so building
+  # them at the tag yields the digests any rebuild of these sources would.
+  runtimes:
+    name: Runtimes / ${{ matrix.platform }}
+    needs: select
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux_arm64
+            runner: ubuntu-24.04-arm
+          - platform: linux_amd64
+            runner: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build and push the vLLM and Ollama runtime images
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          printf '%s\n' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          tag="$GITHUB_SHA-${PLATFORM#linux_}"
+          output='type=image,push=true,rewrite-timestamp=true'
+          docker buildx bake runtimes \
+            --set "vllm.tags=$CI_NAMESPACE/vllm:$tag" --set "vllm.output=$output" \
+            --set "ollama.tags=$CI_NAMESPACE/ollama:$tag" --set "ollama.output=$output"
+          docker logout ghcr.io
+  stage:
+    name: Stage the release
+    needs: [select, build, runtimes]
+    if: >-
+      !cancelled() && needs.select.result == 'success' && needs.runtimes.result == 'success' &&
+      (needs.build.result == 'success' || needs.build.result == 'skipped')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Join each image's platforms and draft the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE: ${{ needs.select.outputs.source }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          printf '%s\n' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          agents=$(docker buildx bake --print agents | jq -er '.target | keys[]')
+          notes="$RUNNER_TEMP/notes.md"
+          {
+            echo "Staged from \`$GITHUB_SHA\`. The agent and proxy images are the ones CI checked at \`$SOURCE\`."
+            echo
+            echo "| Image | Reference |"
+            echo "|---|---|"
+          } > "$notes"
+          for image in $agents ollama-proxy vllm ollama; do
+            case "$image" in
+              vllm|ollama) from=$GITHUB_SHA ;;
+              *) from=$SOURCE ;;
+            esac
+            target="$RELEASE_NAMESPACE/$image:$TAG"
+            docker buildx imagetools create --tag "$target" \
+              "$CI_NAMESPACE/$image:$from-arm64" "$CI_NAMESPACE/$image:$from-amd64"
+            digest=$(docker buildx imagetools inspect "$target" --format '{{.Manifest.Digest}}')
+            package="${RELEASE_NAMESPACE#ghcr.io/nvidia/}/$image"
+            visibility=$(gh api "/orgs/NVIDIA/packages/container/${package//\//%2F}" --jq .visibility 2> /dev/null || echo unknown)
+            if [ "$visibility" = public ]; then
+              echo "::error::$package is public; packages become public only when the release is published"
+              exit 1
+            fi
+            echo "| \`$image\` | \`$RELEASE_NAMESPACE/$image@$digest\` |" >> "$notes"
+          done
+          docker logout ghcr.io
+          cat "$notes" >> "$GITHUB_STEP_SUMMARY"
+          prerelease=
+          case "$TAG" in *-*) prerelease=--prerelease ;; esac
+          if draft=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2> /dev/null); then
+            if [ "$draft" != true ]; then
+              echo "::error::$TAG is already published; stage a new tag instead"
+              exit 1
+            fi
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file "$notes"
+          else
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft $prerelease --verify-tag \
+              --title "NemoClaw $TAG" --notes-file "$notes"
+          fi
