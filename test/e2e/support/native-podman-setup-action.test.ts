@@ -1024,7 +1024,8 @@ exec /bin/bash "$@"
     expect(setupIndex).toBeGreaterThan(openshellInstallIndex);
     expect(headroomIndex).toBeGreaterThan(setupIndex);
     expect(candidateCheckoutIndex).toBeGreaterThan(headroomIndex);
-    expect(headroom?.run).toContain("pids_limit = 128");
+    expect(headroom?.run).toContain("minimum=128");
+    expect(headroom?.run).toContain("pids_limit = $minimum");
     expect(headroom?.run).toContain('cgroup_manager = "systemd"');
     expect(headroom?.run).toContain("/sys/fs/cgroup$group/pids.max");
     expect(headroom?.run).toContain('[[ "$group" != / ]] || break');

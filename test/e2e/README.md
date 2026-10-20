@@ -75,8 +75,9 @@ The install refuses package removals, preserving the runner's Docker and contain
   Unavailable diagnostics do not suppress the readiness failure.
   Trusted Portable Podman setup configures a finite 128-task container limit
   before registry creation. It records service, user, host, and cgroup headroom
-  in `portable-podman-process-headroom.json` and fails setup if less than 128
-  tasks remain. The live scenario requires registry HTTP 200 and retains
+  in `portable-podman-process-headroom.json`. It fails setup when RLIMIT_NPROC,
+  host-thread, or cgroup pids headroom is less than 128 tasks. The live scenario
+  requires registry HTTP 200 and retains
   bounded container-cgroup diagnostics if readiness fails. Unavailable
   diagnostics do not suppress the readiness failure.
 - `.github/workflows/podman-cpu-proof.yaml` publishes PR-only experimental runtime evidence.

@@ -5850,12 +5850,13 @@ jobs:
           set -euo pipefail
           # The shared setup action is pinned and runs before candidate checkout.
           # Keep this Portable Hermes setting in trusted, job-specific workflow code.
+          minimum=128
           config="$RUNNER_TEMP/native-podman-e2e-containers.conf"
           [[ "${CONTAINERS_CONF:?}" == "$config" && -f "$config" && ! -L "$config" ]]
           [[ "$(grep -Fxc '[containers]' "$config")" == 1 ]]
           [[ "$(grep -Fxc '[engine]' "$config")" == 1 ]]
           ! grep -Eq '^[[:space:]]*(pids_limit|cgroup_manager)[[:space:]]*=' "$config"
-          sed -i '/^\[containers\]$/a pids_limit = 128' "$config"
+          sed -i "/^\\[containers\\]$/a pids_limit = $minimum" "$config"
           sed -i '/^\[engine\]$/a cgroup_manager = "systemd"' "$config"
           /usr/bin/systemctl --user restart nemoclaw-native-podman-e2e.service
           service=nemoclaw-native-podman-e2e.service
@@ -5864,7 +5865,6 @@ jobs:
           printf 'NEMOCLAW_NATIVE_PODMAN_SERVICE_PID=%s\n' "$service_pid" >>"$GITHUB_ENV"
           podman --url "unix://${OPENSHELL_PODMAN_SOCKET:?}" info --format json |
             jq -e '((.host.cgroupManager // .Host.CgroupManager) | ascii_downcase) == "systemd"' >/dev/null
-          minimum=128
           nproc_soft="$(awk '$1 == "Max" && $2 == "processes" { print $3; exit }' "/proc/$service_pid/limits" || true)"
           user_tasks="$(ps -u "$(id -u)" -L --no-headers | wc -l | tr -d ' ' || true)"
           host_max="$(cat /proc/sys/kernel/threads-max 2>/dev/null || true)"
