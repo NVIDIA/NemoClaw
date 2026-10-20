@@ -61,13 +61,28 @@ const SECURITY_IMAGES = [
 ] as const;
 const ARCHITECTURES = ["amd64", "arm64"] as const;
 const EXPECTED_SECURITY_PACKAGE_INVENTORY = [
+  "zlib1g=1:1.3.dfsg+really1.3.1-1+b1+nemoclaw1",
+  "libc6=2.41-12+deb13u4",
+  "libc-bin=2.41-12+deb13u4",
+  "bsdutils=1:2.41.5-0+deb13u1",
+  "login=1:4.16.0-2+really2.41.5-0+deb13u1",
+  "mount=2.41.5-0+deb13u1",
+  "util-linux=2.41.5-0+deb13u1",
+  "libblkid1=2.41.5-0+deb13u1",
+  "liblastlog2-2=2.41.5-0+deb13u1",
+  "libmount1=2.41.5-0+deb13u1",
+  "libsmartcols1=2.41.5-0+deb13u1",
+  "libuuid1=2.41.5-0+deb13u1",
+  "libpcre2-8-0=10.46-1~deb13u3",
+  "libsqlite3-0=3.46.1-7+deb13u2",
+  "gzip=1.13-1+deb13u1",
   "libexpat1=2.8.3-1",
   "libonig5=6.9.9-1+b1",
   "libjq1=1.8.2-1",
   "jq=1.8.2-1",
   "vim-common=2:9.2.0858-1",
   "vim-tiny=2:9.2.0858-1",
-  "libssh2-1t64=1.11.1-1+deb13u1+nemoclaw2",
+  "libssh2-1t64=1.11.1-1+deb13u2+nemoclaw1",
   "libssl3t64=3.5.7-1~deb13u3",
   "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u5+nemoclaw1",
   "perl-base=5.44.0-1nemoclaw1",
@@ -111,6 +126,7 @@ function sandboxSecurityCommand(
   fs.mkdirSync(nativeSecurityDebs);
   fs.mkdirSync(path.dirname(fakePythonLink), { recursive: true });
   fs.writeFileSync(path.join(nativeSecurityDebs, "libssh2-1t64.deb"), "fixed libssh2");
+  fs.writeFileSync(path.join(nativeSecurityDebs, "zlib1g.deb"), "fixed zlib");
   fs.writeFileSync(
     path.join(nativeSecurityDebs, "nemoclaw-python3.13-htmlparser-fix.deb"),
     "fixed parser package",
@@ -200,6 +216,57 @@ function completedImageSecurityCommand(
 }
 
 describe("sandbox base security packages", () => {
+  const stalePackageCases = [
+    ["libc6", "2.41-12+deb13u3"],
+    ["util-linux", "2.41-5"],
+    ["login", "1:4.16.0-2+really2.41-5"],
+    ["libpcre2-8-0", "10.46-1~deb13u1"],
+    ["libsqlite3-0", "3.46.1-7+deb13u1"],
+    ["gzip", "1.13-1"],
+    ["zlib1g", "1:1.3.dfsg+really1.3.1-1+b1"],
+    ["libssh2-1t64", "1.11.1-1+deb13u1+nemoclaw2"],
+  ] as const;
+  it.each(
+    stalePackageCases.flatMap(([packageName, staleVersion]) =>
+      SECURITY_CASES.map(
+        ([name, architecture, image]) =>
+          [packageName, name, architecture, staleVersion, image] as const,
+      ),
+    ),
+  )(
+    "rejects stale %s despite a current inventory for %s on %s",
+    (packageName, _name, architecture, staleVersion, image) => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-stale-security-package-"));
+      const prepared = completedImageSecurityCommand(image, tmp, architecture);
+      const fixedSpec = image.expectedInventory.find((entry) =>
+        entry.startsWith(`${packageName}=`),
+      )!;
+      const fixedVersion = fixedSpec.slice(packageName.length + 1);
+      const functions = baseAptSecurityFunctions(architecture).map((definition) =>
+        definition.replace(
+          `${packageName}) printf "${fixedVersion}"`,
+          `${packageName}) printf "${staleVersion}"`,
+        ),
+      );
+      try {
+        const { result } = runLoggedDockerShell(
+          prepared.command,
+          tmp,
+          [
+            "perl_base_installed=1",
+            "perl_installed=1",
+            'stat() { printf "0:0:444\\n"; }',
+            ...useRealPatchedParser(functions, prepared.pythonShim),
+          ],
+          { timeoutMs: 15_000 },
+        );
+        expect(result.status).not.toBe(0);
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("keeps runtime validation aligned with the independent image inventory", () => {
     expect(SANDBOX_BASE_SECURITY_PACKAGE_INVENTORY).toEqual(EXPECTED_SECURITY_PACKAGE_INVENTORY);
     expect(OPENCLAW_SANDBOX_BASE_SECURITY_PACKAGE_INVENTORY).toEqual(

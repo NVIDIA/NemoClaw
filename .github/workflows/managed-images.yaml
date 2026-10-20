@@ -202,7 +202,10 @@ jobs:
             scripts/patch-bundled-npm-brace-expansion.mts \
             scripts/patch-bundled-npm-tar.mts \
             scripts/upgrade-bundled-npm.mts \
-            scripts/security/patches/perl-5.44.0-net-ping-capability-tests.patch
+            scripts/security/patches/perl-5.44.0-net-ping-capability-tests.patch \
+            scripts/security/patches/libssh2-1.11.1-cve-2026.patch \
+            scripts/security/patches/zlib-1.3.1-write-error.patch \
+            scripts/security/zlib-write-error.c
           do
             support_source="$candidate_root/$support_relative"
             support_parent="$staging_root/$(dirname "$support_relative")"
