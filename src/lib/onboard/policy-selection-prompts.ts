@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { takePendingStdinEof } from "../core/pending-stdin-eof";
 import type { TierDefinition } from "../policy/tiers";
 import type { SandboxCancelRollback } from "./cancel-rollback";
 import { OnboardDeferredExitError } from "./session-bootstrap";
@@ -49,6 +50,12 @@ export interface PolicySelectionPromptDeps {
   stdin?: PolicyPromptInput;
   stdout?: PolicyPromptOutput;
   processEvents?: PolicyPromptProcessEvents;
+  /**
+   * Report whether stdin closed before a raw-mode menu opened. Defaults to the
+   * shared terminal check for the real stdin and to "nothing pending" for an
+   * injected one.
+   */
+  takePendingStdinEof?: () => Promise<boolean> | false;
 }
 
 export function createPolicySelectionPromptHelpers(deps: PolicySelectionPromptDeps): {
@@ -77,6 +84,26 @@ export function createPolicySelectionPromptHelpers(deps: PolicySelectionPromptDe
   const stdin = deps.stdin ?? process.stdin;
   const stdout = deps.stdout ?? process.stdout;
   const processEvents = deps.processEvents ?? process;
+  const takePendingEof =
+    deps.takePendingStdinEof ?? (() => (stdin === process.stdin ? takePendingStdinEof() : false));
+
+  /**
+   * Cancel a raw-mode menu whose stdin closed before it opened. Switching the
+   * terminal to raw mode drops a Ctrl-D queued between questions, so the menu
+   * would otherwise wait for a key that never arrives (#12169). Callers check
+   * `takePendingEof()` first, which stays synchronous when nothing is pending
+   * so the menu attaches its key listener on the same tick as before. The
+   * cancellation takes the same path as Ctrl-C at these selectors.
+   */
+  function cancelForClosedStdin(): Promise<never> {
+    return new Promise<never>((_resolve, reject) => {
+      makeOnboardCancelExit(
+        sandboxCancelRollback,
+        () => undefined,
+        (code) => reject(new OnboardDeferredExitError(code)),
+      )();
+    });
+  }
 
   function promptWithOnboardCancel(question: string): Promise<string> {
     return new Promise((resolve, reject) => {
@@ -200,6 +227,9 @@ export function createPolicySelectionPromptHelpers(deps: PolicySelectionPromptDe
       lineCount = lines.length;
     };
 
+    const pending = takePendingEof();
+    if (pending !== false && (await pending)) return cancelForClosedStdin();
+
     // Re-attach stdin to the event loop. A prior prompt cleanup may have
     // unref'd it (sticky), and resume() alone would leave the raw-mode read
     // detached from the loop.
@@ -232,7 +262,9 @@ export function createPolicySelectionPromptHelpers(deps: PolicySelectionPromptDe
         } else if (key === " ") {
           selectedIdx = cursor;
           redraw();
-        } else if (key === "\x03") {
+        } else if (key === "\x03" || key === "\x04") {
+          // Raw mode delivers Ctrl-D as an ordinary byte instead of an
+          // end-of-file; the menu has no typed answer to protect.
           onSigterm();
         } else if (key === "\x1b[A" || key === "k") {
           cursor = (cursor - 1 + n) % n;
@@ -382,6 +414,9 @@ export function createPolicySelectionPromptHelpers(deps: PolicySelectionPromptDe
       lineCount = lines.length;
     };
 
+    const pending = takePendingEof();
+    if (pending !== false && (await pending)) return cancelForClosedStdin();
+
     // Re-attach stdin to the event loop. A prior prompt cleanup may have
     // unref'd it (sticky), and resume() alone would leave the raw-mode read
     // detached from the loop.
@@ -415,7 +450,9 @@ export function createPolicySelectionPromptHelpers(deps: PolicySelectionPromptDe
               .filter((preset) => included.has(preset.name))
               .map((preset) => ({ name: preset.name, access: accessModes[preset.name] })),
           );
-        } else if (key === "\x03") {
+        } else if (key === "\x03" || key === "\x04") {
+          // Raw mode delivers Ctrl-D as an ordinary byte instead of an
+          // end-of-file; the menu has no typed answer to protect.
           onSigterm();
         } else if (key === "\x1b[A" || key === "k") {
           cursor = (cursor - 1 + n) % n;
@@ -532,6 +569,9 @@ export function createPolicySelectionPromptHelpers(deps: PolicySelectionPromptDe
       lineCount = lines.length;
     };
 
+    const pending = takePendingEof();
+    if (pending !== false && (await pending)) return cancelForClosedStdin();
+
     // Re-attach stdin to the event loop. A prior prompt cleanup may have
     // unref'd it (sticky), and resume() alone would leave the raw-mode read
     // detached from the loop.
@@ -561,7 +601,9 @@ export function createPolicySelectionPromptHelpers(deps: PolicySelectionPromptDe
           cleanup();
           stdout.write("\n");
           resolve([...selected]);
-        } else if (key === "\x03") {
+        } else if (key === "\x03" || key === "\x04") {
+          // Raw mode delivers Ctrl-D as an ordinary byte instead of an
+          // end-of-file; the menu has no typed answer to protect.
           onSigterm();
         } else if (key === "\x1b[A" || key === "k") {
           cursor = (cursor - 1 + n) % n;

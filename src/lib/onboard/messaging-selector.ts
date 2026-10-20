@@ -25,7 +25,7 @@ export type MessagingSelectorOutput = typeof process.stderr & {
   readonly isTTY?: boolean;
 };
 
-export type MessagingSelectorKeyAction = "continue" | "redraw" | "finish" | "interrupt";
+export type MessagingSelectorKeyAction = "continue" | "redraw" | "finish" | "interrupt" | "eof";
 
 export interface MessagingSelectorNormalizerState {
   carry: string;
@@ -73,6 +73,9 @@ export function applyMessagingSelectorKey(
   availableChannels: readonly MessagingChannelSelectorEntry[],
 ): MessagingSelectorKeyAction {
   if (key === "\u0003") return "interrupt";
+  // Raw mode delivers Ctrl-D as an ordinary byte instead of an end-of-file.
+  // The menu has no typed answer to protect, so it always closes stdin.
+  if (key === "\u0004") return "eof";
   if (key === "\r" || key === "\n") return "finish";
 
   const num = Number.parseInt(key, 10);
@@ -241,6 +244,10 @@ function readChannelKeys<T extends MessagingChannelSelectorEntry>(
         const action = applyMessagingSelectorKey(text[index], enabled, availableChannels);
         if (action === "interrupt") {
           interrupt("SIGINT");
+          return;
+        }
+        if (action === "eof") {
+          fail(pendingStdinEofError());
           return;
         }
         if (action === "finish") {
