@@ -55,7 +55,7 @@ jobs:
         if: needs.plan.outputs.images == 'true'
         run: |
           cargo images build --platform "$AGENT_PLATFORM" dummy
-          cargo images qualify nc-fabric:dummy --lifecycle dummy
+          cargo images qualify nc-fabric:dummy
       - name: Check packaging and generic Fabric lifecycle
         if: needs.plan.outputs.images == 'true'
         run: docker buildx bake check
@@ -70,10 +70,6 @@ jobs:
           docker buildx bake --print agents | jq -er '.target | to_entries[] | [.key, .value.tags[0]] | @tsv' > .build-image-list
           test -s .build-image-list
           while read -r harness image; do
-            case "$harness" in
-              openclaw|hermes|pi) cargo images qualify "$image" --lifecycle "$harness" ;;
-              *) cargo images qualify "$image" ;;
-            esac
             catalog=$(docker image inspect "$image" --format '{{index .Config.Labels "io.nemoclaw.fabric.catalog"}}')
             docker run --rm --runtime=runc --network none \
               -e NEMOCLAW_TEST_HARNESS="$harness" -e NEMOCLAW_TEST_CATALOG="$catalog" \

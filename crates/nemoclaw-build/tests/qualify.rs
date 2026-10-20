@@ -1,55 +1,51 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! The container `cargo images qualify` runs the command contract in.
+//! The container `cargo images qualify` runs the reference runtime contract in.
 
-use nemoclaw_build::images::{Lifecycle, qualify_arguments};
+use nemoclaw_build::images::qualify_arguments;
 use std::path::Path;
 
-fn arguments(lifecycle: Option<Lifecycle>) -> Vec<String> {
-    qualify_arguments(Path::new("/repo"), "name", "sha256:image", "", lifecycle)
-}
-
-fn environment(arguments: &[String]) -> Vec<&str> {
-    arguments
-        .windows(2)
-        .filter(|pair| pair[0] == "-e")
-        .map(|pair| pair[1].as_str())
-        .collect()
-}
-
+/// The reference runtime runs as an OpenShell sandbox would run it: offline,
+/// read-only, with only its sandbox storage writable. Nothing else is mounted:
+/// Fabric's native adapters are Fabric's to test.
 #[test]
-fn without_a_lifecycle_the_contract_runs_offline_and_read_only() {
-    let arguments = arguments(None);
+fn the_reference_contract_runs_offline_read_only_in_sandbox_storage() {
+    let arguments = qualify_arguments(Path::new("/repo"), "name", "sha256:image");
     for required in ["--network=none", "--read-only", "--runtime=runc"] {
         assert!(
             arguments.iter().any(|argument| argument == required),
             "{required}"
         );
     }
-    let environment = environment(&arguments);
-    assert!(environment.contains(&"NEMOCLAW_TEST_LIFECYCLE="));
-    assert_eq!(arguments.last().map(String::as_str), Some("/test.py"));
-}
-
-/// A lifecycle profile runs a native adapter against local inference in the
-/// sandbox, so it needs the native helper, a home directory and a test key.
-#[test]
-fn a_lifecycle_profile_gets_the_native_helper_home_and_key() {
-    let arguments = arguments(Some(Lifecycle::Hermes));
-    let environment = environment(&arguments);
-    assert!(environment.contains(&"NEMOCLAW_TEST_LIFECYCLE=hermes"));
-    assert!(environment.contains(&"HOME=/sandbox"));
-    assert!(environment.contains(&"FABRIC_NATIVE_TEST_KEY=fabric-native-key"));
+    assert!(
+        arguments
+            .windows(2)
+            .any(|pair| pair[0] == "-e" && pair[1] == "HOME=/sandbox")
+    );
     assert!(
         arguments
             .windows(2)
             .any(|pair| pair[0] == "--workdir" && pair[1] == "/sandbox")
     );
-    // The source is the host path, joined with the host's separator.
-    let helper = Path::new("/repo").join("image").join("qualify_native.py");
-    let mount = format!(
-        "type=bind,src={},dst=/qualify_native.py,readonly",
-        helper.display()
+    let mounts: Vec<&str> = arguments
+        .windows(2)
+        .filter(|pair| pair[0] == "--mount")
+        .map(|pair| pair[1].as_str())
+        .collect();
+    let suite = Path::new("/repo")
+        .join("image")
+        .join("test_agent_contract.py");
+    assert_eq!(
+        mounts,
+        [format!(
+            "type=bind,src={},dst=/test.py,readonly",
+            suite.display()
+        )]
     );
-    assert!(arguments.contains(&mount), "{arguments:?}");
+    assert!(
+        !arguments
+            .iter()
+            .any(|argument| argument.contains("FABRIC_NATIVE"))
+    );
+    assert_eq!(arguments.last().map(String::as_str), Some("/test.py"));
 }

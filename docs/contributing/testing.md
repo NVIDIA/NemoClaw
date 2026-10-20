@@ -411,11 +411,10 @@ The scope includes image Python and retained integration fixtures.
 Native adapter implementation and its behavioral tests live in Fabric and use Fabric's checks.
 
 The [image workflow](../../.github/workflows/images.yml) builds the selected platform's agent images plus the proxy, verifies retained source hashes, and checks installed discovery metadata.
-It first builds and qualifies the separate dummy image, then runs the same [command contract suite](../../image/test_agent_contract.py) against every selected agent image.
-Use the [reference image procedure](../build.md#reference-contract-image) to run that suite locally against explicit image references.
-The suite checks each image's runtime command and catalog, then starts, invokes, and stops one runtime through `fabric-agent-ctl` in a network-isolated container.
-The dummy, OpenClaw, Hermes, and Pi run that lifecycle, using the lifecycle profiles in the reference image procedure.
-Native profiles use isolated local inference; images without a selected profile report lifecycle coverage as skipped.
+It first builds and qualifies the separate dummy image: the [reference runtime suite](../../image/test_agent_contract.py) starts, invokes, and stops one runtime with NemoClaw's test adapter through `fabric-agent-ctl`, in a network-isolated, read-only container.
+It then runs the [image assembly checks](../../image/test_image.py) in every selected agent image: the runtime command, Python against each pinned adapter's declared range, the Fabric lock, Node.js only where a harness needs it, the catalog label, and retained sources without build toolchains.
+NemoClaw doesn't run Fabric's native adapters; their behavior is Fabric's to test.
+Use the [reference image procedure](../build.md#reference-contract-image) to run these locally.
 
 The image workflow obtains its image decision from the shared validation plan and skips image steps when their inputs are unaffected; the `Build` checks still report.
 A failed planning job fails those checks instead of skipping them.

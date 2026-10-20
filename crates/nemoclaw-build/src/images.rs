@@ -22,8 +22,8 @@ const CATALOG_LABEL: &str = "io.nemoclaw.fabric.catalog";
 const REFERENCE_LABEL: &str = "io.nemoclaw.fabric.reference";
 /// The adapter the reference dummy image implements.
 const REFERENCE_ADAPTER: &str = "org.nemoclaw.dummy";
-// Lifecycle profiles start a native adapter and make two inference requests.
-const QUALIFY_TIMEOUT: Duration = Duration::from_secs(480);
+// The reference runtime starts and answers without a model.
+const QUALIFY_TIMEOUT: Duration = Duration::from_secs(120);
 
 fn docker() -> Command {
     let mut command = Command::new("docker");
@@ -324,43 +324,11 @@ pub fn build(root: &Path, platform: &str, selection: &[String]) -> Result<()> {
 }
 
 /// Run the black-box command contract inside one image, offline and read-only.
-/// A shared lifecycle profile: the adapter whose offline configuration the
-/// contract suite configures, invokes and prepares.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
-pub enum Lifecycle {
-    Dummy,
-    Openclaw,
-    Hermes,
-    Pi,
-}
-
-impl Lifecycle {
-    fn name(self) -> &'static str {
-        match self {
-            Self::Dummy => "dummy",
-            Self::Openclaw => "openclaw",
-            Self::Hermes => "hermes",
-            Self::Pi => "pi",
-        }
-    }
-}
-
-/// The `docker run` arguments for one qualification container: offline,
-/// read-only, with the contract suite and native helper mounted read-only.
-pub fn qualify_arguments(
-    root: &Path,
-    name: &str,
-    id: &str,
-    reference: &str,
-    lifecycle: Option<Lifecycle>,
-) -> Vec<String> {
-    let mount = |file: &str, destination: &str| {
-        format!(
-            "type=bind,src={},dst={destination},readonly",
-            root.join("image").join(file).display()
-        )
-    };
-    let mut arguments: Vec<String> = [
+/// The `docker run` arguments for the reference runtime contract: offline,
+/// read-only, with only sandbox storage writable and the suite mounted.
+pub fn qualify_arguments(root: &Path, name: &str, id: &str) -> Vec<String> {
+    let suite = root.join("image").join("test_agent_contract.py");
+    [
         "run",
         "--name",
         name,
@@ -372,37 +340,27 @@ pub fn qualify_arguments(
         "/sandbox:rw,uid=10001,gid=10001,mode=0700",
         "--tmpfs",
         "/tmp:rw,mode=1777",
+        "-e",
+        "HOME=/sandbox",
+        "--workdir",
+        "/sandbox",
+        "--mount",
+        &format!("type=bind,src={},dst=/test.py,readonly", suite.display()),
+        "--entrypoint",
+        "/opt/fabric/bin/python",
+        id,
+        "-B",
+        "/test.py",
     ]
     .map(String::from)
-    .to_vec();
-    for variable in [
-        format!("NEMOCLAW_TEST_REFERENCE={reference}"),
-        format!(
-            "NEMOCLAW_TEST_LIFECYCLE={}",
-            lifecycle.map(Lifecycle::name).unwrap_or("")
-        ),
-        "FABRIC_NATIVE_TEST_KEY=fabric-native-key".into(),
-        "HOME=/sandbox".into(),
-    ] {
-        arguments.extend(["-e".into(), variable]);
-    }
-    arguments.extend([
-        "--workdir".into(),
-        "/sandbox".into(),
-        "--mount".into(),
-        mount("test_agent_contract.py", "/test.py"),
-        "--mount".into(),
-        mount("qualify_native.py", "/qualify_native.py"),
-        "--entrypoint".into(),
-        "/opt/fabric/bin/python".into(),
-        id.into(),
-        "-B".into(),
-        "/test.py".into(),
-    ]);
-    arguments
+    .to_vec()
 }
 
-pub fn qualify(root: &Path, image: &str, lifecycle: Option<Lifecycle>) -> Result<()> {
+/// Run the reference image's runtime contract: NemoClaw's test adapter started,
+/// invoked and stopped through `fabric-agent-ctl` under the conditions an
+/// OpenShell sandbox imposes. Fabric's native adapters are Fabric's to test;
+/// production images get only the assembly checks in `image/test_image.py`.
+pub fn qualify(root: &Path, image: &str) -> Result<()> {
     let inspected = output(
         docker().args(["image", "inspect", image]),
         "inspect the image",
@@ -415,14 +373,18 @@ pub fn qualify(root: &Path, image: &str, lifecycle: Option<Lifecycle>) -> Result
             "{image} has no {CATALOG_LABEL} label; build it with cargo images build"
         ));
     }
-    let reference = labels[REFERENCE_LABEL].as_str().unwrap_or("");
+    if labels[REFERENCE_LABEL].as_str().is_none() {
+        return Err(format!(
+            "{image} is not the reference image; production images are checked by image/test_image.py (docs/contributing/testing.md#image-source-checks)"
+        ));
+    }
     let id = inspected[0]["Id"].as_str().ok_or("image has no ID")?;
     let root = std::path::absolute(root).map_err(|_| "cannot locate the repository")?;
     let mut nonce = [0u8; 16];
     getrandom::fill(&mut nonce).map_err(|_| "cannot name the qualification container")?;
     let name = format!("nemoclaw-contract-{}", crate::hex(&nonce));
     let mut child = docker()
-        .args(qualify_arguments(&root, &name, id, reference, lifecycle))
+        .args(qualify_arguments(&root, &name, id))
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
         .spawn()
@@ -434,7 +396,7 @@ pub fn qualify(root: &Path, image: &str, lifecycle: Option<Lifecycle>) -> Result
                 break exit
                     .success()
                     .then_some(())
-                    .ok_or("the command contract failed");
+                    .ok_or("the reference runtime contract failed");
             }
             Ok(None) if std::time::Instant::now() < deadline => {
                 std::thread::sleep(Duration::from_millis(200));
@@ -442,7 +404,7 @@ pub fn qualify(root: &Path, image: &str, lifecycle: Option<Lifecycle>) -> Result
             Ok(None) => {
                 let _ = child.kill();
                 let _ = child.wait();
-                break Err("the command contract timed out");
+                break Err("the reference runtime contract timed out");
             }
             Err(_) => break Err("cannot observe the qualification container"),
         }

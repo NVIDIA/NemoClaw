@@ -115,8 +115,7 @@ docker image inspect nc-fabric:deepagents --format '{{index .RepoDigests 0}}'
 ```
 
 Use the printed immutable reference in `sandboxes[].image.ref`.
-Replace `deepagents` with `openclaw` to build the other qualified AMD64 harness.
-Run `cargo images build --platform linux/amd64 agents` to build both.
+Replace `deepagents` with another harness name, or use `agents` to build all ten.
 The AMD64 builds and image tests do not establish successful gateway provisioning or an end-to-end agent response.
 
 On ARM64, select `hermes`, `pi`, or another name from the [harness matrix](reference/fabric-harnesses.md), or build every agent with `cargo images build --platform linux/arm64 agents`.
@@ -168,40 +167,26 @@ On Linux ARM64, run from the repository root:
 
 ```sh
 IMAGE_PREFIX=nc-contract cargo images build --platform linux/arm64 dummy
-cargo images qualify nc-contract:dummy --lifecycle dummy
+cargo images qualify nc-contract:dummy
 ```
 
 Use `linux/amd64` on a native AMD64 host.
 The qualifier uses the inspected image ID and an owned disposable container with networking disabled, a read-only root filesystem, and temporary writable sandbox storage.
 It removes that container on success, failure, or timeout; the built image remains local.
-The suite starts, invokes, and stops one runtime through `fabric-agent-ctl`, and checks that the image refuses a second runtime.
+The suite starts, invokes, and stops one runtime through `fabric-agent-ctl` with NemoClaw's test adapter, under the conditions an OpenShell sandbox imposes.
 The [contract description](design/fabric-management.md#image-contract-and-reference-implementation) defines the dummy's settings.
 
-To roll the same interface into all ten production adapter images on a native Linux ARM64 host, run:
+To build all ten production adapter images on a native Linux ARM64 host, run:
 
 ```sh
 IMAGE_PREFIX=nc-contract cargo images build --platform linux/arm64 agents
-cargo images qualify nc-contract:openclaw --lifecycle openclaw
-cargo images qualify nc-contract:hermes --lifecycle hermes
-cargo images qualify nc-contract:pi --lifecycle pi
 ```
 
-Pass each remaining built image to the same qualifier; CI runs it for every selected target.
-On a native Linux AMD64 host, build and qualify its two production targets instead:
-
-```sh
-IMAGE_PREFIX=nc-contract cargo images build --platform linux/amd64 agents
-cargo images qualify nc-contract:deepagents
-cargo images qualify nc-contract:openclaw --lifecycle openclaw
-```
-
+Use `linux/amd64` on a native AMD64 host.
 The build adds the `io.nemoclaw.fabric.catalog` label to every image.
-The `--lifecycle` profile selects adapter configuration and invocation input; the lifecycle assertions are shared with the dummy.
-OpenClaw, Hermes, and Pi run their installed native adapters against an owned loopback inference server inside the network-isolated container.
-The suite starts one runtime through `fabric-agent-ctl`, checks a native reply, stops it, and checks that the image refuses a second runtime.
-Other production images report the unselected lifecycle scenario as skipped.
-The dummy selects its lifecycle profile automatically; an explicit profile makes the intended coverage visible in CI.
-A passing lifecycle does not establish that a runtime stays healthy: Fabric reports no runtime status.
+NemoClaw checks how each production image is assembled, not whether Fabric's adapters work: the [image checks](contributing/testing.md#image-source-checks) run `image/test_image.py` in each image, offline.
+Fabric's runtime and adapters are Fabric's to test, so `cargo images qualify` accepts only the reference image.
+A passing reference lifecycle does not establish that a runtime stays healthy: Fabric reports no runtime status.
 See [upstream ownership](design/fabric-management.md#upstream-ownership) for the remaining Fabric and OpenShell work.
 
 To extend an agent image with your own skills and tools, see [derived agent images](derived-images.md).

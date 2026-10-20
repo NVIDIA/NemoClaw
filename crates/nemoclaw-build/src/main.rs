@@ -168,13 +168,10 @@ enum ImageAction {
         #[arg(required = true)]
         targets: Vec<String>,
     },
-    /// Run the command contract inside each labeled local image.
+    /// Run the reference image's runtime contract: NemoClaw's test adapter through fabric-agent-ctl, offline.
     Qualify {
         #[arg(required = true)]
         images: Vec<String>,
-        /// Also start, invoke and stop a runtime through fabric-agent-ctl with this adapter's offline configuration.
-        #[arg(long, value_enum)]
-        lifecycle: Option<nemoclaw_build::images::Lifecycle>,
     },
     /// Write the metadata bundle a Kubernetes sandbox names in image.metadata.
     ExportMetadata {
@@ -540,9 +537,9 @@ async fn main() -> Result<()> {
             ImageAction::Build { platform, targets } => {
                 nemoclaw_build::images::build(root, &platform, &targets)
             }
-            ImageAction::Qualify { images, lifecycle } => images.iter().try_for_each(|image| {
+            ImageAction::Qualify { images } => images.iter().try_for_each(|image| {
                 eprintln!("Qualifying {image}");
-                nemoclaw_build::images::qualify(root, image, lifecycle)
+                nemoclaw_build::images::qualify(root, image)
             }),
             ImageAction::ExportMetadata {
                 image,
