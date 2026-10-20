@@ -18,14 +18,17 @@ use std::{
 /// The fixture engine address an `ssh` command line names, if it dials one.
 #[must_use]
 pub fn fixture_engine(args: &[String]) -> Option<SocketAddr> {
-    // The command ends the line; the target precedes it, after an optional
-    // `--`.
-    let [before @ .., target, docker, system, dial] = args else {
-        return None;
+    // The command ends the line, as three arguments or, from Docker's client
+    // on Windows, as one; the target precedes it, after an optional `--`.
+    let (before, target) = match args {
+        [before @ .., target, docker, system, dial]
+            if [docker, system, dial] == ["docker", "system", "dial-stdio"] =>
+        {
+            (before, target)
+        }
+        [before @ .., target, command] if command == "docker system dial-stdio" => (before, target),
+        _ => return None,
     };
-    if [docker, system, dial] != ["docker", "system", "dial-stdio"] {
-        return None;
-    }
     // NemoClaw passes `ssh://127.0.0.1:PORT`; Docker's client, which
     // OpenTofu's Docker provider uses, passes `-p PORT` and the host.
     let port = match target.strip_prefix("ssh://127.0.0.1:") {
@@ -121,6 +124,19 @@ mod tests {
             fixture_engine(&args("-p56829 -T 127.0.0.1 docker system dial-stdio")),
             fixture
         );
+        // Docker's client on Windows passes the remote command as one argument.
+        let windows: Vec<String> = [
+            "-p",
+            "56829",
+            "-o ConnectTimeout=30",
+            "-T",
+            "--",
+            "127.0.0.1",
+            "docker system dial-stdio",
+        ]
+        .map(str::to_owned)
+        .to_vec();
+        assert_eq!(fixture_engine(&windows), fixture);
         for other in [
             "-p 56829 -T -- 10.0.0.1 docker system dial-stdio",
             "-T -- 127.0.0.1 docker system dial-stdio",
