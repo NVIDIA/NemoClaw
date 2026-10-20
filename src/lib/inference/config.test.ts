@@ -22,6 +22,7 @@ import {
   LLAMA_CPP_LOCAL_CREDENTIAL_ENV,
   MANAGED_PROVIDER_ID,
   OLLAMA_LOCAL_CREDENTIAL_ENV,
+  OPENROUTER_CLOUD_MODEL_OPTIONS,
   planInferenceRouteReconcile,
   resolveAgentDefaultCloudModel,
   resolveAgentInferenceApi,
@@ -103,6 +104,7 @@ describe("inference selection config", () => {
     expect(CLOUD_MODEL_OPTIONS).toEqual([
       { id: "nvidia/nemotron-3-ultra-550b-a55b", label: "Nemotron 3 Ultra 550B" },
       { id: "nvidia/nemotron-3-super-120b-a12b", label: "Nemotron 3 Super 120B" },
+      { id: "nvidia/nemotron-3.5-super-vl-120b-a12b", label: "Nemotron 3.5 Super VL 120B" },
     ]);
     expect(CLOUD_MODEL_OPTIONS.map((option: { id: string }) => option.id)).not.toContain(
       "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
@@ -126,6 +128,14 @@ describe("inference selection config", () => {
     expect(CLOUD_MODEL_OPTIONS.map((option: { id: string }) => option.id)).toContain(
       "nvidia/nemotron-3-super-120b-a12b",
     );
+  });
+
+  it("keeps the NVIDIA hosted Super VL addition out of the OpenRouter fallback", () => {
+    expect(OPENROUTER_CLOUD_MODEL_OPTIONS.map((option) => option.id)).toEqual([
+      "nvidia/nemotron-3-ultra-550b-a55b",
+      "nvidia/nemotron-3-super-120b-a12b",
+      "minimaxai/minimax-m3",
+    ]);
   });
 
   it("aligns Hermes Provider defaults with the Hermes Agent Nous catalog", () => {

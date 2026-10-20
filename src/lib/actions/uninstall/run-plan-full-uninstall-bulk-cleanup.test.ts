@@ -24,6 +24,7 @@ import {
   MANAGED_GATEWAY_STATE_ROOT_MARKER,
   resolveGatewayStateDirName,
 } from "../../onboard/gateway-binding";
+import * as gatewayRegistry from "../../state/gateway-registry";
 import { createSetupInference, type SetupInferenceDeps } from "../../onboard/setup-inference";
 import {
   applyNativeNvidiaProviderAuthority,
@@ -625,6 +626,42 @@ it("retains a changed same-name registration before scoped pruning (#13470)", as
     expect(retained.sandboxes["my-assistant"].gpuEnabled).toBe(true);
     expect(retained.nativeNvidiaProviderAuthorities.nemoclaw.providerId).toBe("original-provider");
   } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+it("stops uninstall safely when provider authority preparation fails (#13470)", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-authority-prepare-"));
+  const preparation = vi.spyOn(gatewayRegistry, "prepareGatewayProviderAuthorityRetirement");
+  try {
+    const registryFile = writeFullCleanupState(home);
+    fs.writeFileSync(
+      registryFile,
+      JSON.stringify({
+        defaultSandbox: null,
+        sandboxes: {},
+        nativeNvidiaProviderAuthorities: { nemoclaw: { providerId: "retained-provider" } },
+      }),
+    );
+    const before = fs.readFileSync(registryFile, "utf8");
+    preparation.mockImplementationOnce(() => {
+      throw new Error("Sandbox registry lock is held by a live process");
+    });
+    const calls: string[][] = [];
+    const deps = fullCleanupDeps(home, calls, "No sandboxes found.\n");
+    await expect(
+      runUninstallPlan(
+        { assumeYes: true, deleteModels: false, destroyUserData: false, keepOpenShell: false },
+        deps,
+      ),
+    ).resolves.toMatchObject({ exitCode: 1 });
+    expect(preparation).toHaveBeenCalledOnce();
+    expect(deps.error.mock.calls.flat().join("\n")).toContain("Sandbox registry lock is held");
+    expect(calls.some((args) => args[1] === "delete" || args[1] === "remove")).toBe(false);
+    expect(fs.readFileSync(registryFile, "utf8")).toBe(before);
+    expect(fs.existsSync(path.join(home, ".local", "state", "nemoclaw"))).toBe(true);
+  } finally {
+    preparation.mockRestore();
     fs.rmSync(home, { recursive: true, force: true });
   }
 });
