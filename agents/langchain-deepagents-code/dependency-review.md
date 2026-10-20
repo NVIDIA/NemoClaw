@@ -424,3 +424,15 @@ restore behavior. The E2E EXIT trap is still required for early probe failures
 so the ordered suite cannot leave the current sandbox broader than the registry.
 Remove that trap only when each check receives an isolated sandbox or no longer
 mutates policy.
+
+### Auto classifier route
+
+Deep Agents Code reads `[models].auto_classifier` before it creates the separate
+Auto-mode classifier model. Without that key it selects an OpenAI model that a
+managed sandbox's inference route does not serve, so every classification is
+unavailable and Auto falls back to human approval. `generate-config.ts` sets the
+key to the selected default model. The classifier then uses the same endpoint
+and credential placeholder as the agent. Upstream approval policy, denials, and
+the fallback to human approval are unchanged, and Auto remains off until a user
+selects it. The thread-auto-approval live check exercises real classification.
+Remove the key when upstream defaults the classifier to the configured model.

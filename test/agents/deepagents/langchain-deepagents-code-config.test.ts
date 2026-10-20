@@ -126,6 +126,7 @@ describe("LangChain Deep Agents Code config generator", () => {
     const config = runGenerator({});
 
     expect(config).toContain('default = "openai:nvidia/nemotron-3-super-120b-a12b"');
+    expect(config).toContain('auto_classifier = "openai:nvidia/nemotron-3-super-120b-a12b"');
     expect(config).toContain('api_key_env = "DEEPAGENTS_CODE_OPENAI_API_KEY"');
     expect(config).toContain('base_url = "https://inference.local/v1"');
     expect(config).toContain(
@@ -179,6 +180,7 @@ describe("LangChain Deep Agents Code config generator", () => {
     });
 
     expect(config).toContain('default = "openrouter:nvidia/nemotron-3-ultra-550b-a55b"');
+    expect(config).toContain('auto_classifier = "openrouter:nvidia/nemotron-3-ultra-550b-a55b"');
     expect(config).toContain("[models.providers.openrouter]");
     expect(config).toContain('models = ["nvidia/nemotron-3-ultra-550b-a55b"]');
     expect(config).toContain('api_key_env = "OPENROUTER_API_KEY"');

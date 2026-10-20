@@ -214,6 +214,9 @@ function buildConfig(settings: Settings): ManagedDeepAgentsConfig {
     "",
     "[models]",
     `default = ${tomlString(defaultModel)}`,
+    // DCode's default Auto classifier is an OpenAI model that the sandbox route
+    // does not serve. Send the separate classifier request to the selected model.
+    `auto_classifier = ${tomlString(defaultModel)}`,
     "",
     ...providerConfigLines(
       provider,
