@@ -147,14 +147,13 @@ pub(super) async fn run_live_kind(
     // An agent image from this checkout, by digest, loaded into the node and
     // described by its metadata bundle.
     let (target, harness) = live_images::agent();
-    let docker_platform = format!("linux/{}", platform.trim_start_matches("linux_"));
     let prefix = format!("{name}-agent");
     let tag = format!("{prefix}:{target}");
     let metadata = inputs.path().join("agent.metadata.json");
     let cleanup = images.is_none().then(|| ImagesCleanup(tag.clone()));
     let (id, node_image) = match images {
         Some(archive) => (
-            load_archived_agent(&kind, &name, platform, archive, inputs.path())?,
+            load_archived_agent(&kind, &name, archive, inputs.path())?,
             format!("docker.io/library/{}:{target}", live_images::SHARED),
         ),
         None => {
@@ -165,7 +164,7 @@ pub(super) async fn run_live_kind(
                     .output()?
                     .stdout,
             )?;
-            nemoclaw_build::images::export_metadata(&tag, &docker_platform, &metadata)?;
+            nemoclaw_build::images::export_metadata(&tag, &metadata)?;
             run(Command::new(&kind).args(["load", "docker-image", "--name", &name, &tag]))?;
             (id, format!("docker.io/library/{tag}"))
         }
@@ -212,13 +211,7 @@ pub(super) async fn run_live_kind(
 }
 
 /// Import the saved images into the node without a host Docker load or re-export.
-fn load_archived_agent(
-    kind: &Path,
-    name: &str,
-    platform: &str,
-    images: &Path,
-    inputs: &Path,
-) -> Result<String> {
+fn load_archived_agent(kind: &Path, name: &str, images: &Path, inputs: &Path) -> Result<String> {
     let archive = inputs.join("images.tar");
     run(Command::new("zstd")
         .args(["-d", "-q", "-f", "-o"])
@@ -228,7 +221,6 @@ fn load_archived_agent(
     let (digest, metadata) = nemoclaw_build::images::archived_image_metadata(
         &archive,
         &format!("docker.io/library/{}:{target}", live_images::SHARED),
-        &format!("linux/{}", platform.trim_start_matches("linux_")),
     )?;
     fs::write(inputs.join("agent.metadata.json"), metadata)?;
     run(Command::new(kind)
@@ -335,7 +327,6 @@ mod tests {
         let result = load_archived_agent(
             &root.join("kind"),
             "nc-test",
-            "linux_arm64",
             &root.join("images.tar.zst"),
             &root,
         );

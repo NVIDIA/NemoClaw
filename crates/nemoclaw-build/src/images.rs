@@ -59,29 +59,25 @@ fn status(command: &mut Command, what: &str) -> Result<()> {
 }
 
 /// The metadata bundle a Kubernetes sandbox names in `image.metadata`, from
-/// a `docker image save` archive of one image: its index, the manifest for
-/// `platform`, and that manifest's config, each kept as its exact bytes.
-/// Layers and attestations are left out, so the bundle stays small.
-pub fn metadata_bundle(archive: &[u8], platform: &str) -> Result<Vec<u8>> {
+/// a `docker image save` archive of one image: its root, and for each Linux
+/// platform the root lists, that platform's manifest and config, each kept as
+/// its exact bytes. Layers and attestations are left out, so the bundle stays small.
+pub fn metadata_bundle(archive: &[u8]) -> Result<Vec<u8>> {
     let mut tar = tar::Archive::new(archive);
     let files = metadata_files(tar.entries().map_err(|_| "invalid image archive")?)?;
-    Ok(bundle_from_files(files, platform, None)?.1)
+    Ok(bundle_from_files(files, None)?.1)
 }
 
 /// Read a named image's metadata from a saved OCI archive, seeking past layers.
 /// Returns its root digest and the verified metadata bundle.
-pub fn archived_image_metadata(
-    archive: &Path,
-    image: &str,
-    platform: &str,
-) -> Result<(String, Vec<u8>)> {
+pub fn archived_image_metadata(archive: &Path, image: &str) -> Result<(String, Vec<u8>)> {
     let file = fs::File::open(archive).map_err(|_| "cannot open image archive")?;
     let mut tar = tar::Archive::new(file);
     let files = metadata_files(
         tar.entries_with_seek()
             .map_err(|_| "invalid image archive")?,
     )?;
-    bundle_from_files(files, platform, Some(image))
+    bundle_from_files(files, Some(image))
 }
 
 fn metadata_files<R: Read>(entries: tar::Entries<'_, R>) -> Result<BTreeMap<String, Vec<u8>>> {
@@ -107,20 +103,16 @@ fn metadata_files<R: Read>(entries: tar::Entries<'_, R>) -> Result<BTreeMap<Stri
 
 fn bundle_from_files(
     files: BTreeMap<String, Vec<u8>>,
-    platform: &str,
     image: Option<&str>,
 ) -> Result<(String, Vec<u8>)> {
     use sha2::{Digest, Sha256};
-    let (os, architecture) = platform
-        .split_once('/')
-        .ok_or("platform must be os/architecture")?;
-    let blob = |digest: &str| -> Result<String> {
+    let blob = |digest: &str, what: &str| -> Result<String> {
         let hex = digest
             .strip_prefix("sha256:")
             .ok_or("image digest is not SHA-256")?;
         let bytes = files
             .get(&format!("blobs/sha256/{hex}"))
-            .ok_or("image archive lacks a metadata blob")?;
+            .ok_or_else(|| format!("image archive lacks {what}"))?;
         if crate::hex(&Sha256::digest(bytes)) != hex {
             return Err("image metadata blob does not match its digest".into());
         }
@@ -154,52 +146,61 @@ fn bundle_from_files(
         .as_str()
         .ok_or("image archive entry has no digest")?
         .to_owned();
-    let root_raw = blob(&root)?;
+    let root_raw = blob(&root, "the image's root")?;
     let index = json(&root_raw)?;
     let mut blobs = BTreeMap::from([(root.clone(), root_raw)]);
-    let manifest = if index["manifests"].is_array() {
-        let matching: Vec<_> = index["manifests"]
-            .as_array()
-            .unwrap()
+    // An index names each Linux platform it lists; a manifest is its own platform.
+    let platforms: Vec<(String, Option<String>)> = match index["manifests"].as_array() {
+        Some(children) => children
             .iter()
-            .filter(|child| {
-                child["platform"]["os"] == os && child["platform"]["architecture"] == architecture
+            .filter(|child| child["platform"]["os"] == "linux")
+            .map(|child| {
+                let digest = child["digest"]
+                    .as_str()
+                    .ok_or("image manifest has no digest")?;
+                let architecture = child["platform"]["architecture"]
+                    .as_str()
+                    .unwrap_or_default();
+                Ok((digest.to_owned(), Some(architecture.to_owned())))
             })
-            .collect();
-        let [child] = matching.as_slice() else {
-            return Err(format!("image has no single manifest for {platform}"));
-        };
-        let digest = child["digest"]
-            .as_str()
-            .ok_or("image manifest has no digest")?
-            .to_owned();
-        blobs.insert(digest.clone(), blob(&digest)?);
-        digest
-    } else {
-        root.clone()
+            .collect::<Result<_>>()?,
+        None => vec![(root.clone(), None)],
     };
-    let config = json(&blobs[&manifest])?["config"]["digest"]
-        .as_str()
-        .ok_or("image manifest has no config")?
-        .to_owned();
-    let config_raw = blob(&config)?;
-    let configuration = json(&config_raw)?;
-    if configuration["os"] != os || configuration["architecture"] != architecture {
-        return Err(format!("image manifest config does not match {platform}"));
+    if platforms.is_empty() {
+        return Err("image lists no Linux platform".into());
     }
-    blobs.insert(config, config_raw);
-    let bundle = serde_json::to_vec(
-        &serde_json::json!({"schema_version": 1, "manifest_digest": manifest, "blobs": blobs}),
-    )
-    .map_err(|_| "cannot encode the image metadata bundle")?;
+    for (manifest, architecture) in platforms {
+        if manifest != root {
+            let what = format!(
+                "the linux/{} manifest; export a multi-platform image from its registry",
+                architecture.as_deref().unwrap_or_default()
+            );
+            blobs.insert(manifest.clone(), blob(&manifest, &what)?);
+        }
+        let config = json(&blobs[&manifest])?["config"]["digest"]
+            .as_str()
+            .ok_or("image manifest has no config")?
+            .to_owned();
+        let config_raw = blob(&config, "a manifest's config")?;
+        let configuration = json(&config_raw)?;
+        if configuration["os"] != "linux"
+            || architecture
+                .is_some_and(|architecture| configuration["architecture"] != architecture.as_str())
+        {
+            return Err("image manifest config does not match its platform".into());
+        }
+        blobs.insert(config, config_raw);
+    }
+    let bundle = serde_json::to_vec(&serde_json::json!({"schema_version": 2, "blobs": blobs}))
+        .map_err(|_| "cannot encode the image metadata bundle")?;
     Ok((root, bundle))
 }
 
 /// Save `image` from the local Docker engine and write its metadata bundle
 /// to `output`, a new file. Returns the image's digest reference.
-pub fn export_metadata(image: &str, platform: &str, output: &Path) -> Result<()> {
+pub fn export_metadata(image: &str, output: &Path) -> Result<()> {
     let archive = output_of(docker().args(["image", "save", image]), "save the image")?;
-    let bundle = metadata_bundle(&archive, platform)?;
+    let bundle = metadata_bundle(&archive)?;
     let mut file = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)

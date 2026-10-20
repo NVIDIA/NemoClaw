@@ -175,11 +175,9 @@ enum ImageAction {
     },
     /// Write the metadata bundle a Kubernetes sandbox names in image.metadata.
     ExportMetadata {
-        /// A local image, by tag or digest.
+        /// A local image, by tag or digest. Its bundle covers every Linux
+        /// platform it lists.
         image: String,
-        /// linux/arm64 or linux/amd64.
-        #[arg(long)]
-        platform: String,
         /// Where to write the bundle; refuses an existing file.
         #[arg(long)]
         output: PathBuf,
@@ -541,11 +539,9 @@ async fn main() -> Result<()> {
                 eprintln!("Qualifying {image}");
                 nemoclaw_build::images::qualify(root, image)
             }),
-            ImageAction::ExportMetadata {
-                image,
-                platform,
-                output,
-            } => nemoclaw_build::images::export_metadata(&image, &platform, &output),
+            ImageAction::ExportMetadata { image, output } => {
+                nemoclaw_build::images::export_metadata(&image, &output)
+            }
         }
         .map_err(Into::into);
     }

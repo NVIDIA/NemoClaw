@@ -431,10 +431,6 @@ if [ "$#" = 0 ]; then /bin/cat > "$destination"; else /bin/cat "$1" > "$destinat
             .collect();
         assert!(!tags.is_empty());
         let root = tempfile::tempdir().unwrap();
-        let platform = format!(
-            "linux/{}",
-            host_platform().unwrap().trim_start_matches("linux_")
-        );
         let mut baseline = None;
         type Save = fn(&[String], &Path) -> Result<()>;
         for (name, exporter) in [
@@ -457,9 +453,7 @@ if [ "$#" = 0 ]; then /bin/cat > "$destination"; else /bin/cat "$1" > "$destinat
             .unwrap();
             let metadata: Vec<_> = tags
                 .iter()
-                .map(|tag| {
-                    nemoclaw_build::images::archived_image_metadata(&tar, tag, &platform).unwrap()
-                })
+                .map(|tag| nemoclaw_build::images::archived_image_metadata(&tar, tag).unwrap())
                 .collect();
             let mut blobs = std::collections::BTreeMap::new();
             let mut archive = tar::Archive::new(fs::File::open(&tar).unwrap());
