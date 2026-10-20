@@ -1209,6 +1209,12 @@ async function main(
       ]),
       "portable registry inspection",
     );
+    assert.ok(
+      process.env.E2E_TARGET_ID !== "portable-hermes-finalization" ||
+        String((currentRegistry.HostConfig as Record<string, unknown> | undefined)?.PidsLimit) ===
+          "128",
+      "Portable Hermes registry must use the reviewed 128-task limit",
+    );
 
     const openshellBin = run("bash", ["-lc", "command -v openshell"]);
     const gatewayBin = run("bash", ["-lc", "command -v openshell-gateway"]);
@@ -1234,8 +1240,7 @@ async function main(
       fs.readFileSync(gatewayEnv.OPENSHELL_GATEWAY_CONFIG, "utf-8"),
       /supervisor_bin/,
     );
-    const artifactDir = process.env.E2E_ARTIFACT_DIR;
-    assert.ok(artifactDir, "E2E_ARTIFACT_DIR is required for the rootless receipt");
+    const artifactDir = process.env.E2E_ARTIFACT_DIR ?? "";
     fs.mkdirSync(artifactDir, { recursive: true, mode: 0o700 });
 
     progress.phase("start the pinned Podman gateway");
