@@ -114,7 +114,7 @@ NemoClaw allows a credential source only in the process that is intended to hold
 
 | Execution path | Rule |
 |---|---|
-| Host-brokered provider | Discover and use host credentials only through OpenShell-managed providers. NVIDIA Endpoints, supported fixed hosted providers, and new qualifying Deep Agents Code and Hermes local selections except owned Local NVIDIA NIM use sandbox-attached native providers. Owned Local NIM and other routes retain `inference.local`. The sandbox receives no raw host credential. |
+| Host-brokered provider | Discover and use host credentials only through OpenShell-managed providers. NVIDIA Endpoints, supported fixed hosted providers, new Deep Agents Code hosted compatible endpoints, qualified Deep Agents Code and Hermes local selections, and new OpenClaw Ollama, standalone vLLM, and llama.cpp selections use sandbox-attached providers. Owned Local NVIDIA NIM, compatible endpoints without an attachment, and retained shared routes use `inference.local`. The sandbox receives no raw host credential. |
 | Sandbox-direct provider | Keep only credential sources that are deliberately provisioned and reachable inside the sandbox. |
 | Ambient metadata provider | Disable SDK discovery when the metadata endpoint cannot exist across the sandbox boundary. Do not make an internal or link-local endpoint reachable merely to satisfy an automatic probe. |
 | New agent or provider | Declare the enabled credential sources and add agent-specific tests proving that unavailable sources are not probed. |
@@ -159,8 +159,8 @@ If direct Hermes Bedrock support is added later, it must apply the same unavaila
 #### Deep Agents Managed Inference Credential Discovery
 
 NemoClaw configures the managed `dcode` runtime with a generated OpenAI-compatible route.
-New NVIDIA Endpoints, supported fixed hosted providers, Ollama, standalone vLLM, llama.cpp, and qualifying local compatible selections use sandbox-attached native providers.
-Owned Local NVIDIA NIM and other routes retain `inference.local`.
+New NVIDIA Endpoints, supported fixed hosted providers, hosted compatible endpoints, Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible selections use sandbox-attached providers.
+Owned Local NVIDIA NIM, compatible endpoints without an attachment, and retained shared routes use `inference.local`.
 The sandbox receives a scoped credential reference for native providers or a placeholder key for shared routes.
 OpenShell keeps the upstream provider credential outside the sandbox.
 The managed launchers reject credential-shaped environment values and upstream auth files before Deep Agents Code starts, so provider discovery stays on the host-side OpenShell boundary.
@@ -290,14 +290,15 @@ Its curl paths are used only by onboarding's post-create verifier.
 Do not replace these paths with a broad `/**` binary rule.
 Broader binary access would let unrelated sandbox processes send data to Tavily through the same allowed endpoint.
 
-## QA Operation Telemetry
+## Operation Telemetry
 
-NemoClaw operation telemetry is currently available only for QA runs.
-A valid `NEMOCLAW_TELEMETRY_TEST_LABEL` selects NVIDIA's fixed TEST receiver for the installer and supported CLI commands.
+The installer and supported CLI commands attempt to send anonymous operation telemetry to NVIDIA's fixed TEST receiver by default.
+Ordinary runs send an empty `testLabel`.
+QA runs can set `NEMOCLAW_TELEMETRY_TEST_LABEL` to attach a valid label to the same receiver.
 Use `qa-<label>:<client>:attempt-<number>`, for example, `qa-telemetry:client:attempt-1`.
 `<label>` allows 1 to 32 lowercase letters, digits, or hyphens; `<client>` allows 1 to 40 of the same characters.
 Each segment must start with a letter or digit, and the attempt number must be 1 to 999 without a leading zero.
-A missing or invalid value disables telemetry for that run.
+A missing label sends ordinary telemetry; an invalid value disables telemetry for that run.
 Telemetry covers onboarding, CLI update, sandbox upgrade, rebuild, destroy, and recover.
 It also covers inference selection, agent and channel changes, policy changes, and approved sandbox settings changes.
 NemoClaw attempts to send one record when a covered operation finishes.
@@ -335,7 +336,7 @@ The agent never receives the provider API key.
 
 | Aspect | Detail |
 |---|---|
-| Default | NVIDIA Endpoints, supported fixed hosted providers, and new qualifying Deep Agents Code and Hermes local selections except owned Local NVIDIA NIM use sandbox-attached native providers. Owned Local NIM and other routes retain `inference.local`. OpenShell owns the credential and upstream endpoint in both cases. |
+| Default | NVIDIA Endpoints, supported fixed hosted providers, new Deep Agents Code hosted compatible endpoints, qualified Deep Agents Code and Hermes local selections, and new OpenClaw Ollama, standalone vLLM, and llama.cpp selections use sandbox-attached providers. Owned Local NVIDIA NIM, compatible endpoints without an attachment, and retained shared routes use `inference.local`. OpenShell owns the credential and upstream endpoint in both cases. |
 | What you can change | You select a supported provider. NemoClaw selects and enforces that provider's managed path. |
 | Risk if bypassed | Adding an unowned provider endpoint to network policy bypasses NemoClaw's managed provider boundary and could let an agent use a stolen or hardcoded key. The NVIDIA Endpoints path is not a bypass: its checked-in OpenShell provider profile restricts the endpoint, methods, paths, and binaries, then rewrites a placeholder credential at the egress boundary. |
 | Recommendation | Do not add inference provider hosts to network policy for NemoClaw model traffic. Use the provider path created by onboarding. The `claude-code` preset is a separate opt-in exception for running the Claude Code CLI with its own credentials, not a way to configure NemoClaw inference. |

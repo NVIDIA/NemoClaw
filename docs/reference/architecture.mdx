@@ -125,6 +125,10 @@ An inability to grant or remove trust is a hard failure.
 If the service fails inspection, startup, shutdown, or its health check, NemoClaw prints the formula log command and stops so Homebrew remains lifecycle authority.
 A host without Homebrew, or with no staged formula and no installed OpenShell keg, uses the standalone macOS gateway.
 A legacy installation, missing pin, changed formula, failed Homebrew operation, or invalid official-tap identity stops with repair guidance instead of changing lifecycle authority.
+The installer and supported CLI operations attempt anonymous completion telemetry to NVIDIA's fixed TEST receiver by default.
+Run `export NEMOCLAW_DISABLE_TELEMETRY=1` in this shell before installation to suppress collection and delivery.
+Repeat it in any new shell used for NemoClaw CLI commands.
+Refer to [Operation Telemetry](/user-guide/openclaw/security/best-practices#operation-telemetry) for details.
 Rerunning the standard NemoClaw installer downloads and stages the pinned formula before onboarding is retried:
 
 ```bash
@@ -359,13 +363,13 @@ Inside the sandbox:
 ## Inference Routing
 
 Agent inference follows one of two OpenShell-managed paths.
-Owned Local NVIDIA NIM, other custom shared routes, Pi local selections, and retained legacy shared local routes use `inference.local` through the OpenShell gateway:
+Owned Local NVIDIA NIM, compatible endpoints without a native attachment, retained Pi local selections, retained Hermes local selections without an attachment, and retained legacy shared local routes use `inference.local` through the OpenShell gateway:
 
 ```text
 Supported agent runtime (sandbox)  ──▶  inference.local  ──▶  OpenShell gateway  ──▶  Provider endpoint
 ```
 
-NVIDIA Endpoints, supported fixed hosted providers, and new Deep Agents Code and Hermes Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible selections, plus new OpenClaw Ollama, standalone vLLM, and llama.cpp selections use restricted providers attached to the sandbox. For example, NVIDIA Endpoints uses this path:
+NVIDIA Endpoints, supported fixed hosted providers, and new Deep Agents Code hosted compatible selections and qualified Deep Agents Code and Hermes Ollama, standalone vLLM, llama.cpp, and host-local compatible selections, plus new OpenClaw Ollama, standalone vLLM, and llama.cpp selections use restricted providers attached to the sandbox. For example, NVIDIA Endpoints uses this path:
 
 ```text
 Supported agent runtime (sandbox)  ──▶  integrate.api.nvidia.com  ──▶  NVIDIA Endpoints

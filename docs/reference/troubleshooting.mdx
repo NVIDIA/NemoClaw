@@ -19,6 +19,10 @@ content:
 {/* markdownlint-disable MD014 */}
 
 This page covers common installation, onboarding, and runtime issues, along with resolution steps.
+Installer reruns and supported CLI operations attempt anonymous completion telemetry to NVIDIA's fixed TEST receiver by default.
+Run `export NEMOCLAW_DISABLE_TELEMETRY=1` in this shell before a rerun to suppress collection and delivery.
+Repeat it in any new shell used for NemoClaw CLI commands.
+Refer to [Operation Telemetry](/user-guide/openclaw/security/best-practices#operation-telemetry) for details.
 
 <Note>
   The diagnostic commands on this page assume `$$nemoclaw` is on your `PATH`
@@ -871,15 +875,28 @@ Run `$$nemoclaw status` for a broader gateway health report.
 </AgentOnly>
 
 <AgentOnly variant="hermes">
+
+### Portable Hermes receipt and registry authority do not match
+
+Portable Hermes lifecycle commands require the current registry entry and the durable lifecycle receipt to identify the same sandbox, gateway, and lifecycle generation. If onboarding reports that it cannot match them, keep both files unchanged and inspect the sandbox:
+
+```bash
+nemohermes <sandbox-name> doctor
+```
+
+Do not copy, recreate, or edit a registry entry or lifecycle receipt by hand. If `doctor` reports that it cannot qualify the authority, preserve both files unchanged and stop. Manual edits can bind recovery to stale or replacement state.
+
 If `nemohermes <name> recover` reports that the Hermes secret-boundary validator is missing, the sandbox image predates the recovery-side validator that re-checks `/sandbox/.hermes/.env`.
 Current NemoClaw releases fail closed in this state: recovery reports that the validator is missing, leaves an otherwise healthy gateway untouched, refuses to claim the secret boundary was checked, and instructs you to re-image the sandbox with a current Hermes build.
 
-Re-image the sandbox with a current Hermes build before retrying recovery:
+Re-image the sandbox with a current Hermes build through a fresh onboarding run:
 
 ```bash
-nemohermes <sandbox-name> rebuild --yes
-nemohermes <sandbox-name> recover
+nemohermes onboard --experimental-profile portable --fresh --name <sandbox-name> --recreate-sandbox
 ```
+
+Portable Hermes does not support the sandbox `rebuild` command.
+The fresh onboarding run is the supported terminal action for replacing the outdated image.
 
 </AgentOnly>
 
@@ -2068,7 +2085,7 @@ Verify that the inference provider endpoint is reachable from the host. Check th
 $$nemoclaw <name> status
 ```
 
-The main `Inference` line checks the provider path from inside the sandbox and sends an inference request over the path the agent uses. For shared-route providers, including owned Local NVIDIA NIM, `status` probes `https://inference.local/v1/models` before it sends the request through `https://inference.local`. For NVIDIA Endpoints, fixed hosted selections, and new Deep Agents Code and Hermes Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible selections, plus new OpenClaw Ollama, standalone vLLM, and llama.cpp selections with a recorded native attachment, it verifies that attachment and sends the request to the selected native endpoint; it does not probe `inference.local`. When an inference request returns a transient gateway status, `status` makes up to three request attempts before it reports a failure. Shared-route retries repeat the route probe and request, while native providers retry only the native request. It prints the next attempt and two-second delay to stderr before each retry. Each inference request attempt has a 90-second request timeout. If the main line shows `unauthorized`, `unhealthy`, `unreachable`, or `not probed`, inspect the labeled diagnostic lines to identify the failing hop. An `unauthorized` line means the route answered but rejected the request, so refresh the provider credential rather than the route.
+The main `Inference` line checks the provider path from inside the sandbox and sends an inference request over the path the agent uses. For shared-route providers, including owned Local NVIDIA NIM, `status` probes `https://inference.local/v1/models` before it sends the request through `https://inference.local`. For NVIDIA Endpoints, fixed hosted selections, and new Deep Agents Code hosted compatible selections and qualified Deep Agents Code and Hermes Ollama, standalone vLLM, llama.cpp, and host-local compatible selections, plus new OpenClaw Ollama, standalone vLLM, and llama.cpp selections with a recorded native attachment, it verifies that attachment and sends the request to the selected native endpoint; it does not probe `inference.local`. When an inference request returns a transient gateway status, `status` makes up to three request attempts before it reports a failure. Shared-route retries repeat the route probe and request, while native providers retry only the native request. It prints the next attempt and two-second delay to stderr before each retry. Each inference request attempt has a 90-second request timeout. If the main line shows `unauthorized`, `unhealthy`, `unreachable`, or `not probed`, inspect the labeled diagnostic lines to identify the failing hop. An `unauthorized` line means the route answered but rejected the request, so refresh the provider credential rather than the route.
 
 Hermes live qualification for the new local lifecycle remains pending.
 

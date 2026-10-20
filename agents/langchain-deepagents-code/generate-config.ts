@@ -18,6 +18,7 @@ import { join } from "node:path";
 
 import {
   type ManagedDcodeProvider,
+  managedDcodeRequiresNonemptyContent,
   normalizeManagedDcodeEndpointUrl,
   resolveManagedDcodeIdentity,
 } from "../../src/lib/inference/managed-dcode/identity.ts";
@@ -42,10 +43,6 @@ type ManagedDeepAgentsConfig = {
   defaultModel: string;
 };
 
-const NEMOTRON_ULTRA_MODEL_IDS = new Set([
-  "nvidia/nemotron-3-ultra-550b-a55b",
-  "nvidia/nvidia/nemotron-3-ultra",
-]);
 const MANAGED_INFERENCE_API_KEY_ENV = "DEEPAGENTS_CODE_OPENAI_API_KEY";
 const ATTACHED_PROVIDER_API_KEY_ENV = "NVIDIA_INFERENCE_API_KEY";
 
@@ -144,7 +141,7 @@ function openAiModelRequestParamLines(
   // parameters. Keep the exact invalid state, regression proof, and separate
   // removal conditions for this option and the dispatch guard in
   // dependency-review.md under "Managed Ultra compatibility workarounds."
-  const isUltra = NEMOTRON_ULTRA_MODEL_IDS.has(model) && baseUrl !== NVIDIA_HOSTED_NATIVE_ENDPOINT;
+  const isUltra = managedDcodeRequiresNonemptyContent(model, baseUrl);
   const extraBodyEntries = [
     ...(isUltra ? ["chat_template_kwargs = { force_nonempty_content = true }"] : []),
     ...(reasoningEffort ? [`reasoning_effort = ${tomlString(reasoningEffort)}`] : []),
@@ -172,9 +169,10 @@ function providerConfigLines(
   const nativeHosted = nativeHostedAgentConfig(upstreamProvider, baseUrl);
   const apiKeyEnv = nativeLocalCredentialReference(upstreamProvider, baseUrl)
     ? NATIVE_LOCAL_CREDENTIAL_ENV
-    : baseUrl === NVIDIA_HOSTED_NATIVE_ENDPOINT
-      ? ATTACHED_PROVIDER_API_KEY_ENV
-      : (nativeHosted?.credentialEnv ?? MANAGED_INFERENCE_API_KEY_ENV);
+    : (nativeHosted?.credentialEnv ??
+      (baseUrl === NVIDIA_HOSTED_NATIVE_ENDPOINT
+        ? ATTACHED_PROVIDER_API_KEY_ENV
+        : MANAGED_INFERENCE_API_KEY_ENV));
   return [
     `[models.providers.${provider}]`,
     `models = ${tomlArray([model])}`,
@@ -213,6 +211,9 @@ function buildConfig(settings: Settings): ManagedDeepAgentsConfig {
     "",
     "[models]",
     `default = ${tomlString(defaultModel)}`,
+    // A managed sandbox has credentials only for its selected inference route.
+    // Use a separate classifier request on that route, preserving Auto's policy.
+    `auto_classifier = ${tomlString(defaultModel)}`,
     "",
     ...providerConfigLines(
       provider,

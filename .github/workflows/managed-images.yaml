@@ -1081,7 +1081,7 @@ jobs:
           path: ${{ runner.temp }}/managed-pr-contract/contract.json
           if-no-files-found: error
           overwrite: true
-          retention-days: 1
+          retention-days: 7
 
   pr-managed-activation:
     name: PR exact all-agent managed runtime activation (${{ matrix.arch }})

@@ -2401,15 +2401,15 @@ const setupMessagingChannels = messagingChannelSetup.createSetupMessagingChannel
   prompt,
 });
 const configSyncDeps = { getProviderSelectionConfig, sandboxCommandExecutor: sandboxExec };
-const syncNemoClawConfigInSandbox = createNemoClawConfigSync(configSyncDeps);
 const configureOpenclawSandbox = openclawSetup.createConfigureOpenclawSandbox({
-  syncNemoClawConfigInSandbox,
+  syncNemoClawConfigInSandbox: createNemoClawConfigSync(configSyncDeps),
 });
 const setupOpenclaw = openclawSetup.createOpenclawSetup({
   step,
   agentProductName,
   configureOpenclawSandbox,
   restartNativeGateway: restartNativeGatewayForInitialSetup,
+  waitForGatewayStartup: finalizationHandlerDeps.waitForStartedOpenclawGatewayProcess,
   shouldRestartNativeGateway: isRoutedInferenceProvider,
 });
 const {

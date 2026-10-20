@@ -31,6 +31,11 @@ export async function maybePromptForInferenceInputCapability(
 ): Promise<void> {
   const env = deps.env || process.env;
   if (isValidInferenceInputsOverride(env.NEMOCLAW_INFERENCE_INPUTS)) return;
+  // The hosted model has a different identity from the local NVFP4 checkpoint.
+  if (model === "nvidia/nemotron-3.5-super-vl-120b-a12b") {
+    env.NEMOCLAW_INFERENCE_INPUTS = "text,image";
+    return;
+  }
   if (deps.isNonInteractive()) {
     // Unattended onboarding cannot answer the vision prompt. Use declared
     // catalog capabilities, never a model-name hint, for its default.

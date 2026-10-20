@@ -31,8 +31,11 @@
 set -euo pipefail
 
 SANDBOX_NAME="${SANDBOX_NAME:-${NEMOCLAW_SANDBOX_NAME:-e2e-cloud-onboard}}"
+REPO="${REPO:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)}"
 PREFIX="07-deepagents-code-headless-inference"
 HEADLESS_TIMEOUT="${DEEPAGENTS_HEADLESS_TIMEOUT:-120}"
+HOSTED_ENDPOINT="${NEMOCLAW_ENDPOINT_URL:-https://inference-api.nvidia.com/v1}"
+HOSTED_ENDPOINT="$(node --no-warnings "${REPO}/test/e2e/e2e-cloud-experimental/normalize-hosted-endpoint.ts" "$HOSTED_ENDPOINT")"
 SKILL_CLI_TIMEOUT_SECONDS=180
 
 ok() { printf '%s\n' "${PREFIX}: OK ($*)"; }
@@ -382,20 +385,66 @@ references_attached_provider_placeholder_key() {
   grep -Eq 'api_key_env[[:space:]]*=[[:space:]]*"NVIDIA_INFERENCE_API_KEY"'
 }
 
+selected_openai_provider_scalar() {
+  local key="$1"
+  awk -v key="$key" '
+    /^\[\[?[^]]+\]\]?[[:space:]]*$/ {
+      selected = ($0 == "[models.providers.openai]")
+      next
+    }
+    selected && $0 ~ "^[[:space:]]*" key "[[:space:]]*=" {
+      pattern = "^[[:space:]]*" key "[[:space:]]*=[[:space:]]*\"[^\"]*\"[[:space:]]*$"
+      if ($0 !~ pattern) {
+        invalid = 1
+        next
+      }
+      value = $0
+      sub("^[[:space:]]*" key "[[:space:]]*=[[:space:]]*\"", "", value)
+      sub(/"[[:space:]]*$/, "", value)
+      count++
+    }
+    END {
+      if (count == 1 && !invalid) print value
+    }
+  '
+}
+
+references_native_compatible_route() {
+  local configured_endpoint
+  configured_endpoint="$(selected_openai_provider_scalar base_url)"
+  [ "$configured_endpoint" = "$HOSTED_ENDPOINT" ]
+}
+
+references_compatible_provider_placeholder_key() {
+  [ "$(selected_openai_provider_scalar api_key_env)" = "COMPATIBLE_API_KEY" ]
+}
+
 configured_inference_route_contract() {
   local config
   config="$(cat)"
   if printf '%s\n' "$config" | references_native_nvidia_route \
     && printf '%s\n' "$config" | references_attached_provider_placeholder_key \
     && ! printf '%s\n' "$config" | references_managed_inference_route \
-    && ! printf '%s\n' "$config" | references_managed_placeholder_key; then
+    && ! printf '%s\n' "$config" | references_managed_placeholder_key \
+    && ! printf '%s\n' "$config" | references_native_compatible_route \
+    && ! printf '%s\n' "$config" | references_compatible_provider_placeholder_key; then
     printf '%s\n' native-nvidia
+    return 0
+  fi
+  if printf '%s\n' "$config" | references_native_compatible_route \
+    && printf '%s\n' "$config" | references_compatible_provider_placeholder_key \
+    && ! printf '%s\n' "$config" | references_managed_inference_route \
+    && ! printf '%s\n' "$config" | references_managed_placeholder_key \
+    && ! printf '%s\n' "$config" | references_attached_provider_placeholder_key; then
+    printf '%s\n' native-compatible
     return 0
   fi
   if printf '%s\n' "$config" | references_managed_inference_route \
     && printf '%s\n' "$config" | references_managed_placeholder_key \
     && ! printf '%s\n' "$config" | references_native_nvidia_route \
-    && ! printf '%s\n' "$config" | references_attached_provider_placeholder_key; then
+    && ! printf '%s\n' "$config" | references_attached_provider_placeholder_key \
+    && ! printf '%s\n' "$config" | references_native_compatible_route \
+    && ! printf '%s\n' "$config" | references_compatible_provider_placeholder_key; then
     printf '%s\n' managed
     return 0
   fi
@@ -612,6 +661,9 @@ main() {
   if [ "$route_contract" = "native-nvidia" ]; then
     pass "config.toml routes through the native NVIDIA endpoint"
     pass "config.toml uses the attached-provider placeholder API key"
+  elif [ "$route_contract" = "native-compatible" ]; then
+    pass "config.toml routes through the attached compatible endpoint"
+    pass "config.toml uses the compatible-provider placeholder API key"
   elif [ "$route_contract" = "managed" ]; then
     pass "config.toml routes through the managed inference.local endpoint"
     pass "config.toml uses the managed Deep Agents Code placeholder API key"
@@ -811,8 +863,11 @@ DCODE_EXIT:${direct_exit}"
     && [ "$fail_closed_connect_exit" -ne 0 ] \
     && grep -Fq NEMOCLAW_DCODE_IMAGE_PROBE_USED <<<"$fail_closed_connect_output" \
     && grep -Fq NEMOCLAW_DCODE_SESSION_ATTACH_NOT_INVOKED <<<"$fail_closed_connect_output" \
-    && grep -Fq "UNTRUSTED PREAMBLE" <<<"$fail_closed_connect_output" \
-    && grep -Fq "did not return a trusted result" <<<"$fail_closed_connect_output"; then
+    && { { [ "$route_contract" = managed ] \
+      && grep -Fq "UNTRUSTED PREAMBLE" <<<"$fail_closed_connect_output" \
+      && grep -Fq "did not return a trusted result" <<<"$fail_closed_connect_output"; } \
+      || { [[ "$route_contract" = native-nvidia || "$route_contract" = native-compatible ]] \
+        && grep -Fq "sandbox inference route is not known healthy" <<<"$fail_closed_connect_output"; }; }; then
     pass "connect rejects untrusted image-backed route evidence before session attach"
   else
     fail_test "connect did not fail closed before session attach for untrusted image-backed route evidence"

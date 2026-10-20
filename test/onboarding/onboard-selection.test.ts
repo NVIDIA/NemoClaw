@@ -2724,7 +2724,7 @@ reportChildScenario(async () => {
     assert.equal(result.status, 0, result.stderr);
     const payload = JSON.parse(result.stdout.trim());
     assert.equal(payload.result.provider, "nvidia-prod");
-    assert.equal(payload.result.model, "nvidia/nemotron-3-super-120b-a12b");
+    assert.equal(payload.result.model, "nvidia/nemotron-3.5-super-vl-120b-a12b");
     assert.ok(
       payload.lines.some((line: string) =>
         line.includes("Endpoint URL is required for Other OpenAI-compatible endpoint."),
@@ -3146,8 +3146,8 @@ const { setupNim } = require(${onboardPath});
 
 reportChildScenario(async () => {
   process.env.NVIDIA_INFERENCE_API_KEY = "nvapi-bad";
-  const result = await setupNim(null);
-  return { result, messages, prompts, key: process.env.NVIDIA_INFERENCE_API_KEY };
+  process.env.NEMOCLAW_MODEL = "nvidia/nemotron-3-super-120b-a12b";
+  return { result: await setupNim(null), messages, prompts, key: process.env.NVIDIA_INFERENCE_API_KEY };
 });
 `;
     const result = workspace.runNodeSource(script, {

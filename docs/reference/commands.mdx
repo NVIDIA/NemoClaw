@@ -16,6 +16,11 @@ content:
   type: "reference"
 ---
 
+The installer and supported CLI operations attempt anonymous completion telemetry to NVIDIA's fixed TEST receiver by default.
+Run `export NEMOCLAW_DISABLE_TELEMETRY=1` in this shell before installing or rerunning it to suppress collection and delivery.
+Repeat it in any new shell used for NemoClaw CLI commands.
+Refer to [Operation Telemetry](/user-guide/openclaw/security/best-practices#operation-telemetry) for details.
+
 <AgentOnly variant="openclaw">
 
 The `$$nemoclaw` CLI is the primary interface for managing NemoClaw sandboxes. It is installed automatically by the installer (`curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash`). For guidance on when to use `$$nemoclaw` versus the underlying `openshell` CLI, refer to [CLI Selection Guide](cli-selection-guide).
@@ -530,11 +535,20 @@ The host observes through any same-device pending state and verifies the final s
 
 Before the configuration review, NemoClaw records the sandbox name and the selected provider and model as an incomplete choice. If onboarding stops at the review prompt, an interactive `--resume` run shows the prompt again. A non-interactive `--resume` run reuses the recorded choice and continues to inference setup. After you choose **Apply configuration**, NemoClaw records the choice before inference setup starts. If inference setup fails, `--resume` reuses the accepted provider, model, and sandbox name. If you choose **Exit onboarding**, onboarding exits with a nonzero status and clears those recorded choices. Run `$$nemoclaw onboard` to make new choices after exit. During a resume without terminal input, `--yes` or `NEMOCLAW_YES=1` also selects non-interactive resume behavior. For a new or fresh session, `--yes` and `NEMOCLAW_YES=1` accept supported confirmations but do not replace `--non-interactive`. If onboarding returns without reaching the final `complete` state, the command exits with status `1`. When that result is resumable, NemoClaw keeps the session `in_progress` at its last checkpoint instead of marking it failed, so correct the reported condition and run `$$nemoclaw onboard --resume`.
 
-<AgentOnly variant="openclaw,hermes">
+<AgentOnly variant="openclaw">
 
 During finalization, NemoClaw stops onboarding when it cannot complete the process check or a required secret-boundary check refuses.
 It does not report the sandbox as ready.
 Run `$$nemoclaw <sandbox-name> doctor`, correct the reported condition, then run `$$nemoclaw onboard --resume`.
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+During finalization, NemoClaw stops onboarding when it cannot complete the process check or a required secret-boundary check refuses.
+It does not report the sandbox as ready.
+For a Portable Hermes receipt and registry authority mismatch, preserve both records and follow [Portable Hermes receipt and registry authority do not match](troubleshooting#portable-hermes-receipt-and-registry-authority-do-not-match).
+Do not resume onboarding for that authority failure.
+For another resumable finalization failure, run `$$nemoclaw <sandbox-name> doctor`, correct the reported condition, then run `$$nemoclaw onboard --resume`.
 
 </AgentOnly>
 
@@ -1226,8 +1240,8 @@ During that lease, another `launch` still verifies these conditions:
 <AgentOnly variant="hermes,deepagents">
 
 - The recorded inference selection matches its provider path, and every configured route serves a valid response to a bounded request for the recorded model.
-  NVIDIA Endpoints, supported fixed hosted selections, and new Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible selections verify their recorded sandbox-attached provider and request the model at its native endpoint without a shared-route models probe.
-  Owned Local NVIDIA NIM, retained legacy and other custom shared routes use `inference.local`.
+  NVIDIA Endpoints, supported fixed hosted selections, and new Ollama, standalone vLLM, llama.cpp, Deep Agents Code hosted compatible, and qualifying host-local compatible selections verify their recorded sandbox-attached provider and request the model at its native endpoint without a shared-route models probe.
+  Owned Local NVIDIA NIM, retained legacy routes, and other custom routes without an attachment use `inference.local`.
   Their models probe must return HTTP 2xx, except that a retained legacy `openrouter-api` shared route can return HTTP 404 for `GET /v1/models` when the bounded model request succeeds.
   A failed model request rejects readiness before the agent starts.
 
@@ -1301,7 +1315,7 @@ A recognized broken shared-route result lets `connect` attempt DNS or route repa
 When the initial shared-route probe cannot return a trusted result, `connect` fails closed before health-driven repair and before opening SSH.
 It prints a bounded, redacted last-probe detail and points you to `$$nemoclaw <name> doctor`.
 
-For NVIDIA Endpoints, supported fixed hosted selections, new Deep Agents Code and Hermes Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible selections, and new OpenClaw Ollama, standalone vLLM, and llama.cpp selections, `connect` does not inspect or change the unrelated shared route.
+For NVIDIA Endpoints, supported fixed hosted selections, new Deep Agents Code hosted compatible selections and qualified Deep Agents Code and Hermes Ollama, standalone vLLM, llama.cpp, and host-local compatible selections, and new OpenClaw Ollama, standalone vLLM, and llama.cpp selections, `connect` does not inspect or change the unrelated shared route.
 It verifies the recorded sandbox-attached provider and sends a native inference request for the selected model.
 The request must return a structurally valid successful inference result before `connect` opens SSH.
 <AgentOnly variant="deepagents">
@@ -1453,6 +1467,10 @@ This prevents an unused pipe from delaying execution while OpenShell waits for E
 Nonempty `--message-file` arguments and calls without a recognized inline message preserve a pipe or redirect.
 The sandbox resolves message-file paths, including symlinks to stdin.
 For example, the wrapper preserves redirected input for `printf 'ping' | $$nemoclaw my-assistant agent --agent main`.
+The producer must close standard input after writing the message.
+The managed OpenClaw parser waits up to 30 seconds for piped input, including `--message-file /dev/stdin` and symlinks to stdin.
+A positive `--timeout <seconds>` sets this input wait as well as the agent turn timeout.
+If the input deadline expires, the command exits nonzero with guidance to close the producer or provide an inline message.
 
 When the top-level OpenClaw `--json` output flag is present, the wrapper uses a captured no-TTY path with a `64 MiB` buffer so `stdout` stays parseable JSON. Raw `stderr`, including structured JSON diagnostics, is forwarded unchanged. NemoClaw appends failed-tool or untrusted-child provenance only from the `stdout` JSON. The wrapper reads completion markers only from the final matching OpenClaw response envelope: a local `{ payloads, meta }` response or a gateway `{ status, result: { payloads, meta } }` response. It ignores earlier JSON progress or log records. It exits with status `1` when that metadata contains `error.kind: "incomplete_turn"`, `livenessState: "abandoned"`, or a `timeoutPhase` value, even when the envelope reports success. `replayInvalid: true` means replaying the turn may repeat side effects. The wrapper accepts it only with evidence of a completed run, a successful tool summary, and final assistant text matching the reply payload. Otherwise it exits with status `1` and the existing inspect-before-retry guidance. Marker-shaped values inside tool results, tool-call arguments, or other descendants do not change the exit status. A turn can run every tool successfully and still become abandoned before it produces a reply. The wrapper writes the unchanged JSON trace to `stdout` before it reports the incomplete turn, so the partial tool trace remains available. The wrapper writes the verdict, the detected markers, and verify-before-retry guidance to `stderr`. A `timeoutPhase` value names the phase the deadline fired in, so the wrapper writes deadline guidance in place of the generic incomplete-turn text. Tool calls in a partial trace may have already applied side effects, so verify what the turn changed before you retry it. The wrapper passes through an upstream non-zero exit status unchanged. Literal `--json` values consumed by flags such as `-m` or `--reply-channel`, or arguments after `--`, stay on the normal passthrough path. Documented value flags written as `--flag=value`, such as `--session-id=s1`, are recognized the same way as separated value flags. If an unrecognized OpenClaw option appears before `--json`, NemoClaw also keeps the command on the normal passthrough path so OpenClaw remains the argv source of truth.
 
@@ -1729,7 +1747,7 @@ $$nemoclaw my-assistant start
 When that deadline expires, `start` keeps the existing container, exits non-zero, and prints the
 `NEMOCLAW_CONNECT_TIMEOUT` value to use on the next run.
 
-After the gateway and forward checks pass, `start` sends one inference request through the sandbox's selected provider path using its recorded provider and model. NVIDIA Endpoints, supported fixed hosted providers, and new Deep Agents Code and Hermes Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible selections, plus new OpenClaw Ollama, standalone vLLM, and llama.cpp selections, use native endpoints through sandbox-attached OpenShell providers. Owned Local NVIDIA NIM, other custom shared routes, Pi local selections, and retained shared local selections use `inference.local`. A reachable provider path can still reject an inference request or return an invalid result, so the command exits non-zero in either case. It prints the probe result, including the HTTP status when the path returned one, and points you to the sandbox doctor command. Ordinary providers request 16 reply tokens; Gemini requests 256 reply tokens so reasoning has room before visible content. The request allows up to 90 seconds, and the host wrapper allows 95 seconds for bounded process startup and cleanup. Each run consumes provider tokens on a hosted path. When the sandbox records no provider or no model, `start` skips the request and exits `0`. For a shared gateway route, `doctor` still classifies an HTTP `401` or `403` response as reachable. The native NVIDIA doctor probe instead requires a 2xx response from the sandbox-attached provider. Correct the provider credential when `start` reports either status.
+After the gateway and forward checks pass, `start` sends one inference request through the sandbox's selected provider path using its recorded provider and model. NVIDIA Endpoints, supported fixed hosted providers, and new Deep Agents Code hosted compatible selections and qualified Deep Agents Code and Hermes Ollama, standalone vLLM, llama.cpp, and host-local compatible selections, plus new OpenClaw Ollama, standalone vLLM, and llama.cpp selections, use native endpoints through sandbox-attached OpenShell providers. Owned Local NVIDIA NIM, compatible endpoints without a native attachment, retained Pi and Hermes local selections without an attachment, and retained shared local routes use `inference.local`. A reachable provider path can still reject an inference request or return an invalid result, so the command exits non-zero in either case. It prints the probe result, including the HTTP status when the path returned one, and points you to the sandbox doctor command. Ordinary providers request 16 reply tokens; Gemini requests 256 reply tokens so reasoning has room before visible content. The request allows up to 90 seconds, and the host wrapper allows 95 seconds for bounded process startup and cleanup. Each run consumes provider tokens on a hosted path. When the sandbox records no provider or no model, `start` skips the request and exits `0`. For a shared gateway route, `doctor` still classifies an HTTP `401` or `403` response as reachable. The native NVIDIA doctor probe instead requires a 2xx response from the sandbox-attached provider. Correct the provider credential when `start` reports either status.
 
 ### `$$nemoclaw <name> status`
 
@@ -1781,7 +1799,7 @@ $$nemoclaw my-assistant status --json
 $$nemoclaw sandbox status my-assistant --json
 ```
 
-The command probes the selected provider path from inside the sandbox, and when that probe reports the path reachable it sends an inference request over the same path. NVIDIA Endpoints, supported fixed hosted providers, and new Deep Agents Code and Hermes Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible selections, plus new OpenClaw Ollama, standalone vLLM, and llama.cpp selections, use native endpoints through sandbox-attached OpenShell providers. Owned Local NVIDIA NIM, other custom shared routes, Pi local selections, and retained shared local selections use `inference.local`. That inference request is the authoritative inference health check, and both checks exercise the path that agent traffic uses. The main `Inference` line reports one of these states:
+The command probes the selected provider path from inside the sandbox, and when that probe reports the path reachable it sends an inference request over the same path. NVIDIA Endpoints, supported fixed hosted providers, and new Deep Agents Code hosted compatible selections and qualified Deep Agents Code and Hermes Ollama, standalone vLLM, llama.cpp, and host-local compatible selections, plus new OpenClaw Ollama, standalone vLLM, and llama.cpp selections, use native endpoints through sandbox-attached OpenShell providers. Owned Local NVIDIA NIM, compatible endpoints without a native attachment, retained Pi and Hermes local selections without an attachment, and retained shared local routes use `inference.local`. That inference request is the authoritative inference health check, and both checks exercise the path that agent traffic uses. The main `Inference` line reports one of these states:
 
 | State          | Meaning                                                                                                                                                                                                               |
 | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -1890,7 +1908,15 @@ Expected output:
 ...
 ```
 
-If the sandbox is running an older Hermes version than this NemoClaw release expects, `status` and `connect` add an `Update` line pointing at `nemohermes <name> rebuild` to pick up the newer version. The rebuild reuses the existing sandbox name and transfers the complete native home while OpenShell keeps credential stores under its own lifecycle.
+If a non-Portable sandbox runs an older Hermes version than this NemoClaw release expects, `status` and `connect` add an `Update` line that points to `nemohermes <name> rebuild`.
+The rebuild reuses the existing sandbox name and transfers the complete native home while OpenShell keeps credential stores under its lifecycle.
+
+Portable Hermes does not support `rebuild`.
+Replace an older Portable Hermes image through a fresh Portable onboarding run:
+
+```bash
+nemohermes onboard --experimental-profile portable --fresh --name <sandbox-name> --recreate-sandbox
+```
 
 </AgentOnly>
 <AgentOnly variant="deepagents">
@@ -1936,7 +1962,7 @@ The `Registered gateway binding` result depends on the sandbox registry:
 - For a registered sandbox with an invalid binding, the check fails, and `doctor` does not select, probe, or recover a gateway from that binding.
 - For an unregistered sandbox name, `doctor` uses the gateway selected by `NEMOCLAW_GATEWAY_PORT` for its other gateway checks and omits the `Registered gateway binding` check.
 
-For inference health, `doctor` treats the selected provider path inside the sandbox as authoritative. Providers that still use the shared route probe the shared gateway route at `https://inference.local/v1/models`; responses from `200` through `499`, including `401` and `403`, pass that reachability check. NVIDIA Endpoints instead probes its sandbox-attached provider at `https://integrate.api.nvidia.com/v1/models` and requires a 2xx response. For the shared route, HTTP `500` through `599`, interim `100` through `199`, transport failures with status `000`, invalid status values, and an unavailable authoritative probe fail the check. For native NVIDIA, any non-2xx response or unavailable probe fails it. Fixed hosted providers and qualified Deep Agents Code, Hermes, and OpenClaw local selections verify their recorded attachment and make an inference request to their native endpoint.
+For inference health, `doctor` treats the selected provider path inside the sandbox as authoritative. Providers that still use the shared route probe the shared gateway route at `https://inference.local/v1/models`; responses from `200` through `499`, including `401` and `403`, pass that reachability check. NVIDIA Endpoints instead probes its sandbox-attached provider at `https://integrate.api.nvidia.com/v1/models` and requires a 2xx response. For the shared route, HTTP `500` through `599`, interim `100` through `199`, transport failures with status `000`, invalid status values, and an unavailable authoritative probe fail the check. For native NVIDIA, any non-2xx response or unavailable probe fails it. Fixed hosted providers, new Deep Agents Code hosted compatible selections, and qualified Deep Agents Code, Hermes, and OpenClaw local selections verify their recorded attachment and make an inference request to their native endpoint.
 A healthy shared route cannot satisfy that check. Host-side upstream probes use the same authenticated model-invocation checks as status and remain diagnostic only, so their failure does not fail `doctor` when the authoritative in-sandbox path is reachable. For gateway runtimes, `doctor` also reports an informational `Serving process: not checked` result because its fresh sandbox probes do not attest the long-running gateway process. This result does not fail the readiness check. Terminal runtimes omit it because they have no long-running gateway process. The `Inference` `Route` check warns when either the provider or model is unknown. After the gateway is healthy, run `$$nemoclaw <name> status` to refresh the route information.
 
 Warnings do not make the command fail. Failed checks, including a failed or unavailable authoritative inference route, exit non-zero so scripts can use `doctor` as a readiness gate. Use `--json` for machine-readable output. For a `compatible-endpoint` route that uses `openai-completions`, the JSON report includes an informational `Inference` check labeled `Reasoning effort`. The check reports `low`, `medium`, `high`, or `endpoint-default` and never includes credentials. Because the check has `info` status, it does not change the command's exit status.
@@ -2141,7 +2167,7 @@ The sandbox must be running for `nemohermes my-assistant gateway-token --quiet` 
 </AgentOnly>
 <AgentOnly variant="deepagents">
 
-`gateway-token` is not applicable to Deep Agents sandboxes because there is no OpenClaw gateway token. NVIDIA Endpoints, supported fixed hosted providers, and new Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible selections use native endpoints through sandbox-attached OpenShell providers. Owned Local NVIDIA NIM, retained legacy and other custom shared routes use `inference.local`.
+`gateway-token` is not applicable to Deep Agents sandboxes because there is no OpenClaw gateway token. NVIDIA Endpoints, supported fixed hosted providers, and new Ollama, standalone vLLM, llama.cpp, hosted compatible, and qualifying host-local compatible selections use native endpoints through sandbox-attached OpenShell providers. Owned Local NVIDIA NIM, retained legacy routes, and other custom routes without an attachment use `inference.local`.
 
 </AgentOnly>
 
@@ -2844,7 +2870,7 @@ Add a local skill directory to a running sandbox. NemoClaw validates and private
 $$nemoclaw my-assistant skill install ./my-skill/
 ```
 
-The skill directory must contain a `SKILL.md` file with YAML frontmatter that includes a `name` field. Skill names must contain only alphanumeric characters, dots, hyphens, and underscores. For a registered sandbox, skill commands select the agent from its registry record. They ignore another sandbox's latest onboarding selection.
+The skill directory must contain a `SKILL.md` file with YAML frontmatter that includes a `name` field. Skill names must be non-empty, contain only alphanumeric characters, dots, hyphens, and underscores, cannot be `.` or `..`, and cannot exceed 64 characters. For a registered sandbox, skill commands select the agent from its registry record. They ignore another sandbox's latest onboarding selection.
 
 <AgentOnly variant="openclaw">
 
@@ -2907,7 +2933,9 @@ Removal delegates to `dcode skills delete <name> --agent agent --force --json`.
 $$nemoclaw my-assistant skill remove my-skill
 ```
 
-Use the skill name from the `SKILL.md` frontmatter, not the local directory name. Skill names must contain only alphanumeric characters, dots, hyphens, and underscores, and cannot be `.` or `..`.
+Use the skill name from the `SKILL.md` frontmatter, not the local directory name.
+Skill names must be non-empty, contain only alphanumeric characters, dots, hyphens, and underscores, and cannot be `.` or `..`.
+Removal accepts previously installed names longer than 64 characters; new installations enforce the 64-character limit.
 
 <AgentOnly variant="openclaw">
 
@@ -3228,6 +3256,13 @@ $$nemoclaw my-assistant upload ./agent-skills/ /sandbox/.deepagents/agent/skills
 
 Upgrade a sandbox to the current agent version while preserving its complete native home/workspace. The command captures that complete tree and the current OpenShell policy in private temporary handoffs, destroys the old sandbox, recreates it with the current image, and restores the complete tree.
 
+<AgentOnly variant="hermes">
+
+Portable Hermes does not support `rebuild`.
+To replace a Portable Hermes sandbox, run `nemohermes onboard --experimental-profile portable --fresh --name <sandbox-name> --recreate-sandbox`.
+
+</AgentOnly>
+
 If the sandbox or its retained recovery record belongs to another local OpenShell gateway registry, NemoClaw runs the rebuild or recovery retirement from that registry.
 It asks for confirmation before it starts the delegated rebuild worker unless you pass `--yes` or `--force`.
 The worker uses the sandbox's recorded gateway state and credentials; you do not need to select the gateway first.
@@ -3341,8 +3376,8 @@ After the rebuild succeeds, retrieve the replacement token with `nemohermes my-a
 <AgentOnly variant="deepagents">
 
 After restore, the command starts Deep Agents with the complete source native home, including `config.toml`, hooks, skills, memories, histories, packages, and unrelated native entries. Before changing the sandbox, rebuild verifies that the recorded provider path is still reachable and that the target provider, model, reasoning settings, web search selection, base image, current agent MCP source, and current live OpenShell policy can be captured. NVIDIA Endpoints and supported fixed hosted providers use native endpoints through sandbox-attached OpenShell providers.
-Deep Agents also uses attached providers for qualified local endpoints.
-Local NVIDIA NIM, other agents' local selections, and other custom endpoints retain the shared `inference.local` route. If those checks fail after backup, NemoClaw keeps the existing sandbox intact. Use rebuild after a failed Deep Agents version check, after enabling Tavily Search, or as the apply step for legacy MCP migration.
+Deep Agents also uses attached providers for hosted compatible and qualified local endpoints.
+Local NVIDIA NIM, other agents' shared local selections, and custom endpoints without an attachment retain the shared `inference.local` route. If those checks fail after backup, NemoClaw keeps the existing sandbox intact. Use rebuild after a failed Deep Agents version check, after enabling Tavily Search, or as the apply step for legacy MCP migration.
 Legacy Deep Agents Code local sandboxes without an attachment stop before rebuild. Local NVIDIA NIM retains its shared rebuild path.
 Back up the sandbox data before running `nemo-deepagents onboard --fresh --name <sandbox-name> --recreate-sandbox`.
 
@@ -4361,7 +4396,7 @@ The following variables let you tune onboarding without editing the Dockerfile o
 
 <AgentOnly variant="openclaw">
   | `NEMOCLAW_INFERENCE_INPUTS` | comma-separated list of `text` and/or `image` | OpenClaw only.
-  Declares model input modalities. Unsupported or duplicate values are rejected. An explicit valid value takes precedence; unattended onboarding defaults to `text,image` for registered multimodal managed-vLLM models such as Super VL. | |
+  Declares model input modalities. Unsupported or duplicate values are rejected. An explicit valid value takes precedence. Hosted `nvidia/nemotron-3.5-super-vl-120b-a12b` defaults to `text,image` in both interactive and unattended onboarding. Unattended onboarding also selects `text,image` for registered multimodal managed-vLLM models such as Super VL. | |
   `NEMOCLAW_OPENCLAW_OTEL` | `1` to enable | Enables OpenClaw conversation diagnostics export
   through the `diagnostics-otel` plugin. Disabled by default. | | `NEMOCLAW_OPENCLAW_OTEL_ENDPOINT`
   | OTLP/HTTP URL | Sets the OpenTelemetry collector endpoint for OpenClaw diagnostics. Defaults to
