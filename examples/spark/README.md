@@ -17,7 +17,6 @@ The new scenarios use managed Docker gateways and authenticated vLLM services.
 | [two-models.yaml](two-models.yaml) | Pi with Qwen3-4B and Qwen3.6-27B NVFP4 | Fast/smart route selection with two independently managed services |
 | [local-and-hosted.yaml](local-and-hosted.yaml) | OpenClaw with local Qwen3.8-27B NVFP4 and an operator-selected hosted model | Managed local inference plus a hosted model; the local route is the default |
 | [vllm.yaml](vllm.yaml) | OpenClaw with Qwen3-4B | The original ordinary-vLLM example |
-| [spark-inline.yaml](spark-inline.yaml) | OpenClaw with Qwen3.8-Flash-Next-NVFP4 | Model preparation, CPU offloading, and an inline serving recipe |
 | [remote-vllm.yaml](remote-vllm.yaml) | OpenClaw with SSH-managed Qwen3-4B and an external Podman gateway | Separate sandbox and model engines; the current OpenShell Podman pin has the [TLS initialization blocker](https://github.com/NVIDIA/OpenShell/issues/3427) |
 
 The Deep Agents researcher has `tools.allow: [read]`; the writer retains the harness's default tools.
@@ -44,7 +43,6 @@ AGENT_PLATFORM=linux/arm64 docker buildx bake pi deepagents openclaw --load
 cargo run -p nemoclaw-build -- bundle
 ```
 
-The inline recipe has its own [Qwen3.8 image build](../../docs/build.md#build-a-runtime-image).
 The remote example also requires [SSH placement setup](../../docs/remote-service.md).
 
 Copy the selected example, assign a fresh deployment UUID, and replace its local image digests with those reported by your builds.

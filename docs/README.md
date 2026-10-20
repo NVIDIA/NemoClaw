@@ -91,6 +91,5 @@ The design decision defines current invariants.
 
 - [Agent runtime source notices](../image/NOTICE.md).
 - [Generic vLLM source notices](../runtimes/vllm/NOTICE.md).
-- [Qwen3.8 source notices](../runtimes/qwen38/NOTICE.md).
 - [Configuration fixture provenance](../crates/nemoclaw-sdk/tests/fixtures/config/README.md).
 - [Managed runtime fixture provenance](../crates/nemoclaw-provider/src/managed/REFERENCE.md).

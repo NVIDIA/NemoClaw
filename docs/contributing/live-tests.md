@@ -120,15 +120,15 @@ Neither read-only test creates resources or establishes live agent inference.
 
 ## Spark and Fabric
 
-The Spark test reads a copy of `examples/spark/spark-inline.yaml` and asserts the public plan and apply results.
+The Spark test reads a copy of `examples/spark/deepagents-team.yaml`, which serves Nemotron 3.5 Lightning through the generic vLLM image to two Deep Agents sandboxes, and asserts the public plan and apply results.
 Use an available GB10 host, build the runtime and agent images, and set their immutable image references in the YAML.
 Choose a fresh deployment UID, available gateway port and subnet, and a new state-directory path whose parent exists.
-Keep the example's provider name `qwen`, sandbox name `assistant`, and agent name `assistant`; these identify the expected resources.
+The test derives the expected resources from the YAML's provider and sandbox names.
 
 From the repository root, with absolute paths:
 
 ```sh
-NEMOCLAW_LIVE_SPARK_CONFIG=/absolute/path/to/spark-inline.yaml \
+NEMOCLAW_LIVE_SPARK_CONFIG=/absolute/path/to/deepagents-team.yaml \
 NEMOCLAW_LIVE_SPARK_STATE=/absolute/path/to/new-state \
 NEMOCLAW_TEST_BUNDLE=/absolute/path/to/immutable/bundle \
   cargo test -p nemoclaw-e2e --test integration spark::spark_yaml_plans_and_applies_expected_resources -- --ignored
@@ -143,7 +143,7 @@ After failure, retain state for [explicit recovery](../usage.md#updates-and-reco
 
 Run `spark_image_change_plans_and_applies_replacement` separately with the same three variables and an established, running deployment.
 Change only the inference image pin in the YAML.
-The test compares the input with exported configuration, then requires plan and apply to replace `docker_container.inference_service_inference_qwen` and reconcile its image resource while retaining storage.
+The test compares the input with exported configuration, then requires plan and apply to replace the service's `docker_container.inference_service_inference_<service>` and reconcile its image resource while retaining storage.
 Storage retention and watchdog recovery have separate tests under [runtime boundaries](integration-tests.md#runtime-boundaries) and [generic models](#generic-models).
 
 Use an immutable bundle copy for a long live run.

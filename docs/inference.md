@@ -88,7 +88,7 @@ The current tests establish configuration, compilation, API attachment, and drif
 | You run a model server in a Kubernetes or OpenShift gateway's cluster | External `endpoint` naming its Service, `http://<service>.<namespace>.svc.cluster.local:<port>/v1`, and an optional credential reference; follow [in-cluster model servers](kubernetes.md#use-a-model-server-in-the-cluster) | [In-cluster vLLM](../examples/kubernetes/in-cluster-vllm.yaml), [in-cluster Ollama](../examples/kubernetes/in-cluster-ollama.yaml) |
 | NemoClaw should download and serve a pinned public model with vLLM | Declare a service with `kind: vllm`, the runtime image, repository revision, capacity, and serving settings; see [managed models](models.md) | [Generic vLLM](../examples/spark/vllm.yaml) |
 | The Docker daemon running a managed service is reached through SSH | Set `placement.engine` to the SSH endpoint, then declare the private network and `publication` endpoint on the named service; follow [remote service](remote-service.md) | [Remote vLLM](../examples/spark/remote-vllm.yaml) |
-| The model requires preparation tools or runtime patches | Package reviewed tools in an immutable image and declare an [inline recipe](recipes.md) | [Inline Qwen3.8 recipe](../examples/spark/spark-inline.yaml) |
+| The model requires preparation tools or runtime patches | Use an immutable image that packages the recipe's reviewed tools, and declare an [inline recipe](recipes.md) | [Recipe declaration](recipes.md#declaration) |
 
 Service ownership does not depend on the harness; the service must support the [request API](#choose-the-request-api) selected by that harness.
 The [harness matrix](reference/fabric-harnesses.md) distinguishes accepted configurations from live qualification.

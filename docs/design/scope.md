@@ -64,10 +64,7 @@ NemoClaw keeps these by decision, as its own promises:
   NemoClaw writes only the keys it owns into the gateway's configuration and passes the rest through from [`spec.gateway.config`](../usage.md#configure-a-managed-gateway), in OpenShell's format ([#13473](https://github.com/NVIDIA/NemoClaw/issues/13473)).
 - The vLLM supervisor's route allowlist, which is the reverse proxy that vLLM's [security guide](https://github.com/vllm-project/vllm/blob/v0.32.0/docs/usage/security.md) asks deployers to provide ([#13471](https://github.com/NVIDIA/NemoClaw/issues/13471)).
 - The OpenClaw image pin: OpenClaw's npm package has no lockfile, so the agent image copies OpenClaw's published image by digest, and Fabric's adapter refuses versions it doesn't support ([#13476](https://github.com/NVIDIA/NemoClaw/issues/13476)). See [updating the pin](../build.md#update-the-openclaw-pin).
-
-This exception is recorded until its issue is decided:
-
-- `runtimes/qwen38` maintains model-specific vLLM patches ([#13472](https://github.com/NVIDIA/NemoClaw/issues/13472)).
+- No model-specific recipe images: preparation tools and runtime patches belong to the recipe's authors and to vLLM, and NemoClaw keeps only the generic [recipe contract](../recipes.md) ([#13472](https://github.com/NVIDIA/NemoClaw/issues/13472)).
 
 ## Ownership and Recovery
 

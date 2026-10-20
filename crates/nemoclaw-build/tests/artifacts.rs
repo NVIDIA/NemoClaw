@@ -252,8 +252,8 @@ fn supervisor_archive_contains_only_runtime_owned_sources_and_notices() {
         "image/NOTICE.md",
         "crates/nemoclaw-onboarding/src/lib.rs",
         "examples/onboarding/openclaw.yaml",
-        "runtimes/qwen38/verify_packed.py",
-        "runtimes/qwen38/AGPL-3.0-or-later.txt",
+        "runtimes/another-recipe/verify.py",
+        "runtimes/another-recipe/LICENSE.txt",
         "runtimes/vllm/Dockerfile",
         "runtimes/another-recipe/custom.py",
     ]) {
@@ -501,7 +501,7 @@ fn runtime_source_identity_ignores_unrelated_inputs_and_dependency_owners() {
         "crates/nemoclaw-sdk/src/lib.rs",
         "image/fabric/catalog.json",
         "crates/nemoclaw-onboarding/src/lib.rs",
-        "runtimes/qwen38/prepare.py",
+        "runtimes/another-recipe/prepare.py",
     ] {
         let path = root.path().join(name);
         fs::create_dir_all(path.parent().unwrap()).unwrap();

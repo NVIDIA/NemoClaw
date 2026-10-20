@@ -654,7 +654,7 @@ fn portable_container_memory_limits_cover_shared_memory_and_recipe_preparation_o
     for source in [
         include_str!("../../../examples/spark/vllm.yaml"),
         include_str!("../../../examples/managed-ollama-gpu.yaml"),
-        include_str!("../../../examples/spark/spark-inline.yaml"),
+        include_str!("fixtures/config/inline-recipe.yaml"),
     ] {
         let mut input: Value = serde_saphyr::from_str(source).unwrap();
         input["spec"]["services"]["qwen"]["container"] =

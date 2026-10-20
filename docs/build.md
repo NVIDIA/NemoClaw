@@ -230,19 +230,11 @@ cargo run -p nemoclaw-build --no-default-features -- runtime runtimes/vllm/build
 ```
 
 This build exports `.build/vllm/runtime.tar` and loads `nc-prototype-vllm:rust-v1`.
-The image contains the shared supervisor and the pinned multi-platform vLLM base for the build host's architecture, without Qwen3.8 patches or preparation tools; the [Nemotron example](models.md#configure-nemotron-on-an-amd64-gpu-host) uses the AMD64 build.
+The image contains the shared supervisor and the pinned multi-platform vLLM base for the build host's architecture, without model-specific patches or preparation tools; the [Nemotron example](models.md#configure-nemotron-on-an-amd64-gpu-host) uses the AMD64 build.
 Select the model through [model configuration](models.md).
 Selecting this artifact does not qualify GPU inference on the host.
 
-For Qwen3.8 preparation on Linux ARM64, run:
-
-```sh
-cargo run -p nemoclaw-build --no-default-features -- runtime runtimes/qwen38/build.json
-```
-
-This build exports `.build/qwen38/runtime.tar` and loads `nc-prototype-qwen38:spark-rust-v1`.
-Its Dockerfile applies pinned patches and retains original and modified sources.
-Use [the inline recipe guide](recipes.md) to declare preparation and serving requirements.
+A model that needs preparation tools or patches uses an image its recipe's authors build; see [inline recipes](recipes.md).
 
 The builder exports an OCI archive, loads it, and verifies access by its exported digest and target platform.
 The retained `supervisor.json` records the runtime contract version, `runtimeSpecVersion`, alongside the runtime source version.
@@ -258,10 +250,9 @@ It contains the runtime crate, its standalone workspace manifest and pruned lock
 The archive excludes the SDK, provider, OpenShell, Fabric, onboarding, and image recipes.
 The runtime source version covers only these runtime build inputs; changes to other repository components do not change it.
 Each image separately retains its selected Dockerfile and build manifest under `/opt/nemoclaw/source/`.
-The Qwen3.8 image also retains its preparation tools, upstream recipe, licenses, and modified vLLM sources.
 The build excludes dependency paths and parent Git metadata from compiler inputs.
 
-The [vLLM notice](../runtimes/vllm/NOTICE.md) and [Qwen3.8 notice](../runtimes/qwen38/NOTICE.md) identify retained sources and licenses.
+The [vLLM notice](../runtimes/vllm/NOTICE.md) identifies retained sources and licenses.
 
 Generated bundles, build inputs, and images are ignored by Git.
 Model snapshots and prepared data belong to the deployment’s persistent volume, outside the build context.

@@ -11,13 +11,9 @@ The recipe supplies the hardware compatibility requirements; declaring both fiel
 The CLI does not load recipe code.
 Recipe authors package their executables, patches, licenses and source notices in that image; the YAML declares their contract.
 
-See [the inline Qwen example](../examples/spark/spark-inline.yaml).
-Use [the Qwen3.8 image build](build.md#build-a-runtime-image) and CLI bundle from this checkout, and replace the example's runtime image reference with your build's digest.
-The example's existing image pin is from an earlier test build.
+NemoClaw ships no model-specific recipe images: preparation tools and runtime patches belong to the recipe's authors and to vLLM ([#13472](https://github.com/NVIDIA/NemoClaw/issues/13472)).
+Use an image that packages the recipe and declares the contract below.
 Model storage must use the [current manifest format](models.md#retained-model-files); `reuse` does not migrate an older model manifest.
-
-The build loads the image locally without publishing it.
-Its model-specific adapters, model manifest, and semantic verifier live in `runtimes/qwen38`, outside the generic execution path.
 All vLLM services use `kind: vllm`.
 
 ## Declaration

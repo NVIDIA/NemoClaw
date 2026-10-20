@@ -4,7 +4,7 @@
 # vLLM Runtime
 
 This artifact adds the NemoClaw runtime supervisor to the immutable multi-platform upstream vLLM image named in its Dockerfile, built for the Linux ARM64 or AMD64 host that builds it.
-It does not apply the Qwen3.8 recipe patches or embed model weights.
+It does not apply model-specific patches or embed model weights.
 The selected model is downloaded into retained storage when the deployment is applied.
 
 `supervisor-source.tar.gz` retains the supervisor's source and locked dependency sources, including their original license files.

@@ -83,7 +83,7 @@ fn application_references_do_not_enable_yaml_anchors_aliases_or_merges() {
 
 #[test]
 fn omitted_empty_and_zero_values_produce_the_same_defaults() {
-    let mut omitted = input("spark/spark-inline.yaml");
+    let mut omitted = input("../crates/nemoclaw-sdk/tests/fixtures/config/inline-recipe.yaml");
     for key in ["endpoint", "engine", "networkCIDR"] {
         omitted["spec"]["gateway"]
             .as_object_mut()
@@ -158,7 +158,7 @@ fn required_fields_and_mutually_exclusive_provider_forms_are_rejected() {
         assert!(parse(&invalid).is_err(), "{path}");
     }
     for field in ["endpoint", "credential", "ollama"] {
-        let mut invalid = input("spark/spark-inline.yaml");
+        let mut invalid = input("../crates/nemoclaw-sdk/tests/fixtures/config/inline-recipe.yaml");
         invalid["spec"]["inferenceProviders"][0][field] = match field {
             "endpoint" => json!("https://inference.example.com/v1"),
             "credential" => json!({"env": "MODEL_TOKEN"}),
@@ -182,7 +182,7 @@ fn only_route_settings_permit_nested_null_values() {
 
 #[test]
 fn service_image_error_identifies_the_required_digest_pin() {
-    let original = input("spark/spark-inline.yaml");
+    let original = input("../crates/nemoclaw-sdk/tests/fixtures/config/inline-recipe.yaml");
     for image in ["local/runtime:latest", "local/runtime@sha256:short"] {
         let mut value = original.clone();
         value["spec"]["services"]["qwen"]["image"] = json!(image);

@@ -184,7 +184,7 @@ No single active configuration exercises every schema branch:
 | Existing Ollama through an authenticated proxy | [Proxy guide](inference.md#use-external-ollama-through-a-managed-proxy) | Alternative provider mode to managed vLLM |
 | Hermes provider authentication or Relay tracing | [Authentication](../examples/hermes-auth.yaml), [Relay](agents.md#hermes-relay-tracing) | The full-featured example selects OpenClaw |
 | Pi model extensions | [Pi example](../examples/fabric-pi.yaml) | Pi needs a context window for a model it does not ship |
-| Model preparation recipe | [Spark recipe](../examples/spark/spark-inline.yaml) | Separate model, image, and hardware contract |
+| Model preparation recipe | [Recipe declaration](recipes.md#declaration) | Separate model, image, and hardware contract |
 | External gateway credentials and mTLS | [Gateway fields](reference/configuration.md#gateway) | Managed gateways use local HTTP and reject these fields |
 
 The [multiple-provider example](../examples/multiple-providers.yaml) combines selected local and hosted endpoints.

@@ -92,7 +92,7 @@ fn spark_profile_rejects_unknown_ambiguous_and_dedicated_memory_settings() {
     assert!(!schema.is_valid(&value));
 
     let mut value: Value =
-        serde_saphyr::from_str(include_str!("../../../examples/spark/spark-inline.yaml")).unwrap();
+        serde_saphyr::from_str(include_str!("fixtures/config/inline-recipe.yaml")).unwrap();
     value["spec"]["services"]["qwen"]["hardware"] = json!({"profile": "dgx-spark"});
     assert!(Document::parse(value.to_string().as_bytes()).is_err());
     assert!(!schema.is_valid(&value));
