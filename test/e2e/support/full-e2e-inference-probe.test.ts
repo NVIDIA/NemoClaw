@@ -150,6 +150,8 @@ describe("full E2E sandbox inference probe", () => {
   it.each([
     ["nvidia-prod", "NVIDIA_INFERENCE_API_KEY", "https://integrate.api.nvidia.com/v1"],
     ["compatible-endpoint", "COMPATIBLE_API_KEY", "https://custom.example/team/v1"],
+    // Bootstrap and latency smoke use this hosted endpoint through its native provider.
+    ["compatible-endpoint", "COMPATIBLE_API_KEY", "https://inference-api.nvidia.com/v1"],
   ])(
     "uses the sandbox native %s handle and preserves the request as data",
     (provider, credentialEnv, endpointUrl) => {

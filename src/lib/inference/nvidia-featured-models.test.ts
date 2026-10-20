@@ -318,31 +318,44 @@ describe("NVIDIA featured model catalog", () => {
     });
   });
 
-  it("keeps Nemotron 3 Super as the default when it is present in the live catalog (#5827)", () => {
-    const options = getNvidiaFeaturedModelPromptOptions(null, {
-      runCurlProbeImpl: () => ({
-        ok: true,
-        httpStatus: 200,
-        curlStatus: 0,
-        body: JSON.stringify({
-          "featured-models": [
-            { model: "moonshotai/kimi-k2.6", "model-name": "Kimi K2.6" },
-            {
-              model: "nvidia/nemotron-3-super-120b-a12b",
-              "model-name": "Nemotron 3 Super 120B",
-            },
-          ],
+  it.each([
+    ["NVIDIA Endpoints", "nvidia/nemotron-3.5-super-vl-120b-a12b", undefined],
+    [
+      "OpenRouter",
+      "nvidia/nemotron-3.5-super-vl",
+      new Map([["nvidia/nemotron-3.5-super-vl-120b-a12b", "nvidia/nemotron-3.5-super-vl"]]),
+    ],
+  ] as const)(
+    "selects Nemotron 3.5 Super VL from the live %s menu",
+    (_provider, model, aliases) => {
+      const options = getNvidiaFeaturedModelPromptOptions(model, {
+        modelIdAliases: aliases,
+        runCurlProbeImpl: () => ({
+          ok: true,
+          httpStatus: 200,
+          curlStatus: 0,
+          body: JSON.stringify({
+            "featured-models": [
+              { model: "nvidia/nemotron-3-ultra-550b-a55b", "model-name": "Nemotron Ultra" },
+              { model: "moonshotai/kimi-k2.6", "model-name": "Kimi K2.6" },
+              {
+                model: "nvidia/nemotron-3.5-super-vl-120b-a12b",
+                "model-name": "Nemotron 3.5 Super VL",
+              },
+            ],
+          }),
+          stderr: "",
+          message: "",
         }),
-        stderr: "",
-        message: "",
-      }),
-    });
+      });
 
-    expect(options.defaultModelId).toBe("nvidia/nemotron-3-super-120b-a12b");
-    expect(options.cloudModelOptions.map((option) => option.id)).not.toContain(
-      "moonshotai/kimi-k2.6",
-    );
-  });
+      expect(options.defaultModelId).toBe(model);
+      expect(options.cloudModelOptions.map((option) => option.id)).toContain(model);
+      expect(options.cloudModelOptions.map((option) => option.id)).not.toContain(
+        "moonshotai/kimi-k2.6",
+      );
+    },
+  );
 
   it("filters retired featured-feed entries the live NVIDIA catalog no longer serves (#9611, #10222)", () => {
     const options = getNvidiaFeaturedModelPromptOptions(null, {

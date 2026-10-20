@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { managedDcodeRequiresNonemptyContent } from "../../inference/managed-dcode/identity";
 import { nativeHostedAuthHeaderScript } from "../../inference/native-provider/contract";
 import { NATIVE_LOCAL_AUTH_HEADER_SCRIPT } from "../../inference/native-local/agent-config";
 import { NATIVE_NVIDIA_AUTH_HEADER_SCRIPT } from "../../inference/native-nvidia/contract";
@@ -189,6 +190,12 @@ function buildProbeRequest(input: SandboxInferenceInvocationInput): {
       model: input.model,
       [resolveMaxTokensField(input.model)]: resolveProbeReplyTokens(input.provider, input.model),
       messages: [{ role: "user", content: "Reply with OK" }],
+      // Match DCode's pinned Ultra profile: the hosted alias can otherwise
+      // exhaust a short probe on reasoning and return no visible content.
+      ...(input.agentName === DCODE_AGENT_NAME &&
+      managedDcodeRequiresNonemptyContent(input.model, baseUrl)
+        ? { chat_template_kwargs: { force_nonempty_content: true } }
+        : {}),
       stream: false,
     },
   };
