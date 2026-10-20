@@ -62,6 +62,7 @@ on:
       - "src/lib/messaging/**"
       - "src/lib/onboard/**"
       - "src/lib/security/credential-hash.ts"
+      - "src/lib/sandbox-base-image/security-package-specs.ts"
       - "src/lib/state/paths.ts"
       - "src/lib/state/state-root.ts"
       - "src/lib/tool-disclosure.ts"

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import { spawnSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -27,7 +28,7 @@ const SECURITY_IMAGES = [
     finalDockerfile: path.join(ROOT, "Dockerfile"),
     startMarker: "# Trixie has not published fixes",
     additionalStartMarker:
-      "RUN apt-get update \\\n    && apt-get install -y --no-install-recommends \\\n        /tmp/nemoclaw-native-security/perl-base.deb",
+      "# Finish the security inventory after installing the reviewed Perl packages.",
     endMarker: "# setpriv runtime contract",
     expectedInventory: OPENCLAW_SANDBOX_BASE_SECURITY_PACKAGE_INVENTORY,
   },
@@ -82,7 +83,7 @@ const EXPECTED_SECURITY_PACKAGE_INVENTORY = [
   "jq=1.8.2-1",
   "vim-common=2:9.2.0858-1",
   "vim-tiny=2:9.2.0858-1",
-  "libssh2-1t64=1.11.1-1+deb13u2+nemoclaw1",
+  "libssh2-1t64=1.11.1-1+deb13u2+nemoclaw2",
   "libssl3t64=3.5.7-1~deb13u3",
   "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u5+nemoclaw1",
   "perl-base=5.44.0-1nemoclaw1",
@@ -102,6 +103,39 @@ const SECURITY_CASES = SECURITY_IMAGES.flatMap((image) =>
   ARCHITECTURES.map((architecture) => [image.name, architecture, image] as const),
 );
 const OPENCLAW_SECURITY_CASES = SECURITY_CASES.filter(([name]) => name === "OpenClaw");
+
+function quoteShell(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+function stageInventoryRenderer(command: string, inventory: string, baseImage = false): string {
+  const renderer = path.join(ROOT, "scripts/security/security-package-inventory.mts");
+  const mountedRenderer = "/tmp/nemoclaw-security/scripts/security/security-package-inventory.mts";
+  // Execute the real renderer, then run its shell probe in the fixture's shell
+  // so the existing dpkg/stat functions supply simulated installed packages.
+  const staged = command.replace(
+    /\$\(node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON \/tmp\/nemoclaw-security\/scripts\/security\/security-package-inventory\.mts probe ([a-z-]+)\)/g,
+    (_match, profile: string) => {
+      const rendered = spawnSync(process.execPath, [renderer, "probe", profile], {
+        encoding: "utf8",
+      });
+      expect(rendered.status, rendered.stderr).toBe(0);
+      const probe = rendered.stdout.replaceAll(
+        "/usr/local/share/nemoclaw/security-packages.txt",
+        inventory,
+      );
+      return `$(printf '%s' ${quoteShell(probe)})`;
+    },
+  );
+  return [
+    // chown is simulated by the base fixture; final-image tests supply their
+    // own stricter stat stub.
+    baseImage ? 'stat() { printf "0:0:444\\n"; }' : "",
+    staged
+      .replaceAll(mountedRenderer, quoteShell(renderer))
+      .replaceAll('sh -ec "$security_probe"', 'eval "$security_probe"'),
+  ].join("\n");
+}
 
 function sandboxSecurityCommand(
   image: (typeof SECURITY_IMAGES)[number],
@@ -150,7 +184,13 @@ function sandboxSecurityCommand(
     .replaceAll("/usr/local/bin/python", fakePythonLink)
     .replaceAll("/usr/bin/python3", pythonShim)
     .replaceAll("/usr/lib/python3.13/html/parser.py", fixedParser);
-  return { command, inventory, debianSecurityDebs, nativeSecurityDebs, pythonShim };
+  return {
+    command: stageInventoryRenderer(command, inventory, true),
+    inventory,
+    debianSecurityDebs,
+    nativeSecurityDebs,
+    pythonShim,
+  };
 }
 
 function securityInventory(
@@ -212,7 +252,7 @@ function completedImageSecurityCommand(
   )
     .replaceAll("/usr/local/share/nemoclaw/security-packages.txt", inventory)
     .replaceAll("/usr/lib/python3.13/html/parser.py", fixedParser);
-  return { command, inventory, pythonShim };
+  return { command: stageInventoryRenderer(command, inventory), inventory, pythonShim };
 }
 
 describe("sandbox base security packages", () => {
@@ -224,7 +264,7 @@ describe("sandbox base security packages", () => {
     ["libsqlite3-0", "3.46.1-7+deb13u1"],
     ["gzip", "1.13-1"],
     ["zlib1g", "1:1.3.dfsg+really1.3.1-1+b1"],
-    ["libssh2-1t64", "1.11.1-1+deb13u1+nemoclaw2"],
+    ["libssh2-1t64", "1.11.1-1+deb13u2+nemoclaw1"],
   ] as const;
   it.each(
     stalePackageCases.flatMap(([packageName, staleVersion]) =>
@@ -249,6 +289,7 @@ describe("sandbox base security packages", () => {
         ),
       );
       try {
+        expect(functions).not.toEqual(baseAptSecurityFunctions(architecture));
         const { result } = runLoggedDockerShell(
           prepared.command,
           tmp,

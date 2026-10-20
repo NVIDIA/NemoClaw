@@ -11,7 +11,7 @@ describe("host assessment runtime selection", () => {
     const result = assessHost({
       platform: "linux",
       env: { NEMOCLAW_GATEWAY_RUNTIME: "podman" },
-      commandExistsImpl: (name) => ["docker", "node", "openshell"].includes(name),
+      commandExistsImpl: (name) => ["docker", "node", "openshell", "systemctl"].includes(name),
       gpuProbeImpl: () => false,
       readFileImpl: () => "",
       readdirImpl: () => [],
@@ -25,10 +25,13 @@ describe("host assessment runtime selection", () => {
       },
     });
     expect(captured.filter(([command]) => command === "docker")).toEqual([]);
+    expect(captured.filter(([command]) => command === "systemctl")).toEqual([]);
     expect(conflictProbes).toBe(0);
     expect(result.nodeInstalled).toBe(true);
     expect(result.openshellInstalled).toBe(true);
     expect(result.dockerInstalled).toBe(true);
     expect(result.dockerReachable).toBe(false);
+    expect(result.dockerServiceActive).toBe(null);
+    expect(result.dockerServiceEnabled).toBe(null);
   });
 });

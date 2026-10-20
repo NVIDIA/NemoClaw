@@ -3,52 +3,18 @@
 
 import { dockerCapture } from "../adapters/docker";
 
-const SECURITY_INVENTORY_PROBE_OK = "nemoclaw-security-inventory-ok";
-const CURRENT_PYTHON_HTMLPARSER_FIX_PACKAGE =
-  "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u5+nemoclaw1";
-const PINNED_HERMES_BASE_PYTHON_HTMLPARSER_FIX_PACKAGE =
-  "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u4+nemoclaw1";
+import {
+  OPENCLAW_SANDBOX_BASE_SECURITY_PACKAGE_INVENTORY,
+  SANDBOX_BASE_SECURITY_PACKAGE_INVENTORY,
+  PINNED_HERMES_BASE_SECURITY_PACKAGE_INVENTORY,
+  securityInventoryProbe,
+  SECURITY_INVENTORY_PROBE_OK,
+} from "./security-package-specs";
 
-export const SANDBOX_BASE_SECURITY_PACKAGE_INVENTORY = [
-  "zlib1g=1:1.3.dfsg+really1.3.1-1+b1+nemoclaw1",
-  "libc6=2.41-12+deb13u4",
-  "libc-bin=2.41-12+deb13u4",
-  "bsdutils=1:2.41.5-0+deb13u1",
-  "login=1:4.16.0-2+really2.41.5-0+deb13u1",
-  "mount=2.41.5-0+deb13u1",
-  "util-linux=2.41.5-0+deb13u1",
-  "libblkid1=2.41.5-0+deb13u1",
-  "liblastlog2-2=2.41.5-0+deb13u1",
-  "libmount1=2.41.5-0+deb13u1",
-  "libsmartcols1=2.41.5-0+deb13u1",
-  "libuuid1=2.41.5-0+deb13u1",
-  "libpcre2-8-0=10.46-1~deb13u3",
-  "libsqlite3-0=3.46.1-7+deb13u2",
-  "gzip=1.13-1+deb13u1",
-  "libexpat1=2.8.3-1",
-  "libonig5=6.9.9-1+b1",
-  "libjq1=1.8.2-1",
-  "jq=1.8.2-1",
-  "vim-common=2:9.2.0858-1",
-  "vim-tiny=2:9.2.0858-1",
-  "libssh2-1t64=1.11.1-1+deb13u2+nemoclaw1",
-  "libssl3t64=3.5.7-1~deb13u3",
-  CURRENT_PYTHON_HTMLPARSER_FIX_PACKAGE,
-  "perl-base=5.44.0-1nemoclaw1",
-  "perl=5.44.0-1nemoclaw1",
-] as const;
-
-const PINNED_HERMES_BASE_SECURITY_PACKAGE_INVENTORY = SANDBOX_BASE_SECURITY_PACKAGE_INVENTORY.map(
-  (packageSpec) =>
-    packageSpec === CURRENT_PYTHON_HTMLPARSER_FIX_PACKAGE
-      ? PINNED_HERMES_BASE_PYTHON_HTMLPARSER_FIX_PACKAGE
-      : packageSpec,
-);
-
-export const OPENCLAW_SANDBOX_BASE_SECURITY_PACKAGE_INVENTORY = [
-  ...SANDBOX_BASE_SECURITY_PACKAGE_INVENTORY,
-  "libevent-core-2.1-7t64=2.1.13-stable-1",
-] as const;
+export {
+  OPENCLAW_SANDBOX_BASE_SECURITY_PACKAGE_INVENTORY,
+  SANDBOX_BASE_SECURITY_PACKAGE_INVENTORY,
+} from "./security-package-specs";
 
 /**
  * Reject a published or cached base that predates the immutable security
@@ -58,9 +24,6 @@ function sandboxBaseImageHasPackageInventory(
   imageRef: string,
   packageInventory: readonly string[],
 ): boolean {
-  const packageInventoryShellArguments = packageInventory
-    .map((packageSpec) => `"${packageSpec}"`)
-    .join(" ");
   const output = dockerCapture(
     [
       "run",
@@ -76,16 +39,7 @@ function sandboxBaseImageHasPackageInventory(
       "/bin/sh",
       imageRef,
       "-c",
-      [
-        "set -eu",
-        "security_inventory=/usr/local/share/nemoclaw/security-packages.txt",
-        'arch="$(dpkg --print-architecture)"',
-        'test -f "$security_inventory"',
-        'test ! -L "$security_inventory"',
-        `test "$(stat -c '%u:%g:%a' "$security_inventory")" = "0:0:444"`,
-        `printf '%s\\n' "architecture=$arch" ${packageInventoryShellArguments} | cmp -s - "$security_inventory"`,
-        `printf '%s\\n' "${SECURITY_INVENTORY_PROBE_OK}"`,
-      ].join("; "),
+      securityInventoryProbe(packageInventory),
     ],
     { ignoreError: true, timeout: 20_000 },
   );

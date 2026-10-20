@@ -42,6 +42,11 @@ COPY agents/hermes/dashboard-external-host.patch /scripts/hermes-dashboard-exter
 
 FROM scratch AS hermes-agent-payload
 
+# Portable builds reject RUN mounts. Reuse the existing payload layer for
+# the shared inventory tooling instead of adding final-image COPY layers.
+COPY scripts/security/security-package-inventory.mts /tmp/nemoclaw-security/scripts/security/security-package-inventory.mts
+COPY src/lib/sandbox-base-image/security-package-specs.ts /tmp/nemoclaw-security/src/lib/sandbox-base-image/security-package-specs.ts
+
 COPY agents/hermes/plugin/__init__.py agents/hermes/plugin/plugin.yaml /opt/nemoclaw-hermes-plugin/
 # Channel-owned Google Chat runtime asset, loaded by the plugin beside its own
 # __init__.py.
@@ -70,6 +75,11 @@ COPY src/lib/messaging/ /src/lib/messaging/
 COPY scripts/lib/openclaw-npm-remediation.mts /scripts/lib/openclaw-npm-remediation.mts
 
 FROM scratch AS hermes-runtime-payload
+
+# The base uses temporary mounts for these probes. The final image also runs
+# them after materializing its dependencies; Portable requires copied inputs.
+COPY agents/hermes/dependency-security-probes.py /usr/local/libexec/nemoclaw-hermes-dependency-security.py
+COPY agents/hermes/sharp-security-probes.mts /usr/local/libexec/nemoclaw-hermes-sharp-security.mts
 
 COPY --from=mcp-tool-discovery-runtime /opt/mcp-tool-discovery-runtime/dist/ /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime/
 COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
@@ -1448,70 +1458,8 @@ RUN check_metadata() { \
 # Verify the immutable security package inventory in the completed image.
 # hadolint ignore=DL4006
 RUN set -eu; \
-    security_inventory=/usr/local/share/nemoclaw/security-packages.txt; \
-    arch="$(dpkg --print-architecture)"; \
-    python_fix_version="$(dpkg-query -W -f='${Version}' nemoclaw-python3.13-htmlparser-fix)"; \
-    case "$python_fix_version" in \
-        3.13.5-2+deb13u4+nemoclaw1|3.13.5-2+deb13u5+nemoclaw1) ;; \
-        *) echo "ERROR: unexpected patched Python package version: $python_fix_version" >&2; exit 1 ;; \
-    esac; \
-    test -f "$security_inventory"; \
-    test ! -L "$security_inventory"; \
-    test "$(stat -c '%u:%g:%a' "$security_inventory")" = "0:0:444"; \
-    printf '%s\n' \
-        "architecture=$arch" \
-        "zlib1g=1:1.3.dfsg+really1.3.1-1+b1+nemoclaw1" \
-        "libc6=2.41-12+deb13u4" \
-        "libc-bin=2.41-12+deb13u4" \
-        "bsdutils=1:2.41.5-0+deb13u1" \
-        "login=1:4.16.0-2+really2.41.5-0+deb13u1" \
-        "mount=2.41.5-0+deb13u1" \
-        "util-linux=2.41.5-0+deb13u1" \
-        "libblkid1=2.41.5-0+deb13u1" \
-        "liblastlog2-2=2.41.5-0+deb13u1" \
-        "libmount1=2.41.5-0+deb13u1" \
-        "libsmartcols1=2.41.5-0+deb13u1" \
-        "libuuid1=2.41.5-0+deb13u1" \
-        "libpcre2-8-0=10.46-1~deb13u3" \
-        "libsqlite3-0=3.46.1-7+deb13u2" \
-        "gzip=1.13-1+deb13u1" \
-        "libexpat1=2.8.3-1" \
-        "libonig5=6.9.9-1+b1" \
-        "libjq1=1.8.2-1" \
-        "jq=1.8.2-1" \
-        "vim-common=2:9.2.0858-1" \
-        "vim-tiny=2:9.2.0858-1" \
-        "libssh2-1t64=1.11.1-1+deb13u2+nemoclaw1" \
-        "libssl3t64=3.5.7-1~deb13u3" \
-        "nemoclaw-python3.13-htmlparser-fix=$python_fix_version" \
-        "perl-base=5.44.0-1nemoclaw1" \
-        "perl=5.44.0-1nemoclaw1" \
-        | cmp -s - "$security_inventory"; \
-    test "$(dpkg-query -W -f='${Version}' zlib1g)" = "1:1.3.dfsg+really1.3.1-1+b1+nemoclaw1"; \
-    test "$(dpkg-query -W -f='${Version}' libc6)" = "2.41-12+deb13u4"; \
-    test "$(dpkg-query -W -f='${Version}' libc-bin)" = "2.41-12+deb13u4"; \
-    test "$(dpkg-query -W -f='${Version}' bsdutils)" = "1:2.41.5-0+deb13u1"; \
-    test "$(dpkg-query -W -f='${Version}' login)" = "1:4.16.0-2+really2.41.5-0+deb13u1"; \
-    test "$(dpkg-query -W -f='${Version}' mount)" = "2.41.5-0+deb13u1"; \
-    test "$(dpkg-query -W -f='${Version}' util-linux)" = "2.41.5-0+deb13u1"; \
-    test "$(dpkg-query -W -f='${Version}' libblkid1)" = "2.41.5-0+deb13u1"; \
-    test "$(dpkg-query -W -f='${Version}' liblastlog2-2)" = "2.41.5-0+deb13u1"; \
-    test "$(dpkg-query -W -f='${Version}' libmount1)" = "2.41.5-0+deb13u1"; \
-    test "$(dpkg-query -W -f='${Version}' libsmartcols1)" = "2.41.5-0+deb13u1"; \
-    test "$(dpkg-query -W -f='${Version}' libuuid1)" = "2.41.5-0+deb13u1"; \
-    test "$(dpkg-query -W -f='${Version}' libpcre2-8-0)" = "10.46-1~deb13u3"; \
-    test "$(dpkg-query -W -f='${Version}' libsqlite3-0)" = "3.46.1-7+deb13u2"; \
-    test "$(dpkg-query -W -f='${Version}' gzip)" = "1.13-1+deb13u1"; \
-    test "$(dpkg-query -W -f='${Version}' libexpat1)" = "2.8.3-1"; \
-    test "$(dpkg-query -W -f='${Version}' libonig5)" = "6.9.9-1+b1"; \
-    test "$(dpkg-query -W -f='${Version}' libjq1)" = "1.8.2-1"; \
-    test "$(dpkg-query -W -f='${Version}' jq)" = "1.8.2-1"; \
-    test "$(dpkg-query -W -f='${Version}' vim-common)" = "2:9.2.0858-1"; \
-    test "$(dpkg-query -W -f='${Version}' vim-tiny)" = "2:9.2.0858-1"; \
-    test "$(dpkg-query -W -f='${Version}' libssh2-1t64)" = "1.11.1-1+deb13u2+nemoclaw1"; \
-    test "$(dpkg-query -W -f='${Version}' libssl3t64)" = "3.5.7-1~deb13u3"; \
-    test "$(dpkg-query -W -f='${Version}' perl-base)" = "5.44.0-1nemoclaw1"; \
-    test "$(dpkg-query -W -f='${Version}' perl)" = "5.44.0-1nemoclaw1"; \
+    security_probe="$(node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON /tmp/nemoclaw-security/scripts/security/security-package-inventory.mts probe hermes-compatible)"; \
+    sh -ec "$security_probe"; \
     test "$(perl -e 'print $^V')" = "v5.44.0"; \
     ldd /usr/bin/jq | grep -Eq 'libonig[.]so[.]5'; \
     test "$(jq --version)" = "jq-1.8.2"; \
@@ -1525,7 +1473,8 @@ RUN set -eu; \
     python3 -c "import ctypes, sys; lib=ctypes.CDLL('libssh2.so.1'); lib.libssh2_version.restype=ctypes.c_char_p; lib.libssh2_version(0) == b'1.11.1' or sys.exit('unexpected libssh2 runtime version')"; \
     vim.tiny --version | head -n 1 | grep -Eq '^VIM - Vi IMproved 9[.]2 '; \
     vim.tiny --version | grep -Fx 'Included patches: 1-858'; \
-    test -z "$(dpkg --audit)"
+    test -z "$(dpkg --audit)"; \
+    rm -rf /tmp/nemoclaw-security
 # End completed-image security package verification.
 
 # OpenShell 0.0.116 launches the image as the non-root sandbox account.

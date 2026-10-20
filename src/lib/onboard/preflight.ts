@@ -822,7 +822,7 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
     dockerUsesContainerdSnapshotter;
   const dockerDefaultCgroupnsMode = readDockerDefaultCgroupnsMode(readFileImpl);
   const dockerServiceActive =
-    platform === "linux" && systemctlAvailable && dockerInstalled
+    probeDocker && platform === "linux" && systemctlAvailable && dockerInstalled
       ? parseSystemctlState(
           runCaptureImpl(["systemctl", "is-active", "docker"], {
             ignoreError: true,
@@ -830,7 +830,7 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
         )
       : null;
   const dockerServiceEnabled =
-    platform === "linux" && systemctlAvailable && dockerInstalled
+    probeDocker && platform === "linux" && systemctlAvailable && dockerInstalled
       ? parseSystemctlState(
           runCaptureImpl(["systemctl", "is-enabled", "docker"], {
             ignoreError: true,

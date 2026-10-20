@@ -6,7 +6,7 @@ set -euo pipefail
 
 readonly LIBSSH2_VERSION="1.11.1"
 readonly LIBSSH2_DEBIAN_VERSION="1.11.1-1+deb13u2"
-readonly LIBSSH2_PACKAGE_VERSION="${LIBSSH2_DEBIAN_VERSION}+nemoclaw1"
+readonly LIBSSH2_PACKAGE_VERSION="${LIBSSH2_DEBIAN_VERSION}+nemoclaw2"
 readonly LIBSSH2_SOURCE_SHA256="9954cb54c4f548198a7cbebad248bdc87dd64bd26185708a294b2b50771e3769"
 readonly PYTHON_DEBIAN_VERSION="3.13.5-2+deb13u5"
 readonly PYTHON_FIX_VERSION="${PYTHON_DEBIAN_VERSION}+nemoclaw1"
@@ -179,13 +179,20 @@ build_libssh2_package() {
     cd "${source_dir}"
     ./configure \
       --prefix=/usr \
-      --disable-static \
+      --enable-static \
       --disable-docker-tests \
       --disable-sshd-tests \
       --with-crypto=openssl \
       --with-libz
     make -j"$(nproc)"
     run_libssh2_tests "${source_dir}"
+    # Exercise buffered SFTP responses through the built library, including
+    # request IDs that differ from their status and malformed NAME payloads.
+    cc -DHAVE_CONFIG_H -I. -Isrc -Iinclude \
+      "${script_dir}/libssh2-sftp-response-regression.c" \
+      src/.libs/libssh2.a -lssl -lcrypto -lz \
+      -o "${build_root}/libssh2-sftp-response-regression"
+    "${build_root}/libssh2-sftp-response-regression"
     make DESTDIR="${install_root}" install
   )
 
@@ -194,7 +201,7 @@ build_libssh2_package() {
   test -f "${install_root}/usr/lib/libssh2.so.1.0.1"
 
   download \
-    "https://deb.debian.org/debian/pool/main/libs/libssh2/libssh2-1t64_${LIBSSH2_DEBIAN_VERSION}_${architecture}.deb" \
+    "https://snapshot.debian.org/archive/debian/20260906T023042Z/pool/main/libs/libssh2/libssh2-1t64_${LIBSSH2_DEBIAN_VERSION}_${architecture}.deb" \
     "${original_deb}"
   verify_sha256 "${original_sha256}" "${original_deb}"
   dpkg-deb -R "${original_deb}" "${package_root}"
@@ -249,7 +256,7 @@ build_zlib_package() {
     *) return 64 ;;
   esac
   download \
-    'https://deb.debian.org/debian/pool/main/z/zlib/zlib_1.3.dfsg%2Breally1.3.1.orig.tar.gz' \
+    'https://snapshot.debian.org/archive/debian/20260906T023042Z/pool/main/z/zlib/zlib_1.3.dfsg%2Breally1.3.1.orig.tar.gz' \
     "${build_root}/zlib.tar.gz"
   verify_sha256 \
     '60dd315c07f616887caa029408308a018ace66e3d142726a97db164b3b8f69fb' \
@@ -274,7 +281,7 @@ build_zlib_package() {
     ./write-error-test
   )
   download \
-    "https://deb.debian.org/debian/pool/main/z/zlib/zlib1g_1.3.dfsg%2Breally1.3.1-1%2Bb1_${architecture}.deb" \
+    "https://snapshot.debian.org/archive/debian/20260906T023042Z/pool/main/z/zlib/zlib1g_1.3.dfsg%2Breally1.3.1-1%2Bb1_${architecture}.deb" \
     "${original_deb}"
   verify_sha256 "${original_sha256}" "${original_deb}"
   test "$(dpkg-deb -f "${original_deb}" Package)" = zlib1g
