@@ -12,13 +12,12 @@ import { assertExitZero as expectExitZero } from "../fixtures/clients/command.ts
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
-import { nativeHostedAuthHeaderScript } from "../../../src/lib/inference/native-provider/contract.ts";
 import {
   DEFAULT_HOSTED_INFERENCE_MODEL,
-  HOSTED_INFERENCE_CREDENTIAL_ENV,
   HOSTED_INFERENCE_PROVIDER_NAME,
   requireHostedInferenceConfig,
 } from "../fixtures/hosted-inference.ts";
+import { buildSandboxInferenceChatCommand } from "../fixtures/inference-adapter.ts";
 import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
@@ -152,14 +151,7 @@ async function expectPongFromSandboxInference(
   let lastResult: ShellProbeResult | undefined;
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     lastResult = await sandboxExec(
-      [
-        "sh",
-        "-c",
-        `${nativeHostedAuthHeaderScript({ credentialEnv: HOSTED_INFERENCE_CREDENTIAL_ENV, api: "openai-completions" })}; exec curl -s --max-time 60 "$1" -H 'Content-Type: application/json' -H "$AUTH_HEADER" -d "$2"`,
-        "sh",
-        `${endpointUrl}/chat/completions`,
-        payload,
-      ],
+      buildSandboxInferenceChatCommand(payload, EXPECTED_ROUTE_PROVIDER, endpointUrl),
       `phase-6-sandbox-inference-attempt-${attempt}`,
     );
     if (lastResult.stdout.trim()) {
