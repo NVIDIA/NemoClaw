@@ -5,8 +5,10 @@ variable "IMAGE_PREFIX" {
   default = "nc-fabric"
 }
 
+# Agent images build for this host's platform unless AGENT_PLATFORM selects
+# the other one.
 variable "AGENT_PLATFORM" {
-  default = ""
+  default = regex_replace(BAKE_LOCAL_PLATFORM, "/v[0-9]+$", "")
   validation {
     condition = contains(["linux/arm64", "linux/amd64"], AGENT_PLATFORM)
     error_message = "Set AGENT_PLATFORM to linux/arm64 or linux/amd64."
@@ -66,6 +68,48 @@ target "ollama-proxy" {
   platforms = [AGENT_PLATFORM]
   target = "runtime"
   tags = ["${IMAGE_PREFIX}:ollama-proxy"]
+}
+
+# Runtime images always build for the host's platform, so the supervisor
+# compiles natively. Fixed timestamps keep a rebuild of the same sources at the
+# same digest, which deployments pin.
+variable "SOURCE_DATE_EPOCH" {
+  default = "1789689600"
+}
+
+target "supervisor" {
+  context = "."
+  dockerfile = "image/supervisor/Dockerfile"
+  target = "supervisor"
+  platforms = [BAKE_LOCAL_PLATFORM]
+  args = { SOURCE_DATE_EPOCH = SOURCE_DATE_EPOCH }
+}
+
+target "_runtime" {
+  context = "."
+  contexts = { supervisor = "target:supervisor" }
+  platforms = [BAKE_LOCAL_PLATFORM]
+  args = { SOURCE_DATE_EPOCH = SOURCE_DATE_EPOCH }
+  attest = ["type=provenance,disabled=true"]
+  # Docker's containerd image store can't unpack while rewriting timestamps;
+  # it unpacks the image when a container first runs it.
+  output = ["type=docker,rewrite-timestamp=true,unpack=false"]
+}
+
+target "vllm" {
+  inherits = ["_runtime"]
+  dockerfile = "image/vllm/Dockerfile"
+  tags = ["nc-prototype-vllm:rust-v1"]
+}
+
+target "ollama" {
+  inherits = ["_runtime"]
+  dockerfile = "image/ollama/Dockerfile"
+  tags = ["nc-prototype-ollama:rust-v1"]
+}
+
+group "runtimes" {
+  targets = ["vllm", "ollama"]
 }
 
 # Checks use disposable build stages and never start deployed resources.

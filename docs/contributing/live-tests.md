@@ -302,23 +302,8 @@ The test checks managed runtime bindings as well as the hosted agent identity ac
 
 ## Docker Live Suite
 
-`cargo ci live-docker` builds the images and writes the owned inputs for the runtime image, Docker provider, standalone cache, dummy agent, and Docker gateway tests below, then runs them; see [Run each layer](testing.md#run-each-layer).
+`cargo ci live-docker` builds the images and writes the owned inputs for the Docker provider, standalone cache, dummy agent, and Docker gateway tests below, then runs them; see [Run each layer](testing.md#run-each-layer).
 To run one of them by hand, supply its inputs as its section describes.
-
-## Runtime Image Loading
-
-On a native Linux host, complete the [runtime image build prerequisites](../build.md#build-a-runtime-image).
-This test builds a uniquely named scratch image without downloading a base image, exports an OCI archive, loads it, and checks access by the exported digest.
-It removes its image tag afterward; Docker's build cache remains.
-Run from the repository root:
-
-```sh
-NEMOCLAW_TEST_RUNTIME_IMAGE=1 cargo test -p nemoclaw-build --no-default-features --bin nemoclaw-build runtime_archive_loads_with_its_exported_digest -- --ignored
-```
-
-A failure reports the build, load, or identity check that failed; correct the Docker configuration and rerun.
-It does not start containers, run inference, or publish an image.
-
 
 ## Docker Provider Lifecycle
 

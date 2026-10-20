@@ -148,11 +148,68 @@ fn the_proxy_builds_alone_with_its_tests_on_the_selected_platform() {
     }
 }
 
+/// The host's platform, as Bake names it without a CPU variant.
+fn host_platform() -> &'static str {
+    if cfg!(target_arch = "aarch64") {
+        "linux/arm64"
+    } else {
+        "linux/amd64"
+    }
+}
+
+fn platforms(target: &Value) -> Vec<String> {
+    target["platforms"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|platform| {
+            platform
+                .as_str()
+                .unwrap()
+                .trim_end_matches("/v8")
+                .to_owned()
+        })
+        .collect()
+}
+
 #[test]
-fn builds_require_an_explicit_platform() {
-    let Some(output) = bake(None, &["agents"]) else {
+fn agent_builds_default_to_the_host_platform_and_reject_others() {
+    let Some(output) = bake(None, &["dummy"]) else {
         return;
     };
-    assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("AGENT_PLATFORM"));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let plan: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(platforms(&plan["target"]["dummy"]), [host_platform()]);
+    let rejected = bake(Some("linux/riscv64"), &["dummy"]).unwrap();
+    assert!(!rejected.status.success());
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("AGENT_PLATFORM"));
+}
+
+#[test]
+fn runtime_images_build_only_for_the_host_with_their_supervisor() {
+    // Selecting the other agent platform doesn't move runtime images off the host.
+    let other = if host_platform() == "linux/arm64" {
+        "linux/amd64"
+    } else {
+        "linux/arm64"
+    };
+    let Some(targets) = plan(other, &["runtimes"]) else {
+        return;
+    };
+    assert_eq!(
+        names(&targets),
+        BTreeSet::from(["ollama", "supervisor", "vllm"])
+    );
+    for (name, target) in &targets {
+        assert_eq!(platforms(target), [host_platform()], "{name}");
+    }
+    for name in ["vllm", "ollama"] {
+        assert_eq!(targets[name]["contexts"]["supervisor"], "target:supervisor");
+        let output = &targets[name]["output"][0];
+        assert_eq!(output["rewrite-timestamp"], "true", "{name}: {output}");
+    }
 }

@@ -38,7 +38,7 @@ Preserve existing deployments and use available ports and nonoverlapping gateway
 Build the ordinary runtime and the harnesses selected by your example:
 
 ```sh
-cargo run -p nemoclaw-build -- runtime runtimes/vllm/build.json
+docker buildx bake vllm
 AGENT_PLATFORM=linux/arm64 docker buildx bake pi deepagents openclaw --load
 cargo run -p nemoclaw-build -- bundle
 ```

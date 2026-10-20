@@ -3,7 +3,6 @@
 #[cfg(feature = "sdk")]
 mod platform;
 mod run_ci;
-mod runtime;
 use clap::{Parser, Subcommand};
 #[cfg(feature = "sdk")]
 use nemoclaw_sdk::bundle::{self, Manifest};
@@ -52,9 +51,6 @@ enum Action {
     Bundle {
         #[arg(long)]
         platform: Option<String>,
-    },
-    Runtime {
-        manifest: PathBuf,
     },
     /// Run this platform's `CI / Bundle` steps, or one named step.
     ///
@@ -686,6 +682,5 @@ async fn main() -> Result<()> {
 
             bundle(&pins, &platform::select(platform, bundle::platform)?).await
         }
-        Action::Runtime { manifest } => runtime::build_runtime(&pins, &manifest).await,
     }
 }

@@ -212,10 +212,7 @@ fi
     fn seed_live_inputs(&self) {
         for (path, content) in [
             ("dist/linux_arm64/manifest.json", "{}"),
-            (
-                "runtimes/ollama/Dockerfile",
-                "FROM ollama/ollama@sha256:0\n",
-            ),
+            ("image/ollama/Dockerfile", "FROM ollama/ollama@sha256:0\n"),
         ] {
             let file = self.0.path().join(path);
             fs::create_dir_all(file.parent().unwrap()).unwrap();

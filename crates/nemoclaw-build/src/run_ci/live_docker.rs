@@ -36,12 +36,12 @@ fn by_digest(repository: &str, tag: &str) -> Result<String> {
 }
 
 fn ollama_base() -> Result<String> {
-    let dockerfile = fs::read_to_string("runtimes/ollama/Dockerfile")?;
+    let dockerfile = fs::read_to_string("image/ollama/Dockerfile")?;
     dockerfile
         .lines()
         .find_map(|line| line.strip_prefix("FROM "))
         .map(|image| image.trim().to_owned())
-        .ok_or_else(|| "runtimes/ollama/Dockerfile has no base image".into())
+        .ok_or_else(|| "image/ollama/Dockerfile has no base image".into())
 }
 
 /// The images this run builds and the deployment UUIDs its documents own.

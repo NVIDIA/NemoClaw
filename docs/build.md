@@ -72,7 +72,7 @@ Rebuild a bundle from the recorded source revision if the removed tools are need
 
 Use Docker with Buildx on a native host that matches the selected image target.
 Pass `--platform linux/arm64` or `--platform linux/amd64` to the agent image builder.
-Direct Bake checks and proxy builds require the corresponding `AGENT_PLATFORM` environment variable.
+Direct Bake builds and checks use the host's platform unless the `AGENT_PLATFORM` environment variable selects the other one.
 ARM64 selects all ten harnesses; AMD64 selects Deep Agents and OpenClaw.
 The remaining harnesses are ARM64-only until their pinned native dependencies have matching AMD64 artifacts and qualification.
 Agent images share a Python 3.13.15 base without pip.
@@ -209,50 +209,40 @@ To extend an agent image with your own skills and tools, see [derived agent imag
 
 ## Build a Runtime Image
 
-Runtime image builds require Linux, Buildx, and a Docker daemon using the containerd image store.
-Use `--no-default-features` below to compile the runtime builder without the SDK or Protocol Buffers compiler.
-Run `docker info --format '{{json .DriverStatus}}'` against the selected daemon and check for `["driver-type","io.containerd.snapshotter.v1"]`.
-The builder checks this requirement before downloading sources or compiling the supervisor.
-Docker's classic image store is unsupported; use a daemon configured with the [containerd image store](https://docs.docker.com/engine/storage/containerd/) before retrying.
-The builder does not change Docker configuration.
-The artifact manifest must set `platform` to `linux_arm64` or `linux_amd64`; omission is rejected.
-The build host must match that platform, which selects both the supervisor's Rust compilation target and the image platform.
-The builder rejects a mismatched host before building the supervisor or loading an image.
-The artifact manifest selects its Dockerfile, local inputs, immutable source downloads, image name, and reproducible timestamp.
-It downloads pinned sources and dependencies, builds locally, and loads the image into the selected Docker daemon.
+Runtime images build with Docker Buildx Bake on a Linux ARM64 or AMD64 host, always for that host's platform, so the supervisor compiles natively rather than under emulation.
+They require a Docker daemon using the containerd image store, which keeps each local image's digest.
+Run `docker info --format '{{json .DriverStatus}}'` against the selected daemon and check for `["driver-type","io.containerd.snapshotter.v1"]`; Docker's classic image store is unsupported.
+Build stages use pinned Rust and upstream images, so the host needs no Rust toolchain.
+Initial builds need network access for the base images and the supervisor's dependency sources.
+A build does not launch inference or publish an image.
 
-It does not launch inference or publish an image.
-
-For ordinary safetensors models, run on a Linux ARM64 or AMD64 build host matching the model host:
+For ordinary safetensors models, on a build host matching the model host:
 
 ```sh
-cargo run -p nemoclaw-build --no-default-features -- runtime runtimes/vllm/build.json
+docker buildx bake vllm
+docker image inspect nc-prototype-vllm:rust-v1 --format '{{index .RepoDigests 0}}'
 ```
 
-This build exports `.build/vllm/runtime.tar` and loads `nc-prototype-vllm:rust-v1`.
 The image contains the shared supervisor and the pinned multi-platform vLLM base for the build host's architecture, without model-specific patches or preparation tools; the [Nemotron example](models.md#configure-nemotron-on-an-amd64-gpu-host) uses the AMD64 build.
 Select the model through [model configuration](models.md).
 Selecting this artifact does not qualify GPU inference on the host.
 
 A model that needs preparation tools or patches uses an image its recipe's authors build; see [inline recipes](recipes.md).
 
-The builder exports an OCI archive, loads it, and verifies access by its exported digest and target platform.
-The retained `supervisor.json` records the runtime contract version, `runtimeSpecVersion`, alongside the runtime source version.
-Use the immutable image reference printed as `Runtime image loaded: NAME@sha256:DIGEST` for `spec.services.<name>.image`.
+`docker buildx bake ollama` builds the [managed Ollama](inference.md#run-managed-ollama) image, and `docker buildx bake runtimes` builds both.
+Use the `NAME@sha256:DIGEST` reference that `docker image inspect` prints for `spec.services.<name>.image`.
+Builds use fixed timestamps, so rebuilding the same sources keeps the same digest.
 Do not substitute a mutable tag or a digest copied from another build.
-If deployment uses a different Docker daemon, load the archive into that daemon before apply; images are not transferred automatically.
+If deployment uses a different Docker daemon, transfer the image there before apply, for example with `docker save` and `docker load`; images are not transferred automatically.
 
 ## Retained Sources and Compatibility
 
-Source collection may download the pinned dependency sources through Cargo.
-The builder creates a source archive with normalized timestamps and compiles the supervisor offline from that archive.
-It contains the runtime crate, its standalone workspace manifest and pruned lockfile, Cargo-vendored dependencies with their licenses, and runtime policy attribution.
-The archive excludes the SDK, provider, OpenShell, Fabric, onboarding, and image recipes.
-The runtime source version covers only these runtime build inputs; changes to other repository components do not change it.
-Each image separately retains its selected Dockerfile and build manifest under `/opt/nemoclaw/source/`.
-The build excludes dependency paths and parent Git metadata from compiler inputs.
+The supervisor build, `image/supervisor/Dockerfile`, packages the runtime crate with Cargo, vendors its locked dependency sources, and compiles the supervisor offline from that archive.
+The archive contains the runtime crate, its standalone workspace manifest and pruned lockfile, Cargo-vendored dependencies with their licenses, and runtime policy attribution.
+It excludes the SDK, provider, OpenShell, Fabric, onboarding, and agent images.
+Each runtime image retains the archive, the license, its own Dockerfile and notice, and the supervisor's Dockerfile under `/opt/nemoclaw/source/`.
 
-The [vLLM notice](../runtimes/vllm/NOTICE.md) identifies retained sources and licenses.
+The [vLLM notice](../image/vllm/NOTICE.md) and [Ollama notice](../image/ollama/NOTICE.md) identify retained sources and licenses.
 
 Generated bundles, build inputs, and images are ignored by Git.
 Model snapshots and prepared data belong to the deployment’s persistent volume, outside the build context.
@@ -269,11 +259,11 @@ When the image must be acquired, plan reports compatibility as deferred; apply m
 Matching labels establish the declared backend, recipe, and authentication, not successful model loading or inference.
 
 An image built by a different NemoClaw revision may carry the right labels yet reject the runtime contract when its runtime starts, after the deployment has created the service's storage and network.
-In either case, rebuild the selected artifact from the bundle's source revision using the matching vLLM platform/recipe command above or the [managed Ollama build instructions](inference.md#run-managed-ollama).
-Load the rebuilt image on the execution daemon and update `spec.services.<name>.image` to the newly printed digest.
+In either case, rebuild the selected image from the bundle's source revision with `docker buildx bake vllm` or `docker buildx bake ollama`, as above.
+Load the rebuilt image on the execution daemon and update `spec.services.<name>.image` to its new digest.
 Keep the deployment state and reapply; existing model and credential storage remain subject to their retention and identity checks.
 Destroy omits image compatibility gates so a mismatched image alone does not prevent cleanup.
 The runtime also reports its expected specification version and declared field location for invalid input, without echoing configuration values or user-defined map keys.
 
 Developers must increment `nemoclaw_runtime::SPEC_VERSION` when serialized fields or validation changes make the runtime contract incompatible.
-The image builder, SDK requirements, and provider check share that constant; the label does not identify an exact source revision.
+The supervisor, SDK requirements, and provider check share that constant; the label does not identify an exact source revision.

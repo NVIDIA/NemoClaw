@@ -105,7 +105,7 @@ fn fixture_files() -> Vec<(String, String)> {
         ("docs/guide.md", "# Guide\n".into()),
         ("image/fabric/Dockerfile", "FROM scratch\n".into()),
         ("ruff.toml", "\n".into()),
-        ("runtimes/vllm/build.json", "{}\n".into()),
+        ("image/vllm/Dockerfile", "FROM scratch\n".into()),
         (
             "rust-toolchain.toml",
             "[toolchain]\nchannel = \"1.98.1\"\n".into(),
@@ -323,7 +323,7 @@ fn assert_each_change_selects(workflow: &str, paths: &[&str], contents: &str) {
 fn documentation_runtimes_and_other_workflows_do_not_rebuild_images() {
     let decision = images(&[
         ("docs/guide.md", Some("# Changed\n")),
-        ("runtimes/vllm/build.json", Some("{\"changed\": true}\n")),
+        ("image/vllm/Dockerfile", Some("FROM changed\n")),
         (".github/workflows/rust.yml", Some("name: changed\n")),
     ]);
     assert_eq!(decision, "images=false");
@@ -420,7 +420,7 @@ fn live_build_packages_and_their_inputs_run_live_suites() {
             "crates/nemoclaw-build/src/lib.rs",
             "crates/nemoclaw-cli/src/lib.rs",
             "crates/openshell-provider/src/lib.rs",
-            "runtimes/vllm/build.json",
+            "image/vllm/Dockerfile",
             "image/fabric/Dockerfile",
             "examples/local.yaml",
             "versions.json",

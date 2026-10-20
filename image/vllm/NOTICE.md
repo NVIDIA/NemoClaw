@@ -8,10 +8,8 @@ It does not apply model-specific patches or embed model weights.
 The selected model is downloaded into retained storage when the deployment is applied.
 
 `supervisor-source.tar.gz` retains the supervisor's source and locked dependency sources, including their original license files.
-The archive excludes every `runtimes/` directory; it contains no Qwen recipe scripts or recipe license files.
 The runtime policy credit remains in `crates/nemoclaw-runtime/NOTICE.md` inside the archive.
-`/opt/nemoclaw/source/Dockerfile` and `build.json` retain this image's build instructions and manifest.
-`supervisor.json` records the source archive and executable hashes.
+`/opt/nemoclaw/source/Dockerfile` and `supervisor.Dockerfile` retain this image's and the supervisor's build instructions.
 The upstream image retains its vLLM and installed dependency notices.
 Model license and notice files present at the selected repository root are downloaded with the model snapshot.
 

@@ -15,7 +15,6 @@ globs = [
     ".github/workflows/validation-plan.yml",
     "examples/**",
     "image/**",
-    "runtimes/**",
     "schemas/**",
     "versions.json",
     "rust-toolchain.toml",

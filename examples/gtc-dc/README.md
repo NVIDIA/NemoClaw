@@ -57,9 +57,9 @@ On the Station, DGX Spark, or inside the RTX Spark's ARM64 WSL2 distribution, ru
 
 ```sh
 cargo run --locked -p nemoclaw-build -- bundle --platform linux_arm64
-cargo run --locked -p nemoclaw-build --no-default-features -- runtime runtimes/vllm/build.json
+docker buildx bake vllm
 cargo images build --platform linux/arm64 hermes openclaw deepagents
-docker image inspect nc-fabric:hermes nc-fabric:openclaw nc-fabric:deepagents --format '{{index .RepoDigests 0}}'
+docker image inspect nc-prototype-vllm:rust-v1 nc-fabric:hermes nc-fabric:openclaw nc-fabric:deepagents --format '{{index .RepoDigests 0}}'
 ```
 
 All nine targets use the maintained ARM64 Hermes, OpenClaw, or Deep Agents image.
@@ -72,7 +72,7 @@ cp examples/gtc-dc/openclaw-dgx-spark.yaml .local/gtc-dc/deployment.yaml
 ```
 
 Assign a fresh `metadata.uid` and replace both zero-digest image references with references from builds of this checkout.
-The runtime builder prints `Runtime image loaded: NAME@sha256:DIGEST`; image inspection prints the agent's `nc-fabric@sha256:DIGEST` reference.
+Image inspection prints each image's `NAME@sha256:DIGEST` reference.
 Both images must exist on the Docker daemon selected in the copied file.
 Check that its gateway port, model port, and private `/24` do not conflict with existing resources.
 The committed templates use gateway ports 17901–17909, model ports 19101–19109, and networks 172.30.180.0/24–172.30.188.0/24.
@@ -99,6 +99,6 @@ Its DGX Spark and Station commands use vLLM 0.28.0 with settings these templates
 These templates use only fields that this checkout's schema accepts.
 The pinned runtime image builds on the upstream `vllm/vllm-openai` v0.32.0 release image, pinned by digest.
 They do not reproduce or qualify the upstream recipe.
-The [ARM64 runtime notice](../../runtimes/vllm/NOTICE.md) describes retained upstream sources and licenses.
+The [ARM64 runtime notice](../../image/vllm/NOTICE.md) describes retained upstream sources and licenses.
 The model is distributed under the [NVIDIA Nemotron Open Model License](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-nemotron-open-model-license/); the pinned snapshot contains no separate license or notice file.
 The RTX Spark profile uses NVIDIA's [documented N1X GPU identities](https://docs.nvidia.com/rtx-spark/rtx-spark-porting-guide/latest/gpu-identification.html) and [CUDA compute capability table](https://developer.nvidia.com/cuda/gpus).
