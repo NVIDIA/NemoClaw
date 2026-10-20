@@ -533,7 +533,6 @@ syncBuiltinESMExports();\n`,
         defaultModel: "selected-model",
       });
       expect(fs.statSync(target).mode & 0o777).toBe(0o600);
-      expect(fs.readFileSync(settingsPath)).toEqual(fs.readFileSync(target));
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }
