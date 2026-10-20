@@ -74,6 +74,7 @@ export type OnboardPolicyApplicationDeps = Omit<
 
 type PendingPolicySelectionStore = {
   record: NonNullable<SetupPolicySelectionDeps["recordPendingSelection"]>;
+  loadTier?: () => string | null;
   hasPending: (sandboxName: string) => boolean;
   clear: (sandboxName: string) => void;
 };
@@ -179,7 +180,13 @@ export function createOnboardPolicyApplication(deps: OnboardPolicyApplicationDep
       tiers,
       policyTierEnv,
     });
-  const selectPolicyTier = () => promptHelpers().selectPolicyTier();
+  let selectedPolicyTier: Promise<string> | null = null;
+  const selectPolicyTier = () => {
+    selectedPolicyTier ??= Promise.resolve(
+      pendingSelection?.loadTier?.() ?? promptHelpers().selectPolicyTier(),
+    );
+    return selectedPolicyTier;
+  };
   const selectTierPresetsAndAccess = (
     tierName: string,
     allPresets: Array<{ name: string; description?: string }>,
@@ -268,13 +275,17 @@ export function createOnboardPolicyApplication(deps: OnboardPolicyApplicationDep
     resolveSandboxBaselinePolicy: policies.resolveSandboxBaselinePolicy,
     selectPolicyTier,
     selectTierPresetsAndAccess,
-    setupPoliciesWithSelection(
+    async setupPoliciesWithSelection(
       sandboxName: string,
       options: SetupPolicySelectionOptions = {},
     ): Promise<string[]> {
-      return deps.withSandboxMutationLock(sandboxName, () =>
-        setupPoliciesWithSelection(setupDeps, sandboxName, options),
-      );
+      try {
+        return await deps.withSandboxMutationLock(sandboxName, () =>
+          setupPoliciesWithSelection(setupDeps, sandboxName, options),
+        );
+      } finally {
+        selectedPolicyTier = null;
+      }
     },
     validatePolicyTierEnvEarly: policyTierEnv.validatePolicyTierEnvEarly,
   };
@@ -579,6 +590,14 @@ async function setupPoliciesWithSelectionInner(
       }),
     );
     chosen = ensureRequiredTierPolicyPresets(requestedTierName, chosen);
+  }
+
+  if (
+    (requestedTierName === PERSONAL_POLICY_TIER_NAME ||
+      chosen?.includes(PERSONAL_OPEN_INTERNET_PRESET_NAME)) &&
+    deps.hasNativeCustomProvider?.(sandboxName)
+  ) {
+    refusePersonalBesideNativeCustomProvider();
   }
 
   if (selectedPresets !== null) {

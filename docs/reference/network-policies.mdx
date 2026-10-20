@@ -145,6 +145,9 @@ To narrow it, explicitly remove `brew` and apply `brew-balanced`.
 Resuming onboarding reapplies the saved selection; skipping optional setup preserves existing grants.
 
 When Personal is selected or carried forward, the `personal-open-internet` preset is mandatory for every agent and every onboarding entry point. Interactive choices, `NEMOCLAW_POLICY_MODE=custom`, and `NEMOCLAW_POLICY_MODE=skip` control only additional presets; they cannot deselect, skip, or replace Personal's required web authority.
+Fresh onboarding keeps a hosted custom endpoint on the shared `inference.local` route when you select Personal.
+NemoClaw refuses Personal for an existing sandbox that already has a custom native provider attachment.
+Create a new sandbox and select Personal before you enter the custom endpoint.
 
 <Warning title="Personal Tier Network Access">
 The Personal tier applies the `personal-open-internet` policy preset with a hostless L4 endpoint on destination ports `80` and `443`.

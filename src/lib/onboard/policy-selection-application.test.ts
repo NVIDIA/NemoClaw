@@ -28,6 +28,7 @@ vi.mock("../policy", () => ({
   customPresetOwnsNetworkPolicyKey: vi.fn(() => false),
   filterSetupPolicyPresets: vi.fn(),
   getAppliedPresets: vi.fn(() => []),
+  hasNativeCustomProvider: vi.fn(() => false),
   getPersonalSubsumedCustomPresetNames: vi.fn(async () => []),
   listCustomPresets: vi.fn(() => []),
   listSetupPolicyPresets: vi.fn(() => [
@@ -73,6 +74,29 @@ function applicationWithPendingSelection(
 }
 
 describe("onboarding policy application", () => {
+  it("shares a pending tier until policy setup completes", async () => {
+    const loadTier = vi.fn(() => "balanced");
+    const application = applicationWithPendingSelection({
+      record: vi.fn(),
+      loadTier,
+      hasPending: vi.fn(() => false),
+      clear: vi.fn(),
+    });
+
+    await expect(application.selectPolicyTier()).resolves.toBe("balanced");
+    await expect(application.selectPolicyTier()).resolves.toBe("balanced");
+    expect(loadTier).toHaveBeenCalledOnce();
+
+    await expect(
+      application.setupPoliciesWithSelection("alpha", {
+        selectedPresets: ["npm"],
+        tierName: "balanced",
+      }),
+    ).resolves.toEqual(["npm"]);
+    await expect(application.selectPolicyTier()).resolves.toBe("balanced");
+    expect(loadTier).toHaveBeenCalledTimes(2);
+  });
+
   it.each(["npm", "tavily"])(
     "resumes a refused %s write and clears the saved selection after live readback",
     async (presetName) => {

@@ -10,7 +10,11 @@ function createHarness() {
   const deps = {
     policies: {
       setupPolicyPresetSupported: vi.fn(() => true),
-      listSetupPolicyPresets: vi.fn(() => [{ name: "local-inference" }, { name: "npm" }]),
+      listSetupPolicyPresets: vi.fn(() => [
+        { name: "local-inference" },
+        { name: "npm" },
+        { name: "personal-open-internet" },
+      ]),
       listCustomPresets: vi.fn(() => []),
       getAppliedPresets: vi.fn(() => ["local-inference", "npm"]),
       customPresetOwnsNetworkPolicyKey: vi.fn(() => false),
@@ -79,6 +83,31 @@ describe("Personal selection with a native custom provider", () => {
     expect(hasNativeCustomProvider).toHaveBeenCalledWith("alpha");
     expect(errors.join("\n")).toContain("NEMOCLAW_POLICY_TIER=personal");
     expect(deps.selectTierPresetsAndAccess).not.toHaveBeenCalled();
+    expect(syncPresetSelection).not.toHaveBeenCalled();
+  });
+
+  it("refuses a resumed Personal selection before readiness or policy mutation", async () => {
+    const { deps, syncPresetSelection } = createHarness();
+    const hasNativeCustomProvider = vi.fn(() => true);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => {
+      throw new Error("process.exit");
+    });
+    try {
+      await expect(
+        setupPoliciesWithSelection({ ...deps, hasNativeCustomProvider }, "alpha", {
+          selectedPresets: ["personal-open-internet"],
+        }),
+      ).rejects.toThrow("process.exit");
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    } finally {
+      errorSpy.mockRestore();
+      exitSpy.mockRestore();
+    }
+
+    expect(hasNativeCustomProvider).toHaveBeenCalledWith("alpha");
+    expect(deps.waitForSandboxReady).not.toHaveBeenCalled();
+    expect(deps.recordPendingSelection).not.toHaveBeenCalled();
     expect(syncPresetSelection).not.toHaveBeenCalled();
   });
 });

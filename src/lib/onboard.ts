@@ -2330,7 +2330,6 @@ export type SetupInference = import("./onboard/setup-inference").SetupInference;
 function createSetupInference(overrides: Partial<SetupInferenceDeps> = {}): SetupInference {
   return setupInferenceFactory.createSetupInference(getSetupInferenceDeps(), overrides);
 }
-const setupInference = createSetupInference();
 const MESSAGING_CHANNELS = listChannels();
 const sandboxCreateIntentResolver = sandboxCreateIntentResolution.createSandboxCreateIntentResolver<
   AgentDefinition | null,
@@ -2475,6 +2474,7 @@ const {
   env: process.env,
   pendingSelection: onboardSession.createPendingPolicySelectionStore(registry.getSandbox),
 });
+const setupInference = createSetupInference({ resolvePolicyTier: selectPolicyTier });
 const startRecordedStep = onboardRuntimeBoundary.startRecordedStep.bind(onboardRuntimeBoundary);
 const recordStepComplete = onboardRuntimeBoundary.recordStepComplete.bind(onboardRuntimeBoundary);
 const recordStepRejected = onboardRuntimeBoundary.recordStepRejected.bind(onboardRuntimeBoundary);

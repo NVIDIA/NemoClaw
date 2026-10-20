@@ -21,6 +21,8 @@ import {
 import { ensureBedrockRuntimeAdapter } from "../bedrock-runtime-adapter";
 import { PERSONAL_POLICY_TIER_NAME } from "../../policy/tiers";
 
+export { isHostedCustomEndpoint };
+
 /**
  * Existing shared-route sandboxes retain their route until recreated.
  *
