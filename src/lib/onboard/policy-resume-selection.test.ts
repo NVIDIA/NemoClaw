@@ -12,6 +12,10 @@ function policies(
 ) {
   const setupPresets = [
     "npm",
+    "pypi",
+    "huggingface",
+    "brew-balanced",
+    "openclaw-pricing",
     "brave",
     "tavily",
     "slack",
@@ -20,20 +24,28 @@ function policies(
     "personal-open-internet",
   ].map((name) => ({ name }));
   const customPresets = (options.custom ?? []).map((name) => ({ name }));
+  const supported = (name: string, supportOptions?: { webSearchSupported?: boolean | null }) =>
+    (name !== "brave" && name !== "tavily") || supportOptions?.webSearchSupported !== false;
   return {
-    setupPolicyPresetSupported: () => true,
-    listSetupPolicyPresets: async () => setupPresets,
+    setupPolicyPresetSupported: supported,
+    listSetupPolicyPresets: async (
+      _sandboxName: string,
+      supportOptions?: { webSearchSupported?: boolean | null },
+    ) => setupPresets.filter((preset) => supported(preset.name, supportOptions)),
     listCustomPresets: async () => customPresets,
     customPresetOwnsNetworkPolicyKey: async () => options.customOwnsObservability === true,
     getAppliedPresets: async () => options.applied ?? [],
     clampSetupPolicyPresetNames(
       names: string[],
       selectablePresets: Preset[],
-      _supportOptions: { webSearchSupported?: boolean | null } | undefined,
+      supportOptions: { webSearchSupported?: boolean | null } | undefined,
       customPresetNames: Set<string> = new Set(),
     ) {
       const selectable = new Set(selectablePresets.map((preset) => preset.name));
-      return names.filter((name) => selectable.has(name) || customPresetNames.has(name));
+      return names.filter(
+        (name) =>
+          customPresetNames.has(name) || (selectable.has(name) && supported(name, supportOptions)),
+      );
     },
   };
 }
@@ -56,6 +68,62 @@ async function prepare(
 }
 
 describe("preparePolicyPresetResumeSelection web search reconciliation", () => {
+  it("retains an explicit pending search preset without provider configuration", async () => {
+    const result = await preparePolicyPresetResumeSelection(
+      { policies: policies({ applied: [] }) },
+      "alpha",
+      {
+        agent: "openclaw",
+        tierName: "balanced",
+        pendingPolicyPresets: ["tavily"],
+        webSearchConfig: null,
+        webSearchSupported: true,
+      },
+    );
+    expect(result.policyPresets).toContain("tavily");
+  });
+
+  it("retains a failed first-write selection instead of accepting an empty live policy", async () => {
+    const pendingPolicyPresets = [
+      "npm",
+      "pypi",
+      "huggingface",
+      "brew-balanced",
+      "openclaw-pricing",
+    ];
+    const result = await preparePolicyPresetResumeSelection(
+      { policies: policies({ applied: [] }) },
+      "alpha",
+      {
+        agent: "openclaw",
+        tierName: "balanced",
+        pendingPolicyPresets,
+        webSearchConfig: null,
+      },
+    );
+    expect(result.policyPresets).toEqual(pendingPolicyPresets);
+    expect(result.livePolicyPresetsNeedUpdate).toBe(true);
+  });
+
+  it("names the recovery action when a saved preset is no longer available", async () => {
+    await expect(
+      preparePolicyPresetResumeSelection({ policies: policies({ applied: [] }) }, "alpha", {
+        agent: "openclaw",
+        pendingPolicyPresets: ["removed-preset"],
+      }),
+    ).rejects.toThrow("Start a new onboarding attempt with the `--fresh` option");
+  });
+
+  it("rejects a saved Brave preset when web search support is unavailable", async () => {
+    await expect(
+      preparePolicyPresetResumeSelection({ policies: policies({ applied: ["brave"] }) }, "alpha", {
+        agent: "openclaw",
+        pendingPolicyPresets: ["brave"],
+        webSearchSupported: false,
+      }),
+    ).rejects.toThrow("Start a new onboarding attempt with the `--fresh` option");
+  });
+
   it("replaces stale Brave policy with Tavily during a provider switch", async () => {
     const result = await prepare(["brave"], "tavily");
 
