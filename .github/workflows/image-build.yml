@@ -1,0 +1,125 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# Build and check every image on each native platform. With `push`, also push
+# the checked images by digest to an internal per-commit namespace, so a
+# release can promote exactly what was checked instead of rebuilding it.
+name: Image build
+on:
+  workflow_call:
+    inputs:
+      plan:
+        description: The validation plan's result; anything but success fails.
+        type: string
+        required: true
+      run:
+        description: Whether image inputs changed; otherwise the checks report without work.
+        type: boolean
+        required: true
+      push:
+        description: Push the checked images to the per-commit namespace.
+        type: boolean
+        default: false
+      namespace:
+        description: Registry namespace for per-commit images.
+        type: string
+        default: ghcr.io/nvidia/nemoclaw/v1-ci
+permissions:
+  contents: read
+jobs:
+  images:
+    name: ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux_arm64
+            docker_platform: linux/arm64
+            runner: ubuntu-24.04-arm
+          - platform: linux_amd64
+            docker_platform: linux/amd64
+            runner: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    env:
+      AGENT_PLATFORM: ${{ matrix.docker_platform }}
+    steps:
+      - name: Require a successful validation plan
+        env:
+          PLAN_RESULT: ${{ inputs.plan }}
+        run: test "$PLAN_RESULT" = success
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Keep the required Build checks present when image work is unneeded.
+      - name: Validate image selection and Dockerfile instructions
+        if: inputs.run
+        run: |
+          cargo test --locked -p nemoclaw-build --no-default-features --target-dir target/ci-runner --test integration bake::
+          docker buildx bake --check dummy agents ollama-proxy
+      # cargo images builds the tool without the SDK, so the image job needs no protoc.
+      - name: Build and qualify the reference contract image
+        if: inputs.run
+        run: |
+          cargo images build --platform "$AGENT_PLATFORM" dummy
+          cargo images qualify nc-fabric:dummy
+      - name: Check packaging and generic Fabric lifecycle
+        if: inputs.run
+        run: docker buildx bake check
+      - name: Build local images with installed Fabric metadata
+        if: inputs.run
+        run: |
+          cargo images build --platform "$AGENT_PLATFORM" agents
+          docker buildx bake ollama-proxy --load
+      - name: Verify installed discovery and retained source hashes
+        if: inputs.run
+        run: |
+          docker buildx bake --print agents | jq -er '.target | to_entries[] | [.key, .value.tags[0]] | @tsv' > .build-image-list
+          test -s .build-image-list
+          while read -r harness image; do
+            catalog=$(docker image inspect "$image" --format '{{index .Config.Labels "io.nemoclaw.fabric.catalog"}}')
+            docker run --rm --runtime=runc --network none \
+              -e NEMOCLAW_TEST_HARNESS="$harness" -e NEMOCLAW_TEST_CATALOG="$catalog" \
+              -v "$PWD/image/test_image.py:/test.py:ro" \
+              --entrypoint /opt/fabric/bin/python "$image" -B /test.py
+          done < .build-image-list
+      # Pushing doesn't change a digest: Docker's containerd store pushes the
+      # manifest it built. A release promotes these digests; new packages must
+      # not be public before a release makes them so.
+      - name: Push the checked images for this commit
+        if: inputs.run && inputs.push
+        env:
+          NAMESPACE: ${{ inputs.namespace }}
+          GH_TOKEN: ${{ github.token }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          printf '%s\n' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          printf 'ollama-proxy\tnc-fabric:ollama-proxy\n' >> .build-image-list
+          tag="$GITHUB_SHA-${PLATFORM#linux_}"
+          {
+            echo "### Images for $tag"
+            echo
+            echo "| Image | Digest | Push |"
+            echo "|---|---|---|"
+          } >> "$GITHUB_STEP_SUMMARY"
+          total=$(date +%s)
+          while read -r name image; do
+            target="$NAMESPACE/$name:$tag"
+            start=$(date +%s)
+            docker tag "$image" "$target"
+            docker push --quiet "$target" > /dev/null
+            digest=$(docker buildx imagetools inspect "$target" --format '{{.Manifest.Digest}}')
+            echo "| \`$name\` | \`$digest\` | $(( $(date +%s) - start )) s |" >> "$GITHUB_STEP_SUMMARY"
+            package="${NAMESPACE#ghcr.io/nvidia/}/$name"
+            visibility=$(gh api "/orgs/NVIDIA/packages/container/${package//\//%2F}" --jq .visibility 2>/dev/null || echo unknown)
+            echo "$target $digest visibility=$visibility"
+            if [ "$visibility" = public ]; then
+              echo "::error::$package is public; per-commit images must stay internal until a release"
+              exit 1
+            fi
+          done < .build-image-list
+          echo >> "$GITHUB_STEP_SUMMARY"
+          echo "Pushed $(wc -l < .build-image-list) images in $(( $(date +%s) - total )) s." >> "$GITHUB_STEP_SUMMARY"
+          docker logout ghcr.io

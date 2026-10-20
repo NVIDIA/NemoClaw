@@ -417,6 +417,8 @@ NemoClaw doesn't run Fabric's native adapters; their behavior is Fabric's to tes
 Use the [reference image procedure](../build.md#reference-contract-image) to run these locally.
 
 The image workflow obtains its image decision from the shared validation plan and skips image steps when their inputs are unaffected; the `Build` checks still report.
+On `v1` pushes that build images, it then pushes the checked agent and proxy images by digest to `ghcr.io/nvidia/nemoclaw/v1-ci/<image>:<commit>-<arch>`, an internal namespace that releases promote from ([#13516](https://github.com/NVIDIA/NemoClaw/issues/13516)), and fails if any of those packages is public.
+The job summary lists each digest and how long its push took.
 A failed planning job fails those checks instead of skipping them.
 A file inside a crate counts when that crate is part of the image build: `nemoclaw-build` without default features, or the Ollama proxy, with their dependencies.
 [Path rules](../../.config/determinator-images.toml) classify other files by the `.dockerignore` build context.

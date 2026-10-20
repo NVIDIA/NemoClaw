@@ -21,58 +21,13 @@ jobs:
     needs: plan
     # A failed planner must fail the required Build checks, not skip them.
     if: ${{ !cancelled() }}
-    name: Build / ${{ matrix.platform }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: linux_arm64
-            docker_platform: linux/arm64
-            runner: ubuntu-24.04-arm
-          - platform: linux_amd64
-            docker_platform: linux/amd64
-            runner: ubuntu-24.04
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 60
-    env:
-      AGENT_PLATFORM: ${{ matrix.docker_platform }}
-    steps:
-      - name: Require a successful validation plan
-        env:
-          PLAN_RESULT: ${{ needs.plan.result }}
-        run: test "$PLAN_RESULT" = success
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      # Keep the required Build checks present when image work is unneeded.
-      - name: Validate image selection and Dockerfile instructions
-        if: needs.plan.outputs.images == 'true'
-        run: |
-          cargo test --locked -p nemoclaw-build --no-default-features --target-dir target/ci-runner --test integration bake::
-          docker buildx bake --check dummy agents ollama-proxy
-      # cargo images builds the tool without the SDK, so the image job needs no protoc.
-      - name: Build and qualify the reference contract image
-        if: needs.plan.outputs.images == 'true'
-        run: |
-          cargo images build --platform "$AGENT_PLATFORM" dummy
-          cargo images qualify nc-fabric:dummy
-      - name: Check packaging and generic Fabric lifecycle
-        if: needs.plan.outputs.images == 'true'
-        run: docker buildx bake check
-      - name: Build local images with installed Fabric metadata
-        if: needs.plan.outputs.images == 'true'
-        run: |
-          cargo images build --platform "$AGENT_PLATFORM" agents
-          docker buildx bake ollama-proxy --load
-      - name: Verify installed discovery and retained source hashes
-        if: needs.plan.outputs.images == 'true'
-        run: |
-          docker buildx bake --print agents | jq -er '.target | to_entries[] | [.key, .value.tags[0]] | @tsv' > .build-image-list
-          test -s .build-image-list
-          while read -r harness image; do
-            catalog=$(docker image inspect "$image" --format '{{index .Config.Labels "io.nemoclaw.fabric.catalog"}}')
-            docker run --rm --runtime=runc --network none \
-              -e NEMOCLAW_TEST_HARNESS="$harness" -e NEMOCLAW_TEST_CATALOG="$catalog" \
-              -v "$PWD/image/test_image.py:/test.py:ro" \
-              --entrypoint /opt/fabric/bin/python "$image" -B /test.py
-          done < .build-image-list
+    name: Build
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/image-build.yml
+    with:
+      plan: ${{ needs.plan.result }}
+      run: ${{ needs.plan.outputs.images == 'true' }}
+      # Only v1 commits publish their checked images, for releases to promote.
+      push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/v1' }}
