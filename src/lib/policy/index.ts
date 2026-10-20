@@ -2861,6 +2861,36 @@ async function arePresetsCoveredByPersonalPolicy(
   }
 }
 
+/** Identify selected live custom presets whose entire scope Personal will replace. */
+async function getPersonalSubsumedCustomPresetNames(
+  sandboxName: string,
+  presetNames: string[],
+): Promise<string[]> {
+  if (!presetNames.includes(PERSONAL_OPEN_INTERNET_PRESET_NAME)) return [];
+  const current = await readCurrentSandboxPolicy(sandboxName);
+  const personalEntries = extractPresetEntries(
+    loadCentralPreset(PERSONAL_OPEN_INTERNET_PRESET_NAME, { reportMissing: false }),
+  );
+  const before = parseNetworkPolicies(current);
+  if (!current || !personalEntries || !before) {
+    throw new Error("Cannot confirm custom preset coverage before applying Personal policy.");
+  }
+  const after = parseNetworkPolicies(mergePresetIntoPolicy(current, personalEntries));
+  if (!after) {
+    throw new Error("Cannot confirm custom preset coverage before applying Personal policy.");
+  }
+  const selected = new Set(presetNames);
+  const customKeys = new Map<string, string[]>();
+  for (const key of Object.keys(before)) {
+    const name = parseCustomPolicyKey(key)?.presetName;
+    if (!name || !selected.has(name)) continue;
+    customKeys.set(name, [...(customKeys.get(name) ?? []), key]);
+  }
+  return [...customKeys]
+    .filter(([, keys]) => keys.every((key) => !(key in after)))
+    .map(([name]) => name);
+}
+
 async function listCustomPresets(sandboxName: string, gatewayName?: string): Promise<PresetInfo[]> {
   const current = await readCurrentSandboxPolicy(sandboxName, gatewayName);
   if (!current) return [];
@@ -3046,6 +3076,7 @@ export {
   applyPresetContent,
   applyPresets,
   arePresetsCoveredByPersonalPolicy,
+  getPersonalSubsumedCustomPresetNames,
   assertOpenshellResolvable,
   clampSetupPolicyPresetNames,
   customPresetOwnsNetworkPolicyKey,

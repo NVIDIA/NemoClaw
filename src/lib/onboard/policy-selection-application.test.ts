@@ -28,6 +28,7 @@ vi.mock("../policy", () => ({
   customPresetOwnsNetworkPolicyKey: vi.fn(() => false),
   filterSetupPolicyPresets: vi.fn(),
   getAppliedPresets: vi.fn(() => []),
+  getPersonalSubsumedCustomPresetNames: vi.fn(async () => []),
   listCustomPresets: vi.fn(() => []),
   listSetupPolicyPresets: vi.fn(() => [
     { name: "npm" },
@@ -169,6 +170,48 @@ describe("onboarding policy application", () => {
       ).rejects.toThrow("live OpenShell policy does not confirm");
       expect(pendingSelection.clear).not.toHaveBeenCalled();
     } finally {
+      vi.mocked(policies.getAppliedPresets).mockResolvedValue([]);
+    }
+  });
+
+  it("records a Personal-normalized custom preset only in the first policy write", async () => {
+    const pendingSelection = { record: vi.fn(), hasPending: () => true, clear: vi.fn() };
+    const application = applicationWithPendingSelection(pendingSelection);
+    vi.mocked(policies.listCustomPresets).mockResolvedValue([
+      { name: "fixture-weather", file: "fixture-weather.yaml", description: "Custom weather" },
+    ]);
+    vi.mocked(policies.listSetupPolicyPresets).mockResolvedValue([
+      { name: "personal-open-internet", file: "personal.yaml", description: "Personal" },
+      { name: "fixture-weather", file: "fixture-weather.yaml", description: "Custom weather" },
+    ]);
+    vi.mocked(policies.getPersonalSubsumedCustomPresetNames).mockResolvedValue(["fixture-weather"]);
+    vi.mocked(policies.getAppliedPresets).mockResolvedValue(["personal-open-internet"]);
+    syncPresetSelection.mockResolvedValue(undefined);
+    try {
+      await expect(
+        application.setupPoliciesWithSelection("alpha", {
+          selectedPresets: ["personal-open-internet", "fixture-weather"],
+          tierName: "personal",
+        }),
+      ).resolves.toEqual(["personal-open-internet"]);
+      expect(pendingSelection.record).toHaveBeenCalledWith("alpha", "personal", [
+        "personal-open-internet",
+      ]);
+      expect(syncPresetSelection).toHaveBeenCalledWith(
+        "alpha",
+        ["personal-open-internet"],
+        ["personal-open-internet", "fixture-weather"],
+      );
+      expect(pendingSelection.clear).toHaveBeenCalledWith("alpha");
+    } finally {
+      vi.mocked(policies.listCustomPresets).mockResolvedValue([]);
+      vi.mocked(policies.listSetupPolicyPresets).mockResolvedValue([
+        { name: "npm", file: "npm.yaml", description: "npm" },
+        { name: "tavily", file: "tavily.yaml", description: "Tavily" },
+        { name: "weather", file: "weather.yaml", description: "Weather" },
+        { name: "personal-open-internet", file: "personal.yaml", description: "Personal" },
+      ]);
+      vi.mocked(policies.getPersonalSubsumedCustomPresetNames).mockResolvedValue([]);
       vi.mocked(policies.getAppliedPresets).mockResolvedValue([]);
     }
   });

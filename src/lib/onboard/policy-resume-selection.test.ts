@@ -105,6 +105,23 @@ describe("preparePolicyPresetResumeSelection web search reconciliation", () => {
     expect(result.livePolicyPresetsNeedUpdate).toBe(true);
   });
 
+  it("keeps pending deselections during disabled-channel cleanup", async () => {
+    const result = await preparePolicyPresetResumeSelection(
+      { policies: policies({ applied: ["slack", "npm", "pypi"] }) },
+      "alpha",
+      {
+        agent: "openclaw",
+        tierName: "balanced",
+        pendingPolicyPresets: ["npm", "openclaw-pricing"],
+        disabledChannels: ["slack"],
+        enabledChannels: [],
+        webSearchConfig: null,
+      },
+    );
+    expect(result.policyPresets).toEqual(["npm", "openclaw-pricing"]);
+    expect(result.livePolicyPresetsNeedUpdate).toBe(true);
+  });
+
   it("names the recovery action when a saved preset is no longer available", async () => {
     await expect(
       preparePolicyPresetResumeSelection({ policies: policies({ applied: [] }) }, "alpha", {

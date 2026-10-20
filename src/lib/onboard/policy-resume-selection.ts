@@ -157,11 +157,13 @@ export async function preparePolicyPresetResumeSelection(
     appliedPolicyPresetsForSupport,
     options.disabledChannels,
   );
-  policyPresets = mergeAppliedPolicyPresetsForDisabledMessagingCleanup(
-    policyPresets,
-    appliedPolicyPresetsForSupport,
-    options.disabledChannels,
-  );
+  if (options.pendingPolicyPresets == null) {
+    policyPresets = mergeAppliedPolicyPresetsForDisabledMessagingCleanup(
+      policyPresets,
+      appliedPolicyPresetsForSupport,
+      options.disabledChannels,
+    );
+  }
   policyPresets = mergeRequiredSetupPolicyPresets(policyPresets, {
     enabledChannels: options.enabledChannels,
     hermesToolGateways: options.hermesToolGateways,

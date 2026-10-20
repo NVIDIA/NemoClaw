@@ -477,6 +477,18 @@ async function setupPoliciesWithSelectionInner(
   const customPresetNames = new Set(
     (await deps.policies.listCustomPresets(sandboxName)).map((preset) => preset.name),
   );
+  const confirmedSelectionAfterPersonal = async (selected: string[]) => {
+    if (
+      !selected.includes(PERSONAL_OPEN_INTERNET_PRESET_NAME) ||
+      !selected.some((name) => customPresetNames.has(name))
+    ) {
+      return selected;
+    }
+    const subsumed = new Set(
+      await policies.getPersonalSubsumedCustomPresetNames(sandboxName, selected),
+    );
+    return selected.filter((name) => !subsumed.has(name));
+  };
   const customOwnsObservability =
     (await deps.policies.customPresetOwnsNetworkPolicyKey?.(
       sandboxName,
@@ -566,13 +578,14 @@ async function setupPoliciesWithSelectionInner(
     options.revalidateSandboxIdentity?.(
       `reapply selected policy presets to sandbox '${sandboxName}'`,
     );
-    deps.recordPendingSelection?.(sandboxName, requestedTierName, resumeSelection);
+    const confirmedSelection = await confirmedSelectionAfterPersonal(resumeSelection);
+    deps.recordPendingSelection?.(sandboxName, requestedTierName, confirmedSelection);
     await deps.syncPresetSelection(sandboxName, currentAppliedPresets, resumeSelection);
     await requireSandboxReady(deps, sandboxName, "after");
     deps.rememberAppliedTier?.(sandboxName, requestedTierName);
-    await deps.clearPendingSelection?.(sandboxName, resumeSelection);
-    if (onSelection) onSelection(resumeSelection);
-    return resumeSelection;
+    await deps.clearPendingSelection?.(sandboxName, confirmedSelection);
+    if (onSelection) onSelection(confirmedSelection);
+    return confirmedSelection;
   }
 
   const tierName = requestedTierName ?? (await deps.selectPolicyTier());
@@ -649,13 +662,14 @@ async function setupPoliciesWithSelectionInner(
         options.revalidateSandboxIdentity?.(
           `apply retained policy presets to sandbox '${sandboxName}'`,
         );
-        deps.recordPendingSelection?.(sandboxName, tierName, retainedPresets);
+        const confirmedSelection = await confirmedSelectionAfterPersonal(retainedPresets);
+        deps.recordPendingSelection?.(sandboxName, tierName, confirmedSelection);
         await deps.syncPresetSelection(sandboxName, currentAppliedPresets, retainedPresets);
         await requireSandboxReady(deps, sandboxName, "after");
         deps.rememberAppliedTier?.(sandboxName, tierName);
-        await deps.clearPendingSelection?.(sandboxName, retainedPresets);
-        if (onSelection) onSelection(retainedPresets);
-        return retainedPresets;
+        await deps.clearPendingSelection?.(sandboxName, confirmedSelection);
+        if (onSelection) onSelection(confirmedSelection);
+        return confirmedSelection;
       }
       deps.note("  [non-interactive] Skipping optional policy presets.");
       return personalTier ? retainedPresets : [];
@@ -739,13 +753,14 @@ async function setupPoliciesWithSelectionInner(
     options.revalidateSandboxIdentity?.(
       `apply non-interactive policy presets to sandbox '${sandboxName}'`,
     );
-    deps.recordPendingSelection?.(sandboxName, tierName, chosen);
+    const confirmedSelection = await confirmedSelectionAfterPersonal(chosen);
+    deps.recordPendingSelection?.(sandboxName, tierName, confirmedSelection);
     await deps.syncPresetSelection(sandboxName, currentAppliedPresets, chosen);
     await requireSandboxReady(deps, sandboxName, "after");
     deps.rememberAppliedTier?.(sandboxName, tierName);
-    await deps.clearPendingSelection?.(sandboxName, chosen);
-    if (onSelection) onSelection(chosen);
-    return chosen;
+    await deps.clearPendingSelection?.(sandboxName, confirmedSelection);
+    if (onSelection) onSelection(confirmedSelection);
+    return confirmedSelection;
   }
 
   const knownNames = new Set(allPresets.map((preset) => preset.name));
@@ -791,7 +806,8 @@ async function setupPoliciesWithSelectionInner(
     if (interactiveChoiceNames.has(preset.name)) accessByName[preset.name] = preset.access;
   }
   options.revalidateSandboxIdentity?.(`apply policy presets to sandbox '${sandboxName}'`);
-  deps.recordPendingSelection?.(sandboxName, tierName, interactiveChoice);
+  const confirmedSelection = await confirmedSelectionAfterPersonal(interactiveChoice);
+  deps.recordPendingSelection?.(sandboxName, tierName, confirmedSelection);
   await deps.syncPresetSelection(
     sandboxName,
     currentAppliedPresets,
@@ -800,7 +816,7 @@ async function setupPoliciesWithSelectionInner(
   );
   await requireSandboxReady(deps, sandboxName, "after");
   deps.rememberAppliedTier?.(sandboxName, tierName);
-  await deps.clearPendingSelection?.(sandboxName, interactiveChoice);
-  if (onSelection) onSelection(interactiveChoice);
-  return interactiveChoice;
+  await deps.clearPendingSelection?.(sandboxName, confirmedSelection);
+  if (onSelection) onSelection(confirmedSelection);
+  return confirmedSelection;
 }

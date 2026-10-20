@@ -50,6 +50,7 @@ import {
   inspectPolicyMutationContext,
   loadPresetForSandbox,
   getGatewayPresets,
+  getPersonalSubsumedCustomPresetNames,
   getPresetContentGatewayState,
   removePreset,
   restoreBaselineEntry,
@@ -115,6 +116,38 @@ describe("live OpenShell policy mutations", () => {
     );
     expect(await getGatewayPresets(sandboxName)).toEqual(["personal-open-internet"]);
     await expect(arePresetsCoveredByPersonalPolicy(sandboxName, ["weather"])).resolves.toBe(true);
+  });
+
+  it("identifies a live custom web preset that Personal will remove", async () => {
+    await applyPresetContent(sandboxName, "fixture-weather", preset, {
+      custom: { sourcePath: "/tmp/fixture-weather.yaml" },
+      nonFatal: true,
+    });
+    await expect(
+      getPersonalSubsumedCustomPresetNames(sandboxName, [
+        "personal-open-internet",
+        "fixture-weather",
+      ]),
+    ).resolves.toEqual(["fixture-weather"]);
+    await applyPresets(sandboxName, ["personal-open-internet"]);
+    expect(await getGatewayPresets(sandboxName)).toEqual(["personal-open-internet"]);
+  });
+
+  it("keeps a custom preset with non-web endpoints in pending confirmation", async () => {
+    const mixed = preset.replace(
+      "        port: 443",
+      "        port: 443\n      - host: wttr.in\n        port: 8443",
+    );
+    await applyPresetContent(sandboxName, "fixture-weather", mixed, {
+      custom: { sourcePath: "/tmp/fixture-weather.yaml" },
+      nonFatal: true,
+    });
+    await expect(
+      getPersonalSubsumedCustomPresetNames(sandboxName, [
+        "personal-open-internet",
+        "fixture-weather",
+      ]),
+    ).resolves.toEqual([]);
   });
 
   it("requires non-web endpoints even when Personal is active", async () => {
