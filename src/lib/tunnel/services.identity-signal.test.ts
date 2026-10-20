@@ -8,6 +8,7 @@ import {
   existsSync,
   mkdtempSync,
   readFileSync,
+  readlinkSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -114,15 +115,22 @@ describe("cloudflared identity-bound signaling", () => {
     "signals only the verified cloudflared process through a Linux pidfd",
     async () => {
       const executable = join(pidDir, "cloudflared");
-      copyFileSync("/bin/sleep", executable);
+      copyFileSync(process.execPath, executable);
       chmodSync(executable, 0o700);
-      const subprocess = childProcess.spawn(executable, ["20"], { stdio: "ignore" });
+      const subprocess = childProcess.spawn(executable, ["-e", "setInterval(() => {}, 1000)"], {
+        stdio: "ignore",
+      });
+      await new Promise<void>((resolveSpawn, reject) => {
+        subprocess.once("spawn", resolveSpawn);
+        subprocess.once("error", reject);
+      });
       const pid = subprocess.pid as number;
       const exited = new Promise<void>((resolveExit) =>
         subprocess.once("exit", () => resolveExit()),
       );
 
       try {
+        expect(readlinkSync(`/proc/${String(pid)}/exe`)).toBe(executable);
         expect(signalCloudflaredForPlatform(pid, "SIGTERM")).toBe("signaled");
         await exited;
         expect(existsSync(`/proc/${String(pid)}/status`)).toBe(false);
@@ -132,6 +140,7 @@ describe("cloudflared identity-bound signaling", () => {
         } catch {
           // The identity-bound signal already stopped the test-owned process.
         }
+        await exited;
       }
     },
   );

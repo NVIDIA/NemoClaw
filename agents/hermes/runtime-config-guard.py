@@ -54,6 +54,7 @@ OPENSHELL_SUPERVISOR_ARGV0 = b"/opt/openshell/bin/openshell-sandbox"
 # Keep this in parity with the generated config, environment, and hash files.
 # The integration test protects this separate in-image recovery boundary.
 SEALED_FILE_NAMES = ("config.yaml", ".env", ".config-hash")
+NATIVE_LOCAL_STARTUP_CONFIG = ".native-local-startup-config"
 RESTART_ORPHAN_MARKER_NAME = ".nemoclaw-hermes-restart-seal"
 STATE_WORKER_LEASE_SECONDS = 15 * 60
 HERMES_STARTUP_READY_FILE = "/run/nemoclaw/hermes-startup-ready"
@@ -1642,13 +1643,13 @@ def _reconcile_nonroot_startup_api_key_hash(
     hermes_meta: dict[str, int],
     file_states: dict[str, dict[str, object]],
 ) -> None:
-    """Advance strict trust across the one non-root startup mutation we permit.
+    """Advance strict trust across authenticated non-root startup mutations.
 
     OpenShell starts the Hermes entrypoint as ``sandbox``. That process must
     mint a per-sandbox API bearer token, but it cannot update the root-owned
-    strict hash. A later root config write may reconcile that exact append only
-    after the namespace has been frozen. Every other config or env difference
-    remains a hard refusal.
+    strict hash. Native local startup also refreshes three managed credential
+    slots. Its untrusted config preimage must match the strict digest and replay
+    exactly to the frozen current bytes. All other drift remains a refusal.
     """
 
     if not _managed_nonroot_reconciliation_is_allowed():
@@ -1687,21 +1688,30 @@ def _reconcile_nonroot_startup_api_key_hash(
         )
     if not secrets.compare_digest(actual_config_sha256, expected_config_sha256):
         raise UnsafePathError("Hermes config changed after the host read it; retry the command")
+    witness: tuple[str, FileSnapshot] | None = None
     if not secrets.compare_digest(actual_config_sha256, strict_config_sha256):
-        raise UnsafePathError(
-            "refusing config drift during non-root strict hash reconciliation"
+        config_text, read_snapshot = _read_text(config_path, MAX_CONFIG_INPUT_BYTES)
+        if read_snapshot != config_snapshot:
+            raise UnsafePathError("refusing raced Hermes config during strict reconciliation")
+        witness_path = os.path.join(hermes_dir, NATIVE_LOCAL_STARTUP_CONFIG)
+        _preimage, witness_snapshot = _prove_native_local_startup_config(
+            witness_path, config_text, strict_config_sha256, config_snapshot
         )
+        witness = (witness_path, witness_snapshot)
 
     env_text, env_read_snapshot = _read_text(env_path, MAX_ENV_BYTES)
     if env_read_snapshot != env_snapshot:
         raise UnsafePathError("refusing raced Hermes env during strict hash reconciliation")
-    prior_env_text = _without_single_generated_api_server_key(env_text)
     if not secrets.compare_digest(
-        hashlib.sha256(prior_env_text.encode("utf-8")).hexdigest(), strict_env_sha256
+        hashlib.sha256(env_text.encode("utf-8")).hexdigest(), strict_env_sha256
     ):
-        raise UnsafePathError(
-            "refusing non-API-key env drift during non-root strict hash reconciliation"
-        )
+        prior_env_text = _without_single_generated_api_server_key(env_text)
+        if not secrets.compare_digest(
+            hashlib.sha256(prior_env_text.encode("utf-8")).hexdigest(), strict_env_sha256
+        ):
+            raise UnsafePathError(
+                "refusing non-API-key env drift during non-root strict hash reconciliation"
+            )
 
     # Recheck both path snapshots immediately before the root-owned commit.
     # A writable descriptor retained before the namespace freeze must not race
@@ -1709,7 +1719,7 @@ def _reconcile_nonroot_startup_api_key_hash(
     for path, expected_snapshot in (
         (config_path, config_snapshot),
         (env_path, env_snapshot),
-    ):
+    ) + ((witness,) if witness is not None else ()):
         opened = _open_regular(path)
         try:
             if opened.snapshot != expected_snapshot:
@@ -1723,6 +1733,20 @@ def _reconcile_nonroot_startup_api_key_hash(
     # Advance the root-owned strict anchor last, then let the ordinary seal
     # verification and inode replacement path re-prove both anchors.
     _write_hash(hash_file, actual_text)
+    if witness is not None:
+        # Strict trust is already committed. A crash or failed unlink leaves
+        # an untrusted stale witness, never a reason to pretend rollback.
+        directory_fd = None
+        try:
+            directory_fd, basename = _open_parent_dir(witness[0])
+            _assert_current_snapshot(directory_fd, basename, witness[0], witness[1])
+            os.unlink(basename, dir_fd=directory_fd)
+            _fsync_directory_after_replace(directory_fd)
+        except (OSError, UnsafePathError):
+            print("[config] Retained stale native local startup witness after strict commit", file=sys.stderr)
+        finally:
+            if directory_fd is not None:
+                os.close(directory_fd)
 
 
 def _state_file_parent_is_safe(path: str) -> None:
@@ -2425,6 +2449,7 @@ def seal_restart(
     purpose: str = "restart-seal",
     mutation_lock_token: str | None = None,
     expected_config_sha256: str | None = None,
+    restored_native_local_candidate: bytes | None = None,
 ) -> bool:
     if purpose not in {"restart-seal", "config-write"}:
         raise UnsafePathError("refusing unsupported Hermes config transaction purpose")
@@ -2544,6 +2569,11 @@ def seal_restart(
         # Validate before creating replacement inodes. On mismatch the recovery
         # token restores both directory modes and leaves file paths untouched.
         compat_hash_path = os.path.join(hermes_dir, ".config-hash")
+        if restored_native_local_candidate is not None:
+            _adopt_restored_native_local_source(
+                hermes_dir, hash_file, state_file, expected_config_sha256,
+                restored_native_local_candidate, hermes_meta, file_states,
+            )
         try:
             _verify_strict_hash(hermes_dir, hash_file)
         except StrictHashMismatchError:
@@ -2616,6 +2646,8 @@ def seal_restart(
     except Exception:
         if state_created:
             try:
+                if _load_restart_state(state_file).get("phase") == "restored-native-local-adopting":
+                    raise UnsafePathError("restored Hermes source adoption requires recovery")
                 _restore_restart_seal(state_file, verify_hash=False)
             except Exception:
                 # Preserve the frozen root-owned state for explicit recovery
@@ -2640,6 +2672,8 @@ def unseal_restart(hermes_dir: str, state_file: str) -> None:
         raise UnsafePathError(
             "refusing restart unseal for a different Hermes directory"
         )
+    if state_data.get("phase") == "restored-native-local-adopting":
+        _recover_restored_native_local_source(state_file)
     if str(state_data.get("phase", "")).startswith("config-write"):
         _recover_config_write_transaction(hermes_dir, state_file)
     _restore_restart_seal(state_file, verify_hash=True)
@@ -2792,12 +2826,148 @@ def _validate_hermes_config_candidate(config_bytes: bytes) -> None:
         ) from exc
 
 
+def _recover_restored_native_local_source(state_file: str) -> None:
+    """Finish only the source bytes validated before the persisted adoption edge."""
+    state = _load_restart_state(state_file)
+    hermes_dir = str(state["hermes_dir"])
+    hash_file = str(state["hash_file"])
+    config_path = os.path.join(hermes_dir, "config.yaml")
+    env_path = os.path.join(hermes_dir, ".env")
+    expected_hash = state.get("restored_native_local_source_hash")
+    if not isinstance(expected_hash, str):
+        raise UnsafePathError("restored local source recovery has no validated digest")
+    _parse_config_hash(expected_hash, config_path, env_path)
+    parent_path, hermes_name = _split_path(hermes_dir)
+    parent_fd = _open_directory(parent_path)
+    hermes_fd = None
+    try:
+        if not _same_inode(os.fstat(parent_fd), state["parent"]):
+            raise UnsafePathError("restored Hermes parent changed before adoption")
+        hermes_fd = _open_child_directory(parent_fd, hermes_name, hermes_dir)
+        if not _same_inode(os.fstat(hermes_fd), state["hermes"]):
+            raise UnsafePathError("restored Hermes directory changed before adoption")
+        for name in ("config.yaml", ".env"):
+            opened = _open_regular(os.path.join(hermes_dir, name))
+            try:
+                if not _same_inode(os.fstat(opened.fd), state["files"][name]["original"]):
+                    raise UnsafePathError("restored Hermes source inode changed before adoption")
+            finally:
+                opened.close()
+        for anchor in (os.path.join(hermes_dir, ".config-hash"), hash_file):
+            current, _, _ = _hash_text(config_path, env_path)
+            if not secrets.compare_digest(current, expected_hash):
+                raise UnsafePathError("restored Hermes source bytes changed before adoption")
+            _write_hash(anchor, expected_hash)
+        _verify_strict_hash(hermes_dir, hash_file)
+        _verify_compat_hash(hash_file, os.path.join(hermes_dir, ".config-hash"))
+        state["phase"] = "locking"
+        state.pop("restored_native_local_source_hash", None)
+        _write_restart_state(state_file, state, create=False)
+    finally:
+        if hermes_fd is not None:
+            os.close(hermes_fd)
+        os.close(parent_fd)
+
+
+def _adopt_restored_native_local_source(
+    hermes_dir: str, hash_file: str, state_file: str,
+    expected_config_sha256: str | None, candidate_bytes: bytes,
+    hermes_meta: dict[str, int], file_states: dict[str, dict[str, object]],
+) -> None:
+    """Accept only a restored mutable source for an exact local-reference update.
+
+    The namespace is already frozen by seal_restart. General config writes keep
+    their strict-anchor requirement; this operation cannot change route or user
+    settings and must validate the restored environment before adopting it.
+    """
+    config_path = os.path.join(hermes_dir, "config.yaml")
+    env_path = os.path.join(hermes_dir, ".env")
+    source_text, config_snapshot = _read_text(config_path, MAX_CONFIG_INPUT_BYTES)
+    if not secrets.compare_digest(hashlib.sha256(source_text.encode("utf-8")).hexdigest(), expected_config_sha256 or ""):
+        raise UnsafePathError("Hermes config changed after the host read it; retry the command")
+    _validate_hermes_config_candidate(source_text.encode("utf-8"))
+    try:
+        source = yaml.safe_load(source_text)
+        candidate = yaml.safe_load(candidate_bytes)
+        upstream = source["_nemoclaw_upstream"]
+        provider = upstream["provider"]
+        model = source["model"]
+        managed = source["providers"][provider]
+        custom = source["custom_providers"]
+        matches = [entry for entry in custom if isinstance(entry, dict) and entry.get("name") == provider]
+        previous = model["api_key"]
+        reference = candidate["model"]["api_key"]
+        pattern = r"openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_NEMOCLAW_LOCAL_INFERENCE_TOKEN"
+        if (
+            provider not in {"ollama-local", "vllm-local", "llama-cpp-local", "compatible-endpoint"}
+            or upstream.get("provider_key") != provider
+            or model.get("provider") != "custom"
+            or upstream.get("model") != model.get("default")
+            or managed.get("default_model") != model.get("default")
+            or len(matches) != 1
+            or managed.get("api") != model.get("base_url")
+            or matches[0].get("base_url") != model.get("base_url")
+            or not isinstance(previous, str)
+            or (previous != "${NEMOCLAW_LOCAL_INFERENCE_TOKEN}" and re.fullmatch(pattern, previous) is None)
+            or managed.get("api_key") != previous
+            or matches[0].get("api_key") != previous
+            or not isinstance(reference, str)
+            or re.fullmatch(pattern, reference) is None
+        ):
+            raise ValueError("invalid managed local slots")
+        expected = {
+            **source,
+            "model": {**model, "api_key": reference},
+            "providers": {**source["providers"], provider: {**managed, "api_key": reference}},
+            "custom_providers": [
+                {**entry, "api_key": reference} if entry is matches[0] else entry
+                for entry in custom
+            ],
+        }
+        if json.dumps(expected, sort_keys=True, allow_nan=False) != json.dumps(candidate, sort_keys=True, allow_nan=False):
+            raise ValueError("candidate changed non-credential configuration")
+    except (AttributeError, KeyError, TypeError, ValueError, yaml.YAMLError) as exc:
+        raise UnsafePathError("restored Hermes write may change only its three native local credential slots") from exc
+    env_text, env_snapshot = _read_text(env_path, MAX_ENV_BYTES)
+    validator = "/usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py"
+    if os.path.abspath(__file__) != INSTALLED_RUNTIME_CONFIG_GUARD:
+        validator = os.path.join(os.path.dirname(os.path.abspath(__file__)), "validate-env-secret-boundary.py")
+    _validate_env_text_with_boundary(env_text, validator, isolated=True)
+    for path, expected_snapshot in ((config_path, config_snapshot), (env_path, env_snapshot)):
+        opened = _open_regular(path)
+        try:
+            if opened.snapshot != expected_snapshot:
+                raise UnsafePathError("restored Hermes inputs changed before source adoption")
+        finally:
+            opened.close()
+    try:
+        _verify_strict_hash(hermes_dir, hash_file)
+        _verify_compat_hash(hash_file, os.path.join(hermes_dir, ".config-hash"))
+        return
+    except StrictHashMismatchError:
+        pass
+    # The existing write-config readiness gate admits both supported supervisor
+    # topologies. Only the existing sandbox-owned mutable file posture may adopt
+    # restored bytes; matching anchors above need no special topology exception.
+    if not _mutable_nonroot_reconciliation_posture_is_allowed(hermes_meta, file_states):
+        raise UnsafePathError("restored local credential write requires mutable Hermes inputs")
+    state = _load_restart_state(state_file)
+    state["phase"] = "restored-native-local-adopting"
+    state["restored_native_local_source_hash"] = (
+        f"{hashlib.sha256(source_text.encode('utf-8')).hexdigest()}  {config_path}\n"
+        f"{hashlib.sha256(env_text.encode('utf-8')).hexdigest()}  {env_path}\n"
+    )
+    _write_restart_state(state_file, state, create=False)
+    _recover_restored_native_local_source(state_file)
+
+
 def write_config_transaction(
     hermes_dir: str,
     hash_file: str,
     state_file: str,
     expected_config_sha256: str,
     config_bytes: bytes,
+    restore_native_local_credential: bool = False,
 ) -> None:
     if not re.fullmatch(r"[0-9a-f]{64}", expected_config_sha256):
         raise UnsafePathError("write-config requires a valid expected config SHA-256")
@@ -2818,6 +2988,7 @@ def write_config_transaction(
         state_file,
         purpose="config-write",
         expected_config_sha256=expected_config_sha256,
+        restored_native_local_candidate=config_bytes if restore_native_local_credential else None,
     )
     committed = False
     try:
@@ -3003,7 +3174,7 @@ def _validate_runtime_plan_env_key(value: object, label: str) -> str:
 
 
 def _validate_env_text_with_boundary(
-    text: str, boundary_validator_path: str | None
+    text: str, boundary_validator_path: str | None, *, isolated: bool = False
 ) -> None:
     if not boundary_validator_path:
         raise UnsafePathError(
@@ -3011,7 +3182,7 @@ def _validate_env_text_with_boundary(
         )
     try:
         result = subprocess.run(
-            [sys.executable, boundary_validator_path, "env-text"],
+            [sys.executable, *(["-I"] if isolated else []), boundary_validator_path, "env-text"],
             input=text.encode("utf-8"),
             check=False,
             timeout=BOUNDARY_VALIDATOR_TIMEOUT_SECONDS,
@@ -3201,13 +3372,213 @@ def ensure_api_key(hermes_dir: str, hash_file: str, mode: str) -> None:
     print("minted=1" if minted else "updated=1")
 
 
+def _native_local_config_refresh_text(text: str, reference: str) -> str | None:
+    """Replay the three owned credential replacements without adopting drift."""
+    try:
+        config = yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        raise UnsafePathError("Hermes configuration is not valid YAML") from exc
+    if not isinstance(config, dict):
+        raise UnsafePathError("Hermes configuration must be a mapping")
+    upstream = config.get("_nemoclaw_upstream", {})
+    model = config.get("model", {})
+    if not isinstance(upstream, dict) or not isinstance(model, dict):
+        return
+    provider = upstream.get("provider")
+    if provider not in (
+        "ollama-local",
+        "vllm-local",
+        "llama-cpp-local",
+        "compatible-endpoint",
+    ):
+        return
+    env_key = "NEMOCLAW_LOCAL_INFERENCE_TOKEN"
+    template = "${" + env_key + "}"
+    current = model.get("api_key")
+    # Shared inference routes retain their proxy sentinel. Only the native
+    # route emitted by the managed policy owner consumes this runtime value.
+    if not isinstance(current, str) or (
+        current != template
+        and not (
+            current.startswith(SCOPED_PLACEHOLDER_PREFIX) and current.endswith(env_key)
+        )
+    ):
+        return
+    reference_pattern = rf"openshell:resolve:env:(?:v[0-9]{{1,20}}|s[a-f0-9]{{64}})_{env_key}"
+    if not re.fullmatch(reference_pattern, reference):
+        raise UnsafePathError(
+            "Hermes native local route requires a provider-bound credential handle"
+        )
+    providers = config.get("providers", {})
+    custom = config.get("custom_providers", [])
+    managed = providers.get(provider) if isinstance(providers, dict) else None
+    matches = (
+        [entry for entry in custom if isinstance(entry, dict) and entry.get("name") == provider]
+        if isinstance(custom, list)
+        else []
+    )
+    if (
+        upstream.get("provider_key") != provider
+        or model.get("provider") != "custom"
+        or not isinstance(managed, dict)
+        or len(matches) != 1
+        or managed.get("api_key") != current
+        or matches[0].get("api_key") != current
+        or managed.get("api") != model.get("base_url")
+        or matches[0].get("base_url") != model.get("base_url")
+        or (current != template and not re.fullmatch(reference_pattern, current))
+    ):
+        raise UnsafePathError(
+            "Hermes native local managed credential slots are inconsistent"
+        )
+    if current == reference:
+        return text
+    # YAML aliases can share these mappings with unrelated providers or MCP
+    # configuration. Replace only the owned slots, never mutate shared objects.
+    config["model"] = {**model, "api_key": reference}
+    config["providers"] = {**providers, provider: {**managed, "api_key": reference}}
+    config["custom_providers"] = [
+        {**entry, "api_key": reference} if entry is matches[0] else entry
+        for entry in custom
+    ]
+    updated_text = yaml.safe_dump(config, sort_keys=False)
+    _validate_hermes_config_candidate(updated_text.encode("utf-8"))
+    return updated_text
+
+
+def _read_native_local_startup_preimage(
+    witness_path: str, config_snapshot: FileSnapshot
+) -> tuple[str, FileSnapshot]:
+    text, snapshot = _read_text(witness_path, MAX_CONFIG_INPUT_BYTES)
+    if (
+        snapshot.mode != 0o600
+        or snapshot.uid != config_snapshot.uid
+        or snapshot.gid != config_snapshot.gid
+    ):
+        raise UnsafePathError("refusing unsafe native local startup config witness")
+    return text, snapshot
+
+
+def _native_local_startup_config_matches(
+    preimage: str,
+    current_text: str,
+    strict_config_sha256: str,
+) -> bool:
+    """Authenticate the original bytes before attempting a constrained replay."""
+    if not secrets.compare_digest(
+        hashlib.sha256(preimage.encode("utf-8")).hexdigest(), strict_config_sha256
+    ):
+        return False
+    try:
+        current = yaml.safe_load(current_text)
+        model = current.get("model") if isinstance(current, dict) else None
+        reference = model.get("api_key") if isinstance(model, dict) else None
+    except yaml.YAMLError as exc:
+        raise UnsafePathError("Hermes configuration is not valid YAML") from exc
+    if not isinstance(reference, str):
+        raise UnsafePathError("refusing invalid native local startup credential")
+    replayed = _native_local_config_refresh_text(preimage, reference)
+    return replayed is not None and replayed == current_text
+
+
+def _prove_native_local_startup_config(
+    witness_path: str,
+    current_text: str,
+    strict_config_sha256: str,
+    config_snapshot: FileSnapshot,
+) -> tuple[str, FileSnapshot]:
+    """Require a safe authenticated preimage and byte-exact current replay."""
+    try:
+        preimage, witness_snapshot = _read_native_local_startup_preimage(
+            witness_path, config_snapshot
+        )
+    except FileNotFoundError as exc:
+        raise UnsafePathError(
+            "refusing config drift during non-root strict hash reconciliation"
+        ) from exc
+    if not _native_local_startup_config_matches(
+        preimage, current_text, strict_config_sha256
+    ):
+        raise UnsafePathError("refusing config drift during non-root strict hash reconciliation")
+    return preimage, witness_snapshot
+
+
+def _record_native_local_startup_preimage(
+    hermes_dir: str, hash_file: str, text: str, snapshot: FileSnapshot
+) -> None:
+    config_path = os.path.join(hermes_dir, "config.yaml")
+    strict_text, strict_snapshot = _read_text(hash_file, MAX_HASH_BYTES)
+    strict_config_sha256, _env_sha256, _mcp_state = _parse_config_hash(
+        strict_text, config_path, os.path.join(hermes_dir, ".env")
+    )
+    witness_path = os.path.join(hermes_dir, NATIVE_LOCAL_STARTUP_CONFIG)
+    if not secrets.compare_digest(
+        hashlib.sha256(text.encode("utf-8")).hexdigest(), strict_config_sha256
+    ):
+        # Repeated fresh starts must retain the original strict preimage, not
+        # promote an intermediate supervisor's credential reference to trust.
+        try:
+            preimage, _witness_snapshot = _read_native_local_startup_preimage(
+                witness_path, snapshot
+            )
+        except FileNotFoundError:
+            return
+        if not _native_local_startup_config_matches(
+            preimage, text, strict_config_sha256
+        ):
+            # Mutable compat startup may preserve unrelated user edits. They
+            # confer no root trust: retain any old witness and let a later
+            # privileged config write refuse the unprovable drift.
+            return
+    else:
+        try:
+            _old_text, previous = _read_native_local_startup_preimage(
+                witness_path, snapshot
+            )
+        except FileNotFoundError:
+            previous = None
+        _atomic_replace(
+            witness_path, text.encode("utf-8"), expected=previous,
+            mode=0o600, uid=snapshot.uid, gid=snapshot.gid,
+        )
+    opened = _open_regular(hash_file)
+    try:
+        if opened.snapshot != strict_snapshot:
+            raise UnsafePathError("refusing raced native local startup strict anchor")
+    finally:
+        opened.close()
+
+
+def _refresh_native_local_config(hermes_dir: str, hash_file: str, mode: str) -> None:
+    """Materialize only the managed local route from a fresh supervisor env.
+
+    An internal gateway relaunch must not call this: its parent environment can
+    predate a host model switch that already wrote a newer issued reference.
+    """
+    config_path = os.path.join(hermes_dir, "config.yaml")
+    text, snapshot = _read_text(config_path, MAX_CONFIG_INPUT_BYTES)
+    updated_text = _native_local_config_refresh_text(
+        text, os.environ.get("NEMOCLAW_LOCAL_INFERENCE_TOKEN", "")
+    )
+    if updated_text is None or updated_text == text:
+        return
+    if mode == "compat":
+        _record_native_local_startup_preimage(hermes_dir, hash_file, text, snapshot)
+    _write_existing(config_path, updated_text, snapshot)
+    refresh_hashes(hermes_dir, hash_file, mode)
+    print("[config] Refreshed Hermes native local credential reference", file=sys.stderr)
+
+
 def provider_placeholders(
     hermes_dir: str,
     hash_file: str,
     mode: str,
     runtime_plan_path: str | None,
     boundary_validator_path: str | None,
+    refresh_native_local: bool = False,
 ) -> None:
+    if refresh_native_local:
+        _refresh_native_local_config(hermes_dir, hash_file, mode)
     env_path = os.path.join(hermes_dir, ".env")
     if not os.path.exists(env_path):
         return
@@ -3310,12 +3681,18 @@ def main() -> int:
     parser.add_argument("--expected-config-sha256", default="")
     parser.add_argument("--lock-token", default="")
     parser.add_argument("--startup-owner", action="store_true")
+    parser.add_argument("--refresh-native-local", action="store_true")
+    parser.add_argument("--restore-native-local-credential", action="store_true")
     parser.add_argument("--mcp-state-exit-code", action="store_true")
     args = parser.parse_args()
 
     previous_alarm_handler = signal.signal(signal.SIGALRM, _deadline_expired)
     signal.alarm(GUARD_DEADLINE_SECONDS)
     try:
+        if args.restore_native_local_credential and args.action != "write-config":
+            raise UnsafePathError("--restore-native-local-credential requires write-config")
+        if args.refresh_native_local and args.action != "provider-placeholders":
+            raise UnsafePathError("--refresh-native-local requires provider-placeholders")
         if args.mcp_state_exit_code and args.action != "inspect-mcp-integrity":
             raise UnsafePathError(
                 "--mcp-state-exit-code requires inspect-mcp-integrity"
@@ -3372,6 +3749,7 @@ def main() -> int:
                 args.mode,
                 args.runtime_plan,
                 args.boundary_validator,
+                args.refresh_native_local,
             )
         elif args.action == "publish-startup-ready":
             publish_startup_ready()
@@ -3419,6 +3797,7 @@ def main() -> int:
                 args.state_file,
                 args.expected_config_sha256,
                 config_bytes,
+                restore_native_local_credential=args.restore_native_local_credential,
             )
             print("updated=1")
         elif args.action == "recover-prestate-lock":

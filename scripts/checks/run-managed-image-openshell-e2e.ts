@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
@@ -9,7 +10,12 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { reserveCreateSandboxHermesApiPort, resolveAgent } from "../../src/lib/agent/onboard.ts";
 import type { OpenShellForwardPortObserver } from "../../src/lib/onboard/dashboard-port.ts";
-import { parseOpenShellSandboxId } from "../../src/lib/adapters/openshell/sandbox-identity.ts";
+import {
+  isOpenShellSandboxId,
+  NEMOCLAW_CREATE_ATTEMPT_LABEL,
+  parseOpenShellSandboxId,
+  resolveCreatedOpenShellSandboxId,
+} from "../../src/lib/adapters/openshell/sandbox-identity.ts";
 import { createCliOpenShellSandboxCommandExecutor } from "../../src/lib/adapters/openshell/sandbox-command-cli.ts";
 import { createCliOpenShellSandboxObserverFromRunner } from "../../src/lib/adapters/openshell/sandbox-observer-cli.ts";
 import { isValidName, NAME_ALLOWED_FORMAT } from "../../src/lib/name-validation.ts";
@@ -99,6 +105,457 @@ export type ManagedImageOpenShellE2eInputs = {
   failureInjection?: "bootstrap-completion";
 };
 
+export type ManagedImageOpenShellRecoveryScope = {
+  readonly owner: string;
+  readonly stateDir: string;
+  readonly networkName: string;
+};
+
+function recoveryIdentity(input: Inputs, scope: ManagedImageOpenShellRecoveryScope): string {
+  if (
+    !/^llama-cpp-dgx-spark-[1-9][0-9]*-[1-9][0-9]*$/u.test(scope.owner) ||
+    scope.networkName !== `nemoclaw-managed-${scope.owner}` ||
+    !path.isAbsolute(scope.stateDir) ||
+    path.basename(scope.stateDir) !== "managed-openshell" ||
+    path.basename(path.dirname(scope.stateDir)) !== scope.owner ||
+    fs.realpathSync(path.dirname(scope.stateDir)) !== path.dirname(scope.stateDir)
+  )
+    throw new Error("invalid managed qualification recovery scope");
+  return JSON.stringify({
+    kind: "managed-qualification-owner-v2",
+    input: {
+      agent: input.agent,
+      image: input.image,
+      sandbox: input.sandbox,
+      localProvider: input.localProvider,
+      model: input.model,
+      gpu: input.gpu,
+    },
+    scope,
+  });
+}
+
+export function prepareManagedImageOpenShellState(
+  input: Inputs,
+  scope?: ManagedImageOpenShellRecoveryScope,
+): { stateDir: string; networkName: string } {
+  if (!scope)
+    return {
+      stateDir: fs.mkdtempSync(
+        path.join(process.env.RUNNER_TEMP || os.tmpdir(), "nemoclaw-managed-openshell-"),
+      ),
+      networkName: `nemoclaw-managed-pr-${process.pid}-${Date.now().toString(36)}`,
+    };
+  const marker = recoveryIdentity(input, scope);
+  fs.mkdirSync(scope.stateDir, { mode: 0o700 });
+  fs.writeFileSync(path.join(scope.stateDir, "qualification-owner.json"), marker, {
+    flag: "wx",
+    mode: 0o600,
+  });
+  return { stateDir: scope.stateDir, networkName: scope.networkName };
+}
+
+function readManagedRecoveryRecord(file: string): string {
+  const descriptor = fs.openSync(
+    file,
+    fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
+  );
+  try {
+    const marker = fs.fstatSync(descriptor);
+    if (!marker.isFile() || marker.size > 8192)
+      throw new Error("managed recovery identity mismatch");
+    const buffer = Buffer.alloc(8193);
+    let bytes = 0;
+    while (bytes < buffer.length) {
+      const count = fs.readSync(descriptor, buffer, bytes, buffer.length - bytes, bytes);
+      if (count === 0) break;
+      bytes += count;
+    }
+    if (bytes > 8192) throw new Error("managed recovery identity mismatch");
+    return buffer.subarray(0, bytes).toString("utf8");
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
+function requireManagedRecoveryOwner(
+  input: Inputs,
+  scope: ManagedImageOpenShellRecoveryScope,
+): void {
+  if (
+    readManagedRecoveryRecord(path.join(scope.stateDir, "qualification-owner.json")) !==
+    recoveryIdentity(input, scope)
+  )
+    throw new Error("managed recovery identity mismatch");
+}
+
+function optionalManagedRecoveryRecord(file: string): string | null {
+  try {
+    return readManagedRecoveryRecord(file);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+function recordManagedRecoverySandbox(
+  input: Inputs,
+  scope: ManagedImageOpenShellRecoveryScope,
+  nonce: string,
+  sandboxId: string,
+): void {
+  fs.writeFileSync(
+    path.join(scope.stateDir, "qualification-sandbox.json"),
+    JSON.stringify({
+      kind: "managed-qualification-sandbox-v1",
+      owner: scope.owner,
+      sandbox: input.sandbox,
+      sandboxId,
+      createAttemptNonce: nonce,
+    }),
+    { flag: "wx", mode: 0o600 },
+  );
+}
+
+function managedSandboxDeletedIdentity(
+  input: Inputs,
+  scope: ManagedImageOpenShellRecoveryScope,
+  nonce: string,
+  sandboxId: string,
+): string {
+  return JSON.stringify({
+    kind: "managed-qualification-sandbox-deleted-v1",
+    owner: scope.owner,
+    sandbox: input.sandbox,
+    sandboxId,
+    createAttemptNonce: nonce,
+  });
+}
+
+function confirmManagedSandboxAbsent(
+  onboard: Pick<OnboardModule, "runCaptureOpenshell">,
+  nonce: string,
+): void {
+  const output = onboard.runCaptureOpenshell(
+    [
+      "sandbox",
+      "list",
+      "-g",
+      GATEWAY_NAME,
+      "--selector",
+      `${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${nonce}`,
+      "--output",
+      "json",
+      "--limit",
+      "2",
+    ],
+    { ignoreError: false, timeout: 30000, maxBuffer: 1024 * 1024 },
+  );
+  const rows: unknown = JSON.parse(output);
+  if (!Array.isArray(rows) || rows.length !== 0)
+    throw new Error("managed recovery sandbox absence is unproven");
+}
+
+export function createManagedImageSandboxWithRecovery(
+  input: Inputs,
+  scope: ManagedImageOpenShellRecoveryScope | undefined,
+  onboard: Pick<OnboardModule, "runCaptureOpenshell">,
+  create: ReturnType<typeof createManagedImageSandboxWithDiagnostics>,
+): ReturnType<typeof createManagedImageSandboxWithDiagnostics> {
+  if (!scope) return create;
+  let submitted = false;
+  return async (request, options) => {
+    requireManagedRecoveryOwner(input, scope);
+    if (
+      submitted ||
+      request.sandboxName !== input.sandbox ||
+      request.target.kind !== "named" ||
+      request.target.gatewayName !== GATEWAY_NAME ||
+      request.source.reference !== input.image
+    )
+      throw new Error("managed recovery create authority mismatch");
+    const nonce =
+      request.labels?.[NEMOCLAW_CREATE_ATTEMPT_LABEL] ?? randomBytes(31).toString("hex");
+    if (!/^[a-f0-9]{62}$/u.test(nonce))
+      throw new Error("managed recovery create identity mismatch");
+    submitted = true;
+    fs.writeFileSync(
+      path.join(scope.stateDir, "qualification-attempt.json"),
+      JSON.stringify({
+        kind: "managed-qualification-attempt-v1",
+        owner: scope.owner,
+        sandbox: input.sandbox,
+        createAttemptNonce: nonce,
+      }),
+      { flag: "wx", mode: 0o600 },
+    );
+    const result = await create(
+      {
+        ...request,
+        labels: { ...request.labels, [NEMOCLAW_CREATE_ATTEMPT_LABEL]: nonce },
+      },
+      options,
+    );
+    if (result.status === 0 && !result.ambiguous) {
+      const sandboxId = resolveCreatedOpenShellSandboxId({
+        sandboxName: input.sandbox,
+        gatewayName: GATEWAY_NAME,
+        createAttemptNonce: nonce,
+        runCaptureOpenshell: (args, captureOptions) =>
+          onboard.runCaptureOpenshell(args, {
+            ...captureOptions,
+            env: request.environment,
+          }),
+      });
+      recordManagedRecoverySandbox(input, scope, nonce, sandboxId);
+    }
+    return result;
+  };
+}
+
+function removeManagedImageSandbox(
+  input: Inputs,
+  onboard: Pick<OnboardModule, "runOpenshell" | "runCaptureOpenshell" | "openshellArgv">,
+  scope?: ManagedImageOpenShellRecoveryScope,
+): string[] {
+  try {
+    let deletionIdentity: { nonce: string; sandboxId: string } | null = null;
+    if (scope) {
+      requireManagedRecoveryOwner(input, scope);
+      const attemptSource = optionalManagedRecoveryRecord(
+        path.join(scope.stateDir, "qualification-attempt.json"),
+      );
+      const source = optionalManagedRecoveryRecord(
+        path.join(scope.stateDir, "qualification-sandbox.json"),
+      );
+      const deletedSource = optionalManagedRecoveryRecord(
+        path.join(scope.stateDir, "qualification-sandbox-deleted.json"),
+      );
+      if (attemptSource === null) {
+        if (source !== null || deletedSource !== null)
+          throw new Error("managed recovery attempt authority is missing");
+        return [];
+      }
+      const attempt = JSON.parse(attemptSource) as Record<string, unknown>;
+      if (
+        attempt.kind !== "managed-qualification-attempt-v1" ||
+        attempt.owner !== scope.owner ||
+        attempt.sandbox !== input.sandbox ||
+        typeof attempt.createAttemptNonce !== "string" ||
+        !/^[a-f0-9]{62}$/u.test(attempt.createAttemptNonce) ||
+        attemptSource !==
+          JSON.stringify({
+            kind: attempt.kind,
+            owner: attempt.owner,
+            sandbox: attempt.sandbox,
+            createAttemptNonce: attempt.createAttemptNonce,
+          })
+      )
+        throw new Error("managed recovery attempt authority is unproven");
+      const record = source === null ? null : (JSON.parse(source) as Record<string, unknown>);
+      if (
+        source !== null &&
+        (!record ||
+          record.kind !== "managed-qualification-sandbox-v1" ||
+          record.owner !== scope.owner ||
+          record.sandbox !== input.sandbox ||
+          !isOpenShellSandboxId(record.sandboxId) ||
+          record.createAttemptNonce !== attempt.createAttemptNonce ||
+          source !==
+            JSON.stringify({
+              kind: record.kind,
+              owner: record.owner,
+              sandbox: record.sandbox,
+              sandboxId: record.sandboxId,
+              createAttemptNonce: record.createAttemptNonce,
+            }))
+      )
+        throw new Error("managed recovery sandbox identity is unproven");
+      if (deletedSource !== null) {
+        if (
+          source === null ||
+          deletedSource !==
+            managedSandboxDeletedIdentity(
+              input,
+              scope,
+              attempt.createAttemptNonce,
+              record!.sandboxId as string,
+            )
+        )
+          throw new Error("managed recovery deleted sandbox identity is unproven");
+        return [];
+      }
+      const currentId = resolveCreatedOpenShellSandboxId({
+        sandboxName: input.sandbox,
+        gatewayName: GATEWAY_NAME,
+        createAttemptNonce: attempt.createAttemptNonce,
+        runCaptureOpenshell: onboard.runCaptureOpenshell,
+      });
+      const expectedId = record?.sandboxId ?? currentId;
+      if (source === null)
+        recordManagedRecoverySandbox(input, scope, attempt.createAttemptNonce, currentId);
+      deletionIdentity = { nonce: attempt.createAttemptNonce, sandboxId: expectedId as string };
+      const named = onboard.runOpenshell(["sandbox", "get", "-g", GATEWAY_NAME, input.sandbox], {
+        ignoreError: true,
+        env: process.env,
+        timeout: 15000,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      if (
+        currentId !== expectedId ||
+        named.status !== 0 ||
+        parseOpenShellSandboxId(String(named.stdout ?? "")) !== expectedId
+      )
+        throw new Error("managed recovery sandbox identity changed; inspection is required");
+    }
+    const deletion = commandResult(
+      onboard.openshellArgv([
+        "sandbox",
+        "delete",
+        ...(scope ? ["-g", GATEWAY_NAME] : []),
+        input.sandbox,
+      ]),
+      process.env,
+      15000,
+    );
+    if (scope) {
+      if (deletion.status !== 0 || deletion.error)
+        throw new Error("managed-image recovery could not verify sandbox deletion");
+      if (!deletionIdentity) throw new Error("managed recovery sandbox identity is unproven");
+      confirmManagedSandboxAbsent(onboard, deletionIdentity.nonce);
+      fs.writeFileSync(
+        path.join(scope.stateDir, "qualification-sandbox-deleted.json"),
+        managedSandboxDeletedIdentity(
+          input,
+          scope,
+          deletionIdentity.nonce,
+          deletionIdentity.sandboxId,
+        ),
+        { flag: "wx", mode: 0o600 },
+      );
+    }
+    return [];
+  } catch {
+    return ["managed recovery sandbox identity or deletion is unproven; inspection is required"];
+  }
+}
+
+export async function cleanupInterruptedManagedImageOpenShellE2e(
+  input: Inputs,
+  scope: ManagedImageOpenShellRecoveryScope,
+): Promise<void> {
+  recoveryIdentity(input, scope);
+  if (!fs.existsSync(scope.stateDir)) return;
+  const state = fs.lstatSync(scope.stateDir);
+  if (
+    !state.isDirectory() ||
+    state.isSymbolicLink() ||
+    fs.realpathSync(scope.stateDir) !== scope.stateDir
+  )
+    throw new Error("managed recovery state directory is not owned");
+  requireManagedRecoveryOwner(input, scope);
+  const previousEnvironment = { ...process.env };
+  Object.assign(process.env, {
+    NEMOCLAW_NON_INTERACTIVE: "1",
+    NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: path.join(scope.stateDir, "gateway-state"),
+    NEMOCLAW_GATEWAY_PORT: String(GATEWAY_PORT),
+    OPENSHELL_DOCKER_NETWORK_NAME: scope.networkName,
+    XDG_CONFIG_HOME: path.join(scope.stateDir, "xdg-config"),
+    XDG_DATA_HOME: path.join(scope.stateDir, "xdg-data"),
+    XDG_STATE_HOME: path.join(scope.stateDir, "xdg-state"),
+    PATH: `${path.join(os.homedir(), ".local", "bin")}:${process.env.PATH ?? ""}`,
+  });
+  try {
+    const onboard = resolveManagedImageOnboardModule(await import("../../src/lib/onboard.ts"));
+    const sandboxFailures = removeManagedImageSandbox(input, onboard, scope);
+    if (sandboxFailures.length) throw new Error(sandboxFailures.join("; "));
+    const gatewayStop = stopHostGatewayProcesses(
+      {},
+      {
+        clearRuntimeFiles: false,
+        openShellGatewayName: GATEWAY_NAME,
+        openShellGatewayPort: GATEWAY_PORT,
+        scopedGatewayStop: true,
+        stateDir: path.join(scope.stateDir, "gateway-state"),
+        usePgrepFallback: false,
+      },
+    );
+    if (gatewayStop.failed.length || gatewayStop.ownershipFailures?.length)
+      throw new Error("managed recovery gateway ownership or termination is unproven");
+    const removeGateway = commandResult(
+      onboard.openshellArgv(["gateway", "remove", GATEWAY_NAME]),
+      process.env,
+      15000,
+    );
+    const gatewayAlreadyAbsent =
+      removeGateway.status === 1 &&
+      !removeGateway.error &&
+      (/(?:^|\n)\s*(?:Error:\s*)?(?:×\s*)?No gateway metadata found for 'nemoclaw'\./iu.test(
+        String(removeGateway.stderr ?? ""),
+      ) ||
+        /^(?:Error:\s*)?(?:gateway ["']?nemoclaw["']? (?:not found|does not exist)|no such gateway:?[\s"']*nemoclaw)$/iu.test(
+          String(removeGateway.stderr ?? "").trim(),
+        ));
+    if (removeGateway.status !== 0 && !gatewayAlreadyAbsent)
+      throw new Error("managed recovery gateway removal failed");
+    const containers = exactHarnessContainerIds(input, scope.networkName, process.env);
+    if (containers.exactIds.length > 1)
+      throw new Error("managed recovery container identity is ambiguous");
+    if (containers.exactIds.length === 1) {
+      commandResult(["docker", "rm", "--force", containers.exactIds[0]!], process.env, 15000);
+      if (exactHarnessContainerIds(input, scope.networkName, process.env).exactIds.length !== 0)
+        throw new Error("managed recovery container cleanup is unproven");
+    }
+    const provider = createDockerRuntimeProviderBundle();
+    const roots = qualificationManagedStateRoots(
+      onboard.managedWorkloadOnboard.managedStartupStateRoots({
+        agent: input.agent,
+        sandboxName: input.sandbox,
+        agentIdentity: managedImageRuntimeIdentity(input.agent),
+      }),
+      scope.owner,
+    );
+    const failures = cleanupProtectedManagedStateVolumes({
+      onboard,
+      runtimeProvider: provider,
+      roots,
+      scope: null,
+      committed: true,
+    });
+    if (failures.length) throw new Error("managed recovery volume cleanup is unproven");
+    commandResult(["docker", "network", "rm", scope.networkName], process.env, 15000);
+    const network = commandResult(
+      ["docker", "network", "inspect", scope.networkName],
+      process.env,
+      15000,
+    );
+    const escapedNetwork = scope.networkName.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+    const absentNetwork = new RegExp(
+      `^(?:Error(?: response from daemon)?:\\s*)?(?:No such (?:network|object): ${escapedNetwork}|network ${escapedNetwork} not found)$`,
+      "iu",
+    );
+    if (
+      network.error ||
+      network.status !== 1 ||
+      !absentNetwork.test(String(network.stderr ?? "").trim())
+    )
+      throw new Error("managed recovery network cleanup is unproven");
+    if (
+      !removeManagedImageGatewayStateIfSafe(
+        scope.stateDir,
+        gatewayStop,
+        gatewayAlreadyAbsent ? 0 : removeGateway.status,
+      )
+    )
+      throw new Error("managed recovery state removal is unproven");
+  } finally {
+    for (const key of Object.keys(process.env)) {
+      if (!Object.hasOwn(previousEnvironment, key)) delete process.env[key];
+    }
+    Object.assign(process.env, previousEnvironment);
+  }
+}
+
 export type ManagedImageOpenShellE2eProbeResult = {
   readonly status: number | null;
   readonly stdout: string;
@@ -140,6 +597,21 @@ type ProtectedManagedStateRoot = {
   readonly mode: number;
   readonly readWrite: boolean;
 };
+
+function qualificationManagedStateRoots(
+  roots: readonly ProtectedManagedStateRoot[],
+  owner?: string,
+): readonly ProtectedManagedStateRoot[] {
+  return owner
+    ? roots.map((root) => ({
+        ...root,
+        ownershipLabels: {
+          ...root.ownershipLabels,
+          "io.nvidia.nemoclaw.qualification-owner": owner,
+        },
+      }))
+    : roots;
+}
 
 type ProtectedManagedStateVolumeMount = {
   readonly type: "volume";
@@ -185,7 +657,11 @@ type OnboardModule = {
     managedStartupWorkspaceRoot(input: {
       readonly agent: ShippedManagedImageAgent;
       readonly agentIdentity: { readonly uid: number; readonly gid: number };
-    }): { readonly uid: number; readonly gid: number; readonly mode: 0o755 | 0o1775 };
+    }): {
+      readonly uid: number;
+      readonly gid: number;
+      readonly mode: 0o755 | 0o1775;
+    };
     prepareManagedStateVolumes(
       input: { readonly roots: readonly ProtectedManagedStateRoot[] },
       deps: { readonly runtimeProvider: RuntimeProviderBundle },
@@ -381,6 +857,42 @@ function commandDetail(result: ManagedImageCommandResult): string {
     .slice(-8_000);
 }
 
+function printExactContainerFailureState(containerId: string | null, env: NodeJS.ProcessEnv): void {
+  if (!containerId || !/^[a-f0-9]{64}$/u.test(containerId)) return;
+  const state = commandResult(
+    [
+      "docker",
+      "container",
+      "inspect",
+      "--format",
+      "{{.State.Status}} {{.State.ExitCode}} {{.State.OOMKilled}}",
+      containerId,
+    ],
+    env,
+    5_000,
+  );
+  console.error(
+    `Managed-image exact container state: ${managedImageFailureDetail(commandDetail(state))}`,
+  );
+  const processState = commandResult(
+    [
+      "docker",
+      "exec",
+      "--user",
+      "sandbox",
+      containerId,
+      "/bin/sh",
+      "-c",
+      "printf 'pid1='; cat /proc/1/comm; printf 'processes='; ps -eo comm= | head -n 60; printf 'memory-events='; cat /sys/fs/cgroup/memory.events",
+    ],
+    env,
+    5_000,
+  );
+  console.error(
+    `Managed-image exact container processes: ${managedImageFailureDetail(commandDetail(processState))}`,
+  );
+}
+
 function isDockerNotFound(result: ManagedImageCommandResult): boolean {
   return (
     result.status !== 0 &&
@@ -392,8 +904,11 @@ export function removeManagedImageGatewayStateIfSafe(
   stateDir: string,
   gatewayStop: Pick<StopHostGatewayResult, "failed" | "ownershipFailures">,
   gatewayRemovalStatus: number | null,
+  cleanupErrors: readonly string[] = [],
+  retainRecoveryErrors = true,
 ): boolean {
   if (
+    (retainRecoveryErrors && cleanupErrors.length > 0) ||
     gatewayStop.failed.length > 0 ||
     (gatewayStop.ownershipFailures?.length ?? 0) > 0 ||
     gatewayRemovalStatus !== 0
@@ -1002,7 +1517,10 @@ function parseImmutableManifestReference(image: string): {
   if (!match?.[1] || !match[2]) {
     throw new Error("--image must be an immutable repository@sha256 manifest reference");
   }
-  return { repository: match[1], manifestDigest: match[2] as `sha256:${string}` };
+  return {
+    repository: match[1],
+    manifestDigest: match[2] as `sha256:${string}`,
+  };
 }
 
 function resolveLocalImageContentId(
@@ -1023,15 +1541,18 @@ function resolveLocalImageContentId(
 async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = never>(
   input: Inputs,
   afterLocalInference?: (context: ManagedImageOpenShellE2eProbeContext) => Promise<T> | T,
+  recoveryScope?: ManagedImageOpenShellRecoveryScope,
+  maximumOutputTokens?: number,
 ): Promise<ManagedImageOpenShellE2eResult<T>> {
-  const stateParent = process.env.RUNNER_TEMP || os.tmpdir();
-  const stateDir = fs.mkdtempSync(path.join(stateParent, "nemoclaw-managed-openshell-"));
-  const networkName = `nemoclaw-managed-pr-${process.pid}-${Date.now().toString(36)}`;
+  const { stateDir, networkName } = prepareManagedImageOpenShellState(input, recoveryScope);
+  // Qualification ownership records live in stateDir. OpenShell needs an empty
+  // child directory so it can establish its own managed gateway ownership marker.
+  const gatewayStateDir = path.join(stateDir, "gateway-state");
   const previousEnvironment = Object.fromEntries(
     MANAGED_IMAGE_E2E_ENVIRONMENT_KEYS.map((key) => [key, process.env[key]]),
   ) as Record<(typeof MANAGED_IMAGE_E2E_ENVIRONMENT_KEYS)[number], string | undefined>;
   process.env.NEMOCLAW_NON_INTERACTIVE = "1";
-  process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR = stateDir;
+  process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR = gatewayStateDir;
   process.env.NEMOCLAW_GATEWAY_PORT = String(GATEWAY_PORT);
   process.env.NEMOCLAW_DOCKER_GPU_SUPERVISOR_RECONNECT_TIMEOUT = "240";
   process.env.OPENSHELL_DOCKER_NETWORK_NAME = networkName;
@@ -1085,6 +1606,7 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
             baseProfile,
             resolveManagedImageLocalInferenceRoute(input.localProvider),
             input.model,
+            maximumOutputTokens,
           )
         : baseProfile;
     const profile = encodeManagedStartupProfile(protectedProfile);
@@ -1106,11 +1628,14 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
     const selectedRuntimeProvider = createDockerRuntimeProviderBundle();
     runtimeProvider = selectedRuntimeProvider;
     const agentIdentity = managedImageRuntimeIdentity(input.agent);
-    managedStateRoots = onboard.managedWorkloadOnboard.managedStartupStateRoots({
-      agent: input.agent,
-      sandboxName: input.sandbox,
-      agentIdentity,
-    });
+    managedStateRoots = qualificationManagedStateRoots(
+      onboard.managedWorkloadOnboard.managedStartupStateRoots({
+        agent: input.agent,
+        sandboxName: input.sandbox,
+        agentIdentity,
+      }),
+      recoveryScope?.owner,
+    );
     managedStateVolumeScope = onboard.managedWorkloadOnboard.prepareManagedStateVolumes(
       { roots: managedStateRoots },
       { runtimeProvider: selectedRuntimeProvider },
@@ -1244,9 +1769,14 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
         },
         {
           commandExecutor,
-          createSandbox: createManagedImageSandboxWithDiagnostics(
-            onboard.runOpenshell,
-            () => onboard!.openshellArgv([])[0],
+          createSandbox: createManagedImageSandboxWithRecovery(
+            input,
+            recoveryScope,
+            onboard,
+            createManagedImageSandboxWithDiagnostics(
+              onboard.runOpenshell,
+              () => onboard!.openshellArgv([])[0],
+            ),
           ),
           runOpenshell: onboard.runOpenshell,
           runCaptureOpenshell: onboard.runCaptureOpenshell,
@@ -1351,7 +1881,7 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
     hasPrimaryError = true;
     const diagnostics = [
       ...(onboard ? [onboard.openshellArgv(["sandbox", "get", input.sandbox])] : []),
-      ["tail", "-n", "80", path.join(stateDir, "openshell-gateway.log")],
+      ["tail", "-n", "80", path.join(gatewayStateDir, "openshell-gateway.log")],
     ];
     for (const argv of diagnostics) {
       const result = commandResult(argv, process.env, 5_000);
@@ -1359,6 +1889,7 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
         `Managed-image failure evidence: ${managedImageFailureDetail(`${result.stdout ?? ""}\n${result.stderr ?? ""}`)}`,
       );
     }
+    printExactContainerFailureState(ownedContainerId, process.env);
   } finally {
     process.exit = exit;
     try {
@@ -1368,139 +1899,155 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
         `Hermes API port reservation cleanup failed: ${managedImageFailureDetail(error)}`,
       );
     }
-    if (onboard) {
-      commandResult(
-        onboard.openshellArgv(["sandbox", "delete", input.sandbox]),
+    const cleanupManagedRuntime = async () => {
+      if (recoveryScope) {
+        initialSandboxPolicy?.cleanup?.();
+        await cleanupInterruptedManagedImageOpenShellE2e(input, recoveryScope);
+        return;
+      }
+      if (onboard) {
+        cleanupErrors.push(...removeManagedImageSandbox(input, onboard));
+      }
+      const gatewayStop = stopHostGatewayProcesses(
+        {},
+        {
+          clearRuntimeFiles: false,
+          openShellGatewayName: "nemoclaw",
+          openShellGatewayPort: GATEWAY_PORT,
+          scopedGatewayStop: true,
+          stateDir: gatewayStateDir,
+          usePgrepFallback: false,
+        },
+      );
+      if (gatewayStop.failed.length > 0 || (gatewayStop.ownershipFailures?.length ?? 0) > 0) {
+        cleanupErrors.push(
+          `OpenShell gateway cleanup failed: ${[
+            ...gatewayStop.failed.map((pid) => `process ${String(pid)} did not stop`),
+            ...(gatewayStop.ownershipFailures ?? []),
+          ].join("; ")}`,
+        );
+      }
+      let gatewayRemovalStatus: number | null = null;
+      if (onboard) {
+        const removeGateway = commandResult(
+          onboard.openshellArgv(["gateway", "remove", "nemoclaw"]),
+          process.env,
+          15_000,
+        );
+        gatewayRemovalStatus = removeGateway.status;
+        if (removeGateway.status !== 0) {
+          cleanupErrors.push(`OpenShell gateway removal failed: ${commandDetail(removeGateway)}`);
+        }
+      }
+      try {
+        const resolved = exactHarnessContainerIds(input, networkName, process.env);
+        const cleanupContainerId =
+          resolved.exactIds.length === 1 ? (resolved.exactIds[0] ?? null) : null;
+        if (cleanupContainerId) {
+          const remove = commandResult(
+            ["docker", "rm", "-f", cleanupContainerId],
+            process.env,
+            15_000,
+          );
+          const verify = commandResult(
+            ["docker", "container", "inspect", cleanupContainerId],
+            process.env,
+            15_000,
+          );
+          if (verify.status === 0 || !isDockerNotFound(verify)) {
+            cleanupErrors.push(
+              `exact harness container ${cleanupContainerId} was not removed: ${commandDetail(remove)} ${commandDetail(verify)}`.trim(),
+            );
+          }
+        } else if (resolved.exactIds.length > 1) {
+          cleanupErrors.push(
+            `refusing ambiguous exact harness container cleanup: ${resolved.exactIds.length} matches`,
+          );
+        } else if (ownedContainerId) {
+          const verify = commandResult(
+            ["docker", "container", "inspect", ownedContainerId],
+            process.env,
+            15_000,
+          );
+          if (verify.status === 0 || !isDockerNotFound(verify)) {
+            cleanupErrors.push(
+              `could not prove exact harness container ${ownedContainerId} was removed: ${commandDetail(verify)}`,
+            );
+          }
+        }
+      } catch (error) {
+        cleanupErrors.push(error instanceof Error ? error.message : String(error));
+      }
+      cleanupErrors.push(
+        ...cleanupProtectedManagedStateVolumes({
+          onboard,
+          runtimeProvider,
+          roots: managedStateRoots,
+          scope: managedStateVolumeScope,
+          committed: managedStateVolumesCommitted,
+        }),
+      );
+      const removeNetwork = commandResult(
+        ["docker", "network", "rm", networkName],
         process.env,
         15_000,
       );
-    }
-    const gatewayStop = stopHostGatewayProcesses(
-      {},
-      {
-        clearRuntimeFiles: false,
-        openShellGatewayName: "nemoclaw",
-        openShellGatewayPort: GATEWAY_PORT,
-        scopedGatewayStop: true,
-        stateDir,
-        usePgrepFallback: false,
-      },
-    );
-    if (gatewayStop.failed.length > 0 || (gatewayStop.ownershipFailures?.length ?? 0) > 0) {
-      cleanupErrors.push(
-        `OpenShell gateway cleanup failed: ${[
-          ...gatewayStop.failed.map((pid) => `process ${String(pid)} did not stop`),
-          ...(gatewayStop.ownershipFailures ?? []),
-        ].join("; ")}`,
-      );
-    }
-    let gatewayRemovalStatus: number | null = null;
-    if (onboard) {
-      const removeGateway = commandResult(
-        onboard.openshellArgv(["gateway", "remove", "nemoclaw"]),
+      const verifyNetwork = commandResult(
+        ["docker", "network", "inspect", networkName],
         process.env,
         15_000,
       );
-      gatewayRemovalStatus = removeGateway.status;
-      if (removeGateway.status !== 0) {
-        cleanupErrors.push(`OpenShell gateway removal failed: ${commandDetail(removeGateway)}`);
+      if (verifyNetwork.status === 0 || !isDockerNotFound(verifyNetwork)) {
+        cleanupErrors.push(
+          `harness network ${networkName} was not removed: ${commandDetail(removeNetwork)} ${commandDetail(verifyNetwork)}`.trim(),
+        );
       }
-    }
-    try {
-      const resolved = exactHarnessContainerIds(input, networkName, process.env);
-      const cleanupContainerId =
-        resolved.exactIds.length === 1 ? (resolved.exactIds[0] ?? null) : null;
-      if (cleanupContainerId) {
-        const remove = commandResult(
-          ["docker", "rm", "-f", cleanupContainerId],
-          process.env,
-          15_000,
+      const remainingSandboxContainers = commandResult(
+        [
+          "docker",
+          "ps",
+          "-aq",
+          "--filter",
+          "label=openshell.ai/managed-by=openshell",
+          "--filter",
+          `label=openshell.ai/sandbox-name=${input.sandbox}`,
+        ],
+        process.env,
+        15_000,
+      );
+      if (
+        remainingSandboxContainers.status !== 0 ||
+        String(remainingSandboxContainers.stdout ?? "").trim() !== ""
+      ) {
+        cleanupErrors.push(
+          `managed-image sandbox/container orphan remained after cleanup: ${commandDetail(remainingSandboxContainers)}`,
         );
-        const verify = commandResult(
-          ["docker", "container", "inspect", cleanupContainerId],
-          process.env,
-          15_000,
-        );
-        if (verify.status === 0 || !isDockerNotFound(verify)) {
+      }
+      try {
+        initialSandboxPolicy?.cleanup?.();
+      } catch (error) {
+        cleanupErrors.push(error instanceof Error ? error.message : String(error));
+      }
+      try {
+        if (
+          !removeManagedImageGatewayStateIfSafe(
+            stateDir,
+            gatewayStop,
+            gatewayRemovalStatus,
+            cleanupErrors,
+            false,
+          )
+        ) {
           cleanupErrors.push(
-            `exact harness container ${cleanupContainerId} was not removed: ${commandDetail(remove)} ${commandDetail(verify)}`.trim(),
+            `OpenShell gateway ownership evidence remains at ${stateDir} because gateway cleanup did not complete`,
           );
         }
-      } else if (resolved.exactIds.length > 1) {
-        cleanupErrors.push(
-          `refusing ambiguous exact harness container cleanup: ${resolved.exactIds.length} matches`,
-        );
-      } else if (ownedContainerId) {
-        const verify = commandResult(
-          ["docker", "container", "inspect", ownedContainerId],
-          process.env,
-          15_000,
-        );
-        if (verify.status === 0 || !isDockerNotFound(verify)) {
-          cleanupErrors.push(
-            `could not prove exact harness container ${ownedContainerId} was removed: ${commandDetail(verify)}`,
-          );
-        }
+      } catch (error) {
+        cleanupErrors.push(error instanceof Error ? error.message : String(error));
       }
-    } catch (error) {
-      cleanupErrors.push(error instanceof Error ? error.message : String(error));
-    }
-    cleanupErrors.push(
-      ...cleanupProtectedManagedStateVolumes({
-        onboard,
-        runtimeProvider,
-        roots: managedStateRoots,
-        scope: managedStateVolumeScope,
-        committed: managedStateVolumesCommitted,
-      }),
-    );
-    const removeNetwork = commandResult(
-      ["docker", "network", "rm", networkName],
-      process.env,
-      15_000,
-    );
-    const verifyNetwork = commandResult(
-      ["docker", "network", "inspect", networkName],
-      process.env,
-      15_000,
-    );
-    if (verifyNetwork.status === 0 || !isDockerNotFound(verifyNetwork)) {
-      cleanupErrors.push(
-        `harness network ${networkName} was not removed: ${commandDetail(removeNetwork)} ${commandDetail(verifyNetwork)}`.trim(),
-      );
-    }
-    const remainingSandboxContainers = commandResult(
-      [
-        "docker",
-        "ps",
-        "-aq",
-        "--filter",
-        "label=openshell.ai/managed-by=openshell",
-        "--filter",
-        `label=openshell.ai/sandbox-name=${input.sandbox}`,
-      ],
-      process.env,
-      15_000,
-    );
-    if (
-      remainingSandboxContainers.status !== 0 ||
-      String(remainingSandboxContainers.stdout ?? "").trim() !== ""
-    ) {
-      cleanupErrors.push(
-        `managed-image sandbox/container orphan remained after cleanup: ${commandDetail(remainingSandboxContainers)}`,
-      );
-    }
+    };
     try {
-      initialSandboxPolicy?.cleanup?.();
-    } catch (error) {
-      cleanupErrors.push(error instanceof Error ? error.message : String(error));
-    }
-    try {
-      if (!removeManagedImageGatewayStateIfSafe(stateDir, gatewayStop, gatewayRemovalStatus)) {
-        cleanupErrors.push(
-          `OpenShell gateway ownership evidence remains at ${stateDir} because gateway cleanup did not complete`,
-        );
-      }
+      await cleanupManagedRuntime();
     } catch (error) {
       cleanupErrors.push(error instanceof Error ? error.message : String(error));
     }

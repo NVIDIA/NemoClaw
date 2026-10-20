@@ -113,7 +113,7 @@ const TARGETED_ADVISORY_VERSIONS = [
   ["cryptography", "50.0.0"],
   ["uv", "0.11.33"],
   ["langgraph-checkpoint-sqlite", "3.1.1"],
-  ["mcp", "1.28.1"],
+  ["mcp", "2.0.0"],
   ["pillow", "12.3.0"],
   ["pyasn1", "0.6.4"],
 ] as const;
@@ -224,8 +224,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
       "USER root",
     ].join("\n");
     const managedRuntimeDirectory = "&& install -d -o root -g root -m 0755 /run/nemoclaw";
-    const runtimeModeReplay =
-      "RUN chmod 444 /opt/nemoclaw-deepagents-code/generate-config.ts /opt/nemoclaw-deepagents-code/agents/langchain-deepagents-code/generate-config.ts";
+    const runtimeModeReplay = "RUN chmod 444 /opt/nemoclaw-deepagents-code/generate-config.ts";
 
     expect(dockerfile).toContain("ARG BASE_IMAGE\n");
     expect(dockerfile).toContain("ARG NEMOCLAW_MODEL=nvidia/nemotron-3-ultra-550b-a55b");
@@ -624,7 +623,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(patcher).toContain("_nemoclaw_skip_launch_model");
     expect(managedRuntime).toContain("if not servers:\n        return None");
     expect(managedRuntime).toContain("or descriptor != _MANAGED_MCP_FD");
-    expect(patcher).toContain("def discover_mcp_configs(");
+    expect(patcher).toContain("def discover_mcp_config_sources(");
     expect(patcher).toContain("return []");
     expect(agent.userManagedFiles).toContain(".deepagents/.mcp.json");
     expect(wrapper).not.toContain("--mcp-config /sandbox/.mcp.json");
@@ -1031,6 +1030,10 @@ describe("LangChain Deep Agents Code image contracts", () => {
     "https://integrate\\.api\\.nvidia\\.com/v1",
     "references_attached_provider_placeholder_key",
     'api_key_env[[:space:]]*=[[:space:]]*"NVIDIA_INFERENCE_API_KEY"',
+    "references_native_compatible_route",
+    'HOSTED_ENDPOINT="${NEMOCLAW_ENDPOINT_URL:-https://inference-api.nvidia.com/v1}"',
+    "references_compatible_provider_placeholder_key",
+    'selected_openai_provider_scalar api_key_env)" = "COMPATIBLE_API_KEY"',
     "configured_inference_route_contract",
     "classify_headless_output",
     '"schema_version", "command", "data"',
@@ -1168,11 +1171,49 @@ describe("LangChain Deep Agents Code image contracts", () => {
         'api_key_env = "NVIDIA_INFERENCE_API_KEY"',
       ].join("\n"),
     ],
+    [
+      "native-compatible",
+      [
+        "[models.providers.openai]",
+        'base_url = "https://inference-api.nvidia.com/v1"',
+        'api_key_env = "COMPATIBLE_API_KEY"',
+      ].join("\n"),
+    ],
   ])("selects the %s Deep Agents Code inference route contract", (expected, config) => {
     expect(runHeadlessCheckHelper("inference-route-contract", { CONFIG: config })).toBe(
       `${expected}\n`,
     );
   });
+
+  it.each(["https://custom.example.test/v1", "https://integrate.api.nvidia.com/v1"])(
+    "accepts selected compatible endpoint %s and rejects a different endpoint",
+    (endpoint) => {
+      const config = (baseUrl: string) =>
+        [
+          "[models.providers.openai]",
+          `base_url = "${baseUrl}"`,
+          'api_key_env = "COMPATIBLE_API_KEY"',
+        ].join("\n");
+      expect(
+        runHeadlessCheckHelper("inference-route-contract", {
+          CONFIG: config(endpoint),
+          NEMOCLAW_ENDPOINT_URL: endpoint,
+        }),
+      ).toBe("native-compatible\n");
+      expect(() =>
+        runHeadlessCheckHelper("inference-route-contract", {
+          CONFIG: config("https://other.example.test/v1"),
+          NEMOCLAW_ENDPOINT_URL: endpoint,
+        }),
+      ).toThrow();
+      expect(() =>
+        runHeadlessCheckHelper("inference-route-contract", {
+          CONFIG: config(endpoint).replace("COMPATIBLE_API_KEY", "DEEPAGENTS_CODE_OPENAI_API_KEY"),
+          NEMOCLAW_ENDPOINT_URL: endpoint,
+        }),
+      ).toThrow();
+    },
+  );
 
   it.each([
     [
@@ -1190,6 +1231,28 @@ describe("LangChain Deep Agents Code image contracts", () => {
         'api_key_env = "NVIDIA_INFERENCE_API_KEY"',
       ].join("\n"),
     ],
+    [
+      "compatible endpoint with managed placeholder",
+      [
+        "[models.providers.openai]",
+        'base_url = "https://inference-api.nvidia.com/v1"',
+        'api_key_env = "DEEPAGENTS_CODE_OPENAI_API_KEY"',
+      ].join("\n"),
+    ],
+    [
+      "commented compatible key",
+      '[models.providers.openai]\nbase_url = "https://inference-api.nvidia.com/v1"\n' +
+        '# api_key_env = "COMPATIBLE_API_KEY"\napi_key_env = "DEEPAGENTS_CODE_OPENAI_API_KEY"',
+    ],
+    ...["[models.providers.other]", "[[other]]"].map((header) => [
+      `compatible key in ${header}`,
+      [
+        "[models.providers.openai]",
+        'base_url = "https://inference-api.nvidia.com/v1"',
+        header,
+        'api_key_env = "COMPATIBLE_API_KEY"',
+      ].join("\n"),
+    ]),
   ])("rejects an inconsistent Deep Agents Code route contract: %s", (_case, config) => {
     expect(() => runHeadlessCheckHelper("inference-route-contract", { CONFIG: config })).toThrow();
   });
@@ -1380,7 +1443,7 @@ print(json.dumps(values, sort_keys=True))`,
   it.each([
     ["aiohttp", "3.14.3"],
     ["cryptography", "50.0.0"],
-    ["deepagents-code", "0.1.55"],
+    ["deepagents-code", "0.1.71"],
     ["langgraph-checkpoint-sqlite", "3.1.1"],
   ] as const)(
     "records dependency advisory review for the lockfile [case %#]",
@@ -1399,19 +1462,17 @@ print(json.dumps(values, sort_keys=True))`,
         "uv tool run --python 3.13 pip-audit -r agents/langchain-deepagents-code/requirements.lock --progress-spinner off --disable-pip",
       );
       expect(review).toMatch(/Targeted audit result:.*no known vulnerabilities/is);
-      expect(review).toMatch(
-        /Complete-lock audit result:.*2 duplicate records.*1 unrelated package/is,
-      );
+      expect(review).toMatch(/Complete-lock audit result:.*No known vulnerabilities found/is);
       expect(review).toContain("`GHSA-cq5v-8q36-5273`");
       expect(review).toContain("`GHSA-g6cj-pr64-35w5`");
-      expect(review).toContain("Deep Agents Code `0.1.55`");
-      expect(review).toContain("semantic migration through `0.1.55`");
+      expect(review).toContain("Deep Agents Code `0.1.71`");
+      expect(review).toContain("semantic migration from `0.1.55` through `0.1.71`");
       expect(requirementsLock).toContain("uv==0.11.33");
       expect(requirementsLock).toContain("aiohttp==3.14.3");
       expect(requirementsLock).toContain("cryptography==50.0.0");
       expect(requirementsLock).not.toContain("aiohttp==3.14.1");
       expect(requirementsLock).not.toContain("cryptography==49.0.0");
-      expect(requirementsLock).toContain("mcp==1.28.1");
+      expect(requirementsLock).toContain("mcp==2.0.0");
       expect(requirementsLock).toContain("pillow==12.3.0");
       expect(requirementsLock).toContain("pyasn1==0.6.4");
       expect(requirementsLock).toContain("langgraph-checkpoint-sqlite==3.1.1");

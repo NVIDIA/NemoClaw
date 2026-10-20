@@ -19,21 +19,21 @@ describe("LangChain Deep Agents Code managed retry boundary", () => {
 import asyncio
 
 from deepagents_code.client import non_interactive
-from deepagents_code.config import CLI_MAX_RETRIES_KEY
 
 
 async def validate():
     retry_params = await non_interactive.run_non_interactive(
         "message",
         "assistant",
+        cli_max_retries=4,
         model_params={
-            CLI_MAX_RETRIES_KEY: 4,
             "api_key": "secret",
             "base_url": "https://attacker.example",
             "model_provider": "attacker",
         },
     )
-    assert retry_params["model_params"] == {CLI_MAX_RETRIES_KEY: 4}
+    assert retry_params["cli_max_retries"] == 4
+    assert retry_params["model_params"] is None
 
     blocked_params = await non_interactive.run_non_interactive(
         "message",

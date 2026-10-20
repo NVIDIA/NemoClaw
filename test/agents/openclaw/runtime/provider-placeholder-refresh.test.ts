@@ -7,6 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import JSON5 from "json5";
+import { hostedNativeProvider } from "../../../../src/lib/inference/native-provider/hosted.ts";
 import { describe, expect, it, vi } from "vitest";
 import { extractShellFunctionFromSource } from "../../../helpers/shell-source";
 
@@ -27,13 +28,20 @@ function execFileResult(file, args, options) {
   );
 }
 
-describe.concurrent("native NVIDIA handle refresh", () => {
+describe.concurrent("native provider handle refresh", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
   async function runRefresh(
     config: unknown,
     env: Record<string, string> = {},
     rootMode = false,
     runtimePlan: unknown = { credentialBindings: [] },
+    options: {
+      readOnlyDirectory?: boolean;
+      provider?: unknown;
+      nvidia?: boolean;
+      group?: number;
+      failDirectorySync?: boolean;
+    } = {},
   ) {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-provider-placeholders-"));
     try {
@@ -48,11 +56,57 @@ describe.concurrent("native NVIDIA handle refresh", () => {
         `// Native OpenClaw JSON5\n${JSON.stringify(config, null, 2)}\n`,
       );
       fs.writeFileSync(runtimePlanPath, JSON.stringify(runtimePlan));
+      const providerPath = path.join(tmpDir, "providers.cjs");
+      fs.writeFileSync(
+        path.join(tmpDir, "providers.json"),
+        JSON.stringify({
+          openrouter: options.nvidia
+            ? hostedNativeProvider("openrouter-api")
+            : (options.provider ?? hostedNativeProvider("openrouter-api")),
+          NVIDIA_HOSTED_NATIVE_ENDPOINT: options.nvidia
+            ? options.provider.endpoint
+            : "https://integrate.api.nvidia.com/v1",
+          NVIDIA_HOSTED_CREDENTIAL_ENV: options.nvidia
+            ? options.provider.credentialEnv
+            : "NVIDIA_INFERENCE_API_KEY",
+        }),
+      );
+      fs.writeFileSync(
+        providerPath,
+        `const fixture = require("./providers.json");
+exports.hostedNativeProvider = () => fixture.openrouter;
+exports.NVIDIA_HOSTED_NATIVE_ENDPOINT = fixture.NVIDIA_HOSTED_NATIVE_ENDPOINT;
+exports.NVIDIA_HOSTED_CREDENTIAL_ENV = fixture.NVIDIA_HOSTED_CREDENTIAL_ENV;`,
+      );
+      fs.chmodSync(configPath, 0o640);
+      fs.chownSync(configPath, process.getuid(), options.group ?? fs.statSync(configPath).gid);
+      fs.chmodSync(openclawDir, options.readOnlyDirectory ? 0o500 : 0o700);
       const fn = extractShellFunctionFromSource(src, "refresh_openclaw_provider_placeholders")
+        .replace(
+          "import tempfile",
+          options.failDirectorySync
+            ? `import tempfile
+real_fsync = os.fsync
+def sync_or_fail(fd):
+    if stat.S_ISDIR(os.fstat(fd).st_mode):
+        raise OSError("directory sync failed")
+    return real_fsync(fd)
+os.fsync = sync_or_fail`
+            : "import tempfile",
+        )
         .replaceAll("/sandbox/.openclaw", openclawDir)
         .replaceAll("/usr/local/share/nemoclaw/messaging-runtime-plan.json", runtimePlanPath)
         .replaceAll("/usr/local/lib/node_modules/openclaw/node_modules/json5", JSON5_MODULE)
-        .replaceAll("/usr/local/bin/node", process.execPath);
+        .replaceAll("/usr/local/bin/node", process.execPath)
+        .replaceAll(
+          "/usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs",
+          options.provider
+            ? providerPath
+            : path.resolve(
+                import.meta.dirname,
+                "../../../../tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-direct-image-runtime.bundle",
+              ),
+        );
       fs.writeFileSync(
         scriptPath,
         [
@@ -79,8 +133,16 @@ describe.concurrent("native NVIDIA handle refresh", () => {
       const handoffEnv = fs.existsSync(handoffEnvPath)
         ? fs.readFileSync(handoffEnvPath, "utf-8")
         : "";
-      return { config: updatedConfig, handoffEnv, result };
+      return {
+        config: updatedConfig,
+        handoffEnv,
+        result,
+        mode: fs.statSync(configPath).mode & 0o777,
+        group: fs.statSync(configPath).gid,
+        files: fs.readdirSync(openclawDir),
+      };
     } finally {
+      fs.chmodSync(path.join(tmpDir, ".openclaw"), 0o700);
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   }
@@ -114,6 +176,282 @@ describe.concurrent("native NVIDIA handle refresh", () => {
       );
     },
   );
+
+  it.each(
+    [false, true].flatMap((rootMode) =>
+      [
+        { provider: "inference", key: "COMPATIBLE_API_KEY", endpoint: "http://10.1.1.225:8123/v1" },
+        {
+          provider: "anthropic",
+          key: "COMPATIBLE_ANTHROPIC_API_KEY",
+          endpoint: "https://fixture.example",
+        },
+        { provider: "openai", key: "OPENAI_API_KEY", endpoint: "https://api.openai.com/v1" },
+      ].map((route) => ({ ...route, rootMode })),
+    ),
+  )(
+    "refreshes only the persisted $provider credential on restart (root=$rootMode)",
+    async ({ provider, key, endpoint, rootMode }) => {
+      const saved = `openshell:resolve:env:v42_${key}`;
+      const current = `openshell:resolve:env:s${"a".repeat(64)}_${key}`;
+      const run = await runRefresh(
+        {
+          models: {
+            providers: {
+              [provider]: { baseUrl: endpoint, apiKey: saved },
+              unrelated: { baseUrl: endpoint, apiKey: saved },
+            },
+          },
+          channels: { telegram: { botToken: saved } },
+        },
+        { [key]: current },
+        rootMode,
+      );
+      expect(run.result.status, run.result.stderr).toBe(0);
+      expect(run.config.models.providers[provider].apiKey).toBe(current);
+      expect(run.config.models.providers.unrelated.apiKey).toBe(saved);
+      expect(run.config.channels.telegram.botToken).toBe(saved);
+    },
+  );
+
+  it.each(
+    [false, true].flatMap((rootMode) =>
+      [
+        "",
+        "raw-do-not-copy",
+        "openshell:resolve:env:v43_OTHER_API_KEY",
+        "openshell:resolve:env:COMPATIBLE_API_KEY",
+      ].map((runtime) => ({ runtime, rootMode })),
+    ),
+  )(
+    "keeps the saved custom credential when the runtime handle is invalid (root=$rootMode, runtime=$runtime)",
+    async ({ runtime, rootMode }) => {
+      const saved = "openshell:resolve:env:v42_COMPATIBLE_API_KEY";
+      const run = await runRefresh(
+        {
+          models: {
+            providers: {
+              inference: {
+                baseUrl: "https://fixture.example/v1",
+                apiKey: saved,
+              },
+            },
+          },
+        },
+        { COMPATIBLE_API_KEY: runtime },
+        rootMode,
+      );
+      expect(run.result.status, run.result.stderr).toBe(0);
+      expect(run.config.models.providers.inference.apiKey).toBe(saved);
+      expect(JSON.stringify(run.config)).not.toContain("raw-do-not-copy");
+      expect(run.result.stderr).not.toContain("raw-do-not-copy");
+      expect(run.handoffEnv).not.toContain("raw-do-not-copy");
+    },
+  );
+
+  it.each([
+    ["https://integrate.api.nvidia.com/v1/", "NVIDIA_INFERENCE_API_KEY"],
+    ["https://openrouter.ai/api/v1/", "OPENROUTER_API_KEY"],
+  ])("refreshes a native handle with a trailing slash at %s (#13043)", async (endpoint, key) => {
+    const saved = `openshell:resolve:env:v42_${key}`;
+    const current = `openshell:resolve:env:v43_${key}`;
+    const run = await runRefresh(
+      { models: { providers: { inference: { baseUrl: endpoint, apiKey: saved } } } },
+      { [key]: current },
+    );
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.config.models.providers.inference).toEqual({ baseUrl: endpoint, apiKey: current });
+  });
+
+  it.skipIf(process.getuid?.() === 0)(
+    "preserves valid configuration when atomic publication cannot create a file (#13043)",
+    async () => {
+      const config = {
+        models: {
+          providers: {
+            inference: {
+              baseUrl: "https://openrouter.ai/api/v1",
+              apiKey: "openshell:resolve:env:v42_OPENROUTER_API_KEY",
+            },
+          },
+        },
+      };
+      const run = await runRefresh(
+        config,
+        { OPENROUTER_API_KEY: "openshell:resolve:env:v43_OPENROUTER_API_KEY" },
+        false,
+        undefined,
+        { readOnlyDirectory: true },
+      );
+      expect(run.result.status).not.toBe(0);
+      expect(run.config).toEqual(config);
+      expect(run.mode).toBe(0o640);
+      expect(run.files).toEqual(["openclaw.json"]);
+    },
+  );
+
+  it.each(["group", "directory sync"])(
+    "preserves publication safety for %s (#13043)",
+    async (boundary) => {
+      const group = process.getgroups().find((gid) => gid !== process.getgid());
+      const current = "openshell:resolve:env:v43_OPENROUTER_API_KEY";
+      const run = await runRefresh(
+        {
+          models: {
+            providers: {
+              inference: {
+                baseUrl: "https://openrouter.ai/api/v1",
+                apiKey: "openshell:resolve:env:v42_OPENROUTER_API_KEY",
+              },
+            },
+          },
+        },
+        { OPENROUTER_API_KEY: current },
+        false,
+        undefined,
+        { group, failDirectorySync: boundary === "directory sync" },
+      );
+      expect(run.config.models.providers.inference.apiKey).toBe(current);
+      expect(run.files).toEqual(["openclaw.json"]);
+      expect(run.result.status, run.result.stderr).toBe(boundary === "group" ? 0 : 1);
+      expect(run.group).toBe(group ?? process.getgid());
+      expect(run.mode).toBe(0o640);
+      expect(run.result.stderr).toContain(
+        boundary === "group" ? "Refreshed provider placeholders" : "directory sync failed",
+      );
+    },
+  );
+
+  it.each([false, true])(
+    "uses the canonical endpoint and credential definition (NVIDIA=%s) (#13043)",
+    async (nvidia) => {
+      const provider = {
+        ...hostedNativeProvider("openrouter-api"),
+        endpoint: "https://new.example.test/v1",
+        credentialEnv: "NEW_ROUTER_KEY",
+      };
+      const current = "openshell:resolve:env:v43_NEW_ROUTER_KEY";
+      const run = await runRefresh(
+        {
+          models: {
+            providers: {
+              inference: {
+                baseUrl: provider.endpoint,
+                apiKey: "openshell:resolve:env:v42_NEW_ROUTER_KEY",
+              },
+            },
+          },
+        },
+        { NEW_ROUTER_KEY: current },
+        false,
+        undefined,
+        { provider, nvidia },
+      );
+      expect(run.result.status, run.result.stderr).toBe(0);
+      expect(run.config.models.providers.inference.apiKey).toBe(current);
+      expect(run.mode).toBe(0o640);
+      expect(run.files).toEqual(["openclaw.json"]);
+    },
+  );
+
+  describe.each([false, true])("OpenRouter refresh (root=%s)", (rootMode) => {
+    it.each(["v43", `s${"a".repeat(64)}`])(
+      "refreshes restored handles to generation %s (#13043)",
+      async (generation) => {
+        const oldHandle = "openshell:resolve:env:v42_OPENROUTER_API_KEY";
+        const config = {
+          models: {
+            providers: {
+              inference: {
+                baseUrl: "https://openrouter.ai/api/v1",
+                apiKey: oldHandle,
+                models: [{ id: "nvidia/nemotron-3-ultra-550b-a55b" }],
+              },
+            },
+          },
+          agents: { defaults: { workspace: "/sandbox/.openclaw/workspace" } },
+          channels: { telegram: { botToken: oldHandle } },
+        };
+
+        const currentHandle = `openshell:resolve:env:${generation}_OPENROUTER_API_KEY`;
+        const run = await runRefresh(config, { OPENROUTER_API_KEY: currentHandle }, rootMode);
+        expect(run.result.status, run.result.stderr).toBe(0);
+        expect(run.config).toEqual({
+          ...config,
+          models: {
+            providers: {
+              inference: {
+                ...config.models.providers.inference,
+                apiKey: currentHandle,
+              },
+            },
+          },
+        });
+        expect(run.result.stderr).not.toContain(currentHandle);
+        const repeated = await runRefresh(
+          run.config,
+          { OPENROUTER_API_KEY: currentHandle },
+          rootMode,
+        );
+        expect(repeated.result.status, repeated.result.stderr).toBe(0);
+        expect(repeated.config).toEqual(run.config);
+      },
+    );
+
+    it.each([
+      { reason: "raw runtime key", runtime: "sk-or-test-secret" },
+      { reason: "missing runtime key", runtime: "" },
+      { reason: "unscoped runtime key", runtime: "openshell:resolve:env:OPENROUTER_API_KEY" },
+      { reason: "wrong provider key", runtime: "openshell:resolve:env:v43_OPENAI_API_KEY" },
+      { reason: "wrong key suffix", runtime: "openshell:resolve:env:v43_OPENROUTER_API_KEY_OTHER" },
+      { reason: "malformed generation", runtime: "openshell:resolve:env:vbad_OPENROUTER_API_KEY" },
+      {
+        reason: "different endpoint",
+        endpoint: "https://example.com/v1",
+        runtime: "openshell:resolve:env:v43_OPENROUTER_API_KEY",
+      },
+      {
+        reason: "endpoint query",
+        endpoint: "https://openrouter.ai/api/v1/?route=other/",
+        runtime: "openshell:resolve:env:v43_OPENROUTER_API_KEY",
+      },
+      {
+        reason: "endpoint credentials",
+        endpoint: "https://user@openrouter.ai/api/v1/",
+        runtime: "openshell:resolve:env:v43_OPENROUTER_API_KEY",
+      },
+      {
+        reason: "wrong saved provider",
+        saved: "openshell:resolve:env:v42_OPENAI_API_KEY",
+        runtime: "openshell:resolve:env:v43_OPENROUTER_API_KEY",
+      },
+      {
+        reason: "user-managed saved key",
+        saved: "user-managed-reference",
+        runtime: "openshell:resolve:env:v43_OPENROUTER_API_KEY",
+      },
+    ])(
+      "preserves OpenRouter configuration with $reason (#13043)",
+      async ({ runtime, endpoint, saved }) => {
+        const config = {
+          models: {
+            providers: {
+              inference: {
+                baseUrl: endpoint ?? "https://openrouter.ai/api/v1",
+                apiKey: saved ?? "openshell:resolve:env:v42_OPENROUTER_API_KEY",
+              },
+            },
+          },
+        };
+        const run = await runRefresh(config, { OPENROUTER_API_KEY: runtime }, rootMode);
+        expect(run.result.status, run.result.stderr).toBe(0);
+        expect(run.config).toEqual(config);
+        expect(JSON.stringify(run.config)).not.toContain("sk-or-test-secret");
+        expect(run.result.stderr).not.toContain("sk-or-test-secret");
+        expect(run.handoffEnv).not.toContain("sk-or-test-secret");
+      },
+    );
+  });
 
   it.each([
     {

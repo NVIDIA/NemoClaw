@@ -6,7 +6,7 @@ import { exportSnapshots } from "../../actions/config/export-test-fixture";
 import { MessagingSetupApplier } from "../../messaging/applier/setup-applier";
 import { compactSandboxMessagingPlanForPersistence } from "../../messaging/persistence";
 import type { SandboxMessagingState } from "../../state/registry-messaging";
-import { hermesSnapshot, snapshot } from "./export-source-test-fixture";
+import { hermesSnapshot, snapshot, verify } from "./export-source-test-fixture";
 
 function observedMessaging(agent: "openclaw" | "hermes", messaging: unknown) {
   const observed = agent === "hermes" ? hermesSnapshot() : snapshot();
@@ -31,9 +31,11 @@ describe.each(["openclaw", "hermes"] as const)("%s messaging export", (agent) =>
       plan: { ...empty, workflow },
     })),
   ])("exports a sandbox with $label", async ({ plan }) => {
-    const result = await exportSnapshots([observedMessaging(agent, { schemaVersion: 1, plan })]);
+    const observed = observedMessaging(agent, { schemaVersion: 1, plan });
+    const result = await exportSnapshots([observed]);
     const withoutMessaging = await exportSnapshots([observedMessaging(agent, undefined)]);
 
+    expect(verify(observed).kind).toBe("verified");
     expect(result.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
     expect(result.writeStdout.mock.calls).toEqual(withoutMessaging.writeStdout.mock.calls);
     expect(result.publish).not.toHaveBeenCalled();
@@ -104,14 +106,22 @@ describe.each(["openclaw", "hermes"] as const)("%s messaging export", (agent) =>
     { label: "unknown plan field", planChange: { unknown: true } },
     { label: "unknown state field", change: { unknown: true } },
   ])("rejects a $label without publishing", async ({ change, planChange }) => {
-    const result = await exportSnapshots([
-      observedMessaging(agent, {
-        schemaVersion: 1,
-        plan: { ...MessagingSetupApplier.emptyPlan("alpha", agent), ...planChange },
-        ...change,
-      }),
-    ]);
+    const observed = observedMessaging(agent, {
+      schemaVersion: 1,
+      plan: { ...MessagingSetupApplier.emptyPlan("alpha", agent), ...planChange },
+      ...change,
+    });
+    const result = await exportSnapshots([observed]);
 
+    expect(verify(observed)).toMatchObject({
+      kind: "rejected",
+      findings: expect.arrayContaining([
+        expect.objectContaining({
+          category: "unsupported",
+          field: "spec.sandboxes[].integrations.messaging",
+        }),
+      ]),
+    });
     expect(result.outcome).toMatchObject({
       ok: false,
       failure: {

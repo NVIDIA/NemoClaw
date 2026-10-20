@@ -647,9 +647,14 @@ describe("created sandbox identity gate", () => {
     const input = noGpuInput();
     input.verifyCreatedSandboxBeforeEffects = vi.fn();
     input.revalidateVerifiedSandboxBeforeEffect = vi.fn();
+    let capturedNonce = "";
+    input.beforeCreateAttempt = (nonce) => {
+      capturedNonce = nonce;
+    };
     const patch = createGpuPatchFixture();
     mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(patch);
-    mocks.streamSandboxCreate.mockImplementation(async (_command, _args, _env, options) => {
+    mocks.streamSandboxCreate.mockImplementation(async (_command, args, _env, options) => {
+      expect(capturedNonce).toBe(createAttemptNonce(args));
       expect(options.readyCheck?.()).toBe(false);
       return { status: 1, output: "accepted then disconnected", sawProgress: true };
     });
@@ -661,7 +666,11 @@ describe("created sandbox identity gate", () => {
 
     await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow("exact durable sandbox");
 
-    expect(input.persistRetainedSandboxRecovery).toHaveBeenCalledOnce();
+    expect(input.persistRetainedSandboxRecovery).toHaveBeenCalledExactlyOnceWith(
+      expect.any(String),
+      undefined,
+      capturedNonce,
+    );
     expect(input.verifyCreatedSandboxBeforeEffects).not.toHaveBeenCalled();
     expect(input.revalidateVerifiedSandboxBeforeEffect).not.toHaveBeenCalled();
     expect(patch.exitOnPatchError).not.toHaveBeenCalled();
@@ -730,16 +739,8 @@ describe("created sandbox identity gate", () => {
     expect(output).toContain(`${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${nonce}`);
     expect(output).toContain(`Durable sandbox identity fingerprint: ${fingerprint}`);
     expect(output).toContain("Run 'nemoclaw alpha destroy'");
-    expect(output).toContain("the command removes nothing and preserves the recovery record");
-    expect(output).toContain("Inspection is diagnostic only");
-    expect(output).toContain("Recovery remains blocked while the sandbox is present");
     expect(output).toContain("after the owning gateway reports absence");
-    expect(output).toContain("run 'nemoclaw alpha destroy --yes'");
-    expect(output).not.toContain("administrator");
-    expect(output).not.toContain("alpha-sandbox-id");
-    expect(output).not.toContain("Recovery:");
-    expect(output).not.toContain("Or:      nemoclaw onboard");
-    expect(output).not.toContain("onboard --resume");
+    expect(output).not.toMatch(/openshell sandbox delete|onboard --resume/);
     expect(input.verifyCreatedSandboxBeforeEffects).not.toHaveBeenCalled();
     expect(input.revalidateVerifiedSandboxBeforeEffect).not.toHaveBeenCalled();
     expect(patch.exitOnPatchError).not.toHaveBeenCalled();

@@ -1,0 +1,87 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+apiVersion: nemoclaw.nvidia.com/managed-inference/v1
+kind: ServingModel
+
+metadata:
+  id: vllm.nemotron-3.5-super-vl-120b-a12b-nvfp4.v1
+  displayName: NVIDIA Nemotron 3.5 Super VL 120B-A12B NVFP4
+
+spec:
+  # Verified public release artifact; see the Station release record for limitations.
+  id: nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4
+  revision: "82d93699acd3be9e4617c53360fe5b3f5dbeb1b3"
+  environmentValue: nemotron-3.5-super-vl-120b
+  displayName: NVIDIA Nemotron 3.5 Super VL 120B-A12B NVFP4
+  menuOrder: 60
+  servedName: nvidia-nemotron-3.5-super-vl-120b-a12b-nvfp4
+  downloadSizeBytes: 75063319581
+  # Launch repository is public and ungated.
+  gated: false
+  installFastSafetensors: false
+  reviewedCode:
+    revision: "82d93699acd3be9e4617c53360fe5b3f5dbeb1b3"
+    files:
+      - path: .gitattributes
+        digest: sha256:f8d043cdb48627ca5ab06c5bfbec77c60433e6f6d24633e81613f57e9d15fa06
+      - path: README.md
+        digest: sha256:33ababb731e54bf707cba73c7109e73f398e7a0eefa804df2f4720042976b74e
+      - path: __init__.py
+        digest: sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+      - path: bias.md
+        digest: sha256:c5cedf15a6a2d14d73d3aedb1514462c5f55ed3539e6e0e7e08a75e0f99d694e
+      - path: chat_template.jinja
+        digest: sha256:1369e90b19976f99ce2070eb21ade8fcb4af640f008e14e82af5c5e89a9cc816
+      - path: chat_template_backup.jinja
+        digest: sha256:6521afc75afb0661e3558e7e6dee5f2d15de8be1c4dece8171935e778ea283f4
+      - path: config.json
+        digest: sha256:35189a8038d1b1f934e58cba50eb7e97b42a4da569424e35b9fd1048058bc7ea
+      - path: configuration_nemotron_h_omni.py
+        digest: sha256:83f0c11fd9fb4da4a3de434759e1a18958b69f9fce672bafed4346a616ec20d4
+      - path: configuration_radio.py
+        digest: sha256:b0f1ea1d8136272635bc8d6eeba0564542a4e48474ae98b2d8ed74b0fc5d20ce
+      - path: explainability.md
+        digest: sha256:0633d9f3519170f88ea7e3f0447d58b9674260216b8454d8a80e8f42abef2d5e
+      - path: generation_config.json
+        digest: sha256:c67c90fcadf0e7ef78b663eb159664b36a35ffb9dd2523096e226e5c3d1b0e5f
+      - path: hf_quant_config.json
+        digest: sha256:b797654d89e25e9bd13617cb1d216ff5fad78cb6a8b99ba0cd0fbcf20050d75a
+      - path: image_processing_nemotron_h_omni.py
+        digest: sha256:0344e8432097e0718672d6529c68fd6095c36bea176500f131d203d1c7d497e0
+      - path: model.safetensors.index.json
+        digest: sha256:c368acdbcfe882236af1ec79df4a1fb6127e6ed9f742d59c01c21fe96ddc2741
+      - path: modeling_nemotron_h_omni.py
+        digest: sha256:dfe88cc516f27b1dc8508ec7e448d81143aaf13d01400f5f93525b7f1271d929
+      - path: modeling_radio.py
+        digest: sha256:ceec4c1ecd2a2649a79e74b16a2ea4af60e6cd11fbecebbd681c33fb1fccb943
+      - path: preprocessor_config.json
+        digest: sha256:0b80e5c895052ff2d8e528eca719a6b6e39b7b1b60afb0b94553ffae948e22bc
+      - path: privacy.md
+        digest: sha256:db5582217364a580391a86ac54466c75a7577c9e0446f13a0511f74265174d97
+      - path: processing_nemotron_h_omni.py
+        digest: sha256:406bc7689161d19e2a01e34f0ac8a7cc1bbc927f664d03bae3d23d00ea27f11a
+      - path: processor_config.json
+        digest: sha256:ce813d598192df1b09813631b5f9c78f31c1e2e8d291c7c660c8dfa92a9597a7
+      - path: safety.md
+        digest: sha256:60f74211be1d81624807ca626462778610960cf20adc989140118da37d80a86b
+      - path: tokenizer.json
+        digest: sha256:d0432ad8b1c2984a2e2dca82e1933e3fd5628df6e95c51fba4c3ee9950dce299
+      - path: tokenizer_config.json
+        digest: sha256:89fa70d31734c0c75ffdcee4114449f8cf8abd64bc233d420b58e25763f91aba
+      - path: ultra_v3_reasoning_parser.py
+        digest: sha256:14e03de50a523c1b6b4542c22d38ec11cadc515a95752e5a4c8246967f620857
+      - path: accuracy_plot.png
+        digest: sha256:06abbc64e8658a9c360e65044269f5fa6429715eb9446a33941844af92c9c27a
+      - path: harness_comparisons.png
+        digest: sha256:aca282a7f7191693018f30210f5ffec1e19a63bf959eda08772304846b57f3b6
+  preparation:
+    ref: none/v1
+  probePolicyRef: nvidia.endpoint-validation.extended/v1
+  capabilities:
+    chatCompletions: true
+    streaming: true
+    toolCalls: true
+    structuredOutputs: true
+    reasoning: true
+    multimodal: true

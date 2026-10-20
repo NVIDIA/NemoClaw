@@ -163,6 +163,7 @@ describe("NVIDIA featured model catalog", () => {
     expect(models.map((model) => model.id)).toEqual([
       "nvidia/nemotron-3-ultra-550b-a55b",
       "nvidia/nemotron-3-super-120b-a12b",
+      "nvidia/nemotron-3.5-super-vl-120b-a12b",
     ]);
     expect(warnings).toEqual([
       "  Warning: failed to load NVIDIA's featured model catalog; falling back to the bundled list (service unavailable; HTTP 503).",

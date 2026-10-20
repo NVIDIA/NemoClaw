@@ -88,7 +88,10 @@ function pythonProbeRequest() {
 }
 
 function expectProbeStatusWithoutBody(result: ReturnType<typeof spawnSync>, status: string): void {
-  expect(result.status).toBe(0);
+  expect(
+    result.status,
+    JSON.stringify({ error: result.error?.message, signal: result.signal, stderr: result.stderr }),
+  ).toBe(0);
   expect(result.stdout).toContain(`${HTTP_MARKER}${status}`);
   expect(`${result.stdout}\n${result.stderr}`).not.toContain(SECRET_BODY);
 }
@@ -145,7 +148,12 @@ function runPythonProbeWithLocalServer(source: string, status = 200): ReturnType
     "url = 'http://127.0.0.1:%s/mcp/' % port",
     source.replace(/^url = .*$/m, ""),
   ].join("\n");
-  return spawnSync("python3", ["-I", "-c", script], { encoding: "utf8", timeout: 10_000 });
+  return spawnSync("python3", ["-I", "-c", script], {
+    encoding: "utf8",
+    timeout: 10_000,
+    // This fixture serves loopback directly, independent of host proxy discovery.
+    env: { ...process.env, no_proxy: "*" },
+  });
 }
 
 describe("MCP adapter HTTP probe client", () => {

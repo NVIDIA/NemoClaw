@@ -685,6 +685,28 @@ describe("sandbox workload preparation", () => {
     expect(resolveCatalog).not.toHaveBeenCalled();
   });
 
+  it("does not select a generated Dockerfile when native Podman has no managed image (#12942)", async () => {
+    const resolveCatalog = vi.fn(async () => {
+      throw new ManagedImageCatalogUnavailableError("registry offline");
+    });
+
+    await expect(
+      prepareSandboxWorkloadSource(
+        {
+          ...input("openclaw"),
+          runtime: resolveSandboxWorkloadRuntimeCapabilities(
+            { driverName: "podman" },
+            undefined,
+            "x64",
+          ),
+          policy: "prefer-managed",
+        },
+        { resolveCatalog },
+      ),
+    ).rejects.toThrow("cannot use the legacy Dockerfile workload for contract-unavailable");
+    expect(resolveCatalog).toHaveBeenCalledOnce();
+  });
+
   it("fails before catalog access when an incapable runtime requires managed images (#7744)", async () => {
     const resolveCatalog = vi.fn(async () => CATALOG);
 

@@ -10,6 +10,8 @@ import {
 import { isDeepStrictEqual } from "node:util";
 import type { NativeProviderAttachment } from "../../inference/native-provider/contract";
 import { hostedNativeProvider } from "../../inference/native-provider/hosted";
+import { isCustomNativeProviderName } from "../../inference/native-provider/custom";
+import { normalizeHostedProviderAttachment } from "../../inference/native-provider/hosted-attachment";
 import { requireHostedProviderAttachment } from "../../inference/native-provider/hosted-attachment";
 import { readNativeHostedGatewayAuthorities } from "./native-provider-authority-state";
 import { withLock } from "./lock";
@@ -61,6 +63,10 @@ export function getNativeHostedProviderAuthority(
   provider: string,
   endpointUrl?: string | null,
 ): NativeProviderAttachment | undefined {
+  if (isCustomNativeProviderName(provider))
+    return normalizeHostedProviderAttachment(
+      readNativeHostedGatewayAuthorities(load(), gatewayName)?.[provider],
+    );
   if (!hostedNativeProvider(provider)) return undefined;
   const authorities = readNativeHostedGatewayAuthorities(load(), gatewayName);
   const current = requireHostedProviderAttachment(authorities?.[provider], provider);
@@ -83,15 +89,16 @@ export function setNativeHostedProviderAuthority(
     const state = load();
     const authorities = state.nativeHostedProviderAuthorities ?? {};
     const gateway = authorities[gatewayName] ?? {};
-    if (isDeepStrictEqual(gateway[provider], normalized)) return;
+    const authorityKey = normalized.custom ? normalized.providerName : provider;
+    if (isDeepStrictEqual(gateway[authorityKey], normalized)) return;
     state.nativeHostedProviderAuthorities = {
       ...authorities,
       [gatewayName]: {
         ...gateway,
-        ...(gateway[provider] && gateway[provider].providerName !== normalized.providerName
-          ? { [gateway[provider].providerName]: gateway[provider] }
+        ...(gateway[authorityKey] && gateway[authorityKey].providerName !== normalized.providerName
+          ? { [gateway[authorityKey].providerName]: gateway[authorityKey] }
           : {}),
-        [provider]: normalized,
+        [authorityKey]: normalized,
       },
     };
     save(state);

@@ -112,8 +112,8 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     errors.push(`${JOB_ID} must run on the protected amd64 GPU runner`);
   }
   if (job["timeout-minutes"] !== 75) errors.push(`${JOB_ID} must keep the 75 minute timeout`);
-  if (!isDeepStrictEqual(job.permissions, { contents: "read" })) {
-    errors.push(`${JOB_ID} permissions must be exactly contents: read`);
+  if (!isDeepStrictEqual(job.permissions, { contents: "read", "pull-requests": "read" })) {
+    errors.push(`${JOB_ID} permissions must be exactly contents: read and pull-requests: read`);
   }
   if (job["continue-on-error"] !== undefined) {
     errors.push(`${JOB_ID} must not weaken failures with continue-on-error`);
@@ -265,19 +265,43 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
   );
   if (projection?.id !== "openshell-projection")
     errors.push(`${JOB_ID} must identify the OpenShell projection`);
+  const verifyBeforeUse = requireStep(
+    errors,
+    workflowSteps,
+    "Verify reviewed candidate OpenShell runtime before consumption",
+  );
+  const verify = requireStep(errors, workflowSteps, "Verify reviewed candidate OpenShell runtime");
   const restore = requireStep(errors, workflowSteps, "Restore trusted OpenShell sources");
+  const admissionEnv = {
+    GITHUB_TOKEN: "${{ github.token }}",
+    UPGRADE_PR_NUMBER: "${{ inputs.pr_number }}",
+  };
+  if (
+    jobEnv.GITHUB_TOKEN !== undefined ||
+    jobEnv.GH_TOKEN !== undefined ||
+    workflowSteps.some(
+      (step) =>
+        ![projection, verifyBeforeUse, verify, restore].includes(step) &&
+        (record(step.env).GITHUB_TOKEN !== undefined || record(step.env).GH_TOKEN !== undefined),
+    )
+  )
+    errors.push(`${JOB_ID} must expose GitHub credentials only to candidate admission operations`);
+  if (verifyBeforeUse?.if !== undefined || verify?.if !== undefined)
+    errors.push(`${JOB_ID} must not skip OpenShell verification`);
   if (restore?.if !== "${{ always() && steps.openshell-projection.outcome == 'success' }}") {
     errors.push(`${JOB_ID} must restore sources after a successful OpenShell projection`);
   }
   for (const [step, operation, output] of [
     [projection, "prepare", "openshell-projection.json"],
+    [verifyBeforeUse, "verify", "openshell-projection-initially-verified.json"],
+    [verify, "verify", "openshell-projection-verified.json"],
     [restore, "restore", "openshell-projection-restored.json"],
   ] as const) {
     const expected = `set -euo pipefail\nnode tools/e2e/protected-openshell-workspace.mts ${operation} > "$E2E_ARTIFACT_DIR/${output}"\n`;
     if (
       step?.run !== expected ||
       step?.shell !== "bash" ||
-      step?.env !== undefined ||
+      !isDeepStrictEqual(step?.env, admissionEnv) ||
       step?.["continue-on-error"] !== undefined
     ) {
       errors.push(`${JOB_ID} must use the reviewed OpenShell ${operation} operation`);
@@ -387,7 +411,7 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     '[[ -z "$extra" &&',
     '"$cached_revision" == "$CHECKOUT_SHA"',
     '"$cached_platform" == "linux/amd64"',
-    "node scripts/checks/protected-dcode-base-receipt.mts verify",
+    "node scripts/checks/protected-dcode-base-receipt.mts verify-reusable",
     '"$NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE/${name}-base"',
     '"$NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE/${name}-base-receipt.json" "$agent"',
     '"$verified" == "$reference"',
@@ -476,19 +500,11 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     errors.push(`${JOB_ID} must expose NVIDIA_API_KEY only to trusted qualification code`);
   }
   requireFragments(errors, qualification, [
-    'node tools/e2e/protected-openshell-workspace.mts verify > "$E2E_ARTIFACT_DIR/openshell-projection-verified.json"',
     '[[ "$(git rev-parse --verify HEAD)" == "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_WORKFLOW_SHA" ]]',
     'OPENSHELL_BIN="$(command -v openshell)"\nexport OPENSHELL_BIN',
     "tools/e2e/live-vitest-invocation.mts run",
     `--test-path ${LIVE_TEST_PATH}`,
   ]);
-  const qualificationRun = text(qualification?.run);
-  const verifyPosition = qualificationRun.indexOf(
-    "node tools/e2e/protected-openshell-workspace.mts verify",
-  );
-  if (verifyPosition < 0 || verifyPosition > qualificationRun.indexOf("OPENSHELL_BIN=")) {
-    errors.push(`${JOB_ID} must verify projected sources before runtime qualification`);
-  }
   if (text(qualification?.run).includes(".candidate-runtime")) {
     errors.push(`${JOB_ID} trusted qualification must not execute candidate checkout paths`);
   }
@@ -522,6 +538,7 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     "Prepare E2E workspace",
     "Validate protected runtime activation contract",
     "Bind reviewed candidate OpenShell runtime",
+    "Verify reviewed candidate OpenShell runtime before consumption",
     "Download reviewed OpenShell SDK archive",
     "Install reviewed OpenShell SDK from trusted controller",
     "Build trusted CLI with reviewed OpenShell runtime",
@@ -530,6 +547,7 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     "Start isolated protected runtime registry",
     "Build exact all-agent protected runtime images",
     "Install OpenShell CLI",
+    "Verify reviewed candidate OpenShell runtime",
     "Run all-agent GPU, local inference, rollback, and cleanup qualification",
     "Remove isolated protected runtime registry",
     "Restore trusted OpenShell sources",

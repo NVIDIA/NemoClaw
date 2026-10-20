@@ -28,12 +28,17 @@ afterEach(() => {
 });
 
 function createFixture(mode: string, floor?: number, project = false) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-source-coverage-"));
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-source-coverage-")));
   roots.push(root);
   fixtureDeadlines.set(root, performance.now() + testTimeoutOptions(35_000).timeout - 5_000);
   fs.mkdirSync(path.join(root, "src"));
   fs.symlinkSync(path.join(repositoryRoot, "node_modules"), path.join(root, "node_modules"), "dir");
   fs.writeFileSync(path.join(root, "package.json"), '{"type":"module"}');
+  // Keep Vitest's generated setup exclusion inside the fixture root.
+  fs.writeFileSync(
+    path.join(root, "setup.cjs"),
+    `require(${JSON.stringify(SOURCE_REQUIRE_HOOK)});`,
+  );
   fs.writeFileSync(
     path.join(root, "src/probe.ts"),
     `
@@ -84,9 +89,9 @@ export default defineConfig({
  root: ${JSON.stringify(root)},
  plugins: ${project ? "[]" : "[sourceCoveragePlugin()]"},
  test: {
-  ${project ? `server: repositoryConfig.test.server, projects: [{plugins: [sourceCoveragePlugin()], test: {name: "nested", include: ["*.test.ts"], setupFiles: [${JSON.stringify(SOURCE_REQUIRE_HOOK)}]}}],` : ""}
+  ${project ? `server: repositoryConfig.test.server, projects: [{plugins: [sourceCoveragePlugin()], test: {name: "nested", include: ["*.test.ts"], setupFiles: ["./setup.cjs"]}}],` : ""}
   include: ["*.test.ts"],
-  setupFiles: [${JSON.stringify(SOURCE_REQUIRE_HOOK)}],
+  setupFiles: ["./setup.cjs"],
   coverage: {
    provider: "custom",
    customProviderModule: ${JSON.stringify(path.join(repositoryRoot, "test/helpers/source-coverage-provider.mts"))},

@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { withGroupWritableReadinessHome } from "../fixtures/launch-readiness-home.ts";
+
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -1821,27 +1823,37 @@ export async function runOpenClawLaunchSession(
 }
 
 export async function runOpenClawLaunchReadinessLeaseTurns(
-  options: OpenClawLaunchSessionOptions,
+  options: OpenClawLaunchSessionOptions & { qualifyGroupWritableHome?: boolean },
 ): Promise<void> {
-  const probeArgs = options.cliEntrypoint
-    ? [options.cliEntrypoint, options.sandboxName, "connect", "--probe-only"]
-    : [options.sandboxName, "connect", "--probe-only"];
-  const probe = await options.host.command(options.cliCommand, probeArgs, {
-    artifactName: `${options.artifactName}-probe`,
-    env: options.env,
-    redactionValues: options.redactionValues,
-    timeoutMs: OPENCLAW_LAUNCH_READINESS_PROBE_TIMEOUT_MS,
-  });
-  if (probe.exitCode !== 0) {
-    throw new Error(`launch readiness producer failed: ${resultText(probe)}`);
-  }
+  return withGroupWritableReadinessHome(
+    {
+      enabled: options.qualifyGroupWritableHome ?? false,
+      sandboxName: options.sandboxName,
+      gatewayName: String(options.env.OPENSHELL_GATEWAY),
+      gatewayPort: Number(options.env.NEMOCLAW_GATEWAY_PORT),
+    },
+    async () => {
+      const probeArgs = options.cliEntrypoint
+        ? [options.cliEntrypoint, options.sandboxName, "connect", "--probe-only"]
+        : [options.sandboxName, "connect", "--probe-only"];
+      const probe = await options.host.command(options.cliCommand, probeArgs, {
+        artifactName: `${options.artifactName}-probe`,
+        env: options.env,
+        redactionValues: options.redactionValues,
+        timeoutMs: OPENCLAW_LAUNCH_READINESS_PROBE_TIMEOUT_MS,
+      });
+      if (probe.exitCode !== 0) {
+        throw new Error(`launch readiness producer failed: ${resultText(probe)}`);
+      }
 
-  await options.beforeLaunchTurns?.();
+      await options.beforeLaunchTurns?.();
 
-  for (const ordinal of ["first", "second"] as const) {
-    await runOpenClawLaunchSession({
-      ...options,
-      artifactName: `${options.artifactName}-${ordinal}`,
-    });
-  }
+      for (const ordinal of ["first", "second"] as const) {
+        await runOpenClawLaunchSession({
+          ...options,
+          artifactName: `${options.artifactName}-${ordinal}`,
+        });
+      }
+    },
+  );
 }

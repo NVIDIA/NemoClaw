@@ -51,8 +51,8 @@ function makeDeps(overrides: Record<string, unknown> = {}) {
     },
     getHermesToolGatewayBroker: vi.fn(() => ({
       getHermesToolGatewayProviderName: vi.fn(() => "hermes-tool-gateway"),
+      isHermesToolGatewayRefreshProviderRegistered: vi.fn(async () => true),
     })),
-    providerExistsInGateway: vi.fn(async () => true),
     normalizeHermesAuthMethod: vi.fn(() => "api-key"),
     resolveHermesNousApiKey: vi.fn(() => null),
     checkHermesProviderStoreReachable: vi.fn(() => ({ ok: true })),
@@ -512,5 +512,45 @@ describe("native Hermes Provider setup", () => {
     expect(deps.registry.updateSandbox).not.toHaveBeenCalled();
     expect(deps.inferenceRouteMutator.setInferenceRoute).not.toHaveBeenCalled();
     expect(deps.log).not.toHaveBeenCalled();
+  });
+});
+
+describe("Hermes managed-tool profile reuse", () => {
+  it("checks the owned profile before reusing an existing tool provider", async () => {
+    const isRegistered = vi.fn(async () => true);
+    const deps = makeDeps({
+      isNonInteractive: () => true,
+      getHermesToolGatewayBroker: () => ({
+        getHermesToolGatewayProviderName: () => "alpha-hermes-tool-gateway",
+        isHermesToolGatewayRefreshProviderRegistered: isRegistered,
+      }),
+    });
+    await expect(
+      setupHermesProviderInference(
+        { ...makeArgs(null), hermesToolGateways: ["nous-web"] },
+        deps as never,
+      ),
+    ).resolves.toMatchObject({ ok: true });
+    expect(isRegistered).toHaveBeenCalledExactlyOnceWith("alpha", deps.runOpenshell);
+    expect(deps.hermesProviderAuth.ensureHermesProviderOAuthCredentials).not.toHaveBeenCalled();
+  });
+
+  it("stops before inference mutation when the tool profile conflicts", async () => {
+    const deps = makeDeps({
+      getHermesToolGatewayBroker: () => ({
+        getHermesToolGatewayProviderName: () => "alpha-hermes-tool-gateway",
+        isHermesToolGatewayRefreshProviderRegistered: async () => {
+          throw new Error("Hermes tool gateway profile conflicts with NemoClaw's definition");
+        },
+      }),
+    });
+    await expect(
+      setupHermesProviderInference(
+        { ...makeArgs(null), hermesToolGateways: ["nous-web"] },
+        deps as never,
+      ),
+    ).rejects.toThrow(/profile conflicts/u);
+    expect(deps.inferenceRouteMutator.setInferenceRoute).not.toHaveBeenCalled();
+    expect(deps.hermesProviderAuth.ensureHermesProviderOAuthCredentials).not.toHaveBeenCalled();
   });
 });

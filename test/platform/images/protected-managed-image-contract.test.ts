@@ -315,7 +315,11 @@ describe("protected managed-image build contract", () => {
     const { result, output, dockerCalls, references } = runBaseResolution(
       "managed-image-protected-runtime",
       "Resolve digest-pinned amd64 runtime base images",
-      { candidate: "true", localBases: true },
+      {
+        candidate: "true",
+        localBases: true,
+        env: { NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT: "protected-42-2" },
+      },
     );
     expect(result.status, result.stderr).toBe(0);
     expect(output).toBe(
@@ -341,7 +345,7 @@ describe("protected managed-image build contract", () => {
   it.each<Record<string, string>>([
     { CHECKOUT_SHA: "d".repeat(40) },
     { NEMOCLAW_PROTECTED_MANAGED_IMAGE_WORKFLOW_SHA: "d".repeat(40) },
-    { NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT: "protected-42-2" },
+    { NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT: "protected-43-2" },
     { NEMOCLAW_PROTECTED_MANAGED_IMAGE_PLATFORM: "linux/arm64" },
   ])("rejects a GPU handoff for another dispatch: %j", (env) => {
     const { result, output, dockerCalls } = runBaseResolution(

@@ -41,7 +41,7 @@
   "fanOut": {
     "defaultMax": 20,
     "maxByFile": {
-      "src/lib/actions/inference-set.ts": 31,
+      "src/lib/actions/inference-set.ts": 30,
       "src/lib/actions/sandbox/connect.ts": 41,
       "src/lib/actions/sandbox/destroy.ts": 27,
       "src/lib/actions/sandbox/doctor.ts": 26,

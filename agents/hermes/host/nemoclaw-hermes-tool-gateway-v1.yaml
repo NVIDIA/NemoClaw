@@ -1,0 +1,19 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+id: nemoclaw-hermes-tool-gateway-v1
+display_name: NemoClaw Hermes Tool Gateway
+description: Endpointless broker credential for Hermes managed tools
+category: agent
+credentials:
+  - name: broker_token
+    description: Opaque token for the NemoClaw host broker
+    env_vars:
+      - NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN
+    required: true
+    auth_style: header
+    header_name: Authorization
+    query_param: ''
+endpoints: []
+binaries: []
+inference_capable: false

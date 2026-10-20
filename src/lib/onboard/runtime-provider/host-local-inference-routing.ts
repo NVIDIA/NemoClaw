@@ -56,6 +56,10 @@ export interface HostLocalInferenceGatewayMutationInput {
  * owner captures the prior provider and inference selection before returning.
  */
 export interface HostLocalInferenceGatewayMutation {
+  /** Register native inference through the runtime owner's existing publication journal. */
+  registerNativeProvider?: () => Promise<
+    import("../../inference/native-local/contract").NativeLocalProviderAttachment
+  >;
   /** Exact provider mutation owned by a product transaction when supplied. */
   upsertProvider?: (
     name: string,
@@ -108,6 +112,8 @@ export type HostLocalInferenceStartupRequest =
 
 /** Operation-scoped selection injected by the qualification caller. */
 export interface HostLocalInferenceStartupSelection {
+  /** Preserve an existing runtime owner's shared gateway route and transaction. */
+  readonly sharedInferenceRoute?: true;
   /** Exact runtime-provider identity expected from the sandbox-bound resolver. */
   readonly runtimeProviderId: string;
   readonly request: HostLocalInferenceStartupRequest;

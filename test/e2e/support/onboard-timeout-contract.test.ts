@@ -9,16 +9,25 @@ import {
   CONFIG_EXPORT_PINNED_V1_CONSUMER_TIMEOUT_MS,
   CONFIG_EXPORT_POLICY_TIMEOUT_MS,
   DCODE_INVALID_CREDENTIAL_LIFECYCLE_BUDGET_MS,
+  DCODE_NATIVE_LOCAL_TEST_TIMEOUT_MS,
   DCODE_TYPED_TARGET_TEST_TIMEOUT_MS,
   DCODE_TYPED_TARGET_TIMEOUT_MINUTES,
   LIVE_TARGET_BASE_TEST_TIMEOUT_MS,
+  INFERENCE_ROUTING_TARGET_TIMEOUT_MINUTES,
+  OPENCLAW_NATIVE_LOCAL_TEST_TIMEOUT_MS,
+  OPENCLAW_NATIVE_LOCAL_TARGET_TIMEOUT_MINUTES,
   liveTargetTimeoutContract,
   ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
   ONBOARD_NO_RECREATE_COMMAND_TIMEOUT_MS,
+  ONBOARD_REPAIR_COMMAND_TIMEOUT_MS,
+  ONBOARD_REPAIR_TARGET_TIMEOUT_MINUTES,
+  ONBOARD_REPAIR_TEST_TIMEOUT_MS,
   ONBOARD_RESUME_TARGET_TIMEOUT_MINUTES,
   ONBOARD_RESUME_TEST_TIMEOUT_MS,
   ONBOARD_SINGLE_FINAL_HANDOFF_TARGET_TIMEOUT_MINUTES,
   ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
+  PI_QUALIFICATION_TEST_TIMEOUT_MS,
+  PI_QUALIFICATION_TARGET_TIMEOUT_MINUTES,
 } from "../../../tools/e2e/onboard-timeout-contract.mts";
 import {
   catalogueTarget,
@@ -33,7 +42,13 @@ import { CONFIG_EXPORT_EXPECTATIONS, type ConfigExportExpectation } from "../reg
 
 const MINUTE_MS = 60_000;
 const finalHandoffTimeoutMs = getDockerGpuSupervisorReconnectTimeoutSecs(1, {}) * 1_000;
-const affectedTargetIds = ["inference-routing", "onboard-resume"] as const;
+const affectedTargetIds = [
+  "inference-routing",
+  "inference-routing-openclaw-native",
+  "onboard-repair",
+  "onboard-resume",
+  "pi-agent-qualification-amd64",
+] as const;
 const timeoutContractPath = "tools/e2e/onboard-timeout-contract.mts";
 const commandDiagnosticHeadroomMs = 10 * MINUTE_MS;
 const testHeadroomMs = 10 * MINUTE_MS;
@@ -50,6 +65,16 @@ const dcodeExpectedRefusalTimeout = liveTargetTimeoutContract(
 afterEach(() => vi.unstubAllEnvs());
 
 describe("onboard final-handoff timeout contract", () => {
+  it("contains the hosted Pi lifecycle and native requests around rebuild", () => {
+    const boundedOperations = (90 + 20 + 5 + 20 + 5 + 1 + 5) * MINUTE_MS + 30_000;
+    expect(PI_QUALIFICATION_TEST_TIMEOUT_MS).toBeGreaterThan(boundedOperations);
+    expect(catalogueTarget("pi-agent-qualification-amd64").timeoutMinutes).toBe(
+      PI_QUALIFICATION_TARGET_TIMEOUT_MINUTES,
+    );
+    expect(PI_QUALIFICATION_TARGET_TIMEOUT_MINUTES * MINUTE_MS).toBeGreaterThanOrEqual(
+      PI_QUALIFICATION_TEST_TIMEOUT_MS + 10 * MINUTE_MS,
+    );
+  });
   it("keeps the command alive through both reconnect waits and the failure diagnostic", () => {
     expect(ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS).toBeGreaterThanOrEqual(
       finalHandoffTimeoutMs * 2 + commandDiagnosticHeadroomMs,
@@ -91,11 +116,47 @@ describe("onboard final-handoff timeout contract", () => {
     );
   });
 
+  it("keeps onboard-repair alive through seven serial command deadlines and probes", () => {
+    expect(ONBOARD_REPAIR_TEST_TIMEOUT_MS).toBeGreaterThanOrEqual(
+      7 * ONBOARD_REPAIR_COMMAND_TIMEOUT_MS + testHeadroomMs,
+    );
+  });
+
+  it("contains the native DCode lifecycle and sibling isolation command deadlines", () => {
+    const serialCommands =
+      2 * ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS + (20 + 2 + 2 + 2 + 1 + 0.5) * MINUTE_MS;
+    expect(DCODE_NATIVE_LOCAL_TEST_TIMEOUT_MS).toBeGreaterThanOrEqual(
+      serialCommands + testHeadroomMs,
+    );
+    expect(catalogueTarget("inference-routing").timeoutMinutes * MINUTE_MS).toBeGreaterThanOrEqual(
+      75 * MINUTE_MS +
+        DCODE_NATIVE_LOCAL_TEST_TIMEOUT_MS +
+        ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
+    );
+  });
+
+  it("contains both serial OpenClaw native-local scenarios and their finalization", () => {
+    expect(OPENCLAW_NATIVE_LOCAL_TEST_TIMEOUT_MS).toBeGreaterThanOrEqual(
+      DCODE_NATIVE_LOCAL_TEST_TIMEOUT_MS + 5 * MINUTE_MS,
+    );
+    expect(
+      catalogueTarget("inference-routing-openclaw-native").timeoutMinutes * MINUTE_MS,
+    ).toBeGreaterThanOrEqual(
+      OPENCLAW_NATIVE_LOCAL_TEST_TIMEOUT_MS +
+        ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS +
+        jobHeadroomMs,
+    );
+  });
+
   it("pins the reviewed command, test, and target timeout values", () => {
     expect({
       finalHandoffCommandMinutes: ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS / MINUTE_MS,
       singleFinalHandoffTestMinutes: ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS / MINUTE_MS,
       singleFinalHandoffTargetMinutes: ONBOARD_SINGLE_FINAL_HANDOFF_TARGET_TIMEOUT_MINUTES,
+      dcodeNativeLocalTestMinutes: DCODE_NATIVE_LOCAL_TEST_TIMEOUT_MS / MINUTE_MS,
+      inferenceRoutingTargetMinutes: INFERENCE_ROUTING_TARGET_TIMEOUT_MINUTES,
+      openClawNativeLocalTestMinutes: OPENCLAW_NATIVE_LOCAL_TEST_TIMEOUT_MS / MINUTE_MS,
+      openClawNativeLocalTargetMinutes: OPENCLAW_NATIVE_LOCAL_TARGET_TIMEOUT_MINUTES,
       noRecreateCommandMinutes: ONBOARD_NO_RECREATE_COMMAND_TIMEOUT_MS / MINUTE_MS,
       configExportCommandMinutes: CONFIG_EXPORT_COMMAND_TIMEOUT_MS / MINUTE_MS,
       configExportPinnedV1ConsumerMinutes: CONFIG_EXPORT_PINNED_V1_CONSUMER_TIMEOUT_MS / MINUTE_MS,
@@ -105,12 +166,19 @@ describe("onboard final-handoff timeout contract", () => {
       dcodeExpectedRefusalTargetMinutes: dcodeExpectedRefusalTimeout.targetTimeoutMinutes,
       onboardResumeTestMinutes: ONBOARD_RESUME_TEST_TIMEOUT_MS / MINUTE_MS,
       onboardResumeTargetMinutes: ONBOARD_RESUME_TARGET_TIMEOUT_MINUTES,
+      onboardRepairCommandMinutes: ONBOARD_REPAIR_COMMAND_TIMEOUT_MS / MINUTE_MS,
+      onboardRepairTestMinutes: ONBOARD_REPAIR_TEST_TIMEOUT_MS / MINUTE_MS,
+      onboardRepairTargetMinutes: ONBOARD_REPAIR_TARGET_TIMEOUT_MINUTES,
       dcodeTypedTargetTestMinutes: DCODE_TYPED_TARGET_TEST_TIMEOUT_MS / MINUTE_MS,
       dcodeTypedTargetMinutes: DCODE_TYPED_TARGET_TIMEOUT_MINUTES,
     }).toEqual({
       finalHandoffCommandMinutes: 40,
       singleFinalHandoffTestMinutes: 50,
       singleFinalHandoffTargetMinutes: 75,
+      dcodeNativeLocalTestMinutes: 117.5,
+      inferenceRoutingTargetMinutes: 243,
+      openClawNativeLocalTestMinutes: 122.5,
+      openClawNativeLocalTargetMinutes: 193,
       noRecreateCommandMinutes: 15,
       configExportCommandMinutes: 2,
       configExportPinnedV1ConsumerMinutes: 10,
@@ -120,6 +188,9 @@ describe("onboard final-handoff timeout contract", () => {
       dcodeExpectedRefusalTargetMinutes: 152,
       onboardResumeTestMinutes: 150,
       onboardResumeTargetMinutes: 170,
+      onboardRepairCommandMinutes: 20,
+      onboardRepairTestMinutes: 150,
+      onboardRepairTargetMinutes: 170,
       dcodeTypedTargetTestMinutes: 130,
       dcodeTypedTargetMinutes: 150,
     });
@@ -128,10 +199,16 @@ describe("onboard final-handoff timeout contract", () => {
   it.each([
     [
       "inference-routing",
-      ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
-      ONBOARD_SINGLE_FINAL_HANDOFF_TARGET_TIMEOUT_MINUTES,
+      DCODE_NATIVE_LOCAL_TEST_TIMEOUT_MS,
+      INFERENCE_ROUTING_TARGET_TIMEOUT_MINUTES,
+    ],
+    [
+      "inference-routing-openclaw-native",
+      OPENCLAW_NATIVE_LOCAL_TEST_TIMEOUT_MS + ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
+      OPENCLAW_NATIVE_LOCAL_TARGET_TIMEOUT_MINUTES,
     ],
     ["onboard-resume", ONBOARD_RESUME_TEST_TIMEOUT_MS, ONBOARD_RESUME_TARGET_TIMEOUT_MINUTES],
+    ["onboard-repair", ONBOARD_REPAIR_TEST_TIMEOUT_MS, ONBOARD_REPAIR_TARGET_TIMEOUT_MINUTES],
   ] as const)(
     "reserves at least 20 minutes of catalogue-job headroom after the %s test timeout",
     (targetId, testTimeoutMs, targetTimeoutMinutes) => {
@@ -142,7 +219,7 @@ describe("onboard final-handoff timeout contract", () => {
     },
   );
 
-  it("selects both affected targets when the shared timeout contract changes", () => {
+  it("selects each affected target when the shared timeout contract changes", () => {
     expect(
       catalogueTargetsForChangedFiles([timeoutContractPath])
         .map((target) => target.id)
@@ -264,6 +341,9 @@ describe("onboard final-handoff timeout contract", () => {
     LIVE_TARGET_BASE_TEST_TIMEOUT_MS,
     ONBOARD_RESUME_TARGET_TIMEOUT_MINUTES,
     ONBOARD_RESUME_TEST_TIMEOUT_MS,
+    ONBOARD_REPAIR_COMMAND_TIMEOUT_MS,
+    ONBOARD_REPAIR_TARGET_TIMEOUT_MINUTES,
+    ONBOARD_REPAIR_TEST_TIMEOUT_MS,
     ONBOARD_SINGLE_FINAL_HANDOFF_TARGET_TIMEOUT_MINUTES,
     ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
   ])("uses positive whole numbers for timeout contract values [case %#]", (value) => {

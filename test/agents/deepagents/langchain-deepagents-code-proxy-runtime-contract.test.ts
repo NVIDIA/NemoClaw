@@ -32,7 +32,7 @@ function runHeadlessCheckHelper(
 ): string {
   return execFileSync("bash", ["-c", `source "$1"; ${snippet}`, "bash", sourcePath], {
     encoding: "utf8",
-    env: { ...process.env, ...env },
+    env: { ...process.env, ...env, REPO: process.cwd() },
   });
 }
 
