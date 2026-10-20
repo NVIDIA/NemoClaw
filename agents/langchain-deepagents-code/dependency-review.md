@@ -258,8 +258,8 @@ aliases. They are not a new provider profile and do not modify the reviewed
 canonical NVIDIA profile.
 
 The two managed model IDs remain language-local constants in the TypeScript
-config generator, the managed package patch, and the isolated Python
-image/plugin validators. NemoClaw
+identity module (`src/lib/inference/managed-dcode/identity.ts`), the managed
+package patch, and the isolated Python image/plugin validators. NemoClaw
 registers both IDs under the managed OpenAI adapter and the managed OpenRouter
 adapter because Deep Agents Code applies provider-native request shaping before
 it reaches the shared `inference.local` route. Those components run on opposite
