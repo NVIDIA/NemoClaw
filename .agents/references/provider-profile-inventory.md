@@ -71,16 +71,28 @@ evidence that its create branch works with an empty catalog.
 | --- | --- |
 | [setup-inference.ts](../../src/lib/onboard/setup-inference.ts): gateway binding and selected-provider wrapper | Supported dispatcher. Fixed hosted and custom hosted selections use their native lifecycle. `selectedUpsertProvider` intercepts eligible local selections with `prepareNativeLocalSelection`; retained selections can still reach the raw helper. |
 | [credential-provider-registration.ts](../../src/lib/onboard/credential-provider-registration.ts) | Supported forwarding wrapper, not an independent profile owner. Messaging registration now uses the typed applier with owned definitions; remaining inference callers inherit their selection's classification. |
-| [remote.ts](../../src/lib/onboard/inference-providers/remote.ts) | Native local selections use the intercepted upsert. Fresh native hosted selections return before this branch. Remaining custom and compatible shared routes are legacy pending their own migration or retirement. |
+| [remote.ts](../../src/lib/onboard/inference-providers/remote.ts) | Native local selections use the intercepted upsert. Fresh native hosted selections return before this branch. Remaining custom and compatible shared routes are legacy pending their own migration or retirement. A persisted legacy `nvidia-nim` provider resolves to the `build` entry in [selection keys](../../src/lib/onboard/inference-providers/provider-selection-keys.ts), whose catalog type is `nvidia` in [the provider config](../../src/lib/onboard/providers.ts). No owned profile has that ID. |
 | [ollama-local.ts](../../src/lib/onboard/inference-providers/ollama-local.ts) | Supported native selections are intercepted before the raw create. Retained legacy selections remain catalog-dependent (`openai`). |
 | [vllm-local.ts](../../src/lib/onboard/inference-providers/vllm-local.ts) | Standalone native vLLM is intercepted. Local NIM is deliberately excluded and retains the shared route, owned by #13116 and #12975. It still depends on `openai`. |
 | [bedrock-runtime.ts](../../src/lib/onboard/bedrock-runtime.ts) | Legacy pending retirement for existing shared-route custom sandboxes. Fresh hosted Bedrock uses native custom setup, including a profile check before adapter startup. The leaf `openai` upsert is not evidence of a fresh native gap. |
 | [openrouter-runtime.ts](../../src/lib/onboard/openrouter-runtime.ts) | Legacy runtime-adapter branch. The fixed hosted OpenRouter selection returns through native setup first. The retained branch uses catalog type `openai`. |
-| [routed-inference.ts](../../src/lib/onboard/routed-inference.ts) | Retained Model Router route, pending native migration or retirement under #12558. It can create `nvidia-router` with catalog type `openai`; it has no owned import here. Profile ownership remains unresolved under #12940. |
+| [routed-inference.ts](../../src/lib/onboard/routed-inference.ts) | Retained experimental Model Router route with no owner. #12558 has no Model Router slice, and this inventory found no issue that plans its native migration or retirement. It can create `nvidia-router` with catalog type `openai`; it has no owned import here. A maintainer decision must assign an owner or retire the route before the selected release. |
 | [compatible-endpoint-gateway-route.ts](../../src/lib/onboard/inference-providers/compatible-endpoint-gateway-route.ts) | Legacy recovered-provider URL repair. It first checks that the provider exists; a later disappearance can still expose the helper's create branch. No owned profile import is established by this wrapper. |
-| [hermes-provider-auth.ts](../../src/lib/hermes-provider-auth.ts) | Native Hermes setup injects a native credential registrar. The fallback `openai` create remains for explicit custom Hermes endpoints and legacy rebuilds without a native receipt. These are retained legacy catalog paths. |
+| [hermes-provider-auth.ts](../../src/lib/hermes-provider-auth.ts) | Native Hermes setup injects a native credential registrar. The fallback `openai` create remains for explicit custom Hermes endpoints and legacy rebuilds without a native receipt. The [rebuild credential preflight](../../src/lib/actions/sandbox/rebuild-credential-preflight.ts) reaches it when the Hermes Provider is missing before rebuild. These are retained legacy catalog paths. |
 | [hermes-tool-gateway-broker.ts](../../src/lib/hermes-tool-gateway-broker.ts) | Supported owned-profile create, imported before upsert. Exact legacy `generic` reuse passes `knownExists: true`; it does not create a new unowned profile. |
 | [experimental Hermes portable transaction](../../src/lib/onboard/experimental/hermes-portable-ollama-gateway-transaction.ts) | Outside #12940's supported provider setup. This object method implements its own experimental journaled gateway transaction; it is not a call to the shared helper. Its `openai` catalog dependency remains unqualified. |
+
+## Production create paths outside the shared helper
+
+[Inference set](../../src/lib/actions/inference-set.ts) does not call `upsertProvider`. A selection
+that is not native local prepares its binding through
+[the inference-set provider mutation](../../src/lib/actions/inference-set-provider.ts). When the
+provider is missing, it calls `createProvider()` with catalog type `openai` or `anthropic` from
+`providerSurface()` and imports no profile. A loopback no-auth proxy route cannot create. This is a
+retained shared-route catalog dependency, classified with the selected route above.
+
+The direct inference branch of the experimental blueprint runner also creates outside the helper; it
+keeps the separate disposition recorded below.
 
 Retained catalog dependencies above are not import-only completion evidence. #12558's route retirement
 must wait for every retained selection; #12940 must resolve profile ownership for any path that remains
@@ -137,6 +149,10 @@ remains #13346.
 
 Decision: Deepak Jain selects the native NVIDIA hosted path, `nemoclaw-nvidia-inference-v1`.
 Reason: it has a checked-in definition and focused lifecycle tests for creation, reuse, collision, and attachment.
+Warning evidence gap: [lifecycle tests](../../src/lib/inference/native-nvidia.test.ts) use a stub adapter
+and do not assert any post-mutation warning. The generic adapter warning tests cover drift, export failure, and
+timeout, but no caller-level test proves this path emits them. The #13346 run must record whether the
+warning paths were observed.
 Placement: this inventory records the selection; [#13346](https://github.com/NVIDIA/NemoClaw/issues/13346)
 owns execution and cleanup.
 Accountable maintainer: Deepak Jain (@deepujain).
