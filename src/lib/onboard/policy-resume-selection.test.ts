@@ -24,20 +24,28 @@ function policies(
     "personal-open-internet",
   ].map((name) => ({ name }));
   const customPresets = (options.custom ?? []).map((name) => ({ name }));
+  const supported = (name: string, supportOptions?: { webSearchSupported?: boolean | null }) =>
+    (name !== "brave" && name !== "tavily") || supportOptions?.webSearchSupported !== false;
   return {
-    setupPolicyPresetSupported: () => true,
-    listSetupPolicyPresets: async () => setupPresets,
+    setupPolicyPresetSupported: supported,
+    listSetupPolicyPresets: async (
+      _sandboxName: string,
+      supportOptions?: { webSearchSupported?: boolean | null },
+    ) => setupPresets.filter((preset) => supported(preset.name, supportOptions)),
     listCustomPresets: async () => customPresets,
     customPresetOwnsNetworkPolicyKey: async () => options.customOwnsObservability === true,
     getAppliedPresets: async () => options.applied ?? [],
     clampSetupPolicyPresetNames(
       names: string[],
       selectablePresets: Preset[],
-      _supportOptions: { webSearchSupported?: boolean | null } | undefined,
+      supportOptions: { webSearchSupported?: boolean | null } | undefined,
       customPresetNames: Set<string> = new Set(),
     ) {
       const selectable = new Set(selectablePresets.map((preset) => preset.name));
-      return names.filter((name) => selectable.has(name) || customPresetNames.has(name));
+      return names.filter(
+        (name) =>
+          customPresetNames.has(name) || (selectable.has(name) && supported(name, supportOptions)),
+      );
     },
   };
 }
@@ -87,6 +95,16 @@ describe("preparePolicyPresetResumeSelection web search reconciliation", () => {
       preparePolicyPresetResumeSelection({ policies: policies({ applied: [] }) }, "alpha", {
         agent: "openclaw",
         pendingPolicyPresets: ["removed-preset"],
+      }),
+    ).rejects.toThrow("Start a new onboarding attempt with the `--fresh` option");
+  });
+
+  it("rejects a saved Brave preset when web search support is unavailable", async () => {
+    await expect(
+      preparePolicyPresetResumeSelection({ policies: policies({ applied: ["brave"] }) }, "alpha", {
+        agent: "openclaw",
+        pendingPolicyPresets: ["brave"],
+        webSearchSupported: false,
       }),
     ).rejects.toThrow("Start a new onboarding attempt with the `--fresh` option");
   });

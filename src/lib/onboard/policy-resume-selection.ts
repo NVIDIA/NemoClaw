@@ -102,8 +102,9 @@ export async function preparePolicyPresetResumeSelection(
   if (
     options.pendingPolicyPresets?.some(
       (name) =>
-        !selectablePolicyPresets.some((preset) => preset.name === name) &&
-        !customPolicyPresetNames.has(name),
+        !customPolicyPresetNames.has(name) &&
+        (!selectablePolicyPresets.some((preset) => preset.name === name) ||
+          !deps.policies.setupPolicyPresetSupported(name, supportOptions)),
     )
   ) {
     throw new Error(

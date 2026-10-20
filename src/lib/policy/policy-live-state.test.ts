@@ -109,7 +109,7 @@ describe("live OpenShell policy mutations", () => {
   });
 
   it.each(["batch", "direct"] as const)(
-    "applies and recognizes a pricing preset with the custom provider's exact pins (%s)",
+    "applies, discloses, and recognizes a pricing preset with the custom provider's exact pins (%s)",
     async (path) => {
       const pins = ["34.117.59.81", "104.18.8.134"];
       const endpoint = {
@@ -135,6 +135,9 @@ describe("live OpenShell policy mutations", () => {
           ? applyPresetContent(sandboxName, "openclaw-pricing", content!, { nonFatal: true })
           : applyPresets(sandboxName, ["openclaw-pricing"]),
       ).resolves.toBe(true);
+      expect(console.log).toHaveBeenCalledWith(
+        `          allowed IPs: ${[...pins].sort().join(", ")}`,
+      );
       const pricing = YAML.parse(livePolicy).network_policies["openclaw-pricing"].endpoints[1];
       expect(pricing.allowed_ips).toEqual([...pins].sort());
       expect(pricing.rules).toEqual([{ allow: { method: "GET", path: "/api/v1/models" } }]);
@@ -143,17 +146,19 @@ describe("live OpenShell policy mutations", () => {
     },
   );
 
+  const unpinnedRoutes = [{ key: "_provider_nemoclaw_custom_openrouter_v1", pins: undefined }];
+  const conflictingRoutes = [
+    { key: "_provider_nemoclaw_custom_openrouter_v1", pins: ["34.117.59.81"] },
+    { key: "native_hosted_inference", pins: ["104.18.8.134"] },
+  ];
   it.each([
-    { routes: [{ key: "_provider_nemoclaw_custom_openrouter_v1", pins: undefined }] },
-    {
-      routes: [
-        { key: "_provider_nemoclaw_custom_openrouter_v1", pins: ["34.117.59.81"] },
-        { key: "native_hosted_inference", pins: ["104.18.8.134"] },
-      ],
-    },
+    { path: "direct", routes: unpinnedRoutes },
+    { path: "batch", routes: unpinnedRoutes },
+    { path: "direct", routes: conflictingRoutes },
+    { path: "batch", routes: conflictingRoutes },
   ])(
-    "does not submit direct pricing when live provider pins are invalid ($#)",
-    async ({ routes }) => {
+    "does not submit $path pricing when live provider pins are invalid ($#)",
+    async ({ path, routes }) => {
       livePolicy = YAML.stringify({
         version: 1,
         network_policies: Object.fromEntries(
@@ -172,7 +177,9 @@ describe("live OpenShell policy mutations", () => {
       expect(content).not.toBeNull();
 
       await expect(
-        applyPresetContent(sandboxName, "openclaw-pricing", content!, { nonFatal: true }),
+        path === "direct"
+          ? applyPresetContent(sandboxName, "openclaw-pricing", content!, { nonFatal: true })
+          : applyPresets(sandboxName, ["openclaw-pricing"]),
       ).resolves.toBe(false);
       expect(mocks.setSandboxPolicy).not.toHaveBeenCalled();
       expect(livePolicy).toBe(original);

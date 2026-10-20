@@ -2476,7 +2476,7 @@ async function applyPresetContent(
     Object.prototype.hasOwnProperty.call(options, "disclosedPresetState") &&
     options.disclosedPresetState === disclosedPresetState;
   if (!options.suppressDisclosure && !disclosedStateStillCurrent) {
-    logPresetScopeForState(presetName, presetContent, disclosedPresetState);
+    logPresetScopeForState(presetName, effectivePresetContent, disclosedPresetState);
   }
   if (npmBaselineWidened && !options.suppressDisclosure) {
     logOpenClawNpmCompatibilityDisclosure();
