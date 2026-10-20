@@ -1087,3 +1087,72 @@ describe("OpenClaw native local probe routing (#13338)", () => {
     },
   );
 });
+
+it.each(["nvidia/nemotron-3-ultra-550b-a55b", "nvidia/nvidia/nemotron-3-ultra"])(
+  "keeps DCode Ultra readiness on its managed model profile (%s)",
+  (model) => {
+    const selected = {
+      ...input,
+      agentName: "langchain-deepagents-code",
+      model,
+      nativeProvider: true,
+      nativeEndpointUrl: "https://inference-api.nvidia.com/v1",
+    };
+    const result = runProbeCommandWithBody(
+      "200",
+      '{"choices":[{"message":{"content":"OK"}}]}',
+      tmpdir(),
+      selected,
+      { COMPATIBLE_API_KEY: "openshell:resolve:env:COMPATIBLE_API_KEY" },
+    );
+    const payload = JSON.parse(result.argv[result.argv.indexOf("--data-binary") + 1]!);
+    expect(payload.chat_template_kwargs).toEqual({ force_nonempty_content: true });
+  },
+);
+
+it("rejects the native E2E preamble without copying its response into diagnostics", async () => {
+  const result = await probeSandboxInferenceInvocation(
+    {
+      ...input,
+      agentName: "langchain-deepagents-code",
+      nativeProvider: true,
+      nativeEndpointUrl: "https://inference-api.nvidia.com/v1",
+    },
+    {
+      commandExecutor: {
+        runBuffered: async () => bufferedResult(0, "UNTRUSTED PREAMBLE\nBROKEN 000\n", ""),
+      },
+    },
+  );
+  expect(result).toEqual({
+    ok: false,
+    httpStatus: null,
+    detail: "sandbox inference invocation probe returned an invalid response body",
+    endpoint: "https://inference-api.nvidia.com/v1/chat/completions",
+  });
+});
+
+it.each([
+  {
+    agentName: "langchain-deepagents-code",
+    model: "nvidia/nvidia/nemotron-3-ultra",
+    nativeEndpointUrl: "https://integrate.api.nvidia.com/v1",
+  },
+  {
+    agentName: "openclaw",
+    model: "nvidia/nvidia/nemotron-3-ultra",
+    nativeEndpointUrl: "https://inference-api.nvidia.com/v1",
+  },
+  {
+    agentName: "langchain-deepagents-code",
+    model: "another-model",
+    nativeEndpointUrl: "https://inference-api.nvidia.com/v1",
+  },
+])(
+  "preserves unrelated request profiles for $agentName $model at $nativeEndpointUrl",
+  (variant) => {
+    expect(
+      buildSandboxInferenceInvocationCommand({ ...input, nativeProvider: true, ...variant }),
+    ).not.toContain("force_nonempty_content");
+  },
+);

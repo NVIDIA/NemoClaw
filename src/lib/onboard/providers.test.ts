@@ -181,6 +181,7 @@ describe("onboard provider helpers", () => {
       providerName: "openrouter-api",
       providerType: "openai",
       credentialEnv: "OPENROUTER_API_KEY",
+      defaultModel: "nvidia/nemotron-3.5-super-vl",
     });
     expect(NON_INTERACTIVE_PROVIDER_KEYS.has("openrouter")).toBe(true);
     expect(NON_INTERACTIVE_PROVIDER_ALIASES["open-router"]).toBe("openrouter");
