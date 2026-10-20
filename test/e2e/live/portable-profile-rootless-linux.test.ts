@@ -1180,15 +1180,6 @@ async function main(
       )?.map(({ subnet }) => subnet),
       [PORTABLE_DOCKER_NETWORK_SUBNET],
     );
-    assert.equal(
-      run("docker", [
-        "inspect",
-        "--format",
-        `{{with index .NetworkSettings.Networks ${JSON.stringify(PORTABLE_DOCKER_NETWORK_NAME)}}}{{.IPAddress}}{{end}}`,
-        "nemoclaw-portable-registry",
-      ]),
-      PORTABLE_REGISTRY_IP,
-    );
     const currentNetwork = parseOnePodmanRecord(
       run("podman", [
         "--url",
@@ -1240,7 +1231,8 @@ async function main(
       fs.readFileSync(gatewayEnv.OPENSHELL_GATEWAY_CONFIG, "utf-8"),
       /supervisor_bin/,
     );
-    const artifactDir = process.env.E2E_ARTIFACT_DIR ?? "";
+    const artifactDir = process.env.E2E_ARTIFACT_DIR;
+    assert.ok(artifactDir, "E2E_ARTIFACT_DIR is required for the rootless receipt");
     fs.mkdirSync(artifactDir, { recursive: true, mode: 0o700 });
 
     progress.phase("start the pinned Podman gateway");

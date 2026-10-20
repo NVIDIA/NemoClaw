@@ -5862,6 +5862,13 @@ jobs:
           service=nemoclaw-native-podman-e2e.service
           service_pid="$(/usr/bin/systemctl --user show "$service" --property=MainPID --value)"
           [[ "$service_pid" =~ ^[1-9][0-9]*$ ]]
+          # Portable host preparation changes the client configuration and podman.service.
+          # The registry socket belongs to this separate service and must retain this configuration.
+          service_config="$(tr '\0' '\n' <"/proc/$service_pid/environ" | sed -n 's/^CONTAINERS_CONF=//p')"
+          [[ "$service_config" == "$config" ]] || {
+            echo "::error::Portable registry Podman service is using a different containers.conf" >&2
+            exit 1
+          }
           printf 'NEMOCLAW_NATIVE_PODMAN_SERVICE_PID=%s\n' "$service_pid" >>"$GITHUB_ENV"
           podman --url "unix://${OPENSHELL_PODMAN_SOCKET:?}" info --format json |
             jq -e '((.host.cgroupManager // .Host.CgroupManager) | ascii_downcase) == "systemd"' >/dev/null
