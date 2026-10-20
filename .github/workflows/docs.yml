@@ -138,7 +138,11 @@ jobs:
   public:
     name: Release
     needs: validate
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v1.') && vars.FERN_V1_PUBLIC_ENABLED == 'true'
+    # Release candidates such as v1.0.0-rc1 stage images and drafts; only a
+    # final release publishes the documentation.
+    if: >-
+      github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v1.') &&
+      !contains(github.ref_name, '-') && vars.FERN_V1_PUBLIC_ENABLED == 'true'
     environment: docs-v1-public
     runs-on: ubuntu-24.04
     timeout-minutes: 30
