@@ -584,7 +584,7 @@ describe("prepared connect-shell administrative approval", () => {
     expect(commands).toEqual([
       "devices list --json",
       `devices approve ${EXPECTED_REQUEST_ID}`,
-      "cron add --name admin-cron --every 2h --agent main --session isolated --message hello --no-deliver",
+      "cron add --name admin-cron --every 2h --agent main --session isolated --message Respond with a short greeting. --no-deliver",
       "cron run cron-1 --wait --wait-timeout 2m --timeout 10000",
     ]);
   });
@@ -825,6 +825,12 @@ describe("prepared connect-shell administrative approval", () => {
       "message-model-not-found",
     ],
     ["Code Mode could not resolve a configured MCP tool.", "message-code-mode-catalog-miss"],
+    ["Agent couldn't generate a response.", "message-agent-incomplete-turn"],
+    [
+      "\u26a0\ufe0f Agent couldn't generate a response. Please try again.",
+      "message-agent-incomplete-turn",
+    ],
+    ["Agent couldn't generate a response. PRIVATE_SUFFIX", "unavailable"],
     ["HTTP 503: PRIVATE_PROMPT test-gateway-token https://PRIVATE_HOST/", "error-text-http-503"],
     ["503 PRIVATE_BODY", "error-text-http-503"],
     ["503", "error-text-http-503"],

@@ -70,6 +70,7 @@ export async function preparePolicyPresetResumeSelection(
     webSearchSupported?: boolean | null;
     env?: NodeJS.ProcessEnv;
     tierName?: string | null;
+    pendingPolicyPresets?: string[] | null;
   },
 ): Promise<PreparedPolicyResumeSelection> {
   const supportOptions = { webSearchSupported: options.webSearchSupported, agent: options.agent };
@@ -98,8 +99,20 @@ export async function preparePolicyPresetResumeSelection(
       name,
     })),
   ];
+  if (
+    options.pendingPolicyPresets?.some(
+      (name) =>
+        !customPolicyPresetNames.has(name) &&
+        (!selectablePolicyPresets.some((preset) => preset.name === name) ||
+          !deps.policies.setupPolicyPresetSupported(name, supportOptions)),
+    )
+  ) {
+    throw new Error(
+      "The saved policy selection contains an unavailable preset; policy recovery is incomplete. Start a new onboarding attempt with the `--fresh` option to discard the saved selection.",
+    );
+  }
   const clampedLivePolicyPresets = deps.policies.clampSetupPolicyPresetNames(
-    appliedPolicyPresets,
+    options.pendingPolicyPresets ?? appliedPolicyPresets,
     selectablePolicyPresets,
     supportOptions,
     customPolicyPresetNames,
@@ -109,6 +122,7 @@ export async function preparePolicyPresetResumeSelection(
   // agent so the shared predicate exempts them via provenance and re-onboard
   // reuse preserves them. (#6844)
   const isStaleBuiltinWebSearch = (name: string) =>
+    !options.pendingPolicyPresets?.includes(name) &&
     isStaleBuiltinWebSearchPolicyPreset(name, {
       webSearchConfig: options.webSearchConfig,
       customPresetNames: customPolicyPresetNames,
@@ -143,11 +157,13 @@ export async function preparePolicyPresetResumeSelection(
     appliedPolicyPresetsForSupport,
     options.disabledChannels,
   );
-  policyPresets = mergeAppliedPolicyPresetsForDisabledMessagingCleanup(
-    policyPresets,
-    appliedPolicyPresetsForSupport,
-    options.disabledChannels,
-  );
+  if (options.pendingPolicyPresets == null) {
+    policyPresets = mergeAppliedPolicyPresetsForDisabledMessagingCleanup(
+      policyPresets,
+      appliedPolicyPresetsForSupport,
+      options.disabledChannels,
+    );
+  }
   policyPresets = mergeRequiredSetupPolicyPresets(policyPresets, {
     enabledChannels: options.enabledChannels,
     hermesToolGateways: options.hermesToolGateways,

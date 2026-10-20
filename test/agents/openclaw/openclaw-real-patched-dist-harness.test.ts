@@ -22,6 +22,8 @@ import { runRealOpenClawDeviceSelfApprovalProof } from "../../helpers/openclaw-r
 import { runRealOpenClawInstallPathProof } from "../../helpers/openclaw-real-install-path-proof";
 import { runRealOpenClawMcpStartRetryProof } from "../../helpers/openclaw-real-mcp-start-retry-proof";
 
+import { patchOpenClawAgentMessageInput } from "../../../scripts/lib/patch-openclaw-agent-message-input.mts";
+
 const REPO_ROOT = path.join(import.meta.dirname, "../../..");
 const DOCKERFILE = path.join(REPO_ROOT, "Dockerfile");
 const PATCH_OPENCLAW_ISSUE_4434_DIAGNOSTICS = path.join(
@@ -218,13 +220,26 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
-function dockerfilePatchCommand(dist: string): string {
+function dockerfileRuntimePatchCommand(dist: string): string {
   return dockerRunCommandBetween(
+    "# Native OpenClaw restart must reload",
+    "# Keep OpenClaw 2026.9.1 scope-upgrade",
+  )
+    .replaceAll("/usr/local/lib/node_modules/openclaw/dist", shellQuote(dist))
+    .replaceAll(
+      "/usr/local/lib/nemoclaw/patch-openclaw-",
+      path.join(REPO_ROOT, "scripts", "lib", "patch-openclaw-"),
+    );
+}
+
+function dockerfilePatchCommand(dist: string): string {
+  const legacy = dockerRunCommandBetween(
     "# Patch OpenClaw media fetch for proxy-only sandbox",
     "# Native OpenClaw restart must reload",
   )
     .replaceAll("/usr/local/lib/node_modules/openclaw/dist", dist)
     .replaceAll("/usr/local/lib/nemoclaw/extract-semver", shellQuote(OPENCLAW_VERSION_EXTRACTOR));
+  return `${legacy}\n${dockerfileRuntimePatchCommand(dist)}`;
 }
 
 function runDockerfilePatchBlock(dist: string, tmp: string, version: string) {
@@ -388,11 +403,51 @@ it("bounds reload-proof diagnostics while retaining the final gateway error", as
 });
 
 describe("OpenClaw real patched-dist materialization guard", () => {
+  it("applies the Dockerfile runtime patch selection before auditing the distribution", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runtime-patch-"));
+    const dist = path.join(tmp, "dist");
+    fs.mkdirSync(path.join(dist, "cli"), { recursive: true });
+    fs.writeFileSync(path.join(tmp, "package.json"), JSON.stringify({ version: "2026.9.2" }));
+    fs.copyFileSync(
+      path.join(import.meta.dirname, "fixtures/agent-message-input.js.txt"),
+      path.join(dist, "agent-via-gateway-fixture.js"),
+    );
+    fs.copyFileSync(
+      path.join(import.meta.dirname, "fixtures/gateway-container-restart.js.txt"),
+      path.join(dist, "cli/gateway-lifecycle.runtime.js"),
+    );
+    fs.writeFileSync(
+      path.join(dist, "lifecycle-fixture.js"),
+      `async function runSafeGatewayRestart(opts, target) {
+\tconst result = await callGatewayCli({
+\t\tmethod: "gateway.restart.request",
+\t\tparams,
+\t});
+\treturn result;
+}`,
+    );
+    try {
+      expect(() => patchOpenClawAgentMessageInput(dist, true)).toThrow("patch is missing");
+      const result = spawnSync("bash", ["-c", dockerfileRuntimePatchCommand(dist)], {
+        encoding: "utf8",
+        timeout: PATCH_COMMAND_TIMEOUT_MS,
+      });
+      requireSpawnSuccess(result, "apply Dockerfile runtime patches to parser fixtures");
+      expect(() => patchOpenClawAgentMessageInput(dist, true)).not.toThrow();
+      expect(() => patchOpenClawContainerRestart(dist, true)).not.toThrow();
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("maps container-only patch helpers to their repository fixtures", () => {
     const command = dockerfilePatchCommand("/tmp/reviewed-openclaw-dist");
 
     expect(command).not.toContain("/usr/local/lib/nemoclaw/extract-semver");
     expect(command).toContain(shellQuote(OPENCLAW_VERSION_EXTRACTOR));
+    expect(command).toContain("for patch in container-restart agent-message-input");
+    expect(command).not.toContain("/usr/local/lib/nemoclaw/patch-openclaw-");
+    expect(command).toContain(path.join(REPO_ROOT, "scripts", "lib", "patch-openclaw-"));
   });
 
   // source-shape-contract: security -- The real artifact harness must reject every Node runtime except the exact version reviewed for CI and production images
@@ -704,7 +759,8 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
           process.env.PATH = previousPath;
         }
 
-        patchOpenClawContainerRestart(dist);
+        patchOpenClawAgentMessageInput(dist, true);
+
         patchOpenClawContainerRestart(dist, true);
 
         const issue4434Patch = spawnSync(

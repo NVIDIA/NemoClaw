@@ -39,6 +39,8 @@ function createHarness() {
     })),
     waitForSandboxControlPlaneReady: vi.fn(async () => true),
     syncPresetSelection,
+    recordPendingSelection: vi.fn(),
+    clearPendingSelection: vi.fn(),
     selectPolicyTier: vi.fn(async () => "balanced"),
     selectTierPresetsAndAccess: vi.fn(
       async (): Promise<Array<{ name: string; access: string }>> => [],
@@ -82,6 +84,44 @@ describe("Personal selection with a native custom provider", () => {
 });
 
 describe("host-local route-only policy selection", () => {
+  it.each([false, true])(
+    "keeps %s selection pending when policy write fails",
+    async (interactive) => {
+      const { deps, syncPresetSelection } = createHarness();
+      deps.isNonInteractive.mockReturnValue(!interactive);
+      deps.selectTierPresetsAndAccess.mockResolvedValue(
+        interactive ? [{ name: "npm", access: "read" }] : [],
+      );
+      syncPresetSelection.mockImplementation(() => {
+        throw new Error("policy refused");
+      });
+
+      await expect(
+        setupPoliciesWithSelection(deps, "alpha", {
+          selectedPresets: null,
+          excludedPresets: ["local-inference"],
+        }),
+      ).rejects.toThrow("policy refused");
+      expect(deps.recordPendingSelection).toHaveBeenCalledWith(
+        "alpha",
+        "balanced",
+        expect.arrayContaining(["npm"]),
+      );
+      expect(deps.clearPendingSelection).not.toHaveBeenCalled();
+    },
+  );
+
+  it("clears pending selection only after the policy write succeeds", async () => {
+    const { deps, syncPresetSelection } = createHarness();
+    await setupPoliciesWithSelection(deps, "alpha", { selectedPresets: ["npm"] });
+    expect(deps.recordPendingSelection.mock.invocationCallOrder[0]).toBeLessThan(
+      syncPresetSelection.mock.invocationCallOrder[0],
+    );
+    expect(syncPresetSelection.mock.invocationCallOrder[0]).toBeLessThan(
+      deps.clearPendingSelection.mock.invocationCallOrder[0],
+    );
+  });
+
   it("removes a stale recorded local-inference preset from the live selection", async () => {
     const { deps, syncPresetSelection } = createHarness();
 
