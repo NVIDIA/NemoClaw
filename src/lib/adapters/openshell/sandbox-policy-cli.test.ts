@@ -295,6 +295,25 @@ describe("CLI OpenShell sandbox policy writer", () => {
     ]);
   });
 
+  it("retains the redacted OpenShell detail for an unconfirmed policy submission", async () => {
+    const stderr =
+      "Error:   × code: 'The system is not in a state required for the operation's execution', " +
+      'message: "network endpoint ambiguity validation failed: Authorization: Bearer nvapi-secret-value"';
+    const writer = createCliOpenShellSandboxPolicyWriter({
+      capture: vi.fn((_args: string[]) => captured({ status: 1, output: "", stderr })),
+    });
+
+    const { outcome } = await writer.setSandboxPolicy({
+      target: selectedOpenShellGateway(),
+      sandboxName: "alpha",
+      document: POLICY,
+    });
+    expect(outcome.kind).toBe("ambiguous");
+    const detail = outcome.kind === "ambiguous" ? outcome.detail : "";
+    expect(detail).toContain("network endpoint ambiguity validation failed");
+    expect(detail).not.toContain("nvapi-secret-value");
+  });
+
   it("rejects an invalid sandbox name before invoking OpenShell", async () => {
     const capture = vi.fn(() => captured({ output: "" }));
     const writer = createCliOpenShellSandboxPolicyWriter({ capture });

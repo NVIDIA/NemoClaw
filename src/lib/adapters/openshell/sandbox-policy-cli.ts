@@ -192,7 +192,7 @@ function parsePolicySet(
   if (outcome.kind === "rejected") {
     outcome = { ...outcome, message: redactCredentialText(outcome.message) };
   } else if (outcome.kind === "ambiguous") {
-    outcome = { kind: "ambiguous", detail: "OpenShell did not confirm the policy submission" };
+    outcome = { kind: "ambiguous", detail: redactCredentialText(outcome.detail) };
   }
   return { status: captured.status, outcome };
 }
