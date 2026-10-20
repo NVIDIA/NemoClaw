@@ -187,6 +187,9 @@ export function createOnboardPolicyApplication(deps: OnboardPolicyApplicationDep
     );
     return selectedPolicyTier;
   };
+  const resetPolicyTierSelection = () => {
+    selectedPolicyTier = null;
+  };
   const selectTierPresetsAndAccess = (
     tierName: string,
     allPresets: Array<{ name: string; description?: string }>,
@@ -272,6 +275,7 @@ export function createOnboardPolicyApplication(deps: OnboardPolicyApplicationDep
       return await preparePolicyPresetResumeSelection({ policies }, sandboxName, options);
     },
     presetsCheckboxSelector,
+    resetPolicyTierSelection,
     resolveSandboxBaselinePolicy: policies.resolveSandboxBaselinePolicy,
     selectPolicyTier,
     selectTierPresetsAndAccess,
@@ -284,7 +288,7 @@ export function createOnboardPolicyApplication(deps: OnboardPolicyApplicationDep
           setupPoliciesWithSelection(setupDeps, sandboxName, options),
         );
       } finally {
-        selectedPolicyTier = null;
+        resetPolicyTierSelection();
       }
     },
     validatePolicyTierEnvEarly: policyTierEnv.validatePolicyTierEnvEarly,

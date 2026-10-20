@@ -97,6 +97,21 @@ describe("onboarding policy application", () => {
     expect(loadTier).toHaveBeenCalledTimes(2);
   });
 
+  it("starts a fresh tier selection after an onboarding attempt ends before policy setup", async () => {
+    const loadTier = vi.fn().mockReturnValueOnce("balanced").mockReturnValueOnce("personal");
+    const application = applicationWithPendingSelection({
+      record: vi.fn(),
+      loadTier,
+      hasPending: vi.fn(() => false),
+      clear: vi.fn(),
+    });
+
+    await expect(application.selectPolicyTier()).resolves.toBe("balanced");
+    application.resetPolicyTierSelection();
+    await expect(application.selectPolicyTier()).resolves.toBe("personal");
+    expect(loadTier).toHaveBeenCalledTimes(2);
+  });
+
   it.each(["npm", "tavily"])(
     "resumes a refused %s write and clears the saved selection after live readback",
     async (presetName) => {
