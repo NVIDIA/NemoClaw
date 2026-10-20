@@ -326,8 +326,8 @@ async fn interrupted_create_preserves_pending_targets_allows_unrelated_intent_an
     assert_eq!(effects, 4);
     let preview = deployment.plan_destroy(&cancel).await.unwrap();
     // Destroy also removes the agent configuration that replaces the sandbox,
-    // and the workspace.
-    assert_eq!(preview.changes.len(), 5);
+    // the workspace, and the record of the sandbox image's pull.
+    assert_eq!(preview.changes.len(), 6);
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
     let destroyed = Command::new(
         bundle
@@ -353,8 +353,9 @@ async fn interrupted_create_preserves_pending_targets_allows_unrelated_intent_an
             .is_empty()
     );
     assert!(fixture.state.lock().unwrap().workspaces.is_empty());
-    // The workspace, registration, sandbox, agent, and the agent's
-    // configuration: re-apply after destroy recreates the workspace too.
+    // The workspace, registration, sandbox, agent, the agent's
+    // configuration, and the sandbox image's pull: re-apply after destroy
+    // recreates the workspace too.
     assert_eq!(
         deployment
             .apply(&document, &cancel)
@@ -362,7 +363,7 @@ async fn interrupted_create_preserves_pending_targets_allows_unrelated_intent_an
             .unwrap()
             .changes
             .len(),
-        5
+        6
     );
 }
 
@@ -997,8 +998,9 @@ async fn mixed_sandboxes_reorder_add_recover_export_and_destroy_independently() 
     let cancel = CancellationToken::new();
     let preview = deployment.plan(&document, &cancel).await.unwrap();
     // Each image/adapter scope owns its provider registration and executable
-    // grants; each agent's configuration replaces its sandbox.
-    assert_eq!(preview.changes.len(), 9);
+    // grants; each agent's configuration replaces its sandbox; the new
+    // sandbox's image is pulled.
+    assert_eq!(preview.changes.len(), 10);
     assert_eq!(fixture.state.lock().unwrap().effects, 0);
     deployment.apply(&document, &cancel).await.unwrap();
     let before: serde_json::Value =

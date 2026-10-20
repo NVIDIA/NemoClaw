@@ -188,8 +188,9 @@ async fn credentialed_inference_applies_without_probes_then_exports_and_destroys
         }));
     assert_eq!(
         teardown.plan_destroy(&cancel).await.unwrap().changes.len(),
-        // Destroy also removes the agent configuration and the workspace.
-        5
+        // Destroy also removes the agent configuration, the workspace, and
+        // the record of the sandbox image's pull.
+        6
     );
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
     // One initialization reads bindings; the other plans the teardown graph.

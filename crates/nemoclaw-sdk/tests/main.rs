@@ -19,6 +19,7 @@ mod kube_client;
 mod kube_faults;
 #[path = "support/provider_scope.rs"]
 mod provider_scope;
+mod sandbox_image_pull;
 #[path = "support/scripted_tofu.rs"]
 mod scripted_tofu;
 #[path = "support/config.rs"]

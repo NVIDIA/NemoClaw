@@ -213,9 +213,12 @@ Each image authenticates through whatever pulls it, and the configuration names 
 | Image | Pulled by | Authenticates with |
 |---|---|---|
 | Managed gateway and service images on Docker | NemoClaw, through the Docker provider | Logins in the Docker configuration file on the machine running OpenTofu, for each registry listed in `spec.registries` |
+| Agent images on a Docker or Podman gateway's engine | NemoClaw, through the Docker provider, before reading their catalog label | The same logins, for each registry listed in `spec.registries` |
 | Podman gateway image | Podman | Podman's own login on the engine's host |
-| Agent images on Docker or Podman | OpenShell's driver | The container runtime's login on the engine's host |
 | Images on Kubernetes or OpenShift | The cluster | Image-pull Secrets; see [Kubernetes and OpenShift](kubernetes.md) |
+
+When the engine doesn't hold an agent image yet, plan reports that sandbox's compatibility as deferred; apply pulls the image, reads its catalog label, and only then creates the sandbox.
+An external gateway that names no `engine` pulls no agent images.
 
 To have NemoClaw's pulls authenticate, log in on the machine running OpenTofu, for example with `docker login nvcr.io`, and list the registry:
 

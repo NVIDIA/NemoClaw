@@ -55,7 +55,7 @@ pub(crate) fn is_disposable(address: &str) -> bool {
     .iter()
     .any(|prefix| address.starts_with(prefix))
 }
-fn digest(engine: &str, name: &str) -> String {
+pub(crate) fn digest(engine: &str, name: &str) -> String {
     Sha256::digest(format!("{engine}\0{name}").as_bytes())[..16]
         .iter()
         .map(|byte| format!("{byte:02x}"))

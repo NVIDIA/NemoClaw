@@ -140,6 +140,7 @@ pub(crate) fn populate(graph: &mut Value, document: &Document) -> Result<(), Con
             DiscoveryQuery::Fabric(FabricRequest {
                 requirements,
                 metadata_env,
+                engine,
                 ..
             }) => {
                 let sandbox = sandboxes.next().expect("one image read per sandbox");
@@ -157,12 +158,23 @@ pub(crate) fn populate(graph: &mut Value, document: &Document) -> Result<(), Con
                     r#"${{join("; ", concat([{}], [for check in jsondecode(self.observation_json).compatibility.checks : format("%s: %s", check.requirement, check.reason) if check.status == "unsupported"]))}}"#,
                     serde_json::to_string(&context).expect("diagnostic context"),
                 );
+                // As `compile::sandbox_image_pulls` selects them.
+                let pulled = metadata_env.is_none()
+                    && !engine.is_empty()
+                    && !document.spec.gateway.runtime().provider.is_kubernetes();
+                // The plan pulls this image before the reads that need its
+                // label, so an engine that doesn't hold it yet passes here.
+                let condition = if pulled {
+                    "${self.runtime_json != \"\" || self.status == \"unavailable\"}"
+                } else {
+                    "${self.runtime_json != \"\"}"
+                };
                 read(graph, &mut observations, &query, &name, &name, |inputs| {
                     inputs["lifecycle"] = json!({ "postcondition": [{
                         "condition": "${self.compatibility_status != \"unsupported\"}",
                         "error_message": rejection
                     }, {
-                        "condition": "${self.runtime_json != \"\"}",
+                        "condition": condition,
                         "error_message": if metadata_env.is_some() || document.spec.gateway.runtime().provider.is_kubernetes() {
                             format!("sandbox/{}: image runtime metadata is unavailable. Set image.metadata.env to an absolute metadata bundle path and verify that it matches the immutable image digest. Resources retained.", sandbox.name)
                         } else {
@@ -183,7 +195,10 @@ pub(crate) fn populate(graph: &mut Value, document: &Document) -> Result<(), Con
                     }
                 }
                 // Named by sandbox, so adding a sandbox changes no agent's ref.
-                graph["data"]["fabric_harness"][&sandbox.name] = harness;
+                // A pulled image's harness is read after its pull instead.
+                if !pulled {
+                    graph["data"]["fabric_harness"][&sandbox.name] = harness;
+                }
             }
             DiscoveryQuery::Credential(_) => {
                 unreachable!("a plan reads credentials separately from its provider reads")

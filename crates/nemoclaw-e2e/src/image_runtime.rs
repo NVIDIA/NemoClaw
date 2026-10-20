@@ -88,13 +88,28 @@ pub async fn engine(document: &mut Document) -> transport::Fixture {
         .map(|sandbox| sandbox.image.ref_.clone())
         .collect();
     let fixture = transport::Fixture::engine(move |request| {
-        assert_eq!(request.method, "GET");
         assert!(request.body.is_empty());
-        let value = if request.path == "/info" {
-            serde_json::json!({"ID":"fixture", "Architecture":"arm64", "ServerVersion":"28.0", "OSType":"linux"})
-        } else {
-            assert!(request.path.starts_with("/images/") && request.path.ends_with("/json"), "{}", request.path);
-            serde_json::json!({"Id":"sha256:fixture", "Architecture":"arm64", "Os":"linux", "RepoDigests":references, "Config":{"Labels":{IMAGE_CATALOG_LABEL:label}}})
+        // OpenTofu's Docker provider, which the plan uses to pull sandbox
+        // images, pings and lists through versioned paths; the fixture
+        // already holds every sandbox image, so nothing is pulled.
+        let path = request.path.split('?').next().unwrap_or_default();
+        let path = match path.strip_prefix("/v1.") {
+            Some(rest) => &rest[rest.find('/').unwrap_or(rest.len())..],
+            None => path,
+        };
+        if path == "/_ping" {
+            return Some((200, b"OK".to_vec()));
+        }
+        assert_eq!(request.method, "GET", "{}", request.path);
+        let inspect = serde_json::json!({"Id":"sha256:fixture", "Architecture":"arm64", "Os":"linux", "RepoDigests":references, "Config":{"Labels":{IMAGE_CATALOG_LABEL:label}}});
+        let value = match path {
+            "/info" => serde_json::json!({"ID":"fixture", "Architecture":"arm64", "ServerVersion":"28.0", "OSType":"linux"}),
+            "/version" => serde_json::json!({"ApiVersion":"1.47", "MinAPIVersion":"1.24", "Version":"28.0", "Os":"linux", "Arch":"arm64"}),
+            "/images/json" => serde_json::json!([{"Id":"sha256:fixture", "RepoTags":[], "RepoDigests":references, "Labels":{}, "Size":1}]),
+            _ => {
+                assert!(path.starts_with("/images/") && path.ends_with("/json"), "{}", request.path);
+                inspect
+            }
         };
         Some((200, serde_json::to_vec(&value).unwrap()))
     }).await;
