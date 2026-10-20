@@ -175,9 +175,15 @@ enum ImageAction {
     },
     /// Write the metadata bundle a Kubernetes sandbox names in image.metadata.
     ExportMetadata {
-        /// A local image, by tag or digest. Its bundle covers every Linux
-        /// platform it lists.
+        /// A local image, by tag or digest, or with --registry an image in a
+        /// registry, as HOST/REPOSITORY@sha256:DIGEST. Its bundle covers every
+        /// Linux platform it lists.
         image: String,
+        /// Read IMAGE from its registry instead of the local Docker engine.
+        /// NEMOCLAW_REGISTRY_USERNAME and NEMOCLAW_REGISTRY_PASSWORD, when set,
+        /// answer the registry's token challenge.
+        #[arg(long)]
+        registry: bool,
         /// Where to write the bundle; refuses an existing file.
         #[arg(long)]
         output: PathBuf,
@@ -539,8 +545,21 @@ async fn main() -> Result<()> {
                 eprintln!("Qualifying {image}");
                 nemoclaw_build::images::qualify(root, image)
             }),
-            ImageAction::ExportMetadata { image, output } => {
-                nemoclaw_build::images::export_metadata(&image, &output)
+            ImageAction::ExportMetadata {
+                image,
+                registry: false,
+                output,
+            } => nemoclaw_build::images::export_metadata(&image, &output),
+            ImageAction::ExportMetadata {
+                image,
+                registry: true,
+                output,
+            } => {
+                let credentials = std::env::var("NEMOCLAW_REGISTRY_USERNAME")
+                    .ok()
+                    .zip(std::env::var("NEMOCLAW_REGISTRY_PASSWORD").ok());
+                let bundle = nemoclaw_build::images::registry_metadata(&image, credentials).await?;
+                nemoclaw_build::images::write_bundle(&bundle, &output)
             }
         }
         .map_err(Into::into);
