@@ -153,6 +153,7 @@ export type SetupPolicySelectionDeps = {
     initialSelected: string[],
   ) => Promise<Array<Preset & { access: string }>>;
   parsePolicyPresetEnv: (raw: string) => string[];
+  hasNativeCustomProvider?: (sandboxName: string) => boolean;
   env?: NodeJS.ProcessEnv;
 };
 
@@ -195,6 +196,7 @@ export function createOnboardPolicyApplication(deps: OnboardPolicyApplicationDep
     selectPolicyTier,
     selectTierPresetsAndAccess,
     parsePolicyPresetEnv: deps.parsePolicyPresetEnv,
+    hasNativeCustomProvider: (name) => policies.hasNativeCustomProvider(name),
     env: deps.env,
   };
 
@@ -398,6 +400,15 @@ async function requireSandboxReady(
   }
 }
 
+// OpenShell rejects Personal's hostless web rule beside an attached provider's
+// port-443 endpoint (NVIDIA/OpenShell#4662). Refuse before submitting the policy.
+function refusePersonalBesideNativeCustomProvider(): never {
+  console.error(
+    "  The Personal tier cannot be applied because this sandbox's custom endpoint uses an attached provider. Choose another tier, or create a new sandbox with NEMOCLAW_POLICY_TIER=personal set before onboarding.",
+  );
+  process.exit(1);
+}
+
 function refuseInPlacePersonalRemoval(
   personalAlreadyActive: boolean,
   target: readonly string[],
@@ -537,6 +548,9 @@ async function setupPoliciesWithSelectionInner(
   }
 
   const tierName = requestedTierName ?? (await deps.selectPolicyTier());
+  if (tierName === PERSONAL_POLICY_TIER_NAME && deps.hasNativeCustomProvider?.(sandboxName)) {
+    refusePersonalBesideNativeCustomProvider();
+  }
   if (personalAlreadyActive && tierName !== PERSONAL_POLICY_TIER_NAME) {
     refuseInPlacePersonalRemoval(personalAlreadyActive, []);
   }

@@ -49,6 +49,38 @@ function createHarness() {
   return { deps, syncPresetSelection };
 }
 
+describe("Personal selection with a native custom provider", () => {
+  it("refuses an interactive Personal selection before changing policy", async () => {
+    const { deps, syncPresetSelection } = createHarness();
+    deps.isNonInteractive.mockReturnValue(false);
+    deps.selectPolicyTier.mockResolvedValue("personal");
+    const hasNativeCustomProvider = vi.fn(() => true);
+    const errors: string[] = [];
+    const errorSpy = vi.spyOn(console, "error").mockImplementation((message: unknown) => {
+      errors.push(String(message));
+    });
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => {
+      throw new Error("process.exit");
+    });
+    try {
+      await expect(
+        setupPoliciesWithSelection({ ...deps, hasNativeCustomProvider }, "alpha", {
+          selectedPresets: null,
+        }),
+      ).rejects.toThrow("process.exit");
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    } finally {
+      errorSpy.mockRestore();
+      exitSpy.mockRestore();
+    }
+
+    expect(hasNativeCustomProvider).toHaveBeenCalledWith("alpha");
+    expect(errors.join("\n")).toContain("NEMOCLAW_POLICY_TIER=personal");
+    expect(deps.selectTierPresetsAndAccess).not.toHaveBeenCalled();
+    expect(syncPresetSelection).not.toHaveBeenCalled();
+  });
+});
+
 describe("host-local route-only policy selection", () => {
   it("removes a stale recorded local-inference preset from the live selection", async () => {
     const { deps, syncPresetSelection } = createHarness();
