@@ -205,7 +205,7 @@ fn prepare(
                 .extend(names.map(|name| format!("{prefix}:{name}")));
             live_images::build_agent(platform, &prefix)?;
             live_images::build_dummy(platform, &prefix)?;
-            live_images::build_proxies(&prefix)?;
+            live_images::build_proxies(platform, &prefix)?;
         }
     }
     let agent = by_digest(&prefix, target)?;

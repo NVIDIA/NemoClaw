@@ -82,16 +82,29 @@ fn timed_build(tag: &str, build: impl FnOnce() -> Result<()>) -> Result<()> {
     result
 }
 
-/// Two proxy images with distinct digests, for the image-change check.
-pub(super) fn build_proxies(prefix: &str) -> Result<()> {
+/// Two proxy images with distinct digests, for the image-change check: the
+/// Bake proxy target, with a different label each.
+pub(super) fn build_proxies(platform: &str, prefix: &str) -> Result<()> {
+    let docker_platform = format!("linux/{}", platform.trim_start_matches("linux_"));
     for variant in ["a", "b"] {
         let tag = format!("{prefix}:proxy-{variant}");
         timed_build(&tag, || {
             run(docker()
-                .args(["buildx", "build", "--load", "--progress", "plain"])
-                .args(["-f", "image/ollama-proxy/Dockerfile", "--target", "runtime"])
-                .args(["--label", &format!("org.nemoclaw.test=proxy-{variant}")])
-                .args(["--tag", &tag, "."]))
+                .env("AGENT_PLATFORM", &docker_platform)
+                .args([
+                    "buildx",
+                    "bake",
+                    "ollama-proxy",
+                    "--load",
+                    "--progress",
+                    "plain",
+                ])
+                .arg("--set")
+                .arg(format!("ollama-proxy.tags={tag}"))
+                .arg("--set")
+                .arg(format!(
+                    "ollama-proxy.labels.org.nemoclaw.test=proxy-{variant}"
+                )))
         })?;
     }
     Ok(())
@@ -104,7 +117,7 @@ pub(super) fn build(platform: &str) -> Result<()> {
     }
     build_agent(platform, SHARED)?;
     build_dummy(platform, SHARED)?;
-    build_proxies(SHARED)?;
+    build_proxies(platform, SHARED)?;
     let tags = names(platform).map(|name| format!("{SHARED}:{name}"));
     fs::create_dir_all(".build/ci")?;
     let start = Instant::now();

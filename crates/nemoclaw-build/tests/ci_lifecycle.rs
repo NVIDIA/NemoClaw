@@ -127,7 +127,11 @@ exit "${CARGO_RESULT:-0}"
 printf '%s\n' "$*" >> docker.log
 if [ -n "$DOCKER_FAIL_IMAGE" ]; then
     case "$1 $2" in
-        'buildx bake') [ "$3" = "$DOCKER_FAIL_IMAGE" ] && exit 1 ;;
+        'buildx bake')
+            [ "$3" = "$DOCKER_FAIL_IMAGE" ] && exit 1
+            for argument; do
+                [ "$argument" = "ollama-proxy.tags=nc-live-images:$DOCKER_FAIL_IMAGE" ] && exit 1
+            done ;;
         'buildx build')
             for argument; do
                 [ "$argument" = "nc-live-images:$DOCKER_FAIL_IMAGE" ] && exit 1
@@ -463,12 +467,20 @@ fn live_images_builds_the_agent_dummy_and_proxy_images_once_and_saves_them_compr
         log.contains("/opt/nemoclaw/catalog.py --installed"),
         "{log}"
     );
-    for variant in ["dummy", "proxy-a", "proxy-b"] {
+    assert!(log.contains("--tag nc-live-images:dummy"), "{log}");
+    // Both proxies build from the Bake target, differing only in a label.
+    for variant in ["a", "b"] {
         assert!(
-            log.contains(&format!("--tag nc-live-images:{variant}")),
+            log.lines()
+                .any(|line| line.starts_with("buildx bake ollama-proxy --load")
+                    && line.contains(&format!("ollama-proxy.tags=nc-live-images:proxy-{variant}"))
+                    && line.contains(&format!(
+                        "ollama-proxy.labels.org.nemoclaw.test=proxy-{variant}"
+                    ))),
             "{log}"
         );
     }
+    assert!(!log.contains("buildx build"), "{log}");
     assert!(!log.lines().any(|line| line.starts_with("save ")), "{log}");
     let archive =
         fs::read_to_string(fixture.0.path().join(".build/ci/live-images.tar.zst")).unwrap();
