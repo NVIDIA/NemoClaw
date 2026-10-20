@@ -197,8 +197,8 @@ function buildConfig(settings: Settings): ManagedPiConfig {
   };
 }
 
-function resolveSettingsDestination(settingsPath: string): string {
-  let destination = settingsPath;
+function resolveFileDestination(filePath: string): string {
+  let destination = filePath;
   for (;;) {
     try {
       return realpathSync.native(destination);
@@ -237,7 +237,7 @@ function syncManagedDefaults(configDir: string, model: string, nativeLocal: bool
     if (!nativeLocal) return;
     existing = {};
   }
-  const destination = resolveSettingsDestination(settingsPath);
+  const destination = resolveFileDestination(settingsPath);
   const stagedPath = join(dirname(destination), `.settings.json.${randomUUID()}.tmp`);
   let staged = false;
   let descriptor: number | null = null;
@@ -284,24 +284,26 @@ function main(): void {
 
   const configPath = join(configDir, "models.json");
   const config = buildConfig(settings);
+  // Snapshot, write, and roll back the same target without removing a user's link.
+  const configDestination = resolveFileDestination(configPath);
   let previousCatalog: Buffer | null;
   try {
-    previousCatalog = readFileSync(configPath);
+    previousCatalog = readFileSync(configDestination);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     previousCatalog = null;
   }
   try {
-    writeFileSync(configPath, config.text, { mode: 0o600 });
-    chmodSync(configPath, 0o600);
+    writeFileSync(configDestination, config.text, { mode: 0o600 });
+    chmodSync(configDestination, 0o600);
     syncManagedDefaults(configDir, config.model, config.nativeLocal);
   } catch (error) {
     try {
       if (previousCatalog === null) {
-        rmSync(configPath, { force: true });
+        rmSync(configDestination, { force: true });
       } else {
-        writeFileSync(configPath, previousCatalog, { mode: 0o600 });
-        chmodSync(configPath, 0o600);
+        writeFileSync(configDestination, previousCatalog, { mode: 0o600 });
+        chmodSync(configDestination, 0o600);
       }
     } catch (rollbackError) {
       throw new AggregateError([error, rollbackError], "Pi catalog rollback failed.");

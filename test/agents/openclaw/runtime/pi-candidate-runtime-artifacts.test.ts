@@ -261,43 +261,145 @@ describe("Pi managed model catalog generation", () => {
     },
   );
 
-  it("preserves the previous Pi catalog when settings sync fails (#13362)", () => {
-    const selected = {
-      NEMOCLAW_MODEL: "previous-model",
-      NEMOCLAW_UPSTREAM_PROVIDER: "compatible-endpoint",
-      NEMOCLAW_INFERENCE_BASE_URL: "http://host.openshell.internal:11434/v1",
-    };
-    const { home, status, stderr } = generate(selected);
-    try {
-      expect(status, stderr).toBe(0);
-      const configDir = path.join(home, ".pi/agent");
-      const modelsPath = path.join(configDir, "models.json");
-      const settingsPath = path.join(configDir, "settings.json");
-      const previousCatalog = fs.readFileSync(modelsPath);
-      fs.writeFileSync(settingsPath, "{invalid json");
+  it.each([
+    { name: "regular", prepare: (_home: string, _catalog: string) => undefined, linked: false },
+    {
+      name: "symlinked",
+      prepare: (home: string, catalog: string) => {
+        const target = path.join(home, "user-models.json");
+        fs.renameSync(catalog, target);
+        fs.symlinkSync(target, catalog);
+      },
+      linked: true,
+    },
+  ])(
+    "preserves the previous $name Pi catalog when settings sync fails (#13362)",
+    ({ prepare, linked }) => {
+      const selected = {
+        NEMOCLAW_MODEL: "previous-model",
+        NEMOCLAW_UPSTREAM_PROVIDER: "compatible-endpoint",
+        NEMOCLAW_INFERENCE_BASE_URL: "http://host.openshell.internal:11434/v1",
+      };
+      const { home, status, stderr } = generate(selected);
+      try {
+        expect(status, stderr).toBe(0);
+        const configDir = path.join(home, ".pi/agent");
+        const modelsPath = path.join(configDir, "models.json");
+        const settingsPath = path.join(configDir, "settings.json");
+        prepare(home, modelsPath);
+        const previousCatalog = fs.readFileSync(modelsPath);
+        fs.writeFileSync(settingsPath, "{invalid json");
 
-      const failed = spawnSync(
-        process.execPath,
-        [path.join(root, "agents/pi/generate-config.ts")],
-        {
-          cwd: root,
-          encoding: "utf8",
-          env: {
-            PATH: process.env.PATH ?? "",
-            HOME: home,
-            ...selected,
-            NEMOCLAW_MODEL: "next-model",
+        const failed = spawnSync(
+          process.execPath,
+          [path.join(root, "agents/pi/generate-config.ts")],
+          {
+            cwd: root,
+            encoding: "utf8",
+            env: {
+              PATH: process.env.PATH ?? "",
+              HOME: home,
+              ...selected,
+              NEMOCLAW_MODEL: "next-model",
+            },
           },
-        },
-      );
-      expect(failed.status).not.toBe(0);
-      expect(fs.readFileSync(modelsPath)).toEqual(previousCatalog);
-      expect(fs.statSync(modelsPath).mode & 0o777).toBe(0o600);
-      expect(fs.readFileSync(settingsPath, "utf8")).toBe("{invalid json");
-    } finally {
-      fs.rmSync(home, { recursive: true, force: true });
-    }
-  });
+        );
+        expect(failed.status).not.toBe(0);
+        expect(fs.readFileSync(modelsPath)).toEqual(previousCatalog);
+        expect(fs.statSync(modelsPath).mode & 0o777).toBe(0o600);
+        expect(fs.readFileSync(settingsPath, "utf8")).toBe("{invalid json");
+        expect(fs.lstatSync(modelsPath).isSymbolicLink()).toBe(linked);
+      } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.each([
+    {
+      name: "absolute",
+      prepare: (home: string, catalog: string) => {
+        const target = path.join(home, "user-models.json");
+        fs.symlinkSync(target, catalog);
+        return target;
+      },
+    },
+    {
+      name: "relative",
+      prepare: (home: string, catalog: string) => {
+        fs.symlinkSync("../../user-models.json", catalog);
+        return path.join(home, "user-models.json");
+      },
+    },
+    {
+      name: "chained",
+      prepare: (home: string, catalog: string) => {
+        const intermediate = path.join(home, "catalog-link.json");
+        fs.symlinkSync("user-models.json", intermediate);
+        fs.symlinkSync(intermediate, catalog);
+        return path.join(home, "user-models.json");
+      },
+    },
+    {
+      name: "missing-parent",
+      prepare: (home: string, catalog: string) => {
+        const target = path.join(home, "missing-directory/user-models.json");
+        fs.symlinkSync(target, catalog);
+        return target;
+      },
+    },
+  ])(
+    "preserves the $name catalog link through failed startup and retry (#13362)",
+    ({ prepare }) => {
+      const selected = {
+        NEMOCLAW_MODEL: "failed-model",
+        NEMOCLAW_UPSTREAM_PROVIDER: "compatible-endpoint",
+        NEMOCLAW_INFERENCE_BASE_URL: "http://host.openshell.internal:11434/v1",
+      };
+      let target = "";
+      let originalLink = "";
+      const { home, status } = generate(selected, (home) => {
+        const configDir = path.join(home, ".pi/agent");
+        fs.mkdirSync(configDir, { recursive: true });
+        const modelsPath = path.join(configDir, "models.json");
+        target = prepare(home, modelsPath);
+        originalLink = fs.readlinkSync(modelsPath);
+        fs.writeFileSync(path.join(configDir, "settings.json"), "{invalid json");
+      });
+      try {
+        expect(status).not.toBe(0);
+        const modelsPath = path.join(home, ".pi/agent/models.json");
+        const settingsPath = path.join(home, ".pi/agent/settings.json");
+        expect(fs.readlinkSync(modelsPath)).toBe(originalLink);
+        expect(fs.existsSync(target)).toBe(false);
+        expect(fs.readFileSync(settingsPath, "utf8")).toBe("{invalid json");
+
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        fs.writeFileSync(settingsPath, "{}");
+        const retry = spawnSync(
+          process.execPath,
+          [path.join(root, "agents/pi/generate-config.ts")],
+          {
+            cwd: root,
+            encoding: "utf8",
+            env: {
+              PATH: process.env.PATH ?? "",
+              HOME: home,
+              ...selected,
+              NEMOCLAW_MODEL: "retry-model",
+            },
+          },
+        );
+        expect(retry.status, retry.stderr).toBe(0);
+        expect(JSON.parse(fs.readFileSync(target, "utf8")).defaultModel).toBe("retry-model");
+        expect(JSON.parse(fs.readFileSync(settingsPath, "utf8")).defaultModel).toBe("retry-model");
+        expect(fs.statSync(target).mode & 0o777).toBe(0o600);
+        expect(fs.readlinkSync(modelsPath)).toBe(originalLink);
+      } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("preserves both Pi files when settings permission update fails (#13362)", () => {
     const selected = {
