@@ -49,8 +49,8 @@ function createHarness() {
     selectTierPresetsAndAccess: vi.fn(
       async (): Promise<Array<{ name: string; access: string }>> => [],
     ),
-    parsePolicyPresetEnv: vi.fn(() => []),
-    env: { NEMOCLAW_POLICY_MODE: "suggested" },
+    parsePolicyPresetEnv: vi.fn((_value: string): string[] => []),
+    env: { NEMOCLAW_POLICY_MODE: "suggested", NEMOCLAW_POLICY_PRESETS: "" },
   } satisfies SetupPolicySelectionDeps;
   return { deps, syncPresetSelection };
 }
@@ -107,6 +107,35 @@ describe("Personal selection with a native custom provider", () => {
 
     expect(hasNativeCustomProvider).toHaveBeenCalledWith("alpha");
     expect(deps.waitForSandboxReady).not.toHaveBeenCalled();
+    expect(deps.recordPendingSelection).not.toHaveBeenCalled();
+    expect(syncPresetSelection).not.toHaveBeenCalled();
+  });
+
+  it("refuses a custom Personal preset selected under another tier", async () => {
+    const { deps, syncPresetSelection } = createHarness();
+    deps.env = {
+      NEMOCLAW_POLICY_MODE: "custom",
+      NEMOCLAW_POLICY_PRESETS: "personal-open-internet",
+    };
+    deps.parsePolicyPresetEnv.mockReturnValue(["personal-open-internet"]);
+    const hasNativeCustomProvider = vi.fn(() => true);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => {
+      throw new Error("process.exit");
+    });
+    try {
+      await expect(
+        setupPoliciesWithSelection({ ...deps, hasNativeCustomProvider }, "alpha", {
+          selectedPresets: null,
+        }),
+      ).rejects.toThrow("process.exit");
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    } finally {
+      errorSpy.mockRestore();
+      exitSpy.mockRestore();
+    }
+
+    expect(hasNativeCustomProvider).toHaveBeenCalledWith("alpha");
     expect(deps.recordPendingSelection).not.toHaveBeenCalled();
     expect(syncPresetSelection).not.toHaveBeenCalled();
   });

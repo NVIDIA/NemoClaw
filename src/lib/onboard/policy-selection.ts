@@ -499,6 +499,14 @@ async function setupPoliciesWithSelectionInner(
   const customPresetNames = new Set(
     (await deps.policies.listCustomPresets(sandboxName)).map((preset) => preset.name),
   );
+  const refusePersonalBesideNativeCustomProviderIfSelected = (selected: readonly string[]) => {
+    if (
+      selected.includes(PERSONAL_OPEN_INTERNET_PRESET_NAME) &&
+      deps.hasNativeCustomProvider?.(sandboxName)
+    ) {
+      refusePersonalBesideNativeCustomProvider();
+    }
+  };
   const confirmedSelectionAfterPersonal = async (selected: string[]) => {
     if (
       !selected.includes(PERSONAL_OPEN_INTERNET_PRESET_NAME) ||
@@ -609,6 +617,7 @@ async function setupPoliciesWithSelectionInner(
       `reapply selected policy presets to sandbox '${sandboxName}'`,
     );
     const confirmedSelection = await confirmedSelectionAfterPersonal(resumeSelection);
+    refusePersonalBesideNativeCustomProviderIfSelected(confirmedSelection);
     deps.recordPendingSelection?.(sandboxName, requestedTierName, confirmedSelection);
     await deps.syncPresetSelection(sandboxName, currentAppliedPresets, resumeSelection);
     await requireSandboxReady(deps, sandboxName, "after");
@@ -696,6 +705,7 @@ async function setupPoliciesWithSelectionInner(
           `apply retained policy presets to sandbox '${sandboxName}'`,
         );
         const confirmedSelection = await confirmedSelectionAfterPersonal(retainedPresets);
+        refusePersonalBesideNativeCustomProviderIfSelected(confirmedSelection);
         deps.recordPendingSelection?.(sandboxName, tierName, confirmedSelection);
         await deps.syncPresetSelection(sandboxName, currentAppliedPresets, retainedPresets);
         await requireSandboxReady(deps, sandboxName, "after");
@@ -787,6 +797,7 @@ async function setupPoliciesWithSelectionInner(
       `apply non-interactive policy presets to sandbox '${sandboxName}'`,
     );
     const confirmedSelection = await confirmedSelectionAfterPersonal(chosen);
+    refusePersonalBesideNativeCustomProviderIfSelected(confirmedSelection);
     deps.recordPendingSelection?.(sandboxName, tierName, confirmedSelection);
     await deps.syncPresetSelection(sandboxName, currentAppliedPresets, chosen);
     await requireSandboxReady(deps, sandboxName, "after");
@@ -840,6 +851,7 @@ async function setupPoliciesWithSelectionInner(
   }
   options.revalidateSandboxIdentity?.(`apply policy presets to sandbox '${sandboxName}'`);
   const confirmedSelection = await confirmedSelectionAfterPersonal(interactiveChoice);
+  refusePersonalBesideNativeCustomProviderIfSelected(confirmedSelection);
   deps.recordPendingSelection?.(sandboxName, tierName, confirmedSelection);
   await deps.syncPresetSelection(
     sandboxName,

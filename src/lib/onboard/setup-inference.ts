@@ -1102,6 +1102,15 @@ export function createSetupInference(
     const gatewayName = options.gatewayName ?? deps.getGatewayName();
     const endpointSource =
       options.endpointSource === undefined ? "onboard" : options.endpointSource;
+    const policyTierResolver = options.resolvePolicyTier ?? deps.resolvePolicyTier;
+    let policyTierResolution: Promise<string> | undefined;
+    const resolvePolicyTier = policyTierResolver
+      ? () => (policyTierResolution ??= policyTierResolver())
+      : undefined;
+    const hostedSelectionOptions = resolvePolicyTier ? { ...options, resolvePolicyTier } : options;
+    if (sandboxName && isHostedCustomEndpoint(provider, endpointUrl)) {
+      await resolvePolicyTier?.();
+    }
     let selectingNativeLocal = false;
     let nativeLocalAgent: string | null | undefined;
     const routedProvider = deps.isRoutedInferenceProvider?.(provider) === true;
@@ -1136,7 +1145,7 @@ export function createSetupInference(
           sandboxName,
           gatewayName,
           deps,
-          options,
+          options: hostedSelectionOptions,
         });
         const selectedInferenceApi = resolveCustomNativeApi(
           provider,

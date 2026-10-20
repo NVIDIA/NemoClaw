@@ -235,10 +235,14 @@ describe("Personal custom endpoint onboarding", () => {
     };
     const setup = createSetupInference({
       checkGatewayRouteCompatibility: vi.fn(() => ({ ok: true as const })),
-      withSandboxMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
-        await operation(),
-      withGatewayRouteMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
-        await operation(),
+      withSandboxMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) => {
+        events.push("sandbox-lock");
+        return await operation();
+      },
+      withGatewayRouteMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) => {
+        events.push("gateway-lock");
+        return await operation();
+      },
       step: vi.fn(),
       getGatewayName: () => "nemoclaw",
       getSandbox: () => null,
@@ -303,7 +307,7 @@ describe("Personal custom endpoint onboarding", () => {
       ),
     ).resolves.toEqual({ ok: true });
 
-    expect(events).toEqual(["policy-tier", "shared-provider"]);
+    expect(events).toEqual(["policy-tier", "sandbox-lock", "gateway-lock", "shared-provider"]);
     expect(createProvider).not.toHaveBeenCalled();
     expect(attachProvider).not.toHaveBeenCalled();
     expect(inferenceRouteMutator.setInferenceRoute).toHaveBeenCalledOnce();
