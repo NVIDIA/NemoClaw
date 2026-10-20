@@ -5855,7 +5855,10 @@ jobs:
           [[ "${CONTAINERS_CONF:?}" == "$config" && -f "$config" && ! -L "$config" ]]
           [[ "$(grep -Fxc '[containers]' "$config")" == 1 ]]
           [[ "$(grep -Fxc '[engine]' "$config")" == 1 ]]
-          ! grep -Eq '^[[:space:]]*(pids_limit|cgroup_manager)[[:space:]]*=' "$config"
+          if grep -Eq '^[[:space:]]*(pids_limit|cgroup_manager)[[:space:]]*=' "$config"; then
+            echo "::error::Portable Podman containers.conf already sets pids_limit or cgroup_manager" >&2
+            exit 1
+          fi
           sed -i "/^\\[containers\\]$/a pids_limit = $minimum" "$config"
           sed -i '/^\[engine\]$/a cgroup_manager = "systemd"' "$config"
           /usr/bin/systemctl --user restart nemoclaw-native-podman-e2e.service
@@ -5873,7 +5876,7 @@ jobs:
           podman --url "unix://${OPENSHELL_PODMAN_SOCKET:?}" info --format json |
             jq -e '((.host.cgroupManager // .Host.CgroupManager) | ascii_downcase) == "systemd"' >/dev/null
           nproc_soft="$(awk '$1 == "Max" && $2 == "processes" { print $3; exit }' "/proc/$service_pid/limits" || true)"
-          user_tasks="$(ps -u "$(id -u)" -L --no-headers | wc -l | tr -d ' ' || true)"
+          user_tasks="$(ps -u "$(id -u)" -L --no-headers | wc -l | tr -d ' ')" || user_tasks=unavailable
           host_max="$(cat /proc/sys/kernel/threads-max 2>/dev/null || true)"
           host_tasks="$(awk '{ split($4, tasks, "/"); print tasks[2] }' /proc/loadavg 2>/dev/null || true)"
           tasks_max="$(/usr/bin/systemctl --user show "$service" --property=TasksMax --value || true)"

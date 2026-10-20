@@ -64,7 +64,7 @@ service_pid=$(systemctl --user show "$service" --property=MainPID --value 2>/dev
 registry_pid=$(podman container inspect --format '{{.State.Pid}}' nemoclaw-portable-registry 2>/dev/null || true)
 capture_process service "$service_pid"
 capture_process registry "$registry_pid"
-user_tasks=$(ps -u "$uid" -L --no-headers 2>/dev/null | wc -l | tr -d ' ' || true)
+user_tasks=$(ps -u "$uid" -L --no-headers 2>/dev/null | wc -l | tr -d ' ') || user_tasks=unavailable
 printf 'user_tasks=%s\n' "\${user_tasks:-unavailable}"
 host_threads_max=$(cat /proc/sys/kernel/threads-max 2>/dev/null) || host_threads_max=unavailable
 host_pid_max=$(cat /proc/sys/kernel/pid_max 2>/dev/null) || host_pid_max=unavailable
