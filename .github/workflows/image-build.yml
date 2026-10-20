@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 # Build and check every image on each native platform. With `push`, also push
-# the checked images by digest to an internal per-commit namespace, so a
+# the checked images by digest to an internal per-commit package, so a
 # release can promote exactly what was checked instead of rebuilding it.
 name: Image build
 on:
@@ -16,11 +16,11 @@ on:
         type: boolean
         required: true
       push:
-        description: Push the checked images to the per-commit namespace.
+        description: Push the checked images to the per-commit package.
         type: boolean
         default: false
-      namespace:
-        description: Registry namespace for per-commit images.
+      package:
+        description: The one package holding per-commit images, tagged <image>-<commit>-<arch>.
         type: string
         default: ghcr.io/nvidia/nemoclaw/v1-ci
 permissions:
@@ -97,14 +97,14 @@ jobs:
         if: inputs.run && inputs.push
         uses: ./.github/actions/internal-packages
         with:
-          namespace: ${{ inputs.namespace }}
-          names: ${{ steps.push-list.outputs.names }}
+          namespace: ghcr.io/nvidia/nemoclaw
+          names: v1-ci
           required: "false"
           token: ${{ github.token }}
       - name: Push the checked images for this commit
         if: inputs.run && inputs.push && steps.packages.outputs.ready == 'true'
         env:
-          NAMESPACE: ${{ inputs.namespace }}
+          PACKAGE: ${{ inputs.package }}
           GH_TOKEN: ${{ github.token }}
           PLATFORM: ${{ matrix.platform }}
         run: |
@@ -119,7 +119,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           total=$(date +%s)
           while read -r name image; do
-            target="$NAMESPACE/$name:$tag"
+            target="$PACKAGE:$name-$tag"
             start=$(date +%s)
             docker tag "$image" "$target"
             docker push --quiet "$target" > /dev/null

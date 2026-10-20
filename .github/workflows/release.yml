@@ -16,7 +16,7 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 env:
-  CI_NAMESPACE: ghcr.io/nvidia/nemoclaw/v1-ci
+  CI_PACKAGE: ghcr.io/nvidia/nemoclaw/v1-ci
   RELEASE_NAMESPACE: ghcr.io/nvidia/nemoclaw/v1
 jobs:
   select:
@@ -43,8 +43,8 @@ jobs:
           printf '%s\n' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           source=
           for commit in $(git rev-list --first-parent --max-count=200 "$GITHUB_SHA"); do
-            if docker buildx imagetools inspect "$CI_NAMESPACE/openclaw:$commit-arm64" > /dev/null 2>&1 &&
-              docker buildx imagetools inspect "$CI_NAMESPACE/openclaw:$commit-amd64" > /dev/null 2>&1; then
+            if docker buildx imagetools inspect "$CI_PACKAGE:openclaw-$commit-arm64" > /dev/null 2>&1 &&
+              docker buildx imagetools inspect "$CI_PACKAGE:openclaw-$commit-amd64" > /dev/null 2>&1; then
               source=$commit
               break
             fi
@@ -97,8 +97,8 @@ jobs:
       - name: Require internal packages
         uses: ./.github/actions/internal-packages
         with:
-          namespace: ${{ env.CI_NAMESPACE }}
-          names: vllm ollama
+          namespace: ghcr.io/nvidia/nemoclaw
+          names: v1-ci
           required: "true"
           token: ${{ github.token }}
       - name: Build and push the vLLM and Ollama runtime images
@@ -110,8 +110,8 @@ jobs:
           tag="$GITHUB_SHA-${PLATFORM#linux_}"
           output='type=image,push=true,rewrite-timestamp=true'
           docker buildx bake runtimes \
-            --set "vllm.tags=$CI_NAMESPACE/vllm:$tag" --set "vllm.output=$output" \
-            --set "ollama.tags=$CI_NAMESPACE/ollama:$tag" --set "ollama.output=$output"
+            --set "vllm.tags=$CI_PACKAGE:vllm-$tag" --set "vllm.output=$output" \
+            --set "ollama.tags=$CI_PACKAGE:ollama-$tag" --set "ollama.output=$output"
           docker logout ghcr.io
   stage:
     name: Stage the release
@@ -159,7 +159,7 @@ jobs:
             esac
             target="$RELEASE_NAMESPACE/$image:$TAG"
             docker buildx imagetools create --tag "$target" \
-              "$CI_NAMESPACE/$image:$from-arm64" "$CI_NAMESPACE/$image:$from-amd64"
+              "$CI_PACKAGE:$image-$from-arm64" "$CI_PACKAGE:$image-$from-amd64"
             digest=$(docker buildx imagetools inspect "$target" --format '{{.Manifest.Digest}}')
             echo "| \`$image\` | \`$RELEASE_NAMESPACE/$image@$digest\` |" >> "$notes"
           done
