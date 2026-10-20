@@ -99,13 +99,22 @@ export function withManagedImageLocalInferenceProfile(
   profile: ManagedStartupProfile,
   route: ManagedImageLocalInferenceRoute,
   model: string,
+  maximumOutputTokens?: number,
 ): ManagedStartupProfile {
+  if (
+    maximumOutputTokens !== undefined &&
+    (!Number.isSafeInteger(maximumOutputTokens) || maximumOutputTokens < 1)
+  )
+    throw new Error("managed local inference output token limit is invalid");
   const primaryModelRef =
     profile.agent === "openclaw"
       ? `inference/${model}`
       : (profile.inference?.primaryModelRef ?? null);
   return {
     ...profile,
+    ...(profile.agent === "openclaw" && maximumOutputTokens !== undefined
+      ? { tuning: { ...profile.tuning, maxTokens: maximumOutputTokens } }
+      : {}),
     inference: {
       compatibility: profile.agent === "openclaw" ? {} : null,
       inputModalities: profile.agent === "openclaw" ? ["text"] : null,

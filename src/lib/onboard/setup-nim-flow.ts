@@ -576,7 +576,11 @@ function prepareManagedLlamaCppMenu(input: {
     ? discoverManagedLlamaCppSafely(
         deps,
         !deps.isNonInteractive() && !requestedProvider
-          ? { ...process.env, [LLAMA_CPP_RECIPE_ENV]: "", [NEMOCLAW_SERVING_PRESET_ENV]: "" }
+          ? {
+              ...process.env,
+              [LLAMA_CPP_RECIPE_ENV]: "",
+              [NEMOCLAW_SERVING_PRESET_ENV]: "",
+            }
           : undefined,
         gpu,
         runtimeProviderId,
@@ -595,7 +599,11 @@ function prepareManagedLlamaCppMenu(input: {
   }
   return {
     resolution,
-    options: buildManagedLlamaCppOptions({ candidate, requestedProvider, discovery }),
+    options: buildManagedLlamaCppOptions({
+      candidate,
+      requestedProvider,
+      discovery,
+    }),
   };
 }
 
@@ -846,7 +854,9 @@ async function resolveFreshHermesPortableOllamaSelection(input: {
   const nonInteractive = input.deps.isNonInteractive();
   let portableModel =
     input.requestedModel ??
-    input.deps.getNonInteractiveModel("ollama", { allowProviderModelFallback: false });
+    input.deps.getNonInteractiveModel("ollama", {
+      allowProviderModelFallback: false,
+    });
   if (!portableModel && !nonInteractive) {
     const promptedModel = await promptManualModelId("  Ollama model id: ", "Ollama", null, {
       promptFn: input.deps.prompt,
@@ -1062,6 +1072,7 @@ export function createSetupNim(
         );
       const route = (): ProviderInferenceProbeRoute => ({
         provider: state.provider,
+        ...(state.localNimSelected ? { localNimSelected: true } : {}),
         model: typeof state.model === "string" && state.model.trim() ? state.model.trim() : null,
         endpointUrl: state.endpointUrl,
         preferredInferenceApi: effectiveInferenceApi(),
@@ -1362,6 +1373,7 @@ export function createSetupNim(
               sandboxName,
               gatewayPort: deps.getGatewayPort(),
               runtimeProvider,
+              gpu,
               revalidateSandboxIdentity: state.revalidateSandboxIdentity,
             },
           );
@@ -1384,6 +1396,7 @@ export function createSetupNim(
           break;
         } else if (selected.key === "nim-local") {
           const state = createSelectionState();
+          state.localNimSelected = true;
           const result = await deps.handleNimLocalSelection(
             gpu,
             { requestedModel, recoveredFromSandbox, recoveredModel },

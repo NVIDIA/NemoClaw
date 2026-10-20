@@ -47,8 +47,8 @@ def _record(marker: Path, value: str) -> None:
 def _serve(mode: str, host: str, port: int, cert: Path, key: Path, marker: Path) -> None:
     """Run one real Streamable HTTP MCP server for the build validation."""
     import uvicorn
-    from mcp.server.fastmcp import FastMCP
-    from mcp.server.fastmcp.exceptions import ToolError
+    from fastmcp import FastMCP
+    from fastmcp.exceptions import ToolError
     from mcp.types import AudioContent, CallToolResult, ToolAnnotations
     from pydantic import BaseModel
 
@@ -59,15 +59,7 @@ def _serve(mode: str, host: str, port: int, cert: Path, key: Path, marker: Path)
         qualification: Qualification
         task_context: dict[str, str]
 
-    server = FastMCP(
-        "nemoclaw-read-only-validation",
-        host=host,
-        port=port,
-        streamable_http_path="/mcp",
-        json_response=True,
-        stateless_http=True,
-        log_level="CRITICAL",
-    )
+    server = FastMCP("nemoclaw-read-only-validation")
     read_only = ToolAnnotations(
         readOnlyHint=True,
         destructiveHint=False,
@@ -171,7 +163,7 @@ def _serve(mode: str, host: str, port: int, cert: Path, key: Path, marker: Path)
         _record(marker, "ambiguous_b_c")
         return "unexpected"
 
-    app = server.streamable_http_app()
+    app = server.http_app(path="/mcp", json_response=True, stateless_http=True)
     uvicorn.run(
         app,
         host=host,

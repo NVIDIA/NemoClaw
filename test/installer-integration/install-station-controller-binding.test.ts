@@ -402,7 +402,7 @@ printf 'REUSE=%s MIGRATE=%s\n' "$_STATION_EXPRESS_DEFERRED_MANAGED_PAIR" "$_STAT
       name: "continues with an unchanged legacy single-Station head",
       headStatus: 0,
       status: 0,
-      message: /using the existing single-Station Ultra recipe/u,
+      message: /SELECTED_MODEL=nemotron-3-ultra-550b-a55b/u,
     },
     {
       name: "refuses fallback when the legacy single-Station head changes",
@@ -441,6 +441,7 @@ station_migratable_legacy_single_head_running || exit 97
 NEMOCLAW_VLLM_MODEL='nemotron-3-ultra-550b-a55b'
 unset NEMOCLAW_DGX_STATION_PEER
 ensure_station_express_pair
+printf 'SELECTED_MODEL=%s\\n' "$NEMOCLAW_VLLM_MODEL"
 `,
       { ARGS_FILE: argsFile, LEGACY_HEAD_STATUS: String(headStatus) },
     );

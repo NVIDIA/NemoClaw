@@ -7,6 +7,9 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import YAML from "yaml";
+
+import { REPOSITORY_ROOT } from "./core/repository-root";
 
 const require = createRequire(import.meta.url);
 const SOURCE_AUTH = path.join(import.meta.dirname, "hermes-provider-auth.ts");
@@ -260,20 +263,26 @@ describe("Hermes provider OpenShell credential handoff", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-tool-oauth-"));
     try {
       process.env.HOME = tmp;
-      const brokerCalls: Array<{ sandboxName?: string; refreshToken?: string }> = [];
       const auth = loadAuthWithBrokerStub({
-        registerHermesToolGatewayRefreshProvider: async (
-          sandboxName: string,
-          refreshToken: string,
-        ) => {
-          brokerCalls.push({ sandboxName, refreshToken });
-          return { providerName: `${sandboxName}-hermes-tool-gateway`, brokerToken: "broker-3" };
-        },
         ensureHermesToolGatewayBroker: (options: { refreshToken?: string }) => {
           expect(options.refreshToken).toBe("refresh-3");
           return true;
         },
       });
+      const broker = require(SOURCE_BROKER);
+      const profile = YAML.parse(
+        fs.readFileSync(
+          path.join(
+            REPOSITORY_ROOT,
+            "agents",
+            "hermes",
+            "host",
+            "nemoclaw-hermes-tool-gateway-v1.yaml",
+          ),
+          "utf8",
+        ),
+      );
+      let profileImported = false;
       const providerCalls: Array<{ args: string[]; env?: Record<string, string> }> = [];
       const state = await auth.ensureHermesProviderOAuthCredentials("my-assistant", {
         allowInteractiveLogin: true,
@@ -316,20 +325,50 @@ describe("Hermes provider OpenShell credential handoff", () => {
         noBrowser: true,
         runOpenshell: (args: string[], opts: { env?: Record<string, string> } = {}) => {
           providerCalls.push({ args, env: opts.env });
-          return args[1] === "get"
-            ? {
+          switch (`${args[0]} ${args[1]} ${args[2]}`) {
+            case "provider profile export":
+              return profileImported
+                ? { status: 0, stdout: JSON.stringify(profile), stderr: "" }
+                : { status: 1, stdout: "", stderr: "provider profile not found" };
+            case "provider profile import":
+              profileImported = true;
+              return { status: 0, stdout: "", stderr: "" };
+            case `provider get ${args[2]}`:
+              return {
                 status: 1,
                 stdout: "",
-                stderr: "provider 'hermes-provider' not found",
-              }
-            : { status: 0, stdout: "", stderr: "" };
+                stderr: `provider '${args[2]}' not found`,
+              };
+            case `provider create ${args[2]}`:
+              return { status: 0, stdout: "", stderr: "" };
+            default:
+              throw new Error(`Unexpected OpenShell command: ${args.join(" ")}`);
+          }
         },
         toolGatewayPresets: ["nous-web", "nous-audio"],
       });
 
       expect(state.auth_method).toBe("oauth");
       expect(providerCalls.some((call) => call.env?.OPENAI_API_KEY === "agent-key-3")).toBe(true);
-      expect(brokerCalls).toEqual([{ sandboxName: "my-assistant", refreshToken: "refresh-3" }]);
+      const gatewayCalls = providerCalls.filter(
+        ({ args }) => args[1] === "profile" || args.includes("my-assistant-hermes-tool-gateway"),
+      );
+      expect(gatewayCalls.map(({ args }) => args.slice(0, 3).join(" "))).toEqual([
+        "provider profile export",
+        "provider profile import",
+        "provider profile export",
+        "provider get my-assistant-hermes-tool-gateway",
+        "provider get my-assistant-hermes-tool-gateway",
+        "provider create --name",
+        "provider profile export",
+      ]);
+      const create = gatewayCalls.find(({ args }) => args[1] === "create");
+      expect(create?.args).toContain("nemoclaw-hermes-tool-gateway-v1");
+      expect(create?.env?.NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN).toBe(
+        broker.getHermesToolGatewayBrokerToken("my-assistant"),
+      );
+      expect(create?.env?.NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN).not.toBe("refresh-3");
+      expect(JSON.stringify(providerCalls)).not.toContain("refresh-3");
       expect(fs.existsSync(path.join(tmp, ".nemoclaw", "hermes-oauth"))).toBe(false);
     } finally {
       if (originalHome === undefined) delete process.env.HOME;

@@ -8,8 +8,12 @@ import {
   asExportedConfig,
   exportedDeepAgentsSandbox,
 } from "../../../../test/support/config-export-document";
-import type { ObservedExportSnapshot } from "./export-evidence";
+import { exportNativeInferenceReceipt, type ObservedExportSnapshot } from "./export-evidence";
+import { nativeLocalIdentity } from "../../inference/native-local/contract";
+import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../../inference/ollama/contract";
+import { resolveManagedStartupInferenceRoute } from "../../inference/gateway/route-contract";
 import {
+  entry,
   dcodeImageRef,
   dcodeProfileInput,
   dcodeSnapshot,
@@ -32,6 +36,91 @@ function dcodeWorkload(
 }
 
 describe("Deep Agents config export (#11860)", () => {
+  it.each([false, true])(
+    "verifies native compatible endpoint identity with drift=%s (#13197)",
+    (drift) => {
+      const endpoint = "http://host.openshell.internal:8000/v1";
+      const provider = "compatible-endpoint" as const;
+      const binding = {
+        provider,
+        endpointUrl: endpoint,
+        credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+        authMode: "authenticated" as const,
+        sandboxName: "alpha",
+        gatewayName: "nemoclaw",
+      };
+      const receipt = {
+        ...binding,
+        ...nativeLocalIdentity(binding),
+        schemaVersion: 1 as const,
+        providerId: "fixture-provider",
+      };
+      const route = resolveManagedStartupInferenceRoute(
+        "langchain-deepagents-code",
+        provider,
+        "gpt-5",
+        "openai-completions",
+        true,
+        endpoint,
+      );
+      const value = dcodeSnapshot({
+        provider,
+        endpointUrl: endpoint,
+        credentialEnv: "COMPATIBLE_API_KEY",
+        nativeLocalProviderAttachment: receipt,
+        workload: dcodeWorkload({
+          inference: {
+            ...dcodeProfileInput().inference!,
+            upstreamProvider: provider,
+            upstreamEndpointUrl: endpoint,
+            routeProvider: route.providerKey,
+            routedBaseUrl: route.inferenceBaseUrl,
+          },
+        }),
+      });
+      const inference: ObservedExportSnapshot["inference"] = {
+        ...value.inference,
+        provider,
+        endpoint,
+        credentialEnv: "COMPATIBLE_API_KEY",
+        endpointEvidence: {
+          endpoint,
+          source: { kind: "managed-profile", profileId: receipt.profileId },
+          provider: {
+            ...value.inference.endpointEvidence!.provider,
+            name: receipt.providerName,
+            id: drift ? "foreign-provider" : receipt.providerId,
+            managedProfile: {
+              id: receipt.profileId,
+              source: "user",
+              scope: "workspace",
+              resourceVersion: "1",
+            },
+          },
+        },
+      };
+      const result = verify({
+        ...value,
+        sandbox: { ...value.sandbox, providerNames: [receipt.providerName] },
+        inference,
+      });
+      // Receipt fidelity does not expand V1's authenticated HTTP export contract.
+      expect(result).toMatchObject({
+        kind: "rejected",
+        findings: expect.arrayContaining([
+          expect.objectContaining({
+            field: "spec.inferenceProviders[].credential",
+            category: "unsupported",
+          }),
+        ]),
+      });
+      const findings = result.kind === "verified" ? [] : result.findings;
+      expect(findings.filter(({ field }) => field === "source.inference.endpoint")).toEqual(
+        drift ? [expect.objectContaining({ category: "drifted" })] : [],
+      );
+    },
+  );
+
   it("exports the canonical disabled baseline through the v1alpha1 harness", async () => {
     const observed = dcodeSnapshot();
 
@@ -194,3 +283,44 @@ describe("Deep Agents config export (#11860)", () => {
     expect(result.publish).not.toHaveBeenCalled();
   });
 });
+
+it.each([
+  ["ollama-local", null, "NEMOCLAW_LOCAL_INFERENCE_TOKEN", true],
+  ["ollama-local", OLLAMA_LOCAL_CREDENTIAL_ENV, "NEMOCLAW_LOCAL_INFERENCE_TOKEN", true],
+  ["vllm-local", null, "NEMOCLAW_LOCAL_INFERENCE_TOKEN", true],
+  ["compatible-endpoint", "COMPATIBLE_API_KEY", "NEMOCLAW_LOCAL_INFERENCE_TOKEN", true],
+  ["compatible-endpoint", OLLAMA_LOCAL_CREDENTIAL_ENV, "NEMOCLAW_LOCAL_INFERENCE_TOKEN", true],
+  ["compatible-endpoint", null, "NEMOCLAW_LOCAL_INFERENCE_TOKEN", true],
+  ["compatible-endpoint", "UNRELATED_API_KEY", "NEMOCLAW_LOCAL_INFERENCE_TOKEN", false],
+  ["vllm-local", "UNRELATED_API_KEY", "NEMOCLAW_LOCAL_INFERENCE_TOKEN", false],
+  ["ollama-local", "UNRELATED_API_KEY", "NEMOCLAW_LOCAL_INFERENCE_TOKEN", false],
+  ["ollama-local", null, "UNRELATED_API_KEY", false],
+] as const)(
+  "validates export credential mapping %s/%s/%s as %s (#13197)",
+  (provider, credentialEnv, receiptCredential, expected) => {
+    const binding = {
+      provider,
+      endpointUrl: "http://host.openshell.internal:8000/v1",
+      credentialEnv: receiptCredential,
+      authMode: "authenticated" as const,
+      sandboxName: "alpha",
+      gatewayName: "nemoclaw",
+    };
+    const receipt = {
+      ...binding,
+      ...nativeLocalIdentity(binding),
+      schemaVersion: 1 as const,
+      providerId: "fixture-provider",
+    };
+    const result = exportNativeInferenceReceipt(
+      entry({
+        name: "alpha",
+        provider,
+        gatewayName: "nemoclaw",
+        credentialEnv: credentialEnv ?? undefined,
+        nativeLocalProviderAttachment: receipt,
+      }),
+    );
+    expect(result).toEqual(expected ? receipt : null);
+  },
+);

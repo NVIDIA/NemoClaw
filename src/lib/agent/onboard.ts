@@ -14,6 +14,7 @@ import { sleepSeconds } from "../core/wait";
 import { getProviderSelectionConfig } from "../inference/config";
 import { runSandboxConfigSync } from "../onboard/config-sync";
 import { isValidForwardPort } from "../onboard/dashboard-runtime";
+import { createInitialHermesInferenceRoute } from "../onboard/hermes/initial-inference-route";
 import {
   resolveSandboxHermesApiPort,
   retargetHermesApiPortInUrl,
@@ -47,6 +48,10 @@ import { printBearerTokenApiAccess } from "./web-auth-ui";
 
 export { verifyAgentBinaryAvailable } from "./binary-availability";
 
+const initializeHermesInferenceRoute = createInitialHermesInferenceRoute({
+  getSandbox: (name) => registry.getSandbox(name),
+});
+
 export interface OnboardContext {
   step: (current: number, total: number, message: string) => void;
   sandboxCommandExecutor: OpenShellSandboxBufferedCommandExecutor;
@@ -56,6 +61,7 @@ export interface OnboardContext {
   recordStepFailed: (stepName: string, message: string | null) => Promise<unknown>;
   skippedStepMessage: (stepName: string, sandboxName: string) => void;
   revalidateSandboxIdentity?: (operation: string) => void;
+  prepareHermesInferenceForward?: () => Promise<void>;
   now?: () => number;
   sleepSeconds?: (seconds: number) => void;
 }
@@ -368,6 +374,22 @@ export async function handleAgentSetup(
     });
   };
 
+  const initializeReadyAgentInference = async (): Promise<void> => {
+    if (agent.name === "hermes") {
+      if (!ctx.prepareHermesInferenceForward) {
+        throw new Error("Hermes inference activation requires an owned API forward handoff.");
+      }
+      await ctx.prepareHermesInferenceForward();
+      await initializeHermesInferenceRoute(
+        sandboxName,
+        model,
+        provider,
+        ctx.gatewayName ?? "",
+        revalidateSandboxIdentity,
+      );
+    }
+  };
+
   if (resume && sandboxName) {
     if (isTerminalAgent(agent)) {
       const binaryAvailability = await waitForBinaryObservation();
@@ -425,6 +447,7 @@ export async function handleAgentSetup(
         // to the Dockerfile's zero-byte placeholder. Mirrors the OpenClaw
         // path in src/lib/onboard.ts. Fixes #3999 for non-OpenClaw agents.
         await syncNemoClawConfig();
+        await initializeReadyAgentInference();
         revalidateSandboxIdentity?.(`record resumed agent setup for sandbox '${sandboxName}'`);
         skippedStepMessage("agent_setup", sandboxName);
         await recordStepComplete("agent_setup", { sandboxName, provider, model });
@@ -511,6 +534,9 @@ export async function handleAgentSetup(
       },
     });
     if (healthy) {
+      // Hermes exposes its API only after first-start readiness. Restarting to
+      // apply inference before that barrier can terminate the sandbox entrypoint.
+      await initializeReadyAgentInference();
       revalidateSandboxIdentity?.(`record completed agent setup for sandbox '${sandboxName}'`);
       console.log(`  \u2713 ${agent.displayName} gateway is healthy`);
     } else {

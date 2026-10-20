@@ -24,6 +24,9 @@ import {
   validateRebuildProviderReconfigureHandoff,
 } from "./rebuild-route-handoff";
 import type { OnboardOptions } from "./types";
+import type { NativeLocalProviderAttachment } from "../inference/native-local/contract";
+import { verifyRecordedNativeLocalProviderAttachment } from "../inference/native-local/profile";
+import { createManagedProviderAdapter } from "../adapters/openshell/managed-provider-adapter";
 
 export type AuthoritativeOnboardGatewayBinding = { name: string; port: number };
 
@@ -99,6 +102,8 @@ export type AuthoritativeRebuildPreflightOptions = Pick<
   authoritativeResumeConfig: true;
   /** Internal prepared-backup recovery defers route repair to authoritative onboard. */
   deferInferenceRouteUntilOnboard?: true;
+  agent?: string | null;
+  nativeLocalProviderAttachment?: NativeLocalProviderAttachment;
   model: string;
   provider: string;
   sandboxName: string;
@@ -157,6 +162,8 @@ export function resolveAuthoritativeOnboardGatewayBinding(
 
 export type AuthoritativeRebuildTarget = {
   deferInferenceRouteUntilOnboard?: true;
+  agent?: string | null;
+  nativeLocalProviderAttachment?: NativeLocalProviderAttachment;
   sandboxName: string;
   provider: string;
   model: string;
@@ -356,7 +363,16 @@ export async function preflightAuthoritativeRebuildTarget<
     // before recreating the sandbox. A gateway that cannot answer at all leaves
     // the route unknown, which onboarding resolves the same way. Only a gateway
     // that answers with a different route contradicts the rebuild target.
-    if (
+    if (target.nativeLocalProviderAttachment !== undefined) {
+      await verifyRecordedNativeLocalProviderAttachment({
+        adapter: createManagedProviderAdapter(),
+        expected: target.nativeLocalProviderAttachment,
+        sandboxName: target.sandboxName,
+        gatewayName: target.targetGatewayName,
+        agent: target.agent,
+        provider: target.provider,
+      });
+    } else if (
       target.deferInferenceRouteUntilOnboard !== true &&
       deps.inferenceRouteState(target.provider, target.model) === "mismatched"
     ) {

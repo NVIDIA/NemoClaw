@@ -38,6 +38,7 @@ export interface FakeOpenAiCompatibleServer {
 }
 
 export interface FakeOpenAiCompatibleServerOptions {
+  readonly additionalModels?: readonly string[];
   readonly apiKey?: string;
   readonly chatContent?: string;
   readonly forbiddenMarkers?: readonly string[];
@@ -46,11 +47,15 @@ export interface FakeOpenAiCompatibleServerOptions {
   readonly requestCanaryMarker?: string;
   readonly host?: string;
   readonly maxModelLen?: number;
+  /** Advertise the bounded native fingerprint used by existing-server llama.cpp attachment. */
+  readonly llamaCppFingerprint?: boolean;
   readonly model?: string;
   readonly port?: number;
   readonly progress: Pick<TestProgress, "activity" | "event" | "onOutput"> & TestProgressCapability;
   readonly publicHost?: string;
   readonly requireAuth?: boolean;
+  /** Permit credentialless host preflight but validate any supplied bearer token. */
+  readonly allowMissingAuth?: boolean;
   readonly requireAuthModels?: boolean;
   readonly responseText?: string;
   readonly toolCallOnCanary?: { readonly name: string; readonly arguments: string };
@@ -182,6 +187,7 @@ export async function startFakeOpenAiCompatibleServer(
           PATH: process.env.PATH ?? "",
           HOME: process.env.HOME ?? "",
           NEMOCLAW_FAKE_OPENAI_API_KEY: options.apiKey ?? "",
+          NEMOCLAW_FAKE_OPENAI_ADDITIONAL_MODELS: JSON.stringify(options.additionalModels ?? []),
           NEMOCLAW_FAKE_OPENAI_CHAT_CONTENT: options.chatContent ?? "ok",
           NEMOCLAW_FAKE_OPENAI_ENVIRONMENT_FILE: environmentFile,
           NEMOCLAW_FAKE_OPENAI_FORBIDDEN_MARKERS: JSON.stringify(options.forbiddenMarkers ?? []),
@@ -190,12 +196,14 @@ export async function startFakeOpenAiCompatibleServer(
           NEMOCLAW_FAKE_OPENAI_REPLY_FROM_PROMPT: options.replyFromPrompt ? "1" : "0",
           NEMOCLAW_FAKE_OPENAI_MAX_MODEL_LEN:
             options.maxModelLen !== undefined ? String(options.maxModelLen) : "",
+          NEMOCLAW_FAKE_OPENAI_LLAMA_CPP_FINGERPRINT: options.llamaCppFingerprint ? "1" : "0",
           NEMOCLAW_FAKE_OPENAI_MODEL: options.model ?? "test-model",
           NEMOCLAW_FAKE_OPENAI_PORT: String(options.port ?? 0),
           NEMOCLAW_FAKE_OPENAI_PORT_FILE: portFile,
           NEMOCLAW_FAKE_OPENAI_REQUEST_CANARY_MARKER: options.requestCanaryMarker ?? "",
           NEMOCLAW_FAKE_OPENAI_REQUESTS_FILE: requestsFile,
           NEMOCLAW_FAKE_OPENAI_REQUIRE_AUTH: options.requireAuth ? "1" : "0",
+          NEMOCLAW_FAKE_OPENAI_ALLOW_MISSING_AUTH: options.allowMissingAuth ? "1" : "0",
           NEMOCLAW_FAKE_OPENAI_REQUIRE_AUTH_MODELS: options.requireAuthModels ? "1" : "0",
           NEMOCLAW_FAKE_OPENAI_RESPONSE_TEXT: options.responseText ?? options.chatContent ?? "ok",
           NEMOCLAW_FAKE_OPENAI_TOOL_CALL_ON_CANARY: JSON.stringify(

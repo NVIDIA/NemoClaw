@@ -57,22 +57,24 @@ it.each([
     lifecycle: false,
   },
   {
-    name: "successful installer lifecycle",
+    name: "successful unlabeled installer lifecycle",
     exitCode: 0,
     outcome: "completed",
     state: "applied",
     lifecycle: true,
+    testLabel: "",
   },
   {
-    name: "installer host failure after telemetry starts",
+    name: "unlabeled installer host failure after telemetry starts",
     exitCode: 47,
     outcome: "failed",
     state: "unchanged",
     lifecycle: true,
+    testLabel: "",
   },
 ])(
   "delivers one installer record for $name (#12859)",
-  async ({ exitCode, outcome, state, lifecycle }) => {
+  async ({ exitCode, outcome, state, lifecycle, testLabel = "qa-telemetry:client:attempt-1" }) => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-installer-telemetry-"));
     const receipts = path.join(root, "received.ndjson");
     const sourceRoot = path.join(import.meta.dirname, "../..");
@@ -172,7 +174,7 @@ exit ${exitCode}`;
           VITEST: "",
           NODE_ENV: "",
           NEMOCLAW_DISABLE_TELEMETRY: "",
-          NEMOCLAW_TELEMETRY_TEST_LABEL: "qa-telemetry:client:attempt-1",
+          NEMOCLAW_TELEMETRY_TEST_LABEL: testLabel || undefined,
           NEMOCLAW_TEST_RECEIVER_URL: `http://127.0.0.1:${port}/`,
           NEMOCLAW_TEST_TRACE: trace,
           NEMOCLAW_SOURCE_ROOT: sourceRoot,
@@ -201,6 +203,7 @@ exit ${exitCode}`;
       expect(envelope.events).toHaveLength(1);
       expect(isOperationEvent(envelope.events[0])).toBe(true);
       const parameters = envelope.events[0].parameters;
+      expect(parameters.testLabel).toBe(testLabel);
       expect(parameters).toMatchObject({
         operation: "install",
         outcome,

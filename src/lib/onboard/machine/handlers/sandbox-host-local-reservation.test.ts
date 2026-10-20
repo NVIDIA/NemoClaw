@@ -67,6 +67,8 @@ async function resumedHostLocalSandbox() {
     async (...args: Parameters<ReturnType<typeof createDeps>["deps"]["createSandbox"]>) => {
       const authority = args[14];
       assert(authority, "Missing create reservation authority");
+      // The create mock represents admission after the source backup succeeds.
+      await args[15]?.reservePublishedRouteAfterBackup?.();
       const entry = registry.getSandbox(args[4]);
       expect(authority.sessionId).toBe(session.sessionId);
       expect(normalizeInferenceSelection(authority.selection)).toEqual(
@@ -112,13 +114,13 @@ it("reserves the exact published host-local route before resumed create admissio
   });
 });
 
-it("rejects a changed host-local route before create and preserves its authority", async () => {
+it("rejects a changed host-local route before create admission and preserves its authority", async () => {
   const test = await resumedHostLocalSandbox();
   test.options.model = "different-model";
   await expect(test.run()).rejects.toThrow(
     "Cannot change an explicit host-local inference lifecycle reservation",
   );
-  expect(test.createSandbox).not.toHaveBeenCalled();
+  expect(test.createSandbox).toHaveBeenCalledOnce();
   expect(test.registry.getSandbox("saved")).toEqual(test.original);
 });
 
@@ -152,7 +154,7 @@ it.each(["gatewayPort", "openshellDriver"] as const)(
       "cause.message",
       "Cannot reserve host-local inference provenance without exact runtime and gateway authority",
     );
-    expect(test.createSandbox).not.toHaveBeenCalled();
+    expect(test.createSandbox).toHaveBeenCalledOnce();
     expect(test.registry.getSandbox("saved")).toEqual(before);
   },
 );

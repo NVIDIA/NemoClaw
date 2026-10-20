@@ -101,6 +101,16 @@ describe("Hermes GPU startup failure diagnostics", () => {
       "Native GPU diagnostics saved: /tmp/native\nPre-rollback diagnostics saved: /tmp/compatibility",
       "/tmp/compatibility",
     ],
+    [
+      "uses Docker GPU diagnostics after the fallback attempt",
+      "Native GPU diagnostics saved: /tmp/native\nDocker GPU diagnostics saved: /tmp/docker",
+      "/tmp/docker",
+    ],
+    [
+      "uses Docker GPU diagnostics for compatibility-only startup",
+      "Docker GPU diagnostics saved: /tmp/docker",
+      "/tmp/docker",
+    ],
     ["returns empty without a bundle", "GPU setup failed before diagnostics\n", ""],
   ])("extracts %s", (_name, output, expected) => {
     expect(extractHermesGpuDiagnosticsDirectory(output)).toBe(expected);

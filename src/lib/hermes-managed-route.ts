@@ -2,7 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { nativeHostedAgentConfig } from "./inference/native-provider/agent-config.ts";
-import { managedInferenceApiKey } from "./inference-credential.ts";
+import {
+  nativeLocalCredentialReference,
+  NATIVE_LOCAL_CREDENTIAL_ENV,
+  NATIVE_LOCAL_RUNTIME_REFERENCE_PATTERN,
+} from "./inference/native-local/agent-config.ts";
+import {
+  NATIVE_NVIDIA_SCOPED_HANDLE_PATTERN,
+  managedInferenceApiKey,
+  NVIDIA_INFERENCE_PLACEHOLDER,
+} from "./inference-credential.ts";
 
 // Shared inference routing replaces this sentinel at egress. Native NVIDIA
 // routing instead expands the supervisor-issued environment handle.
@@ -43,6 +52,7 @@ export type HermesManagedRoute = {
   upstreamProvider: string;
   inferenceApi: string;
   contextWindow?: number | null;
+  nativeCredentialHandle?: string;
 };
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
@@ -80,9 +90,30 @@ export function applyHermesManagedRoute(
   route: HermesManagedRoute,
 ): asserts config is Record<string, unknown> & HermesManagedRouting {
   const nativeHosted = nativeHostedAgentConfig(route.upstreamProvider, route.baseUrl);
-  const apiKey = nativeHosted
-    ? `\${${nativeHosted.credentialEnv}}`
-    : managedInferenceApiKey(route.baseUrl, HERMES_PROXY_REWRITE_SENTINEL);
+  const nativeLocal = nativeLocalCredentialReference(route.upstreamProvider, route.baseUrl);
+  let apiKey = nativeLocal
+    ? `\${${NATIVE_LOCAL_CREDENTIAL_ENV}}`
+    : nativeHosted
+      ? `\${${nativeHosted.credentialEnv}}`
+      : managedInferenceApiKey(route.baseUrl, HERMES_PROXY_REWRITE_SENTINEL);
+  if (route.nativeCredentialHandle !== undefined) {
+    if (nativeLocal) {
+      const match = new RegExp(NATIVE_LOCAL_RUNTIME_REFERENCE_PATTERN).exec(
+        route.nativeCredentialHandle,
+      );
+      // Require the entire value: JavaScript's `$` also matches before a final newline.
+      if (!match || match[0] !== route.nativeCredentialHandle) {
+        throw new Error("Hermes native local route requires a provider-bound credential handle.");
+      }
+    } else if (
+      route.upstreamProvider !== "nvidia-prod" ||
+      apiKey !== NVIDIA_INFERENCE_PLACEHOLDER ||
+      !NATIVE_NVIDIA_SCOPED_HANDLE_PATTERN.test(route.nativeCredentialHandle)
+    ) {
+      throw new Error("Hermes native NVIDIA route requires a provider-bound credential handle.");
+    }
+    apiKey = route.nativeCredentialHandle;
+  }
   const providerName = route.upstreamProvider || "nemoclaw-inference";
   const providerKey = hermesProviderKey(providerName);
   const apiMode = hermesApiMode(route.inferenceApi);
@@ -147,4 +178,56 @@ export function applyHermesManagedRoute(
   config.model = modelConfig;
   config.providers = providers;
   config.custom_providers = customProviders;
+}
+
+/** Refresh an issued local reference without replacing restored model settings. */
+export function refreshHermesNativeLocalCredential(
+  config: Record<string, unknown>,
+  route: HermesManagedRoute & { nativeCredentialHandle: string },
+): void {
+  const expected: Record<string, unknown> = {};
+  applyHermesManagedRoute(expected, route);
+  const upstream = isObjectRecord(config._nemoclaw_upstream) ? config._nemoclaw_upstream : {};
+  const model = isObjectRecord(config.model) ? config.model : {};
+  const providers = isObjectRecord(config.providers) ? config.providers : {};
+  const providerKey = hermesProviderKey(route.upstreamProvider);
+  const managed = isObjectRecord(providers[providerKey]) ? providers[providerKey] : {};
+  const custom = Array.isArray(config.custom_providers) ? config.custom_providers : [];
+  const matches = custom.filter(
+    (entry) => isObjectRecord(entry) && entry.name === route.upstreamProvider,
+  );
+  const previous = model.api_key;
+  const reference = new RegExp(NATIVE_LOCAL_RUNTIME_REFERENCE_PATTERN).exec(String(previous));
+  if (
+    !nativeLocalCredentialReference(route.upstreamProvider, route.baseUrl) ||
+    upstream.provider !== route.upstreamProvider ||
+    upstream.provider_key !== providerKey ||
+    upstream.model !== route.model ||
+    model.default !== route.model ||
+    model.provider !== "custom" ||
+    model.base_url !== route.baseUrl ||
+    (model.api_mode ?? null) !== (expected.model.api_mode ?? null) ||
+    managed.api !== route.baseUrl ||
+    managed.default_model !== route.model ||
+    (managed.transport ?? null) !== (expected.providers[providerKey].transport ?? null) ||
+    matches.length !== 1 ||
+    matches[0].base_url !== route.baseUrl ||
+    (matches[0].api_mode ?? null) !== (expected.custom_providers[0].api_mode ?? null) ||
+    typeof previous !== "string" ||
+    managed.api_key !== previous ||
+    matches[0].api_key !== previous ||
+    (previous !== `\${${NATIVE_LOCAL_CREDENTIAL_ENV}}` && reference?.[0] !== previous)
+  ) {
+    throw new Error("Restored Hermes inference configuration does not match its registered route.");
+  }
+  // YAML aliases may share these maps with user settings: replace only owned
+  // credential slots, while retaining the config object's guarded-read digest.
+  config.model = { ...model, api_key: route.nativeCredentialHandle };
+  config.providers = {
+    ...providers,
+    [providerKey]: { ...managed, api_key: route.nativeCredentialHandle },
+  };
+  config.custom_providers = custom.map((entry) =>
+    entry === matches[0] ? { ...entry, api_key: route.nativeCredentialHandle } : entry,
+  );
 }

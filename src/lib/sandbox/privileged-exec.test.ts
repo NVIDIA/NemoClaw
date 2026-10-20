@@ -328,8 +328,8 @@ describe("privileged sandbox exec routing", () => {
         "ALL",
         "--cap-add",
         "DAC_OVERRIDE",
-        "--mount",
-        "type=volume,src=nemoclaw-openclaw-state-v1-alpha,dst=/sandbox/.openclaw,volume-nocopy",
+        "--volume",
+        "nemoclaw-openclaw-state-v1-alpha:/sandbox/.openclaw:nocopy",
         PINNED_CLEANUP_IMAGE,
       ]),
     );

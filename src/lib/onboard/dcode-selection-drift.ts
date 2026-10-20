@@ -101,6 +101,7 @@ export function getExpectedDcodeInferenceIdentity(
     preferredInferenceApi,
     nativeProvider,
     requestedEndpointUrl,
+    "langchain-deepagents-code",
   );
   const managedIdentity = resolveManagedDcodeIdentity(
     requestedProvider,

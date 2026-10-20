@@ -8,6 +8,7 @@ import { parseCheckedInProviderProfileContract } from "../../adapters/openshell/
 import { parseOpenShellPolicy } from "../../adapters/openshell/policy-boundary";
 import { nativeProviderLifecycle } from "./index";
 import { boundHermesNativeProfile } from "./hermes-profile";
+import { boundCustomNativeProfile } from "./custom";
 import type { NativeProviderAttachment } from "./contract";
 import type { HostedProviderDefinition } from "./hosted";
 import {
@@ -28,9 +29,14 @@ export function buildNativeHostedSandboxPolicy(
   if (!definition || definition.providerName !== providerName)
     throw new Error("Unknown native hosted inference provider");
   const profile = parseCheckedInProviderProfileContract(
-    definition.endpointUrl
-      ? boundHermesNativeProfile(definition)
-      : fs.readFileSync(nativeProviderLifecycle(definition).nativeProviderProfilePath(), "utf8"),
+    definition.custom
+      ? boundCustomNativeProfile(
+          definition,
+          nativeProviderLifecycle(definition).nativeProviderProfilePath(),
+        )
+      : definition.endpointUrl
+        ? boundHermesNativeProfile(definition)
+        : fs.readFileSync(nativeProviderLifecycle(definition).nativeProviderProfilePath(), "utf8"),
   );
   if (
     !profile ||

@@ -19,6 +19,7 @@ import * as registry from "../../state/registry";
 import * as crossPortRegistryEsm from "../../state/registry/cross-port";
 import { type SandboxStartDeps, startSandbox } from "./start";
 import { resolveSandboxInferenceInvocationEndpoint } from "./inference-invocation-probe";
+import { nativeLocalIdentity } from "../../inference/native-local/contract";
 import {
   HOSTED_NATIVE_PROVIDERS,
   hostedNativeProvider,
@@ -786,6 +787,67 @@ const restartCases = restartProviders.flatMap((provider) =>
 );
 
 describe("startSandbox persisted native inference selection", () => {
+  it.each([
+    ["langchain-deepagents-code", "authenticated"],
+    ["langchain-deepagents-code", "sentinel"],
+    ["openclaw", "authenticated"],
+    ["openclaw", "sentinel"],
+  ] as const)("restarts %s through its recorded %s local provider", async (agent, authMode) => {
+    const binding = {
+      provider: agent === "openclaw" ? ("vllm-local" as const) : ("compatible-endpoint" as const),
+      ...(agent === "openclaw" ? { agent } : {}),
+      endpointUrl: "http://host.openshell.internal:8000/v1",
+      credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+      authMode,
+      gatewayName: "nemoclaw-19080",
+      sandboxName: "my-sandbox",
+    };
+    const attachment = {
+      ...binding,
+      ...nativeLocalIdentity(binding),
+      schemaVersion: 1 as const,
+      providerId: "owned-local-provider-id",
+    };
+    const endpoints: string[] = [];
+    const probeInferenceInvocation = vi.fn<
+      NonNullable<SandboxStartDeps["probeInferenceInvocation"]>
+    >(async (input) => {
+      endpoints.push(resolveSandboxInferenceInvocationEndpoint(input));
+      return { ok: true };
+    });
+    const h = harness({ probeInferenceInvocation });
+    h.getSandbox.mockReturnValue(
+      sandbox({
+        stopped: true,
+        agent,
+        provider: binding.provider,
+        model: "local-model",
+        gatewayName: binding.gatewayName,
+        preferredInferenceApi: "openai-completions",
+        nativeLocalProviderAttachment: attachment,
+      }),
+    );
+
+    await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 0 });
+    expect(endpoints).toEqual([`${binding.endpointUrl}/chat/completions`]);
+    expect(probeInferenceInvocation).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        sandboxName: binding.sandboxName,
+        gatewayName: binding.gatewayName,
+        agentName: agent,
+        provider: binding.provider,
+        model: "local-model",
+        nativeLocalProviderAttachment: attachment,
+      }),
+      {},
+      expect.any(Number),
+    );
+    expect(h.updateSandbox).toHaveBeenCalledWith(
+      "my-sandbox",
+      expect.objectContaining({ stopped: false }),
+    );
+  });
+
   const hermesEndpoint = "https://authenticated.nous.example/api/v1";
   const hermesDefinition = hostedNativeProvider("hermes-provider", hermesEndpoint)!;
   const hermesAttachment = {

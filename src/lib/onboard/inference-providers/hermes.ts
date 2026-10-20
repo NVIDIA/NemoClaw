@@ -97,7 +97,6 @@ export async function setupHermesProviderInference(
     log,
     hermesProviderAuth,
     getHermesToolGatewayBroker,
-    providerExistsInGateway,
     normalizeHermesAuthMethod,
     resolveHermesNousApiKey,
     checkHermesProviderStoreReachable,
@@ -144,8 +143,9 @@ export async function setupHermesProviderInference(
   const toolGatewayProviderRegistered =
     hermesToolGateways.length === 0
       ? true
-      : await providerExistsInGateway(
-          getHermesToolGatewayBroker().getHermesToolGatewayProviderName(targetSandbox),
+      : await getHermesToolGatewayBroker().isHermesToolGatewayRefreshProviderRegistered(
+          targetSandbox,
+          runOpenshell,
         );
   const hasFreshNousApiKey =
     resolvedHermesAuthMethod === HERMES_AUTH_METHOD_API_KEY && !!resolveHermesNousApiKey();

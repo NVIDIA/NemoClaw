@@ -8,7 +8,10 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ArtifactSink } from "../fixtures/artifacts.ts";
-import { captureSandboxFailureDiagnostics } from "../fixtures/sandbox-failure-diagnostics.ts";
+import {
+  captureLifecycleInstallFailureDiagnostics,
+  captureSandboxFailureDiagnostics,
+} from "../fixtures/sandbox-failure-diagnostics.ts";
 import { HostCliClient } from "../fixtures/clients/host.ts";
 import { startTestProgress } from "../fixtures/progress.ts";
 import { redactString } from "../fixtures/redaction.ts";
@@ -41,6 +44,61 @@ function httpResult(status: number, body = "", result = "") {
 }
 
 describe("Hermes MCP HTTP failure diagnostics", () => {
+  it("captures lifecycle install inventory only after failure and preserves redactions", async () => {
+    const host = {
+      command: vi.fn().mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" }),
+      openshellCommandPath: "/reviewed/openshell",
+    };
+    const runtime = {
+      command: vi.fn().mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" }),
+    } as unknown as Parameters<typeof captureLifecycleInstallFailureDiagnostics>[1];
+    const options = {
+      sandboxName: "e2e-sb-ops",
+      gatewayName: "nemoclaw",
+      artifactPrefix: "sandbox-operations-install-failure",
+      env: { OPENSHELL_GATEWAY: "nemoclaw" },
+      redactionValues: ["fixture-secret"],
+    };
+
+    await captureLifecycleInstallFailureDiagnostics(
+      host,
+      runtime,
+      { exitCode: 0, timedOut: false },
+      options,
+    );
+    expect(host.command).not.toHaveBeenCalled();
+    expect(runtime.command).not.toHaveBeenCalled();
+
+    await captureLifecycleInstallFailureDiagnostics(
+      host,
+      runtime,
+      { exitCode: 1, timedOut: false },
+      options,
+    );
+    expect(runtime.command).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        "container",
+        "ps",
+        "--all",
+        "label=openshell.ai/sandbox-name=e2e-sb-ops",
+      ]),
+      expect.objectContaining({
+        artifactName: "sandbox-operations-install-failure-container-inventory",
+        redactionValues: ["fixture-secret"],
+        timeoutMs: 30_000,
+      }),
+    );
+    expect(host.command).toHaveBeenCalledWith(
+      "/reviewed/openshell",
+      ["sandbox", "list", "-g", "nemoclaw"],
+      expect.objectContaining({
+        artifactName: "sandbox-operations-install-failure-sandbox-list",
+        redactionValues: ["fixture-secret"],
+        timeoutMs: 30_000,
+      }),
+    );
+  });
+
   it("captures gateway evidence after a timeout while preserving expected refusals", async () => {
     const command = vi.fn().mockResolvedValue({ exitCode: 0, stdout: "" });
     const host = { command, openshellCommandPath: "/reviewed/openshell" };

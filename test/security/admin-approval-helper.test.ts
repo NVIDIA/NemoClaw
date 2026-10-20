@@ -22,6 +22,29 @@ import {
   preApprovalAdminProbeEvidence,
 } from "../e2e/fixtures/issue-4462-admin-approval-evidence.ts";
 
+const COMPLETED_CRON_RUN = {
+  ok: true,
+  enqueued: true,
+  runId: "run-1",
+  completed: true,
+  status: "ok",
+  completionStatus: "succeeded",
+  run: {
+    jobId: "cron-1",
+    runId: "run-1",
+    action: "finished",
+    status: "ok",
+    completionStatus: "succeeded",
+  },
+};
+
+const FAILED_CRON_RUN = {
+  ...COMPLETED_CRON_RUN,
+  status: "error",
+  completionStatus: "failed",
+  run: { ...COMPLETED_CRON_RUN.run, status: "error", completionStatus: "failed" },
+};
+
 const EXPECTED_REQUEST_ID = "12345678-1234-4123-8123-123456789abc";
 const VERSION_ONE_REQUEST_ID = "12345678-1234-1123-8123-123456789abc";
 const EXPECTED_OPENSHELL_ARGS = [
@@ -150,8 +173,13 @@ function runAdminApprovalScript(
   options: {
     expectedRequestId?: string;
     verifyCronConsumer?: boolean;
+    cronRunOutput?: string;
+    cronRunError?: string;
+    cronRunExitCode?: number;
     terminal?: boolean;
     cleanupFails?: boolean;
+    removeCaptures?: boolean;
+    diagnosticFails?: boolean;
     tamperScript?: boolean;
     requireNonInteractiveBody?: boolean;
     omitPreparedWrapper?: boolean;
@@ -161,6 +189,10 @@ function runAdminApprovalScript(
 ): {
   commands: string[];
   capturedApprovalBytes: number;
+  capturedCronBytes: number;
+  privateCaptureCount: number;
+  failureOutputDrained: boolean;
+  privateCapturesRemaining: string[];
   openshellArgs: string[];
   stagedScriptRetained: boolean;
   result: SpawnSyncReturns<string>;
@@ -174,6 +206,14 @@ function runAdminApprovalScript(
   const openshellArgvLogPath = path.join(root, "openshell-argv.log");
   const mktempCounterPath = path.join(root, "mktemp-counter");
   const stagedScriptReceipt = path.join(root, "staged-script");
+  fs.writeFileSync(
+    path.join(root, "python3"),
+    `#!/bin/sh
+if [ "$FAKE_ADMIN_DIAGNOSTIC_FAIL" = 1 ] && [ "$#" -eq 4 ] && [ "$3" = cron-run ]; then exit 97; fi
+exec "$FAKE_REAL_PYTHON" "$@"
+`,
+    { mode: 0o755 },
+  );
   const stateRoot = writeLocalIdentity(root);
   const helperPath = writePairingStateHelper(root);
   const terminalProbe = path.join(root, "terminal-probe.py");
@@ -219,6 +259,7 @@ if [ "$#" -eq 3 ] && [ "$2" = -- ]; then
   if [ "$FAKE_ADMIN_CLEANUP_FAIL" = 1 ]; then exit 91; fi
   exec /bin/rm "$@"
 fi
+if [ "$FAKE_REMOVE_CAPTURES" = 1 ]; then exec /bin/rm "$@"; fi
 `,
     { mode: 0o755 },
   );
@@ -233,16 +274,17 @@ if [ "\${FAKE_OPENCLAW_FAIL:-}" = "$1:$2" ]; then
     devices:list) printf '%s\\n' 'gateway connection unavailable token=test-gateway-token device=${EXPECTED_DEVICE_ID}' >&2 ;;
     devices:approve) printf '%s\\n' 'approval denied by policy request=${EXPECTED_REQUEST_ID} publicKey=${EXPECTED_PUBLIC_KEY}' >&2 ;;
     cron:add) printf '%s\\n' 'scope upgrade pending approval cron=cron-1' >&2 ;;
-    cron:run) printf '%s\\n' 'request timed out cron=cron-1' >&2 ;;
+    cron:run) printf '%s\\n' "$FAKE_CRON_RUN_ERROR" >&2 ;;
   esac
   python3 -c 'import sys; sys.stderr.buffer.write(b"x" * int(sys.argv[1]))' "$FAKE_FAILURE_OUTPUT_PADDING_BYTES"
+  : >"$FAKE_FAILURE_OUTPUT_DRAINED"
   exit 91
 fi
 case "$1:$2" in
   devices:list) cat "$FAKE_DEVICES_STATE" ;;
   devices:approve) ;;
   cron:add) printf '%s\\n' '{"id":"cron-1","name":"admin-cron"}' ;;
-  cron:run) printf '%s\\n' '{"ok":true,"ran":true}' ;;
+  cron:run) printf '%s\\n' "$FAKE_CRON_RUN_OUTPUT"; exit "$FAKE_CRON_RUN_EXIT_CODE" ;;
   *) exit 90 ;;
 esac
 `,
@@ -261,8 +303,12 @@ esac
     FAKE_DEVICES_STATE: devicesPath,
     FAKE_OPENCLAW_FAIL: failureCommand ?? "",
     FAKE_OPENCLAW_LOG: commandLogPath,
+    FAKE_CRON_RUN_OUTPUT: options.cronRunOutput ?? JSON.stringify(COMPLETED_CRON_RUN),
+    FAKE_CRON_RUN_ERROR: options.cronRunError ?? "request timed out cron=cron-1",
+    FAKE_CRON_RUN_EXIT_CODE: String(options.cronRunExitCode ?? 0),
     FAKE_OPENSHELL_ARGV_LOG: openshellArgvLogPath,
     FAKE_FAILURE_OUTPUT_PADDING_BYTES: String(failureOutputPaddingBytes),
+    FAKE_FAILURE_OUTPUT_DRAINED: path.join(root, "failure-output-drained"),
     FAKE_MKTEMP_COUNTER: mktempCounterPath,
     FAKE_MKTEMP_ROOT: root,
     NEMOCLAW_OPENCLAW_PAIRING_STATE_HELPER: helperPath,
@@ -277,6 +323,11 @@ esac
     ADMIN_REQUIRE_NONINTERACTIVE_BODY: options.requireNonInteractiveBody ? "1" : "0",
     FAKE_ADMIN_SCRIPT_RECEIPT: stagedScriptReceipt,
     FAKE_ADMIN_CLEANUP_FAIL: options.cleanupFails ? "1" : "0",
+    FAKE_REMOVE_CAPTURES: options.removeCaptures ? "1" : "0",
+    FAKE_ADMIN_DIAGNOSTIC_FAIL: options.diagnosticFails ? "1" : "0",
+    FAKE_REAL_PYTHON: spawnSync("python3", ["-c", "import sys; print(sys.executable)"], {
+      encoding: "utf8",
+    }).stdout.trim(),
   };
   try {
     const result = spawnSync("bash", [], {
@@ -312,7 +363,28 @@ esac
     const stagedScriptRetained =
       fs.existsSync(stagedScriptReceipt) &&
       fs.existsSync(fs.readFileSync(stagedScriptReceipt, "utf8"));
-    return { capturedApprovalBytes, commands, openshellArgs, result, stagedScriptRetained };
+    const cronCapturePath = path.join(root, "capture-8");
+    const capturedCronBytes = fs.existsSync(cronCapturePath)
+      ? fs.statSync(cronCapturePath).size
+      : 0;
+    const privateCapturesRemaining = fs
+      .readdirSync(root)
+      .filter((name) => name.startsWith("capture-"));
+    const privateCaptureCount = fs.existsSync(mktempCounterPath)
+      ? Number(fs.readFileSync(mktempCounterPath, "utf8"))
+      : 0;
+    const failureOutputDrained = fs.existsSync(path.join(root, "failure-output-drained"));
+    return {
+      capturedApprovalBytes,
+      capturedCronBytes,
+      privateCaptureCount,
+      privateCapturesRemaining,
+      failureOutputDrained,
+      commands,
+      openshellArgs,
+      result,
+      stagedScriptRetained,
+    };
   } finally {
     removeStagedAdminScript(stagedScriptReceipt);
     fs.rmSync(root, { recursive: true, force: true });
@@ -502,6 +574,7 @@ describe("prepared connect-shell administrative approval", () => {
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain("ISSUE_5324_ADMIN_APPROVAL_OK");
+    expect(result.stderr).not.toContain("ADMIN_CRON_");
     const output = `${result.stdout}\n${result.stderr}`;
     expect(output).not.toContain(EXPECTED_REQUEST_ID);
     expect(output).not.toContain(EXPECTED_DEVICE_ID);
@@ -511,9 +584,494 @@ describe("prepared connect-shell administrative approval", () => {
     expect(commands).toEqual([
       "devices list --json",
       `devices approve ${EXPECTED_REQUEST_ID}`,
-      "cron add --name admin-cron --every 2h --agent main --session isolated --message hello",
-      "cron run cron-1",
+      "cron add --name admin-cron --every 2h --agent main --session isolated --message hello --no-deliver",
+      "cron run cron-1 --wait --wait-timeout 2m --timeout 10000",
     ]);
+  });
+
+  it.each([
+    ["enqueue only", { ok: true, enqueued: true, runId: "run-1" }],
+    ["legacy run acknowledgement", { ok: true, ran: true }],
+    ["unfinished run", { ...COMPLETED_CRON_RUN, completed: false }],
+    ["missing run identity", { ...COMPLETED_CRON_RUN, runId: undefined }],
+    ["wrong job", { ...COMPLETED_CRON_RUN, run: { ...COMPLETED_CRON_RUN.run, jobId: "other" } }],
+    ["wrong run", { ...COMPLETED_CRON_RUN, run: { ...COMPLETED_CRON_RUN.run, runId: "other" } }],
+    ["failed completion", { ...COMPLETED_CRON_RUN, completionStatus: "failed" }],
+    ["skipped run", { ...COMPLETED_CRON_RUN, status: "skipped" }],
+    [
+      "nested failed run with outer success",
+      { ...COMPLETED_CRON_RUN, run: { ...COMPLETED_CRON_RUN.run, status: "error" } },
+    ],
+    [
+      "nested skipped completion with outer success",
+      { ...COMPLETED_CRON_RUN, run: { ...COMPLETED_CRON_RUN.run, completionStatus: "skipped" } },
+    ],
+    ["missing completion record", { ...COMPLETED_CRON_RUN, run: null }],
+  ])("rejects %s before reporting approval success (#13342)", (_case, response) => {
+    const { commands, result, stagedScriptRetained } = runAdminApprovalScript(
+      undefined,
+      0,
+      EXPECTED_REQUEST_ID,
+      { cronRunOutput: JSON.stringify(response) },
+    );
+    expect(result.status).toBe(30);
+    expect(result.stderr).toContain("ADMIN_CRON_RUN_RESULT_INVALID");
+    expect(result.stdout).not.toContain("ISSUE_5324_ADMIN_APPROVAL_OK");
+    expect(`${result.stdout}\n${result.stderr}`).not.toMatch(/cron-1|run-1|test-gateway-token/);
+    expect(commands.filter((command) => command.startsWith("cron run "))).toHaveLength(1);
+    expect(stagedScriptRetained).toBe(false);
+  });
+
+  it.each([
+    ["wrong job", { ...FAILED_CRON_RUN, run: { ...FAILED_CRON_RUN.run, jobId: "other" } }],
+    ["wrong run", { ...FAILED_CRON_RUN, run: { ...FAILED_CRON_RUN.run, runId: "other" } }],
+    ["nonterminal", { ...FAILED_CRON_RUN, completed: false }],
+    ["contradictory status", { ...FAILED_CRON_RUN, run: { ...FAILED_CRON_RUN.run, status: "ok" } }],
+    [
+      "contradictory completion",
+      { ...FAILED_CRON_RUN, run: { ...FAILED_CRON_RUN.run, completionStatus: "succeeded" } },
+    ],
+    [
+      "unrecognized terminal value",
+      {
+        ...FAILED_CRON_RUN,
+        completionStatus: "private-sentinel",
+        run: { ...FAILED_CRON_RUN.run, completionStatus: "private-sentinel" },
+      },
+    ],
+    ["non-string terminal value", { ...FAILED_CRON_RUN, status: ["error"] }],
+    ["successful run on CLI failure", COMPLETED_CRON_RUN],
+  ])("does not attribute %s output to a terminal cron failure", (_case, response) => {
+    const { result, stagedScriptRetained } = runAdminApprovalScript(
+      undefined,
+      0,
+      EXPECTED_REQUEST_ID,
+      {
+        cronRunOutput: JSON.stringify({
+          ...response,
+          run: { ...response.run, error: "HTTP 503: private-sentinel" },
+        }),
+        cronRunExitCode: 1,
+      },
+    );
+    expect(result.status).toBe(29);
+    expect(result.stderr).toContain("ADMIN_DIAGNOSTIC=command-failed");
+    expect(result.stderr).not.toContain("ADMIN_CRON_ERROR_REASON=");
+    expect(result.stderr).not.toContain("ADMIN_CRON_DIAGNOSTIC_SOURCES=");
+    expect(result.stderr).not.toContain("ADMIN_CRON_ERROR_SIGNATURES=");
+    expect(result.stdout).not.toContain("ISSUE_5324_ADMIN_APPROVAL_OK");
+    expect(`${result.stdout}\n${result.stderr}`).not.toMatch(/cron-1|run-1|other|private-sentinel/);
+    expect(stagedScriptRetained).toBe(false);
+  });
+
+  it.each([
+    ["malformed", '{"private-sentinel":'],
+    ["deeply nested", `{"private-sentinel":${"[".repeat(2000)}0${"]".repeat(2000)}}`],
+  ])("preserves a %s cron command failure without raw output", (_case, cronRunOutput) => {
+    const { result, stagedScriptRetained, privateCaptureCount, privateCapturesRemaining } =
+      runAdminApprovalScript(undefined, 0, EXPECTED_REQUEST_ID, {
+        cronRunOutput,
+        cronRunExitCode: 1,
+        removeCaptures: true,
+      });
+    expect(result.status).toBe(29);
+    expect(result.stderr).toContain("ADMIN_DIAGNOSTIC=command-failed");
+    expect(result.stderr).not.toContain("ADMIN_CRON_ERROR_REASON=");
+    expect(result.stderr).not.toContain("ADMIN_CRON_DIAGNOSTIC_SOURCES=");
+    expect(result.stderr).not.toContain("ADMIN_CRON_ERROR_SIGNATURES=");
+    expect(`${result.stdout}\n${result.stderr}`).not.toContain("private-sentinel");
+    expect(privateCaptureCount).toBe(8);
+    expect(privateCapturesRemaining).toEqual([]);
+    expect(stagedScriptRetained).toBe(false);
+  });
+
+  it("accepts completed cron output after a CLI banner (#13342)", () => {
+    const { result } = runAdminApprovalScript(undefined, 0, EXPECTED_REQUEST_ID, {
+      cronRunOutput: `OpenClaw ready\n${JSON.stringify(COMPLETED_CRON_RUN)}`,
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("ISSUE_5324_ADMIN_APPROVAL_OK");
+  });
+
+  it.each([
+    "auth",
+    "auth_permanent",
+    "format",
+    "rate_limit",
+    "overloaded",
+    "billing",
+    "server_error",
+    "timeout",
+    "tls_certificate",
+    "context_overflow",
+    "model_not_found",
+    "session_expired",
+    "empty_response",
+    "no_error_details",
+    "unclassified",
+    "unknown",
+  ])("retains the pinned cron reason %s without private details", (errorReason) => {
+    const sources = [
+      "cron-preflight",
+      "cron-setup",
+      "model-preflight",
+      "agent-run",
+      "tool",
+      "exec",
+      "delivery",
+    ];
+    const entries = sources.map((source, index) => ({
+      source,
+      severity: ["info", "warn", "error"][index % 3],
+      message: "PRIVATE_PROMPT",
+      toolName: "PRIVATE_TOOL",
+      exitCode: 12345,
+    }));
+    const response = {
+      ...FAILED_CRON_RUN,
+      run: {
+        ...FAILED_CRON_RUN.run,
+        errorReason,
+        error: "test-gateway-token",
+        summary: "PRIVATE_RESPONSE",
+        sessionKey: "PRIVATE_SESSION",
+        diagnostics: { summary: "https://PRIVATE_URL/?token=PRIVATE_TOKEN", entries },
+      },
+    };
+    const {
+      result,
+      commands,
+      privateCaptureCount,
+      privateCapturesRemaining,
+      stagedScriptRetained,
+    } = runAdminApprovalScript(undefined, 0, EXPECTED_REQUEST_ID, {
+      cronRunOutput: JSON.stringify(response),
+      cronRunExitCode: 1,
+      removeCaptures: true,
+    });
+    expect(result.status).toBe(29);
+    expect(result.stderr).toBe(
+      `ADMIN_CRON_RUN_FAILED\nADMIN_DIAGNOSTIC=cron-run-error\nADMIN_CRON_ERROR_REASON=${errorReason}\nADMIN_CRON_DIAGNOSTIC_SOURCES=cron-preflight:info,cron-setup:warn,model-preflight:error,agent-run:info,tool:warn,exec:error,delivery:info\nADMIN_CRON_ERROR_SIGNATURES=unavailable\n`,
+    );
+    expect(`${result.stdout}\n${result.stderr}`).not.toMatch(
+      /PRIVATE_|test-gateway-token|cron-1|run-1|12345/,
+    );
+    expect(result.stdout).toContain("ADMIN_CONNECT_BODY_STATUS=29");
+    expect(result.stdout).not.toContain("ISSUE_5324_ADMIN_APPROVAL_OK");
+    expect(commands.filter((command) => command.startsWith("cron run "))).toHaveLength(1);
+    expect(privateCaptureCount).toBe(8);
+    expect(privateCapturesRemaining).toEqual([]);
+    expect(stagedScriptRetained).toBe(false);
+  });
+
+  it.each([
+    undefined,
+    null,
+    42,
+    {},
+    [],
+    "PRIVATE_VALUE",
+    "auth\nPRIVATE_VALUE",
+    "auth\u001b[0m",
+    "аuth",
+  ])("omits an invalid cron diagnostic value %j", (value) => {
+    const response = {
+      ...FAILED_CRON_RUN,
+      run: {
+        ...FAILED_CRON_RUN.run,
+        errorReason: value,
+        diagnostics: {
+          entries: [
+            { source: value, severity: "error" },
+            { source: "exec", severity: value },
+          ],
+        },
+      },
+    };
+    const { result, privateCapturesRemaining } = runAdminApprovalScript(
+      undefined,
+      0,
+      EXPECTED_REQUEST_ID,
+      { cronRunOutput: JSON.stringify(response), cronRunExitCode: 1, removeCaptures: true },
+    );
+    expect(result.status).toBe(29);
+    expect(result.stderr).toBe(
+      "ADMIN_CRON_RUN_FAILED\nADMIN_DIAGNOSTIC=cron-run-error\nADMIN_CRON_ERROR_REASON=unavailable\nADMIN_CRON_DIAGNOSTIC_SOURCES=unavailable\nADMIN_CRON_ERROR_SIGNATURES=unavailable\n",
+    );
+    expect(privateCapturesRemaining).toEqual([]);
+  });
+
+  it.each([null, [], { entries: "PRIVATE_VALUE" }, { entries: [null, [], {}, 42] }])(
+    "omits malformed cron diagnostic entries %j",
+    (diagnostics) => {
+      const response = { ...FAILED_CRON_RUN, run: { ...FAILED_CRON_RUN.run, diagnostics } };
+      const { result } = runAdminApprovalScript(undefined, 0, EXPECTED_REQUEST_ID, {
+        cronRunOutput: JSON.stringify(response),
+        cronRunExitCode: 1,
+      });
+      expect(result.status).toBe(29);
+      expect(result.stderr).toContain("ADMIN_CRON_DIAGNOSTIC_SOURCES=unavailable\n");
+      expect(`${result.stdout}\n${result.stderr}`).not.toContain("PRIVATE_VALUE");
+    },
+  );
+
+  it.each([
+    ["LLM request timed out.", "message-llm-timeout"],
+    ["LLM request failed.", "message-llm-failed"],
+    ["LLM request failed with an unknown error.", "message-llm-unknown"],
+    ["LLM request failed: provider returned an internal error.", "message-llm-provider-internal"],
+    [
+      "The selected model was not found by the provider. Check the model id or choose a different model.",
+      "message-model-not-found",
+    ],
+    ["Code Mode could not resolve a configured MCP tool.", "message-code-mode-catalog-miss"],
+    ["HTTP 503: PRIVATE_PROMPT test-gateway-token https://PRIVATE_HOST/", "error-text-http-503"],
+    ["503 PRIVATE_BODY", "error-text-http-503"],
+    ["503", "error-text-http-503"],
+    ["API error (503): PRIVATE_BODY", "error-text-http-503"],
+    ["status code: 503, message: PRIVATE_BODY", "error-text-http-503"],
+    ["unexpected status = 503 PRIVATE_BODY", "error-text-http-503"],
+    ["http status 503 PRIVATE_BODY", "error-text-http-503"],
+    ["Error: HTTP 503: PRIVATE_BODY", "error-text-http-503"],
+    ["Error, API error (503): PRIVATE_BODY", "error-text-http-503"],
+    ["HTTP 400: PRIVATE_BODY", "error-text-http-400"],
+    ["HTTP 599: PRIVATE_BODY", "error-text-http-599"],
+    ["HTTP 408: PRIVATE_BODY", "error-text-http-408"],
+    ["HTTP 429: PRIVATE_BODY", "error-text-http-429"],
+    ["PRIVATE_PREFIX LLM request timed out.", "unavailable"],
+    ["LLM request timed out. PRIVATE_SUFFIX", "unavailable"],
+    ["PRIVATE_BODY contains 503", "unavailable"],
+    ["503123_PRIVATE_ID", "unavailable"],
+    ["https://PRIVATE_HOST/503", "unavailable"],
+    ["HTTP 399: PRIVATE_BODY", "unavailable"],
+    ["HTTP 600: PRIVATE_BODY", "unavailable"],
+    ["HTTP ５０３: PRIVATE_BODY", "unavailable"],
+    ["Provider API error (503): PRIVATE_BODY", "unavailable"],
+    ["Error: Error: HTTP 503: PRIVATE_BODY", "unavailable"],
+    [null, "unavailable"],
+    [{ message: "HTTP 503: PRIVATE_BODY" }, "unavailable"],
+  ])("projects only a fixed cron error-text signature for %j", (message, signature) => {
+    const response = {
+      ...FAILED_CRON_RUN,
+      run: {
+        ...FAILED_CRON_RUN.run,
+        errorReason: "timeout",
+        error: message,
+        diagnostics: {
+          entries: ["tool", "agent-run"].map((source) => ({ source, severity: "error", message })),
+        },
+      },
+    };
+    const { result, privateCaptureCount, privateCapturesRemaining, stagedScriptRetained } =
+      runAdminApprovalScript(undefined, 0, EXPECTED_REQUEST_ID, {
+        cronRunOutput: JSON.stringify(response),
+        cronRunExitCode: 1,
+        removeCaptures: true,
+      });
+    const expected =
+      signature === "unavailable"
+        ? signature
+        : ["run", "tool", "agent-run"].map((source) => `${source}:${signature}`).join(",");
+    expect(result.status).toBe(29);
+    expect(result.stderr).toContain(`ADMIN_CRON_ERROR_SIGNATURES=${expected}\n`);
+    expect(result.stderr).toContain("ADMIN_CRON_ERROR_REASON=timeout\n");
+    expect(result.stdout).not.toContain("ISSUE_5324_ADMIN_APPROVAL_OK");
+    expect(`${result.stdout}\n${result.stderr}`).not.toMatch(
+      /PRIVATE_|test-gateway-token|cron-1|run-1/,
+    );
+    expect(privateCaptureCount).toBe(8);
+    expect(privateCapturesRemaining).toEqual([]);
+    expect(stagedScriptRetained).toBe(false);
+  });
+
+  it("ignores cron signatures outside the bound error-message fields", () => {
+    const message = "HTTP 503: PRIVATE_BODY";
+    const response = {
+      ...FAILED_CRON_RUN,
+      run: {
+        ...FAILED_CRON_RUN.run,
+        summary: message,
+        arbitrary: { error: message },
+        diagnostics: {
+          summary: message,
+          entries: [
+            { source: "tool", severity: "warn", message },
+            { source: "tool", severity: "info", message },
+            { source: "PRIVATE_SOURCE", severity: "error", message },
+            ...Array.from({ length: 7 }, () => ({
+              source: "tool",
+              severity: "error",
+              summary: message,
+            })),
+            { source: "tool", severity: "error", message },
+          ],
+        },
+      },
+    };
+    const { result, privateCapturesRemaining } = runAdminApprovalScript(
+      undefined,
+      0,
+      EXPECTED_REQUEST_ID,
+      {
+        cronRunOutput: JSON.stringify(response),
+        cronRunExitCode: 1,
+        removeCaptures: true,
+      },
+    );
+    expect(result.status).toBe(29);
+    expect(result.stderr).toContain("ADMIN_CRON_ERROR_SIGNATURES=unavailable\n");
+    expect(`${result.stdout}\n${result.stderr}`).not.toMatch(/PRIVATE_|error-text-http/);
+    expect(privateCapturesRemaining).toEqual([]);
+  });
+
+  it("limits cron error-text signatures to the run and ten entries", () => {
+    const entries = Array.from({ length: 11 }, (_, index) => ({
+      source: "tool",
+      severity: "error",
+      message: `HTTP ${500 + index}: PRIVATE_BODY`,
+    }));
+    const response = {
+      ...FAILED_CRON_RUN,
+      run: { ...FAILED_CRON_RUN.run, error: "HTTP 429: PRIVATE_BODY", diagnostics: { entries } },
+    };
+    const { result, privateCapturesRemaining } = runAdminApprovalScript(
+      undefined,
+      0,
+      EXPECTED_REQUEST_ID,
+      {
+        cronRunOutput: JSON.stringify(response),
+        cronRunExitCode: 1,
+        removeCaptures: true,
+      },
+    );
+    const expected = [
+      "run:error-text-http-429",
+      ...Array.from({ length: 10 }, (_, index) => `tool:error-text-http-${500 + index}`),
+    ];
+    expect(result.status).toBe(29);
+    expect(result.stderr).toContain(`ADMIN_CRON_ERROR_SIGNATURES=${expected.join(",")}\n`);
+    expect(result.stderr).not.toMatch(/PRIVATE_|error-text-http-510/);
+    expect(privateCapturesRemaining).toEqual([]);
+  });
+
+  it("bounds and deduplicates cron diagnostic entries while draining output", () => {
+    const response = {
+      ...FAILED_CRON_RUN,
+      run: {
+        ...FAILED_CRON_RUN.run,
+        errorReason: "server_error",
+        diagnostics: {
+          entries: [
+            ...Array.from({ length: 10 }, () => ({
+              source: "agent-run",
+              severity: "error",
+              message: "HTTP 503: PRIVATE_BODY",
+            })),
+            { source: "delivery", severity: "error", message: "HTTP 429: PRIVATE_BODY" },
+          ],
+        },
+      },
+    };
+    const { result, capturedCronBytes, failureOutputDrained } = runAdminApprovalScript(
+      "cron:run",
+      256 * 1024,
+      EXPECTED_REQUEST_ID,
+      { cronRunError: JSON.stringify(response) },
+    );
+    expect(result.status).toBe(29);
+    expect(capturedCronBytes).toBe(65_536);
+    expect(failureOutputDrained).toBe(true);
+    expect(result.stderr).toContain("ADMIN_CRON_DIAGNOSTIC_SOURCES=agent-run:error\n");
+    expect(result.stderr).not.toContain("delivery:error");
+    expect(result.stderr).toContain("ADMIN_CRON_ERROR_SIGNATURES=agent-run:error-text-http-503\n");
+    expect(result.stderr).not.toMatch(/PRIVATE_|error-text-http-429/);
+  });
+
+  it("rejects truncated cron JSON after draining the bounded capture", () => {
+    const { result, capturedCronBytes, failureOutputDrained } = runAdminApprovalScript(
+      "cron:run",
+      256 * 1024,
+      EXPECTED_REQUEST_ID,
+      { cronRunError: '{"error":"HTTP 503: PRIVATE_VALUE' },
+    );
+    expect(result.status).toBe(29);
+    expect(capturedCronBytes).toBe(65_536);
+    expect(failureOutputDrained).toBe(true);
+    expect(result.stderr).toBe("ADMIN_CRON_RUN_FAILED\nADMIN_DIAGNOSTIC=command-failed\n");
+  });
+
+  it("preserves the cron failure and cleans private files when diagnostics fail", () => {
+    const {
+      result,
+      commands,
+      privateCaptureCount,
+      privateCapturesRemaining,
+      stagedScriptRetained,
+    } = runAdminApprovalScript(undefined, 0, EXPECTED_REQUEST_ID, {
+      cronRunOutput: JSON.stringify(FAILED_CRON_RUN),
+      cronRunExitCode: 1,
+      diagnosticFails: true,
+      removeCaptures: true,
+    });
+    expect(result.status).toBe(29);
+    expect(result.stderr).toContain("ADMIN_DIAGNOSTIC=unavailable");
+    expect(result.stdout).toContain("ADMIN_CONNECT_BODY_STATUS=29");
+    expect(commands.filter((command) => command.startsWith("cron run "))).toHaveLength(1);
+    expect(privateCaptureCount).toBe(8);
+    expect(privateCapturesRemaining).toEqual([]);
+    expect(stagedScriptRetained).toBe(false);
+  });
+
+  it.each([
+    ["error", "failed", "cron-run-error"],
+    ["skipped", "failed", "cron-run-skipped"],
+    ["ok", "failed", "cron-completion-failed"],
+    ["ok", "unknown", "cron-completion-unknown"],
+  ])(
+    "retains the pinned terminal %s/%s category on CLI exit 1",
+    (status, completionStatus, diagnostic) => {
+      const response = {
+        ...COMPLETED_CRON_RUN,
+        status,
+        completionStatus,
+        run: {
+          ...COMPLETED_CRON_RUN.run,
+          status,
+          completionStatus,
+          error: "private generated text test-gateway-token",
+        },
+      };
+      const { commands, result, stagedScriptRetained } = runAdminApprovalScript(
+        undefined,
+        0,
+        EXPECTED_REQUEST_ID,
+        { cronRunOutput: `OpenClaw ready\n${JSON.stringify(response)}`, cronRunExitCode: 1 },
+      );
+      expect(result.status).toBe(29);
+      expect(result.stderr).toContain("ADMIN_CRON_RUN_FAILED");
+      expect(result.stderr).toContain(`ADMIN_DIAGNOSTIC=${diagnostic}`);
+      expect(result.stdout).not.toContain("ISSUE_5324_ADMIN_APPROVAL_OK");
+      expect(`${result.stdout}\n${result.stderr}`).not.toMatch(
+        /cron-1|run-1|private generated text|test-gateway-token/,
+      );
+      expect(commands.filter((command) => command.startsWith("cron run "))).toHaveLength(1);
+      expect(stagedScriptRetained).toBe(false);
+    },
+  );
+
+  it("rejects malformed cron output and removes its staged script (#13342)", () => {
+    const { result, stagedScriptRetained } = runAdminApprovalScript(
+      undefined,
+      0,
+      EXPECTED_REQUEST_ID,
+      {
+        cronRunOutput: "invalid response token=test-gateway-token",
+      },
+    );
+    expect(result.status).toBe(30);
+    expect(result.stderr).toContain("ADMIN_CRON_RUN_RESULT_INVALID");
+    expect(`${result.stdout}\n${result.stderr}`).not.toContain("test-gateway-token");
+    expect(stagedScriptRetained).toBe(false);
   });
 
   it.each([
@@ -563,6 +1121,22 @@ describe("prepared connect-shell administrative approval", () => {
     const { commands, result } = runAdminApprovalScript(undefined, 0, VERSION_ONE_REQUEST_ID);
     expect(result.status, result.stderr).toBe(0);
     expect(commands).toContain(`devices approve ${VERSION_ONE_REQUEST_ID}`);
+  });
+
+  it("distinguishes pinned cron wait exhaustion without exposing its run identity", () => {
+    const { commands, result, stagedScriptRetained } = runAdminApprovalScript(
+      "cron:run",
+      0,
+      EXPECTED_REQUEST_ID,
+      {
+        cronRunError: "timed out waiting for cron run private-run-id token=test-gateway-token",
+      },
+    );
+    expect(result.status).toBe(29);
+    expect(result.stderr).toContain("ADMIN_DIAGNOSTIC=cron-wait-timeout");
+    expect(`${result.stdout}\n${result.stderr}`).not.toMatch(/private-run-id|test-gateway-token/);
+    expect(commands).toHaveLength(4);
+    expect(stagedScriptRetained).toBe(false);
   });
 
   it.each([
