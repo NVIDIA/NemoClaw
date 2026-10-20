@@ -231,6 +231,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && vim.tiny --version | head -n 1 | grep -Eq '^VIM - Vi IMproved 9[.]2 ' \
     && vim.tiny --version | grep -Fx 'Included patches: 1-858' \
     && test "$(perl -e 'print $^V')" = "v5.44.0" \
+    && perl -MDebconf::Log -e 1 \
     && test "$(perl -MSocket -e 'print Socket->VERSION')" = "2.041" \
     && test "$(perl -MStorable -e 'print Storable->VERSION')" = "3.41" \
     && test "$(perl -MHTTP::Tiny -e 'print HTTP::Tiny->VERSION')" = "0.096" \
@@ -719,20 +720,17 @@ RUN /usr/local/bin/hermes --version \
     && /opt/hermes/.venv/bin/python -c \
         'import mcp; from tools import mcp_tool; assert mcp_tool._ensure_mcp_sdk(), "Hermes MCP client runtime is unavailable"; assert getattr(mcp_tool, "_MCP_AVAILABLE", False), "Hermes MCP client runtime is unavailable"; assert getattr(mcp_tool, "_MCP_HTTP_AVAILABLE", False), "Hermes MCP Streamable HTTP runtime is unavailable"'
 
-RUN test -r /opt/hermes/.venv/pyvenv.cfg \
-    && su -s /bin/sh sandbox -c '/opt/hermes/.venv/bin/python3 -c "import urllib.request"'
-
-# Reject build-only paths before the base image can be published.
+# Keep the final base checks in one layer to preserve Docker import headroom.
+COPY agents/hermes/dependency-security-probes.py /usr/local/libexec/nemoclaw-hermes-dependency-security.py
+COPY agents/hermes/sharp-security-probes.mts /usr/local/libexec/nemoclaw-hermes-sharp-security.mts
 RUN set -eu; \
+    test -r /opt/hermes/.venv/pyvenv.cfg; \
+    su -s /bin/sh sandbox -c '/opt/hermes/.venv/bin/python3 -c "import urllib.request"'; \
     for build_only_path in /opt/hermes/tests /root/.npm /root/.cache/electron /root/.cache/node-gyp /root/.cache/uv; do \
         if [ -e "$build_only_path" ] || [ -L "$build_only_path" ]; then \
             echo "ERROR: build-only Hermes path leaked into the base image: $build_only_path" >&2; \
             exit 1; \
         fi; \
-    done
-
-# Exercise the resolved packages with offline security regressions.
-COPY agents/hermes/dependency-security-probes.py /usr/local/libexec/nemoclaw-hermes-dependency-security.py
-COPY agents/hermes/sharp-security-probes.mts /usr/local/libexec/nemoclaw-hermes-sharp-security.mts
-RUN /opt/hermes/.venv/bin/python /usr/local/libexec/nemoclaw-hermes-dependency-security.py \
-    && node /usr/local/libexec/nemoclaw-hermes-sharp-security.mts /opt/hermes/scripts/whatsapp-bridge
+    done; \
+    /opt/hermes/.venv/bin/python /usr/local/libexec/nemoclaw-hermes-dependency-security.py; \
+    node /usr/local/libexec/nemoclaw-hermes-sharp-security.mts /opt/hermes/scripts/whatsapp-bridge

@@ -1400,9 +1400,10 @@ jobs:
           : >"$guard_log"
           cat >"$guard_dir/bin/docker" <<'DOCKER_GUARD'
           #!/usr/bin/env bash
+          guard_bin_dir="${BASH_SOURCE[0]%/*}"
           subcommand="${1:-missing}"
           [[ "$subcommand" =~ ^[a-z][a-z0-9-]{0,31}$ ]] || subcommand=invalid
-          printf '%s\n' "$subcommand" >>"${E2E_DOCKER_GUARD_LOG:?}"
+          printf '%s\n' "$subcommand" >>"$guard_bin_dir/../invocations.log"
           printf 'Docker CLI use is forbidden in managed Podman activation.\n' >&2
           exit 97
           DOCKER_GUARD

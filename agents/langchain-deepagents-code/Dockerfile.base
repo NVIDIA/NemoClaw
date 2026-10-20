@@ -240,6 +240,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && vim.tiny --version | head -n 1 | grep -Eq '^VIM - Vi IMproved 9[.]2 ' \
     && vim.tiny --version | grep -Fx 'Included patches: 1-858' \
     && test "$(perl -e 'print $^V')" = "v5.44.0" \
+    && perl -MDebconf::Log -e 1 \
     && test "$(perl -MSocket -e 'print Socket->VERSION')" = "2.041" \
     && test "$(perl -MStorable -e 'print Storable->VERSION')" = "3.41" \
     && test "$(perl -MHTTP::Tiny -e 'print HTTP::Tiny->VERSION')" = "0.096" \

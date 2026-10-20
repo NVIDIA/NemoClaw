@@ -187,6 +187,7 @@ export function baseAptSecurityFunctions(architecture: DebianArchitecture): stri
       '  [[ "${perl_base_installed:-0}" == "1" ]] || return 64',
       '  case "$*" in',
       '    "-e print \\$^V") printf "v5.44.0" ;;',
+      '    "-MDebconf::Log -e 1") ;;',
       '    "-MSocket -e print Socket-"*) printf "2.041" ;;',
       '    "-MStorable -e print Storable-"*) printf "3.41" ;;',
       '    "-MHTTP::Tiny -e print HTTP::Tiny-"*) printf "0.096" ;;',

@@ -29,6 +29,7 @@ import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
   type RuntimeProviderBundle,
   type RuntimeProviderBundleRegistry,
+  normalizeRuntimeProviderIdentity,
   requireRuntimeProviderDestructiveCleanupAuthority,
   resolveRuntimeProviderBundle,
 } from "../../onboard/runtime-provider/access";
@@ -76,6 +77,8 @@ export function stopSandboxInferenceResources(
   sandboxName: string,
   sandbox: SandboxEntry | null,
 ): void {
+  // Legacy NIM containers belong to Docker, not another sandbox runtime.
+  if (normalizeRuntimeProviderIdentity(sandbox?.openshellDriver) !== "docker") return;
   const nim = require("../../inference/nim") as {
     stopNimContainer: (name: string, opts?: { silent?: boolean }) => void;
     stopNimContainerByName: (name: string) => void;
