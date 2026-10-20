@@ -24,6 +24,11 @@ import {
   MANAGED_GATEWAY_STATE_ROOT_MARKER,
   resolveGatewayStateDirName,
 } from "../../onboard/gateway-binding";
+import { createSetupInference, type SetupInferenceDeps } from "../../onboard/setup-inference";
+import {
+  applyNativeNvidiaProviderAuthority,
+  readNativeNvidiaProviderAuthority,
+} from "../../state/registry/native-provider-authority-state";
 import {
   type RunResult,
   runUninstallPlan as runUninstallPlanBase,
@@ -376,7 +381,7 @@ describe("full uninstall bulk sandbox cleanup", () => {
 });
 
 describe("native NVIDIA provider authority after uninstall", () => {
-  it("allows provider creation on the same empty gateway after uninstall (#13470)", async () => {
+  it("onboards native inference on the same empty gateway after uninstall (#13470)", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-reinstall-"));
     try {
       const registryFile = writeFullCleanupState(home);
@@ -404,7 +409,6 @@ describe("native NVIDIA provider authority after uninstall", () => {
       );
       expect(result.exitCode).toBe(0);
       const registry = JSON.parse(fs.readFileSync(registryFile, "utf8"));
-      const { ensureNativeNvidiaProvider } = await import("../../inference/native-nvidia");
       const getProvider = vi
         .fn()
         .mockResolvedValueOnce({
@@ -427,15 +431,74 @@ describe("native NVIDIA provider authority after uninstall", () => {
         importProviderProfile: vi.fn(async () => ({ ok: true })),
         ensureProviderPolicyComposition: vi.fn(async () => ({ ok: true })),
       } as unknown as import("../../adapters/openshell/provider-adapter").OpenShellProviderAdapter;
+      const readRegistry = () => JSON.parse(fs.readFileSync(registryFile, "utf8"));
+      const getAuthority = vi.fn((gatewayName: string) =>
+        readNativeNvidiaProviderAuthority(readRegistry(), gatewayName),
+      );
+      const updateSandbox = vi.fn(() => true);
+      const verifyOnboardInferenceSmoke = vi.fn(async () => undefined);
+      const setupInference = createSetupInference({
+        checkGatewayRouteCompatibility: () => ({ ok: true }),
+        withSandboxMutationLock: async (_name: string, operation: () => unknown) => operation(),
+        withGatewayRouteMutationLock: async (_name: string, operation: () => unknown) =>
+          operation(),
+        step: vi.fn(),
+        getGatewayName: () => "nemoclaw",
+        getSandbox: () => null,
+        getNativeNvidiaProviderAuthority: getAuthority,
+        setNativeNvidiaProviderAuthority: (
+          gatewayName: string,
+          receipt: Parameters<typeof applyNativeNvidiaProviderAuthority>[2],
+        ) => {
+          const current = readRegistry();
+          expect(applyNativeNvidiaProviderAuthority(current, gatewayName, receipt)).toBe(true);
+          fs.writeFileSync(registryFile, JSON.stringify(current));
+        },
+        providerAdapter: adapter,
+        hydrateCredentialEnv: () => "test-credential",
+        runOpenshell: () => ok(),
+        updateSandbox,
+        verifyOnboardInferenceSmoke,
+        isNonInteractive: () => true,
+        hermesProviderAuth: { HERMES_PROVIDER_NAME: "hermes-provider" },
+        redact: (value: string) => value,
+        compactText: (value: string) => value,
+        log: vi.fn(),
+        error: vi.fn(),
+        exitProcess: (code: number): never => {
+          throw new Error(`exit ${code}`);
+        },
+      } as unknown as SetupInferenceDeps);
       await expect(
-        ensureNativeNvidiaProvider({
-          adapter,
+        setupInference(
+          "reinstalled",
+          "nvidia/nemotron-3-super-120b-a12b",
+          "nvidia-prod",
+          "https://integrate.api.nvidia.com/v1",
+          "NVIDIA_INFERENCE_API_KEY",
+          null,
+          [],
+          { revalidateSandboxIdentity: () => undefined },
+        ),
+      ).resolves.toEqual({ ok: true });
+      expect(getAuthority).toHaveBeenCalledWith("nemoclaw");
+      expect(adapter.createProvider).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
           target: { kind: "named", gatewayName: "nemoclaw" },
-          credentialValue: "test-credential",
-          expected: registry.nativeNvidiaProviderAuthorities?.nemoclaw,
+          name: authority.providerName,
         }),
-      ).resolves.toMatchObject({ providerId: "new-provider-id" });
-      expect(adapter.createProvider).toHaveBeenCalledOnce();
+      );
+      expect(readNativeNvidiaProviderAuthority(readRegistry(), "nemoclaw")).toEqual({
+        ...authority,
+        providerId: "new-provider-id",
+      });
+      expect(updateSandbox).toHaveBeenCalledWith(
+        "reinstalled",
+        expect.objectContaining({
+          nativeNvidiaProviderAttachment: { ...authority, providerId: "new-provider-id" },
+        }),
+      );
+      expect(verifyOnboardInferenceSmoke).toHaveBeenCalledOnce();
       expect(registry.defaultSelectionRevision).toBe(3);
       expect(fs.readFileSync(backup, "utf8")).toBe("preserved workspace backup");
     } finally {
