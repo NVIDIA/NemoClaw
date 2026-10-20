@@ -19,7 +19,7 @@ cargo ci bundle
 cargo ci live-kind
 ```
 
-The runner builds Pi on ARM64 or OpenClaw on AMD64, exports its metadata bundle, loads it by digest, and installs the pinned Agent Sandbox prerequisite.
+The runner builds Pi, exports its metadata bundle, loads it by digest, and installs the pinned Agent Sandbox prerequisite.
 The gateway test checks authentication, forged-token rejection, repeated install/removal, and retained storage without a Helm executable on `PATH`.
 The agent test uses the public SDK to deploy a gateway and sandbox from that image.
 It supplies a caller-relative kubeconfig and expects apply to complete with the agent started.

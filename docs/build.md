@@ -125,8 +125,9 @@ The proxy image holds only the statically linked `nemoclaw-ollama-proxy` binary 
 Set `IMAGE_PREFIX=nc-my-build` before the builder to use your own local repository name without replacing another build's tags.
 
 A Kubernetes or OpenShift sandbox names a metadata bundle in `image.metadata`, since no local engine can be inspected there.
-Write one for a local image with `cargo images export-metadata IMAGE --platform linux/arm64 --output PATH`, where `PATH` is a new file.
-The bundle holds the image's index, the manifest for that platform and its configuration, and no layers; the SDK checks it against the digest in `image.ref`.
+Write one for a local image with `cargo images export-metadata IMAGE --output PATH`, where `PATH` is a new file.
+The bundle holds the image's index, each Linux platform's manifest and configuration, and no layers; the SDK checks it against the digest in `image.ref`.
+The platforms of an index must declare the same catalog, because the cluster chooses the platform each node runs.
 Run it before pushing the image, and use the same digest in `image.ref`.
 
 [The Bake file](../docker-bake.hcl) selects the target platform, qualified harnesses and named stages in the [shared agent Dockerfile](../image/fabric/Dockerfile).

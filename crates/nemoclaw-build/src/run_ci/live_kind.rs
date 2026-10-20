@@ -337,10 +337,8 @@ mod tests {
             let metadata: serde_json::Value =
                 serde_json::from_slice(&fs::read(root.join("agent.metadata.json")).unwrap())
                     .unwrap();
-            assert_eq!(
-                metadata["manifest_digest"],
-                std::env::var("FAKE_DIGEST").unwrap()
-            );
+            assert_eq!(metadata["schema_version"], 2);
+            assert!(metadata["blobs"][std::env::var("FAKE_DIGEST").unwrap()].is_string());
         }
     }
 }
