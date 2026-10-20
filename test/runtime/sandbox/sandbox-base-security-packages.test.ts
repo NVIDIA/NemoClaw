@@ -111,10 +111,10 @@ function quoteShell(value: string): string {
 function stageInventoryRenderer(command: string, inventory: string, baseImage = false): string {
   const renderer = path.join(ROOT, "scripts/security/security-package-inventory.mts");
   const mountedRenderer = "/tmp/nemoclaw-security/scripts/security/security-package-inventory.mts";
-  // Execute the real renderer, then run its shell probe in the fixture's shell
-  // so the existing dpkg/stat functions supply simulated installed packages.
+  // Execute the real renderer with the fixture's simulated installed packages.
+  // A child shell preserves errexit when the Dockerfile invokes the probe in &&.
   const staged = command.replace(
-    /\$\(node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON \/tmp\/nemoclaw-security\/scripts\/security\/security-package-inventory\.mts probe ([a-z-]+)\)/g,
+    /\$\(node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON \/(?:tmp|opt)\/nemoclaw-security\/scripts\/security\/security-package-inventory\.mts probe ([a-z-]+)\)/g,
     (_match, profile: string) => {
       const rendered = spawnSync(process.execPath, [renderer, "probe", profile], {
         encoding: "utf8",
@@ -133,7 +133,10 @@ function stageInventoryRenderer(command: string, inventory: string, baseImage = 
     baseImage ? 'stat() { printf "0:0:444\\n"; }' : "",
     staged
       .replaceAll(mountedRenderer, quoteShell(renderer))
-      .replaceAll('sh -ec "$security_probe"', 'eval "$security_probe"'),
+      .replaceAll(
+        'sh -ec "$security_probe"',
+        'bash -ec "$(declare -f dpkg dpkg-query stat); $(declare -p perl_base_installed perl_installed); $security_probe"',
+      ),
   ].join("\n");
 }
 

@@ -44,8 +44,9 @@ FROM scratch AS hermes-agent-payload
 
 # Portable builds reject RUN mounts. Reuse the existing payload layer for
 # the shared inventory tooling instead of adding final-image COPY layers.
-COPY scripts/security/security-package-inventory.mts /tmp/nemoclaw-security/scripts/security/security-package-inventory.mts
-COPY src/lib/sandbox-base-image/security-package-specs.ts /tmp/nemoclaw-security/src/lib/sandbox-base-image/security-package-specs.ts
+# Copying a scratch /tmp would replace the runtime's sticky writable mode.
+COPY scripts/security/security-package-inventory.mts /opt/nemoclaw-security/scripts/security/security-package-inventory.mts
+COPY src/lib/sandbox-base-image/security-package-specs.ts /opt/nemoclaw-security/src/lib/sandbox-base-image/security-package-specs.ts
 
 COPY agents/hermes/plugin/__init__.py agents/hermes/plugin/plugin.yaml /opt/nemoclaw-hermes-plugin/
 # Channel-owned Google Chat runtime asset, loaded by the plugin beside its own
@@ -1458,7 +1459,7 @@ RUN check_metadata() { \
 # Verify the immutable security package inventory in the completed image.
 # hadolint ignore=DL4006
 RUN set -eu; \
-    security_probe="$(node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON /tmp/nemoclaw-security/scripts/security/security-package-inventory.mts probe hermes-compatible)"; \
+    security_probe="$(node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON /opt/nemoclaw-security/scripts/security/security-package-inventory.mts probe hermes-compatible)"; \
     sh -ec "$security_probe"; \
     test "$(perl -e 'print $^V')" = "v5.44.0"; \
     ldd /usr/bin/jq | grep -Eq 'libonig[.]so[.]5'; \
@@ -1474,7 +1475,7 @@ RUN set -eu; \
     vim.tiny --version | head -n 1 | grep -Eq '^VIM - Vi IMproved 9[.]2 '; \
     vim.tiny --version | grep -Fx 'Included patches: 1-858'; \
     test -z "$(dpkg --audit)"; \
-    rm -rf /tmp/nemoclaw-security
+    rm -rf /opt/nemoclaw-security
 # End completed-image security package verification.
 
 # OpenShell 0.0.116 launches the image as the non-root sandbox account.
