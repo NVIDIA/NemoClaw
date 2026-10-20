@@ -21,7 +21,7 @@ function live(...routes: Array<{ key: string; pins?: string[] }>): string {
   });
 }
 
-describe("OpenClaw pricing with a pinned custom OpenRouter provider", () => {
+describe("OpenClaw pricing with overlapping OpenRouter providers", () => {
   it("uses the exact common pins and keeps the pricing route GET-only", () => {
     const pins = ["34.117.59.81", "104.18.8.134"];
     const content = materializeOpenClawPricingPins(
@@ -47,7 +47,18 @@ describe("OpenClaw pricing with a pinned custom OpenRouter provider", () => {
     );
   });
 
-  it("fails closed for an unpinned or conflicting overlap", () => {
+  it("preserves the standard provider's unpinned pricing route", () => {
+    const content = materializeOpenClawPricingPins(
+      live({ key: "_provider_nemoclaw_openrouter_api_v1" }, { key: "native_hosted_inference" }),
+      preset,
+    );
+    expect(content).toBe(preset);
+    const endpoint = YAML.parse(content).network_policies["openclaw-pricing"].endpoints[0];
+    expect(endpoint.allowed_ips).toBeUndefined();
+    expect(endpoint.rules).toEqual([{ allow: { method: "GET", path: "/api/v1/models" } }]);
+  });
+
+  it("fails closed for a mixed or conflicting overlap", () => {
     expect(() =>
       materializeOpenClawPricingPins(
         live({ key: "user_custom_route", pins: ["34.117.59.81"] }),
@@ -55,7 +66,13 @@ describe("OpenClaw pricing with a pinned custom OpenRouter provider", () => {
       ),
     ).toThrow("no verified OpenRouter provider route");
     expect(() =>
-      materializeOpenClawPricingPins(live({ key: "native_hosted_inference" }), preset),
+      materializeOpenClawPricingPins(
+        live(
+          { key: "_provider_nemoclaw_custom_openrouter_v1", pins: ["34.117.59.81"] },
+          { key: "native_hosted_inference" },
+        ),
+        preset,
+      ),
     ).toThrow("no verified IP pins");
     expect(() =>
       materializeOpenClawPricingPins(

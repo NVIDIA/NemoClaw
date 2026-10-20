@@ -93,6 +93,9 @@ export function materializeOpenClawPricingPins(
     );
   }
   const pins = overlapping.map(({ endpoint }) => endpoint.allowed_ips);
+  // The standard hosted OpenRouter provider has no IP pins. Preserve the
+  // pre-existing hostname-scoped pricing route when every overlap is unpinned.
+  if (pins.every((value) => value == null)) return presetContent;
   const validPins = (value: unknown): value is string[] =>
     Array.isArray(value) &&
     value.length > 0 &&
