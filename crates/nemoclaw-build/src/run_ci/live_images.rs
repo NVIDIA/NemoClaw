@@ -17,25 +17,21 @@ fn docker() -> Command {
     command
 }
 
-/// The agent image a platform's live tests run, and its Fabric harness. Pi is
-/// the smaller image but is built only for ARM64. AMD64 runs Deep Agents until
-/// OpenClaw can start in an OpenShell sandbox again (#13372).
-pub(super) fn agent(platform: &str) -> (&'static str, &'static str) {
-    if platform == "linux_arm64" {
-        ("pi", "nvidia.fabric.pi")
-    } else {
-        ("deepagents", "nvidia.fabric.langchain.deepagents")
-    }
+/// The agent image the live tests run, and its Fabric harness: Pi, the
+/// smallest agent image, until OpenClaw can start in an OpenShell sandbox
+/// again (#13372).
+pub(super) fn agent() -> (&'static str, &'static str) {
+    ("pi", "nvidia.fabric.pi")
 }
 
 /// The platform's agent image, the reference dummy, then the two proxy images.
-pub(super) fn names(platform: &str) -> [&'static str; 4] {
-    [agent(platform).0, DUMMY, "proxy-a", "proxy-b"]
+pub(super) fn names() -> [&'static str; 4] {
+    [agent().0, DUMMY, "proxy-a", "proxy-b"]
 }
 
 /// The platform's archive images that `used` does not name.
-fn unused(platform: &str, used: &[&str]) -> Vec<&'static str> {
-    names(platform)
+fn unused(used: &[&str]) -> Vec<&'static str> {
+    names()
         .into_iter()
         .filter(|name| !used.contains(name))
         .collect()
@@ -46,7 +42,7 @@ pub(super) const DUMMY: &str = "dummy";
 
 /// Build the platform's agent image as `PREFIX:TARGET`.
 pub(super) fn build_agent(platform: &str, prefix: &str) -> Result<()> {
-    build_image(platform, prefix, agent(platform).0)
+    build_image(platform, prefix, agent().0)
 }
 
 /// Build the reference dummy agent image as `PREFIX:dummy`.
@@ -118,7 +114,7 @@ pub(super) fn build(platform: &str) -> Result<()> {
     build_agent(platform, SHARED)?;
     build_dummy(platform, SHARED)?;
     build_proxies(platform, SHARED)?;
-    let tags = names(platform).map(|name| format!("{SHARED}:{name}"));
+    let tags = names().map(|name| format!("{SHARED}:{name}"));
     fs::create_dir_all(".build/ci")?;
     let start = Instant::now();
     // ctr needs the fully qualified names that Docker stores internally.
@@ -233,7 +229,6 @@ fn save(tags: &[String], archive: &Path) -> Result<()> {
 pub(super) fn load(
     archive: &Path,
     prefix: &str,
-    platform: &str,
     names: &[&str],
     owned: &mut Vec<String>,
 ) -> Result<()> {
@@ -267,7 +262,7 @@ pub(super) fn load(
     }
     // The archive holds every live image for the platform; drop the shared
     // names of those this step does not use, and nothing else.
-    for name in unused(platform, names) {
+    for name in unused(names) {
         let _ = docker()
             .args(["image", "rm", &format!("{SHARED}:{name}")])
             .stdout(Stdio::null())
@@ -322,12 +317,9 @@ mod tests {
 
     #[test]
     fn a_step_drops_only_the_platform_archive_images_it_does_not_name() {
-        let target = agent("linux_amd64").0;
-        assert_eq!(
-            unused("linux_amd64", &[target]),
-            [DUMMY, "proxy-a", "proxy-b"]
-        );
-        assert!(unused("linux_amd64", &names("linux_amd64")).is_empty());
+        let target = agent().0;
+        assert_eq!(unused(&[target]), [DUMMY, "proxy-a", "proxy-b"]);
+        assert!(unused(&names()).is_empty());
     }
 }
 

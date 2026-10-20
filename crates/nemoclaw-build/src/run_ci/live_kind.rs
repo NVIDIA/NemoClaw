@@ -146,7 +146,7 @@ pub(super) async fn run_live_kind(
 
     // An agent image from this checkout, by digest, loaded into the node and
     // described by its metadata bundle.
-    let (target, harness) = live_images::agent(platform);
+    let (target, harness) = live_images::agent();
     let docker_platform = format!("linux/{}", platform.trim_start_matches("linux_"));
     let prefix = format!("{name}-agent");
     let tag = format!("{prefix}:{target}");
@@ -224,7 +224,7 @@ fn load_archived_agent(
         .args(["-d", "-q", "-f", "-o"])
         .arg(&archive)
         .arg(images))?;
-    let target = live_images::agent(platform).0;
+    let target = live_images::agent().0;
     let (digest, metadata) = nemoclaw_build::images::archived_image_metadata(
         &archive,
         &format!("docker.io/library/{}:{target}", live_images::SHARED),

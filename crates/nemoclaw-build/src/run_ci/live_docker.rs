@@ -195,10 +195,10 @@ fn prepare(
     getrandom::fill(&mut nonce).map_err(|_| "cannot name the live-test images")?;
     let prefix = format!("nc-live-{}", nemoclaw_build::hex(&nonce));
     // Every test needs python3, sha256sum and node, which both agent images have.
-    let (target, harness) = live_images::agent(platform);
-    let names = live_images::names(platform);
+    let (target, harness) = live_images::agent();
+    let names = live_images::names();
     match images {
-        Some(archive) => live_images::load(archive, &prefix, platform, &names, &mut owned.images)?,
+        Some(archive) => live_images::load(archive, &prefix, &names, &mut owned.images)?,
         None => {
             owned
                 .images

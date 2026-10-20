@@ -15,13 +15,6 @@ variable "AGENT_PLATFORM" {
   }
 }
 
-variable "PLATFORM_HARNESSES" {
-  default = {
-    "linux/arm64" = ["deepagents", "claude", "codex", "mini-swe-agent", "nooa", "nooa-bench", "remote-agent", "openclaw", "hermes", "pi"]
-    "linux/amd64" = ["deepagents", "claude", "codex", "mini-swe-agent", "nooa", "nooa-bench", "remote-agent", "openclaw", "hermes", "pi"]
-  }
-}
-
 variable "HARNESSES" {
   default = {
     deepagents     = { stage = "generic", adapter = "deepagents", adapter_id = "nvidia.fabric.langchain.deepagents", extra = "deepagents" }
@@ -50,7 +43,7 @@ target "_fabric" {
 target "agents" {
   inherits = ["_fabric"]
   name = harness
-  matrix = { harness = PLATFORM_HARNESSES[AGENT_PLATFORM] }
+  matrix = { harness = keys(HARNESSES) }
   target = HARNESSES[harness].stage
   args = {
     HARNESS = harness
