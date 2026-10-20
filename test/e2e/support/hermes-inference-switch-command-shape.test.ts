@@ -291,7 +291,7 @@ describe("Hermes inference switch command shape", () => {
   it("derives the native baseline model from the install environment", async () => {
     const { env } = await nativeSwitchHelpers();
     const installEnv = env("nvapi-public-fixture-key");
-    expect(hostedInstallModel(installEnv)).toBe("nvidia/nemotron-3-super-120b-a12b");
+    expect(hostedInstallModel(installEnv)).toBe("nvidia/nemotron-3.5-super-vl-120b-a12b");
   });
 
   it("keeps the public proxy-resolution credential on the public NVIDIA endpoint", async () => {
