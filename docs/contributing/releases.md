@@ -26,11 +26,12 @@ Until every package exists, `v1` pushes skip pushing images with a warning, and 
 
 ## Stage From a Tag
 
-Push a semver tag on a `v1` commit, starting with `v1.0.0-rc1`:
+Push a semver tag on a `v1` commit, starting with `v0.1.0-rc1`; the `v1` branch ships 0.1 releases.
+Version tags are permanent: a repository rule forbids deleting them.
 
 ```sh
-git tag v1.0.0-rc1 <commit>
-git push origin v1.0.0-rc1
+git tag v0.1.0-rc1 <commit>
+git push origin v0.1.0-rc1
 ```
 
 The [staging workflow](../../.github/workflows/release.yml):

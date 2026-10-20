@@ -7,7 +7,7 @@ on:
   pull_request:
   push:
     branches: [v1]
-    tags: ["v1.*.*"]
+    tags: ["v0.1.*"]
   workflow_dispatch:
 permissions:
   contents: read
@@ -138,10 +138,10 @@ jobs:
   public:
     name: Release
     needs: validate
-    # Release candidates such as v1.0.0-rc1 stage images and drafts; only a
+    # Release candidates such as v0.1.0-rc1 stage images and drafts; only a
     # final release publishes the documentation.
     if: >-
-      github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v1.') &&
+      github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v0.1.') &&
       !contains(github.ref_name, '-') && vars.FERN_V1_PUBLIC_ENABLED == 'true'
     environment: docs-v1-public
     runs-on: ubuntu-24.04

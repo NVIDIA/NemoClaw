@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-# Stage a v1 release from a semver tag such as v1.0.0-rc1. Promote the images
-# CI checked on the tagged v1 history to v1/<image>:<tag>, build the runtime
+# Stage a release from a semver tag such as v0.1.0-rc1 on the v1 branch. Promote
+# the images CI checked on the tagged history to v1/<image>:<tag>, build the runtime
 # images, and create a draft release listing every digest. Nothing here makes a
 # package or the release public, and nothing pushes to a package an
 # administrator hasn't created as internal: packages a workflow creates inherit
@@ -9,7 +9,7 @@
 name: Release / Stage
 on:
   push:
-    tags: ["v1.*"]
+    tags: ["v0.1.*"]
 permissions:
   contents: read
 concurrency:
