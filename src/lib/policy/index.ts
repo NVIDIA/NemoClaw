@@ -2602,7 +2602,7 @@ async function applyPresets(sandboxName: string, presetNames: string[]): Promise
     let entries = preset.entries;
     if (preset.name === "openclaw-pricing") {
       try {
-        content = materializeOpenClawPricingPins(merged, content);
+        content = materializeOpenClawPricingPins(originalPolicy, content);
         const materializedEntries = extractPresetEntries(content);
         if (!materializedEntries)
           throw new Error("The built-in OpenClaw pricing preset is invalid.");

@@ -175,7 +175,7 @@ describe("live OpenShell policy mutations", () => {
     await expect(arePresetsCoveredByPersonalPolicy(sandboxName, ["weather"])).resolves.toBe(false);
   });
 
-  it.each(["batch", "direct"] as const)(
+  it.each(["batch", "batch-after-weather", "direct"] as const)(
     "applies, discloses, and recognizes a pricing preset with the custom provider's exact pins (%s)",
     async (path) => {
       const pins = ["34.117.59.81", "104.18.8.134"];
@@ -200,7 +200,12 @@ describe("live OpenShell policy mutations", () => {
       await expect(
         path === "direct"
           ? applyPresetContent(sandboxName, "openclaw-pricing", content!, { nonFatal: true })
-          : applyPresets(sandboxName, ["openclaw-pricing"]),
+          : applyPresets(
+              sandboxName,
+              path === "batch-after-weather"
+                ? ["weather", "openclaw-pricing"]
+                : ["openclaw-pricing"],
+            ),
       ).resolves.toBe(true);
       expect(console.log).toHaveBeenCalledWith(
         `          allowed IPs: ${[...pins].sort().join(", ")}`,
@@ -256,6 +261,7 @@ describe("live OpenShell policy mutations", () => {
     { path: "batch", routes: mixedRoutes },
     { path: "direct", routes: conflictingRoutes },
     { path: "batch", routes: conflictingRoutes },
+    { path: "batch-after-weather", routes: conflictingRoutes },
   ])(
     "does not submit $path pricing when live provider pins are invalid ($#)",
     async ({ path, routes }) => {
@@ -279,7 +285,12 @@ describe("live OpenShell policy mutations", () => {
       await expect(
         path === "direct"
           ? applyPresetContent(sandboxName, "openclaw-pricing", content!, { nonFatal: true })
-          : applyPresets(sandboxName, ["openclaw-pricing"]),
+          : applyPresets(
+              sandboxName,
+              path === "batch-after-weather"
+                ? ["weather", "openclaw-pricing"]
+                : ["openclaw-pricing"],
+            ),
       ).resolves.toBe(false);
       expect(mocks.setSandboxPolicy).not.toHaveBeenCalled();
       expect(livePolicy).toBe(original);
