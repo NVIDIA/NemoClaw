@@ -189,6 +189,13 @@ function buildProbeRequest(input: SandboxInferenceInvocationInput): {
       model: input.model,
       [resolveMaxTokensField(input.model)]: resolveProbeReplyTokens(input.provider, input.model),
       messages: [{ role: "user", content: "Reply with OK" }],
+      // Match DCode's pinned Ultra profile: the hosted alias can otherwise
+      // exhaust a short probe on reasoning and return no visible content.
+      ...(input.agentName === DCODE_AGENT_NAME &&
+      baseUrl !== NVIDIA_HOSTED_NATIVE_ENDPOINT &&
+      ["nvidia/nemotron-3-ultra-550b-a55b", "nvidia/nvidia/nemotron-3-ultra"].includes(input.model)
+        ? { chat_template_kwargs: { force_nonempty_content: true } }
+        : {}),
       stream: false,
     },
   };
