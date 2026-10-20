@@ -24,6 +24,11 @@ import {
   MANAGED_GATEWAY_STATE_ROOT_MARKER,
   resolveGatewayStateDirName,
 } from "../../onboard/gateway-binding";
+import {
+  getNemoclawOpenShellGatewayUserServicePath,
+  NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE,
+  NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER,
+} from "../../onboard/docker-driver-gateway-service";
 import * as gatewayRegistry from "../../state/gateway-registry";
 import { createSetupInference, type SetupInferenceDeps } from "../../onboard/setup-inference";
 import {
@@ -379,6 +384,72 @@ describe("full uninstall bulk sandbox cleanup", () => {
       fs.rmSync(home, { recursive: true, force: true });
     }
   });
+});
+
+it("retains native authority when service cleanup fails after gateway state removal (#13470)", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-service-failure-"));
+  try {
+    const registryFile = writeFullCleanupState(home);
+    const authority = {
+      schemaVersion: 1,
+      profileId: "nemoclaw-nvidia-inference-v1",
+      providerName: "nemoclaw-nvidia-prod-v1",
+      providerId: "original-provider",
+    };
+    fs.writeFileSync(
+      registryFile,
+      JSON.stringify({
+        defaultSandbox: null,
+        sandboxes: {},
+        nativeNvidiaProviderAuthorities: { nemoclaw: authority },
+      }),
+    );
+    const deps = fullCleanupDeps(home, [], "No sandboxes found.\n");
+    const servicePath = getNemoclawOpenShellGatewayUserServicePath(home, deps.env);
+    fs.mkdirSync(path.dirname(servicePath), { recursive: true });
+    fs.writeFileSync(
+      servicePath,
+      `# ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}\n[Service]\nExecStart=${home}/.local/bin/openshell-gateway\n`,
+    );
+    const serviceResponses = new Map([
+      [
+        `systemctl --user disable --now ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE}`,
+        { status: 1, stdout: "", stderr: "permission denied" },
+      ],
+      [
+        `systemctl --user show ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE} --property=MainPID --value`,
+        ok("0\n"),
+      ],
+    ]);
+    const run = vi.fn(
+      (command: string, args: string[], options?: { env?: NodeJS.ProcessEnv }) =>
+        serviceResponses.get([command, ...args].join(" ")) ?? deps.run(command, args, options),
+    );
+    const result = await runUninstallPlan(
+      { assumeYes: true, deleteModels: false, destroyUserData: false, keepOpenShell: false },
+      {
+        ...deps,
+        platform: "linux",
+        commandExists: (command) => command === "systemctl" || deps.commandExists(command),
+        run,
+      },
+    );
+    expect(
+      run.mock.calls.some(([command, args]) => command === "systemctl" && args.includes("disable")),
+    ).toBe(true);
+    expect(result.exitCode).toBe(1);
+    expect(fs.existsSync(servicePath)).toBe(true);
+    expect(
+      fs.existsSync(
+        path.join(home, ".local", "state", "nemoclaw", resolveGatewayStateDirName(8080)),
+      ),
+    ).toBe(false);
+    expect(
+      JSON.parse(fs.readFileSync(registryFile, "utf8")).nativeNvidiaProviderAuthorities.nemoclaw,
+    ).toEqual(authority);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
 });
 
 describe("native NVIDIA provider authority after uninstall", () => {

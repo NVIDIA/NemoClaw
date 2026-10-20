@@ -4512,7 +4512,9 @@ async function executePreparedPlan(
     return { ok: false, scopedToSelectedGateway: initialScopedToSelectedGateway };
   }
   const retireProviderAuthority = providerAuthorityCleanup.retire;
+  let ok = true;
   const finishProviderAuthorityCleanup = (): boolean => {
+    if (!ok) return false;
     if (!retireProviderAuthority) return true;
     try {
       // Failed state removal must retain provider ownership for recovery.
@@ -4526,7 +4528,6 @@ async function executePreparedPlan(
       return false;
     }
   };
-  let ok = true;
   let scopedToSelectedGateway = initialScopedToSelectedGateway;
   let sharedRegistryMustBePreserved = initialSharedRegistryMustBePreserved;
   let otherGatewayPorts = initialOtherGatewayPorts;
@@ -4841,7 +4842,7 @@ async function executePreparedPlan(
         ok = false;
     }
   }
-  return { ok: ok && finishProviderAuthorityCleanup(), scopedToSelectedGateway };
+  return { ok: finishProviderAuthorityCleanup(), scopedToSelectedGateway };
 }
 
 async function completePortablePlan(
