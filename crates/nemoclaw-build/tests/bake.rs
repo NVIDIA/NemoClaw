@@ -20,7 +20,6 @@ const HARNESSES: [&str; 10] = [
     "remote-agent",
     "pi",
 ];
-const AMD64_HARNESSES: [&str; 2] = ["deepagents", "openclaw"];
 
 /// Whether Docker Buildx can run here; the Windows and macOS runners lack it.
 fn buildx_available() -> bool {
@@ -83,11 +82,11 @@ fn arm64_builds_every_harness_locally_for_its_platform() {
 }
 
 #[test]
-fn amd64_builds_only_its_qualified_harnesses() {
+fn amd64_builds_every_harness() {
     let Some(targets) = plan("linux/amd64", &["agents"]) else {
         return;
     };
-    assert_eq!(names(&targets), BTreeSet::from(AMD64_HARNESSES));
+    assert_eq!(names(&targets), BTreeSet::from(HARNESSES));
     for target in targets.values() {
         assert_eq!(target["platforms"], serde_json::json!(["linux/amd64"]));
     }

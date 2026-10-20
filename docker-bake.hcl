@@ -18,7 +18,7 @@ variable "AGENT_PLATFORM" {
 variable "PLATFORM_HARNESSES" {
   default = {
     "linux/arm64" = ["deepagents", "claude", "codex", "mini-swe-agent", "nooa", "nooa-bench", "remote-agent", "openclaw", "hermes", "pi"]
-    "linux/amd64" = ["deepagents", "openclaw"]
+    "linux/amd64" = ["deepagents", "claude", "codex", "mini-swe-agent", "nooa", "nooa-bench", "remote-agent", "openclaw", "hermes", "pi"]
   }
 }
 
