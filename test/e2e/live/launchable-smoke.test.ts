@@ -12,8 +12,10 @@ import { assertExitZero as expectExitZero } from "../fixtures/clients/command.ts
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { nativeHostedAuthHeaderScript } from "../../../src/lib/inference/native-provider/contract.ts";
 import {
   DEFAULT_HOSTED_INFERENCE_MODEL,
+  HOSTED_INFERENCE_CREDENTIAL_ENV,
   HOSTED_INFERENCE_PROVIDER_NAME,
   requireHostedInferenceConfig,
 } from "../fixtures/hosted-inference.ts";
@@ -26,7 +28,7 @@ import { isTransientProviderValidationFailure } from "./network-policy-transient
 // This is intentionally a single live test instead of a new fixture
 // family: the contract is the real Ubuntu bootstrap path, so the test invokes
 // scripts/brev-launchable-ci-cpu.sh via sudo, then proves the bootstrap-built
-// CLI can onboard, route inference.local, and run an OpenClaw agent turn
+// CLI can onboard, reach its native hosted provider, and run an OpenClaw agent turn
 // through Vitest.
 
 const BOOTSTRAP_SCRIPT = path.join(REPO_ROOT, "scripts", "brev-launchable-ci-cpu.sh");
@@ -138,6 +140,7 @@ async function sleep(ms: number): Promise<void> {
 
 async function expectPongFromSandboxInference(
   sandboxExec: (command: string[], artifactName: string) => Promise<ShellProbeResult>,
+  endpointUrl: string,
 ): Promise<void> {
   const payload = JSON.stringify({
     model: MODEL,
@@ -150,14 +153,11 @@ async function expectPongFromSandboxInference(
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     lastResult = await sandboxExec(
       [
-        "curl",
-        "-s",
-        "--max-time",
-        "60",
-        "https://inference.local/v1/chat/completions",
-        "-H",
-        "Content-Type: application/json",
-        "-d",
+        "sh",
+        "-c",
+        `${nativeHostedAuthHeaderScript({ credentialEnv: HOSTED_INFERENCE_CREDENTIAL_ENV, api: "openai-completions" })}; exec curl -s --max-time 60 "$1" -H 'Content-Type: application/json' -H "$AUTH_HEADER" -d "$2"`,
+        "sh",
+        `${endpointUrl}/chat/completions`,
         payload,
       ],
       `phase-6-sandbox-inference-attempt-${attempt}`,
@@ -174,7 +174,7 @@ async function expectPongFromSandboxInference(
   }
 
   throw new Error(
-    `sandbox inference.local expected PONG after 3 attempts; last content='${lastContent}'; ` +
+    `sandbox native hosted inference expected PONG after 3 attempts; last content='${lastContent}'; ` +
       `stdout='${lastResult?.stdout.slice(0, 300) ?? ""}'; stderr='${lastResult?.stderr.slice(0, 300) ?? ""}'`,
   );
 }
@@ -378,13 +378,7 @@ test(
     });
     expectExitZero(status, `nemoclaw ${SANDBOX_NAME} status`);
 
-    const inferenceConfig = await host.command("openshell", ["inference", "get"], {
-      artifactName: "phase-5-openshell-inference-get",
-      env: pathEnv,
-      timeoutMs: 30_000,
-    });
-    expectExitZero(inferenceConfig, "openshell inference get");
-    expect(inferenceConfig.stdout).toMatch(new RegExp(EXPECTED_ROUTE_PROVIDER, "i"));
+    expect(status.stdout).toMatch(new RegExp(`Provider:\\s+${EXPECTED_ROUTE_PROVIDER}`, "i"));
 
     const gatewayContainer = await runtimeProvider.command(
       ["container", "ps", "--format", "{{.Names}}"],
@@ -438,7 +432,7 @@ test(
         env: pathEnv,
         timeoutMs: INFERENCE_TIMEOUT_MS,
       });
-    await expectPongFromSandboxInference(sandboxExec);
+    await expectPongFromSandboxInference(sandboxExec, hosted.endpointUrl);
 
     const sessionId = `e2e-bootstrap-${Date.now()}-${randomUUID()}`;
     const agent = await sandboxExec(
