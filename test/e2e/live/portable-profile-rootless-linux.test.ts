@@ -1009,7 +1009,11 @@ async function main(
     const prepared = preparePortableExperimentalHost(process.env, { home });
     assert.equal(prepared?.authority.configHome, configHome);
     const runtimeAuthority = prepared!.authority;
-    assert.equal(process.env.DOCKER_HOST, `unix://${process.env.OPENSHELL_PODMAN_SOCKET}`);
+    const expectedPodmanSocket =
+      process.env.E2E_TARGET_ID === "portable-hermes-finalization"
+        ? process.env.OPENSHELL_PODMAN_SOCKET
+        : `${runtimeDir}/podman/podman.sock`;
+    assert.equal(process.env.DOCKER_HOST, `unix://${expectedPodmanSocket}`);
     assert.equal(fs.statSync(path.join(runtimeDir, "podman")).mode & 0o777, 0o700);
     assert.match(
       fs.readFileSync(String(process.env.CONTAINERS_CONF), "utf-8"),

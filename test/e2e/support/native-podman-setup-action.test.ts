@@ -1047,14 +1047,12 @@ exec /bin/bash "$@"
     expect(live?.run).toContain("nvidia-smi --query-gpu=name");
     expect(live?.run).toContain("podman build");
     expect(
-      liveSource.indexOf(
-        "assert.equal(process.env.DOCKER_HOST, `unix://${process.env.OPENSHELL_PODMAN_SOCKET}`)",
-      ),
+      liveSource.indexOf("assert.equal(process.env.DOCKER_HOST, `unix://${expectedPodmanSocket}`)"),
     ).toBeGreaterThanOrEqual(0);
+    expect(liveSource).toContain('process.env.E2E_TARGET_ID === "portable-hermes-finalization"');
+    expect(liveSource).toContain(": `${runtimeDir}/podman/podman.sock`");
     expect(liveSource.indexOf('run("docker", ["version"])')).toBeGreaterThan(
-      liveSource.indexOf(
-        "assert.equal(process.env.DOCKER_HOST, `unix://${process.env.OPENSHELL_PODMAN_SOCKET}`)",
-      ),
+      liveSource.indexOf("assert.equal(process.env.DOCKER_HOST, `unix://${expectedPodmanSocket}`)"),
     );
     expect(live?.run).toMatch(
       /live-vitest-invocation\.mts run \\\n\s+--test-path test\/e2e\/live\/portable-profile-rootless-linux\.test\.ts/u,
