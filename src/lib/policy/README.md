@@ -14,8 +14,11 @@ discard legacy copies of those fields without replaying them.
 
 During an incomplete onboarding policy step, the session temporarily retains
 the selected preset names and tier with the sandbox identity. Resume reconciles
-that pending selection against live OpenShell policy; it is cleared only after
-the live policy confirms application. It is not applied-policy authority.
+that pending selection against live OpenShell policy. NemoClaw clears it after
+the live policy confirms application. NemoClaw discards it if onboarding selects
+another sandbox name or creates a replacement sandbox with a new identity. An
+unexpected identity mismatch stops resume before policy mutation. The pending
+selection is not applied-policy authority.
 
 Policy mutations preserve unrelated live entries. Custom preset identity is
 encoded in namespaced OpenShell policy keys so list and remove commands can
