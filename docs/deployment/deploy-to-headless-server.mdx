@@ -307,7 +307,9 @@ Install a declarative agent skill through the supported host command:
 $$nemoclaw headless-agent skill install ./my-skill/
 ```
 
-The skill directory must contain `SKILL.md` with a `name` field in its YAML frontmatter. Files a skill writes under the native home/workspace survive a rebuild; process-only shell exports and changes elsewhere do not.
+The skill directory must contain `SKILL.md` with a `name` field in its YAML frontmatter.
+Use a name that meets the [skill installation requirements](../reference/commands#$$nemoclaw-name-skill-install-path).
+Files a skill writes under the native home/workspace survive a rebuild; process-only shell exports and changes elsewhere do not.
 
 ## Add a Least-Privilege Policy
 

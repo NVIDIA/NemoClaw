@@ -256,6 +256,9 @@ nemo-deepagents <sandbox-name> rebuild --dcode-auto-approval thread-opt-in --yes
 
 The `thread-opt-in` setting grants permission to use Deep Agents Code's native approval modes, but it does not activate one by itself.
 Use `dcode -y` or **Enable Auto for this thread** for classifier-backed Auto mode.
+The generated configuration selects the managed provider and model for the separate classifier request.
+It uses the same OpenShell credential placeholder and endpoint as the agent.
+If classification fails, DCode retains its native denial and fallback to human approval.
 Use the native `--yolo` or `/yolo` path for unrestricted approval after its warning and acknowledgement.
 The TUI shows the upstream active-state indicator for the selected mode.
 

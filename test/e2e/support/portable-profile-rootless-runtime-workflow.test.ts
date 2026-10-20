@@ -77,6 +77,7 @@ describe("portable profile rootless runtime workflow", () => {
       (step) => step.name === "Install root dependencies with audit",
     );
     const catalogueCompileIndex = steps.findIndex((step) => step.run === "npm run catalog:compile");
+    const cliBuildIndex = steps.findIndex((step) => step.name === "Build exact CLI");
     const provisionIndex = steps.findIndex(
       (step) => step.name === "Provision restricted rootless Linux runtime",
     );
@@ -95,6 +96,17 @@ describe("portable profile rootless runtime workflow", () => {
     const packageVersionIndex = provision?.indexOf("dpkg-query --show") ?? -1;
     const runtimeVersionIndex = provision?.indexOf("podman --version") ?? -1;
     const actionlintLabels = actionlint["self-hosted-runner"]?.labels;
+    const finalizationHelper =
+      "test/e2e/fixtures/portable-profile-rootless-finalization-helpers.ts";
+    const finalizationSources = [
+      "src/lib/onboard/machine/final-flow-composition.ts",
+      "src/lib/onboard/machine/finalization-deps.ts",
+      "src/lib/onboard/machine/handlers/finalization.ts",
+    ];
+    const doctorSources = [
+      "src/lib/actions/sandbox/doctor-system-checks.ts",
+      "src/lib/actions/sandbox/doctor.ts",
+    ];
 
     expect(job?.["runs-on"]).toBe("ubuntu-26.04");
     expect(workflow.on.pull_request.paths).toEqual(
@@ -116,13 +128,19 @@ describe("portable profile rootless runtime workflow", () => {
         "src/lib/onboard/runtime-provider/docker.ts",
       ]),
     );
+    expect(workflow.on.pull_request.paths).toContain(finalizationHelper);
+    expect(workflow.on.push.paths).toContain(finalizationHelper);
+    expect(workflow.on.pull_request.paths).toEqual(expect.arrayContaining(finalizationSources));
+    expect(workflow.on.pull_request.paths).toEqual(expect.arrayContaining(doctorSources));
     expect(Array.isArray(actionlintLabels)).toBe(true);
     expect(actionlintLabels).toContain("ubuntu-26.04");
     expect(job?.env?.PODMAN_APT_VERSION).toBe("5.7.0+ds2-3build1");
     expect(dependencyInstallIndex).toBeGreaterThanOrEqual(0);
     expect(auditedDependencyInstallIndex).toBeGreaterThan(dependencyInstallIndex);
     expect(catalogueCompileIndex).toBeGreaterThan(auditedDependencyInstallIndex);
-    expect(provisionIndex).toBeGreaterThan(catalogueCompileIndex);
+    expect(steps[cliBuildIndex]?.run).toBe("npm run build:cli");
+    expect(cliBuildIndex).toBeGreaterThan(catalogueCompileIndex);
+    expect(provisionIndex).toBeGreaterThan(cliBuildIndex);
     expect(policyIndex).toBeGreaterThan(provisionIndex);
     expect(hermesBaseIndex).toBeGreaterThan(policyIndex);
     expect(liveTestIndex).toBeGreaterThan(hermesBaseIndex);

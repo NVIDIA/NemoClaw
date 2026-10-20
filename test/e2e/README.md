@@ -14,6 +14,12 @@ The llama.cpp GPU case proves ordinary inference before approval, then uses the 
 OpenClaw owns TUI turn ordering and `chat.send` correlation.
 Fixes and regression coverage for those behaviors belong upstream.
 
+DCode Ultra readiness uses the same nonempty-content template parameter as the
+pinned managed DCode profile for the canonical and hosted model IDs. The public
+NVIDIA endpoint keeps its existing request shape. The headless check verifies
+that malformed native inference evidence stops connect before session attach;
+native response bodies remain absent from diagnostics.
+
 Interactive TUI targets require `expect`. The unified workflow installs it
 before those targets run; local runners must provide it themselves.
 
@@ -65,7 +71,12 @@ The install refuses package removals, preserving the runner's Docker and contain
   runs the portable-profile scenario on the reviewed x86-64 NVIDIA GPU runner with
   rootless Podman 5.7. It builds Podman and rootlessport from the pinned v5.7.0
   source commit. It reuses the reviewed native pasta, netavark, and aardvark-dns
-  components. Select it with
+  components. The scenario proves that mismatched receipt and registry authority
+  pauses onboarding and makes `doctor` fail. It then restores valid authority
+  and requires finalization and `doctor` to accept the same authenticated
+  readiness evidence. Deterministic finalization tests own unhealthy gateway,
+  missing secret, and redacted-diagnostic failures. This job does not qualify
+  Hermes inference or widen Portable profile support. Select it with
   `jobs=portable-hermes-finalization`; the job selects Podman 5.7 regardless of
   gateway-runtime inputs. The live scenario also runs the receipt-bound Hermes
   build, registry publication, and OpenShell create transaction against those services.

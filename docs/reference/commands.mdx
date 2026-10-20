@@ -16,6 +16,11 @@ content:
   type: "reference"
 ---
 
+The installer and supported CLI operations attempt anonymous completion telemetry to NVIDIA's fixed TEST receiver by default.
+Run `export NEMOCLAW_DISABLE_TELEMETRY=1` in this shell before installing or rerunning it to suppress collection and delivery.
+Repeat it in any new shell used for NemoClaw CLI commands.
+Refer to [Operation Telemetry](/user-guide/openclaw/security/best-practices#operation-telemetry) for details.
+
 <AgentOnly variant="openclaw">
 
 The `$$nemoclaw` CLI is the primary interface for managing NemoClaw sandboxes. It is installed automatically by the installer (`curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash`). For guidance on when to use `$$nemoclaw` versus the underlying `openshell` CLI, refer to [CLI Selection Guide](cli-selection-guide).
@@ -530,11 +535,20 @@ The host observes through any same-device pending state and verifies the final s
 
 Before the configuration review, NemoClaw records the sandbox name and the selected provider and model as an incomplete choice. If onboarding stops at the review prompt, an interactive `--resume` run shows the prompt again. A non-interactive `--resume` run reuses the recorded choice and continues to inference setup. After you choose **Apply configuration**, NemoClaw records the choice before inference setup starts. If inference setup fails, `--resume` reuses the accepted provider, model, and sandbox name. If you choose **Exit onboarding**, onboarding exits with a nonzero status and clears those recorded choices. Run `$$nemoclaw onboard` to make new choices after exit. During a resume without terminal input, `--yes` or `NEMOCLAW_YES=1` also selects non-interactive resume behavior. For a new or fresh session, `--yes` and `NEMOCLAW_YES=1` accept supported confirmations but do not replace `--non-interactive`. If onboarding returns without reaching the final `complete` state, the command exits with status `1`. When that result is resumable, NemoClaw keeps the session `in_progress` at its last checkpoint instead of marking it failed, so correct the reported condition and run `$$nemoclaw onboard --resume`.
 
-<AgentOnly variant="openclaw,hermes">
+<AgentOnly variant="openclaw">
 
 During finalization, NemoClaw stops onboarding when it cannot complete the process check or a required secret-boundary check refuses.
 It does not report the sandbox as ready.
 Run `$$nemoclaw <sandbox-name> doctor`, correct the reported condition, then run `$$nemoclaw onboard --resume`.
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+During finalization, NemoClaw stops onboarding when it cannot complete the process check or a required secret-boundary check refuses.
+It does not report the sandbox as ready.
+For a Portable Hermes receipt and registry authority mismatch, preserve both records and follow [Portable Hermes receipt and registry authority do not match](troubleshooting#portable-hermes-receipt-and-registry-authority-do-not-match).
+Do not resume onboarding for that authority failure.
+For another resumable finalization failure, run `$$nemoclaw <sandbox-name> doctor`, correct the reported condition, then run `$$nemoclaw onboard --resume`.
 
 </AgentOnly>
 
@@ -1453,6 +1467,10 @@ This prevents an unused pipe from delaying execution while OpenShell waits for E
 Nonempty `--message-file` arguments and calls without a recognized inline message preserve a pipe or redirect.
 The sandbox resolves message-file paths, including symlinks to stdin.
 For example, the wrapper preserves redirected input for `printf 'ping' | $$nemoclaw my-assistant agent --agent main`.
+The producer must close standard input after writing the message.
+The managed OpenClaw parser waits up to 30 seconds for piped input, including `--message-file /dev/stdin` and symlinks to stdin.
+A positive `--timeout <seconds>` sets this input wait as well as the agent turn timeout.
+If the input deadline expires, the command exits nonzero with guidance to close the producer or provide an inline message.
 
 When the top-level OpenClaw `--json` output flag is present, the wrapper uses a captured no-TTY path with a `64 MiB` buffer so `stdout` stays parseable JSON. Raw `stderr`, including structured JSON diagnostics, is forwarded unchanged. NemoClaw appends failed-tool or untrusted-child provenance only from the `stdout` JSON. The wrapper reads completion markers only from the final matching OpenClaw response envelope: a local `{ payloads, meta }` response or a gateway `{ status, result: { payloads, meta } }` response. It ignores earlier JSON progress or log records. It exits with status `1` when that metadata contains `error.kind: "incomplete_turn"`, `livenessState: "abandoned"`, or a `timeoutPhase` value, even when the envelope reports success. `replayInvalid: true` means replaying the turn may repeat side effects. The wrapper accepts it only with evidence of a completed run, a successful tool summary, and final assistant text matching the reply payload. Otherwise it exits with status `1` and the existing inspect-before-retry guidance. Marker-shaped values inside tool results, tool-call arguments, or other descendants do not change the exit status. A turn can run every tool successfully and still become abandoned before it produces a reply. The wrapper writes the unchanged JSON trace to `stdout` before it reports the incomplete turn, so the partial tool trace remains available. The wrapper writes the verdict, the detected markers, and verify-before-retry guidance to `stderr`. A `timeoutPhase` value names the phase the deadline fired in, so the wrapper writes deadline guidance in place of the generic incomplete-turn text. Tool calls in a partial trace may have already applied side effects, so verify what the turn changed before you retry it. The wrapper passes through an upstream non-zero exit status unchanged. Literal `--json` values consumed by flags such as `-m` or `--reply-channel`, or arguments after `--`, stay on the normal passthrough path. Documented value flags written as `--flag=value`, such as `--session-id=s1`, are recognized the same way as separated value flags. If an unrecognized OpenClaw option appears before `--json`, NemoClaw also keeps the command on the normal passthrough path so OpenClaw remains the argv source of truth.
 
@@ -1890,7 +1908,15 @@ Expected output:
 ...
 ```
 
-If the sandbox is running an older Hermes version than this NemoClaw release expects, `status` and `connect` add an `Update` line pointing at `nemohermes <name> rebuild` to pick up the newer version. The rebuild reuses the existing sandbox name and transfers the complete native home while OpenShell keeps credential stores under its own lifecycle.
+If a non-Portable sandbox runs an older Hermes version than this NemoClaw release expects, `status` and `connect` add an `Update` line that points to `nemohermes <name> rebuild`.
+The rebuild reuses the existing sandbox name and transfers the complete native home while OpenShell keeps credential stores under its lifecycle.
+
+Portable Hermes does not support `rebuild`.
+Replace an older Portable Hermes image through a fresh Portable onboarding run:
+
+```bash
+nemohermes onboard --experimental-profile portable --fresh --name <sandbox-name> --recreate-sandbox
+```
 
 </AgentOnly>
 <AgentOnly variant="deepagents">
@@ -2844,7 +2870,7 @@ Add a local skill directory to a running sandbox. NemoClaw validates and private
 $$nemoclaw my-assistant skill install ./my-skill/
 ```
 
-The skill directory must contain a `SKILL.md` file with YAML frontmatter that includes a `name` field. Skill names must contain only alphanumeric characters, dots, hyphens, and underscores. For a registered sandbox, skill commands select the agent from its registry record. They ignore another sandbox's latest onboarding selection.
+The skill directory must contain a `SKILL.md` file with YAML frontmatter that includes a `name` field. Skill names must be non-empty, contain only alphanumeric characters, dots, hyphens, and underscores, cannot be `.` or `..`, and cannot exceed 64 characters. For a registered sandbox, skill commands select the agent from its registry record. They ignore another sandbox's latest onboarding selection.
 
 <AgentOnly variant="openclaw">
 
@@ -2907,7 +2933,9 @@ Removal delegates to `dcode skills delete <name> --agent agent --force --json`.
 $$nemoclaw my-assistant skill remove my-skill
 ```
 
-Use the skill name from the `SKILL.md` frontmatter, not the local directory name. Skill names must contain only alphanumeric characters, dots, hyphens, and underscores, and cannot be `.` or `..`.
+Use the skill name from the `SKILL.md` frontmatter, not the local directory name.
+Skill names must be non-empty, contain only alphanumeric characters, dots, hyphens, and underscores, and cannot be `.` or `..`.
+Removal accepts previously installed names longer than 64 characters; new installations enforce the 64-character limit.
 
 <AgentOnly variant="openclaw">
 
@@ -3227,6 +3255,13 @@ $$nemoclaw my-assistant upload ./agent-skills/ /sandbox/.deepagents/agent/skills
 ### `$$nemoclaw <name> rebuild`
 
 Upgrade a sandbox to the current agent version while preserving its complete native home/workspace. The command captures that complete tree and the current OpenShell policy in private temporary handoffs, destroys the old sandbox, recreates it with the current image, and restores the complete tree.
+
+<AgentOnly variant="hermes">
+
+Portable Hermes does not support `rebuild`.
+To replace a Portable Hermes sandbox, run `nemohermes onboard --experimental-profile portable --fresh --name <sandbox-name> --recreate-sandbox`.
+
+</AgentOnly>
 
 If the sandbox or its retained recovery record belongs to another local OpenShell gateway registry, NemoClaw runs the rebuild or recovery retirement from that registry.
 It asks for confirmation before it starts the delegated rebuild worker unless you pass `--yes` or `--force`.

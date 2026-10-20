@@ -24,7 +24,7 @@ vi.mock("../inference/nvidia-featured-models", async (importOriginal) => {
       defaultModelId:
         defaultModelId === "nvidia/nemotron-3-ultra-550b-a55b"
           ? defaultModelId
-          : "nvidia/nemotron-3-super-120b-a12b",
+          : "nvidia/nemotron-3.5-super-vl-120b-a12b",
       cloudModelOptions: [],
     }),
   };
@@ -59,7 +59,7 @@ describe("NVIDIA featured model selection", () => {
 
     expect(selected).toBe("custom/provider-model");
     expect(promptCloudModel).toHaveBeenCalledWith({
-      defaultModelId: "nvidia/nemotron-3-super-120b-a12b",
+      defaultModelId: "nvidia/nemotron-3.5-super-vl-120b-a12b",
       cloudModelOptions: [],
       manualDefaultModelId: "custom/provider-model",
     });
@@ -112,7 +112,7 @@ describe("NVIDIA featured model selection", () => {
 
   it("reselects instead of recovering a retired NVIDIA Endpoints model", async () => {
     const retiredModel = "minimaxai/minimax-m3";
-    const replacement = "nvidia/nemotron-3-super-120b-a12b";
+    const replacement = "nvidia/nemotron-3.5-super-vl-120b-a12b";
     const warn = vi.fn();
     vi.mocked(promptCloudModel).mockResolvedValueOnce(replacement);
     const session = createNvidiaFeaturedModelSession({ warn, writeLine: vi.fn() });
@@ -143,7 +143,7 @@ describe("NVIDIA featured model selection", () => {
 
   it("ignores a configured retired NVIDIA model during non-interactive recovery", async () => {
     const retiredModel = "minimaxai/minimax-m3";
-    const replacement = "nvidia/nemotron-3-super-120b-a12b";
+    const replacement = "nvidia/nemotron-3.5-super-vl-120b-a12b";
     const warn = vi.fn();
     const session = createNvidiaFeaturedModelSession({ warn, writeLine: vi.fn() });
 

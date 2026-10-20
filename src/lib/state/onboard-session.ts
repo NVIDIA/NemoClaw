@@ -116,6 +116,7 @@ const SAFE_VLLM_INSTALL_MODEL = /^[A-Za-z0-9._:/-]+$/;
 export class InvalidPersistedApfInterceptorIntentError extends Error {}
 export class InvalidPersistedCancellationRecoveryError extends Error {}
 export class InvalidPersistedExternalComponentActivationError extends Error {}
+export class InvalidPersistedPolicySelectionError extends Error {}
 
 // Session-specific aliases for the shared JSON types.
 type SessionJsonValue = JsonValue;
@@ -148,6 +149,71 @@ export interface SessionFailure {
   message: string | null;
   recordedAt: string;
   interrupted?: boolean;
+}
+
+export interface PendingPolicySelection {
+  readonly sandboxName: string;
+  readonly sandboxIdentity: string;
+  readonly tierName: string | null;
+  readonly presetNames: string[];
+}
+
+/** Session journal for a policy choice whose live OpenShell write is not yet confirmed. */
+export function createPendingPolicySelectionStore(
+  getSandbox: (
+    sandboxName: string,
+  ) => Pick<SandboxEntry, "lifecycleLiveIdentityFingerprint" | "createdAt"> | null,
+) {
+  return {
+    hasPending(sandboxName: string): boolean {
+      return loadSession()?.pendingPolicySelection?.sandboxName === sandboxName;
+    },
+    record(sandboxName: string, tierName: string | null, presetNames: string[]): void {
+      if (loadSession()?.sandboxName !== sandboxName) return;
+      const row = getSandbox(sandboxName);
+      const sandboxIdentity =
+        row?.lifecycleLiveIdentityFingerprint ??
+        (row?.createdAt ? `created:${row.createdAt}` : null);
+      if (!sandboxIdentity)
+        throw new Error("Cannot save policy selection without sandbox identity.");
+      updateSession((session) => {
+        if (session.sandboxName !== sandboxName) return;
+        session.pendingPolicySelection = { sandboxName, sandboxIdentity, tierName, presetNames };
+      });
+    },
+    clear(sandboxName: string): void {
+      updateSession((session) => {
+        if (session.pendingPolicySelection?.sandboxName === sandboxName) {
+          session.pendingPolicySelection = null;
+        }
+      });
+    },
+  };
+}
+
+function parsePendingPolicySelection(value: unknown): PendingPolicySelection | null {
+  if (!isObject(value)) return null;
+  const { sandboxName, sandboxIdentity, tierName, presetNames } = value;
+  if (
+    typeof sandboxName !== "string" ||
+    !NAME_VALID_PATTERN.test(sandboxName) ||
+    typeof sandboxIdentity !== "string" ||
+    sandboxIdentity.length === 0 ||
+    sandboxIdentity.length > 256 ||
+    /[\r\n\0]/u.test(sandboxIdentity) ||
+    (tierName !== null && (typeof tierName !== "string" || !/^[a-z0-9-]{1,64}$/u.test(tierName))) ||
+    !Array.isArray(presetNames) ||
+    presetNames.some(
+      (name) => typeof name !== "string" || !/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/u.test(name),
+    )
+  )
+    return null;
+  return {
+    sandboxName,
+    sandboxIdentity,
+    tierName,
+    presetNames: [...new Set(presetNames as string[])],
+  };
 }
 
 export interface SessionCancellationRecovery {
@@ -334,6 +400,8 @@ export interface Session {
   apfInterceptorRequested: boolean;
   hermesToolGateways: string[] | null;
   messagingPlan: SandboxMessagingPlan | null;
+  /** Secret-free selection awaiting confirmed live policy application. */
+  pendingPolicySelection: PendingPolicySelection | null;
   /** Non-secret names of credential providers registered before sandbox setup completed. */
   stagedCredentialProviders: string[];
   gpuPassthrough: boolean;
@@ -1059,6 +1127,7 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     apfInterceptorRequested: overrides.apfInterceptorRequested === true,
     hermesToolGateways: readStringArray(overrides.hermesToolGateways),
     messagingPlan: parseSandboxMessagingPlan(overrides.messagingPlan),
+    pendingPolicySelection: parsePendingPolicySelection(overrides.pendingPolicySelection),
     stagedCredentialProviders: readStringArray(overrides.stagedCredentialProviders) ?? [],
     gpuPassthrough: overrides.gpuPassthrough === true,
     ...(parseSandboxGpuSelection(overrides.sandboxGpuSelection)
@@ -1162,6 +1231,15 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
       "Refusing to load the onboarding session: saved external component activation evidence is incomplete.",
     );
   }
+  if (
+    hasOwn(data, "pendingPolicySelection") &&
+    data.pendingPolicySelection !== null &&
+    !parsePendingPolicySelection(data.pendingPolicySelection)
+  ) {
+    throw new InvalidPersistedPolicySelectionError(
+      "Refusing to load the onboarding session: saved policy selection is invalid.",
+    );
+  }
 
   const normalized = createSession({
     sessionId: readString(data.sessionId) ?? undefined,
@@ -1204,6 +1282,7 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     apfInterceptorRequested: data.apfInterceptorRequested === true,
     hermesToolGateways: readStringArray(data.hermesToolGateways),
     messagingPlan: parseSandboxMessagingPlan(data.messagingPlan),
+    pendingPolicySelection: parsePendingPolicySelection(data.pendingPolicySelection),
     stagedCredentialProviders: readStringArray(data.stagedCredentialProviders) ?? [],
     gpuPassthrough: data.gpuPassthrough === true,
     sandboxGpuSelection: parseSandboxGpuSelection(data.sandboxGpuSelection),

@@ -135,7 +135,7 @@ runAgentTurnLatencyTest(
     expect(openclawInstall.exitCode, resultText(openclawInstall)).toBe(0);
     progress.phase("validate OpenClaw inference route");
     const openclawRoute = await route(
-      sandbox,
+      host,
       OPENCLAW_SANDBOX,
       "openclaw",
       inference,
@@ -202,7 +202,7 @@ runAgentTurnLatencyTest(
     expect(hermesInstall.exitCode, resultText(hermesInstall)).toBe(0);
     progress.phase("validate Hermes inference route");
     const hermesRoute = await route(
-      sandbox,
+      host,
       HERMES_SANDBOX,
       "hermes",
       inference,
