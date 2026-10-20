@@ -24,6 +24,8 @@ import { isShippedManagedImageAgent } from "../managed-image/contract";
 import {
   type BuiltManagedStartupOnboardProfile,
   buildManagedStartupOnboardProfile,
+  resolveManagedStartupInferenceEndpoint,
+  resolveManagedStartupNativeLocalAttachment,
   type ManagedStartupOnboardProfileInput,
 } from "../managed-startup/onboard-profile";
 export {
@@ -60,7 +62,6 @@ import {
 import {
   prepareSandboxRuntimeLaunch,
   prebuildSandboxImageIfEligible,
-  requiresLocalSandboxBuildKit,
   type SandboxCreateLaunchInput,
   type SandboxRuntimeLaunchWithPrebuild,
 } from "../sandbox-create-launch";
@@ -198,6 +199,8 @@ export interface CreateManagedWorkloadOnboardRuntimeInput {
   readonly provider: string | null;
   readonly preferredInferenceApi: string | null;
   readonly endpointUrl: string | null;
+  readonly localNimSelected?: boolean;
+  readonly nativeLocalProviderAttachment?: SandboxEntry["nativeLocalProviderAttachment"];
   readonly nativeProvider?: boolean;
   readonly startupProfile: ManagedProfileInput;
   readonly note: (message: string) => void;
@@ -396,8 +399,16 @@ export function createManagedWorkloadOnboardRuntime(
       return input.managedWorkloadRebuild.replacementProfile;
     }
     if (preparedProfile) return preparedProfile;
+    const nativeLocalProviderAttachment = resolveManagedStartupNativeLocalAttachment(input);
     const selectedModel = input.model?.trim() || "";
     const selectedProvider = input.provider?.trim() || null;
+    const endpointUrl = resolveManagedStartupInferenceEndpoint({
+      agentName: input.agentName,
+      provider: selectedProvider,
+      endpointUrl: input.endpointUrl,
+      localNimSelected: input.localNimSelected,
+      nativeLocalProviderAttachment,
+    });
     const inferenceApi =
       input.agentName === "langchain-deepagents-code"
         ? "openai-completions"
@@ -410,13 +421,16 @@ export function createManagedWorkloadOnboardRuntime(
       selectedModel,
       selectedProvider,
       inferenceApi,
-      input.nativeProvider ?? true,
-      input.endpointUrl,
+      input.nativeLocalProviderAttachment && !nativeLocalProviderAttachment
+        ? false
+        : (input.nativeProvider ?? true),
+      endpointUrl,
+      input.agentName,
     );
     preparedProfile = buildManagedStartupOnboardProfile({
       agentName: input.agentName,
       inference:
-        !selectedModel && !selectedProvider && !input.preferredInferenceApi && !input.endpointUrl
+        !selectedModel && !selectedProvider && !input.preferredInferenceApi && !endpointUrl
           ? null
           : {
               routeProvider: inference.providerKey,
@@ -424,7 +438,7 @@ export function createManagedWorkloadOnboardRuntime(
               model: selectedModel,
               routedBaseUrl: inference.inferenceBaseUrl,
               upstreamEndpointUrl:
-                input.agentName === "langchain-deepagents-code" ? input.endpointUrl : null,
+                input.agentName === "langchain-deepagents-code" ? endpointUrl : null,
               api: inference.inferenceApi as
                 | "openai-completions"
                 | "openai-responses"
@@ -563,10 +577,6 @@ export async function prepareOnboardSandboxWorkloadLaunch(
     );
   }
   if (input.plan.intent.sandboxGpuLogMessage) log(input.plan.intent.sandboxGpuLogMessage);
-  log(
-    `  Creating sandbox '${input.launchInput.sandboxName}' (this takes a few minutes on first run)...`,
-  );
-
   const configuredMessagingChannels =
     getChannelsFromPlan(input.plannedMessagingPlan) ?? createPlan.activeMessagingChannels;
   const initialGpuRoute = initialDockerGpuRoute(createPlan.gpuRoutePlan);
@@ -654,14 +664,30 @@ export async function prepareOnboardSandboxWorkloadLaunch(
       ...launchInput,
       policyAttached: Boolean(createPlan.createRequest.policyPath),
     });
+    const provider = input.runtime.runtimeProvider;
+    const imageBuildSurface = provider?.containerEngine;
+    const nativePodmanCapture =
+      provider?.identity.id === "podman" &&
+      imageBuildSurface?.supported &&
+      imageBuildSurface.identities.some(
+        (identity) => identity.operation === "external-image-preparation",
+      )
+        ? (args: readonly string[], timeoutMs: number) =>
+            imageBuildSurface.capture("external-image-preparation", args, timeoutMs)
+        : undefined;
     const { createArgs: _portableArgs, ...prebuild } = await prebuildSandboxImageIfEligible({
       buildCtx: buildContext.buildCtx,
       buildId,
-      dockerDriverGateway: input.gpu.dockerDriverGateway,
+      dockerDriverGateway: ["docker", "podman"].includes(
+        input.runtime.runtimeProvider?.identity.id ?? "",
+      ),
+      gatewayDriver: input.plan.portableLifecycle
+        ? "podman"
+        : (input.runtime.runtimeProvider?.identity.id ?? "unsupported"),
+      ...(nativePodmanCapture ? { nativePodmanCapture } : {}),
       origin: buildContext.origin,
       sourceReference: createPlan.createRequest.source.reference,
       sandboxName: input.launchInput.sandboxName,
-      requiresLocalBuildKit: requiresLocalSandboxBuildKit(buildContext.origin, input.legacy.agent),
     });
     prepared = {
       createRequest: createPlan.createRequest,
@@ -681,6 +707,9 @@ export async function prepareOnboardSandboxWorkloadLaunch(
     dashboardRemoteBindPrepared,
     legacyBuildContext,
   };
+  log(
+    `  Creating sandbox '${input.launchInput.sandboxName}' (this takes a few minutes on first run)...`,
+  );
   return {
     ...sharedLaunch,
     createRequestPlan: Object.freeze({

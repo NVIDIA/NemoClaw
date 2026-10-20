@@ -146,7 +146,7 @@ describe("rebuildSandbox flow: target image", () => {
 
   it("stops before sandbox mutation when Hermes base-image preflight fails (#11072)", async () => {
     const harness = createRebuildFlowHarness({
-      sandboxEntry: { agent: "hermes" },
+      sandboxEntry: { agent: "hermes", provider: "nvidia-router" },
       baseImagePreflight: { ok: false, imageRef: null, overrideEnvVar: null },
     });
 

@@ -19,8 +19,8 @@ const RECIPE_ID = "vllm.deepseek-v4-flash-0731.spark-dual.v1";
 const LLAMA_CPP_PROFILE_ID = "llama-cpp.dgx-spark-gb10.single.nemotron-3-nano-30b-a3b";
 const LLAMA_CPP_RECIPE_ID = "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1";
 const LLAMA_CPP_IMAGE =
-  "ghcr.io/nvidia/nemoclaw/llama-cpp-server@sha256:9d0cddd7bcaf98d3b75a7fc8c7ce3af3a9973b5f23a8092e7e93a9afc473a675";
-const LLAMA_CPP_IMAGE_DOWNLOAD_SIZE_BYTES = 1_827_478_485;
+  "ghcr.io/nvidia/nemoclaw/llama-cpp-server@sha256:93efd0bec1ed2a7166660edfef9bb743fdfeb3c125d915b43801e69c0befca67";
+const LLAMA_CPP_IMAGE_DOWNLOAD_SIZE_BYTES = 1_862_644_330;
 const LLAMA_CPP_MODEL_DIGEST =
   "sha256:627f5b04aedc97f967332f331bd75b7a4ed2f33ca83e6ee74b44235cc1887890";
 const MUSE_LLAMA_CPP_PROFILE_ID = "llama-cpp.dgx-spark-gb10.single.muse-glimmer-30b";
@@ -190,7 +190,7 @@ describe("managed inference YAML profile contract", () => {
       serve: {
         authentication: "bearer",
         contextSize: 262144,
-        limits: { maxRequestBodyBytes: 1048576 },
+        limits: { requestTimeoutSeconds: 900 },
         batchSize: 2048,
         microBatchSize: 512,
         flashAttention: "enabled",
@@ -245,7 +245,7 @@ describe("managed inference YAML profile contract", () => {
         chatTemplate: "model-embedded-jinja",
         chatTemplateArguments: { reasoningStrength: "low" },
         contextSize: 131072,
-        limits: { maxRequestBodyBytes: 1048576 },
+        limits: { requestTimeoutSeconds: 900 },
         slots: 1,
         speculativeDecoding: "disabled",
       },

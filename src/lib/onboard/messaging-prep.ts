@@ -235,11 +235,16 @@ export async function prepareCreateSandboxMessaging(
       // A static credential-bound policy must instead retain the exact gateway
       // provider already holding that authority.
       if (token && !channelDisabled) continue;
-      const providerReusable = providerType
-        ? await input.providerMatchesGatewayCredential(name, providerType, envKey)
-        : requiresExactOpenClawProviderBinding
-          ? await input.providerMatchesGatewayCredential(name, "generic", envKey)
-          : await input.providerExistsInGateway(name);
+      if (!providerType) {
+        throw new Error(
+          `Messaging provider '${name}' has no explicit owned profile type. Re-run channel setup with a supported profile.`,
+        );
+      }
+      const providerReusable = await input.providerMatchesGatewayCredential(
+        name,
+        providerType,
+        envKey,
+      );
       if (!providerReusable) continue;
       reusableMessagingProviders.push(name);
       if (!channelDisabled && !reusableMessagingChannels.includes(channel)) {

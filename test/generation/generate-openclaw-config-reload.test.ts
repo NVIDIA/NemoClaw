@@ -2,13 +2,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
-// Tests for the gateway.reload pin in scripts/generate-openclaw-config.mts
-// (#4710). The in-sandbox OpenClaw gateway must run with reload mode "off":
-// in the default "hybrid" mode a restart-class config change makes the
-// gateway SIGUSR1-restart itself in-process, and a failed restart parks the
-// process alive with no HTTP listener — invisible to the PID-wait respawn
-// loop in nemoclaw-start.sh. Split out of test/generation/generate-openclaw-config.test.ts,
-// which is at its size budget (ci/test-file-size-budget.json).
+// Agent changes must reach the live gateway. Restart-class changes remain
+// protected by the container fresh-process restart patch (#4710, #13268).
 
 import fs from "node:fs";
 import os from "node:os";
@@ -54,9 +49,9 @@ function buildConfigDirect(envOverrides: Record<string, string> = {}): any {
 }
 
 describe("gateway.reload pin (#4710)", () => {
-  it("pins gateway.reload.mode to off in the generated config", () => {
+  it("enables hybrid reload in the generated config", () => {
     const config = buildConfigDirect();
-    expect(config.gateway.reload).toEqual({ mode: "off" });
+    expect(config.gateway.reload).toEqual({ mode: "hybrid" });
   });
 
   it.each([
@@ -66,13 +61,13 @@ describe("gateway.reload pin (#4710)", () => {
     { CHAT_UI_URL: "http://127.0.0.1:18792" },
   ])("keeps the pin across unrelated env permutations [case %#]", (overrides) => {
     const config = buildConfigDirect(overrides);
-    expect(config.gateway.reload, JSON.stringify(overrides)).toEqual({ mode: "off" });
+    expect(config.gateway.reload, JSON.stringify(overrides)).toEqual({ mode: "hybrid" });
   });
 
   // Generous timeout: main() does real file I/O and the suite shares a
   // worker pool with heavier integration files.
   it(
-    "re-pins off mode when an existing config carries a different reload mode",
+    "enables reload when an existing config disables it",
     {
       timeout: 20000,
     },
@@ -85,7 +80,7 @@ describe("gateway.reload pin (#4710)", () => {
       fs.writeFileSync(
         configPath,
         JSON.stringify({
-          gateway: { reload: { mode: "hybrid" }, auth: { token: "stale" } },
+          gateway: { reload: { mode: "off" }, auth: { token: "stale" } },
           plugins: { installs: { "custom-plugin": { origin: "npm" } } },
         }),
       );
@@ -93,7 +88,7 @@ describe("gateway.reload pin (#4710)", () => {
       withConfigEnv({}, () => main());
 
       const written = JSON.parse(fs.readFileSync(configPath, "utf-8"));
-      expect(written.gateway.reload).toEqual({ mode: "off" });
+      expect(written.gateway.reload).toEqual({ mode: "hybrid" });
       expect(written.plugins.installs["custom-plugin"]).toEqual({ origin: "npm" });
     },
   );

@@ -69,6 +69,40 @@ function runGenerator(env: Record<string, string | undefined>): string {
 }
 
 describe("LangChain Deep Agents Code config generator", () => {
+  it.each(["ollama-local", "vllm-local", "llama-cpp-local"])(
+    "writes the selected native endpoint and credential reference for %s (#12558)",
+    (provider) => {
+      const config = runGenerator({
+        NEMOCLAW_UPSTREAM_PROVIDER: provider,
+        NEMOCLAW_MODEL: "local-model",
+        NEMOCLAW_INFERENCE_BASE_URL: "http://host.openshell.internal:11434/v1",
+        OPENAI_API_KEY: "ambient-secret-must-not-escape",
+      });
+      expect(config).toContain('base_url = "http://host.openshell.internal:11434/v1"');
+      expect(config).toContain('api_key_env = "NEMOCLAW_LOCAL_INFERENCE_TOKEN"');
+      expect(config).toContain('default = "openai:local-model"');
+      expect(config).not.toContain("ambient-secret-must-not-escape");
+    },
+  );
+  it.each(["http://10.1.2.3:8000/v1", "http://host.openshell.internal:42103/v1"])(
+    "keeps compatible endpoint %s on the managed credential contract (#13197)",
+    (endpoint) => {
+      const config = runGenerator({
+        NEMOCLAW_UPSTREAM_PROVIDER: "compatible-endpoint",
+        NEMOCLAW_INFERENCE_BASE_URL: getSandboxInferenceConfig(
+          "fixture-model",
+          "compatible-endpoint",
+          "openai-completions",
+          false,
+          endpoint,
+          "langchain-deepagents-code",
+        ).inferenceBaseUrl,
+      });
+      expect(config).toContain('api_key_env = "DEEPAGENTS_CODE_OPENAI_API_KEY"');
+      expect(config).not.toContain("NEMOCLAW_LOCAL_INFERENCE_TOKEN");
+    },
+  );
+
   it.each(
     HOSTED_NATIVE_PROVIDERS.filter(
       (provider) =>
@@ -191,6 +225,17 @@ describe("LangChain Deep Agents Code config generator", () => {
     expect(config).toContain('default = "openai:nvidia/nemotron-3-super-120b-a12b"');
     expect(config).toContain("[models.providers.openai]");
     expect(config).not.toContain("[models.providers.openrouter]");
+  });
+
+  it("keeps the compatible credential when its endpoint equals the native NVIDIA URL", () => {
+    const config = runGenerator({
+      NEMOCLAW_UPSTREAM_PROVIDER: "compatible-endpoint",
+      NEMOCLAW_UPSTREAM_ENDPOINT_URL: "https://integrate.api.nvidia.com/v1",
+      NEMOCLAW_INFERENCE_BASE_URL: "https://integrate.api.nvidia.com/v1",
+    });
+
+    expect(config).toContain('api_key_env = "COMPATIBLE_API_KEY"');
+    expect(config).not.toContain('api_key_env = "NVIDIA_INFERENCE_API_KEY"');
   });
 
   it("rejects upstream endpoint URLs with control characters before writing config", () => {

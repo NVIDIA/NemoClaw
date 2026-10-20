@@ -22,6 +22,7 @@ import {
   LLAMA_CPP_LOCAL_CREDENTIAL_ENV,
   MANAGED_PROVIDER_ID,
   OLLAMA_LOCAL_CREDENTIAL_ENV,
+  OPENROUTER_CLOUD_MODEL_OPTIONS,
   planInferenceRouteReconcile,
   resolveAgentDefaultCloudModel,
   resolveAgentInferenceApi,
@@ -103,6 +104,7 @@ describe("inference selection config", () => {
     expect(CLOUD_MODEL_OPTIONS).toEqual([
       { id: "nvidia/nemotron-3-ultra-550b-a55b", label: "Nemotron 3 Ultra 550B" },
       { id: "nvidia/nemotron-3-super-120b-a12b", label: "Nemotron 3 Super 120B" },
+      { id: "nvidia/nemotron-3.5-super-vl-120b-a12b", label: "Nemotron 3.5 Super VL 120B" },
     ]);
     expect(CLOUD_MODEL_OPTIONS.map((option: { id: string }) => option.id)).not.toContain(
       "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
@@ -126,6 +128,14 @@ describe("inference selection config", () => {
     expect(CLOUD_MODEL_OPTIONS.map((option: { id: string }) => option.id)).toContain(
       "nvidia/nemotron-3-super-120b-a12b",
     );
+  });
+
+  it("keeps the NVIDIA hosted Super VL addition out of the OpenRouter fallback", () => {
+    expect(OPENROUTER_CLOUD_MODEL_OPTIONS.map((option) => option.id)).toEqual([
+      "nvidia/nemotron-3-ultra-550b-a55b",
+      "nvidia/nemotron-3-super-120b-a12b",
+      "minimaxai/minimax-m3",
+    ]);
   });
 
   it("aligns Hermes Provider defaults with the Hermes Agent Nous catalog", () => {
@@ -648,4 +658,64 @@ describe("formatInferenceRouteDriftForDisplay", () => {
         "gateway inference route (openai[2J/gpt-5.2) differs from the recorded route for sandbox 'alpha' (nvidia/nvidia/nemotron).",
     });
   });
+});
+
+it.each([
+  ["openclaw", true, "https://inference.local/v1"],
+  ["pi", true, "http://host.openshell.internal:8000/v1"],
+  ["pi", false, "https://inference.local/v1"],
+  ["langchain-deepagents-code", false, "https://inference.local/v1"],
+  ["langchain-deepagents-code", true, "http://host.openshell.internal:8000/v1"],
+  ["hermes", true, "http://host.openshell.internal:8000/v1"],
+  ["hermes", false, "https://inference.local/v1"],
+] as const)("routes %s with native attachment %s to %s (#13197)", (agent, attached, expected) => {
+  expect(
+    getSandboxInferenceConfig(
+      "fixture-model",
+      "compatible-endpoint",
+      "openai-completions",
+      attached,
+      "http://host.openshell.internal:8000/v1",
+      agent,
+    ).inferenceBaseUrl,
+  ).toBe(expected);
+});
+
+it.each([
+  ["openclaw", true, "http://host.openshell.internal:8000/v1"],
+  ["openclaw", false, "https://inference.local/v1"],
+  ["hermes", true, "http://host.openshell.internal:8000/v1"],
+  ["pi", true, "http://host.openshell.internal:8000/v1"],
+  ["pi", false, "https://inference.local/v1"],
+] as const)(
+  "routes %s standalone vLLM with native attachment %s to %s",
+  (agent, attached, expected) => {
+    expect(
+      getSandboxInferenceConfig(
+        "fixture-model",
+        "vllm-local",
+        "openai-completions",
+        attached,
+        "http://host.openshell.internal:8000/v1",
+        agent,
+      ).inferenceBaseUrl,
+    ).toBe(expected);
+  },
+);
+
+it.each([
+  ["pi", "openai-completions"],
+  ["hermes", "openai-responses"],
+] as const)("preserves the %s private compatible route family", (agent, expectedApi) => {
+  const endpoint = "http://192.168.1.20:9001/v1";
+  const config = getSandboxInferenceConfig(
+    "fixture-model",
+    "compatible-endpoint",
+    "openai-responses",
+    true,
+    endpoint,
+    agent,
+  );
+  expect(config.inferenceBaseUrl).toBe(endpoint);
+  expect(config.inferenceApi).toBe(expectedApi);
 });

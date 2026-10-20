@@ -1,9 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  normalizeNativeLocalProviderAttachment,
+  usesNativeLocalInference,
+  usesNativeLocalInferenceForAgent,
+} from "../../inference/native-local/contract";
+
 import { isDeepStrictEqual } from "node:util";
 
 import { normalizeInferenceSelection, type InferenceSelection } from "../../inference/selection";
+import { recordedNativeProviderAttachment } from "../../inference/native-provider/recorded-selection";
 import { hostedNativeProvider } from "../../inference/native-provider/hosted";
 import { requireHostedProviderAttachment } from "../../inference/native-provider/hosted-attachment";
 import { normalizeNativeNvidiaProviderAttachment } from "../../inference/native-nvidia";
@@ -24,6 +31,7 @@ const ROUTE_RESERVATION_KEYS = new Set<keyof SandboxEntry>([
   "lifecycleLiveIdentityFingerprint",
   "model",
   "name",
+  "nativeLocalProviderAttachment",
   "nativeNvidiaProviderAttachment",
   "nativeHostedProviderAttachment",
   "openshellDriver",
@@ -92,6 +100,11 @@ function validCarriedRouteMetadata(entry: SandboxEntry): boolean {
     return false;
   }
   if (
+    entry.nativeLocalProviderAttachment !== undefined &&
+    !normalizeNativeLocalProviderAttachment(entry.nativeLocalProviderAttachment)
+  )
+    return false;
+  if (
     entry.nativeNvidiaProviderAttachment !== undefined &&
     !normalizeNativeNvidiaProviderAttachment(entry.nativeNvidiaProviderAttachment)
   ) {
@@ -124,7 +137,10 @@ export interface QualifiedPendingSandboxCreateReservation {
 
 export type SandboxInferenceRouteReservationDisposition =
   | { readonly kind: "missing" }
-  | { readonly kind: "owned"; readonly reservation: QualifiedSandboxInferenceRouteReservation }
+  | {
+      readonly kind: "owned";
+      readonly reservation: QualifiedSandboxInferenceRouteReservation;
+    }
   | { readonly kind: "not-reservation" }
   | { readonly kind: "conflict"; readonly detail: string };
 
@@ -159,7 +175,10 @@ export function qualifyPendingSandboxCreateReservation(
   ) {
     throw new Error("The sandbox create route reservation is not owned by this onboarding session");
   }
-  return { authority: structuredClone(authority), entry: structuredClone(entry) };
+  return {
+    authority: structuredClone(authority),
+    entry: structuredClone(entry),
+  };
 }
 
 /** Compare the complete admitted create reservation before its first checkpoint write. */
@@ -197,11 +216,16 @@ export function isPublishedSandboxRegistration(entry: { pendingRouteReservation?
 
 /** True when an entry participates in the inference route shared by its gateway. */
 export function isSharedGatewayRouteParticipant(entry: {
+  nativeLocalProviderAttachment?: unknown;
+  nimContainer?: string | null;
   pendingRouteReservation?: true;
   createdAt?: string;
   provider?: string | null;
   model?: string | null;
 }): boolean {
+  const ownedLocalNim = entry.provider === "vllm-local" && Boolean(entry.nimContainer?.trim());
+  if (!ownedLocalNim && normalizeNativeLocalProviderAttachment(entry.nativeLocalProviderAttachment))
+    return false;
   if (isPublishedSandboxRegistration(entry)) return true;
   return (
     isRouteOnlySandboxReservation(entry) &&
@@ -235,7 +259,10 @@ export function classifySandboxInferenceRouteReservation(
   if (!entry) return { kind: "missing" };
   if (entry.pendingRouteReservation !== true) return { kind: "not-reservation" };
   if (!isRouteOnlySandboxReservation(entry)) {
-    return { kind: "conflict", detail: "the inference route reservation is already completed" };
+    return {
+      kind: "conflict",
+      detail: "the inference route reservation is already completed",
+    };
   }
   if (!isPendingReservationForSession(entry, authority.sessionId)) {
     return {
@@ -244,11 +271,17 @@ export function classifySandboxInferenceRouteReservation(
     };
   }
   if (Object.keys(entry).some((key) => !ROUTE_RESERVATION_KEYS.has(key as keyof SandboxEntry))) {
-    return { kind: "conflict", detail: "the inference route reservation has sandbox authority" };
+    return {
+      kind: "conflict",
+      detail: "the inference route reservation has sandbox authority",
+    };
   }
   const checkpointClass = verifiedCreateCheckpointClass(entry);
   if (checkpointClass === "sandbox-authority") {
-    return { kind: "conflict", detail: "the inference route reservation has sandbox authority" };
+    return {
+      kind: "conflict",
+      detail: "the inference route reservation has sandbox authority",
+    };
   }
   if (checkpointClass === "malformed") {
     return {
@@ -280,7 +313,10 @@ export function classifySandboxInferenceRouteReservation(
       expectedSelection,
     )
   ) {
-    return { kind: "conflict", detail: "the inference route reservation has another route" };
+    return {
+      kind: "conflict",
+      detail: "the inference route reservation has another route",
+    };
   }
   if (
     (entry.gatewayPort !== undefined &&
@@ -300,7 +336,10 @@ export function classifySandboxInferenceRouteReservation(
         Array.isArray(entry.hostLocalInferenceProvenance) ||
         typeof entry.hostLocalInferenceReceipt !== "string"))
   ) {
-    return { kind: "conflict", detail: "the inference route reservation is malformed" };
+    return {
+      kind: "conflict",
+      detail: "the inference route reservation is malformed",
+    };
   }
   return {
     kind: "owned",
@@ -358,17 +397,64 @@ export function sandboxRegistrationMatchesInferenceRouteReservation(
   );
 }
 
+export { normalizeNativeLocalProviderAttachment };
+
+/** Keep a native attachment only when reusing its recorded route and gateway. */
+export function retainedNativeLocalProviderAttachment(
+  existing: SandboxEntry | undefined,
+  selection: Pick<InferenceSelection, "provider" | "endpointUrl"> & {
+    gatewayName: string;
+  },
+): SandboxEntry["nativeLocalProviderAttachment"] {
+  return existing &&
+    !(selection.provider === "vllm-local" && existing.nimContainer) &&
+    (usesNativeLocalInference(selection.provider, selection.endpointUrl) ||
+      usesNativeLocalInferenceForAgent(
+        existing.agent,
+        selection.provider,
+        selection.endpointUrl,
+      )) &&
+    selection.provider === existing.provider &&
+    selection.endpointUrl === existing.endpointUrl &&
+    selection.gatewayName === existing.gatewayName
+    ? existing.nativeLocalProviderAttachment
+    : undefined;
+}
+
 /** Preserve only the selected hosted provider's validated registration/reservation identity. */
 export function nativeHostedReservationAttachment(
   value: unknown,
   provider: string | null | undefined,
   previous?: SandboxEntry,
+  selection?: Pick<
+    SandboxEntry,
+    "provider" | "endpointUrl" | "credentialEnv" | "preferredInferenceApi" | "gatewayName"
+  >,
 ) {
   const receipt = requireHostedProviderAttachment(value, provider);
-  return hostedNativeProvider(provider)
-    ? (receipt ??
-        (previous && previous.provider === provider
-          ? previous.nativeHostedProviderAttachment
-          : undefined))
-    : undefined;
+  if (receipt) return receipt;
+  if (!previous || previous.provider !== provider) return undefined;
+  const retained = requireHostedProviderAttachment(
+    previous.nativeHostedProviderAttachment,
+    provider,
+  );
+  if (retained?.custom) {
+    if (
+      !selection?.endpointUrl ||
+      !selection.credentialEnv ||
+      !selection.preferredInferenceApi ||
+      selection.gatewayName !== previous.gatewayName
+    )
+      return undefined;
+    try {
+      return recordedNativeProviderAttachment({
+        ...selection,
+        nativeHostedProviderAttachment: retained,
+      });
+    } catch {
+      // A changed binding needs new authority from provider setup.
+      return undefined;
+    }
+  }
+  return hostedNativeProvider(provider) ? retained : undefined;
 }

@@ -7,6 +7,11 @@ import { testTimeout } from "../../test/helpers/timeouts.ts";
 const MINUTE_MS = 60_000;
 const ONBOARD_TEST_HEADROOM_MS = 10 * MINUTE_MS;
 const ONBOARD_JOB_HEADROOM_MS = 20 * MINUTE_MS;
+// Preserve the 90-minute hosted Pi lifecycle and allow a separate native
+// onboarding, two agent requests around a bounded rebuild, isolation probe,
+// destroy, and final listing.
+export const PI_QUALIFICATION_TEST_TIMEOUT_MS = 150 * MINUTE_MS;
+export const PI_QUALIFICATION_TARGET_TIMEOUT_MINUTES = 160;
 export const LIVE_TARGET_BASE_TEST_TIMEOUT_MS = 30 * MINUTE_MS;
 export const CONFIG_EXPORT_COMMAND_TIMEOUT_MS = 2 * MINUTE_MS;
 export const CONFIG_EXPORT_POLICY_TIMEOUT_MS = MINUTE_MS;
@@ -26,10 +31,41 @@ export const DCODE_INVALID_CREDENTIAL_LIFECYCLE_BUDGET_MS = 20 * MINUTE_MS;
 // plus image creation, readiness checks, and a bounded failure diagnostic.
 export const ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS = 40 * MINUTE_MS;
 export const ONBOARD_NO_RECREATE_COMMAND_TIMEOUT_MS = 15 * MINUTE_MS;
+export const ONBOARD_REPAIR_COMMAND_TIMEOUT_MS = 20 * MINUTE_MS;
 
 export const ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS =
   ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS + ONBOARD_TEST_HEADROOM_MS;
 export const ONBOARD_SINGLE_FINAL_HANDOFF_TARGET_TIMEOUT_MINUTES = 75;
+
+// TC-INF-15 serially onboards two sandboxes, rebuilds the owner, stops and starts
+// it, runs DCode, scans credentials, and probes sibling denial. Test headroom
+// also contains prerequisite probes and both pre-onboard cleanup commands.
+export const DCODE_NATIVE_LOCAL_TEST_TIMEOUT_MS =
+  2 * ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS +
+  (20 + 2 + 2 + 2 + 1 + 0.5) * MINUTE_MS +
+  ONBOARD_TEST_HEADROOM_MS;
+
+// Retain the existing routing suite's 75-minute job allowance, including its
+// finalization, and add both new serial DCode scenarios. The inherited suite
+// keeps its overall cost limit rather than summing its individual failure guards.
+export const INFERENCE_ROUTING_TARGET_TIMEOUT_MINUTES =
+  ONBOARD_SINGLE_FINAL_HANDOFF_TARGET_TIMEOUT_MINUTES +
+  Math.ceil(
+    (DCODE_NATIVE_LOCAL_TEST_TIMEOUT_MS + ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS) / MINUTE_MS,
+  );
+
+// The separate OpenClaw native-local target owns the same two-onboard lifecycle
+// as TC-INF-15, then switches its recorded model before the real agent turn.
+// Keep its serial job below the hosted runner's maximum while preserving the
+// existing inference-routing target's reviewed timeout.
+export const OPENCLAW_NATIVE_LOCAL_TEST_TIMEOUT_MS =
+  DCODE_NATIVE_LOCAL_TEST_TIMEOUT_MS + 5 * MINUTE_MS;
+export const OPENCLAW_NATIVE_LOCAL_TARGET_TIMEOUT_MINUTES = Math.ceil(
+  (OPENCLAW_NATIVE_LOCAL_TEST_TIMEOUT_MS +
+    ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS +
+    ONBOARD_JOB_HEADROOM_MS) /
+    MINUTE_MS,
+);
 
 // The typed DCode target runs onboarding, its invalid-credential lifecycle,
 // state validation, and the ordered cloud checks. Those checks can consume 96
@@ -91,3 +127,10 @@ export const ONBOARD_RESUME_TEST_TIMEOUT_MS =
   ONBOARD_TEST_HEADROOM_MS;
 export const ONBOARD_RESUME_TARGET_TIMEOUT_MINUTES =
   (ONBOARD_RESUME_TEST_TIMEOUT_MS + ONBOARD_JOB_HEADROOM_MS) / MINUTE_MS;
+
+// Onboard repair makes seven serial onboarding calls. Keep the test alive
+// through every command deadline plus probes and failure diagnostics.
+export const ONBOARD_REPAIR_TEST_TIMEOUT_MS =
+  7 * ONBOARD_REPAIR_COMMAND_TIMEOUT_MS + ONBOARD_TEST_HEADROOM_MS;
+export const ONBOARD_REPAIR_TARGET_TIMEOUT_MINUTES =
+  (ONBOARD_REPAIR_TEST_TIMEOUT_MS + ONBOARD_JOB_HEADROOM_MS) / MINUTE_MS;

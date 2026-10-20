@@ -163,12 +163,18 @@ describe("config rotate-token", () => {
     },
   );
 
-  it("rejects endpoint-backed fallback session metadata before credential side effects", async () => {
-    const promptSecret = vi.fn();
+  it("updates an endpoint-backed session without recreation metadata (#12940)", async () => {
+    const promptSecret = vi.fn().mockResolvedValue("rotation-secret");
     const saveCredential = vi.fn();
-    const runOpenshellCommand = vi.fn<RotateTokenDeps["runOpenshellCommand"]>();
-    const captureOpenshellCommand = vi.fn<RotateTokenDeps["captureOpenshellCommand"]>();
-    const resolveAgentConfig = vi.fn(() => DEFAULT_AGENT_CONFIG);
+    const runOpenshellCommand = vi.fn<RotateTokenDeps["runOpenshellCommand"]>(
+      () => ({ status: 0 }) as ReturnType<RotateTokenDeps["runOpenshellCommand"]>,
+    );
+    const captureOpenshellCommand = vi.fn(() => ({
+      output: "openshell 0.0.116\n",
+      status: 0,
+      stderr: "",
+      stdout: "openshell 0.0.116\n",
+    }));
     const deps = {
       appendAuditEntry: vi.fn(),
       captureOpenshellCommand,
@@ -183,21 +189,23 @@ describe("config rotate-token", () => {
         provider: "compatible-endpoint",
       }),
       promptSecret,
-      resolveAgentConfig,
+      resolveAgentConfig: () => DEFAULT_AGENT_CONFIG,
       runOpenshellCommand,
       saveCredential,
       validateName: vi.fn((name: string) => name),
     } satisfies RotateTokenDeps;
 
-    await expect(rotateSandboxToken("rotate-profile-test", {}, deps)).rejects.toThrow(
-      "incomplete provider metadata",
-    );
+    await rotateSandboxToken("rotate-profile-test", {}, deps);
 
-    expect(resolveAgentConfig).not.toHaveBeenCalled();
-    expect(promptSecret).not.toHaveBeenCalled();
-    expect(captureOpenshellCommand).not.toHaveBeenCalled();
-    expect(saveCredential).not.toHaveBeenCalled();
-    expect(runOpenshellCommand).not.toHaveBeenCalled();
+    expect(runOpenshellCommand).toHaveBeenCalledOnce();
+    expect(runOpenshellCommand.mock.calls[0]?.[1]).toEqual([
+      "provider",
+      "update",
+      "compatible-endpoint",
+      "--credential",
+      "COMPATIBLE_API_KEY",
+    ]);
+    expect(saveCredential).toHaveBeenCalledWith("COMPATIBLE_API_KEY", "rotation-secret");
   });
 
   it.each([
@@ -254,10 +262,9 @@ describe("config rotate-token", () => {
       provider: "openai-api",
       providerType: "openai",
     }));
-    const runOpenshellCommand = vi
-      .fn<RotateTokenDeps["runOpenshellCommand"]>()
-      .mockReturnValueOnce({ status: 1 } as ReturnType<RotateTokenDeps["runOpenshellCommand"]>)
-      .mockReturnValueOnce({ status: 0 } as ReturnType<RotateTokenDeps["runOpenshellCommand"]>);
+    const runOpenshellCommand = vi.fn<RotateTokenDeps["runOpenshellCommand"]>(
+      () => ({ status: 0 }) as ReturnType<RotateTokenDeps["runOpenshellCommand"]>,
+    );
     const saveCredential = vi.fn();
     const deps = {
       appendAuditEntry: vi.fn(),
@@ -294,218 +301,96 @@ describe("config rotate-token", () => {
       ["provider", "update", "compatible-anthropic-endpoint", "--credential", "ANTHROPIC_API_KEY"],
       expect.objectContaining({ env: { ANTHROPIC_API_KEY: "current-route-secret" } }),
     );
-    expect(runOpenshellCommand).toHaveBeenNthCalledWith(
-      2,
-      expect.any(String),
-      [
-        "provider",
-        "create",
-        "--name",
-        "compatible-anthropic-endpoint",
-        "--type",
-        "anthropic",
-        "--credential",
-        "ANTHROPIC_API_KEY",
-        "--config",
-        "ANTHROPIC_BASE_URL=https://anthropic-compatible.example.test",
-      ],
-      expect.objectContaining({ env: { ANTHROPIC_API_KEY: "current-route-secret" } }),
-    );
-  });
-
-  it("recreates a registered local NIM route with the onboarding-owned NVIDIA provider type", async () => {
-    const runOpenshellCommand = vi
-      .fn<RotateTokenDeps["runOpenshellCommand"]>()
-      .mockReturnValueOnce({ status: 1 } as ReturnType<RotateTokenDeps["runOpenshellCommand"]>)
-      .mockReturnValueOnce({ status: 0 } as ReturnType<RotateTokenDeps["runOpenshellCommand"]>);
-    const deps = {
-      appendAuditEntry: vi.fn(),
-      captureOpenshellCommand: vi.fn(() => ({
-        output: "openshell 0.0.116\n",
-        status: 0,
-        stderr: "",
-        stdout: "openshell 0.0.116\n",
-      })),
-      fail: (lines: string | readonly string[]): never => {
-        throw new Error(typeof lines === "string" ? lines : lines.join("\n"));
-      },
-      loadSandbox: () => ({
-        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
-        preferredInferenceApi: "openai-completions",
-        provider: "nvidia-nim",
-      }),
-      loadSession: vi.fn(() => null),
-      promptSecret: vi.fn().mockResolvedValue("current-route-secret"),
-      resolveAgentConfig: () => DEFAULT_AGENT_CONFIG,
-      runOpenshellCommand,
-      saveCredential: vi.fn(),
-      validateName: vi.fn((name: string) => name),
-    } satisfies RotateTokenDeps;
-
-    await rotateSandboxToken("rotate-profile-test", {}, deps);
-
-    expect(runOpenshellCommand).toHaveBeenNthCalledWith(
-      2,
-      expect.any(String),
-      [
-        "provider",
-        "create",
-        "--name",
-        "nvidia-nim",
-        "--type",
-        "nvidia",
-        "--credential",
-        "NVIDIA_INFERENCE_API_KEY",
-      ],
-      expect.objectContaining({ env: { NVIDIA_INFERENCE_API_KEY: "current-route-secret" } }),
-    );
-  });
-
-  it("recreates a registered compatible route with its gateway-reachable endpoint", async () => {
-    const runOpenshellCommand = vi
-      .fn<RotateTokenDeps["runOpenshellCommand"]>()
-      .mockReturnValueOnce({ status: 1 } as ReturnType<RotateTokenDeps["runOpenshellCommand"]>)
-      .mockReturnValueOnce({ status: 0 } as ReturnType<RotateTokenDeps["runOpenshellCommand"]>);
-    const deps = {
-      appendAuditEntry: vi.fn(),
-      captureOpenshellCommand: vi.fn(() => ({
-        output: "openshell 0.0.116\n",
-        status: 0,
-        stderr: "",
-        stdout: "openshell 0.0.116\n",
-      })),
-      fail: (lines: string | readonly string[]): never => {
-        throw new Error(typeof lines === "string" ? lines : lines.join("\n"));
-      },
-      loadSandbox: () => ({
-        credentialEnv: "COMPATIBLE_API_KEY",
-        endpointUrl: "http://127.0.0.1:11434/v1",
-        preferredInferenceApi: "openai-completions",
-        provider: "compatible-endpoint",
-      }),
-      loadSession: vi.fn(() => null),
-      promptSecret: vi.fn().mockResolvedValue("current-route-secret"),
-      resolveAgentConfig: () => DEFAULT_AGENT_CONFIG,
-      runOpenshellCommand,
-      saveCredential: vi.fn(),
-      validateName: vi.fn((name: string) => name),
-    } satisfies RotateTokenDeps;
-
-    await rotateSandboxToken("rotate-profile-test", {}, deps);
-
-    expect(runOpenshellCommand).toHaveBeenNthCalledWith(
-      2,
-      expect.any(String),
-      [
-        "provider",
-        "create",
-        "--name",
-        "compatible-endpoint",
-        "--type",
-        "openai",
-        "--credential",
-        "COMPATIBLE_API_KEY",
-        "--config",
-        "OPENAI_BASE_URL=http://host.openshell.internal:11434/v1",
-      ],
-      expect.objectContaining({ env: { COMPATIBLE_API_KEY: "current-route-secret" } }),
-    );
-  });
-
-  it("refuses to recreate an endpoint-backed registered provider without its endpoint", async () => {
-    const appendAuditEntry = vi.fn();
-    const saveCredential = vi.fn();
-    const runOpenshellCommand = vi
-      .fn<RotateTokenDeps["runOpenshellCommand"]>()
-      .mockReturnValue({ status: 1 } as ReturnType<RotateTokenDeps["runOpenshellCommand"]>);
-    const deps = {
-      appendAuditEntry,
-      captureOpenshellCommand: vi.fn(() => ({
-        output: "openshell 0.0.116\n",
-        status: 0,
-        stderr: "",
-        stdout: "openshell 0.0.116\n",
-      })),
-      fail: (lines: string | readonly string[]): never => {
-        throw new Error(typeof lines === "string" ? lines : lines.join("\n"));
-      },
-      loadSandbox: () => ({
-        credentialEnv: "COMPATIBLE_API_KEY",
-        endpointUrl: null,
-        preferredInferenceApi: "openai-completions",
-        provider: "compatible-endpoint",
-      }),
-      loadSession: vi.fn(() => null),
-      promptSecret: vi.fn().mockResolvedValue("current-route-secret"),
-      resolveAgentConfig: () => DEFAULT_AGENT_CONFIG,
-      runOpenshellCommand,
-      saveCredential,
-      validateName: vi.fn((name: string) => name),
-    } satisfies RotateTokenDeps;
-
-    await expect(rotateSandboxToken("rotate-profile-test", {}, deps)).rejects.toThrow(
-      "without its endpoint",
-    );
-
     expect(runOpenshellCommand).toHaveBeenCalledOnce();
-    expect(saveCredential).not.toHaveBeenCalled();
-    expect(appendAuditEntry).not.toHaveBeenCalled();
   });
 
-  it("does not persist the token when provider update and recreation both fail", async () => {
-    const appendAuditEntry = vi.fn();
-    const saveCredential = vi.fn();
-    const runOpenshellCommand = vi
-      .fn<RotateTokenDeps["runOpenshellCommand"]>()
-      .mockReturnValue({ status: 1 } as ReturnType<RotateTokenDeps["runOpenshellCommand"]>);
-    const deps = {
-      appendAuditEntry,
-      captureOpenshellCommand: vi.fn(() => ({
-        output: "openshell 0.0.116\n",
-        status: 0,
-        stderr: "",
-        stdout: "openshell 0.0.116\n",
-      })),
-      fail: (lines: string | readonly string[]): never => {
-        throw new Error(typeof lines === "string" ? lines : lines.join("\n"));
+  it.each([
+    {
+      label: "registered native provider",
+      route: {
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+        provider: "nvidia-nim",
       },
-      loadSandbox: () => ({
+      session: null,
+      providerName: "nvidia-nim",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      status: 1,
+    },
+    {
+      label: "registered compatible endpoint",
+      route: {
         credentialEnv: "COMPATIBLE_API_KEY",
         endpointUrl: "https://compatible.example.test/v1",
-        preferredInferenceApi: "openai-completions",
         provider: "compatible-endpoint",
-      }),
-      loadSession: vi.fn(() => null),
-      promptSecret: vi.fn().mockResolvedValue("rejected-route-secret"),
-      resolveAgentConfig: () => DEFAULT_AGENT_CONFIG,
-      runOpenshellCommand,
-      saveCredential,
-      validateName: vi.fn((name: string) => name),
-    } satisfies RotateTokenDeps;
+      },
+      session: null,
+      providerName: "compatible-endpoint",
+      credentialEnv: "COMPATIBLE_API_KEY",
+      status: null,
+    },
+    {
+      label: "legacy session provider",
+      route: null,
+      session: {
+        sandboxName: "rotate-profile-test",
+        credentialEnv: "OPENAI_API_KEY",
+        provider: "inference",
+      },
+      providerName: "inference",
+      credentialEnv: "OPENAI_API_KEY",
+      status: 1,
+    },
+  ])(
+    "stops after an unconfirmed $label update without creating a provider (#12940)",
+    async ({ route, session, providerName, credentialEnv, status }) => {
+      const appendAuditEntry = vi.fn();
+      const saveCredential = vi.fn();
+      const runOpenshellCommand = vi.fn<RotateTokenDeps["runOpenshellCommand"]>(
+        () => ({ status }) as ReturnType<RotateTokenDeps["runOpenshellCommand"]>,
+      );
+      const deps = {
+        appendAuditEntry,
+        captureOpenshellCommand: vi.fn(() => ({
+          output: "openshell 0.0.116\n",
+          status: 0,
+          stderr: "",
+          stdout: "openshell 0.0.116\n",
+        })),
+        fail: (lines: string | readonly string[]): never => {
+          throw new Error(typeof lines === "string" ? lines : lines.join("\n"));
+        },
+        loadSandbox: () => route,
+        loadSession: () => session,
+        promptSecret: vi.fn().mockResolvedValue("rotation-secret"),
+        resolveAgentConfig: () => DEFAULT_AGENT_CONFIG,
+        runOpenshellCommand,
+        saveCredential,
+        validateName: vi.fn((name: string) => name),
+      } satisfies RotateTokenDeps;
 
-    await expect(rotateSandboxToken("rotate-profile-test", {}, deps)).rejects.toThrow(
-      "Failed to update provider",
-    );
+      const failure = await rotateSandboxToken("rotate-profile-test", {}, deps).then(
+        () => "",
+        (error: unknown) => (error instanceof Error ? error.message : String(error)),
+      );
 
-    expect(runOpenshellCommand).toHaveBeenCalledTimes(2);
-    expect(runOpenshellCommand).toHaveBeenNthCalledWith(
-      2,
-      expect.any(String),
-      [
+      expect(failure).toContain(
+        `Could not confirm the token update for provider '${providerName}'`,
+      );
+      expect(failure).toContain("Inspect the OpenShell provider before retrying");
+      expect(failure).not.toContain("rotation-secret");
+      expect(runOpenshellCommand).toHaveBeenCalledOnce();
+      expect(runOpenshellCommand.mock.calls[0]?.[1]).toEqual([
         "provider",
-        "create",
-        "--name",
-        "compatible-endpoint",
-        "--type",
-        "openai",
+        "update",
+        providerName,
         "--credential",
-        "COMPATIBLE_API_KEY",
-        "--config",
-        "OPENAI_BASE_URL=https://compatible.example.test/v1",
-      ],
-      expect.objectContaining({ env: { COMPATIBLE_API_KEY: "rejected-route-secret" } }),
-    );
-    expect(saveCredential).not.toHaveBeenCalled();
-    expect(appendAuditEntry).not.toHaveBeenCalled();
-  });
+        credentialEnv,
+      ]);
+      expect(runOpenshellCommand.mock.calls[0]?.[2]).toMatchObject({
+        env: { [credentialEnv]: "rotation-secret" },
+      });
+      expect(saveCredential).not.toHaveBeenCalled();
+      expect(appendAuditEntry).not.toHaveBeenCalled();
+    },
+  );
 });
