@@ -303,25 +303,6 @@ pub fn plan(
         .collect()
 }
 
-/// Read one file's metadata from a disposable, offline, read-only container.
-fn read_metadata(image: &str, args: &[&str]) -> Result<Value> {
-    let bytes = output(
-        docker()
-            .args([
-                "run",
-                "--rm",
-                "--network=none",
-                "--read-only",
-                "--entrypoint",
-                "/opt/fabric/bin/python",
-                image,
-            ])
-            .args(args),
-        "read installed image metadata",
-    )?;
-    serde_json::from_slice(&bytes).map_err(|_| "image metadata is not JSON".into())
-}
-
 /// The label that publishes the image's catalog: its installed adapters with
 /// their descriptors, and its runtime.
 pub fn labels(name: &str, catalog: Value) -> Result<Vec<(String, String)>> {
@@ -350,54 +331,47 @@ pub fn labels(name: &str, catalog: Value) -> Result<Vec<(String, String)>> {
     Ok(vec![(CATALOG_LABEL.to_owned(), compact(&catalog)?)])
 }
 
-/// Build each target under a temporary tag, read its metadata, then publish
-/// the labeled image under its real tags. The temporary tag is always removed.
+/// Build each target labeled with the catalog it installs. Bake exports the
+/// target's `catalog` stage, then builds its `labeled` stage with that catalog,
+/// which the build checks against the installed one; both reuse the harness
+/// stage's cache, so the image Bake builds is the image we use.
 pub fn build(root: &Path, platform: &str, selection: &[String]) -> Result<()> {
-    for (name, tags) in plan(root, platform, selection)? {
-        let mut nonce = [0u8; 16];
-        getrandom::fill(&mut nonce).map_err(|_| "cannot name a temporary image")?;
-        let temporary = format!("nemoclaw-build:{}", crate::hex(&nonce));
-        let result = (|| {
-            status(
-                docker()
-                    .current_dir(root)
-                    .env("AGENT_PLATFORM", platform)
-                    .args(["buildx", "bake", &name, "--load", "--set"])
-                    .arg(format!("{name}.tags={temporary}")),
-                &format!("build {name}"),
-            )?;
-            let catalog = read_metadata(
-                &temporary,
-                &[
-                    "/opt/nemoclaw/catalog.py",
-                    "--installed",
-                    "--provenance",
-                    "/opt/nemoclaw/provenance.json",
-                ],
-            )?;
-            let labels = labels(&name, catalog)?;
-            let context = tempfile::tempdir().map_err(|_| "cannot create a label context")?;
-            fs::write(
-                context.path().join("Dockerfile"),
-                format!("FROM {temporary}\n"),
-            )
-            .map_err(|_| "cannot write the label Dockerfile")?;
+    for (name, _) in plan(root, platform, selection)? {
+        let bake = || {
             let mut command = docker();
-            command.arg("build");
-            for (label, value) in &labels {
-                command.arg("--label").arg(format!("{label}={value}"));
-            }
-            for tag in &tags {
-                command.args(["--tag", tag]);
-            }
-            status(command.arg(context.path()), &format!("label {name}"))
-        })();
-        let _ = docker()
-            .args(["image", "rm", &temporary])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-        result?;
+            command
+                .current_dir(root)
+                .env("AGENT_PLATFORM", platform)
+                .args(["buildx", "bake", &name]);
+            command
+        };
+        // Bake writes local output only below the directory it runs in.
+        let output = format!(".build/catalog/{name}");
+        let exported = root.join(&output);
+        let _ = fs::remove_dir_all(&exported);
+        fs::create_dir_all(&exported).map_err(|_| "cannot create the catalog directory")?;
+        status(
+            bake()
+                .arg("--set")
+                .arg(format!("{name}.target=catalog"))
+                .arg("--set")
+                .arg(format!("{name}.output=type=local,dest={output}")),
+            &format!("catalog {name}"),
+        )?;
+        let catalog = fs::read(exported.join("catalog.json"))
+            .map_err(|_| format!("{name} exported no catalog"))?;
+        let catalog: Value =
+            serde_json::from_slice(&catalog).map_err(|_| "the exported catalog is not JSON")?;
+        let [(_, label)] = <[_; 1]>::try_from(labels(&name, catalog)?)
+            .map_err(|_| "an image carries exactly one catalog label")?;
+        status(
+            bake()
+                .args(["--load", "--set"])
+                .arg(format!("{name}.target=labeled"))
+                .arg("--set")
+                .arg(format!("{name}.args.CATALOG={label}")),
+            &format!("build {name}"),
+        )?;
     }
     Ok(())
 }

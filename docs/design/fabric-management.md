@@ -66,7 +66,8 @@ These controls belong only to the reference fixture.
 
 ### Image Metadata
 
-`cargo images build` ([source](../../crates/nemoclaw-build/src/images.rs)) runs [`catalog.py`](../../image/fabric/catalog.py) in each image without starting an adapter and attaches the result as `io.nemoclaw.fabric.catalog`.
+`cargo images build` ([source](../../crates/nemoclaw-build/src/images.rs)) builds each image's `catalog` stage, which runs [`catalog.py`](../../image/fabric/catalog.py) without starting an adapter, then its `labeled` stage with the result as `io.nemoclaw.fabric.catalog`.
+A Dockerfile can't set a label from something its own build computes, so the catalog passes between the two builds as a build argument, and the `labeled` stage fails unless it matches the installed catalog.
 Each harness stage declares its adapters, their files, and their executables in `/opt/nemoclaw/adapters.json`.
 The descriptors come unmodified from Fabric's `nemo-fabric-adapter-catalog` package; an adapter Fabric does not publish, such as the test adapter, declares the descriptor file its package installed.
 Direct Docker Bake builds attach no metadata.

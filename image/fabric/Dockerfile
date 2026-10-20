@@ -10,6 +10,8 @@ ARG UV_IMAGE=ghcr.io/astral-sh/uv@sha256:3d868e555f8f1dbc324afa005066cd11e1053fc
 ARG FABRIC_REVISION=5574117feb4be948c1b03f4c36a2fe9a11af910d
 ARG FABRIC_SHA256=b1a7f2759ea26fd3dcf8136be30045897fa5d7c38a7b96e81afaecdde798e523
 ARG OPENCLAW_IMAGE=ghcr.io/openclaw/openclaw@sha256:cc596b846506a5f4cfcee111394a2725f375f01cca2ebb492a161fd1b747f101
+# The harness stage the catalog and labeled stages build on.
+ARG STAGE=generic
 FROM ${RUST_IMAGE} AS rust
 FROM ${UV_IMAGE} AS uv
 FROM ${OPENCLAW_IMAGE} AS openclaw-upstream
@@ -199,3 +201,29 @@ FROM dummy AS reference-tests
 COPY image/fabric/test_reference.py /tests/
 ENV NEMOCLAW_REFERENCE_TESTS=1
 RUN --network=none /opt/fabric/bin/python -B -m unittest discover -s /tests -p 'test_*.py'
+
+# Plan reads an agent image's installed catalog from its
+# io.nemoclaw.fabric.catalog label, which only the built image can produce.
+# `cargo images build` exports it from `catalog`, then builds `labeled` with
+# it as CATALOG; both reuse the harness stage's cache.
+FROM ${STAGE} AS catalog-build
+RUN --network=none /opt/fabric/bin/python /opt/nemoclaw/catalog.py --installed \
+    --provenance /opt/nemoclaw/provenance.json --output /tmp/catalog.json
+
+FROM scratch AS catalog
+COPY --from=catalog-build /tmp/catalog.json /catalog.json
+
+FROM ${STAGE} AS labeled
+ARG CATALOG
+# The label must be the catalog this image installs.
+RUN --network=none --mount=type=bind,from=catalog-build,source=/tmp/catalog.json,target=/tmp/catalog.json \
+    /opt/fabric/bin/python - <<'EOF'
+import json, os, sys
+try:
+    labeled = json.loads(os.environ.get("CATALOG", ""))
+except ValueError:
+    labeled = None
+if labeled != json.load(open("/tmp/catalog.json")):
+    sys.exit("CATALOG must be this image's installed catalog; build with cargo images build")
+EOF
+LABEL io.nemoclaw.fabric.catalog=${CATALOG}

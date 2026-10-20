@@ -299,6 +299,7 @@ async fn download(artifact: &Artifact) -> Result<Vec<u8>> {
     temporary.persist(path)?;
     Ok(bytes)
 }
+#[cfg(feature = "sdk")]
 fn target(platform: &str) -> Result<&'static str> {
     Ok(match platform {
         "linux_arm64" => "aarch64-unknown-linux-gnu",

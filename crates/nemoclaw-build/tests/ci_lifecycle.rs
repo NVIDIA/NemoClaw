@@ -145,20 +145,19 @@ case "$1 $2" in
         if [ "$3" = --print ]; then
             printf '{"target":{"%s":{"tags":["%s:%s"]}}}\n' "$4" "$IMAGE_PREFIX" "$4"
         else
-            # The image a following `docker run` reads its catalog from.
-            printf '%s\n' "$3" > "${0%/*}/last-bake"
+            # A catalog export writes the image's installed catalog.
+            for argument; do
+                case "$argument" in
+                    *.output=type=local,dest=*)
+                        if [ "$3" = dummy ]; then
+                            printf '{"adapters":[{"descriptor":{"adapter_id":"org.nemoclaw.dummy"}}]}\n'
+                        else
+                            printf '{"adapters":[]}\n'
+                        fi > "${argument#*dest=}/catalog.json" ;;
+                esac
+            done
         fi ;;
-    'run '*)
-        case "$*" in
-            *--installed*)
-                last=; IFS= read -r last < "${0%/*}/last-bake" 2>/dev/null
-                if [ "$last" = dummy ]; then
-                    printf '{"adapters":[{"descriptor":{"adapter_id":"org.nemoclaw.dummy"}}]}\n'
-                else
-                    printf '{"adapters":[]}\n'
-                fi ;;
-            *) printf '{"protocol":1}\n' ;;
-        esac ;;
+    'run '*) printf '{"protocol":1}\n' ;;
     'image inspect') printf 'sha256:0123456789abcdef\n' ;;
     'image ls') printf 'nc-live-images:unneeded\n' ;;
     'save '*) printf 'saved %s\n' "$*" ;;
@@ -455,16 +454,20 @@ fn live_images_builds_the_agent_dummy_and_proxy_images_once_and_saves_them_compr
         String::from_utf8_lossy(&output.stderr)
     );
     let log = fixture.docker_log();
-    // ARM64 builds Pi, under the shared prefix the live steps load.
-    assert!(log.contains("buildx bake pi --load"), "{log}");
-    assert!(log.contains("--tag nc-live-images:pi"), "{log}");
-    // The reference dummy runs the full Docker lifecycle without Fabric.
-    assert!(log.contains("buildx bake dummy --load"), "{log}");
-    assert!(
-        log.contains("/opt/nemoclaw/catalog.py --installed"),
-        "{log}"
-    );
-    assert!(log.contains("--tag nc-live-images:dummy"), "{log}");
+    // ARM64 builds Pi and the reference dummy, under the shared prefix the live
+    // steps load: each exports its catalog, then builds its labeled stage.
+    for name in ["pi", "dummy"] {
+        assert!(
+            log.contains(&format!("buildx bake {name} --set {name}.target=catalog")),
+            "{log}"
+        );
+        assert!(
+            log.contains(&format!(
+                "buildx bake {name} --load --set {name}.target=labeled --set {name}.args.CATALOG="
+            )),
+            "{log}"
+        );
+    }
     // Both proxies build from the Bake target, differing only in a label.
     for variant in ["a", "b"] {
         assert!(

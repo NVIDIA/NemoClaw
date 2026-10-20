@@ -58,6 +58,8 @@ target "agents" {
     # The Fabric extra whose locked dependencies the image installs.
     EXTRA = HARNESSES[harness].extra
     ADAPTER_ID = HARNESSES[harness].adapter_id
+    # The stage that `cargo images build` catalogs and labels.
+    STAGE = HARNESSES[harness].stage
   }
   tags = ["${IMAGE_PREFIX}:${harness}"]
 }
@@ -140,7 +142,7 @@ target "proxy-tests" {
 target "dummy" {
   inherits = ["_fabric"]
   target = "dummy"
-  args = { HARNESS = "dummy" }
+  args = { HARNESS = "dummy", STAGE = "dummy" }
   tags = ["${IMAGE_PREFIX}:dummy"]
 }
 

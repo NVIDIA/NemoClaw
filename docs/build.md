@@ -94,9 +94,9 @@ Examples that omit `image` use the generic default agent image pin from `version
 Select an explicit image containing the chosen Fabric adapter; a harness identifier does not select a different image.
 The selected image must still exist on the compute daemon.
 The sandbox compute daemon must have access to that exact image.
-The builder starts a temporary process with networking disabled to read installed Fabric discovery metadata, then labels the final local image.
-It removes its temporary image tag after completion; it does not start an adapter or request model responses.
-Direct `docker buildx bake` builds omit these labels, so plan cannot select them.
+The builder first builds the image's `catalog` stage, which reads the installed Fabric discovery metadata with networking disabled, then builds the image's `labeled` stage with that metadata as its label; the build checks the label against the installed metadata.
+Both builds reuse the same cached layers, and neither starts an adapter or requests model responses.
+A direct `docker buildx bake` build of an agent target omits the label, so plan cannot select it.
 The commands build and load local images; they do not publish images or launch a deployment.
 
 Installed discovery also requires the image-owned runtime manifest and resolves descriptor-required executables inside the image.
