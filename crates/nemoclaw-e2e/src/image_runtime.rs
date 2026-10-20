@@ -81,12 +81,27 @@ pub fn catalog() -> nemoclaw_sdk::fabric_catalog::FabricCatalog {
 pub async fn engine(document: &mut Document) -> transport::Fixture {
     use nemoclaw_sdk::fabric_catalog::IMAGE_CATALOG_LABEL;
     let label = serde_json::to_string(&catalog()).unwrap();
-    let references: Vec<_> = document
-        .spec
-        .sandboxes
-        .iter()
-        .map(|sandbox| sandbox.image.ref_.clone())
-        .collect();
+    // Report each image as Docker does: a digest reference without its tag,
+    // and the tag separately, so OpenTofu's Docker provider finds it.
+    let mut references = Vec::new();
+    let mut tags = Vec::new();
+    for sandbox in &document.spec.sandboxes {
+        let reference = &sandbox.image.ref_;
+        let (name, digest) = reference.split_once('@').unwrap_or((reference, ""));
+        let slash = name.rfind('/').map_or(0, |index| index + 1);
+        let repository = match name[slash..].rfind(':') {
+            Some(colon) => {
+                tags.push(name.to_owned());
+                &name[..slash + colon]
+            }
+            None => name,
+        };
+        references.push(if digest.is_empty() {
+            repository.to_owned()
+        } else {
+            format!("{repository}@{digest}")
+        });
+    }
     let fixture = transport::Fixture::engine(move |request| {
         assert!(request.body.is_empty());
         // OpenTofu's Docker provider, which the plan uses to pull sandbox
@@ -105,7 +120,7 @@ pub async fn engine(document: &mut Document) -> transport::Fixture {
         let value = match path {
             "/info" => serde_json::json!({"ID":"fixture", "Architecture":"arm64", "ServerVersion":"28.0", "OSType":"linux"}),
             "/version" => serde_json::json!({"ApiVersion":"1.47", "MinAPIVersion":"1.24", "Version":"28.0", "Os":"linux", "Arch":"arm64"}),
-            "/images/json" => serde_json::json!([{"Id":"sha256:fixture", "RepoTags":[], "RepoDigests":references, "Labels":{}, "Size":1}]),
+            "/images/json" => serde_json::json!([{"Id":"sha256:fixture", "RepoTags":tags, "RepoDigests":references, "Labels":{}, "Size":1}]),
             _ => {
                 assert!(path.starts_with("/images/") && path.ends_with("/json"), "{}", request.path);
                 inspect
