@@ -308,6 +308,8 @@ describe("LangChain Deep Agents Code config generator", () => {
     ["nvidia/nvidia/nemotron-3-ultra", "https://inference-api.nvidia.com/v1", true],
     ["nvidia/nemotron-3-ultra-550b-a55b", "https://integrate.api.nvidia.com/v1", false],
     ["nvidia/nvidia/nemotron-3-ultra", "https://integrate.api.nvidia.com/v1", false],
+    ["nvidia/nemotron-3-ultra-550b-a55b", "https://integrate.api.nvidia.com/v1/", false],
+    ["nvidia/nvidia/nemotron-3-ultra", "https://integrate.api.nvidia.com/v1/", false],
   ] as const)("aligns config and readiness for %s at %s", (model, endpoint, nonempty) => {
     const config = runGenerator({
       NEMOCLAW_MODEL: model,

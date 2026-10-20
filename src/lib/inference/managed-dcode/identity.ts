@@ -6,7 +6,7 @@ import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "../native-nvidia/contract.ts";
 /** Match the managed Ultra profile without changing public NVIDIA requests. */
 export function managedDcodeRequiresNonemptyContent(model: string, baseUrl: string): boolean {
   return (
-    baseUrl !== NVIDIA_HOSTED_NATIVE_ENDPOINT &&
+    baseUrl.replace(/\/+$/, "") !== NVIDIA_HOSTED_NATIVE_ENDPOINT &&
     ["nvidia/nemotron-3-ultra-550b-a55b", "nvidia/nvidia/nemotron-3-ultra"].includes(model)
   );
 }
