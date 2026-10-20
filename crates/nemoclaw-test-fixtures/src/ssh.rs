@@ -18,21 +18,28 @@ use std::{
 /// The fixture engine address an `ssh` command line names, if it dials one.
 #[must_use]
 pub fn fixture_engine(args: &[String]) -> Option<SocketAddr> {
-    let separator = args.iter().position(|arg| arg == "--")?;
-    let [target, command @ ..] = &args[separator + 1..] else {
+    // The command ends the line; the target precedes it, after an optional
+    // `--`.
+    let [before @ .., target, docker, system, dial] = args else {
         return None;
     };
-    if command != ["docker", "system", "dial-stdio"] {
+    if [docker, system, dial] != ["docker", "system", "dial-stdio"] {
         return None;
     }
     // NemoClaw passes `ssh://127.0.0.1:PORT`; Docker's client, which
     // OpenTofu's Docker provider uses, passes `-p PORT` and the host.
     let port = match target.strip_prefix("ssh://127.0.0.1:") {
-        Some(port) => port,
+        Some(port) => port.to_owned(),
         None if target == "127.0.0.1" => {
-            let options = &args[..separator];
-            let flag = options.iter().position(|arg| arg == "-p")?;
-            options.get(flag + 1)?
+            let options = before.strip_suffix(&["--".to_owned()]).unwrap_or(before);
+            let flag = options.iter().position(|arg| arg.starts_with("-p"))?;
+            match options[flag]
+                .strip_prefix("-p")
+                .filter(|port| !port.is_empty())
+            {
+                Some(port) => port.to_owned(),
+                None => options.get(flag + 1)?.clone(),
+            }
         }
         None => return None,
     };
@@ -108,6 +115,10 @@ mod tests {
             fixture_engine(&args(
                 "-p 56829 -o ConnectTimeout=30 -T -- 127.0.0.1 docker system dial-stdio"
             )),
+            fixture
+        );
+        assert_eq!(
+            fixture_engine(&args("-p56829 -T 127.0.0.1 docker system dial-stdio")),
             fixture
         );
         for other in [
