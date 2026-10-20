@@ -5888,6 +5888,11 @@ jobs:
               { [[ ! "$nproc_soft" =~ ^[0-9]+$ ]] || (( nproc_soft - user_tasks < minimum )); }; }; then
             failure=rlimit_nproc
           fi
+          if [[ ! "$tasks_current" =~ ^[0-9]+$ ]] || \
+            { [[ "$tasks_max" != infinity ]] && \
+              { [[ ! "$tasks_max" =~ ^[0-9]+$ ]] || (( tasks_max - tasks_current < minimum )); }; }; then
+            failure=service_tasks
+          fi
           if [[ ! "$host_max" =~ ^[0-9]+$ || ! "$host_tasks" =~ ^[0-9]+$ ]] || \
             (( host_max - host_tasks < minimum )); then
             failure=host_threads

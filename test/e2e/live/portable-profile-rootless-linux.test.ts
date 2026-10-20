@@ -1009,7 +1009,7 @@ async function main(
     const prepared = preparePortableExperimentalHost(process.env, { home });
     assert.equal(prepared?.authority.configHome, configHome);
     const runtimeAuthority = prepared!.authority;
-    assert.equal(process.env.DOCKER_HOST, `unix://${runtimeDir}/podman/podman.sock`);
+    assert.equal(process.env.DOCKER_HOST, `unix://${process.env.OPENSHELL_PODMAN_SOCKET}`);
     assert.equal(fs.statSync(path.join(runtimeDir, "podman")).mode & 0o777, 0o700);
     assert.match(
       fs.readFileSync(String(process.env.CONTAINERS_CONF), "utf-8"),
@@ -1232,6 +1232,7 @@ async function main(
       ]),
       "portable registry inspection",
     );
+    // The registry uses the trusted API service, whose config sets this effective limit.
     assert.ok(
       process.env.E2E_TARGET_ID !== "portable-hermes-finalization" ||
         String((currentRegistry.HostConfig as Record<string, unknown> | undefined)?.PidsLimit) ===

@@ -1027,6 +1027,8 @@ exec /bin/bash "$@"
     expect(headroom?.run).toContain("minimum=128");
     expect(headroom?.run).toContain("pids_limit = $minimum");
     expect(headroom?.run).toContain('cgroup_manager = "systemd"');
+    expect(headroom?.run).toContain("(( tasks_max - tasks_current < minimum ))");
+    expect(headroom?.run).toContain("failure=service_tasks");
     expect(headroom?.run).toContain("/sys/fs/cgroup$group/pids.max");
     expect(headroom?.run).toContain('[[ "$group" != / ]] || break');
     expect(retainHeadroom?.if).toBe("always()");
@@ -1046,12 +1048,12 @@ exec /bin/bash "$@"
     expect(live?.run).toContain("podman build");
     expect(
       liveSource.indexOf(
-        "assert.equal(process.env.DOCKER_HOST, `unix://${runtimeDir}/podman/podman.sock`)",
+        "assert.equal(process.env.DOCKER_HOST, `unix://${process.env.OPENSHELL_PODMAN_SOCKET}`)",
       ),
     ).toBeGreaterThanOrEqual(0);
     expect(liveSource.indexOf('run("docker", ["version"])')).toBeGreaterThan(
       liveSource.indexOf(
-        "assert.equal(process.env.DOCKER_HOST, `unix://${runtimeDir}/podman/podman.sock`)",
+        "assert.equal(process.env.DOCKER_HOST, `unix://${process.env.OPENSHELL_PODMAN_SOCKET}`)",
       ),
     );
     expect(live?.run).toMatch(
