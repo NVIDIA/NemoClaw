@@ -180,6 +180,7 @@ jobs:
           for relative in \
             agents/langchain-deepagents-code/Dockerfile.base \
             scripts/security/build-native-security-packages.sh \
+            scripts/security/build-perl-security-packages.sh \
             agents/langchain-deepagents-code/requirements.lock
           do
             source_file="$candidate_root/$relative"

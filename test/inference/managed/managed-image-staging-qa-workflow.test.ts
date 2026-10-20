@@ -134,6 +134,7 @@ describe("managed-image staging QA workflow", () => {
     ];
     const perlPatch = "scripts/security/patches/perl-5.44.0-net-ping-capability-tests.patch";
     const nativeSupportFiles = [
+      "scripts/security/build-perl-security-packages.sh",
       "scripts/security/patches/libssh2-1.11.1-cve-2026.patch",
       "scripts/security/patches/zlib-1.3.1-write-error.patch",
       "scripts/security/zlib-write-error.c",
