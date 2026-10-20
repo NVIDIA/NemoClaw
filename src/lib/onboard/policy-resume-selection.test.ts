@@ -82,6 +82,15 @@ describe("preparePolicyPresetResumeSelection web search reconciliation", () => {
     expect(result.livePolicyPresetsNeedUpdate).toBe(true);
   });
 
+  it("names the recovery action when a saved preset is no longer available", async () => {
+    await expect(
+      preparePolicyPresetResumeSelection({ policies: policies({ applied: [] }) }, "alpha", {
+        agent: "openclaw",
+        pendingPolicyPresets: ["removed-preset"],
+      }),
+    ).rejects.toThrow("Start a new onboarding attempt with the `--fresh` option");
+  });
+
   it("replaces stale Brave policy with Tavily during a provider switch", async () => {
     const result = await prepare(["brave"], "tavily");
 

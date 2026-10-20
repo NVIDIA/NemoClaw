@@ -107,7 +107,7 @@ export async function preparePolicyPresetResumeSelection(
     )
   ) {
     throw new Error(
-      "The saved policy selection contains an unavailable preset; policy recovery is incomplete.",
+      "The saved policy selection contains an unavailable preset; policy recovery is incomplete. Start a new onboarding attempt with the `--fresh` option to discard the saved selection.",
     );
   }
   const clampedLivePolicyPresets = deps.policies.clampSetupPolicyPresetNames(
