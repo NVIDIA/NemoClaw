@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Offline native vLLM authentication checks; no model or GPU is started."""
+
 import asyncio
 import os
 import secrets
@@ -35,7 +36,11 @@ class NativeAuthenticationTest(unittest.TestCase):
                     return {"type": "http.request", "body": b"", "more_body": False}
 
                 headers = [] if token is None else [(b"authorization", f"Bearer {token}".encode())]
-                await middleware({"type": "http", "method": "POST", "path": path, "headers": headers}, receive, send)
+                await middleware(
+                    {"type": "http", "method": "POST", "path": path, "headers": headers},
+                    receive,
+                    send,
+                )
                 return statuses
 
             for path in ["/v1/models", "/v1/chat/completions", "/v1/completions"]:
