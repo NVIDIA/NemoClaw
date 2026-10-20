@@ -312,6 +312,8 @@ const PI_IMAGE_SOURCE_OWNING_PATHS = [
   "scripts/security/patches/libssh2-1.11.1-cve-2026.patch",
   "scripts/security/patches/perl-5.44.0-net-ping-capability-tests.patch",
   "scripts/security/patches/python3.13-htmlparser-cve-2026-15308.patch",
+  "scripts/security/patches/zlib-1.3.1-write-error.patch",
+  "scripts/security/zlib-write-error.c",
   "scripts/upgrade-bundled-npm.mts",
   "src/lib/core/endpoint-url-safety.ts",
   "src/lib/inference/native-local/agent-config.ts",

@@ -1535,7 +1535,9 @@ ENTRYPOINT ["/usr/local/bin/nemoclaw-start"]
 CMD ["/bin/bash"]
 
 # Recheck after final-image dependency installation and bridge materialization.
-RUN /opt/hermes/.venv/bin/python /usr/local/libexec/nemoclaw-hermes-dependency-security.py \
+# The runtime CA bundle is mounted only at startup; use system trust for this offline probe.
+RUN SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
+    /opt/hermes/.venv/bin/python /usr/local/libexec/nemoclaw-hermes-dependency-security.py \
     && node /usr/local/libexec/nemoclaw-hermes-sharp-security.mts \
         /opt/hermes/scripts/whatsapp-bridge \
     && if [ -d /sandbox/.hermes/scripts/whatsapp-bridge ]; then \

@@ -71,6 +71,8 @@ const CANONICAL_POST_GENERATOR_INSTRUCTION_SHA256 = new Set([
   "8f0861e48c0cec37faa662fccd130ab21f972ac3ed2a0ce5f4e5a1e9ec223130",
   // Security inventory verification with matching Debian OpenSSL u3 pins.
   "8d0214ab5fec6f6c255e5177ba91c579b36be81ae98c4c5301c483effd750d30",
+  // Updated system-library inventory and read-only installed-version checks.
+  "a9ac5dafe116add404a89434534c626719f6752a7d8f26a7b997560789986c38",
   // Sandbox-user native OpenClaw state modes with root-mode shared access;
   // this exact instruction changes filesystem metadata, not dashboard config.
   "402ffef36760a20e70316a145fa37908c99774496d3dcd0da5f8547b9ac80071",
