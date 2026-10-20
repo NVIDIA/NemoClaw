@@ -60,8 +60,14 @@ const PATCHED_MESSAGE = `\tconst message = opts.message ?? (process.stdin.isTTY 
 
 const ORIGINAL_READ =
   "buffer = await readFileDescriptorBounded(handle.fd, AGENT_MESSAGE_FILE_MAX_BYTES);";
-const PATCHED_READ =
-  "buffer = handle.inheritedStdin ? await readInheritedAgentMessage(timeout) : await readFileDescriptorBounded(handle.fd, AGENT_MESSAGE_FILE_MAX_BYTES);";
+const PATCHED_READ = `let inherited = handle.inheritedStdin;
+\t\tif (!inherited && !stat.isFile()) {
+\t\t\ttry {
+\t\t\t\tconst input = nemoclawStdinStat(0);
+\t\t\t\tinherited = input.dev === stat.dev && input.ino === stat.ino;
+\t\t\t} catch {}
+\t\t}
+\t\tbuffer = inherited ? await readInheritedAgentMessage(timeout) : await readFileDescriptorBounded(handle.fd, AGENT_MESSAGE_FILE_MAX_BYTES);`;
 
 const ORIGINAL_FILE = "await readAgentMessageFile(messageFile);";
 const PATCHED_FILE = "await readAgentMessageFile(messageFile, false, opts.timeout);";

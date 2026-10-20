@@ -287,7 +287,10 @@ and tool calls can otherwise carry empty assistant content. That response shape
 is outside NemoClaw; this repository owns the generated DCode provider
 configuration and the managed package patch, so each supplies the model-specific
 template argument at its own boundary. `generate-config.ts` writes the per-model
-`config.toml` entry. The patched `_get_provider_kwargs` resolver derives the
+`config.toml` entry. Its TypeScript model-and-endpoint predicate lives in
+`src/lib/inference/managed-dcode/identity.ts`; the sandbox invocation probe uses
+that same predicate so readiness and runtime requests agree.
+The patched `_get_provider_kwargs` resolver derives the
 same argument from its language-local ID set because it never consumes the
 mutable `config.toml` params table (#7441). Fixing the serving template, model,
 or third-party client in this repository would require vendoring an upstream
@@ -424,3 +427,18 @@ restore behavior. The E2E EXIT trap is still required for early probe failures
 so the ordered suite cannot leave the current sandbox broader than the registry.
 Remove that trap only when each check receives an isolated sandbox or no longer
 mutates policy.
+
+### Auto classifier route
+
+Deep Agents Code 0.1.71 resolves `[models].auto_classifier` before constructing
+its separate authorization classifier with `create_model`. Its default can
+select an OpenAI model that the managed sandbox's selected endpoint does not
+serve. The generated configuration sets this option to the selected managed
+provider and model identity. The classifier uses the existing managed model
+constructor and OpenShell credential placeholder. It retains the upstream
+structured-decision policy, deadlines, denials and fallback to human approval.
+The capability remains disabled until explicitly selected; this configuration
+does not activate Auto or select unrestricted approval.
+The config-generator regression verifies both managed provider identities.
+The existing thread-auto-approval live check owns real classifier execution,
+sequential tool completion, network/credential boundaries and baseline recovery.

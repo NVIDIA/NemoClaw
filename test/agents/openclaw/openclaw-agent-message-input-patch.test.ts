@@ -33,7 +33,7 @@ function parser(
   const close = vi.fn(async () => {});
   const open = options.denied
     ? vi.fn().mockRejectedValue(Object.assign(new Error("permission denied"), { code: "EACCES" }))
-    : vi.fn().mockResolvedValue({ fd: 8, stat: async () => stat, close });
+    : vi.fn().mockResolvedValue({ fd: 8, stat: async () => ({ ...stat, ino: 3 }), close });
   const read = vi.fn(async () => input);
   const resolve = vm.runInNewContext(
     `${source.replace(/^import .*;\n/u, "")}; resolveAgentMessageOpts`,
@@ -101,15 +101,16 @@ resolveAgentMessageOpts({}).then(({message}) => console.log(message)).catch((err
     }
   });
   it.each([
-    [undefined, false],
-    ["0", false],
-    ["1", false],
-    ["-1", false],
-    ["invalid", false],
-    ["1", true],
+    [undefined, false, false],
+    ["0", false, false],
+    ["1", false, false],
+    ["-1", false, false],
+    ["invalid", false, false],
+    ["1", true, false],
+    ["1", true, true],
   ] as const)(
-    "exits when stdin stays open (timeout: %s, explicit file: %s)",
-    async (timeout, explicit) => {
+    "exits when stdin stays open (timeout: %s, explicit file: %s, reopens: %s)",
+    async (timeout, explicit, reopens) => {
       const source = patchAgentMessageInput(native).replace(/^import .*;\n/u, "");
       const child = spawn(
         process.execPath,
@@ -119,7 +120,12 @@ resolveAgentMessageOpts({}).then(({message}) => console.log(message)).catch((err
 const nemoclawStdinStat = () => require('node:fs').fstatSync(0);
 const MESSAGE_FILE_DECODER = new TextDecoder('utf-8', {fatal: true});
 const formatCliCommand = (value) => value;
-const fs = { open: async () => { throw Object.assign(new Error('denied'), { code: 'EACCES' }); }, stat: async () => nemoclawStdinStat() };
+const fs = { open: ${reopens ? "async () => ({ fd: 8, stat: async () => nemoclawStdinStat(), close: async () => {} })" : "async () => { throw Object.assign(new Error('denied'), { code: 'EACCES' }); }"}, stat: async () => nemoclawStdinStat() };
+const readFileDescriptorBounded = async () => {
+  const chunks = [];
+  for await (const chunk of process.stdin) chunks.push(chunk);
+  return Buffer.concat(chunks);
+};
 const schedule = globalThis.setTimeout;
 globalThis.setTimeout = (callback, delay) => {
   console.log('budget:' + delay);

@@ -1,6 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "../native-nvidia/contract.ts";
+
+/** Match the managed Ultra profile without changing public NVIDIA requests. */
+export function managedDcodeRequiresNonemptyContent(model: string, baseUrl: string): boolean {
+  return (
+    baseUrl !== NVIDIA_HOSTED_NATIVE_ENDPOINT &&
+    ["nvidia/nemotron-3-ultra-550b-a55b", "nvidia/nvidia/nemotron-3-ultra"].includes(model)
+  );
+}
+
 export const OPENROUTER_ENDPOINT_URL = "https://openrouter.ai/api/v1";
 export const OPENROUTER_PROVIDER_NAME = "openrouter-api";
 
