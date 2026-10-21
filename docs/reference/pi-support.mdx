@@ -72,7 +72,8 @@ It survives rebuild and sandbox destruction until an operator runs `nemoclaw cre
 NVIDIA Endpoints, supported fixed hosted providers, new hosted custom endpoints outside the Personal policy tier, and new qualified local selections use sandbox-attached providers.
 For direct hosted custom endpoints, OpenShell binds the recorded endpoint, API, credential environment name, and admitted destination addresses to that provider.
 The AWS Bedrock adapter keeps AWS credentials in its host process and gives OpenShell an adapter token instead of direct endpoint IP pins.
-For a hosted custom selection, Pi's generated `models.json` reads `${COMPATIBLE_API_KEY}` or `${COMPATIBLE_ANTHROPIC_API_KEY}` from its sandbox environment; the environment value is a scoped `openshell:resolve:env:...` reference.
+For an attached hosted custom selection, Pi's generated `models.json` reads `${COMPATIBLE_API_KEY}` or `${COMPATIBLE_ANTHROPIC_API_KEY}` from its sandbox environment; the environment value is a scoped `openshell:resolve:env:...` reference.
+Shared selections use a non-secret managed-route placeholder in `models.json`.
 OpenShell supplies the issued credential at egress without putting the upstream key in Pi's configuration.
 New Personal-tier hosted custom selections, Local NVIDIA NIM, and unchanged published Pi shared-route selections use `inference.local`.
 A failed native selection stops without falling back to the shared route. Direct unmanaged provider access is denied. NemoClaw rejects an unsupported API family, empty model, credential-bearing base URL, or malformed model tuning before Pi starts.

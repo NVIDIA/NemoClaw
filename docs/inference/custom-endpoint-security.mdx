@@ -14,17 +14,19 @@ NemoClaw keeps provider credentials on the host and validates explicit custom en
 ## Protect Provider Credentials
 
 <AgentOnly variant="openclaw">
-New hosted custom selections outside the Personal policy tier use the recorded endpoint through a sandbox-attached OpenShell provider.
+New direct hosted custom selections outside the Personal policy tier use the recorded endpoint through a sandbox-attached OpenShell provider.
 Fresh Personal-tier selections and retained shared routes use `inference.local`.
 </AgentOnly>
 <AgentOnly variant="deepagents">
-New Deep Agents Code sandboxes normally use the recorded endpoint through a sandbox-attached OpenShell provider for hosted compatible endpoints and qualified host-local endpoints.
+New Deep Agents Code sandboxes normally use the recorded endpoint through a sandbox-attached OpenShell provider for direct hosted compatible endpoints and qualified host-local endpoints.
+Bedrock selections use a host-local adapter endpoint instead.
 A fresh Personal-tier hosted compatible selection instead uses `inference.local` without creating a native attachment.
 Other retained shared routes and owned Local NVIDIA NIM also use `inference.local`.
 Refer to [How Inference Routing Works](../about-inference-routing) for the qualification boundary.
 </AgentOnly>
 <AgentOnly variant="hermes">
-New Hermes sandboxes use the recorded endpoint through a sandbox-attached OpenShell provider for hosted compatible endpoints outside the Personal policy tier and qualified host-local endpoints.
+New Hermes sandboxes use the recorded endpoint through a sandbox-attached OpenShell provider for direct hosted compatible endpoints outside the Personal policy tier and qualified host-local endpoints.
+Bedrock selections use a host-local adapter endpoint instead.
 Fresh Personal-tier hosted selections and retained custom routes without an attachment use `inference.local`.
 Refer to [How Inference Routing Works](../about-inference-routing) for the qualification boundary.
 </AgentOnly>

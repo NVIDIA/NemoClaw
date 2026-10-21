@@ -56,7 +56,8 @@ Refer to [Onboarding rejects an Anthropic-compatible tool call](../../reference/
 
 Hermes uses the OpenAI Chat Completions frontend for this provider.
 NemoClaw validates `/v1/chat/completions`.
-For a new hosted selection outside the Personal tier, NemoClaw attaches an endpoint-bound OpenAI-compatible provider and writes its recorded `/v1` base URL to the Hermes model configuration.
+For a new hosted selection outside the Personal tier, NemoClaw attaches an endpoint-bound OpenAI-compatible provider.
+Hermes uses the direct custom endpoint's OpenAI-compatible `/v1` base URL or, for Bedrock, the host-local adapter URL in its model configuration.
 That configuration uses `${COMPATIBLE_ANTHROPIC_API_KEY}`; the sandbox environment supplies the scoped OpenShell credential reference.
 For a new Personal-tier selection or a retained shared route, Hermes uses `https://inference.local/v1` while NemoClaw registers the upstream with OpenShell as `type=openai` using `OPENAI_BASE_URL`.
 The OpenClaw-only native Anthropic `emit_ok` streaming check does not run on this route.
@@ -76,7 +77,8 @@ AWS Bedrock routes keep their existing OpenAI-compatible adapter behavior.
 
 Deep Agents Code supports only OpenAI-compatible inference for this provider.
 NemoClaw validates `/v1/chat/completions` and selects `openai-completions`.
-For a new hosted selection outside the Personal tier, `/sandbox/.deepagents/config.toml` uses the recorded endpoint's OpenAI-compatible `/v1` surface and `api_key_env = "COMPATIBLE_ANTHROPIC_API_KEY"`.
+For a new hosted selection outside the Personal tier, `/sandbox/.deepagents/config.toml` uses the direct custom endpoint's OpenAI-compatible `/v1` surface or, for Bedrock, the host-local adapter URL.
+The file sets `api_key_env = "COMPATIBLE_ANTHROPIC_API_KEY"`.
 The sandbox environment supplies the scoped OpenShell credential reference for that name.
 Personal-tier and retained shared selections use `https://inference.local/v1` in that file.
 For direct custom endpoints, OpenShell keeps the `COMPATIBLE_ANTHROPIC_API_KEY` credential on the host for either route.
