@@ -178,7 +178,7 @@ describe("onboard final-handoff timeout contract", () => {
       dcodeNativeLocalTestMinutes: 117.5,
       inferenceRoutingTargetMinutes: 243,
       openClawNativeLocalTestMinutes: 122.5,
-      openClawNativeLocalTargetMinutes: 243,
+      openClawNativeLocalTargetMinutes: 193,
       noRecreateCommandMinutes: 15,
       configExportCommandMinutes: 2,
       configExportPinnedV1ConsumerMinutes: 10,
@@ -204,7 +204,7 @@ describe("onboard final-handoff timeout contract", () => {
     ],
     [
       "inference-routing-openclaw-native",
-      OPENCLAW_NATIVE_LOCAL_TEST_TIMEOUT_MS + 2 * ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
+      OPENCLAW_NATIVE_LOCAL_TEST_TIMEOUT_MS + ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
       OPENCLAW_NATIVE_LOCAL_TARGET_TIMEOUT_MINUTES,
     ],
     ["onboard-resume", ONBOARD_RESUME_TEST_TIMEOUT_MS, ONBOARD_RESUME_TARGET_TIMEOUT_MINUTES],

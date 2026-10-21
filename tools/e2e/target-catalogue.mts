@@ -1052,7 +1052,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     displayName: "Inference: OpenClaw native local requests and isolation",
     agentRuntime: "openclaw",
     environmentOrInferenceEndpoint:
-      "Ubuntu; authenticated llama.cpp and credentialless vLLM fixtures",
+      "Ubuntu; authenticated llama.cpp and credentialless vLLM fixtures; skips WSL-only TC-INF-19",
     profile: "standard",
     timeoutMinutes: OPENCLAW_NATIVE_LOCAL_TARGET_TIMEOUT_MINUTES,
     installMode: "none",

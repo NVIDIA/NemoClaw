@@ -18,6 +18,12 @@ describe("inference-switch catalogue boundary", () => {
         (target) => target.id,
       ),
     ).toContain("inference-routing-openclaw-native");
+    expect(
+      catalogueTarget("inference-routing-openclaw-native").environmentOrInferenceEndpoint,
+    ).toContain("Ubuntu");
+    expect(
+      catalogueTarget("inference-routing-openclaw-native").environmentOrInferenceEndpoint,
+    ).toContain("skips WSL-only TC-INF-19");
   });
 
   it.each([

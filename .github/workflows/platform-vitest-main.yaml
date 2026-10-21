@@ -273,7 +273,7 @@ jobs:
       matrix:
         include:
           - shard: 1
-            timeout_minutes: 180
+            timeout_minutes: 230
           - shard: 2
             timeout_minutes: 90
           - shard: 3
@@ -485,10 +485,44 @@ jobs:
           set -euo pipefail
           cd $workdir
           $exports
+          test "`$(git rev-parse HEAD)" = "$env:GITHUB_SHA"
           export NEMOCLAW_RUN_LIVE_E2E=1
-          npx vitest run --project e2e-live test/e2e/live/full-e2e.test.ts --silent=false --reporter=default
+          full_status=0
+          npx vitest run --project e2e-live test/e2e/live/full-e2e.test.ts --silent=false --reporter=default || full_status=`$?
+          export NEMOCLAW_GATEWAY_RUNTIME=docker
+          export E2E_ARTIFACT_DIR="`$PWD/.e2e/wsl-ipv6"
+          mkdir -p "`$E2E_ARTIFACT_DIR"
+          git rev-parse HEAD > "`$E2E_ARTIFACT_DIR/commit.txt"
+          uname -a > "`$E2E_ARTIFACT_DIR/platform.txt"
+          docker info --format '{{.OperatingSystem}} {{.Architecture}} {{.ServerVersion}}' > "`$E2E_ARTIFACT_DIR/docker.txt"
+          ipv6_status=0
+          npx vitest run --project e2e-live test/e2e/live/openclaw-inference-switch.test.ts -t '^TC-INF-19' --silent=false --reporter=default --reporter=junit --outputFile.junit=.e2e/wsl-ipv6/junit.xml || ipv6_status=`$?
+          python3 -c 'import xml.etree.ElementTree as E; cases=[c for c in E.parse(".e2e/wsl-ipv6/junit.xml").iter("testcase") if c.get("name", "").startswith("TC-INF-19")]; assert len(cases)==1 and not any(cases[0].find(tag) is not None for tag in ("skipped", "failure", "error")), "TC-INF-19 must execute and pass"'
+          test "`$full_status" -eq 0 && test "`$ipv6_status" -eq 0
           "@
-          Invoke-WslScript -Distro $env:WSL_DISTRO -User $env:WSL_TEST_USER -Script $script
+          try {
+            Invoke-WslScript -Distro $env:WSL_DISTRO -User $env:WSL_TEST_USER -Script $script
+          } finally {
+            $checkout = ConvertTo-BashLiteral -Value $env:WSL_CHECKOUT_DIR
+            $copy = @"
+          set -euo pipefail
+          cd $workdir
+          if [ -d .e2e/wsl-ipv6 ]; then
+            mkdir -p $checkout/.e2e/wsl-ipv6
+            cp -a .e2e/wsl-ipv6/. $checkout/.e2e/wsl-ipv6/
+          fi
+          "@
+            Invoke-WslScript -Distro $env:WSL_DISTRO -User $env:WSL_TEST_USER -Script $copy
+          }
+
+      - name: Upload WSL IPv6 policy evidence
+        if: ${{ matrix.shard == 1 && always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: wsl-ipv6-policy-${{ github.sha }}-${{ github.run_attempt }}
+          path: source/.e2e/wsl-ipv6
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: Explain skipped WSL live E2E
         if: ${{ matrix.shard == 1 && (steps.wsl_docker.outputs.docker_ok != 'true' || github.ref != 'refs/heads/main') }}

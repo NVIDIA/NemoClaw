@@ -112,17 +112,29 @@ Docker and Podman through the existing runtime matrix.
 
 ## WSL2 IPv6 native-local policy proof
 
-`TC-INF-19` in the existing `inference-routing-openclaw-native` target requires WSL2
-with Docker Desktop and IPv6-only ULA resolution for `host.openshell.internal`.
-It binds the authenticated host fixture on `::`, checks that DNS offers no IPv4 fallback,
-and sends a sandbox chat through the OpenShell-issued credential handle.
-Public, link-local, and loopback IPv6 requests must receive `policy_denied` HTTP 403;
-a timeout does not satisfy denial. Existing fixture cleanup removes the sandbox and host endpoint.
-The case skips non-WSL hosts and Podman. A green Ubuntu run does not qualify this WSL2 scenario.
-The target reserves another 50-minute scenario budget for the WSL-only onboarding and probes.
-The source tests own CIDR membership and receipt compatibility; E2E support tests own
-resolution-evidence classification and probe command construction. Live WSL2 execution
-remains required to establish this platform result. On a prepared WSL2 Docker Desktop host, run:
+`TC-INF-19` requires WSL2 Docker and IPv6-only ULA resolution for
+`host.openshell.internal`. It binds the authenticated host fixture on `::`,
+rejects DNS answers with an IPv4 fallback, and sends a sandbox chat through the
+OpenShell-issued credential handle. Public, link-local, and loopback IPv6 requests
+must receive `policy_denied` HTTP 403; a timeout does not satisfy denial.
+Fixture cleanup removes the sandbox and host endpoint.
+
+The `inference-routing-openclaw-native` catalogue target runs on Ubuntu Docker and
+Podman. It skips `TC-INF-19` and does not qualify the WSL2 regression.
+`CI / Platform Compatibility` invokes `TC-INF-19` in its first WSL live shard on
+`windows-latest`, after the existing full E2E test. It runs only on pushes to `main`
+when Docker is available. Both test results contribute to the step result.
+The shard reserves another 50 minutes and uploads commit, kernel, Docker, JUnit,
+and redacted scenario artifacts even when the IPv6 proof fails.
+
+The hosted WSL lane installs native Docker, not Docker Desktop. It must satisfy
+the same IPv6-only ULA prerequisite; IPv4 resolution fails the proof.
+This lane does not establish Windows-on-ARM Docker Desktop qualification.
+No PR catalogue selector currently provides that platform. A passing Ubuntu
+catalogue run or WSL non-live shard cannot replace this missing live evidence.
+The source tests own CIDR membership and receipt compatibility. E2E support tests
+own resolution classification and probe command construction.
+On a prepared WSL2 Docker Desktop host, run:
 
 ```bash
 NEMOCLAW_RUN_LIVE_E2E=1 npx vitest run --project e2e-live test/e2e/live/openclaw-inference-switch.test.ts -t '^TC-INF-19'

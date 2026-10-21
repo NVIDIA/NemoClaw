@@ -103,6 +103,16 @@ describe("platform evidence workflow", () => {
     });
     expect(detection.run).toContain("-User $env:WSL_TEST_USER");
     expect(live.run).toContain("-User $env:WSL_TEST_USER");
+    expect(live.run).toContain("test/e2e/live/openclaw-inference-switch.test.ts -t '^TC-INF-19'");
+    expect(live.run).toContain('test "`$(git rev-parse HEAD)" = "$env:GITHUB_SHA"');
+    expect(live.run).toContain("--reporter=junit");
+    expect(live.run).toContain("TC-INF-19 must execute and pass");
+    expect(live.run).toContain("try {");
+    expect(live.run).toContain("finally {");
+    const evidence = step("wsl-vitest", "Upload WSL IPv6 policy evidence");
+    expect(evidence.if).toContain("always()");
+    expect(evidence.with?.name).toContain("github.sha");
+    expect(evidence.with?.path).toContain("source/.e2e/wsl-ipv6");
   });
 
   it("keeps credentialed macOS E2E independent from non-live shard failures", () => {
