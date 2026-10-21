@@ -60,7 +60,7 @@ variable "frontier" {
   type        = object({ endpoint = string, model = string, credential_env = string })
   default = {
     endpoint       = "https://integrate.api.nvidia.com/v1"
-    model          = "nvidia/nemotron-3-super-120b-a12b"
+    model          = "nvidia/nemotron-3.5-super-vl-120b-a12b"
     credential_env = "NVIDIA_API_KEY"
   }
 }

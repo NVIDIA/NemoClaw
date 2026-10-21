@@ -61,4 +61,4 @@ spec:
             - name: primary
               providerRef: hosted-nvidia-prod
               overrides:
-                model: nvidia/nemotron-3-super-120b-a12b
+                model: nvidia/nemotron-3.5-super-vl-120b-a12b

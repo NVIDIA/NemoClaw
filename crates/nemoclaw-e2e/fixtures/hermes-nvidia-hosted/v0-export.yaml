@@ -22,7 +22,7 @@ spec:
             routes:
               - name: primary
                 overrides:
-                  model: nvidia/nemotron-3-super-120b-a12b
+                  model: nvidia/nemotron-3.5-super-vl-120b-a12b
                 providerRef: hosted-nvidia-prod
           name: primary
       harness:
