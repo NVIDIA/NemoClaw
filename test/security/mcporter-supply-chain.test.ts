@@ -105,7 +105,7 @@ describe("mcporter image supply-chain controls", () => {
     expect(graph.problems).toBeUndefined();
     expect(graph.dependencies?.mcporter?.version).toBe(expectedVersion);
     expect(findDependency(graph, "@modelcontextprotocol/sdk")).toEqual(
-      expect.objectContaining({ overridden: true, version: "1.31.0" }),
+      expect.objectContaining({ overridden: true, version: "1.32.0" }),
     );
     expect(findDependency(graph, "@hono/node-server")).toEqual(
       expect.objectContaining({
