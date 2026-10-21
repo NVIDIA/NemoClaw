@@ -39,7 +39,7 @@ The [staging workflow](../../.github/workflows/release.yml):
 1. Finds the latest commit in the tag's `v1` history with per-commit images, and checks with `nemoclaw-build changes images` that nothing since could change them; otherwise it builds and checks the images at the tag.
 2. Builds the vLLM and Ollama runtime images on each native platform; their builds are reproducible.
 3. Joins each image's ARM64 and AMD64 images into one index at `ghcr.io/nvidia/nemoclaw/v1/<image>:<tag>`, without rebuilding.
-4. Creates a draft release listing every image digest, marked as a prerelease when the tag has one. Rerunning the workflow updates the draft; a published release is never changed.
+4. Creates a draft release listing every image digest, marked as a prerelease when the tag has one, and attaches each agent image's Kubernetes metadata bundle as `<image>.metadata.json`. Rerunning the workflow updates the draft; a published release is never changed.
 
 Only users with push access see a draft release, and the `v1` packages stay internal.
 

@@ -129,6 +129,7 @@ Write one for a local image with `cargo images export-metadata IMAGE --output PA
 The bundle holds the image's index, each Linux platform's manifest and configuration, and no layers; the SDK checks it against the digest in `image.ref`.
 The platforms of an index must declare the same catalog, because the cluster chooses the platform each node runs.
 Run it before pushing the image, and use the same digest in `image.ref`.
+For an image already in a registry, pass `--registry` and its `HOST/REPOSITORY@sha256:DIGEST` reference instead; `NEMOCLAW_REGISTRY_USERNAME` and `NEMOCLAW_REGISTRY_PASSWORD`, when set, answer the registry's token challenge.
 
 [The Bake file](../docker-bake.hcl) selects the target platform, qualified harnesses and named stages in the [shared agent Dockerfile](../image/fabric/Dockerfile).
 Common Fabric wheels and base layers are shared; images other than Hermes export dependencies from Fabric's frozen root lock, selecting the Python adapter's extra when present.
