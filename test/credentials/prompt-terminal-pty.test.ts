@@ -42,6 +42,16 @@ describe.runIf(ptySupported)("credential prompts under a pseudo-TTY", () => {
       const exited = new Promise<number | null>((resolve) => child.on("close", resolve));
 
       try {
+        const firstPromptDeadline = Date.now() + execTimeout(15_000);
+        while (
+          (!fs.existsSync(capturedStderr) ||
+            !fs.readFileSync(capturedStderr, "utf8").includes("first: ")) &&
+          Date.now() < firstPromptDeadline
+        ) {
+          await new Promise((resolve) => setTimeout(resolve, 25));
+        }
+        expect(fs.readFileSync(capturedStderr, "utf8")).toContain("first: ");
+
         child.stdin.write("alpha\n");
         const deadline = Date.now() + execTimeout(15_000);
         while (!output.includes("BETWEEN_PROMPTS") && Date.now() < deadline) {
