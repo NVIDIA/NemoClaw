@@ -20,13 +20,14 @@ OpenShell forwards that traffic to the endpoint configured during onboarding.
 <AgentOnly variant="deepagents">
 New Deep Agents Code sandboxes normally use sandbox-attached OpenShell providers for hosted compatible endpoints and qualified host-local endpoints.
 Fresh onboarding keeps a hosted compatible endpoint on `inference.local` when you select the Personal policy tier.
-The agent uses the recorded endpoint and a credential reference; OpenShell supplies the credential at egress.
+For an attached route, the agent uses the recorded endpoint and a credential reference; OpenShell supplies the credential at egress.
 Retained shared routes and owned Local NVIDIA NIM use `inference.local`.
 Refer to [How Inference Routing Works](../about-inference-routing) for the qualification boundary.
 </AgentOnly>
 <AgentOnly variant="hermes">
-New Hermes sandboxes use sandbox-attached OpenShell providers for qualified host-local endpoints.
-The agent uses the recorded endpoint and a credential reference; OpenShell supplies the credential at egress.
+New Hermes sandboxes use sandbox-attached OpenShell providers for hosted compatible endpoints outside the Personal policy tier and qualified host-local endpoints.
+Fresh Personal-tier hosted selections stay on `inference.local` without a native attachment.
+For an attached route, the agent uses the recorded endpoint and a credential reference; OpenShell supplies the credential at egress.
 Retained shared routes and owned Local NVIDIA NIM use `inference.local`.
 Refer to [How Inference Routing Works](../about-inference-routing) for the qualification boundary.
 </AgentOnly>
@@ -95,8 +96,9 @@ Refer to [Policy Tiers](../../reference/network-policies#policy-tiers) for the P
 </AgentOnly>
 <AgentOnly variant="hermes">
 For qualified host-local endpoints, the attached provider profile authorizes the recorded endpoint and the Hermes runtime binaries.
-Other compatible endpoints use the base `inference.local` policy.
-Neither path requires adding the `local-inference` preset.
+New hosted compatible endpoints outside the Personal tier use an endpoint-bound attached provider.
+Fresh Personal-tier and retained shared selections use the base `inference.local` policy.
+These routes do not require adding the `local-inference` preset.
 </AgentOnly>
 For authenticated endpoints, NemoClaw leaves URLs without an explicit port, URLs on `:80` or another privileged port, and URLs on unsupported ports unchanged.
 Those authenticated URLs require a separately compatible runtime topology and network policy.

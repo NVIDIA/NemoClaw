@@ -53,9 +53,11 @@ For an existing installation, run the canonical onboarding command.
 nemoclaw onboard --agent pi --name my-pi
 ```
 
-Choose a provider and model that use the OpenAI Chat Completions API. NemoClaw keeps the upstream provider credential in OpenShell. NVIDIA Endpoints and supported fixed hosted providers use native endpoints through sandbox-attached OpenShell providers. New Pi selections for Ollama, standalone vLLM, llama.cpp, and qualified host-local compatible endpoints use sandbox-attached providers.
-OpenShell supplies the issued credential at egress; Pi receives only an opaque reference.
-Local NVIDIA NIM, hosted custom endpoints, and unchanged published Pi shared-route selections retain `inference.local`.
+Choose a provider and model that use the OpenAI Chat Completions API.
+NemoClaw keeps the upstream provider credential in OpenShell.
+NVIDIA Endpoints, supported fixed hosted providers, new hosted custom endpoints outside the Personal policy tier, and new qualified local selections use sandbox-attached OpenShell providers.
+OpenShell supplies the issued credential at egress; Pi receives only a credential reference.
+New Personal-tier hosted custom selections, Local NVIDIA NIM, and unchanged published Pi shared-route selections use `inference.local`.
 A failed native selection stops without falling back to the shared route. The credential remains in OpenShell provider state across rebuild and sandbox destruction. When no sandbox needs that provider, remove it explicitly with `nemoclaw credentials reset <provider> --yes`.
 
 Stock onboarding selects a Pi managed-image digest. It does not build the Pi Dockerfile on the host. The reviewed Dockerfile is a trusted CI image-build source, not a user onboarding mechanism. A missing, incomplete, mutable, or inconsistent image contract fails before sandbox creation.

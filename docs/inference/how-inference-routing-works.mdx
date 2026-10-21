@@ -39,10 +39,11 @@ A different destination cannot gain access through a later DNS change.
 Existing sandboxes without a native attachment retain their recorded shared route.
 Legacy local routes have the recovery restrictions described under [Credential Boundary](#credential-boundary).
 New Deep Agents Code, Hermes, OpenClaw, and Pi selections for Ollama, standalone vLLM, and llama.cpp use a sandbox-attached provider for the qualified host-local endpoint.
-Deep Agents Code normally uses an attached provider for hosted compatible endpoints.
+New hosted OpenAI-compatible and Anthropic-compatible selections for Deep Agents Code, Hermes, and Pi use an endpoint-bound attached provider outside the Personal policy tier.
+The agent uses the recorded endpoint and a scoped credential reference; OpenShell supplies the host-held credential at egress.
 A fresh Personal-tier hosted compatible selection instead stays on the shared `inference.local` route and creates no native attachment.
 Deep Agents Code, Hermes, and Pi use attached providers for qualified host-local compatible endpoints.
-OpenClaw compatible endpoints, other custom endpoints without an attachment, Local NVIDIA NIM, Model Router, and unchanged published Pi and Hermes shared local selections retain the shared route.
+Custom endpoints without an attachment, Local NVIDIA NIM, Model Router, and unchanged published shared selections retain the shared route.
 Hermes live qualification for the new local lifecycle remains pending.
 
 ```text
@@ -57,6 +58,8 @@ Missing or conflicting ownership stops the operation instead of falling back to 
 
 Provider credentials stay on the host and flow through the OpenShell provider system.
 The sandbox does not receive the raw upstream API key.
+For attached custom endpoints, OpenShell binds the credential environment name, selected API, endpoint, and admitted destination addresses to the provider.
+Removing a private host from the ambient allowlist does not revoke an already verified endpoint binding.
 
 Local Ollama and local vLLM routes do not require the host `OPENAI_API_KEY`.
 NemoClaw uses provider-specific local tokens for those routes.
