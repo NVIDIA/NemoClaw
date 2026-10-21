@@ -103,12 +103,14 @@ export interface RuntimeRouteAuthority {
 const INFERENCE_ROUTE_BASE_URL = /^https:\/\/inference\.local(?:\/v1)?\/?$/;
 
 /** A native base URL is managed when it is the gateway route or the exact route NemoClaw recorded. */
-function isManagedBaseUrl(value: unknown, authority: RuntimeRouteAuthority): boolean {
+export function isManagedInferenceBaseUrl(
+  value: unknown,
+  recordedRoutedBaseUrl?: string | null,
+): boolean {
   return (
     typeof value === "string" &&
     (INFERENCE_ROUTE_BASE_URL.test(value) ||
-      (typeof authority.managedRoutedBaseUrl === "string" &&
-        value === authority.managedRoutedBaseUrl))
+      (typeof recordedRoutedBaseUrl === "string" && value === recordedRoutedBaseUrl))
   );
 }
 
@@ -381,7 +383,7 @@ function openClawReference(
       : providerKey === "openai" || providerKey === "inference"
         ? "openai-completions"
         : undefined);
-  const managed = isManagedBaseUrl(provider?.baseUrl, authority);
+  const managed = isManagedInferenceBaseUrl(provider?.baseUrl, authority.managedRoutedBaseUrl);
   return { model: value.slice(separator + 1), providerKey, api, managed };
 }
 
@@ -564,7 +566,7 @@ export function projectRuntimeAgents(
           : typeof model.api_mode === "string"
             ? (modes[model.api_mode] ?? model.api_mode)
             : model.api_mode,
-      managed: isManagedBaseUrl(model.base_url, authority),
+      managed: isManagedInferenceBaseUrl(model.base_url, authority.managedRoutedBaseUrl),
     };
   } else if (runtime.agentHarnessId === "langchain-deepagents-code") {
     const models = dataRecord(root.models);
@@ -586,7 +588,7 @@ export function projectRuntimeAgents(
             ? "openai-responses"
             : "openai-completions"
           : undefined,
-      managed: isManagedBaseUrl(provider?.base_url, authority),
+      managed: isManagedInferenceBaseUrl(provider?.base_url, authority.managedRoutedBaseUrl),
     };
   } else
     return {

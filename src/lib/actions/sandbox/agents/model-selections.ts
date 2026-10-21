@@ -1,8 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isManagedInferenceBaseUrl } from "../../../domain/telemetry/dimensions";
 import { dataRecord } from "../../../domain/telemetry/values";
 import { resolveSandboxGatewayName } from "../../../onboard/gateway-binding/identity";
+import { readManagedRoutedBaseUrl } from "../../../onboard/workload/authority";
 import {
   readModelAssignmentSelection,
   readModelSelectionProvenance,
@@ -174,7 +176,7 @@ export function restoredAgentModelSelections(
       const inference = dataRecord(provider?.inference);
       if (
         typeof inference?.baseUrl !== "string" ||
-        !/^https:\/\/inference\.local(?:\/v1)?\/?$/.test(inference.baseUrl) ||
+        !isManagedInferenceBaseUrl(inference.baseUrl, readManagedRoutedBaseUrl(current)) ||
         inference.api !== receipt.apiFamily
       )
         return null;

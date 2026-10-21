@@ -134,6 +134,17 @@ function corporateCaFromReceipt(
  * A normal custom/legacy workload returns null. A row that looks managed but
  * cannot prove its exact immutable authority fails closed.
  */
+/** Return the sandbox-facing inference URL recorded in a valid managed startup profile. */
+export function readManagedRoutedBaseUrl(
+  entry: Pick<SandboxEntry, "agent" | "fromDockerfile" | "imageTag" | "workload">,
+): string | null {
+  try {
+    return readManagedWorkloadAuthority(entry)?.profile.inference?.routedBaseUrl ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export function readManagedWorkloadAuthority(
   entry: Pick<SandboxEntry, "agent" | "fromDockerfile" | "imageTag" | "workload">,
 ): ManagedWorkloadAuthority | null {
