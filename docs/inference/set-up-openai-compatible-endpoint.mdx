@@ -14,8 +14,9 @@ Use the custom OpenAI-compatible provider for servers that implement `/v1/chat/c
 Examples include vLLM, TensorRT-LLM, llama.cpp, LocalAI, and other compatible servers.
 
 <AgentOnly variant="openclaw">
-The agent connects to `inference.local` inside the sandbox.
-OpenShell forwards that traffic to the endpoint configured during onboarding.
+New hosted custom selections outside the Personal policy tier use the recorded endpoint through a sandbox-attached OpenShell provider.
+Fresh Personal-tier selections and retained shared routes use `inference.local`.
+OpenShell holds the upstream credential and supplies it at egress.
 </AgentOnly>
 <AgentOnly variant="deepagents">
 New Deep Agents Code sandboxes normally use sandbox-attached OpenShell providers for hosted compatible endpoints and qualified host-local endpoints.
@@ -81,9 +82,12 @@ Use a host-routable URL such as `http://localhost:8000/v1` when you want onboard
 To qualify for automatic rewriting, an HTTP endpoint URL must use the loopback host `localhost`, `127.0.0.1`, or `[::1]`.
 Automatic rewriting is limited to the port selected by `NEMOCLAW_VLLM_PORT` (`8000` by default) and ports `11434` and `11435`.
 NemoClaw validates the entered URL from the host.
-Shared selections use `https://inference.local/v1` inside the sandbox. Qualified host-local selections use a sandbox-attached provider for the recorded endpoint, which may use `host.openshell.internal:<port>` to reach the host.
+Shared selections use `https://inference.local/v1` inside the sandbox.
+Attached selections use the recorded endpoint; qualified host-local selections may use `host.openshell.internal:<port>` to reach the host.
 <AgentOnly variant="openclaw">
-Sandbox inference requests continue to use the base `inference.local` policy, so the managed compatible-endpoint route does not require adding the `local-inference` preset.
+Shared OpenClaw compatible selections use the base `inference.local` policy.
+New hosted selections outside the Personal tier use their endpoint-bound attached provider profile.
+Neither route requires adding the `local-inference` preset.
 </AgentOnly>
 <AgentOnly variant="deepagents">
 For qualified host-local endpoints, the attached provider profile authorizes the recorded endpoint and the managed DCode runtime binaries.
