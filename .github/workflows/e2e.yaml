@@ -5865,7 +5865,7 @@ jobs:
           sed -i '/^\[containers\]$/a cgroups = "disabled"' "$config"
           service=nemoclaw-native-podman-e2e.service
           service_unit="$(/usr/bin/systemctl --user show "$service" --property=FragmentPath --value)"
-          [[ "$service_unit" == "$RUNNER_TEMP"/* && -f "$service_unit" && ! -L "$service_unit" ]]
+          [[ "$service_unit" == "$HOME/.config/systemd/user/$service" && -f "$service_unit" && ! -L "$service_unit" ]]
           [[ "$(grep -Fxc '[Service]' "$service_unit")" == 1 ]]
           if grep -Eq '^[[:space:]]*TasksMax[[:space:]]*=' "$service_unit"; then
             echo "::error::Portable Podman service already sets TasksMax" >&2
