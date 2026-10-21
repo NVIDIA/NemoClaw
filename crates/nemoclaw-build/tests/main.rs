@@ -31,5 +31,7 @@ mod image_metadata;
 mod images;
 #[path = "qualify.rs"]
 mod qualify;
+#[path = "registry_metadata.rs"]
+mod registry_metadata;
 #[path = "schema.rs"]
 mod schema;

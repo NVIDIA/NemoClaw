@@ -196,11 +196,205 @@ fn bundle_from_files(
     Ok((root, bundle))
 }
 
+const MANIFEST_TYPES: &str = "application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json";
+
+/// The bundle `export_metadata` writes, read from a registry instead of a local
+/// archive: the root at `reference` (`HOST/REPOSITORY@sha256:...`) and, for each
+/// Linux platform it lists, that platform's manifest and config. Every document
+/// is checked against its digest. `credentials` answer the registry's token
+/// challenge; without them the registry must allow anonymous pulls.
+pub async fn registry_metadata(
+    reference: &str,
+    credentials: Option<(String, String)>,
+) -> Result<Vec<u8>> {
+    let (name, root) = reference
+        .rsplit_once('@')
+        .ok_or("a registry reference must pin a digest")?;
+    let (host, repository) = name
+        .split_once('/')
+        .ok_or("a registry reference names its registry host")?;
+    // A tag beside the digest doesn't select anything.
+    let repository = match repository.rsplit_once(':') {
+        Some((repository, tag)) if !tag.contains('/') => repository,
+        _ => repository,
+    };
+    let loopback = host.starts_with("127.0.0.1") || host.starts_with("localhost");
+    let registry = Registry {
+        http: reqwest::Client::builder()
+            .https_only(!loopback)
+            .timeout(std::time::Duration::from_secs(60))
+            .build()
+            .map_err(|_| "cannot create the registry client")?,
+        base: format!(
+            "{}://{host}/v2/{repository}",
+            if loopback { "http" } else { "https" }
+        ),
+        credentials,
+        token: tokio::sync::Mutex::new(None),
+    };
+    let mut files = BTreeMap::new();
+    let mut add = |digest: &str, bytes: Vec<u8>| {
+        files.insert(
+            format!("blobs/sha256/{}", digest.trim_start_matches("sha256:")),
+            bytes,
+        );
+    };
+    let config_of = |raw: &[u8]| -> Result<String> {
+        let value: Value =
+            serde_json::from_slice(raw).map_err(|_| "invalid image manifest".to_owned())?;
+        Ok(value["config"]["digest"]
+            .as_str()
+            .ok_or("image manifest has no config")?
+            .to_owned())
+    };
+    let root_raw = registry.fetch("manifests", root).await?;
+    let index: Value =
+        serde_json::from_slice(&root_raw).map_err(|_| "invalid image index".to_owned())?;
+    let manifests: Vec<(String, Vec<u8>)> = match index["manifests"].as_array() {
+        Some(children) => {
+            let mut manifests = Vec::new();
+            for child in children
+                .iter()
+                .filter(|child| child["platform"]["os"] == "linux")
+            {
+                let digest = child["digest"]
+                    .as_str()
+                    .ok_or("image manifest has no digest")?;
+                manifests.push((
+                    digest.to_owned(),
+                    registry.fetch("manifests", digest).await?,
+                ));
+            }
+            manifests
+        }
+        None => vec![(root.to_owned(), root_raw.clone())],
+    };
+    add(root, root_raw);
+    for (digest, raw) in manifests {
+        let config = config_of(&raw)?;
+        add(&digest, raw);
+        add(&config, registry.fetch("blobs", &config).await?);
+    }
+    files.insert(
+        "index.json".into(),
+        serde_json::to_vec(&serde_json::json!({"manifests": [{"digest": root}]}))
+            .map_err(|_| "cannot encode the image index")?,
+    );
+    Ok(bundle_from_files(files, None)?.1)
+}
+
+struct Registry {
+    http: reqwest::Client,
+    base: String,
+    credentials: Option<(String, String)>,
+    token: tokio::sync::Mutex<Option<String>>,
+}
+
+impl Registry {
+    /// One manifest or blob by digest, at most 1 MiB, checked against the digest.
+    async fn fetch(&self, kind: &str, digest: &str) -> Result<Vec<u8>> {
+        use sha2::{Digest, Sha256};
+        let hex = digest
+            .strip_prefix("sha256:")
+            .filter(|hex| hex.len() == 64 && hex.bytes().all(|byte| byte.is_ascii_hexdigit()))
+            .ok_or("image digest is not SHA-256")?;
+        let url = format!("{}/{kind}/{digest}", self.base);
+        let mut response = self.request(&url).await?;
+        if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+            let challenge = response
+                .headers()
+                .get(reqwest::header::WWW_AUTHENTICATE)
+                .and_then(|value| value.to_str().ok())
+                .ok_or("the registry refused the request without a token challenge")?
+                .to_owned();
+            *self.token.lock().await = Some(self.authenticate(&challenge).await?);
+            response = self.request(&url).await?;
+        }
+        let response = response.error_for_status().map_err(|error| {
+            format!(
+                "cannot fetch {kind} {digest}: {}",
+                error
+                    .status()
+                    .map(|status| status.to_string())
+                    .unwrap_or_default()
+            )
+        })?;
+        let bytes = response
+            .bytes()
+            .await
+            .map_err(|_| format!("cannot read {kind} {digest}"))?;
+        if bytes.len() > 1 << 20 {
+            return Err(format!("{kind} {digest} exceeds 1 MiB"));
+        }
+        if crate::hex(&Sha256::digest(&bytes)) != hex {
+            return Err("image metadata blob does not match its digest".into());
+        }
+        Ok(bytes.to_vec())
+    }
+
+    async fn request(&self, url: &str) -> Result<reqwest::Response> {
+        let mut request = self
+            .http
+            .get(url)
+            .header(reqwest::header::ACCEPT, MANIFEST_TYPES);
+        if let Some(token) = self.token.lock().await.as_deref() {
+            request = request.bearer_auth(token);
+        }
+        request
+            .send()
+            .await
+            .map_err(|_| "cannot reach the registry".to_owned())
+    }
+
+    /// Answer a `Bearer realm=...,service=...,scope=...` challenge with a token.
+    async fn authenticate(&self, challenge: &str) -> Result<String> {
+        let parameters: BTreeMap<&str, &str> = challenge
+            .strip_prefix("Bearer ")
+            .ok_or("the registry asks for an unsupported authentication scheme")?
+            .split(',')
+            .filter_map(|part| part.trim().split_once('='))
+            .map(|(key, value)| (key, value.trim_matches('"')))
+            .collect();
+        let realm = parameters
+            .get("realm")
+            .ok_or("the registry's token challenge names no realm")?;
+        let query: Vec<(&str, &str)> = ["service", "scope"]
+            .into_iter()
+            .filter_map(|key| parameters.get(key).map(|value| (key, *value)))
+            .collect();
+        let url = reqwest::Url::parse_with_params(realm, &query)
+            .map_err(|_| "the registry's token realm is not a URL")?;
+        let mut request = self.http.get(url);
+        if let Some((username, password)) = &self.credentials {
+            request = request.basic_auth(username, Some(password));
+        }
+        let bytes = request
+            .send()
+            .await
+            .and_then(reqwest::Response::error_for_status)
+            .map_err(|_| "the registry refused a token".to_owned())?
+            .bytes()
+            .await
+            .map_err(|_| "the registry returned no token".to_owned())?;
+        let body: Value = serde_json::from_slice(&bytes)
+            .map_err(|_| "the registry returned an invalid token".to_owned())?;
+        body["token"]
+            .as_str()
+            .or(body["access_token"].as_str())
+            .map(str::to_owned)
+            .ok_or_else(|| "the registry returned no token".into())
+    }
+}
+
 /// Save `image` from the local Docker engine and write its metadata bundle
 /// to `output`, a new file. Returns the image's digest reference.
 pub fn export_metadata(image: &str, output: &Path) -> Result<()> {
     let archive = output_of(docker().args(["image", "save", image]), "save the image")?;
-    let bundle = metadata_bundle(&archive)?;
+    write_bundle(&metadata_bundle(&archive)?, output)
+}
+
+/// Write a metadata bundle to `output`, which must be a new file.
+pub fn write_bundle(bundle: &[u8], output: &Path) -> Result<()> {
     let mut file = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -208,7 +402,7 @@ pub fn export_metadata(image: &str, output: &Path) -> Result<()> {
         .map_err(|_| {
             "cannot create the metadata bundle; the output must be a new file".to_owned()
         })?;
-    std::io::Write::write_all(&mut file, &bundle)
+    std::io::Write::write_all(&mut file, bundle)
         .map_err(|_| "cannot write the metadata bundle".to_owned())?;
     Ok(())
 }
