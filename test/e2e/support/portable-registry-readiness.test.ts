@@ -12,10 +12,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ArtifactSink } from "../fixtures/artifacts.ts";
 import {
+  capturePortableRegistryProcessBoundary,
   collectPortableRegistryReadinessFailure,
   probePortableRegistry,
   runPortableRegistryReadinessPolicy,
   type PortableRegistryReadinessObservation,
+  verifyPortableRegistryProcessBoundary,
 } from "../fixtures/portable-registry-readiness.ts";
 import type {
   ShellProbe,
@@ -29,6 +31,104 @@ afterEach(() => {
 });
 
 describe("portable registry readiness policy", () => {
+  it("records the inherited finite service process boundary", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "portable-registry-boundary-"));
+    const evidence = {
+      schemaVersion: 1 as const,
+      minimumHeadroom: 128,
+      inheritedServiceBoundary: true,
+      service: { cgroup: "/service", tasksMax: 71707, tasksCurrent: 21 },
+      registry: { cgroup: "/service" },
+      cgroup: { pidsMax: 71707, pidsCurrent: 22 },
+    };
+    const run = vi.fn(
+      async (
+        _command: TrustedShellCommand,
+        _options: ShellProbeRunOptions,
+      ): Promise<ShellProbeResult> => ({
+        command: [],
+        exitCode: 0,
+        signal: null,
+        timedOut: false,
+        stdout: JSON.stringify(evidence),
+        stderr: "",
+        artifacts: { stdout: "", stderr: "", result: "" },
+      }),
+    );
+    try {
+      vi.stubEnv("DOCKER_HOST", "unix:///run/user/1000/podman/podman.sock");
+      const result = await capturePortableRegistryProcessBoundary({
+        artifacts: new ArtifactSink(root),
+        shellProbe: { run } as unknown as ShellProbe,
+      });
+
+      expect(result).toEqual(evidence);
+      expect(
+        JSON.parse(
+          fs.readFileSync(path.join(root, "portable-registry-process-boundary.json"), "utf8"),
+        ),
+      ).toEqual(evidence);
+      const [command, options] = run.mock.calls[0]!;
+      expect(command.args[5]).toContain('[[ $registry_group == "$service_group" ]]');
+      expect(command.args[5]).toContain('[[ $cgroup_max == "$tasks_max" ]]');
+      expect(command.args[5]).toContain("(( cgroup_max - cgroup_current >= minimum ))");
+      expect(options.env).not.toHaveProperty("UNRELATED_API_KEY");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an unavailable effective process boundary", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "portable-registry-boundary-"));
+    const run = vi.fn(
+      async (
+        _command: TrustedShellCommand,
+        _options: ShellProbeRunOptions,
+      ): Promise<ShellProbeResult> => ({
+        command: [],
+        exitCode: 1,
+        signal: null,
+        timedOut: false,
+        stdout: "",
+        stderr: "registry cgroup mismatch",
+        artifacts: { stdout: "", stderr: "", result: "" },
+      }),
+    );
+    try {
+      await expect(
+        capturePortableRegistryProcessBoundary({
+          artifacts: new ArtifactSink(root),
+          shellProbe: { run } as unknown as ShellProbe,
+        }),
+      ).rejects.toThrow(
+        "Portable registry did not inherit the finite Podman service process boundary.",
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not probe the focused boundary outside its selected target", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "portable-registry-boundary-"));
+    const run = vi.fn();
+    try {
+      await expect(
+        verifyPortableRegistryProcessBoundary({
+          artifacts: new ArtifactSink(root),
+          enabled: false,
+          shellProbe: { run } as unknown as ShellProbe,
+        }),
+      ).resolves.toEqual({
+        inheritedServiceBoundary: true,
+        serviceHeadroomSufficient: true,
+        cgroupHeadroomSufficient: true,
+      });
+      expect(run).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("records first-attempt readiness without sleeping", async () => {
     const sleep = vi.fn(async () => {});
     const onEvidence = vi.fn();

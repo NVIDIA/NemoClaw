@@ -22,6 +22,7 @@ export type PortableRegistryReadinessObservation =
 
 export const PORTABLE_REGISTRY_READINESS_MAX_ATTEMPTS = 10;
 export const PORTABLE_REGISTRY_READINESS_DELAY_MS = 1_000;
+export const PORTABLE_REGISTRY_MINIMUM_PROCESS_HEADROOM = 128;
 
 const PORTABLE_REGISTRY_DIAGNOSTIC_ENV_KEYS = [
   "CONTAINERS_CONF",
@@ -73,6 +74,113 @@ printf 'host_threads_max=%s\n' "\${host_threads_max:-unavailable}"
 printf 'host_pid_max=%s\n' "\${host_pid_max:-unavailable}"
 printf 'host_tasks=%s\n' "\${host_tasks:-unavailable}"
 `;
+
+const PROCESS_BOUNDARY_PROBE = `
+minimum=${PORTABLE_REGISTRY_MINIMUM_PROCESS_HEADROOM}
+service=nemoclaw-native-podman-e2e.service
+service_pid=$(/usr/bin/systemctl --user show "$service" --property=MainPID --value)
+registry_pid=$(podman container inspect --format '{{.State.Pid}}' nemoclaw-portable-registry)
+[[ $service_pid =~ ^[1-9][0-9]*$ && $registry_pid =~ ^[1-9][0-9]*$ ]]
+service_group=$(awk -F: '$1 == "0" { print $3; exit }' "/proc/$service_pid/cgroup")
+registry_group=$(awk -F: '$1 == "0" { print $3; exit }' "/proc/$registry_pid/cgroup")
+[[ $service_group == /* && $service_group != / && $service_group != *'..'* ]]
+[[ $registry_group == "$service_group" ]]
+tasks_max=$(/usr/bin/systemctl --user show "$service" --property=TasksMax --value)
+tasks_current=$(/usr/bin/systemctl --user show "$service" --property=TasksCurrent --value)
+cgroup_max=$(cat "/sys/fs/cgroup$service_group/pids.max")
+cgroup_current=$(cat "/sys/fs/cgroup$service_group/pids.current")
+[[ $tasks_max =~ ^[0-9]+$ && $tasks_current =~ ^[0-9]+$ ]]
+[[ $cgroup_max =~ ^[0-9]+$ && $cgroup_current =~ ^[0-9]+$ ]]
+[[ $cgroup_max == "$tasks_max" ]]
+(( tasks_max - tasks_current >= minimum ))
+(( cgroup_max - cgroup_current >= minimum ))
+jq -cn --argjson minimum "$minimum" \
+  --arg serviceGroup "$service_group" --arg registryGroup "$registry_group" \
+  --argjson tasksMax "$tasks_max" --argjson tasksCurrent "$tasks_current" \
+  --argjson cgroupMax "$cgroup_max" --argjson cgroupCurrent "$cgroup_current" \
+  '{schemaVersion: 1, minimumHeadroom: $minimum,
+    inheritedServiceBoundary: ($serviceGroup == $registryGroup),
+    service: {cgroup: $serviceGroup, tasksMax: $tasksMax, tasksCurrent: $tasksCurrent},
+    registry: {cgroup: $registryGroup},
+    cgroup: {pidsMax: $cgroupMax, pidsCurrent: $cgroupCurrent}}'
+`;
+
+export interface PortableRegistryProcessBoundaryEvidence {
+  readonly schemaVersion: 1;
+  readonly minimumHeadroom: number;
+  readonly inheritedServiceBoundary: boolean;
+  readonly service: {
+    readonly cgroup: string;
+    readonly tasksMax: number;
+    readonly tasksCurrent: number;
+  };
+  readonly registry: { readonly cgroup: string };
+  readonly cgroup: { readonly pidsMax: number; readonly pidsCurrent: number };
+}
+
+export interface PortableRegistryProcessBoundaryAssertion {
+  readonly inheritedServiceBoundary: boolean;
+  readonly serviceHeadroomSufficient: boolean;
+  readonly cgroupHeadroomSufficient: boolean;
+}
+
+export async function capturePortableRegistryProcessBoundary(options: {
+  readonly artifacts: ArtifactSink;
+  readonly shellProbe: ShellProbe;
+}): Promise<PortableRegistryProcessBoundaryEvidence> {
+  const env = buildChildEnv(process.env, {
+    additionalAllowedEnv: PORTABLE_REGISTRY_DIAGNOSTIC_ENV_KEYS,
+    fixtureOverlay: {},
+  });
+  const result = await options.shellProbe.run(
+    trustedShellCommand({
+      command: "bash",
+      args: ["-e", "-u", "-o", "pipefail", "-c", PROCESS_BOUNDARY_PROBE],
+      reason: "verify the registry inherited the finite Podman API-service process boundary",
+    }),
+    {
+      artifactName: "portable-registry-process-boundary-probe",
+      captureLimitBytes: 32 * 1024,
+      env,
+      timeoutMs: 10_000,
+    },
+  );
+  if (result.exitCode !== 0 || result.signal !== null || result.timedOut) {
+    throw new Error(
+      "Portable registry did not inherit the finite Podman service process boundary.",
+    );
+  }
+  let evidence: PortableRegistryProcessBoundaryEvidence;
+  try {
+    evidence = JSON.parse(result.stdout) as PortableRegistryProcessBoundaryEvidence;
+  } catch {
+    throw new Error("Portable registry process-boundary evidence was not valid JSON.");
+  }
+  await options.artifacts.writeJson("portable-registry-process-boundary.json", evidence);
+  return evidence;
+}
+
+export async function verifyPortableRegistryProcessBoundary(options: {
+  readonly artifacts: ArtifactSink;
+  readonly enabled: boolean;
+  readonly shellProbe: ShellProbe;
+}): Promise<PortableRegistryProcessBoundaryAssertion> {
+  if (!options.enabled) {
+    return {
+      inheritedServiceBoundary: true,
+      serviceHeadroomSufficient: true,
+      cgroupHeadroomSufficient: true,
+    };
+  }
+  const evidence = await capturePortableRegistryProcessBoundary(options);
+  return {
+    inheritedServiceBoundary: evidence.inheritedServiceBoundary,
+    serviceHeadroomSufficient:
+      evidence.service.tasksMax - evidence.service.tasksCurrent >= evidence.minimumHeadroom,
+    cgroupHeadroomSufficient:
+      evidence.cgroup.pidsMax - evidence.cgroup.pidsCurrent >= evidence.minimumHeadroom,
+  };
+}
 
 function retryableTransport(observation: PortableRegistryReadinessObservation): boolean {
   return observation.kind === "transport" && observation.code !== "unexpected";

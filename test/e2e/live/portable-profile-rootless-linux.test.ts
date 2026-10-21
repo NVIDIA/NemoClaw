@@ -64,7 +64,10 @@ import { streamSandboxCreate } from "../../../src/lib/sandbox/create-stream.ts";
 import { test } from "../fixtures/e2e-test.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { OPENSHELL_V0116_QUALIFICATION } from "../fixtures/openshell-v0116-qualification.ts";
-import { collectPortableRegistryReadinessFailure } from "../fixtures/portable-registry-readiness.ts";
+import {
+  collectPortableRegistryReadinessFailure,
+  verifyPortableRegistryProcessBoundary,
+} from "../fixtures/portable-registry-readiness.ts";
 import {
   cleanupPortableHostGatewayAlias,
   cleanupPortableProfileRootlessFixture,
@@ -1029,6 +1032,18 @@ async function main(
     run("docker", ["version"]);
     const verifiedPodmanUrl = String(process.env.DOCKER_HOST);
     await waitForRegistry(artifacts, shellProbe);
+    assert.deepEqual(
+      await verifyPortableRegistryProcessBoundary({
+        artifacts,
+        enabled: process.env.E2E_TARGET_ID === "portable-hermes-finalization",
+        shellProbe,
+      }),
+      {
+        inheritedServiceBoundary: true,
+        serviceHeadroomSufficient: true,
+        cgroupHeadroomSufficient: true,
+      },
+    );
 
     progress.phase("verify immutable non-force network removal");
     // Netavark rejects the retired link-local subnet before this pinned runtime can create it.
@@ -1236,14 +1251,6 @@ async function main(
       ]),
       "portable registry inspection",
     );
-    // The registry uses the trusted API service, whose config sets this effective limit.
-    assert.ok(
-      process.env.E2E_TARGET_ID !== "portable-hermes-finalization" ||
-        String((currentRegistry.HostConfig as Record<string, unknown> | undefined)?.PidsLimit) ===
-          "128",
-      "Portable Hermes registry must use the reviewed 128-task limit",
-    );
-
     const openshellBin = run("bash", ["-lc", "command -v openshell"]);
     const gatewayBin = run("bash", ["-lc", "command -v openshell-gateway"]);
     const sandboxBin = run("bash", ["-lc", "command -v openshell-sandbox"]);
