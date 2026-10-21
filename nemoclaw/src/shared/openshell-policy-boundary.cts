@@ -100,6 +100,8 @@ const TRANSPORT_FAILURE_MARKERS: ReadonlyArray<string> = [
 ];
 const AUTHORITATIVE_REFUSAL_PATTERN =
   /^Error:\s+code:\s*'failed[ _]precondition',\s*message:\s*'([^'\r\n]+)'(?:,\s*source:\s*tonic::Status\s*\{\s*code:\s*FailedPrecondition,\s*grpc_status:\s*9\s*\})?\s*$/iu;
+const DECORATED_AMBIGUITY_REFUSAL_PATTERN =
+  /^Error:\s*×\s*code:\s*'The system is not in a state required for the operation's execution',\s*message:\s*'([^\r\n]+)'(?:,\s*source:\s*tonic::Status\s*\{\s*code:\s*FailedPrecondition,\s*grpc_status:\s*9\s*\})?\s*$/u;
 
 /** Parse one sandbox base-policy read into the transport-neutral typed contract. */
 export function parseOpenShellSandboxPolicyRead(raw: string): OpenShellSandboxPolicyRead {
@@ -133,7 +135,13 @@ export function classifyOpenShellSandboxPolicySetResult(
   if (captured.status === 0) return captured.error ? ambiguous() : { kind: "applied" };
   if (captured.status === null) return ambiguous();
   const firstLine = captured.stderr?.split("\n", 1)[0] ?? "";
-  const message = firstLine.match(AUTHORITATIVE_REFUSAL_PATTERN)?.[1]?.trim() ?? null;
+  const decorated = firstLine.match(DECORATED_AMBIGUITY_REFUSAL_PATTERN)?.[1] ?? null;
+  const message =
+    firstLine.match(AUTHORITATIVE_REFUSAL_PATTERN)?.[1]?.trim() ??
+    (decorated?.includes("network endpoint ambiguity validation failed")
+      ? decorated.trim()
+      : null) ??
+    null;
   return message === null ? ambiguous() : { kind: "rejected", status: captured.status, message };
 }
 
