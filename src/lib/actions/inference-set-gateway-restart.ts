@@ -143,7 +143,8 @@ export interface InferenceMutation<T extends InferenceResultForGateway> {
 }
 
 // SOURCE_OF_TRUTH_REVIEW (OpenClaw post-switch convergence; gateway regressions
-// #4504 and #9527): generated OpenClaw config pins gateway.reload.mode to off.
+// #4504 and #9527): hybrid reload applies agent-entry changes, but does not
+// establish inference-route and device-scope convergence.
 // NemoClaw restarts after every changed route, config, and integrity-hash commit
 // so the running gateway cannot retain the prior model or request shaping. Every
 // changed OpenClaw route then requires exact local device-scope convergence
@@ -153,7 +154,7 @@ export interface InferenceMutation<T extends InferenceResultForGateway> {
 // post-commit recovery behavior. The openclaw-inference-switch live target
 // proves gateway health and forwarding. Remove the restart only when the
 // minimum supported OpenClaw applies all generated inference config changes
-// while reload mode remains off. Remove pairing settlement when OpenClaw no
+// and proves live route convergence. Remove pairing settlement when OpenClaw no
 // longer requires a separate allowlisted device-scope upgrade after a route
 // change.
 

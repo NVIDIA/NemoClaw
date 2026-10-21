@@ -2616,6 +2616,9 @@ migrate_legacy_layout() {
   echo "[migration] Completed ${label} layout migration (${data_dir} removed)" >&2
 }
 
+# This entrypoint receives a fresh environment only when OpenShell launches it.
+# Child gateway restarts reuse this shell and must preserve host-written handles.
+_HERMES_NATIVE_LOCAL_REFRESHED=0
 refresh_hermes_provider_placeholders() {
   local mode="${1:-strict}"
   local env_file="${HERMES_DIR}/.env"
@@ -2633,7 +2636,11 @@ refresh_hermes_provider_placeholders() {
   if [ -f "$runtime_plan" ]; then
     args+=(--runtime-plan "$runtime_plan")
   fi
+  if [ "${_HERMES_NATIVE_LOCAL_REFRESHED:-0}" -eq 0 ]; then
+    args+=(--refresh-native-local)
+  fi
   "$_HERMES_PYTHON" -I "${args[@]}" || return $?
+  _HERMES_NATIVE_LOCAL_REFRESHED=1
   validate_hermes_env_secret_boundary
 }
 

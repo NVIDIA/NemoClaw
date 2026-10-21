@@ -53,27 +53,31 @@ function writeFixture(root: string, overrides: FixtureOverrides = {}): void {
     overrides.releaseTrustExtraVersion,
     overrides.releaseTrustVersion ?? openshellMax,
   ].filter((version): version is string => version !== undefined);
-  const installerTrustRecords = installerTrustVersions
-    .map(
-      (version) => `  {
+  const installerTrustRecords = installerTrustVersions.map((version) => ({
+    version,
     formula: {
       asset: "openshell.rb",
-      sha256: "${overrides.releaseFormulaSha256 ?? FORMULA_SHA256}",
+      sha256: overrides.releaseFormulaSha256 ?? FORMULA_SHA256,
+      url: `https://github.com/NVIDIA/OpenShell/releases/download/v${version}/openshell.rb`,
     },
-    manifests: [
-${OPENSHELL_RELEASE_MANIFESTS.filter((manifest) => manifest !== overrides.releaseTrustOmitManifest)
-  .map(
-    (manifest) => `      {
-        asset: "${manifest}",
-        sha256: "${MANIFEST_SHA256}",
-      },`,
-  )
-  .join("\n")}
-    ],
-    version: "${version}",
-  },`,
-    )
-    .join("\n");
+    manifests: OPENSHELL_RELEASE_MANIFESTS.filter(
+      (manifest) => manifest !== overrides.releaseTrustOmitManifest,
+    ).map((asset) => ({ asset, sha256: MANIFEST_SHA256 })),
+    pinLayout: {
+      installer: { assets: ["openshell.rb"], manifests: [...OPENSHELL_RELEASE_MANIFESTS] },
+      brev: { assets: ["openshell-linux.tar.gz"], manifests: [OPENSHELL_RELEASE_MANIFESTS[0]] },
+    },
+    sandboxBuilds: [{ required: false, sha256: MAP_SHA256 }],
+    supervisor: {
+      image: "ghcr.io/nvidia/openshell/supervisor",
+      manifestDigest: `sha256:${MAP_SHA256}`,
+      required: false,
+      runtimeTemplateSha256: [MAP_SHA256],
+    },
+    installerTemplateSha256: [MAP_SHA256],
+    brevTemplateSha256: [MAP_SHA256],
+    featureGateTemplateSha256: [MAP_SHA256],
+  }));
 
   const files: Record<string, string> = {
     "nemoclaw-blueprint/blueprint.yaml": `
@@ -85,12 +89,13 @@ MIN_VERSION="${overrides.installerMin ?? openshellMin}"
 MAX_VERSION="${overrides.installerMax ?? openshellMax}"
 PIN_VERSION="${overrides.installerPinExpression ?? "$MAX_VERSION"}"
 `,
-    "scripts/checks/extract-installer-pins.mts": `
-type OpenShellReleaseTrust = unknown;
-const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
-${installerTrustRecords}
-] as const;
-`,
+    "ci/openshell-upgrade-trust.json":
+      overrides.trustRegistry ??
+      JSON.stringify({
+        schemaVersion: 1,
+        releases: installerTrustRecords,
+        revokedTemplateSha256: [],
+      }),
     "scripts/brev-launchable-ci-cpu.sh": `
 case "$NEMOCLAW_REF" in
   stable | auto) OPENSHELL_VERSION="v${overrides.brevVersion ?? openshellMax}" ;;
@@ -226,6 +231,64 @@ describe("dependency pin drift check", () => {
     );
   });
 
+  it("accepts 0.1.3 from the registry without an inline release record", () => {
+    withFixture(
+      "nemoclaw-dependency-pins-registry-",
+      { openshellMin: "0.1.3", openshellMax: "0.1.3" },
+      (root) => expect(verifyDependencyPins(root)).toEqual([]),
+    );
+  });
+
+  it("retains legacy release identities when the registry is empty", () => {
+    withFixture(
+      "nemoclaw-dependency-pins-legacy-",
+      {
+        openshellMin: "0.0.116",
+        openshellMax: "0.0.116",
+        gatewayFormulaSha256: "cf00a9441589702ffe006720fd6a9dffc0f0745b337036aad26dc53eb94c1558",
+        trustRegistry: JSON.stringify({
+          schemaVersion: 1,
+          releases: [],
+          revokedTemplateSha256: [],
+        }),
+      },
+      (root) => expect(verifyDependencyPins(root)).toEqual([]),
+    );
+  });
+
+  it.each([
+    ["malformed JSON", { trustRegistry: "{" }, "OpenShell release trust:"],
+    [
+      "an unsupported schema",
+      { trustRegistry: '{"schemaVersion":2,"releases":[],"revokedTemplateSha256":[]}' },
+      "Unsupported upgrade trust schema",
+    ],
+    [
+      "duplicate versions",
+      { releaseTrustExtraVersion: OPENSHELL_MAX },
+      "Duplicate upgrade trust registry entry",
+    ],
+    [
+      "a replaced legacy artifact",
+      { releaseTrustExtraVersion: "0.0.116" },
+      "cannot replace an existing release's artifact identities",
+    ],
+    ["an invalid digest", { releaseFormulaSha256: "invalid" }, "Invalid upgrade trust identity"],
+  ])("rejects %s without accepting matching consumer pins", (_name, overrides, failure) => {
+    withFixture("nemoclaw-dependency-pins-invalid-registry-", overrides, (root) => {
+      expect(verifyDependencyPins(root)).toEqual([expect.stringContaining(failure)]);
+    });
+  });
+
+  it("rejects a missing registry", () => {
+    withFixture("nemoclaw-dependency-pins-missing-registry-", {}, (root) => {
+      fs.unlinkSync(path.join(root, "ci/openshell-upgrade-trust.json"));
+      expect(verifyDependencyPins(root)).toEqual([
+        expect.stringContaining("ci/openshell-upgrade-trust.json: failed to read"),
+      ]);
+    });
+  });
+
   it("rejects a stale Homebrew lifecycle formula pin", () => {
     const staleFormulaSha256 = "e".repeat(64);
     withFixture(
@@ -331,7 +394,7 @@ describe("dependency pin drift check", () => {
       { releaseTrustOmitManifest: "openshell-sandbox-checksums-sha256.txt" },
       (root) => {
         expect(verifyDependencyPins(root)).toEqual([
-          "OpenShell release trust: expected one complete record for 1.2.4",
+          "OpenShell release trust: Installer pin extraction failed: OpenShell v1.2.4 must have exactly three trusted release-manifest digests",
         ]);
       },
     );

@@ -111,12 +111,6 @@ describe("llama.cpp DGX Spark qualification plan export (#8260)", () => {
       parseLlamaCppDgxSparkExecutionPlan(JSON.parse(output.plan), output.plan_sha256),
     ).toMatchObject({
       contractVersion: 1,
-      imageBuild: {
-        requestGuardToolchain: {
-          archiveSha256: "sha256:4a97373d49fcacdcf3694fea368a500b00ee3e963974f3e7514132717632f052",
-          version: "1.26.9",
-        },
-      },
       qualification: {
         agentQualification: {
           agent: "openclaw",

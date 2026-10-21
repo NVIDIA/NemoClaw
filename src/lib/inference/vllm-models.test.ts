@@ -143,7 +143,7 @@ describe("vllm model registry", () => {
 
   it.each([
     ["spark", "arm64", "qwen3.6-35b-a3b-nvfp4"],
-    ["station", "arm64", "deepseek-v4-flash"],
+    ["station", "arm64", "nemotron-3.5-super-vl-120b"],
     ["n1x", "arm64", "qwen3.6-35b-a3b-nvfp4"],
     ["linux", "x64", "nemotron-3-nano-4b"],
     ["linux", "arm64", "nemotron-3-nano-4b"],
@@ -187,6 +187,7 @@ describe("vllm model registry", () => {
       "qwen3.6-35b-a3b-nvfp4": 23_500_000_000,
       "muse-glimmer-30b": 25_447_097_878,
       "nemotron-3.5-lightning-30b": 21_561_882_284,
+      "nemotron-3.5-super-vl-120b": 75_063_319_581,
     });
   });
 

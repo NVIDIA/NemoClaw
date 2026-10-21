@@ -70,6 +70,8 @@ export interface SandboxCreateIntent {
   readonly dcodeAutoApprovalMode?: import("./dcode-auto-approval").DcodeAutoApprovalMode;
   /** Non-secret upstream endpoint metadata for managed image config generation. */
   readonly endpointUrl?: string | null;
+  /** Owned Local NIM keeps its shared route even though it records vllm-local. */
+  readonly localNimSelected?: true;
   /** Validated OpenAI-compatible reasoning capability selected during onboarding. */
   readonly compatibleEndpointReasoning?: "true" | "false";
   /** Provenance for the endpoint recorded with the created sandbox. */

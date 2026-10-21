@@ -13,6 +13,11 @@ import {
   type SetupInference,
   type SetupInferenceDeps,
 } from "../../src/lib/onboard/setup-inference.js";
+import { usesNativeLocalInference } from "../../src/lib/inference/native-local/contract";
+import {
+  createNativeLocalSetupHarness,
+  withNativePolicyFixture,
+} from "./native-local-setup-harness";
 import { redact } from "../../src/lib/security/redact.js";
 
 const onboardProviderHelpers = require("../../src/lib/onboard/providers") as {
@@ -47,6 +52,8 @@ export type DirectRunStubResult = {
 };
 
 export type DirectSetupHarnessOptions = {
+  /** Exercise an existing custom sandbox's shared inference route. */
+  legacyCustomRoute?: boolean;
   runOpenshell?: (
     args: string[],
     options: DirectRunOptions,
@@ -378,6 +385,7 @@ export function createDirectSetupInferenceHarnessFactory(
   createSetupInference: CreateSetupInference,
 ) {
   return function createDirectSetupInferenceHarness(options: DirectSetupHarnessOptions = {}) {
+    let legacySandbox: ReturnType<NonNullable<SetupInferenceDeps["getSandbox"]>> = null;
     const commands: DirectCommandEntry[] = [];
     const errors: string[] = [];
     const logs: string[] = [];
@@ -421,7 +429,7 @@ export function createDirectSetupInferenceHarnessFactory(
       }
       return directRunResult();
     };
-    const setupInferenceWithoutPolicyAuthority = createSetupInference({
+    const harnessDeps: Partial<SetupInferenceDeps> = {
       checkGatewayRouteCompatibility: () => ({ ok: true }),
       withGatewayRouteMutationLock: async <T>(
         _gatewayName: string,
@@ -539,10 +547,20 @@ export function createDirectSetupInferenceHarnessFactory(
       // #9110: neutralize the GPU-release seams so harness consumers backed by
       // the production defaults never read the developer's real registry or
       // curl a live Ollama daemon.
-      getSandbox: () => null,
+      getSandbox: () => legacySandbox,
       listSandboxes: () => ({ sandboxes: [], defaultSandbox: null }),
       unloadOllamaModels,
       withOllamaModelOwnershipLock: (operation) => operation(),
+      ...options.overrides,
+    };
+    const setupInferenceWithoutPolicyAuthority = createSetupInference(harnessDeps);
+    const native = createNativeLocalSetupHarness();
+    const setupNativeInference = createSetupInference({
+      ...harnessDeps,
+      providerAdapter: native.adapter,
+      getNativeLocalProviderAuthority: native.getNativeLocalProviderAuthority,
+      setNativeLocalProviderAuthority: native.setNativeLocalProviderAuthority,
+      clearNativeLocalProviderAuthority: native.clearNativeLocalProviderAuthority,
       ...options.overrides,
     });
     const revalidateSandboxIdentity = vi.fn();
@@ -555,22 +573,30 @@ export function createDirectSetupInferenceHarnessFactory(
       hermesAuthMethod,
       hermesToolGateways,
       inferenceOptions = {},
-    ) =>
-      setupInferenceWithoutPolicyAuthority(
-        sandboxName,
-        model,
-        provider,
-        endpointUrl,
-        credentialEnv,
-        hermesAuthMethod,
-        hermesToolGateways,
-        {
-          ...inferenceOptions,
-          revalidateSandboxIdentity:
-            inferenceOptions.revalidateSandboxIdentity ?? revalidateSandboxIdentity,
-        },
-      );
+    ) => {
+      if (options.legacyCustomRoute && sandboxName) {
+        legacySandbox = { name: sandboxName, provider, model, endpointUrl, credentialEnv };
+      }
+      const nativeLocal = usesNativeLocalInference(provider, endpointUrl);
+      const operation = () =>
+        (nativeLocal ? setupNativeInference : setupInferenceWithoutPolicyAuthority)(
+          sandboxName,
+          model,
+          provider,
+          endpointUrl,
+          credentialEnv,
+          hermesAuthMethod,
+          hermesToolGateways,
+          {
+            ...inferenceOptions,
+            revalidateSandboxIdentity:
+              inferenceOptions.revalidateSandboxIdentity ?? revalidateSandboxIdentity,
+          },
+        );
+      return nativeLocal ? withNativePolicyFixture(operation) : operation();
+    };
     return {
+      native,
       commands,
       errors,
       logs,

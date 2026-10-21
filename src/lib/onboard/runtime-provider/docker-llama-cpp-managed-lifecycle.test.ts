@@ -1,28 +1,22 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const subprocess = vi.hoisted(() => ({ spawnSync: vi.fn() }));
-vi.mock("node:child_process", () => ({ spawnSync: subprocess.spawnSync }));
-
+import * as httpProbe from "../../adapters/http/probe";
 import { LLAMA_CPP_PORT } from "../../inference/llama-cpp/contract";
 import type { LlamaCppGgufCachePlan } from "../../inference/llama-cpp/gguf-cache-plan";
-import {
-  LLAMA_CPP_HOST_LOCAL_REQUEST_GUARD_PATH,
-  LLAMA_CPP_HOST_LOCAL_SERVER_PATH,
-} from "../../inference/llama-cpp/host-local-runtime";
 import type {
   DockerLlamaCppManagedLifecycleDependencies,
   DockerLlamaCppManagedLifecycleOptions,
 } from "./docker-llama-cpp-managed-lifecycle";
 import {
   contract,
+  createTestDockerLlamaCppManagedLifecycle as createLifecycle,
   plan,
   digest,
   IMAGE,
@@ -30,6 +24,11 @@ import {
   MODEL_CONTENT,
   MODEL_DIGEST,
   MODEL_FILENAME,
+  modelFilesystemIdentity,
+  keyRootIdentitySha256,
+  journalStore,
+  privateBridgeFixture,
+  replaceModelWithSameSizeContent,
   NETWORK_ID,
   PROBE_IMAGE,
   RECEIPT_TARGET_SHA256,
@@ -40,17 +39,11 @@ import {
 } from "./docker-llama-cpp-managed-lifecycle.test-support";
 import {
   createDockerFixture,
+  dockerCommandPrefixes,
+  hostNetworkRuns,
   type DockerFixture,
 } from "./docker-llama-cpp-managed-lifecycle-engine.test-support";
-import {
-  createTestDockerLlamaCppManagedLifecycle as createLifecycle,
-  privateBridgeFixture,
-} from "./docker-llama-cpp-private-bridge.test-support";
-import type {
-  HostLocalCreateJournalExecutionLease,
-  HostLocalCreateJournalRecord,
-  HostLocalCreateJournalStore,
-} from "./host-local-create-journal";
+import type { HostLocalCreateJournalRecord } from "./host-local-create-journal";
 import {
   type HostLocalInferenceReceiptWriter,
   serializeHostLocalInferenceReceipt,
@@ -75,8 +68,14 @@ function receiptWriter(
 }
 
 beforeEach(() => {
-  subprocess.spawnSync.mockReset();
-  subprocess.spawnSync.mockReturnValue({ status: 0, stdout: "", stderr: "" });
+  vi.spyOn(httpProbe, "runCurlProbe").mockReturnValue({
+    ok: true,
+    httpStatus: 200,
+    curlStatus: 0,
+    body: "ok",
+    stderr: "",
+    message: "",
+  });
   temporaryRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-llama-life-")));
   cacheRoot = path.join(temporaryRoot, "cache");
   modelPath = path.join(
@@ -95,43 +94,10 @@ beforeEach(() => {
   fs.writeFileSync(apiKeyPath, "test-only-secret\n", { mode: 0o600 });
 });
 
-afterEach(() => fs.rmSync(temporaryRoot, { force: true, recursive: true }));
-
-function identity() {
-  const status = fs.lstatSync(modelPath, { bigint: true });
-  return {
-    ctimeNs: status.ctimeNs,
-    dev: status.dev,
-    ino: status.ino,
-    mtimeNs: status.mtimeNs,
-    size: status.size,
-  };
-}
-
-function replaceModelWithSameSizeContent() {
-  const replacement = `${modelPath}.replacement`;
-  fs.writeFileSync(replacement, Buffer.alloc(MODEL_CONTENT.length, 0x62), { mode: 0o600 });
-  fs.renameSync(replacement, modelPath);
-}
-
-function keyRootIdentitySha256(): string {
-  const status = fs.lstatSync(apiKeyRoot, { bigint: true });
-  return rawDigest({
-    schemaVersion: 1,
-    identities: [
-      {
-        dev: status.dev.toString(),
-        ino: status.ino.toString(),
-        uid: status.uid.toString(),
-        gid: status.gid.toString(),
-        nlink: status.nlink.toString(),
-        mode: (status.mode & 0o777n).toString(8),
-        mtimeNs: status.mtimeNs.toString(),
-        ctimeNs: status.ctimeNs.toString(),
-      },
-    ],
-  });
-}
+afterEach(() => {
+  vi.restoreAllMocks();
+  fs.rmSync(temporaryRoot, { force: true, recursive: true });
+});
 
 function bindings(): DockerLlamaCppManagedLifecycleOptions["bindings"] {
   return {
@@ -141,7 +107,7 @@ function bindings(): DockerLlamaCppManagedLifecycleOptions["bindings"] {
     imageReference: IMAGE,
     model: {
       digest: MODEL_DIGEST,
-      filesystemIdentity: identity(),
+      filesystemIdentity: modelFilesystemIdentity(modelPath),
       hostPath: modelPath,
       sizeBytes: MODEL_CONTENT.length,
     },
@@ -165,111 +131,12 @@ function authorityStore(): PersistedEngineAuthorityStore {
     record: (next) => (authority = next),
   };
 }
-interface TestJournalStore extends HostLocalCreateJournalStore {
-  readonly abandonExecution: () => void;
-  readonly hasExecution: () => boolean;
-  readonly failNextPrepareReceipt: () => void;
-  readonly failNextPrepareReceiptAfterCommit: () => void;
-  readonly failNextFinalize: () => void;
-}
-
-function journalStore(): TestJournalStore {
-  const records = new Map<string, HostLocalCreateJournalRecord>();
-  let activeLease: HostLocalCreateJournalExecutionLease | null = null;
-  let prepareReceiptFails = false;
-  let prepareReceiptFailsAfterCommit = false;
-  let finalizeFails = false;
-  const update = (
-    id: string,
-    mutate: (value: HostLocalCreateJournalRecord) => HostLocalCreateJournalRecord,
-  ) => {
-    const current = records.get(id);
-    invariant(current, "missing journal");
-    const next = Object.freeze(mutate(current));
-    records.set(id, next);
-    return next;
-  };
-  return {
-    load: (id) => records.get(id) ?? null,
-    list: () => [...records.values()],
-    create: (record) => {
-      records.set(record.transactionId, Object.freeze(record));
-      return record;
-    },
-    recordNetworkCreated: (id, networkId) =>
-      update(id, (record) => ({
-        ...record,
-        phase: "prepared",
-        networkId,
-        createIntentUnixMs: null,
-      })),
-    recordCreating: (id, createIntentUnixMs) =>
-      update(id, (record) => ({ ...record, phase: "creating", createIntentUnixMs })),
-    recordCreated: (id, runtimeId) =>
-      update(id, (record) => ({ ...record, phase: "created", runtimeId })),
-    recordStarted: (id) => update(id, (record) => ({ ...record, phase: "started" })),
-    prepareReceipt: (id, serializedReceipt) => {
-      switch (prepareReceiptFails) {
-        case true:
-          prepareReceiptFails = false;
-          throw new Error("prepare receipt failed");
-      }
-      const prepared = update(id, (record) => ({
-        ...record,
-        phase: "receipt-prepared",
-        serializedReceipt,
-        receiptSha256: createHash("sha256").update(serializedReceipt).digest("hex"),
-      }));
-      switch (prepareReceiptFailsAfterCommit) {
-        case true:
-          prepareReceiptFailsAfterCommit = false;
-          throw new Error("prepare receipt outcome unknown");
-      }
-      return prepared;
-    },
-    finalize: (id) => {
-      switch (finalizeFails) {
-        case true:
-          finalizeFails = false;
-          throw new Error("finalize failed");
-      }
-      return update(id, (record) => ({
-        ...record,
-        phase: "finalized",
-      }));
-    },
-    retire: (id) => void records.delete(id),
-    acquireExecution: (transactionId) => {
-      invariant(activeLease === null, "execution is already owned by a live process");
-      activeLease = Object.freeze({
-        schemaVersion: 1,
-        transactionId,
-        ownerId: "12345678-1234-4123-8123-123456789abc",
-        ownerPid: process.pid,
-        ownerStartIdentity: "test-process-start-identity",
-      });
-      return activeLease;
-    },
-    assertExecution: (lease) => {
-      invariant(activeLease === lease, "execution ownership changed");
-    },
-    releaseExecution: (lease) => {
-      invariant(activeLease === lease, "execution ownership changed");
-      activeLease = null;
-    },
-    abandonExecution: () => (activeLease = null),
-    hasExecution: () => activeLease !== null,
-    failNextPrepareReceipt: () => (prepareReceiptFails = true),
-    failNextPrepareReceiptAfterCommit: () => (prepareReceiptFailsAfterCommit = true),
-    failNextFinalize: () => (finalizeFails = true),
-  };
-}
-
 function dockerFixture(
   configuredHostPort = "",
   publishedHostPort?: string,
   publishedHostIp = "127.0.0.1",
   publishedBindingCount = 0,
+  imageReference = IMAGE,
 ): DockerFixture {
   return createDockerFixture(
     { apiKeyPath, modelPath, networkName: bindings().network.name },
@@ -277,10 +144,8 @@ function dockerFixture(
     publishedHostPort,
     publishedHostIp,
     publishedBindingCount,
+    imageReference,
   );
-}
-function dockerCommandPrefixes(fixture: DockerFixture): unknown[] {
-  return fixture.capture.mock.calls.map((call) => call[0]?.slice(0, 2));
 }
 
 function options(
@@ -322,16 +187,10 @@ function hostProbeLifecycle(
   const fixture = dockerFixture();
   const hostLoopbackProbe = vi.fn<HostLoopbackProbe>(probe);
   const lifecycle = createLifecycle(
-    { ...options(fixture, store), loopbackProbe: "host-process", readinessTimeoutSeconds },
+    { ...options(fixture, store), readinessTimeoutSeconds },
     { hostLoopbackProbe },
   );
   return { fixture, hostLoopbackProbe, lifecycle, store };
-}
-
-function hostNetworkRuns(fixture: DockerFixture): readonly (readonly string[])[] {
-  return fixture.capture.mock.calls
-    .map(([argv]) => argv as readonly string[])
-    .filter((argv) => argv[0] === "run" && argv[argv.indexOf("--network") + 1] === "host");
 }
 
 function preparedJournal(): HostLocalCreateJournalRecord {
@@ -346,19 +205,20 @@ function preparedJournal(): HostLocalCreateJournalRecord {
     createIntentUnixMs: null,
     specSha256: rawDigest({
       contract: contract(),
-      apiKeyRootIdentitySha256: keyRootIdentitySha256(),
+      apiKeyRootIdentitySha256: keyRootIdentitySha256(apiKeyRoot),
       containerName: "nemoclaw-llama-cpp",
+      hostPort: LLAMA_CPP_PORT,
       imageReference: IMAGE,
       model: {
         planDigest: plan().planDigest,
         recipeId: plan().recipeId,
         digest: MODEL_DIGEST,
         filesystemIdentitySha256: rawDigest({
-          dev: identity().dev.toString(),
-          ino: identity().ino.toString(),
-          size: identity().size.toString(),
-          mtimeNs: identity().mtimeNs.toString(),
-          ctimeNs: identity().ctimeNs.toString(),
+          dev: modelFilesystemIdentity(modelPath).dev.toString(),
+          ino: modelFilesystemIdentity(modelPath).ino.toString(),
+          size: modelFilesystemIdentity(modelPath).size.toString(),
+          mtimeNs: modelFilesystemIdentity(modelPath).mtimeNs.toString(),
+          ctimeNs: modelFilesystemIdentity(modelPath).ctimeNs.toString(),
         }),
         sizeBytes: MODEL_CONTENT.length,
       },
@@ -383,7 +243,7 @@ function preparedJournal(): HostLocalCreateJournalRecord {
       bindingSha256: "1".repeat(64),
     },
     apiKeyIdentitySha256: "3".repeat(64),
-    apiKeyRootIdentitySha256: keyRootIdentitySha256(),
+    apiKeyRootIdentitySha256: keyRootIdentitySha256(apiKeyRoot),
     receiptTargetSha256: RECEIPT_TARGET_SHA256,
     serializedReceipt: null,
     receiptSha256: null,
@@ -391,12 +251,11 @@ function preparedJournal(): HostLocalCreateJournalRecord {
 }
 
 describe("dormant Docker llama.cpp managed lifecycle", () => {
-  it("journals a product install on its declared loopback host port (#8544)", () => {
+  it("journals a product install without publishing container ports (#8544)", () => {
     const fixture = dockerFixture();
     const store = journalStore();
-    const privateBridge = privateBridgeFixture();
     const runtimeBindings = { ...bindings(), hostPort: 8081 };
-    const lifecycle = createLifecycle(options(fixture, store, runtimeBindings), {}, privateBridge);
+    const lifecycle = createLifecycle(options(fixture, store, runtimeBindings), {});
     const writer = receiptWriter();
     const receipt = lifecycle.start(writer);
     const serialized = serializeHostLocalInferenceReceipt(receipt);
@@ -411,14 +270,6 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
       networkId: NETWORK_ID,
     });
     expect(writer.writeExact).toHaveBeenCalledExactlyOnceWith(serialized);
-    expect(privateBridge.start).toHaveBeenCalledWith(
-      expect.objectContaining({
-        transactionId: TRANSACTION_ID,
-        apiKeyPath: runtimeBindings.apiKeyHostPath,
-        targetHost: "172.30.0.2",
-        bindAddresses: ["127.0.0.1", "172.29.0.1"],
-      }),
-    );
     expect(serialized).not.toContain(modelPath);
     expect(serialized).not.toContain("filesystemIdentity");
     expect(serialized).not.toContain("test-only-secret");
@@ -429,29 +280,18 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
       .map(([argv]) => argv)
       .find(([operation]) => operation === "create");
     expect(create).toBeDefined();
-    expect(create?.[create.indexOf("--entrypoint") + 1]).toBe(
-      LLAMA_CPP_HOST_LOCAL_REQUEST_GUARD_PATH,
-    );
+    expect(create).not.toContain("--publish");
     const command = create?.slice(create.indexOf(IMAGE) + 1) ?? [];
-    expect(command[command.indexOf("--max-request-body-bytes") + 1]).toBe(
-      String(contract().serve.limits.maxRequestBodyBytes),
-    );
-    expect(command[command.indexOf("--upstream-port") + 1]).toBe(
-      String(contract().serve.requestGuard.upstreamPort),
-    );
-    const separator = command.indexOf("--");
-    expect(command.slice(separator + 1, separator + 8)).toEqual([
-      LLAMA_CPP_HOST_LOCAL_SERVER_PATH,
+    expect(command.slice(0, 6)).toEqual([
       "--model",
       `/models/${MODEL_FILENAME}`,
       "--alias",
       contract().model.servedName,
       "--host",
-      "127.0.0.1",
+      "0.0.0.0",
     ]);
-    expect(command.slice(separator)[command.slice(separator).indexOf("--port") + 1]).toBe(
-      String(contract().serve.requestGuard.upstreamPort),
-    );
+    expect(command[command.indexOf("--port") + 1]).toBe(String(contract().serve.port));
+    expect(command[command.indexOf("--api-key-file") + 1]).toBe("/run/secrets/llama-cpp-api-key");
     expect(lifecycle.runtime.inspectManaged(receipt).running).toBe(true);
     expect(lifecycle.runtime.stopManaged(receipt).running).toBe(false);
     expect(lifecycle.runtime.prepareDestroy(receipt)).toEqual(receipt);
@@ -477,38 +317,29 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
   it.each([
     { failure: "connection refusal", status: 7, stderr: "curl: (7) failed to connect" },
     { failure: "timeout", status: 28, stderr: "curl: (28) timed out" },
-  ])(
-    "reports a narrow UFW remediation and rolls back after bridge $failure (#8712)",
-    ({ status, stderr }) => {
-      const fixture = dockerFixture();
-      const store = journalStore();
-      const privateBridge = privateBridgeFixture();
-      fixture.failSandboxBridgeProbe({ status, stderr });
+  ])("rolls back after native OpenShell reachability $failure (#8712)", ({ status, stderr }) => {
+    const fixture = dockerFixture();
+    const store = journalStore();
+    fixture.failSandboxBridgeProbe({ status, stderr });
 
-      let failure: Error | undefined;
-      try {
-        createLifecycle(options(fixture, store), {}, privateBridge).start(receiptWriter());
-      } catch (error) {
-        failure = error instanceof Error ? error : new Error(String(error));
-      }
+    let failure: Error | undefined;
+    try {
+      createLifecycle(options(fixture, store), {}).start(receiptWriter());
+    } catch (error) {
+      failure = error instanceof Error ? error : new Error(String(error));
+    }
 
-      expect(failure?.message).toContain(
-        "Managed llama.cpp host-loopback health check passed, but the OpenShell Docker bridge health check failed.",
-      );
-      expect(failure?.message).toContain("OpenShell Docker network: openshell-docker");
-      expect(failure?.message).toContain("Source subnet: 172.29.0.0/16");
-      expect(failure?.message).toContain("Gateway IP address: 172.29.0.1");
-      expect(failure?.message).toContain("TCP port: 8081");
-      expect(failure?.message).toContain(
-        "sudo ufw allow from 172.29.0.0/16 to 172.29.0.1 port 8081 proto tcp",
-      );
-      expect(failure?.message).not.toContain("test-only-secret");
-      expect(privateBridge.stopTransaction).toHaveBeenCalledWith(TRANSACTION_ID);
-      expect(store.list()).toEqual([]);
-      expect(dockerCommandPrefixes(fixture)).toContainEqual(["rm", "--force"]);
-      expect(dockerCommandPrefixes(fixture)).toContainEqual(["network", "rm"]);
-    },
-  );
+    expect(failure?.message).toContain(
+      "host-loopback health check passed, but the OpenShell Docker bridge health check failed",
+    );
+    expect(failure?.message).toContain("sudo ufw");
+    expect(failure?.message).toContain("172.29.0.0/16");
+    expect(failure?.message).toContain("172.29.0.1");
+    expect(failure?.message).not.toContain("test-only-secret");
+    expect(store.list()).toEqual([]);
+    expect(dockerCommandPrefixes(fixture)).toContainEqual(["rm", "--force"]);
+    expect(dockerCommandPrefixes(fixture)).toContainEqual(["network", "rm"]);
+  });
 
   it("does not report UFW remediation for a Docker probe command failure (#8712)", () => {
     const fixture = dockerFixture();
@@ -546,24 +377,22 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     expect(failure?.message).not.toContain("0.0.0.0/0");
   });
 
-  it("probes the private loopback bridge from the host process when the lifecycle selects it", () => {
+  it("probes the private bridge endpoint through the default host curl boundary", () => {
+    const probe = vi.mocked(httpProbe.runCurlProbe);
     const fixture = dockerFixture();
+    const store = journalStore();
     const lifecycle = createLifecycle({
-      ...options(fixture),
-      loopbackProbe: "host-process",
+      ...options(fixture, store),
       readinessTimeoutSeconds: 86_400,
     });
 
     const receipt = lifecycle.start(receiptWriter());
     expect(receipt.runtime).toMatchObject({ kind: "container", runtimeId: RUNTIME_ID });
-    const probeScript = expect.stringMatching(
-      /docker-llama-cpp-private-bridge-probe-process\.js$/u,
+    expect(probe).toHaveBeenCalledExactlyOnceWith(
+      ["--fail", "--silent", "--show-error", "--max-time", "86400", "http://127.0.0.1:8081/health"],
+      { timeoutMs: 86_415_000, pinnedAddresses: [] },
     );
-    expect(subprocess.spawnSync).toHaveBeenCalledExactlyOnceWith(
-      process.execPath,
-      [probeScript, "http://127.0.0.1:8081/health", "86400"],
-      { timeout: 86_415_000 },
-    );
+    expect(fixture.capture.mock.calls.map(([argv]) => argv[0])).not.toContain("curl");
     expect(hostNetworkRuns(fixture)).toEqual([]);
     expect(fixture.capture.mock.calls.map(([argv]) => argv)).toContainEqual(
       expect.arrayContaining([
@@ -572,31 +401,27 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
         "http://host.openshell.internal:8081/health",
       ]),
     );
-  });
-
-  it("fails onboarding when the host-process private loopback bridge probe is refused", () => {
-    const { fixture, lifecycle, store } = hostProbeLifecycle(() => ({
-      status: 7,
-      stdout: "",
-      stderr: "connection refused",
-    }));
-
-    let failure: Error | undefined;
-    try {
-      lifecycle.start(receiptWriter());
-    } catch (error) {
-      failure = error instanceof Error ? error : new Error(String(error));
-    }
-
-    expect(failure?.message).toBe(
-      "Docker llama.cpp private loopback bridge probe failed (exit 7).",
+    probe.mockReturnValue({
+      ok: false,
+      httpStatus: 0,
+      curlStatus: 28,
+      body: "",
+      stderr: "curl timed out",
+      message: "curl timed out",
+    });
+    expect(() => lifecycle.resume(receipt)).toThrow(
+      "Docker llama.cpp private loopback bridge probe failed (exit 28).",
     );
-    expect(failure?.message).not.toContain("test-only-secret");
-    expect(store.list()).toEqual([]);
-    expect(dockerCommandPrefixes(fixture)).toContainEqual(["rm", "--force"]);
+    expect(store.load(TRANSACTION_ID)?.phase).toBe("finalized");
+    expect(dockerCommandPrefixes(fixture)).not.toContainEqual(["rm", "--force"]);
   });
 
   it.each([
+    [
+      "is refused",
+      () => ({ status: 7, stdout: "", stderr: "connection refused test-only-secret" }),
+      "Docker llama.cpp private loopback bridge probe failed (exit 7).",
+    ],
     [
       "reports a spawn error",
       () => ({ status: 1, stdout: "", stderr: "", error: new Error("spawnSync ETIMEDOUT") }),
@@ -614,7 +439,7 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     (_kind, probe, message) => {
       const { fixture, lifecycle, store } = hostProbeLifecycle(probe);
 
-      expect(() => lifecycle.start(receiptWriter())).toThrow(message);
+      expect(() => lifecycle.start(receiptWriter())).toThrow(new Error(message));
       expect(store.list()).toEqual([]);
       expect(store.hasExecution()).toBe(false);
       expect(dockerCommandPrefixes(fixture)).toContainEqual(["rm", "--force"]);
@@ -623,7 +448,7 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
   );
 
   it.each(["resume", "preserveForRebuild"] as const)(
-    "re-proves the private loopback bridge from the host process during %s",
+    "re-proves the private bridge endpoint from the host process during %s",
     (entry) => {
       const { fixture, hostLoopbackProbe, lifecycle } = hostProbeLifecycle();
       const receipt = lifecycle.start(receiptWriter());
@@ -672,7 +497,7 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     },
   );
 
-  it("re-proves the private loopback bridge from the host process when replaying a prepared receipt", () => {
+  it("re-proves the private bridge endpoint from the host process when replaying a prepared receipt", () => {
     const { fixture, hostLoopbackProbe, lifecycle, store } = hostProbeLifecycle();
     const unavailableWriter = receiptWriter(() => {
       throw new Error("writer unavailable");
@@ -694,45 +519,39 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     expect(hostNetworkRuns(fixture)).toEqual([]);
   });
 
-  it("resumes an already-running receipt without creating or starting resources (#8144)", () => {
-    const fixture = dockerFixture();
-    const lifecycle = controller(fixture);
-    const receipt = lifecycle.start(receiptWriter());
-    fixture.capture.mockClear();
-
-    expect(lifecycle.resume(receipt)).toEqual(receipt);
-    const calls = fixture.capture.mock.calls.map((call) => call[0]);
-    expect(calls).toContainEqual(expect.arrayContaining(["container", "inspect", RUNTIME_ID]));
-    expect(calls).toContainEqual(expect.arrayContaining(["run", "--rm"]));
-    expect(calls).not.toContainEqual(expect.arrayContaining(["start"]));
-    expect(calls).not.toContainEqual(expect.arrayContaining(["create"]));
-    expect(calls).not.toContainEqual(expect.arrayContaining(["network", "create"]));
-  });
-
-  it("resumes only the receipt-bound stopped runtime and rechecks readiness (#8144)", () => {
-    const fixture = dockerFixture();
-    const lifecycle = controller(fixture);
-    const receipt = lifecycle.start(receiptWriter());
-    lifecycle.runtime.stopManaged(receipt);
-    fixture.capture.mockClear();
-
-    expect(lifecycle.resume(receipt)).toEqual(receipt);
-    const calls = fixture.capture.mock.calls.map((call) => call[0]);
-    expect(calls.filter((args) => args[0] === "start")).toEqual([["start", RUNTIME_ID]]);
-    expect(calls).toContainEqual(expect.arrayContaining(["run", "--rm"]));
-    expect(calls).not.toContainEqual(expect.arrayContaining(["create"]));
-    expect(calls).not.toContainEqual(expect.arrayContaining(["network", "create"]));
-  });
+  it.each([true, false] as const)(
+    "resumes an owned native runtime with running=%s (#12285)",
+    (running) => {
+      const fixture = dockerFixture();
+      const input = options(fixture);
+      const receipt = createLifecycle(input, {}).start(receiptWriter());
+      fixture.setContainerState(running, running ? "running" : "exited");
+      fixture.capture.mockClear();
+      const updated = createLifecycle({ ...input, bindings: { ...input.bindings } }, {});
+      expect(updated.resume(receipt)).toEqual(receipt);
+      const calls = fixture.capture.mock.calls.map((call) => call[0]);
+      expect(calls).toContainEqual(expect.arrayContaining(["container", "inspect", RUNTIME_ID]));
+      expect(calls.filter((args) => args[0] === "start")).toEqual(
+        running ? [] : [["start", RUNTIME_ID]],
+      );
+      expect(calls).toContainEqual(expect.arrayContaining(["run", "--rm"]));
+      expect(calls).not.toContainEqual(expect.arrayContaining(["create"]));
+      expect(calls).not.toContainEqual(expect.arrayContaining(["network", "create"]));
+      expect(updated.runtime.inspectManaged(receipt).running).toBe(true);
+      updated.runtime.preserveForRebuild(receipt);
+      updated.runtime.stopManaged(receipt);
+      updated.runtime.prepareDestroy(receipt);
+      expect(updated.runtime.destroy(receipt).status).toBe("removed");
+    },
+  );
 
   it("preserves receipt-bound resources after bridge refusal during resume (#8712)", () => {
     const fixture = dockerFixture();
     const store = journalStore();
-    const privateBridge = privateBridgeFixture();
-    const lifecycle = createLifecycle(options(fixture, store), {}, privateBridge);
+    const lifecycle = createLifecycle(options(fixture, store), {});
     const receipt = lifecycle.start(receiptWriter());
     lifecycle.runtime.stopManaged(receipt);
     fixture.capture.mockClear();
-    privateBridge.stopTransaction.mockClear();
     fixture.failSandboxBridgeProbe({ status: 7, stderr: "curl: (7) failed to connect" });
 
     let failure: Error | undefined;
@@ -743,12 +562,8 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     }
 
     expect(failure?.message).toContain(
-      "Managed llama.cpp host-loopback health check passed, but the OpenShell Docker bridge health check failed.",
+      "host-loopback health check passed, but the OpenShell Docker bridge health check failed",
     );
-    expect(failure?.message).toContain(
-      "sudo ufw allow from 172.29.0.0/16 to 172.29.0.1 port 8081 proto tcp",
-    );
-    expect(privateBridge.stopTransaction).not.toHaveBeenCalled();
     expect(store.load(TRANSACTION_ID)).toMatchObject({
       phase: "finalized",
       runtimeId: RUNTIME_ID,
@@ -815,9 +630,9 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     },
   );
   it.each([
-    ["configured", "8081", undefined, "127.0.0.1", 0, /must not configure/u],
-    ["runtime", "", "8081", "127.0.0.1", 1, /must not publish/u],
-    ["runtime-wide", "", "8081", "0.0.0.0", 1, /must not publish/u],
+    ["configured", "8081", undefined, "127.0.0.1", 0, /must not configure published ports/u],
+    ["injected loopback", "", "8081", "127.0.0.1", 1, /must not publish ports/u],
+    ["injected wildcard", "", "8081", "0.0.0.0", 1, /must not publish ports/u],
   ] as const)(
     "rolls back exact ownership for unexpected %s Docker publication (#8544)",
     (_kind, configured, published, ip, count, expectedError) => {
@@ -1036,18 +851,23 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     expect(dockerCommandPrefixes(fixture)).toContainEqual(["rm", "--force"]);
   });
 
-  it("preserves and replays when receipt preparation commits then throws (#8414)", () => {
+  it("replays a prepared native receipt (#12285)", () => {
     const fixture = dockerFixture();
     const store = journalStore();
     const writer = receiptWriter();
-    const lifecycle = controller(fixture, store);
+    const base = options(fixture, store);
+    const lifecycle = createLifecycle(base);
     store.failNextPrepareReceiptAfterCommit();
 
     expect(() => lifecycle.start(writer)).toThrow("prepare receipt outcome unknown");
     expect(store.load(TRANSACTION_ID)?.phase).toBe("receipt-prepared");
     expect(writer.writeExact).not.toHaveBeenCalled();
     expect(dockerCommandPrefixes(fixture)).not.toContainEqual(["rm", "--force"]);
-    expect(lifecycle.recoverUnfinished(writer)).toEqual({
+    const updated = createLifecycle({
+      ...base,
+      bindings: { ...base.bindings },
+    });
+    expect(updated.recoverUnfinished(writer)).toEqual({
       recovered: [TRANSACTION_ID],
       failures: [],
     });
@@ -1161,7 +981,7 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     });
     const lifecycle = controller(fixture, store);
     expect(() => lifecycle.start(unavailableWriter)).toThrow("writer unavailable");
-    replaceModelWithSameSizeContent();
+    replaceModelWithSameSizeContent(modelPath);
     const replayWriter = receiptWriter();
 
     const recovery = lifecycle.recoverUnfinished(replayWriter);
@@ -1435,7 +1255,7 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     const modelFixture = dockerFixture();
     const modelLifecycle = controller(modelFixture);
     const modelReceipt = modelLifecycle.start(receiptWriter());
-    replaceModelWithSameSizeContent();
+    replaceModelWithSameSizeContent(modelPath);
     expect(() => modelLifecycle.runtime.inspectManaged(modelReceipt)).toThrow(
       "filesystem identity",
     );
@@ -1456,19 +1276,13 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     const fixture = dockerFixture();
     const store = journalStore();
     const persistedAuthority = authorityStore();
-    const privateBridge = privateBridgeFixture();
-    const initial = createLifecycle(
-      options(fixture, store, bindings(), persistedAuthority),
-      {},
-      privateBridge,
-    );
+    const initial = createLifecycle(options(fixture, store, bindings(), persistedAuthority), {});
     const receipt = initial.start(receiptWriter());
     expect(initial.runtime.inspectManaged(receipt).running).toBe(true);
-    replaceModelWithSameSizeContent();
+    replaceModelWithSameSizeContent(modelPath);
     const currentIdentityInspector = createLifecycle(
       options(fixture, store, bindings(), persistedAuthority),
       {},
-      privateBridge,
     );
     expect(() => currentIdentityInspector.runtime.inspectManaged(receipt)).toThrow(
       "durable create journal",
@@ -1495,4 +1309,70 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     );
     expect(unavailableStore.list()).toEqual([]);
   });
+});
+
+it("keeps a native receipt bound to its image across lifecycle controllers (#12285)", () => {
+  const formerImage = `ghcr.io/nvidia/nemoclaw/llama-cpp-server@sha256:${"c".repeat(64)}`;
+  const fixture = dockerFixture("", undefined, "127.0.0.1", 0, formerImage);
+  const bridge = privateBridgeFixture();
+  const store = journalStore();
+  const former = options(fixture, store, { ...bindings(), imageReference: formerImage });
+  const receipt = createLifecycle(former, {}, bridge).start(receiptWriter());
+  fixture.capture.mockClear();
+  const updated = createLifecycle(
+    {
+      ...former,
+      bindings: { ...former.bindings },
+    },
+    { hostLoopbackProbe: () => ({ status: 0, stdout: "", stderr: "" }) },
+    bridge,
+  );
+  expect(updated.runtime.inspectManaged(receipt).running).toBe(true);
+  expect(updated.resume(receipt)).toEqual(receipt);
+  expect(updated.runtime.destroy(receipt).status).toBe("removed");
+  expect(dockerCommandPrefixes(fixture)).not.toContainEqual(["create", "--pull=never"]);
+});
+
+it("recovers an unfinished native journal without creating a new runtime (#12285)", () => {
+  const formerImage = `ghcr.io/nvidia/nemoclaw/llama-cpp-server@sha256:${"c".repeat(64)}`;
+  const fixture = dockerFixture("", undefined, "127.0.0.1", 0, formerImage);
+  const store = journalStore();
+  const former = options(fixture, store, { ...bindings(), imageReference: formerImage });
+  expect(() =>
+    createLifecycle(former, {}).start(
+      receiptWriter(() => {
+        throw new Error("writer unavailable");
+      }),
+    ),
+  ).toThrow("writer unavailable");
+  fixture.capture.mockClear();
+  const updated = createLifecycle(
+    {
+      ...former,
+      bindings: { ...former.bindings },
+    },
+    { hostLoopbackProbe: () => ({ status: 0, stdout: "", stderr: "" }) },
+  );
+  expect(updated.recoverUnfinished(receiptWriter())).toEqual({
+    recovered: [TRANSACTION_ID],
+    failures: [],
+  });
+  expect(store.load(TRANSACTION_ID)?.phase).toBe("finalized");
+  expect(dockerCommandPrefixes(fixture)).not.toContainEqual(["create", "--pull=never"]);
+});
+
+it("accepts a newly pinned native image (#12285)", () => {
+  const nextImage = `ghcr.io/nvidia/nemoclaw/llama-cpp-server@sha256:${"a".repeat(64)}`;
+  const fixture = dockerFixture("", undefined, "127.0.0.1", 0, nextImage);
+  const base = options(fixture);
+  const lifecycle = createLifecycle(
+    {
+      ...base,
+      bindings: { ...base.bindings, imageReference: nextImage },
+    },
+    { hostLoopbackProbe: () => ({ status: 0, stdout: "", stderr: "" }) },
+  );
+  const receipt = lifecycle.start(receiptWriter());
+  expect(receipt.runtime).toMatchObject({ imageRef: nextImage });
+  expect(lifecycle.runtime.destroy(receipt).status).toBe("removed");
 });

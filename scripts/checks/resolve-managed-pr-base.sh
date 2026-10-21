@@ -3,6 +3,13 @@
 # SPDX-License-Identifier: Apache-2.0
 
 set -euo pipefail
+case "${PLATFORM:-}" in
+  linux/amd64 | linux/arm64) ;;
+  *)
+    echo "ERROR: PR base resolution requires a supported Linux platform (linux/amd64 or linux/arm64)." >&2
+    exit 1
+    ;;
+esac
 write_dcode_resolution() {
   [ "$AGENT" = "langchain-deepagents-code" ] || return 0
   local identity_ref="$1" inspect_ref="$2" expected_revision="$3"
@@ -56,7 +63,7 @@ build_local_base() {
   local local_base_oci_archive="$RUNNER_TEMP/pr-base.oci.tar"
   local local_base_oci="$RUNNER_TEMP/pr-base.oci"
   docker buildx build \
-    --platform linux/amd64 \
+    --platform "$PLATFORM" \
     --provenance=false \
     --sbom=false \
     --file "$BASE_DOCKERFILE" \
@@ -111,8 +118,8 @@ read_base_inputs() {
   parsed_inputs="$(
     node --experimental-strip-types --input-type=module -e '
       import { pathToFileURL } from "node:url";
-      const { directDockerfileCopySources } = await import(pathToFileURL(process.argv[1]).href);
-      for (const { source } of directDockerfileCopySources(process.argv[2])) {
+      const { directDockerfileContextSources } = await import(pathToFileURL(process.argv[1]).href);
+      for (const { source } of directDockerfileContextSources(process.argv[2])) {
         console.log(source);
       }
     ' "$parser" "$dockerfile"
@@ -179,7 +186,7 @@ alias_raw="$RUNNER_TEMP/pr-base-alias.raw"
 exact_raw="$RUNNER_TEMP/pr-base-exact.raw"
 docker buildx imagetools inspect "$BASE_ALIAS" --raw >"$alias_raw"
 if ! digest="$(
-  jq -er '
+  jq -er --arg architecture "${PLATFORM#linux/}" '
     if (
       .mediaType == "application/vnd.oci.image.index.v1+json" or
       .mediaType == "application/vnd.docker.distribution.manifest.list.v2+json"
@@ -188,20 +195,20 @@ if ! digest="$(
         .manifests[]
         | select(
             .platform.os == "linux" and
-            .platform.architecture == "amd64"
+            .platform.architecture == $architecture
           )
       ]
-      | if length == 1 then .[0].digest else error("not one linux/amd64 image") end
+      | if length == 1 then .[0].digest else error("not one requested platform image") end
     else
       error("base alias is not a platform index")
     end
   ' "$alias_raw"
 )"; then
-  echo "ERROR: PR base alias does not contain exactly one linux/amd64 image." >&2
+  echo "ERROR: PR base alias does not contain exactly one ${PLATFORM} image." >&2
   exit 1
 fi
 if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-  echo "ERROR: PR base alias returned an invalid linux/amd64 digest." >&2
+  echo "ERROR: PR base alias returned an invalid ${PLATFORM} digest." >&2
   exit 1
 fi
 reference="${BASE_REPOSITORY}@${digest}"

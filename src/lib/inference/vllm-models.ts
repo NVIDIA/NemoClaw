@@ -28,6 +28,7 @@
  */
 
 import net from "node:net";
+import { buildReviewedModelCodeCommand } from "./serving/reviewed-model-code.js";
 
 import { isHostLocalInferenceServingRecipe } from "./serving/adapter-registry.js";
 import { managedInferenceDigest } from "./serving/catalog-integrity.js";
@@ -44,6 +45,7 @@ import type {
   ServingArgument,
   ServingModelCapabilities,
   ServingStationPairOrchestration,
+  ReviewedModelCode,
 } from "./serving/types.js";
 
 export type VllmPlatform = "spark" | "station" | "n1x" | "linux";
@@ -151,6 +153,7 @@ export interface VllmRuntimeVariant extends VllmRuntimeOverride {
   managedBearerAuth?: true;
   /** Catalog images do not receive an implicit remote-code flag. */
   trustRemoteCode: false;
+  reviewedCode?: ReviewedModelCode;
   /** Preset selection policy used for automatic hardware defaults. */
   selection: "automatic" | "explicit-only";
   /** Whether the interactive model picker displays this variant. */
@@ -206,8 +209,9 @@ export interface VllmModelDef {
   requireRuntimeVariant?: true;
   /** Whether startup must install vLLM's fastsafetensors extra. Defaults to true. */
   installFastSafetensors?: boolean;
-  /** Disable remote model code for a runtime image that contains native model support. */
+  /** Disable implicit remote-code trust; reviewedCode uses a separate verified launcher. */
   trustRemoteCode?: false;
+  reviewedCode?: ReviewedModelCode;
   /** Require the host-global managed bearer credential and a loopback-only listener. */
   managedBearerAuth?: true;
   /** Reject environment-provided model and serving-argument overrides. */
@@ -312,6 +316,7 @@ function catalogModelVariant(
       ...(directInstall.fixedArguments ? { fixedServeCommand: true as const } : {}),
       ...(directInstall.authentication === "bearer" ? { managedBearerAuth: true as const } : {}),
       trustRemoteCode: false,
+      reviewedCode: recipe.spec.model.reviewedCode,
       selection: preset.spec.selection === "automatic" ? "automatic" : "explicit-only",
       interactive: preset.spec.plan.interactive !== false,
       catalogPresetId: preset.metadata.id,
@@ -422,6 +427,7 @@ export function vllmModelsFromCatalog(
         fixedServeCommand: base.variant.fixedServeCommand,
         managedBearerAuth: base.variant.managedBearerAuth,
         trustRemoteCode: base.variant.trustRemoteCode,
+        reviewedCode: base.variant.reviewedCode,
         capabilities: base.capabilities,
         probePolicyRef: base.probePolicyRef,
       };
@@ -598,7 +604,7 @@ export function resolveVllmModelAlias(value: string): VllmModelDef | null {
 /**
  * Look up the requested express-vLLM model from `NEMOCLAW_VLLM_MODEL`.
  * Returns `null` when the env var is empty so the caller can fall back to
- * the per-platform profile default (Station prefers DeepSeek V4 Flash, Spark
+ * the per-platform profile default (Station prefers Nemotron 3.5 Super VL, Spark
  * the Qwen3.6-35B-A3B NVFP4 checkpoint, and the generic Linux profile prefers
  * Nemotron-Nano-4B for VRAM headroom).
  *
@@ -1010,6 +1016,9 @@ export function buildVllmServeCommand(
   const extraArgs = model.fixedServeCommand ? [] : parseVllmExtraServeArgs(env);
   const setup =
     model.installFastSafetensors === false ? "" : "pip install vllm[fastsafetensors] && ";
+  if (model.reviewedCode) {
+    return `${envPrefix}${buildReviewedModelCodeCommand(model, args, shellQuote)}`;
+  }
   return `${envPrefix}${setup}vllm serve ${[model.id, ...args, ...extraArgs]
     .map(shellQuote)
     .join(" ")}`;

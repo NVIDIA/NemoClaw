@@ -7,6 +7,7 @@ import path from "node:path";
 import { isErrnoException } from "../core/errno";
 import { detectNvidiaPlatform, type NvidiaPlatform } from "../inference/nim";
 import {
+  defaultVllmModelForPlatform,
   selectVllmModelFromEnv,
   STATION_PAIR_OPTIONAL_ORCHESTRATION,
   type VllmModelDef,
@@ -415,10 +416,10 @@ function readStationExpressInstallerResumeGeneration(stateFile: string): string 
   const generation = lines[2]?.startsWith("generation=")
     ? lines[2].slice("generation=".length)
     : "";
-  const canonicalModel = canonicalStationModelValue(modelValue);
+  const validModel = modelValue === "auto" || canonicalStationModelValue(modelValue) !== null;
   if (
     !STATION_EXPRESS_RECEIPT_REVISION_PATTERN.test(revision) ||
-    !canonicalModel ||
+    !validModel ||
     !isValidStationExpressReceiptGeneration(generation)
   ) {
     throw new Error("DGX Station Express installer resume state is malformed.");
@@ -994,8 +995,19 @@ export function getStationExpressResumeIntent(
     return { ok: false, message: `${STATION_EXPRESS_ENV} must be 1 when set.` };
   }
 
-  const model = stationModel(env.NEMOCLAW_VLLM_MODEL);
-  if (!model || !sandboxName || !validSandboxName(sandboxName)) {
+  let model: VllmModelDef | null = null;
+  try {
+    // Capture the same catalog default as the Station runtime before persisting resume intent.
+    model = selectVllmModelFromEnv(env) ?? defaultVllmModelForPlatform("station", "arm64");
+  } catch {
+    // Invalid explicit selectors and catalog failures must still reject the intent.
+  }
+  if (
+    !model ||
+    !model.platforms.includes("station") ||
+    !sandboxName ||
+    !validSandboxName(sandboxName)
+  ) {
     return {
       ok: false,
       message: "DGX Station Express requires a registered Station vLLM model and sandbox name.",

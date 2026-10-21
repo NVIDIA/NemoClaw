@@ -11,7 +11,7 @@ The backend selects only the Station case in `test/e2e/live/dgx-express.test.ts`
 
 Configure the GitHub repository variable `DGX_STATION_DISPATCH_URL` with the receiver's HTTPS origin. Station uses its own queue, OIDC audience, receipt, and artifact namespace. The controller does not use `JETSON_DISPATCH_URL`.
 
-The receiver uses the configured runner account’s normal HOME so its systemd user manager can discover the gateway service. It requires this account’s NemoClaw installation state to be clean between runs. The receiver needs a dedicated Station with prepared host prerequisites, a cached Nemotron 3 Ultra 550B model, and the vLLM image selected by the candidate recipe. Each job uses `/tmp/ncs/<job-id>` for temporary files so `tsx` IPC socket paths fit the Linux pathname limit.
+The receiver uses the configured runner account’s normal HOME so its systemd user manager can discover the gateway service. It requires this account’s NemoClaw installation state to be clean between runs. The receiver needs a dedicated Station with prepared host prerequisites, a cached Nemotron 3.5 Super VL NVFP4 model, and the vLLM image selected by the candidate recipe. Each job uses `/tmp/ncs/<job-id>` for temporary files so `tsx` IPC socket paths fit the Linux pathname limit.
 
 ## Select Express for CI Qualification
 
@@ -23,7 +23,7 @@ NEMOCLAW_REPO_ROOT="$(pwd)" bash install.sh --express-install --yes-i-accept-thi
 
 `--express-install` selects the existing Station Express recipe without its selection prompt. Station qualification and explicit software acceptance remain required. It rejects conflicting provider, profile, deferred-onboarding, and interactive Station options. Ordinary non-interactive installation retains its existing selection behavior.
 
-The smoke checks the ready sandbox, running managed vLLM with the Ultra serving alias, the independently selected managed-image revision, and an assistant response through `inference.local`. Cleanup attempts to retire installation state left after success or failure. Cleanup uses a fresh signal through the E2E cleanup registry.
+The smoke checks the ready sandbox, running managed vLLM with the Super VL serving alias, the independently selected managed-image revision, and an assistant response through `inference.local`. Cleanup attempts to retire installation state left after success or failure. Cleanup uses a fresh signal through the E2E cleanup registry.
 
 Timing evidence records completed smoke phases. Total duration spans installer start through smoke cleanup. Readiness and assertion durations can be absent after failure. vLLM startup remains inside installation. The cache check compares paths, file sizes, and symlink targets. The smoke also checks that the vLLM image remains after uninstall.
 

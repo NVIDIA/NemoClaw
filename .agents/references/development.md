@@ -27,6 +27,7 @@ It retains the repository architecture, conventions, and validation contracts.
 Package-specific guides:
 
 - Messaging architecture and channel migration guidance: [`src/lib/messaging/AGENTS.md`](../../src/lib/messaging/AGENTS.md)
+- Provider profile ownership, import points, and retained catalog dependencies: [provider profile inventory](provider-profile-inventory.md)
 
 ## Quick Reference
 

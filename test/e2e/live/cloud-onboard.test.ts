@@ -4,6 +4,9 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import type { SandboxEntry } from "../../../src/lib/state/registry/types.ts";
+import { recordedNativeProviderAttachment } from "../../../src/lib/inference/native-provider/recorded-selection.ts";
+import { readRegistrySandboxEntry } from "../fixtures/phases/state-validation.ts";
 import { execTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText, shellQuote } from "../fixtures/clients/command.ts";
@@ -19,7 +22,10 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import { assertStockManagedImageReceipt } from "../fixtures/managed-image-receipt.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
-import { captureSandboxFailureDiagnostics } from "../fixtures/sandbox-failure-diagnostics.ts";
+import {
+  captureLifecycleInstallFailureDiagnostics,
+  captureSandboxFailureDiagnostics,
+} from "../fixtures/sandbox-failure-diagnostics.ts";
 import { createPublicInstallWorkspace } from "../fixtures/public-install-workspace.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
@@ -177,7 +183,7 @@ test(
         "explicit corporate CA source is baked and merged with OpenShell trust inside the sandbox",
         "validated compatible-endpoint reasoning reaches the authenticated runtime handoff and OpenClaw model metadata",
         "installed CLI creates a non-empty diagnostics archive for the registered sandbox",
-        "cloud split checks cover inference.local, security leak checks, and Landlock/read-only behavior",
+        "cloud split checks cover the selected inference route, security leak checks, and Landlock/read-only behavior",
         "cleanup verifies sandbox removal",
       ],
     });
@@ -232,6 +238,13 @@ test(
         timeoutMs: execTimeout(25 * 60_000),
       },
     );
+    await captureLifecycleInstallFailureDiagnostics(host, runtimeProvider, install, {
+      sandboxName: SANDBOX_NAME,
+      gatewayName: "nemoclaw",
+      artifactPrefix: "cloud-install-failure",
+      env: testEnv(),
+      redactionValues,
+    });
     expect(install.exitCode, resultText(install)).toBe(0);
     assertStockManagedImageReceipt({
       environment: testEnv(),
@@ -264,7 +277,12 @@ test(
       .split(/\r?\n/)
       .map((line) => line.trim())
       .filter((line) => /^[a-zA-Z][a-zA-Z0-9_-]*$/.test(line));
-    expect(providerNames).toContain(hosted.providerName);
+    const registered = readRegistrySandboxEntry(SANDBOX_NAME, {
+      registryPath: path.join(testHome, ".nemoclaw", "sandboxes.json"),
+    }) as unknown as SandboxEntry;
+    const nativeRoute = recordedNativeProviderAttachment(registered);
+    const expectedGatewayProvider = nativeRoute?.providerName ?? hosted.providerName;
+    expect(providerNames).toContain(expectedGatewayProvider);
     expect(providerNames).not.toContain("OPENSHELL_GATEWAY");
     expect(providerNames).not.toContain("NODE_OPTIONS");
 
@@ -350,6 +368,8 @@ test(
         env: testEnv({
           ...hosted.env,
           CLOUD_EXPERIMENTAL_MODEL: hosted.model,
+          NEMOCLAW_E2E_CLOUD_INFERENCE_URL: nativeRoute?.endpointUrl,
+          NEMOCLAW_E2E_CLOUD_NATIVE_INFERENCE: nativeRoute ? "1" : "0",
           COMPATIBLE_API_KEY: hosted.apiKey,
           NEMOCLAW_E2E_CLOUD_API_KEY_ENV: "COMPATIBLE_API_KEY",
           REPO: REPO_ROOT,
@@ -363,6 +383,7 @@ test(
         artifactPrefix: `cloud-check-${scriptName.replace(/\.sh$/, "")}-failure`,
         redactionValues,
         captureGatewayLog: true,
+        env: testEnv(),
       });
       expect(result.exitCode, `${scriptName}: ${resultText(result)}`).toBe(0);
     }
@@ -374,7 +395,7 @@ test(
       status: "passed",
       credentialMigration: {
         legacyFileRemoved: !fs.existsSync(legacyFile),
-        migratedProviderRegistered: providerNames.includes(hosted.providerName),
+        migratedProviderRegistered: providerNames.includes(expectedGatewayProvider),
         tamperedKeysExcluded:
           !providerNames.includes("OPENSHELL_GATEWAY") && !providerNames.includes("NODE_OPTIONS"),
       },

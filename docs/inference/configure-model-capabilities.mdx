@@ -63,15 +63,18 @@ They omit the field or check for another provider or API family and never includ
 ## Configure Image Input
 
 Set `NEMOCLAW_INFERENCE_INPUTS=text,image` only when the model accepts image input through the selected provider.
-The default is `text`.
+An explicit valid value takes precedence over automatic selection.
 
 ```bash
 export NEMOCLAW_INFERENCE_INPUTS=text,image
 nemoclaw onboard
 ```
 
-During interactive onboarding, NemoClaw prompts for **Text only** or **Text + Image** when the discovered model name appears multimodal and `NEMOCLAW_INFERENCE_INPUTS` is not already valid.
-Non-interactive onboarding uses the environment value or the default `text` setting.
+For hosted NVIDIA Endpoints model `nvidia/nemotron-3.5-super-vl-120b-a12b`, both interactive and non-interactive onboarding select `text,image` automatically unless you supply an explicit valid override.
+For other models, interactive onboarding prompts for **Text only** or **Text + Image** when the discovered model name appears multimodal and `NEMOCLAW_INFERENCE_INPUTS` is not already valid.
+When `NEMOCLAW_INFERENCE_INPUTS` is unset, non-interactive onboarding also enables `text,image` for a registered managed-vLLM model whose catalog declares multimodal input.
+This includes NVIDIA Nemotron 3.5 Super VL on one DGX Station.
+Other models default to `text` during non-interactive onboarding; a model name that merely looks multimodal does not enable image input.
 
 ## Apply Capability Changes
 
