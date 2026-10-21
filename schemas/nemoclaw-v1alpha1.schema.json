@@ -3497,12 +3497,7 @@
         "reasoningParser": {
           "default": "",
           "description": "Native vLLM reasoning parser used when no recipe is declared. Empty omits the parser flag.",
-          "enum": [
-            "",
-            "qwen3",
-            "deepseek_r1",
-            "nemotron_v3"
-          ],
+          "pattern": "^[a-z0-9_]*$",
           "type": "string"
         },
         "speculativeTokens": {
@@ -3532,14 +3527,7 @@
         "toolParser": {
           "default": "",
           "description": "Native vLLM tool-call parser used when no recipe is declared. Empty omits the parser flag.",
-          "enum": [
-            "",
-            "hermes",
-            "qwen3_coder",
-            "qwen3_xml",
-            "llama3_json",
-            "mistral"
-          ],
+          "pattern": "^[a-z0-9_]*$",
           "type": "string"
         }
       },

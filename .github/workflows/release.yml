@@ -43,8 +43,9 @@ jobs:
           printf '%s\n' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           source=
           for commit in $(git rev-list --first-parent --max-count=200 "$GITHUB_SHA"); do
-            if docker buildx imagetools inspect "$CI_PACKAGE:openclaw-$commit-arm64" > /dev/null 2>&1 &&
-              docker buildx imagetools inspect "$CI_PACKAGE:openclaw-$commit-amd64" > /dev/null 2>&1; then
+            # The checked images push the proxy last, so its tags mark a complete push.
+            if docker buildx imagetools inspect "$CI_PACKAGE:ollama-proxy-$commit-arm64" > /dev/null 2>&1 &&
+              docker buildx imagetools inspect "$CI_PACKAGE:ollama-proxy-$commit-amd64" > /dev/null 2>&1; then
               source=$commit
               break
             fi

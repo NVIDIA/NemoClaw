@@ -65,6 +65,7 @@ NemoClaw keeps these by decision, as its own promises:
 - The vLLM supervisor's route allowlist, which is the reverse proxy that vLLM's [security guide](https://github.com/vllm-project/vllm/blob/v0.32.0/docs/usage/security.md) asks deployers to provide ([#13471](https://github.com/NVIDIA/NemoClaw/issues/13471)).
 - The OpenClaw image pin: OpenClaw's npm package has no lockfile, so the agent image copies OpenClaw's published image by digest, and Fabric's adapter refuses versions it doesn't support ([#13476](https://github.com/NVIDIA/NemoClaw/issues/13476)). See [updating the pin](../build.md#update-the-openclaw-pin).
 - No model-specific recipe images: preparation tools and runtime patches belong to the recipe's authors and to vLLM, and NemoClaw keeps only the generic [recipe contract](../recipes.md) ([#13472](https://github.com/NVIDIA/NemoClaw/issues/13472)).
+- Agent image assembly, for now: NemoClaw builds and publishes the images that hold Fabric and each harness's native agent, so it installs and pins those agents in the [agent Dockerfile](../../image/fabric/Dockerfile). Image building moves to the Fabric repository later; Fabric owns each adapter's behavior and its tests.
 
 ## Ownership and Recovery
 
