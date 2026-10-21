@@ -63,7 +63,11 @@ export type { NativeNvidiaProviderAttachment } from "./native-nvidia";
 export const INFERENCE_ROUTE_URL = "https://inference.local/v1";
 export const NOUS_RECOMMENDED_MODELS_URL =
   "https://portal.nousresearch.com/api/nous/recommended-models";
-export const DEFAULT_CLOUD_MODEL = "nvidia/nemotron-3-super-120b-a12b";
+export const DEFAULT_CLOUD_MODEL = "nvidia/nemotron-3.5-super-vl-120b-a12b";
+export const DEFAULT_OPENROUTER_MODEL = "nvidia/nemotron-3.5-super-vl";
+export const OPENROUTER_FEATURED_MODEL_ID_ALIASES: ReadonlyMap<string, string> = new Map([
+  ["nvidia/nemotron-3.5-super-vl-120b-a12b", DEFAULT_OPENROUTER_MODEL],
+]);
 // Fallback context window used when no per-model value is known. Cloud providers
 // have no per-model context metadata today (CLOUD_MODEL_OPTIONS carries only
 // id/label), so they fall back to this; matches the onboarding build default in
@@ -112,6 +116,7 @@ export const CLOUD_MODEL_OPTIONS = [
 export const OPENROUTER_CLOUD_MODEL_OPTIONS = [
   { id: "nvidia/nemotron-3-ultra-550b-a55b", label: "Nemotron 3 Ultra 550B" },
   { id: "nvidia/nemotron-3-super-120b-a12b", label: "Nemotron 3 Super 120B" },
+  { id: "nvidia/nemotron-3.5-super-vl", label: "Nemotron 3.5 Super VL 120B" },
   { id: "minimaxai/minimax-m3", label: "Minimax M3" },
 ];
 export const DEFAULT_ROUTE_PROFILE = "inference-local";
@@ -272,7 +277,7 @@ export function getProviderSelectionConfig(
     case OPENROUTER_PROVIDER_NAME:
       return {
         ...base,
-        model: model || DEFAULT_CLOUD_MODEL,
+        model: model || DEFAULT_OPENROUTER_MODEL,
         credentialEnv: OPENROUTER_CREDENTIAL_ENV,
         providerLabel: "OpenRouter",
       };
@@ -339,8 +344,10 @@ export function getProviderSelectionConfig(
 }
 
 export function getOpenClawPrimaryModel(provider: string, model?: string): string {
+  const defaultCloudModel =
+    provider === OPENROUTER_PROVIDER_NAME ? DEFAULT_OPENROUTER_MODEL : DEFAULT_CLOUD_MODEL;
   const resolvedModel =
-    model || (provider === "ollama-local" ? DEFAULT_OLLAMA_MODEL : DEFAULT_CLOUD_MODEL);
+    model || (provider === "ollama-local" ? DEFAULT_OLLAMA_MODEL : defaultCloudModel);
   return getSandboxInferenceConfig(resolvedModel, provider).primaryModelRef;
 }
 

@@ -9,6 +9,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { loadAgent } from "../../../src/lib/agent/defs";
+import { buildSandboxInferenceInvocationCommand } from "../../../src/lib/actions/sandbox/inference-invocation-probe";
 import { HOSTED_NATIVE_PROVIDERS } from "../../../src/lib/inference/native-provider/hosted";
 import {
   coerceAgentInferenceApi,
@@ -69,6 +70,19 @@ function runGenerator(env: Record<string, string | undefined>): string {
 }
 
 describe("LangChain Deep Agents Code config generator", () => {
+  it.each([
+    ["compatible-endpoint", "openai", "nvidia/nvidia/nemotron-3-ultra"],
+    ["openrouter", "openrouter", "nvidia/nemotron-3-ultra-550b-a55b"],
+  ])("routes the Auto classifier through the managed %s identity", (upstream, provider, model) => {
+    const config = runGenerator({
+      NEMOCLAW_UPSTREAM_PROVIDER: upstream,
+      NEMOCLAW_MODEL: model,
+    });
+    expect(config).toContain(`default = "${provider}:${model}"`);
+    expect(config).toContain(`auto_classifier = "${provider}:${model}"`);
+    expect(config).toContain(`[models.providers.${provider}]`);
+    expect(config).not.toContain("gpt-5.6-luna");
+  });
   it.each(["ollama-local", "vllm-local", "llama-cpp-local"])(
     "writes the selected native endpoint and credential reference for %s (#12558)",
     (provider) => {
@@ -288,6 +302,32 @@ describe("LangChain Deep Agents Code config generator", () => {
       );
     },
   );
+
+  it.each([
+    ["nvidia/nemotron-3-ultra-550b-a55b", "https://inference-api.nvidia.com/v1", true],
+    ["nvidia/nvidia/nemotron-3-ultra", "https://inference-api.nvidia.com/v1", true],
+    ["nvidia/nemotron-3-ultra-550b-a55b", "https://integrate.api.nvidia.com/v1", false],
+    ["nvidia/nvidia/nemotron-3-ultra", "https://integrate.api.nvidia.com/v1", false],
+    ["nvidia/nemotron-3-ultra-550b-a55b", "https://integrate.api.nvidia.com/v1/", false],
+    ["nvidia/nvidia/nemotron-3-ultra", "https://integrate.api.nvidia.com/v1/", false],
+  ] as const)("aligns config and readiness for %s at %s", (model, endpoint, nonempty) => {
+    const config = runGenerator({
+      NEMOCLAW_MODEL: model,
+      NEMOCLAW_UPSTREAM_PROVIDER: "compatible-endpoint",
+      NEMOCLAW_INFERENCE_BASE_URL: endpoint,
+    });
+    const probe = buildSandboxInferenceInvocationCommand({
+      sandboxName: "dcode-workspace",
+      agentName: "langchain-deepagents-code",
+      provider: "compatible-endpoint",
+      model,
+      nativeProvider: true,
+      nativeEndpointUrl: endpoint,
+      preferredInferenceApi: "openai-completions",
+    });
+    expect(config.includes("force_nonempty_content")).toBe(nonempty);
+    expect(probe.includes("force_nonempty_content")).toBe(nonempty);
+  });
 
   it.each(["low", "medium", "high"])(
     "records the onboarding reasoning effort as a managed request parameter: %s (#7938)",
