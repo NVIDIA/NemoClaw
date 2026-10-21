@@ -91,6 +91,7 @@ import {
 } from "../../onboard/host-gateway-process";
 import {
   assertGatewayStatePathSafe,
+  prepareGatewayProviderAuthorityRetirement,
   GATEWAYS_SUBDIR,
   type GatewayRegistryEntry,
   listGatewayStateRoots,
@@ -1551,13 +1552,17 @@ function writeUninstallStateAtomic(home: string, filePath: string, value: unknow
 
 function pruneSelectedRowsFromRegistry(
   paths: UninstallPaths,
-  expectedSelectedNames: readonly string[],
+  expectedSelectedRegistrations: SelectedRegistrySandboxState["registrations"],
   runtime: UninstallRuntime,
 ): boolean {
   const sharedRoot = path.dirname(paths.managedSwapMarkerPath);
   const home = path.dirname(sharedRoot);
   const registryFile = path.join(paths.nemoclawStateDir, "sandboxes.json");
-  if (!pathEntryExists(registryFile, runtime) && expectedSelectedNames.length === 0) return true;
+  if (
+    !pathEntryExists(registryFile, runtime) &&
+    Object.keys(expectedSelectedRegistrations).length === 0
+  )
+    return true;
   try {
     assertGatewayStatePathSafe(home, `${registryFile}.lock`);
     // The canonical registry lock owns this directory: it writes an owner file,
@@ -1565,14 +1570,16 @@ function pruneSelectedRowsFromRegistry(
     return withRegistryLockAt(registryFile, () => {
       const registry = readGatewayRegistryFile(home, registryFile);
       if (!registry) throw new Error(`${registryFile} disappeared during scoped uninstall`);
-      const selectedNames = Object.entries(registry.sandboxes)
-        .filter(([, entry]) => registryEntryGatewayPort(entry) === GATEWAY_PORT)
-        .map(([name]) => name)
-        .sort();
-      if (JSON.stringify(selectedNames) !== JSON.stringify([...expectedSelectedNames].sort())) {
+      const selectedRegistrations = Object.fromEntries(
+        Object.entries(registry.sandboxes).filter(
+          ([, entry]) => registryEntryGatewayPort(entry) === GATEWAY_PORT,
+        ),
+      );
+      if (!isDeepStrictEqual(selectedRegistrations, expectedSelectedRegistrations)) {
         throw new Error(`${registryFile} changed during scoped uninstall`);
       }
 
+      const selectedNames = Object.keys(selectedRegistrations);
       if (selectedNames.length === 0) return true;
       const remainingSandboxes = Object.fromEntries(
         Object.entries(registry.sandboxes).filter(
@@ -1605,12 +1612,12 @@ async function finishScopedOpenShellCleanup(
   paths: UninstallPaths,
   options: UninstallRunOptions,
   runtime: UninstallRuntime,
-  sandboxNames: readonly string[],
+  sandboxRegistrations: SelectedRegistrySandboxState["registrations"],
   externallySupervised: boolean,
 ): Promise<boolean> {
   // Removing selected rows checkpoints successful sandbox deletion, so a retry
   // can skip sandbox deletion after gateway registration cleanup has started.
-  if (!pruneSelectedRowsFromRegistry(paths, sandboxNames, runtime)) return false;
+  if (!pruneSelectedRowsFromRegistry(paths, sandboxRegistrations, runtime)) return false;
   return removeGatewayRegistration(
     runtime,
     options.gatewayName || resolveGatewayName(GATEWAY_PORT),
@@ -3373,7 +3380,7 @@ async function executeOpenShellResourceCleanup(
       paths,
       options,
       runtime,
-      sandboxNames,
+      sandboxRegistrations,
       externallySupervised,
     ))
   ) {
@@ -4441,6 +4448,39 @@ async function refreshInterruptedCleanupScope(
   };
 }
 
+function prepareProviderAuthorityCleanup(
+  paths: UninstallPaths,
+  options: UninstallRunOptions,
+  runtime: UninstallRuntime,
+  openShellCleanup: Exclude<OpenShellCleanupDisposition, "blocked">,
+  portableRuntimeCleanup: boolean,
+  externallySupervised: boolean,
+):
+  | { ok: true; retire: ReturnType<typeof prepareGatewayProviderAuthorityRetirement> }
+  | { ok: false } {
+  let retireProviderAuthority: ReturnType<typeof prepareGatewayProviderAuthorityRetirement>;
+  if (
+    openShellCleanup === "normal" &&
+    !portableRuntimeCleanup &&
+    !options.keepOpenShell &&
+    !externallySupervised
+  ) {
+    try {
+      retireProviderAuthority = prepareGatewayProviderAuthorityRetirement({
+        home: runtime.env.HOME || os.homedir(),
+        registryFile: path.join(paths.nemoclawStateDir, "sandboxes.json"),
+        gatewayName: options.gatewayName || resolveGatewayName(GATEWAY_PORT),
+        gatewayPort: GATEWAY_PORT,
+        writeAtomic: writeUninstallStateAtomic,
+      });
+    } catch (error) {
+      runtime.warn(`Could not snapshot provider authority before uninstall: ${formatError(error)}`);
+      return { ok: false };
+    }
+  }
+  return { ok: true, retire: retireProviderAuthority };
+}
+
 async function executePreparedPlan(
   plan: UninstallPlan,
   paths: UninstallPaths,
@@ -4460,7 +4500,34 @@ async function executePreparedPlan(
   interruptedOnboardLock?: OnboardStateLockHandle,
 ): Promise<{ ok: boolean; scopedToSelectedGateway: boolean }> {
   const externallySupervised = isExternallySupervised(teardownAuthority);
+  const providerAuthorityCleanup = prepareProviderAuthorityCleanup(
+    paths,
+    options,
+    runtime,
+    openShellCleanup,
+    portableRuntimeCleanup,
+    externallySupervised,
+  );
+  if (!providerAuthorityCleanup.ok) {
+    return { ok: false, scopedToSelectedGateway: initialScopedToSelectedGateway };
+  }
+  const retireProviderAuthority = providerAuthorityCleanup.retire;
   let ok = true;
+  const finishProviderAuthorityCleanup = (): boolean => {
+    if (!ok) return false;
+    if (!retireProviderAuthority) return true;
+    try {
+      // Failed state removal must retain provider ownership for recovery.
+      if (pathEntryExists(paths.selectedGatewayLocalStateDir, runtime)) {
+        throw new Error("Gateway state remains after uninstall; retained provider authority.");
+      }
+      retireProviderAuthority(scopedToSelectedGateway);
+      return true;
+    } catch (error) {
+      runtime.warn(formatError(error));
+      return false;
+    }
+  };
   let scopedToSelectedGateway = initialScopedToSelectedGateway;
   let sharedRegistryMustBePreserved = initialSharedRegistryMustBePreserved;
   let otherGatewayPorts = initialOtherGatewayPorts;
@@ -4775,7 +4842,7 @@ async function executePreparedPlan(
         ok = false;
     }
   }
-  return { ok, scopedToSelectedGateway };
+  return { ok: finishProviderAuthorityCleanup(), scopedToSelectedGateway };
 }
 
 async function completePortablePlan(

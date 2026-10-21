@@ -118,8 +118,8 @@ read_base_inputs() {
   parsed_inputs="$(
     node --experimental-strip-types --input-type=module -e '
       import { pathToFileURL } from "node:url";
-      const { directDockerfileCopySources } = await import(pathToFileURL(process.argv[1]).href);
-      for (const { source } of directDockerfileCopySources(process.argv[2])) {
+      const { directDockerfileContextSources } = await import(pathToFileURL(process.argv[1]).href);
+      for (const { source } of directDockerfileContextSources(process.argv[2])) {
         console.log(source);
       }
     ' "$parser" "$dockerfile"
