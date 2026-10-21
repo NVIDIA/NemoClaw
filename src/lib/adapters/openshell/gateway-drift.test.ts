@@ -17,6 +17,7 @@ const {
   detectOpenShellStateRpcResultIssue,
   formatOpenShellStateRpcIssue,
   getGatewayClusterImageDrift,
+  getGatewayClusterImageRef,
   getGatewayHostProcessDrift,
   getHostProcessGatewayRuntimeOrNull,
   isGatewayClusterActiveForGateway,
@@ -38,6 +39,68 @@ describe("OpenShell gateway drift preflight", () => {
       "0.0.36",
     );
     expect(parseGatewayClusterImageVersion("example.com/other/image:0.0.36")).toBeNull();
+  });
+
+  it("skips legacy Docker inspection when Podman is selected", async () => {
+    vi.stubEnv("NEMOCLAW_GATEWAY_RUNTIME", "podman");
+    const docker = requireDist("../docker/inspect.js");
+    const inspect = vi.spyOn(docker, "dockerContainerInspectFormat").mockReturnValue("");
+    const runtime = requireDist("./runtime.js");
+    const capture = vi.spyOn(runtime, "captureOpenshell").mockReturnValue({
+      status: 1,
+      output: "offline",
+    });
+    spies.push(inspect, capture);
+
+    expect(getGatewayClusterImageRef("nemoclaw")).toBeNull();
+    expect(await isGatewayClusterActiveForGateway("nemoclaw")).toBe(false);
+    expect(
+      await detectOpenShellStateRpcPreflightIssue({
+        deps: {
+          getInstalledOpenshellVersion: () => "0.0.116",
+          getHostProcessGatewayRuntime: () => ({
+            gatewayBin: "/opt/openshell-gateway",
+            runningVersion: "0.0.116",
+          }),
+        },
+      }),
+    ).toBeNull();
+    expect(inspect).not.toHaveBeenCalled();
+    expect(capture).not.toHaveBeenCalled();
+  });
+
+  it("retains host version and protocol mismatch detection when Podman is selected", async () => {
+    vi.stubEnv("NEMOCLAW_GATEWAY_RUNTIME", "podman");
+    const docker = requireDist("../docker/inspect.js");
+    const inspect = vi.spyOn(docker, "dockerContainerInspectFormat").mockReturnValue("");
+    const runtime = requireDist("./runtime.js");
+    const capture = vi.spyOn(runtime, "captureOpenshell").mockReturnValue({
+      status: 1,
+      output: "offline",
+    });
+    spies.push(inspect, capture);
+    const options = {
+      deps: {
+        getInstalledOpenshellVersion: () => "0.0.116",
+        getHostProcessGatewayRuntime: () => ({
+          gatewayBin: "/opt/openshell-gateway",
+          runningVersion: "0.0.115",
+        }),
+      },
+    };
+
+    expect(await detectOpenShellStateRpcPreflightIssue(options)).toMatchObject({
+      kind: "host_process_drift",
+      drift: { currentVersion: "0.0.115", expectedVersion: "0.0.116" },
+    });
+    expect(
+      await detectOpenShellStateRpcResultIssue(
+        { status: 1, output: "protobuf schema mismatch" },
+        options,
+      ),
+    ).toMatchObject({ kind: "protobuf_mismatch" });
+    expect(inspect).not.toHaveBeenCalled();
+    expect(capture).not.toHaveBeenCalled();
   });
 
   it("detects a running gateway image that differs from the installed OpenShell version", async () => {

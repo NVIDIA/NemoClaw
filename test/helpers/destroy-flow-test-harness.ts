@@ -83,6 +83,7 @@ export type DestroyHarness = {
   stopAllSpy: MockInstance;
   stopModelRouterForDestroyedSandboxSpy: MockInstance;
   stopNimByNameSpy: MockInstance;
+  stopNimSpy: MockInstance;
   unloadOllamaModelsSpy: MockInstance;
   updateSessionSpy: MockInstance;
   warnSpy: MockInstance;
@@ -681,7 +682,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
       throw new Error(options.stopInferenceError);
     }
   });
-  vi.spyOn(nim, "stopNimContainer").mockImplementation(() => undefined);
+  const stopNimSpy = vi.spyOn(nim, "stopNimContainer").mockImplementation(() => undefined);
   const killStaleProxySpy = vi
     .spyOn(ollamaProxy, "killStaleProxy")
     .mockImplementation(() => undefined);
@@ -834,6 +835,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     stopAllSpy,
     stopModelRouterForDestroyedSandboxSpy,
     stopNimByNameSpy,
+    stopNimSpy,
     unloadOllamaModelsSpy,
     updateSessionSpy,
     warnSpy,

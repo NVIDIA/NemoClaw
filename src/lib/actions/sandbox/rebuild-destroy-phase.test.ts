@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
     ): {
       name: string;
       agent: string;
+      openshellDriver?: string;
       nimContainer?: string | null;
       gatewayName?: string | null;
       gatewayPort?: number | null;
@@ -145,6 +146,38 @@ describe("rebuild destroy phase", () => {
     vi.unstubAllEnvs();
     vi.restoreAllMocks();
   });
+
+  it.each([undefined, "nim-alpha"])(
+    "rebuilds a Podman sandbox without Docker inference cleanup with NIM name %s",
+    async (nimContainer) => {
+      const sandboxEntry = {
+        name: "alpha",
+        agent: "hermes",
+        openshellDriver: "podman",
+        gatewayName: "nemoclaw",
+        nimContainer,
+      };
+      mocks.getSandbox.mockReturnValue(sandboxEntry);
+      const onDeleted = vi.fn();
+      const result = await runRebuildDestroyPhase({
+        sandboxName: "alpha",
+        sandboxEntry,
+        staleRecovery: false,
+        recreateJournal: stubRecreateJournal(),
+        backupManifest: null,
+        log: vi.fn(),
+        bail: (message): never => {
+          throw new Error(message);
+        },
+        onDeleted,
+      });
+
+      expect(result).not.toBeNull();
+      expect(onDeleted).toHaveBeenCalledOnce();
+      expect(mocks.stopNimContainer).not.toHaveBeenCalled();
+      expect(mocks.stopNimContainerByName).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([null, "MCP attachment could not be restored"])(
     "stops before sandbox deletion on a messaging conflict and reports MCP recovery failure %j",

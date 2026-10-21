@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { dockerImageInspectFormat } from "../adapters/docker";
+import { normalizeRuntimeProviderIdentity } from "../onboard/runtime-provider/contract";
 import {
   SANDBOX_BASE_IMAGE_RESOLUTION_SOURCES,
   SANDBOX_BASE_RESOLUTION_KEY_LABEL,
@@ -21,8 +22,9 @@ const VALID_RESOLUTION_SOURCES = new Set<SandboxBaseImageResolution["source"]>(
 
 export function readSandboxBaseImageResolutionMetadata(
   sandboxImageRef: string | null | undefined,
+  driverName?: string | null,
 ): SandboxBaseImageResolutionMetadata | null {
-  if (!sandboxImageRef) return null;
+  if (!sandboxImageRef || normalizeRuntimeProviderIdentity(driverName) !== "docker") return null;
   const labelsOutput = dockerImageInspectFormat("{{json .Config.Labels}}", sandboxImageRef, {
     ignoreError: true,
   });
