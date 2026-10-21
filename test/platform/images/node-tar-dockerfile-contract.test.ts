@@ -452,10 +452,10 @@ describe("node-tar image remediation contract", () => {
       expect(helperCopy, file).toBeGreaterThan(reviewedCopy);
       expect(patchCopy, file).toBeGreaterThan(helperCopy);
       expect(firstPatchRun, file).toBeGreaterThan(patchInputReady);
-      const aptInstall = source.indexOf(
-        "RUN apt-get update && apt-get install -y --no-install-recommends",
-        patchInputReady,
-      );
+      const aptInstall =
+        dockerfileRunCommandPositions(source, "apt-get install -y --no-install-recommends").find(
+          (index) => index > patchInputReady,
+        ) ?? -1;
       const curlPackage = source.indexOf("curl=8.14.1-2+deb13u7", aptInstall);
       const aptInstallCleanup = source.indexOf("&& rm -rf /var/lib/apt/lists/*", curlPackage);
       expect(

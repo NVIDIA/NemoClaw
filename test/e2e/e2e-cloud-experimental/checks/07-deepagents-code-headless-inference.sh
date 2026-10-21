@@ -863,8 +863,11 @@ DCODE_EXIT:${direct_exit}"
     && [ "$fail_closed_connect_exit" -ne 0 ] \
     && grep -Fq NEMOCLAW_DCODE_IMAGE_PROBE_USED <<<"$fail_closed_connect_output" \
     && grep -Fq NEMOCLAW_DCODE_SESSION_ATTACH_NOT_INVOKED <<<"$fail_closed_connect_output" \
-    && grep -Fq "UNTRUSTED PREAMBLE" <<<"$fail_closed_connect_output" \
-    && grep -Fq "did not return a trusted result" <<<"$fail_closed_connect_output"; then
+    && { { [ "$route_contract" = managed ] \
+      && grep -Fq "UNTRUSTED PREAMBLE" <<<"$fail_closed_connect_output" \
+      && grep -Fq "did not return a trusted result" <<<"$fail_closed_connect_output"; } \
+      || { [[ "$route_contract" = native-nvidia || "$route_contract" = native-compatible ]] \
+        && grep -Fq "sandbox inference route is not known healthy" <<<"$fail_closed_connect_output"; }; }; then
     pass "connect rejects untrusted image-backed route evidence before session attach"
   else
     fail_test "connect did not fail closed before session attach for untrusted image-backed route evidence"

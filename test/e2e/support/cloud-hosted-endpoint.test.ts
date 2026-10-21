@@ -83,3 +83,50 @@ it.each([
     }),
   ).toThrow();
 });
+
+it.each(["native-compatible", "native-nvidia", "managed"])(
+  "checks fail-closed connect evidence for the %s route without requiring native response bodies",
+  (route) => {
+    const source = readFileSync(
+      path.join(
+        repo,
+        "test/e2e/e2e-cloud-experimental/checks/07-deepagents-code-headless-inference.sh",
+      ),
+      "utf8",
+    );
+    const start = source.indexOf('  if [ -n "$fail_closed_connect_exit" ]');
+    const end = source.indexOf("\n  # 9.", start);
+    const predicate = source.slice(start, end);
+    const evidence =
+      route === "managed"
+        ? "UNTRUSTED PREAMBLE\ndid not return a trusted result"
+        : "sandbox inference route is not known healthy";
+    function run(exit: string, probe: string, attach: string, detail = evidence) {
+      return spawnSync(
+        "/bin/bash",
+        [
+          "-c",
+          `set -eu
+pass() { :; }
+fail_test() { exit 1; }
+${predicate}`,
+        ],
+        {
+          encoding: "utf8",
+          env: {
+            route_contract: route,
+            fail_closed_connect_exit: exit,
+            fail_closed_connect_output: [probe, attach, detail].join("\n"),
+          },
+        },
+      ).status;
+    }
+    const used = "NEMOCLAW_DCODE_IMAGE_PROBE_USED";
+    const stopped = "NEMOCLAW_DCODE_SESSION_ATTACH_NOT_INVOKED";
+    expect(run("1", used, stopped)).toBe(0);
+    expect(run("0", used, stopped)).not.toBe(0);
+    expect(run("1", "", stopped)).not.toBe(0);
+    expect(run("1", used, "NEMOCLAW_DCODE_SESSION_ATTACH_INVOKED")).not.toBe(0);
+    expect(run("1", used, stopped, "unrelated failure")).not.toBe(0);
+  },
+);

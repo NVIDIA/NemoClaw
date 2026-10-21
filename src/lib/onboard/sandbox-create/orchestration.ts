@@ -2699,6 +2699,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       baseImageResolutionFlow.captureBaseResolution(
         baseImageResolutionContext,
         previousEntry?.imageTag,
+        previousEntry?.openshellDriver,
       );
       const noRestorePending =
         pendingStateRestore === null && pendingStateRestoreBackupPath === null;

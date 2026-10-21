@@ -30,6 +30,7 @@ import {
 } from "./agent-dashboard-forward";
 import { fetchAgentWebAuthTokenFromSandbox as fetchAgentWebAuthToken } from "./agent-web-auth-token";
 import * as dashboardAccess from "./dashboard-access";
+import { normalizeRuntimeProviderIdentity } from "./runtime-provider/access";
 import {
   type DashboardForwardOptions,
   normalizeDashboardForwardOptions,
@@ -89,6 +90,7 @@ export interface OnboardDashboardDeps {
   getSandbox?(name: string):
     | {
         gatewayName?: string | null;
+        openshellDriver?: string | null;
         gatewayPort?: number | null;
         dashboardPort?: number | null;
         dashboardRemoteBindPrepared?: boolean;
@@ -774,7 +776,12 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     const nimStatus = deps.nimStatus ?? nim.nimStatus;
     const nimStatusByName = deps.nimStatusByName ?? nim.nimStatusByName;
     const shouldShowNimLine = deps.shouldShowNimLine ?? nim.shouldShowNimLine;
-    const nimStat = nimContainer ? nimStatusByName(nimContainer) : nimStatus(sandboxName);
+    const dockerRuntime =
+      normalizeRuntimeProviderIdentity(getSandbox?.(sandboxName)?.openshellDriver) === "docker";
+    let nimStat: nim.NimStatus = { running: false, container: nimContainer ?? "" };
+    if (dockerRuntime) {
+      nimStat = nimContainer ? nimStatusByName(nimContainer) : nimStatus(sandboxName);
+    }
     const showNim = shouldShowNimLine(nimContainer, nimStat.running);
     const nimLabel = nimStat.running ? "running" : "not running";
     const providerLabel = deps.getProviderLabel(provider);
