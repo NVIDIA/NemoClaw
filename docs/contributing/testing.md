@@ -428,6 +428,7 @@ The image workflow obtains its image decision from the shared validation plan an
 On `v1` pushes that build images, it then pushes the checked agent and proxy images by digest to `ghcr.io/nvidia/nemoclaw/v1-ci:<image>-<commit>-<arch>`, an internal package that releases promote from ([#13516](https://github.com/NVIDIA/NemoClaw/issues/13516)).
 It pushes only to packages that already exist and aren't public, and otherwise skips with a warning; see [provisioning the packages](releases.md#provision-the-packages).
 The job summary lists each digest and how long its push took.
+A following job keeps the images of the latest ten commits and deletes older ones; releases keep their own copies of the images they promote.
 A failed planning job fails those checks instead of skipping them.
 A file inside a crate counts when that crate is part of the image build: `nemoclaw-build` without default features, or the Ollama proxy, with their dependencies.
 [Path rules](../../.config/determinator-images.toml) classify other files by the `.dockerignore` build context.
