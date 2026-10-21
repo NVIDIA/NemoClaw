@@ -121,17 +121,15 @@ Fixture cleanup removes the sandbox and host endpoint.
 
 The `inference-routing-openclaw-native` catalogue target runs on Ubuntu Docker and
 Podman. It skips `TC-INF-19` and does not qualify the WSL2 regression.
-`CI / Platform Compatibility` invokes `TC-INF-19` in its first WSL live shard on
-`windows-latest`, after the existing full E2E test. It runs only on pushes to `main`
-when Docker is available. Both test results contribute to the step result.
-The shard reserves another 50 minutes and uploads commit, kernel, Docker, JUnit,
-and redacted scenario artifacts even when the IPv6 proof fails.
+The WSL lane in `CI / Platform Compatibility` installs native Ubuntu Docker.
+It does not provision IPv6-only ULA resolution, so it runs its existing full
+E2E suite without invoking `TC-INF-19`.
 
-The hosted WSL lane installs native Docker, not Docker Desktop. It must satisfy
-the same IPv6-only ULA prerequisite; IPv4 resolution fails the proof.
-This lane does not establish Windows-on-ARM Docker Desktop qualification.
-No PR catalogue selector currently provides that platform. A passing Ubuntu
-catalogue run or WSL non-live shard cannot replace this missing live evidence.
+WSL2 ARM Docker Desktop qualification remains unverified. No PR catalogue
+selector currently provides that platform. Run `TC-INF-19` on a prepared
+WSL2 Docker Desktop host with IPv6-only ULA resolution before claiming this
+qualification. A passing Ubuntu catalogue run or WSL non-live shard cannot
+replace this missing live evidence.
 The source tests own CIDR membership and receipt compatibility. E2E support tests
 own resolution classification and probe command construction.
 On a prepared WSL2 Docker Desktop host, run:

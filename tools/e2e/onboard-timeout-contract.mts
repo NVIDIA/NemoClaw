@@ -56,7 +56,6 @@ export const INFERENCE_ROUTING_TARGET_TIMEOUT_MINUTES =
 
 // The separate OpenClaw native-local target owns the same two-onboard lifecycle
 // as TC-INF-15, then switches its recorded model before the real agent turn.
-// TC-INF-19 runs separately in the WSL platform workflow.
 // Keep its serial job below the hosted runner's maximum while preserving the
 // existing inference-routing target's reviewed timeout.
 export const OPENCLAW_NATIVE_LOCAL_TEST_TIMEOUT_MS =
