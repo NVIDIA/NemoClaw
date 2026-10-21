@@ -12,6 +12,14 @@ import {
 import { buildE2eWorkflowPlan } from "../../../tools/e2e/workflow-plan.mts";
 
 describe("inference-switch catalogue boundary", () => {
+  it("selects native-local enforcement coverage when IPv6 evidence changes (#13544)", () => {
+    expect(
+      catalogueTargetsForChangedFiles(["test/e2e/fixtures/native-local-ipv6-evidence.ts"]).map(
+        (target) => target.id,
+      ),
+    ).toContain("inference-routing-openclaw-native");
+  });
+
   it.each([
     "src/lib/inference/native-provider/contract.ts",
     "src/lib/inference/native-provider/custom-setup.ts",

@@ -1068,6 +1068,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       "src/lib/actions/sandbox/inference-invocation-probe.ts",
       "src/lib/actions/sandbox/inference-route-health.ts",
       "test/e2e/fixtures/inference-routing-openclaw-native.ts",
+      "test/e2e/fixtures/native-local-ipv6-evidence.ts",
       "tools/e2e/onboard-timeout-contract.mts",
     ],
   }),
