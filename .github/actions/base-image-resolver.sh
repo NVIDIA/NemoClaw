@@ -5,6 +5,18 @@
 # Shared mechanics for the sandbox base-image resolver actions. Agent-specific
 # candidate construction and validation intentionally remain in each action.
 
+resolver_security_inventory_ok() {
+  local image_ref="$1" profile="$2" probe
+  probe="$(node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/security/security-package-inventory.mts probe "$profile")" || return 1
+  docker run --rm \
+    --network none \
+    --cap-drop ALL \
+    --security-opt no-new-privileges \
+    --read-only \
+    --user sandbox \
+    --entrypoint /bin/sh "$image_ref" -ec "$probe" >/dev/null 2>&1
+}
+
 resolver_glibc_version() {
   docker run --rm --entrypoint /usr/bin/ldd "$1" --version 2>/dev/null \
     | sed -nE 's/.*GLIBC ([0-9]+\.[0-9]+).*/\1/p; s/.* ([0-9]+\.[0-9]+)$/\1/p' \

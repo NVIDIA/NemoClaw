@@ -17,16 +17,23 @@ export async function captureSandboxFailureDiagnostics(
     redactionValues: string[];
     captureGatewayLog?: boolean;
     expectedExitCode?: number;
+    env?: NodeJS.ProcessEnv;
   },
 ): Promise<void> {
   if (result.exitCode === (options.expectedExitCode ?? 0) && !result.timedOut) return;
+  const sourceEnv = options.env ?? process.env;
+  const env: NodeJS.ProcessEnv = {
+    ...buildAvailabilityProbeEnv(sourceEnv),
+    OPENSHELL_GATEWAY: sourceEnv.OPENSHELL_GATEWAY,
+    NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: sourceEnv.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR,
+  };
   await host
     .command(
       host.openshellCommandPath,
       ["logs", options.sandboxName, "-n", "200", "--source", "all", "--since", "2m"],
       {
         artifactName: `${options.artifactPrefix}-supervisor-logs`,
-        env: buildAvailabilityProbeEnv(),
+        env,
         redactionValues: options.redactionValues,
         captureLimitBytes: 32_768,
         timeoutMs: 30_000,
@@ -39,14 +46,14 @@ export async function captureSandboxFailureDiagnostics(
         "cat",
         [
           resolveGatewayLogPathForPort({
-            configured: process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR,
-            home: os.homedir(),
+            configured: env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR,
+            home: env.HOME || os.homedir(),
             port: GATEWAY_PORT,
           }),
         ],
         {
           artifactName: `${options.artifactPrefix}-gateway-log`,
-          env: buildAvailabilityProbeEnv(),
+          env,
           redactionValues: options.redactionValues,
           captureLimitBytes: 32_768,
           timeoutMs: 5_000,
@@ -58,7 +65,7 @@ export async function captureSandboxFailureDiagnostics(
   // Read the stopped container through the existing runtime owner instead of
   // depending on an exec service that died with the supervisor.
   try {
-    const runtime = new RuntimeProviderPrerequisite(host);
+    const runtime = new RuntimeProviderPrerequisite(host, undefined, env);
     const diagnosticOptions = {
       redactionValues: options.redactionValues,
       captureLimitBytes: 32_768,
@@ -103,7 +110,7 @@ export async function captureSandboxFailureDiagnostics(
         ],
         {
           ...diagnosticOptions,
-          env: buildAvailabilityProbeEnv(),
+          env,
           artifactName: `${prefix}-startup-log`,
         },
       ),
@@ -132,6 +139,7 @@ export async function captureLifecycleInstallFailureDiagnostics(
     artifactPrefix: options.artifactPrefix,
     redactionValues: options.redactionValues,
     captureGatewayLog: true,
+    env: options.env,
   });
   await Promise.allSettled([
     runtime.command(

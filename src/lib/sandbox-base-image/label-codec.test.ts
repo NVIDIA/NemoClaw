@@ -51,6 +51,14 @@ describe("sandbox base-image resolution label codec", () => {
     vi.clearAllMocks();
   });
 
+  it.each(["podman", "native", "unknown"])(
+    "does not inspect the Docker image store for a %s image",
+    (driverName) => {
+      expect(readSandboxBaseImageResolutionMetadata("nemoclaw:cached", driverName)).toBeNull();
+      expect(mocks.dockerImageInspectFormat).not.toHaveBeenCalled();
+    },
+  );
+
   it("formats round-trippable completed-image labels (#4680)", () => {
     const labels = formatSandboxBaseImageResolutionLabels(metadata);
     const payload = labels.match(/base-resolution="([^"]+)"/)?.[1];

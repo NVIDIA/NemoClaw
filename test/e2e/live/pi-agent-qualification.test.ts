@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { directDockerfileCopySources } from "../../../scripts/lib/dockerfile-copy-sources.mts";
+import { directDockerfileContextSources } from "../../../scripts/lib/dockerfile-copy-sources.mts";
 import {
   CANDIDATE_AGENT_FEATURE_ENV,
   CANDIDATE_QUALIFICATION_RECEIPT_ENV,
@@ -346,7 +346,7 @@ test(
     progress.phase("validate the exact Pi candidate receipt");
     const piDockerfiles = ["agents/pi/Dockerfile", "agents/pi/Dockerfile.base"];
     const copiedSources = piDockerfiles.flatMap((dockerfile) =>
-      directDockerfileCopySources(path.join(REPO_ROOT, dockerfile), dockerfile).map(
+      directDockerfileContextSources(path.join(REPO_ROOT, dockerfile), dockerfile).map(
         ({ source }) => source,
       ),
     );
