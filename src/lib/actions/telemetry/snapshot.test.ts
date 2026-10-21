@@ -33,7 +33,9 @@ import {
   dcodeProfileInput,
   hermesImageRef,
   hermesProfileInput,
+  imageRef,
   managedWorkload,
+  profileInput,
 } from "../../domain/config/export-source-test-fixture";
 import type { SandboxEntry } from "../../state/registry/types";
 
@@ -288,6 +290,7 @@ async function collectNativeConfiguration(
   configPath: string,
   rawConfig: string,
   entryOverrides: Partial<SandboxEntry> = {},
+  extraResponses: Record<string, string> = {},
 ) {
   mocks.readRegistry.mockReturnValue({
     defaultSandbox: null,
@@ -298,6 +301,7 @@ async function collectNativeConfiguration(
   const responses: Record<string, string> = {
     [JSON.stringify(["uname", "-s"])]: "Linux",
     [JSON.stringify(["cat", configPath])]: rawConfig,
+    ...extraResponses,
   };
   const read = vi.fn(async ({ command }: { command: readonly string[] }) => {
     return (
@@ -334,7 +338,9 @@ async function collectNativeConfiguration(
     expect.objectContaining({ sandboxName: "native", command: ["cat", configPath] }),
     expect.objectContaining({ workspace: "native" }),
   );
-  expect(read).toHaveBeenCalledTimes(entryOverrides.workload ? 1 : 2);
+  expect(read).toHaveBeenCalledTimes(
+    (entryOverrides.workload ? 1 : 2) + Object.keys(extraResponses).length,
+  );
   return event;
 }
 
@@ -491,3 +497,116 @@ it.each([
   expect(event.parameters.collectionStatus).toBe("partial");
   expect(isOperationEvent(event)).toBe(true);
 });
+
+function hostedNvidiaWorkload(
+  input: ReturnType<typeof profileInput>,
+  reference: string,
+  routedBaseUrl: string,
+  primaryModelRef: string | null,
+) {
+  return managedWorkload(
+    {
+      ...input,
+      inference: {
+        ...input.inference!,
+        routeProvider: "inference",
+        upstreamProvider: "nvidia-prod",
+        model: hostedNvidiaModel,
+        routedBaseUrl,
+        api: "openai-completions",
+        primaryModelRef,
+      },
+    },
+    reference,
+  );
+}
+
+const hostedRouteBranches = [
+  {
+    agent: "openclaw",
+    configPath: "/sandbox/.openclaw/openclaw.json",
+    config: (baseUrl: string) =>
+      JSON.stringify({
+        agents: { defaults: { model: `inference/${hostedNvidiaModel}` }, entries: { main: {} } },
+        models: { providers: { inference: { api: "openai-completions", baseUrl } } },
+      }),
+    extraResponses: {
+      [JSON.stringify(["openclaw", "agents", "list", "--json"])]: JSON.stringify([
+        { id: "main", isDefault: true },
+      ]),
+    },
+    workload: (routedBaseUrl: string) => ({
+      imageTag: imageRef,
+      workload: hostedNvidiaWorkload(
+        profileInput(),
+        imageRef,
+        routedBaseUrl,
+        `inference/${hostedNvidiaModel}`,
+      ),
+    }),
+    nativeProviderProfile: "custom",
+  },
+  {
+    agent: "langchain-deepagents-code",
+    configPath: "/sandbox/.deepagents/config.toml",
+    config: (baseUrl: string) =>
+      `[models]\ndefault = "openai:${hostedNvidiaModel}"\n[models.providers.openai]\nbase_url = "${baseUrl}"\n`,
+    extraResponses: {},
+    workload: (routedBaseUrl: string) => ({
+      imageTag: dcodeImageRef,
+      workload: hostedNvidiaWorkload(dcodeProfileInput(), dcodeImageRef, routedBaseUrl, null),
+    }),
+    nativeProviderProfile: "openai",
+  },
+] as const;
+
+it.each(hostedRouteBranches)(
+  "binds the $agent hosted native route recorded in the startup profile (#13576)",
+  async ({ agent, configPath, config, extraResponses, workload }) => {
+    const event = await collectNativeConfiguration(
+      agent,
+      configPath,
+      config(hostedNvidiaEndpoint),
+      {
+        model: hostedNvidiaModel,
+        provider: "nvidia-prod",
+        modelSelectionProvenance: hostedNvidiaProvenance,
+        ...workload(hostedNvidiaEndpoint),
+      } as unknown as Partial<SandboxEntry>,
+      extraResponses,
+    );
+    expect(event.parameters.configurations[0].agents[0].models[0]).toMatchObject({
+      modelId: hostedNvidiaModel,
+      modelSource: "custom",
+      modelSourceStatus: "reported",
+      providerProfile: "nvidia",
+      providerStatus: "reported",
+    });
+    expect(isOperationEvent(event)).toBe(true);
+  },
+);
+
+it.each(hostedRouteBranches)(
+  "keeps a $agent upstream URL that differs from the recorded route native (#13576)",
+  async ({ agent, configPath, config, extraResponses, workload, nativeProviderProfile }) => {
+    const event = await collectNativeConfiguration(
+      agent,
+      configPath,
+      config("https://example.invalid/v1"),
+      {
+        model: hostedNvidiaModel,
+        provider: "nvidia-prod",
+        modelSelectionProvenance: hostedNvidiaProvenance,
+        ...workload(hostedNvidiaEndpoint),
+      } as unknown as Partial<SandboxEntry>,
+      extraResponses,
+    );
+    expect(event.parameters.configurations[0].agents[0].models[0]).toMatchObject({
+      modelSource: "unknown",
+      modelSourceStatus: "not_persisted",
+      providerProfile: nativeProviderProfile,
+    });
+    expect(event.parameters.collectionStatus).toBe("partial");
+    expect(isOperationEvent(event)).toBe(true);
+  },
+);
