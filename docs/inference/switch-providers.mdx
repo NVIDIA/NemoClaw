@@ -74,7 +74,7 @@ Run `$$nemoclaw <name> doctor --fix`, then retry the agent turn.
 <AgentOnly variant="hermes">
 
 For Hermes, NemoClaw updates the native `/sandbox/.hermes/config.yaml`, including the model, base URL, API-family mode, and managed API-key value.
-Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible selections use sandbox-attached providers without changing the shared route.
+Hosted compatible selections outside the Personal tier, Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible selections use sandbox-attached providers without changing the shared route.
 Owned Local NVIDIA NIM and nonqualifying custom endpoints retain the shared route.
 A legacy local sandbox without a valid Hermes attachment must be recreated before a native local switch: back up required state, then run `nemohermes onboard --fresh --name <sandbox-name> --recreate-sandbox`.
 Live qualification of the Hermes native local lifecycle is pending.
