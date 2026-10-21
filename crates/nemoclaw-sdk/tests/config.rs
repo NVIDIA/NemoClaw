@@ -184,6 +184,7 @@ fn fabric_protocol_and_managed_ollama_constraints_survive_the_port() {
         "nooa-bench",
         "remote-agent",
         "pi",
+        "opencode",
     ] {
         let mut document = original.clone();
         document.spec.sandboxes[0].harness.as_mut().unwrap().kind = harness.parse().unwrap();
@@ -398,6 +399,7 @@ fn harness_selection_does_not_determine_service_ownership() {
         "nooa-bench",
         "remote-agent",
         "pi",
+        "opencode",
     ] {
         for fixture in [
             include_str!("../../../examples/spark/vllm.yaml"),
