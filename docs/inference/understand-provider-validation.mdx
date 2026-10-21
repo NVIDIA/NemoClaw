@@ -27,10 +27,10 @@ The `nvapi-` prefix check applies only to `NVIDIA_INFERENCE_API_KEY`.
 OpenRouter keys must be non-empty and begin with `sk-or-`.
 Other provider keys use provider-aware validation during the retry flow.
 
-## Provider Profile Verification
+## Native Local Provider Profile Verification
 
-When NemoClaw attaches a provider after it verifies the expected OpenShell provider profile, it verifies that profile again.
-If the profile changed or the second verification cannot complete, the attachment remains in place and NemoClaw prints a warning.
+During native local endpoint onboarding, NemoClaw retains the expected OpenShell provider profile after a successful inspection and checks it again after attaching the provider.
+If the profile changed or the follow-up export fails or times out, NemoClaw warns the gateway operator without rolling back the attachment.
 Ask the gateway operator to inspect the profile before you rely on its credential boundary.
 
 ## Provider Requests
