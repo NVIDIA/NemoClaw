@@ -213,7 +213,8 @@ Refer to [Recover and Rebuild Sandboxes](../manage-sandboxes/operate-sandboxes/r
 New NVIDIA Endpoints, OpenAI, Anthropic, Google Gemini, OpenRouter, and Hermes Provider selections use sandbox-attached OpenShell providers.
 The agent calls the selected provider API hostname, and OpenShell permits only the approved destination and request paths.
 New Deep Agents Code and Hermes selections also use native providers for Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible endpoints.
-Deep Agents Code also uses native providers for hosted compatible endpoints.
+Deep Agents Code also uses native providers for hosted compatible endpoints unless fresh onboarding selects the Personal policy tier.
+That Personal path creates no native provider attachment and retains `inference.local`.
 New OpenClaw Ollama, standalone vLLM, and llama.cpp selections also use sandbox-attached native providers.
 Owned Local NVIDIA NIM, compatible endpoints without a native attachment, retained Pi local selections, retained Hermes local selections without an attachment, retained OpenClaw shared local selections, and Model Router retain `inference.local`.
 Hermes live qualification for the new local lifecycle remains pending.

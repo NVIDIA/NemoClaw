@@ -960,6 +960,10 @@ const { isAnyPromptActive } = require(${JSON.stringify(path.join(import.meta.dir
 process.stdin.isTTY = true;
 process.stderr.isTTY = true;
 process.stdin.ref = () => process.stdin;
+// The fake TTY flag above would otherwise make the pending-input window
+// (#12169) read this process's real, already-closed stdin and report
+// cancellation before the raw-mode failure under test can happen.
+process.stdin.resume = () => process.stdin;
 process.stdin.pause = () => process.stdin;
 process.stdin.unref = () => process.stdin;
 process.stdin.setRawMode = () => { throw new Error('raw mode unavailable'); };
@@ -1266,12 +1270,15 @@ process.stdin.unref = () => { counts.unref += 1; return process.stdin; };
 process.stdin.setRawMode = (value) => { counts.raw.push(value); return process.stdin; };
 process.stdin.isTTY = true;
 process.stderr.isTTY = true;
+// The fake TTY flag makes each prompt open its pending-input window
+// (#12169) first, so answer once the window has handed stdin to the reader.
+const answerAfterPendingWindow = (text) => setTimeout(() => process.stdin.emit('data', text), 40);
 (async () => {
   const normalPrompt = prompt('normal: ');
-  setImmediate(() => process.stdin.emit('data', 'alpha\\n'));
+  answerAfterPendingWindow('alpha\\n');
   const normal = await normalPrompt;
   const secretPrompt = prompt('secret: ', { secret: true });
-  setImmediate(() => process.stdin.emit('data', 'bravo\\n'));
+  answerAfterPendingWindow('bravo\\n');
   const secret = await secretPrompt;
   console.log(JSON.stringify({ normal, secret, counts }));
 })().catch((err) => { console.error(err && err.stack ? err.stack : String(err)); process.exit(1); });
@@ -1303,5 +1310,59 @@ process.stderr.isTTY = true;
     expect(parsed.counts.raw.at(-1)).toBe(false);
     expect(result.stderr).toContain("*****");
     expect(result.stderr).not.toContain("bravo");
+  });
+
+  it("cancels a masked prompt on Ctrl-D and keeps a half-typed secret", () => {
+    const script = `
+const { prompt } = require(${JSON.stringify(path.join(import.meta.dirname, "../..", "src", "lib", "credentials", "store.ts"))});
+process.stdin.ref = () => process.stdin;
+process.stdin.resume = () => process.stdin;
+process.stdin.pause = () => process.stdin;
+process.stdin.unref = () => process.stdin;
+process.stdin.setRawMode = () => process.stdin;
+process.stdin.isTTY = true;
+process.stderr.isTTY = true;
+// Each prompt opens the pending-input window (#12169) before it reads, so
+// every keystroke below waits for stdin to reach the masked reader.
+const typeAfterPendingWindow = (text, delay) =>
+  setTimeout(() => process.stdin.emit('data', text), delay);
+(async () => {
+  const typed = prompt('secret: ', { secret: true });
+  typeAfterPendingWindow('alpha', 40);
+  typeAfterPendingWindow('\\u0004', 80);
+  typeAfterPendingWindow('\\n', 120);
+  const kept = await typed;
+  const empty = prompt('secret: ', { secret: true });
+  typeAfterPendingWindow('\\u0004', 40);
+  const cancelled = await empty.then(
+    (value) => ({ resolved: value }),
+    (err) => ({ code: err && err.code, message: err && err.message }),
+  );
+  console.log(JSON.stringify({ kept, cancelled }));
+})().catch((err) => { console.error(err && err.stack ? err.stack : String(err)); process.exit(1); });
+`;
+    const scriptFile = path.join(os.tmpdir(), `nemoclaw-credential-eof-${process.pid}.js`);
+    fs.writeFileSync(scriptFile, script, { mode: 0o700 });
+    let result: ReturnType<typeof spawnSync>;
+    try {
+      result = spawnSync(process.execPath, [scriptFile], {
+        encoding: "utf-8",
+        timeout: 5000,
+      });
+    } finally {
+      try {
+        fs.unlinkSync(scriptFile);
+      } catch {
+        /* ignore */
+      }
+    }
+
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(String(result.stdout).trim());
+    // Ctrl-D after characters is ignored, exactly as readline ignores it on a
+    // non-empty line, so the masked characters still answer the question.
+    expect(parsed.kept).toBe("alpha");
+    expect(parsed.cancelled).toEqual({ code: "EOF", message: "Prompt closed before input" });
+    expect(result.stderr).not.toContain("alpha");
   });
 });
