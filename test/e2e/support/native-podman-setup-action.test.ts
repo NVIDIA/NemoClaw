@@ -942,8 +942,15 @@ exec /bin/bash "$@"
       (step) => step.name === "Check out the exact candidate",
     );
     const setup = job.steps?.find((step) => step.name === "Prepare Portable Podman 5.7 runtime");
+    const headroom = job.steps?.find(
+      (step) => step.name === "Set Portable Podman registry process headroom",
+    );
+    const headroomRun = headroom?.run ?? "";
     const live = job.steps?.find(
       (step) => step.name === "Run Portable Hermes finalization live Vitest test",
+    );
+    const retainHeadroom = job.steps?.find(
+      (step) => step.name === "Retain Portable Podman process headroom",
     );
     const fixtureRemoval = job.steps?.find(
       (step) => step.name === "Remove immutable native Podman cleanup fixture",
@@ -952,10 +959,12 @@ exec /bin/bash "$@"
     const openshellInstallIndex = job.steps?.indexOf(openshellInstall!) ?? -1;
     const candidateCheckoutIndex = job.steps?.indexOf(candidateCheckout!) ?? -1;
     const setupIndex = job.steps?.indexOf(setup!) ?? -1;
+    const headroomIndex = job.steps?.indexOf(headroom!) ?? -1;
     const uploadIndex =
       job.steps?.findIndex(
         (step) => step.name === "Upload Portable Hermes finalization artifacts",
       ) ?? -1;
+    const retainHeadroomIndex = job.steps?.indexOf(retainHeadroom!) ?? -1;
     const restoreIndex =
       job.steps?.findIndex(
         (step) => step.name === "Restore Docker and retire Portable Podman runtime",
@@ -1013,6 +1022,23 @@ exec /bin/bash "$@"
     expect(setup?.uses).toBe(
       "NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@22789bcaf835db7cf6390781c8d0f454f1e73dec",
     );
+    expect(setupIndex).toBeGreaterThan(openshellInstallIndex);
+    expect(headroomIndex).toBeGreaterThan(setupIndex);
+    expect(candidateCheckoutIndex).toBeGreaterThan(headroomIndex);
+    expect(headroomRun).toContain("minimum=128");
+    expect(headroomRun).toContain("pids_limit = $minimum");
+    expect(headroomRun).toContain('cgroup_manager = "systemd"');
+    expect(headroomRun).toContain("(( tasks_max - tasks_current < minimum ))");
+    expect(headroomRun).toContain("failure=service_tasks");
+    expect(headroomRun).toContain("/sys/fs/cgroup$group/pids.max");
+    expect(headroomRun).toContain('[[ "$group" != / ]] || break');
+    expect(headroomRun.indexOf('[[ "$group" != / ]] || break')).toBeLessThan(
+      headroomRun.indexOf("/sys/fs/cgroup$group/pids.current"),
+    );
+    expect(retainHeadroom?.if).toBe("always()");
+    expect(retainHeadroom?.run).toContain("portable-podman-process-headroom.json");
+    expect(retainHeadroomIndex).toBeGreaterThan(job.steps?.indexOf(live!) ?? -1);
+    expect(uploadIndex).toBeGreaterThan(retainHeadroomIndex);
     expect(live).toMatchObject({
       env: {
         E2E_HERMES_BASE_STORAGE_HOME: "${{ runner.temp }}/nemoclaw-hermes-base-storage",
@@ -1025,14 +1051,12 @@ exec /bin/bash "$@"
     expect(live?.run).toContain("nvidia-smi --query-gpu=name");
     expect(live?.run).toContain("podman build");
     expect(
-      liveSource.indexOf(
-        "assert.equal(process.env.DOCKER_HOST, `unix://${runtimeDir}/podman/podman.sock`)",
-      ),
+      liveSource.indexOf("assert.equal(process.env.DOCKER_HOST, `unix://${expectedPodmanSocket}`)"),
     ).toBeGreaterThanOrEqual(0);
+    expect(liveSource).toContain('process.env.E2E_TARGET_ID === "portable-hermes-finalization"');
+    expect(liveSource).toContain(": `${runtimeDir}/podman/podman.sock`");
     expect(liveSource.indexOf('run("docker", ["version"])')).toBeGreaterThan(
-      liveSource.indexOf(
-        "assert.equal(process.env.DOCKER_HOST, `unix://${runtimeDir}/podman/podman.sock`)",
-      ),
+      liveSource.indexOf("assert.equal(process.env.DOCKER_HOST, `unix://${expectedPodmanSocket}`)"),
     );
     expect(live?.run).toMatch(
       /live-vitest-invocation\.mts run \\\n\s+--test-path test\/e2e\/live\/portable-profile-rootless-linux\.test\.ts/u,

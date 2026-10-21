@@ -60,7 +60,7 @@ describe("Pi qualification receipt refresh", () => {
     );
     fs.writeFileSync(
       path.join(rootDir, "agents/pi/Dockerfile.base"),
-      "FROM scratch\nCOPY protected/base /base\n",
+      "FROM scratch\nCOPY protected/base /base\nRUN --mount=type=bind,source=protected/specs.ts,target=/specs.ts true\n",
     );
     const amd64Contents = receipt(RECEIPTS[0].platform);
     const arm64Contents = receipt(RECEIPTS[1].platform);
@@ -138,6 +138,7 @@ describe("Pi qualification receipt refresh", () => {
 
   it.each([
     ["copied source", "protected/app/config.json"],
+    ["mounted source", "protected/specs.ts"],
     ["Pi Dockerfile", "agents/pi/Dockerfile"],
     ["Pi base Dockerfile", "agents/pi/Dockerfile.base"],
     ["Docker ignore rules", ".dockerignore"],

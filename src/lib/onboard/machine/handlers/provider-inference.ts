@@ -91,6 +91,8 @@ function selectedNativeInference(
 
 export interface ProviderInferenceSetupOptions {
   agentName?: string;
+  /** Resolve the policy tier before a custom provider can mutate gateway state. */
+  resolvePolicyTier?: () => Promise<string>;
   /** Local NIM shares vllm-local's provider ID but keeps its existing route. */
   localNimSelected?: boolean;
   /** Resume the exact published Pi shared route without selecting a new native provider. */

@@ -368,6 +368,28 @@ describe("custom native endpoint ownership", () => {
     expect(
       usesCustomNativeOnboarding(binding.provider, "http://127.0.0.1:8080/v1", "alpha", null),
     ).toBe(false);
+    // OpenShell rejects Personal's hostless web rule beside a port-443 provider endpoint.
+    expect(
+      usesCustomNativeOnboarding(
+        binding.provider,
+        binding.endpointUrl,
+        "alpha",
+        null,
+        " Personal ",
+      ),
+    ).toBe(false);
+    expect(
+      usesCustomNativeOnboarding(
+        binding.provider,
+        binding.endpointUrl,
+        "alpha",
+        { pendingRouteReservation: true },
+        "personal",
+      ),
+    ).toBe(false);
+    expect(
+      usesCustomNativeOnboarding(binding.provider, binding.endpointUrl, "alpha", null, "balanced"),
+    ).toBe(true);
     const h = harness();
     const receipt = await prepareCustomNativeProvider(h.input);
     expect(

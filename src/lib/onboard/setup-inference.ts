@@ -23,6 +23,7 @@ import {
 } from "../inference/native-provider/hosted";
 import { requireHostedProviderAttachment } from "../inference/native-provider/hosted-attachment";
 import {
+  isHostedCustomEndpoint,
   prepareHostedNativeProvider,
   prepareCustomNativeProvider,
   usesCustomNativeOnboarding,
@@ -243,6 +244,8 @@ export type SetupInferenceDeps = ProviderBranchDeps & {
   requireNativeProviderPolicy?: typeof requireNativeProviderPolicy;
   /** Injectable resolver for resumed custom-endpoint SSRF preflight tests. */
   resolveEndpointHost?: EndpointDnsLookupFn;
+  /** Resolve the current onboarding policy tier before provider mutation. */
+  resolvePolicyTier?: () => Promise<string>;
   /** Exact private endpoint hosts trusted by the operator (tests may inject this). */
   trustedPrivateEndpointHosts?: readonly string[];
   checkGatewayRouteCompatibility: CurrentGatewayRouteCompatibilityCheck;
@@ -751,16 +754,31 @@ async function cleanupUnreservedNativeLocalAfterHostFailure(input: {
   }
 }
 
-function resolveHostedSelection(input: {
+async function resolveHostedSelection(input: {
   provider: string;
   endpointUrl: string | null;
   sandboxName: string | null;
   gatewayName: string;
   deps: SetupInferenceDeps;
+  options: ProviderInferenceSetupOptions;
 }) {
-  const { provider, endpointUrl, sandboxName, gatewayName, deps } = input;
+  const { provider, endpointUrl, sandboxName, gatewayName, deps, options } = input;
   const recordedSandbox = sandboxName ? deps.getSandbox?.(sandboxName) : null;
-  const custom = usesCustomNativeOnboarding(provider, endpointUrl, sandboxName, recordedSandbox);
+  const freshCustomSelection = Boolean(
+    sandboxName &&
+    isHostedCustomEndpoint(provider, endpointUrl) &&
+    !recordedSandbox?.nativeHostedProviderAttachment?.custom &&
+    (!recordedSandbox || recordedSandbox.pendingRouteReservation),
+  );
+  const resolvePolicyTier = options.resolvePolicyTier ?? deps.resolvePolicyTier;
+  const policyTier = freshCustomSelection ? await resolvePolicyTier?.() : undefined;
+  const custom = usesCustomNativeOnboarding(
+    provider,
+    endpointUrl,
+    sandboxName,
+    recordedSandbox,
+    policyTier,
+  );
   const authority =
     provider === "hermes-provider"
       ? ((recordedSandbox?.provider === provider
@@ -1084,6 +1102,15 @@ export function createSetupInference(
     const gatewayName = options.gatewayName ?? deps.getGatewayName();
     const endpointSource =
       options.endpointSource === undefined ? "onboard" : options.endpointSource;
+    const policyTierResolver = options.resolvePolicyTier ?? deps.resolvePolicyTier;
+    let policyTierResolution: Promise<string> | undefined;
+    const resolvePolicyTier = policyTierResolver
+      ? () => (policyTierResolution ??= policyTierResolver())
+      : undefined;
+    const hostedSelectionOptions = resolvePolicyTier ? { ...options, resolvePolicyTier } : options;
+    if (sandboxName && isHostedCustomEndpoint(provider, endpointUrl)) {
+      await resolvePolicyTier?.();
+    }
     let selectingNativeLocal = false;
     let nativeLocalAgent: string | null | undefined;
     const routedProvider = deps.isRoutedInferenceProvider?.(provider) === true;
@@ -1112,7 +1139,14 @@ export function createSetupInference(
           selected: nativeHostedSelection,
           custom: nativeCustomSelection,
           recordedSandbox,
-        } = resolveHostedSelection({ provider, endpointUrl, sandboxName, gatewayName, deps });
+        } = await resolveHostedSelection({
+          provider,
+          endpointUrl,
+          sandboxName,
+          gatewayName,
+          deps,
+          options: hostedSelectionOptions,
+        });
         const selectedInferenceApi = resolveCustomNativeApi(
           provider,
           options.preferredInferenceApi,

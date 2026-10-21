@@ -326,7 +326,7 @@ export class NativeProviderLifecycle<ProfileId extends string, ProviderName exte
 
     if (input.expected) {
       throw new NativeProviderError(
-        `OpenShell provider '${this.definition.providerName}' is missing. Recreate the sandbox before using native ${this.definition.label} inference. No provider was changed.`,
+        `OpenShell provider '${this.definition.providerName}' is missing. If this gateway has no sandboxes after a reinstall, complete uninstall without --keep-openshell, then onboard again. Otherwise, recreate the sandbox before using native ${this.definition.label} inference. No provider was changed.`,
       );
     }
 

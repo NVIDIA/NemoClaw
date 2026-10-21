@@ -18,7 +18,8 @@ The agent connects to `inference.local` inside the sandbox.
 OpenShell forwards that traffic to the endpoint configured during onboarding.
 </AgentOnly>
 <AgentOnly variant="deepagents">
-New Deep Agents Code sandboxes use sandbox-attached OpenShell providers for hosted compatible endpoints and qualified host-local endpoints.
+New Deep Agents Code sandboxes normally use sandbox-attached OpenShell providers for hosted compatible endpoints and qualified host-local endpoints.
+Fresh onboarding keeps a hosted compatible endpoint on `inference.local` when you select the Personal policy tier.
 The agent uses the recorded endpoint and a credential reference; OpenShell supplies the credential at egress.
 Retained shared routes and owned Local NVIDIA NIM use `inference.local`.
 Refer to [How Inference Routing Works](../about-inference-routing) for the qualification boundary.
@@ -85,9 +86,12 @@ Sandbox inference requests continue to use the base `inference.local` policy, so
 </AgentOnly>
 <AgentOnly variant="deepagents">
 For qualified host-local endpoints, the attached provider profile authorizes the recorded endpoint and the managed DCode runtime binaries.
-Hosted compatible endpoints use their recorded endpoint through an attached provider.
+Hosted compatible endpoints normally use their recorded endpoint through an attached provider.
+Fresh Personal-tier onboarding keeps a hosted compatible endpoint on the base `inference.local` policy and does not create a native provider attachment.
+NemoClaw refuses Personal for an existing sandbox that already has a custom native provider attachment; create a new sandbox instead.
 Retained shared routes and owned Local NVIDIA NIM use the base `inference.local` policy.
 These routes do not require the `local-inference` preset.
+Refer to [Policy Tiers](../../reference/network-policies#policy-tiers) for the Personal-tier limitation and recovery steps.
 </AgentOnly>
 <AgentOnly variant="hermes">
 For qualified host-local endpoints, the attached provider profile authorizes the recorded endpoint and the Hermes runtime binaries.

@@ -1,8 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import * as policies from "../policy";
+import {
+  basePolicyHandlerOptions,
+  createPolicyHandlerDeps,
+} from "./machine/handlers/policies-test-fixture";
+import { handlePoliciesState } from "./machine/handlers/policies";
 import {
   createOnboardPolicyApplication,
   type OnboardPolicyApplicationDeps,
@@ -15,12 +23,20 @@ const { seedInitialPolicyContext, syncPresetSelection } = vi.hoisted(() => ({
 }));
 
 vi.mock("../policy", () => ({
+  arePresetsCoveredByPersonalPolicy: vi.fn(),
   clampSetupPolicyPresetNames: vi.fn((names: string[]) => names),
   customPresetOwnsNetworkPolicyKey: vi.fn(() => false),
   filterSetupPolicyPresets: vi.fn(),
   getAppliedPresets: vi.fn(() => []),
+  hasNativeCustomProvider: vi.fn(() => false),
+  getPersonalSubsumedCustomPresetNames: vi.fn(async () => []),
   listCustomPresets: vi.fn(() => []),
-  listSetupPolicyPresets: vi.fn(() => [{ name: "npm" }]),
+  listSetupPolicyPresets: vi.fn(() => [
+    { name: "npm" },
+    { name: "tavily" },
+    { name: "weather" },
+    { name: "personal-open-internet" },
+  ]),
   persistAppliedPolicySelection: vi.fn(),
   resolveSandboxBaselinePolicy: vi.fn(),
   setupPolicyPresetSupported: vi.fn(() => true),
@@ -28,7 +44,217 @@ vi.mock("../policy", () => ({
 vi.mock("./policy-context-seed", () => ({ seedInitialPolicyContext }));
 vi.mock("./policy-preset-sync", () => ({ syncPresetSelection }));
 
+function applicationWithPendingSelection(
+  pendingSelection: OnboardPolicyApplicationDeps["pendingSelection"],
+) {
+  return createOnboardPolicyApplication({
+    localInferenceProviders: [],
+    step: vi.fn(),
+    note: vi.fn(),
+    isNonInteractive: vi.fn(() => true),
+    prompt: vi.fn(async () => ""),
+    selectFromNumberedMenuOrExit,
+    makeOnboardCancelExit: (rollback, cleanup) => () => {
+      cleanup();
+      rollback.markCancelled();
+    },
+    sandboxCancelRollback: { markCancelled: vi.fn() },
+    useColor: false,
+    withSandboxMutationLock: async (_sandboxName, action) => await action(),
+    waitForSandboxReady: vi.fn(async () => ({
+      ready: true as const,
+      reason: "ready" as const,
+      error: null,
+    })),
+    waitForSandboxControlPlaneReady: vi.fn(async () => true),
+    parsePolicyPresetEnv: vi.fn(() => []),
+    env: {},
+    pendingSelection,
+  });
+}
+
 describe("onboarding policy application", () => {
+  it("shares a pending tier until policy setup completes", async () => {
+    const loadTier = vi.fn(() => "balanced");
+    const application = applicationWithPendingSelection({
+      record: vi.fn(),
+      loadTier,
+      hasPending: vi.fn(() => false),
+      clear: vi.fn(),
+    });
+
+    await expect(application.selectPolicyTier()).resolves.toBe("balanced");
+    await expect(application.selectPolicyTier()).resolves.toBe("balanced");
+    expect(loadTier).toHaveBeenCalledOnce();
+
+    await expect(
+      application.setupPoliciesWithSelection("alpha", {
+        selectedPresets: ["npm"],
+        tierName: "balanced",
+      }),
+    ).resolves.toEqual(["npm"]);
+    await expect(application.selectPolicyTier()).resolves.toBe("balanced");
+    expect(loadTier).toHaveBeenCalledTimes(2);
+  });
+
+  it("starts a fresh tier selection after an onboarding attempt ends before policy setup", async () => {
+    const loadTier = vi.fn().mockReturnValueOnce("balanced").mockReturnValueOnce("personal");
+    const application = applicationWithPendingSelection({
+      record: vi.fn(),
+      loadTier,
+      hasPending: vi.fn(() => false),
+      clear: vi.fn(),
+    });
+
+    await expect(application.selectPolicyTier()).resolves.toBe("balanced");
+    application.resetPolicyTierSelection();
+    await expect(application.selectPolicyTier()).resolves.toBe("personal");
+    expect(loadTier).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(["npm", "tavily"])(
+    "resumes a refused %s write and clears the saved selection after live readback",
+    async (presetName) => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pending-policy-"));
+      vi.stubEnv("HOME", home);
+      vi.resetModules();
+      try {
+        const sessionStore = await import("../state/onboard-session");
+        const sandbox = { lifecycleLiveIdentityFingerprint: "live-sandbox-identity" };
+        sessionStore.saveSession(sessionStore.createSession({ sandboxName: "alpha" }));
+        const pendingSelection = sessionStore.createPendingPolicySelectionStore(() => sandbox);
+        vi.mocked(policies.getAppliedPresets).mockResolvedValue([]);
+        const application = applicationWithPendingSelection(pendingSelection);
+
+        syncPresetSelection
+          .mockRejectedValueOnce(new Error("policy refused"))
+          .mockResolvedValue(undefined);
+        await expect(
+          application.setupPoliciesWithSelection("alpha", {
+            selectedPresets: [presetName],
+            tierName: "balanced",
+            preserveExplicitWebSearch: true,
+          }),
+        ).rejects.toThrow("policy refused");
+        expect(sessionStore.loadSession()?.pendingPolicySelection).toEqual({
+          sandboxName: "alpha",
+          sandboxIdentity: "live-sandbox-identity",
+          tierName: "balanced",
+          presetNames: [presetName],
+        });
+
+        const { deps, calls } = createPolicyHandlerDeps({
+          loadSession: sessionStore.loadSession,
+          getActiveSandbox: vi.fn(() => sandbox),
+          preparePolicyPresetResumeSelection: application.preparePolicyPresetResumeSelection,
+          arePolicyPresetsApplied: application.arePolicyPresetsApplied,
+          setupPoliciesWithSelection: application.setupPoliciesWithSelection,
+        });
+        const resume = { ...basePolicyHandlerOptions(deps), sandboxName: "alpha", resume: true };
+        await expect(handlePoliciesState(resume)).rejects.toThrow(
+          "live OpenShell policy does not confirm",
+        );
+        expect(sessionStore.loadSession()?.pendingPolicySelection?.presetNames).toEqual([
+          presetName,
+        ]);
+
+        vi.mocked(policies.getAppliedPresets).mockResolvedValue([presetName]);
+        await expect(handlePoliciesState(resume)).resolves.toMatchObject({
+          appliedPolicyPresets: [presetName],
+        });
+        expect(sessionStore.loadSession()?.pendingPolicySelection).toBeNull();
+        expect(syncPresetSelection).toHaveBeenCalledTimes(3);
+        expect(syncPresetSelection).toHaveBeenNthCalledWith(2, "alpha", [], [presetName]);
+        expect(calls.skipped).not.toHaveBeenCalled();
+      } finally {
+        vi.mocked(policies.getAppliedPresets).mockResolvedValue([]);
+        vi.unstubAllEnvs();
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("clears a Personal selection after confirming its superseded presets", async () => {
+    const pendingSelection = { record: vi.fn(), hasPending: () => true, clear: vi.fn() };
+    const application = applicationWithPendingSelection(pendingSelection);
+    vi.mocked(policies.getAppliedPresets).mockResolvedValue(["personal-open-internet"]);
+    vi.mocked(policies.arePresetsCoveredByPersonalPolicy).mockResolvedValue(true);
+    syncPresetSelection.mockResolvedValue(undefined);
+    try {
+      await expect(
+        application.setupPoliciesWithSelection("alpha", {
+          selectedPresets: ["personal-open-internet", "weather"],
+          tierName: "personal",
+        }),
+      ).resolves.toEqual(["personal-open-internet", "weather"]);
+      expect(pendingSelection.clear).toHaveBeenCalledWith("alpha");
+      expect(policies.arePresetsCoveredByPersonalPolicy).toHaveBeenCalledWith("alpha", ["weather"]);
+    } finally {
+      vi.mocked(policies.getAppliedPresets).mockResolvedValue([]);
+    }
+  });
+
+  it("retains a Personal selection when its superseded presets cannot be confirmed", async () => {
+    const pendingSelection = { record: vi.fn(), hasPending: () => true, clear: vi.fn() };
+    const application = applicationWithPendingSelection(pendingSelection);
+    vi.mocked(policies.getAppliedPresets).mockResolvedValue(["personal-open-internet"]);
+    vi.mocked(policies.arePresetsCoveredByPersonalPolicy).mockResolvedValue(false);
+    syncPresetSelection.mockResolvedValue(undefined);
+    try {
+      await expect(
+        application.setupPoliciesWithSelection("alpha", {
+          selectedPresets: ["personal-open-internet", "weather"],
+          tierName: "personal",
+        }),
+      ).rejects.toThrow("live OpenShell policy does not confirm");
+      expect(pendingSelection.clear).not.toHaveBeenCalled();
+    } finally {
+      vi.mocked(policies.getAppliedPresets).mockResolvedValue([]);
+    }
+  });
+
+  it("records a Personal-normalized custom preset only in the first policy write", async () => {
+    const pendingSelection = { record: vi.fn(), hasPending: () => true, clear: vi.fn() };
+    const application = applicationWithPendingSelection(pendingSelection);
+    vi.mocked(policies.listCustomPresets).mockResolvedValue([
+      { name: "fixture-weather", file: "fixture-weather.yaml", description: "Custom weather" },
+    ]);
+    vi.mocked(policies.listSetupPolicyPresets).mockResolvedValue([
+      { name: "personal-open-internet", file: "personal.yaml", description: "Personal" },
+      { name: "fixture-weather", file: "fixture-weather.yaml", description: "Custom weather" },
+    ]);
+    vi.mocked(policies.getPersonalSubsumedCustomPresetNames).mockResolvedValue(["fixture-weather"]);
+    vi.mocked(policies.getAppliedPresets).mockResolvedValue(["personal-open-internet"]);
+    syncPresetSelection.mockResolvedValue(undefined);
+    try {
+      await expect(
+        application.setupPoliciesWithSelection("alpha", {
+          selectedPresets: ["personal-open-internet", "fixture-weather"],
+          tierName: "personal",
+        }),
+      ).resolves.toEqual(["personal-open-internet"]);
+      expect(pendingSelection.record).toHaveBeenCalledWith("alpha", "personal", [
+        "personal-open-internet",
+      ]);
+      expect(syncPresetSelection).toHaveBeenCalledWith(
+        "alpha",
+        ["personal-open-internet"],
+        ["personal-open-internet", "fixture-weather"],
+      );
+      expect(pendingSelection.clear).toHaveBeenCalledWith("alpha");
+    } finally {
+      vi.mocked(policies.listCustomPresets).mockResolvedValue([]);
+      vi.mocked(policies.listSetupPolicyPresets).mockResolvedValue([
+        { name: "npm", file: "npm.yaml", description: "npm" },
+        { name: "tavily", file: "tavily.yaml", description: "Tavily" },
+        { name: "weather", file: "weather.yaml", description: "Weather" },
+        { name: "personal-open-internet", file: "personal.yaml", description: "Personal" },
+      ]);
+      vi.mocked(policies.getPersonalSubsumedCustomPresetNames).mockResolvedValue([]);
+      vi.mocked(policies.getAppliedPresets).mockResolvedValue([]);
+    }
+  });
+
   it("runs policy application while holding the sandbox mutation lock", async () => {
     const events: string[] = [];
     const withSandboxMutationLock: OnboardPolicyApplicationDeps["withSandboxMutationLock"] = vi.fn(
