@@ -34,7 +34,7 @@ describe("portable registry readiness policy", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "portable-registry-boundary-"));
     const evidence = {
       schemaVersion: 1 as const,
-      minimumHeadroom: 128,
+      minimumHeadroom: 257,
       inheritedServiceBoundary: true,
       service: { cgroup: "/service", tasksMax: 71707, tasksCurrent: 21 },
       registry: { cgroup: "/service" },
@@ -56,6 +56,7 @@ describe("portable registry readiness policy", () => {
     );
     try {
       vi.stubEnv("DOCKER_HOST", "unix:///run/user/1000/podman/podman.sock");
+      vi.stubEnv("PORTABLE_REGISTRY_MINIMUM_PROCESS_HEADROOM", "257");
       const result = await capturePortableRegistryProcessBoundary({
         artifacts: new ArtifactSink(root),
         shellProbe: { run } as unknown as ShellProbe,
@@ -72,6 +73,7 @@ describe("portable registry readiness policy", () => {
       expect(command.args[5]).toContain('[[ $cgroup_max == "$tasks_max" ]]');
       expect(command.args[5]).toContain("(( cgroup_max - cgroup_current >= minimum ))");
       expect(command.args[5]).toContain("fail_boundary service-headroom-insufficient");
+      expect(options.env).toHaveProperty("PORTABLE_REGISTRY_MINIMUM_PROCESS_HEADROOM", "257");
       expect(options.env).not.toHaveProperty("UNRELATED_API_KEY");
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
@@ -95,6 +97,7 @@ describe("portable registry readiness policy", () => {
       }),
     );
     try {
+      vi.stubEnv("PORTABLE_REGISTRY_MINIMUM_PROCESS_HEADROOM", "128");
       await expect(
         capturePortableRegistryProcessBoundary({
           artifacts: new ArtifactSink(root),
@@ -107,6 +110,24 @@ describe("portable registry readiness policy", () => {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it.each([undefined, "0", "not-a-number"])(
+    "rejects an invalid supplied process headroom threshold: %s",
+    async (minimumHeadroom) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "portable-registry-boundary-"));
+      try {
+        vi.stubEnv("PORTABLE_REGISTRY_MINIMUM_PROCESS_HEADROOM", minimumHeadroom ?? "");
+        await expect(
+          capturePortableRegistryProcessBoundary({
+            artifacts: new ArtifactSink(root),
+            shellProbe: { run: vi.fn() } as unknown as ShellProbe,
+          }),
+        ).rejects.toThrow("Portable registry minimum process headroom must be a positive integer.");
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("records first-attempt readiness without sleeping", async () => {
     const sleep = vi.fn(async () => {});

@@ -22,7 +22,8 @@ export type PortableRegistryReadinessObservation =
 
 export const PORTABLE_REGISTRY_READINESS_MAX_ATTEMPTS = 10;
 export const PORTABLE_REGISTRY_READINESS_DELAY_MS = 1_000;
-export const PORTABLE_REGISTRY_MINIMUM_PROCESS_HEADROOM = 128;
+
+const PORTABLE_REGISTRY_MINIMUM_PROCESS_HEADROOM_ENV = "PORTABLE_REGISTRY_MINIMUM_PROCESS_HEADROOM";
 
 const PORTABLE_REGISTRY_DIAGNOSTIC_ENV_KEYS = [
   "CONTAINERS_CONF",
@@ -31,6 +32,7 @@ const PORTABLE_REGISTRY_DIAGNOSTIC_ENV_KEYS = [
   "XDG_CONFIG_HOME",
   "XDG_DATA_HOME",
   "XDG_RUNTIME_DIR",
+  PORTABLE_REGISTRY_MINIMUM_PROCESS_HEADROOM_ENV,
 ] as const;
 
 const PROCESS_HEADROOM_DIAGNOSTIC = `
@@ -78,7 +80,7 @@ printf 'host_tasks=%s\n' "\${host_tasks:-unavailable}"
 `;
 
 const PROCESS_BOUNDARY_PROBE = `
-minimum=${PORTABLE_REGISTRY_MINIMUM_PROCESS_HEADROOM}
+minimum=\${PORTABLE_REGISTRY_MINIMUM_PROCESS_HEADROOM:?}
 service=nemoclaw-native-podman-e2e.service
 service_pid=unavailable
 registry_pid=unavailable
@@ -151,6 +153,14 @@ export async function capturePortableRegistryProcessBoundary(options: {
   readonly artifacts: ArtifactSink;
   readonly shellProbe: ShellProbe;
 }): Promise<PortableRegistryProcessBoundaryEvidence> {
+  const minimumHeadroomText = process.env[PORTABLE_REGISTRY_MINIMUM_PROCESS_HEADROOM_ENV];
+  if (!minimumHeadroomText || !/^[1-9][0-9]*$/u.test(minimumHeadroomText)) {
+    throw new Error("Portable registry minimum process headroom must be a positive integer.");
+  }
+  const minimumHeadroom = Number(minimumHeadroomText);
+  if (!Number.isSafeInteger(minimumHeadroom)) {
+    throw new Error("Portable registry minimum process headroom must be a safe integer.");
+  }
   const env = buildChildEnv(process.env, {
     additionalAllowedEnv: PORTABLE_REGISTRY_DIAGNOSTIC_ENV_KEYS,
     fixtureOverlay: {},

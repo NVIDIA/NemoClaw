@@ -5851,6 +5851,7 @@ jobs:
           # The shared setup action is pinned and runs before candidate checkout.
           # Keep this Portable Hermes setting in trusted, job-specific workflow code.
           minimum=128
+          service_tasks_max=1024
           config="$RUNNER_TEMP/native-podman-e2e-containers.conf"
           [[ "${CONTAINERS_CONF:?}" == "$config" && -f "$config" && ! -L "$config" ]]
           [[ "$(grep -Fxc '[containers]' "$config")" == 1 ]]
@@ -5862,8 +5863,17 @@ jobs:
           # The registry must inherit the finite API-service TasksMax boundary.
           # A per-container systemd leaf failed before the registry could serve HTTP.
           sed -i '/^\[containers\]$/a cgroups = "disabled"' "$config"
-          /usr/bin/systemctl --user restart nemoclaw-native-podman-e2e.service
           service=nemoclaw-native-podman-e2e.service
+          service_unit="$(/usr/bin/systemctl --user show "$service" --property=FragmentPath --value)"
+          [[ "$service_unit" == "$RUNNER_TEMP"/* && -f "$service_unit" && ! -L "$service_unit" ]]
+          [[ "$(grep -Fxc '[Service]' "$service_unit")" == 1 ]]
+          if grep -Eq '^[[:space:]]*TasksMax[[:space:]]*=' "$service_unit"; then
+            echo "::error::Portable Podman service already sets TasksMax" >&2
+            exit 1
+          fi
+          sed -i "/^\[Service\]$/a TasksMax=$service_tasks_max" "$service_unit"
+          /usr/bin/systemctl --user daemon-reload
+          /usr/bin/systemctl --user restart "$service"
           service_pid="$(/usr/bin/systemctl --user show "$service" --property=MainPID --value)"
           [[ "$service_pid" =~ ^[1-9][0-9]*$ ]]
           # Portable host preparation changes the client configuration and podman.service.
@@ -5882,6 +5892,9 @@ jobs:
           tasks_current="$(/usr/bin/systemctl --user show "$service" --property=TasksCurrent --value || true)"
           limit_nproc="$(/usr/bin/systemctl --user show "$service" --property=LimitNPROC --value || true)"
           failure=none
+          if [[ "$tasks_max" != "$service_tasks_max" ]]; then
+            failure=service_tasks_configuration
+          fi
           if [[ ! "$user_tasks" =~ ^[0-9]+$ || -z "$tasks_max" || -z "$tasks_current" || -z "$limit_nproc" ]] || \
             { [[ "$nproc_soft" != unlimited ]] && \
               { [[ ! "$nproc_soft" =~ ^[0-9]+$ ]] || (( nproc_soft - user_tasks < minimum )); }; }; then
@@ -5935,6 +5948,7 @@ jobs:
             echo "::error::Portable Podman infrastructure has insufficient process headroom ($failure)" >&2
             exit 1
           fi
+          printf 'PORTABLE_REGISTRY_MINIMUM_PROCESS_HEADROOM=%s\n' "$minimum" >>"$GITHUB_ENV"
 
       - name: Check out the exact candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

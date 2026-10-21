@@ -1026,6 +1026,11 @@ exec /bin/bash "$@"
     expect(headroomIndex).toBeGreaterThan(setupIndex);
     expect(candidateCheckoutIndex).toBeGreaterThan(headroomIndex);
     expect(headroomRun).toContain("minimum=128");
+    expect(headroomRun).toContain("service_tasks_max=1024");
+    expect(headroomRun).toContain("TasksMax=$service_tasks_max");
+    expect(headroomRun).toContain('[[ "$tasks_max" != "$service_tasks_max" ]]');
+    expect(headroomRun).toContain("failure=service_tasks_configuration");
+    expect(headroomRun).toContain("PORTABLE_REGISTRY_MINIMUM_PROCESS_HEADROOM=%s");
     expect(headroomRun).toContain('cgroups = "disabled"');
     expect(headroomRun).not.toContain("pids_limit = $minimum");
     expect(headroomRun).not.toContain('cgroup_manager = "systemd"');
