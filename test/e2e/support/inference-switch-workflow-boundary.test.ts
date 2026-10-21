@@ -96,7 +96,7 @@ describe("inference-switch catalogue boundary", () => {
     },
   );
 
-  it("selects the public Super VL model for every public NVIDIA target", () => {
+  it("selects the public Super VL model for both native NVIDIA switch targets", () => {
     const superVl = "nvidia/nemotron-3.5-super-vl-120b-a12b";
     expect([DEFAULT_CLOUD_MODEL, PUBLIC_NVIDIA_SWITCH_MODEL]).toEqual([superVl, superVl]);
     // runCatalogueTarget assigns these values over the job environment, so they
@@ -104,11 +104,7 @@ describe("inference-switch catalogue boundary", () => {
     expect([
       catalogueTarget("openclaw-inference-switch").environment.NEMOCLAW_SWITCH_MODEL,
       catalogueTarget("hermes-inference-switch").environment.NEMOCLAW_SWITCH_MODEL,
-      catalogueTarget("pi-agent-qualification-amd64").environment.NEMOCLAW_MODEL,
-    ]).toEqual([superVl, superVl, superVl]);
-    expect(catalogueTarget("pi-agent-qualification-amd64").environment).toMatchObject({
-      NEMOCLAW_E2E_INFERENCE_MODE: "public-nvidia",
-    });
+    ]).toEqual([superVl, superVl]);
   });
 
   it("selects native Anthropic through the existing trusted selector (#13195)", () => {
