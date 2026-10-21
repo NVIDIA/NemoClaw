@@ -543,7 +543,7 @@ async fn main() -> Result<()> {
             }
             ImageAction::Qualify { images } => images.iter().try_for_each(|image| {
                 eprintln!("Qualifying {image}");
-                nemoclaw_build::images::qualify(root, image)
+                nemoclaw_build::images::qualify(image)
             }),
             ImageAction::ExportMetadata {
                 image,

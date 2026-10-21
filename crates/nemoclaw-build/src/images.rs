@@ -518,16 +518,193 @@ pub fn build(root: &Path, platform: &str, selection: &[String]) -> Result<()> {
     Ok(())
 }
 
-/// Run the black-box command contract inside one image, offline and read-only.
-/// The `docker run` arguments for the reference runtime contract: offline,
-/// read-only, with only sandbox storage writable and the suite mounted.
-pub fn qualify_arguments(root: &Path, name: &str, id: &str) -> Vec<String> {
-    let suite = root.join("image").join("test_agent_contract.py");
+/// Facts about an image's assembly, gathered by its own shell: the files its
+/// provenance and runtime declare, the hashes of its retained sources, its user,
+/// the owners and modes under `/sandbox`, and any installer or toolchain left.
+const ASSEMBLY_FACTS: &str = r#"
+echo '=== provenance'; cat /opt/nemoclaw/provenance.json; echo
+echo '=== runtime'; cat /opt/nemoclaw/runtime.json; echo
+echo '=== hashes'; cd /opt/nemoclaw/source && sha256sum fabric.tar.gz requirements.txt local/*
+echo '=== copies'
+for file in /opt/nemoclaw/*.py; do
+  if cmp -s "$file" "local/${file##*/}"; then echo "same ${file##*/}"; else echo "differs ${file##*/}"; fi
+done
+echo '=== identity'; echo "$(id -u) $(id -g)"
+echo '=== sandbox'; find /sandbox -exec stat -c '%u %a %F %n' {} +
+echo '=== installers'; ls -d /opt/fabric/bin/pip* /opt/fabric/lib/python*/site-packages/pip 2>/dev/null || true
+echo '=== toolchains'; for tool in rustc cargo uv gcc; do command -v "$tool" || true; done
+echo '=== control'
+if [ -x /opt/fabric/bin/fabric-agent-ctl ]; then echo executable; else echo missing; fi
+"#;
+
+/// Check an image's assembly facts against what NemoClaw promises about the
+/// images it builds, returning each problem found.
+pub fn check_assembly(facts: &str) -> Vec<String> {
+    let mut sections: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    let mut current = None;
+    for line in facts.lines() {
+        if let Some(name) = line.strip_prefix("=== ") {
+            current = Some(name);
+            sections.entry(name).or_default();
+        } else if let Some(name) = current
+            && !line.trim().is_empty()
+        {
+            sections.entry(name).or_default().push(line);
+        }
+    }
+    let section = |name: &str| sections.get(name).cloned().unwrap_or_default();
+    let document = |name: &str| -> Value {
+        serde_json::from_str(&section(name).join("\n")).unwrap_or(Value::Null)
+    };
+    let mut problems = Vec::new();
+    let (provenance, runtime) = (document("provenance"), document("runtime"));
+    if provenance.is_null() || runtime.is_null() {
+        problems.push("the image's provenance or runtime declaration is unreadable".into());
+        return problems;
+    }
+    if section("control") != ["executable"] {
+        problems.push("/opt/fabric/bin/fabric-agent-ctl is not executable".into());
+    }
+    if !section("installers").is_empty() {
+        problems.push(format!(
+            "the image carries a package installer: {}",
+            section("installers").join(", ")
+        ));
+    }
+    if !section("toolchains").is_empty() {
+        problems.push(format!(
+            "the image carries a build toolchain: {}",
+            section("toolchains").join(", ")
+        ));
+    }
+    // OpenShell's Kubernetes driver runs sandboxes as 10001:10001, and Docker
+    // and Podman use the image's own user, so one ID fits all three.
+    if section("identity") != ["10001 10001"] {
+        problems.push(format!(
+            "the image runs as {}, not 10001:10001",
+            section("identity").join(" ")
+        ));
+    }
+    // The retained sources are the ones the image's provenance names.
+    let hashes: BTreeMap<&str, &str> = section("hashes")
+        .iter()
+        .filter_map(|line| line.split_once("  ").map(|(hash, name)| (name, hash)))
+        .collect();
+    let mut expected = vec![
+        (
+            "fabric.tar.gz".to_owned(),
+            provenance["source_sha256"]
+                .as_str()
+                .unwrap_or_default()
+                .to_owned(),
+        ),
+        (
+            "requirements.txt".to_owned(),
+            provenance["requirements_sha256"]
+                .as_str()
+                .unwrap_or_default()
+                .to_owned(),
+        ),
+    ];
+    for (name, hash) in provenance["local_sources"]
+        .as_object()
+        .into_iter()
+        .flatten()
+    {
+        expected.push((
+            format!("local/{name}"),
+            hash.as_str().unwrap_or_default().to_owned(),
+        ));
+    }
+    for (name, hash) in expected {
+        if hashes.get(name.as_str()) != Some(&hash.as_str()) || hash.is_empty() {
+            problems.push(format!(
+                "the retained source {name} doesn't match the image's provenance"
+            ));
+        }
+    }
+    for line in section("copies") {
+        if let Some(name) = line.strip_prefix("differs ") {
+            problems.push(format!(
+                "/opt/nemoclaw/{name} differs from its retained source"
+            ));
+        }
+    }
+    // OpenShell seeds a Kubernetes workspace by copying the image's /sandbox, as
+    // the namespace's own UID on OpenShift, and its supervisor makes probe
+    // directories under TMPDIR before Fabric starts. So /sandbox and TMPDIR
+    // belong to 10001, and everything in /sandbox is readable by others.
+    let entries: Vec<(&str, u32, bool, &str)> = section("sandbox")
+        .iter()
+        .filter_map(|line| {
+            let mut parts = line.splitn(3, ' ');
+            let owner = parts.next()?;
+            let mode = u32::from_str_radix(parts.next()?, 8).ok()?;
+            let rest = parts.next()?;
+            let directory = rest.starts_with("directory ");
+            let path = rest.split_once(" /").map(|(_, path)| path)?;
+            Some((owner, mode, directory, path))
+        })
+        .collect();
+    let owned_directory = |wanted: &str| {
+        entries.iter().any(|(owner, _, directory, path)| {
+            format!("/{path}") == wanted && *directory && *owner == "10001"
+        })
+    };
+    if !owned_directory("/sandbox") {
+        problems.push("/sandbox is not a directory owned by 10001".into());
+    }
+    let temporary = runtime["environment"]["TMPDIR"]
+        .as_str()
+        .unwrap_or_default();
+    if !temporary.starts_with("/sandbox/") || !owned_directory(temporary) {
+        problems.push(format!(
+            "TMPDIR {temporary} is not a directory in /sandbox owned by 10001"
+        ));
+    }
+    for (_, mode, directory, path) in &entries {
+        let needed = if *directory { 0o005 } else { 0o004 };
+        if mode & needed != needed {
+            problems.push(format!("/{path} is not readable by another user"));
+        }
+    }
+    problems
+}
+
+/// Run the assembly facts script in `image`, offline, as its own user.
+fn assembly(image: &str) -> Result<()> {
+    let facts = output_of(
+        docker().args([
+            "run",
+            "--rm",
+            "--runtime=runc",
+            "--network=none",
+            "--entrypoint",
+            "/bin/sh",
+            image,
+            "-c",
+            ASSEMBLY_FACTS,
+        ]),
+        "gather the image's assembly facts",
+    )?;
+    let problems = check_assembly(&String::from_utf8_lossy(&facts));
+    if problems.is_empty() {
+        Ok(())
+    } else {
+        Err(problems.join("; "))
+    }
+}
+
+const AGENT_CTL: &str = "/opt/fabric/bin/fabric-agent-ctl";
+
+/// The container the reference runtime serves from, as an OpenShell sandbox
+/// runs it: offline, read-only, with only its sandbox storage writable.
+pub fn lifecycle_arguments(name: &str, id: &str) -> Vec<String> {
     [
         "run",
+        "--detach",
         "--name",
         name,
-        "--rm",
         "--runtime=runc",
         "--network=none",
         "--read-only",
@@ -539,23 +716,102 @@ pub fn qualify_arguments(root: &Path, name: &str, id: &str) -> Vec<String> {
         "HOME=/sandbox",
         "--workdir",
         "/sandbox",
-        "--mount",
-        &format!("type=bind,src={},dst=/test.py,readonly", suite.display()),
         "--entrypoint",
-        "/opt/fabric/bin/python",
+        AGENT_CTL,
         id,
-        "-B",
-        "/test.py",
+        "serve",
     ]
     .map(String::from)
     .to_vec()
 }
 
-/// Run the reference image's runtime contract: NemoClaw's test adapter started,
-/// invoked and stopped through `fabric-agent-ctl` under the conditions an
-/// OpenShell sandbox imposes. Fabric's native adapters are Fabric's to test;
-/// production images get only the assembly checks in `image/test_image.py`.
-pub fn qualify(root: &Path, image: &str) -> Result<()> {
+/// Start, invoke, and stop one runtime with NemoClaw's test adapter, through
+/// `fabric-agent-ctl serve` in the reference image. Fabric's runtime and its
+/// adapters are Fabric's to test.
+fn lifecycle(name: &str, id: &str) -> Result<()> {
+    let deadline = std::time::Instant::now() + QUALIFY_TIMEOUT;
+    output(
+        docker().args(lifecycle_arguments(name, id)),
+        "start the reference runtime",
+    )?;
+    while !docker()
+        .args(["exec", name, "test", "-S", "/sandbox/fabric.sock"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+    {
+        if std::time::Instant::now() >= deadline {
+            return Err("fabric-agent-ctl serve did not create its socket".into());
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    let call = |operation: &str, flags: &[&str], input: Option<Value>| -> Result<Value> {
+        if std::time::Instant::now() >= deadline {
+            return Err("the reference runtime contract timed out".into());
+        }
+        let mut child = docker()
+            .args([
+                "exec", "-i", name, AGENT_CTL, operation, "--agent", "contract",
+            ])
+            .args(flags)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|_| "cannot run docker exec")?;
+        if let Some(mut stdin) = child.stdin.take()
+            && let Some(input) = input
+        {
+            std::io::Write::write_all(&mut stdin, input.to_string().as_bytes())
+                .map_err(|_| "cannot write to fabric-agent-ctl")?;
+        }
+        let done = child
+            .wait_with_output()
+            .map_err(|_| "cannot read fabric-agent-ctl")?;
+        let result: Value = serde_json::from_slice(&done.stdout)
+            .map_err(|_| format!("fabric-agent-ctl {operation} wrote no result"))?;
+        let succeeded = result["status"] == "succeeded";
+        if result["operation"] != operation || done.status.success() != succeeded {
+            return Err(format!(
+                "fabric-agent-ctl {operation} reported an inconsistent result"
+            ));
+        }
+        if !succeeded {
+            return Err(format!(
+                "fabric-agent-ctl {operation} failed: {}",
+                result["error"]
+            ));
+        }
+        Ok(result)
+    };
+    let config = serde_json::json!({
+        "schema_version": "fabric.agent/v1alpha1",
+        "metadata": {"name": "contract"},
+        "harness": {"adapter_id": "org.nemoclaw.dummy"},
+    });
+    let started = call("start", &["--config", "-"], Some(config))?;
+    let runtime = started["result"]["runtime_id"]
+        .as_str()
+        .ok_or("fabric-agent-ctl start returned no runtime")?
+        .to_owned();
+    let invoked = call(
+        "invoke",
+        &["--runtime-id", &runtime, "--input", "-"],
+        Some(serde_json::json!({"message": "hello"})),
+    )?;
+    if invoked["result"]["status"] != "succeeded"
+        || invoked["result"]["output"] != serde_json::json!({"message": "hello"})
+    {
+        return Err("the reference runtime didn't echo its input".into());
+    }
+    call("stop", &["--runtime-id", &runtime], None)?;
+    Ok(())
+}
+
+/// Check an agent image NemoClaw built: its runtime command and assembly, and
+/// for the reference image, one runtime's lifecycle.
+pub fn qualify(image: &str) -> Result<()> {
     let inspected = output(
         docker().args(["image", "inspect", image]),
         "inspect the image",
@@ -563,48 +819,26 @@ pub fn qualify(root: &Path, image: &str) -> Result<()> {
     let inspected: Value =
         serde_json::from_slice(&inspected).map_err(|_| "unreadable image inspection")?;
     let labels = &inspected[0]["Config"]["Labels"];
-    if labels[CATALOG_LABEL].as_str().is_none() {
-        return Err(format!(
-            "{image} has no {CATALOG_LABEL} label; build it with cargo images build"
-        ));
-    }
-    if labels[REFERENCE_LABEL].as_str().is_none() {
-        return Err(format!(
-            "{image} is not the reference image; production images are checked by image/test_image.py (docs/contributing/testing.md#image-source-checks)"
-        ));
+    let catalog: Value = labels[CATALOG_LABEL]
+        .as_str()
+        .and_then(|label| serde_json::from_str(label).ok())
+        .ok_or_else(|| {
+            format!("{image} has no {CATALOG_LABEL} label; build it with cargo images build")
+        })?;
+    // OpenShell launches the runtime command, Fabric's own sandbox bridge.
+    if catalog["runtime"]["command"] != serde_json::json!([AGENT_CTL]) {
+        return Err(format!("{image}: its runtime command is not {AGENT_CTL}"));
     }
     let id = inspected[0]["Id"].as_str().ok_or("image has no ID")?;
-    let root = std::path::absolute(root).map_err(|_| "cannot locate the repository")?;
+    assembly(id).map_err(|error| format!("{image}: {error}"))?;
+    if labels[REFERENCE_LABEL].as_str().is_none() {
+        return Ok(());
+    }
     let mut nonce = [0u8; 16];
     getrandom::fill(&mut nonce).map_err(|_| "cannot name the qualification container")?;
     let name = format!("nemoclaw-contract-{}", crate::hex(&nonce));
-    let mut child = docker()
-        .args(qualify_arguments(&root, &name, id))
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .map_err(|_| "cannot run docker to qualify the image")?;
-    let deadline = std::time::Instant::now() + QUALIFY_TIMEOUT;
-    let outcome = loop {
-        match child.try_wait() {
-            Ok(Some(exit)) => {
-                break exit
-                    .success()
-                    .then_some(())
-                    .ok_or("the reference runtime contract failed");
-            }
-            Ok(None) if std::time::Instant::now() < deadline => {
-                std::thread::sleep(Duration::from_millis(200));
-            }
-            Ok(None) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                break Err("the reference runtime contract timed out");
-            }
-            Err(_) => break Err("cannot observe the qualification container"),
-        }
-    };
-    // Only this invocation's container is removed, including after a timeout.
+    let outcome = lifecycle(&name, id);
+    // Only this invocation's container is removed, including after a failure.
     let _ = docker()
         .args(["rm", "--force", &name])
         .stdout(Stdio::null())
