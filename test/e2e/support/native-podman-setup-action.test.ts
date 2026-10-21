@@ -978,6 +978,7 @@ exec /bin/bash "$@"
       E2E_GATEWAY_RUNTIMES: "podman",
       E2E_TARGET_ID: "portable-hermes-finalization",
       E2E_AGENT_RUNTIME: "hermes",
+      NEMOCLAW_NATIVE_PODMAN_SERVICE_TASKS_MAX: "1024",
     });
     expect(job.env).not.toHaveProperty("E2E_HERMES_BASE_STORAGE_HOME");
     expect(setupAction.inputs["cleanup-fixture"]?.default).toBe("");
@@ -1024,16 +1025,21 @@ exec /bin/bash "$@"
       enabled: "true",
       toolchain: "portable-5.7",
       "isolate-docker-cli": "false",
+      "service-tasks-max": "${{ env.NEMOCLAW_NATIVE_PODMAN_SERVICE_TASKS_MAX }}",
     });
     expect(setup?.uses).toBe(
-      "NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@22789bcaf835db7cf6390781c8d0f454f1e73dec",
+      "NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@ec68af5e3f8a6c9b7921d3888255c4a8fce88f5b",
     );
     expect(setupIndex).toBeGreaterThan(openshellInstallIndex);
     expect(headroomIndex).toBeGreaterThan(setupIndex);
     expect(candidateCheckoutIndex).toBeGreaterThan(headroomIndex);
     expect(headroomRun).toContain("minimum=128");
-    expect(headroomRun).toContain("service_tasks_max=1024");
-    expect(headroomRun).toContain("TasksMax=$service_tasks_max");
+    expect(headroomRun).toContain(
+      'service_tasks_max="${NEMOCLAW_NATIVE_PODMAN_SERVICE_TASKS_MAX:?}"',
+    );
+    expect(headroomRun).not.toContain("FragmentPath");
+    expect(headroomRun).not.toContain("daemon-reload");
+    expect(headroomRun).not.toContain('systemctl --user restart "$service"');
     expect(headroomRun).toContain('[[ "$tasks_max" != "$service_tasks_max" ]]');
     expect(headroomRun).toContain("failure=service_tasks_configuration");
     expect(headroomRun).toContain("PORTABLE_REGISTRY_MINIMUM_PROCESS_HEADROOM=%s");

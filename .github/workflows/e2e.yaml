@@ -3240,7 +3240,7 @@ jobs:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Prepare native Podman E2E runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@22789bcaf835db7cf6390781c8d0f454f1e73dec
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@ec68af5e3f8a6c9b7921d3888255c4a8fce88f5b
         with:
           enabled: ${{ matrix.runtime_provider == 'podman' && 'true' || 'false' }}
 
@@ -3448,7 +3448,7 @@ jobs:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Prepare native Podman E2E runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@22789bcaf835db7cf6390781c8d0f454f1e73dec
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@ec68af5e3f8a6c9b7921d3888255c4a8fce88f5b
         with:
           enabled: ${{ matrix.runtime_provider == 'podman' && 'true' || 'false' }}
 
@@ -4130,7 +4130,7 @@ jobs:
         run: npx tsx tools/e2e/runner-comparison.mts initialize
 
       - name: Prepare native Podman E2E runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@22789bcaf835db7cf6390781c8d0f454f1e73dec
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@ec68af5e3f8a6c9b7921d3888255c4a8fce88f5b
         with:
           enabled: ${{ matrix.runtime_provider == 'podman' && 'true' || 'false' }}
 
@@ -4291,7 +4291,7 @@ jobs:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Prepare native Podman E2E runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@22789bcaf835db7cf6390781c8d0f454f1e73dec
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@ec68af5e3f8a6c9b7921d3888255c4a8fce88f5b
         with:
           enabled: ${{ matrix.runtime_provider == 'podman' && 'true' || 'false' }}
 
@@ -4585,7 +4585,7 @@ jobs:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Prepare native Podman E2E runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@22789bcaf835db7cf6390781c8d0f454f1e73dec
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@ec68af5e3f8a6c9b7921d3888255c4a8fce88f5b
         with:
           enabled: ${{ matrix.runtime_provider == 'podman' && 'true' || 'false' }}
 
@@ -5688,7 +5688,7 @@ jobs:
         run: npx tsx tools/e2e/runner-comparison.mts initialize
 
       - name: Prepare native Podman E2E runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@22789bcaf835db7cf6390781c8d0f454f1e73dec
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@ec68af5e3f8a6c9b7921d3888255c4a8fce88f5b
         with:
           enabled: ${{ matrix.runtime_provider == 'podman' && 'true' || 'false' }}
 
@@ -5741,6 +5741,7 @@ jobs:
       E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "x86-64 NVIDIA GPU runner; rootless Podman 5.7; local Ollama"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/portable-hermes-finalization
       E2E_SOURCE_REVISION: ${{ inputs.checkout_sha || github.sha }}
+      NEMOCLAW_NATIVE_PODMAN_SERVICE_TASKS_MAX: "1024"
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_GATEWAY_RUNTIME: podman
@@ -5837,21 +5838,22 @@ jobs:
           enabled: "true"
 
       - name: Prepare Portable Podman 5.7 runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@22789bcaf835db7cf6390781c8d0f454f1e73dec
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@ec68af5e3f8a6c9b7921d3888255c4a8fce88f5b
         with:
           cleanup-fixture: /usr/local/libexec/nemoclaw/native-podman-e2e-restore.${{ github.run_id }}.${{ github.run_attempt }}
           enabled: "true"
           toolchain: portable-5.7
           isolate-docker-cli: "false"
+          service-tasks-max: ${{ env.NEMOCLAW_NATIVE_PODMAN_SERVICE_TASKS_MAX }}
 
       - name: Set Portable Podman registry process headroom
         shell: /bin/bash --noprofile --norc -e -o pipefail {0}
         run: |
           set -euo pipefail
           # The shared setup action is pinned and runs before candidate checkout.
-          # Keep this Portable Hermes setting in trusted, job-specific workflow code.
+          # The job selects the limit; the action owns service-unit rendering and startup.
           minimum=128
-          service_tasks_max=1024
+          service_tasks_max="${NEMOCLAW_NATIVE_PODMAN_SERVICE_TASKS_MAX:?}"
           config="$RUNNER_TEMP/native-podman-e2e-containers.conf"
           [[ "${CONTAINERS_CONF:?}" == "$config" && -f "$config" && ! -L "$config" ]]
           [[ "$(grep -Fxc '[containers]' "$config")" == 1 ]]
@@ -5864,16 +5866,6 @@ jobs:
           # A per-container systemd leaf failed before the registry could serve HTTP.
           sed -i '/^\[containers\]$/a cgroups = "disabled"' "$config"
           service=nemoclaw-native-podman-e2e.service
-          service_unit="$(/usr/bin/systemctl --user show "$service" --property=FragmentPath --value)"
-          [[ "$service_unit" == "$HOME/.config/systemd/user/$service" && -f "$service_unit" && ! -L "$service_unit" ]]
-          [[ "$(grep -Fxc '[Service]' "$service_unit")" == 1 ]]
-          if grep -Eq '^[[:space:]]*TasksMax[[:space:]]*=' "$service_unit"; then
-            echo "::error::Portable Podman service already sets TasksMax" >&2
-            exit 1
-          fi
-          sed -i "/^\[Service\]$/a TasksMax=$service_tasks_max" "$service_unit"
-          /usr/bin/systemctl --user daemon-reload
-          /usr/bin/systemctl --user restart "$service"
           service_pid="$(/usr/bin/systemctl --user show "$service" --property=MainPID --value)"
           [[ "$service_pid" =~ ^[1-9][0-9]*$ ]]
           # Portable host preparation changes the client configuration and podman.service.
@@ -6220,7 +6212,7 @@ jobs:
           enabled: "true"
 
       - name: Prepare native Podman E2E runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@22789bcaf835db7cf6390781c8d0f454f1e73dec
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@ec68af5e3f8a6c9b7921d3888255c4a8fce88f5b
         with:
           enabled: ${{ matrix.runtime_provider == 'podman' && 'true' || 'false' }}
 
@@ -6540,7 +6532,7 @@ jobs:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Prepare native Podman E2E runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@22789bcaf835db7cf6390781c8d0f454f1e73dec
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@ec68af5e3f8a6c9b7921d3888255c4a8fce88f5b
         with:
           enabled: ${{ matrix.runtime_provider == 'podman' && 'true' || 'false' }}
 
@@ -6683,7 +6675,7 @@ jobs:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Prepare native Podman E2E runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@22789bcaf835db7cf6390781c8d0f454f1e73dec
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@ec68af5e3f8a6c9b7921d3888255c4a8fce88f5b
         with:
           enabled: ${{ matrix.runtime_provider == 'podman' && 'true' || 'false' }}
 
