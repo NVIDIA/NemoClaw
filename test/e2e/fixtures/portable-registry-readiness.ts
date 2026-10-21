@@ -63,6 +63,8 @@ capture_process() {
 
 service_pid=$(/usr/bin/systemctl --user show "$service" --property=MainPID --value 2>/dev/null || true)
 registry_pid=$(podman container inspect --format '{{.State.Pid}}' nemoclaw-portable-registry 2>/dev/null || true)
+registry_pids_limit=$(docker inspect --format '{{.HostConfig.PidsLimit}}' nemoclaw-portable-registry 2>/dev/null || true)
+printf 'registry_pids_limit=%s\n' "\${registry_pids_limit:-unavailable}"
 capture_process service "$service_pid"
 capture_process registry "$registry_pid"
 user_tasks=$(ps -u "$uid" -L --no-headers 2>/dev/null | wc -l | tr -d ' ') || user_tasks=unavailable
