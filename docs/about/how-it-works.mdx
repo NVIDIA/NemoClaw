@@ -212,9 +212,11 @@ Refer to [Recover and Rebuild Sandboxes](../manage-sandboxes/operate-sandboxes/r
 
 New NVIDIA Endpoints, OpenAI, Anthropic, Google Gemini, OpenRouter, and Hermes Provider selections use sandbox-attached OpenShell providers.
 The agent calls the selected provider API hostname, and OpenShell permits only the approved destination and request paths.
-New Deep Agents Code and Hermes selections also use native providers for Ollama, standalone vLLM, llama.cpp, and qualifying local compatible endpoints.
+New Deep Agents Code and Hermes selections also use native providers for Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible endpoints.
+Deep Agents Code also uses native providers for hosted compatible endpoints unless fresh onboarding selects the Personal policy tier.
+That Personal path creates no native provider attachment and retains `inference.local`.
 New OpenClaw Ollama, standalone vLLM, and llama.cpp selections also use sandbox-attached native providers.
-Owned Local NVIDIA NIM, other custom shared routes, Pi local selections, retained OpenClaw shared local selections, and Model Router retain `inference.local`.
+Owned Local NVIDIA NIM, compatible endpoints without a native attachment, retained Pi local selections, retained Hermes local selections without an attachment, retained OpenClaw shared local selections, and Model Router retain `inference.local`.
 Hermes live qualification for the new local lifecycle remains pending.
 Legacy Deep Agents Code standalone local sandboxes require backup and fresh recreation before native-provider onboarding; NemoClaw blocks their resume and rebuild. An older OpenClaw Ollama, standalone vLLM, or llama.cpp sandbox without an attachment can retain its supported shared-route model switches, but cannot resume or rebuild. Back it up and re-onboard with `--fresh --name <sandbox-name> --recreate-sandbox`. Owned Local NIM sandboxes retain the shared route and can resume or rebuild without a native attachment.
 Refer to [About Inference Routing](../inference/about-inference-routing) for endpoints and route inspection.

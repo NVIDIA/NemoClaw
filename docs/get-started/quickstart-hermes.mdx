@@ -36,6 +36,11 @@ Review the [Prerequisites](prerequisites) before you begin.
 
 <Steps>
   <Step title="Install NemoClaw for Hermes">
+    The installer and supported CLI operations attempt anonymous completion telemetry to NVIDIA's fixed TEST receiver by default.
+    Run `export NEMOCLAW_DISABLE_TELEMETRY=1` in this shell before installation to suppress collection and delivery.
+    Repeat it in any new shell used for NemoClaw CLI commands.
+    Refer to [Operation Telemetry](/user-guide/hermes/security/best-practices#operation-telemetry) for details.
+
     Run the hosted installer.
 
     ```bash
@@ -407,7 +412,7 @@ Use these details when your first-run path needs more control.
     NemoHermes is ready
 
     Sandbox:  my-hermes
-    Model:    nvidia/nemotron-3-super-120b-a12b (NVIDIA Endpoints)
+    Model:    nvidia/nemotron-3.5-super-vl-120b-a12b (NVIDIA Endpoints)
 
     Access
 

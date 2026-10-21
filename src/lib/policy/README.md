@@ -7,10 +7,23 @@ OpenShell is the sole durable source of truth for sandbox policy. NemoClaw
 provides convenience commands that read the current OpenShell policy, compose a
 requested delta, submit it to OpenShell, and verify the resulting live state.
 
-NemoClaw does not persist policy ownership, policy receipts, desired tiers,
-applied preset lists, custom policy copies, baseline exclusion ledgers, or
-policy hashes and versions. Registry and onboarding-session normalization
+NemoClaw does not persist policy ownership, policy receipts, applied preset
+lists, custom policy copies, baseline exclusion ledgers, or policy hashes and
+versions as policy authority. Registry and onboarding-session normalization
 discard legacy copies of those fields without replaying them.
+
+During an incomplete onboarding policy step, the session temporarily retains
+the selected preset names and tier with the sandbox identity. Resume reconciles
+that pending selection against live OpenShell policy. NemoClaw clears it after
+the live policy confirms application. NemoClaw discards it if onboarding selects
+another sandbox name or creates a replacement sandbox with a new identity. An
+unexpected identity mismatch stops resume before policy mutation. The pending
+selection is not applied-policy authority.
+
+Resume preserves explicitly selected search presets even without search-provider
+configuration. For Personal selections, confirmation accepts superseded web presets
+only when the reviewed live Personal policy covers them. Remaining non-web endpoints
+must still match; unreadable or changed Personal policy leaves the selection pending.
 
 Policy mutations preserve unrelated live entries. Custom preset identity is
 encoded in namespaced OpenShell policy keys so list and remove commands can

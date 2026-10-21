@@ -57,6 +57,7 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { stripAnsi } from "./json-envelope.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
 import {
+  acceptedSwitchResponseModels,
   PUBLIC_NVIDIA_SWITCH_MODEL,
   PUBLIC_NVIDIA_SWITCH_PROVIDER,
 } from "./public-nvidia-switch-provider.ts";
@@ -406,8 +407,9 @@ export async function runHermesPongWithRetry(
       if (result.exitCode === 0) {
         try {
           passed =
-            inferenceResponseModel(result.stdout) === options.expectedModel &&
-            /PONG/iu.test(chatContent(result.stdout));
+            acceptedSwitchResponseModels(options.expectedModel).includes(
+              inferenceResponseModel(result.stdout),
+            ) && /PONG/iu.test(chatContent(result.stdout));
         } catch {}
       }
       return { passed, result };

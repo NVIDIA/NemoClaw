@@ -73,6 +73,7 @@ import {
   OPENSHELL_PROBE_TIMEOUT_MS,
 } from "../../adapters/openshell/runtime";
 import {
+  assertHermesPortableCommandUnavailable,
   assertHermesPortableAgentLifecycleAuthority,
   buildHermesPortableCommandEnvironment,
   buildHermesPortableCommandAuthority,
@@ -148,6 +149,7 @@ export type {
   PortableAgentReceiptDisposition,
 } from "../../onboard/experimental/portable-agent-lifecycle";
 export {
+  assertHermesPortableCommandUnavailable,
   buildHermesPortableCommandAuthority,
   buildHermesPortableCommandEnvironment,
   defaultPortableDemoStateDir,

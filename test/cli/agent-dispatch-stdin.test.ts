@@ -17,6 +17,14 @@ import { createCliOpenShellSandboxSessionExecutor } from "../../src/lib/adapters
 import { runAgentNonJsonPassthrough } from "../../src/lib/actions/sandbox/agent/passthrough";
 import { runAgentJsonPassthrough } from "../../src/lib/actions/sandbox/agent/passthrough-json";
 import { withMcpLifecycleLock } from "../../src/lib/state/mcp-lifecycle-lock-acquisition";
+import { patchAgentMessageInput } from "../../scripts/lib/patch-openclaw-agent-message-input.mts";
+
+const messageParser = patchAgentMessageInput(
+  fs.readFileSync(
+    path.join(import.meta.dirname, "../agents/openclaw/fixtures/agent-message-input.js.txt"),
+    "utf8",
+  ),
+).replace(/^import .*;\n/u, "");
 
 function openPipe(inputPath: string): number {
   expect(spawnSync("mkfifo", [inputPath]).status).toBe(0);
@@ -112,8 +120,19 @@ describe.skipIf(process.platform === "win32")("agent dispatch stdin", () => {
           getGatewayName: () => "nemoclaw-8081",
           runDispatch: childDispatch(
             inputFd,
-            `const input = require('node:fs').readFileSync(process.argv[1], 'utf8');
-console.log(JSON.stringify({payloads: [{text: JSON.stringify({input, args: process.argv.slice(2)})}]}));`,
+            `const fs = require('node:fs/promises');
+const nemoclawStdinStat = () => require('node:fs').fstatSync(0);
+const readFileDescriptorBounded = async (fd) => require('node:fs').readFileSync(fd);
+const MESSAGE_FILE_DECODER = new TextDecoder('utf-8', {fatal: true});
+const formatCliCommand = (command) => command;
+${messageParser}
+resolveAgentMessageOpts(${JSON.stringify({
+              ...(input === "inline" ? { message: "ARG_MESSAGE" } : {}),
+              ...(messageFile ? { messageFile } : {}),
+              json,
+            })}).then(({message: input}) => {
+console.log(JSON.stringify({payloads: [{text: JSON.stringify({input, args: process.argv.slice(2)})}]}));
+}).catch((error) => { console.error(error.message); process.exitCode = 1; });`,
             { messageFile },
           ),
         }),
@@ -121,7 +140,7 @@ console.log(JSON.stringify({payloads: [{text: JSON.stringify({input, args: proce
       const received = JSON.parse(JSON.parse(stdout.join("")).payloads[0].text);
       expect(received.input).toBe(
         input === "inline"
-          ? ""
+          ? "ARG_MESSAGE"
           : input === "regular-file-symlink-chain"
             ? "FILE_MESSAGE"
             : "PIPED_INPUT",

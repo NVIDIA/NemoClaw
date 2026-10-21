@@ -243,6 +243,7 @@ Use `channels add` and rebuild only for channels omitted from initial onboarding
 
 ## Policy, Approval, and Verification
 
+- Before any installer command, explain that the installer and supported CLI operations attempt anonymous completion telemetry to NVIDIA's fixed TEST receiver by default. Offer `NEMOCLAW_DISABLE_TELEMETRY=1` to suppress collection and delivery. If I opt out, pass it to every installer and NemoClaw CLI command during this setup, including verification commands; do not persist it beyond the setup unless I ask.
 - If a loaded platform asset selects its approved install path, follow its policy requirement and skip the policy-tier question.
 - For installation outside an accepted platform-asset path, ask for Balanced, Restricted, or Open policy.
 - Explain that messaging and web-search selections add required endpoints.

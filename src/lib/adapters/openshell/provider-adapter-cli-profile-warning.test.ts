@@ -1,9 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import assert from "node:assert/strict";
 import { describe, expect, it, vi } from "vitest";
 
 import { createCliOpenShellProviderAdapter, type RunProviderCommand } from "./provider-adapter-cli";
+import { parseCheckedInProviderProfileContract } from "./provider-profile";
 import { namedOpenShellGateway } from "./sandbox-observer";
 
 const PROFILE = {
@@ -110,6 +112,107 @@ describe("provider profile inspection and binding warnings (#12940, #13343)", ()
     );
     expect(JSON.stringify(warn.mock.calls)).not.toContain(SECRET);
   });
+
+  it.each([
+    ["matching export", captured(0, JSON.stringify(PROFILE)), null],
+    [
+      "drift",
+      captured(0, JSON.stringify({ ...PROFILE, binaries: ["/tmp/widened"] })),
+      "cannot confirm which definition was used at bind time",
+    ],
+    ["export failure", captured(1, "", SECRET), "did not complete"],
+    [
+      "timeout",
+      captured(null, "", SECRET, Object.assign(new Error(), { code: "ETIMEDOUT" })),
+      "did not complete",
+    ],
+  ])(
+    "checks attachment after expected-profile inspection with %s (#13557)",
+    async (_case, after, warning) => {
+      const expectedProfile = parseCheckedInProviderProfileContract(PROFILE_YAML);
+      assert(expectedProfile);
+      const warn = vi.fn();
+      const run = vi
+        .fn<RunProviderCommand>()
+        .mockReturnValueOnce(captured(0, JSON.stringify(PROFILE)))
+        .mockReturnValueOnce(captured(0))
+        .mockReturnValueOnce(
+          captured(
+            0,
+            "Name: test-provider\nType: test-profile\nCredential keys: TEST_TOKEN\nConfig keys: <none>",
+          ),
+        )
+        .mockReturnValueOnce(after);
+      const adapter = createCliOpenShellProviderAdapter({ run, warn, defaultTimeoutMs: 120_000 });
+
+      await expect(
+        adapter.inspectProviderProfile({
+          target: TARGET,
+          profileType: PROFILE.id,
+          expectedProfile,
+        }),
+      ).resolves.toEqual({ ok: true, value: { credentialKeys: ["TEST_TOKEN"] } });
+      await expect(
+        adapter.attachProvider({
+          target: TARGET,
+          sandboxName: "alpha",
+          providerName: "test-provider",
+        }),
+      ).resolves.toEqual({ ok: true });
+      expect(run.mock.calls.map(([args]) => args[1])).toEqual([
+        "profile",
+        "provider",
+        "get",
+        "profile",
+      ]);
+      expect(run.mock.calls[3]?.[0]).toEqual(PROFILE_EXPORT_ARGS);
+      expect(run.mock.calls.slice(2).map(([, options]) => options.timeout)).toEqual([
+        30_000, 30_000,
+      ]);
+      expect(warn).toHaveBeenCalledTimes(warning ? 1 : 0);
+      expect(warn.mock.calls[0]?.[0] ?? null).toEqual(
+        warning ? expect.stringContaining(warning) : null,
+      );
+      expect(JSON.stringify(warn.mock.calls)).not.toContain(SECRET);
+    },
+  );
+
+  it.each(["contract mismatch", "credential mismatch", "unverified inspection", "other gateway"])(
+    "does not retain attachment verification after %s (#13557)",
+    async (scenario) => {
+      const contract = parseCheckedInProviderProfileContract(PROFILE_YAML);
+      assert(contract);
+      const warn = vi.fn();
+      const run = vi
+        .fn<RunProviderCommand>()
+        .mockReturnValueOnce(captured(0, JSON.stringify(PROFILE)))
+        .mockReturnValueOnce(captured(0));
+      const adapter = createCliOpenShellProviderAdapter({ run, warn });
+      const result = await adapter.inspectProviderProfile({
+        target: TARGET,
+        profileType: PROFILE.id,
+        ...(scenario === "unverified inspection"
+          ? {}
+          : {
+              expectedProfile:
+                scenario === "contract mismatch"
+                  ? { ...contract, profileId: "other-profile" }
+                  : contract,
+            }),
+        ...(scenario === "credential mismatch" ? { registrationCredentials: ["OTHER_TOKEN"] } : {}),
+      });
+      expect(result.ok).toBe(scenario === "unverified inspection" || scenario === "other gateway");
+      await expect(
+        adapter.attachProvider({
+          target: scenario === "other gateway" ? namedOpenShellGateway("other") : TARGET,
+          sandboxName: "alpha",
+          providerName: "test-provider",
+        }),
+      ).resolves.toEqual({ ok: true });
+      expect(run).toHaveBeenCalledTimes(2);
+      expect(warn).not.toHaveBeenCalled();
+    },
+  );
 
   it("does not claim verification for an unverified profile on sandbox create", () => {
     const warn = vi.fn();

@@ -91,6 +91,8 @@ function selectedNativeInference(
 
 export interface ProviderInferenceSetupOptions {
   agentName?: string;
+  /** Resolve the policy tier before a custom provider can mutate gateway state. */
+  resolvePolicyTier?: () => Promise<string>;
   /** Local NIM shares vllm-local's provider ID but keeps its existing route. */
   localNimSelected?: boolean;
   /** Resume the exact published Pi shared route without selecting a new native provider. */
@@ -1084,6 +1086,15 @@ function canResumeProviderSelection(
   provider: string | null,
   model: string | null,
 ): boolean {
+  // An interrupted Station review has a provider/model but no validated model
+  // identity yet. Retry selection so its checkpoint can bind that identity.
+  if (
+    session?.stationExpressIntent &&
+    session.stationExpressIntent.kind !== "spark" &&
+    session.steps.provider_selection.status !== "complete"
+  ) {
+    return false;
+  }
   return (
     !forceProviderSelection &&
     effectiveResume &&

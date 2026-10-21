@@ -25,7 +25,8 @@ import { spawnObservedChild } from "../fixtures/observed-child-process.ts";
 
 export interface InteractiveCommandRule {
   readonly trigger: string;
-  readonly response: string;
+  readonly response: string | readonly string[];
+  readonly responseIntervalMs?: number;
   readonly settleMs?: number;
 }
 
@@ -154,7 +155,11 @@ while time.monotonic() < deadline:
             continue
         settle_s = rule.get("settleMs", 0) / 1000
         if (rule["trigger"] in text or rule["trigger"] in visible_text) and time.monotonic() - last_output_at >= settle_s:
-            os.write(fd, rule["response"].encode())
+            responses = rule["response"] if isinstance(rule["response"], list) else [rule["response"]]
+            interval_s = rule.get("responseIntervalMs", 50) / 1000
+            for response_index, response in enumerate(responses):
+                os.write(fd, response.encode())
+                time.sleep(interval_s * (response_index + 1 < len(responses)))
             sys.stderr.write("FIRED\\t" + rule["trigger"] + "\\n")
             fired[i] = True
     waited = os.waitpid(pid, os.WNOHANG)
@@ -225,6 +230,7 @@ export function driveInteractiveCommand(
     rules: options.rules.map((rule) => ({
       trigger: rule.trigger,
       response: rule.response,
+      responseIntervalMs: rule.responseIntervalMs,
       settleMs: rule.settleMs,
     })),
     // Comfortably longer than the Node-side hard timeout below so the

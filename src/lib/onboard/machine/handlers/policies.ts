@@ -30,6 +30,7 @@ export interface ActiveSandboxPolicyState {
   model?: string | null;
   endpointUrl?: string | null;
   createdAt?: string | null;
+  lifecycleLiveIdentityFingerprint?: string | null;
   pendingRouteReservation?: boolean;
   nativeLocalProviderAttachment?: NativeLocalProviderAttachment;
   nimContainer?: string | null;
@@ -99,6 +100,7 @@ export interface PoliciesStateOptions<Agent, WebSearchConfig> {
         webSearchConfigChanged: boolean;
         webSearchSupported: boolean;
         tierName?: string | null;
+        pendingPolicyPresets?: string[] | null;
       },
     ): PolicyResumeSelection | Promise<PolicyResumeSelection>;
     arePolicyPresetsApplied(
@@ -118,6 +120,7 @@ export interface PoliciesStateOptions<Agent, WebSearchConfig> {
       sandboxName: string,
       options: {
         selectedPresets: string[] | null;
+        preserveExplicitWebSearch?: boolean;
         enabledChannels: string[];
         disabledChannels?: string[] | null;
         webSearchConfig: WebSearchConfig | null;
@@ -166,6 +169,18 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
   const observabilityEnabled = latestSession?.observabilityEnabled === true;
   const recordedMessagingChannels = getActiveChannelsFromPlan(latestSession?.messagingPlan);
   const activeSandbox = deps.getActiveSandbox(sandboxName);
+  const pendingPolicySelection = latestSession?.pendingPolicySelection ?? null;
+  if (pendingPolicySelection) {
+    const identity =
+      activeSandbox?.lifecycleLiveIdentityFingerprint ??
+      (activeSandbox?.createdAt ? `created:${activeSandbox.createdAt}` : null);
+    if (
+      pendingPolicySelection.sandboxName !== sandboxName ||
+      pendingPolicySelection.sandboxIdentity !== identity
+    ) {
+      throw new Error("The saved policy selection belongs to a different sandbox identity.");
+    }
+  }
   const recordedNativeLocal = normalizeNativeLocalProviderAttachment(
     activeSandbox?.nativeLocalProviderAttachment,
   );
@@ -275,13 +290,15 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
     webSearchConfig,
     webSearchConfigChanged,
     webSearchSupported,
-    tierName: null,
+    tierName: pendingPolicySelection?.tierName ?? null,
+    pendingPolicyPresets: pendingPolicySelection?.presetNames ?? null,
   });
   const livePolicyPresetsForSupport = policyResumeSelection.policyPresets;
   const staleLocalInferencePolicy =
     excludeLocalPreset && (await deps.arePolicyPresetsApplied(sandboxName, ["local-inference"]));
   const resumePolicies =
     resume &&
+    !pendingPolicySelection &&
     !staleLocalInferencePolicy &&
     !policyResumeSelection.livePolicyPresetsNeedUpdate &&
     !policyResumeSelection.disabledMessagingPolicyPresetApplied &&
@@ -312,6 +329,7 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
     });
     appliedPolicyPresets = await deps.setupPoliciesWithSelection(sandboxName, {
       selectedPresets: resume ? livePolicyPresetsForSupport : null,
+      preserveExplicitWebSearch: pendingPolicySelection !== null,
       enabledChannels: policyMessagingChannels,
       disabledChannels,
       webSearchConfig,
@@ -323,7 +341,7 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
       // Hermes runs keep their own name.
       agent: normalizeAgentNameForResumeState((agent as { name?: string } | null)?.name),
       observabilityEnabled,
-      tierName: null,
+      tierName: pendingPolicySelection?.tierName ?? null,
       webSearchSupported,
       hermesToolGateways,
       onSelection: () => undefined,

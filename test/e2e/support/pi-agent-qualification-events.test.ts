@@ -8,8 +8,12 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { directDockerfileCopySources } from "../../../scripts/lib/dockerfile-copy-sources.mts";
-import { catalogueTargetsForChangedFiles } from "../../../tools/e2e/target-catalogue.mts";
+import { directDockerfileContextSources } from "../../../scripts/lib/dockerfile-copy-sources.mts";
+import { DEFAULT_CLOUD_MODEL } from "../../../src/lib/inference/config.ts";
+import {
+  catalogueTarget,
+  catalogueTargetsForChangedFiles,
+} from "../../../tools/e2e/target-catalogue.mts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
@@ -160,7 +164,7 @@ describe("Pi qualification event oracle", () => {
     const imageSources = new Set<string>([
       ".dockerignore",
       ...["agents/pi/Dockerfile", "agents/pi/Dockerfile.base"].flatMap((dockerfile) =>
-        directDockerfileCopySources(path.join(REPO_ROOT, dockerfile), dockerfile).map(
+        directDockerfileContextSources(path.join(REPO_ROOT, dockerfile), dockerfile).map(
           ({ source }) => source,
         ),
       ),
@@ -182,6 +186,30 @@ describe("Pi qualification event oracle", () => {
 
     expect(targetIds).toContain("pi-agent-qualification-amd64");
     expect(targetIds).not.toContain("pi-agent-qualification-arm64");
+  });
+
+  it("qualifies the AMD64 target against public Super VL", () => {
+    expect(DEFAULT_CLOUD_MODEL).toBe("nvidia/nemotron-3.5-super-vl-120b-a12b");
+    expect(catalogueTarget("pi-agent-qualification-amd64").environment).toMatchObject({
+      NEMOCLAW_E2E_INFERENCE_MODE: "public-nvidia",
+      NEMOCLAW_MODEL: DEFAULT_CLOUD_MODEL,
+    });
+    const config = (model: string) =>
+      JSON.stringify({
+        providers: {
+          openshell: {
+            api: "openai-completions",
+            baseUrl: "https://integrate.api.nvidia.com/v1",
+            models: [{ id: model }],
+          },
+        },
+      });
+    expect(parsePiInferenceEvidence(config(DEFAULT_CLOUD_MODEL), DEFAULT_CLOUD_MODEL).model).toBe(
+      DEFAULT_CLOUD_MODEL,
+    );
+    expect(() =>
+      parsePiInferenceEvidence(config("nvidia/nemotron-3-super-120b-a12b"), DEFAULT_CLOUD_MODEL),
+    ).toThrow("does not match the qualified route");
   });
 
   it("accepts one successful read and an exact final response", () => {

@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   bail: vi.fn(),
+  readSandboxBaseImageResolutionMetadata: vi.fn(() => null),
   ensureRebuildTargetGatewaySelected: vi.fn(async () => true),
   preflightAuthoritativeOnboardRuntime: vi.fn(async (..._args: unknown[]) => false),
   prepareManagedWorkloadRebuildHandoff: vi.fn(),
@@ -14,6 +15,11 @@ const mocks = vi.hoisted(() => ({
   resolveContextWindowForModel: vi.fn(() => 131_072),
   resolveManagedStartupInferenceRoute: vi.fn(),
   stageManagedWorkloadRebuildProfile: vi.fn(),
+}));
+
+vi.mock("../../sandbox-base-image", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../sandbox-base-image")>()),
+  readSandboxBaseImageResolutionMetadata: mocks.readSandboxBaseImageResolutionMetadata,
 }));
 
 vi.mock("./rebuild-flow-helpers", async (importOriginal) => ({
@@ -30,7 +36,9 @@ vi.mock("../../onboard/workload/rebuild", async (importOriginal) => ({
 }));
 
 vi.mock("../../onboard/runtime-provider/access", () => ({
-  requireRuntimeProviderBundleForSandbox: vi.fn(() => ({ identity: { id: "docker" } })),
+  requireRuntimeProviderBundleForSandbox: vi.fn((entry: { openshellDriver?: string }) => ({
+    identity: { id: entry.openshellDriver ?? "docker" },
+  })),
 }));
 
 vi.mock("../../onboard/workload/runtime", () => ({
@@ -93,6 +101,8 @@ describe("prepareRebuildTargetPreflights", () => {
     entryOverrides: {
       endpointUrl?: string | null;
       hostLocalInferenceReceipt?: string | null;
+      openshellDriver?: string;
+      imageTag?: string;
     } = {},
   ) {
     const resumeConfig = {
@@ -154,6 +164,21 @@ describe("prepareRebuildTargetPreflights", () => {
       | RebuildRecreateOnboardOpts
       | undefined;
   }
+
+  it.each(["podman", "docker"])(
+    "passes the recorded runtime to base-image metadata lookup (%s)",
+    async (openshellDriver) => {
+      await prepareN1xTarget(null, null, "vllm-local", undefined, null, true, {
+        openshellDriver,
+        imageTag: "registry.example/agent@sha256:" + "a".repeat(64),
+      });
+      expect(mocks.prepareRebuildRecreateOptions).toHaveBeenCalled();
+      expect(mocks.readSandboxBaseImageResolutionMetadata).toHaveBeenCalledWith(
+        "registry.example/agent@sha256:" + "a".repeat(64),
+        openshellDriver,
+      );
+    },
+  );
 
   it("runs the default Teams port hook before gateway recovery or runtime preparation", async () => {
     const actual = await vi.importActual<typeof import("./rebuild-messaging-conflict-preflight")>(

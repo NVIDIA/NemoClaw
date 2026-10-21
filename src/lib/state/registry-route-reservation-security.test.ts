@@ -171,6 +171,48 @@ describe("sandbox inference route reservation security", () => {
     }
   });
 
+  it("reuses a published model's reservation without treating selection provenance as route drift", async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-provenance-reservation-"));
+    vi.stubEnv("HOME", home);
+    vi.resetModules();
+    try {
+      const registry = await import("./registry");
+      const route = {
+        ...EXACT_ROUTE_SELECTION,
+        gatewayName: "nemoclaw",
+        reservationSessionId: "session-owner",
+      } as const;
+      const provenance = {
+        schemaVersion: 1,
+        provider: route.provider,
+        model: route.model,
+        providerProfile: "ollama",
+        modelSource: "local",
+        apiFamily: "openai-completions",
+      } as const;
+      registry.registerSandbox({ name: "alpha", ...route, modelSelectionProvenance: provenance });
+      expect(registry.reserveSandboxInferenceRoute("alpha", route)).toBe(true);
+      const before = await fs.readFile(registry.REGISTRY_FILE, "utf8");
+      expect(registry.reserveSandboxInferenceRoute("alpha", route)).toBe(true);
+      expect(registry.getSandbox("alpha")?.modelSelectionProvenance).toEqual(provenance);
+      expect(() =>
+        registry.reserveSandboxInferenceRoute("alpha", {
+          ...route,
+          endpointUrl: "http://127.0.0.1:11435/v1",
+        }),
+      ).toThrow(/cannot change before the owning create transaction completes/u);
+      expect(() =>
+        registry.reserveSandboxInferenceRoute("alpha", {
+          ...route,
+          preferredInferenceApi: "openai-responses",
+        }),
+      ).toThrow(/cannot change before the owning create transaction completes/u);
+      expect(await fs.readFile(registry.REGISTRY_FILE, "utf8")).toBe(before);
+    } finally {
+      await fs.rm(home, { recursive: true, force: true });
+    }
+  });
+
   it("preserves a replacement when cleanup holds an earlier reservation snapshot (#9833)", async () => {
     const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-route-reservation-"));
     vi.stubEnv("HOME", home);

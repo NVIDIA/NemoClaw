@@ -31,6 +31,48 @@ vi.mock("../../sandbox-lifecycle", async (importOriginal) => ({
 }));
 
 describe("sandbox route publication", () => {
+  it.each([
+    { createdAt: "2026-10-19T00:00:00.000Z", retained: false },
+    { createdAt: "2026-10-18T00:00:00.000Z", retained: true },
+  ])(
+    "reconciles pending policy selection after a successful create ($createdAt)",
+    async ({ createdAt, retained }) => {
+      const session = createSession({
+        sandboxName: "my-assistant",
+        pendingPolicySelection: {
+          sandboxName: "my-assistant",
+          sandboxIdentity: "created:2026-10-18T00:00:00.000Z",
+          tierName: null,
+          presetNames: ["openclaw-pricing"],
+        },
+      });
+      const registryEntry: SandboxEntry = {
+        name: "my-assistant",
+        provider: "provider",
+        model: "model",
+        endpointUrl: null,
+        preferredInferenceApi: "openai-completions",
+        gatewayName: "nemoclaw",
+        createdAt: "2026-10-18T00:00:00.000Z",
+      };
+      const { deps } = createDeps(
+        {
+          getSandboxRegistryEntry: () => registryEntry,
+          createSandbox: async () => {
+            registryEntry.createdAt = createdAt;
+            return "my-assistant";
+          },
+        },
+        session,
+      );
+
+      await handleSandboxState(baseOptions(deps, session));
+
+      expect(registryEntry).toMatchObject({ createdAt });
+      expect(session.pendingPolicySelection === null).toBe(!retained);
+    },
+  );
+
   it("reuses an already-published route without finalizing a stale session reservation", async () => {
     const session = createSession({ sandboxName: "saved" });
     session.steps.sandbox.status = "complete";

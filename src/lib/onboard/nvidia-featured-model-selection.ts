@@ -28,7 +28,12 @@ export type NvidiaFeaturedModelSessionOptions = {
   onModelSelected?: ModelPromptOptions["onModelSelected"];
 } & Pick<
   NvidiaFeaturedModelOptions,
-  "catalogLabel" | "catalogUrl" | "fallbackModelOptions" | "retiredModelIds" | "warn"
+  | "catalogLabel"
+  | "catalogUrl"
+  | "fallbackModelOptions"
+  | "modelIdAliases"
+  | "retiredModelIds"
+  | "warn"
 >;
 
 /** Create one catalog-backed model selector for an onboarding session. */
@@ -43,6 +48,7 @@ export function createNvidiaFeaturedModelSession(
     catalogLabel: options.catalogLabel,
     catalogUrl: options.catalogUrl,
     fallbackModelOptions: options.fallbackModelOptions,
+    modelIdAliases: options.modelIdAliases,
     retiredModelIds: options.retiredModelIds,
     warn: options.warn,
   });
