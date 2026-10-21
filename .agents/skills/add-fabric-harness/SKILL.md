@@ -55,7 +55,7 @@ The stage:
 ## 5. Validate
 
 - Build and qualify the image on each platform you can reach natively: `cargo images build --platform linux/arm64 <name>`, then `cargo images qualify nc-fabric:<name>`.
-- Run `docker buildx bake check` and `cargo ci`.
+- Run `docker buildx bake check` and `cargo ci`. Tests that walk every example also count them, such as the [deployment journey](../../../crates/nemoclaw-authoring/tests/deployment_journey.rs); update their counts.
 - CI's image jobs build and qualify every harness on both platforms.
 - Deploying the example is optional; it exercises Fabric's adapter rather than NemoClaw.
 
