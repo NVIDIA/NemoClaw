@@ -49,6 +49,14 @@ describe("public NVIDIA inference switch provider", () => {
     expect(acceptedSwitchResponseModels("mock-anthropic-model")).toEqual(["mock-anthropic-model"]);
   });
 
+  it.each([
+    "nvidia/nemotron-3-super-120b-a12b",
+    "nvidia/nemotron-3-ultra-550b-a55b",
+    "private/nvidia/nemotron-3.5-super-120b-a12b",
+  ])("requires an exact response model for %s", (requested) => {
+    expect(acceptedSwitchResponseModels(requested)).toEqual([requested]);
+  });
+
   it("rejects live provider metadata whose revision differs from the durable receipt", async () => {
     const openshell = vi
       .fn()

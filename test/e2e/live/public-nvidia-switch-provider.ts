@@ -16,7 +16,9 @@ export const PUBLIC_NVIDIA_SWITCH_PROVIDER = "nvidia-prod";
 export const PUBLIC_NVIDIA_SWITCH_MODEL = DEFAULT_CLOUD_MODEL;
 
 // The public endpoint reports its serving deployment, not the requested ID, in a
-// Super VL response. Live E2E run 39548034650 observed this exact value.
+// Super VL response. E2E runs 39548034650 and 39551307701 observed this value for
+// every Hermes, OpenClaw, and Pi request. The public model catalog lists no
+// selectable model with this name, so it cannot match another public selection.
 const PUBLIC_NVIDIA_RESPONSE_MODEL_ALIASES: Readonly<Record<string, readonly string[]>> = {
   "nvidia/nemotron-3.5-super-vl-120b-a12b": ["private/nvidia/nemotron-3.5-super-120b-a12b"],
 };
