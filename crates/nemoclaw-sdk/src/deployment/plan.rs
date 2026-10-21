@@ -224,9 +224,24 @@ pub(super) fn check_plan(
                 ));
             }
             if change.change.actions != ["no-op"] {
+                let replaced = ["delete", "create"].iter().all(|action| {
+                    change
+                        .change
+                        .actions
+                        .iter()
+                        .any(|planned| planned == action)
+                });
+                let reason = change
+                    .change
+                    .before
+                    .get("exited")
+                    .and_then(serde_json::Value::as_str)
+                    .filter(|exited| replaced && !exited.is_empty())
+                    .map(|exited| format!("sandbox exited: {exited}"));
                 changes.push(Change {
                     resource,
                     actions: change.change.actions.clone(),
+                    reason,
                 });
             }
             continue;
@@ -261,6 +276,7 @@ pub(super) fn check_plan(
             changes.push(Change {
                 resource: change.address.clone(),
                 actions: change.change.actions.clone(),
+                reason: None,
             });
         }
     }
@@ -381,6 +397,7 @@ pub(super) fn check_destroy_plan(
                 changes.push(Change {
                     resource,
                     actions: change.change.actions.clone(),
+                    reason: None,
                 });
             }
             continue;
@@ -413,6 +430,7 @@ pub(super) fn check_destroy_plan(
             changes.push(Change {
                 resource: change.address.clone(),
                 actions: change.change.actions.clone(),
+                reason: None,
             });
         }
     }
@@ -501,6 +519,26 @@ mod native_helm_tests {
         assert_eq!(
             super::sandboxes_for_new_agents(&plan),
             ["openshell_sandbox.kept", "openshell_sandbox.updated"]
+        );
+    }
+
+    #[test]
+    fn a_replaced_exited_sandbox_reports_why() {
+        let address = "openshell_sandbox.assistant";
+        let allowed: BTreeMap<String, Row> = [(address.to_owned(), Row::new())].into();
+        let plan: Plan = serde_json::from_value(json!({"resource_changes":[{
+            "mode":"managed", "address":address,
+            "change":{
+                "actions":["delete", "create"],
+                "before":{"exited":"SANDBOX_PHASE_ERROR, reason ContainerExited, exit code 1"},
+                "after":{}
+            }
+        }]}))
+        .unwrap();
+        let changes = check_plan(&plan, &allowed, &BTreeMap::new()).unwrap();
+        assert_eq!(
+            changes[0].reason.as_deref(),
+            Some("sandbox exited: SANDBOX_PHASE_ERROR, reason ContainerExited, exit code 1")
         );
     }
 

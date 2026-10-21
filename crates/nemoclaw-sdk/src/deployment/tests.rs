@@ -163,7 +163,7 @@ fn kubernetes_environment_is_operation_scoped_and_stable_across_export_directori
         }
     }
     let (mut document, _) = kubernetes_context();
-    document.spec.inference_providers[0].credential = Some(Credential {
+    document.spec.inference_providers[0].credential = Some(SecretRef {
         env: "UNREAD_INFERENCE_KEY".into(),
     });
     let temporary = tempfile::tempdir().unwrap();
@@ -476,7 +476,7 @@ fn credential_references_cannot_override_opentofu_control_variables() {
     let mut document =
         Document::parse(include_str!("../../tests/fixtures/config/local.yaml").as_bytes()).unwrap();
     document.spec.inference_providers[0].endpoint = "https://example.com/v1".into();
-    document.spec.inference_providers[0].credential = Some(Credential {
+    document.spec.inference_providers[0].credential = Some(SecretRef {
         env: "TF_CLI_CONFIG_FILE".into(),
     });
     assert!(command_environment(&document, &Values, Path::new("state")).is_err());
@@ -546,7 +546,7 @@ async fn schema_commands_do_not_require_inference_credentials() {
         Deployment::new(&state_path, bundle_directory.path()).with_secrets(secrets.clone());
     let mut document =
         Document::parse(include_str!("../../tests/fixtures/config/local.yaml").as_bytes()).unwrap();
-    document.spec.inference_providers[0].credential = Some(Credential {
+    document.spec.inference_providers[0].credential = Some(SecretRef {
         env: "TEST_INFERENCE_CREDENTIAL".into(),
     });
     let cancel = CancellationToken::new();
@@ -666,7 +666,7 @@ fn gateway_observation_resolves_only_gateway_credentials() {
         }
     }))
     .unwrap();
-    document.spec.inference_providers[0].credential = Some(Credential {
+    document.spec.inference_providers[0].credential = Some(SecretRef {
         env: "INFERENCE_TOKEN".into(),
     });
     document.spec.sandboxes[0].integrations = serde_json::from_value(json!({
@@ -682,7 +682,7 @@ fn gateway_observation_resolves_only_gateway_credentials() {
     assert!(!environment.contains_key("SEARCH_KEY"));
     assert!(command_environment(&document, &GatewayValues, Path::new("state")).is_err());
     if let Gateway::External(gateway) = &mut document.spec.gateway {
-        gateway.credential = Some(Credential {
+        gateway.credential = Some(SecretRef {
             env: "TF_CLI_CONFIG_FILE".into(),
         });
     }
@@ -1332,10 +1332,12 @@ fn an_existing_issuers_token_reaches_gateway_only_runs() {
     let mut value = serde_json::to_value(&document).unwrap();
     value["spec"]["gateway"]["kubernetes"]["authentication"] = json!({
         "profile": "oidc",
-        "issuer": "https://login.example.com",
-        "audience": "openshell",
-        "tokenEnv": "OIDC_TOKEN"
+        "token": {"env": "OIDC_TOKEN"}
     });
+    value["spec"]["gateway"]["config"] = json!({"openshell.gateway.oidc": {
+        "issuer": "https://login.example.com",
+        "audience": "openshell"
+    }});
     let document = Document::parse(value.to_string().as_bytes()).unwrap();
     let environment = gateway_environment(&document, &OidcValues, Path::new("state")).unwrap();
     assert_eq!(environment["OIDC_TOKEN"], "test-OIDC_TOKEN");

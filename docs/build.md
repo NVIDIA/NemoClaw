@@ -3,7 +3,7 @@
 
 # Build Local Artifacts
 
-Build from the repository root with Rust 1.98.1, pinned in [rust-toolchain.toml](../rust-toolchain.toml).
+Build from the repository root with Rust 1.99.1, pinned in [rust-toolchain.toml](../rust-toolchain.toml).
 Native bundles also require Protocol Buffers compiler 36.1.
 Native builds also require a C toolchain for TLS dependencies.
 Run `cargo ci tools` to install the pinned compiler in `.tools/protoc-36.1`; the bundle builder and `cargo ci` find it there.
@@ -72,11 +72,10 @@ Rebuild a bundle from the recorded source revision if the removed tools are need
 
 Use Docker with Buildx on a native host that matches the selected image target.
 Pass `--platform linux/arm64` or `--platform linux/amd64` to the agent image builder.
-Direct Bake checks and proxy builds require the corresponding `AGENT_PLATFORM` environment variable.
-ARM64 selects all ten harnesses; AMD64 selects Deep Agents and OpenClaw.
-The remaining harnesses are ARM64-only until their pinned native dependencies have matching AMD64 artifacts and qualification.
-Agent images share a Python 3.13.15 base without pip.
-Only OpenClaw, Hermes, and Pi add Node.js 24.21.0 LTS: OpenClaw's CLI and Pi's adapter run on it, and Hermes's browser tool and `npx`-launched MCP servers require it.
+Direct Bake builds and checks use the host's platform unless the `AGENT_PLATFORM` environment variable selects the other one.
+Both platforms select all ten harnesses.
+Agent images share a Python 3.13.16 base without pip.
+Only OpenClaw, Hermes, and Pi add Node.js 24.22.0 LTS: OpenClaw's CLI and Pi's adapter run on it, and Hermes's browser tool and `npx`-launched MCP servers require it.
 Image qualification checks that interpreter against every Python adapter’s declared version range in the pinned Fabric source.
 Build stages use pinned Rust, Node, Python, and uv images, so the host needs no language toolchains for image assembly.
 Initial builds need network access to fetch the pinned base images, source archives, and package dependencies.
@@ -94,9 +93,9 @@ Examples that omit `image` use the generic default agent image pin from `version
 Select an explicit image containing the chosen Fabric adapter; a harness identifier does not select a different image.
 The selected image must still exist on the compute daemon.
 The sandbox compute daemon must have access to that exact image.
-The builder starts a temporary process with networking disabled to read installed Fabric discovery metadata, then labels the final local image.
-It removes its temporary image tag after completion; it does not start an adapter or request model responses.
-Direct `docker buildx bake` builds omit these labels, so plan cannot select them.
+The builder first builds the image's `catalog` stage, which reads the installed Fabric discovery metadata with networking disabled, then builds the image's `labeled` stage with that metadata as its label; the build checks the label against the installed metadata.
+Both builds reuse the same cached layers, and neither starts an adapter or requests model responses.
+A direct `docker buildx bake` build of an agent target omits the label, so plan cannot select it.
 The commands build and load local images; they do not publish images or launch a deployment.
 
 Installed discovery also requires the image-owned runtime manifest and resolves descriptor-required executables inside the image.
@@ -116,8 +115,7 @@ docker image inspect nc-fabric:deepagents --format '{{index .RepoDigests 0}}'
 ```
 
 Use the printed immutable reference in `sandboxes[].image.ref`.
-Replace `deepagents` with `openclaw` to build the other qualified AMD64 harness.
-Run `cargo images build --platform linux/amd64 agents` to build both.
+Replace `deepagents` with another harness name, or use `agents` to build all ten.
 The AMD64 builds and image tests do not establish successful gateway provisioning or an end-to-end agent response.
 
 On ARM64, select `hermes`, `pi`, or another name from the [harness matrix](reference/fabric-harnesses.md), or build every agent with `cargo images build --platform linux/arm64 agents`.
@@ -127,9 +125,11 @@ The proxy image holds only the statically linked `nemoclaw-ollama-proxy` binary 
 Set `IMAGE_PREFIX=nc-my-build` before the builder to use your own local repository name without replacing another build's tags.
 
 A Kubernetes or OpenShift sandbox names a metadata bundle in `image.metadata`, since no local engine can be inspected there.
-Write one for a local image with `cargo images export-metadata IMAGE --platform linux/arm64 --output PATH`, where `PATH` is a new file.
-The bundle holds the image's index, the manifest for that platform and its configuration, and no layers; the SDK checks it against the digest in `image.ref`.
+Write one for a local image with `cargo images export-metadata IMAGE --output PATH`, where `PATH` is a new file.
+The bundle holds the image's index, each Linux platform's manifest and configuration, and no layers; the SDK checks it against the digest in `image.ref`.
+The platforms of an index must declare the same catalog, because the cluster chooses the platform each node runs.
 Run it before pushing the image, and use the same digest in `image.ref`.
+For an image already in a registry, pass `--registry` and its `HOST/REPOSITORY@sha256:DIGEST` reference instead; `NEMOCLAW_REGISTRY_USERNAME` and `NEMOCLAW_REGISTRY_PASSWORD`, when set, answer the registry's token challenge.
 
 [The Bake file](../docker-bake.hcl) selects the target platform, qualified harnesses and named stages in the [shared agent Dockerfile](../image/fabric/Dockerfile).
 Common Fabric wheels and base layers are shared; images other than Hermes export dependencies from Fabric's frozen root lock, selecting the Python adapter's extra when present.
@@ -169,99 +169,66 @@ On Linux ARM64, run from the repository root:
 
 ```sh
 IMAGE_PREFIX=nc-contract cargo images build --platform linux/arm64 dummy
-cargo images qualify nc-contract:dummy --lifecycle dummy
+cargo images qualify nc-contract:dummy
 ```
 
 Use `linux/amd64` on a native AMD64 host.
 The qualifier uses the inspected image ID and an owned disposable container with networking disabled, a read-only root filesystem, and temporary writable sandbox storage.
 It removes that container on success, failure, or timeout; the built image remains local.
-The suite starts, invokes, and stops one runtime through `fabric-agent-ctl`, and checks that the image refuses a second runtime.
+The suite starts, invokes, and stops one runtime through `fabric-agent-ctl` with NemoClaw's test adapter, under the conditions an OpenShell sandbox imposes.
 The [contract description](design/fabric-management.md#image-contract-and-reference-implementation) defines the dummy's settings.
 
-To roll the same interface into all ten production adapter images on a native Linux ARM64 host, run:
+To build all ten production adapter images on a native Linux ARM64 host, run:
 
 ```sh
 IMAGE_PREFIX=nc-contract cargo images build --platform linux/arm64 agents
-cargo images qualify nc-contract:openclaw --lifecycle openclaw
-cargo images qualify nc-contract:hermes --lifecycle hermes
-cargo images qualify nc-contract:pi --lifecycle pi
 ```
 
-Pass each remaining built image to the same qualifier; CI runs it for every selected target.
-On a native Linux AMD64 host, build and qualify its two production targets instead:
-
-```sh
-IMAGE_PREFIX=nc-contract cargo images build --platform linux/amd64 agents
-cargo images qualify nc-contract:deepagents
-cargo images qualify nc-contract:openclaw --lifecycle openclaw
-```
-
+Use `linux/amd64` on a native AMD64 host.
 The build adds the `io.nemoclaw.fabric.catalog` label to every image.
-The `--lifecycle` profile selects adapter configuration and invocation input; the lifecycle assertions are shared with the dummy.
-OpenClaw, Hermes, and Pi run their installed native adapters against an owned loopback inference server inside the network-isolated container.
-The suite starts one runtime through `fabric-agent-ctl`, checks a native reply, stops it, and checks that the image refuses a second runtime.
-Other production images report the unselected lifecycle scenario as skipped.
-The dummy selects its lifecycle profile automatically; an explicit profile makes the intended coverage visible in CI.
-A passing lifecycle does not establish that a runtime stays healthy: Fabric reports no runtime status.
+NemoClaw checks how each image is assembled, not whether Fabric's adapters work: `cargo images qualify IMAGE...` checks every image offline, and runs one runtime's lifecycle only in the reference image, with NemoClaw's test adapter.
+Fabric's runtime and adapters are Fabric's to test.
+A passing reference lifecycle does not establish that a runtime stays healthy: Fabric reports no runtime status.
 See [upstream ownership](design/fabric-management.md#upstream-ownership) for the remaining Fabric and OpenShell work.
 
 To extend an agent image with your own skills and tools, see [derived agent images](derived-images.md).
 
 ## Build a Runtime Image
 
-Runtime image builds require Linux, Buildx, and a Docker daemon using the containerd image store.
-Use `--no-default-features` below to compile the runtime builder without the SDK or Protocol Buffers compiler.
-Run `docker info --format '{{json .DriverStatus}}'` against the selected daemon and check for `["driver-type","io.containerd.snapshotter.v1"]`.
-The builder checks this requirement before downloading sources or compiling the supervisor.
-Docker's classic image store is unsupported; use a daemon configured with the [containerd image store](https://docs.docker.com/engine/storage/containerd/) before retrying.
-The builder does not change Docker configuration.
-The artifact manifest must set `platform` to `linux_arm64` or `linux_amd64`; omission is rejected.
-The build host must match that platform, which selects both the supervisor's Rust compilation target and the image platform.
-The builder rejects a mismatched host before building the supervisor or loading an image.
-The artifact manifest selects its Dockerfile, local inputs, immutable source downloads, image name, and reproducible timestamp.
-It downloads pinned sources and dependencies, builds locally, and loads the image into the selected Docker daemon.
+Runtime images build with Docker Buildx Bake on a Linux ARM64 or AMD64 host, always for that host's platform, so the supervisor compiles natively rather than under emulation.
+They require a Docker daemon using the containerd image store, which keeps each local image's digest.
+Run `docker info --format '{{json .DriverStatus}}'` against the selected daemon and check for `["driver-type","io.containerd.snapshotter.v1"]`; Docker's classic image store is unsupported.
+Build stages use pinned Rust and upstream images, so the host needs no Rust toolchain.
+Initial builds need network access for the base images and the supervisor's dependency sources.
+A build does not launch inference or publish an image.
 
-It does not launch inference or publish an image.
-
-For ordinary safetensors models, run on a Linux ARM64 or AMD64 build host matching the model host:
+For ordinary safetensors models, on a build host matching the model host:
 
 ```sh
-cargo run -p nemoclaw-build --no-default-features -- runtime runtimes/vllm/build.json
+docker buildx bake vllm
+docker image inspect nc-prototype-vllm:rust-v1 --format '{{index .RepoDigests 0}}'
 ```
 
-This build exports `.build/vllm/runtime.tar` and loads `nc-prototype-vllm:rust-v1`.
-The image contains the shared supervisor and the pinned multi-platform vLLM base for the build host's architecture, without Qwen3.8 patches or preparation tools; the [Nemotron example](models.md#configure-nemotron-on-an-amd64-gpu-host) uses the AMD64 build.
+The image contains the shared supervisor and the pinned multi-platform vLLM base for the build host's architecture, without model-specific patches or preparation tools; the [Nemotron example](models.md#configure-nemotron-on-an-amd64-gpu-host) uses the AMD64 build.
 Select the model through [model configuration](models.md).
 Selecting this artifact does not qualify GPU inference on the host.
 
-For Qwen3.8 preparation on Linux ARM64, run:
+A model that needs preparation tools or patches uses an image its recipe's authors build; see [inline recipes](recipes.md).
 
-```sh
-cargo run -p nemoclaw-build --no-default-features -- runtime runtimes/qwen38/build.json
-```
-
-This build exports `.build/qwen38/runtime.tar` and loads `nc-prototype-qwen38:spark-rust-v1`.
-Its Dockerfile applies pinned patches and retains original and modified sources.
-Use [the inline recipe guide](recipes.md) to declare preparation and serving requirements.
-
-The builder exports an OCI archive, loads it, and verifies access by its exported digest and target platform.
-The retained `supervisor.json` records the runtime contract version, `runtimeSpecVersion`, alongside the runtime source version.
-Use the immutable image reference printed as `Runtime image loaded: NAME@sha256:DIGEST` for `spec.services.<name>.image`.
+`docker buildx bake ollama` builds the [managed Ollama](inference.md#run-managed-ollama) image, and `docker buildx bake runtimes` builds both.
+Use the `NAME@sha256:DIGEST` reference that `docker image inspect` prints for `spec.services.<name>.image`.
+Builds use fixed timestamps, so rebuilding the same sources keeps the same digest.
 Do not substitute a mutable tag or a digest copied from another build.
-If deployment uses a different Docker daemon, load the archive into that daemon before apply; images are not transferred automatically.
+If deployment uses a different Docker daemon, transfer the image there before apply, for example with `docker save` and `docker load`; images are not transferred automatically.
 
 ## Retained Sources and Compatibility
 
-Source collection may download the pinned dependency sources through Cargo.
-The builder creates a source archive with normalized timestamps and compiles the supervisor offline from that archive.
-It contains the runtime crate, its standalone workspace manifest and pruned lockfile, Cargo-vendored dependencies with their licenses, and runtime policy attribution.
-The archive excludes the SDK, provider, OpenShell, Fabric, onboarding, and image recipes.
-The runtime source version covers only these runtime build inputs; changes to other repository components do not change it.
-Each image separately retains its selected Dockerfile and build manifest under `/opt/nemoclaw/source/`.
-The Qwen3.8 image also retains its preparation tools, upstream recipe, licenses, and modified vLLM sources.
-The build excludes dependency paths and parent Git metadata from compiler inputs.
+The supervisor build, `image/supervisor/Dockerfile`, packages the runtime crate with Cargo, vendors its locked dependency sources, and compiles the supervisor offline from that archive.
+The archive contains the runtime crate, its standalone workspace manifest and pruned lockfile, Cargo-vendored dependencies with their licenses, and runtime policy attribution.
+It excludes the SDK, provider, OpenShell, Fabric, onboarding, and agent images.
+Each runtime image retains the archive, the license, its own Dockerfile and notice, and the supervisor's Dockerfile under `/opt/nemoclaw/source/`.
 
-The [vLLM notice](../runtimes/vllm/NOTICE.md) and [Qwen3.8 notice](../runtimes/qwen38/NOTICE.md) identify retained sources and licenses.
+The [vLLM notice](../image/vllm/NOTICE.md) and [Ollama notice](../image/ollama/NOTICE.md) identify retained sources and licenses.
 
 Generated bundles, build inputs, and images are ignored by Git.
 Model snapshots and prepared data belong to the deployment’s persistent volume, outside the build context.
@@ -278,11 +245,11 @@ When the image must be acquired, plan reports compatibility as deferred; apply m
 Matching labels establish the declared backend, recipe, and authentication, not successful model loading or inference.
 
 An image built by a different NemoClaw revision may carry the right labels yet reject the runtime contract when its runtime starts, after the deployment has created the service's storage and network.
-In either case, rebuild the selected artifact from the bundle's source revision using the matching vLLM platform/recipe command above or the [managed Ollama build instructions](inference.md#run-managed-ollama).
-Load the rebuilt image on the execution daemon and update `spec.services.<name>.image` to the newly printed digest.
+In either case, rebuild the selected image from the bundle's source revision with `docker buildx bake vllm` or `docker buildx bake ollama`, as above.
+Load the rebuilt image on the execution daemon and update `spec.services.<name>.image` to its new digest.
 Keep the deployment state and reapply; existing model and credential storage remain subject to their retention and identity checks.
 Destroy omits image compatibility gates so a mismatched image alone does not prevent cleanup.
 The runtime also reports its expected specification version and declared field location for invalid input, without echoing configuration values or user-defined map keys.
 
 Developers must increment `nemoclaw_runtime::SPEC_VERSION` when serialized fields or validation changes make the runtime contract incompatible.
-The image builder, SDK requirements, and provider check share that constant; the label does not identify an exact source revision.
+The supervisor, SDK requirements, and provider check share that constant; the label does not identify an exact source revision.

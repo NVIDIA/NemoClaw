@@ -23,6 +23,11 @@ resource "openshell_gateway_storage" "gateway" {
   lifecycle { prevent_destroy = true }
   depends_on = [data.docker_image.gateway]
 }
+data "openshell_docker_gateway_runtime" "gateway" {
+  name = var.name
+  endpoint = "http://127.0.0.1:${var.port}"
+  data_path = openshell_gateway_storage.gateway.data_path
+}
 resource "docker_container" "gateway" {
   name = var.name
   image = data.docker_image.gateway.id
@@ -51,6 +56,10 @@ resource "docker_container" "gateway" {
     type = "bind"
     source = "/var/run/docker.sock"
     target = "/var/run/docker.sock"
+  }
+  upload {
+    file = "${openshell_gateway_storage.gateway.data_path}/gateway.toml"
+    content = data.openshell_docker_gateway_runtime.gateway.config_file
   }
 }
 data "openshell_gateway" "ready" {

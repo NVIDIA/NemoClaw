@@ -209,8 +209,7 @@ async fn failed_verification_never_publishes_an_output_manifest() {
 #[test]
 fn model_specific_backend_names_are_rejected() {
     let mut document = serde_json::to_value(
-        Document::parse(include_bytes!("../../../examples/spark/spark-inline.yaml").as_slice())
-            .unwrap(),
+        Document::parse(include_bytes!("fixtures/config/inline-recipe.yaml").as_slice()).unwrap(),
     )
     .unwrap();
     // The example parses with the generic backend and its recipe; change only the kind.

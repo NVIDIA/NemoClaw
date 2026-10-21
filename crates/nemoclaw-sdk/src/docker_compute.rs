@@ -55,7 +55,7 @@ pub(crate) fn is_disposable(address: &str) -> bool {
     .iter()
     .any(|prefix| address.starts_with(prefix))
 }
-fn digest(engine: &str, name: &str) -> String {
+pub(crate) fn digest(engine: &str, name: &str) -> String {
     Sha256::digest(format!("{engine}\0{name}").as_bytes())[..16]
         .iter()
         .map(|byte| format!("{byte:02x}"))
@@ -448,12 +448,25 @@ pub(crate) fn configure(graph: &mut Value, raw: &[Target]) -> Result<(), Error> 
                 .1
                 .to_owned();
             let mut settings = json!({"name": gateway.name, "endpoint": gateway.gateway.endpoint});
+            if let Some(config) = &gateway.gateway.config {
+                settings["config"] = json!(
+                    serde_json::to_string(config)
+                        .map_err(|_| { Error::State("cannot encode gateway config") })?
+                );
+            }
             literal(&mut settings);
             settings["data_path"] = json!("${openshell_gateway_storage.runtime.data_path}");
             graph["data"][&source][&logical] = settings;
             for attribute in ["entrypoint", "command", "env"] {
                 attrs[attribute] = json!(format!("${{data.{source}.{logical}.{attribute}}}"));
             }
+            // Each new container receives the configuration file before it
+            // starts. Docker replaces the container when the file changes and
+            // keeps the storage.
+            attrs["upload"] = json!([{
+                "file": "${openshell_gateway_storage.runtime.data_path}/gateway.toml",
+                "content": format!("${{data.{source}.{logical}.config_file}}"),
+            }]);
             fn storage_path(value: &mut Value) {
                 match value {
                     Value::String(text) => {
@@ -740,6 +753,15 @@ mod tests {
         for attribute in ["entrypoint", "command", "env"] {
             assert_eq!(gateway[attribute], format!("${{{launch}.{attribute}}}"));
         }
+        // Each new container receives the configuration file; a change to it
+        // replaces the container and keeps the storage.
+        assert_eq!(
+            gateway["upload"],
+            json!([{
+                "file": "${openshell_gateway_storage.runtime.data_path}/gateway.toml",
+                "content": format!("${{{launch}.config_file}}"),
+            }])
+        );
         assert_eq!(
             graph["data"]["openshell_docker_gateway_runtime"]["managed_gateway_runtime"],
             json!({

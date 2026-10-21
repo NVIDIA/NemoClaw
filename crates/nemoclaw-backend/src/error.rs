@@ -25,7 +25,8 @@ pub enum Error {
     )]
     SandboxStartup {
         phase: &'static str,
-        reason: &'static str,
+        /// OpenShell's reason code, shaped like an identifier, or `unknown`.
+        reason: String,
         exit_code: String,
     },
     #[error("OpenTofu {operation} failed: {diagnostic}")]
@@ -118,7 +119,7 @@ mod sandbox_startup_tests {
     fn an_unexplained_sandbox_exit_points_to_openshell_logs() {
         let message = Error::SandboxStartup {
             phase: "SANDBOX_PHASE_ERROR",
-            reason: "unknown",
+            reason: "unknown".into(),
             exit_code: "1".into(),
         }
         .to_string();
@@ -129,7 +130,7 @@ mod sandbox_startup_tests {
         // A recognized reason keeps its specific guidance.
         let identity = Error::SandboxStartup {
             phase: "SANDBOX_PHASE_ERROR",
-            reason: "IdentityResolutionFailed",
+            reason: "IdentityResolutionFailed".into(),
             exit_code: "1".into(),
         }
         .to_string();

@@ -1,0 +1,51 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+name: Require internal packages
+description: >-
+  Check that every package an image push targets already exists and isn't
+  public. A workflow must never create a package: packages its token creates
+  inherit this public repository's visibility. Administrators create them as
+  internal first (docs/contributing/releases.md).
+inputs:
+  namespace:
+    description: Registry namespace, such as ghcr.io/nvidia/nemoclaw/v1-ci.
+    required: true
+  names:
+    description: Space-separated image names under the namespace.
+    required: true
+  required:
+    description: Fail when a package is missing or public; otherwise warn and report not ready.
+    required: true
+  token:
+    description: A token that can read the organization's packages.
+    required: true
+outputs:
+  ready:
+    description: Whether every package exists and isn't public.
+    value: ${{ steps.check.outputs.ready }}
+runs:
+  using: composite
+  steps:
+    - id: check
+      shell: bash
+      env:
+        NAMESPACE: ${{ inputs.namespace }}
+        NAMES: ${{ inputs.names }}
+        REQUIRED: ${{ inputs.required }}
+        GH_TOKEN: ${{ inputs.token }}
+      run: |
+        level=warning
+        [ "$REQUIRED" = true ] && level=error
+        ready=true
+        for name in $NAMES; do
+          package="${NAMESPACE#ghcr.io/nvidia/}/$name"
+          if ! visibility=$(gh api "/orgs/NVIDIA/packages/container/${package//\//%2F}" --jq .visibility 2> /dev/null); then
+            echo "::$level::$package doesn't exist or can't be read; an administrator must create it as internal and grant this repository's Actions write access (docs/contributing/releases.md)"
+            ready=false
+          elif [ "$visibility" = public ]; then
+            echo "::$level::$package is public; nothing is pushed to public packages before a release is published"
+            ready=false
+          fi
+        done
+        echo "ready=$ready" >> "$GITHUB_OUTPUT"
+        [ "$ready" = true ] || [ "$REQUIRED" != true ]

@@ -38,6 +38,16 @@ fn spec_on(kind: &str, provider: &str) -> Spec {
     .unwrap()
 }
 
+/// A spec whose gateway trusts an existing OIDC issuer.
+fn oidc_spec(kind: &str) -> Spec {
+    let mut spec = spec(kind);
+    spec.settings.kubernetes.as_mut().unwrap().authentication = serde_json::from_value(json!({
+        "profile": "oidc", "token": {"env": "OIDC_TOKEN"}
+    }))
+    .unwrap();
+    spec
+}
+
 /// A cluster ready to host a gateway.
 fn cluster() -> Objects {
     let objects = Objects::default();
@@ -364,6 +374,42 @@ async fn storage_and_authentication_are_prepared_before_the_gateway_is_observed(
         .await
         .unwrap();
     assert_eq!(read.running, Some(true));
+}
+
+#[tokio::test]
+async fn an_oidc_profile_writes_no_issuer_and_identifies_authentication_by_its_namespace() {
+    let objects = cluster();
+    let directory = tempfile::tempdir().unwrap();
+    let (_fixture, operations) = operations(&objects, directory.path()).await;
+    operations
+        .ensure(&oidc_spec(STORAGE_KIND), None)
+        .await
+        .unwrap();
+    let unready = operations.read(&oidc_spec(AUTH_KIND), None).await.unwrap();
+    assert_eq!((unready.id, unready.running), (None, None));
+    let before = objects.0.lock().unwrap().clone();
+    let auth = operations
+        .ensure(&oidc_spec(AUTH_KIND), None)
+        .await
+        .unwrap();
+    assert!(
+        *objects.0.lock().unwrap() == before,
+        "an existing issuer needs no issuer Deployment, Secret or ConfigMap"
+    );
+    assert!(
+        !operations.state.join("auth").exists(),
+        "an existing issuer needs no local signing material"
+    );
+    let namespace = objects.get("v1", "Namespace", "", "agents").unwrap();
+    assert_eq!(auth.id.as_deref(), namespace["metadata"]["uid"].as_str());
+    assert_eq!(auth.running, Some(true));
+    assert_eq!(
+        operations
+            .read(&oidc_spec(AUTH_KIND), auth.id.as_deref())
+            .await
+            .unwrap(),
+        auth
+    );
 }
 
 /// The namespace annotations OpenShift writes when it creates a project.

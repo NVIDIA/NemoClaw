@@ -4,7 +4,7 @@
 # The bundle retains sources from source::SOURCE_ROOTS, including every crate.
 # Unknown inputs run all checks. These rules must also cover build environment changes.
 [[path-rule]]
-globs = ["Cargo.lock", "crates/**", "examples/**", "runtimes/**", "image/**", "schemas/**", "LICENSE", "versions.json", "rust-toolchain.toml", ".cargo/**", ".config/**", ".github/actions/**", ".github/workflows/rust.yml", ".github/workflows/bundle-platform.yml", ".github/workflows/validation-plan.yml"]
+globs = ["Cargo.lock", "crates/**", "examples/**", "image/**", "schemas/**", "LICENSE", "versions.json", "rust-toolchain.toml", ".cargo/**", ".config/**", ".github/actions/**", ".github/workflows/rust.yml", ".github/workflows/bundle-platform.yml", ".github/workflows/validation-plan.yml"]
 mark-changed = "all"
 
 [[path-rule]]

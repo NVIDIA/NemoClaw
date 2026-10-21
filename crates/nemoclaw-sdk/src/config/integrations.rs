@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use super::{AgentTools, ConfigError, Credential, Document, Sandbox};
+use super::{AgentTools, ConfigError, Document, Sandbox, SecretRef};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -21,7 +21,7 @@ pub struct Api {
     /// The API's HTTPS URL.
     pub endpoint: String,
     /// Host environment reference holding the API key.
-    pub credential: Credential,
+    pub credential: SecretRef,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "ApiAuthStyle")]
     /// How the key is sent: bearer, the default, as a bearer token, or header, as the raw value of headerName.
@@ -71,7 +71,7 @@ pub struct WebSearch {
     /// Supported search service.
     pub provider: SearchProvider,
     /// Host environment reference. OpenShell supplies the search provider's placeholder to the sandbox.
-    pub credential: Credential,
+    pub credential: SecretRef,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "String")]
     /// Variable name the sandbox sees for the key, such as BRAVE_SEARCH_API_KEY for Hermes's Brave plugin. Defaults to the credential's variable.
@@ -233,7 +233,7 @@ fn validate_definitions(definitions: &BTreeMap<String, Integration>) -> Result<(
 pub(crate) struct RuntimeWebSearch {
     pub provider: SearchProvider,
     pub agent_refs: Vec<String>,
-    pub credential: Credential,
+    pub credential: SecretRef,
     pub sandbox_env: Option<String>,
 }
 pub use nemoclaw_openshell::search::{SearchProvider, search_provider_name};
@@ -255,6 +255,6 @@ impl RuntimeWebSearch {
                 "web search requires unique references to configured agents",
             ));
         }
-        super::validation::credential(&Some(self.credential.clone()))
+        super::schema::validate_definition("SecretRef", &self.credential)
     }
 }

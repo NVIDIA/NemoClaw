@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use super::Credential;
+use super::{FileRef, SecretRef};
 use serde::{Deserialize, Serialize};
 
 /// Explicit existing-cluster target for a managed development gateway. The SDK does not create a cluster or select an ambient context, and installs nothing cluster-wide: Agent Sandbox and a default StorageClass must already exist. `runtime.provider: openshift` selects the OpenShift profile.
@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ManagedKubernetes {
     /// Environment reference whose value is the local kubeconfig file path. The file and its credentials remain outside configuration and exported state. Process, loader, trust, proxy, cluster, Python, Helm, OpenTofu, and SDK control variable names are reserved.
-    pub kubeconfig: Credential,
+    pub kubeconfig: FileRef,
     /// Exact kubeconfig context used for every cluster operation.
     #[schemars(
         length(min = 1, max = 253),
@@ -38,40 +38,16 @@ pub struct ManagedKubernetes {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct KubernetesAuthentication {
-    /// `development` generates a scoped local issuer for isolated qualification; `oidc` uses an existing OIDC issuer.
+    /// `development` generates a scoped local issuer for isolated qualification; `oidc` uses an existing OIDC issuer, configured in spec.gateway.config's openshell.gateway.oidc table.
     pub profile: KubernetesAuthenticationProfile,
-    /// HTTPS URL of the existing OIDC issuer. Required for `oidc`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(default, with = "String", length(min = 9, max = 2048))]
-    pub issuer: Option<String>,
-    /// Audience the gateway requires in tokens. Required for `oidc`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(default, with = "String", length(min = 1, max = 253))]
-    pub audience: Option<String>,
-    /// Dot-separated path to the roles array in token claims, such as `groups` or `realm_access.roles`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(default, with = "String", length(min = 1, max = 253))]
-    pub roles_claim: Option<String>,
-    /// Role that grants administrator access; set together with `userRole`, or neither for authentication only.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(default, with = "String", length(min = 1, max = 253))]
-    pub admin_role: Option<String>,
-    /// Role that grants user access; set together with `adminRole`, or neither for authentication only.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(default, with = "String", length(min = 1, max = 253))]
-    pub user_role: Option<String>,
-    /// Dot-separated path to the scopes array in token claims.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(default, with = "String", length(min = 1, max = 253))]
-    pub scopes_claim: Option<String>,
     /// Existing ConfigMap in this deployment's namespace whose `ca.crt` verifies the issuer's TLS certificate; omit for a publicly trusted issuer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "String", length(min = 1, max = 253))]
     pub ca_config_map: Option<String>,
-    /// Environment variable holding the bearer token NemoClaw sends to the gateway. Required for `oidc`; your identity provider's tooling obtains and refreshes it.
+    /// Environment reference holding the bearer token NemoClaw sends to the gateway. Required for `oidc`; your identity provider's tooling obtains and refreshes it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(default, with = "String", length(min = 1, max = 253))]
-    pub token_env: Option<String>,
+    #[schemars(default, with = "SecretRef")]
+    pub token: Option<SecretRef>,
 }
 
 /// Supported managed gateway authentication profile.

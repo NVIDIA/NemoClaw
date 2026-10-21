@@ -7,15 +7,9 @@ use crate::schema::DefaultedInteger;
 
 pub const REPOSITORY: &str = r"^[a-zA-Z0-9][a-zA-Z0-9._-]*/[a-zA-Z0-9][a-zA-Z0-9._-]*$";
 pub const REVISION: &str = r"^[a-f0-9]{40}$";
-pub const TOOL_PARSERS: &[&str] = &[
-    "",
-    "hermes",
-    "qwen3_coder",
-    "qwen3_xml",
-    "llama3_json",
-    "mistral",
-];
-pub const REASONING_PARSERS: &[&str] = &["", "qwen3", "deepseek_r1", "nemotron_v3"];
+/// The shape of a vLLM parser name, so a value can't pass as another vLLM flag.
+/// vLLM decides which parser names exist.
+pub const PARSER: &str = r"^[a-z0-9_]*$";
 pub const PORT: DefaultedInteger = DefaultedInteger {
     default: 18888,
     min: 1024,

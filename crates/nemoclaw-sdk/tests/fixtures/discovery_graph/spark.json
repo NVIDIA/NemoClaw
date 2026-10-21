@@ -13,7 +13,7 @@
               "error_message": "${join(\"; \", concat([\"sandbox/assistant: adapter/nvidia.fabric.openclaw compatibility rejected\"], [for check in jsondecode(self.observation_json).compatibility.checks : format(\"%s: %s\", check.requirement, check.reason) if check.status == \"unsupported\"]))}"
             },
             {
-              "condition": "${self.runtime_json != \"\"}",
+              "condition": "${self.runtime_json != \"\" || self.status == \"unavailable\"}",
               "error_message": "sandbox/assistant: image runtime metadata is unavailable. Set spec.gateway.engine to the sandbox image engine, and use an image built with its runtime manifest, its io.nemoclaw.fabric.catalog label, by its immutable digest; a derived image must keep its base image's labels. Resources retained."
             }
           ]

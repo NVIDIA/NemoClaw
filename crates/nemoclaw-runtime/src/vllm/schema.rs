@@ -66,12 +66,12 @@ pub fn constrain(defs: &mut serde_json::Map<String, Value>, normalized: bool) {
     property(
         serving,
         "toolParser",
-        json!({"enum": c::TOOL_PARSERS, "default": ""}),
+        json!({"pattern": c::PARSER, "default": ""}),
     );
     property(
         serving,
         "reasoningParser",
-        json!({"enum": c::REASONING_PARSERS, "default": ""}),
+        json!({"pattern": c::PARSER, "default": ""}),
     );
     let memory = &mut defs["Memory"];
     for (field, rule) in [

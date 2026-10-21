@@ -1,8 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-# Model tuning informed by MiaAI Lab's AGPL-3.0-or-later single-Spark recipe.
-# Upstream revision and attribution: ../../runtimes/qwen38/NOTICE.md.
-# yaml-language-server: $schema=../../schemas/nemoclaw-v1alpha1.schema.json
+# yaml-language-server: $schema=../../../../../schemas/nemoclaw-v1alpha1.schema.json
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
 metadata:
@@ -19,7 +17,7 @@ spec:
   services:
     qwen:
       kind: vllm
-      image: nc-prototype-qwen38@sha256:f031d87311acb3d29114897d08b44374b3475d5445c9927e762042df2125302f
+      image: nc-prototype-recipe@sha256:f031d87311acb3d29114897d08b44374b3475d5445c9927e762042df2125302f
       model:
         repository: Mia-AiLab/Qwen3.8-Flash-Next-NVFP4
         revision: 925d7be6c14c6c9442ef83e8f05b5a3c39304f69

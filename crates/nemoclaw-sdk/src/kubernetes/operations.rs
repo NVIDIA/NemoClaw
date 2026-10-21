@@ -565,7 +565,7 @@ impl Operations {
             environment.insert(name.to_owned(), path.to_string_lossy().into_owned());
         }
         // A development token is signed here; an existing issuer's token
-        // comes from the variable tokenEnv names, refreshed by its tooling.
+        // comes from the variable token.env names, refreshed by its tooling.
         let authentication = &target.authentication;
         let token = match authentication.profile {
             crate::config::KubernetesAuthenticationProfile::Development => {
@@ -573,12 +573,12 @@ impl Operations {
                 material.token(time::OffsetDateTime::now_utc().unix_timestamp())
             }
             crate::config::KubernetesAuthenticationProfile::Oidc => authentication
-                .token_env
-                .as_deref()
-                .and_then(|name| std::env::var(name).ok())
+                .token
+                .as_ref()
+                .and_then(|token| std::env::var(&token.env).ok())
                 .filter(|token| !token.trim().is_empty())
                 .ok_or(ObservationError::Backend(
-                    "the variable tokenEnv names holds no OIDC token; obtain one from your identity provider",
+                    "the variable token.env names holds no OIDC token; obtain one from your identity provider",
                 ))?,
         };
         environment.insert(super::TOKEN_ENV.to_owned(), token);

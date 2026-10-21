@@ -348,6 +348,7 @@ data fabric_harness (version 0)
   available: bool, computed
   engine: string, optional
   image: string, required
+  image_id: string, optional
   launch_json: string, computed
   metadata_env: string, optional
   observation_json: string, computed
@@ -363,6 +364,7 @@ data fabric_harnesses (version 0)
   engine: string, required
   filesystem_read: list(string), optional
   image: string, required
+  image_id: string, optional
   launch_json: string, computed
   metadata_env: string, optional
   observation_json: string, computed

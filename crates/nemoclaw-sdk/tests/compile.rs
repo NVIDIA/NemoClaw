@@ -140,7 +140,7 @@ fn ownership_generations() -> BTreeMap<String, String> {
 
 #[test]
 fn compiled_resources_preserve_ownership_connections_and_dependency_order() {
-    use nemoclaw_sdk::config::{Credential, TLS};
+    use nemoclaw_sdk::config::{FileRef, SecretRef, TLS};
     use serde_json::json;
     let mut document =
         Document::parse(include_str!("fixtures/config/local.yaml").as_bytes()).unwrap();
@@ -148,24 +148,24 @@ fn compiled_resources_preserve_ownership_connections_and_dependency_order() {
     let nemoclaw_sdk::config::Gateway::External(gateway) = &mut document.spec.gateway else {
         panic!("expected external gateway");
     };
-    gateway.credential = Some(Credential {
+    gateway.credential = Some(SecretRef {
         env: "GATEWAY_TOKEN".into(),
     });
     gateway.tls = Some(TLS {
-        ca: Credential {
+        ca: FileRef {
             env: "GATEWAY_CA".into(),
         },
-        certificate: Credential {
+        certificate: FileRef {
             env: "GATEWAY_CERT".into(),
         },
-        key: Credential {
+        key: FileRef {
             env: "GATEWAY_KEY".into(),
         },
     });
     let provider = &mut document.spec.inference_providers[0];
     provider.name = "remote".into();
     provider.endpoint = "https://models.example.test/v1".into();
-    provider.credential = Some(Credential {
+    provider.credential = Some(SecretRef {
         env: "MODEL_TOKEN".into(),
     });
     let sandbox = &mut document.spec.sandboxes[0];

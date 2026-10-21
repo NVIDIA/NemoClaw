@@ -11,12 +11,6 @@ pub(crate) fn require(valid: bool, reason: &'static str) -> Result<(), ConfigErr
         Err(ConfigError::new(reason))
     }
 }
-pub(super) fn credential(value: &Option<Credential>) -> Result<(), ConfigError> {
-    if let Some(credential) = value {
-        schema::validate_definition("Credential", credential)?;
-    }
-    Ok(())
-}
 
 pub use nemoclaw_backend::{validate_endpoint, validate_endpoint_url};
 
@@ -29,6 +23,20 @@ impl Document {
         let gateway = &self.spec.gateway;
         if let Gateway::Managed(gateway) = gateway {
             gateway.validate_managed()?;
+            // The oidc profile takes OpenShell's OIDC settings from the
+            // authored gateway configuration; OpenShell validates them.
+            let table = crate::managed::gateway_config::OIDC_TABLE;
+            if gateway.kubernetes.as_ref().is_some_and(|target| {
+                target.authentication.profile == super::KubernetesAuthenticationProfile::Oidc
+            }) && !gateway
+                .config
+                .as_ref()
+                .is_some_and(|config| crate::managed::gateway_config::defines(config, table))
+            {
+                return Err(ConfigError(format!(
+                    "the oidc authentication profile requires spec.gateway.config to define {table}, OpenShell's OIDC settings such as issuer and audience"
+                )));
+            }
         }
         if let Gateway::External(gateway) = gateway
             && !gateway.engine.is_empty()
@@ -50,7 +58,9 @@ impl Document {
                     || sandbox.image.metadata.is_none(),
                 "image.metadata is available only for Kubernetes and OpenShift; Docker and Podman use engine image inspection",
             )?;
-            credential(&sandbox.image.metadata)?;
+            if let Some(metadata) = &sandbox.image.metadata {
+                schema::validate_definition("FileRef", metadata)?;
+            }
             require(
                 sandbox_names.insert(&sandbox.name),
                 "sandbox names must be unique",
@@ -83,7 +93,7 @@ impl Document {
                             .all(|name| name == &sandbox.agent.name),
                     "an api integration requires references to the sandbox's agent",
                 )?;
-                credential(&Some(api.api.credential.clone()))?;
+                schema::validate_definition("SecretRef", &api.api.credential)?;
                 let registration = api.registration(&image_scope);
                 require(
                     selected_providers
@@ -122,6 +132,17 @@ impl Document {
 impl super::ManagedGateway {
     pub fn validate_managed(&self) -> Result<(), ConfigError> {
         schema::validate_definition("Gateway", &Gateway::Managed(self.clone()))?;
+        if let Some(config) = &self.config {
+            let driver = if let Some(target) = &self.kubernetes {
+                match target.authentication.profile {
+                    super::KubernetesAuthenticationProfile::Oidc => "kubernetes-oidc",
+                    super::KubernetesAuthenticationProfile::Development => "kubernetes",
+                }
+            } else {
+                self.runtime.provider.as_str()
+            };
+            crate::managed::gateway_config::check(config, driver).map_err(ConfigError)?;
+        }
         if self.kubernetes.is_some() {
             return validate_endpoint(&self.endpoint, true);
         }

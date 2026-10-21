@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 use nemoclaw_sdk::{
-    config::{Credential, Document, InferenceProvider, InferenceProviderKind, InferenceTarget},
+    config::{Document, InferenceProvider, InferenceProviderKind, InferenceTarget, SecretRef},
     services::{
         ServiceDefinition,
         installers::vllm::{HardwareProfile, Service, ServiceHardware, VllmLaunchMode},
@@ -83,7 +83,7 @@ fn service_inference_target_preserves_the_service_name() {
 fn service_inference_target_rejects_credentials_without_exposing_the_reference() {
     let provider = InferenceProvider {
         service_ref: Some("model".into()),
-        credential: Some(Credential {
+        credential: Some(SecretRef {
             env: "SECRET_REF".into(),
         }),
         ..provider()
@@ -95,7 +95,7 @@ fn service_inference_target_rejects_credentials_without_exposing_the_reference()
 #[test]
 fn external_inference_target_rejects_credentials_without_an_endpoint() {
     let provider = InferenceProvider {
-        credential: Some(Credential {
+        credential: Some(SecretRef {
             env: "SECRET_REF".into(),
         }),
         ..provider()
@@ -107,7 +107,7 @@ fn external_inference_target_rejects_credentials_without_an_endpoint() {
 fn external_inference_target_accepts_an_endpoint_with_credentials() {
     let provider = InferenceProvider {
         endpoint: "https://example.com/v1".into(),
-        credential: Some(Credential {
+        credential: Some(SecretRef {
             env: "SECRET_REF".into(),
         }),
         ..provider()

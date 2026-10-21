@@ -222,7 +222,9 @@ async fn gateway_observation_preserves_identity_and_fails_closed_on_drift_or_par
     let container = json!({"Id":"container","Name":format!("/{}",spec.name),"Image":"sha256:runtime","Config":config,"HostConfig":host,"NetworkSettings":{"Networks":{spec.network():{"IPAddress":spec.gateway_address().unwrap()}}},"State":{"Running":true},"Mounts":[{"Type":"volume","Name":spec.volume(),"Destination":"/var/lib/docker/volumes/fixture/_data","RW":true},{"Type":"bind","Source":"/var/run/docker.sock","Destination":"/var/run/docker.sock","RW":true}]});
     let volume = json!({"Name":spec.volume(),"Driver":"local","Scope":"local","Mountpoint":"/var/lib/docker/volumes/fixture/_data","CreatedAt":"2026-09-14T00:00:00Z","Labels":spec.labels().unwrap(),"Options":{}});
     let network = json!({"Id":"network","Name":spec.network(),"Driver":"bridge","Internal":false,"EnableIPv6":false,"Labels":spec.labels().unwrap(),"IPAM":{"Driver":"default","Config":[{"Subnet":spec.network_cidr(),"Gateway":spec.bridge().unwrap()}]}});
-    let gateway_config = spec.gateway_config("/var/lib/docker/volumes/fixture/_data");
+    let gateway_config = spec
+        .gateway_config("/var/lib/docker/volumes/fixture/_data")
+        .unwrap();
     let state = Arc::new(Mutex::new((
         Some(container),
         Some(volume),

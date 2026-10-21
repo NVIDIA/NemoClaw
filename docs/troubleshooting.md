@@ -50,7 +50,8 @@ Do not attach environment dumps, TLS private keys, interface tokens, or the enti
 | `adapter/<id> compatibility rejected` | Read the named sandbox and canonical field; for `models.<role>.max_tokens`, remove that route's `overrides.maxTokens` or choose an adapter that accepts it, then plan again |
 | `Fabric runtime operation failed at STAGE (CODE)` | Read Fabric's message in the file the error names, in the state directory's `diagnostics` directory; it can contain secrets, so read it privately. Then follow [agent interface diagnosis](interfaces.md#diagnose-failures) |
 | Public Fabric configuration mismatch or native startup rejection | Follow [agent interface diagnosis](interfaces.md#diagnose-failures); retained public configuration checks do not audit native files or tokens |
-| `runtime_unavailable`, or `sandbox unavailable: SANDBOX_PHASE_ERROR` | The runtime is unusable or its sandbox exited; read why with `openshell logs SANDBOX --source sandbox`. Only a new sandbox recovers it: change the agent's configuration, or follow the [whole-deployment replacement procedure](usage.md#replace-workloads-after-an-unusable-runtime), including loss of sandbox files and history |
+| A plan replaces a sandbox because `sandbox exited` | OpenShell reports that the sandbox exited, for example after its gateway restarted; read why with `openshell logs SANDBOX --source sandbox`. Applying replaces it, deleting its files and history; see [replacing workloads](usage.md#replace-workloads-after-an-unusable-runtime) |
+| `runtime_unavailable` | The runtime is unusable while its sandbox runs; read why with `openshell logs SANDBOX --source sandbox`. Only a new sandbox recovers it: change the agent's configuration, or follow the [whole-deployment replacement procedure](usage.md#replace-workloads-after-an-unusable-runtime), including loss of sandbox files and history |
 
 OpenShell can add paths of its own, such as read-only `/var/log`, when it loads a sandbox policy.
 NemoClaw accepts those additions when the policy first loads, as long as every declared rule is intact, and records the loaded policy's hash.
@@ -106,8 +107,8 @@ For an external Ollama digest mismatch, use [the proxy guide](inference.md#use-e
 | Forwarded native service cannot connect | Native service, forwarding, or authentication may be incomplete | Follow [interface diagnosis](interfaces.md#diagnose-failures); keep local forwarding ports consistent |
 | Managed runtime stopped after a protection trip | The independent supervisor stopped inference | Inspect [retained status and logs](models.md#diagnose-and-recover-a-stopped-runtime) and correct capacity/startup conditions before explicit recovery |
 
-Terminal sandbox apply errors name the sandbox and report the OpenShell phase, a recognized failure reason, and the main process exit code, or `unknown` when unavailable.
-Recognized reasons are `ControlSupervisorExited`, `ContainerExited`, `IdentityResolutionFailed`, and `ControlSupervisorStartFailed`; other backend reasons appear as `unknown`.
+Terminal sandbox apply errors, and plans that replace an exited sandbox, name the sandbox and report the OpenShell phase, OpenShell's reason code, and the main process exit code, or `unknown` when unavailable.
+The gateway's condition message stays private, because it can contain credentials; a reason that isn't shaped like a code also appears as `unknown`.
 `IdentityResolutionFailed` means the workload user or group could not be resolved in the pinned image; check the explicit policy's `process.run_as_user` and `process.run_as_group`.
 `ControlSupervisorStartFailed` means the control supervisor could not start; inspect the sandbox policy and attached providers.
 These explanations are fixed text, not the gateway's condition message.

@@ -43,6 +43,20 @@ pub fn assert_same_deployment_state(actual: &[u8], expected: &[u8]) {
             .get_mut("check_results")
             .and_then(serde_json::Value::as_array_mut)
         {
+            // A read after a sandbox image pull runs at apply the first time
+            // and at plan afterwards, so OpenTofu records its checks as passed,
+            // then unknown, as it does for every plan-time read.
+            for check in checks.iter_mut() {
+                if check["config_addr"]
+                    .as_str()
+                    .is_some_and(|address| address.ends_with("_acquired"))
+                {
+                    check["status"] = serde_json::json!("unknown");
+                    for object in check["objects"].as_array_mut().into_iter().flatten() {
+                        object["status"] = serde_json::json!("unknown");
+                    }
+                }
+            }
             checks.sort_by_cached_key(|check| serde_json::to_string(check).unwrap());
         }
         state

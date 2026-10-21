@@ -11,7 +11,7 @@ fn source(file: &str) -> Value {
 
 #[test]
 fn schema_failure_names_the_service_field_constraint_and_source_position() {
-    let mut input = source("spark/spark-inline.yaml");
+    let mut input = source("../crates/nemoclaw-sdk/tests/fixtures/config/inline-recipe.yaml");
     input["spec"]["services"]["qwen"]["memory"]
         .as_object_mut()
         .unwrap()
@@ -170,7 +170,7 @@ fn collection_tags_are_rejected_and_quoted_or_block_tag_text_is_preserved() {
 
 #[test]
 fn a_missing_service_image_reports_the_digest_pin_rule_at_its_service() {
-    let mut input = source("spark/spark-inline.yaml");
+    let mut input = source("../crates/nemoclaw-sdk/tests/fixtures/config/inline-recipe.yaml");
     input["spec"]["services"]["qwen"]
         .as_object_mut()
         .unwrap()

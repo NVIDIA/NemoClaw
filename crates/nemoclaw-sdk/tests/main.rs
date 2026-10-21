@@ -19,6 +19,7 @@ mod kube_client;
 mod kube_faults;
 #[path = "support/provider_scope.rs"]
 mod provider_scope;
+mod sandbox_image_pull;
 #[path = "support/scripted_tofu.rs"]
 mod scripted_tofu;
 #[path = "support/config.rs"]
@@ -125,7 +126,7 @@ mod kubernetes_receipt;
 mod kubernetes_storage;
 #[path = "managed_auth.rs"]
 mod managed_auth;
-mod managed_driver_config;
+mod managed_gateway_config;
 #[path = "managed_hermes.rs"]
 mod managed_hermes;
 #[path = "managed_live.rs"]

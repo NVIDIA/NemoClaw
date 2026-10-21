@@ -28,7 +28,7 @@ spec:
     nemotron:
       kind: ollama
       hardware: {profile: dgx-spark}
-      # Replace with the digest of your locally built runtimes/ollama image.
+      # Replace with the digest of your locally built ollama image (docker buildx bake ollama).
       image: nc-prototype-ollama@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
       model:
         name: nemotron-3-nano:30b

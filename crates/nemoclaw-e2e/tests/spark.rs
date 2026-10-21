@@ -43,6 +43,7 @@ fn creates(resources: &[&str]) -> Vec<Change> {
         .map(|resource| Change {
             resource: (*resource).into(),
             actions: vec!["create".into()],
+            reason: None,
         })
         .collect()
 }
@@ -57,8 +58,8 @@ fn assert_applied(result: &OperationResult, expected_changes: &[Change]) {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires owned Spark YAML, an unused NEMOCLAW_LIVE_SPARK_STATE path, and NEMOCLAW_TEST_BUNDLE; leaves workloads running"]
 async fn spark_yaml_plans_and_applies_expected_resources() {
-    // Use a copy of examples/spark/spark-inline.yaml with this host's image pins,
-    // a fresh deployment UID, and available gateway port and subnet.
+    // Use a copy of examples/spark/deepagents-team.yaml with this host's image
+    // pins, a fresh deployment UID, and available gateway port and subnet.
     let document =
         Document::parse(fs::File::open(explicit_path("NEMOCLAW_LIVE_SPARK_CONFIG")).unwrap())
             .unwrap();
@@ -79,18 +80,28 @@ async fn spark_yaml_plans_and_applies_expected_resources() {
     .into();
     let runtime = nemoclaw_sdk::compile::runtime_targets(&document, &generations).unwrap();
     // One plan creates the runtime and the objects it serves, in address order.
-    let mut addresses: Vec<_> = runtime
+    let mut addresses: Vec<String> = runtime
         .iter()
         .filter(|target| !target.address.starts_with("data."))
-        .map(|target| target.address.as_str())
-        .chain([
-            "openshell_inference.inference_qwen",
-            "openshell_sandbox.assistant",
-            "openshell_workspace.deployment",
-        ])
+        .map(|target| target.address.clone())
+        .chain(
+            document
+                .spec
+                .inference_providers
+                .iter()
+                .map(|provider| format!("openshell_inference.inference_{}", provider.name)),
+        )
+        .chain(
+            document
+                .spec
+                .sandboxes
+                .iter()
+                .map(|sandbox| format!("openshell_sandbox.{}", sandbox.name)),
+        )
+        .chain(["openshell_workspace.deployment".to_owned()])
         .collect();
     addresses.sort();
-    let expected = creates(&addresses);
+    let expected = creates(&addresses.iter().map(String::as_str).collect::<Vec<_>>());
     let plan = deployment.plan(&document, &cancel).await.unwrap();
     assert_eq!(plan.outcome, Outcome::Planned);
     assert_eq!(plan.changes, expected);
@@ -131,9 +142,14 @@ async fn spark_image_change_plans_and_applies_replacement() {
         "only the inference image pin may change"
     );
 
+    let service = previous.spec.inference_providers[0]
+        .service_ref
+        .clone()
+        .unwrap();
     let mut expected_changes = vec![Change {
-        resource: "docker_container.inference_service_inference_qwen".into(),
+        resource: format!("docker_container.inference_service_inference_{service}"),
         actions: vec!["delete".into(), "create".into()],
+        reason: None,
     }];
     let generations = [
         "workspace",
@@ -153,6 +169,7 @@ async fn spark_image_change_plans_and_applies_replacement() {
             expected_changes.push(Change {
                 resource: target.address,
                 actions: vec![action.into()],
+                reason: None,
             });
         }
     }

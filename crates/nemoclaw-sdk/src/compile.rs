@@ -494,8 +494,14 @@ fn objects_graph(
         generations,
         crate::services::InstallStage::Deployment,
     )?;
-    let raw = targets_with_plans(document, generations, &service_plans)?;
+    let mut raw = targets_with_plans(document, generations, &service_plans)?;
     let mut graph = compile_with_plans(document, generations, version, &service_plans, &raw)?;
+    // Docker pulls sandbox images with the logins `spec.registries` selects.
+    for (_, pull) in sandbox_image_pulls(document) {
+        if !raw.iter().any(|target| target.address == pull.address) {
+            raw.push(pull);
+        }
+    }
     crate::docker_compute::configure(&mut graph, &raw)
         .map_err(|_| ConfigError::new("invalid Docker compute graph"))?;
     crate::docker_compute::authenticate(&mut graph, &document.spec.registries);
@@ -635,6 +641,37 @@ fn graph_base(
     Ok(graph)
 }
 
+/// On Docker and Podman, the pull that precedes each sandbox image's reads, by
+/// sandbox name. A Kubernetes sandbox, or one with a metadata bundle, reads
+/// verified metadata instead and pulls nothing.
+pub(crate) fn sandbox_image_pulls(document: &Document) -> BTreeMap<String, Target> {
+    let engine = match &document.spec.gateway {
+        _ if document.spec.gateway.runtime().provider.is_kubernetes() => return BTreeMap::new(),
+        crate::config::Gateway::Managed(gateway) => gateway.engine.clone(),
+        crate::config::Gateway::External(gateway) => gateway.engine.clone(),
+    };
+    document
+        .spec
+        .sandboxes
+        .iter()
+        .filter(|sandbox| sandbox.image.metadata.is_none() && !engine.is_empty())
+        .map(|sandbox| {
+            let name = sandbox.image.ref_.clone();
+            (
+                sandbox.name.clone(),
+                Target {
+                    kind: "docker_image".into(),
+                    address: format!(
+                        "docker_image.image_{}",
+                        crate::docker_compute::digest(&engine, &name)
+                    ),
+                    values: Row::from([("engine".into(), engine.clone()), ("name".into(), name)]),
+                },
+            )
+        })
+        .collect()
+}
+
 fn compile_with_plans(
     document: &Document,
     generations: &Generations,
@@ -659,8 +696,36 @@ fn compile_with_plans(
     let mut profile_sources = BTreeMap::new();
     let mut ordered: Vec<_> = document.spec.sandboxes.iter().collect();
     ordered.sort_by_key(|sandbox| &sandbox.name);
+    let pulls = sandbox_image_pulls(document);
     for (index, sandbox) in ordered.iter().enumerate() {
-        let source = format!("data.fabric_harnesses.sandbox_{index}");
+        let mut source = format!("data.fabric_harnesses.sandbox_{index}");
+        if let Some(pull) = pulls.get(&sandbox.name) {
+            // The sandbox and its agent use reads that wait for the pull: an
+            // unknown image ID defers them to apply. The plan-time discovery
+            // read stays, and accepts an image the engine doesn't hold yet.
+            let image_id = json!(format!("${{{}.image_id}}", pull.address));
+            let discovered = graph["data"]["fabric_harnesses"][format!("sandbox_{index}")].clone();
+            let mut acquired = discovered.clone();
+            acquired["image_id"] = image_id.clone();
+            acquired["lifecycle"]["postcondition"][1]["condition"] =
+                json!("${self.runtime_json != \"\"}");
+            graph["data"]["fabric_harnesses"][format!("sandbox_{index}_acquired")] = acquired;
+            let literal = |value: &str| value.replace("${", "$${").replace("%{", "%%{");
+            let requirements =
+                crate::fabric_capabilities::requirements_for_sandbox(document, sandbox)?;
+            graph["data"]["fabric_harness"][format!("{}_acquired", sandbox.name)] = json!({
+                "image": discovered["image"],
+                "engine": discovered["engine"],
+                "image_id": image_id,
+                "adapter_id": literal(
+                    requirements.configuration["harness"]["adapter_id"]
+                        .as_str()
+                        .unwrap_or_default()
+                ),
+                "agent_name": literal(&sandbox.agent.name),
+            });
+            source = format!("data.fabric_harnesses.sandbox_{index}_acquired");
+        }
         runtime_sources.insert(sandbox.name.clone(), source.clone());
         for provider in document.sandbox_inference_providers(sandbox)? {
             profile_sources
@@ -777,8 +842,13 @@ fn compile_with_plans(
             // An agent's harness is the one its sandbox's image read selects.
             if reference.kind == nemoclaw_fabric::agent::HARNESS_TYPE {
                 let sandbox = &target.values[nemoclaw_fabric::agent::SANDBOX];
+                let harness = if pulls.contains_key(sandbox) {
+                    format!("{sandbox}_acquired")
+                } else {
+                    sandbox.clone()
+                };
                 attributes[reference.attribute] =
-                    json!(format!("${{data.fabric_harness.{sandbox}.ref}}"));
+                    json!(format!("${{data.fabric_harness.{harness}.ref}}"));
                 continue;
             }
             let Some(encoded) = carried.into_iter().next() else {

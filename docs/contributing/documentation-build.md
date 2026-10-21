@@ -41,7 +41,7 @@ To recover a damaged import, stop the preview server, remove only the generated 
 ## Validate Locally
 
 Complete the Rust and `protoc` prerequisites in [build.md](../build.md).
-Install Node.js 24.21.0 for the documentation tooling.
+Install Node.js 24.22.0 for the documentation tooling.
 Node runs main's imported generators and the pinned Fern CLI through `npx`; the application remains a Cargo workspace with no root npm package.
 The first Fern invocation downloads its npm dependencies.
 CI uses the same Node version and main's pinned reviewed-npm setup action.
@@ -117,7 +117,7 @@ Manual runs perform validation only.
 | Same-repository PR targeting `v1` with `FERN_TOKEN` | `nemoclaw-v1-pr-N` preview, with one updated PR comment |
 | PR targeting another branch, fork PR, Dependabot PR, or PR without the token | Validation only |
 | Push to `v1` | Stable `nemoclaw-v1` preview; delete associated merged v1 PR previews after success |
-| `v1.*.*` tag with public publication enabled | Both versions on the existing public site, after checking that the tagged commit is reachable from `origin/v1` |
+| `v0.1.*` tag without a prerelease part (not `-rc1`), with public publication enabled | Both versions on the existing public site, after checking that the tagged commit is reachable from `origin/v1` |
 
 The stable staging URL is `https://nvidia-preview-nemoclaw-v1.docs.buildwithfern.com/nemoclaw` after its first successful publish.
 It uses main's staging instance only in Fern preview mode; publishing it does not replace main's staging pages.

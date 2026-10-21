@@ -241,9 +241,6 @@ fn guide(name: &str) -> &'static str {
         | "ReasoningEffort"
         | "AgentAuth"
         | "AuthMethod" => "[Inference configuration](../inference.md)",
-        "AgentInterfaces" | "OpenClawInterfaces" | "OpenClawDashboard" | "DashboardBind" => {
-            "[Agent interfaces](../interfaces.md)"
-        }
         "Integration" | "WebSearch" | "SearchProvider" | "Agent" | "AgentExecution"
         | "AgentObservability" | "OtlpTracing" | "RelayTracing" | "AgentTools" | "AllowedTool"
         | "ToolDisclosure" => "[Agent runtimes](../agents.md)",

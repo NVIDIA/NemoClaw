@@ -4,7 +4,7 @@ use nemoclaw_e2e::openshell::Fixture;
 use nemoclaw_sdk::{
     ObservationError,
     backend::Backend,
-    config::{Credential, Gateway, TLS},
+    config::{FileRef, Gateway, SecretRef, TLS},
 };
 use openshell_provider::{OpenShell, Secrets};
 use rcgen::{
@@ -59,15 +59,17 @@ async fn mutual_tls_and_bearer_references_fail_closed_without_disclosing_credent
         values.insert(name.into(), path.to_str().unwrap().into());
     }
     values.insert("TOKEN".into(), "secret-sentinel".into());
-    let reference = |env: &str| Credential { env: env.into() };
+    let file = |env: &str| FileRef { env: env.into() };
     let gateway = Gateway::External(nemoclaw_sdk::config::ExternalGateway {
         engine: String::new(),
         endpoint: fixture.endpoint.clone(),
-        credential: Some(reference("TOKEN")),
+        credential: Some(SecretRef {
+            env: "TOKEN".into(),
+        }),
         tls: Some(TLS {
-            ca: reference("CA"),
-            certificate: reference("CERT"),
-            key: reference("KEY"),
+            ca: file("CA"),
+            certificate: file("CERT"),
+            key: file("KEY"),
         }),
         ..Default::default()
     });

@@ -88,7 +88,7 @@ The current tests establish configuration, compilation, API attachment, and drif
 | You run a model server in a Kubernetes or OpenShift gateway's cluster | External `endpoint` naming its Service, `http://<service>.<namespace>.svc.cluster.local:<port>/v1`, and an optional credential reference; follow [in-cluster model servers](kubernetes.md#use-a-model-server-in-the-cluster) | [In-cluster vLLM](../examples/kubernetes/in-cluster-vllm.yaml), [in-cluster Ollama](../examples/kubernetes/in-cluster-ollama.yaml) |
 | NemoClaw should download and serve a pinned public model with vLLM | Declare a service with `kind: vllm`, the runtime image, repository revision, capacity, and serving settings; see [managed models](models.md) | [Generic vLLM](../examples/spark/vllm.yaml) |
 | The Docker daemon running a managed service is reached through SSH | Set `placement.engine` to the SSH endpoint, then declare the private network and `publication` endpoint on the named service; follow [remote service](remote-service.md) | [Remote vLLM](../examples/spark/remote-vllm.yaml) |
-| The model requires preparation tools or runtime patches | Package reviewed tools in an immutable image and declare an [inline recipe](recipes.md) | [Inline Qwen3.8 recipe](../examples/spark/spark-inline.yaml) |
+| The model requires preparation tools or runtime patches | Use an immutable image that packages the recipe's reviewed tools, and declare an [inline recipe](recipes.md) | [Recipe declaration](recipes.md#declaration) |
 
 Service ownership does not depend on the harness; the service must support the [request API](#choose-the-request-api) selected by that harness.
 The [harness matrix](reference/fabric-harnesses.md) distinguishes accepted configurations from live qualification.
@@ -197,13 +197,14 @@ Build the supervisor image from this checkout using the [runtime build prerequis
 From the repository root, on a Linux ARM64 or AMD64 build host matching the model host:
 
 ```sh
-cargo run -p nemoclaw-build --no-default-features -- runtime runtimes/ollama/build.json
+docker buildx bake ollama
+docker image inspect nc-prototype-ollama:rust-v1 --format '{{index .RepoDigests 0}}'
 ```
 
-The command builds and loads a local image for the build host's architecture and retains its OCI archive under `.build/ollama`.
-Use the immutable image digest from that build in `spec.services.<name>.image` and make the image available on the selected engine.
+The command builds and loads a local image for the build host's architecture.
+Use the immutable image reference that inspection prints in `spec.services.<name>.image` and make the image available on the selected engine.
 The example image digest is a placeholder; a bare upstream `ollama/ollama` image lacks the required supervisor.
-The [runtime notice](../runtimes/ollama/NOTICE.md) identifies the pinned upstream image and retained sources.
+The [runtime notice](../image/ollama/NOTICE.md) identifies the pinned upstream image and retained sources.
 
 The provider uses `provider: openai` and `api: openai-completions`.
 Select an adapter whose Fabric contract accepts that protocol.
@@ -425,8 +426,8 @@ The selected adapter's model schema and implementation own the meanings, accepte
 These settings do not resize a managed inference server; configure that service's limits separately.
 The SDK does not infer native support from an adapter name or from accepting the YAML structure.
 
-The managed Ollama examples set the service's `serving.contextTokens` to `32768`.
-That suits OpenClaw; [Hermes needs at least `64000`](#size-the-context-for-hermes).
+The managed Ollama examples for OpenClaw set the service's `serving.contextTokens` to `32768`.
+The [managed Hermes example](../examples/managed-hermes.yaml) sets `65536`, because [Hermes needs at least `64000`](#size-the-context-for-hermes).
 An operator-reported OpenClaw prompt used 19,947 tokens in one setup, before allowing space for a reply.
 Size the model, KV cache, and GPU memory for the selected context.
 The OpenClaw adapter owns how it uses the context window; NemoClaw does not assess an OpenClaw route's context budget.
@@ -436,10 +437,13 @@ The OpenClaw adapter owns how it uses the context window; NemoClaw does not asse
 The pinned Hermes Agent requires a model context window of at least 64,000 tokens.
 It reads the window from the model server; route settings do not change it.
 For a Hermes route to managed vLLM or Ollama, set `serving.contextTokens` between `64000` and the schema maximum, `65536`, and choose a model that supports that context.
-The models in the managed Ollama examples and the [Spark vLLM example](../examples/spark/vllm.yaml), `qwen3:0.6b` and `Qwen/Qwen3-4B`, have 40,960-token native context windows and cannot serve Hermes.
+The [managed Hermes example](../examples/managed-hermes.yaml) serves `nemotron-3-nano:4b`, whose 256K-token native window covers that range.
+`qwen3:0.6b` and `Qwen/Qwen3-4B`, used by the other managed Ollama examples and the [Spark vLLM example](../examples/spark/vllm.yaml), have 40,960-token native windows and cannot serve Hermes.
 In one operator test, Hermes answered a request through cluster vLLM serving `Qwen/Qwen3-4B-Instruct-2507` with `serving.contextTokens: 65536`; that test does not qualify the model.
 
-Plan and apply warn when a Hermes route uses a managed vLLM or Ollama service whose `serving.contextTokens` is below `64000`; the warning does not reject the configuration.
+NemoClaw doesn't check the window for Hermes.
+Hermes checks the window the model server reports when the agent starts, and its error names the server setting to raise, which for a managed service is `serving.contextTokens`.
+Ollama reports the model's native window rather than `serving.contextTokens`, so Hermes doesn't reject a smaller managed Ollama window, and longer conversations are cut off at that window instead ([current limits](limits.md#inference)).
 
 ## Authenticate Hermes through the Provider
 
