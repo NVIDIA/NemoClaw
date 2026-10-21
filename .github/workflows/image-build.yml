@@ -73,18 +73,12 @@ jobs:
         run: |
           cargo images build --platform "$AGENT_PLATFORM" agents
           docker buildx bake ollama-proxy --load
-      - name: Verify installed discovery and retained source hashes
+      - name: Qualify the agent images
         if: inputs.run
         run: |
           docker buildx bake --print agents | jq -er '.target | to_entries[] | [.key, .value.tags[0]] | @tsv' > .build-image-list
           test -s .build-image-list
-          while read -r harness image; do
-            catalog=$(docker image inspect "$image" --format '{{index .Config.Labels "io.nemoclaw.fabric.catalog"}}')
-            docker run --rm --runtime=runc --network none \
-              -e NEMOCLAW_TEST_HARNESS="$harness" -e NEMOCLAW_TEST_CATALOG="$catalog" \
-              -v "$PWD/image/test_image.py:/test.py:ro" \
-              --entrypoint /opt/fabric/bin/python "$image" -B /test.py
-          done < .build-image-list
+          cut -f2 .build-image-list | xargs cargo images qualify
       # Pushing doesn't change a digest: Docker's containerd store pushes the
       # manifest it built. A release promotes these digests. Until an
       # administrator creates the packages as internal, v1 pushes skip this.

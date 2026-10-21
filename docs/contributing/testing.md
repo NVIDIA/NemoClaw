@@ -411,8 +411,16 @@ The scope includes image Python and retained integration fixtures.
 Native adapter implementation and its behavioral tests live in Fabric and use Fabric's checks.
 
 The [image workflow](../../.github/workflows/images.yml) builds the selected platform's agent images plus the proxy, verifies retained source hashes, and checks installed discovery metadata.
-It first builds and qualifies the separate dummy image: the [reference runtime suite](../../image/test_agent_contract.py) starts, invokes, and stops one runtime with NemoClaw's test adapter through `fabric-agent-ctl`, in a network-isolated, read-only container.
-It then runs the [image assembly checks](../../image/test_image.py) in every selected agent image: the runtime command, Python against each pinned adapter's declared range, the Fabric lock, Node.js only where a harness needs it, the catalog label, and retained sources without build toolchains.
+It first builds and qualifies the separate dummy image, whose qualification also starts, invokes, and stops one runtime with NemoClaw's test adapter through `fabric-agent-ctl`, in a network-isolated, read-only container.
+It then qualifies every selected agent image with [`cargo images qualify`](../../crates/nemoclaw-build/src/images.rs).
+In each image, offline and as the image's own user, it checks:
+
+- the runtime command is `fabric-agent-ctl`, and it is executable;
+- the retained sources match the image's provenance;
+- the image runs as 10001:10001, and `/sandbox` and `TMPDIR` are laid out as OpenShell needs on Kubernetes and OpenShift;
+- the image carries no package installer and no build toolchain.
+
+The build itself refuses a catalog label that differs from what the image installs, and installs only what Fabric's lock pins.
 NemoClaw doesn't run Fabric's native adapters; their behavior is Fabric's to test.
 Use the [reference image procedure](../build.md#reference-contract-image) to run these locally.
 

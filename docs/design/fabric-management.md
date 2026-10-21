@@ -111,7 +111,7 @@ Deployment ownership, missing bindings, route drift and observation failures con
 ## Validation
 
 [Reference tests](../../image/fabric/test_reference.py) run the dummy agent through a real `fabric-agent-ctl` in the reference image.
-The [reference runtime suite](../../image/test_agent_contract.py) starts, invokes, and stops a runtime through `fabric-agent-ctl` in the dummy image; production images get only [assembly checks](../../image/test_image.py), since Fabric tests its own adapters.
+[`cargo images qualify`](../../crates/nemoclaw-build/src/images.rs) starts, invokes, and stops a runtime through `fabric-agent-ctl` in the dummy image; production images get only its assembly checks, since Fabric tests its own adapters.
 [Catalog tests](../../image/fabric/test_catalog_contract.py) cover image catalogs and runtime metadata.
 The provider's [bridge client tests](../../crates/nemoclaw-e2e/tests/fabric_bridge.rs) and the [Fabric contract tests](../../crates/fabric-provider/tests/contract) cover starts, invocations, stops, and lost replies against the fake gateway.
 [Bundle fixtures](../contributing/integration-tests.md#opentofu-and-bundle-lifecycle) separately exercise deployment recovery, export and reapply, and ownership.

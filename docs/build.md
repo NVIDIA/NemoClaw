@@ -186,8 +186,8 @@ IMAGE_PREFIX=nc-contract cargo images build --platform linux/arm64 agents
 
 Use `linux/amd64` on a native AMD64 host.
 The build adds the `io.nemoclaw.fabric.catalog` label to every image.
-NemoClaw checks how each production image is assembled, not whether Fabric's adapters work: the [image checks](contributing/testing.md#image-source-checks) run `image/test_image.py` in each image, offline.
-Fabric's runtime and adapters are Fabric's to test, so `cargo images qualify` accepts only the reference image.
+NemoClaw checks how each image is assembled, not whether Fabric's adapters work: `cargo images qualify IMAGE...` checks every image offline, and runs one runtime's lifecycle only in the reference image, with NemoClaw's test adapter.
+Fabric's runtime and adapters are Fabric's to test.
 A passing reference lifecycle does not establish that a runtime stays healthy: Fabric reports no runtime status.
 See [upstream ownership](design/fabric-management.md#upstream-ownership) for the remaining Fabric and OpenShell work.
 

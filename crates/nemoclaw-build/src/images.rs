@@ -524,7 +524,8 @@ pub fn build(root: &Path, platform: &str, selection: &[String]) -> Result<()> {
 const ASSEMBLY_FACTS: &str = r#"
 echo '=== provenance'; cat /opt/nemoclaw/provenance.json; echo
 echo '=== runtime'; cat /opt/nemoclaw/runtime.json; echo
-echo '=== hashes'; cd /opt/nemoclaw/source && sha256sum fabric.tar.gz requirements.txt local/*
+echo '=== hashes'; cd /opt/nemoclaw/source && sha256sum fabric.tar.gz requirements.txt
+find local -type f -exec sha256sum {} +
 echo '=== copies'
 for file in /opt/nemoclaw/*.py; do
   if cmp -s "$file" "local/${file##*/}"; then echo "same ${file##*/}"; else echo "differs ${file##*/}"; fi
