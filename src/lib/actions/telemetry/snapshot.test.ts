@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createServer } from "node:http";
 import { beforeEach, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -26,7 +27,8 @@ vi.mock("../sandbox/mcp-bridge-provider-inspection", async (importOriginal) => (
 }));
 
 import { collectOperationSnapshot } from "./snapshot";
-import { collectOperationEvent } from "./send";
+import { collectOperationEvent, sendOperationTelemetry } from "./send";
+import { telemetryRuntime } from "../../adapters/telemetry/http";
 import { isOperationEvent } from "../../domain/telemetry/schema";
 import {
   dcodeImageRef,
@@ -391,3 +393,101 @@ it.each(nativeModelCases)(
     expect(isOperationEvent(event)).toBe(true);
   },
 );
+
+it("delivers a cancelled operation when an OpenClaw roster exhausts collection time (#13575)", async () => {
+  const records: unknown[] = [];
+  const server = createServer(async (request, response) => {
+    let body = "";
+    for await (const chunk of request) body += String(chunk);
+    records.push(JSON.parse(body));
+    response.writeHead(200).end();
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("Missing local receiver");
+  const previousConfig = telemetryRuntime.config;
+  try {
+    for (const key of ["CI", "GITHUB_ACTIONS", "VITEST", "NODE_ENV", "NEMOCLAW_DISABLE_TELEMETRY"])
+      vi.stubEnv(key, undefined);
+    vi.stubEnv("NEMOCLAW_TELEMETRY_TEST_LABEL", "qa-telemetry:local:attempt-1");
+    telemetryRuntime.config = {
+      endpoint: new URL(`http://127.0.0.1:${address.port}/`),
+      localReceiver: true,
+    };
+    mocks.readRegistry.mockReturnValue({
+      defaultSandbox: null,
+      sandboxes: {
+        first: { name: "first", agent: "openclaw", gatewayPort: 8080 },
+        second: { name: "second", agent: "hermes", gatewayPort: 8080 },
+      },
+    });
+    let rosterCancelled = false;
+    const dispose = vi.fn();
+    mocks.createReader.mockImplementation((signal: AbortSignal) => ({
+      read: async ({ command }: { command: readonly string[] }) => {
+        if (command[0] === "openclaw") {
+          return new Promise<string>((_resolve, reject) => {
+            signal.addEventListener(
+              "abort",
+              () => {
+                rosterCancelled = true;
+                reject(new Error("Native evidence cancelled"));
+              },
+              { once: true },
+            );
+          });
+        }
+        return command[0] === "uname" ? "Linux" : "{}";
+      },
+      observeInferenceRoute: async () => ({ ok: false }),
+      dispose,
+    }));
+    const outcome = await sendOperationTelemetry(
+      {
+        operation: "sandbox_destroy",
+        startedAt: "2026-10-20T03:21:24.000Z",
+        completedAt: "2026-10-20T03:22:02.000Z",
+        outcome: "cancelled",
+        state: "unchanged",
+        scope: "sandbox",
+        installedVersion: "1.2.3",
+        targets: [
+          {
+            sandboxName: "first",
+            gatewayName: "nemoclaw",
+            scope: "sandbox",
+            outcome: "cancelled",
+            state: "unchanged",
+          },
+        ],
+      },
+      1_000,
+    );
+    expect(outcome).toBe("accepted");
+    expect(rosterCancelled).toBe(true);
+    expect(dispose).toHaveBeenCalledOnce();
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      events: [
+        {
+          parameters: {
+            operation: "sandbox_destroy",
+            outcome: "cancelled",
+            state: "unchanged",
+            collectionStatus: "partial",
+            publishedEnvironmentCount: 2,
+            configurations: [{ agentHarnessId: "openclaw" }, { agentHarnessId: "hermes" }],
+            targetResults: [{ configurationPosition: 0, outcome: "cancelled", state: "unchanged" }],
+          },
+        },
+      ],
+    });
+  } finally {
+    telemetryRuntime.config = previousConfig;
+    vi.unstubAllEnvs();
+    server.closeAllConnections();
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+  }
+});

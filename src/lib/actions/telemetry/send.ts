@@ -185,14 +185,21 @@ export async function sendOperationTelemetry(
     return "disabled";
   if (!Number.isFinite(budgetMs) || budgetMs <= 0 || budgetMs > 5_000) return "failed";
   const controller = new AbortController();
-  const deadlineAt = Date.now() + budgetMs;
+  const collectionController = new AbortController();
+  // Slow native observations must leave time to deliver their partial snapshot.
+  const collectionBudgetMs = budgetMs - Math.min(1_000, budgetMs / 2);
+  const deadlineAt = Date.now() + collectionBudgetMs;
+  const collectionTimer = setTimeout(() => collectionController.abort(), collectionBudgetMs);
   const timer = setTimeout(() => controller.abort(), budgetMs);
   try {
     const deadline = new Promise<null>((resolve) => {
       controller.signal.addEventListener("abort", () => resolve(null), { once: true });
     });
     const event = await Promise.race([
-      collectOperationEvent(context, { signal: controller.signal, deadlineAt }),
+      collectOperationEvent(context, {
+        signal: collectionController.signal,
+        deadlineAt,
+      }),
       deadline,
     ]);
     if (event === null || controller.signal.aborted) return "failed";
@@ -212,6 +219,8 @@ export async function sendOperationTelemetry(
     return "failed";
   } finally {
     clearTimeout(timer);
+    clearTimeout(collectionTimer);
+    collectionController.abort();
     controller.abort();
   }
 }
