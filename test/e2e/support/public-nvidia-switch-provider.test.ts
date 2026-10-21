@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import { DEFAULT_CLOUD_MODEL } from "../../../src/lib/inference/config.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
@@ -30,7 +31,8 @@ describe("public NVIDIA inference switch provider", () => {
   });
   it("pins the healthy public provider and model", () => {
     expect(PUBLIC_NVIDIA_SWITCH_PROVIDER).toBe("nvidia-prod");
-    expect(PUBLIC_NVIDIA_SWITCH_MODEL).toBe("nvidia/nemotron-3-super-120b-a12b");
+    expect(PUBLIC_NVIDIA_SWITCH_MODEL).toBe("nvidia/nemotron-3.5-super-vl-120b-a12b");
+    expect(PUBLIC_NVIDIA_SWITCH_MODEL).toBe(DEFAULT_CLOUD_MODEL);
     expect(requirePublicNvidiaSwitchKey("nvapi-public-key")).toBe("nvapi-public-key");
     expect(() => requirePublicNvidiaSwitchKey("sk-hosted-key")).toThrow(/nvapi-\*/u);
   });

@@ -10,6 +10,8 @@ import {
   validateE2eTargetCatalogue,
 } from "../../../tools/e2e/target-catalogue.mts";
 import { buildE2eWorkflowPlan } from "../../../tools/e2e/workflow-plan.mts";
+import { DEFAULT_CLOUD_MODEL } from "../../../src/lib/inference/config.ts";
+import { PUBLIC_NVIDIA_SWITCH_MODEL } from "../live/public-nvidia-switch-provider.ts";
 
 describe("inference-switch catalogue boundary", () => {
   it.each([
@@ -68,7 +70,7 @@ describe("inference-switch catalogue boundary", () => {
           NEMOCLAW_AGENT: "openclaw",
           NEMOCLAW_E2E_SHARD: "native-nvidia",
           NEMOCLAW_SWITCH_PROVIDER: "nvidia-prod",
-          NEMOCLAW_SWITCH_MODEL: "nvidia/nemotron-3-super-120b-a12b",
+          NEMOCLAW_SWITCH_MODEL: "nvidia/nemotron-3.5-super-vl-120b-a12b",
           NEMOCLAW_SWITCH_INFERENCE_API: "openai-completions",
         },
       });
@@ -84,7 +86,7 @@ describe("inference-switch catalogue boundary", () => {
         environment: {
           NEMOCLAW_AGENT: "hermes",
           NEMOCLAW_SWITCH_PROVIDER: "nvidia-prod",
-          NEMOCLAW_SWITCH_MODEL: "nvidia/nemotron-3-super-120b-a12b",
+          NEMOCLAW_SWITCH_MODEL: "nvidia/nemotron-3.5-super-vl-120b-a12b",
           NEMOCLAW_SWITCH_INFERENCE_API: "openai-completions",
         },
       });
@@ -93,6 +95,21 @@ describe("inference-switch catalogue boundary", () => {
       expect(target.environment).not.toHaveProperty("NEMOCLAW_E2E_USE_HOSTED_INFERENCE");
     },
   );
+
+  it("selects the public Super VL model for every public NVIDIA target", () => {
+    const superVl = "nvidia/nemotron-3.5-super-vl-120b-a12b";
+    expect([DEFAULT_CLOUD_MODEL, PUBLIC_NVIDIA_SWITCH_MODEL]).toEqual([superVl, superVl]);
+    // runCatalogueTarget assigns these values over the job environment, so they
+    // take precedence over the helper fallback and must match it.
+    expect([
+      catalogueTarget("openclaw-inference-switch").environment.NEMOCLAW_SWITCH_MODEL,
+      catalogueTarget("hermes-inference-switch").environment.NEMOCLAW_SWITCH_MODEL,
+      catalogueTarget("pi-agent-qualification-amd64").environment.NEMOCLAW_MODEL,
+    ]).toEqual([superVl, superVl, superVl]);
+    expect(catalogueTarget("pi-agent-qualification-amd64").environment).toMatchObject({
+      NEMOCLAW_E2E_INFERENCE_MODE: "public-nvidia",
+    });
+  });
 
   it("selects native Anthropic through the existing trusted selector (#13195)", () => {
     expect(catalogueTarget("openclaw-compatible-anthropic-inference-switch")).toMatchObject({

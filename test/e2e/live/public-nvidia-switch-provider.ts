@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { DEFAULT_CLOUD_MODEL } from "../../../src/lib/inference/config.ts";
 import {
   normalizeNativeNvidiaProviderAttachment,
   NVIDIA_HOSTED_CREDENTIAL_ENV,
@@ -12,7 +13,7 @@ import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 export { requirePublicNvidiaSwitchKey } from "../fixtures/hosted-inference.ts";
 
 export const PUBLIC_NVIDIA_SWITCH_PROVIDER = "nvidia-prod";
-export const PUBLIC_NVIDIA_SWITCH_MODEL = "nvidia/nemotron-3-super-120b-a12b";
+export const PUBLIC_NVIDIA_SWITCH_MODEL = DEFAULT_CLOUD_MODEL;
 export const PUBLIC_NVIDIA_SWITCH_ATTACHMENT_EVIDENCE =
   "provider-inspection=0;provider-name=match;provider-profile=match;provider-id=match;attachment-inspection=0;attached=true;schema=1;profile=nemoclaw-nvidia-inference-v1;provider=nemoclaw-nvidia-prod-v1";
 
