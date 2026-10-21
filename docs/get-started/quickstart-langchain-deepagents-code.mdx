@@ -187,7 +187,7 @@ Deep Agents Code has no runtime `inference set` path, so re-onboard the sandbox 
 When you use NVIDIA Endpoints without selecting another model, new Deep Agents Code sandboxes default to `nvidia/nemotron-3-ultra-550b-a55b`.
 For this model, the managed image maps the OpenAI-compatible route to Deep Agents `0.7.15`'s native Nemotron 3 Ultra harness profile, including model-specific tool-calling, filesystem, retry, context, and final-answer safeguards.
 Rebuild existing Deep Agents Code sandboxes after upgrading NemoClaw so their image includes the pinned runtime and profile.
-This agent-specific default does not change the shared Nemotron 3 Super default for OpenClaw and Hermes.
+This agent-specific default does not change the shared Nemotron 3.5 Super VL default for OpenClaw and Hermes.
 The image launcher normalizes the runtime proxy environment for interactive, login-shell, and direct-exec paths and removes inherited proxy credentials and bypass entries before `dcode` starts.
 Managed interactive sessions pre-complete Deep Agents Code's optional first-run onboarding, skip its dependency and model selection screens, then open the TUI with the model selected during NemoClaw onboarding.
 The image includes `ripgrep` and `dos2unix`, and ordinary sessions suppress the optional Tavily warning unless web search is configured or invoked.

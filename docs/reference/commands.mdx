@@ -522,6 +522,12 @@ This surface observes the canonical onboarding session and does not accept input
 
 NemoClaw records onboarding progress so interrupted runs can continue. Use `--resume` to continue a resumable onboarding session with the provider, model, sandbox name, agent, observability choice, custom Dockerfile path, read-only host-mount declarations, and any explicitly selected serving-profile provenance recorded by the original run. For a profile-backed session, resume requires the same catalog, preset, and recipe digests and exits before effects if the installed definition changed. Omit `--profile` to reuse that recorded selection, or pass the same profile explicitly; use `--fresh` to adopt a changed catalog definition. Sessions without a serving-profile provenance record can resume when their checkpoint uses schema 4, but they cannot acquire a new `--profile` selection during resume.
 
+If policy application stops or OpenShell refuses the write, `--resume` reuses the selected presets for the same sandbox.
+NemoClaw checks the sandbox identity and preset availability before it reapplies the selection.
+It clears the saved selection only after live policy readback confirms the presets.
+If a saved preset is unavailable, policy recovery stops without silently removing it; use `--fresh` to discard that selection and choose a new policy.
+If the sandbox identity changed, preserve the reported state and inspect the sandbox before starting a new onboarding attempt.
+
 <AgentOnly variant="openclaw">
 
 OpenClaw onboarding does not enter the `complete` state until NemoClaw proves that the local CLI operator pairing is settled.
