@@ -43,17 +43,21 @@ fn fixture(mut document: Document) -> Option<String> {
             &serde_json::to_string(&binding.launch(&sandbox.agent.name)).unwrap(),
         )
         .unwrap();
-        encoded = encoded
-            .replace(
-                &format!(
-                    "\"${{jsondecode(data.fabric_harnesses.sandbox_{index}.binaries_json)}}\""
-                ),
-                &serde_json::to_string(&binding.binaries()).unwrap(),
-            )
-            .replace(
-                &format!("\"${{data.fabric_harnesses.sandbox_{index}.launch_json}}\""),
-                &launch.replace("${", "$${"),
-            );
+        // On Docker the sandbox takes them from the read after its image pull.
+        for read in [
+            format!("sandbox_{index}"),
+            format!("sandbox_{index}_acquired"),
+        ] {
+            encoded = encoded
+                .replace(
+                    &format!("\"${{jsondecode(data.fabric_harnesses.{read}.binaries_json)}}\""),
+                    &serde_json::to_string(&binding.binaries()).unwrap(),
+                )
+                .replace(
+                    &format!("\"${{data.fabric_harnesses.{read}.launch_json}}\""),
+                    &launch.replace("${", "$${"),
+                );
+        }
     }
     let mut resources = Map::new();
     let compiled: Value = serde_json::from_str(&encoded).unwrap();

@@ -207,6 +207,7 @@ pub(crate) fn resource_label(address: &str) -> String {
             }
             let mappings = [
                 ("fabric_agent.", "agent runtime/"),
+                ("terraform_data.agent_", "agent configuration/"),
                 ("data.ollama_model.", "Ollama model/"),
                 ("ollama_proxy_credential_storage.", "proxy credentials/"),
                 ("docker_container.ollama_proxy_", "ollama proxy/"),
@@ -342,6 +343,9 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
             output.push_str(&format!("  {action}  {label}\n"));
             if context.verbose && label != change.resource {
                 output.push_str(&format!("    {}\n", terminal_text(&change.resource)));
+            }
+            if let Some(reason) = &change.reason {
+                output.push_str(&format!("    {}\n", terminal_text(reason)));
             }
             if change.resource.starts_with("openshell_sandbox.")
                 && change.actions.iter().any(|action| action == "delete")
@@ -753,6 +757,7 @@ mod tests {
     fn resource_results_name_authored_sources_and_separate_deferred_work() {
         let result = json!({"outcome":"planned", "changes":[
             {"resource":"fabric_agent.host", "actions":["update"]},
+            {"resource":"terraform_data.agent_host", "actions":["update"]},
             {"resource":"openshell_inference.inference_local-1234", "actions":["update"]},
             {"resource":"openshell_web_search.tavily_1234_search_key", "actions":["create"]},
             {"resource":"vllm_credential_storage.inference_tiny_auth", "actions":["create"]},
@@ -768,6 +773,7 @@ mod tests {
         let text = render(&["nemoclaw", "plan", "spark.yaml"], result.clone());
         for expected in [
             "agent runtime/host",
+            "agent configuration/host",
             "provider/responses at spec.sandboxes[host].inferenceProviders[responses]",
             "web search/tavily",
             "inference credentials/tiny",
@@ -779,6 +785,7 @@ mod tests {
             assert!(text.contains(expected), "missing {expected}: {text}");
         }
         assert!(!text.contains("1234"), "{text}");
+        assert!(!text.contains("terraform_data"), "{text}");
         assert!(!text.contains("3 unchanged"));
         let verbose = render(
             &["nemoclaw", "plan", "spark.yaml", "--verbose"],
@@ -898,6 +905,17 @@ mod tests {
         }
         let verbose = render(&["nemoclaw", "plan", "spark.yaml", "--verbose"], result);
         assert!(verbose.contains("openshell_sandbox.assistant"));
+    }
+
+    #[test]
+    fn a_planned_replacement_shows_its_reason() {
+        let reason = "sandbox exited: SANDBOX_PHASE_ERROR, reason ContainerExited, exit code 1";
+        let text = render(
+            &["nemoclaw", "plan", "spark.yaml"],
+            json!({"outcome":"planned","changes":[
+                {"resource":"openshell_sandbox.assistant","actions":["delete","create"],"reason":reason}]}),
+        );
+        assert!(text.contains(reason), "{text}");
     }
 
     #[test]

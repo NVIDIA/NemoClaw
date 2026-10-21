@@ -12,7 +12,6 @@ on:
       - rust-toolchain.toml
       - deny.toml
       - tools/ci/**
-      - runtimes/qwen38/**
       - .github/workflows/dependencies.yml
   workflow_dispatch:
 permissions:
@@ -51,5 +50,3 @@ jobs:
       # once here instead of in the native build jobs that `cargo ci` reproduces.
       - name: Test CI orchestration
         run: python3 -B -m unittest discover -s tools/ci -p 'test_*.py'
-      - name: Check recipe attribution and preparation adapters
-        run: python3 -B -m unittest discover -s runtimes/qwen38 -p 'test_*.py'

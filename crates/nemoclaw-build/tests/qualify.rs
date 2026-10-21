@@ -1,55 +1,122 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! The container `cargo images qualify` runs the command contract in.
+//! What `cargo images qualify` checks in an agent image: its assembly in every
+//! image, and the reference runtime's lifecycle in the reference image.
 
-use nemoclaw_build::images::{Lifecycle, qualify_arguments};
-use std::path::Path;
+use nemoclaw_build::images::{check_assembly, lifecycle_arguments};
+use serde_json::json;
 
-fn arguments(lifecycle: Option<Lifecycle>) -> Vec<String> {
-    qualify_arguments(Path::new("/repo"), "name", "sha256:image", "", lifecycle)
-}
+const FABRIC: &str = "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1";
+const REQUIREMENTS: &str = "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2";
+const CATALOG: &str = "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3";
 
-fn environment(arguments: &[String]) -> Vec<&str> {
-    arguments
-        .windows(2)
-        .filter(|pair| pair[0] == "-e")
-        .map(|pair| pair[1].as_str())
-        .collect()
+/// Facts as the image reports them, for an image that meets the contract.
+fn facts() -> String {
+    let provenance = json!({"harness": "agent", "source_sha256": FABRIC,
+        "requirements_sha256": REQUIREMENTS, "local_sources": {"catalog.py": CATALOG}});
+    let runtime = json!({"environment": {"TMPDIR": "/sandbox/tmp"}});
+    format!(
+        "=== provenance\n{provenance}\n=== runtime\n{runtime}\n=== hashes\n\
+         {FABRIC}  fabric.tar.gz\n{REQUIREMENTS}  requirements.txt\n{CATALOG}  local/catalog.py\n\
+         === copies\nsame catalog.py\n=== identity\n10001 10001\n=== sandbox\n\
+         10001 755 directory /sandbox\n10001 755 directory /sandbox/tmp\n10001 644 regular file /sandbox/.profile\n\
+         === installers\n=== toolchains\n=== control\nexecutable\n"
+    )
 }
 
 #[test]
-fn without_a_lifecycle_the_contract_runs_offline_and_read_only() {
-    let arguments = arguments(None);
-    for required in ["--network=none", "--read-only", "--runtime=runc"] {
+fn an_image_that_meets_the_contract_has_no_problems() {
+    assert_eq!(check_assembly(&facts()), Vec::<String>::new());
+}
+
+#[test]
+fn each_assembly_problem_is_named() {
+    for (from, to, problem) in [
+        (
+            "=== control\nexecutable",
+            "=== control\nmissing",
+            "fabric-agent-ctl",
+        ),
+        (
+            "=== installers\n",
+            "=== installers\n/opt/fabric/bin/pip\n",
+            "package installer",
+        ),
+        (
+            "=== toolchains\n",
+            "=== toolchains\n/usr/bin/gcc\n",
+            "build toolchain",
+        ),
+        ("10001 10001", "0 0", "10001:10001"),
+        (
+            "10001 755 directory /sandbox\n",
+            "0 755 directory /sandbox\n",
+            "/sandbox",
+        ),
+        ("10001 755 directory /sandbox/tmp\n", "", "/sandbox/tmp"),
+        (
+            "10001 644 regular file",
+            "10001 600 regular file",
+            "/sandbox/.profile",
+        ),
+        (
+            "10001 755 directory /sandbox/tmp",
+            "10001 750 directory /sandbox/tmp",
+            "/sandbox/tmp",
+        ),
+        (
+            &format!("{FABRIC}  fabric.tar.gz"),
+            &format!("{REQUIREMENTS}  fabric.tar.gz"),
+            "fabric.tar.gz",
+        ),
+        (&format!("{CATALOG}  local/catalog.py\n"), "", "catalog.py"),
+        ("same catalog.py", "differs catalog.py", "catalog.py"),
+    ] {
+        let changed = facts().replace(from, to);
+        assert_ne!(changed, facts(), "{from}");
+        let problems = check_assembly(&changed);
+        assert!(
+            problems.iter().any(|found| found.contains(problem)),
+            "{from} -> {problems:?}"
+        );
+    }
+    assert!(!check_assembly("not facts").is_empty());
+}
+
+/// The reference runtime runs as an OpenShell sandbox would run it: offline,
+/// read-only, with only its sandbox storage writable, serving through Fabric's
+/// `fabric-agent-ctl`. Nothing is mounted: Fabric's adapters are Fabric's to test.
+#[test]
+fn the_reference_lifecycle_runs_offline_read_only_in_sandbox_storage() {
+    let arguments = lifecycle_arguments("name", "sha256:image");
+    for required in [
+        "--network=none",
+        "--read-only",
+        "--runtime=runc",
+        "--detach",
+    ] {
         assert!(
             arguments.iter().any(|argument| argument == required),
             "{required}"
         );
     }
-    let environment = environment(&arguments);
-    assert!(environment.contains(&"NEMOCLAW_TEST_LIFECYCLE="));
-    assert_eq!(arguments.last().map(String::as_str), Some("/test.py"));
-}
-
-/// A lifecycle profile runs a native adapter against local inference in the
-/// sandbox, so it needs the native helper, a home directory and a test key.
-#[test]
-fn a_lifecycle_profile_gets_the_native_helper_home_and_key() {
-    let arguments = arguments(Some(Lifecycle::Hermes));
-    let environment = environment(&arguments);
-    assert!(environment.contains(&"NEMOCLAW_TEST_LIFECYCLE=hermes"));
-    assert!(environment.contains(&"HOME=/sandbox"));
-    assert!(environment.contains(&"FABRIC_NATIVE_TEST_KEY=fabric-native-key"));
+    for (flag, value) in [
+        ("-e", "HOME=/sandbox"),
+        ("--workdir", "/sandbox"),
+        ("--entrypoint", "/opt/fabric/bin/fabric-agent-ctl"),
+        ("--tmpfs", "/sandbox:rw,uid=10001,gid=10001,mode=0700"),
+    ] {
+        assert!(
+            arguments
+                .windows(2)
+                .any(|pair| pair[0] == flag && pair[1] == value),
+            "{flag} {value}"
+        );
+    }
     assert!(
-        arguments
-            .windows(2)
-            .any(|pair| pair[0] == "--workdir" && pair[1] == "/sandbox")
+        !arguments
+            .iter()
+            .any(|argument| argument == "--mount" || argument == "-v")
     );
-    // The source is the host path, joined with the host's separator.
-    let helper = Path::new("/repo").join("image").join("qualify_native.py");
-    let mount = format!(
-        "type=bind,src={},dst=/qualify_native.py,readonly",
-        helper.display()
-    );
-    assert!(arguments.contains(&mount), "{arguments:?}");
+    assert_eq!(&arguments[arguments.len() - 2..], ["sha256:image", "serve"]);
 }

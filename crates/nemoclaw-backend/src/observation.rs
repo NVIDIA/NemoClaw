@@ -82,7 +82,7 @@ pub enum ObservationError {
     },
     SandboxStartup {
         phase: &'static str,
-        reason: &'static str,
+        reason: String,
         exit_code: Option<i32>,
     },
 }

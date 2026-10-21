@@ -83,22 +83,22 @@ fn preview_requires_success_and_its_own_url() {
 }
 
 #[test]
-fn public_release_requires_enablement_a_v1_tag_and_the_tagged_commit() {
+fn public_release_requires_enablement_a_v0_1_tag_and_the_tagged_commit() {
     let release = |enabled: Option<&str>, kind: Option<&str>, tag: Option<&str>| Release {
         enabled: enabled.map(Into::into),
         ref_type: kind.map(Into::into),
         ref_name: tag.map(Into::into),
     };
-    let ok = release(Some("true"), Some("tag"), Some("v1.0.0"));
-    assert_eq!(ok.tag().unwrap(), "v1.0.0");
+    let ok = release(Some("true"), Some("tag"), Some("v0.1.0"));
+    assert_eq!(ok.tag().unwrap(), "v0.1.0");
     assert!(
-        release(None, Some("tag"), Some("v1.0.0"))
+        release(None, Some("tag"), Some("v0.1.0"))
             .tag()
             .unwrap_err()
             .contains("FERN_V1_PUBLIC_ENABLED")
     );
     assert!(
-        release(Some("false"), Some("tag"), Some("v1.0.0"))
+        release(Some("false"), Some("tag"), Some("v0.1.0"))
             .tag()
             .is_err()
     );
@@ -107,14 +107,14 @@ fn public_release_requires_enablement_a_v1_tag_and_the_tagged_commit() {
             .tag()
             .is_err()
     );
-    for tag in ["v2.0.0", "v1.0", "v1.0.0/x", "1.0.0"] {
+    for tag in ["v1.0.0", "v0.2.0", "v0.1", "v0.1.0/x", "0.1.0", "v0.1.0-"] {
         assert!(
             release(Some("true"), Some("tag"), Some(tag)).tag().is_err(),
             "{tag}"
         );
     }
     assert!(
-        release(Some("true"), Some("tag"), Some("v1.2.3-rc.1"))
+        release(Some("true"), Some("tag"), Some("v0.1.3-rc.1"))
             .tag()
             .is_ok()
     );

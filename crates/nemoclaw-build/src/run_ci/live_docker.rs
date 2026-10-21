@@ -36,12 +36,12 @@ fn by_digest(repository: &str, tag: &str) -> Result<String> {
 }
 
 fn ollama_base() -> Result<String> {
-    let dockerfile = fs::read_to_string("runtimes/ollama/Dockerfile")?;
+    let dockerfile = fs::read_to_string("image/ollama/Dockerfile")?;
     dockerfile
         .lines()
         .find_map(|line| line.strip_prefix("FROM "))
         .map(|image| image.trim().to_owned())
-        .ok_or_else(|| "runtimes/ollama/Dockerfile has no base image".into())
+        .ok_or_else(|| "image/ollama/Dockerfile has no base image".into())
 }
 
 /// The images this run builds and the deployment UUIDs its documents own.
@@ -195,17 +195,17 @@ fn prepare(
     getrandom::fill(&mut nonce).map_err(|_| "cannot name the live-test images")?;
     let prefix = format!("nc-live-{}", nemoclaw_build::hex(&nonce));
     // Every test needs python3, sha256sum and node, which both agent images have.
-    let (target, harness) = live_images::agent(platform);
-    let names = live_images::names(platform);
+    let (target, harness) = live_images::agent();
+    let names = live_images::names();
     match images {
-        Some(archive) => live_images::load(archive, &prefix, platform, &names, &mut owned.images)?,
+        Some(archive) => live_images::load(archive, &prefix, &names, &mut owned.images)?,
         None => {
             owned
                 .images
                 .extend(names.map(|name| format!("{prefix}:{name}")));
             live_images::build_agent(platform, &prefix)?;
             live_images::build_dummy(platform, &prefix)?;
-            live_images::build_proxies(&prefix)?;
+            live_images::build_proxies(platform, &prefix)?;
         }
     }
     let agent = by_digest(&prefix, target)?;

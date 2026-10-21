@@ -224,6 +224,10 @@ fn docker_gateway_launch_comes_from_typed_settings() {
   name      = "nc-0123456789abcdef-gateway"
   endpoint  = "http://127.0.0.1:17670"
   data_path = "{data}"
+  config    = jsonencode({{ "openshell.gateway" = {{ log_level = "debug" }} }})
+}}
+output "config_file" {{
+  value = data.openshell_docker_gateway_runtime.gateway.config_file
 }}
 output "entrypoint" {{
   value = data.openshell_docker_gateway_runtime.gateway.entrypoint
@@ -246,6 +250,14 @@ output "env" {{
         outputs["entrypoint"]["value"],
         json!(["/usr/local/bin/openshell-gateway"])
     );
+    let file = outputs["config_file"]["value"].as_str().unwrap();
+    for line in [
+        "log_level = \"debug\"".to_owned(),
+        "sandbox_label = \"nc-0123456789abcdef-gateway\"".to_owned(),
+        format!("kid_path = \"{data}/tls/jwt/kid\""),
+    ] {
+        assert!(file.contains(&line), "{line}: {file}");
+    }
     assert_eq!(
         outputs["command"]["value"],
         json!([

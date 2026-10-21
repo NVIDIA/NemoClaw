@@ -36,6 +36,9 @@ pub struct FabricCapabilitiesState {
     filesystem_read: Value<Vec<Value<String>>>,
     architecture: Value<String>,
     operating_system: Value<String>,
+    /// The pulled image's engine ID: unknown until the pull, which defers the
+    /// read to apply.
+    image_id: Value<String>,
     compatibility_status: Value<String>,
     runtime_json: Value<String>,
     /// The generic sandbox launch for the configured agent.
@@ -150,6 +153,7 @@ impl DataSource for FabricCapabilitiesDataSource {
                     ),
                     ("architecture", String, Optional),
                     ("operating_system", String, Optional),
+                    ("image_id", String, Optional),
                     ("observation_json", String, Computed),
                     ("available", Bool, Computed),
                     ("status", String, Computed),
@@ -206,6 +210,7 @@ impl DataSource for FabricCapabilitiesDataSource {
             &config.config_json,
             &config.architecture,
             &config.operating_system,
+            &config.image_id,
         ]
         .iter()
         .any(|value| matches!(value, Value::Unknown))
@@ -304,6 +309,8 @@ pub struct FabricHarnessState {
     engine: Value<String>,
     image: Value<String>,
     metadata_env: Value<String>,
+    /// The pulled image's engine ID, as for `fabric_harnesses`.
+    image_id: Value<String>,
     adapter_id: Value<String>,
     agent_name: Value<String>,
     launch_json: Value<String>,
@@ -347,6 +354,7 @@ impl FabricHarnessState {
             engine: self.engine.clone(),
             image: self.image.clone(),
             metadata_env: self.metadata_env.clone(),
+            image_id: self.image_id.clone(),
             config_json: config,
             ..Default::default()
         }
@@ -379,6 +387,7 @@ impl DataSource for FabricHarnessDataSource {
                     ("engine", String, Optional),
                     ("image", String, Required),
                     ("metadata_env", String, Optional),
+                    ("image_id", String, Optional),
                     ("adapter_id", String, Required),
                     ("agent_name", String, Required),
                     ("launch_json", String, Computed),
@@ -675,6 +684,84 @@ mod tests {
         let errors = format!("{diagnostics:?}");
         assert!(errors.contains("io.nemoclaw.fabric.catalog"), "{errors}");
         assert!(errors.contains("keep its base image's labels"), "{errors}");
+    }
+
+    /// An image the engine doesn't hold is reported, with known values, as
+    /// unavailable: the plan that pulls it accepts that at plan time.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_absent_image_is_reported_unavailable() {
+        let fixture = crate::fixture::Fixture::start(|request| {
+            assert!(request.path.starts_with("/images/"));
+            Some((404, br#"{"message":"No such image"}"#.to_vec()))
+        })
+        .await;
+        let mut diagnostics = Diagnostics::default();
+        let read = FabricCapabilitiesDataSource::default()
+            .read(
+                &mut diagnostics,
+                FabricCapabilitiesState {
+                    engine: Value::Value(fixture.endpoint.clone()),
+                    image: Value::Value(format!("registry/agent@sha256:{}", "c".repeat(64))),
+                    config_json: Value::Value(
+                        r#"{"schema_version":"fabric.agent/v1alpha1","metadata":{"name":"main"},"harness":{"adapter_id":"nvidia.fabric.hermes"}}"#.into(),
+                    ),
+                    ..Default::default()
+                },
+                ValueEmpty::default(),
+            )
+            .await
+            .unwrap();
+        assert!(matches!(&read.runtime_json, Value::Value(runtime) if runtime.is_empty()));
+        assert!(matches!(&read.status, Value::Value(status) if status == "unavailable"));
+        assert!(matches!(read.observation_json, Value::Value(_)));
+    }
+
+    /// The read after a pull waits for the pulled image's ID, without
+    /// reaching the engine, and so does the harness the agent takes.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_read_waits_for_the_image_the_plan_pulls() {
+        let fixture = crate::fixture::Fixture::start(|request| {
+            panic!(
+                "the engine was read before the image was pulled: {}",
+                request.path
+            )
+        })
+        .await;
+        let image = Value::Value(format!("registry/agent@sha256:{}", "d".repeat(64)));
+        let mut diagnostics = Diagnostics::default();
+        let read = FabricCapabilitiesDataSource::default()
+            .read(
+                &mut diagnostics,
+                FabricCapabilitiesState {
+                    engine: Value::Value(fixture.endpoint.clone()),
+                    image: image.clone(),
+                    image_id: Value::Unknown,
+                    ..Default::default()
+                },
+                ValueEmpty::default(),
+            )
+            .await
+            .unwrap();
+        assert!(matches!(read.runtime_json, Value::Unknown));
+        let harness = FabricHarnessDataSource::default()
+            .read(
+                &mut diagnostics,
+                FabricHarnessState {
+                    engine: Value::Value(fixture.endpoint.clone()),
+                    image,
+                    image_id: Value::Unknown,
+                    adapter_id: Value::Value("nvidia.fabric.hermes".into()),
+                    agent_name: Value::Value("main".into()),
+                    ..Default::default()
+                },
+                ValueEmpty::default(),
+            )
+            .await
+            .unwrap();
+        assert!(matches!(harness.reference, Value::Unknown));
+        assert!(diagnostics.errors.is_empty(), "{diagnostics:?}");
     }
 
     // The fake engine listens on a Unix socket, as the test above.

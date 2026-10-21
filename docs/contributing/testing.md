@@ -155,7 +155,7 @@ A contract test runs the provider built from the checkout, but a system test run
 [Run integration tests](integration-tests.md#opentofu-and-bundle-lifecycle) covers the fixture executables that a single `cargo test` needs.
 
 `cargo ci live-docker` needs Linux with a local Docker engine that uses the [containerd image store](../build.md).
-It pulls the pinned OpenShell and Ollama images; builds an agent image (Pi on ARM64, Deep Agents on AMD64), the reference dummy image, an image derived from the dummy, and two proxy images under a fresh `nc-live-` prefix; and writes gateway documents with fresh UUIDs, ports, and subnets in `172.30.200-254.0/24`.
+It pulls the pinned OpenShell and Ollama images; builds the Pi agent image, the reference dummy image, an image derived from the dummy, and two proxy images under a fresh `nc-live-` prefix; and writes gateway documents with fresh UUIDs, ports, and subnets in `172.30.200-254.0/24`.
 It runs the `live-docker` profile in four nextest commands: one for the tests that need no gateway document, then one for each of the three gateway tests with its own document.
 The tests that use Docker run one at a time, in the profile's `docker-engine` test group; the offline runtime rebuild uses no engine and compiles alongside them.
 Afterward it removes every container, volume, and network labelled with the documents' UUIDs, any sandbox objects in their gateways' OpenShell namespaces, and the images it built, whether or not the tests pass; pulled images remain.
@@ -411,13 +411,23 @@ The scope includes image Python and retained integration fixtures.
 Native adapter implementation and its behavioral tests live in Fabric and use Fabric's checks.
 
 The [image workflow](../../.github/workflows/images.yml) builds the selected platform's agent images plus the proxy, verifies retained source hashes, and checks installed discovery metadata.
-It first builds and qualifies the separate dummy image, then runs the same [command contract suite](../../image/test_agent_contract.py) against every selected agent image.
-Use the [reference image procedure](../build.md#reference-contract-image) to run that suite locally against explicit image references.
-The suite checks each image's runtime command and catalog, then starts, invokes, and stops one runtime through `fabric-agent-ctl` in a network-isolated container.
-The dummy, OpenClaw, Hermes, and Pi run that lifecycle, using the lifecycle profiles in the reference image procedure.
-Native profiles use isolated local inference; images without a selected profile report lifecycle coverage as skipped.
+It first builds and qualifies the separate dummy image, whose qualification also starts, invokes, and stops one runtime with NemoClaw's test adapter through `fabric-agent-ctl`, in a network-isolated, read-only container.
+It then qualifies every selected agent image with [`cargo images qualify`](../../crates/nemoclaw-build/src/images.rs).
+In each image, offline and as the image's own user, it checks:
+
+- the runtime command is `fabric-agent-ctl`, and it is executable;
+- the retained sources match the image's provenance;
+- the image runs as 10001:10001, and `/sandbox` and `TMPDIR` are laid out as OpenShell needs on Kubernetes and OpenShift;
+- the image carries no package installer and no build toolchain.
+
+The build itself refuses a catalog label that differs from what the image installs, and installs only what Fabric's lock pins.
+NemoClaw doesn't run Fabric's native adapters; their behavior is Fabric's to test.
+Use the [reference image procedure](../build.md#reference-contract-image) to run these locally.
 
 The image workflow obtains its image decision from the shared validation plan and skips image steps when their inputs are unaffected; the `Build` checks still report.
+On `v1` pushes that build images, it then pushes the checked agent and proxy images by digest to `ghcr.io/nvidia/nemoclaw/v1-ci:<image>-<commit>-<arch>`, an internal package that releases promote from ([#13516](https://github.com/NVIDIA/NemoClaw/issues/13516)).
+It pushes only to packages that already exist and aren't public, and otherwise skips with a warning; see [provisioning the packages](releases.md#provision-the-packages).
+The job summary lists each digest and how long its push took.
 A failed planning job fails those checks instead of skipping them.
 A file inside a crate counts when that crate is part of the image build: `nemoclaw-build` without default features, or the Ollama proxy, with their dependencies.
 [Path rules](../../.config/determinator-images.toml) classify other files by the `.dockerignore` build context.

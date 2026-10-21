@@ -159,7 +159,7 @@ fn managed_service_questions_use_sdk_types_and_keep_recipe_as_one_value() {
     assert!(state.answer(&capabilities, path, Some(json!(-1))).is_err());
     assert_eq!(state.values(), &before);
 
-    let recipe = journey("spark/spark-inline.yaml");
+    let recipe = journey("../crates/nemoclaw-sdk/tests/fixtures/config/inline-recipe.yaml");
     let resolution = recipe.resolve(&capabilities).unwrap();
     let recipes = resolution
         .questions()
@@ -290,7 +290,7 @@ fn single_sandbox_examples_offer_existing_sdk_values_without_changing_them() {
         );
         covered += 1;
     }
-    assert_eq!(covered, 40);
+    assert_eq!(covered, 39);
 }
 
 #[test]

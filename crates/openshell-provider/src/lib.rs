@@ -319,11 +319,17 @@ fn sandbox_row(
     row.insert("launch_json".into(), launch_json);
     // Empty until the loaded policy is observed.
     row.insert(POLICY_HASH.into(), String::new());
+    // Empty unless OpenShell reports that the sandbox exited.
+    row.insert(EXITED.into(), String::new());
     // Phase is used by active checks, but is not a Terraform schema attribute.
     Ok((row, ready, grants))
 }
 /// The state attribute recording the loaded policy revision's hash.
 pub(crate) const POLICY_HASH: &str = "policy_hash";
+/// The state attribute recording why OpenShell reports the sandbox exited:
+/// its terminal phase, reason, and exit code. A sandbox that exited plans a
+/// replacement.
+pub(crate) const EXITED: &str = "exited";
 
 /// The hash of the loaded policy revision, once it keeps every declared rule.
 fn active_policy(
@@ -588,13 +594,17 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 5] {
             "driver_config_json",
             services::FIELD,
             POLICY_HASH,
+            EXITED,
         ])
         .validate_inputs(network::validate_grant_names)
         // The URLs of the sandbox's exposures, which are part of its creation.
         .computed(services::URLS, nemoclaw_tofu::carry_prior)
         // The loaded policy's hash, OpenShell's additions included; later
         // observations must find the same one.
-        .computed(POLICY_HASH, nemoclaw_tofu::carry_prior),
+        .computed(POLICY_HASH, nemoclaw_tofu::carry_prior)
+        // OpenShell doesn't restart an exited sandbox, so it is replaced.
+        .computed(EXITED, nemoclaw_tofu::replace_when_observed)
+        .replace_on_change(&[EXITED]),
     ]
     .map(lifecycle_rules)
     .map(|mut definition| {

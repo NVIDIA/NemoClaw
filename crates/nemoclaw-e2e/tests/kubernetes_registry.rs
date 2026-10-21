@@ -307,13 +307,14 @@ impl Registry {
 }
 
 /// A new index digest forces a manifest request even though its layers are cached.
-/// The selected platform manifest and configuration retain their exact bytes.
+/// Each platform's manifest and configuration retain their exact bytes.
 fn unique_index(source: &[u8], image: &str, nonce: &str) -> (String, Vec<u8>, String) {
     let mut metadata: Value = serde_json::from_slice(source).unwrap();
     let old = image.rsplit_once('@').unwrap().1;
     let mut index: Value = serde_json::from_str(metadata["blobs"][old].as_str().unwrap()).unwrap();
-    let manifest = metadata["manifest_digest"].as_str().unwrap().to_owned();
-    if old == manifest {
+    // A manifest becomes the only platform of a new index; an index is replaced.
+    if index.get("manifests").is_none() {
+        let manifest = old.to_owned();
         let config: Value = serde_json::from_str(
             metadata["blobs"][index["config"]["digest"].as_str().unwrap()]
                 .as_str()
@@ -418,7 +419,7 @@ fn fixture_indices_force_a_new_pull_without_changing_image_contents() {
         .to_string();
     let manifest_digest = digest(manifest.as_bytes());
     for indexed in [false, true] {
-        let mut metadata = json!({"schema_version":1,"manifest_digest":manifest_digest,
+        let mut metadata = json!({"schema_version":2,
             "blobs":{&manifest_digest:manifest,&config_digest:config}});
         let root = if indexed {
             let index = json!({"schemaVersion":2,"mediaType":OCI_INDEX,"manifests":[{
@@ -443,7 +444,7 @@ fn fixture_indices_force_a_new_pull_without_changing_image_contents() {
         );
         let changed: Value = serde_json::from_slice(&changed).unwrap();
         assert_eq!(changed["blobs"][&one], index);
-        assert_eq!(changed["manifest_digest"], manifest_digest);
+        assert_eq!(changed["schema_version"], 2);
         assert_eq!(changed["blobs"][&manifest_digest], manifest);
         assert_eq!(changed["blobs"][&config_digest], config);
         assert_eq!(changed["blobs"].as_object().unwrap().len(), 3);

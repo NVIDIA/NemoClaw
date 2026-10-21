@@ -29,7 +29,7 @@ spec:
     nemotron:
       kind: vllm
       authentication: bearer
-      # Build runtimes/vllm/build.json on the model host and select its immutable digest.
+      # Build the vllm image (docker buildx bake vllm) on the model host and select its immutable digest.
       image:
         nc-prototype-vllm@sha256:0000000000000000000000000000000000000000000000000000000000000000
       placement:

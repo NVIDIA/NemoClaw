@@ -7,6 +7,8 @@
 mod artifacts;
 #[path = "bake.rs"]
 mod bake;
+#[path = "builder_dependencies.rs"]
+mod builder_dependencies;
 #[path = "catalog_sources.rs"]
 mod catalog_sources;
 #[cfg(unix)]
@@ -29,7 +31,7 @@ mod image_metadata;
 mod images;
 #[path = "qualify.rs"]
 mod qualify;
-#[path = "runtime_engine.rs"]
-mod runtime_engine;
+#[path = "registry_metadata.rs"]
+mod registry_metadata;
 #[path = "schema.rs"]
 mod schema;

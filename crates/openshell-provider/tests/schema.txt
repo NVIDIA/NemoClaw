@@ -36,7 +36,6 @@ resource openshell_gateway_storage (version 0)
   name: string, required
   network_cidr: string, required
   owner: string, optional, computed
-  sandbox_driver_config: string, optional, computed
 
 resource openshell_inference (version 2)
   api: string, required
@@ -103,6 +102,7 @@ resource openshell_podman_gateway (version 0)
   compute_driver: string, required
   endpoint: string, required
   engine: string, required
+  gateway_config: string, optional, computed
   generation: string, optional, computed
   id: string, computed
   image: string, required
@@ -111,10 +111,10 @@ resource openshell_podman_gateway (version 0)
   network_cidr: string, required
   owner: string, optional, computed
   running: string, computed
-  sandbox_driver_config: string, optional, computed
 
 resource openshell_sandbox (version 2)
   driver_config: string, optional
+  exited: string, computed
   gateway: object({ credential_env = string, endpoint = string, kubernetes = string, tls_ca_env = string, tls_certificate_env = string, tls_key_env = string, type = string }), required
   generation: string, optional, computed
   id: string, computed
@@ -375,6 +375,10 @@ data openshell_docker_gateway_runtime (version 0)
   > Computes a Docker gateway container's launch from typed settings without contacting any host.
   command: list(string), computed
     > The container's command.
+  config: string, optional
+    > Authored OpenShell gateway tables as JSON, in the chart's gatewayConfig format.
+  config_file: string, computed
+    > The gateway's OpenShell configuration file.
   data_path: string, required
     > Absolute data path returned by the gateway's storage.
   endpoint: string, required

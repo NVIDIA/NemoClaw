@@ -70,3 +70,31 @@ fn managed_services_keep_their_owner_readiness_queries_instead_of_anonymous_cata
             .is_empty()
     );
 }
+
+/// NemoClaw reads a model catalog itself only from an endpoint its own
+/// connection rules allow: HTTPS, or plain HTTP to a literal loopback or
+/// private address. Plain HTTP to a cluster Service name fails those rules, so
+/// it has no catalog read.
+#[test]
+fn a_cluster_service_endpoint_reads_no_catalog_while_https_and_private_addresses_keep_theirs() {
+    use nemoclaw_sdk::{config::Document, inference_discovery::endpoint_requests};
+    for (endpoint, read) in [
+        ("http://qwen.models.svc.cluster.local:8000/v1", false),
+        ("https://inference.example.com/v1", true),
+        ("http://10.0.0.5:8000/v1", true),
+    ] {
+        let mut input = crate::support::example("kubernetes/external-gateway.yaml");
+        input["spec"]["inferenceProviders"][0]["endpoint"] = serde_json::json!(endpoint);
+        let document = Document::parse(input.to_string().as_bytes()).unwrap();
+        let requests = endpoint_requests(&document).unwrap();
+        let expected: &[&str] = if read { &[endpoint] } else { &[] };
+        assert_eq!(
+            requests
+                .iter()
+                .map(|request| request.endpoint.as_str())
+                .collect::<Vec<_>>(),
+            expected,
+            "{endpoint}"
+        );
+    }
+}

@@ -52,7 +52,7 @@ Requests fail between these two steps, until both sides use the same key.
 | Credential | How to rotate |
 |---|---|
 | External gateway bearer token or mTLS files | The gateway operator issues new ones; update the referenced environment values or files. NemoClaw reads them on every run. |
-| OIDC token for a managed Kubernetes gateway | Refresh it with the issuer's tooling into the variable `tokenEnv` names; NemoClaw reads it on every run, and an expired token fails as an authentication error. |
+| OIDC token for a managed Kubernetes gateway | Refresh it with the issuer's tooling into the variable `token.env` names; NemoClaw reads it on every run, and an expired token fails as an authentication error. |
 | Development credentials for a managed Kubernetes gateway | Their certificates are valid for 365 days and aren't rotated in place. Create a new deployment before they expire, or use the [OIDC profile](kubernetes.md). |
 
 ## Platform Credentials

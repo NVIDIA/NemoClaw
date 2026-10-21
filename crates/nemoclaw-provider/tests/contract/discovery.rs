@@ -246,12 +246,18 @@ async fn compiled_discovery_requires_the_image_runtime_metadata() {
             !["gateway", "gateway_prerequisites"].contains(&name.as_str())
                 && !name.starts_with("endpoint_")
         });
+    // Only the discovery reads; the reads after an image pull belong to apply.
+    let mut reads = compiled["data"]["fabric_harnesses"].clone();
+    reads
+        .as_object_mut()
+        .unwrap()
+        .retain(|name, _| !name.ends_with("_acquired"));
     let graph = json!({
         "terraform":{"required_providers":{"host":{"source":"nvidia/host"},"fabric":{"source":"nvidia/fabric"}}},
         "provider":{"host":{},"fabric":{}},
         "data":{
             "host_engine":compiled["data"]["host_engine"],
-            "fabric_harnesses":compiled["data"]["fabric_harnesses"]
+            "fabric_harnesses":reads
         },
         "output":output
     });
@@ -274,11 +280,31 @@ async fn compiled_discovery_requires_the_image_runtime_metadata() {
             0 => Some("supported"),
             _ => None,
         };
+        // An absent image passes, reported unavailable, because the plan pulls
+        // it before the reads that need its label.
+        let deferred = selected == 3;
         assert_eq!(
             result.status.success(),
-            compatible.is_some(),
+            compatible.is_some() || deferred,
             "{diagnostics}"
         );
+        if deferred {
+            let output = directory
+                .command()
+                .args(["show", "-json", "plan.bin"])
+                .output()
+                .unwrap();
+            assert!(output.status.success());
+            let plan: Value = serde_json::from_slice(&output.stdout).unwrap();
+            let observation: Value = serde_json::from_str(
+                plan["planned_values"]["outputs"]["discovery"]["value"]["sandbox_0"]
+                    .as_str()
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(observation["status"], "unavailable", "{observation}");
+            continue;
+        }
         if let Some(expected) = compatible {
             let output = directory
                 .command()

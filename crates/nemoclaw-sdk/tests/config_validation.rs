@@ -88,7 +88,7 @@ fn normalization_markers_are_accepted_only_before_defaults() {
     for example in [
         "spark/vllm.yaml",
         "managed-ollama.yaml",
-        "spark/spark-inline.yaml",
+        "../crates/nemoclaw-sdk/tests/fixtures/config/inline-recipe.yaml",
     ] {
         let baseline = document(example);
         let reparsed = Document::parse(baseline.yaml().unwrap().as_bytes()).unwrap();
@@ -159,7 +159,10 @@ fn semantic_checks_still_reject_schema_valid_relationships() {
 
 #[test]
 fn recipe_byte_limits_remain_semantic_checks_for_multibyte_strings() {
-    let mut value = serde_json::to_value(document("spark/spark-inline.yaml")).unwrap();
+    let mut value = serde_json::to_value(document(
+        "../crates/nemoclaw-sdk/tests/fixtures/config/inline-recipe.yaml",
+    ))
+    .unwrap();
     value["spec"]["services"]["qwen"]["recipe"]["serving"]["environment"] =
         json!({"VLLM_LABEL": "é".repeat(2049)});
     let validator =

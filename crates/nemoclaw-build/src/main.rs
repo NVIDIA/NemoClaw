@@ -3,7 +3,6 @@
 #[cfg(feature = "sdk")]
 mod platform;
 mod run_ci;
-mod runtime;
 use clap::{Parser, Subcommand};
 #[cfg(feature = "sdk")]
 use nemoclaw_sdk::bundle::{self, Manifest};
@@ -52,9 +51,6 @@ enum Action {
     Bundle {
         #[arg(long)]
         platform: Option<String>,
-    },
-    Runtime {
-        manifest: PathBuf,
     },
     /// Run this platform's `CI / Bundle` steps, or one named step.
     ///
@@ -172,21 +168,22 @@ enum ImageAction {
         #[arg(required = true)]
         targets: Vec<String>,
     },
-    /// Run the command contract inside each labeled local image.
+    /// Run the reference image's runtime contract: NemoClaw's test adapter through fabric-agent-ctl, offline.
     Qualify {
         #[arg(required = true)]
         images: Vec<String>,
-        /// Also start, invoke and stop a runtime through fabric-agent-ctl with this adapter's offline configuration.
-        #[arg(long, value_enum)]
-        lifecycle: Option<nemoclaw_build::images::Lifecycle>,
     },
     /// Write the metadata bundle a Kubernetes sandbox names in image.metadata.
     ExportMetadata {
-        /// A local image, by tag or digest.
+        /// A local image, by tag or digest, or with --registry an image in a
+        /// registry, as HOST/REPOSITORY@sha256:DIGEST. Its bundle covers every
+        /// Linux platform it lists.
         image: String,
-        /// linux/arm64 or linux/amd64.
+        /// Read IMAGE from its registry instead of the local Docker engine.
+        /// NEMOCLAW_REGISTRY_USERNAME and NEMOCLAW_REGISTRY_PASSWORD, when set,
+        /// answer the registry's token challenge.
         #[arg(long)]
-        platform: String,
+        registry: bool,
         /// Where to write the bundle; refuses an existing file.
         #[arg(long)]
         output: PathBuf,
@@ -303,6 +300,7 @@ async fn download(artifact: &Artifact) -> Result<Vec<u8>> {
     temporary.persist(path)?;
     Ok(bytes)
 }
+#[cfg(feature = "sdk")]
 fn target(platform: &str) -> Result<&'static str> {
     Ok(match platform {
         "linux_arm64" => "aarch64-unknown-linux-gnu",
@@ -543,15 +541,26 @@ async fn main() -> Result<()> {
             ImageAction::Build { platform, targets } => {
                 nemoclaw_build::images::build(root, &platform, &targets)
             }
-            ImageAction::Qualify { images, lifecycle } => images.iter().try_for_each(|image| {
+            ImageAction::Qualify { images } => images.iter().try_for_each(|image| {
                 eprintln!("Qualifying {image}");
-                nemoclaw_build::images::qualify(root, image, lifecycle)
+                nemoclaw_build::images::qualify(image)
             }),
             ImageAction::ExportMetadata {
                 image,
-                platform,
+                registry: false,
                 output,
-            } => nemoclaw_build::images::export_metadata(&image, &platform, &output),
+            } => nemoclaw_build::images::export_metadata(&image, &output),
+            ImageAction::ExportMetadata {
+                image,
+                registry: true,
+                output,
+            } => {
+                let credentials = std::env::var("NEMOCLAW_REGISTRY_USERNAME")
+                    .ok()
+                    .zip(std::env::var("NEMOCLAW_REGISTRY_PASSWORD").ok());
+                let bundle = nemoclaw_build::images::registry_metadata(&image, credentials).await?;
+                nemoclaw_build::images::write_bundle(&bundle, &output)
+            }
         }
         .map_err(Into::into);
     }
@@ -686,6 +695,5 @@ async fn main() -> Result<()> {
 
             bundle(&pins, &platform::select(platform, bundle::platform)?).await
         }
-        Action::Runtime { manifest } => runtime::build_runtime(&pins, &manifest).await,
     }
 }

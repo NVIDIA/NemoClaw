@@ -14,7 +14,7 @@ fn main() -> ExitCode {
         Some(address) => nemoclaw_test_fixtures::ssh::relay(address),
         None => {
             eprintln!(
-                "nemoclaw-fixture-ssh: expected -- ssh://127.0.0.1:PORT docker system dial-stdio"
+                "nemoclaw-fixture-ssh: expected -- ssh://127.0.0.1:PORT, or -p PORT -- 127.0.0.1, then docker system dial-stdio; got {args:?}"
             );
             ExitCode::from(255)
         }

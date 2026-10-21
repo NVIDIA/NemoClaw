@@ -19,7 +19,7 @@ cargo ci bundle
 cargo ci live-kind
 ```
 
-The runner builds Pi on ARM64 or Deep Agents on AMD64, exports its metadata bundle, loads it by digest, and installs the pinned Agent Sandbox prerequisite.
+The runner builds Pi, exports its metadata bundle, loads it by digest, and installs the pinned Agent Sandbox prerequisite.
 The gateway test checks authentication, forged-token rejection, repeated install/removal, and retained storage without a Helm executable on `PATH`.
 The OpenShift-profile and registry tests use the public SDK to deploy a gateway and sandbox from that image.
 Each supplies a caller-relative kubeconfig and expects apply to complete with the agent started.
@@ -127,15 +127,15 @@ Neither read-only test creates resources or establishes live agent inference.
 
 ## Spark and Fabric
 
-The Spark test reads a copy of `examples/spark/spark-inline.yaml` and asserts the public plan and apply results.
+The Spark test reads a copy of `examples/spark/deepagents-team.yaml`, which serves Nemotron 3.5 Lightning through the generic vLLM image to two Deep Agents sandboxes, and asserts the public plan and apply results.
 Use an available GB10 host, build the runtime and agent images, and set their immutable image references in the YAML.
 Choose a fresh deployment UID, available gateway port and subnet, and a new state-directory path whose parent exists.
-Keep the example's provider name `qwen`, sandbox name `assistant`, and agent name `assistant`; these identify the expected resources.
+The test derives the expected resources from the YAML's provider and sandbox names.
 
 From the repository root, with absolute paths:
 
 ```sh
-NEMOCLAW_LIVE_SPARK_CONFIG=/absolute/path/to/spark-inline.yaml \
+NEMOCLAW_LIVE_SPARK_CONFIG=/absolute/path/to/deepagents-team.yaml \
 NEMOCLAW_LIVE_SPARK_STATE=/absolute/path/to/new-state \
 NEMOCLAW_TEST_BUNDLE=/absolute/path/to/immutable/bundle \
   cargo test -p nemoclaw-e2e --test integration spark::spark_yaml_plans_and_applies_expected_resources -- --ignored
@@ -150,7 +150,7 @@ After failure, retain state for [explicit recovery](../usage.md#updates-and-reco
 
 Run `spark_image_change_plans_and_applies_replacement` separately with the same three variables and an established, running deployment.
 Change only the inference image pin in the YAML.
-The test compares the input with exported configuration, then requires plan and apply to replace `docker_container.inference_service_inference_qwen` and reconcile its image resource while retaining storage.
+The test compares the input with exported configuration, then requires plan and apply to replace the service's `docker_container.inference_service_inference_<service>` and reconcile its image resource while retaining storage.
 Storage retention and watchdog recovery have separate tests under [runtime boundaries](integration-tests.md#runtime-boundaries) and [generic models](#generic-models).
 
 Use an immutable bundle copy for a long live run.
@@ -309,23 +309,8 @@ The test checks managed runtime bindings as well as the hosted agent identity ac
 
 ## Docker Live Suite
 
-`cargo ci live-docker` builds the images and writes the owned inputs for the runtime image, Docker provider, standalone cache, dummy agent, and Docker gateway tests below, then runs them; see [Run each layer](testing.md#run-each-layer).
+`cargo ci live-docker` builds the images and writes the owned inputs for the Docker provider, standalone cache, dummy agent, and Docker gateway tests below, then runs them; see [Run each layer](testing.md#run-each-layer).
 To run one of them by hand, supply its inputs as its section describes.
-
-## Runtime Image Loading
-
-On a native Linux host, complete the [runtime image build prerequisites](../build.md#build-a-runtime-image).
-This test builds a uniquely named scratch image without downloading a base image, exports an OCI archive, loads it, and checks access by the exported digest.
-It removes its image tag afterward; Docker's build cache remains.
-Run from the repository root:
-
-```sh
-NEMOCLAW_TEST_RUNTIME_IMAGE=1 cargo test -p nemoclaw-build --no-default-features --bin nemoclaw-build runtime_archive_loads_with_its_exported_digest -- --ignored
-```
-
-A failure reports the build, load, or identity check that failed; correct the Docker configuration and rerun.
-It does not start containers, run inference, or publish an image.
-
 
 ## Docker Provider Lifecycle
 

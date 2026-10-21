@@ -109,42 +109,34 @@ pub fn values(spec: &Spec) -> Result<Value, Error> {
         values["gatewayConfig"]["openshell.drivers.kubernetes"]["image_pull_secrets"] =
             json!(target.image_pull_secrets);
     }
-    // An existing issuer replaces the development issuer's settings; its
-    // CA comes from the user's ConfigMap, if any.
+    // An existing issuer's settings are authored in OpenShell's OIDC table,
+    // which passes through below; its CA comes from the user's ConfigMap.
     let authentication = &target.authentication;
     if authentication.profile == crate::config::KubernetesAuthenticationProfile::Oidc {
-        let mut oidc = json!({
-            "issuer": authentication.issuer,
-            "audience": authentication.audience,
-            "jwks_ttl_secs": 3600,
-            "dangerously_allow_insecure_http": false,
-        });
-        for (key, value) in [
-            ("roles_claim", &authentication.roles_claim),
-            ("admin_role", &authentication.admin_role),
-            ("user_role", &authentication.user_role),
-            ("scopes_claim", &authentication.scopes_claim),
-        ] {
-            if let Some(value) = value {
-                oidc[key] = json!(value);
-            }
-        }
-        values["gatewayConfig"]["openshell.gateway.oidc"] = oidc;
+        values["gatewayConfig"]
+            .as_object_mut()
+            .expect("gateway configuration tables")
+            .remove(crate::managed::gateway_config::OIDC_TABLE);
         values["server"]["oidc"]["caConfigMapName"] =
             json!(authentication.ca_config_map.clone().unwrap_or_default());
     }
-    // OpenShell's driver configuration admission, passed through unchanged.
-    if let Some(setting) = &spec.settings.sandbox_driver_config {
-        let mut driver = json!({"allowDriverConfig": setting.allow});
-        if let Some(admission) = &setting.resource_admission {
-            if let Some(enabled) = admission.enabled {
-                driver["resourceAdmission"]["enabled"] = json!(enabled);
-            }
-            if let Some(labels) = &admission.required_labels {
-                driver["resourceAdmission"]["requiredLabels"] = json!(labels);
+    // Authored tables pass through to the chart. Their fields override
+    // NemoClaw's defaults in the same table; validation rejects the keys
+    // NemoClaw owns.
+    if let Some(config) = &spec.settings.config {
+        let tables = values["gatewayConfig"]
+            .as_object_mut()
+            .expect("gateway configuration tables");
+        for (name, fields) in config {
+            match (tables.get_mut(name), fields) {
+                (Some(Value::Object(defaults)), Value::Object(fields)) => {
+                    defaults.extend(fields.clone());
+                }
+                _ => {
+                    tables.insert(name.clone(), fields.clone());
+                }
             }
         }
-        values["server"]["drivers"]["kubernetes"] = driver;
     }
     Ok(values)
 }

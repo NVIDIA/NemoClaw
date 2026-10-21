@@ -30,15 +30,20 @@ NemoClaw installs nothing cluster-wide and never selects a context for you.
 ## Prepare Agent Images
 
 A cluster sandbox names its image's metadata bundle in `image.metadata`, because no local engine can inspect the image there.
-From the repository root, build the image, then write its bundle to a new file:
+
+For a published release, take both from the release: use an agent image's index reference from its notes in `image.ref`, and download the matching `<image>.metadata.json` it attaches.
+One bundle covers every Linux platform the index lists, so it serves ARM64 and AMD64 nodes.
+
+For an image you build, from the repository root, build it, then write its bundle to a new file:
 
 ```sh
 cargo images build --platform linux/amd64 openclaw
-cargo images export-metadata nc-fabric:openclaw --platform linux/amd64 --output openclaw.metadata.json
+cargo images export-metadata nc-fabric:openclaw --output openclaw.metadata.json
 ```
 
 Push the image, then use the digest of the pushed index in `image.ref`.
 The bundle is checked against that digest, so it must come from the same build.
+It covers every Linux platform the index lists, so one bundle serves ARM64 and AMD64 nodes.
 Set the environment variable named in `image.metadata` to the bundle's path before each command.
 See [Build agent images](build.md#build-agent-images) for the harnesses each platform builds.
 
@@ -93,22 +98,24 @@ spec:
     kubernetes:
       authentication:
         profile: oidc
+        caConfigMap: issuer-ca
+        token:
+          env: NEMOCLAW_GATEWAY_TOKEN
+    config:
+      openshell.gateway.oidc:
         issuer: https://login.example.com/realms/openshell
         audience: openshell
-        rolesClaim: groups
-        adminRole: openshell-admins
-        userRole: openshell-users
-        caConfigMap: issuer-ca
-        tokenEnv: NEMOCLAW_GATEWAY_TOKEN
+        roles_claim: groups
+        admin_role: openshell-admins
+        user_role: openshell-users
 ```
 
-- `issuer` and `audience` are passed to OpenShell, which validates every request's bearer token against them.
-- `rolesClaim`, `adminRole` and `userRole` map the token's roles to OpenShell's administrator and user access. Set both roles or neither; with neither, any valid token is accepted. `scopesClaim` names a scopes claim, if your tokens carry one.
+- `openshell.gateway.oidc` in [`spec.gateway.config`](usage.md#configure-a-managed-gateway) holds OpenShell's OIDC settings in OpenShell's names, as its [gateway authentication guide](https://github.com/NVIDIA/OpenShell/blob/5a7728c304b5528e954e9ae900cf21f84e1a12b1/docs/how-it-works/gateways/authentication.mdx#oidc) describes for Helm deployments. OpenShell validates every request's bearer token against the issuer and audience, and maps the token's roles to administrator and user access; omitted settings take OpenShell's defaults. The `oidc` profile requires the table; under `development`, NemoClaw writes it for its own issuer.
 - `caConfigMap` names a ConfigMap in the deployment's namespace whose `ca.crt` verifies the issuer's certificate. Omit it for a publicly trusted issuer. Like registry Secrets, create it after NemoClaw creates the namespace, then rerun apply with the same state directory.
-- `tokenEnv` names the variable holding the bearer token NemoClaw sends to the gateway.
+- `token.env` names the variable holding the bearer token NemoClaw sends to the gateway.
 
 NemoClaw runs no sign-in flow and stores no token.
-Before each plan, apply or destroy, get an access token for the audience from your identity provider, for example with its command-line tool, and put it in the variable `tokenEnv` names:
+Before each plan, apply or destroy, get an access token for the audience from your identity provider, for example with its command-line tool, and put it in the variable `token.env` names:
 
 ```sh
 export NEMOCLAW_GATEWAY_TOKEN="$(your-identity-provider-cli token --audience openshell)"

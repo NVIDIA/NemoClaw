@@ -107,7 +107,7 @@ Managed Podman gateway bindings combine the retained network UUID with container
 | Provider `managed/gateway_storage.rs` and `managed/observation.rs` | Volume verification uses the selected daemon’s `DockerRootDir`, including non-default roots. It rejects paths outside that root and retains label, creation-time, network, and image checks. |
 | Docker provider; `nemoclaw-provider` crate `docker/mod.rs` | The provider acquires Docker gateway and service images on the selected daemon. Application-status and credential archive reads use that same daemon. Model downloads belong to the runtime. Failed reads are not absence. |
 | SDK `config/` and `compile.rs`; provider `openshell/transport.rs` | Local managed inference uses bridge publication; SSH services declare a private publication URL. Explicit inference verification sends requests from the sandbox through OpenShell to the configured endpoint. |
-| Build crate and `runtimes/` | Build-engine selection is separate from runtime placement. A locally loaded image must be transferred before another daemon can use it. |
+| Runtime images under `image/` | Build-engine selection is separate from runtime placement. A locally loaded image must be transferred before another daemon can use it. |
 
 Podman gateway observation checks the native effective and bounding capability sets before normalizing the compatibility API representation of `CapDrop=ALL`; missing or nonempty sets fail observation.
 The gateway stores OpenShell’s extracted runtime binaries under its shared data volume, where both the gateway and Podman can read them.

@@ -26,7 +26,7 @@ The [hardware profile reference](../../docs/models.md#choose-a-hardware-profile)
 Run these commands from the repository root on the Station:
 
 ```sh
-cargo run -p nemoclaw-build -- runtime runtimes/vllm/build.json
+docker buildx bake vllm
 IMAGE_PREFIX=nc-fabric AGENT_PLATFORM=linux/arm64 docker buildx bake openclaw --load
 # The shared-model example also requires the Pi image.
 IMAGE_PREFIX=nc-fabric AGENT_PLATFORM=linux/arm64 docker buildx bake pi --load

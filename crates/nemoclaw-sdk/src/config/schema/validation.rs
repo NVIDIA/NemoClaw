@@ -118,18 +118,20 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
             );
         }
     }
-    property(
-        &mut defs["Credential"],
-        "env",
-        json!({
-            "pattern": c::ENV,
-            "not": {"anyOf": [
-                {"const": "NEMOCLAW_KUBERNETES_STATE"},
-                {"pattern": "^(?:NEMOCLAW_MANAGED_K8S_|HELM_|KUBE_)"}
-            ]},
-            "x-nemoclaw-error": "credential environment reference must be valid and must not shadow managed Kubernetes runtime controls"
-        }),
-    );
+    for (name, kind) in [("SecretRef", "secret"), ("FileRef", "file")] {
+        property(
+            &mut defs[name],
+            "env",
+            json!({
+                "pattern": c::ENV,
+                "not": {"anyOf": [
+                    {"const": "NEMOCLAW_KUBERNETES_STATE"},
+                    {"pattern": "^(?:NEMOCLAW_MANAGED_K8S_|HELM_|KUBE_)"}
+                ]},
+                "x-nemoclaw-error": format!("{kind} reference must name a valid environment variable that does not shadow managed Kubernetes runtime controls")
+            }),
+        );
+    }
     property(
         &mut defs["ManagedKubernetes"],
         "kubeconfig",
@@ -180,26 +182,12 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
             "x-nemoclaw-error": "Kubernetes environment names must be unique variable names that do not shadow process, trust, proxy, or cluster controls"
         }),
     );
-    // OIDC settings belong to the oidc profile, which requires the issuer,
-    // audience, and token variable; roles come in pairs, as in OpenShell.
-    let oidc_fields = [
-        "issuer",
-        "audience",
-        "rolesClaim",
-        "adminRole",
-        "userRole",
-        "scopesClaim",
-        "caConfigMap",
-        "tokenEnv",
-    ];
+    // The oidc profile requires the token variable; OpenShell's OIDC settings
+    // come from spec.gateway.config.
+    let oidc_fields = ["caConfigMap", "token"];
     let reserved_names =
         defs["ManagedKubernetes"]["properties"]["kubeconfig"]["properties"]["env"]["not"].clone();
     let authentication = &mut defs["KubernetesAuthentication"];
-    property(
-        authentication,
-        "issuer",
-        json!({"pattern": r"^https://[^\s/?#@]+(?:/[^\s?#]*)?$(?![\s\S])", "x-nemoclaw-error": "the OIDC issuer must be an https URL without credentials, query, or fragment"}),
-    );
     property(
         authentication,
         "caConfigMap",
@@ -208,25 +196,20 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
             "x-nemoclaw-error": "caConfigMap must be a Kubernetes ConfigMap name"
         }),
     );
+    // The token reaches OpenTofu beside the kubeconfig, so it follows the
+    // kubeconfig reference's rules in addition to SecretRef's.
     property(
         authentication,
-        "tokenEnv",
-        json!({
-            "pattern": c::ENV,
-            "not": {"anyOf": [
-                reserved_names,
-                {"const": "NEMOCLAW_KUBERNETES_STATE"},
-                {"pattern": "^(?:NEMOCLAW_MANAGED_K8S_|HELM_|KUBE_)"}
-            ]},
-            "x-nemoclaw-error": "tokenEnv must be an environment variable name that does not shadow process, trust, proxy, or cluster controls"
-        }),
+        "token",
+        json!({"properties": {"env": {
+            "not": reserved_names,
+            "x-nemoclaw-error": "token environment reference must not shadow process, trust, proxy, or cluster controls"
+        }}}),
     );
-    authentication["dependentRequired"] =
-        json!({"adminRole": ["userRole"], "userRole": ["adminRole"]});
     authentication["allOf"] = json!([
         {
             "if": {"properties": {"profile": {"const": "oidc"}}, "required": ["profile"]},
-            "then": {"required": ["issuer", "audience", "tokenEnv"]},
+            "then": {"required": ["token"]},
             "else": {"not": {"anyOf": oidc_fields.iter().map(|field| json!({"required": [field]})).collect::<Vec<_>>()}}
         }
     ]);

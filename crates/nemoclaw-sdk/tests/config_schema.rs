@@ -47,8 +47,14 @@ fn agrees_at(
 fn image_pull_policy_accepts_only_supported_values_on_managed_containers() {
     let validator = jsonschema::validator_for(&input_schema()).unwrap();
     for (file, path) in [
-        ("spark/spark-inline.yaml", "/spec/gateway"),
-        ("spark/spark-inline.yaml", "/spec/services/qwen"),
+        (
+            "../crates/nemoclaw-sdk/tests/fixtures/config/inline-recipe.yaml",
+            "/spec/gateway",
+        ),
+        (
+            "../crates/nemoclaw-sdk/tests/fixtures/config/inline-recipe.yaml",
+            "/spec/services/qwen",
+        ),
         ("managed-ollama.yaml", "/spec/services/ollama-server"),
     ] {
         for policy in ["Always", "IfNotPresent", "Never", "always", ""] {
@@ -134,7 +140,7 @@ fn input_schema_rejects_missing_required_fields_and_structural_nulls() {
 #[test]
 fn input_schema_preserves_defaults_strict_objects_and_opaque_route_settings() {
     let validator = jsonschema::validator_for(&input_schema()).unwrap();
-    let mut value = input("spark/spark-inline.yaml");
+    let mut value = input("../crates/nemoclaw-sdk/tests/fixtures/config/inline-recipe.yaml");
     for key in ["endpoint", "engine", "networkCIDR"] {
         value["spec"]["gateway"]
             .as_object_mut()
@@ -300,19 +306,19 @@ fn schema_and_parser_enforce_choices_bounds_and_conditional_forms() {
             true,
         ),
         (
-            "spark/spark-inline.yaml",
+            "../crates/nemoclaw-sdk/tests/fixtures/config/inline-recipe.yaml",
             "/spec/services/qwen/recipe/apiVersion",
             json!("future"),
             false,
         ),
         (
-            "spark/spark-inline.yaml",
+            "../crates/nemoclaw-sdk/tests/fixtures/config/inline-recipe.yaml",
             "/spec/services/qwen/memory/gpuMemoryGiB",
             json!(16),
             false,
         ),
         (
-            "spark/spark-inline.yaml",
+            "../crates/nemoclaw-sdk/tests/fixtures/config/inline-recipe.yaml",
             "/spec/services/qwen/recipe/resources/preparedBytes",
             json!(0),
             false,
@@ -472,7 +478,7 @@ fn gateway_variants_reject_fields_owned_by_the_other_mode() {
             json!({"ca": {"env": "CA"}, "certificate": {"env": "CERT"}, "key": {"env": "KEY"}}),
         ),
     ] {
-        let mut managed = input("spark/spark-inline.yaml");
+        let mut managed = input("../crates/nemoclaw-sdk/tests/fixtures/config/inline-recipe.yaml");
         managed["spec"]["gateway"][field] = value;
         agrees(&validator, &managed, false);
     }

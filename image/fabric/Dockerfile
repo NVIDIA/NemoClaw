@@ -1,15 +1,17 @@
-# syntax=docker/dockerfile:1@sha256:ecfaec9ed6d810b56388c508f4121597bfbba70d41a6dfeee4d8cad5f295fc32
+# syntax=docker/dockerfile:1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-ARG NODE_IMAGE=node:24.21.0-trixie-slim@sha256:db3ae80f5d8df06e04dabdf7b44cbf008d32de168205fa0294444aabbc08c590
-ARG PYTHON_IMAGE=python:3.13.15-slim-trixie@sha256:9d2e5553305c7c7b0097999bb17187c69b921ccd6bc9d40e4bb5ebe652c00285
-ARG RUST_IMAGE=rust@sha256:ce84a5edd80c5f91e05c5533b1e53eb1da54028f33734dc06aa6b49fa190462d
-ARG UV_IMAGE=ghcr.io/astral-sh/uv@sha256:3d868e555f8f1dbc324afa005066cd11e1053fc4743b9808ca8025283e65efa5
+ARG NODE_IMAGE=node:24.22.0-trixie-slim@sha256:7f486cabe892bff8fef04c0f7da8dba84a560be3e4e2740b7a86afc57ebec315
+ARG PYTHON_IMAGE=python:3.13.16-slim-trixie@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f
+ARG RUST_IMAGE=rust:1.99.1-slim-trixie@sha256:4df2ae8cfdfebdfc13a65da7f253b73d68983dc0339f2719bc17a279c913b13d
+ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.13.3@sha256:bee0a2a458fd956c5df7b8b4c5fed2257b0af34866e3da7b51db0be3acb375d1
 # The Fabric source every harness installs; the reference dummy's descriptor
 # follows the adapter contract at the same revision.
 ARG FABRIC_REVISION=5574117feb4be948c1b03f4c36a2fe9a11af910d
 ARG FABRIC_SHA256=b1a7f2759ea26fd3dcf8136be30045897fa5d7c38a7b96e81afaecdde798e523
 ARG OPENCLAW_IMAGE=ghcr.io/openclaw/openclaw@sha256:cc596b846506a5f4cfcee111394a2725f375f01cca2ebb492a161fd1b747f101
+# The harness stage the catalog and labeled stages build on.
+ARG STAGE=generic
 FROM ${RUST_IMAGE} AS rust
 FROM ${UV_IMAGE} AS uv
 FROM ${OPENCLAW_IMAGE} AS openclaw-upstream
@@ -199,3 +201,29 @@ FROM dummy AS reference-tests
 COPY image/fabric/test_reference.py /tests/
 ENV NEMOCLAW_REFERENCE_TESTS=1
 RUN --network=none /opt/fabric/bin/python -B -m unittest discover -s /tests -p 'test_*.py'
+
+# Plan reads an agent image's installed catalog from its
+# io.nemoclaw.fabric.catalog label, which only the built image can produce.
+# `cargo images build` exports it from `catalog`, then builds `labeled` with
+# it as CATALOG; both reuse the harness stage's cache.
+FROM ${STAGE} AS catalog-build
+RUN --network=none /opt/fabric/bin/python /opt/nemoclaw/catalog.py --installed \
+    --provenance /opt/nemoclaw/provenance.json --output /tmp/catalog.json
+
+FROM scratch AS catalog
+COPY --from=catalog-build /tmp/catalog.json /catalog.json
+
+FROM ${STAGE} AS labeled
+ARG CATALOG
+# The label must be the catalog this image installs.
+RUN --network=none --mount=type=bind,from=catalog-build,source=/tmp/catalog.json,target=/tmp/catalog.json \
+    /opt/fabric/bin/python - <<'EOF'
+import json, os, sys
+try:
+    labeled = json.loads(os.environ.get("CATALOG", ""))
+except ValueError:
+    labeled = None
+if labeled != json.load(open("/tmp/catalog.json")):
+    sys.exit("CATALOG must be this image's installed catalog; build with cargo images build")
+EOF
+LABEL io.nemoclaw.fabric.catalog=${CATALOG}

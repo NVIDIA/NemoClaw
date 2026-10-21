@@ -117,7 +117,8 @@ impl Release {
         }
     }
 
-    /// The v1 release tag, if public publication is enabled for it.
+    /// The release tag, `v0.1.PATCH` with an optional prerelease suffix, if
+    /// public publication is enabled for it. The `v1` branch ships 0.1 releases.
     pub fn tag(&self) -> Result<&str> {
         if self.enabled.as_deref() != Some("true") {
             return Err(
@@ -126,14 +127,11 @@ impl Release {
             );
         }
         let tag = self.ref_name.as_deref().unwrap_or("");
-        let version = tag.strip_prefix("v1.").unwrap_or("");
-        let (numbers, suffix) = version.split_once('-').unwrap_or((version, ""));
-        let numbers: Vec<_> = numbers.split('.').collect();
+        let version = tag.strip_prefix("v0.1.").unwrap_or("");
+        let (patch, suffix) = version.split_once('-').unwrap_or((version, ""));
         let valid = self.ref_type.as_deref() == Some("tag")
-            && numbers.len() == 2
-            && numbers
-                .iter()
-                .all(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+            && !patch.is_empty()
+            && patch.bytes().all(|b| b.is_ascii_digit())
             && (!version.contains('-') || !suffix.is_empty())
             && suffix
                 .bytes()
@@ -141,7 +139,7 @@ impl Release {
         if valid {
             Ok(tag)
         } else {
-            Err("public publication requires a v1 release tag".into())
+            Err("public publication requires a v0.1 release tag".into())
         }
     }
 }

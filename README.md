@@ -32,5 +32,3 @@ Report potential vulnerabilities through the private channels in [SECURITY.md](S
 ## Licenses
 
 Original NemoClaw code uses [Apache-2.0](LICENSE).
-The Qwen3.8 artifact includes AGPL-3.0-or-later recipe code and adaptations.
-See [component attribution and license notices](runtimes/qwen38/NOTICE.md) for their scope and retained sources.
