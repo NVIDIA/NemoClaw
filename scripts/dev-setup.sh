@@ -478,12 +478,12 @@ check_git_configuration() {
   fi
   hooks_dir="$(git -C "${REPO_ROOT}" rev-parse --git-path hooks 2>/dev/null || true)"
   if [ -z "${hooks_dir}" ]; then
-    fail "Git hook directory could not be resolved" "Run: npm install"
+    fail "Git hook directory could not be resolved" "Run: npm ci --include=dev --ignore-scripts --prefer-offline --include=optional --@nvidia:registry=https://npm.pkg.github.com && ./node_modules/.bin/prek install"
     return
   fi
   for hook in pre-commit commit-msg pre-push; do
     if [ ! -x "${hooks_dir}/${hook}" ]; then
-      fail "Git ${hook} hook is missing" "Run: npm install"
+      fail "Git ${hook} hook is missing" "Run: npm ci --include=dev --ignore-scripts --prefer-offline --include=optional --@nvidia:registry=https://npm.pkg.github.com && ./node_modules/.bin/prek install"
       return
     fi
   done

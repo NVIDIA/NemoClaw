@@ -476,6 +476,26 @@ describe("contributor environment doctor", () => {
     expect(result.status).toBe(1);
     expect(result.output).toContain("Git commit signing is incomplete");
     expect(result.output).toContain("Git pre-push hook is missing");
+    expect(result.output).toContain(
+      "Run: npm ci --include=dev --ignore-scripts --prefer-offline --include=optional --@nvidia:registry=https://npm.pkg.github.com && ./node_modules/.bin/prek install",
+    );
+  });
+
+  it("reports lockfile-preserving hook repair when the hook directory cannot be resolved", () => {
+    const fixture = createFixture();
+    writeTool(
+      fixture.fakeBin,
+      "git",
+      'if [ "${1:-}" = "--version" ]; then echo "git version 2.50.0"; else exit 1; fi',
+    );
+
+    const result = runDoctor(fixture);
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("Git hook directory could not be resolved");
+    expect(result.output).toContain(
+      "Run: npm ci --include=dev --ignore-scripts --prefer-offline --include=optional --@nvidia:registry=https://npm.pkg.github.com && ./node_modules/.bin/prek install",
+    );
   });
 
   it.each([
