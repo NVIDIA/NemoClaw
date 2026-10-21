@@ -3,6 +3,12 @@
 
 import readline from "node:readline";
 
+export {
+  cancelPromptWithPendingEof,
+  pendingStdinEofError,
+  takePendingStdinEof,
+} from "./pending-stdin-eof";
+
 interface PromptInput extends NodeJS.ReadableStream {
   isTTY?: boolean;
 }

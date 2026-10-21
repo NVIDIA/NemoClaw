@@ -24,12 +24,13 @@ export { isPolicyObservationError } from "../adapters/openshell/policy-state";
 import type { OpenShellRuntimeSelection } from "../adapters/openshell/runtime-selection";
 import { loadAgent, requireAgentPolicyAdditionsPath } from "../agent/defs";
 import { CLI_NAME } from "../cli/branding";
-import { createStdinPromptInterface, raisePromptInterrupt } from "../core/prompt-terminal";
 import {
   cancelPromptWithPendingEof,
+  createStdinPromptInterface,
   pendingStdinEofError,
+  raisePromptInterrupt,
   takePendingStdinEof,
-} from "../core/pending-stdin-eof";
+} from "../core/prompt-terminal";
 import {
   getMessagingPolicyKeyAliases,
   getMessagingPolicyPresetValidationWarnings,
