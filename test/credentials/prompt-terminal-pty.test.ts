@@ -60,7 +60,7 @@ describe.runIf(ptySupported)("credential prompts under a pseudo-TTY", () => {
         });
         expect(fs.readFileSync(capturedStderr, "utf8")).toContain("second: ");
       } finally {
-        if (child.exitCode === null) child.kill("SIGKILL");
+        child.exitCode === null && child.kill("SIGKILL");
         fs.rmSync(root, { recursive: true, force: true });
       }
     },
