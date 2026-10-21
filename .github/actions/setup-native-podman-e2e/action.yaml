@@ -21,6 +21,10 @@ inputs:
     description: Optional immutable workflow-owned restore script used if runtime setup is interrupted.
     required: false
     default: ""
+  service-tasks-max:
+    description: Optional finite TasksMax value for the native Podman API service.
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -78,9 +82,18 @@ runs:
         EXPECTED_ARCHITECTURE: ${{ steps.artifact.outputs.architecture }}
         EXPECTED_PODMAN_SOURCE_SHA: ${{ steps.artifact.outputs.podman_source_sha }}
         EXPECTED_PODMAN_VERSION: ${{ steps.artifact.outputs.podman_version }}
+        SERVICE_TASKS_MAX: ${{ inputs.service-tasks-max }}
         TOOLCHAIN_DIRECTORY: ${{ runner.temp }}/native-podman-e2e-toolchain
       run: |
         set -euo pipefail
+        service_tasks_max_line=()
+        if [[ -n "$SERVICE_TASKS_MAX" ]]; then
+          if [[ ! "$SERVICE_TASKS_MAX" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::Native Podman service TasksMax must be a positive integer" >&2
+            exit 1
+          fi
+          service_tasks_max_line=("TasksMax=$SERVICE_TASKS_MAX")
+        fi
         setup_completed=false
         cleanup_interrupted_setup() {
           local command_status=$?
@@ -370,6 +383,7 @@ runs:
           'Type=exec' \
           'Delegate=true' \
           'KillMode=process' \
+          "${service_tasks_max_line[@]}" \
           'Environment=PODMAN_SYSTEMD_UNIT=%n' \
           "EnvironmentFile=$service_environment" \
           "ExecStart=$podman_service_exec" >"$service_unit"

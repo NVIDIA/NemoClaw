@@ -982,12 +982,17 @@ exec /bin/bash "$@"
     expect(job.env).not.toHaveProperty("E2E_HERMES_BASE_STORAGE_HOME");
     expect(setupAction.inputs["cleanup-fixture"]?.default).toBe("");
     expect(setupAction.inputs["isolate-docker-cli"]?.default).toBe("true");
+    expect(setupAction.inputs["service-tasks-max"]?.default).toBe("");
     expect(dockerCliIsolation?.if).toBe(
       "${{ inputs.enabled == 'true' && inputs.isolate-docker-cli == 'true' }}",
     );
     expect(setupRuntime?.env).toMatchObject({
       CLEANUP_FIXTURE: "${{ inputs.cleanup-fixture }}",
+      SERVICE_TASKS_MAX: "${{ inputs.service-tasks-max }}",
     });
+    expect(setupRuntime?.run).toContain('[[ ! "$SERVICE_TASKS_MAX" =~ ^[1-9][0-9]*$ ]]');
+    expect(setupRuntime?.run).toContain('service_tasks_max_line=("TasksMax=$SERVICE_TASKS_MAX")');
+    expect(setupRuntime?.run).toContain('"${service_tasks_max_line[@]}"');
     expect(setupRuntime?.run).toContain("trap cleanup_interrupted_setup EXIT");
     expect(setupRuntime?.run).toContain("trap 'exit 130' INT");
     expect(setupRuntime?.run).toContain("trap 'exit 143' TERM");
