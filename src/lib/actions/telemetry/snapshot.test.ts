@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import assert from "node:assert/strict";
 import { createServer } from "node:http";
+import { json } from "node:stream/consumers";
 import { beforeEach, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -397,18 +399,19 @@ it.each(nativeModelCases)(
 it("delivers a cancelled operation when an OpenClaw roster exhausts collection time (#13575)", async () => {
   const records: unknown[] = [];
   const server = createServer(async (request, response) => {
-    let body = "";
-    for await (const chunk of request) body += String(chunk);
-    records.push(JSON.parse(body));
+    records.push(await json(request));
     response.writeHead(200).end();
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
-  if (!address || typeof address === "string") throw new Error("Missing local receiver");
+  assert(address && typeof address !== "string", "Missing local receiver");
   const previousConfig = telemetryRuntime.config;
   try {
-    for (const key of ["CI", "GITHUB_ACTIONS", "VITEST", "NODE_ENV", "NEMOCLAW_DISABLE_TELEMETRY"])
-      vi.stubEnv(key, undefined);
+    vi.stubEnv("CI", undefined);
+    vi.stubEnv("GITHUB_ACTIONS", undefined);
+    vi.stubEnv("VITEST", undefined);
+    vi.stubEnv("NODE_ENV", undefined);
+    vi.stubEnv("NEMOCLAW_DISABLE_TELEMETRY", undefined);
     vi.stubEnv("NEMOCLAW_TELEMETRY_TEST_LABEL", "qa-telemetry:local:attempt-1");
     telemetryRuntime.config = {
       endpoint: new URL(`http://127.0.0.1:${address.port}/`),
@@ -423,10 +426,10 @@ it("delivers a cancelled operation when an OpenClaw roster exhausts collection t
     });
     let rosterCancelled = false;
     const dispose = vi.fn();
-    mocks.createReader.mockImplementation((signal: AbortSignal) => ({
-      read: async ({ command }: { command: readonly string[] }) => {
-        if (command[0] === "openclaw") {
-          return new Promise<string>((_resolve, reject) => {
+    mocks.createReader.mockImplementation((signal: AbortSignal) => {
+      const responses: Record<string, () => Promise<string>> = {
+        openclaw: () =>
+          new Promise<string>((_resolve, reject) => {
             signal.addEventListener(
               "abort",
               () => {
@@ -435,13 +438,16 @@ it("delivers a cancelled operation when an OpenClaw roster exhausts collection t
               },
               { once: true },
             );
-          });
-        }
-        return command[0] === "uname" ? "Linux" : "{}";
-      },
-      observeInferenceRoute: async () => ({ ok: false }),
-      dispose,
-    }));
+          }),
+        uname: async () => "Linux",
+        cat: async () => "{}",
+      };
+      return {
+        read: ({ command }: { command: readonly string[] }) => responses[command[0]](),
+        observeInferenceRoute: async () => ({ ok: false }),
+        dispose,
+      };
+    });
     const outcome = await sendOperationTelemetry(
       {
         operation: "sandbox_destroy",
