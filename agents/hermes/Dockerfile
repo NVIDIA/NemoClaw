@@ -6,7 +6,7 @@
 # Layers PR-specific code (plugin, config, startup script) on top of the
 # pre-built Hermes base image. Mirrors the OpenClaw Dockerfile structure.
 
-ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:c50a0db0efb317ee4c48438435ca6d754b894d61acc7f91c4c4b0e615b09c5a5
+ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:77ca16dded73b3797d63b7de57ccfc58152b7e4525d7dc4774d540e7ca84939e
 ARG NEMOCLAW_CORPORATE_CA_B64=
 ARG NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=0
 # BuildKit supplies this automatic platform argument. The Portable staged
@@ -1460,7 +1460,27 @@ RUN check_metadata() { \
 # hadolint ignore=DL4006
 RUN set -eu; \
     security_probe="$(node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON /opt/nemoclaw-security/scripts/security/security-package-inventory.mts probe hermes-compatible)"; \
-    sh -ec "$security_probe"; \
+    sh -ec "$security_probe" || { \
+        security_inventory=/usr/local/share/nemoclaw/security-packages.txt; \
+        security_arch="$(dpkg --print-architecture)"; \
+        echo "ERROR: completed-image security packages do not match the reviewed ${security_arch} contract" >&2; \
+        if [ -f "$security_inventory" ] && [ ! -L "$security_inventory" ]; then \
+            echo "Base inventory metadata: $(stat -c '%u:%g:%a' "$security_inventory")" >&2; \
+            expected_inventory="$(mktemp)"; \
+            node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON /opt/nemoclaw-security/scripts/security/security-package-inventory.mts inventory shared "$security_arch" \
+                > "$expected_inventory"; \
+            echo "Expected inventory (-) compared with the base inventory (+):" >&2; \
+            diff -u "$expected_inventory" "$security_inventory" >&2 || true; \
+            rm -f "$expected_inventory"; \
+            while IFS='=' read -r package version; do \
+                [ "$package" = architecture ] \
+                    || echo "package=${package} inventory=${version} installed=$(dpkg-query -W -f='${Version}' "$package" 2>/dev/null || echo missing)" >&2; \
+            done < "$security_inventory"; \
+        else \
+            echo "Base inventory is missing or is not a regular file: ${security_inventory}" >&2; \
+        fi; \
+        exit 1; \
+    }; \
     test "$(perl -e 'print $^V')" = "v5.44.0"; \
     ldd /usr/bin/jq | grep -Eq 'libonig[.]so[.]5'; \
     test "$(jq --version)" = "jq-1.8.2"; \

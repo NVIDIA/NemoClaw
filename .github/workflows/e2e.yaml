@@ -4996,7 +4996,8 @@ jobs:
           docker logs "$NEMOCLAW_PROTECTED_REGISTRY_NAME" >&2
           exit 1
 
-      - name: Build exact all-agent protected managed images
+      - id: protected-images
+        name: Build exact all-agent protected managed images
         env:
           BASE_DCODE: ${{ steps.candidate-contract.outputs.dcode_source == 'candidate' && 'candidate' || steps.bases.outputs.dcode }}
           BASE_HERMES: ${{ steps.bases.outputs.hermes }}
@@ -5121,7 +5122,8 @@ jobs:
           env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN npx vitest run --project integration test/e2e-runtime/managed-image-openclaw-security.test.ts --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Validate managed-image glibc probe lifecycle
-        if: ${{ !cancelled() }}
+        # contracts.json exists only after every protected image build succeeds.
+        if: ${{ !cancelled() && steps.protected-images.outcome == 'success' }}
         shell: bash
         run: |
           set -euo pipefail
