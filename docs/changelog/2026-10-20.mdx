@@ -27,7 +27,10 @@ It also improves uninstall recovery, managed image security, policy recovery, ag
   Related change: [PR #13488](https://github.com/NVIDIA/NemoClaw/pull/13488).
 - Successful `nemoclaw uninstall` retires the selected managed gateway's native-provider authority after gateway state removal, so onboarding on the same port can recreate the provider.
   Failed cleanup, `--keep-openshell`, and concurrent registry changes retain authority for recovery.
+  On rootless Podman, OpenClaw native-home cleanup retries as the sandbox user when root cannot remove the files.
   Related change: [PR #13504](https://github.com/NVIDIA/NemoClaw/pull/13504).
 - Managed sandbox image builds include patched system libraries and updated Hermes HTTP and image libraries.
   Reviewed MCP SDK graphs use version 1.32.0, and image validation rejects stale package inventories.
+  Existing sandboxes retain their prior images until rebuilt; after updating NemoClaw, run `nemoclaw upgrade-sandboxes` to inspect or rebuild them.
+  A selected Podman runtime no longer triggers Docker host setup, Docker preflight checks, or Docker-only NIM cleanup.
   Related change: [PR #13513](https://github.com/NVIDIA/NemoClaw/pull/13513).
