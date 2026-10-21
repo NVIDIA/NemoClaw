@@ -243,7 +243,8 @@ Refer to [How Inference Routing Works](../inference/about-inference-routing) for
 </AgentOnly>
 <AgentOnly variant="deepagents">
 
-New Deep Agents Code sandboxes use attached providers for hosted compatible endpoints.
+New Deep Agents Code sandboxes normally use attached providers for hosted compatible endpoints.
+A fresh Personal-tier hosted compatible selection instead stays on `inference.local` without creating a native attachment.
 Qualified Ollama, standalone vLLM, llama.cpp, and host-local compatible endpoints also use native providers.
 The local attached profile permits only `GET /v1/models` and `POST /v1/chat/completions` on the recorded host and port, using the listed Python and curl binaries.
 These local HTTP endpoints do not use TLS termination on port `443`.

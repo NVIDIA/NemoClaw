@@ -283,7 +283,7 @@ Deep Agents Code normally creates the `/sandbox/.deepagents/agent/` paths below 
 
 | Path | Purpose |
 |---|---|
-| `/sandbox/.deepagents/config.toml` | NemoClaw-generated model and provider configuration. New NVIDIA Endpoints, supported fixed hosted providers, hosted compatible endpoints, Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible selections use sandbox-attached providers with scoped credential references. Owned Local NVIDIA NIM, compatible endpoints without an attachment, and retained shared routes use `inference.local`. |
+| `/sandbox/.deepagents/config.toml` | NemoClaw-generated model and provider configuration. New NVIDIA Endpoints, supported fixed hosted providers, hosted compatible endpoints outside the Personal tier, Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible selections use sandbox-attached providers with scoped credential references. A fresh Personal-tier hosted compatible selection uses `inference.local` without a native attachment. Owned Local NVIDIA NIM, other compatible endpoints without an attachment, and retained shared routes also use `inference.local`. |
 | `/sandbox/.deepagents/.state/` | Deep Agents Code runtime state, including persisted session and MCP-related state. |
 | `/sandbox/.deepagents/agent/AGENTS.md` | Global memory file for the default Deep Agents Code agent, loaded at session start. |
 | `/sandbox/.deepagents/agent/memories/` | Topic-specific markdown memories that Deep Agents Code can read and update across sessions. |

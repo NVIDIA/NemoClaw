@@ -9,6 +9,7 @@ import { resultText } from "../fixtures/clients/command.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
+import { discoverHostAddress } from "../fixtures/host-address.ts";
 import { readRegistrySandboxEntry } from "../fixtures/phases/state-validation.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import { redactString } from "../fixtures/redaction.ts";
@@ -34,11 +35,6 @@ const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-policy-order";
 validateSandboxName(SANDBOX_NAME);
 const ONBOARD_TIMEOUT_MS = 40 * 60_000;
 const MODEL = "test-model";
-// A Docker network namespace cannot reach host loopback directly; bind the
-// fake endpoint on all interfaces and advertise the OpenShell host alias so
-// both the host-side onboard validation and the sandbox's own inference
-// route can reach it (matches the shared E2E inference adapter's mock mode).
-const SANDBOX_HOST_ALIAS = "host.openshell.internal";
 
 // The ordered, observable step headers the real interactive wizard prints.
 // Each must appear strictly after the previous one; `[8/8] Policy presets`
@@ -60,7 +56,7 @@ test(
     timeout: ONBOARD_TIMEOUT_MS,
     meta: {
       e2ePhases: [
-        "start the local compatible-endpoint fake server",
+        "start the hosted custom compatible-endpoint fixture",
         "drive the interactive onboard wizard through a real PTY",
         "confirm every ordered onboarding step appears in order",
         "confirm Personal keeps the hosted custom endpoint on inference.local",
@@ -73,7 +69,17 @@ test(
       scenarioLabel: "onboard policy preset sequencing",
     });
 
-    progress.phase("start the local compatible-endpoint fake server");
+    progress.phase("start the hosted custom compatible-endpoint fixture");
+    // Advertise a runner address instead of the OpenShell-managed host alias.
+    // That keeps this fixture in the hosted-custom classification while the
+    // explicit trust entry admits the private E2E address through SSRF checks.
+    const hostedEndpointAddress = (
+      await discoverHostAddress(host, "host-address-for-hosted-custom-personal")
+    ).address;
+    const onboardEnv = {
+      ...buildAvailabilityProbeEnv(),
+      NEMOCLAW_TRUSTED_PRIVATE_HOSTS: hostedEndpointAddress,
+    };
     const apiKey = `e2e-6042-${randomBytes(16).toString("hex")}`;
     const fake = await startFakeOpenAiCompatibleServer({
       apiKey,
@@ -81,7 +87,7 @@ test(
       host: "0.0.0.0",
       model: MODEL,
       progress,
-      publicHost: SANDBOX_HOST_ALIAS,
+      publicHost: hostedEndpointAddress,
       requireAuth: true,
       responseText: "PONG",
     });
@@ -89,7 +95,7 @@ test(
     cleanup.trackDisposable("close fake compatible-endpoint server", () => fake.close());
     cleanup.trackSandbox(host, SANDBOX_NAME, {
       artifactName: "cleanup-nemoclaw-destroy-onboard-policy-order",
-      env: buildAvailabilityProbeEnv(),
+      env: onboardEnv,
       redactionValues: [apiKey],
       timeoutMs: 120_000,
     });
@@ -110,7 +116,7 @@ test(
         "--yes-i-accept-third-party-software",
       ],
       cwd: REPO_ROOT,
-      env: buildAvailabilityProbeEnv(),
+      env: onboardEnv,
       rules: [
         // A reused host can already have accepted this first-run license
         // notice, so this rule might not fire.
