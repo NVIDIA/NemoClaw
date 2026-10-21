@@ -5905,6 +5905,7 @@ jobs:
           fi
           depth=0
           while (( depth < 24 )); do
+            [[ "$group" != / ]] || break
             current="$(cat "/sys/fs/cgroup$group/pids.current" 2>/dev/null || true)"
             maximum="$(cat "/sys/fs/cgroup$group/pids.max" 2>/dev/null || true)"
             cgroups="$(jq -cn --argjson rows "$cgroups" \
@@ -5915,7 +5916,6 @@ jobs:
                 { [[ ! "$maximum" =~ ^[0-9]+$ ]] || (( maximum - current < minimum )); }; }; then
               failure=cgroup_pids
             fi
-            [[ "$group" != / ]] || break
             group="${group%/*}"
             [[ -n "$group" ]] || group=/
             depth=$((depth + 1))

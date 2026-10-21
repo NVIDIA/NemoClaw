@@ -35,8 +35,8 @@ const PORTABLE_REGISTRY_DIAGNOSTIC_ENV_KEYS = [
 const PROCESS_HEADROOM_DIAGNOSTIC = `
 service=nemoclaw-native-podman-e2e.service
 uid=$(id -u)
-systemctl --user show "$service" --property=MainPID,TasksCurrent,TasksMax,LimitNPROC,ControlGroup --no-pager 2>/dev/null || true
-systemctl show "user@\${uid}.service" "user-\${uid}.slice" --property=Id,TasksCurrent,TasksMax,LimitNPROC,ControlGroup --no-pager 2>/dev/null || true
+/usr/bin/systemctl --user show "$service" --property=MainPID,TasksCurrent,TasksMax,LimitNPROC,ControlGroup --no-pager 2>/dev/null || true
+/usr/bin/systemctl show "user@\${uid}.service" "user-\${uid}.slice" --property=Id,TasksCurrent,TasksMax,LimitNPROC,ControlGroup --no-pager 2>/dev/null || true
 
 capture_process() {
   local label=$1 pid=$2 group current max events depth=0
@@ -60,7 +60,7 @@ capture_process() {
   done
 }
 
-service_pid=$(systemctl --user show "$service" --property=MainPID --value 2>/dev/null || true)
+service_pid=$(/usr/bin/systemctl --user show "$service" --property=MainPID --value 2>/dev/null || true)
 registry_pid=$(podman container inspect --format '{{.State.Pid}}' nemoclaw-portable-registry 2>/dev/null || true)
 capture_process service "$service_pid"
 capture_process registry "$registry_pid"

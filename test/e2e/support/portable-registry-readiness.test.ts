@@ -194,7 +194,9 @@ describe("portable registry readiness policy", () => {
       expect(headroomCommand.command).toBe("bash");
       expect(headroomCommand.args.slice(0, 5)).toEqual(["-e", "-u", "-o", "pipefail", "-c"]);
       const headroomScript = headroomCommand.args[5]!;
-      expect(headroomScript).toContain("systemctl --user show");
+      expect(headroomScript).toContain("/usr/bin/systemctl --user show");
+      expect(headroomScript).toContain('/usr/bin/systemctl show "user@');
+      expect(headroomScript).not.toMatch(/(^|\n)systemctl /);
       expect(headroomScript).toContain("rlimit_nproc_soft");
       expect(headroomScript).toContain("pids_current=");
       expect(headroomScript).toContain("pids_events_max=");

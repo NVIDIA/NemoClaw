@@ -945,6 +945,7 @@ exec /bin/bash "$@"
     const headroom = job.steps?.find(
       (step) => step.name === "Set Portable Podman registry process headroom",
     );
+    const headroomRun = headroom?.run ?? "";
     const live = job.steps?.find(
       (step) => step.name === "Run Portable Hermes finalization live Vitest test",
     );
@@ -1024,13 +1025,16 @@ exec /bin/bash "$@"
     expect(setupIndex).toBeGreaterThan(openshellInstallIndex);
     expect(headroomIndex).toBeGreaterThan(setupIndex);
     expect(candidateCheckoutIndex).toBeGreaterThan(headroomIndex);
-    expect(headroom?.run).toContain("minimum=128");
-    expect(headroom?.run).toContain("pids_limit = $minimum");
-    expect(headroom?.run).toContain('cgroup_manager = "systemd"');
-    expect(headroom?.run).toContain("(( tasks_max - tasks_current < minimum ))");
-    expect(headroom?.run).toContain("failure=service_tasks");
-    expect(headroom?.run).toContain("/sys/fs/cgroup$group/pids.max");
-    expect(headroom?.run).toContain('[[ "$group" != / ]] || break');
+    expect(headroomRun).toContain("minimum=128");
+    expect(headroomRun).toContain("pids_limit = $minimum");
+    expect(headroomRun).toContain('cgroup_manager = "systemd"');
+    expect(headroomRun).toContain("(( tasks_max - tasks_current < minimum ))");
+    expect(headroomRun).toContain("failure=service_tasks");
+    expect(headroomRun).toContain("/sys/fs/cgroup$group/pids.max");
+    expect(headroomRun).toContain('[[ "$group" != / ]] || break');
+    expect(headroomRun.indexOf('[[ "$group" != / ]] || break')).toBeLessThan(
+      headroomRun.indexOf("/sys/fs/cgroup$group/pids.current"),
+    );
     expect(retainHeadroom?.if).toBe("always()");
     expect(retainHeadroom?.run).toContain("portable-podman-process-headroom.json");
     expect(retainHeadroomIndex).toBeGreaterThan(job.steps?.indexOf(live!) ?? -1);
