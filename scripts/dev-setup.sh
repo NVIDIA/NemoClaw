@@ -412,11 +412,11 @@ repair_repository() {
   fi
   run_setup_step "Prepare the required OpenShell SDK" \
     node "${REPO_ROOT}/scripts/lib/openshell-sdk-install.mts" prepare || return 1
-  run_setup_step "Install root dependencies" npm install --include=dev --ignore-scripts --prefer-offline --include=optional --@nvidia:registry=https://npm.pkg.github.com || return 1
+  run_setup_step "Install root dependencies" npm ci --include=dev --ignore-scripts --prefer-offline --include=optional --@nvidia:registry=https://npm.pkg.github.com || return 1
   run_setup_step "Verify the required OpenShell SDK" \
     node "${REPO_ROOT}/scripts/lib/openshell-sdk-install.mts" check || return 1
   run_setup_step "Install plugin dependencies" \
-    npm --prefix nemoclaw install --include=dev --ignore-scripts || return 1
+    npm --prefix nemoclaw ci --include=dev --ignore-scripts || return 1
   run_setup_step "Build the CLI" npm run build:cli || return 1
   run_setup_step "Build and type-check the plugin" npm --prefix nemoclaw run build || return 1
   # Keep the explicit checks aligned with the broader pre-push and CI contracts.
@@ -643,13 +643,13 @@ run_doctor() {
   root_tsc="${REPO_ROOT}/node_modules/.bin/tsc"
   plugin_tsc="${REPO_ROOT}/nemoclaw/node_modules/.bin/tsc"
   check_executable "Root TypeScript dependencies" "${root_tsc}" \
-    "Run: npm install --include=dev --ignore-scripts"
+    "Run: npm ci --include=dev --ignore-scripts"
   check_executable "Pinned Pi coding agent" "${REPO_ROOT}/node_modules/.bin/pi" \
-    "Run: npm install --include=dev --ignore-scripts"
+    "Run: npm ci --include=dev --ignore-scripts"
   check_executable "Prek dependency" "${REPO_ROOT}/node_modules/.bin/prek" \
-    "Run: npm install --include=dev --ignore-scripts"
+    "Run: npm ci --include=dev --ignore-scripts"
   check_executable "Plugin TypeScript dependencies" "${plugin_tsc}" \
-    "Run: npm --prefix nemoclaw install --include=dev --ignore-scripts"
+    "Run: npm --prefix nemoclaw ci --include=dev --ignore-scripts"
   check_build_artifact "CLI build artifacts" "${CLI_BUILD_ARTIFACT}" "Run: npm run build:cli" \
     "${REPO_ROOT}/src" "${REPO_ROOT}/bin" "${REPO_ROOT}/nemoclaw-blueprint/scripts" \
     "${REPO_ROOT}/tsconfig.src.json"
