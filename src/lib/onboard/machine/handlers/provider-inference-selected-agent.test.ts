@@ -8,16 +8,28 @@ import { createSetupInference, type SetupInferenceDeps } from "../../setup-infer
 import { handleProviderInferenceState } from "./provider-inference";
 import { baseOptions, baseSelection, createDeps } from "./provider-inference.test-support";
 
-it.each(["langchain-deepagents-code"])(
-  "admits selected %s local inference when the prior registration was Hermes",
-  async (name) => {
+it.each([
+  {
+    name: "langchain-deepagents-code",
+    provider: "ollama-local",
+    endpointUrl: "http://host.openshell.internal:11434/v1",
+  },
+  { name: "pi", provider: "ollama-local", endpointUrl: "http://host.openshell.internal:11434/v1" },
+  {
+    name: "pi",
+    provider: "compatible-endpoint",
+    endpointUrl: "http://host.openshell.internal:12345/v1",
+  },
+])(
+  "admits selected $name $provider inference when the prior registration was Hermes",
+  async ({ name, provider, endpointUrl }) => {
     const { deps, calls } = createDeps();
     const session = createSession();
     calls.setupNim.mockResolvedValue({
       ...baseSelection,
-      provider: "ollama-local",
+      provider,
       model: "local-model",
-      endpointUrl: "http://host.openshell.internal:11434/v1",
+      endpointUrl,
       credentialEnv: null,
     });
     await handleProviderInferenceState({
@@ -43,14 +55,14 @@ it.each(["langchain-deepagents-code"])(
   },
 );
 
-it.each(["openclaw", "pi", "hermes"])(
+it.each(["openclaw", "hermes"])(
   "keeps selected %s local inference on the existing shared route",
   async (name) => {
     const { deps, calls } = createDeps();
     const session = createSession();
     calls.setupNim.mockResolvedValue({
       ...baseSelection,
-      provider: name === "pi" ? "compatible-endpoint" : "ollama-local",
+      provider: "ollama-local",
       model: "local-model",
       endpointUrl: "http://host.openshell.internal:11434/v1",
       credentialEnv: null,

@@ -7,33 +7,46 @@ import path from "node:path";
 import { expect, it, vi } from "vitest";
 import type { SandboxEntry } from "./registry/types";
 
-it("retains a llama.cpp attachment even when an unrelated NIM marker is stale", async () => {
-  const { nativeLocalIdentity } = await import("../inference/native-local/contract");
-  const { retainedNativeLocalProviderAttachment } = await import("./registry/route-reservation");
-  const binding = {
+it.each([
+  {
     provider: "llama-cpp-local",
     endpointUrl: "http://host.openshell.internal:8000/v1",
-    credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
-    authMode: "sentinel",
-    gatewayName: "nemoclaw",
-    sandboxName: "alpha",
-  } as const;
-  const attachment = {
-    ...binding,
-    ...nativeLocalIdentity(binding),
-    schemaVersion: 1 as const,
-    providerId: "llama-provider",
-  };
-  const existing = {
-    name: "alpha",
-    model: "model-a",
-    ...binding,
-    nimContainer: "stale-nim-marker",
-    nativeLocalProviderAttachment: attachment,
-  } as SandboxEntry;
+    agent: undefined,
+  },
+  {
+    provider: "compatible-endpoint",
+    endpointUrl: "http://host.openshell.internal:12345/v1",
+    agent: "pi",
+  },
+] as const)(
+  "retains a $provider attachment even when an unrelated NIM marker is stale",
+  async (selection) => {
+    const { nativeLocalIdentity } = await import("../inference/native-local/contract");
+    const { retainedNativeLocalProviderAttachment } = await import("./registry/route-reservation");
+    const binding = {
+      ...selection,
+      credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+      authMode: "sentinel",
+      gatewayName: "nemoclaw",
+      sandboxName: "alpha",
+    } as const;
+    const attachment = {
+      ...binding,
+      ...nativeLocalIdentity(binding),
+      schemaVersion: 1 as const,
+      providerId: "llama-provider",
+    };
+    const existing = {
+      name: "alpha",
+      model: "model-a",
+      ...binding,
+      nimContainer: "stale-nim-marker",
+      nativeLocalProviderAttachment: attachment,
+    } as SandboxEntry;
 
-  expect(retainedNativeLocalProviderAttachment(existing, binding)).toEqual(attachment);
-});
+    expect(retainedNativeLocalProviderAttachment(existing, binding)).toEqual(attachment);
+  },
+);
 
 it("drops a stale vLLM attachment when reserving an owned Local NIM shared route", async () => {
   const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-nim-attachment-"));

@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { raisePromptInterrupt } from "../core/prompt-terminal";
+import { pendingStdinEofError, takePendingStdinEof } from "../core/pending-stdin-eof";
 import type { HermesAuthMethod } from "../hermes-provider-auth";
 import * as hermesProviderAuth from "../hermes-provider-auth";
 
@@ -176,6 +178,11 @@ async function selectHermesToolGatewaysInteractive(
 
   showList();
 
+  // Switching the terminal to raw mode drops a Ctrl-D that was queued before
+  // the menu opened, which would leave the menu waiting forever (#12169).
+  const pending = takePendingStdinEof(input);
+  if (pending !== false && (await pending)) throw pendingStdinEofError();
+
   await new Promise<void>((resolve, reject) => {
     let rawModeEnabled = false;
     let finished = false;
@@ -209,7 +216,15 @@ async function selectHermesToolGatewaysInteractive(
         if (ch === "\u0003") {
           cleanup();
           reject(Object.assign(new Error("Prompt interrupted"), { code: "SIGINT" }));
-          process.kill(process.pid, "SIGINT");
+          raisePromptInterrupt();
+          return;
+        }
+        // Raw mode delivers Ctrl-D as an ordinary byte instead of an
+        // end-of-file. The menu has no typed answer to protect, so it always
+        // closes stdin.
+        if (ch === "\u0004") {
+          cleanup();
+          reject(pendingStdinEofError());
           return;
         }
         if (ch === "\r" || ch === "\n") {

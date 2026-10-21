@@ -37,7 +37,10 @@ import {
 import * as registry from "../../state/registry";
 import type { RebuildResumeConfig } from "./rebuild-resume-config";
 import { isLocalInferenceProvider } from "./rebuild-resume-config";
-import { verifyRecordedNativeLocalProviderAttachment } from "../../inference/native-local/profile";
+import {
+  normalizeNativeLocalProviderAttachment,
+  verifyRecordedNativeLocalProviderAttachment,
+} from "../../inference/native-local/profile";
 
 const hermesProviderAuth = require("../../hermes-provider-auth") as {
   HERMES_PROVIDER_NAME: string;
@@ -153,23 +156,46 @@ function rebuildProviderAdapter(
   );
 }
 
-/** Recheck the recorded local attachment at the last boundary before deletion. */
+/** Revalidate the frozen scoped authority immediately before destructive rebuild work. */
 export async function verifyRebuildNativeLocalProviderBeforeDelete(
   sandboxName: string,
-  config: RebuildResumeConfig,
   gatewayName: string,
+  config: RebuildResumeConfig,
   runtimeSelection?: OpenShellRuntimeSelection,
-): Promise<void> {
-  if (runtimeSelection && runtimeSelection.gatewayName !== gatewayName)
-    throw new Error("Native local provider runtime does not match the rebuild gateway.");
-  await verifyRecordedNativeLocalProviderAttachment({
-    adapter: rebuildProviderAdapter(runtimeSelection),
-    expected: config.nativeLocalProviderAttachment,
-    sandboxName,
-    gatewayName,
-    agent: config.agent,
-    provider: config.provider,
-  });
+  getSandbox: (name: string) => RebuildSandboxEntry | null = registry.getSandbox,
+): Promise<boolean> {
+  try {
+    const expected = normalizeNativeLocalProviderAttachment(config.nativeLocalProviderAttachment);
+    const currentAuthorityMatches = () => {
+      const current = getSandbox(sandboxName);
+      return (
+        current?.name === sandboxName &&
+        current.agent === config.agent &&
+        current.provider === config.provider &&
+        JSON.stringify(
+          normalizeNativeLocalProviderAttachment(current.nativeLocalProviderAttachment),
+        ) === JSON.stringify(expected)
+      );
+    };
+    if (
+      !expected ||
+      (runtimeSelection && runtimeSelection.gatewayName !== gatewayName) ||
+      !currentAuthorityMatches()
+    )
+      return false;
+    await verifyRecordedNativeLocalProviderAttachment({
+      adapter: rebuildProviderAdapter(runtimeSelection),
+      expected,
+      sandboxName,
+      gatewayName,
+      agent: config.agent,
+      provider: config.provider,
+    });
+    return currentAuthorityMatches();
+  } catch {
+    // Provider diagnostics can include credential material; the caller emits a fixed error.
+    return false;
+  }
 }
 
 export async function inspectRebuildGatewayProviderRegistration(

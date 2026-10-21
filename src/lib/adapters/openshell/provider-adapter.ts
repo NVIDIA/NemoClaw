@@ -122,6 +122,8 @@ export type InspectOpenShellProviderProfileRequest = OpenShellProviderRequest &
   Readonly<{
     profileType: string;
     expectedProfile?: CheckedInProviderProfileContract;
+    /** Verify operator-owned registration inputs and retain an advisory profile snapshot. */
+    registrationCredentials?: readonly string[] | "from-existing";
   }>;
 
 export type DeleteOpenShellProviderRequest = OpenShellProviderRequest &

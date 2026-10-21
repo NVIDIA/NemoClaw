@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import { hostLocalInferenceReceipt } from "../../test/helpers/host-local-inference-receipt";
+import { serializeHostLocalInferenceReceipt } from "./onboard/runtime-provider/host-local-inference";
 import { buildChain } from "./dashboard/contract.js";
 import {
   nativeLocalIdentity,
@@ -60,8 +62,8 @@ describe("verifyDeployment inference route model-catalog validation", () => {
   it.each([
     ["openclaw", false],
     [DCODE_AGENT, true],
-    ["pi", false],
-    ["hermes", false],
+    ["pi", true],
+    ["hermes", true],
   ])("selects the same onboarding verification route for %s", (agentName, expected) => {
     const context = onboardInferenceVerificationContext("my-sandbox", "my-gateway", agentName, {
       provider: "compatible-endpoint",
@@ -179,15 +181,43 @@ describe("verifyDeployment inference route model-catalog validation", () => {
     expect(probeInferenceInvocation).not.toHaveBeenCalled();
   });
 
+  it("probes an unchanged published Pi local selection over its recorded shared route", async () => {
+    const selection = {
+      provider: "ollama-local",
+      model: "qwen3:8b",
+      endpointUrl: "http://host.openshell.internal:11435/v1",
+      preferredInferenceApi: "openai-completions",
+    };
+    const context = onboardInferenceVerificationContext(
+      "my-sandbox",
+      "my-gateway",
+      "pi",
+      selection,
+      {
+        agent: "pi",
+        ...selection,
+        createdAt: "2026-09-01T00:00:00Z",
+      },
+    );
+    expect(context.route.nativeLocalExpected).toBe(false);
+    const probe = vi.fn(async () => ({ ok: true }) as const);
+    expect(await probeOnboardInferenceInvocation(context.invocation, probe)).toEqual({ ok: true });
+    expect(probe).toHaveBeenCalledWith(expect.not.objectContaining({ nativeProvider: true }));
+  });
+
   it.each([
     [DCODE_AGENT, "https://inference.local/v1"],
     ["openclaw", "https://inference.local/v1"],
+    ["pi", "https://inference.local/v1"],
     [DCODE_AGENT, "http://127.0.0.1:8081/v1"],
     ["openclaw", "http://127.0.0.1:8081/v1"],
+    ["pi", "http://127.0.0.1:8081/v1"],
   ])("accepts the selected local route for %s at %s", async (agentName, endpointUrl) => {
     const binding = {
       ...localBinding,
-      ...(agentName === "openclaw" ? { agent: "openclaw" as const } : {}),
+      ...(agentName === "openclaw" || agentName === "pi"
+        ? { agent: agentName as "openclaw" | "pi" }
+        : {}),
       provider: "llama-cpp-local" as const,
       endpointUrl: "http://host.openshell.internal:8081/v1",
       authMode: "authenticated" as const,
@@ -628,4 +658,58 @@ describe("verifyDeployment inference route model-catalog validation", () => {
       detail: "no provider and model were recorded for this sandbox",
     });
   });
+});
+
+it("verifies the exact published Hermes host bridge route without changing DCode selection", () => {
+  const flow = {
+    provider: "compatible-endpoint",
+    model: "test-model",
+    endpointUrl: "http://127.0.0.1:8000/v1",
+    preferredInferenceApi: "openai-completions",
+  };
+  const binding = {
+    ...localBinding,
+    provider: "compatible-endpoint" as const,
+    agent: "hermes" as const,
+    endpointUrl: "http://host.openshell.internal:8000/v1",
+  };
+  const attachment = {
+    ...flow,
+    endpointUrl: "https://inference.local/v1",
+    hostLocalInferenceReceipt: serializeHostLocalInferenceReceipt({
+      ...hostLocalInferenceReceipt(),
+      endpoint: { ...hostLocalInferenceReceipt().endpoint, host: "host.openshell.internal" },
+    }),
+    nativeLocalProviderAttachment: {
+      ...binding,
+      ...nativeLocalIdentity(binding),
+      schemaVersion: 1 as const,
+      providerId: "hermes-provider",
+    },
+  };
+  const selected = onboardInferenceVerificationContext(
+    "my-sandbox",
+    "my-gateway",
+    "hermes",
+    flow,
+    attachment,
+  );
+  expect(selected.route.endpointUrl).toBe("https://inference.local/v1");
+  expect(selected.invocation.endpointUrl).toBe("https://inference.local/v1");
+  const mismatched = onboardInferenceVerificationContext(
+    "my-sandbox",
+    "my-gateway",
+    "hermes",
+    flow,
+    { ...attachment, model: "other-model" },
+  );
+  expect(mismatched.route.endpointUrl).toBe(flow.endpointUrl);
+  const dcode = onboardInferenceVerificationContext(
+    "my-sandbox",
+    "my-gateway",
+    DCODE_AGENT,
+    flow,
+    attachment,
+  );
+  expect(dcode.route.endpointUrl).toBe(flow.endpointUrl);
 });

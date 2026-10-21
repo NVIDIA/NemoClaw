@@ -6,7 +6,9 @@ import type { ToolDisclosure } from "../../tool-disclosure";
 import {
   isLocalInferenceProvider,
   usesNativeLocalInference,
-} from "../../inference/native-local/contract";
+  usesNativeLocalInferenceForAgent,
+} from "../../inference/native-local/eligibility";
+import type { NativeLocalProviderAttachment } from "../../inference/native-local/profile";
 export { isLocalInferenceProvider };
 import type { ResolvedCorporateCa } from "../corporate-ca-types";
 import type { DcodeAutoApprovalMode } from "../dcode-auto-approval";
@@ -93,6 +95,27 @@ export type BuiltManagedStartupOnboardProfile = BuiltManagedStartupProfile & {
   readonly credentialProxyReplayRequired: boolean;
 };
 
+export function resolveManagedStartupNativeLocalAttachment(input: {
+  agentName: string;
+  provider: string | null;
+  endpointUrl: string | null;
+  localNimSelected?: boolean;
+  nativeLocalProviderAttachment?: NativeLocalProviderAttachment;
+}): NativeLocalProviderAttachment | undefined {
+  const attachment = input.nativeLocalProviderAttachment;
+  return usesNativeLocalInferenceForAgent(
+    input.agentName,
+    input.provider,
+    input.endpointUrl ?? attachment?.endpointUrl,
+    input.localNimSelected,
+  ) &&
+    (input.agentName === "langchain-deepagents-code"
+      ? attachment?.agent === undefined
+      : attachment?.agent === input.agentName)
+    ? attachment
+    : undefined;
+}
+
 export function resolveManagedStartupInferenceEndpoint(input: {
   agentName: string;
   provider: string | null;
@@ -100,6 +123,9 @@ export function resolveManagedStartupInferenceEndpoint(input: {
   localNimSelected?: boolean;
   nativeLocalProviderAttachment?: { endpointUrl: string };
 }): string | null {
+  if (input.agentName === "hermes") {
+    return input.nativeLocalProviderAttachment?.endpointUrl ?? input.endpointUrl;
+  }
   if (input.agentName === "langchain-deepagents-code") {
     if (input.provider === "vllm-local" && input.localNimSelected) return input.endpointUrl;
     if (
@@ -109,6 +135,14 @@ export function resolveManagedStartupInferenceEndpoint(input: {
       throw new Error("Deep Agents Code local inference requires its native provider attachment.");
     }
     return input.nativeLocalProviderAttachment?.endpointUrl ?? input.endpointUrl;
+  }
+  if (input.agentName === "pi") {
+    return (
+      input.nativeLocalProviderAttachment?.endpointUrl ??
+      (usesNativeLocalInferenceForAgent(input.agentName, input.provider, input.endpointUrl)
+        ? null
+        : input.endpointUrl)
+    );
   }
   if (input.agentName === "openclaw" && input.nativeLocalProviderAttachment) {
     return input.nativeLocalProviderAttachment.endpointUrl;

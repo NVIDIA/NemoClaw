@@ -1,8 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { OLLAMA_PROXY_PORT } from "../../core/ollama-proxy-port";
-import { VLLM_PORT } from "../../core/vllm-port";
+export {
+  usesNativeLocalInference,
+  usesNativeLocalInferenceForAgent,
+  isPersistedPiSharedLocalInferenceRoute,
+} from "./eligibility";
 import { createHash } from "node:crypto";
 import { isLocalInferenceProvider, qualifiedNativeLocalEndpointUrl } from "./agent-config";
 import { isValidName } from "../../../../nemoclaw/dist/shared/sandbox-name.cjs";
@@ -21,7 +24,8 @@ export type NativeLocalProvider =
   | "compatible-endpoint";
 export type NativeLocalBinding = Readonly<{
   provider: NativeLocalProvider;
-  agent?: "openclaw";
+  /** Tagged agents retain distinct immutable profile identities. */
+  agent?: "openclaw" | "pi" | "hermes";
   endpointUrl: string;
   credentialEnv: string;
   authMode: "authenticated" | "sentinel";
@@ -39,7 +43,10 @@ export function normalizeNativeLocalBinding(value: unknown): NativeLocalBinding 
   if (
     (!isLocalInferenceProvider(input.provider as string) &&
       input.provider !== "compatible-endpoint") ||
-    (input.agent !== undefined && input.agent !== "openclaw") ||
+    (input.agent !== undefined &&
+      input.agent !== "openclaw" &&
+      input.agent !== "pi" &&
+      input.agent !== "hermes") ||
     (input.agent === "openclaw" && !isLocalInferenceProvider(input.provider as string)) ||
     typeof input.endpointUrl !== "string" ||
     typeof input.credentialEnv !== "string" ||
@@ -57,27 +64,34 @@ export function normalizeNativeLocalBinding(value: unknown): NativeLocalBinding 
   if (!endpointUrl) return undefined;
   return {
     provider: input.provider as NativeLocalProvider,
-    ...(input.agent === "openclaw" ? { agent: "openclaw" as const } : {}),
+    ...(input.agent === "openclaw" || input.agent === "pi" ? { agent: input.agent } : {}),
     endpointUrl,
     credentialEnv: input.credentialEnv,
     authMode: input.authMode,
     gatewayName: input.gatewayName,
     sandboxName: input.sandboxName,
+    ...(input.agent === "hermes" ? { agent: "hermes" as const } : {}),
     ...(typeof input.transactionId === "string" ? { transactionId: input.transactionId } : {}),
   };
 }
 
-export function nativeLocalIdentity(binding: NativeLocalBinding) {
+/** Version 1 remains readable for recorded IPv4-only attachments. New selections use version 2. */
+export function nativeLocalIdentity(binding: NativeLocalBinding, policyVersion: 1 | 2 = 2) {
   const normalized = normalizeNativeLocalBinding(binding);
   if (!normalized) throw new Error("Invalid native host-local inference boundary.");
   const profileHash = createHash("sha256")
     .update(
       JSON.stringify([
         normalized.provider,
-        ...(normalized.agent ? [normalized.agent] : []),
+        ...(normalized.agent === "openclaw" || normalized.agent === "pi" ? [normalized.agent] : []),
         normalized.endpointUrl,
         normalized.credentialEnv,
         normalized.authMode,
+        // Literal private IPv4 endpoints retain their existing immutable boundary.
+        ...(policyVersion === 2 && new URL(normalized.endpointUrl).hostname.startsWith("host.")
+          ? ["private-dual-stack-v1"]
+          : []),
+        ...(normalized.agent === "hermes" ? [normalized.agent] : []),
       ]),
     )
     .digest("hex")
@@ -103,7 +117,9 @@ export function normalizeNativeLocalProviderAttachment(
   const binding = normalizeNativeLocalBinding(value);
   if (!binding) return undefined;
   const receipt = value as Record<string, unknown>;
-  const identity = nativeLocalIdentity(binding);
+  const current = nativeLocalIdentity(binding);
+  const legacy = nativeLocalIdentity(binding, 1);
+  const identity = receipt.profileId === current.profileId ? current : legacy;
   if (
     receipt.schemaVersion !== 1 ||
     receipt.profileId !== identity.profileId ||
@@ -137,44 +153,4 @@ export function normalizeNativeLocalProviderAuthorities(
     return [name, receipt] as const;
   });
   return entries.length ? Object.fromEntries(entries) : undefined;
-}
-
-/** Hosted compatible endpoints remain with their hosted migration slice. */
-export function usesNativeLocalInference(
-  provider: string | null | undefined,
-  endpointUrl?: string | null,
-): boolean {
-  if (isLocalInferenceProvider(provider)) return true;
-  if (provider !== "compatible-endpoint" || !endpointUrl) return false;
-  try {
-    const endpoint = new URL(endpointUrl);
-    return (
-      endpoint.protocol === "http:" &&
-      [11434, OLLAMA_PROXY_PORT, VLLM_PORT].includes(Number(endpoint.port)) &&
-      [
-        "localhost",
-        "127.0.0.1",
-        "[::1]",
-        "host.openshell.internal",
-        "host.docker.internal",
-      ].includes(endpoint.hostname)
-    );
-  } catch {
-    return false;
-  }
-}
-
-/** Route only the agents whose native local credential consumers are covered by this slice. */
-export function usesNativeLocalInferenceForAgent(
-  agentName: string | null | undefined,
-  provider: string | null | undefined,
-  endpointUrl?: string | null,
-  localNimSelected = false,
-): boolean {
-  if (provider === "vllm-local" && localNimSelected) return false;
-  return (
-    (agentName === "langchain-deepagents-code" &&
-      usesNativeLocalInference(provider, endpointUrl)) ||
-    (agentName === "openclaw" && isLocalInferenceProvider(provider))
-  );
 }

@@ -249,6 +249,30 @@ describe("preflightRebuildTargetRuntime GPU route", () => {
       imagePreflight.mockRestore();
     }
   });
+
+  it("builds the replacement image with the recorded dashboard origin (#13177)", async () => {
+    vi.stubEnv("CHAT_UI_URL", "https://ambient.example.test");
+    const imagePreflight = vi
+      .spyOn(rebuildImagePreflight, "preflightRebuildImage")
+      .mockResolvedValue({ ok: true, imageTag: "preflight:test", prepared: null } as never);
+    try {
+      await expect(
+        preflightRebuildTargetRuntime(
+          TARGET,
+          { ...ENTRY, dashboardExternalUrl: "https://launchpad.example.test:18789" },
+          { ...RECREATE_OPTIONS, controlUiPort: 18_790 },
+          vi.fn(),
+          vi.fn() as never,
+        ),
+      ).resolves.toMatchObject({ ok: true });
+
+      expect(imagePreflight).toHaveBeenCalledWith(
+        expect.objectContaining({ chatUiUrl: "https://launchpad.example.test:18790" }),
+      );
+    } finally {
+      imagePreflight.mockRestore();
+    }
+  });
 });
 
 describe("authoritative rebuild readiness", () => {

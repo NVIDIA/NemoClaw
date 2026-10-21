@@ -1075,6 +1075,7 @@ assert_status_mode disabled
       AWS_SECRET_ACCESS_KEY: "do-not-copy",
       GITHUB_TOKEN: "do-not-copy",
       [DCODE_BASE_IMAGE_ENV]: baseImageReference,
+      NEMOCLAW_ENDPOINT_URL: "https://custom.example.test/v1",
       NEMOCLAW_MODEL: "model-a",
       RANDOM_RUNNER_SECRET: "do-not-copy",
     });
@@ -1082,6 +1083,7 @@ assert_status_mode disabled
     expect(env).toMatchObject({
       COMPATIBLE_API_KEY: "secret-key",
       CLOUD_EXPERIMENTAL_MODEL: "model-a",
+      NEMOCLAW_ENDPOINT_URL: "https://custom.example.test/v1",
       NEMOCLAW_SANDBOX_NAME: "deepagents-sandbox",
       SANDBOX_NAME: "deepagents-sandbox",
       OPENSHELL_GATEWAY: "nemoclaw",

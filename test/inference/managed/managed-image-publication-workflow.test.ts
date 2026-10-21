@@ -584,6 +584,7 @@ describe("complete managed-image publication workflow", () => {
     expect(contractUpload.with).toMatchObject({
       name: "managed-pr-contract-${{ matrix.arch == 'arm64' && 'arm64-' || '' }}${{ github.run_id }}-${{ matrix.agent }}",
       overwrite: true,
+      "retention-days": 7,
     });
     expect(
       step(managedPrActivation(workflow), "Download exact published all-agent contracts").with

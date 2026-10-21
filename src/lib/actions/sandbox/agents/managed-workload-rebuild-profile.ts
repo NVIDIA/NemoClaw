@@ -5,7 +5,10 @@ import { recordedNativeProviderAttachment } from "../../../inference/native-prov
 import { rebindLoopbackDashboardUrlPort } from "../../../dashboard/url";
 import { resolveContextWindowForModel } from "../../../inference/context-window";
 import type { SandboxMessagingPlan } from "../../../messaging";
-import { shouldManageDashboardForAgent } from "../../../onboard/dashboard-runtime";
+import {
+  rebuildDashboardChatUiUrl,
+  shouldManageDashboardForAgent,
+} from "../../../onboard/dashboard-runtime";
 import { resolveHermesDashboardOnboardState } from "../../../onboard/hermes-dashboard";
 import { resolveManagedStartupInferenceRoute } from "../../../onboard/inference-route";
 import {
@@ -51,6 +54,27 @@ export function resolveManagedRebuildOpenClawReasoningEffort(
     : "default";
 }
 
+/** Choose the dashboard URL that the replacement startup profile records. */
+function replacementDashboardChatUiUrl(input: {
+  readonly agent: string;
+  readonly manageDashboard: boolean;
+  readonly port: number;
+  readonly previousDashboard: ManagedWorkloadRebuildCatalogHandoff["previousProfile"]["dashboard"];
+  readonly previousHermesBrowserUrl: string | undefined;
+  readonly recordedExternalUrl: string | null | undefined;
+}): string {
+  if (!input.manageDashboard) return "";
+  if (input.previousHermesBrowserUrl !== undefined) {
+    return rebindLoopbackDashboardUrlPort(input.previousHermesBrowserUrl, input.port);
+  }
+  return rebuildDashboardChatUiUrl({
+    agentName: input.agent,
+    recordedExternalUrl: input.recordedExternalUrl,
+    fallbackUrl: input.previousDashboard.agent === "openclaw" ? input.previousDashboard.url : null,
+    port: input.port,
+  });
+}
+
 /** Render the exact replacement profile while the old managed workload remains authoritative. */
 export function prepareManagedRebuildProfileHandoff(input: {
   readonly catalogHandoff: ManagedWorkloadRebuildCatalogHandoff;
@@ -58,6 +82,11 @@ export function prepareManagedRebuildProfileHandoff(input: {
   readonly recreateOptions: RebuildRecreateOnboardOpts;
   readonly messagingPlan: SandboxMessagingPlan | null;
   readonly environment?: NodeJS.ProcessEnv;
+  /**
+   * The sandbox's registry `dashboardExternalUrl`. Rebuild replays this
+   * recorded origin and never reads `CHAT_UI_URL` from its own environment.
+   */
+  readonly recordedDashboardExternalUrl?: string | null;
 }): ManagedWorkloadRebuildHandoff {
   const { catalogHandoff, targetConfig, recreateOptions, messagingPlan } = input;
   const agent = catalogHandoff.agent;
@@ -84,11 +113,14 @@ export function prepareManagedRebuildProfileHandoff(input: {
       "Cannot rebuild the Hermes dashboard because its managed startup profile has no recorded browser URL. Rerun onboarding, then rebuild the sandbox.",
     );
   }
-  const chatUiUrl = manageDashboard
-    ? previousHermesBrowserUrl === undefined
-      ? `http://127.0.0.1:${String(effectiveDashboardPort)}`
-      : rebindLoopbackDashboardUrlPort(previousHermesBrowserUrl, effectiveDashboardPort)
-    : "";
+  const chatUiUrl = replacementDashboardChatUiUrl({
+    agent,
+    manageDashboard,
+    port: effectiveDashboardPort,
+    previousDashboard,
+    previousHermesBrowserUrl,
+    recordedExternalUrl: input.recordedDashboardExternalUrl,
+  });
   const nativeAttachment = recordedNativeProviderAttachment(resumeConfig);
   const inference = managedRebuildProfileDependencies.resolveManagedStartupInferenceRoute(
     agent,

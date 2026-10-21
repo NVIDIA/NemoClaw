@@ -24,8 +24,8 @@ import { isShippedManagedImageAgent } from "../managed-image/contract";
 import {
   type BuiltManagedStartupOnboardProfile,
   buildManagedStartupOnboardProfile,
-  isLocalInferenceProvider,
   resolveManagedStartupInferenceEndpoint,
+  resolveManagedStartupNativeLocalAttachment,
   type ManagedStartupOnboardProfileInput,
 } from "../managed-startup/onboard-profile";
 export {
@@ -399,13 +399,7 @@ export function createManagedWorkloadOnboardRuntime(
       return input.managedWorkloadRebuild.replacementProfile;
     }
     if (preparedProfile) return preparedProfile;
-    const nativeLocalProviderAttachment =
-      input.agentName === "langchain-deepagents-code" ||
-      (input.agentName === "openclaw" &&
-        input.nativeLocalProviderAttachment?.agent === "openclaw" &&
-        isLocalInferenceProvider(input.provider))
-        ? input.nativeLocalProviderAttachment
-        : undefined;
+    const nativeLocalProviderAttachment = resolveManagedStartupNativeLocalAttachment(input);
     const selectedModel = input.model?.trim() || "";
     const selectedProvider = input.provider?.trim() || null;
     const endpointUrl = resolveManagedStartupInferenceEndpoint({

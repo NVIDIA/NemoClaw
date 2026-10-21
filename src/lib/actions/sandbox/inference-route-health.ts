@@ -438,7 +438,9 @@ export function buildSandboxInferenceRouteHealth(
       ok: invocation?.ok === true,
       probed: invocation !== null,
       providerLabel: "Native local inference",
-      endpoint: `${context.nativeLocalEndpoint}/chat/completions`,
+      endpoint:
+        (invocation?.ok === false && invocation.endpoint) ||
+        `${context.nativeLocalEndpoint}/chat/completions`,
       detail: invocation?.ok
         ? "The attached provider served a native local inference request."
         : invocation
