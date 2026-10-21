@@ -319,13 +319,20 @@ async function collectRuntime(
       managedAgentVersion: row.managedAgentVersion,
       managedAgentVersionStatus: row.managedAgentVersionStatus,
     };
+    let managedRoutedBaseUrl: string | null = null;
+    try {
+      managedRoutedBaseUrl =
+        readManagedWorkloadAuthority(entry)?.profile.inference?.routedBaseUrl ?? null;
+    } catch {
+      // projectConfiguration already reports an invalid managed workload receipt.
+    }
     Object.assign(
       row,
       projectRuntimeAgents(
         runtime,
         raw.status === "fulfilled" ? raw.value : null,
         roster.status === "fulfilled" ? roster.value : undefined,
-        { ...entry, metadataErrors: options.metadataErrors },
+        { ...entry, metadataErrors: options.metadataErrors, managedRoutedBaseUrl },
       ),
     );
     if (raw.status === "rejected" || roster.status === "rejected") row.status = "collection_error";

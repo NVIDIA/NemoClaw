@@ -96,6 +96,20 @@ export interface RuntimeRouteAuthority {
   nativeModelSelectionProvenance?: unknown;
   modelAssignmentSelections?: unknown;
   metadataErrors?: readonly TelemetryMetadataError[];
+  /** Sandbox-facing route recorded in the managed startup profile; hosted native routes are upstream URLs. */
+  managedRoutedBaseUrl?: string | null;
+}
+
+const INFERENCE_ROUTE_BASE_URL = /^https:\/\/inference\.local(?:\/v1)?\/?$/;
+
+/** A native base URL is managed when it is the gateway route or the exact route NemoClaw recorded. */
+function isManagedBaseUrl(value: unknown, authority: RuntimeRouteAuthority): boolean {
+  return (
+    typeof value === "string" &&
+    (INFERENCE_ROUTE_BASE_URL.test(value) ||
+      (typeof authority.managedRoutedBaseUrl === "string" &&
+        value === authority.managedRoutedBaseUrl))
+  );
 }
 
 type ModelReference = {
@@ -350,7 +364,11 @@ function modelSelection(value: unknown): {
   };
 }
 
-function openClawReference(value: string, config: Record<string, unknown>): ModelReference {
+function openClawReference(
+  value: string,
+  config: Record<string, unknown>,
+  authority: RuntimeRouteAuthority,
+): ModelReference {
   const separator = value.indexOf("/");
   if (separator <= 0 || separator === value.length - 1)
     throw new Error("Invalid native model reference");
@@ -363,9 +381,7 @@ function openClawReference(value: string, config: Record<string, unknown>): Mode
       : providerKey === "openai" || providerKey === "inference"
         ? "openai-completions"
         : undefined);
-  const managed =
-    typeof provider?.baseUrl === "string" &&
-    /^https:\/\/inference\.local(?:\/v1)?\/?$/.test(provider.baseUrl);
+  const managed = isManagedBaseUrl(provider?.baseUrl, authority);
   return { model: value.slice(separator + 1), providerKey, api, managed };
 }
 
@@ -459,7 +475,7 @@ export function projectRuntimeAgents(
       const readModel = (value: unknown, assignment: TelemetryModel["assignment"]) => {
         try {
           if (typeof value !== "string" || mismatch) throw new Error("Invalid effective model");
-          return projectModel(openClawReference(value, root), assignment, authority, {
+          return projectModel(openClawReference(value, root, authority), assignment, authority, {
             agentId: row.id as string,
             reference: value,
             inherited: assignment === "primary",
@@ -548,9 +564,7 @@ export function projectRuntimeAgents(
           : typeof model.api_mode === "string"
             ? (modes[model.api_mode] ?? model.api_mode)
             : model.api_mode,
-      managed:
-        typeof model.base_url === "string" &&
-        /^https:\/\/inference\.local(?:\/v1)?\/?$/.test(model.base_url),
+      managed: isManagedBaseUrl(model.base_url, authority),
     };
   } else if (runtime.agentHarnessId === "langchain-deepagents-code") {
     const models = dataRecord(root.models);
@@ -572,9 +586,7 @@ export function projectRuntimeAgents(
             ? "openai-responses"
             : "openai-completions"
           : undefined,
-      managed:
-        typeof provider?.base_url === "string" &&
-        /^https:\/\/inference\.local(?:\/v1)?\/?$/.test(provider.base_url),
+      managed: isManagedBaseUrl(provider?.base_url, authority),
     };
   } else
     return {

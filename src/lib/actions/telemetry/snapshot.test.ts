@@ -31,6 +31,8 @@ import { isOperationEvent } from "../../domain/telemetry/schema";
 import {
   dcodeImageRef,
   dcodeProfileInput,
+  hermesImageRef,
+  hermesProfileInput,
   managedWorkload,
 } from "../../domain/config/export-source-test-fixture";
 import type { SandboxEntry } from "../../state/registry/types";
@@ -391,3 +393,101 @@ it.each(nativeModelCases)(
     expect(isOperationEvent(event)).toBe(true);
   },
 );
+
+const hostedNvidiaEndpoint = "https://integrate.api.nvidia.com/v1";
+const hostedNvidiaModel = "nvidia/nemotron-3-ultra-550b-a55b";
+const hostedNvidiaProvenance = {
+  schemaVersion: 1,
+  model: hostedNvidiaModel,
+  provider: "nvidia-prod",
+  providerProfile: "nvidia",
+  modelSource: "custom",
+  apiFamily: "openai-completions",
+};
+
+function hostedNvidiaHermes(routedBaseUrl = hostedNvidiaEndpoint): Partial<SandboxEntry> {
+  const input = hermesProfileInput();
+  // Registry JSON stores the persisted messaging plan, not the in-memory plan type.
+  return {
+    model: hostedNvidiaModel,
+    provider: "nvidia-prod",
+    modelSelectionProvenance: hostedNvidiaProvenance,
+    // Settings a fresh onboard records, so only the model route decides completeness.
+    agentVersion: "0.21.3",
+    openshellDriver: "docker",
+    sandboxGpuEnabled: false,
+    webSearchEnabled: false,
+    observabilityEnabled: false,
+    appliedPolicySelection: { schemaVersion: 1, source: "verified_selection", tier: "balanced" },
+    messaging: {
+      schemaVersion: 1,
+      plan: {
+        schemaVersion: 1,
+        sandboxName: "native",
+        agent: "hermes",
+        workflow: "onboard",
+        disabledChannels: [],
+        channels: [],
+        credentialBindings: [],
+      },
+    },
+    imageTag: hermesImageRef,
+    workload: managedWorkload(
+      {
+        ...input,
+        inference: {
+          ...input.inference!,
+          routeProvider: "inference",
+          upstreamProvider: "nvidia-prod",
+          model: hostedNvidiaModel,
+          routedBaseUrl,
+          api: "openai-completions",
+        },
+      },
+      hermesImageRef,
+    ),
+  } as unknown as Partial<SandboxEntry>;
+}
+
+const hermesNativeConfig = (baseUrl: string) =>
+  `model:\n  default: ${hostedNvidiaModel}\n  provider: custom\n  base_url: "${baseUrl}"\n`;
+
+it("binds a hosted native Hermes route recorded in the startup profile (#13576)", async () => {
+  const event = await collectNativeConfiguration(
+    "hermes",
+    "/sandbox/.hermes/config.yaml",
+    hermesNativeConfig(hostedNvidiaEndpoint),
+    hostedNvidiaHermes(),
+  );
+  expect(event.parameters.configurations[0].agents[0].models[0]).toMatchObject({
+    modelId: hostedNvidiaModel,
+    modelSource: "custom",
+    modelSourceStatus: "reported",
+    providerProfile: "nvidia",
+    providerStatus: "reported",
+  });
+  expect(event.parameters.collectionStatus).toBe("complete");
+  expect(isOperationEvent(event)).toBe(true);
+});
+
+it.each([
+  ["a native URL that differs from the recorded route", hostedNvidiaHermes()],
+  [
+    "no managed startup profile",
+    { ...hostedNvidiaHermes(), imageTag: undefined, workload: undefined },
+  ],
+])("keeps an unrecorded upstream Hermes URL native with %s (#13576)", async (_label, overrides) => {
+  const event = await collectNativeConfiguration(
+    "hermes",
+    "/sandbox/.hermes/config.yaml",
+    hermesNativeConfig(overrides.workload ? "https://example.invalid/v1" : hostedNvidiaEndpoint),
+    overrides,
+  );
+  expect(event.parameters.configurations[0].agents[0].models[0]).toMatchObject({
+    modelSource: "unknown",
+    modelSourceStatus: "not_persisted",
+    providerProfile: "custom",
+  });
+  expect(event.parameters.collectionStatus).toBe("partial");
+  expect(isOperationEvent(event)).toBe(true);
+});
