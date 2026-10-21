@@ -17,8 +17,9 @@ NemoClaw keeps provider credentials on the host and validates explicit custom en
 The agent inside the sandbox sends requests to `inference.local` instead of connecting to the upstream endpoint directly.
 </AgentOnly>
 <AgentOnly variant="deepagents">
-New Deep Agents Code sandboxes use the recorded endpoint through a sandbox-attached OpenShell provider for hosted compatible endpoints and qualified host-local endpoints.
-Retained shared routes and owned Local NVIDIA NIM use `inference.local`.
+New Deep Agents Code sandboxes normally use the recorded endpoint through a sandbox-attached OpenShell provider for hosted compatible endpoints and qualified host-local endpoints.
+A fresh Personal-tier hosted compatible selection instead uses `inference.local` without creating a native attachment.
+Other retained shared routes and owned Local NVIDIA NIM also use `inference.local`.
 Refer to [How Inference Routing Works](../about-inference-routing) for the qualification boundary.
 </AgentOnly>
 <AgentOnly variant="hermes">

@@ -19,8 +19,18 @@ import {
   hasBedrockRuntimeAwsAuthEnv,
 } from "../bedrock-runtime";
 import { ensureBedrockRuntimeAdapter } from "../bedrock-runtime-adapter";
+import { PERSONAL_POLICY_TIER_NAME } from "../../policy/tiers";
 
-/** Existing shared-route sandboxes retain their route until recreated. */
+export { isHostedCustomEndpoint };
+
+/**
+ * Existing shared-route sandboxes retain their route until recreated.
+ *
+ * A Personal sandbox keeps a new custom endpoint on the shared inference.local
+ * route. OpenShell rejects Personal's hostless port-443 rule beside an attached
+ * provider endpoint on the same port (NVIDIA/OpenShell#4662), so a native
+ * provider would make the Personal policy unappliable.
+ */
 export function usesCustomNativeOnboarding(
   provider: string,
   endpointUrl: string | null,
@@ -32,13 +42,14 @@ export function usesCustomNativeOnboarding(
       }
     | null
     | undefined,
+  policyTier: string | undefined = process.env.NEMOCLAW_POLICY_TIER,
 ): boolean {
+  const personal = policyTier?.trim().toLowerCase() === PERSONAL_POLICY_TIER_NAME;
   return Boolean(
     sandboxName &&
     isHostedCustomEndpoint(provider, endpointUrl) &&
-    (!recorded ||
-      recorded.pendingRouteReservation ||
-      recorded.nativeHostedProviderAttachment?.custom),
+    (recorded?.nativeHostedProviderAttachment?.custom ||
+      (!personal && (!recorded || recorded.pendingRouteReservation))),
   );
 }
 

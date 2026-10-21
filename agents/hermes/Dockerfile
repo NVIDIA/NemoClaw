@@ -45,8 +45,7 @@ FROM scratch AS hermes-agent-payload
 # Portable builds reject RUN mounts. Reuse the existing payload layer for
 # the shared inventory tooling instead of adding final-image COPY layers.
 # Copying a scratch /tmp would replace the runtime's sticky writable mode.
-COPY scripts/security/security-package-inventory.mts /opt/nemoclaw-security/scripts/security/security-package-inventory.mts
-COPY src/lib/sandbox-base-image/security-package-specs.ts /opt/nemoclaw-security/src/lib/sandbox-base-image/security-package-specs.ts
+COPY scripts/security/standalone-security-package-inventory.mts /opt/nemoclaw-security/scripts/security/security-package-inventory.mts
 
 COPY agents/hermes/plugin/__init__.py agents/hermes/plugin/plugin.yaml /opt/nemoclaw-hermes-plugin/
 # Channel-owned Google Chat runtime asset, loaded by the plugin beside its own
