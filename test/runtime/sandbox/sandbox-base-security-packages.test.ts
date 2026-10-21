@@ -100,82 +100,63 @@ const HERMES_COMPATIBLE_PYTHON_FIX_INVENTORY = EXPECTED_SECURITY_PACKAGE_INVENTO
     ? "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u4+nemoclaw1"
     : entry,
 );
-// Exact /usr/local/share/nemoclaw/security-packages.txt records read from the
-// immutable Hermes base layers named below. Each platform file contains
-// "architecture=<arch>" followed by the listed packages. Record the selected
-// pin's actual file when agents/hermes/Dockerfile changes BASE_IMAGE.
+// These records are copied from the immutable Hermes base images. Do not
+// derive them from EXPECTED_SECURITY_PACKAGE_INVENTORY: a contract change that
+// the pinned base cannot satisfy must fail here before merge. When BASE_IMAGE
+// changes, copy /usr/local/share/nemoclaw/security-packages.txt from the new
+// image. Each platform file is "architecture=<arch>" followed by this list.
 const HERMES_BASE_REPOSITORY = "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base";
-const SELECTED_HERMES_BASE = {
-  index: "sha256:77ca16dded73b3797d63b7de57ccfc58152b7e4525d7dc4774d540e7ca84939e",
-  sourceRevision: "5c38f103050aee36202c8f9d0e3881440ae807f8",
-  platforms: {
-    amd64: {
-      manifest: "sha256:e050e0826e5eb7facff817bb31e1350e50215ecc941a22b0cbfdf3d1fac0f369",
-      inventoryLayer: "sha256:77593152076fdfe41f7952be1b324e893b3d9a860a3df9300479d5c6d0d6b5f0",
-    },
-    arm64: {
-      manifest: "sha256:8e900c69647493f94afd5b31a6f0f8b4f92edeadc63ccdcdd195e3bf5812bbca",
-      inventoryLayer: "sha256:3e56f38fe7bceb56efce4b6e13cbd63fe7c8d206447ef47479831814c46be07f",
-    },
-  },
-  inventory: [
-    "zlib1g=1:1.3.dfsg+really1.3.1-1+b1+nemoclaw1",
-    "libc6=2.41-12+deb13u4",
-    "libc-bin=2.41-12+deb13u4",
-    "bsdutils=1:2.41.5-0+deb13u1",
-    "login=1:4.16.0-2+really2.41.5-0+deb13u1",
-    "mount=2.41.5-0+deb13u1",
-    "util-linux=2.41.5-0+deb13u1",
-    "libblkid1=2.41.5-0+deb13u1",
-    "liblastlog2-2=2.41.5-0+deb13u1",
-    "libmount1=2.41.5-0+deb13u1",
-    "libsmartcols1=2.41.5-0+deb13u1",
-    "libuuid1=2.41.5-0+deb13u1",
-    "libpcre2-8-0=10.46-1~deb13u3",
-    "libsqlite3-0=3.46.1-7+deb13u2",
-    "gzip=1.13-1+deb13u1",
-    "libexpat1=2.8.3-1",
-    "libonig5=6.9.9-1+b1",
-    "libjq1=1.8.2-1",
-    "jq=1.8.2-1",
-    "vim-common=2:9.2.0858-1",
-    "vim-tiny=2:9.2.0858-1",
-    "libssh2-1t64=1.11.1-1+deb13u2+nemoclaw2",
-    "libssl3t64=3.5.7-1~deb13u3",
-    "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u5+nemoclaw1",
-    "perl-base=5.44.0-1nemoclaw1",
-    "perl=5.44.0-1nemoclaw1",
-  ],
-} as const;
-// The previous pin predates the shared 26-package inventory. Completed Hermes
-// images rejected it on both architectures in E2E run 39531475623.
-const OBSOLETE_HERMES_BASE = {
-  index: "sha256:c50a0db0efb317ee4c48438435ca6d754b894d61acc7f91c4c4b0e615b09c5a5",
-  sourceRevision: "889f81e82ff860117cbcf9e785a748234838bd71",
-  platforms: {
-    amd64: {
-      manifest: "sha256:4f6b7b553178e0445aff1d7fa8274a2b28b7feb2aa828170d1b46b7ad1ac08c2",
-      inventoryLayer: "sha256:586983e6f3d8db89c822d5a9eb03be8fb51542dda47bdad5d93afd50027646a4",
-    },
-    arm64: {
-      manifest: "sha256:2caef3740fcc16b399b03e3a0ead6854ea5622aebe9ac1b81c0e10c422041774",
-      inventoryLayer: "sha256:887856c048314e58fffec58e7e4577d60b1a8d1b076b7f9918595026c80304f7",
-    },
-  },
-  inventory: [
-    "libexpat1=2.8.3-1",
-    "libonig5=6.9.9-1+b1",
-    "libjq1=1.8.2-1",
-    "jq=1.8.2-1",
-    "vim-common=2:9.2.0858-1",
-    "vim-tiny=2:9.2.0858-1",
-    "libssh2-1t64=1.11.1-1+deb13u1+nemoclaw2",
-    "libssl3t64=3.5.7-1~deb13u3",
-    "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u5+nemoclaw1",
-    "perl-base=5.44.0-1nemoclaw1",
-    "perl=5.44.0-1nemoclaw1",
-  ],
-} as const;
+// Built from 5c38f103 by base publication run 39531250600. Inventory layers:
+// amd64 sha256:77593152076fdfe41f7952be1b324e893b3d9a860a3df9300479d5c6d0d6b5f0,
+// arm64 sha256:3e56f38fe7bceb56efce4b6e13cbd63fe7c8d206447ef47479831814c46be07f.
+const SELECTED_HERMES_BASE_INDEX =
+  "sha256:77ca16dded73b3797d63b7de57ccfc58152b7e4525d7dc4774d540e7ca84939e";
+const SELECTED_HERMES_BASE_RECORDED_INVENTORY = [
+  "zlib1g=1:1.3.dfsg+really1.3.1-1+b1+nemoclaw1",
+  "libc6=2.41-12+deb13u4",
+  "libc-bin=2.41-12+deb13u4",
+  "bsdutils=1:2.41.5-0+deb13u1",
+  "login=1:4.16.0-2+really2.41.5-0+deb13u1",
+  "mount=2.41.5-0+deb13u1",
+  "util-linux=2.41.5-0+deb13u1",
+  "libblkid1=2.41.5-0+deb13u1",
+  "liblastlog2-2=2.41.5-0+deb13u1",
+  "libmount1=2.41.5-0+deb13u1",
+  "libsmartcols1=2.41.5-0+deb13u1",
+  "libuuid1=2.41.5-0+deb13u1",
+  "libpcre2-8-0=10.46-1~deb13u3",
+  "libsqlite3-0=3.46.1-7+deb13u2",
+  "gzip=1.13-1+deb13u1",
+  "libexpat1=2.8.3-1",
+  "libonig5=6.9.9-1+b1",
+  "libjq1=1.8.2-1",
+  "jq=1.8.2-1",
+  "vim-common=2:9.2.0858-1",
+  "vim-tiny=2:9.2.0858-1",
+  "libssh2-1t64=1.11.1-1+deb13u2+nemoclaw2",
+  "libssl3t64=3.5.7-1~deb13u3",
+  "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u5+nemoclaw1",
+  "perl-base=5.44.0-1nemoclaw1",
+  "perl=5.44.0-1nemoclaw1",
+] as const;
+// The previous pin, sha256:c50a0db0efb317ee4c48438435ca6d754b894d61acc7f91c4c4b0e615b09c5a5,
+// was built from 889f81e8. Completed Hermes images rejected it on both
+// architectures in E2E run 39531475623. Inventory layers: amd64
+// sha256:586983e6f3d8db89c822d5a9eb03be8fb51542dda47bdad5d93afd50027646a4, arm64
+// sha256:887856c048314e58fffec58e7e4577d60b1a8d1b076b7f9918595026c80304f7.
+const OBSOLETE_HERMES_BASE_RECORDED_INVENTORY = [
+  "libexpat1=2.8.3-1",
+  "libonig5=6.9.9-1+b1",
+  "libjq1=1.8.2-1",
+  "jq=1.8.2-1",
+  "vim-common=2:9.2.0858-1",
+  "vim-tiny=2:9.2.0858-1",
+  "libssh2-1t64=1.11.1-1+deb13u1+nemoclaw2",
+  "libssl3t64=3.5.7-1~deb13u3",
+  "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u5+nemoclaw1",
+  "perl-base=5.44.0-1nemoclaw1",
+  "perl=5.44.0-1nemoclaw1",
+] as const;
 const SECURITY_CASES = SECURITY_IMAGES.flatMap((image) =>
   ARCHITECTURES.map((architecture) => [image.name, architecture, image] as const),
 );
@@ -573,8 +554,7 @@ describe("sandbox base security packages", () => {
   it("selects the Hermes base whose recorded inventory is verified here", () => {
     const dockerfile = fs.readFileSync(path.join(ROOT, "agents", "hermes", "Dockerfile"), "utf-8");
     const pins = [...dockerfile.matchAll(/^ARG BASE_IMAGE=(.+)$/gmu)].map((match) => match[1]);
-    expect(pins).toEqual([`${HERMES_BASE_REPOSITORY}@${SELECTED_HERMES_BASE.index}`]);
-    expect(SELECTED_HERMES_BASE.index).not.toBe(OBSOLETE_HERMES_BASE.index);
+    expect(pins).toEqual([`${HERMES_BASE_REPOSITORY}@${SELECTED_HERMES_BASE_INDEX}`]);
   });
 
   it.each(ARCHITECTURES)(
@@ -586,7 +566,7 @@ describe("sandbox base security packages", () => {
         hermes,
         tmp,
         architecture,
-        SELECTED_HERMES_BASE.inventory,
+        SELECTED_HERMES_BASE_RECORDED_INVENTORY,
       );
 
       try {
@@ -622,7 +602,7 @@ describe("sandbox base security packages", () => {
         hermes,
         tmp,
         architecture,
-        OBSOLETE_HERMES_BASE.inventory,
+        OBSOLETE_HERMES_BASE_RECORDED_INVENTORY,
       );
 
       try {
