@@ -14,6 +14,17 @@ export { requirePublicNvidiaSwitchKey } from "../fixtures/hosted-inference.ts";
 
 export const PUBLIC_NVIDIA_SWITCH_PROVIDER = "nvidia-prod";
 export const PUBLIC_NVIDIA_SWITCH_MODEL = DEFAULT_CLOUD_MODEL;
+
+// The public endpoint reports its serving deployment, not the requested ID, in a
+// Super VL response. Live E2E run 39548034650 observed this exact value.
+const PUBLIC_NVIDIA_RESPONSE_MODEL_ALIASES: Readonly<Record<string, readonly string[]>> = {
+  "nvidia/nemotron-3.5-super-vl-120b-a12b": ["private/nvidia/nemotron-3.5-super-120b-a12b"],
+};
+
+/** Response model identities that prove the requested model answered. */
+export function acceptedSwitchResponseModels(requestedModel: string): readonly string[] {
+  return [requestedModel, ...(PUBLIC_NVIDIA_RESPONSE_MODEL_ALIASES[requestedModel] ?? [])];
+}
 export const PUBLIC_NVIDIA_SWITCH_ATTACHMENT_EVIDENCE =
   "provider-inspection=0;provider-name=match;provider-profile=match;provider-id=match;attachment-inspection=0;attached=true;schema=1;profile=nemoclaw-nvidia-inference-v1;provider=nemoclaw-nvidia-prod-v1";
 
