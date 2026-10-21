@@ -20,6 +20,8 @@ import {
   requirePublicNvidiaInferenceKey,
 } from "../fixtures/inference-adapter.ts";
 import { startTestProgress } from "../fixtures/progress.ts";
+import { DEFAULT_CLOUD_MODEL } from "../../../src/lib/inference/config.ts";
+import { catalogueTarget } from "../../../tools/e2e/target-catalogue.mts";
 
 // Protected image qualification imports the fixture before CLI artifacts exist.
 vi.mock("node:fs", async (importOriginal) => {
@@ -426,7 +428,7 @@ describe("E2E inference adapter", () => {
     expect(env).toMatchObject({
       NEMOCLAW_E2E_INFERENCE_MODE: "public-nvidia",
       NEMOCLAW_PROVIDER: "cloud",
-      NEMOCLAW_MODEL: "nvidia/nemotron-3-super-120b-a12b",
+      NEMOCLAW_MODEL: "nvidia/nemotron-3.5-super-vl-120b-a12b",
       NVIDIA_INFERENCE_API_KEY: "nvapi-public-test-key",
     });
     expect(env.COMPATIBLE_API_KEY).toBeUndefined();
@@ -446,6 +448,45 @@ describe("E2E inference adapter", () => {
       prompt: "public prompt",
       maxTokens: 64,
     });
+  });
+
+  it("selects the Pi catalogue model over an ambient model and keeps explicit overrides", async () => {
+    const requests: ProviderRequest[] = [];
+    const apiKey = "nvapi-public-test-key";
+    const pi = await createAdapter({
+      // runCatalogueTarget assigns the catalogue environment over the job environment.
+      env: {
+        NEMOCLAW_MODEL: "nvidia/nemotron-3-super-120b-a12b",
+        ...catalogueTarget("pi-agent-qualification-amd64").environment,
+      },
+      provider: provider((request) => requests.push(request)),
+      secrets: { NVIDIA_API_KEY: apiKey },
+    });
+    expect([pi.mode, pi.model, pi.env().NEMOCLAW_MODEL]).toEqual([
+      "public-nvidia",
+      DEFAULT_CLOUD_MODEL,
+      DEFAULT_CLOUD_MODEL,
+    ]);
+    await pi.probeModels("pi-models");
+    await pi.directChat("pi prompt", { artifactName: "pi-chat", maxTokens: 64 });
+    expectProviderRequests(requests, {
+      apiKey,
+      endpointBase: "https://integrate.api.nvidia.com/v1",
+      model: DEFAULT_CLOUD_MODEL,
+      modelArtifact: "pi-models",
+      chatArtifact: "pi-chat",
+      prompt: "pi prompt",
+      maxTokens: 64,
+    });
+
+    const explicit = await createAdapter({
+      env: {
+        NEMOCLAW_E2E_INFERENCE_MODE: "public-nvidia",
+        NEMOCLAW_MODEL: "nvidia/explicit-model",
+      },
+      secrets: { NVIDIA_API_KEY: apiKey },
+    });
+    expect(explicit.model).toBe("nvidia/explicit-model");
   });
 
   it("rejects hosted-style keys in public NVIDIA mode", async () => {

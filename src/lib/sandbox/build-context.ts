@@ -162,6 +162,7 @@ function stageReviewedNpmAuditPolicy(rootDir: string, buildCtx: string): void {
 function stageSecurityInventorySources(rootDir: string, buildCtx: string): void {
   for (const relativePath of [
     "scripts/security/security-package-inventory.mts",
+    "scripts/security/standalone-security-package-inventory.mts",
     "src/lib/sandbox-base-image/security-package-specs.ts",
   ]) {
     const target = path.join(buildCtx, relativePath);

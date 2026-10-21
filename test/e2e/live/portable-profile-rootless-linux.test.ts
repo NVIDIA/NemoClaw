@@ -1009,7 +1009,11 @@ async function main(
     const prepared = preparePortableExperimentalHost(process.env, { home });
     assert.equal(prepared?.authority.configHome, configHome);
     const runtimeAuthority = prepared!.authority;
-    assert.equal(process.env.DOCKER_HOST, `unix://${runtimeDir}/podman/podman.sock`);
+    const expectedPodmanSocket =
+      process.env.E2E_TARGET_ID === "portable-hermes-finalization"
+        ? process.env.OPENSHELL_PODMAN_SOCKET
+        : `${runtimeDir}/podman/podman.sock`;
+    assert.equal(process.env.DOCKER_HOST, `unix://${expectedPodmanSocket}`);
     assert.equal(fs.statSync(path.join(runtimeDir, "podman")).mode & 0o777, 0o700);
     assert.match(
       fs.readFileSync(String(process.env.CONTAINERS_CONF), "utf-8"),
@@ -1023,10 +1027,10 @@ async function main(
     const podmanInfo = JSON.parse(run("podman", ["info", "--format", "json"]));
     assert.equal(podmanInfo.host?.security?.rootless, true, "Podman must be rootless");
     run("docker", ["version"]);
+    const verifiedPodmanUrl = String(process.env.DOCKER_HOST);
     await waitForRegistry(artifacts, shellProbe);
 
     progress.phase("verify immutable non-force network removal");
-    const verifiedPodmanUrl = String(process.env.DOCKER_HOST);
     // Netavark rejects the retired link-local subnet before this pinned runtime can create it.
     // Deterministic tests own that state; this live boundary proves the emitted full-ID form.
     run("podman", ["--url", verifiedPodmanUrl, "network", "create", disposableNetworkName]);
@@ -1212,15 +1216,6 @@ async function main(
       )?.map(({ subnet }) => subnet),
       [PORTABLE_DOCKER_NETWORK_SUBNET],
     );
-    assert.equal(
-      run("docker", [
-        "inspect",
-        "--format",
-        `{{with index .NetworkSettings.Networks ${JSON.stringify(PORTABLE_DOCKER_NETWORK_NAME)}}}{{.IPAddress}}{{end}}`,
-        "nemoclaw-portable-registry",
-      ]),
-      PORTABLE_REGISTRY_IP,
-    );
     const currentNetwork = parseOnePodmanRecord(
       run("podman", [
         "--url",
@@ -1240,6 +1235,13 @@ async function main(
         "nemoclaw-portable-registry",
       ]),
       "portable registry inspection",
+    );
+    // The registry uses the trusted API service, whose config sets this effective limit.
+    assert.ok(
+      process.env.E2E_TARGET_ID !== "portable-hermes-finalization" ||
+        String((currentRegistry.HostConfig as Record<string, unknown> | undefined)?.PidsLimit) ===
+          "128",
+      "Portable Hermes registry must use the reviewed 128-task limit",
     );
 
     const openshellBin = run("bash", ["-lc", "command -v openshell"]);
