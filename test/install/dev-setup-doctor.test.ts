@@ -755,6 +755,8 @@ describe("contributor repository setup", () => {
       "npm ci --include=dev --ignore-scripts --prefer-offline --include=optional --@nvidia:registry=https://npm.pkg.github.com",
     );
     expect(commands).toContain("npm --prefix nemoclaw ci --include=dev --ignore-scripts");
+    expect(commands).not.toContain("npm install");
+    expect(commands).not.toContain("npm --prefix nemoclaw install");
     expect(commands).not.toContain("uv sync");
     expect(commands).toContain("prek install");
     expect(commands).not.toContain("npm-link-or-shim");
@@ -772,6 +774,8 @@ describe("contributor repository setup", () => {
       "npm ci --include=dev --ignore-scripts --prefer-offline --include=optional --@nvidia:registry=https://npm.pkg.github.com",
     );
     expect(commands).toContain("npm --prefix nemoclaw ci --include=dev --ignore-scripts");
+    expect(commands).not.toContain("npm install");
+    expect(commands).not.toContain("npm --prefix nemoclaw install");
     expect(commands).not.toContain("uv sync");
     expect(commands).not.toContain("npm-link-or-shim");
     expect(commands).not.toContain("onboard");
@@ -791,6 +795,8 @@ describe("contributor repository setup", () => {
       "npm ci --include=dev --ignore-scripts --prefer-offline --include=optional --@nvidia:registry=https://npm.pkg.github.com",
     );
     expect(commands).toContain("npm --prefix nemoclaw ci --include=dev --ignore-scripts");
+    expect(commands).not.toContain("npm install");
+    expect(commands).not.toContain("npm --prefix nemoclaw install");
   });
 
   it("stops before repository changes when a supported Python is missing", () => {
