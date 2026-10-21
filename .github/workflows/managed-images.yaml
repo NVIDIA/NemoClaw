@@ -57,6 +57,7 @@ on:
       - "src/lib/messaging/**"
       - "src/lib/onboard/**"
       - "src/lib/security/credential-hash.ts"
+      - "src/lib/sandbox-base-image/security-package-specs.ts"
       - "src/lib/state/paths.ts"
       - "src/lib/state/state-root.ts"
       - "test/helpers/openclaw-real-agent-reload-proof.ts"
@@ -180,6 +181,7 @@ jobs:
           for relative in \
             agents/langchain-deepagents-code/Dockerfile.base \
             scripts/security/build-native-security-packages.sh \
+            scripts/security/build-perl-security-packages.sh \
             agents/langchain-deepagents-code/requirements.lock
           do
             source_file="$candidate_root/$relative"
@@ -202,7 +204,13 @@ jobs:
             scripts/patch-bundled-npm-brace-expansion.mts \
             scripts/patch-bundled-npm-tar.mts \
             scripts/upgrade-bundled-npm.mts \
-            scripts/security/patches/perl-5.44.0-net-ping-capability-tests.patch
+            scripts/security/patches/perl-5.44.0-net-ping-capability-tests.patch \
+            scripts/security/patches/libssh2-1.11.1-cve-2026.patch \
+            scripts/security/patches/zlib-1.3.1-write-error.patch \
+            scripts/security/zlib-write-error.c \
+            scripts/security/libssh2-sftp-response-regression.c \
+            scripts/security/security-package-inventory.mts \
+            src/lib/sandbox-base-image/security-package-specs.ts
           do
             support_source="$candidate_root/$support_relative"
             support_parent="$staging_root/$(dirname "$support_relative")"
@@ -1397,9 +1405,10 @@ jobs:
           : >"$guard_log"
           cat >"$guard_dir/bin/docker" <<'DOCKER_GUARD'
           #!/usr/bin/env bash
+          guard_bin_dir="${BASH_SOURCE[0]%/*}"
           subcommand="${1:-missing}"
           [[ "$subcommand" =~ ^[a-z][a-z0-9-]{0,31}$ ]] || subcommand=invalid
-          printf '%s\n' "$subcommand" >>"${E2E_DOCKER_GUARD_LOG:?}"
+          printf '%s\n' "$subcommand" >>"$guard_bin_dir/../invocations.log"
           printf 'Docker CLI use is forbidden in managed Podman activation.\n' >&2
           exit 97
           DOCKER_GUARD

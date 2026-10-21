@@ -12,6 +12,7 @@ import {
 import { createCliOpenShellSandboxLookup } from "../../adapters/openshell/sandbox-observer-cli";
 import { G, R } from "../../cli/terminal-style";
 import * as nim from "../../inference/nim";
+import { normalizeRuntimeProviderIdentity } from "../../onboard/runtime-provider/contract";
 import { resolveGatewayName } from "../../onboard/gateway-binding";
 import { redactFull } from "../../security/redact";
 import { registryEntryGatewayPort } from "../../state/gateway-registry";
@@ -211,6 +212,13 @@ export async function runRebuildDestroyPhase(
     `Registry entry: agent=${sbMeta?.agent}, agentVersion=${sbMeta?.agentVersion}, nimContainer=${sbMeta?.nimContainer}`,
   );
   const stopNimBestEffort = (): void => {
+    if (
+      normalizeRuntimeProviderIdentity(
+        sbMeta?.openshellDriver ?? input.sandboxEntry.openshellDriver,
+      ) !== "docker"
+    ) {
+      return;
+    }
     try {
       if (sbMeta && sbMeta.nimContainer) {
         log(`Stopping NIM container: ${sbMeta.nimContainer}`);

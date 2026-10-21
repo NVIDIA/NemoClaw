@@ -55,9 +55,10 @@ export function createBaseImageResolutionContext(options: {
 export function captureBaseResolution(
   context: BaseImageResolutionContext,
   sandboxImageRef: string | null | undefined,
+  driverName?: string | null,
 ): void {
   if (!context.forceRefresh && !context.resolutionHint && sandboxImageRef) {
-    context.resolutionHint = readSandboxBaseImageResolutionMetadata(sandboxImageRef);
+    context.resolutionHint = readSandboxBaseImageResolutionMetadata(sandboxImageRef, driverName);
   }
 }
 
