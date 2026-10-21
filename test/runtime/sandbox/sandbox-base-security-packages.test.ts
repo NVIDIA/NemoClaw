@@ -11,6 +11,10 @@ import {
   SANDBOX_BASE_SECURITY_PACKAGE_INVENTORY,
 } from "../../../src/lib/sandbox-base-image/security-inventory";
 import {
+  PINNED_HERMES_BASE_SECURITY_PACKAGE_INVENTORY,
+  securityInventoryProbe,
+} from "../../../src/lib/sandbox-base-image/security-package-specs";
+import {
   BASE_APT_SECURITY_HASHES,
   baseAptSecurityFunctions,
 } from "../../helpers/base-apt-security-functions";
@@ -103,6 +107,49 @@ const SECURITY_CASES = SECURITY_IMAGES.flatMap((image) =>
   ARCHITECTURES.map((architecture) => [image.name, architecture, image] as const),
 );
 const OPENCLAW_SECURITY_CASES = SECURITY_CASES.filter(([name]) => name === "OpenClaw");
+
+const REDUCED_CONTEXT_PROFILES = [
+  ["shared", SANDBOX_BASE_SECURITY_PACKAGE_INVENTORY, undefined],
+  ["openclaw", OPENCLAW_SANDBOX_BASE_SECURITY_PACKAGE_INVENTORY, undefined],
+  [
+    "hermes-compatible",
+    SANDBOX_BASE_SECURITY_PACKAGE_INVENTORY,
+    PINNED_HERMES_BASE_SECURITY_PACKAGE_INVENTORY,
+  ],
+] as const;
+
+function runReducedContextRenderer(...args: string[]) {
+  const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-security-renderer-"));
+  const renderer = path.join(temporaryDirectory, "security-package-inventory.mts");
+  fs.copyFileSync(
+    path.join(ROOT, "scripts/security/standalone-security-package-inventory.mts"),
+    renderer,
+  );
+  try {
+    return spawnSync(process.execPath, [renderer, ...args], { encoding: "utf8" });
+  } finally {
+    fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+  }
+}
+
+it.each(REDUCED_CONTEXT_PROFILES)(
+  "renders the canonical %s probe from the reduced Launchable context",
+  (profile, inventory, compatibleInventory) => {
+    const result = runReducedContextRenderer("probe", profile);
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toBe(securityInventoryProbe(inventory, compatibleInventory) + "\n");
+  },
+);
+
+it.each(
+  REDUCED_CONTEXT_PROFILES.flatMap(([profile, inventory]) =>
+    ARCHITECTURES.map((architecture) => [profile, architecture, inventory] as const),
+  ),
+)("renders the canonical %s inventory for %s", (profile, architecture, inventory) => {
+  const result = runReducedContextRenderer("inventory", profile, architecture);
+  expect(result.status, result.stderr).toBe(0);
+  expect(result.stdout).toBe([`architecture=${architecture}`, ...inventory, ""].join("\n"));
+});
 
 function quoteShell(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
