@@ -75,7 +75,8 @@ export function normalizeNativeLocalBinding(value: unknown): NativeLocalBinding 
   };
 }
 
-export function nativeLocalIdentity(binding: NativeLocalBinding) {
+/** Version 1 remains readable for recorded IPv4-only attachments. New selections use version 2. */
+export function nativeLocalIdentity(binding: NativeLocalBinding, policyVersion: 1 | 2 = 2) {
   const normalized = normalizeNativeLocalBinding(binding);
   if (!normalized) throw new Error("Invalid native host-local inference boundary.");
   const profileHash = createHash("sha256")
@@ -86,6 +87,10 @@ export function nativeLocalIdentity(binding: NativeLocalBinding) {
         normalized.endpointUrl,
         normalized.credentialEnv,
         normalized.authMode,
+        // Literal private IPv4 endpoints retain their existing immutable boundary.
+        ...(policyVersion === 2 && new URL(normalized.endpointUrl).hostname.startsWith("host.")
+          ? ["private-dual-stack-v1"]
+          : []),
         ...(normalized.agent === "hermes" ? [normalized.agent] : []),
       ]),
     )
@@ -112,7 +117,9 @@ export function normalizeNativeLocalProviderAttachment(
   const binding = normalizeNativeLocalBinding(value);
   if (!binding) return undefined;
   const receipt = value as Record<string, unknown>;
-  const identity = nativeLocalIdentity(binding);
+  const current = nativeLocalIdentity(binding);
+  const legacy = nativeLocalIdentity(binding, 1);
+  const identity = receipt.profileId === current.profileId ? current : legacy;
   if (
     receipt.schemaVersion !== 1 ||
     receipt.profileId !== identity.profileId ||
