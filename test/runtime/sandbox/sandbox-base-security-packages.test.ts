@@ -121,7 +121,10 @@ const REDUCED_CONTEXT_PROFILES = [
 function runReducedContextRenderer(...args: string[]) {
   const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-security-renderer-"));
   const renderer = path.join(temporaryDirectory, "security-package-inventory.mts");
-  fs.copyFileSync(path.join(ROOT, "scripts/security/security-package-inventory.mts"), renderer);
+  fs.copyFileSync(
+    path.join(ROOT, "scripts/security/standalone-security-package-inventory.mts"),
+    renderer,
+  );
   try {
     return spawnSync(process.execPath, [renderer, ...args], { encoding: "utf8" });
   } finally {

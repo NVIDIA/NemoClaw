@@ -2432,7 +2432,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
 
 # Verify the immutable security package inventory in the completed image.
 # hadolint ignore=DL4006
-RUN --mount=type=bind,source=scripts/security/security-package-inventory.mts,target=/tmp/nemoclaw-security/scripts/security/security-package-inventory.mts \
+RUN --mount=type=bind,source=scripts/security/standalone-security-package-inventory.mts,target=/tmp/nemoclaw-security/scripts/security/security-package-inventory.mts \
     set -eu; \
     security_probe="$(node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON /tmp/nemoclaw-security/scripts/security/security-package-inventory.mts probe openclaw)"; \
     sh -ec "$security_probe"; \
