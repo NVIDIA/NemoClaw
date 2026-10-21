@@ -8,6 +8,10 @@ import * as localRuntime from "../actions/inference-set/local-runtime";
 import { OLLAMA_PROXY_PORT } from "../core/ollama-proxy-port";
 import { isProtectedLocalInferencePort } from "./gateway/local-endpoint-ports";
 import { describe, expect, it, vi } from "vitest";
+import {
+  createCliOpenShellProviderAdapter,
+  type RunProviderCommand,
+} from "../adapters/openshell/provider-adapter-cli";
 import type { OpenShellProviderAdapter } from "../adapters/openshell/provider-adapter";
 import { isLocalInferenceProvider } from "./native-local/agent-config";
 import {
@@ -126,6 +130,71 @@ function fixture(selectedBinding: NativeLocalBinding = binding) {
 }
 
 describe("native local inference", () => {
+  const prepared = prepareNativeLocalProfile(binding);
+  it.each([
+    [
+      "drift",
+      { status: 0, stdout: JSON.stringify({ ...prepared.document, binaries: ["/tmp/widened"] }) },
+      "cannot confirm which definition was used at bind time",
+    ],
+    ["export failure", { status: 1, stderr: "test-only-secret" }, "did not complete"],
+    [
+      "timeout",
+      { status: null, error: Object.assign(new Error("test-only-secret"), { code: "ETIMEDOUT" }) },
+      "did not complete",
+    ],
+  ] as const)(
+    "keeps native-local attachment and warns after profile %s (#13557)",
+    async (_scenario, after, warning) => {
+      const providerId = "11111111-2222-4333-8444-555555555555";
+      const expected = { ...receipt, providerId };
+      const metadata = {
+        status: 0,
+        stdout: [
+          `Name: ${prepared.providerName}`,
+          `Id: ${providerId}`,
+          `Type: ${prepared.profileId}`,
+          "Resource version: 1",
+          `Credential keys: ${binding.credentialEnv}`,
+          "Config keys: <none>",
+        ].join("\n"),
+      };
+      const warn = vi.fn();
+      const run = vi
+        .fn<RunProviderCommand>()
+        .mockReturnValueOnce({ status: 0, stdout: JSON.stringify(prepared.document) })
+        .mockReturnValueOnce(metadata)
+        .mockReturnValueOnce({ status: 0, stdout: "No providers attached to sandbox alice." })
+        .mockReturnValueOnce({ status: 0 })
+        .mockReturnValueOnce(metadata)
+        .mockReturnValueOnce(after)
+        .mockReturnValueOnce(metadata)
+        .mockReturnValueOnce({
+          status: 0,
+          stdout: `NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\n${prepared.providerName} ${prepared.profileId} 1 0`,
+        });
+      const adapter = createCliOpenShellProviderAdapter({ run, warn });
+
+      await expect(
+        ensureNativeLocalProviderAttached({ adapter, expected, sandboxName: "alice" }),
+      ).resolves.toEqual({ receipt: expected, changed: true });
+      expect(run.mock.calls.map(([args]) => args.slice(0, 2))).toEqual([
+        ["provider", "profile"],
+        ["provider", "get"],
+        ["sandbox", "provider"],
+        ["sandbox", "provider"],
+        ["provider", "get"],
+        ["provider", "profile"],
+        ["provider", "get"],
+        ["sandbox", "provider"],
+      ]);
+      expect(warn).toHaveBeenCalledOnce();
+      expect(warn.mock.calls[0]?.[0]).toContain(warning);
+      expect(JSON.stringify(warn.mock.calls)).not.toContain("test-only-secret");
+      expect(run.mock.calls.some(([args]) => args.includes("detach"))).toBe(false);
+    },
+  );
+
   it.each([
     ["pi", "http://host.openshell.internal:12345/v1", true],
     ["pi", "http://192.168.1.20:9001/v1", true],

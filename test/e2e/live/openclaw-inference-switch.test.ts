@@ -61,6 +61,7 @@ import {
   startMockOpenClawBaselineProvider,
 } from "./openclaw-inference-switch-helpers.ts";
 import {
+  acceptedSwitchResponseModels,
   PUBLIC_NVIDIA_SWITCH_ATTACHMENT_EVIDENCE,
   PUBLIC_NVIDIA_SWITCH_MODEL,
   PUBLIC_NVIDIA_SWITCH_PROVIDER,
@@ -636,7 +637,7 @@ async function checkSandboxInference(
               ? parseAnthropicContent(body)
               : parseChatContent(body);
           const responseModel = inferenceResponseModel(body);
-          const modelMatches = responseModel === SWITCH_MODEL;
+          const modelMatches = acceptedSwitchResponseModels(SWITCH_MODEL).includes(responseModel);
           productMatched = modelMatches && /\bPONG\b/iu.test(content);
           lastFailure = modelMatches
             ? `expected PONG, got ${content.slice(0, 300)}`
@@ -1441,7 +1442,6 @@ test(
   },
 );
 
-// WSL2 with Docker Desktop must expose its host alias exclusively through a ULA.
 test.skipIf(!isWslDockerIpv6TestHost())(
   "TC-INF-19 OpenClaw admits a WSL2 IPv6 host bridge and denies other IPv6 destinations (#13544)",
   {

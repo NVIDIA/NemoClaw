@@ -49,6 +49,7 @@ import {
   useLocalHermesInferenceBaseline,
 } from "./hermes-inference-switch-helpers.ts";
 import {
+  acceptedSwitchResponseModels,
   PUBLIC_NVIDIA_SWITCH_ATTACHMENT_EVIDENCE,
   PUBLIC_NVIDIA_SWITCH_PROVIDER,
   readPublicNvidiaSwitchAttachmentEvidence,
@@ -429,7 +430,9 @@ test(
     });
     expect(inferenceLocal.exitCode, resultText(inferenceLocal)).toBe(0);
     expect(chatContent(inferenceLocal.stdout)).toMatch(/PONG/i);
-    expect(inferenceResponseModel(inferenceLocal.stdout)).toBe(SWITCH_MODEL);
+    expect(acceptedSwitchResponseModels(SWITCH_MODEL)).toContain(
+      inferenceResponseModel(inferenceLocal.stdout),
+    );
 
     const hermesApiPayload = JSON.stringify({
       model: SWITCH_MODEL,
@@ -455,7 +458,9 @@ test(
     });
     expect(chat.exitCode, resultText(chat)).toBe(0);
     expect(chatContent(chat.stdout)).toMatch(/PONG/i);
-    expect(inferenceResponseModel(chat.stdout)).toBe(SWITCH_MODEL);
+    expect(acceptedSwitchResponseModels(SWITCH_MODEL)).toContain(
+      inferenceResponseModel(chat.stdout),
+    );
 
     progress.phase("run Hermes CLI adapter forms against switched provider");
     const hermesCli = await runHermesCliPongWithRetry({

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { DEFAULT_CLOUD_MODEL } from "../../../src/lib/inference/config.ts";
 import {
   normalizeNativeNvidiaProviderAttachment,
   NVIDIA_HOSTED_CREDENTIAL_ENV,
@@ -12,7 +13,20 @@ import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 export { requirePublicNvidiaSwitchKey } from "../fixtures/hosted-inference.ts";
 
 export const PUBLIC_NVIDIA_SWITCH_PROVIDER = "nvidia-prod";
-export const PUBLIC_NVIDIA_SWITCH_MODEL = "nvidia/nemotron-3-super-120b-a12b";
+export const PUBLIC_NVIDIA_SWITCH_MODEL = DEFAULT_CLOUD_MODEL;
+
+// The public endpoint reports its serving deployment, not the requested ID, in a
+// Super VL response. E2E runs 39548034650 and 39551307701 observed this value for
+// every Hermes, OpenClaw, and Pi request. The public model catalog lists no
+// selectable model with this name, so it cannot match another public selection.
+const PUBLIC_NVIDIA_RESPONSE_MODEL_ALIASES: Readonly<Record<string, readonly string[]>> = {
+  "nvidia/nemotron-3.5-super-vl-120b-a12b": ["private/nvidia/nemotron-3.5-super-120b-a12b"],
+};
+
+/** Response model identities that prove the requested model answered. */
+export function acceptedSwitchResponseModels(requestedModel: string): readonly string[] {
+  return [requestedModel, ...(PUBLIC_NVIDIA_RESPONSE_MODEL_ALIASES[requestedModel] ?? [])];
+}
 export const PUBLIC_NVIDIA_SWITCH_ATTACHMENT_EVIDENCE =
   "provider-inspection=0;provider-name=match;provider-profile=match;provider-id=match;attachment-inspection=0;attached=true;schema=1;profile=nemoclaw-nvidia-inference-v1;provider=nemoclaw-nvidia-prod-v1";
 

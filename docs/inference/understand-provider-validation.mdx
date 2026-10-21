@@ -27,6 +27,12 @@ The `nvapi-` prefix check applies only to `NVIDIA_INFERENCE_API_KEY`.
 OpenRouter keys must be non-empty and begin with `sk-or-`.
 Other provider keys use provider-aware validation during the retry flow.
 
+## Native Local Provider Profile Verification
+
+During native local endpoint onboarding, NemoClaw retains the expected OpenShell provider profile after a successful inspection and checks it again after attaching the provider.
+If the profile changed or the follow-up export fails or times out, NemoClaw warns the gateway operator without rolling back the attachment.
+Ask the gateway operator to inspect the profile before you rely on its credential boundary.
+
 ## Provider Requests
 
 NemoClaw sends a provider-specific request that exercises the API surface intended for the route.
@@ -53,7 +59,10 @@ If the last retry fails or times out, validation stops without another Chat Comp
 <AgentOnly variant="deepagents">
 
 The managed Deep Agents runtime keeps `use_responses_api = false` and uses Chat Completions.
-NVIDIA Endpoints, supported fixed hosted providers, hosted compatible endpoints, and new Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible selections use native endpoints through sandbox-attached OpenShell providers.
+NVIDIA Endpoints, supported fixed hosted providers, and new Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible selections use native endpoints through sandbox-attached OpenShell providers.
+Hosted compatible endpoints normally use the same native path.
+Fresh Personal-tier onboarding instead keeps a hosted compatible endpoint on `inference.local` and creates no native provider attachment.
+NemoClaw refuses Personal for an existing sandbox that already has a custom native provider attachment.
 Owned Local NVIDIA NIM and retained legacy shared routes use `inference.local`.
 `NEMOCLAW_PREFERRED_API` does not change that runtime selection.
 

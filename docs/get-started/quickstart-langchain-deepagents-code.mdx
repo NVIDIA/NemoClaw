@@ -178,8 +178,9 @@ NemoClaw writes `/sandbox/.deepagents/config.toml` with an OpenAI-compatible pro
 NVIDIA Endpoints uses `https://integrate.api.nvidia.com/v1` through a least-privilege OpenShell provider attached to the sandbox.
 Supported fixed hosted providers also use their native endpoints through sandbox-attached providers.
 New Ollama, standalone vLLM, llama.cpp, and qualifying local compatible selections use their qualified host-local endpoint through a sandbox-attached OpenShell provider.
-New hosted compatible endpoints use their recorded endpoint through a sandbox-attached provider.
-Retained shared selections and owned Local NVIDIA NIM use `https://inference.local/v1`.
+New hosted compatible endpoints normally use their recorded endpoint through a sandbox-attached provider.
+A fresh Personal-tier hosted compatible selection instead uses `https://inference.local/v1` without creating a native provider attachment.
+Other retained shared selections and owned Local NVIDIA NIM also use `https://inference.local/v1`.
 Each route puts a scoped placeholder in the agent config instead of the real provider key.
 When onboarding records a reasoning effort on a `compatible-endpoint` route that uses `openai-completions`, managed startup writes that value to a root-owned file and Deep Agents Code model requests carry it as an `extra_body.reasoning_effort` request parameter.
 Leave `NEMOCLAW_REASONING_EFFORT` unset to keep the endpoint's own default.
