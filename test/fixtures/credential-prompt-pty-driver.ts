@@ -8,11 +8,11 @@ import { prompt } from "../../src/lib/credentials/store";
 const statePath = process.env.NEMOCLAW_PROMPT_PTY_STATE;
 if (!statePath) throw new Error("NEMOCLAW_PROMPT_PTY_STATE is required");
 
-async function main(): Promise<void> {
+async function main(stateFile: string): Promise<void> {
   const first = await prompt("first: ");
   if (first !== "alpha") throw new Error(`unexpected first answer: ${first}`);
 
-  fs.writeFileSync(statePath, JSON.stringify({ status: "in_progress", resumable: true }));
+  fs.writeFileSync(stateFile, JSON.stringify({ status: "in_progress", resumable: true }));
   process.stdout.write("BETWEEN_PROMPTS\n");
 
   await new Promise((resolve) => setTimeout(resolve, 200));
@@ -28,7 +28,7 @@ async function main(): Promise<void> {
   }
 }
 
-void main().catch((error: unknown) => {
+void main(statePath).catch((error: unknown) => {
   console.error(error instanceof Error ? error.stack : String(error));
   process.exitCode = 1;
 });
