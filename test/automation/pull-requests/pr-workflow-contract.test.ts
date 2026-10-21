@@ -321,6 +321,9 @@ function runSdkPackageLocator(fixture: SdkPackageLocatorFixture): Readonly<{
         GITHUB_WORKSPACE: tempRoot,
         REPOSITORY_ID: "123",
         HEAD_REPOSITORY: fixture.headRepository ?? "NVIDIA/NemoClaw",
+        CANDIDATE_SHA: "a".repeat(40),
+        UPGRADE_BASE_SHA: "b".repeat(40),
+        UPGRADE_PR_NUMBER: "123",
         PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
       },
       tempRoot,
@@ -522,7 +525,7 @@ describe("pull request and main workflow contracts", () => {
 
   // source-shape-contract: security -- Pull request jobs must never receive the GitHub Packages credential
   it("does not grant package access to pull request jobs", () => {
-    expect(prWorkflow.permissions).toEqual({ contents: "read" });
+    expect(prWorkflow.permissions).toEqual({ contents: "read", "pull-requests": "read" });
     expect(
       Object.entries(prWorkflow.jobs).filter(([, job]) => job.permissions?.packages !== undefined),
     ).toEqual([]);
@@ -581,6 +584,7 @@ describe("pull request and main workflow contracts", () => {
     expect(actions.map((action) => requiredStep(action, "Install dependencies").env)).toEqual(
       actions.map(() => ({
         NODE_AUTH_TOKEN: "${{ github.event_name == 'push' && github.token || '' }}",
+        GITHUB_TOKEN: "${{ github.event_name == 'pull_request' && github.token || '' }}",
       })),
     );
     expect(actions.map((action) => requiredStep(action, "Install dependencies").run)).toEqual([
@@ -862,10 +866,10 @@ printf '%s  %s\\n' '6bf226944684f56c84dd014e8b979d27425c0148f61b3bd99bcc6f39e9dc
     expect(result.calls).toEqual([""]);
   });
 
-  // source-shape-contract: security -- PR dependency jobs receive only the base-approved SDK archive after credential-free integrity verification
-  it("passes only the base-packaged SDK archive to pull request dependency jobs", () => {
+  // source-shape-contract: security -- The base-controlled verifier admits SDK archives before downstream candidate dependency execution
+  it("passes only an SDK archive admitted by the base-controlled verifier to dependency jobs", () => {
     const job = prWorkflow.jobs["openshell-sdk-package"];
-    expect(job.permissions).toEqual({ actions: "read", contents: "read" });
+    expect(job.permissions).toEqual({ actions: "read", contents: "read", "pull-requests": "read" });
     expect(requiredWorkflowStep(job, "Checkout base package decision").with).toMatchObject({
       ref: "${{ github.event.pull_request.base.sha }}",
       path: ".trusted-sdk-package-decision",
@@ -961,14 +965,6 @@ printf '%s  %s\\n' '6bf226944684f56c84dd014e8b979d27425c0148f61b3bd99bcc6f39e9dc
     const { result, githubOutput } = runSdkPackageLocator({ step: locateSdk, run });
     expect(result.status).not.toBe(0);
     expect(githubOutput).not.toContain("artifact_id=");
-  });
-
-  it("accepts a manually refreshed archive from trusted main", () => {
-    const { result } = runSdkPackageLocator({
-      step: locateSdk,
-      run: { ...mainSdkRun, event: "workflow_dispatch" },
-    });
-    expect(result.status, result.stderr).toBe(0);
   });
 
   it("reports artifact lookup failures without private API diagnostics", () => {

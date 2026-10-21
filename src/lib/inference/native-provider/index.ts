@@ -3,6 +3,7 @@
 
 import path from "node:path";
 import { withHermesNativeProfile } from "./hermes-profile";
+import { withCustomNativeProfile } from "./custom";
 
 import type {
   OpenShellGatewayTarget,
@@ -40,7 +41,7 @@ export class NativeProviderLifecycle<ProfileId extends string, ProviderName exte
       root,
       "managed-inference",
       "provider-profiles",
-      `${this.definition.profileId}.yaml`,
+      `${this.definition.custom ? (this.definition.custom.api === "anthropic-messages" ? "nemoclaw-anthropic-inference-v1" : "nemoclaw-openai-inference-v1") : this.definition.profileId}.yaml`,
     );
   }
 
@@ -82,11 +83,17 @@ export class NativeProviderLifecycle<ProfileId extends string, ProviderName exte
     target: OpenShellGatewayTarget,
     profilePath = this.nativeProviderProfilePath(),
   ): Promise<void> {
-    const imported = this.definition.endpointUrl
-      ? await withHermesNativeProfile(this.definition, (boundPath) =>
-          adapter.importProviderProfile({ target, profilePath: boundPath }),
+    const imported = this.definition.custom
+      ? await withCustomNativeProfile(
+          this.definition,
+          (boundPath) => adapter.importProviderProfile({ target, profilePath: boundPath }),
+          profilePath,
         )
-      : await adapter.importProviderProfile({ target, profilePath });
+      : this.definition.endpointUrl
+        ? await withHermesNativeProfile(this.definition, (boundPath) =>
+            adapter.importProviderProfile({ target, profilePath: boundPath }),
+          )
+        : await adapter.importProviderProfile({ target, profilePath });
     if (imported.ok) return;
     const collision =
       imported.error.kind === "command" && imported.error.reason === "profile_incompatible";
@@ -123,6 +130,7 @@ export class NativeProviderLifecycle<ProfileId extends string, ProviderName exte
       providerId: metadata.revision.id,
       ...(this.definition.endpointUrl ? { endpointUrl: this.definition.endpointUrl } : {}),
       ...(this.definition.allowedIps ? { allowedIps: [...this.definition.allowedIps] } : {}),
+      ...(this.definition.custom ? { custom: this.definition.custom } : {}),
     };
   }
 
@@ -151,7 +159,7 @@ export class NativeProviderLifecycle<ProfileId extends string, ProviderName exte
   }
 
   authorityPersistenceRecovery(gatewayName: string): string {
-    return `Run 'nemoclaw credentials reset ${this.definition.logicalProvider} --yes' against gateway '${gatewayName}', then retry.`;
+    return `Run 'nemoclaw credentials reset ${this.definition.custom ? this.definition.providerName : this.definition.logicalProvider} --yes' against gateway '${gatewayName}', then retry.`;
   }
 
   async removeNewNativeProvider(input: {
@@ -318,7 +326,7 @@ export class NativeProviderLifecycle<ProfileId extends string, ProviderName exte
 
     if (input.expected) {
       throw new NativeProviderError(
-        `OpenShell provider '${this.definition.providerName}' is missing. Recreate the sandbox before using native ${this.definition.label} inference. No provider was changed.`,
+        `OpenShell provider '${this.definition.providerName}' is missing. If this gateway has no sandboxes after a reinstall, complete uninstall without --keep-openshell, then onboard again. Otherwise, recreate the sandbox before using native ${this.definition.label} inference. No provider was changed.`,
       );
     }
 

@@ -52,6 +52,68 @@ afterEach(() => {
 });
 
 describe("base image resolver helper (#6957)", () => {
+  it.each(["sandbox", "hermes"] as const)(
+    "rejects stale %s security packages before selecting a base",
+    (agent) => {
+      const bin = fakeDocker(`
+printf "%s\\0" "$@" >> "$DOCKER_LOG"
+printf "\\0" >> "$DOCKER_LOG"
+if [[ "$1" == pull || "$1" == build ]]; then exit 0; fi
+if [[ "$1" == image && "$2" == inspect ]]; then printf "%s\\n" "$REMOTE_DIGEST"; exit 0; fi
+if [[ "$1" == run ]]; then
+  while (($#)); do
+    if [[ "$1" == --entrypoint ]]; then entrypoint="$2"; image="$3"; break; fi
+    shift
+  done
+  if [[ "$entrypoint" == /usr/bin/ldd ]]; then printf "ldd (Debian GLIBC 2.41) 2.41\\n"; exit 0; fi
+  if [[ "$*" == *security_inventory=* ]]; then
+    [[ "$image" == nemoclaw-*-local ]]
+    exit
+  fi
+  exit 0
+fi
+exit 2`);
+      // Keep candidate discovery offline; a changed local input selects the
+      // build fallback after every remote inventory has been rejected.
+      writeFileSync(path.join(bin, "git"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+      const githubEnv = path.join(bin, "github.env");
+      const dockerLog = path.join(bin, "docker.log");
+      writeFileSync(githubEnv, "");
+      const action = agent === "hermes" ? hermesAction : sandboxAction;
+      const script = action.runs.steps.find((step) => step.run)?.run ?? "";
+      const localImage =
+        agent === "hermes" ? "nemoclaw-hermes-base-local" : "nemoclaw-sandbox-base-local";
+      const result = spawnSync("bash", ["--noprofile", "--norc", "-c", script], {
+        cwd: repoRoot,
+        encoding: "utf8",
+        timeout: execTimeout(),
+        env: {
+          ...process.env,
+          PATH: `${bin}:${process.env.PATH}`,
+          GITHUB_ACTION_PATH: path.join(repoRoot, `.github/actions/resolve-${agent}-base-image`),
+          GITHUB_ENV: githubEnv,
+          GITHUB_SHA: "1".repeat(40),
+          DOCKER_LOG: dockerLog,
+          REMOTE_DIGEST: `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:${"b".repeat(64)}`,
+        },
+      });
+      expect(result.status, result.stderr).toBe(0);
+      expect(readFileSync(githubEnv, "utf8").trim()).toBe(
+        `${agent === "hermes" ? "HERMES_BASE_IMAGE" : "BASE_IMAGE"}=${localImage}`,
+      );
+      const calls = readFileSync(dockerLog, "utf8")
+        .split("\0\0")
+        .filter(Boolean)
+        .map((call) => call.split("\0").filter(Boolean));
+      expect(calls.filter((args) => args[0] === "build")).toHaveLength(1);
+      expect(
+        calls.some(
+          (args) => args.includes(localImage) && args.some((arg) => arg.includes("dpkg-query")),
+        ),
+      ).toBe(true);
+    },
+  );
+
   it("executes the sandbox action and exports a compatible candidate", () => {
     const bin = fakeDocker(`
 if [[ "$1" == pull ]]; then exit 0; fi
@@ -274,7 +336,7 @@ if [[ "$1" == run ]]; then
   done
   if [[ "$entrypoint" == /usr/bin/ldd ]]; then printf "ldd (GLIBC 2.39) 2.39\\n"; exit 0; fi
   if [[ "$entrypoint" == /bin/sh ]]; then
-    [[ "\${@: -1}" == "3.5.7-1~deb13u3" ]]
+    [[ "\${@: -1}" == *'"libssl3t64=3.5.7-1~deb13u3"'* ]]
     if [[ "$image" == "$REMOTE_DIGEST" ]]; then exit 1; fi
     exit "$LOCAL_STATUS"
   fi
@@ -303,7 +365,7 @@ exit 2`);
       },
     });
     expect(result.status, result.stderr).toBe(status);
-    expect(result.stdout).toContain("does not match OpenSSL 3.5.7-1~deb13u3");
+    expect(result.stdout).toContain("does not match the reviewed security package inventory");
     expect(readFileSync(githubEnv, "utf8")).toBe(exported);
     const calls = readFileSync(dockerLog, "utf8")
       .split("\0\0")

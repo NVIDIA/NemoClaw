@@ -10,7 +10,7 @@ export interface TelemetryDeliveryConfig {
   localReceiver?: boolean;
 }
 
-// Registration and TEST validation are separate from Production activation.
+// Ordinary and QA operations use TEST until a separate Production cutover.
 export const telemetryRuntime: { config: TelemetryDeliveryConfig | null } = { config: null };
 
 export function shouldSuppressTelemetry(env: NodeJS.ProcessEnv): boolean {
@@ -36,12 +36,7 @@ export function allowedTelemetryCollection(
   config: TelemetryDeliveryConfig | null,
   testLabel: string | null,
 ): boolean {
-  return (
-    config !== null &&
-    allowedTelemetryEndpoint(config) &&
-    testLabel !== null &&
-    (config.localReceiver === true || testLabel.length > 0)
-  );
+  return config !== null && allowedTelemetryEndpoint(config) && testLabel !== null;
 }
 
 /** Select the fixed TEST receiver before a CLI or installer operation starts. */
@@ -51,7 +46,7 @@ export function resolveTelemetryDeliveryConfig(
   if (shouldSuppressTelemetry(env)) return null;
   const label = readTelemetryTestLabel(env);
   if (label === null) return null;
-  if (!telemetryRuntime.config && label.length > 0) {
+  if (!telemetryRuntime.config) {
     telemetryRuntime.config = { endpoint: new URL(TEST_TELEMETRY_ENDPOINT) };
   }
   return allowedTelemetryCollection(telemetryRuntime.config, label)

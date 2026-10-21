@@ -52,8 +52,16 @@ If the last retry fails or times out, validation stops without another Chat Comp
 
 <AgentOnly variant="deepagents">
 
-The managed Deep Agents runtime keeps `use_responses_api = false` and uses Chat Completions. NVIDIA Endpoints and supported fixed hosted providers use native endpoints through sandbox-attached OpenShell providers. Custom and local providers retain the shared `inference.local` route.
+The managed Deep Agents runtime keeps `use_responses_api = false` and uses Chat Completions.
+NVIDIA Endpoints, supported fixed hosted providers, hosted compatible endpoints, and new Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible selections use native endpoints through sandbox-attached OpenShell providers.
+Owned Local NVIDIA NIM and retained legacy shared routes use `inference.local`.
 `NEMOCLAW_PREFERRED_API` does not change that runtime selection.
+
+</AgentOnly>
+
+<AgentOnly variant="openclaw">
+
+New OpenClaw Ollama, standalone vLLM, and llama.cpp selections use their recorded sandbox-attached native provider for validation. Local NVIDIA NIM, user-supplied compatible endpoints, and retained shared local selections use `inference.local`. An older OpenClaw Ollama, standalone vLLM, or llama.cpp sandbox without a native attachment can use supported shared-route model switches, but cannot resume or rebuild. Back it up and re-onboard with `--fresh --name <sandbox-name> --recreate-sandbox`. Owned Local NVIDIA NIM sandboxes can resume or rebuild on the shared route.
 
 </AgentOnly>
 

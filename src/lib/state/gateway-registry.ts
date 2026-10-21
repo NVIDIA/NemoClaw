@@ -3,6 +3,8 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
+import { withRegistryLockAt } from "./registry/lock";
 
 import { isErrnoException } from "../core/errno";
 import { isObjectRecord } from "../core/json-types";
@@ -376,4 +378,94 @@ export function listRecordedModelRouterPorts(home: string): number[] {
     if (port !== null) ports.add(port);
   }
   return [...ports].sort((left, right) => left - right);
+}
+
+const GATEWAY_AUTHORITY_FIELDS = [
+  "nativeNvidiaProviderAuthorities",
+  "nativeHostedProviderAuthorities",
+] as const;
+
+function selectedAuthorities(
+  registry: GatewayRegistryDocument,
+  gatewayName: string,
+): Record<string, unknown> & { nativeLocalProviderAuthorities: Record<string, unknown> } {
+  return {
+    ...Object.fromEntries(
+      GATEWAY_AUTHORITY_FIELDS.map((field) => [
+        field,
+        isObjectRecord(registry[field]) ? registry[field][gatewayName] : undefined,
+      ]),
+    ),
+    nativeLocalProviderAuthorities: Object.fromEntries(
+      Object.entries(
+        isObjectRecord(registry.nativeLocalProviderAuthorities)
+          ? registry.nativeLocalProviderAuthorities
+          : {},
+      ).filter(([, receipt]) => isObjectRecord(receipt) && receipt.gatewayName === gatewayName),
+    ),
+  };
+}
+
+/** Call the returned operation only after the owned gateway resources and state are removed. */
+export function prepareGatewayProviderAuthorityRetirement(input: {
+  home: string;
+  registryFile: string;
+  gatewayName: string;
+  gatewayPort: number;
+  writeAtomic: (home: string, file: string, value: unknown) => void;
+}): ((pruned: boolean) => void) | undefined {
+  const { home, registryFile, gatewayName, gatewayPort } = input;
+  assertGatewayStatePathSafe(home, `${registryFile}.lock`);
+  if (!readGatewayRegistryFile(home, registryFile)) return undefined;
+  const initial = withRegistryLockAt(registryFile, () =>
+    readGatewayRegistryFile(home, registryFile),
+  );
+  if (!initial) throw new Error("Sandbox registry disappeared before uninstall cleanup.");
+  const expected = selectedAuthorities(initial, gatewayName);
+  if (
+    GATEWAY_AUTHORITY_FIELDS.every((field) => expected[field] === undefined) &&
+    Object.keys(expected.nativeLocalProviderAuthorities).length === 0
+  )
+    return undefined;
+  const selectedRows = (registry: GatewayRegistryDocument) =>
+    Object.fromEntries(
+      Object.entries(registry.sandboxes).filter(
+        ([, entry]) => registryEntryGatewayPort(entry) === gatewayPort,
+      ),
+    );
+  const expectedRows = selectedRows(initial);
+  return (pruned) => {
+    // A full purge needs no metadata write and must not recreate the state root.
+    if (!readGatewayRegistryFile(home, registryFile)) return;
+    return withRegistryLockAt(registryFile, () => {
+      const current = readGatewayRegistryFile(home, registryFile);
+      // A purged registry has no ownership records to retire.
+      if (!current) return;
+      if (
+        !isDeepStrictEqual(selectedAuthorities(current, gatewayName), expected) ||
+        !isDeepStrictEqual(selectedRows(current), pruned ? {} : expectedRows)
+      ) {
+        throw new Error(
+          "Gateway provider authority or sandbox registrations changed during uninstall; retained current authority.",
+        );
+      }
+      let changed = false;
+      for (const field of GATEWAY_AUTHORITY_FIELDS) {
+        const authorities = current[field];
+        if (!isObjectRecord(authorities) || !Object.hasOwn(authorities, gatewayName)) continue;
+        delete authorities[gatewayName];
+        if (Object.keys(authorities).length === 0) delete current[field];
+        changed = true;
+      }
+      if (isObjectRecord(current.nativeLocalProviderAuthorities)) {
+        for (const name of Object.keys(expected.nativeLocalProviderAuthorities)) {
+          delete current.nativeLocalProviderAuthorities[name];
+          changed = true;
+        }
+        if (Object.keys(current.nativeLocalProviderAuthorities).length === 0)
+          delete current.nativeLocalProviderAuthorities;
+      }
+      if (changed) input.writeAtomic(home, registryFile, current);
+    });
+  };
 }

@@ -31,23 +31,24 @@ Do not use this path on a shared or routed network without separately reviewed i
 
 ## Select a Trusted Pair
 
-When no peer or model is selected, Station Express selects `nemotron-3-ultra-550b-a55b`.
+When no peer or model is selected, Station Express checks for a trusted pair before choosing the serving recipe.
 It derives one counterpart from each of two configured private `/30` ConnectX-8 rails.
 It consults existing SSH trust only for those two addresses.
 
 At least one derived address must already be trusted.
 If both addresses are trusted, their host keys must identify one SSH host.
 The Stations must pass reciprocal identity, GPU, route, neighbor, MAC, rail, and jumbo-frame checks.
-After qualification, the installer prepares the peer with the same reviewed helper and exports the qualified peer.
+After qualification, the installer prepares the peer with the same reviewed helper, exports the qualified peer, and selects `nemotron-3-ultra-550b-a55b` for distributed serving.
 
 No managed-vLLM image or model download starts before the pair qualification or single-Station fallback decision completes.
-If no trusted pair qualifies, Express retains the single-Station Ultra recipe.
+If no trusted pair qualifies, a new installation uses the catalog's single-Station default, Nemotron 3.5 Super VL NVFP4.
+An existing legacy single-Station Ultra workload retains Ultra instead of switching models.
 When Express recognizes an existing legacy single-Station workload, that workload must remain unchanged during peer discovery.
 If it changes, the installer stops and reports the image and ownership-contract mismatch instead of continuing the upgrade.
 Inspect the `nemoclaw-vllm` container with `docker inspect nemoclaw-vllm`.
 Restore the original single-Station workload before retrying, or stop the upgrade if the change was intentional.
 If the read-only preparation check finds an active vLLM workload on an automatically discovered peer, Express leaves that peer unchanged.
-It retains the single-Station Ultra recipe.
+The local host follows the same single-Station selection rules above.
 
 Set `NEMOCLAW_DGX_STATION_PEER` to request one already-trusted peer.
 The installer stops instead of falling back when that peer does not qualify.
@@ -66,6 +67,10 @@ A missing, malformed, or mismatched ownership field remains foreign state and st
 For the first non-interactive setup, pass the managed provider and peer to the shell installer.
 The installer qualifies the pair and creates the peer binding that managed vLLM requires.
 Do not set `NEMOCLAW_DGX_STATION_SSH_BINDING` yourself or run `$$nemoclaw onboard` directly for the first pair setup.
+The installer and supported CLI operations attempt anonymous completion telemetry to NVIDIA's fixed TEST receiver by default.
+Run `export NEMOCLAW_DISABLE_TELEMETRY=1` in this shell before installation to suppress collection and delivery.
+Repeat it in any new shell used for NemoClaw CLI commands.
+Refer to [Operation Telemetry](/user-guide/openclaw/security/best-practices#operation-telemetry) for details.
 
 ```bash
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | \

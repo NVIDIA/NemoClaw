@@ -57,6 +57,15 @@ describe("model prompt helpers", () => {
     expect(result).toBe("live/default");
   });
 
+  it("selects hosted Super VL after the existing cloud model choices", async () => {
+    const result = await promptCloudModel({
+      promptFn: promptSequence(["3"]),
+      writeLine: vi.fn(),
+    });
+
+    expect(result).toBe("nvidia/nemotron-3.5-super-vl-120b-a12b");
+  });
+
   it("keeps a separate safe custom model as the Other prefill (#5827)", async () => {
     const promptFn = promptSequence(["2", ""]);
     const validateNvidiaEndpointModelFn = vi.fn((model: string) => ({

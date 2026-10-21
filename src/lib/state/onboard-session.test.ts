@@ -974,6 +974,18 @@ describe("onboard session", () => {
     expect(loaded.metadata.hostMounts).not.toBe(hostMounts);
   });
 
+  it("keeps only the selected GPU mode and device in persisted GPU intent", () => {
+    session.saveSession(session.createSession());
+    const persisted = JSON.parse(fs.readFileSync(session.SESSION_FILE, "utf8"));
+    persisted.sandboxGpuSelection = { mode: "auto", device: null, token: "do-not-retain" };
+    fs.writeFileSync(session.SESSION_FILE, JSON.stringify(persisted));
+
+    const loaded = requireLoadedSession(session.loadSession());
+    expect(loaded.sandboxGpuSelection).toEqual({ mode: "auto", device: null });
+    session.saveSession(loaded);
+    expect(fs.readFileSync(session.SESSION_FILE, "utf8")).not.toContain("do-not-retain");
+  });
+
   it("preserves a fail-closed marker for malformed host mount metadata", () => {
     const malformed = session.createSession();
     fs.mkdirSync(path.dirname(session.SESSION_FILE), { recursive: true });
