@@ -255,6 +255,14 @@ it.each([undefined, "", "linux/s390x", "windows/amd64"])(
 
 const publishedBaseCases = [
   {
+    candidateContents: "export const version = 2;\n",
+    candidatePath: "scripts/security/inventory.mts",
+    expectedLocal: true,
+    failPublishedPull: false,
+    rejectCopyParsing: false,
+    title: "builds locally when a mounted security input changed",
+  },
+  {
     candidateContents: "unrelated candidate change\n",
     candidatePath: "README.md",
     expectedLocal: false,
@@ -366,6 +374,7 @@ it.each(
   const copyParser = "scripts/lib/dockerfile-copy-sources.mts";
   const fixtureResolver = path.join(temporaryRoot, "scripts/checks/resolve-managed-pr-base.sh");
   const securityPatch = "scripts/security/patches/libssh2-1.11.1-cve-2026.patch";
+  const mountedInventory = "scripts/security/inventory.mts";
   const unsupportedCopy = rejectCopyParsing ? 'COPY ["README.md", "/tmp/README.md"]\n' : "";
   fs.mkdirSync(agentRoot, { recursive: true });
   fs.mkdirSync(path.dirname(fixtureResolver), { recursive: true });
@@ -373,7 +382,7 @@ it.each(
   fs.mkdirSync(path.join(temporaryRoot, path.dirname(securityPatch)), { recursive: true });
   fs.writeFileSync(
     path.join(agentRoot, "Dockerfile.base"),
-    `FROM scratch\nCOPY --chmod=0444 ${securityPatch} /tmp/libssh2.patch\nCOPY agents/langchain-deepagents-code/requirements.lock /tmp/requirements.lock\nCOPY agents/langchain-deepagents-code/validate-runtime-contract.py /tmp/validate-runtime-contract.py\nCOPY ${adversarialInput} /tmp/security-contract\n${unsupportedCopy}`,
+    `FROM scratch\nCOPY --chmod=0444 ${securityPatch} /tmp/libssh2.patch\nCOPY agents/langchain-deepagents-code/requirements.lock /tmp/requirements.lock\nCOPY agents/langchain-deepagents-code/validate-runtime-contract.py /tmp/validate-runtime-contract.py\nCOPY ${adversarialInput} /tmp/security-contract\nRUN --mount=type=bind,source=${mountedInventory},target=/inventory.mts node /inventory.mts\n${unsupportedCopy}`,
   );
   fs.writeFileSync(path.join(agentRoot, "requirements.lock"), "deepagents==0.7.5\n");
   fs.writeFileSync(path.join(agentRoot, "validate-runtime-contract.py"), "print('ok')\n");
@@ -382,6 +391,7 @@ it.each(
   fs.chmodSync(fixtureResolver, 0o755);
   fs.copyFileSync(path.join(repoRoot, copyParser), path.join(temporaryRoot, copyParser));
   fs.writeFileSync(path.join(temporaryRoot, securityPatch), "security patch v1\n");
+  fs.writeFileSync(path.join(temporaryRoot, mountedInventory), "export const version = 1;\n");
   fs.writeFileSync(path.join(temporaryRoot, ".dockerignore"), ".git\n");
   runGit(
     "add",
@@ -391,6 +401,7 @@ it.each(
     `:(literal)${adversarialInput}`,
     copyParser,
     securityPatch,
+    mountedInventory,
   );
   runGit("commit", "--quiet", "-m", "test: add base");
   const publishedSourceSha = runGit("rev-parse", "HEAD");

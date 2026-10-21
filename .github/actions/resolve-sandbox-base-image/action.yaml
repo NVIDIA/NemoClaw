@@ -7,6 +7,14 @@ description: Resolve the sandbox base image from GHCR, falling back to a local D
 runs:
   using: composite
   steps:
+    - name: Set up security inventory tooling
+      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      with:
+        node-version: 24.18.1
+
+    - name: Install reviewed npm
+      uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
+
     - name: Resolve sandbox base image
       shell: bash
       run: |
@@ -16,6 +24,8 @@ runs:
         min_glibc="2.39"
         base_inputs=(
           Dockerfile.base
+          scripts/security/
+          src/lib/sandbox-base-image/security-package-specs.ts
           agents/openclaw/openclaw-runtime/package.json
           agents/openclaw/openclaw-runtime/package-lock.json
           nemoclaw-blueprint/blueprint.yaml
@@ -41,6 +51,10 @@ runs:
           version="$(resolver_glibc_version "$ref" || true)"
           if ! resolver_glibc_ok "$version" "$min_glibc"; then
             echo "::warning::Sandbox base image ${ref} has glibc ${version:-unknown}; need >= ${min_glibc}"
+            return 1
+          fi
+          if ! resolver_security_inventory_ok "$ref" openclaw; then
+            echo "::warning::Sandbox base image ${ref} does not match the reviewed security package inventory; trying another candidate"
             return 1
           fi
           resolver_write_env BASE_IMAGE "$ref" || return 1
@@ -69,6 +83,10 @@ runs:
           version="$(resolver_glibc_version nemoclaw-sandbox-base-local || true)"
           if ! resolver_glibc_ok "$version" "$min_glibc"; then
             echo "::error::Local sandbox base image has glibc ${version:-unknown}; need >= ${min_glibc}"
+            exit 1
+          fi
+          if ! resolver_security_inventory_ok nemoclaw-sandbox-base-local openclaw; then
+            echo "::error::Local sandbox base image does not match the reviewed security package inventory"
             exit 1
           fi
           resolver_write_env BASE_IMAGE nemoclaw-sandbox-base-local
