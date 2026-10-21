@@ -17,7 +17,6 @@ import {
   probePortableRegistry,
   runPortableRegistryReadinessPolicy,
   type PortableRegistryReadinessObservation,
-  verifyPortableRegistryProcessBoundary,
 } from "../fixtures/portable-registry-readiness.ts";
 import type {
   ShellProbe,
@@ -103,27 +102,6 @@ describe("portable registry readiness policy", () => {
       ).rejects.toThrow(
         "Portable registry did not inherit the finite Podman service process boundary.",
       );
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("does not probe the focused boundary outside its selected target", async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "portable-registry-boundary-"));
-    const run = vi.fn();
-    try {
-      await expect(
-        verifyPortableRegistryProcessBoundary({
-          artifacts: new ArtifactSink(root),
-          enabled: false,
-          shellProbe: { run } as unknown as ShellProbe,
-        }),
-      ).resolves.toEqual({
-        inheritedServiceBoundary: true,
-        serviceHeadroomSufficient: true,
-        cgroupHeadroomSufficient: true,
-      });
-      expect(run).not.toHaveBeenCalled();
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

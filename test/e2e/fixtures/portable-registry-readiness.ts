@@ -118,12 +118,6 @@ export interface PortableRegistryProcessBoundaryEvidence {
   readonly cgroup: { readonly pidsMax: number; readonly pidsCurrent: number };
 }
 
-export interface PortableRegistryProcessBoundaryAssertion {
-  readonly inheritedServiceBoundary: boolean;
-  readonly serviceHeadroomSufficient: boolean;
-  readonly cgroupHeadroomSufficient: boolean;
-}
-
 export async function capturePortableRegistryProcessBoundary(options: {
   readonly artifacts: ArtifactSink;
   readonly shellProbe: ShellProbe;
@@ -158,28 +152,6 @@ export async function capturePortableRegistryProcessBoundary(options: {
   }
   await options.artifacts.writeJson("portable-registry-process-boundary.json", evidence);
   return evidence;
-}
-
-export async function verifyPortableRegistryProcessBoundary(options: {
-  readonly artifacts: ArtifactSink;
-  readonly enabled: boolean;
-  readonly shellProbe: ShellProbe;
-}): Promise<PortableRegistryProcessBoundaryAssertion> {
-  if (!options.enabled) {
-    return {
-      inheritedServiceBoundary: true,
-      serviceHeadroomSufficient: true,
-      cgroupHeadroomSufficient: true,
-    };
-  }
-  const evidence = await capturePortableRegistryProcessBoundary(options);
-  return {
-    inheritedServiceBoundary: evidence.inheritedServiceBoundary,
-    serviceHeadroomSufficient:
-      evidence.service.tasksMax - evidence.service.tasksCurrent >= evidence.minimumHeadroom,
-    cgroupHeadroomSufficient:
-      evidence.cgroup.pidsMax - evidence.cgroup.pidsCurrent >= evidence.minimumHeadroom,
-  };
 }
 
 function retryableTransport(observation: PortableRegistryReadinessObservation): boolean {

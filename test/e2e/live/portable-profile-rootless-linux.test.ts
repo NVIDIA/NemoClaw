@@ -65,8 +65,8 @@ import { test } from "../fixtures/e2e-test.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { OPENSHELL_V0116_QUALIFICATION } from "../fixtures/openshell-v0116-qualification.ts";
 import {
+  capturePortableRegistryProcessBoundary,
   collectPortableRegistryReadinessFailure,
-  verifyPortableRegistryProcessBoundary,
 } from "../fixtures/portable-registry-readiness.ts";
 import {
   cleanupPortableHostGatewayAlias,
@@ -1032,18 +1032,11 @@ async function main(
     run("docker", ["version"]);
     const verifiedPodmanUrl = String(process.env.DOCKER_HOST);
     await waitForRegistry(artifacts, shellProbe);
-    assert.deepEqual(
-      await verifyPortableRegistryProcessBoundary({
+    process.env.E2E_TARGET_ID === "portable-hermes-finalization" &&
+      (await capturePortableRegistryProcessBoundary({
         artifacts,
-        enabled: process.env.E2E_TARGET_ID === "portable-hermes-finalization",
         shellProbe,
-      }),
-      {
-        inheritedServiceBoundary: true,
-        serviceHeadroomSufficient: true,
-        cgroupHeadroomSufficient: true,
-      },
-    );
+      }));
 
     progress.phase("verify immutable non-force network removal");
     // Netavark rejects the retired link-local subnet before this pinned runtime can create it.

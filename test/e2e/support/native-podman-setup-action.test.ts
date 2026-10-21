@@ -1056,7 +1056,7 @@ exec /bin/bash "$@"
       liveSource.indexOf("assert.equal(process.env.DOCKER_HOST, `unix://${expectedPodmanSocket}`)"),
     ).toBeGreaterThanOrEqual(0);
     expect(liveSource).toContain('process.env.E2E_TARGET_ID === "portable-hermes-finalization"');
-    expect(liveSource).toContain("verifyPortableRegistryProcessBoundary");
+    expect(liveSource).toContain("capturePortableRegistryProcessBoundary");
     expect(liveSource).not.toContain("HostConfig as Record<string, unknown>");
     expect(liveSource).toContain(": `${runtimeDir}/podman/podman.sock`");
     expect(liveSource.indexOf('run("docker", ["version"])')).toBeGreaterThan(
