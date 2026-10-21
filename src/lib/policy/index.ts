@@ -5,7 +5,6 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import readline from "node:readline";
 import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 
@@ -27,9 +26,11 @@ import { loadAgent, requireAgentPolicyAdditionsPath } from "../agent/defs";
 import { CLI_NAME } from "../cli/branding";
 import {
   cancelPromptWithPendingEof,
+  createStdinPromptInterface,
   pendingStdinEofError,
+  raisePromptInterrupt,
   takePendingStdinEof,
-} from "../core/pending-stdin-eof";
+} from "../core/prompt-terminal";
 import {
   getMessagingPolicyKeyAliases,
   getMessagingPolicyPresetValidationWarnings,
@@ -2224,7 +2225,7 @@ function askPreset(question: string): Promise<string> {
 
 function readPresetAnswer(question: string): Promise<string> {
   return new Promise<string>((resolve, reject) => {
-    const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
+    const rl = createStdinPromptInterface();
     let finished = false;
     const finish = (settle: () => void) => {
       if (finished) return;
@@ -2240,7 +2241,7 @@ function readPresetAnswer(question: string): Promise<string> {
     // SIGINT and the close that follows is ignored.
     rl.on("SIGINT", () => {
       finish(() => reject(Object.assign(new Error("Prompt interrupted"), { code: "SIGINT" })));
-      process.kill(process.pid, "SIGINT");
+      raisePromptInterrupt();
     });
     rl.on("close", () => finish(() => reject(pendingStdinEofError())));
     rl.question(question, (answer: string) => finish(() => resolve(answer)));

@@ -20,9 +20,13 @@ describe("stringSetsEqual", () => {
   });
 });
 
-describe("setupHermesToolGateways interactive selector EOF (#12169)", () => {
+describe("setupHermesToolGateways interactive selector", () => {
+  const savedExitCode = process.exitCode;
+
   afterEach(() => {
+    process.exitCode = savedExitCode;
     vi.unstubAllEnvs();
+    vi.restoreAllMocks();
   });
 
   function openSelector() {
@@ -46,6 +50,24 @@ describe("setupHermesToolGateways interactive selector EOF (#12169)", () => {
       });
     return { input, select };
   }
+
+  it("rejects with SIGINT, pins exit code 130 and re-raises SIGINT on Ctrl-C", async () => {
+    const { input, select } = openSelector();
+    const killSpy = vi
+      .spyOn(process, "kill")
+      .mockImplementation((() => true) as typeof process.kill);
+    process.exitCode = undefined;
+
+    const pending = select();
+    await vi.waitFor(() => expect(input.setRawMode).toHaveBeenCalledWith(true));
+    input.write("\u0003");
+
+    await expect(pending).rejects.toMatchObject({ message: "Prompt interrupted", code: "SIGINT" });
+    expect(process.exitCode).toBe(130);
+    expect(killSpy).toHaveBeenCalledWith(process.pid, "SIGINT");
+    expect(input.setRawMode).toHaveBeenLastCalledWith(false);
+    expect(input.listenerCount("data")).toBe(0);
+  });
 
   it("cancels on an EOF queued before the menu enters raw mode", async () => {
     const { input, select } = openSelector();
