@@ -86,13 +86,13 @@ runs:
         TOOLCHAIN_DIRECTORY: ${{ runner.temp }}/native-podman-e2e-toolchain
       run: |
         set -euo pipefail
-        service_tasks_max_line=()
+        service_tasks_max_line=""
         if [[ -n "$SERVICE_TASKS_MAX" ]]; then
           if [[ ! "$SERVICE_TASKS_MAX" =~ ^[1-9][0-9]*$ ]]; then
             echo "::error::Native Podman service TasksMax must be a positive integer" >&2
             exit 1
           fi
-          service_tasks_max_line=("TasksMax=$SERVICE_TASKS_MAX")
+          service_tasks_max_line="TasksMax=$SERVICE_TASKS_MAX"
         fi
         setup_completed=false
         cleanup_interrupted_setup() {
@@ -373,20 +373,25 @@ runs:
           "PATH=$toolchain_install_root/bin:$PATH" \
           "XDG_RUNTIME_DIR=$runtime_directory" >"$service_environment"
         chmod 0600 "$service_environment"
-        printf '%s\n' \
-          '[Unit]' \
-          'Description=NemoClaw native Podman E2E API service' \
-          "Requires=$service_name.socket" \
-          "After=$service_name.socket dbus.socket" \
-          '' \
-          '[Service]' \
-          'Type=exec' \
-          'Delegate=true' \
-          'KillMode=process' \
-          "${service_tasks_max_line[@]}" \
-          'Environment=PODMAN_SYSTEMD_UNIT=%n' \
-          "EnvironmentFile=$service_environment" \
-          "ExecStart=$podman_service_exec" >"$service_unit"
+        {
+          printf '%s\n' \
+            '[Unit]' \
+            'Description=NemoClaw native Podman E2E API service' \
+            "Requires=$service_name.socket" \
+            "After=$service_name.socket dbus.socket" \
+            '' \
+            '[Service]' \
+            'Type=exec' \
+            'Delegate=true' \
+            'KillMode=process'
+          if [[ -n "$service_tasks_max_line" ]]; then
+            printf '%s\n' "$service_tasks_max_line"
+          fi
+          printf '%s\n' \
+            'Environment=PODMAN_SYSTEMD_UNIT=%n' \
+            "EnvironmentFile=$service_environment" \
+            "ExecStart=$podman_service_exec"
+        } >"$service_unit"
         printf '%s\n' \
           '[Unit]' \
           'Description=NemoClaw native Podman E2E API socket' \

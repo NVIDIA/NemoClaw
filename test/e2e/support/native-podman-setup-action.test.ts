@@ -991,8 +991,9 @@ exec /bin/bash "$@"
       SERVICE_TASKS_MAX: "${{ inputs.service-tasks-max }}",
     });
     expect(setupRuntime?.run).toContain('[[ ! "$SERVICE_TASKS_MAX" =~ ^[1-9][0-9]*$ ]]');
-    expect(setupRuntime?.run).toContain('service_tasks_max_line=("TasksMax=$SERVICE_TASKS_MAX")');
-    expect(setupRuntime?.run).toContain('"${service_tasks_max_line[@]}"');
+    expect(setupRuntime?.run).toContain('service_tasks_max_line="TasksMax=$SERVICE_TASKS_MAX"');
+    expect(setupRuntime?.run).toContain('if [[ -n "$service_tasks_max_line" ]]');
+    expect(setupRuntime?.run).toContain("printf '%s\\n' \"$service_tasks_max_line\"");
     expect(setupRuntime?.run).toContain("trap cleanup_interrupted_setup EXIT");
     expect(setupRuntime?.run).toContain("trap 'exit 130' INT");
     expect(setupRuntime?.run).toContain("trap 'exit 143' TERM");
