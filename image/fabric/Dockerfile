@@ -70,11 +70,11 @@ COPY image/fabric/ /build/
 COPY image/NOTICE.md docker-bake.hcl .dockerignore /build/
 RUN --mount=type=cache,target=/root/.cache/uv \
     if [ -n "$ADAPTER" ]; then uv build --python /usr/local/bin/python3 --wheel --out-dir /wheels "/src/fabric/adapters/python/$ADAPTER"; fi \
-    && python3 /build/wheel_lock.py /wheels > /own-requirements.txt \
+    && sh /build/inputs.sh lock /wheels > /own-requirements.txt \
     && uv export --project /src/fabric --frozen --no-default-groups --no-emit-local ${EXTRA:+--extra=$EXTRA} --output-file /requirements.txt \
     && cat /own-requirements.txt >> /requirements.txt \
     && uv pip install --python /opt/fabric/bin/python --require-hashes --find-links /wheels -r /requirements.txt \
-    && python3 /build/provenance.py > /provenance.json
+    && sh /build/inputs.sh provenance /build > /provenance.json
 
 FROM base AS runtime-base
 COPY --from=harness-wheels /opt/fabric /opt/fabric
