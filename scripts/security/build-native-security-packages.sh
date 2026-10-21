@@ -5,14 +5,13 @@
 set -euo pipefail
 
 readonly LIBSSH2_VERSION="1.11.1"
-readonly LIBSSH2_DEBIAN_VERSION="1.11.1-1+deb13u1"
+readonly LIBSSH2_DEBIAN_VERSION="1.11.1-1+deb13u2"
 readonly LIBSSH2_PACKAGE_VERSION="${LIBSSH2_DEBIAN_VERSION}+nemoclaw2"
 readonly LIBSSH2_SOURCE_SHA256="9954cb54c4f548198a7cbebad248bdc87dd64bd26185708a294b2b50771e3769"
 readonly PYTHON_DEBIAN_VERSION="3.13.5-2+deb13u5"
 readonly PYTHON_FIX_VERSION="${PYTHON_DEBIAN_VERSION}+nemoclaw1"
 readonly PYTHON_PARSER_SHA256="f91ec3de6331206bbe2ec3e54a05f646bd23d3c61a18d4a01b25164e070bacc9"
 readonly PYTHON_PARSER_FIXED_SHA256="4ff43a8578bda2f14686c67911b64c18e869841973722b1c623b5727491bdaf7"
-readonly DEBIAN_SNAPSHOT_URL="https://snapshot.debian.org/archive/debian/20260724T000000Z/pool/main"
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly script_dir
@@ -154,10 +153,10 @@ build_libssh2_package() {
 
   case "${architecture}" in
     amd64)
-      original_sha256="915c4ec450a369d430e0151f9e10e25044ea2f0d6e41901e00a9317e232e5683"
+      original_sha256="dbb1024c192d4d292b7cfa902b96076cfe81b56a5eed4fb28da36e8bf543e49a"
       ;;
     arm64)
-      original_sha256="600c2a845d6d14d292c765382bc7e644898762e1634a4aecf5b85329622dbbfe"
+      original_sha256="245565f4ce5493d67a3c54e26bc3d9cf28b1b70eeb912de7cda61af52268017d"
       ;;
     *)
       printf 'Unsupported architecture: %s\n' "${architecture}" >&2
@@ -180,13 +179,20 @@ build_libssh2_package() {
     cd "${source_dir}"
     ./configure \
       --prefix=/usr \
-      --disable-static \
+      --enable-static \
       --disable-docker-tests \
       --disable-sshd-tests \
       --with-crypto=openssl \
       --with-libz
     make -j"$(nproc)"
     run_libssh2_tests "${source_dir}"
+    # Exercise buffered SFTP responses through the built library, including
+    # request IDs that differ from their status and malformed NAME payloads.
+    cc -DHAVE_CONFIG_H -I. -Isrc -Iinclude \
+      "${script_dir}/libssh2-sftp-response-regression.c" \
+      src/.libs/libssh2.a -lssl -lcrypto -lz \
+      -o "${build_root}/libssh2-sftp-response-regression"
+    "${build_root}/libssh2-sftp-response-regression"
     make DESTDIR="${install_root}" install
   )
 
@@ -195,7 +201,7 @@ build_libssh2_package() {
   test -f "${install_root}/usr/lib/libssh2.so.1.0.1"
 
   download \
-    "${DEBIAN_SNAPSHOT_URL}/libs/libssh2/libssh2-1t64_${LIBSSH2_DEBIAN_VERSION}_${architecture}.deb" \
+    "https://snapshot.debian.org/archive/debian/20260906T023042Z/pool/main/libs/libssh2/libssh2-1t64_${LIBSSH2_DEBIAN_VERSION}_${architecture}.deb" \
     "${original_deb}"
   verify_sha256 "${original_sha256}" "${original_deb}"
   dpkg-deb -R "${original_deb}" "${package_root}"
@@ -232,6 +238,72 @@ build_libssh2_package() {
     "${output_dir}/libssh2-1t64.deb"
   test "$(dpkg-deb -f "${output_dir}/libssh2-1t64.deb" Version)" = \
     "${LIBSSH2_PACKAGE_VERSION}"
+}
+
+build_zlib_package() {
+  local architecture="$1"
+  local original_sha256
+  local debian_version="1:1.3.dfsg+really1.3.1-1+b1"
+  local package_version="${debian_version}+nemoclaw1"
+  local source_dir="${build_root}/zlib-source"
+  local package_root="${build_root}/zlib-package"
+  local original_deb="${build_root}/zlib-original.deb"
+  local multiarch
+
+  case "${architecture}" in
+    amd64) original_sha256="015be740d6236ad114582dea500c1d907f29e16d6db00566ca32fb68d71ac90d" ;;
+    arm64) original_sha256="209aa5cf671e97b9eb0410844fa6df4cae2e75b0c72e7802ab6c8ece13e6ddef" ;;
+    *) return 64 ;;
+  esac
+  download \
+    'https://snapshot.debian.org/archive/debian/20260906T023042Z/pool/main/z/zlib/zlib_1.3.dfsg%2Breally1.3.1.orig.tar.gz' \
+    "${build_root}/zlib.tar.gz"
+  verify_sha256 \
+    '60dd315c07f616887caa029408308a018ace66e3d142726a97db164b3b8f69fb' \
+    "${build_root}/zlib.tar.gz"
+  mkdir -p "${source_dir}"
+  tar -xzf "${build_root}/zlib.tar.gz" -C "${source_dir}" --strip-components=1
+  (
+    cd "${source_dir}"
+    CFLAGS='-O2 -fstack-protector-strong -D_FORTIFY_SOURCE=2' \
+      LDFLAGS='-Wl,-z,relro,-z,now' ./configure --shared --prefix=/usr
+    make -j"$(nproc)"
+    cc -I. "${script_dir}/zlib-write-error.c" \
+      -L. -Wl,-rpath,"${source_dir}" -lz -o write-error-test
+    # Prove that the regression reaches the bug before applying the fix.
+    local baseline_status=0
+    ./write-error-test || baseline_status="$?"
+    test "${baseline_status}" -eq 4
+    git apply --check "${patch_dir}/zlib-1.3.1-write-error.patch"
+    git apply "${patch_dir}/zlib-1.3.1-write-error.patch"
+    make -j"$(nproc)"
+    make check
+    ./write-error-test
+  )
+  download \
+    "https://snapshot.debian.org/archive/debian/20260906T023042Z/pool/main/z/zlib/zlib1g_1.3.dfsg%2Breally1.3.1-1%2Bb1_${architecture}.deb" \
+    "${original_deb}"
+  verify_sha256 "${original_sha256}" "${original_deb}"
+  test "$(dpkg-deb -f "${original_deb}" Package)" = zlib1g
+  test "$(dpkg-deb -f "${original_deb}" Version)" = "${debian_version}"
+  dpkg-deb -R "${original_deb}" "${package_root}"
+  multiarch="$(gcc -print-multiarch)"
+  local original_library="${package_root}/usr/lib/${multiarch}/libz.so.1.3.1"
+  local fixed_library="${source_dir}/libz.so.1.3.1"
+  test -f "${original_library}"
+  readelf -d "${fixed_library}" | grep -Fq '[libz.so.1]'
+  nm -D --defined-only --format=posix "${original_library}" \
+    | cut -d ' ' -f 1 | sort -u >"${build_root}/zlib-original.symbols"
+  nm -D --defined-only --format=posix "${fixed_library}" \
+    | cut -d ' ' -f 1 | sort -u >"${build_root}/zlib-fixed.symbols"
+  comm -23 "${build_root}/zlib-original.symbols" "${build_root}/zlib-fixed.symbols" \
+    >"${build_root}/zlib-missing.symbols"
+  test ! -s "${build_root}/zlib-missing.symbols"
+  install -m 0644 "${fixed_library}" "${original_library}"
+  rewrite_control_field "${package_root}/DEBIAN/control" Version "${package_version}"
+  refresh_md5sums "${package_root}"
+  dpkg-deb --build --root-owner-group "${package_root}" "${output_dir}/zlib1g.deb"
+  test "$(dpkg-deb -f "${output_dir}/zlib1g.deb" Version)" = "${package_version}"
 }
 
 build_python_fix_package() {
@@ -304,6 +376,7 @@ main() {
   architecture="$(dpkg --print-architecture)"
   build_libssh2_package "${architecture}"
   build_python_fix_package "${architecture}"
+  build_zlib_package "${architecture}"
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

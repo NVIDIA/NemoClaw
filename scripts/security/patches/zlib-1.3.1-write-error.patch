@@ -1,0 +1,22 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Backport df84af25dc1942490e1d1c899a07619152a46148 to the Debian 1.3.1
+# writer. Clear the borrowed input pointer after a direct write fails, before
+# gzclearerr() permits a later small write. See Debian bug #1146895.
+diff --git a/gzwrite.c b/gzwrite.c
+--- a/gzwrite.c
++++ b/gzwrite.c
+@@ -227,8 +227,11 @@ local z_size_t gz_write(gz_statep state, voidpc buf, z_size_t len) {
+                 n = (unsigned)len;
+             state->strm.avail_in = n;
+             state->x.pos += n;
+-            if (gz_comp(state, Z_NO_FLUSH) == -1)
++            if (gz_comp(state, Z_NO_FLUSH) == -1) {
++                state->strm.avail_in = 0;
++                state->strm.next_in = state->in;
+                 return 0;
++            }
+             len -= n;
+         } while (len);
+     }

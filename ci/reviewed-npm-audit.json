@@ -159,7 +159,7 @@
       "integrity": "sha512-M6C7UsnX815nv26qBJFYGe6aGzv+ftZLRzV6S9oRXUtXg2Yn67eVntpssT94kgkquKVSeUxerUg0j1ONp4WYQg==",
       "tarballUrl": "https://registry.npmjs.org/openclaw/-/openclaw-2026.9.2.tgz",
       "directory": "agents/openclaw/openclaw-runtime",
-      "lockSha256": "b44c7f475fe36a378ebc078dbf068bd225f8470002834ce1308872049213b633",
+      "lockSha256": "4c14e6f08cafbe3309c4f2790812c7675c2b3836614463f1ee82a4d16d19fcc4",
       "replacement": {
         "label": "OpenClaw 2026.9.5 locked runtime graph",
         "packageSpec": "openclaw@2026.9.5",
@@ -175,7 +175,7 @@
       "integrity": "sha512-egoPVYqTnWb3NjRIxo+xc8OrAI0dlPrJm9pAiZx0pImuNIV5rKhGtTnIfH/Y1ldGPVu74ibj3KR5c9U/QSdQFA==",
       "tarballUrl": "https://registry.npmjs.org/mcporter/-/mcporter-0.7.3.tgz",
       "directory": "agents/openclaw/mcporter-runtime",
-      "lockSha256": "3c81d752d50113a2781b2aa1e8f1faade088f6fe3ed0bdde6ad0fb67a364f958"
+      "lockSha256": "fb489a01077a2c93cd82bb141f4c491f7a39143a67997fbcce9865e7351a45f7"
     },
     {
       "id": "wechat-runtime",
@@ -193,11 +193,11 @@
     {
       "id": "mcp-tool-discovery-runtime",
       "label": "MCP tool discovery runtime locked production graph",
-      "packageSpec": "@modelcontextprotocol/sdk@1.31.0",
-      "integrity": "sha512-UvTMgnNlnIBO/22ob2RcVGDlcvOslQs8T59+FTGdA0L27a39fdGF/EDETNtDVK4DZGpwomlsYpRdA8UXcVL/pw==",
-      "tarballUrl": "https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.31.0.tgz",
+      "packageSpec": "@modelcontextprotocol/sdk@1.32.0",
+      "integrity": "sha512-8BviX/hK4Gd2eL1KdTwm0gfl4d3wdoErW0Jd00h6nomUAtk6IJk5vwQJc6kfWtJTzN5OEV/lgIiJKI8fiDGAlA==",
+      "tarballUrl": "https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.32.0.tgz",
       "directory": "tools/mcp-tool-discovery-runtime",
-      "lockSha256": "ccb3c75ff554bb9a8c8b94e7f98205dde1456e58df6797fc8757c635e2c58413"
+      "lockSha256": "6631147d175dae27a3d99a06eb8e6d4b7071b4304453a25cb74f0ddd0c892983"
     }
   ],
   "sourceRegistryPackageReplacement": {
