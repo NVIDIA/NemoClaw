@@ -53,7 +53,10 @@ If the last retry fails or times out, validation stops without another Chat Comp
 <AgentOnly variant="deepagents">
 
 The managed Deep Agents runtime keeps `use_responses_api = false` and uses Chat Completions.
-NVIDIA Endpoints, supported fixed hosted providers, hosted compatible endpoints, and new Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible selections use native endpoints through sandbox-attached OpenShell providers.
+NVIDIA Endpoints, supported fixed hosted providers, and new Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible selections use native endpoints through sandbox-attached OpenShell providers.
+Hosted compatible endpoints normally use the same native path.
+Fresh Personal-tier onboarding instead keeps a hosted compatible endpoint on `inference.local` and creates no native provider attachment.
+NemoClaw refuses Personal for an existing sandbox that already has a custom native provider attachment.
 Owned Local NVIDIA NIM and retained legacy shared routes use `inference.local`.
 `NEMOCLAW_PREFERRED_API` does not change that runtime selection.
 
