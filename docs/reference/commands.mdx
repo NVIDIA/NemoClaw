@@ -886,14 +886,18 @@ After provider selection, the wizard reviews the provider, model, credential sta
 
 When you edit inference, NemoClaw clears the credential staged for the discarded selection. NemoClaw preserves the sandbox name. When you edit the sandbox name, NemoClaw preserves the inference selection. The sandbox prompt shows the prior name as its default. After you apply the configuration, routine editing ends. If inference setup fails and offers a `back` recovery action, you can return to provider and model selection and then review the updated configuration again.
 
+For a hosted custom endpoint, the wizard asks for the **policy tier** before it registers inference.
+It reuses that selection when it later applies the sandbox policy.
+
 <AgentOnly variant="openclaw,hermes">
-  It then prompts for optional web search and messaging channels, builds and starts the sandbox, and
-  asks for a **policy tier** that controls the default set of network policy presets applied to the
-  sandbox.
+  For other inference providers, it then prompts for optional web search and messaging channels,
+  builds and starts the sandbox, and asks for a **policy tier** that controls the default set of
+  network policy presets applied to the sandbox.
 </AgentOnly>
 <AgentOnly variant="deepagents">
-  It then prompts for optional web search, builds and starts the sandbox, and asks for a **policy
-  tier** that controls the default set of network policy presets applied to the sandbox.
+  For other inference providers, it then prompts for optional web search, builds and starts the
+  sandbox, and asks for a **policy tier** that controls the default set of network policy presets
+  applied to the sandbox.
 </AgentOnly>
 Four tiers are available:
 

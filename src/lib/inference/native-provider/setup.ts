@@ -98,4 +98,8 @@ export async function prepareHostedNativeProvider(input: {
   return receipt;
 }
 
-export { prepareCustomNativeProvider, usesCustomNativeOnboarding } from "./custom-setup";
+export {
+  isHostedCustomEndpoint,
+  prepareCustomNativeProvider,
+  usesCustomNativeOnboarding,
+} from "./custom-setup";
