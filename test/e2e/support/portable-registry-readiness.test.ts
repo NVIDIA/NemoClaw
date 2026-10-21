@@ -71,6 +71,7 @@ describe("portable registry readiness policy", () => {
       expect(command.args[5]).toContain('[[ $registry_group == "$service_group" ]]');
       expect(command.args[5]).toContain('[[ $cgroup_max == "$tasks_max" ]]');
       expect(command.args[5]).toContain("(( cgroup_max - cgroup_current >= minimum ))");
+      expect(command.args[5]).toContain("fail_boundary service-headroom-insufficient");
       expect(options.env).not.toHaveProperty("UNRELATED_API_KEY");
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
@@ -88,7 +89,7 @@ describe("portable registry readiness policy", () => {
         exitCode: 1,
         signal: null,
         timedOut: false,
-        stdout: "",
+        stdout: JSON.stringify({ failureReason: "service-headroom-insufficient" }),
         stderr: "registry cgroup mismatch",
         artifacts: { stdout: "", stderr: "", result: "" },
       }),
@@ -100,7 +101,7 @@ describe("portable registry readiness policy", () => {
           shellProbe: { run } as unknown as ShellProbe,
         }),
       ).rejects.toThrow(
-        "Portable registry did not inherit the finite Podman service process boundary.",
+        "Portable registry process-boundary verification failed: service-headroom-insufficient.",
       );
     } finally {
       fs.rmSync(root, { recursive: true, force: true });

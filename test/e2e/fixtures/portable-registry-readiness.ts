@@ -80,22 +80,49 @@ printf 'host_tasks=%s\n' "\${host_tasks:-unavailable}"
 const PROCESS_BOUNDARY_PROBE = `
 minimum=${PORTABLE_REGISTRY_MINIMUM_PROCESS_HEADROOM}
 service=nemoclaw-native-podman-e2e.service
-service_pid=$(/usr/bin/systemctl --user show "$service" --property=MainPID --value)
-registry_pid=$(podman container inspect --format '{{.State.Pid}}' nemoclaw-portable-registry)
-[[ $service_pid =~ ^[1-9][0-9]*$ && $registry_pid =~ ^[1-9][0-9]*$ ]]
-service_group=$(awk -F: '$1 == "0" { print $3; exit }' "/proc/$service_pid/cgroup")
-registry_group=$(awk -F: '$1 == "0" { print $3; exit }' "/proc/$registry_pid/cgroup")
-[[ $service_group == /* && $service_group != / && $service_group != *'..'* ]]
-[[ $registry_group == "$service_group" ]]
-tasks_max=$(/usr/bin/systemctl --user show "$service" --property=TasksMax --value)
-tasks_current=$(/usr/bin/systemctl --user show "$service" --property=TasksCurrent --value)
-cgroup_max=$(cat "/sys/fs/cgroup$service_group/pids.max")
-cgroup_current=$(cat "/sys/fs/cgroup$service_group/pids.current")
-[[ $tasks_max =~ ^[0-9]+$ && $tasks_current =~ ^[0-9]+$ ]]
-[[ $cgroup_max =~ ^[0-9]+$ && $cgroup_current =~ ^[0-9]+$ ]]
-[[ $cgroup_max == "$tasks_max" ]]
-(( tasks_max - tasks_current >= minimum ))
-(( cgroup_max - cgroup_current >= minimum ))
+service_pid=unavailable
+registry_pid=unavailable
+service_group=unavailable
+registry_group=unavailable
+tasks_max=unavailable
+tasks_current=unavailable
+cgroup_max=unavailable
+cgroup_current=unavailable
+
+fail_boundary() {
+  jq -cn --arg failureReason "$1" --argjson minimum "$minimum" \
+    --arg servicePid "$service_pid" --arg registryPid "$registry_pid" \
+    --arg serviceGroup "$service_group" --arg registryGroup "$registry_group" \
+    --arg tasksMax "$tasks_max" --arg tasksCurrent "$tasks_current" \
+    --arg cgroupMax "$cgroup_max" --arg cgroupCurrent "$cgroup_current" \
+    '{schemaVersion: 1, failureReason: $failureReason, minimumHeadroom: $minimum,
+      service: {pid: $servicePid, cgroup: $serviceGroup, tasksMax: $tasksMax,
+        tasksCurrent: $tasksCurrent},
+      registry: {pid: $registryPid, cgroup: $registryGroup},
+      cgroup: {pidsMax: $cgroupMax, pidsCurrent: $cgroupCurrent}}'
+  exit 1
+}
+
+service_pid=$(/usr/bin/systemctl --user show "$service" --property=MainPID --value 2>/dev/null || true)
+registry_pid=$(podman container inspect --format '{{.State.Pid}}' nemoclaw-portable-registry 2>/dev/null || true)
+[[ $service_pid =~ ^[1-9][0-9]*$ && $registry_pid =~ ^[1-9][0-9]*$ ]] || \
+  fail_boundary process-identities-unavailable
+service_group=$(awk -F: '$1 == "0" { print $3; exit }' "/proc/$service_pid/cgroup" 2>/dev/null || true)
+registry_group=$(awk -F: '$1 == "0" { print $3; exit }' "/proc/$registry_pid/cgroup" 2>/dev/null || true)
+[[ $service_group == /* && $service_group != / && $service_group != *'..'* ]] || \
+  fail_boundary service-cgroup-invalid
+[[ $registry_group == "$service_group" ]] || fail_boundary registry-cgroup-mismatch
+tasks_max=$(/usr/bin/systemctl --user show "$service" --property=TasksMax --value 2>/dev/null || true)
+tasks_current=$(/usr/bin/systemctl --user show "$service" --property=TasksCurrent --value 2>/dev/null || true)
+cgroup_max=$(cat "/sys/fs/cgroup$service_group/pids.max" 2>/dev/null || true)
+cgroup_current=$(cat "/sys/fs/cgroup$service_group/pids.current" 2>/dev/null || true)
+[[ $tasks_max =~ ^[0-9]+$ && $tasks_current =~ ^[0-9]+$ ]] || \
+  fail_boundary service-task-limit-unavailable
+[[ $cgroup_max =~ ^[0-9]+$ && $cgroup_current =~ ^[0-9]+$ ]] || \
+  fail_boundary cgroup-task-limit-unavailable
+[[ $cgroup_max == "$tasks_max" ]] || fail_boundary service-cgroup-limit-mismatch
+(( tasks_max - tasks_current >= minimum )) || fail_boundary service-headroom-insufficient
+(( cgroup_max - cgroup_current >= minimum )) || fail_boundary cgroup-headroom-insufficient
 jq -cn --argjson minimum "$minimum" \
   --arg serviceGroup "$service_group" --arg registryGroup "$registry_group" \
   --argjson tasksMax "$tasks_max" --argjson tasksCurrent "$tasks_current" \
@@ -142,9 +169,8 @@ export async function capturePortableRegistryProcessBoundary(options: {
     },
   );
   if (result.exitCode !== 0 || result.signal !== null || result.timedOut) {
-    throw new Error(
-      "Portable registry did not inherit the finite Podman service process boundary.",
-    );
+    const failureReason = /"failureReason":"([a-z-]+)"/u.exec(result.stdout)?.[1] ?? "probe-failed";
+    throw new Error(`Portable registry process-boundary verification failed: ${failureReason}.`);
   }
   let evidence: PortableRegistryProcessBoundaryEvidence;
   try {
