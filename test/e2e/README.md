@@ -111,6 +111,34 @@ tests. The real-child input cases include a relative symbolic-link chain to a re
 file with spaces while stdin contains competing data. This target is selectable for
 Docker and Podman through the existing runtime matrix.
 
+## WSL2 IPv6 native-local policy proof
+
+`TC-INF-19` requires WSL2 Docker and IPv6-only ULA resolution for
+`host.openshell.internal`. It binds the authenticated host fixture on `::`,
+rejects DNS answers with an IPv4 fallback, and sends a sandbox chat through the
+OpenShell-issued credential handle. Public, link-local, and loopback IPv6 requests
+must receive `policy_denied` HTTP 403; a timeout does not satisfy denial.
+Fixture cleanup removes the sandbox and host endpoint.
+
+The `inference-routing-openclaw-native` catalogue target runs on Ubuntu Docker and
+Podman. It skips `TC-INF-19` and does not qualify the WSL2 regression.
+The WSL lane in `CI / Platform Compatibility` installs native Ubuntu Docker.
+It does not provision IPv6-only ULA resolution, so it runs its existing full
+E2E suite without invoking `TC-INF-19`.
+
+WSL2 ARM Docker Desktop qualification remains unverified. No PR catalogue
+selector currently provides that platform. Run `TC-INF-19` on a prepared
+WSL2 Docker Desktop host with IPv6-only ULA resolution before claiming this
+qualification. A passing Ubuntu catalogue run or WSL non-live shard cannot
+replace this missing live evidence.
+The source tests own CIDR membership and receipt compatibility. E2E support tests
+own resolution classification and probe command construction.
+On a prepared WSL2 Docker Desktop host, run:
+
+```bash
+NEMOCLAW_RUN_LIVE_E2E=1 npx vitest run --project e2e-live test/e2e/live/openclaw-inference-switch.test.ts -t '^TC-INF-19'
+```
+
 ## CI execution shape
 
 ### Protected DGX Spark qualification
