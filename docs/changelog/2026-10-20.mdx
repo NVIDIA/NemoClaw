@@ -16,6 +16,9 @@ It also improves uninstall recovery, managed image security, policy recovery, ag
   If OpenShell refuses a policy write, `onboard --resume` reuses the saved preset selection for the same sandbox and confirms the live policy before clearing it.
   An unavailable saved preset stops recovery with a `--fresh` hint.
   Related change: [PR #13499](https://github.com/NVIDIA/NemoClaw/pull/13499).
+- Fresh Deep Agents Code onboarding keeps a hosted custom endpoint on the shared `inference.local` route when you select the Personal policy tier.
+  NemoClaw refuses Personal for an existing sandbox that already has a custom native provider attachment; create a new sandbox instead.
+  Related change: [PR #13528](https://github.com/NVIDIA/NemoClaw/pull/13528).
 - `nemoclaw <sandbox> agent` accepts piped messages without an inline `--message` and applies the input deadline to stalled pipes.
   Deep Agents Code readiness and its Auto classifier now use the selected managed Ultra route and required request parameters.
   Related change: [PR #13444](https://github.com/NVIDIA/NemoClaw/pull/13444).
