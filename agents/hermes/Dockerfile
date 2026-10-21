@@ -1459,27 +1459,7 @@ RUN check_metadata() { \
 # hadolint ignore=DL4006
 RUN set -eu; \
     security_probe="$(node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON /opt/nemoclaw-security/scripts/security/security-package-inventory.mts probe hermes-compatible)"; \
-    sh -ec "$security_probe" || { \
-        security_inventory=/usr/local/share/nemoclaw/security-packages.txt; \
-        security_arch="$(dpkg --print-architecture)"; \
-        echo "ERROR: completed-image security packages do not match the reviewed ${security_arch} contract" >&2; \
-        if [ -f "$security_inventory" ] && [ ! -L "$security_inventory" ]; then \
-            echo "Base inventory metadata: $(stat -c '%u:%g:%a' "$security_inventory")" >&2; \
-            expected_inventory="$(mktemp)"; \
-            node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON /opt/nemoclaw-security/scripts/security/security-package-inventory.mts inventory shared "$security_arch" \
-                > "$expected_inventory"; \
-            echo "Expected inventory (-) compared with the base inventory (+):" >&2; \
-            diff -u "$expected_inventory" "$security_inventory" >&2 || true; \
-            rm -f "$expected_inventory"; \
-            while IFS='=' read -r package version; do \
-                [ "$package" = architecture ] \
-                    || echo "package=${package} inventory=${version} installed=$(dpkg-query -W -f='${Version}' "$package" 2>/dev/null || echo missing)" >&2; \
-            done < "$security_inventory"; \
-        else \
-            echo "Base inventory is missing or is not a regular file: ${security_inventory}" >&2; \
-        fi; \
-        exit 1; \
-    }; \
+    sh -ec "$security_probe"; \
     test "$(perl -e 'print $^V')" = "v5.44.0"; \
     ldd /usr/bin/jq | grep -Eq 'libonig[.]so[.]5'; \
     test "$(jq --version)" = "jq-1.8.2"; \

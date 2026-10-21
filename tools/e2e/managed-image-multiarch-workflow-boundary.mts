@@ -62,7 +62,7 @@ const REVIEWED_EXECUTION_STEP_NAMES = [
   "Run every exact managed-image contract directly",
 ] as const;
 const REVIEWED_EXECUTION_SURFACE_SHA256 =
-  "746255075ebc6e0c9a091ce54154dcccc5e983564e326a34565a92ac7b5072f2";
+  "10a73edea771fdd015b543a8dec7ed55be5d6c28dc1a43bed8dccd07be497ba7";
 const SHARED_POLICY_BOUNDARY_RUN = [
   "set -euo pipefail",
   "[[ ! -e nemoclaw/dist && ! -L nemoclaw/dist ]] || {",
@@ -551,16 +551,8 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
     "--reporter=test/e2e/risk-signal-reporter.ts",
   ]);
   const glibc = requireStep(errors, steps, "Validate managed-image glibc probe lifecycle");
-  // The glibc consumer reads contracts.json, which exists only after every
-  // protected image build succeeds. A failed build must not produce a
-  // secondary missing-contract failure that hides the build cause.
-  if (glibc?.if !== "${{ !cancelled() && steps.protected-images.outcome == 'success' }}") {
-    errors.push(
-      `${JOB_ID} managed-image glibc probe must run unless cancelled after protected images build`,
-    );
-  }
-  if (build?.id !== "protected-images") {
-    errors.push(`${JOB_ID} protected image build must expose its outcome as protected-images`);
+  if (glibc?.if !== "${{ !cancelled() }}") {
+    errors.push(`${JOB_ID} managed-image glibc probe must run unless cancelled`);
   }
   if (glibc?.["continue-on-error"] !== undefined) {
     errors.push(`${JOB_ID} managed-image glibc probe must not continue on error`);

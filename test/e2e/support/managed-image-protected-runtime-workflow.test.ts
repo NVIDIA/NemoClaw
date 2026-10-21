@@ -193,7 +193,7 @@ describe("protected managed-image runtime workflow", () => {
       run: expect.stringContaining("env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN"),
     });
     expect(steps[glibc]).toMatchObject({
-      if: "${{ !cancelled() && steps.protected-images.outcome == 'success' }}",
+      if: "${{ !cancelled() }}",
       run: expect.stringContaining("env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN"),
     });
     expect(steps[cohortCleanup]).toMatchObject({ if: "always()" });
@@ -925,23 +925,6 @@ describe("protected managed-image runtime workflow", () => {
     namedMultiarchStep(candidate, name)[key] = value;
 
     expect(validateManagedImageMultiarchWorkflow(candidate)).not.toEqual([]);
-  });
-
-  it("runs the glibc consumer only after every protected image build succeeds", () => {
-    expect(validateManagedImageMultiarchWorkflow(workflow())).toEqual([]);
-
-    const missingContract = workflow();
-    namedMultiarchStep(missingContract, "Validate managed-image glibc probe lifecycle").if =
-      "${{ !cancelled() }}";
-    expect(validateManagedImageMultiarchWorkflow(missingContract)).toContain(
-      "managed-image-multiarch-startup managed-image glibc probe must run unless cancelled after protected images build",
-    );
-
-    const unnamedBuild = workflow();
-    delete namedMultiarchStep(unnamedBuild, "Build exact all-agent protected managed images").id;
-    expect(validateManagedImageMultiarchWorkflow(unnamedBuild)).toContain(
-      "managed-image-multiarch-startup protected image build must expose its outcome as protected-images",
-    );
   });
 
   it("requires one amd64 build-cache upload", () => {

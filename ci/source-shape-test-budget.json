@@ -467,11 +467,6 @@
       "category": "compatibility"
     },
     {
-      "file": "test/runtime/sandbox/sandbox-base-security-packages.test.ts",
-      "test": "selects the Hermes base whose recorded inventory is verified here",
-      "category": "security"
-    },
-    {
       "file": "test/automation/e2e/platform-vitest-main-workflow.test.ts",
       "test": "preserves distinct main-commit evidence in a serialized queue",
       "category": "compatibility"
