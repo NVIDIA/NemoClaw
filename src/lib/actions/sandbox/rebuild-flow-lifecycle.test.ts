@@ -405,7 +405,7 @@ describe("rebuildSandbox flow: lifecycle", () => {
     expect(harness.registryUpdateSpy).toHaveBeenCalledWith(
       "alpha",
       expect.objectContaining({
-        provider: "ollama-local",
+        provider: "build",
         model: "nvidia/nemotron",
         webSearchEnabled: false,
         fromDockerfile: null,

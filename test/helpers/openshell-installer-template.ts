@@ -7,6 +7,24 @@ import path from "node:path";
 import { v00116Pins, v012Pins } from "./openshell-release-fixtures";
 import { selectHistoricalGatewayProcessReader } from "./prepared-gateway-runtime";
 
+/** Stage the verifier and its inert registry for both candidate and separate trusted checkouts. */
+export function copyTrustedInstallerVerifier(repoRoot: string, targetRoot: string): void {
+  [
+    "scripts/check-installer-hash.sh",
+    "scripts/checks/extract-installer-pins.mts",
+    "scripts/checks/openshell-trust-data.mts",
+    "ci/openshell-upgrade-trust.json",
+    "tools/e2e/candidate-openshell-trust.mts",
+    "tools/e2e/candidate-openshell-version.mts",
+    "tools/e2e/candidate-upgrade-admission.mts",
+    "tools/e2e/base-image-publication.mts",
+  ].forEach((file) => {
+    const target = path.join(targetRoot, file);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.copyFileSync(path.join(repoRoot, file), target);
+  });
+}
+
 export function brevMutationFixtures(
   ASSET_DIGESTS: ReadonlyMap<string, string>,
   ASSETS: readonly string[],

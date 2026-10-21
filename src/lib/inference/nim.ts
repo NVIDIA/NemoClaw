@@ -1116,12 +1116,14 @@ export interface NimStartOptions {
   ngcApiKey?: string;
 }
 
+export type NimStartReceipt = { name: string; id: string };
+
 export function startNimContainerByName(
   name: string,
   model: string,
   port = VLLM_PORT,
   opts: NimStartOptions = {},
-): string {
+): NimStartReceipt {
   const image = getImageForModel(model);
   if (!image) {
     console.error(`  Unknown model: ${model}`);
@@ -1155,7 +1157,7 @@ export function startNimContainerByName(
   dockerForceRm(name, { ignoreError: true });
 
   console.log(`  Starting NIM container: ${name}`);
-  dockerRunDetached(
+  const started = dockerRunDetached(
     [
       "--gpus",
       "all",
@@ -1170,7 +1172,23 @@ export function startNimContainerByName(
     ],
     runEnv ? { env: runEnv } : {},
   );
-  return name;
+  const id = started.stdout?.toString("utf-8").trim() ?? "";
+  if (!/^[0-9a-f]{64}$/u.test(id)) {
+    const receiptError = `Docker did not return a verifiable ID for NIM container '${name}'.`;
+    try {
+      const removed = dockerForceRm(name, { ignoreError: true, suppressOutput: true });
+      if (removed.status !== 0) {
+        throw new Error(`docker rm -f exited with status ${removed.status ?? "unknown"}`);
+      }
+    } catch (error) {
+      const cleanupFailure = error instanceof Error ? error.message : "docker rm -f could not run";
+      throw new Error(
+        `${receiptError} Cleanup failed: ${cleanupFailure}. Inspect and remove this container before retrying onboarding.`,
+      );
+    }
+    throw new Error(`${receiptError} Removed the named container.`);
+  }
+  return { name, id };
 }
 
 export interface WaitForNimHealthOptions {
@@ -1285,6 +1303,16 @@ export function stopNimContainerByNameOrThrow(name: string): void {
   if (stopNimContainerByName(name)) return;
   throw new Error(
     `Could not remove NIM container '${name}'. Refusing to continue because it may still own its credentials and port.`,
+  );
+}
+
+/** Remove only the exact container created by this onboarding attempt. */
+export function stopNimContainerByIdOrThrow(id: string): void {
+  if (!/^[0-9a-f]{64}$/u.test(id)) throw new Error("Invalid owned NIM container ID");
+  dockerStop(id, { ignoreError: true });
+  if (dockerRm(id, { ignoreError: true }).status === 0) return;
+  throw new Error(
+    `Could not remove owned NIM container '${id}'. Inspect and remove this exact container before retrying onboarding.`,
   );
 }
 

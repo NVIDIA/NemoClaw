@@ -3,11 +3,15 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import { nativeLocalIdentity } from "../../inference/native-local/contract";
 import type { ProviderHealthStatus } from "../../inference/health";
 import type { SandboxEntry } from "../../state/registry";
 import type { SandboxInferenceInvocationResult } from "./inference-invocation-probe";
 import type { SandboxInferenceRouteHealth } from "./inference-route-health";
 import { collectSandboxStatusSnapshot } from "./status-snapshot";
+import { probeSandboxInferenceInvocation } from "./inference-invocation-probe";
+import { recordingProbeShell } from "../../../../test/helpers/native-local-probe-shell";
+import { nativeLocalTestReceipt } from "../../../../test/helpers/inference-set";
 
 // Direct, unmocked coverage of `buildSandboxInferenceRouteHealth` through the
 // exported `collectSandboxStatusSnapshot` entry point (it is not itself
@@ -50,6 +54,112 @@ function snapshotDeps(
 }
 
 describe("collectSandboxStatusSnapshot inference route health", () => {
+  it.each([true, false])(
+    "reports native local attachment health without querying the shared route: %s (#12558)",
+    async (attached) => {
+      const binding = {
+        provider: "ollama-local",
+        endpointUrl: "http://host.openshell.internal:11434/v1",
+        credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+        authMode: "sentinel",
+        gatewayName: "nemoclaw",
+        sandboxName: "alpha",
+      } as const;
+      const receipt = {
+        ...binding,
+        ...nativeLocalIdentity(binding),
+        schemaVersion: 1 as const,
+        providerId: "owned-local-provider",
+      };
+      const options = snapshotDeps(
+        null,
+        null,
+        { ok: true },
+        {
+          provider: binding.provider,
+          gatewayName: binding.gatewayName,
+          nativeLocalProviderAttachment: receipt,
+        },
+      );
+      const observeInferenceRoute = vi.fn();
+      const verifyNativeLocalProviderAttachmentImpl = vi.fn();
+      verifyNativeLocalProviderAttachmentImpl.mockImplementation(
+        attached
+          ? async () => undefined
+          : async () => {
+              throw new Error("attachment missing");
+            },
+      );
+      const probeSandboxInferenceInvocationImpl = vi.fn(async () => ({ ok: true as const }));
+      const snapshot = await collectSandboxStatusSnapshot("alpha", {
+        ...options,
+        deps: {
+          ...options.deps,
+          inferenceRouteObserver: { observeInferenceRoute },
+          verifyNativeLocalProviderAttachmentImpl,
+          probeSandboxInferenceInvocationImpl,
+        },
+      });
+      expect(snapshot.inferenceHealth).toMatchObject({
+        ok: attached,
+        endpoint: expect.stringContaining(binding.endpointUrl),
+      });
+      expect(observeInferenceRoute).not.toHaveBeenCalled();
+      expect(verifyNativeLocalProviderAttachmentImpl).toHaveBeenCalledWith({
+        sandboxName: "alpha",
+        gatewayName: "nemoclaw",
+        expected: receipt,
+      });
+      expect(probeSandboxInferenceInvocationImpl).toHaveBeenCalledTimes(Number(attached));
+    },
+  );
+
+  it("reports bounded redacted native local verification details and recovery (#12558)", async () => {
+    const binding = {
+      provider: "ollama-local",
+      endpointUrl: "http://host.openshell.internal:11434/v1",
+      credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+      authMode: "sentinel",
+      gatewayName: "nemoclaw",
+      sandboxName: "alpha",
+    } as const;
+    const receipt = {
+      ...binding,
+      ...nativeLocalIdentity(binding),
+      schemaVersion: 1 as const,
+      providerId: "owned-local-provider",
+    };
+    const secret = `nvapi-${"a".repeat(40)}`;
+    const options = snapshotDeps(
+      null,
+      null,
+      { ok: true },
+      {
+        provider: binding.provider,
+        gatewayName: binding.gatewayName,
+        nativeLocalProviderAttachment: receipt,
+      },
+    );
+    const snapshot = await collectSandboxStatusSnapshot("alpha", {
+      ...options,
+      deps: {
+        ...options.deps,
+        verifyNativeLocalProviderAttachmentImpl: async () => {
+          throw new Error(
+            `profile changed\nAuthorization: Bearer ${secret} ${"detail ".repeat(100)}`,
+          );
+        },
+      },
+    });
+    expect(snapshot.inferenceHealth).toMatchObject({ ok: false, probed: false });
+    expect(snapshot.inferenceHealth?.detail).toContain("profile changed");
+    expect(snapshot.inferenceHealth?.detail).toContain(receipt.providerName);
+    expect(snapshot.inferenceHealth?.detail).toContain("Recreate");
+    expect(snapshot.inferenceHealth?.detail).not.toContain(secret);
+    expect(snapshot.inferenceHealth?.detail).not.toMatch(/[\u0000-\u001f\u007f]/u);
+    expect(snapshot.inferenceHealth?.detail?.length).toBeLessThan(600);
+  });
+
   it("restores the guarded agent and host-forward chain before probing a Docker-recovered sandbox", async () => {
     const order: string[] = [];
     const gateway: SandboxInferenceRouteHealth = {
@@ -855,7 +965,7 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
     expect(delayInferenceRecoveryProbe).toHaveBeenCalledOnce();
     expect(snapshot.inferenceHealth).toMatchObject({
       ok: false,
-      detail: brokenRoute.detail,
+      detail: expect.stringContaining(brokenRoute.detail),
       failureLabel: "unreachable",
     });
   });
@@ -1050,4 +1160,52 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
     expect(delayInferenceRecoveryProbe).not.toHaveBeenCalled();
     expect(snapshot.inferenceHealth).toMatchObject({ ok: false, failureLabel: "unhealthy" });
   });
+});
+
+describe("status native local request identity (#13338)", () => {
+  it.each(["openclaw", undefined] as const)(
+    "probes and reports the recorded OpenClaw endpoint when the registry agent is %s",
+    async (agent) => {
+      const receipt = nativeLocalTestReceipt(
+        "vllm-local",
+        "http://host.openshell.internal:18000/v1",
+        {
+          agent: "openclaw",
+          authMode: "sentinel",
+        },
+      );
+      const options = snapshotDeps(
+        null,
+        null,
+        { ok: true },
+        {
+          agent,
+          provider: "vllm-local",
+          model: "local-model",
+          gatewayName: "nemoclaw",
+          nativeLocalProviderAttachment: receipt,
+        },
+      );
+      const shell = recordingProbeShell("503");
+      const snapshot = await collectSandboxStatusSnapshot("alpha", {
+        ...options,
+        deps: {
+          ...options.deps,
+          inferenceRouteObserver: { observeInferenceRoute: vi.fn() },
+          verifyNativeLocalProviderAttachmentImpl: async () => undefined,
+          probeSandboxInferenceInvocationImpl: (input, _deps, timeoutMs) =>
+            probeSandboxInferenceInvocation(input, { execute: shell.execute }, timeoutMs),
+          delayInferenceRecoveryProbe: async () => undefined,
+        },
+      });
+      expect(shell.destinations().length).toBeGreaterThan(0);
+      expect(new Set(shell.destinations())).toEqual(
+        new Set(["http://host.openshell.internal:18000/v1/chat/completions"]),
+      );
+      expect(snapshot.inferenceHealth).toMatchObject({
+        ok: false,
+        endpoint: shell.destinations()[0],
+      });
+    },
+  );
 });

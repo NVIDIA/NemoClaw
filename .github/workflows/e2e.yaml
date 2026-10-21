@@ -382,6 +382,8 @@ jobs:
       selected_workflow_jobs: ${{ steps.matrix.outputs.selected_workflow_jobs }}
       managed_image_required: ${{ steps.matrix.outputs.managed_image_required }}
       openshell_version: ${{ steps.openshell_version.outputs.version }}
+      openshell_supervisor_image: ${{ steps.openshell_version.outputs.supervisor_image }}
+      openshell_runtime_provenance: ${{ steps.openshell_version.outputs.runtime_provenance }}
       catalogue_standard_matrix: ${{ steps.matrix.outputs.catalogue_standard_matrix }}
       catalogue_nvidia_api_matrix: ${{ steps.matrix.outputs.catalogue_nvidia_api_matrix }}
       catalogue_nvidia_inference_matrix: ${{ steps.matrix.outputs.catalogue_nvidia_inference_matrix }}
@@ -733,10 +735,13 @@ jobs:
 
       - id: openshell_version
         name: Resolve reviewed candidate OpenShell version
-        if: ${{ contains(fromJSON(steps.matrix.outputs.selected_jobs), 'openshell-gateway-auth-contract') || contains(fromJSON(steps.matrix.outputs.selected_jobs), 'external-gateway-health') }}
+        if: ${{ contains(fromJSON(steps.matrix.outputs.selected_jobs), 'openshell-gateway-auth-contract') || contains(fromJSON(steps.matrix.outputs.selected_jobs), 'external-gateway-health') || contains(fromJSON(steps.matrix.outputs.selected_jobs), 'mcp-bridge') || contains(fromJSON(steps.matrix.outputs.selected_jobs), 'openshell-credential-generation-window') }}
         env:
+          MCP_RUNTIME_REQUIRED: ${{ contains(fromJSON(steps.matrix.outputs.selected_jobs), 'mcp-bridge') || contains(fromJSON(steps.matrix.outputs.selected_jobs), 'openshell-credential-generation-window') }}
           CANDIDATE_REPOSITORY: ${{ inputs.checkout_repository || github.repository }}
           CANDIDATE_SHA: ${{ inputs.checkout_sha || github.sha }}
+          UPGRADE_PR_NUMBER: ${{ inputs.pr_number }}
+          UPGRADE_BASE_SHA: ${{ inputs.base_sha }}
           GITHUB_TOKEN: ${{ github.token }}
         run: node --no-warnings tools/e2e/candidate-openshell-version.mts
 
@@ -843,6 +848,7 @@ jobs:
             scripts/check-dist-sourcemaps.mts
             scripts/audit-reviewed-npm-graph.mts
             scripts/checks/prepare-ci-npm-install.mts
+            scripts/lib/reviewed-ci-npm-install.mts
             scripts/lib/openclaw-npm-remediation.mts
             scripts/lib/reviewed-npm-archive.mts
             scripts/lib/reviewed-npm-cache.mts
@@ -3192,7 +3198,7 @@ jobs:
           path: ${{ runner.temp }}/openshell-sdk
 
       - name: Install reviewed OpenShell SDK archive without package credentials
-        uses: NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@697af6ed24d88e7a8cbb0409acde3398e12f8eae
+        uses: NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@2584abf0a4f739fa5f2e3fd92821ff78175b4115
 
       - name: Record immutable Deep Agents Code base evidence
         if: ${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' && needs.generate-matrix.outputs.workload_source == 'managed-image' && needs.base-image-publication.outputs.managed_image_catalog == '' }}
@@ -3516,7 +3522,7 @@ jobs:
     secrets:
       DOCKERHUB_USERNAME: ${{ github.ref == 'refs/heads/main' && github.workflow_ref == 'NVIDIA/NemoClaw/.github/workflows/e2e.yaml@refs/heads/main' && github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.DOCKERHUB_USERNAME || '' }}
       DOCKERHUB_TOKEN: ${{ github.ref == 'refs/heads/main' && github.workflow_ref == 'NVIDIA/NemoClaw/.github/workflows/e2e.yaml@refs/heads/main' && github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.DOCKERHUB_TOKEN || '' }}
-      HOSTED_INFERENCE_API_KEY: ${{ github.ref == 'refs/heads/main' && github.workflow_ref == 'NVIDIA/NemoClaw/.github/workflows/e2e.yaml@refs/heads/main' && github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && (matrix.id == 'hosted-inference-openai' && secrets.OPENAI_API_KEY || matrix.id == 'hosted-inference-anthropic' && secrets.ANTHROPIC_API_KEY || matrix.id == 'hosted-inference-gemini' && secrets.GEMINI_API_KEY || matrix.id == 'hosted-inference-openrouter' && secrets.OPENROUTER_API_KEY || matrix.id == 'hosted-inference-hermes' && secrets.NOUS_API_KEY) || '' }}
+      HOSTED_INFERENCE_API_KEY: ${{ github.ref == 'refs/heads/main' && github.workflow_ref == 'NVIDIA/NemoClaw/.github/workflows/e2e.yaml@refs/heads/main' && github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && matrix.id == 'hosted-inference-openrouter' && secrets.OPENROUTER_API_KEY || '' }}
 
   catalogue-standard:
     name: ${{ matrix.display_name }} (${{ matrix.runtime_provider }})
@@ -3829,7 +3835,7 @@ jobs:
           path: ${{ runner.temp }}/openshell-sdk
 
       - name: Install reviewed OpenShell SDK archive without package credentials
-        uses: NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@697af6ed24d88e7a8cbb0409acde3398e12f8eae
+        uses: NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@2584abf0a4f739fa5f2e3fd92821ff78175b4115
 
       - name: Install OpenShell CLI
         run: env -u NODE_AUTH_TOKEN -u GITHUB_TOKEN bash scripts/install-openshell.sh
@@ -3891,7 +3897,7 @@ jobs:
       NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF: ${{ matrix.runtime_provider == 'docker' && '1' || '0' }}
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_GATEWAY_RUNTIME: ${{ matrix.runtime_provider }}
-      OPENSHELL_DOCKER_SUPERVISOR_IMAGE: ghcr.io/nvidia/openshell/supervisor@sha256:c8c42aef16c200063e32cbf72e553e4ead027085427b555efafd95063ecead42
+      OPENSHELL_DOCKER_SUPERVISOR_IMAGE: ${{ needs.generate-matrix.outputs.openshell_supervisor_image }}
     steps:
       - id: trusted_hermes_swap
         name: Provision trusted Hermes E2E swap
@@ -4110,7 +4116,7 @@ jobs:
           path: ${{ runner.temp }}/openshell-sdk
 
       - name: Install reviewed OpenShell SDK archive without package credentials
-        uses: NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@697af6ed24d88e7a8cbb0409acde3398e12f8eae
+        uses: NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@2584abf0a4f739fa5f2e3fd92821ff78175b4115
 
       - name: Restore exact-commit CLI artifact
         uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@b1494a0828a80a8d5dc862effc9e85ac987f8b4a
@@ -4157,22 +4163,32 @@ jobs:
       - name: Install OpenShell CLI
         env:
           NEMOCLAW_OPENSHELL_FORCE_INSTALL: "1"
+          OPENSHELL_RUNTIME_PROVENANCE: ${{ needs.generate-matrix.outputs.openshell_runtime_provenance }}
         run: |
           set -euo pipefail
           bash scripts/install-openshell.sh
+          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
+          node --input-type=module - "$(command -v openshell)" <<'NODE'
+          import { createHash } from 'node:crypto';
+          import { readFileSync } from 'node:fs';
+          import { dirname, join } from 'node:path';
+          const directory = dirname(process.argv[2]);
+          const expected = JSON.parse(process.env.OPENSHELL_RUNTIME_PROVENANCE);
+          for (const [role, binary] of [
+            ['cli', 'openshell'],
+            ['gateway', 'openshell-gateway'],
+            ['standaloneSandbox', 'openshell-sandbox'],
+          ]) {
+            const bytes = readFileSync(join(directory, binary));
+            const actual = createHash('sha256').update(bytes).digest('hex');
+            if (actual !== expected.artifacts?.[role]?.binarySha256) {
+              throw new Error(`Installed OpenShell ${role} differs from reviewed provenance`);
+            }
+          }
+          NODE
           if [[ "$NEMOCLAW_MCP_BRIDGE_AGENT" == "deepagents" ]]; then
             mkdir -p "$E2E_ARTIFACT_DIR/mcp-bridge-deepagents"
-            jq -n '{
-              schemaVersion: 1,
-              sourceRepository: "NVIDIA/OpenShell",
-              releaseTag: "v0.0.116",
-              sourceSha: "d1155aa70042d3e2ee49dbfa15346b108b7c1d92",
-              artifacts: {
-                cli: {binarySha256: "24e85062073d512d1951c76cd3890b7bce1ab01cc36a08f88b3b43c067a402da"},
-                gateway: {binarySha256: "780fc7ad871e2163f3fb866a2d0254ee682fc0d83e6261a84b350c8dcdd9f47b"},
-                standaloneSandbox: {binarySha256: "326ee26df8f8575ba761470757a12fe5c1cdc904ba064b81946692dd0328dd40"}
-              }
-            }' > "$E2E_ARTIFACT_DIR/mcp-bridge-deepagents/openshell-exact-main-provenance.json"
+            printf '%s\n' "$OPENSHELL_RUNTIME_PROVENANCE" > "$E2E_ARTIFACT_DIR/mcp-bridge-deepagents/openshell-exact-main-provenance.json"
           fi
 
       - name: Run MCP OpenShell provider live test
@@ -4253,7 +4269,7 @@ jobs:
       NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF: "1"
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_GATEWAY_RUNTIME: ${{ matrix.runtime_provider }}
-      OPENSHELL_DOCKER_SUPERVISOR_IMAGE: ghcr.io/nvidia/openshell/supervisor@sha256:c8c42aef16c200063e32cbf72e553e4ead027085427b555efafd95063ecead42
+      OPENSHELL_DOCKER_SUPERVISOR_IMAGE: ${{ needs.generate-matrix.outputs.openshell_supervisor_image }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -4304,21 +4320,31 @@ jobs:
       - name: Install OpenShell CLI
         env:
           NEMOCLAW_OPENSHELL_FORCE_INSTALL: "1"
+          OPENSHELL_RUNTIME_PROVENANCE: ${{ needs.generate-matrix.outputs.openshell_runtime_provenance }}
         run: |
           set -euo pipefail
           bash scripts/install-openshell.sh
-          mkdir -p "$E2E_ARTIFACT_DIR/openshell-credential-generation-window"
-          jq -n '{
-            schemaVersion: 1,
-            sourceRepository: "NVIDIA/OpenShell",
-            releaseTag: "v0.0.116",
-            sourceSha: "d1155aa70042d3e2ee49dbfa15346b108b7c1d92",
-            artifacts: {
-              cli: {binarySha256: "24e85062073d512d1951c76cd3890b7bce1ab01cc36a08f88b3b43c067a402da"},
-              gateway: {binarySha256: "780fc7ad871e2163f3fb866a2d0254ee682fc0d83e6261a84b350c8dcdd9f47b"},
-              standaloneSandbox: {binarySha256: "326ee26df8f8575ba761470757a12fe5c1cdc904ba064b81946692dd0328dd40"}
+          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
+          node --input-type=module - "$(command -v openshell)" <<'NODE'
+          import { createHash } from 'node:crypto';
+          import { readFileSync } from 'node:fs';
+          import { dirname, join } from 'node:path';
+          const directory = dirname(process.argv[2]);
+          const expected = JSON.parse(process.env.OPENSHELL_RUNTIME_PROVENANCE);
+          for (const [role, binary] of [
+            ['cli', 'openshell'],
+            ['gateway', 'openshell-gateway'],
+            ['standaloneSandbox', 'openshell-sandbox'],
+          ]) {
+            const bytes = readFileSync(join(directory, binary));
+            const actual = createHash('sha256').update(bytes).digest('hex');
+            if (actual !== expected.artifacts?.[role]?.binarySha256) {
+              throw new Error(`Installed OpenShell ${role} differs from reviewed provenance`);
             }
-          }' > "$E2E_ARTIFACT_DIR/openshell-credential-generation-window/openshell-exact-main-provenance.json"
+          }
+          NODE
+          mkdir -p "$E2E_ARTIFACT_DIR/openshell-credential-generation-window"
+          printf '%s\n' "$OPENSHELL_RUNTIME_PROVENANCE" > "$E2E_ARTIFACT_DIR/openshell-credential-generation-window/openshell-exact-main-provenance.json"
 
       - name: Run OpenShell credential generation-window live test
         run: |
@@ -5187,6 +5213,7 @@ jobs:
     timeout-minutes: 75
     permissions:
       contents: read
+      pull-requests: read
     env:
       CHECKOUT_SHA: ${{ inputs.checkout_sha || github.sha }}
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/managed-image-protected-runtime
@@ -5335,9 +5362,21 @@ jobs:
       - id: openshell-projection
         name: Bind reviewed candidate OpenShell runtime
         shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          UPGRADE_PR_NUMBER: ${{ inputs.pr_number }}
         run: |
           set -euo pipefail
           node tools/e2e/protected-openshell-workspace.mts prepare > "$E2E_ARTIFACT_DIR/openshell-projection.json"
+
+      - name: Verify reviewed candidate OpenShell runtime before consumption
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          UPGRADE_PR_NUMBER: ${{ inputs.pr_number }}
+        run: |
+          set -euo pipefail
+          node tools/e2e/protected-openshell-workspace.mts verify > "$E2E_ARTIFACT_DIR/openshell-projection-initially-verified.json"
 
       - name: Download reviewed OpenShell SDK archive
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -5474,6 +5513,15 @@ jobs:
         shell: bash
         run: env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
 
+      - name: Verify reviewed candidate OpenShell runtime
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          UPGRADE_PR_NUMBER: ${{ inputs.pr_number }}
+        run: |
+          set -euo pipefail
+          node tools/e2e/protected-openshell-workspace.mts verify > "$E2E_ARTIFACT_DIR/openshell-projection-verified.json"
+
       - name: Run all-agent GPU, local inference, rollback, and cleanup qualification
         env:
           NVIDIA_API_KEY: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.NVIDIA_API_KEY || '' }}
@@ -5484,7 +5532,6 @@ jobs:
             echo "::error::Protected NIM qualification must execute trusted workflow code" >&2
             exit 1
           }
-          node tools/e2e/protected-openshell-workspace.mts verify > "$E2E_ARTIFACT_DIR/openshell-projection-verified.json"
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
           OPENSHELL_BIN="$(command -v openshell)"
           export OPENSHELL_BIN
@@ -5520,6 +5567,9 @@ jobs:
       - name: Restore trusted OpenShell sources
         if: ${{ always() && steps.openshell-projection.outcome == 'success' }}
         shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          UPGRADE_PR_NUMBER: ${{ inputs.pr_number }}
         run: |
           set -euo pipefail
           node tools/e2e/protected-openshell-workspace.mts restore > "$E2E_ARTIFACT_DIR/openshell-projection-restored.json"
@@ -5624,7 +5674,7 @@ jobs:
           path: ${{ runner.temp }}/openshell-sdk
 
       - name: Install reviewed OpenShell SDK archive without package credentials
-        uses: NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@697af6ed24d88e7a8cbb0409acde3398e12f8eae
+        uses: NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@2584abf0a4f739fa5f2e3fd92821ff78175b4115
 
       - name: Restore exact-commit CLI artifact
         uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@b1494a0828a80a8d5dc862effc9e85ac987f8b4a
@@ -5732,6 +5782,160 @@ jobs:
           [[ "$(sudo stat -c '%u:%g:%a' "$CLEANUP_FIXTURE")" == "0:0:555" ]]
           sudo cmp -s "$extracted_fixture" "$CLEANUP_FIXTURE"
 
+      - name: Install pinned OpenShell
+        env:
+          XDG_BIN_HOME: ${{ runner.temp }}/nemoclaw-portable-hermes-openshell-bin.${{ github.run_id }}.${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          install_root="${XDG_BIN_HOME:?}"
+          [[ "$install_root" == "$RUNNER_TEMP"/nemoclaw-portable-hermes-openshell-bin.* ]]
+          rm -rf -- "$install_root"
+          install -d -m 0700 "$install_root"
+          installer_sentinel="nemoclaw-openshell-install-sentinel:${install_root}"
+          cat >"$install_root/openshell" <<'EOF'
+          #!/bin/sh
+          printf '%s\n' 'openshell 0.0.0-dev'
+          EOF
+          printf '# %s\n' "$installer_sentinel" >>"$install_root/openshell"
+          chmod 0700 "$install_root/openshell"
+          env -u GH_TOKEN -u GITHUB_TOKEN \
+            PATH="$install_root:$PATH" \
+            NEMOCLAW_NON_INTERACTIVE=1 \
+            bash scripts/install-openshell.sh
+          openshell_install_root_is_complete() {
+            local root="$1" component
+            for component in openshell openshell-gateway openshell-sandbox; do
+              [[ -f "$root/$component" && ! -L "$root/$component" && -x "$root/$component" ]] \
+                || return 1
+            done
+          }
+          if ! openshell_install_root_is_complete "$install_root"; then
+            echo "::error::The pinned OpenShell installer did not populate the isolated install root." >&2
+            exit 1
+          fi
+          if grep -Fq "$installer_sentinel" "$install_root/openshell"; then
+            echo "::error::The pinned OpenShell installer did not replace its trusted reinstall sentinel." >&2
+            exit 1
+          fi
+          for component in openshell openshell-gateway openshell-sandbox; do
+            source="$install_root/$component"
+            [[ -f "$source" && ! -L "$source" && -x "$source" ]]
+            destination="/usr/bin/$component"
+            if [[ "$source" -ef "$destination" ]]; then
+              [[ -f "$destination" && ! -L "$destination" ]]
+              sudo chown root:root "$destination"
+              sudo chmod 0755 "$destination"
+            else
+              sudo install -o root -g root -m 0755 "$source" "$destination"
+            fi
+          done
+          echo /usr/bin >>"$GITHUB_PATH"
+
+      - name: Recover stale Docker isolation before Portable Podman E2E
+        uses: NVIDIA/NemoClaw/.github/actions/restore-native-podman-e2e@9650336899bf836db5844381a97cbc2b0fe4a2b8
+        with:
+          enabled: "true"
+
+      - name: Prepare Portable Podman 5.7 runtime
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@22789bcaf835db7cf6390781c8d0f454f1e73dec
+        with:
+          cleanup-fixture: /usr/local/libexec/nemoclaw/native-podman-e2e-restore.${{ github.run_id }}.${{ github.run_attempt }}
+          enabled: "true"
+          toolchain: portable-5.7
+          isolate-docker-cli: "false"
+
+      - name: Set Portable Podman registry process headroom
+        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+        run: |
+          set -euo pipefail
+          # The shared setup action is pinned and runs before candidate checkout.
+          # Keep this Portable Hermes setting in trusted, job-specific workflow code.
+          minimum=128
+          config="$RUNNER_TEMP/native-podman-e2e-containers.conf"
+          [[ "${CONTAINERS_CONF:?}" == "$config" && -f "$config" && ! -L "$config" ]]
+          [[ "$(grep -Fxc '[containers]' "$config")" == 1 ]]
+          [[ "$(grep -Fxc '[engine]' "$config")" == 1 ]]
+          if grep -Eq '^[[:space:]]*(pids_limit|cgroup_manager)[[:space:]]*=' "$config"; then
+            echo "::error::Portable Podman containers.conf already sets pids_limit or cgroup_manager" >&2
+            exit 1
+          fi
+          sed -i "/^\\[containers\\]$/a pids_limit = $minimum" "$config"
+          sed -i '/^\[engine\]$/a cgroup_manager = "systemd"' "$config"
+          /usr/bin/systemctl --user restart nemoclaw-native-podman-e2e.service
+          service=nemoclaw-native-podman-e2e.service
+          service_pid="$(/usr/bin/systemctl --user show "$service" --property=MainPID --value)"
+          [[ "$service_pid" =~ ^[1-9][0-9]*$ ]]
+          # Portable host preparation changes the client configuration and podman.service.
+          # The registry socket belongs to this separate service and must retain this configuration.
+          service_config="$(tr '\0' '\n' <"/proc/$service_pid/environ" | sed -n 's/^CONTAINERS_CONF=//p')"
+          [[ "$service_config" == "$config" ]] || {
+            echo "::error::Portable registry Podman service is using a different containers.conf" >&2
+            exit 1
+          }
+          printf 'NEMOCLAW_NATIVE_PODMAN_SERVICE_PID=%s\n' "$service_pid" >>"$GITHUB_ENV"
+          podman --url "unix://${OPENSHELL_PODMAN_SOCKET:?}" info --format json |
+            jq -e '((.host.cgroupManager // .Host.CgroupManager) | ascii_downcase) == "systemd"' >/dev/null
+          nproc_soft="$(awk '$1 == "Max" && $2 == "processes" { print $3; exit }' "/proc/$service_pid/limits" || true)"
+          user_tasks="$(ps -u "$(id -u)" -L --no-headers | wc -l | tr -d ' ')" || user_tasks=unavailable
+          host_max="$(cat /proc/sys/kernel/threads-max 2>/dev/null || true)"
+          host_tasks="$(awk '{ split($4, tasks, "/"); print tasks[2] }' /proc/loadavg 2>/dev/null || true)"
+          tasks_max="$(/usr/bin/systemctl --user show "$service" --property=TasksMax --value || true)"
+          tasks_current="$(/usr/bin/systemctl --user show "$service" --property=TasksCurrent --value || true)"
+          limit_nproc="$(/usr/bin/systemctl --user show "$service" --property=LimitNPROC --value || true)"
+          failure=none
+          if [[ ! "$user_tasks" =~ ^[0-9]+$ || -z "$tasks_max" || -z "$tasks_current" || -z "$limit_nproc" ]] || \
+            { [[ "$nproc_soft" != unlimited ]] && \
+              { [[ ! "$nproc_soft" =~ ^[0-9]+$ ]] || (( nproc_soft - user_tasks < minimum )); }; }; then
+            failure=rlimit_nproc
+          fi
+          if [[ ! "$tasks_current" =~ ^[0-9]+$ ]] || \
+            { [[ "$tasks_max" != infinity ]] && \
+              { [[ ! "$tasks_max" =~ ^[0-9]+$ ]] || (( tasks_max - tasks_current < minimum )); }; }; then
+            failure=service_tasks
+          fi
+          if [[ ! "$host_max" =~ ^[0-9]+$ || ! "$host_tasks" =~ ^[0-9]+$ ]] || \
+            (( host_max - host_tasks < minimum )); then
+            failure=host_threads
+          fi
+          group="$(awk -F: '$1 == "0" { print $3; exit }' "/proc/$service_pid/cgroup")"
+          cgroups='[]'
+          if [[ "$group" != /* || "$group" == *'..'* ]]; then
+            failure=service_cgroup
+            group=/
+          fi
+          depth=0
+          while (( depth < 24 )); do
+            [[ "$group" != / ]] || break
+            current="$(cat "/sys/fs/cgroup$group/pids.current" 2>/dev/null || true)"
+            maximum="$(cat "/sys/fs/cgroup$group/pids.max" 2>/dev/null || true)"
+            cgroups="$(jq -cn --argjson rows "$cgroups" \
+              --arg path "$group" --arg current "$current" --arg maximum "$maximum" \
+              '$rows + [{path: $path, current: $current, maximum: $maximum}]')"
+            if [[ ! "$current" =~ ^[0-9]+$ ]] || \
+              { [[ "$maximum" != max ]] && \
+                { [[ ! "$maximum" =~ ^[0-9]+$ ]] || (( maximum - current < minimum )); }; }; then
+              failure=cgroup_pids
+            fi
+            group="${group%/*}"
+            [[ -n "$group" ]] || group=/
+            depth=$((depth + 1))
+          done
+          if [[ "$group" != / ]]; then failure=cgroup_depth; fi
+          jq -n --arg failure "$failure" --argjson minimum "$minimum" \
+            --arg tasksMax "$tasks_max" --arg tasksCurrent "$tasks_current" \
+            --arg limitNproc "$limit_nproc" \
+            --arg nprocSoft "$nproc_soft" --arg userTasks "$user_tasks" \
+            --arg hostMax "$host_max" --arg hostTasks "$host_tasks" --argjson cgroups "$cgroups" \
+            '{schemaVersion: 1, failure: $failure, minimumHeadroom: $minimum,
+              service: {tasksMax: $tasksMax, tasksCurrent: $tasksCurrent, limitNproc: $limitNproc,
+                nprocSoft: $nprocSoft, userTasks: $userTasks},
+              host: {threadsMax: $hostMax, tasks: $hostTasks}, cgroups: $cgroups}' \
+            >"$RUNNER_TEMP/portable-podman-process-headroom.json"
+          if [[ "$failure" != none ]]; then
+            echo "::error::Portable Podman infrastructure has insufficient process headroom ($failure)" >&2
+            exit 1
+          fi
+
       - name: Check out the exact candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -5757,29 +5961,6 @@ jobs:
           set -euo pipefail
           npm run catalog:compile
           npm run build:policy-boundary
-
-      - name: Install pinned OpenShell
-        run: |
-          set -euo pipefail
-          env -u GH_TOKEN -u GITHUB_TOKEN NEMOCLAW_NON_INTERACTIVE=1 bash scripts/install-openshell.sh
-          for component in openshell openshell-gateway openshell-sandbox; do
-            resolved="$(command -v "$component")"
-            sudo install -o root -g root -m 0755 "$resolved" "/usr/bin/$component"
-          done
-          echo /usr/bin >>"$GITHUB_PATH"
-
-      - name: Recover stale Docker isolation before Portable Podman E2E
-        uses: NVIDIA/NemoClaw/.github/actions/restore-native-podman-e2e@9650336899bf836db5844381a97cbc2b0fe4a2b8
-        with:
-          enabled: "true"
-
-      - name: Prepare Portable Podman 5.7 runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@22789bcaf835db7cf6390781c8d0f454f1e73dec
-        with:
-          cleanup-fixture: /usr/local/libexec/nemoclaw/native-podman-e2e-restore.${{ github.run_id }}.${{ github.run_attempt }}
-          enabled: "true"
-          toolchain: portable-5.7
-          isolate-docker-cli: "false"
 
       - name: Run Portable Hermes finalization live Vitest test
         shell: /bin/bash --noprofile --norc -e -o pipefail {0}
@@ -5830,6 +6011,18 @@ jobs:
             .
           npx tsx tools/e2e/live-vitest-invocation.mts run \
             --test-path test/e2e/live/portable-profile-rootless-linux.test.ts
+
+      - name: Retain Portable Podman process headroom
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          source="$RUNNER_TEMP/portable-podman-process-headroom.json"
+          if [[ -f "$source" && ! -L "$source" ]]; then
+            [[ ! -L "$E2E_ARTIFACT_DIR" ]]
+            install -d -m 0700 "$E2E_ARTIFACT_DIR"
+            install -m 0600 "$source" "$E2E_ARTIFACT_DIR/portable-podman-process-headroom.json"
+          fi
 
       - name: Upload Portable Hermes finalization artifacts
         if: always()
@@ -6226,8 +6419,8 @@ jobs:
       E2E_DEFAULT_ENABLED: "0"
       E2E_GATEWAY_RUNTIMES: agnostic
       E2E_AGENT_RUNTIME: openclaw
-      E2E_OBSERVABLE_OUTCOME: Station Express installs managed Ultra vLLM and NemoClaw, serves sandbox inference, and removes job runtime
-      E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: Dedicated DGX Station GB300 with cached Nemotron 3 Ultra 550B
+      E2E_OBSERVABLE_OUTCOME: Station Express installs managed Super VL vLLM and NemoClaw, serves sandbox inference, and removes job runtime
+      E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: Dedicated DGX Station GB300 with cached Nemotron 3.5 Super VL 120B
     steps:
       - name: Check out trusted Station controller
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

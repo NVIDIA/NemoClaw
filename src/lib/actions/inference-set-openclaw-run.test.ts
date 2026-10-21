@@ -9,6 +9,37 @@ import { runInferenceSet } from "./inference-set";
 import { baseSession, createDeps } from "../../../test/helpers/inference-set";
 
 describe("runInferenceSet OpenClaw routing", () => {
+  it("stops a switch to local when its runtime credential is unavailable", async () => {
+    const deps = createDeps({
+      config: {},
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        gatewayName: "nemoclaw",
+        provider: "openai-api",
+        model: "gpt-5.4",
+      },
+    });
+    deps.getNativeLocalProviderAuthority = () => undefined;
+    deps.setNativeLocalProviderAuthority = vi.fn();
+    deps.resolveLocalSwitchRuntime = () => {
+      throw new Error("local runtime credential unavailable");
+    };
+    await expect(
+      runInferenceSet(
+        { provider: "ollama-local", model: "local-model", sandboxName: "alpha" },
+        deps,
+      ),
+    ).rejects.toThrow("local runtime credential unavailable");
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+    expect(deps.calls.setOpenClawConfigValues).not.toHaveBeenCalled();
+    expect(
+      deps.calls.captureOpenshell.mock.calls.some(
+        ([args]) => Array.isArray(args) && args[0] === "inference" && args[1] === "set",
+      ),
+    ).toBe(false);
+  });
+
   it("requires recreation instead of silently migrating a legacy NVIDIA sandbox", async () => {
     const deps = createDeps({
       config: {},

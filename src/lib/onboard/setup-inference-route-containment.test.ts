@@ -358,6 +358,9 @@ describe("onboard shared gateway route containment", () => {
     });
     const verifyOnboardInferenceSmoke = vi.fn();
     const setupInference = createSetupInference({
+      getSandbox: () => ({ name: "sandbox-a", provider: "compatible-endpoint" }),
+      localInference: { loadPendingOllamaModelCleanup: () => [] },
+      withOllamaModelOwnershipLock: (operation: () => unknown) => operation(),
       checkGatewayRouteCompatibility: vi.fn(() => ({ ok: true as const })),
       withSandboxMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
         await operation(),
@@ -586,6 +589,7 @@ describe("onboard shared gateway route containment", () => {
       checkGatewayRouteCompatibility: (
         request: Parameters<SetupInferenceDeps["checkGatewayRouteCompatibility"]>[0],
       ) => checkGatewayRouteCompatibility({ ...request, sandboxes: [peer] }),
+      getSandbox: () => ({ name: "new-custom", provider: "compatible-endpoint" }),
       withSandboxMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
         await operation(),
       withGatewayRouteMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
@@ -1142,7 +1146,7 @@ describe("onboard shared gateway route containment", () => {
             providerName: "compatible-endpoint",
             providerType: "openai",
             credentialEnv: "COMPATIBLE_API_KEY",
-            endpointUrl: "https://public-name.example/v1",
+            endpointUrl: "http://host.openshell.internal:1234/v1",
             helpUrl: null,
             modelMode: "input",
             defaultModel: "new-model",
@@ -1175,7 +1179,7 @@ describe("onboard shared gateway route containment", () => {
         "alpha",
         "new-model",
         selectedProvider,
-        selectedProvider === "vllm-local" ? null : "https://public-name.example/v1",
+        selectedProvider === "vllm-local" ? null : "http://host.openshell.internal:1234/v1",
         selectedProvider === "vllm-local" ? null : "COMPATIBLE_API_KEY",
         null,
         [],

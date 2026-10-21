@@ -350,6 +350,44 @@ describe("onboard dashboard helpers", () => {
     expect(nimStatus).toHaveBeenCalledWith("my-gpt-claw");
   });
 
+  it.each([
+    { driver: "podman", probe: false },
+    { driver: " Podman ", probe: false },
+    { driver: "docker", probe: true },
+    { driver: "vm", probe: true },
+    { driver: undefined, probe: true },
+  ])("limits dashboard NIM probes for driver $driver", async ({ driver, probe }) => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const nimStatus = vi.fn(() => ({ running: false, container: "nemoclaw-nim-test" }));
+    const nimStatusByName = vi.fn(() => ({ running: false, container: "named-nim" }));
+    const helpers = createOnboardDashboardHelpers({
+      runCaptureOpenshell: vi.fn(() => ""),
+      runCapture: vi.fn(() => ""),
+      cliName: () => "nemoclaw",
+      agentProductName: () => "NemoClaw",
+      getProviderLabel: (provider) => provider,
+      getSandbox: () => ({ gatewayName: "nemoclaw", openshellDriver: driver }),
+      nimStatus,
+      nimStatusByName,
+      note: vi.fn(),
+      isWsl: () => false,
+      redact: (value) => String(value),
+      sleep: vi.fn(),
+      sandboxTransferExecutor: createTokenDownloadTransferExecutor(),
+      printAgentDashboardUi: vi.fn(),
+      listSandboxes: () => ({ sandboxes: [] }),
+    });
+    try {
+      await helpers.printDashboard("test", "model", "compatible-endpoint");
+      await helpers.printDashboard("test", "model", "compatible-endpoint", "named-nim");
+      expect(nimStatus).toHaveBeenCalledTimes(probe ? 1 : 0);
+      expect(nimStatusByName).toHaveBeenCalledTimes(probe ? 1 : 0);
+      expect(logSpy.mock.calls.flat().join("\n")).toContain("NemoClaw is ready");
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
   it("shows the loopback dashboard URL with a WSL host-IP fallback under WSL", async () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
     const helpers = createOnboardDashboardHelpers({

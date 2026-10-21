@@ -44,6 +44,7 @@ import { EXPERIMENTAL_PROFILE_ENV } from "./docker-driver-platform";
 import { assertNoIncompleteExternalComponentActivation } from "./external-component/onboarding";
 import type { PortableInferenceActivation } from "./experimental/portable-inference-descriptor";
 import { requireReadOnlyHostMountRuntimeSupport } from "./host-mount";
+import { type DcodeAutoApprovalMode, isDcodeAutoApprovalMode } from "./dcode-auto-approval";
 import type { ResumeConfigConflict } from "./resume-config";
 import type { StationExpressResumeIntent } from "./station-express-resume";
 import { ensureRequiredTierPolicyPresets } from "./policy-tier-suppression";
@@ -486,6 +487,7 @@ export interface OnboardSessionBootstrapInput {
   envAgent?: string | null;
   requestedToolDisclosure?: ToolDisclosure | null;
   requestedObservabilityEnabled?: boolean | null;
+  requestedDcodeAutoApprovalMode?: DcodeAutoApprovalMode | null;
   apfInterceptorRequested?: boolean | null;
   stationExpressIntent?: StationExpressResumeIntent | null;
   requestedHostMounts?: readonly import("../state/registry/types").SandboxHostMount[];
@@ -781,6 +783,10 @@ async function prepareResumeSession(
       current.observabilityEnabled = input.requestedObservabilityEnabled;
       current.observabilityRequestedExplicitly = true;
     }
+    if (isDcodeAutoApprovalMode(input.requestedDcodeAutoApprovalMode)) {
+      current.dcodeAutoApprovalMode = input.requestedDcodeAutoApprovalMode;
+      current.dcodeAutoApprovalRequestedExplicitly = true;
+    }
     current.mode = mode(input.nonInteractive);
     current.failure = null;
     current.status = "in_progress";
@@ -815,6 +821,10 @@ function prepareFreshSession(
     toolDisclosure: input.requestedToolDisclosure ?? DEFAULT_TOOL_DISCLOSURE,
     observabilityEnabled: input.requestedObservabilityEnabled === true,
     observabilityRequestedExplicitly: typeof input.requestedObservabilityEnabled === "boolean",
+    dcodeAutoApprovalMode: input.requestedDcodeAutoApprovalMode ?? null,
+    dcodeAutoApprovalRequestedExplicitly: isDcodeAutoApprovalMode(
+      input.requestedDcodeAutoApprovalMode,
+    ),
     apfInterceptorRequested: input.apfInterceptorRequested === true,
     stationExpressIntent: input.stationExpressIntent ?? null,
     servingProfileProvenance: input.servingProfileProvenance ?? null,

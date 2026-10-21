@@ -25,11 +25,7 @@ export function operationEnvelope(
   event: unknown,
   temporaryFunctionalConsent = false,
 ): Record<string, unknown> | null {
-  if (
-    !isOperationEvent(event) ||
-    (temporaryFunctionalConsent && event.parameters.testLabel.length === 0)
-  )
-    return null;
+  if (!isOperationEvent(event)) return null;
   const installedVersion =
     event.parameters.versions.installedStatus === "reported"
       ? event.parameters.versions.installed
