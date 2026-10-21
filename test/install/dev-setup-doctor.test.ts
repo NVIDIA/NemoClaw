@@ -564,6 +564,9 @@ describe("contributor environment doctor", () => {
     expect(result.status).toBe(1);
     expect(result.output).toContain("hadolint: not found");
     expect(result.output).toContain("Root TypeScript dependencies: missing or not executable");
+    expect(result.output).toContain(
+      "Run: npm ci --include=dev --ignore-scripts --@nvidia:registry=https://npm.pkg.github.com",
+    );
     expect(result.output).toContain("Plugin build artifacts: missing");
     expect(result.output).toContain("Git contributor identity is incomplete");
   });
@@ -799,7 +802,9 @@ describe("contributor repository setup", () => {
 
     expect(result.status).toBe(1);
     expect(result.output).toContain("Python 3.11 or newer was not found locally.");
-    expect(readCommandLog(fixture)).not.toContain("npm ci");
+    const commands = readCommandLog(fixture);
+    expect(commands).not.toContain("npm ci");
+    expect(commands).not.toContain("npm --prefix nemoclaw ci");
   });
 
   it("rejects unsupported Node.js before repository changes", () => {
@@ -810,7 +815,9 @@ describe("contributor repository setup", () => {
 
     expect(result.status).toBe(1);
     expect(result.output).toContain("Node.js 22.18.0 is below 22.19.0");
-    expect(readCommandLog(fixture)).not.toContain("npm ci");
+    const commands = readCommandLog(fixture);
+    expect(commands).not.toContain("npm ci");
+    expect(commands).not.toContain("npm --prefix nemoclaw ci");
   });
 
   it("stops before repository changes on an unsupported host", () => {
@@ -823,7 +830,9 @@ describe("contributor repository setup", () => {
 
     expect(result.status).toBe(1);
     expect(result.output).toContain("Unsupported host: Plan9 mips64");
-    expect(readCommandLog(fixture)).not.toContain("npm ci");
+    const commands = readCommandLog(fixture);
+    expect(commands).not.toContain("npm ci");
+    expect(commands).not.toContain("npm --prefix nemoclaw ci");
   });
 
   it("stops before dependency installation for an inherited Git hooks override", () => {
@@ -833,7 +842,9 @@ describe("contributor repository setup", () => {
 
     expect(result.status).toBe(1);
     expect(result.output).toContain("core.hooksPath");
-    expect(readCommandLog(fixture)).not.toContain("npm ci");
+    const commands = readCommandLog(fixture);
+    expect(commands).not.toContain("npm ci");
+    expect(commands).not.toContain("npm --prefix nemoclaw ci");
   });
 
   it("stops after a failed setup step without running later mutations", () => {
@@ -923,7 +934,9 @@ describe("contributor repository setup", () => {
 
     expect(result.status).not.toBe(0);
     expect(result.output).toContain("NEMOCLAW_DEV_DOCTOR_REPO_ROOT");
-    expect(readCommandLog(fixture)).not.toContain("npm ci");
+    const commands = readCommandLog(fixture);
+    expect(commands).not.toContain("npm ci");
+    expect(commands).not.toContain("npm --prefix nemoclaw ci");
   });
 
   it("exposes the development CLI only when requested", () => {

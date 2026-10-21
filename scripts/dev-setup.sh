@@ -643,11 +643,11 @@ run_doctor() {
   root_tsc="${REPO_ROOT}/node_modules/.bin/tsc"
   plugin_tsc="${REPO_ROOT}/nemoclaw/node_modules/.bin/tsc"
   check_executable "Root TypeScript dependencies" "${root_tsc}" \
-    "Run: npm ci --include=dev --ignore-scripts"
+    "Run: npm ci --include=dev --ignore-scripts --@nvidia:registry=https://npm.pkg.github.com"
   check_executable "Pinned Pi coding agent" "${REPO_ROOT}/node_modules/.bin/pi" \
-    "Run: npm ci --include=dev --ignore-scripts"
+    "Run: npm ci --include=dev --ignore-scripts --@nvidia:registry=https://npm.pkg.github.com"
   check_executable "Prek dependency" "${REPO_ROOT}/node_modules/.bin/prek" \
-    "Run: npm ci --include=dev --ignore-scripts"
+    "Run: npm ci --include=dev --ignore-scripts --@nvidia:registry=https://npm.pkg.github.com"
   check_executable "Plugin TypeScript dependencies" "${plugin_tsc}" \
     "Run: npm --prefix nemoclaw ci --include=dev --ignore-scripts"
   check_build_artifact "CLI build artifacts" "${CLI_BUILD_ARTIFACT}" "Run: npm run build:cli" \
