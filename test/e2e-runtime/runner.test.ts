@@ -71,6 +71,29 @@ function withoutDockerAuthorityProbe(calls: SpawnCall[]): SpawnCall[] {
 }
 
 describe("runner helpers", () => {
+  it("does not probe Docker or change Docker selectors when Podman is selected", () => {
+    const platform = require(platformPath);
+    const detect = vi.spyOn(platform, "detectDockerHost").mockReturnValue({
+      dockerHost: "unix:///unselected-docker.sock",
+      source: "context",
+      socketPath: null,
+    });
+    try {
+      vi.stubEnv("NEMOCLAW_GATEWAY_RUNTIME", "podman");
+      vi.stubEnv("DOCKER_CONTEXT", "unselected-context");
+      vi.stubEnv("DOCKER_HOST", undefined);
+      delete require.cache[require.resolve(runnerPath)];
+      require(runnerPath);
+      expect(detect).not.toHaveBeenCalled();
+      expect(process.env.DOCKER_CONTEXT).toBe("unselected-context");
+      expect(process.env.DOCKER_HOST).toBeUndefined();
+    } finally {
+      detect.mockRestore();
+      vi.unstubAllEnvs();
+      delete require.cache[require.resolve(runnerPath)];
+    }
+  });
+
   it("does not let child commands consume installer stdin", () => {
     const script = `
       const { runShell } = require(${JSON.stringify(runnerPath)});

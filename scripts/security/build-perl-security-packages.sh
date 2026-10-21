@@ -56,10 +56,13 @@ git -C "${source_dir}" apply "${net_ping_test_patch}"
   # Configure probe that previously returned a false negative under QEMU.
   # Remove this override only after the pinned base image and Perl release report
   # d_syscallproto=define from native Configure probes on amd64 and arm64.
+  # Debian's package tools need /usr/share/perl5. Search it after the new core
+  # modules so distribution modules cannot replace the security-fixed versions.
   ./Configure -des \
     -Dprefix=/usr \
     -Dvendorprefix=/usr \
     -Dsiteprefix=/usr/local \
+    -Dotherlibdirs=/usr/share/perl5 \
     -Dusethreads \
     -Duse64bitall \
     -Dd_syscallproto=define \

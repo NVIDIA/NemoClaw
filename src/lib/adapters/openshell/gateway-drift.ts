@@ -16,6 +16,7 @@ import {
   resolveDockerDriverGatewayStateDir,
 } from "../../onboard/host-gateway-process";
 import { readGatewayProcEntry } from "../../onboard/gateway/process-proc-entry";
+import { isPodmanGatewayRuntimeEnabled } from "../../onboard/runtime-provider/configured-runtime";
 import { isOpenShellProtobufSchemaMismatch } from "../../runtime-recovery";
 import {
   type GatewayReuseState,
@@ -159,6 +160,7 @@ export function getGatewayClusterImageRef(
   gatewayName = DEFAULT_GATEWAY_NAME,
   { timeoutMs = OPENSHELL_PROBE_TIMEOUT_MS }: { timeoutMs?: number } = {},
 ): string | null {
+  if (isPodmanGatewayRuntimeEnabled()) return null;
   const imageRef = dockerContainerInspectFormat(
     "{{.Config.Image}}",
     getGatewayClusterContainerName(gatewayName),
@@ -231,6 +233,7 @@ export async function isGatewayClusterActiveForGateway(
     observer?: OpenShellGatewayReuseObserver;
   } = {},
 ): Promise<boolean> {
+  if (isPodmanGatewayRuntimeEnabled()) return false;
   if (runtimeSelection && runtimeSelection.gatewayName !== gatewayName) return false;
   const observed = await (
     observer ??

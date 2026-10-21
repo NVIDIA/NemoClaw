@@ -73,6 +73,7 @@ import {
   isPolicyObject,
   isPresetPolicyMap,
   materializeLocalInferencePresetPorts,
+  materializeOpenClawPricingPins,
   type PolicyDocument,
   type PolicyObject,
   type PolicyValue,
@@ -2360,10 +2361,10 @@ async function applyPresetContent(
     }
   }
 
-  const effectivePresetContent = options.custom
+  let effectivePresetContent = options.custom
     ? namespaceCustomPresetContent(presetName, presetContent)
     : presetContent;
-  const presetEntries = extractPresetEntries(effectivePresetContent);
+  let presetEntries = extractPresetEntries(effectivePresetContent);
   if (!presetEntries) {
     console.error(`  Preset ${presetName} has no network_policies section.`);
     return false;
@@ -2394,6 +2395,22 @@ async function applyPresetContent(
       `  Could not read the current policy for sandbox '${sandboxName}'; refusing to apply '${presetName}' to avoid overwriting it.`,
     );
     return false;
+  }
+  if (!options.custom && presetName === "openclaw-pricing") {
+    try {
+      effectivePresetContent = materializeOpenClawPricingPins(
+        currentPolicy,
+        effectivePresetContent,
+      );
+      const materializedEntries = extractPresetEntries(effectivePresetContent);
+      if (!materializedEntries) throw new Error("The built-in OpenClaw pricing preset is invalid.");
+      presetEntries = materializedEntries;
+    } catch (error) {
+      console.error(
+        `  ${error instanceof Error ? error.message : "Cannot apply OpenClaw pricing."}`,
+      );
+      return false;
+    }
   }
   if (Object.prototype.hasOwnProperty.call(options, "expectedExistingNetworkPolicyContent")) {
     let collision: string | null = null;
@@ -2473,7 +2490,7 @@ async function applyPresetContent(
     Object.prototype.hasOwnProperty.call(options, "disclosedPresetState") &&
     options.disclosedPresetState === disclosedPresetState;
   if (!options.suppressDisclosure && !disclosedStateStillCurrent) {
-    logPresetScopeForState(presetName, presetContent, disclosedPresetState);
+    logPresetScopeForState(presetName, effectivePresetContent, disclosedPresetState);
   }
   if (npmBaselineWidened && !options.suppressDisclosure) {
     logOpenClawNpmCompatibilityDisclosure();
@@ -2595,9 +2612,25 @@ async function applyPresets(sandboxName: string, presetNames: string[]): Promise
   const originalPolicy = merged;
 
   for (const preset of preparedPresets) {
-    const state = classifyPresetEntries(merged, preset.entries);
-    presetContents.push({ content: preset.content, name: preset.name, state });
-    merged = mergePresetIntoPolicy(merged, preset.entries);
+    let content = preset.content;
+    let entries = preset.entries;
+    if (preset.name === "openclaw-pricing") {
+      try {
+        content = materializeOpenClawPricingPins(originalPolicy, content);
+        const materializedEntries = extractPresetEntries(content);
+        if (!materializedEntries)
+          throw new Error("The built-in OpenClaw pricing preset is invalid.");
+        entries = materializedEntries;
+      } catch (error) {
+        console.error(
+          `  ${error instanceof Error ? error.message : "Cannot apply OpenClaw pricing."}`,
+        );
+        return false;
+      }
+    }
+    const state = classifyPresetEntries(merged, entries);
+    presetContents.push({ content, name: preset.name, state });
+    merged = mergePresetIntoPolicy(merged, entries);
   }
   if (uniquePresetNames.some((name) => name === "teams" || name === "outlook")) {
     try {
@@ -2817,6 +2850,61 @@ async function getAppliedPresets(sandboxName: string, timeoutMs?: number): Promi
   return (await getGatewayPresets(sandboxName, timeoutMs)) ?? [];
 }
 
+/** Confirm superseded presets without ignoring their remaining non-web endpoints. */
+async function arePresetsCoveredByPersonalPolicy(
+  sandboxName: string,
+  presetNames: string[],
+): Promise<boolean> {
+  try {
+    const current = await readCurrentSandboxPolicy(sandboxName);
+    if (!current || !policyHasNetworkPolicy(current, PERSONAL_OPEN_INTERNET_POLICY_KEY)) {
+      return false;
+    }
+    let merged = current;
+    for (const name of presetNames) {
+      const content = await loadPresetForSandbox(sandboxName, name);
+      const entries = extractPresetEntries(content);
+      if (!entries) return false;
+      // Composition validates the reviewed Personal entry and removes only its
+      // superseded web endpoints. Any remaining change still needs application.
+      merged = mergePresetIntoPolicy(merged, entries);
+    }
+    return policyDocumentsMatch(current, merged);
+  } catch {
+    return false;
+  }
+}
+
+/** Identify selected live custom presets whose entire scope Personal will replace. */
+async function getPersonalSubsumedCustomPresetNames(
+  sandboxName: string,
+  presetNames: string[],
+): Promise<string[]> {
+  if (!presetNames.includes(PERSONAL_OPEN_INTERNET_PRESET_NAME)) return [];
+  const current = await readCurrentSandboxPolicy(sandboxName);
+  const personalEntries = extractPresetEntries(
+    loadCentralPreset(PERSONAL_OPEN_INTERNET_PRESET_NAME, { reportMissing: false }),
+  );
+  const before = parseNetworkPolicies(current);
+  if (!current || !personalEntries || !before) {
+    throw new Error("Cannot confirm custom preset coverage before applying Personal policy.");
+  }
+  const after = parseNetworkPolicies(mergePresetIntoPolicy(current, personalEntries));
+  if (!after) {
+    throw new Error("Cannot confirm custom preset coverage before applying Personal policy.");
+  }
+  const selected = new Set(presetNames);
+  const customKeys = new Map<string, string[]>();
+  for (const key of Object.keys(before)) {
+    const name = parseCustomPolicyKey(key)?.presetName;
+    if (!name || !selected.has(name)) continue;
+    customKeys.set(name, [...(customKeys.get(name) ?? []), key]);
+  }
+  return [...customKeys]
+    .filter(([, keys]) => keys.every((key) => !(key in after)))
+    .map(([name]) => name);
+}
+
 async function listCustomPresets(sandboxName: string, gatewayName?: string): Promise<PresetInfo[]> {
   const current = await readCurrentSandboxPolicy(sandboxName, gatewayName);
   if (!current) return [];
@@ -2888,6 +2976,14 @@ async function getGatewayPresets(
       content: await loadPresetForSandbox(sandboxName, preset.name, { sandbox, gatewayName }),
     });
   }
+  for (const source of sources) {
+    if (source.name !== "openclaw-pricing" || !source.content) continue;
+    try {
+      source.content = materializeOpenClawPricingPins(document, source.content);
+    } catch {
+      source.content = null;
+    }
+  }
   const builtins = inspectGatewayPresetNames({
     readPolicy: () => document,
     parseCurrentPolicy: parseCurrentPolicyOrEmpty,
@@ -2920,11 +3016,20 @@ async function getPresetContentGatewayState(
     runtimeSelection,
     timeoutMs,
   );
+  let expectedContent = presetContent;
+  try {
+    const parsed = YAML.parse(presetContent);
+    if (parsed?.preset?.name === "openclaw-pricing") {
+      expectedContent = materializeOpenClawPricingPins(document ?? "", presetContent);
+    }
+  } catch {
+    return null;
+  }
   return inspectPresetContentGatewayState({
     readPolicy: () => document ?? "",
     parseCurrentPolicy: parseCurrentPolicyOrEmpty,
     extractPresetEntries,
-    presetContent,
+    presetContent: expectedContent,
     policyKey,
   });
 }
@@ -2984,6 +3089,8 @@ export {
   applyPreset,
   applyPresetContent,
   applyPresets,
+  arePresetsCoveredByPersonalPolicy,
+  getPersonalSubsumedCustomPresetNames,
   assertOpenshellResolvable,
   clampSetupPolicyPresetNames,
   customPresetOwnsNetworkPolicyKey,
