@@ -60,12 +60,12 @@ Each receipt must match the protected inputs and an image digest in the candidat
 
 Pi reads a generated `/sandbox/.pi/agent/models.json` file. The file contains the model, managed route, API family, and a non-secret route placeholder. It does not contain the upstream provider credential.
 
-At startup, NemoClaw writes `models.json`.
+When NemoClaw applies a Pi configuration, it writes `models.json`.
 When `settings.json` exists, or the selected inference is native local, it also updates Pi's default provider and model.
 It updates the settings target atomically.
 If the settings update fails, NemoClaw restores the previous catalog or removes only the catalog target that the failed startup created.
-For either file, a configured symbolic link remains in place.
-NemoClaw writes its target when that file is updated.
+When NemoClaw applies a Pi configuration, existing `models.json` and `settings.json` paths must be regular files.
+A symbolic link at either path stops that update before the Pi generator runs.
 
 The upstream credential remains in OpenShell provider state. It survives rebuild and sandbox destruction until an operator runs `nemoclaw credentials reset <provider> --yes` after all dependent sandboxes are gone. NVIDIA Endpoints and supported fixed hosted providers use native endpoints through sandbox-attached OpenShell providers. New Pi selections for Ollama, standalone vLLM, llama.cpp, and qualified host-local compatible endpoints use sandbox-attached providers.
 OpenShell supplies the issued credential at egress; Pi receives only an opaque reference.
