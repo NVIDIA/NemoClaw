@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import { BlockList, isIP } from "node:net";
+import { prepareNativeLocalSwitch } from "../actions/inference/native-local";
+import * as localRuntime from "../actions/inference-set/local-runtime";
 import { OLLAMA_PROXY_PORT } from "../core/ollama-proxy-port";
 import { isProtectedLocalInferencePort } from "./gateway/local-endpoint-ports";
 import { describe, expect, it, vi } from "vitest";
@@ -340,8 +343,8 @@ describe("native local inference", () => {
     ).toBe(true);
   });
 
-  it("isolates Hermes interpreter permissions without changing canonical DCode identity", () => {
-    expect(identity).toEqual({
+  it("isolates Hermes interpreter permissions and preserves recorded agent identities", () => {
+    expect(nativeLocalIdentity(binding, 1)).toEqual({
       profileId: "nemoclaw-local-authenticated-v1-2aa03053df038ef92e6bfbd9",
       providerName: "nemoclaw-local-v1-a97b50ec4828f77f37ca0fd6",
     });
@@ -353,16 +356,16 @@ describe("native local inference", () => {
       "/usr/bin/curl",
     ]);
     const hermes = prepareNativeLocalProfile({ ...binding, agent: "hermes" });
-    expect(nativeLocalIdentity({ ...binding, agent: "hermes" })).toEqual({
+    expect(nativeLocalIdentity({ ...binding, agent: "hermes" }, 1)).toEqual({
       profileId: "nemoclaw-local-authenticated-v1-e6c1e496ac27438aa3ced2a6",
       providerName: "nemoclaw-local-v1-37774dccc8c1a20aa63ad49d",
     });
     expect(hermes.profileId).not.toBe(dcode.profileId);
-    expect(nativeLocalIdentity({ ...binding, agent: "openclaw" })).toEqual({
+    expect(nativeLocalIdentity({ ...binding, agent: "openclaw" }, 1)).toEqual({
       profileId: "nemoclaw-local-authenticated-v1-9f7d167472a7f83a0c81d053",
       providerName: "nemoclaw-local-v1-618dfcccd3ab805e1b26339b",
     });
-    expect(nativeLocalIdentity({ ...binding, agent: "pi" })).toEqual({
+    expect(nativeLocalIdentity({ ...binding, agent: "pi" }, 1)).toEqual({
       profileId: "nemoclaw-local-authenticated-v1-f6199144c76791c151009dc5",
       providerName: "nemoclaw-local-v1-ef8d855a399f3009f10266b8",
     });
@@ -452,6 +455,33 @@ describe("native local inference", () => {
     expect(isLocalInferenceProvider("llama-cpp-local")).toBe(true);
   });
 
+  it.each(["host.openshell.internal", "host.docker.internal"])(
+    "admits private IPv6 resolution for %s (#13544)",
+    (host) => {
+      const endpoint = prepareNativeLocalProfile({
+        ...binding,
+        endpointUrl: `http://${host}:11435/v1`,
+      }).document.endpoints[0];
+      const addresses = new BlockList();
+      endpoint.allowed_ips.forEach((cidr) => {
+        const [address, prefix] = cidr.split("/");
+        addresses.addSubnet(address, Number(prefix), isIP(address) === 6 ? "ipv6" : "ipv4");
+      });
+      expect(addresses.check("fdc4:f303:9324::254", "ipv6")).toBe(true);
+      expect(addresses.check("fc00::", "ipv6")).toBe(true);
+      expect(addresses.check("fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", "ipv6")).toBe(true);
+      expect(addresses.check("fbff:ffff::1", "ipv6")).toBe(false);
+      expect(addresses.check("fe00::", "ipv6")).toBe(false);
+      expect(addresses.check("10.0.0.1", "ipv4")).toBe(true);
+      expect(addresses.check("172.16.0.1", "ipv4")).toBe(true);
+      expect(addresses.check("192.168.0.1", "ipv4")).toBe(true);
+      expect(addresses.check("2001:4860:4860::8888", "ipv6")).toBe(false);
+      expect(addresses.check("fe80::1", "ipv6")).toBe(false);
+      expect(addresses.check("::1", "ipv6")).toBe(false);
+      expect(addresses.check("8.8.8.8", "ipv4")).toBe(false);
+    },
+  );
+
   it("restricts the selected bridge to models and chat requests (#12558)", () => {
     const profile = prepareNativeLocalProfile(binding);
     expect(profile.document.binaries).toContain("/usr/bin/python3");
@@ -473,7 +503,7 @@ describe("native local inference", () => {
         port: 11435,
         protocol: "rest",
         enforcement: "enforce",
-        allowed_ips: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"],
+        allowed_ips: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7"],
         rules: [
           { allow: { method: "GET", path: "/v1/models" } },
           { allow: { method: "POST", path: "/v1/chat/completions" } },
@@ -646,6 +676,92 @@ describe("native local inference", () => {
     expect(f.adapter.getProvider).not.toHaveBeenCalled();
     expect(f.adapter.attachProvider).not.toHaveBeenCalled();
   });
+  it("stops Hermes reselection before detaching IPv4 access when the dual-stack profile conflicts (#13544)", async () => {
+    const f = fixture({
+      ...binding,
+      agent: "hermes",
+      credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+    });
+    const selected = f.input.binding;
+    const previous = {
+      ...selected,
+      ...nativeLocalIdentity(selected, 1),
+      schemaVersion: 1 as const,
+      providerId: "old-instance",
+    };
+    vi.spyOn(localRuntime, "resolveHermesLocalSwitchRuntime").mockReturnValue({
+      endpointUrl: selected.endpointUrl,
+      credentialValue: "test-only-secret",
+      authMode: "authenticated",
+      ownedProxy: true,
+    });
+    f.adapter.importProviderProfile.mockResolvedValue({
+      ok: false,
+      error: { kind: "command", reason: "profile_incompatible", message: "collision" },
+    });
+    await expect(
+      prepareNativeLocalSwitch({
+        adapter: f.adapter,
+        previous,
+        provider: selected.provider,
+        agentName: "hermes",
+        gatewayName: selected.gatewayName,
+        sandboxName: selected.sandboxName,
+        binding: null,
+        resolveCredentialValue: () => "",
+        readAuthority: f.input.readAuthority,
+        writeAuthority: f.input.writeAuthority,
+      }),
+    ).rejects.toThrow("conflicts");
+    expect(f.adapter.importProviderProfile).toHaveBeenCalledOnce();
+    expect(f.adapter.createProvider).not.toHaveBeenCalled();
+    expect(f.adapter.detachProvider).not.toHaveBeenCalled();
+    expect(f.adapter.attachProvider).not.toHaveBeenCalled();
+  });
+
+  it("verifies a recorded IPv4 attachment without expanding its permissions (#13544)", async () => {
+    const f = fixture();
+    const current = await ensureNativeLocalProvider(f.input);
+    const expected = { ...receipt, ...nativeLocalIdentity(binding, 1) };
+    f.adapter.getProvider.mockResolvedValue({
+      ok: true,
+      value: {
+        name: expected.providerName,
+        type: expected.profileId,
+        credentialKeys: [expected.credentialEnv],
+        configKeys: [],
+        revision: { id: expected.providerId, resourceVersion: 1 },
+      },
+    });
+    f.adapter.listProviderAttachments.mockResolvedValue({
+      ok: true,
+      value: { names: [expected.providerName] },
+    });
+    vi.clearAllMocks();
+    await expect(
+      verifyRecordedNativeLocalProviderAttachment({
+        adapter: f.adapter,
+        expected,
+        sandboxName: "alice",
+        gatewayName: "nemoclaw",
+        agent: "langchain-deepagents-code",
+        provider: binding.provider,
+      }),
+    ).resolves.toEqual(expected);
+    const checked = f.adapter.inspectProviderProfile.mock.calls[0][0].expectedProfile;
+    expect(checked?.boundary.endpoints).toEqual(
+      prepareNativeLocalProfile(expected).document.endpoints,
+    );
+    expect(JSON.stringify(checked)).not.toContain("fc00::/7");
+    expect(current.profileId).not.toBe(expected.profileId);
+    expect(f.adapter.importProviderProfile).not.toHaveBeenCalled();
+    expect(f.adapter.updateProvider).not.toHaveBeenCalled();
+    await expect(ensureNativeLocalProvider({ ...f.input, expected })).rejects.toThrow(
+      "identity does not match",
+    );
+    expect(f.adapter.createProvider).not.toHaveBeenCalled();
+  });
+
   it("refuses a changed profile before attachment verification (#12558)", async () => {
     const f = fixture();
     await ensureNativeLocalProvider(f.input);
