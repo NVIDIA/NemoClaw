@@ -3,7 +3,12 @@
 
 import fs from "node:fs";
 
-import { prompt } from "../../src/lib/credentials/store";
+import * as credentialsModule from "../../src/lib/credentials/store";
+
+const credentials = credentialsModule as typeof credentialsModule & {
+  default?: typeof credentialsModule;
+};
+const prompt = credentials.default?.prompt ?? credentials.prompt;
 
 const statePath = process.env.NEMOCLAW_PROMPT_PTY_STATE;
 if (!statePath) throw new Error("NEMOCLAW_PROMPT_PTY_STATE is required");
