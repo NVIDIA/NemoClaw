@@ -100,8 +100,12 @@ runs:
           service_tasks_max_line="TasksMax=$SERVICE_TASKS_MAX"
         fi
         container_cgroups_line=""
+        oci_runtime=runc
         case "$DISABLE_CONTAINER_CGROUPS" in
-          true) container_cgroups_line='cgroups = "disabled"' ;;
+          true)
+            container_cgroups_line='cgroups = "disabled"'
+            oci_runtime=crun
+            ;;
           false) ;;
           *)
             echo "::error::Native Podman container cgroup override must be true or false" >&2
@@ -285,9 +289,9 @@ runs:
           newgidmap
           newuidmap
           nft
-          runc
           slirp4netns
         )
+        required_host_commands+=("$oci_runtime")
         if [[ -r /sys/module/apparmor/parameters/enabled ]] && grep -q '^Y' /sys/module/apparmor/parameters/enabled; then
           required_host_commands+=(aa-exec apparmor_parser)
         fi
@@ -375,7 +379,7 @@ runs:
             'log_driver = "k8s-file"' \
             '' \
             '[engine]' \
-            'runtime = "runc"' \
+            "runtime = \"$oci_runtime\"" \
             '' \
             '[network]' \
             'firewall_driver = "nftables"'
@@ -449,10 +453,10 @@ runs:
         service_pid="$(/usr/bin/systemctl --user show "$service_name.service" --property=MainPID --value)"
         [[ "$service_pid" =~ ^[1-9][0-9]*$ ]]
         [[ "$(curl --fail --silent --show-error --noproxy '*' --unix-socket "$socket_path" http://localhost/_ping)" == "OK" ]]
-        jq -e '
+        jq -e --arg runtime "$oci_runtime" '
           (.host.security.rootless // .Host.Security.Rootless) == true and
           ((.host.cgroupVersion // .Host.CgroupVersion) | ascii_downcase) == "v2" and
-          ((.host.ociRuntime.name // .Host.OCIRuntime.Name) | ascii_downcase) == "runc"
+          ((.host.ociRuntime.name // .Host.OCIRuntime.Name) | ascii_downcase) == $runtime
         ' "$RUNNER_TEMP/native-podman-e2e-info.json" >/dev/null
 
         # A Podman matrix row is qualification evidence only when Docker cannot
