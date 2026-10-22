@@ -881,7 +881,8 @@
         "test/e2e/fixtures/admin-approval-connect.ts",
         "test/e2e/fixtures/admin-approval-connect.sh",
         "test/e2e/fixtures/issue-4462-admin-approval-evidence.ts",
-        "test/e2e/fixtures/managed-image-receipt.ts"
+        "test/e2e/fixtures/managed-image-receipt.ts",
+        "test/e2e/fixtures/native-local-ipv6-evidence.ts"
       ],
       "fast": [
         "src/lib/inference/native-local.test.ts",
@@ -902,7 +903,8 @@
         "test/e2e/support/openclaw-inference-switch-helpers.test.ts",
         "test/e2e/support/public-nvidia-switch-provider.test.ts",
         "test/security/admin-approval-helper.test.ts",
-        "test/e2e/support/hosted-inference.test.ts"
+        "test/e2e/support/hosted-inference.test.ts",
+        "test/e2e/support/native-local-ipv6-evidence.test.ts"
       ]
     },
     {

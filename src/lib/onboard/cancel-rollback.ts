@@ -19,8 +19,8 @@ export { restoreDefaultAfterRecreate, wasSandboxDefault } from "./default-preser
  *
  * The guard activates only when both conditions are true:
  *   - `arm()` records a newly created sandbox after `createSandbox` succeeds.
- *   - `markCancelled()` records Ctrl+C or SIGTERM at the policy-tier or either
- *     policy-preset selector.
+ *   - `markCancelled()` records Ctrl+C, Ctrl+D, or SIGTERM at the policy-tier
+ *     or either policy-preset selector.
  *
  * Other `process.exit(1)` failure paths do not call `markCancelled()`. Their
  * existing preservation behavior remains unchanged.
