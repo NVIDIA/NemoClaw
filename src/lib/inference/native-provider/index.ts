@@ -12,7 +12,7 @@ import type {
   OpenShellProviderMetadata,
 } from "../../adapters/openshell/sandbox-observer";
 import { REPOSITORY_ROOT } from "../../core/repository-root";
-import { isValidName } from "../../../../nemoclaw/dist/shared/sandbox-name.cjs";
+import { isValidName } from "../../sandbox-name-contract";
 import {
   normalizeNativeProviderAttachment,
   type NativeProviderAttachment,
