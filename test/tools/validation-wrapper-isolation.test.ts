@@ -27,7 +27,14 @@ type TargetedVitestRunner = (input: Record<string, unknown>) => Promise<{ code: 
 const nativeSandboxAvailable =
   (process.platform === "darwin" && fs.existsSync("/usr/bin/sandbox-exec")) ||
   (process.platform === "linux" &&
-    spawnSync("/bin/sh", ["-c", "command -v bwrap"], { encoding: "utf8" }).status === 0);
+    spawnSync(
+      "/bin/sh",
+      [
+        "-c",
+        "command -v bwrap >/dev/null 2>&1 && bwrap --die-with-parent --new-session --unshare-all --share-net --ro-bind / / /bin/true",
+      ],
+      { encoding: "utf8" },
+    ).status === 0);
 
 function foreground(exitCode: number | null = 0, stdout = "", stderr = ""): BashResult {
   return {
