@@ -115,7 +115,8 @@ function expectNodeToolchainBoundary(command: string): void {
   expect(command).toContain('PATH="$node_bin_dir:');
   expect(command).toContain('GIT_DIR="$git_shadow" GIT_WORK_TREE="$repo_root"');
   expect(command).toContain("GIT_DIR=/git GIT_WORK_TREE=/workspace");
-  expect(command).toContain('(literal (param "GIT_CONFIG_PATH"))');
+  expect(command).toContain('(deny file-read*\n  (subpath (param "GIT_DIR"))');
+  expect(command).toContain('(allow file-read* (subpath (param "GIT_OBJECTS")))');
   expect(command).toContain('--ro-bind "$git_shadow" /git');
   expect(command).toContain("(allow network-outbound (remote ip))");
   expect(command).toContain('(allow network* (subpath (param "ISOLATION_ROOT")))');
@@ -153,8 +154,17 @@ function createCheckoutFixture(
   linked ? git("worktree", "add", "-b", "fixture-worktree", worktree) : undefined;
   const workdir = linked ? worktree : repository;
   const config = path.join(repository, ".git", "config");
+  const nestedConfig = path.join(repository, ".git", "modules", "fixture", "config");
+  fs.mkdirSync(path.dirname(nestedConfig), { recursive: true });
+  fs.writeFileSync(nestedConfig, "benign-submodule-git-config-canary\n", { mode: 0o600 });
   const sandboxConfig =
     process.platform === "linux" ? (linked ? "/git/config" : "/workspace/.git/config") : config;
+  const sandboxNestedConfig =
+    process.platform === "linux"
+      ? linked
+        ? "/git/modules/fixture/config"
+        : "/workspace/.git/modules/fixture/config"
+      : nestedConfig;
   const sandboxGitMetadata =
     process.platform === "linux"
       ? linked
@@ -188,6 +198,10 @@ fi
 if /usr/bin/git config --local --get-regexp '^http\\..*\\.extraHeader$' 2>/dev/null | /usr/bin/grep -F 'benign-git-config-canary' >/dev/null; then
   printf '%s\n' 'repository Git credential config was active' >&2
   exit 44
+fi
+if /bin/cat ${shellQuote(sandboxNestedConfig)} 2>/dev/null | /usr/bin/grep -F 'benign-submodule-git-config-canary' >/dev/null; then
+  printf '%s\n' 'nested Git credential config was readable' >&2
+  exit 46
 fi
 ${socketProbe}
 command -v node >/dev/null

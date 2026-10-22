@@ -129,11 +129,9 @@ if [ -n "$git_head_ref" ]; then
 else
   /usr/bin/git -C "$repo_root" rev-parse --verify HEAD >"$git_shadow/HEAD"
 fi
-/usr/bin/git -C "$repo_root" for-each-ref --format='%(objectname) %(refname)' |
-while IFS=' ' read -r git_ref_oid git_ref_name; do
+/usr/bin/git -C "$repo_root" for-each-ref --format='update %(refname) %(objectname)' |
   /usr/bin/env -i PATH=/usr/bin:/bin GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
-    /usr/bin/git --git-dir="$git_shadow" update-ref "$git_ref_name" "$git_ref_oid"
-done
+    /usr/bin/git --git-dir="$git_shadow" update-ref --stdin
 
 if [ -x /usr/bin/sandbox-exec ]; then
   sandbox_profile="$isolation_root/profile.sb"
@@ -171,8 +169,9 @@ if [ -x /usr/bin/sandbox-exec ]; then
 (deny file-write* (subpath (param "GIT_DIR")))
 (deny file-write* (subpath (param "GIT_COMMON_DIR")))
 (deny file-read*
-  (literal (param "GIT_CONFIG_PATH"))
-  (literal (param "GIT_WORKTREE_CONFIG_PATH")))
+  (subpath (param "GIT_DIR"))
+  (subpath (param "GIT_COMMON_DIR")))
+(allow file-read* (subpath (param "GIT_OBJECTS")))
 (allow network-outbound (remote ip))
 (allow network-inbound (local ip))
 (allow network-bind (local ip))
@@ -182,8 +181,6 @@ PROFILE
   /usr/bin/sandbox-exec -D REPO_ROOT="$repo_root" -D ISOLATION_ROOT="$isolation_root" \
     -D GIT_DIR="$git_dir" -D GIT_COMMON_DIR="$git_common_dir" \
     -D GIT_OBJECTS="$git_common_dir/objects" \
-    -D GIT_CONFIG_PATH="$git_common_dir/config" \
-    -D GIT_WORKTREE_CONFIG_PATH="$git_dir/config.worktree" \
     -D NODE_PREFIX="$node_prefix" \
     -f "$sandbox_profile" /usr/bin/env -i \
     HOME="$isolation_root/home" XDG_CONFIG_HOME="$isolation_root/home" TMPDIR="$isolation_root/tmp" \
