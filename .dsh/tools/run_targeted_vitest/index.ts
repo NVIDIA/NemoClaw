@@ -66,7 +66,7 @@ export default async function run_targeted_vitest(input: {
       "Vitest projects must be non-option repository-relative names of at most 128 characters",
     );
   const quote = (v) => "'" + String(v).replaceAll("'", "'\"'\"'") + "'";
-  const args = ["vitest", "run", ...projects.flatMap((x) => ["--project", x]), ...input.files];
+  const args = ["run", ...projects.flatMap((x) => ["--project", x]), ...input.files];
   if (input.coverage)
     args.push(
       "--coverage",
@@ -85,17 +85,21 @@ export default async function run_targeted_vitest(input: {
   const nodeBinDir = path.dirname(nodeExecutable);
   const nodePrefix = path.dirname(nodeBinDir);
   const nodePrefixParent = path.dirname(nodePrefix);
-  const command = "npx " + args.map(quote).join(" ");
+  const command =
+    `${quote(nodeExecutable)} ${quote("node_modules/vitest/vitest.mjs")} ` +
+    args.map(quote).join(" ");
   const isolatedCommand = `set -eu
 umask 077
 repo_root=$(/bin/pwd -P)
+node_executable=${quote(nodeExecutable)}
 node_bin_dir=${quote(nodeBinDir)}
 node_prefix=${quote(nodePrefix)}
 node_prefix_parent=${quote(nodePrefixParent)}
-isolation_root=$(/usr/bin/mktemp -d /tmp/ncv.XXXXXX)
+isolation_root=$(/usr/bin/mktemp -d /tmp/ncv.XXXXXX 2>/dev/null) ||
+  isolation_root=$(/usr/bin/mktemp -d "\${TMPDIR:-/tmp}/ncv.XXXXXX")
 isolation_root=$(cd "$isolation_root" && /bin/pwd -P)
 trap '/bin/rm -R -f -- "$isolation_root"' EXIT
-/bin/mkdir -p "$isolation_root/home" "$isolation_root/tmp"
+/bin/mkdir -p "$isolation_root/bin" "$isolation_root/home" "$isolation_root/tmp"
 git_dir=$(/usr/bin/git -C "$repo_root" rev-parse --absolute-git-dir)
 git_common_dir=$(/usr/bin/git -C "$repo_root" rev-parse --path-format=absolute --git-common-dir)
 git_dir=$(cd "$git_dir" && /bin/pwd -P)
@@ -133,6 +137,46 @@ fi
   /usr/bin/env -i PATH=/usr/bin:/bin GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
     /usr/bin/git --git-dir="$git_shadow" update-ref --stdin
 
+cat >"$isolation_root/bin/git" <<'GIT_WRAPPER'
+#!/bin/sh
+set -eu
+repo_root=\${NEMOCLAW_REPO_ROOT:?}
+git_shadow=\${NEMOCLAW_GIT_SHADOW:?}
+if [ "\${GIT_DIR+x}" = x ] || [ "\${GIT_WORK_TREE+x}" = x ]; then
+  exec /usr/bin/git "$@"
+fi
+for git_arg do
+  if [ "$git_arg" = init ]; then exec /usr/bin/git "$@"; fi
+done
+git_cwd=$PWD
+git_expect_c=false
+for git_arg do
+  if [ "$git_expect_c" = true ]; then
+    case "$git_arg" in /*) git_cwd=$git_arg ;; *) git_cwd=$git_cwd/$git_arg ;; esac
+    git_expect_c=false
+    continue
+  fi
+  case "$git_arg" in
+    -C) git_expect_c=true ;;
+    -C?*) git_c_value=\${git_arg#-C}; case "$git_c_value" in /*) git_cwd=$git_c_value ;; *) git_cwd=$git_cwd/$git_c_value ;; esac ;;
+  esac
+done
+if git_cwd=$(cd "$git_cwd" 2>/dev/null && /bin/pwd -P); then
+  case "$git_cwd/" in
+    "$repo_root/"*)
+      git_probe=$git_cwd
+      while [ "$git_probe" != "$repo_root" ]; do
+        if [ -e "$git_probe/.git" ]; then exec /usr/bin/git "$@"; fi
+        git_probe=\${git_probe%/*}
+      done
+      exec /usr/bin/env GIT_DIR="$git_shadow" GIT_WORK_TREE="$repo_root" /usr/bin/git "$@"
+      ;;
+  esac
+fi
+exec /usr/bin/git "$@"
+GIT_WRAPPER
+/bin/chmod 0555 "$isolation_root/bin/git"
+
 if [ -x /usr/bin/sandbox-exec ]; then
   sandbox_profile="$isolation_root/profile.sb"
   cat >"$sandbox_profile" <<'PROFILE'
@@ -160,7 +204,7 @@ if [ -x /usr/bin/sandbox-exec ]; then
   (subpath (param "REPO_ROOT"))
   (subpath (param "ISOLATION_ROOT"))
   (subpath (param "GIT_OBJECTS"))
-  (subpath (param "NODE_PREFIX")))
+  (literal (param "NODE_EXECUTABLE")))
 (allow file-write*
   (subpath (param "REPO_ROOT"))
   (subpath (param "ISOLATION_ROOT"))
@@ -181,14 +225,14 @@ PROFILE
   /usr/bin/sandbox-exec -D REPO_ROOT="$repo_root" -D ISOLATION_ROOT="$isolation_root" \
     -D GIT_DIR="$git_dir" -D GIT_COMMON_DIR="$git_common_dir" \
     -D GIT_OBJECTS="$git_common_dir/objects" \
-    -D NODE_PREFIX="$node_prefix" \
+    -D NODE_EXECUTABLE="$node_executable" \
     -f "$sandbox_profile" /usr/bin/env -i \
     HOME="$isolation_root/home" XDG_CONFIG_HOME="$isolation_root/home" TMPDIR="$isolation_root/tmp" \
-    PATH="$node_bin_dir:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+    PATH="$isolation_root/bin:$node_bin_dir:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
     CI=true NO_COLOR=1 TERM=dumb \
+    NEMOCLAW_REPO_ROOT="$repo_root" NEMOCLAW_GIT_SHADOW="$git_shadow" \
     NPM_CONFIG_USERCONFIG=/dev/null \
     GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_OPTIONAL_LOCKS=0 \
-    GIT_DIR="$git_shadow" GIT_WORK_TREE="$repo_root" \
     /bin/sh -c ${quote(command)}
   validation_status=$?
   set -e
@@ -206,16 +250,16 @@ if command -v bwrap >/dev/null 2>&1; then
     printf 'gitdir: /git\n' >"$git_pointer"
     set -- "$@" --ro-bind "$git_pointer" /workspace/.git
   else
-    empty_git="$isolation_root/empty-git"
-    /bin/mkdir "$empty_git"
-    set -- "$@" --ro-bind "$empty_git" /workspace/.git
+    set -- "$@" --ro-bind "$git_shadow" /workspace/.git
+    set -- "$@" --ro-bind "$git_common_dir/objects" /workspace/.git/objects
   fi
   for system_path in /usr /bin /sbin /lib /lib64 /opt /etc; do
     if [ -e "$system_path" ]; then set -- "$@" --ro-bind "$system_path" "$system_path"; fi
   done
-  case "$node_prefix" in
+  case "$node_executable" in
     /usr|/usr/*|/bin|/bin/*|/sbin|/sbin/*|/lib|/lib/*|/lib64|/lib64/*|/opt|/opt/*|/etc|/etc/*) ;;
-    *) set -- "$@" --dir "$node_prefix_parent" --ro-bind "$node_prefix" "$node_prefix" ;;
+    *) set -- "$@" --dir "$node_prefix_parent" --dir "$node_prefix" --dir "$node_bin_dir" \
+      --ro-bind "$node_executable" "$node_executable" ;;
   esac
   set +e
   "$@" --chdir /workspace /usr/bin/env -i \
@@ -224,7 +268,6 @@ if command -v bwrap >/dev/null 2>&1; then
     CI=true NO_COLOR=1 TERM=dumb \
     NPM_CONFIG_USERCONFIG=/dev/null \
     GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_OPTIONAL_LOCKS=0 \
-    GIT_DIR=/git GIT_WORK_TREE=/workspace \
     /bin/sh -c ${quote(command)}
   validation_status=$?
   set -e

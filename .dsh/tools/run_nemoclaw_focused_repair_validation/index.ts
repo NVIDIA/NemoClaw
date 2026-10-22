@@ -104,10 +104,11 @@ repo_root=$(/bin/pwd -P)
 node_bin_dir=${q(nodeBinDir)}
 node_prefix=${q(nodePrefix)}
 node_prefix_parent=${q(nodePrefixParent)}
-isolation_root=$(/usr/bin/mktemp -d /tmp/ncv.XXXXXX)
+isolation_root=$(/usr/bin/mktemp -d /tmp/ncv.XXXXXX 2>/dev/null) ||
+  isolation_root=$(/usr/bin/mktemp -d "\${TMPDIR:-/tmp}/ncv.XXXXXX")
 isolation_root=$(cd "$isolation_root" && /bin/pwd -P)
 trap '/bin/rm -R -f -- "$isolation_root"' EXIT
-/bin/mkdir -p "$isolation_root/home" "$isolation_root/tmp"
+/bin/mkdir -p "$isolation_root/bin" "$isolation_root/home" "$isolation_root/tmp"
 git_dir=$(/usr/bin/git -C "$repo_root" rev-parse --absolute-git-dir)
 git_common_dir=$(/usr/bin/git -C "$repo_root" rev-parse --path-format=absolute --git-common-dir)
 git_dir=$(cd "$git_dir" && /bin/pwd -P)
@@ -144,6 +145,46 @@ fi
 /usr/bin/git -C "$repo_root" for-each-ref --format='update %(refname) %(objectname)' |
   /usr/bin/env -i PATH=/usr/bin:/bin GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
     /usr/bin/git --git-dir="$git_shadow" update-ref --stdin
+
+cat >"$isolation_root/bin/git" <<'GIT_WRAPPER'
+#!/bin/sh
+set -eu
+repo_root=\${NEMOCLAW_REPO_ROOT:?}
+git_shadow=\${NEMOCLAW_GIT_SHADOW:?}
+if [ "\${GIT_DIR+x}" = x ] || [ "\${GIT_WORK_TREE+x}" = x ]; then
+  exec /usr/bin/git "$@"
+fi
+for git_arg do
+  if [ "$git_arg" = init ]; then exec /usr/bin/git "$@"; fi
+done
+git_cwd=$PWD
+git_expect_c=false
+for git_arg do
+  if [ "$git_expect_c" = true ]; then
+    case "$git_arg" in /*) git_cwd=$git_arg ;; *) git_cwd=$git_cwd/$git_arg ;; esac
+    git_expect_c=false
+    continue
+  fi
+  case "$git_arg" in
+    -C) git_expect_c=true ;;
+    -C?*) git_c_value=\${git_arg#-C}; case "$git_c_value" in /*) git_cwd=$git_c_value ;; *) git_cwd=$git_cwd/$git_c_value ;; esac ;;
+  esac
+done
+if git_cwd=$(cd "$git_cwd" 2>/dev/null && /bin/pwd -P); then
+  case "$git_cwd/" in
+    "$repo_root/"*)
+      git_probe=$git_cwd
+      while [ "$git_probe" != "$repo_root" ]; do
+        if [ -e "$git_probe/.git" ]; then exec /usr/bin/git "$@"; fi
+        git_probe=\${git_probe%/*}
+      done
+      exec /usr/bin/env GIT_DIR="$git_shadow" GIT_WORK_TREE="$repo_root" /usr/bin/git "$@"
+      ;;
+  esac
+fi
+exec /usr/bin/git "$@"
+GIT_WRAPPER
+/bin/chmod 0555 "$isolation_root/bin/git"
 
 if [ -x /usr/bin/sandbox-exec ]; then
   sandbox_profile="$isolation_root/profile.sb"
@@ -196,11 +237,11 @@ PROFILE
     -D NODE_PREFIX="$node_prefix" \
     -f "$sandbox_profile" /usr/bin/env -i \
     HOME="$isolation_root/home" XDG_CONFIG_HOME="$isolation_root/home" TMPDIR="$isolation_root/tmp" \
-    PATH="$node_bin_dir:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+    PATH="$isolation_root/bin:$node_bin_dir:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
     CI=true NO_COLOR=1 TERM=dumb \
+    NEMOCLAW_REPO_ROOT="$repo_root" NEMOCLAW_GIT_SHADOW="$git_shadow" \
     NPM_CONFIG_USERCONFIG=/dev/null \
     GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_OPTIONAL_LOCKS=0 \
-    GIT_DIR="$git_shadow" GIT_WORK_TREE="$repo_root" \
     /bin/sh -c ${q(command)}
   validation_status=$?
   set -e
@@ -218,9 +259,8 @@ if command -v bwrap >/dev/null 2>&1; then
     printf 'gitdir: /git\n' >"$git_pointer"
     set -- "$@" --ro-bind "$git_pointer" /workspace/.git
   else
-    empty_git="$isolation_root/empty-git"
-    /bin/mkdir "$empty_git"
-    set -- "$@" --ro-bind "$empty_git" /workspace/.git
+    set -- "$@" --ro-bind "$git_shadow" /workspace/.git
+    set -- "$@" --ro-bind "$git_common_dir/objects" /workspace/.git/objects
   fi
   for system_path in /usr /bin /sbin /lib /lib64 /opt /etc; do
     if [ -e "$system_path" ]; then set -- "$@" --ro-bind "$system_path" "$system_path"; fi
@@ -236,7 +276,6 @@ if command -v bwrap >/dev/null 2>&1; then
     CI=true NO_COLOR=1 TERM=dumb \
     NPM_CONFIG_USERCONFIG=/dev/null \
     GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_OPTIONAL_LOCKS=0 \
-    GIT_DIR=/git GIT_WORK_TREE=/workspace \
     /bin/sh -c ${q(command)}
   validation_status=$?
   set -e
@@ -327,6 +366,14 @@ exit 126`,
       failed: [],
       nul: null,
     };
+  const hostHome = process.env.HOME ? realpathSync(process.env.HOME) : null;
+  if (!hostHome) throw new Error("Credential-isolated validation requires a resolvable host HOME.");
+  const homeRelativeToNodePrefix = path.relative(nodePrefix, hostHome);
+  if (
+    homeRelativeToNodePrefix === "" ||
+    (homeRelativeToNodePrefix !== ".." && !homeRelativeToNodePrefix.startsWith(".." + path.sep))
+  )
+    throw new Error("Credential-isolated validation cannot expose the host HOME.");
   const steps = [];
   for (const item of commands) {
     const r = await tools.bash({
