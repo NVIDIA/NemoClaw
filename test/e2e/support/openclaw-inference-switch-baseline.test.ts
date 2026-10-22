@@ -2,13 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import os from "node:os";
 
 import { afterEach, expect, it, vi } from "vitest";
 
 const captured = vi.hoisted(() => ({ test: vi.fn() }));
 vi.mock("../fixtures/e2e-test.ts", async () => ({
   expect: (await import("vitest")).expect,
-  test: captured.test,
+  test: Object.assign(captured.test, {
+    skipIf: (skip: boolean) => (skip ? vi.fn() : captured.test),
+  }),
 }));
 vi.mock("../fixtures/managed-image-receipt.ts", () => ({
   selectedE2eManagedImageReference: () => "example.invalid/openclaw@sha256:" + "a".repeat(64),
@@ -47,9 +50,18 @@ async function loadNativeSwitchRun(nativeCustom = false) {
   return { progress, run };
 }
 
-it.each([false, true])(
-  "selects the authenticated baseline with native custom=%s",
-  async (nativeCustom) => {
+it.each(
+  [false, true].flatMap((nativeCustom) =>
+    ["6.8.0-generic", "6.6.87.2-microsoft-standard-WSL2"].map((release) => ({
+      nativeCustom,
+      release,
+    })),
+  ),
+)(
+  "selects the authenticated baseline with native custom=$nativeCustom on $release",
+  async ({ nativeCustom, release }) => {
+    vi.spyOn(os, "release").mockReturnValue(release);
+    vi.stubEnv("NEMOCLAW_GATEWAY_RUNTIME", "docker");
     const { progress, run } = await loadNativeSwitchRun(nativeCustom);
     const result = { exitCode: 0, stdout: "", stderr: "" };
     const stop = new Error("onboarding captured");

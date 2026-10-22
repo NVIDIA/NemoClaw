@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { randomBytes } from "node:crypto";
+import { DEFAULT_CLOUD_MODEL } from "../../../src/lib/inference/config.ts";
 import { nativeHostedAuthHeaderScript } from "../../../src/lib/inference/native-provider/contract.ts";
 import {
   NATIVE_NVIDIA_AUTH_HEADER_SCRIPT,
@@ -83,7 +84,7 @@ export interface E2EInferenceAdapterOptions {
 
 const DEFAULT_MOCK_MODEL = "nvidia/nvidia/nemotron-3-ultra";
 const DEFAULT_PUBLIC_NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1";
-const DEFAULT_PUBLIC_NVIDIA_MODEL = "nvidia/nemotron-3-super-120b-a12b";
+const DEFAULT_PUBLIC_NVIDIA_MODEL = DEFAULT_CLOUD_MODEL;
 const PUBLIC_NVIDIA_SECRET = "NVIDIA_API_KEY";
 const DIRECT_CHAT_TIMEOUT_MS = 120_000;
 const INTERNAL_NVIDIA_ALLOWED_HOSTS = ["inference-api.nvidia.com"] as const;
