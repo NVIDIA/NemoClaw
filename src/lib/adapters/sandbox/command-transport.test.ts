@@ -108,7 +108,9 @@ describe("native sandbox command transport", () => {
     ["invalid", 9000],
     ["0", 9000],
     ["-1", 9000],
-  ])("uses timeout override %s only when positive", async (value, expected) => {
+    ["2147483647", 2147483647],
+    ["2147483648", 9000],
+  ])("uses timeout override %s only when valid", async (value, expected) => {
     vi.stubEnv("NEMOCLAW_SANDBOX_EXEC_TIMEOUT_MS", value);
     const deps = fixture();
     await executeSandboxExecCommandTransport(deps, "alpha", "id", 9000, {});

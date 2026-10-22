@@ -14,6 +14,20 @@ import { DEFAULT_CLOUD_MODEL } from "../../../src/lib/inference/config.ts";
 import { PUBLIC_NVIDIA_SWITCH_MODEL } from "../live/public-nvidia-switch-provider.ts";
 
 describe("inference-switch catalogue boundary", () => {
+  it("selects native-local enforcement coverage when IPv6 evidence changes (#13544)", () => {
+    expect(
+      catalogueTargetsForChangedFiles(["test/e2e/fixtures/native-local-ipv6-evidence.ts"]).map(
+        (target) => target.id,
+      ),
+    ).toContain("inference-routing-openclaw-native");
+    expect(
+      catalogueTarget("inference-routing-openclaw-native").environmentOrInferenceEndpoint,
+    ).toContain("Ubuntu");
+    expect(
+      catalogueTarget("inference-routing-openclaw-native").environmentOrInferenceEndpoint,
+    ).toContain("skips WSL-only TC-INF-19");
+  });
+
   it.each([
     "src/lib/inference/native-provider/contract.ts",
     "src/lib/inference/native-provider/custom-setup.ts",

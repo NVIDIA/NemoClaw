@@ -11,7 +11,6 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import readline from "node:readline";
 
 import { isErrnoException } from "../core/errno";
 import {
@@ -21,6 +20,7 @@ import {
 } from "../core/pending-stdin-eof";
 import { GATEWAY_PORT } from "../core/ports";
 import { createPromptActivityCleanup } from "../core/prompt-activity";
+import { createStdinPromptInterface, raisePromptInterrupt } from "../core/prompt-terminal";
 import { listMessagingCredentialMetadata } from "../messaging/channels";
 import { rejectSymlinksOnPath } from "../state/config-io";
 import { nemoclawStateRoot } from "../state/state-root";
@@ -830,7 +830,13 @@ export function isSecureCredentialPromptAvailable(
 /**
  * Prompt the user on stderr and resolve to their trimmed answer. Pass
  * `{ secret: true }` to mask input on a TTY (falls back to plain readline
- * when stdin/stderr is non-interactive, e.g. in CI).
+ * when stdin is non-interactive, e.g. in CI).
+ *
+ * A TTY stdin alone selects the masked reader. The readline fallback keys
+ * its terminal mode off stdin so Ctrl-C keeps working when stderr is
+ * captured, and terminal mode echoes what is typed — which would write the
+ * secret itself into the redirected stderr. The masked reader only ever
+ * writes asterisks, and it needs nothing from stderr but a writable stream.
  */
 export function prompt(
   question: string,
@@ -865,21 +871,26 @@ function askQuestion(
     if (typeof process.stdin.ref === "function") {
       process.stdin.ref();
     }
-    const silent = opts.secret === true && isSecureCredentialPromptAvailable();
+    // A TTY stdin alone selects the masked reader: it only ever writes
+    // asterisks, so it stays safe when stderr is captured, where readline's
+    // stdin-keyed terminal mode would echo the secret into the redirected
+    // stream. `isSecureCredentialPromptAvailable()` still gates the callers
+    // that refuse to run at all without an interactive stderr.
+    const silent = opts.secret === true && process.stdin.isTTY === true;
     if (silent) {
       readSecretAnswer(question, opts.maskCap)
         .then(resolve)
         .catch((error: NodeJS.ErrnoException) => {
           if (error && error.code === "SIGINT") {
             reject(error);
-            process.kill(process.pid, "SIGINT");
+            raisePromptInterrupt();
             return;
           }
           reject(error);
         });
       return;
     }
-    const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
+    const rl = createStdinPromptInterface();
     let finished = false;
 
     const cleanup = createPromptActivityCleanup(() => {
@@ -914,7 +925,7 @@ function askQuestion(
       rl.on("SIGINT", () => {
         const error = Object.assign(new Error("Prompt interrupted"), { code: "SIGINT" });
         rejectPrompt(error);
-        process.kill(process.pid, "SIGINT");
+        raisePromptInterrupt();
       });
       // Treat readline closing before the question is answered as cancellation.
       // When stdin reaches EOF (e.g. `nemoclaw onboard ... < /dev/null`), the

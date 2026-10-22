@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { raisePromptInterrupt } from "../core/prompt-terminal";
 import { pendingStdinEofError, takePendingStdinEof } from "../core/pending-stdin-eof";
 import type { HermesAuthMethod } from "../hermes-provider-auth";
 import * as hermesProviderAuth from "../hermes-provider-auth";
@@ -215,7 +216,7 @@ async function selectHermesToolGatewaysInteractive(
         if (ch === "\u0003") {
           cleanup();
           reject(Object.assign(new Error("Prompt interrupted"), { code: "SIGINT" }));
-          process.kill(process.pid, "SIGINT");
+          raisePromptInterrupt();
           return;
         }
         // Raw mode delivers Ctrl-D as an ordinary byte instead of an

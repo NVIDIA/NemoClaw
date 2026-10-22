@@ -78,6 +78,13 @@ import {
   onboardNativeOpenClaw,
   requestNativeOpenClaw,
 } from "../fixtures/inference-routing-openclaw-native.ts";
+import {
+  nativeLocalUlaOnlyResolution,
+  isWslDockerIpv6TestHost,
+  nativeLocalIpv6ResolutionCommand,
+  nativeLocalIpv6DeniedCommand,
+} from "../fixtures/native-local-ipv6-evidence.ts";
+import { nativeLocalChatCommand } from "../fixtures/native-local-chat.ts";
 import { assertAgentExecutionSucceeded } from "./gpu-e2e-helpers.ts";
 import { hostedCredentialScanCommand } from "./inference-routing-credential-scan.ts";
 import {
@@ -1432,5 +1439,62 @@ test(
       ),
     ).toBe(true);
     expect(requests.every((request) => request.auth === "ok")).toBe(true);
+  },
+);
+
+test.skipIf(!isWslDockerIpv6TestHost())(
+  "TC-INF-19 OpenClaw admits a WSL2 IPv6 host bridge and denies other IPv6 destinations (#13544)",
+  {
+    timeout: ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
+    meta: {
+      e2ePhases: [
+        "confirm live inference prerequisites",
+        "onboard native OpenClaw owner",
+        "verify IPv6 policy boundary",
+      ],
+    },
+  },
+  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
+    progress.phase("onboard native OpenClaw owner");
+    const context = { artifacts, cleanup, host, progress, runtimeProvider, sandbox };
+    const selected = await onboardNativeOpenClaw(true, context, "::");
+    const { owner, apiKey, fake, onboard, attachment } = selected;
+    const options = { env: sandboxAccessEnv(), timeoutMs: 150_000, redactionValues: [apiKey] };
+    expectOnboardSuccess(onboard, `${owner} IPv6 onboard`);
+    progress.phase("verify IPv6 policy boundary");
+    const resolution = await sandbox.exec(owner, nativeLocalIpv6ResolutionCommand(), {
+      artifactName: `${owner}-ipv6-resolution`,
+      env: sandboxAccessEnv(),
+      timeoutMs: 30_000,
+    });
+    expect(resolution.exitCode, resultText(resolution)).toBe(0);
+    expect(nativeLocalUlaOnlyResolution(resolution.stdout), resolution.stdout).toBe(true);
+    const offset = fake.requests().length;
+    const body = JSON.stringify({
+      model: "nemoclaw-openclaw-native-local",
+      messages: [{ role: "user", content: "PONG" }],
+      max_tokens: 8,
+    });
+    const reply = await sandbox.execShell(
+      owner,
+      trustedSandboxShellScript(nativeLocalChatCommand(attachment!.endpointUrl, body, "-fsS")),
+      { ...options, artifactName: `${owner}-ipv6-chat` },
+    );
+    expect(reply.exitCode, resultText(reply)).toBe(0);
+    const requests = fake.requests().slice(offset);
+    expect(requests.some((r) => r.path === "/v1/chat/completions" && r.auth === "ok")).toBe(true);
+    const [publicIpv6, linkLocal, loopback] = await Promise.all(
+      ["2001:4860:4860::8888", "fe80::1", "::1"].map((address) =>
+        sandbox.exec(owner, nativeLocalIpv6DeniedCommand(address, body), {
+          artifactName: `${owner}-ipv6-deny-${address.replaceAll(":", "-")}`,
+          env: sandboxAccessEnv(),
+          timeoutMs: 30_000,
+        }),
+      ),
+    );
+    const policyDenied = /"error"\s*:\s*"policy_denied"[\s\S]*\n403$/;
+    expect(publicIpv6.stdout, resultText(publicIpv6)).toMatch(policyDenied);
+    expect(linkLocal.stdout, resultText(linkLocal)).toMatch(policyDenied);
+    expect(loopback.stdout, resultText(loopback)).toMatch(policyDenied);
   },
 );
