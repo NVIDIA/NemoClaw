@@ -267,10 +267,12 @@ export function wipeAgentNativeHome(
       throw error;
     }
     // Rootless Podman root may lack permission to remove sandbox-user state,
-    // including OpenClaw SQLite files. Finish the validated wipe as the image's
+    // including agent SQLite files. Finish the validated wipe as the image's
     // pinned sandbox user before attempting stopped-volume cleanup.
     if (
-      (agentName === "langchain-deepagents-code" || agentName === "openclaw") &&
+      (agentName === "langchain-deepagents-code" ||
+        agentName === "openclaw" ||
+        agentName === "hermes") &&
       result.status === 1 &&
       !result.error &&
       runAsSandboxUser
@@ -852,7 +854,9 @@ export async function executeSandboxDestroy({
                 : {}),
             });
           if (
-            (agentName === "langchain-deepagents-code" || agentName === "openclaw") &&
+            (agentName === "langchain-deepagents-code" ||
+              agentName === "openclaw" ||
+              agentName === "hermes") &&
             control.executeAsSandboxUser
           ) {
             const identity = managedImageRuntimeIdentity(agentName);
