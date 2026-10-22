@@ -181,6 +181,19 @@ Use `nemo-deepagents <sandbox-name> status`, `logs`, `connect`, and `rebuild` fo
 If the terminal runtime reports degraded health, rebuild the sandbox instead of using `recover` or `gateway restart`.
 </AgentOnly>
 
+<AgentOnly variant="hermes">
+
+### Recover Portable Published Ollama
+
+If a Hermes Portable Ollama runner stops after onboarding, run `$$nemoclaw <sandbox-name> recover` or `$$nemoclaw <sandbox-name> connect --probe-only`.
+Ordinary `connect` also attempts recovery when the recorded inference route is unavailable.
+The command checks the sandbox's recorded lifecycle and inference authority, resumes only its exact receipt-owned runner, and verifies the inference route before accepting it.
+If the recorded provider, runner, network, socket, or private state identity has changed, recovery exits nonzero without replacing that state.
+Preserve the private inference state and exact redacted error, and [file a NemoClaw issue](https://github.com/NVIDIA/NemoClaw/issues/new) for maintainer review before retrying an authority-drift failure.
+If an unrelated host service holds a required published address, stop that service and rerun the same recovery command.
+
+</AgentOnly>
+
 ### Understand Launch Readiness Leases
 
 A successful complete preflight for `$$nemoclaw launch <sandbox-name>` can publish a credential-free launch-readiness lease on Linux. Linux infrastructure can publish the same evidence with `$$nemoclaw <sandbox-name> connect --probe-only`. The lease has a fixed 24-hour lifetime that repeated launches do not extend. Leaving the agent with `/exit` does not revoke it, and users do not refresh it manually.

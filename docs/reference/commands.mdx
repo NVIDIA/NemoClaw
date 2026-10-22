@@ -4616,7 +4616,17 @@ Array-shape example (paths defaulted):
 
 #### Linux Ollama install mode details
 
-Set `NEMOCLAW_OLLAMA_INSTALL_MODE=system` to run the official `https://ollama.com/install.sh` installer, which uses sudo, writes to `/usr/local`, and configures systemd. Set `NEMOCLAW_OLLAMA_INSTALL_MODE=user` to extract the release tarball to `${HOME}/.local` without sudo and launch the daemon manually without systemd persistence. Leave `NEMOCLAW_OLLAMA_INSTALL_MODE` empty or unset to let NemoClaw auto-detect the mode. Auto-detection selects `system` when the current user is root or passwordless `sudo` works. Auto-detection selects `user` in non-interactive runs without passwordless `sudo`. An interactive shell falls back to `system` so the official installer can prompt for the password. NemoClaw rejects any other value. On upgrades, NemoClaw rejects `user` because a user-local install cannot replace the system daemon on `:11434`. On upgrades, NemoClaw also rejects `system` under `NEMOCLAW_NON_INTERACTIVE=1` when passwordless `sudo` is unavailable because the installer would hang on a hidden sudo prompt. The run exits with an actionable diagnostic instead.
+Set `NEMOCLAW_OLLAMA_INSTALL_MODE=system` to run a pinned snapshot of the official Ollama installer after NemoClaw verifies its SHA-256 digest.
+The system installer uses sudo, writes to `/usr/local`, and configures systemd.
+Set `NEMOCLAW_OLLAMA_INSTALL_MODE=user` to extract the release tarball to `${HOME}/.local` without sudo and launch the daemon manually without systemd persistence.
+Leave `NEMOCLAW_OLLAMA_INSTALL_MODE` empty or unset to let NemoClaw auto-detect the mode.
+Auto-detection selects `system` when the current user is root or passwordless `sudo` works.
+Auto-detection selects `user` in non-interactive runs without passwordless `sudo`.
+An interactive shell falls back to `system` so the official installer can prompt for the password.
+NemoClaw rejects any other value.
+On upgrades, NemoClaw rejects `user` because a user-local install cannot replace the system daemon on `:11434`.
+On upgrades, NemoClaw also rejects `system` under `NEMOCLAW_NON_INTERACTIVE=1` when passwordless `sudo` is unavailable because the installer would hang on a hidden sudo prompt.
+The run exits with an actionable diagnostic instead.
 
 ### Experimental NemoCUA
 
