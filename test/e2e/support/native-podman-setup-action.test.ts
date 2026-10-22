@@ -923,6 +923,7 @@ exec /bin/bash "$@"
     const setupRuntime = setupAction.runs.steps.find(
       (step) => step.name === "Start native Podman runtime",
     );
+    const setupRuntimeRun = setupRuntime?.run ?? "";
     const dockerCliIsolation = setupAction.runs.steps.find(
       (step) => step.name === "Remove Docker CLI from native Podman execution",
     );
@@ -982,6 +983,7 @@ exec /bin/bash "$@"
     });
     expect(job.env).not.toHaveProperty("E2E_HERMES_BASE_STORAGE_HOME");
     expect(setupAction.inputs["cleanup-fixture"]?.default).toBe("");
+    expect(setupAction.inputs["disable-container-cgroups"]?.default).toBe("false");
     expect(setupAction.inputs["isolate-docker-cli"]?.default).toBe("true");
     expect(setupAction.inputs["service-tasks-max"]?.default).toBe("");
     expect(dockerCliIsolation?.if).toBe(
@@ -989,8 +991,16 @@ exec /bin/bash "$@"
     );
     expect(setupRuntime?.env).toMatchObject({
       CLEANUP_FIXTURE: "${{ inputs.cleanup-fixture }}",
+      DISABLE_CONTAINER_CGROUPS: "${{ inputs.disable-container-cgroups }}",
       SERVICE_TASKS_MAX: "${{ inputs.service-tasks-max }}",
     });
+    expect(setupRuntime?.run).toContain('case "$DISABLE_CONTAINER_CGROUPS" in');
+    expect(setupRuntime?.run).toContain("container_cgroups_line='cgroups = \"disabled\"'");
+    expect(setupRuntime?.run).toContain('if [[ -n "$container_cgroups_line" ]]');
+    expect(setupRuntime?.run).toContain("printf '%s\\n' \"$container_cgroups_line\"");
+    expect(setupRuntimeRun.indexOf("printf '%s\\n' \"$container_cgroups_line\"")).toBeLessThan(
+      setupRuntimeRun.indexOf('/usr/bin/systemctl --user start "$service_name.socket"'),
+    );
     expect(setupRuntime?.run).toContain('[[ ! "$SERVICE_TASKS_MAX" =~ ^[1-9][0-9]*$ ]]');
     expect(setupRuntime?.run).toContain('service_tasks_max_line="TasksMax=$SERVICE_TASKS_MAX"');
     expect(setupRuntime?.run).toContain('if [[ -n "$service_tasks_max_line" ]]');
@@ -1022,13 +1032,14 @@ exec /bin/bash "$@"
     expect(setup?.with).toEqual({
       "cleanup-fixture":
         "/usr/local/libexec/nemoclaw/native-podman-e2e-restore.${{ github.run_id }}.${{ github.run_attempt }}",
+      "disable-container-cgroups": "true",
       enabled: "true",
       toolchain: "portable-5.7",
       "isolate-docker-cli": "false",
       "service-tasks-max": "${{ env.NEMOCLAW_NATIVE_PODMAN_SERVICE_TASKS_MAX }}",
     });
     expect(setup?.uses).toBe(
-      "NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@ec68af5e3f8a6c9b7921d3888255c4a8fce88f5b",
+      "NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@56a7be8c1a845d86dfca0b70e769e2c160aa8609",
     );
     expect(setupIndex).toBeGreaterThan(openshellInstallIndex);
     expect(headroomIndex).toBeGreaterThan(setupIndex);
@@ -1043,7 +1054,8 @@ exec /bin/bash "$@"
     expect(headroomRun).toContain('[[ "$tasks_max" != "$service_tasks_max" ]]');
     expect(headroomRun).toContain("failure=service_tasks_configuration");
     expect(headroomRun).toContain("PORTABLE_REGISTRY_MINIMUM_PROCESS_HEADROOM=%s");
-    expect(headroomRun).toContain('cgroups = "disabled"');
+    expect(headroomRun).toContain(`grep -Fxc 'cgroups = "disabled"' "$config"`);
+    expect(headroomRun).not.toContain("sed -i");
     expect(headroomRun).not.toContain("pids_limit = $minimum");
     expect(headroomRun).not.toContain('cgroup_manager = "systemd"');
     expect(headroomRun).toContain('[[ ! "$tasks_max" =~ ^[0-9]+$');

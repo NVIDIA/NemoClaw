@@ -86,8 +86,8 @@ The install refuses package removals, preserving the runner's Docker and contain
   Unavailable diagnostics do not suppress the readiness failure.
   Trusted Portable Podman setup requires at least 128 tasks of remaining headroom
   on its finite API-service boundary before registry creation. The job selects a
-  1024-task limit, and the pinned setup action owns rendering that limit into the
-  service unit before startup. Focused containers
+  1024-task limit and disabled per-container cgroups, and the pinned setup action
+  owns rendering both settings before service startup. Focused containers
   inherit that boundary, and the live scenario verifies that the registry shares
   its service cgroup with sufficient remaining headroom. Setup records service,
   user, host, and cgroup headroom in `portable-podman-process-headroom.json`.
