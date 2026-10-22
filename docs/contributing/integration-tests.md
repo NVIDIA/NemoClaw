@@ -124,7 +124,7 @@ The fixtures return protocol responses; they do not establish agent inference, n
 | `export_observations` | Export through provider refresh without applying, without inference or search credentials, rejection of observed drift without changes to saved state, and a Pi model changed inside the sandbox, which export ignores |
 | `fabric_deployment` | One harness test each for OpenClaw and Pi, where a changed configuration replaces the agent with its sandbox, and missing or failed runtime declarations |
 | `kubernetes_agents` | The three-agent `external-gateway.yaml` examples for Kubernetes and OpenShift, one test each, against the fixture gateway reporting OpenShell's Kubernetes driver, with a metadata bundle describing the images and inference at a cluster Service URL without a key: a plan without effects; three sandboxes, each with a policy rule for the Service's name and no address grant; each agent's Fabric configuration with its own name and the Service URL; an unchanged apply without changes or gateway effects; export and reapply; and destroy. It does not check that a cluster resolves or reaches the Service |
-| `multi_agent` | Three OpenClaw agents in separate sandboxes, where an update replaces two sandboxes and Fabric rejects one agent's start: the CLI names only the failed sandbox and leaves out Fabric's message, which `diagnostics/fabric-SANDBOX.json` keeps; the other replacement finishes; the unchanged agent is neither replaced, stopped, nor restarted; and the retry replaces only the failed agent's sandbox before export, unchanged reapply, and destroy |
+| `multi_agent` | Three OpenClaw agents in separate sandboxes, each with its own model, sharing one provider registration: one agent's rejected start, its removal, or another owner's label on its sandbox changes no agent that the document leaves unchanged |
 | `multiple_providers` | Two deployments' provider attachments, export and reapply, drift, and destroy, each scoped to its sandbox |
 | `fabric_bridge` | The provider's `fabric-agent-ctl` client: the image's own command and environment, input on stdin, and uncertain invocations never replayed. These tests are not ignored and run with the unit tests |
 | `remote_service` | Services on simulated SSH hosts; see [SSH service fixtures](#ssh-service-fixtures) |
@@ -136,6 +136,20 @@ In `deployment`, `cli_terminal_outputs_preserve_lifecycle_and_json_contract` che
 `gateway_change_between_plan_and_apply_preserves_resources_and_allows_teardown` changes the gateway driver after planning to check OpenTofu's apply-time check, recovery, and teardown.
 `rejected_policy_fails_promptly_with_context_and_allows_recovery_or_destroy` checks a simulated gateway admission rejection with sandbox context in text and JSON output, retained bindings, recovery, and destroy.
 `separate_agent_sandboxes_cli_export_reapply_and_policy_drift` and `tool_disclosure_cli_export_reapply_and_configuration_on_stdin` check OpenClaw tool policies, whose changes replace the sandbox, with observation failures that change nothing.
+
+In `multi_agent`:
+
+- `one_failed_agent_is_reported_alone_and_its_retry_replaces_only_it` replaces two sandboxes in an update, and Fabric rejects one agent's start.
+  The CLI names only the failed sandbox and leaves out Fabric's message, which `diagnostics/fabric-SANDBOX.json` keeps.
+  The other replacement finishes, the unchanged agent is neither replaced, stopped, nor restarted, and the retry replaces only the failed agent's sandbox.
+- `removing_one_agent_stops_only_its_runtime_and_keeps_shared_registrations` removes one sandbox from the document.
+  The plan deletes only that sandbox, its agent, and its agent configuration, and apply stops only that agent.
+  The other agents, the provider registration and profile, and the workspace stay as they were.
+- `a_foreign_owner_on_one_agent_stops_planning_without_touching_the_others` gives one sandbox a different owner label on the gateway.
+  Plan, `plan_destroy`, export, apply, and destroy each fail on the ownership change without changing `terraform.tfstate`, `intent.json`, the gateway, or any sandbox.
+  After the label is restored, destroy finishes.
+
+The first two tests end with export, unchanged reapply, and destroy.
 
 ### Helm Release Recovery
 
@@ -153,6 +167,8 @@ NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
 Nextest, which CI uses, runs each test in its own process.
 
 Each test that makes destroy fail or stop ends by removing the cause, if any, and running destroy again, which must finish: a failed destroy must leave the deployment recoverable, not only unchanged.
+Every test also starts with objects that belong to someone else: a second deployment's namespace, key-encryption key, and gateway claim, and, in the fixture deployment's namespace, another release's Helm record and a ConfigMap the second deployment owns.
+No request in the test may write to any of them, and the final destroy must leave each of them as it was.
 
 | Module | Checks |
 |---|---|
