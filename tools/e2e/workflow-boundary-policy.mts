@@ -13,8 +13,8 @@ export const E2E_ACTION_PROVENANCE = {
   },
   nativePodmanRuntime: {
     reference:
-      "NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@22789bcaf835db7cf6390781c8d0f454f1e73dec",
-    contentSha256: "71b047434bb457bd0e7f7d1b8dec9c5c803f2e74de3cdc92381652dbd77d82c8",
+      "NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@56a7be8c1a845d86dfca0b70e769e2c160aa8609",
+    contentSha256: "878ab6e47753f69f459135540ac0417b81f7cb22eafe628af4ba44689c3ebb39",
   },
   restoreNativePodmanRuntime: {
     reference:

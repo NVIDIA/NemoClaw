@@ -84,9 +84,12 @@ The install refuses package removals, preserving the runner's Docker and contain
   attempt evidence. A failure attempts to retain redacted container state, the
   published port mapping, and a bounded registry log tail before cleanup.
   Unavailable diagnostics do not suppress the readiness failure.
-  Trusted Portable Podman setup gives its API service a 128-task container limit
-  before registry creation. The live scenario verifies that the registry uses
-  that service's socket and has the effective limit. Setup records service,
+  Trusted Portable Podman setup requires at least 128 tasks of remaining headroom
+  on its finite API-service boundary before registry creation. The job selects a
+  1024-task limit and disabled per-container cgroups, and the pinned setup action
+  owns rendering both settings before service startup. Focused containers
+  inherit that boundary, and the live scenario verifies that the registry shares
+  its service cgroup with sufficient remaining headroom. Setup records service,
   user, host, and cgroup headroom in `portable-podman-process-headroom.json`.
   It fails when RLIMIT_NPROC, service TasksMax, host-thread, or cgroup pids
   headroom is less than 128 tasks. The live scenario requires registry HTTP 200
