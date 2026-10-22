@@ -199,6 +199,9 @@ impl Document {
         names
     }
     pub fn defaults(&mut self) {
+        // Owners, names, and the default subnet derive from the UUID, so one
+        // deployment keeps one identity whatever case its UUID was written in.
+        self.metadata.uid.make_ascii_lowercase();
         let gateway = &mut self.spec.gateway;
         if let Gateway::Managed(gateway) = gateway
             && gateway.kubernetes.is_none()

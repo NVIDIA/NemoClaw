@@ -11,15 +11,12 @@ pub struct ManagedKubernetes {
     /// Environment reference whose value is the local kubeconfig file path. The file and its credentials remain outside configuration and exported state. Process, loader, trust, proxy, cluster, Python, Helm, OpenTofu, and SDK control variable names are reserved.
     pub kubeconfig: FileRef,
     /// Exact kubeconfig context used for every cluster operation.
-    #[schemars(
-        length(min = 1, max = 253),
-        regex(pattern = r"^[^\x00-\x20\x7f]+$(?![\s\S])")
-    )]
+    #[schemars(length(min = 1, max = 253), regex(pattern = r"^[^\x00-\x20\x7f]+$"))]
     pub context: String,
     /// Namespace for this deployment's gateway and generated development authentication resources.
     #[schemars(
         length(min = 1, max = 63),
-        regex(pattern = r"^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$(?![\s\S])")
+        regex(pattern = r"^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$")
     )]
     pub namespace: String,
     /// How the managed gateway authenticates users: a generated development issuer, or an existing OIDC issuer.

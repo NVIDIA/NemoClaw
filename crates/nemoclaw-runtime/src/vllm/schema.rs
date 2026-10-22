@@ -242,7 +242,7 @@ fn recipe(defs: &mut serde_json::Map<String, Value>) {
     property(
         settings,
         "environment",
-        json!({"additionalProperties": {"type": "string", "maxLength": r::PATH_MAX, "pattern": "^[^\\u0000]*$"}}),
+        json!({"additionalProperties": {"type": "string", "maxLength": r::PATH_MAX, "pattern": "^[^\\x00]*$"}}),
     );
     let compilation = &mut defs["Compilation"];
     property(

@@ -110,7 +110,7 @@ Paths:
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `allow` | array of string | Yes | — | Native tool identifiers. Fabric validates availability and semantics. Constraints: minimum items 1; maximum items 128; items: pattern `^[^\u0000-\u001f\u007f]+$(?![\s\S])`; minimum characters 1; maximum characters 256. |
+| `allow` | array of string | Yes | — | Native tool identifiers. Fabric validates availability and semantics. Constraints: minimum items 1; maximum items 128; items: pattern `^[^\x00-\x1f\x7f]+$`; minimum characters 1; maximum characters 256. |
 
 ## ApiAuthStyle
 
@@ -457,7 +457,7 @@ Paths:
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `metadata` | [FileRef](#fileref) | No | — | Environment reference to the absolute path of a local OCI metadata bundle for `ref`; required for Kubernetes and OpenShift, where no local engine can be inspected. Destroy does not read it. Its index, manifest, configuration, and Fabric catalog are verified against `ref` before use. The bundle holds no image layers or credentials. Docker and Podman inspect their engine instead. |
-| `ref` | string | For Kubernetes sandboxes | — | Immutable image reference. Kubernetes and OpenShift require an explicit nonempty reference. For other drivers, omitted or empty selects the generic SDK agent image pin; verify that it contains the selected Fabric adapter. Constraints: `""` or pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. Kubernetes and OpenShift require an explicit immutable image reference. For other drivers, omitted or empty selects the generic SDK agent image pin; verify that it contains the selected Fabric adapter. |
+| `ref` | string | For Kubernetes sandboxes | — | Immutable image reference. Kubernetes and OpenShift require an explicit nonempty reference. For other drivers, omitted or empty selects the generic SDK agent image pin; verify that it contains the selected Fabric adapter. Constraints: `""` or pattern `^(?:(?:localhost(?::[0-9]+)?\|[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)+(?::[0-9]+)?\|[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?:[0-9]+)/)?[a-z0-9]+(?:(?:[._]\|__\|-+)[a-z0-9]+)*(?:/[a-z0-9]+(?:(?:[._]\|__\|-+)[a-z0-9]+)*)*(?::[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127})?@sha256:[a-f0-9]{64}$`. Kubernetes and OpenShift require an explicit immutable image reference. For other drivers, omitted or empty selects the generic SDK agent image pin; verify that it contains the selected Fabric adapter. |
 
 ## ImagePullPolicy
 
@@ -606,7 +606,7 @@ Paths:
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `caConfigMap` | string | No | — | Existing ConfigMap in this deployment's namespace whose `ca.crt` verifies the issuer's TLS certificate; omit for a publicly trusted issuer. Constraints: pattern `^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\.[a-z0-9](?:[-a-z0-9]*[a-z0-9])?)*$(?![\s\S])`; minimum characters 1; maximum characters 253. |
+| `caConfigMap` | string | No | — | Existing ConfigMap in this deployment's namespace whose `ca.crt` verifies the issuer's TLS certificate; omit for a publicly trusted issuer. Constraints: pattern `^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\.[a-z0-9](?:[-a-z0-9]*[a-z0-9])?)*$`; minimum characters 1; maximum characters 253. |
 | `profile` | string | Yes | — | `development` generates a scoped local issuer for isolated qualification; `oidc` uses an existing OIDC issuer, configured in spec.gateway.config's openshell.gateway.oidc table. Constraints: `"development"` or `"oidc"`. |
 | `token` | [SecretRef](#secretref) | No | — | Environment reference holding the bearer token NemoClaw sends to the gateway. Required for `oidc`; your identity provider's tooling obtains and refreshes it. |
 
@@ -623,11 +623,11 @@ Paths:
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `authentication` | [KubernetesAuthentication](#kubernetesauthentication) | Yes | — | How the managed gateway authenticates users: a generated development issuer, or an existing OIDC issuer. |
-| `context` | string | Yes | — | Exact kubeconfig context used for every cluster operation. Constraints: pattern `^[^\x00-\x20\x7f]+$(?![\s\S])`; minimum characters 1; maximum characters 253. |
+| `context` | string | Yes | — | Exact kubeconfig context used for every cluster operation. Constraints: pattern `^[^\x00-\x20\x7f]+$`; minimum characters 1; maximum characters 253. |
 | `environment` | array of string | No | — | Caller environment variables that the kubeconfig's exec credential plugin needs, such as `AWS_PROFILE` for an EKS cluster. Cluster operations receive only platform variables and these; they are resolved like credential references and never written to configuration or state. Constraints: maximum items 32; items: pattern `^[A-Z_][A-Z0-9_]{0,127}$`. |
-| `imagePullSecrets` | array of string | No | — | Names of caller-managed registry Secrets in this deployment's namespace, used by gateway/helper and sandbox pods. Values stay in Kubernetes; NemoClaw does not create, read, rotate, or remove these Secrets. Provision them after the SDK creates the namespace, before its pods need to pull images. Constraints: maximum items 32; items: pattern `^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\.[a-z0-9](?:[-a-z0-9]*[a-z0-9])?)*$(?![\s\S])`; minimum characters 1; maximum characters 253. |
+| `imagePullSecrets` | array of string | No | — | Names of caller-managed registry Secrets in this deployment's namespace, used by gateway/helper and sandbox pods. Values stay in Kubernetes; NemoClaw does not create, read, rotate, or remove these Secrets. Provision them after the SDK creates the namespace, before its pods need to pull images. Constraints: maximum items 32; items: pattern `^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\.[a-z0-9](?:[-a-z0-9]*[a-z0-9])?)*$`; minimum characters 1; maximum characters 253. |
 | `kubeconfig` | [FileRef](#fileref) | Yes | — | Environment reference whose value is the local kubeconfig file path. The file and its credentials remain outside configuration and exported state. Process, loader, trust, proxy, cluster, Python, Helm, OpenTofu, and SDK control variable names are reserved. |
-| `namespace` | string | Yes | — | Namespace for this deployment's gateway and generated development authentication resources. Constraints: pattern `^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$(?![\s\S])`; minimum characters 1; maximum characters 63. |
+| `namespace` | string | Yes | — | Namespace for this deployment's gateway and generated development authentication resources. Constraints: pattern `^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$`; minimum characters 1; maximum characters 63. |
 
 ## Manifest
 
@@ -681,7 +681,7 @@ Paths:
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `name` | string | Yes | — | Lowercase deployment name. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
-| `uid` | string | Yes | — | Immutable deployment UUID. Use a fresh UUID for a new deployment and retain it for later operations. Constraints: pattern `^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$`. |
+| `uid` | string | Yes | — | Immutable deployment UUID. Use a fresh UUID for a new deployment and retain it for later operations. Either case is accepted; NemoClaw stores it lowercase. Constraints: pattern `^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$`. |
 
 ## Model
 
@@ -1197,7 +1197,7 @@ Managed Ollama daemon and selected model.
 |---|---|---|---|---|
 | `container` | [ServiceContainer](#servicecontainer) | No | — | Container CPU and memory limits, IPC, and shared memory for Docker. Native managed Podman inference is unsupported. Omission uses private IPC and 8 GiB of shared memory. |
 | `hardware` | [ServiceHardware](#servicehardware) | Yes | — | Explicit supported GPU or system profile. |
-| `image` | string | Yes | — | Immutable runtime image containing Ollama and the NemoClaw supervisor. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. |
+| `image` | string | Yes | — | Immutable runtime image containing Ollama and the NemoClaw supervisor. Constraints: pattern `^(?:(?:localhost(?::[0-9]+)?\|[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)+(?::[0-9]+)?\|[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?:[0-9]+)/)?[a-z0-9]+(?:(?:[._]\|__\|-+)[a-z0-9]+)*(?:/[a-z0-9]+(?:(?:[._]\|__\|-+)[a-z0-9]+)*)*(?::[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127})?@sha256:[a-f0-9]{64}$`. |
 | `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Image acquisition before container creation. Omission means IfNotPresent. Constraints: `"IfNotPresent"` or `"Never"`. |
 | `kind` | string | Yes | — | Supported installer selected by this service definition. Constraints: `"ollama"`. |
 | `memory` | [OllamaMemory](#ollamamemory) | No | — | GPU budget and resident memory-protection thresholds. |
@@ -1216,7 +1216,7 @@ Managed authentication proxy for an external Ollama daemon and model.
 |---|---|---|---|---|
 | `endpoint` | string | Yes | — | Private or loopback HTTP IPv4:port/v1 published by the proxy and reachable by OpenShell. |
 | `engine` | string | No | — | Local Docker Unix socket. Omission uses the managed gateway engine. Constraints: pattern `^unix:///[^?#\x00]*$`. |
-| `image` | string | Yes | — | Immutable NemoClaw proxy image. The external daemon runs on the selected Docker host. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. |
+| `image` | string | Yes | — | Immutable NemoClaw proxy image. The external daemon runs on the selected Docker host. Constraints: pattern `^(?:(?:localhost(?::[0-9]+)?\|[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)+(?::[0-9]+)?\|[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?:[0-9]+)/)?[a-z0-9]+(?:(?:[._]\|__\|-+)[a-z0-9]+)*(?:/[a-z0-9]+(?:(?:[._]\|__\|-+)[a-z0-9]+)*)*(?::[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127})?@sha256:[a-f0-9]{64}$`. |
 | `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Image acquisition before container creation. Omission means IfNotPresent. Constraints: `"IfNotPresent"` or `"Never"`. |
 | `kind` | string | Yes | — | Supported installer selected by this service definition. Constraints: `"ollamaProxy"`. |
 | `upstream` | [ExternalOllama](#externalollama) | Yes | — | External loopback-only daemon and already-installed model. |
@@ -1231,7 +1231,7 @@ Managed vLLM runtime and immutable model snapshot.
 | `authentication` | [ServiceAuthentication](#serviceauthentication) | No | — | Optional native bearer authentication. The runtime uses a key supplied in NEMOCLAW_INFERENCE_KEY, or generates and retains one in its credential storage; omission preserves unauthenticated serving. |
 | `container` | [ServiceContainer](#servicecontainer) | No | — | Container CPU and memory limits, IPC, and shared memory for Docker. Native managed Podman inference is unsupported. Omission uses private IPC and 8 GiB of shared memory. |
 | `hardware` | [ServiceHardware](#servicehardware) | Without recipe | — | Explicit hardware contract: a named GPU or system profile, or dedicated GPU requirements for Linux AMD64. Required without an inline recipe; excludes recipe. |
-| `image` | string | Yes | — | Immutable runtime image containing vLLM, the NemoClaw supervisor, and any declared recipe tools. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. |
+| `image` | string | Yes | — | Immutable runtime image containing vLLM, the NemoClaw supervisor, and any declared recipe tools. Constraints: pattern `^(?:(?:localhost(?::[0-9]+)?\|[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)+(?::[0-9]+)?\|[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?:[0-9]+)/)?[a-z0-9]+(?:(?:[._]\|__\|-+)[a-z0-9]+)*(?:/[a-z0-9]+(?:(?:[._]\|__\|-+)[a-z0-9]+)*)*(?::[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127})?@sha256:[a-f0-9]{64}$`. |
 | `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Image acquisition before container creation. Omission means IfNotPresent. Constraints: `"IfNotPresent"` or `"Never"`. |
 | `kind` | string | Yes | — | Supported installer selected by this service definition. Constraints: `"vllm"`. |
 | `memory` | [Memory](#memory) | No | — | GPU budget and resident watchdog thresholds. Omission selects the SDK defaults. |
@@ -1254,7 +1254,7 @@ Image-owned container with explicit launch settings and bounded readiness.
 | `data` | [ContainerData](#containerdata) | No | — | Disposable application data. Omission provides /data; destroy removes this volume. Typed model services retain their own storage policy. |
 | `environment` | map of string | No | — | Literal application settings, visible in configuration, plans/state, exports, and Docker inspection. No host-variable expansion or protected credential delivery. Constraints: keys: pattern `^[A-Z_][A-Z0-9_]{0,127}$`. |
 | `files` | map of string | No | — | Literal nonsecret configuration files uploaded before startup with mode 0444. Contents are retained in plans and state; these are not secret files or immutable mounts. |
-| `image` | string | Yes | — | Immutable application image. The image owns its entrypoint and default command. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. |
+| `image` | string | Yes | — | Immutable application image. The image owns its entrypoint and default command. Constraints: pattern `^(?:(?:localhost(?::[0-9]+)?\|[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)+(?::[0-9]+)?\|[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?:[0-9]+)/)?[a-z0-9]+(?:(?:[._]\|__\|-+)[a-z0-9]+)*(?:/[a-z0-9]+(?:(?:[._]\|__\|-+)[a-z0-9]+)*)*(?::[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127})?@sha256:[a-f0-9]{64}$`. |
 | `kind` | string | Yes | — | Supported installer selected by this service definition. Constraints: `"container"`. |
 | `port` | integer | No | — | Listener inside the container. It must match the application's own configuration; omission uses publication.port when published. Constraints: minimum 1; maximum 65535. |
 | `publication` | [ContainerPublication](#containerpublication) | No | — | Optional loopback or private IPv4 TCP publication. Omission publishes no port. |
@@ -1380,7 +1380,7 @@ Paths:
 |---|---|---|---|---|
 | `chunkedPrefill` | boolean | No | `false` | Enable chunked prefill. |
 | `compilation` | [Compilation](#compilation) | No | — | Optional typed compilation settings. Omission selects compilation mode 0 for recipe serving. |
-| `environment` | map of string | No | `{}` | Literal VLLM_* environment values for serving. Do not place credentials here. Constraints: keys: pattern `^VLLM_[A-Z0-9_]*$`; values: pattern `^[^\u0000]*$`; maximum characters 4096. |
+| `environment` | map of string | No | `{}` | Literal VLLM_* environment values for serving. Do not place credentials here. Constraints: keys: pattern `^VLLM_[A-Z0-9_]*$`; values: pattern `^[^\x00]*$`; maximum characters 4096. |
 | `kvCacheDtype` | string | No | `""` | KV cache dtype understood by the pinned vLLM image. Empty omits the flag. Constraints: maximum characters 256; `""` or pattern `^[a-zA-Z0-9._/][a-zA-Z0-9._/-]*$`. |
 | `lazyLoading` | boolean | No | `false` | Enable the lazy safetensors loading strategy. |
 | `mambaCacheDtype` | string | No | `""` | Mamba SSM cache dtype understood by the pinned vLLM image. Empty omits the flag. Constraints: maximum characters 256; `""` or pattern `^[a-zA-Z0-9._/][a-zA-Z0-9._/-]*$`. |

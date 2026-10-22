@@ -600,3 +600,124 @@ fn schema_patterns_reject_trailing_newlines_in_identifiers_and_pins() {
         agrees_at(&validator, &value, false, file, path);
     }
 }
+
+/// Collect every `pattern` keyword in a schema with its JSON pointer.
+fn schema_patterns(value: &Value, pointer: &str, found: &mut Vec<(String, String)>) {
+    match value {
+        Value::Object(object) => {
+            for (key, child) in object {
+                let path = format!("{pointer}/{key}");
+                if key == "pattern"
+                    && let Some(pattern) = child.as_str()
+                {
+                    found.push((path, pattern.to_owned()));
+                } else {
+                    schema_patterns(child, &path, found);
+                }
+            }
+        }
+        Value::Array(items) => {
+            for (index, child) in items.iter().enumerate() {
+                schema_patterns(child, &format!("{pointer}/{index}"), found);
+            }
+        }
+        _ => {}
+    }
+}
+
+#[test]
+fn schema_patterns_use_syntax_that_re2_validators_compile() {
+    let mut patterns = Vec::new();
+    schema_patterns(&input_schema(), "", &mut patterns);
+    assert!(
+        patterns.len() > 50,
+        "found only {} patterns",
+        patterns.len()
+    );
+    // The regex crate shares RE2's syntax limits: no lookaround or backreferences.
+    let unsupported: Vec<_> = patterns
+        .iter()
+        .filter(|(_, pattern)| regex::Regex::new(pattern).is_err())
+        .collect();
+    assert!(unsupported.is_empty(), "{unsupported:#?}");
+}
+
+#[test]
+fn an_end_anchored_pattern_rejects_a_trailing_newline() {
+    let managed = input("kubernetes/managed-development.yaml");
+    Document::parse(managed.to_string().as_bytes()).unwrap();
+    for pointer in [
+        "/metadata/uid",
+        "/spec/gateway/endpoint",
+        "/spec/gateway/kubernetes/context",
+        "/spec/gateway/kubernetes/namespace",
+    ] {
+        let mut value = managed.clone();
+        let field = value.pointer_mut(pointer).unwrap();
+        *field = json!(format!("{}\n", field.as_str().unwrap()));
+        assert!(
+            Document::parse(value.to_string().as_bytes()).is_err(),
+            "accepted a trailing newline at {pointer}"
+        );
+    }
+    let mut value = managed;
+    value["spec"]["gateway"]["kubernetes"]["imagePullSecrets"] = json!(["registry-login\n"]);
+    assert!(Document::parse(value.to_string().as_bytes()).is_err());
+}
+
+#[test]
+fn image_references_follow_the_registry_reference_grammar() {
+    let validator = jsonschema::validator_for(&input_schema()).unwrap();
+    let digest = format!("@sha256:{}", "a".repeat(64));
+    let document = input("openclaw.yaml");
+    for (name, accepted) in [
+        ("nc-fabric-owner-20260924", true),
+        ("agent", true),
+        ("team/agent", true),
+        ("registry.example.com/team/agent", true),
+        ("Registry.Example.com:5000/team/agent:v1.2_rc-3", true),
+        ("localhost/agent", true),
+        ("localhost:5000/team/agent", true),
+        ("gpu-box:5000/agent", true),
+        ("registry.example.com/team/a.b_c__d-e--f", true),
+        ("registry.example.com/Team/agent", false),
+        ("Team/agent", false),
+        ("Agent", false),
+        ("registry.example.com//agent", false),
+        ("registry.example.com/team/", false),
+        ("/agent", false),
+        ("agent:", false),
+        ("agent:-tag", false),
+        ("registry.example.com/-agent", false),
+        ("registry.example.com/agent..x", false),
+        ("registry.example.com/agent___x", false),
+        ("-registry.example.com/agent", false),
+    ] {
+        let mut value = document.clone();
+        value["spec"]["sandboxes"][0]["image"]["ref"] = json!(format!("{name}{digest}"));
+        agrees(&validator, &value, accepted);
+    }
+}
+
+#[test]
+fn metadata_uid_accepts_either_case_and_keeps_it_lowercase() {
+    let validator = jsonschema::validator_for(&input_schema()).unwrap();
+    let lower = "5f0b6e1c-3a2d-4b8e-9c7f-1a2b3c4d5e6f";
+    let mut value = input("openclaw.yaml");
+    value["metadata"]["uid"] = json!(lower.to_uppercase());
+    agrees(&validator, &value, true);
+    let upper = Document::parse(value.to_string().as_bytes()).unwrap();
+    assert_eq!(upper.metadata.uid, lower);
+    value["metadata"]["uid"] = json!(lower);
+    let same = Document::parse(value.to_string().as_bytes()).unwrap();
+    assert_eq!(upper, same);
+    assert_eq!(upper.workspace(), same.workspace());
+
+    // A value built in Rust is checked after defaults, which store the UUID lowercase.
+    let mut direct = same.clone();
+    direct.metadata.uid = lower.to_uppercase();
+    assert!(direct.validate().is_err());
+    direct.defaults();
+    assert_eq!(direct, same);
+    direct.validate().unwrap();
+}

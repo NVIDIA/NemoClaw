@@ -112,7 +112,7 @@
           "items": {
             "maxLength": 256,
             "minLength": 1,
-            "pattern": "^[^\\u0000-\\u001f\\u007f]+$(?![\\s\\S])",
+            "pattern": "^[^\\x00-\\x1f\\x7f]+$",
             "type": "string"
           },
           "maxItems": 128,
@@ -699,7 +699,7 @@
             ],
             "properties": {
               "endpoint": {
-                "pattern": "^https://127\\.0\\.0\\.1:(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])$(?![\\s\\S])"
+                "pattern": "^https://127\\.0\\.0\\.1:(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])$"
               }
             },
             "required": [
@@ -871,7 +871,7 @@
               "const": ""
             },
             {
-              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$"
+              "pattern": "^(?:(?:localhost(?::[0-9]+)?|[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)+(?::[0-9]+)?|[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?:[0-9]+)/)?[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*(?:/[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*)*(?::[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127})?@sha256:[a-f0-9]{64}$"
             }
           ],
           "description": "Immutable image reference. Kubernetes and OpenShift require an explicit nonempty reference. For other drivers, omitted or empty selects the generic SDK agent image pin; verify that it contains the selected Fabric adapter.",
@@ -1245,7 +1245,7 @@
           "description": "Existing ConfigMap in this deployment's namespace whose `ca.crt` verifies the issuer's TLS certificate; omit for a publicly trusted issuer.",
           "maxLength": 253,
           "minLength": 1,
-          "pattern": "^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\\.[a-z0-9](?:[-a-z0-9]*[a-z0-9])?)*$(?![\\s\\S])",
+          "pattern": "^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\\.[a-z0-9](?:[-a-z0-9]*[a-z0-9])?)*$",
           "type": "string",
           "x-nemoclaw-error": "caConfigMap must be a Kubernetes ConfigMap name"
         },
@@ -1329,7 +1329,7 @@
           "description": "Exact kubeconfig context used for every cluster operation.",
           "maxLength": 253,
           "minLength": 1,
-          "pattern": "^[^\\x00-\\x20\\x7f]+$(?![\\s\\S])",
+          "pattern": "^[^\\x00-\\x20\\x7f]+$",
           "type": "string"
         },
         "environment": {
@@ -1396,7 +1396,7 @@
           "items": {
             "maxLength": 253,
             "minLength": 1,
-            "pattern": "^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\\.[a-z0-9](?:[-a-z0-9]*[a-z0-9])?)*$(?![\\s\\S])",
+            "pattern": "^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\\.[a-z0-9](?:[-a-z0-9]*[a-z0-9])?)*$",
             "type": "string"
           },
           "maxItems": 32,
@@ -1455,7 +1455,7 @@
           "description": "Namespace for this deployment's gateway and generated development authentication resources.",
           "maxLength": 63,
           "minLength": 1,
-          "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$(?![\\s\\S])",
+          "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$",
           "type": "string"
         }
       },
@@ -1652,8 +1652,8 @@
           "type": "string"
         },
         "uid": {
-          "description": "Immutable deployment UUID. Use a fresh UUID for a new deployment and retain it for later operations.",
-          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$",
+          "description": "Immutable deployment UUID. Use a fresh UUID for a new deployment and retain it for later operations. Either case is accepted; NemoClaw stores it lowercase.",
+          "pattern": "^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$",
           "type": "string"
         }
       },
@@ -2781,7 +2781,7 @@
             },
             "image": {
               "description": "Immutable runtime image containing Ollama and the NemoClaw supervisor.",
-              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$",
+              "pattern": "^(?:(?:localhost(?::[0-9]+)?|[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)+(?::[0-9]+)?|[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?:[0-9]+)/)?[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*(?:/[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*)*(?::[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127})?@sha256:[a-f0-9]{64}$",
               "type": "string",
               "x-nemoclaw-error": "service image must be pinned by a SHA-256 digest"
             },
@@ -2848,7 +2848,7 @@
             },
             "image": {
               "description": "Immutable NemoClaw proxy image. The external daemon runs on the selected Docker host.",
-              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$",
+              "pattern": "^(?:(?:localhost(?::[0-9]+)?|[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)+(?::[0-9]+)?|[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?:[0-9]+)/)?[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*(?:/[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*)*(?::[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127})?@sha256:[a-f0-9]{64}$",
               "type": "string",
               "x-nemoclaw-error": "service image must be pinned by a SHA-256 digest"
             },
@@ -3091,7 +3091,7 @@
             },
             "image": {
               "description": "Immutable runtime image containing vLLM, the NemoClaw supervisor, and any declared recipe tools.",
-              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$",
+              "pattern": "^(?:(?:localhost(?::[0-9]+)?|[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)+(?::[0-9]+)?|[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?:[0-9]+)/)?[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*(?:/[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*)*(?::[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127})?@sha256:[a-f0-9]{64}$",
               "type": "string",
               "x-nemoclaw-error": "service image must be pinned by a SHA-256 digest"
             },
@@ -3200,7 +3200,7 @@
             },
             "image": {
               "description": "Immutable application image. The image owns its entrypoint and default command.",
-              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$",
+              "pattern": "^(?:(?:localhost(?::[0-9]+)?|[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)+(?::[0-9]+)?|[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?:[0-9]+)/)?[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*(?:/[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*)*(?::[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127})?@sha256:[a-f0-9]{64}$",
               "type": "string",
               "x-nemoclaw-error": "service image must be pinned by a SHA-256 digest"
             },
@@ -3549,7 +3549,7 @@
         "environment": {
           "additionalProperties": {
             "maxLength": 4096,
-            "pattern": "^[^\\u0000]*$",
+            "pattern": "^[^\\x00]*$",
             "type": "string"
           },
           "default": {},
@@ -4011,7 +4011,7 @@
                     "image": {
                       "properties": {
                         "ref": {
-                          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$"
+                          "pattern": "^(?:(?:localhost(?::[0-9]+)?|[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)+(?::[0-9]+)?|[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?:[0-9]+)/)?[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*(?:/[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*)*(?::[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127})?@sha256:[a-f0-9]{64}$"
                         }
                       },
                       "required": [

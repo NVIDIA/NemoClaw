@@ -32,7 +32,7 @@ pub struct Metadata {
     /// Lowercase deployment name.
     pub name: String,
     #[serde(rename = "uid")]
-    /// Immutable deployment UUID. Use a fresh UUID for a new deployment and retain it for later operations.
+    /// Immutable deployment UUID. Use a fresh UUID for a new deployment and retain it for later operations. Either case is accepted; NemoClaw stores it lowercase.
     pub uid: String,
 }
 
