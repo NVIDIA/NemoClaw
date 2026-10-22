@@ -1,3 +1,6 @@
+import { realpathSync } from "node:fs";
+import path from "node:path";
+
 /**
  * Run focused Vitest files with selected projects, bounded head/tail output, and explicit truncation metadata.
  */
@@ -78,10 +81,17 @@ export default async function run_targeted_vitest(input: {
   const maxLines = Math.max(1, Math.min(500, input.maxLines ?? 120));
   const clipMode = input.clipMode ?? "tail";
   if (!new Set(["head", "tail"]).has(clipMode)) throw new Error("clipMode must be head or tail");
+  const nodeExecutable = realpathSync(process.execPath);
+  const nodeBinDir = path.dirname(nodeExecutable);
+  const nodePrefix = path.dirname(nodeBinDir);
+  const nodePrefixParent = path.dirname(nodePrefix);
   const command = "npx " + args.map(quote).join(" ");
   const isolatedCommand = `set -eu
 umask 077
 repo_root=$(/bin/pwd -P)
+node_bin_dir=${quote(nodeBinDir)}
+node_prefix=${quote(nodePrefix)}
+node_prefix_parent=${quote(nodePrefixParent)}
 isolation_root=$(/usr/bin/mktemp -d /tmp/ncv.XXXXXX)
 isolation_root=$(cd "$isolation_root" && /bin/pwd -P)
 trap '/bin/rm -R -f -- "$isolation_root"' EXIT
@@ -129,7 +139,8 @@ if [ -x /usr/bin/sandbox-exec ]; then
   (subpath (param "REPO_ROOT"))
   (subpath (param "ISOLATION_ROOT"))
   (subpath (param "GIT_DIR"))
-  (subpath (param "GIT_COMMON_DIR")))
+  (subpath (param "GIT_COMMON_DIR"))
+  (subpath (param "NODE_PREFIX")))
 (allow file-write*
   (subpath (param "REPO_ROOT"))
   (subpath (param "ISOLATION_ROOT"))
@@ -142,9 +153,10 @@ PROFILE
   set +e
   /usr/bin/sandbox-exec -D REPO_ROOT="$repo_root" -D ISOLATION_ROOT="$isolation_root" \
     -D GIT_DIR="$git_dir" -D GIT_COMMON_DIR="$git_common_dir" \
+    -D NODE_PREFIX="$node_prefix" \
     -f "$sandbox_profile" /usr/bin/env -i \
     HOME="$isolation_root/home" XDG_CONFIG_HOME="$isolation_root/home" TMPDIR="$isolation_root/tmp" \
-    PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin \
+    PATH="$node_bin_dir:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
     CI=true NO_COLOR=1 TERM=dumb \
     NPM_CONFIG_USERCONFIG=/dev/null \
     GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_OPTIONAL_LOCKS=0 \
@@ -169,10 +181,14 @@ if command -v bwrap >/dev/null 2>&1; then
   for system_path in /usr /bin /sbin /lib /lib64 /opt /etc; do
     if [ -e "$system_path" ]; then set -- "$@" --ro-bind "$system_path" "$system_path"; fi
   done
+  case "$node_prefix" in
+    /usr|/usr/*|/bin|/bin/*|/sbin|/sbin/*|/lib|/lib/*|/lib64|/lib64/*|/opt|/opt/*|/etc|/etc/*) ;;
+    *) set -- "$@" --dir "$node_prefix_parent" --ro-bind "$node_prefix" "$node_prefix" ;;
+  esac
   set +e
   "$@" --chdir /workspace /usr/bin/env -i \
     HOME=/home/validator XDG_CONFIG_HOME=/home/validator TMPDIR=/tmp \
-    PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin \
+    PATH="$node_bin_dir:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
     CI=true NO_COLOR=1 TERM=dumb \
     NPM_CONFIG_USERCONFIG=/dev/null \
     GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_OPTIONAL_LOCKS=0 \

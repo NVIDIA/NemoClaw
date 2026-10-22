@@ -39,19 +39,39 @@ type ExecutionProofRuntime = {
 };
 
 function loadPromptQueueRuntime(): PromptQueueRuntime {
-  return new Function("require", `${onboardChildRuntimeSource}\nreturn { installPromptQueue };`)(
-    createRequire(import.meta.url),
-  ) as PromptQueueRuntime;
+  return loadChildRuntime<PromptQueueRuntime>("installPromptQueue");
 }
 
 function loadExecutionProofRuntime(): ExecutionProofRuntime {
-  return new Function(
-    "require",
-    `${onboardChildRuntimeSource}\nreturn { createSuccessfulOllamaServiceExecutionProofRunner };`,
-  )(createRequire(import.meta.url)) as ExecutionProofRuntime;
+  return loadChildRuntime<ExecutionProofRuntime>(
+    "createSuccessfulOllamaServiceExecutionProofRunner",
+  );
+}
+
+function loadChildRuntime<T>(exportName: string): T {
+  const childRequire = createRequire(import.meta.url);
+  const childCrypto = childRequire("node:crypto") as typeof import("node:crypto");
+  const originalCreateHash = childCrypto.createHash;
+  try {
+    return new Function("require", `${onboardChildRuntimeSource}\nreturn { ${exportName} };`)(
+      childRequire,
+    ) as T;
+  } finally {
+    childCrypto.createHash = originalCreateHash;
+  }
 }
 
 describe("onboard child prompt queue", () => {
+  it("restores the parent crypto implementation after loading the child fixture", () => {
+    const childRequire = createRequire(import.meta.url);
+    const childCrypto = childRequire("node:crypto") as typeof import("node:crypto");
+    const originalCreateHash = childCrypto.createHash;
+
+    loadPromptQueueRuntime();
+
+    assert.equal(childCrypto.createHash, originalCreateHash);
+  });
+
   it("fails when a child scenario asks an unscripted question", async () => {
     const target: PromptTarget = {};
     const { messages, prompts } = loadPromptQueueRuntime().installPromptQueue(target, ["answer"]);
