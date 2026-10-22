@@ -123,22 +123,39 @@ describe.each(HOSTED_NATIVE_PROVIDERS)("native $label lifecycle", (definition) =
   });
 
   it.each([
-    ["a stale registry record", "alpha", /'alpha' is still recorded.*'nemoclaw alpha destroy'/su],
-    ["gateway ownership", undefined, /complete uninstall without --keep-openshell/u],
-  ])("explains a missing provider owned by %s", async (_case, recordedSandboxName, message) => {
-    const { lifecycle, adapter, methods, receipt } = fixture(definition);
-    methods.getProvider.mockResolvedValue(notFound);
-    await expect(
-      lifecycle.ensureNativeProvider({
-        adapter,
-        target,
-        credentialValue: "test-secret",
-        expected: receipt,
-        ...(recordedSandboxName ? { recordedSandboxName } : {}),
-      }),
-    ).rejects.toThrow(message);
-    expect(methods.createProvider).not.toHaveBeenCalled();
-  });
+    [
+      "a stale registry record",
+      "alpha",
+      /only the NemoClaw registry record for sandbox 'alpha'.*'nemoclaw alpha destroy'/su,
+      /uninstall/u,
+    ],
+    ["gateway ownership", undefined, /complete uninstall without --keep-openshell/u, /destroy/u],
+    [
+      "a registry record with an invalid sandbox name",
+      "alpha; touch /tmp/owned",
+      /complete uninstall without --keep-openshell/u,
+      /touch/u,
+    ],
+  ])(
+    "explains a missing provider owned by %s",
+    async (_case, recordedSandboxName, message, absent) => {
+      const { lifecycle, adapter, methods, receipt } = fixture(definition);
+      methods.getProvider.mockResolvedValue(notFound);
+      const error = await lifecycle
+        .ensureNativeProvider({
+          adapter,
+          target,
+          credentialValue: "test-secret",
+          expected: receipt,
+          ...(recordedSandboxName ? { recordedSandboxName } : {}),
+        })
+        .catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toMatch(message);
+      expect((error as Error).message).not.toMatch(absent);
+      expect(methods.createProvider).not.toHaveBeenCalled();
+    },
+  );
 
   it("rejects another profile's receipt even when its provider ID matches (#12589)", async () => {
     const { lifecycle, adapter, methods, receipt } = fixture(definition);
@@ -232,7 +249,7 @@ describe("hosted native provider setup", () => {
     [
       "only the registry records ownership",
       false,
-      /'alpha' is still recorded.*'nemoclaw alpha destroy'/su,
+      /only the NemoClaw registry record for sandbox 'alpha'.*'nemoclaw alpha destroy'/su,
     ],
     ["the gateway records ownership", true, /complete uninstall without --keep-openshell/u],
   ])("explains a missing provider when %s", async (_case, gatewayOwned, message) => {

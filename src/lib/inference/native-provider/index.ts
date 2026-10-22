@@ -12,6 +12,7 @@ import type {
   OpenShellProviderMetadata,
 } from "../../adapters/openshell/sandbox-observer";
 import { REPOSITORY_ROOT } from "../../core/repository-root";
+import { isValidName } from "../../sandbox-name-contract";
 import {
   normalizeNativeProviderAttachment,
   type NativeProviderAttachment,
@@ -326,10 +327,11 @@ export class NativeProviderLifecycle<ProfileId extends string, ProviderName exte
       return observedReceipt;
     }
 
-    if (input.expected && input.recordedSandboxName) {
-      const sandbox = input.recordedSandboxName;
+    // The registry name is untrusted input; print it as a command only when it is a valid sandbox name.
+    const sandbox = input.recordedSandboxName;
+    if (input.expected && sandbox && isValidName(sandbox)) {
       throw new NativeProviderError(
-        `OpenShell provider '${this.definition.providerName}' is missing, but sandbox '${sandbox}' is still recorded from an earlier install. This happens after 'nemoclaw uninstall' keeps user data. Run 'nemoclaw ${sandbox} destroy' to clear the stale record, then onboard again. No provider was changed.`,
+        `OpenShell provider '${this.definition.providerName}' is missing, and only the NemoClaw registry record for sandbox '${sandbox}' shows that NemoClaw owned it. If that sandbox no longer exists on this gateway, run 'nemoclaw ${sandbox} destroy' to clear the stale record, then onboard again. Otherwise, recreate the sandbox before using native ${this.definition.label} inference. No provider was changed.`,
       );
     }
     if (input.expected) {

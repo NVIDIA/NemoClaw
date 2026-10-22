@@ -310,7 +310,7 @@ describe("custom native endpoint ownership", () => {
     [
       "only the registry records ownership",
       false,
-      /'alpha' is still recorded.*'nemoclaw alpha destroy'/su,
+      /only the NemoClaw registry record for sandbox 'alpha'.*'nemoclaw alpha destroy'/su,
     ],
     ["the gateway records ownership", true, /complete uninstall without --keep-openshell/u],
   ])("explains a missing provider when %s", async (_case, gatewayOwned, message) => {

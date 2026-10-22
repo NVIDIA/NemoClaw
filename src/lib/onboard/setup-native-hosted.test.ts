@@ -226,3 +226,78 @@ describe.each(providers)("native $label onboarding", (provider) => {
     expect(JSON.stringify(updateSandbox.mock.calls)).not.toContain("host-secret");
   });
 });
+
+describe.each(providers.filter((provider) => provider.logicalProvider !== "hermes-provider"))(
+  "native $label onboarding with a stale registry record",
+  (provider) => {
+    it("points the missing provider at destroy without creating one", async () => {
+      const receipt = {
+        schemaVersion: 1,
+        profileId: provider.profileId,
+        providerName: provider.providerName,
+        providerId: "identity",
+        ...(provider.endpointUrl ? { endpointUrl: provider.endpointUrl } : {}),
+        ...(provider.allowedIps ? { allowedIps: provider.allowedIps } : {}),
+        ...(provider.custom ? { custom: provider.custom } : {}),
+      };
+      const createProvider = vi.fn<OpenShellProviderAdapter["createProvider"]>();
+      const setup = createSetupInference({
+        checkGatewayRouteCompatibility: vi.fn(() => ({ ok: true })),
+        withSandboxMutationLock: async <T>(_name: string, fn: () => T | Promise<T>) => await fn(),
+        withGatewayRouteMutationLock: async <T>(_name: string, fn: () => T | Promise<T>) =>
+          await fn(),
+        step: vi.fn(),
+        getGatewayName: () => "gateway",
+        runOpenshell: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
+        updateSandbox: vi.fn(() => true),
+        localInference: { loadPendingOllamaModelCleanup: () => [] },
+        withOllamaModelOwnershipLock: (operation: () => unknown) => operation(),
+        getNativeHostedProviderAuthority: () => undefined,
+        setNativeHostedProviderAuthority: vi.fn(),
+        getSandbox: () => ({
+          name: "alpha",
+          provider: provider.logicalProvider,
+          nativeHostedProviderAttachment: receipt,
+        }),
+        resolveEndpointHost: async () => [{ address: "8.8.8.8", family: 4 }],
+        upsertProvider: vi.fn(),
+        verifyInferenceRoute: vi.fn(),
+        verifyOnboardInferenceSmoke: vi.fn(async () => undefined),
+        isNonInteractive: () => true,
+        hermesProviderAuth: { HERMES_PROVIDER_NAME: "hermes-provider" },
+        providerAdapter: {
+          getProvider: vi.fn(async () => ({
+            ok: false,
+            error: { kind: "command", reason: "not_found", message: "absent" },
+          })),
+          createProvider,
+          importProviderProfile: vi.fn(async () => ({ ok: true })),
+          ensureProviderPolicyComposition: vi.fn(async () => ({ ok: true, value: undefined })),
+        } as unknown as OpenShellProviderAdapter,
+        hydrateCredentialEnv: () => "host-secret",
+        redact: (s: string) => s,
+        compactText: (s: string) => s,
+        log: vi.fn(),
+        error: vi.fn(),
+        exitProcess: (code: number): never => {
+          throw new Error(`exit ${code}`);
+        },
+      } as unknown as SetupInferenceDeps);
+      await expect(
+        setup(
+          "alpha",
+          "supported-model",
+          provider.logicalProvider,
+          provider.custom?.endpointUrl ?? provider.endpoint,
+          provider.custom?.credentialEnv ?? provider.credentialEnv,
+          null,
+          [],
+          { revalidateSandboxIdentity: () => undefined, preferredInferenceApi: provider.api },
+        ),
+      ).rejects.toThrow(
+        /only the NemoClaw registry record for sandbox 'alpha'.*'nemoclaw alpha destroy'/su,
+      );
+      expect(createProvider).not.toHaveBeenCalled();
+    });
+  },
+);
