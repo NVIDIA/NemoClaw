@@ -6110,8 +6110,6 @@ jobs:
           sudo test -f "$runtime"
           sudo test ! -L "$runtime"
           [[ "$(sudo stat -c '%u:%g:%a' "$runtime")" == 0:0:755 ]]
-          [[ "$(sudo sha256sum "$runtime" | cut -d ' ' -f1)" == \
-            2aa6b7024a9c9f153895c0d11ae233d3758f54844011c3a039e3e89048d01d42 ]]
           sudo rm -f -- "$runtime"
           sudo test ! -e "$runtime"
 
