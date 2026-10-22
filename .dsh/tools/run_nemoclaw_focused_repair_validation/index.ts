@@ -124,6 +124,29 @@ if [ -f "$repo_root/.git" ]; then
   fi
 fi
 
+git_shadow="$isolation_root/git"
+/bin/mkdir -p "$git_shadow/objects/info" "$git_shadow/refs"
+cat >"$git_shadow/config" <<'GIT_CONFIG'
+[core]
+	repositoryformatversion = 0
+	bare = false
+	logallrefupdates = false
+GIT_CONFIG
+printf '%s\n' "$git_common_dir/objects" >"$git_shadow/objects/info/alternates"
+if [ -f "$git_dir/index" ]; then /bin/cp "$git_dir/index" "$git_shadow/index"; fi
+if [ -f "$git_common_dir/shallow" ]; then /bin/cp "$git_common_dir/shallow" "$git_shadow/shallow"; fi
+git_head_ref=$(/usr/bin/git -C "$repo_root" symbolic-ref -q HEAD || :)
+if [ -n "$git_head_ref" ]; then
+  printf 'ref: %s\n' "$git_head_ref" >"$git_shadow/HEAD"
+else
+  /usr/bin/git -C "$repo_root" rev-parse --verify HEAD >"$git_shadow/HEAD"
+fi
+/usr/bin/git -C "$repo_root" for-each-ref --format='%(objectname) %(refname)' |
+while IFS=' ' read -r git_ref_oid git_ref_name; do
+  /usr/bin/env -i PATH=/usr/bin:/bin GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+    /usr/bin/git --git-dir="$git_shadow" update-ref "$git_ref_name" "$git_ref_oid"
+done
+
 if [ -x /usr/bin/sandbox-exec ]; then
   sandbox_profile="$isolation_root/profile.sb"
   cat >"$sandbox_profile" <<'PROFILE'
@@ -150,8 +173,7 @@ if [ -x /usr/bin/sandbox-exec ]; then
   (subpath "/dev")
   (subpath (param "REPO_ROOT"))
   (subpath (param "ISOLATION_ROOT"))
-  (subpath (param "GIT_DIR"))
-  (subpath (param "GIT_COMMON_DIR"))
+  (subpath (param "GIT_OBJECTS"))
   (subpath (param "NODE_PREFIX")))
 (allow file-write*
   (subpath (param "REPO_ROOT"))
@@ -160,11 +182,20 @@ if [ -x /usr/bin/sandbox-exec ]; then
 (deny file-write* (subpath (string-append (param "REPO_ROOT") "/.git")))
 (deny file-write* (subpath (param "GIT_DIR")))
 (deny file-write* (subpath (param "GIT_COMMON_DIR")))
-(allow network*)
+(deny file-read*
+  (literal (param "GIT_CONFIG_PATH"))
+  (literal (param "GIT_WORKTREE_CONFIG_PATH")))
+(allow network-outbound (remote ip))
+(allow network-inbound (local ip))
+(allow network-bind (local ip))
+(allow network* (subpath (param "ISOLATION_ROOT")))
 PROFILE
   set +e
   /usr/bin/sandbox-exec -D REPO_ROOT="$repo_root" -D ISOLATION_ROOT="$isolation_root" \
     -D GIT_DIR="$git_dir" -D GIT_COMMON_DIR="$git_common_dir" \
+    -D GIT_OBJECTS="$git_common_dir/objects" \
+    -D GIT_CONFIG_PATH="$git_common_dir/config" \
+    -D GIT_WORKTREE_CONFIG_PATH="$git_dir/config.worktree" \
     -D NODE_PREFIX="$node_prefix" \
     -f "$sandbox_profile" /usr/bin/env -i \
     HOME="$isolation_root/home" XDG_CONFIG_HOME="$isolation_root/home" TMPDIR="$isolation_root/tmp" \
@@ -172,6 +203,7 @@ PROFILE
     CI=true NO_COLOR=1 TERM=dumb \
     NPM_CONFIG_USERCONFIG=/dev/null \
     GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_OPTIONAL_LOCKS=0 \
+    GIT_DIR="$git_shadow" GIT_WORK_TREE="$repo_root" \
     /bin/sh -c ${q(command)}
   validation_status=$?
   set -e
@@ -182,13 +214,16 @@ if command -v bwrap >/dev/null 2>&1; then
   set -- "$(command -v bwrap)" --die-with-parent --new-session --unshare-all --share-net
   set -- "$@" --proc /proc --dev /dev --tmpfs /tmp --dir /home
   set -- "$@" --bind "$isolation_root/home" /home/validator --bind "$repo_root" /workspace
+  set -- "$@" --dir /git --ro-bind "$git_shadow" /git
+  set -- "$@" --ro-bind "$git_common_dir/objects" /git/objects
   if [ -n "$git_worktree_name" ]; then
     git_pointer="$isolation_root/git-pointer"
-    printf 'gitdir: /git/worktrees/%s\n' "$git_worktree_name" >"$git_pointer"
-    set -- "$@" --dir /git --ro-bind "$git_common_dir" /git
+    printf 'gitdir: /git\n' >"$git_pointer"
     set -- "$@" --ro-bind "$git_pointer" /workspace/.git
   else
-    set -- "$@" --ro-bind "$repo_root/.git" /workspace/.git
+    empty_git="$isolation_root/empty-git"
+    /bin/mkdir "$empty_git"
+    set -- "$@" --ro-bind "$empty_git" /workspace/.git
   fi
   for system_path in /usr /bin /sbin /lib /lib64 /opt /etc; do
     if [ -e "$system_path" ]; then set -- "$@" --ro-bind "$system_path" "$system_path"; fi
@@ -204,6 +239,7 @@ if command -v bwrap >/dev/null 2>&1; then
     CI=true NO_COLOR=1 TERM=dumb \
     NPM_CONFIG_USERCONFIG=/dev/null \
     GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_OPTIONAL_LOCKS=0 \
+    GIT_DIR=/git GIT_WORK_TREE=/workspace \
     /bin/sh -c ${q(command)}
   validation_status=$?
   set -e
