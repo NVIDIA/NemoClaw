@@ -12,7 +12,7 @@ import type {
   OpenShellProviderMetadata,
 } from "../../adapters/openshell/sandbox-observer";
 import { REPOSITORY_ROOT } from "../../core/repository-root";
-import { isValidNemoClawSandboxName } from "../../config/model";
+import { isValidName } from "../../../../nemoclaw/dist/shared/sandbox-name.cjs";
 import {
   normalizeNativeProviderAttachment,
   type NativeProviderAttachment,
@@ -329,7 +329,7 @@ export class NativeProviderLifecycle<ProfileId extends string, ProviderName exte
 
     // The registry name is untrusted input; print it as a command only when it is a valid sandbox name.
     const sandbox = input.recordedSandboxName;
-    if (input.expected && sandbox && isValidNemoClawSandboxName(sandbox)) {
+    if (input.expected && sandbox && isValidName(sandbox)) {
       throw new NativeProviderError(
         `OpenShell provider '${this.definition.providerName}' is missing, and only the NemoClaw registry record for sandbox '${sandbox}' shows that NemoClaw owned it. If that sandbox no longer exists on this gateway, run 'nemoclaw ${sandbox} destroy' to clear the stale record, then onboard again. Otherwise, recreate the sandbox before using native ${this.definition.label} inference. No provider was changed.`,
       );
