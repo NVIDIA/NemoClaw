@@ -11,7 +11,10 @@ import { isDeepStrictEqual } from "node:util";
 import { buildSelectedOpenShellSubprocessEnv } from "../../adapters/openshell/command-argv";
 import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import { resolveRegisteredAgentDefinition } from "../../agent/runtime";
-import { managedImageRuntimeIdentity } from "../../onboard/managed-image/agents";
+import {
+  managedImageRuntimeIdentity,
+  type ManagedImageAgent,
+} from "../../onboard/managed-image/agents";
 import {
   createCliOpenShellSandboxLifecycleFromRunner,
   createCliOpenShellSandboxLookupFromRunner,
@@ -93,7 +96,15 @@ export function stopSandboxInferenceResources(
 }
 
 const SANDBOX_NATIVE_ROOT = "/sandbox";
-const COMPLETE_NATIVE_HOME_AGENTS = new Set(["hermes", "langchain-deepagents-code", "openclaw"]);
+const COMPLETE_NATIVE_HOME_AGENTS = new Set<string>([
+  "hermes",
+  "langchain-deepagents-code",
+  "openclaw",
+] satisfies ManagedImageAgent[]);
+
+function isCompleteNativeHomeAgent(agentName: string): agentName is ManagedImageAgent {
+  return COMPLETE_NATIVE_HOME_AGENTS.has(agentName);
+}
 
 function requireNormalizedNativeRoot(agentName: string, configuredRoot: string): string {
   const normalized = path.posix.normalize(configuredRoot);
@@ -166,7 +177,7 @@ export function wipeAgentNativeHome(
   ) => RuntimeProviderStoppedSandboxStateCleanupResult,
   runAsSandboxUser?: (command: readonly string[]) => RuntimeProviderPrivilegedSandboxCommandResult,
 ): void {
-  if (!COMPLETE_NATIVE_HOME_AGENTS.has(agentName)) return;
+  if (!isCompleteNativeHomeAgent(agentName)) return;
   const agent = resolveRegisteredAgentDefinition({ agent: agentName });
   if (!agent) {
     throw new Error(
@@ -270,9 +281,7 @@ export function wipeAgentNativeHome(
     // including agent SQLite files. Finish the validated wipe as the image's
     // pinned sandbox user before attempting stopped-volume cleanup.
     if (
-      (agentName === "langchain-deepagents-code" ||
-        agentName === "openclaw" ||
-        agentName === "hermes") &&
+      isCompleteNativeHomeAgent(agentName) &&
       result.status === 1 &&
       !result.error &&
       runAsSandboxUser
@@ -853,12 +862,7 @@ export async function executeSandboxDestroy({
                 ? { expectedResourceHandle: expectedRuntimeProviderIdentity.resourceHandle }
                 : {}),
             });
-          if (
-            (agentName === "langchain-deepagents-code" ||
-              agentName === "openclaw" ||
-              agentName === "hermes") &&
-            control.executeAsSandboxUser
-          ) {
+          if (isCompleteNativeHomeAgent(agentName) && control.executeAsSandboxUser) {
             const identity = managedImageRuntimeIdentity(agentName);
             runAsSandboxUser = (command) =>
               control.executeAsSandboxUser!({
