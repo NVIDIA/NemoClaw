@@ -129,9 +129,12 @@ function expectCommonIsolationBoundary(command: string): void {
 }
 
 function expectFocusedNodeToolchainBoundary(command: string): void {
-  expect(command).toContain('(subpath (param "NODE_PREFIX"))');
-  expect(command).toContain('-D NODE_PREFIX="$node_prefix"');
-  expect(command).toContain('--ro-bind "$node_prefix" "$node_prefix"');
+  expect(command).toContain('(literal (param "NODE_EXECUTABLE"))');
+  expect(command).toContain('(subpath (param "NPM_ROOT"))');
+  expect(command).toContain('-D NODE_EXECUTABLE="$node_executable" -D NPM_ROOT="$npm_root"');
+  expect(command).toContain('--ro-bind "$node_executable" "$node_executable"');
+  expect(command).toContain('--ro-bind "$npm_root" "$npm_root"');
+  expect(command).not.toContain('(subpath (param "NODE_PREFIX"))');
   expectCommonIsolationBoundary(command);
 }
 
@@ -324,9 +327,10 @@ describe("credential-isolated validation wrappers", () => {
   );
 
   it.runIf(nativeSandboxAvailable)(
-    "denies sibling credentials when Node is installed directly under the host home",
+    "denies sibling credentials when Node is installed under a home other than parent HOME",
     async () => {
       const syntheticHome = fs.mkdtempSync(path.join(os.tmpdir(), "ncv-node-home-"));
+      const parentHome = fs.mkdtempSync(path.join(os.tmpdir(), "ncv-parent-home-"));
       const syntheticBin = path.join(syntheticHome, "bin");
       const syntheticNode = path.join(syntheticBin, "node");
       const credentialCanary = path.join(syntheticHome, ".ssh", "nemoclaw-canary");
@@ -340,7 +344,7 @@ describe("credential-isolated validation wrappers", () => {
       const originalExecPath = Object.getOwnPropertyDescriptor(process, "execPath");
       const originalHome = process.env.HOME;
       Object.defineProperty(process, "execPath", { ...originalExecPath, value: syntheticNode });
-      process.env.HOME = syntheticHome;
+      process.env.HOME = parentHome;
       installTools((input) => {
         const result = spawnSync("/bin/sh", ["-c", input.command], {
           cwd: input.workdir,
@@ -356,44 +360,17 @@ describe("credential-isolated validation wrappers", () => {
       });
 
       try {
-        const [{ default: runFocusedValidation }, { default: runTargetedVitest }] =
-          await Promise.all([
-            vi.importActual<{ default: FocusedValidationRunner }>(
-              "../../.dsh/tools/run_nemoclaw_focused_repair_validation/index",
-            ),
-            vi.importActual<{ default: TargetedVitestRunner }>(
-              "../../.dsh/tools/run_targeted_vitest/index",
-            ),
-          ]);
-        await expect(
-          runFocusedValidation({
-            workdir: fixture.workdir,
-            files: [],
-            testFiles: ["probe.test.ts"],
-            projects: ["integration"],
-            baseRef: "HEAD",
-            formatWrite: false,
-            typecheckCli: false,
-            typecheckPlugin: false,
-            repoChecks: false,
-            diffCheck: false,
-            nulCheck: false,
-            docs: false,
-            dryRun: false,
-          }),
-        ).rejects.toThrow("cannot expose the host HOME");
-        const targeted = await runTargetedVitest({
-          workdir: fixture.workdir,
-          files: ["probe.test.ts"],
-          projects: ["integration"],
+        await expect(runBothWrappers(fixture.workdir)).resolves.toEqual({
+          focusedOk: true,
+          targetedCode: 0,
         });
-        expect(targeted, targeted.stderr).toMatchObject({ code: 0 });
         expect(fs.readFileSync(credentialCanary, "utf8")).toBe("must remain unreadable\n");
       } finally {
         Object.defineProperty(process, "execPath", originalExecPath as PropertyDescriptor);
         originalHome === undefined ? delete process.env.HOME : (process.env.HOME = originalHome);
         fs.rmSync(fixture.root, { recursive: true, force: true });
         fs.rmSync(syntheticHome, { recursive: true, force: true });
+        fs.rmSync(parentHome, { recursive: true, force: true });
       }
     },
   );

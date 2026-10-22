@@ -94,21 +94,51 @@ export default async function run_nemoclaw_focused_repair_validation(input: {
   if (!projects.every((x) => allowed.has(x))) throw new Error("Unsupported Vitest project");
   const nodeExecutable = realpathSync(process.execPath),
     nodeBinDir = path.dirname(nodeExecutable),
-    nodePrefix = path.dirname(nodeBinDir),
-    nodePrefixParent = path.dirname(nodePrefix),
-    q = (v) => "'" + String(v).replaceAll("'", "'\"'\"'") + "'",
+    nodeBinParent = path.dirname(nodeBinDir),
+    resolveNpmCli = (name: "npm" | "npx") => {
+      const candidates = [
+        nodeBinDir,
+        ...(process.env.PATH ?? "").split(path.delimiter).filter(Boolean),
+      ];
+      for (const directory of new Set(candidates)) {
+        try {
+          const cli = realpathSync(path.join(directory, name)),
+            cliDirectory = path.dirname(cli),
+            root = path.dirname(cliDirectory);
+          if (
+            path.basename(cli) === `${name}-cli.js` &&
+            path.basename(cliDirectory) === "bin" &&
+            path.basename(root) === "npm"
+          )
+            return { cli, root };
+        } catch {
+          // Try the next host PATH entry.
+        }
+      }
+      throw new Error(`Credential-isolated validation requires the standard ${name} CLI layout.`);
+    },
+    npmRuntime = resolveNpmCli("npm"),
+    npxRuntime = resolveNpmCli("npx");
+  if (npmRuntime.root !== npxRuntime.root)
+    throw new Error("Credential-isolated validation requires npm and npx from one package.");
+  const q = (v) => "'" + String(v).replaceAll("'", "'\"'\"'") + "'",
     isolate = (command) =>
       `set -eu
 umask 077
 repo_root=$(/bin/pwd -P)
+node_executable=${q(nodeExecutable)}
 node_bin_dir=${q(nodeBinDir)}
-node_prefix=${q(nodePrefix)}
-node_prefix_parent=${q(nodePrefixParent)}
+node_bin_parent=${q(nodeBinParent)}
+npm_cli=${q(npmRuntime.cli)}
+npx_cli=${q(npxRuntime.cli)}
+npm_root=${q(npmRuntime.root)}
+npm_root_parent=${q(path.dirname(npmRuntime.root))}
 isolation_root=$(/usr/bin/mktemp -d /tmp/ncv.XXXXXX 2>/dev/null) ||
   isolation_root=$(/usr/bin/mktemp -d "\${TMPDIR:-/tmp}/ncv.XXXXXX")
 isolation_root=$(cd "$isolation_root" && /bin/pwd -P)
 trap '/bin/rm -R -f -- "$isolation_root"' EXIT
-/bin/mkdir -p "$isolation_root/bin" "$isolation_root/home" "$isolation_root/tmp"
+/bin/mkdir -p \
+  "$isolation_root/bin" "$isolation_root/runtime-bin" "$isolation_root/home" "$isolation_root/tmp"
 git_dir=$(/usr/bin/git -C "$repo_root" rev-parse --absolute-git-dir)
 git_common_dir=$(/usr/bin/git -C "$repo_root" rev-parse --path-format=absolute --git-common-dir)
 git_dir=$(cd "$git_dir" && /bin/pwd -P)
@@ -184,7 +214,16 @@ if git_cwd=$(cd "$git_cwd" 2>/dev/null && /bin/pwd -P); then
 fi
 exec /usr/bin/git "$@"
 GIT_WRAPPER
-/bin/chmod 0555 "$isolation_root/bin/git"
+cat >"$isolation_root/runtime-bin/npm" <<'NPM_WRAPPER'
+#!/bin/sh
+exec "$NEMOCLAW_NODE_EXECUTABLE" "$NEMOCLAW_NPM_CLI" "$@"
+NPM_WRAPPER
+cat >"$isolation_root/runtime-bin/npx" <<'NPX_WRAPPER'
+#!/bin/sh
+exec "$NEMOCLAW_NODE_EXECUTABLE" "$NEMOCLAW_NPX_CLI" "$@"
+NPX_WRAPPER
+/bin/chmod 0555 \
+  "$isolation_root/bin/git" "$isolation_root/runtime-bin/npm" "$isolation_root/runtime-bin/npx"
 
 if [ -x /usr/bin/sandbox-exec ]; then
   sandbox_profile="$isolation_root/profile.sb"
@@ -213,7 +252,8 @@ if [ -x /usr/bin/sandbox-exec ]; then
   (subpath (param "REPO_ROOT"))
   (subpath (param "ISOLATION_ROOT"))
   (subpath (param "GIT_OBJECTS"))
-  (subpath (param "NODE_PREFIX")))
+  (literal (param "NODE_EXECUTABLE"))
+  (subpath (param "NPM_ROOT")))
 (allow file-write*
   (subpath (param "REPO_ROOT"))
   (subpath (param "ISOLATION_ROOT"))
@@ -234,12 +274,14 @@ PROFILE
   /usr/bin/sandbox-exec -D REPO_ROOT="$repo_root" -D ISOLATION_ROOT="$isolation_root" \
     -D GIT_DIR="$git_dir" -D GIT_COMMON_DIR="$git_common_dir" \
     -D GIT_OBJECTS="$git_common_dir/objects" \
-    -D NODE_PREFIX="$node_prefix" \
+    -D NODE_EXECUTABLE="$node_executable" -D NPM_ROOT="$npm_root" \
     -f "$sandbox_profile" /usr/bin/env -i \
     HOME="$isolation_root/home" XDG_CONFIG_HOME="$isolation_root/home" TMPDIR="$isolation_root/tmp" \
-    PATH="$isolation_root/bin:$node_bin_dir:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+    PATH="$isolation_root/bin:$isolation_root/runtime-bin:$node_bin_dir:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
     CI=true NO_COLOR=1 TERM=dumb \
     NEMOCLAW_REPO_ROOT="$repo_root" NEMOCLAW_GIT_SHADOW="$git_shadow" \
+    NEMOCLAW_NODE_EXECUTABLE="$node_executable" \
+    NEMOCLAW_NPM_CLI="$npm_cli" NEMOCLAW_NPX_CLI="$npx_cli" \
     NPM_CONFIG_USERCONFIG=/dev/null \
     GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_OPTIONAL_LOCKS=0 \
     /bin/sh -c ${q(command)}
@@ -251,6 +293,7 @@ fi
 if command -v bwrap >/dev/null 2>&1; then
   set -- "$(command -v bwrap)" --die-with-parent --new-session --unshare-all --share-net
   set -- "$@" --proc /proc --dev /dev --tmpfs /tmp --dir /home
+  set -- "$@" --dir /ncv --ro-bind "$isolation_root/runtime-bin" /ncv/bin
   set -- "$@" --bind "$isolation_root/home" /home/validator --bind "$repo_root" /workspace
   set -- "$@" --dir /git --ro-bind "$git_shadow" /git
   set -- "$@" --ro-bind "$git_common_dir/objects" /git/objects
@@ -265,15 +308,22 @@ if command -v bwrap >/dev/null 2>&1; then
   for system_path in /usr /bin /sbin /lib /lib64 /opt /etc; do
     if [ -e "$system_path" ]; then set -- "$@" --ro-bind "$system_path" "$system_path"; fi
   done
-  case "$node_prefix" in
+  case "$node_executable" in
     /usr|/usr/*|/bin|/bin/*|/sbin|/sbin/*|/lib|/lib/*|/lib64|/lib64/*|/opt|/opt/*|/etc|/etc/*) ;;
-    *) set -- "$@" --dir "$node_prefix_parent" --ro-bind "$node_prefix" "$node_prefix" ;;
+    *) set -- "$@" --dir "$node_bin_parent" --dir "$node_bin_dir" \
+      --ro-bind "$node_executable" "$node_executable" ;;
+  esac
+  case "$npm_root" in
+    /usr|/usr/*|/bin|/bin/*|/sbin|/sbin/*|/lib|/lib/*|/lib64|/lib64/*|/opt|/opt/*|/etc|/etc/*) ;;
+    *) set -- "$@" --dir "$npm_root_parent" --ro-bind "$npm_root" "$npm_root" ;;
   esac
   set +e
   "$@" --chdir /workspace /usr/bin/env -i \
     HOME=/home/validator XDG_CONFIG_HOME=/home/validator TMPDIR=/tmp \
-    PATH="$node_bin_dir:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+    PATH="/ncv/bin:$node_bin_dir:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
     CI=true NO_COLOR=1 TERM=dumb \
+    NEMOCLAW_NODE_EXECUTABLE="$node_executable" \
+    NEMOCLAW_NPM_CLI="$npm_cli" NEMOCLAW_NPX_CLI="$npx_cli" \
     NPM_CONFIG_USERCONFIG=/dev/null \
     GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_OPTIONAL_LOCKS=0 \
     /bin/sh -c ${q(command)}
@@ -366,14 +416,6 @@ exit 126`,
       failed: [],
       nul: null,
     };
-  const hostHome = process.env.HOME ? realpathSync(process.env.HOME) : null;
-  if (!hostHome) throw new Error("Credential-isolated validation requires a resolvable host HOME.");
-  const homeRelativeToNodePrefix = path.relative(nodePrefix, hostHome);
-  if (
-    homeRelativeToNodePrefix === "" ||
-    (homeRelativeToNodePrefix !== ".." && !homeRelativeToNodePrefix.startsWith(".." + path.sep))
-  )
-    throw new Error("Credential-isolated validation cannot expose the host HOME.");
   const steps = [];
   for (const item of commands) {
     const r = await tools.bash({
