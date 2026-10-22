@@ -230,7 +230,7 @@ spec:
             - name: primary
               providerRef: frontier
               overrides:
-                model: nvidia/nemotron-3-super-120b-a12b
+                model: nvidia/nemotron-3.5-super-vl-120b-a12b
                 harnessProvider: custom
                 temperature: 0.3
                 maxTokens: 8192
@@ -287,7 +287,7 @@ spec:
             - name: primary
               providerRef: frontier
               overrides:
-                model: nvidia/nemotron-3-super-120b-a12b
+                model: nvidia/nemotron-3.5-super-vl-120b-a12b
                 harnessProvider: custom
                 temperature: 0
                 maxTokens: 4096

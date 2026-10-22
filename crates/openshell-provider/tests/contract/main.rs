@@ -286,6 +286,7 @@ fixtures! {
     fabric_mini_swe_agent => "fabric-mini-swe-agent",
     fabric_nooa => "fabric-nooa",
     fabric_nooa_bench => "fabric-nooa-bench",
+    fabric_opencode => "fabric-opencode",
     fabric_openclaw => "fabric-openclaw",
     fabric_pi => "fabric-pi",
     fabric_remote_agent => "fabric-remote-agent",

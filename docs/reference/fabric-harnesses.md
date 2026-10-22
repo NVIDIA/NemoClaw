@@ -21,6 +21,7 @@ Use [inference API selection](../inference.md#choose-the-request-api) for the pr
 | `nvidia.fabric.nooa.bench-agent` | One | External or managed, subject to API compatibility | [Nooa Bench](../../examples/fabric-nooa-bench.yaml) |
 | `nvidia.fabric.remote-agent` | One | External or managed, subject to API compatibility | [Remote Agent](../../examples/fabric-remote-agent.yaml) |
 | `nvidia.fabric.pi` | One | External or managed, subject to API compatibility | [Pi](../../examples/fabric-pi.yaml) |
+| `nvidia.fabric.opencode` | One | External or managed, subject to API compatibility | [OpenCode](../../examples/fabric-opencode.yaml) |
 
 Managed inference means an accepted Ollama or vLLM service configuration, with that mode's prerequisites.
 It does not promise arbitrary model compatibility.
