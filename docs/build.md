@@ -88,7 +88,7 @@ cargo images build --platform linux/arm64 openclaw
 docker image inspect nc-fabric:openclaw --format '{{index .RepoDigests 0}}'
 ```
 
-Use the printed immutable reference in `sandboxes[].image.ref`.
+Use the printed immutable reference in `sandboxes.<name>.image.ref`.
 Examples that omit `image` use the generic default agent image pin from `versions.json`.
 Select an explicit image containing the chosen Fabric adapter; a harness identifier does not select a different image.
 The selected image must still exist on the compute daemon.
@@ -114,7 +114,7 @@ cargo images build --platform linux/amd64 deepagents
 docker image inspect nc-fabric:deepagents --format '{{index .RepoDigests 0}}'
 ```
 
-Use the printed immutable reference in `sandboxes[].image.ref`.
+Use the printed immutable reference in `sandboxes.<name>.image.ref`.
 Replace `deepagents` with another harness name, or use `agents` to build all ten.
 The AMD64 builds and image tests do not establish successful gateway provisioning or an end-to-end agent response.
 

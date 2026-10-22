@@ -171,9 +171,9 @@ fn compiled_resources_preserve_ownership_connections_and_dependency_order() {
         .spec
         .inference_providers
         .insert("remote".into(), provider);
-    let sandbox = &mut document.spec.sandboxes[0];
-    sandbox.name = "worker".into();
+    let mut sandbox = document.spec.sandboxes.remove("assistant").unwrap();
     sandbox.agent.inference.as_mut().unwrap().routes[0].provider_ref = Some("remote".into());
+    document.spec.sandboxes.insert("worker".into(), sandbox);
     let generations = ownership_generations();
     let graph = compile(&document, &generations, "0.1.0").unwrap();
     // Providers take no connection; the gateway data source does, and
@@ -366,7 +366,10 @@ fn managed_plans_query_selected_engine_and_image_without_probe_resources() {
             "${data.openshell_gateway_prerequisites.current.observation_json}"
         );
         let image = &graph["data"]["fabric_harnesses"]["sandbox_0"];
-        assert_eq!(image["image"], document.spec.sandboxes[0].image.ref_);
+        assert_eq!(
+            image["image"],
+            document.spec.sandboxes["assistant"].image.ref_
+        );
         assert!(
             image.get("depends_on").is_none(),
             "metadata inspection must not depend on image acquisition"
@@ -382,7 +385,7 @@ fn managed_plans_query_selected_engine_and_image_without_probe_resources() {
         assert_eq!(
             configuration["harness"]["adapter_id"],
             document
-                .sandbox_harness(&document.spec.sandboxes[0])
+                .sandbox_harness(document.sandbox("assistant").unwrap())
                 .unwrap()
                 .kind
                 .as_str()
@@ -399,8 +402,9 @@ fn managed_plans_query_selected_engine_and_image_without_probe_resources() {
 fn arbitrary_fabric_harness_identifier_survives_runtime_compilation() {
     let mut value: serde_json::Value =
         serde_saphyr::from_str(include_str!("fixtures/config/local.yaml")).unwrap();
-    value["spec"]["sandboxes"][0]["harness"]["kind"] = "org.fixture.custom-adapter".into();
-    value["spec"]["sandboxes"][0]["harness"]["settings"] =
+    value["spec"]["sandboxes"]["assistant"]["harness"]["kind"] =
+        "org.fixture.custom-adapter".into();
+    value["spec"]["sandboxes"]["assistant"]["harness"]["settings"] =
         serde_json::json!({"custom_option":"fixture-value"});
     value["spec"]["inferenceProviders"]["local"]["api"] = "openai-responses".into();
     let document = Document::parse(value.to_string().as_bytes()).unwrap();
@@ -451,10 +455,9 @@ fn adding_an_image_keeps_existing_registration_and_separates_executable_scopes()
         .find(|target| target.kind == "inference")
         .unwrap();
     let mut changed = document.clone();
-    let mut second = changed.spec.sandboxes[0].clone();
-    second.name = "second".into();
+    let mut second = changed.spec.sandboxes["assistant"].clone();
     second.image.ref_ = format!("fixture/other@sha256:{}", "b".repeat(64));
-    changed.spec.sandboxes.push(second);
+    changed.spec.sandboxes.insert("second".into(), second);
     let after = targets(&changed, &generations).unwrap();
     assert!(after.contains(original));
     assert_eq!(
@@ -503,10 +506,9 @@ fn sandboxes_pass_driver_configuration_through() {
     let mut value: serde_json::Value =
         serde_saphyr::from_str(include_str!("../../../examples/fabric-openclaw.yaml")).unwrap();
     let doc = nemoclaw_sdk::config::Document::parse(value.to_string().as_bytes()).unwrap();
-    let name = doc.spec.sandboxes[0].name.clone();
     let graph = nemoclaw_sdk::compile::compile(&doc, &generations, "0.1.0").unwrap();
     assert!(
-        graph["resource"]["openshell_sandbox"][&name]
+        graph["resource"]["openshell_sandbox"]["assistant"]
             .get("driver_config")
             .is_none()
     );
@@ -514,12 +516,12 @@ fn sandboxes_pass_driver_configuration_through() {
     let mounts = serde_json::json!({"docker": {"mounts": [
         {"type": "volume", "source": "skills", "target": "/sandbox/skills"}
     ]}});
-    value["spec"]["sandboxes"][0]["driverConfig"] = mounts.clone();
+    value["spec"]["sandboxes"]["assistant"]["driverConfig"] = mounts.clone();
     let doc = nemoclaw_sdk::config::Document::parse(value.to_string().as_bytes())
         .expect("driverConfig must parse");
     let graph = nemoclaw_sdk::compile::compile(&doc, &generations, "0.1.0").unwrap();
     // However OpenTofu takes it, OpenShell receives it unchanged.
-    let attribute = &graph["resource"]["openshell_sandbox"][&name]["driver_config"];
+    let attribute = &graph["resource"]["openshell_sandbox"]["assistant"]["driver_config"];
     let decoded: serde_json::Value = match attribute.as_str() {
         Some(text) => serde_json::from_str(text).unwrap(),
         None => attribute.clone(),
@@ -543,7 +545,7 @@ fn isolated_sandboxes_take_extra_network_grants() {
         "host": "docs.example.com", "port": 443, "protocol": "rest", "enforcement": "enforce",
         "rules": [{"allow": {"method": "GET", "path": "/**"}}]
     }]});
-    value["spec"]["sandboxes"][0]["network"] =
+    value["spec"]["sandboxes"]["assistant"]["network"] =
         serde_json::json!({"tier": "isolated", "grants": {"docs": grant}});
     let doc = nemoclaw_sdk::config::Document::parse(value.to_string().as_bytes())
         .expect("grants must parse");
@@ -568,7 +570,7 @@ fn isolated_sandboxes_take_extra_network_grants() {
     assert_eq!(rules[0]["binaries"], serde_json::json!([]));
 
     // An explicit policy already holds every grant.
-    value["spec"]["sandboxes"][0]["network"] = serde_json::json!({
+    value["spec"]["sandboxes"]["assistant"]["network"] = serde_json::json!({
         "policy": {"explicit": {"version": 1}},
         "grants": {"docs": grant}
     });

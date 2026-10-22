@@ -82,13 +82,9 @@ fn proxy_readiness_is_fresh_and_orders_only_its_selected_consumer() {
     let mut value = input();
     value["spec"]["inferenceProviders"]["other"] =
         json!({"provider":"openai", "endpoint":"http://127.0.0.1:11436/v1"});
-    let mut second = value["spec"]["sandboxes"][0].clone();
-    second["name"] = json!("other");
+    let mut second = value["spec"]["sandboxes"]["assistant"].clone();
     second["agent"]["inference"]["routes"][0]["providerRef"] = json!("other");
-    value["spec"]["sandboxes"]
-        .as_array_mut()
-        .unwrap()
-        .push(second);
+    value["spec"]["sandboxes"]["other"] = second;
     let document = Document::parse(value.to_string().as_bytes()).unwrap();
     let generations: Generations = [
         "workspace",
@@ -333,7 +329,7 @@ fn proxy_rejects_unpinned_models_nonlocal_daemons_and_ambiguous_ownership() {
 fn deep_agents_and_pi_use_authenticated_ollama_proxy_connections() {
     for harness in ["deepagents", "pi"] {
         let mut value = input();
-        value["spec"]["sandboxes"][0]["harness"]["kind"] = json!(harness);
+        value["spec"]["sandboxes"]["assistant"]["harness"]["kind"] = json!(harness);
         let doc = Document::parse(value.to_string().as_bytes()).unwrap();
         assert!(
             jsonschema::validator_for(&input_schema())

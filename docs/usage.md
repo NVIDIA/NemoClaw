@@ -44,7 +44,7 @@ See [CLI options and output](reference/cli.md) for bundle selection, formats, an
 
 ## Configure Sandboxes and Inference
 
-A document contains one to 32 named sandboxes, each with one harness and one agent.
+A document contains one to 32 sandboxes keyed by name, each with one harness and one agent.
 Use the [multiple-sandbox example](../examples/multiple-sandboxes.yaml) to share inference across different harnesses.
 [OpenClaw and Pi](agents.md) can select multiple models; each Deep Agents instance selects one.
 
@@ -289,7 +289,7 @@ Apply recomputes its plan; a successful earlier plan does not reserve resources 
 
 ### Multiple Sandboxes
 
-Sandbox names must be unique within a deployment; each sandbox declares one named agent.
+Sandbox names, the keys of `spec.sandboxes`, are unique within a deployment; each sandbox declares one named agent.
 Agent names may repeat across sandboxes.
 Adding a named sandbox preserves existing sandbox and provider identities.
 Reordering declarations is not an update.

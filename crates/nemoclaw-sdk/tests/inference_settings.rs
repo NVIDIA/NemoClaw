@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 fn input(harness: &str) -> Value {
     let mut v: Value =
         serde_saphyr::from_str(include_str!("../../../examples/local.yaml")).unwrap();
-    v["spec"]["sandboxes"][0]["harness"]["kind"] = json!(harness);
+    v["spec"]["sandboxes"]["assistant"]["harness"]["kind"] = json!(harness);
     v
 }
 fn parse(v: &Value) -> Result<Document, nemoclaw_sdk::config::ConfigError> {
@@ -18,7 +18,8 @@ fn parse(v: &Value) -> Result<Document, nemoclaw_sdk::config::ConfigError> {
 fn api_and_tuning_survive_compilation_and_yaml() {
     let mut v = input("openclaw");
     v["spec"]["inferenceProviders"]["local"]["api"] = json!("openai-responses");
-    let route = &mut v["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"];
+    let route =
+        &mut v["spec"]["sandboxes"]["assistant"]["agent"]["inference"]["routes"][0]["overrides"];
     route["settings"]["contextWindow"] = json!(65536);
     route["maxTokens"] = json!(8192);
     route["settings"]["reasoning"] = json!(true);
@@ -56,9 +57,9 @@ fn hermes_auth_requires_the_routed_credential_provider() {
     v["spec"]["inferenceProviders"]["local"]["endpoint"] =
         json!("https://inference-api.nousresearch.com/v1");
     v["spec"]["inferenceProviders"]["local"]["credential"] = json!({"env":"NOUS_API_KEY"});
-    v["spec"]["sandboxes"][0]["agent"]["auth"] = json!({"method":"api-key"});
+    v["spec"]["sandboxes"]["assistant"]["agent"]["auth"] = json!({"method":"api-key"});
     assert!(parse(&v).is_ok());
-    v["spec"]["sandboxes"][0]["agent"]["auth"]["providerRef"] = json!("foreign");
+    v["spec"]["sandboxes"]["assistant"]["agent"]["auth"]["providerRef"] = json!("foreign");
     assert!(parse(&v).is_err());
 }
 #[test]
@@ -70,7 +71,8 @@ fn unsupported_or_out_of_range_options_fail_before_deployment() {
         ("reasoningEffort", json!("")),
     ] {
         let mut v = input("openclaw");
-        v["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"][field] = value;
+        v["spec"]["sandboxes"]["assistant"]["agent"]["inference"]["routes"][0]["overrides"]
+            [field] = value;
         assert!(parse(&v).is_err());
         assert!(
             !jsonschema::validator_for(&input_schema())
@@ -118,19 +120,20 @@ fn explicit_apis_validate_transport_families_and_native_wire_requirements() {
 #[test]
 fn explicit_false_and_default_survive_and_auth_cannot_bypass_credentials() {
     let mut v = input("openclaw");
-    let overrides = &mut v["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"];
+    let overrides =
+        &mut v["spec"]["sandboxes"]["assistant"]["agent"]["inference"]["routes"][0]["overrides"];
     overrides["settings"]["reasoning"] = json!(false);
     overrides["settings"]["reasoning_effort"] = json!("default");
     let d = parse(&v).unwrap();
     let exported: Value = serde_saphyr::from_str(&d.yaml().unwrap()).unwrap();
     assert_eq!(
-        exported["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"]["settings"]
-            ["reasoning"],
+        exported["spec"]["sandboxes"]["assistant"]["agent"]["inference"]["routes"][0]["overrides"]
+            ["settings"]["reasoning"],
         false
     );
     for harness in ["hermes", "openclaw"] {
         let mut v = input(harness);
-        v["spec"]["sandboxes"][0]["agent"]["auth"] = json!({"method":"api-key"});
+        v["spec"]["sandboxes"]["assistant"]["agent"]["auth"] = json!({"method":"api-key"});
         assert!(parse(&v).is_err());
         assert!(
             jsonschema::validator_for(&input_schema())
@@ -144,7 +147,8 @@ fn explicit_false_and_default_survive_and_auth_cannot_bypass_credentials() {
         ("unexpected", json!(true)),
     ] {
         let mut v = input("openclaw");
-        v["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"][field] = value;
+        v["spec"]["sandboxes"]["assistant"]["agent"]["inference"]["routes"][0]["overrides"]
+            [field] = value;
         assert!(parse(&v).is_err());
         assert!(
             !jsonschema::validator_for(&input_schema())
@@ -159,13 +163,13 @@ fn native_tuning_is_preserved_for_adapter_validation() {
     let schema = jsonschema::validator_for(&input_schema()).unwrap();
     for harness in ["deepagents", "mini-swe-agent", "remote-agent"] {
         let mut v = input(harness);
-        v["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"]["maxTokens"] =
+        v["spec"]["sandboxes"]["assistant"]["agent"]["inference"]["routes"][0]["overrides"]["maxTokens"] =
             json!(128);
         let doc = parse(&v).unwrap();
         assert!(schema.is_valid(&v), "{harness}");
         assert_eq!(parse(&serde_json::to_value(&doc).unwrap()).unwrap(), doc);
-        v["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"]["settings"]["reasoning_effort"] =
-            json!("high");
+        v["spec"]["sandboxes"]["assistant"]["agent"]["inference"]["routes"][0]["overrides"]["settings"]
+            ["reasoning_effort"] = json!("high");
         assert!(parse(&v).is_ok());
         assert!(schema.is_valid(&v));
     }

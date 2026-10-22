@@ -310,6 +310,8 @@ fn constraints(schema: &Value) -> String {
         ("maxLength", "maximum characters"),
         ("minItems", "minimum items"),
         ("maxItems", "maximum items"),
+        ("minProperties", "minimum entries"),
+        ("maxProperties", "maximum entries"),
     ] {
         if let Some(value) = schema.get(key) {
             parts.push(format!("{label} {value}"));

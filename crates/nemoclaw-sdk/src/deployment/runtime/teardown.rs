@@ -10,7 +10,7 @@ pub(super) fn destroy_environment(document: &Document) -> Document {
     for provider in environment.provider_definitions_mut() {
         provider.credential = None;
     }
-    for sandbox in &mut environment.spec.sandboxes {
+    for sandbox in environment.spec.sandboxes.values_mut() {
         // Destroy never reads the image, so it needs no metadata path.
         sandbox.image.metadata = None;
         sandbox.integrations.clear();
@@ -291,7 +291,12 @@ mod tests {
         assert!(document.credential_names().contains(&"TEST_IMAGE_METADATA"));
         let environment = destroy_environment(&document);
         assert_eq!(environment.credential_names(), ["TEST_KUBECONFIG"]);
-        assert!(document.spec.sandboxes[0].image.metadata.is_some());
+        assert!(
+            document.spec.sandboxes["assistant"]
+                .image
+                .metadata
+                .is_some()
+        );
     }
 
     #[tokio::test]
@@ -533,10 +538,13 @@ mod tests {
             .spec
             .inference_providers
             .insert("other".into(), provider);
-        let mut sandbox = record.document.spec.sandboxes[0].clone();
-        sandbox.name = "other".into();
+        let mut sandbox = record.document.spec.sandboxes["assistant"].clone();
         sandbox.agent.inference.as_mut().unwrap().routes[0].provider_ref = Some("other".into());
-        record.document.spec.sandboxes.push(sandbox);
+        record
+            .document
+            .spec
+            .sandboxes
+            .insert("other".into(), sandbox);
         let bindings: BTreeMap<_, _> =
             compile::runtime_targets(&record.document, &record.generations)
                 .unwrap()

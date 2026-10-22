@@ -46,7 +46,7 @@ spec:
       provider: openai
       serviceRef: qwen
   sandboxes:
-    - name: assistant
+    assistant:
       image:
         ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
       network:

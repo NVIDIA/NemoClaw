@@ -68,13 +68,14 @@ fn load_journey(
         .ok_or("template metadata must be an object")?
         .insert("uid".into(), serde_json::json!(new_deployment_uid()?));
     let partial = PartialDocument::from_yaml(&serde_json::to_vec(&supplied)?)?;
-    JourneyDefinition::new("onboarding", partial)
-        .ask([
-            "/metadata/name",
-            "/spec/sandboxes/0/harness/kind",
-            "/spec/gateway/runtime/provider",
-            "inference:preset",
-        ])
+    let definition = JourneyDefinition::new("onboarding", partial);
+    // The harness question holds the template's sandbox name. A template
+    // without exactly one sandbox has none, and the journey refuses to start.
+    let harness = definition.harness_question();
+    definition
+        .ask(["/metadata/name"])
+        .ask(harness)
+        .ask(["/spec/gateway/runtime/provider", "inference:preset"])
         .ask([JourneyScope::InferenceApi])
         .ask([JourneyScope::RouteModels])
         .ask([JourneyScope::ActiveAdapterSettings])
@@ -173,11 +174,8 @@ mod tests {
         let mut values: serde_json::Value =
             serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
                 .unwrap();
-        let second = values["spec"]["sandboxes"][0].clone();
-        values["spec"]["sandboxes"]
-            .as_array_mut()
-            .unwrap()
-            .push(second);
+        let second = values["spec"]["sandboxes"]["assistant"].clone();
+        values["spec"]["sandboxes"]["second"] = second;
         let yaml = serde_json::to_vec(&values).unwrap();
         std::fs::write(&path, &yaml).unwrap();
         assert!(load_journey(Source::Template(&path), &Capabilities::available()).is_err());
@@ -191,7 +189,7 @@ mod tests {
         let mut values: serde_json::Value =
             serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
                 .unwrap();
-        values["spec"]["sandboxes"][0]["harness"] = serde_json::json!({
+        values["spec"]["sandboxes"]["assistant"]["harness"] = serde_json::json!({
             "kind": "fixture-reopen-adapter",
             "settings": {"custom_option": "retained"}
         });
@@ -201,7 +199,7 @@ mod tests {
         assert_eq!(
             journey
                 .values()
-                .pointer("/spec/sandboxes/0/harness/settings/custom_option"),
+                .pointer("/spec/sandboxes/assistant/harness/settings/custom_option"),
             Some(&serde_json::json!("retained"))
         );
         let resolution = journey.resolve(&capabilities).unwrap();
@@ -236,7 +234,7 @@ mod tests {
         assert_eq!(
             state
                 .values()
-                .pointer("/spec/sandboxes/0/agent/inference/routes/0/overrides/model"),
+                .pointer("/spec/sandboxes/assistant/agent/inference/routes/0/overrides/model"),
             Some(&serde_json::json!("nvidia/nemotron-3.5-super-vl-120b-a12b"))
         );
     }

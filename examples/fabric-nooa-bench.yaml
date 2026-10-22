@@ -20,7 +20,7 @@ spec:
       provider: openai
       endpoint: http://172.20.0.1:11446/v1
   sandboxes:
-    - name: assistant
+    assistant:
       image:
         ref: nc-prototype-fabric@sha256:deaa2580e46f5d27105c7051771d36da36c5879ac2fea98e6b22cd651c910260
       network:

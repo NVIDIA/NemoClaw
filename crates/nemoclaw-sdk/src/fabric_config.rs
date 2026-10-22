@@ -1,12 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //! Deployment-owned projection into the public Fabric configuration contract.
-use crate::config::{ConfigError, Document, Sandbox};
+use crate::config::{ConfigError, Document, NamedSandbox};
 use serde_json::{Value, json};
 
 /// Resolve deployment references without interpreting native adapter settings.
 /// This exact configuration is planned against the image descriptors and sent to Fabric.
-pub fn for_sandbox(document: &Document, sandbox: &Sandbox) -> Result<Value, ConfigError> {
+pub fn for_sandbox(document: &Document, sandbox: NamedSandbox<'_>) -> Result<Value, ConfigError> {
     let harness = document.sandbox_harness(sandbox)?;
     let selection = document.scoped_inference(sandbox)?;
     let mut result = json!({

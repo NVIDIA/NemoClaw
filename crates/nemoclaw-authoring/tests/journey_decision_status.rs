@@ -52,7 +52,7 @@ fn supplied_values_and_user_decisions_are_distinct() {
     assert!(
         session
             .values()
-            .pointer("/spec/sandboxes/0/harness/settings/cli")
+            .pointer("/spec/sandboxes/assistant/harness/settings/cli")
             .is_none()
     );
 }

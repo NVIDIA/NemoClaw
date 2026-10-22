@@ -47,7 +47,7 @@ spec:
       provider: openai
       serviceRef: local
   sandboxes:
-    - name: researcher
+    researcher:
       image:
         ref: nc-fabric@sha256:f4a2f7068525f55f1dc25e77dfcc07998a32bd19f44ad75a61e304e255440f56
       network:
@@ -68,7 +68,7 @@ spec:
         tools:
           allow:
             - read
-    - name: writer
+    writer:
       image:
         ref: nc-fabric@sha256:f4a2f7068525f55f1dc25e77dfcc07998a32bd19f44ad75a61e304e255440f56
       network:

@@ -38,7 +38,7 @@ Add files anywhere else; prefer paths outside `/sandbox`, which OpenShell manage
 - **Tools:** binaries on the agent's `PATH` are available to harnesses that run commands, within the sandbox policy.
 - **Network access** for your tools still comes from the sandbox policy: [grants](sandbox-network.md) decide which hosts they can reach.
 
-Reference the image by its digest in `sandboxes[].image.ref`, as for any agent image.
+Reference the image by its digest in `sandboxes.<name>.image.ref`, as for any agent image.
 
 ## When Releases Change
 

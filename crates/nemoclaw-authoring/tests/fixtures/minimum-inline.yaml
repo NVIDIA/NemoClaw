@@ -14,7 +14,8 @@ spec:
       credential:
         env: NVIDIA_API_KEY
   sandboxes:
-    - harness: {}
+    assistant:
+      harness: {}
       agent:
         inference:
           routes:

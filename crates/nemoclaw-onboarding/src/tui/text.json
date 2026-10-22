@@ -49,9 +49,6 @@
     "/spec/sandboxes/*/image/ref": {
       "title": "Sandbox image"
     },
-    "/spec/sandboxes/*/name": {
-      "title": "Name this sandbox"
-    },
     "/spec/sandboxes/*/network/policy": {
       "title": "Network policy"
     },

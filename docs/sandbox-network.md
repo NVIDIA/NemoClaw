@@ -3,7 +3,7 @@
 
 # Configure Sandbox Policy
 
-Use `sandboxes[].network.policy.explicit` to declare filesystem, process, and egress policy.
+Use `sandboxes.<name>.network.policy.explicit` to declare filesystem, process, and egress policy.
 Start from [the explicit-policy example](../examples/explicit-policy.yaml) and follow [deployment usage](usage.md) to plan, apply, and export it.
 
 Before applying, select a fresh deployment UUID, an available gateway and inference endpoint, and an immutable agent image available to the runtime.

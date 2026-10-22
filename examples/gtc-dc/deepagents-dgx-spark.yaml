@@ -54,7 +54,7 @@ spec:
       provider: openai
       serviceRef: super
   sandboxes:
-    - name: assistant
+    assistant:
       image:
         ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
       network:

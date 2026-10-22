@@ -91,9 +91,7 @@ fn read(
 
 pub(crate) fn populate(graph: &mut Value, document: &Document) -> Result<(), ConfigError> {
     let mut observations = Map::new();
-    let mut sandboxes: Vec<_> = document.spec.sandboxes.iter().collect();
-    sandboxes.sort_by(|left, right| left.name.cmp(&right.name));
-    let mut sandboxes = sandboxes.into_iter();
+    let mut sandboxes = document.sandboxes();
     let (mut targets, mut images) = (0, 0);
     for query in plan_queries(document)? {
         match &query {
@@ -197,7 +195,7 @@ pub(crate) fn populate(graph: &mut Value, document: &Document) -> Result<(), Con
                 // Named by sandbox, so adding a sandbox changes no agent's ref.
                 // A pulled image's harness is read after its pull instead.
                 if !pulled {
-                    graph["data"]["fabric_harness"][&sandbox.name] = harness;
+                    graph["data"]["fabric_harness"][sandbox.name] = harness;
                 }
             }
             DiscoveryQuery::Credential(_) => {

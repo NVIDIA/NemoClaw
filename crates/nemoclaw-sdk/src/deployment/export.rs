@@ -539,10 +539,9 @@ mod tests {
         let mut document =
             Document::parse(include_bytes!("../../tests/fixtures/config/local.yaml").as_slice())
                 .unwrap();
-        let mut second = document.spec.sandboxes[0].clone();
-        second.name = "second".into();
+        let mut second = document.spec.sandboxes["assistant"].clone();
         second.image.ref_ = format!("fixture/second@sha256:{}", "b".repeat(64));
-        document.spec.sandboxes.push(second);
+        document.spec.sandboxes.insert("second".into(), second);
         let generations = ["workspace", "provider", "sandbox"]
             .map(|kind| (kind.into(), "a".repeat(32)))
             .into();
@@ -698,7 +697,7 @@ mod tests {
                         "credential":{"env":"SEARCH_KEY"}}
                 }))
                 .unwrap();
-                let sandbox = &mut document.spec.sandboxes[0];
+                let sandbox = document.spec.sandboxes.get_mut("assistant").unwrap();
                 sandbox.agent.integration_refs = vec!["search".into()];
                 match scope {
                     "deployment" => document.spec.integrations = definitions,
@@ -817,7 +816,7 @@ mod tests {
         )
         .unwrap();
         value["spec"]["inferenceProviders"]["hosted"] = serde_json::json!({"provider":"openai","endpoint":"https://hosted.example/v1","credential":{"env":"OLD_KEY"}});
-        let inference = &mut value["spec"]["sandboxes"][0]["agent"]["inference"];
+        let inference = &mut value["spec"]["sandboxes"]["assistant"]["agent"]["inference"];
         inference["default"] = serde_json::json!("primary");
         inference["routes"].as_array_mut().unwrap().push(serde_json::json!({"name":"smart","providerRef":"hosted","overrides":{"model":"smart"}}));
         let mut document = Document::parse(value.to_string().as_bytes()).unwrap();

@@ -17,18 +17,18 @@ spec:
       provider: openai
       endpoint: http://172.20.0.1:11446/v1
   sandboxes:
-  - name: assistant
-    image:
-      ref: nc-prototype-fabric@sha256:a6a0e5cf53501e765ae43457212989ff4716c6224352dc109ebd49c3780450cd
-    network:
-      tier: isolated
-    harness:
-      kind: nvidia.fabric.langchain.deepagents
-    agent:
-      name: main
-      inference:
-        routes:
-        - name: primary
-          providerRef: local
-          overrides:
-            model: qwen3:1.7b
+    assistant:
+      image:
+        ref: nc-prototype-fabric@sha256:a6a0e5cf53501e765ae43457212989ff4716c6224352dc109ebd49c3780450cd
+      network:
+        tier: isolated
+      harness:
+        kind: nvidia.fabric.langchain.deepagents
+      agent:
+        name: main
+        inference:
+          routes:
+          - name: primary
+            providerRef: local
+            overrides:
+              model: qwen3:1.7b

@@ -18,7 +18,7 @@ spec:
       provider: openai
       endpoint: http://172.20.0.1:11436/v1
   sandboxes:
-    - name: assistant
+    assistant:
       network:
         policy:
           explicit:

@@ -20,7 +20,7 @@ fn anthropic_with_claude_should_work() {
         "https://api.anthropic.com/v1"
     );
     assert_eq!(
-        desired["spec"]["sandboxes"][0]["harness"]["kind"],
+        desired["spec"]["sandboxes"]["assistant"]["harness"]["kind"],
         "nvidia.fabric.claude"
     );
     assert_eq!(document.credential_names(), ["ANTHROPIC_API_KEY"]);
@@ -55,7 +55,7 @@ fn openai_compatible_endpoint_with_tuning_should_work() {
     let document = Document::parse(desired.yaml().as_bytes()).unwrap();
     let desired = normalized(&document);
     let overrides =
-        &desired["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"];
+        &desired["spec"]["sandboxes"]["assistant"]["agent"]["inference"]["routes"][0]["overrides"];
     assert_eq!(
         desired["spec"]["inferenceProviders"]["local"]["api"],
         "openai-responses"
@@ -104,7 +104,7 @@ fn deep_agents_should_work() {
     let document = Document::parse(yaml.as_slice()).unwrap();
     let desired = normalized(&document);
     assert_eq!(
-        desired["spec"]["sandboxes"][0]["harness"]["kind"],
+        desired["spec"]["sandboxes"]["assistant"]["harness"]["kind"],
         "nvidia.fabric.langchain.deepagents"
     );
 }
@@ -114,12 +114,15 @@ fn multiple_openclaw_sandboxes_with_policy_tools_and_observability_should_work()
     let yaml = include_bytes!("../../../examples/full-featured-openclaw.yaml");
     let document = Document::parse(yaml.as_slice()).unwrap();
     let desired = normalized(&document);
-    let sandboxes = desired["spec"]["sandboxes"].as_array().unwrap();
+    let sandboxes = desired["spec"]["sandboxes"].as_object().unwrap();
     assert_eq!(sandboxes.len(), 3);
-    assert_eq!(sandboxes[0]["agent"]["name"], "researcher");
-    assert_eq!(sandboxes[1]["agent"]["name"], "writer");
-    assert_eq!(sandboxes[2]["agent"]["name"], "reader");
-    assert_eq!(sandboxes[2]["agent"]["tools"]["allow"], json!(["read"]));
+    assert_eq!(sandboxes["researcher"]["agent"]["name"], "researcher");
+    assert_eq!(sandboxes["writer"]["agent"]["name"], "writer");
+    assert_eq!(sandboxes["reader"]["agent"]["name"], "reader");
+    assert_eq!(
+        sandboxes["reader"]["agent"]["tools"]["allow"],
+        json!(["read"])
+    );
     assert_eq!(
         desired["spec"]["harnesses"]["assistant"]["execution"]["timeoutSeconds"],
         900
@@ -132,7 +135,7 @@ fn pi_should_work() {
     let document = Document::parse(yaml.as_slice()).unwrap();
     let desired = normalized(&document);
     assert_eq!(
-        desired["spec"]["sandboxes"][0]["harness"]["kind"],
+        desired["spec"]["sandboxes"]["assistant"]["harness"]["kind"],
         "nvidia.fabric.pi"
     );
 }
@@ -206,7 +209,7 @@ fn openclaw_should_work() {
     let document = Document::parse(yaml.as_slice()).unwrap();
     let desired = normalized(&document);
     assert_eq!(
-        desired["spec"]["sandboxes"][0]["harness"]["kind"],
+        desired["spec"]["sandboxes"]["assistant"]["harness"]["kind"],
         "nvidia.fabric.openclaw"
     );
 }
@@ -384,6 +387,13 @@ impl DesiredState {
         }
     }
 
+    /// The document's sole sandbox definition.
+    fn sandbox(&mut self) -> &mut Value {
+        let sandboxes = self.value["spec"]["sandboxes"].as_object_mut().unwrap();
+        assert_eq!(sandboxes.len(), 1);
+        sandboxes.values_mut().next().unwrap()
+    }
+
     /// The document's sole deployment-level provider definition.
     fn provider(&mut self) -> &mut Value {
         let providers = self.value["spec"]["inferenceProviders"]
@@ -410,13 +420,13 @@ impl DesiredState {
     }
 
     fn inference_inputs(mut self, inputs: &[&str]) -> Self {
-        self.value["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"]["input"] =
-            json!(inputs);
+        self.sandbox()["agent"]["inference"]["routes"][0]["overrides"]["input"] = json!(inputs);
         self
     }
 
     fn sandbox_name(mut self, name: &str) -> Self {
-        self.value["spec"]["sandboxes"][0]["name"] = json!(name);
+        let sandbox = self.sandbox().take();
+        self.value["spec"]["sandboxes"] = json!({name: sandbox});
         self
     }
 
@@ -433,7 +443,7 @@ impl DesiredState {
     }
 
     fn sandbox_resources(mut self) -> Self {
-        self.value["spec"]["sandboxes"][0]["resources"] = json!({"cpu": "4", "memory": "16Gi"});
+        self.sandbox()["resources"] = json!({"cpu": "4", "memory": "16Gi"});
         self
     }
 
@@ -459,16 +469,14 @@ impl DesiredState {
     }
 
     fn hermes_provider_tools(mut self) -> Self {
-        self.value["spec"]["sandboxes"][0]["harness"]["providerAuthentication"] =
-            json!({"method": "oauth"});
-        self.value["spec"]["sandboxes"][0]["harness"]["toolGateways"] = json!(["nous-web"]);
-        self.value["spec"]["sandboxes"][0]["credentialPlaceholderExtensions"] =
-            json!(["TELEGRAM_BOT_TOKEN_AGENT_A"]);
+        self.sandbox()["harness"]["providerAuthentication"] = json!({"method": "oauth"});
+        self.sandbox()["harness"]["toolGateways"] = json!(["nous-web"]);
+        self.sandbox()["credentialPlaceholderExtensions"] = json!(["TELEGRAM_BOT_TOKEN_AGENT_A"]);
         self
     }
 
     fn trusted_private_hosts(mut self) -> Self {
-        self.value["spec"]["sandboxes"][0]["network"]["trustedPrivateHosts"] =
+        self.sandbox()["network"]["trustedPrivateHosts"] =
             json!(["10.10.0.12", "inference.corp.example"]);
         self
     }
@@ -480,7 +488,7 @@ impl DesiredState {
     }
 
     fn messaging_channel(mut self) -> Self {
-        self.value["spec"]["sandboxes"][0]["channels"] =
+        self.sandbox()["channels"] =
             json!([{"kind": "slack", "credential": {"env": "SLACK_BOT_TOKEN"}}]);
         self
     }

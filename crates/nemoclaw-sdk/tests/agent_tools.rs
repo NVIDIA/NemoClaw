@@ -9,17 +9,16 @@ use serde_json::{Value, json};
 fn input(count: usize) -> Value {
     let mut value: Value =
         serde_saphyr::from_str(include_str!("../../../examples/fabric-openclaw.yaml")).unwrap();
-    let primary = value["spec"]["sandboxes"][0].clone();
-    value["spec"]["sandboxes"] = Value::Array(
+    let primary = value["spec"]["sandboxes"]["assistant"].clone();
+    value["spec"]["sandboxes"] = Value::Object(
         (0..count)
             .map(|n| {
                 let mut sandbox = primary.clone();
-                sandbox["name"] = json!(format!("sandbox-{n}"));
                 sandbox["agent"]["name"] = json!(format!("agent-{n}"));
                 if n != 0 {
                     sandbox["agent"]["tools"] = json!({"allow":["read"]});
                 }
-                sandbox
+                (format!("sandbox-{n}"), sandbox)
             })
             .collect(),
     );
@@ -51,7 +50,7 @@ fn separate_sandboxes_preserve_each_agents_restrictions_in_launch_and_yaml() {
         }
     }
     let mut v = input(1);
-    v["spec"]["sandboxes"][0]["agent"]["tools"] = json!({"allow":["read"]});
+    v["spec"]["sandboxes"]["sandbox-0"]["agent"]["tools"] = json!({"allow":["read"]});
     assert!(parse(&v).is_ok());
     assert!(schema.is_valid(&v));
 }
@@ -68,15 +67,17 @@ fn invalid_sandboxes_and_permissions_fail_before_planning() {
         json!(null),
     ] {
         let mut v = input(3);
-        v["spec"]["sandboxes"][1]["agent"]["tools"] = tools;
+        v["spec"]["sandboxes"]["sandbox-1"]["agent"]["tools"] = tools;
         assert!(parse(&v).is_err());
         assert!(!schema.is_valid(&v));
     }
+    // Names are keys, so a repeated name is a duplicate YAML key.
+    let repeated = serde_saphyr::to_string(&input(3))
+        .unwrap()
+        .replace("sandbox-1:", "sandbox-0:");
+    assert!(Document::parse(repeated.as_bytes()).is_err());
     let mut v = input(3);
-    v["spec"]["sandboxes"][1]["name"] = json!("sandbox-0");
-    assert!(parse(&v).is_err());
-    let mut v = input(3);
-    v["spec"]["sandboxes"][1]["agent"]["harness"]["kind"] = json!("hermes");
+    v["spec"]["sandboxes"]["sandbox-1"]["agent"]["harness"]["kind"] = json!("hermes");
     assert!(parse(&v).is_err());
     assert!(!schema.is_valid(&v));
 }
@@ -85,15 +86,19 @@ fn invalid_sandboxes_and_permissions_fail_before_planning() {
 fn disclosure_belongs_to_opaque_native_settings() {
     let mut value = input(2);
     for (i, mode) in ["progressive", "direct"].iter().enumerate() {
-        value["spec"]["sandboxes"][i]["harness"]["settings"] = json!({"disclosure":mode});
+        value["spec"]["sandboxes"][format!("sandbox-{i}")]["harness"]["settings"] =
+            json!({"disclosure":mode});
     }
     let doc = parse(&value).unwrap();
     for (i, mode) in ["progressive", "direct"].iter().enumerate() {
-        let config =
-            nemoclaw_sdk::fabric_config::for_sandbox(&doc, &doc.spec.sandboxes[i]).unwrap();
+        let config = nemoclaw_sdk::fabric_config::for_sandbox(
+            &doc,
+            doc.sandbox(&format!("sandbox-{i}")).unwrap(),
+        )
+        .unwrap();
         assert_eq!(config["harness"]["settings"]["disclosure"], *mode);
     }
-    value["spec"]["sandboxes"][0]["agent"]["tools"] = json!({"disclosure":"direct"});
+    value["spec"]["sandboxes"]["sandbox-0"]["agent"]["tools"] = json!({"disclosure":"direct"});
     assert!(parse(&value).is_err());
 }
 
@@ -102,8 +107,8 @@ fn tool_choices_are_preserved_independently_of_harness_identity() {
     let schema = jsonschema::validator_for(&input_schema()).unwrap();
     for harness in ["deepagents", "pi"] {
         let mut value = input(1);
-        value["spec"]["sandboxes"][0]["harness"]["kind"] = json!(harness);
-        value["spec"]["sandboxes"][0]["agent"]["tools"] = json!({"allow":["read"]});
+        value["spec"]["sandboxes"]["sandbox-0"]["harness"]["kind"] = json!(harness);
+        value["spec"]["sandboxes"]["sandbox-0"]["agent"]["tools"] = json!({"allow":["read"]});
         let document = parse(&value).expect("native read tool policy");
         assert!(schema.is_valid(&value));
         let generations = ["workspace", "provider", "sandbox"]
@@ -116,7 +121,8 @@ fn tool_choices_are_preserved_independently_of_harness_identity() {
         .unwrap();
         assert_eq!(settings["tools"], json!({"enabled":["read"]}));
         for disclosure in ["direct", "progressive"] {
-            value["spec"]["sandboxes"][0]["agent"]["tools"] = json!({"disclosure":disclosure});
+            value["spec"]["sandboxes"]["sandbox-0"]["agent"]["tools"] =
+                json!({"disclosure":disclosure});
             assert!(parse(&value).is_err());
             // Native disclosure belongs to harness.settings.
             assert!(!schema.is_valid(&value));
@@ -127,10 +133,14 @@ fn tool_choices_are_preserved_independently_of_harness_identity() {
 #[test]
 fn deep_agents_use_separate_sandboxes_with_stable_names_and_independent_models() {
     let mut value = input(2);
-    for sandbox in value["spec"]["sandboxes"].as_array_mut().unwrap() {
+    for sandbox in value["spec"]["sandboxes"]
+        .as_object_mut()
+        .unwrap()
+        .values_mut()
+    {
         sandbox["harness"]["kind"] = json!("deepagents");
     }
-    value["spec"]["sandboxes"][1]["agent"]["inference"]["routes"][0]["overrides"]["model"] =
+    value["spec"]["sandboxes"]["sandbox-1"]["agent"]["inference"]["routes"][0]["overrides"]["model"] =
         json!("other-model");
     let doc = parse(&value).expect("one native Deep Agents instance per sandbox");
     assert!(
@@ -150,9 +160,4 @@ fn deep_agents_use_separate_sandboxes_with_stable_names_and_independent_models()
     assert_eq!(configuration["metadata"]["name"], "agent-1");
     let settings: Value = nemoclaw_fabric::agent::compose(&sandbox.values).unwrap();
     assert_eq!(settings["models"]["default"]["model"], "other-model");
-    value["spec"]["sandboxes"].as_array_mut().unwrap().reverse();
-    assert_eq!(
-        targets(&parse(&value).unwrap(), &generations).unwrap(),
-        rows
-    );
 }

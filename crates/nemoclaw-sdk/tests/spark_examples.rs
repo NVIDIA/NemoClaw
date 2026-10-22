@@ -88,7 +88,7 @@ fn arm64_hardware_scenarios_compile_their_declared_resources() {
                 })
             );
             assert!(service.image.starts_with("nc-prototype-vllm@sha256:"));
-            for sandbox in &doc.spec.sandboxes {
+            for sandbox in doc.spec.sandboxes.values() {
                 assert!(sandbox.image.ref_.starts_with("nc-fabric@sha256:"));
             }
             if name == "shared-model.yaml" {

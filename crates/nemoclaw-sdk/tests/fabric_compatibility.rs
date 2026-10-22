@@ -55,18 +55,21 @@ fn public_fabric_configuration_passes_through_without_overriding_deployment_bind
     use nemoclaw_sdk::config::Document;
     let mut input: serde_json::Value =
         serde_saphyr::from_str(include_str!("fixtures/config/local.yaml")).unwrap();
-    input["spec"]["sandboxes"][0]["harness"]["config"] = json!({"mcp":{"servers":{"custom":{"transport":"stdio","url":"owned-fixture","exposure":"harness_native"}}},"runtime":{"max_turns":3}});
+    input["spec"]["sandboxes"]["assistant"]["harness"]["config"] = json!({"mcp":{"servers":{"custom":{"transport":"stdio","url":"owned-fixture","exposure":"harness_native"}}},"runtime":{"max_turns":3}});
     let doc = Document::parse(input.to_string().as_bytes()).unwrap();
-    let actual = nemoclaw_sdk::fabric_config::for_sandbox(&doc, &doc.spec.sandboxes[0]).unwrap();
+    let actual =
+        nemoclaw_sdk::fabric_config::for_sandbox(&doc, doc.sandbox("assistant").unwrap()).unwrap();
     assert_eq!(actual["runtime"]["max_turns"], 3);
     assert_eq!(
         actual["mcp"],
-        input["spec"]["sandboxes"][0]["harness"]["config"]["mcp"]
+        input["spec"]["sandboxes"]["assistant"]["harness"]["config"]["mcp"]
     );
-    input["spec"]["sandboxes"][0]["harness"]["config"]["models"] =
+    input["spec"]["sandboxes"]["assistant"]["harness"]["config"]["models"] =
         json!({"default":{"base_url":"https://substituted.invalid"}});
     let doc = Document::parse(input.to_string().as_bytes()).unwrap();
-    assert!(nemoclaw_sdk::fabric_config::for_sandbox(&doc, &doc.spec.sandboxes[0]).is_err());
+    assert!(
+        nemoclaw_sdk::fabric_config::for_sandbox(&doc, doc.sandbox("assistant").unwrap()).is_err()
+    );
 }
 
 #[test]
@@ -248,7 +251,8 @@ fn generated_base_urls_go_only_to_adapters_that_accept_them() {
     )
     .unwrap();
     let config =
-        nemoclaw_sdk::fabric_config::for_sandbox(&remote, &remote.spec.sandboxes[0]).unwrap();
+        nemoclaw_sdk::fabric_config::for_sandbox(&remote, remote.sandbox("assistant").unwrap())
+            .unwrap();
     assert!(
         config["models"]["default"].get("base_url").is_none(),
         "{config}"
@@ -263,7 +267,8 @@ fn generated_base_urls_go_only_to_adapters_that_accept_them() {
     )
     .unwrap();
     let config =
-        nemoclaw_sdk::fabric_config::for_sandbox(&openclaw, &openclaw.spec.sandboxes[0]).unwrap();
+        nemoclaw_sdk::fabric_config::for_sandbox(&openclaw, openclaw.sandbox("assistant").unwrap())
+            .unwrap();
     assert_eq!(
         config["models"]["default"]["base_url"],
         "https://inference.example.com/v1"
@@ -277,8 +282,8 @@ fn declared_model_extensions_get_the_provider_api_and_authored_fields() {
         include_bytes!("../../../examples/fabric-pi.yaml").as_slice(),
     )
     .unwrap();
-    let model = &nemoclaw_sdk::fabric_config::for_sandbox(&pi, &pi.spec.sandboxes[0]).unwrap()["models"]
-        ["default"];
+    let model = &nemoclaw_sdk::fabric_config::for_sandbox(&pi, pi.sandbox("assistant").unwrap())
+        .unwrap()["models"]["default"];
     assert_eq!(model["api"], "openai-completions", "{model}");
     assert_eq!(model["context_window"], 32768, "{model}");
     assert_eq!(model["max_tokens"], 4096, "{model}");
@@ -287,7 +292,8 @@ fn declared_model_extensions_get_the_provider_api_and_authored_fields() {
     let text = include_str!("../../../examples/openclaw.yaml");
     let openclaw = nemoclaw_sdk::config::Document::parse(text.as_bytes()).unwrap();
     let config =
-        nemoclaw_sdk::fabric_config::for_sandbox(&openclaw, &openclaw.spec.sandboxes[0]).unwrap();
+        nemoclaw_sdk::fabric_config::for_sandbox(&openclaw, openclaw.sandbox("assistant").unwrap())
+            .unwrap();
     assert!(config["models"]["default"].get("api").is_none(), "{config}");
 
     // Extensions cannot replace a field the deployment sets.
@@ -298,7 +304,8 @@ fn declared_model_extensions_get_the_provider_api_and_authored_fields() {
     assert_ne!(reserved, text);
     let reserved = nemoclaw_sdk::config::Document::parse(reserved.as_bytes()).unwrap();
     assert!(
-        nemoclaw_sdk::fabric_config::for_sandbox(&reserved, &reserved.spec.sandboxes[0]).is_err()
+        nemoclaw_sdk::fabric_config::for_sandbox(&reserved, reserved.sandbox("assistant").unwrap())
+            .is_err()
     );
 }
 
@@ -306,8 +313,9 @@ fn declared_model_extensions_get_the_provider_api_and_authored_fields() {
 fn routes_set_the_harness_provider_and_sampling() {
     let text = include_str!("../../../examples/openclaw.yaml");
     let plain = nemoclaw_sdk::config::Document::parse(text.as_bytes()).unwrap();
-    let model = &nemoclaw_sdk::fabric_config::for_sandbox(&plain, &plain.spec.sandboxes[0])
-        .unwrap()["models"]["default"];
+    let model =
+        &nemoclaw_sdk::fabric_config::for_sandbox(&plain, plain.sandbox("assistant").unwrap())
+            .unwrap()["models"]["default"];
     // Without them, the provider is the inference provider's API family and
     // no sampling is sent.
     assert_eq!(model["provider"], "openai", "{model}");
@@ -320,8 +328,9 @@ fn routes_set_the_harness_provider_and_sampling() {
     );
     assert_ne!(tuned, text);
     let tuned = nemoclaw_sdk::config::Document::parse(tuned.as_bytes()).unwrap();
-    let model = &nemoclaw_sdk::fabric_config::for_sandbox(&tuned, &tuned.spec.sandboxes[0])
-        .unwrap()["models"]["default"];
+    let model =
+        &nemoclaw_sdk::fabric_config::for_sandbox(&tuned, tuned.sandbox("assistant").unwrap())
+            .unwrap()["models"]["default"];
     assert_eq!(model["provider"], "custom", "{model}");
     assert_eq!(model["temperature"], 0.2, "{model}");
     assert_eq!(model["top_p"], 0.9, "{model}");

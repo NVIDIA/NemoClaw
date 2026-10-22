@@ -17,7 +17,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let capabilities = Capabilities::from_catalog(&catalog);
 
     let minimum = PartialDocument::from_yaml(
-        b"apiVersion: nemoclaw.nvidia.com/v1alpha1\nkind: NemoClawConfig\nspec:\n  sandboxes:\n    - {}\n",
+        b"apiVersion: nemoclaw.nvidia.com/v1alpha1\nkind: NemoClawConfig\nspec:\n  sandboxes:\n    assistant: {}\n",
     )?;
     let minimum = JourneyDefinition::new("minimum viable values", minimum)
         .ask(["/metadata/name"])
@@ -41,7 +41,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut guided_values: serde_json::Value =
         serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))?;
     guided_values
-        .pointer_mut("/spec/sandboxes/0/agent/inference/routes/0/overrides")
+        .pointer_mut("/spec/sandboxes/assistant/agent/inference/routes/0/overrides")
         .and_then(serde_json::Value::as_object_mut)
         .expect("bundled example has one model route")
         .remove("model");
@@ -49,11 +49,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let guided = JourneyDefinition::new("guided preview", guided)
         .ask([
             "/metadata/name",
-            "/spec/sandboxes/0/harness/kind",
+            "/spec/sandboxes/assistant/harness/kind",
             "/spec/gateway/runtime/provider",
             "/spec/inferenceProviders/nvidia-prod/provider",
             "/spec/inferenceProviders/nvidia-prod/api",
-            "/spec/sandboxes/0/agent/inference/routes/0/overrides/model",
+            "/spec/sandboxes/assistant/agent/inference/routes/0/overrides/model",
         ])
         .omit([JourneyScope::ActiveAdapterSettings]);
     println!();

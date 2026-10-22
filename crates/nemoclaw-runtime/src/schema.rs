@@ -34,10 +34,11 @@ pub fn forbid(names: &[&str]) -> Value {
 }
 // Required ancestors make a condition false when a field is omitted.
 // Consequences constrain only fields that are present, allowing SDK defaults.
+// A `*` segment applies the rest of the path to every value of a map.
 pub fn at(path: &str, rule: Value, required: bool) -> Value {
     path.split('/').rev().fold(rule, |child, segment| {
-        if segment == "[]" {
-            json!({"items": child})
+        if segment == "*" {
+            json!({"additionalProperties": child})
         } else if required {
             json!({"required": [segment], "properties": {segment: child}})
         } else {
