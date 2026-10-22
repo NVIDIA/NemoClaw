@@ -186,6 +186,7 @@ If the terminal runtime reports degraded health, rebuild the sandbox instead of 
 ### Recover Portable Published Ollama
 
 If a Hermes Portable Ollama runner stops after onboarding, run `$$nemoclaw <sandbox-name> recover` or `$$nemoclaw <sandbox-name> connect --probe-only`.
+For Hermes Portable, `recover` performs the same probe-only inference recovery as `connect --probe-only`.
 Ordinary `connect` also attempts recovery when the recorded inference route is unavailable.
 The command checks the sandbox's recorded lifecycle and inference authority, resumes only its exact receipt-owned runner, and verifies the inference route before accepting it.
 If the recorded provider, runner, network, socket, or private state identity has changed, recovery exits nonzero without replacing that state.
