@@ -39,9 +39,9 @@ type ExecutionProofRuntime = {
 };
 
 function loadPromptQueueRuntime(): PromptQueueRuntime {
-  return new Function(
-    `${onboardChildRuntimeSource}\nreturn { installPromptQueue };`,
-  )() as PromptQueueRuntime;
+  return new Function("require", `${onboardChildRuntimeSource}\nreturn { installPromptQueue };`)(
+    createRequire(import.meta.url),
+  ) as PromptQueueRuntime;
 }
 
 function loadExecutionProofRuntime(): ExecutionProofRuntime {

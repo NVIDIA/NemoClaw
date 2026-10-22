@@ -82,10 +82,25 @@ export default async function run_targeted_vitest(input: {
   const isolatedCommand = `set -eu
 umask 077
 repo_root=$(/bin/pwd -P)
-isolation_root=$(/usr/bin/mktemp -d /tmp/nemoclaw-validation.XXXXXX)
+isolation_root=$(/usr/bin/mktemp -d /tmp/ncv.XXXXXX)
 isolation_root=$(cd "$isolation_root" && /bin/pwd -P)
 trap '/bin/rm -R -f -- "$isolation_root"' EXIT
 /bin/mkdir -p "$isolation_root/home" "$isolation_root/tmp"
+git_dir=$(/usr/bin/git -C "$repo_root" rev-parse --absolute-git-dir)
+git_common_dir=$(/usr/bin/git -C "$repo_root" rev-parse --path-format=absolute --git-common-dir)
+git_dir=$(cd "$git_dir" && /bin/pwd -P)
+git_common_dir=$(cd "$git_common_dir" && /bin/pwd -P)
+git_worktree_name=
+if [ -f "$repo_root/.git" ]; then
+  git_worktree_name=\${git_dir##*/}
+  case "$git_worktree_name" in
+    ''|*[!A-Za-z0-9._-]*) printf '%s\n' 'Unsupported Git worktree metadata path.' >&2; exit 126 ;;
+  esac
+  if [ "$git_dir" != "$git_common_dir/worktrees/$git_worktree_name" ]; then
+    printf '%s\n' 'Git worktree metadata must belong to its common Git directory.' >&2
+    exit 126
+  fi
+fi
 
 if [ -x /usr/bin/sandbox-exec ]; then
   sandbox_profile="$isolation_root/profile.sb"
@@ -112,22 +127,27 @@ if [ -x /usr/bin/sandbox-exec ]; then
   (subpath "/private/var/db")
   (subpath "/dev")
   (subpath (param "REPO_ROOT"))
-  (subpath (param "ISOLATION_ROOT")))
+  (subpath (param "ISOLATION_ROOT"))
+  (subpath (param "GIT_DIR"))
+  (subpath (param "GIT_COMMON_DIR")))
 (allow file-write*
   (subpath (param "REPO_ROOT"))
   (subpath (param "ISOLATION_ROOT"))
   (literal "/dev/null"))
 (deny file-write* (subpath (string-append (param "REPO_ROOT") "/.git")))
+(deny file-write* (subpath (param "GIT_DIR")))
+(deny file-write* (subpath (param "GIT_COMMON_DIR")))
 (allow network*)
 PROFILE
   set +e
   /usr/bin/sandbox-exec -D REPO_ROOT="$repo_root" -D ISOLATION_ROOT="$isolation_root" \
+    -D GIT_DIR="$git_dir" -D GIT_COMMON_DIR="$git_common_dir" \
     -f "$sandbox_profile" /usr/bin/env -i \
     HOME="$isolation_root/home" XDG_CONFIG_HOME="$isolation_root/home" TMPDIR="$isolation_root/tmp" \
     PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin \
     CI=true NO_COLOR=1 TERM=dumb \
     NPM_CONFIG_USERCONFIG=/dev/null \
-    GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+    GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_OPTIONAL_LOCKS=0 \
     /bin/sh -c ${quote(command)}
   validation_status=$?
   set -e
@@ -138,7 +158,14 @@ if command -v bwrap >/dev/null 2>&1; then
   set -- "$(command -v bwrap)" --die-with-parent --new-session --unshare-all --share-net
   set -- "$@" --proc /proc --dev /dev --tmpfs /tmp --dir /home
   set -- "$@" --bind "$isolation_root/home" /home/validator --bind "$repo_root" /workspace
-  if [ -e "$repo_root/.git" ]; then set -- "$@" --ro-bind "$repo_root/.git" /workspace/.git; fi
+  if [ -n "$git_worktree_name" ]; then
+    git_pointer="$isolation_root/git-pointer"
+    printf 'gitdir: /git/worktrees/%s\n' "$git_worktree_name" >"$git_pointer"
+    set -- "$@" --dir /git --ro-bind "$git_common_dir" /git
+    set -- "$@" --ro-bind "$git_pointer" /workspace/.git
+  else
+    set -- "$@" --ro-bind "$repo_root/.git" /workspace/.git
+  fi
   for system_path in /usr /bin /sbin /lib /lib64 /opt /etc; do
     if [ -e "$system_path" ]; then set -- "$@" --ro-bind "$system_path" "$system_path"; fi
   done
@@ -148,7 +175,7 @@ if command -v bwrap >/dev/null 2>&1; then
     PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin \
     CI=true NO_COLOR=1 TERM=dumb \
     NPM_CONFIG_USERCONFIG=/dev/null \
-    GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+    GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_OPTIONAL_LOCKS=0 \
     /bin/sh -c ${quote(command)}
   validation_status=$?
   set -e

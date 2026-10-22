@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -56,7 +58,7 @@ describe("resolveOllamaTarballArch", () => {
 
 describe("sha256File", () => {
   it("computes a lowercase SHA-256 identity for downloaded bytes", () => {
-    const directory = fs.mkdtempSync("/tmp/nemoclaw-ollama-integrity-");
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-integrity-"));
     const file = `${directory}/install.sh`;
     try {
       fs.writeFileSync(file, "#!/bin/sh\nexit 0\n");
