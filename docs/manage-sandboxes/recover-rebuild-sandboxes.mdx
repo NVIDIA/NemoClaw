@@ -190,7 +190,10 @@ For Hermes Portable, `recover` performs the same probe-only inference recovery a
 Ordinary `connect` also attempts recovery when the recorded inference route is unavailable.
 The command checks the sandbox's recorded lifecycle and inference authority, resumes only its exact receipt-owned runner, and verifies the inference route before accepting it.
 If the recorded provider, runner, network, socket, or private state identity has changed, recovery exits nonzero without replacing that state.
-Preserve the private inference state and exact redacted error, and [file a NemoClaw issue](https://github.com/NVIDIA/NemoClaw/issues/new) for maintainer review before retrying an authority-drift failure.
+Preserve the private inference state and exact redacted error after an authority-drift failure.
+Run `$$nemoclaw <sandbox-name> doctor` to inspect the recorded lifecycle state.
+Do not edit or delete the private inference state or retry recovery.
+[File a NemoClaw issue](https://github.com/NVIDIA/NemoClaw/issues/new) with the redacted doctor report and recovery error for maintainer review.
 If an unrelated host service holds a required published address, stop that service and rerun the same recovery command.
 
 </AgentOnly>
