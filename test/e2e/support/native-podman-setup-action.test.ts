@@ -1052,6 +1052,8 @@ exec /bin/bash "$@"
       "NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@e85857e2a7bfb2af01241ecbce5947ee774c1280",
     );
     expect(setupIndex).toBeGreaterThan(openshellInstallIndex);
+    expect(job.steps?.at(setupIndex + 1)?.name).toBe("Select pinned compatible Portable crun");
+    expect(job.steps?.at(restoreIndex + 1)?.name).toBe("Remove pinned Portable crun");
     expect(headroomIndex).toBeGreaterThan(setupIndex);
     expect(candidateCheckoutIndex).toBeGreaterThan(headroomIndex);
     expect(headroomRun).toContain("minimum=128");
@@ -1077,7 +1079,7 @@ exec /bin/bash "$@"
       headroomRun.indexOf("/sys/fs/cgroup$group/pids.current"),
     );
     expect(retainHeadroom?.if).toBe("always()");
-    expect(retainHeadroom?.run).toContain("portable-podman-process-headroom.json");
+    expect(retainHeadroom?.run).toContain("portable-podman-process-headroom");
     expect(retainHeadroomIndex).toBeGreaterThan(job.steps?.indexOf(live!) ?? -1);
     expect(uploadIndex).toBeGreaterThan(retainHeadroomIndex);
     expect(live).toMatchObject({
