@@ -48,11 +48,13 @@ A new image-index digest prevents cached image metadata from bypassing the pull;
 Export must preserve the authored image and Secret references; OpenTofu state must hold no registry values, and destroy must retain the caller-managed Secret.
 The fixture removes its registry afterward; HTTP configuration is confined to that registry on the disposable node.
 
-The OIDC test, `kubernetes_live::oidc`, runs the SDK's development issuer image in a fresh `nc-issuer-*` namespace as a stand-in for an existing identity provider.
-It deploys a gateway and sandbox from the agent image with the `oidc` authentication profile, supplying the issuer's token through `tokenEnv`.
+The OIDC test, `kubernetes_live::oidc`, runs the SDK's development issuer image in a fresh `nc-issuer-*` namespace as a stand-in for an existing identity provider, and deletes that namespace when the test passes or panics, but not when nextest stops it at its time limit.
+It deploys a gateway and sandbox from the agent image with the `oidc` authentication profile, supplying the issuer's token through `token.env`.
 Apply must complete with the agent started and no development issuer in the deployment's namespace.
-A plan with a token for another audience, signed with the same key, must be refused without echoing the token.
-Export must reproduce the authored configuration, and destroy must keep the gateway's storage.
+A plan with a token for another audience, signed with the same key, must be refused without echoing a token, and must leave `intent.json`, the OpenTofu state, and every file under `kubernetes/` in the state directory byte-identical.
+The test then supplies only a second token, issued one second after the first, as a user does after a token expires.
+With it, a plan must report no changes, export must reproduce the authored configuration, and destroy must keep the gateway's storage; if that destroy fails, the test destroys with the first token before failing.
+No regular file in the state directory may contain any of the three tokens in its raw bytes; the search does not follow symbolic links or open saved plans, which are zip archives.
 
 These live tests run no model and need no GPU or user registry credentials; the stub's fixed reply does not establish inference or model compatibility.
 The render tests check the Kubernetes gateway UID, observed OpenShift UID and group, and image pull references in gateway/helper pods and sandbox-driver configuration.
