@@ -79,10 +79,25 @@ export default async function run_targeted_vitest(input: {
   const clipMode = input.clipMode ?? "tail";
   if (!new Set(["head", "tail"]).has(clipMode)) throw new Error("clipMode must be head or tail");
   const command = "npx " + args.map(quote).join(" ");
+  const isolatedCommand = [
+    "umask 077",
+    'isolation_root=$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/nemoclaw-validation.XXXXXX") || exit 1',
+    "trap '/bin/rm -rf -- \"$isolation_root\"' EXIT",
+    "/usr/bin/env -i" +
+      ' HOME="$isolation_root"' +
+      ' XDG_CONFIG_HOME="$isolation_root"' +
+      ' TMPDIR="$isolation_root"' +
+      ' PATH="$PATH"' +
+      " CI=true NO_COLOR=1 TERM=dumb" +
+      " NPM_CONFIG_USERCONFIG=/dev/null" +
+      " GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1" +
+      " /bin/sh -c " +
+      quote(command),
+  ].join("; ");
   const result = await tools.bash({
-    command,
+    command: isolatedCommand,
     workdir: input.workdir,
-    description: "Run selected Vitest files",
+    description: "Run selected Vitest files without host credentials",
     timeoutMs,
   });
   if (result.kind !== "foreground") throw new Error("Unexpected background result");

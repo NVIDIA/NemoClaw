@@ -90,6 +90,22 @@ export default async function run_nemoclaw_focused_repair_validation(input: {
   ]);
   if (!projects.every((x) => allowed.has(x))) throw new Error("Unsupported Vitest project");
   const q = (v) => "'" + String(v).replaceAll("'", "'\"'\"'") + "'",
+    isolate = (command) =>
+      [
+        "umask 077",
+        'isolation_root=$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/nemoclaw-validation.XXXXXX") || exit 1',
+        "trap '/bin/rm -rf -- \"$isolation_root\"' EXIT",
+        "/usr/bin/env -i" +
+          ' HOME="$isolation_root"' +
+          ' XDG_CONFIG_HOME="$isolation_root"' +
+          ' TMPDIR="$isolation_root"' +
+          ' PATH="$PATH"' +
+          " CI=true NO_COLOR=1 TERM=dumb" +
+          " NPM_CONFIG_USERCONFIG=/dev/null" +
+          " GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1" +
+          " /bin/sh -c " +
+          q(command),
+      ].join("; "),
     commands = [],
     oxc = files.filter((f) => /\.(cjs|cts|js|jsx|mjs|mts|ts|tsx)$/.test(f));
   if (oxc.length) {
@@ -175,9 +191,9 @@ export default async function run_nemoclaw_focused_repair_validation(input: {
   const steps = [];
   for (const item of commands) {
     const r = await tools.bash({
-      command: item.command,
+      command: isolate(item.command),
       workdir: input.workdir,
-      description: "Run focused repair validation",
+      description: "Run credential-isolated focused repair validation",
       timeoutMs,
     });
     if (r.kind !== "foreground") throw new Error("Unexpected background result");
