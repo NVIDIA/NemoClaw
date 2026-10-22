@@ -600,3 +600,42 @@ fn schema_patterns_reject_trailing_newlines_in_identifiers_and_pins() {
         agrees_at(&validator, &value, false, file, path);
     }
 }
+
+#[test]
+fn service_placement_spells_network_cidr_like_the_managed_gateway() {
+    let schema = input_schema();
+    assert!(
+        schema["$defs"]["Gateway"]["oneOf"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|variant| variant["properties"].get("networkCIDR").is_some())
+    );
+    let placement = &schema["$defs"]["ServicePlacement"]["properties"];
+    assert!(placement.get("networkCIDR").is_some(), "{placement}");
+    assert!(placement.get("networkCidr").is_none(), "{placement}");
+
+    let validator = jsonschema::validator_for(&schema).unwrap();
+    let mut value = input("../crates/nemoclaw-sdk/tests/fixtures/config/spark.yaml");
+    value["spec"]["gateway"] = json!({
+        "management": "external",
+        "endpoint": "http://127.0.0.1:17670",
+        "runtime": {"provider": "podman"}
+    });
+    let service = &mut value["spec"]["services"]["qwen"];
+    service["placement"] =
+        json!({"engine": "ssh://operator@gpu-box", "networkCIDR": "172.30.119.0/24"});
+    service["publication"] =
+        json!({"endpoint": "http://10.0.0.8:18888/v1", "bindAddress": "10.0.0.8"});
+    agrees(&validator, &value, true);
+    let document = Document::parse(value.to_string().as_bytes()).unwrap();
+    assert_eq!(
+        serde_json::to_value(&document).unwrap()["spec"]["services"]["qwen"]["placement"],
+        json!({"engine": "ssh://operator@gpu-box", "networkCIDR": "172.30.119.0/24"})
+    );
+
+    let mut other_spelling = value;
+    other_spelling["spec"]["services"]["qwen"]["placement"] =
+        json!({"engine": "ssh://operator@gpu-box", "networkCidr": "172.30.119.0/24"});
+    agrees(&validator, &other_spelling, false);
+}
