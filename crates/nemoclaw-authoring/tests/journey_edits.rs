@@ -27,7 +27,15 @@ fn preset_keeps_shared_provider_identity_and_reopens_every_dependent_route() {
     routes.push(second);
     values["spec"]["sandboxes"][0]["agent"]["inference"]["default"] =
         values["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["name"].clone();
-    let provider_name = values["spec"]["inferenceProviders"][0]["name"].clone();
+    let provider_names = |values: &Value| {
+        values["spec"]["inferenceProviders"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    let providers = provider_names(&values);
     let first_name =
         values["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["name"].clone();
     let mut state = JourneyDefinition::new("shared-provider", partial(&values))
@@ -67,10 +75,7 @@ fn preset_keeps_shared_provider_identity_and_reopens_every_dependent_route() {
         .answer(&capabilities, "inference:preset", Some(json!("openai")))
         .unwrap();
 
-    assert_eq!(
-        state.values()["spec"]["inferenceProviders"][0]["name"],
-        provider_name
-    );
+    assert_eq!(provider_names(state.values()), providers);
     assert!(
         state
             .resolve(&capabilities)
@@ -179,7 +184,7 @@ fn exact_and_scope_api_guidance_use_the_same_selected_provider_policy() {
         "../../../examples/spark/local-and-hosted.yaml"
     ))
     .unwrap();
-    let api = "/spec/inferenceProviders/1/api";
+    let api = "/spec/inferenceProviders/hosted/api";
     for scopes in [
         vec![JourneyScope::RouteModels],
         vec![JourneyScope::RouteModels, JourneyScope::InferenceApi],

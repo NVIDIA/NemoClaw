@@ -26,7 +26,7 @@ spec:
       authentication:
         profile: development
   inferenceProviders:
-    - name: hosted-nvidia
+    hosted-nvidia:
       provider: openai
       api: openai-completions
       endpoint: https://integrate.api.nvidia.com/v1

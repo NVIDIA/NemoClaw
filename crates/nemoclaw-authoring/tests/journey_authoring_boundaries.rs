@@ -9,6 +9,16 @@ fn supplied() -> Value {
     serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml")).unwrap()
 }
 
+/// Rename the supplied provider, keyed by name, and the route that references it.
+fn rename_provider(values: &mut Value, name: &str) {
+    let providers = values["spec"]["inferenceProviders"]
+        .as_object_mut()
+        .unwrap();
+    let provider = providers.remove("nvidia-prod").unwrap();
+    providers.insert(name.into(), provider);
+    values["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["providerRef"] = json!(name);
+}
+
 fn start(values: Value, capabilities: &Capabilities) -> nemoclaw_authoring::JourneyState {
     let base = PartialDocument::from_yaml(values.to_string().as_bytes()).unwrap();
     JourneyDefinition::new("boundaries", base)
@@ -41,12 +51,10 @@ fn supplied_hosted_defaults_remain_an_sdk_valid_isolated_document() {
 fn explicit_custom_provider_identity_survives_an_unrelated_model_answer() {
     let capabilities = Capabilities::available();
     let mut values = supplied();
-    values["spec"]["inferenceProviders"][0]["name"] = json!("my-private-service");
-    values["spec"]["inferenceProviders"][0]["endpoint"] =
-        json!("https://models.private.example/v1");
-    values["spec"]["inferenceProviders"][0]["credential"]["env"] = json!("PRIVATE_MODEL_TOKEN");
-    values["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["providerRef"] =
-        json!("my-private-service");
+    rename_provider(&mut values, "my-private-service");
+    let provider = &mut values["spec"]["inferenceProviders"]["my-private-service"];
+    provider["endpoint"] = json!("https://models.private.example/v1");
+    provider["credential"]["env"] = json!("PRIVATE_MODEL_TOKEN");
     let mut state = start(values, &capabilities);
     let model = "/spec/sandboxes/0/agent/inference/routes/0/overrides/model";
     state
@@ -60,7 +68,10 @@ fn explicit_custom_provider_identity_survives_an_unrelated_model_answer() {
         .unwrap()
         .clone();
     let provider = document.inference_provider().unwrap();
-    assert_eq!(provider.name, "my-private-service");
+    assert_eq!(
+        provider,
+        &document.spec.inference_providers["my-private-service"]
+    );
     assert_eq!(provider.endpoint, "https://models.private.example/v1");
     assert_eq!(document.credential_names(), ["PRIVATE_MODEL_TOKEN"]);
     assert_eq!(
@@ -83,11 +94,10 @@ fn supplied_automation_values_survive_a_journey_without_reprojection() {
     values["metadata"]["name"] = json!("automated-deployment");
     values["spec"]["sandboxes"][0]["name"] = json!("automated-sandbox");
     values["spec"]["sandboxes"][0]["agent"]["name"] = json!("automated-agent");
-    values["spec"]["inferenceProviders"][0]["name"] = json!("automated-provider");
-    values["spec"]["inferenceProviders"][0]["api"] = json!("openai-responses");
-    values["spec"]["inferenceProviders"][0]["credential"]["env"] = json!("AUTOMATED_API_KEY");
-    values["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["providerRef"] =
-        json!("automated-provider");
+    rename_provider(&mut values, "automated-provider");
+    let provider = &mut values["spec"]["inferenceProviders"]["automated-provider"];
+    provider["api"] = json!("openai-responses");
+    provider["credential"]["env"] = json!("AUTOMATED_API_KEY");
     let state = start(values, &capabilities);
     let document = state
         .resolve(&capabilities)
@@ -100,8 +110,8 @@ fn supplied_automation_values_survive_a_journey_without_reprojection() {
     assert_eq!(document.spec.sandboxes[0].name, "automated-sandbox");
     assert_eq!(document.spec.sandboxes[0].agent.name, "automated-agent");
     assert_eq!(
-        document.inference_provider().unwrap().name,
-        "automated-provider"
+        document.inference_provider().unwrap(),
+        &document.spec.inference_providers["automated-provider"]
     );
     assert_eq!(
         document.inference_provider().unwrap().api,
@@ -176,7 +186,7 @@ fn unsupported_protocol_answer_is_rejected_without_mutating_the_document() {
         state
             .answer(
                 &capabilities,
-                "/spec/inferenceProviders/0/api",
+                "/spec/inferenceProviders/nvidia-prod/api",
                 Some(json!("anthropic-messages"))
             )
             .is_err()

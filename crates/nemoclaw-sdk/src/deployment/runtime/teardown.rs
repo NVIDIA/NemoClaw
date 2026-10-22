@@ -517,8 +517,7 @@ mod tests {
     #[test]
     fn multiple_services_retain_each_volume_and_require_its_own_binding() {
         let (mut record, _) = runtime_state();
-        let mut provider = record.document.spec.inference_providers[0].clone();
-        provider.name = "other".into();
+        let mut provider = record.document.spec.inference_providers["qwen"].clone();
         provider.service_ref = Some("other".into());
         let mut definition = record.document.spec.services["qwen"].clone();
         update_service(&mut definition, "/serving/port", |port| {
@@ -529,7 +528,11 @@ mod tests {
             .spec
             .services
             .insert("other".into(), definition);
-        record.document.spec.inference_providers.push(provider);
+        record
+            .document
+            .spec
+            .inference_providers
+            .insert("other".into(), provider);
         let mut sandbox = record.document.spec.sandboxes[0].clone();
         sandbox.name = "other".into();
         sandbox.agent.inference.as_mut().unwrap().routes[0].provider_ref = Some("other".into());

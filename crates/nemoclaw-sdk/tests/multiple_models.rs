@@ -86,14 +86,10 @@ fn ambiguous_defaults_and_duplicate_choices_are_rejected() {
 fn pi_choices_preserve_native_metadata_and_provider_credentials() {
     let mut value: Value =
         serde_saphyr::from_str(include_str!("../../../examples/fabric-pi.yaml")).unwrap();
-    let mut provider = value["spec"]["inferenceProviders"][0].clone();
-    provider["name"] = json!("hosted");
+    let mut provider = value["spec"]["inferenceProviders"]["local"].clone();
     provider["endpoint"] = json!("https://hosted.example/v1");
     provider["credential"] = json!({"env":"HOSTED_KEY"});
-    value["spec"]["inferenceProviders"]
-        .as_array_mut()
-        .unwrap()
-        .push(provider);
+    value["spec"]["inferenceProviders"]["hosted"] = provider;
     let inference = &mut value["spec"]["sandboxes"][0]["agent"]["inference"];
     let mut hosted = inference["routes"][0].clone();
     hosted["name"] = json!("smart");

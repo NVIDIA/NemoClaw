@@ -63,7 +63,7 @@ spec:
       memory:
         gpuMemoryUtilization: 0.75
   inferenceProviders:
-    - name: nemotron
+    nemotron:
       provider: openai
       api: openai-completions
       serviceRef: nemotron

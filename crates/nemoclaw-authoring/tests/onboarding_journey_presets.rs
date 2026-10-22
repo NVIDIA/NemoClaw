@@ -123,7 +123,10 @@ fn vendor_catalogs_follow_the_endpoint_and_preserve_an_unlisted_suggestion() {
         PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
     let mut state = JourneyDefinition::new("editable-endpoint", base)
-        .ask(["inference:preset", "/spec/inferenceProviders/0/endpoint"])
+        .ask([
+            "inference:preset",
+            "/spec/inferenceProviders/nvidia-prod/endpoint",
+        ])
         .ask([JourneyScope::RouteModels])
         .start(&capabilities)
         .unwrap();
@@ -149,7 +152,7 @@ fn vendor_catalogs_follow_the_endpoint_and_preserve_an_unlisted_suggestion() {
     state
         .answer(
             &capabilities,
-            "/spec/inferenceProviders/0/endpoint",
+            "/spec/inferenceProviders/nvidia-prod/endpoint",
             Some(json!("https://private.example/v1")),
         )
         .unwrap();
@@ -174,7 +177,7 @@ fn vendor_catalogs_are_not_applied_to_generic_endpoints() {
         state
             .answer(
                 &capabilities,
-                "/spec/inferenceProviders/0/endpoint",
+                "/spec/inferenceProviders/nvidia-prod/endpoint",
                 Some(json!("https://private.example/v1")),
             )
             .unwrap();
@@ -305,7 +308,7 @@ fn every_curated_preset_and_protocol_roundtrips_through_the_sdk() {
             state
                 .answer(&capabilities, "inference:preset", Some(json!(preset.id())))
                 .unwrap();
-            let endpoint = "/spec/inferenceProviders/0/endpoint";
+            let endpoint = "/spec/inferenceProviders/nvidia-prod/endpoint";
             if state
                 .resolve(&capabilities)
                 .unwrap()
@@ -320,7 +323,7 @@ fn every_curated_preset_and_protocol_roundtrips_through_the_sdk() {
                     )
                     .unwrap();
             }
-            let api_path = "/spec/inferenceProviders/0/api";
+            let api_path = "/spec/inferenceProviders/nvidia-prod/api";
             state
                 .answer(
                     &capabilities,
@@ -370,17 +373,12 @@ fn custom_endpoint_questions_stay_user_facing_without_internal_provider_names() 
             Some(json!("openai-compatible")),
         )
         .unwrap();
-    let endpoint = "/spec/inferenceProviders/0/endpoint";
+    let endpoint = "/spec/inferenceProviders/nvidia-prod/endpoint";
     let resolution = state.resolve(&capabilities).unwrap();
     assert!(resolution.question(endpoint).is_some());
     assert!(
         resolution
-            .question("/spec/inferenceProviders/0/name")
-            .is_none()
-    );
-    assert!(
-        resolution
-            .question("/spec/inferenceProviders/0/credential/env")
+            .question("/spec/inferenceProviders/nvidia-prod/credential/env")
             .is_none()
     );
     state
@@ -406,6 +404,11 @@ fn custom_endpoint_questions_stay_user_facing_without_internal_provider_names() 
         "https://inference.example.com/v1"
     );
     assert_eq!(document.credential_names(), ["COMPATIBLE_API_KEY"]);
+    // The provider keeps the template's internal name, its key; no question asks for one.
+    assert_eq!(
+        document.spec.inference_providers.keys().collect::<Vec<_>>(),
+        ["nvidia-prod"]
+    );
 }
 
 #[test]
@@ -529,7 +532,7 @@ fn a_hermes_author_can_select_nous_without_losing_the_selected_harness() {
     assert_eq!(
         state
             .values()
-            .pointer("/spec/inferenceProviders/0/endpoint"),
+            .pointer("/spec/inferenceProviders/nvidia-prod/endpoint"),
         Some(&json!("https://inference-api.nousresearch.com/v1"))
     );
 }
@@ -552,7 +555,7 @@ fn a_pi_author_can_explicitly_choose_responses_api() {
             Some(json!("nvidia-endpoints")),
         )
         .unwrap();
-    let api = "/spec/inferenceProviders/0/api";
+    let api = "/spec/inferenceProviders/nvidia-prod/api";
     state
         .answer(&capabilities, api, Some(json!("openai-responses")))
         .unwrap();

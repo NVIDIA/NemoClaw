@@ -100,8 +100,9 @@ async fn credentialed_inference_applies_without_probes_then_exports_and_destroys
     .unwrap();
     *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
     let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
-    document.spec.inference_providers[0].endpoint = "https://unreachable.invalid/v1".into();
-    document.spec.inference_providers[0].credential = Some(nemoclaw_sdk::config::SecretRef {
+    let provider = document.spec.inference_providers.get_mut("local").unwrap();
+    provider.endpoint = "https://unreachable.invalid/v1".into();
+    provider.credential = Some(nemoclaw_sdk::config::SecretRef {
         env: REFERENCE.into(),
     });
     let cancel = CancellationToken::new();
@@ -146,7 +147,11 @@ async fn credentialed_inference_applies_without_probes_then_exports_and_destroys
         );
     }
     let mut observed = document.clone();
-    observed.spec.inference_providers[0]
+    observed
+        .spec
+        .inference_providers
+        .get_mut("local")
+        .unwrap()
         .credential
         .as_mut()
         .unwrap()
@@ -286,7 +291,12 @@ async fn mixed_search_export_preserves_scopes_shared_registrations_and_state_on_
             .unwrap();
     *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
     let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
-    document.spec.inference_providers[0].endpoint = "https://127.0.0.1:9/v1".into();
+    document
+        .spec
+        .inference_providers
+        .get_mut("local")
+        .unwrap()
+        .endpoint = "https://127.0.0.1:9/v1".into();
     document.spec.integrations = serde_json::from_value(serde_json::json!({
         "shared-search":{"kind":"webSearch", "provider":"tavily", "credential":{"env":"EXPORT_TAVILY_KEY"}},
         "unused-search":{"kind":"webSearch", "provider":"brave", "credential":{"env":"UNUSED_EXPORT_KEY"}}

@@ -38,7 +38,7 @@ fn endpoint_requests_deduplicate_shared_routes_and_preserve_harness_api_defaults
         Document::parse(include_bytes!("../../../examples/onboarding/openclaw.yaml").as_slice())
             .unwrap();
     let mut value = serde_json::to_value(document).unwrap();
-    value["spec"]["inferenceProviders"][0]
+    value["spec"]["inferenceProviders"]["nvidia-prod"]
         .as_object_mut()
         .unwrap()
         .remove("api");
@@ -84,7 +84,7 @@ fn a_cluster_service_endpoint_reads_no_catalog_while_https_and_private_addresses
         ("http://10.0.0.5:8000/v1", true),
     ] {
         let mut input = crate::support::example("kubernetes/external-gateway.yaml");
-        input["spec"]["inferenceProviders"][0]["endpoint"] = serde_json::json!(endpoint);
+        input["spec"]["inferenceProviders"]["inference"]["endpoint"] = serde_json::json!(endpoint);
         let document = Document::parse(input.to_string().as_bytes()).unwrap();
         let requests = endpoint_requests(&document).unwrap();
         let expected: &[&str] = if read { &[endpoint] } else { &[] };

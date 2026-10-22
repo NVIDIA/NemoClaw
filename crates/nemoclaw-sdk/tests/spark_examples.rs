@@ -58,7 +58,7 @@ fn arm64_hardware_scenarios_compile_their_declared_resources() {
             Document::parse(doc.yaml().unwrap().as_bytes()).unwrap(),
             doc
         );
-        for provider in &doc.spec.inference_providers {
+        for provider in doc.spec.inference_providers.values() {
             if let Some(name) = &provider.service_ref {
                 let ServiceDefinition::Vllm(service) = &doc.spec.services[name] else {
                     panic!("{name}: expected vLLM service");

@@ -24,7 +24,7 @@ spec:
       certificate: {env: GATEWAY_CERT}
       key: {env: GATEWAY_KEY}
   inferenceProviders:
-    - name: hosted-nvidia-prod
+    hosted-nvidia-prod:
       provider: openai
       api: openai-completions
       endpoint: https://integrate.api.nvidia.com/v1

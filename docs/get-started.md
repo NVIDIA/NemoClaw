@@ -69,9 +69,9 @@ Edit the copied YAML before executing it:
 | `spec.gateway.endpoint` | Your existing gateway's endpoint |
 | `spec.gateway.engine` | The Docker or Podman engine containing the immutable sandbox image; replace the example's illustrative socket with that engine's address |
 | `spec.gateway.credential` and `spec.gateway.tls` | References required by that gateway; omit optional fields when unused |
-| `spec.inferenceProviders[0].endpoint` | Your upstream inference base URL |
-| `spec.inferenceProviders[0].provider` and `.api` | The [matching protocol and API](inference.md); the example selects OpenAI Responses |
-| `spec.inferenceProviders[0].credential` | An environment reference when the endpoint needs a key |
+| `spec.inferenceProviders.local.endpoint` | Your upstream inference base URL |
+| `spec.inferenceProviders.local.provider` and `.api` | The [matching protocol and API](inference.md); the example selects OpenAI Responses |
+| `spec.inferenceProviders.local.credential` | An environment reference when the endpoint needs a key |
 | `spec.sandboxes[0].image.ref` | The immutable reference from your image build |
 | `spec.gateway.runtime.provider` | `docker` or `podman`, matching your gateway's compute driver |
 | The primary route's `overrides.model` | The exact model ID served by your endpoint |

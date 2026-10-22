@@ -128,11 +128,14 @@ fn guided_sdk_questions_are_visible_in_the_tree_without_printing_suggestions() {
         PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
     let journey = JourneyDefinition::new("guided-sdk", base).ask([
-        "/spec/inferenceProviders/0/api",
+        "/spec/inferenceProviders/nvidia-prod/api",
         "/spec/sandboxes/0/agent/inference/routes/0/overrides/model",
     ]);
     let tree = journey.print_tree(&Capabilities::available()).unwrap();
-    assert!(tree.contains("/spec/inferenceProviders/0/api"), "{tree}");
+    assert!(
+        tree.contains("/spec/inferenceProviders/nvidia-prod/api"),
+        "{tree}"
+    );
     assert!(
         tree.contains("/spec/sandboxes/0/agent/inference/routes/0/overrides/model"),
         "{tree}"
@@ -151,14 +154,14 @@ fn inference_preset_preview_shows_custom_endpoint_branch() {
             .unwrap();
     let journey = JourneyDefinition::new("preset", base).ask([
         "inference:preset",
-        "/spec/inferenceProviders/0/api",
+        "/spec/inferenceProviders/nvidia-prod/api",
         "/spec/sandboxes/0/agent/inference/routes/0/overrides/model",
     ]);
     let tree = journey.print_tree(&Capabilities::available()).unwrap();
     assert!(tree.contains("inference:preset"), "{tree}");
     assert!(tree.contains("openai-compatible"), "{tree}");
     assert!(
-        tree.contains("/spec/inferenceProviders/0/endpoint"),
+        tree.contains("/spec/inferenceProviders/nvidia-prod/endpoint"),
         "{tree}"
     );
     assert!(
@@ -305,8 +308,8 @@ fn tree_branches_on_finite_sdk_choices_from_the_resolver() {
     let base =
         PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
-    let definition =
-        JourneyDefinition::new("api-choices", base).ask(["/spec/inferenceProviders/0/api"]);
+    let definition = JourneyDefinition::new("api-choices", base)
+        .ask(["/spec/inferenceProviders/nvidia-prod/api"]);
     let capabilities = Capabilities::available();
     let resolution = definition
         .start(&capabilities)
@@ -314,7 +317,7 @@ fn tree_branches_on_finite_sdk_choices_from_the_resolver() {
         .resolve(&capabilities)
         .unwrap();
     let question = resolution
-        .question("/spec/inferenceProviders/0/api")
+        .question("/spec/inferenceProviders/nvidia-prod/api")
         .unwrap();
     assert!(question.choices().len() > 1);
     let tree = definition.print_tree(&capabilities).unwrap();

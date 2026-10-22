@@ -75,9 +75,9 @@ spec:
             size: 1
             sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
   inferenceProviders:
-  - name: qwen
-    provider: openai
-    serviceRef: qwen
+    qwen:
+      provider: openai
+      serviceRef: qwen
   sandboxes:
   - name: assistant
     image:

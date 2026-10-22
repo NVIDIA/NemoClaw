@@ -14,10 +14,10 @@ spec:
     management: external
     endpoint: http://127.0.0.1:17671
   inferenceProviders:
-    - name: local
+    local:
       provider: openai
       endpoint: http://172.20.0.1:11434/v1
-    - name: hosted
+    hosted:
       provider: anthropic
       api: anthropic-messages
       endpoint: https://hosted.example/v1

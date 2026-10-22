@@ -8,7 +8,7 @@ metadata: {}
 spec:
   gateway: {}
   inferenceProviders:
-    - name: nvidia-prod
+    nvidia-prod:
       api: openai-completions
       endpoint: https://integrate.api.nvidia.com/v1
       credential:

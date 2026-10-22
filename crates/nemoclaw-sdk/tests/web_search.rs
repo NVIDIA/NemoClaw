@@ -544,7 +544,9 @@ fn tavily_rejects_collisions_with_managed_profile_and_provider_names() {
     for name in ["tavily-search", "tavily-search-custom"] {
         let mut value = input();
         value["spec"]["sandboxes"][0]["integrations"]["search"]["provider"] = json!("tavily");
-        value["spec"]["inferenceProviders"][0]["name"] = json!(name);
+        let providers = value["spec"]["inferenceProviders"].as_object_mut().unwrap();
+        let provider = providers.remove("local").unwrap();
+        providers.insert(name.into(), provider);
         value["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["providerRef"] =
             json!(name);
         let error = Document::parse(value.to_string().as_bytes()).unwrap_err();

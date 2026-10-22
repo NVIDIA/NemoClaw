@@ -51,8 +51,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "/metadata/name",
             "/spec/sandboxes/0/harness/kind",
             "/spec/gateway/runtime/provider",
-            "/spec/inferenceProviders/0/provider",
-            "/spec/inferenceProviders/0/api",
+            "/spec/inferenceProviders/nvidia-prod/provider",
+            "/spec/inferenceProviders/nvidia-prod/api",
             "/spec/sandboxes/0/agent/inference/routes/0/overrides/model",
         ])
         .omit([JourneyScope::ActiveAdapterSettings]);

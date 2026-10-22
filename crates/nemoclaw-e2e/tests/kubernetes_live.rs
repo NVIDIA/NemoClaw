@@ -631,7 +631,7 @@ spec:
       authentication: {{profile: development}}
       imagePullSecrets: {pull_secrets}
   inferenceProviders:
-    - name: hosted
+    hosted:
       provider: openai
       endpoint: https://inference.example.test/v1
   sandboxes:

@@ -99,12 +99,13 @@ fn unused_inference_is_validated_but_adds_no_credentials_or_resources() {
 #[test]
 fn shared_inline_provider_is_one_instance_and_edits_stay_in_its_definition() {
     let mut value = input();
-    let provider = value["spec"]
+    let mut provider = value["spec"]
         .as_object_mut()
         .unwrap()
         .remove("inferenceProviders")
-        .unwrap()[0]
-        .clone();
+        .unwrap()["local"]
+        .take();
+    provider["name"] = json!("local");
     let route = &mut value["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0];
     route.as_object_mut().unwrap().remove("providerRef");
     route["provider"] = provider;

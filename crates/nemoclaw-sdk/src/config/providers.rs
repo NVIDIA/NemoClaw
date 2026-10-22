@@ -7,22 +7,30 @@ use std::collections::{BTreeMap, BTreeSet};
 
 // The resource key identifies the registration; the authored path distinguishes
 // separate definitions with identical values and lets export edit the right one.
+// The name is the definition's map key, or an inline definition's own name.
 pub(crate) struct SelectedProvider<'a> {
+    pub name: &'a str,
     pub definition: &'a InferenceProvider,
     pub key: String,
     pub(crate) path: String,
 }
 impl<'a> SelectedProvider<'a> {
-    fn new(definition: &'a InferenceProvider, sandbox: Option<&Sandbox>, path: String) -> Self {
+    fn new(
+        name: &'a str,
+        definition: &'a InferenceProvider,
+        sandbox: Option<&Sandbox>,
+        path: String,
+    ) -> Self {
         use sha2::{Digest, Sha256};
         let key = sandbox.map_or_else(
-            || definition.name.clone(),
+            || name.to_owned(),
             |sandbox| {
-                let digest = Sha256::digest(format!("{}/{}", sandbox.name, definition.name));
+                let digest = Sha256::digest(format!("{}/{name}", sandbox.name));
                 format!("local-{}", &super::hex(&digest)[..24])
             },
         );
         Self {
+            name,
             definition,
             key,
             path,
@@ -32,7 +40,7 @@ impl<'a> SelectedProvider<'a> {
         use sha2::{Digest, Sha256};
         self.key = format!(
             "{}-{}",
-            &self.definition.name[..self.definition.name.len().min(12)],
+            &self.name[..self.name.len().min(12)],
             &super::hex(&Sha256::digest(format!("{}\0{scope}", self.key)))[..24]
         );
         self
@@ -72,11 +80,11 @@ impl Document {
         inference: &ScopedInference<'a>,
     ) -> Result<SelectedProvider<'a>, ConfigError> {
         let enclosing = || {
-            self.spec.inference_providers.iter().chain(
+            self.spec.inference_providers.keys().chain(
                 inference
                     .sandbox
                     .into_iter()
-                    .flat_map(|s| &s.inference_providers),
+                    .flat_map(|s| s.inference_providers.keys()),
             )
         };
         match DefinitionSource::from_parts(
@@ -85,35 +93,32 @@ impl Document {
             "route requires exactly one of provider or providerRef",
         )? {
             DefinitionSource::Inline(provider) => {
-                if enclosing().any(|definition| definition.name == provider.name) {
+                if enclosing().any(|name| *name == provider.name) {
                     return Err(ConfigError::new(
                         "inline provider names must not shadow enclosing definitions",
                     ));
                 }
                 Ok(SelectedProvider::new(
-                    provider,
+                    &provider.name,
+                    &provider.definition,
                     inference.sandbox,
                     format!("{}.provider", inference.route_path(route)),
                 ))
             }
             DefinitionSource::Reference(name) => {
-                if let Some(provider) = self
-                    .spec
-                    .inference_providers
-                    .iter()
-                    .find(|p| p.name == name)
-                {
+                if let Some(provider) = self.spec.inference_providers.get(name) {
                     return Ok(SelectedProvider::new(
+                        name,
                         provider,
                         None,
                         provider_path("spec", name),
                     ));
                 }
                 if let Some(sandbox) = inference.sandbox
-                    && let Some(provider) =
-                        sandbox.inference_providers.iter().find(|p| p.name == name)
+                    && let Some(provider) = sandbox.inference_providers.get(name)
                 {
                     return Ok(SelectedProvider::new(
+                        name,
                         provider,
                         Some(sandbox),
                         provider_path(&sandbox_path(sandbox), name),
@@ -123,7 +128,7 @@ impl Document {
                     &format!("{}.providerRef", inference.route_path(route)),
                     "provider",
                     name,
-                    enclosing().map(|p| p.name.as_str()),
+                    enclosing().map(String::as_str),
                 ))
             }
         }
@@ -188,20 +193,24 @@ impl Document {
     pub(crate) fn selected_providers(&self) -> Result<Vec<SelectedProvider<'_>>, ConfigError> {
         let mut selected = BTreeMap::new();
         for sandbox in &self.spec.sandboxes {
-            let mut names = BTreeSet::new();
-            for definition in self
+            if !self
                 .spec
                 .inference_providers
-                .iter()
-                .chain(&sandbox.inference_providers)
+                .keys()
+                .chain(sandbox.inference_providers.keys())
+                .all(|name| super::validation::valid_name(name))
             {
-                if !super::validation::valid_name(&definition.name)
-                    || !names.insert(&definition.name)
-                {
-                    return Err(ConfigError::new(
-                        "provider names must be unique lowercase names without shadowing",
-                    ));
-                }
+                return Err(ConfigError::new("provider names must be lowercase names"));
+            }
+            if let Some(name) = sandbox
+                .inference_providers
+                .keys()
+                .find(|name| self.spec.inference_providers.contains_key(*name))
+            {
+                return Err(ConfigError(format!(
+                    "{}: sandbox provider names must not shadow deployment definitions",
+                    provider_path(&sandbox_path(sandbox), name)
+                )));
             }
             let inference = self.scoped_inference(sandbox)?;
             for route in &inference.inference.routes {
@@ -295,7 +304,7 @@ impl Document {
         self.spec
             .inference_providers
             .iter_mut()
-            .map(|provider| (provider_path("spec", &provider.name), provider))
+            .map(|(name, provider)| (provider_path("spec", name), provider))
             .chain(
                 self.spec
                     .inferences
@@ -314,7 +323,7 @@ impl Document {
                 sandbox
                     .inference_providers
                     .iter_mut()
-                    .map(move |provider| (provider_path(&definitions, &provider.name), provider))
+                    .map(move |(name, provider)| (provider_path(&definitions, name), provider))
                     .chain(
                         sandbox
                             .inferences
@@ -341,12 +350,12 @@ impl Document {
     pub(super) fn provider_definitions(&self) -> impl Iterator<Item = &InferenceProvider> {
         self.spec
             .inference_providers
-            .iter()
+            .values()
             .chain(
                 self.spec
                     .sandboxes
                     .iter()
-                    .flat_map(|sandbox| &sandbox.inference_providers),
+                    .flat_map(|sandbox| sandbox.inference_providers.values()),
             )
             .chain(self.inference_definitions().flat_map(|selection| {
                 selection
@@ -354,6 +363,7 @@ impl Document {
                     .routes
                     .iter()
                     .filter_map(|route| route.provider.as_ref())
+                    .map(|provider| &provider.definition)
             }))
     }
 }
@@ -364,6 +374,9 @@ fn inline_providers_mut(
 ) -> impl Iterator<Item = (String, &mut InferenceProvider)> {
     inference.routes.iter_mut().filter_map(move |route| {
         let path = format!("{base}.routes[{}].provider", diagnostic_name(&route.name));
-        route.provider.as_mut().map(|provider| (path, provider))
+        route
+            .provider
+            .as_mut()
+            .map(|provider| (path, &mut provider.definition))
     })
 }

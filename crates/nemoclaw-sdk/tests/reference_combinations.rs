@@ -33,13 +33,14 @@ fn declaration_scope_combinations_preserve_runtime_and_authored_intent() {
         for inference_scope in 0..3 {
             for harness_scope in 0..3 {
                 let mut value = input.clone();
-                let provider = value["spec"]
+                let mut provider = value["spec"]
                     .as_object_mut()
                     .unwrap()
                     .remove("inferenceProviders")
-                    .unwrap()[0]
-                    .clone();
+                    .unwrap()["local"]
+                    .take();
                 if provider_scope == 2 {
+                    provider["name"] = json!("local");
                     let route =
                         &mut value["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0];
                     route.as_object_mut().unwrap().remove("providerRef");
@@ -50,7 +51,7 @@ fn declaration_scope_combinations_preserve_runtime_and_authored_intent() {
                     } else {
                         &mut value["spec"]["sandboxes"][0]
                     };
-                    scope["inferenceProviders"] = json!([provider]);
+                    scope["inferenceProviders"] = json!({"local": provider});
                 }
                 if inference_scope != 0 {
                     let agent = &mut value["spec"]["sandboxes"][0]["agent"];
