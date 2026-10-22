@@ -3,7 +3,7 @@
 
 use nemoclaw_sdk::config::{InferenceApi, InferenceProviderKind};
 
-pub(crate) const NVIDIA_MODEL: &str = "nvidia/nemotron-3-super-120b-a12b";
+pub(crate) const NVIDIA_MODEL: &str = "nvidia/nemotron-3.5-super-vl-120b-a12b";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 /// Branded endpoint preset offered by guided authoring.

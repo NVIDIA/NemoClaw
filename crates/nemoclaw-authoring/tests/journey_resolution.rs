@@ -1888,7 +1888,7 @@ fn missing_catalog_key_keeps_curated_suggestions_without_allowing_delegation() {
     assert!(
         model
             .choices()
-            .contains(&json!("nvidia/nemotron-3-super-120b-a12b"))
+            .contains(&json!("nvidia/nemotron-3.5-super-vl-120b-a12b"))
     );
     assert!(model.suggestion().is_some());
     // Without the catalog, bulk acceptance cannot establish model compatibility.
@@ -3790,7 +3790,7 @@ fn minimally_supplied_inline_envelope_materializes_through_one_resolver() {
         ),
         (
             "/spec/sandboxes/0/agent/inference/routes/0/overrides/model",
-            json!("nvidia/nemotron-3-super-120b-a12b"),
+            json!("nvidia/nemotron-3.5-super-vl-120b-a12b"),
         ),
     ];
     for (id, answer) in answers {
