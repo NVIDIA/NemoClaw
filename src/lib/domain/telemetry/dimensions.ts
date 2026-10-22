@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isManagedInferenceBaseUrl } from "../../onboard/workload/authority";
 import type {
   TelemetryAgent,
   TelemetryConfiguration,
@@ -98,20 +99,6 @@ export interface RuntimeRouteAuthority {
   metadataErrors?: readonly TelemetryMetadataError[];
   /** Sandbox-facing route recorded in the managed startup profile; hosted native routes are upstream URLs. */
   managedRoutedBaseUrl?: string | null;
-}
-
-const INFERENCE_ROUTE_BASE_URL = /^https:\/\/inference\.local(?:\/v1)?\/?$/;
-
-/** A native base URL is managed when it is the gateway route or the exact route NemoClaw recorded. */
-export function isManagedInferenceBaseUrl(
-  value: unknown,
-  recordedRoutedBaseUrl?: string | null,
-): boolean {
-  return (
-    typeof value === "string" &&
-    (INFERENCE_ROUTE_BASE_URL.test(value) ||
-      (typeof recordedRoutedBaseUrl === "string" && value === recordedRoutedBaseUrl))
-  );
 }
 
 type ModelReference = {

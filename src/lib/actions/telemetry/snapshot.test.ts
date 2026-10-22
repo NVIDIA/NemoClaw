@@ -291,6 +291,8 @@ async function collectNativeConfiguration(
   rawConfig: string,
   entryOverrides: Partial<SandboxEntry> = {},
   extraResponses: Record<string, string> = {},
+  // A valid managed receipt supplies the sandbox OS; otherwise the collector runs `uname -s`.
+  unameReads = entryOverrides.workload ? 0 : 1,
 ) {
   mocks.readRegistry.mockReturnValue({
     defaultSandbox: null,
@@ -338,9 +340,7 @@ async function collectNativeConfiguration(
     expect.objectContaining({ sandboxName: "native", command: ["cat", configPath] }),
     expect.objectContaining({ workspace: "native" }),
   );
-  expect(read).toHaveBeenCalledTimes(
-    (entryOverrides.workload ? 1 : 2) + Object.keys(extraResponses).length,
-  );
+  expect(read).toHaveBeenCalledTimes(1 + unameReads + Object.keys(extraResponses).length);
   return event;
 }
 
@@ -477,26 +477,44 @@ it("binds a hosted native Hermes route recorded in the startup profile (#13576)"
 });
 
 it.each([
-  ["a native URL that differs from the recorded route", hostedNvidiaHermes()],
+  [
+    "a native URL that differs from the recorded route",
+    "https://example.invalid/v1",
+    hostedNvidiaHermes(),
+    0,
+  ],
   [
     "no managed startup profile",
+    hostedNvidiaEndpoint,
     { ...hostedNvidiaHermes(), imageTag: undefined, workload: undefined },
+    1,
   ],
-])("keeps an unrecorded upstream Hermes URL native with %s (#13576)", async (_label, overrides) => {
-  const event = await collectNativeConfiguration(
-    "hermes",
-    "/sandbox/.hermes/config.yaml",
-    hermesNativeConfig(overrides.workload ? "https://example.invalid/v1" : hostedNvidiaEndpoint),
-    overrides,
-  );
-  expect(event.parameters.configurations[0].agents[0].models[0]).toMatchObject({
-    modelSource: "unknown",
-    modelSourceStatus: "not_persisted",
-    providerProfile: "custom",
-  });
-  expect(event.parameters.collectionStatus).toBe("partial");
-  expect(isOperationEvent(event)).toBe(true);
-});
+  [
+    "an invalid managed receipt",
+    hostedNvidiaEndpoint,
+    { ...hostedNvidiaHermes(), imageTag: `${hermesImageRef.slice(0, -1)}d` },
+    1,
+  ],
+])(
+  "keeps an unrecorded upstream Hermes URL native with %s (#13576)",
+  async (_label, baseUrl, overrides, unameReads) => {
+    const event = await collectNativeConfiguration(
+      "hermes",
+      "/sandbox/.hermes/config.yaml",
+      hermesNativeConfig(baseUrl),
+      overrides,
+      {},
+      unameReads,
+    );
+    expect(event.parameters.configurations[0].agents[0].models[0]).toMatchObject({
+      modelSource: "unknown",
+      modelSourceStatus: "not_persisted",
+      providerProfile: "custom",
+    });
+    expect(event.parameters.collectionStatus).toBe("partial");
+    expect(isOperationEvent(event)).toBe(true);
+  },
+);
 
 function hostedNvidiaWorkload(
   input: ReturnType<typeof profileInput>,

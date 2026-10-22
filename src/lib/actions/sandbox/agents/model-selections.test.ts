@@ -4,6 +4,7 @@
 import { expect, it } from "vitest";
 
 import { restoredAgentModelSelections } from "./model-selections";
+import { readManagedWorkloadAuthority } from "../../../onboard/workload/authority";
 import {
   imageRef,
   managedWorkload,
@@ -79,5 +80,11 @@ it.each([
   ["a different recorded route", "https://example.invalid/v1"],
 ])("rejects an upstream route with %s (#13576)", (_label, routedBaseUrl) => {
   const entry = sandbox(routedBaseUrl);
+  expect(restoredAgentModelSelections(nativeConfig(hostedNvidiaEndpoint), entry, entry)).toBeNull();
+});
+
+it("rejects an upstream route when the managed receipt is invalid (#13576)", () => {
+  const entry = { ...sandbox(hostedNvidiaEndpoint), imageTag: `${imageRef.slice(0, -1)}b` };
+  expect(() => readManagedWorkloadAuthority(entry)).toThrow();
   expect(restoredAgentModelSelections(nativeConfig(hostedNvidiaEndpoint), entry, entry)).toBeNull();
 });

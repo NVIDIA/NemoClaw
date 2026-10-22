@@ -126,14 +126,6 @@ function corporateCaFromReceipt(
       };
 }
 
-/**
- * Read a durable managed workload without consulting a mutable release
- * pointer. The returned receipt is cloned and the contract, profile, and CA
- * transport are revalidated as one authority unit.
- *
- * A normal custom/legacy workload returns null. A row that looks managed but
- * cannot prove its exact immutable authority fails closed.
- */
 /** Return the sandbox-facing inference URL recorded in a valid managed startup profile. */
 export function readManagedRoutedBaseUrl(
   entry: Pick<SandboxEntry, "agent" | "fromDockerfile" | "imageTag" | "workload">,
@@ -145,6 +137,28 @@ export function readManagedRoutedBaseUrl(
   }
 }
 
+const INFERENCE_ROUTE_BASE_URL = /^https:\/\/inference\.local(?:\/v1)?\/?$/;
+
+/** A native base URL is managed when it is the gateway route or the exact route NemoClaw recorded. */
+export function isManagedInferenceBaseUrl(
+  value: unknown,
+  recordedRoutedBaseUrl?: string | null,
+): boolean {
+  return (
+    typeof value === "string" &&
+    (INFERENCE_ROUTE_BASE_URL.test(value) ||
+      (typeof recordedRoutedBaseUrl === "string" && value === recordedRoutedBaseUrl))
+  );
+}
+
+/**
+ * Read a durable managed workload without consulting a mutable release
+ * pointer. The returned receipt is cloned and the contract, profile, and CA
+ * transport are revalidated as one authority unit.
+ *
+ * A normal custom/legacy workload returns null. A row that looks managed but
+ * cannot prove its exact immutable authority fails closed.
+ */
 export function readManagedWorkloadAuthority(
   entry: Pick<SandboxEntry, "agent" | "fromDockerfile" | "imageTag" | "workload">,
 ): ManagedWorkloadAuthority | null {
