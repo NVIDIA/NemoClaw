@@ -228,12 +228,12 @@ OpenShell mediates inference traffic and keeps provider credentials outside the 
 
 <AgentOnly variant="openclaw">
 
-Local providers and custom endpoints retain the shared `inference.local` route.
+New hosted custom endpoints outside the Personal tier use sandbox-attached providers. A fresh Personal-tier hosted selection, custom endpoints without an attachment, owned Local NVIDIA NIM, and retained shared selections use `inference.local`. Qualified new Ollama, standalone vLLM, and llama.cpp selections also use attached providers.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
 
-New Hermes Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible selections use sandbox-attached providers.
+New Hermes hosted compatible selections outside the Personal tier, Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible selections use sandbox-attached providers.
 The profile restricts the recorded host, port, methods, paths, and Hermes runtime binaries.
 OpenShell replaces the scoped credential reference at the allowed endpoint; the upstream credential remains outside the sandbox.
 Owned Local NVIDIA NIM, nonqualifying custom endpoints, and retained legacy local routes continue to use `inference.local`.
@@ -243,7 +243,7 @@ Refer to [How Inference Routing Works](../inference/about-inference-routing) for
 </AgentOnly>
 <AgentOnly variant="deepagents">
 
-New Deep Agents Code sandboxes normally use attached providers for hosted compatible endpoints.
+New Deep Agents Code sandboxes use attached providers for hosted compatible endpoints outside the Personal tier.
 A fresh Personal-tier hosted compatible selection instead stays on `inference.local` without creating a native attachment.
 Qualified Ollama, standalone vLLM, llama.cpp, and host-local compatible endpoints also use native providers.
 The local attached profile permits only `GET /v1/models` and `POST /v1/chat/completions` on the recorded host and port, using the listed Python and curl binaries.

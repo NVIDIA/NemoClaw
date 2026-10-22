@@ -15,10 +15,11 @@ Use the NemoClaw CLI to read the selected inference provider and model.
 When the selected sandbox has a valid native provider attachment, the command reports the sandbox's recorded provider, model, and native endpoint without reading the shared gateway route.
 For providers that still use the shared route, the command reads the live OpenShell inference route.
 For a compatible custom provider on a shared route, the command also reports its persisted endpoint URL when the registry provider and model match the live route.
-Native hosted providers are OpenAI, Anthropic, Gemini, OpenRouter, and Hermes Provider.
+Fixed native hosted providers include OpenAI, Anthropic, Gemini, OpenRouter, and Hermes Provider.
 <AgentOnly variant="openclaw">
 New OpenClaw selections for Ollama, standalone vLLM, and llama.cpp also report their sandbox-attached local provider.
-Local NVIDIA NIM and OpenClaw compatible endpoints keep shared-route readback.
+New hosted compatible selections outside the Personal tier report their endpoint-bound attachment.
+Local NVIDIA NIM, new Personal-tier hosted compatible selections, and retained shared routes keep shared-route readback.
 </AgentOnly>
 <AgentOnly variant="deepagents">
 Deep Agents Code normally reports a recorded native attachment for hosted compatible endpoints and qualified Ollama, vLLM, llama.cpp, and host-local compatible endpoints.
@@ -27,7 +28,8 @@ The displayed endpoint is the host-reachable address recorded for that sandbox.
 Legacy selections without an attachment and owned Local NVIDIA NIM retain shared-route readback.
 </AgentOnly>
 <AgentOnly variant="hermes">
-Hermes also reports a recorded native local attachment for qualified Ollama, vLLM, llama.cpp, and host-local compatible endpoints.
+Hermes also reports a recorded native attachment for hosted compatible endpoints outside the Personal tier and qualified Ollama, vLLM, llama.cpp, and host-local compatible endpoints.
+Fresh Personal-tier hosted compatible selections keep shared-route readback.
 The displayed endpoint is the host-reachable address recorded for that sandbox.
 Legacy selections without an attachment and owned Local NVIDIA NIM retain shared-route readback.
 </AgentOnly>

@@ -18,6 +18,7 @@ import { CleanupRegistry } from "../fixtures/cleanup.ts";
 import { ShellProbe, trustedShellCommand } from "../fixtures/shell-probe.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
+import { boundedTestTempRoot } from "../../helpers/bounded-temp-root";
 import {
   stationVllmCommands,
   assertStationWorkload,
@@ -663,7 +664,9 @@ it("allows consecutive tsx IPC servers within the generated temporary path lengt
   const env = stationSmokeEnvironment(base, "/candidate");
   const worstCaseSocket = `${env.TMPDIR}/tsx-4294967295/4294967295.pipe`;
   expect(Buffer.byteLength(worstCaseSocket)).toBeLessThan(108);
-  const root = fs.mkdtempSync("/tmp/ncs-ipc-");
+  const root = fs.mkdtempSync(
+    path.join(boundedTestTempRoot("nc-XXXXXX", Buffer.byteLength(env.TMPDIR!)), "nc-"),
+  );
   directories.push(root);
   const tmp = path.join(root, "x".repeat(env.TMPDIR!.length - root.length - 1));
   fs.mkdirSync(tmp);
