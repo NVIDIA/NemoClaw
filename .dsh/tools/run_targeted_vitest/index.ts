@@ -79,21 +79,84 @@ export default async function run_targeted_vitest(input: {
   const clipMode = input.clipMode ?? "tail";
   if (!new Set(["head", "tail"]).has(clipMode)) throw new Error("clipMode must be head or tail");
   const command = "npx " + args.map(quote).join(" ");
-  const isolatedCommand = [
-    "umask 077",
-    'isolation_root=$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/nemoclaw-validation.XXXXXX") || exit 1',
-    "trap '/bin/rm -rf -- \"$isolation_root\"' EXIT",
-    "/usr/bin/env -i" +
-      ' HOME="$isolation_root"' +
-      ' XDG_CONFIG_HOME="$isolation_root"' +
-      ' TMPDIR="$isolation_root"' +
-      ' PATH="$PATH"' +
-      " CI=true NO_COLOR=1 TERM=dumb" +
-      " NPM_CONFIG_USERCONFIG=/dev/null" +
-      " GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1" +
-      " /bin/sh -c " +
-      quote(command),
-  ].join("; ");
+  const isolatedCommand = `set -eu
+umask 077
+repo_root=$(/bin/pwd -P)
+isolation_root=$(/usr/bin/mktemp -d /tmp/nemoclaw-validation.XXXXXX)
+isolation_root=$(cd "$isolation_root" && /bin/pwd -P)
+trap '/bin/rm -R -f -- "$isolation_root"' EXIT
+/bin/mkdir -p "$isolation_root/home" "$isolation_root/tmp"
+
+if [ -x /usr/bin/sandbox-exec ]; then
+  sandbox_profile="$isolation_root/profile.sb"
+  cat >"$sandbox_profile" <<'PROFILE'
+(version 1)
+(deny default)
+(allow process*)
+(allow signal (target same-sandbox))
+(allow sysctl-read)
+(allow mach-lookup
+  (global-name "com.apple.trustd")
+  (global-name "com.apple.trustd.agent"))
+(allow file-read-metadata)
+(allow file-read-data (literal "/"))
+(allow file-read*
+  (subpath "/System")
+  (subpath "/usr")
+  (subpath "/bin")
+  (subpath "/sbin")
+  (subpath "/opt/homebrew")
+  (subpath "/usr/local")
+  (subpath "/Library")
+  (subpath "/private/etc")
+  (subpath "/private/var/db")
+  (subpath "/dev")
+  (subpath (param "REPO_ROOT"))
+  (subpath (param "ISOLATION_ROOT")))
+(allow file-write*
+  (subpath (param "REPO_ROOT"))
+  (subpath (param "ISOLATION_ROOT"))
+  (literal "/dev/null"))
+(deny file-write* (subpath (string-append (param "REPO_ROOT") "/.git")))
+(allow network*)
+PROFILE
+  set +e
+  /usr/bin/sandbox-exec -D REPO_ROOT="$repo_root" -D ISOLATION_ROOT="$isolation_root" \
+    -f "$sandbox_profile" /usr/bin/env -i \
+    HOME="$isolation_root/home" XDG_CONFIG_HOME="$isolation_root/home" TMPDIR="$isolation_root/tmp" \
+    PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin \
+    CI=true NO_COLOR=1 TERM=dumb \
+    NPM_CONFIG_USERCONFIG=/dev/null \
+    GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+    /bin/sh -c ${quote(command)}
+  validation_status=$?
+  set -e
+  exit "$validation_status"
+fi
+
+if command -v bwrap >/dev/null 2>&1; then
+  set -- "$(command -v bwrap)" --die-with-parent --new-session --unshare-all --share-net
+  set -- "$@" --proc /proc --dev /dev --tmpfs /tmp --dir /home
+  set -- "$@" --bind "$isolation_root/home" /home/validator --bind "$repo_root" /workspace
+  if [ -e "$repo_root/.git" ]; then set -- "$@" --ro-bind "$repo_root/.git" /workspace/.git; fi
+  for system_path in /usr /bin /sbin /lib /lib64 /opt /etc; do
+    if [ -e "$system_path" ]; then set -- "$@" --ro-bind "$system_path" "$system_path"; fi
+  done
+  set +e
+  "$@" --chdir /workspace /usr/bin/env -i \
+    HOME=/home/validator XDG_CONFIG_HOME=/home/validator TMPDIR=/tmp \
+    PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin \
+    CI=true NO_COLOR=1 TERM=dumb \
+    NPM_CONFIG_USERCONFIG=/dev/null \
+    GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+    /bin/sh -c ${quote(command)}
+  validation_status=$?
+  set -e
+  exit "$validation_status"
+fi
+
+printf '%s\n' 'Credential-isolated validation requires sandbox-exec or bubblewrap.' >&2
+exit 126`;
   const result = await tools.bash({
     command: isolatedCommand,
     workdir: input.workdir,
