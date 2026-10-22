@@ -598,6 +598,76 @@ describe("native NVIDIA onboarding", () => {
     );
   });
 
+  it.each([
+    [
+      "only the registry records ownership",
+      false,
+      /'alpha' is still recorded.*'nemoclaw alpha destroy'/su,
+    ],
+    ["the gateway records ownership", true, /complete uninstall without --keep-openshell/u],
+  ])("explains a missing NVIDIA provider when %s", async (_case, gatewayOwned, message) => {
+    const receipt = {
+      schemaVersion: 1,
+      profileId: "nemoclaw-nvidia-inference-v1",
+      providerName: "nemoclaw-nvidia-prod-v1",
+      providerId: "provider-id",
+    } as const;
+    const createProvider = vi.fn<OpenShellProviderAdapter["createProvider"]>();
+    const setupInference = createSetupInference({
+      checkGatewayRouteCompatibility: vi.fn(() => ({ ok: true as const })),
+      withSandboxMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
+        await operation(),
+      withGatewayRouteMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
+        await operation(),
+      step: vi.fn(),
+      getGatewayName: () => "onboarding-gateway",
+      runOpenshell: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
+      updateSandbox: vi.fn(() => true),
+      getSandbox: () => ({
+        name: "alpha",
+        provider: "nvidia-prod",
+        nativeNvidiaProviderAttachment: receipt,
+      }),
+      getNativeNvidiaProviderAuthority: () => (gatewayOwned ? receipt : undefined),
+      upsertProvider: vi.fn(async () => ({ ok: true })),
+      verifyInferenceRoute: vi.fn(),
+      verifyOnboardInferenceSmoke: vi.fn(async () => undefined),
+      isNonInteractive: () => true,
+      hermesProviderAuth: { HERMES_PROVIDER_NAME: "hermes-provider" },
+      providerAdapter: {
+        ensureProviderPolicyComposition: vi.fn(async () => ({ ok: true, value: undefined })),
+        importProviderProfile: vi.fn(async () => ({ ok: true as const })),
+        getProvider: vi.fn(async () => ({
+          ok: false,
+          error: { kind: "command", reason: "not_found", message: "not found" },
+        })),
+        createProvider,
+      } as unknown as OpenShellProviderAdapter,
+      hydrateCredentialEnv: vi.fn(() => "host-only-nvidia-credential"),
+      redact: (value: string) => value,
+      compactText: (value: string) => value,
+      log: vi.fn(),
+      error: vi.fn(),
+      exitProcess: vi.fn((code: number): never => {
+        throw new Error(`exit ${code}`);
+      }),
+    } as unknown as SetupInferenceDeps);
+
+    await expect(
+      setupInference(
+        "alpha",
+        "nvidia/nemotron-3-super-120b-a12b",
+        "nvidia-prod",
+        "https://integrate.api.nvidia.com/v1",
+        "NVIDIA_INFERENCE_API_KEY",
+        null,
+        [],
+        { revalidateSandboxIdentity: () => undefined },
+      ),
+    ).rejects.toThrow(message);
+    expect(createProvider).not.toHaveBeenCalled();
+  });
+
   it("requires recreation instead of recording a receipt for a legacy NVIDIA sandbox", async () => {
     const providerAdapter = {
       ensureProviderPolicyComposition: vi.fn(async () => ({ ok: true, value: undefined })),

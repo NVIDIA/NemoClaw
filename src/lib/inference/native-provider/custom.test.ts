@@ -306,6 +306,32 @@ describe("custom native endpoint ownership", () => {
     expect(onCredentialPersisted).not.toHaveBeenCalled();
   });
 
+  it.each([
+    [
+      "only the registry records ownership",
+      false,
+      /'alpha' is still recorded.*'nemoclaw alpha destroy'/su,
+    ],
+    ["the gateway records ownership", true, /complete uninstall without --keep-openshell/u],
+  ])("explains a missing provider when %s", async (_case, gatewayOwned, message) => {
+    const h = harness();
+    const recorded = await prepareCustomNativeProvider(h.input);
+    h.adapter.getProvider.mockResolvedValue({
+      ok: false,
+      error: { kind: "command", reason: "not_found", message: "absent" },
+    });
+    await expect(
+      prepareCustomNativeProvider({
+        ...h.input,
+        recordedAttachment: recorded,
+        recordedSandboxName: "alpha",
+        readAuthority: (gateway, name) =>
+          gatewayOwned ? h.input.readAuthority(gateway, name) : undefined,
+      }),
+    ).rejects.toThrow(message);
+    expect(h.adapter.createProvider).toHaveBeenCalledTimes(1);
+  });
+
   it("does not retire a credential when authority persistence fails", async () => {
     const h = harness();
     const onCredentialPersisted = vi.fn();

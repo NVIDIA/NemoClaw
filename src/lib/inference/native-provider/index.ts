@@ -259,6 +259,8 @@ export class NativeProviderLifecycle<ProfileId extends string, ProviderName exte
     credentialValue: string | null;
     reuseExistingCredential?: boolean;
     expected?: NativeProviderAttachment<ProfileId, ProviderName>;
+    /** Registry sandbox whose receipt is the only ownership evidence for `expected`. */
+    recordedSandboxName?: string;
     profilePath?: string;
   }): Promise<NativeProviderAttachment<ProfileId, ProviderName>> {
     if (input.expected) this.requireExpectedReceipt(input.expected);
@@ -324,6 +326,12 @@ export class NativeProviderLifecycle<ProfileId extends string, ProviderName exte
       return observedReceipt;
     }
 
+    if (input.expected && input.recordedSandboxName) {
+      const sandbox = input.recordedSandboxName;
+      throw new NativeProviderError(
+        `OpenShell provider '${this.definition.providerName}' is missing, but sandbox '${sandbox}' is still recorded from an earlier install. This happens after 'nemoclaw uninstall' keeps user data. Run 'nemoclaw ${sandbox} destroy' to clear the stale record, then onboard again. No provider was changed.`,
+      );
+    }
     if (input.expected) {
       throw new NativeProviderError(
         `OpenShell provider '${this.definition.providerName}' is missing. If this gateway has no sandboxes after a reinstall, complete uninstall without --keep-openshell, then onboard again. Otherwise, recreate the sandbox before using native ${this.definition.label} inference. No provider was changed.`,
