@@ -932,6 +932,9 @@ exec /bin/bash "$@"
       "utf8",
     );
     const job = e2eWorkflowJobs()["portable-hermes-finalization"]!;
+    const hostDependencies = job.steps?.find(
+      (step) => step.name === "Install Portable Podman host dependencies",
+    );
     const trustedCheckout = job.steps?.find(
       (step) => step.name === "Check out trusted workflow cleanup authority",
     );
@@ -982,6 +985,7 @@ exec /bin/bash "$@"
       NEMOCLAW_NATIVE_PODMAN_SERVICE_TASKS_MAX: "1024",
     });
     expect(job.env).not.toHaveProperty("E2E_HERMES_BASE_STORAGE_HOME");
+    expect(hostDependencies?.with?.packages).toContain(" crun ");
     expect(setupAction.inputs["cleanup-fixture"]?.default).toBe("");
     expect(setupAction.inputs["disable-container-cgroups"]?.default).toBe("false");
     expect(setupAction.inputs["isolate-docker-cli"]?.default).toBe("true");
@@ -996,6 +1000,12 @@ exec /bin/bash "$@"
     });
     expect(setupRuntime?.run).toContain('case "$DISABLE_CONTAINER_CGROUPS" in');
     expect(setupRuntime?.run).toContain("container_cgroups_line='cgroups = \"disabled\"'");
+    expect(setupRuntimeRun).toContain("oci_runtime=runc");
+    expect(setupRuntimeRun).toContain("oci_runtime=crun");
+    expect(setupRuntimeRun).toContain('required_host_commands+=("$oci_runtime")');
+    expect(setupRuntimeRun).toContain('"runtime = \\\"$oci_runtime\\\""');
+    expect(setupRuntimeRun).toContain('jq -e --arg runtime "$oci_runtime"');
+    expect(setupRuntimeRun).toContain("== $runtime");
     expect(setupRuntime?.run).toContain('if [[ -n "$container_cgroups_line" ]]');
     expect(setupRuntime?.run).toContain("printf '%s\\n' \"$container_cgroups_line\"");
     expect(setupRuntimeRun.indexOf("printf '%s\\n' \"$container_cgroups_line\"")).toBeLessThan(
@@ -1039,7 +1049,7 @@ exec /bin/bash "$@"
       "service-tasks-max": "${{ env.NEMOCLAW_NATIVE_PODMAN_SERVICE_TASKS_MAX }}",
     });
     expect(setup?.uses).toBe(
-      "NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@56a7be8c1a845d86dfca0b70e769e2c160aa8609",
+      "NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@e85857e2a7bfb2af01241ecbce5947ee774c1280",
     );
     expect(setupIndex).toBeGreaterThan(openshellInstallIndex);
     expect(headroomIndex).toBeGreaterThan(setupIndex);
