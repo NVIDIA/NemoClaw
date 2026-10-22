@@ -25,6 +25,10 @@ inputs:
     description: Optional finite TasksMax value for the native Podman API service.
     required: false
     default: ""
+  disable-container-cgroups:
+    description: Disable per-container cgroup creation before starting the native Podman API service.
+    required: false
+    default: "false"
 
 runs:
   using: composite
@@ -82,6 +86,7 @@ runs:
         EXPECTED_ARCHITECTURE: ${{ steps.artifact.outputs.architecture }}
         EXPECTED_PODMAN_SOURCE_SHA: ${{ steps.artifact.outputs.podman_source_sha }}
         EXPECTED_PODMAN_VERSION: ${{ steps.artifact.outputs.podman_version }}
+        DISABLE_CONTAINER_CGROUPS: ${{ inputs.disable-container-cgroups }}
         SERVICE_TASKS_MAX: ${{ inputs.service-tasks-max }}
         TOOLCHAIN_DIRECTORY: ${{ runner.temp }}/native-podman-e2e-toolchain
       run: |
@@ -94,6 +99,15 @@ runs:
           fi
           service_tasks_max_line="TasksMax=$SERVICE_TASKS_MAX"
         fi
+        container_cgroups_line=""
+        case "$DISABLE_CONTAINER_CGROUPS" in
+          true) container_cgroups_line='cgroups = "disabled"' ;;
+          false) ;;
+          *)
+            echo "::error::Native Podman container cgroup override must be true or false" >&2
+            exit 1
+            ;;
+        esac
         setup_completed=false
         cleanup_interrupted_setup() {
           local command_status=$?
@@ -352,15 +366,20 @@ runs:
           'driver = "overlay"' \
           "runroot = \"$storage_directory/runroot\"" \
           "graphroot = \"$storage_directory/graphroot\"" >"$storage_config"
-        printf '%s\n' \
-          '[containers]' \
-          'log_driver = "k8s-file"' \
-          '' \
-          '[engine]' \
-          'runtime = "runc"' \
-          '' \
-          '[network]' \
-          'firewall_driver = "nftables"' >"$containers_config"
+        {
+          printf '%s\n' '[containers]'
+          if [[ -n "$container_cgroups_line" ]]; then
+            printf '%s\n' "$container_cgroups_line"
+          fi
+          printf '%s\n' \
+            'log_driver = "k8s-file"' \
+            '' \
+            '[engine]' \
+            'runtime = "runc"' \
+            '' \
+            '[network]' \
+            'firewall_driver = "nftables"'
+        } >"$containers_config"
         export CONTAINERS_CONF="$containers_config"
         export CONTAINERS_STORAGE_CONF="$storage_config"
         export DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime_directory/bus"
