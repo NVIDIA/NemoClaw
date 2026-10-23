@@ -20,7 +20,7 @@ export default class SandboxDownloadCommand extends NemoClawCommand {
   static usage = ["<name> <sandbox-path> [host-dest]"];
   static examples = [
     "<%= config.bin %> sandbox download alpha /sandbox/.openclaw/workspace/SOUL.md ./",
-    "<%= config.bin %> sandbox download alpha /sandbox/.openclaw/agents/main/sessions/ ./sessions/",
+    "<%= config.bin %> sandbox download alpha /sandbox/.openclaw/workspace/ ./workspace/",
   ];
   static args = {
     sandboxName: sandboxNameArg,

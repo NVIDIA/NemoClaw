@@ -65,21 +65,18 @@ OpenShell log lines keep their existing source tags.
 ## Inspect Agent Session State
 
 OpenClaw stores structured session state inside the sandbox.
-Use these files for audit trails, compliance review, or replay tooling that includes assistant messages and tool activity.
+Use it for audit trails, compliance review, or replay tooling that includes assistant messages and tool activity.
+The storage location depends on the OpenClaw release.
 
-| File | Purpose |
-|---|---|
-| `/sandbox/.openclaw/agents/main/sessions/<session-id>.jsonl` | Per-session event log for audit trails and compliance dashboards that can include assistant messages, `thinking` blocks, tool calls, tool results, token usage, and cost metadata. |
-| `/sandbox/.openclaw/agents/main/sessions/<session-id>.trajectory.jsonl` | Lower-level trajectory data for fine-grained replay that can be large, so avoid it for routine audit summaries. |
-| `/sandbox/.openclaw/agents/main/sessions/sessions.json` | Session index that maps known session keys to their persisted state. |
+| Location | OpenClaw release | Purpose |
+|---|---|---|
+| `/sandbox/.openclaw/agents/main/agent/openclaw-agent.sqlite` | 2026.9 and later | Session database. It holds the per-session event log and the trajectory data. |
+| `/sandbox/.openclaw/agents/main/sessions/<session-id>.jsonl` | Earlier releases | Per-session event log for audit trails and compliance dashboards that can include assistant messages, `thinking` blocks, tool calls, tool results, token usage, and cost metadata. |
+| `/sandbox/.openclaw/agents/main/sessions/<session-id>.trajectory.jsonl` | Earlier releases | Lower-level trajectory data for fine-grained replay that can be large, so avoid it for routine audit summaries. |
+| `/sandbox/.openclaw/agents/main/sessions/sessions.json` | Earlier releases | Session index that maps known session keys to their persisted state. |
 
-Inspect the session directory from the host by running a sandbox command.
-
-```bash
-$$nemoclaw <name> exec -- ls -lh /sandbox/.openclaw/agents/main/sessions
-```
-
-List the stored session keys, then export the session you need for offline review.
+For either store, list the stored session keys, then export the session you need for offline review.
+The export writes each session as `<session-id>.jsonl`, and as `<session-id>.trajectory.jsonl` with `--include-trajectory`.
 
 ```bash
 $$nemoclaw <name> sessions list
@@ -88,7 +85,7 @@ $$nemoclaw <name> sessions export <key>
 
 Handle exported session logs as sensitive data.
 They can contain prompts, tool inputs, tool outputs, file paths, and cost metadata from the agent run.
-The export command copies only the selected session files and writes them owner-only (`0600`).
+The export command copies only the selected sessions and writes them owner-only (`0600`).
 
 ## Monitor Network Activity in the TUI
 

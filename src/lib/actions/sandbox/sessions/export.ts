@@ -19,6 +19,10 @@
 //         store and only reads it through the upstream CLI; renaming a key,
 //         changing the per-session filename layout, or normalising the
 //         `sessions list --json` shape are upstream concerns.
+//       * OpenClaw 2026.9 and later keep transcripts in the per-agent SQLite
+//         database instead of `<sessionId>.jsonl` files. NemoClaw reads the
+//         selected rows read-only inside the sandbox and stages them as
+//         `<sessionId>.jsonl` files (see `openclaw-transcript-source.ts`).
 //   - Source-fix constraint: NemoClaw cannot bypass the two-hop transport
 //     without reaching into the cluster container's file system, which
 //     would violate the sandbox isolation. The wrapper therefore stays a
@@ -48,7 +52,11 @@ import type {
   OpenShellSandboxTransferExecutor,
   OpenShellSandboxTransferRequest,
 } from "../../../adapters/openshell/sandbox-transfer";
-import { captureOpenshell, runOpenshell } from "../../../adapters/openshell/runtime";
+import {
+  captureOpenshell,
+  OPENSHELL_PROBE_TIMEOUT_MS,
+  runOpenshell,
+} from "../../../adapters/openshell/runtime";
 import { CLI_NAME } from "../../../cli/branding";
 import {
   deferSandboxLifecycleExit,
@@ -67,6 +75,11 @@ import {
   validateAgentId,
   validateSessionKey,
 } from "./paths";
+import {
+  OPENCLAW_TRANSCRIPT_SOURCE_SCRIPT,
+  OPENCLAW_TRANSCRIPT_SOURCE_TIMEOUT_MS,
+  parseOpenClawTranscriptSource,
+} from "./openclaw-transcript-source";
 import { parseSessionIndex, type SessionIndexEntry } from "./session-index";
 
 export type SessionsExportFormat = "dir" | "tar" | "jsonl";
@@ -181,18 +194,22 @@ function scopeSandboxCommandToTarget(
   return [...args.slice(0, 2), "-g", target.gatewayName, ...args.slice(2)];
 }
 
+function removeCommand(input: {
+  sandboxName: string;
+  remotePath: string;
+  recursive?: boolean;
+}): string[] {
+  const flag = input.recursive ? "-rf" : "-f";
+  return ["sandbox", "exec", "--name", input.sandboxName, "--", "rm", flag, input.remotePath];
+}
+
 function manualRemoteCleanupCommand(input: {
   sandboxName: string;
   target: OpenShellSandboxTransferRequest["target"];
   remotePath: string;
+  recursive?: boolean;
 }): string {
-  return [
-    CLI_NAME,
-    ...scopeSandboxCommandToTarget(
-      ["sandbox", "exec", "--name", input.sandboxName, "--", "rm", "-f", input.remotePath],
-      input.target,
-    ),
-  ].join(" ");
+  return [CLI_NAME, ...scopeSandboxCommandToTarget(removeCommand(input), input.target)].join(" ");
 }
 
 export async function exportSandboxSessions(
@@ -232,7 +249,6 @@ async function exportSandboxSessionsUnlocked(
   const target = resolveTransferTarget(opts.sandboxName);
 
   const format: SessionsExportFormat = opts.format === "tar" ? "tar" : "dir";
-  const sourceDir = `/sandbox/.openclaw/agents/${agent}/sessions`;
 
   // Always enumerate sessions through the in-sandbox `openclaw sessions list`
   // index, even with no key filter, so the export contains exactly the
@@ -255,6 +271,39 @@ async function exportSandboxSessionsUnlocked(
     throw new Error(`Refusing to export: agent '${agent}' has no sessions to bundle.`);
   }
 
+  const source = locateOpenClawTranscripts(opts.sandboxName, target, agent, resolvedFiles);
+  try {
+    return await publishOpenClawExport({
+      opts,
+      transfers,
+      target,
+      agent,
+      format,
+      sourceDir: source.sourceDir,
+      trimmedKeys,
+      resolvedSessionIds,
+      resolvedFiles,
+      sessions,
+    });
+  } finally {
+    if (source.stagingDir) removeStagedTranscripts(opts.sandboxName, target, source.stagingDir);
+  }
+}
+
+async function publishOpenClawExport(input: {
+  opts: SessionsExportOptions;
+  transfers: SessionExportTransfers;
+  target: OpenShellSandboxTransferRequest["target"];
+  agent: string;
+  format: SessionsExportFormat;
+  sourceDir: string;
+  trimmedKeys: string[];
+  resolvedSessionIds: string[];
+  resolvedFiles: string[];
+  sessions: SessionIndexEntry[];
+}): Promise<SessionsExportResult> {
+  const { opts, transfers, target, agent, format, sourceDir, trimmedKeys } = input;
+  const { resolvedSessionIds, resolvedFiles, sessions } = input;
   const hostDest = resolveHostDestination(opts.out, opts.sandboxName, agent, format);
 
   let bundleBytes: number | null = null;
@@ -288,7 +337,12 @@ async function exportSandboxSessionsUnlocked(
             "--",
             "sh",
             "-c",
-            buildShellInvocation(tarArgv, tarballRemote),
+            buildShellInvocation({
+              tarArgv,
+              tarRelpaths: resolvedFiles,
+              tarballRemote,
+              sourceDir,
+            }),
           ],
           target,
         ),
@@ -299,6 +353,7 @@ async function exportSandboxSessionsUnlocked(
           `Failed to tar sessions for agent '${agent}' in sandbox '${opts.sandboxName}' (exit ${tarResult.status}).`,
         );
       }
+      assertAllArchiveMembersRegular(opts.sandboxName, target, tarballRemote);
 
       const downloadResult = await transfers.download({
         sandboxName: opts.sandboxName,
@@ -359,6 +414,9 @@ async function exportSandboxSessionsUnlocked(
     }
     const hostStagingDir = fs.mkdtempSync(path.join(hostDest, ".sessions-export-"));
     try {
+      // Download and verify every selected transcript into the private staging
+      // directory first. Publishing only after all downloads pass means a
+      // mid-loop transfer failure leaves no partial export in hostDest.
       for (const file of resolvedFiles) {
         const stagingPath = path.join(hostStagingDir, file);
         const downloadResult = await transfers.download({
@@ -375,7 +433,9 @@ async function exportSandboxSessionsUnlocked(
         // Session JSONL can contain pasted secrets — restrict each file to
         // owner-only before it is published (the rename preserves the mode).
         hardenPermissions(stagingPath);
-        fs.renameSync(stagingPath, path.join(hostDest, file));
+      }
+      for (const file of resolvedFiles) {
+        fs.renameSync(path.join(hostStagingDir, file), path.join(hostDest, file));
       }
     } finally {
       removeHostStagingDir(hostStagingDir);
@@ -620,14 +680,12 @@ function removeRemoteStagingArtifact(input: {
   sandboxName: string;
   target: OpenShellSandboxTransferRequest["target"];
   remotePath: string;
+  recursive?: boolean;
   artifactLabel: string;
   retainedDataNote: string;
 }): void {
   const remoteCleanup = runOpenshell(
-    scopeSandboxCommandToTarget(
-      ["sandbox", "exec", "--name", input.sandboxName, "--", "rm", "-f", input.remotePath],
-      input.target,
-    ),
+    scopeSandboxCommandToTarget(removeCommand(input), input.target),
     { ignoreError: true, stdio: "ignore" },
   );
   if (remoteCleanup.status !== 0) {
@@ -657,24 +715,56 @@ export function buildSandboxTarArgv(input: {
   tarballRemote: string;
   resolvedFiles: readonly string[];
 }): string[] {
-  // `--` separates tar options from operands so any file name that happens
-  // to start with `-` (even though SAFE_TOKEN_RE forbids that today) cannot
-  // be reinterpreted as a tar option.
-  const argv: string[] = ["tar", "-czf", input.tarballRemote, "-C", input.sourceDir, "--"];
+  // `--no-recursion` stops tar from descending into a directory, so a
+  // transcript replaced by a directory between the re-check and tar cannot
+  // expand the archive with files beneath the session store. `--` separates
+  // tar options from operands so any file name that happens to start with `-`
+  // (even though SAFE_TOKEN_RE forbids that today) cannot be reinterpreted as
+  // a tar option.
+  const argv: string[] = [
+    "tar",
+    "-czf",
+    input.tarballRemote,
+    "--no-recursion",
+    "-C",
+    input.sourceDir,
+    "--",
+  ];
   for (const file of input.resolvedFiles) argv.push(`./${file}`);
   return argv;
 }
 
-function buildShellInvocation(tarArgv: readonly string[], tarballRemote: string): string {
+function buildShellInvocation(input: {
+  tarArgv: readonly string[];
+  tarRelpaths: readonly string[];
+  tarballRemote: string;
+  sourceDir: string;
+}): string {
+  const { tarArgv, tarRelpaths, tarballRemote, sourceDir } = input;
   // umask 077 restricts the staging tarball (mode 600) so a concurrent
   // sandbox user cannot read another agent's session JSONL between the tar
   // step and the download step. The mkdir + chmod 700 pair guarantees the
   // staging directory itself is owner-only even if a previous run (or an
   // unrelated tool) created it with a broader mode.
+  //
+  // The archive operation re-verifies each transcript is a regular,
+  // non-symlink file with link count 1 immediately before tar reads it, using absolute paths
+  // under sourceDir. This is a best-effort re-check: the test and tar are
+  // separate commands, so a transcript replaced between them can still be
+  // bundled. It narrows, but does not eliminate, the window where tar could
+  // recurse a directory or pack a link; the preflight probe remains the
+  // primary diagnostic.
   const quoted = tarArgv.map(shellQuote).join(" ");
   const quotedTarball = shellQuote(tarballRemote);
   const quotedStagingDir = shellQuote(STAGING_DIR_IN_SANDBOX);
-  return `umask 077 && mkdir -p ${quotedStagingDir} && chmod 700 ${quotedStagingDir} && ${quoted} && chmod 600 ${quotedTarball}`;
+  const validation = tarRelpaths
+    .map((relpath) => `${shellQuote(sourceDir)}/${shellQuote(relpath)}`)
+    .map(
+      (abs) =>
+        `[ -f ${abs} ] && [ ! -L ${abs} ] && [ "$(stat -c %h ${abs} 2>/dev/null)" = "1" ] || { printf 'refusing non-regular transcript %s\\n' ${abs} >&2; exit 3; }`,
+    )
+    .join(" && ");
+  return `umask 077 && mkdir -p ${quotedStagingDir} && chmod 700 ${quotedStagingDir} && ${validation} && ${quoted} && chmod 600 ${quotedTarball}`;
 }
 
 function shellQuote(value: string): string {
@@ -799,6 +889,134 @@ function readSessionIndex(
     );
   }
   return parsed;
+}
+
+/**
+ * Find the selected transcripts in the sandbox. OpenClaw 2026.9 and later keep
+ * them in the per-agent session database; the in-sandbox script then writes
+ * them as `<sessionId>.jsonl` files into a new owner-only staging directory,
+ * and the export reads from there. Earlier OpenClaw releases keep the files in
+ * `agents/<id>/sessions`; the script checks each one in place. A selected
+ * session with no stored transcript, or an abnormal legacy file, refuses the
+ * whole export before any output is written.
+ */
+function locateOpenClawTranscripts(
+  sandboxName: string,
+  target: OpenShellSandboxTransferRequest["target"],
+  agent: string,
+  files: readonly string[],
+): { sourceDir: string; stagingDir: string | null } {
+  const legacyDir = `/sandbox/.openclaw/agents/${agent}/sessions`;
+  const stagingDir = `${STAGING_DIR_IN_SANDBOX}/sessions-export-${agent}-${randomBytes(6).toString("hex")}`;
+  // The agent id, staging directory, and file basenames travel as argv
+  // operands, never interpolated into the script.
+  const result = captureOpenshell(
+    scopeSandboxCommandToTarget(
+      [
+        "sandbox",
+        "exec",
+        "--name",
+        sandboxName,
+        "--",
+        "node",
+        "--no-warnings",
+        "-e",
+        OPENCLAW_TRANSCRIPT_SOURCE_SCRIPT,
+        "/sandbox",
+        agent,
+        stagingDir,
+        ...files,
+      ],
+      target,
+    ),
+    { ignoreError: true, timeout: OPENCLAW_TRANSCRIPT_SOURCE_TIMEOUT_MS },
+  );
+  const source = parseOpenClawTranscriptSource(result, files);
+  switch (source.kind) {
+    case "legacy":
+      return { sourceDir: legacyDir, stagingDir: null };
+    case "staged":
+      return { sourceDir: stagingDir, stagingDir };
+    case "legacy-abnormal":
+      throw new Error(
+        `Refusing to export: sessions are listed in the agent index but their transcript files are missing, symlinks, hard links, or not regular files in the sandbox store: ${source.files.join(", ")}. ` +
+          `Inspect ${legacyDir} in the sandbox, or re-run the affected turn.`,
+      );
+    case "stored-missing":
+      throw new Error(
+        `Refusing to export: sessions are listed in the agent index but the OpenClaw session database has no transcript for: ${source.files.join(", ")}. ` +
+          `A session has no transcript until its first turn is stored; re-run the affected turn, or export the other sessions by key.`,
+      );
+    case "failed":
+      // The script can stop after it created the staging directory.
+      removeStagedTranscripts(sandboxName, target, stagingDir);
+      throw new Error(
+        `Failed to verify session transcripts in sandbox '${sandboxName}' (exit ${result.status})${source.detail}. Verify the sandbox is live with \`${CLI_NAME} ${sandboxName} status\`.`,
+      );
+  }
+}
+
+function removeStagedTranscripts(
+  sandboxName: string,
+  target: OpenShellSandboxTransferRequest["target"],
+  stagingDir: string,
+): void {
+  removeRemoteStagingArtifact({
+    sandboxName,
+    target,
+    remotePath: stagingDir,
+    recursive: true,
+    artifactLabel: "staging directory",
+    retainedDataNote: "The directory may still contain session JSONL with pasted secrets",
+  });
+}
+
+/**
+ * Verify every member of a built session archive is a regular file before the
+ * archive is downloaded. Combined with `--no-recursion`, this rejects a
+ * transcript replaced by a directory or symlink between the re-check and tar:
+ * the archive may contain an abnormal member, but it is refused here instead
+ * of being published.
+ */
+function assertAllArchiveMembersRegular(
+  sandboxName: string,
+  target: OpenShellSandboxTransferRequest["target"],
+  tarballRemote: string,
+): void {
+  const result = captureOpenshell(
+    scopeSandboxCommandToTarget(
+      [
+        "sandbox",
+        "exec",
+        "--name",
+        sandboxName,
+        "--",
+        "sh",
+        "-c",
+        `tar -tvzf ${shellQuote(tarballRemote)}`,
+      ],
+      target,
+    ),
+    { ignoreError: true, timeout: OPENSHELL_PROBE_TIMEOUT_MS },
+  );
+  if (result.status !== 0) {
+    throw new Error(
+      `Failed to inspect the session archive in sandbox '${sandboxName}' (exit ${result.status}). The export was not written.`,
+    );
+  }
+  // `tar -tvzf` lists one line per member; the file-mode first character is
+  // `-` for a regular file, `d` for a directory, `l` for a symlink, etc.
+  const nonRegular = (result.output ?? "")
+    .split(/\r?\n/)
+    .map((line) => line.trimStart())
+    .filter((line) => line.length > 0)
+    .filter((line) => line[0] !== "-")
+    .map((line) => line.split(/\s+/).at(-1) ?? "?");
+  if (nonRegular.length > 0) {
+    throw new Error(
+      `Refusing to export: the session archive contains non-regular members (${nonRegular.join(", ")}). A transcript was likely replaced in the sandbox during the export. No export was written.`,
+    );
+  }
 }
 
 function stagingTarballPath(agent: string): string {
