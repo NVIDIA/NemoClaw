@@ -431,6 +431,7 @@ describe("shared E2E workflow boundary", () => {
       "selection and headroom",
     ],
     ["Remove pinned Portable crun", 'user_systemctl stop "$service.socket"', "teardown"],
+    ["Remove pinned Portable crun", "sudo stat -c '%u:%g'", "teardown"],
     ["Remove pinned Portable crun", 'sudo rm -f -- "$runtime"', "teardown"],
   ])("rejects weakened Portable crun control in %s", (name, control, diagnostic) => {
     const errors = validatePortableMutation((workflow) => {

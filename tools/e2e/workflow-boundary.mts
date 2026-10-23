@@ -3042,7 +3042,8 @@ export function validatePortableCrunWorkflow(workflow: unknown): string[] {
       '"$service_state" != inactive',
       '"$manager_state" != inactive',
       "sudo test ! -L",
-      "0:0:755",
+      "sudo stat -c '%u:%g' \"$runtime\"",
+      "== 0:0",
       'sudo rm -f -- "$runtime"',
       'sudo test ! -e "$runtime"',
     ]) ||

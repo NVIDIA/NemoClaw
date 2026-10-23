@@ -6123,7 +6123,8 @@ jobs:
           fi
           sudo test -f "$runtime"
           sudo test ! -L "$runtime"
-          [[ "$(sudo stat -c '%u:%g:%a' "$runtime")" == 0:0:755 ]]
+          # A failed install can leave a partial root-owned file before chmod.
+          [[ "$(sudo stat -c '%u:%g' "$runtime")" == 0:0 ]]
           sudo rm -f -- "$runtime"
           sudo test ! -e "$runtime"
 
