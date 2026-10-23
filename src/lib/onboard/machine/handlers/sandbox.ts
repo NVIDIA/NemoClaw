@@ -45,6 +45,7 @@ import { type SandboxEntry, type SandboxRemovalReceipt } from "../../../state/re
 import { getSandboxEntryInference } from "../../../state/registry-entry-view";
 import { toolDisclosureOrDefault } from "../../../tool-disclosure";
 import {
+  clearCheckpointResourceProfile,
   recordCheckpointEffectGroup,
   recordCheckpointMessaging,
   recordCheckpointProviderEffectGroup,
@@ -125,6 +126,7 @@ import {
   hasHostMountConfigDrift,
   hasMessagingChannelConfigDrift,
   initialOpenClawToolDisclosure,
+  isValidSavedResourceProfile,
   replacesSameNameSandbox,
   requiresSandboxRecreation,
   resolveToolDisclosureResumeSignals,
@@ -1968,40 +1970,62 @@ class SandboxStateFlow<
     return nextState;
   }
 
+  private readSavedResourceProfile(session: Session | null): {
+    completed: boolean;
+    valid: boolean;
+    resourceProfile: ResourceProfile | null;
+  } {
+    const checkpoint = session?.checkpoint;
+    const completed = checkpoint
+      ? !isDecisionUnset(checkpoint.resourceProfile)
+      : session?.sandboxPromptProgress?.resourceProfile === true;
+    const resourceProfile = (
+      checkpoint ? decisionValue(checkpoint.resourceProfile) : (session?.resourceProfile ?? null)
+    ) as ResourceProfile | null;
+    const valid =
+      isValidSavedResourceProfile(
+        resourceProfile as SessionResourceProfile | CheckpointResourceProfile | null,
+      ) && isValidSavedResourceProfile(session?.resourceProfile ?? null);
+    return { completed, valid, resourceProfile };
+  }
+
   private async resolveResourceProfile(state: SandboxStepState<WebSearchConfig>): Promise<{
     state: SandboxStepState<WebSearchConfig>;
     resourceProfile: ResourceProfile | null;
   }> {
-    const checkpoint = state.session?.checkpoint;
-    const completedSelection = checkpoint
-      ? !isDecisionUnset(checkpoint.resourceProfile)
-      : state.session?.sandboxPromptProgress?.resourceProfile === true;
+    let nextState = state;
+    const saved = this.readSavedResourceProfile(nextState.session);
+    if (this.resumesSandboxPrompts && !saved.valid) {
+      const session = this.deps.updateSession((current) => {
+        clearCheckpointResourceProfile(current);
+        return current;
+      });
+      nextState = { ...nextState, session };
+    }
     if (
       this.resumesSandboxPrompts &&
       this.options.resume &&
-      completedSelection &&
+      saved.completed &&
+      saved.valid &&
       !hasResourceProfileEnvOverride(this.options.env)
     ) {
-      const resourceProfile = (
-        checkpoint ? decisionValue(checkpoint.resourceProfile) : state.session?.resourceProfile
-      ) as ResourceProfile | null;
       this.deps.note(
-        resourceProfile
+        saved.resourceProfile
           ? "  [resume] Reusing resource profile selection."
           : "  [resume] Reusing OpenShell default resources.",
       );
-      return { state, resourceProfile };
+      return { state: nextState, resourceProfile: saved.resourceProfile };
     }
 
     const resourceProfile = await this.deps.selectResourceProfileForSandbox();
-    if (!this.resumesSandboxPrompts) return { state, resourceProfile };
+    if (!this.resumesSandboxPrompts) return { state: nextState, resourceProfile };
     const session = this.deps.updateSession((current) => {
       current.resourceProfile = resourceProfile as SessionResourceProfile | null;
       current.sandboxPromptProgress.resourceProfile = true;
       recordCheckpointResourceProfile(current, resourceProfile as CheckpointResourceProfile | null);
       return current;
     });
-    return { state: { ...state, session }, resourceProfile };
+    return { state: { ...nextState, session }, resourceProfile };
   }
 
   private async buildSandboxCreateIntent(

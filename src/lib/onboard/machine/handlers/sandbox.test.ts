@@ -802,6 +802,36 @@ describe("handleSandboxState", () => {
     });
   });
 
+  it.each([
+    { cpu: "150%", memory: "25%" },
+    { cpu: "25%", memory: "0%" },
+  ])("replaces a resumed resource profile when saved limits are %j", async (invalidProfile) => {
+    const session = createSession({
+      sandboxName: "saved",
+      resourceProfile: invalidProfile,
+      sandboxPromptProgress: {
+        sandboxName: true,
+        webSearch: true,
+        messaging: true,
+        resourceProfile: true,
+      },
+    });
+    const updateSession = vi.fn((mutator: (value: typeof session) => void) => {
+      mutator(session);
+      return session;
+    });
+    const { deps, calls } = createDeps({ getSandboxReuseState: () => "missing", updateSession });
+
+    await handleSandboxState({ ...baseOptions(deps, session), resume: true, sandboxName: "saved" });
+
+    expect(calls.selectResourceProfile).toHaveBeenCalledOnce();
+    expect(calls.resolveCreateIntent).toHaveBeenCalledWith(
+      expect.objectContaining({ resourceProfile: null }),
+    );
+    expect(session.resourceProfile).toBeNull();
+    expect(session.checkpoint?.resourceProfile).toEqual(decisionDeclined());
+  });
+
   it("recreates a resumed Hermes sandbox when its compatible Anthropic frontend is stale", async () => {
     const session = createSession({
       agent: "hermes",
