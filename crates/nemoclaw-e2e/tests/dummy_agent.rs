@@ -8,6 +8,7 @@
 //! not qualify a production adapter's health.
 
 use fabric_provider::AgentBridge as _;
+use nemoclaw_e2e::state::{runtime_id, sandbox_binding};
 use nemoclaw_sdk::{
     CancellationToken, Deployment, OperationResult, Outcome,
     backend::Row,
@@ -15,50 +16,10 @@ use nemoclaw_sdk::{
 };
 use openshell_provider::{EnvironmentSecrets, OpenShell};
 use serde_json::Value;
-use std::{fs, path::Path, process::Command, sync::Arc};
+use std::{fs, process::Command, sync::Arc};
 
 fn required(name: &str) -> String {
     std::env::var(name).unwrap_or_else(|_| panic!("{name} is required"))
-}
-
-/// The deployment's only sandbox binding, from its OpenTofu state.
-fn sandbox_binding(directory: &Path) -> Row {
-    let state: Value =
-        serde_json::from_slice(&fs::read(directory.join("terraform.tfstate")).unwrap()).unwrap();
-    let mut sandboxes = state["resources"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter(|resource| {
-            resource["mode"] == "managed" && resource["type"] == "openshell_sandbox"
-        });
-    let sandbox = sandboxes.next().expect("one sandbox binding");
-    assert!(sandboxes.next().is_none(), "expected one sandbox binding");
-    // Convert typed refs to the row fields the gateway client expects.
-    let mut attributes = sandbox["instances"][0]["attributes"].clone();
-    nemoclaw_openshell::flatten("openshell_sandbox", &mut attributes);
-    attributes
-        .as_object()
-        .unwrap()
-        .iter()
-        .filter_map(|(key, value)| Some((key.clone(), value.as_str()?.to_owned())))
-        .collect()
-}
-
-/// The runtime ID Fabric gave the deployment's agent, from its OpenTofu state.
-fn runtime_id(directory: &Path) -> String {
-    let state: Value =
-        serde_json::from_slice(&fs::read(directory.join("terraform.tfstate")).unwrap()).unwrap();
-    let id = state["resources"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|resource| resource["mode"] == "managed" && resource["type"] == "fabric_agent")
-        .and_then(|resource| resource["instances"][0]["attributes"]["runtime_id"].as_str())
-        .expect("the agent records its runtime ID")
-        .to_owned();
-    assert!(!id.trim().is_empty());
-    id
 }
 
 /// Send one request through Fabric's bridge and return the agent's run result.
@@ -185,8 +146,9 @@ async fn the_dummy_agent_completes_a_managed_docker_lifecycle() {
         Arc::new(EnvironmentSecrets),
     )
     .unwrap();
-    let binding = fabric_provider::fabric_binding(sandbox_binding(&state_path)).unwrap();
-    let runtime = runtime_id(&state_path);
+    let binding =
+        fabric_provider::fabric_binding(sandbox_binding(&state_path, &sandbox.name)).unwrap();
+    let runtime = runtime_id(&state_path, &sandbox.name);
     let reply = invoke(&client, &binding, &runtime, "dummy-lifecycle").await;
     assert_eq!(reply["status"], "succeeded", "{reply}");
     assert_eq!(reply["output"]["message"], configured_reply, "{reply}");
@@ -230,7 +192,7 @@ async fn the_dummy_agent_completes_a_managed_docker_lifecycle() {
     assert_eq!(reapplied.outcome, Outcome::Succeeded);
     assert!(reapplied.changes.is_empty(), "{:?}", reapplied.changes);
     assert_eq!(
-        runtime_id(&state_path),
+        runtime_id(&state_path, &sandbox.name),
         runtime,
         "unchanged applies must keep the running agent"
     );
@@ -274,44 +236,5 @@ async fn the_dummy_agent_completes_a_managed_docker_lifecycle() {
         )
         .is_empty(),
         "destroy removed the retained gateway storage"
-    );
-}
-
-#[test]
-fn sandbox_binding_preserves_the_workspace_from_its_typed_reference() {
-    let directory = tempfile::tempdir().unwrap();
-    let state = serde_json::json!({
-        "resources": [{
-            "mode": "managed",
-            "type": "openshell_sandbox",
-            "instances": [{"attributes": {
-                "name": "assistant",
-                "id": "sandbox-id",
-                "owner": "owner",
-                "generation": "generation",
-                "workspace": {
-                    "type": "openshell_workspace",
-                    "name": "workspace",
-                    "id": "workspace-id",
-                    "owner": "owner",
-                    "generation": "workspace-generation"
-                }
-            }}]
-        }]
-    });
-    fs::write(
-        directory.path().join("terraform.tfstate"),
-        serde_json::to_vec(&state).unwrap(),
-    )
-    .unwrap();
-    assert_eq!(
-        sandbox_binding(directory.path()),
-        Row::from([
-            ("name".into(), "assistant".into()),
-            ("id".into(), "sandbox-id".into()),
-            ("owner".into(), "owner".into()),
-            ("generation".into(), "generation".into()),
-            ("workspace".into(), "workspace".into()),
-        ])
     );
 }

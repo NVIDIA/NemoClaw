@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 use fabric_provider::AgentBridge as _;
 
+use nemoclaw_e2e::state::{runtime_id, successful_invocation};
 use nemoclaw_sdk::{
     CancellationToken, Deployment, OperationResult, Outcome,
     backend::Row,
@@ -17,37 +18,6 @@ use std::{
 
 // These opt-in tests qualify deployment lifecycle and explicit invocation transport.
 // Adapter-owned input/output meaning and model response quality belong to Fabric.
-fn successful_invocation(response: &[u8]) -> bool {
-    serde_json::from_slice::<Value>(response).is_ok_and(|value| {
-        value["status"] == "succeeded" && value["error"].is_null() && value.get("output").is_some()
-    })
-}
-
-#[test]
-fn failed_or_incomplete_results_are_not_successful_invocations() {
-    for response in [
-        json!({"status":"failed","output":"anything"}),
-        json!({"status":"succeeded"}),
-        json!({"status":"succeeded","output":null,"error":{"message":"failed"}}),
-    ] {
-        assert!(!successful_invocation(
-            &serde_json::to_vec(&response).unwrap()
-        ));
-    }
-}
-
-#[test]
-fn successful_fabric_results_allow_adapter_owned_output_shapes() {
-    for output in [
-        json!("native"),
-        json!([1, 2]),
-        json!({"artifact":"owned"}),
-        Value::Null,
-    ] {
-        let result = json!({"status":"succeeded","output":output,"error":null});
-        assert!(successful_invocation(&serde_json::to_vec(&result).unwrap()));
-    }
-}
 
 fn invocation_input(variable: &str) -> Value {
     let path = PathBuf::from(std::env::var_os(variable).expect(variable));
@@ -133,22 +103,6 @@ async fn invoke(
     serde_json::to_vec(&result).unwrap()
 }
 
-/// The runtime ID Fabric gave the deployment's agent, from its OpenTofu state.
-fn runtime_id(directory: &Path) -> String {
-    let state: Value =
-        serde_json::from_slice(&fs::read(directory.join("terraform.tfstate")).unwrap()).unwrap();
-    let id = state["resources"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|resource| resource["mode"] == "managed" && resource["type"] == "fabric_agent")
-        .and_then(|resource| resource["instances"][0]["attributes"]["runtime_id"].as_str())
-        .expect("the agent records its runtime ID")
-        .to_owned();
-    assert!(!id.trim().is_empty());
-    id
-}
-
 #[tokio::test]
 #[ignore = "requires NEMOCLAW_LIVE_FABRIC_CONFIG, NEMOCLAW_LIVE_FABRIC_STATE, NEMOCLAW_LIVE_FABRIC_INPUT, NEMOCLAW_TEST_BUNDLE; creates and destroys only that owned deployment"]
 async fn fabric_native_access_and_reconciliation_preserve_the_hosted_runtime() {
@@ -164,7 +118,8 @@ async fn fabric_native_access_and_reconciliation_preserve_the_hosted_runtime() {
     let input = invocation_input("NEMOCLAW_LIVE_FABRIC_INPUT");
     assert!(uses_independent_inference(&document));
     let provider = document.inference_provider().unwrap();
-    let agent = &document.spec.sandboxes[0].agent;
+    let sandbox = &document.spec.sandboxes[0];
+    let agent = &sandbox.agent;
     assert!(matches!(document.spec.gateway, Gateway::External(_)));
     // Managed-service installation is qualified separately; this live target
     // exercises only an external inference provider.
@@ -193,7 +148,7 @@ async fn fabric_native_access_and_reconciliation_preserve_the_hosted_runtime() {
             "policy-denied-403"
         );
     }
-    let hosted = runtime_id(&directory);
+    let hosted = runtime_id(&directory, &sandbox.name);
     let unchanged = deployment.apply(&document, &cancel).await.unwrap();
     assert!(unchanged.changes.is_empty());
     let exported = deployment.export(&cancel).await.unwrap();
@@ -208,13 +163,13 @@ async fn fabric_native_access_and_reconciliation_preserve_the_hosted_runtime() {
     );
     assert_eq!(bindings(&directory).0, before);
     assert_eq!(managed_bindings(&directory), managed_before);
-    assert_eq!(runtime_id(&directory), hosted);
+    assert_eq!(runtime_id(&directory, &sandbox.name), hosted);
     let response = invoke(&client, &binding, &agent.name, &hosted, &input).await;
     assert!(
         successful_invocation(&response),
         "Fabric invocation did not succeed"
     );
-    assert_eq!(runtime_id(&directory), hosted);
+    assert_eq!(runtime_id(&directory, &sandbox.name), hosted);
     let destroyed = deployment.destroy(&cancel).await.unwrap();
     assert_eq!(destroyed.outcome, Outcome::Destroyed);
 }
@@ -266,6 +221,7 @@ async fn dependency_upgrade_survives_apply_process_exit() {
         uses_independent_inference(&document),
         "use one agent and one independent inference provider"
     );
+    let sandbox = &document.spec.sandboxes[0];
     let input = invocation_input("NEMOCLAW_UPGRADE_INPUT");
     fs::create_dir(&directory).expect("test requires a fresh owned state directory");
     let executable = bundle
@@ -298,7 +254,7 @@ async fn dependency_upgrade_survives_apply_process_exit() {
         .await
         .unwrap();
     let (before, binding) = bindings(&directory);
-    let hosted = runtime_id(&directory);
+    let hosted = runtime_id(&directory, &sandbox.name);
     let reply = invoke(
         &client,
         &binding,
@@ -322,7 +278,7 @@ async fn dependency_upgrade_survives_apply_process_exit() {
             .is_empty()
     );
     assert_eq!(bindings(&directory).0, before);
-    assert_eq!(runtime_id(&directory), hosted);
+    assert_eq!(runtime_id(&directory, &sandbox.name), hosted);
     let destroyed = deployment.destroy(&cancel).await.unwrap();
     assert_eq!(destroyed.outcome, Outcome::Destroyed);
 }
