@@ -17,6 +17,7 @@ import {
   tempFiles,
 } from "../../../../test/helpers/rebuild-flow-generic-harness";
 import { makePreparedRecoveryManifest } from "./rebuild-flow-test-fixtures";
+import { HERMES_API_PORT_ENV, resolveOnboardHermesApiPort } from "../../onboard/hermes-api-port";
 import { enforceRemovedImmutabilityMigrationBoundary } from "../../state/migrations/removed-immutability";
 import type { SandboxRuntimeSnapshot } from "../../state/registry/runtime-snapshot";
 import { registry } from "../../../../test/helpers/rebuild-flow-harness";
@@ -98,6 +99,38 @@ describe("rebuildSandbox flow: lifecycle", () => {
       restoreEnv();
     }
   });
+
+  it.each([undefined, "8650"])(
+    "keeps a rebuilt Hermes API port from pinning the next sandbox (caller value: %s) (#13628)",
+    async (callerPort) => {
+      const restoreEnv = snapshotEnv([HERMES_API_PORT_ENV]);
+      try {
+        void (callerPort === undefined
+          ? delete process.env[HERMES_API_PORT_ENV]
+          : (process.env[HERMES_API_PORT_ENV] = callerPort));
+        const ports = { alpha: 8642, beta: 8643 } as Record<string, number>;
+        const getSandbox = (name: string) => ({ name, hermesApiPort: ports[name] });
+        let rebuiltPort: number | undefined;
+        const harness = createRebuildFlowHarness({
+          onboard: () => {
+            rebuiltPort = resolveOnboardHermesApiPort("alpha", {
+              getSandbox,
+              allowRegisteredOverride: true,
+            });
+          },
+        });
+        await harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true });
+
+        expect(rebuiltPort).toBe(callerPort ? Number(callerPort) : 8642);
+        expect(process.env[HERMES_API_PORT_ENV]).toBe(callerPort);
+        expect(
+          resolveOnboardHermesApiPort("beta", { getSandbox, allowRegisteredOverride: true }),
+        ).toBe(callerPort ? Number(callerPort) : 8643);
+      } finally {
+        restoreEnv();
+      }
+    },
+  );
 
   it.each(["relative/gateway", "/"])(
     "rejects an unsafe recorded gateway directory before rebuild effects (%s)",

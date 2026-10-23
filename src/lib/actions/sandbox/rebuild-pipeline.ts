@@ -156,6 +156,8 @@ export async function rebuildSandbox(
           MESSAGING_SETUP_APPLIER_ENV_KEY,
           DOCKER_GPU_PATCH_NETWORK_ENV,
           "NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR",
+          // Port selection publishes here; keep it from pinning the next rebuild (#13628).
+          "NEMOCLAW_HERMES_API_PORT",
           ...REBUILD_HERMES_DASHBOARD_ENV_KEYS,
           ...MESSAGING_CHANNEL_CONFIG_ENV_KEYS,
         ];
