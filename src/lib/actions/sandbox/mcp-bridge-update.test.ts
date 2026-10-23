@@ -57,7 +57,14 @@ vi.mock("./mcp-bridge-validation", async (importOriginal) => ({
   assertMcpCredentialBoundaryRuntimeVersion: vi.fn(),
 }));
 
-import { refreshMcpBridgePublicPins, updateMcpBridgeDenyTools } from "./mcp-bridge-add-restart";
+import {
+  clearMcpBridgeAllowTools,
+  refreshMcpBridgePublicPins,
+  updateMcpBridgeAllowTools,
+  updateMcpBridgeDenyTools,
+} from "./mcp-bridge-add-restart";
+import { assertMcpBridgePolicyTarget } from "./mcp-bridge-policy";
+import { replayTrustedPrivateEndpoint } from "../../security/trusted-private-endpoint";
 import { dispatchMcpBridgeCommand } from "./mcp-bridge";
 
 const entry: McpSourceEntry = {
@@ -199,6 +206,42 @@ describe("source-backed MCP denied-tool policy updates", () => {
     expect(mocks.applyGeneratedPolicy.mock.calls[0]?.[1]).not.toHaveProperty("denyTools");
   });
 
+  it("switches an allowlist-mode server to denied-tool mode on a non-empty update", async () => {
+    mocks.inspectSourceBridgeState.mockReturnValueOnce({
+      bridges: { github: { ...entry, allowTools: ["read_issue"] } },
+      sources: { native: { github: { ...entry, allowTools: ["read_issue"] } }, legacy: {} },
+    });
+    mocks.inspectAgentMcpSources.mockResolvedValueOnce({
+      native: { github: { ...entry, allowTools: ["read_issue"] } },
+      legacy: {},
+    });
+
+    await updateMcpBridgeDenyTools("alpha", "github", ["delete_repo"]);
+
+    // A stale allowlist would make the renderer choose allowlist mode and drop
+    // the requested deny rules, so the replacement must not carry one.
+    const updated = mocks.applyGeneratedPolicy.mock.calls[0]?.[1] as McpSourceEntry;
+    expect(updated.denyTools).toEqual(["delete_repo"]);
+    expect(updated).not.toHaveProperty("allowTools");
+  });
+
+  it("preserves the allowlist when the denylist is cleared on an allowlist-mode server", async () => {
+    mocks.inspectSourceBridgeState.mockReturnValueOnce({
+      bridges: { github: { ...entry, allowTools: ["read_issue"] } },
+      sources: { native: { github: { ...entry, allowTools: ["read_issue"] } }, legacy: {} },
+    });
+    mocks.inspectAgentMcpSources.mockResolvedValueOnce({
+      native: { github: { ...entry, allowTools: ["read_issue"] } },
+      legacy: {},
+    });
+
+    await updateMcpBridgeDenyTools("alpha", "github", []);
+
+    const updated = mocks.applyGeneratedPolicy.mock.calls[0]?.[1] as McpSourceEntry;
+    expect(updated.allowTools).toEqual(["read_issue"]);
+    expect(updated).not.toHaveProperty("denyTools");
+  });
+
   it("leaves the route blocked with an exact retry command after activation failure (#11115)", async () => {
     mocks.applyGeneratedPolicy.mockRejectedValueOnce(new Error("activation failed"));
 
@@ -216,4 +259,152 @@ describe("source-backed MCP denied-tool policy updates", () => {
     expect(mocks.removeGeneratedPolicy).not.toHaveBeenCalled();
     expect(mocks.applyGeneratedPolicy).not.toHaveBeenCalled();
   });
+
+  it("accepts deny-tool update when recorded public pins match fresh DNS answer", async () => {
+    const lookup = vi
+      .spyOn(dns, "lookup")
+      .mockResolvedValue([{ address: "8.8.8.8", family: 4 }] as never);
+    try {
+      await updateMcpBridgeDenyTools("alpha", "github", ["delete_repo"]);
+      expect(mocks.applyGeneratedPolicy).toHaveBeenCalled();
+      expect(mocks.removeGeneratedPolicy).toHaveBeenCalled();
+    } finally {
+      lookup.mockRestore();
+    }
+  });
+
+  it("rejects deny-tool update when public pins drift without --refresh-public-pins", async () => {
+    const lookup = vi
+      .spyOn(dns, "lookup")
+      .mockResolvedValue([{ address: "1.1.1.1", family: 4 }] as never);
+    mocks.preflightMcpEntryTargets.mockResolvedValueOnce(
+      new Map([["github", { addresses: ["1.1.1.1"] }]]),
+    );
+    try {
+      await expect(updateMcpBridgeDenyTools("alpha", "github", ["delete_repo"])).rejects.toThrow(
+        /drifted public address pins.*--refresh-public-pins/,
+      );
+      expect(mocks.removeGeneratedPolicy).not.toHaveBeenCalled();
+      expect(mocks.applyGeneratedPolicy).not.toHaveBeenCalled();
+    } finally {
+      lookup.mockRestore();
+    }
+  });
+
+  it("explicit --refresh-public-pins updates public pins and then allows deny-tool update", async () => {
+    const lookup = vi
+      .spyOn(dns, "lookup")
+      .mockResolvedValue([{ address: "1.1.1.1", family: 4 }] as never);
+    try {
+      await dispatchMcpBridgeCommand("alpha", ["update", "github", "--refresh-public-pins"]);
+      expect(mocks.refreshMcpPublicPolicyPins).toHaveBeenCalled();
+      expect(mocks.applyGeneratedPolicy).not.toHaveBeenCalled();
+      expect(mocks.removeGeneratedPolicy).not.toHaveBeenCalled();
+
+      // After refresh, a deny-tool update should succeed with the new pins
+      vi.clearAllMocks();
+      mocks.inspectSourceBridgeState.mockReturnValue({
+        bridges: { github: { ...entry, allowedIps: ["1.1.1.1"] } },
+        sources: { native: { github: { ...entry, allowedIps: ["1.1.1.1"] } }, legacy: {} },
+      });
+      mocks.inspectAgentMcpSources.mockResolvedValue({
+        native: { github: { ...entry, allowedIps: ["1.1.1.1"] } },
+        legacy: {},
+      });
+      mocks.preflightMcpEntryTargets.mockResolvedValue(
+        new Map([["github", { addresses: ["1.1.1.1"] }]]),
+      );
+
+      await updateMcpBridgeDenyTools("alpha", "github", ["delete_repo"]);
+      expect(mocks.applyGeneratedPolicy).toHaveBeenCalled();
+      expect(mocks.removeGeneratedPolicy).toHaveBeenCalled();
+    } finally {
+      lookup.mockRestore();
+    }
+  });
+
+  it("excludes trusted-private registrations from public-pin drift check", async () => {
+    const privateEntry = {
+      ...entry,
+      allowedIps: ["10.20.30.40"],
+      trustedPrivateHost: "mcp.example.test",
+    };
+    mocks.inspectSourceBridgeState.mockReturnValueOnce({
+      bridges: { github: privateEntry },
+      sources: { native: { github: privateEntry }, legacy: {} },
+    });
+    mocks.inspectAgentMcpSources.mockResolvedValueOnce({
+      native: { github: privateEntry },
+      legacy: {},
+    });
+    // Reissue real in-process trusted-private capability authority from the durable
+    // private pins, matching what the SSRF preflight hands the action.
+    const replay = replayTrustedPrivateEndpoint("mcp.example.test", ["10.20.30.40"], {
+      requireAllPrivate: true,
+    });
+    mocks.preflightMcpEntryTargets.mockResolvedValueOnce(
+      new Map([
+        [
+          "github",
+          {
+            addresses: replay.addresses,
+            trustedPrivateHost: replay.host,
+            trustedPrivateCapability: replay.trustedPrivateCapability,
+          },
+        ],
+      ]),
+    );
+
+    // Should NOT throw drift error for trusted-private
+    await updateMcpBridgeDenyTools("alpha", "github", ["delete_repo"]);
+
+    // Assert the resulting policy inputs rather than only the mock-call counts:
+    // the durable entry must keep its trusted-private intent and exact pins,
+    // carry the replacement denylist, and retain no allowlist.
+    const [appliedSandbox, updatedEntry, appliedTarget] = mocks.applyGeneratedPolicy.mock
+      .calls[0] as [string, McpSourceEntry, Record<string, unknown>];
+    expect(appliedSandbox).toBe("alpha");
+    expect(updatedEntry).toMatchObject({
+      server: "github",
+      trustedPrivateHost: "mcp.example.test",
+      allowedIps: ["10.20.30.40"],
+      denyTools: ["delete_repo"],
+    });
+    expect(updatedEntry).not.toHaveProperty("allowTools");
+    expect(appliedTarget).toMatchObject({
+      addresses: ["10.20.30.40"],
+      trustedPrivateCapability: replay.trustedPrivateCapability,
+      trustedPrivateHost: "mcp.example.test",
+    });
+
+    // The trusted-private capability gate must accept this entry and target.
+    expect(() =>
+      assertMcpBridgePolicyTarget(updatedEntry, appliedTarget as never),
+    ).not.toThrow();
+  });
+
+  it.each([
+    ["denied-tool update", () => updateMcpBridgeDenyTools("alpha", "github", ["delete_repo"])],
+    ["allowlist update", () => updateMcpBridgeAllowTools("alpha", "github", ["read_issue"])],
+    ["allowlist clear", () => clearMcpBridgeAllowTools("alpha", "github")],
+  ])(
+    "refuses %s on entries with conflicting live policy",
+    async (_label, mutate) => {
+      // A conflicted entry must never feed a replacement policy: reusing its
+      // tool state could silently widen access (e.g. an all-invalid allowlist
+      // would otherwise fall through to unrestricted denylist mode).
+      const conflicted = {
+        ...entry,
+        policyConflict: "Live policy contains invalid tool selectors.",
+      };
+      mocks.inspectSourceBridgeState.mockReturnValueOnce({
+        bridges: { github: conflicted },
+        sources: { native: { github: conflicted }, legacy: {} },
+      });
+
+      await expect(mutate()).rejects.toThrow(/conflicting live policy/);
+      expect(mocks.applyGeneratedPolicy).not.toHaveBeenCalled();
+      expect(mocks.removeGeneratedPolicy).not.toHaveBeenCalled();
+    },
+  );
 });

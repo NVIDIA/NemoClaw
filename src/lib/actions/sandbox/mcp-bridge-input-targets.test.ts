@@ -421,6 +421,10 @@ const entry = () => ({
   allowedIps: ["8.8.8.8"], providerName: "alpha-mcp-github",
   ...(state.provider ? { providerId } : {}),
   policyName: "mcp-bridge-github", source: "native",
+  allowTools: undefined,
+  transport: "sse",
+  requireOAuth: undefined,
+  serverIdentity: undefined,
 });
 replace(adapters, "assertAgentMcpMutationRuntimeCapability", () => {});
 replace(adapters, "assertAgentMcpTeardownRuntimeCapability", () => {});
