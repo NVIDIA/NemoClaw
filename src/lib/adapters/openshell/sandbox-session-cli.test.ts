@@ -131,6 +131,27 @@ describe("OpenShell sessions", () => {
     },
   );
 
+  it.each(["capture", "inherit"] as const)(
+    "writes buffered stdin to a closed piped fd 0 with %s output (#13621)",
+    async (output) => {
+      const f = sessionHarness(false);
+      const end = vi.fn();
+      f.child.stdin = { on: vi.fn(), end };
+      const session = f.executor.start({ ...command, output, stdin: Buffer.from("ping\n") });
+
+      expect(f.spawnChild.mock.calls[0]?.[2].stdio).toEqual([
+        "pipe",
+        output === "capture" ? "pipe" : "inherit",
+        output === "capture" ? "pipe" : "inherit",
+      ]);
+      expect(end).toHaveBeenCalledWith(Buffer.from("ping\n"));
+      f.events.emit("close", 0, null);
+      const completed = await session.completion;
+      expect(completed.outcome).toEqual({ kind: "exited", exitCode: 0 });
+      completed.release();
+    },
+  );
+
   it("captures a gateway-scoped command and withholds terminal stdin", async () => {
     const f = sessionHarness();
     const session = f.executor.start(command);

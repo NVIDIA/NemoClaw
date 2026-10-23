@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { StdioOptions } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -123,6 +124,27 @@ describe("runCapturedProcess", () => {
     expect(result.error?.message).toBe("agent output exceeded the 6-byte combined capture limit");
     expect(result.stdout).toBe("1234");
     expect(result.stderr).toBe("");
+  });
+
+  it("writes supplied input to a piped fd 0 and closes it (#13621)", async () => {
+    const harness = dispatchHarness();
+    const end = vi.fn();
+    harness.child.stdin = { on: vi.fn(), end };
+    const spawnChild = vi.fn(
+      (_binary: string, _args: readonly string[], _stdio: StdioOptions) => harness.child,
+    );
+    const pending = runCapturedProcess(
+      "openshell",
+      ["sandbox", "exec", "--name", "alpha", "--", "openclaw", "agent"],
+      { stdinIsTty: false, stdin: Buffer.from("ping\n") },
+      { signalSource: harness.signalSource, spawnChild },
+    );
+
+    harness.childEvents.emit("close", 0, null);
+
+    expect(await pending).toMatchObject({ status: 0 });
+    expect(spawnChild.mock.calls[0]?.[2]).toEqual(["pipe", "pipe", "pipe"]);
+    expect(end).toHaveBeenCalledWith(Buffer.from("ping\n"));
   });
 });
 describe("capturedProcessStdio", () => {
