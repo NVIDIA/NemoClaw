@@ -422,8 +422,8 @@ function validateUploadPlacement(
       "Clean up Docker auth",
     ],
     [
-      "Restore Docker and retire Portable Podman runtime",
       "Remove pinned Portable crun",
+      "Restore Docker and retire Portable Podman runtime",
       "Remove immutable native Podman cleanup fixture",
       "Clean up Docker auth",
     ],

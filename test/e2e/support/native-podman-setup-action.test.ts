@@ -1053,7 +1053,7 @@ exec /bin/bash "$@"
     );
     expect(setupIndex).toBeGreaterThan(openshellInstallIndex);
     expect(job.steps?.at(setupIndex + 1)?.name).toBe("Select pinned compatible Portable crun");
-    expect(job.steps?.at(restoreIndex + 1)?.name).toBe("Remove pinned Portable crun");
+    expect(job.steps?.at(restoreIndex - 1)?.name).toBe("Remove pinned Portable crun");
     expect(headroomIndex).toBeGreaterThan(setupIndex);
     expect(candidateCheckoutIndex).toBeGreaterThan(headroomIndex);
     expect(headroomRun).toContain("minimum=128");

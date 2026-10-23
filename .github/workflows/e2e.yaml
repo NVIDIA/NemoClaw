@@ -6093,12 +6093,6 @@ jobs:
           name: e2e-portable-hermes-finalization
           path: e2e-artifacts/live/portable-hermes-finalization/
 
-      - name: Restore Docker and retire Portable Podman runtime
-        if: always()
-        uses: NVIDIA/NemoClaw/.github/actions/restore-native-podman-e2e@9650336899bf836db5844381a97cbc2b0fe4a2b8
-        with:
-          enabled: "true"
-
       - name: Remove pinned Portable crun
         if: always()
         shell: /bin/bash --noprofile --norc -e -o pipefail {0}
@@ -6106,12 +6100,38 @@ jobs:
           set -euo pipefail
           runtime=/usr/local/libexec/nemoclaw/portable-crun.${{ github.run_id }}.${{ github.run_attempt }}
           if ! sudo test -e "$runtime" && ! sudo test -L "$runtime"; then exit 0; fi
-          ! /usr/bin/systemctl --user is-active --quiet nemoclaw-native-podman-e2e.service
+          uid="$(id -u)"
+          manager_state="$(/usr/bin/systemctl is-active "user@${uid}.service" 2>/dev/null || true)"
+          if [[ "$manager_state" == active ]]; then
+            service=nemoclaw-native-podman-e2e
+            runtime_dir="/run/user/$uid"
+            user_systemctl() {
+              env DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime_dir/bus" \
+                XDG_RUNTIME_DIR="$runtime_dir" /usr/bin/systemctl --user "$@"
+            }
+            user_systemctl stop "$service.socket" "$service.service" 2>/dev/null || true
+            socket_state="$(user_systemctl is-active "$service.socket" 2>/dev/null || true)"
+            service_state="$(user_systemctl is-active "$service.service" 2>/dev/null || true)"
+            if [[ "$socket_state" != inactive && "$socket_state" != unknown ]] ||
+              [[ "$service_state" != inactive && "$service_state" != unknown ]]; then
+              echo "::error::Portable crun cleanup could not prove Podman socket and service inactive" >&2
+              exit 1
+            fi
+          elif [[ "$manager_state" != inactive ]]; then
+            echo "::error::Portable crun cleanup could not prove user manager inactive" >&2
+            exit 1
+          fi
           sudo test -f "$runtime"
           sudo test ! -L "$runtime"
           [[ "$(sudo stat -c '%u:%g:%a' "$runtime")" == 0:0:755 ]]
           sudo rm -f -- "$runtime"
           sudo test ! -e "$runtime"
+
+      - name: Restore Docker and retire Portable Podman runtime
+        if: always()
+        uses: NVIDIA/NemoClaw/.github/actions/restore-native-podman-e2e@9650336899bf836db5844381a97cbc2b0fe4a2b8
+        with:
+          enabled: "true"
 
       - name: Remove immutable native Podman cleanup fixture
         if: always()

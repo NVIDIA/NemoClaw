@@ -15,6 +15,7 @@ import {
 import {
   validateE2eWorkflowBoundary,
   validateNativePodmanStagingAction,
+  validatePortableCrunWorkflow,
 } from "../../../tools/e2e/workflow-boundary.mts";
 import { validateE2eOperationsWorkflowBoundary } from "../../../tools/e2e/operations-workflow-boundary.mts";
 import { readWorkflow } from "../../helpers/e2e-workflow-contract";
@@ -65,6 +66,12 @@ function validateMutatedWorkflow(
   } finally {
     fs.rmSync(directory, { force: true, recursive: true });
   }
+}
+
+function validatePortableMutation(mutator: (workflow: Workflow) => void): string[] {
+  const workflow = readWorkflow() as Workflow;
+  mutator(workflow);
+  return validatePortableCrunWorkflow(workflow);
 }
 
 type WorkflowSteps = NonNullable<Workflow["jobs"][string]["steps"]>;
@@ -400,6 +407,53 @@ describe("shared E2E workflow boundary", () => {
     });
     expect(errors).toContain(
       "portable-hermes-finalization must bind the exact-commit CLI artifact restore to the planned provenance output",
+    );
+  });
+
+  it.each([
+    ["Select pinned compatible Portable crun", "--proto-redir '=https'", "HTTPS, digest"],
+    ["Select pinned compatible Portable crun", "sha256sum --check --strict", "HTTPS, digest"],
+    ["Select pinned compatible Portable crun", "sudo install --owner=root", "HTTPS, digest"],
+    [
+      "Select pinned compatible Portable crun",
+      'podman --url "unix://$socket" info',
+      "restarted API",
+    ],
+    [
+      "Prove Portable Podman OCI execution before Hermes",
+      "run --rm --pull=always",
+      "pinned OCI probe",
+    ],
+    ["Run Portable Hermes finalization live Vitest test", "--runtime", "pinned OCI probe"],
+    [
+      "Retain Portable Podman process headroom",
+      "portable-podman-crun-authority",
+      "selection and headroom",
+    ],
+    ["Remove pinned Portable crun", 'user_systemctl stop "$service.socket"', "teardown"],
+    ["Remove pinned Portable crun", 'sudo rm -f -- "$runtime"', "teardown"],
+  ])("rejects weakened Portable crun control in %s", (name, control, diagnostic) => {
+    const errors = validatePortableMutation((workflow) => {
+      const target = workflow.jobs["portable-hermes-finalization"].steps!.find(
+        (candidate) => candidate.name === name,
+      )!;
+      target.run = target.run!.replace(control, "");
+    });
+    expect(errors.some((error) => error.includes(diagnostic))).toBe(true);
+  });
+
+  it("rejects Portable crun removal after Docker restoration", () => {
+    const errors = validatePortableMutation((workflow) => {
+      const jobSteps = workflow.jobs["portable-hermes-finalization"].steps!;
+      const index = jobSteps.findIndex((step) => step.name === "Remove pinned Portable crun");
+      const [removal] = jobSteps.splice(index, 1);
+      const restore = jobSteps.findIndex(
+        (step) => step.name === "Restore Docker and retire Portable Podman runtime",
+      );
+      jobSteps.splice(restore + 1, 0, removal!);
+    });
+    expect(errors).toContain(
+      "Portable crun trust, evidence, and teardown steps must retain their reviewed order",
     );
   });
 
