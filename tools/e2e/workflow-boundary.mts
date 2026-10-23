@@ -2968,6 +2968,7 @@ export function validatePortableCrunWorkflow(workflow: unknown): string[] {
   const upload = step(steps, "Upload Portable Hermes finalization artifacts");
   const remove = step(steps, "Remove pinned Portable crun");
   const restore = step(steps, "Restore Docker and retire Portable Podman runtime");
+  const fallback = step(steps, "Remove pinned Portable crun after restoration");
   const checkout = step(steps, "Check out the exact candidate");
   const errors: string[] = [];
 
@@ -3054,8 +3055,29 @@ export function validatePortableCrunWorkflow(workflow: unknown): string[] {
       "Portable crun teardown must stop and verify the service before removing the root-owned runtime",
     );
 
-  const positions = [select, checkout, probe, live, retain, upload, remove, restore].map((item) =>
-    steps.indexOf(item),
+  if (
+    fallback.if !== "always()" ||
+    !containsAll(fallback.run, [
+      `runtime=${RUNTIME}`,
+      'manager_state="$(/usr/bin/systemctl is-active',
+      "user_systemctl is-active nemoclaw-native-podman-e2e.socket",
+      "user_systemctl is-active nemoclaw-native-podman-e2e.service",
+      '"$socket_state" != inactive',
+      '"$service_state" != inactive',
+      '"$manager_state" != inactive',
+      'sudo test -f "$runtime"',
+      'sudo test ! -L "$runtime"',
+      "sudo stat -c '%u:%g'",
+      "== 0:0",
+      'sudo rm -f -- "$runtime"',
+      'sudo test ! -e "$runtime"',
+    ]) ||
+    !ordered(fallback.run, '"$service_state" != inactive', 'sudo rm -f -- "$runtime"')
+  )
+    errors.push("Portable crun must retain a safe post-restoration removal fallback");
+
+  const positions = [select, checkout, probe, live, retain, upload, remove, restore, fallback].map(
+    (item) => steps.indexOf(item),
   );
   if (
     positions.some((position) => position < 0) ||

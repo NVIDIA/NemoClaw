@@ -431,8 +431,10 @@ describe("shared E2E workflow boundary", () => {
       "selection and headroom",
     ],
     ["Remove pinned Portable crun", 'user_systemctl stop "$service.socket"', "teardown"],
+    ["Remove pinned Portable crun", 'user_systemctl is-active "$service.service"', "teardown"],
     ["Remove pinned Portable crun", "sudo stat -c '%u:%g'", "teardown"],
     ["Remove pinned Portable crun", 'sudo rm -f -- "$runtime"', "teardown"],
+    ["Remove pinned Portable crun after restoration", 'sudo rm -f -- "$runtime"', "fallback"],
   ])("rejects weakened Portable crun control in %s", (name, control, diagnostic) => {
     const errors = validatePortableMutation((workflow) => {
       const target = workflow.jobs["portable-hermes-finalization"].steps!.find(
@@ -456,6 +458,19 @@ describe("shared E2E workflow boundary", () => {
     expect(errors).toContain(
       "Portable crun trust, evidence, and teardown steps must retain their reviewed order",
     );
+  });
+
+  it("requires the fallback when pre-restore removal cannot prove service state", () => {
+    const errors = validatePortableMutation((workflow) => {
+      const steps = workflow.jobs["portable-hermes-finalization"].steps!;
+      const removal = steps.find((step) => step.name === "Remove pinned Portable crun")!;
+      removal.run = removal.run!.replace('user_systemctl is-active "$service.service"', "");
+      steps.splice(
+        steps.findIndex((step) => step.name === "Remove pinned Portable crun after restoration"),
+        1,
+      );
+    });
+    expect(errors).toContain("Portable crun must retain a safe post-restoration removal fallback");
   });
 
   it("keeps action paths case-sensitive when classifying staging references", () => {

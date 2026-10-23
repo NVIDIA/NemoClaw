@@ -6134,6 +6134,38 @@ jobs:
         with:
           enabled: "true"
 
+      - name: Remove pinned Portable crun after restoration
+        if: always()
+        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+        run: |
+          set -euo pipefail
+          runtime=/usr/local/libexec/nemoclaw/portable-crun.${{ github.run_id }}.${{ github.run_attempt }}
+          if ! sudo test -e "$runtime" && ! sudo test -L "$runtime"; then exit 0; fi
+          uid="$(id -u)"
+          manager_state="$(/usr/bin/systemctl is-active "user@${uid}.service" 2>/dev/null || true)"
+          if [[ "$manager_state" == active ]]; then
+            runtime_dir="/run/user/$uid"
+            user_systemctl() {
+              env DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime_dir/bus" \
+                XDG_RUNTIME_DIR="$runtime_dir" /usr/bin/systemctl --user "$@"
+            }
+            socket_state="$(user_systemctl is-active nemoclaw-native-podman-e2e.socket 2>/dev/null || true)"
+            service_state="$(user_systemctl is-active nemoclaw-native-podman-e2e.service 2>/dev/null || true)"
+            if [[ "$socket_state" != inactive && "$socket_state" != unknown ]] ||
+              [[ "$service_state" != inactive && "$service_state" != unknown ]]; then
+              echo "::error::Portable crun cleanup after restoration could not prove Podman inactive" >&2
+              exit 1
+            fi
+          elif [[ "$manager_state" != inactive ]]; then
+            echo "::error::Portable crun cleanup after restoration could not prove user manager inactive" >&2
+            exit 1
+          fi
+          sudo test -f "$runtime"
+          sudo test ! -L "$runtime"
+          [[ "$(sudo stat -c '%u:%g' "$runtime")" == 0:0 ]]
+          sudo rm -f -- "$runtime"
+          sudo test ! -e "$runtime"
+
       - name: Remove immutable native Podman cleanup fixture
         if: always()
         env:
