@@ -5,27 +5,86 @@
 // the wizard should surface a steer-away hint before returning to provider
 // selection so the user does not keep re-picking Local Ollama.
 
+import { spawn } from "node:child_process";
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { MIN_HERMES_OLLAMA_CONTEXT_WINDOW } from "../inference/ollama-runtime-context";
+import {
+  MIN_AUTODETECTED_OLLAMA_CONTEXT_WINDOW,
+  MIN_HERMES_OLLAMA_CONTEXT_WINDOW,
+} from "../inference/ollama-runtime-context";
 import {
   isOllamaProviderPinned,
   runOllamaStartupOrGate,
   setOllamaAutostartDisabled,
+  startDetachedOllamaServe,
 } from "./ollama-startup";
 
+vi.mock("node:child_process", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("node:child_process")>()),
+  spawn: vi.fn(() => ({ on: vi.fn(), unref: vi.fn() })),
+}));
+
 const wait = require("../core/wait");
-const runner = require("../runner");
+const spawnMock = vi.mocked(spawn);
+
+function serveLaunches() {
+  return spawnMock.mock.calls.filter(([, args]) => args?.[0] === "serve");
+}
+
+describe("startDetachedOllamaServe (#11984)", () => {
+  beforeEach(() => spawnMock.mockClear());
+
+  it("starts ollama serve in its own session so onboarding exit cannot stop it", () => {
+    startDetachedOllamaServe({ port: 11434 });
+
+    expect(serveLaunches()).toHaveLength(1);
+    const [file, args, options] = spawnMock.mock.calls[0];
+    expect(file).toBe("ollama");
+    expect(args).toEqual(["serve"]);
+    expect(options).toMatchObject({ detached: true, stdio: "ignore" });
+    expect(options?.env?.OLLAMA_HOST).toBe("127.0.0.1:11434");
+    expect(options?.env).not.toHaveProperty("OLLAMA_CONTEXT_LENGTH");
+    expect(spawnMock.mock.results[0].value.unref).toHaveBeenCalledTimes(1);
+  });
+
+  it("absorbs spawn errors so the readiness probe reports the failure", () => {
+    startDetachedOllamaServe({ port: 11434 });
+
+    const child = spawnMock.mock.results[0].value;
+    const onError = child.on.mock.calls.find(([event]: [string]) => event === "error")?.[1];
+    expect(onError).toBeTypeOf("function");
+    expect(() => onError(new Error("spawn ollama ENOENT"))).not.toThrow();
+  });
+
+  it("requests the agent context floor only when it exceeds the autodetected minimum", () => {
+    startDetachedOllamaServe({
+      port: 11434,
+      contextWindowFloor: MIN_AUTODETECTED_OLLAMA_CONTEXT_WINDOW,
+    });
+    startDetachedOllamaServe({ port: 11434, contextWindowFloor: MIN_HERMES_OLLAMA_CONTEXT_WINDOW });
+
+    expect(spawnMock.mock.calls[0][2]?.env).not.toHaveProperty("OLLAMA_CONTEXT_LENGTH");
+    expect(spawnMock.mock.calls[1][2]?.env?.OLLAMA_CONTEXT_LENGTH).toBe(
+      String(MIN_HERMES_OLLAMA_CONTEXT_WINDOW),
+    );
+  });
+
+  it("launches an explicit binary path without shell quoting", () => {
+    startDetachedOllamaServe({ port: 11434, binPath: "/home/o'test/.local/bin/ollama" });
+
+    expect(spawnMock.mock.calls[0][0]).toBe("/home/o'test/.local/bin/ollama");
+    expect(spawnMock.mock.calls[0][1]).toEqual(["serve"]);
+  });
+});
 
 describe("runOllamaStartupOrGate steer hint (#4365)", () => {
   let originalWaitForHttp: typeof wait.waitForHttp;
-  let originalRunShell: typeof runner.runShell;
   let originalProviderEnv: string | undefined;
   let originalNoAutostartEnv: string | undefined;
 
   beforeEach(() => {
     originalWaitForHttp = wait.waitForHttp;
-    originalRunShell = runner.runShell;
     originalProviderEnv = process.env.NEMOCLAW_PROVIDER;
     originalNoAutostartEnv = process.env.NEMOCLAW_OLLAMA_NO_AUTOSTART;
     // Clear NEMOCLAW_OLLAMA_NO_AUTOSTART so isOllamaAutostartDisabled() stays
@@ -33,13 +92,12 @@ describe("runOllamaStartupOrGate steer hint (#4365)", () => {
     // timeout branch is bypassed and these assertions never run.
     delete process.env.NEMOCLAW_OLLAMA_NO_AUTOSTART;
     setOllamaAutostartDisabled(false);
-    runner.runShell = () => ({ status: 0 });
+    spawnMock.mockClear();
   });
 
   function restore() {
     setOllamaAutostartDisabled(false);
     wait.waitForHttp = originalWaitForHttp;
-    runner.runShell = originalRunShell;
     if (originalProviderEnv === undefined) delete process.env.NEMOCLAW_PROVIDER;
     else process.env.NEMOCLAW_PROVIDER = originalProviderEnv;
     if (originalNoAutostartEnv === undefined) {
@@ -150,11 +208,6 @@ describe("runOllamaStartupOrGate steer hint (#4365)", () => {
       waitCalled = true;
       return true;
     };
-    let shellCalled = false;
-    runner.runShell = () => {
-      shellCalled = true;
-      return { status: 0 };
-    };
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
     try {
@@ -167,7 +220,7 @@ describe("runOllamaStartupOrGate steer hint (#4365)", () => {
 
       expect(outcome).toEqual({ kind: "ready" });
       expect(waitCalled).toBe(false);
-      expect(shellCalled).toBe(false);
+      expect(serveLaunches()).toHaveLength(0);
       expect(errSpy).not.toHaveBeenCalled();
     } finally {
       errSpy.mockRestore();
@@ -178,11 +231,6 @@ describe("runOllamaStartupOrGate steer hint (#4365)", () => {
   it("starts a NemoClaw-owned Hermes daemon with its required context length", () => {
     delete process.env.NEMOCLAW_PROVIDER;
     wait.waitForHttp = () => true;
-    let command = "";
-    runner.runShell = (value: string) => {
-      command = value;
-      return { status: 0 };
-    };
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
     try {
@@ -195,9 +243,14 @@ describe("runOllamaStartupOrGate steer hint (#4365)", () => {
       });
 
       expect(outcome).toEqual({ kind: "ready" });
-      expect(command).toBe(
-        "OLLAMA_CONTEXT_LENGTH=64000 OLLAMA_HOST=127.0.0.1:11434 ollama serve > /dev/null 2>&1 &",
-      );
+      expect(serveLaunches()).toHaveLength(1);
+      expect(serveLaunches()[0][2]).toMatchObject({
+        detached: true,
+        env: expect.objectContaining({
+          OLLAMA_HOST: "127.0.0.1:11434",
+          OLLAMA_CONTEXT_LENGTH: String(MIN_HERMES_OLLAMA_CONTEXT_WINDOW),
+        }),
+      });
     } finally {
       logSpy.mockRestore();
       restore();
@@ -246,11 +299,6 @@ describe("runOllamaStartupOrGate steer hint (#4365)", () => {
   ] as const)("refuses an unavailable Hermes fallback and $name (#6760)", (testCase) => {
     providerSetups[testCase.providerSetup]();
     setOllamaAutostartDisabled(true);
-    let shellCalled = false;
-    runner.runShell = () => {
-      shellCalled = true;
-      return { status: 0 };
-    };
     const getLocalProviderBaseUrl = vi.fn(() => "http://host.openshell.internal:11435/v1");
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
@@ -268,7 +316,7 @@ describe("runOllamaStartupOrGate steer hint (#4365)", () => {
     try {
       outcomeAssertions[testCase.outcome](invoke);
       expect(exitSpy).toHaveBeenCalledTimes(testCase.expectedExitCalls);
-      expect(shellCalled).toBe(false);
+      expect(serveLaunches()).toHaveLength(0);
       expect(getLocalProviderBaseUrl).not.toHaveBeenCalled();
       expect(errSpy).toHaveBeenCalledWith(
         "  Ollama is not running on localhost:11434 and --no-ollama-autostart is set; cannot verify the required 64000-token context window.",
