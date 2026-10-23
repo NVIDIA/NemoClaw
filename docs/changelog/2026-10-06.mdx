@@ -20,8 +20,7 @@ It also adds Tavily to managed OpenClaw images, expands configuration export cov
   Related change: [PR #12516](https://github.com/NVIDIA/NemoClaw/pull/12516).
   Refer to [Understand Context Compaction](/user-guide/openclaw/configure-agents/understand-context-compaction).
 - The 64 GB DGX Spark Qwen vLLM recipe uses lazy `safetensors` loading instead of `fastsafetensors`.
-  This change reduces startup memory pressure on the Experimental 64 GB profile without changing its model, context, concurrency, or memory limits.
-  Hosted-installer and sustained-workload qualification remain pending.
+  This change reduces startup memory pressure on the 64 GB profile without changing its model, context, concurrency, or memory limits.
   Related change: [PR #12633](https://github.com/NVIDIA/NemoClaw/pull/12633).
   Refer to [Set Up vLLM](/user-guide/openclaw/inference/local-inference/set-up-vllm).
 - Operator-attached llama.cpp onboarding now checks sandbox reachability before it accepts a host service.

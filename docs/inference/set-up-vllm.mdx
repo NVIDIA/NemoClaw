@@ -383,8 +383,6 @@ The smaller recipe admits a nominal 64 GB DGX Spark that reports about 61.6 GB o
 The admission floor uses detected total unified-memory capacity, not currently available memory.
 The separate GPU-memory preflight still checks available memory when `nvidia-smi` reports numeric values.
 It loads weights with vLLM's lazy `safetensors` strategy instead of `fastsafetensors`.
-The profile remains Experimental.
-Hosted-installer and sustained-workload qualification remain pending.
 Unknown capacity or less than 60 GB does not qualify for either Qwen recipe.
 Before installation, NemoClaw displays the selected hardware profile and context limit.
 
