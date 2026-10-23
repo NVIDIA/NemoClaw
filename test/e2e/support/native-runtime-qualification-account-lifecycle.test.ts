@@ -8,6 +8,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { boundedTestTempRoot } from "../../helpers/bounded-temp-root";
 import { readYaml, type Workflow } from "../../helpers/e2e-workflow-contract";
 
 const roots: string[] = [];
@@ -363,7 +364,9 @@ describe("native runtime qualification account lifecycle", () => {
 
   it("rejects a symlinked or wrong-owner user bus while accepting the exact account socket", async () => {
     const fixture = createFixture();
-    const socketRoot = fs.mkdtempSync("/tmp/nrq-bus-");
+    const socketRoot = fs.mkdtempSync(
+      path.join(boundedTestTempRoot("nc-XXXXXX/bus-link", 104), "nc-"),
+    );
     roots.push(socketRoot);
     const socket = path.join(socketRoot, "bus");
     const socketLink = path.join(socketRoot, "bus-link");

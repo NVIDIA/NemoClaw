@@ -2,6 +2,11 @@
   "maxSourceShapeCases": 0,
   "sourceShapeContractExceptions": [
     {
+      "file": "test/repository/dockerignore-security-contract.test.ts",
+      "test": "excludes secret-bearing names at every directory depth",
+      "category": "security"
+    },
+    {
       "file": "src/lib/readiness/host.test.ts",
       "test": "bounds and redacts successful probe text before schema validation",
       "category": "compatibility"
