@@ -307,6 +307,8 @@ When the backup contains native agent state, successful uninstall prints the pat
 Deep Agents Code files are inside that archive, not separate loose files.
 The whole-host sweep applies this gate separately to each selected gateway port.
 If a backup fails or any registered sandbox is skipped, uninstall stops that gateway pass before OpenShell resource cleanup.
+If Docker or Podman does not respond, uninstall reports that engine, skips its stopped sandboxes, and states that their containers cannot be cleaned up.
+Start that container engine, then rerun the same uninstall command.
 A registry entry confirmed absent from both the selected gateway and Docker is exempt because no sandbox state remains to capture.
 When uninstall confirms that no sibling gateways remain, it also removes the shared CLI, services, images, providers, configuration, models, and swap.
 During full uninstall, NemoClaw requires complete selected-gateway authority before it removes provider registrations, the gateway registration, `sandboxes.json`, or later local state.
