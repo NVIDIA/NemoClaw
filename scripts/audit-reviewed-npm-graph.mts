@@ -298,6 +298,7 @@ export function reviewedArchiveGraphManifest(archiveTarVersion: unknown) {
       "@modelcontextprotocol/sdk": "1.32.0",
       "proxy-addr": "2.0.8",
       tar: archiveTarVersion,
+      zod: "4.6.6",
     },
     private: true,
     version: "1.0.0",
