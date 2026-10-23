@@ -383,7 +383,7 @@ import importlib.util, json, sys, types
 spec = importlib.util.spec_from_file_location("mcp_tx", sys.argv[1])
 module = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = module
-spec.loader.exec_module(module)
+spec.loader.exec_module(module); module.GUARD_PATH = sys.argv[2]
 payload = {
     "server": "safe",
     "url": "https://mcp.example.test/mcp",
@@ -832,7 +832,7 @@ import importlib.util, sys
 spec = importlib.util.spec_from_file_location("mcp_tx", sys.argv[1])
 module = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = module
-spec.loader.exec_module(module)
+spec.loader.exec_module(module); module.GUARD_PATH = sys.argv[2]
 payload = {
     "server": "fake",
     "url": "https://mcp.example.test/mcp",
@@ -858,7 +858,7 @@ import importlib.util, sys
 spec = importlib.util.spec_from_file_location("mcp_tx", sys.argv[1])
 module = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = module
-spec.loader.exec_module(module)
+spec.loader.exec_module(module); module.GUARD_PATH = sys.argv[2]
 payload = {
     "server": "fake",
     "url": "https://mcp.example.test/mcp",
@@ -1131,7 +1131,7 @@ import contextlib, importlib.util, json, signal, sys, types
 spec = importlib.util.spec_from_file_location("mcp_tx", sys.argv[1])
 module = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = module
-spec.loader.exec_module(module)
+spec.loader.exec_module(module); module.GUARD_PATH = sys.argv[2]
 
 sandbox_uid = 1000
 gateway_pid = 4242

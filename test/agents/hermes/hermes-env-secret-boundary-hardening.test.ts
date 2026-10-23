@@ -6,7 +6,16 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import yaml from "js-yaml";
 import { describe, expect, it } from "vitest";
+import { shellQuote } from "../../../src/lib/core/shell-quote";
+import {
+  createRestartFixture,
+  gatewayConfigStubRoot,
+  hashInputs,
+  RUNTIME_CONFIG_GUARD,
+  strictHashIsValid,
+} from "../../helpers/hermes-restart-config-seal-fixture";
 import { extractShellFunction, runHermesBashHarness } from "../../support/hermes-shell-harness";
 
 const VALIDATOR = path.join(
@@ -212,6 +221,99 @@ describe("agents/hermes/start.sh provider placeholder refresh", () => {
     expect(result.stderr).toContain("guard-failed");
     expect(result.stdout).toContain("status=1");
   });
+
+  it("runs the guard and its MCP refresh when .env is absent (#12594)", () => {
+    const result = runHermesBashHarness(
+      [
+        "validate_hermes_env_secret_boundary() { echo boundary-ran; }",
+        'fake_guard_python() { echo "guard-ran $*"; }',
+        extractShellFunction(
+          fs.readFileSync(START_SCRIPT, "utf-8"),
+          "refresh_hermes_provider_placeholders",
+        ),
+        "_HERMES_PYTHON=fake_guard_python",
+        "_HERMES_RUNTIME_CONFIG_GUARD=guard.py",
+        "_HERMES_BOUNDARY_VALIDATOR=validator.py",
+        "refresh_hermes_provider_placeholders strict",
+        "echo status=$?",
+      ],
+      (tmpDir) => {
+        const hermesHome = path.join(tmpDir, ".hermes");
+        fs.mkdirSync(hermesHome);
+        return { HERMES_DIR: hermesHome, HERMES_HASH_FILE: path.join(tmpDir, "hash") };
+      },
+    );
+
+    expect(result.stdout).toContain("guard-ran -I guard.py provider-placeholders");
+    expect(result.stdout).toContain("--refresh-native-local");
+    expect(result.stdout).toContain("status=0");
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "refreshes a stale managed MCP header through the real guard at startup (#12594)",
+    () => {
+      const fixture = createRestartFixture();
+      const stale = "openshell:resolve:env:v5_QMD_MCP_TOKEN";
+      const current = "openshell:resolve:env:v6_QMD_MCP_TOKEN";
+      const managed = {
+        url: "https://mcp.example.test/mcp",
+        enabled: true,
+        timeout: 120,
+        connect_timeout: 60,
+        tools: { resources: true, prompts: true },
+        headers: { Authorization: `Bearer ${stale}` },
+      };
+      const user = {
+        url: "https://user.example.test/mcp",
+        headers: { Authorization: `Bearer ${stale}` },
+      };
+      const config = { model: { default: "trusted-model" }, mcp_servers: { qmd: managed, user } };
+      try {
+        fs.writeFileSync(fixture.configPath, yaml.dump(config));
+        const hashes = hashInputs(fixture.configPath, fixture.envPath);
+        fs.writeFileSync(fixture.hashPath, hashes);
+        fs.writeFileSync(fixture.compatHashPath, hashes);
+        const envBefore = fs.readFileSync(fixture.envPath, "utf8");
+        const runGuard =
+          "import runpy, sys; source = sys.argv.pop(1); sys.path.insert(0, sys.argv.pop(1)); " +
+          "sys.argv[0] = source; runpy.run_path(source, run_name='__main__')";
+
+        const result = runHermesBashHarness(
+          [
+            "validate_hermes_env_secret_boundary() { :; }",
+            `guard_python() { shift; python3 -I -c ${shellQuote(runGuard)} "$1" ${shellQuote(gatewayConfigStubRoot(fixture.root))} "\${@:2}"; }`,
+            extractShellFunction(
+              fs.readFileSync(START_SCRIPT, "utf-8"),
+              "refresh_hermes_provider_placeholders",
+            ),
+            "_HERMES_PYTHON=guard_python",
+            `_HERMES_RUNTIME_CONFIG_GUARD=${shellQuote(RUNTIME_CONFIG_GUARD)}`,
+            `_HERMES_BOUNDARY_VALIDATOR=${shellQuote(VALIDATOR)}`,
+            `HERMES_DIR=${shellQuote(fixture.hermesDir)}`,
+            `HERMES_HASH_FILE=${shellQuote(fixture.hashPath)}`,
+            "refresh_hermes_provider_placeholders strict",
+            "echo status=$?",
+          ],
+          () => ({ QMD_MCP_TOKEN: current }),
+        );
+
+        expect(result.stdout, result.stderr).toContain("status=0");
+        expect(yaml.load(fs.readFileSync(fixture.configPath, "utf8"))).toEqual({
+          ...config,
+          mcp_servers: {
+            qmd: { ...managed, headers: { Authorization: `Bearer ${current}` } },
+            user,
+          },
+        });
+        expect(fs.readFileSync(fixture.envPath, "utf8")).toBe(envBefore);
+        expect(strictHashIsValid(fixture)).toBe(true);
+        expect(result.stdout + result.stderr).not.toContain(current);
+        expect(result.stdout + result.stderr).not.toContain(stale);
+      } finally {
+        fs.rmSync(fixture.root, { recursive: true, force: true });
+      }
+    },
+  );
 });
 
 describe("Hermes env-text secret boundary", () => {

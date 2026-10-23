@@ -2744,6 +2744,8 @@ A failed shell `curl` is not evidence that the managed MCP route is broken.
 <AgentOnly variant="hermes">
 
 Hermes includes the stable credential handle from the readiness check in the resolver placeholder and preserves it through inspection, rollback, and lifecycle reconciliation while OpenShell still reports it.
+At each sandbox start, Hermes replaces the handle in a NemoClaw-managed MCP entry with the current handle for the same credential when the two differ, and updates the configuration hash.
+MCP entries that NemoClaw did not write stay unchanged.
 
 </AgentOnly>
 <AgentOnly variant="openclaw">

@@ -22,6 +22,7 @@ import stat
 import struct
 import subprocess
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import yaml
@@ -30,6 +31,10 @@ import yaml
 API_SERVER_KEY_RE = re.compile(r"^[0-9a-f]{64}$")
 ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 SCOPED_PLACEHOLDER_PREFIX = "openshell:resolve:env:"
+MCP_AUTHORIZATION_SCHEME = "Bearer "
+MCP_SCOPED_HANDLE_RE = re.compile(
+    r"openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_([A-Za-z_][A-Za-z0-9_]{0,127})"
+)
 BOUNDARY_VALIDATOR_TIMEOUT_SECONDS = 5
 FS_IOC_GETFLAGS = 0x80086601
 FS_IOC_SETFLAGS = 0x40086602
@@ -3446,6 +3451,107 @@ def _native_local_config_refresh_text(text: str, reference: str) -> str | None:
     return updated_text
 
 
+def managed_mcp_entry(url: object, headers: dict) -> dict[str, object]:
+    """Build the canonical NemoClaw-managed Hermes MCP server entry.
+
+    The MCP transaction writes entries through this function, and startup
+    refresh recognizes managed entries by comparing against it.
+    """
+    entry: dict[str, object] = {
+        "url": url,
+        "enabled": True,
+        "timeout": 120,
+        "connect_timeout": 60,
+        "tools": {"resources": True, "prompts": True},
+    }
+    if headers:
+        entry["headers"] = headers
+    return entry
+
+
+def _mcp_authorization_handle(server: object) -> tuple[str, str] | None:
+    """Return the env key and scoped handle of a managed MCP bearer header.
+
+    Only an entry equal to `managed_mcp_entry` qualifies. User-authored
+    entries stay unchanged.
+    """
+    if (
+        not isinstance(server, dict)
+        or not isinstance(server.get("url"), str)
+        or server != managed_mcp_entry(server["url"], server.get("headers"))
+    ):
+        return None
+    headers = server.get("headers")
+    if not isinstance(headers, dict) or set(headers) != {"Authorization"}:
+        return None
+    value = headers["Authorization"]
+    if not isinstance(value, str) or not value.startswith(MCP_AUTHORIZATION_SCHEME):
+        return None
+    handle = value[len(MCP_AUTHORIZATION_SCHEME) :]
+    match = MCP_SCOPED_HANDLE_RE.fullmatch(handle)
+    return (match.group(1), handle) if match else None
+
+
+def _mcp_authorization_refresh(
+    config: dict, handle_for_env_key: Callable[[str], str]
+) -> list[str]:
+    """Rebind stale managed MCP bearer handles to their own credential key.
+
+    MCP add and restart bake the attached credential revision into the header.
+    A later provider-env revision makes OpenShell reject that handle once its
+    retained generation is gone. Only an Authorization value that already names
+    the same env key changes, and aliased mappings are copied, never mutated.
+    """
+    servers = config.get("mcp_servers")
+    if not isinstance(servers, dict):
+        return []
+    refreshed = {}
+    env_keys = set()
+    for name, server in servers.items():
+        current = _mcp_authorization_handle(server)
+        if current is None:
+            continue
+        env_key, handle = current
+        candidate = handle_for_env_key(env_key)
+        match = MCP_SCOPED_HANDLE_RE.fullmatch(candidate)
+        if match is None or match.group(1) != env_key or candidate == handle:
+            continue
+        refreshed[name] = {
+            **server,
+            "headers": {"Authorization": f"{MCP_AUTHORIZATION_SCHEME}{candidate}"},
+        }
+        env_keys.add(env_key)
+    if refreshed:
+        config["mcp_servers"] = {**servers, **refreshed}
+    return sorted(env_keys)
+
+
+def _startup_config_refresh_text(
+    text: str,
+    native_reference: str | None,
+    handle_for_env_key: Callable[[str], str],
+) -> tuple[str | None, bool, list[str]]:
+    """Apply every fresh-entrypoint credential refresh in one fixed order."""
+    native_text = (
+        None
+        if native_reference is None
+        else _native_local_config_refresh_text(text, native_reference)
+    )
+    try:
+        config = yaml.safe_load(text if native_text is None else native_text)
+    except yaml.YAMLError as exc:
+        raise UnsafePathError("Hermes configuration is not valid YAML") from exc
+    if not isinstance(config, dict):
+        raise UnsafePathError("Hermes configuration must be a mapping")
+    native_changed = native_text is not None and native_text != text
+    mcp_env_keys = _mcp_authorization_refresh(config, handle_for_env_key)
+    if not mcp_env_keys:
+        return native_text, native_changed, []
+    updated_text = yaml.safe_dump(config, sort_keys=False)
+    _validate_hermes_config_candidate(updated_text.encode("utf-8"))
+    return updated_text, native_changed, mcp_env_keys
+
+
 def _read_native_local_startup_preimage(
     witness_path: str, config_snapshot: FileSnapshot
 ) -> tuple[str, FileSnapshot]:
@@ -3471,13 +3577,28 @@ def _native_local_startup_config_matches(
         return False
     try:
         current = yaml.safe_load(current_text)
-        model = current.get("model") if isinstance(current, dict) else None
-        reference = model.get("api_key") if isinstance(model, dict) else None
     except yaml.YAMLError as exc:
         raise UnsafePathError("Hermes configuration is not valid YAML") from exc
-    if not isinstance(reference, str):
-        raise UnsafePathError("refusing invalid native local startup credential")
-    replayed = _native_local_config_refresh_text(preimage, reference)
+    if not isinstance(current, dict):
+        raise UnsafePathError("Hermes configuration must be a mapping")
+    model = current.get("model")
+    reference = model.get("api_key") if isinstance(model, dict) else None
+    servers = current.get("mcp_servers")
+    handles_by_env_key: dict[str, set[str]] = {}
+    for server in servers.values() if isinstance(servers, dict) else ():
+        found = _mcp_authorization_handle(server)
+        if found is not None:
+            handles_by_env_key.setdefault(found[0], set()).add(found[1])
+    mcp_handles = {
+        env_key: next(iter(handles))
+        for env_key, handles in handles_by_env_key.items()
+        if len(handles) == 1
+    }
+    replayed, _native_changed, _mcp_env_keys = _startup_config_refresh_text(
+        preimage,
+        reference if isinstance(reference, str) else None,
+        lambda env_key: mcp_handles.get(env_key, ""),
+    )
     return replayed is not None and replayed == current_text
 
 
@@ -3550,15 +3671,19 @@ def _record_native_local_startup_preimage(
 
 
 def _refresh_native_local_config(hermes_dir: str, hash_file: str, mode: str) -> None:
-    """Materialize only the managed local route from a fresh supervisor env.
+    """Materialize managed credential handles from a fresh supervisor env.
 
+    This covers the managed local route and managed MCP bearer headers.
     An internal gateway relaunch must not call this: its parent environment can
-    predate a host model switch that already wrote a newer issued reference.
+    predate a host model switch or MCP restart that already wrote a newer
+    issued reference.
     """
     config_path = os.path.join(hermes_dir, "config.yaml")
     text, snapshot = _read_text(config_path, MAX_CONFIG_INPUT_BYTES)
-    updated_text = _native_local_config_refresh_text(
-        text, os.environ.get("NEMOCLAW_LOCAL_INFERENCE_TOKEN", "")
+    updated_text, native_changed, mcp_env_keys = _startup_config_refresh_text(
+        text,
+        os.environ.get("NEMOCLAW_LOCAL_INFERENCE_TOKEN", ""),
+        lambda env_key: os.environ.get(env_key, ""),
     )
     if updated_text is None or updated_text == text:
         return
@@ -3566,7 +3691,13 @@ def _refresh_native_local_config(hermes_dir: str, hash_file: str, mode: str) -> 
         _record_native_local_startup_preimage(hermes_dir, hash_file, text, snapshot)
     _write_existing(config_path, updated_text, snapshot)
     refresh_hashes(hermes_dir, hash_file, mode)
-    print("[config] Refreshed Hermes native local credential reference", file=sys.stderr)
+    if native_changed:
+        print("[config] Refreshed Hermes native local credential reference", file=sys.stderr)
+    for env_key in mcp_env_keys:
+        print(
+            f"[config] Refreshed Hermes MCP credential reference for {env_key}",
+            file=sys.stderr,
+        )
 
 
 def provider_placeholders(

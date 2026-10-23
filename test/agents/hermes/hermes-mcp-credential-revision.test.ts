@@ -11,6 +11,11 @@ const TRANSACTION = path.resolve(
   "../../..",
   "agents/hermes/mcp-config-transaction.py",
 );
+const GUARD = path.resolve(
+  import.meta.dirname,
+  "../../..",
+  "agents/hermes/runtime-config-guard.py",
+);
 
 describe("Hermes MCP credential revision transaction", () => {
   it("accepts a child-visible bounded revision and preserves exact comparison (#10155)", () => {
@@ -23,6 +28,7 @@ spec = importlib.util.spec_from_file_location("mcp_tx", sys.argv[1])
 module = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = module
 spec.loader.exec_module(module)
+module.GUARD_PATH = sys.argv[2]
 
 os.environ["FAKE_TOKEN"] = "openshell:resolve:env:v12_FAKE_TOKEN"
 base = {
@@ -98,6 +104,7 @@ comparison = {
 }
 print(json.dumps({"validation": results, "comparison": comparison}))`,
         TRANSACTION,
+        GUARD,
       ],
       { encoding: "utf8" },
     );

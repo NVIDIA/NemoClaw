@@ -65,6 +65,8 @@ OpenShell keeps the raw credential in its provider store and combines credential
 <AgentOnly variant="hermes">
 Hermes includes the stable credential handle from the readiness check in this placeholder.
 Registration, inspection, rollback, and lifecycle reconciliation preserve that handle while OpenShell still reports it.
+At each sandbox start, Hermes replaces the handle in a NemoClaw-managed MCP entry with the current handle for the same credential when the two differ, and updates the configuration hash.
+MCP entries that NemoClaw did not write stay unchanged.
 </AgentOnly>
 
 For the normal MCP client path, OpenShell evaluates the effective policy for the destination host and port, adapter binary, literal endpoint path, and MCP method before replacing placeholders in allowed HTTP request headers.

@@ -226,7 +226,10 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   },
   {
     pattern: /(?:^|\/)agents\/hermes\/runtime-config-guard\.py$/,
-    testsToRun: runTests("src/lib/actions/sandbox/gateway-restart-hermes-drift.test.ts"),
+    testsToRun: runTests(
+      "src/lib/actions/sandbox/gateway-restart-hermes-drift.test.ts",
+      "test/agents/hermes/hermes-mcp-credential-startup.test.ts",
+    ),
   },
   {
     pattern: /(?:^|\/)scripts\/lib\/refresh-openclaw-wechat-placeholder\.py$/,
@@ -237,6 +240,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests(
       "src/lib/actions/sandbox/gateway-restart-hermes-drift.test.ts",
       "test/agents/hermes/hermes-mcp-credential-revision.test.ts",
+      "test/agents/hermes/hermes-mcp-credential-startup.test.ts",
     ),
   },
   {

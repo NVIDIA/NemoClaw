@@ -285,9 +285,11 @@ def _credential_name_is_reserved(name: str) -> bool:
 
 
 def _load_guard() -> ModuleType:
-    spec = importlib.util.spec_from_file_location(
-        "nemoclaw_hermes_runtime_guard", GUARD_PATH
-    )
+    return _load_guard_module("nemoclaw_hermes_runtime_guard")
+
+
+def _load_guard_module(name: str) -> ModuleType:
+    spec = importlib.util.spec_from_file_location(name, GUARD_PATH)
     if spec is None or spec.loader is None:
         raise RuntimeError("Hermes runtime config guard could not be loaded")
     module = importlib.util.module_from_spec(spec)
@@ -520,16 +522,8 @@ def _managed_candidate(payload: dict[str, object]) -> dict[str, object]:
     headers = payload.get("headers")
     if not isinstance(headers, dict):
         raise ValueError("MCP mutation payload headers must be an object")
-    candidate: dict[str, object] = {
-        "url": payload.get("url"),
-        "enabled": True,
-        "timeout": 120,
-        "connect_timeout": 60,
-        "tools": {"resources": True, "prompts": True},
-    }
-    if headers:
-        candidate["headers"] = headers
-    return candidate
+    owner = _load_guard_module("nemoclaw_hermes_mcp_entry_owner")
+    return owner.managed_mcp_entry(payload.get("url"), headers)
 
 
 def _managed_candidate_matches(
