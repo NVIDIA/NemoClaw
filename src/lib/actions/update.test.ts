@@ -648,10 +648,14 @@ describe("runUpdateAction", () => {
     });
 
     it("treats NEMOCLAW_NON_INTERACTIVE=1 as unable to prompt", async () => {
-      const { result, spawnSyncImpl } = run({ NEMOCLAW_NON_INTERACTIVE: "1" }, true);
+      const { error, result, spawnSyncImpl } = run({ NEMOCLAW_NON_INTERACTIVE: "1" }, true);
 
       await expect(result).resolves.toEqual(expect.objectContaining({ status: 1 }));
       expect(spawnSyncImpl).not.toHaveBeenCalled();
+      expect(error).toHaveBeenCalledWith(
+        expect.stringContaining("NEMOCLAW_NON_INTERACTIVE=1 prevents it from prompting"),
+      );
+      expect(error).not.toHaveBeenCalledWith(expect.stringContaining("no terminal is available"));
     });
 
     it("runs the installer with the accept variable and passes it through", async () => {

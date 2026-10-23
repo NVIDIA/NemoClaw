@@ -583,13 +583,22 @@ export async function runUpdateAction(
   const noticeAccepted =
     env[NOTICE_ACCEPT_ENV] === "1" ||
     (deps.usageNoticeAccepted ?? (() => hasAcceptedUsageNotice(loadUsageNoticeConfig().version)))();
-  const canPrompt =
-    env.NEMOCLAW_NON_INTERACTIVE !== "1" && (deps.hasTerminal ?? canPromptOnTerminal)();
+  const nonInteractive = env.NEMOCLAW_NON_INTERACTIVE === "1";
+  const canPrompt = !nonInteractive && (deps.hasTerminal ?? canPromptOnTerminal)();
   if (!noticeAccepted && !canPrompt) {
-    error(
-      "  The maintained installer must show the third-party software notice, and no terminal is available to accept it.",
-    );
-    error(`  Re-run in a terminal, or set ${NOTICE_ACCEPT_ENV}=1 to accept the notice.`);
+    if (nonInteractive) {
+      error(
+        "  The maintained installer must show the third-party software notice, and NEMOCLAW_NON_INTERACTIVE=1 prevents it from prompting.",
+      );
+      error(
+        `  Set ${NOTICE_ACCEPT_ENV}=1 to accept the notice, or unset NEMOCLAW_NON_INTERACTIVE and re-run in a terminal.`,
+      );
+    } else {
+      error(
+        "  The maintained installer must show the third-party software notice, and no terminal is available to accept it.",
+      );
+      error(`  Re-run in a terminal, or set ${NOTICE_ACCEPT_ENV}=1 to accept the notice.`);
+    }
     recordResult("failed");
     return {
       currentVersion,
