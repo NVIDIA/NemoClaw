@@ -26,6 +26,7 @@ import type { ToolDisclosure } from "../../tool-disclosure";
 import { prepareManagedRebuildProfileHandoff } from "./agents/managed-workload-rebuild-profile";
 import {
   getPersistedSandboxTargetGatewayName,
+  getValidatedPersistedSandboxTargetGatewayPort,
   getSandboxTargetGatewayName,
 } from "./gateway-target";
 import type { RebuildBail, RebuildLog } from "./rebuild-credential-preflight";
@@ -300,6 +301,7 @@ export async function prepareRebuildTargetPreflights(args: {
     try {
       recreateOptions.managedWorkloadRebuild = prepareManagedRebuildProfileHandoff({
         catalogHandoff: managedWorkloadRebuildCatalog,
+        gatewayPort: getValidatedPersistedSandboxTargetGatewayPort(sandboxEntry),
         targetConfig,
         recreateOptions,
         messagingPlan,

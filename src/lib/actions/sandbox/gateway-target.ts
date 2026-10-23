@@ -3,6 +3,7 @@
 
 import { GATEWAY_PORT } from "../../core/ports";
 import {
+  registryEntryGatewayPort,
   resolveGatewayName,
   resolveGatewayPortFromName,
   resolveSandboxGatewayName,
@@ -39,6 +40,13 @@ export function getSandboxTargetGatewayName(sandboxName = ""): string {
 /** Resolve a gateway directly from the already-authoritative persisted row. */
 export function getPersistedSandboxTargetGatewayName(sandbox: SandboxGatewayBinding): string {
   return resolveSandboxGatewayName(sandbox);
+}
+
+/** Reject conflicting persisted identity before a managed rebuild probes its runtime. */
+export function getValidatedPersistedSandboxTargetGatewayPort(
+  sandbox: SandboxGatewayBinding & { name: string },
+): number {
+  return registryEntryGatewayPort(sandbox);
 }
 
 /** Resolve the complete canonical gateway binding from one persisted sandbox row. */

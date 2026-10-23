@@ -11,6 +11,7 @@
  */
 
 import { getScopedCredentialOverride } from "../credentials/scoped-overrides";
+import os from "node:os";
 import { DEFAULT_CONTEXT_WINDOW } from "./config";
 import {
   createOllamaApiCaptureEx,
@@ -23,6 +24,21 @@ import {
   resolveOllamaRuntimeContextWindow,
 } from "./local";
 import { resolveVllmContextWindowFromModels } from "./vllm-runtime-context";
+
+function hasManagedLlamaCppCredential(apiKey: string, gatewayPort: number): boolean {
+  try {
+    const state =
+      require("./llama-cpp/managed-state") as typeof import("./llama-cpp/managed-state");
+    const paths = state.managedLlamaCppStatePaths(os.homedir(), gatewayPort);
+    return (
+      state.loadManagedLlamaCppOwner(paths) !== null &&
+      state.loadManagedLlamaCppReceipt(paths) !== null &&
+      state.loadManagedLlamaCppApiKey(paths) === apiKey
+    );
+  } catch {
+    return false;
+  }
+}
 
 export interface ContextWindowDeps {
   /** Load the model and wait for the load to finish, so the probe finds it resident. */
@@ -38,7 +54,7 @@ export interface ContextWindowDeps {
   /** Read the running vLLM server's max_model_len for the model; null when unavailable. */
   probeVllmContextWindow: (model: string) => number | null;
   /** Read the authenticated llama.cpp server's served context size. */
-  probeLlamaCppContextWindow?: (model: string) => number | null;
+  probeLlamaCppContextWindow?: (model: string, gatewayPort: number) => number | null;
   /** Fallback window for providers without a per-model runtime signal (cloud). */
   defaultCloudContextWindow: () => number;
 }
@@ -94,12 +110,12 @@ const defaultContextWindowDeps: ContextWindowDeps = {
   },
   defaultCloudContextWindow: (): number => DEFAULT_CONTEXT_WINDOW,
   /** Read the selected model's served context using the scoped or staged credential. */
-  probeLlamaCppContextWindow: (model: string): number | null => {
+  probeLlamaCppContextWindow: (model: string, gatewayPort: number): number | null => {
     const { LLAMA_CPP_CREDENTIAL_ENV, probeLlamaCppAttachment } = require("./llama-cpp") as {
       LLAMA_CPP_CREDENTIAL_ENV: string;
       probeLlamaCppAttachment: (
         apiKey: string,
-        options?: { requestedModel?: string | null },
+        options?: { requestedModel?: string | null; managedRuntime?: true },
       ) => { ok: boolean; contextWindow?: number };
     };
     const apiKey =
@@ -107,7 +123,12 @@ const defaultContextWindowDeps: ContextWindowDeps = {
       process.env[LLAMA_CPP_CREDENTIAL_ENV]?.replace(/\r/g, "").trim() ??
       null;
     if (!apiKey) return null;
-    const result = probeLlamaCppAttachment(apiKey, { requestedModel: model });
+    const result = probeLlamaCppAttachment(apiKey, {
+      requestedModel: model,
+      ...(hasManagedLlamaCppCredential(apiKey, gatewayPort)
+        ? { managedRuntime: true as const }
+        : {}),
+    });
     return result.ok ? (result.contextWindow ?? null) : null;
   },
 };
@@ -132,6 +153,7 @@ const defaultContextWindowDeps: ContextWindowDeps = {
 export function resolveContextWindowForModel(
   provider: string,
   model: string,
+  gatewayPort: number,
   deps: ContextWindowDeps = defaultContextWindowDeps,
 ): number | null {
   if (provider === "ollama-local") {
@@ -142,7 +164,7 @@ export function resolveContextWindowForModel(
     return deps.probeVllmContextWindow(model);
   }
   if (provider === "llama-cpp-local") {
-    return deps.probeLlamaCppContextWindow?.(model) ?? null;
+    return deps.probeLlamaCppContextWindow?.(model, gatewayPort) ?? null;
   }
   if (provider === "compatible-endpoint" || provider === "compatible-anthropic-endpoint") {
     return null;

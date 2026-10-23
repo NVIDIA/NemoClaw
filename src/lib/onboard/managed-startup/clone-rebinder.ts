@@ -64,6 +64,7 @@ export interface ManagedStartupCloneCurrentState {
 
 export interface ManagedStartupCloneRebindInput {
   readonly sourceSandboxName: string;
+  readonly sourceGatewayPort: number;
   readonly destinationSandboxName: string;
   readonly expectedAgent: ManagedStartupAgent;
   readonly destinationDashboardPort: number | null;
@@ -307,6 +308,7 @@ function currentMessagingPlan(current: ManagedStartupCloneCurrentState): unknown
 function reconcileCurrentSourceProfile(
   profile: ManagedStartupProfile,
   current: ManagedStartupCloneCurrentState,
+  sourceGatewayPort: number,
 ): ManagedStartupProfile {
   const inference = currentInference(profile, current);
   const hermesToolGateways = current.hermesToolGateways ?? [];
@@ -352,6 +354,7 @@ function reconcileCurrentSourceProfile(
       contextWindow = managedStartupCloneRebinderDependencies.resolveContextWindowForModel(
         currentProvider,
         requireCurrentString(current.model, "inference model"),
+        sourceGatewayPort,
       );
       if (contextWindow === null) {
         fail("current OpenClaw inference route has no verifiable context window");
@@ -499,7 +502,11 @@ export function rebindManagedStartupProfileForClone(
 
   let profile: ManagedStartupProfile;
   try {
-    const currentSourceProfile = reconcileCurrentSourceProfile(sourceProfile, input.currentSource);
+    const currentSourceProfile = reconcileCurrentSourceProfile(
+      sourceProfile,
+      input.currentSource,
+      input.sourceGatewayPort,
+    );
     profile = validateManagedStartupProfile({
       ...currentSourceProfile,
       inference: destinationInference(currentSourceProfile, input),
