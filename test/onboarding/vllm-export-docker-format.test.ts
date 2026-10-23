@@ -25,24 +25,30 @@ describe.skipIf(!dockerClientAvailable)("managed vLLM Docker format boundary", (
     expect(fixture.run().serving.hostPort).toBe(18000);
   });
 
-  it("accepts Docker-normalized runtime settings", () => {
-    Object.assign(fixture.objects.container.HostConfig, {
-      Devices: null,
-      CapAdd: null,
-      SecurityOpt: ["label=disable"],
-      Ulimits: null,
-      ShmSize: 64 * 1024 * 1024,
-    });
-    Reflect.deleteProperty(fixture.objects.container.HostConfig, "Tmpfs");
-    Object.assign(fixture.objects.container.HostConfig.DeviceRequests[0]!, { DeviceIDs: null });
-    fixture.objects.container.Config.Env.unshift("HF_HOME=/root/.cache/huggingface");
-    Object.assign(fixture.objects.container.Mounts[0]!, {
-      Source: "/home/fixture/.cache/huggingface",
-      Destination: "/root/.cache/huggingface",
-      RW: true,
-    });
-    expect(fixture.run().serving.hostPort).toBe(18000);
-  });
+  it.each([
+    ["null", null],
+    ["an empty list", []],
+  ])(
+    "accepts Docker-normalized runtime settings with unset resource limits recorded as %s",
+    (_spelling, ulimits) => {
+      Object.assign(fixture.objects.container.HostConfig, {
+        Devices: null,
+        CapAdd: null,
+        SecurityOpt: ["label=disable"],
+        Ulimits: ulimits,
+        ShmSize: 64 * 1024 * 1024,
+      });
+      Reflect.deleteProperty(fixture.objects.container.HostConfig, "Tmpfs");
+      Object.assign(fixture.objects.container.HostConfig.DeviceRequests[0]!, { DeviceIDs: null });
+      fixture.objects.container.Config.Env.unshift("HF_HOME=/root/.cache/huggingface");
+      Object.assign(fixture.objects.container.Mounts[0]!, {
+        Source: "/home/fixture/.cache/huggingface",
+        Destination: "/root/.cache/huggingface",
+        RW: true,
+      });
+      expect(fixture.run().serving.hostPort).toBe(18000);
+    },
+  );
 
   it.each([
     [
@@ -80,6 +86,12 @@ describe.skipIf(!dockerClientAvailable)("managed vLLM Docker format boundary", (
       "resource limit",
       (f: Fixture) => {
         f.objects.container.HostConfig.Ulimits[0]!.Soft = 1;
+      },
+    ],
+    [
+      "required resource limit set",
+      (f: Fixture) => {
+        f.objects.container.HostConfig.Ulimits.pop();
       },
     ],
     [
