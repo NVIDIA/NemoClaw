@@ -177,6 +177,12 @@ function providerProfileRecoveryLines(
         "  OPENSHELL_GATEWAY_ENDPOINT is set. Unset OPENSHELL_GATEWAY_ENDPOINT and retry with the recorded gateway.",
       ];
     }
+    if (error.kind === "command" && error.reason === "profile_incompatible") {
+      return [
+        `  ${error.message}`,
+        "  Retry with a declared credential name, or ask the gateway operator to update this profile.",
+      ];
+    }
     if (error.kind === "schema" || error.kind === "command") {
       return [
         "  Ask the gateway operator to inspect or import this profile and confirm its credential names, then retry.",

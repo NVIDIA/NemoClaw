@@ -736,39 +736,50 @@ describe("credential actions use typed OpenShell provider results", () => {
     expect(adapter.createProvider).not.toHaveBeenCalled();
   });
 
-  it("does not create from existing credentials when profile identity is unverified (#9806)", async () => {
-    const inspectProviderProfile: OpenShellProviderAdapter["inspectProviderProfile"] =
-      async () => ({
-        ok: false,
-        error: {
-          kind: "schema",
-          message: "OpenShell returned an invalid provider profile.",
-        },
-      });
-    const adapter = providerAdapter({ inspectProviderProfile: vi.fn(inspectProviderProfile) });
-
-    const result = await runCredentialsAddAction(
-      {
-        provider: "custom-provider",
-        type: "generic",
-        credentials: [],
-        configPairs: [],
-        fromExisting: true,
-      },
-      { providerAdapter: adapter },
-    );
+  const undeclared = `The supplied credential names are not declared by the OpenShell provider profile. Declared credential names: NVIDIA_API_KEY.`;
+  it.each([
+    {
+      name: "from existing credentials when profile identity is unverified (#9806)",
+      input: { provider: "custom-provider", type: "generic", credentials: [] as string[] },
+      error: {
+        kind: "schema",
+        message: "OpenShell returned an invalid provider profile.",
+      } as const,
+      expected: [
+        "  Ask the gateway operator to inspect or import this profile and confirm its credential names, then retry.",
+      ],
+    },
+    {
+      name: "an extra NVIDIA provider with an undeclared credential name (#13541)",
+      input: { provider: "demo-nvidia", type: "nvidia", credentials: ["NVIDIA_INFERENCE_API_KEY"] },
+      error: { kind: "command", reason: "profile_incompatible", message: undeclared } as const,
+      expected: [
+        `  ${undeclared}`,
+        "  Retry with a declared credential name, or ask the gateway operator to update this profile.",
+      ],
+    },
+  ])("does not create $name", async ({ input, error, expected }) => {
+    vi.stubEnv("NVIDIA_INFERENCE_API_KEY", "host-only-value");
+    type Inspect = OpenShellProviderAdapter["inspectProviderProfile"];
+    const inspectProviderProfile = vi.fn<Inspect>(async () => ({ ok: false, error }));
+    const adapter = providerAdapter({ inspectProviderProfile });
+    const fromExisting = input.credentials.length === 0;
+    const action = { ...input, configPairs: [], fromExisting };
+    const result = await runCredentialsAddAction(action, { providerAdapter: adapter });
 
     expect(result.exitCode).toBe(1);
-    expect(result.failureLines).toContain(
-      "  Ask the gateway operator to inspect or import this profile and confirm its credential names, then retry.",
-    );
-    expect(adapter.inspectProviderProfile).toHaveBeenCalledWith({
+    expect(result.failureLines).toEqual([
+      `  Could not verify provider profile '${input.type}' for credential registration.`,
+      ...expected,
+    ]);
+    expect(inspectProviderProfile).toHaveBeenCalledWith({
       target: { kind: "named", gatewayName: "nemoclaw" },
-      profileType: "generic",
+      profileType: input.type,
       timeoutMs: 30_000,
-      registrationCredentials: "from-existing",
+      registrationCredentials: fromExisting ? "from-existing" : input.credentials,
     });
     expect(adapter.createProvider).not.toHaveBeenCalled();
+    expect(result.failureLines.join("\n")).not.toContain("host-only-value");
   });
 
   it("creates from existing credentials when live MCP provider keys do not overlap (#9806)", async () => {
