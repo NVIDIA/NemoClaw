@@ -19,11 +19,15 @@ import {
 } from "./inference-route-health";
 
 describe("sandbox inference route health", () => {
-  const makeExecutor = (stdout: string, status = 0): OpenShellSandboxBufferedCommandExecutor => ({
+  const makeExecutor = (
+    stdout: string,
+    status = 0,
+    stderr = "",
+  ): OpenShellSandboxBufferedCommandExecutor => ({
     runBuffered: vi.fn(async () => ({
       outcome: { kind: "completed" as const, exitCode: status },
       stdout,
-      stderr: "",
+      stderr,
     })),
   });
 
@@ -61,6 +65,8 @@ describe("sandbox inference route health", () => {
   it.each([
     makeExecutor("private diagnostic", 1),
     makeExecutor("unexpected"),
+    makeExecutor("", 2, "argument --hermes-dir: invalid value"),
+    makeExecutor("", 1, "argument action: invalid choice: 'verify-nvidia-credential'"),
     {
       runBuffered: vi.fn(async () => ({
         outcome: {

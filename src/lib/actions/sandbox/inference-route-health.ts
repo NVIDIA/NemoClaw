@@ -613,6 +613,12 @@ export class HermesNvidiaCredentialRejectedError extends Error {
   }
 }
 
+export class HermesNvidiaCredentialVerifierMissingError extends Error {
+  constructor() {
+    super("The installed Hermes image lacks the NVIDIA credential verifier.");
+  }
+}
+
 /** Check the agent's persisted slots against the fresh supervisor generation. */
 export async function verifyHermesNvidiaCredential(
   entry: SandboxEntry,
@@ -643,6 +649,13 @@ export async function verifyHermesNvidiaCredential(
     result.stdout.trim() === "rejected=1"
   ) {
     throw new HermesNvidiaCredentialRejectedError();
+  }
+  if (
+    result.outcome.kind === "completed" &&
+    result.outcome.exitCode === 2 &&
+    /argument action: invalid choice: 'verify-nvidia-credential'/u.test(result.stderr)
+  ) {
+    throw new HermesNvidiaCredentialVerifierMissingError();
   }
   if (
     result.outcome.kind !== "completed" ||

@@ -9,6 +9,7 @@ import type { SandboxEntry } from "../../state/registry";
 import type { SandboxInferenceInvocationResult } from "./inference-invocation-probe";
 import {
   HermesNvidiaCredentialRejectedError,
+  verifyHermesNvidiaCredential,
   type SandboxInferenceRouteHealth,
 } from "./inference-route-health";
 import { collectSandboxStatusSnapshot } from "./status-snapshot";
@@ -1248,6 +1249,33 @@ describe("Hermes NVIDIA agent credential health", () => {
     expect(snapshot.inferenceHealth).toMatchObject({ ok: false, failureLabel: "unauthorized" });
     expect(snapshot.inferenceHealth?.detail).toContain("Rebuild");
     expect(JSON.stringify(snapshot.inferenceHealth)).not.toContain("private credential detail");
+  });
+  it("requires rebuild when an older Hermes guard cannot verify credentials", async () => {
+    const input = options();
+    const snapshot = await collectSandboxStatusSnapshot("alpha", {
+      ...input,
+      deps: {
+        ...input.deps,
+        verifyNativeNvidiaProviderAttachmentImpl: async () => {},
+        verifyHermesNvidiaCredentialImpl: (entry) =>
+          verifyHermesNvidiaCredential(entry, {
+            runBuffered: async () => ({
+              outcome: { kind: "completed", exitCode: 2 },
+              stdout: "",
+              stderr:
+                "hermes-runtime-config-guard.py: error: argument action: invalid choice: 'verify-nvidia-credential' (choose from 'ensure-api-key', 'refresh-hashes')",
+            }),
+          }),
+      },
+    });
+    expect(snapshot.inferenceHealth).toMatchObject({
+      ok: false,
+      probed: false,
+      failureLabel: "unreachable",
+      detail: expect.stringContaining("Rebuild"),
+    });
+    expect(snapshot.inferenceHealth?.detail).toContain("install the credential verifier");
+    expect(snapshot.inferenceHealth?.detail).not.toContain("Retry status");
   });
   it.each(["command timeout", "transport unavailable", "missing verifier"])(
     "reports unavailable verification without a credential diagnosis: %s",
