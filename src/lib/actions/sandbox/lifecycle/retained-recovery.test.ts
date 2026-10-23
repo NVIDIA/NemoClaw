@@ -282,6 +282,60 @@ describe("journaled rebuild recovery", () => {
     expect(h.capture).toHaveBeenCalledTimes(2);
   });
 
+  it("selects the retained target recovery while preserving another active rebuild (#7475)", async () => {
+    const h = await setupJournaledRebuild();
+    expect(h.session.acquireOnboardLock("retain alpha recovery").acquired).toBe(true);
+    try {
+      h.session.selectRebuildSession("beta");
+    } finally {
+      h.session.releaseOnboardLock();
+    }
+    const recreate = await import("../../../onboard/sandbox-recreate-transaction");
+    const beta = h.session.updateSession((current) => {
+      const transaction = recreate.beginSandboxRecreateTransaction(current, {
+        sandboxName: "beta",
+        gatewayName: h.record.gatewayName,
+        gatewayPort: h.record.gatewayPort,
+        sourceEntry: { name: "beta", agent: "openclaw" },
+        observation: { state: "missing", liveIdentityFingerprint: null },
+        targetIntentFingerprint: recreate.fingerprintSandboxRecreateValue("beta-target"),
+      });
+      current.checkpoint = {
+        ...current.checkpoint!,
+        sandboxIdentity: { kind: "selected", value: { name: "beta", agent: "openclaw" } },
+        gatewayAuthority: {
+          kind: "selected",
+          value: {
+            gatewayName: h.record.gatewayName,
+            gatewayPort: h.record.gatewayPort,
+            mode: "nemoclaw-managed",
+            source: "standalone",
+            endpoint: null,
+            stateDir: null,
+            supervisor: null,
+            requiredCapabilities: [],
+          },
+        },
+        sandboxRecreate: transaction,
+      };
+      return current;
+    });
+    const target = h.session.loadRebuildSession("alpha");
+    expect(target?.checkpoint?.sandboxRecreate?.sandboxName).toBe("alpha");
+
+    expect(h.run()).toBe(true);
+
+    expect(h.session.loadSession()).toMatchObject({
+      sandboxName: "alpha",
+      status: "failed",
+      cancellationRecovery: null,
+      checkpoint: { sandboxRecreate: target?.checkpoint?.sandboxRecreate },
+    });
+    expect(h.session.loadRebuildSession("beta")).toEqual(beta);
+    expect(h.session.listRetainedSandboxRecoveryRecords()).toEqual([]);
+    expect(h.registry.getSandbox("alpha")).toEqual(h.source);
+  });
+
   it("lets the rebuild guard continue after reconciling the saved replacement (#7475)", async () => {
     const h = await setupJournaledRebuild();
     const preflight = await import("../destroy-preflight");

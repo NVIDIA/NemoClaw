@@ -41,6 +41,8 @@ type RecoveryState = {
     typeof OnboardSession,
     | "withOwnedOnboardLock"
     | "loadSession"
+    | "loadRebuildSession"
+    | "selectRebuildSession"
     | "updateSession"
     | "listRetainedSandboxRecoveryRecords"
     | "retainedSandboxRecoveryMatchesSession"
@@ -335,7 +337,7 @@ export function reconcileJournaledRebuildRecovery(
       refuseRebuild(sandboxName, "exactly one identity-free recovery record is required");
     }
     const entry = state.registry.getSandbox(sandboxName);
-    const session = state.session.loadSession();
+    const session = state.session.loadRebuildSession(sandboxName);
     const transaction = session?.checkpoint?.sandboxRecreate;
     if (
       !entry ||
@@ -378,6 +380,7 @@ export function reconcileJournaledRebuildRecovery(
     requireDefaultDockerObservation(record, refuseRebuild);
     requireAbsence(record, state, refuseRebuild);
     requireOwnedRuntime(record, entry, state, refuseRebuild);
+    state.session.selectRebuildSession(sandboxName);
     if (
       !isDeepStrictEqual(state.registry.getSandbox(sandboxName), entry) ||
       !isDeepStrictEqual(state.session.loadSession(), session) ||
