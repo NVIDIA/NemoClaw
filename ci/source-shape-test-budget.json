@@ -485,6 +485,11 @@
       "file": "test/automation/e2e/platform-vitest-main-workflow.test.ts",
       "test": "installs container clients before Vitest but starts Docker only afterward",
       "category": "compatibility"
+    },
+    {
+      "file": "test/package-contract/nemoclaw-plugin-metadata.test.ts",
+      "test": "keeps agent and blueprint runtime minimums compatible with the packaged plugin",
+      "category": "compatibility"
     }
   ]
 }

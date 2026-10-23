@@ -205,6 +205,7 @@ function runInstallBlock(
     codexAcpPackIntegrity?: string;
     packFilename?: string | null;
     allowLegacyFixture?: boolean;
+    blueprintMinimum?: string;
     installedOpenClawVersion?: string;
     installedOpenClawVersionPrefix?: string;
     installedOpenClawVersionSuffix?: string;
@@ -232,6 +233,7 @@ function runInstallBlock(
     codexAcpPackIntegrity = codexAcpCommittedIntegrity,
     packFilename,
     allowLegacyFixture = false,
+    blueprintMinimum,
     installedOpenClawVersion = LEGACY_REBUILD_OPENCLAW_VERSION,
     installedOpenClawVersionPrefix = "openclaw ",
     installedOpenClawVersionSuffix = "",
@@ -280,7 +282,12 @@ function runInstallBlock(
   fs.copyFileSync(OPENCLAW_VERSION_EXTRACTOR, openclawVersionExtractor);
   fs.chmodSync(openclawVersionExtractor, 0o755);
   fs.copyFileSync(MCPORTER_LOCKFILE, path.join(mcporterRuntime, "package-lock.json"));
-  fs.writeFileSync(blueprint, fs.readFileSync(BLUEPRINT, "utf-8"));
+  fs.writeFileSync(
+    blueprint,
+    blueprintMinimum
+      ? `min_openclaw_version: "${blueprintMinimum}"\n`
+      : fs.readFileSync(BLUEPRINT, "utf-8"),
+  );
   fs.writeFileSync(auditExceptionFile, auditExceptionPolicy);
   fs.writeFileSync(
     reviewedNpmExecutable,
@@ -1346,6 +1353,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
             registryTarball: LEGACY_GATEWAY_UPGRADE_OPENCLAW_TARBALL,
             packIntegrity: LEGACY_GATEWAY_UPGRADE_OPENCLAW_INTEGRITY,
             allowLegacyFixture: true,
+            blueprintMinimum: LEGACY_REBUILD_OPENCLAW_VERSION,
             packFilename: "../openclaw-2026.4.24.tgz",
           },
         );
@@ -1391,6 +1399,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
             registryTarball: LEGACY_GATEWAY_UPGRADE_OPENCLAW_TARBALL,
             packIntegrity: LEGACY_GATEWAY_UPGRADE_OPENCLAW_INTEGRITY,
             allowLegacyFixture: true,
+            blueprintMinimum: LEGACY_REBUILD_OPENCLAW_VERSION,
             packFilename: null,
           },
         );
@@ -1407,6 +1416,32 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
     }
 
     if (group === "contract") {
+      it.each(["final", "base"] as const)(
+        "rejects runtimes below the shipped blueprint minimum even in legacy fixture mode: %s",
+        (image) => {
+          const command =
+            image === "final"
+              ? extractRunBlock(
+                  DOCKERFILE,
+                  "# OPENCLAW_VERSION is the NemoClaw runtime build target",
+                  "# Patch OpenClaw media fetch",
+                )
+              : extractRunBlock(
+                  DOCKERFILE_BASE,
+                  "# Install OpenClaw CLI + PyYAML.",
+                  "# Baseline health check.",
+                );
+          const rejected = runInstallBlock(command, {
+            openclawVersion: LEGACY_REBUILD_OPENCLAW_VERSION,
+            allowLegacyFixture: true,
+          });
+          expect(rejected.result.status).not.toBe(0);
+          expect(`${rejected.result.stdout}${rejected.result.stderr}`).toMatch(/below.*minimum/u);
+          expect(rejected.calls).not.toContain("npm view");
+          expect(rejected.calls).not.toContain("npm install");
+        },
+      );
+
       it("rejects legacy fixture pins unless stale-upgrade fixture mode is explicit", () => {
         const production = runInstallBlock(
           extractRunBlock(
@@ -1416,6 +1451,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
           ),
           {
             openclawVersion: LEGACY_REBUILD_OPENCLAW_VERSION,
+            blueprintMinimum: LEGACY_REBUILD_OPENCLAW_VERSION,
             registryIntegrity: LEGACY_REBUILD_OPENCLAW_INTEGRITY,
             registryTarball: LEGACY_REBUILD_OPENCLAW_TARBALL,
             packIntegrity: LEGACY_REBUILD_OPENCLAW_INTEGRITY,
@@ -1429,6 +1465,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
           ),
           {
             openclawVersion: LEGACY_REBUILD_OPENCLAW_VERSION,
+            blueprintMinimum: LEGACY_REBUILD_OPENCLAW_VERSION,
             registryIntegrity: LEGACY_REBUILD_OPENCLAW_INTEGRITY,
             registryTarball: LEGACY_REBUILD_OPENCLAW_TARBALL,
             packIntegrity: LEGACY_REBUILD_OPENCLAW_INTEGRITY,
@@ -1446,6 +1483,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
             registryTarball: LEGACY_REBUILD_OPENCLAW_TARBALL,
             packIntegrity: LEGACY_REBUILD_OPENCLAW_INTEGRITY,
             allowLegacyFixture: true,
+            blueprintMinimum: LEGACY_REBUILD_OPENCLAW_VERSION,
           },
         );
         const gatewayFixtureBase = runInstallBlock(
@@ -1460,6 +1498,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
             registryTarball: LEGACY_GATEWAY_UPGRADE_OPENCLAW_TARBALL,
             packIntegrity: LEGACY_GATEWAY_UPGRADE_OPENCLAW_INTEGRITY,
             allowLegacyFixture: true,
+            blueprintMinimum: LEGACY_REBUILD_OPENCLAW_VERSION,
           },
         );
 

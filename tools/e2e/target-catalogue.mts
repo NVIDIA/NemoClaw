@@ -654,6 +654,17 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference and public weather endpoint",
     shard: "openclaw-balanced-weather",
     selector: "^common-egress.+C1.+$",
+    owningPaths: [
+      "agents/openclaw/manifest.yaml",
+      "nemoclaw-blueprint/blueprint.yaml",
+      "nemoclaw/package.json",
+      "nemoclaw/src/index.ts",
+      "nemoclaw/src/denied-search-state.ts",
+      "nemoclaw/src/runtime-context.ts",
+      "nemoclaw/src/search-config.ts",
+      "scripts/generate-openclaw-config.mts",
+      "src/lib/openclaw/agent-json-provenance.ts",
+    ],
   }),
   commonEgressTarget({
     displayName: "Networking: OpenClaw reaches a public reference through open egress",

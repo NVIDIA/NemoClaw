@@ -12,10 +12,12 @@
  */
 
 import { renderBox } from "./banner.js";
+import { DeniedSearchState } from "./denied-search-state.js";
 import { handleSlashCommand } from "./commands/slash.js";
 import { readNativeRoute } from "./onboard/native-route.js";
 import { getPluginConfig } from "./plugin-config.js";
 import { registerRuntimeContext } from "./runtime-context.js";
+import { configuredSearchEnabled } from "./search-config.js";
 import { safeResolvePath } from "./security/safe-resolve-path.js";
 import { isMemoryPath, scanForSecrets } from "./security/secret-scanner.js";
 
@@ -45,7 +47,18 @@ function readBeforeToolCallEvent(value: unknown): Partial<BeforeToolCallEvent> |
   return {
     toolName: readStringProperty(value, "toolName"),
     params: isToolParams(params) ? params : undefined,
+    runId: readStringProperty(value, "runId"),
   };
+}
+
+/** Use the same host identity for tool denial and authoritative agent_end cleanup. */
+function searchTurnKeys(args: readonly PluginValue[]): string[] {
+  const identities: string[] = [];
+  for (const key of ["runId", "sessionKey", "sessionId"]) {
+    const value = readStringProperty(args[1], key) ?? readStringProperty(args[0], key);
+    if (value?.trim()) identities.push(`${key}:${value}`);
+  }
+  return identities;
 }
 
 // ---------------------------------------------------------------------------
@@ -154,6 +167,7 @@ export interface BeforeToolCallResult {
 
 /** Return value from a before_prompt_build hook. */
 export interface BeforePromptBuildResult {
+  toolsAllow?: string[];
   systemPrompt?: string;
   prependContext?: string;
   appendContext?: string;
@@ -161,8 +175,19 @@ export interface BeforePromptBuildResult {
   appendSystemContext?: string;
 }
 
+/** Return value from the host's pre-inference admission gate. */
+export interface BeforeAgentRunResult {
+  outcome: "block";
+  reason: string;
+  message: string;
+}
+
 /** Union of all hook result types. */
-export type HookResult = BeforeToolCallResult | BeforePromptBuildResult | undefined;
+export type HookResult =
+  | BeforeToolCallResult
+  | BeforePromptBuildResult
+  | BeforeAgentRunResult
+  | undefined;
 
 /**
  * The API object injected into the plugin's register function by the OpenClaw
@@ -226,7 +251,52 @@ export { getPluginConfig };
 /** Tool names that can write/modify files and should be scanned for secrets. */
 const WRITE_TOOL_NAMES = new Set(["write", "edit", "apply_patch", "notebook_edit"]);
 
+function blocksDisabledSearch(
+  config: OpenClawConfig,
+  event: BeforeToolCallEvent,
+  deniedSearchRuns: DeniedSearchState,
+  aliases: readonly string[],
+): boolean {
+  if (configuredSearchEnabled(config) !== false) {
+    deniedSearchRuns.clear();
+    return false;
+  }
+
+  const target = event.toolName.toLowerCase().split(":").at(-1) ?? "";
+  const wrappedTarget = readStringProperty(event.params, "id")?.toLowerCase().split(":").at(-1);
+  const effectiveTarget = target === "tool_call" ? (wrappedTarget ?? "") : target;
+  const searchTool =
+    effectiveTarget === "search" ||
+    /web[_-]?search|(?:brave|tavily)(?:[_:-]|$)/u.test(effectiveTarget);
+  const probe = JSON.stringify(event.params);
+  const searchDiscovery =
+    /^(?:tool_search|tool_describe)$/u.test(effectiveTarget) &&
+    /\b(?:brave|tavily|search|web[_ -]?search)\b/iu.test(probe);
+  const providerProbe =
+    /^(?:exec|execute|shell|web_fetch|browser)$/u.test(effectiveTarget) &&
+    /https?:\/\/(?:api\.tavily\.com|(?:api\.)?search\.brave\.com)(?:[/:?"\s]|$)/iu.test(probe);
+  if (searchTool || searchDiscovery || providerProbe) {
+    if (event.runId) deniedSearchRuns.deny(event.runId, aliases);
+    return true;
+  }
+
+  // A denied search identifies the turn, not the subject of a local document.
+  // Identity-less calls cannot safely correlate turns, so substitutes fail closed.
+  const substituteTool =
+    /^(?:tool_search|tool_describe|tool_call|web_fetch|memory_search|sessions_search|read|exec|execute|shell|browser)$/u;
+  return (
+    (!deniedSearchRuns.hasAdmission(event.runId, aliases) ||
+      deniedSearchRuns.blocks(event.runId)) &&
+    substituteTool.test(target)
+  );
+}
+
 export default function register(api: OpenClawPluginApi): void {
+  const deniedSearchRuns = new DeniedSearchState(() => {
+    api.logger.warn(
+      "Disabled-search identity capacity reached; new turns are refused until an active turn finishes or its deadline expires.",
+    );
+  });
   // 1. Register /nemoclaw slash command (chat interface)
   api.registerCommand({
     name: "nemoclaw",
@@ -246,6 +316,7 @@ export default function register(api: OpenClawPluginApi): void {
     api.logger.warn(
       `Could not register runtime context hook: ${err instanceof Error ? err.message : String(err)}`,
     );
+    throw err;
   }
 
   const bannerEndpoint = route.endpoint;
@@ -254,19 +325,65 @@ export default function register(api: OpenClawPluginApi): void {
 
   if (route.managedModel) api.registerProvider(registeredProviderForConfig(route));
 
-  // 3. Register before_tool_call hook to block secrets in memory writes (#1233)
-  // NOTE: This relies on OpenClaw's before_tool_call plugin hook contract
-  // (PluginHookBeforeToolCallEvent/Result in openclaw/src/plugins/types.ts).
-  // If the hook name or return shape changes in a future OpenClaw release,
-  // the try/catch ensures the plugin still loads — the scanner just becomes
-  // a no-op. Verify after OpenClaw upgrades that blocked writes still show
-  // the expected error message.
+  // 3. Enforce disabled search and block secrets in memory writes.
+  // Search can be disabled after load, so enforcement hooks are mandatory even when currently enabled.
+  try {
+    api.on(
+      "before_agent_run",
+      (...args: readonly PluginValue[]): BeforeAgentRunResult | undefined => {
+        if (configuredSearchEnabled(api.config) !== false) {
+          deniedSearchRuns.clear();
+          return undefined;
+        }
+        const identities = searchTurnKeys(args);
+        const identity = identities[0];
+        if (!identity) {
+          return {
+            outcome: "block",
+            reason: "disabled-search turn identity missing",
+            message:
+              "This turn cannot start safely because OpenClaw did not provide a run or session identity. Check the gateway logs before retrying.",
+          };
+        }
+        if (deniedSearchRuns.admit(identity, identities)) return undefined;
+        return {
+          outcome: "block",
+          reason: "disabled-search turn admission unavailable",
+          message:
+            "This turn cannot start safely while web search is disabled. Wait for an active turn to finish and retry. If no turn is active, restart the gateway.",
+        };
+      },
+    );
+  } catch (err) {
+    api.logger.warn(
+      `Could not register disabled-search admission gate: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    throw err;
+  }
   try {
     api.on(
       "before_tool_call",
       (...args: readonly PluginValue[]): BeforeToolCallResult | undefined => {
         const event = readBeforeToolCallEvent(args[0]);
         if (!event?.toolName || !event.params) return undefined;
+
+        const identities = searchTurnKeys(args);
+        const runId = identities[0];
+        if (
+          blocksDisabledSearch(
+            api.config,
+            { toolName: event.toolName, params: event.params, runId },
+            deniedSearchRuns,
+            identities,
+          )
+        ) {
+          return {
+            block: true,
+            blockReason:
+              "Web search is unavailable in this sandbox. Do not discover search providers, retry search, or probe web pages, local files, memory, or shell output as substitutes. " +
+              "Tell the user search is unavailable. Do not claim to have searched or present unverified installation documentation; return installationDocumentation as null when requested.",
+          };
+        }
 
         const toolName = event.toolName.toLowerCase();
         if (!WRITE_TOOL_NAMES.has(toolName)) return undefined;
@@ -302,10 +419,20 @@ export default function register(api: OpenClawPluginApi): void {
         };
       },
     );
+    api.on("gateway_stop", (): undefined => {
+      deniedSearchRuns.clear();
+      return undefined;
+    });
+    api.on("agent_end", (...args: readonly PluginValue[]): undefined => {
+      // Resolve all terminal identities together so a shared session cannot release another run.
+      deniedSearchRuns.delete(searchTurnKeys(args));
+      return undefined;
+    });
   } catch (err) {
     api.logger.warn(
-      `[SECURITY] Could not register secret scanner hook: ${err instanceof Error ? err.message : String(err)}`,
+      `[SECURITY] Could not register tool safety hooks: ${err instanceof Error ? err.message : String(err)}`,
     );
+    throw err;
   }
 
   const bannerLines = [

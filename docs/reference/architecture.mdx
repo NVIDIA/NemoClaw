@@ -234,9 +234,12 @@ Its durable entry points are `nemoclaw/src/index.ts`, `nemoclaw/src/runtime-cont
 The `nemoclaw/src/commands/` directory contains in-sandbox `/nemoclaw` command handlers and migration helpers.
 The `nemoclaw/src/blueprint/` directory contains runner, persistent-state, internal rollback-capture, SSRF, and private-network validation code.
 
-Before an OpenClaw turn starts, the plugin prepends a short system-context block with the active sandbox name, sandbox phase, network policy summary, and filesystem policy summary.
+Before each OpenClaw turn, the plugin prepends a system-context block with the active sandbox name, network and filesystem policy summaries, and web-research guidance.
 This guidance stays out of the visible chat transcript.
-When the policy or phase changes during a session, the plugin sends a smaller update block instead of repeating the full context.
+The web-research guidance distinguishes configured search availability from tool availability and successful retrieval.
+It directs the agent to disclose unavailable search, report failed fetches, and label local knowledge as unverified.
+A press release or announcement must not be presented as installation documentation.
+Successfully retrieved content remains usable when search is disabled.
 The context tells the agent to try allowed network and filesystem operations before reporting them unavailable, and to distinguish policy denials from DNS, timeout, TLS, or filesystem errors.
 </AgentOnly>
 

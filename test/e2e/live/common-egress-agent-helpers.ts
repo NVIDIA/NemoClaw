@@ -7,6 +7,15 @@
 // expected-token matching, and pre-contract provider-validation skip
 // classification without gating on NEMOCLAW_RUN_LIVE_E2E=1.
 
+import {
+  openClawAgentIncompleteTurnSignal,
+  projectOpenClawAgentCompletion,
+  openClawAgentResponseRecord,
+  parseOpenClawJsonDocuments,
+} from "../../../src/lib/openclaw/agent-json-provenance.ts";
+import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
+
+import { parseJsonFromText } from "./json-envelope.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   runBoundedRetry,
@@ -123,6 +132,20 @@ export interface OpenClawToolEvidenceReductionFailureArtifact {
 }
 
 export interface OpenClawAgentFailureArtifact {
+  completion: ReturnType<typeof projectOpenClawAgentCompletion>;
+  response: {
+    stdoutPresent: boolean;
+    stderrPresent: boolean;
+    jsonDocumentCount: number;
+    responseRecordCount: number;
+    payloadCount: number;
+    incompleteTurn: boolean;
+    timeoutPhase: "none" | "provider" | "tool" | "post_turn" | "other";
+    abandoned: boolean;
+    replayRisk: boolean;
+    incompleteTurnError: boolean;
+    assistantReplyPresent: boolean;
+  };
   schemaVersion: 1;
   attempt: number;
   diagnosticSummary:
@@ -168,6 +191,10 @@ interface AgentAssertionRetryOptions {
   sleep?: (milliseconds: number) => Promise<void>;
 }
 
+export type OpenClawToolEvidenceArtifact =
+  | PersonalPublicFetchToolEvidenceArtifact
+  | ReturnType<typeof projectUnavailableSearchToolEvidenceArtifact>;
+
 export interface OpenClawAgentAttemptEvidenceOptions {
   classification: AgentAssertionAttempt;
   label: string;
@@ -181,6 +208,7 @@ export interface OpenClawAgentAttemptEvidenceOptions {
   >;
   reply: string;
   toolEvidenceValidator?: (evidence: OpenClawToolEvidence) => boolean;
+  toolEvidenceProjector?: (evidence: OpenClawToolEvidence) => OpenClawToolEvidenceArtifact;
 }
 
 export interface OpenClawAgentAttemptEvidenceResult {
@@ -201,7 +229,42 @@ export function projectOpenClawAgentFailureArtifact(
       : result.exitCode !== 0
         ? "command-exited-nonzero"
         : "expected-reply-missing";
+  const documents = parseOpenClawJsonDocuments(result.stdout);
+  const responses = documents.flatMap((document) => {
+    const response = openClawAgentResponseRecord(document);
+    return response ? [response] : [];
+  });
+  const incomplete = openClawAgentIncompleteTurnSignal(result.stdout);
+  const phase = incomplete?.timeoutPhase;
+  // Keep response framing evidence after sandbox cleanup without retaining model or tool text.
+  const boundedCount = (count: number) => Math.min(1_000, count);
   return {
+    completion: projectOpenClawAgentCompletion(documents),
+    response: {
+      stdoutPresent: result.stdout.trim().length > 0,
+      stderrPresent: result.stderr.trim().length > 0,
+      jsonDocumentCount: boundedCount(documents.length),
+      responseRecordCount: boundedCount(responses.length),
+      payloadCount: boundedCount(
+        responses.reduce(
+          (count, response) =>
+            count + (Array.isArray(response.payloads) ? response.payloads.length : 0),
+          0,
+        ),
+      ),
+      incompleteTurn: incomplete !== null,
+      timeoutPhase:
+        phase === undefined
+          ? "none"
+          : phase === "provider" || phase === "tool" || phase === "post_turn"
+            ? phase
+            : "other",
+      abandoned: incomplete?.markers.some((marker) => marker.startsWith("livenessState=")) ?? false,
+      replayRisk: incomplete?.markers.includes("replayInvalid=true") ?? false,
+      incompleteTurnError:
+        incomplete?.markers.some((marker) => marker.startsWith("error.kind=")) ?? false,
+      assistantReplyPresent: parseOpenClawAgentText(result.stdout).length > 0,
+    },
     schemaVersion: 1,
     attempt,
     diagnosticSummary,
@@ -920,34 +983,15 @@ export async function validateOpenClawAgentAttemptEvidence(
     }
     await options.recordToolEvidence(toolEvidence);
     if (!options.toolEvidenceValidator(toolEvidence)) {
-      const assessment = projectPersonalPublicFetchToolEvidenceArtifact(toolEvidence);
-      const counts = assessment.webFetchResultCounts;
-      const diagnostic = [
-        `errors=${toolEvidence.errors.length}`,
-        `finalStatuses=${toolEvidence.finalStatuses.length}`,
-        `finalSuccess=${assessment.finalSuccess}`,
-        `projectedTarget=${assessment.projectedTargetEvidence}`,
-        `controlTargetViolations=${assessment.controlTargetViolations}`,
-        `webFetchCalls=${assessment.webFetchCalls}`,
-        `webFetchExecutions=${assessment.webFetchExecutions}`,
-        `qualifying=${assessment.qualifyingWebFetchResults}`,
-        `unexpectedWebFetchCalls=${assessment.unexpectedWebFetchCalls}`,
-        `unexpectedWebFetchExecutions=${assessment.unexpectedWebFetchExecutions}`,
-        `unexpectedWebFetchResults=${assessment.unexpectedWebFetchResults}`,
-        `webFetchResults=${counts.total}`,
-        `expectedContentMatches=${counts.expectedContentMatches}`,
-        `expectedUrlMatches=${counts.expectedUrlMatches}`,
-        `httpSuccess=${counts.httpSuccess}`,
-        `maxCharsWithinLimit=${counts.maxCharsWithinLimit}`,
-        `paired=${counts.paired}`,
-        `publicHttpsTarget=${counts.publicHttpsTarget}`,
-        `resultSuccess=${counts.resultSuccess}`,
-        `forbiddenTools=${assessment.forbiddenToolCount}`,
-        `forbiddenProviders=${assessment.forbiddenProviderMentionCount}`,
-      ].join("; ");
+      const diagnostic = options.toolEvidenceProjector
+        ? ` (${JSON.stringify(
+            options.toolEvidenceProjector(toolEvidence),
+            (_key, value: unknown) => (typeof value === "string" ? undefined : value),
+          )})`
+        : "";
       return {
         attempt: { passed: false, failureClass: "deterministic" },
-        failure: `${options.label}: reduced tool evidence did not match the required trajectory (${diagnostic})`,
+        failure: `${options.label}: reduced tool evidence did not match the required trajectory${diagnostic}`,
       };
     }
   }
@@ -955,6 +999,135 @@ export async function validateOpenClawAgentAttemptEvidence(
     attempt: { passed: true },
     evidence: toolEvidence ? { reply: options.reply, toolEvidence } : { reply: options.reply },
   };
+}
+
+/** Project fixed diagnostic categories without retaining reply content or arbitrary field names. */
+export function projectUnavailableSearchReplyArtifact(reply: string) {
+  const structuredReply = reply
+    .trim()
+    .replace(/^```(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n```$/iu, "$1");
+  let answer: unknown;
+  let jsonParseStatus = "valid";
+  let surroundingProse = "absent";
+  try {
+    answer = JSON.parse(structuredReply);
+  } catch {
+    jsonParseStatus = "invalid";
+    surroundingProse = "unknown";
+    // Embedded JSON supplies diagnostics only; it never satisfies whole-reply validation.
+    if (structuredReply.length <= 16_384) {
+      try {
+        answer = parseJsonFromText(structuredReply);
+        surroundingProse = "present";
+      } catch {
+        // Do not retain parser errors, which can contain reply text.
+      }
+    }
+  }
+  const record =
+    answer !== null && typeof answer === "object" && !Array.isArray(answer)
+      ? (answer as Record<string, unknown>)
+      : {};
+  const fields = ["searchStatus", "installationDocumentation"].filter((key) =>
+    Object.hasOwn(record, key),
+  );
+  const status = record.searchStatus;
+  const documentation = record.installationDocumentation;
+  return {
+    schemaVersion: 1,
+    unavailableSearchReply:
+      jsonParseStatus === "valid" &&
+      Object.keys(record).length === 2 &&
+      status === "unavailable" &&
+      documentation === null,
+    jsonParseStatus,
+    fields,
+    unexpectedFieldCount: Math.min(1_000, Object.keys(record).length - fields.length),
+    searchStatus:
+      status === "unavailable" || status === "available" || status === "unknown"
+        ? status
+        : Object.hasOwn(record, "searchStatus")
+          ? "other"
+          : "missing",
+    installationDocumentationType: !Object.hasOwn(record, "installationDocumentation")
+      ? "missing"
+      : documentation === null
+        ? "null"
+        : Array.isArray(documentation)
+          ? "array"
+          : typeof documentation,
+    surroundingProse,
+  };
+}
+
+/** Require a completed turn that reports the known disabled-search state without tool activity. */
+export function hasUnavailableSearchToolEvidence(evidence: OpenClawToolEvidence): boolean {
+  return (
+    evidence.errors.length === 0 &&
+    evidence.finalStatuses.length === 1 &&
+    evidence.finalStatuses[0] === "success" &&
+    !evidence.webFetchResults.some((result) => result.resultSuccess || result.httpSuccess) &&
+    !evidence.providerMentions.some((provider) => /brave|tavily/iu.test(provider)) &&
+    evidence.toolCalls.length === 0 &&
+    evidence.toolExecutions.length === 0 &&
+    evidence.toolResults.length === 0
+  );
+}
+
+/** Retain fixed counts for the same no-tool contract used by the unavailable-search validator. */
+export function projectUnavailableSearchToolEvidenceArtifact(evidence: OpenClawToolEvidence) {
+  const tools = [...evidence.toolCalls, ...evidence.toolExecutions, ...evidence.toolResults];
+  return {
+    schemaVersion: 1 as const,
+    contract: "unavailable-search" as const,
+    errorCount: Math.min(1_000, evidence.errors.length),
+    finalStatusCount: Math.min(1_000, evidence.finalStatuses.length),
+    finalSuccess: evidence.finalStatuses.length === 1 && evidence.finalStatuses[0] === "success",
+    toolCallCount: Math.min(1_000, evidence.toolCalls.length),
+    toolExecutionCount: Math.min(1_000, evidence.toolExecutions.length),
+    toolResultCount: Math.min(1_000, evidence.toolResults.length),
+    forbiddenToolCount: Math.min(1_000, tools.length),
+    discoveryToolCount: Math.min(
+      1_000,
+      tools.filter(({ name }) => /^tool_(?:search|describe|call)$/iu.test(name)).length,
+    ),
+    forbiddenProviderMentionCount: Math.min(
+      1_000,
+      evidence.providerMentions.filter((provider) => /brave|tavily/iu.test(provider)).length,
+    ),
+    successfulFetchResultCount: Math.min(
+      1_000,
+      evidence.webFetchResults.filter(
+        ({ resultSuccess, httpSuccess }) => resultSuccess || httpSuccess,
+      ).length,
+    ),
+    matches: hasUnavailableSearchToolEvidence(evidence),
+  };
+}
+
+/** Validate the complete research reply independently of the reply-key smoke check. */
+export function isUnavailableSearchReply(reply: string): boolean {
+  if (projectUnavailableSearchReplyArtifact(reply).unavailableSearchReply) return true;
+  if (reply.length > 16_384) return false;
+  try {
+    const answer = parseJsonFromText(reply);
+    // Preserve the field contract while allowing explanatory prose around the JSON.
+    if (answer === null || typeof answer !== "object" || Array.isArray(answer)) return false;
+    const record = answer as Record<string, unknown>;
+    if (
+      Object.keys(record).length !== 2 ||
+      record.searchStatus !== "unavailable" ||
+      record.installationDocumentation !== null
+    )
+      return false;
+    const prose = reply.replace(JSON.stringify(answer), "");
+    // Prose may disclose limitations, but cannot add a research or documentation claim.
+    return !/official\s+installation\s+documentation\s*:|(?:based on|after)\s+(?:my\s+)?(?:research|investigation)|(?:I|we)\s+(?:have\s+)?(?:searched|found|verified)|"installationDocumentation"\s*:\s*\{/iu.test(
+      prose,
+    );
+  } catch {
+    return false;
+  }
 }
 
 export function parseChatContent(raw: string): string {

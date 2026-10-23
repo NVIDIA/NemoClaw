@@ -103,6 +103,12 @@ describe("mcporter image supply-chain controls", () => {
     expect(result.status, result.stderr).toBe(0);
     const graph = JSON.parse(result.stdout) as DependencyNode & { problems?: string[] };
     expect(graph.problems).toBeUndefined();
+    expect(findDependency(graph, "body-parser")).toEqual(
+      expect.objectContaining({ overridden: true, version: "2.4.0" }),
+    );
+    expect(findDependency(graph, "zod")).toEqual(
+      expect.objectContaining({ overridden: true, version: "4.6.6" }),
+    );
     expect(graph.dependencies?.mcporter?.version).toBe(expectedVersion);
     expect(findDependency(graph, "@modelcontextprotocol/sdk")).toEqual(
       expect.objectContaining({ overridden: true, version: "1.32.0" }),

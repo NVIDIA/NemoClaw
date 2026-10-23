@@ -11,8 +11,8 @@
       "./dist/index.js"
     ],
     "compat": {
-      "pluginApi": ">=2026.5.22",
-      "minGatewayVersion": "2026.5.22"
+      "pluginApi": ">=2026.9.2",
+      "minGatewayVersion": "2026.9.2"
     },
     "build": {
       "openclawVersion": "2026.9.2"

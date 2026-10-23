@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { loadState } from "./blueprint/state.js";
-import type { NemoClawConfig, OpenClawPluginApi } from "./index.js";
+import type { NemoClawConfig, OpenClawConfig, OpenClawPluginApi } from "./index.js";
+import { configuredSearchEnabled } from "./search-config.js";
 import * as importedSandboxName from "./shared/sandbox-name.cjs";
 
 const sourceOrGeneratedSandboxName = importedSandboxName as typeof importedSandboxName & {
@@ -59,7 +60,30 @@ export function getRuntimeSummary(pluginConfig: NemoClawConfig): RuntimeSummary 
   };
 }
 
-function buildRuntimeContextText(summary: RuntimeSummary): string {
+function searchContext(config: OpenClawConfig): string[] {
+  const enabled = configuredSearchEnabled(config);
+  let availability = "Web search availability is not confirmed by OpenClaw configuration.";
+  if (enabled === false) {
+    availability =
+      "Web search is disabled in OpenClaw configuration. For web-search requests, tell the user that web search is unavailable immediately. Do not use tool discovery to find the disabled search provider or retry searches. Do not inspect sandbox-local files, memory, or shell output to reconstruct web-search results.";
+  } else if (enabled === true) {
+    availability =
+      "Web search is enabled in OpenClaw configuration. Configuration does not guarantee tool availability or request success.";
+  }
+
+  return [
+    availability,
+    "If no search tool is available, tell the user that web search is unavailable; do not claim to have searched.",
+    "Only claim successful web research when a tool retrieved supporting content this turn.",
+    "Label sandbox-local files, memory, and prior knowledge as local or unverified sources.",
+    "Do not present a press release or announcement as installation documentation.",
+    "A failed search or web_fetch is not evidence that a page does not exist.",
+    "Report fetch errors separately from search availability.",
+    "You may use successfully retrieved web_fetch content even when search is disabled. Cite the retrieved source and describe what it supports.",
+  ];
+}
+
+function buildRuntimeContextText(summary: RuntimeSummary, config: OpenClawConfig): string {
   const displaySandboxName = isValidName(summary.sandboxName) ? summary.sandboxName : "<name>";
   const lines = [
     "<nemoclaw-runtime>",
@@ -70,6 +94,8 @@ function buildRuntimeContextText(summary: RuntimeSummary): string {
     ...summary.networkLines.map((line) => `- ${line}`),
     "Filesystem policy:",
     ...summary.filesystemLines.map((line) => `- ${line}`),
+    "Web research:",
+    ...searchContext(config).map((line) => `- ${line}`),
     "Behavior:",
     "- Do not assert that a URL or host is blocked or unreachable unless you have actually attempted it this turn; report the actual result rather than speculating.",
     "- If a tool reports `CONNECT tunnel failed, response 403`, state that the proxy refused the request.",
@@ -85,11 +111,23 @@ function buildRuntimeContextText(summary: RuntimeSummary): string {
 }
 
 /**
- * Registers a `before_prompt_build` hook that prepends a static
- * `<nemoclaw-runtime>` context block to each agent turn.
+ * Prepends runtime context and withholds tools for explicit disabled-search turns.
  */
 export function registerRuntimeContext(api: OpenClawPluginApi, pluginConfig: NemoClawConfig): void {
-  api.on("before_prompt_build", () => ({
-    prependSystemContext: buildRuntimeContextText(getRuntimeSummary(pluginConfig)),
-  }));
+  api.on("before_prompt_build", (event) => {
+    const prompt =
+      event && typeof event === "object" && !Array.isArray(event) ? event.prompt : undefined;
+    // A tool-call denial happens after the model has already attempted discovery.
+    // Narrow only explicit search turns; ordinary local work and direct fetches keep their tools.
+    const unavailableSearch =
+      configuredSearchEnabled(api.config) === false &&
+      typeof prompt === "string" &&
+      /(?:^|[.!?\n])\s*(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?(?:(?:search|research|browse(?!\s+(?:(?:the\s+)?(?:web|internet)|online)\b\s+(?:(?:using|with)\s+`?web_fetch`?\b|(?:and\s+)?(?:fetch|retrieve)\b)[^.!?]*https?:\/\/))\s+(?:(?:the\s+)?(?:web|internet)|online)|(?:use|run)\s+(?:a\s+)?(?:web[_ -]?search|(?:tavily|brave)(?:\s+to)?\s+(?:search|find|look\s+up))|search\s+(?:using|with|via)\s+(?:tavily|brave)|(?:find|look\s+up|locate|research)\s+[^.!?\n]*?\b(?:online|on\s+(?:the\s+)?(?:web|internet))(?=\s*(?:[.!?\n]|$|(?:and|for)\b)))\b/iu.test(
+        prompt,
+      );
+    return {
+      prependSystemContext: buildRuntimeContextText(getRuntimeSummary(pluginConfig), api.config),
+      ...(unavailableSearch ? { toolsAllow: [] } : {}),
+    };
+  });
 }

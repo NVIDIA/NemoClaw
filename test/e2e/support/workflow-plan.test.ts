@@ -920,6 +920,15 @@ describe("E2E workflow plan", () => {
     );
   });
 
+  it("selects the unavailable-search proof when the OpenClaw prompt hook changes", () => {
+    const plan = buildE2eWorkflowPlan({}, { changedFiles: ["nemoclaw/src/runtime-context.ts"] });
+    expect(
+      plan.coverageMatrix
+        .map((row) => row.id)
+        .filter((id) => id.startsWith("common-egress-agent-")),
+    ).toEqual(["common-egress-agent-openclaw-balanced-weather"]);
+  });
+
   it("maps the trusted main Personal stock selector to the candidate public-fetch target", () => {
     const legacyId = "common-egress-agent-openclaw-personal-stock-price";
     const canonicalId = "common-egress-agent-openclaw-personal-public-fetch";

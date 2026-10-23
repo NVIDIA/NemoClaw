@@ -175,7 +175,7 @@
       "integrity": "sha512-egoPVYqTnWb3NjRIxo+xc8OrAI0dlPrJm9pAiZx0pImuNIV5rKhGtTnIfH/Y1ldGPVu74ibj3KR5c9U/QSdQFA==",
       "tarballUrl": "https://registry.npmjs.org/mcporter/-/mcporter-0.7.3.tgz",
       "directory": "agents/openclaw/mcporter-runtime",
-      "lockSha256": "fb489a01077a2c93cd82bb141f4c491f7a39143a67997fbcce9865e7351a45f7"
+      "lockSha256": "c24649f412f19bebfed29bda9f0b17f714fb4834ff76d06ef97e792952c33ebd"
     },
     {
       "id": "wechat-runtime",
