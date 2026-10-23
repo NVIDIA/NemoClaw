@@ -129,15 +129,13 @@ Accepting Windows Express and its third-party software notice is the explicit op
 During Windows Express, onboarding automatically selects the Qwen 3.6 35B-A3B recipe after the applicable N1x or Station GB300 readiness requirements pass.
 
 <Note>
-  This path is an experimental implementation. It does not establish a supported agent, model, and
-  runtime tuple until the protected qualification and activation gates pass.
+  This path is an experimental implementation.
+  It does not establish a supported agent, model, and runtime tuple until the protected qualification and activation gates pass.
   The managed image must contain native `llama-server` and curl.
   The model container has no published ports and remains on an internal Docker network.
   NemoClaw uses its authenticated host bridge and requires successful host-loopback and OpenShell route checks before activation.
   The protected qualification runner's temporary registry still requires Docker Engine `28.3.3` or newer with its default protected NAT and firewall behavior.
-  The Muse Glimmer
-  profile remains Experimental after bounded physical DGX Spark qualification of text, separated
-  reasoning, and one structured tool call.
+  The Muse Glimmer profile remains Experimental after bounded physical DGX Spark qualification of text, separated reasoning, and one structured tool call.
 </Note>
 
 Before you start, confirm these prerequisites:
@@ -177,12 +175,10 @@ It does not write the value to managed llama.cpp state, the receipt, the serving
 Run `unset HF_TOKEN` after onboarding when no other process needs it.
 
 <Warning>
-  When the artifacts are not already present, onboarding pulls digest-pinned images from external
-  registries and acquires the YAML-declared GGUF file through the standard Hugging Face cache. It
-  reuses locally present pinned images and a cached GGUF only after NemoClaw verifies their
-  identities. It creates an owner-only API key, a host-loopback listener on port `8081`, and a
-  Docker internal network. Only one managed llama.cpp runtime can exist per Docker authority,
-  regardless of the owning OpenShell gateway or sandbox.
+  When the artifacts are not already present, onboarding pulls digest-pinned images from external registries and acquires the YAML-declared GGUF file through the standard Hugging Face cache.
+  It reuses locally present pinned images and a cached GGUF only after NemoClaw verifies their identities.
+  It creates an owner-only API key, a host-loopback listener on port `8081`, and a Docker internal network.
+  Only one managed llama.cpp runtime can exist per Docker authority, regardless of the owning OpenShell gateway or sandbox.
 </Warning>
 
 Run interactive onboarding on the qualified host:
@@ -322,7 +318,14 @@ It repeats these checks when onboarding resumes.
 It then runs the authoritative OpenShell Docker bridge probe on fixed port `8081`.
 On Docker Desktop in WSL, NemoClaw runs the loopback health probe from the WSL CLI process because a host-network container cannot reach the WSL loopback listener.
 If the bridge probe cannot connect or times out after the earlier checks pass, onboarding stops without changing UFW.
-On Docker Desktop in WSL, this failure reports the private sandbox bridge probe result. Check that Docker Desktop is running, that its WSL integration is enabled for this distribution, and that the OpenShell Docker network and host gateway are available before retrying onboarding. The WSL path does not print a UFW command.
+On Docker Desktop in WSL, this failure reports the private sandbox bridge probe result.
+Before retrying onboarding, confirm these conditions:
+
+- Docker Desktop is running.
+- Its WSL integration is enabled for this distribution.
+- The OpenShell Docker network and host gateway are available.
+
+The WSL path does not print a UFW command.
 
 On native Linux, when the bridge reports a valid narrow subnet and a gateway IP address inside that subnet, the error reports these values:
 
@@ -336,9 +339,9 @@ On native Linux, if the bridge topology is missing or invalid, onboarding fails 
 Inspect the OpenShell Docker bridge configuration before you retry onboarding.
 
 <Warning>
-  On native Linux, the printed command changes UFW. Confirm that the reported Docker network, source subnet, and
-  gateway IP address belong to the OpenShell Docker bridge before you run it. The rule allows TCP
-  traffic only from that subnet to port `8081` on that gateway IP address.
+  On native Linux, the printed command changes UFW.
+  Confirm that the reported Docker network, source subnet, and gateway IP address belong to the OpenShell Docker bridge before you run it.
+  The rule allows TCP traffic only from that subnet to port `8081` on that gateway IP address.
 </Warning>
 
 On native Linux, run the command from the onboarding error.
@@ -359,7 +362,8 @@ sudo ufw --force delete allow from <subnet> to <gateway-ip> port 8081 proto tcp
 On native Linux, use the same subnet and gateway IP address that appeared in the original command.
 
 If resumed onboarding reports that it cannot reserve host-local inference, run `$$nemoclaw <sandbox-name> doctor`.
-If the diagnostic identifies the former WSL Qwen image, resume is unavailable. Follow the exact owned-runtime removal and fresh onboarding procedure in [Upgrade or Roll Back](#upgrade-or-roll-back) after a qualified native image is pinned.
+If the diagnostic identifies the former WSL Qwen image, resume is unavailable.
+Follow the exact owned-runtime removal and fresh onboarding procedure in [Upgrade or Roll Back](#upgrade-or-roll-back) after a qualified native image is pinned.
 For other runtime or gateway-authority conditions, correct the reported condition before you rerun the same provider and recipe selection.
 NemoClaw resumes only the persisted Docker authority, image, recipe, model digest, network, and runtime identity.
 It reconciles an unfinished create journal before it starts a new runtime.
@@ -389,8 +393,11 @@ NemoClaw can remove that runtime through the existing journal-aware cleanup owne
 The former image cannot start or resume.
 Other unrecognized authority changes fail closed and preserve the existing state.
 
-After a qualified native image is pinned, run `$$nemoclaw <sandbox-name> destroy` for the existing managed runtime, then run onboarding again.
-This removes the owned runtime and network but preserves the shared model cache.
+Before destroying the sandbox, save any sandbox files you need.
+`destroy` removes the sandbox, its owned runtime, and its network but preserves the shared model cache.
+After a qualified native image is pinned, run `$$nemoclaw <sandbox-name> destroy`.
+Confirm that the sandbox no longer appears in `$$nemoclaw list`.
+Then run onboarding again.
 
 For an earlier Station GB300 runtime with no recorded GPU UUID, NemoClaw also refuses startup because the old one-GPU request can select another card.
 After a qualified GB300 image is pinned in the recipe, save any sandbox files you need, run `$$nemoclaw <sandbox-name> destroy --yes`, confirm the sandbox is absent with `$$nemoclaw list`, and onboard again.
