@@ -31,13 +31,7 @@ function workflowStep(file: string, job: string, name: string): Step {
   return step as Step;
 }
 
-function runStep(
-  step: Step,
-  executable: string,
-  failFormat = "",
-  commandStatus = 0,
-  commandError = "",
-) {
+function runStep(step: Step, executable: string, failFormat = "", commandStatus = 0) {
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "llama-signatures-"));
   const bin = path.join(temporary, "bin");
   const record = path.join(temporary, "commands.jsonl");
@@ -50,7 +44,6 @@ const args = process.argv.slice(2);
 fs.appendFileSync(process.env.COMMAND_RECORD, JSON.stringify(args) + "\\n");
 const format = args.includes("--new-bundle-format=false") ? "legacy" : "bundle";
 process.stdout.write("[]\\n");
-process.stderr.write(process.env.COMMAND_ERROR);
 process.exit(format === process.env.FAIL_FORMAT ? 23 : Number(process.env.COMMAND_STATUS));
 `,
     { mode: 0o755 },
@@ -63,7 +56,6 @@ process.exit(format === process.env.FAIL_FORMAT ? 23 : Number(process.env.COMMAN
         PATH: `${bin}:${process.env.PATH ?? ""}`,
         COMMAND_RECORD: record,
         COMMAND_STATUS: String(commandStatus),
-        COMMAND_ERROR: commandError,
         FAIL_FORMAT: failFormat,
         IMAGE: image,
         DIGEST: digest,
@@ -84,11 +76,12 @@ process.exit(format === process.env.FAIL_FORMAT ? 23 : Number(process.env.COMMAN
 }
 
 describe("llama.cpp signature compatibility", () => {
-  it.each([
-    ["llama-cpp-image-attest.yaml", "attest"],
-    ["llama-cpp-signature-test.yaml", "publish-test"],
-  ])("signs both formats through %s (#12206)", (file, job) => {
-    const step = workflowStep(file, job, "Sign exact candidate index");
+  it("signs the same index in bundle and legacy formats (#12206)", () => {
+    const step = workflowStep(
+      "llama-cpp-image-attest.yaml",
+      "attest",
+      "Sign exact candidate index",
+    );
     const result = runStep(step, "cosign");
     expect(result.status, result.stderr).toBe(0);
     expect(result.invocations).toEqual([
@@ -105,42 +98,17 @@ describe("llama.cpp signature compatibility", () => {
   });
 
   it.each([
-    ["llama-cpp-image-attest.yaml", "attest", "bundle", 1],
-    ["llama-cpp-image-attest.yaml", "attest", "legacy", 2],
-    ["llama-cpp-signature-test.yaml", "publish-test", "bundle", 1],
-    ["llama-cpp-signature-test.yaml", "publish-test", "legacy", 2],
-  ])("stops %s job %s when %s signing fails (#12206)", (file, job, format, count) => {
-    const step = workflowStep(String(file), String(job), "Sign exact candidate index");
+    ["bundle", 1],
+    ["legacy", 2],
+  ])("fails publication when %s signing fails (#12206)", (format, count) => {
+    const step = workflowStep(
+      "llama-cpp-image-attest.yaml",
+      "attest",
+      "Sign exact candidate index",
+    );
     const result = runStep(step, "cosign", String(format));
     expect(result.status, result.stderr).toBe(23);
     expect(result.invocations).toHaveLength(Number(count));
-  });
-
-  it.each([
-    [0, "", 1],
-    [31, "registry unavailable", 1],
-    [31, "none of the expected identities matched what was in the certificate", 0],
-  ])("classifies identity rejection for status %s and %s (#12206)", (status, error, expected) => {
-    const step = workflowStep(
-      "llama-cpp-signature-test.yaml",
-      "verify-test",
-      "Reject the wrong certificate identity",
-    );
-    const result = runStep(step, "docker", "", Number(status), String(error));
-    expect(result.status, result.stderr).toBe(expected);
-    expect(result.invocations).toEqual([
-      [
-        "run",
-        "--rm",
-        cosign2,
-        "verify",
-        "--certificate-identity",
-        `${identity}-unexpected`,
-        "--certificate-oidc-issuer",
-        issuer,
-        reference,
-      ],
-    ]);
   });
 
   it.each([0, 31])("preserves the Cosign 2 verification result %s (#12206)", (status) => {

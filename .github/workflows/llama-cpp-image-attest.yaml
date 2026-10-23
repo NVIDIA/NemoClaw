@@ -273,7 +273,7 @@ jobs:
         run: |
           set -euo pipefail
           timeout --foreground 120s cosign sign --yes "$IMAGE@$DIGEST"
-          # Cosign 2 defaults to the legacy .sig location rather than Sigstore bundles.
+          # Also publish a legacy .sig signature for Cosign 2's default verifier.
           # Legacy signing uses the built-in services and still requires a transparency log.
           timeout --foreground 120s cosign sign --yes \
             --new-bundle-format=false \
