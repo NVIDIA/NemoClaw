@@ -229,6 +229,8 @@ class FakeOpener:
             inference_request_tokens.append(
                 request_data.get("max_tokens", request_data.get("max_completion_tokens"))
             )
+            if responses[0] == "__timeout__":
+                raise TimeoutError("timed out after %s seconds" % timeout)
             return FakeResponse(200, responses.pop(0))
         direct_request_count.append(1)
         direct_request_urls.append(request.full_url)
@@ -514,8 +516,32 @@ describe("compatible endpoint sandbox smoke helpers", () => {
     expect(runOpenshell).toHaveBeenNthCalledWith(
       2,
       expect.any(Array),
-      expect.objectContaining({ timeout: 625_000 }),
+      expect.objectContaining({ timeout: 1_705_000 }),
     );
+    expect(String(runOpenshell.mock.calls[1]?.[0]?.at(-1))).toContain(
+      "request_timeout_seconds = 180",
+    );
+  });
+
+  it("reports a timed-out inference proof once, without a traceback (#13663)", () => {
+    const authority = allAgentProofAuthorities[0].authority;
+    const result = runProviderNeutralScript({
+      authority,
+      responses: ["__timeout__"],
+      script: buildProviderNeutralInferenceSandboxSmokeScript(
+        "qwen3.5-9b",
+        authority,
+        undefined,
+        300,
+      ),
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("content proof timed out after 300 seconds without a response");
+    expect(result.stderr).toContain("raise NEMOCLAW_LOCAL_INFERENCE_TIMEOUT");
+    expect(result.stderr).not.toContain("Traceback");
+    expect(result.stdout).toContain("INFERENCE_REQUEST_TOKENS=512\n");
+    expect(result.stdout).toContain("SLEEP_DELAYS=\n");
   });
 
   it.each([
@@ -583,11 +609,16 @@ describe("compatible endpoint sandbox smoke helpers", () => {
   });
 
   it.each([
-    { label: "none", messagingChannels: [] as string[] },
-    { label: "Telegram", messagingChannels: ["telegram"] },
+    { label: "none", messagingChannels: [] as string[], stderr: "curl exit 7" },
+    { label: "Telegram", messagingChannels: ["telegram"], stderr: "curl exit 7" },
+    {
+      label: "long-output",
+      messagingChannels: [] as string[],
+      stderr: `${"x".repeat(2000)} curl exit 7`,
+    },
   ])(
     "reports a channel-agnostic sandbox smoke failure for $label messaging (#10405)",
-    async ({ messagingChannels }) => {
+    async ({ messagingChannels, stderr }) => {
       const errors: string[] = [];
       const error = vi.spyOn(console, "error").mockImplementation((message) => {
         errors.push(String(message));
@@ -601,7 +632,7 @@ describe("compatible endpoint sandbox smoke helpers", () => {
           status: 0,
           stdout: providerMetadata(args.at(-1) ?? ""),
         }))
-        .mockReturnValueOnce({ status: 1, stderr: "curl exit 7" });
+        .mockReturnValueOnce({ status: 1, stderr });
 
       try {
         await expect(
