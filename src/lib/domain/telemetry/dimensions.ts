@@ -230,8 +230,7 @@ function projectModel(
         ) !== null
       : reference.managed &&
         parsed.model === authority.model &&
-        parsed.provider === authority.provider &&
-        parsed.apiFamily === reference.api)
+        parsed.provider === authority.provider)
       ? parsed
       : null;
   const source = projectAssignmentSource(reference, assignment, authority, bound, slot);
