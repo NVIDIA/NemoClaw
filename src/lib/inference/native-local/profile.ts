@@ -24,16 +24,21 @@ import {
   type NativeLocalProviderAttachment,
 } from "./contract";
 
-export { normalizeNativeLocalProviderAttachment };
+export { normalizeNativeLocalProviderAttachment, nativeLocalIdentity };
 export type { NativeLocalProviderAttachment };
 
 export function prepareNativeLocalProfile(input: NativeLocalBinding) {
   const binding = normalizeNativeLocalBinding(input);
   if (!binding) throw new Error("Invalid native host-local inference boundary.");
-  const identity = nativeLocalIdentity(binding);
+  // A recorded attachment keeps its original immutable permissions. Reselection
+  // creates the dual-stack profile through the existing ownership transaction.
+  const recorded = normalizeNativeLocalProviderAttachment(input);
+  const identity = recorded ?? nativeLocalIdentity(binding);
+  const dualStack = identity.profileId === nativeLocalIdentity(binding).profileId;
   const endpoint = new URL(binding.endpointUrl);
   return {
-    ...identity,
+    profileId: identity.profileId,
+    providerName: identity.providerName,
     credentialEnv: binding.credentialEnv,
     document: {
       id: identity.profileId,
@@ -62,7 +67,7 @@ export function prepareNativeLocalProfile(input: NativeLocalBinding) {
           // admit its private resolution, never another hostname or port.
           allowed_ips: isIP(endpoint.hostname)
             ? [`${endpoint.hostname}/32`]
-            : ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"],
+            : ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", ...(dualStack ? ["fc00::/7"] : [])],
           rules: [
             { allow: { method: "GET", path: `${endpoint.pathname}/models` } },
             { allow: { method: "POST", path: `${endpoint.pathname}/chat/completions` } },

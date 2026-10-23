@@ -75,6 +75,8 @@ const CANONICAL_POST_GENERATOR_INSTRUCTION_SHA256 = new Set([
   "a9ac5dafe116add404a89434534c626719f6752a7d8f26a7b997560789986c38",
   // Shared package inventory probe and runtime checks preserve dashboard config.
   "e96d02526fb3449d631f2a7f551d5dc81a2071ae747cdeb0ac0107a5b878c7be",
+  // Standalone inventory probe reads the same pins and preserves dashboard config.
+  "58888f93a5f7c1bd8067137a7593399939903810354cbd4406c7b94b28e19335",
   // Sandbox-user native OpenClaw state modes with root-mode shared access;
   // this exact instruction changes filesystem metadata, not dashboard config.
   "402ffef36760a20e70316a145fa37908c99774496d3dcd0da5f8547b9ac80071",

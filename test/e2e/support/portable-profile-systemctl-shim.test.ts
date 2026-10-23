@@ -7,7 +7,7 @@ import net from "node:net";
 import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
-
+import { boundedTestTempRoot } from "../../helpers/bounded-temp-root";
 import {
   cleanupPortableProfileRootlessFixture,
   cleanupPortableProfileSystemctlFixture,
@@ -30,7 +30,6 @@ interface FixtureScope {
   readonly shim: string;
   readonly socketPath: string;
 }
-
 interface FixtureProcessRecord {
   readonly identity: string;
   readonly pid: number;
@@ -54,7 +53,8 @@ ExecStart=${gatewayBin}
 }
 
 function createFixture(): FixtureScope {
-  const directory = fs.mkdtempSync("/tmp/portable-systemctl-shim-");
+  const tempRoot = boundedTestTempRoot("nc-XXXXXX/runtime/podman/podman.sock", 104);
+  const directory = fs.mkdtempSync(path.join(tempRoot, "nc-"));
   const binDir = path.join(directory, "bin");
   const homeDir = path.join(directory, "home");
   const binHome = path.join(homeDir, ".local", "bin");
@@ -834,7 +834,7 @@ describe("portable profile systemctl fixture", () => {
     "isolates the managed gateway user service from ambient XDG homes (#9208)",
     { timeout: 30_000 },
     async () => {
-      const ambientRoot = fs.mkdtempSync("/tmp/portable-systemctl-ambient-");
+      const ambientRoot = fs.mkdtempSync(path.join(process.env.TMPDIR!, "nc-"));
       vi.stubEnv("XDG_BIN_HOME", path.join(ambientRoot, "bin"));
       vi.stubEnv("XDG_CONFIG_HOME", path.join(ambientRoot, "config"));
       vi.stubEnv("XDG_RUNTIME_DIR", path.join(ambientRoot, "runtime"));

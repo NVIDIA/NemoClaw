@@ -110,6 +110,7 @@ const PUBLISHER_JOB_ALIASES = new Map<string, RequiredPublisherJob>([
 
 class IneligibleManualManagedImagePromotionError extends Error {}
 class PaginationCapExceededError extends Error {}
+class PaginationUnstableError extends Error {}
 
 function requiredPublisherIneligibilityError(
   requiredName: RequiredPublisherJob,
@@ -751,7 +752,9 @@ export async function collectPaginated(
     );
     if (result) return result;
   }
-  throw new Error(`${label} total_count changed during ${PAGINATION_ATTEMPTS} pagination attempts`);
+  throw new PaginationUnstableError(
+    `${label} total_count changed during ${PAGINATION_ATTEMPTS} pagination attempts`,
+  );
 }
 
 export async function collectPublicationRuns(
@@ -762,7 +765,11 @@ export async function collectPublicationRuns(
   try {
     return await collectPaginated(request, basePath, "workflow_runs");
   } catch (error) {
-    if (!(error instanceof PaginationCapExceededError)) throw error;
+    if (
+      !(error instanceof PaginationCapExceededError || error instanceof PaginationUnstableError)
+    ) {
+      throw error;
+    }
   }
 
   const workflowRuns: unknown[] = [];

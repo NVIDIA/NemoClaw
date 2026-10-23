@@ -34,3 +34,6 @@ It also improves uninstall recovery, managed image security, policy recovery, ag
   Existing sandboxes retain their prior images until rebuilt; after updating NemoClaw, run `nemoclaw upgrade-sandboxes` to inspect or rebuild them.
   A selected Podman runtime no longer triggers Docker host setup, Docker preflight checks, or Docker-only NIM cleanup.
   Related change: [PR #13513](https://github.com/NVIDIA/NemoClaw/pull/13513).
+- Native local provider attachment now retains the expected OpenShell profile verified during inspection so NemoClaw can check it again after attachment.
+  A changed profile, failed export, or timeout warns the gateway operator without rolling back a successful attachment.
+  Related change: [PR #13564](https://github.com/NVIDIA/NemoClaw/pull/13564).

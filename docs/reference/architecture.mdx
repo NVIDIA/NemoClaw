@@ -204,7 +204,7 @@ Layering from top to bottom:
 NemoClaw never gives the sandbox a raw provider key.
 At onboard time it registers credentials with OpenShell's provider and placeholder system.
 Shared routes use the gateway L7 proxy to substitute the real value at egress.
-NVIDIA Endpoints, supported fixed hosted providers, and qualified Deep Agents and Hermes local endpoints use sandbox-attached provider profiles.
+NVIDIA Endpoints, supported fixed hosted providers, new hosted compatible selections outside the Personal tier, and qualified local endpoints use sandbox-attached provider profiles.
 These profiles restrict requests and replace placeholder credentials at egress.
 The CLI helper `isInferenceRouteReady` (in `src/lib/onboard.ts`) is a host-side readiness check used by the resume flow to decide whether the active route already covers the chosen provider and model.
 It is not a runtime component.
@@ -363,13 +363,13 @@ Inside the sandbox:
 ## Inference Routing
 
 Agent inference follows one of two OpenShell-managed paths.
-Owned Local NVIDIA NIM, compatible endpoints without a native attachment, retained Pi local selections, retained Hermes local selections without an attachment, and retained legacy shared local routes use `inference.local` through the OpenShell gateway:
+Owned Local NVIDIA NIM, compatible endpoints without a native attachment, and retained shared routes use `inference.local` through the OpenShell gateway:
 
 ```text
 Supported agent runtime (sandbox)  ──▶  inference.local  ──▶  OpenShell gateway  ──▶  Provider endpoint
 ```
 
-NVIDIA Endpoints, supported fixed hosted providers, and new Deep Agents Code hosted compatible selections and qualified Deep Agents Code and Hermes Ollama, standalone vLLM, llama.cpp, and host-local compatible selections, plus new OpenClaw Ollama, standalone vLLM, and llama.cpp selections use restricted providers attached to the sandbox. For example, NVIDIA Endpoints uses this path:
+NVIDIA Endpoints, supported fixed hosted providers, and new hosted compatible selections outside the Personal tier use restricted providers attached to the sandbox. Qualified new local selections also use this path where the agent supports them. Pi native routing remains gated by its activation status. For example, NVIDIA Endpoints uses this path:
 
 ```text
 Supported agent runtime (sandbox)  ──▶  integrate.api.nvidia.com  ──▶  NVIDIA Endpoints
