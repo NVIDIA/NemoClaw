@@ -34,16 +34,29 @@
   },
   {
     "id": "positive-authorized-fork-publication",
-    "question": "Publish this validated NemoClaw change from my authorized fork. The explicit authorized task does not require manual PR E2E, and the canonical required CI paths permit fork heads.",
+    "question": "Publish this validated NemoClaw change targeting v1 from my authorized fork. The explicit authorized task does not require manual PR E2E, and the canonical required CI paths permit fork heads.",
     "expected_skill": "nemoclaw-contributor-create-pr",
     "ground_truth": "When every required path permits fork heads, publication uses the declared authorized fork and binds its guarded branch write and PR creation to that verified repository identity.",
     "expected_behavior": [
       "Uses `nemoclaw-contributor-create-pr`.",
-      "Records from the explicit authorized task that manual PR E2E is not required and does not invent an E2E requirement from advisory output or an implementation handoff.",
+      "Records that the v1 target is excluded from the main-PR E2E approval policy and that the explicit authorized task requires no manual PR E2E. Does not infer dispatch authority from advisory output or an implementation handoff.",
       "Reads the source-repository restrictions from the canonical base and confirms that every required CI path permits fork heads.",
       "Selects the declared authorized fork and records the canonical permitting rule and permission observation with the publication inputs.",
       "Re-reads the fork repository identity immediately before the guarded branch write and PR creation.",
       "Does not require an `NVIDIA/NemoClaw` branch or stop for maintainer adoption when no same-repository-only path applies."
+    ]
+  },
+  {
+    "id": "positive-main-draft-without-live-dispatch",
+    "question": "Create a draft PR targeting main for this validated skill change. I have maintainer write access, but I have not requested any live E2E run.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "The main-PR E2E approval policy determines source-repository eligibility without requiring live evidence before draft publication or authorizing a dispatch.",
+    "expected_behavior": [
+      "Uses nemoclaw-contributor-create-pr and reads the canonical main-target approval and source-repository contracts.",
+      "Selects an authorized NVIDIA/NemoClaw source branch because eventual PR E2E evidence is same-repository-only.",
+      "Publishes the draft after local validation, verified commits, and the DCO declaration without requiring E2E evidence for a PR that does not yet exist.",
+      "Does not dispatch live E2E or infer credential, hardware, or staging authority from the approval requirement.",
+      "Reports passing candidate E2E as required before approval while following CI and automated reviews."
     ]
   },
   {

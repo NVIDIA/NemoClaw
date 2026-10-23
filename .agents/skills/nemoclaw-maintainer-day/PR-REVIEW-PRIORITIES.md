@@ -22,6 +22,9 @@ current diff and repository evidence while evaluating these gates and expectatio
    A `BEHIND` merge state alone does not block approval.
 6. **No unresolved major or critical CodeRabbit findings** — Correctness and safety findings block the PR. Style comments do not. Assess borderline cases.
 7. **Tests for touched risky code** — risky areas must have test coverage, either added in the PR or pre-existing. No exceptions.
+8. **Passing PR E2E evidence** — For every PR targeting `main`, require
+   [Check PR E2E Evidence](../nemoclaw-maintainer-check-pr-e2e/SKILL.md) to return `PASS` before approval.
+   PRs targeting `v1` are excluded from this requirement.
 
 ## Manual review inputs
 

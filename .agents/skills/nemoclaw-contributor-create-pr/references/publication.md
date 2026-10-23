@@ -8,13 +8,19 @@
 Choose the source repository before declaring the immutable publication inputs or writing a branch.
 Do not default to a fork merely because it is the usual contributor location.
 
-Read the canonical base copies of the pull-request workflows. Treat manual PR E2E applicability and
-selector choice as immutable publication inputs owned by the explicit authorized task. Do not infer
-that manual E2E is required from advisory recommendations, an implementation handoff, or the
-publication skill itself. When the authorized task does not require manual PR E2E, it is not a
-publication requirement. For required manual PR E2E, read its canonical contract. Use the trusted
-diff, the task-owned applicability input, and those canonical rules to determine whether every
-required CI and E2E path supports a fork head. In particular:
+Read the canonical base copies of the pull-request workflows and approval guidance.
+[Check PR E2E Evidence](../../nemoclaw-maintainer-check-pr-e2e/SKILL.md) requires passing manual PR E2E before approval of every PR targeting `main`.
+Its workflow accepts only `NVIDIA/NemoClaw` source branches, so select that repository even when the task does not request a run.
+PRs targeting `v1` are excluded from this E2E requirement; other required CI and E2E restrictions still apply.
+
+This source restriction does not authorize live execution or require passing E2E before draft publication.
+Do not inspect PR evidence before the PR exists.
+Keep selector choice and execution opt-ins within the authorized task.
+Advisory recommendations and an implementation handoff do not authorize a new run.
+When the accepted scope requires E2E before publication, collect that evidence through its canonical procedure.
+
+Use the trusted diff, target-branch approval policy, task requirements, and canonical workflow contracts
+to determine whether every required CI and E2E path supports the proposed source repository. In particular:
 
 - a candidate whose required reviewed OpenShell SDK package job rejects a non-canonical head must use
   a branch in `NVIDIA/NemoClaw`;
