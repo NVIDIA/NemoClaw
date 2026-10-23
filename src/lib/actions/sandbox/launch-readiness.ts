@@ -167,6 +167,7 @@ export type LaunchReadinessPublicationResult =
       kind: "validation-failed";
       category: "identity" | "config" | "health" | "session";
       failedCheck?: LaunchReadinessFailedCheck;
+      unknownAgent?: string;
     }
   | { kind: "policy-observation-failed"; error: OpenShellSandboxError }
   | {
@@ -189,6 +190,11 @@ export type LaunchReadinessMutationGateResult<T> =
   | { kind: "entered"; value: T }
   | { kind: "changed" }
   | { kind: "unsafe"; evidence?: LaunchReadinessUnsafeAuthorityEvidence };
+
+/** The recorded agent is registry data, so quote and escape it before printing. */
+export function formatUnknownLaunchAgent(agentName: string): string {
+  return `the recorded agent ${JSON.stringify(agentName)} is unknown`;
+}
 
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
@@ -971,12 +977,14 @@ function debugDecision(category: LaunchReadinessDecisionCategory): void {
 function publicationValidationCategory(error: unknown): {
   category: LaunchReadinessPublicationValidationCategory;
   failedCheck?: LaunchReadinessFailedCheck;
+  unknownAgent?: string;
 } | null {
   if (!(error instanceof ObservationError)) return null;
   if (!["identity", "config", "health", "session"].includes(error.category)) return null;
   return {
     category: error.category as LaunchReadinessPublicationValidationCategory,
     ...(error.failedCheck ? { failedCheck: error.failedCheck } : {}),
+    ...(error.unknownAgent === undefined ? {} : { unknownAgent: error.unknownAgent }),
   };
 }
 

@@ -141,6 +141,7 @@ export class LaunchReadinessObservationError extends Error {
   constructor(
     readonly category: LaunchReadinessObservationCategory,
     readonly failedCheck?: LaunchReadinessFailedCheck,
+    readonly unknownAgent?: string,
   ) {
     super(category);
   }
@@ -206,7 +207,9 @@ export function resolveTrustedLaunchAgent(
   agentName = normalizedString(entry.agent) ?? "openclaw",
 ): AgentDefinition {
   const available = (deps.listAgents ?? listAgents)();
-  if (!available.includes(agentName)) throw new LaunchReadinessObservationError("config");
+  if (!available.includes(agentName)) {
+    throw new LaunchReadinessObservationError("config", undefined, agentName);
+  }
   let agent: AgentDefinition;
   try {
     agent = (deps.loadAgent ?? loadAgent)(agentName);

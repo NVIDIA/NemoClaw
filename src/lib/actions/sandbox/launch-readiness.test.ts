@@ -1437,6 +1437,10 @@ describe("launch readiness validation", () => {
       diagnostic: { stage: "publication-validation", reason: "runtime-observation-failed" },
     });
 
+    const unknownAgent = { ...deps(), listAgents: () => ["hermes"] };
+    const refused = await publishLaunchReadiness(publication, unknownAgent);
+    expect(refused).toMatchObject({ category: "config", unknownAgent: "openclaw" });
+
     const pairingObservationUnavailable = deps();
     pairingObservationUnavailable.observeOpenClawPairingQualification = () => {
       throw new Error("pairing observation unavailable");

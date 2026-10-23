@@ -60,6 +60,8 @@ vi.mock("./launch-readiness", () => ({
     evidence
       ? ` persistent receipt evidence: observed mode ${evidence.observedMode}`
       : " Repair the current user's secure OS runtime authority and NemoClaw state permissions, then retry.",
+  formatUnknownLaunchAgent: (agentName: string) =>
+    `the recorded agent ${JSON.stringify(agentName)} is unknown`,
   inspectLaunchReadiness: mocks.inspectLaunchReadiness,
   publishLaunchReadiness: mocks.publishLaunchReadiness,
   withLaunchReadinessMutationGate: mocks.withLaunchReadinessMutationGate,
@@ -1233,6 +1235,29 @@ describe("launchSandbox", () => {
     );
 
     expect(mocks.prepareInteractiveSession).toHaveBeenCalled();
+    expect(mocks.startSandboxExec).not.toHaveBeenCalled();
+  });
+
+  it("names an unknown recorded agent instead of advising a retry (#12208)", async () => {
+    mocks.inspectLaunchReadiness.mockResolvedValue({
+      kind: "fallback",
+      category: "config",
+      fence: { epochId: "a".repeat(64) },
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      fenceFailed: false,
+      recoveryBlocked: false,
+    });
+    mocks.publishLaunchReadiness.mockResolvedValue({
+      kind: "validation-failed",
+      category: "config",
+      unknownAgent: "missing-launch-agent",
+    });
+
+    await expect(launchSandbox("alpha")).rejects.toThrow(
+      `Launch readiness refused sandbox 'alpha' because the recorded agent "missing-launch-agent" is unknown. Recreate it with a supported agent.`,
+    );
+
     expect(mocks.startSandboxExec).not.toHaveBeenCalled();
   });
 

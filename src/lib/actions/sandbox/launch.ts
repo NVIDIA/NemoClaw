@@ -39,6 +39,7 @@ import { getKnownSandboxTarget } from "./gateway-target";
 import {
   createBoundLaunchReadinessDeps,
   formatLaunchReadinessUnsafeAuthorityEvidence,
+  formatUnknownLaunchAgent,
   inspectLaunchReadiness,
   publicationFromDecision,
   publishLaunchReadiness,
@@ -456,8 +457,11 @@ async function prepareLaunchSession(
       );
     }
     if (gated.value.publication?.kind === "validation-failed") {
+      const { category, unknownAgent } = gated.value.publication;
       throw new Error(
-        `Launch readiness final validation failed due to ${gated.value.publication.category}. Retry launch.`,
+        unknownAgent === undefined
+          ? `Launch readiness final validation failed due to ${category}. Retry launch.`
+          : `Launch readiness refused sandbox '${sandboxName}' because ${formatUnknownLaunchAgent(unknownAgent)}. Recreate it with a supported agent.`,
       );
     }
     session = gated.value.prepared;

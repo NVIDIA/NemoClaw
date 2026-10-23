@@ -783,6 +783,24 @@ describe("connectSandbox flow", () => {
     );
   });
 
+  it("probe-only names an unknown recorded agent and escapes it (#12208)", async () => {
+    const harness = createConnectHarness({
+      readinessPublicationResult: {
+        kind: "validation-failed",
+        category: "config",
+        unknownAgent: "bad\u001b[31m",
+      },
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
+      'final launch-readiness validation failed because the recorded agent "bad\\u001b[31m" is unknown',
+    );
+  });
+
   it("records OpenClaw readiness observations through final publication (#10612)", async () => {
     const harness = createConnectHarness();
     harness.inspectLaunchReadinessSpy.mockImplementationOnce(async (...args: unknown[]) => {
