@@ -24,6 +24,8 @@ const SUPPORTED_DOCKER_ENDPOINT_REASON =
   "The socket path cannot contain a single quote or line break. " +
   "TCP and SSH endpoints and relative paths are not supported, even when reachable. ";
 
+const MAX_DOCKER_ENDPOINT_DISPLAY_LENGTH = 1024;
+
 export function wslDockerBlocksRemainingChecks(host: HostAssessment): boolean {
   return (
     host.isWsl &&
@@ -154,12 +156,17 @@ export const retryDockerProbe: AdvisoryCheck<HostAssessment> = {
     if (!issue) return null;
     const command = issue.startsWith("version_") ? "docker version" : "docker info";
     const timedOut = issue.endsWith("_timeout");
+    const endpoint = host.dockerSelectedEndpoint;
+    const authority =
+      endpoint && endpoint.length <= MAX_DOCKER_ENDPOINT_DISPLAY_LENGTH
+        ? `selected Docker authority ${JSON.stringify(endpoint)}`
+        : "selected Docker authority";
     return hostAdvisory(retryDockerProbe, {
       title: "Retry the Docker readiness probe",
       kind: "manual",
       reason: timedOut
-        ? `The selected Docker authority did not answer \`${command}\` within 15 seconds. NemoClaw kept that authority and did not classify the daemon as stopped.`
-        : `NemoClaw could not start the \`${command}\` readiness probe. It kept the selected Docker authority because no daemon verdict was available.`,
+        ? `The ${authority} did not answer \`${command}\` within 15 seconds. NemoClaw kept that authority and did not classify the daemon as stopped.`
+        : `NemoClaw could not start the \`${command}\` readiness probe. It kept the ${authority} because no daemon verdict was available.`,
       commands: [
         `${command}   # verify the selected Docker authority answers`,
         "Restart the selected Docker runtime if the command remains unresponsive, then rerun `nemoclaw onboard`.",
