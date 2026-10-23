@@ -125,8 +125,8 @@ jobs:
             docker tag "$image" "$target"
             docker push --quiet "$target" > /dev/null
             digest=$(docker buildx imagetools inspect "$target" --format '{{.Manifest.Digest}}')
-            # Scan the image where it was built; staging copies the result.
-            sh .github/scripts/image-sbom.sh "$image" "$target" "linux/${PLATFORM#linux_}"
+            # Record the pushed image's SBOM; staging copies it.
+            sh .github/scripts/image-sbom.sh "$target" "linux/${PLATFORM#linux_}"
             echo "| \`$name\` | \`$digest\` | $(( $(date +%s) - start )) s |" >> "$GITHUB_STEP_SUMMARY"
           done < .build-image-list
           echo >> "$GITHUB_STEP_SUMMARY"
