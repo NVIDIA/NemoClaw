@@ -788,7 +788,7 @@ describe("connectSandbox flow", () => {
       readinessPublicationResult: {
         kind: "validation-failed",
         category: "config",
-        unknownAgent: "bad\u001b[31m",
+        unknownAgent: "bad\u202e",
       },
     });
 
@@ -796,9 +796,11 @@ describe("connectSandbox flow", () => {
       "process.exit(1)",
     );
 
-    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
-      'final launch-readiness validation failed because the recorded agent "bad\\u001b[31m" is unknown',
+    const output = harness.errorSpy.mock.calls.flat().join("\n");
+    expect(output).toContain(
+      'final launch-readiness validation failed because the recorded agent "bad\\\\u202e" is unknown, so recreate the sandbox with a supported agent.',
     );
+    expect(output).not.toContain("\u202e");
   });
 
   it("records OpenClaw readiness observations through final publication (#10612)", async () => {

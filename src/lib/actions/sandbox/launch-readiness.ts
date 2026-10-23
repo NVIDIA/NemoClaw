@@ -31,6 +31,7 @@ import {
 } from "../../onboard/runtime-provider/access";
 import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gateway-endpoint-guard";
 import { parseAndValidateSandboxPolicy } from "../../policy/sandbox-policy-validation";
+import { sanitizeReadinessText } from "../../readiness/sanitize";
 import {
   checkLaunchReadinessMutationAuthority,
   classifyLaunchReadinessStoreFailure,
@@ -191,9 +192,14 @@ export type LaunchReadinessMutationGateResult<T> =
   | { kind: "changed" }
   | { kind: "unsafe"; evidence?: LaunchReadinessUnsafeAuthorityEvidence };
 
-/** The recorded agent is registry data, so quote and escape it before printing. */
+const UNKNOWN_LAUNCH_AGENT_NAME_MAX_LENGTH = 256;
+
+/** The recorded agent is registry data, so escape and quote it before printing. */
 export function formatUnknownLaunchAgent(agentName: string): string {
-  return `the recorded agent ${JSON.stringify(agentName)} is unknown`;
+  const name = JSON.stringify(
+    sanitizeReadinessText(agentName, UNKNOWN_LAUNCH_AGENT_NAME_MAX_LENGTH),
+  );
+  return `the recorded agent ${name} is unknown, so recreate the sandbox with a supported agent`;
 }
 
 function shellQuote(value: string): string {

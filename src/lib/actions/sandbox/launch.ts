@@ -461,7 +461,7 @@ async function prepareLaunchSession(
       throw new Error(
         unknownAgent === undefined
           ? `Launch readiness final validation failed due to ${category}. Retry launch.`
-          : `Launch readiness refused sandbox '${sandboxName}' because ${formatUnknownLaunchAgent(unknownAgent)}. Recreate it with a supported agent.`,
+          : `Launch readiness refused sandbox '${sandboxName}' because ${formatUnknownLaunchAgent(unknownAgent)}.`,
       );
     }
     session = gated.value.prepared;
