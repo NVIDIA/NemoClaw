@@ -60,7 +60,12 @@ describe("internal uninstall command", () => {
     const instance = new InternalUninstallRunPlanCommand([], {} as Config);
     Object.defineProperty(instance, "parse", {
       value: vi.fn().mockResolvedValue({
-        flags: { yes: true, "force-fresh-reset": true, "keep-openshell": true },
+        flags: {
+          yes: true,
+          "force-fresh-reset": true,
+          "keep-openshell": true,
+          "retained-gateway-port": ["9000", "18080"],
+        },
       }),
     });
     const command = instance.run().then(() => {
@@ -72,6 +77,7 @@ describe("internal uninstall command", () => {
         expect.objectContaining({ assumeYes: true, forceFreshReset: true, keepOpenShell: true }),
         expect.objectContaining({
           backupAllBeforeUninstall: expect.any(Function),
+          retainedGatewayPorts: [9000, 18080],
           withSandboxMutationLock: expect.any(Function),
         }),
       );

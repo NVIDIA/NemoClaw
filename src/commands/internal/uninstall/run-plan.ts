@@ -33,6 +33,7 @@ export default class InternalUninstallRunPlanCommand extends NemoClawCommand {
         "Uninstall every gateway port on this host, not only the port NEMOCLAW_GATEWAY_PORT selects",
     }),
     "all-gateway-ports-child": Flags.boolean({ hidden: true }),
+    "retained-gateway-port": Flags.string({ hidden: true, multiple: true }),
     "force-fresh-ownership-preflight": Flags.boolean({ hidden: true }),
     "force-fresh-reset": Flags.boolean({ hidden: true }),
     "keep-openshell": Flags.boolean({ description: "Leave the openshell binary installed" }),
@@ -66,6 +67,13 @@ export default class InternalUninstallRunPlanCommand extends NemoClawCommand {
       gatewayName: flags.gateway,
       keepOpenShell: flags["keep-openshell"] ?? false,
     };
+    const retainedGatewayPorts = (flags["retained-gateway-port"] ?? []).map((value) => {
+      const port = Number(value);
+      if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+        this.error(`Invalid retained gateway port '${value}'.`);
+      }
+      return port;
+    });
     const backupAllBeforeUninstall = (sandboxNames: readonly string[]) =>
       backupAllUnderPortableHostFence({
         purpose: "pre-uninstall",
@@ -86,6 +94,7 @@ export default class InternalUninstallRunPlanCommand extends NemoClawCommand {
       await runUninstallPlanProduction(options, {
         backupAllBeforeUninstall,
         requireCompleteGatewayProcessCleanup: flags["all-gateway-ports-child"] ?? false,
+        retainedGatewayPorts,
         withSandboxMutationLock,
       }),
     );

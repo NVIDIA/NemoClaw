@@ -15,7 +15,11 @@ import {
   uninstallChildEnv,
 } from "./all-gateway-ports";
 import type { UninstallRunDeps, UninstallRunOptions } from "./run-plan";
-import { readGatewayOpenShellStateDir } from "../../state/gateway-registry";
+import { listGatewayStateRoots, readGatewayOpenShellStateDir } from "../../state/gateway-registry";
+import {
+  resolveGatewayStateDirForPort,
+  writeDockerDriverGatewayBinding,
+} from "../../onboard/gateway/state-dir";
 
 const OPTIONS: UninstallRunOptions = {
   assumeYes: true,
@@ -69,6 +73,46 @@ describe("uninstall across every gateway port (#7791)", () => {
     expect(result.ports).toEqual([9000, 18080, 8080]);
     expect(runPortPass.mock.calls.map(([port]) => port)).toEqual([9000, 18080]);
     expect(runSelectedPass).toHaveBeenCalledTimes(1);
+  });
+
+  it("lets the final discovered child clean the host when the selected port is absent (#13332)", async () => {
+    const log = vi.fn();
+    const { deps, runPortPass, runSelectedPass } = sweepDeps({
+      listGatewayPorts: () => [9123],
+      log,
+      readLine: () => "y",
+    });
+
+    const result = await runUninstallAllGatewayPorts({ ...OPTIONS, assumeYes: false }, deps);
+
+    expect(result).toEqual({ exitCode: 0, ports: [9123] });
+    expect(runPortPass.mock.calls.map(([port]) => port)).toEqual([9123]);
+    expect(runSelectedPass).not.toHaveBeenCalled();
+    expect(log).not.toHaveBeenCalledWith(expect.stringContaining("port 8080"));
+    expect(log).toHaveBeenCalledWith(
+      "Each listed port is uninstalled in order; the last listed port runs last.",
+    );
+  });
+
+  it("carries an earlier failed port into the final child when the selected port is absent", async () => {
+    const runPortPass = vi.fn(
+      (
+        port: number,
+        _options: UninstallRunOptions,
+        _env: NodeJS.ProcessEnv,
+        _retainedGatewayPorts?: readonly number[],
+      ) => (port === 9000 ? 1 : 0),
+    );
+    const { deps } = sweepDeps({
+      listGatewayPorts: () => [9000, 18080],
+      runPortPass,
+    });
+
+    const result = await runUninstallAllGatewayPorts(OPTIONS, deps);
+
+    expect(result).toEqual({ exitCode: 1, ports: [9000, 18080] });
+    expect(runPortPass.mock.calls[0]?.[3]).toEqual([]);
+    expect(runPortPass.mock.calls[1]?.[3]).toEqual([9000]);
   });
 
   it("forces confirmation-free child passes after one whole-host confirmation", async () => {
@@ -338,7 +382,6 @@ describe("uninstall across every gateway port (#7791)", () => {
         home,
         isTty: false,
         kill: () => true,
-        listGatewayPorts: () => [8080, 9123],
         log: vi.fn(),
         resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
           gatewayName,
@@ -369,11 +412,169 @@ describe("uninstall across every gateway port (#7791)", () => {
         withSandboxMutationLock: async (_sandboxName, operation) => await operation(),
       });
 
-      expect(result).toEqual({ exitCode: 0, ports: [8080, 9123] });
+      expect(result).toEqual({ exitCode: 0, ports: [9123] });
       expect(fs.existsSync(apiKeyPath)).toBe(false);
       expect(fs.existsSync(selectedStateDir)).toBe(false);
     } finally {
       fs.rmSync(home, { force: true, recursive: true });
+    }
+  });
+
+  it("does not treat the shared home root as a default gateway without gateway evidence (#13332)", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-no-default-"));
+    const gatewayRoot = path.join(home, ".nemoclaw", "gateways", "9123");
+    fs.mkdirSync(gatewayRoot, { recursive: true });
+
+    try {
+      vi.stubEnv("NEMOCLAW_GATEWAY_PORT", "9123");
+      vi.resetModules();
+      const { runUninstallAllGatewayPorts: runSweep } = await import("./all-gateway-ports");
+      expect(listGatewayStateRoots(home).map(({ gatewayPort }) => gatewayPort)).toEqual([
+        8080, 9123,
+      ]);
+      const { deps, runPortPass, runSelectedPass } = sweepDeps({
+        env: { HOME: home, NEMOCLAW_GATEWAY_PORT: "9123" },
+        home,
+        listGatewayPorts: undefined,
+        gatewayStateDirForPort: () => null,
+      });
+
+      const result = await runSweep(OPTIONS, deps);
+
+      expect(result).toEqual({ exitCode: 0, ports: [9123] });
+      expect(runPortPass).not.toHaveBeenCalled();
+      expect(runSelectedPass).toHaveBeenCalledOnce();
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ["default", (_home: string) => undefined],
+    [
+      "custom",
+      (home: string) =>
+        writeDockerDriverGatewayBinding(home, 8080, {
+          stateDir: path.join(home, "custom-default-gateway"),
+          dockerNetworkName: "mvca-nemoclaw-b1",
+        }),
+    ],
+  ])(
+    "retains a default gateway when its config is present without a registry (%s state) (#13332)",
+    async (_stateKind, configureStateDir) => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-default-config-"));
+      const sharedRoot = path.join(home, ".nemoclaw");
+      const gatewayRoot = path.join(sharedRoot, "gateways", "9123");
+      fs.mkdirSync(gatewayRoot, { recursive: true });
+      configureStateDir(home);
+      const gatewayStateDir = resolveGatewayStateDirForPort({ home, port: 8080 });
+      fs.mkdirSync(gatewayStateDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(gatewayStateDir, "openshell-gateway.toml"),
+        "legacy gateway config\n",
+      );
+
+      try {
+        vi.stubEnv("NEMOCLAW_GATEWAY_PORT", "9123");
+        vi.resetModules();
+        const { runUninstallAllGatewayPorts: runSweep } = await import("./all-gateway-ports");
+        const { deps, runPortPass, runSelectedPass } = sweepDeps({
+          env: { HOME: home, NEMOCLAW_GATEWAY_PORT: "9123" },
+          home,
+          listGatewayPorts: undefined,
+          gatewayStateDirForPort: () => null,
+        });
+
+        const result = await runSweep(OPTIONS, deps);
+
+        expect(result.ports).toEqual([8080, 9123]);
+        expect(runPortPass.mock.calls.map(([port]) => port)).toEqual([8080]);
+        expect(runSelectedPass).toHaveBeenCalledOnce();
+      } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.each([
+    ["directory", (configPath: string) => fs.mkdirSync(configPath)],
+    [
+      "symbolic link",
+      (configPath: string) => {
+        const target = path.join(path.dirname(configPath), "actual-config.toml");
+        fs.writeFileSync(target, "legacy gateway config\n");
+        fs.symlinkSync(target, configPath);
+      },
+    ],
+  ])(
+    "does not treat a %s as default gateway config evidence (#13332)",
+    async (_entryKind, createConfigEntry) => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-invalid-config-"));
+      const gatewayRoot = path.join(home, ".nemoclaw", "gateways", "9123");
+      const gatewayStateDir = resolveGatewayStateDirForPort({ home, port: 8080 });
+      fs.mkdirSync(gatewayRoot, { recursive: true });
+      fs.mkdirSync(gatewayStateDir, { recursive: true });
+      createConfigEntry(path.join(gatewayStateDir, "openshell-gateway.toml"));
+
+      try {
+        vi.stubEnv("NEMOCLAW_GATEWAY_PORT", "9123");
+        vi.resetModules();
+        const { runUninstallAllGatewayPorts: runSweep } = await import("./all-gateway-ports");
+        const { deps, runPortPass, runSelectedPass } = sweepDeps({
+          env: { HOME: home, NEMOCLAW_GATEWAY_PORT: "9123" },
+          home,
+          listGatewayPorts: undefined,
+          gatewayStateDirForPort: () => null,
+        });
+
+        const result = await runSweep(OPTIONS, deps);
+
+        expect(result).toEqual({ exitCode: 0, ports: [9123] });
+        expect(runPortPass).not.toHaveBeenCalled();
+        expect(runSelectedPass).toHaveBeenCalledOnce();
+      } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("includes a default gateway with a registered sandbox in the whole-host sweep (#13332)", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-default-present-"));
+    const sharedRoot = path.join(home, ".nemoclaw");
+    const gatewayRoot = path.join(sharedRoot, "gateways", "9123");
+    fs.mkdirSync(gatewayRoot, { recursive: true });
+    fs.writeFileSync(
+      path.join(sharedRoot, "sandboxes.json"),
+      JSON.stringify({
+        defaultSandbox: "default-sandbox",
+        sandboxes: {
+          "default-sandbox": {
+            name: "default-sandbox",
+            gatewayName: "nemoclaw",
+            gatewayPort: 8080,
+          },
+        },
+      }),
+    );
+
+    try {
+      vi.stubEnv("NEMOCLAW_GATEWAY_PORT", "9123");
+      vi.resetModules();
+      const { runUninstallAllGatewayPorts: runSweep } = await import("./all-gateway-ports");
+      const { deps, runPortPass, runSelectedPass } = sweepDeps({
+        env: { HOME: home, NEMOCLAW_GATEWAY_PORT: "9123" },
+        home,
+        listGatewayPorts: undefined,
+        gatewayStateDirForPort: () => null,
+      });
+
+      const result = await runSweep(OPTIONS, deps);
+
+      expect(result.ports).toEqual([8080, 9123]);
+      expect(runPortPass.mock.calls.map(([port]) => port)).toEqual([8080]);
+      expect(runSelectedPass).toHaveBeenCalledOnce();
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
     }
   });
 
@@ -533,5 +734,19 @@ describe("uninstall across every gateway port (#7791)", () => {
     ],
   ] as const)("passes %s to a child gateway-port pass", (_scenario, overrides, expected) => {
     expect(uninstallChildArgs({ ...OPTIONS, ...overrides })).toEqual(expected);
+  });
+
+  it("passes retained failed ports to the final child gateway-port pass", () => {
+    expect(uninstallChildArgs(OPTIONS, [9000, 18080])).toEqual([
+      "internal",
+      "uninstall",
+      "run-plan",
+      "--yes",
+      "--all-gateway-ports-child",
+      "--retained-gateway-port",
+      "9000",
+      "--retained-gateway-port",
+      "18080",
+    ]);
   });
 });
