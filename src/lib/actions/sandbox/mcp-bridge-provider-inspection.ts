@@ -20,8 +20,13 @@ import { getDockerDriverGatewayLocalTlsDir } from "../../onboard/docker-driver-g
 import { resolveGatewayStateDirForPort } from "../../onboard/gateway/state-dir";
 import { resolveGatewayCredentialMutationAuthority } from "../../onboard/gateway-teardown-authority";
 import {
+  invalidGatewayManagementDeclarationError,
+  loadGatewayManagementDeclaration,
+} from "../../onboard/gateway-management";
+import {
   evaluateGatewayAttachmentConfiguration,
   isExternallySupervised,
+  resolveGatewayOwner,
   type GatewayOwner,
 } from "../../onboard/gateway-ownership";
 import { replayTrustedPrivateEndpoint } from "../../security/trusted-private-endpoint";
@@ -135,10 +140,22 @@ function providerRuntimeLocalTlsDir(
 
 export function getMcpProviderInspectionRuntimeSelection(
   sandbox: SandboxEntry,
+  options: { observationOnly?: boolean } = {},
 ): McpProviderInspectionRuntimeSelection {
   const providerRuntimeGateway = getPersistedSandboxTargetGateway(sandbox);
   const { gatewayName, gatewayPort } = providerRuntimeGateway;
-  const owner = resolveGatewayCredentialMutationAuthority({ gatewayName, gatewayPort });
+  let owner: GatewayOwner;
+  if (options.observationOnly) {
+    const loaded = loadGatewayManagementDeclaration();
+    if (!loaded.ok) throw invalidGatewayManagementDeclarationError(loaded.reason);
+    // Observation needs routing and TLS, not service installation or lifecycle authority.
+    owner = resolveGatewayOwner({
+      gatewayName,
+      gatewayPort,
+      declaration: loaded.declaration,
+      hasPackagedService: false,
+    });
+  } else owner = resolveGatewayCredentialMutationAuthority({ gatewayName, gatewayPort });
   const localTlsDir = providerRuntimeLocalTlsDir(owner, providerRuntimeGateway.selectedInProcess);
   return {
     gatewayName,
@@ -149,10 +166,11 @@ export function getMcpProviderInspectionRuntimeSelection(
 
 export function resolveSandboxConfigRuntimeSelection(
   sandboxName: string,
+  options: { observationOnly?: boolean } = {},
 ): OpenShellRuntimeSelection {
   const sandbox = getKnownSandboxTarget(sandboxName);
   if (!sandbox) throw new Error(`Sandbox '${sandboxName}' has no recorded runtime target.`);
-  return getMcpProviderInspectionRuntimeSelection(sandbox);
+  return getMcpProviderInspectionRuntimeSelection(sandbox, options);
 }
 
 export async function inspectMcpProvider(
