@@ -44,12 +44,14 @@ describe("showSandboxStatus flow", () => {
   });
 
   it.each(["pending", "configuring", "active"] as const)(
-    "reports Hermes portable receipt phase %s without Docker or OpenClaw status work (#9203)",
+    "reports Hermes portable phase %s and its recorded gateway without probing health (#10656)",
     async (phase) => {
+      const gatewayName = "nemoclaw-8245";
+      vi.stubEnv("NEMOCLAW_GATEWAY_PORT", "8080");
       const harness = createStatusFlowHarness({
-        portableDisposition: hermesPortableDisposition(phase),
+        portableDisposition: { ...hermesPortableDisposition(phase), gatewayName },
         registryEntry: phase === "pending" ? "missing" : "present",
-        sandboxEntry: { agent: "hermes" },
+        sandboxEntry: { agent: "hermes", gatewayName },
       });
 
       await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
@@ -61,6 +63,9 @@ describe("showSandboxStatus flow", () => {
       expect(harness.logSpy.mock.calls.flat().join("\n")).toContain(
         "Runtime and agent health: not probed",
       );
+      expect(harness.logSpy.mock.calls.flat().join("\n")).toContain(
+        `Recorded gateway: ${gatewayName}`,
+      );
       expect(report).toMatchObject({
         schemaVersion: 1,
         name: "alpha",
@@ -68,11 +73,17 @@ describe("showSandboxStatus flow", () => {
         agent: "hermes",
         agentDisplayName: "Hermes",
         portableLifecyclePhase: phase,
+        gatewayState: "not-probed",
+        inferenceHealth: null,
         policies: ["npm", "telegram"],
         policiesAvailable: true,
       });
       expect(harness.collectSandboxStatusSnapshotSpy).not.toHaveBeenCalled();
       expect(harness.getSandboxDockerRuntimeSpy).not.toHaveBeenCalled();
+      expect(harness.isSandboxGatewayRunningForStatusSpy).not.toHaveBeenCalled();
+      expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+      expect(exitSpy).not.toHaveBeenCalled();
+      expect(process.exitCode).toBeUndefined();
       expect(harness.withMcpLifecycleLockSpy).toHaveBeenCalledTimes(2);
     },
   );
