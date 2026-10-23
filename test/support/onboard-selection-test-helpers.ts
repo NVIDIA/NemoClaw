@@ -250,7 +250,7 @@ runner.runShell = () => ({ status: 0 });
 const childProcess = require("node:child_process");
 const originalSpawn = childProcess.spawn;
 childProcess.spawn = (file, args, options) => {
-  if (Array.isArray(args) && args[0] === "serve") {
+  if (file === "ollama" && Array.isArray(args) && args[0] === "serve") {
     console.error("OLLAMA_SERVE_LAUNCHED");
     return { pid: 99999, unref() {}, on() {} };
   }
