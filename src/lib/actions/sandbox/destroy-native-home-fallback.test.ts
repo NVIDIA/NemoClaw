@@ -47,7 +47,7 @@ describe("native-home destroy fallback", () => {
         openshellResult: { status: 255, stdout: "", stderr: "sandbox is not running" },
       },
     ].flatMap((scenario) =>
-      ["langchain-deepagents-code", "openclaw"].map((agent) => ({ ...scenario, agent })),
+      ["langchain-deepagents-code", "openclaw", "hermes"].map((agent) => ({ ...scenario, agent })),
     ),
   )(
     "completes $agent cleanup as the sandbox owner after $initial",
@@ -113,6 +113,7 @@ describe("native-home destroy fallback", () => {
   it.each([
     { agent: "langchain-deepagents-code", label: "LangChain Deep Agents Code" },
     { agent: "openclaw", label: "OpenClaw" },
+    { agent: "hermes", label: "Hermes Agent" },
   ])("fails closed when the pinned $agent user cannot finish the wipe", ({ agent, label }) => {
     const failure = { status: 1, signal: null, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
     const runAsSandboxUser = vi.fn(() => failure);
@@ -209,6 +210,7 @@ describe("native-home destroy fallback", () => {
   it.each([
     { agent: "langchain-deepagents-code", sandboxUser: DEEP_AGENTS_CODE_SANDBOX_USER },
     { agent: "openclaw", sandboxUser: "998:998" },
+    { agent: "hermes", sandboxUser: "998:999" },
     { agent: undefined, sandboxUser: "998:998" },
     { agent: null, sandboxUser: "998:998" },
     { agent: "", sandboxUser: "998:998" },
