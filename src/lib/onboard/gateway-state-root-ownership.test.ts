@@ -17,6 +17,36 @@ function target(stateDir: string, gatewayPort = 9123) {
 }
 
 describe("managed gateway state root ownership", () => {
+  it("identifies a missing gateway ancestor without weakening the ownership check (#12389)", () => {
+    const root = fs.mkdtempSync(path.join(process.cwd(), "nemoclaw-missing-gateway-parent-"));
+    const stateDir = path.join(root, "missing", "gateway");
+    try {
+      expect(managedGatewayStateRootOwnershipFailure(target(stateDir))).toContain(
+        `ancestor '${path.join(root, "missing")}' cannot be inspected (ENOENT)`,
+      );
+      expect(fs.existsSync(path.join(root, "missing"))).toBe(false);
+    } finally {
+      fs.rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  it("does not copy unexpected filesystem error text into gateway diagnostics (#12389)", () => {
+    const error = Object.assign(new Error("credential-shaped private detail"), { code: "EIO" });
+    const inspect = vi.spyOn(fs, "lstatSync").mockImplementationOnce(() => {
+      throw error;
+    });
+    try {
+      const failure = managedGatewayStateRootOwnershipFailure(
+        target(path.join(process.cwd(), "gateway")),
+      );
+      expect(failure).toContain("cannot be inspected");
+      expect(failure).not.toContain("credential-shaped private detail");
+      expect(failure).not.toContain("EIO");
+    } finally {
+      inspect.mockRestore();
+    }
+  });
+
   it("rejects an existing nonempty directory that NemoClaw does not own", () => {
     const root = fs.mkdtempSync(path.join(process.cwd(), "nemoclaw-unowned-gateway-root-"));
     const stateDir = path.join(root, "gateway");

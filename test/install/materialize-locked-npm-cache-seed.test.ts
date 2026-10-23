@@ -22,6 +22,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   type LockedArchive,
+  lockedArchives,
   materializeLockedNpmCacheSeed,
   verifyAndCopyLockedNpmCacheSeed,
 } from "../../scripts/checks/materialize-locked-npm-cache-seed.mts";
@@ -83,6 +84,32 @@ afterEach(() => {
 });
 
 describe("locked npm cache seed materialization", () => {
+  it("preserves distinct archive contents when registry URLs share a filename", async () => {
+    const alpha = archive("alpha", "alpha archive");
+    const beta = archive("beta", "beta archive");
+    beta.locked.resolved = "https://registry.npmjs.org/beta/-/alpha-1.0.0.tgz";
+    const sources = new Map([
+      [alpha.locked.resolved, alpha.bytes],
+      [beta.locked.resolved, beta.bytes],
+    ]);
+    const lockfile = writeLock(testRoot, [alpha.locked, beta.locked]);
+    const seed = path.join(testRoot, "seed");
+    const copied = path.join(testRoot, "copied");
+    const manifest = await materializeLockedNpmCacheSeed({
+      downloadArchive: async (entry) => sources.get(entry.resolved)!,
+      lockfile,
+      output: seed,
+      target: TARGET,
+    });
+    await verifyAndCopyLockedNpmCacheSeed({ lockfile, output: copied, seed, target: TARGET });
+    expect(new Set(manifest.archives.map(({ archive }) => archive)).size).toBe(2);
+    expect(
+      readdirSync(copied)
+        .map((name) => readFileSync(path.join(copied, name), "utf8"))
+        .sort(),
+    ).toEqual(["alpha archive", "beta archive"]);
+  });
+
   it("materializes the reviewed OpenClaw 2026.9.1 archive size", async () => {
     const bytes = Buffer.alloc(55_564_082, 0x61);
     const locked: LockedArchive = {
@@ -377,6 +404,128 @@ describe("locked npm cache seed materialization", () => {
     ).rejects.toThrow(
       "package-lock exact dependency is unresolved: beta@2.0.0 from node_modules/alpha",
     );
+    expect(downloadArchive).not.toHaveBeenCalled();
+  });
+
+  it("exports and verifies a transitive version selected by the adjacent manifest override", async () => {
+    const alpha = archive("alpha", "alpha archive");
+    const beta = archive("beta", "beta archive");
+    const lockfile = writeLock(testRoot, [alpha.locked, beta.locked]);
+    const lock = JSON.parse(readFileSync(lockfile, "utf8"));
+    lock.packages[""].dependencies = { alpha: "1.0.0" };
+    lock.packages["node_modules/alpha"].dependencies = { beta: "0.9.0" };
+    writeFileSync(lockfile, JSON.stringify(lock));
+    const manifestPath = path.join(testRoot, "package.json");
+    const manifest = { ...lock.packages[""], overrides: { beta: "1.0.0" } };
+    writeFileSync(manifestPath, JSON.stringify(manifest));
+    const sources = new Map([
+      [alpha.locked.resolved, alpha.bytes],
+      [beta.locked.resolved, beta.bytes],
+    ]);
+    const seed = path.join(testRoot, "seed");
+    const exported = await materializeLockedNpmCacheSeed({
+      downloadArchive: async (entry) => sources.get(entry.resolved)!,
+      lockfile,
+      output: seed,
+      target: TARGET,
+    });
+    expect(exported.archiveCount).toBe(2);
+    expect(await verifyAndCopyLockedNpmCacheSeed({ lockfile, seed, target: TARGET })).toEqual(
+      exported,
+    );
+    manifest.overrides.beta = "1.1.0";
+    writeFileSync(manifestPath, JSON.stringify(manifest));
+    await expect(
+      verifyAndCopyLockedNpmCacheSeed({ lockfile, seed, target: TARGET }),
+    ).rejects.toThrow("package-lock exact dependency is unresolved: beta@1.1.0");
+  });
+
+  it.each([
+    { label: "missing", overrides: undefined },
+    { label: "different version", overrides: { beta: "1.1.0" } },
+    { label: "range", overrides: { beta: "^1.0.0" } },
+    { label: "different package", overrides: { gamma: "1.0.0" } },
+    { label: "nested", overrides: { alpha: { beta: "1.0.0" } } },
+    { label: "version-qualified", overrides: { "beta@0.9.0": "1.0.0" } },
+    { label: "shadowed", overrides: { beta: "1.0.0", alpha: { beta: "0.8.0" } } },
+  ])("rejects a transitive mismatch when the override is $label", ({ overrides }) => {
+    const lockfile = writeLock(testRoot, [
+      archive("alpha", "alpha").locked,
+      archive("beta", "beta").locked,
+    ]);
+    const lock = JSON.parse(readFileSync(lockfile, "utf8"));
+    lock.packages[""].dependencies = { alpha: "1.0.0" };
+    lock.packages["node_modules/alpha"].dependencies = { beta: "0.9.0" };
+    expect(() =>
+      lockedArchives(
+        JSON.stringify(lock),
+        TARGET,
+        JSON.stringify({ ...lock.packages[""], overrides }),
+      ),
+    ).toThrow("package-lock exact dependency is unresolved: beta@");
+  });
+
+  it.each([
+    "name",
+    "version",
+    "dependencies",
+    "devDependencies",
+    "optionalDependencies",
+    "peerDependencies",
+  ])("rejects an override manifest with different root %s", (key) => {
+    const lockfile = writeLock(testRoot, [archive("alpha", "alpha").locked]);
+    const source = readFileSync(lockfile, "utf8");
+    const manifest = { ...JSON.parse(source).packages[""], overrides: { beta: "1.0.0" } };
+    manifest[key] =
+      key.endsWith("Dependencies") || key === "dependencies" ? { other: "1.0.0" } : "different";
+    expect(() => lockedArchives(source, TARGET, JSON.stringify(manifest))).toThrow(
+      `package.json ${key} differs from package-lock root`,
+    );
+  });
+
+  it("keeps direct and bundled dependencies under the original exact-version check", () => {
+    const lockfile = writeLock(testRoot, [
+      archive("alpha", "alpha").locked,
+      archive("beta", "beta").locked,
+    ]);
+    const lock = JSON.parse(readFileSync(lockfile, "utf8"));
+    lock.packages[""].dependencies = { alpha: "0.9.0" };
+    expect(() =>
+      lockedArchives(
+        JSON.stringify(lock),
+        TARGET,
+        JSON.stringify({ ...lock.packages[""], overrides: { alpha: "1.0.0" } }),
+      ),
+    ).toThrow("package-lock exact dependency is unresolved: alpha@0.9.0 from root package");
+    lock.packages[""].dependencies = { alpha: "1.0.0" };
+    lock.packages["node_modules/alpha"].dependencies = { beta: "0.9.0" };
+    lock.packages["node_modules/beta"].inBundle = true;
+    expect(() =>
+      lockedArchives(
+        JSON.stringify(lock),
+        TARGET,
+        JSON.stringify({ ...lock.packages[""], overrides: { beta: "1.0.0" } }),
+      ),
+    ).toThrow("package-lock exact dependency is unresolved: beta@0.9.0 from node_modules/alpha");
+  });
+
+  it("rejects a symlinked adjacent manifest before downloading archives", async () => {
+    const lockfile = writeLock(testRoot, [archive("alpha", "alpha").locked]);
+    const manifest = path.join(testRoot, "manifest.json");
+    writeFileSync(
+      manifest,
+      JSON.stringify(JSON.parse(readFileSync(lockfile, "utf8")).packages[""]),
+    );
+    symlinkSync(manifest, path.join(testRoot, "package.json"));
+    const downloadArchive = vi.fn();
+    await expect(
+      materializeLockedNpmCacheSeed({
+        downloadArchive,
+        lockfile,
+        output: path.join(testRoot, "seed"),
+        target: TARGET,
+      }),
+    ).rejects.toThrow();
     expect(downloadArchive).not.toHaveBeenCalled();
   });
 

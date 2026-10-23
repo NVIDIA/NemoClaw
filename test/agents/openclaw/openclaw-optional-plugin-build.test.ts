@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -11,70 +12,223 @@ import { writeReviewedNpmFixture } from "../../helpers/reviewed-npm-fixture";
 
 const ROOT = path.resolve(import.meta.dirname, "../../..");
 const BRAVE_INTEGRITY =
-  "sha512-4+j+eQTToV3k7Cb25MUL6h2uL8cJYyuLytfpd/sJK/HjR43dgKBqKpBsb1+I3w1Jr6PLpnjSf6/I3//3K0cdnA==";
+  "sha512-6416aPlfnAKlu8IBrrjgfoiss/10xB32ywFwnIf/fkVMQE61qsmzA/qxUniQuDwOB6EBFNEkNs54DhIT7g3UVg==";
 const BRAVE_TARBALL =
-  "https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.9.1.tgz";
+  "https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.9.2.tgz";
+const TAVILY_INTEGRITY =
+  "sha512-FYK2e7aXagwcGiTRQfidS3PThIfJkAQoqYEtlkadiGxmgeChYY71YLeD6nQAHZKHmTAOw9U7njDxMBvYyXPf5w==";
+const TAVILY_TARBALL =
+  "https://registry.npmjs.org/@openclaw/tavily-plugin/-/tavily-plugin-2026.9.2.tgz";
 
-it("pins Brave web-search and preserves its placeholder during build-time doctor", () => {
-  const dockerfile = fs.readFileSync(path.join(ROOT, "Dockerfile"), "utf-8");
-  const command = dockerRunCommandBetween(
-    dockerfile,
-    "# Install non-messaging OpenClaw plugins",
-    "USER root\nCOPY src/lib/messaging/ /src/lib/messaging/",
-  );
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-brave-plugin-install-"));
-  const log = path.join(tmp, "calls.log");
-  try {
-    const npmFixture = path.join(tmp, "npm-fixture");
-    writeReviewedNpmFixture(npmFixture, log, [
-      {
-        integrity: BRAVE_INTEGRITY,
-        packageSpec: "@openclaw/brave-plugin@2026.9.1",
-        tarballUrl: BRAVE_TARBALL,
-      },
-    ]);
-    const script = [
-      "#!/usr/bin/env bash",
-      "set -euo pipefail",
-      `call_log=${JSON.stringify(log)}`,
-      'openclaw() { printf "%s|BRAVE_API_KEY=%s\\n" "$*" "${BRAVE_API_KEY:-}" >> "$call_log"; }',
-      command
-        .replace(
-          "export NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR=/opt/nemoclaw-reviewed-npm-archives;",
-          "unset NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR;",
-        )
-        .replaceAll(
-          "/scripts/lib/reviewed-npm-archive.mts",
-          path.join(ROOT, "scripts", "lib", "reviewed-npm-archive.mts"),
-        ),
-    ].join("\n");
-    const scriptPath = path.join(tmp, "run.sh");
-    fs.writeFileSync(scriptPath, script, { mode: 0o700 });
-    const result = spawnSync("bash", [scriptPath], {
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        NEMOCLAW_OPENCLAW_OTEL: "0",
-        NEMOCLAW_REVIEWED_NPM_EXECUTABLE: npmFixture,
-        NEMOCLAW_WEB_SEARCH_ENABLED: "1",
-        NEMOCLAW_WEB_SEARCH_PROVIDER: "brave",
-        NODE_OPTIONS: "",
-        OPENCLAW_BRAVE_PLUGIN_2026_9_1_INTEGRITY: BRAVE_INTEGRITY,
-        OPENCLAW_VERSION: "2026.9.1",
-      },
-    });
-    const calls = fs.readFileSync(log, "utf-8");
-    expect(result.status, result.stderr).toBe(0);
-    expect(calls).toContain("npm view @openclaw/brave-plugin@2026.9.1 dist.integrity");
-    expect(calls).toContain("npm pack @openclaw/brave-plugin@2026.9.1 --pack-destination");
-    expect(calls).toContain("plugins install --force --accept-capabilities npm-pack:");
-    expect(calls).toContain(
-      "doctor --fix --non-interactive|BRAVE_API_KEY=openshell:resolve:env:BRAVE_API_KEY",
+it.each([
+  {
+    provider: "brave",
+    integrity: BRAVE_INTEGRITY,
+    tarball: BRAVE_TARBALL,
+    credential: "BRAVE_API_KEY",
+  },
+  {
+    provider: "tavily",
+    integrity: TAVILY_INTEGRITY,
+    tarball: TAVILY_TARBALL,
+    credential: "TAVILY_API_KEY",
+  },
+])(
+  "pins $provider and preserves its placeholder during build-time doctor (#11294)",
+  ({ provider, integrity, tarball, credential }) => {
+    const dockerfile = fs.readFileSync(path.join(ROOT, "Dockerfile"), "utf-8");
+    const command = dockerRunCommandBetween(
+      dockerfile,
+      "# Install non-messaging OpenClaw plugins",
+      "USER root\nCOPY src/lib/messaging/ /src/lib/messaging/",
     );
-  } finally {
-    fs.rmSync(tmp, { recursive: true, force: true });
-  }
-});
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-search-plugin-install-"));
+    const log = path.join(tmp, "calls.log");
+    try {
+      const npmFixture = path.join(tmp, "npm-fixture");
+      writeReviewedNpmFixture(npmFixture, log, [
+        {
+          integrity,
+          packageSpec: `@openclaw/${provider}-plugin@2026.9.2`,
+          tarballUrl: tarball,
+        },
+      ]);
+      const script = [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        'openclaw() { printf "%s|BRAVE_API_KEY=%s|TAVILY_API_KEY=%s\\n" "$*" "${BRAVE_API_KEY:-}" "${TAVILY_API_KEY:-}" >> "$PLUGIN_CALL_LOG"; }',
+        command
+          .replace(
+            "export NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR=/opt/nemoclaw-reviewed-npm-archives;",
+            "unset NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR;",
+          )
+          .replaceAll(
+            "/scripts/lib/reviewed-npm-archive.mts",
+            path.join(ROOT, "scripts", "lib", "reviewed-npm-archive.mts"),
+          ),
+      ].join("\n");
+      const scriptPath = path.join(tmp, "run.sh");
+      fs.writeFileSync(scriptPath, script, { mode: 0o700 });
+      const result = spawnSync("bash", [scriptPath], {
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          PLUGIN_CALL_LOG: log,
+          BRAVE_API_KEY: "",
+          TAVILY_API_KEY: "",
+          NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION: "0",
+          NEMOCLAW_OPENCLAW_OTEL: "0",
+          NEMOCLAW_REVIEWED_NPM_EXECUTABLE: npmFixture,
+          NEMOCLAW_WEB_SEARCH_ENABLED: "1",
+          NEMOCLAW_WEB_SEARCH_PROVIDER: provider,
+          NODE_OPTIONS: "",
+          OPENCLAW_BRAVE_PLUGIN_2026_9_2_INTEGRITY: BRAVE_INTEGRITY,
+          OPENCLAW_TAVILY_PLUGIN_2026_9_2_INTEGRITY: TAVILY_INTEGRITY,
+          OPENCLAW_VERSION: "2026.9.2",
+        },
+      });
+      const calls = fs.readFileSync(log, "utf-8");
+      expect(result.status, result.stderr).toBe(0);
+      expect(calls).toContain(`npm view @openclaw/${provider}-plugin@2026.9.2 dist.integrity`);
+      expect(calls).toContain(`npm pack @openclaw/${provider}-plugin@2026.9.2 --pack-destination`);
+      expect(calls).toContain("plugins install --force --accept-capabilities npm-pack:");
+      expect(calls).toContain("doctor --fix --non-interactive|");
+      expect(calls).toContain(`${credential}=openshell:resolve:env:${credential}`);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  },
+);
+
+it.each([
+  {
+    scenario: "selected Tavily",
+    provider: "tavily",
+    union: "0",
+    content: "reviewed plugin fixture",
+    version: "2026.9.2",
+    status: 0,
+    installed: ["tavily-plugin"],
+    doctor: "doctor --fix --non-interactive|||\n",
+    diagnostic: /^$/u,
+  },
+  {
+    scenario: "the managed image",
+    provider: "tavily",
+    union: "1",
+    content: "reviewed plugin fixture",
+    version: "2026.9.2",
+    status: 0,
+    installed: ["diagnostics-otel", "brave-plugin", "tavily-plugin"],
+    doctor: "",
+    diagnostic: /^$/u,
+  },
+  {
+    scenario: "a modified Tavily archive",
+    provider: "tavily",
+    union: "0",
+    content: "modified plugin fixture",
+    version: "2026.9.2",
+    status: 1,
+    installed: [],
+    doctor: "",
+    diagnostic: /integrity mismatch for .*tavily-plugin-2026\.9\.2\.tgz/u,
+  },
+  {
+    scenario: "a modified Brave archive",
+    provider: "brave",
+    union: "0",
+    content: "modified plugin fixture",
+    version: "2026.9.2",
+    status: 1,
+    installed: [],
+    doctor: "",
+    diagnostic: /integrity mismatch for .*brave-plugin-2026\.9\.2\.tgz/u,
+  },
+  {
+    scenario: "an unpinned Tavily version",
+    provider: "tavily",
+    union: "0",
+    content: "reviewed plugin fixture",
+    version: "2099.1.1",
+    status: 1,
+    installed: [],
+    doctor: "",
+    diagnostic: /@openclaw\/tavily-plugin@2099\.1\.1 has no committed npm integrity pin/u,
+  },
+])(
+  "uses only verified offline archives for $scenario (#11294)",
+  ({ provider, union, content, version, status, installed, doctor, diagnostic }) => {
+    const command = dockerRunCommandBetween(
+      fs.readFileSync(path.join(ROOT, "Dockerfile"), "utf-8"),
+      "# Install non-messaging OpenClaw plugins",
+      "USER root\nCOPY src/lib/messaging/ /src/lib/messaging/",
+    );
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-offline-search-plugin-"));
+    const log = path.join(tmp, "calls.log");
+    const archiveDirectory = path.join(tmp, "archives");
+    const integrity = `sha512-${createHash("sha512").update("reviewed plugin fixture").digest("base64")}`;
+    try {
+      fs.mkdirSync(archiveDirectory);
+      fs.writeFileSync(
+        path.join(archiveDirectory, "diagnostics-otel-2026.9.2.tgz"),
+        "reviewed plugin fixture",
+      );
+      fs.writeFileSync(
+        path.join(archiveDirectory, "brave-plugin-2026.9.2.tgz"),
+        "reviewed plugin fixture",
+      );
+      fs.writeFileSync(
+        path.join(archiveDirectory, "tavily-plugin-2026.9.2.tgz"),
+        "reviewed plugin fixture",
+      );
+      fs.writeFileSync(path.join(archiveDirectory, `${provider}-plugin-2026.9.2.tgz`), content);
+      fs.writeFileSync(log, "");
+      const script = [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        'openclaw() { printf "%s|%s|%s|%s\\n" "$*" "${NPM_CONFIG_OFFLINE:-}" "${NPM_CONFIG_IGNORE_SCRIPTS:-}" "${npm_config_ignore_scripts:-}" >> "$PLUGIN_CALL_LOG"; }',
+        command.replace(
+          "export NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR=/opt/nemoclaw-reviewed-npm-archives;",
+          'export NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR="$PLUGIN_ARCHIVE_DIR";',
+        ),
+      ].join("\n");
+      const scriptPath = path.join(tmp, "run.sh");
+      fs.writeFileSync(scriptPath, script);
+      const result = spawnSync("bash", [scriptPath], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          NODE_OPTIONS: "",
+          PLUGIN_CALL_LOG: log,
+          PLUGIN_ARCHIVE_DIR: archiveDirectory,
+          NPM_CONFIG_OFFLINE: "",
+          NPM_CONFIG_IGNORE_SCRIPTS: "",
+          npm_config_ignore_scripts: "",
+          NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION: union,
+          NEMOCLAW_OPENCLAW_OTEL: "0",
+          NEMOCLAW_WEB_SEARCH_ENABLED: "1",
+          NEMOCLAW_WEB_SEARCH_PROVIDER: provider,
+          OPENCLAW_VERSION: version,
+          OPENCLAW_DIAGNOSTICS_OTEL_2026_9_2_INTEGRITY: integrity,
+          OPENCLAW_BRAVE_PLUGIN_2026_9_2_INTEGRITY: integrity,
+          OPENCLAW_TAVILY_PLUGIN_2026_9_2_INTEGRITY: integrity,
+        },
+      });
+      expect(result.status, result.stderr).toBe(status);
+      expect(result.stderr).toMatch(diagnostic);
+      const expectedInstalls = installed
+        .map(
+          (plugin) =>
+            `plugins install --force --accept-capabilities npm-pack:${archiveDirectory}/${plugin}-2026.9.2.tgz|true|true|true\n`,
+        )
+        .join("");
+      expect(fs.readFileSync(log, "utf8")).toBe(expectedInstalls + doctor);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  },
+);
 
 it.runIf(process.platform === "linux")(
   "reports an unsafe messaging cache path before invoking the build applier",
@@ -146,7 +300,7 @@ it.each([
       {
         env: {
           NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION: union,
-          OPENCLAW_VERSION: "2026.9.1",
+          OPENCLAW_VERSION: "2026.9.2",
         },
       },
     );

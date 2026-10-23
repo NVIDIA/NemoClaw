@@ -7,15 +7,62 @@ import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
 import { openRegularFileNoFollow } from "../../adapters/fs/regular-file";
+import { publishExportFile } from "../../adapters/fs/config-export-file";
+import type { SandboxEntry } from "../registry/types";
 import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../../sandbox-name-contract";
+import type { JsonObject } from "../../core/json-types";
+import { inspectCheckpoint } from "../onboard-checkpoint";
 
 const SCHEMA_VERSION = 1;
+const CREATE_AUTHORITY_SCHEMA_VERSION = 2;
 const FINGERPRINT_PATTERN = /^[0-9a-f]{64}$/u;
 const CREATE_ATTEMPT_NONCE_PATTERN = /^[0-9a-f]{62}$/u;
 const SAFE_EVIDENCE_PATTERN = /^[A-Za-z0-9._:@/-]{1,256}$/u;
 
 export function retainedSandboxRecoveryFile(sessionDirectory: string): string {
   return path.join(sessionDirectory, "retained-sandbox-recovery.json");
+}
+
+export function retainedRebuildSessionFileName(
+  sandboxName: string,
+): `.onboard-rebuild-${string}.json` {
+  if (sandboxName.length > NAME_MAX_LENGTH || !NAME_VALID_PATTERN.test(sandboxName)) {
+    throw new Error("Cannot select rebuild recovery for an invalid sandbox name.");
+  }
+  return `.onboard-rebuild-${sandboxName}.json`;
+}
+
+/** Read the same protected transaction authority for recovery and state migration. */
+export function readRetainedRebuildSession(
+  stateDirectory: string,
+  sandboxName: string,
+  expectedGatewayPort?: number,
+): JsonObject | null {
+  const missing = Symbol("missing retained rebuild session");
+  const value = readStateFile(
+    path.join(stateDirectory, retainedRebuildSessionFileName(sandboxName)),
+    missing,
+    true,
+  );
+  if (value === missing) return null;
+  const checkpoint = inspectCheckpoint(isObjectRecord(value) ? value.checkpoint : undefined);
+  if (
+    !isObjectRecord(value) ||
+    value.version !== 1 ||
+    checkpoint.status !== "loaded" ||
+    checkpoint.checkpoint.sandboxRecreate?.sandboxName !== sandboxName ||
+    value.sessionId !== checkpoint.checkpoint.sessionId ||
+    !isObjectRecord(value.machine) ||
+    value.machine.state !== checkpoint.checkpoint.machineState ||
+    (expectedGatewayPort !== undefined &&
+      checkpoint.checkpoint.sandboxRecreate.gatewayPort !== expectedGatewayPort)
+  ) {
+    throw new Error(
+      `Retained rebuild recovery does not identify sandbox '${sandboxName}'` +
+        (expectedGatewayPort === undefined ? "." : ` on gateway port ${expectedGatewayPort}.`),
+    );
+  }
+  return value as JsonObject;
 }
 
 export type RetainedSandboxRecoveryReason =
@@ -28,8 +75,44 @@ export interface RetainedSandboxResourceEvidence {
   readonly credentialEnvironmentVariables: readonly string[];
 }
 
+/** Authority observed before one native Docker create request, independent of session lifetime. */
+export interface RetainedSandboxCreateAuthority {
+  readonly schemaVersion: 1;
+  readonly runtime: "native-linux-default-docker";
+  readonly reservationSessionId: string;
+  readonly gatewayStateDir: string;
+  readonly daemonId: string;
+}
+
+export function parseRetainedSandboxCreateAuthority(
+  value: unknown,
+): RetainedSandboxCreateAuthority | null {
+  if (
+    !isObjectRecord(value) ||
+    value.schemaVersion !== 1 ||
+    value.runtime !== "native-linux-default-docker" ||
+    !validSafeEvidence(value.reservationSessionId) ||
+    typeof value.gatewayStateDir !== "string" ||
+    !path.isAbsolute(value.gatewayStateDir) ||
+    value.gatewayStateDir.length > 4096 ||
+    /[\x00-\x1f\x7f]/u.test(value.gatewayStateDir) ||
+    typeof value.daemonId !== "string" ||
+    value.daemonId.length === 0 ||
+    value.daemonId.length > 256 ||
+    /[\s\x00-\x1f\x7f]/u.test(value.daemonId)
+  )
+    return null;
+  return {
+    schemaVersion: 1,
+    runtime: "native-linux-default-docker",
+    reservationSessionId: value.reservationSessionId,
+    gatewayStateDir: value.gatewayStateDir,
+    daemonId: value.daemonId,
+  };
+}
+
 export interface RetainedSandboxRecoveryRecord {
-  readonly schemaVersion: typeof SCHEMA_VERSION;
+  readonly schemaVersion: typeof SCHEMA_VERSION | typeof CREATE_AUTHORITY_SCHEMA_VERSION;
   readonly recordId: string;
   readonly sandboxName: string;
   readonly sandboxIdentityFingerprint: string | null;
@@ -38,13 +121,14 @@ export interface RetainedSandboxRecoveryRecord {
   readonly gatewayPort: number;
   readonly lifecycleGeneration: string | null;
   readonly createAttemptNonce: string;
+  readonly createAuthority?: RetainedSandboxCreateAuthority;
   readonly resources: RetainedSandboxResourceEvidence;
   readonly reason: RetainedSandboxRecoveryReason;
   readonly recordedAt: string;
 }
 
 interface RetainedSandboxRecoveryState {
-  readonly schemaVersion: typeof SCHEMA_VERSION;
+  readonly schemaVersion: typeof SCHEMA_VERSION | typeof CREATE_AUTHORITY_SCHEMA_VERSION;
   readonly unresolved: readonly RetainedSandboxRecoveryRecord[];
 }
 
@@ -62,15 +146,24 @@ export interface RecordRetainedSandboxRecoveryInput {
   readonly gatewayPort: number;
   readonly lifecycleGeneration: string | null;
   readonly createAttemptNonce: string;
+  readonly createAuthority?: RetainedSandboxCreateAuthority;
   readonly resources: RetainedSandboxResourceEvidence;
   readonly reason: RetainedSandboxRecoveryReason;
   readonly recordedAt?: string;
 }
 
-const emptyState = (): RetainedSandboxRecoveryState => ({
-  schemaVersion: SCHEMA_VERSION,
-  unresolved: [],
-});
+export function retainedSandboxRecoveryDocument(
+  records: readonly RetainedSandboxRecoveryRecord[],
+): RetainedSandboxRecoveryState {
+  return {
+    schemaVersion: records.some((record) => record.createAuthority !== undefined)
+      ? CREATE_AUTHORITY_SCHEMA_VERSION
+      : SCHEMA_VERSION,
+    unresolved: records,
+  };
+}
+
+const emptyState = (): RetainedSandboxRecoveryState => retainedSandboxRecoveryDocument([]);
 
 function sameFileIdentity(left: fs.Stats, right: fs.Stats): boolean {
   return left.dev === right.dev && left.ino === right.ino;
@@ -186,14 +279,32 @@ function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function readStateFile(filePath: string): unknown {
+function assertPrivateRecoveryFile(stat: fs.Stats): void {
+  if (
+    (stat.mode & 0o077) !== 0 ||
+    (typeof process.getuid === "function" && stat.uid !== process.getuid())
+  ) {
+    throw new Error("Retained rebuild recovery must be a private file owned by the current user.");
+  }
+}
+
+function readStateFile(
+  filePath: string,
+  missingValue: unknown = emptyState(),
+  requirePrivate = false,
+): unknown {
   const directory = openStateDirectory(filePath, false);
-  if (directory === null) return emptyState();
+  if (directory === null) return missingValue;
   try {
     revalidateStateDirectory(directory);
     const file = openRegularFileNoFollow(filePath);
     try {
-      const value = JSON.parse(file.readUtf8());
+      if (requirePrivate) assertPrivateRecoveryFile(file.stat());
+      const text = requirePrivate
+        ? file.readBytes(16 * 1024 * 1024).toString("utf8")
+        : file.readUtf8();
+      if (requirePrivate) assertPrivateRecoveryFile(file.stat());
+      const value = JSON.parse(text);
       revalidateStateDirectory(directory);
       return value;
     } finally {
@@ -205,7 +316,7 @@ function readStateFile(filePath: string): unknown {
       "code" in error &&
       (error as NodeJS.ErrnoException).code === "ENOENT"
     ) {
-      return emptyState();
+      return missingValue;
     }
     if (
       error instanceof Error &&
@@ -273,7 +384,10 @@ function writeStateFile(filePath: string, state: RetainedSandboxRecoveryState): 
     );
     revalidateStateDirectory(directory);
     temporaryStat = assertTemporaryStateFile(descriptor, temporary);
-    fs.writeFileSync(descriptor, JSON.stringify(state, null, 2));
+    fs.writeFileSync(
+      descriptor,
+      JSON.stringify(retainedSandboxRecoveryDocument(state.unresolved), null, 2),
+    );
     fs.fchmodSync(descriptor, 0o600);
     fs.fsyncSync(descriptor);
     temporaryStat = assertTemporaryStateFile(descriptor, temporary);
@@ -340,8 +454,10 @@ function parseRecord(value: unknown): RetainedSandboxRecoveryRecord | null {
   const resources = parseEvidence(value.resources);
   const fingerprint = value.sandboxIdentityFingerprint;
   const reason = value.reason;
+  const createAuthority = parseRetainedSandboxCreateAuthority(value.createAuthority);
   if (
-    value.schemaVersion !== SCHEMA_VERSION ||
+    value.schemaVersion !==
+      (value.createAuthority === undefined ? SCHEMA_VERSION : CREATE_AUTHORITY_SCHEMA_VERSION) ||
     typeof value.recordId !== "string" ||
     !FINGERPRINT_PATTERN.test(value.recordId) ||
     !validSandboxName(value.sandboxName) ||
@@ -354,6 +470,7 @@ function parseRecord(value: unknown): RetainedSandboxRecoveryRecord | null {
     typeof value.createAttemptNonce !== "string" ||
     !CREATE_ATTEMPT_NONCE_PATTERN.test(value.createAttemptNonce) ||
     !resources ||
+    (value.createAuthority !== undefined && !createAuthority) ||
     !["cancelled_after_sandbox_creation", "retained_after_sandbox_creation_failure"].includes(
       String(reason),
     ) ||
@@ -362,7 +479,7 @@ function parseRecord(value: unknown): RetainedSandboxRecoveryRecord | null {
     return null;
   }
   return {
-    schemaVersion: SCHEMA_VERSION,
+    schemaVersion: createAuthority ? CREATE_AUTHORITY_SCHEMA_VERSION : SCHEMA_VERSION,
     recordId: value.recordId,
     sandboxName: value.sandboxName,
     sandboxIdentityFingerprint: fingerprint,
@@ -372,24 +489,39 @@ function parseRecord(value: unknown): RetainedSandboxRecoveryRecord | null {
     lifecycleGeneration: value.lifecycleGeneration,
     createAttemptNonce: value.createAttemptNonce,
     resources,
+    ...(createAuthority ? { createAuthority } : {}),
     reason: reason as RetainedSandboxRecoveryReason,
     recordedAt: value.recordedAt,
   };
 }
 
 function loadState(filePath: string): RetainedSandboxRecoveryState {
-  const value = readStateFile(filePath);
-  if (!isObjectRecord(value) || value.schemaVersion !== SCHEMA_VERSION) {
+  let value = readStateFile(filePath);
+  if (
+    isObjectRecord(value) &&
+    Array.isArray(value.unresolved) &&
+    value.unresolved.some(
+      (record) => isObjectRecord(record) && record.createAuthority !== undefined,
+    )
+  ) {
+    value = readStateFile(filePath, emptyState(), true);
+  }
+  if (
+    !isObjectRecord(value) ||
+    ![SCHEMA_VERSION, CREATE_AUTHORITY_SCHEMA_VERSION].includes(Number(value.schemaVersion)) ||
+    typeof value.schemaVersion !== "number"
+  ) {
     throw new Error("Retained sandbox recovery state has an unsupported schema.");
   }
   const unresolved = Array.isArray(value.unresolved) ? value.unresolved.map(parseRecord) : null;
-  if (!unresolved || unresolved.includes(null)) {
+  if (
+    !unresolved ||
+    unresolved.includes(null) ||
+    (value.schemaVersion === SCHEMA_VERSION && unresolved.some((record) => record?.createAuthority))
+  ) {
     throw new Error("Retained sandbox recovery state is invalid; onboarding remains blocked.");
   }
-  return {
-    schemaVersion: SCHEMA_VERSION,
-    unresolved: unresolved as RetainedSandboxRecoveryRecord[],
-  };
+  return retainedSandboxRecoveryDocument(unresolved as RetainedSandboxRecoveryRecord[]);
 }
 
 function recoveryRecordId(input: RecordRetainedSandboxRecoveryInput): string {
@@ -416,7 +548,9 @@ function assertRecordInput(input: RecordRetainedSandboxRecoveryInput): void {
     !validGatewayPort(input.gatewayPort) ||
     (input.lifecycleGeneration !== null && !validSafeEvidence(input.lifecycleGeneration)) ||
     !CREATE_ATTEMPT_NONCE_PATTERN.test(input.createAttemptNonce) ||
-    !parseEvidence(input.resources)
+    !parseEvidence(input.resources) ||
+    (input.createAuthority !== undefined &&
+      !parseRetainedSandboxCreateAuthority(input.createAuthority))
   ) {
     throw new Error("Cannot persist invalid retained sandbox recovery evidence.");
   }
@@ -434,7 +568,7 @@ export function recordRetainedSandboxRecovery(
 ): RetainedSandboxRecoveryRecord {
   assertRecordInput(input);
   const record: RetainedSandboxRecoveryRecord = {
-    schemaVersion: SCHEMA_VERSION,
+    schemaVersion: input.createAuthority ? CREATE_AUTHORITY_SCHEMA_VERSION : SCHEMA_VERSION,
     recordId: recoveryRecordId(input),
     sandboxName: input.sandboxName,
     sandboxIdentityFingerprint: input.sandboxIdentityFingerprint,
@@ -444,6 +578,9 @@ export function recordRetainedSandboxRecovery(
     lifecycleGeneration: input.lifecycleGeneration,
     createAttemptNonce: input.createAttemptNonce,
     resources: parseEvidence(input.resources)!,
+    ...(input.createAuthority
+      ? { createAuthority: parseRetainedSandboxCreateAuthority(input.createAuthority)! }
+      : {}),
     reason: input.reason,
     recordedAt: input.recordedAt ?? new Date().toISOString(),
   };
@@ -451,6 +588,10 @@ export function recordRetainedSandboxRecovery(
     throw new Error("Cannot persist retained sandbox recovery with an invalid timestamp.");
   }
   const current = loadState(filePath);
+  const existing = current.unresolved.find((candidate) => candidate.recordId === record.recordId);
+  if (existing && !isDeepStrictEqual(existing.createAuthority, record.createAuthority)) {
+    throw new Error("Cannot replace the original create authority of a retained recovery record.");
+  }
   const next: RetainedSandboxRecoveryState = {
     ...current,
     unresolved: [
@@ -488,7 +629,59 @@ export function retainedSandboxRecoveryAuthorityIsCurrent(
   return retainedSandboxRecoveryAuthorityMatchesState(loadState(filePath), expected);
 }
 
-/** Retire only the unchanged record whose external resources were verified absent. */
+/** Preserve the original tracking without asserting historical runtime cleanup. */
+export function archiveRetainedSandboxRecoveryForLocalDiscard(
+  filePath: string,
+  record: RetainedSandboxRecoveryRecord,
+  reservation: SandboxEntry | null,
+): string {
+  if (!retainedSandboxRecoveryAuthorityIsCurrent(filePath, record)) {
+    throw new Error("Recovery authority changed before archival.");
+  }
+  const archivePath = path.join(
+    path.dirname(filePath),
+    ".retained-recovery-archive",
+    `${record.recordId}.json`,
+  );
+  const directory = openStateDirectory(archivePath, true)!;
+  try {
+    const reservationSnapshot: unknown = JSON.parse(JSON.stringify(reservation));
+    const missing = Symbol("missing recovery archive");
+    const existing = readStateFile(archivePath, missing, true);
+    if (existing === missing) {
+      const archive = {
+        schemaVersion: 1,
+        operation: "forced-local-recovery-discard",
+        originalResourceAbsence: "unverified",
+        record,
+        reservation: reservationSnapshot,
+      };
+      revalidateStateDirectory(directory);
+      const published = publishExportFile(archivePath, `${JSON.stringify(archive, null, 2)}\n`);
+      if (!published.ok) {
+        throw new Error("Could not durably archive recovery; active metadata was preserved.");
+      }
+    }
+    const archived = readStateFile(archivePath, missing, true);
+    if (
+      !isObjectRecord(archived) ||
+      archived.schemaVersion !== 1 ||
+      archived.operation !== "forced-local-recovery-discard" ||
+      archived.originalResourceAbsence !== "unverified" ||
+      !isDeepStrictEqual(archived.record, record) ||
+      (reservation !== null && !isDeepStrictEqual(archived.reservation, reservationSnapshot))
+    ) {
+      throw new Error("Recovery archive conflicts with the current record or reservation.");
+    }
+    revalidateStateDirectory(directory);
+    fs.fsyncSync(directory.descriptor);
+    return archivePath;
+  } finally {
+    fs.closeSync(directory.descriptor);
+  }
+}
+
+/** Retire only the unchanged record after its caller qualifies retirement. */
 export function resolveRetainedSandboxRecovery(
   filePath: string,
   expected: RetainedSandboxRecoveryRecord,

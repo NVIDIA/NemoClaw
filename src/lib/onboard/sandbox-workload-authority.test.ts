@@ -96,6 +96,42 @@ describe("managed workload authority", () => {
     ).toBeNull();
   });
 
+  it.each(["openclaw", "hermes"] as const)(
+    "preserves explicit external %s adoption only with a valid matching receipt",
+    (agent) => {
+      const reference = `${MANAGED_IMAGE_REPOSITORIES[agent]}@sha256:${"a".repeat(64)}`;
+      const external = {
+        agent,
+        imageTag: reference,
+        fromDockerfile: null,
+        workload: {
+          schemaVersion: 1,
+          kind: "external-image",
+          reference,
+          platform: "linux/amd64",
+          runtimeImageContentId: `sha256:${"b".repeat(64)}`,
+          shared: true,
+        },
+      } as const;
+      expect(readManagedWorkloadAuthority(external)).toBeNull();
+      expect(() =>
+        readManagedWorkloadAuthority({
+          ...external,
+          imageTag: `${MANAGED_IMAGE_REPOSITORIES[agent]}@sha256:${"c".repeat(64)}`,
+        }),
+      ).toThrow(ManagedWorkloadAuthorityError);
+      expect(() =>
+        readManagedWorkloadAuthority({ ...external, fromDockerfile: "/tmp/Dockerfile" }),
+      ).toThrow(ManagedWorkloadAuthorityError);
+      expect(() =>
+        readManagedWorkloadAuthority({
+          ...external,
+          workload: { ...external.workload, runtimeImageContentId: "invalid" },
+        }),
+      ).toThrow(ManagedWorkloadAuthorityError);
+    },
+  );
+
   it("rejects missing explicit agent identity", () => {
     expect(() =>
       readManagedWorkloadAuthority({

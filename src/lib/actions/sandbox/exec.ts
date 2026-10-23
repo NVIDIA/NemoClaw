@@ -11,14 +11,22 @@ import {
   selectedOpenShellGateway,
 } from "../../adapters/openshell/sandbox-observer";
 import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gateway-endpoint-guard";
-import type {
-  MutableConfigPermsInspection,
-  MutableConfigRepairResult,
-} from "../../sandbox/mutable-config-perms";
-import type { SandboxEntry } from "../../state/registry";
 import { type ExecPolicyHintDeps, preparePolicyHint } from "./exec-policy-hint-integration";
 import type { GatewaySelectResult } from "./gateway-select";
+import {
+  finishTelemetryOperation,
+  isTelemetryOperationActive,
+  recordTelemetryTarget,
+} from "../telemetry/operation";
+import { readTelemetryAgentRoster, readTelemetryAgentConfiguration } from "./agents/apply";
+import {
+  explicitAgentModel,
+  readAgentSelectionEntry,
+  persistVerifiedAgentModelSelections,
+  verifiedAddedAgentModelSelection,
+} from "./agents/model-selections";
 import { wrapExecCommandWithRuntimeEnv } from "./runtime-env";
+import type { TelemetryMetadataError } from "../../domain/telemetry/event";
 
 export {
   wrapExecCommandWithRuntimeEnv,
@@ -36,17 +44,11 @@ export type SandboxExecGatewayRestart = (sandboxName: string) => Promise<{ ok: b
 
 export type SandboxExecAgentResolver = (sandboxName: string) => string | null;
 
-export type SandboxExecCleanupDeps = {
-  getSandbox: (sandboxName: string) => Pick<SandboxEntry, "agent"> | null;
-  inspectMutableConfigPerms: (sandboxName: string) => MutableConfigPermsInspection;
-  repairMutableConfigPerms: (sandboxName: string) => MutableConfigRepairResult;
-};
-
 export type SandboxExecCompletion = {
   code: number;
   commandCode: number;
   invocationError?: string;
-  cleanupError?: string;
+  cancelled?: boolean;
 };
 
 // OpenShell accepts LF/CR in command argv while retaining field-specific
@@ -72,67 +74,6 @@ export function workdirMissingMessage(workdir: string): string {
   return `error: --workdir: ${workdir} does not exist inside the sandbox`;
 }
 
-function repairFailureDetail(
-  inspection: MutableConfigPermsInspection,
-  result: MutableConfigRepairResult,
-): string | null {
-  if (!result.applied) {
-    return `repair skipped: ${result.reason}`;
-  }
-  if (result.verified) return null;
-  const before = inspection.applies ? inspection.issues.join("; ") : inspection.reason;
-  const errors = result.errors.join("; ") || "verification failed";
-  return `${errors}${before ? ` (before repair: ${before})` : ""}`;
-}
-
-/**
- * Restore the mutable OpenClaw permission contract after the public
- * `nemoclaw <sandbox> exec` command boundary. OpenShell executes the requested
- * process directly, so the sandbox entrypoint's one-shot cleanup does not run
- * on this path. Hermes and custom agents are deliberately left unchanged.
- *
- * Each production inspect/repair call takes the cross-process sandbox mutation
- * lock. The repair is idempotent, and the host keeps lock authority outside the
- * sandbox-owned config tree.
- */
-export function cleanupOpenClawAfterExec(
-  sandboxName: string,
-  deps: SandboxExecCleanupDeps,
-): string | null {
-  let entry: Pick<SandboxEntry, "agent"> | null;
-  try {
-    entry = deps.getSandbox(sandboxName);
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    return `sandbox registry lookup failed: ${detail}`;
-  }
-  if (!entry) return null;
-  if ((entry.agent ?? "openclaw") !== "openclaw") return null;
-
-  let inspection: MutableConfigPermsInspection;
-  try {
-    inspection = deps.inspectMutableConfigPerms(sandboxName);
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    return `permission inspection failed: ${detail}`;
-  }
-  if (!inspection.applies) return `permission inspection unavailable: ${inspection.reason}`;
-  if (inspection.ok) return null;
-
-  let repair: MutableConfigRepairResult;
-  try {
-    repair = deps.repairMutableConfigPerms(sandboxName);
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    return `permission repair failed: ${detail}`;
-  }
-  return repairFailureDetail(inspection, repair);
-}
-
-export function cleanupFailureMessage(commandCode: number, detail: string): string {
-  return `  OpenClaw permission cleanup failed (command exit ${commandCode}; cleanup exit 1): ${detail}`;
-}
-
 function defaultSelectGateway(sandboxName: string): Promise<GatewaySelectResult> {
   return (
     require("./gateway-select") as typeof import("./gateway-select")
@@ -145,11 +86,8 @@ function defaultSelectGateway(sandboxName: string): Promise<GatewaySelectResult>
 export type ExecSandboxDeps = {
   /** Typed command execution and pre-dispatch workdir observation. */
   commandExecutor?: OpenShellSandboxCommandExecutor;
-  /** Post-command observability and cleanup seams. */
+  /** Post-command observability seams. */
   policyHint?: ExecPolicyHintDeps;
-  cleanupDeps?: SandboxExecCleanupDeps;
-  /** Reacquire and verify dispatch authority before delayed launch cleanup. */
-  withCleanupAuthority?: (cleanup: () => string | null) => Promise<string | null>;
   /** Activate config written by a successful direct Google Chat pairing approval. */
   restartGateway?: SandboxExecGatewayRestart;
   /** Resolve the sandbox's recorded agent before applying agent-specific post-exec effects. */
@@ -184,28 +122,18 @@ async function runSandboxExecRequest(
 
 async function finishSandboxExecRequest(
   completed: Awaited<ReturnType<OpenShellSandboxCommandExecutor["runStreaming"]>>,
-  request: OpenShellSandboxCommandRequest,
-  cleanupDeps: SandboxExecCleanupDeps,
-  withCleanupAuthority?: ExecSandboxDeps["withCleanupAuthority"],
 ): Promise<SandboxExecCompletion> {
   try {
     const commandCode = completed.outcome.kind === "completed" ? completed.outcome.exitCode : 1;
     const invocationError =
       completed.outcome.kind === "failed" ? completed.outcome.error.message : undefined;
-    const cleanup = () => cleanupOpenClawAfterExec(request.sandboxName, cleanupDeps);
-    let cleanupError: string | undefined;
-    try {
-      cleanupError =
-        (await (withCleanupAuthority ? withCleanupAuthority(cleanup) : cleanup())) ?? undefined;
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      cleanupError = `cleanup authority unavailable: ${detail}`;
-    }
     return {
-      code: cleanupError ? 1 : commandCode,
+      code: commandCode,
       commandCode,
       ...(invocationError ? { invocationError } : {}),
-      ...(cleanupError ? { cleanupError } : {}),
+      ...(completed.outcome.kind === "failed" && completed.outcome.error.kind === "cancelled"
+        ? { cancelled: true }
+        : {}),
     };
   } finally {
     completed.release();
@@ -254,24 +182,10 @@ function googleChatPairingActivationFailureMessage(cliName: string, sandboxName:
   );
 }
 
-function googleChatPairingUnmanagedCleanupFailureMessage(sandboxName: string): string {
-  return (
-    `  Google Chat pairing approval committed for '${sandboxName}', but post-command cleanup failed. ` +
-    "The approval was not rolled back. No owning managed gateway is registered, so NemoClaw did not attempt gateway activation."
-  );
-}
-
 function agentRosterActivationFailureMessage(cliName: string, sandboxName: string): string {
   return (
     `  OpenClaw agent roster update committed for '${sandboxName}', but managed gateway activation failed. ` +
     `The config change was not rolled back. Run '${cliName} ${sandboxName} gateway restart' before dispatching to the changed roster.`
-  );
-}
-
-function agentRosterUnmanagedCleanupFailureMessage(sandboxName: string): string {
-  return (
-    `  OpenClaw agent roster update committed for '${sandboxName}', but post-command cleanup failed. ` +
-    "The config change was not rolled back. No owning managed gateway is registered, so NemoClaw did not attempt gateway activation."
   );
 }
 
@@ -344,7 +258,6 @@ export async function startSandboxExec(
   const emitPolicyDenialHint = preparePolicyHint(
     CLI_NAME,
     sandboxName,
-    command,
     deps.policyHint,
     gatewayName,
   );
@@ -357,33 +270,15 @@ export async function startSandboxExec(
     timeoutSeconds: options.timeoutSeconds,
     stdin: options.stdin,
   };
+  const rosterTelemetry = isOpenClawAgentRosterMutation(command) && isTelemetryOperationActive();
+  const selectionEntry = rosterTelemetry ? readAgentSelectionEntry(sandboxName) : null;
+  const beforeRoster = rosterTelemetry ? await readTelemetryAgentRoster(sandboxName, target) : null;
   const pending = runSandboxExecRequest(commandExecutor, request);
   return async () => {
-    const completion = await finishSandboxExecRequest(
-      await pending,
-      request,
-      deps.cleanupDeps ?? {
-        getSandbox: (name) =>
-          (require("../../state/registry") as typeof import("../../state/registry")).getSandbox(
-            name,
-          ),
-        inspectMutableConfigPerms: (name) =>
-          (
-            require("../../sandbox/mutable-config-perms") as typeof import("../../sandbox/mutable-config-perms")
-          ).inspectMutableConfigPerms(name),
-        repairMutableConfigPerms: (name) =>
-          (
-            require("../../sandbox/mutable-config-perms") as typeof import("../../sandbox/mutable-config-perms")
-          ).repairMutableConfigPerms(name),
-      },
-      deps.withCleanupAuthority,
-    );
+    const completion = await finishSandboxExecRequest(await pending);
     if (completion.invocationError) {
       console.error(`  Failed to invoke openshell: ${completion.invocationError}`);
       console.error("  Ensure 'openshell' is installed and on PATH.");
-    }
-    if (completion.cleanupError) {
-      console.error(cleanupFailureMessage(completion.commandCode, completion.cleanupError));
     }
     await emitPolicyDenialHint(completion);
     let exitCode = completion.code;
@@ -397,22 +292,13 @@ export async function startSandboxExec(
       googleChatApprovalCommitted
         ? googleChatPairingActivationFailureMessage(CLI_NAME, sandboxName)
         : agentRosterActivationFailureMessage(CLI_NAME, sandboxName);
-    if (activationCommitted && completion.cleanupError) {
-      console.error(
-        managedActivation
-          ? activationFailureMessage()
-          : googleChatApprovalCommitted
-            ? googleChatPairingUnmanagedCleanupFailureMessage(sandboxName)
-            : agentRosterUnmanagedCleanupFailureMessage(sandboxName),
-      );
-    }
     if (exitCode === 0 && managedActivation) {
       let recordedAgent: string | null = null;
       try {
         recordedAgent = (deps.resolveSandboxAgent ?? defaultResolveSandboxAgent)(sandboxName);
       } catch {
         console.error(activationFailureMessage());
-        exit(1);
+        exitCode = 1;
       }
       if (recordedAgent === "openclaw") {
         let restartSucceeded = false;
@@ -427,6 +313,67 @@ export async function startSandboxExec(
           exitCode = 1;
         }
       }
+    }
+    if (rosterTelemetry) {
+      const config = await readTelemetryAgentConfiguration(sandboxName, target);
+      const afterRoster = await readTelemetryAgentRoster(sandboxName, target, config);
+      if (!beforeRoster || !afterRoster) {
+        recordTelemetryTarget({
+          scope: "configuration",
+          sandboxName,
+          gatewayName,
+          outcome: completion.cancelled ? "cancelled" : exitCode !== 0 ? "failed" : "unverified",
+          state: "unavailable",
+          verificationStatus: "collection_error",
+        });
+      } else {
+        const changed = JSON.stringify(beforeRoster) !== JSON.stringify(afterRoster);
+        let sourceVerified = true;
+        const metadataErrors: TelemetryMetadataError[] = [];
+        if (changed) {
+          const deleted = beforeRoster.filter((id) => !afterRoster.includes(id));
+          const added = afterRoster.filter((id) => !beforeRoster.includes(id));
+          const model = command[2] === "add" ? explicitAgentModel(command) : null;
+          const selection =
+            model && added.length === 1
+              ? verifiedAddedAgentModelSelection(config, added[0], model)
+              : null;
+          sourceVerified =
+            (!model || selection !== null) &&
+            persistVerifiedAgentModelSelections(
+              selectionEntry,
+              config,
+              selection ? [selection] : [],
+              deleted,
+            );
+          if (!sourceVerified && selection)
+            metadataErrors.push({
+              category: "model_source",
+              slot: {
+                agentId: selection.agentId,
+                assignment: selection.assignment,
+                reference: selection.reference,
+              },
+            });
+        }
+        recordTelemetryTarget({
+          scope: "configuration",
+          sandboxName,
+          gatewayName,
+          outcome: completion.cancelled
+            ? "cancelled"
+            : exitCode !== 0
+              ? "failed"
+              : changed
+                ? "completed"
+                : "no_change",
+          state: changed ? (exitCode === 0 ? "applied" : "partial") : "unchanged",
+          ...(!sourceVerified
+            ? { verificationStatus: "collection_error" as const, metadataErrors }
+            : {}),
+        });
+      }
+      await finishTelemetryOperation(exitCode);
     }
     exit(exitCode);
   };

@@ -8,7 +8,11 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { type CompositeAction, readYaml } from "../../helpers/e2e-workflow-contract";
+import {
+  type CompositeAction,
+  type WorkflowJob,
+  readYaml,
+} from "../../helpers/e2e-workflow-contract";
 import { execTimeout } from "../../helpers/timeouts";
 
 const repoRoot = path.resolve(import.meta.dirname, "../../..");
@@ -48,6 +52,68 @@ afterEach(() => {
 });
 
 describe("base image resolver helper (#6957)", () => {
+  it.each(["sandbox", "hermes"] as const)(
+    "rejects stale %s security packages before selecting a base",
+    (agent) => {
+      const bin = fakeDocker(`
+printf "%s\\0" "$@" >> "$DOCKER_LOG"
+printf "\\0" >> "$DOCKER_LOG"
+if [[ "$1" == pull || "$1" == build ]]; then exit 0; fi
+if [[ "$1" == image && "$2" == inspect ]]; then printf "%s\\n" "$REMOTE_DIGEST"; exit 0; fi
+if [[ "$1" == run ]]; then
+  while (($#)); do
+    if [[ "$1" == --entrypoint ]]; then entrypoint="$2"; image="$3"; break; fi
+    shift
+  done
+  if [[ "$entrypoint" == /usr/bin/ldd ]]; then printf "ldd (Debian GLIBC 2.41) 2.41\\n"; exit 0; fi
+  if [[ "$*" == *security_inventory=* ]]; then
+    [[ "$image" == nemoclaw-*-local ]]
+    exit
+  fi
+  exit 0
+fi
+exit 2`);
+      // Keep candidate discovery offline; a changed local input selects the
+      // build fallback after every remote inventory has been rejected.
+      writeFileSync(path.join(bin, "git"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+      const githubEnv = path.join(bin, "github.env");
+      const dockerLog = path.join(bin, "docker.log");
+      writeFileSync(githubEnv, "");
+      const action = agent === "hermes" ? hermesAction : sandboxAction;
+      const script = action.runs.steps.find((step) => step.run)?.run ?? "";
+      const localImage =
+        agent === "hermes" ? "nemoclaw-hermes-base-local" : "nemoclaw-sandbox-base-local";
+      const result = spawnSync("bash", ["--noprofile", "--norc", "-c", script], {
+        cwd: repoRoot,
+        encoding: "utf8",
+        timeout: execTimeout(),
+        env: {
+          ...process.env,
+          PATH: `${bin}:${process.env.PATH}`,
+          GITHUB_ACTION_PATH: path.join(repoRoot, `.github/actions/resolve-${agent}-base-image`),
+          GITHUB_ENV: githubEnv,
+          GITHUB_SHA: "1".repeat(40),
+          DOCKER_LOG: dockerLog,
+          REMOTE_DIGEST: `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:${"b".repeat(64)}`,
+        },
+      });
+      expect(result.status, result.stderr).toBe(0);
+      expect(readFileSync(githubEnv, "utf8").trim()).toBe(
+        `${agent === "hermes" ? "HERMES_BASE_IMAGE" : "BASE_IMAGE"}=${localImage}`,
+      );
+      const calls = readFileSync(dockerLog, "utf8")
+        .split("\0\0")
+        .filter(Boolean)
+        .map((call) => call.split("\0").filter(Boolean));
+      expect(calls.filter((args) => args[0] === "build")).toHaveLength(1);
+      expect(
+        calls.some(
+          (args) => args.includes(localImage) && args.some((arg) => arg.includes("dpkg-query")),
+        ),
+      ).toBe(true);
+    },
+  );
+
   it("executes the sandbox action and exports a compatible candidate", () => {
     const bin = fakeDocker(`
 if [[ "$1" == pull ]]; then exit 0; fi
@@ -93,7 +159,7 @@ if [[ "$1" == run ]]; then
     shift
   done
   if [[ "$entrypoint" == /usr/bin/ldd ]]; then printf "ldd (Ubuntu GLIBC 2.39) 2.39\\n"; exit 0; fi
-  if [[ "$entrypoint" == sh ]]; then exit 0; fi
+  if [[ "$entrypoint" == sh || "$entrypoint" == /bin/sh ]]; then exit 0; fi
   if [[ "$entrypoint" == /opt/hermes/.venv/bin/python ]]; then
     probe="\${@: -1}"
     [[ "$probe" == *'import mcp'* ]]
@@ -181,7 +247,7 @@ if [[ "$1" == run ]]; then
     shift
   done
   if [[ "$entrypoint" == /usr/bin/ldd ]]; then printf "ldd (Ubuntu GLIBC 2.39) 2.39\\n"; exit 0; fi
-  if [[ "$entrypoint" == sh ]]; then exit 0; fi
+  if [[ "$entrypoint" == sh || "$entrypoint" == /bin/sh ]]; then exit 0; fi
   if [[ "$entrypoint" == /opt/hermes/.venv/bin/python ]]; then
     probe="\${@: -1}"
     [[ "$probe" == *'import mcp'* ]]
@@ -246,6 +312,106 @@ exit 2`);
     expect(remoteProbe).toBeGreaterThanOrEqual(0);
     expect(localBuild).toBeGreaterThan(remoteProbe);
     expect(localProbe).toBeGreaterThan(localBuild);
+  });
+
+  it.each([
+    {
+      name: "builds a compatible local base",
+      localStatus: "0",
+      status: 0,
+      exported: "HERMES_BASE_IMAGE=nemoclaw-hermes-base-local\n",
+    },
+    { name: "rejects an incompatible local base", localStatus: "1", status: 1, exported: "" },
+  ])("rejects an obsolete Hermes OpenSSL base and $name", ({ localStatus, status, exported }) => {
+    const remoteDigest = `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:${"c".repeat(64)}`;
+    const bin = fakeDocker(`
+printf "%s\\0" "$@" >> "$DOCKER_LOG"
+printf "\\0" >> "$DOCKER_LOG"
+if [[ "$1" == pull || "$1" == build ]]; then exit 0; fi
+if [[ "$1" == image && "$2" == inspect ]]; then printf "%s\\n" "$REMOTE_DIGEST"; exit 0; fi
+if [[ "$1" == run ]]; then
+  while (($#)); do
+    if [[ "$1" == --entrypoint ]]; then entrypoint="$2"; image="$3"; break; fi
+    shift
+  done
+  if [[ "$entrypoint" == /usr/bin/ldd ]]; then printf "ldd (GLIBC 2.39) 2.39\\n"; exit 0; fi
+  if [[ "$entrypoint" == /bin/sh ]]; then
+    [[ "\${@: -1}" == *'"libssl3t64=3.5.7-1~deb13u3"'* ]]
+    if [[ "$image" == "$REMOTE_DIGEST" ]]; then exit 1; fi
+    exit "$LOCAL_STATUS"
+  fi
+  exit 0
+fi
+exit 2`);
+    const dockerLog = path.join(bin, "docker.log");
+    const githubEnv = path.join(bin, "github.env");
+    writeFileSync(githubEnv, "");
+    const resolver = hermesAction.runs.steps.find(
+      (step) => step.name === "Resolve Hermes sandbox base image",
+    )?.run;
+    const result = spawnSync("bash", ["--noprofile", "--norc", "-c", resolver ?? ""], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      timeout: execTimeout(),
+      env: {
+        ...process.env,
+        DOCKER_LOG: dockerLog,
+        GITHUB_ACTION_PATH: path.join(repoRoot, ".github/actions/resolve-hermes-base-image"),
+        GITHUB_ENV: githubEnv,
+        GITHUB_SHA: "1".repeat(40),
+        PATH: `${bin}:${process.env.PATH}`,
+        REMOTE_DIGEST: remoteDigest,
+        LOCAL_STATUS: localStatus,
+      },
+    });
+    expect(result.status, result.stderr).toBe(status);
+    expect(result.stdout).toContain("does not match the reviewed security package inventory");
+    expect(readFileSync(githubEnv, "utf8")).toBe(exported);
+    const calls = readFileSync(dockerLog, "utf8")
+      .split("\0\0")
+      .filter(Boolean)
+      .map((call) => call.split("\0").filter(Boolean));
+    expect(calls.filter((args) => args[0] === "build")).toEqual([
+      ["build", "-f", "agents/hermes/Dockerfile.base", "-t", "nemoclaw-hermes-base-local", "."],
+    ]);
+    const probes = calls.filter((args) => args.includes("/bin/sh"));
+    expect(probes[0]).toContain(remoteDigest);
+    expect(probes.at(-1)).toContain("nemoclaw-hermes-base-local");
+  });
+
+  it("builds the Hermes final image with the daemon that owns the resolved local base", () => {
+    const workflow = readYaml<{ jobs: Record<string, WorkflowJob> }>(
+      ".github/workflows/sandbox-images.yaml",
+    );
+    const build = workflow.jobs["build-hermes-sandbox-image"]?.steps?.find(
+      (step) => step.name === "Build Hermes production image",
+    );
+    const bin = fakeDocker(`printf "%s\\0" "$@" > "$DOCKER_LOG"`);
+    const dockerLog = path.join(bin, "docker.log");
+    const result = spawnSync("bash", ["--noprofile", "--norc", "-c", build?.run ?? "exit 99"], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      timeout: execTimeout(),
+      env: {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH}`,
+        DOCKER_LOG: dockerLog,
+        HERMES_BASE_IMAGE: "nemoclaw-hermes-base-local",
+      },
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(readFileSync(dockerLog, "utf8").split("\0").filter(Boolean)).toEqual([
+      "build",
+      "--builder",
+      "default",
+      "-f",
+      "agents/hermes/Dockerfile",
+      "--build-arg",
+      "BASE_IMAGE=nemoclaw-hermes-base-local",
+      "-t",
+      "nemoclaw-hermes-production",
+      ".",
+    ]);
   });
 
   it("pulls a remote image and accepts a compatible glibc version", () => {

@@ -3,6 +3,7 @@
 
 import type { AgentDefinition } from "../agent/defs";
 import type { OpenShellSandboxObserver } from "../adapters/openshell/sandbox-observer";
+import type { OpenShellGpuDiagnostics } from "../adapters/openshell/gpu-diagnostics";
 import {
   type CreateOpenShellSandboxRequest,
   type OpenShellSandboxLifecycle,
@@ -31,6 +32,7 @@ import {
   classifyHermesPortableRegistry,
   createHermesPortableChildEnvironment,
   createHermesPortableContainerDeps,
+  createHermesPortableGpuDiagnostics,
   createHermesPortableOpenShellCapture,
   createHermesPortableReadyCapture,
   createHermesPortableReadyRunner,
@@ -69,6 +71,7 @@ export {
   classifyHermesPortableRegistry,
   createHermesPortableChildEnvironment,
   createHermesPortableContainerDeps,
+  createHermesPortableGpuDiagnostics,
   createHermesPortableOpenShellCapture,
   createHermesPortableReadyCapture,
   createHermesPortableReadyRunner,
@@ -166,7 +169,7 @@ export function resolveAgentCreateInput(
 ) {
   return {
     dockerDriverGateway,
-    ...resolveDockerStartupCommandPatch(agent, dockerDriverGateway, env),
+    ...resolveDockerStartupCommandPatch(agent, dockerDriverGateway),
     portableLifecycle: resolvePortableLifecycleMode(agent, env),
     hermesPortableLifecycle: isHermesPortableLifecycleMode(agent, env),
   };
@@ -200,6 +203,8 @@ export interface SandboxGpuCreateFlowInput {
     sandboxIdentityFingerprint?: string,
     createAttemptNonce?: string,
   ) => boolean;
+  /** Capture recovery authority before submitting each create request. */
+  beforeCreateAttempt?: (createAttemptNonce: string) => void;
   provider: string;
   sandboxGpuConfig: SandboxGpuConfig;
   gpuRoutePlan: import("./docker-gpu-route").DockerGpuRoutePlan;
@@ -224,6 +229,8 @@ export interface SandboxGpuCreateFlowInput {
   terminalAgent: boolean;
   persistStartupCommand?: boolean;
   managedImage?: boolean;
+  /** Publisher-owned exact-digest image; readiness failures include compatibility guidance. */
+  externalImage?: boolean;
   requiredUlimits?: readonly DockerUlimit[] | null;
   /**
    * Verify the exact sandbox created by each attempt before runtime activation,
@@ -262,6 +269,7 @@ export function refuseApfMutableNameFallbackCleanup(sandboxName: string) {
 
 export interface SandboxGpuCreateFlowDeps {
   commandExecutor: OpenShellSandboxBufferedCommandExecutor;
+  openShellGpuDiagnostics?: OpenShellGpuDiagnostics;
   runOpenshell: RunOpenshell;
   runCaptureOpenshell: RunCaptureOpenshell;
   sandboxObserver: OpenShellSandboxObserver;
@@ -277,8 +285,16 @@ export interface SandboxGpuCreateFlowDeps {
   ) => boolean;
   printCreateFailureDiagnostics?: (
     sandboxName: string,
-    options: { readonly backupPath?: string | null },
+    options: {
+      readonly backupPath?: string | null;
+      readonly sandboxContainerOutput?: string | null;
+    },
   ) => void;
+  /** Test seam for failed-container output captured before rollback (#13178). */
+  captureSandboxContainerOutput?: (
+    sandboxName: string,
+    expectedContainerId: string | null,
+  ) => string | null;
   /** Production callers configure the hidden portable lifecycle through the default implementation. */
   installPortableDemoLifecycle?: typeof installPortableDemoSandboxLifecycle;
   /** Production callers omit this factory and use the runtime provider's adapter. */
@@ -405,7 +421,10 @@ export async function runSandboxGpuCreateFlow(
               error: failure.error,
               additionalSummaryLines: routeAdapter.additionalSummaryLines,
             },
-            { runCaptureOpenshell: deps.runCaptureOpenshell },
+            {
+              runCaptureOpenshell: deps.runCaptureOpenshell,
+              openShellGpuDiagnostics: deps.openShellGpuDiagnostics,
+            },
           );
           if (diagnostics) console.error(`  Native GPU diagnostics saved: ${diagnostics.dir}`);
         },

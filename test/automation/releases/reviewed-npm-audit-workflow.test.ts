@@ -9,6 +9,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
+import { readWorkflow, required, step } from "../../helpers/managed-image-publication-workflow";
 import {
   assertReviewedAuditReportsPass,
   NPM_AUDIT_SIGNATURE_ARGV,
@@ -304,6 +305,16 @@ function writeProductionSourceGraph(
 }
 
 describe("trusted npm audit workflow (#5896)", () => {
+  it("runs the PR audit from its exact head commit", () => {
+    const job = required(readWorkflow("pr.yaml").jobs?.["reviewed-npm-audit"], "missing PR audit");
+    expect(step(job, "Checkout").with).toMatchObject({
+      ref: "${{ github.event.pull_request.head.sha }}",
+      "persist-credentials": false,
+    });
+    expect(step(job, "Audit reviewed production npm graphs").uses).toBe(
+      "./.github/actions/ci-reviewed-npm-audit",
+    );
+  });
   // source-shape-contract: security -- Composite audit inputs must cross into executable shell only through the step environment
   it("passes the cache identity target root without interpolating it into shell source", () => {
     const action = YAML.parse(
@@ -355,8 +366,8 @@ describe("trusted npm audit workflow (#5896)", () => {
     expect(fixture.result.status, fixture.result.stderr.toString()).toBe(0);
     expect(fixture.lockedProvenance).toMatchObject({
       graph: {
-        label: "OpenClaw 2026.9.1 locked runtime graph",
-        packageSpecs: ["openclaw@2026.9.1"],
+        label: "OpenClaw 2026.9.5 locked runtime graph",
+        packageSpecs: ["openclaw@2026.9.5"],
       },
       scanner: {
         name: "npm audit",
@@ -366,10 +377,10 @@ describe("trusted npm audit workflow (#5896)", () => {
     });
     expect(fixture.lockedReceipt).toBeDefined();
     expect(fixture.npmCalls).toContain(
-      JSON.stringify(["view", "openclaw@2026.9.1", "dist.integrity"]),
+      JSON.stringify(["view", "openclaw@2026.9.5", "dist.integrity"]),
     );
     expect(fixture.npmCalls).toContain(
-      JSON.stringify(["view", "openclaw@2026.9.1", "dist.tarball"]),
+      JSON.stringify(["view", "openclaw@2026.9.5", "dist.tarball"]),
     );
     expect(fixture.npmCalls).toContain(JSON.stringify(NPM_AUDIT_SIGNATURE_ARGV));
   });
@@ -511,9 +522,12 @@ describe("trusted npm audit workflow (#5896)", () => {
     }
   });
 
-  it("keeps the WeChat archive and reviewed locked graph distinct", () => {
+  it("reviews Google Chat and keeps the WeChat archive and locked graph distinct", () => {
     const config = parseAuditConfig(
       fs.readFileSync(path.join(REPO_ROOT, "ci", "reviewed-npm-audit.json"), "utf-8"),
+    );
+    expect(config.archivePackages.map(({ packageSpec }) => packageSpec)).toContain(
+      "@openclaw/googlechat@2026.9.5",
     );
     expect(
       config.archivePackages.some(

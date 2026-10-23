@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { appendFileSync } from "node:fs";
+import { OPENROUTER_SMOKE } from "./hosted-provider-smoke.mts";
+import { requiresManagedImages } from "./workflow-prerequisites.mts";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
@@ -23,20 +25,22 @@ import {
   discoverCredentialFreeTests,
   SHARED_E2E_JOB_ID,
 } from "./credential-free-tests.mts";
-import { JETSON_DISPATCH_TARGET } from "./jetson-dispatch-contract.mts";
+import {
+  DGX_STATION_DISPATCH_TARGET,
+  JETSON_DISPATCH_TARGET,
+} from "./jetson-dispatch-contract.mts";
 import { normalizeE2eSelectorIds } from "./selector-aliases.mts";
 import {
   catalogueExclusionReason,
+  catalogueHostPackages,
   catalogueMatrix,
-  catalogueTarget,
   catalogueTargetsForChangedFiles,
   E2E_EXECUTION_PROFILES,
-  E2E_OPTIONAL_CREDENTIALS,
+  E2E_HOST_PACKAGES,
   E2E_TARGET_CATALOGUE,
   type E2eCatalogueMatrixRow,
   type E2eCatalogueTarget,
   type E2eExecutionProfile,
-  type E2eOptionalCredential,
   pathMatches,
 } from "./target-catalogue.mts";
 import {
@@ -78,6 +82,7 @@ export type E2eWorkflowPlan = {
 };
 
 type WorkflowPlanOptions = {
+  includeStagingBrevLaunchable?: boolean;
   changedFiles?: readonly string[];
   gatewayRuntimes?: readonly E2eGatewayRuntime[];
 };
@@ -96,8 +101,8 @@ const CATALOGUE_JOB_BY_PROFILE: Record<E2eExecutionProfile, string> = {
   standard: "catalogue-standard",
   "nvidia-api": "catalogue-nvidia-api",
   "nvidia-inference": "catalogue-nvidia-inference",
+  "hosted-inference": "catalogue-hosted-inference",
   "github-read": "catalogue-github-read",
-  "brave-nvidia-inference": "catalogue-brave-nvidia-inference",
 };
 const REGISTRY_OWNING_PATHS = [
   "nemoclaw-blueprint/",
@@ -271,6 +276,7 @@ function isCatalogueMatrixRow(value: unknown): value is E2eCatalogueMatrixRow {
   return (
     isRecord(value) &&
     hasExactKeys(value, [
+      ...(value.model_env === undefined ? [] : ["model_env"]),
       "artifact_layout",
       "agent_runtime",
       "cloudflared",
@@ -324,7 +330,10 @@ function isCatalogueMatrixRow(value: unknown): value is E2eCatalogueMatrixRow {
     Number.isInteger(value.timeout_minutes) &&
     value.timeout_minutes > 0 &&
     typeof value.host_packages === "string" &&
-    /^(?:|expect|iptables|expect iptables)$/u.test(value.host_packages) &&
+    (value.host_packages === "" ||
+      value.host_packages
+        .split(" ")
+        .every((name) => E2E_HOST_PACKAGES.some((packageName) => packageName === name))) &&
     typeof value.install_non_interactive === "boolean" &&
     typeof value.cloudflared === "boolean" &&
     typeof value.runner_comparison === "boolean" &&
@@ -392,6 +401,8 @@ function isCatalogueMatrixRowForProfile(
   const target = E2E_TARGET_CATALOGUE.find((entry) => entry.id === value.id);
   return (
     target?.profile === profile &&
+    value.model_env ===
+      (target.id === "hosted-inference-openrouter" ? OPENROUTER_SMOKE.modelEnv : undefined) &&
     target.targetId === value.target_id &&
     target.displayName === value.display_name &&
     target.agentRuntime === value.agent_runtime &&
@@ -406,7 +417,7 @@ function isCatalogueMatrixRowForProfile(
     target.installNonInteractive === value.install_non_interactive &&
     target.restoreCli === value.restore_cli &&
     target.cloudflared === value.cloudflared &&
-    target.hostPackages.join(" ") === value.host_packages &&
+    catalogueHostPackages(target, value.runtime_provider) === value.host_packages &&
     target.hostPreparation === value.host_preparation &&
     target.runnerComparison === value.runner_comparison &&
     target.runnerPressure === value.runner_pressure &&
@@ -440,8 +451,8 @@ function emptyCatalogueMatrices(): Record<E2eExecutionProfile, E2eCatalogueMatri
     standard: [],
     "nvidia-api": [],
     "nvidia-inference": [],
+    "hosted-inference": [],
     "github-read": [],
-    "brave-nvidia-inference": [],
   };
 }
 
@@ -628,6 +639,16 @@ export function buildE2eWorkflowPlan(
   const jobs = selectorIds(selectors.jobs, "jobs");
   const targets = selectorIds(selectors.targets, "targets");
 
+  if (
+    (jobs.includes(DGX_STATION_DISPATCH_TARGET) || targets.includes(DGX_STATION_DISPATCH_TARGET)) &&
+    !(
+      (selectors.jobs === DGX_STATION_DISPATCH_TARGET && !selectors.targets) ||
+      (selectors.targets === DGX_STATION_DISPATCH_TARGET && !selectors.jobs)
+    )
+  ) {
+    throw new Error(`${DGX_STATION_DISPATCH_TARGET} must be selected by itself`);
+  }
+
   if (jobs.includes(STAGING_BREV_IDENTITY_JOB_ID) && (jobs.length !== 1 || targets.length !== 0)) {
     throw new Error(`${STAGING_BREV_IDENTITY_JOB_ID} must be selected by itself`);
   }
@@ -755,7 +776,10 @@ export function buildE2eWorkflowPlan(
     if (
       changedFiles.some((file) => FULL_SUITE_OWNING_PATHS.some((owner) => pathMatches(file, owner)))
     ) {
-      const plan = buildE2eWorkflowPlan(selectors, { gatewayRuntimes });
+      const plan = buildE2eWorkflowPlan(selectors, {
+        gatewayRuntimes,
+        includeStagingBrevLaunchable: options.includeStagingBrevLaunchable,
+      });
       const { coverageMatrix: _coverageMatrix, ...planWithoutCoverage } = plan;
       const selectedJobs = [...new Set([...plan.selectedJobs, JETSON_DISPATCH_TARGET])];
       return withCoverageMatrix(
@@ -800,7 +824,9 @@ export function buildE2eWorkflowPlan(
     selectedJobSet.add(JETSON_DISPATCH_TARGET);
     const selectedJobs = [...selectedJobSet];
     const runtimeSelectedJobs = selectedJobs.filter(
-      (job) => workflowJobRuntimeProviders(inventory, job, gatewayRuntimes).length > 0,
+      (job) =>
+        (job !== "staging-brev-launchable" || options.includeStagingBrevLaunchable !== false) &&
+        workflowJobRuntimeProviders(inventory, job, gatewayRuntimes).length > 0,
     );
     const selectedTests = credentialFreeTestMatrix(
       credentialFreeTests.filter((row) => changedFiles.includes(row.file)),
@@ -813,6 +839,16 @@ export function buildE2eWorkflowPlan(
     const selectedCatalogueTargets = E2E_TARGET_CATALOGUE.filter(
       (target) => selectedCatalogueIds.has(target.id) || selectedCatalogueIds.has(target.targetId),
     );
+    const unresolvedRiskJobIds = riskJobIds.filter((id) => {
+      const workflowJob = inventory.targetToJob.get(id) ?? id;
+      if (inventory.workflowJobs.includes(workflowJob)) return false;
+      return !selectedCatalogueTargets.some((target) => target.id === id || target.targetId === id);
+    });
+    if (unresolvedRiskJobIds.length > 0) {
+      throw new Error(
+        `PR risk plan requires E2E identifiers that do not resolve to selected work: ${unresolvedRiskJobIds.join(",")}`,
+      );
+    }
     const riskTargetIds = riskPlan.requiredTargets.map((target) => target.id);
     const registryMatrix = [
       ...registryTargetsForChangedFiles(changedFiles, gatewayRuntimes),
@@ -845,6 +881,7 @@ export function buildE2eWorkflowPlan(
   const selectedJobs = inventory.workflowJobs.filter(
     (job) =>
       !inventory.explicitOnlyJobs.includes(job) &&
+      (job !== "staging-brev-launchable" || options.includeStagingBrevLaunchable !== false) &&
       (job !== SHARED_E2E_JOB_ID || testMatrix.length > 0) &&
       workflowJobRuntimeProviders(inventory, job, gatewayRuntimes).length > 0,
   );
@@ -853,7 +890,10 @@ export function buildE2eWorkflowPlan(
       gatewayRuntimes,
       matrix: buildLiveTargetMatrix([], gatewayRuntimes),
       testMatrix,
-      catalogueMatrices: catalogueMatrices(E2E_TARGET_CATALOGUE, gatewayRuntimes),
+      catalogueMatrices: catalogueMatrices(
+        E2E_TARGET_CATALOGUE.filter((target) => target.profile !== "hosted-inference"),
+        gatewayRuntimes,
+      ),
       selectedJobs,
       runtimeProvidersByJob: runtimeProvidersByJob(
         inventory,
@@ -977,27 +1017,6 @@ function expectedHermesSelection(selectors: WorkflowPlanSelectors): boolean {
     ...selectorIds(selectors.targets, "targets"),
   ];
   return selected.length === 0 || selected.includes(HERMES_JOB_ID);
-}
-
-export function withoutUnavailableOptionalCredentialTargets(
-  plan: E2eWorkflowPlan,
-  availableCredentials: ReadonlySet<E2eOptionalCredential>,
-): E2eWorkflowPlan {
-  const catalogueMatrices = Object.fromEntries(
-    E2E_EXECUTION_PROFILES.map((profile) => [
-      profile,
-      plan.catalogueMatrices[profile].filter((row) =>
-        catalogueTarget(row.id).requiredOptionalCredentials.every((credential) =>
-          availableCredentials.has(credential),
-        ),
-      ),
-    ]),
-  ) as Record<E2eExecutionProfile, E2eCatalogueMatrixRow[]>;
-  const { coverageMatrix: _coverageMatrix, ...planWithoutCoverage } = plan;
-  return withCoverageMatrix(
-    { ...planWithoutCoverage, catalogueMatrices },
-    readFreeStandingJobsInventory(),
-  );
 }
 
 type RuntimeExclusion = {
@@ -1152,16 +1171,13 @@ export function writeE2eWorkflowPlanCiOutput(
   );
   const hasPlannerSelectors = Boolean(selectors.jobs || selectors.targets);
   const changedFiles = hasPlannerSelectors ? undefined : changedFilesFromEnvironment(environment);
-  const planned = buildE2eWorkflowPlan(selectors, { changedFiles, gatewayRuntimes });
-  const availableOptionalCredentials = new Set<E2eOptionalCredential>(
-    E2E_OPTIONAL_CREDENTIALS.filter(
-      (credential) => environment[`NEMOCLAW_E2E_${credential}_AVAILABLE`] !== "false",
-    ),
-  );
-  const availabilityScopedPlan = hasPlannerSelectors
-    ? planned
-    : withoutUnavailableOptionalCredentialTargets(planned, availableOptionalCredentials);
-  const plan = validateE2eWorkflowPlan(availabilityScopedPlan);
+  const planned = buildE2eWorkflowPlan(selectors, {
+    changedFiles,
+    gatewayRuntimes,
+    includeStagingBrevLaunchable:
+      environment.NEMOCLAW_E2E_INCLUDE_STAGING_BREV_LAUNCHABLE === "true",
+  });
+  const plan = validateE2eWorkflowPlan(planned);
   const expectedHermes = expectedHermesSelection(selectors);
   if (!changedFiles && plan.hermesSelected !== expectedHermes) {
     throw new Error("E2E planner changed the trusted Hermes selection");
@@ -1177,12 +1193,13 @@ export function writeE2eWorkflowPlanCiOutput(
       `catalogue_standard_matrix=${JSON.stringify(plan.catalogueMatrices.standard)}`,
       `catalogue_nvidia_api_matrix=${JSON.stringify(plan.catalogueMatrices["nvidia-api"])}`,
       `catalogue_nvidia_inference_matrix=${JSON.stringify(plan.catalogueMatrices["nvidia-inference"])}`,
+      `catalogue_hosted_inference_matrix=${JSON.stringify(plan.catalogueMatrices["hosted-inference"])}`,
       `catalogue_github_read_matrix=${JSON.stringify(plan.catalogueMatrices["github-read"])}`,
-      `catalogue_brave_nvidia_inference_matrix=${JSON.stringify(plan.catalogueMatrices["brave-nvidia-inference"])}`,
       `gateway_runtimes=${JSON.stringify(plan.gatewayRuntimes)}`,
       `runtime_providers_by_job=${JSON.stringify(plan.runtimeProvidersByJob)}`,
       `selected_jobs=${JSON.stringify(plan.selectedJobs)}`,
       `selected_workflow_jobs=${JSON.stringify(selectedWorkflowJobs(plan))}`,
+      `managed_image_required=${requiresManagedImages(selectedWorkflowJobs(plan))}`,
       `hermes_selected=${plan.hermesSelected}`,
       `explicit_only_jobs=${plan.explicitOnlyJobs.join(",")}`,
       `release_required_jobs=${JSON.stringify(releaseRequiredWorkflowJobs())}`,

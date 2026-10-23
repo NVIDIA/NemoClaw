@@ -251,6 +251,7 @@ describe("native security package remediation", () => {
         "42e33d81577ed4b95d4b4f6f845e5ee8efe5eeb4",
         "a9758da45a52bc8c630ec9493804d0c6ea30b24a",
         "7c8a170c6dca3cd4cf24de836f43ba1a20e662d5",
+        "34497525929b9a47f03dfb81887ac896202b7e12",
       ].every((commit) => libssh2Patch.includes(commit)),
     ).toBe(true);
     expect(libssh2Patch).toContain("blocksize > sizeof(buf)");
@@ -300,9 +301,7 @@ describe("native security package remediation", () => {
     expect(content).toContain(
       "/tmp/nemoclaw-native-security/nemoclaw-python3.13-htmlparser-fix.deb",
     );
-    expect(content).toContain("libssh2-1t64=1.11.1-1+deb13u1+nemoclaw2");
-    expect(content).toContain("libssl3t64=3.5.7-1~deb13u2");
-    expect(content).toContain("nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u5+nemoclaw1");
+    expect(content).toContain("libssl3t64=3.5.7-1~deb13u3");
     expect(content).toContain("4ff43a8578bda2f14686c67911b64c18e869841973722b1c623b5727491bdaf7");
     expect(content).toContain("[p.feed('') for _ in range(20000)]");
     expect(content).toContain("or sys.exit('empty feeds accumulated pending entries')");

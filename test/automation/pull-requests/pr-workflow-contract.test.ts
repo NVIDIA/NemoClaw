@@ -3,7 +3,15 @@
 
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -27,6 +35,9 @@ type CiWorkflow = {
 const trustedCheckoutAction = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1";
 const trustedSetupNodeAction = "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020";
 const reviewedNpmAction = "./.github/actions/setup-reviewed-npm";
+const reviewedInstallerHashRef =
+  "${{ github.event.pull_request.base.sha == '241fcd199275fa1d1ac6bf9beddd991117398536' && " +
+  "'9daa989354dcdf3756165337877bf659d9d27dc6' || github.event.pull_request.base.sha }}";
 
 const cliShardCount = "12";
 const cliShardTimeoutMinutes = 30;
@@ -80,6 +91,151 @@ function runWorkflowShellStep(
     stdout: String(result.stdout),
     stderr: String(result.stderr),
   };
+}
+
+function runPinnedAptFixture(
+  mode: string,
+  step?: WorkflowStep,
+  packages = ["fd-find=9.0.0-1", "ripgrep=14.1.0-1"],
+) {
+  const temp = mkdtempSync(join(tmpdir(), "nemoclaw-pinned-apt-"));
+  const fakeBin = join(temp, "bin");
+  const runnerTemp = join(temp, "runner-temp");
+  const aptCalls = join(temp, "apt-calls");
+  const timeoutCalls = join(temp, "timeout-calls");
+  const sourceCapture = join(temp, "source-capture");
+  const fakeUbuntuSources = join(temp, "ubuntu.sources");
+  mkdirSync(fakeBin);
+  mkdirSync(runnerTemp, { mode: 0o700 });
+  writeFileSync(aptCalls, "");
+  writeFileSync(timeoutCalls, "");
+  writeFileSync(sourceCapture, "");
+  writeFileSync(
+    fakeUbuntuSources,
+    `Types: deb
+URIs: mirror+file:/etc/apt/apt-mirrors.txt
+Suites: noble noble-updates noble-backports
+Components: main restricted universe multiverse
+Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+
+Types: deb
+URIs: ${mode === "unexpected-source" ? "mirror+file:/etc/apt/unexpected.txt" : "mirror+file:/etc/apt/apt-mirrors.txt"}
+Suites: noble-security
+Components: main restricted universe multiverse
+Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+`,
+  );
+  writeFileSync(
+    join(fakeBin, "sudo"),
+    `#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "$APT_CALLS"
+if [[ "$1" == rm && "$2" == -rf && "$3" == -- && "$4" == /tmp/nemoclaw-apt-lists.* ]]; then
+  command rm -rf -- "$4" || exit $?
+fi
+if [[ "$1" == chmod ]]; then command chmod "$2" "$3"; exit $?; fi
+if [[ "$1" == install ]]; then
+  [[ "$*" == "install -d -o _apt -g root -m 0700 /tmp/nemoclaw-apt-lists."*"/partial" ]] || exit 93
+  command install -d -m 0700 "\${@: -1}"; exit $?
+fi
+if [[ "$1" == test && "$FAKE_APT_MODE" == missing-source ]]; then exit 1; fi
+if [[ "$1" == awk ]]; then command awk "$2" "$FAKE_UBUNTU_SOURCES"; exit $?; fi
+if [[ "$1" == timeout ]]; then shift; timeout "$@"; exit $?; fi
+if [[ "$1" == apt-get ]]; then echo 'apt-get must run under sudo timeout' >&2; exit 99; fi
+exit 0
+`,
+    { mode: 0o755 },
+  );
+  writeFileSync(
+    join(fakeBin, "apt-get"),
+    `#!/usr/bin/env bash
+printf 'apt-get %s\\n' "$*" >> "$APT_CALLS"
+source_path=''
+lists_path=''
+for arg in "$@"; do
+  if [[ "$arg" == Dir::Etc::sourcelist=* ]]; then source_path="\${arg#*=}"; fi
+  if [[ "$arg" == Dir::State::lists=* ]]; then lists_path="\${arg#*=}"; fi
+done
+node -e 'const fs=require("node:fs"),path=require("node:path"),[source,lists]=process.argv.slice(1); for(const file of [source,lists]) for(let dir=path.dirname(file);dir!=="/";dir=path.dirname(dir)) if(!(fs.statSync(dir).mode&1)) process.exit(91); if(!(fs.statSync(source).mode&4)||!(fs.statSync(lists).mode&1)||(fs.statSync(path.join(lists,"partial")).mode&0o777)!==0o700) process.exit(92)' "$source_path" "$lists_path" || exit $?
+if [[ -n "$source_path" && -f "$source_path" ]]; then cp "$source_path" "$SOURCE_CAPTURE"; fi
+if [[ "$FAKE_APT_MODE" == mirror-file-failure && "$*" == *' install '* ]]; then
+  if [[ "$source_path" == /etc/apt/sources.list.d/ubuntu.sources ]] || grep -q 'mirror+file:' "$source_path"; then
+    echo 'Downloading mirror file failed' >&2
+    exit 100
+  fi
+fi
+if [[ "$FAKE_APT_MODE" == update-error ]]; then
+  for ((line=1; line<=100; line++)); do printf 'apt diagnostic %s\\n' "$line" >&2; done
+  exit 86
+fi
+if [[ "$FAKE_APT_MODE" == install-error && "$*" == *' install '* ]]; then exit 100; fi
+exit 0
+`,
+    { mode: 0o755 },
+  );
+  writeFileSync(
+    join(fakeBin, "timeout"),
+    `#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "$TIMEOUT_CALLS"
+shift 3
+if [[ "$FAKE_APT_MODE" == timeout || ( "$FAKE_APT_MODE" == install-timeout && "$*" == *' install '* ) ]]; then exit 124; fi
+if [[ "$FAKE_APT_MODE" == force-killed ]]; then exit 137; fi
+if [[ "$FAKE_APT_MODE" == recover-update && "$*" == *' update' && $(wc -l < "$TIMEOUT_CALLS") -lt 3 ]]; then exit 124; fi
+"$@"
+`,
+    { mode: 0o755 },
+  );
+  writeFileSync(join(fakeBin, "stat"), "#!/usr/bin/env bash\nprintf '700\\n'\n", {
+    mode: 0o755,
+  });
+  writeFileSync(
+    join(fakeBin, "dpkg-query"),
+    "#!/usr/bin/env bash\ncase \"${*: -1}\" in fd-find) printf '9.0.0-1';; ripgrep) printf '14.1.0-1';; *) exit 1;; esac\n",
+    { mode: 0o755 },
+  );
+  writeFileSync(join(fakeBin, "fdfind"), "#!/usr/bin/env bash\nprintf 'fdfind 9.0.0\\n'\n", {
+    mode: 0o755,
+  });
+  writeFileSync(join(fakeBin, "rg"), "#!/usr/bin/env bash\nprintf 'ripgrep 14.1.0\\n'\n", {
+    mode: 0o755,
+  });
+  writeFileSync(join(fakeBin, "npm"), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
+  const env = {
+    ...process.env,
+    ADVISOR_DIR: process.cwd(),
+    APT_CALLS: aptCalls,
+    FAKE_UBUNTU_SOURCES: fakeUbuntuSources,
+    FAKE_APT_MODE: mode,
+    FD_FIND_VERSION: "9.0.0-1",
+    GITHUB_ACTION_PATH: join(process.cwd(), ".github/actions/ci-cli-coverage-shard"),
+    PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+    RIPGREP_VERSION: "14.1.0-1",
+    RUNNER_TEMP: runnerTemp,
+    SOURCE_CAPTURE: sourceCapture,
+    TIMEOUT_CALLS: timeoutCalls,
+  };
+  try {
+    const result = step
+      ? runWorkflowShellStep(step, env)
+      : spawnSync(
+          "bash",
+          [
+            join(process.cwd(), ".github/actions/ci-install-pinned-ubuntu-packages.sh"),
+            ...packages,
+          ],
+          { encoding: "utf8", env, timeout: 5_000 },
+        );
+    return {
+      status: result.status,
+      stderr: String(result.stderr),
+      runnerTemp,
+      runnerTempMode: statSync(runnerTemp).mode & 0o777,
+      calls: readFileSync(aptCalls, "utf8").trim().split("\n"),
+      sourceText: readFileSync(sourceCapture, "utf8"),
+      timeoutCalls: readFileSync(timeoutCalls, "utf8").trim().split("\n"),
+    };
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
+  }
 }
 
 const reviewedSdk = {
@@ -165,6 +321,9 @@ function runSdkPackageLocator(fixture: SdkPackageLocatorFixture): Readonly<{
         GITHUB_WORKSPACE: tempRoot,
         REPOSITORY_ID: "123",
         HEAD_REPOSITORY: fixture.headRepository ?? "NVIDIA/NemoClaw",
+        CANDIDATE_SHA: "a".repeat(40),
+        UPGRADE_BASE_SHA: "b".repeat(40),
+        UPGRADE_PR_NUMBER: "123",
         PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
       },
       tempRoot,
@@ -235,11 +394,11 @@ function runWorkflowShellStepWithJobs(
 
 function installerHashTrustViolations(workflow: CiWorkflow): string[] {
   const steps = workflow.jobs["check-hash"]?.steps ?? [];
-  const baseCheckout = steps.find(
-    (step) => step.name === "Checkout base-trusted installer hash action",
+  const reviewedCheckout = steps.find(
+    (step) => step.name === "Checkout reviewed installer hash action",
   );
   const prCheck = steps.find(
-    (step) => step.name === "Verify pull request installer hashes from base-trusted code",
+    (step) => step.name === "Verify pull request installer hashes from reviewed code",
   );
   const allowedExecutors = new Set([
     "./.trusted-installer-hash/.github/actions/ci-installer-hash-check",
@@ -247,20 +406,21 @@ function installerHashTrustViolations(workflow: CiWorkflow): string[] {
   ]);
 
   return [
-    ...(baseCheckout ? [] : ["missing base-trusted installer hash checkout"]),
-    ...(baseCheckout?.uses === trustedCheckoutAction
+    ...(reviewedCheckout ? [] : ["missing reviewed installer hash checkout"]),
+    ...(reviewedCheckout?.uses === trustedCheckoutAction
       ? []
-      : ["base-trusted installer hash checkout must use the pinned checkout action"]),
-    ...(baseCheckout?.with?.ref === "${{ github.event.pull_request.base.sha }}"
+      : ["reviewed installer hash checkout must use the pinned checkout action"]),
+    ...(reviewedCheckout?.with?.repository === "NVIDIA/NemoClaw" &&
+    reviewedCheckout.with.ref === reviewedInstallerHashRef
       ? []
-      : ["base-trusted installer hash checkout must use the PR base SHA"]),
-    ...(baseCheckout?.with?.path === ".trusted-installer-hash"
+      : ["reviewed installer hash checkout must use the exact NVIDIA-owned revision"]),
+    ...(reviewedCheckout?.with?.path === ".trusted-installer-hash"
       ? []
-      : ["base-trusted installer hash checkout must use the trusted action path"]),
+      : ["reviewed installer hash checkout must use the trusted action path"]),
     ...(prCheck?.if === "github.event_name == 'pull_request'" &&
     prCheck.uses === "./.trusted-installer-hash/.github/actions/ci-installer-hash-check"
       ? []
-      : ["pull request installer hashes must use only the base-trusted action"]),
+      : ["pull request installer hashes must use only the reviewed action"]),
     ...steps.flatMap((step) => [
       ...(step.uses === "./.github/actions/ci-installer-hash-check" &&
       step.if !== "github.event_name != 'pull_request'"
@@ -365,7 +525,7 @@ describe("pull request and main workflow contracts", () => {
 
   // source-shape-contract: security -- Pull request jobs must never receive the GitHub Packages credential
   it("does not grant package access to pull request jobs", () => {
-    expect(prWorkflow.permissions).toEqual({ contents: "read" });
+    expect(prWorkflow.permissions).toEqual({ contents: "read", "pull-requests": "read" });
     expect(
       Object.entries(prWorkflow.jobs).filter(([, job]) => job.permissions?.packages !== undefined),
     ).toEqual([]);
@@ -424,6 +584,7 @@ describe("pull request and main workflow contracts", () => {
     expect(actions.map((action) => requiredStep(action, "Install dependencies").env)).toEqual(
       actions.map(() => ({
         NODE_AUTH_TOKEN: "${{ github.event_name == 'push' && github.token || '' }}",
+        GITHUB_TOKEN: "${{ github.event_name == 'pull_request' && github.token || '' }}",
       })),
     );
     expect(actions.map((action) => requiredStep(action, "Install dependencies").run)).toEqual([
@@ -514,41 +675,201 @@ printf '%s  %s\\n' '6bf226944684f56c84dd014e8b979d27425c0148f61b3bd99bcc6f39e9dc
       "Advisor runtime",
       requiredWorkflowStep(advisorWorkflow.jobs["build-advisor-runtime"], "Install locked runtime"),
     ],
-  ])("refreshes only Ubuntu package metadata for %s", (_name, installStep) => {
-    const temp = mkdtempSync(join(tmpdir(), "nemoclaw-ubuntu-apt-sources-"));
-    const fakeBin = join(temp, "bin");
-    const aptArgs = join(temp, "apt-args");
-    mkdirSync(fakeBin);
-    writeFileSync(
-      join(fakeBin, "sudo"),
-      '#!/usr/bin/env bash\nprintf "%s\\n" "$@" > "$APT_ARGS"\nexit 86\n',
-      { mode: 0o755 },
-    );
-
-    try {
-      const result = runWorkflowShellStep(installStep, {
-        APT_ARGS: aptArgs,
-        PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
-      });
+  ])(
+    "reports an Ubuntu APT update failure before installing packages in %s (#11320)",
+    (_name, installStep) => {
+      const result = runPinnedAptFixture("update-error", installStep);
       expect(result.status).toBe(86);
-      expect(readFileSync(aptArgs, "utf8").trim().split("\n")).toEqual([
-        "apt-get",
-        "update",
-        "-qq",
-        "-o",
-        "Dir::Etc::sourcelist=sources.list.d/ubuntu.sources",
-        "-o",
-        "Dir::Etc::sourceparts=-",
-      ]);
-    } finally {
-      rmSync(temp, { force: true, recursive: true });
-    }
+      expect(result.stderr).toContain("APT update failed");
+      expect(result.stderr).toContain("apt diagnostic 100");
+      expect(result.stderr).not.toContain("apt diagnostic 1\n");
+      expect(result.stderr.split("\n")).toHaveLength(62);
+      expect(result.runnerTempMode).toBe(0o700);
+      const aptCalls = result.calls.filter((call) => call.startsWith("apt-get "));
+      expect(aptCalls).toHaveLength(1);
+      expect(result.timeoutCalls).toHaveLength(1);
+      expect(aptCalls[0]).toMatch(
+        /Dir::Etc::sourcelist=\S+\/nemoclaw-ubuntu-sources\.\S+\/ubuntu\.sources/u,
+      );
+      expect(aptCalls[0]).toContain("Dir::Etc::sourceparts=-");
+      expect(aptCalls[0]).toMatch(/Dir::State::lists=\S+\/nemoclaw-apt-lists\.\S+/u);
+      expect(aptCalls[0]).toMatch(/ update$/u);
+    },
+  );
+
+  it("uses one isolated Ubuntu package list for APT update and install (#11320)", () => {
+    const result = runPinnedAptFixture("success");
+    expect(result.status).toBe(0);
+    const aptCalls = result.calls.filter((call) => call.startsWith("apt-get "));
+    expect(aptCalls).toHaveLength(2);
+    const lists = aptCalls.map((call) => call.match(/Dir::State::lists=(\S+)/u)?.[1]);
+    expect(lists[0]).toMatch(/^\/tmp\/nemoclaw-apt-lists\.\S+$/u);
+    expect(lists[1]).toBe(lists[0]);
+    expect(
+      result.calls.filter(
+        (call) => call.startsWith("chmod ") && call.endsWith(` ${result.runnerTemp}`),
+      ),
+    ).toEqual([]);
+    expect(result.calls.filter((call) => call.startsWith("rm -rf -- "))).toEqual([
+      `rm -rf -- ${lists[0]}`,
+    ]);
+    expect(existsSync(lists[0] ?? "")).toBe(false);
+    const sources = aptCalls.map((call) => call.match(/Dir::Etc::sourcelist=(\S+)/u)?.[1]);
+    expect(sources[0]).toMatch(/\/nemoclaw-ubuntu-sources\.\S+\/ubuntu\.sources$/u);
+    expect(sources[1]).toBe(sources[0]);
+    expect(aptCalls[1]).toContain("Dir::Etc::sourceparts=-");
+    expect(aptCalls[1]).toContain(
+      "install -y --no-install-recommends fd-find=9.0.0-1 ripgrep=14.1.0-1",
+    );
   });
 
-  // source-shape-contract: security -- PR dependency jobs receive only the base-approved SDK archive after credential-free integrity verification
-  it("passes only the base-packaged SDK archive to pull request dependency jobs", () => {
+  it("resolves the runner mirrorlist before pinned install with isolated APT lists (#11320)", () => {
+    const result = runPinnedAptFixture("mirror-file-failure");
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.sourceText.match(/URIs: https:\/\/archive\.ubuntu\.com\/ubuntu/gu)).toHaveLength(
+      2,
+    );
+    expect(result.sourceText).not.toContain("mirror+file:");
+    expect(result.sourceText).toContain("Suites: noble noble-updates noble-backports");
+    expect(result.sourceText).toContain("Components: main restricted universe multiverse");
+    expect(
+      result.sourceText.match(/Signed-By: \/usr\/share\/keyrings\/ubuntu-archive-keyring\.gpg/gu),
+    ).toHaveLength(2);
+    expect(result.sourceText).toContain("Suites: noble-security");
+    expect(result.calls.filter((call) => call.startsWith("apt-get "))).toHaveLength(2);
+  });
+
+  it("rejects an unexpected runner mirrorlist before APT runs (#11320)", () => {
+    const result = runPinnedAptFixture("unexpected-source");
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Unsupported Ubuntu APT source");
+    expect(result.calls.filter((call) => call.startsWith("apt-get "))).toHaveLength(0);
+  });
+
+  it.each([
+    ["CLI shards", requiredStep(sharedActions.cliCoverageShard, "Install pinned Pi search tools")],
+    [
+      "Advisor runtime",
+      requiredWorkflowStep(advisorWorkflow.jobs["build-advisor-runtime"], "Install locked runtime"),
+    ],
+  ])("installs the pinned packages through the %s workflow step (#11320)", (_name, installStep) => {
+    const result = runPinnedAptFixture("success", installStep);
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.runnerTempMode).toBe(0o700);
+    const aptCalls = result.calls.filter((call) => call.startsWith("apt-get "));
+    expect(aptCalls).toHaveLength(2);
+    expect(aptCalls[1]).toContain(
+      "install -y --no-install-recommends fd-find=9.0.0-1 ripgrep=14.1.0-1",
+    );
+  });
+
+  it("stops a stalled APT update within the command budget (#11320)", () => {
+    const result = runPinnedAptFixture("timeout");
+    expect(result.status).toBe(124);
+    expect(result.stderr).toContain("APT update timed out");
+    expect(result.timeoutCalls[0]).toMatch(/^-k 10s 300s apt-get /u);
+    expect(result.calls.filter((call) => call.startsWith("apt-get "))).toHaveLength(0);
+  });
+
+  it("retries only CLI update timeouts and then installs pinned packages (#11320)", () => {
+    const installStep = requiredStep(
+      sharedActions.cliCoverageShard,
+      "Install pinned Pi search tools",
+    );
+    const result = runPinnedAptFixture("recover-update", installStep);
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.timeoutCalls).toHaveLength(4);
+    expect(result.timeoutCalls.slice(0, 3)).toEqual(
+      Array.from({ length: 3 }, () => expect.stringMatching(/^-k 10s 120s apt-get /u)),
+    );
+    expect(result.timeoutCalls[3]).toMatch(/^-k 10s 180s apt-get /u);
+    const aptCalls = result.calls.filter((call) => call.startsWith("apt-get "));
+    expect(aptCalls).toHaveLength(2);
+    expect(aptCalls[0]).toContain("Acquire::Retries=2");
+    expect(aptCalls[0]).toContain("Acquire::http::Timeout=20");
+    expect(aptCalls[0]).toContain("Dir::Etc::sourceparts=-");
+    expect(aptCalls[1]).toContain("Dir::Etc::sourceparts=-");
+    expect(aptCalls[1]).toContain(
+      "install -y --no-install-recommends fd-find=9.0.0-1 ripgrep=14.1.0-1",
+    );
+  });
+
+  it("stops CLI updates after three bounded timeouts without installing (#11320)", () => {
+    const installStep = requiredStep(
+      sharedActions.cliCoverageShard,
+      "Install pinned Pi search tools",
+    );
+    const result = runPinnedAptFixture("timeout", installStep);
+    expect(result.status).toBe(124);
+    expect(result.timeoutCalls).toHaveLength(3);
+    expect(result.timeoutCalls).toEqual(
+      Array.from({ length: 3 }, () => expect.stringMatching(/^-k 10s 120s apt-get /u)),
+    );
+    expect(result.stderr).toContain("APT update timed out");
+    expect(result.stderr).toContain("attempt 3/3");
+    expect(result.calls.filter((call) => call.startsWith("apt-get "))).toHaveLength(0);
+  });
+
+  it("stops a stalled APT install after a successful update (#11320)", () => {
+    const result = runPinnedAptFixture("install-timeout");
+    expect(result.status).toBe(124);
+    expect(result.stderr).toContain("APT install timed out");
+    expect(result.timeoutCalls).toHaveLength(2);
+    expect(result.timeoutCalls[1]).toMatch(/^-k 10s 300s apt-get /u);
+    expect(result.calls.filter((call) => call.startsWith("apt-get "))).toHaveLength(1);
+  });
+
+  it("stops a stalled CLI install within the preserved limit (#11320)", () => {
+    const installStep = requiredStep(
+      sharedActions.cliCoverageShard,
+      "Install pinned Pi search tools",
+    );
+    const result = runPinnedAptFixture("install-timeout", installStep);
+    expect(result.status).toBe(124);
+    expect(result.stderr).toContain("APT install timed out");
+    expect(result.timeoutCalls).toHaveLength(2);
+    expect(result.timeoutCalls[0]).toMatch(/^-k 10s 120s apt-get /u);
+    expect(result.timeoutCalls[1]).toMatch(/^-k 10s 180s apt-get /u);
+    expect(result.calls.filter((call) => call.startsWith("apt-get "))).toHaveLength(1);
+  });
+
+  it("fails when the pinned package install fails (#11320)", () => {
+    const result = runPinnedAptFixture("install-error");
+    expect(result.status).toBe(100);
+    expect(result.stderr).toContain("APT install failed");
+    expect(result.calls.filter((call) => call.startsWith("apt-get "))).toHaveLength(2);
+  });
+
+  it("reports a possible force-killed timeout without claiming its cause (#11320)", () => {
+    const result = runPinnedAptFixture("force-killed");
+    expect(result.status).toBe(137);
+    expect(result.stderr).toContain("APT update was force-killed");
+    expect(result.stderr).toContain("may have exceeded 300s");
+    expect(result.calls.filter((call) => call.startsWith("timeout "))).toHaveLength(1);
+    expect(result.calls.find((call) => call.startsWith("timeout "))).toMatch(
+      /^timeout -k 10s 300s apt-get /u,
+    );
+    expect(result.calls.filter((call) => call.startsWith("apt-get "))).toHaveLength(0);
+  });
+
+  it("rejects a missing Ubuntu source before APT runs (#11320)", () => {
+    const result = runPinnedAptFixture("missing-source");
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Missing Ubuntu APT source");
+    expect(result.calls.filter((call) => call.startsWith("apt-get "))).toHaveLength(0);
+  });
+
+  it("rejects an unpinned package before using sudo (#11320)", () => {
+    const result = runPinnedAptFixture("success", undefined, ["fd-find"]);
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("Unpinned APT package");
+    expect(result.calls).toEqual([""]);
+  });
+
+  // source-shape-contract: security -- The base-controlled verifier admits SDK archives before downstream candidate dependency execution
+  it("passes only an SDK archive admitted by the base-controlled verifier to dependency jobs", () => {
     const job = prWorkflow.jobs["openshell-sdk-package"];
-    expect(job.permissions).toEqual({ actions: "read", contents: "read" });
+    expect(job.permissions).toEqual({ actions: "read", contents: "read", "pull-requests": "read" });
     expect(requiredWorkflowStep(job, "Checkout base package decision").with).toMatchObject({
       ref: "${{ github.event.pull_request.base.sha }}",
       path: ".trusted-sdk-package-decision",
@@ -644,14 +965,6 @@ printf '%s  %s\\n' '6bf226944684f56c84dd014e8b979d27425c0148f61b3bd99bcc6f39e9dc
     const { result, githubOutput } = runSdkPackageLocator({ step: locateSdk, run });
     expect(result.status).not.toBe(0);
     expect(githubOutput).not.toContain("artifact_id=");
-  });
-
-  it("accepts a manually refreshed archive from trusted main", () => {
-    const { result } = runSdkPackageLocator({
-      step: locateSdk,
-      run: { ...mainSdkRun, event: "workflow_dispatch" },
-    });
-    expect(result.status, result.stderr).toBe(0);
   });
 
   it("reports artifact lookup failures without private API diagnostics", () => {
@@ -771,28 +1084,29 @@ printf '%s  %s\\n' '6bf226944684f56c84dd014e8b979d27425c0148f61b3bd99bcc6f39e9dc
     },
   );
 
-  // source-shape-contract: security -- PR base SHA action execution prevents pull-request code from authorizing installer hashes
-  it("executes pull request installer hash checks only from the PR base SHA", () => {
+  // source-shape-contract: security -- An immutable reviewed revision prevents current pull-request code from authorizing installer hashes
+  it("executes pull request installer hash checks only from the reviewed revision", () => {
     expect(installerHashTrustViolations(installerHashWorkflow)).toEqual([]);
 
     const headCheckout = structuredClone(installerHashWorkflow);
     requiredWorkflowStep(
       headCheckout.jobs["check-hash"],
-      "Checkout base-trusted installer hash action",
+      "Checkout reviewed installer hash action",
     ).with = {
+      repository: "NVIDIA/NemoClaw",
       ref: "${{ github.event.pull_request.head.sha }}",
       path: ".trusted-installer-hash",
     };
 
-    const missingBaseCheckout = structuredClone(installerHashWorkflow);
-    missingBaseCheckout.jobs["check-hash"].steps = missingBaseCheckout.jobs[
+    const missingReviewedCheckout = structuredClone(installerHashWorkflow);
+    missingReviewedCheckout.jobs["check-hash"].steps = missingReviewedCheckout.jobs[
       "check-hash"
-    ].steps?.filter((step) => step.name !== "Checkout base-trusted installer hash action");
+    ].steps?.filter((step) => step.name !== "Checkout reviewed installer hash action");
 
     const mutableExecutor = structuredClone(installerHashWorkflow);
     requiredWorkflowStep(
       mutableExecutor.jobs["check-hash"],
-      "Verify pull request installer hashes from base-trusted code",
+      "Verify pull request installer hashes from reviewed code",
     ).uses = "./.github/actions/ci-installer-hash-check";
 
     const bootstrapExecutor = structuredClone(installerHashWorkflow);
@@ -809,13 +1123,13 @@ printf '%s  %s\\n' '6bf226944684f56c84dd014e8b979d27425c0148f61b3bd99bcc6f39e9dc
     });
 
     expect(installerHashTrustViolations(headCheckout)).toContain(
-      "base-trusted installer hash checkout must use the PR base SHA",
+      "reviewed installer hash checkout must use the exact NVIDIA-owned revision",
     );
-    expect(installerHashTrustViolations(missingBaseCheckout)).toContain(
-      "missing base-trusted installer hash checkout",
+    expect(installerHashTrustViolations(missingReviewedCheckout)).toContain(
+      "missing reviewed installer hash checkout",
     );
     expect(installerHashTrustViolations(mutableExecutor)).toContain(
-      "pull request installer hashes must use only the base-trusted action",
+      "pull request installer hashes must use only the reviewed action",
     );
     expect(installerHashTrustViolations(bootstrapExecutor)).toContain(
       "unapproved installer hash executor: ./.bootstrap-installer-hash/.github/actions/ci-installer-hash-check",

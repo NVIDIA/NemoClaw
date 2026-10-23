@@ -435,7 +435,6 @@ function managedOutputTargets(
   switch (profile.agent) {
     case "openclaw":
       files.add(path.join(root, "openclaw.json"));
-      files.add(path.join(root, ".config-hash"));
       break;
     case "hermes":
       files.add(path.join(root, "config.yaml"));
@@ -449,6 +448,7 @@ function managedOutputTargets(
     case "pi":
       directories.add(path.join(root, "agent"));
       files.add(path.join(root, "agent", "models.json"));
+      files.add(path.join(root, "agent", "settings.json"));
       break;
   }
 

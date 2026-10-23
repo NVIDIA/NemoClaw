@@ -15,111 +15,18 @@ import { isObjectRecord } from "../shared/object-record.js";
 
 let configDir = join(homedir(), ".nemoclaw");
 
-export type EndpointType =
-  | "build"
-  | "openai"
-  | "anthropic"
-  | "gemini"
-  | "ncp"
-  | "nim-local"
-  | "vllm"
-  | "ollama"
-  | "custom";
-
+/** NemoClaw metadata only; native OpenClaw configuration owns inference. */
 export interface NemoClawOnboardConfig {
-  endpointType: EndpointType;
-  endpointUrl: string;
-  ncpPartner: string | null;
-  model: string;
   profile: string;
-  credentialEnv: string;
-  provider?: string;
-  providerLabel?: string;
   onboardedAt: string;
-}
-
-function isEndpointType(value: unknown): value is EndpointType {
-  return (
-    value === "build" ||
-    value === "openai" ||
-    value === "anthropic" ||
-    value === "gemini" ||
-    value === "ncp" ||
-    value === "nim-local" ||
-    value === "vllm" ||
-    value === "ollama" ||
-    value === "custom"
-  );
-}
-
-function isOptionalString(value: unknown): value is string | undefined {
-  return value === undefined || typeof value === "string";
 }
 
 function isOnboardConfig(value: unknown): value is NemoClawOnboardConfig {
   return (
     isObjectRecord(value) &&
-    isEndpointType(value.endpointType) &&
-    typeof value.endpointUrl === "string" &&
-    (value.ncpPartner === null || typeof value.ncpPartner === "string") &&
-    typeof value.model === "string" &&
     typeof value.profile === "string" &&
-    typeof value.credentialEnv === "string" &&
-    isOptionalString(value.providerLabel) &&
-    isOptionalString(value.provider) &&
     typeof value.onboardedAt === "string"
   );
-}
-
-export function describeOnboardEndpoint(config: NemoClawOnboardConfig): string {
-  if (config.endpointUrl === "https://inference.local/v1") {
-    return "Managed Inference Route (inference.local)";
-  }
-
-  let safeUrl = config.endpointUrl;
-  try {
-    const parsed = new URL(config.endpointUrl);
-    if (parsed.password) parsed.password = "****";
-    if (parsed.username) parsed.username = "****";
-    for (const key of [...parsed.searchParams.keys()]) {
-      if (/(token|key|secret|auth|sig|credential|password)/i.test(key)) {
-        parsed.searchParams.set(key, "****");
-      }
-    }
-    safeUrl = parsed.toString();
-  } catch {
-    // Not a valid URL — show as-is
-  }
-  return `${config.endpointType} (${safeUrl})`;
-}
-
-export function describeOnboardProvider(config: NemoClawOnboardConfig): string {
-  if (config.providerLabel) {
-    return config.providerLabel;
-  }
-
-  switch (config.endpointType) {
-    case "build":
-      return "NVIDIA Endpoints";
-    case "openai":
-      return "OpenAI";
-    case "anthropic":
-      return "Anthropic";
-    case "gemini":
-      return "Google Gemini";
-    case "ollama":
-      return "Local Ollama";
-    case "vllm":
-      return "Local vLLM";
-    case "nim-local":
-      return "Local NVIDIA NIM";
-    case "ncp":
-      return "NVIDIA Cloud Partner";
-    case "custom":
-      return "Other OpenAI-compatible endpoint";
-    default:
-      return "Unknown";
-  }
 }
 
 let configDirCreated = false;
@@ -149,7 +56,9 @@ export function loadOnboardConfig(): NemoClawOnboardConfig | null {
   // Treat unreadable config as "no config" so plugin register doesn't abort.
   try {
     const parsed: unknown = JSON.parse(readFileSync(path, "utf-8"));
-    return isOnboardConfig(parsed) ? parsed : null;
+    return isOnboardConfig(parsed)
+      ? { profile: parsed.profile, onboardedAt: parsed.onboardedAt }
+      : null;
   } catch {
     return null;
   }

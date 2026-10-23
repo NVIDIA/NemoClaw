@@ -79,7 +79,6 @@ processRecovery.beginUnregisteredOpenClawBackupQuiesce = async (sandboxName) => 
   ok: true,
   window: { sandboxName, kind: "backup" },
 });
-processRecovery.promoteUnregisteredOpenClawBackupQuiesceToPostRestoreDoctor = async (window) => ({ ok: true, window: { sandboxName: window.sandboxName } });
 processRecovery.finishUnregisteredOpenClawPostRestoreDoctor = async () => ({ ok: true });
 processRecovery.abortUnregisteredOpenClawPostRestoreDoctor = async () => ({ ok: true });
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
@@ -234,11 +233,6 @@ const MARKER_SHA = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852
               release: () => {},
             };
           },
-        },
-        cleanupDeps: {
-          getSandbox: () => ({ agent: "openclaw" }),
-          inspectMutableConfigPerms: () => ({ applies: true, ok: true }),
-          repairMutableConfigPerms: () => ({ applied: false }),
         },
         exit: (code) => {
           execCode = code;

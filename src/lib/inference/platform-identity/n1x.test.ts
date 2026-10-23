@@ -53,7 +53,8 @@ function unexpectedFixturePath(filePath: string): never {
 }
 
 describe("N1x identity", () => {
-  it("recognizes the bounded N1x GPU name reported through WSL (#10962)", () => {
+  it("recognizes each accepted bounded N1x GPU name reported through WSL (#10962, #12282)", () => {
+    expect(isN1xWslGpuName("NVIDIA RTX Spark N1X (5120-core Blackwell RTX GPU)")).toBe(true);
     expect(isN1xWslGpuName("NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU)")).toBe(true);
     expect(isN1xWslGpuName("NVIDIA RTX Spark N1X")).toBe(true);
   });
@@ -63,10 +64,12 @@ describe("N1x identity", () => {
     "NVIDIA RTX Spark N1X2",
     "Prototype NVIDIA RTX Spark N1X",
     "NVIDIA RTX Spark N1X prototype",
+    "NVIDIA RTX Spark N1X (4096-core Blackwell RTX GPU)",
+    "NVIDIA RTX Spark N1X (5120-core Blackwell RTX GPU) prototype",
     "NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU) prototype",
     `NVIDIA RTX Spark N1X\nforged`,
     `NVIDIA RTX Spark N1X ${"x".repeat(256)}`,
-  ])("rejects a noncanonical N1x WSL GPU identity %s (#10962)", (name) => {
+  ])("rejects a noncanonical N1x WSL GPU identity %s (#10962, #12282)", (name) => {
     expect(isN1xWslGpuName(name)).toBe(false);
   });
 
@@ -156,6 +159,67 @@ describe("N1x identity", () => {
       }),
     ).toEqual({ candidate: false, fastOsMarker: false, pciGpu: undefined, qualified: false });
   });
+
+  it.each(["0x2e03", "0x2e06", "0x2e13", "0x2e02", "0x2e2a"])(
+    "recognizes N1x PCI device %s without an OS marker (#12737)",
+    (device) => {
+      const identity = n1xFixture({
+        openFile: () => {
+          throw Object.assign(new Error("missing marker"), { code: "ENOENT" });
+        },
+        readFile: (filePath) => {
+          const fields: Record<string, string> = {
+            vendor: "0x10de\n",
+            class: "0x030200\n",
+            device: `${device}\n`,
+          };
+          return fields[filePath.split("/").at(-1) ?? ""] ?? unexpectedFixturePath(filePath);
+        },
+      });
+      expect(identity).toEqual({
+        candidate: true,
+        fastOsMarker: false,
+        pciGpu: true,
+        pciDevice: device,
+        qualified: true,
+      });
+    },
+  );
+
+  it.each([
+    ["DGX Spark GPU", "0x10de", "0x030000", "0x2e12"],
+    ["wrong vendor", "0x1234", "0x030000", "0x2e2a"],
+    ["non-display device", "0x10de", "0x020000", "0x2e2a"],
+    ["nearby unknown device", "0x10de", "0x030000", "0x2e04"],
+  ])("does not infer N1x from a %s (#12737)", (_scenario, vendor, pciClass, device) => {
+    const identity = n1xFixture({
+      openFile: () => {
+        throw Object.assign(new Error("missing marker"), { code: "ENOENT" });
+      },
+      readFile: (filePath) => {
+        const fields: Record<string, string> = { vendor, class: pciClass, device };
+        return fields[filePath.split("/").at(-1) ?? ""] ?? unexpectedFixturePath(filePath);
+      },
+    });
+    expect(identity.qualified).toBe(false);
+    expect(identity.candidate).toBe(false);
+  });
+
+  it.each(["EACCES", "ELOOP"])(
+    "does not use PCI inference to bypass marker error %s (#12737)",
+    (code) => {
+      const readFile = vi.fn(() => "0x2e2a");
+      expect(
+        n1xFixture({
+          openFile: () => {
+            throw Object.assign(new Error("marker unavailable"), { code });
+          },
+          readFile,
+        }).qualified,
+      ).toBe(false);
+      expect(readFile).not.toHaveBeenCalled();
+    },
+  );
 
   it.each(["ELOOP", "EMLINK"])(
     "preserves a linked FastOS marker as an unqualified N1x candidate with %s (#8574)",

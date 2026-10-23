@@ -188,12 +188,12 @@ describe("portable agent runtime contract", () => {
     expect(String(error)).not.toContain("do-not-store");
   });
 
-  it("binds compatibility to agent-owned state and health semantics (#11079)", () => {
+  it("binds compatibility to agent-owned config safety and health semantics (#11079)", () => {
     const contract = hermesContract();
     const agent = loadAgent("hermes");
     const changedAgent = {
       ...agent,
-      stateFiles: [...agent.stateFiles, { path: "future.db", strategy: "sqlite_backup" as const }],
+      userManagedFiles: [...agent.userManagedFiles, "future.secret"],
     } as AgentDefinition;
 
     expect(() => parsePortableAgentRuntimeContractV1(contract, changedAgent)).toThrow(

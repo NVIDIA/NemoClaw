@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { NATIVE_LOCAL_CREDENTIAL_ENV } from "../../inference/native-local/agent-config";
+import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../../inference/ollama/contract";
+import { normalizeNativeLocalProviderAttachment } from "../../inference/native-local/profile";
 import type * as TypeBoxModule from "typebox" with { "resolution-mode": "import" };
 import {
   BoundedTextSchema,
@@ -30,6 +33,8 @@ import {
 import type { SandboxConfiguration } from "../sandbox/configuration";
 import type { SandboxEntry } from "../../state/registry/types";
 import type { ObservedOllamaProxy } from "../../inference/ollama/proxy-observation";
+import { webSearchEnvFor } from "../../inference/web-search";
+import { webSearchProviderProfileId } from "../../inference/web-search/provider-profile";
 
 const { Type } = require("typebox") as typeof TypeBoxModule;
 
@@ -71,6 +76,9 @@ export const EXPORT_REGISTRY_EVIDENCE_KEYS = [
   "messaging",
   "model",
   "name",
+  "nativeNvidiaProviderAttachment",
+  "nativeLocalProviderAttachment",
+  "nativeHostedProviderAttachment",
   "nimContainer",
   "observabilityEnabled",
   "openshellDriver",
@@ -89,6 +97,58 @@ export const EXPORT_REGISTRY_EVIDENCE_KEYS = [
 type ObservedExportRegistryKey = (typeof EXPORT_REGISTRY_EVIDENCE_KEYS)[number];
 
 export type ObservedExportRegistry = DeepReadonly<Pick<SandboxEntry, ObservedExportRegistryKey>>;
+
+function hasNativeLocalExportCredential(
+  entry: ObservedExportRegistry,
+  receiptCredential: string,
+): boolean {
+  return (
+    receiptCredential === NATIVE_LOCAL_CREDENTIAL_ENV &&
+    (entry.credentialEnv == null ||
+      (entry.provider === "compatible-endpoint" &&
+        (entry.credentialEnv === "COMPATIBLE_API_KEY" ||
+          entry.credentialEnv === OLLAMA_LOCAL_CREDENTIAL_ENV)) ||
+      (entry.provider === "ollama-local" && entry.credentialEnv === OLLAMA_LOCAL_CREDENTIAL_ENV))
+  );
+}
+
+export function exportNativeInferenceReceipt(entry: ObservedExportRegistry) {
+  if (entry.nativeLocalProviderAttachment !== undefined) {
+    const receipt = normalizeNativeLocalProviderAttachment(entry.nativeLocalProviderAttachment);
+    if (
+      !receipt ||
+      !["ollama-local", "vllm-local", "compatible-endpoint"].includes(receipt.provider) ||
+      receipt.provider !== entry.provider ||
+      receipt.sandboxName !== entry.name ||
+      receipt.gatewayName !== entry.gatewayName ||
+      !hasNativeLocalExportCredential(entry, receipt.credentialEnv)
+    )
+      return null;
+    return receipt;
+  }
+  return entry.provider?.trim() === "nvidia-prod"
+    ? entry.nativeNvidiaProviderAttachment
+    : undefined;
+}
+
+export function exportWebSearchBinding(
+  entry: Pick<ObservedExportRegistry, "name" | "agent" | "webSearchEnabled" | "webSearchProvider">,
+) {
+  const provider = entry.webSearchProvider;
+  if (
+    entry.webSearchEnabled !== true ||
+    (provider !== "brave" && provider !== "tavily") ||
+    (entry.agent !== "openclaw" && entry.agent !== "hermes") ||
+    (entry.agent === "hermes" && provider !== "tavily")
+  )
+    return undefined;
+  return {
+    provider,
+    name: `${entry.name}-${provider}-search`,
+    profileId: webSearchProviderProfileId(provider, entry.agent),
+    credentialEnv: webSearchEnvFor(provider),
+  } as const;
+}
 
 declare const CANONICAL_EXPORT_POLICY: unique symbol;
 export type CanonicalExportPolicy = Readonly<Record<string, unknown>> & {
@@ -112,7 +172,7 @@ export interface ObservedExportEndpointEvidence {
     readonly profileWorkspace?: string;
     /** null means the OpenAI profile was read at its binding and confirmed absent. */
     readonly managedProfile?: {
-      readonly id: "brave" | "openai";
+      readonly id: string;
       readonly source: "builtin" | "user";
       readonly scope: "" | "platform" | "workspace";
       readonly resourceVersion: string;
@@ -124,7 +184,11 @@ export interface ObservedExportEndpointEvidence {
         readonly kind: "provider-config";
         readonly key: "OPENAI_BASE_URL" | "ANTHROPIC_BASE_URL";
       }
-    | { readonly kind: "builtin-profile"; readonly profileId: "nvidia" };
+    | { readonly kind: "builtin-profile"; readonly profileId: "nvidia" }
+    | {
+        readonly kind: "managed-profile";
+        readonly profileId: string;
+      };
 }
 
 export interface ObservedExportWebSearchProvider {
@@ -282,6 +346,14 @@ const ExportInferenceSchema = Type.Union([
   ),
 ]);
 
+const ExportWebSearchSchema = Type.Object(
+  {
+    ...NemoClawBraveSearchConfigSchema.properties,
+    provider: Type.Union([Type.Literal("brave"), Type.Literal("tavily")]),
+  },
+  { additionalProperties: false },
+);
+
 /** Representable values only; provenance and policy qualification remain separate. */
 const exportSourceFields = {
   sandboxName: Type.Refine(SandboxNameSchema, isValidNemoClawSandboxName),
@@ -296,7 +368,7 @@ const exportSourceFields = {
   proxy: Type.Optional(NemoClawManagedProxyConfigSchema),
   inference: ExportInferenceSchema,
   observability: Type.Optional(NemoClawOpenClawObservabilitySchema),
-  webSearch: Type.Optional(NemoClawBraveSearchConfigSchema),
+  webSearch: Type.Optional(ExportWebSearchSchema),
 };
 
 export const ExportSourceValuesSchema = Type.Refine(
@@ -325,10 +397,9 @@ export const ExportSourceValuesSchema = Type.Refine(
       value.observability !== undefined
     )
       return false;
-    return (
-      value.agent === "hermes" ||
-      (value.auth === undefined && value.webSearch === undefined && value.interfaces === undefined)
-    );
+    return value.agent === "hermes"
+      ? value.webSearch === undefined || value.webSearch.provider === "tavily"
+      : value.auth === undefined && value.webSearch === undefined && value.interfaces === undefined;
   },
 );
 
@@ -345,7 +416,11 @@ export type VerifiedExportSource = ExportSourceValues & {
 };
 
 export type ExportSourceVerificationResult =
-  | Readonly<{ kind: "verified"; source: VerifiedExportSource }>
+  | Readonly<{
+      kind: "verified";
+      source: VerifiedExportSource;
+      corporateCaOmitted?: true;
+    }>
   | Readonly<{ kind: "rejected"; findings: NonEmptyExportFindings }>;
 
 /** The only observation port. Each call reads one complete source snapshot. */

@@ -29,3 +29,11 @@ export function parseVersionFromText(value = "", versionCommand?: string): strin
   const match = text.match(SEMVER_PATTERN);
   return match ? match[1] : null;
 }
+
+/** Parse only output that identifies the OpenShell executable. */
+export function parseOpenShellVersionFromText(value = ""): string | null {
+  const match = String(value || "").match(
+    /(?<![a-z0-9_.-])openshell\s+([0-9]+\.[0-9]+\.[0-9]+)(?![0-9.])/iu,
+  );
+  return match?.[1] ?? null;
+}

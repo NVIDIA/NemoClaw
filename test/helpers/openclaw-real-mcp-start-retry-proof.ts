@@ -247,7 +247,7 @@ async function runScenario(mode) {
     const before = posts();
     const materialized = await materializeBundleMcpToolsForRun({ runtime, reservedToolNames: new Set() });
     const catalog = runtime.peekCatalog();
-    materialized.dispose?.();
+    await materialized.dispose?.();
     return {
       toolCount: materialized.tools.length,
       attempts: posts() - before,

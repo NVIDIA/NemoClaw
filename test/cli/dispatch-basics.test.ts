@@ -146,6 +146,9 @@ describe("CLI dispatch", () => {
     expect(output).toContain("(--check, --fresh, --allow-downgrade, --yes|-y)");
     expect(output).toContain("nemoclaw gc");
     expect(output).toContain("(--yes|-y|--force, --dry-run)");
+    expect(output).toContain("nemoclaw backup-all");
+    expect(output).toContain("nemoclaw <name> rebuild");
+    expect(output).not.toContain("<name> snapshot");
     expect(output).toContain("nemoclaw onboard");
     expect(output).toContain(
       "Configure inference endpoint and credentials (--agent to choose runtime)",

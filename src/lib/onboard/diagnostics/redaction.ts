@@ -3,7 +3,14 @@
 
 import { isNativeError, isProxy } from "node:util/types";
 
-import { redact, redactFull, redactFullWithUrls, redactSensitiveText } from "../../security/redact";
+import {
+  redact,
+  redactFull,
+  redactFullWithUrls,
+  redactSensitiveText,
+  redactStandaloneSecretsFull,
+  redactUrl,
+} from "../../security/redact";
 
 interface DiagnosticTask {
   source: object;
@@ -435,6 +442,30 @@ export function redactOnboardErrorText(message: string): string {
 /** Bound a diagnostic after removing recognized credential values. */
 export function redactOnboardDiagnosticText(message: string): string {
   return redactSensitiveText(message) ?? "";
+}
+
+/** Redact endpoint credentials before bounding and escaping the displayed URL. */
+export function formatOnboardEndpointDiagnostic(endpointUrl: string): string {
+  try {
+    const endpoint = new URL(redactUrl(endpointUrl) ?? "");
+    if (endpoint.protocol !== "http:" && endpoint.protocol !== "https:") {
+      return JSON.stringify("<REDACTED>");
+    }
+    const path = decodeURIComponent(endpoint.pathname);
+    // Omit the whole path when credentials or further encoding could hide
+    // a secret; partial replacement could leave part of a credential visible.
+    if (path.includes("%") || redactFull(path) !== path) {
+      endpoint.pathname = "/<REDACTED>";
+    }
+    if (
+      [...endpoint.searchParams].some(([key, value]) => key.includes("%") || value.includes("%"))
+    ) {
+      endpoint.search = "";
+    }
+    return JSON.stringify(redactStandaloneSecretsFull(endpoint.toString()).slice(0, 240));
+  } catch {
+    return JSON.stringify("<REDACTED>");
+  }
 }
 
 /** Preserve the command diagnostic's existing redaction and length contract. */

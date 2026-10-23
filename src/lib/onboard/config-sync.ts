@@ -48,8 +48,8 @@ export function createNemoClawConfigSync(deps: NemoClawConfigSyncDeps) {
   };
 }
 
-// Write `~/.nemoclaw/config.json` and normalize OpenClaw config-dir perms
-// inside the sandbox. Also replaces the historical zero-byte config.json placeholder
+// Write `~/.nemoclaw/config.json` inside the sandbox and initialize managed-profile
+// session state when needed. Also replace the historical zero-byte placeholder
 // that crashes the OpenClaw nemoclaw plugin's loadOnboardConfig. Fixes #3999.
 export async function runSandboxConfigSync(
   sandboxName: string,
@@ -63,9 +63,20 @@ export async function runSandboxConfigSync(
 }
 
 export function buildSandboxConfigSyncScript(
-  selectionConfig: ProviderSelectionConfig & { agent?: string },
+  selectionConfig: ProviderSelectionConfig & { agent?: string; onboardedAt?: string },
   managedProfileApplied = false,
 ): string {
+  // Record onboarding intent for reuse comparisons, not OpenClaw runtime routing.
+  // Native OpenClaw edits never flow back into this selection record.
+  const metadata =
+    !selectionConfig.agent || selectionConfig.agent === "openclaw"
+      ? {
+          profile: selectionConfig.profile,
+          provider: selectionConfig.provider,
+          model: selectionConfig.model,
+          onboardedAt: selectionConfig.onboardedAt,
+        }
+      : selectionConfig;
   const writeSelection = `
 set -euo pipefail
 # OpenShell exec and the OpenClaw gateway can expose different HOME values.
@@ -79,14 +90,14 @@ if [ -n "$nemoclaw_dir_uid" ] && [ "$nemoclaw_dir_uid" = "$current_uid" ]; then
   chmod 700 "$nemoclaw_dir"
 fi
 cat > "$nemoclaw_config" <<'EOF_NEMOCLAW_CFG'
-${JSON.stringify(selectionConfig, null, 2)}
+${JSON.stringify(metadata, null, 2)}
 EOF_NEMOCLAW_CFG
 chmod 600 "$nemoclaw_config"
 `.trim();
   // Retained Hermes sandboxes can contain an unrelated .openclaw directory.
   if (selectionConfig.agent === "hermes") return writeSelection;
-  if (managedProfileApplied) {
-    return `${writeSelection}
+  if (!managedProfileApplied) return writeSelection;
+  return `${writeSelection}
 config_dir=/sandbox/.openclaw
 if [ -d "$config_dir" ]; then
   current_uid="$(id -u)"
@@ -106,25 +117,4 @@ if [ -d "$config_dir" ]; then
   chmod 700 "$config_dir/agents" "$config_dir/agents/main" "$config_dir/agents/main/sessions"
 fi
 exit`;
-  }
-  // Managed startup has already created OpenClaw's baseline state before its
-  // gateway becomes reachable. Re-running native setup here can rewrite live
-  // state and terminate the sandbox while onboarding is connected.
-  return `${writeSelection}
-config_dir=/sandbox/.openclaw
-if [ -d "$config_dir" ]; then
-  config_dir_owner="$(stat -c '%U' "$config_dir" 2>/dev/null || echo unknown)"
-  if [ "$config_dir_owner" != "root" ]; then
-    if [ -L "$config_dir" ] || [ -L "$config_dir/openclaw.json" ] || [ -L "$config_dir/.config-hash" ]; then
-      echo "Refusing OpenClaw state initialization through a symlink" >&2
-      exit 1
-    fi
-    export HOME=/sandbox OPENCLAW_STATE_DIR="$config_dir" OPENCLAW_CONFIG_PATH="$config_dir/openclaw.json"
-    /usr/local/bin/openclaw config validate
-    (cd "$config_dir" && sha256sum openclaw.json >.config-hash)
-    python3 -I /usr/local/lib/nemoclaw/normalize_mutable_config_perms.py "$config_dir" "$current_uid" "$(id -g)"
-  fi
-fi
-exit
-`.trim();
 }

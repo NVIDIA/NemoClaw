@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -52,7 +53,7 @@ function expectedReceipt(cohort: string, receiptAttempt: number): Record<string,
 }
 
 describe("managed-image publication promotion", () => {
-  it("stages all multi-platform cohort aliases before moving the shipped root pointers (#7744, #11228)", () => {
+  it("stages all multi-platform cohort aliases before moving the shipped root pointers (#7744, #11228, #11341)", () => {
     const promotion = required(
       step(
         managedPromoter(readWorkflow("managed-images.yaml")),
@@ -77,6 +78,7 @@ describe("managed-image publication promotion", () => {
     expect(failedCalls).toContain(`openclaw-sandbox:cohort-${cohort}`);
     expect(failedCalls).not.toContain(`openclaw-sandbox:${revision}`);
     expect(failedCalls).not.toContain(`hermes-sandbox:${revision}`);
+    expect(failedCalls).not.toContain(`langchain-deepagents-code-sandbox:${revision}`);
 
     const accepted = runManagedImagePromotion(promotion, "", pointer);
     const acceptedCalls = accepted.calls.join("\n");
@@ -97,6 +99,7 @@ describe("managed-image publication promotion", () => {
     );
     const rootPointer = acceptedCalls.indexOf(`openclaw-sandbox:${revision}`);
     const hermesPointer = acceptedCalls.indexOf(`hermes-sandbox:${revision}`);
+    const dcodePointer = acceptedCalls.indexOf(`langchain-deepagents-code-sandbox:${revision}`);
 
     expect(accepted.calls.filter((call) => call.startsWith("pull ")).sort()).toEqual(
       expectedPullCalls.sort(),
@@ -110,10 +113,10 @@ describe("managed-image publication promotion", () => {
     });
     expect(lastCohortStage).toBeGreaterThanOrEqual(0);
     expect(rootPointer).toBeGreaterThan(lastCohortStage);
-    // Hermes ships its root pointer alongside OpenClaw (#11228); Deep Agents
-    // Code stays cohort-only.
+    // Every shipped agent's root pointer moves only after all cohort aliases
+    // stage: Hermes per #11228, Deep Agents Code per #11341.
     expect(hermesPointer).toBeGreaterThan(lastCohortStage);
-    expect(acceptedCalls).not.toContain(`langchain-deepagents-code-sandbox:${revision}`);
+    expect(dcodePointer).toBeGreaterThan(lastCohortStage);
     expect(Object.keys(accepted.platformContracts).sort()).toEqual(
       publicationAgents
         .flatMap((agent) => publicationPlatforms.map((platform) => `${agent}|${platform}`))
@@ -165,6 +168,48 @@ describe("managed-image publication promotion", () => {
         runId,
       }),
     ).toEqual(expectedReceipt("ghrun-7744-1", 1));
+  });
+
+  it("publishes the Deep Agents release alias with the exact cohort bytes after staging (#11341)", () => {
+    const workflow = managedPromoter(readWorkflow("managed-images.yaml"));
+    const promotion = required(
+      step(workflow, "Stage validated multi-platform managed image cohort and contracts").run,
+      "managed image promotion script is missing",
+    );
+    const pointer = required(
+      step(workflow, "Promote durable managed image cohort pointers").run,
+      "managed image pointer script is missing",
+    );
+    const releaseTag = "v0.1.0";
+    const released = runManagedImagePromotion(promotion, "", pointer, { releaseTag });
+    expect(released.status, released.stderr).toBe(0);
+
+    const image = "ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox";
+    const alias = `${image}:${releaseTag}`;
+    const agent = required(
+      (released.cohortContract?.agents as Record<string, { reference: string; digest: string }>)[
+        "langchain-deepagents-code"
+      ],
+      "Deep Agents cohort reference is missing",
+    );
+    const pointerCall = `buildx imagetools create --tag ${image}:${revision} --tag ${alias} ${agent.reference}`;
+    const lastCohortStage = Math.max(
+      ...publicationAgents.map((name) =>
+        released.calls.findIndex((call) =>
+          call.startsWith(
+            `buildx imagetools create --tag ghcr.io/nvidia/nemoclaw/${name}-sandbox:cohort-`,
+          ),
+        ),
+      ),
+    );
+    expect(lastCohortStage).toBeGreaterThanOrEqual(0);
+    expect(released.calls.indexOf(pointerCall)).toBeGreaterThan(lastCohortStage);
+    expect(released.calls).toContain(`buildx imagetools inspect ${alias} --raw`);
+    const aliasBytes = required(released.aliasBytes[alias], "Deep Agents release alias is missing");
+    expect(`sha256:${createHash("sha256").update(aliasBytes).digest("hex")}`).toBe(agent.digest);
+    expect(released.cohortContract?.source).toMatchObject({
+      release: releaseTag,
+    });
   });
 
   it("rejects promotion when a candidate names another workflow run", () => {

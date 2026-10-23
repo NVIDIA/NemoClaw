@@ -9,9 +9,14 @@ import { runDebug } from "./debug";
 const mocks = vi.hoisted(() => ({
   runBuffered:
     vi.fn<import("../adapters/openshell/sandbox-command-cli").OpenShellBufferedCommandRunner>(),
+  collectOpenshell: vi.fn(),
   archive: vi.fn(),
   directories: [] as string[],
   archivedFiles: [] as string[],
+}));
+
+vi.mock("../adapters/openshell/debug-diagnostics-cli", () => ({
+  createCliOpenShellDebugDiagnostics: () => ({ collect: mocks.collectOpenshell }),
 }));
 
 vi.mock("node:child_process", async (original) => ({
@@ -53,6 +58,13 @@ vi.mock("./tarball", async () => {
 });
 
 beforeEach(() => {
+  mocks.collectOpenshell.mockReset().mockResolvedValue([
+    {
+      name: "openshell-status",
+      content: "fixture OpenShell status\n",
+      outcome: { kind: "completed", exitCode: 0 },
+    },
+  ]);
   mocks.runBuffered.mockReset().mockResolvedValue({
     status: 0,
     stdout: "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nfixture diagnostics",
@@ -82,6 +94,13 @@ describe("debug sandbox internals failure boundary", () => {
     expect(calls).toContain("--noprofile");
     expect(calls).toContain("__NEMOCLAW_SANDBOX_EXEC_STARTED__");
     expect(calls).not.toContain("nemoclaw-proxy-env.sh");
+    expect(mocks.collectOpenshell).toHaveBeenCalledExactlyOnceWith({
+      target: { kind: "named", gatewayName: "owned" },
+      sandboxName: "alpha",
+      quick: true,
+      timeoutMs: 30_000,
+    });
+    expect(mocks.archivedFiles).toContain("openshell-status.txt");
   });
 
   it("retains later diagnostics and archive when endpoint authority rejects sandbox internals", async () => {

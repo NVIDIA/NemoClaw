@@ -22,6 +22,8 @@ import {
 } from "./portable-agent-runtime";
 
 export type ManagedImageSelectionPolicy = "prefer-managed" | "require-managed";
+export const EXTERNAL_IMAGE_AGENTS = ["openclaw", "hermes"] as const;
+export type ExternalImageAgent = (typeof EXTERNAL_IMAGE_AGENTS)[number];
 
 /**
  * Capabilities are advertised by the selected OpenShell compute driver.
@@ -45,6 +47,12 @@ export interface SandboxWorkloadRuntimeCapabilities {
   } | null;
   /** Missing or null until the provider has completed portable runtime qualification. */
   readonly portableAgentRuntime?: PortableAgentRuntimeProviderSupport | null;
+  /** Missing or null when user-supplied immutable images are unsupported. */
+  readonly externalImages?: {
+    readonly exactDigestReferences: boolean;
+    readonly platforms: readonly ManagedImagePlatform[];
+    readonly agents: readonly ExternalImageAgent[];
+  } | null;
 }
 
 export type LegacyDockerfileReason =
@@ -71,10 +79,21 @@ export interface PortableAgentRuntimeWorkloadSource {
   readonly contract: PortableAgentRuntimeContractV1;
 }
 
+export interface ExternalImageWorkloadSource {
+  readonly kind: "external-image";
+  /** Exact publisher-owned reference requested by the operator. */
+  readonly reference: string;
+  readonly platform: ManagedImagePlatform;
+  /** Immutable local engine identity observed after pull. */
+  readonly runtimeImageContentId: `sha256:${string}`;
+  readonly toolDisclosure: "progressive" | "direct";
+}
+
 export type SandboxWorkloadSource =
   | LegacyDockerfileWorkloadSource
   | ManagedImageWorkloadSource
-  | PortableAgentRuntimeWorkloadSource;
+  | PortableAgentRuntimeWorkloadSource
+  | ExternalImageWorkloadSource;
 
 export interface ResolveSandboxWorkloadSourceOptions {
   readonly agentName: string;

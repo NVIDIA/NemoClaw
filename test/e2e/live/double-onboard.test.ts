@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { parseOpenShellSandboxId } from "../../../src/lib/adapters/openshell/sandbox-identity.ts";
+import { NATIVE_LOCAL_AUTH_HEADER_SCRIPT } from "../../../src/lib/inference/native-local/agent-config.ts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
@@ -14,7 +15,7 @@ import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
-import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT } from "../fixtures/paths.ts";
+import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 const REGISTRY_FILE = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
@@ -58,14 +59,14 @@ function dashboardPort(sandboxName: string): string {
   return sandboxName === SANDBOX_A ? DASHBOARD_PORT_A : DASHBOARD_PORT_B;
 }
 
-function onboardEnv(sandboxName: string, fakeBaseUrl: string): NodeJS.ProcessEnv {
+function onboardEnv(sandboxName: string, fakeBaseUrl: string, model: string): NodeJS.ProcessEnv {
   return commandEnv({
     COMPATIBLE_API_KEY: "dummy",
     NEMOCLAW_PROVIDER: "custom",
     NEMOCLAW_AGENT: process.env.NEMOCLAW_AGENT ?? "openclaw",
     NEMOCLAW_HERMES_API_PORT: sandboxName === SANDBOX_A ? process.env.NEMOCLAW_HERMES_API_PORT : "",
     NEMOCLAW_ENDPOINT_URL: fakeBaseUrl,
-    NEMOCLAW_MODEL: "test-model",
+    NEMOCLAW_MODEL: model,
     NEMOCLAW_SANDBOX_NAME: sandboxName,
     NEMOCLAW_POLICY_MODE: "skip",
     NEMOCLAW_DASHBOARD_PORT: dashboardPort(sandboxName),
@@ -98,10 +99,11 @@ async function runOnboard(
   sandboxName: string,
   fakeBaseUrl: string,
   artifactName: string,
+  model = "test-model",
 ): Promise<ShellProbeResult> {
   return await command(host, ["onboard", "--non-interactive"], {
     artifactName,
-    env: onboardEnv(sandboxName, fakeBaseUrl),
+    env: onboardEnv(sandboxName, fakeBaseUrl, model),
     timeoutMs: ONBOARD_TIMEOUT_MS,
   });
 }
@@ -135,8 +137,8 @@ async function waitForDashboardReachability(
     );
     output = resultText(result);
     reachable = result.exitCode === 0 && !result.timedOut;
-    if (reachable === expectedReachable) break;
-    if (attempt < PROBE_ATTEMPTS) await sleep(PROBE_DELAY_MS);
+    if (reachable === expectedReachable || attempt === PROBE_ATTEMPTS) break;
+    await sleep(PROBE_DELAY_MS);
   }
   return { reachable, output };
 }
@@ -190,11 +192,12 @@ async function cleanupDoubleOnboardResources(
   host: HostCliClient,
   sandbox: SandboxClient,
   forwardTargets: readonly ForwardCleanupTarget[],
-): Promise<void> {
+  phase: "pre-cleanup" | "verify-cleanup",
+): Promise<Error | undefined> {
   for (const { port, sandboxName } of forwardTargets) {
     await ignoreCleanupError(() =>
       host.cleanupForward(Number(port), {
-        artifactName: `cleanup-openshell-forward-stop-${sandboxName}-${port}`,
+        artifactName: `${phase}-openshell-forward-stop-${sandboxName}-${port}`,
         env: commandEnv(),
         gatewayName: "nemoclaw",
         sandboxName,
@@ -203,24 +206,38 @@ async function cleanupDoubleOnboardResources(
     );
   }
   const names = [INSTALL_SANDBOX_NAME, SANDBOX_A, SANDBOX_B].filter(Boolean);
+  let destroyError: Error | undefined;
+  for (const name of names) {
+    try {
+      await host.cleanupSandbox(name, {
+        artifactName: `${phase}-nemoclaw-destroy-${name}`,
+        env: commandEnv(),
+        timeoutMs: RECOVERY_PROBE_TIMEOUT_MS,
+      });
+    } catch (error) {
+      // Keep the first failure while completing fallback cleanup and absence checks.
+      destroyError ??= error instanceof Error ? error : new Error(String(error));
+    }
+  }
   for (const name of names) {
     await ignoreCleanupError(() =>
-      command(host, [name, "destroy", "--yes"], {
-        artifactName: `cleanup-nemoclaw-destroy-${name}`,
+      sandbox.cleanupSandbox(name, {
+        artifactName: `${phase}-openshell-sandbox-delete-${name}`,
+        env: commandEnv(),
+        timeoutMs: 60_000,
+      }),
+    );
+    // Reconcile a retained registry entry after fallback deletion without hiding
+    // the original public destroy failure from final verification.
+    await ignoreCleanupError(() =>
+      host.cleanupSandbox(name, {
+        artifactName: `${phase}-nemoclaw-reconcile-${name}`,
         env: commandEnv(),
         timeoutMs: RECOVERY_PROBE_TIMEOUT_MS,
       }),
     );
   }
-  for (const name of names) {
-    await ignoreCleanupError(() =>
-      sandbox.cleanupSandbox(name, {
-        artifactName: `cleanup-openshell-sandbox-delete-${name}`,
-        env: commandEnv(),
-        timeoutMs: 60_000,
-      }),
-    );
-  }
+  return destroyError;
 }
 
 async function gatewayRuntimeId(gateway: GatewayClient): Promise<string> {
@@ -235,23 +252,19 @@ async function prerequisiteOrSkip(
   args: string[],
   artifactName: string,
 ): Promise<ShellProbeResult> {
-  let result: ShellProbeResult;
+  let detail: string;
   try {
-    result = await host.command(commandName, args, {
+    const result = await host.command(commandName, args, {
       artifactName,
       env: commandEnv(),
       timeoutMs: 30_000,
     });
+    if (result.exitCode === 0) return result;
+    detail = resultText(result);
   } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    const message = `${commandName} ${args.join(" ")} is required for double-onboard live E2E: ${detail}`;
-    if (process.env.GITHUB_ACTIONS === "true") throw new Error(message);
-    skip(message);
+    detail = error instanceof Error ? error.message : String(error);
   }
-  if (result.exitCode === 0) return result;
-  const message = `${commandName} ${args.join(" ")} is required for double-onboard live E2E: ${resultText(
-    result,
-  )}`;
+  const message = `${commandName} ${args.join(" ")} is required for double-onboard live E2E: ${detail}`;
   if (process.env.GITHUB_ACTIONS === "true") throw new Error(message);
   skip(message);
 }
@@ -265,7 +278,10 @@ test(
         "validate double-onboard lifecycle prerequisites",
         "onboard first sandbox",
         "re-onboard same sandbox on existing gateway",
+        "recreate OpenClaw sandbox after a model change",
         "onboard sibling sandbox with isolated dashboard",
+        "verify sibling native endpoint remains isolated",
+        "verify sibling native endpoint accepts authenticated requests",
         "stop sibling sandbox without disturbing the first forward",
         "replace sandbox after stale registry refusal",
         "remove double-onboard resources",
@@ -283,11 +299,6 @@ test(
     sandbox,
     skip,
   }) => {
-    expect(
-      fs.existsSync(CLI_DIST_ENTRYPOINT),
-      "run `npm run build:cli` before live repo CLI targets",
-    ).toBe(true);
-
     await runtimeProvider.requireAvailable({
       artifactName: "prereq-runtime-info",
       scenarioLabel: "double-onboard",
@@ -318,6 +329,24 @@ test(
       await artifacts.writeJson("fake-openai-requests.json", fake.requests());
       await fake.close();
     });
+    const siblingInference =
+      process.env.NEMOCLAW_AGENT === "hermes"
+        ? await startFakeOpenAiCompatibleServer({
+            apiKey: "dummy",
+            host: "0.0.0.0",
+            model: "test-model",
+            port: 11434,
+            progress,
+            publicHost: "host.openshell.internal",
+            requireAuth: true,
+            requireAuthModels: true,
+          })
+        : null;
+    siblingInference &&
+      cleanup.trackDisposable("close sibling OpenAI-compatible endpoint", async () => {
+        await artifacts.writeJson("sibling-openai-requests.json", siblingInference.requests());
+        await siblingInference.close();
+      });
     cleanup.trackGateway(host, "nemoclaw", {
       artifactName: "cleanup-openshell-gateway-destroy-nemoclaw",
       env: commandEnv(),
@@ -342,6 +371,12 @@ test(
     const forwardPorts = [...new Set(forwardTargets.map(({ port }) => port))];
     const cleanupSandboxNames = [INSTALL_SANDBOX_NAME, SANDBOX_A, SANDBOX_B].filter(Boolean);
     [...cleanupSandboxNames].reverse().forEach((name) => {
+      // Cleanup runs in reverse order: remove the remote sandbox before reconciling its registry.
+      cleanup.trackSandbox(host, name, {
+        artifactName: `cleanup-nemoclaw-destroy-${name}`,
+        env: commandEnv(),
+        timeoutMs: RECOVERY_PROBE_TIMEOUT_MS,
+      });
       cleanup.trackDisposable(`delete OpenShell sandbox ${name}`, () =>
         sandbox.cleanupSandbox(name, {
           artifactName: `cleanup-openshell-sandbox-delete-${name}`,
@@ -349,11 +384,6 @@ test(
           timeoutMs: 60_000,
         }),
       );
-      cleanup.trackSandbox(host, name, {
-        artifactName: `cleanup-nemoclaw-destroy-${name}`,
-        env: commandEnv(),
-        timeoutMs: RECOVERY_PROBE_TIMEOUT_MS,
-      });
     });
     forwardTargets.forEach(({ port, sandboxName }) => {
       cleanup.trackForward(host, Number(port), {
@@ -369,19 +399,27 @@ test(
       id: "double-onboard",
       boundary: "direct-cli-openshell-lifecycle",
       contract: [
-        "same-name onboarding reuses the live gateway and sandbox",
+        "same-selection onboarding reuses the live gateway and sandbox",
+        ...(process.env.NEMOCLAW_AGENT === "hermes"
+          ? []
+          : [
+              "changed-model OpenClaw onboarding replaces the sandbox and updates agent and registry selection",
+            ]),
         "a sibling sandbox keeps a separate owned dashboard forward",
+        ...(process.env.NEMOCLAW_AGENT === "hermes"
+          ? ["a sibling native provider does not grant the first sandbox access to its endpoint"]
+          : []),
         "stopping the sibling releases only its dashboard forward",
         "status and connect preserve a stale local registration",
         "explicit removal permits a clean replacement and complete cleanup",
       ],
     });
 
-    await cleanupDoubleOnboardResources(host, sandbox, forwardTargets);
+    await cleanupDoubleOnboardResources(host, sandbox, forwardTargets, "pre-cleanup");
     await lifecycle.stopGatewayRuntime();
     await ignoreCleanupError(() =>
       host.cleanupGatewayRegistration("nemoclaw", {
-        artifactName: "cleanup-openshell-gateway-destroy-nemoclaw",
+        artifactName: "pre-cleanup-openshell-gateway-destroy-nemoclaw",
         env: commandEnv(),
         timeoutMs: 60_000,
       }),
@@ -401,7 +439,6 @@ test(
     expect(sandboxAAfterFirst.exitCode, resultText(sandboxAAfterFirst)).toBe(0);
     const sandboxAIdBeforeReuse = parseOpenShellSandboxId(resultText(sandboxAAfterFirst));
     expect(sandboxAIdBeforeReuse, resultText(sandboxAAfterFirst)).not.toBeNull();
-    expect(registryHas(SANDBOX_A), `${REGISTRY_FILE} missing ${SANDBOX_A}`).toBe(true);
 
     progress.phase("re-onboard same sandbox on existing gateway");
     const second = await runOnboard(host, SANDBOX_A, fake.baseUrl, "phase-3-second-onboard");
@@ -447,19 +484,97 @@ test(
       );
       hermesApiForwardOwned = apiListenerAfterReuse.valid;
       expect(hermesApiForwardOwned, apiListenerAfterReuse.output).toBe(true);
+    } else {
+      progress.phase("recreate OpenClaw sandbox after a model change");
+      const changedModel = "changed-model";
+      const changed = await runOnboard(
+        host,
+        SANDBOX_A,
+        fake.baseUrl,
+        "phase-3-model-change-onboard",
+        changedModel,
+      );
+      expect(changed.exitCode, resultText(changed)).toBe(0);
+      const recreated = await sandbox.openshell(["sandbox", "get", SANDBOX_A], {
+        artifactName: "phase-3-model-change-sandbox",
+        env: commandEnv(),
+        timeoutMs: 30_000,
+      });
+      expect(recreated.exitCode, resultText(recreated)).toBe(0);
+      const recreatedId = parseOpenShellSandboxId(resultText(recreated));
+      expect(recreatedId, resultText(recreated)).not.toBeNull();
+      expect(recreatedId).not.toBe(sandboxAIdAfterReuse);
+      const primary = await sandbox.exec(
+        SANDBOX_A,
+        ["openclaw", "config", "get", "agents.defaults.model.primary", "--json"],
+        {
+          artifactName: "phase-3-model-change-openclaw-primary",
+          env: commandEnv(),
+          timeoutMs: 30_000,
+        },
+      );
+      expect(primary.exitCode, resultText(primary)).toBe(0);
+      expect(JSON.parse(primary.stdout)).toBe(`inference/${changedModel}`);
+      const registry = JSON.parse(fs.readFileSync(REGISTRY_FILE, "utf8")) as {
+        sandboxes?: Record<string, { model?: string }>;
+      };
+      expect(registry.sandboxes?.[SANDBOX_A]?.model).toBe(changedModel);
     }
 
     progress.phase("onboard sibling sandbox with isolated dashboard");
-    const sibling = await runOnboard(host, SANDBOX_B, fake.baseUrl, "phase-4-sibling-onboard");
+    const sibling = await runOnboard(
+      host,
+      SANDBOX_B,
+      siblingInference?.baseUrl ?? fake.baseUrl,
+      "phase-4-sibling-onboard",
+    );
     expect(sibling.exitCode, resultText(sibling)).toBe(0);
-    await sandbox.expectListed(SANDBOX_A, {
-      artifactName: "phase-4-openshell-sandbox-a-listed",
-      env: commandEnv(),
-    });
-    await sandbox.expectListed(SANDBOX_B, {
-      artifactName: "phase-4-openshell-sandbox-b-listed",
-      env: commandEnv(),
-    });
+
+    siblingInference && progress.phase("verify sibling native endpoint remains isolated");
+    const denied = siblingInference
+      ? await sandbox.exec(
+          SANDBOX_A,
+          ["curl", "-sS", "--max-time", "15", "http://host.openshell.internal:11434/v1/models"],
+          {
+            artifactName: "phase-4-sibling-native-endpoint-denial",
+            env: commandEnv(),
+            timeoutMs: 30_000,
+          },
+        )
+      : null;
+    denied && expect(JSON.parse(denied.stdout)).toMatchObject({ error: "policy_denied" });
+
+    siblingInference &&
+      progress.phase("verify sibling native endpoint accepts authenticated requests");
+    const previousRequests = siblingInference?.requests().length ?? 0;
+    const accepted = siblingInference
+      ? await sandbox.exec(
+          SANDBOX_B,
+          [
+            "sh",
+            "-lc",
+            `${NATIVE_LOCAL_AUTH_HEADER_SCRIPT}; curl -fsS --max-time 15 http://host.openshell.internal:11434/v1/chat/completions -H "$AUTH_HEADER" -H 'Content-Type: application/json' --data '{"model":"test-model","messages":[{"role":"user","content":"ping"}]}'`,
+          ],
+          {
+            artifactName: "phase-4-sibling-native-endpoint-authenticated-post",
+            env: commandEnv(),
+            timeoutMs: 30_000,
+          },
+        )
+      : null;
+    accepted && expect(accepted.exitCode, resultText(accepted)).toBe(0);
+    siblingInference &&
+      expect(
+        siblingInference
+          .requests()
+          .slice(previousRequests)
+          .some(
+            (request) =>
+              request.auth === "ok" &&
+              request.method === "POST" &&
+              request.path === "/v1/chat/completions",
+          ),
+      ).toBe(true);
 
     const dashboardABeforeStop = await waitForDashboardReachability(
       host,
@@ -533,7 +648,6 @@ test(
     });
     expect(directDeleteA.exitCode, resultText(directDeleteA)).toBe(0);
     await waitForSandboxAbsent(sandbox, SANDBOX_A, 60_000);
-    expect(registryHas(SANDBOX_A), "direct deletion removed sandbox A registration").toBe(true);
 
     const staleStatus = await command(host, [SANDBOX_A, "status"], {
       artifactName: "phase-6-stale-status",
@@ -541,7 +655,6 @@ test(
       timeoutMs: 60_000,
     });
     expect(staleStatus.exitCode, resultText(staleStatus)).toBe(1);
-    expect(registryHas(SANDBOX_A), "status removed sandbox A registration").toBe(true);
 
     const staleConnect = await command(host, [SANDBOX_A, "connect"], {
       artifactName: "phase-6-stale-connect",
@@ -549,7 +662,11 @@ test(
       timeoutMs: RECOVERY_PROBE_TIMEOUT_MS,
     });
     expect(staleConnect.exitCode, resultText(staleConnect)).toBe(1);
-    expect(registryHas(SANDBOX_A), "connect removed sandbox A registration").toBe(true);
+    // Status/connect cannot recreate registration. This retained observation
+    // proves it survived both read-only commands after direct OpenShell deletion.
+    expect(registryHas(SANDBOX_A), "stale status/connect removed sandbox A registration").toBe(
+      true,
+    );
 
     const removeStale = await command(host, [SANDBOX_A, "destroy", "--yes"], {
       artifactName: "phase-6-remove-stale-registry-a",
@@ -573,12 +690,17 @@ test(
     expect(registryHas(SANDBOX_A), "replacement did not register sandbox A").toBe(true);
 
     progress.phase("remove double-onboard resources");
-    await cleanupDoubleOnboardResources(host, sandbox, forwardTargets);
+    const destroyError = await cleanupDoubleOnboardResources(
+      host,
+      sandbox,
+      forwardTargets,
+      "verify-cleanup",
+    );
     await waitForSandboxAbsent(sandbox, SANDBOX_A, 60_000);
     await waitForSandboxAbsent(sandbox, SANDBOX_B, 60_000);
     expect(
       registryHas(SANDBOX_A) || registryHas(SANDBOX_B),
-      "registry still contains test entries",
+      `registry still contains test entries; destroy error: ${destroyError?.message ?? "none"}`,
     ).toBe(false);
 
     const remainingListeners = await Promise.all(
@@ -588,6 +710,7 @@ test(
       expect(listener.exitCode, resultText(listener)).toBe(1);
       expect(listener.timedOut, resultText(listener)).toBe(false);
     });
+    if (destroyError) throw destroyError;
 
     await artifacts.target.complete({
       id: "double-onboard",

@@ -21,10 +21,12 @@ import { getMcpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider"
 import {
   assertNoLegacyMcpSources,
   inspectAgentMcpSources,
-  inspectCapturedOpenClawMcpSources,
+  inspectCapturedAgentMcpSources,
   joinMcpEntriesToOpenShell,
+  type McpSourceObservationDeadline,
 } from "./mcp-bridge-source";
 import type { McpSourceEntry } from "./mcp-bridge-contracts";
+import type { PreparedStoppedNativeState } from "../../state/state-directory-restore";
 
 export type McpRebuildPreparation = Awaited<ReturnType<typeof prepareMcpBridgesForRebuild>>;
 
@@ -32,24 +34,37 @@ export async function observeMcpStateForRebuild(
   sandbox: RebuildSandboxEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection | undefined,
   inspectCurrentSource: boolean,
-  capturedOpenClawState?: import("../../state/state-directory-restore").CapturedOpenClawState,
+  deadline?: McpSourceObservationDeadline,
+  stoppedNativeState?: PreparedStoppedNativeState,
 ): Promise<{
   entries: McpSourceEntry[];
   runtimeSelection?: McpProviderInspectionRuntimeSelection;
 }> {
   if (!inspectCurrentSource) return { entries: [] };
+  if (
+    stoppedNativeState &&
+    (stoppedNativeState.sandboxName !== sandbox.name ||
+      stoppedNativeState.agentName !== (sandbox.agent ?? "openclaw"))
+  )
+    throw new Error("Captured MCP source does not match the rebuild target.");
   const sourceRuntime = runtimeSelection ?? {
     gatewayName: resolveSandboxGatewayName(sandbox),
     workspace: OPENSHELL_DEFAULT_WORKSPACE,
   };
-  const sources = capturedOpenClawState
-    ? inspectCapturedOpenClawMcpSources(capturedOpenClawState)
-    : await inspectAgentMcpSources(sandbox, sourceRuntime);
+  const sources = stoppedNativeState
+    ? inspectCapturedAgentMcpSources(stoppedNativeState)
+    : await inspectAgentMcpSources(sandbox, sourceRuntime, deadline);
   assertNoLegacyMcpSources(sandbox.name, sources.legacy, "rebuilding");
   if (Object.keys(sources.native).length === 0) return { entries: [] };
   const selectedRuntime = runtimeSelection ?? getMcpProviderInspectionRuntimeSelection(sandbox);
   const entries = Object.values(
-    await joinMcpEntriesToOpenShell(sandbox, sources.native, selectedRuntime),
+    await joinMcpEntriesToOpenShell(
+      sandbox,
+      sources.native,
+      selectedRuntime,
+      "inspect current MCP source state",
+      deadline,
+    ),
   );
   return {
     entries,
@@ -63,17 +78,17 @@ export async function prepareMcpForRebuild(
   bail: RebuildBail,
   frozenRuntimeSelection?: McpProviderInspectionRuntimeSelection,
   sourceEntries: readonly McpSourceEntry[] = [],
-  capturedOpenClawState?: import("../../state/state-directory-restore").CapturedOpenClawState,
+  stoppedNativeState?: PreparedStoppedNativeState,
 ): Promise<McpRebuildPreparation | null> {
   // Source inspection resolves OpenShell authority lazily only after it finds
   // MCP intent. A retained recovery handoff is the sole eager authority input.
   const runtimeSelection = frozenRuntimeSelection;
   try {
-    if (capturedOpenClawState)
+    if (stoppedNativeState)
       return await prepareMcpBridgesForStoppedSandboxRebuild(
         sandboxName,
         sourceEntries,
-        capturedOpenClawState,
+        stoppedNativeState,
         runtimeSelection,
       );
     return await (staleRecovery
@@ -127,25 +142,16 @@ export function printMcpRebuildRetryCommand(
   const dcodeAutoApprovalArg = dcodeAutoApproval?.requestedExplicitly
     ? ` --dcode-auto-approval ${dcodeAutoApproval.mode}`
     : "";
-  if (entries.length > 0) {
-    const disclosureArg = toolDisclosure ? ` --tool-disclosure ${toolDisclosure}` : "";
-    console.error(
-      `    2. Run: ${CLI_NAME} ${sandboxName} rebuild --yes${disclosureArg}${observabilityArg}${dcodeAutoApprovalArg}`,
-    );
-    console.error(
-      `       This will recreate sandbox '${sandboxName}' and restore its MCP bridges.`,
-    );
-    return;
-  }
   const disclosureArg = toolDisclosure ? ` --tool-disclosure ${toolDisclosure}` : "";
-  // The recreate fault can land after the sandbox was deleted but before create
-  // recorded its name, leaving the resumable onboard session with no name to
-  // resume. Carry --name so this printed command works as written instead of
-  // failing with "no sandbox name was recorded. Re-run with --name".
+  // Recovery must re-enter rebuild so it loads the retained backup and the
+  // original target fingerprint. Generic onboard resume owns a different
+  // transaction and does not accept rebuild-only options such as DCode approval.
   console.error(
-    `    2. Run: ${CLI_NAME} onboard --resume --name ${sandboxName}${disclosureArg}${observabilityArg}${dcodeAutoApprovalArg}`,
+    `    2. Run: ${CLI_NAME} ${sandboxName} rebuild --yes${disclosureArg}${observabilityArg}${dcodeAutoApprovalArg}`,
   );
-  console.error(`       This will recreate sandbox '${sandboxName}'.`);
+  console.error(
+    `       This will recreate sandbox '${sandboxName}'${entries.length > 0 ? " and restore its MCP bridges" : ""}.`,
+  );
 }
 
 export async function restoreMcpAfterRebuild(

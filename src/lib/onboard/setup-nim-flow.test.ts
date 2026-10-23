@@ -45,58 +45,77 @@ describe("withServingPortGuard", () => {
 });
 
 describe("createSetupNim", () => {
-  it("passes the Deep Agents default to provider-scoped model selection", async () => {
-    const ultra = "nvidia/nemotron-3-ultra-550b-a55b";
-    const log = vi.fn();
-    const nvidiaSession = { select: async () => unexpected("NVIDIA model selection") };
-    const openRouterSession = { select: async () => unexpected("OpenRouter model selection") };
-    const createNvidiaFeaturedModelSession = vi
-      .fn<SetupNimFlowDeps["createNvidiaFeaturedModelSession"]>()
-      .mockReturnValueOnce(nvidiaSession)
-      .mockReturnValueOnce(openRouterSession);
-    const handleRemoteProviderSelection = vi.fn<SetupNimFlowDeps["handleRemoteProviderSelection"]>(
-      async (_args, state) => {
+  it.each([
+    {
+      scenario: "the Deep Agents override",
+      agent: {
+        name: "langchain-deepagents-code",
+        inference: { default_model: "nvidia/nemotron-3-ultra-550b-a55b" },
+      } as AgentDefinition,
+      nvidiaDefault: "nvidia/nemotron-3-ultra-550b-a55b",
+      openRouterDefault: "nvidia/nemotron-3-ultra-550b-a55b",
+    },
+    {
+      scenario: "the shared cloud default",
+      agent: null,
+      nvidiaDefault: "nvidia/nemotron-3.5-super-vl-120b-a12b",
+      openRouterDefault: "nvidia/nemotron-3.5-super-vl",
+    },
+  ])(
+    "passes $scenario to provider model selection",
+    async ({ agent, nvidiaDefault, openRouterDefault }) => {
+      const log = vi.fn();
+      const nvidiaSession = { select: async () => unexpected("NVIDIA model selection") };
+      const openRouterSession = { select: async () => unexpected("OpenRouter model selection") };
+      const createNvidiaFeaturedModelSession = vi
+        .fn<SetupNimFlowDeps["createNvidiaFeaturedModelSession"]>()
+        .mockReturnValueOnce(nvidiaSession)
+        .mockReturnValueOnce(openRouterSession);
+      const handleRemoteProviderSelection = vi.fn<
+        SetupNimFlowDeps["handleRemoteProviderSelection"]
+      >(async (_args, state) => {
         expect(state.nvidiaFeaturedModels).toBe(nvidiaSession);
         expect(state.openRouterFeaturedModels).toBe(openRouterSession);
-        state.model = ultra;
+        state.model = nvidiaDefault;
         state.provider = "nvidia-prod";
         state.endpointUrl = "https://integrate.api.nvidia.com/v1";
         state.credentialEnv = "NVIDIA_INFERENCE_API_KEY";
         return "selected";
-      },
-    );
-    const setupNim = createSetupNim(
-      makeDeps({ createNvidiaFeaturedModelSession, handleRemoteProviderSelection, log }),
-    );
-    const dcodeAgent = {
-      name: "langchain-deepagents-code",
-      inference: { default_model: ultra },
-    } as AgentDefinition;
+      });
+      const setupNim = createSetupNim(
+        makeDeps({ createNvidiaFeaturedModelSession, handleRemoteProviderSelection, log }),
+      );
+      await setupNim(null, null, agent);
 
-    await setupNim(null, null, dcodeAgent);
-
-    expect(createNvidiaFeaturedModelSession).toHaveBeenCalledTimes(2);
-    expect(createNvidiaFeaturedModelSession).toHaveBeenNthCalledWith(1, {
-      defaultModel: ultra,
-      writeLine: log,
-    });
-    expect(createNvidiaFeaturedModelSession).toHaveBeenNthCalledWith(2, {
-      defaultModel: ultra,
-      fallbackModelOptions: [
-        {
-          id: "nvidia/nemotron-3-ultra-550b-a55b",
-          label: "Nemotron 3 Ultra 550B",
-        },
-        {
-          id: "nvidia/nemotron-3-super-120b-a12b",
-          label: "Nemotron 3 Super 120B",
-        },
-        { id: "minimaxai/minimax-m3", label: "Minimax M3" },
-      ],
-      retiredModelIds: [],
-      writeLine: log,
-    });
-  });
+      expect(createNvidiaFeaturedModelSession).toHaveBeenCalledTimes(2);
+      expect(createNvidiaFeaturedModelSession).toHaveBeenNthCalledWith(1, {
+        defaultModel: nvidiaDefault,
+        onModelSelected: expect.any(Function),
+        writeLine: log,
+      });
+      expect(createNvidiaFeaturedModelSession).toHaveBeenNthCalledWith(2, {
+        defaultModel: openRouterDefault,
+        onModelSelected: expect.any(Function),
+        fallbackModelOptions: [
+          {
+            id: "nvidia/nemotron-3-ultra-550b-a55b",
+            label: "Nemotron 3 Ultra 550B",
+          },
+          {
+            id: "nvidia/nemotron-3-super-120b-a12b",
+            label: "Nemotron 3 Super 120B",
+          },
+          { id: "nvidia/nemotron-3.5-super-vl", label: "Nemotron 3.5 Super VL 120B" },
+          { id: "minimaxai/minimax-m3", label: "Minimax M3" },
+        ],
+        modelIdAliases: new Map([
+          ["nvidia/nemotron-3.5-super-vl-120b-a12b", "nvidia/nemotron-3.5-super-vl"],
+        ]),
+        retiredModelIds: [],
+        writeLine: log,
+      });
+    },
+  );
 
   it("lets a same-gateway route constraint override the Deep Agents default before probing", async () => {
     const ultra = "nvidia/nemotron-3-ultra-550b-a55b";
@@ -145,6 +164,7 @@ describe("createSetupNim", () => {
 
     expect(createNvidiaFeaturedModelSession).toHaveBeenCalledWith({
       defaultModel: ultra,
+      onModelSelected: expect.any(Function),
       writeLine: expect.any(Function),
     });
     expect(select).toHaveBeenCalledWith(sharedModel, null, true);
@@ -1391,6 +1411,10 @@ describe("createSetupNim", () => {
     const setupNim = createSetupNim(
       makeDeps({
         isNonInteractive: () => true,
+        discoverManagedLlamaCppSelections: () => ({
+          choices: [],
+          resolution: { kind: "rejected", reason: "vLLM fixture has no managed llama.cpp choice" },
+        }),
         localModelProfileIntegration: { resolvePlan: () => plan, onboard },
         detectInferenceProviderHostState: () =>
           makeHostState({ vllmProfile: profile, hasVllmImage: true }),

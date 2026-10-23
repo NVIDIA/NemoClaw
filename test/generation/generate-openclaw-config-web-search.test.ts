@@ -12,8 +12,47 @@ function buildWebSearchConfig(env: Record<string, string>) {
   return buildConfig({ ...BASE_ENV, ...env });
 }
 
-describe("generate-openclaw-config.mts: Tavily web search", () => {
-  it("emits the bundled plugin's credential path", () => {
+describe("generate-openclaw-config.mts: web search", () => {
+  it("disables web search when an OpenRouter inference key is present (#12886)", () => {
+    const config = buildWebSearchConfig({
+      NEMOCLAW_MODEL: "openai/gpt-4o-mini",
+      NEMOCLAW_PROVIDER_KEY: "inference",
+      NEMOCLAW_UPSTREAM_PROVIDER: "openrouter-api",
+      NEMOCLAW_INFERENCE_BASE_URL: "https://openrouter.ai/api/v1",
+      NEMOCLAW_INFERENCE_API: "openai-completions",
+      NEMOCLAW_WEB_SEARCH_ENABLED: "0",
+      OPENROUTER_API_KEY: "sk-or-test",
+    });
+
+    expect(config.tools?.web?.search).toEqual({ enabled: false });
+    expect(config.models?.providers?.inference?.apiKey).toBe(
+      "openshell:resolve:env:OPENROUTER_API_KEY",
+    );
+  });
+
+  it.each(["brave", "tavily"])(
+    "enables only the selected %s search plugin in the managed image (#11294)",
+    (provider) => {
+      const config = buildWebSearchConfig({
+        NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION: "1",
+        NEMOCLAW_WEB_SEARCH_ENABLED: "1",
+        NEMOCLAW_WEB_SEARCH_PROVIDER: provider,
+      });
+
+      expect(config.tools?.web?.search).toEqual({ enabled: true, provider });
+      expect(config.plugins?.entries?.[provider]).toEqual({
+        enabled: true,
+        config: {
+          webSearch: { apiKey: `openshell:resolve:env:${provider.toUpperCase()}_API_KEY` },
+        },
+      });
+      const inactive = provider === "brave" ? "tavily" : "brave";
+      expect(config.plugins?.entries?.[inactive]).toEqual({ enabled: false });
+      expect(config.tools?.web?.search?.apiKey).toBeUndefined();
+    },
+  );
+
+  it("emits the Tavily plugin's credential reference (#11294)", () => {
     const config = buildWebSearchConfig({
       NEMOCLAW_WEB_SEARCH_ENABLED: "1",
       NEMOCLAW_WEB_SEARCH_PROVIDER: "tavily",

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import nodePath from "node:path";
@@ -33,16 +34,23 @@ const {
   setResolvedOllamaHost,
 }: typeof import("../inference/local") = require("../inference/local");
 
-const OFFICIAL_OLLAMA_INSTALLER_URL = "https://ollama.com/install.sh";
+export const OFFICIAL_OLLAMA_INSTALLER_URL =
+  "https://raw.githubusercontent.com/ollama/ollama/de25dd526f4c9ba367ee69022168c6c5f2dc3285/scripts/install.sh";
+export const OFFICIAL_OLLAMA_INSTALLER_SHA256 =
+  "25f64b810b947145095956533e1bdf56eacea2673c55a7e586be4515fc882c9f";
 const OFFICIAL_OLLAMA_INSTALLER_PROCESS_TIMEOUT_MS = 190_000;
+
+export function sha256File(filePath: string): string {
+  return createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
+}
 
 /**
  * Install location modes.
  *
- *  - `system`     installs into `/usr/local` via the official Ollama
- *                 installer script (`https://ollama.com/install.sh`). Requires
- *                 sudo, configures a systemd service, and writes to a system
- *                 user (`ollama`). This is the historical path.
+ *  - `system`     installs into `/usr/local` via a digest-verified snapshot of
+ *                 the official Ollama installer. Requires sudo, configures a
+ *                 systemd service, and writes to a system user (`ollama`).
+ *                 This is the historical path.
  *  - `user-local` installs into `${HOME}/.local` by downloading the official
  *                 release tarball directly and extracting it as the invoking
  *                 user. No sudo, no systemd, no system user. The daemon is
@@ -64,6 +72,8 @@ export type InstallOllamaLinuxOptions = InstallOllamaLinuxModeOptions & {
   arch?: () => NodeJS.Architecture;
   /** Test seam: override `runShell`. */
   runShellImpl?: typeof runShell;
+  /** Test seam: override local SHA-256 calculation. */
+  sha256FileImpl?: typeof sha256File;
   /** Test seam: override the detached `ollama serve` launch. */
   startOllamaServeImpl?: typeof startDetachedOllamaServe;
   /** Test seam: override systemd loopback override. */
@@ -118,17 +128,18 @@ function detectJetpackVariant(opts: InstallOllamaLinuxOptions): "jetpack5" | "je
 }
 
 /**
- * Run the official `https://ollama.com/install.sh`. Sudo-bound. Configures
- * the systemd `ollama.service`, creates the `ollama` system user, and
- * installs CUDA drivers when applicable. An upgrade that replaces a stale
- * binary asks the installer for `MIN_OLLAMA_VERSION` by name; a fresh install
- * has no floor to satisfy and takes latest.
+ * Run the pinned official Ollama installer. Sudo-bound. Configures the
+ * systemd `ollama.service`, creates the `ollama` system user, and installs
+ * CUDA drivers when applicable. An upgrade that replaces a stale binary asks
+ * the installer for `MIN_OLLAMA_VERSION` by name; a fresh install has no floor
+ * to satisfy and takes latest.
  */
 function runOfficialInstallScript(opts: InstallOllamaLinuxOptions): void {
   const log = opts.log ?? ((m: string) => console.log(m));
   const errorLog = opts.errorLog ?? ((m: string) => console.error(m));
   const runCaptureExImpl = opts.runCaptureExImpl ?? runCaptureEx;
   const runShellImpl = opts.runShellImpl ?? runShell;
+  const sha256FileImpl = opts.sha256FileImpl ?? sha256File;
   ensureOllamaLinuxExtractionDependencies(opts);
   log(
     "  The Ollama installer creates a system user, a systemd service, and writes to /usr/local. " +
@@ -181,6 +192,24 @@ function runOfficialInstallScript(opts: InstallOllamaLinuxOptions): void {
         message: `  Ollama installer download failed after bounded retries (exit ${fetchResult.exitCode ?? "unknown"}).`,
       };
     } else {
+      let actualSha256 = "";
+      try {
+        actualSha256 = sha256FileImpl(installerPath);
+      } catch (error) {
+        failure = {
+          exitCode: 1,
+          message: `  Unable to verify Ollama installer integrity: ${error instanceof Error ? error.message : String(error)}`,
+        };
+      }
+      if (!failure && actualSha256 !== OFFICIAL_OLLAMA_INSTALLER_SHA256) {
+        failure = {
+          exitCode: 1,
+          message:
+            "  Ollama installer integrity check failed; refusing to execute downloaded content.",
+        };
+      }
+    }
+    if (!failure) {
       const installResult = runShellImpl(`${versionPin}sh ${shellQuote(installerPath)}`, {
         ignoreError: true,
         stdio: "inherit",

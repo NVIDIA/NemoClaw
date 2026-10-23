@@ -188,7 +188,7 @@ describe("managed startup shared-state transaction", () => {
         fs.chmodSync(target, 0o600);
       });
       const createManagedDrift: Record<ManagedStartupAgent, () => void> = {
-        openclaw: () => fs.writeFileSync(path.join(root, ".config-hash"), "new\n"),
+        openclaw: () => undefined,
         hermes: () => fs.writeFileSync(path.join(root, ".config-hash"), "new\n"),
         "langchain-deepagents-code": () => {
           fs.mkdirSync(path.join(root, ".state"));
@@ -196,6 +196,7 @@ describe("managed startup shared-state transaction", () => {
         pi: () => {
           fs.mkdirSync(path.join(root, "agent"));
           fs.writeFileSync(path.join(root, "agent", "models.json"), "{}\n");
+          fs.writeFileSync(path.join(root, "agent", "settings.json"), "{}\n");
         },
       };
       createManagedDrift[agent]();
@@ -210,10 +211,10 @@ describe("managed startup shared-state transaction", () => {
       });
       expect(mode(root)).toBe(0o750);
       const absentManagedPaths: Record<ManagedStartupAgent, readonly string[]> = {
-        openclaw: [".config-hash"],
+        openclaw: [],
         hermes: [".config-hash"],
         "langchain-deepagents-code": [".state"],
-        pi: ["agent", path.join("agent", "models.json")],
+        pi: ["agent", path.join("agent", "models.json"), path.join("agent", "settings.json")],
       };
       expect(
         absentManagedPaths[agent].every((relativePath) =>

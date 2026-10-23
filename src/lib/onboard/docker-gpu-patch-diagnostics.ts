@@ -347,22 +347,28 @@ export function collectDockerGpuPatchDiagnostics(
     if (containerLogs.trim()) writeDiagnosticText("docker-logs.txt", containerLogs);
   }
 
-  if (deps.runCaptureOpenshell) {
-    const captures: Array<[string, string[]]> = [
-      ["openshell-sandbox-get.txt", ["sandbox", "get", sandboxName]],
-      ["openshell-sandbox-list.txt", ["sandbox", "list"]],
-      ["openshell-logs.txt", ["doctor", "logs", "--name", "nemoclaw"]],
-    ];
-    for (const [fileName, args] of captures) {
+  const openShellDiagnosticArtifacts = snapshot?.openShellDiagnosticArtifacts;
+  if (openShellDiagnosticArtifacts) {
+    for (const artifact of openShellDiagnosticArtifacts) {
       try {
-        const output = deps.runCaptureOpenshell(args, {
-          ignoreError: true,
-          timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
-        });
-        if (output.trim()) writeDiagnosticText(fileName, output);
+        if (artifact.content.trim()) writeDiagnosticText(artifact.name, artifact.content);
       } catch {
-        // Best effort.
+        // Best-effort diagnostics must not hide the original failure.
       }
+    }
+  } else if (deps.openShellGpuDiagnostics) {
+    try {
+      const artifacts = deps.openShellGpuDiagnostics.collect({
+        target: { kind: "selected" },
+        sandboxName,
+        timeoutMs: DOCKER_GPU_PATCH_TIMEOUT_MS,
+        redact: redactor.redactText,
+      });
+      for (const artifact of artifacts) {
+        if (artifact.content.trim()) writeDiagnosticText(artifact.name, artifact.content);
+      }
+    } catch {
+      // Best-effort diagnostics must not hide the original failure.
     }
   }
 

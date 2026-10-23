@@ -53,10 +53,15 @@ export function bindFixtureProviderPolicyEndpoint(
   host: string,
   port: number,
   protocol: string,
+  restMethods?: readonly ("GET" | "POST")[],
 ): void {
   const policy = readPolicy(policyFile);
   const { endpoint } = findFixturePolicyEndpoint(policy, host, port, protocol);
   endpoint.credential_binding = { provider: providerName };
+  if (restMethods) {
+    delete endpoint.access;
+    endpoint.rules = restMethods.map((method) => ({ allow: { method, path: "/**" } }));
+  }
   fs.writeFileSync(policyFile, YAML.stringify(policy));
   fs.chmodSync(policyFile, 0o600);
 }
@@ -83,6 +88,24 @@ export function unbindProviderPolicyEndpoints(policyFile: string, providerName: 
         (endpoint.credential_binding as { provider?: unknown }).provider === providerName,
     )
     .forEach((endpoint) => delete endpoint.credential_binding);
+  fs.writeFileSync(policyFile, YAML.stringify(policy));
+  fs.chmodSync(policyFile, 0o600);
+}
+
+export function unbindFixtureProviderPolicyEndpoint(
+  policyFile: string,
+  providerName: string,
+  host: string,
+  port: number,
+  protocol: string,
+): void {
+  const policy = readPolicy(policyFile);
+  const { endpoint } = findFixturePolicyEndpoint(policy, host, port, protocol);
+  const binding = endpoint.credential_binding as { provider?: unknown } | undefined;
+  if (binding?.provider !== providerName) {
+    throw new Error("fixture endpoint credential binding belongs to another provider");
+  }
+  delete endpoint.credential_binding;
   fs.writeFileSync(policyFile, YAML.stringify(policy));
   fs.chmodSync(policyFile, 0o600);
 }

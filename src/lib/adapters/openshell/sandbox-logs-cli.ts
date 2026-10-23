@@ -13,8 +13,10 @@ import {
   runCliOpenShellBufferedCommand,
 } from "./sandbox-command-cli";
 import type { OpenShellBufferedCommandRunner } from "./sandbox-command-cli";
-import { resolveOpenshellBinaryOrNull } from "./resolve-shared";
-import { buildOpenShellSubprocessEnv } from "./runtime";
+import {
+  buildOpenShellDiagnosticEnvironment,
+  resolveOpenshellBinaryOrNull,
+} from "./resolve-shared";
 import type {
   OpenShellSandboxLogError,
   OpenShellSandboxLogFollowSession,
@@ -147,19 +149,6 @@ function classifyError(error: Error): OpenShellSandboxLogError {
   return { kind: "invocation", message };
 }
 
-function buildLogEnvironment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const environment = buildOpenShellSubprocessEnv(source);
-  for (const name of [
-    "OPENSHELL_GATEWAY",
-    "OPENSHELL_WORKSPACE",
-    "OPENSHELL_LOCAL_TLS_DIR",
-  ] as const) {
-    const value = source[name];
-    if (value !== undefined) environment[name] = value;
-  }
-  return environment;
-}
-
 function outputView(output: LogChildOutput): OpenShellSandboxLogOutput {
   output.setEncoding("utf8");
   return {
@@ -264,7 +253,7 @@ export function createCliOpenShellSandboxLogs(
           }),
         };
       }
-      const environment = buildLogEnvironment(sourceEnvironment);
+      const environment = buildOpenShellDiagnosticEnvironment(sourceEnvironment);
       let binary: string | null;
       try {
         binary = resolveBinary();
@@ -348,7 +337,7 @@ export function createCliOpenShellSandboxLogs(
       if (!binary) {
         return immediateFailure({ kind: "unavailable", message: "OpenShell binary not found" });
       }
-      const environment = buildLogEnvironment(sourceEnvironment);
+      const environment = buildOpenShellDiagnosticEnvironment(sourceEnvironment);
       const spawnChild: OpenShellLogSpawner =
         deps.spawnChild ??
         ((file, args, options) => spawn(file, [...args], options) as OpenShellLogChild);

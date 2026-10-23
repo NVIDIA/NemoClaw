@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
+import type { OpenShellGpuDiagnostics } from "../adapters/openshell/gpu-diagnostics";
 const dockerAdapterMocks = vi.hoisted(() => ({
   dockerCapture: vi.fn((args: readonly string[]) =>
     args[0] === "ps" ? "default-container-id\n" : "",
@@ -61,6 +62,61 @@ describe("Docker GPU patch diagnostics", () => {
         expect.arrayContaining(["ps"]),
         expect.objectContaining({ ignoreError: true }),
       );
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("collects OpenShell evidence through a typed fake and omits empty failed artifacts", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-gpu-openshell-"));
+    const collect = vi.fn<OpenShellGpuDiagnostics["collect"]>((request) => [
+      {
+        name: "openshell-sandbox-get.txt",
+        content: request.redact("Phase: Error\nTOKEN=fixture-secret"),
+        outcome: { kind: "completed", exitCode: 0 },
+      },
+      {
+        name: "openshell-sandbox-list.txt",
+        content: "",
+        outcome: {
+          kind: "failed",
+          error: { kind: "timeout", message: "timed out" },
+        },
+      },
+      {
+        name: "openshell-logs.txt",
+        content: request.redact("gateway failure context"),
+        outcome: { kind: "completed", exitCode: 1 },
+      },
+    ]);
+    try {
+      const diagnostics = collectDockerGpuPatchDiagnostics(
+        "alpha",
+        { additionalSensitiveValues: ["fixture-secret"] },
+        {
+          dockerCapture: vi.fn(() => ""),
+          dockerLogs: vi.fn(() => ""),
+          homedir: () => tmpDir,
+          now: () => new Date("2026-05-12T00:00:00Z"),
+          openShellGpuDiagnostics: { collect },
+        },
+      );
+
+      expect(collect).toHaveBeenCalledExactlyOnceWith({
+        target: { kind: "selected" },
+        sandboxName: "alpha",
+        timeoutMs: 30_000,
+        redact: expect.any(Function),
+      });
+      expect(
+        fs.readFileSync(path.join(diagnostics?.dir ?? "", "openshell-sandbox-get.txt"), "utf8"),
+      ).toContain("TOKEN=<REDACTED>");
+      expect(fs.existsSync(path.join(diagnostics?.dir ?? "", "openshell-sandbox-list.txt"))).toBe(
+        false,
+      );
+      expect(
+        fs.readFileSync(path.join(diagnostics?.dir ?? "", "openshell-logs.txt"), "utf8"),
+      ).toContain("gateway failure context");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

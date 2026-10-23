@@ -91,18 +91,21 @@ describe("Docker context authority selection (#11719)", () => {
     },
   );
 
-  it("lets DOCKER_CONTEXT override DOCKER_HOST, as the Docker CLI does", () => {
+  it("lets DOCKER_HOST override DOCKER_CONTEXT, as the Docker CLI does (#12223)", () => {
     const { opts, resolveDockerContextHost } = twoEngineHost(
-      { DOCKER_HOST: `unix://${DOCKER_SOCKET}`, DOCKER_CONTEXT: "qa-unreachable" },
+      {
+        DOCKER_HOST: `unix://${DOCKER_SOCKET}`,
+        DOCKER_CONTEXT: "qa-unreachable",
+      },
       DEAD_CONTEXT_SOCKET,
     );
 
     expect(detectDockerHost(opts)).toEqual({
-      dockerHost: DEAD_CONTEXT_SOCKET,
-      source: "context",
+      dockerHost: `unix://${DOCKER_SOCKET}`,
+      source: "env",
       socketPath: null,
     });
-    expect(resolveDockerContextHost).toHaveBeenCalledWith("qa-unreachable");
+    expect(resolveDockerContextHost).not.toHaveBeenCalled();
   });
 
   it.each(["", "   "])("treats a blank context selector as no selection: %j", (value) => {
@@ -204,22 +207,26 @@ describe("assessHost Docker context endpoint (#11719)", () => {
     expect(rendered).not.toContain(oversizedContext);
   });
 
-  it("reports an unresolved DOCKER_CONTEXT even when DOCKER_HOST is set", () => {
+  it("ignores DOCKER_CONTEXT when a valid DOCKER_HOST is set (#12223)", () => {
     const assessment = assessHost({
       platform: "linux",
       release: "6.8.0-generic",
       procVersion: "Linux version 6.8.0-generic",
-      env: { DOCKER_HOST: "tcp://192.0.2.10:2375", DOCKER_CONTEXT: "qa-remote" },
+      env: {
+        DOCKER_HOST: `unix://${DOCKER_SOCKET}`,
+        DOCKER_CONTEXT: "qa-remote",
+      },
+      dockerInfoOutput: REACHABLE_DOCKER_INFO,
       commandExistsImpl,
       runCaptureImpl,
     });
 
-    expect(assessment.dockerContextInvalid).toBe("qa-remote");
-    expect(assessment.dockerHostInvalid).toBe(true);
-    const invalid = planHostAdvisories(assessment).find(
-      (action) => action.id === "invalid_docker_host",
+    expect(assessment.dockerContextInvalid).toBeUndefined();
+    expect(assessment.dockerHostInvalid).toBe(false);
+    expect(assessment.dockerReachable).toBe(true);
+    expect(planHostAdvisories(assessment).map((action) => action.id)).not.toContain(
+      "invalid_docker_host",
     );
-    expect(invalid?.title).toBe("Fix the DOCKER_CONTEXT endpoint");
   });
 
   it("rejects a control-bearing endpoint without reproducing the control byte", () => {

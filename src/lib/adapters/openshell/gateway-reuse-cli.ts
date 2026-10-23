@@ -30,6 +30,8 @@ function failed(error: OpenShellSandboxError): OpenShellGatewayReuseObservation 
     namedMetadata: false,
     shouldSelect: false,
     endpoints: [],
+    namedEndpoint: null,
+    namedActive: null,
     endpointBinding: "unknown",
     error,
   };
@@ -73,6 +75,22 @@ function parseGatewayRegistry(output: string): GatewayRegistryEntry[] | null {
 
 function gatewayMetadataOutput(entry: GatewayRegistryEntry | undefined): string {
   return entry ? `Gateway: ${entry.name}\nGateway endpoint: ${entry.endpoint}` : "";
+}
+
+function normalizeGatewayEndpoint(value: string): string | null {
+  try {
+    const endpoint = new URL(value);
+    return ["https:", "http:"].includes(endpoint.protocol) &&
+      !endpoint.username &&
+      !endpoint.password &&
+      endpoint.pathname === "/" &&
+      !endpoint.search &&
+      !endpoint.hash
+      ? endpoint.origin
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 export function createCliOpenShellGatewayReuseObserver(
@@ -144,7 +162,8 @@ export function createCliOpenShellGatewayReuseObserver(
             kind: "schema",
             message: "OpenShell returned an unrecognized gateway registry.",
           });
-        const namedOutput = gatewayMetadataOutput(registry.find((entry) => entry.name === name));
+        const namedEntry = registry.find((entry) => entry.name === name);
+        const namedOutput = gatewayMetadataOutput(namedEntry);
         const activeOutput = gatewayMetadataOutput(registry.find((entry) => entry.active));
         const observationOutputs = [statusOutput, namedOutput, activeOutput];
         const namedMetadata = hasStaleGateway(namedOutput, name);
@@ -161,21 +180,7 @@ export function createCliOpenShellGatewayReuseObserver(
           for (const match of stripOpenShellCliAnsi(output).matchAll(
             /^\s*(?:Gateway endpoint|Server):\s*(.*)$/gim,
           )) {
-            try {
-              const endpoint = new URL(match[1].trim());
-              endpoints.push(
-                ["https:", "http:"].includes(endpoint.protocol) &&
-                  !endpoint.username &&
-                  !endpoint.password &&
-                  endpoint.pathname === "/" &&
-                  !endpoint.search &&
-                  !endpoint.hash
-                  ? endpoint.origin
-                  : null,
-              );
-            } catch {
-              endpoints.push(null);
-            }
+            endpoints.push(normalizeGatewayEndpoint(match[1].trim()));
           }
         }
         return {
@@ -189,6 +194,8 @@ export function createCliOpenShellGatewayReuseObserver(
             name,
           ),
           endpoints,
+          namedEndpoint: namedEntry ? normalizeGatewayEndpoint(namedEntry.endpoint) : null,
+          namedActive: namedEntry?.active ?? null,
           endpointBinding:
             request.expectedGatewayPort === undefined
               ? "unknown"

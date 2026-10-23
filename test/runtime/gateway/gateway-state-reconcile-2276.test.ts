@@ -17,6 +17,7 @@ import { createServer } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, it } from "vitest";
+import { makeFakeCurlScript } from "../../../src/lib/inference/onboard-probes-curl-harness";
 import { testTimeout } from "../../helpers/timeouts";
 
 const TIMEOUT_MS = testTimeout(60_000);
@@ -335,6 +336,15 @@ beforeEach(() => {
   fs.mkdirSync(registryDir, { recursive: true, mode: 0o700 });
   fs.writeFileSync(installerInvocationsFile, "");
   fs.writeFileSync(dockerInvocationsFile, "");
+  // Credential validation must succeed before this fixture reaches stale-policy recovery.
+  fs.writeFileSync(
+    path.join(homeLocalBin, "curl"),
+    makeFakeCurlScript(`
+printf '%s' '{"choices":[{"message":{"role":"assistant","content":"OK"}}]}' > "$outfile"
+printf '200'
+`),
+    { mode: 0o755 },
+  );
   // Image freshness has its own tests; this process fixture represents unchanged inputs.
   fs.writeFileSync(
     path.join(homeLocalBin, "git"),

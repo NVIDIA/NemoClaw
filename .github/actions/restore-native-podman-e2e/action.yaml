@@ -212,8 +212,7 @@ runs:
         cleanup_status=$?
         set -e
         if [[ "$cleanup_status" -ne 0 ]]; then
-          echo "::error::Native Podman runtime cleanup did not complete; preserving Podman and Docker recovery authority" >&2
-          exit "$cleanup_status"
+          echo "::warning::Native Podman runtime cleanup did not complete; attempting Docker restoration before failing" >&2
         fi
         restore_present=false
         if sudo -n test -e "$restore_root" || sudo -n test -L "$restore_root"; then
@@ -327,7 +326,7 @@ runs:
         sudo -n rm -f -- "$runtime_state_path"
         sudo -n rmdir -- "$restore_root"
         fi
-        if [[ "$cleanup_authorized" == true ]]; then
+        if [[ "$cleanup_authorized" == true && "$cleanup_status" -eq 0 ]]; then
           for target in "$toolchain_install_root/bin/podman" "$toolchain_install_root/bin/pasta"; do
             if sudo -n test -e "$target" || sudo -n test -L "$target"; then
               sudo -n test -f "$target"
@@ -341,4 +340,8 @@ runs:
           fi
           sudo -n rm -f -- "$cleanup_state_path"
           sudo -n rmdir -- "$toolchain_install_root"
+        fi
+        if [[ "$cleanup_status" -ne 0 ]]; then
+          echo "::error::Native Podman runtime cleanup did not complete; preserved Podman recovery authority after restoring Docker" >&2
+          exit "$cleanup_status"
         fi

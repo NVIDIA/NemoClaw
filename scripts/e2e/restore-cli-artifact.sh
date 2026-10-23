@@ -117,8 +117,7 @@ for boundary in \
   openshell-gateway-health-sdk.js \
   openshell-observation-boundary.cjs \
   openshell-policy-boundary.cjs \
-  sandbox-name.cjs \
-  snapshot-sanitizer-boundary.cjs; do
+  sandbox-name.cjs; do
   boundary_path="$restore_dir/nemoclaw/dist/shared/$boundary"
   [[ -f "$boundary_path" && ! -L "$boundary_path" && -s "$boundary_path" ]] \
     || {

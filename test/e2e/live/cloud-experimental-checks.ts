@@ -12,11 +12,13 @@ import {
   requireDcodeBaseImageReference,
 } from "../fixtures/dcode-base-image.ts";
 import type { E2ETargetFixtures } from "../fixtures/e2e-test.ts";
+import { DEFAULT_HOSTED_INFERENCE_BASE_URL } from "../fixtures/hosted-inference.ts";
 import { assertStockManagedImageReceipt } from "../fixtures/managed-image-receipt.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   DEEPAGENTS_FRESH_REONBOARD_CHECK,
+  DEEPAGENTS_HEADLESS_INFERENCE_CHECK,
   DEEPAGENTS_OBSERVABILITY_CHECK,
   DEEPAGENTS_THREAD_AUTO_APPROVAL_CHECK,
 } from "./cloud-experimental-check-list.ts";
@@ -24,6 +26,7 @@ import {
 const REQUIRED_CHECK_SKIP_PATTERN = /(^|\n).*\bSKIP\b/i;
 const DEFAULT_CHECK_TIMEOUT_MS = 180_000;
 const FRESH_REONBOARD_TIMEOUT_MS = 15 * 60_000;
+const HEADLESS_INFERENCE_TIMEOUT_MS = 25 * 60_000;
 const OBSERVABILITY_TIMEOUT_MS = 8 * 60_000;
 const TUI_MODEL_TURN_TIMEOUT_MS = 20 * 60_000;
 const THREAD_AUTO_APPROVAL_TIMEOUT_MS = 35 * 60_000;
@@ -91,6 +94,7 @@ export function buildCloudExperimentalCommandEnv(
     ...buildAvailabilityProbeEnv(base),
     CLOUD_EXPERIMENTAL_MODEL: base.NEMOCLAW_MODEL,
     COMPATIBLE_API_KEY: apiKey,
+    NEMOCLAW_ENDPOINT_URL: base.NEMOCLAW_ENDPOINT_URL || DEFAULT_HOSTED_INFERENCE_BASE_URL,
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
     NEMOCLAW_E2E_CLOUD_API_KEY_ENV: "COMPATIBLE_API_KEY",
     NEMOCLAW_NON_INTERACTIVE: "1",
@@ -115,6 +119,7 @@ export function assertRequiredCloudExperimentalResult(
 
 export function cloudExperimentalCheckTimeoutMs(scriptPath: string): number {
   if (scriptPath === DEEPAGENTS_FRESH_REONBOARD_CHECK) return FRESH_REONBOARD_TIMEOUT_MS;
+  if (scriptPath === DEEPAGENTS_HEADLESS_INFERENCE_CHECK) return HEADLESS_INFERENCE_TIMEOUT_MS;
   if (scriptPath === DEEPAGENTS_OBSERVABILITY_CHECK) return OBSERVABILITY_TIMEOUT_MS;
   if (scriptPath === DEEPAGENTS_CODE_TUI_CHECK) return TUI_MODEL_TURN_TIMEOUT_MS;
   if (scriptPath === DEEPAGENTS_THREAD_AUTO_APPROVAL_CHECK) {

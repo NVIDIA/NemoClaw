@@ -388,30 +388,50 @@ describe("runAgentJsonPassthrough", () => {
     expect(exit).toHaveBeenCalledWith(1);
   });
 
-  it("keeps a completed turn at exit 0 so the incomplete-turn check does not misfire", async () => {
-    const payload = JSON.stringify({
-      status: "ok",
-      summary: "completed",
-      result: { payloads: [{ text: "PONG" }], meta: { livenessState: "working" } },
-    });
-    const runDispatch = vi.fn(async (_request: OpenShellSandboxSessionRequest) => ({
-      outcome: { kind: "exited" as const, exitCode: 0 },
-      stdout: payload,
-      stderr: "",
-    }));
-    const { exit, proc } = makeProc();
+  it.each([
+    { replayInvalid: false, corroborated: true, exitCode: 0 },
+    { replayInvalid: true, corroborated: true, exitCode: 0 },
+    { replayInvalid: true, corroborated: false, exitCode: 1 },
+  ])(
+    "returns $exitCode for replayInvalid=$replayInvalid with corroborated=$corroborated",
+    async ({ replayInvalid, corroborated, exitCode }) => {
+      const payload = JSON.stringify({
+        status: "ok",
+        summary: "completed",
+        result: {
+          payloads: [{ text: "PONG" }],
+          meta: {
+            aborted: false,
+            replayInvalid,
+            stopReason: "stop",
+            finalAssistantVisibleText: "PONG",
+            ...(corroborated ? { toolSummary: { calls: 1, failures: 0, tools: ["exec"] } } : {}),
+          },
+        },
+      });
+      const runDispatch = vi.fn(async (_request: OpenShellSandboxSessionRequest) => ({
+        outcome: { kind: "exited" as const, exitCode: 0 },
+        stdout: payload,
+        stderr: "",
+      }));
+      const { exit, proc, stderr, stdout } = makeProc();
 
-    await expect(
-      runAgentJsonPassthrough("alpha", ["openclaw", "agent", "--json"], proc, {
-        getGatewayName: () => null,
-        getOpenshellBinary: () => "openshell",
-        runDispatch,
-        stdinIsTty: () => false,
-      }),
-    ).rejects.toThrow("__exit:0");
+      await expect(
+        runAgentJsonPassthrough("alpha", ["openclaw", "agent", "--json"], proc, {
+          getGatewayName: () => null,
+          getOpenshellBinary: () => "openshell",
+          runDispatch,
+          stdinIsTty: () => false,
+        }),
+      ).rejects.toThrow(`__exit:${String(exitCode)}`);
 
-    expect(exit).toHaveBeenCalledWith(0);
-  });
+      expect(exit).toHaveBeenCalledWith(exitCode);
+      expect(stdout.join("")).toBe(payload);
+      expect(stderr.join("").includes("did not complete")).toBe(exitCode === 1);
+      expect(stderr.join("").includes("replayInvalid=true")).toBe(exitCode === 1);
+      expect(stderr.join("").includes("Inspect the partial JSON trace")).toBe(exitCode === 1);
+    },
+  );
 
   it("keeps a healthy response at exit 0 after a marker-bearing JSON log record", async () => {
     const payload = [

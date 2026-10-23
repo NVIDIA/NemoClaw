@@ -11,13 +11,21 @@ import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import { patchOpenClawContainerRestart } from "../../../scripts/lib/patch-openclaw-container-restart.mts";
+import {
+  buildConfig,
+  buildManagedInferenceSafeguardCompaction,
+} from "../../../scripts/generate-openclaw-config.mts";
+import { baseOpenClawGenerationEnv } from "../../helpers/openclaw-env-fixture";
+import { runRealOpenClawAgentReloadProof } from "../../helpers/openclaw-real-agent-reload-proof";
+import { runRealOpenClawCompactionRetryProof } from "../../helpers/openclaw-real-compaction-retry-proof";
 import { runRealOpenClawDeviceSelfApprovalProof } from "../../helpers/openclaw-real-device-self-approval-proof";
 import { runRealOpenClawInstallPathProof } from "../../helpers/openclaw-real-install-path-proof";
 import { runRealOpenClawMcpStartRetryProof } from "../../helpers/openclaw-real-mcp-start-retry-proof";
 
+import { patchOpenClawAgentMessageInput } from "../../../scripts/lib/patch-openclaw-agent-message-input.mts";
+
 const REPO_ROOT = path.join(import.meta.dirname, "../../..");
 const DOCKERFILE = path.join(REPO_ROOT, "Dockerfile");
-const PATCH_OPENCLAW_CHAT_SEND = path.join(REPO_ROOT, "scripts", "patch-openclaw-chat-send.mts");
 const PATCH_OPENCLAW_ISSUE_4434_DIAGNOSTICS = path.join(
   REPO_ROOT,
   "scripts",
@@ -212,13 +220,26 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
-function dockerfilePatchCommand(dist: string): string {
+function dockerfileRuntimePatchCommand(dist: string): string {
   return dockerRunCommandBetween(
+    "# Native OpenClaw restart must reload",
+    "# Keep OpenClaw 2026.9.1 scope-upgrade",
+  )
+    .replaceAll("/usr/local/lib/node_modules/openclaw/dist", shellQuote(dist))
+    .replaceAll(
+      "/usr/local/lib/nemoclaw/patch-openclaw-",
+      path.join(REPO_ROOT, "scripts", "lib", "patch-openclaw-"),
+    );
+}
+
+function dockerfilePatchCommand(dist: string): string {
+  const legacy = dockerRunCommandBetween(
     "# Patch OpenClaw media fetch for proxy-only sandbox",
-    "# Patch OpenClaw chat.send gateway behavior",
+    "# Native OpenClaw restart must reload",
   )
     .replaceAll("/usr/local/lib/node_modules/openclaw/dist", dist)
     .replaceAll("/usr/local/lib/nemoclaw/extract-semver", shellQuote(OPENCLAW_VERSION_EXTRACTOR));
+  return `${legacy}\n${dockerfileRuntimePatchCommand(dist)}`;
 }
 
 function runDockerfilePatchBlock(dist: string, tmp: string, version: string) {
@@ -360,12 +381,73 @@ function materializeReviewedTarball(
   return tarballPath;
 }
 
+it("bounds reload-proof diagnostics while retaining the final gateway error", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "reload-diagnostics-"));
+  try {
+    fs.writeFileSync(
+      path.join(root, "openclaw.mjs"),
+      'process.stdout.write("x".repeat(128 * 1024), () => process.stderr.write("final-gateway-error", () => process.exit(1)));',
+    );
+    const error = await runRealOpenClawAgentReloadProof({
+      dist: path.join(root, "dist"),
+      nodeExecutable: process.execPath,
+      gatewayConfig: { reload: { mode: "hybrid" } },
+    }).catch((error: Error) => error);
+    expect(error).toBeInstanceOf(Error);
+    const message = (error as Error).message;
+    expect(message).toContain("final-gateway-error");
+    expect(message.length).toBeLessThanOrEqual(64 * 1024 + "gateway did not start: ".length);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 describe("OpenClaw real patched-dist materialization guard", () => {
+  it("applies the Dockerfile runtime patch selection before auditing the distribution", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runtime-patch-"));
+    const dist = path.join(tmp, "dist");
+    fs.mkdirSync(path.join(dist, "cli"), { recursive: true });
+    fs.writeFileSync(path.join(tmp, "package.json"), JSON.stringify({ version: "2026.9.2" }));
+    fs.copyFileSync(
+      path.join(import.meta.dirname, "fixtures/agent-message-input.js.txt"),
+      path.join(dist, "agent-via-gateway-fixture.js"),
+    );
+    fs.copyFileSync(
+      path.join(import.meta.dirname, "fixtures/gateway-container-restart.js.txt"),
+      path.join(dist, "cli/gateway-lifecycle.runtime.js"),
+    );
+    fs.writeFileSync(
+      path.join(dist, "lifecycle-fixture.js"),
+      `async function runSafeGatewayRestart(opts, target) {
+\tconst result = await callGatewayCli({
+\t\tmethod: "gateway.restart.request",
+\t\tparams,
+\t});
+\treturn result;
+}`,
+    );
+    try {
+      expect(() => patchOpenClawAgentMessageInput(dist, true)).toThrow("patch is missing");
+      const result = spawnSync("bash", ["-c", dockerfileRuntimePatchCommand(dist)], {
+        encoding: "utf8",
+        timeout: PATCH_COMMAND_TIMEOUT_MS,
+      });
+      requireSpawnSuccess(result, "apply Dockerfile runtime patches to parser fixtures");
+      expect(() => patchOpenClawAgentMessageInput(dist, true)).not.toThrow();
+      expect(() => patchOpenClawContainerRestart(dist, true)).not.toThrow();
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("maps container-only patch helpers to their repository fixtures", () => {
     const command = dockerfilePatchCommand("/tmp/reviewed-openclaw-dist");
 
     expect(command).not.toContain("/usr/local/lib/nemoclaw/extract-semver");
     expect(command).toContain(shellQuote(OPENCLAW_VERSION_EXTRACTOR));
+    expect(command).toContain("for patch in container-restart agent-message-input");
+    expect(command).not.toContain("/usr/local/lib/nemoclaw/patch-openclaw-");
+    expect(command).toContain(path.join(REPO_ROOT, "scripts", "lib", "patch-openclaw-"));
   });
 
   // source-shape-contract: security -- The real artifact harness must reject every Node runtime except the exact version reviewed for CI and production images
@@ -487,8 +569,8 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
         "OpenClaw real patched-dist npm runtime",
       );
       const version = readRequiredDockerArg("OPENCLAW_VERSION");
-      const integrity = readRequiredDockerArg("OPENCLAW_2026_9_1_INTEGRITY");
-      const tarballUrl = readRequiredDockerArg("OPENCLAW_2026_9_1_TARBALL");
+      const integrity = readRequiredDockerArg("OPENCLAW_2026_9_2_INTEGRITY");
+      const tarballUrl = readRequiredDockerArg("OPENCLAW_2026_9_2_TARBALL");
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-real-dist-"));
       try {
         const tarballPath = materializeReviewedTarball(tarballUrl, tmp, integrity);
@@ -677,87 +759,9 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
           process.env.PATH = previousPath;
         }
 
-        const retryPersistencePreimage = [
-          "\t\t\tlet suppressNextUserMessagePersistence = params.suppressNextUserMessagePersistence ?? false;",
-          "\t\t\tlet lastPersistedCurrentMessageId;",
-          "\t\t\tconst onUserMessagePersisted = (message) => {",
-          "\t\t\t\tif (params.currentMessageId !== void 0) lastPersistedCurrentMessageId = params.currentMessageId;",
-        ].join("\n");
-        const embeddedAgentFiles = fs
-          .readdirSync(dist)
-          .filter((file) => file.startsWith("embedded-agent-") && file.endsWith(".js"))
-          .map((file) => path.join(dist, file));
-        const retryPersistenceTargets = embeddedAgentFiles.filter(
-          (file) => fs.readFileSync(file, "utf-8").split(retryPersistencePreimage).length === 2,
-        );
-        const nativeRetryPersistenceGuard = [
-          "await sessionPromptState.waitForCurrentUserMessagePersistence();",
-          "sessionPromptState.suppressNextUserMessagePersistence = sessionPromptState.activePrompt.persisted;",
-        ];
-        const nativeRetryPersistenceTargets = embeddedAgentFiles.filter((file) => {
-          const source = fs.readFileSync(file, "utf-8");
-          return nativeRetryPersistenceGuard.every((line) => source.includes(line));
-        });
-        requireRuntimeEqual(
-          String(retryPersistenceTargets.length + nativeRetryPersistenceTargets.length),
-          "1",
-          "embedded-agent retry persistence legacy-or-native guard count",
-        );
+        patchOpenClawAgentMessageInput(dist, true);
 
-        patchOpenClawContainerRestart(dist);
         patchOpenClawContainerRestart(dist, true);
-
-        const chatPatch = spawnSync(nodeRuntime.executable, [PATCH_OPENCLAW_CHAT_SEND, dist], {
-          encoding: "utf-8",
-          timeout: PATCH_COMMAND_TIMEOUT_MS,
-        });
-        requireSpawnSuccess(chatPatch, "apply chat.send compatibility patch");
-        requireRuntimeIncludes(
-          chatPatch.stdout,
-          "patched OpenClaw chat.send compatibility",
-          "chat.send patch output",
-        );
-
-        const audit = spawnSync(
-          nodeRuntime.executable,
-          [PATCH_OPENCLAW_CHAT_SEND, "--audit", dist],
-          {
-            encoding: "utf-8",
-            timeout: PATCH_COMMAND_TIMEOUT_MS,
-          },
-        );
-        requireSpawnSuccess(audit, "audit chat.send compatibility patch");
-        requireRuntimeIncludes(audit.stdout, "chat.send runtime:", "chat.send audit");
-        requireRuntimeIncludes(audit.stdout, "get-reply runtime:", "get-reply audit");
-        requireRuntimeIncludes(audit.stdout, "followup runner runtime:", "followup audit");
-        const retryPersistenceMarker = "nemoclaw: suppress persisted user turn on embedded retries";
-        const retryPersistenceTarget = (retryPersistenceTargets[0] ??
-          nativeRetryPersistenceTargets[0]) as string;
-        retryPersistenceTargets.length === 1
-          ? (() => {
-              requireRuntimeIncludes(
-                audit.stdout,
-                "embedded-agent retry runtime:",
-                "embedded-agent retry audit",
-              );
-              const retryPersistenceSource = fs.readFileSync(retryPersistenceTarget, "utf-8");
-              requireRuntimeEqual(
-                String(retryPersistenceSource.split(retryPersistenceMarker).length - 1),
-                "1",
-                "embedded-agent retry persistence marker count",
-              );
-            })()
-          : requireRuntimeEqual(
-              String(audit.stdout.includes("embedded-agent retry runtime:")),
-              "false",
-              "native embedded-agent retry guard must not be patched",
-            );
-        const embeddedAgentSyntax = spawnSync(
-          nodeRuntime.executable,
-          ["--check", retryPersistenceTarget],
-          { encoding: "utf-8", timeout: PATCH_COMMAND_TIMEOUT_MS },
-        );
-        requireSpawnSuccess(embeddedAgentSyntax, "validate patched embedded-agent syntax");
 
         const issue4434Patch = spawnSync(
           nodeRuntime.executable,
@@ -874,7 +878,10 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
               (source.includes('from "@openclaw/fs-safe/secret";') &&
                 source.includes("PRIVATE_SECRET_DIR_MODE") &&
                 source.includes("PRIVATE_SECRET_FILE_MODE") &&
-                source.includes("writeSecretFileAtomic as writePrivateSecretFileAtomic"))
+                (source.includes("writeSecretFileAtomic as writePrivateSecretFileAtomic") ||
+                  (source.includes("async function writePrivateSecretFileAtomic(params) {") &&
+                    source.includes("await tightenSecretDirectoryModes(params);") &&
+                    source.includes("await writeSecretFileAtomic(params);"))))
             );
           });
         requireRuntimeEqual(
@@ -985,6 +992,26 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
           nodeExecutable: nodeRuntime.executable,
           patchScript: PATCH_OPENCLAW_MCP_RELIABILITY,
           timeoutMs: PATCH_COMMAND_TIMEOUT_MS,
+        });
+
+        runRealOpenClawCompactionRetryProof({
+          dist,
+          nodeExecutable: nodeRuntime.executable,
+          compaction: buildManagedInferenceSafeguardCompaction(
+            "inference",
+            "vllm-local",
+            "https://inference.local/v1",
+            "vllm.n1x.single.qwen3-6-35b-a3b-nvfp4",
+            32768,
+            4096,
+          ),
+          timeoutMs: PATCH_COMMAND_TIMEOUT_MS,
+        });
+
+        await runRealOpenClawAgentReloadProof({
+          gatewayConfig: buildConfig(baseOpenClawGenerationEnv()).gateway,
+          dist,
+          nodeExecutable: nodeRuntime.executable,
         });
 
         runRealOpenClawInstallPathProof({

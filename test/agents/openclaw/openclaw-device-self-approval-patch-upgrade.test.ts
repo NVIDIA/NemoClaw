@@ -286,7 +286,10 @@ describe("OpenClaw device self-approval patch upgrades (#4462)", () => {
     }
   });
 
-  it("adds watcher deferral to an earlier patched current gateway runtime (#9844)", () => {
+  it.each([
+    ["2026.9.1", { allowSilentLocalPairing: true }],
+    ["2026.9.2", { localApproval: "silent" }],
+  ] as const)("adds watcher deferral to the %s gateway runtime (#9844)", (_version, plan) => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-defer-upgrade-"));
     const dist = path.join(tmp, "dist");
     fs.mkdirSync(dist);
@@ -324,8 +327,14 @@ describe("OpenClaw device self-approval patch upgrades (#4462)", () => {
       const resolvePairingOutcome = vm.runInNewContext(`${upgraded}\nresolvePairingOutcome`) as (
         input: Record<string, unknown>,
       ) => "approved" | "pending";
-      const boundedUpgrade = boundedScopeUpgrade();
+      const boundedUpgrade = { ...boundedScopeUpgrade(), plan };
       expect(resolvePairingOutcome(boundedUpgrade)).toBe("pending");
+      expect(
+        resolvePairingOutcome({
+          ...boundedUpgrade,
+          plan: { localApproval: "trusted-cidr" },
+        }),
+      ).toBe("approved");
       expect(
         resolvePairingOutcome({
           ...boundedUpgrade,

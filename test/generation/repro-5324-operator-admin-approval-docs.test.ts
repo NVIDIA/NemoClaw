@@ -31,6 +31,15 @@ describe("operator.admin manual approval documentation (#5324)", () => {
     expect(sectionEnd).toBeGreaterThan(sectionStart);
     expect(section).toContain("`operator.pairing`, `operator.read`, and `operator.write`");
     expect(section).toContain("It never automatically approves `operator.admin`.");
+    expect(section).toContain("bounded, best-effort approval attempts");
+    expect(section).toContain("If an allowlisted request remains pending");
+    expect(section).toContain(
+      "../reference/troubleshooting#an-openclaw-command-inside-the-sandbox-fails-with-scope-upgrade-pending-approval",
+    );
+    expect(section).toContain(
+      "Unknown clients and non-allowlisted scopes are never automatically approved.",
+    );
+    expect(section).not.toContain("No action needed.");
     expect(section).toMatch(/cron/i);
   });
 
@@ -52,7 +61,7 @@ describe("operator.admin manual approval documentation (#5324)", () => {
   });
 
   it("routes troubleshooting approval through the prepared connect shell (#5324)", () => {
-    const connect = troubleshootingSection.indexOf("$$nemoclaw my-assistant connect");
+    const connect = troubleshootingSection.indexOf("$$nemoclaw <name> connect");
     const list = troubleshootingSection.indexOf("openclaw devices list --json");
     const approve = troubleshootingSection.indexOf("openclaw devices approve <requestId>");
 
@@ -61,6 +70,31 @@ describe("operator.admin manual approval documentation (#5324)", () => {
     expect(connect).toBeGreaterThanOrEqual(0);
     expect(list).toBeGreaterThan(connect);
     expect(approve).toBeGreaterThan(list);
+    expect(troubleshootingSection).toContain("$$nemoclaw <name> connect");
+    expect(troubleshootingSection).toContain(
+      "Replace `<name>` with the sandbox name from the failed command.",
+    );
+    expect(troubleshootingSection).toContain("Record the `requestId` from this native failure.");
+    expect(troubleshootingSection).toMatch(
+      /`connect` makes a bounded, best-effort\s+attempt to settle pending requests/,
+    );
+    expect(troubleshootingSection).toMatch(/an eligible\s+request can remain\s+pending/);
+    expect(troubleshootingSection).not.toContain("`connect` automatically settles");
+    expect(troubleshootingSection).toContain("does not authenticate that client metadata");
+    expect(troubleshootingSection).not.toMatch(
+      /authenticated device\s+identity|authoritative\s+device-identity binding/,
+    );
+    expect(troubleshootingSection).toMatch(
+      /`exec` command streams the native command output and normally returns its\s+native exit status/,
+    );
+    expect(troubleshootingSection).not.toContain("OpenClaw permission cleanup failed");
+    expect(troubleshootingSection).not.toContain(
+      "The `exec` command preserves the native command output and exit status.",
+    );
+    expect(troubleshootingSection).toContain(
+      "whose `requestId` exactly matches the native failure",
+    );
+    expect(troubleshootingSection).toContain("approve only that same `requestId`");
     expect(troubleshootingSection).not.toContain("exec -- openclaw devices approve");
   });
 });

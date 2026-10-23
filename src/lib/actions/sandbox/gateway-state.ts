@@ -27,6 +27,7 @@ import {
   TERMINAL_SANDBOX_PHASES,
 } from "../../state/gateway";
 export { isTerminalSandboxPhase, sandboxPhaseNeedsLifecycleStart, TERMINAL_SANDBOX_PHASES };
+export { createSandboxStartErrorGrace } from "../../domain/lifecycle/sandbox-start-error-grace";
 import { selectNamedGateway, selectSandboxOwningGateway } from "./gateway-select";
 import {
   gatewayNamePattern,
@@ -72,6 +73,7 @@ import {
   OPENSHELL_PROBE_TIMEOUT_MS,
 } from "../../adapters/openshell/runtime";
 import {
+  assertHermesPortableCommandUnavailable,
   assertHermesPortableAgentLifecycleAuthority,
   buildHermesPortableCommandEnvironment,
   buildHermesPortableCommandAuthority,
@@ -147,6 +149,7 @@ export type {
   PortableAgentReceiptDisposition,
 } from "../../onboard/experimental/portable-agent-lifecycle";
 export {
+  assertHermesPortableCommandUnavailable,
   buildHermesPortableCommandAuthority,
   buildHermesPortableCommandEnvironment,
   defaultPortableDemoStateDir,

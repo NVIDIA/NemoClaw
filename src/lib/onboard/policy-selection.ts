@@ -54,6 +54,7 @@ import {
   RESTRICTED_TIER_NAME,
 } from "./policy-tier-suppression";
 import { withPolicyApplicationTrace } from "./tracing";
+import { readAppliedPolicySelection } from "../domain/telemetry/provenance";
 
 export { suppressedAgentRequiredPresets } from "./policy-tier-suppression";
 
@@ -68,6 +69,14 @@ export type OnboardPolicyApplicationDeps = Omit<
   waitForSandboxControlPlaneReady(sandboxName: string): Promise<boolean>;
   parsePolicyPresetEnv(raw: string): string[];
   env: NodeJS.ProcessEnv;
+  pendingSelection?: PendingPolicySelectionStore;
+};
+
+type PendingPolicySelectionStore = {
+  record: NonNullable<SetupPolicySelectionDeps["recordPendingSelection"]>;
+  loadTier?: () => string | null;
+  hasPending: (sandboxName: string) => boolean;
+  clear: (sandboxName: string) => void;
 };
 
 type Preset = { name: string; access?: string };
@@ -112,6 +121,7 @@ export type SetupPresetSuggestionOptions = {
 
 export type SetupPolicySelectionOptions = {
   selectedPresets?: string[] | null;
+  preserveExplicitWebSearch?: boolean;
   onSelection?: ((policyPresets: string[]) => void) | null;
   webSearchConfig?: WebSearchConfig | null;
   enabledChannels?: string[] | null;
@@ -130,6 +140,13 @@ export type SetupPolicySelectionOptions = {
 };
 
 export type SetupPolicySelectionDeps = {
+  rememberAppliedTier?: (sandboxName: string, tierName: string | null) => void;
+  recordPendingSelection?: (
+    sandboxName: string,
+    tierName: string | null,
+    presets: string[],
+  ) => void;
+  clearPendingSelection?: (sandboxName: string, presets: string[]) => Promise<void>;
   policies: PoliciesApi;
   tiers: TiersApi;
   localInferenceProviders: readonly string[];
@@ -151,17 +168,28 @@ export type SetupPolicySelectionDeps = {
     initialSelected: string[],
   ) => Promise<Array<Preset & { access: string }>>;
   parsePolicyPresetEnv: (raw: string) => string[];
+  hasNativeCustomProvider?: (sandboxName: string) => boolean;
   env?: NodeJS.ProcessEnv;
 };
 
 export function createOnboardPolicyApplication(deps: OnboardPolicyApplicationDeps) {
+  const pendingSelection = deps.pendingSelection;
   const promptHelpers = () =>
     createPolicySelectionPromptHelpers({
       ...deps,
       tiers,
       policyTierEnv,
     });
-  const selectPolicyTier = () => promptHelpers().selectPolicyTier();
+  let selectedPolicyTier: Promise<string> | null = null;
+  const selectPolicyTier = () => {
+    selectedPolicyTier ??= Promise.resolve(
+      pendingSelection?.loadTier?.() ?? promptHelpers().selectPolicyTier(),
+    );
+    return selectedPolicyTier;
+  };
+  const resetPolicyTierSelection = () => {
+    selectedPolicyTier = null;
+  };
   const selectTierPresetsAndAccess = (
     tierName: string,
     allPresets: Array<{ name: string; description?: string }>,
@@ -172,6 +200,32 @@ export function createOnboardPolicyApplication(deps: OnboardPolicyApplicationDep
     initialSelected: string[],
   ) => promptHelpers().presetsCheckboxSelector(allPresets, initialSelected);
   const setupDeps: SetupPolicySelectionDeps = {
+    recordPendingSelection: pendingSelection?.record,
+    clearPendingSelection: async (sandboxName, presetNames) => {
+      if (!pendingSelection?.hasPending(sandboxName)) return;
+      const applied = new Set(await policies.getAppliedPresets(sandboxName));
+      const missing = presetNames.filter((name) => !applied.has(name));
+      if (
+        missing.length > 0 &&
+        !(
+          presetNames.includes(PERSONAL_OPEN_INTERNET_PRESET_NAME) &&
+          applied.has(PERSONAL_OPEN_INTERNET_PRESET_NAME) &&
+          (await policies.arePresetsCoveredByPersonalPolicy(sandboxName, missing))
+        )
+      ) {
+        throw new Error("The live OpenShell policy does not confirm every selected preset.");
+      }
+      pendingSelection.clear(sandboxName);
+    },
+    rememberAppliedTier: (sandboxName, tierName) => {
+      const receipt = readAppliedPolicySelection({
+        schemaVersion: 1,
+        source: "verified_selection",
+        tier: tierName,
+      });
+      if (!receipt) return;
+      policies.persistAppliedPolicySelection(sandboxName, receipt);
+    },
     policies,
     tiers,
     localInferenceProviders: deps.localInferenceProviders,
@@ -184,6 +238,7 @@ export function createOnboardPolicyApplication(deps: OnboardPolicyApplicationDep
     selectPolicyTier,
     selectTierPresetsAndAccess,
     parsePolicyPresetEnv: deps.parsePolicyPresetEnv,
+    hasNativeCustomProvider: (name) => policies.hasNativeCustomProvider(name),
     env: deps.env,
   };
 
@@ -220,16 +275,21 @@ export function createOnboardPolicyApplication(deps: OnboardPolicyApplicationDep
       return await preparePolicyPresetResumeSelection({ policies }, sandboxName, options);
     },
     presetsCheckboxSelector,
+    resetPolicyTierSelection,
     resolveSandboxBaselinePolicy: policies.resolveSandboxBaselinePolicy,
     selectPolicyTier,
     selectTierPresetsAndAccess,
-    setupPoliciesWithSelection(
+    async setupPoliciesWithSelection(
       sandboxName: string,
       options: SetupPolicySelectionOptions = {},
     ): Promise<string[]> {
-      return deps.withSandboxMutationLock(sandboxName, () =>
-        setupPoliciesWithSelection(setupDeps, sandboxName, options),
-      );
+      try {
+        return await deps.withSandboxMutationLock(sandboxName, () =>
+          setupPoliciesWithSelection(setupDeps, sandboxName, options),
+        );
+      } finally {
+        resetPolicyTierSelection();
+      }
     },
     validatePolicyTierEnvEarly: policyTierEnv.validatePolicyTierEnvEarly,
   };
@@ -387,6 +447,15 @@ async function requireSandboxReady(
   }
 }
 
+// OpenShell rejects Personal's hostless web rule beside an attached provider's
+// port-443 endpoint (NVIDIA/OpenShell#4662). Refuse before submitting the policy.
+function refusePersonalBesideNativeCustomProvider(): never {
+  console.error(
+    "  The Personal tier cannot be applied because this sandbox's custom endpoint uses an attached provider. Choose another tier, or create a new sandbox with NEMOCLAW_POLICY_TIER=personal set before onboarding.",
+  );
+  process.exit(1);
+}
+
 function refuseInPlacePersonalRemoval(
   personalAlreadyActive: boolean,
   target: readonly string[],
@@ -434,6 +503,26 @@ async function setupPoliciesWithSelectionInner(
   const customPresetNames = new Set(
     (await deps.policies.listCustomPresets(sandboxName)).map((preset) => preset.name),
   );
+  const refusePersonalBesideNativeCustomProviderIfSelected = (selected: readonly string[]) => {
+    if (
+      selected.includes(PERSONAL_OPEN_INTERNET_PRESET_NAME) &&
+      deps.hasNativeCustomProvider?.(sandboxName)
+    ) {
+      refusePersonalBesideNativeCustomProvider();
+    }
+  };
+  const confirmedSelectionAfterPersonal = async (selected: string[]) => {
+    if (
+      !selected.includes(PERSONAL_OPEN_INTERNET_PRESET_NAME) ||
+      !selected.some((name) => customPresetNames.has(name))
+    ) {
+      return selected;
+    }
+    const subsumed = new Set(
+      await policies.getPersonalSubsumedCustomPresetNames(sandboxName, selected),
+    );
+    return selected.filter((name) => !subsumed.has(name));
+  };
   const customOwnsObservability =
     (await deps.policies.customPresetOwnsNetworkPolicyKey?.(
       sandboxName,
@@ -506,8 +595,21 @@ async function setupPoliciesWithSelectionInner(
     // Pass the requested tier so the pruner exempts that tier's egress defaults
     // (e.g. `brave` on Balanced) via provenance — a reconcile-triggered reuse
     // reapply must not narrow an applied tier default. (#6844)
-    chosen = excludePresets(pruneUnavailablePresets(chosen, { tierName: requestedTierName }));
+    chosen = excludePresets(
+      pruneUnavailablePresets(chosen, {
+        tierName: requestedTierName,
+        preserveExplicitWebSearch: options.preserveExplicitWebSearch,
+      }),
+    );
     chosen = ensureRequiredTierPolicyPresets(requestedTierName, chosen);
+  }
+
+  if (
+    (requestedTierName === PERSONAL_POLICY_TIER_NAME ||
+      chosen?.includes(PERSONAL_OPEN_INTERNET_PRESET_NAME)) &&
+    deps.hasNativeCustomProvider?.(sandboxName)
+  ) {
+    refusePersonalBesideNativeCustomProvider();
   }
 
   if (selectedPresets !== null) {
@@ -518,13 +620,21 @@ async function setupPoliciesWithSelectionInner(
     options.revalidateSandboxIdentity?.(
       `reapply selected policy presets to sandbox '${sandboxName}'`,
     );
+    const confirmedSelection = await confirmedSelectionAfterPersonal(resumeSelection);
+    refusePersonalBesideNativeCustomProviderIfSelected(confirmedSelection);
+    deps.recordPendingSelection?.(sandboxName, requestedTierName, confirmedSelection);
     await deps.syncPresetSelection(sandboxName, currentAppliedPresets, resumeSelection);
     await requireSandboxReady(deps, sandboxName, "after");
-    if (onSelection) onSelection(resumeSelection);
-    return resumeSelection;
+    deps.rememberAppliedTier?.(sandboxName, requestedTierName);
+    await deps.clearPendingSelection?.(sandboxName, confirmedSelection);
+    if (onSelection) onSelection(confirmedSelection);
+    return confirmedSelection;
   }
 
   const tierName = requestedTierName ?? (await deps.selectPolicyTier());
+  if (tierName === PERSONAL_POLICY_TIER_NAME && deps.hasNativeCustomProvider?.(sandboxName)) {
+    refusePersonalBesideNativeCustomProvider();
+  }
   if (personalAlreadyActive && tierName !== PERSONAL_POLICY_TIER_NAME) {
     refuseInPlacePersonalRemoval(personalAlreadyActive, []);
   }
@@ -598,10 +708,15 @@ async function setupPoliciesWithSelectionInner(
         options.revalidateSandboxIdentity?.(
           `apply retained policy presets to sandbox '${sandboxName}'`,
         );
+        const confirmedSelection = await confirmedSelectionAfterPersonal(retainedPresets);
+        refusePersonalBesideNativeCustomProviderIfSelected(confirmedSelection);
+        deps.recordPendingSelection?.(sandboxName, tierName, confirmedSelection);
         await deps.syncPresetSelection(sandboxName, currentAppliedPresets, retainedPresets);
         await requireSandboxReady(deps, sandboxName, "after");
-        if (onSelection) onSelection(retainedPresets);
-        return retainedPresets;
+        deps.rememberAppliedTier?.(sandboxName, tierName);
+        await deps.clearPendingSelection?.(sandboxName, confirmedSelection);
+        if (onSelection) onSelection(confirmedSelection);
+        return confirmedSelection;
       }
       deps.note("  [non-interactive] Skipping optional policy presets.");
       return personalTier ? retainedPresets : [];
@@ -685,10 +800,15 @@ async function setupPoliciesWithSelectionInner(
     options.revalidateSandboxIdentity?.(
       `apply non-interactive policy presets to sandbox '${sandboxName}'`,
     );
+    const confirmedSelection = await confirmedSelectionAfterPersonal(chosen);
+    refusePersonalBesideNativeCustomProviderIfSelected(confirmedSelection);
+    deps.recordPendingSelection?.(sandboxName, tierName, confirmedSelection);
     await deps.syncPresetSelection(sandboxName, currentAppliedPresets, chosen);
     await requireSandboxReady(deps, sandboxName, "after");
-    if (onSelection) onSelection(chosen);
-    return chosen;
+    deps.rememberAppliedTier?.(sandboxName, tierName);
+    await deps.clearPendingSelection?.(sandboxName, confirmedSelection);
+    if (onSelection) onSelection(confirmedSelection);
+    return confirmedSelection;
   }
 
   const knownNames = new Set(allPresets.map((preset) => preset.name));
@@ -734,6 +854,9 @@ async function setupPoliciesWithSelectionInner(
     if (interactiveChoiceNames.has(preset.name)) accessByName[preset.name] = preset.access;
   }
   options.revalidateSandboxIdentity?.(`apply policy presets to sandbox '${sandboxName}'`);
+  const confirmedSelection = await confirmedSelectionAfterPersonal(interactiveChoice);
+  refusePersonalBesideNativeCustomProviderIfSelected(confirmedSelection);
+  deps.recordPendingSelection?.(sandboxName, tierName, confirmedSelection);
   await deps.syncPresetSelection(
     sandboxName,
     currentAppliedPresets,
@@ -741,6 +864,8 @@ async function setupPoliciesWithSelectionInner(
     accessByName,
   );
   await requireSandboxReady(deps, sandboxName, "after");
-  if (onSelection) onSelection(interactiveChoice);
-  return interactiveChoice;
+  deps.rememberAppliedTier?.(sandboxName, tierName);
+  await deps.clearPendingSelection?.(sandboxName, confirmedSelection);
+  if (onSelection) onSelection(confirmedSelection);
+  return confirmedSelection;
 }

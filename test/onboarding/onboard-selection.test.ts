@@ -32,6 +32,7 @@ import { createInferenceSelectionValidationHelpers } from "../../src/lib/onboard
 import {
   type InstallOllamaLinuxOptions,
   installOllamaOnLinux,
+  OFFICIAL_OLLAMA_INSTALLER_SHA256,
 } from "../../src/lib/onboard/install-ollama-linux.js";
 import { getWindowsHostOllamaDockerRequirement } from "../../src/lib/onboard/local-inference-topology.js";
 import {
@@ -235,6 +236,7 @@ function makeInstallOllamaLinuxOptions(
       .fn()
       .mockReturnValue({ stdout: "", stderr: "", exitCode: 0, timedOut: false }),
     runShellImpl: vi.fn().mockReturnValue({ status: 0, stdout: "", stderr: "", error: null }),
+    sha256FileImpl: vi.fn().mockReturnValue(OFFICIAL_OLLAMA_INSTALLER_SHA256),
     startOllamaServeImpl: vi.fn(),
     waitForHttpImpl: vi.fn().mockReturnValue(true),
     sleepSecondsImpl: vi.fn(),
@@ -474,7 +476,6 @@ function makeSetupNimOllamaDeps(overrides: Partial<SetupNimOllamaDeps> = {}): Se
     ensureOllamaLoopbackSystemdOverride: () => "not-applicable",
     runOllamaStartupOrGate: () => ({ kind: "ready" }),
     shouldFrontOllamaWithProxy: () => false,
-    // Proxy startup is deferred until configuration review acceptance.
     getLocalProviderBaseUrl: () => "http://host.docker.internal:11434/v1",
     selectAndValidateOllamaModel: async () => ({
       outcome: "selected",
@@ -1490,7 +1491,7 @@ reportChildScenario(async () => {
   });
 
   it(
-    "treats an implicit latest Ollama model as installed during systemd repair",
+    "recovers a timed-out systemd proof before accepting an implicit latest Ollama model",
     {
       timeout: PROVIDER_SELECTION_TEST_TIMEOUT_MS,
     },
@@ -1531,7 +1532,7 @@ runner.runCapture = (command) => {
   if (cmd.includes("api/generate")) return '{"response":"hello"}';
   if (cmd.includes("ps")) return "node ollama-auth-proxy.js";
   return "";
-}; runner.runCaptureEx = createSuccessfulOllamaServiceExecutionProofRunner(runner.runCaptureEx);
+}; runner.runCaptureEx = createSuccessfulOllamaServiceExecutionProofRunner(runner.runCaptureEx, true);
 runner.run = (command) => {
   runCommands.push(Array.isArray(command) ? command.join(" ") : command);
   return { status: 0 };
@@ -2048,7 +2049,6 @@ wait.sleepSeconds = () => {};
 // installOllamaSystem probes loopback at tries=1 before launching, then
 // waits at tries=10 after launch. The fake curl in these tests answers 200
 // to any URL, so real waitForHttp would short-circuit the manual launch.
-// Differentiate by tries count.
 wait.waitForHttp = (_url, tries) => (tries ?? 0) > 1;
 
 const { setupNim } = require(${onboardPath});
@@ -2725,7 +2725,7 @@ reportChildScenario(async () => {
     assert.equal(result.status, 0, result.stderr);
     const payload = JSON.parse(result.stdout.trim());
     assert.equal(payload.result.provider, "nvidia-prod");
-    assert.equal(payload.result.model, "nvidia/nemotron-3-super-120b-a12b");
+    assert.equal(payload.result.model, "nvidia/nemotron-3.5-super-vl-120b-a12b");
     assert.ok(
       payload.lines.some((line: string) =>
         line.includes("Endpoint URL is required for Other OpenAI-compatible endpoint."),
@@ -3011,9 +3011,9 @@ reportChildScenario(async () => {
       const { result, lines } = await captureConsoleOutput(async () => {
         try {
           await resolveNonInteractiveBuildCredential({
-            provider: "nvidia-prod",
             helpUrl: "https://build.nvidia.com/settings/api-keys",
-            recoveredFromSandbox: false,
+            recovery: { recoveredFromSandbox: false },
+            getSandbox: () => null,
             providerExistsInGateway: () => false,
           });
           return null;
@@ -3058,9 +3058,9 @@ reportChildScenario(async () => {
       const { result, lines } = await captureConsoleOutput(async () => {
         try {
           await resolveNonInteractiveBuildCredential({
-            provider: "nvidia-prod",
             helpUrl: "https://build.nvidia.com/settings/api-keys",
-            recoveredFromSandbox: false,
+            recovery: { recoveredFromSandbox: false },
+            getSandbox: () => null,
             providerExistsInGateway: () => false,
           });
           return null;
@@ -3147,8 +3147,8 @@ const { setupNim } = require(${onboardPath});
 
 reportChildScenario(async () => {
   process.env.NVIDIA_INFERENCE_API_KEY = "nvapi-bad";
-  const result = await setupNim(null);
-  return { result, messages, prompts, key: process.env.NVIDIA_INFERENCE_API_KEY };
+  process.env.NEMOCLAW_MODEL = "nvidia/nemotron-3-super-120b-a12b";
+  return { result: await setupNim(null), messages, prompts, key: process.env.NVIDIA_INFERENCE_API_KEY };
 });
 `;
     const result = workspace.runNodeSource(script, {
@@ -3455,7 +3455,7 @@ const nimMod = require(${nimPath});
 nimMod.getNimModelOptions = () => ({ models: [{ name: "nvidia/nemotron-3-nano", image: "fake", minGpuMemoryMB: 8000 }], usableMemoryMB: 16000 });
 nimMod.pullNimImage = () => {};
 nimMod.containerName = () => "nemoclaw-nim-test";
-nimMod.startNimContainerByName = () => "container-123";
+nimMod.startNimContainerByName = () => ({ name: "container-123", id: "a".repeat(64) });
 nimMod.waitForNimHealth = () => true;
 nimMod.isNgcLoggedIn = () => true;
 

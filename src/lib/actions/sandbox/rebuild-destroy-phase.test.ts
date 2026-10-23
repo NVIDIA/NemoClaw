@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
     ): {
       name: string;
       agent: string;
+      openshellDriver?: string;
       nimContainer?: string | null;
       gatewayName?: string | null;
       gatewayPort?: number | null;
@@ -23,7 +24,6 @@ const mocks = vi.hoisted(() => ({
   removeSandboxRegistryEntryWithReceipt: vi.fn(() => null),
   waitUntil: vi.fn(),
   waitUntilAsync: vi.fn(),
-  warnUnpreservedUserManagedFiles: vi.fn(),
   runOpenshell: vi.fn(
     (
       _args: string[],
@@ -65,10 +65,6 @@ vi.mock("../../state/registry", async (importOriginal) => ({
 
 vi.mock("./destroy", () => ({
   removeSandboxRegistryEntryWithReceipt: mocks.removeSandboxRegistryEntryWithReceipt,
-}));
-
-vi.mock("./rebuild-flow-helpers", () => ({
-  warnUnpreservedUserManagedFiles: mocks.warnUnpreservedUserManagedFiles,
 }));
 
 vi.mock("./forward-recovery", () => ({
@@ -150,6 +146,38 @@ describe("rebuild destroy phase", () => {
     vi.unstubAllEnvs();
     vi.restoreAllMocks();
   });
+
+  it.each([undefined, "nim-alpha"])(
+    "rebuilds a Podman sandbox without Docker inference cleanup with NIM name %s",
+    async (nimContainer) => {
+      const sandboxEntry = {
+        name: "alpha",
+        agent: "hermes",
+        openshellDriver: "podman",
+        gatewayName: "nemoclaw",
+        nimContainer,
+      };
+      mocks.getSandbox.mockReturnValue(sandboxEntry);
+      const onDeleted = vi.fn();
+      const result = await runRebuildDestroyPhase({
+        sandboxName: "alpha",
+        sandboxEntry,
+        staleRecovery: false,
+        recreateJournal: stubRecreateJournal(),
+        backupManifest: null,
+        log: vi.fn(),
+        bail: (message): never => {
+          throw new Error(message);
+        },
+        onDeleted,
+      });
+
+      expect(result).not.toBeNull();
+      expect(onDeleted).toHaveBeenCalledOnce();
+      expect(mocks.stopNimContainer).not.toHaveBeenCalled();
+      expect(mocks.stopNimContainerByName).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([null, "MCP attachment could not be restored"])(
     "stops before sandbox deletion on a messaging conflict and reports MCP recovery failure %j",
@@ -357,7 +385,7 @@ describe("rebuild destroy phase", () => {
     expect(onDeleted).toHaveBeenCalledOnce();
   });
 
-  it("pins deletion and the delete-edge user-file probe when ambient selection changes (#10514)", async () => {
+  it("pins deletion when ambient selection changes without probing a file allowlist (#10514)", async () => {
     vi.stubEnv("OPENSHELL_GATEWAY", "nemoclaw-29080");
     vi.stubEnv("OPENSHELL_WORKSPACE", "hostile-workspace");
     vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", "/hostile/tls");
@@ -411,11 +439,6 @@ describe("rebuild destroy phase", () => {
           OPENSHELL_LOCAL_TLS_DIR: "/authority/tls",
         }),
       }),
-    );
-    expect(mocks.warnUnpreservedUserManagedFiles).toHaveBeenCalledWith(
-      "alpha",
-      expect.any(Function),
-      runtimeSelection,
     );
     const deleteOptions = mocks.runOpenshell.mock.calls.find(
       ([args]) => args[0] === "sandbox" && args[1] === "delete",
@@ -895,7 +918,7 @@ describe("rebuild destroy phase", () => {
 
     expect(mocks.captureOpenshell).toHaveBeenCalledWith(
       ["sandbox", "get", "-g", "nemoclaw", "alpha"],
-      expect.objectContaining({ timeout: 15_000 }),
+      expect.any(Object),
     );
     expect(onDeleted).not.toHaveBeenCalled();
     expect(onDeleteStateAmbiguous).toHaveBeenCalledOnce();

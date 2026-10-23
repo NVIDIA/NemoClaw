@@ -26,7 +26,6 @@ const CATALOGUE_JOBS = [
   "catalogue-nvidia-api",
   "catalogue-nvidia-inference",
   "catalogue-github-read",
-  "catalogue-brave-nvidia-inference",
 ] as const;
 
 function workflow(): OperationsWorkflow {
@@ -79,12 +78,12 @@ describe("stock onboarding managed-image publication boundary", () => {
     },
   );
 
-  it("blocks matrix generation when any publication architecture fails", () => {
+  it("plans image prerequisites before waiting for publication", () => {
     const value = workflow();
-    value.jobs["generate-matrix"].needs = [];
+    value.jobs["generate-matrix"].needs = ["base-image-publication"];
 
     expect(validateBaseImagePublicationGate(value)).toContain(
-      "generate-matrix must wait for complete managed-image publication",
+      "generate-matrix must not wait for managed-image publication",
     );
   });
 });

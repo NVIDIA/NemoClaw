@@ -41,10 +41,6 @@ nemoclaw_e2e_configure_compatible_inference() {
   export COMPATIBLE_API_KEY="$NVIDIA_INFERENCE_API_KEY"
 }
 
-nemoclaw_e2e_hosted_inference_key() {
-  printf '%s' "${NVIDIA_INFERENCE_API_KEY:-}"
-}
-
 nemoclaw_e2e_hosted_inference_base_url() {
   if nemoclaw_e2e_using_compatible_inference; then
     printf '%s' "${NEMOCLAW_ENDPOINT_URL:-https://inference-api.nvidia.com/v1}"
@@ -58,41 +54,6 @@ nemoclaw_e2e_expected_route_provider() {
     printf '%s' "$NEMOCLAW_E2E_HOSTED_INFERENCE_PROVIDER_DEFAULT"
   else
     printf '%s' "nvidia-prod"
-  fi
-}
-
-nemoclaw_e2e_strip_ansi() {
-  if command -v perl >/dev/null 2>&1; then
-    perl -pe 's/\x1b\][^\a]*(?:\a|\x1b\\)//g; s/\x1b\[[0-9;?]*[ -\/]*[@-~]//g'
-  else
-    sed -E $'s/\x1B\\[[0-9;?]*[ -\\/]*[@-~]//g'
-  fi
-}
-
-nemoclaw_e2e_inference_output_matches() {
-  local output="$1"
-  local provider="$2"
-  local model="${3:-}"
-  local plain
-
-  plain="$(printf '%s' "$output" | nemoclaw_e2e_strip_ansi)"
-  grep -Eqi "Provider:[[:space:]]*${provider}" <<<"$plain" || return 1
-  [ -z "$model" ] || grep -Fq "$model" <<<"$plain"
-}
-
-nemoclaw_e2e_note_pass() {
-  if declare -F pass >/dev/null 2>&1; then
-    pass "$@"
-  else
-    printf 'PASS: %s\n' "$*"
-  fi
-}
-
-nemoclaw_e2e_note_fail() {
-  if declare -F fail >/dev/null 2>&1; then
-    fail "$@"
-  else
-    printf 'ERROR: %s\n' "$*" >&2
   fi
 }
 
@@ -118,26 +79,4 @@ nemoclaw_e2e_probe_hosted_inference() {
   # redaction and retries.
   status=$(curl -sS --connect-timeout 10 --max-time 20 -o /dev/null -w "%{http_code}" "$base_url" 2>/dev/null) || return $?
   [ -n "$status" ] && [ "$status" != "000" ]
-}
-
-nemoclaw_e2e_require_hosted_inference_key() {
-  local key
-  key="$(nemoclaw_e2e_hosted_inference_key)"
-
-  if nemoclaw_e2e_using_compatible_inference; then
-    if [ -n "$key" ]; then
-      nemoclaw_e2e_note_pass "NVIDIA_INFERENCE_API_KEY is set for hosted CI inference"
-    else
-      nemoclaw_e2e_note_fail "NVIDIA_INFERENCE_API_KEY not set - required for hosted CI inference"
-      return 1
-    fi
-    return 0
-  fi
-
-  if [ -n "$key" ] && [[ "$key" == nvapi-* ]]; then
-    nemoclaw_e2e_note_pass "NVIDIA_INFERENCE_API_KEY is set (starts with nvapi-)"
-  else
-    nemoclaw_e2e_note_fail "NVIDIA_INFERENCE_API_KEY not set or invalid - required for live inference"
-    return 1
-  fi
 }

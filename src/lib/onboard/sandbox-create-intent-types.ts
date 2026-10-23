@@ -1,7 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { NativeLocalProviderAttachment } from "../inference/native-local/contract";
+import type { NativeProviderAttachment } from "../inference/native-provider/contract";
+
 import type { SandboxHostMount } from "../state/registry/types";
+import type { NativeNvidiaProviderAttachment } from "../inference/native-nvidia";
 import type { MessagingChannelConfig } from "../messaging-channel-config";
 import type { DockerGpuRoutePlan } from "./docker-gpu-route";
 import type { InitialSandboxPolicy } from "./initial-policy";
@@ -47,6 +51,9 @@ export type SandboxCreatePolicyRequest = {
 export type SandboxCreateIntent = {
   readonly sandboxName: string;
   readonly inferenceProvider: string | null;
+  readonly nativeLocalProviderAttachment?: NativeLocalProviderAttachment;
+  readonly nativeNvidiaProviderAttachment?: NativeNvidiaProviderAttachment;
+  readonly nativeHostedProviderAttachment?: NativeProviderAttachment;
   readonly activeMessagingChannels: readonly string[];
   readonly messagingProviderRequests: readonly SandboxCreateMessagingProviderRequest[];
   readonly reusableMessagingProviders: readonly string[];
@@ -68,6 +75,9 @@ export type ResolveSandboxCreateIntentInput = {
   basePolicyPath: string;
   sandboxName: string;
   inferenceProvider?: string | null;
+  nativeLocalProviderAttachment?: NativeLocalProviderAttachment;
+  nativeNvidiaProviderAttachment?: NativeNvidiaProviderAttachment;
+  nativeHostedProviderAttachment?: NativeProviderAttachment;
   hostLocalInferenceRouteOnly?: boolean;
   channels: readonly MessagingChannel[];
   enabledChannels: string[] | null;
@@ -106,9 +116,6 @@ export type MaterializeSandboxCreatePlanInput = {
   messagingTokenDefs: MessagingTokenDef[];
   /** Non-secret config captured in the messaging plan that owns exact policy endpoints. */
   messagingConfig?: MessagingChannelConfig | null;
-  runProviderPreDeleteCleanup(
-    revalidateSandboxIdentity?: (operation: string) => void,
-  ): Promise<void>;
   upsertMessagingProviders(
     tokenDefs: MessagingTokenDef[],
     options: {

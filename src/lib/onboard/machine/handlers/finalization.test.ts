@@ -77,6 +77,7 @@ function createDeps(
     getChatUiUrl: vi.fn(() => "http://127.0.0.1:18789"),
     buildChain: vi.fn(() => ({ port: 18789 })),
     verify: vi.fn(async () => ({ ok: true })),
+    probeTerminalInference: vi.fn(async () => ({ ok: true })),
     diagnostics: vi.fn(() => ["  ✓ verified"]),
     verifyWebSearch: vi.fn(async () => true),
     dashboard: vi.fn(async () => undefined),
@@ -109,6 +110,7 @@ function createDeps(
       getChatUiUrl: calls.getChatUiUrl,
       buildVerifyChain: calls.buildChain,
       verifyDeployment: calls.verify,
+      probeTerminalInference: calls.probeTerminalInference,
       formatVerificationDiagnostics: calls.diagnostics,
       verifyWebSearchInsideSandbox: calls.verifyWebSearch,
       printDashboard: calls.dashboard,
@@ -613,6 +615,82 @@ describe("finalization handlers", () => {
     expect(result.stateResult.type).toBe("complete");
   });
 
+  it.each([false, true])(
+    "verifies Deep Code OpenRouter inference before reporting the terminal ready (deferred: %s)",
+    async (deferRuntimeVerification) => {
+      const { deps, calls } = createDeps();
+      const agent = {
+        name: "langchain-deepagents-code",
+        displayName: "LangChain Deep Agents Code",
+        runtime: { kind: "terminal", interactive_command: "dcode" },
+      };
+
+      const result = await runFinalizationHandlers({
+        ...baseOptions(deps),
+        provider: "openrouter-api",
+        model: "moonshotai/kimi-k2.6",
+        preferredInferenceApi: "openai-completions",
+        agent,
+        deferRuntimeVerification,
+      });
+
+      expect(calls.probeTerminalInference).toHaveBeenCalledExactlyOnceWith({
+        sandboxName: "my-assistant",
+        agentName: "langchain-deepagents-code",
+        provider: "openrouter-api",
+        model: "moonshotai/kimi-k2.6",
+        preferredInferenceApi: "openai-completions",
+      });
+      expect(calls.log).toHaveBeenCalledWith(
+        "  ✓ LangChain Deep Agents Code terminal runtime is ready",
+      );
+      expect(calls.reportReadiness).toHaveBeenCalledExactlyOnceWith(true);
+      expect(result.deploymentHealthy).toBe(true);
+      expect(result.stateResult.type).toBe("complete");
+    },
+  );
+
+  it.each([false, true])(
+    "keeps Deep Code OpenRouter onboarding incomplete when inference is unavailable (deferred: %s)",
+    async (deferRuntimeVerification) => {
+      const { deps, calls } = createDeps({
+        probeTerminalInference: vi.fn(async () => ({
+          ok: false,
+          detail: "sandbox inference invocation probe returned HTTP 503",
+        })),
+      });
+      const agent = {
+        name: "langchain-deepagents-code",
+        displayName: "LangChain Deep Agents Code",
+        runtime: { kind: "terminal", interactive_command: "dcode" },
+      };
+
+      const result = await runFinalizationHandlers({
+        ...baseOptions(deps),
+        provider: "openrouter-api",
+        model: "moonshotai/kimi-k2.6",
+        agent,
+        deferRuntimeVerification,
+      });
+
+      expect(result).toMatchObject({
+        deploymentHealthy: false,
+        stateResult: {
+          type: "pause",
+          metadata: { state: "post_verify", reason: "deployment_not_ready" },
+        },
+      });
+      expect(result.verificationDiagnostics).toEqual([
+        expect.stringContaining("sandbox inference invocation probe returned HTTP 503"),
+      ]);
+      expect(calls.error).toHaveBeenCalledWith(
+        expect.stringContaining("Deep Code inference for 'my-assistant' is not ready"),
+      );
+      expect(calls.log).not.toHaveBeenCalledWith(expect.stringContaining("runtime is ready"));
+      expect(calls.reportReadiness).toHaveBeenCalledExactlyOnceWith(false);
+    },
+  );
+
   it("does not complete the session when deployment verification fails", async () => {
     const { deps, calls } = createDeps({
       verifyDeployment: vi.fn(async () => {
@@ -835,4 +913,59 @@ describe("secret-boundary refusal during finalization", () => {
       expect(calls.log).not.toHaveBeenCalledWith(expect.stringContaining("ready"));
     },
   );
+
+  it.each([
+    {
+      reason: "portable-hermes-registry-authority-unavailable" as const,
+      expected: "lifecycle receipt and registered gateway authority could not be matched",
+      action: "nemoclaw my-assistant doctor",
+      additional: "Preserve the registry and lifecycle receipt files unchanged",
+      forbidden: "identity-qualified recovery guidance",
+      resume: false,
+    },
+    {
+      reason: "portable-hermes-native-gateway-unavailable" as const,
+      expected: "receipt-owned native gateway is not qualified and healthy",
+      action: "nemoclaw my-assistant recover",
+      additional: "nemoclaw onboard --resume",
+      forbidden: "untrusted runtime diagnostic",
+      resume: true,
+    },
+    {
+      reason: "portable-hermes-lifecycle-lock-unavailable" as const,
+      expected: "lifecycle lock is unavailable",
+      action: "Wait for the active sandbox operation to finish",
+      additional: "nemoclaw onboard --resume",
+      forbidden: "untrusted runtime diagnostic",
+      resume: true,
+    },
+  ])("renders redacted actionable Portable Hermes $reason guidance (#11892)", async (row) => {
+    const { deps, calls } = createDeps({
+      checkAndRecoverSandboxProcesses: vi.fn(async () => ({
+        ready: false as const,
+        reason: row.reason,
+      })),
+    });
+
+    const result = await handleFinalizationPhase({
+      ...baseOptions(deps),
+      agent: { name: "hermes" },
+      portableProfileSelected: true,
+    });
+
+    expect(result.stateResult).toMatchObject({
+      type: "pause",
+      metadata: { state: "finalizing", reason: "recovery_check_incomplete" },
+    });
+    expect(calls.error).toHaveBeenCalledWith(expect.stringContaining(row.expected));
+    expect(calls.error).toHaveBeenCalledWith(expect.stringContaining(row.action));
+    expect(calls.error).toHaveBeenCalledWith(expect.stringContaining(row.additional));
+    expect(calls.error).not.toHaveBeenCalledWith(expect.stringContaining(row.forbidden));
+    expect(calls.error.mock.calls.flat().join("\n").includes("nemoclaw onboard --resume")).toBe(
+      row.resume,
+    );
+    expect(calls.error).not.toHaveBeenCalledWith(
+      expect.stringContaining("untrusted runtime diagnostic"),
+    );
+  });
 });

@@ -1,33 +1,37 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-interface SnapshotStateFile {
-  path: string;
-  strategy: "copy" | "sqlite_backup";
+import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
+import type {
+  SandboxCommandResult,
+  SandboxExecCommandExecutionOptions,
+} from "../../adapters/sandbox/command-transport";
+import { executeOrdinarySandboxCommand } from "../../adapters/sandbox/ordinary-command";
+
+export const HERMES_DASHBOARD_STATE_MIGRATION_COMMAND =
+  "/opt/hermes/.venv/bin/python3 -I /usr/local/lib/nemoclaw/migrate-hermes-dashboard-state.py --hermes-dir /sandbox/.hermes";
+export const HERMES_DASHBOARD_STATE_MIGRATION_TIMEOUT_MS = 30 * 60_000;
+
+export function hermesDashboardStateMigrationRecoveryGuidance(sandboxName: string): string {
+  return `Hermes home /sandbox/.hermes in sandbox '${sandboxName}' may contain a partial legacy dashboard-state migration. Inspect and reconcile that home before retrying restore.`;
 }
 
-/**
- * Recommend a gateway restart after restoring a Hermes SQLite state file.
- *
- * The restored SQLite databases replace files the running Hermes gateway
- * still holds open, so it serves pre-restore state until it reopens them
- * (#7312).
- */
-export function printHermesGatewayRestoreHint(
+export function migrateHermesLegacyDashboardState(
   sandboxName: string,
-  agentName: string | null | undefined,
-  restoredFiles: readonly string[],
-  snapshotStateFiles: readonly SnapshotStateFile[],
-  cliName: string,
-  writeLine: (message: string) => void = console.log,
-): void {
-  if (agentName !== "hermes") return;
-  const restoredFileSet = new Set(restoredFiles);
-  const restoredSqliteDatabase = snapshotStateFiles.some(
-    (stateFile) => stateFile.strategy === "sqlite_backup" && restoredFileSet.has(stateFile.path),
-  );
-  if (!restoredSqliteDatabase) return;
-  writeLine(
-    `  Restart the gateway to open the restored state databases: run \`${cliName} ${sandboxName} gateway restart\``,
+  runtimeSelection?: OpenShellRuntimeSelection,
+  executionOptions: Pick<
+    SandboxExecCommandExecutionOptions,
+    "commandExecutor" | "gatewayName"
+  > = {},
+): Promise<SandboxCommandResult | null> {
+  return executeOrdinarySandboxCommand(
+    sandboxName,
+    HERMES_DASHBOARD_STATE_MIGRATION_COMMAND,
+    HERMES_DASHBOARD_STATE_MIGRATION_TIMEOUT_MS,
+    {
+      honorCallerTimeout: true,
+      ...executionOptions,
+      ...(runtimeSelection ? { runtimeSelection } : {}),
+    },
   );
 }

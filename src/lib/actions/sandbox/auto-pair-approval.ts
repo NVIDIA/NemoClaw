@@ -383,7 +383,7 @@ def exit_with_receipt(receipt):
   const pendingRead = options.localDeviceOnly
     ? `
 # SOURCE_OF_TRUTH_REVIEW (restored-clone local pending selection):
-# Invalid state: after snapshot restore restarts the clone gateway, the bounded
+# Invalid state: after restored-clone activation restarts the gateway, the bounded
 # warm-up asks for operator.write. When the clone's paired baseline lacks that
 # scope, OpenClaw creates the pending transition, and that same transition gates
 # the devices list this one-shot approval pass would need.

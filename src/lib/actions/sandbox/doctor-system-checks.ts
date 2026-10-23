@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import path from "node:path";
 import { stripAnsi } from "../../adapters/openshell/client";
 import { CLI_NAME } from "../../cli/branding";
 import { GATEWAY_PORT } from "../../core/ports";
@@ -15,10 +14,19 @@ import {
   resolveCurrentRuntimeProviderBundle,
   resolveRuntimeProviderBundle,
 } from "../../onboard/runtime-provider/access";
-import { qualifyPortableAgentLifecycleAuthority } from "../../onboard/experimental/portable-agent-lifecycle";
+import {
+  assertHermesPortableAgentLifecycleAuthority,
+  HermesPortableLifecycleAuthorityError,
+  qualifyPortableAgentLifecycleAuthority,
+} from "../../onboard/experimental/portable-agent-lifecycle";
 import { withSandboxLifecycleLock } from "./lifecycle/lock";
 import type { SandboxEntry } from "../../state/registry";
-import { readCloudflaredState } from "../../tunnel/services";
+import {
+  findHostUnmanagedCloudflaredPids,
+  migrateLegacyCloudflaredState,
+  readCloudflaredState,
+  resolveTunnelPidDir,
+} from "../../tunnel/services";
 import {
   buildGatewayInspectFailureChecks,
   type GatewayInspectOptions,
@@ -36,7 +44,46 @@ export function inspectSandboxDoctorPortableAuthority(
   sandboxName: string,
   readRegistry: (sandboxName: string) => SandboxEntry | null,
 ) {
-  return qualifyPortableAgentLifecycleAuthority(sandboxName, { readRegistry });
+  try {
+    return qualifyPortableAgentLifecycleAuthority(sandboxName, { readRegistry });
+  } catch (error) {
+    if (error instanceof HermesPortableLifecycleAuthorityError) {
+      return { kind: "hermes-authority-unavailable" as const };
+    }
+    throw error;
+  }
+}
+
+type HermesPortableDoctorAuthority = Extract<
+  ReturnType<typeof qualifyPortableAgentLifecycleAuthority>,
+  { readonly kind: "hermes" }
+>;
+
+/** Confirm active Hermes readiness without exposing untrusted runtime diagnostics. */
+export async function observeSandboxDoctorHermesReadiness(
+  sandboxName: string,
+  authority: HermesPortableDoctorAuthority,
+  readRegistry: (sandboxName: string) => SandboxEntry | null,
+): Promise<"ready" | "unavailable" | "authority-unavailable" | null> {
+  if (authority.phase !== "active" || !authority.entry) return null;
+  try {
+    await assertHermesPortableAgentLifecycleAuthority(
+      sandboxName,
+      {
+        agent: authority.entry.agent,
+        gatewayName: authority.gatewayName,
+        lifecycleGeneration: authority.lifecycleGeneration,
+        openshellDriver: authority.entry.openshellDriver,
+        provider: authority.entry.provider,
+      },
+      { readRegistry },
+    );
+    return "ready";
+  } catch (error) {
+    return error instanceof HermesPortableLifecycleAuthorityError
+      ? "authority-unavailable"
+      : "unavailable";
+  }
 }
 
 export function oneLine(value = ""): string {
@@ -157,8 +204,64 @@ function staleCloudflaredPidCheck(pid: number): DoctorCheck {
   };
 }
 
-export function cloudflaredDoctorCheck(sandboxName: string): DoctorCheck {
-  const state = readCloudflaredState(path.join("/tmp", `nemoclaw-services-${sandboxName}`));
+function unverifiedCloudflaredPidCheck(pid: number): DoctorCheck {
+  return {
+    group: "Local services",
+    label: "cloudflared",
+    status: "warn",
+    detail: `PID ${pid}, identity unavailable`,
+    hint: "process identity is unavailable; restore process inspection access, then retry",
+  };
+}
+
+function legacyCloudflaredMigrationWarning(
+  sandboxName: string,
+  gatewayPort: number,
+  migrateState: typeof migrateLegacyCloudflaredState,
+): DoctorCheck | null {
+  try {
+    migrateState({ sandboxName, gatewayPort });
+    return null;
+  } catch (error) {
+    return {
+      group: "Local services",
+      label: "cloudflared",
+      status: "warn",
+      detail: error instanceof Error ? error.message : "legacy cloudflared migration failed",
+      hint: `inspect each process and stop only the unintended one, then rerun \`${CLI_NAME} ${sandboxName} doctor\``,
+    };
+  }
+}
+
+export function cloudflaredDoctorCheck(
+  sandboxName: string,
+  gatewayPort: number = GATEWAY_PORT,
+  readState: typeof readCloudflaredState = readCloudflaredState,
+  migrateState: typeof migrateLegacyCloudflaredState = migrateLegacyCloudflaredState,
+): DoctorCheck {
+  const usesProductionState = readState === readCloudflaredState;
+  if (usesProductionState) {
+    const warning = legacyCloudflaredMigrationWarning(sandboxName, gatewayPort, migrateState);
+    if (warning) return warning;
+  }
+  const state = readState(resolveTunnelPidDir({ gatewayPort }));
+  const managedPid =
+    state.kind === "stale-pid-process" || state.kind === "unverified-pid-process"
+      ? state.pid
+      : null;
+  const unmanagedPids =
+    usesProductionState && state.kind !== "running"
+      ? findHostUnmanagedCloudflaredPids(managedPid)
+      : [];
+  if (unmanagedPids.length > 0) {
+    return {
+      group: "Local services",
+      label: "cloudflared",
+      status: "warn",
+      detail: `unmanaged PID${unmanagedPids.length === 1 ? "" : "s"} ${unmanagedPids.join(", ")}`,
+      hint: "cloudflared is running without NemoClaw ownership; stop it through its process manager before running `nemoclaw tunnel start`",
+    };
+  }
   switch (state.kind) {
     case "stopped":
       return stoppedCloudflaredCheck();
@@ -166,6 +269,8 @@ export function cloudflaredDoctorCheck(sandboxName: string): DoctorCheck {
       return staleCloudflaredPidFileCheck();
     case "stale-pid-process":
       return staleCloudflaredPidCheck(state.pid);
+    case "unverified-pid-process":
+      return unverifiedCloudflaredPidCheck(state.pid);
     case "running":
       return {
         group: "Local services",

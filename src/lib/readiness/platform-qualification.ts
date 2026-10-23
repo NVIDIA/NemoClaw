@@ -11,8 +11,12 @@ import {
   readBoundedNvidiaFirmwareValue,
 } from "../inference/dgx-station-identity.js";
 import type { NvidiaPlatform } from "../inference/nim.js";
-import { collectN1xIdentity, type N1xIdentityOptions } from "../inference/platform-identity/n1x.js";
-import { collectN1xWslProduct } from "../inference/platform-identity/n1x-wsl.js";
+import {
+  collectN1xIdentity,
+  isKnownN1xPciDevice,
+  type N1xIdentityOptions,
+} from "../inference/platform-identity/n1x.js";
+import { collectWslNvidiaProduct } from "../inference/platform-identity/n1x-wsl.js";
 import {
   isQualifiedStationProfile,
   isQualifiedStationRuntime,
@@ -48,8 +52,11 @@ export interface PlatformIdentity {
   n1xCandidate?: boolean | null;
   n1xFastOsMarker?: boolean | null;
   n1xPciGpu?: boolean | null;
+  n1xPciDevice?: string | null;
   n1xWslGpu?: boolean | null;
   n1xWslProduct?: boolean | null;
+  stationGb300WslGpu?: boolean | null;
+  stationGb300WslProduct?: boolean | null;
   stationProfile?: StationProfile | null;
   stationGb300PciGpu?: boolean | null;
   osId?: string | null;
@@ -102,6 +109,8 @@ export interface CollectPlatformIdentityOptions extends N1xIdentityOptions {
   isWsl?: boolean;
   /** Pre-collected boundary observation; null means the probe was inconclusive. */
   n1xWslProductObservation?: boolean | null;
+  /** Pre-collected boundary observation; null means the probe was inconclusive. */
+  stationGb300WslProductObservation?: boolean | null;
   runCaptureImpl?: (
     command: readonly string[],
     options?: { ignoreError?: boolean; timeout?: number },
@@ -390,10 +399,25 @@ export function collectPlatformIdentity(
   const firmwareProducts = [productName, productFamily, boardName, deviceTreeModel];
   const firmwareIdentity = classifyNvidiaFirmwareProducts(firmwareProducts);
   const stationFirmwareProduct = firmwareIdentity.stationFirmwareProduct;
-  const n1xWslProduct = Object.prototype.hasOwnProperty.call(options, "n1xWslProductObservation")
+  const hasN1xWslProductObservation = Object.prototype.hasOwnProperty.call(
+    options,
+    "n1xWslProductObservation",
+  );
+  const hasStationGb300WslProductObservation = Object.prototype.hasOwnProperty.call(
+    options,
+    "stationGb300WslProductObservation",
+  );
+  const collectedWslProduct =
+    options.isWsl && !hasN1xWslProductObservation && !hasStationGb300WslProductObservation
+      ? collectWslNvidiaProduct(options)
+      : undefined;
+  const n1xWslProduct = hasN1xWslProductObservation
     ? options.n1xWslProductObservation
-    : collectN1xWslProduct(options);
-  const wslIdentity = options.isWsl ? { n1xWslProduct } : {};
+    : collectedWslProduct?.n1x;
+  const stationGb300WslProduct = hasStationGb300WslProductObservation
+    ? options.stationGb300WslProductObservation
+    : collectedWslProduct?.stationGb300;
+  const wslIdentity = options.isWsl ? { n1xWslProduct, stationGb300WslProduct } : {};
   const osReleasePath = options.osReleasePath ?? "/etc/os-release";
   const osReleaseFallbackPath =
     options.osReleaseFallbackPath ??
@@ -443,6 +467,7 @@ export function collectPlatformIdentity(
         n1xCandidate: true,
         n1xFastOsMarker: n1xIdentity.fastOsMarker,
         n1xPciGpu: n1xIdentity.pciGpu,
+        ...(n1xIdentity.pciDevice ? { n1xPciDevice: n1xIdentity.pciDevice } : {}),
       };
     }
   }
@@ -529,18 +554,21 @@ function deriveN1xQualification(input: Readonly<PlatformQualificationInput>): {
 } {
   const identity =
     input.nvidiaPlatform === "n1x" || input.n1xCandidate === true || input.n1xFastOsMarker === true;
+  const identityEstablished =
+    input.n1xFastOsMarker === true || isKnownN1xPciDevice(input.n1xPciDevice ?? undefined);
   const qualified =
     input.nvidiaPlatform === "n1x" &&
-    input.n1xFastOsMarker === true &&
+    identityEstablished &&
     input.n1xPciGpu === true &&
     input.platform === "linux" &&
     input.architecture === "arm64" &&
+    !input.isWsl &&
     input.hasNvidiaGpu;
   let status: QualificationStatus = "unknown";
-  if (identity && input.n1xFastOsMarker === false) {
-    status = "unqualified";
-  } else if (identity && input.n1xFastOsMarker === true && input.n1xPciGpu !== undefined) {
+  if (identity && identityEstablished && input.n1xPciGpu !== undefined) {
     status = qualified ? "qualified" : "unqualified";
+  } else if (identity && input.n1xFastOsMarker === false) {
+    status = "unqualified";
   }
   return { identity, qualified, status };
 }
@@ -553,6 +581,31 @@ function deriveN1xWslQualification(
   if (input.n1xWslGpu === undefined || input.n1xWslGpu === null) return "unknown";
   if (!activeRuntimeProviderId || input.containerGpuProof === undefined) return "unknown";
   return input.n1xWslGpu === true &&
+    input.platform === "linux" &&
+    input.architecture === "arm64" &&
+    input.containerGpuProof.providerId === activeRuntimeProviderId &&
+    input.containerGpuProof.passed &&
+    input.hasNvidiaGpu
+    ? "qualified"
+    : "unqualified";
+}
+
+function deriveStationGb300WslQualification(
+  input: Readonly<PlatformQualificationInput>,
+  activeRuntimeProviderId: string | null,
+): QualificationStatus {
+  if (!input.isWsl) return "unqualified";
+  if (
+    input.stationGb300WslGpu === undefined ||
+    input.stationGb300WslGpu === null ||
+    input.stationGb300WslProduct === undefined ||
+    input.stationGb300WslProduct === null
+  ) {
+    return "unknown";
+  }
+  if (!activeRuntimeProviderId || input.containerGpuProof === undefined) return "unknown";
+  return input.stationGb300WslGpu === true &&
+    input.stationGb300WslProduct === true &&
     input.platform === "linux" &&
     input.architecture === "arm64" &&
     input.containerGpuProof.providerId === activeRuntimeProviderId &&
@@ -663,6 +716,7 @@ export function projectPlatformQualification(
   const sparkQualified = sparkIdentity && input.architecture === "arm64" && input.hasNvidiaGpu;
   const n1x = deriveN1xQualification(input);
   const n1xWslStatus = deriveN1xWslQualification(input, activeRuntimeProviderId);
+  const stationGb300WslStatus = deriveStationGb300WslQualification(input, activeRuntimeProviderId);
   const platformSupported =
     (linuxSupported || macosSupported) &&
     input.platformIdentityConflict !== true &&
@@ -680,6 +734,8 @@ export function projectPlatformQualification(
     input.n1xPciGpu !== undefined ||
     input.n1xWslGpu !== undefined ||
     input.n1xWslProduct !== undefined ||
+    input.stationGb300WslGpu !== undefined ||
+    input.stationGb300WslProduct !== undefined ||
     input.stationProfile ||
     input.stationFirmwareProduct
   ) {
@@ -702,8 +758,11 @@ export function projectPlatformQualification(
         n1xCandidate: input.n1xCandidate ?? null,
         n1xFastOsMarker: input.n1xFastOsMarker ?? null,
         n1xPciGpu: input.n1xPciGpu ?? null,
+        n1xPciDevice: input.n1xPciDevice ?? null,
         n1xWslGpu: input.n1xWslGpu ?? null,
         n1xWslProduct: input.n1xWslProduct ?? null,
+        stationGb300WslGpu: input.stationGb300WslGpu ?? null,
+        stationGb300WslProduct: input.stationGb300WslProduct ?? null,
         stationProfile: input.stationProfile ?? null,
         stationGb300PciGpu: input.stationGb300PciGpu ?? null,
         osId: input.osId ?? null,
@@ -751,6 +810,10 @@ export function projectPlatformQualification(
     capability(
       "host.platform.n1x_wsl",
       !input.isWsl ? "absent" : n1xWslStatus === "qualified" ? "present" : "absent",
+    ),
+    capability(
+      "host.platform.station_gb300_wsl",
+      !input.isWsl ? "absent" : stationGb300WslStatus === "qualified" ? "present" : "absent",
     ),
     capability("host.platform.dgx_spark", sparkQualified ? "present" : "absent"),
     capability(
@@ -827,6 +890,13 @@ export function projectPlatformQualification(
     if (input.n1xWslGpu === true) {
       qualifications.push(
         qualification("host.platform.n1x_wsl", n1xWslStatus, ["host.platform.n1x_wsl"]),
+      );
+    }
+    if (input.stationGb300WslGpu === true || input.stationGb300WslProduct === true) {
+      qualifications.push(
+        qualification("host.platform.station_gb300_wsl", stationGb300WslStatus, [
+          "host.platform.station_gb300_wsl",
+        ]),
       );
     }
   }
@@ -961,7 +1031,7 @@ export function projectPlatformQualification(
       id: "host.platform.n1x_unqualified",
       severity: "blocking",
       summary:
-        "N1x requires the trusted FastOS marker, NVIDIA PCI identity, Arm64 host, and available NVIDIA GPU.",
+        "N1x requires a trusted FastOS marker or recognized N1x PCI device, NVIDIA display-class PCI identity, a native Linux Arm64 host, and an available NVIDIA GPU.",
       capabilityIds: ["host.platform.n1x", "host.platform.supported"],
       ...(evidence.length ? { evidenceIds: ["host.platform.identity"] } : {}),
     });

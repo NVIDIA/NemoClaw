@@ -50,6 +50,11 @@ describe("sandbox workload runtime capabilities", () => {
       legacyDockerfileBuilds: true,
       managedImages: AMD64_MANAGED_IMAGE_V1_SUPPORT,
       portableAgentRuntime: null,
+      externalImages: {
+        exactDigestReferences: true,
+        platforms: ["linux/amd64"],
+        agents: ["openclaw", "hermes"],
+      },
     });
   });
 
@@ -62,6 +67,11 @@ describe("sandbox workload runtime capabilities", () => {
       legacyDockerfileBuilds: true,
       managedImages: ARM64_MANAGED_IMAGE_V1_SUPPORT,
       portableAgentRuntime: null,
+      externalImages: {
+        exactDigestReferences: true,
+        platforms: ["linux/arm64"],
+        agents: ["openclaw", "hermes"],
+      },
     });
   });
 
@@ -74,6 +84,7 @@ describe("sandbox workload runtime capabilities", () => {
       legacyDockerfileBuilds: true,
       managedImages: null,
       portableAgentRuntime: null,
+      externalImages: null,
     });
   });
 
@@ -84,6 +95,7 @@ describe("sandbox workload runtime capabilities", () => {
       legacyDockerfileBuilds: true,
       managedImages: null,
       portableAgentRuntime: null,
+      externalImages: null,
     });
   });
 
@@ -94,6 +106,7 @@ describe("sandbox workload runtime capabilities", () => {
       legacyDockerfileBuilds: false,
       managedImages: null,
       portableAgentRuntime: null,
+      externalImages: null,
     });
   });
 
@@ -106,6 +119,7 @@ describe("sandbox workload runtime capabilities", () => {
         legacyDockerfileBuilds: false,
         managedImages: null,
         portableAgentRuntime: null,
+        externalImages: null,
       });
     },
   );
@@ -141,6 +155,7 @@ describe("sandbox workload runtime capabilities", () => {
         contractVersions: [1],
         capabilityContractVersions: [1],
       },
+      externalImages: null,
     });
   });
 

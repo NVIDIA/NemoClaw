@@ -12,6 +12,7 @@ import path from "node:path";
 import { redirectInheritedChildStdoutToStderr } from "./cli/stdout-guard";
 import { REPOSITORY_ROOT } from "./core/repository-root";
 import { shellQuote } from "./core/shell-quote";
+import { isPodmanGatewayRuntimeEnabled } from "./onboard/runtime-provider/configured-runtime";
 import { detectDockerHost } from "./platform";
 import {
   diagnosticPreview,
@@ -51,7 +52,7 @@ type CaptureOptions = Omit<SpawnSyncOptionsWithStringEncoding, "encoding"> & {
 
 type SpawnResult = SpawnSyncReturns<string | Buffer>;
 
-const dockerAuthority = detectDockerHost();
+const dockerAuthority = isPodmanGatewayRuntimeEnabled() ? null : detectDockerHost();
 if (dockerAuthority) {
   process.env.DOCKER_HOST = dockerAuthority.dockerHost;
   // The selected authority is now explicit. Keep no context selector that can
@@ -72,16 +73,13 @@ function buildRunnerEnv(
   }
   if (replaceEnv) return normalizedExtra;
   if (executable !== undefined && path.basename(executable) === "docker") {
-    const selectedDockerContext = String(
-      normalizedExtra.DOCKER_CONTEXT ?? process.env.DOCKER_CONTEXT ?? "",
-    ).trim();
     const selectedDockerHost =
-      normalizedExtra.DOCKER_HOST ?? (selectedDockerContext ? undefined : process.env.DOCKER_HOST);
-    return buildDockerSubprocessEnv(process.env, selectedDockerHost, normalizedExtra, {
+      String(normalizedExtra.DOCKER_HOST ?? "").trim() ||
+      String(process.env.DOCKER_HOST ?? "").trim();
+    return buildDockerSubprocessEnv(process.env, selectedDockerHost || undefined, normalizedExtra, {
       preserveDockerConfig:
-        normalizedExtra.DOCKER_HOST === undefined &&
-        dockerAuthority?.source === "context" &&
-        selectedDockerHost === dockerAuthority.dockerHost,
+        selectedDockerHost !== "" &&
+        (normalizedExtra.DOCKER_CONFIG !== undefined || process.env.DOCKER_CONFIG !== undefined),
     });
   }
   return buildSubprocessEnv(normalizedExtra);

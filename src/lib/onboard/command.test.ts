@@ -305,6 +305,7 @@ describe("onboard command options", () => {
       agent: "langchain-deepagents-code",
       agentsManifest: null,
       toolDisclosure: "direct",
+      dcodeAutoApprovalMode: null,
       observabilityEnabled: true,
       controlUiPort: 18790,
       deferProcessExit: true,
@@ -353,6 +354,7 @@ describe("onboard command options", () => {
       agent: null,
       agentsManifest: null,
       toolDisclosure: null,
+      dcodeAutoApprovalMode: null,
       observabilityEnabled: null,
       controlUiPort: null,
       deferProcessExit: true,
@@ -555,6 +557,48 @@ describe("onboard command options", () => {
     const relativeDockerfilePath = path.relative(process.cwd(), dockerfilePath);
 
     expect(resolve({ from: relativeDockerfilePath }).fromDockerfile).toBe(relativeDockerfilePath);
+  });
+
+  it("accepts only exact-digest external image references", () => {
+    const reference = `ghcr.io/example/openclaw@sha256:${"a".repeat(64)}`;
+    expect(resolve({ "from-image": reference }).fromImage).toBe(reference);
+
+    const errors: string[] = [];
+    expect(() =>
+      resolve(
+        { "from-image": "ghcr.io/example/openclaw:latest" },
+        { error: (message = "") => errors.push(message) },
+      ),
+    ).toThrow("exit:1");
+    expect(errors.join("\n")).toContain("repository@sha256");
+  });
+
+  it("rejects external images for the Portable profile", () => {
+    const errors: string[] = [];
+    expect(() =>
+      resolve(
+        {
+          "experimental-profile": "portable",
+          "from-image": `ghcr.io/example/openclaw@sha256:${"a".repeat(64)}`,
+        },
+        { error: (message = "") => errors.push(message) },
+      ),
+    ).toThrow("exit:1");
+    expect(errors.join("\n")).toContain("--from-image cannot be used with the Portable profile");
+  });
+
+  it("rejects simultaneous Dockerfile and external image sources", () => {
+    const errors: string[] = [];
+    expect(() =>
+      resolve(
+        {
+          from: "Dockerfile",
+          "from-image": `ghcr.io/example/openclaw@sha256:${"a".repeat(64)}`,
+        },
+        { error: (message = "") => errors.push(message) },
+      ),
+    ).toThrow("exit:1");
+    expect(errors.join("\n")).toContain("--from and --from-image cannot both be set");
   });
 
   it("rejects missing and non-file Dockerfile paths before onboarding", () => {
@@ -978,7 +1022,7 @@ describe("onboard command options", () => {
       ),
     ).toThrow("exit:1");
     expect(errors).toEqual([
-      `  Serving profile '${profileId}' is incompatible: podman-host: readiness status is incompatible.`,
+      `  Serving profile '${profileId}' is incompatible: podman-host: readiness status is incompatible; host.docker.unavailable: Docker is unavailable..`,
     ]);
   });
 

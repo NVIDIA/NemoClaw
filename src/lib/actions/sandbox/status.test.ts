@@ -177,6 +177,43 @@ describe("sandbox status inference health", () => {
     });
   });
 
+  it("passes the recorded sandbox route endpoint to the provider probe", () => {
+    let observed: ProviderHealthProbeOptions | undefined;
+
+    getSandboxStatusInferenceHealth(
+      true,
+      "vllm-local",
+      "nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8",
+      (_provider, options) => {
+        observed = options;
+        return null;
+      },
+      "http://host.openshell.internal:46145/v1",
+    );
+
+    expect(observed).toEqual({
+      model: "nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8",
+      recordedEndpointUrl: "http://host.openshell.internal:46145/v1",
+    });
+  });
+
+  it("omits the recorded endpoint from the probe options when the registry records none", () => {
+    let observed: ProviderHealthProbeOptions | undefined;
+
+    getSandboxStatusInferenceHealth(
+      true,
+      "vllm-local",
+      "nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8",
+      (_provider, options) => {
+        observed = options;
+        return null;
+      },
+      null,
+    );
+
+    expect(observed).toEqual({ model: "nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8" });
+  });
+
   it("does not probe when the sandbox gateway is not present", () => {
     let called = false;
 

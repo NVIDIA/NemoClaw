@@ -33,6 +33,7 @@ function runWithInstalledVersion(
   extraEnv: NodeJS.ProcessEnv = {},
   options: {
     capability?: boolean;
+    curlExitCode?: number;
     featurePlacement?: OpenShellFeaturePlacement;
     driverBins?: boolean | "gateway" | "gateway-vm";
     driverLocation?: "path" | "explicit" | "symlink";
@@ -155,7 +156,7 @@ printf '%s\n' '# downloaded OpenShell formula' 'class Openshell < Formula' > "$o
 exit 0`
         : `#!/usr/bin/env bash
 echo "curl stub: $*" >&2
-exit 1`,
+exit ${options.curlExitCode ?? 1}`,
     );
 
     writeExecutable(
@@ -825,7 +826,7 @@ exit 1`,
     }
   });
 
-  it("downloads and verifies every Linux arm64 release asset during reinstall", () => {
+  it("bounds stalled Linux arm64 release downloads and verifies every asset (#11281)", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-linux-arm64-assets-"));
     try {
       const fakeBin = path.join(tmp, "bin");
@@ -935,6 +936,16 @@ chmod 755 "$dest"`,
 
       expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
       const downloads = fs.readFileSync(downloadLog, "utf8");
+      const boundedInvocation = new RegExp(
+        "^(?!.*--(?:max-time|retry-all-errors)\\b)" +
+          "(?=.*--connect-timeout[ \\t]+10(?:[ \\t]|$))" +
+          "(?=.*--retry[ \\t]+3(?:[ \\t]|$))" +
+          "(?=.*--retry-delay[ \\t]+2(?:[ \\t]|$))" +
+          "(?=.*--speed-limit[ \\t]+1024(?:[ \\t]|$))" +
+          "(?=.*--speed-time[ \\t]+60(?:[ \\t]|$)).*$",
+        "gm",
+      );
+      expect(downloads.match(boundedInvocation)).toHaveLength(6);
       expect(downloads).toContain("openshell-aarch64-unknown-linux-musl.tar.gz");
       expect(downloads).toContain("openshell-gateway-aarch64-unknown-linux-gnu.tar.gz");
       expect(downloads).toContain("openshell-sandbox-aarch64-unknown-linux-musl.tar.gz");
@@ -1178,6 +1189,18 @@ exit 0`,
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
+
+  it.each([22, 28])(
+    "stops before verification when curl exits with status %i (#11281)",
+    (status) => {
+      const result = runWithInstalledVersion("0.0.38", {}, { curlExitCode: status });
+
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(status);
+      expect(result.stderr).toContain("curl stub:");
+      expect(result.stdout).toContain("Downloading OpenShell release assets");
+      expect(result.stdout).not.toContain("Verifying SHA-256 checksum");
+    },
+  );
 
   it("triggers upgrade when openshell 0.0.38 is installed (below current floor)", () => {
     const result = runWithInstalledVersion("0.0.38");

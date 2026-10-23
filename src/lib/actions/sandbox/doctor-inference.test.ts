@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  HOSTED_NATIVE_PROVIDERS,
+  hostedNativeProvider,
+} from "../../inference/native-provider/hosted";
 import { describe, expect, it, vi } from "vitest";
 import type { ProviderHealthStatus } from "../../inference/health";
 import { collectInferenceChecks, collectManagedLlamaCppDoctorChecks } from "./doctor-inference";
@@ -97,7 +101,7 @@ describe("doctor inference checks", () => {
   it("makes a broken inference.local route authoritative over a healthy upstream (#6192)", async () => {
     const checks = await collectInferenceChecks(
       "alpha",
-      { provider: "nvidia-prod", model: "nvidia/nemotron" },
+      { provider: "openai-api", model: "gpt-5.4" },
       true,
       {
         probeProviderHealthImpl: () => upstream(),
@@ -116,7 +120,7 @@ describe("doctor inference checks", () => {
   it("keeps failed upstream health diagnostic when inference.local works (#6192)", async () => {
     const checks = await collectInferenceChecks(
       "alpha",
-      { provider: "nvidia-prod", model: "nvidia/nemotron" },
+      { provider: "openai-api", model: "gpt-5.4" },
       true,
       {
         probeProviderHealthImpl: () =>
@@ -137,7 +141,7 @@ describe("doctor inference checks", () => {
   it("keeps inference.local authoritative when the upstream diagnostic throws (#6192)", async () => {
     const checks = await collectInferenceChecks(
       "alpha",
-      { provider: "nvidia-prod", model: "nvidia/nemotron" },
+      { provider: "openai-api", model: "gpt-5.4" },
       true,
       {
         probeProviderHealthImpl: () => {
@@ -182,7 +186,7 @@ describe("doctor inference checks", () => {
   it("reports an HTTP 503 inference.local route as unhealthy (#6192)", async () => {
     const checks = await collectInferenceChecks(
       "alpha",
-      { provider: "nvidia-prod", model: "model" },
+      { provider: "openai-api", model: "model" },
       true,
       {
         probeProviderHealthImpl: () => upstream(),
@@ -204,7 +208,7 @@ describe("doctor inference checks", () => {
     async (failureMode) => {
       const checks = await collectInferenceChecks(
         "alpha",
-        { provider: "nvidia-prod", model: "model" },
+        { provider: "openai-api", model: "model" },
         true,
         {
           probeProviderHealthImpl: () => upstream(),
@@ -230,7 +234,7 @@ describe("doctor inference checks", () => {
   it("keeps serving-process health explicitly unchecked until a probe contract exists (#7003)", async () => {
     const checks = await collectInferenceChecks(
       "alpha",
-      { provider: "nvidia-prod", model: "model" },
+      { provider: "openai-api", model: "model" },
       true,
       {
         probeProviderHealthImpl: () => upstream(),
@@ -250,7 +254,7 @@ describe("doctor inference checks", () => {
   it("omits serving-process health for terminal agents without a gateway process (#7003)", async () => {
     const checks = await collectInferenceChecks(
       "alpha",
-      { provider: "nvidia-prod", model: "model" },
+      { provider: "openai-api", model: "model" },
       true,
       {
         probeProviderHealthImpl: () => upstream(),
@@ -265,13 +269,127 @@ describe("doctor inference checks", () => {
   it("does not mutate direct provider health while adding route evidence", async () => {
     const providerHealth = upstream();
 
-    await collectInferenceChecks("alpha", { provider: "nvidia-prod", model: "model" }, true, {
+    await collectInferenceChecks("alpha", { provider: "openai-api", model: "model" }, true, {
       probeProviderHealthImpl: () => providerHealth,
       probeSandboxInferenceGatewayHealthImpl: async () => gateway(true),
     });
 
     expect(providerHealth).not.toHaveProperty("subprobes");
     expect(providerHealth).not.toHaveProperty("probeLabel");
+  });
+
+  it("verifies and probes the attached native NVIDIA provider without consulting inference.local", async () => {
+    const receipt = {
+      schemaVersion: 1 as const,
+      profileId: "nemoclaw-nvidia-inference-v1" as const,
+      providerName: "nemoclaw-nvidia-prod-v1" as const,
+      providerId: "11111111-2222-4333-8444-555555555555",
+    };
+    const verify = vi.fn(async () => undefined);
+    const nativeProbe = vi.fn(async () => ({
+      ok: true,
+      endpoint: "https://integrate.api.nvidia.com/v1/models",
+      httpStatus: 200,
+      detail: "native NVIDIA models route reachable",
+    }));
+    const sharedProbe = vi.fn(async () => gateway(true));
+
+    const checks = await collectInferenceChecks(
+      "alpha",
+      {
+        provider: "nvidia-prod",
+        model: "nvidia/nemotron",
+        agentName: "openclaw",
+        nativeNvidiaProviderAttachment: receipt,
+      },
+      true,
+      {
+        gatewayName: "nemoclaw-19080",
+        includeServingProcessCheck: false,
+        verifyNativeNvidiaStatusAttachmentImpl: verify,
+        probeSandboxNativeNvidiaModelsHealthImpl: nativeProbe,
+        probeSandboxInferenceGatewayHealthImpl: sharedProbe,
+      },
+    );
+
+    expect(verify).toHaveBeenCalledWith({
+      gatewayName: "nemoclaw-19080",
+      sandboxName: "alpha",
+      expected: receipt,
+    });
+    expect(nativeProbe).toHaveBeenCalledWith("alpha", {
+      gatewayName: "nemoclaw-19080",
+      agentName: "openclaw",
+    });
+    expect(sharedProbe).not.toHaveBeenCalled();
+    expect(checks).toContainEqual(
+      expect.objectContaining({ label: "Inference route (native NVIDIA)", status: "ok" }),
+    );
+  });
+
+  it("fails native NVIDIA doctor when the recorded attachment is unavailable", async () => {
+    const nativeProbe = vi.fn();
+
+    const checks = await collectInferenceChecks(
+      "alpha",
+      { provider: "nvidia-prod", model: "nvidia/nemotron" },
+      true,
+      {
+        gatewayName: "nemoclaw-19080",
+        includeServingProcessCheck: false,
+        probeSandboxNativeNvidiaModelsHealthImpl: nativeProbe,
+      },
+    );
+
+    expect(nativeProbe).not.toHaveBeenCalled();
+    expect(checks).toContainEqual(
+      expect.objectContaining({
+        label: "Inference route (native NVIDIA)",
+        status: "fail",
+        detail: expect.stringContaining("ownership receipt"),
+      }),
+    );
+  });
+
+  it("does not let an unrelated healthy shared route hide unavailable native NVIDIA access", async () => {
+    const receipt = {
+      schemaVersion: 1 as const,
+      profileId: "nemoclaw-nvidia-inference-v1" as const,
+      providerName: "nemoclaw-nvidia-prod-v1" as const,
+      providerId: "11111111-2222-4333-8444-555555555555",
+    };
+    const sharedProbe = vi.fn(async () => gateway(true));
+
+    const checks = await collectInferenceChecks(
+      "alpha",
+      {
+        provider: "nvidia-prod",
+        model: "nvidia/nemotron",
+        nativeNvidiaProviderAttachment: receipt,
+      },
+      true,
+      {
+        gatewayName: "nemoclaw-19080",
+        includeServingProcessCheck: false,
+        verifyNativeNvidiaStatusAttachmentImpl: vi.fn(async () => undefined),
+        probeSandboxNativeNvidiaModelsHealthImpl: vi.fn(async () => ({
+          ok: false,
+          endpoint: "https://integrate.api.nvidia.com/v1/models",
+          httpStatus: 401,
+          detail: "native NVIDIA models route returned HTTP 401",
+        })),
+        probeSandboxInferenceGatewayHealthImpl: sharedProbe,
+      },
+    );
+
+    expect(sharedProbe).not.toHaveBeenCalled();
+    expect(checks).toContainEqual(
+      expect.objectContaining({
+        label: "Inference route (native NVIDIA)",
+        status: "fail",
+        detail: expect.stringContaining("401"),
+      }),
+    );
   });
 
   it("passes the live route model to direct provider diagnostics", async () => {
@@ -289,4 +407,113 @@ describe("doctor inference checks", () => {
 
     expect(probe).toHaveBeenCalledWith("ollama-local", { model: "nemotron-mini:latest" });
   });
+
+  it("passes the recorded route endpoint to direct provider diagnostics", async () => {
+    const probe = vi.fn(() => upstream());
+
+    await collectInferenceChecks(
+      "alpha",
+      {
+        provider: "vllm-local",
+        model: "nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8",
+        recordedEndpointUrl: "http://host.openshell.internal:46145/v1",
+      },
+      true,
+      {
+        probeProviderHealthImpl: probe,
+        probeSandboxInferenceGatewayHealthImpl: async () => gateway(true),
+      },
+    );
+
+    expect(probe).toHaveBeenCalledWith("vllm-local", {
+      model: "nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8",
+      recordedEndpointUrl: "http://host.openshell.internal:46145/v1",
+    });
+  });
+});
+
+describe("hosted native doctor", () => {
+  it.each([
+    ...HOSTED_NATIVE_PROVIDERS,
+    hostedNativeProvider("hermes-provider", "https://staging.nous.example/v1")!,
+  ])("checks the attached $label endpoint without the shared route", async (definition) => {
+    const receipt = {
+      schemaVersion: 1 as const,
+      providerName: definition.providerName,
+      profileId: definition.profileId,
+      providerId: "owned-id",
+      ...("endpointUrl" in definition
+        ? { endpointUrl: definition.endpointUrl, allowedIps: ["8.8.8.8"] }
+        : {}),
+    };
+    const verify = vi.fn(async () => undefined);
+    const probe = vi.fn(async () => ({ ok: true as const }));
+    const shared = vi.fn();
+    const checks = await collectInferenceChecks(
+      "alpha",
+      {
+        provider: definition.logicalProvider,
+        model: "supported-model",
+        nativeHostedProviderAttachment: receipt,
+      },
+      true,
+      {
+        gatewayName: "gateway",
+        verifyNativeHostedStatusAttachmentImpl: verify,
+        probeSandboxInferenceInvocationImpl: probe,
+        probeSandboxInferenceGatewayHealthImpl: shared,
+        probeProviderHealthImpl: vi.fn(() => null),
+      },
+    );
+    expect(verify).toHaveBeenCalledWith({
+      gatewayName: "gateway",
+      sandboxName: "alpha",
+      expected: receipt,
+    });
+    expect(probe).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: definition.logicalProvider,
+        nativeProvider: true,
+        ...("endpointUrl" in definition ? { nativeEndpointUrl: definition.endpointUrl } : {}),
+      }),
+      {},
+      95_000,
+    );
+    expect(shared).not.toHaveBeenCalled();
+    expect(checks).toContainEqual(
+      expect.objectContaining({ label: "Inference route (native hosted)", status: "ok" }),
+    );
+  });
+
+  it.each([
+    {},
+    {
+      schemaVersion: 1,
+      providerName: "nemoclaw-openai-api-v1",
+      profileId: "nemoclaw-openai-inference-v1",
+      providerId: "owned-id",
+    },
+  ])(
+    "refuses malformed or mismatched authority without a native or shared probe (%j)",
+    async (receipt) => {
+      const probe = vi.fn();
+      const shared = vi.fn();
+      const checks = await collectInferenceChecks(
+        "alpha",
+        { provider: "anthropic-prod", model: "model", nativeHostedProviderAttachment: receipt },
+        true,
+        {
+          gatewayName: "gateway",
+          probeSandboxInferenceInvocationImpl: probe,
+          probeSandboxInferenceGatewayHealthImpl: shared,
+          probeProviderHealthImpl: vi.fn(() => null),
+        },
+      );
+      expect(probe).not.toHaveBeenCalled();
+      expect(shared).not.toHaveBeenCalled();
+      expect(checks).toContainEqual(
+        expect.objectContaining({ label: "Inference route (native hosted)", status: "fail" }),
+      );
+    },
+  );
 });

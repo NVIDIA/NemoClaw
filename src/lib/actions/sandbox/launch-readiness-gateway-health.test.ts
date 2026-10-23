@@ -6,14 +6,23 @@ import { execFileSync } from "node:child_process";
 import { describe, expect, it, vi } from "vitest";
 
 import type { OpenShellSandboxBufferedCommandExecutor } from "../../adapters/openshell/sandbox-command";
+import { nativeLocalIdentity } from "../../inference/native-local/contract";
 import { loadAgent } from "../../agent/defs";
 import type { SandboxEntry } from "../../state/registry";
 import {
   LaunchReadinessEvidenceError,
   LaunchReadinessObservationError,
   requireLaunchSemanticHealth,
+  requireNativeInferenceHealth,
   type LaunchReadinessHealthDeps,
 } from "./launch-readiness/health";
+import { probeSandboxInferenceInvocation } from "./inference-invocation-probe";
+import { runSandboxInferenceInvocationProbe } from "./inference-route-health";
+import {
+  NATIVE_LOCAL_CREDENTIAL_HANDLE,
+  recordingProbeShell,
+} from "../../../../test/helpers/native-local-probe-shell";
+import { nativeLocalTestReceipt } from "../../../../test/helpers/inference-set";
 import {
   isSandboxGatewayRunningForStatus,
   waitForStartedHermesGatewayProcess,
@@ -206,6 +215,7 @@ const SANDBOX = "alpha";
 const GATEWAY = "nemoclaw";
 const MODEL = "nvidia/nemotron-3-ultra-550b-a55b";
 const dcodeAgent = loadAgent("langchain-deepagents-code");
+const OPENROUTER_GATEWAY_AGENTS = ["openclaw", "hermes"] as const;
 
 function dcodeEntry(provider = "openrouter-api"): SandboxEntry {
   return {
@@ -225,6 +235,8 @@ function dcodeHealthDeps(
 ): LaunchReadinessHealthDeps {
   return {
     smoke: vi.fn(async () => ({ ok: true }) as const),
+    gatewayHealth: vi.fn(async () => true),
+    forwardsHealthy: vi.fn(() => true),
     inferenceProbe: vi.fn(async () => ({
       healthy: true,
       broken: false,
@@ -311,4 +323,183 @@ describe("Deep Agents Code launch readiness", () => {
       }),
     );
   });
+});
+
+describe("OpenRouter launch readiness", () => {
+  it.each(OPENROUTER_GATEWAY_AGENTS)(
+    "accepts the %s catalog 404 after the recorded inference request succeeds (#12621)",
+    async (agentName) => {
+      const agent = loadAgent(agentName);
+      const entry = {
+        name: SANDBOX,
+        agent: agentName,
+        provider: "openrouter-api",
+        model: MODEL,
+        preferredInferenceApi: "openai-completions",
+      } as SandboxEntry;
+      const currentDeps = dcodeHealthDeps({ ok: true });
+
+      await expect(
+        requireLaunchSemanticHealth(SANDBOX, GATEWAY, agentName, entry, agent, true, currentDeps),
+      ).resolves.toBeUndefined();
+      expect(currentDeps.inferenceInvocationProbe).toHaveBeenCalledWith({
+        sandboxName: SANDBOX,
+        gatewayName: GATEWAY,
+        agentName,
+        provider: "openrouter-api",
+        model: MODEL,
+        preferredInferenceApi: "openai-completions",
+      });
+    },
+  );
+
+  it.each(OPENROUTER_GATEWAY_AGENTS)(
+    "rejects the %s catalog 404 when the recorded inference request fails (#12621)",
+    async (agentName) => {
+      const agent = loadAgent(agentName);
+      const entry = {
+        name: SANDBOX,
+        agent: agentName,
+        provider: "openrouter-api",
+        model: MODEL,
+        preferredInferenceApi: "openai-completions",
+      } as SandboxEntry;
+      const currentDeps = dcodeHealthDeps({
+        ok: false,
+        detail: "sandbox inference invocation probe returned HTTP 401",
+        httpStatus: 401,
+      });
+
+      await expect(
+        requireLaunchSemanticHealth(SANDBOX, GATEWAY, agentName, entry, agent, true, currentDeps),
+      ).rejects.toEqual(
+        expect.objectContaining<Partial<LaunchReadinessObservationError>>({
+          category: "health",
+          failedCheck: "inference request",
+        }),
+      );
+      expect(currentDeps.inferenceInvocationProbe).toHaveBeenCalledWith({
+        sandboxName: SANDBOX,
+        gatewayName: GATEWAY,
+        agentName,
+        provider: "openrouter-api",
+        model: MODEL,
+        preferredInferenceApi: "openai-completions",
+      });
+    },
+  );
+});
+
+describe("Hermes native-local readiness authority", () => {
+  function fixture(provider: string, agent: "hermes" | undefined) {
+    const binding = {
+      agent,
+      provider: "vllm-local" as const,
+      endpointUrl: "http://host.openshell.internal:8000/v1",
+      gatewayName: "selected",
+      sandboxName: "alpha",
+      credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+      authMode: "authenticated" as const,
+    };
+    const receipt = {
+      ...binding,
+      ...nativeLocalIdentity(binding),
+      schemaVersion: 1 as const,
+      providerId: "owned",
+    };
+    return {
+      sandboxName: "alpha",
+      gatewayName: "selected",
+      agentName: "hermes",
+      entry: {
+        name: "alpha",
+        agent: "hermes",
+        provider,
+        model: "model-a",
+        nativeLocalProviderAttachment: receipt,
+      },
+      deps: {
+        verifyNativeLocalAttachment: vi.fn(async () => {}),
+        inferenceInvocationProbe: vi.fn(async () => ({ ok: true as const })),
+      },
+    };
+  }
+
+  it.each([
+    { name: "different selected provider", provider: "llama-cpp-local", agent: "hermes" as const },
+    { name: "DCode attachment", provider: "vllm-local", agent: undefined },
+  ])("rejects $name before observing or invoking the provider", async ({ provider, agent }) => {
+    const input = fixture(provider, agent);
+    await expect(requireNativeInferenceHealth(input)).rejects.toBeInstanceOf(
+      LaunchReadinessEvidenceError,
+    );
+    expect(input.deps.verifyNativeLocalAttachment).not.toHaveBeenCalled();
+    expect(input.deps.inferenceInvocationProbe).not.toHaveBeenCalled();
+  });
+
+  it("verifies and invokes the attached Hermes provider", async () => {
+    const input = fixture("vllm-local", "hermes");
+    await expect(requireNativeInferenceHealth(input)).resolves.toBe(true);
+    expect(input.deps.verifyNativeLocalAttachment).toHaveBeenCalledExactlyOnceWith({
+      sandboxName: "alpha",
+      gatewayName: "selected",
+      expected: input.entry.nativeLocalProviderAttachment,
+    });
+    expect(input.deps.inferenceInvocationProbe).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        agentName: "hermes",
+        provider: "vllm-local",
+        model: "model-a",
+        nativeLocalProviderAttachment: input.entry.nativeLocalProviderAttachment,
+      }),
+    );
+  });
+});
+
+describe("OpenClaw native-local readiness identity (#13338)", () => {
+  it.each([
+    { agentName: undefined, agent: "openclaw" },
+    { agentName: undefined, agent: undefined },
+    { agentName: "openclaw", agent: "openclaw" },
+  ])(
+    "sends the health request to the recorded endpoint (selected $agentName, recorded $agent)",
+    async ({ agentName, agent }) => {
+      const receipt = nativeLocalTestReceipt(
+        "llama-cpp-local",
+        "http://host.openshell.internal:8081/v1",
+        {
+          agent: "openclaw",
+          gatewayName: "selected",
+        },
+      );
+      const shell = recordingProbeShell("200", '{"choices":[{"message":{"content":"OK"}}]}');
+      await expect(
+        requireNativeInferenceHealth({
+          sandboxName: "alpha",
+          gatewayName: "selected",
+          ...(agentName ? { agentName } : {}),
+          entry: {
+            name: "alpha",
+            ...(agent ? { agent } : {}),
+            provider: "llama-cpp-local",
+            model: "local-model",
+            nativeLocalProviderAttachment: receipt,
+          },
+          deps: {
+            verifyNativeLocalAttachment: vi.fn(async () => {}),
+            inferenceInvocationProbe: (input) =>
+              runSandboxInferenceInvocationProbe(input, (selected, _deps, timeoutMs) =>
+                probeSandboxInferenceInvocation(selected, { execute: shell.execute }, timeoutMs),
+              ),
+          },
+        }),
+      ).resolves.toBe(true);
+      expect(shell.destinations()).toEqual([
+        "http://host.openshell.internal:8081/v1/chat/completions",
+      ]);
+      expect(shell.requests[0]).toContain(
+        `Authorization: Bearer ${NATIVE_LOCAL_CREDENTIAL_HANDLE}`,
+      );
+    },
+  );
 });

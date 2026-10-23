@@ -658,6 +658,101 @@ it.each<{ after: SessionRecords; status: number }>([
   },
 );
 
+const structured503Cases: Array<[Record<string, unknown>, number]> = [
+  [{ errorMessage: "503 upstream temporarily unavailable" }, 3],
+  [{ errorMessage: "" }, 3],
+  [{ errorMessage: "503 invalid API key" }, 2],
+  [{ errorMessage: "503 network policy denied" }, 2],
+  [{ errorMessage: "BadRequestError: invalid response" }, 2],
+  [{ errorMessage: "invalid provider response" }, 2],
+  [{ errorMessage: "malformed response" }, 2],
+  [{ errorMessage: "RateLimitError: retry later" }, 2],
+  [{ errorMessage: "APITimeoutError: request expired" }, 2],
+  [{ errorMessage: "unknown", errorCode: "500" }, 2],
+  [{ errorMessage: "unknown", errorCode: "401" }, 2],
+  [{ errorMessage: "unknown", errorCode: 503 }, 2],
+  [{ errorMessage: "unknown", provider: "other" }, 2],
+  [{ errorMessage: "unknown", api: "other" }, 2],
+  [{ errorMessage: "unknown", content: null }, 2],
+  [{ errorMessage: "unknown", stopReason: "stop" }, 2],
+];
+
+it.each(
+  structured503Cases.flatMap(([overrides, status]) =>
+    (["jsonl", "sqlite"] as const).map((format) => ({ format, overrides, status })),
+  ),
+)(
+  "classifies structured HTTP 503 in $format with $overrides as status $status",
+  ({ format, overrides, status }) => {
+    const records = [message("user"), providerUnavailableMessage(overrides)];
+    const { qualification } =
+      format === "jsonl"
+        ? runEvidenceFixture({ after: { "session-a": records }, expectedTurns: 1 })
+        : runSqliteEvidenceFixture({
+            after: records.map((eventJson, index) => ({
+              eventJson,
+              seq: index + 1,
+              sessionId: "session-a",
+            })),
+            expectedTurns: 1,
+          });
+    expect(qualification.status, JSON.stringify(overrides)).toBe(status);
+  },
+);
+
+it.each([
+  ["jsonl", false],
+  ["sqlite", false],
+  ["jsonl", true],
+  ["sqlite", true],
+] as const)(
+  "reports safe empty-message metadata from %s with unknown fields %s",
+  (format, unknownFields) => {
+    const secret = "nvapi-private-diagnostic-canary";
+    const records = [
+      message("user"),
+      providerUnavailableMessage({
+        errorCode: 401,
+        errorMessage: `AuthenticationError: ${secret}`,
+        ...(unknownFields
+          ? {
+              errorCode: secret,
+              errorMessage: secret,
+              stopReason: secret,
+              api: secret,
+              provider: secret,
+            }
+          : {}),
+      }),
+    ];
+    const { qualification } =
+      format === "jsonl"
+        ? runEvidenceFixture({ after: { "session-a": records }, expectedTurns: 1 })
+        : runSqliteEvidenceFixture({
+            after: records.map((eventJson, index) => ({
+              eventJson,
+              seq: index + 1,
+              sessionId: "session-a",
+            })),
+            expectedTurns: 1,
+          });
+    expect(qualification.status).toBe(2);
+    expect(JSON.parse(qualification.stderr)).toEqual({
+      reason: "message_content_empty",
+      sessionId: "session-a",
+      messageIndex: 1,
+      role: "assistant",
+      stopReason: unknownFields ? "other" : "error",
+      errorCode: unknownFields ? null : "401",
+      errorCodeType: unknownFields ? "string" : "number",
+      errorType: unknownFields ? "unclassified" : "AuthenticationError",
+      api: unknownFields ? "other" : "openai-completions",
+      managedProvider: !unknownFields,
+    });
+    expect(qualification.stderr).not.toContain(secret);
+  },
+);
+
 it("rejects an unterminated appended session record (#9160)", () => {
   const { baseline, qualification } = runEvidenceFixture({
     after: {

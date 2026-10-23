@@ -52,7 +52,7 @@ async function runUninstallPlan(options: UninstallRunOptions, deps: UninstallRun
 }
 
 async function runManagedHermesVolumeUninstall(
-  mode: "foreign" | "owned" | "remove-fails",
+  mode: "foreign" | "owned" | "remove-fails" | "remove-fails-once",
   destroyUserData: boolean,
   containerMode: "absent" | "foreign" | "owned" = "absent",
 ) {
@@ -84,12 +84,25 @@ async function runManagedHermesVolumeUninstall(
   const logs: string[] = [];
   const containerId = "hermes-sandbox-container";
   let containerPresent = containerMode !== "absent";
+  let gatewayRegistered = true;
+  let volumeRemovalAttempts = 0;
   let volumePresent = true;
   const run = vi.fn((command: string, args: string[]) => {
     events.push(`${command} ${args.join(" ")}`);
-    return command === "openshell" && args[0] === "gateway" && args[1] === "list"
-      ? ok(JSON.stringify([{ name: "nemoclaw" }]))
-      : ok();
+    switch (`${command} ${args.join(" ")}`) {
+      case "openshell gateway list":
+      case "openshell gateway list -o json":
+        return ok(JSON.stringify(gatewayRegistered ? [{ name: "nemoclaw" }] : []));
+      case "openshell gateway remove nemoclaw":
+        gatewayRegistered = false;
+        return ok();
+      case "openshell sandbox delete --all":
+        return gatewayRegistered
+          ? ok()
+          : { status: 1, stdout: "", stderr: "Unknown gateway 'nemoclaw'" };
+      default:
+        return ok();
+    }
   });
   const runDocker = vi.fn((args: string[]) => {
     dockerCalls.push(args);
@@ -126,6 +139,15 @@ async function runManagedHermesVolumeUninstall(
           case "attached":
           case "remove-fails":
             return { status: 1, stdout: "", stderr: "volume is still in use" };
+          case "remove-fails-once":
+            volumeRemovalAttempts += 1;
+            switch (volumeRemovalAttempts) {
+              case 1:
+                return { status: 1, stdout: "", stderr: "volume is still in use" };
+              default:
+                volumePresent = false;
+                return ok(`${volumeName}\n`);
+            }
           default:
             volumePresent = false;
             return ok(`${volumeName}\n`);
@@ -137,37 +159,39 @@ async function runManagedHermesVolumeUninstall(
     }
   });
 
-  const result = await runUninstallPlan(
-    { assumeYes: true, deleteModels: false, destroyUserData, keepOpenShell: false },
-    {
-      commandExists: () => true,
-      env: { HOME: home } as NodeJS.ProcessEnv,
-      error: (line) => errors.push(line),
-      existsSync: (target) => target.startsWith(home) && fs.existsSync(target),
-      hasPortableRuntimeCleanup: () => false,
-      isTty: false,
-      kill: () => true,
-      log: (line) => logs.push(line),
-      rmSync: fs.rmSync,
-      run,
-      runDocker,
-      runtimeProviders: createRuntimeProviderBundleRegistry([
-        [
-          "docker",
-          createDockerRuntimeProviderBundle({
-            captureHostCommand: (_command, args) => {
-              const result = runDocker(args);
-              return {
-                status: result.status ?? 1,
-                stdout: result.stdout,
-                stderr: result.stderr,
-              };
-            },
-          }),
-        ],
-      ]),
-    },
-  );
+  const execute = () =>
+    runUninstallPlan(
+      { assumeYes: true, deleteModels: false, destroyUserData, keepOpenShell: false },
+      {
+        commandExists: () => true,
+        env: { HOME: home } as NodeJS.ProcessEnv,
+        error: (line) => errors.push(line),
+        existsSync: (target) => target.startsWith(home) && fs.existsSync(target),
+        hasPortableRuntimeCleanup: () => false,
+        isTty: false,
+        kill: () => true,
+        log: (line) => logs.push(line),
+        rmSync: fs.rmSync,
+        run,
+        runDocker,
+        runtimeProviders: createRuntimeProviderBundleRegistry([
+          [
+            "docker",
+            createDockerRuntimeProviderBundle({
+              captureHostCommand: (_command, args) => {
+                const result = runDocker(args);
+                return {
+                  status: result.status ?? 1,
+                  stdout: result.stdout,
+                  stderr: result.stderr,
+                };
+              },
+            }),
+          ],
+        ]),
+      },
+    );
+  const result = await execute();
 
   return {
     cleanup: () => fs.rmSync(home, { force: true, recursive: true }),
@@ -176,9 +200,11 @@ async function runManagedHermesVolumeUninstall(
     dockerCalls,
     errors,
     events,
+    gatewayRegistered: () => gatewayRegistered,
     logs,
     registryFile,
     result,
+    retry: execute,
     volumeName,
     volumePresent: () => volumePresent,
   };
@@ -302,6 +328,25 @@ describe("managed Hermes state volume uninstall", () => {
         `Managed Hermes state volume '${harness.volumeName}' could not be removed.`,
       );
       expect(harness.errors).toContain("Preserved NemoClaw state so exact cleanup can be retried.");
+    } finally {
+      harness.cleanup();
+    }
+  });
+
+  it("retries volume cleanup before removing the gateway registration", async () => {
+    const harness = await runManagedHermesVolumeUninstall("remove-fails-once", true);
+    try {
+      expect(harness.result.exitCode).toBe(1);
+      expect(harness.gatewayRegistered()).toBe(true);
+      expect(harness.volumePresent()).toBe(true);
+      expect(fs.existsSync(harness.registryFile)).toBe(true);
+
+      const retry = await harness.retry();
+
+      expect(retry.exitCode, harness.errors.join("\n")).toBe(0);
+      expect(harness.gatewayRegistered()).toBe(false);
+      expect(harness.volumePresent()).toBe(false);
+      expect(fs.existsSync(harness.registryFile)).toBe(false);
     } finally {
       harness.cleanup();
     }

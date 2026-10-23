@@ -4,7 +4,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { runInferenceSet } from "./actions/inference-set.js";
-import { createDeps } from "./actions/inference-set.test-support.js";
+import { createDeps } from "../../test/helpers/inference-set.js";
 import type { SandboxEntry } from "./state/registry.js";
 
 interface MockRegistryState {
@@ -277,7 +277,7 @@ describe("recoverRegistryEntries seeded recovery paths", () => {
     });
     await expect(
       runInferenceSet(
-        { provider: "nvidia-prod", model: "nvidia/model-b", sandboxName: "gamma" },
+        { provider: "nvidia-router", model: "nvidia/model-b", sandboxName: "gamma" },
         deps,
       ),
     ).rejects.toMatchObject({
@@ -289,9 +289,7 @@ describe("recoverRegistryEntries seeded recovery paths", () => {
     expect(deps.calls.captureOpenshell).not.toHaveBeenCalled();
     expect(deps.calls.readSandboxConfig).not.toHaveBeenCalled();
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
-    expect(deps.calls.recomputeSandboxConfigHash).not.toHaveBeenCalled();
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
-    expect(deps.calls.updateSession).not.toHaveBeenCalled();
     expect(deps.calls.appendAuditEntry).not.toHaveBeenCalled();
     expect(deps.calls.restartSandboxGateway).not.toHaveBeenCalled();
   });

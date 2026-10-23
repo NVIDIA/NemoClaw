@@ -11,6 +11,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   patchContainerRestart,
+  patchHostSafeRestart,
   patchOpenClawContainerRestart,
 } from "../../../scripts/lib/patch-openclaw-container-restart.mts";
 
@@ -18,6 +19,15 @@ const nativeRestart = fs.readFileSync(
   path.join(import.meta.dirname, "fixtures/gateway-container-restart.js.txt"),
   "utf8",
 );
+const nativeSafeRestart = `async function runSafeGatewayRestart(opts, target) {
+\tconst params = { target, skipDeferral: opts.skipDeferral };
+\tconst result = await callGatewayCli({
+\t\tmethod: "gateway.restart.request",
+\t\tparams,
+\t\ttimeoutMs: 1e4
+\t});
+\treturn result;
+}`;
 function restartHarness(
   options: {
     sandbox?: boolean;
@@ -59,6 +69,56 @@ function restartHarness(
 }
 
 describe("OpenClaw sandbox restart patch", () => {
+  it.each([
+    [{ OPENSHELL_SANDBOX: "1", NEMOCLAW_OPENCLAW_HOST_RESTART: "1" }, true],
+    [{ OPENSHELL_SANDBOX: "1" }, false],
+    [{ NEMOCLAW_OPENCLAW_HOST_RESTART: "1" }, false],
+  ] as const)(
+    "limits backend authentication to an explicit sandbox host restart: %j",
+    async (env, hostRestart) => {
+      const restart = vm.runInNewContext(
+        `${patchHostSafeRestart(nativeSafeRestart)}; runSafeGatewayRestart`,
+        {
+          process: { env },
+          callGatewayCli: async (opts: unknown) => opts,
+        },
+      );
+      const target = { pid: 123, ownerId: "native-owner", port: 18791 };
+      expect(await restart({ skipDeferral: true }, target)).toEqual({
+        method: "gateway.restart.request",
+        params: { target, skipDeferral: true },
+        timeoutMs: 10000,
+        ...(hostRestart
+          ? {
+              clientName: "gateway-client",
+              mode: "backend",
+              requireLocalBackendSharedAuth: true,
+              sharedStateMode: "read-only",
+            }
+          : {}),
+      });
+    },
+  );
+  it("audits the host restart adaptation and rejects native drift", () => {
+    const patched = patchHostSafeRestart(nativeSafeRestart);
+    expect(patchHostSafeRestart(patched)).toBe(patched);
+    expect(() =>
+      patchHostSafeRestart(
+        patched.replace(
+          "requireLocalBackendSharedAuth: true",
+          "requireLocalBackendSharedAuth: false",
+        ),
+      ),
+    ).toThrow("Incomplete");
+    expect(() =>
+      patchHostSafeRestart(
+        nativeSafeRestart.replace('"gateway.restart.request"', '"different.method"'),
+      ),
+    ).toThrow("Unrecognized");
+    expect(() => patchHostSafeRestart(nativeSafeRestart + nativeSafeRestart)).toThrow(
+      "Expected one",
+    );
+  });
   it.each([true, false])(
     "replaces the OpenShell process when generic container detection is %s",
     (container) => {
@@ -143,6 +203,7 @@ describe("OpenClaw sandbox restart patch", () => {
       fs.mkdirSync(path.join(dist, "cli"), { recursive: true });
       const target = path.join(dist, "cli/gateway-lifecycle.runtime.js");
       fs.writeFileSync(target, nativeRestart);
+      fs.writeFileSync(path.join(dist, "lifecycle-fixture.js"), nativeSafeRestart);
       fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ version: "unknown" }));
       expect(() => patchOpenClawContainerRestart(dist)).toThrow("Unsupported");
       expect(fs.readFileSync(target, "utf8")).toBe(nativeRestart);

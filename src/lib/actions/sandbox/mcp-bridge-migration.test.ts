@@ -183,7 +183,10 @@ describe("explicit MCP migration", () => {
     });
     expect(mocks.register).toHaveBeenCalledOnce();
     expect(mocks.inspectSources).toHaveBeenCalledOnce();
-    expect(mocks.reloadOpenClaw).toHaveBeenCalledWith("alpha", ["openclaw-config"]);
+    expect(mocks.reloadOpenClaw).toHaveBeenCalledWith("alpha", ["openclaw-config"], {
+      gatewayName: "nemoclaw",
+      workspace: "default",
+    });
     expect(mocks.removeLegacy).toHaveBeenCalledOnce();
     expect(mocks.reloadOpenClaw.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.removeLegacy.mock.invocationCallOrder[0],

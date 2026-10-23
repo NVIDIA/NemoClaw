@@ -24,8 +24,8 @@ const expectedHonoNodeServerTarball =
   "https://registry.npmjs.org/@hono/node-server/-/node-server-2.0.11.tgz";
 const expectedHonoVersion = "4.12.34";
 const expectedHonoTarball = "https://registry.npmjs.org/hono/-/hono-4.12.34.tgz";
-const expectedFastUriVersion = "3.1.6";
-const expectedFastUriTarball = "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.6.tgz";
+const expectedFastUriVersion = "3.1.7";
+const expectedFastUriTarball = "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.7.tgz";
 const expectedIpAddressVersion = "10.3.1";
 const expectedIpAddressTarball = "https://registry.npmjs.org/ip-address/-/ip-address-10.3.1.tgz";
 const runtimePrefix = "npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime";
@@ -104,6 +104,9 @@ describe("mcporter image supply-chain controls", () => {
     const graph = JSON.parse(result.stdout) as DependencyNode & { problems?: string[] };
     expect(graph.problems).toBeUndefined();
     expect(graph.dependencies?.mcporter?.version).toBe(expectedVersion);
+    expect(findDependency(graph, "@modelcontextprotocol/sdk")).toEqual(
+      expect.objectContaining({ overridden: true, version: "1.32.0" }),
+    );
     expect(findDependency(graph, "@hono/node-server")).toEqual(
       expect.objectContaining({
         overridden: true,

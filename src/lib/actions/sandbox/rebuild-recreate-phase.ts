@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { CLI_NAME } from "../../cli/branding";
 import { RD as _RD, R } from "../../cli/terminal-style";
 import { normalizeProcessExitCode } from "../../core/process-exit";
 import { hasValidDeferredN1xManagedVllmReplacementAuthority } from "../../domain/sandbox/n1x-managed-vllm-rebuild";
@@ -23,6 +22,7 @@ import type { RebuildDurableConfig } from "./rebuild-durable-config";
 import { isolateAmbientRecreateEnv } from "./rebuild-env-isolation";
 import {
   pinRebuildAgentBaseImageForRecreate,
+  pinRecordedOpenClawDashboardOriginForRecreate,
   type RebuildAgentBaseImagePreflight,
   type RebuildSandboxEntry,
 } from "./rebuild-flow-helpers";
@@ -168,10 +168,9 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
         observabilityRequestedExplicitly: recreateOptions.observabilityRequestedExplicitly,
         telegramConfig: sessionMatchesSandbox ? sessionBefore?.telegramConfig : null,
         wechatConfig: sessionMatchesSandbox ? sessionBefore?.wechatConfig : null,
-        migratedLegacyValueHashes: sessionMatchesSandbox
-          ? sessionBefore?.migratedLegacyValueHashes
-          : null,
         routerPid: resumeConfig.provider === "nvidia-router" ? sessionBefore?.routerPid : undefined,
+        routerPort:
+          resumeConfig.provider === "nvidia-router" ? sessionBefore?.routerPort : undefined,
         routerCredentialHash:
           resumeConfig.provider === "nvidia-router" ? sessionBefore?.routerCredentialHash : null,
         // The inner resume compares its requested host mounts against this
@@ -182,6 +181,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
         metadata: {
           gatewayName: recreateOptions.targetGatewayName,
           fromDockerfile: storedFromDockerfile,
+          fromImage: recreateOptions.fromImage,
           ...(recreateOptions.hostMounts && recreateOptions.hostMounts.length > 0
             ? { hostMounts: cloneSandboxHostMounts(recreateOptions.hostMounts) }
             : {}),
@@ -204,6 +204,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     s.hermesToolGateways = rebuildsHermesSandbox ? rebuildHermesToolGateways : [];
     s.gpuPassthrough = rebuildGpuOverrides.sessionGpuPassthrough;
     s.metadata.fromDockerfile = storedFromDockerfile;
+    s.metadata.fromImage = recreateOptions.fromImage;
     s.provider = resumeConfig.provider;
     s.model = resumeConfig.model;
     s.nimContainer = resumeConfig.nimContainer;
@@ -233,7 +234,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     `Recreate env will target NEMOCLAW_SANDBOX_NAME=${sandboxName}; NEMOCLAW_RECREATE_SANDBOX=${process.env.NEMOCLAW_RECREATE_SANDBOX}`,
   );
   log(
-    `Calling onboard({ resume: true, nonInteractive: true, recreateSandbox: true, fromDockerfile: ${storedFromDockerfile} })`,
+    `Calling onboard({ resume: true, nonInteractive: true, recreateSandbox: true, fromDockerfile: ${storedFromDockerfile}, fromImage: ${recreateOptions.fromImage} })`,
   );
 
   let onboardFailed = false;
@@ -250,6 +251,14 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
   const previousSandboxName = process.env.NEMOCLAW_SANDBOX_NAME;
   const previousRecreateWithoutBackup = process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP;
   const previousRestoreLatestBackup = process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE;
+  const restoreChatUiUrl = pinRecordedOpenClawDashboardOriginForRecreate({
+    sandboxName,
+    sandboxEntry: sb,
+    rebuildAgent,
+    controlUiPort: recreateOptions.controlUiPort,
+    replacementDashboard:
+      recreateOptions.managedWorkloadRebuild?.replacementProfile.profile.dashboard,
+  });
   process.env.NEMOCLAW_SANDBOX_NAME = sandboxName;
   // The outer rebuild already made its sole backup before the destroy phase deleted
   // the sandbox without tearing down the gateway/session needed by onboard --resume.
@@ -288,9 +297,6 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
       ...(preparedBackupRecovery ? { allowRemovedImmutabilityStateRecord: true } : {}),
       rebuildGatewayAuthority,
       rebuildPolicySourcePath,
-      ...(rebuildsHermesSandbox && backupManifest?.preservedEnv
-        ? { rebuildPreservedEnv: backupManifest.preservedEnv }
-        : {}),
       recreateJournalTargetIntentFingerprint: recreateJournal.targetIntentFingerprint,
     });
     const returnedExitCode = normalizeProcessExitCode(process.exitCode);
@@ -335,6 +341,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     } else {
       process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE = previousRestoreLatestBackup;
     }
+    restoreChatUiUrl();
   }
 
   if (onboardFailed) {
@@ -374,9 +381,8 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
       },
     );
     if (backupManifest) {
-      console.error("    3. Then restore your workspace state:");
       console.error(
-        `       ${CLI_NAME} ${sandboxName} snapshot restore "${backupManifest.timestamp}"`,
+        "       The retry will restore the complete native agent home from this backup.",
       );
     }
     console.error("");

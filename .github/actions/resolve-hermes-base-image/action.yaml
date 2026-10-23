@@ -7,6 +7,14 @@ description: Resolve the Hermes sandbox base image from GHCR, falling back to a 
 runs:
   using: composite
   steps:
+    - name: Set up security inventory tooling
+      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      with:
+        node-version: 24.18.1
+
+    - name: Install reviewed npm
+      uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
+
     - name: Resolve Hermes sandbox base image
       shell: bash
       run: |
@@ -60,7 +68,7 @@ runs:
         }
 
         try_image() {
-          local ref="$1" version digest_ref
+          local ref="$1" version digest_ref inventory_profile
           if ! resolver_pull "$ref"; then
             return 1
           fi
@@ -76,6 +84,14 @@ runs:
           fi
           if ! layout_ok "$digest_ref"; then
             echo "::warning::Hermes sandbox base image ${ref} contains retired sandbox state; trying another candidate"
+            return 1
+          fi
+          inventory_profile=shared
+          if [[ "$digest_ref" == "$tracked_ref" ]]; then
+            inventory_profile=hermes-compatible
+          fi
+          if ! resolver_security_inventory_ok "$digest_ref" "$inventory_profile"; then
+            echo "::warning::Hermes sandbox base image ${ref} does not match the reviewed security package inventory; trying another candidate"
             return 1
           fi
           if ! runtime_identity_ok "$digest_ref"; then
@@ -122,6 +138,10 @@ runs:
         fi
         if ! layout_ok nemoclaw-hermes-base-local; then
           echo "::error::Local Hermes sandbox base image contains retired sandbox state"
+          exit 1
+        fi
+        if ! resolver_security_inventory_ok nemoclaw-hermes-base-local shared; then
+          echo "::error::Local Hermes sandbox base image does not match the reviewed security package inventory"
           exit 1
         fi
         if ! runtime_identity_ok nemoclaw-hermes-base-local; then

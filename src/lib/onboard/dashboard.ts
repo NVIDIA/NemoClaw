@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import JSON5 from "json5";
 import {
   formatOpenShellForwardStartFailure,
   type OpenShellForwardAdapter,
@@ -29,6 +30,7 @@ import {
 } from "./agent-dashboard-forward";
 import { fetchAgentWebAuthTokenFromSandbox as fetchAgentWebAuthToken } from "./agent-web-auth-token";
 import * as dashboardAccess from "./dashboard-access";
+import { normalizeRuntimeProviderIdentity } from "./runtime-provider/access";
 import {
   type DashboardForwardOptions,
   normalizeDashboardForwardOptions,
@@ -88,6 +90,7 @@ export interface OnboardDashboardDeps {
   getSandbox?(name: string):
     | {
         gatewayName?: string | null;
+        openshellDriver?: string | null;
         gatewayPort?: number | null;
         dashboardPort?: number | null;
         dashboardRemoteBindPrepared?: boolean;
@@ -724,7 +727,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       if (completion.wasInterrupted()) return null;
       const jsonPath = findOpenclawJsonPath(tmpDir);
       if (!jsonPath) return null;
-      const cfg = JSON.parse(fs.readFileSync(jsonPath, "utf-8"));
+      const cfg = JSON5.parse(fs.readFileSync(jsonPath, "utf-8"));
       const parsedToken = cfg && cfg.gateway && cfg.gateway.auth && cfg.gateway.auth.token;
       token = typeof parsedToken === "string" && parsedToken.length > 0 ? parsedToken : null;
     } catch {
@@ -773,7 +776,12 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     const nimStatus = deps.nimStatus ?? nim.nimStatus;
     const nimStatusByName = deps.nimStatusByName ?? nim.nimStatusByName;
     const shouldShowNimLine = deps.shouldShowNimLine ?? nim.shouldShowNimLine;
-    const nimStat = nimContainer ? nimStatusByName(nimContainer) : nimStatus(sandboxName);
+    const dockerRuntime =
+      normalizeRuntimeProviderIdentity(getSandbox?.(sandboxName)?.openshellDriver) === "docker";
+    let nimStat: nim.NimStatus = { running: false, container: nimContainer ?? "" };
+    if (dockerRuntime) {
+      nimStat = nimContainer ? nimStatusByName(nimContainer) : nimStatus(sandboxName);
+    }
     const showNim = shouldShowNimLine(nimContainer, nimStat.running);
     const nimLabel = nimStat.running ? "running" : "not running";
     const providerLabel = deps.getProviderLabel(provider);

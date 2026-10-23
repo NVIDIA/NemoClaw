@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { VerifyDeploymentResult } from "../../verify-deployment";
 import {
+  OpenClawPairingIncompatibleError,
   OPENCLAW_PAIRING_OBSERVATION_TIMEOUT_MS,
   type OpenClawPairingSettlementObservation,
 } from "../../actions/sandbox/launch-readiness/openclaw-pairing-qualification";
@@ -18,6 +19,7 @@ import {
 } from "../../actions/sandbox/auto-pair-warmup";
 import { withGatewayRouteMutationLock } from "../../inference/gateway-route-mutation-lock";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
+import { HermesPortableLifecycleAuthorityError } from "../experimental/portable-agent-lifecycle";
 import {
   finalizationHandlerDeps,
   finalizationHandlerRuntime,
@@ -100,6 +102,78 @@ describe("ordinary OpenClaw pairing settlement", () => {
       "/sandbox/.openclaw",
     );
     expect(scope.deps.runWarmup).not.toHaveBeenCalled();
+  });
+
+  it("distinguishes incompatible pairing from a missing device (#13100)", async () => {
+    const scope = ordinaryPairingDeps({
+      observePairing: vi.fn(() => {
+        throw new OpenClawPairingIncompatibleError();
+      }),
+    });
+    await expect(settleOrdinaryOpenClawPairing("alpha", scope.deps)).resolves.toEqual({
+      kind: "incomplete",
+      reason: "pairing-incompatible",
+    });
+    expect(scope.deps.runWarmup).not.toHaveBeenCalled();
+    expect(scope.deps.observePairing).toHaveBeenCalledOnce();
+    expect(scope.deps.sleep).not.toHaveBeenCalled();
+  });
+
+  it.each([1, 2])(
+    "retains incompatible evidence through transient reads after attempt %i (#13100)",
+    async (attempt) => {
+      let calls = 0;
+      const scope = ordinaryPairingDeps({
+        observePairing: vi.fn(() => {
+          throw ++calls === attempt
+            ? new OpenClawPairingIncompatibleError()
+            : new Error("state changing");
+        }),
+      });
+      await expect(settleOrdinaryOpenClawPairing("alpha", scope.deps)).resolves.toEqual({
+        kind: "incomplete",
+        reason: "pairing-incompatible",
+      });
+      expect(scope.deps.runWarmup).not.toHaveBeenCalled();
+    },
+  );
+
+  it("accepts successful observation after incompatible and transient reads (#13100)", async () => {
+    const scope = ordinaryPairingDeps({
+      observePairing: vi
+        .fn(() => SETTLED)
+        .mockImplementationOnce(() => {
+          throw new Error("state changing");
+        })
+        .mockImplementationOnce(() => {
+          throw new OpenClawPairingIncompatibleError();
+        })
+        .mockImplementationOnce(() => {
+          throw new Error("state changing");
+        }),
+    });
+    await expect(settleOrdinaryOpenClawPairing("alpha", scope.deps)).resolves.toEqual({
+      kind: "settled",
+    });
+  });
+
+  it("warms up a verified probe baseline and reuses settlement on retry (#13100)", async () => {
+    const scope = ordinaryPairingDeps({
+      observePairing: vi
+        .fn()
+        .mockReturnValueOnce({
+          ...PAIRING_ONLY,
+          state: "scope-upgrade-required",
+        })
+        .mockReturnValue(SETTLED),
+    });
+    await expect(settleOrdinaryOpenClawPairing("alpha", scope.deps)).resolves.toEqual({
+      kind: "settled",
+    });
+    await expect(settleOrdinaryOpenClawPairing("alpha", scope.deps)).resolves.toEqual({
+      kind: "settled",
+    });
+    expect(scope.deps.runWarmup).toHaveBeenCalledExactlyOnceWith("alpha", "nemoclaw");
   });
 
   it("reuses an exact pending upgrade without running another producer (#10014)", async () => {
@@ -678,6 +752,28 @@ describe("finalizationHandlerDeps.waitForSandboxControlPlaneReady", () => {
     vi.unstubAllEnvs();
   });
 
+  it("reports the readiness failure without exposing credentials or unbounded output", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(finalizationHandlerRuntime, "loadProcessRecovery").mockReturnValue({
+      checkAndRecoverSandboxProcesses: vi.fn(),
+      waitForStartedNativeGatewayProcess: vi.fn(async () => true),
+      waitForRecreatedSandboxOpenShellReady: vi.fn(async (_name, options) => {
+        options?.onFailure?.({
+          failure: "openshell-readiness-failure",
+          openshellError: `Authorization: Bearer super-secret-token ${"x".repeat(2000)}`,
+        });
+        return false;
+      }),
+    });
+    await expect(finalizationHandlerDeps.waitForSandboxControlPlaneReady("alpha")).resolves.toBe(
+      false,
+    );
+    const message = String(error.mock.calls[0]?.[0]);
+    expect(message).toContain("openshell-readiness-failure");
+    expect(message).not.toContain("super-secret-token");
+    expect(message.length).toBeLessThan(1200);
+  });
+
   it("delegates timeout selection to the recovery readiness helper", async () => {
     vi.stubEnv("NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS", "75");
     vi.stubEnv("NEMOCLAW_SANDBOX_READY_TIMEOUT", "180");
@@ -700,7 +796,9 @@ describe("finalizationHandlerDeps.waitForSandboxControlPlaneReady", () => {
     await expect(
       finalizationHandlerDeps.waitForSandboxControlPlaneReady("policy-box"),
     ).resolves.toBe(true);
-    expect(waitForRecreatedSandboxOpenShellReady).toHaveBeenCalledWith("policy-box");
+    expect(waitForRecreatedSandboxOpenShellReady).toHaveBeenCalledWith("policy-box", {
+      onFailure: expect.any(Function),
+    });
     expect(effectiveTimeoutSeconds).toBe(75);
   });
 });
@@ -765,6 +863,221 @@ describe("finalizationHandlerDeps.readRegistryAgent", () => {
   });
 });
 
+describe("Hermes portable finalization readiness", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function installPortableReadinessHarness(
+    assertReady: typeof import("../experimental/portable-agent-lifecycle").assertHermesPortableAgentLifecycleAuthority,
+  ) {
+    const entry = {
+      name: "alpha",
+      agent: "hermes",
+      gatewayName: "nemoclaw-19080",
+      lifecycleGeneration: "generation-1",
+      openshellDriver: "docker",
+      provider: "ollama-local",
+    };
+    const load = vi.fn(() => ({ defaultSandbox: "alpha", sandboxes: { alpha: entry } }));
+    const loadRegistryPersistence = vi
+      .spyOn(finalizationHandlerRuntime, "loadRegistryPersistence")
+      .mockReturnValue({ load });
+    const assertHermesPortableAgentLifecycleAuthority = vi.fn(assertReady);
+    const qualifyPortableAgentLifecycleAuthority = vi.fn<
+      typeof import("../experimental/portable-agent-lifecycle").qualifyPortableAgentLifecycleAuthority
+    >(() => undefined as never);
+    vi.spyOn(finalizationHandlerRuntime, "loadPortableAgentLifecycle").mockReturnValue({
+      assertHermesPortableAgentLifecycleAuthority,
+      HermesPortableLifecycleAuthorityError,
+      qualifyPortableAgentLifecycleAuthority,
+    });
+    const portableLifecycleLockOptions = vi.fn(() => ({
+      stateDir: "/portable/state",
+    }));
+    vi.spyOn(finalizationHandlerRuntime, "loadPortableLifecycleLock").mockReturnValue({
+      portableLifecycleLockOptions,
+    });
+    const withMcpLifecycleLock = vi.fn(async (_name, operation) => await operation());
+    vi.spyOn(finalizationHandlerRuntime, "loadSandboxLifecycleLock").mockReturnValue({
+      withMcpLifecycleLock,
+    } as never);
+    return {
+      assertHermesPortableAgentLifecycleAuthority,
+      entry,
+      load,
+      loadRegistryPersistence,
+      portableLifecycleLockOptions,
+      qualifyPortableAgentLifecycleAuthority,
+      withMcpLifecycleLock,
+    };
+  }
+
+  it("accepts receipt-qualified authenticated Hermes health (#11892)", async () => {
+    const harness = installPortableReadinessHarness(async () => undefined);
+    const environment = { HOME: "/home/kiosk", PATH: "/usr/bin" };
+
+    await expect(
+      finalizationHandlerDeps.checkHermesPortableSandboxReadiness("alpha", environment),
+    ).resolves.toBe(true);
+
+    expect(harness.withMcpLifecycleLock).toHaveBeenCalledWith("alpha", expect.any(Function), {
+      stateDir: "/portable/state",
+    });
+    expect(harness.loadRegistryPersistence).toHaveBeenCalledExactlyOnceWith(environment);
+    expect(harness.portableLifecycleLockOptions).toHaveBeenCalledWith(environment);
+    expect(harness.assertHermesPortableAgentLifecycleAuthority).toHaveBeenCalledWith(
+      "alpha",
+      {
+        agent: "hermes",
+        gatewayName: "nemoclaw-19080",
+        lifecycleGeneration: "generation-1",
+        openshellDriver: "docker",
+        provider: "ollama-local",
+      },
+      { env: environment, readRegistry: expect.any(Function) },
+    );
+    const readinessDeps = harness.assertHermesPortableAgentLifecycleAuthority.mock.calls[0]?.[2];
+    expect(readinessDeps?.readRegistry?.("alpha")).toEqual(harness.entry);
+  });
+
+  it("uses the registry authority observed under the lifecycle lock (#11892)", async () => {
+    const harness = installPortableReadinessHarness(async () => undefined);
+    const lockedEntry = {
+      ...harness.entry,
+      gatewayName: "nemoclaw-19081",
+      lifecycleGeneration: "generation-2",
+    };
+    harness.withMcpLifecycleLock.mockImplementation(async (_name, operation) => {
+      harness.load.mockReturnValue({
+        defaultSandbox: "alpha",
+        sandboxes: { alpha: lockedEntry },
+      });
+      return await operation();
+    });
+    harness.qualifyPortableAgentLifecycleAuthority.mockImplementation((_name, deps) => {
+      expect(deps.readRegistry?.("alpha")).toEqual(lockedEntry);
+      return undefined as never;
+    });
+
+    await expect(
+      finalizationHandlerDeps.checkHermesPortableSandboxReadiness("alpha", {
+        HOME: "/home/kiosk",
+      }),
+    ).resolves.toBe(true);
+
+    expect(harness.assertHermesPortableAgentLifecycleAuthority).toHaveBeenCalledWith(
+      "alpha",
+      {
+        agent: "hermes",
+        gatewayName: "nemoclaw-19081",
+        lifecycleGeneration: "generation-2",
+        openshellDriver: "docker",
+        provider: "ollama-local",
+      },
+      expect.objectContaining({ readRegistry: expect.any(Function) }),
+    );
+  });
+
+  it.each([
+    "qualifyPortableAgentLifecycleAuthority",
+    "assertHermesPortableAgentLifecycleAuthority",
+  ] as const)("preserves registry disagreement from %s (#11892)", async (method) => {
+    const harness = installPortableReadinessHarness(async () => undefined);
+    const refuse = () => {
+      throw new HermesPortableLifecycleAuthorityError(
+        "receipt-registry-disagreement",
+        "untrusted authority diagnostic",
+      );
+    };
+    harness[method].mockImplementation(refuse);
+
+    await expect(
+      finalizationHandlerDeps.checkHermesPortableSandboxReadiness("alpha", {
+        HOME: "/home/kiosk",
+      }),
+    ).resolves.toEqual({
+      ready: false,
+      reason: "portable-hermes-registry-authority-unavailable",
+    });
+    expect(harness.assertHermesPortableAgentLifecycleAuthority).toHaveBeenCalledTimes(
+      method === "assertHermesPortableAgentLifecycleAuthority" ? 1 : 0,
+    );
+  });
+
+  it("fails closed when portable Hermes readiness is unavailable (#11892)", async () => {
+    installPortableReadinessHarness(async () => {
+      throw new Error("untrusted runtime diagnostic");
+    });
+
+    await expect(
+      finalizationHandlerDeps.checkHermesPortableSandboxReadiness("alpha", {
+        HOME: "/home/kiosk",
+      }),
+    ).resolves.toEqual({
+      ready: false,
+      reason: "portable-hermes-native-gateway-unavailable",
+    });
+  });
+
+  it("fails closed when the portable Hermes registry cannot be read (#11892)", async () => {
+    vi.spyOn(finalizationHandlerRuntime, "loadRegistryPersistence").mockImplementation(() => {
+      throw new Error("untrusted registry diagnostic");
+    });
+
+    await expect(
+      finalizationHandlerDeps.checkHermesPortableSandboxReadiness("alpha", {
+        HOME: "/home/kiosk",
+      }),
+    ).resolves.toEqual({
+      ready: false,
+      reason: "portable-hermes-registry-authority-unavailable",
+    });
+  });
+
+  it("classifies registry authority loss during native readiness without exposing it (#11892)", async () => {
+    const harness = installPortableReadinessHarness(async () => undefined);
+    harness.load
+      .mockReturnValueOnce({ defaultSandbox: "alpha", sandboxes: { alpha: harness.entry } })
+      .mockImplementation(() => {
+        throw new Error("untrusted registry diagnostic");
+      });
+    harness.assertHermesPortableAgentLifecycleAuthority.mockImplementation(
+      async (_name, _context, deps) => {
+        expect(deps?.readRegistry).toBeTypeOf("function");
+        deps?.readRegistry?.("alpha");
+      },
+    );
+
+    await expect(
+      finalizationHandlerDeps.checkHermesPortableSandboxReadiness("alpha", {
+        HOME: "/home/kiosk",
+      }),
+    ).resolves.toEqual({
+      ready: false,
+      reason: "portable-hermes-registry-authority-unavailable",
+    });
+  });
+
+  it("classifies a lifecycle lock failure without exposing its diagnostic (#11892)", async () => {
+    installPortableReadinessHarness(async () => undefined);
+    vi.spyOn(finalizationHandlerRuntime, "loadSandboxLifecycleLock").mockReturnValue({
+      withMcpLifecycleLock: vi.fn(async () => {
+        throw new Error("untrusted lock diagnostic");
+      }),
+    } as never);
+
+    await expect(
+      finalizationHandlerDeps.checkHermesPortableSandboxReadiness("alpha", {
+        HOME: "/home/kiosk",
+      }),
+    ).resolves.toEqual({
+      ready: false,
+      reason: "portable-hermes-lifecycle-lock-unavailable",
+    });
+  });
+});
+
 describe("finalization process-recovery refusal propagation", () => {
   beforeEach(() => {
     vi.spyOn(finalizationHandlerRuntime, "loadLaunchReadiness").mockReturnValue({
@@ -809,6 +1122,7 @@ describe("finalization process-recovery refusal propagation", () => {
   });
 
   it("pauses before recovery when initial OpenClaw startup does not settle", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
     const recover = vi.fn();
     vi.spyOn(finalizationHandlerRuntime, "loadLaunchReadiness").mockReturnValue({
       resolveOrdinaryOpenClawPairingTarget: () => ({ gatewayName: "nemoclaw" }),
@@ -823,6 +1137,30 @@ describe("finalization process-recovery refusal propagation", () => {
       finalizationHandlerDeps.checkAndRecoverSandboxProcesses("alpha", { quiet: true }),
     ).resolves.toBe(false);
     expect(recover).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("startup did not settle"));
+  });
+
+  it("reports bounded redacted recovery failure details even in quiet onboarding", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(finalizationHandlerRuntime, "loadProcessRecovery").mockReturnValue({
+      checkAndRecoverSandboxProcesses: vi.fn(async () => ({
+        checked: true,
+        wasRunning: false,
+        recovered: false,
+        forwardRecovered: false,
+        recoveryFailureDetail:
+          "transport failed Authorization: Bearer secret-value " + "x".repeat(2000),
+      })),
+      waitForRecreatedSandboxOpenShellReady: vi.fn(async () => true),
+      waitForStartedNativeGatewayProcess: vi.fn(async () => true),
+    });
+    await expect(
+      finalizationHandlerDeps.checkAndRecoverSandboxProcesses("alpha", { quiet: true }),
+    ).resolves.toBe(false);
+    const diagnostic = error.mock.calls.flat().join("\n");
+    expect(diagnostic).toContain("transport failed");
+    expect(diagnostic).not.toContain("secret-value");
+    expect(diagnostic.length).toBeLessThan(1100);
   });
 
   it("passes the scope-validated portable environment to process recovery", async () => {
@@ -990,9 +1328,15 @@ describe("finalization process-recovery refusal propagation", () => {
 });
 
 describe("initial native gateway startup", () => {
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
 
   it("uses the native agent restart path without restoring supervisor authority", async () => {
+    vi.stubEnv("OPENSHELL_GATEWAY", "ambient-gateway");
+    vi.stubEnv("OPENSHELL_WORKSPACE", "review-workspace");
+    vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", "/tmp/review-tls");
     const restartSandboxGateway = vi.fn(async () => ({
       ok: true as const,
       restarted: true as const,
@@ -1003,9 +1347,18 @@ describe("initial native gateway startup", () => {
       restartSandboxGateway,
     });
 
-    await expect(restartNativeGatewayForInitialSetup("alpha")).resolves.toMatchObject({
+    await expect(
+      restartNativeGatewayForInitialSetup("alpha", "nemoclaw-19090"),
+    ).resolves.toMatchObject({
       ok: true,
     });
-    expect(restartSandboxGateway).toHaveBeenCalledExactlyOnceWith("alpha", { quiet: true });
+    expect(restartSandboxGateway).toHaveBeenCalledExactlyOnceWith("alpha", {
+      quiet: true,
+      runtimeSelection: {
+        gatewayName: "nemoclaw-19090",
+        workspace: "review-workspace",
+        localTlsDir: "/tmp/review-tls",
+      },
+    });
   });
 });

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import path from "node:path";
+import { resolveVllmModelAlias, vllmModelMatchesAlias } from "../inference/vllm-models";
 import { isDecisionSelected } from "../state/onboard-checkpoint-decision";
 import {
   hasInvalidSessionHostMounts,
@@ -9,6 +10,10 @@ import {
 } from "../state/onboard-session";
 import type { SandboxHostMount } from "../state/registry/types";
 import { normalizeToolDisclosure, type ToolDisclosure } from "../tool-disclosure";
+import {
+  isValidStationExpressProviderState,
+  parseStationExpressResumeIntent,
+} from "./station-express-resume";
 import { preflightVllmModelEnvOrExit } from "./vllm-model-preflight";
 
 const onboardProviders = require("./providers");
@@ -18,11 +23,19 @@ export interface ResumeSessionLike {
   provider?: string | null;
   model?: string | null;
   vllmInstallModel?: string | null;
+  stationExpressIntent?: unknown;
   agent?: string | null;
   toolDisclosure?: ToolDisclosure;
   observabilityEnabled?: boolean;
-  metadata?: { fromDockerfile?: string | null; hostMounts?: SandboxHostMount[] } | null;
-  steps?: { sandbox?: { status?: string | null } | null } | null;
+  metadata?: {
+    fromDockerfile?: string | null;
+    fromImage?: string | null;
+    hostMounts?: SandboxHostMount[];
+  } | null;
+  steps?: {
+    sandbox?: { status?: string | null } | null;
+    provider_selection?: { status?: string | null } | null;
+  } | null;
   checkpoint?: {
     sandboxIdentity?: import("../state/onboard-checkpoint-types").CheckpointDecision<
       import("../state/onboard-checkpoint-types").CheckpointSandboxIdentity
@@ -135,6 +148,7 @@ export function getResumeConfigConflicts(
   opts: {
     nonInteractive?: boolean;
     fromDockerfile?: string | null;
+    fromImage?: string | null;
     sandboxName?: string | null;
     agent?: string | null;
     toolDisclosure?: ToolDisclosure | null;
@@ -162,8 +176,22 @@ export function getResumeConfigConflicts(
   }
 
   const requestedProvider = getRequestedProviderHint(nonInteractive, allowHostedInferenceStaging);
+  const stationIntent = parseStationExpressResumeIntent(session?.stationExpressIntent);
+  const providerStepStatus = session?.steps?.provider_selection?.status;
+  // Express replays install-vllm until provider selection completes, including
+  // retries that already selected an owned vLLM server without installing it.
+  const retryingStationProvider =
+    stationIntent?.kind !== "spark" &&
+    stationIntent !== null &&
+    ["pending", "in_progress", "failed"].includes(providerStepStatus ?? "") &&
+    isValidStationExpressProviderState(
+      stationIntent,
+      providerStepStatus,
+      session?.provider,
+      session?.model,
+    );
   const effectiveRequestedProvider =
-    session?.vllmInstallModel && requestedProvider === "install-vllm"
+    (session?.vllmInstallModel || retryingStationProvider) && requestedProvider === "install-vllm"
       ? "vllm-local"
       : onboardProviders.getEffectiveProviderName(requestedProvider);
   const recordedProvider = session?.vllmInstallModel ? "vllm-local" : session?.provider;
@@ -185,10 +213,14 @@ export function getResumeConfigConflicts(
       ? requestedVllmModel
       : getRequestedModelHint(nonInteractive, allowHostedInferenceStaging);
   const recordedModel = session?.vllmInstallModel ?? session?.model;
+  const recordedVllmModel = session?.vllmInstallModel
+    ? resolveVllmModelAlias(session.vllmInstallModel)
+    : null;
   if (
     requestedModel &&
     recordedModel &&
-    requestedModel.toLowerCase() !== recordedModel.toLowerCase()
+    requestedModel.toLowerCase() !== recordedModel.toLowerCase() &&
+    !(recordedVllmModel && vllmModelMatchesAlias(recordedVllmModel, requestedModel))
   ) {
     conflicts.push({
       field: "model",
@@ -206,6 +238,16 @@ export function getResumeConfigConflicts(
       field: "fromDockerfile",
       requested: requestedFrom,
       recorded: recordedFrom,
+    });
+  }
+
+  const requestedImage = opts.fromImage?.trim() || null;
+  const recordedImage = session?.metadata?.fromImage?.trim() || null;
+  if (requestedImage !== recordedImage) {
+    conflicts.push({
+      field: "fromImage",
+      requested: requestedImage,
+      recorded: recordedImage,
     });
   }
 

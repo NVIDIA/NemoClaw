@@ -308,9 +308,12 @@ function assertReviewedNodeBases(file: string, source: string): void {
 }
 
 function completedStage(source: string): string {
-  const finalStageStart = [...source.matchAll(/^FROM\b/gmu)].at(-1)?.index;
-  assert(finalStageStart !== undefined, "Dockerfile must contain a completed image stage");
-  return source.slice(finalStageStart);
+  const stages = [...source.matchAll(/^FROM\s+(\S+)(?:\s+AS\s+(\S+))?/gmu)];
+  const finalStage = stages.at(-1);
+  assert(finalStage, "Dockerfile must contain a completed image stage");
+  const parent = stages.findIndex((stage) => stage[2] === finalStage[1]);
+  const inherited = parent < 0 ? "" : completedStage(source.slice(0, stages[parent + 1]!.index));
+  return inherited + source.slice(finalStage.index);
 }
 
 function namedStage(source: string, name: string): string {
@@ -321,6 +324,29 @@ function namedStage(source: string, name: string): string {
 }
 
 describe("node-tar image remediation contract", () => {
+  it.each([
+    ...pinnedBaseDockerfiles.map((file) => ({ file, count: 2 })),
+    { file: "Dockerfile", count: 1 },
+  ])("pins reviewed curl in every install stage of $file", ({ file, count }) => {
+    const source = fs.readFileSync(path.join(repoRoot, file), "utf8");
+    const versions = dockerfileInstructions(source)
+      .filter((instruction) => instruction.keyword === "RUN")
+      .flatMap((instruction) =>
+        Array.from(instruction.body.matchAll(/\bcurl=([^\s\\]+)/gu), (match) => match[1]),
+      );
+
+    expect(versions, file).toHaveLength(count);
+    expect([...new Set(versions)], file).toEqual(["8.14.1-2+deb13u7"]);
+  });
+
+  it("checks inherited runtime instructions without including unrelated stages", () => {
+    expect(
+      completedStage(
+        "FROM base AS prepared\nRUN patch\nFROM scratch AS unused\nRUN unrelated\nFROM prepared\nRUN npm ci\n",
+      ),
+    ).toBe("FROM base AS prepared\nRUN patch\nFROM prepared\nRUN npm ci\n");
+  });
+
   it("binds the remediation lifecycle to the affected upstream Node image pins", () => {
     const observedBases = new Set<string>();
     pinnedBaseDockerfiles.forEach((file) => {
@@ -426,11 +452,11 @@ describe("node-tar image remediation contract", () => {
       expect(helperCopy, file).toBeGreaterThan(reviewedCopy);
       expect(patchCopy, file).toBeGreaterThan(helperCopy);
       expect(firstPatchRun, file).toBeGreaterThan(patchInputReady);
-      const aptInstall = source.indexOf(
-        "RUN apt-get update && apt-get install -y --no-install-recommends",
-        patchInputReady,
-      );
-      const curlPackage = source.indexOf("curl=8.14.1-2+deb13u5", aptInstall);
+      const aptInstall =
+        dockerfileRunCommandPositions(source, "apt-get install -y --no-install-recommends").find(
+          (index) => index > patchInputReady,
+        ) ?? -1;
+      const curlPackage = source.indexOf("curl=8.14.1-2+deb13u7", aptInstall);
       const aptInstallCleanup = source.indexOf("&& rm -rf /var/lib/apt/lists/*", curlPackage);
       expect(
         aptInstall > patchCopy &&
@@ -587,7 +613,6 @@ describe("reviewed npm image remediation contract", () => {
       "Dockerfile:builder",
       "Dockerfile:codex-acp-runtime",
       "Dockerfile:wechat-npm-cache",
-      "Dockerfile:openclaw-managed-messaging-npm-cache-0",
       "Dockerfile:openclaw-managed-messaging-npm-cache-1",
       "Dockerfile.base:native-security-builder",
       "Dockerfile.base:<final>",

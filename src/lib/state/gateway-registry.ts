@@ -3,12 +3,17 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
+import { withRegistryLockAt } from "./registry/lock";
 
 import { isErrnoException } from "../core/errno";
 import { isObjectRecord } from "../core/json-types";
+import { resolveLegacyModelRouterPort } from "../core/model-router-port";
 import { DEFAULT_GATEWAY_PORT } from "../core/ports";
+import { isValidDashboardExternalUrl } from "../dashboard/url";
 import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../name-validation";
-import { resolveGatewayName, resolveGatewayPortFromName } from "../onboard/gateway-binding";
+import { registryEntryGatewayPort, resolveGatewayName } from "../onboard/gateway-binding/identity";
+export { registryEntryGatewayPort } from "../onboard/gateway-binding/identity";
 import { GATEWAYS_SUBDIR, nemoclawStateRoot } from "./state-root";
 import { normalizePendingSandboxCreateIdentity } from "./registry/pending-create-identity";
 
@@ -24,12 +29,14 @@ export {
 export { withRegistryLockAt } from "./registry/lock";
 
 const MAX_REGISTRY_BYTES = 16 * 1024 * 1024;
+const MAX_ONBOARD_SESSION_BYTES = 1024 * 1024;
 const MAX_GATEWAY_ROOTS = 256;
 const MAX_GATEWAY_DIRECTORY_ENTRIES = 1024;
 
 export interface GatewayRegistryEntry extends Record<string, unknown> {
   name: string;
   dashboardPort?: number | null;
+  dashboardExternalUrl?: string | null;
   hermesApiPort?: number | null;
   gatewayName?: string | null;
   gatewayPort?: number | null;
@@ -126,6 +133,16 @@ function parseRegistry(filePath: string, raw: string): GatewayRegistryDocument {
         throw stateError(`${filePath} has an invalid ${field} for sandbox ${JSON.stringify(name)}`);
       }
     }
+    const externalUrl = value.dashboardExternalUrl;
+    if (
+      externalUrl !== undefined &&
+      externalUrl !== null &&
+      (typeof externalUrl !== "string" || !isValidDashboardExternalUrl(externalUrl))
+    ) {
+      throw stateError(
+        `${filePath} has an invalid dashboardExternalUrl for sandbox ${JSON.stringify(name)}`,
+      );
+    }
     const gatewayStateDir = value.openshellGatewayStateDir;
     if (
       gatewayStateDir !== undefined &&
@@ -174,37 +191,6 @@ export function readGatewayRegistryFile(
   } finally {
     fs.closeSync(fd);
   }
-}
-
-/** Resolve the gateway identity recorded by a registry row, rejecting ambiguity. */
-export function registryEntryGatewayPort(entry: GatewayRegistryEntry): number {
-  const hasPort = entry.gatewayPort !== undefined && entry.gatewayPort !== null;
-  const hasName = entry.gatewayName !== undefined && entry.gatewayName !== null;
-  const port = entry.gatewayPort;
-  const name = entry.gatewayName;
-
-  if (
-    hasPort &&
-    (typeof port !== "number" || !Number.isInteger(port) || port < 1 || port > 65535)
-  ) {
-    throw stateError(`sandbox ${JSON.stringify(entry.name)} has an invalid gatewayPort`);
-  }
-  if (hasName && typeof name !== "string") {
-    throw stateError(`sandbox ${JSON.stringify(entry.name)} has an invalid gatewayName`);
-  }
-
-  const portFromName = typeof name === "string" ? resolveGatewayPortFromName(name) : null;
-  if (hasName && portFromName === null) {
-    throw stateError(`sandbox ${JSON.stringify(entry.name)} has an unrecognized gatewayName`);
-  }
-  if (typeof port === "number") {
-    if (typeof name === "string" && resolveGatewayName(port) !== name) {
-      throw stateError(`sandbox ${JSON.stringify(entry.name)} has conflicting gateway identity`);
-    }
-    return port;
-  }
-  if (portFromName !== null) return portFromName;
-  return DEFAULT_GATEWAY_PORT;
 }
 
 /** Recover one unambiguous onboard-time custom OpenShell state directory for a gateway port. */
@@ -324,4 +310,162 @@ export function listHostGatewayRegistryEntries(home: string): HostGatewayRegistr
     }
   }
   return result;
+}
+
+/**
+ * Enumerate every gateway port represented by durable host state.
+ *
+ * State-root names protect gateways that do not yet have a sandbox row, while
+ * registry bindings retain ports recorded by legacy layouts. Consumers that
+ * expose a host loopback service must treat the complete inventory as control
+ * plane, even when the current process selects another gateway.
+ */
+export function listRecordedGatewayPorts(home: string): number[] {
+  const ports = new Set(listGatewayStateRoots(home).map(({ gatewayPort }) => gatewayPort));
+  for (const { gatewayPort } of listHostGatewayRegistryEntries(home)) ports.add(gatewayPort);
+  return [...ports].sort((left, right) => left - right);
+}
+
+/** Enumerate exact Model Router ports retained by onboarding state on this host. */
+export function listRecordedModelRouterPorts(home: string): number[] {
+  const ports = new Set<number>();
+  for (const state of listGatewayStateRoots(home)) {
+    const sessionFile = path.join(state.root, "onboard-session.json");
+    assertGatewayStatePathSafe(home, path.dirname(sessionFile));
+    let fd: number;
+    try {
+      fd = openReadOnlyNoFollow(sessionFile);
+    } catch (error) {
+      if (isErrnoException(error) && error.code === "ENOENT") continue;
+      throw error;
+    }
+    try {
+      const stat = fs.fstatSync(fd);
+      if (!stat.isFile()) throw stateError(`${sessionFile} is not a regular file`);
+      if (stat.size > MAX_ONBOARD_SESSION_BYTES) {
+        throw stateError(
+          `${sessionFile} exceeds the ${String(MAX_ONBOARD_SESSION_BYTES)} byte limit`,
+        );
+      }
+      const parsed: unknown = JSON.parse(fs.readFileSync(fd, "utf8"));
+      if (!isObjectRecord(parsed)) throw stateError(`${sessionFile} is not an object`);
+      const routerPort = parsed.routerPort;
+      if (routerPort === null && parsed.routerPid === null && parsed.routerCredentialHash === null)
+        continue;
+      if (routerPort === undefined || routerPort === null) {
+        const legacyPort = resolveLegacyModelRouterPort(parsed);
+        if (legacyPort !== null) ports.add(legacyPort);
+        continue;
+      }
+      if (
+        typeof routerPort !== "number" ||
+        !Number.isInteger(routerPort) ||
+        routerPort < 1 ||
+        routerPort > 65535
+      ) {
+        throw stateError(`${sessionFile} has an invalid routerPort`);
+      }
+      ports.add(routerPort);
+    } catch (error) {
+      if (error instanceof SyntaxError) throw stateError(`${sessionFile} is not valid JSON`);
+      throw error;
+    } finally {
+      fs.closeSync(fd);
+    }
+  }
+  for (const { entry } of listHostGatewayRegistryEntries(home)) {
+    const port = resolveLegacyModelRouterPort(entry);
+    if (port !== null) ports.add(port);
+  }
+  return [...ports].sort((left, right) => left - right);
+}
+
+const GATEWAY_AUTHORITY_FIELDS = [
+  "nativeNvidiaProviderAuthorities",
+  "nativeHostedProviderAuthorities",
+] as const;
+
+function selectedAuthorities(
+  registry: GatewayRegistryDocument,
+  gatewayName: string,
+): Record<string, unknown> & { nativeLocalProviderAuthorities: Record<string, unknown> } {
+  return {
+    ...Object.fromEntries(
+      GATEWAY_AUTHORITY_FIELDS.map((field) => [
+        field,
+        isObjectRecord(registry[field]) ? registry[field][gatewayName] : undefined,
+      ]),
+    ),
+    nativeLocalProviderAuthorities: Object.fromEntries(
+      Object.entries(
+        isObjectRecord(registry.nativeLocalProviderAuthorities)
+          ? registry.nativeLocalProviderAuthorities
+          : {},
+      ).filter(([, receipt]) => isObjectRecord(receipt) && receipt.gatewayName === gatewayName),
+    ),
+  };
+}
+
+/** Call the returned operation only after the owned gateway resources and state are removed. */
+export function prepareGatewayProviderAuthorityRetirement(input: {
+  home: string;
+  registryFile: string;
+  gatewayName: string;
+  gatewayPort: number;
+  writeAtomic: (home: string, file: string, value: unknown) => void;
+}): ((pruned: boolean) => void) | undefined {
+  const { home, registryFile, gatewayName, gatewayPort } = input;
+  assertGatewayStatePathSafe(home, `${registryFile}.lock`);
+  if (!readGatewayRegistryFile(home, registryFile)) return undefined;
+  const initial = withRegistryLockAt(registryFile, () =>
+    readGatewayRegistryFile(home, registryFile),
+  );
+  if (!initial) throw new Error("Sandbox registry disappeared before uninstall cleanup.");
+  const expected = selectedAuthorities(initial, gatewayName);
+  if (
+    GATEWAY_AUTHORITY_FIELDS.every((field) => expected[field] === undefined) &&
+    Object.keys(expected.nativeLocalProviderAuthorities).length === 0
+  )
+    return undefined;
+  const selectedRows = (registry: GatewayRegistryDocument) =>
+    Object.fromEntries(
+      Object.entries(registry.sandboxes).filter(
+        ([, entry]) => registryEntryGatewayPort(entry) === gatewayPort,
+      ),
+    );
+  const expectedRows = selectedRows(initial);
+  return (pruned) => {
+    // A full purge needs no metadata write and must not recreate the state root.
+    if (!readGatewayRegistryFile(home, registryFile)) return;
+    return withRegistryLockAt(registryFile, () => {
+      const current = readGatewayRegistryFile(home, registryFile);
+      // A purged registry has no ownership records to retire.
+      if (!current) return;
+      if (
+        !isDeepStrictEqual(selectedAuthorities(current, gatewayName), expected) ||
+        !isDeepStrictEqual(selectedRows(current), pruned ? {} : expectedRows)
+      ) {
+        throw new Error(
+          "Gateway provider authority or sandbox registrations changed during uninstall; retained current authority.",
+        );
+      }
+      let changed = false;
+      for (const field of GATEWAY_AUTHORITY_FIELDS) {
+        const authorities = current[field];
+        if (!isObjectRecord(authorities) || !Object.hasOwn(authorities, gatewayName)) continue;
+        delete authorities[gatewayName];
+        if (Object.keys(authorities).length === 0) delete current[field];
+        changed = true;
+      }
+      if (isObjectRecord(current.nativeLocalProviderAuthorities)) {
+        for (const name of Object.keys(expected.nativeLocalProviderAuthorities)) {
+          delete current.nativeLocalProviderAuthorities[name];
+          changed = true;
+        }
+        if (Object.keys(current.nativeLocalProviderAuthorities).length === 0)
+          delete current.nativeLocalProviderAuthorities;
+      }
+      if (changed) input.writeAtomic(home, registryFile, current);
+    });
+  };
 }

@@ -14,15 +14,18 @@ const TARGET = {
 } as unknown as AgentConfigTarget;
 
 describe("readInSandboxConfigOrFail pre-flight gate (#6997)", () => {
-  it("returns the config when the sandbox is readable", () => {
-    const config = { model: "old" } as unknown as ConfigObject;
-    const readSandboxConfig = vi.fn(() => config);
+  it.each([undefined, "recorded-gateway"])(
+    "returns the readable config using gateway %s",
+    (gatewayName) => {
+      const config = { model: "old" } as unknown as ConfigObject;
+      const readSandboxConfig = vi.fn(() => config);
 
-    const result = readInSandboxConfigOrFail({ readSandboxConfig }, "box", TARGET);
+      const result = readInSandboxConfigOrFail({ readSandboxConfig }, "box", TARGET, gatewayName);
 
-    expect(result).toBe(config);
-    expect(readSandboxConfig).toHaveBeenCalledWith("box", TARGET);
-  });
+      expect(result).toBe(config);
+      expect(readSandboxConfig).toHaveBeenCalledWith("box", TARGET, gatewayName);
+    },
+  );
 
   it("converts a stopped-sandbox SandboxConfigError into an actionable InferenceSetError", () => {
     const readSandboxConfig = vi.fn(() => {

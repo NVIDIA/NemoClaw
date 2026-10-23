@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { withGroupWritableReadinessHome } from "../fixtures/launch-readiness-home.ts";
+
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -1153,6 +1155,21 @@ function hasStructuredContent(message) {
   return Array.isArray(message.content) && message.content.length > 0;
 }
 
+function messageFailureMetadata(message) {
+  const errorMessage = typeof message.errorMessage === "string" ? message.errorMessage.trim() : "";
+  const errorType = /^(?:litellm\.)?(AuthenticationError|PermissionDeniedError|BadRequestError|NotFoundError|RateLimitError|APIConnectionError|APITimeoutError|InternalServerError|ServiceUnavailableError)(?::|$)/.exec(errorMessage)?.[1];
+  const errorCode = ["string", "number"].includes(typeof message.errorCode) ? String(message.errorCode).trim() : "";
+  return {
+    role: message.role,
+    stopReason: ["stop", "length", "toolUse", "error", "aborted"].includes(message.stopReason) ? message.stopReason : "other",
+    errorCode: /^[1-5][0-9]{2}$/.test(errorCode) ? errorCode : null,
+    errorCodeType: typeof message.errorCode,
+    errorType: errorType ?? (errorMessage ? "unclassified" : null),
+    api: ["openai-completions", "openai-responses", "anthropic-messages"].includes(message.api) ? message.api : "other",
+    managedProvider: message.provider === "inference",
+  };
+}
+
 function structuredContentText(message) {
   return [message.content]
     .flat()
@@ -1168,8 +1185,9 @@ function structuredContentText(message) {
 
 const providerUnavailableCodes = new Set(["500", "502", "503", "504", "529"]);
 const providerUnavailableError = /^(?:litellm\.)?(?:InternalServerError|ServiceUnavailableError)(?::|$)/;
+const providerConflictingError = /^(?:litellm\.)?(?:BadRequestError|NotFoundError|RateLimitError|APIConnectionError|APITimeoutError)(?::|$)/;
 const providerNonRetryableError =
-  /(?:authenticat|authori[sz]|unauthori[sz]ed|forbidden|invalid (?:api )?key|credential|\b(?:policy|permission)\b|\b(?:denied|blocked|prohibited)\b)/i;
+  /(?:authenticat|authori[sz]|unauthori[sz]ed|forbidden|invalid (?:api )?key|credential|malformed|invalid (?:provider )?response|\b(?:policy|permission)\b|\b(?:denied|blocked|prohibited)\b)/i;
 
 function isStructuredProviderUnavailable(message) {
   const errorMessage = typeof message.errorMessage === "string" ? message.errorMessage.trim() : "";
@@ -1185,7 +1203,8 @@ function isStructuredProviderUnavailable(message) {
     identity === "assistant\ntrue\nerror\nopenai-completions\ninference" &&
     typeof message.errorCode === "string" &&
     providerUnavailableCodes.has(message.errorCode.trim()) &&
-    providerUnavailableError.test(errorMessage) &&
+    (message.errorCode.trim() === "503" || providerUnavailableError.test(errorMessage)) &&
+    !providerConflictingError.test(errorMessage) &&
     !providerNonRetryableError.test(errorMessage)
   );
 }
@@ -1219,6 +1238,7 @@ function appendedMessages(fileName, baseline) {
       contentText: structuredContentText(record.message),
       hasStructuredContent: hasStructuredContent(record.message),
       providerUnavailable: isStructuredProviderUnavailable(record.message),
+      failureMetadata: messageFailureMetadata(record.message),
     });
   }
   return messages;
@@ -1241,6 +1261,7 @@ function structuredMessages(events, sessionId) {
             contentText: structuredContentText(message),
             hasStructuredContent: hasStructuredContent(message),
             providerUnavailable: isStructuredProviderUnavailable(message),
+            failureMetadata: messageFailureMetadata(message),
           },
         ]
       : [];
@@ -1334,7 +1355,7 @@ function qualifyStructuredTurns(changedSessions, expectedTurns) {
       { sessionId },
     );
     if (!message.hasStructuredContent && !message.providerUnavailable) {
-      finish(2, "message_content_empty", { sessionId });
+      finish(2, "message_content_empty", { sessionId, messageIndex: index, ...message.failureMetadata });
     }
   }
   const providerUnavailable = providerUnavailableIndex !== -1;
@@ -1401,6 +1422,7 @@ pty_monitor_root="/tmp/nemoclaw-launch-turn-$NEMOCLAW_LAUNCH_RUN_ID"
 session_pid=""
 session_deadline=""
 provider_unavailable_candidate=0
+last_evidence_status=unset
 
 remove_session_baseline() {
   session_evidence cleanup-baseline
@@ -1422,6 +1444,7 @@ cleanup() {
   local cleanup_status=0
   trap - EXIT
   set +e
+  printf 'nemoclaw.e2e.launch-cleanup=started evidence-status=%s provider-unavailable=%s\n' "$last_evidence_status" "$provider_unavailable_candidate" >&2
   exec 3>&- || true
   if [[ -n "$session_pid" ]] && kill -0 "$session_pid" 2>/dev/null; then
     kill -TERM "$session_pid" 2>/dev/null || true
@@ -1431,19 +1454,24 @@ cleanup() {
   if [[ -n "$session_pid" ]]; then
     wait "$session_pid" 2>/dev/null || true
   fi
-  if ! remove_session_baseline >/dev/null 2>&1; then
+  echo "nemoclaw.e2e.launch-cleanup=child-reaped" >&2
+  # A fatal shell error in one cleanup call must not skip the remaining cleanup.
+  if ! (remove_session_baseline) >/dev/null 2>"$evidence_error"; then
     echo "structured session baseline cleanup failed" >&2
+    tail -c 2048 "$evidence_error" >&2 || true
+    cleanup_status=1
+  fi
+  wait_for_pty_monitor_exit
+  if ! (remove_pty_monitor) >/dev/null 2>"$evidence_error"; then
+    echo "launch PTY monitor cleanup failed" >&2
+    tail -c 2048 "$evidence_error" >&2 || true
     cleanup_status=1
   fi
   if ! rm -rf -- "$session_dir"; then
     echo "launch host session cleanup failed" >&2
     cleanup_status=1
   fi
-  wait_for_pty_monitor_exit
-  if ! remove_pty_monitor >/dev/null 2>&1; then
-    echo "launch PTY monitor cleanup failed" >&2
-    cleanup_status=1
-  fi
+  printf 'nemoclaw.e2e.launch-cleanup=completed status=%s\n' "$cleanup_status" >&2
   if [[ "$original_status" != 0 ]]; then
     case "$provider_unavailable_candidate:$cleanup_status" in
       1:0) printf '\n%s\n' "${OPENCLAW_PROVIDER_UNAVAILABLE_MARKER}:$NEMOCLAW_LAUNCH_RUN_ID" >&2 ;;
@@ -1513,15 +1541,22 @@ wait_for_turn_count() {
   local expected_turns="$1"
   local evidence_status
   local session_active
+  # Retain this phase's diagnostics if the final deadline probe has no stderr.
+  # Bound the retained tail after each failed probe, before polling again.
+  : > "$evidence_error"
   while (( SECONDS < session_deadline )); do
     # Sample liveness first so an exited child receives one final evidence qualification.
     session_active=1
     kill -0 "$session_pid" 2>/dev/null || session_active=0
-    if session_evidence qualify "$expected_turns" >/dev/null 2>"$evidence_error"; then
+    if session_evidence qualify "$expected_turns" >/dev/null 2>>"$evidence_error"; then
+      last_evidence_status=0
       return 0
     else
       evidence_status=$?
     fi
+    last_evidence_status="$evidence_status"
+    tail -c 2048 "$evidence_error" > "$evidence_error.tmp"
+    mv "$evidence_error.tmp" "$evidence_error"
     if [[ "$evidence_status" != 1 ]]; then
       case "$evidence_status" in
         3) fail_provider_unavailable ;;
@@ -1539,12 +1574,15 @@ wait_for_turn_count() {
 
 wait_for_pty_input_mode() {
   local evidence_status
+  : > "$evidence_error"
   while (( SECONDS < session_deadline )); do
-    if session_evidence input-mode >/dev/null 2>"$evidence_error"; then
+    if session_evidence input-mode >/dev/null 2>>"$evidence_error"; then
       return 0
     else
       evidence_status=$?
     fi
+    tail -c 2048 "$evidence_error" > "$evidence_error.tmp"
+    mv "$evidence_error.tmp" "$evidence_error"
     if [[ "$evidence_status" != 1 ]]; then
       fail_launch_session "OpenClaw TUI input-mode evidence was invalid or unavailable (status $evidence_status)"
     fi
@@ -1558,12 +1596,15 @@ wait_for_pty_input_mode() {
 
 wait_for_pty_monitor_ready() {
   local evidence_status
+  : > "$evidence_error"
   while (( SECONDS < session_deadline )); do
-    if session_evidence monitor-ready >/dev/null 2>"$evidence_error"; then
+    if session_evidence monitor-ready >/dev/null 2>>"$evidence_error"; then
       return 0
     else
       evidence_status=$?
     fi
+    tail -c 2048 "$evidence_error" > "$evidence_error.tmp"
+    mv "$evidence_error.tmp" "$evidence_error"
     if [[ "$evidence_status" != 1 ]]; then
       fail_launch_session "OpenClaw PTY monitor evidence was invalid or unavailable (status $evidence_status)"
     fi
@@ -1674,9 +1715,10 @@ if [[ "$launch_status" != 0 ]]; then
   exit "$launch_status"
 fi
 if session_evidence qualify 2 >/dev/null 2>"$evidence_error"; then
-  :
+  last_evidence_status=0
 else
   evidence_status=$?
+  last_evidence_status="$evidence_status"
   case "$evidence_status" in
     3) fail_provider_unavailable ;;
   esac
@@ -1734,7 +1776,8 @@ export async function runOpenClawLaunchSession(
   for (let attempt = 1; attempt <= OPENCLAW_LAUNCH_PROVIDER_ATTEMPTS; attempt += 1) {
     const inputs = uniqueTurnInputs();
     const runId = randomUUID().replaceAll("-", "");
-    const result = await options.host.command("bash", ["-lc", LAUNCH_TURN_SCRIPT], {
+    // A failing logout file can break Bash 5.1's function context during EXIT cleanup.
+    const result = await options.host.command("bash", ["-c", LAUNCH_TURN_SCRIPT], {
       artifactName:
         attempt === 1
           ? options.artifactName
@@ -1780,27 +1823,37 @@ export async function runOpenClawLaunchSession(
 }
 
 export async function runOpenClawLaunchReadinessLeaseTurns(
-  options: OpenClawLaunchSessionOptions,
+  options: OpenClawLaunchSessionOptions & { qualifyGroupWritableHome?: boolean },
 ): Promise<void> {
-  const probeArgs = options.cliEntrypoint
-    ? [options.cliEntrypoint, options.sandboxName, "connect", "--probe-only"]
-    : [options.sandboxName, "connect", "--probe-only"];
-  const probe = await options.host.command(options.cliCommand, probeArgs, {
-    artifactName: `${options.artifactName}-probe`,
-    env: options.env,
-    redactionValues: options.redactionValues,
-    timeoutMs: OPENCLAW_LAUNCH_READINESS_PROBE_TIMEOUT_MS,
-  });
-  if (probe.exitCode !== 0) {
-    throw new Error(`launch readiness producer failed: ${resultText(probe)}`);
-  }
+  return withGroupWritableReadinessHome(
+    {
+      enabled: options.qualifyGroupWritableHome ?? false,
+      sandboxName: options.sandboxName,
+      gatewayName: String(options.env.OPENSHELL_GATEWAY),
+      gatewayPort: Number(options.env.NEMOCLAW_GATEWAY_PORT),
+    },
+    async () => {
+      const probeArgs = options.cliEntrypoint
+        ? [options.cliEntrypoint, options.sandboxName, "connect", "--probe-only"]
+        : [options.sandboxName, "connect", "--probe-only"];
+      const probe = await options.host.command(options.cliCommand, probeArgs, {
+        artifactName: `${options.artifactName}-probe`,
+        env: options.env,
+        redactionValues: options.redactionValues,
+        timeoutMs: OPENCLAW_LAUNCH_READINESS_PROBE_TIMEOUT_MS,
+      });
+      if (probe.exitCode !== 0) {
+        throw new Error(`launch readiness producer failed: ${resultText(probe)}`);
+      }
 
-  await options.beforeLaunchTurns?.();
+      await options.beforeLaunchTurns?.();
 
-  for (const ordinal of ["first", "second"] as const) {
-    await runOpenClawLaunchSession({
-      ...options,
-      artifactName: `${options.artifactName}-${ordinal}`,
-    });
-  }
+      for (const ordinal of ["first", "second"] as const) {
+        await runOpenClawLaunchSession({
+          ...options,
+          artifactName: `${options.artifactName}-${ordinal}`,
+        });
+      }
+    },
+  );
 }

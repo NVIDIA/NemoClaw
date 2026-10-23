@@ -55,6 +55,57 @@ function disabledWechatPlan(): SandboxMessagingPlan {
 }
 
 describe("disabled channel agent config removal", () => {
+  it("removes only existing OpenClaw paths through one native patch", () => {
+    const plan: SandboxMessagingPlan = {
+      ...disabledWechatPlan(),
+      agent: "openclaw",
+      agentRender: [
+        {
+          agent: "openclaw",
+          channelId: "wechat",
+          kind: "json-fragment",
+          target: "openclaw.json",
+          path: "channels.openclaw-weixin",
+          value: { enabled: true },
+          templateRefs: [],
+        },
+        {
+          agent: "openclaw",
+          channelId: "wechat",
+          kind: "json-fragment",
+          target: "openclaw.json",
+          path: "plugins.entries.openclaw-weixin",
+          value: { enabled: true },
+          templateRefs: [],
+        },
+      ],
+    };
+    const calls: Array<{ args: readonly string[]; input?: string }> = [];
+
+    const result = MessagingSetupApplier.removeDisabledChannelAgentConfigAtOpenShell(
+      plan,
+      "wechat",
+      {
+        runOpenshell: (args, options) => {
+          calls.push({ args, input: options?.input });
+          return args.includes("get")
+            ? args.includes("channels.openclaw-weixin")
+              ? { status: 0, stdout: "{}" }
+              : { status: 1, stderr: "Unknown config path: plugins.entries.openclaw-weixin" }
+            : { status: 0 };
+        },
+      },
+    );
+
+    expect(result.appliedTargets).toEqual(["/sandbox/.openclaw/openclaw.json"]);
+    expect(calls).toHaveLength(3);
+    expect(calls[2]?.args).toContain("patch");
+    expect(JSON.parse(calls[2]?.input ?? "{}")).toEqual({
+      channels: { "openclaw-weixin": null },
+    });
+    expect(calls.flatMap((call) => call.args)).not.toContain("cat");
+  });
+
   it("removes only the retired Hermes channel's manifest-owned JSON and env entries", () => {
     const target = "/sandbox/.hermes/config.yaml";
     const envTarget = "/sandbox/.hermes/.env";

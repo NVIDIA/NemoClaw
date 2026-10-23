@@ -240,8 +240,12 @@ describe("uninstall Docker resource scope", () => {
         },
       });
       expect(result.result.exitCode).toBe(1);
-      expect(result.calls.some((args) => args[0] === "inspect" && args.at(-1) === id)).toBe(true);
-      expect(result.errors.join("\n")).toContain("my-assistant");
+      expect(result.calls.some((args) => args[0] === "inspect" && args.at(-1) === id)).toBe(
+        status === 0,
+      );
+      expect(result.errors.join("\n")).toContain(
+        status === 0 ? "my-assistant" : "cleanup was not accepted",
+      );
       expect(result.retainedRegistry).toBe(result.registry);
       expect(result.metadataWrites).toEqual([]);
       expect(result.calls.filter((args) => args[0] === "rm" || args[0] === "images")).toEqual([]);

@@ -22,7 +22,10 @@ import {
   parseHttpsPinRouteId,
   revokeHttpsPinRuntimeAdapterRoute,
 } from "../../inference/https-pin-runtime-adapter";
-import { prepareManagedLlamaCppRuntimeCleanupForSandbox } from "../../inference/local-model-profile/cleanup";
+import {
+  prepareManagedLlamaCppRuntimeCleanupForSandbox,
+  readPendingHostLocalVllmRetirement,
+} from "../../inference/local-model-profile/cleanup";
 import {
   isLocalOllamaRouteOwner,
   loadPersistedOllamaHost,
@@ -44,7 +47,6 @@ import {
   removeManagedAgentStateVolumes,
 } from "../../onboard/sandbox-provider-cleanup";
 import { validateName } from "../../runner";
-import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
 import {
   enforceRemovedImmutabilityMigrationBoundary,
   retireRemovedImmutabilityStateRecord,
@@ -57,9 +59,12 @@ import {
 } from "./destroy-confirmation";
 import {
   executeSandboxDestroy,
+  recordDestroyCompletion,
+  retireDestroyedSandboxNativeLocalProvider,
   preparePortableDemoSandboxDestroyAuthority,
   redactDestroyError,
   retirePortableLifecycleAuthority,
+  stopSandboxInferenceResources,
 } from "./destroy-execution";
 import {
   cleanupGatewayAfterLastSandbox,
@@ -77,16 +82,21 @@ import {
   isSameDestroyContainerIdentityProof,
   observeDestroyContainerIdentity,
 } from "./destroy-presence";
+import { withSandboxLifecycleLock } from "./lifecycle/lock";
 import {
   prepareSandboxDestroy,
+  reconcileIdentityFreeRecovery,
+  recordManagedVllmRetirementPending,
+  reportManagedVllmDestroyOutcome,
   resolveSandboxDestroyRegistryAuthority,
   resolveSandboxDestroyGatewayName,
   resolveSandboxDestroyRuntimeSelection,
+  retireManagedVllmForDestroyedSandbox,
+  listInferenceRouteOwnersAcrossGatewayRoots,
   stopModelRouterForDestroyedSandbox,
-  stopSandboxInferenceResources,
+  stopDestroyedSandboxProxy,
   teardownSandboxDashboardForward,
 } from "./destroy-preflight";
-import { type WipeSandboxStateDeps, wipeSandboxState } from "./wipe-state";
 
 export { assertUnambiguousDestroyContainerIdentity, classifyDestroySandboxPresence };
 
@@ -207,8 +217,13 @@ export type CleanupSandboxServicesDeps = {
     sandboxName: string;
     channelStopTransport?: RuntimeProviderChannelStopTransport;
     cleanupOllamaModels?: boolean;
+    stopCloudflared?: boolean;
     unloadOllamaModels?: () => OllamaUnloadResult | void;
   }) => OllamaUnloadResult | void;
+  migrateLegacyCloudflaredState?: (
+    opts: { sandboxName: string; gatewayPort?: number },
+    deps?: { recoverySandboxName?: string },
+  ) => boolean;
   unloadOllamaModels?: (onlyModels?: readonly string[]) => OllamaUnloadResult | void;
   loadPendingOllamaModelCleanup?: (sandboxName: string) => readonly string[];
   clearPendingOllamaModelCleanup?: (
@@ -280,9 +295,11 @@ export async function cleanupSandboxServices(
   {
     stopHostServices = false,
     channelStopTransport,
+    gatewayPort,
   }: {
     stopHostServices?: boolean;
     channelStopTransport?: RuntimeProviderChannelStopTransport;
+    gatewayPort?: number;
   } = {},
   deps: CleanupSandboxServicesDeps = {},
 ): Promise<void> {
@@ -302,6 +319,7 @@ export async function cleanupSandboxServices(
       sandboxName: string;
       channelStopTransport?: RuntimeProviderChannelStopTransport;
       cleanupOllamaModels?: boolean;
+      stopCloudflared?: boolean;
       unloadOllamaModels?: () => OllamaUnloadResult | void;
     }) => {
       const services = require("../../tunnel/services") as {
@@ -309,6 +327,7 @@ export async function cleanupSandboxServices(
           sandboxName: string;
           channelStopTransport?: RuntimeProviderChannelStopTransport;
           cleanupOllamaModels?: boolean;
+          stopCloudflared?: boolean;
           unloadOllamaModels?: () => OllamaUnloadResult | void;
         }) => OllamaUnloadResult | void;
       };
@@ -367,6 +386,20 @@ export async function cleanupSandboxServices(
       return runtime.runOpenshell(args, opts);
     });
   const rmSync = deps.rmSync ?? fs.rmSync;
+  const migrateLegacyCloudflaredState =
+    deps.migrateLegacyCloudflaredState ??
+    ((
+      opts: { sandboxName: string; gatewayPort?: number },
+      migrationDeps?: { recoverySandboxName?: string },
+    ) => {
+      const services = require("../../tunnel/services") as {
+        migrateLegacyCloudflaredState: (
+          options: { sandboxName: string; gatewayPort?: number },
+          deps?: { recoverySandboxName?: string },
+        ) => boolean;
+      };
+      return services.migrateLegacyCloudflaredState(opts, migrationDeps);
+    });
   const stopGooglechatWebhookTunnel =
     deps.stopGooglechatWebhookTunnel ??
     ((name: string) => {
@@ -390,6 +423,10 @@ export async function cleanupSandboxServices(
     });
 
   const googlechatServicesPidDir = googlechatWebhookTunnelPidDir(servicesPidDir);
+  migrateLegacyCloudflaredState(
+    { sandboxName: validatedSandboxName, gatewayPort },
+    { recoverySandboxName: validatedSandboxName },
+  );
   try {
     stopGooglechatWebhookTunnel(validatedSandboxName);
   } catch (error) {
@@ -408,8 +445,8 @@ export async function cleanupSandboxServices(
   let ollamaCleanup: OllamaUnloadResult | void = undefined;
   if (stopHostServices) {
     // `stopAll()` owns the host-wide unload when this sandbox has an Ollama
-    // route or retained cleanup work. Don't probe an unrelated daemon for a
-    // sandbox with no Ollama ownership, and don't double-call cleanup here.
+    // route or retained cleanup work. The dashboard tunnel has independent
+    // host lifetime and must survive every sandbox destroy (#11628).
     try {
       ollamaCleanup = withOllamaModelOwnershipLock(() => {
         const sandbox = getSandbox(validatedSandboxName);
@@ -422,6 +459,7 @@ export async function cleanupSandboxServices(
           sandboxName: validatedSandboxName,
           ...(channelStopTransport ? { channelStopTransport } : {}),
           cleanupOllamaModels,
+          stopCloudflared: false,
           unloadOllamaModels: () => unloadOllamaModels(),
         });
       });
@@ -634,11 +672,6 @@ export async function revokeDestroyedSandboxHttpsPinRoute(
   }
 }
 
-export type { WipeSandboxStateDeps };
-// Re-export so existing callers (tests, downstream code) keep working after
-// the wipe was extracted out of the destroy monolith (#5455 PRA-2).
-export { wipeSandboxState };
-
 class SandboxDestroyExitRequest extends Error {
   constructor(readonly exitCode: number) {
     super(`Sandbox destroy requested exit ${String(exitCode)}`);
@@ -657,8 +690,9 @@ export async function destroySandbox(
     finalGatewayCleanup?: FinalDestroyGatewayCleanupDeps;
   } = {},
 ): Promise<void> {
+  const telemetryTarget: { gatewayName?: string; mutationStarted?: boolean } = {};
   try {
-    return await withMcpLifecycleLock(sandboxName, () => {
+    return await withSandboxLifecycleLock(sandboxName, () => {
       const removedImmutabilityMigration = enforceRemovedImmutabilityMigrationBoundary(
         sandboxName,
         { allowStateRecord: true },
@@ -669,34 +703,87 @@ export async function destroySandbox(
         options,
         removedImmutabilityMigration.stateRecord !== null,
         deps,
+        telemetryTarget,
       );
     });
   } catch (error) {
-    if (error instanceof SandboxDestroyExitRequest) process.exit(error.exitCode);
+    await recordDestroyCompletion(
+      sandboxName,
+      "failed",
+      error instanceof SandboxDestroyExitRequest ? error.exitCode : undefined,
+      telemetryTarget.gatewayName,
+      telemetryTarget.mutationStarted === true,
+    );
+    if (error instanceof SandboxDestroyExitRequest) {
+      process.exit(error.exitCode);
+    }
     throw error;
   }
 }
 
 async function destroySandboxUnlocked(
   sandboxName: string,
-  options: string[] | DestroySandboxOptions = {},
-  retireRemovedImmutabilityState = false,
+  options: string[] | DestroySandboxOptions,
+  retireRemovedImmutabilityState: boolean,
   deps: {
     finalGatewayCleanup?: FinalDestroyGatewayCleanupDeps;
-  } = {},
+  },
+  telemetryTarget: { gatewayName?: string; mutationStarted?: boolean },
 ): Promise<void> {
   const normalized = normalizeDestroySandboxOptions(options);
   const registryAuthority = resolveSandboxDestroyRegistryAuthority(sandboxName);
   const getRegisteredSandbox = registryAuthority.getSandbox;
   const listRegisteredSandboxes = registryAuthority.listSandboxes;
   const registeredSandbox = registryAuthority.entry;
+  if (registeredSandbox) {
+    try {
+      telemetryTarget.gatewayName = resolveSandboxDestroyGatewayName(
+        sandboxName,
+        registeredSandbox,
+      );
+    } catch {
+      // The enforcing owner below still reports invalid gateway authority.
+    }
+  }
   const operationRuntimeSelection = resolveSandboxDestroyRuntimeSelection(registeredSandbox);
-  if (!(await confirmSandboxDestroy(sandboxName, normalized, operationRuntimeSelection))) return;
+  if (!(await confirmSandboxDestroy(sandboxName, normalized, operationRuntimeSelection))) {
+    await recordDestroyCompletion(sandboxName, "cancelled", undefined, telemetryTarget.gatewayName);
+    return;
+  }
   if (registeredSandbox) {
     onboardSession.reconstructRetainedSandboxRecoveryFromPendingCreate(registeredSandbox);
   }
   const destroySession = onboardSession.loadSession();
   const retainedRecoveryRecords = onboardSession.listRetainedSandboxRecoveryRecords();
+  try {
+    if (
+      reconcileIdentityFreeRecovery(
+        sandboxName,
+        retainedRecoveryRecords,
+        registryAuthority.gatewayPort,
+        {
+          session: onboardSession,
+          registry,
+          forceLocal: normalized.force === true,
+          ...(retireRemovedImmutabilityState
+            ? {
+                retireRemovedImmutabilityState: () => {
+                  retireRemovedImmutabilityStateRecord(sandboxName, "sandbox-destroyed");
+                },
+              }
+            : {}),
+        },
+      )
+    ) {
+      console.log(
+        `  Cleared retained recovery for '${sandboxName}'. No sandbox resources were removed.`,
+      );
+      return;
+    }
+  } catch (error) {
+    console.error(`  ${redactDestroyError(error)}`);
+    requestSandboxDestroyExit(1);
+  }
   const retainedRecoveryAuthority = selectRetainedSandboxRecoveryAuthority(
     sandboxName,
     registeredSandbox,
@@ -733,6 +820,7 @@ async function destroySandboxUnlocked(
     registeredSandbox,
     retainedRecoveryAuthority?.gatewayName,
   );
+  telemetryTarget.gatewayName = destroyGatewayName;
   const destroyRuntimeProviderId = resolveGatewayCleanupRuntimeProviderId(
     destroyGatewayName,
     registeredSandbox?.openshellDriver,
@@ -867,23 +955,17 @@ async function destroySandboxUnlocked(
       `Refusing to destroy sandbox '${sandboxName}': gateway authority changed during preflight.`,
     );
   }
-  if (retainedRecoveryAuthority && sandboxPresence !== "absent") {
-    // OpenShell has no atomic delete-by-identity primitive: it exposes no
-    // way to bind a mutable-name delete to the retained record's immutable
-    // sandbox id/resource version. Even a fresh identity read immediately
-    // before the delete command cannot close the window where another
-    // OpenShell client removes the retained sandbox and creates a
-    // replacement under the same name between that read and OpenShell
-    // processing the delete (#10863). Automatic deletion of a live retained
-    // sandbox is therefore always fail-closed. Inspection cannot authorize a
-    // later mutable-name delete, so the recovery record remains unresolved
-    // until OpenShell can prove absence through the owning gateway.
+  if (
+    retainedRecoveryAuthority &&
+    sandboxPresence !== "absent" &&
+    (sandboxPresence !== "present" || !retainedSandboxIdentityFingerprint)
+  ) {
     const presenceDetail =
       sandboxPresence === "present"
         ? "OpenShell reports a sandbox present under this name."
         : "OpenShell could not determine whether a sandbox is present under this name.";
     console.error(
-      `  Refusing to delete retained sandbox '${sandboxName}': ${presenceDetail} NemoClaw cannot bind a mutable-name delete to the retained record (create-attempt label '${retainedRecoveryAuthority.createAttemptNonce}') without an atomic OpenShell delete-by-identity primitive. No sandbox resources were removed. Preserve the recovery record. Inspect 'openshell sandbox list -g ${retainedRecoveryAuthority.gatewayName} -o json' for diagnosis only; do not run mutable-name deletion. Recovery remains blocked until the owning gateway reports the sandbox absent. Then rerun '${CLI_NAME} ${sandboxName} destroy --yes' to reconcile verified residual resources and the recovery record.`,
+      `  Refusing to delete retained sandbox '${sandboxName}': ${presenceDetail} Its live identity cannot be verified. Inspect 'openshell sandbox list -g ${retainedRecoveryAuthority.gatewayName} -o json'. Preserve the recovery record; no sandbox resources were removed. Create-attempt label: '${retainedRecoveryAuthority.createAttemptNonce}'.`,
     );
     preparedManagedLlamaCppCleanup?.abort();
     requestSandboxDestroyExit(1);
@@ -939,6 +1021,9 @@ async function destroySandboxUnlocked(
       ...(portableContainerAuthority ? { portableContainerAuthority } : {}),
       verifyForwardPortsReleased: () => teardownSandboxDashboardForward(sandboxName),
       stopInferenceResources: () => stopSandboxInferenceResources(sandboxName, sandbox),
+      onMutationStarted: () => {
+        telemetryTarget.mutationStarted = true;
+      },
     });
   } catch (error) {
     preparedManagedLlamaCppCleanup?.abort();
@@ -1006,6 +1091,7 @@ async function destroySandboxUnlocked(
     preparedManagedLlamaCppCleanup?.abort();
     requestSandboxDestroyExit(destructiveResult.exitCode);
   }
+  telemetryTarget.mutationStarted = true;
   const {
     detachOutcome,
     deleteResult,
@@ -1064,6 +1150,25 @@ async function destroySandboxUnlocked(
     preparedManagedLlamaCppCleanup?.abort();
   }
   if (deleteSucceededOrAlreadyGone && sandbox) {
+    await retireDestroyedSandboxNativeLocalProvider(
+      sandbox,
+      cleanupGatewayName,
+      runOpenshell,
+      destroyRuntimeSelection,
+    ).catch((error) => {
+      preparedManagedLlamaCppCleanup?.abort();
+      throw error;
+    });
+  }
+  if (deleteSucceededOrAlreadyGone && sandbox) {
+    abortPreparedCleanupOnError(() =>
+      stopDestroyedSandboxProxy(sandboxName, sandbox, listRegisteredSandboxes, {
+        listInferenceRouteOwners: () => [
+          ...listRegisteredSandboxes().sandboxes,
+          ...listInferenceRouteOwnersAcrossGatewayRoots(),
+        ],
+      }),
+    );
     const stateVolumeCleanupResults = abortPreparedCleanupOnError(() =>
       removeManagedAgentStateVolumes(
         {
@@ -1107,6 +1212,10 @@ async function destroySandboxUnlocked(
     await cleanupSandboxServices(
       sandboxName,
       {
+        gatewayPort:
+          registeredSandbox === null
+            ? (retainedRecoveryAuthority?.gatewayPort ?? registryAuthority.gatewayPort)
+            : registryAuthority.gatewayPort,
         stopHostServices: shouldStopHostServices,
         ...(destroyChannelStopTransport
           ? { channelStopTransport: destroyChannelStopTransport }
@@ -1161,6 +1270,21 @@ async function destroySandboxUnlocked(
    */
   if (deleteSucceededOrAlreadyGone && retireRemovedImmutabilityState) {
     retireRemovedImmutabilityStateRecord(sandboxName, "sandbox-destroyed");
+  }
+  if (deleteSucceededOrAlreadyGone) {
+    try {
+      recordManagedVllmRetirementPending(sandbox, { keepVllm: normalized.keepVllm });
+    } catch (error) {
+      defaultDestroyWarn(
+        `Could not record the pending managed vLLM retirement for '${sandboxName}': ${redactDestroyError(error)}. A destroy retry cannot retire the container if this retirement does not complete.`,
+      );
+      if (readPendingHostLocalVllmRetirement() !== sandboxName) {
+        console.error(
+          "  The sandbox registry entry was preserved so exact managed vLLM retirement can be retried.",
+        );
+        requestSandboxDestroyExit(1);
+      }
+    }
   }
   const removalOutcome = removeSandboxRegistryEntryOutcome(sandboxName, {
     removeImage: (name) => removeSandboxImage(name, { getSandbox: getRegisteredSandbox }),
@@ -1250,6 +1374,17 @@ async function destroySandboxUnlocked(
       );
     }
   }
+  // The registry row is gone, so every remaining Local vLLM row in any gateway
+  // state root is a peer that still needs the host-global container. A retry
+  // that finds no row owns the retirement only through its pending record.
+  if (deleteSucceededOrAlreadyGone && (removed || (!sandbox && registryEntryAbsent))) {
+    reportManagedVllmDestroyOutcome(
+      await retireManagedVllmForDestroyedSandbox(sandboxName, sandbox, {
+        keepVllm: normalized.keepVllm,
+      }),
+      { log: console.log, warn: defaultDestroyWarn },
+    );
+  }
   const retainedRecoveryOwnsDestroySession = retainedRecoveryAuthority
     ? onboardSession.retainedSandboxRecoveryMatchesSession(
         retainedRecoveryAuthority,
@@ -1268,6 +1403,7 @@ async function destroySandboxUnlocked(
         current.sandboxName === destroySession.sandboxName &&
         current.endpointUrl === destroySession.endpointUrl &&
         current.routerPid === destroySession.routerPid &&
+        (current.routerPort ?? null) === (destroySession.routerPort ?? null) &&
         current.routerCredentialHash === destroySession.routerCredentialHash,
       (current) => {
         current.sandboxName = null;
@@ -1355,4 +1491,5 @@ async function destroySandboxUnlocked(
     console.warn(`  ${YW}⚠${R}${m}`),
   );
   console.log(`  ${G}✓${R} Sandbox '${sandboxName}' destroyed`);
+  await recordDestroyCompletion(sandboxName, "completed", undefined, destroyGatewayName);
 }

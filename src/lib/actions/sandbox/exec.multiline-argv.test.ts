@@ -20,22 +20,7 @@ vi.mock("node:child_process", async (importOriginal) => {
   return { ...actual, spawn: vi.fn() };
 });
 
-import {
-  execSandbox,
-  type ExecSandboxDeps,
-  type SandboxExecCleanupDeps,
-  wrapExecCommandWithRuntimeEnv,
-} from "./exec";
-
-const cleanupSkipped: SandboxExecCleanupDeps = {
-  getSandbox: () => null,
-  inspectMutableConfigPerms: () => {
-    throw new Error("cleanup should be skipped");
-  },
-  repairMutableConfigPerms: () => {
-    throw new Error("cleanup should be skipped");
-  },
-};
+import { execSandbox, type ExecSandboxDeps, wrapExecCommandWithRuntimeEnv } from "./exec";
 
 function commandExecutor(options: {
   run?: OpenShellSandboxCommandExecutor["runStreaming"];
@@ -55,7 +40,6 @@ function commandExecutor(options: {
 function execDeps(executor: OpenShellSandboxCommandExecutor): ExecSandboxDeps {
   return {
     commandExecutor: executor,
-    cleanupDeps: cleanupSkipped,
     selectGateway: () => ({ outcome: "unregistered", gatewayName: null }),
   };
 }

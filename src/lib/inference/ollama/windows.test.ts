@@ -5,6 +5,7 @@ import { EventEmitter } from "node:events";
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { execTimeout } from "../../../../test/helpers/timeouts";
 
 const require = createRequire(import.meta.url);
 const WINDOWS_DIST_PATH = require.resolve("./windows");
@@ -385,7 +386,7 @@ describe("Windows Ollama helper", () => {
             ["-NoProfile", "-Command", fixture + command[2]],
             {
               encoding: "utf8",
-              timeout: 15_000,
+              timeout: execTimeout(15_000),
             },
           );
           expect(result.error).toBeUndefined();

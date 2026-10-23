@@ -1,9 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import os from "node:os";
+import type { SystemReadinessReport } from "../readiness/types";
+import type { ManagedInferenceReadinessSource } from "../inference/serving/types";
+
 import type { AgentDefinition } from "../agent/defs";
 import {
   OPENROUTER_CLOUD_MODEL_OPTIONS,
+  OPENROUTER_FEATURED_MODEL_ID_ALIASES,
   resolveAgentDefaultCloudModel,
   resolveAgentProviderInferenceApi,
 } from "../inference/config";
@@ -43,7 +48,10 @@ import {
   createLocalModelProfileIntegration,
   type LocalModelProfilePlan,
 } from "./local-model-profile/integration";
-import type { ProviderSelectionResult } from "./machine/handlers/provider-inference";
+import type {
+  ProviderSelectionResult,
+  ProviderInferenceStateOptions,
+} from "./machine/handlers/provider-inference";
 import type { ProviderInferenceProbeRoute } from "./machine/handlers/provider-inference-route-containment";
 import type {
   NvidiaFeaturedModelSession,
@@ -53,6 +61,8 @@ import type { InferenceProviderHostGpu, InferenceProviderHostState } from "./pro
 import { buildInferenceProviderMenu, type ProviderMenuChoice } from "./provider-menu";
 import {
   applyVllmInstallResumeDefaults,
+  selectedProviderModelProvenance,
+  type SelectedModelOrigin,
   resolveSelectedEndpointSource,
   resolveRequestedProviderSelection,
   vllmInstallRecoveryOptions,
@@ -64,7 +74,11 @@ import type { RuntimeProviderBundle } from "./runtime-provider/contract";
 import { resolveCurrentRuntimeProviderBundle } from "./runtime-provider/current";
 
 export { resolveCurrentRuntimeProviderBundle };
-export { createHermesPortableOllamaInferenceResolver } from "./experimental/hermes-portable-ollama-inference";
+export {
+  createHermesPortableOllamaInferenceBindings,
+  createHermesPortableOllamaInferenceResolver,
+  retireHermesPortableOllamaFreshState,
+} from "./experimental/hermes-portable-ollama-inference";
 
 import { prepareProviderDiscovery } from "./setup-nim-provider-discovery";
 import type { SetupNimSelectionState as BaseSetupNimSelectionState } from "./setup-nim-selection";
@@ -117,7 +131,40 @@ export type SetupNim = (
   canProbeRoute?: (provider: string) => boolean,
   recoverySessionId?: string | null,
   revalidateSandboxIdentity?: (route: ProviderInferenceProbeRoute, operation: string) => void,
+  readinessReport?: SystemReadinessReport,
 ) => Promise<ProviderSelectionResult>;
+
+/** Bind current-run evidence without persisting it in the onboarding session. */
+export function bindSetupNimForRun(
+  setup: SetupNim,
+  rebuildRoute: RebuildRouteHandoff | null | undefined,
+  getReadinessReport: () => SystemReadinessReport | undefined,
+): ProviderInferenceStateOptions<SetupNimGpu, AgentDefinition | null, unknown>["deps"]["setupNim"] {
+  return (
+    gpu,
+    sandboxName,
+    agent,
+    recover,
+    gateway,
+    assertRouteCompatible,
+    canProbeRoute,
+    recoverySessionId,
+    revalidateSandboxIdentity,
+  ) =>
+    setup(
+      gpu,
+      sandboxName,
+      agent,
+      recover,
+      rebuildRoute,
+      gateway,
+      assertRouteCompatible,
+      canProbeRoute,
+      recoverySessionId,
+      revalidateSandboxIdentity,
+      getReadinessReport(),
+    );
+}
 
 export interface SetupNimFlowDeps {
   remoteProviderConfig: Record<string, SetupNimRemoteProviderConfigEntry>;
@@ -238,6 +285,7 @@ export interface SetupNimFlowDeps {
       beforeInstall?: (modelId: string) => void;
       checkpointInstallIntent?: (modelId: string) => void;
       modelIntent?: string;
+      readinessReports?: readonly ManagedInferenceReadinessSource[];
     },
   ): Promise<{ ok: boolean }>;
   checkpointVllmInstallModel?(modelId: string): void;
@@ -520,13 +568,20 @@ function prepareManagedLlamaCppMenu(input: {
   const { deps, gpu, requestedProvider } = input;
   const platform = gpu?.platform;
   const candidate =
-    platform === "spark" || platform === "n1x" || requestedProvider === "install-llama-cpp";
+    platform === "spark" ||
+    platform === "n1x" ||
+    gpu?.stationGb300WslProduct === true ||
+    requestedProvider === "install-llama-cpp";
   const runtimeProviderId = candidate ? deps.getRuntimeProvider().identity.id : undefined;
   const discovery = candidate
     ? discoverManagedLlamaCppSafely(
         deps,
         !deps.isNonInteractive() && !requestedProvider
-          ? { ...process.env, [LLAMA_CPP_RECIPE_ENV]: "", [NEMOCLAW_SERVING_PRESET_ENV]: "" }
+          ? {
+              ...process.env,
+              [LLAMA_CPP_RECIPE_ENV]: "",
+              [NEMOCLAW_SERVING_PRESET_ENV]: "",
+            }
           : undefined,
         gpu,
         runtimeProviderId,
@@ -538,9 +593,18 @@ function prepareManagedLlamaCppMenu(input: {
       `  Managed llama.cpp is unavailable on this N1x host: ${resolution.reason} Fix the reported readiness or runtime-provider requirement, then rerun onboarding.`,
     );
   }
+  if (gpu?.stationGb300WslProduct === true && resolution?.kind === "rejected") {
+    deps.note(
+      `  Managed llama.cpp is unavailable on this Station GB300 WSL host: ${resolution.reason} Fix the reported readiness or runtime-provider requirement, then rerun onboarding.`,
+    );
+  }
   return {
     resolution,
-    options: buildManagedLlamaCppOptions({ candidate, requestedProvider, discovery }),
+    options: buildManagedLlamaCppOptions({
+      candidate,
+      requestedProvider,
+      discovery,
+    }),
   };
 }
 
@@ -551,7 +615,7 @@ function platformDefaultProviderKey(input: {
   requestedModel: string | null;
 }): "install-llama-cpp" | "install-ollama" | "install-vllm" | undefined {
   if (
-    input.gpu?.platform === "n1x" &&
+    (input.gpu?.platform === "n1x" || input.gpu?.stationGb300WslProduct === true) &&
     !input.requestedModel &&
     input.managedLlamaCpp?.kind === "selected"
   ) {
@@ -722,6 +786,14 @@ function requestedVllmServingProfileModel(
   return requested?.backend === "vllm" ? requested : null;
 }
 
+/** A model match on an existing endpoint does not prove its recipe or image. */
+function installedVllmServingProfileProvenance(
+  managedInstall: boolean,
+  profile: RequestedServingProfileModel | null,
+): ServingProfileProvenance | null {
+  return managedInstall ? (profile?.provenance ?? null) : null;
+}
+
 /** Preserve explicit route intent while converting a known catalog alias to its served name. */
 function requestedManagedVllmRouteModel(input: {
   requestedModel: string | null;
@@ -783,7 +855,9 @@ async function resolveFreshHermesPortableOllamaSelection(input: {
   const nonInteractive = input.deps.isNonInteractive();
   let portableModel =
     input.requestedModel ??
-    input.deps.getNonInteractiveModel("ollama", { allowProviderModelFallback: false });
+    input.deps.getNonInteractiveModel("ollama", {
+      allowProviderModelFallback: false,
+    });
   if (!portableModel && !nonInteractive) {
     const promptedModel = await promptManualModelId("  Ollama model id: ", "Ollama", null, {
       promptFn: input.deps.prompt,
@@ -811,6 +885,16 @@ async function resolveFreshHermesPortableOllamaSelection(input: {
   const selectedModel = isBackToSelection(state.model) ? null : state.model;
   await maybePromptForSupportedInferenceInputCapability(input.deps, input.agent, selectedModel);
   return {
+    ...selectedProviderModelProvenance({
+      model: selectedModel,
+      provider: state.provider,
+      endpointUrl: state.endpointUrl,
+      preferredInferenceApi: input.deps.resolveAgentInferenceApi(
+        input.agent.name,
+        state.provider,
+        input.deps.coerceAgentInferenceApi(input.agent, state.preferredInferenceApi),
+      ),
+    }),
     model: selectedModel,
     provider: state.provider,
     endpointUrl: state.endpointUrl,
@@ -855,6 +939,38 @@ function policyCheckedVllmInstallRecovery(
   };
 }
 
+async function installVllmWithReadiness(
+  deps: SetupNimFlowDeps,
+  profile: VllmProfile,
+  options: Parameters<SetupNimFlowDeps["installVllm"]>[1],
+  report?: SystemReadinessReport,
+): Promise<{ ok: boolean }> {
+  // Preserve the WSL proof's original observation time. Native hosts retain
+  // fresh collection because onboarding can outlast the reuse window.
+  const wslReport = report?.observations.some(
+    ({ id, state, value }) => id === "host.os.wsl" && state === "present" && value === true,
+  )
+    ? report
+    : undefined;
+  const runtimeProviderId = deps.getRuntimeProvider().identity.id;
+  const mismatchedProvider = wslReport?.observations.some(
+    ({ id, state, value }) =>
+      (id === "host.runtime.provider" || id === "host.gpu.container_proof_provider") &&
+      state === "present" &&
+      value !== runtimeProviderId,
+  );
+  if (mismatchedProvider) {
+    deps.error(
+      `  vLLM readiness was collected for a different runtime provider. Rerun onboarding with ${runtimeProviderId}.`,
+    );
+    return { ok: false };
+  }
+  return deps.installVllm(profile, {
+    ...options,
+    ...(wslReport ? { readinessReports: [{ nodeId: os.hostname(), report: wslReport }] } : {}),
+  });
+}
+
 /** Create the provider-selection flow and seed agent-specific Ollama defaults. */
 export function createSetupNim(
   defaults: SetupNimFlowDeps,
@@ -880,6 +996,7 @@ export function createSetupNim(
     canProbeRoute?: (provider: string) => boolean,
     recoverySessionId?: string | null,
     revalidateSandboxIdentity?: (route: ProviderInferenceProbeRoute, operation: string) => void,
+    readinessReport?: SystemReadinessReport,
   ): Promise<ProviderSelectionResult> {
     deps.step(3, 8, "Configuring inference provider");
 
@@ -899,19 +1016,40 @@ export function createSetupNim(
     let endpointTrustedPrivateCapability: TrustedPrivateEndpointCapability | undefined;
     let vllmModelIdentity: string | undefined;
     let selectedServingProfileProvenance: ServingProfileProvenance | null = null;
+    let selectedModelOrigin: SelectedModelOrigin | undefined;
     const inferenceCapabilityCache = new OnboardInferenceCapabilityCache();
+    const agentDefaultModel = resolveAgentDefaultCloudModel(agent);
     const nvidiaFeaturedModels = deps.createNvidiaFeaturedModelSession({
-      defaultModel: resolveAgentDefaultCloudModel(agent),
+      onModelSelected: (model, source) => {
+        selectedModelOrigin = {
+          model,
+          source,
+          provider: deps.remoteProviderConfig.build.providerName,
+        };
+      },
+      defaultModel: agentDefaultModel,
       writeLine: deps.log,
     });
     const openRouterFeaturedModels = deps.createNvidiaFeaturedModelSession({
-      defaultModel: resolveAgentDefaultCloudModel(agent),
+      onModelSelected: (model, source) => {
+        selectedModelOrigin = {
+          model,
+          source,
+          provider: deps.remoteProviderConfig.openrouter.providerName,
+        };
+      },
+      defaultModel:
+        OPENROUTER_FEATURED_MODEL_ID_ALIASES.get(agentDefaultModel) ?? agentDefaultModel,
       fallbackModelOptions: OPENROUTER_CLOUD_MODEL_OPTIONS,
+      modelIdAliases: OPENROUTER_FEATURED_MODEL_ID_ALIASES,
       retiredModelIds: [],
       writeLine: deps.log,
     });
     const createSelectionState = (): SetupNimSelectionState => {
       const state: SetupNimSelectionState = {
+        onModelSelected: (model, source) => {
+          selectedModelOrigin = { model, source, provider: state.provider };
+        },
         model,
         provider,
         endpointUrl,
@@ -938,6 +1076,7 @@ export function createSetupNim(
         );
       const route = (): ProviderInferenceProbeRoute => ({
         provider: state.provider,
+        ...(state.localNimSelected ? { localNimSelected: true } : {}),
         model: typeof state.model === "string" && state.model.trim() ? state.model.trim() : null,
         endpointUrl: state.endpointUrl,
         preferredInferenceApi: effectiveInferenceApi(),
@@ -1238,6 +1377,7 @@ export function createSetupNim(
               sandboxName,
               gatewayPort: deps.getGatewayPort(),
               runtimeProvider,
+              gpu,
               revalidateSandboxIdentity: state.revalidateSandboxIdentity,
             },
           );
@@ -1260,6 +1400,7 @@ export function createSetupNim(
           break;
         } else if (selected.key === "nim-local") {
           const state = createSelectionState();
+          state.localNimSelected = true;
           const result = await deps.handleNimLocalSelection(
             gpu,
             { requestedModel, recoveredFromSandbox, recoveredModel },
@@ -1373,16 +1514,21 @@ export function createSetupNim(
             seedVllmInstallRoute,
             deps.selectVllmModelFromEnv,
           );
-          const result = await deps.installVllm(vllmProfile, {
-            hasImage: hasVllmImage,
-            nonInteractive: deps.isNonInteractive(),
-            promptFn: deps.prompt,
-            ...vllmRecovery,
-            beforeInstall: (modelId) => {
-              seedVllmInstallRoute(modelId);
-              vllmState.revalidateSandboxIdentity?.("install managed vLLM runtime");
+          const result = await installVllmWithReadiness(
+            deps,
+            vllmProfile,
+            {
+              hasImage: hasVllmImage,
+              nonInteractive: deps.isNonInteractive(),
+              promptFn: deps.prompt,
+              ...vllmRecovery,
+              beforeInstall: (modelId) => {
+                seedVllmInstallRoute(modelId);
+                vllmState.revalidateSandboxIdentity?.("install managed vLLM runtime");
+              },
             },
-          });
+            readinessReport,
+          );
           if (!result.ok) {
             exitAfterPinnedVllmFailure(
               deps,
@@ -1398,6 +1544,9 @@ export function createSetupNim(
         }
         if (selected.key === "vllm") {
           const state = preparedVllmState ?? createSelectionState();
+          const requestedServingProfile = requestedVllmServingProfileModel(
+            deps.resolveRequestedServingProfileModel,
+          );
           state.model = resolveInitialVllmSelectionModel({
             preparedState: preparedVllmState,
             requestedProvider,
@@ -1414,9 +1563,7 @@ export function createSetupNim(
           const result = await deps.handleVllmSelection(state, {
             managedInstall: preparedVllmState !== null,
             sparkHost: gpu?.spark === true,
-            servingProfileModel: requestedVllmServingProfileModel(
-              deps.resolveRequestedServingProfileModel,
-            ),
+            servingProfileModel: requestedServingProfile,
           });
           ({
             model,
@@ -1429,6 +1576,10 @@ export function createSetupNim(
           } = state);
           vllmModelIdentity = state.vllmModelIdentity;
           if (result === "retry-selection") continue selectionLoop;
+          selectedServingProfileProvenance = installedVllmServingProfileProvenance(
+            preparedVllmState !== null,
+            requestedServingProfile,
+          );
           break;
         } else if (selected.key === "routed") {
           const state = createSelectionState();
@@ -1471,7 +1622,20 @@ export function createSetupNim(
           hasTrustedPrivateCapability: Boolean(endpointTrustedPrivateCapability),
         });
     await maybePromptForSupportedInferenceInputCapability(deps, agent, selectedModel);
+    const modelProvenanceUpdate = selectedProviderModelProvenance({
+      model: selectedModel,
+      provider,
+      endpointUrl,
+      preferredInferenceApi: deps.resolveAgentInferenceApi(
+        agent?.name ?? null,
+        provider,
+        deps.coerceAgentInferenceApi(agent, preferredInferenceApi),
+      ),
+      requestedModel,
+      selectedModelOrigin,
+    });
     return {
+      ...modelProvenanceUpdate,
       model: selectedModel,
       provider,
       endpointUrl,

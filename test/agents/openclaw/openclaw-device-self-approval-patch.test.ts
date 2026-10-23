@@ -860,7 +860,12 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
     }
   });
 
-  it("passes authenticated identity for a pre-convergence write request to the canonical approver", async () => {
+  it.each([
+    ["legacy token", { token: "token-before" }],
+    ["explicit device token", { deviceToken: "token-before" }],
+    ["explicit token priority", { token: "other-token", deviceToken: "token-before" }],
+    ["empty explicit token", { token: "token-before", deviceToken: " " }],
+  ])("passes authenticated identity using %s to the canonical approver", async (_label, auth) => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-handler-"));
     const dist = path.join(tmp, "dist");
     fs.mkdirSync(dist);
@@ -878,7 +883,7 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
       const broadcasts: unknown[] = [];
       await runtime.deviceHandlers["device.pair.approve"]({
         params: { requestId: "request-1" },
-        client: validClient(),
+        client: validClient({ connect: { ...validClient().connect, auth } }),
         respond: (...args: unknown[]) => responses.push(args),
         context: {
           logGateway: { warn() {}, info() {} },
@@ -910,6 +915,13 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
 
   it.each([
     ["shared auth", validClient({ isDeviceTokenAuth: false })],
+    [
+      "shared auth with explicit device token",
+      validClient({
+        isDeviceTokenAuth: false,
+        connect: { ...validClient().connect, auth: { deviceToken: "token-before" } },
+      }),
+    ],
     [
       "missing caller identity",
       validClient({

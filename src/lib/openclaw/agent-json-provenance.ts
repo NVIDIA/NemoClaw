@@ -365,19 +365,54 @@ export function openClawAgentResponseRecord(doc: unknown): UnknownRecord | null 
   return null;
 }
 
-/** The declared run-metadata record from an agent response envelope. */
-function agentResponseMetaRecord(doc: unknown): UnknownRecord | null {
-  const response = openClawAgentResponseRecord(doc);
-  return response && isObjectRecord(response.meta) ? response.meta : null;
-}
-
 /** Select the final agent response without treating JSON log records as responses. */
-function finalAgentResponseMetaRecord(docs: unknown[]): UnknownRecord | null {
+function finalAgentResponse(docs: unknown[]): {
+  document: UnknownRecord;
+  response: UnknownRecord;
+  meta: UnknownRecord;
+} | null {
   for (let index = docs.length - 1; index >= 0; index -= 1) {
-    const meta = agentResponseMetaRecord(docs[index]);
-    if (meta) return meta;
+    const document = docs[index];
+    const response = openClawAgentResponseRecord(document);
+    if (isObjectRecord(document) && response && isObjectRecord(response.meta)) {
+      return { document, response, meta: response.meta };
+    }
   }
   return null;
+}
+
+/** Require a completed tool run and a final reply before accepting replay risk. */
+function hasCompletedToolReply(
+  document: UnknownRecord,
+  response: UnknownRecord,
+  meta: UnknownRecord,
+): boolean {
+  if (meta.aborted === true || meta.error !== undefined) return false;
+  if (meta.stopReason !== undefined && normalized(meta.stopReason) !== "stop") return false;
+  const completed =
+    document === response
+      ? meta.aborted === false && normalized(meta.stopReason) === "stop"
+      : document.status === "ok" && document.summary === "completed";
+  const summary = meta.toolSummary;
+  const visible =
+    typeof meta.finalAssistantVisibleText === "string" ? meta.finalAssistantVisibleText.trim() : "";
+  return (
+    completed &&
+    isObjectRecord(summary) &&
+    typeof summary.calls === "number" &&
+    Number.isSafeInteger(summary.calls) &&
+    summary.calls > 0 &&
+    summary.failures === 0 &&
+    visible.length > 0 &&
+    Array.isArray(response.payloads) &&
+    response.payloads.some(
+      (payload) =>
+        isObjectRecord(payload) &&
+        payload.isError !== true &&
+        typeof payload.text === "string" &&
+        payload.text.trim() === visible,
+    )
+  );
 }
 
 /** The phase the run's deadline fired in, or null when the run did not time out. */
@@ -390,7 +425,6 @@ function timedOutPhase(meta: UnknownRecord): string | null {
 
 function turnMetaMarkers(meta: UnknownRecord): string[] {
   const markers: string[] = [];
-  if (meta.replayInvalid === true) markers.push("replayInvalid=true");
   if (normalized(meta.livenessState) === ABANDONED_LIVENESS_VALUE) {
     markers.push(`livenessState=${String(meta.livenessState)}`);
   }
@@ -404,19 +438,23 @@ function turnMetaMarkers(meta: UnknownRecord): string[] {
 }
 
 /**
- * Detect a turn the run metadata itself marks incomplete, abandoned, or timed
- * out. Returns null when no marker is present, so a healthy turn is never
- * reclassified. A timed-out run also carries its declared phase, which the
- * caller uses to pick deadline-specific recovery guidance.
+ * Detect incomplete, abandoned, timed-out, or uncorroborated replay-risk turns.
+ * Corroborated completed tool replies remain successful. A timed-out run also
+ * carries its declared phase for deadline-specific recovery guidance.
  */
 export function openClawAgentIncompleteTurnSignal(
   raw: string,
 ): OpenClawIncompleteTurnSignal | null {
   const docs = parseOpenClawJsonDocuments(raw);
   if (docs.length === 0) return null;
-  const meta = finalAgentResponseMetaRecord(docs);
-  if (!meta) return null;
+  const final = finalAgentResponse(docs);
+  if (!final) return null;
+  const { document, response, meta } = final;
   const markers = dedupe(turnMetaMarkers(meta));
+  // Replay risk alone is not failure, but uncertain side effects need inspection.
+  if (meta.replayInvalid === true && !hasCompletedToolReply(document, response, meta)) {
+    markers.unshift("replayInvalid=true");
+  }
   if (markers.length === 0) return null;
   const timeoutPhase = timedOutPhase(meta);
   return timeoutPhase ? { markers, timeoutPhase } : { markers };

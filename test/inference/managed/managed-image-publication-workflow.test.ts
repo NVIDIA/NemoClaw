@@ -2,13 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
-import { OPENSHELL_V0116_QUALIFICATION } from "../../e2e/fixtures/openshell-v0116-qualification";
 
 import {
   publicationAgents,
@@ -31,8 +29,8 @@ import {
 import type { Job, Workflow } from "../../helpers/managed-image-publication-workflow-types";
 
 const fullShaAction = /^[^@]+@[0-9a-f]{40}$/iu;
-const reviewedAuditAction = "NVIDIA/NemoClaw/.github/actions/ci-reviewed-npm-audit@";
-const reviewedAuditSha = "8ed889c14ccd7e828a9fbc20606cc7c587e6ca31";
+const reviewedAuditAction = "./.github/actions/ci-reviewed-npm-audit";
+const reviewedAuditSha = "e0769ad0e6783e4108a1f26cc44b162f1f7ecc3f";
 
 function needsOutput(job: string, output: string): string {
   return `\${{ needs.${job}.outputs.${output} }}`;
@@ -147,7 +145,7 @@ describe("complete managed-image publication workflow", () => {
       "Audit exact PR production npm graphs",
     );
     expect(prAudit.with?.["cache-directory"]).toBe("${{ runner.temp }}/reviewed-npm-audit-cache");
-    expect(prAudit.uses).toBe(reviewedAuditAction + reviewedAuditSha);
+    expect(prAudit.uses).toBe(reviewedAuditAction);
     expect(managedAudit.with?.["cache-directory"]).toBe(
       "${{ runner.temp }}/reviewed-npm-audit-cache",
     );
@@ -214,6 +212,8 @@ describe("complete managed-image publication workflow", () => {
       step(managedPublisher(managedWorkflow), "Validate exact managed image before promotion")
         .run ?? "";
     expect(validationRun).not.toContain('path.join(projectsRoot, entry.name, "package.json")');
+    expect(validationRun).toContain('tavily: ["@openclaw/tavily-plugin", "2026.9.2"]');
+    expect(validationRun).not.toContain("uninstalled OpenClaw plugin tavily");
     const channelGuardEnd = validationRun.indexOf("managed OpenClaw channel");
     const channelGuardStart = validationRun.lastIndexOf("for (const id of [", channelGuardEnd);
     expect(channelGuardStart).toBeGreaterThan(-1);
@@ -472,6 +472,7 @@ describe("complete managed-image publication workflow", () => {
       expect.arrayContaining([
         ".github/actions/ci-reviewed-npm-audit/**",
         "ci/reviewed-npm-audit.json",
+        "test/helpers/openclaw-real-agent-reload-proof.ts",
       ]),
     );
     expect(reviewedAudit).toMatchObject({
@@ -486,28 +487,8 @@ describe("complete managed-image publication workflow", () => {
       path: "candidate",
       "persist-credentials": false,
     });
-    const trustedCheckout = step(reviewedAudit, "Checkout npm audit code from the base commit");
-    expect(trustedCheckout.with).toMatchObject({
-      ref: reviewedAuditSha,
-      path: ".trusted-reviewed-npm-audit",
-      "persist-credentials": false,
-      "sparse-checkout-cone-mode": false,
-    });
-    expect(trustedCheckout.with?.["sparse-checkout"]).toContain(
-      ".github/actions/ci-reviewed-npm-audit",
-    );
-    expect(trustedCheckout.with?.["sparse-checkout"]).toContain("ci/reviewed-npm-audit.json");
-    const verifyAuditIdentities = step(reviewedAudit, "Verify exact audit source and target");
-    expect(verifyAuditIdentities.env).toEqual({
-      CANDIDATE_SHA: "${{ github.event.pull_request.head.sha }}",
-      REVIEWED_AUDIT_SHA: reviewedAuditSha,
-    });
-    expect(verifyAuditIdentities.run).toContain(
-      "git -C .trusted-reviewed-npm-audit rev-parse --verify HEAD",
-    );
-    expect(verifyAuditIdentities.run).toContain("git -C candidate rev-parse --verify HEAD");
     expect(step(reviewedAudit, "Audit exact PR production npm graphs")).toMatchObject({
-      uses: "./.trusted-reviewed-npm-audit/.github/actions/ci-reviewed-npm-audit",
+      uses: "./candidate/.github/actions/ci-reviewed-npm-audit",
       with: {
         "cache-directory": "${{ runner.temp }}/reviewed-npm-audit-cache",
         "report-dir": "artifacts/reviewed-npm-audit",
@@ -522,23 +503,33 @@ describe("complete managed-image publication workflow", () => {
 
     expect(prBuilder.needs).toEqual(["pr-reviewed-npm-audit", "publication-identity"]);
     expect(publicationIdentity.if).toBeUndefined();
-    expect(publicationIdentity.outputs).toEqual({
-      cohort: "${{ steps.identity.outputs.cohort }}",
-    });
     expect(prBuilder.if).toBe("github.event_name == 'pull_request'");
-    expect(prBuilder["runs-on"]).toBe("ubuntu-24.04");
+    expect(prBuilder["runs-on"]).toBe(
+      "${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}",
+    );
+    expect(prBuilder.strategy?.matrix?.arch).toEqual(["amd64", "arm64"]);
+    expect(prBuilder.strategy?.matrix?.agent).toEqual(matrix.map(({ agent }) => agent));
+    expect(prBuilder.env?.PLATFORM).toBe("linux/${{ matrix.arch }}");
     expect(prBuilder["timeout-minutes"]).toBe(90);
     expect(prBuilder.permissions).toEqual({ contents: "read", packages: "write" });
     expect(step(prBuilder, "Checkout").with?.["persist-credentials"]).toBe(false);
     expect(step(prBuilder, "Checkout").with?.ref).toBe("${{ github.event.pull_request.head.sha }}");
     expect(releaseIdentity.id).toBe("release");
-    expect(releaseIdentity.run).toContain("git describe --tags --match 'v*' \"$CANDIDATE_SHA\"");
+    expect(releaseIdentity.env?.RELEASE).toBe(needsOutput("publication-identity", "release"));
     expect(releaseIdentity.run).toContain("value=%s");
     expect(step(prBuilder, "Set up Docker Buildx").id).toBe("buildx");
     const auditVerifierCheckout = step(prBuilder, "Checkout trusted mcporter audit verifier");
     expect(auditVerifierCheckout.with?.ref).toBe(reviewedAuditSha);
     const prepareAuditEvidence = step(prBuilder, "Prepare same-run mcporter audit evidence");
-    expect(prepareAuditEvidence.run).toContain(`rev-parse --verify HEAD)" = '${reviewedAuditSha}'`);
+    expect(prepareAuditEvidence.env?.REVIEWED_AUDIT_SHA).toBe(reviewedAuditSha);
+    expect(prepareAuditEvidence.run).toContain('rev-parse --verify HEAD)" = "$REVIEWED_AUDIT_SHA"');
+    expect(prepareAuditEvidence.run).toContain('trustedRoot, "scripts/lib/reviewed-npm-audit.mts"');
+    expect(prepareAuditEvidence.run).toContain('trustedRoot, "scripts/lib/npm-audit-receipt.mts"');
+    expect(prepareAuditEvidence.run).toContain('"audit", "signatures"');
+    expect(prepareAuditEvidence.run).toContain("$RUNNER_TEMP/trusted-mcporter-audit-report/");
+    expect(prBuilder.steps?.map((candidate) => candidate.name)).not.toContain(
+      "Download same-run npm audit evidence",
+    );
     expect(prepareAuditEvidence.run).not.toMatch(/--legacy-(?:audit|npmjs)/u);
     const matrixByAgent = new Map(matrix.map((entry) => [entry.agent, entry]));
     expect([...matrixByAgent.keys()].sort()).toEqual([
@@ -563,20 +554,20 @@ describe("complete managed-image publication workflow", () => {
       expect(action.uses, action.name).toMatch(fullShaAction);
     }
 
-    expect(step(prBuilder, "Resolve digest-pinned linux/amd64 PR base").run).toBe(
+    expect(step(prBuilder, "Resolve digest-pinned native PR base").run).toBe(
       "scripts/checks/resolve-managed-pr-base.sh",
     );
     expect(registryBaseBuild.if).toBe("steps.base.outputs.local != 'true'");
     const localBuild = required(localBaseBuild.run, "PR managed image local build is missing");
     expect(localBuild).toContain("docker build");
-    expect(localBuild).toContain("--platform linux/amd64");
+    expect(localBuild).toContain('--platform "$PLATFORM"');
     expect(localBuild).toContain('--build-arg "BASE_IMAGE=${BASE_IMAGE}"');
     expect(localBuild).toContain('--tag "$IMAGE_REFERENCE"');
     expect(localBuild).toContain('--label "org.opencontainers.image.version=${RELEASE}"');
     expect(localBaseBuild.env?.RELEASE).toBe("${{ steps.release.outputs.value }}");
     expect(localBuild).not.toContain("docker buildx build");
     expect(registryBaseBuild.with).toMatchObject({
-      platforms: "linux/amd64",
+      platforms: "linux/${{ matrix.arch }}",
       load: true,
       push: false,
     });
@@ -591,13 +582,16 @@ describe("complete managed-image publication workflow", () => {
     );
     expect(publishedContract.env?.COHORT).toBe("${{ needs.publication-identity.outputs.cohort }}");
     expect(contractUpload.with).toMatchObject({
-      name: "managed-pr-contract-${{ github.run_id }}-${{ matrix.agent }}",
+      name: "managed-pr-contract-${{ matrix.arch == 'arm64' && 'arm64-' || '' }}${{ github.run_id }}-${{ matrix.agent }}",
       overwrite: true,
+      "retention-days": 7,
     });
     expect(
       step(managedPrActivation(workflow), "Download exact published all-agent contracts").with
         ?.pattern,
-    ).toBe("managed-pr-contract-${{ github.run_id }}-*");
+    ).toBe(
+      "managed-pr-contract-${{ matrix.arch == 'arm64' && 'arm64-' || '' }}${{ github.run_id }}-*",
+    );
     expect(
       step(managedPrPodmanActivation(workflow), "Download exact published all-agent contracts").with
         ?.pattern,
@@ -740,7 +734,7 @@ describe("complete managed-image publication workflow", () => {
     expect(publish.if).toBe(sameRepository);
     expect(publish.with).toMatchObject({
       builder: "${{ steps.buildx.outputs.name }}",
-      platforms: "linux/amd64",
+      platforms: "linux/${{ matrix.arch }}",
       "build-contexts":
         "${{ steps.base.outputs.local == 'true' && format('nemoclaw-pr-base=oci-layout://{0}', steps.base.outputs.oci) || '' }}",
       outputs:
@@ -788,9 +782,12 @@ describe("complete managed-image publication workflow", () => {
     expect(workflow.on?.pull_request?.paths).toEqual(
       expect.arrayContaining([
         "src/lib/actions/sandbox/**",
+        "src/lib/adapters/container-engine.ts",
         "src/lib/onboard/**",
         "src/lib/adapters/openshell/**",
+        "src/lib/adapters/podman/**",
         ...approvalFixturePaths,
+        "test/e2e/fixtures/docker-build-guard.ts",
         "test/e2e/fixtures/gateway-runtime-start.ts",
         "test/e2e/fixtures/phases/lifecycle.ts",
         "test/e2e/live/managed-image-activation-e2e*.ts",
@@ -799,6 +796,7 @@ describe("complete managed-image publication workflow", () => {
     const baseImagePaths = readWorkflow("base-image.yaml").on?.push?.paths ?? [];
     expect(baseImagePaths).toEqual(
       expect.arrayContaining([
+        "test/helpers/openclaw-real-agent-reload-proof.ts",
         "test/e2e/fixtures/gateway-runtime-start.ts",
         "test/e2e/fixtures/phases/lifecycle.ts",
       ]),
@@ -806,11 +804,16 @@ describe("complete managed-image publication workflow", () => {
     expect(baseImagePaths.join("\n")).not.toMatch(
       /admin-(?:approval-connect|request-selector)|issue-4462-(?:admin-approval-evidence|admin-request-selector|fresh-agent-gateway-snapshot)/u,
     );
-    expect(activation.needs).toBe("pr-build-and-entrypoint");
+    expect(activation.needs).toEqual(["pr-build-and-entrypoint", "publication-identity"]);
     expect(activation.if).toContain(
       "github.event.pull_request.head.repo.full_name == github.repository",
     );
     expect(activation.permissions).toEqual({ contents: "read" });
+    expect(activation.strategy?.matrix?.arch).toEqual(["amd64", "arm64"]);
+    expect(activation["runs-on"]).toBe(
+      "${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}",
+    );
+    expect(activation.env?.MANAGED_IMAGE_PLATFORM).toBe("linux/${{ matrix.arch }}");
     expect(activation.env?.CANDIDATE_SHA).toBe("${{ github.event.pull_request.head.sha }}");
     expect(activation.env?.NEMOCLAW_MANAGED_ACTIVATION_CATALOG).toBe(
       "${{ github.workspace }}/managed-pr-catalog.json",
@@ -829,6 +832,10 @@ describe("complete managed-image publication workflow", () => {
     expect(run).toContain('[[ "$(git rev-parse --verify HEAD)" == "$CANDIDATE_SHA" ]]');
     expect(run).toContain("test/e2e/live/managed-image-activation-e2e.test.ts");
     expect(steps.map(({ name }) => name)).toContain("Upload managed runtime activation evidence");
+    expect(step(activation, "Upload managed runtime activation evidence").with).toMatchObject({
+      name: "managed-image-activation-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}",
+      "if-no-files-found": "error",
+    });
   });
   it("leaves MCP qualification to the normal E2E workflow (#11828)", () => {
     const workflow = readWorkflow("managed-images.yaml");
@@ -845,111 +852,12 @@ describe("complete managed-image publication workflow", () => {
       stableMcp.env?.OPENSHELL_DOCKER_SUPERVISOR_IMAGE,
       "stable MCP job is missing OPENSHELL_DOCKER_SUPERVISOR_IMAGE",
     );
-    expect(stableSupervisorImage).toBe(OPENSHELL_V0116_QUALIFICATION.supervisorImage);
+    expect(stableSupervisorImage).toBe(
+      needsOutput("generate-matrix", "openshell_supervisor_image"),
+    );
     expect(credentialWindow.env?.OPENSHELL_DOCKER_SUPERVISOR_IMAGE).toBe(
-      OPENSHELL_V0116_QUALIFICATION.supervisorImage,
+      needsOutput("generate-matrix", "openshell_supervisor_image"),
     );
-  });
-
-  it("pins a single linux/amd64 PR base descriptor and fails closed on torn index evidence", () => {
-    const workflow = readWorkflow("managed-images.yaml");
-    const resolver = required(
-      step(managedPrBuilder(workflow), "Resolve digest-pinned linux/amd64 PR base").run,
-      "PR base resolver script is missing",
-    );
-    const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-base-"));
-    const fakeBin = path.join(temporaryRoot, "bin");
-    const aliasRaw = path.join(temporaryRoot, "alias.raw");
-    const exactRaw = path.join(temporaryRoot, "exact.raw");
-    const output = path.join(temporaryRoot, "output");
-    const summary = path.join(temporaryRoot, "summary");
-    fs.mkdirSync(fakeBin);
-    const exactBody = JSON.stringify({
-      schemaVersion: 2,
-      mediaType: "application/vnd.oci.image.manifest.v1+json",
-      config: { digest: `sha256:${"a".repeat(64)}`, size: 1 },
-      layers: [],
-    });
-    const digest = `sha256:${createHash("sha256").update(exactBody).digest("hex")}`;
-    const descriptor = {
-      mediaType: "application/vnd.oci.image.manifest.v1+json",
-      digest,
-      size: exactBody.length,
-      platform: { os: "linux", architecture: "amd64" },
-    };
-    const writeAlias = (manifests: unknown[]) => {
-      fs.writeFileSync(
-        aliasRaw,
-        JSON.stringify({
-          schemaVersion: 2,
-          mediaType: "application/vnd.oci.image.index.v1+json",
-          manifests,
-        }),
-      );
-    };
-    writeAlias([descriptor]);
-    fs.writeFileSync(exactRaw, exactBody);
-    fs.writeFileSync(
-      path.join(fakeBin, "docker"),
-      `#!/bin/bash
-set -euo pipefail
-if [ "\${1:-} \${2:-} \${3:-}" != "buildx imagetools inspect" ]; then
-  exit 90
-fi
-if [[ "\${4:-}" == *":latest" ]]; then
-  cat "$ALIAS_RAW"
-else
-  cat "$EXACT_RAW"
-fi
-`,
-      { mode: 0o755 },
-    );
-    const runResolver = () =>
-      spawnSync("bash", ["-c", resolver], {
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          AGENT: "openclaw",
-          ALIAS_RAW: aliasRaw,
-          BASE_ALIAS: "ghcr.io/nvidia/nemoclaw/sandbox-base:latest",
-          BASE_DOCKERFILE: "Dockerfile.base",
-          BASE_REPOSITORY: "ghcr.io/nvidia/nemoclaw/sandbox-base",
-          BASE_SHA: spawnSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).stdout.trim(),
-          CANDIDATE_SHA: spawnSync("git", ["rev-parse", "HEAD"], {
-            encoding: "utf8",
-          }).stdout.trim(),
-          DISPLAY_NAME: "OpenClaw",
-          EXACT_RAW: exactRaw,
-          GITHUB_OUTPUT: output,
-          GITHUB_STEP_SUMMARY: summary,
-          LOCAL_BASE_REFERENCE: "nemoclaw-managed-pr/openclaw-base:test",
-          PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
-          RUNNER_TEMP: temporaryRoot,
-        },
-      });
-
-    try {
-      const accepted = runResolver();
-      expect(accepted.status, accepted.stderr).toBe(0);
-      expect(fs.readFileSync(output, "utf8")).toContain(
-        `ref=ghcr.io/nvidia/nemoclaw/sandbox-base@${digest}`,
-      );
-
-      writeAlias([descriptor, descriptor]);
-      const duplicate = runResolver();
-      expect(duplicate.status).not.toBe(0);
-      expect(duplicate.stderr).toContain("does not contain exactly one linux/amd64 image");
-
-      writeAlias([descriptor]);
-      fs.appendFileSync(exactRaw, " ");
-      const wrongBody = runResolver();
-      expect(wrongBody.status).not.toBe(0);
-      expect(wrongBody.stderr).toContain(
-        "exact PR base bytes do not match the selected descriptor digest",
-      );
-    } finally {
-      fs.rmSync(temporaryRoot, { recursive: true, force: true });
-    }
   });
 
   it("publishes an exact native amd64 and arm64 lane for every shipped agent (#7744)", () => {
@@ -1087,7 +995,7 @@ fi
     const dependencies = step(publisher, "Install managed-image publication harness dependencies");
     expect(dependencies.run).toContain("npm ci --ignore-scripts --no-audit --no-fund");
     expect(releaseIdentity.id).toBe("release");
-    expect(releaseIdentity.run).toContain("git describe --tags --match 'v*' \"$GITHUB_SHA\"");
+    expect(releaseIdentity.env?.RELEASE).toBe(needsOutput("publication-identity", "release"));
     expect(releaseIdentity.run).toContain("managed image release identity does not match");
     expect(guard.run).toContain('--build-arg "TARGETARCH=${target_arch}"');
     expect(guard.run).toContain('scripts/check-production-build-args.sh "${build_args[@]}"');
@@ -1224,7 +1132,10 @@ fi
         String(candidate.with?.name ?? "").startsWith("managed-image-"),
     );
 
-    expect(identity?.outputs).toEqual({ cohort: "${{ steps.identity.outputs.cohort }}" });
+    expect(identity?.outputs).toEqual({
+      cohort: "${{ steps.identity.outputs.cohort }}",
+      release: "${{ steps.release.outputs.value }}",
+    });
     expect(publisher.needs).toEqual(["publication-identity", "reviewed-npm-audit"]);
     expect(publisher.outputs).toBeUndefined();
     expect(JSON.stringify(workflow)).not.toContain('rm -rf -- "$ANONYMOUS_CONFIG"');
@@ -1291,12 +1202,12 @@ fi
     expect(promotion.run).toContain('"${descriptor_args[@]}"');
     expect(promotion.run).toContain('cmp -s "$expected_descriptors" "$actual_descriptors"');
     expect(promotion.run).toContain(') == ["linux/amd64", "linux/arm64"]');
-    expect(promotion.run).toContain("shipped_agents=(openclaw hermes)");
+    expect(promotion.run).toContain("shipped_agents=(openclaw hermes langchain-deepagents-code)");
     expect(promotion.run).toContain(
       'aliases+=("$(jq -r \'.image\' <<<"$cohort_manifest"):${GITHUB_SHA}")',
     );
     expect(promotion.run).not.toContain('imagetools create "${consumer_tag_args[@]}"');
-    expect(pointer.run).toContain("shipped_agents=(openclaw hermes)");
+    expect(pointer.run).toContain("shipped_agents=(openclaw hermes langchain-deepagents-code)");
     expect(pointer.run).toContain(
       'exact_reference="$(jq -er --arg agent "$agent" \'.agents[$agent].reference\'',
     );

@@ -299,6 +299,78 @@ function Install-WslUbuntuDependencies {
     Invoke-WslScript @invokeParameters
 }
 
+function Repair-WslSystemdAfterInstall {
+    param([Parameter(Mandatory = $true)] [string]$Distro)
+
+    # Windows PowerShell 5.1 can throw on redirected native stderr before
+    # returning an exit code. Capture expected manager errors inside Linux.
+    $probe = @('-d', $Distro, '--user', 'root', '--', 'bash', '-c',
+        'timeout 10s systemctl show --property=Version --value 2>&1')
+    $result = Invoke-WslNativeOutput -ArgumentList $probe
+    if ($result.ExitCode -eq 0) { return }
+
+    $diagnostic = @($result.Output) -join "`n"
+    if ($result.ExitCode -ne 124 -and
+        $diagnostic -notmatch 'Failed to connect.*bus|Transport endpoint is not connected') {
+        throw "WSL service-manager probe failed: $diagnostic"
+    }
+
+    # Package installation can leave the CI distro's systemd bus unavailable.
+    # Restart only that distro, once, before tests or credentials enter it.
+    Write-Host "Restarting CI distro '$Distro' after an unavailable systemd bus: $diagnostic"
+    $exitCode = Invoke-WslNative -ArgumentList @('--terminate', $Distro) -MergeError
+    if ($exitCode -ne 0) { throw "WSL distro termination failed with exit code $exitCode." }
+
+    for ($attempt = 0; $attempt -lt 20; $attempt++) {
+        $result = Invoke-WslNativeOutput -ArgumentList $probe
+        if ($result.ExitCode -eq 0) { return }
+        if ($attempt -lt 19) { Start-Sleep -Seconds 1 }
+    }
+    throw "WSL systemd did not become available after one distro restart: $(@($result.Output) -join "`n")"
+}
+
+function Get-WslContainerRuntimeUnavailableScript {
+    return @'
+if docker info >/dev/null 2>&1; then
+  echo "Docker must remain unavailable during the non-live Vitest suite." >&2
+  systemctl show --property=LoadState,ActiveState,SubState docker.service docker.socket >&2 || true
+  exit 1
+fi
+'@
+}
+
+function Get-WslContainerRuntimeStopScript {
+    # This CI-owned distro can restart between steps; keep masks until live testing.
+    $script = @'
+set -euo pipefail
+systemctl mask --now docker.service docker.socket
+'@
+    return $script + "`n" + (Get-WslContainerRuntimeUnavailableScript)
+}
+
+function Stop-WslContainerRuntime {
+    param([Parameter(Mandatory = $true)] [string]$Distro)
+
+    Repair-WslSystemdAfterInstall -Distro $Distro
+    Invoke-WslScript -Distro $Distro -User root -Script (Get-WslContainerRuntimeStopScript)
+}
+
+function Get-WslContainerRuntimeStartScript {
+    return @'
+set -euo pipefail
+systemctl unmask docker.service docker.socket
+systemctl start docker.service
+timeout 30s bash -c 'until docker info >/dev/null 2>&1; do sleep 1; done'
+docker info
+'@
+}
+
+function Start-WslContainerRuntime {
+    param([Parameter(Mandatory = $true)] [string]$Distro)
+
+    Invoke-WslScript -Distro $Distro -User root -Script (Get-WslContainerRuntimeStartScript)
+}
+
 function Get-WslNodeInstallScript {
     return @'
 set -euo pipefail

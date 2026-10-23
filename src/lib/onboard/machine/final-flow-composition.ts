@@ -26,7 +26,9 @@ export type FinalOnboardFlowCompositionOptions<
   readonly portableRuntimeContext?: PortableOnboardRuntimeContext | null;
   agentSetupDeps: Omit<
     FinalOnboardFlowPhaseOptions<Context, VerifyChain, VerificationResult>["agentSetupDeps"],
-    "waitForSandboxControlPlaneReady"
+    | "waitForSandboxControlPlaneReady"
+    | "waitForStartedOpenclawGatewayProcess"
+    | "settleStartedOpenclawGatewayForConfiguration"
   >;
   finalizationDeps: Omit<
     FinalOnboardFlowPhaseOptions<Context, VerifyChain, VerificationResult>["finalizationDeps"],
@@ -47,21 +49,24 @@ export function createFinalOnboardFlowPhases<
     agentSetupDeps: {
       ...options.agentSetupDeps,
       waitForSandboxControlPlaneReady: finalizationHandlerDeps.waitForSandboxControlPlaneReady,
+      waitForStartedOpenclawGatewayProcess:
+        finalizationHandlerDeps.waitForStartedOpenclawGatewayProcess,
+      settleStartedOpenclawGatewayForConfiguration:
+        finalizationHandlerDeps.settleStartedOpenclawGatewayForConfiguration,
     },
     finalizationDeps: {
       ...options.finalizationDeps,
       ...finalizationHandlerDeps,
-      ...(portableRuntime
+      ...(portableRuntime && options.branchState === "agent_setup"
         ? {
-            checkAndRecoverSandboxProcesses: (name: string, options: { quiet: boolean }) => {
+            checkAndRecoverSandboxProcesses: (name: string, _options: { quiet: boolean }) => {
               if (!portableRuntime.environmentScope) {
                 throw new Error(
                   "Hermes portable finalization requires onboarding environment authority",
                 );
               }
-              return finalizationHandlerDeps.checkAndRecoverSandboxProcesses(
+              return finalizationHandlerDeps.checkHermesPortableSandboxReadiness(
                 name,
-                options,
                 portableRuntime.environmentScope.createHermesPortablePodmanSourceEnvironment(
                   portableRuntime.authority,
                 ),

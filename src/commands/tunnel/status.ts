@@ -4,7 +4,7 @@
 import { NemoClawCommand } from "../../lib/cli/nemoclaw-oclif-command";
 
 import { showStatus } from "../../lib/tunnel/services";
-import { resolveDefaultSandboxName } from "../../lib/tunnel/service-command";
+import { resolveDefaultSandboxServiceOptions } from "../../lib/tunnel/service-command";
 import { serviceDeps } from "../../lib/tunnel/command-support";
 
 export default class TunnelStatusCommand extends NemoClawCommand {
@@ -12,13 +12,13 @@ export default class TunnelStatusCommand extends NemoClawCommand {
   static strict = true;
   static summary = "Show cloudflared public-URL tunnel status";
   static description =
-    "Show the cloudflared public-URL tunnel status for the default sandbox dashboard.";
+    "Show the selected OpenShell gateway's cloudflared public-URL tunnel status for the selected or default sandbox dashboard.";
   static usage = ["tunnel status"];
   static examples = ["<%= config.bin %> tunnel status"];
   static flags = {};
 
   public async run(): Promise<void> {
     await this.parse(TunnelStatusCommand);
-    showStatus({ sandboxName: resolveDefaultSandboxName(serviceDeps().listSandboxes) });
+    showStatus(resolveDefaultSandboxServiceOptions(serviceDeps()));
   }
 }

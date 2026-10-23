@@ -15,6 +15,8 @@ import {
   hostGatewayCmdlineMatches,
   resolveDockerDriverGatewayStateDir,
 } from "../../onboard/host-gateway-process";
+import { readGatewayProcEntry } from "../../onboard/gateway/process-proc-entry";
+import { isPodmanGatewayRuntimeEnabled } from "../../onboard/runtime-provider/configured-runtime";
 import { isOpenShellProtobufSchemaMismatch } from "../../runtime-recovery";
 import {
   type GatewayReuseState,
@@ -158,6 +160,7 @@ export function getGatewayClusterImageRef(
   gatewayName = DEFAULT_GATEWAY_NAME,
   { timeoutMs = OPENSHELL_PROBE_TIMEOUT_MS }: { timeoutMs?: number } = {},
 ): string | null {
+  if (isPodmanGatewayRuntimeEnabled()) return null;
   const imageRef = dockerContainerInspectFormat(
     "{{.Config.Image}}",
     getGatewayClusterContainerName(gatewayName),
@@ -230,6 +233,7 @@ export async function isGatewayClusterActiveForGateway(
     observer?: OpenShellGatewayReuseObserver;
   } = {},
 ): Promise<boolean> {
+  if (isPodmanGatewayRuntimeEnabled()) return false;
   if (runtimeSelection && runtimeSelection.gatewayName !== gatewayName) return false;
   const observed = await (
     observer ??
@@ -335,9 +339,10 @@ function isLiveGatewayProcess(pid: number | null | undefined, gatewayBin: string
     if ((err as NodeJS.ErrnoException).code !== "EPERM") return false;
   }
   let cmdline = "";
-  try {
-    cmdline = fs.readFileSync(`/proc/${pid}/cmdline`, "utf-8").replace(/\0/g, " ").trim();
-  } catch {
+  const procCmdline = readGatewayProcEntry(pid as number, "cmdline");
+  if (procCmdline !== null) {
+    cmdline = procCmdline.replace(/\0/g, " ").trim();
+  } else {
     try {
       const ps = spawnSync("ps", ["-p", String(pid), "-o", "args="], {
         encoding: "utf-8",

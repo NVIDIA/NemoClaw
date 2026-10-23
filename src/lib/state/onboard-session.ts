@@ -9,15 +9,19 @@
 
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
+import { isDeepStrictEqual } from "node:util";
 import path from "node:path";
+import {
+  readModelSelectionProvenance,
+  type ModelSelectionProvenance,
+  parseServingProfileProvenance,
+  type ServingProfileProvenance,
+} from "./onboard-session/selection-provenance";
 
+import type { DcodeAutoApprovalMode } from "../onboard/dcode-auto-approval";
 import { isErrnoException } from "../core/errno";
 import { isObjectRecord, type JsonObject, type JsonValue } from "../core/json-types";
 import { DEFAULT_GATEWAY_PORT, GATEWAY_PORT } from "../core/ports";
-import {
-  parseServingProfileProvenance,
-  type ServingProfileProvenance,
-} from "../inference/serving/profile-provenance";
 import {
   normalizeWebSearchConfig,
   webSearchEnvFor,
@@ -63,13 +67,18 @@ import { nextMachineStateAfterCompletedStep } from "./onboard-step-state";
 import {
   listRetainedSandboxRecoveryRecords as readRetainedSandboxRecoveryRecords,
   recordRetainedSandboxRecovery as writeRetainedSandboxRecovery,
+  archiveRetainedSandboxRecoveryForLocalDiscard as archiveRecoveryForLocalDiscard,
   retainedSandboxRecoveryAuthorityIsCurrent,
   retainedSandboxRecoveryFile,
+  retainedRebuildSessionFileName,
+  readRetainedRebuildSession,
   resolveRetainedSandboxRecovery as retireRetainedSandboxRecovery,
   type RecordRetainedSandboxRecoveryInput,
   type RetainedSandboxRecoveryRecord,
   type RetainedSandboxRecoveryReason,
   validSafeEvidence,
+  parseRetainedSandboxCreateAuthority,
+  type RetainedSandboxCreateAuthority,
 } from "./onboard-session/retained-sandbox-recovery";
 import {
   acquireOnboardStateLock,
@@ -107,6 +116,7 @@ const SAFE_VLLM_INSTALL_MODEL = /^[A-Za-z0-9._:/-]+$/;
 export class InvalidPersistedApfInterceptorIntentError extends Error {}
 export class InvalidPersistedCancellationRecoveryError extends Error {}
 export class InvalidPersistedExternalComponentActivationError extends Error {}
+export class InvalidPersistedPolicySelectionError extends Error {}
 
 // Session-specific aliases for the shared JSON types.
 type SessionJsonValue = JsonValue;
@@ -141,7 +151,76 @@ export interface SessionFailure {
   interrupted?: boolean;
 }
 
+export interface PendingPolicySelection {
+  readonly sandboxName: string;
+  readonly sandboxIdentity: string;
+  readonly tierName: string | null;
+  readonly presetNames: string[];
+}
+
+/** Session journal for a policy choice whose live OpenShell write is not yet confirmed. */
+export function createPendingPolicySelectionStore(
+  getSandbox: (
+    sandboxName: string,
+  ) => Pick<SandboxEntry, "lifecycleLiveIdentityFingerprint" | "createdAt"> | null,
+) {
+  return {
+    loadTier(): string | null {
+      return loadSession()?.pendingPolicySelection?.tierName ?? null;
+    },
+    hasPending(sandboxName: string): boolean {
+      return loadSession()?.pendingPolicySelection?.sandboxName === sandboxName;
+    },
+    record(sandboxName: string, tierName: string | null, presetNames: string[]): void {
+      if (loadSession()?.sandboxName !== sandboxName) return;
+      const row = getSandbox(sandboxName);
+      const sandboxIdentity =
+        row?.lifecycleLiveIdentityFingerprint ??
+        (row?.createdAt ? `created:${row.createdAt}` : null);
+      if (!sandboxIdentity)
+        throw new Error("Cannot save policy selection without sandbox identity.");
+      updateSession((session) => {
+        if (session.sandboxName !== sandboxName) return;
+        session.pendingPolicySelection = { sandboxName, sandboxIdentity, tierName, presetNames };
+      });
+    },
+    clear(sandboxName: string): void {
+      updateSession((session) => {
+        if (session.pendingPolicySelection?.sandboxName === sandboxName) {
+          session.pendingPolicySelection = null;
+        }
+      });
+    },
+  };
+}
+
+function parsePendingPolicySelection(value: unknown): PendingPolicySelection | null {
+  if (!isObject(value)) return null;
+  const { sandboxName, sandboxIdentity, tierName, presetNames } = value;
+  if (
+    typeof sandboxName !== "string" ||
+    !NAME_VALID_PATTERN.test(sandboxName) ||
+    typeof sandboxIdentity !== "string" ||
+    sandboxIdentity.length === 0 ||
+    sandboxIdentity.length > 256 ||
+    /[\r\n\0]/u.test(sandboxIdentity) ||
+    (tierName !== null && (typeof tierName !== "string" || !/^[a-z0-9-]{1,64}$/u.test(tierName))) ||
+    !Array.isArray(presetNames) ||
+    presetNames.some(
+      (name) => typeof name !== "string" || !/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/u.test(name),
+    )
+  )
+    return null;
+  return {
+    sandboxName,
+    sandboxIdentity,
+    tierName,
+    presetNames: [...new Set(presetNames as string[])],
+  };
+}
+
 export interface SessionCancellationRecovery {
+  readonly createAuthority?: RetainedSandboxCreateAuthority;
   readonly reason: "cancelled_after_sandbox_creation" | "retained_after_sandbox_creation_failure";
   readonly sandboxName: string;
   readonly sandboxIdentityFingerprint: string | null;
@@ -174,13 +253,15 @@ function sameCancellationRecovery(
     left.gatewayPort === right.gatewayPort &&
     left.lifecycleGeneration === right.lifecycleGeneration &&
     left.createAttemptNonce === right.createAttemptNonce &&
-    left.recordedAt === right.recordedAt
+    left.recordedAt === right.recordedAt &&
+    isDeepStrictEqual(left.createAuthority, right.createAuthority)
   );
 }
 
 export interface SessionMetadata {
   gatewayName: string;
   fromDockerfile: string | null;
+  fromImage?: string | null;
   hostMounts?: SandboxHostMount[];
 }
 
@@ -283,6 +364,7 @@ export interface Session {
   sandboxName: string | null;
   provider: string | null;
   model: string | null;
+  modelSelectionProvenance?: ModelSelectionProvenance | null;
   /** Secret-free model intent retained only while a managed vLLM install is unfinished. */
   vllmInstallModel: string | null;
   /** GPU exposed to the host-side managed vLLM container for this onboarding attempt. */
@@ -301,6 +383,8 @@ export interface Session {
   compatibleEndpointReasoningEffort: ReasoningEffort | null;
   nimContainer: string | null;
   routerPid: number | null;
+  /** Host port last used by the managed Model Router; retained for exact cleanup. */
+  routerPort: number | null;
   routerCredentialHash: string | null;
   webSearchConfig: WebSearchConfig | null;
   /** Completed secret-free choices that can be reused by an interrupted sandbox setup. */
@@ -313,25 +397,19 @@ export interface Session {
   observabilityEnabled: boolean;
   /** True when observability was explicitly enabled or disabled for this resumable run. */
   observabilityRequestedExplicitly: boolean;
+  dcodeAutoApprovalMode: DcodeAutoApprovalMode | null;
+  dcodeAutoApprovalRequestedExplicitly: boolean;
   /** Operator-selected APF create mode; this is not observed policy provenance. */
   apfInterceptorRequested: boolean;
   hermesToolGateways: string[] | null;
   messagingPlan: SandboxMessagingPlan | null;
+  /** Secret-free selection awaiting confirmed live policy application. */
+  pendingPolicySelection: PendingPolicySelection | null;
   /** Non-secret names of credential providers registered before sandbox setup completed. */
   stagedCredentialProviders: string[];
-  // SHA-256 hex digest of every legacy credential value successfully
-  // written to the OpenShell gateway during this onboard session, keyed by
-  // env-name. Persisted across process restarts so a `--resume` run that
-  // skips already-completed upserts still knows the migration completed
-  // earlier and can safely remove ~/.nemoclaw/credentials.json on the
-  // final completeSession. Storing the hash (not just the env-name) lets
-  // us detect when the legacy file value was edited between runs, when
-  // the gateway provider was reset out-of-band, or when an unrelated
-  // session is found on disk — in any of those cases the in-memory
-  // migrated set is NOT seeded from the persisted record, so the cleanup
-  // gate keeps the file until the *current* value is actually re-migrated.
-  migratedLegacyValueHashes: Record<string, string> | null;
   gpuPassthrough: boolean;
+  /** Requested GPU mode/device, retained before a sandbox registry entry exists. */
+  sandboxGpuSelection?: { mode: "auto" | "1" | "0"; device: string | null };
   telegramConfig: TelegramConfig | null;
   wechatConfig: WechatConfig | null;
   metadata: SessionMetadata;
@@ -363,6 +441,7 @@ export interface SessionUpdates {
   sandboxName?: string | null;
   provider?: string | null;
   model?: string | null;
+  modelSelectionProvenance?: ModelSelectionProvenance | null;
   servingProfileProvenance?: ServingProfileProvenance | null;
   endpointUrl?: string | null;
   credentialEnv?: string | null;
@@ -372,18 +451,22 @@ export interface SessionUpdates {
   compatibleEndpointReasoningEffort?: ReasoningEffort | null;
   nimContainer?: string | null;
   routerPid?: number;
+  routerPort?: number;
   routerCredentialHash?: string;
   webSearchConfig?: WebSearchConfig | null;
   toolDisclosure?: ToolDisclosure;
   observabilityEnabled?: boolean;
   hermesToolGateways?: string[] | null;
   messagingPlan?: SandboxMessagingPlan | null;
-  migratedLegacyValueHashes?: Record<string, string>;
   gpuPassthrough?: boolean;
   telegramConfig?: TelegramConfig | null;
   wechatConfig?: WechatConfig | null;
   externalComponentActivation?: ExternalComponentActivationIncomplete | null;
-  metadata?: { gatewayName?: string; fromDockerfile?: string | null };
+  metadata?: {
+    gatewayName?: string;
+    fromDockerfile?: string | null;
+    fromImage?: string | null;
+  };
   /** Ephemeral vLLM checkpoint proof consumed by Station provider binding; never persisted. */
   stationExpressModelIdentity?: string;
 }
@@ -412,6 +495,8 @@ export interface DebugSessionSummary {
   toolDisclosure: ToolDisclosure;
   observabilityEnabled: boolean;
   observabilityRequestedExplicitly: boolean;
+  dcodeAutoApprovalMode: DcodeAutoApprovalMode | null;
+  dcodeAutoApprovalRequestedExplicitly: boolean;
   apfInterceptorRequested: boolean;
   hermesToolGateways: string[] | null;
   gpuPassthrough: boolean;
@@ -563,6 +648,11 @@ function readPositiveInteger(value: SessionJsonValue | undefined): number | null
   return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : null;
 }
 
+function readTcpPort(value: SessionJsonValue | undefined): number | null {
+  const port = readPositiveInteger(value);
+  return port !== null && port <= 65535 ? port : null;
+}
+
 function readNonNegativeInteger(value: SessionJsonValue | undefined): number | null {
   return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : null;
 }
@@ -579,15 +669,6 @@ function readCanonicalIsoTimestamp(value: SessionJsonValue | undefined): string 
 function readStringArray(value: SessionJsonValue | undefined): string[] | null {
   if (!Array.isArray(value)) return null;
   return value.filter((entry): entry is string => typeof entry === "string");
-}
-
-function readStringRecord(value: SessionJsonValue | undefined): Record<string, string> | null {
-  if (!isObject(value)) return null;
-  const result: Record<string, string> = {};
-  for (const [k, v] of Object.entries(value)) {
-    if (typeof k === "string" && typeof v === "string") result[k] = v;
-  }
-  return result;
 }
 
 function isStepStatus(value: string): value is StepStatus {
@@ -702,8 +783,17 @@ function parseSessionMetadata(value: SessionJsonValue | undefined): SessionMetad
   return {
     gatewayName: readString(value.gatewayName) ?? "nemoclaw",
     fromDockerfile: readString(value.fromDockerfile),
+    fromImage: readString(value.fromImage),
     ...(hostMounts.length > 0 ? { hostMounts } : {}),
   };
+}
+
+function parseSandboxGpuSelection(value: unknown): Session["sandboxGpuSelection"] {
+  if (!isObject(value)) return undefined;
+  const mode = value.mode;
+  if (mode !== "auto" && mode !== "1" && mode !== "0") return undefined;
+  if (value.device != null && typeof value.device !== "string") return undefined;
+  return { mode, device: readString(value.device) };
 }
 
 function parseStepState(value: SessionJsonValue | undefined): StepState | null {
@@ -817,6 +907,7 @@ function parseSessionCancellationRecovery(
   const gatewayPort = value.gatewayPort;
   const lifecycleGeneration = readString(value.lifecycleGeneration);
   const createAttemptNonce = readString(value.createAttemptNonce);
+  const createAuthority = parseRetainedSandboxCreateAuthority(value.createAuthority);
   if (
     !sandboxName ||
     sandboxName.length > NAME_MAX_LENGTH ||
@@ -829,7 +920,8 @@ function parseSessionCancellationRecovery(
     Number(gatewayPort) > 65_535 ||
     !lifecycleGeneration ||
     !createAttemptNonce ||
-    !/^[0-9a-f]{62}$/u.test(createAttemptNonce)
+    !/^[0-9a-f]{62}$/u.test(createAttemptNonce) ||
+    (value.createAuthority !== undefined && !createAuthority)
   ) {
     return null;
   }
@@ -841,6 +933,7 @@ function parseSessionCancellationRecovery(
     gatewayPort: Number(gatewayPort),
     lifecycleGeneration,
     createAttemptNonce,
+    ...(createAuthority ? { createAuthority } : {}),
     recordedAt,
   };
 }
@@ -995,6 +1088,13 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     sandboxName: overrides.sandboxName ?? null,
     provider: overrides.provider ?? null,
     model: overrides.model ?? null,
+    ...(readModelSelectionProvenance(overrides.modelSelectionProvenance)
+      ? {
+          modelSelectionProvenance: readModelSelectionProvenance(
+            overrides.modelSelectionProvenance,
+          ),
+        }
+      : {}),
     vllmInstallModel: parseVllmInstallModel(overrides.vllmInstallModel),
     vllmGpuDevice: parseVllmGpuDevice(overrides.vllmGpuDevice),
     servingProfileProvenance: parseServingProfileProvenance(overrides.servingProfileProvenance),
@@ -1014,6 +1114,7 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     ),
     nimContainer: overrides.nimContainer ?? null,
     routerPid: readPositiveInteger(overrides.routerPid),
+    routerPort: readTcpPort(overrides.routerPort),
     routerCredentialHash: overrides.routerCredentialHash ?? null,
     webSearchConfig: normalizeWebSearchConfig(overrides.webSearchConfig),
     sandboxPromptProgress: parseSandboxPromptProgress(
@@ -1022,21 +1123,25 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     ),
     resourceProfile: parseSessionResourceProfile(overrides.resourceProfile),
     toolDisclosure: normalizeSessionToolDisclosure(overrides.toolDisclosure),
+    dcodeAutoApprovalMode: overrides.dcodeAutoApprovalMode ?? null,
+    dcodeAutoApprovalRequestedExplicitly: overrides.dcodeAutoApprovalRequestedExplicitly === true,
     observabilityEnabled: overrides.observabilityEnabled === true,
     observabilityRequestedExplicitly: overrides.observabilityRequestedExplicitly === true,
     apfInterceptorRequested: overrides.apfInterceptorRequested === true,
     hermesToolGateways: readStringArray(overrides.hermesToolGateways),
     messagingPlan: parseSandboxMessagingPlan(overrides.messagingPlan),
+    pendingPolicySelection: parsePendingPolicySelection(overrides.pendingPolicySelection),
     stagedCredentialProviders: readStringArray(overrides.stagedCredentialProviders) ?? [],
-    migratedLegacyValueHashes: overrides.migratedLegacyValueHashes
-      ? readStringRecord(overrides.migratedLegacyValueHashes)
-      : null,
     gpuPassthrough: overrides.gpuPassthrough === true,
+    ...(parseSandboxGpuSelection(overrides.sandboxGpuSelection)
+      ? { sandboxGpuSelection: parseSandboxGpuSelection(overrides.sandboxGpuSelection) }
+      : {}),
     telegramConfig: parseTelegramConfig(overrides.telegramConfig),
     wechatConfig: parseWechatConfig(overrides.wechatConfig),
     metadata: {
       gatewayName: overrides.metadata?.gatewayName ?? "nemoclaw",
       fromDockerfile: overrides.metadata?.fromDockerfile ?? null,
+      fromImage: overrides.metadata?.fromImage ?? null,
       ...(overrides.metadata?.hostMounts?.length
         ? { hostMounts: overrides.metadata.hostMounts.map((mount) => ({ ...mount })) }
         : {}),
@@ -1129,6 +1234,15 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
       "Refusing to load the onboarding session: saved external component activation evidence is incomplete.",
     );
   }
+  if (
+    hasOwn(data, "pendingPolicySelection") &&
+    data.pendingPolicySelection !== null &&
+    !parsePendingPolicySelection(data.pendingPolicySelection)
+  ) {
+    throw new InvalidPersistedPolicySelectionError(
+      "Refusing to load the onboarding session: saved policy selection is invalid.",
+    );
+  }
 
   const normalized = createSession({
     sessionId: readString(data.sessionId) ?? undefined,
@@ -1139,6 +1253,9 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     sandboxName: readString(data.sandboxName),
     provider: readString(data.provider),
     model: readString(data.model),
+    ...(readModelSelectionProvenance(data.modelSelectionProvenance)
+      ? { modelSelectionProvenance: readModelSelectionProvenance(data.modelSelectionProvenance) }
+      : {}),
     vllmInstallModel,
     vllmGpuDevice,
     servingProfileProvenance,
@@ -1152,19 +1269,26 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     compatibleEndpointReasoningEffort,
     nimContainer: readString(data.nimContainer),
     routerPid: readPositiveInteger(data.routerPid),
+    routerPort: readTcpPort(data.routerPort),
     routerCredentialHash: readString(data.routerCredentialHash),
     webSearchConfig: parseWebSearchConfig(data.webSearchConfig),
     sandboxPromptProgress: parseSandboxPromptProgress(data.sandboxPromptProgress, data),
     resourceProfile: parseSessionResourceProfile(data.resourceProfile),
     toolDisclosure: normalizeSessionToolDisclosure(data.toolDisclosure),
+    dcodeAutoApprovalMode:
+      data.dcodeAutoApprovalMode === "disabled" || data.dcodeAutoApprovalMode === "thread-opt-in"
+        ? data.dcodeAutoApprovalMode
+        : null,
+    dcodeAutoApprovalRequestedExplicitly: data.dcodeAutoApprovalRequestedExplicitly === true,
     observabilityEnabled: data.observabilityEnabled === true,
     observabilityRequestedExplicitly: data.observabilityRequestedExplicitly === true,
     apfInterceptorRequested: data.apfInterceptorRequested === true,
     hermesToolGateways: readStringArray(data.hermesToolGateways),
     messagingPlan: parseSandboxMessagingPlan(data.messagingPlan),
+    pendingPolicySelection: parsePendingPolicySelection(data.pendingPolicySelection),
     stagedCredentialProviders: readStringArray(data.stagedCredentialProviders) ?? [],
-    migratedLegacyValueHashes: readStringRecord(data.migratedLegacyValueHashes),
     gpuPassthrough: data.gpuPassthrough === true,
+    sandboxGpuSelection: parseSandboxGpuSelection(data.sandboxGpuSelection),
     telegramConfig: parseTelegramConfig(data.telegramConfig),
     wechatConfig: parseWechatConfig(data.wechatConfig),
     lastStepStarted: readString(data.lastStepStarted),
@@ -1253,6 +1377,10 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
 }
 
 export function loadSession(): Session | null {
+  return loadSessionFile(SESSION_FILE);
+}
+
+function loadSessionFile(filePath: string): Session | null {
   const lockOwned = heldLockHandle !== null;
   let descriptor: number | null = null;
   try {
@@ -1261,22 +1389,22 @@ export function loadSession(): Session | null {
     if (lockOwned) {
       try {
         descriptor = fs.openSync(
-          SESSION_FILE,
-          fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0),
+          filePath,
+          fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0),
         );
       } catch (error) {
         if (isErrnoException(error) && error.code === "ENOENT") {
-          assertOnboardLockOwned();
+          if (lockOwned) assertOnboardLockOwned();
           return null;
         }
         throw error;
       }
-      assertSessionFileIdentity(descriptor, SESSION_FILE);
+      assertSessionFileIdentity(descriptor, filePath);
       contents = String(fs.readFileSync(descriptor, "utf-8"));
-      assertSessionFileIdentity(descriptor, SESSION_FILE);
+      assertSessionFileIdentity(descriptor, filePath);
     } else {
-      if (!fs.existsSync(SESSION_FILE)) return null;
-      contents = fs.readFileSync(SESSION_FILE, "utf-8");
+      if (!fs.existsSync(filePath)) return null;
+      contents = fs.readFileSync(filePath, "utf-8");
     }
     const parsed = JSON.parse(contents);
     const normalized = normalizeSession(parsed);
@@ -1293,6 +1421,102 @@ export function loadSession(): Session | null {
     return null;
   } finally {
     if (descriptor !== null) fs.closeSync(descriptor);
+  }
+}
+
+function rebuildSessionFile(sandboxName: string): string {
+  return path.join(SESSION_DIR, retainedRebuildSessionFileName(sandboxName));
+}
+
+function loadRetainedRebuildSession(sandboxName: string): Session | null {
+  if (heldLockHandle !== null) assertOnboardLockOwned();
+  const value = readRetainedRebuildSession(SESSION_DIR, sandboxName);
+  if (heldLockHandle !== null) assertOnboardLockOwned();
+  if (value === null) return null;
+  const retained = normalizeSession(value);
+  if (!retained) {
+    throw new Error(`Retained rebuild recovery does not identify sandbox '${sandboxName}'.`);
+  }
+  return retained;
+}
+
+/** Read the target's recovery before preflight acquires the onboarding lock. */
+export function loadRebuildSession(sandboxName: string): Session | null {
+  const current = loadSession();
+  return current?.checkpoint?.sandboxRecreate?.sandboxName === sandboxName
+    ? current
+    : (loadRetainedRebuildSession(sandboxName) ?? current);
+}
+
+function moveSessionFile(source: string, target: string): void {
+  assertOnboardLockOwned();
+  const descriptor = fs.openSync(
+    source,
+    fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0),
+  );
+  try {
+    assertSessionFileIdentity(descriptor, source);
+    fs.fchmodSync(descriptor, 0o600);
+    fs.fsyncSync(descriptor);
+    assertOnboardLockOwned();
+    fs.renameSync(source, target);
+    assertOnboardLockOwned();
+    assertSessionFileIdentity(descriptor, target);
+    fs.fsyncSync(heldLockHandle!.directoryDescriptor);
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
+/** Select one rebuild's session without discarding another sandbox's recovery. */
+export function selectRebuildSession(sandboxName: string): void {
+  assertOnboardLockOwned();
+  const targetFile = rebuildSessionFile(sandboxName);
+  const current = loadSession();
+  if (current?.externalComponentActivation) {
+    throw new Error(
+      "Cannot select rebuild recovery while external component activation is incomplete. " +
+        "Preserve the current session, sandbox registry, and sandbox.",
+    );
+  }
+  if (!current && fs.existsSync(SESSION_FILE)) {
+    throw new Error("Cannot select rebuild recovery: the current onboarding session is invalid.");
+  }
+  const retained = loadRetainedRebuildSession(sandboxName);
+  const transaction = current?.checkpoint?.sandboxRecreate;
+  if (retained && !transaction && current?.resumable) {
+    throw new Error(
+      `Cannot select rebuild recovery for '${sandboxName}': ` +
+        `onboarding for ${JSON.stringify(current.sandboxName ?? "(unnamed)")} is unfinished. ` +
+        "Resume or clear that onboarding session before retrying.",
+    );
+  }
+  if (transaction?.sandboxName === sandboxName) {
+    if (retained) {
+      throw new Error(`Sandbox '${sandboxName}' has conflicting rebuild recovery sessions.`);
+    }
+    return;
+  }
+  if (transaction) {
+    const sourceFile = rebuildSessionFile(transaction.sandboxName);
+    // Refuse an existing destination, including a dangling symlink.
+    try {
+      fs.lstatSync(sourceFile);
+      throw new Error(
+        `Sandbox '${transaction.sandboxName}' already has retained rebuild recovery.`,
+      );
+    } catch (error) {
+      if (!(isErrnoException(error) && error.code === "ENOENT")) throw error;
+    }
+    // Renaming leaves one owner. If the process stops before selection finishes,
+    // the next rebuild can recover this session from its sandbox's file.
+    moveSessionFile(SESSION_FILE, sourceFile);
+  }
+  if (retained) {
+    moveSessionFile(targetFile, SESSION_FILE);
+  } else if (transaction || !current) {
+    // Preflight has not started onboarding or recorded a rebuild transaction yet.
+    saveSession({ ...createSession({ sandboxName }), resumable: false });
   }
 }
 
@@ -1449,7 +1673,8 @@ function onboardLockContentionGuidance(
   return [lead, ...holderDetails, remediation].join(" ");
 }
 
-function withOwnedOnboardLock<T>(command: string, operation: () => T): T {
+/** Hold the onboarding writer lock through one synchronous state transition. */
+export function withOwnedOnboardLock<T>(command: string, operation: () => T): T {
   const managesOnboardLock = heldLockHandle === null;
   if (managesOnboardLock) {
     const lock = acquireOnboardLock(command);
@@ -1586,6 +1811,11 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
   assignNullableString(safe, "sandboxName", updates.sandboxName);
   assignNullableString(safe, "provider", updates.provider);
   assignNullableString(safe, "model", updates.model);
+  if (updates.modelSelectionProvenance === null) safe.modelSelectionProvenance = null;
+  else {
+    const provenance = readModelSelectionProvenance(updates.modelSelectionProvenance);
+    if (provenance) safe.modelSelectionProvenance = provenance;
+  }
   if (updates.servingProfileProvenance === null) {
     safe.servingProfileProvenance = null;
   } else {
@@ -1621,6 +1851,14 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
   ) {
     safe.routerPid = updates.routerPid;
   }
+  if (
+    typeof updates.routerPort === "number" &&
+    Number.isInteger(updates.routerPort) &&
+    updates.routerPort > 0 &&
+    updates.routerPort <= 65535
+  ) {
+    safe.routerPort = updates.routerPort;
+  }
   if (typeof updates.routerCredentialHash === "string") {
     safe.routerCredentialHash = updates.routerCredentialHash;
   }
@@ -1647,13 +1885,6 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
   } else {
     const messagingPlan = parseSandboxMessagingPlan(updates.messagingPlan);
     if (messagingPlan) safe.messagingPlan = messagingPlan;
-  }
-  if (isObject(updates.migratedLegacyValueHashes)) {
-    const cleaned: Record<string, string> = {};
-    for (const [k, v] of Object.entries(updates.migratedLegacyValueHashes)) {
-      if (typeof k === "string" && typeof v === "string") cleaned[k] = v;
-    }
-    safe.migratedLegacyValueHashes = cleaned;
   }
   if (updates.gpuPassthrough === true || updates.gpuPassthrough === false) {
     safe.gpuPassthrough = updates.gpuPassthrough;
@@ -1687,6 +1918,7 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
         typeof updates.metadata.fromDockerfile === "string"
           ? updates.metadata.fromDockerfile
           : null,
+      fromImage: typeof updates.metadata.fromImage === "string" ? updates.metadata.fromImage : null,
     };
   }
   return safe;
@@ -1699,6 +1931,7 @@ export function updateSession(mutator: (session: Session) => Session | void): Se
 }
 
 export interface RetainedSandboxRecoveryContext {
+  readonly createAuthority?: RetainedSandboxCreateAuthority;
   readonly gatewayName: string;
   readonly gatewayPort: number;
   readonly lifecycleGeneration: string;
@@ -1735,6 +1968,7 @@ function persistIndependentRetainedSandboxRecovery(
     lifecycleGeneration: context.lifecycleGeneration,
     createAttemptNonce: context.createAttemptNonce,
     resources: retainedSandboxResourceEvidence(session),
+    ...(context.createAuthority ? { createAuthority: context.createAuthority } : {}),
     reason,
   });
 }
@@ -1749,6 +1983,8 @@ export function listRetainedSandboxRecoveryRecords(): readonly RetainedSandboxRe
       recovery &&
       !records.some(
         (record) =>
+          (!record.createAuthority ||
+            record.createAuthority.reservationSessionId === current.sessionId) &&
           record.sandboxName === recovery.sandboxName &&
           record.sandboxIdentityFingerprint === recovery.sandboxIdentityFingerprint &&
           record.createAttemptNonce === recovery.createAttemptNonce,
@@ -1763,6 +1999,7 @@ export function listRetainedSandboxRecoveryRecords(): readonly RetainedSandboxRe
           lifecycleGeneration: recovery.lifecycleGeneration,
           createAttemptNonce: recovery.createAttemptNonce,
           resources: retainedSandboxResourceEvidence(current),
+          ...(recovery.createAuthority ? { createAuthority: recovery.createAuthority } : {}),
           reason: recovery.reason,
           recordedAt: recovery.recordedAt,
         });
@@ -1863,11 +2100,16 @@ export function recordRetainedSandboxRecovery(
 
 export function retainedSandboxRecoveryMatchesSession(
   record: RetainedSandboxRecoveryRecord,
-  session: Pick<Session, "cancellationRecovery"> | null | undefined,
+  session:
+    | (Pick<Session, "cancellationRecovery"> & Partial<Pick<Session, "sessionId">>)
+    | null
+    | undefined,
 ): boolean {
   const recovery = session?.cancellationRecovery;
   if (!recovery) return false;
   return (
+    (!record.createAuthority ||
+      record.createAuthority.reservationSessionId === session?.sessionId) &&
     record.sandboxName === recovery.sandboxName &&
     record.sandboxIdentityFingerprint === recovery.sandboxIdentityFingerprint &&
     record.gatewayName === recovery.gatewayName &&
@@ -1877,14 +2119,31 @@ export function retainedSandboxRecoveryMatchesSession(
   );
 }
 
-/** Clear one recovery-only session after destroy verifies the retained resources absent. */
-export function resolveRetainedSandboxRecovery(record: RetainedSandboxRecoveryRecord): boolean {
+/** Archive the selected record before an explicit local-only discard. */
+export function archiveRetainedSandboxRecoveryForLocalDiscard(
+  record: RetainedSandboxRecoveryRecord,
+  reservation: SandboxEntry | null,
+): string {
+  return withOwnedOnboardLock("nemoclaw forced local recovery archive", () =>
+    archiveRecoveryForLocalDiscard(RETAINED_SANDBOX_RECOVERY_FILE, record, reservation),
+  );
+}
+
+/** Preserve another onboarding session when retiring an operator-selected local record. */
+export function resolveRetainedSandboxRecovery(
+  record: RetainedSandboxRecoveryRecord,
+  options: { preserveSession?: boolean } = {},
+): boolean {
   return withOwnedOnboardLock("nemoclaw retained sandbox recovery completion", () => {
     if (!retainedSandboxRecoveryAuthorityIsCurrent(RETAINED_SANDBOX_RECOVERY_FILE, record)) {
       return false;
     }
     const current = loadSession();
-    if (current && retainedSandboxRecoveryMatchesSession(record, current)) {
+    if (
+      !options.preserveSession &&
+      current &&
+      retainedSandboxRecoveryMatchesSession(record, current)
+    ) {
       current.status = "failed";
       current.resumable = false;
       current.sandboxName = null;
@@ -1914,6 +2173,12 @@ export function markCancellationRecovery(
   }
   return withOwnedOnboardLock("nemoclaw cancellation recovery", () => {
     const saved = updateSession((session) => {
+      if (
+        context.createAuthority &&
+        context.createAuthority.reservationSessionId !== session.sessionId
+      ) {
+        throw new Error("The retained create authority belongs to another onboarding session.");
+      }
       if (session.sandboxName !== null && session.sandboxName !== sandboxName) {
         throw new Error("Cannot record cancellation recovery for a different onboarding sandbox.");
       }
@@ -1972,6 +2237,12 @@ export function markRetainedSandboxRecovery(
   }
   return withOwnedOnboardLock("nemoclaw retained sandbox recovery", () => {
     const saved = updateSession((session) => {
+      if (
+        context.createAuthority &&
+        context.createAuthority.reservationSessionId !== session.sessionId
+      ) {
+        throw new Error("The retained create authority belongs to another onboarding session.");
+      }
       if (session.sandboxName !== null && session.sandboxName !== sandboxName) {
         throw new Error(
           "Cannot record retained sandbox recovery for a different onboarding sandbox.",
@@ -2403,6 +2674,8 @@ export function summarizeForDebug(
     compatibleEndpointReasoningEffort: session.compatibleEndpointReasoningEffort,
     nimContainer: session.nimContainer,
     toolDisclosure: session.toolDisclosure,
+    dcodeAutoApprovalMode: session.dcodeAutoApprovalMode,
+    dcodeAutoApprovalRequestedExplicitly: session.dcodeAutoApprovalRequestedExplicitly,
     observabilityEnabled: session.observabilityEnabled,
     observabilityRequestedExplicitly: session.observabilityRequestedExplicitly,
     apfInterceptorRequested: session.apfInterceptorRequested,

@@ -17,6 +17,7 @@ import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
   type RuntimeProviderBundleRegistry,
 } from "../../onboard/runtime-provider/access";
+import { recordedNativeProviderAttachment } from "../../inference/native-provider/recorded-selection";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import {
@@ -155,15 +156,35 @@ async function checkStartedSandboxInference(
   const model = (sandbox.model ?? "").trim();
   const provider = (sandbox.provider ?? "").trim();
   if (!model || !provider) return null;
+  let nativeProvider: boolean;
+  let nativeEndpointUrl: string | undefined;
+  try {
+    const receipt = recordedNativeProviderAttachment(sandbox);
+    nativeProvider = Boolean(receipt);
+    nativeEndpointUrl = receipt?.endpointUrl;
+  } catch {
+    return {
+      ok: false,
+      httpStatus: null,
+      detail: "recorded native inference ownership is invalid; no inference request was sent",
+    };
+  }
   const gatewayName = getPersistedSandboxTargetGatewayName(sandbox);
   log("  Checking that the sandbox serves an agent request…");
   const input = {
     sandboxName,
     gatewayName,
-    ...(sandbox.agent === "langchain-deepagents-code" ? { agentName: sandbox.agent } : {}),
+    ...(sandbox.agent === "langchain-deepagents-code" || sandbox.agent === "openclaw"
+      ? { agentName: sandbox.agent }
+      : {}),
     provider,
     model,
     preferredInferenceApi: sandbox.preferredInferenceApi ?? null,
+    ...(sandbox.nativeLocalProviderAttachment
+      ? { nativeLocalProviderAttachment: sandbox.nativeLocalProviderAttachment }
+      : {}),
+    ...(nativeProvider ? { nativeProvider: true } : {}),
+    ...(nativeEndpointUrl ? { nativeEndpointUrl } : {}),
   };
   const probe = () =>
     (deps.probeInferenceInvocation ?? probeSandboxInferenceInvocation)(

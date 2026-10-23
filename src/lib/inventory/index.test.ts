@@ -1091,7 +1091,13 @@ describe("inventory commands", () => {
 
     it("reuses the existing sandbox list when resolving status service sandbox", async () => {
       const listSandboxes = vi.fn(() => ({
-        sandboxes: [{ name: "alpha", model: "nvidia/nemotron-3-super-120b-a12b" }],
+        sandboxes: [
+          {
+            name: "alpha",
+            model: "nvidia/nemotron-3-super-120b-a12b",
+            dashboardPort: 18790,
+          },
+        ],
         defaultSandbox: "alpha",
       }));
       const showServiceStatus = vi.fn();
@@ -1102,7 +1108,10 @@ describe("inventory commands", () => {
         log: vi.fn(),
       });
       expect(listSandboxes).toHaveBeenCalledOnce();
-      expect(showServiceStatus).toHaveBeenCalledWith({ sandboxName: "alpha" });
+      expect(showServiceStatus).toHaveBeenCalledWith({
+        sandboxName: "alpha",
+        dashboardPort: 18790,
+      });
     });
 
     it("reuses the existing sandbox list when resolving JSON status service sandbox", async () => {

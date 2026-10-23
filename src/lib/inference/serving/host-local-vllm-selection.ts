@@ -4,6 +4,7 @@
 import os from "node:os";
 
 import { getBuildIdentity } from "../../core/version.js";
+import { sanitizeReadinessText } from "../../readiness/sanitize.js";
 import { createHostReadinessReport } from "../../readiness/host.js";
 import type { VllmProfile } from "../vllm.js";
 import type { VllmModelDef, VllmPlatform } from "../vllm-models.js";
@@ -28,6 +29,7 @@ import type {
 } from "./types.js";
 
 export interface MaterializedHostLocalVllmSelection {
+  readonly displayName?: string;
   readonly profile: VllmProfile;
   readonly model: VllmModelDef;
   readonly presetId: string;
@@ -75,6 +77,7 @@ export function materializeHostLocalVllmModel(
     downloadSizeBytes: recipe.spec.model.downloadSizeBytes,
     maxModelLen: positiveIntegerArgument(recipe, "--max-model-len"),
     revision: recipe.spec.model.revision,
+    reviewedCode: recipe.spec.model.reviewedCode,
     servedModelId: recipe.spec.model.servedName,
     modelArgs: hostLocalVllmModelArguments(recipe),
     gated: recipe.spec.model.gated,
@@ -138,8 +141,11 @@ export function materializeHostLocalVllmSelection(
     throw new Error("host-local vLLM recipe is missing required runtime or model fields");
   }
   const model = materializeHostLocalVllmModel(recipe, directInstall, baseProfile.platform);
+  // Preserve platform GPU selection when the installer applies the recipe's container arguments.
+  model.runtime = { ...model.runtime!, catalogPresetId: preset.metadata.id };
   const gpuMemoryUtilization = hostLocalVllmGpuMemoryUtilization(recipe);
   return {
+    displayName: preset.metadata.displayName,
     presetId: preset.metadata.id,
     recipeId: recipe.metadata.id,
     model,
@@ -219,7 +225,23 @@ export function resolveHostLocalVllmSelection(
         : { provider: "vllm" },
   });
   if (resolution.outcome !== "selected") {
-    return { kind: "rejected", reason: resolution.message };
+    const hostFacts =
+      resolution.outcome === "no-match"
+        ? readinessReports[0]?.report.observations
+            .filter(
+              ({ id, state }) =>
+                state === "present" &&
+                (id === "host.os.architecture" || id === "host.docker.runtime"),
+            )
+            .map(({ id, value }) => sanitizeReadinessText(`${id}=${String(value)}`, 256))
+            .join(", ")
+        : undefined;
+    return {
+      kind: "rejected",
+      reason: hostFacts
+        ? `${resolution.message} Host: ${hostFacts}. Choose another inference provider or an explicitly compatible serving profile.`
+        : resolution.message,
+    };
   }
   if ("topologyQualification" in resolution) {
     return {

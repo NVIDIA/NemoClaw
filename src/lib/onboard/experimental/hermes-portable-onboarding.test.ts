@@ -21,6 +21,7 @@ import {
   classifyHermesPortableRegistry,
   createHermesPortableAuthenticatedHealthCapture,
   createHermesPortableChildEnvironment,
+  createHermesPortableGpuDiagnostics,
   createHermesPortableReadyRunner,
   createHermesPortableOpenShellCapture,
   createHermesPortableReadyCapture,
@@ -129,6 +130,10 @@ function deps(options: HermesPortableTransactionFixtureOptions = {}) {
   return createHermesPortableTransactionFixture(input(), options);
 }
 
+function reservedRoute(sessionId: string) {
+  return { pendingRouteReservation: true as const, reservationSessionId: sessionId };
+}
+
 beforeEach(() => {
   stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-onboard-"));
   policyPath = path.join(stateDir, "create.yaml");
@@ -136,6 +141,37 @@ beforeEach(() => {
 });
 
 afterEach(() => fs.rmSync(stateDir, { recursive: true, force: true }));
+
+describe("Hermes portable image handoff", () => {
+  it("accepts the bare image ID returned by Podman", async () => {
+    const current = input();
+    const fixture = createHermesPortableTransactionFixture(current, {
+      inspectImageId: "a".repeat(64),
+    });
+    await expect(
+      runHermesPortableOnboardingTransaction(current, fixture.value),
+    ).resolves.toBeDefined();
+    expect(fixture.events).toContain("create");
+  });
+
+  it.each([
+    ["build failure", { buildStatus: 125 }, "Podman image build failed"],
+    ["missing local image", { inspectImageStatus: 1 }, "unavailable in the selected Podman store"],
+    ["publish failure", { pushStatus: 125 }, "image publication"],
+    [
+      "missing registry image",
+      { imageAvailable: false },
+      "not visible in the managed local registry",
+    ],
+  ] as const)("stops before create after %s", async (_case, options, message) => {
+    const current = input();
+    const fixture = createHermesPortableTransactionFixture(current, options);
+    await expect(runHermesPortableOnboardingTransaction(current, fixture.value)).rejects.toThrow(
+      message,
+    );
+    expect(fixture.events).not.toContain("create");
+  });
+});
 
 describe("Hermes portable onboarding transaction", () => {
   it("allows first onboarding when no uninstall state directory exists (#9608)", () => {
@@ -238,6 +274,51 @@ describe("Hermes portable onboarding transaction", () => {
     );
   });
 
+  it("keeps GPU failure diagnostics on receipt-owned get/list authority", () => {
+    const capture = vi.fn((args: readonly string[], _timeoutMs?: number) => ({
+      status: 0,
+      stdout: Buffer.from(args[1] === "get" ? "Phase: Error\n" : "alpha  Error\n"),
+      stderr: Buffer.alloc(0),
+    }));
+    const run = createHermesPortableReadyRunner("alpha", "nemoclaw", capture);
+    const diagnostics = createHermesPortableGpuDiagnostics("alpha", "nemoclaw", run);
+
+    const artifacts = diagnostics.collect({
+      target: { kind: "selected" },
+      sandboxName: "alpha",
+      timeoutMs: 1_234,
+      redact: (value) => value,
+    });
+
+    expect(capture.mock.calls).toEqual([
+      [["sandbox", "get", "-g", "nemoclaw", "alpha"], 1_234],
+      [["sandbox", "list", "-g", "nemoclaw"], 1_234],
+    ]);
+    expect(artifacts).toEqual([
+      {
+        name: "openshell-sandbox-get.txt",
+        content: "Phase: Error",
+        outcome: { kind: "completed", exitCode: 0 },
+      },
+      {
+        name: "openshell-sandbox-list.txt",
+        content: "alpha  Error",
+        outcome: { kind: "completed", exitCode: 0 },
+      },
+      {
+        name: "openshell-logs.txt",
+        content: "",
+        outcome: {
+          kind: "failed",
+          error: {
+            kind: "unavailable",
+            message: "OpenShell runner authority does not support doctor logs",
+          },
+        },
+      },
+    ]);
+  });
+
   it("runs authenticated health inside the exact OpenShell workload namespace (#9211)", () => {
     const capture = vi.fn(() => ({
       status: 0,
@@ -320,6 +401,16 @@ describe("Hermes portable onboarding transaction", () => {
     expect(completed.created).toBe(true);
     expect(fixture.events[0]).toBe("lock-enter");
     expect(fixture.events.at(-1)).toBe("lock-exit");
+    expect(fixture.events.indexOf("image-build")).toBeLessThan(
+      fixture.events.indexOf("image-inspect"),
+    );
+    expect(fixture.events.indexOf("image-inspect")).toBeLessThan(
+      fixture.events.indexOf("image-push"),
+    );
+    expect(fixture.events.indexOf("image-push")).toBeLessThan(
+      fixture.events.indexOf("image-visible"),
+    );
+    expect(fixture.events.indexOf("image-visible")).toBeLessThan(fixture.events.indexOf("create"));
     expect(fixture.events.indexOf("create")).toBeLessThan(fixture.events.indexOf("registry"));
     expect(fixture.events.indexOf("registry")).toBeLessThan(
       fixture.events.lastIndexOf("policy-base"),
@@ -1374,7 +1465,19 @@ network_policies:
     },
   );
 
-  it("requires exact Hermes registry agent, gateway, generation, and driver agreement (#9203)", () => {
+  it.each([
+    ["absent", null, "missing"],
+    ["exact match", {}, "matching"],
+    ["legacy port omission", { gatewayPort: undefined }, "matching-without-gateway-port"],
+    ["null port", { gatewayPort: null }, "conflict"],
+    ["different port", { gatewayPort: 8081 }, "conflict"],
+    ["old OpenShell", { openshellVersion: "0.0.101" }, "conflict"],
+    ["other generation", { lifecycleGeneration: "other" }, "conflict"],
+    ["other agent", { agent: "openclaw" }, "conflict"],
+    ["same reserved session", reservedRoute("session-alpha"), "matching", "session-alpha"],
+    ["foreign reserved session", reservedRoute("session-beta"), "conflict", "session-alpha"],
+  ] as const)("classifies Hermes registry $0 (#9203)", (...args) => {
+    const [, override, kind, sessionId] = args;
     const receipt = {
       sandboxName: "alpha",
       gatewayName: "nemoclaw",
@@ -1391,48 +1494,7 @@ network_policies:
       openshellVersion: "0.0.116",
     };
 
-    expect(classifyHermesPortableRegistry(receipt, null)).toEqual({ kind: "missing" });
-    expect(classifyHermesPortableRegistry(receipt, matching)).toMatchObject({ kind: "matching" });
-    const { gatewayPort: _gatewayPort, ...withoutGatewayPort } = matching;
-    expect(classifyHermesPortableRegistry(receipt, withoutGatewayPort)).toMatchObject({
-      kind: "matching-without-gateway-port",
-    });
-    expect(
-      classifyHermesPortableRegistry(receipt, { ...matching, gatewayPort: null }),
-    ).toMatchObject({ kind: "conflict" });
-    expect(
-      classifyHermesPortableRegistry(receipt, { ...matching, gatewayPort: 8081 }),
-    ).toMatchObject({ kind: "conflict" });
-    expect(
-      classifyHermesPortableRegistry(
-        receipt,
-        {
-          ...matching,
-          pendingRouteReservation: true,
-          reservationSessionId: "session-alpha",
-        },
-        "session-alpha",
-      ),
-    ).toMatchObject({ kind: "matching" });
-    expect(
-      classifyHermesPortableRegistry(
-        receipt,
-        {
-          ...matching,
-          pendingRouteReservation: true,
-          reservationSessionId: "session-beta",
-        },
-        "session-alpha",
-      ),
-    ).toMatchObject({ kind: "conflict" });
-    expect(
-      classifyHermesPortableRegistry(receipt, { ...matching, openshellVersion: "0.0.101" }),
-    ).toMatchObject({ kind: "conflict" });
-    expect(
-      classifyHermesPortableRegistry(receipt, { ...matching, lifecycleGeneration: "other" }),
-    ).toMatchObject({ kind: "conflict" });
-    expect(
-      classifyHermesPortableRegistry(receipt, { ...matching, agent: "openclaw" }),
-    ).toMatchObject({ kind: "conflict" });
+    const entry = override === null ? null : { ...matching, ...override };
+    expect(classifyHermesPortableRegistry(receipt, entry, sessionId)).toMatchObject({ kind });
   });
 });

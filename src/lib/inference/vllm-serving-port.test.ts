@@ -72,6 +72,7 @@ vi.mock("./serving/vllm-managed-support", async (importOriginal) => {
 import {
   detectVllmProfile,
   installVllm as installVllmProduction,
+  resolveVllmModelRuntime,
   type InstallVllmOptions,
   type VllmProfile,
 } from "./vllm";
@@ -144,8 +145,13 @@ describe("managed vLLM serving-port guard (#8685)", () => {
 
   it("uses the fixed vLLM local model profile command without managed-cluster selection", async () => {
     const baseProfile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+    const sparkModel = resolveVllmModelRuntime(
+      baseProfile,
+      baseProfile.defaultModel,
+      "arm64",
+    ).model;
     const model = {
-      ...baseProfile.defaultModel,
+      ...sparkModel,
       id: "nvidia/fixed-local-profile",
       fixedServeCommand: true as const,
       managedBearerAuth: true as const,

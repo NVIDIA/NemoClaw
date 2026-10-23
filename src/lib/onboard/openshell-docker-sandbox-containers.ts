@@ -1,11 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { dockerCapture, dockerRun } from "../adapters/docker";
+import { dockerCapture, dockerLogs, dockerRun } from "../adapters/docker";
 import {
   inspectDockerSandboxIdentities,
   type DockerSandboxIdentityObservation,
 } from "../adapters/docker/inspect";
+import { captureDockerContainerFailureEvidence } from "./compute/docker-container-failure-evidence";
 import type { DockerGpuPatchDeps } from "./docker-gpu-patch-types";
 
 export const OPENSHELL_MANAGED_BY_LABEL = "openshell.ai/managed-by";
@@ -78,6 +79,69 @@ export function findOpenShellDockerSandboxContainerIds(
     .filter(Boolean);
 }
 
+/**
+ * One deadline for discovery, inspection, and log reads, so diagnostics delay
+ * rollback by at most this long even when Docker stalls.
+ */
+const SANDBOX_FAILURE_OUTPUT_BUDGET_MS = 4_000;
+
+type SandboxFailureOutputDeps = Pick<
+  DockerGpuPatchDeps,
+  "dockerCapture" | "dockerLogs" | "dockerRun"
+> & { readonly now?: () => number };
+
+/**
+ * Capture redacted recent output from one sandbox container before rollback
+ * can remove or replace it. Use the exact replacement container when the
+ * caller owns one; otherwise require exactly one OpenShell-labeled container.
+ *
+ * SOURCE_OF_TRUTH_REVIEW
+ * invalidState: OpenShell 0.0.116 writes supervisor startup failures, such as
+ *   a Landlock hard_requirement error, only to the sandbox container's stderr;
+ *   neither `openshell logs` nor sandbox status carries the reason (#13178).
+ * sourceBoundary: captureDockerContainerFailureEvidence owns bounded Docker
+ *   inspect, log, and redaction behavior.
+ * whyNotSourceFix: the supervisor runs in the pinned external OpenShell
+ *   release; OpenShell 0.1.x reports the supervisor log tail in sandbox status.
+ * regressionTest: openshell-docker-sandbox-containers.test.ts and
+ *   onboard-sandbox-create-failure.test.ts.
+ * removalCondition: remove once the OpenShell pin reaches 0.1.0.
+ */
+export function captureOpenShellDockerSandboxFailureOutput(
+  sandboxName: string,
+  expectedContainerId: string | null,
+  deps: SandboxFailureOutputDeps = {},
+): string | null {
+  try {
+    const now = deps.now ?? Date.now;
+    const deadlineMs = now() + SANDBOX_FAILURE_OUTPUT_BUDGET_MS;
+    let containerId = expectedContainerId;
+    if (!containerId) {
+      const containers = queryOpenShellDockerSandboxContainers(
+        sandboxName,
+        { dockerRun: deps.dockerRun ?? dockerRun },
+        Math.min(2_000, deadlineMs - now()),
+      );
+      if (!containers.ok || containers.ids.length !== 1) return null;
+      containerId = containers.ids[0];
+    }
+    const evidence = captureDockerContainerFailureEvidence(
+      containerId,
+      {
+        dockerCapture: deps.dockerCapture ?? dockerCapture,
+        dockerLogs: deps.dockerLogs ?? dockerLogs,
+      },
+      { deadlineMs, now },
+    );
+    // Opaque credentials are redacted only after inspect identifies them;
+    // without that, pattern redaction alone could print an opaque value.
+    if (!evidence.inspectRedactionApplied) return null;
+    return evidence.redactedLogTail || null;
+  } catch {
+    return null;
+  }
+}
+
 export type OpenShellDockerSandboxContainerQuery =
   | { ok: true; ids: string[] }
   | { ok: false; ids: []; error: string };
@@ -88,14 +152,14 @@ function queryDockerSandboxContainerIds(
   timeoutMs: number,
 ): OpenShellDockerSandboxContainerQuery {
   const run = deps.dockerRun ?? dockerRun;
-  const requestedTimeoutMs =
-    Number.isFinite(timeoutMs) && timeoutMs > 0
-      ? Math.floor(timeoutMs)
-      : DOCKER_SANDBOX_QUERY_TIMEOUT_MS;
+  const requestedTimeoutMs = Math.floor(timeoutMs);
+  if (!Number.isFinite(timeoutMs) || requestedTimeoutMs <= 0) {
+    return { ok: false, ids: [], error: "Docker sandbox query deadline expired" };
+  }
   const result = run([...filterArgs, "--format", "{{.ID}}"], {
     ignoreError: true,
     suppressOutput: true,
-    timeout: Math.max(1, Math.min(DOCKER_SANDBOX_QUERY_TIMEOUT_MS, requestedTimeoutMs)),
+    timeout: Math.min(DOCKER_SANDBOX_QUERY_TIMEOUT_MS, requestedTimeoutMs),
   });
   if (Number(result.status ?? 1) !== 0) {
     return {
@@ -223,12 +287,17 @@ type ExactDockerContainerCleanupDeps = {
 
 export function inspectDockerSandboxNameLabeledContainers(
   sandboxName: string,
+  inspect?: Parameters<typeof inspectDockerSandboxIdentities>[2],
 ): DockerSandboxIdentityObservation {
-  return inspectDockerSandboxIdentities(`${OPENSHELL_SANDBOX_NAME_LABEL}=${sandboxName}`, {
-    managedBy: OPENSHELL_MANAGED_BY_LABEL,
-    workspace: OPENSHELL_SANDBOX_WORKSPACE_LABEL,
-    sandboxId: OPENSHELL_SANDBOX_ID_LABEL,
-  });
+  return inspectDockerSandboxIdentities(
+    `${OPENSHELL_SANDBOX_NAME_LABEL}=${sandboxName}`,
+    {
+      managedBy: OPENSHELL_MANAGED_BY_LABEL,
+      workspace: OPENSHELL_SANDBOX_WORKSPACE_LABEL,
+      sandboxId: OPENSHELL_SANDBOX_ID_LABEL,
+    },
+    inspect,
+  );
 }
 
 function exactCleanupContainerIds(
@@ -385,6 +454,9 @@ export type OpenShellDockerSandboxRuntimeSnapshotQuery =
 export interface OpenShellDockerSandboxRuntimeSnapshotOptions {
   /** Full transaction-owned container ID selected while a rollback backup is retained. */
   readonly expectedContainerId?: string;
+  /** Total budget for the complete provider observation. */
+  readonly timeoutMs?: number;
+  readonly now?: () => number;
 }
 
 export function isImmutableDockerImageId(value: string): boolean {
@@ -562,8 +634,19 @@ export function queryOpenShellDockerSandboxRuntimeSnapshot(
   deps: DockerSandboxContainerQueryDeps = {},
   options: OpenShellDockerSandboxRuntimeSnapshotOptions = {},
 ): OpenShellDockerSandboxRuntimeSnapshotQuery {
-  const containers = queryOpenShellDockerSandboxContainers(sandboxName, deps);
+  const now = options.now ?? Date.now;
+  const totalTimeoutMs = Math.max(
+    1,
+    Math.min(DOCKER_SANDBOX_QUERY_TIMEOUT_MS, options.timeoutMs ?? DOCKER_SANDBOX_QUERY_TIMEOUT_MS),
+  );
+  const deadlineMs = now() + totalTimeoutMs;
+  const remainingTimeoutMs = () => Math.floor(deadlineMs - now());
+  const containers = queryOpenShellDockerSandboxContainers(sandboxName, deps, remainingTimeoutMs());
   if (!containers.ok) return { ok: false, error: containers.error };
+  const inspectTimeoutMs = remainingTimeoutMs();
+  if (inspectTimeoutMs <= 0) {
+    return { ok: false, error: "Docker runtime snapshot deadline expired" };
+  }
   const expectedContainerId = options.expectedContainerId;
   if (expectedContainerId !== undefined && !/^[a-f0-9]{64}$/u.test(expectedContainerId)) {
     return { ok: false, error: "expected sandbox container ID is invalid" };
@@ -593,7 +676,7 @@ export function queryOpenShellDockerSandboxRuntimeSnapshot(
     {
       ignoreError: true,
       suppressOutput: true,
-      timeout: DOCKER_SANDBOX_QUERY_TIMEOUT_MS,
+      timeout: inspectTimeoutMs,
     },
   );
   if (Number(inspect.status ?? 1) !== 0) {
@@ -627,6 +710,9 @@ export function queryOpenShellDockerSandboxRuntimeSnapshot(
   const runtime = fields[5];
   let nvidiaVisibleDevices: string | null = null;
   if (runtime.trim().toLowerCase() === "nvidia") {
+    if (remainingTimeoutMs() <= 0) {
+      return { ok: false, error: "Docker runtime snapshot deadline expired" };
+    }
     const visibleDevices = parseNvidiaVisibleDevices(
       run(
         [
@@ -640,7 +726,7 @@ export function queryOpenShellDockerSandboxRuntimeSnapshot(
         {
           ignoreError: true,
           suppressOutput: true,
-          timeout: DOCKER_SANDBOX_QUERY_TIMEOUT_MS,
+          timeout: remainingTimeoutMs(),
         },
       ),
     );

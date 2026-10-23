@@ -96,9 +96,13 @@ describe("released OpenShell SDK export reads", () => {
     },
   );
 
-  it.skipIf(!hasSdkArtifact()).each(["openai", "nvidia"] as const)(
-    "accepts generated %s responses without losing identity or uint64 revisions",
-    async (providerType) => {
+  it.skipIf(!hasSdkArtifact()).each([
+    ["openai", ""],
+    ["nvidia", ""],
+    ["nvidia", "default"],
+  ] as const)(
+    "accepts generated %s responses at binding %j without losing identity or uint64 revisions",
+    async (providerType, profileWorkspace) => {
       const sdkPackage = "@nvidia/openshell-sdk/raw";
       const protobufPackage = "@bufbuild/protobuf";
       const [raw, { create, toBinary, fromBinary }] = await Promise.all([
@@ -116,20 +120,23 @@ describe("released OpenShell SDK export reads", () => {
         fromBinary(schema, toBinary(schema, create(schema, input)));
       const client: OpenShellReadClient = {
         raw: {
-          getProviderProfile: async () =>
-            roundTrip(raw.OpenShell.method.getProviderProfile.output, {
+          getProviderProfile: async (request) => {
+            expect(request).toEqual({ id: "nvidia", workspace: profileWorkspace });
+            return roundTrip(raw.OpenShell.method.getProviderProfile.output, {
               profile: {
                 id: "nvidia",
                 source: "builtin",
                 inferenceCapable: true,
                 endpoints: [{ host: "integrate.api.nvidia.com", port: 443 }],
               },
-            }),
+            });
+          },
           getProvider: async () =>
             roundTrip(raw.OpenShell.method.getProvider.output, {
               provider: {
                 metadata,
                 type: providerType,
+                profileWorkspace,
                 credentials: { API_KEY: "REDACTED" },
                 config:
                   providerType === "nvidia" ? {} : { OPENAI_BASE_URL: "https://api.example/v1" },

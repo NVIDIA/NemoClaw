@@ -43,9 +43,10 @@ import {
 } from "../fixtures/fake-openai-compatible.ts";
 import {
   expectSandboxProviderAttachment,
-  upsertGenericGatewayProvider,
+  createExtraGatewayProvider,
 } from "../fixtures/gateway-providers.ts";
 import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
+import { captureOpenClawOnboardFailure } from "../fixtures/openclaw-onboard-diagnostics.ts";
 
 // Disruption-recovery contract — regression for #446.
 //
@@ -242,7 +243,7 @@ test(
     // Assertion: hermetic-compatible-endpoint-ready — the workflow does not
     // pass hosted NVIDIA inference secrets. Instead, this test exposes a local
     // fake OpenAI-compatible endpoint at a host address the OpenShell gateway and
-    // sandbox can route to, matching test/e2e/lib/hermetic-compatible-inference.sh.
+    // sandbox can route to.
     const fakePublicHost = "host.openshell.internal";
     let fake = await startFakeOpenAiCompatibleServer({
       apiKey: FAKE_COMPATIBLE_AUTH_VALUE,
@@ -440,11 +441,9 @@ test(
     await artifacts.writeJson("phase-2-fake-openai-compatible-requests.json", fake.requests());
     expectHermeticCompatibleEndpointUsed(fake, onboardingRequestOffset);
 
-    await upsertGenericGatewayProvider(host, LIVE_EXTRA_PROVIDER, {
-      artifactName: "phase-2-live-extra-provider-upsert",
-      credentialEnv: EXTRA_PROVIDER_TOKEN_ENV,
+    await createExtraGatewayProvider(host, LIVE_EXTRA_PROVIDER, {
+      artifactName: "phase-2-live-extra-provider-create",
       env: { ...buildAvailabilityProbeEnv(), [EXTRA_PROVIDER_TOKEN_ENV]: EXTRA_PROVIDER_TOKEN },
-      redactionValues: [EXTRA_PROVIDER_TOKEN],
     });
     const seededExtraProviders = updateExtraProviders((providers) => {
       providers.add(STALE_EXTRA_PROVIDER);
@@ -494,6 +493,13 @@ test(
       captureGatewayLog: true,
     });
     const resumeText = `${resumeRun.stdout}\n${resumeRun.stderr}`;
+    await captureOpenClawOnboardFailure(resumeRun, sandbox, {
+      sandboxName: SANDBOX_NAME,
+      artifactPrefix: "phase-3-onboard-resume",
+      env: resumeEnv,
+      redactionValues: [FAKE_COMPATIBLE_AUTH_VALUE, EXTRA_PROVIDER_TOKEN],
+      runtime: runtimeProvider,
+    });
 
     // Assertion: resume-exit-0.
     expect(resumeRun.exitCode, resumeText).toBe(0);

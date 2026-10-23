@@ -1,16 +1,28 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { execFileSync, spawnSync } from "node:child_process";
+import fs from "node:fs";
+import { buildSandboxInferenceChatCommand } from "../fixtures/inference-adapter.ts";
+import os from "node:os";
+import path from "node:path";
+import assert from "node:assert/strict";
+import { runInNewContext } from "node:vm";
+import { customNativeProvider } from "../../../src/lib/inference/native-provider/custom.ts";
+import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 
 import {
   buildFullE2eInferenceRequest,
+  readFullE2eInferenceRoute,
   FULL_E2E_INFERENCE_EVIDENCE_LIMIT_BYTES,
   type FullE2eInferenceAttemptInput,
   fullE2eInferenceProbeEvidence,
   type InferenceCommandResult,
   parseFullE2eInferenceResponse,
   runFullE2eInferenceProbe,
+  runFullE2eInferenceCommand,
+  retainFullE2eInferenceAvailability,
 } from "../live/full-e2e-inference-probe.ts";
 
 function commandResult(stdout: string, exitCode = 0, stderr = ""): InferenceCommandResult {
@@ -25,7 +37,198 @@ function completion(content: string, finishReason = "stop"): string {
   });
 }
 
+it.each([
+  ["owned-id", "none", true],
+  ["different-id", "none", false],
+  ["owned-id", "endpoint", false],
+  ["owned-id", "api", false],
+  ["owned-id", "credential", false],
+  ["owned-id", "model", false],
+] as const)(
+  "checks custom native provider identity %s and agent drift %s on the recorded gateway",
+  async (observedId, drift, expected) => {
+    const definition = customNativeProvider({
+      provider: "compatible-endpoint",
+      endpointUrl: "https://custom.example/v1",
+      api: "openai-completions",
+      credentialEnv: "SOURCE_KEY",
+      allowedIps: ["8.8.8.8"],
+    });
+    const openshell = vi
+      .fn()
+      .mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: [
+          `Name: ${definition.providerName}`,
+          `Id: ${observedId}`,
+          `Type: ${definition.profileId}`,
+          "Resource version: 1",
+          "Credential keys: COMPATIBLE_API_KEY",
+          "Config keys: <none>",
+        ].join("\n"),
+      })
+      .mockResolvedValueOnce({ exitCode: 0, stdout: definition.providerName });
+    const handle = "openshell:resolve:env:v3_COMPATIBLE_API_KEY";
+    const config = {
+      agents: {
+        defaults: {
+          model: { primary: drift === "model" ? "inference/other" : "inference/selected-model" },
+        },
+      },
+      models: {
+        providers: {
+          inference: {
+            baseUrl: drift === "endpoint" ? "https://wrong.example/v1" : definition.endpoint,
+            api: drift === "api" ? "openai-responses" : definition.api,
+            apiKey: drift === "credential" ? "raw-secret" : handle,
+            models: [{ id: "selected-model" }],
+          },
+        },
+      },
+    };
+    const exec = vi.fn(async (_name, command) => {
+      let stdout = "";
+      try {
+        runInNewContext(command[2], {
+          require: (name: string) =>
+            name === "node:fs" ? { readFileSync: () => JSON.stringify(config) } : assert,
+          process: {
+            argv: ["node", command[3]],
+            env: { COMPATIBLE_API_KEY: handle },
+            stdout: {
+              write: (value: string) => {
+                stdout += value;
+              },
+            },
+          },
+        });
+        return { exitCode: 0, stdout };
+      } catch {
+        return { exitCode: 1, stdout };
+      }
+    });
+    const result = await readFullE2eInferenceRoute({
+      sandbox: { openshell, exec } as unknown as SandboxClient,
+      sandboxName: "alpha",
+      logicalProvider: definition.logicalProvider,
+      model: "selected-model",
+      env: {},
+      redactionValues: ["synthetic-key"],
+      entry: {
+        name: "alpha",
+        gatewayName: "recorded-gateway",
+        nativeHostedProviderAttachment: {
+          schemaVersion: 1,
+          profileId: definition.profileId,
+          providerName: definition.providerName,
+          providerId: "owned-id",
+          endpointUrl: definition.endpointUrl,
+          allowedIps: definition.allowedIps,
+          custom: definition.custom,
+        },
+      },
+    });
+    expect(result.ok).toBe(expected);
+    expect(exec).toHaveBeenCalledExactlyOnceWith(
+      "alpha",
+      expect.any(Array),
+      expect.objectContaining({ artifactName: "phase-3-native-custom-agent-route" }),
+    );
+    expect(openshell.mock.calls.map(([args]) => args)).toEqual([
+      ["provider", "get", "-g", "recorded-gateway", definition.providerName],
+      ["sandbox", "provider", "list", "-g", "recorded-gateway", "alpha"],
+    ]);
+    expect(openshell).toHaveBeenNthCalledWith(
+      1,
+      expect.any(Array),
+      expect.objectContaining({ redactionValues: ["synthetic-key"], captureLimitBytes: 16 * 1024 }),
+    );
+  },
+);
+
 describe("full E2E sandbox inference probe", () => {
+  it.each([
+    ["nvidia-prod", "NVIDIA_INFERENCE_API_KEY", "https://integrate.api.nvidia.com/v1"],
+    ["compatible-endpoint", "COMPATIBLE_API_KEY", "https://custom.example/team/v1"],
+    // Bootstrap and latency smoke use this hosted endpoint through its native provider.
+    ["compatible-endpoint", "COMPATIBLE_API_KEY", "https://inference-api.nvidia.com/v1"],
+  ])(
+    "uses the sandbox native %s handle and preserves the request as data",
+    (provider, credentialEnv, endpointUrl) => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "full-e2e-native-probe-"));
+      try {
+        fs.writeFileSync(path.join(directory, "curl"), '#!/bin/sh\nprintf "%s\\n" "$@"\n', {
+          mode: 0o700,
+        });
+        const body = JSON.stringify({ prompt: 'literal $(exit 99) "quote"' });
+        const [command, ...args] = buildSandboxInferenceChatCommand(body, provider, endpointUrl);
+        const handle = `openshell:resolve:env:v3_${credentialEnv}`;
+        const env = { PATH: `${directory}:/usr/bin:/bin`, [credentialEnv]: handle };
+        const result = execFileSync(command, args, { env, encoding: "utf8" });
+        expect(result.split("\n")).toEqual([
+          "-fsS",
+          "--max-time",
+          "90",
+          `${endpointUrl}/chat/completions`,
+          "-H",
+          "Content-Type: application/json",
+          "-H",
+          `Authorization: Bearer ${handle}`,
+          "--data-raw",
+          body,
+          "",
+        ]);
+      } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.each(["", "nvapi-raw-key", "$(exit 99)"])(
+    "rejects the invalid native credential %j before invoking curl",
+    (invalid) => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "full-e2e-invalid-probe-"));
+      try {
+        const marker = path.join(directory, "curl-invoked");
+        fs.writeFileSync(
+          path.join(directory, "curl"),
+          '#!/bin/sh\nprintf invoked > "$CURL_MARKER"\n',
+          {
+            mode: 0o700,
+          },
+        );
+        const [, ...args] = buildSandboxInferenceChatCommand("{}", "nvidia-prod");
+        const denied = spawnSync("/bin/bash", args, {
+          env: {
+            PATH: `${directory}:/usr/bin:/bin`,
+            NVIDIA_INFERENCE_API_KEY: invalid,
+            CURL_MARKER: marker,
+          },
+          encoding: "utf8",
+        });
+        expect(denied.status).toBe(2);
+        expect(denied.stdout).toBe("");
+        expect(denied.stderr).toBe("");
+        expect(fs.existsSync(marker)).toBe(false);
+      } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("retains the credential-free local probe for a compatible provider", () => {
+    expect(buildSandboxInferenceChatCommand("{}", "compatible-endpoint")).toEqual([
+      "curl",
+      "-fsS",
+      "--max-time",
+      "90",
+      "https://inference.local/v1/chat/completions",
+      "-H",
+      "Content-Type: application/json",
+      "--data-raw",
+      "{}",
+    ]);
+  });
   it("uses deterministic sampling and the requested reply budget for Nemotron", () => {
     expect(JSON.parse(buildFullE2eInferenceRequest("nvidia/nvidia/nemotron-3-ultra", 512))).toEqual(
       {
@@ -298,5 +501,133 @@ describe("full E2E sandbox inference probe", () => {
 
     expect(probe.outcome).toBe("semantic-mismatch");
     expect(calls).toBe(2);
+  });
+});
+
+describe("full E2E inference service availability", () => {
+  const unavailable = commandResult("", 22, "curl: (22) The requested URL returned error: 503\n");
+
+  it("retains availability in the aggregate log when the artifact write fails", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const writeError = new Error("artifact write failed");
+    try {
+      await expect(
+        runFullE2eInferenceCommand({
+          run: async () => unavailable,
+          sleep: async () => {},
+          onEvidence: (evidence) =>
+            retainFullE2eInferenceAvailability(1, evidence, async () => {
+              expect(log).toHaveBeenCalledOnce();
+              throw writeError;
+            }),
+        }),
+      ).rejects.toBe(writeError);
+      expect(log.mock.calls[0][0]).toBe("NEMOCLAW_INFERENCE_AVAILABILITY");
+      expect(JSON.parse(log.mock.calls[0][1])).toMatchObject({
+        replyAttempt: 1,
+        outcome: "exhausted",
+        attempts: [
+          { attempt: 1, failureClass: "transient-external", retryScheduled: true },
+          { attempt: 2, failureClass: "transient-external", retryScheduled: false },
+        ],
+      });
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("retains both attempts when HTTP 503 recovers", async () => {
+    const attempts: number[] = [];
+    const delays: number[] = [];
+    const evidence: unknown[] = [];
+    const result = await runFullE2eInferenceCommand({
+      run: async (attempt) => {
+        attempts.push(attempt);
+        return attempt === 1 ? unavailable : commandResult(completion("42"));
+      },
+      sleep: async (ms) => {
+        delays.push(ms);
+      },
+      onEvidence: (value) => {
+        evidence.push(value);
+      },
+    });
+    expect(result.exitCode).toBe(0);
+    expect(attempts).toEqual([1, 2]);
+    expect(delays).toEqual([5_000]);
+    expect(evidence.at(-1)).toMatchObject({
+      outcome: "passed-after-retry",
+      maxAttempts: 2,
+      attempts: [
+        { attempt: 1, failureClass: "transient-external", retryScheduled: true },
+        { attempt: 2, outcome: "passed", retryScheduled: false },
+      ],
+    });
+  });
+
+  it("fails an execution exception without retrying or exposing its text", async () => {
+    let calls = 0;
+    const evidence: unknown[] = [];
+    await expect(
+      runFullE2eInferenceCommand({
+        run: async () => {
+          calls += 1;
+          throw new Error("sensitive unstructured error");
+        },
+        sleep: async () => {
+          throw new Error("unexpected retry");
+        },
+        onEvidence: (value) => {
+          evidence.push(value);
+        },
+      }),
+    ).rejects.toThrow("full-e2e.inference-local.arithmetic failed-no-retry");
+    expect(calls).toBe(1);
+    expect(evidence.at(-1)).toMatchObject({ outcome: "failed-no-retry" });
+    expect(JSON.stringify(evidence)).not.toContain("sensitive");
+  });
+
+  it("fails persistent HTTP 503 after two attempts", async () => {
+    let calls = 0;
+    const evidence: unknown[] = [];
+    const result = await runFullE2eInferenceCommand({
+      run: async () => {
+        calls += 1;
+        return unavailable;
+      },
+      sleep: async () => {},
+      onEvidence: (value) => {
+        evidence.push(value);
+      },
+    });
+    expect(result).toEqual(unavailable);
+    expect(calls).toBe(2);
+    expect(evidence.at(-1)).toMatchObject({ outcome: "exhausted" });
+  });
+
+  it.each([
+    commandResult("", 22, "curl: (22) The requested URL returned error: 401"),
+    commandResult("", 22, "curl: (22) The requested URL returned error: 403"),
+    commandResult("", 22, "curl: (22) The requested URL returned error: 500"),
+    commandResult("", 28, "curl: (28) Operation timed out"),
+    commandResult("", 1, "curl: (22) The requested URL returned error: 503"),
+    commandResult("policy denied", 22, unavailable.stderr),
+    commandResult("", 22, `${unavailable.stderr}authentication failed`),
+    commandResult("not json"),
+    commandResult(completion("41")),
+  ])("does not retry other command or semantic results: %j", async (input) => {
+    let calls = 0;
+    const result = await runFullE2eInferenceCommand({
+      run: async () => {
+        calls += 1;
+        return input;
+      },
+      sleep: async () => {
+        throw new Error("unexpected retry");
+      },
+      onEvidence: () => {},
+    });
+    expect(result).toEqual(input);
+    expect(calls).toBe(1);
   });
 });

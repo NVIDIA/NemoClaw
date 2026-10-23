@@ -1,0 +1,80 @@
+{
+  "schemaVersion": 1,
+  "releases": [
+    {
+      "brevTemplateSha256": ["e44a3952cd5f6be9f017a5b69028c2068a746060bff31c3f05eecbb36cd7237c"],
+      "formula": {
+        "asset": "openshell.rb",
+        "sha256": "e760d5c41f5d3fd7a430a87e1efdf813c44848689c76a10029c8f65ed4f4eb4b",
+        "url": "https://github.com/NVIDIA/OpenShell/releases/download/v0.1.3/openshell.rb"
+      },
+      "installerTemplateSha256": [
+        "0b9c65bcc255d97d2fbfef638fbb4b374d7617fb2aaaf6cb76b898ded74e498f"
+      ],
+      "manifests": [
+        {
+          "asset": "openshell-checksums-sha256.txt",
+          "sha256": "a7bc832c2e777e43e373bcdfa2f3d6180f2e83efb491d81d4299e181697444eb"
+        },
+        {
+          "asset": "openshell-gateway-checksums-sha256.txt",
+          "sha256": "414dc38f465086532077429a5d652ebad4d28fc384077c54c70139209568f8c6"
+        },
+        {
+          "asset": "openshell-sandbox-checksums-sha256.txt",
+          "sha256": "1320a57cc9fd3ce8ad4bb9e1f8e225241f2d8b35ae3ceb1ae69992670211d576"
+        }
+      ],
+      "sandboxBuilds": [
+        {
+          "required": false,
+          "sha256": "38fe063f19c72680a1bc4b0c343a3ec5b7a5cb087a627faab5b2aefd9d50d094"
+        },
+        {
+          "required": false,
+          "sha256": "23147b42d31bd0b13e1a9ed7b3834b8e6075836cba0872fffa9e7d481f6dd281"
+        }
+      ],
+      "supervisor": {
+        "image": "ghcr.io/nvidia/openshell/supervisor",
+        "manifestDigest": "sha256:4ab2b970cdb02c7518ba4ccbbadb4861ae9a8d0b8770e5b160697f0453b0a8e4",
+        "required": false,
+        "runtimeTemplateSha256": [
+          "5e698f27cbaae4c544696137afbccdda68d2466fbe7532c6d1c65970ec5c66f6"
+        ]
+      },
+      "pinLayout": {
+        "brev": {
+          "assets": [
+            "openshell-x86_64-unknown-linux-musl.tar.gz",
+            "openshell-aarch64-unknown-linux-musl.tar.gz"
+          ],
+          "manifests": ["openshell-checksums-sha256.txt"]
+        },
+        "installer": {
+          "assets": [
+            "openshell-x86_64-unknown-linux-musl.tar.gz",
+            "openshell-aarch64-unknown-linux-musl.tar.gz",
+            "openshell-aarch64-apple-darwin.tar.gz",
+            "openshell-gateway-x86_64-unknown-linux-gnu.tar.gz",
+            "openshell-gateway-aarch64-unknown-linux-gnu.tar.gz",
+            "openshell-gateway-aarch64-apple-darwin.tar.gz",
+            "openshell-sandbox-x86_64-unknown-linux-musl.tar.gz",
+            "openshell-sandbox-aarch64-unknown-linux-musl.tar.gz",
+            "openshell.rb"
+          ],
+          "manifests": [
+            "openshell-checksums-sha256.txt",
+            "openshell-gateway-checksums-sha256.txt",
+            "openshell-sandbox-checksums-sha256.txt"
+          ]
+        }
+      },
+      "featureGateTemplateSha256": [
+        "cd2c1e6d74756d1a6d166bbfdb31a31f75b7bc6a50fc9d6b9e218f2a9eb97402"
+      ],
+      "version": "0.1.3"
+    }
+  ],
+  "revokedTemplateSha256": []
+}

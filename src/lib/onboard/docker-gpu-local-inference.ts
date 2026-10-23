@@ -11,7 +11,12 @@ import {
   getDockerGpuPatchNetworkMode,
   printDockerGpuProofFailure,
 } from "./docker-gpu-patch";
-import type { DockerGpuPatchMode, SandboxCreateRuntimePatch } from "./docker-gpu-patch-types";
+import type {
+  DockerGpuDiagnosticDeps,
+  DockerGpuPatchDeps,
+  DockerGpuPatchMode,
+  SandboxCreateRuntimePatch,
+} from "./docker-gpu-patch-types";
 import type { SelectedDockerGpuRoute } from "./docker-gpu-route";
 import { adaptDockerGpuRouteForPatch } from "./docker-gpu-route-patch-adapter";
 import { attachRuntimeRollbackError } from "./diagnostics/runtime-rollback-error";
@@ -388,6 +393,8 @@ export type GpuSandboxAfterReadyOptions = {
   ) => Promise<SandboxGpuProofResult>;
   reportGpuProofFailure?: boolean;
   selectedMode: SandboxCreateRuntimePatch["selectedMode"];
+  openShellGpuDiagnostics?: DockerGpuPatchDeps["openShellGpuDiagnostics"];
+  dockerCapture?: DockerGpuDiagnosticDeps["dockerCapture"];
   runCaptureOpenshell: (args: string[], opts?: Record<string, unknown>) => string;
   env?: NodeJS.ProcessEnv;
   platform?: NodeJS.Platform;
@@ -395,6 +402,22 @@ export type GpuSandboxAfterReadyOptions = {
   logError?: (message: string) => void;
   deps?: DockerGpuSandboxInferenceVerifyDeps;
 };
+
+function gpuFailureDiagnosticDeps(
+  options: Pick<
+    GpuSandboxAfterReadyOptions,
+    "openShellGpuDiagnostics" | "runCaptureOpenshell" | "dockerCapture"
+  >,
+): Pick<
+  DockerGpuDiagnosticDeps,
+  "openShellGpuDiagnostics" | "runCaptureOpenshell" | "dockerCapture"
+> {
+  return {
+    openShellGpuDiagnostics: options.openShellGpuDiagnostics,
+    runCaptureOpenshell: options.runCaptureOpenshell,
+    dockerCapture: options.dockerCapture,
+  };
+}
 
 function asDockerGpuPatchMode(
   selected: ReturnType<SandboxCreateRuntimePatch["selectedMode"]>,
@@ -450,7 +473,7 @@ export async function verifyGpuSandboxAccessAfterReady(
         error,
         asDockerGpuPatchMode(options.selectedMode()),
         {
-          runCaptureOpenshell: options.runCaptureOpenshell,
+          ...gpuFailureDiagnosticDeps(options),
           additionalSummaryLines: adaptDockerGpuRouteForPatch(options.selectedRoute)
             .additionalSummaryLines,
         },

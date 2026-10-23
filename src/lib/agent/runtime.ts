@@ -45,6 +45,20 @@ export type SessionAgentDefinitionResolution =
   | { agent: AgentDefinition; requestedName: string; resolved: true }
   | { agent: null; requestedName: string; resolved: false };
 
+/** Resolve a registry-recorded name against the trusted agent manifest inventory. */
+export function resolveRegisteredAgentDefinition(
+  source: RegisteredAgentSource,
+): AgentDefinition | null {
+  const name = source?.agent;
+  if (!name) return null;
+  try {
+    if (!listAgents().includes(name)) return null;
+    return loadAgent(name);
+  } catch {
+    return null;
+  }
+}
+
 /** Resolve OpenClaw's legacy null without hiding an invalid registered agent. */
 export function resolveSessionAgentDefinition(
   sandboxName: string | undefined,
@@ -54,7 +68,9 @@ export function resolveSessionAgentDefinition(
   let requestedName = "openclaw";
   try {
     const registered = sandboxName ? registry.getSandbox(sandboxName) : null;
-    requestedName = registered?.agent || onboardSession.loadSession()?.agent || "openclaw";
+    requestedName = registered
+      ? (registered.agent ?? "openclaw")
+      : onboardSession.loadSession()?.agent || "openclaw";
     if (requestedName !== "openclaw") {
       return { agent: null, requestedName, resolved: false };
     }
@@ -72,12 +88,7 @@ export function resolveSessionAgentDefinition(
 export function getRegisteredAgent(source: RegisteredAgentSource): AgentDefinition | null {
   const name = source?.agent;
   if (!name || name === "openclaw") return null;
-  try {
-    if (!listAgents().includes(name)) return null;
-    return loadAgent(name);
-  } catch {
-    return null;
-  }
+  return resolveRegisteredAgentDefinition(source);
 }
 
 /**

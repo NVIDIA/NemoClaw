@@ -7,6 +7,8 @@ import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { dockerExecFileSync } from "../adapters/docker/exec";
+import { createCliOpenShellDebugDiagnostics } from "../adapters/openshell/debug-diagnostics-cli";
+import type { OpenShellDebugDiagnostics } from "../adapters/openshell/debug-diagnostics";
 import {
   executeOrdinarySandboxCommand,
   SandboxCommandTransportError,
@@ -30,6 +32,10 @@ export interface DebugOptions {
   /** Write a tarball to this path. */
   output?: string;
 }
+
+export type RunDebugDeps = Readonly<{
+  openshellDiagnostics?: OpenShellDebugDiagnostics;
+}>;
 
 // ---------------------------------------------------------------------------
 // Colour helpers — respect NO_COLOR
@@ -68,6 +74,13 @@ function section(title: string): void {
  */
 export function redact(text: string): string {
   return redactFullWithUrls(text);
+}
+
+export function createOpenShellDebugDiagnostics(hostCwd?: string): OpenShellDebugDiagnostics {
+  return createCliOpenShellDebugDiagnostics({
+    ...(hostCwd ? { hostCwd } : {}),
+    redact,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -327,26 +340,29 @@ function collectDocker(collectDir: string, quick: boolean): void {
   }
 }
 
-function collectOpenshell(
+async function collectOpenshell(
   collectDir: string,
   sandboxName: string,
   gatewayName: string | undefined,
   quick: boolean,
-): void {
-  const gatewayArgs = gatewayName ? ["-g", gatewayName] : [];
+  diagnostics: OpenShellDebugDiagnostics,
+): Promise<void> {
   section("OpenShell");
-  collect(collectDir, "openshell-status", "openshell", ["status", ...gatewayArgs]);
-  collect(collectDir, "openshell-sandbox-list", "openshell", ["sandbox", "list", ...gatewayArgs]);
-  collect(collectDir, "openshell-sandbox-get", "openshell", [
-    "sandbox",
-    "get",
-    ...gatewayArgs,
+  const artifacts = await diagnostics.collect({
+    target: gatewayName ? { kind: "named", gatewayName } : { kind: "selected" },
     sandboxName,
-  ]);
-  collect(collectDir, "openshell-logs", "openshell", ["logs", ...gatewayArgs, sandboxName]);
-
-  if (!quick) {
-    collect(collectDir, "openshell-gateway-info", "openshell", ["gateway", "info", ...gatewayArgs]);
+    quick,
+    timeoutMs: TIMEOUT_MS,
+  });
+  for (const artifact of artifacts) {
+    writeFileSync(join(collectDir, `${artifact.name}.txt`), artifact.content);
+    console.log(artifact.content.trimEnd());
+    if (
+      (artifact.outcome.kind === "completed" && artifact.outcome.exitCode !== 0) ||
+      (artifact.outcome.kind === "failed" && artifact.outcome.error.kind !== "unavailable")
+    ) {
+      console.log("  (command exited with non-zero status)");
+    }
   }
 }
 
@@ -497,7 +513,7 @@ export function getDebugCompletionMessages(output?: string): string[] {
  * Collect local and sandbox diagnostics for a NemoClaw environment and
  * optionally bundle the results into a tarball for issue reporting.
  */
-export async function runDebug(opts: DebugOptions = {}): Promise<void> {
+export async function runDebug(opts: DebugOptions = {}, deps: RunDebugDeps = {}): Promise<void> {
   const quick = opts.quick ?? false;
   const output = opts.output ?? "";
   // Compiled location: dist/lib/diagnostics/debug.js → repo root is 3 levels up
@@ -523,7 +539,13 @@ export async function runDebug(opts: DebugOptions = {}): Promise<void> {
     collectProcesses(collectDir, quick);
     collectGpu(collectDir, quick);
     collectDocker(collectDir, quick);
-    collectOpenshell(collectDir, sandboxName, opts.gatewayName, quick);
+    await collectOpenshell(
+      collectDir,
+      sandboxName,
+      opts.gatewayName,
+      quick,
+      deps.openshellDiagnostics ?? createOpenShellDebugDiagnostics(),
+    );
     collectOnboardSession(collectDir, repoDir);
     await collectSandboxInternals(collectDir, sandboxName, opts.gatewayName, quick);
 

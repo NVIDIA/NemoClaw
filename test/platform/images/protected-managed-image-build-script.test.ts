@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   chmodSync,
   existsSync,
@@ -24,6 +25,10 @@ const REPO_ROOT = path.resolve(fileURLToPath(new URL("../../..", import.meta.url
 const SCRIPT = path.join(REPO_ROOT, "scripts/checks/build-protected-managed-images.sh");
 const REVISION = "a".repeat(40);
 const DIGEST = "b".repeat(64);
+const OPENCLAW_BASE = `ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:${DIGEST}`;
+const HERMES_BASE = `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:${DIGEST}`;
+const DCODE_BASE = `ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base@sha256:${DIGEST}`;
+const PREPARED_IDENTITY = `${REVISION} linux/amd64 ${OPENCLAW_BASE} ${HERMES_BASE} ${DCODE_BASE}`;
 
 let testRoot = "";
 let stubBin = "";
@@ -53,8 +58,20 @@ set -euo pipefail
 printf '%s\n' "$*" >>"$NEMOCLAW_TEST_DOCKER_LOG"
 printf '%s\n' "\${BUILDX_CONFIG:-}" >>"$NEMOCLAW_TEST_BUILDX_CONFIG_LOG"
 case "$*" in
+  "buildx imagetools inspect localhost:5000/nemoclaw-managed-protected-base/"*)
+    cat "$NEMOCLAW_TEST_BASE_MANIFEST"
+    ;;
   "buildx imagetools inspect "*) printf '{}\n' ;;
   "buildx build "*)
+    if [[ "$*" == *"/Dockerfile.base "* ]]; then
+      for argument in "$@"; do
+        if [[ "$argument" == type=oci,dest=*,tar=false ]]; then
+          destination="\${argument#type=oci,dest=}"
+          destination="\${destination%,tar=false}"
+          cp -R "$NEMOCLAW_TEST_BASE_LAYOUT" "$destination"
+        fi
+      done
+    fi
     build_count=0
     if [[ -f "$NEMOCLAW_TEST_DOCKER_BUILD_COUNT" ]]; then
       read -r build_count <"$NEMOCLAW_TEST_DOCKER_BUILD_COUNT"
@@ -89,8 +106,8 @@ case "$*" in
       *"/langchain-deepagents-code@"*) agent=langchain-deepagents-code ;;
       *) exit 93 ;;
     esac
-    printf '[{"Id":"sha256:${DIGEST}","Config":{"User":"%s","Labels":{"io.nvidia.nemoclaw.agent":"%s","io.nvidia.nemoclaw.managed-image.contract":"1","io.nvidia.nemoclaw.managed-image.platform":"%s","io.nvidia.nemoclaw.managed-image.startup-profile":"1","io.nvidia.nemoclaw.managed-image.capabilities":"1","io.nvidia.nemoclaw.managed-image.cohort":"protected-1-1","org.opencontainers.image.revision":"${REVISION}"}}}]\n' \
-      "$NEMOCLAW_TEST_IMAGE_USER" "$agent" "$NEMOCLAW_TEST_IMAGE_PLATFORM"
+    printf '[{"Id":"sha256:${DIGEST}","Config":{"User":"%s","Labels":{"io.nvidia.nemoclaw.agent":"%s","io.nvidia.nemoclaw.managed-image.contract":"1","io.nvidia.nemoclaw.managed-image.platform":"%s","io.nvidia.nemoclaw.managed-image.startup-profile":"1","io.nvidia.nemoclaw.managed-image.capabilities":"1","io.nvidia.nemoclaw.managed-image.cohort":"%s","org.opencontainers.image.revision":"${REVISION}"}}}]\n' \
+      "$NEMOCLAW_TEST_IMAGE_USER" "$agent" "$NEMOCLAW_TEST_IMAGE_PLATFORM" "$NEMOCLAW_TEST_IMAGE_COHORT"
     ;;
   *) exit 91 ;;
 esac
@@ -102,18 +119,30 @@ esac
 case "$*" in
   *containerimage.digest*) printf 'sha256:${DIGEST}\\n' ;;
   *"if length == 1 then .[0].Id"*) printf 'sha256:${DIGEST}\\n' ;;
-  *"--arg agent "*) PATH="$NEMOCLAW_TEST_REAL_PATH" command jq "$@" ;;
+  *"--arg agent "* | *".manifests |"*) PATH="$NEMOCLAW_TEST_REAL_PATH" command jq "$@" ;;
   *"-se "*) printf '[]\\n' ;;
   *) ;;
 esac
 `,
   );
-  writeExecutable("sha256sum", `#!/usr/bin/env bash\nprintf '%s  %s\\n' '${DIGEST}' "$1"\n`);
+  writeExecutable(
+    "sha256sum",
+    `#!/usr/bin/env bash
+if [[ "$1" == */*-candidate-base.raw ]]; then
+  PATH="$NEMOCLAW_TEST_REAL_PATH" command sha256sum "$@"
+else
+  printf '%s  %s\\n' '${DIGEST}' "$1"
+fi
+`,
+  );
   writeExecutable(
     "node",
     `#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >>"$NEMOCLAW_TEST_SEED_LOG"
+if [[ "$1" == */scripts/checks/protected-dcode-base-receipt.mts ]]; then
+  exec "$NEMOCLAW_TEST_REAL_NODE" "$@"
+fi
 if [[ "$*" == *"/scripts/lib/npm-audit-receipt.mts"* ]]; then
   while (($# > 0)); do
     if [[ "$1" == "--result" && "$NEMOCLAW_TEST_RECEIPT_VERIFY_STATUS" == 0 ]]; then
@@ -161,14 +190,28 @@ esac
 }
 
 function completeImportedAgentCaches(cacheRoot: string): void {
-  for (const agent of ["openclaw", "hermes", "langchain-deepagents-code"]) {
+  for (const agent of [
+    "hermes",
+    "langchain-deepagents-code",
+    "npm12",
+    "openclaw-system",
+    "hermes-system",
+    "langchain-deepagents-code-system",
+  ]) {
     mkdirSync(path.join(cacheRoot, agent, "blobs", "sha256"), { recursive: true });
-    writeFileSync(path.join(cacheRoot, agent, "index.json"), "{}\n", "utf8");
+    writeFileSync(
+      path.join(cacheRoot, agent, "index.json"),
+      JSON.stringify({
+        manifests: [{ digest: `sha256:${DIGEST}` }],
+      }),
+      "utf8",
+    );
   }
 }
 
 function completeImportedCache(cacheRoot: string): void {
   completeImportedAgentCaches(cacheRoot);
+  writeFileSync(path.join(cacheRoot, "prepared-inputs"), `${PREPARED_IDENTITY}\n`);
   mkdirSync(path.join(cacheRoot, "npm-cache-seed"));
   writeFileSync(path.join(cacheRoot, "npm-cache-seed", "manifest.json"), "{}\n", "utf8");
   mkdirSync(path.join(cacheRoot, "mcp-runtime-npm-cache-seed"));
@@ -185,6 +228,66 @@ function completeAuditEvidence(auditDirectory: string): void {
   mkdirSync(auditDirectory, { recursive: true });
   writeFileSync(path.join(auditDirectory, "mcporter-runtime.receipt.json"), '{"result":"pass"}\n');
   writeFileSync(path.join(auditDirectory, "mcporter-runtime.raw.json"), '{"metadata":{}}\n');
+}
+
+// Docker is the stubbed process boundary; the production receipt CLI still
+// hashes and validates every byte exported by this synthetic builder fixture.
+function candidateBaseFixture(platform = "linux/amd64", agent = "langchain-deepagents-code") {
+  const layout = path.join(testRoot, "base-fixture");
+  mkdirSync(path.join(layout, "blobs/sha256"), { recursive: true });
+  function blob(value: unknown, mediaType: string) {
+    const bytes = Buffer.from(JSON.stringify(value));
+    const digest = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+    writeFileSync(path.join(layout, "blobs/sha256", digest.slice(7)), bytes);
+    return { digest, size: bytes.length, mediaType };
+  }
+  const config = blob(
+    {
+      os: "linux",
+      architecture: platform.slice(6),
+      config: {
+        Labels: {
+          "org.opencontainers.image.revision": REVISION,
+          "org.opencontainers.image.source": "https://github.com/NVIDIA/NemoClaw",
+          "io.nvidia.nemoclaw.agent": agent,
+          "io.nvidia.nemoclaw.managed-image.cohort": "protected-1-1",
+        },
+      },
+    },
+    "application/vnd.oci.image.config.v1+json",
+  );
+  const manifest = blob(
+    {
+      schemaVersion: 2,
+      mediaType: "application/vnd.oci.image.manifest.v1+json",
+      config,
+      layers: [blob("synthetic layer", "application/vnd.oci.image.layer.v1.tar")],
+    },
+    "application/vnd.oci.image.manifest.v1+json",
+  );
+  writeFileSync(
+    path.join(layout, "index.json"),
+    JSON.stringify({ schemaVersion: 2, manifests: [manifest] }),
+  );
+  writeFileSync(path.join(layout, "oci-layout"), JSON.stringify({ imageLayoutVersion: "1.0.0" }));
+  writeExecutable(
+    "git",
+    `#!/usr/bin/env bash
+case "$*" in
+  *"rev-parse --verify HEAD") printf '%s\\n' "\${NEMOCLAW_TEST_GIT_HEAD:-${REVISION}}" ;;
+  *"diff --quiet HEAD --") exit "\${NEMOCLAW_TEST_GIT_DIRTY:-0}" ;;
+  *) exit 97 ;;
+esac
+`,
+  );
+  return {
+    reference: `localhost:5000/nemoclaw-managed-protected-base/${agent}@${manifest.digest}`,
+    environment: {
+      NEMOCLAW_TEST_BASE_LAYOUT: layout,
+      NEMOCLAW_TEST_BASE_MANIFEST: path.join(layout, "blobs/sha256", manifest.digest.slice(7)),
+      NEMOCLAW_PROTECTED_MANAGED_IMAGE_WORKFLOW_SHA: "c".repeat(40),
+    },
+  };
 }
 
 function completeSourceBoundary(sourceRoot: string): void {
@@ -254,6 +357,8 @@ function runBuild(
   const output = path.join(testRoot, "contracts.json");
   const platformOverride = extraArgs.findIndex((argument) => argument === "--platform");
   const effectivePlatform = platformOverride >= 0 ? extraArgs[platformOverride + 1] : platform;
+  const cohortOverride = extraArgs.findIndex((argument) => argument === "--cohort");
+  const effectiveCohort = cohortOverride >= 0 ? extraArgs[cohortOverride + 1] : "protected-1-1";
   return spawnSync(
     "bash",
     [
@@ -290,11 +395,13 @@ function runBuild(
         NEMOCLAW_TEST_DOCKER_BUILD_FAILURE_MODE: dockerBuildFailureMode,
         NEMOCLAW_TEST_DOCKER_LOG: dockerLog,
         NEMOCLAW_TEST_IMAGE_PLATFORM: effectivePlatform,
+        NEMOCLAW_TEST_IMAGE_COHORT: effectiveCohort,
         NEMOCLAW_TEST_IMAGE_USER: imageUser,
         NEMOCLAW_TEST_REGISTRY_CURL_EXIT: registryCurlExit,
         NEMOCLAW_TEST_REGISTRY_LOG: registryLog,
         NEMOCLAW_TEST_REGISTRY_STATUS: registryStatus,
         NEMOCLAW_TEST_REAL_PATH: process.env.PATH ?? "",
+        NEMOCLAW_TEST_REAL_NODE: process.execPath,
         NEMOCLAW_TEST_RECEIPT_VERIFY_STATUS: receiptVerifyStatus,
         NEMOCLAW_TEST_SEED_LOG: seedLog,
         NEMOCLAW_TEST_TEE_FAILURE_MODE: teeFailureMode,
@@ -331,6 +438,137 @@ beforeEach(() => {
 
 afterEach(() => {
   rmSync(testRoot, { force: true, recursive: true });
+});
+
+describe.each([
+  ["openclaw", "openclaw", OPENCLAW_BASE],
+  ["hermes", "hermes", HERMES_BASE],
+  ["langchain-deepagents-code", "dcode", DCODE_BASE],
+])("protected candidate %s base handoff", (agent, cacheName, publishedBase) => {
+  it.each(["linux/amd64", "linux/arm64"])(
+    "exports a verified base and consumes it offline on %s",
+    (platform) => {
+      stubBuildInvocation();
+      const fixture = candidateBaseFixture(platform, agent);
+      const cache = path.join(testRoot, "candidate-cache");
+      const source = path.join(testRoot, "candidate-source");
+      completeSourceBoundary(source);
+      const produced = runBuild(
+        source,
+        [`--${cacheName}-base`, "candidate", "--cache-to", cache],
+        platform,
+        fixture.environment,
+      );
+      expect(produced.status, produced.stderr).toBe(0);
+      const realCache = realpathSync(cache);
+      expect(readFileSync(path.join(cache, "prepared-inputs"), "utf8")).toBe(
+        `${REVISION} ${platform} ${[OPENCLAW_BASE, HERMES_BASE, DCODE_BASE].map((base) => (base === publishedBase ? fixture.reference : base)).join(" ")}\n`,
+      );
+      const receipt = JSON.parse(
+        readFileSync(path.join(cache, `${cacheName}-base-receipt.json`), "utf8"),
+      );
+      expect(receipt).toMatchObject({
+        reference: fixture.reference,
+        platform,
+        sourceRevision: REVISION,
+        workflowSha: "c".repeat(40),
+        cohort: "protected-1-1",
+      });
+      const baseBuild = recordedBuildInvocations()[0];
+      expect(baseBuild).toContain(`/Dockerfile.base --platform ${platform}`);
+      expect(baseBuild).toContain(
+        `--output type=oci,dest=${realCache}/${cacheName}-base,tar=false`,
+      );
+      expect(baseBuild).toContain(
+        `--output type=image,name=localhost:5000/nemoclaw-managed-protected-base/${agent}:${REVISION},push=true,oci-mediatypes=true`,
+      );
+      expect(baseBuild).not.toContain("ghcr.io");
+
+      completeImportedAgentCaches(cache);
+      const audit = path.join(testRoot, "audit");
+      completeAuditEvidence(audit);
+      writeFileSync(dockerLog, "");
+      const consumed = runBuild(
+        source,
+        [
+          `--${cacheName}-base`,
+          fixture.reference,
+          "--cache-from",
+          cache,
+          "--cohort",
+          "protected-1-2",
+          "--audit-evidence-from",
+          audit,
+        ],
+        platform,
+        fixture.environment,
+      );
+      expect(consumed.status, consumed.stderr).toBe(0);
+      const builds = recordedBuildInvocations();
+      expect(builds).toHaveLength(3);
+      expect(builds.every((line) => line.includes("--network none"))).toBe(true);
+      expect(recordedBuildInvocation(agent)).toContain(
+        `--build-context ${fixture.reference}=oci-layout://${realCache}/${cacheName}-base@${receipt.digest}`,
+      );
+      const calls = readFileSync(dockerLog, "utf8");
+      expect(calls).not.toContain("/Dockerfile.base");
+      expect(calls).not.toContain(`buildx imagetools inspect ${fixture.reference}`);
+      expect(readFileSync(seedLog, "utf8")).toContain(
+        "protected-dcode-base-receipt.mts verify-reusable",
+      );
+
+      // A receipt from another controller revision must fail before Docker,
+      // rather than silently selecting the published main base.
+      writeFileSync(dockerLog, "");
+      const rejected = runBuild(
+        source,
+        [
+          `--${cacheName}-base`,
+          fixture.reference,
+          "--cache-from",
+          cache,
+          "--cohort",
+          "protected-1-2",
+          "--audit-evidence-from",
+          audit,
+        ],
+        platform,
+        { ...fixture.environment, NEMOCLAW_PROTECTED_MANAGED_IMAGE_WORKFLOW_SHA: "d".repeat(40) },
+      );
+      expect(rejected.status, rejected.stderr).toBe(1);
+      expect(rejected.stderr).toContain("receipt does not match");
+      expect(readFileSync(dockerLog, "utf8")).toBe("");
+    },
+  );
+
+  it.each([
+    [{ NEMOCLAW_TEST_GIT_HEAD: "d".repeat(40) }, "does not match its revision"],
+    [{ NEMOCLAW_TEST_GIT_DIRTY: "1" }, "tracked modifications"],
+  ] as const)("rejects an unbound candidate checkout %j", (change, diagnostic) => {
+    stubBuildInvocation();
+    const fixture = candidateBaseFixture("linux/amd64", agent);
+    const result = runBuild(REPO_ROOT, [`--${cacheName}-base`, "candidate"], "linux/amd64", {
+      ...fixture.environment,
+      ...change,
+    });
+    expect(result.status, result.stderr).toBe(1);
+    expect(result.stderr).toContain(diagnostic);
+    expect(existsSync(dockerLog)).toBe(false);
+  });
+
+  it("rejects different registry and OCI manifests before building managed images", () => {
+    stubBuildInvocation();
+    const fixture = candidateBaseFixture("linux/amd64", agent);
+    const mismatch = path.join(testRoot, "different-manifest");
+    writeFileSync(mismatch, "{}");
+    const result = runBuild(REPO_ROOT, [`--${cacheName}-base`, "candidate"], "linux/amd64", {
+      ...fixture.environment,
+      NEMOCLAW_TEST_BASE_MANIFEST: mismatch,
+    });
+    expect(result.status, result.stderr).toBe(1);
+    expect(result.stderr).toContain("registry and OCI artifact digests differ");
+    expect(recordedBuildInvocations()).toHaveLength(1);
+  });
 });
 
 describe("protected managed-image source-root boundary", () => {
@@ -506,7 +744,7 @@ describe("protected managed-image build-cache boundary", () => {
     );
   });
 
-  it("passes each agent one empty absolute cache export root", () => {
+  it("exports prepared inputs and only the layer caches consumed offline", () => {
     const cacheRoot = path.join(testRoot, "export-cache");
     stubBuildInvocation();
 
@@ -514,16 +752,34 @@ describe("protected managed-image build-cache boundary", () => {
 
     expect(result.status, result.stderr).toBe(0);
     expect(existsSync(cacheRoot)).toBe(true);
-    expect(recordedBuildInvocations()).toHaveLength(3);
+    expect(readFileSync(path.join(cacheRoot, "prepared-inputs"), "utf8")).toBe(
+      `${PREPARED_IDENTITY}\n`,
+    );
+    expect(recordedBuildInvocations()).toHaveLength(7);
+    expect(recordedBuildInvocations()).toEqual([
+      expect.stringContaining("io.nvidia.nemoclaw.agent=openclaw"),
+      expect.stringContaining(
+        `--target npm12 --provenance=false --sbom=false --build-arg BASE_IMAGE=ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:${DIGEST} --build-arg TARGETARCH=amd64 --output type=oci,dest=${realpathSync(cacheRoot)}/npm12,tar=false ${REPO_ROOT}`,
+      ),
+      expect.stringContaining(
+        `--target openclaw-system --provenance=false --sbom=false --build-arg BASE_IMAGE=ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:${DIGEST} --build-arg TARGETARCH=amd64 --output type=oci,dest=${realpathSync(cacheRoot)}/openclaw-system,tar=false ${REPO_ROOT}`,
+      ),
+      expect.stringContaining("io.nvidia.nemoclaw.agent=hermes"),
+      expect.stringContaining(
+        `--file ${REPO_ROOT}/agents/hermes/Dockerfile --platform linux/amd64 --target hermes-system --provenance=false --sbom=false --build-arg BASE_IMAGE=${HERMES_BASE} --build-arg TARGETARCH=amd64 --output type=oci,dest=${realpathSync(cacheRoot)}/hermes-system,tar=false ${REPO_ROOT}`,
+      ),
+      expect.stringContaining("io.nvidia.nemoclaw.agent=langchain-deepagents-code"),
+      expect.stringContaining(
+        `--file ${REPO_ROOT}/agents/langchain-deepagents-code/Dockerfile --platform linux/amd64 --target langchain-deepagents-code-system --provenance=false --sbom=false --build-arg BASE_IMAGE=${DCODE_BASE} --build-arg TARGETARCH=amd64 --output type=oci,dest=${realpathSync(cacheRoot)}/langchain-deepagents-code-system,tar=false ${REPO_ROOT}`,
+      ),
+    ]);
 
     expect({
       openclaw: recordedBuildInvocation("openclaw"),
       hermes: recordedBuildInvocation("hermes"),
       "langchain-deepagents-code": recordedBuildInvocation("langchain-deepagents-code"),
     }).toEqual({
-      openclaw: expect.stringContaining(
-        `--cache-to type=local,dest=${realpathSync(cacheRoot)}/openclaw,mode=max`,
-      ),
+      openclaw: expect.not.stringContaining("--cache-to"),
       hermes: expect.stringContaining(
         `--cache-to type=local,dest=${realpathSync(cacheRoot)}/hermes,mode=max`,
       ),
@@ -581,14 +837,50 @@ describe("protected managed-image build-cache boundary", () => {
     expect(existsSync(dockerLog)).toBe(false);
   });
 
-  it("rejects an incomplete imported cache before invoking Docker", () => {
+  it("rejects online preparation during offline consumption", () => {
+    const cacheRoot = path.join(testRoot, "cache");
+    const result = runBuild(REPO_ROOT, ["--cache-to", cacheRoot, "--cache-from", cacheRoot]);
+    expect(result.status).toBe(2);
+    expect(existsSync(cacheRoot)).toBe(false);
+    expect(existsSync(dockerLog)).toBe(false);
+  });
+
+  it.each([
+    "hermes",
+    "npm12",
+    "openclaw-system",
+    "hermes-system",
+    "langchain-deepagents-code-system",
+  ])("rejects an imported cache missing %s before invoking Docker", (stage) => {
     const cacheRoot = path.join(testRoot, "imported-cache");
-    mkdirSync(cacheRoot);
+    completeImportedCache(cacheRoot);
+    rmSync(path.join(cacheRoot, stage), { recursive: true });
 
     const result = runBuild(REPO_ROOT, ["--cache-from", cacheRoot]);
 
     expect(result.status, result.stderr).toBe(1);
-    expect(result.stderr).toContain("imported cache is incomplete for openclaw");
+    expect(result.stderr).toContain(`imported cache is incomplete for ${stage}`);
+    expect(existsSync(dockerLog)).toBe(false);
+  });
+
+  it.each([
+    ["revision", REVISION],
+    ["platform", "linux/amd64"],
+    ["OpenClaw base", OPENCLAW_BASE],
+    ["Hermes base", HERMES_BASE],
+    ["Deep Agents Code base", DCODE_BASE],
+  ])("rejects prepared inputs for another %s before invoking Docker", (_field, original) => {
+    const cacheRoot = path.join(testRoot, "imported-cache");
+    completeImportedCache(cacheRoot);
+    writeFileSync(
+      path.join(cacheRoot, "prepared-inputs"),
+      PREPARED_IDENTITY.replace(original, "different"),
+    );
+
+    const result = runBuild(REPO_ROOT, ["--cache-from", cacheRoot]);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("prepared inputs do not match");
     expect(existsSync(dockerLog)).toBe(false);
   });
 
@@ -723,6 +1015,18 @@ describe("protected managed-image build-cache boundary", () => {
     });
     expect(recordedBuildInvocation("openclaw").split(" ")).toContain("--no-cache");
     expect(recordedBuildInvocation("openclaw")).toContain(
+      `--build-context npm12=oci-layout://${realpathSync(cacheRoot)}/npm12@sha256:${DIGEST}`,
+    );
+    expect(recordedBuildInvocation("openclaw")).toContain(
+      `--build-context openclaw-system=oci-layout://${realpathSync(cacheRoot)}/openclaw-system@sha256:${DIGEST}`,
+    );
+    expect(recordedBuildInvocation("hermes")).toContain(
+      `--build-context hermes-system=oci-layout://${realpathSync(cacheRoot)}/hermes-system@sha256:${DIGEST}`,
+    );
+    expect(recordedBuildInvocation("langchain-deepagents-code")).toContain(
+      `--build-context langchain-deepagents-code-system=oci-layout://${realpathSync(cacheRoot)}/langchain-deepagents-code-system@sha256:${DIGEST}`,
+    );
+    expect(recordedBuildInvocation("openclaw")).toContain(
       `--secret id=nemoclaw-mcporter-audit-receipt,src=${realpathSync(auditRoot)}/mcporter-runtime.receipt.json`,
     );
     expect(recordedBuildInvocation("openclaw")).toContain(
@@ -755,13 +1059,40 @@ describe("protected managed-image build-cache boundary", () => {
     expect(readdirSync(sourceMessagingSeed).sort()).toEqual(originalMessagingSeedNames);
   });
 
+  it.each(["missing", "ambiguous", "mutable"])(
+    "rejects a %s prepared image before invoking Docker",
+    (state) => {
+      const cacheRoot = path.join(testRoot, "imported-cache");
+      const auditRoot = path.join(testRoot, "audit-evidence");
+      completeImportedCache(cacheRoot);
+      completeAuditEvidence(auditRoot);
+      stubBuildInvocation();
+      const manifests = {
+        missing: [],
+        ambiguous: [{ digest: `sha256:${DIGEST}` }, { digest: `sha256:${DIGEST}` }],
+        mutable: [{ digest: "latest" }],
+      }[state];
+      writeFileSync(path.join(cacheRoot, "npm12", "index.json"), JSON.stringify({ manifests }));
+
+      const result = runBuild(REPO_ROOT, [
+        "--cache-from",
+        cacheRoot,
+        "--audit-evidence-from",
+        auditRoot,
+      ]);
+
+      expect(result.status).not.toBe(0);
+      expect(existsSync(dockerLog)).toBe(false);
+    },
+  );
+
   it("rejects a nested symlink in a complete imported cache before invoking Docker", () => {
     const cacheRoot = path.join(testRoot, "imported-cache");
     completeImportedAgentCaches(cacheRoot);
 
     symlinkSync(
       path.join(cacheRoot, "hermes", "index.json"),
-      path.join(cacheRoot, "openclaw", "blobs", "sha256", "nested-link"),
+      path.join(cacheRoot, "hermes-system", "blobs", "sha256", "nested-link"),
     );
 
     const result = runBuild(REPO_ROOT, ["--cache-from", cacheRoot]);

@@ -41,6 +41,7 @@ export interface JournalBoundPreUpgradeBackupResult<Runtime> {
 export interface SandboxRecreateProtectionOptions {
   sandboxName: string;
   sandboxEntry: SandboxEntry | null;
+  getSandbox: (sandboxName: string) => SandboxEntry | null;
   note(message: string): void;
 }
 
@@ -61,7 +62,7 @@ export function createSandboxRecreateProtection(
   options: SandboxRecreateProtectionOptions,
   deps: SandboxRecreateProtectionDeps = defaultDeps,
 ) {
-  const { sandboxName, sandboxEntry, note } = options;
+  const { sandboxName, sandboxEntry, getSandbox, note } = options;
 
   const selectPreUpgradeBackup = (binding: PreUpgradeBackupBinding): string | null =>
     deps.selectPreUpgradeBackupForCreate({
@@ -106,6 +107,7 @@ export function createSandboxRecreateProtection(
     backup(): PreRecreateBackupResult {
       return deps.backupSandboxBeforeRecreate({
         sandboxName,
+        getSandbox,
       });
     },
   };

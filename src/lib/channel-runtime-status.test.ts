@@ -291,13 +291,29 @@ describe("probeChannelRuntimeStatus", () => {
     expect(result.detail).toContain("missing or empty");
   });
 
-  it("returns ok=false on invalid JSON", async () => {
+  it("returns ok=false on invalid JSON5", async () => {
     const result = await probeChannelRuntimeStatus({
       configFilePath: "/sandbox/.openclaw/openclaw.json",
       executeSandboxCommand: makeMockExec("{not json", []),
     });
     expect(result.ok).toBe(false);
-    expect(result.detail).toContain("not valid JSON");
+    expect(result.detail).toContain("not valid JSON5");
+  });
+
+  it("reads channels from native OpenClaw JSON5", async () => {
+    const result = await probeChannelRuntimeStatus({
+      configFilePath: "/sandbox/.openclaw/openclaw.json",
+      executeSandboxCommand: makeMockExec(
+        `{
+          // Native OpenClaw configuration accepts JSON5.
+          channels: { telegram: { accounts: { default: { enabled: true, }, }, }, },
+        }`,
+        ["telegram"],
+      ),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.visibleChannels).toEqual(["telegram"]);
   });
 
   it("treats a configured channel as visible when the gateway log mentions it", async () => {

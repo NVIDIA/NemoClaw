@@ -6,16 +6,20 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { expect, it, onTestFinished } from "vitest";
+import { afterAll, expect, it, onTestFinished } from "vitest";
 
 import { createInstallerCheckout, runInstallerSourcedBody } from "../helpers/installer-run-fixture";
 import {
   INSTALLER_PAYLOAD,
-  TEST_SYSTEM_PATH,
+  buildIsolatedSystemPath,
   writeExecutable,
 } from "../helpers/installer-sourced-env";
 
 const INSTALLER = path.join(import.meta.dirname, "../..", "install.sh");
+
+// Docker state belongs to each fixture, not the developer or WSL host.
+const TEST_SYSTEM_PATH = buildIsolatedSystemPath(["docker"]);
+afterAll(() => fs.rmSync(TEST_SYSTEM_PATH, { recursive: true, force: true }));
 
 function installerCheckout(prefix: string) {
   const checkout = createInstallerCheckout(prefix);
@@ -709,7 +713,7 @@ it.each([
     record "fresh:$FRESH:$NEMOCLAW_FORCE_FRESH_INSTALL"
     printf '%s' "$order"
   `,
-      { extraEnv: { ...extraEnv } },
+      { extraEnv: { PATH: TEST_SYSTEM_PATH, ...extraEnv } },
     );
     onTestFinished(run.remove);
 

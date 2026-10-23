@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import crypto from "node:crypto";
-import { constants } from "node:fs";
+import { closeSync, constants, fstatSync, openSync, readFileSync } from "node:fs";
 import {
   chmod,
   copyFile,
@@ -169,7 +169,74 @@ function resolveDependencyPath(
   }
 }
 
-function reachablePackagePaths(packages: JsonRecord, target: NpmPlatformTarget): string[] {
+function exactGlobalOverrides(root: JsonRecord, manifestSource?: string): Map<string, string> {
+  const result = new Map<string, string>();
+  if (manifestSource === undefined) return result;
+  const manifest = record(JSON.parse(manifestSource) as unknown, "package.json");
+  for (const key of ["name", "version"]) {
+    if (manifest[key] !== root[key])
+      throw new Error(`package.json ${key} differs from package-lock root`);
+  }
+  for (const key of [
+    "dependencies",
+    "devDependencies",
+    "optionalDependencies",
+    "peerDependencies",
+  ]) {
+    const declared = dependencyEntries(manifest, key).sort((a, b) => a.name.localeCompare(b.name));
+    const locked = dependencyEntries(root, key).sort((a, b) => a.name.localeCompare(b.name));
+    if (JSON.stringify(declared) !== JSON.stringify(locked)) {
+      throw new Error(`package.json ${key} differs from package-lock root`);
+    }
+  }
+  const overrides = record(manifest.overrides ?? {}, "package.json overrides");
+  for (const [name, value] of Object.entries(overrides)) {
+    if (
+      /^(?:@[^/@]+\/)?[^/@]+$/u.test(name) &&
+      typeof value === "string" &&
+      exactDependencyVersion(value)
+    ) {
+      result.set(name, value);
+    }
+  }
+  // A nested or version-qualified rule can supersede a global rule. Keep those
+  // names under the original strict check until their scoped semantics are supported.
+  function excludeScopedRules(rules: JsonRecord, nested: boolean): void {
+    for (const [selector, value] of Object.entries(rules)) {
+      const name = /^(?:@[^/@]+\/)?[^/@]+/u.exec(selector)?.[0];
+      if (name && (nested || selector !== name || typeof value !== "string")) result.delete(name);
+      if (typeof value === "object" && value !== null) {
+        excludeScopedRules(record(value, "package.json nested override"), true);
+      }
+    }
+  }
+  excludeScopedRules(overrides, false);
+  return result;
+}
+
+export function readAdjacentPackageManifest(lockfile: string): string | undefined {
+  const file = path.join(path.dirname(lockfile), "package.json");
+  let descriptor: number;
+  try {
+    descriptor = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+  try {
+    if (!fstatSync(descriptor).isFile())
+      throw new Error("package.json must be one regular non-symlink file");
+    return readFileSync(descriptor, "utf8");
+  } finally {
+    closeSync(descriptor);
+  }
+}
+
+function reachablePackagePaths(
+  packages: JsonRecord,
+  target: NpmPlatformTarget,
+  overrides: ReadonlyMap<string, string>,
+): string[] {
   const root = record(packages[""], "package-lock root package");
   const queue: Array<{
     dependency: string;
@@ -199,7 +266,9 @@ function reachablePackagePaths(packages: JsonRecord, target: NpmPlatformTarget):
       throw new Error(`package-lock dependency is unresolved: ${edge.dependency}`);
     }
     const entry = record(packages[packagePath], `package-lock entry ${packagePath}`);
-    const exactVersion = exactDependencyVersion(edge.requested);
+    const override =
+      edge.fromPath && entry.inBundle !== true ? overrides.get(edge.dependency) : undefined;
+    const exactVersion = override ?? exactDependencyVersion(edge.requested);
     if (exactVersion !== undefined && entry.version !== exactVersion) {
       throw new Error(
         `package-lock exact dependency is unresolved: ${edge.dependency}@${exactVersion} from ${edge.fromPath || "root package"}`,
@@ -260,6 +329,7 @@ function reachablePackagePaths(packages: JsonRecord, target: NpmPlatformTarget):
 export function lockedArchives(
   lockSource: string,
   requestedTarget: NpmPlatformTarget,
+  manifestSource?: string,
 ): LockedArchive[] {
   const lock = record(JSON.parse(lockSource) as unknown, "package-lock.json");
   if (lock.lockfileVersion !== 3) throw new Error("package-lock.json must use lockfileVersion 3");
@@ -268,8 +338,13 @@ export function lockedArchives(
   const byArchive = new Map<string, LockedArchive>();
   const byResolved = new Map<string, LockedArchive>();
   const byIntegrity = new Map<string, LockedArchive>();
+  const collidingArchives = new Set<string>();
 
-  for (const packagePath of reachablePackagePaths(packages, target)) {
+  const overrides = exactGlobalOverrides(
+    record(packages[""], "package-lock root package"),
+    manifestSource,
+  );
+  for (const packagePath of reachablePackagePaths(packages, target, overrides)) {
     const entry = record(packages[packagePath], `package-lock entry ${packagePath}`);
     if (entry.inBundle === true) continue;
     const resolved = entry.resolved;
@@ -285,7 +360,7 @@ export function lockedArchives(
     const sameResolved = byResolved.get(resolved);
     const sameIntegrity = byIntegrity.get(integrity);
     if (sameArchive && JSON.stringify(sameArchive) !== JSON.stringify(candidate)) {
-      throw new Error(`package-lock archive name is ambiguous: ${archive}`);
+      collidingArchives.add(archive);
     }
     if (sameResolved && sameResolved.integrity !== integrity) {
       throw new Error(`package-lock URL has more than one integrity: ${resolved}`);
@@ -299,7 +374,16 @@ export function lockedArchives(
   }
 
   if (byArchive.size === 0) throw new Error("package-lock.json contains no registry archives");
-  return [...byArchive.values()].sort((left, right) => left.archive.localeCompare(right.archive));
+  return [...byResolved.values()]
+    .map((entry) =>
+      collidingArchives.has(entry.archive)
+        ? {
+            ...entry,
+            archive: `${crypto.createHash("sha256").update(entry.resolved).digest("hex")}-${entry.archive}`,
+          }
+        : entry,
+    )
+    .sort((left, right) => left.archive.localeCompare(right.archive));
 }
 
 async function exactFileSource(file: string, label: string): Promise<Buffer> {
@@ -411,7 +495,11 @@ export async function materializeLockedNpmCacheSeed(options: {
 }): Promise<SeedManifest> {
   const lockSource = await exactFileSource(options.lockfile, "lockfile");
   const target = exactTarget(options.target);
-  const archives = lockedArchives(lockSource.toString("utf8"), target);
+  const archives = lockedArchives(
+    lockSource.toString("utf8"),
+    target,
+    readAdjacentPackageManifest(options.lockfile),
+  );
   const downloadArchive = options.downloadArchive ?? defaultDownloadArchive;
   const directory = await atomicOutputDirectory(options.output);
   try {
@@ -510,7 +598,11 @@ export async function verifyAndCopyLockedNpmCacheSeed(options: {
 }): Promise<SeedManifest> {
   const lockSource = await exactFileSource(options.lockfile, "lockfile");
   const target = exactTarget(options.target);
-  const expected = lockedArchives(lockSource.toString("utf8"), target);
+  const expected = lockedArchives(
+    lockSource.toString("utf8"),
+    target,
+    readAdjacentPackageManifest(options.lockfile),
+  );
   const seed = await exactDirectory(options.seed, "seed directory");
   const manifestSource = await exactFileSource(
     path.join(seed, LOCKED_NPM_CACHE_SEED_MANIFEST_NAME),

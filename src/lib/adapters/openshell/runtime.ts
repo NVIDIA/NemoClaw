@@ -4,16 +4,17 @@
 import type { StdioOptions } from "node:child_process";
 import path from "node:path";
 
+import { parseTimerDelayMs } from "../../core/timer";
 import { ROOT } from "../../runner";
 import {
   captureOpenshellCommand,
   captureOpenshellCommandAsync,
   captureSandboxSshConfigCommand,
-  getInstalledOpenshellVersion,
   OPENSHELL_OPERATION_TIMEOUT_MS,
   OPENSHELL_PROBE_TIMEOUT_MS,
   runOpenshellCommand,
 } from "./command-execution";
+import { cliOpenShellInstalledVersionObserver } from "./installed-version-cli";
 import { buildOpenShellSubprocessEnv, resolveOpenshellBinaryOrNull } from "./resolve-shared";
 
 type CommandArgs = string[];
@@ -172,9 +173,9 @@ export function captureResolvedOpenshellAsync(args: CommandArgs, opts: AsyncRunn
 
 /** Resolve the status-probe timeout (ms) from env, falling back to the default. */
 export function getStatusProbeTimeoutMs(): number {
-  const raw = process.env.NEMOCLAW_STATUS_PROBE_TIMEOUT_MS;
-  const parsed = raw ? Number(raw) : NaN;
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : OPENSHELL_PROBE_TIMEOUT_MS;
+  return (
+    parseTimerDelayMs(process.env.NEMOCLAW_STATUS_PROBE_TIMEOUT_MS) ?? OPENSHELL_PROBE_TIMEOUT_MS
+  );
 }
 
 /** Async variant of {@link captureOpenshell} for status probes, with a kill grace period. */
@@ -198,8 +199,8 @@ export function isCommandTimeout(result: { error?: Error }) {
 
 /** Return the installed OpenShell version, or null when it cannot be determined. */
 export function getInstalledOpenshellVersionOrNull(opts: { timeout?: number } = {}): string | null {
-  return getInstalledOpenshellVersion(getOpenshellBinary(), {
-    cwd: ROOT,
-    timeout: opts.timeout,
+  const result = cliOpenShellInstalledVersionObserver.observeInstalledVersion({
+    timeoutMs: opts.timeout,
   });
+  return result.ok ? result.version : null;
 }

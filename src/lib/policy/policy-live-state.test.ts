@@ -43,11 +43,15 @@ vi.mock("../state/registry", async (importOriginal) => ({
 import {
   applyPresetContent,
   applyPresets,
+  arePresetsCoveredByPersonalPolicy,
   captureRecordedSandboxBasePolicy,
   confirmAppliedPolicySetSubmission,
   excludeBaselineEntry,
   inspectPolicyMutationContext,
   loadPresetForSandbox,
+  getGatewayPresets,
+  getPersonalSubsumedCustomPresetNames,
+  getPresetContentGatewayState,
   removePreset,
   restoreBaselineEntry,
   setPolicyDocument,
@@ -106,6 +110,193 @@ describe("live OpenShell policy mutations", () => {
     );
   });
 
+  it("confirms a web preset superseded by the reviewed Personal policy", async () => {
+    await expect(applyPresets(sandboxName, ["personal-open-internet", "weather"])).resolves.toBe(
+      true,
+    );
+    expect(await getGatewayPresets(sandboxName)).toEqual(["personal-open-internet"]);
+    await expect(arePresetsCoveredByPersonalPolicy(sandboxName, ["weather"])).resolves.toBe(true);
+  });
+
+  it("identifies a live custom web preset that Personal will remove", async () => {
+    await applyPresetContent(sandboxName, "fixture-weather", preset, {
+      custom: { sourcePath: "/tmp/fixture-weather.yaml" },
+      nonFatal: true,
+    });
+    await expect(
+      getPersonalSubsumedCustomPresetNames(sandboxName, [
+        "personal-open-internet",
+        "fixture-weather",
+      ]),
+    ).resolves.toEqual(["fixture-weather"]);
+    await applyPresets(sandboxName, ["personal-open-internet"]);
+    expect(await getGatewayPresets(sandboxName)).toEqual(["personal-open-internet"]);
+  });
+
+  it("keeps a custom preset with non-web endpoints in pending confirmation", async () => {
+    const mixed = preset.replace(
+      "        port: 443",
+      "        port: 443\n      - host: wttr.in\n        port: 8443",
+    );
+    await applyPresetContent(sandboxName, "fixture-weather", mixed, {
+      custom: { sourcePath: "/tmp/fixture-weather.yaml" },
+      nonFatal: true,
+    });
+    await expect(
+      getPersonalSubsumedCustomPresetNames(sandboxName, [
+        "personal-open-internet",
+        "fixture-weather",
+      ]),
+    ).resolves.toEqual([]);
+  });
+
+  it("requires non-web endpoints even when Personal is active", async () => {
+    await applyPresets(sandboxName, ["personal-open-internet"]);
+    await expect(
+      arePresetsCoveredByPersonalPolicy(sandboxName, ["weather", "local-inference"]),
+    ).resolves.toBe(false);
+    await applyPresets(sandboxName, ["local-inference"]);
+    await expect(
+      arePresetsCoveredByPersonalPolicy(sandboxName, ["weather", "local-inference"]),
+    ).resolves.toBe(true);
+  });
+
+  it("rejects missing or changed Personal authority during confirmation", async () => {
+    await expect(arePresetsCoveredByPersonalPolicy(sandboxName, ["weather"])).resolves.toBe(false);
+    await applyPresets(sandboxName, ["personal-open-internet"]);
+    const changed = YAML.parse(livePolicy);
+    changed.network_policies.personal_open_internet.endpoints = [];
+    livePolicy = YAML.stringify(changed);
+    await expect(arePresetsCoveredByPersonalPolicy(sandboxName, ["weather"])).resolves.toBe(false);
+  });
+
+  it("retains pending confirmation when Personal policy cannot be read", async () => {
+    mocks.readSandboxPolicy.mockReturnValue({ ok: false, error: { message: "unavailable" } });
+    await expect(arePresetsCoveredByPersonalPolicy(sandboxName, ["weather"])).resolves.toBe(false);
+  });
+
+  it.each(["batch", "batch-after-weather", "direct"] as const)(
+    "applies, discloses, and recognizes a pricing preset with the custom provider's exact pins (%s)",
+    async (path) => {
+      const pins = ["34.117.59.81", "104.18.8.134"];
+      const endpoint = {
+        host: "openrouter.ai",
+        port: 443,
+        protocol: "rest",
+        enforcement: "enforce",
+        allowed_ips: pins,
+        rules: [{ allow: { method: "POST", path: "/api/v1/chat/completions" } }],
+      };
+      livePolicy = YAML.stringify({
+        version: 1,
+        network_policies: {
+          _provider_nemoclaw_custom_openrouter_v1: { name: "provider", endpoints: [endpoint] },
+          native_hosted_inference: { name: "native_hosted_inference", endpoints: [endpoint] },
+        },
+      });
+
+      const content = await loadPresetForSandbox(sandboxName, "openclaw-pricing");
+      expect(content).not.toBeNull();
+      await expect(
+        path === "direct"
+          ? applyPresetContent(sandboxName, "openclaw-pricing", content!, { nonFatal: true })
+          : applyPresets(
+              sandboxName,
+              path === "batch-after-weather"
+                ? ["weather", "openclaw-pricing"]
+                : ["openclaw-pricing"],
+            ),
+      ).resolves.toBe(true);
+      expect(console.log).toHaveBeenCalledWith(
+        `          allowed IPs: ${[...pins].sort().join(", ")}`,
+      );
+      const pricing = YAML.parse(livePolicy).network_policies["openclaw-pricing"].endpoints[1];
+      expect(pricing.allowed_ips).toEqual([...pins].sort());
+      expect(pricing.rules).toEqual([{ allow: { method: "GET", path: "/api/v1/models" } }]);
+      expect(await getGatewayPresets(sandboxName)).toContain("openclaw-pricing");
+      expect(await getPresetContentGatewayState(sandboxName, content!)).toBe("match");
+    },
+  );
+
+  it.each(["batch", "direct"] as const)(
+    "preserves the standard OpenRouter provider's unpinned pricing route (%s)",
+    async (path) => {
+      const endpoint = {
+        host: "openrouter.ai",
+        port: 443,
+        rules: [{ allow: { method: "GET", path: "/api/v1/models" } }],
+      };
+      livePolicy = YAML.stringify({
+        version: 1,
+        network_policies: {
+          _provider_nemoclaw_openrouter_api_v1: { endpoints: [endpoint] },
+          native_hosted_inference: { endpoints: [endpoint] },
+        },
+      });
+      const content = await loadPresetForSandbox(sandboxName, "openclaw-pricing");
+      expect(content).not.toBeNull();
+      await expect(
+        path === "direct"
+          ? applyPresetContent(sandboxName, "openclaw-pricing", content!, { nonFatal: true })
+          : applyPresets(sandboxName, ["openclaw-pricing"]),
+      ).resolves.toBe(true);
+      const pricing = YAML.parse(livePolicy).network_policies["openclaw-pricing"].endpoints[1];
+      expect(pricing.allowed_ips).toBeUndefined();
+      expect(pricing.rules).toEqual([{ allow: { method: "GET", path: "/api/v1/models" } }]);
+      expect(await getGatewayPresets(sandboxName)).toContain("openclaw-pricing");
+      expect(await getPresetContentGatewayState(sandboxName, content!)).toBe("match");
+    },
+  );
+
+  const mixedRoutes = [
+    { key: "_provider_nemoclaw_custom_openrouter_v1", pins: ["34.117.59.81"] },
+    { key: "native_hosted_inference", pins: undefined },
+  ];
+  const conflictingRoutes = [
+    { key: "_provider_nemoclaw_custom_openrouter_v1", pins: ["34.117.59.81"] },
+    { key: "native_hosted_inference", pins: ["104.18.8.134"] },
+  ];
+  it.each([
+    { path: "direct", routes: mixedRoutes },
+    { path: "batch", routes: mixedRoutes },
+    { path: "direct", routes: conflictingRoutes },
+    { path: "batch", routes: conflictingRoutes },
+    { path: "batch-after-weather", routes: conflictingRoutes },
+  ])(
+    "does not submit $path pricing when live provider pins are invalid ($#)",
+    async ({ path, routes }) => {
+      livePolicy = YAML.stringify({
+        version: 1,
+        network_policies: Object.fromEntries(
+          routes.map(({ key, pins }) => [
+            key,
+            {
+              endpoints: [
+                { host: "openrouter.ai", port: 443, ...(pins ? { allowed_ips: pins } : {}) },
+              ],
+            },
+          ]),
+        ),
+      });
+      const original = livePolicy;
+      const content = await loadPresetForSandbox(sandboxName, "openclaw-pricing");
+      expect(content).not.toBeNull();
+
+      await expect(
+        path === "direct"
+          ? applyPresetContent(sandboxName, "openclaw-pricing", content!, { nonFatal: true })
+          : applyPresets(
+              sandboxName,
+              path === "batch-after-weather"
+                ? ["weather", "openclaw-pricing"]
+                : ["openclaw-pricing"],
+            ),
+      ).resolves.toBe(false);
+      expect(mocks.setSandboxPolicy).not.toHaveBeenCalled();
+      expect(livePolicy).toBe(original);
+    },
+  );
+
   it("pins recorded policy reads to the supplied operation target (#10514)", async () => {
     const runtimeSelection = {
       gatewayName: "nemoclaw",
@@ -132,6 +323,26 @@ describe("live OpenShell policy mutations", () => {
         runtimeSelection,
         scope: "base",
       }),
+    );
+  });
+
+  it("bounds every recorded policy read by one absolute observation deadline", async () => {
+    const now = vi.fn().mockReturnValueOnce(9_000).mockReturnValue(9_250);
+
+    await expect(
+      captureRecordedSandboxBasePolicy(
+        sandboxName,
+        "capture a bounded lifecycle policy",
+        undefined,
+        10_000,
+        now,
+      ),
+    ).resolves.toBe(livePolicy);
+    expect(mocks.inspectSandboxPolicy).toHaveBeenCalledWith(
+      expect.objectContaining({ timeoutMs: 1_000 }),
+    );
+    expect(mocks.readSandboxPolicy).toHaveBeenCalledWith(
+      expect.objectContaining({ timeoutMs: 750 }),
     );
   });
 
@@ -182,6 +393,50 @@ describe("live OpenShell policy mutations", () => {
     expect(mocks.setSandboxPolicy).toHaveBeenCalledOnce();
     expect(mocks.readSandboxPolicy).toHaveBeenCalledTimes(3);
     expect(YAML.parse(livePolicy).network_policies).toEqual({ host_approval: hostEntry });
+  });
+
+  it("verifies preset removal against operator-owned policy while ignoring provider readback (#12048)", async () => {
+    const providerEntry = { endpoints: [{ host: "provider.internal", port: 443 }] };
+    const weatherPolicy = YAML.stringify({
+      version: 1,
+      network_policies: {
+        host_approval: hostEntry,
+        weather: { endpoints: [{ host: "wttr.in", port: 443 }] },
+      },
+    });
+    livePolicy = weatherPolicy;
+    mocks.setSandboxPolicy.mockImplementation((request) => {
+      const parsed = YAML.parse(request.document);
+      parsed.network_policies._provider_token = providerEntry;
+      livePolicy = YAML.stringify(parsed);
+      return { outcome: { kind: "applied" }, status: 0 };
+    });
+    expect({
+      removed: await removePreset(sandboxName, "weather", {
+        nonFatal: true,
+        presetContent: preset,
+      }),
+      network_policies: YAML.parse(livePolicy).network_policies,
+    }).toEqual({
+      removed: true,
+      network_policies: { host_approval: hostEntry, _provider_token: providerEntry },
+    });
+
+    mocks.setSandboxPolicy.mockReset();
+    mocks.setSandboxPolicy.mockImplementation((request) => {
+      const parsed = YAML.parse(request.document);
+      delete parsed.network_policies.host_approval;
+      livePolicy = YAML.stringify(parsed);
+      return { outcome: { kind: "applied" }, status: 0 };
+    });
+    livePolicy = weatherPolicy;
+    vi.mocked(console.error).mockClear();
+    expect(
+      await removePreset(sandboxName, "weather", { nonFatal: true, presetContent: preset }),
+    ).toBe(false);
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining("the resulting base policy did not match the requested policy"),
+    );
   });
 
   it("uses one initial base-policy read, one final recheck, and one write readback for a batch", async () => {

@@ -146,7 +146,7 @@ describe("rebuildSandbox flow: target image", () => {
 
   it("stops before sandbox mutation when Hermes base-image preflight fails (#11072)", async () => {
     const harness = createRebuildFlowHarness({
-      sandboxEntry: { agent: "hermes" },
+      sandboxEntry: { agent: "hermes", provider: "nvidia-router" },
       baseImagePreflight: { ok: false, imageRef: null, overrideEnvVar: null },
     });
 
@@ -155,101 +155,6 @@ describe("rebuildSandbox flow: target image", () => {
     ).resolves.toBeUndefined();
 
     expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
-    expectNoSandboxDelete(harness.runOpenshellSpy);
-    expect(harness.onboardSpy).not.toHaveBeenCalled();
-  });
-
-  it("finalizes the retained Hermes image from backup before sandbox deletion (#7803)", async () => {
-    const preservedEnv = [
-      {
-        path: ".env",
-        assignments: ["SLACK_HOME_CHANNEL=C0123", "SLACK_HOME_CHANNEL_THREAD_ID=123.456"],
-      },
-    ];
-    const messagingPlan = {
-      schemaVersion: 1 as const,
-      sandboxName: "alpha",
-      agent: "hermes" as const,
-      workflow: "rebuild" as const,
-      channels: [],
-      disabledChannels: [],
-      credentialBindings: [],
-      networkPolicy: { presets: [], entries: [] },
-      agentRender: [],
-      buildSteps: [],
-      stateUpdates: [],
-      healthChecks: [],
-    };
-    const finalizePreparedImage = vi.fn((prepared, _plan, _capturedEnv) => ({
-      ok: true as const,
-      imageTag: "nemoclaw-rebuild-finalize:test",
-      prepared: { ...prepared, buildId: "backup-finalized" },
-    }));
-    const harness = createRebuildFlowHarness({
-      sandboxEntry: { agent: "hermes" },
-      backupPreservedEnv: preservedEnv,
-      buildMessagingRebuildPlan: () => messagingPlan,
-      finalizePreparedImage,
-    });
-
-    await expect(
-      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-    ).resolves.toBeUndefined();
-
-    expect(finalizePreparedImage).toHaveBeenCalledWith(
-      expect.objectContaining({ rebuildTarget: { agentName: "hermes", fromDockerfile: null } }),
-      messagingPlan,
-      preservedEnv,
-    );
-    expect(harness.onboardSpy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        preparedImageRebuild: expect.objectContaining({
-          buildContext: expect.objectContaining({ buildId: "backup-finalized" }),
-        }),
-      }),
-    );
-    expect(harness.backupSandboxStateSpy.mock.invocationCallOrder[0]).toBeLessThan(
-      harness.finalizePreparedImageSpy.mock.invocationCallOrder[0]!,
-    );
-    const deleteCall = harness.runOpenshellSpy.mock.calls.findIndex(
-      ([args]) => Array.isArray(args) && args.join(" ") === "sandbox delete -g nemoclaw alpha",
-    );
-    expect(deleteCall).toBeGreaterThanOrEqual(0);
-    expect(harness.finalizePreparedImageSpy.mock.invocationCallOrder[0]).toBeLessThan(
-      harness.runOpenshellSpy.mock.invocationCallOrder[deleteCall]!,
-    );
-  });
-
-  it("keeps the Hermes sandbox when backup-finalized image validation fails (#7803)", async () => {
-    const harness = createRebuildFlowHarness({
-      sandboxEntry: { agent: "hermes" },
-      backupPreservedEnv: [{ path: ".env", assignments: ["SLACK_HOME_CHANNEL=C0123"] }],
-      buildMessagingRebuildPlan: () => ({
-        schemaVersion: 1,
-        sandboxName: "alpha",
-        agent: "hermes",
-        workflow: "rebuild",
-        channels: [],
-        disabledChannels: [],
-        credentialBindings: [],
-        networkPolicy: { presets: [], entries: [] },
-        agentRender: [],
-        buildSteps: [],
-        stateUpdates: [],
-        healthChecks: [],
-      }),
-      finalizePreparedImage: () => ({
-        ok: false,
-        detail: "final image build failed",
-      }),
-    });
-
-    await expect(
-      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-    ).rejects.toThrow("Replacement sandbox image finalization failed");
-
-    expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
-    expect(harness.finalizePreparedImageSpy).toHaveBeenCalledOnce();
     expectNoSandboxDelete(harness.runOpenshellSpy);
     expect(harness.onboardSpy).not.toHaveBeenCalled();
   });
@@ -542,7 +447,7 @@ describe("rebuildSandbox flow: target image", () => {
       const errors = harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
       expect(errors).toContain("Recreate failed after sandbox was destroyed");
       expect(errors).toContain(`Backup is preserved at: ${harness.backupPath}`);
-      expect(errors).toContain("onboard --resume");
+      expect(errors).toContain("nemoclaw alpha rebuild --yes");
     } finally {
       restoreEnv();
     }

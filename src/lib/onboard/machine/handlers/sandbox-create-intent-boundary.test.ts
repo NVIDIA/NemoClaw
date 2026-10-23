@@ -1,8 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { HOSTED_NATIVE_PROVIDERS } from "../../../inference/native-provider/hosted";
 import { resolveMessagingPlanAuthority } from "../../../messaging/plan-authority";
 import type { CheckpointProviderBinding } from "../../../state/onboard-checkpoint-types";
 import { createSession } from "../../../state/onboard-session";
@@ -25,6 +30,106 @@ const resourceProfiles: [string, { cpu: string; memory: string } | null][] = [
 ];
 
 describe("sandbox create intent machine boundary", () => {
+  beforeEach(() => {
+    vi.stubEnv(
+      "HOME",
+      fs.mkdtempSync(path.join(os.tmpdir() ?? "/tmp", "nemoclaw-sandbox-intent-")),
+    );
+  });
+
+  afterEach(() => {
+    fs.rmSync(process.env.HOME!, { force: true, recursive: true });
+    vi.unstubAllEnvs();
+  });
+
+  it("attaches the internal native NVIDIA provider while retaining the logical selection", async () => {
+    const session = createSession({ sandboxName: "native-nvidia" });
+    const nativeNvidiaProviderAttachment = {
+      schemaVersion: 1 as const,
+      profileId: "nemoclaw-nvidia-inference-v1" as const,
+      providerName: "nemoclaw-nvidia-prod-v1" as const,
+      providerId: "11111111-2222-4333-8444-555555555555",
+    };
+    const { deps, calls } = createDeps({
+      getSandboxRegistryEntry: (name: string) => ({
+        name,
+        provider: "nvidia-prod",
+        model: "nvidia/nemotron-3-super-120b-a12b",
+        endpointUrl: null,
+        preferredInferenceApi: "openai-completions",
+        webSearchEnabled: false,
+        toolDisclosure: "progressive" as const,
+        fromDockerfile: null,
+        hermesAuthMethod: null,
+        nativeNvidiaProviderAttachment,
+      }),
+    });
+
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      sandboxName: "native-nvidia",
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+    });
+
+    expect(calls.resolveCreateIntent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sandboxName: "native-nvidia",
+        inferenceProvider: "nemoclaw-nvidia-prod-v1",
+        nativeNvidiaProviderAttachment,
+      }),
+    );
+    expect(calls.startStep).toHaveBeenCalledWith("sandbox", {
+      sandboxName: "native-nvidia",
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+    });
+  });
+
+  it.each(HOSTED_NATIVE_PROVIDERS)(
+    "attaches the recorded native $label resource while retaining its logical selection",
+    async (provider) => {
+      const session = createSession({ sandboxName: "native-hosted" });
+      const nativeHostedProviderAttachment = {
+        schemaVersion: 1 as const,
+        profileId: provider.profileId,
+        providerName: provider.providerName,
+        providerId: "11111111-2222-4333-8444-555555555555",
+      };
+      const { deps, calls } = createDeps({
+        getSandboxRegistryEntry: (name: string) => ({
+          name,
+          provider: provider.logicalProvider,
+          model: "selected-model",
+          endpointUrl: null,
+          preferredInferenceApi: provider.api,
+          webSearchEnabled: false,
+          toolDisclosure: "progressive" as const,
+          fromDockerfile: null,
+          hermesAuthMethod: null,
+          nativeHostedProviderAttachment,
+        }),
+      });
+      await handleSandboxState({
+        ...baseOptions(deps, session),
+        sandboxName: "native-hosted",
+        provider: provider.logicalProvider,
+        model: "selected-model",
+      });
+      expect(calls.resolveCreateIntent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          inferenceProvider: provider.providerName,
+          nativeHostedProviderAttachment,
+        }),
+      );
+      expect(calls.startStep).toHaveBeenCalledWith("sandbox", {
+        sandboxName: "native-hosted",
+        provider: provider.logicalProvider,
+        model: "selected-model",
+      });
+    },
+  );
+
   it("rejects deterministic create conflicts before resume recreation mutates state (#6226)", async () => {
     const session = createSession({ sandboxName: "saved" });
     session.steps.sandbox.status = "complete";
@@ -69,6 +174,8 @@ describe("sandbox create intent machine boundary", () => {
       });
       const createIntent = calls.createSandbox.mock.calls[0]?.at(-2) as unknown as {
         resolved: unknown;
+        reservePublishedRouteAfterBackup?: () => void;
+        recreateJournalTargetIntentFingerprint?: string;
       };
       expect(createIntent).toMatchObject({
         resolved: {
@@ -99,8 +206,15 @@ describe("sandbox create intent machine boundary", () => {
         observabilityEnabled: false,
         extraProviders: [],
       });
-      const serializedIntent = JSON.stringify(createIntent);
-      expect(JSON.parse(serializedIntent)).toEqual(createIntent);
+      const {
+        reservePublishedRouteAfterBackup,
+        recreateJournalTargetIntentFingerprint,
+        ...durableIntent
+      } = createIntent;
+      expect(typeof reservePublishedRouteAfterBackup).toMatch(/^(undefined|function)$/u);
+      expect(recreateJournalTargetIntentFingerprint).toBeUndefined();
+      const serializedIntent = JSON.stringify(durableIntent);
+      expect(JSON.parse(serializedIntent)).toEqual(durableIntent);
       expect(serializedIntent).not.toMatch(/stored-|resolved-|secret-value|token-value/iu);
       resolvedIntents.push(createIntent.resolved);
       expect(calls.startStep).toHaveBeenCalledWith("sandbox", {
@@ -263,6 +377,12 @@ describe("sandbox create intent machine boundary", () => {
     const oldPlan = makeMinimalPlan("old-name");
     const durableSession = createSession({
       sandboxName: "old-name",
+      pendingPolicySelection: {
+        sandboxName: "old-name",
+        sandboxIdentity: "created:2026-10-18T00:00:00.000Z",
+        tierName: null,
+        presetNames: ["openclaw-pricing"],
+      },
       webSearchConfig: null,
       messagingPlan: oldPlan,
       resourceProfile: null,
@@ -314,8 +434,39 @@ describe("sandbox create intent machine boundary", () => {
     );
     expect(calls.setupMessaging).toHaveBeenCalledWith(null, null, "new-name");
     expect(durableSession.sandboxName).toBe("new-name");
+    expect(durableSession.pendingPolicySelection).toBeNull();
     expect(durableSession.messagingPlan).toBeNull();
     expect(durableSession.sandboxPromptProgress.messaging).toBe(false);
+  });
+
+  it("clears a stale policy choice when a Hermes resume changes sandbox name", async () => {
+    const session = createSession({
+      sandboxName: "old-name",
+      pendingPolicySelection: {
+        sandboxName: "old-name",
+        sandboxIdentity: "created:2026-10-18T00:00:00.000Z",
+        tierName: null,
+        presetNames: ["github"],
+      },
+    });
+    const { deps } = createDeps(
+      {
+        getStoredMessagingChannelConfig: () => {
+          throw new Error("stop after name checkpoint");
+        },
+      },
+      session,
+    );
+
+    await expect(
+      handleSandboxState({
+        ...baseOptions(deps, session),
+        agent: { name: "hermes" },
+        resume: true,
+        sandboxName: "new-name",
+      }),
+    ).rejects.toThrow("stop after name checkpoint");
+    expect(session.pendingPolicySelection).toBeNull();
   });
 
   it("resumes at the interrupted resource prompt after checkpointing earlier choices (#6743)", async () => {

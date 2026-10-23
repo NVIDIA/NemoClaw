@@ -41,11 +41,16 @@ export interface OnboardFlowContext<Agent = unknown, Gpu = unknown, SandboxGpuCo
   deferredN1xManagedVllmPreviewAccepted?: boolean;
   /** Exact provider-owned route and proof contract consumed after final policy sync. */
   hostLocalInferenceSandboxProofAuthority?: HostLocalInferenceSandboxProofAuthority | null;
+  /** Route staged until the source sandbox's pre-delete backup succeeds. */
+  stagedNativeLocalRecreation?: import("../inference-providers/types").StagedNativeLocalRecreation;
+  deferredInferenceRoute?: (reserve: () => void) => Promise<void>;
   gpu: Gpu | null;
   sandboxGpuConfig: SandboxGpuConfig | null;
   gpuPassthrough: boolean;
   /** Validated process-local component authority for this fresh onboarding run. */
   externalComponent?: PreparedExternalComponent | null;
+  /** Process-local guard for mutations of the registered sandbox identity. */
+  revalidateSandboxIdentity?: (operation: string) => void;
 }
 
 export type ProviderModelSelectedOnboardFlowContext<Context extends OnboardFlowContext> =
@@ -91,6 +96,8 @@ export interface ProviderModelSelectedContextUpdate {
   webSearchConfig: WebSearchConfig | null;
   hostLocalInferenceRouteOnly: boolean;
   hostLocalInferenceSandboxProofAuthority: HostLocalInferenceSandboxProofAuthority | null;
+  stagedNativeLocalRecreation?: import("../inference-providers/types").StagedNativeLocalRecreation;
+  deferredInferenceRoute?: (reserve: () => void) => Promise<void>;
 }
 
 export interface SandboxCreatedContextUpdate {
@@ -101,6 +108,7 @@ export interface SandboxCreatedContextUpdate {
   hermesToolGateways: string[];
   selectedMessagingChannels: string[];
   webSearchSupported: boolean;
+  revalidateSandboxIdentity?: (operation: string) => void;
 }
 
 export function assertProviderModelSelectedContext<Context extends OnboardFlowContext>(

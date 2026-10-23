@@ -31,9 +31,9 @@ export const DEFAULT_AGENT_CONFIG: AgentConfigTarget = {
   agentName: "openclaw",
   configPath: "/sandbox/.openclaw/openclaw.json",
   configDir: "/sandbox/.openclaw",
-  format: "json",
+  format: "json5",
   configFile: "openclaw.json",
-  sensitiveFiles: ["/sandbox/.openclaw/.config-hash"],
+  sensitiveFiles: [],
 };
 
 function defaultDependencies(): AgentConfigDependencies {
@@ -87,7 +87,8 @@ export function resolveAgentConfig(
 
   const dir = requireCanonicalConfigDir(cfg.dir);
   const configPath = resolveConfigFile(dir, cfg.configFile, "config_file");
-  const sensitiveFiles = [resolveConfigFile(dir, ".config-hash", "config hash")];
+  const sensitiveFiles =
+    agentName === "hermes" ? [resolveConfigFile(dir, ".config-hash", "config hash")] : [];
   if (cfg.envFile !== undefined && cfg.envFile !== null) {
     sensitiveFiles.push(resolveConfigFile(dir, cfg.envFile, "env_file"));
   }

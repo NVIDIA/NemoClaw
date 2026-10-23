@@ -41,6 +41,11 @@ const REVIEWED_LAYOUTS = {
     filename: /^install-source-utils-[A-Za-z0-9_-]+\.js$/,
     mode: "native",
   },
+  "2026.9.2": {
+    expectedFiles: 1,
+    filename: /^install-source-utils-[A-Za-z0-9_-]+\.js$/,
+    mode: "native",
+  },
 } as const;
 
 function occurrences(contents: string, needle: string): number {

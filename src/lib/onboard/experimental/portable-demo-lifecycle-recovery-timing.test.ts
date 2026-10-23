@@ -301,7 +301,7 @@ describe("portable lifecycle recovery timing output", () => {
     ]);
     const gatewayLine = gatewayTimingLines(log)[0];
     expect(gatewayLine).toBe(
-      "  Portable OpenClaw gateway startup timing: launchToEntry=10ms entrySetup=10ms configIntegrity=15ms providerModelCors=11ms tokenPlaceholderHash=13ms messagingChannelsPreloadsScan=21ms workspaceAuthTemp=20ms gatewaySpawn=10ms spawnToFirstHealth=2000ms launchToFirstHealth=2110ms probe=0ms sleep=0ms firstReadyAttempt=1 lastFailure=none diagnosticRead=10ms diagnosticReadOutcome=recorded",
+      "  Portable OpenClaw gateway startup timing: launchToEntry=10ms entrySetup=10ms providerModelCors=26ms providerPlaceholdersGatewayToken=13ms messagingChannelsPreloadsScan=21ms workspaceAuthTemp=20ms gatewaySpawn=10ms spawnToFirstHealth=2000ms launchToFirstHealth=2110ms probe=0ms sleep=0ms firstReadyAttempt=1 lastFailure=none diagnosticRead=10ms diagnosticReadOutcome=recorded",
     );
   });
 
@@ -325,7 +325,7 @@ describe("portable lifecycle recovery timing output", () => {
       "  Portable lifecycle timing: authority=0ms inspect=0ms containerStart=0ms execReady=0ms ollama=0ms gatewayHealth=0ms startupProbe=0ms startupLaunch=0ms gatewayReady=0ms total=0ms containerAction=reused gatewayAction=reused ollamaAction=not-applicable ollamaAttempts=0 execAttempts=1 execNotReady=0 execTimeouts=0 execErrors=0 gatewayAttempts=1 gatewayNotReady=0 gatewayTimeouts=0 gatewayErrors=0 result=already-running",
     ]);
     expect(gatewayTimingLines(log)).toEqual([
-      "  Portable OpenClaw gateway startup timing: launchToEntry=0ms entrySetup=0ms configIntegrity=0ms providerModelCors=0ms tokenPlaceholderHash=0ms messagingChannelsPreloadsScan=0ms workspaceAuthTemp=0ms gatewaySpawn=0ms spawnToFirstHealth=0ms launchToFirstHealth=0ms probe=0ms sleep=0ms firstReadyAttempt=0 lastFailure=none diagnosticRead=0ms diagnosticReadOutcome=not-applicable",
+      "  Portable OpenClaw gateway startup timing: launchToEntry=0ms entrySetup=0ms providerModelCors=0ms providerPlaceholdersGatewayToken=0ms messagingChannelsPreloadsScan=0ms workspaceAuthTemp=0ms gatewaySpawn=0ms spawnToFirstHealth=0ms launchToFirstHealth=0ms probe=0ms sleep=0ms firstReadyAttempt=0 lastFailure=none diagnosticRead=0ms diagnosticReadOutcome=not-applicable",
     ]);
   });
 

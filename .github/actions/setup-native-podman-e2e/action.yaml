@@ -9,6 +9,26 @@ inputs:
     description: Prepare Podman when the E2E dispatch selected the native Podman gateway runtime.
     required: false
     default: "false"
+  toolchain:
+    description: Select the reviewed Podman toolchain contract.
+    required: false
+    default: native-6.1
+  isolate-docker-cli:
+    description: Remove the Docker client after disabling the Docker daemon.
+    required: false
+    default: "true"
+  cleanup-fixture:
+    description: Optional immutable workflow-owned restore script used if runtime setup is interrupted.
+    required: false
+    default: ""
+  service-tasks-max:
+    description: Optional finite TasksMax value for the native Podman API service.
+    required: false
+    default: ""
+  disable-container-cgroups:
+    description: Disable per-container cgroup creation before starting the native Podman API service.
+    required: false
+    default: "false"
 
 runs:
   using: composite
@@ -19,6 +39,7 @@ runs:
       shell: bash
       env:
         RUNNER_ARCH_KIND: ${{ runner.arch }}
+        TOOLCHAIN_PROFILE: ${{ inputs.toolchain }}
       run: |
         set -euo pipefail
         case "$RUNNER_ARCH_KIND" in
@@ -29,8 +50,26 @@ runs:
             exit 1
             ;;
         esac
+        case "$TOOLCHAIN_PROFILE" in
+          native-6.1)
+            artifact_prefix=native-podman-e2e-toolchain
+            podman_version=6.1.0
+            podman_source_sha=cade97a52ebdf9dbf9e81de8009015776837a074
+            ;;
+          portable-5.7)
+            artifact_prefix=portable-podman-e2e-toolchain
+            podman_version=5.7.0
+            podman_source_sha=0370128fc8dcae93533334324ef838db8f8da8cb
+            ;;
+          *)
+            echo "::error::Unsupported reviewed Podman toolchain: $TOOLCHAIN_PROFILE" >&2
+            exit 1
+            ;;
+        esac
         printf 'architecture=%s\n' "$architecture" >>"$GITHUB_OUTPUT"
-        printf 'name=native-podman-e2e-toolchain-%s\n' "$architecture" >>"$GITHUB_OUTPUT"
+        printf 'name=%s-%s\n' "$artifact_prefix" "$architecture" >>"$GITHUB_OUTPUT"
+        printf 'podman_version=%s\n' "$podman_version" >>"$GITHUB_OUTPUT"
+        printf 'podman_source_sha=%s\n' "$podman_source_sha" >>"$GITHUB_OUTPUT"
 
     - name: Download native Podman toolchain
       if: ${{ inputs.enabled == 'true' }}
@@ -43,10 +82,67 @@ runs:
       if: ${{ inputs.enabled == 'true' }}
       shell: bash
       env:
+        CLEANUP_FIXTURE: ${{ inputs.cleanup-fixture }}
         EXPECTED_ARCHITECTURE: ${{ steps.artifact.outputs.architecture }}
+        EXPECTED_PODMAN_SOURCE_SHA: ${{ steps.artifact.outputs.podman_source_sha }}
+        EXPECTED_PODMAN_VERSION: ${{ steps.artifact.outputs.podman_version }}
+        DISABLE_CONTAINER_CGROUPS: ${{ inputs.disable-container-cgroups }}
+        SERVICE_TASKS_MAX: ${{ inputs.service-tasks-max }}
         TOOLCHAIN_DIRECTORY: ${{ runner.temp }}/native-podman-e2e-toolchain
       run: |
         set -euo pipefail
+        service_tasks_max_line=""
+        if [[ -n "$SERVICE_TASKS_MAX" ]]; then
+          if [[ ! "$SERVICE_TASKS_MAX" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::Native Podman service TasksMax must be a positive integer" >&2
+            exit 1
+          fi
+          service_tasks_max_line="TasksMax=$SERVICE_TASKS_MAX"
+        fi
+        container_cgroups_line=""
+        oci_runtime=runc
+        case "$DISABLE_CONTAINER_CGROUPS" in
+          true)
+            container_cgroups_line='cgroups = "disabled"'
+            oci_runtime=crun
+            ;;
+          false) ;;
+          *)
+            echo "::error::Native Podman container cgroup override must be true or false" >&2
+            exit 1
+            ;;
+        esac
+        setup_completed=false
+        cleanup_interrupted_setup() {
+          local command_status=$?
+          local cleanup_status=0
+          trap - EXIT INT TERM
+          if [[ "$setup_completed" != true && -n "$CLEANUP_FIXTURE" ]]; then
+            set +e
+            /usr/bin/env -i \
+              HOME="$HOME" \
+              PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+              RUNNER_TEMP="$RUNNER_TEMP" \
+              /bin/bash "$CLEANUP_FIXTURE"
+            cleanup_status=$?
+            set -e
+          fi
+          if [[ "$cleanup_status" -ne 0 ]]; then
+            echo "::error::Native Podman setup failed and runner restoration also failed" >&2
+            exit "$cleanup_status"
+          fi
+          exit "$command_status"
+        }
+        if [[ -n "$CLEANUP_FIXTURE" ]]; then
+          [[ "$CLEANUP_FIXTURE" == /usr/local/libexec/nemoclaw/* ]]
+          [[ "$CLEANUP_FIXTURE" != *'/../'* && "$CLEANUP_FIXTURE" != */.. ]]
+          sudo -n test -f "$CLEANUP_FIXTURE"
+          sudo -n test ! -L "$CLEANUP_FIXTURE"
+          [[ "$(sudo -n stat -c '%u:%g:%a' "$CLEANUP_FIXTURE")" == "0:0:555" ]]
+          trap cleanup_interrupted_setup EXIT
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
+        fi
         [[ "$RUNNER_OS" == "Linux" ]]
         [[ -d "$TOOLCHAIN_DIRECTORY" && ! -L "$TOOLCHAIN_DIRECTORY" ]]
         [[ -z "$(find -P "$TOOLCHAIN_DIRECTORY" -type l -print -quit)" ]]
@@ -69,12 +165,15 @@ runs:
           cd "$TOOLCHAIN_DIRECTORY"
           sha256sum --check --strict SHA256SUMS
         )
-        jq -e --arg architecture "$EXPECTED_ARCHITECTURE" '
+        jq -e \
+          --arg architecture "$EXPECTED_ARCHITECTURE" \
+          --arg podmanSourceSha "$EXPECTED_PODMAN_SOURCE_SHA" \
+          --arg podmanVersion "$EXPECTED_PODMAN_VERSION" '
           .schemaVersion == 1 and
           .kind == "nemoclaw-native-podman-toolchain-v1" and
           .architecture == $architecture and
-          .podmanVersion == "6.1.0" and
-          .podmanSourceSha == "cade97a52ebdf9dbf9e81de8009015776837a074" and
+          .podmanVersion == $podmanVersion and
+          .podmanSourceSha == $podmanSourceSha and
           .netavarkVersion == "2.1.0" and
           .netavarkSourceSha == "8e91ad1d947ed325327b638f0cb906bea1f7d0ab" and
           .aardvarkDnsVersion == "2.1.0" and
@@ -190,9 +289,9 @@ runs:
           newgidmap
           newuidmap
           nft
-          runc
           slirp4netns
         )
+        required_host_commands+=("$oci_runtime")
         if [[ -r /sys/module/apparmor/parameters/enabled ]] && grep -q '^Y' /sys/module/apparmor/parameters/enabled; then
           required_host_commands+=(aa-exec apparmor_parser)
         fi
@@ -223,7 +322,7 @@ runs:
             "$TOOLCHAIN_DIRECTORY/libexec/podman/$helper" \
             "$helper_install_root/$helper"
         done
-        [[ "$("$podman_executable" --version)" == "podman version 6.1.0" ]]
+        [[ "$("$podman_executable" --version)" == "podman version $EXPECTED_PODMAN_VERSION" ]]
 
         [[ -z "$subuid_range" ]] || sudo usermod --add-subuids "$subuid_range" "$execution_user"
         [[ -z "$subgid_range" ]] || sudo usermod --add-subgids "$subgid_range" "$execution_user"
@@ -271,15 +370,20 @@ runs:
           'driver = "overlay"' \
           "runroot = \"$storage_directory/runroot\"" \
           "graphroot = \"$storage_directory/graphroot\"" >"$storage_config"
-        printf '%s\n' \
-          '[containers]' \
-          'log_driver = "k8s-file"' \
-          '' \
-          '[engine]' \
-          'runtime = "runc"' \
-          '' \
-          '[network]' \
-          'firewall_driver = "nftables"' >"$containers_config"
+        {
+          printf '%s\n' '[containers]'
+          if [[ -n "$container_cgroups_line" ]]; then
+            printf '%s\n' "$container_cgroups_line"
+          fi
+          printf '%s\n' \
+            'log_driver = "k8s-file"' \
+            '' \
+            '[engine]' \
+            "runtime = \"$oci_runtime\"" \
+            '' \
+            '[network]' \
+            'firewall_driver = "nftables"'
+        } >"$containers_config"
         export CONTAINERS_CONF="$containers_config"
         export CONTAINERS_STORAGE_CONF="$storage_config"
         export DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime_directory/bus"
@@ -292,19 +396,25 @@ runs:
           "PATH=$toolchain_install_root/bin:$PATH" \
           "XDG_RUNTIME_DIR=$runtime_directory" >"$service_environment"
         chmod 0600 "$service_environment"
-        printf '%s\n' \
-          '[Unit]' \
-          'Description=NemoClaw native Podman E2E API service' \
-          "Requires=$service_name.socket" \
-          "After=$service_name.socket dbus.socket" \
-          '' \
-          '[Service]' \
-          'Type=exec' \
-          'Delegate=true' \
-          'KillMode=process' \
-          'Environment=PODMAN_SYSTEMD_UNIT=%n' \
-          "EnvironmentFile=$service_environment" \
-          "ExecStart=$podman_service_exec" >"$service_unit"
+        {
+          printf '%s\n' \
+            '[Unit]' \
+            'Description=NemoClaw native Podman E2E API service' \
+            "Requires=$service_name.socket" \
+            "After=$service_name.socket dbus.socket" \
+            '' \
+            '[Service]' \
+            'Type=exec' \
+            'Delegate=true' \
+            'KillMode=process'
+          if [[ -n "$service_tasks_max_line" ]]; then
+            printf '%s\n' "$service_tasks_max_line"
+          fi
+          printf '%s\n' \
+            'Environment=PODMAN_SYSTEMD_UNIT=%n' \
+            "EnvironmentFile=$service_environment" \
+            "ExecStart=$podman_service_exec"
+        } >"$service_unit"
         printf '%s\n' \
           '[Unit]' \
           'Description=NemoClaw native Podman E2E API socket' \
@@ -343,10 +453,10 @@ runs:
         service_pid="$(/usr/bin/systemctl --user show "$service_name.service" --property=MainPID --value)"
         [[ "$service_pid" =~ ^[1-9][0-9]*$ ]]
         [[ "$(curl --fail --silent --show-error --noproxy '*' --unix-socket "$socket_path" http://localhost/_ping)" == "OK" ]]
-        jq -e '
+        jq -e --arg runtime "$oci_runtime" '
           (.host.security.rootless // .Host.Security.Rootless) == true and
           ((.host.cgroupVersion // .Host.CgroupVersion) | ascii_downcase) == "v2" and
-          ((.host.ociRuntime.name // .Host.OCIRuntime.Name) | ascii_downcase) == "runc"
+          ((.host.ociRuntime.name // .Host.OCIRuntime.Name) | ascii_downcase) == $runtime
         ' "$RUNNER_TEMP/native-podman-e2e-info.json" >/dev/null
 
         # A Podman matrix row is qualification evidence only when Docker cannot
@@ -421,9 +531,11 @@ runs:
           printf 'PATH=%s:%s\n' "$toolchain_install_root/bin" "$PATH"
           printf 'XDG_RUNTIME_DIR=%s\n' "$runtime_directory"
         } >>"$GITHUB_ENV"
+        setup_completed=true
+        trap - EXIT INT TERM
 
     - name: Remove Docker CLI from native Podman execution
-      if: ${{ inputs.enabled == 'true' }}
+      if: ${{ inputs.enabled == 'true' && inputs.isolate-docker-cli == 'true' }}
       shell: bash
       run: |
         set -euo pipefail

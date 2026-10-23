@@ -15,6 +15,17 @@ const INSTALLER_SOURCE = fs.readFileSync(
 );
 const TRUSTED_V00116_TEMPLATE_DIGEST =
   "24cb9e67b855e8a69df32aae992f4756ef2b29bcdc7846ef57bcfeacb3c1a9a3";
+const BOUNDED_DOWNLOAD_TEMPLATE_DIGEST =
+  "6808b7c667aef5c9ebdfe269ae1f9b4c181b5de6a6e62bdb526fac4338f5ee4f";
+const originalCurl =
+  'curl -fL "${curl_progress[@]}" "https://github.com/NVIDIA/OpenShell/releases/download/${RELEASE_TAG}/$name" \\';
+const boundedCurl = [
+  'curl -fL "${curl_progress[@]}" --connect-timeout 10 --retry 3 --retry-delay 2 \\',
+  "      --speed-limit 1024 --speed-time 60 \\",
+  '      "https://github.com/NVIDIA/OpenShell/releases/download/${RELEASE_TAG}/$name" \\',
+].join("\n");
+const originalInstaller = INSTALLER_SOURCE.replace(boundedCurl, originalCurl);
+const boundedInstaller = originalInstaller.replace(originalCurl, boundedCurl);
 const tempDirs: string[] = [];
 
 afterEach(() => {
@@ -79,11 +90,18 @@ describe("installer Homebrew formula reuse trust", () => {
   it("accepts only the reviewed OpenShell 0.0.116 installer template", () => {
     expect(INSTALLER_SOURCE).toContain('MIN_VERSION="0.0.116"');
     expect(INSTALLER_SOURCE).toContain('MAX_VERSION="0.0.116"');
-    expectTrustedTemplate(INSTALLER_SOURCE, TRUSTED_V00116_TEMPLATE_DIGEST);
+    expectTrustedTemplate(originalInstaller, TRUSTED_V00116_TEMPLATE_DIGEST);
+    expectTrustedTemplate(boundedInstaller, BOUNDED_DOWNLOAD_TEMPLATE_DIGEST);
   });
 
-  it("rejects an unreviewed mutation of the OpenShell 0.0.116 installer template", () => {
-    const result = runTrustCheck(untrustedTemplate);
+  it.each([
+    ["existing template", untrustedTemplate],
+    [
+      "download retry policy",
+      boundedInstaller.replace("--retry 3 --retry-delay 2", "--retry 4 --retry-delay 2"),
+    ],
+  ])("rejects an unreviewed mutation of the OpenShell 0.0.116 %s", (_name, source) => {
+    const result = runTrustCheck(source);
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("installer operational template is not base-trusted");

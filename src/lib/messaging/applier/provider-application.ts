@@ -3,9 +3,9 @@
 
 import {
   WEB_SEARCH_PROVIDER_PROFILE_IDS,
-  webSearchProviderProfilePath,
   type WebSearchProviderProfileId,
-} from "./web-search-provider-profile";
+} from "../../inference/web-search/provider-profile";
+import { webSearchProviderProfilePath } from "./web-search-provider-profile";
 import {
   buildMessagingBridgeRefreshMaterial,
   listMessagingBridgeProfiles,
@@ -53,9 +53,19 @@ export function buildMessagingProviderApplication(
   const refreshes: MessagingProviderRefreshEphemeralInput[] = [];
 
   for (const tokenDef of input.tokenDefs) {
-    const providerType = tokenDef.providerType ?? "generic";
+    const providerType = tokenDef.providerType;
+    if (!providerType) {
+      throw new Error(
+        `Messaging provider '${tokenDef.name}' has no explicit owned profile type. Re-run channel setup with a supported profile.`,
+      );
+    }
     const bridgeProfile = profilesByType.get(providerType);
-    const profile = providerProfile(input.root, providerType, bridgeProfile);
+    const profile = messagingProviderProfileForType(input.root, providerType, bridgeProfile);
+    if (!profile) {
+      throw new Error(
+        `Messaging provider '${tokenDef.name}' has no NemoClaw-owned profile for type '${providerType}'. Re-run channel setup with a supported profile.`,
+      );
+    }
     const channelId =
       bridgeProfile?.channelId ??
       input.channelIdForCredential?.(tokenDef.envKey, tokenDef.name) ??
@@ -88,7 +98,7 @@ export function buildMessagingProviderApplication(
   return { definitions, refreshes };
 }
 
-function providerProfile(
+export function messagingProviderProfileForType(
   root: string,
   providerType: string,
   bridgeProfile: MessagingBridgeProfile | undefined,
@@ -109,6 +119,25 @@ function providerProfile(
     };
   }
   return undefined;
+}
+
+/** Check the same checked-in profile ownership boundary before external effects. */
+export function hasNemoClawOwnedMessagingProviderProfile(
+  root: string | undefined,
+  agent: string | null | undefined,
+  providerType: string,
+): boolean {
+  if (
+    providerType === MESSAGING_CREDENTIAL_PROVIDER_TYPE ||
+    (WEB_SEARCH_PROVIDER_PROFILE_IDS as readonly string[]).includes(providerType)
+  ) {
+    return true;
+  }
+  const bridgeProfile = messagingBridgeProfilesForAgent(
+    agent,
+    listMessagingBridgeProfiles({ root }),
+  ).find((profile) => profile.profileId === providerType);
+  return Boolean(bridgeProfile);
 }
 
 function buildRefreshDefinition(

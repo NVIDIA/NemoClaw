@@ -12,22 +12,31 @@ export default class DestroyCliCommand extends NemoClawCommand {
   static strict = true;
   static summary = "Stop NIM and delete sandbox";
   static description = "Destroy a sandbox and remove its local registry entry.";
-  static usage = ["<name> [--yes|-y|--force] [--cleanup-gateway|--no-cleanup-gateway]"];
+  static usage = [
+    "<name> [--yes|-y|--force] [--cleanup-gateway|--no-cleanup-gateway] [--keep-vllm]",
+  ];
   static examples = [
     "<%= config.bin %> sandbox destroy alpha",
     "<%= config.bin %> sandbox destroy alpha --yes",
     "<%= config.bin %> sandbox destroy alpha --yes --cleanup-gateway",
+    "<%= config.bin %> sandbox destroy alpha --yes --keep-vllm",
   ];
   static args = {
     sandboxName: Args.string({ name: "sandbox", description: "Sandbox name", required: true }),
   };
   static flags = {
     yes: yesFlag(),
-    force: forceFlag(),
+    force: forceFlag(
+      "Skip confirmation. For eligible recovery records with no sandbox identity, archive and remove local tracking after current absence checks. Original runtime cleanup remains unverified.",
+    ),
     "cleanup-gateway": Flags.boolean({
       description:
         "When destroying the last sandbox, also tear down the shared NemoClaw gateway. Default: preserve on Linux; cleanup for unattended macOS destroys. NEMOCLAW_CLEANUP_GATEWAY overrides the platform default.",
       allowNo: true,
+    }),
+    "keep-vllm": Flags.boolean({
+      description:
+        "Keep the managed vLLM container running after destroying the last sandbox that uses Local vLLM. NEMOCLAW_KEEP_VLLM=1 has the same effect.",
     }),
   };
 
@@ -38,6 +47,7 @@ export default class DestroyCliCommand extends NemoClawCommand {
       force: flags.force === true,
       yes: flags.yes === true,
       ...(cleanupGatewayFlag === undefined ? {} : { cleanupGateway: cleanupGatewayFlag }),
+      ...(flags["keep-vllm"] === true ? { keepVllm: true } : {}),
     });
   }
 }

@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   checkLaunchReadinessMutationAuthority,
+  classifyLaunchReadinessStoreFailure,
   fenceLaunchReadinessLease as fenceLeaseStore,
   LAUNCH_READINESS_LEASE_MS,
   LAUNCH_READINESS_MAX_BYTES,
@@ -60,6 +61,12 @@ function openClawIdentity(): LaunchReadinessIdentity {
 
 function throwReadOnly(message: string): never {
   throw Object.assign(new Error(message), { code: "EROFS" });
+}
+
+function operationPath(target: fs.PathLike): string {
+  const value = String(target);
+  const retained = /^(\/proc\/self\/fd\/\d+)\/(.+)$/u.exec(value);
+  return retained ? path.join(fs.realpathSync(retained[1]), retained[2]) : value;
 }
 
 describe("launch readiness lease storage", () => {
@@ -509,6 +516,161 @@ describe("launch readiness lease storage", () => {
     ).toBe("changed");
   });
 
+  it.each([8080, 18080])(
+    "publishes and reloads readiness under a group-writable home on gateway port %s",
+    (gatewayPort) => {
+      fs.chmodSync(home, 0o775);
+      const previousUmask = process.umask(0o002);
+      try {
+        const fence = fenceLaunchReadinessLease(SANDBOX, gatewayPort, options());
+        expect(
+          checkLaunchReadinessMutationAuthority(
+            SANDBOX,
+            GATEWAY_NAME,
+            gatewayPort,
+            fence.epochId,
+            options(),
+          ),
+        ).toBe("current");
+        const lease = publishLaunchReadinessLease(
+          SANDBOX,
+          gatewayPort,
+          fence.epochId,
+          identity(),
+          options(),
+        );
+        expect(readLaunchReadinessLease(SANDBOX, gatewayPort, options())).toEqual({
+          kind: "valid",
+          lease,
+        });
+        expect(fs.statSync(home).mode & 0o777).toBe(0o775);
+      } finally {
+        process.umask(previousUmask);
+      }
+    },
+  );
+
+  it("reports bounded persistent receipt permission evidence without authorizing mutation (#10638)", () => {
+    publish();
+    const receiptPath = launchReadinessReceiptPath(SANDBOX, GATEWAY_PORT, home);
+    const uid = process.getuid?.() ?? 0;
+    fs.chmodSync(receiptPath, 0o640);
+
+    expect(
+      checkLaunchReadinessMutationAuthority(SANDBOX, GATEWAY_NAME, GATEWAY_PORT, null, options()),
+    ).toEqual({
+      kind: "unsafe",
+      evidence: {
+        resource: "persistent receipt",
+        path: receiptPath,
+        expectedUid: uid,
+        observedUid: uid,
+        expectedMode: "0600",
+        observedMode: "0640",
+        operation: "inspect",
+        errorCode: null,
+        repair: "chmod",
+      },
+    });
+
+    fs.chmodSync(receiptPath, 0o600);
+  });
+
+  it.each(["receipt", "persistent ancestor", "runtime ancestor"] as const)(
+    "identifies the unsafe %s directory without blaming its safe child (#10638)",
+    (target) => {
+      publish();
+      const receiptPath = launchReadinessReceiptPath(SANDBOX, GATEWAY_PORT, home);
+      const receiptDir =
+        target === "receipt"
+          ? path.dirname(receiptPath)
+          : target === "persistent ancestor"
+            ? path.join(home, ".nemoclaw")
+            : path.join(runtimeRoot, "nemoclaw");
+      const mode = target === "persistent ancestor" ? 0o777 : 0o750;
+      const uid = process.getuid?.() ?? 0;
+      fs.chmodSync(receiptDir, mode);
+
+      try {
+        expect(
+          checkLaunchReadinessMutationAuthority(
+            SANDBOX,
+            GATEWAY_NAME,
+            GATEWAY_PORT,
+            null,
+            options(),
+          ),
+        ).toEqual({
+          kind: "unsafe",
+          evidence: {
+            resource:
+              target === "runtime ancestor"
+                ? "runtime authority directory"
+                : "persistent receipt directory",
+            path: receiptDir,
+            expectedUid: uid,
+            observedUid: uid,
+            expectedMode: target === "persistent ancestor" ? "no group/other write bits" : "0700",
+            observedMode: mode.toString(8).padStart(4, "0"),
+            operation: "inspect",
+            errorCode: null,
+            repair: "manual",
+          },
+        });
+      } finally {
+        fs.chmodSync(receiptDir, 0o700);
+      }
+    },
+  );
+
+  it("does not suggest chmod for malformed authority with correct permissions (#10638)", () => {
+    publish();
+    const authorityPath = launchReadinessAuthorityPath(SANDBOX, runtimeRoot);
+    fs.writeFileSync(authorityPath, "invalid authority", { mode: 0o600 });
+    expect(
+      checkLaunchReadinessMutationAuthority(SANDBOX, GATEWAY_NAME, GATEWAY_PORT, null, options()),
+    ).toMatchObject({
+      kind: "unsafe",
+      evidence: {
+        path: authorityPath,
+        expectedMode: "0600",
+        observedMode: "0600",
+        repair: "manual",
+      },
+    });
+  });
+
+  it.each(["EROFS", "ENOENT", "private-message=do-not-display"])(
+    "retains only a bounded write error code (%s) without suggesting chmod (#10638)",
+    (code) => {
+      const fence = fenceLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options());
+      const authorityPath = launchReadinessAuthorityPath(SANDBOX, runtimeRoot);
+      vi.spyOn(fs, "fsyncSync").mockImplementation(() => {
+        throw Object.assign(new Error("private-message=do-not-display"), { code });
+      });
+      const result = checkLaunchReadinessMutationAuthority(
+        SANDBOX,
+        GATEWAY_NAME,
+        GATEWAY_PORT,
+        fence.epochId,
+        options(),
+      );
+      expect(result).toMatchObject({
+        kind: "unsafe",
+        evidence: {
+          path: authorityPath,
+          expectedMode: "0600",
+          observedMode: "0600",
+          operation: "write",
+          errorCode: code === "private-message=do-not-display" ? null : code,
+          repair: "manual",
+        },
+      });
+      expect(JSON.stringify(result)).not.toContain("private-message=do-not-display");
+      expect(fs.readdirSync(path.dirname(authorityPath))).toEqual([path.basename(authorityPath)]);
+    },
+  );
+
   it("rejects a copied fence after the state volume changes during preflight", () => {
     const fence = fenceLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options());
     const stateRoot = path.join(home, ".nemoclaw");
@@ -657,6 +819,7 @@ describe("launch readiness lease storage", () => {
   });
 
   it("rejects unsafe receipt permissions and foreign ownership authority", () => {
+    fs.chmodSync(home, 0o775);
     publish();
     const receiptPath = launchReadinessReceiptPath(SANDBOX, GATEWAY_PORT, home);
     const receiptDir = path.dirname(receiptPath);
@@ -671,10 +834,14 @@ describe("launch readiness lease storage", () => {
     expect(readLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options()).kind).toBe("unsafe");
     fs.chmodSync(receiptDir, 0o700);
 
-    const stateAncestor = path.dirname(path.dirname(receiptDir));
+    const stateAncestor = path.dirname(receiptDir);
     fs.chmodSync(stateAncestor, 0o770);
     expect(readLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options()).kind).toBe("unsafe");
     fs.chmodSync(stateAncestor, 0o700);
+
+    fs.chmodSync(home, 0o777);
+    expect(readLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options()).kind).toBe("unsafe");
+    fs.chmodSync(home, 0o775);
 
     expect(
       readLaunchReadinessLease(
@@ -707,6 +874,209 @@ describe("launch readiness lease storage", () => {
     expect(readLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options()).kind).toBe("unsafe");
   });
 
+  it
+    .runIf(process.platform === "linux")
+    .each(["create-root", "create-descendant", "fence", "publish", "read"] as const)(
+    "keeps %s operations and cleanup inside retained directories during a home path swap (#10638)",
+    (operation) => {
+      fs.chmodSync(home, 0o775);
+      const stateRoot = path.join(home, ".nemoclaw");
+      const savedState = path.join(home, ".nemoclaw-saved");
+      const outside = path.join(root, "outside");
+      const receiptPath = launchReadinessReceiptPath(SANDBOX, GATEWAY_PORT, home);
+      const receiptDir = path.dirname(receiptPath);
+      fs.mkdirSync(outside, { mode: 0o777 });
+      fs.chmodSync(outside, 0o777);
+      const outsideMode = fs.statSync(outside).mode & 0o777;
+      const prepareStore = () => {
+        fs.mkdirSync(path.join(outside, "launch-readiness"), { mode: 0o777 });
+        return fenceLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options()).epochId;
+      };
+      const prepareRead = () => {
+        const epoch = prepareStore();
+        publishLaunchReadinessLease(SANDBOX, GATEWAY_PORT, epoch, identity(), options());
+        fs.writeFileSync(
+          path.join(outside, "launch-readiness", path.basename(receiptPath)),
+          "peer-owned receipt",
+          { mode: 0o600 },
+        );
+        return epoch;
+      };
+      const prepare: Record<typeof operation, () => string | undefined> = {
+        "create-root": () => undefined,
+        "create-descendant": () => {
+          fs.mkdirSync(stateRoot, { mode: 0o700 });
+          return undefined;
+        },
+        fence: prepareStore,
+        publish: prepareStore,
+        read: prepareRead,
+      };
+      const epoch = prepare[operation]();
+      const open = fs.openSync.bind(fs);
+      const rename = fs.renameSync.bind(fs);
+      const mkdir = fs.mkdirSync.bind(fs);
+      let swapped = false;
+      let outsideFileOpened = false;
+      let outsideTemporary: string | undefined;
+      const swap = () => {
+        rename(stateRoot, savedState);
+        fs.symlinkSync(outside, stateRoot);
+        swapped = true;
+      };
+      const installOpenSwap = (kind: "fence" | "read") => {
+        const matches = {
+          fence: (logicalPath: string, _flags: string | number) =>
+            path.dirname(logicalPath) === receiptDir && logicalPath.endsWith(".tmp"),
+          read: (logicalPath: string, flags: string | number) =>
+            logicalPath === receiptPath &&
+            typeof flags === "number" &&
+            (flags & fs.constants.O_CREAT) === 0,
+        };
+        const observeOutsideOpen = {
+          fence: (_descriptor: number, logicalPath: string) =>
+            fs.existsSync(path.join(outside, "launch-readiness", path.basename(logicalPath))),
+          read: (descriptor: number, _logicalPath: string) => {
+            const opened = fs.fstatSync(descriptor);
+            const outsideStat = fs.statSync(
+              path.join(outside, "launch-readiness", path.basename(receiptPath)),
+            );
+            return opened.dev === outsideStat.dev && opened.ino === outsideStat.ino;
+          },
+        };
+        vi.spyOn(fs, "openSync").mockImplementation((target, flags, mode) => {
+          const logicalPath = operationPath(target);
+          const intercept = !swapped && matches[kind](logicalPath, flags);
+          intercept && swap();
+          const descriptor = open(target, flags, mode);
+          outsideFileOpened = intercept
+            ? observeOutsideOpen[kind](descriptor, logicalPath)
+            : outsideFileOpened;
+          return descriptor;
+        });
+      };
+      const install: Record<typeof operation, () => void> = {
+        "create-root": () => {
+          vi.spyOn(fs, "mkdirSync").mockImplementation((target, mkdirOptions) => {
+            const result = mkdir(
+              target,
+              mkdirOptions as fs.MakeDirectoryOptions & { recursive: true },
+            );
+            !swapped && operationPath(target) === stateRoot && swap();
+            return result;
+          });
+        },
+        "create-descendant": () => {
+          vi.spyOn(fs, "mkdirSync").mockImplementation((target, mkdirOptions) => {
+            !swapped && operationPath(target) === receiptDir && swap();
+            return mkdir(target, mkdirOptions as fs.MakeDirectoryOptions & { recursive: true });
+          });
+        },
+        fence: () => installOpenSwap("fence"),
+        publish: () => {
+          vi.spyOn(fs, "renameSync").mockImplementation((source, destination) => {
+            const intercept = !swapped && operationPath(destination) === receiptPath;
+            intercept &&
+              (() => {
+                outsideTemporary = path.join(
+                  outside,
+                  "launch-readiness",
+                  path.basename(String(source)),
+                );
+                fs.writeFileSync(outsideTemporary, "peer-owned staging file", { mode: 0o600 });
+                swap();
+              })();
+            rename(source, destination);
+          });
+        },
+        read: () => installOpenSwap("read"),
+      };
+      install[operation]();
+
+      const expectFenceRejection = () =>
+        expect(() => fenceLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options())).toThrow();
+      const execute: Record<typeof operation, () => void> = {
+        "create-root": expectFenceRejection,
+        "create-descendant": expectFenceRejection,
+        fence: expectFenceRejection,
+        publish: () =>
+          expect(() =>
+            publishLaunchReadinessLease(SANDBOX, GATEWAY_PORT, epoch!, identity(), options()),
+          ).toThrow(),
+        read: () =>
+          expect(readLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options()).kind).toBe("unsafe"),
+      };
+      execute[operation]();
+      expect(swapped).toBe(true);
+      expect(outsideFileOpened).toBe(false);
+      expect(fs.statSync(outside).mode & 0o777).toBe(outsideMode);
+      const outsideReceiptExpected: Record<typeof operation, boolean> = {
+        "create-root": false,
+        "create-descendant": false,
+        fence: false,
+        publish: false,
+        read: true,
+      };
+      expect(
+        fs.existsSync(path.join(outside, "launch-readiness", path.basename(receiptPath))),
+      ).toBe(outsideReceiptExpected[operation]);
+      const expectSavedTemporaryAbsent = () =>
+        expect(fs.readdirSync(path.join(savedState, "launch-readiness")).join("\n")).not.toMatch(
+          /\.tmp(?:\n|$)/u,
+        );
+      const verify: Record<typeof operation, () => void> = {
+        "create-root": () => expect(fs.readdirSync(outside)).toEqual([]),
+        "create-descendant": () => expect(fs.readdirSync(outside)).toEqual([]),
+        fence: () => {
+          expectSavedTemporaryAbsent();
+          expect(fs.readdirSync(path.join(outside, "launch-readiness"))).toEqual([]);
+        },
+        publish: () => {
+          expectSavedTemporaryAbsent();
+          expect(fs.readdirSync(path.join(outside, "launch-readiness"))).toEqual([
+            path.basename(outsideTemporary!),
+          ]);
+          expect(fs.readFileSync(outsideTemporary!, "utf8")).toBe("peer-owned staging file");
+        },
+        read: () => {
+          expectSavedTemporaryAbsent();
+          expect(fs.readdirSync(path.join(outside, "launch-readiness"))).toEqual([
+            path.basename(receiptPath),
+          ]);
+          expect(
+            fs.readFileSync(
+              path.join(outside, "launch-readiness", path.basename(receiptPath)),
+              "utf8",
+            ),
+          ).toBe("peer-owned receipt");
+        },
+      };
+      verify[operation]();
+    },
+  );
+
+  it.runIf(process.platform === "linux")(
+    "creates private receipt and authority directories under a restrictive umask (#10638)",
+    () => {
+      fs.chmodSync(home, 0o775);
+      const previousUmask = process.umask(0o777);
+      try {
+        const fence = fenceLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options());
+        publishLaunchReadinessLease(SANDBOX, GATEWAY_PORT, fence.epochId, identity(), options());
+      } finally {
+        process.umask(previousUmask);
+      }
+
+      const receiptPath = launchReadinessReceiptPath(SANDBOX, GATEWAY_PORT, home);
+      const authorityPath = launchReadinessAuthorityPath(SANDBOX, runtimeRoot);
+      expect(fs.statSync(path.join(home, ".nemoclaw")).mode & 0o777).toBe(0o700);
+      expect(fs.statSync(path.dirname(receiptPath)).mode & 0o777).toBe(0o700);
+      expect(fs.statSync(path.join(runtimeRoot, "nemoclaw")).mode & 0o777).toBe(0o700);
+      expect(fs.statSync(path.dirname(authorityPath)).mode & 0o777).toBe(0o700);
+      expect(readLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options()).kind).toBe("valid");
+    },
+  );
+
   it("uses one sandbox-global authority epoch across owning gateway changes", () => {
     const gatewayA = "gateway-a";
     const gatewayB = "gateway-b";
@@ -738,7 +1108,7 @@ describe("launch readiness lease storage", () => {
     const authorityPath = launchReadinessAuthorityPath(SANDBOX, runtimeRoot);
     const rename = fs.renameSync.bind(fs);
     vi.spyOn(fs, "renameSync").mockImplementation((source, destination) =>
-      destination === authorityPath
+      operationPath(destination) === authorityPath
         ? throwReadOnly("read-only runtime authority")
         : rename(source, destination),
     );
@@ -750,7 +1120,7 @@ describe("launch readiness lease storage", () => {
   it("allows the complete preflight only when runtime authority and persistent evidence are securely absent", () => {
     const mkdir = fs.mkdirSync.bind(fs);
     vi.spyOn(fs, "mkdirSync").mockImplementation((target, mkdirOptions) =>
-      String(target).startsWith(runtimeRoot)
+      operationPath(target).startsWith(runtimeRoot)
         ? throwReadOnly("read-only runtime root")
         : mkdir(target, mkdirOptions as fs.MakeDirectoryOptions & { recursive: true }),
     );
@@ -808,7 +1178,7 @@ describe("launch readiness lease storage", () => {
     const before = fs.statSync(receiptPath);
     const rename = fs.renameSync.bind(fs);
     vi.spyOn(fs, "renameSync").mockImplementation((source, destination) =>
-      destination === receiptPath
+      operationPath(destination) === receiptPath
         ? throwReadOnly("read-only persistent state")
         : rename(source, destination),
     );
@@ -835,5 +1205,42 @@ describe("launch readiness lease storage", () => {
     fs.writeFileSync(receiptPath, JSON.stringify(value), { mode: 0o600 });
     fs.chmodSync(receiptPath, 0o600);
     expect(readLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options()).kind).toBe("missing");
+  });
+});
+
+describe("launch readiness publication diagnostics", () => {
+  it.each([
+    ["EACCES", "permission-denied"],
+    ["EPERM", "permission-denied"],
+    ["EROFS", "read-only-filesystem"],
+    ["ENOSPC", "storage-full"],
+    ["ENOENT", "store-missing"],
+    ["private-token", "unclassified"],
+  ])("classifies %s without exposing error text", (code, expected) => {
+    const error = Object.assign(new Error("private-token".repeat(1000)), { code });
+    expect(classifyLaunchReadinessStoreFailure(error)).toBe(expected);
+  });
+
+  it.each([
+    ["Launch readiness publication authority changed.", "authority-changed"],
+    [
+      "Launch readiness publication is disabled while authority or clock history is unsafe.",
+      "publication-disabled",
+    ],
+    ["Launch readiness publication time is unsafe.", "publication-time-unsafe"],
+    ["Launch readiness lease time envelope is no longer valid.", "lease-time-invalid"],
+  ])("classifies the fixed storage error %s", (message, expected) => {
+    expect(classifyLaunchReadinessStoreFailure(new Error(message))).toBe(expected);
+  });
+
+  it("does not serialize thrown values or invoke code accessors", () => {
+    const getter = vi.fn(() => {
+      throw new Error("private-token");
+    });
+    const error = Object.defineProperty(new Error("private-token"), "code", { get: getter });
+    expect(classifyLaunchReadinessStoreFailure(error)).toBe("unclassified");
+    expect(classifyLaunchReadinessStoreFailure({ message: "private-token" })).toBe("unclassified");
+    expect(classifyLaunchReadinessStoreFailure(undefined)).toBe("unclassified");
+    expect(getter).not.toHaveBeenCalled();
   });
 });

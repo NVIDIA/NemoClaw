@@ -102,6 +102,7 @@ export function dcodeProfileInput(
     "openai-api",
     "gpt-5",
     "openai-completions",
+    false,
   );
   return {
     ...profileInput(),
@@ -228,6 +229,61 @@ export function snapshot(overrides: Partial<ObservedExportSnapshot> = {}): Obser
   };
 }
 
+export function geminiSnapshot(): ObservedExportSnapshot {
+  const base = snapshot();
+  const endpoint = "https://generativelanguage.googleapis.com/v1beta/openai/";
+  const model = "gemini-3.6-flash";
+  const route = resolveManagedStartupInferenceRoute(
+    "openclaw",
+    "gemini-api",
+    model,
+    "openai-completions",
+  );
+  return {
+    ...base,
+    registry: entry({
+      provider: "gemini-api",
+      model,
+      preferredInferenceApi: "openai-completions",
+      endpointUrl: endpoint,
+      credentialEnv: "GEMINI_API_KEY",
+      workload: managedWorkload(
+        profileInput({
+          inference: {
+            routeProvider: route.providerKey,
+            upstreamProvider: "gemini-api",
+            model,
+            routedBaseUrl: route.inferenceBaseUrl,
+            upstreamEndpointUrl: null,
+            api: "openai-completions",
+            primaryModelRef: route.primaryModelRef,
+            compatibility: route.inferenceCompat ?? {},
+          },
+        }),
+      ),
+    }),
+    inference: {
+      ...base.inference,
+      provider: "gemini-api",
+      model,
+      api: "openai-completions",
+      endpoint,
+      credentialEnv: "GEMINI_API_KEY",
+      endpointEvidence: {
+        endpoint,
+        provider: {
+          gatewayName: "nemoclaw",
+          workspace: "default",
+          name: "gemini-api",
+          id: "gemini-provider-id",
+          resourceVersion: "8",
+        },
+        source: { kind: "provider-config", key: "OPENAI_BASE_URL" },
+      },
+    },
+  };
+}
+
 export function braveSnapshot(): ObservedExportSnapshot {
   const value = snapshot();
   return {
@@ -269,6 +325,37 @@ export function hermesSnapshot(
     }),
     sandbox: { ...snapshot().sandbox, imageRef: hermesImageRef },
   });
+}
+
+export function tavilySnapshot(agent: "openclaw" | "hermes" = "openclaw"): ObservedExportSnapshot {
+  const value = agent === "hermes" ? hermesSnapshot() : snapshot();
+  const input = agent === "hermes" ? hermesProfileInput() : profileInput();
+  const profileId = agent === "hermes" ? "tavily-hermes-v1" : "tavily";
+  return {
+    ...value,
+    registry: {
+      ...value.registry,
+      webSearchEnabled: true,
+      webSearchProvider: "tavily",
+      workload: managedWorkload(
+        { ...input, webSearch: { fetchEnabled: true, provider: "tavily" } },
+        agent === "hermes" ? hermesImageRef : imageRef,
+      ),
+    },
+    sandbox: { ...value.sandbox, providerNames: ["alpha-tavily-search"] },
+    webSearchProvider: {
+      gatewayName: "nemoclaw",
+      workspace: "default",
+      name: "alpha-tavily-search",
+      id: "tavily-provider-id",
+      resourceVersion: "4",
+      type: profileId,
+      profileWorkspace: "default",
+      profile: { id: profileId, source: "user", scope: "workspace", resourceVersion: "4" },
+      credentialKeys: ["TAVILY_API_KEY"],
+      configKeys: [],
+    },
+  };
 }
 
 export function dcodeSnapshot(
@@ -431,6 +518,7 @@ export function compatibleSnapshot(
     "compatible-endpoint",
     "gpt-5",
     "openai-completions",
+    false,
   );
   const input = {
     ...base,

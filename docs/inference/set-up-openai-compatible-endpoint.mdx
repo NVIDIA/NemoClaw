@@ -13,8 +13,28 @@ content:
 Use the custom OpenAI-compatible provider for servers that implement `/v1/chat/completions` or a compatible `/v1/responses` API.
 Examples include vLLM, TensorRT-LLM, llama.cpp, LocalAI, and other compatible servers.
 
-The agent connects to `inference.local` inside the sandbox.
-OpenShell forwards that traffic to the endpoint configured during onboarding.
+<AgentOnly variant="openclaw">
+New hosted custom selections outside the Personal policy tier use the recorded endpoint through a sandbox-attached OpenShell provider.
+Fresh Personal-tier selections and retained shared routes use `inference.local`.
+OpenShell holds the upstream credential and supplies it at egress.
+</AgentOnly>
+<AgentOnly variant="deepagents">
+New Deep Agents Code sandboxes normally use sandbox-attached OpenShell providers for hosted compatible endpoints and qualified host-local endpoints.
+Fresh onboarding keeps a hosted compatible endpoint on `inference.local` when you select the Personal policy tier.
+For an attached route, the agent uses the recorded endpoint and a credential reference; OpenShell supplies the credential at egress.
+Retained shared routes and owned Local NVIDIA NIM use `inference.local`.
+Refer to [How Inference Routing Works](../about-inference-routing) for the qualification boundary.
+</AgentOnly>
+<AgentOnly variant="hermes">
+New Hermes sandboxes use sandbox-attached OpenShell providers for hosted compatible endpoints outside the Personal policy tier and qualified host-local endpoints.
+Fresh Personal-tier hosted selections stay on `inference.local` without a native attachment.
+For an attached route, the agent uses the recorded endpoint and a credential reference; OpenShell supplies the credential at egress.
+Retained shared routes and owned Local NVIDIA NIM use `inference.local`.
+Refer to [How Inference Routing Works](../about-inference-routing) for the qualification boundary.
+</AgentOnly>
+<AgentOnly variant="hermes">
+Live qualification of the Hermes native local lifecycle is pending.
+</AgentOnly>
 
 ## Start the Server
 
@@ -38,7 +58,7 @@ Onboarding does not display this degraded result.
 Before you continue, inspect the configured backend port:
 
 ```bash
-backend_port=${NEMOCLAW_VLLM_PORT:-8000}
+backend_port=8000 # Replace with the port in the endpoint URL entered during onboarding.
 lsof -nP -iTCP:"$backend_port" -sTCP:LISTEN
 ```
 
@@ -61,21 +81,45 @@ Enter the server base URL and the model ID reported by the server.
 Use a host-routable URL such as `http://localhost:8000/v1` when you want onboarding to verify the API, tool-calling, and streaming paths before gateway registration.
 To qualify for automatic rewriting, an HTTP endpoint URL must use the loopback host `localhost`, `127.0.0.1`, or `[::1]`.
 Automatic rewriting is limited to the port selected by `NEMOCLAW_VLLM_PORT` (`8000` by default) and ports `11434` and `11435`.
-NemoClaw validates the entered URL from the host and registers the OpenShell gateway route through `host.openshell.internal:<port>` for sandbox traffic.
-Sandbox inference requests continue to use the base `inference.local` policy, so the managed compatible-endpoint route does not require adding the `local-inference` preset.
-NemoClaw leaves URLs without an explicit port, URLs on `:80` or another privileged port, and URLs on unsupported ports unchanged.
-Those URLs require a separately compatible runtime topology and network policy.
+NemoClaw validates the entered URL from the host.
+Shared selections use `https://inference.local/v1` inside the sandbox.
+Attached selections use the recorded endpoint; qualified host-local selections may use `host.openshell.internal:<port>` to reach the host.
+<AgentOnly variant="openclaw">
+Shared OpenClaw compatible selections use the base `inference.local` policy.
+New hosted selections outside the Personal tier use their endpoint-bound attached provider profile.
+Neither route requires adding the `local-inference` preset.
+</AgentOnly>
+<AgentOnly variant="deepagents">
+For qualified host-local endpoints, the attached provider profile authorizes the recorded endpoint and the managed DCode runtime binaries.
+Hosted compatible endpoints normally use their recorded endpoint through an attached provider.
+Fresh Personal-tier onboarding keeps a hosted compatible endpoint on the base `inference.local` policy and does not create a native provider attachment.
+NemoClaw refuses Personal for an existing sandbox that already has a custom native provider attachment; create a new sandbox instead.
+Retained shared routes and owned Local NVIDIA NIM use the base `inference.local` policy.
+These routes do not require the `local-inference` preset.
+Refer to [Policy Tiers](../../reference/network-policies#policy-tiers) for the Personal-tier limitation and recovery steps.
+</AgentOnly>
+<AgentOnly variant="hermes">
+For qualified host-local endpoints, the attached provider profile authorizes the recorded endpoint and the Hermes runtime binaries.
+New hosted compatible endpoints outside the Personal tier use an endpoint-bound attached provider.
+Fresh Personal-tier and retained shared selections use the base `inference.local` policy.
+These routes do not require adding the `local-inference` preset.
+</AgentOnly>
+For authenticated endpoints, NemoClaw leaves URLs without an explicit port, URLs on `:80` or another privileged port, and URLs on unsupported ports unchanged.
+Those authenticated URLs require a separately compatible runtime topology and network policy.
 This rewrite depends on an OpenShell topology that resolves `host.openshell.internal` inside the sandbox; if that bridge is unavailable, onboarding can still validate the host URL, but `$$nemoclaw <name> status` is the authoritative runtime check.
 For no-authentication endpoints on the port selected by `NEMOCLAW_VLLM_PORT` (`8000` by default) or port `11434`, keep the server bound to loopback.
 NemoClaw's token-protected proxy makes the loopback service reachable from the sandbox without exposing the backend on other host interfaces.
-Port `11435` is the default proxy listener, so an endpoint using that port requires `COMPATIBLE_API_KEY` unless you configure `NEMOCLAW_OLLAMA_PROXY_PORT` to use a different free port before onboarding.
+Port `11435` is reserved for the proxy and is unavailable for new no-authentication endpoints.
+Recovery can retain an existing no-authentication route on `11435` only when the proxy has moved and no other protected service owns that port.
+The shared proxy stays pinned to its existing backend; reuse that endpoint.
+Moving or removing a sandbox does not release the host-global binding.
+To select a different no-authentication backend, back up the sandboxes and remove the final NemoClaw gateway with the uninstaller before reinstalling.
 
 If you manually enter a sandbox-internal alias such as `http://host.openshell.internal:8000/v1`, host-side endpoint probing is skipped during onboarding.
 Use a host-routable endpoint such as `localhost` when you need onboarding to verify the API, tool-calling, and streaming paths before gateway registration.
 Otherwise, verify the runtime route after onboarding with `$$nemoclaw <name> status` and a short agent request.
 
 For an HTTP URL using the host `localhost`, `127.0.0.1`, or `[::1]` and the port selected by `NEMOCLAW_VLLM_PORT` (`8000` by default) or port `11434`, the API key prompt says that pressing Enter selects no authentication.
-Port `11435` also supports this mode when `NEMOCLAW_OLLAMA_PROXY_PORT` uses a different free port before onboarding.
 Other URLs still require `COMPATIBLE_API_KEY`.
 
 Refer to [Choose a Compatible Inference API](choose-compatible-inference-api) for the probe order and runtime API selection.
@@ -137,7 +181,7 @@ NEMOCLAW_PROVIDER=custom \
 | `NEMOCLAW_PROVIDER` | Set to `custom`. |
 | `NEMOCLAW_ENDPOINT_URL` | Base URL of the server, without userinfo, query, or fragment components. |
 | `NEMOCLAW_MODEL` | Model ID reported by the server. |
-| `NEMOCLAW_COMPATIBLE_AUTH_MODE` | Set to `none` to explicitly select no authentication for an HTTP endpoint using `localhost`, `127.0.0.1`, or `[::1]` and the port selected by `NEMOCLAW_VLLM_PORT` (`8000` by default) or port `11434`. Port `11435` requires `NEMOCLAW_OLLAMA_PROXY_PORT` to use a different free port. |
+| `NEMOCLAW_COMPATIBLE_AUTH_MODE` | Set to `none` to explicitly select no authentication for an HTTP endpoint using `localhost`, `127.0.0.1`, or `[::1]` and the port selected by `NEMOCLAW_VLLM_PORT` (`8000` by default) or port `11434`. Protected service ports remain excluded. |
 | `NEMOCLAW_REASONING` | Enables reasoning-only validation with the case-insensitive true values `true`, `1`, `yes`, and `y`. |
 | `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` | Optional comma-separated hostnames or IP literals for operator-owned private endpoints. Wildcards are not supported. |
 | `NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS` | Inference-only compatibility alias for `NEMOCLAW_TRUSTED_PRIVATE_HOSTS`. Inference onboarding combines entries from both variables. |

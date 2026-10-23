@@ -4,6 +4,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createCliOpenShellInferenceRouteObserver,
+  createCliOpenShellInferenceRouteMutator,
   createSynchronousCliOpenShellInferenceRouteObserver,
 } from "./inference-route-cli";
 
@@ -281,6 +282,432 @@ describe("CLI inference route observation", () => {
     expect(result).toMatchObject({
       ok: false,
       error: { kind: "transport", reason: "process_start" },
+    });
+    expect(JSON.stringify(result)).not.toContain("secret");
+  });
+});
+
+const mutationRequest = {
+  target: { kind: "named", gatewayName: "nemoclaw-19090" },
+  route: { provider: "openai-api", model: "gpt-5" },
+  verification: "skip",
+  verificationTimeoutSeconds: 30,
+  timeoutMs: 4_321,
+} as const;
+
+describe("CLI inference route mutation", () => {
+  it("updates only the named gateway through the bounded asynchronous capture", async () => {
+    const capture = vi.fn().mockResolvedValue({ status: 0, output: "", stdout: "", stderr: "" });
+
+    await expect(
+      createCliOpenShellInferenceRouteMutator(capture).setInferenceRoute(mutationRequest),
+    ).resolves.toEqual({ ok: true });
+    expect(capture).toHaveBeenCalledExactlyOnceWith(
+      [
+        "inference",
+        "set",
+        "-g",
+        "nemoclaw-19090",
+        "--no-verify",
+        "--provider",
+        "openai-api",
+        "--model",
+        "gpt-5",
+        "--timeout",
+        "30",
+      ],
+      {
+        ignoreError: true,
+        includeStderr: true,
+        includeStreams: true,
+        outputLimitBytes: 1024 * 1024,
+        timeout: 4_321,
+      },
+    );
+  });
+
+  it("rejects invalid input and competing endpoint authority before spawning", async () => {
+    const capture = vi.fn();
+    const mutator = createCliOpenShellInferenceRouteMutator(capture, {
+      environment: { OPENSHELL_GATEWAY_ENDPOINT: "https://other.invalid" },
+    });
+
+    await expect(mutator.setInferenceRoute(mutationRequest)).resolves.toMatchObject({
+      ok: false,
+      ambiguous: false,
+      error: { kind: "validation" },
+    });
+    expect(capture).not.toHaveBeenCalled();
+  });
+
+  it.each([0, -1, 4_321.5, Number.NaN, Number.POSITIVE_INFINITY, 2_147_483_648])(
+    "rejects an unsafe outer process timeout before spawning: %s",
+    async (timeoutMs) => {
+      const capture = vi.fn();
+
+      await expect(
+        createCliOpenShellInferenceRouteMutator(capture).setInferenceRoute({
+          ...mutationRequest,
+          timeoutMs,
+        }),
+      ).resolves.toMatchObject({
+        ok: false,
+        ambiguous: false,
+        error: { kind: "validation" },
+      });
+      expect(capture).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    "provider 'openai-api' not found",
+    'Provider "openai-api" was not found',
+    "not found: provider `openai-api`",
+  ])("classifies an exact requested-provider failure as definite: %s", async (output) => {
+    const capture = vi.fn().mockResolvedValue({ status: 17, output });
+
+    await expect(
+      createCliOpenShellInferenceRouteMutator(capture, {
+        redactDiagnostic: (value) => value,
+      }).setInferenceRoute(mutationRequest),
+    ).resolves.toMatchObject({
+      ok: false,
+      ambiguous: false,
+      error: { kind: "command", reason: "provider_not_found", exitCode: 17 },
+    });
+  });
+
+  it.each([
+    "provider 'other-provider' not found",
+    "provider openai-api not found",
+    "the provider name was not found: openai-api",
+  ])("does not classify unsafe provider-not-found text for retry: %s", async (output) => {
+    const result = await createCliOpenShellInferenceRouteMutator(
+      vi.fn().mockResolvedValue({ status: 17, output }),
+      { redactDiagnostic: (value) => value },
+    ).setInferenceRoute(mutationRequest);
+
+    expect(result).toMatchObject({
+      ok: false,
+      ambiguous: false,
+      error: { kind: "command", reason: "failed", exitCode: 17 },
+    });
+  });
+
+  it("bounds provider-not-found classification to the captured evidence window", async () => {
+    const malformed = "x".repeat(100 * 1024);
+    const withinCapture = `${"x".repeat(4_000)}\nprovider 'openai-api' not found`;
+    const beyondCapture = `${"x".repeat(1024 * 1024)}\nprovider 'openai-api' not found`;
+    const mutator = (output: string) =>
+      createCliOpenShellInferenceRouteMutator(vi.fn().mockResolvedValue({ status: 17, output }), {
+        redactDiagnostic: (value) => value,
+      }).setInferenceRoute(mutationRequest);
+
+    await expect(mutator(malformed)).resolves.toMatchObject({
+      ok: false,
+      ambiguous: false,
+      error: { kind: "command", reason: "failed" },
+    });
+    await expect(mutator(withinCapture)).resolves.toMatchObject({
+      ok: false,
+      ambiguous: false,
+      error: { kind: "command", reason: "provider_not_found" },
+    });
+    await expect(mutator(beyondCapture)).resolves.toMatchObject({
+      ok: false,
+      ambiguous: false,
+      error: { kind: "command", reason: "failed" },
+    });
+  });
+
+  it("classifies beyond display truncation while redacting URL userinfo and query text", async () => {
+    const password = "provider-password-secret";
+    const query = "provider-query-secret";
+    const result = await createCliOpenShellInferenceRouteMutator(
+      vi.fn().mockResolvedValue({
+        status: 17,
+        output:
+          `https://user:${password}@gateway.example.test/v1?token=${query} ${"x".repeat(3_000)}` +
+          "\nprovider 'openai-api' not found",
+      }),
+      {
+        redactDiagnostic: (value) =>
+          value.replace(password, "[redacted]").replace(query, "[redacted]"),
+      },
+    ).setInferenceRoute(mutationRequest);
+
+    expect(result).toMatchObject({
+      ok: false,
+      ambiguous: false,
+      error: { kind: "command", reason: "provider_not_found" },
+    });
+    expect(JSON.stringify(result)).not.toContain(password);
+    expect(JSON.stringify(result)).not.toContain(query);
+  });
+
+  it.each([
+    [
+      "timeout",
+      {
+        status: null,
+        output: "token=secret",
+        error: Object.assign(new Error("secret"), { code: "ETIMEDOUT" }),
+      },
+      { kind: "timeout" },
+    ],
+    [
+      "missing status",
+      { status: null, output: "token=secret" },
+      { kind: "command", reason: "indeterminate" },
+    ],
+    [
+      "signal-terminated process with collapsed exit status",
+      { status: 1, signal: "SIGTERM", output: "token=secret" },
+      { kind: "command", reason: "indeterminate", exitCode: null },
+    ],
+    [
+      "lost connection",
+      { status: 1, output: "connection reset token=secret" },
+      { kind: "transport", reason: "unreachable" },
+    ],
+    [
+      "status-zero error",
+      { status: 0, output: "Error: token=secret" },
+      { kind: "command", reason: "indeterminate" },
+    ],
+  ])("marks a %s result ambiguous and redacts its detail", async (_, captured, error) => {
+    const result = await createCliOpenShellInferenceRouteMutator(
+      vi.fn().mockResolvedValue(captured),
+      {
+        redactDiagnostic: (value) => value.replaceAll("secret", "[redacted]"),
+      },
+    ).setInferenceRoute(mutationRequest);
+
+    expect(result).toMatchObject({ ok: false, ambiguous: true, error });
+    expect(JSON.stringify(result)).not.toContain("secret");
+  });
+
+  it.each([
+    ["authentication", "Error: unauthorized token=secret", { kind: "authentication" }],
+    [
+      "gateway identity",
+      "handshake verification failed token=secret",
+      { kind: "transport", reason: "identity_mismatch" },
+    ],
+  ])("keeps status-zero %s output ambiguous", async (_, output, error) => {
+    const result = await createCliOpenShellInferenceRouteMutator(
+      vi.fn().mockResolvedValue({ status: 0, output }),
+      { redactDiagnostic: (value) => value.replaceAll("secret", "[redacted]") },
+    ).setInferenceRoute(mutationRequest);
+
+    expect(result).toMatchObject({
+      ok: false,
+      ambiguous: true,
+      error,
+    });
+    expect(JSON.stringify(result)).not.toContain("secret");
+  });
+
+  it.each([
+    ["authentication", "Error: unauthorized", { kind: "authentication" }],
+    [
+      "gateway identity",
+      "handshake verification failed",
+      { kind: "transport", reason: "identity_mismatch" },
+    ],
+  ])("keeps nonzero %s output definite", async (_, output, error) => {
+    const result = await createCliOpenShellInferenceRouteMutator(
+      vi.fn().mockResolvedValue({ status: 1, output }),
+    ).setInferenceRoute(mutationRequest);
+
+    expect(result).toMatchObject({ ok: false, ambiguous: false, error });
+  });
+
+  it("contains a pre-spawn failure as a definite non-application", async () => {
+    const capture = vi.fn().mockResolvedValue({
+      status: null,
+      output: "",
+      error: Object.assign(new Error("missing"), { code: "ENOENT" }),
+    });
+
+    await expect(
+      createCliOpenShellInferenceRouteMutator(capture).setInferenceRoute(mutationRequest),
+    ).resolves.toMatchObject({
+      ok: false,
+      ambiguous: false,
+      error: { kind: "transport", reason: "process_start" },
+    });
+  });
+
+  it("keeps an unrecognized verified nonzero result ambiguous", async () => {
+    const result = await createCliOpenShellInferenceRouteMutator(
+      vi.fn().mockResolvedValue({ status: 19, output: "verification command failed" }),
+      { redactDiagnostic: (value) => value },
+    ).setInferenceRoute({
+      ...mutationRequest,
+      verification: "required",
+      timeoutMs: 45_000,
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      ambiguous: true,
+      error: { kind: "command", reason: "indeterminate", exitCode: 19 },
+    });
+  });
+
+  it("classifies the exact requested provider/model verification failure as definite", async () => {
+    const output =
+      "failed to verify inference endpoint for provider 'openai-api' and model 'gpt-5' at https://api.example.test/v1: HTTP 401 unauthorized";
+    const result = await createCliOpenShellInferenceRouteMutator(
+      vi.fn().mockResolvedValue({ status: 1, output }),
+      { redactDiagnostic: (value) => value },
+    ).setInferenceRoute({ ...mutationRequest, verification: "required", timeoutMs: 45_000 });
+
+    expect(result).toMatchObject({
+      ok: false,
+      ambiguous: false,
+      error: { kind: "command", reason: "verification_failed", exitCode: 1 },
+    });
+  });
+
+  it.each([
+    "failed to verify inference endpoint for provider 'other' and model 'gpt-5' at https://api.example.test/v1",
+    "failed to verify inference endpoint for provider 'openai-api' and model 'other' at https://api.example.test/v1",
+    "failed to verify inference endpoint for provider 'OpenAI-api' and model 'gpt-5' at https://api.example.test/v1",
+  ])("does not trust verification failure text for a different route: %s", async (output) => {
+    const result = await createCliOpenShellInferenceRouteMutator(
+      vi.fn().mockResolvedValue({ status: 1, output }),
+      { redactDiagnostic: (value) => value },
+    ).setInferenceRoute({ ...mutationRequest, verification: "required", timeoutMs: 45_000 });
+
+    expect(result).toMatchObject({
+      ok: false,
+      ambiguous: true,
+      error: { kind: "command", reason: "indeterminate", exitCode: 1 },
+    });
+  });
+
+  it("does not classify verification text from a successful command", async () => {
+    const output =
+      "failed to verify inference endpoint for provider 'openai-api' and model 'gpt-5' at https://api.example.test/v1";
+
+    await expect(
+      createCliOpenShellInferenceRouteMutator(
+        vi.fn().mockResolvedValue({ status: 0, output }),
+      ).setInferenceRoute({ ...mutationRequest, verification: "required", timeoutMs: 45_000 }),
+    ).resolves.toEqual({ ok: true });
+  });
+
+  it.each(["HTTP 401 unauthorized", "Error: authentication failed"])(
+    "does not treat required-verification authorization output as a definite pre-write failure: %s",
+    async (output) => {
+      const result = await createCliOpenShellInferenceRouteMutator(
+        vi.fn().mockResolvedValue({ status: 1, output }),
+        { redactDiagnostic: (value) => value },
+      ).setInferenceRoute({
+        ...mutationRequest,
+        verification: "required",
+        timeoutMs: 45_000,
+      });
+
+      expect(result).toMatchObject({
+        ok: false,
+        ambiguous: true,
+        error: { kind: "command", reason: "indeterminate", exitCode: 1 },
+      });
+    },
+  );
+
+  it("does not expose a successful exit code for an ambiguous required-verification failure", async () => {
+    const result = await createCliOpenShellInferenceRouteMutator(
+      vi.fn().mockResolvedValue({ status: 0, output: "Error: authentication failed" }),
+      { redactDiagnostic: (value) => value },
+    ).setInferenceRoute({
+      ...mutationRequest,
+      verification: "required",
+      timeoutMs: 45_000,
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      ambiguous: true,
+      error: { kind: "command", reason: "indeterminate", exitCode: null },
+    });
+  });
+
+  it("allows verified mutations enough outer-process grace without extending no-verify calls", async () => {
+    const verifiedCapture = vi
+      .fn()
+      .mockResolvedValue({ status: 0, output: "", stdout: "", stderr: "" });
+    await createCliOpenShellInferenceRouteMutator(verifiedCapture).setInferenceRoute({
+      ...mutationRequest,
+      verification: "required",
+      verificationTimeoutSeconds: 180,
+      timeoutMs: undefined,
+    });
+    expect(verifiedCapture).toHaveBeenCalledWith(
+      expect.arrayContaining(["--timeout", "180"]),
+      expect.objectContaining({ timeout: 195_000 }),
+    );
+
+    const skippedCapture = vi
+      .fn()
+      .mockResolvedValue({ status: 0, output: "", stdout: "", stderr: "" });
+    await createCliOpenShellInferenceRouteMutator(skippedCapture).setInferenceRoute({
+      ...mutationRequest,
+      verification: "skip",
+      verificationTimeoutSeconds: 180,
+      timeoutMs: 4_321,
+    });
+    expect(skippedCapture).toHaveBeenCalledWith(
+      expect.arrayContaining(["--no-verify", "--timeout", "180"]),
+      expect.objectContaining({ timeout: 4_321 }),
+    );
+  });
+
+  it("allows the omitted 60-second verification default enough outer-process grace", async () => {
+    const capture = vi.fn().mockResolvedValue({ status: 0, output: "" });
+
+    await createCliOpenShellInferenceRouteMutator(capture).setInferenceRoute({
+      target: mutationRequest.target,
+      route: mutationRequest.route,
+      verification: "required",
+    });
+
+    expect(capture).toHaveBeenCalledWith(
+      expect.not.arrayContaining(["--timeout"]),
+      expect.objectContaining({ timeout: 75_000 }),
+    );
+  });
+
+  it("rejects an explicit process cap shorter than omitted required verification", async () => {
+    const capture = vi.fn();
+
+    await expect(
+      createCliOpenShellInferenceRouteMutator(capture).setInferenceRoute({
+        target: mutationRequest.target,
+        route: mutationRequest.route,
+        verification: "required",
+        timeoutMs: 74_999,
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      ambiguous: false,
+      error: { kind: "validation" },
+    });
+    expect(capture).not.toHaveBeenCalled();
+  });
+
+  it("treats a rejected asynchronous capture as an unknown outcome", async () => {
+    const capture = vi.fn().mockRejectedValue(new Error("secret"));
+
+    const result =
+      await createCliOpenShellInferenceRouteMutator(capture).setInferenceRoute(mutationRequest);
+    expect(result).toMatchObject({
+      ok: false,
+      ambiguous: true,
+      error: { kind: "command", reason: "indeterminate", exitCode: null },
     });
     expect(JSON.stringify(result)).not.toContain("secret");
   });

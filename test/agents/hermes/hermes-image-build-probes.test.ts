@@ -73,7 +73,6 @@ const commands = [
   "cron-create",
   "cron-reopen",
   "cron-runtime-source",
-  "dashboard-policy",
   "discord-backup",
   "discord-create",
   "discord-recovery-source",

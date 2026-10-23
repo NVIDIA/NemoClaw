@@ -9,9 +9,10 @@ import {
   type NvidiaPlatform,
 } from "../inference/nim.js";
 import type { ContainerGpuProofStatus } from "../container-gpu-proof.js";
+import { isDgxStationGb300GpuName } from "../inference/dgx-station-identity.js";
 import type { HostAssessment } from "../onboard/preflight.js";
 import { assessHost } from "../onboard/preflight.js";
-import { collectN1xWslProduct } from "../inference/platform-identity/n1x-wsl.js";
+import { collectWslNvidiaProduct } from "../inference/platform-identity/n1x-wsl.js";
 import { resolveOpenshell } from "./openshell-resolver.js";
 import {
   type CollectPlatformIdentityOptions,
@@ -94,7 +95,10 @@ export interface CollectHostObservationsOptions {
   assess?: () => HostAssessment;
   architecture?: string;
   detectGpu?: () =>
-    | (Pick<GpuDetection, "count" | "containerGpuProof" | "n1xWslProduct"> &
+    | (Pick<
+        GpuDetection,
+        "count" | "containerGpuProof" | "n1xWslProduct" | "stationGb300WslProduct"
+      > &
         Partial<
           Pick<
             GpuDetection,
@@ -128,18 +132,25 @@ export interface CreateHostReadinessReportOptions {
   maxObservationAgeMs?: number;
 }
 
-/** Collect the Windows product once with the same bounded readiness transport. */
-export function collectN1xWslProductObservation(
+export interface WslNvidiaProductObservation {
+  n1xWslProduct: boolean | null;
+  stationGb300WslProduct: boolean | null;
+}
+
+/** Collect and classify the Windows product once with the bounded readiness transport. */
+export function collectWslNvidiaProductObservation(
   isWsl: boolean,
-  collector: typeof collectN1xWslProduct = collectN1xWslProduct,
-): boolean | null {
+  collector: typeof collectWslNvidiaProduct = collectWslNvidiaProduct,
+): WslNvidiaProductObservation {
   const probeEnv = buildSystemReadinessProbeEnv();
-  return (
-    collector({
-      isWsl,
-      runCaptureImpl: createSystemReadinessCapture(probeEnv),
-    }) ?? null
-  );
+  const observed = collector({
+    isWsl,
+    runCaptureImpl: createSystemReadinessCapture(probeEnv),
+  });
+  return {
+    n1xWslProduct: observed?.n1x ?? null,
+    stationGb300WslProduct: observed?.stationGb300 ?? null,
+  };
 }
 
 function safeReportText(value: string): string {
@@ -203,6 +214,10 @@ function adaptHostAssessment(
     platformIdentity: {
       ...platformIdentity,
       n1xWslGpu: host.isWsl && hostGpuPlatform === "n1x" ? true : undefined,
+      stationGb300WslGpu:
+        host.isWsl && gpu?.gpus
+          ? gpu.gpus.some(({ name }) => isDgxStationGb300GpuName(name))
+          : undefined,
     },
     runtimeProviderId: runtimeProvider?.providerId,
     runtimeProviderOwnsHostReadiness: runtimeProvider?.ownsHostReadiness,
@@ -266,6 +281,17 @@ function observeHost(
       Object.prototype.hasOwnProperty.call(gpu, "n1xWslProduct")
     ) {
       platformIdentityOptions.n1xWslProductObservation = gpu.n1xWslProduct ?? null;
+    }
+    if (
+      !Object.prototype.hasOwnProperty.call(
+        platformIdentityOptions,
+        "stationGb300WslProductObservation",
+      ) &&
+      gpu &&
+      Object.prototype.hasOwnProperty.call(gpu, "stationGb300WslProduct")
+    ) {
+      platformIdentityOptions.stationGb300WslProductObservation =
+        gpu.stationGb300WslProduct ?? null;
     }
     return {
       observedAt,
@@ -392,6 +418,7 @@ function unknownProjection(evidenceIds: readonly string[]): {
     "host.platform.wsl_runtime_available",
     "host.platform.wsl_gpu_passthrough",
     "host.platform.n1x_wsl",
+    "host.platform.station_gb300_wsl",
     "host.platform.dgx_spark",
     "host.platform.n1x",
     "host.platform.dgx_station_hardware",

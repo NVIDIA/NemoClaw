@@ -23,11 +23,12 @@ export const PREPARE_COMPILED_ARTIFACT_ACTION =
 const CHECKOUT_LOCAL_PREPARE_E2E_ACTION = "./.github/actions/prepare-e2e";
 export const CLI_ARTIFACT_PRODUCER_JOB = E2E_JOB_POLICY.cliArtifactProducer;
 const PREINSTALLED_E2E_JOBS = new Set([
+  "dgx-station-express",
   "staging-brev-launchable",
   "staging-brev-launchable-identity",
 ]);
 const NATIVE_RUNTIME_QUALIFICATION_PRODUCER_PREPARE_CONDITION =
-  "${{ inputs.checkout_sha == '' || inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '' }}";
+  "${{ inputs.checkout_sha == '' || (inputs.jobs != 'native-runtime-qualification-producer' && inputs.jobs != 'llama-cpp-dgx-spark-qualification') || inputs.targets != '' }}";
 
 export const PREPARE_E2E_NO_BUILD_JOBS = new Set<string>(E2E_JOB_POLICY.prepareNoBuild);
 

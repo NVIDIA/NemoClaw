@@ -31,7 +31,11 @@ export function fullE2eGateway(preinstalled: boolean, env: NodeJS.ProcessEnv = p
     env: { ...env, NEMOCLAW_GATEWAY_MANAGEMENT: declarationPath },
   });
   if (!loaded.ok) throw new Error(`Launchable gateway declaration: ${loaded.reason}`);
-  if (loaded.declaration?.mode !== "externally-supervised" || !loaded.declaration.endpoint) {
+  if (
+    loaded.declaration?.mode !== "externally-supervised" ||
+    !loaded.declaration.endpoint ||
+    !loaded.declaration.stateDir
+  ) {
     throw new Error("The preinstalled Launchable requires an externally supervised gateway");
   }
   const endpoint = new URL(loaded.declaration.endpoint);
@@ -47,6 +51,7 @@ export function fullE2eGateway(preinstalled: boolean, env: NodeJS.ProcessEnv = p
       OPENSHELL_GATEWAY: resolveGatewayName(port),
       NEMOCLAW_GATEWAY_MANAGEMENT: declarationPath,
       NEMOCLAW_GATEWAY_PORT: String(port),
+      NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: loaded.declaration.stateDir,
     },
   };
 }

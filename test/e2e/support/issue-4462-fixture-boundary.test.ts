@@ -9,6 +9,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { adminApprovalConnectScript } from "../fixtures/admin-approval-connect.ts";
+import { ADMIN_APPROVAL_TEST_CLI_SH } from "../../support/admin-approval-connect-fixture.ts";
 import { ISSUE_4462_PAIRING_SEED_PY } from "../fixtures/issue-4462-pairing-seed.ts";
 import { ISSUE_4462_SCOPE_UPGRADE_PHASES } from "../fixtures/issue-4462-admin-approval-evidence.ts";
 
@@ -178,7 +179,7 @@ describe("scope-upgrade approval live fixture", () => {
   it("refuses removed private gateway aliases at the connect-shell boundary", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-4462-connect-"));
     const cli = path.join(root, "nemoclaw");
-    fs.writeFileSync(cli, "#!/bin/sh\nexec /bin/bash -s\n", { mode: 0o755 });
+    fs.writeFileSync(cli, ADMIN_APPROVAL_TEST_CLI_SH, { mode: 0o755 });
     try {
       const result = spawnSync("bash", ["-c", adminApprovalConnectScript(cli, "alpha", "cron")], {
         encoding: "utf8",

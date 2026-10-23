@@ -9,8 +9,10 @@ import {
   isShippedManagedImageAgent,
   MANAGED_IMAGE_PLATFORMS,
   MANAGED_IMAGE_REPOSITORIES,
+  managedImagePlatformForNodeArchitecture,
   SHIPPED_MANAGED_IMAGE_AGENTS,
   type ManagedImageContractV1,
+  type ManagedImagePlatform,
   type ShippedManagedImageAgent,
 } from "../../../src/lib/onboard/managed-image/contract.ts";
 import { readManagedWorkloadAuthority } from "../../../src/lib/onboard/workload/authority.ts";
@@ -55,11 +57,19 @@ function selectedManagedImageRevision(environment: NodeJS.ProcessEnv): string {
   return catalog.revision;
 }
 
-export function assertManagedImageReceiptMatchesSelectedCohort(options: {
+interface SelectedManagedImageAuthority {
+  readonly platform: ManagedImagePlatform;
+  readonly reference: string;
+  readonly release: string | null;
+  readonly sourceCohort: string;
+  readonly sourceRevision: string;
+}
+
+function selectedManagedImageAuthority(options: {
   readonly environment: NodeJS.ProcessEnv;
   readonly expectedAgent: ShippedManagedImageAgent;
-  readonly workload?: Record<string, unknown>;
-}): void {
+  readonly platform: unknown;
+}): SelectedManagedImageAuthority {
   const revision = options.environment.E2E_MANAGED_IMAGE_REVISION?.trim() ?? "";
   const rawReceipt = options.environment.E2E_MANAGED_IMAGE_COHORT_RECEIPT?.trim() ?? "";
   if (!revision) {
@@ -68,26 +78,23 @@ export function assertManagedImageReceiptMatchesSelectedCohort(options: {
         "stock onboarding requires the complete selected managed-image cohort receipt",
       );
     }
-    const platform = options.workload?.platform;
     if (
-      typeof platform !== "string" ||
-      !(MANAGED_IMAGE_PLATFORMS as readonly string[]).includes(platform)
+      typeof options.platform !== "string" ||
+      !(MANAGED_IMAGE_PLATFORMS as readonly string[]).includes(options.platform)
     ) {
       throw new Error("stock onboarding candidate managed-image catalog is invalid");
     }
     const contract = readCandidateCatalog(options.environment).get(options.expectedAgent);
-    if (
-      !contract ||
-      contract.platform !== platform ||
-      options.workload?.kind !== "managed-image" ||
-      options.workload.reference !== contract.reference ||
-      options.workload.release !== contract.source.release ||
-      options.workload.sourceRevision !== contract.source.revision ||
-      options.workload.sourceCohort !== contract.source.cohort
-    ) {
+    if (!contract || contract.platform !== options.platform) {
       throw new Error("stock onboarding must use the exact agent image from the selected cohort");
     }
-    return;
+    return {
+      platform: contract.platform,
+      reference: contract.reference,
+      release: contract.source.release,
+      sourceCohort: contract.source.cohort,
+      sourceRevision: contract.source.revision,
+    };
   }
   if (!REVISION_PATTERN.test(revision) || !rawReceipt || Buffer.byteLength(rawReceipt) > 8 * 1024) {
     throw new Error("stock onboarding requires the complete selected managed-image cohort receipt");
@@ -123,11 +130,10 @@ export function assertManagedImageReceiptMatchesSelectedCohort(options: {
     throw new Error("stock onboarding selected managed-image cohort receipt is invalid");
   }
 
-  const platform = options.workload?.platform;
   const agentImages = (images as Record<string, unknown>)[options.expectedAgent];
   if (
-    typeof platform !== "string" ||
-    !(MANAGED_IMAGE_PLATFORMS as readonly string[]).includes(platform) ||
+    typeof options.platform !== "string" ||
+    !(MANAGED_IMAGE_PLATFORMS as readonly string[]).includes(options.platform) ||
     !agentImages ||
     typeof agentImages !== "object" ||
     Array.isArray(agentImages) ||
@@ -136,14 +142,56 @@ export function assertManagedImageReceiptMatchesSelectedCohort(options: {
   ) {
     throw new Error("stock onboarding selected managed-image cohort receipt is invalid");
   }
-  const expectedReference = (agentImages as Record<string, unknown>)[platform];
+  const reference = (agentImages as Record<string, unknown>)[options.platform];
+  const referencePrefix = `${MANAGED_IMAGE_REPOSITORIES[options.expectedAgent]}@sha256:`;
   if (
-    typeof expectedReference !== "string" ||
-    !expectedReference.startsWith(`${MANAGED_IMAGE_REPOSITORIES[options.expectedAgent]}@sha256:`) ||
+    typeof reference !== "string" ||
+    !reference.startsWith(referencePrefix) ||
+    !/^[a-f0-9]{64}$/i.test(reference.slice(referencePrefix.length))
+  ) {
+    throw new Error("stock onboarding must use the exact agent image from the selected cohort");
+  }
+  return {
+    platform: options.platform as ManagedImagePlatform,
+    reference,
+    release: null,
+    sourceCohort: cohort as string,
+    sourceRevision: revision,
+  };
+}
+
+/** Resolve the selected E2E image from its candidate catalog or publication receipt. */
+export function selectedE2eManagedImageReference(options: {
+  readonly environment: NodeJS.ProcessEnv;
+  readonly expectedAgent: ShippedManagedImageAgent;
+  readonly nodeArchitecture?: string;
+}): string {
+  const nodeArchitecture = options.nodeArchitecture ?? process.arch;
+  const platform = managedImagePlatformForNodeArchitecture(nodeArchitecture);
+  if (platform === null) {
+    throw new Error(
+      `selected E2E managed image does not support host architecture '${nodeArchitecture}'`,
+    );
+  }
+  return selectedManagedImageAuthority({ ...options, platform }).reference;
+}
+
+export function assertManagedImageReceiptMatchesSelectedCohort(options: {
+  readonly environment: NodeJS.ProcessEnv;
+  readonly expectedAgent: ShippedManagedImageAgent;
+  readonly workload?: Record<string, unknown>;
+}): void {
+  const selected = selectedManagedImageAuthority({
+    environment: options.environment,
+    expectedAgent: options.expectedAgent,
+    platform: options.workload?.platform,
+  });
+  if (
     options.workload?.kind !== "managed-image" ||
-    options.workload.reference !== expectedReference ||
-    options.workload.sourceRevision !== revision ||
-    options.workload.sourceCohort !== cohort
+    options.workload.reference !== selected.reference ||
+    (selected.release !== null && options.workload.release !== selected.release) ||
+    options.workload.sourceRevision !== selected.sourceRevision ||
+    options.workload.sourceCohort !== selected.sourceCohort
   ) {
     throw new Error("stock onboarding must use the exact agent image from the selected cohort");
   }

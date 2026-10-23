@@ -18,6 +18,9 @@ export const LAUNCH_READINESS_MAX_BYTES = 16 * 1_024;
 const RECEIPT_DIRECTORY = "launch-readiness";
 const AUTHORITY_PRODUCT_DIRECTORY = "nemoclaw";
 const AUTHORITY_DIRECTORY = "launch-readiness";
+const LINUX_PROC_SUPER_MAGIC = 0x9fa0n;
+// Linux UAPI O_PATH = 010000000. Node does not expose it in fs.constants.
+const LINUX_O_PATH = 0x200000;
 const SHA256_RE = /^[a-f0-9]{64}$/;
 const BOOT_ID_RE = /^[A-Za-z0-9._:-]{1,160}$/;
 
@@ -95,7 +98,26 @@ export type LaunchReadinessLeaseRead =
   | { kind: "identity"; lease: LaunchReadinessLease }
   | { kind: "valid"; lease: LaunchReadinessLease };
 
-export type LaunchReadinessMutationAuthorityCheck = "current" | "changed" | "unsafe";
+export interface LaunchReadinessUnsafeAuthorityEvidence {
+  resource:
+    | "persistent receipt"
+    | "persistent receipt directory"
+    | "runtime authority file"
+    | "runtime authority directory";
+  path: string;
+  expectedUid: number;
+  observedUid: number | null;
+  expectedMode: "0600" | "0700" | "no group/other write bits" | "no other write bits";
+  observedMode: string | null;
+  operation: "inspect" | "write";
+  errorCode: string | null;
+  repair: "chmod" | "manual";
+}
+
+export type LaunchReadinessMutationAuthorityCheck =
+  | "current"
+  | "changed"
+  | { kind: "unsafe"; evidence?: LaunchReadinessUnsafeAuthorityEvidence };
 
 export interface LaunchReadinessStoreOptions {
   home?: string;
@@ -156,17 +178,66 @@ interface AuthorityContext extends BaseContext {
   runtimeRootInode: string;
 }
 
-interface SecureDirectory {
+interface DirectoryHandle {
   fd: number;
   stat: fs.Stats;
   path: string;
-  ancestors: Array<{ path: string; stat: fs.Stats; privateDirectory: boolean }>;
+}
+
+interface SecureDirectory extends DirectoryHandle {
+  ancestors: Array<DirectoryHandle & { privateDirectory: boolean }>;
 }
 
 class MissingStoreError extends Error {}
 class UnsupportedAuthorityError extends Error {}
-class UnsafeReceiptError extends Error {}
+class UnsafeReceiptError extends Error {
+  constructor(
+    readonly diagnosticCode: string | null = null,
+    readonly directoryPath?: string,
+    readonly privateDirectory = true,
+  ) {
+    super();
+  }
+}
 class MalformedReceiptError extends Error {}
+
+/** Return only fixed labels; exception messages, paths, and runtime state stay private. */
+export function classifyLaunchReadinessStoreFailure(error: unknown) {
+  if (error instanceof MissingStoreError) return "store-missing";
+  if (error instanceof UnsupportedAuthorityError) return "authority-unsupported";
+  if (error instanceof MalformedReceiptError) return "receipt-malformed";
+  const code =
+    error instanceof UnsafeReceiptError
+      ? error.diagnosticCode
+      : error instanceof Error
+        ? Object.getOwnPropertyDescriptor(error, "code")?.value
+        : null;
+  switch (code) {
+    case "EACCES":
+    case "EPERM":
+      return "permission-denied";
+    case "EROFS":
+      return "read-only-filesystem";
+    case "ENOSPC":
+      return "storage-full";
+    case "ENOENT":
+      return "store-missing";
+  }
+  if (error instanceof UnsafeReceiptError) return "receipt-unsafe";
+  if (error instanceof Error) {
+    switch (Object.getOwnPropertyDescriptor(error, "message")?.value) {
+      case "Launch readiness publication authority changed.":
+        return "authority-changed";
+      case "Launch readiness publication is disabled while authority or clock history is unsafe.":
+        return "publication-disabled";
+      case "Launch readiness publication time is unsafe.":
+        return "publication-time-unsafe";
+      case "Launch readiness lease time envelope is no longer valid.":
+        return "lease-time-invalid";
+    }
+  }
+  return "unclassified";
+}
 
 export class LaunchReadinessFenceError extends Error {
   constructor(
@@ -716,16 +787,39 @@ function sameIdentity(left: fs.Stats, right: fs.Stats): boolean {
   return left.dev === right.dev && left.ino === right.ino;
 }
 
-function assertSecureDirectoryStat(stat: fs.Stats, uid: number, privateDirectory: boolean): void {
+function assertSecureDirectoryStat(
+  stat: fs.Stats,
+  context: BaseContext,
+  directoryPath: string,
+  privateDirectory: boolean,
+): void {
+  // The user's home may be group-writable; NemoClaw state below it remains protected.
+  const forbiddenWriteBits = "home" in context && directoryPath === context.home ? 0o002 : 0o022;
   if (
     !stat.isDirectory() ||
     stat.isSymbolicLink() ||
-    stat.uid !== uid ||
-    (stat.mode & 0o022) !== 0
+    stat.uid !== context.uid ||
+    (stat.mode & forbiddenWriteBits) !== 0
   ) {
     throw new UnsafeReceiptError();
   }
   if (privateDirectory && (stat.mode & 0o777) !== 0o700) throw new UnsafeReceiptError();
+}
+
+function assertCreatedDirectoryStat(
+  stat: fs.Stats,
+  context: BaseContext,
+  directoryPath: string,
+): void {
+  const forbiddenWriteBits = "home" in context && directoryPath === context.home ? 0o002 : 0o022;
+  if (
+    !stat.isDirectory() ||
+    stat.isSymbolicLink() ||
+    stat.uid !== context.uid ||
+    (stat.mode & forbiddenWriteBits) !== 0
+  ) {
+    throw new UnsafeReceiptError();
+  }
 }
 
 function ancestorPaths(root: string, target: string): string[] {
@@ -740,19 +834,19 @@ function ancestorPaths(root: string, target: string): string[] {
   return paths;
 }
 
-function fsyncSecureDirectoryPath(directoryPath: string, uid: number): void {
-  const flags =
-    fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_DIRECTORY ?? 0);
-  let fd: number | null = null;
-  try {
-    fd = fs.openSync(directoryPath, flags);
-    assertSecureDirectoryStat(fs.fstatSync(fd), uid, false);
-    fs.fsyncSync(fd);
-  } catch {
-    throw new UnsafeReceiptError();
-  } finally {
-    if (fd !== null) fs.closeSync(fd);
-  }
+function retainedDirectoryPath(fd: number): string {
+  const procfs = fs.statfsSync("/proc/self/fd", { bigint: true });
+  if (procfs.type !== LINUX_PROC_SUPER_MAGIC) throw new UnsafeReceiptError();
+  return `/proc/self/fd/${fd}`;
+}
+
+function directoryEntryPath(directory: DirectoryHandle, entry: string): string {
+  if (path.dirname(entry) !== directory.path) throw new UnsafeReceiptError();
+  // Production authority is Linux-only. Other hosts retain the existing explicit
+  // runtime-root test seam; they cannot enter this path with production options.
+  return process.platform === "linux"
+    ? path.join(retainedDirectoryPath(directory.fd), path.basename(entry))
+    : entry;
 }
 
 function ensureSecureDirectory(
@@ -762,76 +856,113 @@ function ensureSecureDirectory(
   create: boolean,
   privateFrom = directoryPath,
 ): SecureDirectory {
+  if (process.platform !== "linux" && context.runtimeAuthorityRoot === null) {
+    throw new UnsupportedAuthorityError();
+  }
   const paths = ancestorPaths(root, directoryPath);
   const ancestors: SecureDirectory["ancestors"] = [];
-  for (const [index, candidate] of paths.entries()) {
-    const privateDirectory =
-      candidate === directoryPath ||
-      candidate.startsWith(`${privateFrom}${path.sep}`) ||
-      candidate === privateFrom;
-    let stat: fs.Stats;
-    try {
-      stat = fs.lstatSync(candidate);
-      assertSecureDirectoryStat(stat, context.uid, privateDirectory);
-    } catch (error) {
-      if (error instanceof Error && "code" in error && error.code === "ENOENT" && !create) {
-        throw new MissingStoreError();
-      }
-      if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") {
-        if (error instanceof UnsafeReceiptError) throw error;
-        throw new UnsafeReceiptError();
-      }
-      if (index === 0) throw new UnsafeReceiptError();
+  const flags =
+    fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_DIRECTORY ?? 0);
+  let inspectedPath = root;
+  let privateDirectory = false;
+  try {
+    for (const candidate of paths) {
+      inspectedPath = candidate;
+      privateDirectory =
+        candidate === directoryPath ||
+        candidate.startsWith(`${privateFrom}${path.sep}`) ||
+        candidate === privateFrom;
+      const parent = ancestors.at(-1);
+      const retainedPath = parent ? directoryEntryPath(parent, candidate) : candidate;
+      let before: fs.Stats;
+      let created = false;
       try {
-        fs.mkdirSync(candidate, { mode: 0o700 });
-        fs.chmodSync(candidate, 0o700);
-        stat = fs.lstatSync(candidate);
-        assertSecureDirectoryStat(stat, context.uid, privateDirectory);
-        fsyncSecureDirectoryPath(path.dirname(candidate), context.uid);
-      } catch {
-        throw new UnsafeReceiptError();
+        before = fs.lstatSync(retainedPath);
+      } catch (error) {
+        if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") {
+          throw error;
+        }
+        if (!create) throw new MissingStoreError();
+        if (!parent) throw new UnsafeReceiptError();
+        fs.mkdirSync(retainedPath, { mode: 0o700 });
+        before = fs.lstatSync(retainedPath);
+        created = true;
+      }
+      if (created) assertCreatedDirectoryStat(before, context, candidate);
+      else assertSecureDirectoryStat(before, context, candidate, privateDirectory);
+      let fd: number;
+      try {
+        fd = fs.openSync(retainedPath, flags);
+      } catch (error) {
+        if (
+          !created ||
+          process.platform !== "linux" ||
+          !(error instanceof Error) ||
+          !("code" in error) ||
+          (error.code !== "EACCES" && error.code !== "EPERM")
+        ) {
+          throw error;
+        }
+        const pathFd = fs.openSync(
+          retainedPath,
+          LINUX_O_PATH | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_DIRECTORY ?? 0),
+        );
+        try {
+          const pathStat = fs.fstatSync(pathFd);
+          assertCreatedDirectoryStat(pathStat, context, candidate);
+          if (!sameIdentity(before, pathStat)) throw new UnsafeReceiptError();
+          const retainedDirectory = retainedDirectoryPath(pathFd);
+          fs.chmodSync(retainedDirectory, 0o700);
+          fd = fs.openSync(`${retainedDirectory}/.`, flags);
+        } finally {
+          fs.closeSync(pathFd);
+        }
+      }
+      try {
+        if (created) fs.fchmodSync(fd, 0o700);
+        const stat = fs.fstatSync(fd);
+        assertSecureDirectoryStat(stat, context, candidate, privateDirectory);
+        if (!sameIdentity(before, stat)) throw new UnsafeReceiptError();
+        if (created) {
+          if (parent) fs.fsyncSync(parent.fd);
+        }
+        ancestors.push({ fd, path: candidate, stat, privateDirectory });
+      } catch (error) {
+        fs.closeSync(fd);
+        throw error;
       }
     }
-    ancestors.push({ path: candidate, stat, privateDirectory });
-  }
-
-  const noFollow = fs.constants.O_NOFOLLOW ?? 0;
-  const directoryOnly = fs.constants.O_DIRECTORY ?? 0;
-  let fd: number;
-  try {
-    fd = fs.openSync(directoryPath, fs.constants.O_RDONLY | noFollow | directoryOnly);
-  } catch {
-    throw new UnsafeReceiptError();
-  }
-  try {
-    const descriptorStat = fs.fstatSync(fd);
-    const pathStat = fs.lstatSync(directoryPath);
-    assertSecureDirectoryStat(descriptorStat, context.uid, true);
-    assertSecureDirectoryStat(pathStat, context.uid, true);
-    if (!sameIdentity(descriptorStat, pathStat)) throw new UnsafeReceiptError();
-    for (const ancestor of ancestors) {
-      const current = fs.lstatSync(ancestor.path);
-      assertSecureDirectoryStat(current, context.uid, ancestor.privateDirectory);
-      if (!sameIdentity(ancestor.stat, current)) throw new UnsafeReceiptError();
-    }
-    return { fd, stat: descriptorStat, path: directoryPath, ancestors };
+    const leaf = ancestors.at(-1);
+    if (!leaf) throw new UnsafeReceiptError();
+    const directory = { fd: leaf.fd, stat: leaf.stat, path: directoryPath, ancestors };
+    revalidateDirectory(context, directory);
+    return directory;
   } catch (error) {
-    fs.closeSync(fd);
-    if (error instanceof UnsafeReceiptError) throw error;
-    throw new UnsafeReceiptError();
+    for (const ancestor of ancestors.reverse()) fs.closeSync(ancestor.fd);
+    if (error instanceof MissingStoreError) throw error;
+    if (error instanceof UnsafeReceiptError && error.directoryPath) throw error;
+    throw new UnsafeReceiptError(boundedErrorCode(error), inspectedPath, privateDirectory);
   }
 }
 
 function revalidateDirectory(context: BaseContext, directory: SecureDirectory): void {
   for (const ancestor of directory.ancestors) {
-    const current = fs.lstatSync(ancestor.path);
-    assertSecureDirectoryStat(current, context.uid, ancestor.privateDirectory);
-    if (!sameIdentity(ancestor.stat, current)) throw new UnsafeReceiptError();
+    try {
+      const current = fs.lstatSync(ancestor.path);
+      assertSecureDirectoryStat(current, context, ancestor.path, ancestor.privateDirectory);
+      if (!sameIdentity(ancestor.stat, current)) throw new UnsafeReceiptError();
+    } catch (error) {
+      throw new UnsafeReceiptError(
+        boundedErrorCode(error),
+        ancestor.path,
+        ancestor.privateDirectory,
+      );
+    }
   }
   const descriptorStat = fs.fstatSync(directory.fd);
   const pathStat = fs.lstatSync(directory.path);
-  assertSecureDirectoryStat(descriptorStat, context.uid, true);
-  assertSecureDirectoryStat(pathStat, context.uid, true);
+  assertSecureDirectoryStat(descriptorStat, context, directory.path, true);
+  assertSecureDirectoryStat(pathStat, context, directory.path, true);
   if (!sameIdentity(directory.stat, descriptorStat) || !sameIdentity(directory.stat, pathStat)) {
     throw new UnsafeReceiptError();
   }
@@ -857,10 +988,11 @@ function readSecureFileAtPath(
   filePath: string,
 ): string {
   revalidateDirectory(context, directory);
+  const retainedPath = directoryEntryPath(directory, filePath);
   const flags = fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0);
   let fd: number;
   try {
-    fd = fs.openSync(filePath, flags);
+    fd = fs.openSync(retainedPath, flags);
   } catch (error) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") {
       throw new MissingStoreError();
@@ -879,7 +1011,7 @@ function readSecureFileAtPath(
     }
     if (total > LAUNCH_READINESS_MAX_BYTES) throw new UnsafeReceiptError();
     const after = fs.fstatSync(fd);
-    const pathStat = fs.lstatSync(filePath);
+    const pathStat = fs.lstatSync(retainedPath);
     assertSecureReceiptStat(after, context.uid);
     assertSecureReceiptStat(pathStat, context.uid);
     if (
@@ -920,7 +1052,7 @@ function tempPath(filePath: string): string {
 
 function proveWritable(context: BaseContext, directory: SecureDirectory, filePath: string): void {
   revalidateDirectory(context, directory);
-  const candidate = tempPath(filePath);
+  const candidate = directoryEntryPath(directory, tempPath(filePath));
   let fd: number | null = null;
   try {
     fd = fs.openSync(
@@ -938,14 +1070,15 @@ function proveWritable(context: BaseContext, directory: SecureDirectory, filePat
     revalidateDirectory(context, directory);
     fs.unlinkSync(candidate);
     fs.fsyncSync(directory.fd);
-  } catch {
+  } catch (error) {
     if (fd !== null) fs.closeSync(fd);
     try {
       fs.unlinkSync(candidate);
     } catch {
       // The store is already classified unsafe; cleanup is best effort.
     }
-    throw new UnsafeReceiptError();
+    if (error instanceof UnsafeReceiptError) throw error;
+    throw new UnsafeReceiptError(boundedErrorCode(error));
   }
 }
 
@@ -961,7 +1094,8 @@ function writeSecureJson(
     throw new UnsafeReceiptError();
   }
   revalidateDirectory(context, directory);
-  const candidate = tempPath(filePath);
+  const candidate = directoryEntryPath(directory, tempPath(filePath));
+  const retainedPath = directoryEntryPath(directory, filePath);
   let fd: number | null = null;
   try {
     fd = fs.openSync(
@@ -985,7 +1119,7 @@ function writeSecureJson(
     const tempPathStat = fs.lstatSync(candidate);
     assertSecureReceiptStat(tempPathStat, context.uid);
     if (!sameIdentity(tempStat, tempPathStat)) throw new UnsafeReceiptError();
-    fs.renameSync(candidate, filePath);
+    fs.renameSync(candidate, retainedPath);
     fs.fsyncSync(directory.fd);
     verify(readSecureFileAtPath(context, directory, filePath));
   } catch (error) {
@@ -1060,7 +1194,101 @@ type AuthorityInspection =
   | { kind: "missing"; context: AuthorityContext | null }
   | { kind: "unsupported"; context: null }
   | { kind: "present"; context: AuthorityContext; authority: LaunchReadinessAuthority }
-  | { kind: "unsafe"; context: AuthorityContext | null };
+  | {
+      kind: "unsafe";
+      context: AuthorityContext | null;
+      evidence?: LaunchReadinessUnsafeAuthorityEvidence;
+    };
+
+function boundedErrorCode(error: unknown): string | null {
+  if (error instanceof UnsafeReceiptError) return error.diagnosticCode;
+  const code = error instanceof Error && "code" in error ? error.code : null;
+  return typeof code === "string" && /^[A-Z0-9_]{1,32}$/.test(code) ? code : null;
+}
+
+function unsafePathEvidence(
+  resource: LaunchReadinessUnsafeAuthorityEvidence["resource"],
+  path: string,
+  context: BaseContext,
+  expectedMode: LaunchReadinessUnsafeAuthorityEvidence["expectedMode"],
+  operation: LaunchReadinessUnsafeAuthorityEvidence["operation"],
+  error: unknown,
+): LaunchReadinessUnsafeAuthorityEvidence {
+  const expectedUid = context.uid;
+  if (error instanceof UnsafeReceiptError && error.directoryPath) {
+    path = error.directoryPath;
+    resource = resource.startsWith("runtime")
+      ? "runtime authority directory"
+      : "persistent receipt directory";
+    expectedMode = error.privateDirectory ? "0700" : "no group/other write bits";
+    if ("home" in context && path === context.home) expectedMode = "no other write bits";
+  }
+  try {
+    // This post-failure snapshot is diagnostic only; a concurrent repair can make it newer than the rejected state.
+    const stat = fs.lstatSync(path);
+    return {
+      resource,
+      path,
+      expectedUid,
+      observedUid: stat.uid,
+      expectedMode,
+      observedMode: (stat.mode & 0o777).toString(8).padStart(4, "0"),
+      operation,
+      errorCode: boundedErrorCode(error),
+      repair:
+        operation === "inspect" &&
+        stat.isFile() &&
+        !stat.isSymbolicLink() &&
+        stat.nlink === 1 &&
+        stat.uid === expectedUid &&
+        expectedMode === "0600" &&
+        (stat.mode & 0o777) !== 0o600
+          ? "chmod"
+          : "manual",
+    };
+  } catch {
+    return {
+      resource,
+      path,
+      expectedUid,
+      observedUid: null,
+      expectedMode,
+      observedMode: null,
+      operation,
+      errorCode: boundedErrorCode(error),
+      repair: "manual",
+    };
+  }
+}
+
+function authorityUnsafeEvidence(
+  context: AuthorityContext,
+  operation: LaunchReadinessUnsafeAuthorityEvidence["operation"],
+  error: unknown,
+): LaunchReadinessUnsafeAuthorityEvidence {
+  return unsafePathEvidence(
+    "runtime authority file",
+    context.authorityPath,
+    context,
+    "0600",
+    operation,
+    error,
+  );
+}
+
+function authorityDirectoryUnsafeEvidence(
+  context: AuthorityContext,
+  error: unknown,
+): LaunchReadinessUnsafeAuthorityEvidence {
+  return unsafePathEvidence(
+    "runtime authority directory",
+    context.authorityDir,
+    context,
+    "0700",
+    "inspect",
+    error,
+  );
+}
 
 function inspectAuthority(base: BaseContext, sandboxName: string): AuthorityInspection {
   let context: AuthorityContext;
@@ -1077,16 +1305,38 @@ function inspectAuthority(base: BaseContext, sandboxName: string): AuthorityInsp
   }
   try {
     directory = ensureAuthorityDirectory(context, false);
+  } catch (error) {
+    return error instanceof MissingStoreError
+      ? { kind: "missing", context }
+      : {
+          kind: "unsafe",
+          context,
+          evidence: authorityDirectoryUnsafeEvidence(context, error),
+        };
+  }
+  try {
     const authority = readAuthorityAtPath(context, directory);
-    proveWritable(context, directory, context.authorityPath);
+    try {
+      proveWritable(context, directory, context.authorityPath);
+    } catch (error) {
+      return {
+        kind: "unsafe",
+        context,
+        evidence: authorityUnsafeEvidence(context, "write", error),
+      };
+    }
     if (!authorityContextMatches(authority, context, directory)) {
-      return { kind: "unsafe", context };
+      return {
+        kind: "unsafe",
+        context,
+        evidence: authorityUnsafeEvidence(context, "inspect", new UnsafeReceiptError()),
+      };
     }
     return { kind: "present", context, authority };
   } catch (error) {
     return error instanceof MissingStoreError
       ? { kind: "missing", context }
-      : { kind: "unsafe", context };
+      : { kind: "unsafe", context, evidence: authorityUnsafeEvidence(context, "inspect", error) };
   } finally {
     closeDirectory(directory);
   }
@@ -1200,7 +1450,9 @@ function validateLeaseTime(
 }
 
 function closeDirectory(directory: SecureDirectory | null): void {
-  if (directory) fs.closeSync(directory.fd);
+  if (directory) {
+    for (const ancestor of [...directory.ancestors].reverse()) fs.closeSync(ancestor.fd);
+  }
 }
 
 export function readLaunchReadinessLease(
@@ -1338,7 +1590,24 @@ function authorityPublicationTimeline(
   return { timeline: { ...timeline, elapsed }, state: "ready" };
 }
 
-type PersistentInspection = { kind: "missing" } | { kind: "present" } | { kind: "unsafe" };
+type PersistentInspection =
+  | { kind: "missing" }
+  | { kind: "present" }
+  | { kind: "unsafe"; evidence?: LaunchReadinessUnsafeAuthorityEvidence };
+
+function persistentUnsafeEvidence(
+  context: StoreContext,
+  error: unknown,
+): LaunchReadinessUnsafeAuthorityEvidence {
+  return unsafePathEvidence(
+    "persistent receipt",
+    context.receiptPath,
+    context,
+    "0600",
+    "inspect",
+    error,
+  );
+}
 
 function inspectPersistentStore(
   base: BaseContext,
@@ -1346,9 +1615,10 @@ function inspectPersistentStore(
   gatewayPort: number,
   options: LaunchReadinessStoreOptions,
 ): PersistentInspection {
+  let context: StoreContext | null = null;
   let directory: SecureDirectory | null = null;
   try {
-    const context = buildStoreContext(base, sandboxName, gatewayPort, options);
+    context = buildStoreContext(base, sandboxName, gatewayPort, options);
     directory = ensureSecureDirectory(context, context.home, context.receiptDir, false);
     try {
       readRecordAtPath(context, directory);
@@ -1356,10 +1626,23 @@ function inspectPersistentStore(
     } catch (error) {
       if (error instanceof MissingStoreError) return { kind: "missing" };
       if (error instanceof MalformedReceiptError) return { kind: "present" };
-      return { kind: "unsafe" };
+      return { kind: "unsafe", evidence: persistentUnsafeEvidence(context, error) };
     }
   } catch (error) {
-    return error instanceof MissingStoreError ? { kind: "missing" } : { kind: "unsafe" };
+    if (error instanceof MissingStoreError) return { kind: "missing" };
+    return {
+      kind: "unsafe",
+      evidence: context
+        ? unsafePathEvidence(
+            "persistent receipt directory",
+            context.receiptDir,
+            context,
+            "0700",
+            "inspect",
+            error,
+          )
+        : undefined,
+    };
   } finally {
     closeDirectory(directory);
   }
@@ -1385,7 +1668,7 @@ export function checkLaunchReadinessMutationAuthority(
     gatewayPort > 65535 ||
     (expectedEpochId !== null && !isEpoch(expectedEpochId))
   ) {
-    return "unsafe";
+    return { kind: "unsafe" };
   }
   try {
     const base = buildBaseContext(options);
@@ -1393,11 +1676,12 @@ export function checkLaunchReadinessMutationAuthority(
     if (expectedEpochId === null) {
       if (inspection.kind === "unsupported") return "current";
       const persistent = inspectPersistentStore(base, sandboxName, gatewayPort, options);
-      if (inspection.kind === "unsafe" || persistent.kind === "unsafe") return "unsafe";
+      if (inspection.kind === "unsafe") return { kind: "unsafe", evidence: inspection.evidence };
+      if (persistent.kind === "unsafe") return persistent;
       return inspection.kind === "missing" && persistent.kind === "missing" ? "current" : "changed";
     }
     if (inspection.kind === "unsupported") return "changed";
-    if (inspection.kind === "unsafe") return "unsafe";
+    if (inspection.kind === "unsafe") return { kind: "unsafe", evidence: inspection.evidence };
     if (inspection.kind === "missing") return "changed";
     const { authority } = inspection;
     return authority.phase === "fence" &&
@@ -1408,7 +1692,7 @@ export function checkLaunchReadinessMutationAuthority(
       ? "current"
       : "changed";
   } catch {
-    return "unsafe";
+    return { kind: "unsafe" };
   }
 }
 

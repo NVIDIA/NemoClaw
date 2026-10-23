@@ -3,6 +3,7 @@
 
 import { canonicalEndpoint, type EndpointFlavor } from "../core/url-utils";
 import { isBedrockRuntimeEndpoint } from "../inference/bedrock-runtime";
+import { usesCustomNativeOnboarding } from "../inference/native-provider/custom-setup";
 import { isSafeModelId } from "../validation";
 import type { GatewayProviderMetadata } from "./gateway-provider-metadata";
 import type { RecordedInferenceRoute } from "./provider-recovery";
@@ -25,10 +26,20 @@ export function isRecoveredProviderCredentialReuseSelectionKey(value: string): b
   return Object.prototype.hasOwnProperty.call(SUPPORTED_INFERENCE_APIS_BY_SELECTION, value);
 }
 
+export type RecoveredProviderReuseRejectCondition =
+  | "recovery-source"
+  | "provider-identity"
+  | "model-identity"
+  | "inference-api"
+  | "provider-surface"
+  | "gateway-provider-identity"
+  | "endpoint-identity";
+
 export type RecoveredProviderReuseDecision =
   | { kind: "validate-host-credential" }
   | { kind: "reuse-gateway-credential"; preferredInferenceApi: string }
-  | { kind: "reject"; reason: string };
+  | { kind: "verify-native-credential"; preferredInferenceApi: string }
+  | { kind: "reject"; condition: RecoveredProviderReuseRejectCondition; reason: string };
 
 type EndpointIdentity = {
   flavor: EndpointFlavor;
@@ -58,6 +69,7 @@ type RecoveredProviderSelection = {
 };
 
 type RecoveredProviderSelectionDeps = {
+  getSandbox?: (name: string) => Parameters<typeof usesCustomNativeOnboarding>[3];
   resolveProviderCredential(name: string): string | null;
   readRecordedInferenceRoute(sandboxName: string | null): RecordedInferenceRoute | null;
   readRecordedProviderEndpoints(
@@ -103,25 +115,62 @@ export function assessRecoveredProviderCredentialReuse(options: {
   expectedCredentialEnv: string;
   gatewayProvider: GatewayProviderMetadata | null;
   endpointIdentity?: EndpointIdentity;
+  nativeCustom?: boolean;
 }): RecoveredProviderReuseDecision {
   if (options.hostCredentialAvailable) return { kind: "validate-host-credential" };
   if (!options.recoveredFromSandbox) {
-    return { kind: "reject", reason: "the selection was not recovered from this sandbox" };
+    return {
+      kind: "reject",
+      condition: "recovery-source",
+      reason: "the selection was not recovered from this sandbox",
+    };
   }
 
   const selectedProvider = completeProvider(options.selectedProvider);
   const recoveredProvider = completeProvider(options.recoveredProvider);
   if (!selectedProvider || !recoveredProvider || selectedProvider !== recoveredProvider) {
-    return { kind: "reject", reason: "the recovered provider identity is missing or incompatible" };
+    return {
+      kind: "reject",
+      condition: "provider-identity",
+      reason: "the recovered provider identity is missing or incompatible",
+    };
   }
   const selectedModel = completeModel(options.selectedModel);
   const recoveredModel = completeModel(options.recoveredModel);
   if (!selectedModel || !recoveredModel || selectedModel !== recoveredModel) {
-    return { kind: "reject", reason: "the recovered model is missing or invalid" };
+    return {
+      kind: "reject",
+      condition: "model-identity",
+      reason: "the recovered model is missing or invalid",
+    };
   }
   const supportedApis = SUPPORTED_INFERENCE_APIS_BY_SELECTION[options.selectedKey];
   if (!supportedApis?.has(options.recoveredPreferredInferenceApi ?? "")) {
-    return { kind: "reject", reason: "the recovered inference API is missing or unsupported" };
+    return {
+      kind: "reject",
+      condition: "inference-api",
+      reason: "the recovered inference API is missing or unsupported",
+    };
+  }
+  if (options.nativeCustom) {
+    const endpoint = options.endpointIdentity;
+    const selected = endpoint && canonicalEndpoint(endpoint.selected, endpoint.flavor);
+    if (
+      !selected ||
+      endpoint?.routeSource !== "registry" ||
+      selected !== canonicalEndpoint(endpoint.recovered, endpoint.flavor)
+    )
+      return {
+        kind: "reject",
+        condition: "endpoint-identity",
+        reason: "the recovered endpoint identity is missing or incompatible",
+      };
+    // Selection can defer host validation, but only provider setup can verify
+    // the endpoint-bound receipt and current OpenShell resource identity.
+    return {
+      kind: "verify-native-credential",
+      preferredInferenceApi: options.recoveredPreferredInferenceApi as string,
+    };
   }
   const gatewayProvider = options.gatewayProvider;
   // #6294: an OpenAI-only agent coerced onto openai-completions registers the
@@ -154,6 +203,7 @@ export function assessRecoveredProviderCredentialReuse(options: {
     if (expectedProviderType === "openai" && gatewayProvider?.type === "anthropic") {
       return {
         kind: "reject",
+        condition: "provider-surface",
         reason:
           `provider '${selectedProvider}' is still registered for the Anthropic Messages ` +
           `surface; export ${options.expectedCredentialEnv} so onboarding can re-register ` +
@@ -162,6 +212,7 @@ export function assessRecoveredProviderCredentialReuse(options: {
     }
     return {
       kind: "reject",
+      condition: "gateway-provider-identity",
       reason: `provider '${selectedProvider}' has no compatible non-secret identity in OpenShell`,
     };
   }
@@ -201,6 +252,7 @@ export function assessRecoveredProviderCredentialReuse(options: {
     ) {
       return {
         kind: "reject",
+        condition: "endpoint-identity",
         reason: "the recovered endpoint identity is missing or incompatible",
       };
     }
@@ -231,6 +283,15 @@ export function resolveRecoveredProviderCredentialReuse(
       : selected.key === "anthropicCompatible"
         ? "anthropic"
         : null;
+  const nativeCustom = Boolean(
+    deps.getSandbox &&
+    usesCustomNativeOnboarding(
+      state.provider,
+      state.endpointUrl,
+      options.sandboxName,
+      options.sandboxName ? deps.getSandbox(options.sandboxName) : null,
+    ),
+  );
   const decision = assessRecoveredProviderCredentialReuse({
     hostCredentialAvailable: false,
     recoveredFromSandbox,
@@ -242,14 +303,17 @@ export function resolveRecoveredProviderCredentialReuse(
     recoveredPreferredInferenceApi: recoveredRoute?.preferredInferenceApi,
     expectedProviderType: remoteConfig.providerType,
     expectedCredentialEnv: selectedCredentialEnv,
-    gatewayProvider: deps.readGatewayProviderMetadata(state.provider),
+    gatewayProvider: nativeCustom ? null : deps.readGatewayProviderMetadata(state.provider),
+    nativeCustom,
     endpointIdentity: customFlavor
       ? {
           flavor: customFlavor,
           routeSource: recoveredRoute?.source ?? null,
           selected: state.endpointUrl,
           recovered: recoveredRoute?.endpointUrl,
-          otherRecorded: deps.readRecordedProviderEndpoints(state.provider, options.sandboxName),
+          otherRecorded: nativeCustom
+            ? []
+            : deps.readRecordedProviderEndpoints(state.provider, options.sandboxName),
         }
       : undefined,
   });
@@ -266,7 +330,9 @@ export function resolveRecoveredProviderCredentialReuse(
   state.reuseGatewayCredentialWithoutLocalKey = true;
   state.preferredInferenceApi = decision.preferredInferenceApi;
   deps.note(
-    `  Reusing existing gateway credential for '${state.provider}'; skipping direct endpoint validation.`,
+    decision.kind === "verify-native-credential"
+      ? "  Checking for a matching endpoint-bound credential during provider setup; a new credential may be required."
+      : `  Reusing existing gateway credential for '${state.provider}'; skipping direct endpoint validation.`,
   );
   return true;
 }

@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   queryOpenShellDockerSandboxRuntimeSnapshot,
+  captureOpenShellDockerSandboxFailureOutput,
   resolveOpenShellSandboxOwnershipLabel,
   removeExactOpenShellDockerSandboxContainers,
 } from "./openshell-docker-sandbox-containers";
@@ -147,7 +148,172 @@ function querySnapshot(fields: unknown, nvidiaVisibleDevices?: string) {
   };
 }
 
+// OpenShell 0.0.116 sends supervisor startup failures only to the sandbox
+// container's stderr (#13178). Remove once the OpenShell pin reaches 0.1.0.
+describe("captureOpenShellDockerSandboxFailureOutput (#13178)", () => {
+  const CONTAINER_ID = "f".repeat(64);
+  const STARTUP_FAILURE =
+    "Error:   × Failed to prepare sandbox: Landlock path unavailable in hard_requirement mode";
+  const dockerResult = (stdout: string, status = 0, stderr = "") =>
+    ({ status, stdout, stderr }) as never;
+  const inspectWithEnv = (env: string[]) => JSON.stringify([{ Config: { Env: env }, State: {} }]);
+
+  it("reads redacted output from the one OpenShell container labeled with the sandbox name", () => {
+    const opaqueSecret = "opaque-value-9f8e7d6c5b4a";
+    const dockerRun = vi.fn((_args: readonly string[], _options?: { timeout?: number }) =>
+      dockerResult(`${CONTAINER_ID}\n`),
+    );
+    const dockerCapture = vi.fn((args: readonly string[]) =>
+      args.includes("--format") ? "" : inspectWithEnv([`PROVIDER_TOKEN=${opaqueSecret}`]),
+    );
+    const dockerLogs = vi.fn(() => `provider said ${opaqueSecret}\n${STARTUP_FAILURE}`);
+
+    const output = captureOpenShellDockerSandboxFailureOutput("my-assistant", null, {
+      dockerRun,
+      dockerCapture,
+      dockerLogs,
+    });
+
+    expect(dockerRun.mock.calls[0][0]).toEqual(
+      expect.arrayContaining([
+        "label=openshell.ai/managed-by=openshell",
+        "label=openshell.ai/sandbox-name=my-assistant",
+      ]),
+    );
+    expect(dockerLogs).toHaveBeenCalledWith(CONTAINER_ID, expect.anything());
+    // A stalled lookup must not hold the failed sandbox before rollback.
+    expect(dockerRun.mock.calls[0][1]).toMatchObject({ timeout: 2_000 });
+    expect(output).toContain(STARTUP_FAILURE);
+    expect(output).not.toContain(opaqueSecret);
+  });
+
+  it("starts no Docker call after the shared capture deadline before rollback", () => {
+    let clock = 1_000;
+    const dockerRun = vi.fn((_args: readonly string[], options?: { timeout?: number }) => {
+      clock += options?.timeout ?? 0;
+      return dockerResult(`${CONTAINER_ID}\n`);
+    });
+    const dockerCapture = vi.fn((_args: readonly string[], options?: { timeout?: number }) => {
+      clock += options?.timeout ?? 0;
+      return "";
+    });
+    const dockerLogs = vi.fn();
+
+    expect(
+      captureOpenShellDockerSandboxFailureOutput("my-assistant", null, {
+        dockerRun,
+        dockerCapture,
+        dockerLogs,
+        now: () => clock,
+      }),
+    ).toBeNull();
+    expect(dockerRun.mock.calls[0][1]).toMatchObject({ timeout: 2_000 });
+    expect(dockerCapture).toHaveBeenCalledOnce();
+    expect(dockerCapture.mock.calls[0][1]).toMatchObject({ timeout: 2_000 });
+    expect(dockerLogs).not.toHaveBeenCalled();
+    expect(clock - 1_000).toBeLessThanOrEqual(4_000);
+  });
+
+  it("reads the exact failed replacement without a label lookup", () => {
+    const dockerRun = vi.fn();
+    const dockerLogs = vi.fn(() => STARTUP_FAILURE);
+
+    expect(
+      captureOpenShellDockerSandboxFailureOutput("my-assistant", CONTAINER_ID, {
+        dockerRun,
+        dockerCapture: () => inspectWithEnv([]),
+        dockerLogs,
+      }),
+    ).toBe(STARTUP_FAILURE);
+    expect(dockerRun).not.toHaveBeenCalled();
+    expect(dockerLogs).toHaveBeenCalledWith(CONTAINER_ID, expect.anything());
+  });
+
+  it.each([
+    ["no labeled container", dockerResult("")],
+    ["several labeled containers", dockerResult(`${CONTAINER_ID}\n${"e".repeat(64)}\n`)],
+    ["a failed Docker query", dockerResult("", 1, "Cannot connect to the Docker daemon")],
+  ])("captures nothing when Docker reports %s", (_scenario, psResult) => {
+    const dockerLogs = vi.fn();
+
+    expect(
+      captureOpenShellDockerSandboxFailureOutput("my-assistant", null, {
+        dockerRun: vi.fn(() => psResult),
+        dockerCapture: () => "",
+        dockerLogs,
+      }),
+    ).toBeNull();
+    expect(dockerLogs).not.toHaveBeenCalled();
+  });
+
+  it("captures nothing when docker logs fails", () => {
+    expect(
+      captureOpenShellDockerSandboxFailureOutput("my-assistant", CONTAINER_ID, {
+        dockerCapture: () => "",
+        dockerLogs: () => {
+          throw new Error("No such container");
+        },
+      }),
+    ).toBeNull();
+  });
+
+  it.each([
+    [
+      "fails",
+      () => {
+        throw new Error("inspect failed");
+      },
+    ],
+    ["returns malformed output", () => "not json"],
+    ["omits the container environment", () => JSON.stringify([{}])],
+  ])(
+    "captures nothing when container inspect %s, so opaque values cannot leak",
+    (_scenario, inspect) => {
+      const opaqueSecret = "opaque-value-9f8e7d6c5b4a";
+
+      expect(
+        captureOpenShellDockerSandboxFailureOutput("my-assistant", CONTAINER_ID, {
+          dockerCapture: inspect,
+          dockerLogs: () => `provider said ${opaqueSecret}\n${STARTUP_FAILURE}`,
+        }),
+      ).toBeNull();
+    },
+  );
+});
+
 describe("queryOpenShellDockerSandboxRuntimeSnapshot", () => {
+  it("does not start container discovery after the shared deadline expires", () => {
+    const dockerRun = vi.fn();
+    const now = vi.fn().mockReturnValueOnce(1_000).mockReturnValue(1_001);
+
+    expect(
+      queryOpenShellDockerSandboxRuntimeSnapshot("alpha", { dockerRun }, { timeoutMs: 1, now }),
+    ).toEqual({ ok: false, error: "Docker sandbox query deadline expired" });
+    expect(dockerRun).not.toHaveBeenCalled();
+  });
+
+  it("reuses the validated remaining deadline for container inspection", () => {
+    const dockerRun = vi
+      .fn()
+      .mockReturnValueOnce({ status: 0, stdout: "container-a\n", stderr: "" })
+      .mockReturnValueOnce({ status: 0, stdout: JSON.stringify(EMPTY_RUNTIME_FIELDS), stderr: "" });
+    const now = vi
+      .fn()
+      .mockReturnValueOnce(1_000)
+      .mockReturnValueOnce(1_000)
+      .mockReturnValueOnce(1_000)
+      .mockReturnValue(1_001);
+
+    expect(
+      queryOpenShellDockerSandboxRuntimeSnapshot("alpha", { dockerRun }, { timeoutMs: 1, now }),
+    ).toEqual(expect.objectContaining({ ok: true, containerId: "container-a" }));
+    expect(dockerRun).toHaveBeenNthCalledWith(
+      2,
+      expect.arrayContaining(["inspect", "container-a"]),
+      expect.objectContaining({ timeout: 1 }),
+    );
+  });
+
   it("returns immutable identity, bookkeeping ref, and safe absence from one exact container", () => {
     const { dockerRun, result } = querySnapshot(EMPTY_RUNTIME_FIELDS);
 

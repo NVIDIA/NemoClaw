@@ -27,8 +27,11 @@ export interface ContainerGpuProofResult {
   timedOut: boolean;
   exitCode: number | null;
   diagnostic: string;
+  /** Stage that prevented an effectful proof from succeeding. */
+  failurePhase?: "provider" | "capture" | "device-evidence" | "cleanup";
   /** Per-device identity and capacity observed inside the proved container namespace. */
   verifiedDevices?: readonly {
+    uuid?: string;
     name: string;
     totalMemoryMB: number;
     availableMemoryMB: number;

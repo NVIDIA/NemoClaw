@@ -181,7 +181,7 @@ console.log(JSON.stringify({ dir, token: process.env.OPENCLAW_GATEWAY_TOKEN ?? n
     const block = sourceBlock(
       source,
       "# OpenClaw 2026.9.1 enforces owner-only SQLite",
-      "# Begin the root PID 1 readiness lease",
+      "# Migrate legacy symlink layout",
     );
     const result = runBash([
       `id() { if [ "\${1:-}" = "-u" ]; then printf ${JSON.stringify(String(uid))}; else command id "$@"; fi; }`,

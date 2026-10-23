@@ -6,6 +6,7 @@ import path from "node:path";
 
 export type ContainerEngineOperationScope =
   | "host-doctor"
+  | "external-image-preparation"
   | "host-local-inference"
   | "gateway-inspection"
   | "sandbox-lifecycle"
@@ -296,6 +297,7 @@ function defaultCapture(
     cwd: process.cwd(),
     env: environment ?? containerEngineCommandEnvironment(),
     encoding: "utf8",
+    killSignal: "SIGKILL",
     maxBuffer: MAX_OUTPUT_BYTES,
     shell: false,
     stdio: [input ? "pipe" : "ignore", "pipe", "pipe"],

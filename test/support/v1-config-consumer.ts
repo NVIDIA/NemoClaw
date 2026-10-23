@@ -39,6 +39,20 @@ export interface PinnedV1OpenClawNativeSettings {
   execution: { timeoutSeconds: number; heartbeatEvery: string | null };
   dashboard: { enabled: boolean; port: number; bind: string };
   toolDisclosure: string;
+  diagnostics?: {
+    enabled: boolean;
+    otel: {
+      enabled: boolean;
+      endpoint: string;
+      serviceName: string;
+      sampleRate: number;
+      protocol: string;
+      traces: boolean;
+      metrics: boolean;
+      logs: boolean;
+    };
+  };
+  diagnosticsPlugin?: { enabled: boolean };
 }
 
 export interface PinnedV1HermesNativeSettings {
@@ -88,6 +102,15 @@ export interface PinnedV1ConsumerEvidence {
   openclawNativeSettings?: Record<string, PinnedV1OpenClawNativeSettings>;
   openclawNativeSettingsVerified?: number;
   hermesNativeSettingsVerified?: number;
+  webSearch?: Record<
+    string,
+    {
+      provider: "brave" | "tavily";
+      credentialReference: string;
+      agentRefs: string[];
+      nativeProvider: "brave" | "tavily";
+    }
+  >;
 }
 
 /** Parse an exact export and generate its native settings with the pinned v1 consumer. */
@@ -117,21 +140,39 @@ export function validateConfigExportWithPinnedV1(raw: string): PinnedV1ConsumerE
       path.join(FIXTURE_ROOT, "config-export-compatibility.rs"),
       path.join(consumer, "crates/nemoclaw-sdk/tests/config_export_compatibility.rs"),
     );
-    execFileSync(
-      "cargo",
-      ["test", "--locked", "-p", "nemoclaw-sdk", "--test", "config_export_compatibility"],
-      {
-        cwd: consumer,
-        env: consumerEnvironment({
-          CARGO_TARGET_DIR: path.join(temporaryRoot, "cargo-target"),
-          NEMOCLAW_V1_CONFIG_INPUT: input,
-          NEMOCLAW_V1_SETTINGS_OUTPUT: settings,
-        }),
-        maxBuffer: 10 * 1024 * 1024,
-        stdio: "pipe",
-        timeout: 8 * 60_000,
-      },
-    );
+    try {
+      execFileSync(
+        "cargo",
+        ["test", "--locked", "-p", "nemoclaw-sdk", "--test", "config_export_compatibility"],
+        {
+          cwd: consumer,
+          env: consumerEnvironment({
+            CARGO_TARGET_DIR: path.join(temporaryRoot, "cargo-target"),
+            CARGO_INCREMENTAL: "0",
+            CARGO_PROFILE_DEV_DEBUG: "0",
+            NEMOCLAW_V1_CONFIG_INPUT: input,
+            NEMOCLAW_V1_SETTINGS_OUTPUT: settings,
+          }),
+          maxBuffer: 10 * 1024 * 1024,
+          stdio: "pipe",
+          timeout: 8 * 60_000,
+        },
+      );
+    } catch (error) {
+      const failure = error as Error & {
+        code?: string;
+        status?: number | null;
+        signal?: string | null;
+        stdout?: Buffer;
+        stderr?: Buffer;
+      };
+      // E2E evidence bounds diagnostics, so retain the cause after build progress.
+      throw new Error(
+        `Pinned v1 consumer failed (status=${failure.status ?? "unknown"}, signal=${failure.signal ?? "none"}, code=${failure.code ?? "none"}).\n` +
+          `stdout tail:\n${failure.stdout?.toString().slice(-800) ?? ""}\n` +
+          `stderr tail:\n${failure.stderr?.toString().slice(-1_000) ?? ""}`,
+      );
+    }
     const output = execFileSync(
       "python3",
       [path.join(FIXTURE_ROOT, "validate-native-settings.py"), consumer, settings],

@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import { runInNewContext } from "node:vm";
 
 import { describe, expect, it } from "vitest";
+import { credentialWindowHttpFixture } from "../helpers/credential-window-http-fixture.ts";
 
 import { MCP_BRIDGE_TEST_CREDENTIALS } from "../e2e/fixtures/mcp-bridge-credentials.ts";
 import {
@@ -21,6 +23,64 @@ import {
 } from "../e2e/live/openshell-credential-generation-window.ts";
 
 describe("OpenShell exact-main credential generation-window proof", () => {
+  it.each([200, 401, "ECONNRESET", "private-error-secret"])(
+    "records bounded request evidence for %s without changing the acknowledgement",
+    async (result) => {
+      const writes = new Map<string, string>();
+      let diagnostic = "";
+      let summary = "";
+      const script = buildCredentialWindowChildScript({
+        mcpUrl: "https://credential-window.example.test/mcp",
+        maxRuntimeMs: 3000,
+      });
+      await runInNewContext(script, {
+        Buffer,
+        URL,
+        setTimeout,
+        process: {
+          env: { FAKE_MCP_SECRET: "openshell:resolve:env:v42_FAKE_MCP_SECRET" },
+          stdout: {
+            write: (value: string) => {
+              summary += value;
+            },
+          },
+          stderr: {
+            write: (value: string) => {
+              diagnostic += value;
+            },
+          },
+        },
+        require: (name: string) =>
+          new Map<string, unknown>([
+            [
+              "node:fs",
+              {
+                existsSync: () => true,
+                readFileSync: () =>
+                  writes.has(CREDENTIAL_WINDOW_PATHS.acknowledgement)
+                    ? CREDENTIAL_WINDOW_STEPS.stop
+                    : CREDENTIAL_WINDOW_STEPS.allowedBeforeExpiry,
+                writeFileSync: (file: string, value: string) => writes.set(file, value),
+              },
+            ],
+            ["node:https", credentialWindowHttpFixture(result)],
+          ]).get(name),
+      });
+      const outcome = result === 200 ? "allowed" : "denied";
+      const expected = { step: CREDENTIAL_WINDOW_STEPS.allowedBeforeExpiry, outcome };
+      expect(JSON.parse(writes.get(CREDENTIAL_WINDOW_PATHS.acknowledgement)!)).toEqual(expected);
+      expect(JSON.parse(summary)).toEqual({ revision: "v42", outcomes: [expected] });
+      expect(JSON.parse(diagnostic)).toEqual({
+        ...expected,
+        ...(typeof result === "number"
+          ? { httpStatus: result }
+          : { transportCode: result === "ECONNRESET" ? result : "OTHER" }),
+      });
+      expect(diagnostic).not.toContain("private-error-secret");
+      expect(diagnostic).not.toContain("openshell:resolve:");
+    },
+  );
+
   it("crosses the complete upstream retention window with unique scannable values", () => {
     const secrets = credentialWindowSecrets();
 
@@ -44,7 +104,7 @@ describe("OpenShell exact-main credential generation-window proof", () => {
     expect(script).toContain('"^openshell:resolve:env:(v[0-9]{1,20})_" + config.envName + "$"');
     expect(script).toContain('authorization: "Bearer " + credentialPlaceholder');
     expect(script).toContain('response.statusCode === 200 ? "allowed" : "denied"');
-    expect(script).toContain('outbound.on("error", () => resolve("denied"))');
+    expect(script).toContain('transportCode: knownCodes.has(error.code) ? error.code : "OTHER"');
     expect(script).toContain("outbound.setTimeout(30_000");
     expect(script).toContain(JSON.stringify(CREDENTIAL_WINDOW_PATHS.acknowledgement));
     expect(script).toContain(JSON.stringify(CREDENTIAL_WINDOW_STEPS.allowedBeforeExpiry));

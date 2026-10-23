@@ -18,7 +18,7 @@ const protectedManagedImageContract = (
 const { PROTECTED_MANAGED_IMAGE_ACTIVATION_PATH, PROTECTED_MANAGED_IMAGE_MULTIARCH_JOB_ID } =
   protectedManagedImageContract;
 
-export const RISK_PLAN_VERSION = 25 as const;
+export const RISK_PLAN_VERSION = 26 as const;
 
 export const PR_E2E_TYPED_TARGET_IDS = ["ubuntu-repo-cloud-langchain-deepagents-code"] as const;
 const SANDBOX_LIFECYCLE_TARGET_ID = "sandbox-survival";
@@ -105,10 +105,11 @@ const HERMES_CLI_ADAPTER_RUNTIME_FILES = new Set([
   "agents/hermes/hermes-wrapper.py",
   "agents/hermes/validate-cli-adapter.py",
 ]);
-const HERMES_CRON_RESTORE_E2E_JOB_IDS = ["rebuild-hermes"] as const;
-const HERMES_CRON_RESTORE_RUNTIME_FILES = new Set([
+const HERMES_REBUILD_RESTORE_E2E_JOB_IDS = ["rebuild-hermes"] as const;
+const HERMES_REBUILD_RESTORE_RUNTIME_FILES = new Set([
   "agents/hermes/cron-restore-control.py",
   "agents/hermes/patch-cron-restore-drain.py",
+  "src/lib/actions/sandbox/rebuild-restore-phase.ts",
   "src/lib/actions/sandbox/rebuild-hermes-post-restore.ts",
   "src/lib/actions/sandbox/runtime/hermes-cron-restore-recovery.ts",
 ]);
@@ -125,7 +126,6 @@ const HERMES_MANAGED_POLICY_FILES = new Set([
   "agents/hermes/image-build-probes.py",
   "agents/hermes/managed_policy.py",
   "agents/hermes/patch-profile-policy-defaults.py",
-  "agents/hermes/seed-dashboard-config.py",
   "agents/hermes/start.sh",
   "src/lib/hermes-managed-route.ts",
 ]);
@@ -172,6 +172,14 @@ const HERMES_STARTUP_RUNTIME_FILES = new Set([
   "agents/hermes/start.sh",
 ]);
 const OPENCLAW_STARTUP_RUNTIME_FILES = new Set(["scripts/nemoclaw-start.sh"]);
+// These owners create, approve, or restore OpenClaw pairing authority. Keep
+// their focused proof on the canonical transition that exercises pairing and
+// scope approval instead of a rebuild-only state transfer.
+const OPENCLAW_PAIRING_RUNTIME_FILES = new Set([
+  "src/lib/actions/sandbox/auto-pair-approval.ts",
+  "src/lib/actions/sandbox/restore-gateway-pairing.ts",
+  "src/lib/adapters/openshell/restore-gateway-pairing.ts",
+]);
 const MANAGED_IMAGE_PROTECTED_RUNTIME_ACTIVATION =
   "ci/protected-managed-image-runtime-activation-v1.json";
 const MANAGED_IMAGE_PROTECTED_RUNTIME_JOB_ID = "managed-image-protected-runtime" as const;
@@ -406,9 +414,9 @@ export function focusedPrE2eJobsForChangedFiles(
   const hermesAcpRuntimeFiles = stableUnique(
     changedFiles.filter((file) => HERMES_ACP_RUNTIME_FILES.has(file) && isRuntimeRelevant(file)),
   );
-  const hermesCronRestoreFiles = stableUnique(
+  const hermesRebuildRestoreFiles = stableUnique(
     changedFiles.filter(
-      (file) => HERMES_CRON_RESTORE_RUNTIME_FILES.has(file) && isRuntimeRelevant(file),
+      (file) => HERMES_REBUILD_RESTORE_RUNTIME_FILES.has(file) && isRuntimeRelevant(file),
     ),
   );
   const hermesManagedPolicyFiles = stableUnique(
@@ -436,6 +444,9 @@ export function focusedPrE2eJobsForChangedFiles(
       (file) => OPENCLAW_STARTUP_RUNTIME_FILES.has(file) && isRuntimeRelevant(file),
     ),
   );
+  const openClawPairingRuntimeFiles = stableUnique(
+    changedFiles.filter((file) => OPENCLAW_PAIRING_RUNTIME_FILES.has(file)),
+  );
   return [
     { id: "staging-brev-launchable", matchedFiles: brevLaunchableFiles },
     ...(journaledRecreateResumeFiles.length > 0
@@ -458,9 +469,9 @@ export function focusedPrE2eJobsForChangedFiles(
       id,
       matchedFiles: hermesAcpRuntimeFiles,
     })),
-    ...HERMES_CRON_RESTORE_E2E_JOB_IDS.map((id) => ({
+    ...HERMES_REBUILD_RESTORE_E2E_JOB_IDS.map((id) => ({
       id,
-      matchedFiles: hermesCronRestoreFiles,
+      matchedFiles: hermesRebuildRestoreFiles,
     })),
     ...HERMES_MANAGED_POLICY_E2E_JOB_IDS.map((id) => ({
       id,
@@ -478,6 +489,10 @@ export function focusedPrE2eJobsForChangedFiles(
       id,
       matchedFiles: openClawMessagingRuntimeFiles,
     })),
+    {
+      id: "issue-4462-scope-upgrade-approval",
+      matchedFiles: openClawPairingRuntimeFiles,
+    },
   ].filter((selection) => selection.matchedFiles.length > 0);
 }
 
@@ -515,18 +530,19 @@ export const RISK_RULES: readonly RiskRule[] = [
     summary:
       "Upgrade, rebuild, snapshot, and restore operations must preserve user state while replacing stale runtime state.",
     tier: 2,
-    requiredJobs: ["rebuild-openclaw", "state-backup-restore"],
+    requiredJobs: ["rebuild-hermes", "rebuild-openclaw"],
     invariants: [
       "host and in-sandbox runtime versions agree after mutation",
       "credentials, policy, messaging, and workspace state survive intended preservation paths",
       "failed mutations remain retryable without destructive cleanup",
     ],
     matches: (file) =>
-      (file.startsWith("src/") ||
+      file.startsWith("src/lib/state/") ||
+      ((file.startsWith("src/") ||
         file.startsWith("nemoclaw/") ||
         file.startsWith("scripts/") ||
         file.startsWith("nemoclaw-blueprint/")) &&
-      MUTATION_FILE.test(file),
+        MUTATION_FILE.test(file)),
   },
   {
     id: "shared-agent",

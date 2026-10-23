@@ -15,7 +15,6 @@ import {
   captureOpenshellCommandAsync,
   captureOpenshellCommandAsyncResult,
   captureSandboxSshConfigCommand,
-  getInstalledOpenshellVersion,
   type OpenshellSpawnSync,
   parseVersionFromText,
   runOpenshellCommand,
@@ -623,16 +622,5 @@ describe("openshell helpers", () => {
       }),
     ).toThrow("exit:1");
     expect(errors).toEqual(["  Failed to start OpenShell command: spawn ENOENT"]);
-  });
-
-  it("reads the installed openshell version through the capture helper", () => {
-    const version = getInstalledOpenshellVersion("openshell", {
-      spawnSyncImpl: stubSpawnSync({
-        status: 0,
-        stdout: "built on 2026.7.1, openshell 0.0.11\n",
-        stderr: "",
-      }),
-    });
-    expect(version).toBe("0.0.11");
   });
 });

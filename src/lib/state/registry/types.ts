@@ -1,7 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { NativeLocalProviderAttachment } from "../../inference/native-local/contract";
+import type { NativeProviderAttachment } from "../../inference/native-provider/contract";
+import type { NativeHostedProviderAuthorities } from "./native-provider-authority-state";
 import type { InferenceSelection } from "../../inference/selection";
+import type { NativeNvidiaProviderAttachment } from "../../inference/native-nvidia";
+import type {
+  AppliedPolicySelection,
+  ModelAssignmentSelection,
+  ModelSelectionProvenance,
+} from "../../domain/telemetry/provenance";
 import type { ServingProfileProvenance } from "../../inference/serving/types";
 import type { WebSearchProvider } from "../../inference/web-search";
 import type { DcodeAutoApprovalMode } from "../../onboard/dcode-auto-approval";
@@ -81,6 +90,13 @@ export interface SandboxHostLocalInferenceProvenance {
 
 export interface SandboxEntry extends Partial<InferenceSelection> {
   name: string;
+  appliedPolicySelection?: AppliedPolicySelection;
+  /** Private selection origin matched to the current native model/provider/API. */
+  nativeModelSelectionProvenance?: ModelSelectionProvenance;
+  /** Private source receipts bound to verified native agent/model assignments. */
+  modelAssignmentSelections?: ModelAssignmentSelection[];
+  /** Agent configuration was persisted but has not crossed verified activation. */
+  configurationApplyPending?: true;
   /** Route-only placeholder created before sandbox creation; never eligible as the default. */
   pendingRouteReservation?: true;
   /** Onboard session that owns this route transaction, retained after publication for exact idempotence. */
@@ -110,6 +126,8 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   webSearchProvider?: WebSearchProvider | null;
   agent?: string | null;
   agentVersion?: string | null;
+  /** Route committed before OpenClaw config synchronization; invalidates retained context on retry. */
+  openClawConfigSyncPending?: true;
   // NemoClaw build fingerprint (the NemoClaw CLI/build version) stamped only on
   // NemoClaw-managed images at create/rebuild time. `upgrade-sandboxes` compares
   // it against the running NemoClaw build so an image/build change with an
@@ -130,6 +148,12 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   managedStartupProtocol?: "identity-bound" | "legacy-unbound";
   /** Canonical provider-neutral receipt for an out-of-sandbox inference runtime. */
   hostLocalInferenceReceipt?: string | null;
+  /** Exact host-local provider identity attached to this sandbox. */
+  nativeLocalProviderAttachment?: NativeLocalProviderAttachment;
+  /** Exact OpenShell provider identity attached for native NVIDIA hosted inference. */
+  nativeNvidiaProviderAttachment?: NativeNvidiaProviderAttachment;
+  /** Exact selected fixed hosted provider identity; separate from gateway ownership. */
+  nativeHostedProviderAttachment?: NativeProviderAttachment;
   /** Explicit hidden-lifecycle provenance; absence keeps llama.cpp on its legacy path. */
   hostLocalInferenceProvenance?: SandboxHostLocalInferenceProvenance;
   /** Explicit Deferred N1x managed-vLLM choice retained after successful onboarding. */
@@ -150,6 +174,13 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
    */
   hermesApiPort?: number | null;
   dashboardPort?: number | null;
+  /**
+   * Browser-facing external dashboard URL resolved from `CHAT_UI_URL` at
+   * onboard time (host + scheme with the effective dashboard port). Persisted
+   * only when an external origin was configured; a plain loopback dashboard is
+   * left unset and reported as `http://127.0.0.1:<dashboardPort>/` (#11439).
+   */
+  dashboardExternalUrl?: string | null;
   /** Remote dashboard exposure was included in the sandbox's generated config. */
   dashboardRemoteBindPrepared?: boolean;
   /** Generation proving which durable same-name recreate registered this row. */
@@ -199,6 +230,18 @@ export type SandboxWorkloadReceipt =
     }
   | {
       readonly schemaVersion: 1;
+      readonly kind: "external-image";
+      /** Exact publisher-owned OCI image digest requested by the operator. */
+      readonly reference: string;
+      /** Platform selected by the local runtime when the digest was inspected. */
+      readonly platform: "linux/amd64" | "linux/arm64";
+      /** Immutable host-local content identity returned by the container runtime. */
+      readonly runtimeImageContentId: string;
+      /** Publisher-owned images are never removed by NemoClaw cleanup. */
+      readonly shared: true;
+    }
+  | {
+      readonly schemaVersion: 1;
       readonly kind: "legacy-dockerfile";
       readonly reference: string | null;
       readonly shared: false;
@@ -210,4 +253,9 @@ export interface SandboxRegistry {
   defaultSandbox: string | null;
   defaultSelectionRevision?: number;
   extraProviders?: string[];
+  /** NemoClaw-owned host-local provider identities keyed by provider name. */
+  nativeLocalProviderAuthorities?: Record<string, NativeLocalProviderAttachment>;
+  /** Exact NemoClaw-owned native NVIDIA provider identity for each OpenShell gateway. */
+  nativeNvidiaProviderAuthorities?: Record<string, NativeNvidiaProviderAttachment>;
+  nativeHostedProviderAuthorities?: NativeHostedProviderAuthorities;
 }

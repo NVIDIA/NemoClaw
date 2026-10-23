@@ -15,6 +15,7 @@ import {
   type V1Alpha1Export,
 } from "../../../../src/lib/config/v1alpha1-export.ts";
 import { unsafeEndpointUrlViolation } from "../../../../src/lib/core/endpoint-url-safety.ts";
+import { isWebSearchProvider, webSearchEnvFor } from "../../../../src/lib/inference/web-search.ts";
 import { V1ALPHA1_RUNTIME_DEFAULTS_REVISION } from "../../../../src/lib/domain/config/v1alpha1-runtime-defaults.ts";
 import { decodeManagedStartupProfile } from "../../../../src/lib/onboard/managed-startup/profile.ts";
 import type { SandboxEntry } from "../../../../src/lib/state/registry/types.ts";
@@ -46,6 +47,7 @@ import {
 } from "../hosted-inference.ts";
 import { CLI_DIST_ENTRYPOINT, REPO_ROOT } from "../paths.ts";
 import type { SecretStore } from "../secrets.ts";
+import type { ShellProbeResult } from "../shell-probe.ts";
 import type { NemoClawInstance } from "./onboarding.ts";
 
 const { Type } = require("typebox") as typeof TypeBoxModule;
@@ -102,7 +104,10 @@ const ExportAgentSchema = Type.Object(
       ]),
     ),
     integrationRefs: Type.Optional(
-      Type.Array(Type.Literal("brave-search"), { minItems: 1, maxItems: 1 }),
+      Type.Array(Type.Union([Type.Literal("brave-search"), Type.Literal("tavily-search")]), {
+        minItems: 1,
+        maxItems: 1,
+      }),
     ),
   },
   { additionalProperties: false },
@@ -136,19 +141,34 @@ const ExportSandboxFields = {
     { additionalProperties: false },
   ),
   integrations: Type.Optional(
-    Type.Object(
-      {
-        "brave-search": Type.Object(
-          {
-            kind: Type.Literal("webSearch"),
-            provider: Type.Literal("brave"),
-            credential: CredentialSchema,
-          },
-          { additionalProperties: false },
-        ),
-      },
-      { additionalProperties: false },
-    ),
+    Type.Union([
+      Type.Object(
+        {
+          "brave-search": Type.Object(
+            {
+              kind: Type.Literal("webSearch"),
+              provider: Type.Literal("brave"),
+              credential: CredentialSchema,
+            },
+            { additionalProperties: false },
+          ),
+        },
+        { additionalProperties: false },
+      ),
+      Type.Object(
+        {
+          "tavily-search": Type.Object(
+            {
+              kind: Type.Literal("webSearch"),
+              provider: Type.Literal("tavily"),
+              credential: CredentialSchema,
+            },
+            { additionalProperties: false },
+          ),
+        },
+        { additionalProperties: false },
+      ),
+    ]),
   ),
 };
 const DeepAgentsExportSandboxSchema = Type.Object(
@@ -598,6 +618,10 @@ function expectedPinnedV1Evidence(entry: ConfigExportRegistryEntry): PinnedV1Con
   const openclawNativeSettings = expectedOpenclawNativeSettings(entry);
   const hermesNativeSettings =
     entry.agent === "hermes" ? expectedPinnedV1HermesNativeSettings(entry) : undefined;
+  const searchProvider = entry.webSearchEnabled === true ? entry.webSearchProvider : null;
+  if (entry.webSearchEnabled === true && !isWebSearchProvider(searchProvider)) {
+    throw new Error("the live web-search provider is missing or unsupported");
+  }
   return {
     revision: V1ALPHA1_RUNTIME_DEFAULTS_REVISION,
     compiledSandboxes: 1,
@@ -610,6 +634,16 @@ function expectedPinnedV1Evidence(entry: ConfigExportRegistryEntry): PinnedV1Con
     ...(hermesNativeSettings
       ? { hermesNativeSettings: { [entry.name]: hermesNativeSettings } }
       : {}),
+    webSearch: searchProvider
+      ? {
+          [entry.name]: {
+            provider: searchProvider,
+            credentialReference: webSearchEnvFor(searchProvider),
+            agentRefs: ["primary"],
+            nativeProvider: searchProvider,
+          },
+        }
+      : {},
     openclawNativeSettingsVerified: entry.agent === "openclaw" ? 1 : 0,
     hermesNativeSettingsVerified: entry.agent === "hermes" ? 1 : 0,
   };
@@ -625,6 +659,7 @@ function comparablePinnedV1Evidence(
   return {
     revision: evidence.revision,
     compiledSandboxes: evidence.compiledSandboxes,
+    webSearch: evidence.webSearch ?? {},
     ...(expected.contextWindows ? { contextWindows: evidence.contextWindows } : {}),
     ...(expected.openclawNativeSettings
       ? {
@@ -647,6 +682,8 @@ function comparablePinnedV1Evidence(
 
 function targetPolicyForV1Alpha1(value: unknown, agent: string | null | undefined): unknown {
   const policy = structuredClone(requiredRecord(value, "effective policy"));
+  const landlock = policy.landlock as Record<string, unknown> | undefined;
+  if (landlock?.compatibility === "strict") landlock.compatibility = "hard_requirement";
   const process = policy.process as Record<string, unknown> | undefined;
   if (process && typeof process === "object" && !Array.isArray(process)) {
     if (process.run_as_user === "sandbox") process.run_as_user = "1000";
@@ -703,7 +740,13 @@ function observedFeatures(
   sandbox: V1Alpha1Export["spec"]["sandboxes"][number] | undefined,
 ): string[] {
   const features: string[] = [];
-  if (sandbox?.integrations?.["brave-search"]) features.push("webSearch");
+  if (
+    sandbox?.agent.integrationRefs?.some(
+      (name) => sandbox.integrations?.[name]?.kind === "webSearch",
+    )
+  ) {
+    features.push("webSearch");
+  }
   if (sandbox?.harness.observability) features.push("observability");
   return features.sort();
 }
@@ -911,6 +954,27 @@ function boundedDiagnostic(secretStore: SecretStore, value: unknown): string {
   return secretStore.redact(raw).slice(0, MAX_DIAGNOSTIC_LENGTH);
 }
 
+/** Both callers use --json; match only the current runtime-specific refusal. */
+export function isPodmanConfigExportRefusal(
+  result: Pick<ShellProbeResult, "exitCode" | "signal" | "timedOut" | "stdout" | "stderr">,
+  outputExists: boolean,
+): boolean {
+  try {
+    const output = JSON.parse(resultText(result)) as { error?: { message?: unknown } };
+    // oclif JSON mode exits 1; error.oclif.exit records the underlying error code.
+    return (
+      result.exitCode === 1 &&
+      result.signal === null &&
+      !result.timedOut &&
+      !outputExists &&
+      output?.error?.message ===
+        "Config export failed (unsupported).\nV1alpha1 export currently supports the Docker runtime; Podman compatibility is deferred."
+    );
+  } catch {
+    return false;
+  }
+}
+
 function refusalCategory(output: string): string | undefined {
   return /Config export failed \(([a-z-]+)\)/u.exec(output)?.[1];
 }
@@ -1044,7 +1108,12 @@ export class ConfigExportValidationPhaseFixture {
   ): Promise<ConfigExportEvidenceEnvelope> {
     const startedAt = this.dependencies.now();
     const producer = this.dependencies.producer();
-    const expectation = target.configExport.expectation;
+    let expectation = target.configExport.expectation;
+    let expectedRefusalCategory =
+      target.configExport.expectation === "expected-refusal"
+        ? target.configExport.failureCategory
+        : undefined;
+    let podmanRefusal = false;
     if (expectation === "no-usable-sandbox") {
       if (!instance.expectedFailure) {
         throw new Error(
@@ -1107,6 +1176,11 @@ export class ConfigExportValidationPhaseFixture {
         }
         expectedConsumerEvidence = expectedPinnedV1Evidence(sourceEntry);
         registryBeforeExport = structuredClone(registry.sandboxes);
+        podmanRefusal = expected.runtimeProvider === "podman";
+        if (podmanRefusal) {
+          expectation = "expected-refusal";
+          expectedRefusalCategory = "unsupported";
+        }
       }
       failureStage = "transport";
       const result = await this.host.nemoclaw(
@@ -1139,10 +1213,13 @@ export class ConfigExportValidationPhaseFixture {
         if (result.exitCode === 0 || outputExists) {
           throw new Error("config export unexpectedly succeeded or published a file");
         }
-        if (observedRefusalCategory !== target.configExport.failureCategory) {
+        if (observedRefusalCategory !== expectedRefusalCategory) {
           throw new Error(
-            `config export refused with '${observedRefusalCategory ?? "unclassified"}', expected '${target.configExport.failureCategory}'`,
+            `config export refused with '${observedRefusalCategory ?? "unclassified"}', expected '${expectedRefusalCategory}'`,
           );
+        }
+        if (podmanRefusal && !isPodmanConfigExportRefusal(result, outputExists)) {
+          throw new Error("config export did not report the expected Podman refusal");
         }
         classification = "expected-refusal";
         diagnostic = boundedDiagnostic(this.secrets, resultText(result));
@@ -1278,9 +1355,7 @@ export class ConfigExportValidationPhaseFixture {
       classification,
       passed: passed && cleanupSucceeded,
       producer,
-      ...(target.configExport.expectation === "expected-refusal"
-        ? { expectedRefusalCategory: target.configExport.failureCategory }
-        : {}),
+      ...(expectedRefusalCategory ? { expectedRefusalCategory } : {}),
       ...(observedRefusalCategory ? { observedRefusalCategory } : {}),
       ...(expected ? { expected } : {}),
       ...(observed ? { observed } : {}),

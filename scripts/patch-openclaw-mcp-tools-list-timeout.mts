@@ -12,7 +12,7 @@ export const MARKER = "/* nemoclaw MCP tools/list timeout override */";
 export const TOOLS_LIST_TIMEOUT_ENV = "NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS";
 export const TOOLS_LIST_TIMEOUT_MIN_MS = 1500;
 export const TOOLS_LIST_TIMEOUT_MAX_MS = 10_000;
-export const SUPPORTED_OPENCLAW_VERSION = "2026.9.1";
+export const SUPPORTED_OPENCLAW_VERSION = "2026.9.2";
 const LEGACY_FIXTURE_OPENCLAW_VERSIONS = new Set(["2026.3.11", "2026.4.24"]);
 
 /** Client identity that only the compiled bundle-mcp session runtime carries. */
@@ -194,7 +194,7 @@ function resolveBundleMcpRuntimeFile(distDir: string): string {
 export function patchOpenClawMcpToolsListTimeout(distDir: string): PatchRunResult {
   const resolvedDist = path.resolve(distDir);
   const version = readOpenClawVersion(resolvedDist);
-  if (version !== SUPPORTED_OPENCLAW_VERSION) {
+  if (version !== SUPPORTED_OPENCLAW_VERSION && version !== "2026.9.1") {
     if (LEGACY_FIXTURE_OPENCLAW_VERSIONS.has(version)) {
       return { status: "skipped-unsupported-version", version };
     }

@@ -70,6 +70,35 @@ describe("authoritative rebuild resume config", () => {
     });
   });
 
+  it("resumes an adopted external-image disclosure when the operator made no explicit choice", () => {
+    expect(
+      getResumeConfigConflicts(
+        {
+          sandboxName: "demo",
+          provider: "nvidia-prod",
+          model: "test-model",
+          toolDisclosure: "direct",
+        },
+        {},
+      ),
+    ).not.toContainEqual(expect.objectContaining({ field: "tool disclosure" }));
+  });
+
+  it("requires resume to retain the recorded external image digest", () => {
+    const recorded = `ghcr.io/example/openclaw@sha256:${"a".repeat(64)}`;
+    const changed = `ghcr.io/example/openclaw@sha256:${"b".repeat(64)}`;
+    const session = { metadata: { fromDockerfile: null, fromImage: recorded } };
+
+    expect(getResumeConfigConflicts(session, { fromImage: recorded })).not.toContainEqual(
+      expect.objectContaining({ field: "fromImage" }),
+    );
+    expect(getResumeConfigConflicts(session, { fromImage: changed })).toContainEqual({
+      field: "fromImage",
+      requested: changed,
+      recorded,
+    });
+  });
+
   it("fails closed for a corrupt persisted tool-disclosure value", () => {
     const corrupt = normalizeSession({
       version: 1,
@@ -167,4 +196,96 @@ describe("authoritative rebuild resume config", () => {
       recorded: "vllm-local",
     });
   });
+
+  it.each(["nemotron-3.5-super-vl-120b", "nvidia-nemotron-3.5-super-vl-120b-a12b-nvfp4"])(
+    "resumes the recorded vLLM checkpoint through its catalog alias %s",
+    (alias) => {
+      vi.stubEnv("NEMOCLAW_PROVIDER", "install-vllm");
+      vi.stubEnv("NEMOCLAW_VLLM_MODEL", alias);
+
+      expect(
+        getResumeConfigConflicts(
+          {
+            provider: null,
+            model: null,
+            vllmInstallModel: "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4",
+          },
+          { nonInteractive: true },
+        ),
+      ).toEqual([]);
+    },
+  );
+
+  it("keeps hosted model names distinct from managed vLLM aliases", () => {
+    vi.stubEnv("NEMOCLAW_PROVIDER", "build");
+    vi.stubEnv("NEMOCLAW_MODEL", "nemotron-3.5-super-vl-120b");
+    const recorded = "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4";
+
+    expect(
+      getResumeConfigConflicts(
+        { provider: "nvidia-prod", model: recorded },
+        { nonInteractive: true },
+      ),
+    ).toContainEqual({
+      field: "model",
+      requested: "nemotron-3.5-super-vl-120b",
+      recorded,
+    });
+  });
+
+  const stationSelection = {
+    provider: "vllm-local",
+    model: "nvidia-nemotron-3.5-super-vl-120b-a12b-nvfp4",
+    stationExpressIntent: {
+      version: 1,
+      model: "nemotron-3.5-super-vl-120b",
+      sandboxName: "my-assistant",
+    },
+  };
+
+  it.each(["pending", "in_progress", "failed"])(
+    "resumes the same Station selection while provider selection is %s",
+    (status) => {
+      const session = { ...stationSelection, steps: { provider_selection: { status } } };
+      vi.stubEnv("NEMOCLAW_PROVIDER", "install-vllm");
+      vi.stubEnv("NEMOCLAW_MODEL", session.model);
+      expect(getResumeConfigConflicts(session, { nonInteractive: true })).toEqual([]);
+
+      vi.stubEnv("NEMOCLAW_MODEL", "other-model");
+      expect(getResumeConfigConflicts(session, { nonInteractive: true })).toContainEqual({
+        field: "model",
+        requested: "other-model",
+        recorded: session.model,
+      });
+      vi.stubEnv("NEMOCLAW_PROVIDER", "build");
+      expect(getResumeConfigConflicts(session, { nonInteractive: true })).toContainEqual({
+        field: "provider",
+        requested: "nvidia-prod",
+        recorded: session.provider,
+      });
+    },
+  );
+
+  it.each([
+    ["failed", undefined],
+    ["failed", { version: 1 }],
+    ["failed", { version: 1, kind: "spark", sandboxName: "my-assistant" }],
+    ["complete", stationSelection.stationExpressIntent],
+    [undefined, stationSelection.stationExpressIntent],
+  ] as const)(
+    "rejects install-vllm for status %s and intent %j",
+    (status, stationExpressIntent) => {
+      vi.stubEnv("NEMOCLAW_PROVIDER", "install-vllm");
+      const session = {
+        ...stationSelection,
+        stationExpressIntent,
+        steps: { provider_selection: { status } },
+      };
+      expect(getResumeConfigConflicts(session, { nonInteractive: true })).toContainEqual({
+        field: "provider",
+        requested: "install-vllm",
+        recorded: session.provider,
+      });
+    },
+  );
 });

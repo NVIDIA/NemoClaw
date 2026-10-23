@@ -19,7 +19,7 @@ vi.mock("../../sandbox/config", () => ({
     configPath: "/sandbox/.openclaw/openclaw.json",
   }),
   readSandboxConfig: () => ({}),
-  writeSandboxConfig: vi.fn(),
+  setOpenClawConfigValues: vi.fn(),
 }));
 
 const execute = vi.mocked(executeSandboxExecCommand);

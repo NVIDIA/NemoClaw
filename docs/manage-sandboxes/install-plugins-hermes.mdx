@@ -23,6 +23,11 @@ user plugins to be baked into the sandbox image. Its built-in integration
 remains part of the shipped runtime, while user-installed plugins and packages
 remain ordinary Hermes state.
 
+<Note>
+This page applies only to non-Portable Hermes sandboxes.
+Portable Hermes does not expose the host `exec`, `gateway restart`, or `rebuild` commands that this workflow requires.
+</Note>
+
 ## Install and Discover a User Plugin
 
 Follow the plugin's Hermes installation instructions and place its complete
@@ -79,16 +84,14 @@ nemohermes <name> gateway restart
 nemohermes <name> status
 ```
 
-Hermes user plugins and lazy packages live in declared Hermes state, so they
-survive native restart and state-preserving rebuild or restore without a
-NemoClaw plugin ownership record:
+Non-Portable Hermes user plugins and lazy packages live in the agent's native home.
+They survive native restart and the complete native-home transfer performed by
+a state-preserving rebuild or restore without a NemoClaw plugin ownership record:
 
 ```bash
 nemohermes <name> rebuild --yes
 nemohermes <name> exec -- hermes plugins list
 ```
-
-A fresh onboarding with `--fresh` intentionally creates a new state boundary.
 
 ## Network and Credential Boundaries
 

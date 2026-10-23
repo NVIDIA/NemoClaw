@@ -29,7 +29,7 @@ describe("showSandboxChannelStatus config comparison", () => {
         command.includes("/sandbox/.openclaw/openclaw.json")
           ? {
               status: 0,
-              stdout: JSON.stringify({
+              stdout: `// Native OpenClaw JSON5\n${JSON.stringify({
                 channels: {
                   telegram: {
                     accounts: {
@@ -44,7 +44,7 @@ describe("showSandboxChannelStatus config comparison", () => {
                     },
                   },
                 },
-              }),
+              })}`,
               stderr: "",
             }
           : { status: 1, stdout: "", stderr: "" },

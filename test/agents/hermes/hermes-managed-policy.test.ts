@@ -6,11 +6,19 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import {
+  INVALID_NATIVE_NVIDIA_URLS,
+  NATIVE_NVIDIA_URLS,
+} from "../../fixtures/native-nvidia-inference-urls";
 import type { HermesBuildSettings } from "../../../agents/hermes/config/build-env.ts";
 import {
   buildHermesManagedPolicy,
   HERMES_MANAGED_POLICY_SCHEMA_VERSION,
 } from "../../../agents/hermes/config/managed-policy.ts";
+
+import { BEDROCK_RUNTIME_ADAPTER_OPENAI_BASE_URL } from "../../../src/lib/inference/bedrock-runtime";
+
+import { HOSTED_NATIVE_PROVIDERS } from "../../../src/lib/inference/native-provider/hosted";
 
 const READER_PATH = path.join(
   import.meta.dirname,
@@ -25,13 +33,6 @@ const PROFILE_PATCHER_PATH = path.join(
   "agents",
   "hermes",
   "patch-profile-policy-defaults.py",
-);
-const DASHBOARD_SEEDER_PATH = path.join(
-  import.meta.dirname,
-  "../../..",
-  "agents",
-  "hermes",
-  "seed-dashboard-config.py",
 );
 const SETTINGS: HermesBuildSettings = {
   model: "test-model",
@@ -69,12 +70,24 @@ except module.ManagedPolicyError as exc:
     raise SystemExit(1)
 `;
 
-function loadWithPython(document: unknown) {
+function loadWithPython(document: unknown, startupMigration = false) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "hermes-managed-policy-"));
   const policyPath = path.join(tmp, "managed-policy.json");
   fs.writeFileSync(policyPath, `${JSON.stringify(document)}\n`);
   try {
-    return spawnSync("python3", ["-I", "-c", PYTHON_LOAD, READER_PATH, policyPath], {
+    const hermesHome = path.join(tmp, ".hermes");
+    fs.mkdirSync(hermesHome);
+    const args = startupMigration
+      ? [
+          "-I",
+          path.join(path.dirname(READER_PATH), "migrate-dashboard-state.py"),
+          "--managed-policy",
+          policyPath,
+          "--hermes-dir",
+          hermesHome,
+        ]
+      : ["-I", "-c", PYTHON_LOAD, READER_PATH, policyPath];
+    return spawnSync("python3", args, {
       encoding: "utf8",
       timeout: 5000,
     });
@@ -84,6 +97,267 @@ function loadWithPython(document: unknown) {
 }
 
 describe("Hermes managed policy", () => {
+  const localSettings = {
+    ...SETTINGS,
+    baseUrl: "http://host.openshell.internal:8000/v1",
+    upstreamProvider: "compatible-endpoint",
+  };
+
+  it.each([
+    ["ollama-local", "http://host.openshell.internal:11434/v1"],
+    ["vllm-local", "http://host.docker.internal:8000/v1"],
+    ["llama-cpp-local", "http://10.0.0.2:8080/v1"],
+    ["vllm-local", "http://172.16.0.2:1024/custom/v1/"],
+    ["ollama-local", "http://192.168.0.2:65535/v1"],
+  ])("accepts the generated local policy at startup for %s at %s", (upstreamProvider, baseUrl) => {
+    const policy = buildHermesManagedPolicy({ ...SETTINGS, upstreamProvider, baseUrl }, {});
+    expect(policy.config.model?.api_key).toBe("${NEMOCLAW_LOCAL_INFERENCE_TOKEN}");
+    const result = loadWithPython(policy, true);
+    expect(result.status, result.stderr).toBe(0);
+  });
+
+  it.each([
+    "http://10.20.30.40:8080/v1",
+    "http://172.16.0.2:1024/custom/v1/",
+    "http://192.168.0.2:65535/v1",
+    "http://public.example:8000/v1",
+    "http://127.0.0.1:8000/v1",
+    "http://172.32.0.1:8000/v1",
+    "http://host.openshell.internal:80/v1",
+    "http://host.openshell.internal/v1",
+    "https://host.openshell.internal:8000/v1",
+    "http://host.openshell.internal:8000/",
+    "http://host.openshell.internal:8000/v1%2fother",
+    "http://do-not-echo@host.openshell.internal:8000/v1",
+    "http://@host.openshell.internal:8000/v1",
+    "http://host.openshell.internal:8000/v1?",
+    "http://host.openshell.internal:8000/v1#",
+    "http://host.openshell.internal:8000/v1\n",
+  ])("rejects the local template at an unqualified endpoint %j", (baseUrl) => {
+    const policy = buildHermesManagedPolicy(localSettings, {});
+    policy.config.model!.base_url = baseUrl;
+    const result = loadWithPython(policy);
+    expect(result.status).toBe(1);
+    expect(result.stderr).not.toContain("do-not-echo");
+  });
+
+  it.each([
+    "${OPENAI_API_KEY}",
+    "openshell:resolve:env:NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+    "openshell:resolve:env:v7_NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+    `openshell:resolve:env:s${"a".repeat(64)}_NEMOCLAW_LOCAL_INFERENCE_TOKEN`,
+    "synthetic-raw-local-credential",
+  ])("rejects baked or unrelated credentials in the local policy case %#", (apiKey) => {
+    const policy = buildHermesManagedPolicy(localSettings, {});
+    policy.config.model!.api_key = apiKey;
+    const result = loadWithPython(policy);
+    expect(result.status).toBe(1);
+    expect(result.stderr).not.toContain(apiKey);
+  });
+
+  it("rejects the local template for an unrelated provider", () => {
+    const policy = buildHermesManagedPolicy(localSettings, {});
+    policy.config._nemoclaw_upstream!.provider = "openai-api";
+    const result = loadWithPython(policy);
+    expect(result.status).toBe(1);
+  });
+
+  it.each(HOSTED_NATIVE_PROVIDERS)(
+    "accepts the runtime credential reference for $label",
+    (provider) => {
+      const policy = buildHermesManagedPolicy(
+        {
+          ...SETTINGS,
+          baseUrl: provider.endpoint,
+          upstreamProvider: provider.logicalProvider,
+          inferenceApi: provider.api,
+        },
+        {},
+      );
+      expect(policy.config.model?.api_key).toBe(`\${${provider.credentialEnv}}`);
+      const result = loadWithPython(policy);
+      expect(result.status, result.stderr).toBe(0);
+    },
+  );
+
+  it.each([
+    ["compatible-endpoint", "https://hosted.example:8443/inference/v1", "COMPATIBLE_API_KEY"],
+    ["compatible-endpoint", "https://integrate.api.nvidia.com/v1", "COMPATIBLE_API_KEY"],
+    ["compatible-endpoint", "http://10.20.30.40:8080/v1", "COMPATIBLE_API_KEY"],
+    [
+      "compatible-anthropic-endpoint",
+      "https://anthropic.example/v1",
+      "COMPATIBLE_ANTHROPIC_API_KEY",
+    ],
+    [
+      "compatible-anthropic-endpoint",
+      BEDROCK_RUNTIME_ADAPTER_OPENAI_BASE_URL,
+      "COMPATIBLE_ANTHROPIC_API_KEY",
+    ],
+  ])(
+    "loads a generated custom policy for %s at %s (#13195)",
+    (provider, baseUrl, credentialEnv) => {
+      const policy = buildHermesManagedPolicy(
+        { ...SETTINGS, baseUrl, upstreamProvider: provider },
+        {},
+      );
+      expect(policy.config.model?.api_key).toBe(`\${${credentialEnv}}`);
+      const result = loadWithPython(policy);
+      expect(result.status, result.stderr).toBe(0);
+
+      policy.config.model!.api_key = "synthetic-raw-credential";
+      const rejected = loadWithPython(policy);
+      expect(rejected.status).toBe(1);
+      expect(rejected.stderr).not.toContain("synthetic-raw-credential");
+    },
+  );
+
+  it("accepts the Hermes credential reference at an authenticated endpoint", () => {
+    const policy = buildHermesManagedPolicy(
+      {
+        ...SETTINGS,
+        baseUrl: "https://authenticated-hermes.example:8443/inference/v1/",
+        upstreamProvider: "hermes-provider",
+      },
+      {},
+    );
+    const result = loadWithPython(policy);
+    expect(result.status, result.stderr).toBe(0);
+  });
+
+  it.each([
+    ["openai-api", "https://api.openai.com/v1", "${ANTHROPIC_API_KEY}"],
+    ["anthropic-prod", "https://api.openai.com/v1", "${ANTHROPIC_API_KEY}"],
+    ["openai-api", "https://api.openai.com/v2", "${OPENAI_API_KEY}"],
+    ["openai-api", "https://api.openai.com:8443/v1", "${OPENAI_API_KEY}"],
+    ["openai-api", "https://api.openai.com.example/v1", "${OPENAI_API_KEY}"],
+    ["custom", "https://api.openai.com/v1", "${OPENAI_API_KEY}"],
+    ["compatible-endpoint", "https://hosted.example/v1", "${COMPATIBLE_ANTHROPIC_API_KEY}"],
+    ["compatible-anthropic-endpoint", "https://hosted.example/v1", "${COMPATIBLE_API_KEY}"],
+    ["compatible-endpoint", "https://inference.local/v1", "${COMPATIBLE_API_KEY}"],
+    ["compatible-endpoint", "http://localhost/v1", "${COMPATIBLE_API_KEY}"],
+    ["compatible-endpoint", "http://127.0.0.1/v1", "${COMPATIBLE_API_KEY}"],
+    ["compatible-endpoint", "http://[::1]/v1", "${COMPATIBLE_API_KEY}"],
+    ["compatible-endpoint", "https://do-not-echo@hosted.example/v1", "${COMPATIBLE_API_KEY}"],
+    ["compatible-endpoint", "https://hosted.example/v1?do-not-echo", "${COMPATIBLE_API_KEY}"],
+    ["compatible-endpoint", "https://hosted.example/v1#do-not-echo", "${COMPATIBLE_API_KEY}"],
+    ["hermes-provider", "https://authenticated-hermes.example/v1", "${GEMINI_API_KEY}"],
+    ["hermes-provider", "https://inference.local/v1", "${OPENAI_API_KEY}"],
+    ["hermes-provider", "https://localhost/v1", "${OPENAI_API_KEY}"],
+    ["hermes-provider", "https://gateway.internal/v1", "${OPENAI_API_KEY}"],
+    ["hermes-provider", "http://authenticated-hermes.example/v1", "${OPENAI_API_KEY}"],
+    ["hermes-provider", "https://do-not-echo@authenticated-hermes.example/v1", "${OPENAI_API_KEY}"],
+    [
+      "hermes-provider",
+      "https://authenticated-hermes.example/v1?token=do-not-echo",
+      "${OPENAI_API_KEY}",
+    ],
+    ["hermes-provider", "https://authenticated-hermes.example/v1#do-not-echo", "${OPENAI_API_KEY}"],
+    ["hermes-provider", "https://authenticated-hermes.example/v1%2fother", "${OPENAI_API_KEY}"],
+  ])("rejects a mismatched hosted route for %s at %s", (provider, baseUrl, apiKey) => {
+    const policy = buildHermesManagedPolicy(SETTINGS, {});
+    policy.config._nemoclaw_upstream!.provider = provider;
+    policy.config.model!.base_url = baseUrl;
+    policy.config.model!.api_key = apiKey;
+    const result = loadWithPython(policy);
+    expect(result.status).toBe(1);
+    expect(result.stderr).not.toContain(apiKey);
+    expect(result.stderr).not.toContain("do-not-echo");
+  });
+
+  it.each([
+    "openshell:resolve:env:OPENAI_API_KEY",
+    "openshell:resolve:env:v7_OPENAI_API_KEY",
+    "${UNRELATED_API_KEY}",
+    "synthetic-raw-credential",
+  ])("rejects a baked or unrelated hosted credential %s", (apiKey) => {
+    const policy = buildHermesManagedPolicy(
+      { ...SETTINGS, baseUrl: "https://api.openai.com/v1", upstreamProvider: "openai-api" },
+      {},
+    );
+    policy.config.model!.api_key = apiKey;
+    const result = loadWithPython(policy);
+    expect(result.status).toBe(1);
+    expect(result.stderr).not.toContain(apiKey);
+  });
+
+  it.each(NATIVE_NVIDIA_URLS)(
+    "accepts the native NVIDIA inference placeholder at %s",
+    (baseUrl) => {
+      const policy = buildHermesManagedPolicy(
+        { ...SETTINGS, baseUrl, upstreamProvider: "nvidia-prod" },
+        {},
+      );
+      expect(policy.config.model?.api_key).toBe("${NVIDIA_INFERENCE_API_KEY}");
+      const result = loadWithPython(policy);
+      expect(result.status, result.stderr).toBe(0);
+    },
+  );
+
+  it.each([
+    "openshell:resolve:env:v7_NVIDIA_INFERENCE_API_KEY",
+    `openshell:resolve:env:s${"a".repeat(64)}_NVIDIA_INFERENCE_API_KEY`,
+  ])("accepts a provider-bound native NVIDIA credential handle %s", (apiKey) => {
+    const policy = buildHermesManagedPolicy(
+      { ...SETTINGS, baseUrl: NATIVE_NVIDIA_URLS[0], upstreamProvider: "nvidia-prod" },
+      {},
+    );
+    policy.config.model!.api_key = apiKey;
+    const result = loadWithPython(policy);
+    expect(result.status, result.stderr).toBe(0);
+  });
+
+  it.each([
+    "openshell:resolve:env:NVIDIA_INFERENCE_API_KEY",
+    "openshell:resolve:env:v7_OPENAI_API_KEY",
+    "openshell:resolve:env:v123456789012345678901_NVIDIA_INFERENCE_API_KEY",
+    `openshell:resolve:env:s${"A".repeat(64)}_NVIDIA_INFERENCE_API_KEY`,
+    "sk-raw-policy-credential",
+  ])("rejects an invalid native NVIDIA credential handle %s", (apiKey) => {
+    const policy = buildHermesManagedPolicy(
+      { ...SETTINGS, baseUrl: NATIVE_NVIDIA_URLS[0], upstreamProvider: "nvidia-prod" },
+      {},
+    );
+    policy.config.model!.api_key = apiKey;
+    const result = loadWithPython(policy);
+    expect(result.status).toBe(1);
+    expect(result.stderr).not.toContain(apiKey);
+  });
+
+  it.each(INVALID_NATIVE_NVIDIA_URLS)(
+    "rejects ambiguous native NVIDIA routing at %j",
+    (baseUrl) => {
+      expect(() => buildHermesManagedPolicy({ ...SETTINGS, baseUrl }, {})).toThrow(
+        "Native NVIDIA inference requires https://integrate.api.nvidia.com/v1.",
+      );
+
+      const policy = buildHermesManagedPolicy({ ...SETTINGS, baseUrl: NATIVE_NVIDIA_URLS[0] }, {});
+      const result = loadWithPython({
+        ...policy,
+        config: { ...policy.config, model: { ...policy.config.model, base_url: baseUrl } },
+      });
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("Native NVIDIA inference requires");
+      expect(result.stderr).not.toContain("do-not-echo");
+    },
+  );
+
+  it.each([
+    ["https://integrate.api.nvidia.com/v1", "sk-OPENSHELL-PROXY-REWRITE"],
+    ["https://inference.local/v1", "${NVIDIA_INFERENCE_API_KEY}"],
+    ["https://integrate.api.nvidia.com.example/v1", "${NVIDIA_INFERENCE_API_KEY}"],
+    ["https://integrate.api.nvidia.com/v1", "sk-raw-policy-credential"],
+  ])("rejects credentials outside the managed route contract at %s", (baseUrl, apiKey) => {
+    const policy = buildHermesManagedPolicy({ ...SETTINGS, baseUrl }, {});
+    const malformedPolicy = {
+      ...policy,
+      config: { ...policy.config, model: { ...policy.config.model, api_key: apiKey } },
+    };
+    const result = loadWithPython(malformedPolicy);
+    expect(result.status).toBe(1);
+    expect(result.stderr).not.toContain(apiKey);
+  });
+
   it("accepts absent inference while retaining managed restrictions", () => {
     const policy = buildHermesManagedPolicy({ ...SETTINGS, model: null }, {});
     const result = loadWithPython(policy);
@@ -105,18 +379,21 @@ describe("Hermes managed policy", () => {
     expect(policy.schema_version).toBe(HERMES_MANAGED_POLICY_SCHEMA_VERSION);
     expect(Object.keys(policy).sort()).toEqual([
       "config",
-      "dashboard",
       "env_lines",
       "managed_paths",
       "schema_version",
+      "shadow_migration",
     ]);
+    expect(policy.shadow_migration).toMatchObject({
+      routing_keys: expect.arrayContaining(["model", "_nemoclaw_upstream"]),
+      env_keys: expect.arrayContaining(["API_SERVER_HOST", "API_SERVER_PORT"]),
+    });
     expect(policy.config._nemoclaw_upstream).toEqual({
       provider: "NVIDIA Router",
       provider_key: "nvidia-router",
       model: "test-model",
     });
     expect(policy.env_lines).toContain("DISCORD_BOT_TOKEN=openshell:resolve:env:DISCORD_BOT_TOKEN");
-    expect(policy.dashboard.env_keys).not.toContain("API_SERVER_KEY");
     expect(serialized).not.toContain(rawSecret);
     expect(loadWithPython(policy).status).toBe(0);
   });
@@ -130,7 +407,7 @@ describe("Hermes managed policy", () => {
     const result = loadWithPython(policy);
 
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain("has no migration to 1");
+    expect(result.stderr).toContain(`has no migration to ${HERMES_MANAGED_POLICY_SCHEMA_VERSION}`);
   });
 
   it("rejects a raw model credential without echoing it (#8008)", () => {
@@ -147,7 +424,9 @@ describe("Hermes managed policy", () => {
     const result = loadWithPython(malformedPolicy);
 
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain("must use the OpenShell proxy rewrite sentinel");
+    expect(result.stderr).toContain(
+      "must use an OpenShell credential placeholder or proxy rewrite sentinel",
+    );
     expect(result.stderr).not.toContain(rawCredential);
   });
 
@@ -156,14 +435,6 @@ describe("Hermes managed policy", () => {
       encoding: "utf8",
       timeout: 5000,
     });
-    const seeder = spawnSync("python3", ["-I", DASHBOARD_SEEDER_PATH], {
-      encoding: "utf8",
-      timeout: 5000,
-    });
-
     expect(patcher.status, patcher.stderr).toBe(0);
-    expect(seeder.status).toBe(1);
-    expect(seeder.stderr).toContain("usage: seed-dashboard-config.py");
-    expect(seeder.stderr).not.toContain("ModuleNotFoundError");
   });
 });

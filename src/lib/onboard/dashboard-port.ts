@@ -67,10 +67,7 @@ export function createOpenShellForwardPortObserver(input: {
 }): OpenShellForwardPortObserver {
   return async (ports) => {
     const forwards = ports.map((port) => input.forwardForPort(port));
-    const observations = await input.adapter.observeForwards({
-      forwards,
-      ...(input.assertCurrent ? { assertCurrent: input.assertCurrent } : {}),
-    });
+    const observations = await input.adapter.observeForwards({ forwards });
     if (
       observations.length !== forwards.length ||
       observations.some((observation, index) => {
@@ -80,6 +77,9 @@ export function createOpenShellForwardPortObserver(input: {
     ) {
       throw new Error("OpenShell returned incomplete forward ownership evidence.");
     }
+    // This batch is read-only. Mutations use their own strict fences, while
+    // one final check rejects all valid evidence if gateway authority changed.
+    await input.assertCurrent?.();
     return observations;
   };
 }
@@ -91,7 +91,7 @@ const DASHBOARD_PORT_RESERVATION_LOCK = "dashboard-port-reservation:host";
  *
  * OpenShell forward listings are gateway-scoped while dashboard ports and the
  * NemoClaw registry are host-scoped. Holding one cross-process lease across
- * allocation and registration prevents onboard or snapshot restores on
+ * allocation and registration prevents onboard or rebuild restores on
  * different gateways from selecting the same currently-free port.
  * Callers that also need lifecycle locks must use the shared order:
  * sandbox mutation → this host reservation → gateway route mutation.
@@ -133,26 +133,89 @@ export function probePortBoundSync(port: number): boolean {
 }
 
 /**
- * Synchronous check whether a TCP port has an active listener on the host.
+ * Classify an `lsof -n` NAME bind address as one that would block a loopback
+ * dashboard bind. NemoClaw binds its dashboard forward on `127.0.0.1`
+ * (see {@link reserveDashboardPort} and {@link probePortBoundSync}), so a
+ * listener only conflicts when it already owns the loopback interface or a
+ * wildcard address that includes it. A listener bound solely to an external
+ * interface (e.g. a TLS reverse proxy in front of `CHAT_UI_URL`) leaves the
+ * loopback socket free and must not be treated as blocking (#11439).
+ */
+function bindAddressBlocksLoopback(address: string): boolean {
+  const addr = address.replace(/^\[/, "").replace(/\]$/, "").toLowerCase();
+  // Wildcard binds (all interfaces) always include loopback.
+  if (addr === "*" || addr === "0.0.0.0" || addr === "::" || addr === "0:0:0:0:0:0:0:0") {
+    return true;
+  }
+  // IPv4 loopback (127.0.0.0/8) and IPv6 loopback (::1), including the
+  // IPv4-mapped form docker-proxy can report.
+  if (addr.startsWith("127.")) return true;
+  if (addr === "::1" || addr === "0:0:0:0:0:0:0:1") return true;
+  if (addr.startsWith("::ffff:127.")) return true;
+  return false;
+}
+
+/**
+ * Decide whether `lsof -sTCP:LISTEN -P -n` output shows a listener on `port`
+ * that would block a loopback dashboard bind. Only loopback and wildcard binds
+ * count; an external-interface-only listener does not. Returns false when no
+ * matching loopback/wildcard listener is present so callers fall through to the
+ * authoritative `127.0.0.1` bind probe (#11439). Preserves docker-proxy /
+ * loopback / `0.0.0.0` detection (#3260), which report wildcard or loopback
+ * addresses.
+ */
+export function lsofOutputBlocksLoopbackBind(
+  output: string | null | undefined,
+  port: number,
+): boolean {
+  if (!output) return false;
+  for (const rawLine of output.split("\n")) {
+    const line = rawLine.trim();
+    if (!/\(LISTEN\)$/.test(line)) continue;
+    // NAME column holds the bind endpoint, e.g. "TCP 127.0.0.1:18789 (LISTEN)",
+    // "TCP *:18789 (LISTEN)", or "TCP [::1]:18789 (LISTEN)".
+    const match = line.match(/\s(\S+):(\d+)\s+\(LISTEN\)$/);
+    if (!match) continue;
+    if (Number(match[2]) !== port) continue;
+    if (bindAddressBlocksLoopback(match[1])) return true;
+  }
+  return false;
+}
+
+/**
+ * Synchronous check whether a TCP port has an active listener that would block
+ * NemoClaw's dashboard bind.
+ *
+ * The default loopback dashboard forward binds `127.0.0.1`, so the decision is
+ * interface-specific: an external-interface-only listener on the same port
+ * number does not count. When `loopbackOnly` is false — an operator opted into a
+ * remote (`0.0.0.0`) bind via `NEMOCLAW_DASHBOARD_BIND` — the forward binds all
+ * interfaces, so any listener on the port (including an external-interface-only
+ * one) genuinely conflicts and counts (#3259, #11439).
  *
  * Detection chain — any positive signal short-circuits:
  *   1. `lsof` — finds listeners owned by the current user.
  *   2. `sudo -n lsof` — catches root-owned listeners (e.g., docker-proxy on
- *      macOS) that the unprivileged lsof can't see. Silently no-ops when
- *      the user can't escalate non-interactively.
- *   3. Node `net` bind probe — authoritative fallback when both lsof
- *      invocations come up empty, mirroring the direct ForwardTcp bind.
+ *      macOS) that the unprivileged lsof can't see. Silently no-ops when the
+ *      user can't escalate non-interactively.
+ *   3. Node `net` bind probe — authoritative `127.0.0.1` check, run whenever the
+ *      lsof invocations show no blocking listener, mirroring the direct
+ *      ForwardTcp loopback bind.
  *
  * Returns false (optimistic) when every probe is inconclusive. The detached
  * OpenShell launch performs the final bind check.
  */
-export function isPortBoundOnHost(port: number): boolean {
+export function isPortBoundOnHost(port: number, loopbackOnly = true): boolean {
+  const blocks = (output: ReturnType<RunCaptureFn>): boolean =>
+    loopbackOnly
+      ? lsofOutputBlocksLoopbackBind(output, port)
+      : Boolean(output && output.trim().length > 0);
   try {
     const out: ReturnType<RunCaptureFn> = runCapture(
       ["lsof", "-i", `:${port}`, "-sTCP:LISTEN", "-P", "-n"],
       { ignoreError: true },
     );
-    if (out && out.trim().length > 0) return true;
+    if (blocks(out)) return true;
   } catch {
     /* fall through to the next probe */
   }
@@ -162,7 +225,7 @@ export function isPortBoundOnHost(port: number): boolean {
       ["sudo", "-n", "lsof", "-i", `:${port}`, "-sTCP:LISTEN", "-P", "-n"],
       { ignoreError: true },
     );
-    if (sudoOut && sudoOut.trim().length > 0) return true;
+    if (blocks(sudoOut)) return true;
   } catch {
     /* fall through to the bind probe */
   }
@@ -363,7 +426,13 @@ export function findAvailablePortInRangeFromObservations(
   range: HostPortRange,
   registryOccupiedPorts: ReadonlyMap<string, string> = new Map(),
 ): number {
-  const indeterminate = observations.find((observation) => observation.state === "indeterminate");
+  // An unprovable owner on one port only keeps that port occupied below. Any other
+  // indeterminate result means the observation itself failed, so stop (#11979).
+  const indeterminate = observations.find(
+    (observation) =>
+      observation.state === "indeterminate" &&
+      !("error" in observation && observation.error.kind === "ownership"),
+  );
   if (indeterminate) {
     const message =
       "error" in indeterminate ? indeterminate.error.message : "Invalid forward request.";
@@ -388,12 +457,44 @@ export function findAvailablePortInRangeFromObservations(
   }
 
   const lines = [...occupied.entries()]
-    .filter(([port]) => Number(port) >= range.start && Number(port) <= range.end)
-    .map(([port, owner]) => `  ${port} → ${owner}`)
+    .filter(([port]) => portsToScan.includes(Number(port)))
+    .map(([port, owner]) => {
+      const foreign = observations.some(
+        (observation) =>
+          observation.state === "foreign" && observation.forward.port === Number(port),
+      );
+      const description =
+        registryOccupiedPorts.get(port) ?? (foreign ? "foreign OpenShell forward" : owner);
+      return `  ${port} → ${description}`;
+    })
     .join("\n");
+  const ownershipUnverifiedPorts = portsToScan.filter(
+    (port) =>
+      !registryOccupiedPorts.has(String(port)) &&
+      observations.some(
+        (observation) =>
+          observation.state === "indeterminate" &&
+          "forward" in observation &&
+          observation.forward.port === port &&
+          observation.error.kind === "ownership",
+      ),
+  );
+  const ownershipRemedy =
+    "Restore OpenShell forward ownership verification for these ports, then rerun onboarding.";
+  if (ownershipUnverifiedPorts.length === portsToScan.length) {
+    throw new Error(
+      `No ${range.label} port in range ${range.start}-${range.end} has verified OpenShell forward ownership:\n${lines}\n` +
+        ownershipRemedy,
+    );
+  }
+  const mixedOwnershipRemedy =
+    ownershipUnverifiedPorts.length > 0
+      ? `\nSome candidate ports have unverified OpenShell forward ownership.\n${ownershipRemedy}`
+      : "";
   throw new Error(
     `All ${range.label} ports in range ${range.start}-${range.end} are occupied:\n${lines}\n` +
-      range.remedy,
+      range.remedy +
+      mixedOwnershipRemedy,
   );
 }
 
@@ -508,12 +609,18 @@ function parseChatUiUrlPort(chatUiUrlEnv: string | null | undefined): number | n
   }
 }
 
+/**
+ * Build the dashboard URL for a new sandbox. `--control-ui-port` selects only
+ * the port; the `CHAT_UI_URL` host is kept (#13177). Without a usable
+ * `CHAT_UI_URL`, the URL is loopback on the effective port.
+ */
 function buildCreateSandboxChatUiUrl(
   chatUiUrlEnv: string | null | undefined,
-  controlUiPort: number | null,
   effectivePort: number,
 ): string {
-  if (chatUiUrlEnv && controlUiPort == null) {
+  // `--control-ui-port` selects the port only; it must not discard the
+  // browser-facing host that `CHAT_UI_URL` records (#13177).
+  if (chatUiUrlEnv) {
     try {
       const parsed = new URL(normalizeChatUiUrlForParsing(chatUiUrlEnv));
       parsed.port = String(effectivePort);
@@ -554,7 +661,7 @@ function createSandboxDashboardPortResult(
   return {
     preferredPort,
     effectivePort,
-    chatUiUrl: buildCreateSandboxChatUiUrl(input.chatUiUrlEnv, input.controlUiPort, effectivePort),
+    chatUiUrl: buildCreateSandboxChatUiUrl(input.chatUiUrlEnv, effectivePort),
   };
 }
 

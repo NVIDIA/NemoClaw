@@ -38,7 +38,7 @@ function printTelegramDirectMessageAllowlistWarning({
   const allowedCount = Array.isArray(allowFrom) ? allowFrom.length : 0;
   if (getObjectPath(account, "dmPolicy") !== "allowlist" || allowedCount > 0) return;
 
-  log("  ⚠ Telegram direct-message allowlist is empty in baked openclaw.json.");
+  log("  ⚠ Telegram direct-message allowlist is empty in the current openclaw.json.");
   log(
     "    Set TELEGRAM_ALLOWED_IDS before rebuild, or complete OpenClaw pairing before expecting DM replies.",
   );

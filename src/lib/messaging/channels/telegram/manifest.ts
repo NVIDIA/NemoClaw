@@ -14,6 +14,7 @@ export const telegramManifest = {
     "After changing privacy mode, remove and re-add the bot to each group before testing @mentions.",
   ],
   supportedAgents: ["openclaw", "hermes"],
+  state: { openclaw: ["telegram"], hermes: ["platforms/telegram"] },
   auth: {
     mode: "token-paste",
   },

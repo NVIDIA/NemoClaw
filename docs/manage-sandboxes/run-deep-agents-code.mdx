@@ -187,10 +187,11 @@ The managed launchers disable the following mutable or unsupported behavior:
 
 Interactive sessions retain Deep Agents Code's native local behavior for shell allowlists, startup commands, interpreter and programmatic-tool settings, and user hooks.
 These processes run as the sandbox user inside OpenShell and receive the supported secret-free runtime environment.
-NemoClaw snapshots and restores `hooks.json` plus the supported interpreter and startup-mode keys in `config.toml` during a managed rebuild.
+OpenShell preserves the complete native home, and managed rebuild transfers it without interpreting `hooks.json` or selected `config.toml` keys.
 
-The managed model constructor accepts only Deep Agents Code's `openai` provider path and reads its endpoint from a root-owned image file.
-It supplies the non-secret gateway placeholder key and ignores mutable provider classes, credentials, endpoints, and constructor parameters in Deep Agents Code config.
+The generated configuration selects Deep Agents Code's `openai` provider for NVIDIA routes and `openrouter` for native OpenRouter routes.
+The managed model constructor accepts only these two provider names. It reads the endpoint from a root-owned image file and accepts only the route's matching non-secret OpenShell credential placeholder.
+It ignores mutable provider classes, credentials, endpoints, and constructor parameters in Deep Agents Code config.
 CLI and TUI model parameter overrides and custom rubric models are blocked.
 For headless runs, `--max-retries` remains available after Deep Agents Code validates the retry count.
 The managed boundary discards every other model parameter, including credentials, endpoints, and provider settings.
@@ -236,7 +237,18 @@ The managed headless path still disables shell execution, startup commands, inte
 Managed Deep Agents sandboxes keep interactive thread auto-approval disabled by default.
 In this mode, the TUI auto-approval choice and `dcode -y` fail closed.
 
-Enable the capability for a named sandbox through a transactional rebuild because NemoClaw bakes the capability into the managed image:
+For initial onboarding, select the capability explicitly:
+
+```bash
+nemoclaw onboard --agent langchain-deepagents-code --dcode-auto-approval thread-opt-in
+```
+
+`thread-opt-in` supports only managed Deep Agents Code images. It grants the capability without activating auto-approval.
+Use `--dcode-auto-approval disabled` to select the default posture or clear a recorded capability when switching agents.
+Before sandbox registration, resume preserves the explicit choice saved in the onboarding session.
+Omitting the flag preserves the registered capability during resume or recreation, including a prior revocation.
+
+For an existing sandbox, change the capability through a transactional rebuild because NemoClaw bakes it into the managed image:
 
 ```bash
 nemo-deepagents <sandbox-name> rebuild --dcode-auto-approval thread-opt-in --yes
@@ -244,6 +256,9 @@ nemo-deepagents <sandbox-name> rebuild --dcode-auto-approval thread-opt-in --yes
 
 The `thread-opt-in` setting grants permission to use Deep Agents Code's native approval modes, but it does not activate one by itself.
 Use `dcode -y` or **Enable Auto for this thread** for classifier-backed Auto mode.
+The generated configuration selects the managed provider and model for the separate classifier request.
+It uses the same OpenShell credential placeholder and endpoint as the agent.
+If classification fails, DCode retains its native denial and fallback to human approval.
 Use the native `--yolo` or `/yolo` path for unrestricted approval after its warning and acknowledgement.
 The TUI shows the upstream active-state indicator for the selected mode.
 

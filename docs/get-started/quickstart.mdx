@@ -35,6 +35,11 @@ Review the [Prerequisites](prerequisites) before you begin.
 
 <Steps>
   <Step title="Install NemoClaw">
+    The installer and supported CLI operations attempt anonymous completion telemetry to NVIDIA's fixed TEST receiver by default.
+    Run `export NEMOCLAW_DISABLE_TELEMETRY=1` in this shell before installation to suppress collection and delivery.
+    Repeat it in any new shell used for NemoClaw CLI commands.
+    Refer to [Operation Telemetry](/user-guide/openclaw/security/best-practices#operation-telemetry) for details.
+
     Run the hosted installer in a terminal.
 
     ```bash
@@ -71,9 +76,11 @@ Review the [Prerequisites](prerequisites) before you begin.
     Wait for the ready summary, then check the sandbox state.
     Before it prints this summary, ordinary fresh OpenClaw onboarding waits for exactly one matching local CLI operator device.
     The in-sandbox auto-pair watcher is the only component that approves this device's baseline scope upgrade.
-    The host runs one bounded warm-up only when the canonical device is pairing-only, then observes the same device without sending another approval.
+    The host runs one bounded warm-up when the verified canonical device has pairing-only or pairing/read permissions and needs write access.
+    This includes a matching CLI device whose connection metadata was refreshed by a probe.
+    The host then observes the same device without sending another approval.
     Onboarding verifies the exact paired and token scopes and confirms that no same-device request remains pending.
-    Onboarding reports whether settlement failed because of an unavailable pairing, failed warm-up, missing request, persistent pending request, stopped watcher, policy rejection, approval timeout, or approval failure.
+    Onboarding reports whether settlement failed because of an unavailable or incompatible pairing, failed warm-up, missing request, persistent pending request, stopped watcher, policy rejection, approval timeout, or approval failure.
     The failure message omits device identifiers, request identifiers, public keys, tokens, and child command output.
     If this bounded readiness check does not settle, NemoClaw keeps onboarding resumable.
     Run `nemoclaw onboard --resume` after you correct the reported condition.
@@ -200,7 +207,11 @@ Use these details when your first-run path needs more control.
     On any express platform, set `NEMOCLAW_NO_EXPRESS=1` to skip the express prompt, or set `NEMOCLAW_PROVIDER` to choose a provider yourself.
 
     N1x Express selects one-host managed vLLM with `nvidia/Qwen3.6-35B-A3B-NVFP4`.
-    N1x detection requires Linux `arm64`, a trusted `/etc/fastos-release` marker with `NAME="N1x FASTOS"`, and NVIDIA vendor ID `10de` on a display-class PCI device.
+    N1x detection requires native Linux `arm64` and NVIDIA vendor ID `10de` on a display-class PCI device.
+    A trusted `/etc/fastos-release` marker with `NAME="N1x FASTOS"` qualifies the legacy path.
+    If the marker is absent, recognized N1x PCI device IDs can qualify an inferred identity.
+    Invalid, linked, or unreadable markers do not enable inference.
+    Refer to [N1x identity requirements](../inference/local-inference/set-up-vllm#use-n1x-express) for the recognized IDs and pending physical validation.
     The N1x path does not use DGX Spark cluster discovery, the fixed catalog path, managed llama.cpp, or NVIDIA NIM.
     Accepting the N1x prompt supplies the narrow managed-vLLM preview intent required to pass the pending-validation readiness finding.
     Declining the N1x prompt or setting `NEMOCLAW_NO_EXPRESS=1` continues with ordinary interactive onboarding.
@@ -282,6 +293,7 @@ Use these details when your first-run path needs more control.
     It retires the running gateway before replacing OpenShell only when that version is outside the supported range; an unknown installed version or an invalid or missing range stops the update without retiring the gateway, while any retirement failure stops the update with the sandbox backups preserved.
     After the host upgrade, it runs `nemoclaw upgrade-sandboxes --auto` before generic host admission.
     Confirmed recovery rebuilds stale sandboxes and restores validated backups for registered sandboxes that are not Ready.
+    Recovery also includes confirmed pre-fingerprint OpenClaw sandboxes that report Ready when their live agent-version probe fails.
     The installer skips generic onboarding when no Station reconciliation remains necessary.
     Required Station reconciliation still passes through host preflight.
     If recovery exits 0 but the installer cannot inspect its output, it reports unconfirmed recovery and skips generic onboarding.
@@ -291,7 +303,7 @@ Use these details when your first-run path needs more control.
     For pre-fingerprint OpenClaw and Hermes registry entries, confirm that every listed sandbox used a NemoClaw-managed image before recovery onto the current managed image.
     In non-interactive runs, set `NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE` to the JSON array of printed names only after you verify every named sandbox used a managed image.
     Legacy managed-image confirmation never overrides recorded custom-image evidence.
-    A custom OpenClaw sandbox uses the same validated state backup boundary; OpenClaw's native plugin and package state is restored with the rest of its declared state.
+    A custom OpenClaw sandbox uses the same validated whole-home transfer; OpenClaw's native plugin and package state is restored with every other path under the OpenShell-provided native home.
     If a backup is skipped or fails, or automatic rebuild fails or is blocked, the installer exits nonzero before generic onboarding begins.
 
     The inference prompt presents these choices.
@@ -330,8 +342,16 @@ Use these details when your first-run path needs more control.
     | Local Ollama | You want a host-local Ollama model. | None |
     | Model Router | You want NemoClaw to start the host-side model router. | `NVIDIA_INFERENCE_API_KEY` |
 
+    The NVIDIA Endpoints model picker includes hosted `nvidia/nemotron-3.5-super-vl-120b-a12b`.
+    Selecting it enables text and image input unless you provide an explicit valid override.
+    Refer to [Configure OpenClaw Model Capabilities](/user-guide/openclaw/inference/manage-inference/configure-model-capabilities) for input settings.
+
     For an OpenAI-compatible HTTP endpoint on `localhost`, `127.0.0.1`, or `[::1]`, press Enter to select no authentication when the endpoint uses the port selected by `NEMOCLAW_VLLM_PORT` (`8000` by default) or port `11434`.
-    Port `11435` supports this mode only when `NEMOCLAW_OLLAMA_PROXY_PORT` uses a different free port.
+    Port `11435` is reserved for the proxy and is unavailable for new no-authentication endpoints.
+    Recovery can retain an existing no-authentication route on `11435` only when the proxy has moved and no other protected service owns that port.
+    The shared protected proxy stays pinned to its existing backend; reuse that endpoint.
+    Moving or removing a sandbox does not release the host-global binding.
+    To select a different no-authentication backend, back up the sandboxes and remove the final NemoClaw gateway with the uninstaller before reinstalling.
 
     After you enter a sandbox name, the wizard asks for final confirmation before it registers the provider, prompts for integrations, and creates the sandbox.
 
@@ -369,7 +389,10 @@ Use these details when your first-run path needs more control.
   </Accordion>
 
   <Accordion title="Web Search Messaging and Network Policies">
-    After confirmation, NemoClaw registers the selected provider with the OpenShell gateway and sets the `inference.local` route.
+    After confirmation, NemoClaw registers the selected provider with OpenShell.
+    NVIDIA Endpoints and supported fixed hosted providers use native endpoints through sandbox-attached OpenShell providers.
+    New Ollama, standalone vLLM, and llama.cpp selections also use sandbox-attached providers for their host-local endpoints.
+    Local NVIDIA NIM, custom endpoints, and earlier local selections without a sandbox-attached provider retain the shared `inference.local` route.
     The wizard asks whether to enable web search and offers Brave Search or Tavily Search.
     Provide `BRAVE_API_KEY` for Brave Search or `TAVILY_API_KEY` for Tavily Search when prompted.
     NemoClaw validates the selected key before it creates the sandbox, registers a sandbox-scoped OpenShell provider, and writes only an OpenShell resolver placeholder into the OpenClaw configuration.
@@ -387,7 +410,7 @@ Use these details when your first-run path needs more control.
     When the selector is unset, OpenClaw chooses Brave Search when `BRAVE_API_KEY` is available, then Tavily Search when only `TAVILY_API_KEY` is available.
     Brave Search wins when both keys are available.
     Changing or disabling web search requires re-running onboarding with the new selection and accepting sandbox recreation, or passing `--recreate-sandbox`.
-    NemoClaw backs up supported workspace state before recreation and restores it into the replacement sandbox.
+    NemoClaw transfers the complete native home/workspace before recreation, including unknown files and agent-managed state. If that tree contains credential-bearing or uninspectable content, recreation stops before replacement; move credentials to supported OpenShell storage or bindings, then retry.
 
     The onboarding flow also offers Telegram, Discord, Slack, WeChat, WhatsApp, Microsoft Teams, and Google Chat.
     Press a channel number to toggle it, then press Enter to continue.
@@ -406,7 +429,7 @@ Use these details when your first-run path needs more control.
     The selector can include destinations such as GitHub, Jira, Slack, Telegram, or local inference.
     Press `r` to switch a selected preset between read-only and read-write when it supports both modes.
 
-    Use the onboarding summary to verify that the sandbox gateway, dashboard port forward, and `inference.local` route are reachable.
+    Use the onboarding summary to verify that the sandbox gateway, dashboard port forward, and selected inference path are reachable.
     When web search is enabled, it also checks the selected provider configuration and sends a real search request through sandbox egress.
     Treat an unreachable route or HTTP 5xx response as a failed readiness check: onboarding marks the sandbox not ready and exits non-zero.
     Restore the configured endpoint or proxy, run `nemoclaw onboard --resume` to complete the retained onboarding session, then rerun `nemoclaw <sandbox-name> status` to verify the route.

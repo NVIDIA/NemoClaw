@@ -10,7 +10,8 @@ content:
   type: "how_to"
 ---
 The Google Gemini provider routes NemoClaw to Google's OpenAI-compatible Chat Completions endpoint.
-The sandbox continues to use the managed `inference.local` route.
+The agent calls `https://generativelanguage.googleapis.com/v1beta/openai/` through a sandbox-attached OpenShell provider.
+OpenShell injects the credential; the sandbox receives only a placeholder.
 
 ## Credential
 

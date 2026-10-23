@@ -111,9 +111,6 @@ export function resolveRuntimeInferenceApi(options: {
   if (agentApi) return normalizeInferenceApi(agentApi);
 
   const sameProvider = currentProvider === provider;
-  const sessionApi = sameProvider ? sessionRouteApi(session, sandboxName, provider) : null;
-  if (sessionApi) return sessionApi;
-
   const configApi =
     sameProvider && agentName === "hermes"
       ? readHermesRouteApi(config)
@@ -121,6 +118,9 @@ export function resolveRuntimeInferenceApi(options: {
         ? readOpenClawRouteApi(config, provider)
         : null;
   if (configApi) return configApi;
+
+  const sessionApi = sameProvider ? sessionRouteApi(session, sandboxName, provider) : null;
+  if (sessionApi) return sessionApi;
 
   if (provider === "compatible-anthropic-endpoint") return "anthropic-messages";
   return null;

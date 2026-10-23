@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { StringDecoder } from "node:string_decoder";
 
+import { MAX_TIMER_DELAY_MS } from "../../core/timer";
 import { redactFull, redactFullWithUrls } from "../../security/redact";
 
 const HF_TOKEN_ENV_KEYS = ["HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"] as const;
@@ -13,7 +14,6 @@ const HF_RATE_LIMIT_PATTERN = /\b429\b|too many requests|rate[\s_-]*limit/i;
 const MODEL_DOWNLOAD_HEARTBEAT_MS = 30_000;
 const DEFAULT_MODEL_DOWNLOAD_STALL_TIMEOUT_MS = 10 * 60 * 1000;
 const MODEL_DOWNLOAD_STALL_TIMEOUT_ENV = "NEMOCLAW_HF_DOWNLOAD_STALL_TIMEOUT";
-const MAX_TIMER_DELAY_MS = 2_147_483_647;
 const CONTAINER_CLEANUP_TIMEOUT_MS = 10_000;
 const HF_DOWNLOAD_CACHE_CONTAINER_DIR = "/tmp/nemoclaw-huggingface";
 const HF_REPOSITORY_ID_MAX_LENGTH = 96;
@@ -50,7 +50,10 @@ export type HuggingFaceModelAcquisitionResult =
 
 export type HfDownloadAuthentication =
   | { readonly authenticated: false }
-  | { readonly authenticated: true; readonly source: (typeof HF_TOKEN_ENV_KEYS)[number] };
+  | {
+      readonly authenticated: true;
+      readonly source: (typeof HF_TOKEN_ENV_KEYS)[number];
+    };
 
 function pickHfTokenEntry(
   env: NodeJS.ProcessEnv = process.env,
@@ -195,11 +198,11 @@ function modelDownloadStallTimeoutMs(env: NodeJS.ProcessEnv = process.env): numb
 }
 
 function dockerEndpointIdentity(env: Readonly<Record<string, string>>): string {
-  const dockerContext = env.DOCKER_CONTEXT?.trim();
-  if (dockerContext) return `Docker context ${redactFull(dockerContext)}`;
   const dockerHost = env.DOCKER_HOST?.trim();
-  return dockerHost
-    ? `Docker host ${redactFullWithUrls(dockerHost)}`
+  if (dockerHost) return `Docker host ${redactFullWithUrls(dockerHost)}`;
+  const dockerContext = env.DOCKER_CONTEXT?.trim();
+  return dockerContext
+    ? `Docker context ${redactFull(dockerContext)}`
     : "the default Docker endpoint";
 }
 

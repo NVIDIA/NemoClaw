@@ -2,12 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { BackupResult } from "../state/sandbox";
-import * as sandboxState from "../state/sandbox";
+import type { SandboxEntry } from "../state/registry/types";
+import * as snapshotBackup from "../actions/sandbox/snapshot/backup-authority";
 
 export type SandboxBackupImpl = (sandboxName: string) => BackupResult;
 
 export interface PreRecreateBackupOptions {
   sandboxName: string;
+  getSandbox?: (sandboxName: string) => SandboxEntry | null;
   backupImpl?: SandboxBackupImpl;
   log?: (msg: string) => void;
   errorLog?: (msg: string) => void;
@@ -27,7 +29,14 @@ export function backupSandboxBeforeRecreate(
 ): PreRecreateBackupResult {
   const log = opts.log ?? ((m: string) => console.log(m));
   const errorLog = opts.errorLog ?? ((m: string) => console.error(m));
-  const backupImpl = opts.backupImpl ?? sandboxState.backupSandboxState;
+  const backupImpl =
+    opts.backupImpl ??
+    ((sandboxName) => {
+      if (!opts.getSandbox) throw new Error("managed sandbox registry reader is required");
+      return snapshotBackup.backupSandboxStateWithManagedAuthority(sandboxName, {
+        getSandbox: opts.getSandbox,
+      });
+    });
   try {
     const backup = backupImpl(opts.sandboxName);
     if (backup.success && backup.manifest?.backupPath) {

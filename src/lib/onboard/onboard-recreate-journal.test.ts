@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { shouldReconcileRestoredOpenClawSelection } from "./onboard-recreate-journal";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -30,6 +31,7 @@ import {
 const BASE_INTENT: OnboardRecreateTargetIntent = {
   agent: "openclaw",
   fromDockerfile: null,
+  fromImage: null,
   provider: "nvidia-prod",
   model: "gpt-5.4",
   preferredInferenceApi: "openai-completions",
@@ -49,6 +51,7 @@ describe("non-resumed replacement target fingerprint (#7735)", () => {
   });
 
   it.each([
+    { fromImage: `ghcr.io/example/openclaw@sha256:${"a".repeat(64)}` },
     { observabilityEnabled: true },
     { toolDisclosure: "direct" },
     { sandboxGpuConfig: { sandboxGpuEnabled: true, mode: "all" } },
@@ -163,6 +166,23 @@ describe("non-resumed onboard replacement journal (#7735)", () => {
       note: vi.fn(),
     });
   }
+
+  it("retains explicit OpenClaw selection reconciliation when resuming its journal (#12667)", () => {
+    openOnboardRecreateJournal({
+      target: NON_DEFAULT_TARGET,
+      agentName: "openclaw",
+      intent: BASE_INTENT,
+      reconcileOpenClawInference: true,
+      note: vi.fn(),
+    });
+    const transactionId = session.checkpoint?.sandboxRecreate?.id;
+    session = JSON.parse(JSON.stringify(session));
+    open();
+    expect(session.checkpoint?.sandboxRecreate).toMatchObject({
+      id: transactionId,
+      reconcileOpenClawInference: true,
+    });
+  });
 
   it("journals an explicit recreation before the delete command runs", () => {
     open();
@@ -521,4 +541,84 @@ describe("non-resumed onboard replacement journal (#7735)", () => {
       phase: "deleted",
     });
   });
+});
+
+describe("restored selection override admission", () => {
+  it.each([
+    {
+      label: "changed model",
+      agent: "openclaw",
+      custom: false,
+      forced: false,
+      unknown: false,
+      providerChanged: false,
+      modelChanged: true,
+      expected: true,
+    },
+    {
+      label: "changed provider",
+      agent: "openclaw",
+      custom: false,
+      forced: false,
+      unknown: false,
+      providerChanged: true,
+      modelChanged: false,
+      expected: true,
+    },
+    {
+      label: "unchanged intent with native edits",
+      agent: "openclaw",
+      custom: false,
+      forced: false,
+      unknown: false,
+      providerChanged: false,
+      modelChanged: false,
+      expected: false,
+    },
+    {
+      label: "unknown intent",
+      agent: "openclaw",
+      custom: false,
+      forced: false,
+      unknown: true,
+      providerChanged: true,
+      modelChanged: true,
+      expected: false,
+    },
+    {
+      label: "rebuild",
+      agent: "openclaw",
+      custom: false,
+      forced: true,
+      unknown: false,
+      providerChanged: true,
+      modelChanged: true,
+      expected: false,
+    },
+    {
+      label: "custom image",
+      agent: "openclaw",
+      custom: true,
+      forced: false,
+      unknown: false,
+      providerChanged: true,
+      modelChanged: true,
+      expected: false,
+    },
+    {
+      label: "Hermes",
+      agent: "hermes",
+      custom: false,
+      forced: false,
+      unknown: false,
+      providerChanged: true,
+      modelChanged: true,
+      expected: false,
+    },
+  ])(
+    "bounds reconciliation for $label (#12667)",
+    ({ agent, custom, forced, expected, ...drift }) => {
+      expect(shouldReconcileRestoredOpenClawSelection(agent, custom, forced, drift)).toBe(expected);
+    },
+  );
 });

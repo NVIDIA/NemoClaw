@@ -55,15 +55,10 @@ describe("compiled rebuild loader boundary", () => {
     const priorCache = snapshotRequireCache();
     try {
       const rebuild = require(rebuildPath) as {
-        buildRefreshMutableOpenClawConfigHashCommand?: (configDir?: string) => string;
         stageMessagingManifestPlanForRebuild?: (...args: unknown[]) => Promise<unknown>;
       };
 
-      expect(rebuild.buildRefreshMutableOpenClawConfigHashCommand).toBeTypeOf("function");
       expect(rebuild.stageMessagingManifestPlanForRebuild).toBeTypeOf("function");
-      expect(
-        rebuild.buildRefreshMutableOpenClawConfigHashCommand?.("/tmp/openclaw config"),
-      ).toContain("config_dir='/tmp/openclaw config'");
     } finally {
       restoreRequireCache(priorCache);
     }

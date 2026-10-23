@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as sandboxCommandCli from "../../adapters/openshell/sandbox-command-cli";
 import type { OpenShellSandboxBufferedCommandRequest } from "../../adapters/openshell/sandbox-command";
@@ -16,7 +16,23 @@ import { createPodmanRuntimeProviderBundle } from "../../onboard/runtime-provide
 import { createRuntimeProviderBundleRegistry } from "../../onboard/runtime-provider/registry";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
+import * as crossPortRegistryEsm from "../../state/registry/cross-port";
 import { type SandboxStartDeps, startSandbox } from "./start";
+import { resolveSandboxInferenceInvocationEndpoint } from "./inference-invocation-probe";
+import { nativeLocalIdentity } from "../../inference/native-local/contract";
+import {
+  HOSTED_NATIVE_PROVIDERS,
+  hostedNativeProvider,
+} from "../../inference/native-provider/hosted";
+
+// connect.ts loads this registry through require. Keep injected lifecycle fixtures
+// independent of host sandboxes; the sibling-gateway test restores the real lookup.
+const crossPortRegistry =
+  require("../../state/registry/cross-port") as typeof import("../../state/registry/cross-port");
+beforeEach(() => {
+  vi.spyOn(crossPortRegistry, "findSandboxAcrossGatewayRoots").mockReturnValue(null);
+  vi.spyOn(crossPortRegistryEsm, "getSandboxAcrossGatewayRoots").mockReturnValue(null);
+});
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -144,6 +160,7 @@ function providerRegistry(providerId: "docker" | "podman") {
 
 describe("startSandbox native lifecycle", () => {
   it("starts a sandbox from its sibling gateway registry and clears stop intent there", async () => {
+    vi.restoreAllMocks();
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-start-cross-root-"));
     const registryDir = path.join(home, ".nemoclaw", "gateways", "8245");
     const registryFile = path.join(registryDir, "sandboxes.json");
@@ -749,4 +766,281 @@ describe("startSandbox native lifecycle", () => {
     expect(probeInferenceInvocation).toHaveBeenCalledOnce();
     expect(delayInferenceInvocationProbe).not.toHaveBeenCalled();
   });
+});
+
+const restartProviders = [
+  ...HOSTED_NATIVE_PROVIDERS,
+  {
+    logicalProvider: "nvidia-prod",
+    profileId: "nemoclaw-nvidia-inference-v1",
+    providerName: "nemoclaw-nvidia-prod-v1",
+    endpoint: "https://integrate.api.nvidia.com/v1",
+    api: "openai-completions",
+  },
+] as const;
+
+const restartCases = restartProviders.flatMap((provider) =>
+  (provider.api === "openai-completions" ? ["openclaw", "pi"] : ["openclaw"]).map((agent) => ({
+    ...provider,
+    agent,
+  })),
+);
+
+describe("startSandbox persisted native inference selection", () => {
+  it.each([
+    ["langchain-deepagents-code", "authenticated"],
+    ["langchain-deepagents-code", "sentinel"],
+    ["openclaw", "authenticated"],
+    ["openclaw", "sentinel"],
+  ] as const)("restarts %s through its recorded %s local provider", async (agent, authMode) => {
+    const binding = {
+      provider: agent === "openclaw" ? ("vllm-local" as const) : ("compatible-endpoint" as const),
+      ...(agent === "openclaw" ? { agent } : {}),
+      endpointUrl: "http://host.openshell.internal:8000/v1",
+      credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+      authMode,
+      gatewayName: "nemoclaw-19080",
+      sandboxName: "my-sandbox",
+    };
+    const attachment = {
+      ...binding,
+      ...nativeLocalIdentity(binding),
+      schemaVersion: 1 as const,
+      providerId: "owned-local-provider-id",
+    };
+    const endpoints: string[] = [];
+    const probeInferenceInvocation = vi.fn<
+      NonNullable<SandboxStartDeps["probeInferenceInvocation"]>
+    >(async (input) => {
+      endpoints.push(resolveSandboxInferenceInvocationEndpoint(input));
+      return { ok: true };
+    });
+    const h = harness({ probeInferenceInvocation });
+    h.getSandbox.mockReturnValue(
+      sandbox({
+        stopped: true,
+        agent,
+        provider: binding.provider,
+        model: "local-model",
+        gatewayName: binding.gatewayName,
+        preferredInferenceApi: "openai-completions",
+        nativeLocalProviderAttachment: attachment,
+      }),
+    );
+
+    await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 0 });
+    expect(endpoints).toEqual([`${binding.endpointUrl}/chat/completions`]);
+    expect(probeInferenceInvocation).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        sandboxName: binding.sandboxName,
+        gatewayName: binding.gatewayName,
+        agentName: agent,
+        provider: binding.provider,
+        model: "local-model",
+        nativeLocalProviderAttachment: attachment,
+      }),
+      {},
+      expect.any(Number),
+    );
+    expect(h.updateSandbox).toHaveBeenCalledWith(
+      "my-sandbox",
+      expect.objectContaining({ stopped: false }),
+    );
+  });
+
+  const hermesEndpoint = "https://authenticated.nous.example/api/v1";
+  const hermesDefinition = hostedNativeProvider("hermes-provider", hermesEndpoint)!;
+  const hermesAttachment = {
+    schemaVersion: 1 as const,
+    profileId: hermesDefinition.profileId,
+    providerName: hermesDefinition.providerName,
+    providerId: "authenticated-hermes-provider-id",
+    endpointUrl: hermesEndpoint,
+    allowedIps: ["8.8.8.8"],
+  };
+
+  it("restarts Hermes through its persisted authenticated endpoint", async () => {
+    const endpoints: string[] = [];
+    const probeInferenceInvocation = vi.fn<
+      NonNullable<SandboxStartDeps["probeInferenceInvocation"]>
+    >(async (input) => {
+      endpoints.push(resolveSandboxInferenceInvocationEndpoint(input));
+      return { ok: true };
+    });
+    const h = harness({ probeInferenceInvocation });
+    h.getSandbox.mockReturnValue(
+      sandbox({
+        stopped: true,
+        agent: "hermes",
+        provider: "hermes-provider",
+        model: "authenticated-model",
+        preferredInferenceApi: "openai-completions",
+        nativeHostedProviderAttachment: hermesAttachment,
+      }),
+    );
+
+    await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 0 });
+    expect(probeInferenceInvocation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "hermes-provider",
+        model: "authenticated-model",
+        nativeProvider: true,
+        nativeEndpointUrl: hermesEndpoint,
+      }),
+      {},
+      expect.any(Number),
+    );
+    expect(endpoints).toEqual(["https://authenticated.nous.example/api/v1/chat/completions"]);
+    expect(h.updateSandbox).toHaveBeenCalledWith(
+      "my-sandbox",
+      expect.objectContaining({ stopped: false }),
+    );
+  });
+
+  it.each([
+    { name: "unsafe endpoint", patch: { endpointUrl: "http://authenticated.nous.example/api/v1" } },
+    {
+      name: "different endpoint identity",
+      patch: { endpointUrl: "https://different.nous.example/api/v1" },
+    },
+    { name: "missing address pins", patch: { allowedIps: [] } },
+    { name: "private address pin", patch: { allowedIps: ["127.0.0.1"] } },
+  ])("refuses Hermes restart with $name before inference", async ({ patch }) => {
+    const probeInferenceInvocation = vi.fn(async () => ({ ok: true }) as const);
+    const h = harness({ probeInferenceInvocation });
+    h.getSandbox.mockReturnValue(
+      sandbox({
+        stopped: true,
+        agent: "hermes",
+        provider: "hermes-provider",
+        model: "authenticated-model",
+        nativeHostedProviderAttachment: { ...hermesAttachment, ...patch },
+      }),
+    );
+
+    await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 1 });
+    expect(probeInferenceInvocation).not.toHaveBeenCalled();
+    expect(h.updateSandbox).not.toHaveBeenCalledWith(
+      "my-sandbox",
+      expect.objectContaining({ stopped: false }),
+    );
+  });
+
+  it.each(restartCases)(
+    "restarts $agent with $logicalProvider using its attached native endpoint",
+    async (definition) => {
+      const endpoints: string[] = [];
+      const probeInferenceInvocation = vi.fn<
+        NonNullable<SandboxStartDeps["probeInferenceInvocation"]>
+      >(async (input) => {
+        endpoints.push(resolveSandboxInferenceInvocationEndpoint(input));
+        return { ok: true };
+      });
+      const h = harness({ probeInferenceInvocation });
+      const receipt = {
+        schemaVersion: 1 as const,
+        profileId: definition.profileId,
+        providerName: definition.providerName,
+        providerId: "owned-provider-id",
+      };
+      h.getSandbox.mockReturnValue(
+        sandbox({
+          stopped: true,
+          agent: definition.agent,
+          provider: definition.logicalProvider,
+          model: "fixture-model",
+          preferredInferenceApi: definition.api,
+          ...(definition.logicalProvider === "nvidia-prod"
+            ? {
+                nativeNvidiaProviderAttachment: {
+                  ...receipt,
+                  profileId: "nemoclaw-nvidia-inference-v1",
+                  providerName: "nemoclaw-nvidia-prod-v1",
+                },
+              }
+            : { nativeHostedProviderAttachment: receipt }),
+        }),
+      );
+      await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 0 });
+      const suffix = definition.api === "anthropic-messages" ? "/v1/messages" : "/chat/completions";
+      expect(endpoints).toEqual([definition.endpoint.replace(/\/+$/, "") + suffix]);
+      expect(h.updateSandbox).toHaveBeenCalledWith(
+        "my-sandbox",
+        expect.objectContaining({ stopped: false }),
+      );
+    },
+  );
+
+  it.each(restartCases)(
+    "retains the $agent legacy shared route for $logicalProvider without native authority",
+    async (definition) => {
+      const endpoints: string[] = [];
+      const h = harness({
+        probeInferenceInvocation: async (input) => {
+          endpoints.push(resolveSandboxInferenceInvocationEndpoint(input));
+          return { ok: true };
+        },
+      });
+      h.getSandbox.mockReturnValue(
+        sandbox({
+          agent: definition.agent,
+          provider: definition.logicalProvider,
+          model: "fixture-model",
+          preferredInferenceApi: definition.api,
+        }),
+      );
+      await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 0 });
+      expect(endpoints).toEqual([
+        "https://inference.local/v1/" +
+          (definition.api === "anthropic-messages" ? "messages" : "chat/completions"),
+      ]);
+    },
+  );
+
+  it.each([
+    {
+      nativeHostedProviderAttachment: {
+        schemaVersion: 1,
+        profileId: "nemoclaw-openai-inference-v1",
+        providerName: "nemoclaw-openai-api-v1",
+        providerId: "",
+      },
+    },
+    {
+      nativeHostedProviderAttachment: {
+        schemaVersion: 1,
+        profileId: "nemoclaw-gemini-inference-v1",
+        providerName: "nemoclaw-gemini-api-v1",
+        providerId: "wrong-selection",
+      },
+    },
+    {
+      nativeNvidiaProviderAttachment: {
+        schemaVersion: 1,
+        profileId: "nemoclaw-nvidia-inference-v1",
+        providerName: "nemoclaw-nvidia-prod-v1",
+        providerId: "wrong-selection",
+      },
+    },
+  ])(
+    "refuses invalid or mismatched persisted authority without probing [case %#]",
+    async (attachment) => {
+      const probeInferenceInvocation = vi.fn(async () => ({ ok: true }) as const);
+      const h = harness({ probeInferenceInvocation });
+      h.getSandbox.mockReturnValue(
+        sandbox({
+          stopped: true,
+          provider: "openai-api",
+          model: "fixture-model",
+          ...attachment,
+        } as Partial<SandboxEntry>),
+      );
+      await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 1 });
+      expect(probeInferenceInvocation).not.toHaveBeenCalled();
+      expect(h.updateSandbox).not.toHaveBeenCalledWith(
+        "my-sandbox",
+        expect.objectContaining({ stopped: false }),
+      );
+    },
+  );
 });

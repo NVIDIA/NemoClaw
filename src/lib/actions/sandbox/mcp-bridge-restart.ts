@@ -27,6 +27,7 @@ import {
   preflightMcpEntryTargets,
   waitForAttachedMcpCredential,
 } from "./mcp-bridge-provider";
+import { createMcpProviderAdapterBoundary } from "./mcp-bridge-provider-inspection";
 import {
   assertMcpAdapterMutationRuntimeCapabilities,
   assertMcpAdapterTeardownRuntimeCapabilities,
@@ -64,10 +65,11 @@ async function reloadAttemptedOpenClawMutation(
   sandboxName: string,
   adapters: readonly AgentMcpAdapter[],
   failure: unknown,
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
 ): Promise<void> {
   if (!adapters.includes("openclaw-config")) return;
   try {
-    await reloadOpenClawGatewayAfterMcpMutation(sandboxName, adapters);
+    await reloadOpenClawGatewayAfterMcpMutation(sandboxName, adapters, runtimeSelection);
   } catch (reloadFailure) {
     const originalDetail = failure instanceof Error ? failure.message : String(failure);
     const reloadDetail =
@@ -182,10 +184,19 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
       console.log(`  Reloaded MCP server '${name}' from current agent configuration.`);
     }
   } catch (error) {
-    await reloadAttemptedOpenClawMutation(sandboxName, attemptedAdapters, error);
+    await reloadAttemptedOpenClawMutation(
+      sandboxName,
+      attemptedAdapters,
+      error,
+      providerRuntimeSelection,
+    );
     throw error;
   }
-  await reloadOpenClawGatewayAfterMcpMutation(sandboxName, attemptedAdapters);
+  await reloadOpenClawGatewayAfterMcpMutation(
+    sandboxName,
+    attemptedAdapters,
+    providerRuntimeSelection,
+  );
 }
 
 export async function restoreExistingMcpBridgeRuntime(
@@ -250,7 +261,8 @@ export async function restoreExistingMcpBridgeRuntime(
         [entry],
         providerRuntimeSelection,
       );
-      await ensureMcpBridgeProviderProfile(providerRuntimeSelection);
+      const providerAdapter = createMcpProviderAdapterBoundary(providerRuntimeSelection).adapter;
+      await ensureMcpBridgeProviderProfile(providerRuntimeSelection, providerAdapter);
       if (options.applyPolicy !== false) {
         await applyGeneratedPolicy(
           sandboxName,
@@ -262,7 +274,7 @@ export async function restoreExistingMcpBridgeRuntime(
           },
         );
       }
-      await attachProvider(sandboxName, entry, providerRuntimeSelection);
+      await attachProvider(sandboxName, entry, providerRuntimeSelection, providerAdapter);
       if (options.applyPolicy !== false) {
         await applyGeneratedPolicy(
           sandboxName,
@@ -318,8 +330,17 @@ export async function restoreExistingMcpBridgeRuntime(
       );
     }
   } catch (error) {
-    await reloadAttemptedOpenClawMutation(sandboxName, attemptedAdapters, error);
+    await reloadAttemptedOpenClawMutation(
+      sandboxName,
+      attemptedAdapters,
+      error,
+      providerRuntimeSelection,
+    );
     throw error;
   }
-  await reloadOpenClawGatewayAfterMcpMutation(sandboxName, attemptedAdapters);
+  await reloadOpenClawGatewayAfterMcpMutation(
+    sandboxName,
+    attemptedAdapters,
+    providerRuntimeSelection,
+  );
 }

@@ -56,6 +56,8 @@ const durableConfig: RebuildDurableConfig = {
   dcodeAutoApprovalModeError: null,
   fromDockerfile: null,
   fromDockerfileError: null,
+  fromImage: null,
+  fromImageError: null,
   hermesAuthMethod: null,
   hermesAuthMethodError: null,
   webSearchConfig: null,
@@ -401,65 +403,6 @@ describe("runRebuildRecreatePhase handoff", () => {
     } finally {
       restoreEnv("NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE", previousRestoreLatestBackup);
     }
-  });
-
-  it("carries preserved Hermes home channels to the Dockerfile patch boundary (#7803)", async () => {
-    vi.spyOn(rebuildOnboardDependencies, "onboard").mockImplementation(async (options) => {
-      expect(options.rebuildPreservedEnv).toEqual([
-        {
-          path: ".env",
-          assignments: ["SLACK_HOME_CHANNEL=C0123", "SLACK_HOME_CHANNEL_THREAD_ID="],
-        },
-      ]);
-    });
-
-    await expect(
-      runRebuildRecreatePhase(
-        makeInput({
-          sandboxEntry: {
-            name: "alpha",
-            agent: "hermes",
-            observabilityEnabled: true,
-          },
-          rebuildAgent: "hermes",
-          rebuildsHermesSandbox: true,
-          messagingPlan: {
-            schemaVersion: 1,
-            sandboxName: "alpha",
-            agent: "hermes",
-            workflow: "rebuild",
-            channels: [
-              {
-                channelId: "slack",
-                displayName: "Slack",
-                authMode: "token-paste",
-                active: true,
-                selected: true,
-                configured: true,
-                disabled: false,
-                inputs: [],
-                hooks: [],
-              },
-            ],
-            disabledChannels: [],
-            credentialBindings: [],
-            networkPolicy: { presets: [], entries: [] },
-            agentRender: [],
-            buildSteps: [],
-            stateUpdates: [],
-            healthChecks: [],
-          },
-          backupManifest: {
-            preservedEnv: [
-              {
-                path: ".env",
-                assignments: ["SLACK_HOME_CHANNEL=C0123", "SLACK_HOME_CHANNEL_THREAD_ID="],
-              },
-            ],
-          } as never,
-        }),
-      ),
-    ).resolves.toBe(true);
   });
 
   it("restores the caller backup marker after inner recreate failure", async () => {

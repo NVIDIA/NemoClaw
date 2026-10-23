@@ -16,7 +16,10 @@ import { buildOpenShellRuntimeSelectionEnv } from "./runtime-selection";
 import { assertNoOpenShellGatewayEndpointOverride } from "./gateway-scope";
 import type {
   CreateOpenShellSandboxRequest,
+  DeleteAllOpenShellSandboxesRequest,
   DeleteOpenShellSandboxRequest,
+  OpenShellSandboxDeleteAllSubmission,
+  OpenShellSandboxDeleteFailed,
   OpenShellSandboxDeleteSubmission,
   OpenShellSandboxLifecycle,
 } from "./sandbox-lifecycle";
@@ -188,6 +191,16 @@ function validDeleteRequest(request: DeleteOpenShellSandboxRequest): boolean {
   );
 }
 
+function validDeleteAllRequest(request: DeleteAllOpenShellSandboxesRequest): boolean {
+  return (
+    request.target.kind === "selected" &&
+    Boolean(request.runtimeSelection) &&
+    isValidName(request.runtimeSelection?.gatewayName ?? "") &&
+    (request.timeoutMs === undefined ||
+      (Number.isFinite(request.timeoutMs) && request.timeoutMs > 0))
+  );
+}
+
 export type StreamSandboxCreateCommand = (
   command: string,
   args: readonly string[],
@@ -202,18 +215,12 @@ function validCreateText(value: string | undefined): value is string {
 /** Own the child environment allowlist for OpenShell create processes. */
 export function buildOpenShellSandboxCreateEnvironment(
   source: NodeJS.ProcessEnv,
-  options: {
-    readonly policyAttached: boolean;
-    readonly dockerClientConfigDirectory?: string;
-  },
+  options: { readonly policyAttached: boolean },
 ): Record<string, string> {
   const environment = buildSubprocessEnvFrom(source);
   delete environment.KUBECONFIG;
   delete environment.SSH_AUTH_SOCK;
   if (!options.policyAttached) delete environment.OPENSHELL_SANDBOX_POLICY;
-  if (options.dockerClientConfigDirectory) {
-    environment.DOCKER_CONFIG = options.dockerClientConfigDirectory;
-  }
   return environment;
 }
 
@@ -237,7 +244,6 @@ function validCreateRequest(request: CreateOpenShellSandboxRequest): boolean {
     request.gpu?.device,
     request.resources?.cpu,
     request.resources?.memory,
-    request.dockerClientConfigDirectory,
     request.workingDirectory,
     ...Object.keys(request.labels ?? {}),
     ...Object.values(request.labels ?? {}),
@@ -331,7 +337,7 @@ function failedDelete(
   diagnostic = "",
   exitCode: number | null = null,
   ambiguous = false,
-): OpenShellSandboxDeleteSubmission {
+): OpenShellSandboxDeleteFailed {
   return { kind: "failed", diagnostic, error, ambiguous, exitCode };
 }
 
@@ -362,6 +368,69 @@ function isAmbiguousFailure(
   return error.kind === "transport";
 }
 
+function submitSandboxDelete(
+  capture: SandboxLifecycleCapture,
+  args: string[],
+  timeoutMs: number,
+): Promise<OpenShellSandboxDeleteAllSubmission>;
+function submitSandboxDelete(
+  capture: SandboxLifecycleCapture,
+  args: string[],
+  timeoutMs: number,
+  absentSandboxName: string,
+): Promise<OpenShellSandboxDeleteSubmission>;
+async function submitSandboxDelete(
+  capture: SandboxLifecycleCapture,
+  args: string[],
+  timeoutMs: number,
+  absentSandboxName?: string,
+): Promise<OpenShellSandboxDeleteSubmission> {
+  let captured: CapturedOpenShellCommandResult;
+  try {
+    captured = await capture(args, {
+      ignoreError: true,
+      includeStderr: true,
+      includeStreams: true,
+      maxBuffer: CAPTURE_LIMIT_BYTES,
+      timeout: timeoutMs,
+    });
+  } catch (caught) {
+    const error = caught instanceof Error ? caught : new Error("OpenShell capture failed.");
+    const code = (error as NodeJS.ErrnoException).code;
+    const definiteSpawnFailure = code === "ENOENT" || code === "EACCES";
+    return failedDelete(
+      definiteSpawnFailure
+        ? { kind: "command", reason: "failed", message: deleteMessages.unavailable }
+        : { kind: "transport", reason: "unreachable", message: deleteMessages.command },
+      "",
+      null,
+      !definiteSpawnFailure,
+    );
+  }
+
+  const output = outputOf(captured);
+  const diagnostic = safeDiagnostic(output);
+  const printedError = /^\s*Error:/imu.test(output);
+  const error = classifyCliOpenShellCommandError(
+    printedError && captured.status === 0 ? { ...captured, status: 1 } : captured,
+    {
+      ...deleteMessages,
+      timeout: `OpenShell sandbox delete timed out after ${String(timeoutMs / 1_000)} seconds. Deletion could not be confirmed.`,
+    },
+  );
+  if (!error) return { kind: "accepted", diagnostic, exitCode: 0 };
+  if (
+    absentSandboxName &&
+    error.kind === "command" &&
+    captured.status !== null &&
+    !captured.error &&
+    isExplicitMissingOpenShellSandboxOutput(output, absentSandboxName)
+  ) {
+    return { kind: "absent", diagnostic, exitCode: captured.status ?? 1 };
+  }
+  return failedDelete(error, diagnostic, captured.status, isAmbiguousFailure(captured, error));
+}
+
 export function createCliOpenShellSandboxLifecycle(input: {
   capture: SandboxLifecycleCapture;
   streamCreate?: StreamSandboxCreateCommand;
@@ -389,9 +458,6 @@ export function createCliOpenShellSandboxLifecycle(input: {
         const stream = input.streamCreate ?? streamSandboxCreate;
         const filteredEnvironment = buildOpenShellSandboxCreateEnvironment(request.environment, {
           policyAttached: Boolean(request.policyPath),
-          ...(request.dockerClientConfigDirectory
-            ? { dockerClientConfigDirectory: request.dockerClientConfigDirectory }
-            : {}),
         });
         const environment = request.runtimeSelection
           ? buildOpenShellRuntimeSelectionEnv(filteredEnvironment, request.runtimeSelection)
@@ -429,6 +495,19 @@ export function createCliOpenShellSandboxLifecycle(input: {
         };
       }
     },
+    async deleteAllSandboxes(request): Promise<OpenShellSandboxDeleteAllSubmission> {
+      if (!validDeleteAllRequest(request)) return failedDelete(invalidDeleteError);
+      const timeoutMs = request.timeoutMs ?? input.defaultTimeoutMs ?? OPENSHELL_HEAVY_TIMEOUT_MS;
+      return submitSandboxDelete(
+        (args, options) =>
+          input.capture(
+            args,
+            withSelectedOpenShellCommandOptions(options, request.runtimeSelection),
+          ),
+        ["sandbox", "delete", "--all"],
+        timeoutMs,
+      );
+    },
     async deleteSandbox(request) {
       if (!validDeleteRequest(request)) return failedDelete(invalidDeleteError);
       if (!request.runtimeSelection) {
@@ -438,57 +517,17 @@ export function createCliOpenShellSandboxLifecycle(input: {
           return failedDelete(invalidDeleteError);
         }
       }
-
-      let captured: CapturedOpenShellCommandResult;
       const timeoutMs = request.timeoutMs ?? input.defaultTimeoutMs ?? OPENSHELL_HEAVY_TIMEOUT_MS;
-      try {
-        captured = await input.capture(
-          ["sandbox", "delete", "-g", request.target.gatewayName, request.sandboxName],
-          withSelectedOpenShellCommandOptions(
-            {
-              ignoreError: true,
-              includeStderr: true,
-              includeStreams: true,
-              maxBuffer: CAPTURE_LIMIT_BYTES,
-              timeout: timeoutMs,
-            } as const,
-            request.runtimeSelection,
+      return submitSandboxDelete(
+        (args, options) =>
+          input.capture(
+            args,
+            withSelectedOpenShellCommandOptions(options, request.runtimeSelection),
           ),
-        );
-      } catch (caught) {
-        const error = caught instanceof Error ? caught : new Error("OpenShell capture failed.");
-        const code = (error as NodeJS.ErrnoException).code;
-        const definiteSpawnFailure = code === "ENOENT" || code === "EACCES";
-        return failedDelete(
-          definiteSpawnFailure
-            ? { kind: "command", reason: "failed", message: deleteMessages.unavailable }
-            : { kind: "transport", reason: "unreachable", message: deleteMessages.command },
-          "",
-          null,
-          !definiteSpawnFailure,
-        );
-      }
-
-      const output = outputOf(captured);
-      const diagnostic = safeDiagnostic(output);
-      const printedError = /^\s*Error:/imu.test(output);
-      const error = classifyCliOpenShellCommandError(
-        printedError && captured.status === 0 ? { ...captured, status: 1 } : captured,
-        {
-          ...deleteMessages,
-          timeout: `OpenShell sandbox delete timed out after ${String(timeoutMs / 1_000)} seconds. Deletion could not be confirmed.`,
-        },
+        ["sandbox", "delete", "-g", request.target.gatewayName, request.sandboxName],
+        timeoutMs,
+        request.sandboxName,
       );
-      if (!error) return { kind: "accepted", diagnostic, exitCode: 0 };
-      if (
-        error.kind === "command" &&
-        captured.status !== null &&
-        !captured.error &&
-        isExplicitMissingOpenShellSandboxOutput(output, request.sandboxName)
-      ) {
-        return { kind: "absent", diagnostic, exitCode: captured.status ?? 1 };
-      }
-      return failedDelete(error, diagnostic, captured.status, isAmbiguousFailure(captured, error));
     },
   };
 }

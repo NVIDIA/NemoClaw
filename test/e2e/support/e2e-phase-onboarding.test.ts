@@ -542,7 +542,17 @@ describe("onboarding phase fixture", () => {
     );
     const secrets = new FakeSecrets({ NVIDIA_INFERENCE_API_KEY: "secret-token" });
     const cleanup = new FakeCleanup();
-    const onboard = new OnboardingPhaseFixture(new HostCliClient(runner), secrets, cleanup);
+    const probe = vi.fn();
+    const onboard = new OnboardingPhaseFixture(
+      new HostCliClient(runner),
+      secrets,
+      cleanup,
+      undefined,
+      {
+        sandbox: { openshell: probe, exec: probe },
+        runtime: { resolveSandboxResourceHandle: probe, command: probe },
+      },
+    );
 
     const instance = await onboard.from(
       ready({ onboarding: "cloud-openclaw-policy-custom-missing-presets" }),
@@ -574,42 +584,52 @@ describe("onboarding phase fixture", () => {
     });
     expect(cleanup.calls).toHaveLength(1);
     expect(cleanup.calls[0]?.name).toBe("destroy NemoClaw sandbox e2e-policy-missing");
+    expect(probe).not.toHaveBeenCalled();
   });
 
-  it("rejects unrelated failures for the missing custom policy presets negative path", async () => {
-    const runner = new FakeRunner();
-    runner.enqueue(shellResult(1, "provider rejected credential"));
-    const onboard = new OnboardingPhaseFixture(
-      new HostCliClient(runner),
-      new FakeSecrets({ NVIDIA_INFERENCE_API_KEY: "secret" }),
-    );
+  it.each([
+    ["sandbox not Ready", /failed without the policy preset signature/],
+    [
+      "NEMOCLAW_POLICY_PRESETS is required when NEMOCLAW_POLICY_MODE=custom.\nTypeError: unexpected",
+      /failed with a JavaScript stack trace/,
+    ],
+  ] as const)(
+    "captures bounded diagnostics without replacing the failure: %s",
+    async (output, error) => {
+      const runner = new FakeRunner();
+      runner.enqueue(shellResult(1, output));
+      const probe = vi.fn().mockRejectedValue(new Error("diagnostic unavailable"));
+      const resolveSandboxResourceHandle = vi.fn().mockResolvedValue("a".repeat(64));
+      const onboard = new OnboardingPhaseFixture(
+        new HostCliClient(runner),
+        new FakeSecrets({ NVIDIA_INFERENCE_API_KEY: 'secret"token' }),
+        undefined,
+        undefined,
+        {
+          sandbox: { openshell: probe, exec: probe },
+          runtime: { resolveSandboxResourceHandle, command: probe },
+        },
+      );
 
-    await expect(
-      onboard.from(ready({ onboarding: "cloud-openclaw-policy-custom-missing-presets" }), {
-        sandboxName: "e2e-policy-missing",
-      }),
-    ).rejects.toThrow(/failed without the policy preset signature/);
-  });
-
-  it("rejects the expected policy preset failure when it includes a stack trace", async () => {
-    const runner = new FakeRunner();
-    runner.enqueue(
-      shellResult(
-        1,
-        "NEMOCLAW_POLICY_PRESETS is required when NEMOCLAW_POLICY_MODE=custom.\nTypeError: unexpected\n    at Object.onboard (/app/onboard.js:1:1)",
-      ),
-    );
-    const onboard = new OnboardingPhaseFixture(
-      new HostCliClient(runner),
-      new FakeSecrets({ NVIDIA_INFERENCE_API_KEY: "secret" }),
-    );
-
-    await expect(
-      onboard.from(ready({ onboarding: "cloud-openclaw-policy-custom-missing-presets" }), {
-        sandboxName: "e2e-policy-missing",
-      }),
-    ).rejects.toThrow(/failed with a JavaScript stack trace/);
-  });
+      await expect(
+        onboard.from(ready({ onboarding: "cloud-openclaw-policy-custom-missing-presets" }), {
+          sandboxName: "e2e-policy-missing",
+        }),
+      ).rejects.toThrow(error);
+      expect(resolveSandboxResourceHandle).toHaveBeenCalledWith(
+        "e2e-policy-missing",
+        expect.objectContaining({
+          env: runner.calls[0]?.options?.env,
+          redactionValues: ['secret"token', 'secret\\"token'],
+          timeoutMs: 15_000,
+          killGraceMs: 1_000,
+          captureLimitBytes: 64 * 1024,
+        }),
+      );
+      expect(probe).toHaveBeenCalledTimes(7);
+      expect(runner.calls).toHaveLength(1);
+    },
+  );
 
   it("publishes redacted legacy preflight evidence for the no-Docker negative path", async () => {
     const previousContextDir = process.env.E2E_CONTEXT_DIR;

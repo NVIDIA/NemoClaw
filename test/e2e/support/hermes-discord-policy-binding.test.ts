@@ -9,8 +9,13 @@ import path from "node:path";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 
+import { parseAndValidateSandboxPolicy } from "../../../src/lib/policy/sandbox-policy-validation.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
-import { rebindFixtureProviderPolicyEndpoint } from "../fixtures/gateway-providers.ts";
+import {
+  applyFixtureProviderPolicyEndpoint,
+  clearFixtureProviderPolicyEndpoint,
+  rebindFixtureProviderPolicyEndpoint,
+} from "../fixtures/gateway-providers.ts";
 import { requireSuccessfulPolicyBoundaryBuild } from "../fixtures/hermes-discord-policy-boundary-build.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
@@ -65,6 +70,54 @@ function successfulProbe(stdout = ""): ShellProbeResult {
   };
 }
 
+function fixtureBindingCleanupHarness(fixtureProvider = "telegram-provider") {
+  const original = {
+    version: 1,
+    network_policies: {
+      telegram: {
+        endpoints: [
+          {
+            host: "api.telegram.org",
+            port: 443,
+            credential_binding: { provider: "telegram-provider" },
+          },
+        ],
+      },
+      fixture: {
+        endpoints: [
+          {
+            host: "host.openshell.internal",
+            port: 43119,
+            protocol: "rest",
+            credential_binding: { provider: fixtureProvider },
+          },
+        ],
+      },
+    },
+  };
+  const applied: unknown[] = [];
+  const command = vi
+    .fn<HostCliClient["command"]>()
+    .mockResolvedValueOnce(successfulProbe(YAML.stringify(original)))
+    .mockImplementationOnce(async (_command, args = []) => {
+      applied.push(YAML.parse(fs.readFileSync(args[args.indexOf("--policy") + 1], "utf8")));
+      return successfulProbe();
+    });
+  const host = {
+    command,
+    openshellCommandPath: "/usr/local/bin/openshell",
+  } as unknown as HostCliClient;
+  const clear = () =>
+    clearFixtureProviderPolicyEndpoint(host, "e2e-telegram", {
+      artifactName: "clear-fake-telegram-binding",
+      endpoint: { host: "host.openshell.internal", port: 43119, protocol: "rest" },
+      env: {},
+      providerName: "telegram-provider",
+      redactionValues: [],
+    });
+  return { applied, clear, original };
+}
+
 function runBinaryAssertion(policyFile: string) {
   return spawnSync(
     process.execPath,
@@ -99,6 +152,91 @@ describe("Hermes Discord E2E policy binding", () => {
       fs.rmSync(tempDir, { force: true, recursive: true });
     }
   });
+
+  it("clears the fake endpoint binding while preserving the real Telegram binding for removal", async () => {
+    const { applied, clear, original } = fixtureBindingCleanupHarness();
+    await clear();
+    expect(applied).toEqual([
+      {
+        ...original,
+        network_policies: {
+          telegram: original.network_policies.telegram,
+          fixture: {
+            endpoints: [{ host: "host.openshell.internal", port: 43119, protocol: "rest" }],
+          },
+        },
+      },
+    ]);
+  });
+
+  it("refuses to clear a fixture endpoint bound to another provider", async () => {
+    const { applied, clear } = fixtureBindingCleanupHarness("another-provider");
+    await expect(clear()).rejects.toThrow("belongs to another provider");
+    expect(applied).toEqual([]);
+  });
+
+  it.each([
+    { requested: undefined, expected: ["GET", "POST"] },
+    { requested: ["POST"] as const, expected: ["POST"] },
+  ])(
+    "renders only declared REST methods in a rebuild-valid fixture policy [case %#]",
+    async ({ requested, expected }) => {
+      const providerName = "telegram-provider";
+      const source = YAML.stringify({
+        version: 1,
+        network_policies: {
+          fixture: {
+            name: "fixture",
+            endpoints: [
+              {
+                host: "host.openshell.internal",
+                port: 43119,
+                protocol: "rest",
+                rules: ["GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH"].map((method) => ({
+                  allow: { method, path: "**" },
+                })),
+              },
+            ],
+            binaries: [{ path: "/usr/local/bin/node" }, { path: "/usr/bin/node" }],
+          },
+        },
+      });
+      expect(() => parseAndValidateSandboxPolicy(source)).toThrow("sandbox policy schema");
+      const applied: string[] = [];
+      const command = vi
+        .fn<HostCliClient["command"]>()
+        .mockResolvedValueOnce(successfulProbe(providerName))
+        .mockResolvedValueOnce(successfulProbe())
+        .mockResolvedValueOnce(successfulProbe(source))
+        .mockImplementationOnce(async (_command, args = []) => {
+          applied.push(fs.readFileSync(args[args.indexOf("--policy") + 1], "utf8"));
+          return successfulProbe();
+        });
+      const host = {
+        command,
+        openshellCommandPath: "/usr/local/bin/openshell",
+      } as unknown as HostCliClient;
+      await applyFixtureProviderPolicyEndpoint(host, "e2e-telegram", {
+        artifactName: "apply-fake-telegram-policy",
+        endpoint: { port: 43119 },
+        protocol: "rest",
+        rewrite: "request-body-credential-rewrite",
+        env: {},
+        providerName,
+        redactionValues: [],
+        restMethods: requested,
+      });
+      expect(applied).toHaveLength(1);
+      const policy = parseAndValidateSandboxPolicy(applied[0]);
+      expect(policy).toMatchObject({
+        network_policies: {
+          fixture: {
+            endpoints: [{ rules: expected.map((method) => ({ allow: { method, path: "/**" } })) }],
+          },
+        },
+      });
+    },
+  );
 
   it("strips OpenShell revision metadata before binding the fake Gateway endpoint", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-discord-policy-"));

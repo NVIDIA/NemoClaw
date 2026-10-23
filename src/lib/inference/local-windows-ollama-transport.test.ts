@@ -899,7 +899,7 @@ describe("Windows-host Ollama transport", () => {
     }
   });
 
-  it("keeps a cached Windows route when DOCKER_HOST changes beneath the default context", () => {
+  it("rejects a cached Windows route when DOCKER_HOST changes beneath the default context", () => {
     const stateRoot = mkdtempSync(join(tmpdir(), "nemoclaw-ollama-host-switch-"));
     try {
       const discoveryCapture = respondsOnlyThroughDockerDesktop(
@@ -919,10 +919,11 @@ describe("Windows-host Ollama transport", () => {
         JSON.stringify({ capabilities: ["tools"] }),
       );
       expect(probeOllamaModelCapabilities("qwen3.5:9b", requestCapture)).toMatchObject({
-        source: "api",
-        supportsTools: true,
+        source: "unknown",
+        supportsTools: null,
       });
-      expect(getResolvedOllamaHost()).toBe(OLLAMA_HOST_DOCKER_INTERNAL);
+      expect(requestCapture).not.toHaveBeenCalled();
+      expect(getResolvedOllamaHost()).toBe("127.0.0.1");
     } finally {
       rmSync(stateRoot, { recursive: true, force: true });
     }

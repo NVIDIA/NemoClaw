@@ -3,6 +3,10 @@
 
 import { randomUUID } from "node:crypto";
 
+import { DCODE_MANAGED_EXEC_LAUNCHER } from "../../../../src/lib/actions/sandbox/connect-inference-route-probe.ts";
+import { nativeHostedAuthHeaderScript } from "../../../../src/lib/inference/native-provider/contract.ts";
+import { hostedNativeProviderForAttachment } from "../../../../src/lib/inference/native-provider/hosted-attachment.ts";
+import { recordedNativeProviderAttachment } from "../../../../src/lib/inference/native-provider/recorded-selection.ts";
 import { buildAvailabilityProbeEnv } from "../availability-env.ts";
 import { assertExitZero, outputContainsReadySandbox, resultText } from "../clients/command.ts";
 import type { HostCliClient } from "../clients/host.ts";
@@ -18,16 +22,29 @@ import type { NemoClawInstance } from "./onboarding.ts";
 import { latestRebuildBackupDir } from "./state-validation.ts";
 
 const AGENT = "langchain-deepagents-code";
-const MARKER_PATH = "/sandbox/.deepagents/.state/nemoclaw-invalid-credential-rebuild-marker";
-const MARKER_VALUE = "NEMOCLAW_DCODE_INVALID_CREDENTIAL_REBUILD_MARKER";
+const MARKER_PATH = "/sandbox/.nemoclaw-dcode-rebuild-marker";
+const MARKER_VALUE = "NEMOCLAW_DCODE_REBUILD_MARKER";
 const ROUTE_ATTEMPTS = 8;
 const ROUTE_DELAY_MS = 2_000;
-const REBUILD_TIMEOUT_MS = 3 * 60_000;
+const INVALID_REBUILD_TIMEOUT_MS = 3 * 60_000;
+const SUCCESSFUL_REBUILD_TIMEOUT_MS = 20 * 60_000;
+const DCODE_ACTION_TIMEOUT_MS = 2 * 60_000;
+const NATIVE_STATE_CASES = [
+  ["/sandbox/.nemoclaw-dcode-unknown.txt", "unknown-home"],
+  ["/sandbox/workspace/nemoclaw-dcode/project.txt", "workspace"],
+  ["/sandbox/.local/share/nemoclaw-dcode/packages/tool.txt", "package"],
+  ["/sandbox/.deepagents/plugins/nemoclaw-dcode/plugin.txt", "plugin"],
+  ["/sandbox/.deepagents/hooks/nemoclaw-dcode/preflight.sh", "hook"],
+  ["/sandbox/.deepagents/cron/nemoclaw-dcode/jobs.json", "cron"],
+  ["/sandbox/.deepagents/agents/nemoclaw-child/history.jsonl", "child-agent"],
+  ["/sandbox/.deepagents/nemoclaw-dcode-config/config.json", "configuration"],
+] as const;
 
 export interface DcodeInvalidCredentialRebuildOptions {
   gatewayName: string;
   providerName: string;
   credentialEnv: string;
+  endpoint: string;
   model: string;
   validCredential: string;
 }
@@ -62,10 +79,10 @@ export function dcodeInvalidCredentialRebuildOptionsFromRegistryEntry(
   if (!validCredential) {
     throw new Error("DCode invalid-credential lifecycle requires the original provider credential");
   }
-  const providerName = requiredString(entry, "provider");
-  if (providerName !== HOSTED_INFERENCE_PROVIDER_NAME) {
+  const logicalProvider = requiredString(entry, "provider");
+  if (logicalProvider !== HOSTED_INFERENCE_PROVIDER_NAME) {
     throw new Error(
-      `DCode invalid-credential lifecycle requires provider '${HOSTED_INFERENCE_PROVIDER_NAME}', got '${providerName}'`,
+      `DCode invalid-credential lifecycle requires provider '${HOSTED_INFERENCE_PROVIDER_NAME}', got '${logicalProvider}'`,
     );
   }
   const credentialEnv =
@@ -77,10 +94,29 @@ export function dcodeInvalidCredentialRebuildOptionsFromRegistryEntry(
       `DCode invalid-credential lifecycle requires credential env '${HOSTED_INFERENCE_CREDENTIAL_ENV}'`,
     );
   }
+  const attachment = recordedNativeProviderAttachment({
+    provider: logicalProvider,
+    endpointUrl: typeof entry.endpointUrl === "string" ? entry.endpointUrl : undefined,
+    credentialEnv,
+    preferredInferenceApi:
+      typeof entry.preferredInferenceApi === "string" ? entry.preferredInferenceApi : undefined,
+    nativeHostedProviderAttachment: entry.nativeHostedProviderAttachment,
+  });
+  const nativeProvider = attachment && hostedNativeProviderForAttachment(attachment);
+  if (
+    !nativeProvider?.custom ||
+    nativeProvider.api !== "openai-completions" ||
+    nativeProvider.credentialEnv !== credentialEnv
+  ) {
+    throw new Error(
+      "DCode invalid-credential lifecycle requires an attached native completion provider",
+    );
+  }
   return {
     gatewayName: requiredString(entry, "gatewayName"),
-    providerName,
+    providerName: nativeProvider.providerName,
     credentialEnv,
+    endpoint: `${nativeProvider.endpoint.replace(/\/+$/u, "")}/chat/completions`,
     model: requiredString(entry, "model"),
     validCredential,
   };
@@ -93,6 +129,7 @@ export function isDcodeInvalidCredentialRebuildOptions(
     "gatewayName" in options &&
     "providerName" in options &&
     "credentialEnv" in options &&
+    "endpoint" in options &&
     "model" in options &&
     "validCredential" in options
   );
@@ -193,21 +230,19 @@ async function probeRoute(
   return await deps.sandbox.exec(
     sandboxName,
     [
-      "curl",
-      "-sS",
-      "-o",
-      "/dev/null",
-      "-w",
-      "%{http_code}",
-      "--connect-timeout",
-      "5",
-      "--max-time",
-      "15",
-      "-H",
-      "Content-Type: application/json",
-      "--data-binary",
+      DCODE_MANAGED_EXEC_LAUNCHER,
+      "/bin/sh",
+      "-c",
+      [
+        nativeHostedAuthHeaderScript({
+          credentialEnv: options.credentialEnv,
+          api: "openai-completions",
+        }),
+        'exec curl -q -sS -o /dev/null -w "%{http_code}" --connect-timeout 5 --max-time 15 -H "Content-Type: application/json" -H "$AUTH_HEADER" --data-binary "$1" "$2"',
+      ].join("; "),
+      "dcode-native-inference-probe",
       payload,
-      "https://inference.local/v1/chat/completions",
+      options.endpoint,
     ],
     {
       artifactName: `lifecycle-dcode-route-${phase}-${attempt}`,
@@ -292,6 +327,41 @@ function assertFailedBeforeDestructiveWork(result: ShellProbeResult): void {
   }
 }
 
+function assertDcodeActionSucceeded(result: ShellProbeResult): void {
+  assertExitZero(result, "run DCode action after successful rebuild");
+  let envelope: unknown;
+  try {
+    envelope = JSON.parse(result.stdout);
+  } catch {
+    throw new Error(
+      `DCode action did not return JSON after successful rebuild: ${resultText(result)}`,
+    );
+  }
+  if (envelope === null || typeof envelope !== "object" || Array.isArray(envelope)) {
+    throw new Error("DCode action returned a non-object JSON envelope after successful rebuild");
+  }
+  const record = envelope as Record<string, unknown>;
+  const data = record.data;
+  if (
+    record.schema_version !== 1 ||
+    record.command !== "non-interactive" ||
+    data === null ||
+    typeof data !== "object" ||
+    Array.isArray(data)
+  ) {
+    throw new Error("DCode action returned an invalid JSON envelope after successful rebuild");
+  }
+  const action = data as Record<string, unknown>;
+  if (
+    action.status !== "success" ||
+    action.exit_code !== 0 ||
+    typeof action.response !== "string" ||
+    action.response.trim() !== "PONG"
+  ) {
+    throw new Error(`DCode action was not usable after successful rebuild: ${resultText(result)}`);
+  }
+}
+
 export async function simulateDcodeInvalidCredentialRebuild(
   instance: NemoClawInstance,
   options: DcodeInvalidCredentialRebuildOptions,
@@ -346,6 +416,25 @@ export async function simulateDcodeInvalidCredentialRebuild(
   );
   assertExitZero(markerWrite, "write DCode rebuild marker");
   record("marker-write", markerWrite);
+
+  const nativeStateWrite = await deps.sandbox.exec(
+    instance.sandboxName,
+    [
+      "sh",
+      "-c",
+      'set -eu; while [ "$#" -gt 0 ]; do path="$1"; value="$2"; shift 2; mkdir -p "$(dirname "$path")"; printf \'%s\' "$value" > "$path"; done',
+      "sh",
+      ...NATIVE_STATE_CASES.flatMap(([statePath, value]) => [statePath, value]),
+    ],
+    {
+      artifactName: "lifecycle-dcode-native-state-write",
+      env: gatewayEnv(options.gatewayName),
+      redactionValues: baseRedactions,
+      timeoutMs: 30_000,
+    },
+  );
+  assertExitZero(nativeStateWrite, "write representative DCode native state");
+  record("native-state-write", nativeStateWrite);
 
   const idsBeforeResult = await managedContainerIds(
     deps,
@@ -427,7 +516,7 @@ export async function simulateDcodeInvalidCredentialRebuild(
         artifactName: "lifecycle-dcode-rebuild-invalid-credential",
         env: gatewayEnv(options.gatewayName),
         redactionValues,
-        timeoutMs: REBUILD_TIMEOUT_MS,
+        timeoutMs: INVALID_REBUILD_TIMEOUT_MS,
       },
     );
     record("nemoclaw-rebuild:invalid-credential", rebuild);
@@ -479,6 +568,84 @@ export async function simulateDcodeInvalidCredentialRebuild(
   }
   if (primaryError) throw primaryError;
   if (restorationError) throw restorationError;
+
+  const successfulRebuild = await deps.host.nemoclaw(
+    [instance.sandboxName, "rebuild", "--yes", "--verbose"],
+    {
+      artifactName: "lifecycle-dcode-rebuild-valid-credential",
+      env: gatewayEnv(options.gatewayName),
+      redactionValues,
+      timeoutMs: SUCCESSFUL_REBUILD_TIMEOUT_MS,
+    },
+  );
+  assertExitZero(successfulRebuild, "rebuild DCode with the restored valid credential");
+  record("nemoclaw-rebuild:valid-credential", successfulRebuild);
+
+  const idsRebuiltResult = await managedContainerIds(
+    deps,
+    instance.sandboxName,
+    "rebuilt",
+    redactionValues,
+  );
+  const idsRebuilt = sortedLines(idsRebuiltResult.stdout);
+  if (idsRebuilt.length === 0 || sameStrings(idsRebuilt, idsBefore)) {
+    throw new Error("DCode successful rebuild did not create a replacement managed container");
+  }
+  record("container-ids:rebuilt", idsRebuiltResult);
+
+  const rebuiltMarker = await deps.sandbox.exec(instance.sandboxName, ["cat", MARKER_PATH], {
+    artifactName: "lifecycle-dcode-marker-read-rebuilt",
+    env: gatewayEnv(options.gatewayName),
+    redactionValues,
+    timeoutMs: 30_000,
+  });
+  assertExitZero(rebuiltMarker, "read DCode marker after successful rebuild");
+  if (rebuiltMarker.stdout !== MARKER_VALUE) {
+    throw new Error("DCode marker changed or disappeared after successful rebuild");
+  }
+  record("marker-read:rebuilt", rebuiltMarker);
+
+  const rebuiltNativeState = await deps.sandbox.exec(
+    instance.sandboxName,
+    [
+      "sh",
+      "-c",
+      'set -eu; while [ "$#" -gt 0 ]; do path="$1"; expected="$2"; shift 2; actual="$(cat "$path")"; [ "$actual" = "$expected" ] || { echo "native state mismatch: $path" >&2; exit 41; }; printf \'%s\\n\' "$actual"; done',
+      "sh",
+      ...NATIVE_STATE_CASES.flatMap(([statePath, value]) => [statePath, value]),
+    ],
+    {
+      artifactName: "lifecycle-dcode-native-state-read-rebuilt",
+      env: gatewayEnv(options.gatewayName),
+      redactionValues,
+      timeoutMs: 30_000,
+    },
+  );
+  assertExitZero(rebuiltNativeState, "read representative DCode native state after rebuild");
+  const expectedNativeState = `${NATIVE_STATE_CASES.map(([, value]) => value).join("\n")}\n`;
+  if (rebuiltNativeState.stdout !== expectedNativeState) {
+    throw new Error(
+      `DCode representative native state changed after successful rebuild: ${resultText(rebuiltNativeState)}`,
+    );
+  }
+  record("native-state-read:rebuilt", rebuiltNativeState);
+  record(
+    "sandbox-ready:rebuilt",
+    await assertReady(deps, instance.sandboxName, options, "rebuilt", redactionValues),
+  );
+
+  const dcodeAction = await deps.sandbox.exec(
+    instance.sandboxName,
+    ["dcode", "-n", "Reply with exactly one word: PONG", "--json"],
+    {
+      artifactName: "lifecycle-dcode-action-rebuilt",
+      env: gatewayEnv(options.gatewayName),
+      redactionValues,
+      timeoutMs: DCODE_ACTION_TIMEOUT_MS,
+    },
+  );
+  assertDcodeActionSucceeded(dcodeAction);
+  record("dcode-action:rebuilt", dcodeAction);
 
   return { profile: "dcode-rebuild-invalid-credential", steps };
 }

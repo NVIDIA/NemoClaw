@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import assert from "node:assert/strict";
 
 import type { HostLocalVllmSelectionResult } from "./serving/host-local-vllm-selection";
 import type { VllmProfile } from "./vllm";
@@ -80,6 +81,12 @@ vi.mock("./serving/vllm-managed-support", async (importOriginal) => {
 });
 
 import { detectVllmProfile, installVllm } from "./vllm";
+import { formatStorageBytes } from "./vllm-storage";
+import { loadManagedInferenceCatalog } from "./serving/catalog-loader";
+import { resolveManagedInferenceServing } from "./serving/resolver";
+import { isHostLocalInferenceServingRecipe } from "./serving/adapter-registry";
+import { materializeHostLocalVllmSelection } from "./serving/host-local-vllm-selection";
+import { buildVllmServeCommand } from "./vllm-models";
 import {
   applyVllmInstallProbeDefaults,
   createVllmInstallSpies,
@@ -106,6 +113,16 @@ async function resolveActualHostLocalSelection(
   });
   expect(selection.kind).toBe("selected");
   return selection as SelectedHostLocalVllm;
+}
+
+function declaredImageSize(selection: SelectedHostLocalVllm): string {
+  return formatStorageBytes(BigInt(selection.profile.imageDownloadSizeBytes));
+}
+
+function declaredModelSize(selection: SelectedHostLocalVllm): string {
+  return formatStorageBytes(
+    BigInt(selection.profile.modelDownloadSizeBytes ?? selection.model.downloadSizeBytes),
+  );
 }
 
 function vllmInstallTestReadinessAtMemory(profile: VllmProfile, availableMemoryBytes: number) {
@@ -157,6 +174,7 @@ describe("fixed catalog vLLM installs", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.runCurlProbe.mockReset();
     spies = createVllmInstallSpies();
     resetVllmInstallEnv();
     applyVllmInstallProbeDefaults(mocks);
@@ -181,7 +199,7 @@ describe("fixed catalog vLLM installs", () => {
     mocks.resolveHostLocalVllmSelection.mockImplementation((...args) =>
       actualSelection.resolveHostLocalVllmSelection(...args),
     );
-    const reason = `vllm-install-test-host: GPU memory capacity ${String(availableMemoryBytes)} is below the recipe minimum 64000000000 bytes.`;
+    const reason = `vllm-install-test-host: GPU memory capacity ${String(availableMemoryBytes)} is below the recipe minimum 64000000000 bytes. Host: host.os.architecture=arm64, host.docker.runtime=docker. Choose another inference provider or an explicitly compatible serving profile.`;
 
     const result = await installVllm(profile, {
       hasImage: false,
@@ -278,6 +296,9 @@ describe("fixed catalog vLLM installs", () => {
       );
       expect(result).toEqual({ ok: true });
       expect(mocks.dockerRunDetached).toHaveBeenCalledOnce();
+      expect(mocks.dockerRunDetached.mock.calls[0]![0]).toEqual(
+        expect.arrayContaining([...selection.model.runtime!.dockerRunArgs!]),
+      );
     },
   );
 
@@ -308,6 +329,62 @@ describe("fixed catalog vLLM installs", () => {
     expect(mocks.dockerRunDetached).toHaveBeenCalledOnce();
   });
 
+  it.each([
+    ["", undefined],
+    ["nemotron-3.5-super-vl-120b", undefined],
+    ["nemotron-3.5-super-vl-120b", "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4"],
+  ])(
+    "carries the reviewed model guard for selection '%s' and checkpoint '%s'",
+    async (requestedModel, checkpointModel) => {
+      process.env.NEMOCLAW_VLLM_MODEL = requestedModel;
+      process.env.HF_TOKEN = "hf_fixture_download_only";
+      mocks.getGpuIndicesByName.mockReturnValue([0]);
+      const profile = detectVllmProfile({ platform: "station", type: "nvidia" })!;
+      const catalog = loadManagedInferenceCatalog();
+      const presetId = "vllm.dgx-station-gb300.single.nemotron-3.5-super-vl-120b-a12b-nvfp4";
+      const readinessReports = vllmInstallTestReadiness(profile, "nemotron-3.5-super-vl-120b");
+      const resolved = resolveManagedInferenceServing(
+        { readinessReports, topologyQualifications: [], intent: { preset: presetId } },
+        catalog,
+      );
+      assert.ok(resolved.outcome === "selected", "Expected enabled test recipe to resolve");
+      assert.ok(isHostLocalInferenceServingRecipe(resolved.recipe));
+      const selected = materializeHostLocalVllmSelection(
+        { ...resolved, recipe: resolved.recipe },
+        profile,
+      );
+      mocks.resolveHostLocalVllmSelection.mockReturnValue({ kind: "selected", ...selected });
+      mockSuccessfulVllmInstall(mocks, selected.profile.containerName);
+      mockSuccessfulAuthenticatedReadiness(selected.model.servedModelId!);
+      const result = await installVllm(profile, {
+        hasImage: true,
+        nonInteractive: true,
+        promptFn: vi.fn(),
+        modelIntent: checkpointModel,
+        readinessReports,
+        resolveManagedBridgeHost: () => "172.18.0.1",
+      });
+      expect(result, spies.errSpy.mock.calls.flat().join("\n")).toEqual({ ok: true });
+      const [args, options] = mocks.dockerRunDetached.mock.calls[0]!;
+      expect(args.at(-1)).toBe(buildVllmServeCommand(selected.model));
+      expect(args).toContainEqual(
+        expect.stringMatching(/target=\/root\/\.cache\/huggingface\/hub,readonly$/),
+      );
+      expect(args).toContain("34359738368b");
+      expect(args).toContain("device=0");
+      expect(args).not.toContainEqual(
+        expect.stringMatching(/huggingface:\/root\/\.cache\/huggingface$/),
+      );
+      expect(args.join("\n")).not.toContain("b".repeat(64));
+      expect(args.join("\n")).not.toContain("hf_fixture_download_only");
+      expect(options.env.VLLM_API_KEY).toBe("b".repeat(64));
+      expect(options.env).not.toHaveProperty("HF_TOKEN");
+      expect(mocks.persistHostLocalVllmRuntimeReceipt).toHaveBeenCalledWith(
+        expect.objectContaining({ serving: selected.profile.servingCatalog }),
+      );
+    },
+  );
+
   /**
    * Resume replays NemoClaw's own checkpoint, so the preset-driven install
    * paths below run the real selection guard rather than a canned result.
@@ -325,6 +402,40 @@ describe("fixed catalog vLLM installs", () => {
       }),
     );
   }
+
+  it.each(["automatic", "picker", "resume"] as const)(
+    "installs the bounded Spark recipe through %s selection at the reported 64 GB capacity",
+    async (mode) => {
+      const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+      const readinessReports = vllmInstallTestReadinessAtMemory(profile, 61_614_325_760);
+      await withActualSelectionGuard(readinessReports);
+      mockSuccessfulVllmInstall(mocks, profile.containerName);
+
+      const result = await installVllm(profile, {
+        hasImage: true,
+        nonInteractive: mode !== "picker",
+        promptFn: vi.fn(async (question: string) => (question.includes("Continue") ? "y" : "1")),
+        ...(mode === "resume" ? { modelIntent: "qwen3.6-35b-a3b-nvfp4" } : {}),
+        readinessReports,
+      });
+
+      expect(result, spies.errSpy.mock.calls.flat().join("\n")).toEqual({ ok: true });
+      expect(spies.logSpy).toHaveBeenCalledWith(
+        "    Selected for your hardware: Qwen3.6 35B-A3B NVFP4 on one 64 GB DGX Spark",
+      );
+      expect(spies.logSpy).toHaveBeenCalledWith("    Context limit: 32768 tokens");
+      expect(mocks.dockerRunDetached).toHaveBeenCalledOnce();
+      const command = mocks.dockerRunDetached.mock.calls[0]![0].at(-1) as string;
+      expect(command).toContain("vllm serve nvidia/Qwen3.6-35B-A3B-NVFP4");
+      expect(command).toContain("--max-model-len 32768");
+      expect(command).toContain("--max-num-seqs 1");
+      expect(command).toContain("--max-num-batched-tokens 4096");
+      expect(command).toContain("--gpu-memory-utilization 0.5");
+      expect(command).toContain("--load-format safetensors");
+      expect(command).toContain("--safetensors-load-strategy lazy");
+      expect(command).not.toContain("--load-format fastsafetensors");
+    },
+  );
 
   it("resumes a checkpointed model under an explicitly selected serving preset", async () => {
     const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
@@ -386,6 +497,25 @@ describe("fixed catalog vLLM installs", () => {
       expect.stringContaining("the resumed model 'qwen3.6-35b-a3b-nvfp4' does not match"),
     );
     expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
+  });
+
+  it("rejects a different model override before resuming vLLM", async () => {
+    process.env.NEMOCLAW_VLLM_MODEL = "nemotron-3-ultra-550b-a55b";
+    mocks.getGpuIndicesByName.mockReturnValue([0]);
+    const profile = detectVllmProfile({ platform: "station", type: "nvidia" })!;
+
+    const result = await installVllm(profile, {
+      hasImage: true,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+      modelIntent: "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4",
+    });
+
+    expect(result).toEqual({ ok: false });
+    expect(spies.errSpy).toHaveBeenCalledWith(
+      expect.stringContaining("the resumed model conflicts with NEMOCLAW_VLLM_MODEL"),
+    );
+    expect(mocks.dockerRunDetached).not.toHaveBeenCalled();
   });
 
   it("still rejects an operator model override against a serving preset", async () => {
@@ -464,6 +594,76 @@ describe("fixed catalog vLLM installs", () => {
     expect(checkpointInstallIntent).toHaveBeenCalledWith("QWEN3.6-35B-A3B-NVFP4");
     expect(checkpointInstallIntent.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.dockerPullWithProgressWatchdog.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("declares the profile and both download sizes before the install gate (#12207)", async () => {
+    const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+    const modelIntent = "nemotron-3-nano-4b";
+    const selectedByModel = await resolveActualHostLocalSelection(
+      profile,
+      { NEMOCLAW_VLLM_MODEL: modelIntent },
+      modelIntent,
+    );
+    process.env.NEMOCLAW_SERVING_PRESET = selectedByModel.presetId;
+    const selection = await resolveActualHostLocalSelection(profile, process.env, modelIntent);
+    const readinessReports = vllmInstallTestReadiness(profile, modelIntent);
+    mocks.resolveHostLocalVllmSelection.mockReturnValue(selection);
+    mockSuccessfulVllmInstall(mocks, selection.profile.containerName);
+    mockSuccessfulAuthenticatedReadiness(selection.model.servedModelId ?? selection.model.id);
+    const promptFn = vi.fn(async () => "y");
+
+    const result = await installVllm(profile, {
+      hasImage: false,
+      nonInteractive: false,
+      promptFn,
+      readinessReports,
+      resolveManagedBridgeHost: () => "172.18.0.1",
+    });
+
+    expect(result).toEqual({ ok: true });
+    const declaration = spies.logSpy.mock.calls.map(([line]) => String(line));
+    const gate = promptFn.mock.invocationCallOrder[0]!;
+    const declaredBeforeGate = spies.logSpy.mock.invocationCallOrder
+      .map((order, index) => (order < gate ? declaration[index]! : null))
+      .filter((line): line is string => line !== null);
+    expect(declaredBeforeGate).toContain(`    Serving profile: ${selection.presetId}`);
+    expect(declaredBeforeGate).toContain(`    Recipe: ${selection.recipeId}`);
+    expect(declaredBeforeGate).toContain(
+      `    Image download on first run (${declaredImageSize(selection)}), cached after`,
+    );
+    expect(declaredBeforeGate).toContain(
+      `    Model download on first run (${declaredModelSize(selection)}), cached after`,
+    );
+  });
+
+  it("omits the image size line when the pinned image is already cached", async () => {
+    const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+    const modelIntent = "nemotron-3-nano-4b";
+    const selectedByModel = await resolveActualHostLocalSelection(
+      profile,
+      { NEMOCLAW_VLLM_MODEL: modelIntent },
+      modelIntent,
+    );
+    process.env.NEMOCLAW_SERVING_PRESET = selectedByModel.presetId;
+    const selection = await resolveActualHostLocalSelection(profile, process.env, modelIntent);
+    mocks.resolveHostLocalVllmSelection.mockReturnValue(selection);
+    mockSuccessfulVllmInstall(mocks, selection.profile.containerName);
+    mockSuccessfulAuthenticatedReadiness(selection.model.servedModelId ?? selection.model.id);
+
+    const result = await installVllm(profile, {
+      hasImage: true,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+      readinessReports: vllmInstallTestReadiness(profile, modelIntent),
+      resolveManagedBridgeHost: () => "172.18.0.1",
+    });
+
+    expect(result).toEqual({ ok: true });
+    const declaration = spies.logSpy.mock.calls.map(([line]) => String(line));
+    expect(declaration.filter((line) => line.includes("Image download on first run"))).toEqual([]);
+    expect(declaration).toContain(
+      `    Model download on first run (${declaredModelSize(selection)}), cached after`,
     );
   });
 

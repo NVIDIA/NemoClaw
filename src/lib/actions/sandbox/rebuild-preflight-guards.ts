@@ -12,7 +12,9 @@ import {
   formatGatewayRouteConflict,
   type GatewayInferenceRoute,
   isAdvisoryGatewayRouteConflict,
+  preflightGatewayRouteDiscovery,
 } from "../../inference/gateway-route-compatibility";
+import { normalizeNativeLocalProviderAttachment } from "../../inference/native-local/contract";
 import { normalizeInferenceSelection } from "../../inference/selection";
 import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import { requireRuntimeProviderBundleForSandbox } from "../../onboard/runtime-provider/access";
@@ -94,6 +96,32 @@ function hardRouteConflict(
   if (!route.provider || !route.model) {
     return "Prepared rebuild inference route is missing its provider or model.";
   }
+  const target = sandboxes.find((entry) => entry.name === sandboxName);
+  if (target?.nativeLocalProviderAttachment !== undefined) {
+    const local = normalizeNativeLocalProviderAttachment(target.nativeLocalProviderAttachment);
+    if (
+      !local ||
+      !(target.agent === "langchain-deepagents-code"
+        ? local.agent === undefined
+        : target.agent === "hermes"
+          ? local.agent === "hermes"
+          : (target.agent === "openclaw" || target.agent === "pi") &&
+            local.agent === target.agent &&
+            !target.nimContainer) ||
+      local.sandboxName !== sandboxName ||
+      local.gatewayName !== gatewayName ||
+      local.provider !== route.provider
+    )
+      return "Native local provider authority does not match the rebuild target.";
+    const discovery = preflightGatewayRouteDiscovery({
+      gatewayName,
+      sandboxName,
+      route: { ...route, model: route.model },
+      sandboxes,
+      nativeLocalSelection: true,
+    });
+    return discovery.ok ? null : formatGatewayRouteConflict(discovery.result);
+  }
   const compatibility = checkGatewayRouteCompatibility({
     gatewayName,
     sandboxName,
@@ -148,6 +176,8 @@ export function commitRebuildRoutePreflight(
     const migratedSandboxNames: string[] = [];
     for (const peer of Object.values(sandboxRegistry.sandboxes)) {
       if (
+        target.nativeLocalProviderAttachment !== undefined ||
+        peer.nativeLocalProviderAttachment !== undefined ||
         peer.name === input.sandboxName ||
         peer.provider !== targetRoute.provider ||
         !missingCredentialIdentity(peer.credentialEnv)
@@ -161,7 +191,11 @@ export function commitRebuildRoutePreflight(
         continue;
       }
       if (peerGatewayName !== input.gatewayName) continue;
-      const credentialEnv = getRebuildCredentialEnvFromRegistry(peer.provider, peer.credentialEnv);
+      const credentialEnv = getRebuildCredentialEnvFromRegistry(
+        peer.provider,
+        peer.credentialEnv,
+        peer.endpointUrl,
+      );
       if (!credentialEnv) continue;
       peer.credentialEnv = credentialEnv;
       migratedSandboxNames.push(peer.name);
@@ -379,6 +413,12 @@ export function acquireRebuildOnboardLock(
       bail,
     );
     return null;
+  }
+  try {
+    onboardSession.selectRebuildSession(sandboxName);
+  } catch (error) {
+    onboardSession.releaseOnboardLock();
+    throw error;
   }
   let released = false;
   const release = () => {

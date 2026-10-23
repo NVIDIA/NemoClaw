@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createCliOpenShellSandboxLifecycleFromRunner } from "../../src/lib/adapters/openshell/sandbox-lifecycle-cli.ts";
 import { createDockerGpuDiagnosticRedactor } from "../../src/lib/onboard/docker-gpu-diagnostic-redaction.ts";
 import type { ShippedManagedImageAgent } from "../../src/lib/onboard/managed-image/contract.ts";
 import type { ManagedStartupProfile } from "../../src/lib/onboard/managed-startup/profile.ts";
@@ -98,13 +99,22 @@ export function withManagedImageLocalInferenceProfile(
   profile: ManagedStartupProfile,
   route: ManagedImageLocalInferenceRoute,
   model: string,
+  maximumOutputTokens?: number,
 ): ManagedStartupProfile {
+  if (
+    maximumOutputTokens !== undefined &&
+    (!Number.isSafeInteger(maximumOutputTokens) || maximumOutputTokens < 1)
+  )
+    throw new Error("managed local inference output token limit is invalid");
   const primaryModelRef =
     profile.agent === "openclaw"
       ? `inference/${model}`
       : (profile.inference?.primaryModelRef ?? null);
   return {
     ...profile,
+    ...(profile.agent === "openclaw" && maximumOutputTokens !== undefined
+      ? { tuning: { ...profile.tuning, maxTokens: maximumOutputTokens } }
+      : {}),
     inference: {
       compatibility: profile.agent === "openclaw" ? {} : null,
       inputModalities: profile.agent === "openclaw" ? ["text"] : null,
@@ -137,4 +147,20 @@ export function managedImageFailureDetail(
   });
   const detail = error instanceof Error ? (error.stack ?? error.message) : String(error);
   return redactor.redactText(detail).slice(0, 8_000);
+}
+
+export function createManagedImageSandboxWithDiagnostics(
+  run: Parameters<typeof createCliOpenShellSandboxLifecycleFromRunner>[0],
+  resolveBinary: () => string,
+) {
+  const { createSandbox } = createCliOpenShellSandboxLifecycleFromRunner(run, { resolveBinary });
+  return async (...args: Parameters<typeof createSandbox>) => {
+    const result = await createSandbox(...args);
+    if (result.status !== 0 || result.ambiguous) {
+      console.error(
+        `Managed-image create evidence: ${managedImageFailureDetail(result.diagnostic)}`,
+      );
+    }
+    return result;
+  };
 }

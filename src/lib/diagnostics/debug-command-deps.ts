@@ -2,11 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { CLI_NAME } from "../cli/branding";
-import { runDebug } from "./debug";
+import { createOpenShellDebugDiagnostics, runDebug } from "./debug";
 import type { RunDebugCommandDeps } from "./debug-command";
-import { captureOpenshellCommand } from "../adapters/openshell/client";
-import { resolveOpenshell } from "../adapters/openshell/resolve";
-import { createCliOpenShellSandboxObserver } from "../adapters/openshell/sandbox-observer-cli";
+import { createRuntimeCliOpenShellSandboxObserver } from "../adapters/openshell/sandbox-observer-cli";
 import {
   namedOpenShellGateway,
   selectedOpenShellGateway,
@@ -36,13 +34,8 @@ function resolveDebugGatewayName(
 }
 
 export function buildDebugCommandDeps(rootDir: string): RunDebugCommandDeps {
-  const sandboxObserver = createCliOpenShellSandboxObserver({
-    capture: (args, options) => {
-      const openshell = resolveOpenshell();
-      if (!openshell) return { status: 1, output: "" };
-      return captureOpenshellCommand(openshell, args, { cwd: rootDir, ...options });
-    },
-  });
+  const openshellDiagnostics = createOpenShellDebugDiagnostics(rootDir);
+  const sandboxObserver = createRuntimeCliOpenShellSandboxObserver(rootDir);
 
   const liveSandboxNames = async (
     target: OpenShellGatewayTarget,
@@ -133,7 +126,7 @@ export function buildDebugCommandDeps(rootDir: string): RunDebugCommandDeps {
         : null;
       if (portable) return runHermesPortableDebug(options, portable);
       assertNoHermesPortableHostAuthority(defaultPortableStateDir(process.env), "debug");
-      return runDebug(options);
+      return runDebug(options, { openshellDiagnostics });
     },
   };
 }

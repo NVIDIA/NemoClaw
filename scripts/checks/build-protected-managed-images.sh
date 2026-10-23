@@ -21,6 +21,7 @@ cache_to=""
 cache_from=""
 audit_evidence_from=""
 runtime_user="sandbox"
+prepared_stages=(npm12 openclaw-system hermes-system langchain-deepagents-code-system)
 while (($# > 0)); do
   case "$1" in
     --audit-evidence-from)
@@ -94,6 +95,7 @@ done
 [[ "$cohort" =~ ^protected-[1-9][0-9]{0,19}-[1-9][0-9]{0,9}$ ]] || usage
 [[ "$platform" == "linux/amd64" || "$platform" == "linux/arm64" ]] || usage
 [[ "$runtime_user" == "root" || "$runtime_user" == "sandbox" ]] || usage
+[[ -z "$cache_to" || -z "$cache_from" ]] || usage
 case "$platform" in
   linux/amd64) npm_target_cpu="x64" ;;
   linux/arm64) npm_target_cpu="arm64" ;;
@@ -101,9 +103,19 @@ esac
 target_arch="${platform#linux/}"
 npm_target_os="linux"
 npm_target_libc="glibc"
-[[ "$openclaw_base" =~ ^ghcr[.]io/nvidia/nemoclaw/sandbox-base@sha256:[a-f0-9]{64}$ ]] || usage
-[[ "$hermes_base" =~ ^ghcr[.]io/nvidia/nemoclaw/hermes-sandbox-base@sha256:[a-f0-9]{64}$ ]] || usage
-[[ "$dcode_base" =~ ^ghcr[.]io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base@sha256:[a-f0-9]{64}$ ]] || usage
+[[ "$openclaw_base" == candidate ||
+  "$openclaw_base" =~ ^ghcr[.]io/nvidia/nemoclaw/sandbox-base@sha256:[a-f0-9]{64}$ ||
+  (-n "$cache_from" && "$openclaw_base" =~ ^localhost:5000/nemoclaw-managed-protected-base/openclaw@sha256:[a-f0-9]{64}$) ]] || usage
+[[ "$hermes_base" == candidate ||
+  "$hermes_base" =~ ^ghcr[.]io/nvidia/nemoclaw/hermes-sandbox-base@sha256:[a-f0-9]{64}$ ||
+  (-n "$cache_from" && "$hermes_base" =~ ^localhost:5000/nemoclaw-managed-protected-base/hermes@sha256:[a-f0-9]{64}$) ]] || usage
+[[ "$dcode_base" == candidate ||
+  "$dcode_base" =~ ^ghcr[.]io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base@sha256:[a-f0-9]{64}$ ||
+  (-n "$cache_from" && "$dcode_base" =~ ^localhost:5000/nemoclaw-managed-protected-base/langchain-deepagents-code@sha256:[a-f0-9]{64}$) ]] || usage
+[[ "$dcode_base" != candidate || -z "$cache_from" ]] || usage
+[[ "$openclaw_base" != candidate || -z "$cache_from" ]] || usage
+[[ "$hermes_base" != candidate || -z "$cache_from" ]] || usage
+prepared_identity="$revision $platform $openclaw_base $hermes_base $dcode_base"
 [[ "$source_root" == /* && "$source_root" != *$'\n'* && -d "$source_root" && ! -L "$source_root" ]] || usage
 source_root="$(cd -- "$source_root" && pwd -P)"
 controller_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
@@ -147,7 +159,7 @@ if [[ -n "$cache_from" ]]; then
     echo "ERROR: protected managed-image imported cache contains a symlink" >&2
     exit 1
   }
-  for agent in openclaw hermes langchain-deepagents-code; do
+  for agent in hermes langchain-deepagents-code "${prepared_stages[@]}"; do
     cache_source="$cache_from/$agent"
     [[ -d "$cache_source/blobs/sha256" && -f "$cache_source/index.json" ]] || {
       echo "ERROR: protected managed-image imported cache is incomplete for ${agent}" >&2
@@ -176,6 +188,10 @@ if [[ -n "$cache_from" ]]; then
   }
   [[ -f "$cache_from/messaging-npm-cache-seed/manifest.json" && ! -L "$cache_from/messaging-npm-cache-seed/manifest.json" ]] || {
     echo "ERROR: protected managed-image imported cache has no locked messaging npm cache seed manifest" >&2
+    exit 1
+  }
+  [[ -f "$cache_from/prepared-inputs" && "$(cat "$cache_from/prepared-inputs")" == "$prepared_identity" ]] || {
+    echo "ERROR: prepared inputs do not match the revision, platform, and bases" >&2
     exit 1
   }
 fi
@@ -232,6 +248,72 @@ restore_worktree() {
 trap restore_worktree EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+
+# A PR dependency upgrade needs its own base; a published main base cannot
+# satisfy the candidate's no-deps profile. Keep this build on the CPU runner
+# and bind the exported OCI bytes to the exact source, platform and run.
+prepare_candidate_base() {
+  local agent="$1" dockerfile="$2" cache_name="$3"
+  prepared_base="$4"
+  prepared_base_layout=""
+  local receipt_helper="$controller_root/scripts/checks/protected-dcode-base-receipt.mts"
+  if [[ "$prepared_base" == candidate ]]; then
+    [[ "$(git -C "$source_root" rev-parse --verify HEAD)" == "$revision" ]] || {
+      echo "ERROR: candidate base checkout does not match its revision" >&2
+      exit 1
+    }
+    git -C "$source_root" diff --quiet HEAD -- || {
+      echo "ERROR: candidate base checkout has tracked modifications" >&2
+      exit 1
+    }
+    prepared_base_layout="${cache_to:-$work_dir}/${cache_name}-base"
+    local base_receipt="${cache_to:-$work_dir}/${cache_name}-base-receipt.json"
+    local base_tag="localhost:5000/nemoclaw-managed-protected-base/${agent}:${revision}"
+    docker buildx build \
+      --file "$source_root/$dockerfile" \
+      --platform "$platform" \
+      --provenance=false --sbom=false \
+      --label "org.opencontainers.image.source=https://github.com/NVIDIA/NemoClaw" \
+      --label "org.opencontainers.image.revision=${revision}" \
+      --label "io.nvidia.nemoclaw.agent=${agent}" \
+      --label "io.nvidia.nemoclaw.managed-image.cohort=${cohort}" \
+      --output "type=image,name=${base_tag},push=true,oci-mediatypes=true" \
+      --output "type=oci,dest=${prepared_base_layout},tar=false" \
+      "$source_root"
+    prepared_base="$(CHECKOUT_SHA="$revision" \
+      NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT="$cohort" \
+      NEMOCLAW_PROTECTED_MANAGED_IMAGE_PLATFORM="$platform" \
+      node "$receipt_helper" write "$prepared_base_layout" "$base_receipt" "$agent")"
+    # Prove the pushed manifest and the offline artifact have the same identity.
+    docker buildx imagetools inspect "$prepared_base" --raw >"$work_dir/${cache_name}-candidate-base.raw"
+    [[ "sha256:$(sha256sum "$work_dir/${cache_name}-candidate-base.raw" | awk '{print $1}')" == "${prepared_base##*@}" ]] || {
+      echo "ERROR: candidate base registry and OCI artifact digests differ" >&2
+      exit 1
+    }
+  elif [[ "$prepared_base" == localhost:5000/* ]]; then
+    prepared_base_layout="$cache_from/${cache_name}-base"
+    local verified_base
+    verified_base="$(CHECKOUT_SHA="$revision" \
+      NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT="$cohort" \
+      NEMOCLAW_PROTECTED_MANAGED_IMAGE_PLATFORM="$platform" \
+      node "$receipt_helper" verify-reusable "$prepared_base_layout" "$cache_from/${cache_name}-base-receipt.json" "$agent")"
+    [[ "$verified_base" == "$prepared_base" ]] || {
+      echo "ERROR: candidate base artifact does not match the prepared base reference" >&2
+      exit 1
+    }
+  fi
+}
+
+prepare_candidate_base openclaw Dockerfile.base openclaw "$openclaw_base"
+openclaw_base="$prepared_base"
+openclaw_base_layout="$prepared_base_layout"
+prepare_candidate_base hermes agents/hermes/Dockerfile.base hermes "$hermes_base"
+hermes_base="$prepared_base"
+hermes_base_layout="$prepared_base_layout"
+prepare_candidate_base langchain-deepagents-code agents/langchain-deepagents-code/Dockerfile.base dcode "$dcode_base"
+dcode_base="$prepared_base"
+dcode_base_layout="$prepared_base_layout"
+prepared_identity="$revision $platform $openclaw_base $hermes_base $dcode_base"
 
 audit_receipt=""
 audit_raw_report=""
@@ -427,8 +509,12 @@ build_agent() {
   local metadata="$work_dir/${agent}-build-metadata.json"
   local exact_image_raw="$work_dir/${agent}-image-exact.raw"
   local -a cache_args=()
+  local -a agent_stages=("${agent}-system")
+  if [[ "$agent" == "openclaw" ]]; then
+    agent_stages=(npm12 "${agent_stages[@]}")
+  fi
 
-  if [[ -n "$cache_to" ]]; then
+  if [[ -n "$cache_to" && "$agent" != "openclaw" ]]; then
     local cache_destination="$cache_to/$agent"
     cache_args+=(--cache-to "type=local,dest=${cache_destination},mode=max")
   fi
@@ -436,13 +522,22 @@ build_agent() {
     local cache_source="$cache_from/$agent"
     cache_args+=(--network none)
     if [[ "$agent" == "openclaw" ]]; then
-      # The exported cache is produced before the locked npm seeds are overlaid.
-      # Do not import its layer graph: some BuildKit versions still reuse
+      # Rebuild from the overlaid locked npm seeds. Some BuildKit versions reuse
       # empty-seed COPY results when --no-cache and --cache-from are combined.
       cache_args+=(--no-cache)
     else
       cache_args+=(--cache-from "type=local,src=${cache_source}")
     fi
+    # Consume prepared system files by digest, outside the imported layer graph.
+    local stage stage_digest
+    for stage in "${agent_stages[@]}"; do
+      stage_digest="$(jq -er '.manifests | if length == 1 then .[0].digest else error("expected one prepared image") end' "$cache_from/$stage/index.json")"
+      [[ "$stage_digest" =~ ^sha256:[a-f0-9]{64}$ ]] || {
+        echo "ERROR: protected managed-image prepared stage has no immutable digest: ${stage}" >&2
+        exit 1
+      }
+      cache_args+=(--build-context "$stage=oci-layout://${cache_from}/${stage}@${stage_digest}")
+    done
   fi
 
   if [[ "$agent" == "openclaw" && -n "$audit_receipt" ]]; then
@@ -456,13 +551,24 @@ build_agent() {
   fi
 
   local base_digest="${base_reference##*@}"
-  docker buildx imagetools inspect "$base_reference" --raw >"$exact_base_raw"
-  local actual_base
-  actual_base="sha256:$(sha256sum "$exact_base_raw" | awk '{print $1}')"
-  [[ "$actual_base" == "$base_digest" ]] || {
-    echo "ERROR: ${agent} exact base bytes do not match its descriptor" >&2
-    exit 1
-  }
+  local base_layout=""
+  case "$agent" in
+    openclaw) base_layout="$openclaw_base_layout" ;;
+    hermes) base_layout="$hermes_base_layout" ;;
+    langchain-deepagents-code) base_layout="$dcode_base_layout" ;;
+  esac
+  if [[ -n "$base_layout" ]]; then
+    # The verified local OCI input survives deletion of the CPU job's registry.
+    cache_args+=(--build-context "$base_reference=oci-layout://${base_layout}@${base_digest}")
+  else
+    docker buildx imagetools inspect "$base_reference" --raw >"$exact_base_raw"
+    local actual_base
+    actual_base="sha256:$(sha256sum "$exact_base_raw" | awk '{print $1}')"
+    [[ "$actual_base" == "$base_digest" ]] || {
+      echo "ERROR: ${agent} exact base bytes do not match its descriptor" >&2
+      exit 1
+    }
+  fi
 
   scripts/check-production-build-args.sh \
     -f "$dockerfile_path" \
@@ -563,6 +669,17 @@ build_agent() {
       localContentId: $localContentId,
       baseReference: $baseReference
     }' >>"$contracts"
+
+  if [[ -n "$cache_to" ]]; then
+    # OCI inputs remain available when the offline build misses a cached layer.
+    local stage
+    for stage in "${agent_stages[@]}"; do
+      docker buildx build --file "$dockerfile_path" --platform "$platform" \
+        --target "$stage" --provenance=false --sbom=false \
+        --build-arg "BASE_IMAGE=${base_reference}" --build-arg "TARGETARCH=${target_arch}" \
+        --output "type=oci,dest=${cache_to}/${stage},tar=false" "$source_root"
+    done
+  fi
 }
 
 build_agent \
@@ -579,6 +696,7 @@ build_agent \
   "$dcode_base"
 
 if [[ -n "$cache_to" ]]; then
+  printf '%s\n' "$prepared_identity" >"$cache_to/prepared-inputs"
   node --no-warnings "$seed_helper" export \
     --lockfile "$source_lockfile" \
     --output "$cache_to/npm-cache-seed" \

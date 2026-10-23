@@ -57,6 +57,7 @@ import {
   waitForAttachedMcpCredential,
   waitForDetachedMcpCredential,
 } from "./mcp-bridge-provider";
+import { createMcpProviderAdapterBoundary } from "./mcp-bridge-provider-inspection";
 import {
   assertNoAmbiguousMcpCredentialTarget,
   assertNoAmbiguousMcpCredentialTargets,
@@ -900,7 +901,8 @@ async function addMcpBridgeUnlocked(
     // supplied by a foreign attachment before opening its MCP route, then check
     // again after provider creation to close the intervening race.
     await assertNoProviderCredentialCollisions(sandboxName, [entry], providerRuntimeSelection);
-    await ensureMcpBridgeProviderProfile(providerRuntimeSelection);
+    const providerAdapter = createMcpProviderAdapterBoundary(providerRuntimeSelection).adapter;
+    await ensureMcpBridgeProviderProfile(providerRuntimeSelection, providerAdapter);
     // Load the real protocol:mcp policy without a credential binding before
     // provider mutation. OpenShell requires the endpointless provider to be
     // attached before it accepts credential_binding.provider, and withholds
@@ -919,6 +921,7 @@ async function addMcpBridgeUnlocked(
       allowExisting: recovery.resuming,
       expectedProviderId: entry.providerId,
       runtimeSelection: providerRuntimeSelection,
+      providerAdapter,
       prepareMutation: async (action) => {
         // A fresh create has no prior revision to compare. Observe only the
         // bounded placeholder classification for an actual update, after the
@@ -950,7 +953,7 @@ async function addMcpBridgeUnlocked(
     }
     if (!recovery.attachmentPresent) {
       providerAttachAttempted = true;
-      await attachProvider(sandboxName, entry, providerRuntimeSelection);
+      await attachProvider(sandboxName, entry, providerRuntimeSelection, providerAdapter);
     }
     if (recovery.policyState !== "bound") {
       await applyGeneratedPolicy(sandboxName, entry, target, {
@@ -993,6 +996,7 @@ async function addMcpBridgeUnlocked(
             expectedProviderId: entry.providerId,
             requireExisting: true,
             runtimeSelection: providerRuntimeSelection,
+            providerAdapter,
           });
           if (republished.action !== "updated") {
             await refreshMcpProviderEnvironment(entry, providerRuntimeSelection);
@@ -1012,6 +1016,7 @@ async function addMcpBridgeUnlocked(
         expectedProviderId: entry.providerId,
         requireExisting: true,
         runtimeSelection: providerRuntimeSelection,
+        providerAdapter,
       });
       credentialRevision = await waitForAttachedMcpCredential(
         sandboxName,
@@ -1080,7 +1085,7 @@ async function addMcpBridgeUnlocked(
         throw error;
       }
     }
-    await reloadOpenClawGatewayAfterMcpMutation(sandboxName, [adapter]);
+    await reloadOpenClawGatewayAfterMcpMutation(sandboxName, [adapter], providerRuntimeSelection);
   } catch (error) {
     if (!rollbackAuthorized) throw error;
     const rollbackProviderInspection =

@@ -111,7 +111,7 @@ describe("P0-E cloud-experimental parity guardrails", () => {
     }
   });
 
-  it("keeps live DCode config inspection and mutation-boundary coverage in the fresh re-onboard check", () => {
+  it("keeps complete native DCode config and mutation-boundary coverage in the fresh re-onboard check", () => {
     const script = fs.readFileSync(dcodeFreshReonboardCheck, "utf8");
 
     expect(script).toContain('"$CLI" "$SANDBOX_NAME" config get');
@@ -121,6 +121,12 @@ describe("P0-E cloud-experimental parity guardrails", () => {
     expect(script).toContain("sha256sum /sandbox/.deepagents/config.toml");
     expect(script).toContain("config is baked into the sandbox image at build time");
     expect(script).toContain("re-onboard with the new selection");
+    expect(script).toContain('NEMOCLAW_COMPAT_MODEL="$model_a"');
+    expect(script).toContain('NEMOCLAW_MODEL="$model_a"');
+    expect(script).toContain('config_sha_restored" = "$config_sha_before');
+    expect(script).toContain('config["agents"] == {"startup_command": "discard"}');
+    expect(script).toContain('config["hooks"] == {"post_start": "discard"}');
+    expect(script).not.toContain("select-authorized-chat-model.mts");
     expect(script).toContain("executePrivilegedSandboxCommand");
     expect(script).toContain("resolvePrivilegedSandboxTarget");
     expect(script).not.toMatch(/\bdocker (?:exec|ps)\b/u);
@@ -496,6 +502,40 @@ describe("P0-E cloud-experimental parity guardrails", () => {
     expect(script).toContain('export_baseline_registry_state)" = "disabled:disabled"');
   });
 
+  it("redacts DCode autorun diagnostics and preserves failure handling when capture fails", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-autorun-diagnostics-"));
+    try {
+      const secret = "diagnostic-provider-secret-canary";
+      fs.writeFileSync(
+        path.join(tempDir, "timeout"),
+        '#!/bin/sh\nprintf "tool event: %s\\n" "$COMPATIBLE_API_KEY"\nexit 1\n',
+        { mode: 0o755 },
+      );
+      const result = spawnSync("bash", ["-s", "--", dcodeApprovalCheck], {
+        encoding: "utf8",
+        input: 'source "$1"\ncapture_autorun_diagnostics\n',
+        env: {
+          ...process.env,
+          PATH: `${tempDir}:${DEFAULT_TEST_PATH}`,
+          REPO: process.cwd(),
+          SANDBOX_NAME: "e2e-dcode",
+          COMPATIBLE_API_KEY: secret,
+        },
+      });
+      expect({
+        status: result.status,
+        output: result.stdout.trim(),
+        stderr: result.stderr,
+      }).toEqual({
+        status: 0,
+        output: "tool event: [REDACTED]",
+        stderr: "",
+      });
+    } finally {
+      fs.rmSync(tempDir, { force: true, recursive: true });
+    }
+  });
+
   it("restores the DCode export baseline and preserves the triggering failure status", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-baseline-recovery-"));
     const mockCli = path.join(tempDir, "nemoclaw");
@@ -600,6 +640,9 @@ exit 37
           { mode: 0o755 },
         );
 
+        // The shell program is a fixed literal; repository and temporary-file paths are
+        // positional arguments and are expanded only inside double quotes.
+        // lgtm[js/shell-command-injection-from-environment]
         const result = spawnSync(
           "/bin/bash",
           [
@@ -815,6 +858,11 @@ assert_status_mode disabled
     ).toBe(180_000);
     expect(
       cloudExperimentalCheckTimeoutMs(
+        "test/e2e/e2e-cloud-experimental/checks/07-deepagents-code-headless-inference.sh",
+      ),
+    ).toBe(25 * 60_000);
+    expect(
+      cloudExperimentalCheckTimeoutMs(
         "test/e2e/e2e-cloud-experimental/checks/10-deepagents-code-tui-startup.sh",
       ),
     ).toBe(20 * 60_000);
@@ -1027,6 +1075,7 @@ assert_status_mode disabled
       AWS_SECRET_ACCESS_KEY: "do-not-copy",
       GITHUB_TOKEN: "do-not-copy",
       [DCODE_BASE_IMAGE_ENV]: baseImageReference,
+      NEMOCLAW_ENDPOINT_URL: "https://custom.example.test/v1",
       NEMOCLAW_MODEL: "model-a",
       RANDOM_RUNNER_SECRET: "do-not-copy",
     });
@@ -1034,6 +1083,7 @@ assert_status_mode disabled
     expect(env).toMatchObject({
       COMPATIBLE_API_KEY: "secret-key",
       CLOUD_EXPERIMENTAL_MODEL: "model-a",
+      NEMOCLAW_ENDPOINT_URL: "https://custom.example.test/v1",
       NEMOCLAW_SANDBOX_NAME: "deepagents-sandbox",
       SANDBOX_NAME: "deepagents-sandbox",
       OPENSHELL_GATEWAY: "nemoclaw",

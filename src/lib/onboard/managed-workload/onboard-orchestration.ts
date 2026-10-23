@@ -6,6 +6,7 @@ import type { AgentDefinition } from "../../agent/defs";
 import { getVersion } from "../../core/version";
 import type { SandboxMessagingPlan } from "../../messaging/manifest";
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry/types";
+import type { ToolDisclosure } from "../../tool-disclosure";
 import type {
   CreateSandboxBuildContextResult,
   PreparedSandboxBuildContext,
@@ -23,10 +24,13 @@ import { isShippedManagedImageAgent } from "../managed-image/contract";
 import {
   type BuiltManagedStartupOnboardProfile,
   buildManagedStartupOnboardProfile,
+  resolveManagedStartupInferenceEndpoint,
+  resolveManagedStartupNativeLocalAttachment,
   type ManagedStartupOnboardProfileInput,
 } from "../managed-startup/onboard-profile";
 export {
   applyProviderManagedStartupRootRequest,
+  completeProviderManagedStartup,
   finalizeProviderManagedStartupSharedState,
   releaseProviderManagedStartupHold,
   refreshManagedStartupCorporateCaTrust,
@@ -58,7 +62,6 @@ import {
 import {
   prepareSandboxRuntimeLaunch,
   prebuildSandboxImageIfEligible,
-  requiresLocalSandboxBuildKit,
   type SandboxCreateLaunchInput,
   type SandboxRuntimeLaunchWithPrebuild,
 } from "../sandbox-create-launch";
@@ -68,6 +71,8 @@ import {
   installedManagedImageCatalogRevision,
   liveE2eManagedImageCatalog,
   liveE2eManagedImageRevision,
+  externalImageWorkloadMatches,
+  prepareExternalImageForOnboardSource,
   type PreparedSandboxWorkloadSource,
   prepareSandboxWorkloadSource,
 } from "../workload/preparation";
@@ -76,6 +81,7 @@ import {
   prepareSandboxWorkloadSourceFromRebuildHandoff,
 } from "../workload/rebuild";
 import { resolveSandboxWorkloadRuntimeCapabilities } from "../workload/runtime";
+import type { ExternalImageWorkloadSource } from "../workload/source";
 import {
   prepareManagedStateVolumes,
   removeManagedStateVolumes,
@@ -96,6 +102,38 @@ type ManagedProfileInput = Omit<
 type ResolveBuildPatchInput = Parameters<typeof resolveSandboxBuildPatch>[0];
 type SandboxInferenceConfig = import("../../inference/config").SandboxInferenceConfig;
 export { normalizeRuntimeProviderIdentity };
+export { externalImageWorkloadMatches };
+
+/** Resolve and inspect a user-supplied image through the selected provider. */
+export function prepareExternalImageForOnboard(input: {
+  readonly computePlan: OpenShellComputePlan;
+  readonly reference: string;
+  readonly agentName: string;
+  readonly requestedToolDisclosure: ToolDisclosure | null;
+}): {
+  readonly workload: ExternalImageWorkloadSource;
+  readonly toolDisclosure: ToolDisclosure;
+} {
+  const runtime = resolveSandboxWorkloadRuntimeCapabilities(input.computePlan);
+  const provider = resolveRuntimeProviderBundle(
+    input.computePlan.driverName,
+    CURRENT_RUNTIME_PROVIDER_BUNDLES,
+  );
+  if (!provider?.containerEngine.supported || !provider.containerEngine.externalImagePreparation) {
+    throw new Error(
+      `Driver '${input.computePlan.driverName}' does not provide container image preparation.`,
+    );
+  }
+  return prepareExternalImageForOnboardSource(
+    {
+      reference: input.reference,
+      agentName: input.agentName,
+      runtime,
+      requestedToolDisclosure: input.requestedToolDisclosure,
+    },
+    provider.containerEngine.externalImagePreparation,
+  );
+}
 
 export type ManagedStateVolumeOnboardLifecycle = {
   readonly roots: readonly import("../managed-startup/state-roots").ManagedStartupStateRoot[];
@@ -155,11 +193,15 @@ export interface CreateManagedWorkloadOnboardRuntimeInput {
   readonly agentName: string;
   readonly legacyDockerfilePath: string;
   readonly customDockerfilePath: string | null;
+  readonly preparedExternalImage?: ExternalImageWorkloadSource | null;
   readonly rootDir: string;
   readonly model: string | null;
   readonly provider: string | null;
   readonly preferredInferenceApi: string | null;
   readonly endpointUrl: string | null;
+  readonly localNimSelected?: boolean;
+  readonly nativeLocalProviderAttachment?: SandboxEntry["nativeLocalProviderAttachment"];
+  readonly nativeProvider?: boolean;
   readonly startupProfile: ManagedProfileInput;
   readonly note: (message: string) => void;
   readonly fallbackBuildEstimate: () => string | null;
@@ -216,6 +258,11 @@ export async function prepareSandboxWorkloadForPortableLifecycle(
   if (workload.source.kind === "portable-image") {
     throw new Error("Portable image workload activation is not enabled.");
   }
+  if (portableLifecycle && workload.source.kind === "external-image") {
+    throw new Error(
+      "Portable OpenClaw onboarding cannot use a user-supplied Docker image because that path requires Docker lifecycle operations.",
+    );
+  }
   assertPortableManagedBootstrapNotSelected(
     portableLifecycle,
     workload.source.kind === "managed-image",
@@ -237,6 +284,9 @@ export async function prepareHermesPortableSandboxWorkloadForLifecycle(
   }
   if (workload.source.kind === "portable-image") {
     throw new Error("Portable image workload activation is not enabled.");
+  }
+  if (workload.source.kind === "external-image") {
+    throw new Error("Hermes portable onboarding cannot use a user-supplied Docker image.");
   }
   if (
     workload.source.reason !== "runtime-unsupported" ||
@@ -310,6 +360,7 @@ export function createManagedWorkloadOnboardRuntime(
           agentName: input.agentName,
           legacyDockerfilePath: input.legacyDockerfilePath,
           customDockerfilePath: input.customDockerfilePath,
+          preparedExternalImage: input.preparedExternalImage ?? null,
           runtime: runtimeCapabilities,
           version: getVersion({ rootDir: input.rootDir }),
           // Same environment authority the catalog selection above reads, so
@@ -348,8 +399,16 @@ export function createManagedWorkloadOnboardRuntime(
       return input.managedWorkloadRebuild.replacementProfile;
     }
     if (preparedProfile) return preparedProfile;
+    const nativeLocalProviderAttachment = resolveManagedStartupNativeLocalAttachment(input);
     const selectedModel = input.model?.trim() || "";
     const selectedProvider = input.provider?.trim() || null;
+    const endpointUrl = resolveManagedStartupInferenceEndpoint({
+      agentName: input.agentName,
+      provider: selectedProvider,
+      endpointUrl: input.endpointUrl,
+      localNimSelected: input.localNimSelected,
+      nativeLocalProviderAttachment,
+    });
     const inferenceApi =
       input.agentName === "langchain-deepagents-code"
         ? "openai-completions"
@@ -362,11 +421,16 @@ export function createManagedWorkloadOnboardRuntime(
       selectedModel,
       selectedProvider,
       inferenceApi,
+      input.nativeLocalProviderAttachment && !nativeLocalProviderAttachment
+        ? false
+        : (input.nativeProvider ?? true),
+      endpointUrl,
+      input.agentName,
     );
     preparedProfile = buildManagedStartupOnboardProfile({
       agentName: input.agentName,
       inference:
-        !selectedModel && !selectedProvider && !input.preferredInferenceApi && !input.endpointUrl
+        !selectedModel && !selectedProvider && !input.preferredInferenceApi && !endpointUrl
           ? null
           : {
               routeProvider: inference.providerKey,
@@ -374,7 +438,7 @@ export function createManagedWorkloadOnboardRuntime(
               model: selectedModel,
               routedBaseUrl: inference.inferenceBaseUrl,
               upstreamEndpointUrl:
-                input.agentName === "langchain-deepagents-code" ? input.endpointUrl : null,
+                input.agentName === "langchain-deepagents-code" ? endpointUrl : null,
               api: inference.inferenceApi as
                 | "openai-completions"
                 | "openai-responses"
@@ -414,7 +478,6 @@ export interface PrepareOnboardSandboxWorkloadLaunchInput {
     readonly deferSandboxEffectsUntilIdentityVerification?: boolean;
     readonly skipProviderEffects?: boolean;
     readonly rebindMessagingTokenDefs: () => Promise<readonly MessagingTokenDef[]>;
-    readonly runProviderPreDeleteCleanup: MaterializeSandboxCreatePlanInput["runProviderPreDeleteCleanup"];
     readonly upsertMessagingProviders: MaterializeSandboxCreatePlanInput["upsertMessagingProviders"];
     readonly getHermesToolGatewayProviderName: (sandboxName: string) => string;
     readonly discloseInitialSandboxPolicy: (policy: InitialSandboxPolicy) => void;
@@ -488,7 +551,8 @@ export async function prepareOnboardSandboxWorkloadLaunch(
         )
       : null;
   const fromRef =
-    input.workload.source.kind === "managed-image"
+    input.workload.source.kind === "managed-image" ||
+    input.workload.source.kind === "external-image"
       ? input.workload.source.reference
       : `${requireLegacyBuildContext(legacyBuildContext).buildCtx}/Dockerfile`;
   const messagingTokenDefs = await input.plan.rebindMessagingTokenDefs();
@@ -503,7 +567,6 @@ export async function prepareOnboardSandboxWorkloadLaunch(
     messagingTokenDefs: [...messagingTokenDefs],
     messagingConfig:
       input.messagingConfig ?? getMessagingChannelConfigFromPlan(input.plannedMessagingPlan),
-    runProviderPreDeleteCleanup: input.plan.runProviderPreDeleteCleanup,
     upsertMessagingProviders: input.plan.upsertMessagingProviders,
     getHermesToolGatewayProviderName: input.plan.getHermesToolGatewayProviderName,
     discloseInitialSandboxPolicy: input.plan.discloseInitialSandboxPolicy,
@@ -514,10 +577,6 @@ export async function prepareOnboardSandboxWorkloadLaunch(
     );
   }
   if (input.plan.intent.sandboxGpuLogMessage) log(input.plan.intent.sandboxGpuLogMessage);
-  log(
-    `  Creating sandbox '${input.launchInput.sandboxName}' (this takes a few minutes on first run)...`,
-  );
-
   const configuredMessagingChannels =
     getChannelsFromPlan(input.plannedMessagingPlan) ?? createPlan.activeMessagingChannels;
   const initialGpuRoute = initialDockerGpuRoute(createPlan.gpuRoutePlan);
@@ -570,6 +629,17 @@ export async function prepareOnboardSandboxWorkloadLaunch(
         prebuild: { imageRef: null, imageId: null },
       },
     };
+  } else if (input.workload.source.kind === "external-image") {
+    prepared = {
+      createRequest: createPlan.createRequest,
+      launch: {
+        ...prepareSandboxRuntimeLaunch({
+          ...launchInput,
+          policyAttached: Boolean(createPlan.createRequest.policyPath),
+        }),
+        prebuild: { imageRef: null, imageId: null },
+      },
+    };
   } else {
     const buildContext = requireLegacyBuildContext(legacyBuildContext);
     input.dependencies.prepareSandboxBuildPatchConfig({ configuredMessagingChannels });
@@ -594,14 +664,30 @@ export async function prepareOnboardSandboxWorkloadLaunch(
       ...launchInput,
       policyAttached: Boolean(createPlan.createRequest.policyPath),
     });
+    const provider = input.runtime.runtimeProvider;
+    const imageBuildSurface = provider?.containerEngine;
+    const nativePodmanCapture =
+      provider?.identity.id === "podman" &&
+      imageBuildSurface?.supported &&
+      imageBuildSurface.identities.some(
+        (identity) => identity.operation === "external-image-preparation",
+      )
+        ? (args: readonly string[], timeoutMs: number) =>
+            imageBuildSurface.capture("external-image-preparation", args, timeoutMs)
+        : undefined;
     const { createArgs: _portableArgs, ...prebuild } = await prebuildSandboxImageIfEligible({
       buildCtx: buildContext.buildCtx,
       buildId,
-      dockerDriverGateway: input.gpu.dockerDriverGateway,
+      dockerDriverGateway: ["docker", "podman"].includes(
+        input.runtime.runtimeProvider?.identity.id ?? "",
+      ),
+      gatewayDriver: input.plan.portableLifecycle
+        ? "podman"
+        : (input.runtime.runtimeProvider?.identity.id ?? "unsupported"),
+      ...(nativePodmanCapture ? { nativePodmanCapture } : {}),
       origin: buildContext.origin,
       sourceReference: createPlan.createRequest.source.reference,
       sandboxName: input.launchInput.sandboxName,
-      requiresLocalBuildKit: requiresLocalSandboxBuildKit(buildContext.origin, input.legacy.agent),
     });
     prepared = {
       createRequest: createPlan.createRequest,
@@ -621,6 +707,9 @@ export async function prepareOnboardSandboxWorkloadLaunch(
     dashboardRemoteBindPrepared,
     legacyBuildContext,
   };
+  log(
+    `  Creating sandbox '${input.launchInput.sandboxName}' (this takes a few minutes on first run)...`,
+  );
   return {
     ...sharedLaunch,
     createRequestPlan: Object.freeze({
@@ -689,7 +778,10 @@ export function resolveOnboardSandboxWorkloadReceipt(input: {
 }): { readonly resolvedImageTag: string; readonly workloadReceipt: SandboxWorkloadReceipt } {
   const output = `${input.firstCreateOutput}\n${input.createOutput}`;
   const resolvedImageTag =
-    (input.workload.source.kind === "managed-image" ? input.workload.source.reference : null) ??
+    (input.workload.source.kind === "managed-image" ||
+    input.workload.source.kind === "external-image"
+      ? input.workload.source.reference
+      : null) ??
     input.registryImageRef ??
     input.prebuildImageRef ??
     input.extractBuiltImageRef(output) ??
@@ -707,6 +799,19 @@ export function resolveOnboardSandboxWorkloadReceipt(input: {
   }
   if (input.workload.source.kind === "portable-image") {
     throw new Error("Portable image workload activation is not enabled.");
+  }
+  if (input.workload.source.kind === "external-image") {
+    return {
+      resolvedImageTag,
+      workloadReceipt: {
+        schemaVersion: 1,
+        kind: "external-image",
+        reference: input.workload.source.reference,
+        platform: input.workload.source.platform,
+        runtimeImageContentId: input.workload.source.runtimeImageContentId,
+        shared: true,
+      },
+    };
   }
   const profile = input.runtime.ensurePreparedProfile(input.workload);
   if (!profile) throw new Error("Managed sandbox workload is missing its startup profile.");

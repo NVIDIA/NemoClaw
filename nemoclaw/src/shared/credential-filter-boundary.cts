@@ -123,8 +123,16 @@ const SAFE_CREDENTIAL_PLACEHOLDER_PATTERNS: readonly RegExp[] = [
   /^xoxb-OPENSHELL-RESOLVE-ENV-[A-Za-z0-9_]+$/,
   /^xapp-OPENSHELL-RESOLVE-ENV-[A-Za-z0-9_]+$/,
 ];
+const NVIDIA_INFERENCE_ENV_REFERENCE = "${NVIDIA_INFERENCE_API_KEY}";
 const SAFE_CREDENTIAL_PLACEHOLDER_LITERALS: ReadonlySet<string> = new Set([
   "unused",
+  // Pi and Deep Agents use this public, fixed route sentinel when talking to
+  // OpenShell's local managed-inference endpoint. It is not upstream
+  // authority and is safe to carry across a native-home rebuild.
+  "nemoclaw-managed-inference",
+  // Hermes requires an sk-prefixed value in its config, but OpenShell replaces
+  // this reserved non-secret sentinel at the proxy boundary before inference.
+  "sk-OPENSHELL-PROXY-REWRITE",
   CREDENTIAL_PLACEHOLDER,
 ]);
 
@@ -183,6 +191,7 @@ export function isConfigValue(value: unknown): value is ConfigValue {
 function scrubConfigValue(value: unknown): unknown {
   if (typeof value === "string") {
     if (isSafeCredentialPlaceholder(value)) return value;
+    if (value === NVIDIA_INFERENCE_ENV_REFERENCE) return CREDENTIAL_PLACEHOLDER;
     let hasUrlCredentials = false;
     try {
       const url = new URL(value);
@@ -203,6 +212,7 @@ function cliFlagName(token: string): string | null {
 function scrubArrayElement(value: unknown, previous: unknown): unknown {
   if (typeof value !== "string") return stripCredentials(value);
   if (isSafeCredentialPlaceholder(value)) return value;
+  if (value === NVIDIA_INFERENCE_ENV_REFERENCE) return CREDENTIAL_PLACEHOLDER;
 
   const eq = value.indexOf("=");
   if (eq > 0 && value.startsWith("-")) {

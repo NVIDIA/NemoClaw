@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { shellQuote } from "./core/shell-quote";
+import JSON5 from "json5";
 
 /**
  * Probe the OpenClaw runtime channel registry from inside a sandbox.
@@ -35,7 +36,7 @@ import { shellQuote } from "./core/shell-quote";
  * next step (the dashboard view, the gateway log) instead of a generic
  * "messaging may be broken" message.
  *
- * Pure JSON / log parsing is split from the SSH/exec probes so the
+ * Pure JSON5 / log parsing is split from the SSH/exec probes so the
  * comparison logic stays unit-testable without touching a sandbox.
  */
 
@@ -49,7 +50,7 @@ const DEFAULT_RUNTIME_VISIBILITY_METADATA = listOpenClawRuntimeChannelMetadata()
 export type RuntimeChannelStatus = {
   /**
    * True when at least the config layer was read and parsed. False on SSH
-   * failure, missing file, empty stdout, or invalid JSON — `detail`
+   * failure, missing file, empty stdout, or invalid JSON5 — `detail`
    * carries the specific reason so callers can surface an actionable hint.
    */
   ok: boolean;
@@ -264,7 +265,7 @@ function escapeExtendedRegexLiteral(value: string): string {
  *     could not corroborate.
  *
  * The probe is intentionally conservative: any failure to read the config
- * (sandbox unreachable, file missing, invalid JSON) is surfaced as
+ * (sandbox unreachable, file missing, invalid JSON5) is surfaced as
  * `ok: false` so callers can either warn or, when a deeper probe is
  * desired, decide to fail. The detail string is the one the caller
  * should render verbatim in a diagnostic hint.
@@ -299,7 +300,7 @@ export async function probeChannelRuntimeStatus(
   }
   let parsed: unknown;
   try {
-    parsed = JSON.parse(stdout);
+    parsed = JSON5.parse(stdout);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return {
@@ -308,7 +309,7 @@ export async function probeChannelRuntimeStatus(
       configuredChannels: [],
       configuredButNotRunning: [],
       logProbeOk: false,
-      detail: `runtime channel config ${configFilePath} is not valid JSON: ${message}`,
+      detail: `runtime channel config ${configFilePath} is not valid JSON5: ${message}`,
     };
   }
   const configuredChannels = extractEnabledChannelsFromOpenclawConfig(parsed);

@@ -59,6 +59,8 @@ export interface SandboxCreateIntent {
   /** Defer provider, credential, and attachment effects until the created sandbox identity is verified. */
   readonly deferSandboxEffectsUntilIdentityVerification?: true;
   readonly recreate: boolean;
+  /** Stage a published source's replacement route only after its pre-delete backup succeeds. */
+  readonly reservePublishedRouteAfterBackup?: () => void | Promise<void>;
   /** Explicit fresh-create mode that lets APF supply the sandbox-scoped policy. */
   readonly apfInterceptorRequested?: true;
   readonly toolDisclosure: import("../tool-disclosure").ToolDisclosure;
@@ -68,6 +70,8 @@ export interface SandboxCreateIntent {
   readonly dcodeAutoApprovalMode?: import("./dcode-auto-approval").DcodeAutoApprovalMode;
   /** Non-secret upstream endpoint metadata for managed image config generation. */
   readonly endpointUrl?: string | null;
+  /** Owned Local NIM keeps its shared route even though it records vllm-local. */
+  readonly localNimSelected?: true;
   /** Validated OpenAI-compatible reasoning capability selected during onboarding. */
   readonly compatibleEndpointReasoning?: "true" | "false";
   /** Provenance for the endpoint recorded with the created sandbox. */
@@ -82,14 +86,14 @@ export interface SandboxCreateIntent {
   readonly reuseRegisteredCredentials?: true;
   /** Internal durable handoff for one journaled same-name replacement. */
   readonly recreateTransaction?: {
+    /** Process-local proof that this fresh, non-forced run opened the journal. */
+    readonly freshNonForced?: true;
     readonly id: string;
     readonly targetGeneration: string;
     readonly targetIntentFingerprint: string;
   };
   /** Internal outer-rebuild authority for carrying managed MCP state through replacement. */
   readonly recreateJournalTargetIntentFingerprint?: string;
-  /** Validated non-secret Hermes environment assignments carried by a rebuild. */
-  readonly rebuildPreservedEnv?: readonly import("../state/preserved-env").PreservedEnvFile[];
   /** Bounded live OpenShell policy handoff for one active rebuild. */
   readonly rebuildPolicySourcePath?: string;
 }
@@ -168,8 +172,6 @@ export type OnboardOptions = {
   preparedImageRebuild?: import("./prepared-dcode-rebuild").PreparedImageRebuildHandoff;
   /** Internal immutable managed-image/profile handoff validated before rebuild deletion. */
   managedWorkloadRebuild?: import("./workload/rebuild").ManagedWorkloadRebuildHandoff;
-  /** Internal validated non-secret Hermes environment assignments carried by a rebuild. */
-  rebuildPreservedEnv?: readonly import("../state/preserved-env").PreservedEnvFile[];
   /** Bounded live OpenShell policy handoff for one active rebuild. */
   rebuildPolicySourcePath?: string;
   /** Internal hint for resolving the sandbox base image without repeating remote discovery. */
@@ -185,6 +187,7 @@ export type OnboardOptions = {
   /** Operator-selected APF compatibility mode for fresh sandbox creation. */
   apfInterceptorRequested?: boolean | null;
   fromDockerfile?: string | null;
+  fromImage?: string | null;
   sandboxName?: string | null;
   /** Explicit host directories exposed read-only to the sandbox. */
   hostMounts?: readonly import("../state/registry/types").SandboxHostMount[];

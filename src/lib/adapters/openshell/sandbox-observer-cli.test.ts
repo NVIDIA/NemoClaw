@@ -88,6 +88,24 @@ describe("CLI OpenShell sandbox observer", () => {
     });
   });
 
+  it("rejects an endpoint override before selected-target observation (#11832)", async () => {
+    const capture = vi.fn();
+    const observer = createCliOpenShellSandboxObserver({
+      capture,
+      environment: {
+        OPENSHELL_GATEWAY_ENDPOINT: "https://user:fixture-secret@example.test",
+      },
+    });
+
+    await expect(
+      observer.listSandboxes({ target: selectedOpenShellGateway() }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { kind: "transport", reason: "endpoint_override" },
+    });
+    expect(capture).not.toHaveBeenCalled();
+  });
+
   it("contains table and ANSI compatibility inside the CLI implementation (#9803)", () => {
     expect(
       parseCliOpenShellSandboxInventory(

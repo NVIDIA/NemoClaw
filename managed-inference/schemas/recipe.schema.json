@@ -26,8 +26,22 @@
         "execution"
       ],
       "anyOf": [
-        { "required": ["model"], "properties": { "model": {} } },
-        { "required": ["modelRef"], "properties": { "modelRef": {} } }
+        {
+          "required": [
+            "model"
+          ],
+          "properties": {
+            "model": {}
+          }
+        },
+        {
+          "required": [
+            "modelRef"
+          ],
+          "properties": {
+            "modelRef": {}
+          }
+        }
       ],
       "properties": {
         "backend": {
@@ -85,6 +99,9 @@
             },
             "installFastSafetensors": {
               "type": "boolean"
+            },
+            "reviewedCode": {
+              "$ref": "https://github.com/NVIDIA/NemoClaw/managed-inference/schemas/model.schema.json#/properties/spec/properties/reviewedCode"
             },
             "preparation": {
               "$ref": "#/$defs/modelPreparation"
@@ -482,8 +499,37 @@
                     "pattern": "^--[a-z0-9][a-z0-9._-]*$",
                     "maxLength": 128
                   },
-                  "value": {
-                    "$ref": "#/$defs/scalar"
+                  "value": {}
+                },
+                "if": {
+                  "properties": {
+                    "name": {
+                      "const": "--chat-template"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "value": {
+                      "oneOf": [
+                        {
+                          "$ref": "#/$defs/scalar"
+                        },
+                        {
+                          "type": "string",
+                          "minLength": 1025,
+                          "maxLength": 16384,
+                          "pattern": "\\{[%{]"
+                        }
+                      ]
+                    }
+                  }
+                },
+                "else": {
+                  "properties": {
+                    "value": {
+                      "$ref": "#/$defs/scalar"
+                    }
                   }
                 },
                 "additionalProperties": false
@@ -593,54 +639,14 @@
             "limits": {
               "type": "object",
               "required": [
-                "maxRequestBodyBytes",
-                "maxRequestHeaderBytes",
-                "maxOutputTokens",
-                "requestTimeoutSeconds",
-                "shutdownTimeoutSeconds"
+                "requestTimeoutSeconds"
               ],
               "properties": {
-                "maxRequestBodyBytes": {
-                  "type": "integer",
-                  "minimum": 1,
-                  "maximum": 67108864
-                },
-                "maxRequestHeaderBytes": {
-                  "type": "integer",
-                  "minimum": 1,
-                  "maximum": 1048576
-                },
-                "maxOutputTokens": {
-                  "type": "integer",
-                  "minimum": 1,
-                  "maximum": 1048576
-                },
                 "requestTimeoutSeconds": {
+                  "description": "Native llama-server read/write socket timeout. The host bridge separately enforces its fixed total request-duration cap.",
                   "type": "integer",
                   "minimum": 1,
                   "maximum": 86400
-                },
-                "shutdownTimeoutSeconds": {
-                  "type": "integer",
-                  "minimum": 1,
-                  "maximum": 86400
-                }
-              },
-              "additionalProperties": false
-            },
-            "requestGuard": {
-              "type": "object",
-              "required": [
-                "upstreamPort"
-              ],
-              "properties": {
-                "upstreamPort": {
-                  "type": "integer",
-                  "minimum": 1,
-                  "maximum": 65535,
-                  "not": {
-                    "const": 8081
-                  }
                 }
               },
               "additionalProperties": false
@@ -1399,8 +1405,7 @@
               "flashAttention",
               "kvCache",
               "speculativeDecoding",
-              "limits",
-              "requestGuard"
+              "limits"
             ],
             "properties": {
               "protocol": {},
@@ -1466,8 +1471,7 @@
               "flashAttention": {},
               "kvCache": {},
               "speculativeDecoding": {},
-              "limits": {},
-              "requestGuard": {}
+              "limits": {}
             },
             "propertyNames": {
               "not": {

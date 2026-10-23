@@ -31,7 +31,12 @@ const PRE_ROLLBACK_DIAGNOSTICS_CALL_TIMEOUT_MS = 2_000;
 
 type PreRollbackDiagnosticsDeps = Pick<
   DockerGpuPatchDeps,
-  "runCaptureOpenshell" | "dockerCapture" | "dockerLogs" | "homedir" | "now"
+  | "runCaptureOpenshell"
+  | "openShellGpuDiagnostics"
+  | "dockerCapture"
+  | "dockerLogs"
+  | "homedir"
+  | "now"
 >;
 
 /**
@@ -80,6 +85,21 @@ function boundedDiagnosticsDeps(
           const bounded = boundedOptions(options);
           if (!bounded) return "";
           return deps.runCaptureOpenshell?.(args, bounded) ?? "";
+        }
+      : undefined,
+    openShellGpuDiagnostics: deps.openShellGpuDiagnostics
+      ? {
+          collect: (request) => {
+            const remaining = deadline - Date.now();
+            if (remaining <= 0) return [];
+            return (
+              deps.openShellGpuDiagnostics?.collect({
+                ...request,
+                deadlineMs: deadline,
+                timeoutMs: Math.min(PRE_ROLLBACK_DIAGNOSTICS_CALL_TIMEOUT_MS, remaining),
+              }) ?? []
+            );
+          },
         }
       : undefined,
   };

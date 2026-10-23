@@ -395,6 +395,7 @@ describe("getSandboxDockerRuntime (#4495)", () => {
       running: false,
       containerName: null,
       containerAbsenceConfirmed: false,
+      containerObservationFailed: true,
     });
   });
 

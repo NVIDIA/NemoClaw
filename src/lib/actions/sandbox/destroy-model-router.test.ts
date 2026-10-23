@@ -24,6 +24,7 @@ function createDeps(overrides: Partial<StopModelRouterForDestroyedSandboxDeps> =
     sandboxName: "alpha",
     endpointUrl: routedSandbox.endpointUrl,
     routerPid: 4242,
+    routerPort: 4100,
     routerCredentialHash: "hash",
   } as Session;
   const deps: StopModelRouterForDestroyedSandboxDeps = {
@@ -73,6 +74,7 @@ describe("stopModelRouterForDestroyedSandbox", () => {
 
     expect(deps.stopProcess).toHaveBeenCalledWith(4242, 4100);
     expect(session.routerPid).toBeNull();
+    expect(session.routerPort).toBeNull();
     expect(session.routerCredentialHash).toBeNull();
     expect(session.sandboxName).toBeNull();
     expect(deps.warn).not.toHaveBeenCalled();
@@ -262,6 +264,7 @@ describe("stopModelRouterForDestroyedSandbox", () => {
 
     expect(deps.stopProcess).not.toHaveBeenCalled();
     expect(session.routerPid).toBeNull();
+    expect(session.routerPort).toBeNull();
     expect(session.routerCredentialHash).toBeNull();
   });
 

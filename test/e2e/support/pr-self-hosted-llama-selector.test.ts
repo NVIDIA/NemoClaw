@@ -22,12 +22,15 @@ type WorkflowStep = {
 
 type WorkflowJob = {
   env?: Record<string, string>;
+  if?: string;
   outputs?: Record<string, string>;
   permissions?: Record<string, string>;
   "runs-on"?: string;
   steps?: WorkflowStep[];
   "timeout-minutes"?: number;
   needs?: string;
+  uses?: string;
+  with?: Record<string, unknown>;
 };
 
 type Workflow = {
@@ -35,6 +38,7 @@ type Workflow = {
 };
 
 const WORKFLOW_PATH = ".github/workflows/pr-self-hosted.yaml";
+const SANDBOX_IMAGES_WORKFLOW_PATH = ".github/workflows/sandbox-images.yaml";
 const LLAMA_LIVE_TEST_PATH = "test/e2e/live/llama-cpp-generic-gpu.test.ts";
 const CANDIDATE_SHA = "a".repeat(40);
 const BASE_SHA = "b".repeat(40);
@@ -97,6 +101,14 @@ function selectorScript(): string {
   return script;
 }
 
+function hermesSelectorScript(): string {
+  const script = workflow().jobs["select-hermes-root-entrypoint"]?.steps?.find(
+    (step) => step.name === "Select Hermes root-entrypoint qualification from PR files",
+  )?.run;
+  assert(typeof script === "string", "Hermes root-entrypoint selector script is missing");
+  return script;
+}
+
 function declaredSelectionPaths(): readonly string[] {
   const script = selectorScript();
   const exactPaths = [...script.matchAll(/\.filename == "([^"]+)"/gu)].map(([, value]) => {
@@ -114,14 +126,24 @@ function declaredSelectionPaths(): readonly string[] {
   return paths;
 }
 
-async function selectGenericGpuLane(
+async function executeSelector(
+  script: string,
+  fixtureName: string,
   changedFiles: readonly string[],
   copiedSha = CANDIDATE_SHA,
   baseSha = BASE_SHA,
+  filesRequestStatus = 0,
+  reportedChangedFileCount: unknown = changedFiles.length,
+  expectedStatus: number | readonly number[] = filesRequestStatus,
+  filesResponse = JSON.stringify([changedFiles.map((filename) => ({ filename }))]),
+  prResponse = JSON.stringify({
+    number: 8748,
+    base: { sha: baseSha },
+    changed_files: reportedChangedFileCount,
+    head: { sha: CANDIDATE_SHA },
+  }),
 ) {
-  const script = selectorScript();
-
-  const directory = mkdtempSync(join(tmpdir(), "nemoclaw-generic-gpu-selector-"));
+  const directory = mkdtempSync(join(tmpdir(), `nemoclaw-${fixtureName}-selector-`));
   const binDirectory = join(directory, "bin");
   const outputPath = join(directory, "github-output");
   const ghPath = join(binDirectory, "gh");
@@ -134,6 +156,7 @@ if [[ "\${!#}" == "repos/NVIDIA/NemoClaw/pulls/8748" ]]; then
   printf '%s' "$PR_JSON"
 else
   printf '%s' "$PR_FILES_JSON"
+  exit "$PR_FILES_EXIT"
 fi
 `,
   );
@@ -152,22 +175,158 @@ fi
         GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
         GITHUB_SHA: copiedSha,
         PATH: `${binDirectory}:${process.env.PATH ?? ""}`,
-        PR_FILES_JSON: JSON.stringify([changedFiles.map((filename) => ({ filename }))]),
-        PR_JSON: JSON.stringify({
-          number: 8748,
-          base: { sha: baseSha },
-          head: { sha: CANDIDATE_SHA },
-        }),
+        PR_FILES_JSON: filesResponse,
+        PR_FILES_EXIT: String(filesRequestStatus),
+        PR_JSON: prResponse,
       },
     );
-    assert.equal(result.status, 0, result.stderr);
-    return readFileSync(outputPath, "utf8").trim();
+    assert.equal(result.signal, null, result.stderr);
+    assert([expectedStatus].flat().includes(result.status ?? -1), result.stderr);
+    const output = readFileSync(outputPath, "utf8");
+    assert(result.status === 0 || output === "", "failed discovery wrote job outputs");
+    return result.status === 0 ? output.trim() : `status=${result.status}`;
   } finally {
     rmSync(directory, { force: true, recursive: true });
   }
 }
 
+function selectGenericGpuLane(
+  changedFiles: readonly string[],
+  copiedSha = CANDIDATE_SHA,
+  baseSha = BASE_SHA,
+) {
+  return executeSelector(selectorScript(), "generic-gpu", changedFiles, copiedSha, baseSha);
+}
+
+function selectHermesRootEntrypoint(
+  changedFiles: readonly string[],
+  copiedSha = CANDIDATE_SHA,
+  baseSha = BASE_SHA,
+  filesRequestStatus = 0,
+  reportedChangedFileCount = changedFiles.length,
+  expectedStatus = filesRequestStatus,
+) {
+  return executeSelector(
+    hermesSelectorScript(),
+    "hermes-root-entrypoint",
+    changedFiles,
+    copiedSha,
+    baseSha,
+    filesRequestStatus,
+    reportedChangedFileCount,
+    expectedStatus,
+  );
+}
+
 describe.concurrent("generic NVIDIA GPU PR selection", () => {
+  // source-shape-contract: security -- The copied PR workflow must run the exact Hermes root-entrypoint recovery proof while excluding unrelated image jobs
+  it("runs the Hermes root-entrypoint recovery proof for the copied PR revision", ({ expect }) => {
+    const selector = workflow().jobs["select-hermes-root-entrypoint"];
+    const caller = workflow().jobs["hermes-root-entrypoint-smoke"];
+    expect(selector).toMatchObject({
+      outputs: { selected: "${{ steps.changed.outputs.selected }}" },
+      permissions: { contents: "read" },
+      "runs-on": "ubuntu-latest",
+    });
+    expect(caller).toMatchObject({
+      if: "${{ needs.select-hermes-root-entrypoint.outputs.selected == 'true' }}",
+      needs: "select-hermes-root-entrypoint",
+      uses: "./.github/workflows/sandbox-images.yaml",
+      with: { hermes_only: true },
+    });
+
+    const reusable = YAML.parse(readFileSync(SANDBOX_IMAGES_WORKFLOW_PATH, "utf8")) as {
+      on: { workflow_call: { inputs: Record<string, unknown> } };
+      jobs: Record<string, WorkflowJob>;
+    };
+    expect(reusable.on.workflow_call.inputs.hermes_only).toMatchObject({
+      default: false,
+      required: false,
+      type: "boolean",
+    });
+    expect(reusable.jobs["test-hermes-sandbox-image"]?.needs).toBe("build-hermes-sandbox-image");
+    expect(
+      reusable.jobs["test-hermes-sandbox-image"]?.steps?.find(
+        (step) => step.name === "Run Hermes root entrypoint smoke Vitest test",
+      )?.run,
+    ).toContain("test/e2e/live/hermes-root-entrypoint-smoke.test.ts");
+    expect(
+      reusable.jobs["test-hermes-sandbox-image"]?.steps?.find(
+        (step) => step.name === "Upload Hermes root entrypoint smoke artifacts",
+      ),
+    ).toMatchObject({
+      if: "always()",
+      with: { path: "e2e-artifacts/live/hermes-root-entrypoint-smoke/" },
+    });
+    expect(
+      Object.fromEntries(
+        Object.entries(reusable.jobs)
+          .filter(
+            ([jobName]) =>
+              jobName !== "build-hermes-sandbox-image" && jobName !== "test-hermes-sandbox-image",
+          )
+          .map(([jobName, job]) => [jobName, job.if]),
+      ),
+    ).toEqual({
+      "build-sandbox-images": "${{ inputs.hermes_only != true }}",
+      "build-sandbox-images-arm64": "${{ inputs.hermes_only != true && inputs.run_arm64 }}",
+      "managed-image-openclaw-security": "${{ inputs.hermes_only != true }}",
+      "messaging-plan-image-boundary": "${{ inputs.hermes_only != true }}",
+      "port-override-image-contract": "${{ inputs.hermes_only != true }}",
+    });
+  });
+
+  // source-shape-contract: security -- Executes the copied-PR selector to prove a Hermes runtime owner retains the trusted root-entrypoint qualification
+  it("selects Hermes qualification for a Hermes runtime change", async ({ expect }) => {
+    await expect(selectHermesRootEntrypoint(["agents/hermes/start.sh"])).resolves.toBe(
+      "selected=true",
+    );
+  });
+
+  // source-shape-contract: security -- Hermes lifecycle source changes must retain copied-PR root-entrypoint qualification
+  it("selects Hermes qualification for a Hermes lifecycle source-only change", async ({
+    expect,
+  }) => {
+    await expect(
+      selectHermesRootEntrypoint(["src/lib/actions/sandbox/runtime/hermes-lifecycle.ts"]),
+    ).resolves.toBe("selected=true");
+  });
+
+  // source-shape-contract: security -- Every source copied into the Hermes image must retain copied-PR root-entrypoint qualification
+  it("selects Hermes qualification for a copied Hermes runtime source", async ({ expect }) => {
+    await expect(selectHermesRootEntrypoint(["src/lib/hermes-managed-route.ts"])).resolves.toBe(
+      "selected=true",
+    );
+  });
+
+  // source-shape-contract: security -- Changed-file discovery failures must stop trusted copied-PR qualification instead of silently skipping it
+  it("fails Hermes qualification when changed files cannot be fetched", async ({ expect }) => {
+    await expect(
+      selectHermesRootEntrypoint(["agents/hermes/start.sh"], CANDIDATE_SHA, BASE_SHA, 17),
+    ).resolves.toBe("status=17");
+  });
+
+  // source-shape-contract: security -- A truncated PR-file response must fail closed instead of skipping trusted qualification
+  it("fails Hermes qualification when changed-file discovery is incomplete", async ({ expect }) => {
+    await expect(
+      selectHermesRootEntrypoint(
+        ["docs/get-started/quickstart.mdx"],
+        CANDIDATE_SHA,
+        BASE_SHA,
+        0,
+        2,
+        1,
+      ),
+    ).resolves.toBe("status=1");
+  });
+
+  // source-shape-contract: security -- Executes the copied-PR selector to prove unrelated documentation cannot consume trusted Hermes image runners
+  it("skips Hermes qualification for unrelated documentation", async ({ expect }) => {
+    await expect(selectHermesRootEntrypoint(["docs/get-started/quickstart.mdx"])).resolves.toBe(
+      "selected=false",
+    );
+  });
+
   it.for(declaredSelectionPaths())(
     "selects the generic NVIDIA GPU E2E job when %s can change installer readiness",
     async (changedFile, { expect }) => {
@@ -197,6 +356,17 @@ describe.concurrent("generic NVIDIA GPU PR selection", () => {
       );
     },
   );
+
+  it("selects the generic GPU E2E when only its llama.cpp diagnostics owner changes", async ({
+    expect,
+  }) => {
+    const result = await selectGenericGpuLane([
+      "test/e2e/fixtures/llama-cpp-runtime-diagnostics.ts",
+    ]);
+    expect(result).toBe(
+      `base_sha=${BASE_SHA}\nhead_sha=${CANDIDATE_SHA}\npr_number=8748\nselected=true`,
+    );
+  });
 
   it.for(ARM64_PROOF_AUTHORITY_PATHS)(
     "does not select the Docker-qualified AMD64 GPU job for ARM64 proof owner %s",
@@ -235,6 +405,155 @@ describe.concurrent("generic NVIDIA GPU PR selection", () => {
     );
   });
 
+  it.for([
+    {
+      name: "API failure with matching files",
+      response: '[[{"filename":"scripts/install.sh"}]]',
+      count: 1,
+      status: 17,
+      expectedExit: 17,
+    },
+    {
+      name: "API failure with nonmatching files",
+      response: '[[{"filename":"docs/readme.md"}]]',
+      count: 1,
+      status: 17,
+      expectedExit: 17,
+    },
+    { name: "malformed JSON", response: "{", count: 1, status: 0, expectedExit: [4, 5] },
+    { name: "non-array pages", response: "null", count: 0, status: 0, expectedExit: 1 },
+    {
+      name: "flat file list",
+      response: '[{"filename":"scripts/install.sh"}]',
+      count: 1,
+      status: 0,
+      expectedExit: 1,
+    },
+    { name: "non-array page", response: "[[], {}]", count: 0, status: 0, expectedExit: 1 },
+    {
+      name: "non-object file",
+      response: '[["scripts/install.sh"]]',
+      count: 1,
+      status: 0,
+      expectedExit: 1,
+    },
+    { name: "missing filename", response: "[[{}]]", count: 1, status: 0, expectedExit: 1 },
+    {
+      name: "non-string filename",
+      response: '[[{"filename":null}]]',
+      count: 1,
+      status: 0,
+      expectedExit: 1,
+    },
+    {
+      name: "incomplete nonmatching files",
+      response: '[[{"filename":"docs/readme.md"}]]',
+      count: 2,
+      status: 0,
+      expectedExit: 1,
+    },
+    {
+      name: "incomplete matching files",
+      response: '[[{"filename":"scripts/install.sh"}]]',
+      count: 2,
+      status: 0,
+      expectedExit: 1,
+    },
+    {
+      name: "excess files",
+      response: '[[{"filename":"scripts/install.sh"}]]',
+      count: 0,
+      status: 0,
+      expectedExit: 1,
+    },
+    {
+      name: "empty pages with nonzero count",
+      response: "[]",
+      count: 1,
+      status: 0,
+      expectedExit: 1,
+    },
+    {
+      name: "empty page with nonzero count",
+      response: "[[]]",
+      count: 1,
+      status: 0,
+      expectedExit: 1,
+    },
+    { name: "negative count", response: "[[]]", count: -1, status: 0, expectedExit: 4 },
+    { name: "fractional count", response: "[[]]", count: 0.5, status: 0, expectedExit: 4 },
+    { name: "string count", response: "[[]]", count: "0", status: 0, expectedExit: 4 },
+    { name: "null count", response: "[[]]", count: null, status: 0, expectedExit: 4 },
+  ])("fails GPU discovery without outputs for $name", async (fixture) => {
+    await executeSelector(
+      selectorScript(),
+      "generic-gpu",
+      [],
+      CANDIDATE_SHA,
+      BASE_SHA,
+      fixture.status,
+      fixture.count,
+      fixture.expectedExit,
+      fixture.response,
+    );
+  });
+
+  it("fails GPU discovery without outputs for missing changed_files", async () => {
+    await executeSelector(
+      selectorScript(),
+      "generic-gpu",
+      [],
+      CANDIDATE_SHA,
+      BASE_SHA,
+      0,
+      0,
+      4,
+      "[[]]",
+      JSON.stringify({
+        number: 8748,
+        base: { sha: BASE_SHA },
+        head: { sha: CANDIDATE_SHA },
+      }),
+    );
+  });
+
+  it.for(["[]", "[[]]"])(
+    "skips GPU qualification for complete empty pages %s",
+    async (response, { expect }) => {
+      const result = await executeSelector(
+        selectorScript(),
+        "generic-gpu",
+        [],
+        CANDIDATE_SHA,
+        BASE_SHA,
+        0,
+        0,
+        0,
+        response,
+      );
+      expect(result).toBe(
+        `base_sha=${BASE_SHA}\nhead_sha=${CANDIDATE_SHA}\npr_number=8748\nselected=false`,
+      );
+    },
+  );
+
+  it("selects GPU qualification when a later complete page matches", async ({ expect }) => {
+    const result = await executeSelector(
+      selectorScript(),
+      "generic-gpu",
+      [],
+      CANDIDATE_SHA,
+      BASE_SHA,
+      0,
+      2,
+      0,
+      '[[{"filename":"docs/readme.md"}],[{"filename":"scripts/install.sh"}]]',
+    );
+    expect(result).toBe(
+      `base_sha=${BASE_SHA}\nhead_sha=${CANDIDATE_SHA}\npr_number=8748\nselected=true`,
+    );
+  });
+
   it("rejects a copied branch whose commit does not match the current PR head", async ({
     expect,
   }) => {
@@ -254,7 +573,7 @@ describe.concurrent("generic NVIDIA GPU PR selection", () => {
   }) => {
     assert.match(
       readFileSync(LLAMA_LIVE_TEST_PATH, "utf8"),
-      /const agent = await host\.nemoclaw\([\s\S]*await captureManagedRuntimeLogs\([^)]*\);[\s\S]*expect\(agent\.exitCode/u,
+      /const agent = await host\.nemoclaw\([\s\S]*await captureManagedLlamaCppRuntimeLogs\([^)]*\);[\s\S]*expect\(agent\.exitCode/u,
       "llama.cpp runtime logs must be captured after the agent request and before its exit assertion",
     );
     expect(workflow().jobs["llama-cpp-generic-gpu"]?.env?.NEMOCLAW_GATEWAY_RUNTIME).toBe("docker");

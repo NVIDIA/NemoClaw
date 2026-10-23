@@ -3,8 +3,8 @@
 
 import type { WebSearchConfig } from "../inference/web-search";
 import * as webSearch from "../inference/web-search";
+import { webSearchProviderProfileId } from "../inference/web-search/provider-profile";
 import { listMessagingCredentialMetadata } from "../messaging/channels";
-import { webSearchProviderProfileId } from "../messaging/applier/web-search-provider-profile";
 import { MESSAGING_CREDENTIAL_PROVIDER_TYPE } from "../messaging/provider-profile";
 import { type ChannelDef, getChannelTokenKeys } from "../sandbox/channels";
 import type { ExtraPlaceholderCredentialSources } from "./extra-placeholder-keys";
@@ -235,11 +235,16 @@ export async function prepareCreateSandboxMessaging(
       // A static credential-bound policy must instead retain the exact gateway
       // provider already holding that authority.
       if (token && !channelDisabled) continue;
-      const providerReusable = providerType
-        ? await input.providerMatchesGatewayCredential(name, providerType, envKey)
-        : requiresExactOpenClawProviderBinding
-          ? await input.providerMatchesGatewayCredential(name, "generic", envKey)
-          : await input.providerExistsInGateway(name);
+      if (!providerType) {
+        throw new Error(
+          `Messaging provider '${name}' has no explicit owned profile type. Re-run channel setup with a supported profile.`,
+        );
+      }
+      const providerReusable = await input.providerMatchesGatewayCredential(
+        name,
+        providerType,
+        envKey,
+      );
       if (!providerReusable) continue;
       reusableMessagingProviders.push(name);
       if (!channelDisabled && !reusableMessagingChannels.includes(channel)) {

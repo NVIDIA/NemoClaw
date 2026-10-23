@@ -21,6 +21,7 @@ import {
   protectedProviderContainerName,
   protectedProviderContainerPreflightCommand,
   protectedProviderFinalInventoryCommand,
+  protectedProviderImagePulledByStart,
   protectedProviderReportedContainerId,
   protectedVllmReadinessCommand,
 } from "../live/managed-image-protected-runtime-helpers.ts";
@@ -799,5 +800,29 @@ printf 'nim-stalled-probe-diagnostic key=%s\\n' "$FAKE_NIM_API_KEY"`,
     expect(result.stderr).not.toContain(sensitiveValue);
     expect(fs.readFileSync(result.artifacts.stderr, "utf8")).not.toContain(sensitiveValue);
     expect(fs.readFileSync(result.artifacts.result, "utf8")).not.toContain(sensitiveValue);
+  });
+});
+
+describe("protected provider image ownership", () => {
+  it("treats a provider image as run-owned only when docker run pulled that exact reference", () => {
+    const pulled = [
+      `Unable to find image '${PROVIDER_IMAGE}' locally`,
+      `${PROVIDER_IMAGE}: Pulling from vllm`,
+      "Status: Downloaded newer image",
+    ].join("\n");
+    expect(protectedProviderImagePulledByStart(PROVIDER_IMAGE, pulled)).toBe(true);
+    expect(protectedProviderImagePulledByStart(PROVIDER_IMAGE, "")).toBe(false);
+    expect(
+      protectedProviderImagePulledByStart(
+        PROVIDER_IMAGE,
+        `Unable to find image 'registry.example/other@sha256:${"c".repeat(64)}' locally`,
+      ),
+    ).toBe(false);
+    expect(
+      protectedProviderImagePulledByStart(
+        PROVIDER_IMAGE,
+        `provider log: Unable to find image '${PROVIDER_IMAGE}' locally (replayed)`,
+      ),
+    ).toBe(false);
   });
 });

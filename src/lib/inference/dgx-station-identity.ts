@@ -25,6 +25,10 @@ export function isDgxStationGb300Product(productName: string): boolean {
   return STATION_GB300_PRODUCT_PATTERN.test(productName.trim());
 }
 
+export function isDgxStationGb300GpuName(gpuName: string): boolean {
+  return /^NVIDIA[\t ]+GB300(?:$|[\t ])/iu.test(gpuName.trim());
+}
+
 export function isDgxStationGb300PciDevice(
   vendor: string | null | undefined,
   device: string | null | undefined,

@@ -16,8 +16,6 @@ import { processTreeBoundedOpenshellInvocation } from "./process-tree-timeout";
 import { captureSandboxSshConfig } from "./sandbox-ssh-config-capture";
 import { classifyManagedGatewayEndpointBinding } from "../../../../nemoclaw/dist/shared/openshell-gateway-endpoint-boundary.cjs";
 
-import { parseVersionFromText } from "./version-text";
-
 export { parseVersionFromText } from "./version-text";
 export { classifyManagedGatewayEndpointBinding };
 export { buildSelectedOpenShellSubprocessEnv } from "./command-argv";
@@ -544,15 +542,4 @@ export function captureOpenshellCommandAsyncResult(
     }
     if (hasInput) child.stdin?.end(opts.input);
   });
-}
-
-export function getInstalledOpenshellVersion(
-  binary: string,
-  opts: CaptureOpenshellOptions = {},
-): string | null {
-  const versionResult = captureOpenshellCommand(binary, ["--version"], {
-    ...opts,
-    ignoreError: true,
-  });
-  return parseVersionFromText(versionResult.output, binary);
 }

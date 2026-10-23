@@ -114,7 +114,6 @@ describe("global oclif command adapters", () => {
       primaryModelRef: "inference/nvidia/model-a",
       providerKey: "inference",
       configChanged: true,
-      sessionUpdated: false,
     });
   });
 

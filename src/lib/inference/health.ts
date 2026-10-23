@@ -60,6 +60,8 @@ export interface ProviderHealthProbeOptions {
   model?: string | null;
   getCredentialImpl?: (envName: string) => string | null | undefined;
   isWsl?: boolean;
+  /** Sandbox route endpoint recorded at onboard; selects the bearerless local vLLM host port. */
+  recordedEndpointUrl?: string | null;
 }
 
 export type OllamaHostInventoryProbeOptions = {
@@ -689,6 +691,7 @@ export function probeRemoteProviderHealth(
       `${BUILD_ENDPOINT_URL}/chat/completions`,
       options,
       true,
+      resolveProbeReplyTokens(provider, config.model),
     );
   }
 
@@ -738,6 +741,7 @@ export function probeProviderHealth(
   const localOptions: LocalProviderHealthProbeOptions = {
     model: options.model,
     runCurlProbeImpl: options.runCurlProbeImpl,
+    recordedEndpointUrl: options.recordedEndpointUrl,
   };
   const local = probeLocalProviderHealth(provider, localOptions);
   if (local) {

@@ -13,13 +13,16 @@ import {
 } from "../../../../test/helpers/docker-operation-authority-test-helpers";
 import { prependInstalledUserLocalOpenshellPath } from "../openshell-pin";
 import { detectWslDockerDesktopStatus } from "../wsl-docker-desktop-gpu";
+import { createDockerRuntimeProviderBundle } from "./docker";
 import {
   createDockerLlamaCppHostLocalOperation,
+  createDockerLlamaCppInspectionOperation,
   createDockerLlamaCppOperationAuthority,
 } from "./docker-llama-cpp-operation";
 import {
   createDockerOperationAuthority,
   dockerOperationBindingSha256,
+  dockerOperationBridgeEnvironment,
   dockerOperationCommandArguments,
 } from "./docker-operation-authority";
 
@@ -32,7 +35,9 @@ function fakeExecutableRoot(): string {
 }
 
 function writeFakeExecutable(root: string, name: string, script: string): void {
-  fs.writeFileSync(path.join(root, name), `#!/bin/sh\n${script}\n`, { mode: 0o700 });
+  fs.writeFileSync(path.join(root, name), `#!/bin/sh\n${script}\n`, {
+    mode: 0o700,
+  });
 }
 
 function fakeDocker(output: string): string {
@@ -85,6 +90,38 @@ describe("Docker operation authority", () => {
     ]);
   });
 
+  it.each([" stale-context ", "stale\u0007context"])(
+    "binds DOCKER_HOST without validating the unused context %j (#12223)",
+    (dockerContext) => {
+      const capture = contextCapture("ssh://ignored-context.example.test");
+      const authority = createDockerOperationAuthority(
+        "sandbox-lifecycle",
+        {
+          DOCKER_CONFIG: "/tmp/nemoclaw-docker",
+          DOCKER_CONTEXT: dockerContext,
+          DOCKER_HOST: "unix:///tmp/explicit-docker.sock",
+        },
+        capture,
+      );
+
+      expect(authority.engine.capture(["info"]).status).toBe(0);
+      expect(capture.mock.calls.at(-1)?.[1]).toEqual([
+        "--config",
+        "/tmp/nemoclaw-docker",
+        "--host",
+        "unix:///tmp/explicit-docker.sock",
+        "info",
+      ]);
+      expect(dockerOperationCommandArguments(authority, ["ps"])).toEqual([
+        "--config",
+        "/tmp/nemoclaw-docker",
+        "--host",
+        "unix:///tmp/explicit-docker.sock",
+        "ps",
+      ]);
+    },
+  );
+
   it("includes operation, engine, and executable-qualified authority in the stable binding digest", () => {
     const capture = contextCapture("ssh://nvidia@spark.example.test");
     const lifecycle = createDockerOperationAuthority(
@@ -102,6 +139,17 @@ describe("Docker operation authority", () => {
     expect(dockerOperationBindingSha256(lifecycle.engine)).not.toBe(
       dockerOperationBindingSha256(cleanup.engine),
     );
+    const inference = createDockerOperationAuthority(
+      "host-local-inference",
+      { HOME: "/tmp/nemoclaw-home", DOCKER_CONTEXT: "spark", UNRELATED_SECRET: "not-inherited" },
+      capture,
+    );
+    const bridgeEnvironment = dockerOperationBridgeEnvironment(inference);
+    expect(bridgeEnvironment.UNRELATED_SECRET).toBeUndefined();
+    expect(
+      createDockerOperationAuthority("host-local-inference", bridgeEnvironment, capture).engine
+        .authorityId,
+    ).toBe(inference.engine.authorityId);
     expect(dockerOperationBindingSha256(lifecycle.engine)).toBe(
       createHash("sha256")
         .update(
@@ -181,7 +229,9 @@ describe("Docker operation authority", () => {
     const home = fakeExecutableRoot();
     const localBin = path.join(home, ".local", "bin");
     fs.mkdirSync(localBin, { recursive: true });
-    fs.writeFileSync(path.join(localBin, "openshell"), "not executable\n", { mode: 0o600 });
+    fs.writeFileSync(path.join(localBin, "openshell"), "not executable\n", {
+      mode: 0o600,
+    });
     const environment = {
       HOME: home,
       DOCKER_HOST: "unix:///tmp/nemoclaw-docker.sock",
@@ -202,7 +252,10 @@ describe("Docker operation authority", () => {
     const getFutureShellPathHint = vi.fn(() => "export PATH");
 
     expect(
-      prependInstalledUserLocalOpenshellPath({ env: environment, getFutureShellPathHint }),
+      prependInstalledUserLocalOpenshellPath({
+        env: environment,
+        getFutureShellPathHint,
+      }),
     ).toBeNull();
     expect(getFutureShellPathHint).not.toHaveBeenCalled();
     expect(environment.PATH).toBe("/usr/bin");
@@ -438,7 +491,10 @@ describe("Docker operation authority", () => {
     expect(() =>
       createDockerOperationAuthority(
         "sandbox-lifecycle",
-        { HOME: "/tmp/nemoclaw-home", DOCKER_HOST: "tcp://spark.example.test:2375" },
+        {
+          HOME: "/tmp/nemoclaw-home",
+          DOCKER_HOST: "tcp://spark.example.test:2375",
+        },
         capture,
       ),
     ).toThrow("requires verified TLS for remote Docker TCP endpoints");
@@ -495,19 +551,15 @@ vi.mock("../wsl-docker-desktop-gpu", async (importOriginal) => ({
   detectWslDockerDesktopStatus: vi.fn(() => "not-docker-desktop" as const),
 }));
 
-describe("managed llama.cpp operation probe strategy", () => {
+describe("managed llama.cpp operation bridge topology", () => {
   const env = { HOME: "/tmp/nemoclaw-home", DOCKER_CONTEXT: "spark" };
-  const input = {} as Parameters<
+  const input = { bindings: {} } as Parameters<
     ReturnType<typeof createDockerLlamaCppHostLocalOperation>["createLlamaCppLifecycle"]
   >[0];
 
-  it.each([
-    { status: "docker-desktop" as const, loopbackProbe: "host-process" },
-    { status: "not-docker-desktop" as const, loopbackProbe: undefined },
-    { status: "unknown" as const, loopbackProbe: undefined },
-  ])(
-    "defaults loopbackProbe to $loopbackProbe when the WSL Docker Desktop status is $status",
-    ({ status, loopbackProbe }) => {
+  it.each(["docker-desktop", "not-docker-desktop", "unknown"] as const)(
+    "retains the existing listener topology for %s during creation and inspection",
+    (status) => {
       vi.mocked(detectWslDockerDesktopStatus).mockReturnValue(status);
       const createLifecycle = vi.fn(() => ({}) as never);
       const operation = createDockerLlamaCppHostLocalOperation(
@@ -518,26 +570,171 @@ describe("managed llama.cpp operation probe strategy", () => {
       );
 
       operation.createLlamaCppLifecycle(input);
-
-      expect(createLifecycle).toHaveBeenCalledExactlyOnceWith({ ...input, loopbackProbe });
+      const expected = {
+        ...input,
+        bindings: status === "docker-desktop" ? { bridgeLoopbackOnly: true } : {},
+      };
+      expect(createLifecycle).toHaveBeenCalledExactlyOnceWith(expected, {
+        dockerEnvironment: expect.objectContaining({ DOCKER_CONTEXT: "spark" }),
+      });
+      createLifecycle.mockClear();
+      createDockerLlamaCppInspectionOperation(
+        operation.engine,
+        env,
+        createLifecycle,
+      ).createLlamaCppLifecycle(input);
+      expect(createLifecycle).toHaveBeenCalledExactlyOnceWith(expected);
     },
   );
 
-  it("keeps a caller-selected host-process probe outside Docker Desktop WSL", () => {
-    vi.mocked(detectWslDockerDesktopStatus).mockReturnValue("not-docker-desktop");
-    const createLifecycle = vi.fn(() => ({}) as never);
+  it("bounds the registered Docker operation factory and rejects commands after expiry", () => {
+    const executableRoot = fakeExecutableRoot();
+    const invocationLog = path.join(executableRoot, "invocations.log");
+    writeFakeExecutable(
+      executableRoot,
+      "docker",
+      `printf '%s\\n' "$*" >> '${invocationLog}'\n/bin/sleep 2`,
+    );
+    const provider = createDockerRuntimeProviderBundle();
+    expect(provider.hostLocalInference.supported).toBe(true);
+    const hostLocalInference = provider.hostLocalInference as Extract<
+      typeof provider.hostLocalInference,
+      { supported: true }
+    >;
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000);
+    const operation = hostLocalInference.createOperation({
+      env: {
+        DOCKER_HOST: "unix:///tmp/nemoclaw-deadline-test.sock",
+        HOME: executableRoot,
+        PATH: executableRoot,
+      },
+      deadlineMs: 1_500,
+    });
+
+    const startedAt = performance.now();
+    const result = operation.engine.captureHost(["info"], 5_000);
+    expect(result.status).toBe(1);
+    expect(performance.now() - startedAt).toBeLessThan(1_500);
+    expect(fs.readFileSync(invocationLog, "utf8").trim().split("\n")).toEqual(["info"]);
+    now.mockReturnValue(1_500);
+    expect(() => operation.engine.captureHost(["late-info"])).toThrow(
+      "host-local inference authority deadline expired",
+    );
+    expect(fs.readFileSync(invocationLog, "utf8").trim().split("\n")).toEqual(["info"]);
+    now.mockRestore();
+  });
+
+  it("includes Docker context qualification in the shared operation deadline", () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000);
+    const deadlineCapture = contextCapture("ssh://nvidia@spark.example.test");
+    const inspection = deadlineCapture("docker", ["inspect"], 1);
+    deadlineCapture.mockReset().mockImplementationOnce(() => {
+      now.mockReturnValue(1_600);
+      return inspection;
+    });
+
+    try {
+      expect(() =>
+        createDockerLlamaCppHostLocalOperation(env, deadlineCapture, undefined, undefined, 1_500),
+      ).toThrow("Managed llama.cpp deadline expired.");
+      expect(deadlineCapture.mock.calls[0]?.[2]).toBe(500);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it("recomputes the Docker command budget after the context authority guard", () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000);
+    const deadlineCapture = contextCapture("ssh://nvidia@spark.example.test");
+    const inspection = deadlineCapture("docker", ["inspect"], 1);
+    const success = { status: 0, stdout: "", stderr: "" };
+    deadlineCapture
+      .mockReset()
+      .mockImplementationOnce(() => inspection)
+      .mockImplementationOnce(() => {
+        now.mockReturnValue(1_400);
+        return inspection;
+      })
+      .mockImplementationOnce(() => success)
+      .mockImplementationOnce(() => inspection);
+
+    try {
+      const operation = createDockerLlamaCppHostLocalOperation(
+        env,
+        deadlineCapture,
+        undefined,
+        undefined,
+        1_500,
+      );
+
+      expect(operation.engine.capture(["info"], 5_000).status).toBe(0);
+      expect(deadlineCapture.mock.calls[2]?.[1].at(-1)).toBe("info");
+      expect(deadlineCapture.mock.calls[2]?.[2]).toBe(100);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it("does not start a Docker command after its context guard exhausts the deadline", () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000);
+    const deadlineCapture = contextCapture("ssh://nvidia@spark.example.test");
+    const inspection = deadlineCapture("docker", ["inspect"], 1);
+    deadlineCapture
+      .mockReset()
+      .mockImplementationOnce(() => inspection)
+      .mockImplementationOnce(() => {
+        now.mockReturnValue(1_500);
+        return inspection;
+      });
+
+    try {
+      const operation = createDockerLlamaCppHostLocalOperation(
+        env,
+        deadlineCapture,
+        undefined,
+        undefined,
+        1_500,
+      );
+
+      expect(() => operation.engine.capture(["info"], 5_000)).toThrow(
+        "Managed llama.cpp deadline expired.",
+      );
+      expect(deadlineCapture).toHaveBeenCalledTimes(2);
+      expect(deadlineCapture.mock.calls.some(([, args]) => args.at(-1) === "info")).toBe(false);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it("bounds streamed Docker commands to the same operation deadline", () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000);
+    const spawn = vi.fn(() => ({}) as never);
     const operation = createDockerLlamaCppHostLocalOperation(
       env,
       contextCapture("ssh://nvidia@spark.example.test"),
+      spawn,
       undefined,
-      createLifecycle,
+      1_250,
     );
 
-    operation.createLlamaCppLifecycle({ ...input, loopbackProbe: "host-process" });
+    operation.spawn(["pull", "example.invalid/model"], { stdio: "pipe", timeout: 5_000 });
 
-    expect(createLifecycle).toHaveBeenCalledExactlyOnceWith({
-      ...input,
-      loopbackProbe: "host-process",
-    });
+    expect(spawn).toHaveBeenCalledWith(
+      [
+        "--config",
+        "/tmp/nemoclaw-home/.docker",
+        "--context",
+        "spark",
+        "pull",
+        "example.invalid/model",
+      ],
+      { stdio: "pipe", timeout: 250, killSignal: "SIGKILL" },
+    );
+    now.mockReturnValue(1_250);
+    expect(() => operation.spawn(["pull", "example.invalid/late-model"])).toThrow(
+      "host-local inference authority deadline expired",
+    );
+    expect(spawn).toHaveBeenCalledOnce();
+    now.mockRestore();
   });
 });

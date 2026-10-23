@@ -124,17 +124,20 @@ const localProviderScenarios = [
 ] as const;
 
 function makeRouteApplier() {
-  return createLocalInferenceRouteApplier({
-    runOpenshell: openshellRuntime.runOpenshell,
-    isNonInteractive: () => true,
-    promptValidationRecovery: async () => "selection",
-    classifyApplyFailure: () => ({ kind: "unknown" }) as never,
-    compactText: (value) => value.trim(),
-    redact: (value) => value,
-    localInferenceTimeoutSecs: 30,
-    error: unusedCommonInferenceDeps.error,
-    exitProcess: unusedCommonInferenceDeps.exitProcess,
-  });
+  const setInferenceRoute = vi.fn(async () => ({ ok: true as const }));
+  return {
+    applyLocalInferenceRoute: createLocalInferenceRouteApplier({
+      gatewayName: "nemoclaw",
+      inferenceRouteMutator: { setInferenceRoute },
+      isNonInteractive: () => true,
+      promptValidationRecovery: async () => "selection",
+      classifyApplyFailure: () => ({ kind: "unknown" }) as never,
+      localInferenceTimeoutSecs: 30,
+      error: unusedCommonInferenceDeps.error,
+      exitProcess: unusedCommonInferenceDeps.exitProcess,
+    }),
+    setInferenceRoute,
+  };
 }
 
 installRebuildFlowTestHooks({ acceptThirdPartySoftware: true });
@@ -146,8 +149,16 @@ describe("rebuild local-provider recreation", () => {
       let sourceDeleted = false;
       let harness!: RebuildFlowHarness;
       let setupResult: SetupResult | undefined;
+      const routeApplier = makeRouteApplier();
       harness = createRebuildFlowHarness({
-        sandboxEntry: { provider, model, credentialEnv: null },
+        // Pi retains the shared-local route exercised here; OpenClaw and Hermes require native attachments.
+        sandboxEntry: {
+          agent: "pi",
+          provider,
+          model,
+          credentialEnv: null,
+          createdAt: "2026-10-01T00:00:00.000Z",
+        },
         onboard: async (session) => {
           const callsBeforeSetup = harness.runOpenshellSpy.mock.calls.map(
             (call) => call[0] as string[],
@@ -158,7 +169,7 @@ describe("rebuild local-provider recreation", () => {
           expect(session.steps.provider_selection.status).toBe("pending");
           expect(session.steps.inference.status).toBe("pending");
 
-          setupResult = await setup(makeRouteApplier());
+          setupResult = await setup(routeApplier.applyLocalInferenceRoute);
         },
       });
       harness.session.provider = provider;
@@ -218,20 +229,16 @@ describe("rebuild local-provider recreation", () => {
         "--config",
         `OPENAI_BASE_URL=${baseUrl}`,
       ]);
-      expect(calls).toContainEqual([
-        "inference",
-        "set",
-        "--no-verify",
-        "--provider",
-        provider,
-        "--model",
-        model,
-        "--timeout",
-        "30",
-      ]);
+      expect(routeApplier.setInferenceRoute).toHaveBeenCalledOnce();
+      expect(routeApplier.setInferenceRoute).toHaveBeenCalledWith({
+        target: { kind: "named", gatewayName: "nemoclaw" },
+        route: { provider, model },
+        verification: "skip",
+        verificationTimeoutSeconds: 30,
+      });
       expect(calls.some((args) => args[0] === "provider" && args[1] === "update")).toBe(false);
       expect(harness.restoreSandboxStateSpy).toHaveBeenCalledWith("alpha", harness.backupPath, {
-        targetAgentType: "openclaw",
+        targetAgentType: "pi",
       });
     },
   );

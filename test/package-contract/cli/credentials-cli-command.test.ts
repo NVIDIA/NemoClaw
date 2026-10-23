@@ -349,7 +349,7 @@ describe("credentials oclif commands", () => {
 
     expect(calls).toEqual([
       {
-        args: ["provider", "delete", "-g", "nemoclaw", "nvidia-prod"],
+        args: ["provider", "delete", "-g", "nemoclaw", "nemoclaw-nvidia-prod-v1"],
         opts: {
           env: expect.any(Object),
           ignoreError: true,
@@ -472,6 +472,17 @@ describe("credentials oclif commands", () => {
             env: expect.any(Object),
             ignoreError: true,
             maxBuffer: 64 * 1024,
+            replaceEnv: true,
+            stdio: ["ignore", "pipe", "pipe"],
+            suppressOutput: true,
+            timeout: 30_000,
+          },
+        },
+        {
+          args: ["provider", "profile", "-g", "nemoclaw", "export", "tavily", "--output", "json"],
+          opts: {
+            env: expect.any(Object),
+            ignoreError: true,
             replaceEnv: true,
             stdio: ["ignore", "pipe", "pipe"],
             suppressOutput: true,
