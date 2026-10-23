@@ -54,54 +54,17 @@ Publishing is manual: publish the draft, then make each `v1` package public in i
 Making a package public can't be undone, and the organization's package policy may need an administrator.
 Before publishing, complete the provenance, SBOM, scanning, and license work ([#13521](https://github.com/NVIDIA/NemoClaw/issues/13521), [#13522](https://github.com/NVIDIA/NemoClaw/issues/13522), [#13523](https://github.com/NVIDIA/NemoClaw/issues/13523), [#13524](https://github.com/NVIDIA/NemoClaw/issues/13524)).
 
-## SBOM Assets and Attestations
+## SBOM Assets
 
 Staging scans each image's exact Linux ARM64 and AMD64 manifest with Syft 1.55.0, including agent and proxy images reused from CI.
-Each platform gets a digest-named SPDX 2.3 JSON asset; `sboms.json` maps the image reference and platform to its asset and SHA-256 checksum.
+Each platform gets a digest-named SPDX 2.3 JSON asset; `sboms.json` maps each asset to its image reference, platform, and SHA-256 checksum.
 The existing Kubernetes metadata bundles remain separate assets.
 The scanner catalogs OS packages and installed Python and Node packages.
 Runtime images retain the supervisor's `Cargo.lock` beside its source archive, and the proxy retains its package-specific `Cargo.lock`, so their Rust dependency inventories are discoverable without relying on binary metadata.
 Those Rust entries describe the retained build sources, including build dependencies; they do not prove that each dependency is linked into the executable.
-Image scanning cannot recover components whose upstream images contain neither package metadata nor recognizable binaries; inspect representative OS, Python, Node, and Rust entries before release approval.
+Image scanning cannot recover components whose upstream images contain neither package metadata nor recognizable binaries; inspect representative OS, Python, Node, and Rust entries before publishing.
 
-Assets remain private with the draft.
-Attestations from this public repository use public Sigstore infrastructure, even when the image package is internal, and can disclose the inventory.
-Before using SBOM attestation, an administrator must create the `v1-release-attestations` environment with required reviewers and restrict it to the intended release tags.
-The separate approval job checks that required reviewers are configured and fails if the environment is unprotected.
-Approve it only when public disclosure of the staged inventories is authorized.
-Generation has no OIDC or attestation-write permission; only the jobs following approval can issue attestations.
-Approval emits public evidence but does not publish the draft or change package visibility.
-
-The attestation jobs download the exact assets from the draft, verify their checksums, and use pinned `actions/attest` with `sbom-path` to attach an SPDX predicate to each platform digest as an OCI referrer.
-They verify the result and check that the image digest is unchanged.
-They do not rebuild an image or insert an attestation into its index.
-
-### Verify Before Publishing
-
-Read the platform reference and asset name from `sboms.json`, then verify one platform as follows, using its full digest:
-
-```sh
-image=ghcr.io/nvidia/nemoclaw/v1/hermes@sha256:<platform-digest>
-gh attestation verify "oci://$image" --repo NVIDIA/NemoClaw \
-  --predicate-type https://spdx.dev/Document/v2.3
-```
-
-Repeat for every platform in the mapping.
-A verification against a different digest must not accept the original subject's attestation.
-Confirm that all mapped assets are downloadable by a user with draft access, that their checksums match, and that the package remains internal with anonymous pulls denied.
-Compare representative OS, Python, Node, and Rust packages against the installed images and retained build metadata.
-The local fixture tests do not establish registry visibility, actual image coverage, protected approval, or hosted attestation verification; a release validation run must establish those results.
-
-### Recover a Partial Run
-
-A scanner error, missing platform, substituted digest, malformed document, or document exceeding 16 MB fails staging before the new SBOM assets are uploaded.
-Local generation uses a fresh directory and exposes it only when every platform succeeds; it never reuses leftover scan files.
-Rerun staging to regenerate the complete inventory if generation or asset upload fails.
-A failed upload can leave some assets on the draft, so use only a successful staging run's complete `sboms.json` mapping.
-Digest-named assets prevent a new image's SBOM from overwriting another digest's evidence.
-
-If attestation fails for some platforms after approval, keep the release in draft and rerun the failed jobs from that run; the checksum check rejects an asset changed since staging.
-If assets changed, rerun staging and obtain approval for that inventory instead.
-Successful earlier attestations may remain visible; a partial attestation matrix does not qualify the release.
-A published release cannot be restaged: use a new tag.
-Provenance, vulnerability policy, and license approval remain tracked in #13521, #13523, and #13524.
+The assets stay private with the draft: release candidates and internal packages publish nothing about their images.
+Only a final release attests the inventories, together with provenance ([#13521](https://github.com/NVIDIA/NemoClaw/issues/13521)).
+A Syft failure fails staging before any SBOM asset is uploaded; rerun staging.
+Assets are named by digest, so a rerun can't overwrite another image's inventory.
