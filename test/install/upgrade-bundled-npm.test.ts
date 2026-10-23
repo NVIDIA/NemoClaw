@@ -1,11 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   FIXED_TAR_VERSION,
@@ -87,7 +88,82 @@ function fixedTar(): string {
   return root;
 }
 
+function offlineInstallFixture(missingDependency = false) {
+  const directory = temporaryDirectory();
+  const home = path.join(directory, "agent-home");
+  const callerCache = path.join(directory, "caller-cache");
+  const temporaryRoot = path.join(directory, "build-tmp");
+  const prefix = path.join(directory, "prefix");
+  const npmRoot = path.join(prefix, "lib", "node_modules", "npm");
+  const packageRoot = path.join(directory, "package");
+  const archivePath = path.join(directory, "npm.tgz");
+  const lifecycleMarker = path.join(directory, "lifecycle-ran");
+  for (const child of [home, callerCache, temporaryRoot]) fs.mkdirSync(child);
+  fs.writeFileSync(path.join(callerCache, "existing-entry"), "caller cache bytes\n");
+  writeJson(path.join(npmRoot, "package.json"), { name: "npm", version: "11.16.0" });
+  writeJson(path.join(packageRoot, "package.json"), {
+    name: "npm",
+    version: REVIEWED_NPM_VERSION,
+    bundleDependencies: Object.keys(REVIEWED_NPM_PACKAGES),
+    dependencies: {
+      ...REVIEWED_NPM_PACKAGES,
+      ...(missingDependency ? { "nemoclaw-offline-test-missing": "1.0.0" } : {}),
+    },
+    scripts: {
+      install:
+        "node -e \"require('fs').writeFileSync(process.env.NEMOCLAW_NPM_LIFECYCLE_MARKER, 'ran')\"",
+    },
+  });
+  for (const [name, version] of Object.entries(REVIEWED_NPM_PACKAGES)) {
+    writePackage(packageRoot, name, name, version);
+  }
+  execFileSync("tar", ["-czf", archivePath, "-C", directory, "package"]);
+  const archiveBytes = fs.readFileSync(archivePath);
+  const environment = {
+    PATH: process.env.PATH ?? "",
+    HOME: home,
+    TMPDIR: temporaryRoot,
+    NODE_DISABLE_COMPILE_CACHE: "1",
+    npm_config_prefix: prefix,
+    npm_config_globalconfig: path.join(directory, "global.npmrc"),
+    npm_config_registry: "http://127.0.0.1:1/",
+    npm_config_fetch_retries: "0",
+    npm_config_fetch_timeout: "500",
+    npm_config_update_notifier: "false",
+    NEMOCLAW_NPM_LIFECYCLE_MARKER: lifecycleMarker,
+  };
+  vi.stubEnv("TMPDIR", temporaryRoot);
+
+  return {
+    archiveBytes,
+    archivePath,
+    callerCache,
+    home,
+    lifecycleMarker,
+    npmRoot,
+    temporaryRoot,
+    upgrade(cacheVariable?: "npm_config_cache" | "NPM_CONFIG_CACHE") {
+      return upgradeBundledNpm(npmRoot, {
+        commandRunner(command, args) {
+          execFileSync(command, [...args], {
+            cwd: directory,
+            encoding: "utf8",
+            env: {
+              ...environment,
+              ...(cacheVariable ? { [cacheVariable]: callerCache } : {}),
+            },
+            stdio: ["ignore", "pipe", "pipe"],
+            timeout: 10_000,
+          });
+        },
+        prepareArchive: () => ({ archivePath, cleanup: () => undefined }),
+      });
+    },
+  };
+}
+
 afterEach(() => {
+  vi.unstubAllEnvs();
   for (const directory of temporaryDirectories.splice(0)) {
     fs.rmSync(directory, { force: true, recursive: true });
   }
@@ -170,41 +246,70 @@ describe("reviewed bundled npm upgrade", () => {
     },
   );
 
-  it("installs the verified npm archive without consulting registry state", () => {
-    const npmRoot = affectedNpm("11.16.0");
-    const replacementRoot = reviewedNpm();
-    const archivePath = path.join(temporaryDirectory(), "npm-12.0.2.tgz");
-    fs.writeFileSync(archivePath, "reviewed fixture\n");
-    const commands: Array<{ args: readonly string[]; command: string }> = [];
-    const sideEffects: Readonly<Record<string, (() => void) | undefined>> = {
-      "npm install": () => {
-        fs.rmSync(npmRoot, { recursive: true });
-        fs.cpSync(replacementRoot, npmRoot, { recursive: true });
-      },
-    };
+  it.each([
+    { name: "an absent agent cache", cacheVariable: undefined },
+    { name: "npm_config_cache", cacheVariable: "npm_config_cache" },
+    { name: "NPM_CONFIG_CACHE", cacheVariable: "NPM_CONFIG_CACHE" },
+  ] as const)("installs reviewed npm without changing $name (#13241)", ({ cacheVariable }) => {
+    const fixture = offlineInstallFixture();
 
-    upgradeBundledNpm(npmRoot, {
-      commandRunner(command, args) {
-        commands.push({ args, command });
-        sideEffects[`${command} ${args[0] ?? ""}`]?.();
-      },
-      prepareArchive: () => ({ archivePath, cleanup: () => undefined }),
-    });
+    const result = fixture.upgrade(cacheVariable);
 
-    expect(commands[0]).toEqual({
-      command: "npm",
-      args: [
-        "install",
-        "--global",
-        archivePath,
-        "--userconfig",
-        "/dev/null",
-        "--ignore-scripts",
-        "--no-audit",
-        "--no-fund",
-        "--offline",
-      ],
+    expect(result).toEqual({
+      npmVersion: REVIEWED_NPM_VERSION,
+      packages: Object.fromEntries(
+        Object.entries(REVIEWED_NPM_PACKAGES).map(([name, version]) => [name, [version]]),
+      ),
     });
+    expect(fs.readdirSync(fixture.home)).toEqual([]);
+    expect(fs.readdirSync(fixture.callerCache)).toEqual(["existing-entry"]);
+    expect(fs.readFileSync(path.join(fixture.callerCache, "existing-entry"), "utf8")).toBe(
+      "caller cache bytes\n",
+    );
+    expect(fs.readdirSync(fixture.temporaryRoot)).toEqual([]);
+    expect(fs.existsSync(fixture.lifecycleMarker)).toBe(false);
+    expect(fs.readFileSync(fixture.archivePath)).toEqual(fixture.archiveBytes);
+  });
+
+  it("installs reviewed npm without changing an existing agent cache (#13241)", () => {
+    const fixture = offlineInstallFixture();
+    const cachedFile = path.join(fixture.home, ".npm/_cacache/index-v5/aa/bb/persisted");
+    fs.mkdirSync(path.dirname(cachedFile), { recursive: true });
+    fs.writeFileSync(cachedFile, "archived agent cache bytes\n");
+    const homeEntries = fs.readdirSync(fixture.home, { recursive: true }).sort();
+
+    const result = fixture.upgrade();
+
+    expect(result).toEqual({
+      npmVersion: REVIEWED_NPM_VERSION,
+      packages: Object.fromEntries(
+        Object.entries(REVIEWED_NPM_PACKAGES).map(([name, version]) => [name, [version]]),
+      ),
+    });
+    expect(fs.readdirSync(fixture.home, { recursive: true }).sort()).toEqual(homeEntries);
+    expect(fs.readFileSync(cachedFile, "utf8")).toBe("archived agent cache bytes\n");
+    expect(fs.readdirSync(fixture.callerCache)).toEqual(["existing-entry"]);
+    expect(fs.readFileSync(path.join(fixture.callerCache, "existing-entry"), "utf8")).toBe(
+      "caller cache bytes\n",
+    );
+    expect(fs.readdirSync(fixture.temporaryRoot)).toEqual([]);
+    expect(fs.existsSync(fixture.lifecycleMarker)).toBe(false);
+    expect(fs.readFileSync(fixture.archivePath)).toEqual(fixture.archiveBytes);
+  });
+
+  it("removes build cache after an offline install failure and retains the archive (#13241)", () => {
+    const fixture = offlineInstallFixture(true);
+
+    expect(() => fixture.upgrade("NPM_CONFIG_CACHE")).toThrow(/ENOTCACHED/u);
+
+    expect(fs.readdirSync(fixture.home)).toEqual([]);
+    expect(fs.readdirSync(fixture.callerCache)).toEqual(["existing-entry"]);
+    expect(fs.readFileSync(path.join(fixture.callerCache, "existing-entry"), "utf8")).toBe(
+      "caller cache bytes\n",
+    );
+    expect(fs.readdirSync(fixture.temporaryRoot)).toEqual([]);
+    expect(fs.existsSync(fixture.lifecycleMarker)).toBe(false);
+    expect(fs.readFileSync(fixture.archivePath)).toEqual(fixture.archiveBytes);
   });
 
   it("does not download npm when the reviewed tree is already installed", () => {
