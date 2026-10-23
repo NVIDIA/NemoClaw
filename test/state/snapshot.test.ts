@@ -157,6 +157,16 @@ function buildSymlinkCredentialTraversalTar(): Buffer {
   ]);
 }
 
+function replacePublishedNativeArchive(backupPath: string, archive: Buffer): void {
+  fs.writeFileSync(path.join(backupPath, "native-home.tar"), archive);
+  const manifestPath = path.join(backupPath, "rebuild-manifest.json");
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as {
+    nativeState: { sha256: string };
+  };
+  manifest.nativeState.sha256 = createHash("sha256").update(archive).digest("hex");
+  fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+}
+
 function writeSandboxRegistry(sandboxName: string, agent: "hermes" | null = null): void {
   writeSnapshotRegistry(TMP_HOME, sandboxName, agent);
 }
@@ -694,6 +704,14 @@ describe("complete native home persistence", () => {
         [".openclaw/agents/child/history.jsonl", "child-agent"],
         [".nemoclaw/agent-owned-sibling.txt", "preserved-sibling"],
         [
+          "workspace/05-\u{1F6E0}\u{FE0F}\\ Systems\\ \\&\\ Templates/notes.md",
+          "backslash-workspace-notes",
+        ],
+        [
+          "workspace/05-\u{1F6E0}\u{FE0F}\\ Systems\\ \\&\\ Templates/.env",
+          "CUSTOM_MODE=enabled\n",
+        ],
+        [
           "node_modules/combined-stream/yarn.lock",
           '# yarn lockfile v1\n\ndelayed-stream@~1.0.0:\n  version "1.0.0"\n  resolved "https://registry.yarnpkg.com/delayed-stream/-/delayed-stream-1.0.0.tgz#df3ae199acadfb7d440aaae0b29e2272b24ec619"\n\nfar@~0.0.7:\n  version "0.0.7"\n  dependencies:\n    oop "0.0.3"\n',
         ],
@@ -901,6 +919,11 @@ describe("complete native home persistence", () => {
       JSON.stringify({ requestId: "example-request" }),
     ],
     ["OpenClaw database", OPENCLAW_SQLITE_WAL, "SQLite format 3\0binary state"],
+    [
+      "a workspace .env in a directory whose name contains a backslash",
+      "workspace/05-\u{1F6E0}\u{FE0F}\\ Systems\\ \\&\\ Templates/.env",
+      "CUSTOM_MODE=enabled\n",
+    ],
   ])(
     "preserves %s without treating it as credential configuration",
     (_case, relativePath, content) => {
@@ -991,6 +1014,11 @@ describe("complete native home persistence", () => {
     [
       "a dependency lockfile",
       "node_modules/example/yarn.lock",
+      `# yarn lockfile v1\n\nexample@1.0.0:\n  version "1.0.0"\n  resolved "https://build-user:ghp_${"abcdef0123456789"}@registry.example.test/example.tgz"\n`,
+    ],
+    [
+      "a dependency lockfile in a directory whose name contains a backslash",
+      "workspace/05-\u{1F6E0}\u{FE0F}\\ Systems\\ \\&\\ Templates/yarn.lock",
       `# yarn lockfile v1\n\nexample@1.0.0:\n  version "1.0.0"\n  resolved "https://build-user:ghp_${"abcdef0123456789"}@registry.example.test/example.tgz"\n`,
     ],
     [
@@ -1391,15 +1419,7 @@ process.exit(result.status ?? 90);
         },
       });
       expect(backup.success, backup.error).toBe(true);
-      const archivePath = path.join(backup.manifest!.backupPath, "native-home.tar");
-      const archive = buildSymlinkTraversalTar();
-      fs.writeFileSync(archivePath, archive);
-      const manifestPath = path.join(backup.manifest!.backupPath, "rebuild-manifest.json");
-      const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as {
-        nativeState: { sha256: string };
-      };
-      manifest.nativeState.sha256 = createHash("sha256").update(archive).digest("hex");
-      fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+      replacePublishedNativeArchive(backup.manifest!.backupPath, buildSymlinkTraversalTar());
 
       const restore = await sandboxState.restoreSandboxState("alpha", backup.manifest!.backupPath);
 
@@ -1413,6 +1433,61 @@ process.exit(result.status ?? 90);
       restoreEnv("NEMOCLAW_OPENSHELL_BIN", oldOpenshell);
       restoreEnv("NEMOCLAW_TEST_NATIVE_ROOT", oldNativeRoot);
       restoreEnv("NEMOCLAW_TEST_SSH_COMMAND_LOG", oldCommandLog);
+      restoreEnv("PATH", oldPath);
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
+  it("round-trips backslash paths and rejects symlink traversal after tar rejects --quoting-style=literal", async () => {
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-bsdtar-fallback-"));
+    const oldPath = process.env.PATH;
+    const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
+    const oldNativeRoot = process.env.NEMOCLAW_TEST_NATIVE_ROOT;
+    try {
+      const binDir = path.join(fixture, "bin");
+      const nativeRoot = path.join(fixture, "native-home");
+      const relativeFile = "workspace/05-\u{1F6E0}\u{FE0F}\\ Systems\\ \\&\\ Templates/notes.md";
+      const systemTar = spawnSync("sh", ["-c", "command -v tar"], {
+        encoding: "utf8",
+      }).stdout.trim();
+      expect(systemTar).not.toBe("");
+      fs.mkdirSync(binDir, { recursive: true });
+      fs.mkdirSync(path.dirname(path.join(nativeRoot, relativeFile)), { recursive: true });
+      fs.writeFileSync(path.join(nativeRoot, relativeFile), "fallback-backslash-notes");
+      writeFakeOpenshell(binDir);
+      writeFakeSsh(binDir);
+      writeExecutable(
+        path.join(binDir, "tar"),
+        [
+          "#!/usr/bin/env node",
+          'const { spawnSync } = require("node:child_process");',
+          "const args = process.argv.slice(2);",
+          'if (args.includes("--quoting-style=literal")) { process.stderr.write("tar: Option --quoting-style=literal is not supported\\n"); process.exit(1); }',
+          'const forwarded = args.includes("-tf") || args.includes("-tvf") ? ["--quoting-style=literal", ...args] : args;',
+          `process.exit(spawnSync(${JSON.stringify(systemTar)}, forwarded, { stdio: "inherit" }).status ?? 90);`,
+        ].join("\n"),
+      );
+      process.env.NEMOCLAW_OPENSHELL_BIN = path.join(binDir, "openshell");
+      process.env.NEMOCLAW_TEST_NATIVE_ROOT = nativeRoot;
+      process.env.PATH = `${binDir}:${oldPath ?? ""}`;
+      writeSandboxRegistry("alpha");
+
+      const backup = sandboxState.backupSandboxState("alpha");
+      expect(backup.success, backup.error).toBe(true);
+      fs.writeFileSync(path.join(nativeRoot, relativeFile), "mutated");
+      const restore = await sandboxState.restoreSandboxState("alpha", backup.manifest!.backupPath);
+      expect(restore.success, restore.error).toBe(true);
+      expect(fs.readFileSync(path.join(nativeRoot, relativeFile), "utf8")).toBe(
+        "fallback-backslash-notes",
+      );
+
+      replacePublishedNativeArchive(backup.manifest!.backupPath, buildSymlinkTraversalTar());
+      const rejected = await sandboxState.restoreSandboxState("alpha", backup.manifest!.backupPath);
+      expect(rejected.success).toBe(false);
+      expect(rejected.error).toContain("would extract through symlink 'redirect'");
+    } finally {
+      restoreEnv("NEMOCLAW_OPENSHELL_BIN", oldOpenshell);
+      restoreEnv("NEMOCLAW_TEST_NATIVE_ROOT", oldNativeRoot);
       restoreEnv("PATH", oldPath);
       fs.rmSync(fixture, { recursive: true, force: true });
     }
