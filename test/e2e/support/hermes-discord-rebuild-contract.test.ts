@@ -30,6 +30,7 @@ async function runPhase(
     failedCommand?: string;
     lostDiscord?: boolean;
     statusHealth?: { ok: boolean; probed: boolean } | null;
+    statusProvider?: string;
   } = {},
 ) {
   const command = vi.fn(
@@ -39,7 +40,7 @@ async function runPhase(
         stdout: args.includes("status")
           ? JSON.stringify({
               agent: "hermes",
-              provider: "nvidia-prod",
+              provider: options.statusProvider ?? "nvidia-prod",
               inferenceHealth:
                 options.statusHealth === undefined
                   ? { ok: true, probed: true }
@@ -125,6 +126,10 @@ describe("Hermes Discord rebuild evidence", () => {
       await expect(runPhase({ statusHealth })).rejects.toThrow();
     },
   );
+
+  it("rejects healthy post-rebuild status from another provider", async () => {
+    await expect(runPhase({ statusProvider: "compatible-endpoint" })).rejects.toThrow();
+  });
 
   it("leaves the Anthropic variant outside the native NVIDIA phase", async () => {
     const { command, exec } = await runPhase({ publicKey: null });

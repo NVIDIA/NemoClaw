@@ -561,6 +561,7 @@ print(json.dumps({
         });
         expectExitZero(status, "check Hermes NVIDIA status after rebuild");
         expect(JSON.parse(status.stdout), resultText(status)).toMatchObject({
+          provider: "nvidia-prod",
           inferenceHealth: { ok: true, probed: true },
         });
         const inference = await sandbox.exec(
