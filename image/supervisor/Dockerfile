@@ -39,5 +39,8 @@ RUN --mount=type=cache,target=/target \
     cargo build --locked --offline --release -p nemoclaw-runtime --target-dir /target; \
     install -m 0755 /target/release/nemoclaw-runtime /out/nemoclaw-runtime
 
+# Keep the locked build inventory visible to image SBOM catalogers, which
+# cannot discover Rust dependencies from the stripped executable or tarball.
 FROM scratch AS supervisor
+COPY --from=source /source/Cargo.lock /Cargo.lock
 COPY --from=build /out/ /

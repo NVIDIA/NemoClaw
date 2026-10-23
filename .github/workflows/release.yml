@@ -128,6 +128,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Install the pinned SBOM generator
+        id: syft
+        uses: anchore/sbom-action/download-syft@fffec3d851af758d56fee099cf3fbf8aa8779843 # v0.24.3
+        with:
+          syft-version: v1.55.0
       - name: List the release images
         id: images
         run: |
@@ -148,11 +153,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           SOURCE: ${{ needs.select.outputs.source }}
           TAG: ${{ github.ref_name }}
+          SYFT: ${{ steps.syft.outputs.cmd }}
         run: |
           printf '%s\n' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           notes="$RUNNER_TEMP/notes.md"
           bundles="$RUNNER_TEMP/bundles"
           mkdir "$bundles"
+          inventory="$RUNNER_TEMP/inventory.json"
+          echo '[]' > "$inventory"
           {
             echo "Staged from \`$GITHUB_SHA\`. The agent and proxy images are the ones CI checked at \`$SOURCE\`."
             echo
@@ -170,7 +178,13 @@ jobs:
             docker buildx imagetools create --tag "$target" \
               "$CI_PACKAGE:$image-$from-arm64" "$CI_PACKAGE:$image-$from-amd64"
             digest=$(docker buildx imagetools inspect "$target" --format '{{.Manifest.Digest}}')
-            metadata=—
+            docker buildx imagetools inspect "$RELEASE_NAMESPACE/$image@$digest" --raw > "$RUNNER_TEMP/index.json"
+            jq --arg name "$image" --arg repository "$RELEASE_NAMESPACE/$image" \
+              --slurpfile manifests "$RUNNER_TEMP/index.json" \
+              '. + [{name: $name, repository: $repository, manifests: $manifests[0]}]' \
+              "$inventory" > "$inventory.next"
+            mv "$inventory.next" "$inventory"
+            metadata=-
             # Each agent image's bundle covers both platforms of its index.
             case " $AGENTS " in *" $image "*) agent=true ;; *) agent=false ;; esac
             if [ "$agent" = true ]; then
@@ -182,6 +196,36 @@ jobs:
             fi
             echo "| \`$image\` | \`$RELEASE_NAMESPACE/$image@$digest\` | $metadata |" >> "$notes"
           done
+          # Syft scans each platform's exact image, including images reused from
+          # earlier CI, and writes its SPDX document. Nothing rebuilds an image.
+          sboms="$RUNNER_TEMP/sboms"
+          mkdir "$sboms"
+          echo '[]' > "$sboms/sboms.json"
+          jq -r '.[] | .repository as $repository | .name as $name | .manifests.manifests[]
+            | select(.platform.os == "linux")
+            | [$name, $repository, .digest, .platform.architecture] | @tsv' "$inventory" > "$RUNNER_TEMP/platforms.tsv"
+          while IFS="$(printf '\t')" read -r name repository digest arch; do
+            asset="$name-linux-$arch-${digest#sha256:}.spdx.json"
+            SYFT_CHECK_FOR_APP_UPDATE=false "$SYFT" "registry:$repository@$digest" \
+              --select-catalogers +rust-cargo-lock-cataloger -o "spdx-json=$sboms/$asset"
+            jq --arg platform "linux/$arch" --arg reference "$repository@$digest" --arg asset "$asset" \
+              --arg sha256 "$(sha256sum "$sboms/$asset" | cut -d' ' -f1)" \
+              '. + [{platform: $platform, reference: $reference, asset: $asset, sha256: $sha256}]' \
+              "$sboms/sboms.json" > "$sboms/sboms.next"
+            mv "$sboms/sboms.next" "$sboms/sboms.json"
+          done < "$RUNNER_TEMP/platforms.tsv"
+          {
+            echo
+            echo '## Software bills of materials'
+            echo
+            cat <<'NOTES'
+          Each platform has an SPDX JSON asset, and `sboms.json` records each asset's image reference, platform and SHA-256. These stay private draft assets: release candidates publish nothing about their images, and only final releases attest them (#13521).
+          NOTES
+            echo
+            echo '| Platform | Image reference | SPDX asset |'
+            echo '|---|---|---|'
+            jq -r '.[] | "| `\(.platform)` | `\(.reference)` | `\(.asset)` |"' "$sboms/sboms.json"
+          } >> "$notes"
           docker logout ghcr.io
           cat "$notes" >> "$GITHUB_STEP_SUMMARY"
           prerelease=
@@ -197,3 +241,4 @@ jobs:
               --title "NemoClaw $TAG" --notes-file "$notes"
           fi
           gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber "$bundles"/*.metadata.json
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber "$sboms"/*.spdx.json "$sboms/sboms.json"

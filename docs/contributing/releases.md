@@ -14,9 +14,9 @@ The package is internal: only members of NVIDIA's enterprise can pull it.
 ## Provision the Packages
 
 A package that a workflow's token creates inherits this public repository's visibility, so the workflows never create one: they push only to packages that already exist and aren't public.
-Before the first push, an organization administrator creates each package as internal and grants this repository's Actions write access:
+Before the first push, a maintainer creates each package as internal, which makes them its administrator, and grants this repository's Actions write access:
 
-- `v1-ci`, which holds every per-commit image.
+- `v1-ci`, which holds every per-commit image. Grant it the **Admin** role instead, so the image workflow can delete per-commit images older than the latest ten commits.
 - `v1/<image>` for each agent image (`claude`, `codex`, `deepagents`, `hermes`, `mini-swe-agent`, `nooa`, `nooa-bench`, `openclaw`, `opencode`, `pi`, `remote-agent`), and for `ollama-proxy`, `vllm`, and `ollama`.
 - Create a package by pushing any image to it with a personal token that has `write:packages`; it starts internal.
 - Then, in the package's settings under **Manage Actions access**, add `NVIDIA/NemoClaw` with the **Write** role.
@@ -53,3 +53,18 @@ Docker deployments pull private images through `spec.registries`; Kubernetes dep
 Publishing is manual: publish the draft, then make each `v1` package public in its package settings.
 Making a package public can't be undone, and the organization's package policy may need an administrator.
 Before publishing, complete the provenance, SBOM, scanning, and license work ([#13521](https://github.com/NVIDIA/NemoClaw/issues/13521), [#13522](https://github.com/NVIDIA/NemoClaw/issues/13522), [#13523](https://github.com/NVIDIA/NemoClaw/issues/13523), [#13524](https://github.com/NVIDIA/NemoClaw/issues/13524)).
+
+## SBOM Assets
+
+Staging scans each image's exact Linux ARM64 and AMD64 manifest with Syft 1.55.0, including agent and proxy images reused from CI.
+Each platform gets a digest-named SPDX 2.3 JSON asset; `sboms.json` maps each asset to its image reference, platform, and SHA-256 checksum.
+The existing Kubernetes metadata bundles remain separate assets.
+The scanner catalogs OS packages and installed Python and Node packages.
+Runtime images retain the supervisor's `Cargo.lock` beside its source archive, and the proxy retains its package-specific `Cargo.lock`, so their Rust dependency inventories are discoverable without relying on binary metadata.
+Those Rust entries describe the retained build sources, including build dependencies; they do not prove that each dependency is linked into the executable.
+Image scanning cannot recover components whose upstream images contain neither package metadata nor recognizable binaries; inspect representative OS, Python, Node, and Rust entries before publishing.
+
+The assets stay private with the draft: release candidates and internal packages publish nothing about their images.
+Only a final release attests the inventories, together with provenance ([#13521](https://github.com/NVIDIA/NemoClaw/issues/13521)).
+A Syft failure fails staging before any SBOM asset is uploaded; rerun staging.
+Assets are named by digest, so a rerun can't overwrite another image's inventory.

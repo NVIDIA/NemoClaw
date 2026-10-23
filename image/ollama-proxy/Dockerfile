@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 ARG RUST_IMAGE=rust:1.99.1-alpine@sha256:557a94c82b485a14b569120e00867267108c734efe33f10cc31ca0cd5dd1eca9
 
-# musl links the proxy statically, so the runtime image holds nothing else.
+# musl links the proxy statically; retain its license and build inventory.
 FROM ${RUST_IMAGE} AS build
 RUN apk add --no-cache musl-dev
 WORKDIR /src
@@ -13,7 +13,11 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,targe
     --mount=type=cache,target=/src/target \
     cargo build --locked --release -p nemoclaw-ollama-proxy \
     && install -D -m 0755 target/release/nemoclaw-ollama-proxy /out/usr/local/bin/nemoclaw-ollama-proxy \
-    && install -D -m 0644 LICENSE /out/usr/share/doc/nemoclaw-ollama-proxy/LICENSE
+    && install -D -m 0644 LICENSE /out/usr/share/doc/nemoclaw-ollama-proxy/LICENSE \
+    && cargo package --locked --no-verify --allow-dirty -p nemoclaw-ollama-proxy --target-dir /tmp/package \
+    && mkdir /tmp/proxy-source \
+    && tar -xzf /tmp/package/package/nemoclaw-ollama-proxy-*.crate -C /tmp/proxy-source --strip-components=1 \
+    && install -m 0644 /tmp/proxy-source/Cargo.lock /out/usr/share/doc/nemoclaw-ollama-proxy/Cargo.lock
 
 FROM build AS test
 RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/usr/local/cargo/git \
