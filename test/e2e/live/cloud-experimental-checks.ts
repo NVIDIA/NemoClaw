@@ -80,7 +80,11 @@ export function buildCloudExperimentalCommandEnv(
   sandboxName: string,
   apiKey: string,
   base: NodeJS.ProcessEnv = process.env,
-  options: { dcodeBaseImageReference?: string; forwardDcodeBaseImage?: boolean } = {},
+  options: {
+    dcodeBaseImageReference?: string;
+    forwardDcodeBaseImage?: boolean;
+    tavilyApiKey?: string;
+  } = {},
 ): NodeJS.ProcessEnv {
   const candidateDcodeBaseImage =
     options.dcodeBaseImageReference ?? base[DCODE_BASE_IMAGE_ENV]?.trim();
@@ -103,6 +107,9 @@ export function buildCloudExperimentalCommandEnv(
     REPO: REPO_ROOT,
     SANDBOX_NAME: sandboxName,
     ...(dcodeBaseImage ? { [DCODE_BASE_IMAGE_ENV]: dcodeBaseImage } : {}),
+    ...(options.tavilyApiKey
+      ? { TAVILY_API_KEY: options.tavilyApiKey, NEMOCLAW_E2E_TAVILY_AUTHENTICATED: "1" }
+      : {}),
   };
 }
 
@@ -254,6 +261,11 @@ export async function runE2eCloudExperimentalChecks(
   },
 ): Promise<void> {
   const apiKey = context.secrets.optional("NVIDIA_INFERENCE_API_KEY") ?? "";
+  const tavilyApiKey = checkScripts.some((script) =>
+    script.endsWith("/09-deepagents-code-tavily-opt-in.sh"),
+  )
+    ? context.secrets.required("TAVILY_API_KEY")
+    : undefined;
   await context.artifacts.writeJson(
     "e2e-cloud-experimental-checks.json",
     buildCloudExperimentalChecksEvidence(targetId, sandboxName, checkScripts),
@@ -291,8 +303,11 @@ export async function runE2eCloudExperimentalChecks(
             env: buildCloudExperimentalCommandEnv(sandboxName, apiKey, process.env, {
               dcodeBaseImageReference: context.dcodeBaseImageReference,
               forwardDcodeBaseImage: scriptPath === DEEPAGENTS_FRESH_REONBOARD_CHECK,
+              tavilyApiKey: scriptPath.endsWith("/09-deepagents-code-tavily-opt-in.sh")
+                ? tavilyApiKey
+                : undefined,
             }),
-            redactionValues: [apiKey],
+            redactionValues: [apiKey, ...(tavilyApiKey ? [tavilyApiKey] : [])],
             timeoutMs: cloudExperimentalCheckTimeoutMs(scriptPath),
           });
     assertRequiredCloudExperimentalResult(scriptPath, result);

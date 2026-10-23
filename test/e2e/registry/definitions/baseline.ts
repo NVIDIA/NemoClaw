@@ -40,7 +40,7 @@ const TARGETS: readonly TargetDefinition[] = [
     expectedStateId: "cloud-deepagents-code-ready",
     configExport: { expectation: "required" },
     suiteIds: ["smoke", "inference", "terminal-agent", "deepagents-code-policy"],
-    requiredSecrets: ["NVIDIA_INFERENCE_API_KEY"],
+    requiredSecrets: ["NVIDIA_INFERENCE_API_KEY", "TAVILY_API_KEY"],
     gatewayRuntimes: E2E_GATEWAY_RUNTIMES,
   },
   {

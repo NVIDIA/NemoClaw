@@ -1824,17 +1824,23 @@ Confirm that the target sandbox has the `tavily` preset applied:
 nemo-deepagents <name> policy list
 ```
 
-If it is missing, apply the preset, register the host-side credential, and rebuild so the provider attaches:
+If the preset is missing, apply it.
+Register the credential on the host and attach the provider to the sandbox:
 
 ```bash
 nemo-deepagents <name> policy add tavily --yes
 export TAVILY_API_KEY=tvly-...
 nemo-deepagents credentials add tavily-search --type tavily --agent dcode --credential TAVILY_API_KEY
 unset TAVILY_API_KEY
-nemo-deepagents <name> rebuild
+openshell sandbox provider attach <name> tavily-search
 ```
 
-If Tavily is still blocked after rebuild, inspect recent policy denials:
+After removal, NemoClaw keeps the saved Tavily selection disabled.
+Deep Agents has no managed web-search configuration for a durable Tavily attachment.
+Repeat the attachment after each rebuild.
+
+Retry the Tavily request from sandbox Python.
+If Tavily is still blocked after attachment, inspect recent policy denials:
 
 ```bash
 nemo-deepagents <name> logs --tail 50

@@ -1178,6 +1178,20 @@ export function writeE2eWorkflowPlanCiOutput(
       environment.NEMOCLAW_E2E_INCLUDE_STAGING_BREV_LAUNCHABLE === "true",
   });
   const plan = validateE2eWorkflowPlan(planned);
+  if (
+    plan.matrix.some((target) => target.requiredSecrets.includes("TAVILY_API_KEY")) &&
+    !(
+      environment.GITHUB_REPOSITORY === "NVIDIA/NemoClaw" &&
+      environment.GITHUB_REF === "refs/heads/main" &&
+      environment.GITHUB_WORKFLOW_REF ===
+        "NVIDIA/NemoClaw/.github/workflows/e2e.yaml@refs/heads/main" &&
+      (environment.EVENT_NAME === "push" || environment.EVENT_NAME === "workflow_dispatch") &&
+      (!environment.NEMOCLAW_E2E_EXPECTED_SHA ||
+        environment.NEMOCLAW_E2E_CREDENTIALS_ALLOWED === "true")
+    )
+  ) {
+    throw new Error("Tavily E2E requires the trusted main workflow with authorized credentials");
+  }
   const expectedHermes = expectedHermesSelection(selectors);
   if (!changedFiles && plan.hermesSelected !== expectedHermes) {
     throw new Error("E2E planner changed the trusted Hermes selection");

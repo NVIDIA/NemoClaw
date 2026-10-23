@@ -65,6 +65,7 @@ nemoclaw_cli() {
 python_probe_source() {
   cat <<'PY'
 import json
+import os
 import sys
 import urllib.error
 import urllib.request
@@ -88,10 +89,13 @@ def is_policy_denial(text):
     return any(marker in lowered for marker in DENIAL_MARKERS)
 
 
+print(f'PROBE_PID:{os.getpid()}', flush=True)
 url = sys.argv[1]
+# OpenShell replaces this placeholder at egress; the sandbox never receives the key.
+payload = {'query': 'nemoclaw reachability probe', 'max_results': 1, 'api_key': 'openshell-placeholder'}
 request = urllib.request.Request(
     url,
-    data=json.dumps({'query': 'nemoclaw reachability probe', 'max_results': 1}).encode('utf-8'),
+    data=json.dumps(payload).encode('utf-8'),
     headers={'Content-Type': 'application/json'},
     method='POST',
 )
@@ -106,23 +110,23 @@ except urllib.error.HTTPError as exc:
         body = ''
     details = f'{exc} {body}'.strip()
     if is_policy_denial(details):
-        print(f'BLOCKED:HTTPError:{details}')
+        print('BLOCKED:HTTPError')
     else:
         print(f'REACHED:{exc.code}')
 except urllib.error.URLError as exc:
     details = str(exc.reason if getattr(exc, 'reason', None) is not None else exc)
     if is_policy_denial(details):
-        print(f'BLOCKED:URLError:{details}')
+        print('BLOCKED:URLError')
     else:
-        print(f'ERROR:URLError:{details}')
+        print('ERROR:URLError')
 except OSError as exc:
     details = str(exc)
     if is_policy_denial(details):
-        print(f'BLOCKED:{type(exc).__name__}:{details}')
+        print(f'BLOCKED:{type(exc).__name__}')
     else:
-        print(f'ERROR:{type(exc).__name__}:{details}')
+        print(f'ERROR:{type(exc).__name__}')
 except Exception as exc:
-    print(f'ERROR:{type(exc).__name__}:{exc}')
+    print(f'ERROR:{type(exc).__name__}')
 PY
 }
 
@@ -152,17 +156,112 @@ verify_observability_state() {
   pass "host registry and persistent marker preserve enabled observability $phase"
 }
 
+tavily_audit_logs() {
+  local phase="$1"
+  if [ "$phase" = "before" ] && [ -n "${NEMOCLAW_E2E_TAVILY_AUDIT_BEFORE_FIXTURE+x}" ]; then
+    printf '%s\n' "$NEMOCLAW_E2E_TAVILY_AUDIT_BEFORE_FIXTURE"
+  elif [ -n "${NEMOCLAW_E2E_TAVILY_AUDIT_FIXTURE+x}" ]; then
+    printf '%s\n' "$NEMOCLAW_E2E_TAVILY_AUDIT_FIXTURE"
+  else
+    openshell logs "$SANDBOX_NAME" -n 500 --source all --since 2m 2>/dev/null
+  fi
+}
+
+tavily_audit_cursor() {
+  local output
+  output="$(tavily_audit_logs before)" || return 1
+  printf '%s\n' "$output" | awk '
+    /^\[[0-9]+(\.[0-9]+)?\]/ {
+      ts = substr($0, 2, index($0, "]") - 2) + 0;
+      if (ts > cursor) cursor = ts;
+    }
+    END { printf "%.9f\n", cursor }
+  '
+}
+
+tavily_denied_audit() {
+  local cursor="$1" probe_pid="$2" output
+  [[ "$probe_pid" =~ ^[0-9]+$ ]] || return 1
+  output="$(tavily_audit_logs after)" || return 1
+  printf '%s\n' "$output" | awk -v cursor="$cursor" -v pid="$probe_pid" '
+    /^\[[0-9]+(\.[0-9]+)?\]/ {
+      ts = substr($0, 2, index($0, "]") - 2) + 0;
+      actor = "python3[^ ()]*\\(" pid "\\)";
+      if (ts > cursor && /NET:OPEN/ && / DENIED / &&
+          $0 ~ actor && / -> api[.]tavily[.]com:443([\/ ]|$)/) found = 1;
+    }
+    END { exit !found }
+  '
+}
+
+AUDIT_SETTING_BEFORE=""
+TAVILY_PROVIDER=""
+
+capture_audit_setting() {
+  openshell settings get "$SANDBOX_NAME" --json | node -e '
+let input = "";
+process.stdin.on("data", chunk => input += chunk);
+process.stdin.on("end", () => {
+  const settings = JSON.parse(input).settings;
+  if (!settings || typeof settings !== "object") process.exit(1);
+  const value = settings.ocsf_json_enabled;
+  if (value !== undefined && !["<unset>", "true", "false"].includes(value)) process.exit(1);
+  process.stdout.write(value ?? "<unset>");
+});'
+}
+
+restore_audit_setting() {
+  [ -n "$AUDIT_SETTING_BEFORE" ] || return 0
+  if [ "$AUDIT_SETTING_BEFORE" = "<unset>" ]; then
+    openshell settings delete "$SANDBOX_NAME" --key ocsf_json_enabled --yes >/dev/null 2>&1 || return 1
+  else
+    openshell settings set "$SANDBOX_NAME" --key ocsf_json_enabled --value "$AUDIT_SETTING_BEFORE" >/dev/null 2>&1 || return 1
+  fi
+  [ "$(capture_audit_setting)" = "$AUDIT_SETTING_BEFORE" ]
+}
+
+cleanup_tavily_check() {
+  local status=0
+  restore_tavily_denial || status=1
+  if [ -n "$TAVILY_PROVIDER" ]; then
+    if ! nemoclaw_cli credentials reset "$TAVILY_PROVIDER" --yes >/dev/null 2>&1; then
+      fail_test "could not remove disposable Tavily provider"
+      status=1
+    fi
+  fi
+  if ! restore_audit_setting; then
+    fail_test "could not restore the prior Tavily audit setting"
+    status=1
+  fi
+  return "$status"
+}
+
 restore_tavily_denial() {
-  local cleanup_status=0 remove_output post_remove_probe_output
+  local cleanup_status=0 remove_output post_remove_probe_output audit_start=0 probe_pid
   if ! remove_output="$(nemoclaw_cli "$SANDBOX_NAME" policy-remove tavily --yes 2>&1)"; then
     fail_test "policy-remove tavily failed after the opt-in proof: $remove_output"
     cleanup_status=1
   else
     sleep "${NEMOCLAW_E2E_POLICY_SETTLE_SECONDS:-5}"
+    if [ "${NEMOCLAW_E2E_TAVILY_AUTHENTICATED:-0}" = "1" ]; then
+      if ! audit_start="$(tavily_audit_cursor)"; then
+        fail_test "could not capture the Tavily audit cursor"
+        return 1
+      fi
+    fi
     post_remove_probe_output="$(python_probe "https://api.tavily.com/search" || true)"
     if [[ "$post_remove_probe_output" == *"BLOCKED:"* &&
       "$post_remove_probe_output" != *"REACHED:"* ]]; then
       pass "managed Deep Agents Code python returns to the default Tavily denial"
+      if [ "${NEMOCLAW_E2E_TAVILY_AUTHENTICATED:-0}" = "1" ]; then
+        probe_pid="$(printf '%s\n' "$post_remove_probe_output" | sed -n 's/^PROBE_PID:\([0-9][0-9]*\)$/\1/p')"
+        if tavily_denied_audit "$audit_start" "$probe_pid"; then
+          pass "post-removal Tavily request has DENIED audit evidence"
+        else
+          fail_test "post-removal Tavily DENIED audit evidence is missing"
+          cleanup_status=1
+        fi
+      fi
     else
       fail_test "policy-remove did not restore the default Tavily denial: $post_remove_probe_output"
       cleanup_status=1
@@ -190,6 +289,32 @@ if [ "${NEMOCLAW_E2E_TAVILY_SELF_TEST:-}" = "probe-command-shape" ]; then
   }
   python_probe "https://api.tavily.com/search"
   exit 0
+fi
+
+if [ "${NEMOCLAW_E2E_TAVILY_SELF_TEST:-}" = "audit-cleanup" ]; then
+  AUDIT_FIXTURE="$(mktemp)"
+  printf '%s' "${NEMOCLAW_E2E_AUDIT_BEFORE:-<unset>}" >"$AUDIT_FIXTURE"
+  trap 'rm -f "$AUDIT_FIXTURE"' EXIT
+  AUDIT_RESTORING=0
+  openshell() {
+    if [ "$AUDIT_RESTORING" = "1" ] && [ "${NEMOCLAW_E2E_AUDIT_RESTORE_FIXTURE:-ok}" = "fail" ]; then
+      return 1
+    fi
+    case "$2" in
+      get) printf '{"settings":{"ocsf_json_enabled":"%s"}}' "$(cat "$AUDIT_FIXTURE")" ;;
+      set) printf '%s' "$7" >"$AUDIT_FIXTURE" ;;
+      delete) printf '%s' '<unset>' >"$AUDIT_FIXTURE" ;;
+      *) return 1 ;;
+    esac
+  }
+  AUDIT_SETTING_BEFORE="$(capture_audit_setting)"
+  openshell settings set "$SANDBOX_NAME" --key ocsf_json_enabled --value true
+  AUDIT_RESTORING=1
+  restore_tavily_denial() { return "${NEMOCLAW_E2E_REMOVE_STATUS:-0}"; }
+  cleanup_status=0
+  cleanup_tavily_check || cleanup_status=1
+  printf 'RESTORED:%s\n' "$(cat "$AUDIT_FIXTURE")"
+  exit "$cleanup_status"
 fi
 
 if [ "${NEMOCLAW_E2E_TAVILY_SELF_TEST:-}" = "restore-denial" ]; then
@@ -245,18 +370,46 @@ else
   fail_test "tavily dry-run did not show api.tavily.com: $DRY_RUN_OUTPUT"
 fi
 
+trap 'cleanup_tavily_check || exit 1' EXIT
+if [ "${NEMOCLAW_E2E_TAVILY_AUTHENTICATED:-0}" = "1" ]; then
+  if [ -z "${TAVILY_API_KEY:-}" ]; then
+    fail_test "authenticated Tavily check requires the host credential"
+    exit 1
+  fi
+  AUDIT_SETTING_BEFORE="$(capture_audit_setting)" || {
+    fail_test "could not capture the prior Tavily audit setting"
+    exit 1
+  }
+  if ! openshell settings set "$SANDBOX_NAME" --key ocsf_json_enabled --value true >/dev/null 2>&1; then
+    fail_test "could not enable Tavily audit evidence"
+    exit 1
+  fi
+  TAVILY_PROVIDER="e2e-tavily-$(node -p 'require("node:crypto").randomUUID()')"
+  if ! nemoclaw_cli credentials add "$TAVILY_PROVIDER" --type tavily --agent dcode --credential TAVILY_API_KEY >/dev/null 2>&1; then
+    fail_test "could not register disposable Tavily provider"
+    exit 1
+  fi
+  unset TAVILY_API_KEY
+  if ! openshell sandbox provider attach "$SANDBOX_NAME" "$TAVILY_PROVIDER" >/dev/null 2>&1; then
+    fail_test "could not attach disposable Tavily provider"
+    exit 1
+  fi
+fi
+
 APPLY_OUTPUT="$(nemoclaw_cli "$SANDBOX_NAME" policy-add tavily --yes 2>&1)" || {
   fail_test "policy-add tavily failed: $APPLY_OUTPUT"
   printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"
   exit 1
 }
-trap restore_tavily_denial EXIT
 pass "tavily policy preset applies"
 
 sleep "${NEMOCLAW_E2E_POLICY_SETTLE_SECONDS:-5}"
 
 PROBE_OUTPUT="$(python_probe "https://api.tavily.com/search")"
-if echo "$PROBE_OUTPUT" | grep -q "REACHED:"; then
+if [ "${NEMOCLAW_E2E_TAVILY_AUTHENTICATED:-0}" = "1" ] \
+  && ! echo "$PROBE_OUTPUT" | grep -Fxq "REACHED:200"; then
+  fail_test "authenticated Tavily request did not succeed after policy-add"
+elif echo "$PROBE_OUTPUT" | grep -q "REACHED:"; then
   pass "managed Deep Agents Code python can reach Tavily after policy-add"
 elif echo "$PROBE_OUTPUT" | grep -q "BLOCKED:"; then
   fail_test "managed Deep Agents Code python is still policy-blocked after policy-add: $PROBE_OUTPUT"
@@ -288,7 +441,7 @@ else
 fi
 
 # Do not leak this check's durable opt-in into later sequential checks.
-restore_tavily_denial || true
+cleanup_tavily_check || true
 trap - EXIT
 
 printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"

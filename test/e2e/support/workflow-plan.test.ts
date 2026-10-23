@@ -618,6 +618,10 @@ describe("E2E workflow plan", () => {
           GITHUB_OUTPUT: output,
           GITHUB_STEP_SUMMARY: summary,
           INFERENCE_MODE: "mock",
+          GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
+          GITHUB_REF: "refs/heads/main",
+          GITHUB_WORKFLOW_REF: "NVIDIA/NemoClaw/.github/workflows/e2e.yaml@refs/heads/main",
+          EVENT_NAME: "workflow_dispatch",
           NEMOCLAW_E2E_CREDENTIALS_ALLOWED: "true",
           NEMOCLAW_E2E_EXPECTED_SHA: "a".repeat(40),
           NEMOCLAW_GATEWAY_RUNTIMES: "podman",
@@ -1477,6 +1481,10 @@ describe("E2E workflow plan", () => {
         INFERENCE_MODE: "mock",
         JOBS: "cloud-onboard",
         TARGETS: target,
+        GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
+        GITHUB_REF: "refs/heads/main",
+        GITHUB_WORKFLOW_REF: "NVIDIA/NemoClaw/.github/workflows/e2e.yaml@refs/heads/main",
+        EVENT_NAME: "workflow_dispatch",
       });
 
       expect(result.status, result.stderr).toBe(0);

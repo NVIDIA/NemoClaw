@@ -356,6 +356,10 @@ export interface SandboxStateOptions<
     listRegistrySandboxes(): { sandboxes: unknown[] };
     planRegisteredExtraProviders(
       gatewayName: string,
+      options?: Pick<
+        import("../../extra-provider-reconciliation").ReconcileExtraProvidersDeps,
+        "webSearchProvider"
+      >,
     ):
       | import("../../extra-provider-reconciliation").ExtraProviderReconciliationPlan
       | Promise<import("../../extra-provider-reconciliation").ExtraProviderReconciliationPlan>;
@@ -2437,6 +2441,11 @@ class SandboxStateFlow<
       );
       const extraProviderPlan = await this.deps.planRegisteredExtraProviders(
         this.options.gatewayName,
+        {
+          webSearchProvider: state.webSearchConfig
+            ? webSearchProviderForConfig(state.webSearchConfig as unknown as SharedWebSearchConfig)
+            : null,
+        },
       );
       if (
         this.options.apfInterceptorRequested === true &&

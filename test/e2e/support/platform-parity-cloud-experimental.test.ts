@@ -19,6 +19,7 @@ import { HostCliClient } from "../fixtures/clients/host.ts";
 import { CleanupRegistry } from "../fixtures/cleanup.ts";
 import { DCODE_BASE_IMAGE, DCODE_BASE_IMAGE_ENV } from "../fixtures/dcode-base-image.ts";
 import { SecretStore } from "../fixtures/secrets.ts";
+import { canonicalTargets } from "../registry/definitions/baseline.ts";
 import type {
   ShellProbeResult,
   ShellProbeRunOptions,
@@ -470,10 +471,122 @@ describe("P0-E cloud-experimental parity guardrails", () => {
       expect(`${result.stdout}\n${result.stderr}`).toMatch(expected);
       expect(`${result.stdout}\n${result.stderr}`).toMatch(observabilityExpected);
       expect(fs.readFileSync(dcodeTavilyCheck, "utf8")).toContain(
-        "trap restore_tavily_denial EXIT",
+        "trap 'cleanup_tavily_check || exit 1' EXIT",
       );
     },
   );
+
+  it.each([
+    ["<unset>", "0", "ok", 0],
+    ["true", "0", "ok", 0],
+    ["false", "0", "ok", 0],
+    ["<unset>", "1", "ok", 1],
+    ["true", "1", "ok", 1],
+    ["false", "1", "ok", 1],
+    ["true", "0", "fail", 1],
+  ])(
+    "restores audit setting %s after removal status %s and restoration %s (#13082)",
+    (before, removeStatus, restoreStatus, expectedStatus) => {
+      const result = spawnSync("bash", [dcodeTavilyCheck], {
+        encoding: "utf8",
+        env: {
+          PATH: DEFAULT_TEST_PATH,
+          NEMOCLAW_E2E_TAVILY_SELF_TEST: "audit-cleanup",
+          NEMOCLAW_E2E_AUDIT_BEFORE: before as string,
+          NEMOCLAW_E2E_REMOVE_STATUS: removeStatus as string,
+          NEMOCLAW_E2E_AUDIT_RESTORE_FIXTURE: restoreStatus as string,
+        },
+      });
+      expect(result.status, result.stdout + result.stderr).toBe(expectedStatus);
+      expect(result.stdout).toContain(`RESTORED:${before}`);
+    },
+  );
+
+  it("scopes authenticated Tavily credentials to its check environment (#13082)", () => {
+    const base = { TAVILY_API_KEY: "ambient-key", OTHER_SECRET: "unrelated-key" };
+    const ordinary = buildCloudExperimentalCommandEnv("sandbox", "inference-key", base);
+    const authenticated = buildCloudExperimentalCommandEnv("sandbox", "inference-key", base, {
+      tavilyApiKey: "tavily-fixture-key",
+    });
+    expect(ordinary).not.toHaveProperty("TAVILY_API_KEY");
+    expect(authenticated).toMatchObject({
+      TAVILY_API_KEY: "tavily-fixture-key",
+      NEMOCLAW_E2E_TAVILY_AUTHENTICATED: "1",
+    });
+    expect(authenticated).not.toHaveProperty("OTHER_SECRET");
+    expect(
+      canonicalTargets().find(
+        (target) => target.id === "ubuntu-repo-cloud-langchain-deepagents-code",
+      )?.requiredSecrets,
+    ).toEqual(["NVIDIA_INFERENCE_API_KEY", "TAVILY_API_KEY"]);
+  });
+
+  it("passes the required Tavily secret only to its live check (#13082)", async () => {
+    const artifactRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-tavily-caller-"));
+    const run = vi.fn(async () => shellResult(0, ""));
+    const script = "test/e2e/e2e-cloud-experimental/checks/09-deepagents-code-tavily-opt-in.sh";
+    try {
+      await runE2eCloudExperimentalChecks(
+        "ubuntu-repo-cloud-langchain-deepagents-code",
+        "sandbox",
+        [script],
+        {
+          artifacts: new ArtifactSink(artifactRoot),
+          cleanup: new CleanupRegistry(),
+          host: new HostCliClient({ run }),
+          secrets: new SecretStore({ TAVILY_API_KEY: "tavily-fixture-key" }, (note) => {
+            throw new Error(note);
+          }),
+        },
+      );
+      expect(run).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({ command: "bash", args: [path.join(process.cwd(), script)] }),
+        expect.objectContaining({
+          env: expect.objectContaining({
+            TAVILY_API_KEY: "tavily-fixture-key",
+            NEMOCLAW_E2E_TAVILY_AUTHENTICATED: "1",
+          }),
+          redactionValues: expect.arrayContaining(["tavily-fixture-key"]),
+        }),
+      );
+    } finally {
+      fs.rmSync(artifactRoot, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    "denied",
+    "allowed",
+    "stale",
+    "wrong-host",
+    "wrong-pid",
+    "wrong-port",
+    "wrong-binary",
+    "missing-pid",
+  ])("requires post-removal Tavily audit evidence with %s events (#13082)", (event) => {
+    const cursor = Math.floor(Date.now() / 1000);
+    const epoch = event === "stale" ? cursor - 1 : cursor + 1;
+    const pid = event === "wrong-pid" ? 4243 : 4242;
+    const port = event === "wrong-port" ? 8443 : 443;
+    const binary = event === "wrong-binary" ? "node" : "python3.12";
+    const host = event === "wrong-host" ? "other.example.com" : "api.tavily.com";
+    const decision = event === "allowed" ? "ALLOWED" : "DENIED";
+    const result = spawnSync("bash", [dcodeTavilyCheck], {
+      encoding: "utf8",
+      env: {
+        PATH: DEFAULT_TEST_PATH,
+        SANDBOX_NAME: "deepagents-sandbox",
+        NEMOCLAW_E2E_TAVILY_SELF_TEST: "restore-denial",
+        NEMOCLAW_E2E_TAVILY_PROBE_FIXTURE:
+          event === "missing-pid" ? tavilyBlocked : `PROBE_PID:4242\n${tavilyBlocked}`,
+        NEMOCLAW_E2E_TAVILY_AUTHENTICATED: "1",
+        NEMOCLAW_E2E_TAVILY_AUDIT_BEFORE_FIXTURE: `[${cursor}] old event`,
+        NEMOCLAW_E2E_TAVILY_AUDIT_FIXTURE: `[${epoch}] [sandbox] [OCSF] [ocsf] NET:OPEN [WARN] ${decision} ${binary}(${pid}) -> ${host}:${port}`,
+      },
+    });
+    expect(result.status, result.stdout + result.stderr).toBe(event === "denied" ? 0 : 1);
+  });
 
   it("skips the DCode auto-approval check before optional host prerequisites", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-approval-skip-"));
