@@ -23,7 +23,7 @@ on:
   workflow_dispatch:
     inputs:
       publish:
-        description: Publish a run-unique candidate from main or the approved PR 12664 branch
+        description: Publish a run-unique candidate from main
         required: true
         default: false
         type: boolean
@@ -1065,21 +1065,3 @@ jobs:
           path: ${{ runner.temp }}/llama-cpp-evidence/publication-receipt.json
           if-no-files-found: error
           retention-days: ${{ fromJSON(needs.config.outputs.publication_receipt_retention_days) }}
-
-# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-# SHA-pinned caller. No executable steps are allowed here.
-  publish-approved-branch:
-    name: Publish the approved branch through the immutable publisher
-    if: github.event_name == 'workflow_dispatch' && inputs.publish && !inputs.publisher_call && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/fix/issue-12285-wsl-transport'
-    permissions:
-      contents: read
-      checks: read
-      pull-requests: read
-      packages: write
-      attestations: write
-      id-token: write
-    uses: NVIDIA/NemoClaw/.github/workflows/llama-cpp-image.yaml@195d6fa1670f993095be3432bcfe822095546717
-    with:
-      publish: true
-      publisher_call: true
