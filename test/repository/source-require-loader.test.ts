@@ -171,6 +171,14 @@ process.exitCode = sdk.gatewayPort({ kind: "named", gatewayName: "nemoclaw" }) =
         path.join(REPO_ROOT, "test/helpers/source-require-cache.ts"),
         path.join(root, "test/helpers/source-require-cache.ts"),
       );
+      fs.copyFileSync(
+        path.join(REPO_ROOT, "test/helpers/source-require-compiler.ts"),
+        path.join(root, "test/helpers/source-require-compiler.ts"),
+      );
+      fs.copyFileSync(
+        path.join(REPO_ROOT, "test/helpers/source-coverage.cts"),
+        path.join(root, "test/helpers/source-coverage.cts"),
+      );
       fs.symlinkSync(
         path.join(REPO_ROOT, "node_modules/typescript"),
         path.join(root, "node_modules/typescript"),
@@ -558,6 +566,8 @@ const nativeTypeScriptLoader = Module._extensions[".ts"];
 const expected = new Set([
   path.resolve(${JSON.stringify(path.join(import.meta.dirname, "../helpers", "register-source-require.ts"))}),
   path.resolve(${JSON.stringify(path.join(import.meta.dirname, "../helpers", "source-require-cache.ts"))}),
+  path.resolve(${JSON.stringify(path.join(import.meta.dirname, "../helpers", "source-require-compiler.ts"))}),
+  path.resolve(${JSON.stringify(path.join(import.meta.dirname, "../helpers", "source-coverage.cts"))}),
 ]);
 const compiled = [];
 const originalCompile = Module.prototype._compile;
@@ -603,7 +613,7 @@ if (require.cache[typescriptPath] !== undefined) {
     require.cache[typescriptPath] === undefined ||
     registeredTypeScriptLoader === nativeTypeScriptLoader ||
     !rejectedUnexpected ||
-    compiled.length !== 2 ||
+    compiled.length !== expected.size ||
     compiled.some((entry) => !entry.sourceMapped)
   ) {
     console.error(JSON.stringify({ fixture, compiled, rejectedUnexpected, typescriptLoaded: require.cache[typescriptPath] !== undefined }));

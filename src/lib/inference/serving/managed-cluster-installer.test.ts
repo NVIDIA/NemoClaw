@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 import type {
   ManagedClusterConfirmedManagedServingCapability,
@@ -11,6 +14,7 @@ import type {
   CreateManagedClusterVllmExecutorOptions,
   ManagedClusterExecutorStageNode,
 } from "./managed-cluster-executor.js";
+import { formatStorageBytes } from "../vllm-storage.js";
 import { fixtureManagedClusterSelection } from "./managed-cluster-fixture.test-support.js";
 import {
   HOST_LOCAL_VLLM_LIFECYCLE_REF,
@@ -106,7 +110,16 @@ function successfulStart(reusedExisting = false) {
 }
 
 describe("managed-cluster vLLM installer selection", () => {
-  beforeEach(() => vi.restoreAllMocks());
+  let fixtureHome: string;
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    fixtureHome = mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cluster-install-"));
+    vi.spyOn(os, "homedir").mockReturnValue(fixtureHome);
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    rmSync(fixtureHome, { recursive: true, force: true });
+  });
 
   it("leaves non-Spark and conflict-free explicit legacy vLLM intent untouched", async () => {
     const probeCapability = vi.fn(() => ({
@@ -390,6 +403,45 @@ describe("managed-cluster vLLM installer selection", () => {
     expect(result).toEqual({ kind: "handled", result: { ok: false } });
     expect(promptFn).not.toHaveBeenCalled();
     expect(claimCapability).not.toHaveBeenCalled();
+  });
+
+  it("declares per-node download sizes before the consent prompt (#12207)", async () => {
+    const capability = readyCapability();
+    const selection = fixtureManagedClusterSelection();
+    const messages: string[] = [];
+    const log = vi.fn((message?: string) => {
+      messages.push(message ?? "");
+    });
+    const promptFn = vi.fn(async () => "no");
+
+    await tryInstallManagedClusterManagedVllm(
+      { platform: "spark", env: {}, nonInteractive: false, promptFn },
+      effects(),
+      {
+        probeCapability: () => capability,
+        resolveSelection: () => selection,
+        claimCapability: vi.fn(),
+        assertNoRuntimeReceipts: vi.fn(),
+        log,
+        error: vi.fn(),
+      },
+    );
+
+    const gate = promptFn.mock.invocationCallOrder[0]!;
+    const declaredBeforeGate = log.mock.invocationCallOrder
+      .map((order, index) => (order < gate ? messages[index]! : null))
+      .filter((line): line is string => line !== null);
+    expect(promptFn).toHaveBeenCalled();
+    expect(declaredBeforeGate).toContain(
+      `    Image download per node on first run (${formatStorageBytes(
+        BigInt(selection.recipe.spec.runtime.imageDownloadSizeBytes),
+      )}), cached after`,
+    );
+    expect(declaredBeforeGate).toContain(
+      `    Model download per node on first run (${formatStorageBytes(
+        BigInt(selection.recipe.spec.model.downloadSizeBytes),
+      )}), cached after`,
+    );
   });
 
   it("rechecks the selected port after consent and before claiming binding state", async () => {

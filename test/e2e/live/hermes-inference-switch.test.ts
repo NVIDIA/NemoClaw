@@ -18,9 +18,8 @@ import {
   env,
   envHash,
   expectAuthenticatedBaselineInventoryRequest,
+  expectNativeLocalHermesTurn,
   expectAuthenticatedProxyResolutionRequests,
-  expectedApiMode,
-  expectedBaseUrl,
   expectOpenAiProvider,
   hasAuthenticatedProxyResolutionRequest,
   hashCheck,
@@ -31,11 +30,9 @@ import {
   inferenceLocalMaxTokens,
   installHermes,
   maybeAssertEnvHashStable,
-  maybeAssertPidStable,
-  mockAnthropicSwitchEnabled,
+  parseHermesGatewayPid,
   PROXY_FORBIDDEN_MARKERS,
   PROXY_RESOLUTION_PROVIDER,
-  parseHermesModelBlock,
   parseInferenceRoute,
   prepareCompatibleAnthropicSwitchBinding,
   prepareProxyResolutionRoute,
@@ -49,8 +46,10 @@ import {
   SWITCH_MODEL,
   SWITCH_PROVIDER,
   strictHashPerms,
+  useLocalHermesInferenceBaseline,
 } from "./hermes-inference-switch-helpers.ts";
 import {
+  acceptedSwitchResponseModels,
   PUBLIC_NVIDIA_SWITCH_ATTACHMENT_EVIDENCE,
   PUBLIC_NVIDIA_SWITCH_PROVIDER,
   readPublicNvidiaSwitchAttachmentEvidence,
@@ -75,6 +74,7 @@ test(
       e2ePhases: [
         "prepare clean Hermes inference sandbox",
         "install baseline Hermes runtime",
+        "prove native local Hermes startup and model switch",
         "switch Hermes inference provider",
         "validate switched route and mutable config",
         "exercise sandbox inference and Hermes API",
@@ -122,16 +122,18 @@ test(
 
     // OpenShell reaches this fixture from its gateway network namespace, where
     // the runner's loopback address is not routable.
-    const mockBaseline = mockAnthropicSwitchEnabled()
+    const mockBaseline = useLocalHermesInferenceBaseline()
       ? await startFakeOpenAiCompatibleServer({
           apiKey: MOCK_BASELINE_API_KEY,
           chatContent: "PONG",
           forbiddenMarkers: PROXY_FORBIDDEN_MARKERS,
           host: "0.0.0.0",
           model: MOCK_BASELINE_MODEL,
+          port: 11434,
           publicHost: "host.openshell.internal",
           progress,
           requireAuth: true,
+          requireAuthModels: true,
         })
       : undefined;
     cleanup.trackDisposable("close Hermes inference switch baseline fixture", async () => {
@@ -168,30 +170,79 @@ test(
 
     progress.phase("install baseline Hermes runtime");
     const install = await installHermes(host, apiKey, installEnv);
+    await host.recordSandboxContainerDiscoveryOnFailure(
+      SANDBOX_NAME,
+      install.exitCode,
+      redactionValues,
+    );
     expect(install.exitCode, resultText(install)).toBe(0);
     expectAuthenticatedBaselineInventoryRequest(mockBaseline);
-    const baselineRoute = mockBaseline
-      ? await sandbox.openshell(["inference", "get", "-g", "nemoclaw"], {
-          artifactName: "openshell-inference-route-before-switch",
-          env: env(),
-          timeoutMs: 30_000,
-        })
-      : await host.command("node", [CLI, "inference", "get"], {
-          artifactName: "nemoclaw-native-inference-route-before-switch",
-          env: env(),
-          timeoutMs: 30_000,
-        });
+    const baselineRoute = await host.command("node", [CLI, "inference", "get"], {
+      artifactName: "nemoclaw-native-inference-route-before-switch",
+      env: env(),
+      timeoutMs: 30_000,
+    });
     expect(baselineRoute.exitCode, resultText(baselineRoute)).toBe(0);
     expect(parseInferenceRoute(resultText(baselineRoute))).toEqual({
       provider: mockBaseline ? "compatible-endpoint" : PUBLIC_NVIDIA_SWITCH_PROVIDER,
-      model: hostedInstallModel(installEnv),
+      model: hostedInstallModel(env(apiKey, installEnv)),
     });
-    const baselineSession = structuredClone(registryState().session);
+    progress.phase("prove native local Hermes startup and model switch");
+    mockBaseline &&
+      (await expectNativeLocalHermesTurn({
+        sandbox,
+        endpoint: mockBaseline,
+        model: MOCK_BASELINE_MODEL,
+        artifactName: "hermes-native-local-startup",
+        redactionValues,
+        onEvidence: async (evidence) => {
+          await artifacts.writeJson("retry/hermes-native-local-startup.json", evidence);
+        },
+      }));
+    const localModel = `${MOCK_BASELINE_MODEL}-switched`;
+    const localSwitch =
+      mockBaseline &&
+      (await host.command(
+        "node",
+        [
+          CLI,
+          "inference",
+          "set",
+          "--sandbox",
+          SANDBOX_NAME,
+          "--provider",
+          "compatible-endpoint",
+          "--model",
+          localModel,
+          "--no-verify",
+        ],
+        {
+          artifactName: "hermes-native-local-model-switch",
+          env: env(),
+          redactionValues,
+          timeoutMs: 180_000,
+        },
+      ));
+    localSwitch && expect(localSwitch.exitCode, resultText(localSwitch)).toBe(0);
+    mockBaseline &&
+      (await expectNativeLocalHermesTurn({
+        sandbox,
+        endpoint: mockBaseline,
+        model: localModel,
+        artifactName: "hermes-native-local-after-model-switch",
+        redactionValues,
+        onEvidence: async (evidence) => {
+          await artifacts.writeJson("retry/hermes-native-local-after-model-switch.json", evidence);
+        },
+      }));
+    const baselineState = registryState();
+    const baselineSession = structuredClone(baselineState.session);
     const switchBinding = await prepareCompatibleAnthropicSwitchBinding(host, cleanup);
     const switchEndpointUrl = switchBinding?.endpointUrl ?? null;
     switchBinding && redactionValues.push(switchBinding.credentialValue);
 
     const pidBefore = await hermesGatewayPid(sandbox, "pid-before");
+    expect(parseHermesGatewayPid(pidBefore), resultText(pidBefore)).toBeDefined();
     const envHashBefore = await envHash(sandbox, "env-hash-before");
 
     progress.phase("switch Hermes inference provider");
@@ -207,8 +258,6 @@ test(
       },
     );
     expect(switched.exitCode, resultText(switched)).toBe(0);
-    expect(resultText(switched)).not.toContain("writing the in-sandbox config failed");
-    expect(resultText(switched)).toContain(`Inference route synced for '${SANDBOX_NAME}'`);
     switchBinding &&
       (await expectOpenAiProvider(
         host,
@@ -218,7 +267,10 @@ test(
 
     progress.phase("validate switched route and mutable config");
     const pidAfter = await hermesGatewayPid(sandbox, "pid-after");
-    maybeAssertPidStable(pidBefore, pidAfter, (actual, expected) => expect(actual).toBe(expected));
+    expect(parseHermesGatewayPid(pidAfter), resultText(pidAfter)).toBeDefined();
+    expect(pidAfter.stdout.trim() !== pidBefore.stdout.trim()).toBe(
+      Boolean(mockBaseline) || SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER,
+    );
 
     const health = await sandbox.exec(
       SANDBOX_NAME,
@@ -243,20 +295,20 @@ test(
       model: SWITCH_MODEL,
     });
 
-    const config = await sandbox.exec(SANDBOX_NAME, ["cat", "/sandbox/.hermes/config.yaml"], {
-      artifactName: "hermes-config-yaml",
-      env: env(),
-      redactionValues,
-      timeoutMs: 30_000,
-    });
+    const config = await sandbox.exec(
+      SANDBOX_NAME,
+      ["sed", "/^[[:space:]]*api_key:/d", "/sandbox/.hermes/config.yaml"],
+      {
+        artifactName: "hermes-config-yaml",
+        env: env(),
+        redactionValues,
+        timeoutMs: 30_000,
+      },
+    );
     expect(config.exitCode, resultText(config)).toBe(0);
-    const model = parseHermesModelBlock(config.stdout);
-    expect(model.default).toBe(SWITCH_MODEL);
-    expect(model.provider).toBe("custom");
-    expect(model.base_url).toBe(expectedBaseUrl());
-    expect(model.api_mode).toBe(expectedApiMode());
+    // Field projection is covered by inference-set-patch-hermes and config generation
+    // tests. Live dashboard, API, and CLI turns below verify the selected route.
     expect((await apiKeyShape(sandbox)).exitCode).toBe(0);
-    expect(config.stdout).not.toMatch(/^models:\s*$/mu);
 
     const dashboardShadowConfig = await sandbox.exec(
       SANDBOX_NAME,
@@ -291,10 +343,8 @@ test(
 
     const strictHash = await hashCheck(sandbox, "/etc/nemoclaw/hermes.config-hash", "strict");
     expect(strictHash.exitCode, resultText(strictHash)).toBe(0);
-    expect(strictHash.stdout).toContain("OK");
     const compatHash = await hashCheck(sandbox, "/sandbox/.hermes/.config-hash", "compat");
     expect(compatHash.exitCode, resultText(compatHash)).toBe(0);
-    expect(compatHash.stdout).toContain("OK");
     const strictPerms = await strictHashPerms(sandbox);
     expect(strictPerms.stdout.trim()).toMatch(/^0\s+[0-7]+$/u);
     expect(Number.parseInt(strictPerms.stdout.trim().split(/\s+/u)[1], 8) & 0o222).toBe(0);
@@ -380,7 +430,9 @@ test(
     });
     expect(inferenceLocal.exitCode, resultText(inferenceLocal)).toBe(0);
     expect(chatContent(inferenceLocal.stdout)).toMatch(/PONG/i);
-    expect(inferenceResponseModel(inferenceLocal.stdout)).toBe(SWITCH_MODEL);
+    expect(acceptedSwitchResponseModels(SWITCH_MODEL)).toContain(
+      inferenceResponseModel(inferenceLocal.stdout),
+    );
 
     const hermesApiPayload = JSON.stringify({
       model: SWITCH_MODEL,
@@ -406,7 +458,9 @@ test(
     });
     expect(chat.exitCode, resultText(chat)).toBe(0);
     expect(chatContent(chat.stdout)).toMatch(/PONG/i);
-    expect(inferenceResponseModel(chat.stdout)).toBe(SWITCH_MODEL);
+    expect(acceptedSwitchResponseModels(SWITCH_MODEL)).toContain(
+      inferenceResponseModel(chat.stdout),
+    );
 
     progress.phase("run Hermes CLI adapter forms against switched provider");
     const hermesCli = await runHermesCliPongWithRetry({

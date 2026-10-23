@@ -321,12 +321,13 @@ export function assertOnboardGatewayReadiness(
 /** Collect and admit production gateway facts before onboarding effects. */
 export async function collectOnboardGatewayReadiness(
   options: ProductionGatewayReadinessOptions,
+  exitProcess?: FatalRuntimePreflightContext["exitProcess"],
 ): Promise<CollectedGatewayReadiness> {
   const snapshot = await collectGatewayObservations(
     createProductionGatewayReadinessDependencies(options),
   );
   const projection = projectGatewayReadiness(snapshot);
-  assertOnboardGatewayReadiness(projection);
+  assertOnboardGatewayReadiness(projection, exitProcess);
   return { projection, snapshot };
 }
 

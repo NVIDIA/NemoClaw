@@ -143,8 +143,8 @@ If the container runtime restricts `ulimit` modification, the entrypoint logs a 
 Managed Deep Agents uses stricter enforcement than the best-effort entrypoint behavior described above.
 The managed Deep Agents image applies the 512-process and 65,536-file-descriptor caps to the long-running sandbox entrypoint tree and to direct managed `dcode` launches.
 
-During Docker-driver onboarding, NemoClaw also configures the container with `nproc=512:512` and `nofile=65536:65536` limits so the managed entrypoint and fresh exec or connect processes start under the same hard caps.
-The container-level limits and managed startup command remain in effect when you stop and start the sandbox or restart the OpenShell gateway.
+CPU onboarding keeps the container created by OpenShell and relies on the image entrypoint and managed launcher to apply and verify these limits on each launch.
+When GPU compatibility requires a replacement Docker container, NemoClaw also configures that container with `nproc=512:512` and `nofile=65536:65536` limits.
 
 It also applies and verifies the caps in Bash login and interactive shells because fresh `openshell sandbox exec` and connect shells do not inherit the dcode entrypoint child's lowered limits.
 

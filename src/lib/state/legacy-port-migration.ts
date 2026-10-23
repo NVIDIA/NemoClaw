@@ -18,6 +18,7 @@ import {
 } from "./gateway-registry";
 import {
   listRetainedSandboxRecoveryRecords,
+  retainedSandboxRecoveryDocument as retainedRecoveryDocument,
   retainedSandboxRecoveryFile,
   retainedRebuildSessionFileName,
   readRetainedRebuildSession,
@@ -133,10 +134,7 @@ interface LegacyPortMigrationIntent {
   remainingRecovery: RetainedRecoveryDocument | null;
 }
 
-interface RetainedRecoveryDocument {
-  schemaVersion: 1;
-  unresolved: readonly RetainedSandboxRecoveryRecord[];
-}
+type RetainedRecoveryDocument = ReturnType<typeof retainedRecoveryDocument>;
 
 function migrationError(message: string): Error {
   return new Error(`Cannot safely migrate legacy NemoClaw state for this gateway port: ${message}`);
@@ -253,12 +251,6 @@ function readJsonNoFollow(home: string, filePath: string): unknown | null {
   } finally {
     fs.closeSync(fd);
   }
-}
-
-function retainedRecoveryDocument(
-  records: readonly RetainedSandboxRecoveryRecord[],
-): RetainedRecoveryDocument {
-  return { schemaVersion: 1, unresolved: records };
 }
 
 function readRetainedRecoveryDocument(

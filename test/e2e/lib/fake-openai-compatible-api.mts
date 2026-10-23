@@ -14,6 +14,16 @@ const logFile = process.env.NEMOCLAW_FAKE_OPENAI_LOG_FILE || "";
 const requestsFile = process.env.NEMOCLAW_FAKE_OPENAI_REQUESTS_FILE || "";
 const environmentFile = process.env.NEMOCLAW_FAKE_OPENAI_ENVIRONMENT_FILE || "";
 const model = process.env.NEMOCLAW_FAKE_OPENAI_MODEL || "test-model";
+const additionalModels = (() => {
+  try {
+    const value = JSON.parse(process.env.NEMOCLAW_FAKE_OPENAI_ADDITIONAL_MODELS || "[]");
+    return Array.isArray(value)
+      ? value.filter((entry): entry is string => typeof entry === "string")
+      : [];
+  } catch {
+    return [];
+  }
+})();
 // Optional runtime context window advertised on /v1/models, mirroring vLLM's
 // max_model_len so onboarding can probe a real endpoint's context (#6177).
 const maxModelLen = (() => {
@@ -22,10 +32,12 @@ const maxModelLen = (() => {
 })();
 const apiKey = process.env.NEMOCLAW_FAKE_OPENAI_API_KEY || "";
 const requireAuth = process.env.NEMOCLAW_FAKE_OPENAI_REQUIRE_AUTH === "1";
+const allowMissingAuth = process.env.NEMOCLAW_FAKE_OPENAI_ALLOW_MISSING_AUTH === "1";
 // Opt-in auth enforcement on GET /v1/models specifically (real vLLM launched
 // with --api-key gates it). Separate from requireAuth so existing tests, whose
 // readiness probe hits /v1/models unauthenticated, keep working. See #6177.
 const requireAuthModels = process.env.NEMOCLAW_FAKE_OPENAI_REQUIRE_AUTH_MODELS === "1";
+const llamaCppFingerprint = process.env.NEMOCLAW_FAKE_OPENAI_LLAMA_CPP_FINGERPRINT === "1";
 const chatContent = process.env.NEMOCLAW_FAKE_OPENAI_CHAT_CONTENT || "ok";
 const responseText = process.env.NEMOCLAW_FAKE_OPENAI_RESPONSE_TEXT || chatContent;
 const replyFromPrompt = process.env.NEMOCLAW_FAKE_OPENAI_REPLY_FROM_PROMPT === "1";
@@ -117,7 +129,7 @@ function sendResponseSse(res: ServerResponse, text: string): void {
 }
 
 function isAuthOk(req: IncomingMessage): boolean {
-  if (!requireAuth) return true;
+  if (!requireAuth || (allowMissingAuth && req.headers.authorization === undefined)) return true;
   return req.headers.authorization === `Bearer ${apiKey}`;
 }
 
@@ -229,6 +241,39 @@ function requestedCanaryToolCall(payload: JsonObject, raw: Buffer): JsonObject |
 const server = createServer(async (req, res) => {
   const path = requestPath(req);
 
+  if (
+    llamaCppFingerprint &&
+    req.method === "GET" &&
+    ["/health", "/props", "/metrics"].includes(path)
+  ) {
+    const authorized = isAuthOk(req);
+    recordRequest({
+      method: "GET",
+      path,
+      bodyBytes: 0,
+      auth: authorized ? "ok" : "missing",
+      authorizationSent: Boolean(req.headers.authorization),
+    });
+    if (!authorized) {
+      sendJson(res, 401, { error: { message: "missing bearer credential" } });
+    } else if (path === "/health") {
+      sendJson(res, 200, { status: "ok" });
+    } else if (path === "/props") {
+      sendJson(res, 200, {
+        model_path: "/models/fake.gguf",
+        model_alias:
+          new URL(req.url || "/props", "http://fake-openai-compatible.local").searchParams.get(
+            "model",
+          ) || model,
+        total_slots: 1,
+        default_generation_settings: { params: {} },
+      });
+    } else {
+      sendJson(res, 501, { error: { type: "not_supported_error" } });
+    }
+    return;
+  }
+
   if (req.method === "GET" && ["/v1/models", "/models"].includes(path)) {
     const modelsAuthOk = !requireAuthModels || req.headers.authorization === `Bearer ${apiKey}`;
     log(`GET ${path} auth=${modelsAuthOk ? "ok" : "missing"}`);
@@ -248,9 +293,21 @@ const server = createServer(async (req, res) => {
       sendJson(res, 401, { error: { message: "missing bearer credential" } });
       return;
     }
-    const modelEntry: JsonObject = { id: model, object: "model" };
-    if (maxModelLen !== null) modelEntry.max_model_len = maxModelLen;
-    sendJson(res, 200, { object: "list", data: [modelEntry] });
+    const entries = [model, ...additionalModels].map((servedModel) => {
+      const modelEntry: JsonObject = { id: servedModel, object: "model" };
+      if (llamaCppFingerprint) {
+        modelEntry.owned_by = "llamacpp";
+        modelEntry.meta = {
+          n_vocab: 32000,
+          n_ctx: maxModelLen ?? 8192,
+          n_ctx_train: 8192,
+          n_embd: 4096,
+        };
+      }
+      if (maxModelLen !== null) modelEntry.max_model_len = maxModelLen;
+      return modelEntry;
+    });
+    sendJson(res, 200, { object: "list", data: entries });
     return;
   }
 

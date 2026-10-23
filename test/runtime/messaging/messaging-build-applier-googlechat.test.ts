@@ -220,11 +220,41 @@ it("patches the installed official Slack bundle only after registry provenance i
   fs.mkdirSync(target, { recursive: true });
   fs.writeFileSync(
     path.join(installed, "package.json"),
-    JSON.stringify({ name: "@openclaw/slack", version: "2026.9.2" }),
+    JSON.stringify({
+      name: "@openclaw/slack",
+      version: "2026.9.2",
+      dependencies: { "@slack/bolt": "5.0.0" },
+      bundledDependencies: ["@slack/bolt"],
+    }),
+  );
+  const boltDirectory = path.join(installed, "node_modules/@slack/bolt");
+  const expressDirectory = path.join(boltDirectory, "node_modules/express");
+  fs.mkdirSync(expressDirectory, { recursive: true });
+  fs.writeFileSync(
+    path.join(boltDirectory, "package.json"),
+    JSON.stringify({
+      name: "@slack/bolt",
+      version: "5.0.0",
+      dependencies: { express: "^5.0.0" },
+      license: "MIT",
+      engines: { node: ">=20" },
+    }),
+  );
+  fs.writeFileSync(
+    path.join(expressDirectory, "package.json"),
+    JSON.stringify({
+      name: "express",
+      version: "5.2.1",
+      dependencies: { "proxy-addr": "^2.0.7" },
+      license: "MIT",
+      engines: { node: ">= 18" },
+    }),
   );
   const metadata = {
     name: "proxy-addr",
     dependencies: { forwarded: "0.2.0", "ipaddr.js": "1.9.1" },
+    license: "MIT",
+    engines: { node: ">= 0.10" },
   };
   fs.writeFileSync(
     path.join(target, "package.json"),
@@ -274,7 +304,9 @@ it("patches the installed official Slack bundle only after registry provenance i
         ...env,
         OPENCLAW_PLUGIN_INSTALL_PATH: outside,
       }),
-    ).toThrow("outside its trusted plugin root");
+    ).toThrow(
+      "OpenClaw Slack remediation requires a valid managed npm package directory and reviewed dependency graph",
+    );
     const alias = path.join(path.dirname(installed), "slack-alias");
     fs.symlinkSync(installed, alias, "dir");
     expect(() =>
@@ -282,7 +314,10 @@ it("patches the installed official Slack bundle only after registry provenance i
         ...env,
         OPENCLAW_PLUGIN_INSTALL_PATH: alias,
       }),
-    ).toThrow("outside its trusted plugin root");
+    ).toThrow(
+      "OpenClaw Slack remediation requires a valid managed npm package directory and reviewed dependency graph",
+    );
+    expect(fs.readFileSync(path.join(target, "index.js"), "utf8")).toBe(expectedContent.stdout);
     const outsideDependency = path.join(
       outside,
       "node_modules/@slack/bolt/node_modules/proxy-addr",

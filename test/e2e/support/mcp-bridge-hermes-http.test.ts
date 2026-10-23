@@ -8,7 +8,10 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ArtifactSink } from "../fixtures/artifacts.ts";
-import { captureSandboxFailureDiagnostics } from "../fixtures/sandbox-failure-diagnostics.ts";
+import {
+  captureLifecycleInstallFailureDiagnostics,
+  captureSandboxFailureDiagnostics,
+} from "../fixtures/sandbox-failure-diagnostics.ts";
 import { HostCliClient } from "../fixtures/clients/host.ts";
 import { startTestProgress } from "../fixtures/progress.ts";
 import { redactString } from "../fixtures/redaction.ts";
@@ -41,6 +44,61 @@ function httpResult(status: number, body = "", result = "") {
 }
 
 describe("Hermes MCP HTTP failure diagnostics", () => {
+  it("captures lifecycle install inventory only after failure and preserves redactions", async () => {
+    const host = {
+      command: vi.fn().mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" }),
+      openshellCommandPath: "/reviewed/openshell",
+    };
+    const runtime = {
+      command: vi.fn().mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" }),
+    } as unknown as Parameters<typeof captureLifecycleInstallFailureDiagnostics>[1];
+    const options = {
+      sandboxName: "e2e-sb-ops",
+      gatewayName: "nemoclaw",
+      artifactPrefix: "sandbox-operations-install-failure",
+      env: { OPENSHELL_GATEWAY: "nemoclaw" },
+      redactionValues: ["fixture-secret"],
+    };
+
+    await captureLifecycleInstallFailureDiagnostics(
+      host,
+      runtime,
+      { exitCode: 0, timedOut: false },
+      options,
+    );
+    expect(host.command).not.toHaveBeenCalled();
+    expect(runtime.command).not.toHaveBeenCalled();
+
+    await captureLifecycleInstallFailureDiagnostics(
+      host,
+      runtime,
+      { exitCode: 1, timedOut: false },
+      options,
+    );
+    expect(runtime.command).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        "container",
+        "ps",
+        "--all",
+        "label=openshell.ai/sandbox-name=e2e-sb-ops",
+      ]),
+      expect.objectContaining({
+        artifactName: "sandbox-operations-install-failure-container-inventory",
+        redactionValues: ["fixture-secret"],
+        timeoutMs: 30_000,
+      }),
+    );
+    expect(host.command).toHaveBeenCalledWith(
+      "/reviewed/openshell",
+      ["sandbox", "list", "-g", "nemoclaw"],
+      expect.objectContaining({
+        artifactName: "sandbox-operations-install-failure-sandbox-list",
+        redactionValues: ["fixture-secret"],
+        timeoutMs: 30_000,
+      }),
+    );
+  });
+
   it("captures gateway evidence after a timeout while preserving expected refusals", async () => {
     const command = vi.fn().mockResolvedValue({ exitCode: 0, stdout: "" });
     const host = { command, openshellCommandPath: "/reviewed/openshell" };
@@ -66,6 +124,70 @@ describe("Hermes MCP HTTP failure diagnostics", () => {
     );
     expect(command).toHaveBeenCalledTimes(3);
   });
+
+  it.each([
+    { runtimeId: "docker", expectedArgsPrefix: ["container", "ps"] },
+    { runtimeId: "podman", expectedArgsPrefix: ["--url", "unix:///fixture/podman.sock"] },
+  ])(
+    "captures install diagnostics from the caller's HOME and $runtimeId runtime",
+    async ({ runtimeId, expectedArgsPrefix }) => {
+      const command = vi.fn().mockResolvedValue({ exitCode: 0, stdout: "" });
+      const host = { command, openshellCommandPath: "/reviewed/openshell" };
+      const runtime = {
+        command: vi.fn().mockResolvedValue({ exitCode: 0, stdout: "" }),
+      } as unknown as Parameters<typeof captureLifecycleInstallFailureDiagnostics>[1];
+      const env = {
+        HOME: "/fixture/isolated-home",
+        PATH: SYSTEM_PATH,
+        OPENSHELL_GATEWAY: "isolated-gateway",
+        NEMOCLAW_GATEWAY_RUNTIME: runtimeId,
+        NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR:
+          runtimeId === "podman" ? "/fixture/gateway-state" : undefined,
+        OPENSHELL_PODMAN_SOCKET: "/fixture/podman.sock",
+        NVIDIA_API_KEY: "fixture-secret",
+        NODE_OPTIONS: "--require=/unrelated-hook.js",
+      };
+      await captureLifecycleInstallFailureDiagnostics(
+        host,
+        runtime,
+        { exitCode: 1, timedOut: false },
+        {
+          sandboxName: "isolated-sandbox",
+          gatewayName: "isolated-gateway",
+          artifactPrefix: "isolated-install",
+          env,
+          redactionValues: ["fixture-secret"],
+        },
+      );
+      expect(command).toHaveBeenCalledWith(
+        "cat",
+        [
+          runtimeId === "podman"
+            ? "/fixture/gateway-state/openshell-gateway.log"
+            : "/fixture/isolated-home/.local/state/nemoclaw/openshell-docker-gateway/openshell-gateway.log",
+        ],
+        expect.objectContaining({
+          artifactName: "isolated-install-gateway-log",
+          env: expect.objectContaining({ HOME: env.HOME }),
+        }),
+      );
+      const supervisor = command.mock.calls.find(
+        ([, , options]) => options.artifactName === "isolated-install-supervisor-logs",
+      );
+      expect(supervisor?.[2].env).toMatchObject({
+        HOME: env.HOME,
+        OPENSHELL_GATEWAY: "isolated-gateway",
+      });
+      expect(supervisor?.[2].env).not.toHaveProperty("NVIDIA_API_KEY");
+      expect(supervisor?.[2].env).not.toHaveProperty("NODE_OPTIONS");
+      const discovery = command.mock.calls.find(
+        ([, , options]) => options.artifactName === "isolated-install-container-identity",
+      );
+      expect(discovery?.[0]).toBe(runtimeId);
+      expect(discovery?.[2].env.HOME).toBe(env.HOME);
+      expect(discovery?.[1].slice(0, 2)).toEqual(expectedArgsPrefix);
+    },
+  );
 
   it.each(["restart", "remove"] as const)(
     "captures bounded supervisor logs after %s failure without requiring sandbox exec",

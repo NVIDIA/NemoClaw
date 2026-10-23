@@ -131,44 +131,164 @@ function makeInput(overrides: Partial<RebuildRecreatePhaseInput> = {}): RebuildR
   };
 }
 
+let session: Session;
+
+/** Stub an onboard session whose recreate journal has already deleted the sandbox. */
+function stubJournaledRecreateSession(): void {
+  session = onboardSession.createSession({ sandboxName: SANDBOX_NAME });
+  session.checkpoint = {
+    ...deriveCheckpointFromSession(session),
+    sandboxIdentity: decisionSelected({ name: SANDBOX_NAME, agent: "openclaw" }),
+    gatewayAuthority: decisionSelected(GATEWAY_AUTHORITY),
+    sandboxRecreate: {
+      version: 1,
+      id: recreateJournal.id,
+      revision: 3,
+      sandboxName: SANDBOX_NAME,
+      gatewayName: GATEWAY_AUTHORITY.gatewayName,
+      gatewayPort: GATEWAY_AUTHORITY.gatewayPort,
+      sourceRegistryFingerprint: "source-registry",
+      sourceLiveIdentityFingerprint: null,
+      sourceWorkload: null,
+      targetIntentFingerprint: recreateJournal.targetIntentFingerprint,
+      targetGeneration: recreateJournal.targetGeneration,
+      targetLiveIdentityFingerprint: null,
+      phase: "deleted",
+      startedAt: "2026-08-07T00:00:00.000Z",
+      updatedAt: "2026-08-07T00:00:01.000Z",
+    },
+  };
+  vi.spyOn(console, "log").mockImplementation(() => undefined);
+  vi.spyOn(console, "error").mockImplementation(() => undefined);
+  vi.spyOn(onboardSession, "loadSession").mockImplementation(() => session);
+  vi.spyOn(onboardSession, "updateSession").mockImplementation((mutator) => {
+    session = mutator(session) ?? session;
+    return session;
+  });
+}
+
+describe("rebuild recreate OpenClaw dashboard origin (#13177)", () => {
+  let previousChatUiUrl: string | undefined;
+
+  beforeEach(() => {
+    previousChatUiUrl = process.env.CHAT_UI_URL;
+    stubJournaledRecreateSession();
+  });
+
+  afterEach(() => {
+    restoreEnv("CHAT_UI_URL", previousChatUiUrl);
+    vi.restoreAllMocks();
+  });
+
+  /** Record the `CHAT_UI_URL` that the inner onboard sees while it runs. */
+  function observeInnerChatUiUrl(): () => string | undefined {
+    let observed: string | undefined = "not-called";
+    vi.spyOn(rebuildOnboardDependencies, "onboard").mockImplementation(async () => {
+      observed = process.env.CHAT_UI_URL;
+    });
+    return () => observed;
+  }
+
+  it("replays the recorded origin instead of the rebuild environment's CHAT_UI_URL", async () => {
+    process.env.CHAT_UI_URL = "https://ambient.example.test";
+    const observed = observeInnerChatUiUrl();
+
+    await expect(
+      runRebuildRecreatePhase(
+        makeInput({
+          sandboxEntry: {
+            name: SANDBOX_NAME,
+            agent: "openclaw",
+            dashboardExternalUrl: "https://launchpad.example.test:18789",
+          },
+          recreateOptions: { ...recreateOptions, controlUiPort: 18_790 },
+        }),
+      ),
+    ).resolves.toBe(true);
+
+    expect(observed()).toBe("https://launchpad.example.test:18790");
+    expect(vi.mocked(console.log)).toHaveBeenCalledWith(
+      expect.stringContaining("Ignoring CHAT_UI_URL='https://ambient.example.test'"),
+    );
+    expect(process.env.CHAT_UI_URL).toBe("https://ambient.example.test");
+  });
+
+  it("replays the managed replacement profile's origin for a sandbox without a registry record", async () => {
+    const observed = observeInnerChatUiUrl();
+    const managedWorkloadRebuild = {
+      replacementProfile: {
+        profile: {
+          dashboard: {
+            agent: "openclaw",
+            mode: "remote",
+            url: "https://launchpad.example.test:18790",
+            port: 18_790,
+            bindAddress: "127.0.0.1",
+            wslExposure: false,
+          },
+        },
+      },
+    } as unknown as NonNullable<RebuildRecreateOnboardOpts["managedWorkloadRebuild"]>;
+
+    await expect(
+      runRebuildRecreatePhase(
+        makeInput({
+          recreateOptions: { ...recreateOptions, controlUiPort: 18_790, managedWorkloadRebuild },
+        }),
+      ),
+    ).resolves.toBe(true);
+
+    expect(observed()).toBe("https://launchpad.example.test:18790");
+  });
+
+  it("recreates a sandbox without a recorded origin on loopback", async () => {
+    process.env.CHAT_UI_URL = "https://ambient.example.test";
+    const observed = observeInnerChatUiUrl();
+
+    await expect(
+      runRebuildRecreatePhase(
+        makeInput({ recreateOptions: { ...recreateOptions, controlUiPort: 18_790 } }),
+      ),
+    ).resolves.toBe(true);
+
+    expect(observed()).toBe("http://127.0.0.1:18790");
+    expect(process.env.CHAT_UI_URL).toBe("https://ambient.example.test");
+  });
+
+  it("restores the ambient CHAT_UI_URL after the inner onboard fails", async () => {
+    process.env.CHAT_UI_URL = "https://ambient.example.test";
+    let observed: string | undefined;
+    vi.spyOn(rebuildOnboardDependencies, "onboard").mockImplementation(async () => {
+      observed = process.env.CHAT_UI_URL;
+      throw new Error("inner onboard failed");
+    });
+
+    await expect(
+      runRebuildRecreatePhase(
+        makeInput({
+          sandboxEntry: {
+            name: SANDBOX_NAME,
+            agent: "openclaw",
+            dashboardExternalUrl: "https://launchpad.example.test:18789",
+          },
+          recreateOptions: { ...recreateOptions, controlUiPort: 18_790 },
+        }),
+      ),
+    ).rejects.toThrow("bail: Recreate failed");
+
+    expect(observed).toBe("https://launchpad.example.test:18790");
+    expect(process.env.CHAT_UI_URL).toBe("https://ambient.example.test");
+  });
+});
+
 describe("rebuild recreate compatible-endpoint reasoning handoff (#7940)", () => {
-  let session: Session;
   let previousReasoning: string | undefined;
   let previousReasoningEffort: string | undefined;
 
   beforeEach(() => {
     previousReasoning = process.env.NEMOCLAW_REASONING;
     previousReasoningEffort = process.env.NEMOCLAW_REASONING_EFFORT;
-    session = onboardSession.createSession({ sandboxName: SANDBOX_NAME });
-    session.checkpoint = {
-      ...deriveCheckpointFromSession(session),
-      sandboxIdentity: decisionSelected({ name: SANDBOX_NAME, agent: "openclaw" }),
-      gatewayAuthority: decisionSelected(GATEWAY_AUTHORITY),
-      sandboxRecreate: {
-        version: 1,
-        id: recreateJournal.id,
-        revision: 3,
-        sandboxName: SANDBOX_NAME,
-        gatewayName: GATEWAY_AUTHORITY.gatewayName,
-        gatewayPort: GATEWAY_AUTHORITY.gatewayPort,
-        sourceRegistryFingerprint: "source-registry",
-        sourceLiveIdentityFingerprint: null,
-        sourceWorkload: null,
-        targetIntentFingerprint: recreateJournal.targetIntentFingerprint,
-        targetGeneration: recreateJournal.targetGeneration,
-        targetLiveIdentityFingerprint: null,
-        phase: "deleted",
-        startedAt: "2026-08-07T00:00:00.000Z",
-        updatedAt: "2026-08-07T00:00:01.000Z",
-      },
-    };
-    vi.spyOn(console, "log").mockImplementation(() => undefined);
-    vi.spyOn(console, "error").mockImplementation(() => undefined);
-    vi.spyOn(onboardSession, "loadSession").mockImplementation(() => session);
-    vi.spyOn(onboardSession, "updateSession").mockImplementation((mutator) => {
-      session = mutator(session) ?? session;
-      return session;
-    });
+    stubJournaledRecreateSession();
   });
 
   afterEach(() => {

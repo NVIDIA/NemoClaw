@@ -11,6 +11,7 @@ import { buildMcpCredentialRevisionObservationCommand } from "./mcp-bridge";
 import {
   assertNoAttachedProviderCredentialCollisions,
   assertNoRegisteredProviderCredentialCollisions,
+  createMcpProviderAdapterBoundary,
   providerMatchesCredential,
   providerMatchesManagedCredential,
 } from "./mcp-bridge-provider-inspection";
@@ -194,7 +195,9 @@ describe("OpenShell MCP provider state", () => {
     const commandFamilies = new Set<string>();
     let providerExists = false;
     let providerAttached = false;
+    let profileChanged = false;
     let resourceVersion = 0;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const providerOutput = () =>
       providerMetadataOutput(
         "alpha-mcp-fake",
@@ -228,7 +231,7 @@ describe("OpenShell MCP provider state", () => {
           commandFamilies.add("profile");
           return {
             status: 0,
-            stdout: profileOutput(args[3], args[3] === "openai"),
+            stdout: profileOutput(args[3], profileChanged),
             stderr: "",
           };
         case "provider get alpha-mcp-fake":
@@ -239,6 +242,7 @@ describe("OpenShell MCP provider state", () => {
         case "provider create --name":
           commandFamilies.add("create");
           providerExists = true;
+          profileChanged = true;
           resourceVersion = 1;
           return { status: 0, stdout: "Created", stderr: "" };
         case "provider update alpha-mcp-fake":
@@ -284,11 +288,18 @@ describe("OpenShell MCP provider state", () => {
     });
     providerCommand.setProviderCommandRuntimeHooksForTest({ runOpenshell: runOpenshell as never });
 
-    await ensureMcpBridgeProviderProfile(runtimeSelection);
+    const providerAdapter = createMcpProviderAdapterBoundary(runtimeSelection).adapter;
+    await ensureMcpBridgeProviderProfile(runtimeSelection, providerAdapter);
     const created = await upsertMcpProvider("alpha-mcp-fake", [{ name: "EXPECTED_TOKEN" }], {
       allowExisting: false,
       runtimeSelection,
+      providerAdapter,
     });
+    expect(warn).toHaveBeenCalledOnce();
+    expect(warn.mock.calls[0]?.[0]).toContain(
+      "cannot confirm which definition was used at bind time",
+    );
+    expect(warn.mock.calls[0]?.[0]).not.toContain("host-only-secret");
     const entry: McpSourceEntry = {
       server: "fake",
       agent: "openclaw",
@@ -299,7 +310,9 @@ describe("OpenShell MCP provider state", () => {
       providerId: created.inspection.id ?? undefined,
       policyName: "mcp-bridge-fake",
     };
-    await attachProvider("alpha", entry, runtimeSelection);
+    await attachProvider("alpha", entry, runtimeSelection, providerAdapter);
+    expect(warn).toHaveBeenCalledTimes(2);
+    expect(warn.mock.calls[1]?.[0]).not.toContain("host-only-secret");
     await refreshMcpProviderEnvironment(entry, runtimeSelection);
     await expect(detachProvider("alpha", entry, { runtimeSelection })).resolves.toBe("detached");
 

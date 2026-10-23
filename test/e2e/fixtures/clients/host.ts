@@ -29,6 +29,10 @@ export interface ForwardCleanupOptions extends ShellProbeRunOptions {
   sandboxName?: string;
 }
 
+export interface SandboxCleanupOptions extends ShellProbeRunOptions {
+  preserveGatewayRegistration?: boolean;
+}
+
 export interface ForwardListenerEvidence {
   valid: boolean;
   pid?: number;
@@ -50,7 +54,7 @@ async function forwardListenerAuthority(env: NodeJS.ProcessEnv): Promise<{
 }> {
   const [ports, gatewayEnv, gatewayIdentity, gatewayManagement] = await Promise.all([
     import("../../../../src/lib/core/ports.ts"),
-    import("../../../../src/lib/onboard/docker-driver-gateway-env.ts"),
+    import("../../../../src/lib/core/gateway-address.ts"),
     import("../../../../src/lib/onboard/gateway-binding/identity.ts"),
     import("../../../../src/lib/onboard/gateway-management.ts"),
   ]);
@@ -128,6 +132,33 @@ export class HostCliClient {
       });
     }
     return result;
+  }
+
+  async recordSandboxContainerDiscoveryOnFailure(
+    sandboxName: string,
+    exitCode: number | null,
+    redactionValues: string[] = [],
+  ): Promise<void> {
+    if (exitCode === 0 || !/^[a-z][a-z0-9-]*$/u.test(sandboxName)) return;
+    const format = "{{.ID}}\t{{.Names}}\t{{.Status}}";
+    const filters = [
+      ["label", `label=openshell.ai/sandbox-name=${sandboxName}`],
+      ["name", `name=${sandboxName}`],
+    ] as const;
+    await Promise.allSettled(
+      filters.map(async ([kind, filter]) => {
+        await this.command(
+          "docker",
+          ["ps", "--all", "--no-trunc", "--filter", filter, "--format", format],
+          {
+            artifactName: `sandbox-container-discovery-${kind}`,
+            captureLimitBytes: 8_192,
+            redactionValues,
+            timeoutMs: 5_000,
+          },
+        );
+      }),
+    );
   }
 
   async isCommandAvailable(command: string, options: ShellProbeRunOptions = {}): Promise<boolean> {
@@ -312,17 +343,20 @@ export class HostCliClient {
 
   async destroySandbox(
     sandboxName: string,
-    options: ShellProbeRunOptions = {},
+    options: SandboxCleanupOptions = {},
   ): Promise<ShellProbeResult> {
-    return await this.nemoclaw([sandboxName, "destroy", "--yes"], {
+    const { preserveGatewayRegistration = false, ...probeOptions } = options;
+    const args = [sandboxName, "destroy", "--yes"];
+    if (preserveGatewayRegistration) args.push("--no-cleanup-gateway");
+    return await this.nemoclaw(args, {
       artifactName: `destroy-sandbox-${artifactLabel(sandboxName)}`,
       env: buildAvailabilityProbeEnv(),
       timeoutMs: 15 * 60_000,
-      ...options,
+      ...probeOptions,
     });
   }
 
-  async cleanupSandbox(sandboxName: string, options: ShellProbeRunOptions = {}): Promise<void> {
+  async cleanupSandbox(sandboxName: string, options: SandboxCleanupOptions = {}): Promise<void> {
     const result = await this.destroySandbox(sandboxName, options);
     if (result.exitCode === 0) return;
     const text = resultText(result);

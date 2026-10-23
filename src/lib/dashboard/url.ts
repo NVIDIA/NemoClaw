@@ -90,3 +90,25 @@ export function resolveExternalDashboardUrl(chatUiUrl: string | null | undefined
   }
   return normalized;
 }
+
+/**
+ * Resolve the dashboard URL that a rebuild replays for a sandbox (#13177).
+ *
+ * The registry's `dashboardExternalUrl` is the authoritative record:
+ * `undefined` means onboarding never recorded one, so `fallbackUrl` (the
+ * previous startup profile's URL) applies; `null` means onboarding cleared it.
+ * The resolved external origin is rebound to the replacement's dashboard port.
+ * Without an external origin, the loopback URL for that port is returned.
+ */
+export function resolveRecordedDashboardUrlForPort(input: {
+  readonly recordedExternalUrl: string | null | undefined;
+  readonly fallbackUrl?: string | null;
+  readonly port: number;
+}): string {
+  const recorded =
+    input.recordedExternalUrl === undefined ? input.fallbackUrl : input.recordedExternalUrl;
+  return (
+    resolveExternalDashboardUrlForPort(recorded, input.port) ??
+    `http://127.0.0.1:${String(input.port)}`
+  );
+}

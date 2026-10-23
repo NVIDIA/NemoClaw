@@ -153,8 +153,10 @@ Hermes exposes an OpenAI-compatible API on the forwarded Hermes port and can opt
 Do not publish those endpoints on shared or public networks unless you put them behind your own access controls.
 
 NemoClaw keeps provider credentials in OpenShell.
-NVIDIA Endpoints traffic uses the native NVIDIA endpoint through the sandbox-attached OpenShell provider.
-Other managed inference providers continue to use `inference.local`.
+NVIDIA Endpoints and supported fixed hosted providers use native endpoints through sandbox-attached OpenShell providers.
+New Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible selections also use sandbox-attached providers and scoped credential references.
+Owned Local NVIDIA NIM, nonqualifying custom endpoints, and retained legacy shared routes continue to use `inference.local`.
+Live qualification of the Hermes native local lifecycle is pending.
 Generated Hermes runtime files use OpenShell resolver placeholders for managed-tool and messaging credentials.
 
 Hermes startup rejects raw secret-shaped values in sandbox-visible environment or config fields, while allowing empty values, migration sentinels, OpenShell resolver placeholders, and expected Slack placeholder forms.

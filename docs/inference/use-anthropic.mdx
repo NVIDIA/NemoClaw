@@ -10,7 +10,8 @@ content:
   type: "how_to"
 ---
 The Anthropic provider routes supported agents to the native Anthropic Messages API through OpenShell.
-The provider uses the `anthropic-messages` protocol.
+The agent calls `https://api.anthropic.com` with the `anthropic-messages` protocol through a sandbox-attached OpenShell provider.
+OpenShell injects the credential; the sandbox receives only a placeholder.
 
 ## Credential
 

@@ -1,6 +1,22 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  normalizeNativeLocalProviderAttachment,
+  type NativeLocalProviderAttachment,
+} from "../../inference/native-local/contract";
+import { verifyNativeLocalProviderAttachment } from "../../inference/native-local/profile";
+import type { SandboxEntry } from "../../state/registry/types";
+import { recordedNativeProviderAttachment } from "../../inference/native-provider/recorded-selection";
+import { hostedNativeProvider } from "../../inference/native-provider/hosted";
+import { hostedNativeProviderForAttachment } from "../../inference/native-provider/hosted-attachment";
+import {
+  fixedNativeProvider,
+  fixedNativeProviderForAttachment,
+} from "../../inference/native-provider/fixed";
+import { nativeProviderLifecycle } from "../../inference/native-provider";
+import type { NativeProviderAttachment } from "../../inference/native-provider/contract";
+import { NATIVE_NVIDIA_AUTH_HEADER_SCRIPT } from "../../inference/native-nvidia/contract";
 import { buildSandboxCommandEnvironment } from "../../adapters/sandbox/command-transport";
 import type { OpenShellSandboxBufferedCommandExecutor } from "../../adapters/openshell/sandbox-command";
 import { createCliOpenShellSandboxCommandExecutor } from "../../adapters/openshell/sandbox-command-cli";
@@ -10,7 +26,6 @@ import * as agentRuntime from "../../agent/runtime";
 import { REPOSITORY_ROOT } from "../../core/repository-root";
 import type { ProviderHealthStatus } from "../../inference/health";
 import {
-  isNativeNvidiaProvider,
   NVIDIA_HOSTED_NATIVE_ENDPOINT,
   verifyNativeNvidiaProviderAttachment,
   type NativeNvidiaProviderAttachment,
@@ -60,6 +75,53 @@ export async function verifyNativeNvidiaStatusAttachment(input: {
   });
 }
 
+export type VerifyNativeLocalStatusAttachment = (input: {
+  gatewayName: string;
+  sandboxName: string;
+  expected: NativeLocalProviderAttachment;
+}) => Promise<void>;
+
+export const verifyNativeLocalStatusAttachment: VerifyNativeLocalStatusAttachment = async (
+  input,
+) => {
+  if (input.expected.gatewayName !== input.gatewayName)
+    throw new Error("Native local provider gateway authority changed.");
+  await verifyNativeLocalProviderAttachment({
+    adapter: createCliOpenShellProviderAdapter(),
+    sandboxName: input.sandboxName,
+    expected: input.expected,
+  });
+};
+export type VerifyNativeHostedStatusAttachment = (input: {
+  gatewayName: string;
+  sandboxName: string;
+  expected: NativeProviderAttachment;
+}) => Promise<void>;
+
+export async function verifyNativeHostedStatusAttachment(input: {
+  gatewayName: string;
+  sandboxName: string;
+  expected: NativeProviderAttachment;
+  verify?: VerifyNativeHostedStatusAttachment;
+}): Promise<void> {
+  if (input.verify) {
+    await input.verify({
+      gatewayName: input.gatewayName,
+      sandboxName: input.sandboxName,
+      expected: input.expected,
+    });
+    return;
+  }
+  await nativeProviderLifecycle(
+    fixedNativeProviderForAttachment(input.expected),
+  ).verifyNativeProviderAttachment({
+    adapter: createCliOpenShellProviderAdapter(),
+    target: { kind: "named", gatewayName: input.gatewayName },
+    sandboxName: input.sandboxName,
+    expected: input.expected,
+  });
+}
+
 export type SandboxInferenceRouteHealth = {
   ok: boolean;
   endpoint: string;
@@ -69,7 +131,7 @@ export type SandboxInferenceRouteHealth = {
 
 const NATIVE_NVIDIA_MODELS_ENDPOINT = `${NVIDIA_HOSTED_NATIVE_ENDPOINT}/models`;
 const NATIVE_NVIDIA_MODELS_PROBE_SCRIPT = [
-  "AUTH_HEADER=$(printf 'Authorization: %s %s' 'Bearer' 'nemoclaw-openshell-provider')",
+  NATIVE_NVIDIA_AUTH_HEADER_SCRIPT,
   `HTTP_CODE=$(/usr/bin/curl -q -s -o /dev/null -w '%{http_code}' -H "$AUTH_HEADER" --connect-timeout 3 --max-time 15 ${NATIVE_NVIDIA_MODELS_ENDPOINT} 2>/dev/null) || HTTP_CODE=000`,
   'case "$HTTP_CODE" in 2[0-9][0-9]) printf \'OK %s\' "$HTTP_CODE" ;; *) printf \'BROKEN %s\' "$HTTP_CODE" ;; esac',
 ].join("; ");
@@ -334,6 +396,11 @@ function buildInvokedRouteHealth(
 export type SandboxInferenceRouteHealthContext = {
   provider: string | null;
   nativeNvidia?: boolean;
+  nativeLocalEndpoint?: string;
+  nativeProvider?: boolean;
+  nativeEndpointUrl?: string;
+  model?: string | null;
+  preferredInferenceApi?: string | null;
 };
 
 // A models route that answers but is credential-gated (401/403) stays
@@ -366,11 +433,46 @@ export function buildSandboxInferenceRouteHealth(
   invocation: SandboxInferenceInvocationResult | null,
   context: SandboxInferenceRouteHealthContext,
 ): ProviderHealthStatus {
-  if (context.nativeNvidia && isNativeNvidiaProvider(context.provider)) {
+  if (context.nativeLocalEndpoint) {
+    return {
+      ok: invocation?.ok === true,
+      probed: invocation !== null,
+      providerLabel: "Native local inference",
+      endpoint:
+        (invocation?.ok === false && invocation.endpoint) ||
+        `${context.nativeLocalEndpoint}/chat/completions`,
+      detail: invocation?.ok
+        ? "The attached provider served a native local inference request."
+        : invocation
+          ? `Native local inference failed: ${invocation.detail}`
+          : "Native local inference could not be verified inside the sandbox.",
+      ...(invocation?.ok
+        ? {}
+        : {
+            failureLabel: classifyInferenceInvocationFailureLabel(invocation?.httpStatus ?? null),
+          }),
+      subprobes: providerHealthDiagnostics(providerHealth, invocation?.ok === true),
+    };
+  }
+  const definition =
+    fixedNativeProvider(context.provider) ??
+    (context.nativeProvider &&
+    (context.provider === "compatible-endpoint" ||
+      context.provider === "compatible-anthropic-endpoint")
+      ? { logicalProvider: context.provider, label: "custom hosted" }
+      : undefined);
+  if ((context.nativeProvider || context.nativeNvidia) && definition) {
     const endpoint =
       invocation && !invocation.ok && invocation.endpoint
         ? invocation.endpoint
-        : `${NVIDIA_HOSTED_NATIVE_ENDPOINT}/chat/completions`;
+        : resolveSandboxInferenceInvocationEndpoint({
+            sandboxName: "",
+            provider: definition.logicalProvider,
+            model: context.model ?? "",
+            preferredInferenceApi: context.preferredInferenceApi ?? null,
+            nativeProvider: true,
+            nativeEndpointUrl: context.nativeEndpointUrl,
+          });
     const diagnostics = providerHealthDiagnostics(providerHealth, Boolean(invocation?.ok));
     const nativeHealth: ProviderHealthStatus = invocation?.ok
       ? {
@@ -378,7 +480,7 @@ export function buildSandboxInferenceRouteHealth(
           probed: true,
           providerLabel: "Inference route",
           endpoint,
-          detail: "The attached OpenShell provider served a native NVIDIA inference request.",
+          detail: `The attached OpenShell provider served a native ${definition.label} inference request.`,
         }
       : {
           ok: false,
@@ -386,8 +488,8 @@ export function buildSandboxInferenceRouteHealth(
           providerLabel: "Inference route",
           endpoint,
           detail: invocation
-            ? `The native NVIDIA route did not serve an inference request: ${invocation.detail}.`
-            : "Could not probe the native NVIDIA route from inside the sandbox. Recreate legacy beta sandboxes before using this route.",
+            ? `The native ${definition.label} route did not serve an inference request: ${invocation.detail}.`
+            : `Could not probe the native ${definition.label} route from inside the sandbox. Recreate legacy beta sandboxes before using this route.`,
           failureLabel: classifyInferenceInvocationFailureLabel(invocation?.httpStatus ?? null),
         };
     return diagnostics.length > 0 ? { ...nativeHealth, subprobes: diagnostics } : nativeHealth;
@@ -442,6 +544,13 @@ export function buildSandboxInferenceRouteHealth(
       detail: `Could not probe ${endpoint} from inside the sandbox.`,
     };
   }
+  if (
+    !routeHealth.ok &&
+    gateway?.httpStatus === 0 &&
+    new URL(endpoint).hostname === "inference.local"
+  )
+    routeHealth.detail +=
+      " If this legacy route is no longer available, recreate the sandbox to use native inference.";
   const subprobes = [...(routeHealth.subprobes ?? []), ...diagnostics];
   return subprobes.length > 0 ? { ...routeHealth, subprobes } : routeHealth;
 }
@@ -465,4 +574,35 @@ export async function runSandboxInferenceInvocationProbe(
       endpoint: resolveSandboxInferenceInvocationEndpoint(input),
     };
   }
+}
+
+export function readNativeStatusSelection(entry: SandboxEntry | null | undefined) {
+  let attachment: NativeProviderAttachment | undefined;
+  let failure: string | null = null;
+  try {
+    if (entry?.nativeLocalProviderAttachment !== undefined) {
+      attachment = normalizeNativeLocalProviderAttachment(entry.nativeLocalProviderAttachment);
+      if (!attachment)
+        failure =
+          "Recorded native local provider ownership is invalid; no inference request was sent.";
+    } else {
+      attachment = entry ? recordedNativeProviderAttachment(entry) : undefined;
+    }
+  } catch {
+    failure = "Recorded native provider ownership is invalid; no inference request was sent.";
+  }
+  const local = entry?.nativeLocalProviderAttachment !== undefined;
+  const definition = local
+    ? null
+    : attachment
+      ? hostedNativeProviderForAttachment(attachment)
+      : hostedNativeProvider(entry?.provider);
+  return {
+    attachment,
+    failure,
+    label: local ? "local" : (definition?.label ?? "NVIDIA"),
+    endpoint: local
+      ? (attachment?.endpointUrl ?? "")
+      : (definition?.endpoint ?? NVIDIA_HOSTED_NATIVE_ENDPOINT),
+  };
 }

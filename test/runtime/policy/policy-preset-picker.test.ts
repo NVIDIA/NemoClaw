@@ -60,7 +60,13 @@ async function runSelectionPrompt(
   const closeListeners: Array<() => void> = [];
   const close = vi.fn(() => closeListeners.forEach((listener) => listener()));
   const createInterface = vi.spyOn(readline, "createInterface").mockImplementation((options) => {
-    expect(options).toEqual({ input: process.stdin, output: process.stderr });
+    // `terminal` follows stdin so Ctrl-C still reaches the picker when the
+    // prompt output is captured (#12167).
+    expect(options).toEqual({
+      input: process.stdin,
+      output: process.stderr,
+      terminal: process.stdin.isTTY === true,
+    });
     return {
       question: (question: string, callback: (answer: string) => void) => {
         process.stderr.write(question);

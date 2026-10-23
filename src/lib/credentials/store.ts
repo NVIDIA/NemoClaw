@@ -11,11 +11,16 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import readline from "node:readline";
 
 import { isErrnoException } from "../core/errno";
+import {
+  cancelPromptWithPendingEof,
+  pendingStdinEofError,
+  takePendingStdinEof,
+} from "../core/pending-stdin-eof";
 import { GATEWAY_PORT } from "../core/ports";
 import { createPromptActivityCleanup } from "../core/prompt-activity";
+import { createStdinPromptInterface, raisePromptInterrupt } from "../core/prompt-terminal";
 import { listMessagingCredentialMetadata } from "../messaging/channels";
 import { rejectSymlinksOnPath } from "../state/config-io";
 import { nemoclawStateRoot } from "../state/state-root";
@@ -626,6 +631,17 @@ export function removeLegacyCredentialsFileIfEmpty(): boolean {
  * rejects with `code: "SIGINT"` on Ctrl-C.
  */
 export function promptSecret(question: string, maskCap?: number): Promise<string> {
+  // A Ctrl-D typed before this prompt started would otherwise be dropped by
+  // the raw-mode switch below and the read would never settle (#12169).
+  const pending = takePendingStdinEof();
+  if (pending === false) return readSecretAnswer(question, maskCap);
+  return pending.then((ended) => {
+    if (ended) cancelPromptWithPendingEof(question);
+    return readSecretAnswer(question, maskCap);
+  });
+}
+
+function readSecretAnswer(question: string, maskCap?: number): Promise<string> {
   return new Promise((resolve, reject) => {
     const input = process.stdin;
     const output = process.stderr;
@@ -677,7 +693,7 @@ export function promptSecret(question: string, maskCap?: number): Promise<string
     }
 
     function onInputClosed() {
-      rejectPrompt(Object.assign(new Error("Prompt closed before input"), { code: "EOF" }));
+      rejectPrompt(pendingStdinEofError());
     }
 
     // With maskCap set, cap the asterisks and add an "(and N more characters)"
@@ -728,6 +744,20 @@ export function promptSecret(question: string, maskCap?: number): Promise<string
         if (ch === "\u0003") {
           rejectPrompt(Object.assign(new Error("Prompt interrupted"), { code: "SIGINT" }));
           return;
+        }
+
+        // Raw mode suppresses the terminal's own end-of-file handling, so the
+        // masked reader has to recognise Ctrl-D itself or the key does
+        // nothing here while it cancels every other prompt (#12169). readline
+        // ends only on an empty line and ignores the key once an answer is
+        // typed; a half-entered secret keeps that behaviour rather than
+        // discarding the characters the user already masked.
+        if (ch === "\u0004") {
+          if (answer.length === 0) {
+            onInputClosed();
+            return;
+          }
+          continue;
         }
 
         if (ch.charCodeAt(0) === 0x17) {
@@ -800,11 +830,37 @@ export function isSecureCredentialPromptAvailable(
 /**
  * Prompt the user on stderr and resolve to their trimmed answer. Pass
  * `{ secret: true }` to mask input on a TTY (falls back to plain readline
- * when stdin/stderr is non-interactive, e.g. in CI).
+ * when stdin is non-interactive, e.g. in CI).
+ *
+ * A TTY stdin alone selects the masked reader. The readline fallback keys
+ * its terminal mode off stdin so Ctrl-C keeps working when stderr is
+ * captured, and terminal mode echoes what is typed — which would write the
+ * secret itself into the redirected stderr. The masked reader only ever
+ * writes asterisks, and it needs nothing from stderr but a writable stream.
  */
 export function prompt(
   question: string,
   opts: { secret?: boolean; maskCap?: number } = {},
+): Promise<string> {
+  // Re-attach stdin before the pending-input window: takePendingStdinEof()
+  // reads the terminal, and a detached handle would not deliver that read.
+  if (typeof process.stdin.ref === "function") {
+    process.stdin.ref();
+  }
+  // Cancellation that reached the terminal between questions belongs to this
+  // prompt: readline would drop it when it switches the TTY to raw mode and
+  // then wait forever for an answer (#12169).
+  const pending = takePendingStdinEof();
+  if (pending === false) return askQuestion(question, opts);
+  return pending.then((ended) => {
+    if (ended) cancelPromptWithPendingEof(question);
+    return askQuestion(question, opts);
+  });
+}
+
+function askQuestion(
+  question: string,
+  opts: { secret?: boolean; maskCap?: number },
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     // Re-attach stdin to the event loop before any prompt path. unref() in
@@ -815,21 +871,26 @@ export function prompt(
     if (typeof process.stdin.ref === "function") {
       process.stdin.ref();
     }
-    const silent = opts.secret === true && isSecureCredentialPromptAvailable();
+    // A TTY stdin alone selects the masked reader: it only ever writes
+    // asterisks, so it stays safe when stderr is captured, where readline's
+    // stdin-keyed terminal mode would echo the secret into the redirected
+    // stream. `isSecureCredentialPromptAvailable()` still gates the callers
+    // that refuse to run at all without an interactive stderr.
+    const silent = opts.secret === true && process.stdin.isTTY === true;
     if (silent) {
-      promptSecret(question, opts.maskCap)
+      readSecretAnswer(question, opts.maskCap)
         .then(resolve)
         .catch((error: NodeJS.ErrnoException) => {
           if (error && error.code === "SIGINT") {
             reject(error);
-            process.kill(process.pid, "SIGINT");
+            raisePromptInterrupt();
             return;
           }
           reject(error);
         });
       return;
     }
-    const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
+    const rl = createStdinPromptInterface();
     let finished = false;
 
     const cleanup = createPromptActivityCleanup(() => {
@@ -864,7 +925,7 @@ export function prompt(
       rl.on("SIGINT", () => {
         const error = Object.assign(new Error("Prompt interrupted"), { code: "SIGINT" });
         rejectPrompt(error);
-        process.kill(process.pid, "SIGINT");
+        raisePromptInterrupt();
       });
       // Treat readline closing before the question is answered as cancellation.
       // When stdin reaches EOF (e.g. `nemoclaw onboard ... < /dev/null`), the
@@ -874,7 +935,7 @@ export function prompt(
       // post-answer close is ignored and only a premature EOF rejects here.
       rl.on("close", () => {
         if (finished) return;
-        rejectPrompt(Object.assign(new Error("Prompt closed before input"), { code: "EOF" }));
+        rejectPrompt(pendingStdinEofError());
       });
       rl.question(question, (answer) => {
         resolvePrompt(answer.trim());

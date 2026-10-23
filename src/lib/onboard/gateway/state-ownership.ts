@@ -1,10 +1,22 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import os from "node:os";
 import path from "node:path";
 
+import { dockerContextIsDefaultFromBuild } from "../../adapters/docker/client-isolation";
+import { dockerRun } from "../../adapters/docker/run";
+import {
+  parseRetainedSandboxCreateAuthority,
+  type RetainedSandboxCreateAuthority,
+} from "../../state/onboard-session/retained-sandbox-recovery";
+import { resolveGatewayStateDirForPort } from "./state-dir";
+
 import { readDockerDriverGatewayProcessEnvironment } from "../docker-driver-gateway-process-identity";
-import { HOST_GATEWAY_PGREP_PATTERN } from "../host-gateway-process";
+import {
+  HOST_GATEWAY_PGREP_PATTERN,
+  resolveOwnedHostGatewayRuntimeProviderId,
+} from "../host-gateway-process";
 import {
   NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV,
   processEnvironmentUsesSelectedGatewayState,
@@ -112,4 +124,52 @@ export function createDockerDriverGatewayStateOwnership(
   }
 
   return { isDockerDriverGatewayPidUsingSelectedState, isDockerDriverGatewayStateInUse };
+}
+
+/** Observe the same native gateway and daemon authority for create and retained recovery. */
+export function captureNativeDockerRecoveryAuthority(
+  gatewayName: string,
+  gatewayPort: number,
+  reservationSessionId: string,
+): RetainedSandboxCreateAuthority | undefined {
+  if (process.platform !== "linux") return undefined;
+  const gatewayStateDir = resolveGatewayStateDirForPort({
+    configured: process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR,
+    home: os.homedir(),
+    port: gatewayPort,
+  });
+  const ownedRuntime = () =>
+    resolveOwnedHostGatewayRuntimeProviderId({
+      gatewayName,
+      gatewayPort,
+      stateDir: gatewayStateDir,
+      requireDefaultDockerDaemon: true,
+    });
+  if (ownedRuntime() !== "docker") return undefined;
+  if (
+    process.env.DOCKER_HOST?.trim() !== "unix:///var/run/docker.sock" &&
+    !dockerContextIsDefaultFromBuild(process.env)
+  )
+    return undefined;
+  const result = dockerRun(["--context", "default", "info", "--format", "{{.ID}}"], {
+    ignoreError: true,
+    suppressOutput: true,
+    timeout: 5_000,
+  });
+  const authority = parseRetainedSandboxCreateAuthority({
+    schemaVersion: 1,
+    runtime: "native-linux-default-docker",
+    reservationSessionId,
+    gatewayStateDir,
+    daemonId: String(result.stdout ?? "").trim(),
+  });
+  if (
+    result.status !== 0 ||
+    String(result.stderr ?? "").trim() ||
+    !authority ||
+    ownedRuntime() !== "docker"
+  ) {
+    throw new Error("Cannot establish the owned Docker daemon for retained create recovery.");
+  }
+  return authority;
 }

@@ -478,6 +478,17 @@ describe("credentials oclif commands", () => {
             timeout: 30_000,
           },
         },
+        {
+          args: ["provider", "profile", "-g", "nemoclaw", "export", "tavily", "--output", "json"],
+          opts: {
+            env: expect.any(Object),
+            ignoreError: true,
+            replaceEnv: true,
+            stdio: ["ignore", "pipe", "pipe"],
+            suppressOutput: true,
+            timeout: 30_000,
+          },
+        },
       ]);
       expect(calls[0]?.opts?.env?.TAVILY_API_KEY).toBeUndefined();
       expect(calls[1]?.opts?.env?.UNRELATED_API_KEY).toBeUndefined();

@@ -7,8 +7,22 @@ import {
   exportLiveSource,
   expectExportRefusal,
 } from "../../../../test/support/config-export-harness";
+import fs from "node:fs";
+import {
+  HOSTED_NATIVE_PROVIDERS,
+  type HostedProviderDefinition,
+} from "../../inference/native-provider/hosted";
+import { nativeProviderLifecycle } from "../../inference/native-provider";
+import { BEDROCK_RUNTIME_ADAPTER_OPENAI_BASE_URL } from "../../inference/bedrock-runtime";
+import {
+  customNativeProvider,
+  boundCustomNativeProfile,
+} from "../../inference/native-provider/custom";
+import { parseCheckedInProviderProfileContract } from "../openshell/provider-profile";
+import { resolveManagedStartupInferenceRoute } from "../../inference/gateway/route-contract";
+import { getSandboxEntryInference } from "../../state/registry-entry-view";
 import { createHash } from "node:crypto";
-import { describe, expect, it, vi } from "vitest";
+import { assert, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 import {
   managedBraveProfile,
@@ -144,6 +158,134 @@ function mockNativeNvidiaSource(profileWorkspace = "default") {
       },
     },
   });
+}
+
+function mockNativeHostedSource(definition: HostedProviderDefinition) {
+  const route = resolveManagedStartupInferenceRoute(
+    "openclaw",
+    definition.logicalProvider,
+    "model-a",
+    definition.api,
+    true,
+    definition.endpointUrl,
+  );
+  const startup = buildManagedStartupProfile({
+    ...startupInput,
+    inference: {
+      ...startupInput.inference,
+      routeProvider: route.providerKey,
+      upstreamProvider: definition.logicalProvider,
+      routedBaseUrl: route.inferenceBaseUrl,
+      upstreamEndpointUrl: null,
+      api: definition.api,
+      primaryModelRef: route.primaryModelRef,
+      compatibility: route.inferenceCompat ?? {},
+    },
+  });
+  const native = {
+    ...entry,
+    provider: definition.logicalProvider,
+    endpointUrl: definition.custom?.endpointUrl ?? definition.endpoint,
+    credentialEnv: definition.custom?.credentialEnv ?? definition.credentialEnv,
+    preferredInferenceApi: definition.api,
+    nativeHostedProviderAttachment: {
+      schemaVersion: 1 as const,
+      profileId: definition.profileId,
+      providerName: definition.providerName,
+      providerId: "native-provider-id",
+      ...(definition.custom
+        ? {
+            endpointUrl: definition.endpointUrl,
+            allowedIps: definition.allowedIps,
+            custom: definition.custom,
+          }
+        : {}),
+    },
+    workload: {
+      ...entry.workload,
+      encodedProfile: startup.encodedProfile,
+      startupProfileSha256: startup.startupProfileSha256,
+    },
+  };
+  mockSupportedLiveSource(3, 3, native);
+  vi.mocked(getSandboxEntryInference).mockReturnValue({
+    kind: "configured",
+    provider: definition.logicalProvider,
+    model: "model-a",
+  });
+  const readCredential = vi.fn(() => {
+    throw new Error("Credential value must not be read");
+  });
+  raw.getProvider.mockResolvedValue({
+    provider: {
+      ...nativeNvidiaProvider(),
+      metadata: { ...nativeNvidiaProvider().metadata, name: definition.providerName },
+      type: definition.profileId,
+      credentials: Object.defineProperty({}, definition.credentialEnv, {
+        enumerable: true,
+        get: readCredential,
+      }),
+    },
+  });
+  const profilePath = nativeProviderLifecycle(definition).nativeProviderProfilePath();
+  const contract = parseCheckedInProviderProfileContract(
+    definition.custom
+      ? boundCustomNativeProfile(definition, profilePath)
+      : fs.readFileSync(profilePath, "utf8"),
+  )!;
+  const credential = contract.boundary.credentials[0];
+  const endpoint = contract.boundary.endpoints[0] as {
+    host: string;
+    port: number;
+    allowed_ips?: string[];
+    tls?: string;
+    rules: { allow: { method: string; path: string } }[];
+  };
+  const base = managedBraveProfile();
+  raw.getProviderProfile.mockResolvedValue({
+    profile: {
+      ...base,
+      id: definition.profileId,
+      inferenceCapable: true,
+      credentials: [
+        {
+          ...base.credentials[0],
+          envVars: credential.env_vars,
+          authStyle: credential.auth_style,
+          headerName: credential.header_name,
+        },
+      ],
+      endpoints: [
+        {
+          ...base.endpoints[0],
+          host: endpoint.host,
+          port: endpoint.port,
+          allowedIps: endpoint.allowed_ips ?? [],
+          tls: endpoint.tls ?? "",
+          access: "",
+          rules: endpoint.rules.map((rule) => ({
+            allow: {
+              ...rule.allow,
+              command: "",
+              query: {},
+              operationType: "",
+              operationName: "",
+              fields: [],
+              params: {},
+            },
+          })),
+        },
+      ],
+      binaries: contract.boundary.binaries.map((path) => ({ path })),
+    },
+  });
+  raw.getSandbox.mockResolvedValue({
+    sandbox: {
+      ...inventory().sandbox,
+      spec: { ...inventory().sandbox.spec, providers: [definition.providerName] },
+    },
+  });
+  return { readCredential, native };
 }
 
 describe("live export snapshot reader", () => {
@@ -679,6 +821,129 @@ describe("live export snapshot reader", () => {
       expect(publish).not.toHaveBeenCalled();
     },
   );
+
+  it.each([
+    ...HOSTED_NATIVE_PROVIDERS.filter((definition) => definition.logicalProvider !== "gemini-api"),
+    ...[
+      ["compatible-endpoint", "openai-completions", "https://custom.example/team/v1"],
+      ["compatible-endpoint", "openai-responses", "https://custom.example/team/v1"],
+      ["compatible-anthropic-endpoint", "anthropic-messages", "https://custom.example/team"],
+      ["compatible-anthropic-endpoint", "openai-completions", "https://custom.example/team"],
+      ["compatible-anthropic-endpoint", "openai-responses", "https://custom.example/team"],
+    ].map(([provider, api, endpointUrl]) =>
+      customNativeProvider({
+        provider,
+        api,
+        endpointUrl,
+        credentialEnv: "TEAM_KEY",
+        allowedIps: ["8.8.8.8"],
+      }),
+    ),
+    customNativeProvider({
+      provider: "compatible-anthropic-endpoint",
+      api: "openai-completions",
+      endpointUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
+      credentialEnv: "TEAM_KEY",
+      allowedIps: [],
+      adapterEndpointUrl: BEDROCK_RUNTIME_ADAPTER_OPENAI_BASE_URL,
+    }),
+  ])(
+    "exports native $label without reading shared routing or secret values",
+    async (definition: HostedProviderDefinition) => {
+      const { readCredential } = mockNativeHostedSource(definition);
+      const { result, writeStdout } = await exportLiveSource();
+      expect(result).toEqual({ ok: true, completion: { kind: "stdout" } });
+      const yaml = writeStdout.mock.calls[0]![0];
+      const document = asExportedConfig(YAML.parse(yaml));
+      expect(document.spec.inferenceProviders[0]).toMatchObject({
+        endpoint: definition.custom?.endpointUrl ?? definition.endpoint,
+        api: definition.api,
+        credential: { env: definition.custom?.credentialEnv ?? definition.credentialEnv },
+      });
+      expect(readCredential).not.toHaveBeenCalled();
+      expect(captureSanitizedResolvedOpenshell).not.toHaveBeenCalled();
+      expect(yaml).not.toContain(readFailureCanary);
+    },
+  );
+
+  it.each(["selected", "runtime", "both"] as const)(
+    "rejects custom native export when the %s endpoint changes",
+    async (changed) => {
+      const definition = customNativeProvider({
+        provider: "compatible-anthropic-endpoint",
+        api: "openai-completions",
+        endpointUrl: "https://custom.example/team",
+        credentialEnv: "TEAM_KEY",
+        allowedIps: ["8.8.8.8"],
+      });
+      mockNativeHostedSource(definition);
+      const observed = await createLiveExportSnapshotReader().read("alpha");
+      assert(observed.kind === "observed" && observed.inference.endpointEvidence);
+      const { endpointEvidence: evidence, ...inference } = observed.inference;
+      const result = await observeStableExportSource("alpha", {
+        read: async () => ({
+          ...observed,
+          inference: {
+            ...inference,
+            endpoint: changed === "runtime" ? inference.endpoint : "https://drift.example/v1",
+            endpointEvidence: {
+              ...evidence,
+              endpoint: changed === "selected" ? evidence.endpoint : "https://drift.example/v1",
+            },
+          },
+        }),
+      });
+      expect(result).toMatchObject({ ok: false });
+    },
+  );
+
+  it("rejects native hosted export when the sandbox attaches an unrelated provider", async () => {
+    mockNativeHostedSource(HOSTED_NATIVE_PROVIDERS[0]);
+    raw.getSandbox.mockResolvedValue({
+      sandbox: {
+        ...inventory().sandbox,
+        spec: { ...inventory().sandbox.spec, providers: ["unrelated"] },
+      },
+    });
+    const exported = await exportLiveSource();
+    expect(exported.result.ok).toBe(false);
+    expect(exported.writeStdout).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      failure: "replaced provider",
+      id: "replacement",
+      type: HOSTED_NATIVE_PROVIDERS[0].profileId,
+      credentials: { OPENAI_API_KEY: readFailureCanary },
+    },
+    {
+      failure: "wrong profile",
+      id: "native-provider-id",
+      type: "unrelated-profile",
+      credentials: { OPENAI_API_KEY: readFailureCanary },
+    },
+    {
+      failure: "extra credential",
+      id: "native-provider-id",
+      type: HOSTED_NATIVE_PROVIDERS[0].profileId,
+      credentials: { OPENAI_API_KEY: readFailureCanary, FOREIGN_KEY: readFailureCanary },
+    },
+  ])("rejects native hosted export with $failure", async ({ id, type, credentials }) => {
+    const definition = HOSTED_NATIVE_PROVIDERS[0];
+    mockNativeHostedSource(definition);
+    raw.getProvider.mockResolvedValue({
+      provider: {
+        ...nativeNvidiaProvider(),
+        metadata: { ...nativeNvidiaProvider().metadata, name: definition.providerName, id },
+        type,
+        credentials,
+      },
+    });
+    const exported = await exportLiveSource();
+    expect(exported.result.ok).toBe(false);
+    expect(exported.writeStdout).not.toHaveBeenCalled();
+  });
 
   it("retains the legacy shared-route NVIDIA export without a native receipt", async () => {
     mockSupportedLiveSource();

@@ -12,6 +12,7 @@ import {
   buildPublishedRouteIndex,
   extractMarkdownLinks,
   findBrokenChangelogRoutes,
+  findBrokenReadmeDocsRoutes,
   findBrokenPublishedRedirects,
   findBrokenPublishedRoutes,
   findMissingDirectLegacyManageSandboxRedirects,
@@ -110,6 +111,24 @@ ${body}
 }
 
 describe("published docs route checking", () => {
+  it("validates README links against published Fern routes", () => {
+    const index = buildPublishedRouteIndex(navYaml);
+    const readme = [
+      "[Documentation](https://docs.nvidia.com/nemoclaw/latest/)",
+      "[Commands](https://docs.nvidia.com/nemoclaw/latest/user-guide/openclaw/reference/commands.html)",
+      "[Legacy commands](https://docs.nvidia.com/nemoclaw/latest/reference/commands.html)",
+      "[External](https://example.com/not-checked)",
+    ].join("\n");
+
+    expect(findBrokenReadmeDocsRoutes(index, readme)).toEqual([
+      expect.objectContaining({
+        line: 3,
+        resolved: "/reference/commands",
+        text: "Legacy commands",
+      }),
+    ]);
+  });
+
   it("checks static MDX hrefs, including multiline attributes, outside code examples", () => {
     const body = [
       '<Card data-href="../ignored"',

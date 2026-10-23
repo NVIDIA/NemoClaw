@@ -1,14 +1,21 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  normalizeNativeLocalProviderAttachment,
+  normalizeNativeLocalProviderAuthorities,
+} from "../../inference/native-local/contract";
+
 import path from "node:path";
+import { requireHostedProviderAttachment } from "../../inference/native-provider/hosted-attachment";
+import { normalizeNativeHostedProviderAuthorities } from "./native-provider-authority-state";
 import { isObjectRecord } from "../../core/json-types";
 import { GATEWAY_PORT } from "../../core/ports";
 import { isDeferredN1xManagedVllmAcceptanceRoute } from "../../domain/sandbox/n1x-managed-vllm-rebuild";
 import { parseServingProfileProvenance } from "../../inference/serving/profile-provenance";
 import { readConfigFile, writeConfigFile } from "../config-io";
 import { normalizeExtraProviders } from "../extra-providers";
-import { normalizeNativeNvidiaProviderAuthorities } from "./native-nvidia-provider-authority-state";
+import { normalizeNativeNvidiaProviderAuthorities } from "./native-provider-authority-state";
 import {
   cloneSandboxMessagingState,
   serializeSandboxMessagingStateForDisk,
@@ -95,10 +102,41 @@ function normalizeDeferredN1xManagedVllmAcceptance(
   return value;
 }
 
+function requireNativeLocalProviderAttachment(
+  entry: SandboxEntry,
+  operation: "load" | "save",
+): SandboxEntry["nativeLocalProviderAttachment"] {
+  if (entry.nativeLocalProviderAttachment === undefined) return undefined;
+  const attachment = normalizeNativeLocalProviderAttachment(entry.nativeLocalProviderAttachment);
+  if (
+    !attachment ||
+    attachment.sandboxName !== entry.name ||
+    attachment.gatewayName !== entry.gatewayName ||
+    attachment.provider !== entry.provider
+  ) {
+    throw new Error(
+      `Cannot ${operation} sandbox ${JSON.stringify(entry.name)}: invalid native local provider attachment in sandboxes.json. Inspect and repair nativeLocalProviderAttachment before retrying.`,
+    );
+  }
+  return attachment;
+}
+
 export const REGISTRY_FILE = path.join(
   nemoclawStateRoot(process.env.HOME || "/tmp", GATEWAY_PORT),
   "sandboxes.json",
 );
+
+/** Read the registry owned by an explicit process environment. */
+export function loadFromEnvironment(environment: NodeJS.ProcessEnv): SandboxRegistry {
+  const registryFile = path.join(
+    nemoclawStateRoot(environment.HOME || "/tmp", GATEWAY_PORT),
+    "sandboxes.json",
+  );
+  return normalizeRegistry(
+    readConfigFile<unknown>(registryFile, { sandboxes: {}, defaultSandbox: null }),
+  );
+}
+
 export function load(): SandboxRegistry {
   return normalizeRegistry(
     readConfigFile<unknown>(REGISTRY_FILE, { sandboxes: {}, defaultSandbox: null }),
@@ -108,6 +146,12 @@ export function load(): SandboxRegistry {
 export function save(data: SandboxRegistry): void {
   const serialized = serializeRegistryForDisk(data);
   const previous = readConfigFile<unknown>(REGISTRY_FILE, {});
+  if (isObjectRecord(previous)) {
+    normalizeNativeLocalProviderAuthorities(previous.nativeLocalProviderAuthorities);
+    for (const [, entry] of parseSandboxRegistryEntries(previous.sandboxes)) {
+      requireNativeLocalProviderAttachment(entry, "save");
+    }
+  }
   // Legacy MCP ownership is disk-only compatibility evidence, not runtime
   // authority. Ordinary writes must retain it until an explicit migration or
   // verified removal retires it. Never accept a caller-supplied replacement.
@@ -125,6 +169,9 @@ export function save(data: SandboxRegistry): void {
 function normalizeRegistry(value: unknown): SandboxRegistry {
   const data = isObjectRecord(value) ? value : {};
   const extraProviders = normalizeExtraProviders(data.extraProviders);
+  const nativeLocalProviderAuthorities = normalizeNativeLocalProviderAuthorities(
+    data.nativeLocalProviderAuthorities,
+  );
   const nativeNvidiaProviderAuthorities = normalizeNativeNvidiaProviderAuthorities(
     data.nativeNvidiaProviderAuthorities,
   );
@@ -144,6 +191,13 @@ function normalizeRegistry(value: unknown): SandboxRegistry {
     sandboxes,
   };
   if (extraProviders) base.extraProviders = extraProviders;
+  if (nativeLocalProviderAuthorities)
+    base.nativeLocalProviderAuthorities = nativeLocalProviderAuthorities;
+  const nativeHostedProviderAuthorities = normalizeNativeHostedProviderAuthorities(
+    data.nativeHostedProviderAuthorities,
+  );
+  if (nativeHostedProviderAuthorities)
+    base.nativeHostedProviderAuthorities = nativeHostedProviderAuthorities;
   if (nativeNvidiaProviderAuthorities) {
     base.nativeNvidiaProviderAuthorities = nativeNvidiaProviderAuthorities;
   }
@@ -152,6 +206,9 @@ function normalizeRegistry(value: unknown): SandboxRegistry {
 
 function serializeRegistryForDisk(data: SandboxRegistry): SandboxRegistry {
   const extraProviders = normalizeExtraProviders(data.extraProviders);
+  const nativeLocalProviderAuthorities = normalizeNativeLocalProviderAuthorities(
+    data.nativeLocalProviderAuthorities,
+  );
   const nativeNvidiaProviderAuthorities = normalizeNativeNvidiaProviderAuthorities(
     data.nativeNvidiaProviderAuthorities,
   );
@@ -174,6 +231,13 @@ function serializeRegistryForDisk(data: SandboxRegistry): SandboxRegistry {
     sandboxes,
   };
   if (extraProviders) base.extraProviders = extraProviders;
+  if (nativeLocalProviderAuthorities)
+    base.nativeLocalProviderAuthorities = nativeLocalProviderAuthorities;
+  const nativeHostedProviderAuthorities = normalizeNativeHostedProviderAuthorities(
+    data.nativeHostedProviderAuthorities,
+  );
+  if (nativeHostedProviderAuthorities)
+    base.nativeHostedProviderAuthorities = nativeHostedProviderAuthorities;
   if (nativeNvidiaProviderAuthorities) {
     base.nativeNvidiaProviderAuthorities = nativeNvidiaProviderAuthorities;
   }
@@ -198,6 +262,7 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
   );
   const deferredN1xManagedVllmAccepted = normalizeDeferredN1xManagedVllmAcceptance(entry, "load");
   const policyEntry = normalizeSandboxPolicyAttribution(entry);
+  const nativeLocalProviderAttachment = requireNativeLocalProviderAttachment(policyEntry, "load");
   const {
     cuaRuntimeReadiness: _legacyCuaRuntimeReadiness,
     messaging: _messaging,
@@ -206,6 +271,8 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
     hostLocalInferenceProvenance: _hostLocalInferenceProvenance,
     servingProfileProvenance: _servingProfileProvenance,
     deferredN1xManagedVllmAccepted: _deferredN1xManagedVllmAccepted,
+    nativeLocalProviderAttachment: _nativeLocalProviderAttachment,
+    nativeHostedProviderAttachment: hostedAttachment,
     nativeNvidiaProviderAuthority: _legacyNativeNvidiaProviderAuthority,
     mcp: _legacyMcp,
     ...rest
@@ -214,8 +281,14 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
     nativeNvidiaProviderAuthority?: unknown;
     mcp?: unknown;
   };
+  const nativeHostedProviderAttachment = requireHostedProviderAttachment(
+    hostedAttachment,
+    rest.provider,
+  );
   return {
     ...rest,
+    ...(nativeLocalProviderAttachment ? { nativeLocalProviderAttachment } : {}),
+    ...(nativeHostedProviderAttachment ? { nativeHostedProviderAttachment } : {}),
     ...(workload ? { workload } : {}),
     ...(hostLocalInferenceReceipt !== undefined ? { hostLocalInferenceReceipt } : {}),
     ...(hostLocalInferenceProvenance ? { hostLocalInferenceProvenance } : {}),
@@ -262,6 +335,7 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
   );
   const deferredN1xManagedVllmAccepted = normalizeDeferredN1xManagedVllmAcceptance(durable, "save");
   const policyEntry = normalizeSandboxPolicyAttribution(durable);
+  const nativeLocalProviderAttachment = requireNativeLocalProviderAttachment(policyEntry, "save");
   const {
     cuaRuntimeReadiness: _legacyCuaRuntimeReadiness,
     messaging: _messaging,
@@ -270,6 +344,8 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
     hostLocalInferenceProvenance: _hostLocalInferenceProvenance,
     servingProfileProvenance: _servingProfileProvenance,
     deferredN1xManagedVllmAccepted: _deferredN1xManagedVllmAccepted,
+    nativeLocalProviderAttachment: _nativeLocalProviderAttachment,
+    nativeHostedProviderAttachment: hostedAttachment,
     nativeNvidiaProviderAuthority: _legacyNativeNvidiaProviderAuthority,
     mcp: _legacyMcp,
     ...rest
@@ -278,8 +354,14 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
     nativeNvidiaProviderAuthority?: unknown;
     mcp?: unknown;
   };
+  const nativeHostedProviderAttachment = requireHostedProviderAttachment(
+    hostedAttachment,
+    rest.provider,
+  );
   return {
     ...rest,
+    ...(nativeLocalProviderAttachment ? { nativeLocalProviderAttachment } : {}),
+    ...(nativeHostedProviderAttachment ? { nativeHostedProviderAttachment } : {}),
     ...(rest.dashboardPort === 0 ? { dashboardPort: null } : {}),
     ...(workload ? { workload } : {}),
     ...(hostLocalInferenceReceipt !== undefined ? { hostLocalInferenceReceipt } : {}),

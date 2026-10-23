@@ -154,7 +154,8 @@ When the missing-custom-presets target fails before its expected policy rejectio
 The probes also capture unexpected JavaScript failures; they do not change the onboarding result or the required policy rejection.
 Container probes use a resolved full container ID and never delete resources or retry onboarding.
 
-The `full-e2e` restart probe selects a UUID-scoped native OpenClaw provider using the already-tested model through `inference.local`.
+The `full-e2e` restart probe selects a UUID-scoped native OpenClaw provider using the already-tested model and route.
+Source installs use `inference.local`; the Brev Launchable uses the native NVIDIA endpoint with its supervisor-issued credential handle.
 After NemoClaw stop/start, a gateway-only turn must report that provider and model before the probe restores the original selection.
 The probe removes its temporary native entries before the launch checks.
 The fixture contains no provider credentials. It sends a JSON patch to native OpenClaw through stdin.
@@ -543,7 +544,8 @@ test/e2e/
 - `.github/workflows/portable-profile-e2e.yaml` provides experimental portable-profile evidence on matching `main` changes or manual dispatches.
 - The explicit-only `portable-hermes-finalization` job in `.github/workflows/e2e.yaml`
   runs the portable-profile scenario on the reviewed x86-64 NVIDIA GPU runner with
-  rootless Podman 5.7. The selector stages and uses that runtime directly.
+  rootless Podman 5.7. The selector stages and uses that runtime directly, including
+  the receipt-bound Hermes build, publication, and OpenShell create transaction.
 - `.github/workflows/podman-cpu-proof.yaml` provides PR-only experimental runtime evidence with Docker disabled.
 - `.github/workflows/sandbox-images.yaml` provides reusable image build and test evidence through manual dispatch and `workflow_call`.
   `.github/workflows/e2e.yaml` selects free-standing jobs, including `whatsapp-qr-compact` and `ollama-auth-proxy`.
