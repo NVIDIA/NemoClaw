@@ -246,6 +246,16 @@ runner.runCapture = (command) => {
 };
 runner.run = () => ({ status: 0 });
 runner.runShell = () => ({ status: 0 });
+// The WSL-local route starts a detached ollama serve that would outlive this check.
+const childProcess = require("node:child_process");
+const originalSpawn = childProcess.spawn;
+childProcess.spawn = (file, args, options) => {
+  if (Array.isArray(args) && args[0] === "serve") {
+    console.error("OLLAMA_SERVE_LAUNCHED");
+    return { pid: 99999, unref() {}, on() {} };
+  }
+  return originalSpawn(file, args, options);
+};
 
 const credentials = require(${credentialsPath});
 const topology = require(${topologyPath});
