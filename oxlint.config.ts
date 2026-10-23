@@ -83,7 +83,12 @@ export default defineConfig({
   },
   overrides: [
     {
-      files: ["docs/_components/**/*.{ts,tsx}", "fern/components/**/*.{ts,tsx}"],
+      files: [
+        "docs/_components/**/*.{ts,tsx}",
+        "fern/components/**/*.{ts,tsx}",
+        "tools/process-window/src/browser.ts",
+        "tools/process-window/test/browser.spec.ts",
+      ],
       env: { browser: true },
     },
     {
