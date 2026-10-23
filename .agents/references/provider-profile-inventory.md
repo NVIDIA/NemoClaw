@@ -30,6 +30,21 @@ does not authorize adoption of an existing provider. Ambiguous mutations require
 another mutation. Restart and rebuild verify recorded authority; they do not authorize automatic
 migration of old shared-route sandboxes.
 
+## Native local host address boundary
+
+New native-local selections admit RFC1918 IPv4 and IPv6 unique-local (`fc00::/7`) resolution
+only for `host.openshell.internal` or `host.docker.internal`. Each profile still binds one host,
+port, API prefix, binary set, and credential reference. Public IPv6, link-local IPv6, and literal
+IPv6 endpoints remain excluded. Literal private IPv4 endpoints retain their single-address `/32` boundary.
+
+The dual-stack boundary has a distinct profile and provider identity. Existing IPv4-only receipts
+remain valid for verification and cleanup; resume and rebuild retain their recorded permissions.
+To use IPv6 after upgrading, reselect the local provider with `nemoclaw <sandbox> inference set --provider <provider> --model <model>`.
+If onboarding has not finished, resume with `nemoclaw onboard --resume`; if it retains the old
+attachment, reselect local inference before retrying the proof. Do not overwrite or delete an
+attached profile to change its permissions. Reselection uses the existing ownership and cleanup
+transaction. Profile collisions and missing ownership still stop before provider mutation.
+
 ## Owned inference profiles
 
 All fixed definitions below are in

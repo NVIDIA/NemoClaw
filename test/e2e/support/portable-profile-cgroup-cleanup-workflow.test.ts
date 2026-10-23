@@ -3,6 +3,7 @@
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import { expect, it } from "vitest";
@@ -23,7 +24,7 @@ function portableCleanupRun(): string {
 }
 
 it("restores the portable user manager and linger state after refusing a changed drop-in", () => {
-  const root = fs.mkdtempSync("/tmp/portable-cpu-delegation-restoration-");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "portable-cpu-delegation-restoration-"));
   const bin = path.join(root, "bin");
   const changed = path.join(root, "changed.conf");
   const podmanConfig = path.join(root, "portable-containers.conf");

@@ -9,6 +9,7 @@ import { MIN_OLLAMA_VERSION } from "../../src/lib/inference/ollama-version.js";
 import {
   type InstallOllamaLinuxOptions,
   installOllamaOnLinux,
+  OFFICIAL_OLLAMA_INSTALLER_SHA256,
 } from "../../src/lib/onboard/install-ollama-linux.js";
 import {
   assertOllamaUpgradeApplied,
@@ -49,6 +50,7 @@ function makeInstallOptions(
       .fn()
       .mockReturnValue({ stdout: "", stderr: "", exitCode: 0, timedOut: false }),
     runShellImpl: vi.fn().mockReturnValue({ status: 0, stdout: "", stderr: "", error: null }),
+    sha256FileImpl: vi.fn().mockReturnValue(OFFICIAL_OLLAMA_INSTALLER_SHA256),
     waitForHttpImpl: vi.fn().mockReturnValue(true),
     sleepSecondsImpl: vi.fn(),
     ensureManagedOllamaLoopbackSystemdOverrideImpl: vi.fn().mockReturnValue("ready"),
