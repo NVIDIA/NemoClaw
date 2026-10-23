@@ -116,8 +116,6 @@ jobs:
           docker logout ghcr.io
   stage:
     name: Stage the release
-    outputs:
-      sboms: ${{ steps.draft.outputs.sboms }}
     needs: [select, build, runtimes]
     if: >-
       !cancelled() && needs.select.result == 'success' && needs.runtimes.result == 'success' &&
@@ -149,7 +147,6 @@ jobs:
           required: "true"
           token: ${{ github.token }}
       - name: Join each image's platforms and draft the release
-        id: draft
         env:
           NAMES: ${{ steps.images.outputs.names }}
           AGENTS: ${{ steps.images.outputs.agents }}
@@ -199,19 +196,30 @@ jobs:
             fi
             echo "| \`$image\` | \`$RELEASE_NAMESPACE/$image@$digest\` | $metadata |" >> "$notes"
           done
-          # The scanner reads immutable child manifests, including images reused
-          # from earlier CI. Nothing rebuilds or rewrites an image for its SBOM.
+          # Syft scans each platform's exact image, including images reused from
+          # earlier CI, and writes its SPDX document. Nothing rebuilds an image.
           sboms="$RUNNER_TEMP/sboms"
-          cargo run --locked -q -p nemoclaw-build --no-default-features -- \
-            release-sboms --inventory "$inventory" --output "$sboms" --syft "$SYFT" \
-            > "$RUNNER_TEMP/sbom-matrix.json"
-          echo "sboms=$(jq -c '{include: .}' "$RUNNER_TEMP/sbom-matrix.json")" >> "$GITHUB_OUTPUT"
+          mkdir "$sboms"
+          echo '[]' > "$sboms/sboms.json"
+          jq -r '.[] | .repository as $repository | .name as $name | .manifests.manifests[]
+            | select(.platform.os == "linux")
+            | [$name, $repository, .digest, .platform.architecture] | @tsv' "$inventory" > "$RUNNER_TEMP/platforms.tsv"
+          while IFS="$(printf '\t')" read -r name repository digest arch; do
+            asset="$name-linux-$arch-${digest#sha256:}.spdx.json"
+            SYFT_CHECK_FOR_APP_UPDATE=false "$SYFT" "registry:$repository@$digest" \
+              --select-catalogers +rust-cargo-lock-cataloger -o "spdx-json=$sboms/$asset"
+            jq --arg platform "linux/$arch" --arg reference "$repository@$digest" --arg asset "$asset" \
+              --arg sha256 "$(sha256sum "$sboms/$asset" | cut -d' ' -f1)" \
+              '. + [{platform: $platform, reference: $reference, asset: $asset, sha256: $sha256}]' \
+              "$sboms/sboms.json" > "$sboms/sboms.next"
+            mv "$sboms/sboms.next" "$sboms/sboms.json"
+          done < "$RUNNER_TEMP/platforms.tsv"
           {
             echo
             echo '## Software bills of materials'
             echo
             cat <<'NOTES'
-          Each platform has an SPDX JSON asset. `sboms.json` records the image, platform, digest, asset and SHA-256. Attestations require a separate approval in this run; a draft alone does not establish that they exist.
+          Each platform has an SPDX JSON asset, and `sboms.json` records each asset's image reference, platform and SHA-256. These stay private draft assets: release candidates publish nothing about their images, and only final releases attest them (#13521).
           NOTES
             echo
             echo '| Platform | Image reference | SPDX asset |'
@@ -234,69 +242,3 @@ jobs:
           fi
           gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber "$bundles"/*.metadata.json
           gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber "$sboms"/*.spdx.json "$sboms/sboms.json"
-  approve-sboms:
-    name: Approve public SBOM attestations
-    needs: stage
-    runs-on: ubuntu-24.04
-    environment: v1-release-attestations
-    permissions:
-      contents: read
-    steps:
-      # Public-repository attestations use public Sigstore even for internal
-      # packages. An unprotected or newly auto-created environment must fail.
-      - name: Require configured reviewers before emitting public metadata
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          protected=$(gh api "repos/$GITHUB_REPOSITORY/environments/v1-release-attestations" \
-            --jq '.protection_rules | any(.type == "required_reviewers" and (.reviewers | length > 0))')
-          if [ "$protected" != true ]; then
-            echo '::error::Configure required reviewers on v1-release-attestations before approving public SBOM attestations'
-            exit 1
-          fi
-  attest-sboms:
-    name: Attest / ${{ matrix.asset }}
-    needs: [stage, approve-sboms]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJSON(needs.stage.outputs.sboms) }}
-    permissions:
-      contents: read
-      packages: write
-      id-token: write
-      attestations: write
-    steps:
-      - name: Download the exact staged asset and check its checksum
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
-          ASSET: ${{ matrix.asset }}
-          SHA256: ${{ matrix.sha256 }}
-        run: |
-          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$ASSET" --dir "$RUNNER_TEMP/sbom"
-          cd "$RUNNER_TEMP/sbom"
-          printf '%s  %s\n' "$SHA256" "$ASSET" | sha256sum --check --strict
-          printf '%s\n' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-      - name: Attach the SPDX predicate to the platform digest
-        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
-        with:
-          subject-name: ${{ matrix.repository }}
-          subject-digest: ${{ matrix.digest }}
-          sbom-path: ${{ runner.temp }}/sbom/${{ matrix.asset }}
-          push-to-registry: true
-          create-storage-record: false
-      - name: Verify the SPDX attestation and unchanged subject
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REFERENCE: ${{ matrix.reference }}
-          DIGEST: ${{ matrix.digest }}
-        run: |
-          gh attestation verify "oci://$REFERENCE" --repo "$GITHUB_REPOSITORY" \
-            --predicate-type https://spdx.dev/Document/v2.3
-          actual=$(docker buildx imagetools inspect "$REFERENCE" --format '{{.Manifest.Digest}}')
-          test "$actual" = "$DIGEST"
-      - name: Remove registry credentials
-        if: always()
-        run: docker logout ghcr.io
