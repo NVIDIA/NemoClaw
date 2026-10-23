@@ -4049,6 +4049,17 @@ This differs from a managed `NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR` override, whi
   </Warning>
 </AgentOnly>
 
+<AgentOnly variant="openclaw">
+  <Warning>
+    For a Docker OpenClaw sandbox that uses the NemoClaw-managed image, uninstall removes its managed
+    `/sandbox/.openclaw` state volume even without `--destroy-user-data`, as `$$nemoclaw <name> destroy`
+    does. Back up required OpenClaw state first. When the gateway is externally supervised, uninstall
+    does not delete the sandbox and keeps its state volume. NemoClaw removes only a volume with exact
+    ownership labels; inspection or removal failure exits nonzero and preserves registry state for
+    retry.
+  </Warning>
+</AgentOnly>
+
 ```bash
 $$nemoclaw uninstall [--yes] [--keep-openshell] [--delete-models] [--destroy-user-data] [--all-gateway-ports] [--gateway <name>]
 ```

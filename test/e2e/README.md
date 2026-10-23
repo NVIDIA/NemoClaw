@@ -912,8 +912,10 @@ retains one sandbox identity check and proves dashboard and API forward ownershi
 after reuse. `onboard-resume-hermes` retains its before-and-after resume evidence.
 The original entries retain OpenClaw coverage. `double-onboard` also repeats
 onboarding with a changed model and verifies replacement identity, the OpenClaw
-primary model, and the recorded selection. Unit and integration tests own the
-drift decision and interactive confirmation cases.
+primary model, and the recorded selection. It then runs `nemoclaw uninstall --yes --destroy-user-data`,
+verifies that the managed OpenClaw state volume is gone, and onboards the same
+sandbox name again. Unit and integration tests own the drift decision and
+interactive confirmation cases.
 
 Give each entry one `displayName` in the form `<area>: <observable outcome>`.
 Do not include this implementation metadata or workflow text in the display name:
