@@ -170,10 +170,11 @@ export function setTelemetryOutcome(
 export function recordTelemetryVersions(versions: {
   previous?: string;
   target?: string;
-  installed?: string;
+  installed?: string | null;
 }): void {
   appendReceipt({ kind: "versions", ...versions });
 }
+
 function readReceipts(current: Context): Record<string, unknown>[] {
   return privateFile(current.directory, "receipts.ndjson", 1_048_576)
     .split("\n")
@@ -288,7 +289,8 @@ function terminalContext(current: Context, exitCode = 0): TelemetryOperationCont
     else if (receipt.kind === "versions") {
       if (typeof receipt.previous === "string") metadata.previousVersion = receipt.previous;
       if (typeof receipt.target === "string") metadata.targetVersion = receipt.target;
-      if (typeof receipt.installed === "string") metadata.installedVersion = receipt.installed;
+      if (typeof receipt.installed === "string" || receipt.installed === null)
+        metadata.installedVersion = receipt.installed;
     }
   }
   metadata.targets = [...targets.values()];
@@ -599,7 +601,7 @@ export async function finishInstallerTelemetry(
   state: TelemetryState,
   scope: TelemetryScope,
   exitCode: number,
-  versions: { previous?: string; target?: string; installed?: string } = {},
+  versions: { previous?: string; target?: string; installed?: string | null } = {},
 ): Promise<void> {
   const inherited = inheritedContext();
   if (!inherited || inherited.directory !== directory) return;

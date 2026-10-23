@@ -9,6 +9,7 @@ import {
 import { isTelemetryConfigurationKey } from "../domain/telemetry/event";
 import {
   readModelSelectionProvenance,
+  readHermesModelSelectionTuple,
   selectedModelProvenance,
 } from "../domain/telemetry/provenance";
 import { CLI_NAME } from "../cli/branding";
@@ -37,40 +38,31 @@ export function persistConfigurationTelemetry(
       pending === undefined ? {} : { configurationApplyPending: pending ? true : undefined };
     if (config) {
       const modelConfig = isConfigObject(config.model) ? config.model : {};
-      const model = modelConfig.default;
       const nativeProvider = modelConfig.provider;
       const upstream = isConfigObject(config._nemoclaw_upstream)
         ? config._nemoclaw_upstream.provider
         : undefined;
-      const provider = nativeProvider === "custom" ? upstream : nativeProvider;
-      const apiMode = modelConfig.api_mode;
-      const api =
-        apiMode === undefined || apiMode === ""
-          ? "openai-completions"
-          : apiMode === "anthropic_messages"
-            ? "anthropic-messages"
-            : apiMode === "codex_responses"
-              ? "openai-responses"
-              : typeof apiMode === "string"
-                ? apiMode
-                : null;
+      const tuple = readHermesModelSelectionTuple(config);
       const previous = readModelSelectionProvenance(entry.nativeModelSelectionProvenance);
       const source =
         key === "model.default" && newModelSelection
           ? "custom"
-          : previous && previous.model === model && previous.provider === provider
+          : previous &&
+              previous.model === tuple?.model &&
+              previous.provider === tuple.provider &&
+              previous.apiFamily === tuple.apiFamily
             ? previous.modelSource
             : undefined;
       updates.nativeModelSelectionProvenance =
-        typeof model === "string" && typeof provider === "string" && source
+        tuple && source
           ? selectedModelProvenance({
-              model,
-              provider,
+              model: tuple.model,
+              provider: tuple.provider,
               endpointUrl:
                 nativeProvider === "custom" && upstream === entry.provider
                   ? entry.endpointUrl
                   : undefined,
-              preferredInferenceApi: api,
+              preferredInferenceApi: tuple.apiFamily,
               modelSource: source,
             })
           : undefined;

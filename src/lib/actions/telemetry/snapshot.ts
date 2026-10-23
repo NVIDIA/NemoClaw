@@ -5,12 +5,12 @@ import path from "node:path";
 import { createSupervisedSandboxCommandReader } from "./native-reader";
 import type { OpenShellInferenceRouteResult } from "../../adapters/openshell/inference-route";
 import {
-  approvedCategory,
+  observedString,
   classifyTelemetryAgent,
   classifyTelemetrySandboxOS,
-  COMPUTE_DRIVERS,
+  hasNativeTelemetryParser,
+  hasTelemetryCollectionError,
   dataRecord,
-  MANAGED_AGENT_VERSIONS,
   MESSAGING_CHANNELS,
   parseRuntimeRoster,
   projectRuntimeAgents,
@@ -83,10 +83,7 @@ function projectConfiguration(
       sandboxOSStatus = "reported";
       imageOwnership = "managed";
       imageOwnershipStatus = "reported";
-      const version = approvedCategory(
-        entry.agentVersion,
-        MANAGED_AGENT_VERSIONS[harness.agentHarnessId] ?? [],
-      );
+      const version = observedString(entry.agentVersion);
       managedAgentVersion = version.value;
       managedAgentVersionStatus = version.status;
     } else if (workload?.kind === "external-image") {
@@ -120,11 +117,11 @@ function projectConfiguration(
   } catch {
     sandboxOSStatus = imageOwnershipStatus = managedAgentVersionStatus = "collection_error";
   }
-  const driver = approvedCategory(entry.openshellDriver, COMPUTE_DRIVERS);
+  const driver = observedString(entry.openshellDriver);
   const webSearch = booleanSetting(entry.webSearchEnabled);
   const observability = booleanSetting(entry.observabilityEnabled);
   if (
-    harness.agentHarnessStatus === "reported" &&
+    hasNativeTelemetryParser(harness.agentHarnessId) &&
     !DCODE_OBSERVABILITY_FEATURE.supportsAgent(entry.agent)
   ) {
     observability.status =
@@ -298,8 +295,8 @@ async function collectRuntime(
           row.sandboxOSStatus = "collection_error";
         });
     }
-    if (row.agentHarnessId === "other" || row.agentHarnessId === "unknown") {
-      row.agentsStatus = row.defaultAgentModel.status = row.agentHarnessStatus;
+    if (!hasNativeTelemetryParser(row.agentHarnessId)) {
+      row.agentsStatus = row.defaultAgentModel.status = "not_observed";
       return;
     }
     const config = resolveAgentConfig(entry.name, {
@@ -467,7 +464,7 @@ export async function collectOperationSnapshot(options: {
   }
   snapshot.publishedEnvironmentCount = entries.length;
   snapshot.configuredRuntimeCount = snapshot.configurations.filter(
-    (row) => row.agentHarnessId !== "unknown",
+    (row) => row.agentHarnessStatus === "reported",
   ).length;
   snapshot.configuredAgentCount = snapshot.configurations.reduce(
     (count, row) => count + row.agents.length,
@@ -476,7 +473,7 @@ export async function collectOperationSnapshot(options: {
   const collectionError =
     inventoryError ||
     observationIncomplete ||
-    snapshot.configurations.some((row) => JSON.stringify(row).includes('"collection_error"'));
+    snapshot.configurations.some(hasTelemetryCollectionError);
   if (collectionError) {
     snapshot.collectionStatus = snapshot.configurations.length > 0 ? "partial" : "collection_error";
   }
@@ -488,7 +485,7 @@ export async function collectOperationSnapshot(options: {
     )
   )
     snapshot.countsStatus = "collection_error";
-  else if (snapshot.configurations.some((row) => row.agentHarnessId === "unknown"))
+  else if (snapshot.configurations.some((row) => row.agentHarnessStatus === "not_persisted"))
     snapshot.countsStatus = "not_persisted";
   else {
     const unknownRoster = snapshot.configurations.find((row) => row.agentsStatus !== "reported");

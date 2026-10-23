@@ -17,27 +17,12 @@ import {
   type ModelSelectionProvenance,
 } from "./provenance";
 
-import {
-  AGENT_HARNESS_IDS,
-  TELEMETRY_MODEL_IDS,
-  TELEMETRY_API_FAMILIES,
-  TELEMETRY_MODEL_KEYS,
-  dataRecord,
-  classifyTelemetryProvider,
-} from "./values";
+import { dataRecord, classifyTelemetryProvider } from "./values";
 export {
-  AGENT_HARNESS_IDS,
-  TELEMETRY_MODEL_IDS,
   TELEMETRY_PROVIDER_PROFILES,
-  TELEMETRY_API_FAMILIES,
   MODEL_SELECTION_SOURCES,
-  COMPUTE_DRIVERS,
   GPU_STATES,
   MESSAGING_CHANNELS,
-  POLICY_TIER_CATEGORIES,
-  SANDBOX_OPERATING_SYSTEMS,
-  MANAGED_AGENT_VERSIONS,
-  TELEMETRY_MODEL_KEYS,
   dataRecord,
   classifyTelemetryProvider,
 } from "./values";
@@ -55,39 +40,51 @@ const NATIVE_PROVIDERS: Readonly<Record<string, string>> = {
   custom: "custom",
 };
 
-export function approvedCategory(
+export function hasTelemetryCollectionError(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some(hasTelemetryCollectionError);
+  const record = dataRecord(value);
+  return (
+    record !== null &&
+    Object.entries(record).some(
+      ([key, item]) =>
+        ((key === "status" || key.endsWith("Status")) && item === "collection_error") ||
+        hasTelemetryCollectionError(item),
+    )
+  );
+}
+
+export function observedString(
   value: unknown,
-  allowed: readonly string[],
+  missingStatus: ValueStatus = "not_persisted",
 ): { value: string; status: ValueStatus } {
-  if (value === undefined || value === null || value === "")
-    return { value: "unknown", status: "not_persisted" };
-  if (typeof value !== "string") return { value: "unknown", status: "collection_error" };
-  return allowed.includes(value) && value !== "unknown" && value !== "other"
+  if (value === undefined || value === null || value === "" || value === "unknown")
+    return { value: "unknown", status: missingStatus };
+  return typeof value === "string"
     ? { value, status: "reported" }
-    : { value: "other", status: "unapproved" };
+    : { value: "unknown", status: "collection_error" };
 }
 
 export function classifyTelemetryAgent(
   value: unknown,
 ): Pick<TelemetryAgent, "agentHarnessId" | "agentHarnessStatus"> {
-  const category = approvedCategory(value, AGENT_HARNESS_IDS);
+  const category = observedString(value);
   return { agentHarnessId: category.value, agentHarnessStatus: category.status };
 }
 
-export function classifyTelemetryApi(value: unknown): string {
-  return typeof value === "string" && TELEMETRY_API_FAMILIES.some((item) => item === value)
-    ? value
-    : "unknown";
+export function hasNativeTelemetryParser(agentHarnessId: string): boolean {
+  return (
+    agentHarnessId === "openclaw" ||
+    agentHarnessId === "hermes" ||
+    agentHarnessId === "langchain-deepagents-code"
+  );
 }
 
 export function classifyTelemetrySandboxOS(raw: string): { value: string; status: ValueStatus } {
-  const name = raw.trim();
+  const name = raw.replace(/[\r\n]+$/, "");
   if (name === "Linux") return { value: "linux", status: "reported" };
   if (/^(?:Windows_NT|MINGW(?:32|64)_NT|MSYS_NT|CYGWIN_NT)(?:-[0-9]+(?:[.-][0-9]+)*)?$/.test(name))
     return { value: "windows", status: "reported" };
-  if (["Darwin", "FreeBSD", "OpenBSD", "NetBSD", "SunOS", "AIX"].includes(name))
-    return { value: "other", status: "unapproved" };
-  return { value: "unknown", status: "collection_error" };
+  return observedString(name, "collection_error");
 }
 
 export interface RuntimeRouteAuthority {
@@ -217,7 +214,7 @@ function projectModel(
   authority: RuntimeRouteAuthority,
   slot?: { agentId: string; reference: string; inherited: boolean; sources: AssignmentSources },
 ): TelemetryModel {
-  const model = approvedCategory(reference.model, TELEMETRY_MODEL_IDS);
+  const model = observedString(reference.model);
   const nativeChoice =
     reference.nativeConfiguration !== undefined &&
     authority.nativeModelSelectionProvenance !== undefined;
@@ -233,7 +230,8 @@ function projectModel(
         ) !== null
       : reference.managed &&
         parsed.model === authority.model &&
-        parsed.provider === authority.provider)
+        parsed.provider === authority.provider &&
+        parsed.apiFamily === reference.api)
       ? parsed
       : null;
   const source = projectAssignmentSource(reference, assignment, authority, bound, slot);
@@ -249,13 +247,11 @@ function projectModel(
     : reference.providerKey
       ? (NATIVE_PROVIDERS[reference.providerKey] ?? "custom")
       : "unknown";
-  const api = classifyTelemetryApi(reference.api);
+  const api = observedString(reference.api, "unavailable");
   return {
     assignment,
     modelId: model.value,
     modelStatus: model.status,
-    knownModelKey: TELEMETRY_MODEL_KEYS[model.value] ?? model.value,
-    knownModelKeyStatus: model.status,
     modelSource: source.value,
     modelSourceStatus: source.status,
     providerProfile: provider,
@@ -265,9 +261,8 @@ function projectModel(
         : reference.managed && authority.provider == null
           ? "not_persisted"
           : "collection_error",
-    apiFamily: api,
-    apiStatus:
-      api !== "unknown" ? "reported" : reference.api === undefined ? "unavailable" : "unapproved",
+    apiFamily: api.value,
+    apiStatus: api.status,
   };
 }
 
@@ -279,8 +274,6 @@ export function unknownModel(
     assignment,
     modelId: "unknown",
     modelStatus: status,
-    knownModelKey: "unknown",
-    knownModelKeyStatus: status,
     modelSource: "unknown",
     modelSourceStatus: status,
     providerProfile: "unknown",
@@ -415,6 +408,12 @@ export function projectRuntimeAgents(
   roster: readonly Record<string, unknown>[] | undefined,
   authority: RuntimeRouteAuthority,
 ): RuntimeAgentProjection {
+  if (!hasNativeTelemetryParser(runtime.agentHarnessId))
+    return {
+      agents: [],
+      agentsStatus: "not_observed",
+      defaultAgentModel: { agentPosition: -1, modelPosition: -1, status: "not_observed" },
+    };
   if (runtime.agentHarnessId === "openclaw" && roster?.length === 0)
     return {
       agents: [],
@@ -497,7 +496,7 @@ export function projectRuntimeAgents(
       if (invalidSubagent || subagent !== undefined)
         models.push(readModel(invalidSubagent ? undefined : subagent, "subagent"));
       const modelsStatus: ValueStatus =
-        sources.invalid || models.some((model) => Object.values(model).includes("collection_error"))
+        sources.invalid || models.some(hasTelemetryCollectionError)
           ? "collection_error"
           : "reported";
       return {
@@ -580,17 +579,15 @@ export function projectRuntimeAgents(
   } else
     return {
       agents: [],
-      agentsStatus: "unapproved",
-      defaultAgentModel: { agentPosition: -1, modelPosition: -1, status: "unapproved" },
+      agentsStatus: "not_observed",
+      defaultAgentModel: { agentPosition: -1, modelPosition: -1, status: "not_observed" },
     };
   const model = projectModel(reference, "primary", authority);
   return {
     agents: [
       {
         ...runtime,
-        modelsStatus: Object.values(model).includes("collection_error")
-          ? "collection_error"
-          : "reported",
+        modelsStatus: hasTelemetryCollectionError(model) ? "collection_error" : "reported",
         models: [model],
       },
     ],
