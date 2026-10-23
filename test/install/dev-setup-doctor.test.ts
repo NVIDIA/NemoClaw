@@ -150,9 +150,9 @@ fi`,
     "npm",
     `if [ "\${1:-}" = "root" ] && [ "\${2:-}" = "-g" ]; then
   echo "${globalRoot}"
-elif [ "\${FAKE_NPM_ROOT_INSTALL_FAIL:-}" = "1" ] && [ "\${1:-}" = "install" ]; then
+elif [ "\${FAKE_NPM_ROOT_INSTALL_FAIL:-}" = "1" ] && [ "\${1:-}" = "ci" ]; then
   exit 1
-elif [ "\${FAKE_NPM_PLUGIN_INSTALL_FAIL:-}" = "1" ] && [ "\${1:-}" = "--prefix" ] && [ "\${2:-}" = "nemoclaw" ] && [ "\${3:-}" = "install" ]; then
+elif [ "\${FAKE_NPM_PLUGIN_INSTALL_FAIL:-}" = "1" ] && [ "\${1:-}" = "--prefix" ] && [ "\${2:-}" = "nemoclaw" ] && [ "\${3:-}" = "ci" ]; then
   exit 1
 elif [ "\${FAKE_NPM_CLI_TYPECHECK_OOM:-}" = "1" ] && [ "\${1:-}" = "run" ] && [ "\${2:-}" = "typecheck:cli" ]; then
   printf '%s\\n' '<--- Last few GCs --->' >&2
@@ -476,6 +476,26 @@ describe("contributor environment doctor", () => {
     expect(result.status).toBe(1);
     expect(result.output).toContain("Git commit signing is incomplete");
     expect(result.output).toContain("Git pre-push hook is missing");
+    expect(result.output).toContain(
+      "Run: npm ci --include=dev --ignore-scripts --prefer-offline --include=optional --@nvidia:registry=https://npm.pkg.github.com && ./node_modules/.bin/prek install",
+    );
+  });
+
+  it("reports lockfile-preserving hook repair when the hook directory cannot be resolved", () => {
+    const fixture = createFixture();
+    writeTool(
+      fixture.fakeBin,
+      "git",
+      'if [ "${1:-}" = "--version" ]; then echo "git version 2.50.0"; else exit 1; fi',
+    );
+
+    const result = runDoctor(fixture);
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("Git hook directory could not be resolved");
+    expect(result.output).toContain(
+      "Run: npm ci --include=dev --ignore-scripts --prefer-offline --include=optional --@nvidia:registry=https://npm.pkg.github.com && ./node_modules/.bin/prek install",
+    );
   });
 
   it.each([
@@ -564,6 +584,9 @@ describe("contributor environment doctor", () => {
     expect(result.status).toBe(1);
     expect(result.output).toContain("hadolint: not found");
     expect(result.output).toContain("Root TypeScript dependencies: missing or not executable");
+    expect(result.output).toContain(
+      "Run: npm ci --include=dev --ignore-scripts --@nvidia:registry=https://npm.pkg.github.com",
+    );
     expect(result.output).toContain("Plugin build artifacts: missing");
     expect(result.output).toContain("Git contributor identity is incomplete");
   });
@@ -749,9 +772,11 @@ describe("contributor repository setup", () => {
     expect(result.output).toContain("Ready to create a feature branch.");
     const commands = readCommandLog(fixture);
     expect(commands).toContain(
-      "npm install --include=dev --ignore-scripts --prefer-offline --include=optional --@nvidia:registry=https://npm.pkg.github.com",
+      "npm ci --include=dev --ignore-scripts --prefer-offline --include=optional --@nvidia:registry=https://npm.pkg.github.com",
     );
-    expect(commands).toContain("npm --prefix nemoclaw install --include=dev --ignore-scripts");
+    expect(commands).toContain("npm --prefix nemoclaw ci --include=dev --ignore-scripts");
+    expect(commands).not.toContain("npm install");
+    expect(commands).not.toContain("npm --prefix nemoclaw install");
     expect(commands).not.toContain("uv sync");
     expect(commands).toContain("prek install");
     expect(commands).not.toContain("npm-link-or-shim");
@@ -766,9 +791,11 @@ describe("contributor repository setup", () => {
 
     const commands = readCommandLog(fixture);
     expect(commands).toContain(
-      "npm install --include=dev --ignore-scripts --prefer-offline --include=optional --@nvidia:registry=https://npm.pkg.github.com",
+      "npm ci --include=dev --ignore-scripts --prefer-offline --include=optional --@nvidia:registry=https://npm.pkg.github.com",
     );
-    expect(commands).toContain("npm --prefix nemoclaw install --include=dev --ignore-scripts");
+    expect(commands).toContain("npm --prefix nemoclaw ci --include=dev --ignore-scripts");
+    expect(commands).not.toContain("npm install");
+    expect(commands).not.toContain("npm --prefix nemoclaw install");
     expect(commands).not.toContain("uv sync");
     expect(commands).not.toContain("npm-link-or-shim");
     expect(commands).not.toContain("onboard");
@@ -785,9 +812,11 @@ describe("contributor repository setup", () => {
     expect(result.status).toBe(0);
     const commands = readCommandLog(fixture);
     expect(commands).toContain(
-      "npm install --include=dev --ignore-scripts --prefer-offline --include=optional --@nvidia:registry=https://npm.pkg.github.com",
+      "npm ci --include=dev --ignore-scripts --prefer-offline --include=optional --@nvidia:registry=https://npm.pkg.github.com",
     );
-    expect(commands).toContain("npm --prefix nemoclaw install --include=dev --ignore-scripts");
+    expect(commands).toContain("npm --prefix nemoclaw ci --include=dev --ignore-scripts");
+    expect(commands).not.toContain("npm install");
+    expect(commands).not.toContain("npm --prefix nemoclaw install");
   });
 
   it("stops before repository changes when a supported Python is missing", () => {
@@ -799,7 +828,9 @@ describe("contributor repository setup", () => {
 
     expect(result.status).toBe(1);
     expect(result.output).toContain("Python 3.11 or newer was not found locally.");
-    expect(readCommandLog(fixture)).not.toContain("npm install");
+    const commands = readCommandLog(fixture);
+    expect(commands).not.toContain("npm ci");
+    expect(commands).not.toContain("npm --prefix nemoclaw ci");
   });
 
   it("rejects unsupported Node.js before repository changes", () => {
@@ -810,7 +841,9 @@ describe("contributor repository setup", () => {
 
     expect(result.status).toBe(1);
     expect(result.output).toContain("Node.js 22.18.0 is below 22.19.0");
-    expect(readCommandLog(fixture)).not.toContain("npm install");
+    const commands = readCommandLog(fixture);
+    expect(commands).not.toContain("npm ci");
+    expect(commands).not.toContain("npm --prefix nemoclaw ci");
   });
 
   it("stops before repository changes on an unsupported host", () => {
@@ -823,7 +856,9 @@ describe("contributor repository setup", () => {
 
     expect(result.status).toBe(1);
     expect(result.output).toContain("Unsupported host: Plan9 mips64");
-    expect(readCommandLog(fixture)).not.toContain("npm install");
+    const commands = readCommandLog(fixture);
+    expect(commands).not.toContain("npm ci");
+    expect(commands).not.toContain("npm --prefix nemoclaw ci");
   });
 
   it("stops before dependency installation for an inherited Git hooks override", () => {
@@ -833,7 +868,9 @@ describe("contributor repository setup", () => {
 
     expect(result.status).toBe(1);
     expect(result.output).toContain("core.hooksPath");
-    expect(readCommandLog(fixture)).not.toContain("npm install");
+    const commands = readCommandLog(fixture);
+    expect(commands).not.toContain("npm ci");
+    expect(commands).not.toContain("npm --prefix nemoclaw ci");
   });
 
   it("stops after a failed setup step without running later mutations", () => {
@@ -844,7 +881,7 @@ describe("contributor repository setup", () => {
     expect(result.status).toBe(1);
     expect(result.output).toContain("Setup stopped while attempting: Install plugin dependencies");
     const commands = readCommandLog(fixture);
-    expect(commands).toContain("npm --prefix nemoclaw install --include=dev --ignore-scripts");
+    expect(commands).toContain("npm --prefix nemoclaw ci --include=dev --ignore-scripts");
     expect(commands).not.toContain("uv sync");
   });
 
@@ -857,9 +894,9 @@ describe("contributor repository setup", () => {
     expect(result.output).toContain("Setup stopped while attempting: Install root dependencies");
     const commands = readCommandLog(fixture);
     expect(commands).toContain(
-      "npm install --include=dev --ignore-scripts --prefer-offline --include=optional --@nvidia:registry=https://npm.pkg.github.com",
+      "npm ci --include=dev --ignore-scripts --prefer-offline --include=optional --@nvidia:registry=https://npm.pkg.github.com",
     );
-    expect(commands).not.toContain("npm --prefix nemoclaw install");
+    expect(commands).not.toContain("npm --prefix nemoclaw ci");
   });
 
   it("stops CLI type-check setup failures with a heap-limit remedy instead of the V8 stack", () => {
@@ -923,7 +960,9 @@ describe("contributor repository setup", () => {
 
     expect(result.status).not.toBe(0);
     expect(result.output).toContain("NEMOCLAW_DEV_DOCTOR_REPO_ROOT");
-    expect(readCommandLog(fixture)).not.toContain("npm install");
+    const commands = readCommandLog(fixture);
+    expect(commands).not.toContain("npm ci");
+    expect(commands).not.toContain("npm --prefix nemoclaw ci");
   });
 
   it("exposes the development CLI only when requested", () => {
