@@ -265,6 +265,9 @@ cargo run -q --locked -p nemoclaw-build --no-default-features -- lifecycle-timin
 ```
 
 CI keeps each step's JUnit report, with per-test durations, for 14 days in the `test-PLATFORM-ATTEMPT`, `lifecycle-PLATFORM-SHARD-ATTEMPT`, `live-docker-PLATFORM-ATTEMPT`, and `live-kind-PLATFORM-ATTEMPT` artifacts; the `live-docker` report joins its four nextest commands.
+The live reports hold outcomes and times only, so they can be shared as a run's result; failing tests' output stays in the job log.
+The rest of what a live run used is on its GitHub run: the commit and runner, and the `bundle-PLATFORM-COMMIT-ATTEMPT` and `live-images-PLATFORM-COMMIT-ATTEMPT` artifacts it downloaded, each with its digest.
+Versions it pinned are in the repository at that commit, and known gaps are in [current limits](../limits.md).
 
 ## How CI Runs the Tests
 
