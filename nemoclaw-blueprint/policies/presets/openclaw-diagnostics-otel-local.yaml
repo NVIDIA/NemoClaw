@@ -18,6 +18,7 @@ network_policies:
           - 10.0.0.0/8
           - 172.16.0.0/12
           - 192.168.0.0/16
+          - fc00::/7
         rules:
           - allow: { method: POST, path: "/v1/traces" }
           - allow: { method: POST, path: "/v1/traces/**" }
