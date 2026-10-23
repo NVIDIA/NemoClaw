@@ -56,7 +56,9 @@ Before publishing, complete the provenance, SBOM, scanning, and license work ([#
 
 ## SBOM Assets
 
-Staging scans each image's exact Linux ARM64 and AMD64 manifest with Syft 1.55.0, including agent and proxy images reused from CI.
+Each image is scanned where it is built, with Syft 1.55.0: the image workflow scans each agent and proxy image it pushes on `v1`, and staging's runtime jobs scan the vLLM and Ollama images they build.
+The SPDX document is kept in `v1-ci` as `sbom-DIGEST`, named by the platform manifest it describes, so an unchanged image is never scanned again.
+Staging copies each release platform's document from there, and scans from the registry only an image that has none.
 Each platform gets a digest-named SPDX 2.3 JSON asset; `sboms.json` maps each asset to its image reference, platform, and SHA-256 checksum.
 The existing Kubernetes metadata bundles remain separate assets.
 The scanner catalogs OS packages and installed Python and Node packages.
@@ -66,5 +68,5 @@ Image scanning cannot recover components whose upstream images contain neither p
 
 The assets stay private with the draft: release candidates and internal packages publish nothing about their images.
 Only a final release attests the inventories, together with provenance ([#13521](https://github.com/NVIDIA/NemoClaw/issues/13521)).
-A Syft failure fails staging before any SBOM asset is uploaded; rerun staging.
+A Syft failure fails the job that runs it, before staging uploads any SBOM asset; rerun it.
 Assets are named by digest, so a rerun can't overwrite another image's inventory.
