@@ -11,6 +11,7 @@ import {
   CANDIDATE_AGENT_FEATURE_ENV,
   CANDIDATE_QUALIFICATION_RECEIPT_ENV,
 } from "../../../src/lib/agent/candidate.ts";
+import { DEFAULT_CLOUD_MODEL } from "../../../src/lib/inference/config.ts";
 import { PI_QUALIFICATION_TEST_TIMEOUT_MS } from "../../../tools/e2e/onboard-timeout-contract.mts";
 import { runBoundedRetry } from "../../../tools/e2e/retry-evidence.mts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
@@ -40,7 +41,7 @@ import {
 } from "./pi-agent-qualification-events.ts";
 
 const GATEWAY = "nemoclaw";
-const MODEL = "nvidia/nemotron-3-super-120b-a12b";
+const MODEL = DEFAULT_CLOUD_MODEL;
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-pi-qual";
 const TASK_VERSION = "pi-read-v3";
 const LIVE_TIMEOUT_MS = PI_QUALIFICATION_TEST_TIMEOUT_MS;

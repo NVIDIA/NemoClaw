@@ -79,6 +79,7 @@ export async function prepareHostedNativeProvider(input: {
     credentialValue: input.credentialValue,
     reuseExistingCredential: input.reuseExistingCredential,
     ...(expected ? { expected } : {}),
+    ...(expected && !gatewayAuthority && recorded ? { recordedSandboxName: recorded.name } : {}),
   });
   await lifecycle.persistNativeProviderAuthority({
     adapter: input.adapter,
@@ -98,4 +99,8 @@ export async function prepareHostedNativeProvider(input: {
   return receipt;
 }
 
-export { prepareCustomNativeProvider, usesCustomNativeOnboarding } from "./custom-setup";
+export {
+  isHostedCustomEndpoint,
+  prepareCustomNativeProvider,
+  usesCustomNativeOnboarding,
+} from "./custom-setup";

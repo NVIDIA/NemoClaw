@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -10,7 +12,10 @@ import {
   decideInstallOllamaLinuxMode,
   type InstallOllamaLinuxOptions,
   installOllamaOnLinux,
+  OFFICIAL_OLLAMA_INSTALLER_SHA256,
+  OFFICIAL_OLLAMA_INSTALLER_URL,
   resolveOllamaTarballArch,
+  sha256File,
 } from "./install-ollama-linux";
 
 function makeOpts(overrides: Partial<InstallOllamaLinuxOptions>): InstallOllamaLinuxOptions {
@@ -24,6 +29,7 @@ function makeOpts(overrides: Partial<InstallOllamaLinuxOptions>): InstallOllamaL
     runCaptureImpl: vi.fn().mockReturnValue(""),
     runCaptureExImpl: vi.fn().mockReturnValue({ stdout: "", exitCode: 0, timedOut: false }),
     runShellImpl: vi.fn().mockReturnValue({ status: 0, stdout: "", stderr: "", error: null }),
+    sha256FileImpl: vi.fn().mockReturnValue(OFFICIAL_OLLAMA_INSTALLER_SHA256),
     waitForHttpImpl: vi.fn().mockReturnValue(true),
     sleepSecondsImpl: vi.fn(),
     ensureManagedOllamaLoopbackSystemdOverrideImpl: vi.fn().mockReturnValue("ready"),
@@ -47,6 +53,21 @@ describe("resolveOllamaTarballArch", () => {
     expect(resolveOllamaTarballArch("arm" as NodeJS.Architecture)).toBeNull();
     expect(resolveOllamaTarballArch("ia32" as NodeJS.Architecture)).toBeNull();
     expect(resolveOllamaTarballArch("ppc64" as NodeJS.Architecture)).toBeNull();
+  });
+});
+
+describe("sha256File", () => {
+  it("computes a lowercase SHA-256 identity for downloaded bytes", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-integrity-"));
+    const file = `${directory}/install.sh`;
+    try {
+      fs.writeFileSync(file, "#!/bin/sh\nexit 0\n");
+      expect(sha256File(file)).toBe(
+        "306c6ca7407560340797866e077e053627ad409277d1b9da58106fce4cf717cb",
+      );
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
   });
 });
 
@@ -488,6 +509,40 @@ describe("installOllamaOnLinux (system)", () => {
     }
   });
 
+  it("rejects installer content whose digest differs from the pinned identity", () => {
+    let installerPath = "";
+    const runCaptureExImpl = vi.fn().mockImplementation((command: readonly string[]) => {
+      installerPath = outputPathFromCurlCommand(command);
+      fs.writeFileSync(installerPath, "#!/bin/sh\nprintf substituted\n");
+      return { stdout: "", stderr: "", exitCode: 0, timedOut: false };
+    });
+    const runShellImpl = vi.fn();
+    const errorLog = vi.fn();
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${code})`);
+    }) as never);
+
+    try {
+      expect(() =>
+        installOllamaOnLinux(
+          makeOpts({
+            modeOverride: "system",
+            runCaptureImpl: vi.fn().mockReturnValue("/usr/bin/zstd"),
+            runCaptureExImpl,
+            runShellImpl,
+            sha256FileImpl: sha256File,
+            errorLog,
+          }),
+        ),
+      ).toThrow("process.exit(1)");
+      expect(runShellImpl).not.toHaveBeenCalled();
+      expect(errorLog).toHaveBeenCalledWith(expect.stringContaining("integrity check failed"));
+      expect(fs.existsSync(installerPath)).toBe(false);
+    } finally {
+      exitSpy.mockRestore();
+    }
+  });
+
   it("does not retry an installer that exits nonzero (#9698)", () => {
     let installerPath = "";
     const runCaptureExImpl = vi.fn().mockImplementation((command: readonly string[]) => {
@@ -541,13 +596,14 @@ describe("installOllamaOnLinux (system)", () => {
     const result = installOllamaOnLinux(opts);
     expect(result).toEqual({ ok: true, mode: "system", binPath: "/usr/local/bin/ollama" });
     const fetchCall = runCaptureExImpl.mock.calls.find(([command]) =>
-      Array.isArray(command) ? command.includes("https://ollama.com/install.sh") : false,
+      Array.isArray(command) ? command.includes(OFFICIAL_OLLAMA_INSTALLER_URL) : false,
     )?.[0] as readonly string[] | undefined;
     expect(fetchCall).toContain("--connect-timeout");
     expect(fetchCall).toContain("--max-time");
     expect(fetchCall).toContain("--retry-max-time");
     expect(fetchCall).toContain("--proto-redir");
     expect(fetchCall).not.toContain("--insecure");
+    expect(opts.sha256FileImpl).toHaveBeenCalled();
     const installCall = findRunShellCall(runShellImpl, "sh '");
     expect(installCall).toBeDefined();
     expect(installCall).not.toContain("curl");

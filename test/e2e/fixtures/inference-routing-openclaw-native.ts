@@ -23,6 +23,7 @@ type NativeOpenClawContext = Pick<
 export async function onboardNativeOpenClaw(
   authenticated: boolean,
   { artifacts, cleanup, host, progress, runtimeProvider, sandbox }: NativeOpenClawContext,
+  listenHost: "0.0.0.0" | "::" = "0.0.0.0",
 ) {
   await requireLivePrerequisites(host, runtimeProvider);
   const owner = inferenceSandboxName(authenticated ? "e2e-oc-auth" : "e2e-oc-none");
@@ -34,7 +35,7 @@ export async function onboardNativeOpenClaw(
     model,
     additionalModels: authenticated ? [switchedModel] : [],
     chatContent: "PONG",
-    host: "0.0.0.0",
+    host: listenHost,
     port: authenticated ? 8081 : 8000,
     publicHost: "host.openshell.internal",
     requireAuth: true,

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { MAX_TIMER_DELAY_MS } from "../../core/timer";
 import {
   assertNoOpenShellGatewayEndpointOverride,
   OpenShellGatewayEndpointOverrideError,
@@ -28,7 +29,6 @@ const DEFAULT_MUTATION_TIMEOUT_MS = 30_000;
 const DEFAULT_VERIFICATION_TIMEOUT_SECONDS = 60;
 const MUTATION_VERIFICATION_GRACE_MS = 15_000;
 const MAX_VERIFICATION_TIMEOUT_SECONDS = 3_600;
-const MAX_PROCESS_TIMEOUT_MS = 2_147_483_647;
 const MUTATION_DETAIL_LIMIT = 2_000;
 const TERMINAL_OSC_RE = /(?:\x1B\]|\x9D)[\s\S]*?(?:\x07|\x1B\\|\x9C|$)/gu;
 const TERMINAL_STRING_RE = /(?:\x1B[PX^_]|[\x90\x98\x9E\x9F])[\s\S]*?(?:\x1B\\|\x9C|$)/gu;
@@ -438,7 +438,7 @@ function mutationRequestError(
     (request.timeoutMs !== undefined &&
       (!Number.isSafeInteger(request.timeoutMs) ||
         request.timeoutMs <= 0 ||
-        request.timeoutMs > MAX_PROCESS_TIMEOUT_MS ||
+        request.timeoutMs > MAX_TIMER_DELAY_MS ||
         request.timeoutMs < requiredProcessTimeoutMs))
   ) {
     return {

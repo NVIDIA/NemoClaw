@@ -10,7 +10,11 @@ function createHarness() {
   const deps = {
     policies: {
       setupPolicyPresetSupported: vi.fn(() => true),
-      listSetupPolicyPresets: vi.fn(() => [{ name: "local-inference" }, { name: "npm" }]),
+      listSetupPolicyPresets: vi.fn(() => [
+        { name: "local-inference" },
+        { name: "npm" },
+        { name: "personal-open-internet" },
+      ]),
       listCustomPresets: vi.fn(() => []),
       getAppliedPresets: vi.fn(() => ["local-inference", "npm"]),
       customPresetOwnsNetworkPolicyKey: vi.fn(() => false),
@@ -45,11 +49,97 @@ function createHarness() {
     selectTierPresetsAndAccess: vi.fn(
       async (): Promise<Array<{ name: string; access: string }>> => [],
     ),
-    parsePolicyPresetEnv: vi.fn(() => []),
-    env: { NEMOCLAW_POLICY_MODE: "suggested" },
+    parsePolicyPresetEnv: vi.fn((_value: string): string[] => []),
+    env: { NEMOCLAW_POLICY_MODE: "suggested", NEMOCLAW_POLICY_PRESETS: "" },
   } satisfies SetupPolicySelectionDeps;
   return { deps, syncPresetSelection };
 }
+
+describe("Personal selection with a native custom provider", () => {
+  it("refuses an interactive Personal selection before changing policy", async () => {
+    const { deps, syncPresetSelection } = createHarness();
+    deps.isNonInteractive.mockReturnValue(false);
+    deps.selectPolicyTier.mockResolvedValue("personal");
+    const hasNativeCustomProvider = vi.fn(() => true);
+    const errors: string[] = [];
+    const errorSpy = vi.spyOn(console, "error").mockImplementation((message: unknown) => {
+      errors.push(String(message));
+    });
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => {
+      throw new Error("process.exit");
+    });
+    try {
+      await expect(
+        setupPoliciesWithSelection({ ...deps, hasNativeCustomProvider }, "alpha", {
+          selectedPresets: null,
+        }),
+      ).rejects.toThrow("process.exit");
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    } finally {
+      errorSpy.mockRestore();
+      exitSpy.mockRestore();
+    }
+
+    expect(hasNativeCustomProvider).toHaveBeenCalledWith("alpha");
+    expect(errors.join("\n")).toContain("NEMOCLAW_POLICY_TIER=personal");
+    expect(deps.selectTierPresetsAndAccess).not.toHaveBeenCalled();
+    expect(syncPresetSelection).not.toHaveBeenCalled();
+  });
+
+  it("refuses a resumed Personal selection before readiness or policy mutation", async () => {
+    const { deps, syncPresetSelection } = createHarness();
+    const hasNativeCustomProvider = vi.fn(() => true);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => {
+      throw new Error("process.exit");
+    });
+    try {
+      await expect(
+        setupPoliciesWithSelection({ ...deps, hasNativeCustomProvider }, "alpha", {
+          selectedPresets: ["personal-open-internet"],
+        }),
+      ).rejects.toThrow("process.exit");
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    } finally {
+      errorSpy.mockRestore();
+      exitSpy.mockRestore();
+    }
+
+    expect(hasNativeCustomProvider).toHaveBeenCalledWith("alpha");
+    expect(deps.waitForSandboxReady).not.toHaveBeenCalled();
+    expect(deps.recordPendingSelection).not.toHaveBeenCalled();
+    expect(syncPresetSelection).not.toHaveBeenCalled();
+  });
+
+  it("refuses a custom Personal preset selected under another tier", async () => {
+    const { deps, syncPresetSelection } = createHarness();
+    deps.env = {
+      NEMOCLAW_POLICY_MODE: "custom",
+      NEMOCLAW_POLICY_PRESETS: "personal-open-internet",
+    };
+    deps.parsePolicyPresetEnv.mockReturnValue(["personal-open-internet"]);
+    const hasNativeCustomProvider = vi.fn(() => true);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => {
+      throw new Error("process.exit");
+    });
+    try {
+      await expect(
+        setupPoliciesWithSelection({ ...deps, hasNativeCustomProvider }, "alpha", {
+          selectedPresets: null,
+        }),
+      ).rejects.toThrow("process.exit");
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    } finally {
+      errorSpy.mockRestore();
+      exitSpy.mockRestore();
+    }
+
+    expect(hasNativeCustomProvider).toHaveBeenCalledWith("alpha");
+    expect(deps.recordPendingSelection).not.toHaveBeenCalled();
+    expect(syncPresetSelection).not.toHaveBeenCalled();
+  });
+});
 
 describe("host-local route-only policy selection", () => {
   it.each([false, true])(
