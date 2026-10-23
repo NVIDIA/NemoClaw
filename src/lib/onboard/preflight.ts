@@ -28,6 +28,7 @@ import {
   isDockerDaemonReachable,
   isSupportedGatewayDockerHost,
 } from "../domain/docker-host";
+import { captureNvidiaSmi } from "../inference/gpu-trust";
 import type { DockerAuthorityConflict } from "../platform";
 import { classifyDockerVersionIdentity, observeDockerAuthorityConflict } from "../platform";
 import { resolveOpenshell } from "../readiness/openshell-resolver";
@@ -556,13 +557,10 @@ function detectNvidiaGpuHardware(runCaptureImpl: RunCaptureFn): boolean {
   return output.split("\n").some(lspciLineIsNvidiaGpu);
 }
 
-function detectNvidiaGpu(runCaptureImpl: RunCaptureFn): boolean {
-  if (
-    commandExists("nvidia-smi", runCaptureImpl) &&
-    Boolean(String(runCaptureImpl(["nvidia-smi", "-L"], { ignoreError: true }) || "").trim())
-  ) {
-    return true;
-  }
+function detectNvidiaGpu(runCaptureImpl: RunCaptureFn, isWsl: boolean): boolean {
+  // Share the PATH-then-WSL-driver lookup with GPU detection so a WSL host that
+  // reaches nvidia-smi only through its stock driver path is still recognised.
+  if (captureNvidiaSmi(["-L"], { isWsl, runCaptureImpl }).trim()) return true;
   // The driver may be missing or unloaded (nvidia-smi absent/empty) even when
   // NVIDIA GPU hardware is present. Fall back to a hardware probe so CDI/toolkit
   // remediation still fires when the toolkit is missing and Docker CDI dirs are
@@ -616,7 +614,18 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
     opts.commandExistsImpl?.("docker") ?? commandExists("docker", runCaptureImpl);
   const nodeInstalled = opts.commandExistsImpl?.("node") ?? commandExists("node", runCaptureImpl);
   const openshellInstalled = isOpenshellAvailable(opts, runCaptureImpl);
-  const hasNvidiaGpu = opts.gpuProbeImpl?.() ?? detectNvidiaGpu(runCaptureImpl);
+  const release = opts.release ?? os.release();
+  const procVersion =
+    opts.procVersion ??
+    (() => {
+      try {
+        return readFileImpl("/proc/version", "utf-8");
+      } catch {
+        return "";
+      }
+    })();
+  const isWslHost = detectWsl({ platform, env, release, procVersion });
+  const hasNvidiaGpu = opts.gpuProbeImpl?.() ?? detectNvidiaGpu(runCaptureImpl, isWslHost);
   const nvidiaContainerToolkitInstalled =
     opts.commandExistsImpl?.("nvidia-ctk") ?? commandExists("nvidia-ctk", runCaptureImpl);
   const packageManager = detectPackageManager(runCaptureImpl);
@@ -729,16 +738,6 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
     }
   }
 
-  const release = opts.release ?? os.release();
-  const procVersion =
-    opts.procVersion ??
-    (() => {
-      try {
-        return readFileImpl("/proc/version", "utf-8");
-      } catch {
-        return "";
-      }
-    })();
   let runtime = inferContainerRuntime(dockerInfoOutput);
   // Podman fronting the Docker CLI compatibility socket mimics Docker in
   // `docker info`, so the grep above misclassifies it as `docker`. Reclassify
@@ -755,7 +754,6 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
   if (dockerReachable && runtime === "unknown" && platform === "linux") {
     runtime = "docker";
   }
-  const isWslHost = detectWsl({ platform, env, release, procVersion });
   const dockerCredentialStore = readDockerCredentialStore(env, readFileImpl);
   const dockerCredsStore = dockerCredentialStore.credsStore;
   // Session markers cannot see the Windows side of WSL interop, so probe the
