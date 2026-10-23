@@ -3,9 +3,13 @@
 
 import {
   NVIDIA_HOSTED_LOGICAL_PROVIDER,
+  NVIDIA_HOSTED_NATIVE_ENDPOINT,
   normalizeNativeNvidiaProviderAttachment,
 } from "../native-nvidia/contract";
-import { requireHostedProviderAttachment } from "./hosted-attachment";
+import {
+  hostedNativeProviderForAttachment,
+  requireHostedProviderAttachment,
+} from "./hosted-attachment";
 import { normalizeProviderBaseUrl } from "../../core/provider-endpoint";
 import type { NativeProviderAttachment } from "./contract";
 
@@ -51,4 +55,14 @@ export function recordedNativeProviderAttachment(selection: {
     return nvidia;
   }
   return hosted;
+}
+
+/** Endpoint of the recorded native NVIDIA or hosted attachment; throws like the attachment check. */
+export function recordedNativeProviderEndpoint(
+  selection: Parameters<typeof recordedNativeProviderAttachment>[0],
+): string | undefined {
+  if (!recordedNativeProviderAttachment(selection)) return undefined;
+  return selection.nativeNvidiaProviderAttachment !== undefined
+    ? NVIDIA_HOSTED_NATIVE_ENDPOINT
+    : hostedNativeProviderForAttachment(selection.nativeHostedProviderAttachment)?.endpoint;
 }

@@ -15,6 +15,7 @@ import {
   parseRuntimeRoster,
   projectRuntimeAgents,
   projectCurrentInferenceRoute,
+  type RuntimeRouteAuthority,
   unknownModel,
 } from "../../domain/telemetry/dimensions";
 import type {
@@ -27,6 +28,7 @@ import type {
   ValueStatus,
 } from "../../domain/telemetry/event";
 import { resolveRegisteredAgentDefinition } from "../../agent/runtime";
+import { recordedNativeProviderEndpoint } from "../../inference/native-provider/recorded-selection";
 import { readAppliedPolicySelection } from "../../domain/telemetry/provenance";
 import { DCODE_OBSERVABILITY_FEATURE } from "../../onboard/observability-policy-presets";
 import { readManagedWorkloadAuthority } from "../../onboard/workload/authority";
@@ -48,6 +50,26 @@ import { cloneSandboxWorkloadReceipt } from "../../state/registry/workload";
 import { getMcpProviderInspectionRuntimeSelection } from "../sandbox/mcp-bridge-provider-inspection";
 
 const MAX_CONCURRENT_RUNTIME_OBSERVATIONS = 4;
+
+/**
+ * Route proved by a valid native NVIDIA or hosted attachment, or an invalid-receipt marker.
+ * Both keys are always set so registry fields with the same names cannot reach telemetry.
+ */
+function nativeAttachmentEvidence(entry: SandboxEntry): {
+  nativeAttachedRoute: RuntimeRouteAuthority["nativeAttachedRoute"];
+  nativeAttachmentInvalid: boolean;
+} {
+  try {
+    const endpoint = recordedNativeProviderEndpoint(entry);
+    return {
+      nativeAttachedRoute:
+        endpoint && entry.provider ? { provider: entry.provider, endpoint } : undefined,
+      nativeAttachmentInvalid: false,
+    };
+  } catch {
+    return { nativeAttachedRoute: undefined, nativeAttachmentInvalid: true };
+  }
+}
 
 function booleanSetting(value: unknown): {
   value: "true" | "false" | "unknown";
@@ -325,7 +347,11 @@ async function collectRuntime(
         runtime,
         raw.status === "fulfilled" ? raw.value : null,
         roster.status === "fulfilled" ? roster.value : undefined,
-        { ...entry, metadataErrors: options.metadataErrors },
+        {
+          ...entry,
+          ...nativeAttachmentEvidence(entry),
+          metadataErrors: options.metadataErrors,
+        },
       ),
     );
     if (raw.status === "rejected" || roster.status === "rejected") row.status = "collection_error";

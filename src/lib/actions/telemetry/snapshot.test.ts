@@ -378,6 +378,128 @@ it.each(nativeModelCases)(
   },
 );
 
+const hermesConfig = (baseUrl: string) =>
+  `model:\n  default: nvidia/nemotron-3-ultra-550b-a55b\n  provider: custom\n  base_url: ${baseUrl}\n`;
+const nvidiaAttachment = {
+  schemaVersion: 1,
+  profileId: "nemoclaw-nvidia-inference-v1",
+  providerName: "nemoclaw-nvidia-prod-v1",
+  providerId: "11111111-2222-4333-8444-555555555555",
+} as const;
+const openaiAttachment = {
+  schemaVersion: 1,
+  profileId: "nemoclaw-openai-inference-v1",
+  providerName: "nemoclaw-openai-api-v1",
+  providerId: "66666666-7777-4888-9999-000000000000",
+} as const;
+
+const nvidiaRoute = { provider: "nvidia-prod", model: "nvidia/nemotron-3-ultra-550b-a55b" };
+const forged = <T>(value: unknown) => value as T;
+
+it.each<{
+  name: string;
+  entry: Partial<SandboxEntry>;
+  baseUrl?: string;
+  providerProfile: string;
+  providerStatus?: string;
+}>([
+  {
+    name: "an attached native NVIDIA route",
+    entry: { ...nvidiaRoute, nativeNvidiaProviderAttachment: nvidiaAttachment },
+    providerProfile: "nvidia",
+  },
+  {
+    name: "an attached native OpenAI route",
+    entry: {
+      ...nvidiaRoute,
+      provider: "openai-api",
+      nativeHostedProviderAttachment: openaiAttachment,
+    },
+    baseUrl: "https://api.openai.com/v1",
+    providerProfile: "openai",
+  },
+  {
+    name: "a valid NVIDIA receipt with another Hermes endpoint",
+    entry: { ...nvidiaRoute, nativeNvidiaProviderAttachment: nvidiaAttachment },
+    baseUrl: "https://api.openai.com/v1",
+    providerProfile: "custom",
+  },
+  {
+    name: "a native config for another recorded model",
+    entry: {
+      ...nvidiaRoute,
+      model: "other/model",
+      nativeNvidiaProviderAttachment: nvidiaAttachment,
+    },
+    providerProfile: "custom",
+  },
+  {
+    name: "a native config without an attachment",
+    entry: nvidiaRoute,
+    providerProfile: "custom",
+  },
+  {
+    name: "an NVIDIA receipt recorded for another provider",
+    entry: {
+      ...nvidiaRoute,
+      provider: "openai-api",
+      nativeNvidiaProviderAttachment: nvidiaAttachment,
+    },
+    providerProfile: "unknown",
+    providerStatus: "collection_error",
+  },
+  {
+    name: "an empty NVIDIA receipt",
+    entry: { ...nvidiaRoute, nativeNvidiaProviderAttachment: forged({}) },
+    providerProfile: "unknown",
+    providerStatus: "collection_error",
+  },
+  {
+    name: "an NVIDIA receipt stored as a hosted attachment",
+    entry: { ...nvidiaRoute, nativeHostedProviderAttachment: forged(nvidiaAttachment) },
+    providerProfile: "unknown",
+    providerStatus: "collection_error",
+  },
+  {
+    name: "an unrelated local attachment",
+    entry: { ...nvidiaRoute, nativeLocalProviderAttachment: forged({ profileId: "unrelated" }) },
+    providerProfile: "custom",
+  },
+  {
+    name: "a shared-route config with an invalid NVIDIA receipt",
+    entry: { ...nvidiaRoute, nativeNvidiaProviderAttachment: forged({}) },
+    baseUrl: "https://inference.local/v1",
+    providerProfile: "nvidia",
+  },
+  {
+    name: "a registry entry that carries its own attached route",
+    entry: forged({
+      ...nvidiaRoute,
+      nativeAttachedRoute: {
+        provider: "nvidia-prod",
+        endpoint: "https://integrate.api.nvidia.com/v1",
+      },
+    }),
+    providerProfile: "custom",
+  },
+])(
+  "reports the Hermes custom adapter for $name as $providerProfile (#13577)",
+  async ({ entry, baseUrl, providerProfile, providerStatus }) => {
+    const event = await collectNativeConfiguration(
+      "hermes",
+      "/sandbox/.hermes/config.yaml",
+      hermesConfig(baseUrl ?? "https://integrate.api.nvidia.com/v1"),
+      entry,
+    );
+    expect(event.parameters.configurations[0].agents[0].models[0]).toMatchObject({
+      modelId: "nvidia/nemotron-3-ultra-550b-a55b",
+      providerProfile,
+      providerStatus: providerStatus ?? "reported",
+    });
+    expect(isOperationEvent(event)).toBe(true);
+  },
+);
+
 it.each(nativeModelCases)(
   "marks a malformed $agent native model as a collection error (#12859)",
   async ({ agent, configPath, invalidConfig }) => {
