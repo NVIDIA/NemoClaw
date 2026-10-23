@@ -339,8 +339,14 @@ env:
 ```
 
 Register the server with OpenShell using the same key: give `openshell_inference` a `server` object whose `credential_env` names a variable holding the key where OpenTofu runs.
-Readiness on those platforms is the platform's job; point its readiness probe at `GET /health`, which needs no key.
 In YAML, set the provider's `credential` to that variable; [Use a Model Server in the Cluster](kubernetes.md#use-a-model-server-in-the-cluster) shows a Kubernetes example.
+
+Readiness on those platforms is the platform's job, using the server's own checks:
+
+- For vLLM, probe `GET /health`, which needs no key; vLLM serves it only once the model is loaded.
+- For Ollama, use an exec probe that runs `ollama show MODEL`; it succeeds only once the runtime has pulled the model, while Ollama's HTTP API answers before then.
+
+When memory protection stops the server, the runtime exits. Choose a restart policy that doesn't start the model again under the same memory pressure, such as Kubernetes' `restartPolicy: Never` for a pod that should stay down.
 
 ## Use External Ollama through a Managed Proxy
 
