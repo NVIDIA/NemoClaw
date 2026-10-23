@@ -35,5 +35,3 @@ mod qualify;
 mod registry_metadata;
 #[path = "schema.rs"]
 mod schema;
-
-mod release_sboms;

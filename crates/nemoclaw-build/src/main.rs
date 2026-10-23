@@ -25,15 +25,6 @@ struct Cli {
 }
 #[derive(Subcommand)]
 enum Action {
-    /// Generate digest-bound SPDX assets for the staged image inventory.
-    ReleaseSboms {
-        #[arg(long)]
-        inventory: PathBuf,
-        #[arg(long)]
-        output: PathBuf,
-        #[arg(long, default_value = "syft")]
-        syft: PathBuf,
-    },
     /// Render repository Markdown into Fern pages and check local links.
     #[cfg(feature = "sdk")]
     Docs {
@@ -509,14 +500,6 @@ async fn bundle(pins: &Pins, platform: &str) -> Result<()> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    if let Action::ReleaseSboms {
-        inventory,
-        output,
-        syft,
-    } = &cli.command
-    {
-        return nemoclaw_build::release_sboms::run(inventory, output, syft).map_err(Into::into);
-    }
     #[cfg(feature = "sdk")]
     if let Action::Docs { check, revision } = cli.command {
         return nemoclaw_build::docs::generate(Path::new("."), check, revision.as_deref());
@@ -695,8 +678,7 @@ async fn main() -> Result<()> {
         Action::Schema { .. } | Action::Docs { .. } | Action::Fern { .. } => {
             unreachable!("documentation generation returned before build tool checks")
         }
-        Action::ReleaseSboms { .. }
-        | Action::Ci { .. }
+        Action::Ci { .. }
         | Action::Images { .. }
         | Action::Changes { .. }
         | Action::LifecycleTiming { .. } => {
