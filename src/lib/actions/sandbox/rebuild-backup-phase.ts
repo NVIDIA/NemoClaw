@@ -22,6 +22,7 @@ import type { RebuildBail, RebuildLog } from "./rebuild-credential-preflight";
 import { backupSandboxStateForRebuild, type RebuildSandboxEntry } from "./rebuild-flow-helpers";
 import type { RebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
 import { recordRebuildRecoveryBackup } from "./rebuild-recreate-journal";
+import { redactBoundedRebuildTerminalDiagnostic } from "./rebuild-preflight-confirmation";
 import {
   abortOpenClawPostRestoreDoctor,
   beginOpenClawBackupQuiesce,
@@ -83,9 +84,27 @@ export interface RebuildBackupPhaseResult {
 }
 
 export async function releaseRebuildSourceOpenClawWindow(window: OpenClawPostRestoreDoctorWindow) {
-  const finished = await finishOpenClawBackupQuiesce(window);
+  let finished: Awaited<ReturnType<typeof finishOpenClawBackupQuiesce>>;
+  try {
+    finished = await finishOpenClawBackupQuiesce(window);
+  } catch (error) {
+    finished = {
+      ok: false,
+      stage: "release",
+      detail: redactBoundedRebuildTerminalDiagnostic(error),
+    };
+  }
   if (!finished.ok) {
-    const aborted = await abortOpenClawPostRestoreDoctor(window);
+    let aborted: Awaited<ReturnType<typeof abortOpenClawPostRestoreDoctor>>;
+    try {
+      aborted = await abortOpenClawPostRestoreDoctor(window);
+    } catch (error) {
+      aborted = {
+        ok: false,
+        stage: "abort",
+        detail: redactBoundedRebuildTerminalDiagnostic(error),
+      };
+    }
     const state = aborted.ok
       ? "The retained sandbox was stopped."
       : `Stopping or maintenance reconciliation was not fully verified (${aborted.detail}).`;

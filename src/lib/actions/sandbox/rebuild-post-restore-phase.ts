@@ -19,8 +19,12 @@ import * as registry from "../../state/registry";
 import { settlePortableOpenClawPairing } from "./launch-readiness";
 import { ensureMessagingHostForwardAfterRebuild } from "./messaging-host-forward-lifecycle";
 import type { RebuildBackupManifest } from "./rebuild-backup-phase";
-import type { RebuildBail, RebuildLog } from "./rebuild-credential-preflight";
-import { redactBoundedRebuildTerminalDiagnostic } from "./rebuild-preflight-confirmation";
+import {
+  DeferredRebuildCliExit,
+  redactBoundedRebuildTerminalDiagnostic,
+  type RebuildBail,
+  type RebuildLog,
+} from "./rebuild/cli-exit";
 import {
   completeHermesCronRestoreAfterGatewayReplacement,
   type HermesCronRestoreIdentity,
@@ -32,6 +36,7 @@ import {
   verifyHermesGatewayAfterStateRestore,
   verifyHermesGatewayAfterStateRestoreForCronGate,
 } from "./rebuild-hermes-post-restore";
+
 import { getPersistedSandboxTargetGatewayName } from "./gateway-target";
 import {
   type McpRebuildPreparation,
@@ -351,6 +356,7 @@ export async function runRebuildPostRestorePhase(
         effectiveMessagingPlan = finalizedMessagingPlan;
       }
     } catch (error) {
+      if (error instanceof DeferredRebuildCliExit) throw error;
       bail(
         `Could not finalize pending messaging removals after rebuild: ${
           error instanceof Error ? error.message : String(error)

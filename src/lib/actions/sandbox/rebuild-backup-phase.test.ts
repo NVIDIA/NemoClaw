@@ -133,6 +133,34 @@ describe("rebuild policy handoff", () => {
     },
   );
 
+  it.each([true, false])(
+    "aborts and reports a rejected source-window release (%s)",
+    async (abortRejects) => {
+      const warning = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const window = { sandboxName: "retained-alpha", kind: "backup" as const };
+      mocks.finishOpenClawBackupQuiesce.mockRejectedValue(new Error("injected release rejection"));
+      mocks.abortOpenClawPostRestoreDoctor.mockImplementation(
+        abortRejects
+          ? () => Promise.reject(new Error("injected abort rejection"))
+          : () => Promise.resolve({ ok: true }),
+      );
+
+      await expect(releaseRebuildSourceOpenClawWindow(window)).resolves.toEqual({
+        ok: false,
+        stage: "release",
+        detail: "injected release rejection",
+      });
+
+      expect(mocks.abortOpenClawPostRestoreDoctor).toHaveBeenCalledExactlyOnceWith(window);
+      const text = warning.mock.calls.flat().join(" ");
+      expect(text).toContain("retained-alpha");
+      expect(text).toContain("recorded gateway");
+      expect(text).toContain("injected release rejection");
+      expect(text).toContain("Preserve this sandbox and its backup");
+      expect(text).toContain(abortRejects ? "injected abort rejection" : "was stopped");
+    },
+  );
+
   it("captures the current OpenShell base policy in a private transaction file", async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-policy-test-"));
     temporaryDirectories.push(directory);

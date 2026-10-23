@@ -479,12 +479,37 @@ For a non-default gateway port, these files reside under `~/.nemoclaw/gateways/<
 Resume or clear an unfinished ordinary onboarding session before retrying retained rebuild recovery.
 To discard that ordinary onboarding attempt and start over, run `$$nemoclaw onboard --fresh` as described in [Previous onboarding session failed](../../reference/troubleshooting#previous-onboarding-session-failed).
 
+<AgentOnly variant="openclaw">
+
+### Recover a Retained Source After Maintenance Cleanup Fails
+
+If `rebuild` reports `OpenClaw source maintenance cleanup did not return retained sandbox` or `OpenClaw source maintenance cleanup failed`, do not follow the rerun instructions below yet.
+This recovery takes precedence over the ordinary interrupted-replacement steps.
+Preserve the source sandbox, backup, and rebuild recovery files.
+Inspect the recorded gateway and retained sandbox before another lifecycle action:
+
+```bash
+openshell gateway select <recorded-gateway>
+openshell status
+$$nemoclaw <sandbox-name> status
+$$nemoclaw <sandbox-name> logs --tail 100
+```
+
+If the warning confirms that NemoClaw stopped the source sandbox, run `$$nemoclaw <sandbox-name> start`.
+Rerun the original rebuild only after `start` succeeds and `status` confirms that the sandbox and OpenClaw gateway are healthy.
+If NemoClaw could not verify the stop or maintenance reconciliation, preserve the current state and ask a NemoClaw maintainer to review the warning, redacted logs, and backup path.
+Do not delete the source or start another replacement until its maintenance state is reconciled.
+
+</AgentOnly>
+
 <Warning title="Preserve Rebuild Recovery Files">
 Do not manually delete `onboard-session.json` or retained `.onboard-rebuild-<sandbox>.json` files to resolve an interrupted replacement.
-Keep the recovery files and rerun the affected sandbox's rebuild with the same settings.
+Keep the recovery files.
+After any source maintenance cleanup failure is reconciled, rerun the affected sandbox's rebuild with the same settings.
 </Warning>
 
-If `rebuild` stops after recording the journal, rerun the command with the same replacement settings. The rerun takes one of these actions:
+If `rebuild` stops after recording the journal, resolve any source maintenance cleanup failure first.
+Then rerun the command with the same replacement settings. The rerun takes one of these actions:
 
 - It continues deletion when the live sandbox still has the journaled source identity.
 - It continues creation when the recorded OpenShell gateway explicitly reports the source sandbox as absent.

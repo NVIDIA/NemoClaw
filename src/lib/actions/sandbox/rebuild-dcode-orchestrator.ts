@@ -70,7 +70,8 @@ export type DcodeRebuildOrchestrator = {
     dcodeAutoApprovalMode: DcodeAutoApprovalMode,
     skipLiveRoute: boolean,
     gatewayPort: number,
-    runtimeSelection?: OpenShellRuntimeSelection,
+    runtimeSelection: OpenShellRuntimeSelection | undefined,
+    deferredBail: DcodeRebuildPreflightBail,
   ): Promise<boolean>;
   checkAtDeleteEdge(
     resumeConfig: RebuildResumeConfig,
@@ -223,6 +224,7 @@ export function createDcodeRebuildOrchestrator(
       skipLiveRoute,
       gatewayPort,
       runtimeSelection,
+      deferredBail,
     ) =>
       run(async () => {
         if (!scope.enabled) return true;
@@ -236,14 +238,14 @@ export function createDcodeRebuildOrchestrator(
             skipLiveRoute,
             gatewayPort,
             log,
-            bail: scope.bail,
+            bail: deferredBail,
             checkGatewaySchema: (selection) =>
-              deps.checkGatewaySchema(sandboxName, scope.bail, selection),
+              deps.checkGatewaySchema(sandboxName, deferredBail, selection),
             runtimeSelection,
           });
         }
         const replacement = scope.preparedReplacement;
-        if (!replacement) return scope.bail("DCode replacement preflight was not retained.");
+        if (!replacement) return deferredBail("DCode replacement preflight was not retained.");
         return revalidateDcodeReplacementAtMutationEdge({
           sandboxName,
           entry,
@@ -253,9 +255,9 @@ export function createDcodeRebuildOrchestrator(
           skipLiveRoute,
           gatewayPort,
           log,
-          bail: scope.bail,
+          bail: deferredBail,
           checkGatewaySchema: (selection) =>
-            deps.checkGatewaySchema(sandboxName, scope.bail, selection),
+            deps.checkGatewaySchema(sandboxName, deferredBail, selection),
           runtimeSelection,
           replacement,
         });
