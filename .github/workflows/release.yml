@@ -102,10 +102,17 @@ jobs:
           names: v1-ci
           required: "true"
           token: ${{ github.token }}
+      - name: Install the pinned SBOM generator
+        id: syft
+        uses: anchore/sbom-action/download-syft@fffec3d851af758d56fee099cf3fbf8aa8779843 # v0.24.3
+        with:
+          syft-version: v1.55.0
       - name: Build and push the vLLM and Ollama runtime images
         env:
           GH_TOKEN: ${{ github.token }}
           PLATFORM: ${{ matrix.platform }}
+          PACKAGE: ${{ env.CI_PACKAGE }}
+          SYFT: ${{ steps.syft.outputs.cmd }}
         run: |
           printf '%s\n' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           tag="$GITHUB_SHA-${PLATFORM#linux_}"
@@ -113,6 +120,11 @@ jobs:
           docker buildx bake runtimes \
             --set "vllm.tags=$CI_PACKAGE:vllm-$tag" --set "vllm.output=$output" \
             --set "ollama.tags=$CI_PACKAGE:ollama-$tag" --set "ollama.output=$output"
+          # A runtime image's digest only changes with its inputs, so its SBOM
+          # is usually already recorded.
+          for name in vllm ollama; do
+            sh .github/scripts/image-sbom.sh "$CI_PACKAGE:$name-$tag" "$CI_PACKAGE:$name-$tag" "linux/${PLATFORM#linux_}"
+          done
           docker logout ghcr.io
   stage:
     name: Stage the release
@@ -196,8 +208,8 @@ jobs:
             fi
             echo "| \`$image\` | \`$RELEASE_NAMESPACE/$image@$digest\` | $metadata |" >> "$notes"
           done
-          # Syft scans each platform's exact image, including images reused from
-          # earlier CI, and writes its SPDX document. Nothing rebuilds an image.
+          # Each platform's SPDX document was recorded where the image was built,
+          # under its digest. Syft scans only an image that has none.
           sboms="$RUNNER_TEMP/sboms"
           mkdir "$sboms"
           echo '[]' > "$sboms/sboms.json"
@@ -206,8 +218,15 @@ jobs:
             | [$name, $repository, .digest, .platform.architecture] | @tsv' "$inventory" > "$RUNNER_TEMP/platforms.tsv"
           while IFS="$(printf '\t')" read -r name repository digest arch; do
             asset="$name-linux-$arch-${digest#sha256:}.spdx.json"
-            SYFT_CHECK_FOR_APP_UPDATE=false "$SYFT" "registry:$repository@$digest" \
-              --select-catalogers +rust-cargo-lock-cataloger -o "spdx-json=$sboms/$asset"
+            recorded="$CI_PACKAGE:sbom-${digest#sha256:}"
+            if docker create --platform "linux/$arch" --name sbom "$recorded" / > /dev/null 2>&1 &&
+              docker cp sbom:/sbom.spdx.json "$sboms/$asset" > /dev/null; then
+              docker rm sbom > /dev/null
+            else
+              docker rm sbom > /dev/null 2>&1 || true
+              SYFT_CHECK_FOR_APP_UPDATE=false "$SYFT" "registry:$repository@$digest" \
+                --select-catalogers +rust-cargo-lock-cataloger -o "spdx-json=$sboms/$asset"
+            fi
             jq --arg platform "linux/$arch" --arg reference "$repository@$digest" --arg asset "$asset" \
               --arg sha256 "$(sha256sum "$sboms/$asset" | cut -d' ' -f1)" \
               '. + [{platform: $platform, reference: $reference, asset: $asset, sha256: $sha256}]' \
