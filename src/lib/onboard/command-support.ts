@@ -3,6 +3,7 @@
 
 import { Flags } from "@oclif/core";
 import { TOOL_DISCLOSURE_VALUES, type ToolDisclosure } from "../tool-disclosure";
+import { DCODE_AUTO_APPROVAL_MODES, type DcodeAutoApprovalMode } from "./dcode-auto-approval";
 import { describeAgentFlag } from "./agent-flag-help";
 import { PORTABLE_EXPERIMENTAL_PROFILE } from "./docker-driver-platform";
 import { NOTICE_ACCEPT_FLAG, NOTICE_ACCEPT_FLAG_NAME } from "./usage-notice";
@@ -47,7 +48,7 @@ function agentFlagDescription(): string {
 }
 
 export const onboardUsage = [
-  `onboard [--profile <name>] [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--apf-interceptor] [--gpu | --no-gpu] [--from <Dockerfile> | --from-image <repository@sha256:digest>] [--name <sandbox>] [--host-mount <host:/sandbox/path>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--vllm-gpu-device <index-or-uuid>] [--agent <name>] [--agents <agents.yaml>] [--tool-disclosure <progressive|direct>] [--observability | --no-observability] [--control-ui-port <N>] [--events=jsonl] [--yes | -y] [--no-ollama-autostart] [${NOTICE_ACCEPT_FLAG}]`,
+  `onboard [--profile <name>] [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--apf-interceptor] [--gpu | --no-gpu] [--from <Dockerfile> | --from-image <repository@sha256:digest>] [--name <sandbox>] [--host-mount <host:/sandbox/path>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--vllm-gpu-device <index-or-uuid>] [--agent <name>] [--agents <agents.yaml>] [--tool-disclosure <progressive|direct>] [--dcode-auto-approval <disabled|thread-opt-in>] [--observability | --no-observability] [--control-ui-port <N>] [--events=jsonl] [--yes | -y] [--no-ollama-autostart] [${NOTICE_ACCEPT_FLAG}]`,
 ];
 
 export const onboardExamples = [
@@ -85,6 +86,7 @@ export type OnboardFlags = {
   agent?: string;
   agents?: string;
   "tool-disclosure"?: ToolDisclosure;
+  "dcode-auto-approval"?: DcodeAutoApprovalMode;
   observability?: boolean;
   "control-ui-port"?: number;
   events?: "jsonl";
@@ -161,6 +163,11 @@ export function buildOnboardFlags(options: { includeEvents?: boolean } = {}): Re
       description:
         "Choose progressive tool discovery or direct exposure of all session-authorized tools",
       options: [...TOOL_DISCLOSURE_VALUES],
+    }),
+    "dcode-auto-approval": Flags.string({
+      description:
+        "Choose the managed Deep Agents Code capability; thread-opt-in permits explicit per-thread activation without activating auto-approval",
+      options: [...DCODE_AUTO_APPROVAL_MODES],
     }),
     observability: Flags.boolean({
       allowNo: true,

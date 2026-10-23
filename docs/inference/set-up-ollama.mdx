@@ -53,7 +53,7 @@ If the published runner later stops, use `$$nemoclaw <name> recover` or `$$nemoc
 Ordinary `connect` also resumes it when the recorded inference route is unavailable.
 When `launch` runs its complete preflight, it uses the same recovery path before it starts the agent.
 A launch that accepts existing launch-readiness evidence skips that preflight.
-Follow [Recover Portable Published Ollama](../../manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes#recover-portable-published-ollama) for the authority checks, route proof, and failure procedure.
+Follow [Recover Portable Published Ollama](/user-guide/hermes/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes#recover-portable-published-ollama) for the authority checks, route proof, and failure procedure.
 
 <Warning title="Portable Cleanup Boundary">
 Run `$$nemoclaw uninstall` for full cleanup of a receipt-owned Portable Ollama runner.
@@ -79,7 +79,9 @@ The wizard checks `ollama --version` and `/api/version` on port `11434` independ
 If NemoClaw detects an installed CLI or local running daemon but cannot read its version, onboarding uses the upgrade path instead of reusing it.
 
 On macOS, the wizard uses `brew upgrade ollama` for the platform upgrade path.
-On Linux, the wizard uses the official `https://ollama.com/install.sh` path and asks it for `0.32.9` by name when the installed binary is stale, because the version the installer calls latest is below the minimum on some hosts.
+On Linux, the wizard downloads a pinned snapshot of the official Ollama installer and verifies its SHA-256 digest before execution.
+If the download cannot be verified, onboarding stops without running it.
+When the installed binary is stale, the verified installer asks for `0.32.9` by name because the version it calls latest is below the minimum on some hosts.
 If the installed binary is already at or above the minimum and only the daemon is stale, the wizard restarts the daemon without running the installer or replacing the newer binary.
 Linux upgrades use the sudo-driven system path because a user-local fallback would leave an existing system daemon serving the stale binary.
 If sudo is unavailable in a non-interactive run, rerun interactively or upgrade Ollama manually.
@@ -373,7 +375,7 @@ The chassis model qualifies only this Ollama model selection; it does not establ
 The proof runs one pinned CUDA workload and capacity query through the provider abstraction; Docker supplies its GPU flag and Podman supplies its NVIDIA CDI device without a separate model-selection path.
 On a WSL Station GB300, the Docker proof can also qualify the host for `qwen3.6:35b`.
 The bounded Windows chassis model must report Station GB300, the proof must match every reported GPU, and at least one proved device must report an `NVIDIA GB300` name.
-The Station GB300 Ollama qualification does not apply to Podman, managed vLLM, or generic multi-GPU hosts. Managed llama.cpp uses a separate Docker Desktop-only Station GB300 readiness qualification with the same bounded product and reconciled GPU proof.
+The Station GB300 Ollama qualification does not apply to Podman, managed vLLM, or generic multi-GPU hosts. Managed llama.cpp uses a separate Docker Desktop-only Station GB300 readiness qualification. It also requires the bounded product observation, a proof that reconciles every reported GPU, and exactly one proved GB300 GPU UUID for Docker device binding.
 Missing, malformed, mismatched, or insufficient proof capacity retains the `qwen3.5:9b` fallback.
 This safeguard only changes automatic selection.
 

@@ -39,6 +39,7 @@ import {
   addV00106OperationalTrust,
   alterRequiredReleaseValue,
   brevMutationFixtures,
+  copyTrustedInstallerVerifier,
   preparedReleaseArgs,
   prepareReleaseFixtureRuntime,
   installerReleaseTemplate,
@@ -46,6 +47,7 @@ import {
 } from "../helpers/openshell-installer-template";
 
 import { selectPreparedGatewayRuntime } from "../helpers/prepared-gateway-runtime";
+import { registerV012TemplateCases } from "./installer-hash-v012-suite";
 
 const REPO_ROOT = path.join(import.meta.dirname, "../..");
 const INSTALLER_TEMPLATE = fs.readFileSync(
@@ -56,6 +58,8 @@ const BREV_TEMPLATE = fs.readFileSync(
   path.join(REPO_ROOT, "scripts/brev-launchable-ci-cpu.sh"),
   "utf8",
 );
+const OBSOLETE_NPM_REPLACEMENT_DIGEST =
+  "d6a9924eae784af912bce30dc50884494ec547fbec6aab56f23734f72e3a234c";
 // Retain the reviewed 0.0.116 cleanup fixture across the 0.1.2 migration.
 const NPM_CLEANUP_TEMPLATE = fs.readFileSync(
   path.join(REPO_ROOT, "test/fixtures/openshell-brev-npm-cleanup.sh"),
@@ -370,8 +374,8 @@ const removeFirstReleaseFormula = (source: string): string =>
   );
 const trustSyntheticSupervisorRuntimeTemplate = (source: string): string => {
   const marker = "      runtimeTemplateSha256: [\n";
-  const result = source.replaceAll(
-    marker,
+  const result = source.replace(
+    /^      runtimeTemplateSha256: \[\n/gmu,
     `${marker}        "${SYNTHETIC_SUPERVISOR_RUNTIME_TEMPLATE_SHA256}",\n`,
   );
   assert.notEqual(result, source, "synthetic supervisor runtime trust anchors");
@@ -596,17 +600,12 @@ function createFixture(
   const checksDir = path.join(scriptsDir, "checks");
   const binDir = path.join(fixtureRoot, "bin");
   tempDirs.push(fixtureRoot);
-  fs.mkdirSync(checksDir, { recursive: true });
+  copyTrustedInstallerVerifier(REPO_ROOT, fixtureRoot);
   fs.mkdirSync(binDir, { recursive: true });
   fs.mkdirSync(path.join(fixtureRoot, "nemoclaw-blueprint"), {
     recursive: true,
   });
   fs.mkdirSync(path.join(fixtureRoot, "src/lib/onboard"), { recursive: true });
-  const checker = fs.readFileSync(
-    path.join(REPO_ROOT, "scripts", "check-installer-hash.sh"),
-    "utf8",
-  );
-  fs.writeFileSync(path.join(scriptsDir, "check-installer-hash.sh"), checker);
   fs.writeFileSync(
     path.join(checksDir, "extract-installer-pins.mts"),
     trustSyntheticSupervisorRuntimeTemplate(
@@ -749,6 +748,7 @@ function runFixture(
   openshellVersion?: string,
   trustedChecker = false,
   formatting: PinFormatting = "canonical",
+  candidateAdmission = false,
 ) {
   const fixtureRoot = createFixture(openshellVersion, formatting);
   const targetChecker = path.join(fixtureRoot, "scripts", "check-installer-hash.sh");
@@ -761,12 +761,7 @@ function runFixture(
     "extract-installer-pins.mts",
   );
   tempDirs.push(trustedRoot);
-  fs.mkdirSync(path.dirname(trustedParserPath), { recursive: true });
-  fs.copyFileSync(path.join(REPO_ROOT, "scripts", "check-installer-hash.sh"), trustedCheckerPath);
-  fs.copyFileSync(
-    path.join(REPO_ROOT, "scripts", "checks", "extract-installer-pins.mts"),
-    trustedParserPath,
-  );
+  copyTrustedInstallerVerifier(REPO_ROOT, trustedRoot);
   const parserSource = fs.readFileSync(trustedParserPath, "utf8");
   const mutateParser = PARSER_MUTATIONS[mode];
   const mutatedParserSource = mutateParser?.(parserSource) ?? parserSource;
@@ -803,8 +798,11 @@ function runFixture(
     encoding: "utf8",
     env: {
       ...process.env,
-      GITHUB_TOKEN: "",
+      GITHUB_TOKEN: candidateAdmission ? "fixture-unused-token" : "",
       GH_TOKEN: "",
+      UPGRADE_PR_NUMBER: candidateAdmission ? "123" : "",
+      UPGRADE_CANDIDATE_SHA: candidateAdmission ? "a".repeat(40) : "",
+      UPGRADE_BASE_SHA: candidateAdmission ? "b".repeat(40) : "",
       NEMOCLAW_INSTALLER_HASH_REPO_ROOT: trustedChecker ? fixtureRoot : "",
       NEMOCLAW_TEST_CURL_MODE:
         mode.includes("bypass") || mode === "brev-mismatch" ? "complete" : mode,
@@ -854,6 +852,30 @@ function parseNpmReplacement(source: string, digest: string, trustedDigest = dig
 }
 
 describe("installer hash verification", () => {
+  it("keeps upstream asset verification when candidate admission uses unchanged base trust", () => {
+    expectTrustedRelease(
+      runFixture("complete", "0.0.116", true, "canonical", true),
+      "0.0.116",
+      CHECKSUM_MANIFESTS,
+      ASSET_DIGESTS_BY_VERSION.get("0.0.116")!,
+    );
+  });
+  // source-shape-contract: security -- Exact absence of the retired Brev digest prevents a stale installer template from regaining authorization
+  it("does not base-trust the obsolete Brev npm replacement digest", () => {
+    const parserSource = fs.readFileSync(
+      path.join(REPO_ROOT, "scripts/checks/extract-installer-pins.mts"),
+      "utf8",
+    );
+    expect(parserSource).not.toContain(`"${OBSOLETE_NPM_REPLACEMENT_DIGEST}"`);
+
+    const untrustedTemplate = `${BREV_TEMPLATE}\n# Exercise the parser's current trusted-digest diagnostic.\n`;
+    const result = parseNpmReplacement(untrustedTemplate, OBSOLETE_NPM_REPLACEMENT_DIGEST);
+
+    expect(result.status, result.stderr).toBe(1);
+    expect(result.stderr).toContain("Brev launchable operational template is not base-trusted");
+    expect(result.stderr).not.toContain(OBSOLETE_NPM_REPLACEMENT_DIGEST);
+  });
+
   describe("DCode bootstrap prerequisite", () => {
     it("admits the reviewed npm replacement only after its trust prerequisite", () => {
       const before = parseNpmReplacement(
@@ -922,7 +944,7 @@ describe("installer hash verification", () => {
   it("verifies all installer and Brev pins from token-free checksum manifests", () => {
     const result = runFixture("complete");
 
-    expect(result.status, result.stdout).toBe(0);
+    expect(result.status, result.stdout + result.stderr).toBe(0);
     expect(result.stdout).toContain("All installer hashes are current");
   });
 
@@ -1034,6 +1056,7 @@ describe("installer hash verification", () => {
     ]);
   });
 
+  registerV012TemplateCases(REPO_ROOT, createFixture);
   it.each(V012_TRUST_MUTATIONS)(
     "rejects an altered OpenShell 0.1.2 %s",
     (_label, name, value, diagnostic) => {

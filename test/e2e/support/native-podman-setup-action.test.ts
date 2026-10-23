@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { addAbortListener } from "node:events";
 import fs from "node:fs";
@@ -18,12 +18,14 @@ import {
   validateNativePodmanRestoreAction,
   validateNativePodmanSetupAction,
 } from "../../../tools/e2e/workflow-boundary.mts";
+import { requireFixture } from "./require-fixture.ts";
 
 const RESTORE_ACTION = path.resolve(".github/actions/restore-native-podman-e2e/action.yaml");
 const SETUP_ACTION = path.resolve(".github/actions/setup-native-podman-e2e/action.yaml");
 const FIXED_RESTORE_ROOT = "/usr/lib/nemoclaw-native-podman-e2e/docker-cli-restore";
 const COMMAND_OUTPUT_LIMIT = 64 * 1024;
 const OUTPUT_TRUNCATION_MARKER = "\n[output truncated]\n";
+const OPENSHELL_COMPONENTS = ["openshell", "openshell-gateway", "openshell-sandbox"];
 
 type WorkflowStep = {
   env?: Record<string, unknown>;
@@ -47,6 +49,31 @@ function e2eWorkflowJobs(): Record<string, WorkflowJob> {
     jobs: Record<string, WorkflowJob>;
   };
   return workflow.jobs;
+}
+
+function privilegedOpenShellInstallLog(sourceRoot: string): string {
+  return `${OPENSHELL_COMPONENTS.map(
+    (component) =>
+      `install -o root -g root -m 0755 ${sourceRoot}/${component} /usr/bin/${component}`,
+  ).join("\n")}\n`;
+}
+
+function requirePrivilegedOpenShellInstallLog(log: string, sourceRoot: string): void {
+  requireFixture(
+    log === privilegedOpenShellInstallLog(sourceRoot),
+    "Portable Hermes must install every OpenShell component as root:root with mode 0755",
+  );
+}
+
+function requirePrivilegedOpenShellReuseLog(log: string, destinationRoot: string): void {
+  const expected = `${OPENSHELL_COMPONENTS.flatMap((component) => [
+    `chown root:root ${destinationRoot}/${component}`,
+    `chmod 0755 ${destinationRoot}/${component}`,
+  ]).join("\n")}\n`;
+  requireFixture(
+    log === expected,
+    "Portable Hermes must enforce root:root ownership and mode 0755 on reused components",
+  );
 }
 
 vi.setConfig({ maxConcurrency: 5 });
@@ -359,6 +386,137 @@ function writeExecutable(filePath: string, source: string): void {
   fs.writeFileSync(filePath, source, { mode: 0o700 });
 }
 
+function writeOpenShellComponents(root: string, mode = 0o755): void {
+  for (const component of OPENSHELL_COMPONENTS) {
+    const componentPath = path.join(root, component);
+    writeExecutable(componentPath, "#!/bin/sh\nexit 0\n");
+    fs.chmodSync(componentPath, mode);
+  }
+}
+
+type OpenShellHandoffContext = {
+  fakeBin: string;
+  home: string;
+  privilegedRoot: string;
+  root: string;
+  xdgBinHome: string;
+};
+
+type OpenShellHandoffPreparation = {
+  pathValue: string;
+  requireInstallLog?: (log: string) => void;
+  rewritePrivilegedRoot?: boolean;
+  sourceRoot: string;
+  verifySelection?: () => void;
+};
+
+function runOpenShellHandoffFixture(
+  tempPrefix: string,
+  prepare: (context: OpenShellHandoffContext) => OpenShellHandoffPreparation,
+): void {
+  const job = e2eWorkflowJobs()["portable-hermes-finalization"]!;
+  const install = job.steps?.find((step) => step.name === "Install pinned OpenShell");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), tempPrefix));
+  const home = path.join(root, "home");
+  const fakeBin = path.join(root, "bin");
+  const xdgBinHome = String(install?.env?.XDG_BIN_HOME ?? "")
+    .replace("${{ runner.temp }}", root)
+    .replace("${{ github.run_id }}", "123456")
+    .replace("${{ github.run_attempt }}", "1");
+  const githubPath = path.join(root, "github-path");
+  const privilegedRoot = path.join(root, "installed");
+  const sudoLog = path.join(root, "sudo.log");
+  fs.mkdirSync(home);
+  fs.mkdirSync(fakeBin);
+  fs.mkdirSync(privilegedRoot);
+  fs.writeFileSync(sudoLog, "");
+
+  try {
+    const { pathValue, requireInstallLog, rewritePrivilegedRoot, sourceRoot, verifySelection } =
+      prepare({
+        fakeBin,
+        home,
+        privilegedRoot,
+        root,
+        xdgBinHome,
+      });
+    const validateInstallLog =
+      requireInstallLog ?? ((log) => requirePrivilegedOpenShellInstallLog(log, sourceRoot));
+    writeExecutable(
+      path.join(fakeBin, "sudo"),
+      `#!/bin/sh
+set -eu
+case "$1" in
+  install)
+    previous=
+    last=
+    for argument in "$@"; do
+      previous="$last"
+      last="$argument"
+    done
+    [ -x "$previous" ]
+    destination="$SUDO_INSTALL_ROOT/$(basename "$last")"
+    cp "$previous" "$destination"
+    chmod 0755 "$destination"
+    ;;
+  chown)
+    [ "$2" = root:root ]
+    [ -f "$3" ] && [ ! -L "$3" ]
+    ;;
+  chmod)
+    [ "$2" = 0755 ]
+    [ -f "$3" ] && [ ! -L "$3" ]
+    chmod 0755 "$3"
+    ;;
+  *) exit 64 ;;
+esac
+printf '%s\\n' "$*" >>"$SUDO_LOG"
+exit 0
+`,
+    );
+    const installScript = rewritePrivilegedRoot
+      ? (install?.run ?? "").replaceAll("/usr/bin", privilegedRoot)
+      : (install?.run ?? "");
+    const result = spawnSync("/bin/bash", ["-c", installScript], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        GITHUB_PATH: githubPath,
+        HOME: home,
+        PATH: pathValue,
+        RUNNER_TEMP: root,
+        SUDO_INSTALL_ROOT: privilegedRoot,
+        SUDO_LOG: sudoLog,
+        XDG_BIN_HOME: xdgBinHome,
+      },
+    });
+
+    requireFixture(result.status === 0, result.stderr);
+    verifySelection?.();
+    const installLog = fs.readFileSync(sudoLog, "utf8");
+    validateInstallLog(installLog);
+    for (const component of OPENSHELL_COMPONENTS) {
+      const source = path.join(sourceRoot, component);
+      const destination = path.join(privilegedRoot, component);
+      requireFixture(
+        fs.readFileSync(destination).equals(fs.readFileSync(source)),
+        `Portable Hermes changed ${component} bytes during handoff`,
+      );
+      requireFixture(
+        (fs.statSync(destination).mode & 0o777) === 0o755,
+        `Portable Hermes installed ${component} with the wrong mode`,
+      );
+    }
+    requireFixture(
+      fs.readFileSync(githubPath, "utf8") ===
+        `${rewritePrivilegedRoot ? privilegedRoot : "/usr/bin"}\n`,
+      "Portable Hermes did not publish the privileged OpenShell root",
+    );
+  } finally {
+    fs.rmSync(root, { force: true, recursive: true });
+  }
+}
+
 async function runPodmanCleanupFixture(
   ownerContext: ProcessOwner,
   withDockerState: boolean,
@@ -601,11 +759,19 @@ describe("native Podman E2E setup boundary", () => {
     expect(dependencyInstall?.env).toEqual({
       UBUNTU_SNAPSHOT_ID: "20260911T000000Z",
     });
-    expect(dependencyInstall?.run).toContain("Dir::Etc::sourcelist=sources.list.d/ubuntu.sources");
+    expect(dependencyInstall?.run).toContain(
+      "URIs: https://snapshot.ubuntu.com/ubuntu/$UBUNTU_SNAPSHOT_ID",
+    );
+    expect(dependencyInstall?.run).toContain('-o "Dir::Etc::sourcelist=$snapshot_sources"');
     expect(dependencyInstall?.run).toContain("Dir::Etc::sourceparts=-");
+    expect(dependencyInstall?.run).toContain("Pin: origin snapshot.ubuntu.com");
+    expect(dependencyInstall?.run).toContain("Pin-Priority: 1001");
+    expect(dependencyInstall?.run).toContain('-o "Dir::Etc::preferences=$snapshot_preferences"');
+    expect(dependencyInstall?.run).toContain("Dir::Etc::preferencesparts=-");
+    expect(dependencyInstall?.run).toContain('-o "Dir::State::lists=$snapshot_lists"');
     expect(dependencyInstall?.run).toContain("APT::Get::AllowUnauthenticated=false");
     expect(dependencyInstall?.run).toContain("Acquire::AllowInsecureRepositories=false");
-    expect(dependencyInstall?.run).toContain('--snapshot "$UBUNTU_SNAPSHOT_ID"');
+    expect(dependencyInstall?.run).toContain("--allow-downgrades");
     expect(dependencyInstall?.run).toContain(
       [
         '  "gcc=4:13.2.0-7ubuntu1"',
@@ -640,6 +806,114 @@ describe("native Podman E2E setup boundary", () => {
     });
   });
 
+  it("copies Portable Hermes OpenShell components from a nondefault XDG bin home", () => {
+    runOpenShellHandoffFixture("nemoclaw-openshell-handoff-", ({ fakeBin, xdgBinHome }) => {
+      writeExecutable(
+        path.join(fakeBin, "bash"),
+        `#!/bin/sh
+set -eu
+if [ "\${1:-}" = scripts/install-openshell.sh ]; then
+  install_root="\${XDG_BIN_HOME:-$HOME/.local/bin}"
+  mkdir -p "$install_root"
+  for component in openshell openshell-gateway openshell-sandbox; do
+    printf '#!/bin/sh\\nexit 0\\n' >"$install_root/$component"
+    chmod 0755 "$install_root/$component"
+  done
+  exit 0
+fi
+exec /bin/bash "$@"
+`,
+      );
+      return {
+        pathValue: `${fakeBin}:/usr/bin:/bin`,
+        sourceRoot: xdgBinHome,
+      };
+    });
+  });
+
+  it("forces a fresh isolated install instead of promoting a compatible preinstalled root", () => {
+    runOpenShellHandoffFixture(
+      "nemoclaw-openshell-preinstalled-",
+      ({ fakeBin, home, root, xdgBinHome }) => {
+        const preinstalledRoot = path.join(root, "preinstalled");
+        const staleUserLocalRoot = path.join(home, ".local", "bin");
+        fs.mkdirSync(preinstalledRoot);
+        fs.mkdirSync(staleUserLocalRoot, { recursive: true });
+        fs.mkdirSync(xdgBinHome, { recursive: true });
+        writeExecutable(
+          path.join(fakeBin, "bash"),
+          `#!/bin/sh
+set -eu
+if [ "\${1:-}" = scripts/install-openshell.sh ]; then
+  [ "$(command -v openshell)" = "$XDG_BIN_HOME/openshell" ]
+  for component in openshell openshell-gateway openshell-sandbox; do
+    printf '#!/bin/sh\\nexit 7\\n' >"$XDG_BIN_HOME/$component"
+    chmod 0755 "$XDG_BIN_HOME/$component"
+  done
+  exit 0
+fi
+exec /bin/bash "$@"
+`,
+        );
+        writeOpenShellComponents(preinstalledRoot);
+        writeExecutable(path.join(xdgBinHome, "openshell"), "#!/bin/sh\nexit 81\n");
+        writeExecutable(path.join(xdgBinHome, "openshell-gateway"), "#!/bin/sh\nexit 82\n");
+        writeExecutable(path.join(xdgBinHome, "openshell-sandbox"), "#!/bin/sh\nexit 83\n");
+        writeExecutable(path.join(staleUserLocalRoot, "openshell"), "#!/bin/sh\nexit 91\n");
+        writeExecutable(path.join(staleUserLocalRoot, "openshell-gateway"), "#!/bin/sh\nexit 92\n");
+        writeExecutable(path.join(staleUserLocalRoot, "openshell-sandbox"), "#!/bin/sh\nexit 93\n");
+        return {
+          pathValue: `${fakeBin}:${preinstalledRoot}:/usr/bin:/bin`,
+          sourceRoot: xdgBinHome,
+          verifySelection: () =>
+            requireFixture(
+              fs.existsSync(xdgBinHome),
+              "A compatible preinstalled OpenShell bypassed the required fresh install",
+            ),
+        };
+      },
+    );
+  });
+
+  it("enforces ownership and mode when the isolated install aliases the privileged root", () => {
+    runOpenShellHandoffFixture(
+      "nemoclaw-openshell-privileged-preinstalled-",
+      ({ fakeBin, privilegedRoot, xdgBinHome }) => {
+        writeExecutable(
+          path.join(fakeBin, "bash"),
+          `#!/bin/sh
+set -eu
+if [ "\${1:-}" = scripts/install-openshell.sh ]; then
+  [ "$(command -v openshell)" = "$XDG_BIN_HOME/openshell" ]
+  rm -f "$XDG_BIN_HOME/openshell"
+  for component in openshell openshell-gateway openshell-sandbox; do
+    ln "$SUDO_INSTALL_ROOT/$component" "$XDG_BIN_HOME/$component"
+  done
+  exit 0
+fi
+exec /bin/bash "$@"
+`,
+        );
+        writeOpenShellComponents(privilegedRoot, 0o777);
+        return {
+          pathValue: `${fakeBin}:${privilegedRoot}:/usr/bin:/bin`,
+          requireInstallLog: (log) => requirePrivilegedOpenShellReuseLog(log, privilegedRoot),
+          rewritePrivilegedRoot: true,
+          sourceRoot: xdgBinHome,
+        };
+      },
+    );
+  });
+
+  it("rejects a Portable Hermes handoff without root ownership arguments", () => {
+    const sourceRoot = "/trusted/openshell";
+    const mutation = privilegedOpenShellInstallLog(sourceRoot).replace(" -o root", "");
+
+    expect(() => requirePrivilegedOpenShellInstallLog(mutation, sourceRoot)).toThrow(
+      /root:root with mode 0755/,
+    );
+  });
+
   // source-shape-contract: security -- The explicit selector must retain the reviewed GPU, runtime, candidate, and cleanup boundaries
   it("runs Portable Hermes only on the explicit Podman 5.7 GPU lane", () => {
     const setupAction = YAML.parse(fs.readFileSync(SETUP_ACTION, "utf8")) as {
@@ -649,6 +923,7 @@ describe("native Podman E2E setup boundary", () => {
     const setupRuntime = setupAction.runs.steps.find(
       (step) => step.name === "Start native Podman runtime",
     );
+    const setupRuntimeRun = setupRuntime?.run ?? "";
     const dockerCliIsolation = setupAction.runs.steps.find(
       (step) => step.name === "Remove Docker CLI from native Podman execution",
     );
@@ -657,29 +932,43 @@ describe("native Podman E2E setup boundary", () => {
       "utf8",
     );
     const job = e2eWorkflowJobs()["portable-hermes-finalization"]!;
+    const hostDependencies = job.steps?.find(
+      (step) => step.name === "Install Portable Podman host dependencies",
+    );
     const trustedCheckout = job.steps?.find(
       (step) => step.name === "Check out trusted workflow cleanup authority",
     );
     const fixtureInstall = job.steps?.find(
       (step) => step.name === "Install immutable native Podman cleanup fixture",
     );
+    const openshellInstall = job.steps?.find((step) => step.name === "Install pinned OpenShell");
     const candidateCheckout = job.steps?.find(
       (step) => step.name === "Check out the exact candidate",
     );
     const setup = job.steps?.find((step) => step.name === "Prepare Portable Podman 5.7 runtime");
+    const headroom = job.steps?.find(
+      (step) => step.name === "Set Portable Podman registry process headroom",
+    );
+    const headroomRun = headroom?.run ?? "";
     const live = job.steps?.find(
       (step) => step.name === "Run Portable Hermes finalization live Vitest test",
+    );
+    const retainHeadroom = job.steps?.find(
+      (step) => step.name === "Retain Portable Podman process headroom",
     );
     const fixtureRemoval = job.steps?.find(
       (step) => step.name === "Remove immutable native Podman cleanup fixture",
     );
     const trustedCheckoutIndex = job.steps?.indexOf(trustedCheckout!) ?? -1;
+    const openshellInstallIndex = job.steps?.indexOf(openshellInstall!) ?? -1;
     const candidateCheckoutIndex = job.steps?.indexOf(candidateCheckout!) ?? -1;
     const setupIndex = job.steps?.indexOf(setup!) ?? -1;
+    const headroomIndex = job.steps?.indexOf(headroom!) ?? -1;
     const uploadIndex =
       job.steps?.findIndex(
         (step) => step.name === "Upload Portable Hermes finalization artifacts",
       ) ?? -1;
+    const retainHeadroomIndex = job.steps?.indexOf(retainHeadroom!) ?? -1;
     const restoreIndex =
       job.steps?.findIndex(
         (step) => step.name === "Restore Docker and retire Portable Podman runtime",
@@ -693,16 +982,39 @@ describe("native Podman E2E setup boundary", () => {
       E2E_GATEWAY_RUNTIMES: "podman",
       E2E_TARGET_ID: "portable-hermes-finalization",
       E2E_AGENT_RUNTIME: "hermes",
+      NEMOCLAW_NATIVE_PODMAN_SERVICE_TASKS_MAX: "1024",
     });
     expect(job.env).not.toHaveProperty("E2E_HERMES_BASE_STORAGE_HOME");
+    expect(hostDependencies?.with?.packages).toContain(" crun ");
     expect(setupAction.inputs["cleanup-fixture"]?.default).toBe("");
+    expect(setupAction.inputs["disable-container-cgroups"]?.default).toBe("false");
     expect(setupAction.inputs["isolate-docker-cli"]?.default).toBe("true");
+    expect(setupAction.inputs["service-tasks-max"]?.default).toBe("");
     expect(dockerCliIsolation?.if).toBe(
       "${{ inputs.enabled == 'true' && inputs.isolate-docker-cli == 'true' }}",
     );
     expect(setupRuntime?.env).toMatchObject({
       CLEANUP_FIXTURE: "${{ inputs.cleanup-fixture }}",
+      DISABLE_CONTAINER_CGROUPS: "${{ inputs.disable-container-cgroups }}",
+      SERVICE_TASKS_MAX: "${{ inputs.service-tasks-max }}",
     });
+    expect(setupRuntime?.run).toContain('case "$DISABLE_CONTAINER_CGROUPS" in');
+    expect(setupRuntime?.run).toContain("container_cgroups_line='cgroups = \"disabled\"'");
+    expect(setupRuntimeRun).toContain("oci_runtime=runc");
+    expect(setupRuntimeRun).toContain("oci_runtime=crun");
+    expect(setupRuntimeRun).toContain('required_host_commands+=("$oci_runtime")');
+    expect(setupRuntimeRun).toContain('"runtime = \\\"$oci_runtime\\\""');
+    expect(setupRuntimeRun).toContain('jq -e --arg runtime "$oci_runtime"');
+    expect(setupRuntimeRun).toContain("== $runtime");
+    expect(setupRuntime?.run).toContain('if [[ -n "$container_cgroups_line" ]]');
+    expect(setupRuntime?.run).toContain("printf '%s\\n' \"$container_cgroups_line\"");
+    expect(setupRuntimeRun.indexOf("printf '%s\\n' \"$container_cgroups_line\"")).toBeLessThan(
+      setupRuntimeRun.indexOf('/usr/bin/systemctl --user start "$service_name.socket"'),
+    );
+    expect(setupRuntime?.run).toContain('[[ ! "$SERVICE_TASKS_MAX" =~ ^[1-9][0-9]*$ ]]');
+    expect(setupRuntime?.run).toContain('service_tasks_max_line="TasksMax=$SERVICE_TASKS_MAX"');
+    expect(setupRuntime?.run).toContain('if [[ -n "$service_tasks_max_line" ]]');
+    expect(setupRuntime?.run).toContain("printf '%s\\n' \"$service_tasks_max_line\"");
     expect(setupRuntime?.run).toContain("trap cleanup_interrupted_setup EXIT");
     expect(setupRuntime?.run).toContain("trap 'exit 130' INT");
     expect(setupRuntime?.run).toContain("trap 'exit 143' TERM");
@@ -722,16 +1034,54 @@ describe("native Podman E2E setup boundary", () => {
     );
     expect(fixtureInstall?.run).toContain("sha256sum --check --strict");
     expect(fixtureInstall?.run).toContain("--owner=root --group=root --mode=0555");
+    expect(openshellInstall?.run).toContain("bash scripts/install-openshell.sh");
+    expect(openshellInstall?.env).toEqual({
+      XDG_BIN_HOME:
+        "${{ runner.temp }}/nemoclaw-portable-hermes-openshell-bin.${{ github.run_id }}.${{ github.run_attempt }}",
+    });
     expect(setup?.with).toEqual({
       "cleanup-fixture":
         "/usr/local/libexec/nemoclaw/native-podman-e2e-restore.${{ github.run_id }}.${{ github.run_attempt }}",
+      "disable-container-cgroups": "true",
       enabled: "true",
       toolchain: "portable-5.7",
       "isolate-docker-cli": "false",
+      "service-tasks-max": "${{ env.NEMOCLAW_NATIVE_PODMAN_SERVICE_TASKS_MAX }}",
     });
     expect(setup?.uses).toBe(
-      "NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@22789bcaf835db7cf6390781c8d0f454f1e73dec",
+      "NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@e85857e2a7bfb2af01241ecbce5947ee774c1280",
     );
+    expect(setupIndex).toBeGreaterThan(openshellInstallIndex);
+    expect(job.steps?.at(setupIndex + 1)?.name).toBe("Select pinned compatible Portable crun");
+    expect(job.steps?.at(restoreIndex - 1)?.name).toBe("Remove pinned Portable crun");
+    expect(headroomIndex).toBeGreaterThan(setupIndex);
+    expect(candidateCheckoutIndex).toBeGreaterThan(headroomIndex);
+    expect(headroomRun).toContain("minimum=128");
+    expect(headroomRun).toContain(
+      'service_tasks_max="${NEMOCLAW_NATIVE_PODMAN_SERVICE_TASKS_MAX:?}"',
+    );
+    expect(headroomRun).not.toContain("FragmentPath");
+    expect(headroomRun).not.toContain("daemon-reload");
+    expect(headroomRun).not.toContain('systemctl --user restart "$service"');
+    expect(headroomRun).toContain('[[ "$tasks_max" != "$service_tasks_max" ]]');
+    expect(headroomRun).toContain("failure=service_tasks_configuration");
+    expect(headroomRun).toContain("PORTABLE_REGISTRY_MINIMUM_PROCESS_HEADROOM=%s");
+    expect(headroomRun).toContain(`grep -Fxc 'cgroups = "disabled"' "$config"`);
+    expect(headroomRun).not.toContain("sed -i");
+    expect(headroomRun).not.toContain("pids_limit = $minimum");
+    expect(headroomRun).not.toContain('cgroup_manager = "systemd"');
+    expect(headroomRun).toContain('[[ ! "$tasks_max" =~ ^[0-9]+$');
+    expect(headroomRun).toContain("(( tasks_max - tasks_current < minimum ))");
+    expect(headroomRun).toContain("failure=service_tasks");
+    expect(headroomRun).toContain("/sys/fs/cgroup$group/pids.max");
+    expect(headroomRun).toContain('[[ "$group" != / ]] || break');
+    expect(headroomRun.indexOf('[[ "$group" != / ]] || break')).toBeLessThan(
+      headroomRun.indexOf("/sys/fs/cgroup$group/pids.current"),
+    );
+    expect(retainHeadroom?.if).toBe("always()");
+    expect(retainHeadroom?.run).toContain("portable-podman-process-headroom");
+    expect(retainHeadroomIndex).toBeGreaterThan(job.steps?.indexOf(live!) ?? -1);
+    expect(uploadIndex).toBeGreaterThan(retainHeadroomIndex);
     expect(live).toMatchObject({
       env: {
         E2E_HERMES_BASE_STORAGE_HOME: "${{ runner.temp }}/nemoclaw-hermes-base-storage",
@@ -744,19 +1094,21 @@ describe("native Podman E2E setup boundary", () => {
     expect(live?.run).toContain("nvidia-smi --query-gpu=name");
     expect(live?.run).toContain("podman build");
     expect(
-      liveSource.indexOf(
-        "assert.equal(process.env.DOCKER_HOST, `unix://${runtimeDir}/podman/podman.sock`)",
-      ),
+      liveSource.indexOf("assert.equal(process.env.DOCKER_HOST, `unix://${expectedPodmanSocket}`)"),
     ).toBeGreaterThanOrEqual(0);
+    expect(liveSource).toContain('process.env.E2E_TARGET_ID === "portable-hermes-finalization"');
+    expect(liveSource).toContain("capturePortableRegistryProcessBoundary");
+    expect(liveSource).not.toContain("HostConfig as Record<string, unknown>");
+    expect(liveSource).toContain(": `${runtimeDir}/podman/podman.sock`");
     expect(liveSource.indexOf('run("docker", ["version"])')).toBeGreaterThan(
-      liveSource.indexOf(
-        "assert.equal(process.env.DOCKER_HOST, `unix://${runtimeDir}/podman/podman.sock`)",
-      ),
+      liveSource.indexOf("assert.equal(process.env.DOCKER_HOST, `unix://${expectedPodmanSocket}`)"),
     );
     expect(live?.run).toMatch(
       /live-vitest-invocation\.mts run \\\n\s+--test-path test\/e2e\/live\/portable-profile-rootless-linux\.test\.ts/u,
     );
     expect(trustedCheckoutIndex).toBeGreaterThanOrEqual(0);
+    expect(openshellInstallIndex).toBeGreaterThan(trustedCheckoutIndex);
+    expect(candidateCheckoutIndex).toBeGreaterThan(openshellInstallIndex);
     expect(candidateCheckoutIndex).toBeGreaterThan(trustedCheckoutIndex);
     expect(setupIndex).toBeGreaterThanOrEqual(0);
     expect(uploadIndex).toBeGreaterThan(setupIndex);

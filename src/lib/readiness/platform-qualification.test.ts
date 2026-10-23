@@ -669,6 +669,62 @@ describe("platform readiness qualification (#7410)", () => {
     });
   });
 
+  it.each(["0x2e03", "0x2e06", "0x2e13", "0x2e02", "0x2e2a"])(
+    "admits PCI-inferred N1x device %s only as a Deferred platform (#12737)",
+    (device) => {
+      const identity = collectPlatformIdentity({
+        readFile: (filePath) => {
+          const fields: Record<string, string> = {
+            "/sys/class/dmi/id/product_name": "SKU 1\n",
+            "/sys/bus/pci/devices/0000:01:00.0/vendor": "0x10de\n",
+            "/sys/bus/pci/devices/0000:01:00.0/class": "0x030000\n",
+            "/sys/bus/pci/devices/0000:01:00.0/device": `${device}\n`,
+          };
+          return fields[filePath] ?? unexpectedFixturePath(filePath);
+        },
+        readdir: () => ["0000:01:00.0"],
+        openFile: () => {
+          throw Object.assign(new Error("missing marker"), { code: "ENOENT" });
+        },
+      });
+      expect(identity).toMatchObject({
+        nvidiaPlatform: "n1x",
+        n1xFastOsMarker: false,
+        n1xPciDevice: device,
+        n1xPciGpu: true,
+      });
+      const result = projectPlatformQualification(
+        input({ architecture: "arm64", hasNvidiaGpu: true, ...identity }),
+      );
+      expect(qualification(result, "host.platform.n1x")).toBe("qualified");
+      expect(capability(result, "host.platform.supported")).toBe("absent");
+      expect(result.findings.map(({ id }) => id)).toContain("host.platform.n1x_validation_pending");
+      expect(result.evidence[0]?.details).toMatchObject({ n1xPciDevice: device });
+    },
+  );
+
+  it.each([
+    ["x86 host", { architecture: "x64" }],
+    ["non-Linux host", { platform: "darwin" }],
+    ["WSL host", { isWsl: true }],
+    ["unavailable GPU", { hasNvidiaGpu: false }],
+    ["unrecognized device", { n1xPciDevice: "0x2e04" }],
+  ] as const)("rejects PCI-inferred N1x admission on an %s (#12737)", (_scenario, overrides) => {
+    const result = projectPlatformQualification(
+      input({
+        architecture: "arm64",
+        hasNvidiaGpu: true,
+        nvidiaPlatform: "n1x",
+        n1xFastOsMarker: false,
+        n1xPciGpu: true,
+        n1xPciDevice: "0x2e2a",
+        ...overrides,
+      }),
+    );
+    expect(qualification(result, "host.platform.n1x")).toBe("unqualified");
+    expect(capability(result, "host.platform.n1x")).toBe("absent");
+  });
+
   it("classifies a trusted OEM DGX Spark FastOS marker as Spark rather than failed N1x (#10717)", () => {
     const identityFiles = new Map([["/fixtures/product_name", "OEM GB10 system\n"]]);
     const identity = collectPlatformIdentity({

@@ -52,6 +52,14 @@ function npmCacheFailureDiagnostic(
 }
 
 export function stageReviewedArchiveWithNpm(request: NpmCacheStageRequest): void {
+  const {
+    GITHUB_TOKEN: _github,
+    GH_TOKEN: _gh,
+    NODE_AUTH_TOKEN: _node,
+    NPM_TOKEN: _npm,
+    NPM_CONFIG__AUTH_TOKEN: _auth,
+    ...environment
+  } = process.env;
   const stagingRoot = mkdtempSync(join(tmpdir(), "nemoclaw-reviewed-npm-cache-add-"));
   try {
     const archivePath = join(stagingRoot, request.artifactName);
@@ -69,7 +77,7 @@ export function stageReviewedArchiveWithNpm(request: NpmCacheStageRequest): void
       ],
       {
         encoding: "utf8",
-        env: { ...process.env, NPM_CONFIG_UPDATE_NOTIFIER: "false" },
+        env: { ...environment, NPM_CONFIG_UPDATE_NOTIFIER: "false" },
         maxBuffer: 16 * 1024 * 1024,
         timeout: 30_000,
         stdio: ["ignore", "pipe", "pipe"],

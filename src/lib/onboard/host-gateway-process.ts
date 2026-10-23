@@ -5,6 +5,9 @@ import { type SpawnSyncOptions, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
+import { readGatewayProcessEnvironment } from "./gateway/process-environment";
+import { readGatewayProcEntry } from "./gateway/process-proc-entry";
+
 import { waitUntil } from "../core/wait";
 import {
   gatewayIdForStateDir,
@@ -159,11 +162,7 @@ function readPidFile(pidFile: string): number | null {
 }
 
 function readProcCmdline(pid: number): string {
-  try {
-    return fs.readFileSync(`/proc/${pid}/cmdline`, "utf-8").replace(/\0/g, " ").trim();
-  } catch {
-    return "";
-  }
+  return (readGatewayProcEntry(pid, "cmdline") ?? "").replace(/\0/g, " ").trim();
 }
 
 function processArgs(pid: number, deps: HostGatewayProcessDeps): string {
@@ -181,14 +180,25 @@ function hostGatewayProcessStatus(
   pid: number,
   deps: HostGatewayProcessDeps,
 ): HostGatewayProcessStatus {
-  const result = deps.run("ps", ["-p", String(pid), "-o", "stat="], { env: deps.env });
+  // A Linux group leader can be a zombie while another thread still owns sockets.
+  const args = ["-p", String(pid), "-o", "stat="];
+  if (process.platform === "linux") args.push("-L");
+  const result = deps.run("ps", args, { env: deps.env });
   if (result.status === 1) {
     return result.stdout.trim() === "" && result.stderr.trim() === "" ? "exited" : "unknown";
   }
   if (result.status !== 0) return "unknown";
-  const state = result.stdout.trim().charAt(0);
-  if (EXITED_PROCESS_STATES.has(state)) return "exited";
-  return RUNNING_PROCESS_STATES.has(state) ? "running" : "unknown";
+  if (result.stdout.trim() === "") return "unknown";
+  const states = result.stdout
+    .trim()
+    .split(/\r?\n/)
+    .map((line) => line.trim().charAt(0));
+  if (states.every((state) => EXITED_PROCESS_STATES.has(state))) return "exited";
+  return states.every(
+    (state) => EXITED_PROCESS_STATES.has(state) || RUNNING_PROCESS_STATES.has(state),
+  )
+    ? "running"
+    : "unknown";
 }
 
 function pidOwner(pid: number, deps: HostGatewayProcessDeps): string | null {
@@ -230,6 +240,8 @@ export function resolveOwnedHostGatewayRuntimeProviderId(options: {
   architecture?: NodeJS.Architecture;
   platform?: NodeJS.Platform;
   uid?: number;
+  recoveryRecordedAt?: string;
+  requireDefaultDockerDaemon?: boolean;
 }): string | null {
   const platform = options.platform ?? process.platform;
   const architecture = options.architecture ?? process.arch;
@@ -250,6 +262,26 @@ export function resolveOwnedHostGatewayRuntimeProviderId(options: {
     return null;
   }
   if (markerPort !== options.gatewayPort) return null;
+  if (
+    options.requireDefaultDockerDaemon &&
+    marker.dockerHost !== null &&
+    marker.dockerHost !== "unix:///var/run/docker.sock"
+  ) {
+    return null;
+  }
+  if (options.recoveryRecordedAt !== undefined) {
+    // A replacement gateway cannot establish the daemon used by an earlier failed create.
+    const recordedAt = Date.parse(options.recoveryRecordedAt);
+    const startedAt = Date.parse(marker.createdAt);
+    if (
+      (marker.dockerHost !== null && marker.dockerHost !== "unix:///var/run/docker.sock") ||
+      !Number.isFinite(recordedAt) ||
+      !Number.isFinite(startedAt) ||
+      startedAt >= recordedAt
+    ) {
+      return null;
+    }
+  }
   const provider = resolveRegisteredRuntimeProvider(marker.driver);
   return provider?.gateway.supported === true ? provider.identity.id : null;
 }
@@ -264,18 +296,8 @@ export function processUsesStateScopedSandboxNamespace(
   if (owner.status !== 0 || Number(owner.stdout.trim()) !== uid) return false;
   let environment = deps.readProcessEnvironment?.(pid) ?? null;
   if (!environment) {
-    try {
-      environment = Object.fromEntries(
-        fs
-          .readFileSync(`/proc/${String(pid)}/environ`, "utf-8")
-          .split("\0")
-          .filter(Boolean)
-          .map((entry) => [
-            entry.slice(0, entry.indexOf("=")),
-            entry.slice(entry.indexOf("=") + 1),
-          ]),
-      );
-    } catch {
+    environment = readGatewayProcessEnvironment(pid);
+    if (!environment) {
       const command = deps.run("ps", ["eww", "-p", String(pid), "-o", "command="], {
         env: deps.env,
       });
@@ -289,13 +311,12 @@ export function processUsesStateScopedSandboxNamespace(
   return environment?.[NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV] === gatewayIdForStateDir(stateDir);
 }
 
-function readProcessExecutable(pid: number, deps: HostGatewayProcessDeps): string | null {
+export function readHostGatewayProcessExecutable(
+  pid: number,
+  deps: Pick<HostGatewayProcessDeps, "readProcessExecutable">,
+): string | null {
   if (deps.readProcessExecutable) return deps.readProcessExecutable(pid);
-  try {
-    return fs.realpathSync.native(`/proc/${String(pid)}/exe`);
-  } catch {
-    return null;
-  }
+  return readGatewayProcEntry(pid, "exe");
 }
 
 function normalizeProcessExecutable(value: string): string {
@@ -323,7 +344,7 @@ export function externallySupervisedHostGatewayProcessOwnershipFailure(
   if (!processUsesStateScopedSandboxNamespace(options.pid, options.stateDir, deps)) {
     return "gateway process owner and loaded sandbox namespace cannot be proven";
   }
-  const executable = readProcessExecutable(options.pid, deps);
+  const executable = readHostGatewayProcessExecutable(options.pid, deps);
   if (
     !executable ||
     normalizeProcessExecutable(executable) !== normalizeProcessExecutable(options.gatewayBin)

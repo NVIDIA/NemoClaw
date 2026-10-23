@@ -136,7 +136,7 @@ describe("sandbox inference route health", () => {
       expect.objectContaining({
         sandboxName: "alpha",
         target: { kind: "named", gatewayName: "nemoclaw-19080" },
-        command: ["sh", "-c", expect.stringContaining("nemoclaw-openshell-provider")],
+        command: ["sh", "-c", expect.stringContaining("NVIDIA_INFERENCE_API_KEY")],
       }),
     );
   });
@@ -445,4 +445,20 @@ describe("transient inference invocation failures", () => {
   it("reports no failure when no inference request was sent (#10709)", () => {
     expect(isTransientInferenceInvocationFailure(null)).toBe(false);
   });
+});
+
+it("offers conditional recreation guidance when the legacy route cannot be reached", () => {
+  const health = buildSandboxInferenceRouteHealth(
+    {
+      ok: false,
+      endpoint: "https://inference.local/v1/models",
+      httpStatus: 0,
+      detail: "Inference gateway is unreachable.",
+    },
+    null,
+    null,
+    { provider: "compatible-endpoint", model: "selected" },
+  );
+  expect(health.ok).toBe(false);
+  expect(health.detail).toContain("If this legacy route is no longer available");
 });

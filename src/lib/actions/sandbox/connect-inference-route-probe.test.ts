@@ -158,7 +158,7 @@ describe("sandbox connect inference route probe request", () => {
         });
 
         expect(result.status).toBe(0);
-        expect(result.stdout).toBe("BROKEN 000");
+        expect(result.stdout).toMatch(/^BROKEN 000 curl_exit=[1-9][0-9]*$/u);
         expect(result.stdout).not.toContain(spoof);
         expect(fs.existsSync(profileMarker)).toBe(false);
         expect(fs.existsSync(curlConfigMarker)).toBe(false);

@@ -3,6 +3,9 @@
 
 import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
 import { spawnSync } from "node:child_process";
+import { getChatCompletionsProbePayload } from "../../inference/openai-probe-models";
+import { NATIVE_NVIDIA_AUTH_HEADER_SCRIPT } from "../../inference/native-nvidia/contract";
+import { nativeLocalIdentity } from "../../inference/native-local/contract";
 import {
   existsSync,
   mkdtempSync,
@@ -14,7 +17,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { assert, describe, expect, it, vi } from "vitest";
 import { isNvcfFunctionNotFoundForAccount } from "../../inference/nvcf-model-access";
 
 import {
@@ -22,7 +25,13 @@ import {
   buildSandboxInferenceInvocationCommand,
   probeSandboxInferenceInvocation,
   READINESS_INFERENCE_INVOCATION_TIMEOUT_MS,
+  type SandboxInferenceInvocationInput,
 } from "./inference-invocation-probe";
+import {
+  NATIVE_LOCAL_CREDENTIAL_HANDLE,
+  recordingProbeShell,
+} from "../../../../test/helpers/native-local-probe-shell";
+import { nativeLocalTestReceipt } from "../../../../test/helpers/inference-set";
 
 const input = {
   sandboxName: "dcode-workspace",
@@ -56,7 +65,8 @@ function runProbeCommandWithBody(
   code: string,
   body: string,
   parentDirectory: string = tmpdir(),
-  probeInput = input,
+  probeInput: SandboxInferenceInvocationInput = input,
+  probeEnvironment: NodeJS.ProcessEnv = {},
 ): { stdout: string; argv: string[] } {
   const dir = mkdtempSync(path.join(parentDirectory, "nemoclaw-probe-parity-"));
   try {
@@ -77,7 +87,7 @@ function runProbeCommandWithBody(
     );
     const run = spawnSync("/bin/sh", ["-c", buildSandboxInferenceInvocationCommand(probeInput)], {
       encoding: "utf8",
-      env: { ...process.env, PATH: `${bin}:${process.env.PATH || ""}` },
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH || ""}`, ...probeEnvironment },
     });
     return {
       stdout: run.stdout || "",
@@ -141,10 +151,34 @@ describe("sandbox inference invocation probe", () => {
     });
 
     expect(command).toContain("https://integrate.api.nvidia.com/v1/chat/completions");
-    expect(command).toContain("Authorization: Bearer nemoclaw-openshell-provider");
+    expect(command).toContain('AUTH_HEADER="Authorization: Bearer ${NVIDIA_INFERENCE_API_KEY}"');
     expect(command).not.toContain("https://inference.local");
     expect(command).not.toContain("NVIDIA_API_KEY");
-    expect(command).not.toContain("NVIDIA_INFERENCE_API_KEY");
+    expect(command).toContain("openshell:resolve:env:");
+  });
+
+  it("uses the supervisor credential in the shared native model request (#12822)", () => {
+    const model = "nvidia/nemotron-3-super-120b-a12b";
+    const placeholder = "openshell:resolve:env:v123_NVIDIA_INFERENCE_API_KEY";
+    const servedBody = '{"choices":[{"message":{"content":"OK"}}]}';
+    const result = runProbeCommandWithBody(
+      "200",
+      servedBody,
+      tmpdir(),
+      {
+        ...input,
+        provider: "nvidia-prod",
+        model,
+        nativeProvider: true,
+      },
+      { NVIDIA_INFERENCE_API_KEY: placeholder },
+    );
+
+    expect(result.stdout).toBe(`200\n${servedBody}`);
+    expect(result.argv).toContain(`Authorization: Bearer ${placeholder}`);
+    expect(result.argv.at(-1)).toBe("https://integrate.api.nvidia.com/v1/chat/completions");
+    expect(JSON.parse(result.argv[result.argv.indexOf("--data-binary") + 1]).model).toBe(model);
+    expect(result.argv.join("\n")).not.toContain("nemoclaw-openshell-provider");
   });
 
   it("fails closed and redacts diagnostics when the stored gateway credential is rejected (#6195)", async () => {
@@ -444,11 +478,40 @@ describe("sandbox inference invocation probe", () => {
       ),
     ).resolves.toEqual({
       ok: false,
-      detail: "sandbox inference invocation probe was unavailable",
+      detail: "sandbox inference invocation probe exited with status 127",
       httpStatus: null,
       endpoint: "https://inference.local/v1/chat/completions",
     });
   });
+
+  it.each([
+    [56, "curl-error:56\n", null, "exited with status 56"],
+    [1, "401\n", 401, "returned HTTP 401"],
+    [0, '200\n{"choices":[{"message":{"content":"OK"}}]}', null, "was unavailable"],
+  ] as const)(
+    "preserves failed DCode diagnostics and rejects successful startup stderr (exit %s) (#12822)",
+    async (exitCode, stdout, httpStatus, detail) => {
+      const runBuffered = vi.fn(async () =>
+        bufferedResult(exitCode, stdout, "untrusted stderr with nvapi-private-canary"),
+      );
+      const result = await probeSandboxInferenceInvocation(
+        {
+          ...input,
+          agentName: "langchain-deepagents-code",
+          provider: "nvidia-prod",
+          nativeProvider: true,
+        },
+        { commandExecutor: { runBuffered } },
+      );
+      expect(result).toEqual({
+        ok: false,
+        detail: `sandbox inference invocation probe ${detail}`,
+        httpStatus,
+        endpoint: "https://integrate.api.nvidia.com/v1/chat/completions",
+      });
+      expect(JSON.stringify(result)).not.toContain("nvapi-private-canary");
+    },
+  );
 
   it("accepts a served response body that serializes an empty tool call list (#9108)", async () => {
     const body = JSON.stringify({
@@ -645,3 +708,451 @@ describe("native inference transport failures", () => {
     ).rejects.toBe(error);
   });
 });
+
+it.each([
+  "",
+  "opaque-real-token",
+  "openshell:resolve:env:OTHER_API_KEY",
+  "openshell:resolve:env:v123_OTHER_API_KEY",
+  "openshell:resolve:env:v_NVIDIA_INFERENCE_API_KEY",
+  "openshell:resolve:env:v123x_NVIDIA_INFERENCE_API_KEY",
+  `openshell:resolve:env:v${"1".repeat(21)}_NVIDIA_INFERENCE_API_KEY`,
+  `openshell:resolve:env:s${"a".repeat(63)}_NVIDIA_INFERENCE_API_KEY`,
+  `openshell:resolve:env:s${"A".repeat(64)}_NVIDIA_INFERENCE_API_KEY`,
+  "openshell:resolve:env:NVIDIA_INFERENCE_API_KEY_suffix",
+  "openshell:resolve:env:NVIDIA_INFERENCE_API_KEY\nother",
+  "openshell:resolve:env:NVIDIA_INFERENCE_API_KEY\n",
+])("rejects non-placeholder native probe credentials before use (%s)", (value) => {
+  const result = spawnSync("sh", ["-c", `${NATIVE_NVIDIA_AUTH_HEADER_SCRIPT}; printf used`], {
+    encoding: "utf8",
+    env: { PATH: process.env.PATH, NVIDIA_INFERENCE_API_KEY: value },
+  });
+  expect(result.status).toBe(2);
+  expect(result.stdout).toBe("");
+  expect(result.stderr).toBe("");
+});
+
+it.each([
+  "openshell:resolve:env:NVIDIA_INFERENCE_API_KEY",
+  "openshell:resolve:env:v123_NVIDIA_INFERENCE_API_KEY",
+  `openshell:resolve:env:v${"1".repeat(20)}_NVIDIA_INFERENCE_API_KEY`,
+  `openshell:resolve:env:s${"a".repeat(64)}_NVIDIA_INFERENCE_API_KEY`,
+])("uses the exact supervisor NVIDIA placeholder %s for native probes", (value) => {
+  const result = spawnSync(
+    "sh",
+    ["-c", `${NATIVE_NVIDIA_AUTH_HEADER_SCRIPT}; printf '%s' "$AUTH_HEADER"`],
+    { encoding: "utf8", env: { PATH: process.env.PATH, NVIDIA_INFERENCE_API_KEY: value } },
+  );
+  expect(result.status).toBe(0);
+  expect(result.stdout).toBe(`Authorization: Bearer ${value}`);
+});
+
+it("gives native Ultra readiness the same reasoning budget as host onboarding", () => {
+  const model = "nvidia/nemotron-3-ultra-550b-a55b";
+  const command = buildSandboxInferenceInvocationCommand({
+    ...input,
+    provider: "nvidia-prod",
+    model,
+    nativeProvider: true,
+  });
+  const payload = getChatCompletionsProbePayload(model, { useNvidiaEndpointProbePayload: true });
+  expect(payload.max_tokens).toBe(256);
+  expect(command).toContain('"max_tokens":256');
+});
+
+describe("native hosted inference probe credential boundary", () => {
+  it.each([
+    [
+      "compatible-endpoint",
+      "COMPATIBLE_API_KEY",
+      "openai-completions",
+      "https://custom.example/team/v1",
+      "/chat/completions",
+      "Authorization: Bearer",
+    ],
+    [
+      "compatible-endpoint",
+      "COMPATIBLE_API_KEY",
+      "openai-responses",
+      "https://custom.example/team/v1",
+      "/responses",
+      "Authorization: Bearer",
+    ],
+    [
+      "compatible-anthropic-endpoint",
+      "COMPATIBLE_ANTHROPIC_API_KEY",
+      "anthropic-messages",
+      "https://custom.example/team",
+      "/v1/messages",
+      "x-api-key:",
+    ],
+  ])("uses the custom %s %s %s binding", (provider, env, api, endpoint, suffix, header) => {
+    const placeholder = `openshell:resolve:env:v123_${env}`;
+    const result = runProbeCommandWithBody(
+      "200",
+      "{}",
+      tmpdir(),
+      {
+        ...input,
+        provider,
+        preferredInferenceApi: api,
+        nativeProvider: true,
+        nativeEndpointUrl: endpoint,
+      },
+      { [env]: placeholder },
+    );
+    expect(result.argv.at(-1)).toBe(endpoint + suffix);
+    expect(result.argv).toContain(`${header} ${placeholder}`);
+    expect(result.stdout).toBe("200\n{}");
+  });
+
+  it.each([true, false])(
+    "gives conditional legacy DNS guidance only for a shared route (native=%s)",
+    async (nativeProvider) => {
+      const result = await probeSandboxInferenceInvocation(
+        {
+          ...input,
+          nativeProvider,
+          ...(nativeProvider ? { nativeEndpointUrl: "https://custom.example/v1" } : {}),
+        },
+        { execute: vi.fn(async () => ({ status: 6, stdout: "curl-error:6\n", stderr: "" })) },
+      );
+      expect(result.ok).toBe(false);
+      assert(result.ok === false);
+      expect(result.detail.includes("If that route is no longer available")).toBe(!nativeProvider);
+      expect(result.endpoint).toBe(
+        nativeProvider
+          ? "https://custom.example/v1/chat/completions"
+          : "https://inference.local/v1/chat/completions",
+      );
+    },
+  );
+
+  it.each([
+    [
+      "openai-api",
+      "OPENAI_API_KEY",
+      "openai-completions",
+      "https://api.openai.com/v1/chat/completions",
+      "Authorization: Bearer",
+    ],
+    [
+      "openai-api",
+      "OPENAI_API_KEY",
+      "openai-responses",
+      "https://api.openai.com/v1/responses",
+      "Authorization: Bearer",
+    ],
+    [
+      "anthropic-prod",
+      "ANTHROPIC_API_KEY",
+      "anthropic-messages",
+      "https://api.anthropic.com/v1/messages",
+      "x-api-key:",
+    ],
+    [
+      "gemini-api",
+      "GEMINI_API_KEY",
+      "openai-completions",
+      "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+      "Authorization: Bearer",
+    ],
+    [
+      "openrouter-api",
+      "OPENROUTER_API_KEY",
+      "openai-completions",
+      "https://openrouter.ai/api/v1/chat/completions",
+      "Authorization: Bearer",
+    ],
+    [
+      "hermes-provider",
+      "OPENAI_API_KEY",
+      "openai-completions",
+      "https://inference-api.nousresearch.com/v1/chat/completions",
+      "Authorization: Bearer",
+    ],
+  ])(
+    "sends %s %s %s through the exact native endpoint [case %#]",
+    (provider, env, api, endpoint, header) => {
+      const placeholder = `openshell:resolve:env:v123_${env}`;
+      const result = runProbeCommandWithBody(
+        "200",
+        "{}",
+        tmpdir(),
+        {
+          ...input,
+          provider,
+          preferredInferenceApi: api,
+          nativeProvider: true,
+        },
+        { [env]: placeholder },
+      );
+      expect(result.argv.at(-1)).toBe(endpoint);
+      expect(result.argv).toContain(`${header} ${placeholder}`);
+      expect(result.stdout).toBe("200\n{}");
+    },
+  );
+
+  it.each([
+    [
+      "openrouter-api",
+      "OPENROUTER_API_KEY",
+      "openai-completions",
+      ["HTTP-Referer: https://www.nvidia.com/nemoclaw/", "X-OpenRouter-Title: NVIDIA NemoClaw"],
+    ],
+    [
+      "anthropic-prod",
+      "ANTHROPIC_API_KEY",
+      "anthropic-messages",
+      ["anthropic-version: 2023-06-01"],
+    ],
+  ] as const)("preserves %s protocol headers", (provider, env, api, headers) => {
+    const result = runProbeCommandWithBody(
+      "200",
+      "{}",
+      tmpdir(),
+      {
+        ...input,
+        provider,
+        preferredInferenceApi: api,
+        nativeProvider: true,
+      },
+      { [env]: `openshell:resolve:env:v123_${env}` },
+    );
+    expect(result.argv).toEqual(expect.arrayContaining([...headers]));
+  });
+
+  it.each([
+    undefined,
+    "sk-not-a-supervisor-placeholder",
+    "openshell:resolve:env:OTHER_API_KEY",
+    "openshell:resolve:env:OPENAI_API_KEY;evil",
+  ])("rejects absent, raw, or wrong native credentials before curl [case %#]", (credential) => {
+    const command = buildSandboxInferenceInvocationCommand({
+      ...input,
+      provider: "openai-api",
+      nativeProvider: true,
+    });
+    const result = spawnSync("/bin/sh", ["-c", command], {
+      env: { PATH: process.env.PATH, ...(credential ? { OPENAI_API_KEY: credential } : {}) },
+      encoding: "utf8",
+      timeout: 5000,
+    });
+    expect(result.status).toBe(2);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe("");
+  });
+});
+
+it.each([true, undefined])(
+  "uses a native local attachment without custom hosted authority (native=%s) (#13195)",
+  async (nativeProvider) => {
+    const binding = {
+      provider: "compatible-endpoint",
+      endpointUrl: "http://host.openshell.internal:8000/v1",
+      credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+      authMode: "authenticated",
+      gatewayName: "nemoclaw",
+      sandboxName: input.sandboxName,
+    } as const;
+    const selected = {
+      ...input,
+      agentName: "langchain-deepagents-code",
+      nativeProvider,
+      nativeLocalProviderAttachment: {
+        ...binding,
+        ...nativeLocalIdentity(binding),
+        schemaVersion: 1 as const,
+        providerId: "fixture-local-provider",
+      },
+    };
+    const placeholder = "openshell:resolve:env:v123_NEMOCLAW_LOCAL_INFERENCE_TOKEN";
+    const body = '{"choices":[{"message":{"content":"OK"}}]}';
+    const result = runProbeCommandWithBody("200", body, tmpdir(), selected, {
+      NEMOCLAW_LOCAL_INFERENCE_TOKEN: placeholder,
+    });
+    expect(result.argv.at(-1)).toBe(binding.endpointUrl + "/chat/completions");
+    expect(result.argv).toContain(`Authorization: Bearer ${placeholder}`);
+    expect(
+      await probeSandboxInferenceInvocation(selected, {
+        commandExecutor: {
+          runBuffered: async () => bufferedResult(0, result.stdout, ""),
+        },
+      }),
+    ).toEqual({ ok: true });
+  },
+);
+
+describe("OpenClaw native local probe routing (#13338)", () => {
+  const PROVIDERS = [
+    ["vllm-local", "http://host.openshell.internal:18000/v1"],
+    ["llama-cpp-local", "http://host.openshell.internal:8081/v1"],
+    ["ollama-local", "http://host.openshell.internal:11435/v1"],
+  ] as const;
+  const okBody = '{"choices":[{"message":{"content":"OK"}}]}';
+
+  function openClawInput(
+    provider: (typeof PROVIDERS)[number][0],
+    endpointUrl: string,
+    agentName: string | null | undefined,
+    agent: "openclaw" | null = "openclaw",
+  ): SandboxInferenceInvocationInput {
+    return {
+      sandboxName: "alpha",
+      gatewayName: "nemoclaw",
+      ...(agentName === undefined ? {} : { agentName }),
+      provider,
+      model: "local-model",
+      preferredInferenceApi: "openai-completions",
+      nativeLocalProviderAttachment: nativeLocalTestReceipt(
+        provider,
+        endpointUrl,
+        agent ? { agent } : {},
+      ),
+    };
+  }
+
+  it.each(
+    PROVIDERS.flatMap(([provider, endpointUrl]) =>
+      [undefined, null, "openclaw"].map((agentName) => ({ provider, endpointUrl, agentName })),
+    ),
+  )(
+    "sends $provider to the recorded endpoint when agentName is $agentName",
+    async ({ provider, endpointUrl, agentName }) => {
+      const selected = openClawInput(provider, endpointUrl, agentName);
+      const shell = recordingProbeShell("200", okBody);
+      await expect(
+        probeSandboxInferenceInvocation(selected, { execute: shell.execute }),
+      ).resolves.toEqual({ ok: true });
+      expect(shell.destinations()).toEqual([`${endpointUrl}/chat/completions`]);
+      expect(shell.requests[0]).toContain(
+        `Authorization: Bearer ${NATIVE_LOCAL_CREDENTIAL_HANDLE}`,
+      );
+      expect(shell.requests[0].join("\n")).not.toContain("inference.local");
+    },
+  );
+
+  it("reports the endpoint that actually failed", async () => {
+    const [provider, endpointUrl] = PROVIDERS[0];
+    const shell = recordingProbeShell("503");
+    const result = await probeSandboxInferenceInvocation(
+      openClawInput(provider, endpointUrl, null),
+      {
+        execute: shell.execute,
+      },
+    );
+    expect(result).toMatchObject({ ok: false, httpStatus: 503 });
+    assert(!result.ok);
+    expect(result.endpoint).toBe(shell.destinations()[0]);
+    expect(result.endpoint).toBe(`${endpointUrl}/chat/completions`);
+  });
+
+  it("refuses a raw credential before calling curl", async () => {
+    const [provider, endpointUrl] = PROVIDERS[2];
+    const shell = recordingProbeShell("200", okBody, {
+      NEMOCLAW_LOCAL_INFERENCE_TOKEN: "raw-local-secret",
+    });
+    const result = await probeSandboxInferenceInvocation(
+      openClawInput(provider, endpointUrl, null),
+      {
+        execute: shell.execute,
+      },
+    );
+    expect(result.ok).toBe(false);
+    expect(shell.requests).toEqual([]);
+  });
+
+  it.each([
+    ["ollama-local", undefined],
+    ["ollama-local", "openclaw"],
+    ["vllm-local", "openclaw"],
+  ] as const)(
+    "keeps a %s selection without native authority (agent %s) on the shared route",
+    async (provider, agentName) => {
+      const shell = recordingProbeShell("200", okBody, {});
+      await expect(
+        probeSandboxInferenceInvocation(
+          {
+            sandboxName: "alpha",
+            ...(agentName ? { agentName } : {}),
+            provider,
+            model: "local-model",
+            preferredInferenceApi: "openai-completions",
+          },
+          { execute: shell.execute },
+        ),
+      ).resolves.toEqual({ ok: true });
+      expect(shell.destinations()).toEqual(["https://inference.local/v1/chat/completions"]);
+      expect(shell.requests[0].join("\n")).not.toContain("Authorization");
+    },
+  );
+});
+
+it.each(["nvidia/nemotron-3-ultra-550b-a55b", "nvidia/nvidia/nemotron-3-ultra"])(
+  "keeps DCode Ultra readiness on its managed model profile (%s)",
+  (model) => {
+    const selected = {
+      ...input,
+      agentName: "langchain-deepagents-code",
+      model,
+      nativeProvider: true,
+      nativeEndpointUrl: "https://inference-api.nvidia.com/v1",
+    };
+    const result = runProbeCommandWithBody(
+      "200",
+      '{"choices":[{"message":{"content":"OK"}}]}',
+      tmpdir(),
+      selected,
+      { COMPATIBLE_API_KEY: "openshell:resolve:env:COMPATIBLE_API_KEY" },
+    );
+    const payload = JSON.parse(result.argv[result.argv.indexOf("--data-binary") + 1]!);
+    expect(payload.chat_template_kwargs).toEqual({ force_nonempty_content: true });
+  },
+);
+
+it("rejects the native E2E preamble without copying its response into diagnostics", async () => {
+  const result = await probeSandboxInferenceInvocation(
+    {
+      ...input,
+      agentName: "langchain-deepagents-code",
+      nativeProvider: true,
+      nativeEndpointUrl: "https://inference-api.nvidia.com/v1",
+    },
+    {
+      commandExecutor: {
+        runBuffered: async () => bufferedResult(0, "UNTRUSTED PREAMBLE\nBROKEN 000\n", ""),
+      },
+    },
+  );
+  expect(result).toEqual({
+    ok: false,
+    httpStatus: null,
+    detail: "sandbox inference invocation probe returned an invalid response body",
+    endpoint: "https://inference-api.nvidia.com/v1/chat/completions",
+  });
+});
+
+it.each([
+  {
+    agentName: "langchain-deepagents-code",
+    model: "nvidia/nvidia/nemotron-3-ultra",
+    nativeEndpointUrl: "https://integrate.api.nvidia.com/v1",
+  },
+  {
+    agentName: "openclaw",
+    model: "nvidia/nvidia/nemotron-3-ultra",
+    nativeEndpointUrl: "https://inference-api.nvidia.com/v1",
+  },
+  {
+    agentName: "langchain-deepagents-code",
+    model: "another-model",
+    nativeEndpointUrl: "https://inference-api.nvidia.com/v1",
+  },
+])(
+  "preserves unrelated request profiles for $agentName $model at $nativeEndpointUrl",
+  (variant) => {
+    expect(
+      buildSandboxInferenceInvocationCommand({ ...input, nativeProvider: true, ...variant }),
+    ).not.toContain("force_nonempty_content");
+  },
+);

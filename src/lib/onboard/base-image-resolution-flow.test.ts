@@ -44,6 +44,13 @@ describe("base image resolution flow", () => {
     vi.clearAllMocks();
   });
 
+  it("does not inspect Docker for a recorded Podman image during recreate", () => {
+    const context = createBaseImageResolutionContext({ fresh: false, env: {} });
+    captureBaseResolution(context, "registry.example/agent@sha256:" + "a".repeat(64), "podman");
+    expect(context.resolutionHint).toBeNull();
+    expect(mocks.dockerImageInspectFormat).not.toHaveBeenCalled();
+  });
+
   it.each(["1", "true", "YES", "on"])(
     "recognizes the %s refresh environment value (#4680)",
     (value) => {

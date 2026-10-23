@@ -18,7 +18,7 @@ The design goal is to keep messaging channel behavior out of core onboard/rebuil
 5. `onboard/dockerfile-patch.ts` bakes the plan into the sandbox build.
 6. `applier/build/messaging-build-applier.mts` applies agent install, render, post-agent-install build files, and writes the reduced runtime plan artifact.
 7. `MessagingHostStateApplier` persists durable plan state under the sandbox registry entry.
-8. Rebuild reads the persisted plan, stages a fresh build plan, and reapplies OpenClaw render/post-install hooks after `openclaw doctor` rewrites config.
+8. Rebuild reads the persisted plan, stages a fresh build plan, and reapplies manifest render/post-install hooks after restoring agent state. OpenClaw keeps its maintenance window through these writes; Hermes reloads the restored config through its native supervised restart.
 
 ## Package Map
 
@@ -39,6 +39,7 @@ The design goal is to keep messaging channel behavior out of core onboard/rebuil
 
 - Manifests and compiled plans are serializable data. Do not put functions, classes, live clients, or raw secret values in them.
 - Ephemeral provider application inputs may retain credential or refresh material in host process memory for the complete provider-application operation. Callers must release those references as soon as the operation settles; JavaScript does not guarantee zeroization. Never serialize, persist, log, diagnose, or return those values from the applier. Transfer provider credentials and refresh secrets to OpenShell child processes through environment values only, never command arguments.
+- Host-side messaging provider definitions require an explicit NemoClaw-owned profile type. Reject missing or unowned types before profile import or provider mutation; never create through OpenShell's `generic` fallback. Existing gateway providers may be reused only when their profile and credential binding match.
 - Secret inputs must not declare `statePath`; persisted plans may contain `credentialAvailable`, `credentialHash`, and placeholders, never tokens.
 - Hook implementations are resolved by stable handler IDs through `MessagingHookRegistry`. Manifests reference handlers by string; they do not import handler code.
 - Hook outputs must match manifest declarations and be JSON-serializable. Add outputs to the manifest before consuming them.

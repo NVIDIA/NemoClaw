@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
+import { writeConfigFile } from "../../state/config-io";
 
 import { type OpenRegularFile, openRegularFileNoFollow } from "../../adapters/fs/regular-file";
 import { DEFAULT_GATEWAY_PORT, GATEWAY_PORT } from "../gateway-binding/identity";
@@ -27,7 +29,7 @@ export function resolveGatewayStateDirName(port: number): string {
     : `${BASE_GATEWAY_STATE_DIR_NAME}-${port}`;
 }
 
-export function resolveGatewayStateDirForPort(options: {
+function resolveConfiguredGatewayStateDirForPort(options: {
   configured?: string;
   home: string;
   port: number;
@@ -275,5 +277,129 @@ export function isManagedGatewayStateRootReservation(
     return entries.length === 1 && entries[0] === MANAGED_GATEWAY_STATE_ROOT_MARKER;
   } catch {
     return false;
+  }
+}
+
+/** The fixed per-port directory, independent of a saved custom binding. */
+export function resolveDefaultGatewayStateDirForPort(options: {
+  home: string;
+  port: number;
+}): string {
+  return resolveConfiguredGatewayStateDirForPort(options);
+}
+
+/** Resolve every gateway consumer through the same explicit-or-saved binding. */
+export function resolveGatewayStateDirForPort(
+  options: Parameters<typeof resolveConfiguredGatewayStateDirForPort>[0],
+): string {
+  return resolveConfiguredGatewayStateDirForPort({
+    ...options,
+    configured: options.configured?.trim()
+      ? options.configured
+      : readDockerDriverGatewayBinding(options.home, options.port)?.stateDir,
+  });
+}
+
+const MAX_BINDING_BYTES = 256 * 1024;
+const NETWORK_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/u;
+
+export type DockerDriverGatewayBinding = {
+  stateDir: string;
+  dockerNetworkName: string;
+};
+
+function validPort(port: number): boolean {
+  return Number.isInteger(port) && port >= 1 && port <= 65535;
+}
+
+function bindingsPath(home: string, port: number): string {
+  return path.join(home, ".local", "state", "nemoclaw", "gateway-runtime-bindings", `${port}.json`);
+}
+
+function validBinding(value: unknown): value is DockerDriverGatewayBinding {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const binding = value as Partial<DockerDriverGatewayBinding>;
+  return (
+    typeof binding.stateDir === "string" &&
+    path.isAbsolute(binding.stateDir) &&
+    !/[\0\r\n]/u.test(binding.stateDir) &&
+    typeof binding.dockerNetworkName === "string" &&
+    NETWORK_NAME_PATTERN.test(binding.dockerNetworkName)
+  );
+}
+
+/** Read the same private file that was validated, without following a receipt symlink. */
+export function readDockerDriverGatewayBinding(
+  home: string = os.homedir(),
+  gatewayPort: number,
+): DockerDriverGatewayBinding | null {
+  if (!validPort(gatewayPort) || typeof fs.constants.O_NOFOLLOW !== "number") return null;
+  let descriptor: number | undefined;
+  try {
+    descriptor = fs.openSync(
+      bindingsPath(home, gatewayPort),
+      fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
+    );
+    const stat = fs.fstatSync(descriptor);
+    if (
+      !stat.isFile() ||
+      stat.nlink !== 1 ||
+      typeof process.getuid !== "function" ||
+      stat.uid !== process.getuid() ||
+      (stat.mode & 0o077) !== 0 ||
+      stat.size > MAX_BINDING_BYTES
+    )
+      return null;
+    const parsed: unknown = JSON.parse(fs.readFileSync(descriptor, "utf8"));
+    if (!validBinding(parsed)) return null;
+    const stateDir = resolveConfiguredGatewayStateDirForPort({
+      configured: parsed.stateDir,
+      home,
+      port: gatewayPort,
+    });
+    return { stateDir, dockerNetworkName: parsed.dockerNetworkName };
+  } catch {
+    return null;
+  } finally {
+    if (descriptor !== undefined) fs.closeSync(descriptor);
+  }
+}
+
+/** Use one receipt per port so another gateway cannot overwrite this binding. */
+export function writeDockerDriverGatewayBinding(
+  home: string = os.homedir(),
+  gatewayPort: number,
+  binding: DockerDriverGatewayBinding,
+): void {
+  if (!validPort(gatewayPort) || !validBinding(binding)) {
+    throw new Error("Invalid Docker-driver gateway binding");
+  }
+  writeConfigFile(bindingsPath(home, gatewayPort), {
+    stateDir: path.resolve(binding.stateDir),
+    dockerNetworkName: binding.dockerNetworkName,
+  });
+}
+
+/** Resolve recovery inputs without turning restored values into process-wide overrides. */
+export function resolveDockerDriverGatewayBinding(
+  env: NodeJS.ProcessEnv = process.env,
+  home: string = os.homedir(),
+  gatewayPort: number,
+): Partial<DockerDriverGatewayBinding> {
+  const saved = readDockerDriverGatewayBinding(home, gatewayPort);
+  return {
+    stateDir: env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR?.trim() || saved?.stateDir,
+    dockerNetworkName: env.OPENSHELL_DOCKER_NETWORK_NAME || saved?.dockerNetworkName,
+  };
+}
+
+/** Forget only the binding for the managed state directory that was removed. */
+export function removeDockerDriverGatewayBinding(
+  home: string,
+  gatewayPort: number,
+  stateDir: string,
+): void {
+  if (readDockerDriverGatewayBinding(home, gatewayPort)?.stateDir === path.resolve(stateDir)) {
+    fs.rmSync(bindingsPath(home, gatewayPort), { force: true });
   }
 }

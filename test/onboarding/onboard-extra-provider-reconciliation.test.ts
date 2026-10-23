@@ -95,7 +95,11 @@ runner.run = (command, opts = {}) => {
     };
   }
   if (normalized.includes("provider get -g nemoclaw ")) {
-    return { status: 0, stdout: "" };
+    const name = normalized.split("provider get -g nemoclaw ")[1];
+    return {
+      status: 0,
+      stdout: "Name: " + name + "\nType: generic\nCredential keys: <none>\nConfig keys: <none>\n",
+    };
   }
   return { status: 0 };
 };
@@ -228,8 +232,14 @@ const createReservedSandbox = () => {
           [
             "provider get -g nemoclaw brave-search",
             "provider get -g nemoclaw brave-search",
+            "provider get -g nemoclaw brave-search",
+            "provider get -g nemoclaw brave-search",
             "provider get -g nemoclaw custom-provider",
             "provider get -g nemoclaw custom-provider",
+            "provider get -g nemoclaw custom-provider",
+            "provider get -g nemoclaw custom-provider",
+            "provider get -g nemoclaw my-slack-bridge",
+            "provider get -g nemoclaw my-slack-bridge",
             "provider get -g nemoclaw my-slack-bridge",
             "provider get -g nemoclaw my-slack-bridge",
             "provider get -g nemoclaw nvidia-prod",

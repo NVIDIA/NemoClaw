@@ -26,7 +26,6 @@ type CommandEntry = {
   policyContent?: string;
   policyReadError?: string;
   dockerfileContent?: string;
-  dockerfileReadError?: string;
   providerRevisions?: Record<string, number | undefined> | null;
   rawCredentialInEnv?: boolean;
 };
@@ -168,6 +167,12 @@ const { createSandbox, setupMessagingChannels } = require(${onboardPath});
       assert.equal(result.status, 0, result.stderr);
       const payload = parseStdoutJson(result.stdout);
 
+      assert.deepEqual(
+        payload.commands.filter((e: CommandEntry) => e.command.includes("sandbox provider detach")),
+        [],
+        "new sandbox creation should not detach providers",
+      );
+
       const providerCommands = payload.commands.filter((e: CommandEntry) =>
         e.command.includes("provider create"),
       );
@@ -273,14 +278,8 @@ const { createSandbox, setupMessagingChannels } = require(${onboardPath});
       );
 
       const envString = JSON.stringify(createCommand.env);
-      assert.ok(
-        !envString.includes("test-discord-token-value"),
-        "Discord token value must not leak into sandbox env",
-      );
-      assert.ok(
-        !envString.includes("xoxb-test-slack-token-value"),
-        "Slack bot token value must not leak into sandbox spawn env",
-      );
+      assert.ok(!envString.includes("test-discord-token-value"), "Discord token in sandbox env");
+      assert.ok(!envString.includes("xoxb-test-slack-token-value"), "Slack bot token in env");
       assert.ok(
         !envString.includes("xapp-test-slack-app-token-value"),
         "Slack app token value must not leak into sandbox spawn env",
@@ -409,7 +408,10 @@ childProcess.spawn = (...args) => {
   });
   return child;
 };
-
+require(${JSON.stringify(path.join(repoRoot, "src", "lib", "onboard", "sandbox-prebuild.ts"))}).prebuildSandboxImageIfEligible = async () => ({
+  createArgs: [], sourceReference: "nemoclaw-sandbox-local:fixture-messaging",
+  imageRef: "nemoclaw-sandbox-local:fixture-messaging", imageId: "sha256:" + "a".repeat(64),
+});
 const { createSandbox } = require(${onboardPath});
 
 (async () => {
@@ -452,6 +454,10 @@ const { createSandbox } = require(${onboardPath});
         assert.equal(result.status, 0, result.stderr);
         const payload = parseStdoutJson(result.stdout);
         assert.ok(payload.createCommand.command.includes("sandbox create"));
+        assert.match(
+          payload.createCommand.command,
+          /--from nemoclaw-sandbox-local:fixture-messaging/,
+        );
         assert.match(payload.createCommand.command, /--provider my-assistant-slack-bridge/);
         assert.match(payload.createCommand.command, /--provider my-assistant-slack-app/);
         assert.match(payload.createCommand.policyPath, /nemoclaw-initial-policy/);
@@ -746,15 +752,7 @@ childProcess.spawn = (...args) => {
   child.pid = 4242;
   const command = _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]);
   const entry = { command, env: args[2]?.env || null };
-  const dockerfileMatch = command.match(/(?:--from|-f) ([^ ]+Dockerfile)/);
-  if (dockerfileMatch) {
-    try {
-      entry.dockerfileContent = dockerfileContent = fs.readFileSync(dockerfileMatch[1], "utf-8");
-    } catch (error) {
-      entry.dockerfileReadError = String(error);
-    }
-  }
-  commands.push({ ...entry, dockerfileContent: entry.dockerfileContent ?? dockerfileContent });
+  commands.push({ ...entry, dockerfileContent });
   process.nextTick(() => {
     child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
     child.emit("close", 0);
@@ -762,6 +760,11 @@ childProcess.spawn = (...args) => {
   return child;
 };
 
+require(${JSON.stringify(path.join(repoRoot, "src", "lib", "onboard", "sandbox-prebuild.ts"))}).prebuildSandboxImageIfEligible = async (input) => {
+  dockerfileContent = fs.readFileSync(require("node:path").join(input.buildCtx, "Dockerfile"), "utf-8");
+  return { createArgs: [], sourceReference: "nemoclaw-sandbox-local:fixture-messaging",
+    imageRef: "nemoclaw-sandbox-local:fixture-messaging", imageId: "sha256:" + "a".repeat(64) };
+};
 const { createSandbox } = require(${onboardPath});
 
 (async () => {
@@ -795,7 +798,8 @@ const { createSandbox } = require(${onboardPath});
         entry.command.includes("sandbox create"),
       );
       assert.ok(createCommand, "expected sandbox create command");
-      assert.equal(createCommand.dockerfileReadError, undefined);
+      assert.match(createCommand.command, /--from nemoclaw-sandbox-local:fixture-messaging/);
+      assert.equal(typeof createCommand.dockerfileContent, "string");
 
       assert.deepEqual(
         activeChannelsFromDockerfile(createCommand.dockerfileContent),
@@ -904,15 +908,7 @@ childProcess.spawn = (...args) => {
   child.pid = 4242;
   const command = _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]);
   const entry = { command, env: args[2]?.env || null };
-  const dockerfileMatch = command.match(/(?:--from|-f) ([^ ]+Dockerfile)/);
-  if (dockerfileMatch) {
-    try {
-      entry.dockerfileContent = dockerfileContent = fs.readFileSync(dockerfileMatch[1], "utf-8");
-    } catch (error) {
-      entry.dockerfileReadError = String(error);
-    }
-  }
-  commands.push({ ...entry, dockerfileContent: entry.dockerfileContent ?? dockerfileContent });
+  commands.push({ ...entry, dockerfileContent });
   process.nextTick(() => {
     child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
     child.emit("close", 0);
@@ -920,6 +916,11 @@ childProcess.spawn = (...args) => {
   return child;
 };
 
+require(${JSON.stringify(path.join(repoRoot, "src", "lib", "onboard", "sandbox-prebuild.ts"))}).prebuildSandboxImageIfEligible = async (input) => {
+  dockerfileContent = fs.readFileSync(require("node:path").join(input.buildCtx, "Dockerfile"), "utf-8");
+  return { createArgs: [], sourceReference: "nemoclaw-sandbox-local:fixture-messaging",
+    imageRef: "nemoclaw-sandbox-local:fixture-messaging", imageId: "sha256:" + "a".repeat(64) };
+};
 const { createSandbox } = require(${onboardPath});
 
 (async () => {
@@ -967,7 +968,8 @@ const { createSandbox } = require(${onboardPath});
           entry.command.includes("sandbox create"),
         );
         assert.ok(createCommand, "expected sandbox create command");
-        assert.equal(createCommand.dockerfileReadError, undefined);
+        assert.match(createCommand.command, /--from nemoclaw-sandbox-local:fixture-messaging/);
+        assert.equal(typeof createCommand.dockerfileContent, "string");
         assert.doesNotMatch(createCommand.command, /--provider \S+-bridge\b/);
 
         assert.deepEqual(activeChannelsFromDockerfile(createCommand.dockerfileContent), [
@@ -1074,15 +1076,7 @@ childProcess.spawn = (...args) => {
   child.pid = 4242;
   const command = _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]);
   const entry = { command, env: args[2]?.env || null };
-  const dockerfileMatch = command.match(/(?:--from|-f) ([^ ]+Dockerfile)/);
-  if (dockerfileMatch) {
-    try {
-      entry.dockerfileContent = dockerfileContent = fs.readFileSync(dockerfileMatch[1], "utf-8");
-    } catch (error) {
-      entry.dockerfileReadError = String(error);
-    }
-  }
-  commands.push({ ...entry, dockerfileContent: entry.dockerfileContent ?? dockerfileContent });
+  commands.push({ ...entry, dockerfileContent });
   process.nextTick(() => {
     child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
     child.emit("close", 0);
@@ -1090,6 +1084,11 @@ childProcess.spawn = (...args) => {
   return child;
 };
 
+require(${JSON.stringify(path.join(repoRoot, "src", "lib", "onboard", "sandbox-prebuild.ts"))}).prebuildSandboxImageIfEligible = async (input) => {
+  dockerfileContent = fs.readFileSync(require("node:path").join(input.buildCtx, "Dockerfile"), "utf-8");
+  return { createArgs: [], sourceReference: "nemoclaw-sandbox-local:fixture-messaging",
+    imageRef: "nemoclaw-sandbox-local:fixture-messaging", imageId: "sha256:" + "a".repeat(64) };
+};
 const { createSandbox } = require(${onboardPath});
 
 (async () => {
@@ -1127,7 +1126,8 @@ const { createSandbox } = require(${onboardPath});
           entry.command.includes("sandbox create"),
         );
         assert.ok(createCommand, "expected sandbox create command");
-        assert.equal(createCommand.dockerfileReadError, undefined);
+        assert.match(createCommand.command, /--from nemoclaw-sandbox-local:fixture-messaging/);
+        assert.equal(typeof createCommand.dockerfileContent, "string");
 
         assert.deepEqual(
           activeChannelsFromDockerfile(createCommand.dockerfileContent),

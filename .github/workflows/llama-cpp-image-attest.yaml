@@ -34,19 +34,45 @@ jobs:
     name: Validate attestation inputs
     runs-on: ubuntu-24.04
     timeout-minutes: 5
-    permissions: {}
+    permissions:
+      contents: read
+      checks: read
+      pull-requests: read
     outputs:
+      trusted_revision: ${{ steps.identity.outputs.revision }}
       candidate_tag: ${{ steps.validate.outputs.candidate_tag }}
       digest: ${{ steps.validate.outputs.digest }}
       image: ${{ steps.validate.outputs.image }}
       retention_days: ${{ steps.validate.outputs.retention_days }}
       sbom_format: ${{ steps.validate.outputs.sbom_format }}
     steps:
+      - name: Resolve the signer's own source
+        id: identity
+        env:
+          WORKFLOW_JOB: ${{ toJSON(job) }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          revision="$(jq -er '
+            select(.workflow_repository == "NVIDIA/NemoClaw" and
+              .workflow_file_path == ".github/workflows/llama-cpp-image-attest.yaml")
+            | .workflow_sha | select(type == "string" and test("^[0-9a-f]{40}$"))
+          ' <<< "$WORKFLOW_JOB")"
+          printf 'revision=%s\n' "$revision" >> "$GITHUB_OUTPUT"
+      - name: Check out the signer's own source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NVIDIA/NemoClaw
+          ref: ${{ steps.identity.outputs.revision }}
+          persist-credentials: false
       - name: Validate exact inputs
         id: validate
         shell: bash
         env:
           CALLER_WORKFLOW_REF: ${{ github.workflow_ref }}
+          ROOT_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          TRUSTED_REVISION: ${{ steps.identity.outputs.revision }}
+          GH_TOKEN: ${{ github.token }}
           INPUT_CANDIDATE_TAG: ${{ inputs.candidate_tag }}
           INPUT_DIGEST: ${{ inputs.digest }}
           INPUT_IMAGE: ${{ inputs.image }}
@@ -55,11 +81,57 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$GITHUB_REPOSITORY" != "NVIDIA/NemoClaw" ] \
-            || [ "$GITHUB_EVENT_NAME" != "workflow_dispatch" ] \
-            || [ "$GITHUB_REF" != "refs/heads/main" ] \
-            || [ "$CALLER_WORKFLOW_REF" != "NVIDIA/NemoClaw/.github/workflows/llama-cpp-image.yaml@refs/heads/main" ]; then
-            echo "ERROR: attestation caller does not match the trusted main workflow." >&2
+            || [ "$GITHUB_EVENT_NAME" != "workflow_dispatch" ]; then
+            echo "ERROR: attestation caller does not match the trusted publication workflow." >&2
             exit 1
+          fi
+          if [ "$GITHUB_REF" = "refs/heads/main" ]; then
+            test "$CALLER_WORKFLOW_REF" = "NVIDIA/NemoClaw/.github/workflows/llama-cpp-image.yaml@$GITHUB_REF"
+          else
+            if [ "$GITHUB_REF" != "refs/heads/fix/issue-12285-wsl-transport" ] \
+              || [[ ! "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]] \
+              || [[ ! "$TRUSTED_REVISION" =~ ^[0-9a-f]{40}$ ]] \
+              || [ "$ROOT_WORKFLOW_SHA" != "$GITHUB_SHA" ] \
+              || [ "$CALLER_WORKFLOW_REF" != "NVIDIA/NemoClaw/.github/workflows/llama-cpp-image.yaml@$GITHUB_REF" ]; then
+              echo "ERROR: attestation ref is not approved." >&2
+              exit 1
+            fi
+            wrapper_sha="$( { cat .github/workflows/llama-cpp-image.yaml; sed "s/PUBLISHER_REVISION/$TRUSTED_REVISION/g" ci/llama-cpp-branch-publication.yaml; } | git hash-object --stdin)"
+            gh api "repos/NVIDIA/NemoClaw/contents/.github/workflows/llama-cpp-image.yaml?ref=$GITHUB_SHA" \
+              | jq -e --arg expected "$wrapper_sha" '.type == "file" and .sha == $expected' >/dev/null
+            gh api repos/NVIDIA/NemoClaw/pulls/12664 | jq -e --arg sha "$GITHUB_SHA" '
+              .state == "open" and .head.sha == $sha
+              and .head.ref == "fix/issue-12285-wsl-transport"
+              and .head.repo.full_name == "NVIDIA/NemoClaw"
+              and .base.ref == "main" and .base.repo.full_name == "NVIDIA/NemoClaw"
+            ' >/dev/null
+            # Revalidate admission inside the signer, independently of its caller.
+            if [ "$(gh api "repos/NVIDIA/NemoClaw/commits/$GITHUB_SHA" --jq '.commit.verification.verified')" != "true" ]; then
+              echo "ERROR: branch publication requires a verified signed commit." >&2
+              exit 1
+            fi
+            # PR description edits add a skipped changes check. Every required
+            # check still needs an actual success on this exact commit.
+            gh api --paginate --slurp "repos/NVIDIA/NemoClaw/commits/$GITHUB_SHA/check-runs?per_page=100&filter=latest" \
+              | jq -e --arg sha "$GITHUB_SHA" '
+                [.[] | .check_runs[] | select(.app.id == 15368 and .head_sha == $sha)] as $runs
+                | ["checks", "commit-lint", "dco-check", "check-hash", "changes",
+                   "Build native llama.cpp server (amd64)", "Build native llama.cpp server (arm64)"]
+                | all(.[]; . as $name
+                    | [$runs[] | select(.name == $name)]
+                    | any(.[]; .conclusion == "success")
+                      and all(.[]; .status == "completed" and
+                        (.conclusion == "success" or ($name == "changes" and .conclusion == "skipped"))))
+              ' >/dev/null
+            # GitHub requires both forms when a name has check runs and commit
+            # statuses. In particular, admission also owns check-hash status.
+            gh api --paginate --slurp "repos/NVIDIA/NemoClaw/commits/$GITHUB_SHA/statuses?per_page=100" \
+              | jq -e '
+                add | group_by(.context) | map(max_by(.id))
+                | all(.[] | select(.context == "checks" or .context == "commit-lint" or
+                    .context == "dco-check" or .context == "check-hash" or .context == "changes");
+                    .state == "success" and .creator.id == 41898282 and .creator.type == "Bot")
+              ' >/dev/null
           fi
           expected_candidate_tag="llama-cpp-candidate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           if [ "$INPUT_CANDIDATE_TAG" != "$expected_candidate_tag" ]; then
@@ -105,6 +177,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.validate-inputs.outputs.trusted_revision }}
           persist-credentials: false
 
       - name: Authenticate to GHCR
@@ -200,3 +273,10 @@ jobs:
         run: |
           set -euo pipefail
           timeout --foreground 120s cosign sign --yes "$IMAGE@$DIGEST"
+          # Also publish a legacy .sig signature for Cosign 2's default verifier.
+          # Legacy signing uses the built-in services and still requires a transparency log.
+          timeout --foreground 120s cosign sign --yes \
+            --new-bundle-format=false \
+            --use-signing-config=false \
+            --tlog-upload=true \
+            "$IMAGE@$DIGEST"

@@ -8,6 +8,7 @@ import type { ManagedInferenceReadinessSource } from "../inference/serving/types
 import type { AgentDefinition } from "../agent/defs";
 import {
   OPENROUTER_CLOUD_MODEL_OPTIONS,
+  OPENROUTER_FEATURED_MODEL_ID_ALIASES,
   resolveAgentDefaultCloudModel,
   resolveAgentProviderInferenceApi,
 } from "../inference/config";
@@ -60,6 +61,8 @@ import type { InferenceProviderHostGpu, InferenceProviderHostState } from "./pro
 import { buildInferenceProviderMenu, type ProviderMenuChoice } from "./provider-menu";
 import {
   applyVllmInstallResumeDefaults,
+  selectedProviderModelProvenance,
+  type SelectedModelOrigin,
   resolveSelectedEndpointSource,
   resolveRequestedProviderSelection,
   vllmInstallRecoveryOptions,
@@ -574,7 +577,11 @@ function prepareManagedLlamaCppMenu(input: {
     ? discoverManagedLlamaCppSafely(
         deps,
         !deps.isNonInteractive() && !requestedProvider
-          ? { ...process.env, [LLAMA_CPP_RECIPE_ENV]: "", [NEMOCLAW_SERVING_PRESET_ENV]: "" }
+          ? {
+              ...process.env,
+              [LLAMA_CPP_RECIPE_ENV]: "",
+              [NEMOCLAW_SERVING_PRESET_ENV]: "",
+            }
           : undefined,
         gpu,
         runtimeProviderId,
@@ -593,7 +600,11 @@ function prepareManagedLlamaCppMenu(input: {
   }
   return {
     resolution,
-    options: buildManagedLlamaCppOptions({ candidate, requestedProvider, discovery }),
+    options: buildManagedLlamaCppOptions({
+      candidate,
+      requestedProvider,
+      discovery,
+    }),
   };
 }
 
@@ -775,6 +786,14 @@ function requestedVllmServingProfileModel(
   return requested?.backend === "vllm" ? requested : null;
 }
 
+/** A model match on an existing endpoint does not prove its recipe or image. */
+function installedVllmServingProfileProvenance(
+  managedInstall: boolean,
+  profile: RequestedServingProfileModel | null,
+): ServingProfileProvenance | null {
+  return managedInstall ? (profile?.provenance ?? null) : null;
+}
+
 /** Preserve explicit route intent while converting a known catalog alias to its served name. */
 function requestedManagedVllmRouteModel(input: {
   requestedModel: string | null;
@@ -836,7 +855,9 @@ async function resolveFreshHermesPortableOllamaSelection(input: {
   const nonInteractive = input.deps.isNonInteractive();
   let portableModel =
     input.requestedModel ??
-    input.deps.getNonInteractiveModel("ollama", { allowProviderModelFallback: false });
+    input.deps.getNonInteractiveModel("ollama", {
+      allowProviderModelFallback: false,
+    });
   if (!portableModel && !nonInteractive) {
     const promptedModel = await promptManualModelId("  Ollama model id: ", "Ollama", null, {
       promptFn: input.deps.prompt,
@@ -864,6 +885,16 @@ async function resolveFreshHermesPortableOllamaSelection(input: {
   const selectedModel = isBackToSelection(state.model) ? null : state.model;
   await maybePromptForSupportedInferenceInputCapability(input.deps, input.agent, selectedModel);
   return {
+    ...selectedProviderModelProvenance({
+      model: selectedModel,
+      provider: state.provider,
+      endpointUrl: state.endpointUrl,
+      preferredInferenceApi: input.deps.resolveAgentInferenceApi(
+        input.agent.name,
+        state.provider,
+        input.deps.coerceAgentInferenceApi(input.agent, state.preferredInferenceApi),
+      ),
+    }),
     model: selectedModel,
     provider: state.provider,
     endpointUrl: state.endpointUrl,
@@ -985,19 +1016,40 @@ export function createSetupNim(
     let endpointTrustedPrivateCapability: TrustedPrivateEndpointCapability | undefined;
     let vllmModelIdentity: string | undefined;
     let selectedServingProfileProvenance: ServingProfileProvenance | null = null;
+    let selectedModelOrigin: SelectedModelOrigin | undefined;
     const inferenceCapabilityCache = new OnboardInferenceCapabilityCache();
+    const agentDefaultModel = resolveAgentDefaultCloudModel(agent);
     const nvidiaFeaturedModels = deps.createNvidiaFeaturedModelSession({
-      defaultModel: resolveAgentDefaultCloudModel(agent),
+      onModelSelected: (model, source) => {
+        selectedModelOrigin = {
+          model,
+          source,
+          provider: deps.remoteProviderConfig.build.providerName,
+        };
+      },
+      defaultModel: agentDefaultModel,
       writeLine: deps.log,
     });
     const openRouterFeaturedModels = deps.createNvidiaFeaturedModelSession({
-      defaultModel: resolveAgentDefaultCloudModel(agent),
+      onModelSelected: (model, source) => {
+        selectedModelOrigin = {
+          model,
+          source,
+          provider: deps.remoteProviderConfig.openrouter.providerName,
+        };
+      },
+      defaultModel:
+        OPENROUTER_FEATURED_MODEL_ID_ALIASES.get(agentDefaultModel) ?? agentDefaultModel,
       fallbackModelOptions: OPENROUTER_CLOUD_MODEL_OPTIONS,
+      modelIdAliases: OPENROUTER_FEATURED_MODEL_ID_ALIASES,
       retiredModelIds: [],
       writeLine: deps.log,
     });
     const createSelectionState = (): SetupNimSelectionState => {
       const state: SetupNimSelectionState = {
+        onModelSelected: (model, source) => {
+          selectedModelOrigin = { model, source, provider: state.provider };
+        },
         model,
         provider,
         endpointUrl,
@@ -1024,6 +1076,7 @@ export function createSetupNim(
         );
       const route = (): ProviderInferenceProbeRoute => ({
         provider: state.provider,
+        ...(state.localNimSelected ? { localNimSelected: true } : {}),
         model: typeof state.model === "string" && state.model.trim() ? state.model.trim() : null,
         endpointUrl: state.endpointUrl,
         preferredInferenceApi: effectiveInferenceApi(),
@@ -1324,6 +1377,7 @@ export function createSetupNim(
               sandboxName,
               gatewayPort: deps.getGatewayPort(),
               runtimeProvider,
+              gpu,
               revalidateSandboxIdentity: state.revalidateSandboxIdentity,
             },
           );
@@ -1346,6 +1400,7 @@ export function createSetupNim(
           break;
         } else if (selected.key === "nim-local") {
           const state = createSelectionState();
+          state.localNimSelected = true;
           const result = await deps.handleNimLocalSelection(
             gpu,
             { requestedModel, recoveredFromSandbox, recoveredModel },
@@ -1489,6 +1544,9 @@ export function createSetupNim(
         }
         if (selected.key === "vllm") {
           const state = preparedVllmState ?? createSelectionState();
+          const requestedServingProfile = requestedVllmServingProfileModel(
+            deps.resolveRequestedServingProfileModel,
+          );
           state.model = resolveInitialVllmSelectionModel({
             preparedState: preparedVllmState,
             requestedProvider,
@@ -1505,9 +1563,7 @@ export function createSetupNim(
           const result = await deps.handleVllmSelection(state, {
             managedInstall: preparedVllmState !== null,
             sparkHost: gpu?.spark === true,
-            servingProfileModel: requestedVllmServingProfileModel(
-              deps.resolveRequestedServingProfileModel,
-            ),
+            servingProfileModel: requestedServingProfile,
           });
           ({
             model,
@@ -1520,6 +1576,10 @@ export function createSetupNim(
           } = state);
           vllmModelIdentity = state.vllmModelIdentity;
           if (result === "retry-selection") continue selectionLoop;
+          selectedServingProfileProvenance = installedVllmServingProfileProvenance(
+            preparedVllmState !== null,
+            requestedServingProfile,
+          );
           break;
         } else if (selected.key === "routed") {
           const state = createSelectionState();
@@ -1562,7 +1622,20 @@ export function createSetupNim(
           hasTrustedPrivateCapability: Boolean(endpointTrustedPrivateCapability),
         });
     await maybePromptForSupportedInferenceInputCapability(deps, agent, selectedModel);
+    const modelProvenanceUpdate = selectedProviderModelProvenance({
+      model: selectedModel,
+      provider,
+      endpointUrl,
+      preferredInferenceApi: deps.resolveAgentInferenceApi(
+        agent?.name ?? null,
+        provider,
+        deps.coerceAgentInferenceApi(agent, preferredInferenceApi),
+      ),
+      requestedModel,
+      selectedModelOrigin,
+    });
     return {
+      ...modelProvenanceUpdate,
       model: selectedModel,
       provider,
       endpointUrl,

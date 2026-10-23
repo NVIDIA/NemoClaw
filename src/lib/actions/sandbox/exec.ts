@@ -13,7 +13,20 @@ import {
 import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gateway-endpoint-guard";
 import { type ExecPolicyHintDeps, preparePolicyHint } from "./exec-policy-hint-integration";
 import type { GatewaySelectResult } from "./gateway-select";
+import {
+  finishTelemetryOperation,
+  isTelemetryOperationActive,
+  recordTelemetryTarget,
+} from "../telemetry/operation";
+import { readTelemetryAgentRoster, readTelemetryAgentConfiguration } from "./agents/apply";
+import {
+  explicitAgentModel,
+  readAgentSelectionEntry,
+  persistVerifiedAgentModelSelections,
+  verifiedAddedAgentModelSelection,
+} from "./agents/model-selections";
 import { wrapExecCommandWithRuntimeEnv } from "./runtime-env";
+import type { TelemetryMetadataError } from "../../domain/telemetry/event";
 
 export {
   wrapExecCommandWithRuntimeEnv,
@@ -35,6 +48,7 @@ export type SandboxExecCompletion = {
   code: number;
   commandCode: number;
   invocationError?: string;
+  cancelled?: boolean;
 };
 
 // OpenShell accepts LF/CR in command argv while retaining field-specific
@@ -117,6 +131,9 @@ async function finishSandboxExecRequest(
       code: commandCode,
       commandCode,
       ...(invocationError ? { invocationError } : {}),
+      ...(completed.outcome.kind === "failed" && completed.outcome.error.kind === "cancelled"
+        ? { cancelled: true }
+        : {}),
     };
   } finally {
     completed.release();
@@ -253,6 +270,9 @@ export async function startSandboxExec(
     timeoutSeconds: options.timeoutSeconds,
     stdin: options.stdin,
   };
+  const rosterTelemetry = isOpenClawAgentRosterMutation(command) && isTelemetryOperationActive();
+  const selectionEntry = rosterTelemetry ? readAgentSelectionEntry(sandboxName) : null;
+  const beforeRoster = rosterTelemetry ? await readTelemetryAgentRoster(sandboxName, target) : null;
   const pending = runSandboxExecRequest(commandExecutor, request);
   return async () => {
     const completion = await finishSandboxExecRequest(await pending);
@@ -278,7 +298,7 @@ export async function startSandboxExec(
         recordedAgent = (deps.resolveSandboxAgent ?? defaultResolveSandboxAgent)(sandboxName);
       } catch {
         console.error(activationFailureMessage());
-        exit(1);
+        exitCode = 1;
       }
       if (recordedAgent === "openclaw") {
         let restartSucceeded = false;
@@ -293,6 +313,67 @@ export async function startSandboxExec(
           exitCode = 1;
         }
       }
+    }
+    if (rosterTelemetry) {
+      const config = await readTelemetryAgentConfiguration(sandboxName, target);
+      const afterRoster = await readTelemetryAgentRoster(sandboxName, target, config);
+      if (!beforeRoster || !afterRoster) {
+        recordTelemetryTarget({
+          scope: "configuration",
+          sandboxName,
+          gatewayName,
+          outcome: completion.cancelled ? "cancelled" : exitCode !== 0 ? "failed" : "unverified",
+          state: "unavailable",
+          verificationStatus: "collection_error",
+        });
+      } else {
+        const changed = JSON.stringify(beforeRoster) !== JSON.stringify(afterRoster);
+        let sourceVerified = true;
+        const metadataErrors: TelemetryMetadataError[] = [];
+        if (changed) {
+          const deleted = beforeRoster.filter((id) => !afterRoster.includes(id));
+          const added = afterRoster.filter((id) => !beforeRoster.includes(id));
+          const model = command[2] === "add" ? explicitAgentModel(command) : null;
+          const selection =
+            model && added.length === 1
+              ? verifiedAddedAgentModelSelection(config, added[0], model)
+              : null;
+          sourceVerified =
+            (!model || selection !== null) &&
+            persistVerifiedAgentModelSelections(
+              selectionEntry,
+              config,
+              selection ? [selection] : [],
+              deleted,
+            );
+          if (!sourceVerified && selection)
+            metadataErrors.push({
+              category: "model_source",
+              slot: {
+                agentId: selection.agentId,
+                assignment: selection.assignment,
+                reference: selection.reference,
+              },
+            });
+        }
+        recordTelemetryTarget({
+          scope: "configuration",
+          sandboxName,
+          gatewayName,
+          outcome: completion.cancelled
+            ? "cancelled"
+            : exitCode !== 0
+              ? "failed"
+              : changed
+                ? "completed"
+                : "no_change",
+          state: changed ? (exitCode === 0 ? "applied" : "partial") : "unchanged",
+          ...(!sourceVerified
+            ? { verificationStatus: "collection_error" as const, metadataErrors }
+            : {}),
+        });
+      }
+      await finishTelemetryOperation(exitCode);
     }
     exit(exitCode);
   };

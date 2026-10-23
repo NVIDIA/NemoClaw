@@ -2,9 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import { DEFAULT_CLOUD_MODEL } from "../../../src/lib/inference/config.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
+  acceptedSwitchResponseModels,
   PUBLIC_NVIDIA_SWITCH_ATTACHMENT_EVIDENCE,
   PUBLIC_NVIDIA_SWITCH_MODEL,
   PUBLIC_NVIDIA_SWITCH_PROVIDER,
@@ -13,11 +15,46 @@ import {
 } from "../live/public-nvidia-switch-provider.ts";
 
 describe("public NVIDIA inference switch provider", () => {
+  it("inspects the declared Launchable gateway instead of the default gateway", async () => {
+    const openshell = vi.fn().mockResolvedValue({ exitCode: 1, stdout: "", stderr: "" });
+    await readPublicNvidiaSwitchAttachmentEvidence({
+      artifactName: "launchable-provider",
+      env: { OPENSHELL_GATEWAY: "nemoclaw-18080" },
+      logicalProvider: PUBLIC_NVIDIA_SWITCH_PROVIDER,
+      receipt: undefined,
+      sandbox: { openshell } as unknown as SandboxClient,
+      sandboxName: "e2e-staging",
+    });
+    expect(openshell.mock.calls.map(([args]) => args)).toEqual([
+      ["provider", "get", "-g", "nemoclaw-18080", "nemoclaw-nvidia-prod-v1"],
+      ["sandbox", "provider", "list", "-g", "nemoclaw-18080", "e2e-staging"],
+    ]);
+  });
   it("pins the healthy public provider and model", () => {
     expect(PUBLIC_NVIDIA_SWITCH_PROVIDER).toBe("nvidia-prod");
-    expect(PUBLIC_NVIDIA_SWITCH_MODEL).toBe("nvidia/nemotron-3-super-120b-a12b");
+    expect(PUBLIC_NVIDIA_SWITCH_MODEL).toBe("nvidia/nemotron-3.5-super-vl-120b-a12b");
+    expect(PUBLIC_NVIDIA_SWITCH_MODEL).toBe(DEFAULT_CLOUD_MODEL);
     expect(requirePublicNvidiaSwitchKey("nvapi-public-key")).toBe("nvapi-public-key");
     expect(() => requirePublicNvidiaSwitchKey("sk-hosted-key")).toThrow(/nvapi-\*/u);
+  });
+
+  it("accepts only the observed serving name as a Super VL response model", () => {
+    expect(acceptedSwitchResponseModels(PUBLIC_NVIDIA_SWITCH_MODEL)).toEqual([
+      "nvidia/nemotron-3.5-super-vl-120b-a12b",
+      "private/nvidia/nemotron-3.5-super-120b-a12b",
+    ]);
+    expect(acceptedSwitchResponseModels(PUBLIC_NVIDIA_SWITCH_MODEL)).not.toContain(
+      "nvidia/nemotron-3-super-120b-a12b",
+    );
+    expect(acceptedSwitchResponseModels("mock-anthropic-model")).toEqual(["mock-anthropic-model"]);
+  });
+
+  it.each([
+    "nvidia/nemotron-3-super-120b-a12b",
+    "nvidia/nemotron-3-ultra-550b-a55b",
+    "private/nvidia/nemotron-3.5-super-120b-a12b",
+  ])("requires an exact response model for %s", (requested) => {
+    expect(acceptedSwitchResponseModels(requested)).toEqual([requested]);
   });
 
   it("rejects live provider metadata whose revision differs from the durable receipt", async () => {

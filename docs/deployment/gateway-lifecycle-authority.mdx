@@ -145,12 +145,20 @@ The process identity must remain stable while NemoClaw reads `/proc` evidence an
 The process must belong to the unit's cgroup under the declared systemd manager scope, and its executable must match `execPath`.
 The endpoint must answer its health check.
 
-After validation, NemoClaw registers the endpoint under the canonical gateway name and selects it as the active OpenShell gateway.
-Immediately before registration, NemoClaw reloads the authority and rejects any change from the authority bound to the run.
+After validation, NemoClaw inspects the canonical gateway registration before changing it.
+When no registration exists, NemoClaw registers the declared endpoint.
+When a registration exists, its normalized scheme, host, and port must match the declared endpoint.
+If another gateway is active, NemoClaw selects the matching registration.
+NemoClaw reuses the registration only after post-selection verification confirms that it is active and healthy.
+A conflicting, malformed, or post-selection unhealthy retained registration stops onboarding and remains available for inspection.
+Immediately before attachment, NemoClaw reloads the authority and rejects any change from the authority bound to the run.
 Port `8080` uses the name `nemoclaw`, and another port uses `nemoclaw-<port>`.
 NemoClaw verifies the named and active registrations before advancing to provider selection.
 It then repeats the health, supervisor, listener, executable, cgroup, and process identity checks and compares them with the initial evidence.
-If registration, selection, or repeated validation fails, NemoClaw removes the attempted registration and stops before provider selection.
+If registration, selection, or repeated validation fails, NemoClaw removes only a registration created by the current attempt while the same authority still authorizes cleanup, and stops before provider selection.
+If authority changes after registration, NemoClaw retains the registration and reports its name.
+Confirm the gateway authority and inspect the named registration with `openshell gateway list -o json` before rerunning onboarding.
+A reused registration remains available for inspection.
 
 Onboarding fails when any of the following conditions applies:
 
@@ -165,6 +173,7 @@ Onboarding fails when any of the following conditions applies:
 - The listener does not belong to the declared systemd unit.
 - The listener executable does not match `execPath`.
 - The endpoint does not answer the required health check.
+- A retained canonical registration does not exactly match the declared endpoint.
 - The authority differs from the authority already bound to this run or checkpoint.
 
 ## Preserve authority across resume

@@ -11,6 +11,18 @@ type WorkflowNeed = {
 const CONTROLLER_JOBS = ["base-image-publication", "generate-matrix"] as const;
 const JOB_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
 
+function requiredResultJobs(selectedJobs: readonly string[]): string[] {
+  return [
+    ...new Set([
+      ...CONTROLLER_JOBS,
+      ...selectedJobs,
+      ...(selectedJobs.includes("llama-cpp-dgx-spark-qualification")
+        ? ["llama-cpp-dgx-spark-plan"]
+        : []),
+    ]),
+  ];
+}
+
 function parseJobIds(value: string, label: string, invalidLabel = label.toLowerCase()): string[] {
   const jobs = JSON.parse(value) as unknown;
   if (!Array.isArray(jobs)) {
@@ -29,9 +41,16 @@ function parseJobIds(value: string, label: string, invalidLabel = label.toLowerC
 export function failedReleaseQualificationJobs(
   needs: Record<string, WorkflowNeed>,
   releaseRequiredJobs: readonly string[],
+  managedImageRequired = true,
 ): string[] {
-  return [...CONTROLLER_JOBS, ...releaseRequiredJobs].filter(
-    (job) => needs[job]?.result !== "success",
+  return requiredResultJobs(releaseRequiredJobs).filter(
+    (job) =>
+      needs[job]?.result !== "success" &&
+      !(
+        job === "base-image-publication" &&
+        !managedImageRequired &&
+        needs[job]?.result === "skipped"
+      ),
   );
 }
 
@@ -39,6 +58,7 @@ export function assertReleaseQualification(
   needsJson: string,
   releaseRequiredJobsJson: string,
   evidence?: { outputPath: string; runId: string; attempt: string },
+  managedImageRequired = true,
 ): void {
   const needs = JSON.parse(needsJson) as Record<string, WorkflowNeed>;
   if (!needs || typeof needs !== "object" || Array.isArray(needs)) {
@@ -49,7 +69,11 @@ export function assertReleaseQualification(
     "Release-required jobs",
     "release-required job IDs",
   );
-  const failedJobs = failedReleaseQualificationJobs(needs, releaseRequiredJobs);
+  const failedJobs = failedReleaseQualificationJobs(
+    needs,
+    releaseRequiredJobs,
+    managedImageRequired,
+  );
   if (evidence) {
     if (!/^[1-9][0-9]*$/.test(evidence.runId) || !/^[1-9][0-9]*$/.test(evidence.attempt)) {
       throw new Error("Invalid dispatch receipt reference");
@@ -61,7 +85,7 @@ export function assertReleaseQualification(
     ) {
       throw new Error("PR evidence requires a nonempty bounded selection");
     }
-    const results = [...new Set([...CONTROLLER_JOBS, ...releaseRequiredJobs])].map((job) => ({
+    const results = requiredResultJobs(releaseRequiredJobs).map((job) => ({
       job,
       result: needs[job]?.result ?? null,
     }));
@@ -72,6 +96,7 @@ export function assertReleaseQualification(
           kind: "nemoclaw-review-queue-e2e-result-v1",
           dispatchArtifact: `e2e-dispatch-${evidence.runId}-${evidence.attempt}`,
           selectedWorkflowJobs: releaseRequiredJobs,
+          ...(!managedImageRequired ? { managedImageRequired: false } : {}),
           results,
           status:
             failedJobs.length === 0
@@ -102,5 +127,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
           attempt: process.env.GITHUB_RUN_ATTEMPT ?? "",
         }
       : undefined,
+    process.env.MANAGED_IMAGE_REQUIRED !== "false",
   );
 }

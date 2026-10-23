@@ -280,6 +280,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
     pattern: /(?:^|\/)\.github\/workflows\/managed-images\.yaml$/,
     testsToRun: runTests(
+      "test/e2e/support/managed-podman-docker-guard.test.ts",
       "test/inference/managed/managed-image-mcp-bridge-publication.test.ts",
       "test/inference/managed/managed-image-publication-workflow.test.ts",
       "test/e2e-runtime/pull-public-exact-digest.test.ts",
@@ -402,6 +403,12 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
     pattern: /(?:^|\/)\.github\/workflows\/pr-review-advisor\.yaml$/,
     testsToRun: runTests("test/e2e/support/pr-review-advisor-workflow-boundary.test.ts"),
+  },
+  {
+    pattern: /(?:^|\/)\.github\/workflows\/pr-review-coordinator-shadow-sample\.yaml$/,
+    testsToRun: runTests(
+      "test/automation/pull-requests/pr-review-coordinator-shadow-sample-workflow.test.ts",
+    ),
   },
   {
     pattern: /(?:^|\/)tools\/pr-review-advisor\/openshell-policy\.yaml$/,

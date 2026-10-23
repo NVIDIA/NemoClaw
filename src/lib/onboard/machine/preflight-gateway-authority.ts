@@ -20,6 +20,7 @@ export interface OnboardGatewayReadinessCollectorDeps {
   gatewayName(): string;
   gatewayPort(): number;
   resolveOwner(): GatewayOwner;
+  exitProcess?: fatalRuntimePreflight.FatalRuntimePreflightContext["exitProcess"];
   probeAttachment: Parameters<
     typeof fatalRuntimePreflight.collectOnboardGatewayReadiness
   >[0]["probeAttachment"];
@@ -72,13 +73,14 @@ export interface OnboardPreflightGatewayAuthorityDeps extends Pick<
 }
 
 export function createOnboardPreflightGatewayAuthority(deps: OnboardPreflightGatewayAuthorityDeps) {
-  const collectGateway = () => {
+  const collectGateway = (exitProcess?: OnboardGatewayReadinessCollectorDeps["exitProcess"]) => {
     const ownerDeps = deps.getGatewayOwnerDeps();
     return deps.collectGatewayReadiness({
       gatewayName: deps.gatewayName,
       gatewayPort: deps.gatewayPort,
       resolveOwner: ownerDeps.resolveGatewayOwner,
       probeAttachment: ownerDeps.probeGatewayAttachment,
+      ...(exitProcess ? { exitProcess } : {}),
     });
   };
   const collectGatewayReadiness = async () => (await collectGateway()).projection;
@@ -92,7 +94,7 @@ export function createOnboardPreflightGatewayAuthority(deps: OnboardPreflightGat
     ) =>
       fatalRuntimePreflight.runReadinessGatedRuntimePreflight(options, {
         nonInteractive: deps.isNonInteractive(),
-        collectGatewayReadiness: collectGateway,
+        collectGatewayReadiness: () => collectGateway(exitProcess),
         ...(exitProcess ? { exitProcess } : {}),
       }),
     prepareGatewayAuthority: () =>
@@ -123,7 +125,7 @@ export function createOnboardPreflightGatewayAuthority(deps: OnboardPreflightGat
 export function collectOnboardGatewayReadiness(
   deps: OnboardGatewayReadinessCollectorDeps,
 ): Promise<fatalRuntimePreflight.CollectedGatewayReadiness> {
-  return fatalRuntimePreflight.collectOnboardGatewayReadiness(deps);
+  return fatalRuntimePreflight.collectOnboardGatewayReadiness(deps, deps.exitProcess);
 }
 
 function isManagedGateway(readiness: GatewayReadinessProjection): boolean {

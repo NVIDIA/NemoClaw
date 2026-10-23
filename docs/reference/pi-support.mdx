@@ -33,8 +33,8 @@ Pi is a NemoClaw agent runtime. Docker is the initial compute runtime. Pi-specif
 | Host platform       | Linux AMD64 or Linux ARM64               |
 | Compute runtime     | Docker                                   |
 | Managed API         | OpenAI Chat Completions                  |
-| Sandbox route       | Shared: `https://inference.local/v1`; NVIDIA: `https://integrate.api.nvidia.com/v1` |
-| Qualification model | `nvidia/nemotron-3-super-120b-a12b`      |
+| Sandbox route       | Attached provider for NVIDIA, fixed hosted providers, new hosted custom endpoints outside Personal, and new qualified local selections; shared route for new Personal-tier hosted custom endpoints, Local NVIDIA NIM, and published legacy selections |
+| Qualification model | `nvidia/nemotron-3.5-super-vl-120b-a12b` |
 | Interactive command | `pi`                                     |
 | Headless command    | `pi --no-approve --print`                |
 
@@ -60,13 +60,30 @@ Each receipt must match the protected inputs and an image digest in the candidat
 
 Pi reads a generated `/sandbox/.pi/agent/models.json` file. The file contains the model, managed route, API family, and a non-secret route placeholder. It does not contain the upstream provider credential.
 
-The upstream credential remains in OpenShell provider state. It survives rebuild and sandbox destruction until an operator runs `nemoclaw credentials reset <provider> --yes` after all dependent sandboxes are gone. Most providers give Pi the managed `inference.local` route. NVIDIA Endpoints instead uses the least-privilege OpenShell provider attached to the sandbox for `integrate.api.nvidia.com`. Direct unmanaged provider access is denied. NemoClaw rejects an unsupported API family, empty model, credential-bearing base URL, or malformed model tuning before Pi starts.
+When NemoClaw applies a Pi configuration, it writes `models.json`.
+When `settings.json` exists, or the selected inference is native local, it also updates Pi's default provider and model.
+It updates the settings target atomically.
+If the settings update fails, NemoClaw restores the previous catalog or removes only the catalog target that the failed startup created.
+When NemoClaw applies a Pi configuration, existing `models.json` and `settings.json` paths must be regular files.
+A symbolic link at either path stops that update before the Pi generator runs.
 
-When Pi uses the recorded `openrouter-api` provider, `https://inference.local/v1/models` returns `HTTP 404` by design because NemoClaw's OpenRouter adapter serves Chat Completions without a model catalog.
-NemoClaw reports the route ready only after a bounded inference request successfully serves the selected model.
-If that request fails, the expected catalog response does not make the route ready.
+For direct provider routes, the upstream credential remains in OpenShell provider state.
+It survives rebuild and sandbox destruction until an operator runs `nemoclaw credentials reset <provider> --yes` after all dependent sandboxes are gone.
+NVIDIA Endpoints, supported fixed hosted providers, new hosted custom endpoints outside the Personal policy tier, and new qualified local selections use sandbox-attached providers.
+For direct hosted custom endpoints, OpenShell binds the recorded endpoint, API, credential environment name, and admitted destination addresses to that provider.
+The AWS Bedrock adapter keeps AWS credentials in its host process and gives OpenShell an adapter token instead of direct endpoint IP pins.
+For an attached hosted custom selection, Pi's generated `models.json` reads `${COMPATIBLE_API_KEY}` or `${COMPATIBLE_ANTHROPIC_API_KEY}` from its sandbox environment; the environment value is a scoped `openshell:resolve:env:...` reference.
+Shared selections use a non-secret managed-route placeholder in `models.json`.
+OpenShell supplies the issued credential at egress without putting the upstream key in Pi's configuration.
+New Personal-tier hosted custom selections, Local NVIDIA NIM, and unchanged published Pi shared-route selections use `inference.local`.
+A failed native selection stops without falling back to the shared route. Direct unmanaged provider access is denied. NemoClaw rejects an unsupported API family, empty model, credential-bearing base URL, or malformed model tuning before Pi starts.
 
-The initial qualification requires streaming, a structured `read` tool call, a successful tool result, and an independently checked final response with `nvidia/nemotron-3-super-120b-a12b`.
+For OpenRouter, Pi uses `https://openrouter.ai/api/v1` through its recorded native provider. Readiness requires a successful bounded inference request for the selected model.
+
+Native-local qualification requires a fresh Pi request to the selected endpoint and model before and after rebuild, with the issued credential and confirmed cleanup.
+
+The initial qualification requires streaming, a structured `read` tool call, a successful tool result, and an independently checked final response with `nvidia/nemotron-3.5-super-vl-120b-a12b`.
+Fresh hosted custom OpenAI onboarding and a Pi real request after a credential rewrite still need live qualification.
 
 ## Model Metadata and Route Changes
 

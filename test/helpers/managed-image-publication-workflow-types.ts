@@ -45,7 +45,7 @@ export type Job = {
   steps?: Step[];
   strategy?: {
     "fail-fast"?: boolean;
-    matrix?: { include?: MatrixEntry[]; pass?: number[] };
+    matrix?: { include?: MatrixEntry[]; pass?: number[]; agent?: string[]; arch?: string[] };
   };
   "timeout-minutes"?: number;
   uses?: string;

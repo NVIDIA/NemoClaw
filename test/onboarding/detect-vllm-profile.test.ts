@@ -41,17 +41,17 @@ describe("detectVllmProfile", () => {
     );
   });
 
-  it("returns the Station profile when gpu.platform === 'station'", () => {
+  it("returns the Super VL default and runtime for Station", () => {
     const profile = detectVllmProfile({ platform: "station", type: "nvidia" });
     expect(profile).not.toBeNull();
     expect(profile!.name).toBe("DGX Station");
     expect(profile!.image).toBe(
-      "nvcr.io/nvidia/vllm@sha256:9204569b17ee4c0eff75194b8e6e458479c8aee18953b5ab9cf359fcdac659e2",
+      "vllm/vllm-openai@sha256:fd33bec1578f312a01547cc6b9691a5154c3e8bcfb76d2b35acb657bfc4eee8f",
     );
-    expect(profile!.imageDownloadSizeBytes).toBe(9_603_085_145);
-    expect(profile!.imageUnpackedSizeBytes).toBe(27_658_526_720);
-    expect(profile!.defaultModel.id).toBe("deepseek-ai/DeepSeek-V4-Flash");
-    expect(profile!.defaultModel.envValue).toBe("deepseek-v4-flash");
+    expect(profile!.imageDownloadSizeBytes).toBe(10_690_535_076);
+    expect(profile!.imageUnpackedSizeBytes).toBeUndefined();
+    expect(profile!.defaultModel.id).toBe("nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4");
+    expect(profile!.defaultModel.envValue).toBe("nemotron-3.5-super-vl-120b");
   });
 
   it.each([

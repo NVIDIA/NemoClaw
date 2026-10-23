@@ -35,7 +35,7 @@ export LANGCHAIN_TRACING_V2=false
 export DEEPAGENTS_CODE_OFFLINE=1
 export DEEPAGENTS_CODE_RIPGREP_INSTALLER=system
 export DEEPAGENTS_CODE_OPENAI_API_KEY="${DEEPAGENTS_CODE_OPENAI_API_KEY:-nemoclaw-managed-inference}"
-export NEMOCLAW_ATTACHED_PROVIDER_API_KEY=nemoclaw-openshell-provider
+unset NEMOCLAW_ATTACHED_PROVIDER_API_KEY
 export OPENAI_BASE_URL="${OPENAI_BASE_URL:-https://inference.local/v1}"
 unset PYTHONHOME PYTHONPATH
 
@@ -444,6 +444,11 @@ is_openshell_env_placeholder_for_name() {
   local value="$2"
   local canonical revision_prefix stable_prefix generation_suffix versioned revision stable handle
 
+  if [ "$name" = "NEMOCLAW_ATTACHED_PROVIDER_API_KEY" ]; then
+    [ "$value" = "${NVIDIA_INFERENCE_API_KEY:-}" ] || return 1
+    name=NVIDIA_INFERENCE_API_KEY
+  fi
+
   # OPENSHELL_TLS_KEY is supervisor infrastructure, not a provider credential.
   # Never let a provider placeholder bypass that supervisor-only boundary.
   [ "$name" != "OPENSHELL_TLS_KEY" ] || return 1
@@ -457,7 +462,10 @@ is_openshell_env_placeholder_for_name() {
   esac
 
   canonical="${OPENSHELL_ENV_PLACEHOLDER_PREFIX}${name}"
-  [ "$value" = "$canonical" ] && return 0
+  if [ "$value" = "$canonical" ]; then
+    [ "$name" != "NEMOCLAW_LOCAL_INFERENCE_TOKEN" ]
+    return $?
+  fi
 
   revision_prefix="${OPENSHELL_ENV_PLACEHOLDER_PREFIX}v"
   stable_prefix="${OPENSHELL_ENV_PLACEHOLDER_PREFIX}s"
@@ -655,7 +663,7 @@ try:
 except Exception:
     sys.exit(1)
 # Schema pin: detection assumes a truthy top-level "credentials" key,
-# matching the auth.json shape reviewed for deepagents-code==0.1.55. Nested or
+# matching the auth.json shape reviewed for deepagents-code==0.1.71. Nested or
 # renamed shapes ({"auth":{...}}, {"state":{"credentials":...}}, top-level
 # list) are not detected. When bumping the upstream pin, re-review this
 # assumption against the new auth.json schema.
@@ -678,6 +686,17 @@ assert_no_codex_auth_credentials() {
     refuse_auth_store_credentials "$auth_file"
   fi
 }
+
+# Restored native config.toml files can still reference the old environment key.
+# Keep that consumer on the current supervisor placeholder, never a fixed token.
+# Remove this alias when supported restored configs no longer use the old key.
+if is_openshell_env_placeholder_for_name NVIDIA_INFERENCE_API_KEY "${NVIDIA_INFERENCE_API_KEY:-}"; then
+  export NEMOCLAW_ATTACHED_PROVIDER_API_KEY="$NVIDIA_INFERENCE_API_KEY"
+fi
+
+if [ "${NEMOCLAW_LOCAL_INFERENCE_TOKEN+x}" = x ] && ! is_openshell_env_placeholder_for_name NEMOCLAW_LOCAL_INFERENCE_TOKEN "$NEMOCLAW_LOCAL_INFERENCE_TOKEN"; then
+  refuse_invalid_openshell_placeholder "runtime environment variable" NEMOCLAW_LOCAL_INFERENCE_TOKEN
+fi
 
 assert_no_secret_runtime_env
 assert_no_secret_env_file

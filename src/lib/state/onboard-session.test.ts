@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import os from "node:os";
@@ -514,31 +513,18 @@ describe("onboard session", () => {
   // Session secret boundary from #6225. Endpoint query coverage for #6224
   // lives in onboard-session-redaction.test.ts.
 
-  it("round-trips writer-shaped legacy migration hashes and drops non-string entries (#6225)", () => {
-    // Digest shape mirrors legacyValueHash() in src/lib/onboard.ts, the only
-    // production writer of this map. This test covers session filtering and
-    // persistence; the writer owns converting credential values to digests.
-    const legacyValue = "nvapi-sentinel6225-legacy-value-do-not-persist";
-    const digest = createHash("sha256").update(legacyValue).digest("hex");
-    session.saveSession(session.createSession());
-    expect(
-      JSON.parse(fs.readFileSync(session.SESSION_FILE, "utf8")).migratedLegacyValueHashes,
-    ).toBeNull();
+  it("drops legacy migration hashes when a session is resumed (#12859)", () => {
+    const stale = {
+      ...session.createSession(),
+      migratedLegacyValueHashes: { NVIDIA_API_KEY: "a".repeat(64) },
+    };
+    const resumed = requireLoadedSession(session.normalizeSession(stale));
+    expect(resumed).not.toHaveProperty("migratedLegacyValueHashes");
 
-    session.markStepComplete("provider_selection", {
-      migratedLegacyValueHashes: {
-        NVIDIA_API_KEY: digest,
-        BROKEN_NUMERIC: 123,
-        BROKEN_NULL: null,
-      } as unknown as Record<string, string>,
-    });
-
-    const raw = fs.readFileSync(session.SESSION_FILE, "utf8");
-    expect(raw).toContain(digest);
-    expect(raw).not.toContain("BROKEN_NUMERIC");
-    const loaded = requireLoadedSession(session.loadSession());
-    expect(loaded.migratedLegacyValueHashes).toEqual({ NVIDIA_API_KEY: digest });
-    expect(loaded.migratedLegacyValueHashes?.NVIDIA_API_KEY).toMatch(/^[0-9a-f]{64}$/);
+    session.saveSession(resumed);
+    expect(JSON.parse(fs.readFileSync(session.SESSION_FILE, "utf8"))).not.toHaveProperty(
+      "migratedLegacyValueHashes",
+    );
   });
 
   it("serializes missing and explicit-null credentialEnv identically (#6228)", () => {
@@ -986,6 +972,18 @@ describe("onboard session", () => {
     const loaded = requireLoadedSession(session.loadSession());
     expect(loaded.metadata.hostMounts).toEqual(hostMounts);
     expect(loaded.metadata.hostMounts).not.toBe(hostMounts);
+  });
+
+  it("keeps only the selected GPU mode and device in persisted GPU intent", () => {
+    session.saveSession(session.createSession());
+    const persisted = JSON.parse(fs.readFileSync(session.SESSION_FILE, "utf8"));
+    persisted.sandboxGpuSelection = { mode: "auto", device: null, token: "do-not-retain" };
+    fs.writeFileSync(session.SESSION_FILE, JSON.stringify(persisted));
+
+    const loaded = requireLoadedSession(session.loadSession());
+    expect(loaded.sandboxGpuSelection).toEqual({ mode: "auto", device: null });
+    session.saveSession(loaded);
+    expect(fs.readFileSync(session.SESSION_FILE, "utf8")).not.toContain("do-not-retain");
   });
 
   it("preserves a fail-closed marker for malformed host mount metadata", () => {

@@ -111,6 +111,20 @@ describe("DGX Station Express resume (#7048)", () => {
     });
   });
 
+  it.each(["auto", "unknown-model", "qwen3.6-35b-a3b-nvfp4"])(
+    "rejects explicit model %s instead of selecting the Station default",
+    (model) => {
+      const env = expressEnv();
+      env.NEMOCLAW_VLLM_MODEL = model;
+      delete env.NEMOCLAW_MODEL;
+
+      expect(getStationExpressResumeIntent(env, "my-assistant")).toEqual({
+        ok: false,
+        message: "DGX Station Express requires a registered Station vLLM model and sandbox name.",
+      });
+    },
+  );
+
   it("captures the qualified dual-Station served alias in the sealed intent", () => {
     expect(getStationExpressResumeIntent(dualExpressEnv(), "my-assistant")).toEqual({
       ok: true,
@@ -892,26 +906,27 @@ describe("DGX Station Express resume (#7048)", () => {
     }
   });
 
-  it("rejects an arbitrary served alias in an installer receipt", () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-receipt-alias-"));
-    const stateDir = path.join(home, ".nemoclaw");
-    const receipt = path.join(stateDir, "station-express-resume");
-    fs.mkdirSync(stateDir, { mode: 0o700 });
-    fs.writeFileSync(receipt, receiptText(receiptGeneration, "nvidia/nemotron-3-ultra-550b-a55b"), {
-      mode: 0o600,
-    });
+  it.each(["nvidia/nemotron-3-ultra-550b-a55b", "AUTO", " auto"])(
+    "rejects noncanonical model %s in an installer receipt",
+    (model) => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-receipt-alias-"));
+      const stateDir = path.join(home, ".nemoclaw");
+      const receipt = path.join(stateDir, "station-express-resume");
+      fs.mkdirSync(stateDir, { mode: 0o700 });
+      fs.writeFileSync(receipt, receiptText(receiptGeneration, model), {
+        mode: 0o600,
+      });
 
-    try {
-      expect(() =>
-        retireStationExpressInstallerResume(receiptGeneration, { env: { HOME: home } }),
-      ).toThrow("installer resume state is malformed");
-      expect(fs.readFileSync(receipt, "utf8")).toBe(
-        receiptText(receiptGeneration, "nvidia/nemotron-3-ultra-550b-a55b"),
-      );
-    } finally {
-      fs.rmSync(home, { recursive: true, force: true });
-    }
-  });
+      try {
+        expect(() =>
+          retireStationExpressInstallerResume(receiptGeneration, { env: { HOME: home } }),
+        ).toThrow("installer resume state is malformed");
+        expect(fs.readFileSync(receipt, "utf8")).toBe(receiptText(receiptGeneration, model));
+      } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("never unlinks a replacement receipt introduced before its atomic claim", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-receipt-race-"));

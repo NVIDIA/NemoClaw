@@ -14,6 +14,7 @@ import {
   validateReviewedOpenShellSdkInstallAction,
 } from "../../../tools/e2e/reviewed-openshell-sdk-install-workflow-boundary.mts";
 import { parseNpmPackArchives } from "./openshell-sdk-pack-archives.ts";
+import { projectProtectedOpenShellSdk } from "../../../tools/e2e/protected-openshell-projection.mts";
 
 describe("reviewed OpenShell SDK E2E boundary", () => {
   it.for([
@@ -52,7 +53,7 @@ describe("reviewed OpenShell SDK E2E boundary", () => {
   });
 
   it.each(["0.0.106", "0.0.116"] as const)(
-    "installs and imports SDK %s without credentials or scripts",
+    "projects, installs and imports SDK %s without credentials or scripts",
     (selectedVersion) => {
       const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sdk-action-execution-"));
       const trustedRoot = path.join(directory, "trusted");
@@ -231,6 +232,34 @@ export class OpenShellClient { static connect() { return transport; } }
             },
             version: "1.0.0",
           }),
+        );
+        const packageSource = fs.readFileSync(path.join(targetRoot, "package.json"), "utf8");
+        const lockSource = fs.readFileSync(path.join(targetRoot, "package-lock.json"), "utf8");
+        const baselinePackage = JSON.parse(packageSource);
+        const baselineLock = JSON.parse(lockSource);
+        baselinePackage.optionalDependencies["@nvidia/openshell-sdk"] = "0.0.106";
+        baselineLock.packages[""].optionalDependencies["@nvidia/openshell-sdk"] = "0.0.106";
+        Object.assign(baselineLock.packages["node_modules/@nvidia/openshell-sdk"], {
+          version: "0.0.106",
+          resolved: tarballUrl,
+          integrity,
+        });
+        const projected = projectProtectedOpenShellSdk(
+          { packageSource, lockSource },
+          {
+            packageSource: JSON.stringify(baselinePackage),
+            lockSource: JSON.stringify(baselineLock),
+            auditSource: fs.readFileSync(
+              path.join(trustedRoot, "ci/reviewed-npm-audit.json"),
+              "utf8",
+            ),
+          },
+          selectedVersion,
+        );
+        fs.writeFileSync(path.join(targetRoot, "package.json"), projected.files["package.json"]!);
+        fs.writeFileSync(
+          path.join(targetRoot, "package-lock.json"),
+          projected.files["package-lock.json"]!,
         );
         fs.mkdirSync(path.join(targetRoot, "nemoclaw"));
         fs.writeFileSync(

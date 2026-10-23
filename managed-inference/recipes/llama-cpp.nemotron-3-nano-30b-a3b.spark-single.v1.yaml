@@ -43,8 +43,8 @@ spec:
       cleanup: preserve
 
   runtime:
-    image: ghcr.io/nvidia/nemoclaw/llama-cpp-server@sha256:9d0cddd7bcaf98d3b75a7fc8c7ce3af3a9973b5f23a8092e7e93a9afc473a675
-    imageDownloadSizeBytes: 1827478485
+    image: ghcr.io/nvidia/nemoclaw/llama-cpp-server@sha256:93efd0bec1ed2a7166660edfef9bb743fdfeb3c125d915b43801e69c0befca67
+    imageDownloadSizeBytes: 1862644330
     platforms:
       - linux/amd64
       - linux/arm64
@@ -85,14 +85,7 @@ spec:
       value: f16
     speculativeDecoding: disabled
     limits:
-      maxRequestBodyBytes: 1048576
-      maxRequestHeaderBytes: 32768
-      maxOutputTokens: 4096
       requestTimeoutSeconds: 900
-      shutdownTimeoutSeconds: 25
-    requestGuard:
-      upstreamPort: 8082
-
   readiness:
     contractRef: llama-cpp.server-readiness/v1
     timeoutSeconds: 1800

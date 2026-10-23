@@ -1680,7 +1680,7 @@ describe("nim", () => {
     }
 
     it("passes NGC_API_KEY and NIM_NGC_API_KEY through spawn env, not argv", () => {
-      const run = vi.fn();
+      const run = vi.fn(() => ({ status: 0, stdout: Buffer.from("a".repeat(64)) }));
       const { nimModule, restore } = loadNimWithMockedRunner(
         vi.fn(() => ""),
         run,
@@ -1710,7 +1710,7 @@ describe("nim", () => {
     it("falls back to process.env.NGC_API_KEY when no opts key is supplied", () => {
       const envSnapshot = clearNimApiKeyEnv();
       process.env.NGC_API_KEY = "nvapi-env-ngc";
-      const run = vi.fn();
+      const run = vi.fn(() => ({ status: 0, stdout: Buffer.from("a".repeat(64)) }));
       const { nimModule, restore } = loadNimWithMockedRunner(
         vi.fn(() => ""),
         run,
@@ -1735,7 +1735,7 @@ describe("nim", () => {
     it("falls back to process.env.NVIDIA_INFERENCE_API_KEY when NGC_API_KEY is unset", () => {
       const envSnapshot = clearNimApiKeyEnv();
       process.env.NVIDIA_INFERENCE_API_KEY = "nvapi-env-nvidia";
-      const run = vi.fn();
+      const run = vi.fn(() => ({ status: 0, stdout: Buffer.from("a".repeat(64)) }));
       const { nimModule, restore } = loadNimWithMockedRunner(
         vi.fn(() => ""),
         run,
@@ -1756,7 +1756,7 @@ describe("nim", () => {
 
     it("omits env flags when no key is available", () => {
       const envSnapshot = clearNimApiKeyEnv();
-      const run = vi.fn();
+      const run = vi.fn(() => ({ status: 0, stdout: Buffer.from("a".repeat(64)) }));
       const { nimModule, restore } = loadNimWithMockedRunner(
         vi.fn(() => ""),
         run,

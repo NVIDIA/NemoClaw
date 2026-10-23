@@ -6,9 +6,40 @@ import type { OpenShellProviderAdapter } from "../adapters/openshell/provider-ad
 import type { OpenClawConfigUpdate } from "../sandbox/config";
 import type { ConfigObject } from "../security/credential-filter";
 import { runInferenceSet } from "./inference-set";
-import { baseSession, createDeps } from "./inference-set.test-support";
+import { baseSession, createDeps } from "../../../test/helpers/inference-set";
 
 describe("runInferenceSet OpenClaw routing", () => {
+  it("stops a switch to local when its runtime credential is unavailable", async () => {
+    const deps = createDeps({
+      config: {},
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        gatewayName: "nemoclaw",
+        provider: "openai-api",
+        model: "gpt-5.4",
+      },
+    });
+    deps.getNativeLocalProviderAuthority = () => undefined;
+    deps.setNativeLocalProviderAuthority = vi.fn();
+    deps.resolveLocalSwitchRuntime = () => {
+      throw new Error("local runtime credential unavailable");
+    };
+    await expect(
+      runInferenceSet(
+        { provider: "ollama-local", model: "local-model", sandboxName: "alpha" },
+        deps,
+      ),
+    ).rejects.toThrow("local runtime credential unavailable");
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+    expect(deps.calls.setOpenClawConfigValues).not.toHaveBeenCalled();
+    expect(
+      deps.calls.captureOpenshell.mock.calls.some(
+        ([args]) => Array.isArray(args) && args[0] === "inference" && args[1] === "set",
+      ),
+    ).toBe(false);
+  });
+
   it("requires recreation instead of silently migrating a legacy NVIDIA sandbox", async () => {
     const deps = createDeps({
       config: {},
@@ -72,6 +103,7 @@ describe("runInferenceSet OpenClaw routing", () => {
     };
     let attached = false;
     const providerAdapter = {
+      ensureProviderPolicyComposition: vi.fn(async () => ({ ok: true as const })),
       importProviderProfile: vi.fn(async () => ({ ok: true as const })),
       getProvider: vi.fn(async () => ({
         ok: true as const,
@@ -157,6 +189,7 @@ describe("runInferenceSet OpenClaw routing", () => {
       });
     const attachProvider = vi.fn<OpenShellProviderAdapter["attachProvider"]>();
     const providerAdapter = {
+      ensureProviderPolicyComposition: vi.fn(async () => ({ ok: true as const })),
       importProviderProfile: vi.fn(async () => ({ ok: true as const })),
       getProvider,
       updateProvider: vi.fn(async () => ({ ok: true as const })),
@@ -196,6 +229,7 @@ describe("runInferenceSet OpenClaw routing", () => {
       return { ok: true };
     });
     const providerAdapter = {
+      ensureProviderPolicyComposition: vi.fn(async () => ({ ok: true as const })),
       importProviderProfile: vi.fn(async () => ({ ok: true as const })),
       getProvider: vi.fn(async () =>
         providerPresent
@@ -279,6 +313,7 @@ describe("runInferenceSet OpenClaw routing", () => {
     });
     const attachProvider = vi.fn<OpenShellProviderAdapter["attachProvider"]>();
     const providerAdapter = {
+      ensureProviderPolicyComposition: vi.fn(async () => ({ ok: true as const })),
       importProviderProfile: vi.fn(async () => ({ ok: true as const })),
       getProvider: vi.fn(async () =>
         providerPresent
@@ -380,7 +415,7 @@ describe("runInferenceSet OpenClaw routing", () => {
       providerAdapter,
     });
 
-    await runInferenceSet({ provider: "openai-api", model: "gpt-5.4", noVerify: true }, deps);
+    await runInferenceSet({ provider: "nvidia-router", model: "gpt-5.4", noVerify: true }, deps);
 
     expect(detachProvider).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({
@@ -438,10 +473,10 @@ describe("runInferenceSet OpenClaw routing", () => {
       resolveCredentialValue: () => "",
     });
 
-    await runInferenceSet({ provider: "openai-api", model: "gpt-5.4", noVerify: true }, deps);
+    await runInferenceSet({ provider: "nvidia-router", model: "gpt-5.4", noVerify: true }, deps);
 
     expect(entry).toMatchObject({
-      provider: "openai-api",
+      provider: "nvidia-router",
     });
     expect(entry.nativeNvidiaProviderAttachment).toBeUndefined();
     expect(entry).not.toHaveProperty("nativeNvidiaProviderAuthority");
@@ -550,7 +585,7 @@ describe("runInferenceSet OpenClaw routing", () => {
     });
 
     await expect(
-      runInferenceSet({ provider: "openai-api", model: "gpt-5.4", noVerify: true }, deps),
+      runInferenceSet({ provider: "nvidia-router", model: "gpt-5.4", noVerify: true }, deps),
     ).rejects.toThrow("Could not detach native NVIDIA provider from sandbox 'alpha'");
 
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
@@ -617,7 +652,7 @@ describe("runInferenceSet OpenClaw routing", () => {
       expect(providerUpdate?.value).toEqual({
         api: "openai-completions",
         baseUrl: "https://integrate.api.nvidia.com/v1",
-        apiKey: "unused",
+        apiKey: "${NVIDIA_INFERENCE_API_KEY}",
         headers: { "X-NemoClaw-Upstream-Provider": "nvidia-prod" },
         models: alreadyExists ? [otherModel, selectedModel] : [selectedModel, otherModel],
       });

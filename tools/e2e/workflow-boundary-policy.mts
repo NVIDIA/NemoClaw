@@ -13,8 +13,8 @@ export const E2E_ACTION_PROVENANCE = {
   },
   nativePodmanRuntime: {
     reference:
-      "NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@22789bcaf835db7cf6390781c8d0f454f1e73dec",
-    contentSha256: "71b047434bb457bd0e7f7d1b8dec9c5c803f2e74de3cdc92381652dbd77d82c8",
+      "NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@e85857e2a7bfb2af01241ecbce5947ee774c1280",
+    contentSha256: "ffedc78b82ac624702758ea76b0cc33045f546c9a4206742aaa9ebf1c4dbb7c0",
   },
   restoreNativePodmanRuntime: {
     reference:
@@ -23,8 +23,8 @@ export const E2E_ACTION_PROVENANCE = {
   },
   stageNativePodmanToolchains: {
     reference:
-      "NVIDIA/NemoClaw/.github/actions/stage-native-podman-e2e-toolchains@dfb7fb7c0ae86b2926ec6e896bec72bacd9b23a2",
-    contentSha256: "60e4a4e39c06c9de3c2e64caaafcb232e0742c5a9afa7a9b472a9ee086123897",
+      "NVIDIA/NemoClaw/.github/actions/stage-native-podman-e2e-toolchains@19eb13446b3eb5e41cca2e65b44c9b33c963a595",
+    contentSha256: "7fd90d4dc1fbed1c0c037a33239e68ab29ff7e937744743398d87cf834ac5c2a",
   },
   restoreCliArtifact: {
     reference:
@@ -33,7 +33,7 @@ export const E2E_ACTION_PROVENANCE = {
   },
   reviewedSdkInstall: {
     reference:
-      "NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@697af6ed24d88e7a8cbb0409acde3398e12f8eae",
+      "NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@2584abf0a4f739fa5f2e3fd92821ff78175b4115",
     contentSha256: "09f77858c4025bdef9c3ffb184a53041c9be8cc87f7853c403f22ea70391228b",
   },
   uploadArtifacts: {
@@ -55,14 +55,14 @@ export const E2E_ACTION_PROVENANCE = {
   },
   hostDependencies: {
     reference:
-      "NVIDIA/NemoClaw/.github/actions/host-dependency-setup@d511d704980d651909b52b18ee42fad41a017b7d",
+      "NVIDIA/NemoClaw/.github/actions/host-dependency-setup@e85857e2a7bfb2af01241ecbce5947ee774c1280",
     actionSha256: "6eabd4f7f0d1eb0d3e1788323a0222173dc574f1f722c0ae302cacb268327154",
-    scriptSha256: "13211c558ff3c7816fe3b3936a0d62f87c28ebd721b295f4571431d59cfcc04a",
+    scriptSha256: "2df9f3342ad5c31a2d5221d2c7ee1d835bb43b798697171f21f4e5125cd7161a",
   },
 } as const;
 
 export const E2E_JOB_POLICY = {
   cliArtifactProducer: "generate-matrix",
-  prepareNoBuild: ["managed-image-multiarch-startup"],
-  prepareTrustedBuild: ["managed-image-protected-runtime"],
+  prepareNoBuild: ["managed-image-multiarch-startup", "managed-image-protected-runtime"],
+  prepareTrustedBuild: ["llama-cpp-dgx-spark-qualification"],
 } as const;

@@ -3,7 +3,9 @@
 
 import { setTimeout as delay } from "node:timers/promises";
 
+import { createSandboxStartErrorGrace } from "../../domain/lifecycle/sandbox-start-error-grace";
 import { isValidName } from "../../name-validation";
+import { isTerminalSandboxPhase } from "../../state/gateway";
 import { fingerprintOpenShellSandboxId } from "./sandbox-identity";
 import type { OpenShellGatewayTarget, OpenShellSandboxError } from "./sandbox-observer";
 
@@ -31,7 +33,6 @@ type SdkSandboxMutationResponse = Readonly<{
 type SdkClient = Readonly<{
   sandbox: Readonly<{
     get(name: string, options: CallOptions): Promise<SdkSandboxRef>;
-    waitReady(name: string, timeoutSecs: number, options: CallOptions): Promise<SdkSandboxRef>;
   }>;
   raw: Readonly<{
     startSandbox(
@@ -50,6 +51,7 @@ export type SdkOpenShellSandboxStateLifecycleDeps = Readonly<{
   env?: NodeJS.ProcessEnv;
   homeDir?: string;
   loadSdk?: () => Promise<unknown>;
+  waitForStartPoll?: (signal: AbortSignal) => Promise<void>;
   waitForStopPoll?: (signal: AbortSignal) => Promise<void>;
 }>;
 
@@ -113,6 +115,7 @@ async function mutate(
   action: "start" | "stop",
   request: MutateOpenShellSandboxRequest,
   connect: (target: OpenShellGatewayTarget, options: CallOptions) => Promise<SdkClient>,
+  waitForStartPoll: (signal: AbortSignal) => Promise<void>,
   waitForStopPoll: (signal: AbortSignal) => Promise<void>,
 ): Promise<OpenShellSandboxMutationSubmission> {
   if (
@@ -178,44 +181,43 @@ async function mutate(
         },
       };
     }
-    if (action === "start") {
-      const ready = await Promise.race([
-        client.sandbox.waitReady(
-          request.sandboxName,
-          Math.max(1, Math.ceil((request.timeoutMs ?? DEFAULT_MUTATION_TIMEOUT_MS) / 1000)),
-          { signal: controller.signal },
-        ),
+    const allowInitialError = createSandboxStartErrorGrace(action === "start");
+    for (;;) {
+      const current = await Promise.race([
+        client.sandbox.get(request.sandboxName, { signal: controller.signal }),
         aborted,
       ]);
-      if (fingerprintOpenShellSandboxId(ready.id) !== request.sandboxIdentityFingerprint) {
+      if (fingerprintOpenShellSandboxId(current.id) !== request.sandboxIdentityFingerprint) {
         return {
           kind: "failed",
           error: {
             kind: "transport",
             reason: "identity_mismatch",
-            message: "OpenShell readiness changed sandbox identity.",
+            message:
+              action === "start"
+                ? "OpenShell readiness changed sandbox identity."
+                : "OpenShell stop observation changed sandbox identity.",
           },
         };
       }
-    } else {
-      for (;;) {
-        const stopped = await Promise.race([
-          client.sandbox.get(request.sandboxName, { signal: controller.signal }),
-          aborted,
-        ]);
-        if (fingerprintOpenShellSandboxId(stopped.id) !== request.sandboxIdentityFingerprint) {
-          return {
-            kind: "failed",
-            error: {
-              kind: "transport",
-              reason: "identity_mismatch",
-              message: "OpenShell stop observation changed sandbox identity.",
-            },
-          };
-        }
-        if (stopped.phase.toLowerCase() === "stopped") break;
-        await Promise.race([waitForStopPoll(controller.signal), aborted]);
+      const phase = current.phase.toLowerCase();
+      if (phase === (action === "start" ? "ready" : "stopped")) break;
+      if (action === "start" && !allowInitialError(phase) && isTerminalSandboxPhase(phase)) {
+        return {
+          kind: "failed",
+          error: {
+            kind: "command",
+            reason: "failed",
+            message: `OpenShell sandbox entered ${current.phase} while waiting for readiness after start.`,
+          },
+        };
       }
+      await Promise.race([
+        action === "start"
+          ? waitForStartPoll(controller.signal)
+          : waitForStopPoll(controller.signal),
+        aborted,
+      ]);
     }
     return { kind: "accepted" };
   } catch (error) {
@@ -249,8 +251,10 @@ export function createSdkOpenShellSandboxStateLifecycle(
     });
   const waitForStopPoll =
     deps.waitForStopPoll ?? ((signal: AbortSignal) => delay(250, undefined, { signal }));
+  const waitForStartPoll =
+    deps.waitForStartPoll ?? ((signal: AbortSignal) => delay(3_000, undefined, { signal }));
   return {
-    startSandbox: (request) => mutate("start", request, connect, waitForStopPoll),
-    stopSandbox: (request) => mutate("stop", request, connect, waitForStopPoll),
+    startSandbox: (request) => mutate("start", request, connect, waitForStartPoll, waitForStopPoll),
+    stopSandbox: (request) => mutate("stop", request, connect, waitForStartPoll, waitForStopPoll),
   };
 }

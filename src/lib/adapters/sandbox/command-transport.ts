@@ -7,13 +7,14 @@ import type {
 } from "../openshell/sandbox-command";
 import { namedOpenShellGateway, selectedOpenShellGateway } from "../openshell/sandbox-observer";
 
-import { createCliOpenShellSandboxCommandExecutor } from "../openshell/sandbox-command-cli";
 import {
-  buildOpenShellRuntimeSelectionEnv,
-  type OpenShellRuntimeSelection,
-} from "../openshell/runtime-selection";
+  buildSandboxCommandEnvironment,
+  createCliOpenShellSandboxCommandExecutor,
+} from "../openshell/sandbox-command-cli";
+export { buildSandboxCommandEnvironment } from "../openshell/sandbox-command-cli";
+import type { OpenShellRuntimeSelection } from "../openshell/runtime-selection";
 import { REPOSITORY_ROOT } from "../../core/repository-root";
-import { buildSubprocessEnv } from "../../subprocess-env";
+import { parseTimerDelayMs } from "../../core/timer";
 import {
   buildSandboxExecMarkedCommand,
   extractSandboxExecCommandStdout,
@@ -56,7 +57,7 @@ export async function executeSandboxExecCommandTransport(
   timeout: number,
   options: SandboxExecCommandOptions,
 ): Promise<SandboxCommandResult> {
-  const timeoutOverride = Number(process.env.NEMOCLAW_SANDBOX_EXEC_TIMEOUT_MS || "");
+  const timeoutOverride = parseTimerDelayMs(process.env.NEMOCLAW_SANDBOX_EXEC_TIMEOUT_MS);
   const completed = await deps.commandExecutor.runBuffered({
     sandboxName,
     target: options.gatewayName
@@ -65,9 +66,7 @@ export async function executeSandboxExecCommandTransport(
     command: ["sh", "-c", deps.buildSandboxExecMarkedCommand(command)],
     environment: options.runtimeEnv ?? deps.buildSubprocessEnv(),
     timeoutMilliseconds:
-      !options.honorCallerTimeout && Number.isFinite(timeoutOverride) && timeoutOverride > 0
-        ? timeoutOverride
-        : timeout,
+      !options.honorCallerTimeout && timeoutOverride !== undefined ? timeoutOverride : timeout,
   });
   if (completed.outcome.kind === "failed") {
     throw new SandboxCommandTransportError(completed.outcome.error.kind);
@@ -103,7 +102,7 @@ function commandTransportDependencies(
 ): CommandTransportDependencies {
   return {
     buildSandboxExecMarkedCommand,
-    buildSubprocessEnv,
+    buildSubprocessEnv: buildSandboxCommandEnvironment,
     extractSandboxExecCommandStdout,
     commandExecutor: {
       runBuffered: (request) =>
@@ -113,16 +112,6 @@ function commandTransportDependencies(
         }),
     },
   };
-}
-
-/** Apply the same filtered environment and recorded runtime to native sandbox probes. */
-export function buildSandboxCommandEnvironment(
-  runtimeSelection?: OpenShellRuntimeSelection,
-  runtimeEnv?: NodeJS.ProcessEnv,
-): NodeJS.ProcessEnv {
-  return runtimeSelection
-    ? buildOpenShellRuntimeSelectionEnv(buildSubprocessEnv(), runtimeSelection)
-    : (runtimeEnv ?? buildSubprocessEnv());
 }
 
 export async function executeSandboxExecCommand(

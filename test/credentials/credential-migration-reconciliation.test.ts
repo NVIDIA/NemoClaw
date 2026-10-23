@@ -15,12 +15,21 @@ import {
   type CredentialProviderRegistrationDeps,
   createCredentialProviderRegistration,
 } from "../../src/lib/onboard/credential-provider-registration.js";
+import { MESSAGING_CREDENTIAL_PROVIDER_TYPE } from "../../src/lib/messaging/provider-profile.js";
 import { handleFinalizationState } from "../../src/lib/onboard/machine/handlers/finalization.js";
 import type { MessagingTokenDef } from "../../src/lib/onboard/messaging-prep.js";
+import { createSession, normalizeSession } from "../../src/lib/state/onboard-session.js";
 import type { Session } from "../../src/lib/state/onboard-session.js";
 import { withProcessEnv } from "../support/setup-inference-test-harness.js";
 
 const LEGACY_SECRET = "sk-TEST-NOT-A-REAL-STORED-KEY";
+const MESSAGING_PROFILE = {
+  id: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
+  credentials: [],
+  endpoints: [],
+  binaries: [],
+  inference_capable: false,
+};
 
 type RegistrationAttempt = ReturnType<
   ReturnType<typeof createCredentialProviderRegistration>["stageSandboxCredentialProviders"]
@@ -43,7 +52,11 @@ const REGISTRATION_SCENARIOS = [
     registrationStatus: 0,
     settle: async (attempt: RegistrationAttempt) => {
       await expect(attempt).resolves.toEqual([
-        { name: "legacy-openai", type: "generic", credentialEnv: "OPENAI_API_KEY" },
+        {
+          name: "legacy-openai",
+          type: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
+          credentialEnv: "OPENAI_API_KEY",
+        },
       ]);
     },
     expectedMigrated: true,
@@ -97,6 +110,35 @@ async function finalizeMigration(
 }
 
 describe("legacy credential reconciliation", () => {
+  it("keeps the legacy file when only a prior session claims migration (#12859)", async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-credential-resume-"));
+    const legacyDir = path.join(tmpDir, ".nemoclaw");
+    const legacyFile = path.join(legacyDir, "credentials.json");
+    fs.mkdirSync(legacyDir, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(legacyFile, JSON.stringify({ OPENAI_API_KEY: LEGACY_SECRET }), {
+      mode: 0o600,
+    });
+    try {
+      await withProcessEnv({ HOME: tmpDir, OPENAI_API_KEY: undefined }, async () => {
+        const priorSession = {
+          ...createSession(),
+          migratedLegacyValueHashes: { OPENAI_API_KEY: "a".repeat(64) },
+        };
+        expect(normalizeSession(priorSession)).not.toHaveProperty("migratedLegacyValueHashes");
+        const stagedKeys = stageLegacyCredentialsToEnv();
+        const stagedValues = new Map(stagedKeys.map((key) => [key, process.env[key] ?? ""]));
+
+        await finalizeMigration(stagedKeys, new Set(), stagedValues);
+
+        expect(JSON.parse(fs.readFileSync(legacyFile, "utf8"))).toEqual({
+          OPENAI_API_KEY: LEGACY_SECRET,
+        });
+      });
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it.each(REGISTRATION_SCENARIOS)("$label (#7617)", async (scenario) => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-credential-migration-"));
     const legacyDir = path.join(tmpDir, ".nemoclaw");
@@ -139,44 +181,42 @@ describe("legacy credential reconciliation", () => {
             "--name",
             "legacy-openai",
             "--type",
-            "generic",
+            MESSAGING_CREDENTIAL_PROVIDER_TYPE,
             "--credential",
             "OPENAI_API_KEY",
           ];
           const providerMissing = { status: 1, stdout: "", stderr: "provider not found" };
-          const runOpenshell = vi
-            .fn()
-            .mockImplementationOnce((args: string[]) => {
-              expect(args).toEqual(providerGetArgs);
-              return providerMissing;
-            })
-            .mockImplementationOnce((args: string[]) => {
-              expect(args).toEqual(providerGetArgs);
-              return providerMissing;
-            })
-            .mockImplementationOnce((args: string[]) => {
-              expect(args).toEqual(providerCreateArgs);
-              return {
-                status: scenario.registrationStatus,
-                stdout: "",
-                stderr: scenario.registrationStatus === 0 ? "" : "registration failed",
-              };
-            })
-            .mockImplementationOnce((args: string[]) => {
-              expect(args).toEqual(providerGetArgs);
-              return {
-                status: 0,
-                stdout: [
-                  "Id: provider-legacy-openai",
-                  "Name: legacy-openai",
-                  "Type: generic",
-                  "Resource version: 1",
-                  "Credential keys: OPENAI_API_KEY",
-                  "Config keys: <none>",
-                ].join("\n"),
-                stderr: "",
-              };
-            });
+          let providerCreated = false;
+          const success = { status: 0, stdout: "", stderr: "" };
+          const runOpenshell = vi.fn((args: string[], _options?: Record<string, unknown>) => {
+            const isCreate = args[0] === "provider" && args[1] === "create";
+            const result =
+              args.includes("profile") && args.includes("export")
+                ? { ...success, stdout: JSON.stringify(MESSAGING_PROFILE) }
+                : args.join(" ") === providerGetArgs.join(" ")
+                  ? providerCreated
+                    ? {
+                        ...success,
+                        stdout: [
+                          "Id: provider-legacy-openai",
+                          "Name: legacy-openai",
+                          `Type: ${MESSAGING_CREDENTIAL_PROVIDER_TYPE}`,
+                          "Resource version: 1",
+                          "Credential keys: OPENAI_API_KEY",
+                          "Config keys: <none>",
+                        ].join("\n"),
+                      }
+                    : providerMissing
+                  : isCreate
+                    ? {
+                        ...success,
+                        status: scenario.registrationStatus,
+                        stderr: scenario.registrationStatus === 0 ? "" : "registration failed",
+                      }
+                    : success;
+            providerCreated ||= isCreate && result.status === 0;
+            return result;
+          });
           const deps: CredentialProviderRegistrationDeps = {
             root: path.join(import.meta.dirname, "../.."),
             runOpenshell:
@@ -186,7 +226,6 @@ describe("legacy credential reconciliation", () => {
             updateSession: (mutator) => mutator(session) ?? session,
             stagedLegacyValues,
             migratedLegacyKeys,
-            persistMigratedLegacyKeys: () => undefined,
           };
           const registration = createCredentialProviderRegistration(deps);
           const tokenDefs: MessagingTokenDef[] = [
@@ -194,6 +233,7 @@ describe("legacy credential reconciliation", () => {
               name: "legacy-openai",
               envKey: "OPENAI_API_KEY",
               token: process.env.OPENAI_API_KEY ?? "",
+              providerType: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
             },
           ];
 
@@ -207,7 +247,7 @@ describe("legacy credential reconciliation", () => {
                 requiredBindings: [
                   {
                     name: "legacy-openai",
-                    type: "generic",
+                    type: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
                     credentialEnv: "OPENAI_API_KEY",
                   },
                 ],
@@ -224,6 +264,9 @@ describe("legacy credential reconciliation", () => {
           expect(process.env.NODE_OPTIONS).toBe("--enable-source-maps");
           expect(migratedLegacyKeys.has("OPENAI_API_KEY")).toBe(scenario.expectedMigrated);
           expect(runOpenshell.mock.calls.flatMap(([args]) => args)).not.toContain(LEGACY_SECRET);
+          expect(runOpenshell.mock.calls.find(([args]) => args[1] === "create")?.[0]).toEqual(
+            providerCreateArgs,
+          );
           expect(runOpenshell.mock.calls.find(([args]) => args[1] === "create")?.[1]).toMatchObject(
             {
               env: { OPENAI_API_KEY: LEGACY_SECRET },
@@ -290,7 +333,8 @@ describe("legacy credential reconciliation", () => {
           );
           const migratedLegacyKeys = new Set<string>();
           const session = { stagedCredentialProviders: [] } as unknown as Session;
-          const providerType = route === "messaging" ? "generic" : "nvidia";
+          const providerType =
+            route === "messaging" ? MESSAGING_CREDENTIAL_PROVIDER_TYPE : "nvidia";
           let providerExists = false;
           const metadata = {
             status: 0,
@@ -306,15 +350,16 @@ describe("legacy credential reconciliation", () => {
           };
           const runOpenshell = vi.fn((args: string[]) => {
             const result =
-              args[1] === "get"
-                ? providerExists
-                  ? metadata
-                  : { status: 1, stdout: "", stderr: "provider 'nvidia-prod' not found" }
-                : { status: 0, stdout: "", stderr: "" };
+              args.includes("profile") && args.includes("export")
+                ? { status: 0, stdout: JSON.stringify(MESSAGING_PROFILE), stderr: "" }
+                : args[1] === "get"
+                  ? providerExists
+                    ? metadata
+                    : { status: 1, stdout: "", stderr: "provider 'nvidia-prod' not found" }
+                  : { status: 0, stdout: "", stderr: "" };
             providerExists ||= args[1] === "create";
             return result;
           });
-          const persistMigratedLegacyKeys = vi.fn();
           const registration = createCredentialProviderRegistration({
             root: path.join(import.meta.dirname, "../.."),
             runOpenshell:
@@ -324,7 +369,6 @@ describe("legacy credential reconciliation", () => {
             updateSession: (mutator) => mutator(session) ?? session,
             stagedLegacyValues,
             migratedLegacyKeys,
-            persistMigratedLegacyKeys,
           });
           const resolved = resolveProviderCredential("NVIDIA_INFERENCE_API_KEY");
           await (route === "direct"
@@ -344,7 +388,7 @@ describe("legacy credential reconciliation", () => {
                   requiredBindings: [
                     {
                       name: "nvidia-prod",
-                      type: "generic",
+                      type: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
                       credentialEnv: "NVIDIA_INFERENCE_API_KEY",
                     },
                   ],
@@ -355,6 +399,7 @@ describe("legacy credential reconciliation", () => {
                       name: "nvidia-prod",
                       envKey: "NVIDIA_INFERENCE_API_KEY",
                       token: resolved ?? "",
+                      providerType: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
                     },
                   ],
                 }),
@@ -365,7 +410,6 @@ describe("legacy credential reconciliation", () => {
           );
           expect(resolved).toBe(LEGACY_SECRET);
           expect(migratedLegacyKeys).toEqual(new Set(["NVIDIA_API_KEY"]));
-          expect(persistMigratedLegacyKeys).toHaveBeenCalledOnce();
           expect(runOpenshell.mock.calls.flatMap(([args]) => args)).not.toContain(LEGACY_SECRET);
           expect(
             fs.existsSync(legacyFile) ? JSON.parse(fs.readFileSync(legacyFile, "utf8")) : null,
@@ -378,3 +422,50 @@ describe("legacy credential reconciliation", () => {
     }
   });
 });
+
+it.each([true, false])(
+  "retires only the persisted native credential value (matches=%s)",
+  async (matches) => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "native-credential-migration-"));
+    const legacy = path.join(directory, ".nemoclaw", "credentials.json");
+    fs.mkdirSync(path.dirname(legacy), { recursive: true });
+    fs.writeFileSync(legacy, JSON.stringify({ COMPATIBLE_API_KEY: LEGACY_SECRET }), {
+      mode: 0o600,
+    });
+    try {
+      await withProcessEnv({ HOME: directory, COMPATIBLE_API_KEY: undefined }, async () => {
+        const stagedKeys = stageLegacyCredentialsToEnv();
+        const stagedValues = new Map(stagedKeys.map((key) => [key, process.env[key] ?? ""]));
+        const migrated = new Set<string>();
+        const revalidate = vi.fn();
+        const registration = createCredentialProviderRegistration({
+          root: directory,
+          getGatewayName: () => "gateway",
+          getCredential: () => null,
+          runOpenshell: vi.fn(),
+          updateSession: vi.fn(),
+          stagedLegacyValues: stagedValues,
+          migratedLegacyKeys: migrated,
+        });
+        registration.recordMigratedProviderCredential(
+          "compatible-endpoint",
+          "COMPATIBLE_API_KEY",
+          matches ? LEGACY_SECRET : "different-persisted-key",
+          revalidate,
+        );
+        expect(revalidate).toHaveBeenCalledTimes(1);
+        await finalizeMigration(stagedKeys, migrated, stagedValues);
+        expect(fs.existsSync(legacy)).toBe(!matches);
+        const retainedCredentials = fs
+          .readdirSync(path.dirname(legacy))
+          .filter((name) => name === "credentials.json")
+          .map((name) =>
+            JSON.parse(fs.readFileSync(path.join(path.dirname(legacy), name), "utf8")),
+          );
+        expect(retainedCredentials).toEqual(matches ? [] : [{ COMPATIBLE_API_KEY: LEGACY_SECRET }]);
+      });
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  },
+);
