@@ -2846,7 +2846,8 @@ EOF
     return 0
   fi
 
-  mkdir -p "$NEMOCLAW_SHIM_DIR"
+  # Keep new ~/.local ancestors compatible with the gateway state ownership check.
+  (umask g-w,o-w && mkdir -p "$NEMOCLAW_SHIM_DIR")
   temp_shim="$(mktemp "${shim_path}.tmp.XXXXXX")" \
     || error "Could not create a temporary shim beside $shim_path."
   _cleanup_files+=("$temp_shim")

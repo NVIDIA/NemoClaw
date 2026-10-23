@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -94,6 +95,69 @@ describe("managed gateway state root ownership", () => {
       fs.rmSync(root, { force: true, recursive: true });
     }
   });
+
+  it("does not suggest chmod for a shared root-owned directory like /tmp", () => {
+    const real = fs.lstatSync;
+    const lstat = vi
+      .spyOn(fs, "lstatSync")
+      .mockImplementation(((p: fs.PathLike) =>
+        String(p) === "/shared"
+          ? Object.assign(real("/"), { uid: 0, mode: 0o41777 })
+          : real(p)) as typeof fs.lstatSync);
+    try {
+      expect(() => ensureManagedGatewayStateRoot(target("/shared/gateway"))).toThrow(
+        /ancestor '\/shared' is not a trusted real directory/,
+      );
+      expect(() => ensureManagedGatewayStateRoot(target("/shared/gateway"))).not.toThrow(/chmod/);
+    } finally {
+      lstat.mockRestore();
+    }
+  });
+
+  it("does not suggest chmod for a shared root-owned directory when running as root", () => {
+    const real = fs.lstatSync;
+    const getuid = vi.spyOn(process, "getuid").mockReturnValue(0);
+    const lstat = vi
+      .spyOn(fs, "lstatSync")
+      .mockImplementation(((p: fs.PathLike) =>
+        String(p) === "/shared"
+          ? Object.assign(real("/"), { uid: 0, mode: 0o41777 })
+          : Object.assign(real(p), { uid: 0 })) as typeof fs.lstatSync);
+    try {
+      expect(() => ensureManagedGatewayStateRoot(target("/shared/gateway"))).toThrow(
+        /ancestor '\/shared' is not a trusted real directory/,
+      );
+      expect(() => ensureManagedGatewayStateRoot(target("/shared/gateway"))).not.toThrow(/chmod/);
+    } finally {
+      lstat.mockRestore();
+      getuid.mockRestore();
+    }
+  });
+
+  it.skipIf(process.getuid?.() === 0).each(["plain", "agent's $(false);"])(
+    "repairs a writable owned ancestor with the suggested command: %s (#12496)",
+    (name) => {
+      const root = fs.mkdtempSync(path.join(process.cwd(), `nemoclaw-${name}-parent-`));
+      const stateDir = path.join(root, "gateway");
+      try {
+        fs.chmodSync(root, 0o775);
+        const failure = managedGatewayStateRootOwnershipFailure(target(stateDir));
+        expect(failure).toContain("It has mode 0775");
+        expect(() => ensureManagedGatewayStateRoot(target(stateDir))).toThrow(/chmod go-w/);
+        expect(fs.existsSync(stateDir)).toBe(false);
+        const command = failure?.match(/\((chmod go-w .+)\), then retry$/)?.[1];
+        expect(command).toBeDefined();
+        const repaired = spawnSync("bash", ["-c", command ?? "exit 99"], { encoding: "utf8" });
+        expect(repaired.status, repaired.stderr).toBe(0);
+        expect(fs.statSync(root).mode & 0o777).toBe(0o755);
+        ensureManagedGatewayStateRoot(target(stateDir));
+        expect(managedGatewayStateRootOwnershipFailure(target(stateDir))).toBeNull();
+      } finally {
+        fs.chmodSync(root, 0o700);
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("rejects a private immediate parent beneath a replaceable ancestor", () => {
     const root = fs.mkdtempSync(path.join(process.cwd(), "nemoclaw-replaceable-gateway-parent-"));

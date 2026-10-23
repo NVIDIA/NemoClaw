@@ -44,6 +44,8 @@ import {
   prepareReleaseFixtureRuntime,
   installerReleaseTemplate,
   removeV00106OperationalTrust,
+  removeV00116SandboxBuildTrust,
+  replacePinFunction,
 } from "../helpers/openshell-installer-template";
 
 import { selectPreparedGatewayRuntime } from "../helpers/prepared-gateway-runtime";
@@ -455,31 +457,6 @@ function renderPinFunction(
   return `${functionOpening}\n${localInputs}\n${caseOpening}\n${cases}\n    *)\n      return 1\n      ;;\n  esac\n}\n`;
 }
 
-function replacePinFunction(
-  source: string,
-  functionName: string,
-  nextMarker: string,
-  replacement: string,
-): string {
-  const start = source.indexOf(`${functionName}() {`);
-  const next = source.indexOf(`\n${nextMarker}`, start);
-  expect(start, `${functionName} template start`).not.toBe(-1);
-  expect(next, `${functionName} template end`).not.toBe(-1);
-  return `${source.slice(0, start)}${replacement}${source.slice(next)}`;
-}
-
-function removeV00116SandboxBuildTrust(source: string): string {
-  const v00116SandboxBuilds = `    # OpenShell v0.0.116 standalone sandbox binaries.
-    326ee26df8f8575ba761470757a12fe5c1cdc904ba064b81946692dd0328dd40 | \\
-      7052a87d2b46ef52ecc0f7c64b9bac008dd3010c467881b0648045334eb0ed1d)
-      printf '%s\\n' "0.0.116"
-      ;;
-`;
-  const result = source.replace(v00116SandboxBuilds, "");
-  expect(result, "v0.0.116 sandbox build fixture").not.toBe(source);
-  return result;
-}
-
 function renderInstallerTemplate(openshellVersion: string, pinFunction: string): string {
   const selected = installerReleaseTemplate(INSTALLER_TEMPLATE, openshellVersion)
     .replace(/^MIN_VERSION="[0-9]+\.[0-9]+\.[0-9]+"$/m, `MIN_VERSION="${openshellVersion}"`)
@@ -769,6 +746,15 @@ function runFixture(
     mutateParser === undefined,
   );
   fs.writeFileSync(trustedParserPath, trustSyntheticSupervisorRuntimeTemplate(mutatedParserSource));
+  // The test's trusted artifact identity must agree in both trust sources.
+  const registryPath = path.join(trustedRoot, "ci/openshell-upgrade-trust.json");
+  const registrySource = fs.readFileSync(registryPath, "utf8");
+  fs.writeFileSync(
+    registryPath,
+    mode === "trusted-formula-mismatch"
+      ? registrySource.replaceAll(FORMULA_DIGEST, "0".repeat(64))
+      : registrySource,
+  );
   fs.writeFileSync(
     targetChecker,
     trustedChecker
@@ -832,6 +818,8 @@ function parseNpmReplacement(source: string, digest: string, trustedDigest = dig
   const parser = path.join(root, "scripts/checks/extract-installer-pins.mts");
   const parserSource = fs.readFileSync(parser, "utf8");
   fs.writeFileSync(parser, parserSource.replace(digest, trustedDigest));
+  const registry = path.join(root, "ci/openshell-upgrade-trust.json");
+  fs.writeFileSync(registry, fs.readFileSync(registry, "utf8").replaceAll(digest, trustedDigest));
   const brev = path.join(root, "scripts/brev-launchable-ci-cpu.sh");
   fs.writeFileSync(brev, source);
   return spawnSync(

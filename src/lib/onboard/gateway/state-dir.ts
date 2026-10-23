@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { shellQuote } from "../../core/shell-quote";
 import { writeConfigFile } from "../../state/config-io";
 
 import { type OpenRegularFile, openRegularFileNoFollow } from "../../adapters/fs/regular-file";
@@ -114,7 +115,12 @@ function stateRootParentOwnershipFailure(stateDir: string): string | null {
       (inspected.uid !== uid && inspected.uid !== 0) ||
       (inspected.mode & 0o022) !== 0
     ) {
-      return `the gateway state directory's ancestor '${ancestor}' is not a trusted real directory owned by the current user or root without group or world write access`;
+      const reason = `the gateway state directory's ancestor '${ancestor}' is not a trusted real directory owned by the current user or root without group or world write access`;
+      // Shared root-owned directories must not receive a permission-change suggestion.
+      const chmodFixes = uid !== 0 && inspected.isDirectory() && inspected.uid === uid;
+      if (!chmodFixes) return reason;
+      const mode = (inspected.mode & 0o7777).toString(8).padStart(4, "0");
+      return `${reason}. It has mode ${mode}; remove group and other write permission (chmod go-w ${shellQuote(ancestor)}), then retry`;
     }
     const parent = path.dirname(ancestor);
     if (parent === ancestor) return null;
