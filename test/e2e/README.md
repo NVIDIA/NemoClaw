@@ -1123,16 +1123,17 @@ The stateless request has no tools or conversation persistence, so repeating it
 has no application mutation. It may consume another inference request.
 
 The probe retries once after five seconds when curl exits 22 with empty
-stdout and exactly reports HTTP 503, or when curl exits 28 with empty stdout
-and reports a timeout with zero response bytes. Neither result identifies
-whether the gateway or upstream caused the failure. Every request has its own
-command artifact and a 90-second curl limit. Each reply-budget
-attempt logs bounded availability evidence, including recovery or exhaustion,
+stdout and exactly reports HTTP 429, 500, 502, 503, or 504. It also retries
+when curl exits 28 with empty stdout and reports a timeout with zero response
+bytes. Neither result identifies whether the gateway or upstream caused the
+failure. Every request has its own command artifact and a 90-second curl limit.
+Each reply-budget attempt logs bounded availability evidence, including recovery
+or exhaustion,
 before writing its artifact. The aggregate log survives an artifact-write failure
 and is retained after Brev cleanup; the artifact exists only when its write succeeds.
 The existing two reply budgets permit at most four requests in total.
-Persistent 503 or no-response timeouts, other HTTP errors, ambiguous transport
-failures, and unknown errors fail.
+Persistent retriable HTTP responses, zero-response timeouts, other HTTP errors,
+ambiguous transport failures, and unknown errors fail.
 The existing response validation and answer assertion remain unchanged.
 
 ## Launch-readiness locked-image acceptance
