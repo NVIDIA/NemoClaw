@@ -57,7 +57,7 @@ fn each_agent_matches_the_hcl_example() {
             if local {
                 "nemotron-3-nano:30b"
             } else {
-                "nvidia/nemotron-3-super-120b-a12b"
+                "nvidia/nemotron-3.5-super-vl-120b-a12b"
             },
             "{}",
             sandbox.name

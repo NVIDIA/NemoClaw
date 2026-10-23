@@ -53,19 +53,17 @@ NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
   cargo test -p nemoclaw-provider --test contract -- --ignored
 ```
 
-Its modules run the `nemoclaw` types against fake Docker engines, gateways, model servers, and Kubernetes APIs:
+Its modules run the `nemoclaw` types against fake Docker engines, SSH hosts, and model servers:
 
 | Module | Checks |
 |---|---|
 | `provider_protocol` | The fixture provider from `nemoclaw-fixture-provider`, and on Unix the provider against a fake Docker API: network and image planning, including prerequisite changes before saved-plan application |
 | `service_capacity` | `vllm_capacity` through an isolated SSH simulator (shared-host overcommit, deferred reads, state kept after failed observations, and cleanup without capacity checks), and Ollama readiness and capacity rejecting a vLLM contract |
 | `service_readiness` | Standalone service readiness; see [below](#standalone-service-readiness) |
-| `service_storage`, `gateway_storage` | Retained service storage and, on Unix, Docker gateway storage against a fake engine |
-| `gateway_readiness` | Managed-gateway exit diagnostics, bootstrap state kept after failure, corrected retry, unchanged-apply rechecks, and teardown without the readiness data source |
-| `runtime_image`, `vllm_runtime` | Runtime image compatibility and, on Unix, the vLLM runtime contract |
+| `service_storage` | Retained service storage |
+| `host_image`, `vllm_runtime` | Authored image compatibility through `data.host_image` and, on Unix, the vLLM runtime contract |
 | `host_container_health` | Authored application health reads: an owned healthy container passes and an unhealthy one fails the plan |
 | `discovery` | Discovery plans that read target metadata without mutations |
-| `kubernetes_hcl`, `kubernetes_lifecycle` | Kubernetes planning, and apply, refresh, and teardown against the in-memory API in `crates/test-support/kube_api.rs`; the test writes and deletes the objects Helm would, and the live Kind suite runs the chart itself |
 
 `every_type_has_a_contract_test` requires a contract test for every type the provider serves, or an `ELSEWHERE` entry naming where it is tested instead.
 
@@ -90,6 +88,9 @@ The fixtures are the OpenShell resources the SDK compiles for each example with 
 The `capabilities` tests check gateway preconditions, saved-plan rechecks, and capability reads deferred until bootstrap inputs are known.
 The `standalone` tests apply the authored resources in `tests/contract/standalone` through lost create and delete replies, foreign or missing objects, failed observations, deferred bootstrap endpoints, and registration replacement and rotation.
 The fake gateway refuses to delete a referenced profile or an attached provider, as the pinned API does.
+On Unix, the `gateway_storage` test checks Docker gateway storage against a fake engine.
+The `gateway_readiness` test checks managed-gateway exit diagnostics, bootstrap state kept after failure, corrected retry, unchanged-apply rechecks, and teardown without the readiness data source.
+The `kubernetes_hcl` test plans the managed Kubernetes resources, and the `kubernetes_lifecycle` tests apply, refresh, and tear them down against the in-memory API in `crates/test-support/kube_api.rs`; they write and delete the objects Helm would, and the live Kind suite runs the chart itself.
 `every_fixture_runs_and_every_type_is_covered` requires a test for every fixture and a fixture for every OpenShell type.
 
 ### Fabric Provider Contract
@@ -99,8 +100,8 @@ NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
   cargo test -p fabric-provider --test contract -- --ignored
 ```
 
-`fabric_agent` starts a Pi agent from `tests/contract/fixtures` in a sandbox: an invalid configuration fails validation at its field without repeating the value, a changed configuration replaces the sandbox, a lost start reply is not retried and recovers in a replaced sandbox, and removing the agent stops it and keeps its sandbox.
-On Unix, `fabric_harnesses` reads a fake Docker engine's image metadata: a compatible image reports its runtime binaries; another platform, or a read policy without the runtime's paths, is unsupported; a missing image is unknown.
+The tests in `tests/contract/main.rs` apply a `fabric_agent` that starts a Pi agent from `tests/contract/fixtures` in a sandbox: an invalid configuration fails validation at its field without repeating the value, a changed configuration replaces the sandbox, a lost start reply is not retried and recovers in a replaced sandbox, and removing the agent stops it and keeps its sandbox.
+On Unix, the `capabilities` test reads `fabric_harnesses` from a fake Docker engine's image metadata: a compatible image reports its runtime binaries; another platform, or a read policy without the runtime's paths, is unsupported; a missing image is unknown.
 `every_fabric_type_has_a_contract_test` requires a contract test for every Fabric type.
 
 ## System Tests
@@ -122,23 +123,38 @@ The fixtures return protocol responses; they do not establish agent inference, n
 | `deployment` | Configuration lifecycles through the SDK and CLI: shared state, interrupted creation, unchanged apply, startup failure recovered in a new sandbox, failed observation without state loss, export and reapply, policy and tool drift, web search, credential redaction, startup failure messages, and destroy |
 | `export_observations` | Export through provider refresh without applying, without inference or search credentials, rejection of observed drift without changes to saved state, and a Pi model changed inside the sandbox, which export ignores |
 | `fabric_deployment` | One harness test each for OpenClaw and Pi, where a changed configuration replaces the agent with its sandbox, and missing or failed runtime declarations |
+| `kubernetes_agents` | The three-agent `external-gateway.yaml` examples for Kubernetes and OpenShift, one test each, against the fixture gateway reporting OpenShell's Kubernetes driver, with a metadata bundle describing the images and inference at a cluster Service URL without a key: a plan without effects; three sandboxes, each with a policy rule for the Service's name and no address grant; each agent's Fabric configuration with its own name and the Service URL; an unchanged apply without changes or gateway effects; export and reapply; and destroy. It does not check that a cluster resolves or reaches the Service |
+| `multi_agent` | Three OpenClaw agents in separate sandboxes, each with its own model, sharing one provider registration: one agent's rejected start, its removal, or another owner's label on its sandbox changes no agent that the document leaves unchanged |
 | `multiple_providers` | Two deployments' provider attachments, export and reapply, drift, and destroy, each scoped to its sandbox |
-| `inference_discovery` | Optional catalog failures that keep complete unchanged plans and report uncertainty |
-| `fabric_bridge` | The provider's `fabric-agent-ctl` client: the image's own command and environment, input on stdin, and uncertain invocations never replayed |
+| `fabric_bridge` | The provider's `fabric-agent-ctl` client: the image's own command and environment, input on stdin, and uncertain invocations never replayed. These tests are not ignored and run with the unit tests |
 | `remote_service` | Services on simulated SSH hosts; see [SSH service fixtures](#ssh-service-fixtures) |
 | `travel_example` | `examples/hcl/travel` applied unchanged as plain HCL from the bundle's provider mirror: Ollama placed from its runtime launch on a simulated SSH engine, endpoint readiness against a fake model server, OpenShell objects and the Pi agent on the fixture gateway, agent readiness, and an unchanged second plan |
 | `travel_team_example` | `examples/hcl/travel-team` applied the same way: six Hermes agents in `for_each` sandboxes with per-role providers, grants, toolsets, and models; an unchanged second plan; a hosted-model change replacing only the scheduler's and buyer's sandboxes; and teardown that fails without `destroy = true` and removes everything with it. It reports each OpenTofu command's duration |
-| `helm_recovery` | On Unix, destroy and its recovery against an in-memory Kubernetes API, after failures, a second destroy, and cancellation; see [below](#helm-release-recovery) |
+| `helm_recovery` | On Unix, destroy and its recovery against an in-memory Kubernetes API, after failures and cancellation; see [below](#helm-release-recovery) |
 
 In `deployment`, `cli_terminal_outputs_preserve_lifecycle_and_json_contract` checks text plans, JSON apply, unchanged text apply, JSON plan completeness, text destroy, and repeated JSON destroy against one fixture state.
 `gateway_change_between_plan_and_apply_preserves_resources_and_allows_teardown` changes the gateway driver after planning to check OpenTofu's apply-time check, recovery, and teardown.
 `rejected_policy_fails_promptly_with_context_and_allows_recovery_or_destroy` checks a simulated gateway admission rejection with sandbox context in text and JSON output, retained bindings, recovery, and destroy.
 `separate_agent_sandboxes_cli_export_reapply_and_policy_drift` and `tool_disclosure_cli_export_reapply_and_configuration_on_stdin` check OpenClaw tool policies, whose changes replace the sandbox, with observation failures that change nothing.
 
+In `multi_agent`:
+
+- `one_failed_agent_is_reported_alone_and_its_retry_replaces_only_it` replaces two sandboxes in an update, and Fabric rejects one agent's start.
+  The CLI names only the failed sandbox and leaves out Fabric's message, which `diagnostics/fabric-SANDBOX.json` keeps.
+  The other replacement finishes, the unchanged agent is neither replaced, stopped, nor restarted, and the retry replaces only the failed agent's sandbox.
+- `removing_one_agent_stops_only_its_runtime_and_keeps_shared_registrations` removes one sandbox from the document.
+  The plan deletes only that sandbox, its agent, and its agent configuration, and apply stops only that agent.
+  The other agents, the provider registration and profile, and the workspace stay as they were.
+- `a_foreign_owner_on_one_agent_stops_planning_without_touching_the_others` gives one sandbox a different owner label on the gateway.
+  Plan, `plan_destroy`, export, apply, and destroy each fail on the ownership change without changing `terraform.tfstate`, `intent.json`, the gateway, or any sandbox.
+  After the label is restored, destroy finishes.
+
+The first two tests end with export, unchanged reapply, and destroy.
+
 ### Helm Release Recovery
 
 The `helm_recovery` tests run the bundle's OpenTofu and Helm provider against the in-memory Kubernetes API in `crates/test-support/kube_api.rs`, then call the SDK's public `destroy`, `plan_destroy`, `export`, and `apply`.
-Installing a release through `apply` would pull the pinned chart, so each test starts from an interrupted runtime apply with a fixture release: the Helm provider imports the release, except in `release_record`, where Kubernetes holds only its record.
+Installing a release through `apply` would pull the pinned chart, so each test starts from an interrupted runtime apply with a fixture release, which the Helm provider imports.
 The SDK's test-only `test-scenarios` feature builds that starting state; `nemoclaw-e2e` enables it in its dev-dependencies, so the tests need no extra flag.
 On Unix, run them with:
 
@@ -151,13 +167,13 @@ NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
 Nextest, which CI uses, runs each test in its own process.
 
 Each test that makes destroy fail or stop ends by removing the cause, if any, and running destroy again, which must finish: a failed destroy must leave the deployment recoverable, not only unchanged.
+Every test also starts with objects that belong to someone else: a second deployment's namespace, key-encryption key, and gateway claim, and, in the fixture deployment's namespace, another release's Helm record and a ConfigMap the second deployment owns.
+No request in the test may write to any of them, and the final destroy must leave each of them as it was.
 
 | Module | Checks |
 |---|---|
 | `helm_recovery` | An outage or a permission failure before planning keeps the Helm release binding, and after the saved plan the binding is restored; cancellation after the release is deleted keeps a resumable checkpoint; a preview leaves an interrupted destroy unchanged and a retry recovers it |
-| `helm_recovery::receipt` | A deleted or truncated receipt stops destroy and its preview while OpenTofu plans, without changing state, bindings, objects, or the receipt; the restored receipt lets destroy finish |
-| `helm_recovery::release_record` | A Helm release record with no binding stops destroy before it deletes any issuer object, and apply and export stay refused; destroy finishes once the record is gone |
-| `helm_recovery::destroy_faults` | A second destroy launches no plan or apply; an authentication failure (HTTP 401) before planning, after the saved plan, or after it on the issuer's ConfigMap reads alone stops destroy, keeps the issuer, and lets a retry finish; cancelling at the first refresh returns promptly while the API is unreachable and changes nothing |
+| `helm_recovery::destroy_faults` | An authentication failure (HTTP 401) before planning, after the saved plan, or after it on the issuer's ConfigMap reads alone stops destroy, keeps the issuer, and lets a retry finish; cancelling at the first refresh returns promptly while the API is unreachable and changes nothing |
 
 ### SSH Service Fixtures
 

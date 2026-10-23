@@ -138,7 +138,7 @@ fn guided_sdk_questions_are_visible_in_the_tree_without_printing_suggestions() {
         "{tree}"
     );
     assert!(
-        !tree.contains("nvidia/nemotron-3-super-120b-a12b"),
+        !tree.contains("nvidia/nemotron-3.5-super-vl-120b-a12b"),
         "{tree}"
     );
     assert!(!tree.contains("No configuration questions"), "{tree}");

@@ -21,21 +21,28 @@ cargo ci live-kind
 
 The runner builds Pi, exports its metadata bundle, loads it by digest, and installs the pinned Agent Sandbox prerequisite.
 The gateway test checks authentication, forged-token rejection, repeated install/removal, and retained storage without a Helm executable on `PATH`.
-The agent test uses the public SDK to deploy a gateway and sandbox from that image.
-It supplies a caller-relative kubeconfig and expects apply to complete with the agent started.
+The OpenShift-profile and registry tests use the public SDK to deploy a gateway and sandbox from that image.
+Each supplies a caller-relative kubeconfig and expects apply to complete with the agent started.
 Export must reproduce the authored configuration; destroy then keeps the namespace, encryption key, and gateway PVC with unchanged UIDs.
-The OpenShift-profile test supplies namespace UID-range annotations on kind and checks that gateway and sandbox pods use the assigned UID through the same SDK flow.
+The OpenShift-profile test supplies namespace UID-range annotations on kind and checks that gateway and sandbox pods use the assigned UID.
 The registry test starts a pinned, authenticated registry on the run's kind network and uploads only the run's agent fixture there.
 It checks anonymous and wrong-credential rejection, then deploys an agent with a caller-managed image pull Secret provisioned after namespace creation.
 A new image-index digest prevents cached image metadata from bypassing the pull; the agent's layers and configuration remain unchanged.
 Apply, export and destroy must preserve the authored references, keep registry values out of OpenTofu state, and retain the caller-managed Secret.
 The fixture removes its registry afterward; HTTP configuration is confined to that registry on the disposable node.
+
+The OIDC test, `kubernetes_live::oidc`, runs the SDK's development issuer image in a fresh `nc-issuer-*` namespace as a stand-in for an existing identity provider.
+It deploys a gateway and sandbox from the agent image with the `oidc` authentication profile, supplying the issuer's token through `tokenEnv`.
+Apply must complete with the agent started and no development issuer in the deployment's namespace.
+A plan with a token for another audience, signed with the same key, must be refused without echoing the token.
+Export must reproduce the authored configuration, and destroy must keep the gateway's storage.
+
 These live tests request no inference and need no GPU or user registry credentials.
 The render tests check the Kubernetes gateway UID, observed OpenShift UID and group, and image pull references in gateway/helper pods and sandbox-driver configuration.
 Kind does not enforce OpenShift security context constraints; these checks do not establish OpenShift admission or platform compatibility.
 
 The runner deletes its cluster and removes its built image tag after success or failure; pulled images and build caches remain.
-Set `NEMOCLAW_KEEP_KIND_CLUSTER=1` to retain the cluster on either outcome, then delete it with the printed kind command after inspection.
+Set `NEMOCLAW_KEEP_KIND_CLUSTER` to any value to retain the cluster on either outcome, then delete it with the printed kind command after inspection.
 The gateway test's private state directory remains as described below, including when the runner deletes the cluster.
 
 To render the pinned chart through the bundled provider without cluster access:

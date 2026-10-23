@@ -237,7 +237,7 @@ mod tests {
             state
                 .values()
                 .pointer("/spec/sandboxes/0/agent/inference/routes/0/overrides/model"),
-            Some(&serde_json::json!("nvidia/nemotron-3-super-120b-a12b"))
+            Some(&serde_json::json!("nvidia/nemotron-3.5-super-vl-120b-a12b"))
         );
     }
 }

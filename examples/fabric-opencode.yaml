@@ -1,0 +1,37 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=../schemas/nemoclaw-v1alpha1.schema.json
+
+# Set the endpoint and model for your service. Fabric's OpenCode adapter runs
+# OpenCode on Bun inside the sandbox. See docs/agents.md.
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: fabric-opencode
+  uid: 7b2f5c1e-9a64-4d8b-b3e0-5c71a2f9d846
+spec:
+  gateway:
+    management: external
+    runtime:
+      provider: docker
+    endpoint: http://127.0.0.1:17681
+  inferenceProviders:
+    - name: local
+      provider: openai
+      endpoint: http://172.20.0.1:11446/v1
+  sandboxes:
+    - name: assistant
+      image:
+        ref: nc-fabric-opencode@sha256:9d1c4e7a2b8f3e6d5c0a9b8f7e6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b1a0f9e8d
+      network:
+        tier: isolated
+      harness:
+        kind: nvidia.fabric.opencode
+      agent:
+        name: main
+        inference:
+          routes:
+            - name: primary
+              providerRef: local
+              overrides:
+                model: qwen3:4b

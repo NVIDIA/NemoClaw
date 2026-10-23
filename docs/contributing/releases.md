@@ -17,7 +17,7 @@ A package that a workflow's token creates inherits this public repository's visi
 Before the first push, a maintainer creates each package as internal, which makes them its administrator, and grants this repository's Actions write access:
 
 - `v1-ci`, which holds every per-commit image. Grant it the **Admin** role instead, so the image workflow can delete per-commit images older than the latest ten commits.
-- `v1/<image>` for each agent image (`claude`, `codex`, `deepagents`, `hermes`, `mini-swe-agent`, `nooa`, `nooa-bench`, `openclaw`, `pi`, `remote-agent`), and for `ollama-proxy`, `vllm`, and `ollama`.
+- `v1/<image>` for each agent image (`claude`, `codex`, `deepagents`, `hermes`, `mini-swe-agent`, `nooa`, `nooa-bench`, `openclaw`, `opencode`, `pi`, `remote-agent`), and for `ollama-proxy`, `vllm`, and `ollama`.
 - Create a package by pushing any image to it with a personal token that has `write:packages`; it starts internal.
 - Then, in the package's settings under **Manage Actions access**, add `NVIDIA/NemoClaw` with the **Write** role.
 

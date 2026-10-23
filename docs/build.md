@@ -73,7 +73,7 @@ Rebuild a bundle from the recorded source revision if the removed tools are need
 Use Docker with Buildx on a native host that matches the selected image target.
 Pass `--platform linux/arm64` or `--platform linux/amd64` to the agent image builder.
 Direct Bake builds and checks use the host's platform unless the `AGENT_PLATFORM` environment variable selects the other one.
-Both platforms select all ten harnesses.
+Both platforms build every harness in the Bake file's `HARNESSES` map.
 Agent images share a Python 3.13.16 base without pip.
 Only OpenClaw, Hermes, and Pi add Node.js 24.22.0 LTS: OpenClaw's CLI and Pi's adapter run on it, and Hermes's browser tool and `npx`-launched MCP servers require it.
 Image qualification checks that interpreter against every Python adapter’s declared version range in the pinned Fabric source.

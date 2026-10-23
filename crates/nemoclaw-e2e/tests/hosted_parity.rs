@@ -142,7 +142,7 @@ fn assert_hosted_document(document: &Document, harness: HarnessKind, runtime_roo
     );
     assert_eq!(
         inference.routes[0].overrides.model,
-        "nvidia/nemotron-3-super-120b-a12b"
+        "nvidia/nemotron-3.5-super-vl-120b-a12b"
     );
 }
 

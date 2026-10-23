@@ -27,6 +27,7 @@ variable "HARNESSES" {
     openclaw       = { stage = "openclaw", adapter = "openclaw", adapter_id = "nvidia.fabric.openclaw", extra = "openclaw" }
     hermes         = { stage = "hermes", adapter = "hermes", adapter_id = "nvidia.fabric.hermes", extra = "hermes-agent" }
     pi             = { stage = "pi", adapter = "", adapter_id = "nvidia.fabric.pi", extra = "" }
+    opencode       = { stage = "opencode", adapter = "", adapter_id = "nvidia.fabric.opencode", extra = "" }
   }
 }
 

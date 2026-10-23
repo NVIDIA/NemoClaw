@@ -49,12 +49,17 @@ pub struct State {
     pub fabric_stopped: HashSet<String>,
     /// Stdin sent with each exec call, parallel to `exec_calls`.
     pub exec_stdin: Vec<Vec<u8>>,
+    /// The sandbox name each exec call targets, parallel to `exec_calls`.
+    pub exec_sandboxes: Vec<String>,
     /// Files present in the fake sandbox for bridge commands that name a path.
     pub sandbox_files: HashMap<String, Vec<u8>>,
     /// Start requests answered as though `serve` were not yet listening.
     pub host_unavailable_starts: usize,
     pub exec_response: Option<Vec<u8>>,
     pub configuration_error: Option<serde_json::Value>,
+    /// Start rejections by sandbox name, which take precedence over
+    /// `configuration_error` for that sandbox.
+    pub configuration_error_for: HashMap<String, serde_json::Value>,
     pub effects: usize,
     pub expected_bearer: Option<String>,
     pub conditional_updates: usize,
@@ -821,6 +826,7 @@ impl tonic::server::ServerStreamingService<p::ExecSandboxRequest> for Exec {
         };
         if let Some(execution) = state.sandbox_execution.clone() {
             state.exec_calls.push(request.command.clone());
+            state.exec_sandboxes.push(request.sandbox.clone());
             state.exec_stdin.push(request.stdin.clone());
             state.exec_environments.push(request.environment.clone());
             drop(state);
@@ -900,7 +906,12 @@ impl tonic::server::ServerStreamingService<p::ExecSandboxRequest> for Exec {
                         .then(|| serde_json::from_slice::<serde_json::Value>(&request.stdin).ok())
                         .flatten()
                     {
-                        if let Some(rejected) = state.configuration_error.clone() {
+                        if let Some(rejected) = state
+                            .configuration_error_for
+                            .get(&request.sandbox)
+                            .or(state.configuration_error.as_ref())
+                            .cloned()
+                        {
                             let code = rejected["error"]["code"].as_str().unwrap_or("start_failed");
                             // Fabric rejects an invalid configuration before
                             // starting anything; any other failed start may
@@ -1002,6 +1013,7 @@ impl tonic::server::ServerStreamingService<p::ExecSandboxRequest> for Exec {
         state.exec_environments.push(request.environment);
         state.exec_stdin.push(request.stdin);
         state.exec_calls.push(request.command);
+        state.exec_sandboxes.push(request.sandbox);
         if !truncated {
             events.push(Ok(p::ExecSandboxEvent {
                 payload: Some(p::exec_sandbox_event::Payload::Exit(p::ExecSandboxExit {
