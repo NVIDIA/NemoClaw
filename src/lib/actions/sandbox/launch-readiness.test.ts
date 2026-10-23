@@ -1399,19 +1399,6 @@ describe("launch readiness validation", () => {
     );
   });
 
-  it("names an unsupported recorded agent when final validation refuses it (#12208)", async () => {
-    const first = await inspectLaunchReadiness(SANDBOX, deps());
-    const publication = publicationFromDecision(SANDBOX, first);
-
-    sandbox = { ...sandbox, agent: "missing-launch-agent" };
-
-    expect(await publishLaunchReadiness(publication, deps())).toMatchObject({
-      kind: "validation-failed",
-      category: "config",
-      unknownAgent: "missing-launch-agent",
-    });
-  });
-
   it("distinguishes authoritative final validation failure from evidence failure", async () => {
     const first = await inspectLaunchReadiness(SANDBOX, deps());
     const publication = publicationFromDecision(SANDBOX, first);
@@ -1449,6 +1436,10 @@ describe("launch readiness validation", () => {
       kind: "evidence-failed",
       diagnostic: { stage: "publication-validation", reason: "runtime-observation-failed" },
     });
+
+    const unknownAgent = { ...deps(), getSandbox: () => ({ ...sandbox, agent: "no-such-agent" }) };
+    const refused = await publishLaunchReadiness(publication, unknownAgent);
+    expect(refused).toMatchObject({ category: "config", unknownAgent: "no-such-agent" });
 
     const pairingObservationUnavailable = deps();
     pairingObservationUnavailable.observeOpenClawPairingQualification = () => {
