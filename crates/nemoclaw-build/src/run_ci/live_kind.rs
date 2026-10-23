@@ -199,6 +199,7 @@ pub(super) async fn run_live_kind(
     command
         .env("NEMOCLAW_TEST_KUBECONFIG", &kubeconfig)
         .env("NEMOCLAW_TEST_KUBE_CONTEXT", format!("kind-{name}"))
+        .env("NEMOCLAW_TEST_KUBE_RUNTIME", "kubernetes")
         .env("NEMOCLAW_TEST_KIND_NODE", &node_container)
         .env("NEMOCLAW_TEST_BUNDLE", &bundle)
         .env("NEMOCLAW_TEST_AGENT_IMAGE", &image)

@@ -55,6 +55,19 @@ fn required(name: &str) -> String {
         .unwrap_or_else(|_| panic!("{name} is required; see docs/contributing/live-tests.md"))
 }
 
+/// The runtime provider the gateway test deploys with: `kubernetes`, or
+/// `openshift` on a cluster that enforces security context constraints and
+/// assigns each namespace a UID range.
+fn runtime_provider() -> String {
+    let provider =
+        std::env::var("NEMOCLAW_TEST_KUBE_RUNTIME").unwrap_or_else(|_| "kubernetes".into());
+    assert!(
+        ["kubernetes", "openshift"].contains(&provider.as_str()),
+        "NEMOCLAW_TEST_KUBE_RUNTIME must be kubernetes or openshift, not {provider:?}"
+    );
+    provider
+}
+
 /// State, generated credentials and plans stay in a private directory, including
 /// after failure. No OpenTofu output is copied to the test log.
 struct Tofu {
@@ -350,6 +363,89 @@ async fn authenticated_gateway(operations: &Operations, spec: &Spec) {
     );
 }
 
+/// On OpenShift the cluster, not the test, assigns the namespace's UID and
+/// group range and admits each pod under a security context constraint. This
+/// reads both: every pod must carry the default `restricted-v2` constraint,
+/// run every container as the first UID of the range, and use the first
+/// supplemental group as its fsGroup.
+async fn admitted_under_the_assigned_range(client: &kube::Client, namespace: &str) {
+    use k8s_openapi::api::core::v1::Pod;
+    let annotations = Api::<Namespace>::all(client.clone())
+        .get(namespace)
+        .await
+        .unwrap_or_else(|_| panic!("cannot observe the test namespace"))
+        .metadata
+        .annotations
+        .unwrap_or_default();
+    let first = |key: &str| -> i64 {
+        annotations
+            .get(key)
+            .and_then(|range| range.split_once('/'))
+            .and_then(|(start, _)| start.parse().ok())
+            .unwrap_or_else(|| panic!("the namespace has no usable {key} annotation"))
+    };
+    let user = first("openshift.io/sa.scc.uid-range");
+    let group = if annotations.contains_key("openshift.io/sa.scc.supplemental-groups") {
+        first("openshift.io/sa.scc.supplemental-groups")
+    } else {
+        user
+    };
+    let pods = Api::<Pod>::namespaced(client.clone(), namespace)
+        .list(&ListParams::default())
+        .await
+        .unwrap_or_else(|_| panic!("cannot observe the test namespace's pods"))
+        .items;
+    assert!(!pods.is_empty(), "the gateway's pods exist");
+    for pod in pods {
+        let name = pod.metadata.name.clone().unwrap_or_default();
+        let constraint = pod
+            .metadata
+            .annotations
+            .as_ref()
+            .and_then(|annotations| annotations.get("openshift.io/scc"))
+            .cloned();
+        let spec = pod.spec.expect("every observed pod has a spec");
+        let pod_user = spec
+            .security_context
+            .as_ref()
+            .and_then(|context| context.run_as_user);
+        let pod_group = spec
+            .security_context
+            .as_ref()
+            .and_then(|context| context.fs_group);
+        eprintln!("pod {name}: scc {constraint:?}, fsGroup {pod_group:?}");
+        assert_eq!(
+            constraint.as_deref(),
+            Some("restricted-v2"),
+            "{name} is admitted under the default restricted constraint"
+        );
+        assert_eq!(
+            pod_group,
+            Some(group),
+            "{name} uses the namespace's first group as fsGroup"
+        );
+        for container in spec
+            .init_containers
+            .iter()
+            .flatten()
+            .chain(&spec.containers)
+        {
+            let effective = container
+                .security_context
+                .as_ref()
+                .and_then(|context| context.run_as_user)
+                .or(pod_user);
+            eprintln!("  container {}: runAsUser {effective:?}", container.name);
+            assert_eq!(
+                effective,
+                Some(user),
+                "{name}/{} runs as the namespace's first UID",
+                container.name
+            );
+        }
+    }
+}
+
 #[tokio::test]
 #[ignore = "needs an owned cluster with Agent Sandbox and a verified bundle; see live-tests.md"]
 async fn the_gateway_installs_authenticates_and_is_removed_keeping_storage() {
@@ -374,6 +470,7 @@ async fn the_gateway_installs_authenticates_and_is_removed_keeping_storage() {
         &hex[20..]
     );
     let namespace = format!("nc-live-{}", &hex[..16]);
+    let provider = runtime_provider();
     let port = std::net::TcpListener::bind("127.0.0.1:0")
         .unwrap()
         .local_addr()
@@ -386,7 +483,7 @@ async fn the_gateway_installs_authenticates_and_is_removed_keeping_storage() {
     let mut value = serde_json::to_value(original).unwrap();
     value["metadata"]["uid"] = json!(owner);
     value["spec"]["gateway"] = json!({
-        "management": "managed", "runtime": {"provider": "kubernetes"},
+        "management": "managed", "runtime": {"provider": provider},
         "endpoint": format!("https://127.0.0.1:{port}"),
         "kubernetes": {
             "kubeconfig": {"env": "NEMOCLAW_TEST_KUBECONFIG"},
@@ -473,6 +570,9 @@ async fn the_gateway_installs_authenticates_and_is_removed_keeping_storage() {
             "native Helm tracks one deployed release"
         );
         authenticated_gateway(&operations, &spec).await;
+        if provider == "openshift" {
+            admitted_under_the_assigned_range(&operations.client, &namespace).await;
+        }
         let teardown = compile_teardown(
             &document,
             &generations,
@@ -523,16 +623,67 @@ async fn the_gateway_installs_authenticates_and_is_removed_keeping_storage() {
         }
     }
     // Removing what destroy retains: deleting the namespace removes the key
-    // and claims, and with kind's Delete reclaim policy, their volumes.
-    let volumes: Vec<String> =
-        Api::<PersistentVolumeClaim>::namespaced(operations.client.clone(), &namespace)
-            .list(&ListParams::default())
-            .await
-            .unwrap()
-            .items
-            .into_iter()
-            .filter_map(|claim| claim.spec.and_then(|spec| spec.volume_name))
-            .collect();
+    // and claims, and with kind's Delete reclaim policy, their volumes. Under
+    // Retain, as on OpenShift Local, a volume and its storage would outlive
+    // the claim, so the test first lets each volume provisioned for its claims
+    // be deleted with them.
+    let claims = Api::<PersistentVolumeClaim>::namespaced(operations.client.clone(), &namespace)
+        .list(&ListParams::default())
+        .await
+        .unwrap()
+        .items;
+    let persistent =
+        Api::<k8s_openapi::api::core::v1::PersistentVolume>::all(operations.client.clone());
+    let mut volumes = Vec::new();
+    for claim in &claims {
+        let Some(name) = claim
+            .spec
+            .as_ref()
+            .and_then(|spec| spec.volume_name.clone())
+        else {
+            continue;
+        };
+        let volume = persistent.get(&name).await.unwrap();
+        let spec = volume.spec.unwrap_or_default();
+        if spec.persistent_volume_reclaim_policy.as_deref() != Some("Delete") {
+            let annotations = volume.metadata.annotations.unwrap_or_default();
+            let uid = claim
+                .metadata
+                .uid
+                .as_deref()
+                .expect("a listed claim has a UID");
+            assert!(
+                annotations.contains_key("pv.kubernetes.io/provisioned-by"),
+                "{name} was provisioned dynamically, not created by hand"
+            );
+            // Kubernetes marks a volume it bound to a claim afterwards, such as
+            // a reused one; a provisioner binds the volume it creates itself.
+            assert!(
+                !annotations.contains_key("pv.kubernetes.io/bound-by-controller"),
+                "{name} was provisioned for the gateway's claim, not rebound to it"
+            );
+            assert_eq!(
+                spec.claim_ref
+                    .and_then(|reference| reference.uid)
+                    .as_deref(),
+                Some(uid),
+                "{name} is bound to the gateway's claim"
+            );
+            persistent
+                .patch(
+                    &name,
+                    &kube::api::PatchParams::default(),
+                    &kube::api::Patch::Merge(
+                        json!({"spec": {"persistentVolumeReclaimPolicy": "Delete"}}),
+                    ),
+                )
+                .await
+                .unwrap_or_else(|error| {
+                    panic!("cannot let {name} be deleted with its claim: {error}")
+                });
+        }
+        volumes.push(name);
+    }
     assert!(
         !volumes.is_empty(),
         "the gateway's claims are bound to volumes"
@@ -542,21 +693,27 @@ async fn the_gateway_installs_authenticates_and_is_removed_keeping_storage() {
         .delete(&namespace, &kube::api::DeleteParams::foreground())
         .await
         .unwrap();
-    let persistent =
-        Api::<k8s_openapi::api::core::v1::PersistentVolume>::all(operations.client.clone());
     let deadline = std::time::Instant::now() + Duration::from_secs(120);
     loop {
         let namespace_gone = namespaces.get_opt(&namespace).await.unwrap().is_none();
-        let mut volumes_gone = true;
-        for volume in &volumes {
-            volumes_gone &= persistent.get_opt(volume).await.unwrap().is_none();
+        let mut remaining = Vec::new();
+        for name in &volumes {
+            if let Some(volume) = persistent.get_opt(name).await.unwrap() {
+                let phase = volume
+                    .status
+                    .and_then(|status| status.phase)
+                    .unwrap_or_default();
+                let finalizers = volume.metadata.finalizers.unwrap_or_default();
+                remaining.push(format!("{name} {phase} {finalizers:?}"));
+            }
         }
-        if namespace_gone && volumes_gone {
+        if namespace_gone && remaining.is_empty() {
             break;
         }
         assert!(
             std::time::Instant::now() < deadline,
-            "deleting the namespace removes the deployment's retained resources"
+            "deleting the namespace removes the deployment's retained resources \
+             (namespace gone: {namespace_gone}; volumes left: {remaining:?})"
         );
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
@@ -757,6 +914,18 @@ async fn on_openshift_the_sandbox_runs_as_the_namespace_uid() {
             .unwrap(),
     )
     .unwrap();
+    // The test writes the namespace's range itself, which would overwrite the
+    // one a cluster that enforces OpenShift's constraints assigned.
+    assert!(
+        !client
+            .list_api_groups()
+            .await
+            .unwrap()
+            .groups
+            .iter()
+            .any(|group| group.name == "security.openshift.io"),
+        "this test writes the namespace's UID range itself; do not run it on a cluster that serves security.openshift.io"
+    );
     let observed = std::sync::Mutex::new(None::<(Option<i64>, Option<i64>)>);
     deploy_and_export("openshift", async |namespace| {
         // Annotate the namespace as soon as the SDK creates it, as OpenShift

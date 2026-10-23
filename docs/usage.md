@@ -584,4 +584,4 @@ Whether the noted volumes go too depends on their StorageClass: with the `Delete
 On OpenShift, `oc delete project` does the same as deleting the namespace.
 When the namespace and the volumes are gone, remove the state directory, which holds the cluster receipt and any development issuer keys.
 
-The [live Kubernetes suite](contributing/live-tests.md) deletes a retained namespace this way and checks that the namespace and its volumes are gone.
+The [live Kubernetes gateway test](contributing/live-tests.md#kubernetes-gateway-without-the-helm-cli) deletes its namespace this way, after switching any volume whose reclaim policy is not `Delete` to `Delete`, and checks that the namespace and its volumes are gone.
