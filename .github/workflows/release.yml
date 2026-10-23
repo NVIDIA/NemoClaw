@@ -95,9 +95,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # Runtime images build reproducibly only in the containerd image store:
-      # the classic store ignores the targets' timestamp rewriting.
-      - uses: ./.github/actions/containerd-store
       - name: Require internal packages
         uses: ./.github/actions/internal-packages
         with:
@@ -119,15 +116,17 @@ jobs:
         run: |
           printf '%s\n' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           tag="$GITHUB_SHA-${PLATFORM#linux_}"
-          # The targets' own output loads each image into the containerd store
-          # with its timestamps clamped to SOURCE_DATE_EPOCH, and pushing from
-          # there keeps that digest. A direct registry push from the build
-          # skipped the clamp, so every staging produced new digests.
-          docker buildx bake runtimes \
-            --set "vllm.tags=$CI_PACKAGE:vllm-$tag" --set "ollama.tags=$CI_PACKAGE:ollama-$tag"
-          for name in vllm ollama; do
-            docker push --quiet "$CI_PACKAGE:$name-$tag"
-          done
+          # Runtime images are reproducible only when every layer's timestamps
+          # are clamped to SOURCE_DATE_EPOCH. The runners' built-in BuildKit
+          # can't clamp and push (it ignores rewrite-timestamp in the classic
+          # image store, and rejects it with unpack=false in the containerd
+          # one), so a pinned BuildKit in a container pushes them instead.
+          docker buildx create --name runtimes --driver docker-container \
+            --driver-opt image=moby/buildkit@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8
+          output='type=image,push=true,rewrite-timestamp=true'
+          docker buildx bake --builder runtimes runtimes \
+            --set "vllm.tags=$CI_PACKAGE:vllm-$tag" --set "vllm.output=$output" \
+            --set "ollama.tags=$CI_PACKAGE:ollama-$tag" --set "ollama.output=$output"
           # A runtime image's digest only changes with its inputs, so its SBOM
           # is usually already recorded.
           for name in vllm ollama; do
