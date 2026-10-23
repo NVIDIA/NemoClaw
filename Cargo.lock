@@ -2527,6 +2527,7 @@ dependencies = [
  "tar",
  "tempfile",
  "thiserror 2.0.20",
+ "time",
  "tokio",
  "toml 1.1.5+spec-1.1.0",
  "url",

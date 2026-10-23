@@ -61,6 +61,7 @@
         {"title": "Run integration tests", "source": "docs/contributing/integration-tests.md", "slug": "testing/fixtures"},
         {"title": "Run live tests", "source": "docs/contributing/live-tests.md", "slug": "testing/live"},
         {"title": "Stage a v1 release", "source": "docs/contributing/releases.md", "slug": "releases"},
+        {"title": "Assess saved image inventories", "source": "docs/contributing/image-assessment.md", "slug": "image-assessment"},
         {"title": "Contribute documentation", "source": "docs/contributing/documentation.md", "slug": "contributing"},
         {"title": "Maintain the configuration schema", "source": "docs/contributing/configuration-schema.md", "slug": "configuration-schema"},
         {"title": "Build and publish documentation", "source": "docs/contributing/documentation-build.md", "slug": "documentation-build"}

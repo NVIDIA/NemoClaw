@@ -157,6 +157,28 @@ jobs:
         run: |
           git fetch --no-tags origin v1
           git merge-base --is-ancestor HEAD origin/v1
+      - name: Require a security-reviewed public release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          directory="$RUNNER_TEMP/docs-release"
+          mkdir "$directory"
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" > "$directory/release.json"
+          jq -e --arg tag "$TAG" '.tag_name == $tag and .draft == false and (.published_at | type == "string")' \
+            "$directory/release.json" > /dev/null
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir "$directory" \
+            --pattern gate.json --pattern assessment.json --pattern inventory.json --pattern sboms.json
+          jq -e --arg tag "$TAG" '
+            .schema_version == 1 and .release_tag == $tag and .status == "passed" and
+            .publication_authorized == false and .policy.status == "passed" and .policy.publication_authorized == false and
+            (.controller_revision | test("^[a-f0-9]{40}$")) and
+            ([.inventory_sha256,.sboms_sha256,.assessment_sha256,.policy.policy_sha256] | all(test("^[a-f0-9]{64}$")))
+          ' "$directory/gate.json" > /dev/null
+          for name in inventory sboms assessment; do
+            checksum=$(jq -er --arg key "${name}_sha256" '.[$key]' "$directory/gate.json")
+            printf '%s  %s\n' "$checksum" "$directory/$name.json" | sha256sum --check --strict > /dev/null
+          done
       - uses: ./.github/actions/setup-docs
         with:
           rust: "false"

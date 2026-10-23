@@ -45,14 +45,24 @@ Only users with push access see a draft release, and the `v1` packages stay inte
 
 ## Test a Staged Release
 
+Use [image assessment](image-assessment.md) to evaluate the saved SPDX inventories.
+Local assessment does not authorize publication.
+
 Deploy with the digests the draft lists.
 Docker deployments pull private images through `spec.registries`; Kubernetes deployments use `imagePullSecrets`.
 
 ## Publish
 
-Publishing is manual: publish the draft, then make each `v1` package public in its package settings.
-Making a package public can't be undone, and the organization's package policy may need an administrator.
+Keep the draft and packages private until installer, onboarding, QA, and product sign-off are complete.
+Configure the [protected security controller](image-assessment.md#configure-hosted-enforcement) before enabling `V1_SECURITY_PUBLICATION_ENABLED`.
+The controlled publisher requires security approval, a fresh passing assessment, and unchanged registry digests before publishing the draft.
+Security disclosure and controlled publication run only for final release tags; release candidates retain private draft assets.
+Restrict direct manual publication and package-administrator privileges separately; those powers can bypass the workflow.
+An administrator handles approved package visibility changes; making a package public cannot be undone.
 Before publishing, complete the provenance, SBOM, scanning, and license work ([#13521](https://github.com/NVIDIA/NemoClaw/issues/13521), [#13522](https://github.com/NVIDIA/NemoClaw/issues/13522), [#13523](https://github.com/NVIDIA/NemoClaw/issues/13523), [#13524](https://github.com/NVIDIA/NemoClaw/issues/13524)).
+
+The final-tag public documentation job also requires the published release and its bound passing gate receipt.
+If it ran while release review was pending, rerun it after controlled publication.
 
 ## SBOM Assets
 
@@ -60,6 +70,7 @@ Each image is scanned where it is built, with Syft 1.55.0: the image workflow sc
 The SPDX document is kept in `v1-ci` as `sbom-DIGEST`, named by the platform manifest it describes, so an unchanged image is never scanned again.
 Staging copies each release platform's document from there, and scans from the registry only an image that has none.
 Each platform gets a digest-named SPDX 2.3 JSON asset; `sboms.json` maps each asset to its image reference, platform, and SHA-256 checksum.
+Staging also retains `inventory.json` with each image's index digest and platform descriptors so assessment and publication can verify the same subjects.
 The existing Kubernetes metadata bundles remain separate assets.
 The scanner catalogs OS packages and installed Python and Node packages.
 Runtime images retain the supervisor's `Cargo.lock` beside its source archive, and the proxy retains its package-specific `Cargo.lock`, so their Rust dependency inventories are discoverable without relying on binary metadata.
