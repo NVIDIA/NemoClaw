@@ -1037,7 +1037,10 @@ Repair Docker access or the Docker Buildx plugin when either Docker command fail
 $$nemoclaw onboard --resume
 ```
 
-A passing Docker recovery completes the local BuildKit build before sandbox creation starts. If NemoClaw rejects the staged build context trust boundary, do not change its permissions or move its Dockerfile. Rerun the command so NemoClaw creates a new private staged context. If the new context is also rejected, preserve the complete error and stop instead of forcing the gateway builder.
+A passing Docker recovery completes the local BuildKit build before sandbox creation starts.
+If NemoClaw rejects the staged build context trust boundary, do not change its permissions or move its Dockerfile.
+Rerun the command so NemoClaw creates a new private staged context.
+If the new context is also rejected, preserve the complete error and stop instead of forcing the gateway builder.
 
 The same build and image check applies to a user-supplied `--from` context on a local Docker gateway.
 NemoClaw does not send a Dockerfile to the gateway builder after a local build failure.
