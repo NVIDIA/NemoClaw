@@ -1800,8 +1800,9 @@ For a Hermes native NVIDIA route, `status` also verifies the agent's managed cre
 If the verifier confirms an invalid or stale reference, `inferenceHealth` reports `ok: false`, `probed: false`, and `failureLabel: "unauthorized"`, even when the provider-path request succeeded.
 The text output reports `not probed` for the agent credential check. For a confirmed rejection, it directs you to `$$nemoclaw <name> rebuild` to refresh the managed credential.
 After rebuilding, rerun `$$nemoclaw <name> status`; healthy inference requires both a successful provider-path request and a verified managed credential reference.
-If verification is unavailable because the command times out, sandbox access fails, or the verifier is missing, status instead reports `failureLabel: "unreachable"` with `ok: false` and `probed: false`.
-Retry status. If verification remains unavailable, check sandbox health and recover access before retrying.
+If verification is unavailable because the command times out, sandbox access fails, or the installed image lacks the verifier, status instead reports `failureLabel: "unreachable"` with `ok: false` and `probed: false`.
+If status reports that the installed image lacks the verifier, rebuild the sandbox to install it, then rerun status.
+For other unavailable-verification results, retry status. If verification remains unavailable, check sandbox health and recover access before retrying.
 Retained shared NVIDIA routes do not use this additional check.
 
 </AgentOnly>

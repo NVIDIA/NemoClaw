@@ -2581,7 +2581,9 @@ Hermes interactive OAuth evidence is also deferred for Slice 2 (#12589).
 
 The native NVIDIA `hermes-inference-switch` target enrolls Discord, rebuilds
 the sandbox without host credential overrides, verifies the retained Discord
-settings, and runs a Hermes turn. This checks the live OpenShell credential
+settings, requires healthy `status --json` output, and runs a Hermes turn.
+The status call checks the installed guard through the CLI without a host key override.
+This checks the live OpenShell credential
 generation and archived-state restore boundary for #13633. The target uses its
 public `NVIDIA_API_KEY` credential profile. The `hermes-discord` target retains
 its internal hosted inference credential and Discord security checks.

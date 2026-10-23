@@ -553,6 +553,16 @@ print(json.dumps({
           guildIds: "1491590992753590594",
           allowedUsers: "1005536447329222676",
         });
+        const status = await host.command("node", [CLI, SANDBOX_NAME, "status", "--json"], {
+          artifactName: "hermes-nvidia-discord-post-rebuild-status",
+          env: env(),
+          redactionValues,
+          timeoutMs: 6 * 60_000,
+        });
+        expectExitZero(status, "check Hermes NVIDIA status after rebuild");
+        expect(JSON.parse(status.stdout), resultText(status)).toMatchObject({
+          inferenceHealth: { ok: true, probed: true },
+        });
         const inference = await sandbox.exec(
           SANDBOX_NAME,
           ["hermes", "-z", "Reply with exactly PROBE_OK"],

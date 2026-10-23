@@ -25,13 +25,27 @@ const script = ts.transpileModule(`(async () => { ${phase} })()`, {
 }).outputText;
 
 async function runPhase(
-  options: { publicKey?: string | null; failedCommand?: string; lostDiscord?: boolean } = {},
+  options: {
+    publicKey?: string | null;
+    failedCommand?: string;
+    lostDiscord?: boolean;
+    statusHealth?: { ok: boolean; probed: boolean } | null;
+  } = {},
 ) {
   const command = vi.fn(
     async (_binary: string, args: string[], _input: { env: NodeJS.ProcessEnv }) => {
       return {
         exitCode: args.includes(options.failedCommand ?? "never") ? 1 : 0,
-        stdout: "",
+        stdout: args.includes("status")
+          ? JSON.stringify({
+              agent: "hermes",
+              provider: "nvidia-prod",
+              inferenceHealth:
+                options.statusHealth === undefined
+                  ? { ok: true, probed: true }
+                  : options.statusHealth,
+            })
+          : "",
         stderr: "fixture failure",
       };
     },
@@ -84,19 +98,33 @@ describe("Hermes Discord rebuild evidence", () => {
     expect(command.mock.calls[0]![2].env.NVIDIA_INFERENCE_API_KEY).toBe("synthetic-public-key");
     expect(command.mock.calls[1]![2].env).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
     expect(command.mock.calls[1]![2].env).not.toHaveProperty("DISCORD_BOT_TOKEN");
-    expect(command).toHaveBeenCalledTimes(2);
+    expect(command).toHaveBeenCalledTimes(3);
+    expect(command.mock.calls[2]![1]).toEqual([
+      "bin/nemoclaw.js",
+      "fixture-hermes",
+      "status",
+      "--json",
+    ]);
+    expect(command.mock.calls[2]![2].env).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
     expect(exec).toHaveBeenCalledTimes(2);
     expect(exec.mock.calls[0]![1]).not.toContain("-z");
     expect(exec.mock.calls[1]![1]).toContain("-z");
   });
 
-  it.each(["discord", "rebuild"])("stops when %s fails", async (failedCommand) => {
+  it.each(["discord", "rebuild", "status"])("stops when %s fails", async (failedCommand) => {
     await expect(runPhase({ failedCommand })).rejects.toThrow();
   });
 
   it("rejects a rebuild that loses Discord configuration", async () => {
     await expect(runPhase({ lostDiscord: true })).rejects.toThrow();
   });
+
+  it.each([null, { ok: false, probed: false }, { ok: true, probed: false }])(
+    "rejects unavailable or unhealthy post-rebuild status [%#]",
+    async (statusHealth) => {
+      await expect(runPhase({ statusHealth })).rejects.toThrow();
+    },
+  );
 
   it("leaves the Anthropic variant outside the native NVIDIA phase", async () => {
     const { command, exec } = await runPhase({ publicKey: null });
