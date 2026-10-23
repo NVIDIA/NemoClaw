@@ -2846,7 +2846,8 @@ EOF
     return 0
   fi
 
-  mkdir -p "$NEMOCLAW_SHIM_DIR"
+  # The shim parent must not become group-writable under a permissive umask.
+  (umask g-w,o-w && mkdir -p "$NEMOCLAW_SHIM_DIR")
   temp_shim="$(mktemp "${shim_path}.tmp.XXXXXX")" \
     || error "Could not create a temporary shim beside $shim_path."
   _cleanup_files+=("$temp_shim")

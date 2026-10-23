@@ -25,6 +25,16 @@ export function copyTrustedInstallerVerifier(repoRoot: string, targetRoot: strin
   });
 }
 
+/** Keep synthetic historical fixtures on the base trust record. */
+export function retainBaseInstallerTrust(root: string): void {
+  const registryPath = path.join(root, "ci/openshell-upgrade-trust.json");
+  const registry = JSON.parse(fs.readFileSync(registryPath, "utf8")) as {
+    releases: { version: string }[];
+  };
+  registry.releases = registry.releases.filter((release) => release.version !== "0.0.116");
+  fs.writeFileSync(registryPath, JSON.stringify(registry));
+}
+
 export function brevMutationFixtures(
   ASSET_DIGESTS: ReadonlyMap<string, string>,
   ASSETS: readonly string[],
@@ -105,6 +115,11 @@ const MACOS_METHOD_START = `MACOS_INSTALL_METHOD="\${_NEMOCLAW_OPENSHELL_INSTALL
 const MACOS_METHOD_END = "esac\n";
 
 export function installerReleaseTemplate(source: string, version: string): string {
+  // Historical trust fixtures retain the installer bytes authorized before the
+  // direct-install permission fix. The current candidate is checked separately.
+  const currentInstall = '  (umask g-w,o-w && mkdir -p "$target_dir")';
+  const historicalInstall = '  mkdir -p "$target_dir"';
+  if (source.includes(currentInstall)) source = source.replace(currentInstall, historicalInstall);
   const v012Comment =
     "  # OpenShell 0.1.2 enforces MCP policy in its supervisor image. Recognize\n" +
     "  # only its exact pinned sandbox artifacts here, not version text alone.\n" +

@@ -43,6 +43,7 @@ import {
   preparedReleaseArgs,
   prepareReleaseFixtureRuntime,
   installerReleaseTemplate,
+  retainBaseInstallerTrust,
   removeV00106OperationalTrust,
 } from "../helpers/openshell-installer-template";
 
@@ -601,6 +602,7 @@ function createFixture(
   const binDir = path.join(fixtureRoot, "bin");
   tempDirs.push(fixtureRoot);
   copyTrustedInstallerVerifier(REPO_ROOT, fixtureRoot);
+  retainBaseInstallerTrust(fixtureRoot);
   fs.mkdirSync(binDir, { recursive: true });
   fs.mkdirSync(path.join(fixtureRoot, "nemoclaw-blueprint"), {
     recursive: true,
@@ -762,6 +764,7 @@ function runFixture(
   );
   tempDirs.push(trustedRoot);
   copyTrustedInstallerVerifier(REPO_ROOT, trustedRoot);
+  retainBaseInstallerTrust(trustedRoot);
   const parserSource = fs.readFileSync(trustedParserPath, "utf8");
   const mutateParser = PARSER_MUTATIONS[mode];
   const mutatedParserSource = mutateParser?.(parserSource) ?? parserSource;

@@ -1037,7 +1037,7 @@ if [ -w "$target_dir" ]; then
   install_bins "$target_dir"
 elif [ "${NEMOCLAW_NON_INTERACTIVE:-}" = "1" ] || [ ! -t 0 ]; then
   target_dir="${XDG_BIN_HOME:-$HOME/.local/bin}"
-  mkdir -p "$target_dir"
+  (umask g-w,o-w && mkdir -p "$target_dir")
   install_bins "$target_dir"
   warn "Installed openshell to $target_dir/openshell (user-local path)"
   warn "For future shells, run: export PATH=\"$target_dir:\$PATH\""
