@@ -198,6 +198,7 @@ export async function prepareNativeSelection(input: {
 }): Promise<{
   attachment?: NativeProviderAttachment;
   attachmentChanged: boolean;
+  providerChanged?: boolean;
   endpointUrl?: string;
 }> {
   if (!input.selectingNative) return { attachmentChanged: false };
@@ -251,17 +252,18 @@ export async function prepareNativeSelection(input: {
     hostedNativeProvider(input.provider, definition.endpointUrl)?.endpoint,
   );
   const target = { kind: "named", gatewayName: input.gatewayName } as const;
+  // Hosted model selection must not rotate a gateway-shared provider credential.
+  // Hermes host credentials use NOUS_API_KEY; OPENAI_API_KEY is its injection slot.
+  const credentialValue =
+    input.expectedAttachment && !isNativeNvidiaProvider(input.provider)
+      ? null
+      : input.deps.resolveCredentialValue(
+          input.provider === "hermes-provider" ? "NOUS_API_KEY" : definition.credentialEnv,
+        ) || null;
   const ensured = await lifecycle.ensureNativeProvider({
     adapter: input.deps.providerAdapter,
     target,
-    // Hosted model selection must not rotate a gateway-shared provider credential.
-    // Hermes host credentials use NOUS_API_KEY; OPENAI_API_KEY is its injection slot.
-    credentialValue:
-      input.expectedAttachment && !isNativeNvidiaProvider(input.provider)
-        ? null
-        : input.deps.resolveCredentialValue(
-            input.provider === "hermes-provider" ? "NOUS_API_KEY" : definition.credentialEnv,
-          ) || null,
+    credentialValue,
     ...(input.expectedAttachment ? { expected: input.expectedAttachment } : {}),
     ...(input.expectedAttachment && !authority.read(input.gatewayName)
       ? { recordedSandboxName: input.sandboxName }
@@ -285,6 +287,7 @@ export async function prepareNativeSelection(input: {
   return {
     attachment: attached.receipt,
     attachmentChanged: attached.changed,
+    providerChanged: !input.expectedAttachment || credentialValue !== null,
     endpointUrl: attached.receipt.endpointUrl,
   };
 }

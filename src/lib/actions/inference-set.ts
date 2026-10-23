@@ -1070,6 +1070,20 @@ function observeInferenceRouteForSelection(input: {
   return observeInferenceRouteBeforeMutation(input.deps, input.gatewayName);
 }
 
+function sharedInferenceRouteChanged(
+  nativeProvider: boolean,
+  previous: OpenShellInferenceRouteObservation,
+  provider: string,
+  model: string,
+): boolean {
+  if (nativeProvider) return false;
+  return (
+    previous.state === "unconfigured" ||
+    previous.route.provider !== provider ||
+    previous.route.model !== model
+  );
+}
+
 function providerBackedRouteLacksRollbackTarget(input: {
   nativeProvider: boolean;
   directProviderBinding: boolean;
@@ -2088,12 +2102,15 @@ async function runInferenceSetWithoutHostLock(
         patched.changed,
         retryingOpenClawConfigSync,
         appliedProvider,
-        rollbackRoute?.provider !== provider,
-        rollbackRoute?.model !== model,
+        Boolean(nativeSelection.providerChanged),
+        nativeAttachmentChanged,
+        nativeLocalAttachmentChanged,
+        sharedInferenceRouteChanged(selectingNative, preMutationRoute, provider, model),
         previousProvider !== provider,
         previousModel !== model,
         previousInferenceApi !== preferredInferenceApi,
         (entry.endpointUrl ?? null) !== (registryMetadata.endpointUrl ?? null),
+        (entry.credentialEnv ?? null) !== (registryMetadata.credentialEnv ?? null),
       ],
       expectedGatewayName,
     );
