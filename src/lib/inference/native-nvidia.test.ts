@@ -333,7 +333,9 @@ describe("native NVIDIA OpenShell provider", () => {
         target,
         credentialValue: "opaque-test-secret",
       }),
-    ).rejects.toThrow(/already exists without a matching NemoClaw ownership receipt/u);
+    ).rejects.toThrow(
+      /already exists without a matching NemoClaw ownership receipt\. No provider was changed\. An earlier installation .* remove it with 'openshell provider delete -g nemoclaw nemoclaw-nvidia-prod-v1', then run onboarding again\./u,
+    );
     expect(updateProvider).not.toHaveBeenCalled();
     expect(attachProvider).not.toHaveBeenCalled();
     expect(providerAdapter.ensureProviderPolicyComposition).not.toHaveBeenCalled();

@@ -28,6 +28,19 @@ export class NativeProviderError extends Error {
   }
 }
 
+/** Refuse a provider that has no NemoClaw receipt, and name the command that clears it. */
+export function unownedNativeProviderMessage(
+  providerName: string,
+  target: OpenShellGatewayTarget,
+): string {
+  const gatewayFlag = target.kind === "named" ? ` -g ${target.gatewayName}` : "";
+  return [
+    `OpenShell provider '${providerName}' already exists without a matching NemoClaw ownership receipt. No provider was changed.`,
+    "An earlier installation can leave this provider on the gateway after its NemoClaw state is removed.",
+    `If no sandbox uses it, remove it with 'openshell provider delete${gatewayFlag} ${providerName}', then run onboarding again.`,
+  ].join(" ");
+}
+
 function assertExpectedProfile(
   profile: NativeProviderProfile,
   expected?: NativeProviderAttachment,
@@ -222,9 +235,7 @@ export async function ensureNativeProvider(input: {
   if (before) {
     const receipt = nativeProviderAttachmentFromMetadata(before, profile);
     if (!input.expected) {
-      throw new NativeProviderError(
-        `OpenShell provider '${profile.providerName}' already exists without a matching NemoClaw ownership receipt. No provider was changed.`,
-      );
+      throw new NativeProviderError(unownedNativeProviderMessage(profile.providerName, target));
     }
     if (input.expected && input.expected.providerId !== receipt.providerId) {
       throw new NativeProviderError(
