@@ -17,7 +17,10 @@ import {
 import { testTimeout } from "../../helpers/timeouts";
 import { withLegacyMessagingPlanEnvDirect } from "../../messaging-plan-test-helper";
 
-import { createSlackRemediationFixture } from "../../support/slack-remediation-fixture";
+import {
+  createSlackRemediationFixture,
+  writeSlackBundledParserFixture,
+} from "../../support/slack-remediation-fixture";
 
 import { officialPluginInspectionShell } from "./official-plugin-inspection-fixture";
 
@@ -255,6 +258,14 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
             .update(fs.readFileSync(path.join(fixture.proxyAddrDirectory, "index.js")))
             .digest("hex"),
         ).toBe("aa7efd29bbd61cbcc1bdafde9e674db28ead077864f33bfad3cdd19bb5a3778c");
+        const dependencies = path.dirname(fixture.proxyAddrDirectory);
+        expect(
+          JSON.parse(fs.readFileSync(path.join(dependencies, "body-parser/package.json"), "utf8"))
+            .version,
+        ).toBe("2.4.0");
+        expect(
+          JSON.parse(fs.readFileSync(path.join(dependencies, "qs/package.json"), "utf8")).version,
+        ).toBe("6.16.1");
         expect(fs.readFileSync(fixture.trace, "utf8")).toBe("installed\ninspected-unpatched\n");
         expect(fs.readdirSync(fixture.env.TMPDIR)).toEqual([]);
       } finally {
@@ -345,8 +356,11 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
         });
         expect(fs.readdirSync(fixture.env.TMPDIR)).toEqual([]);
         expect(fs.readdirSync(path.dirname(fixture.proxyAddrDirectory)).sort()).toEqual([
+          "body-parser",
           "express",
+          "iconv-lite",
           "proxy-addr",
+          "qs",
         ]);
       } finally {
         fs.rmSync(fixture.root, { recursive: true, force: true });
@@ -401,6 +415,10 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
           fixture,
           failRestore ? preservedPackage : fixture.proxyAddrDirectory,
         );
+        expect(
+          JSON.parse(fs.readFileSync(path.join(packageParent, "body-parser/package.json"), "utf8"))
+            .version,
+        ).toBe("2.3.0");
         expect(result.stderr).toContain(
           failRestore
             ? "OpenClaw dependency 'proxy-addr' could not be replaced."
@@ -417,7 +435,9 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
         expect(result.stderr).not.toContain(fixture.root);
         expect(result.stderr).not.toContain("rename-failure-canary");
         expect(fs.readdirSync(packageParent).sort()).toEqual(
-          failRestore ? ["express", recoveryDirectories[0]!].sort() : ["express", "proxy-addr"],
+          failRestore
+            ? ["body-parser", "express", "iconv-lite", "qs", recoveryDirectories[0]!].sort()
+            : ["body-parser", "express", "iconv-lite", "proxy-addr", "qs"],
         );
       } finally {
         fs.rmSync(fixture.root, { recursive: true, force: true });
@@ -871,7 +891,7 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
       JSON.stringify({
         name: "express",
         version: "5.2.1",
-        dependencies: { "proxy-addr": "^2.0.7" },
+        dependencies: { "body-parser": "^2.2.1", "proxy-addr": "^2.0.7" },
         license: "MIT",
         engines: { node: ">= 18" },
       }),
@@ -887,6 +907,7 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
       }),
     );
     fs.writeFileSync(path.join(dependencyDirectory, "index.js"), "vulnerable-canary");
+    writeSlackBundledParserFixture(packageDirectory);
     const tracePath = path.join(tmp, "openclaw.trace");
     const inspection = JSON.stringify({
       plugin: { id: "slack", trustedOfficialInstall: true },
