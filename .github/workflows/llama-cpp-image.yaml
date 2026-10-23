@@ -16,6 +16,7 @@ on:
       - "test/inference/llama/llama-cpp-image.test.ts"
       - "test/inference/llama/llama-cpp-image-publication-evidence.test.ts"
       - "test/inference/llama/llama-cpp-image-workflow.test.ts"
+      - "test/inference/llama/llama-cpp-image-signatures.test.ts"
       - "src/lib/onboard/runtime-provider/docker-llama-cpp-private-bridge*.ts"
       - "src/lib/onboard/runtime-provider/docker-operation-authority.ts"
       - "test/package-contract/inference/llama-cpp-native-cancellation*.ts"
@@ -888,9 +889,40 @@ jobs:
       retention_days: ${{ fromJSON(needs.config.outputs.publication_receipt_retention_days) }}
       sbom_format: ${{ needs.config.outputs.publication_sbom_format }}
 
+  verify-legacy-candidate:
+    name: Verify llama.cpp with Cosign 2
+    needs: [config, publication-gate, assemble-candidate, attest-candidate]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions: {}
+    steps:
+      - name: Verify legacy signature anonymously
+        shell: bash
+        env:
+          CERTIFICATE_IDENTITY: ${{ needs.publication-gate.outputs.signature_identity }}
+          CERTIFICATE_OIDC_ISSUER: ${{ needs.config.outputs.publication_signature_issuer }}
+          REFERENCE: ${{ needs.assemble-candidate.outputs.reference }}
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            ghcr.io/sigstore/cosign/cosign@sha256:68839b7f13dac5a6744a5d8818e984dd39183374e37855c19e14d623d9bc9037 \
+            verify \
+            --certificate-identity "$CERTIFICATE_IDENTITY" \
+            --certificate-oidc-issuer "$CERTIFICATE_OIDC_ISSUER" \
+            "$REFERENCE" > signature-verification-cosign2.json 2> signature-verification-cosign2.log
+
+      - name: Retain Cosign 2 verification evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: llama-cpp-legacy-verification-${{ github.run_id }}-${{ github.run_attempt }}
+          path: signature-verification-cosign2.*
+          if-no-files-found: error
+          retention-days: ${{ fromJSON(needs.config.outputs.publication_receipt_retention_days) }}
+
   verify-candidate:
     name: Verify evidence and emit publication receipt
-    needs: [config, publication-gate, assemble-candidate, scan-candidate, attest-candidate]
+    needs: [config, publication-gate, assemble-candidate, scan-candidate, attest-candidate, verify-legacy-candidate]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
