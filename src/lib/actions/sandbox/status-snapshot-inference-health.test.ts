@@ -8,7 +8,7 @@ import type { ProviderHealthStatus } from "../../inference/health";
 import type { SandboxEntry } from "../../state/registry";
 import type { SandboxInferenceInvocationResult } from "./inference-invocation-probe";
 import type { SandboxInferenceRouteHealth } from "./inference-route-health";
-import { collectSandboxStatusSnapshot } from "./status-snapshot";
+import { collectSandboxStatusSnapshot, isInferenceHealthFailing } from "./status-snapshot";
 import { probeSandboxInferenceInvocation } from "./inference-invocation-probe";
 import { recordingProbeShell } from "../../../../test/helpers/native-local-probe-shell";
 import { nativeLocalTestReceipt } from "../../../../test/helpers/inference-set";
@@ -18,6 +18,20 @@ import { nativeLocalTestReceipt } from "../../../../test/helpers/inference-set";
 // exported). status-flow.test.ts mocks collectSandboxStatusSnapshot wholesale
 // and never exercises this code, so it never proves okLabel is actually set
 // in production wiring rather than merely respected if present (#6846).
+it("keeps degraded inference nonfatal while unverified and unhealthy routes fail (#13616)", () => {
+  const health: ProviderHealthStatus = {
+    ok: true,
+    probed: false,
+    degraded: true,
+    providerLabel: "Inference route",
+    endpoint: "https://integrate.api.nvidia.com/v1/chat/completions",
+    detail: "NVIDIA upstream is temporarily unavailable",
+  };
+  expect(isInferenceHealthFailing(health)).toBe(false);
+  expect(isInferenceHealthFailing({ ...health, degraded: undefined })).toBe(true);
+  expect(isInferenceHealthFailing({ ...health, ok: false })).toBe(true);
+});
+
 function snapshotDeps(
   gateway: SandboxInferenceRouteHealth | null,
   providerHealth: ProviderHealthStatus | null = null,
@@ -54,6 +68,61 @@ function snapshotDeps(
 }
 
 describe("collectSandboxStatusSnapshot inference route health", () => {
+  it("keeps exhausted native NVIDIA HTTP 500 health degraded and nonfatal (#13616)", async () => {
+    const attachment = {
+      schemaVersion: 1,
+      profileId: "nemoclaw-nvidia-inference-v1",
+      providerName: "nemoclaw-nvidia-prod-v1",
+      providerId: "owned-provider-id",
+    } as const;
+    const invocation: SandboxInferenceInvocationResult = {
+      ok: false,
+      detail: "sandbox inference invocation probe returned HTTP 500",
+      httpStatus: 500,
+    };
+    const options = snapshotDeps(null, null, invocation, {
+      gatewayName: "nemoclaw",
+      provider: "nvidia-prod",
+      nativeNvidiaProviderAttachment: attachment,
+    });
+    const verifyNativeNvidiaProviderAttachmentImpl = vi.fn(async () => undefined);
+    const probeSandboxInferenceInvocationImpl = vi.fn(async () => invocation);
+    const probeSandboxInferenceGatewayHealthImpl = vi.fn(async () => null);
+    const delayInferenceRecoveryProbe = vi.fn(async () => undefined);
+    const snapshot = await collectSandboxStatusSnapshot("alpha", {
+      ...options,
+      deps: {
+        ...options.deps,
+        verifyNativeNvidiaProviderAttachmentImpl,
+        probeSandboxInferenceInvocationImpl,
+        probeSandboxInferenceGatewayHealthImpl,
+        delayInferenceRecoveryProbe,
+      },
+    });
+
+    expect(verifyNativeNvidiaProviderAttachmentImpl).toHaveBeenCalledWith(
+      expect.objectContaining({
+        gatewayName: "nemoclaw",
+        sandboxName: "alpha",
+        expected: attachment,
+      }),
+    );
+    expect(probeSandboxInferenceGatewayHealthImpl).not.toHaveBeenCalled();
+    expect(probeSandboxInferenceInvocationImpl).toHaveBeenCalledTimes(3);
+    expect(probeSandboxInferenceInvocationImpl).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "nvidia-prod",
+        model: "nvidia/nemotron",
+        nativeProvider: true,
+      }),
+      {},
+      95_000,
+    );
+    expect(delayInferenceRecoveryProbe).toHaveBeenCalledTimes(2);
+    expect(snapshot.inferenceHealth).toMatchObject({ ok: true, probed: false, degraded: true });
+    expect(isInferenceHealthFailing(snapshot.inferenceHealth)).toBe(false);
+  });
+
   it.each([true, false])(
     "reports native local attachment health without querying the shared route: %s (#12558)",
     async (attached) => {
@@ -852,7 +921,7 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
   // Every transient status must repeat the whole probe pair, not just the
   // inference request: a retry that skipped the route probe could report a
   // served request against a route it never rechecked.
-  it.each([429, 502, 503, 504])(
+  it.each([429, 500, 502, 503, 504])(
     "serves a Ready managed sandbox after one transient HTTP %i inference request (#10709)",
     async (httpStatus) => {
       const healthy: SandboxInferenceRouteHealth = {
@@ -1049,15 +1118,6 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
         ok: false as const,
         detail: "sandbox inference invocation probe returned HTTP 404",
         httpStatus: 404,
-      },
-      failureLabel: "unhealthy",
-    },
-    {
-      label: "internal error",
-      invocation: {
-        ok: false as const,
-        detail: "sandbox inference invocation probe returned HTTP 500",
-        httpStatus: 500,
       },
       failureLabel: "unhealthy",
     },

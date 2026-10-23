@@ -392,7 +392,56 @@ describe("buildSandboxInferenceRouteHealth (#10080)", () => {
 });
 
 describe("transient inference invocation failures", () => {
-  it.each([429, 502, 503, 504])(
+  it.each([429, 500, 503])(
+    "reports NVIDIA HTTP %i as degraded after route verification (#13616)",
+    (httpStatus) => {
+      const result = buildSandboxInferenceRouteHealth(
+        null,
+        null,
+        {
+          ok: false,
+          detail: `sandbox inference invocation probe returned HTTP ${httpStatus}`,
+          httpStatus,
+        },
+        { provider: "nvidia-prod", nativeProvider: true, model: "fixture-model" },
+      );
+      expect(result).toMatchObject({ ok: true, probed: false, degraded: true });
+      expect(result.detail).toContain("NVIDIA upstream is temporarily unavailable");
+    },
+  );
+
+  it.each([401, 403, 404])("keeps NVIDIA HTTP %i unhealthy (#13616)", (httpStatus) => {
+    const result = buildSandboxInferenceRouteHealth(
+      null,
+      null,
+      { ok: false, detail: `HTTP ${httpStatus}`, httpStatus },
+      { provider: "nvidia-prod", nativeProvider: true, model: "fixture-model" },
+    );
+    expect(result.ok).toBe(false);
+    expect(result.degraded).toBeUndefined();
+  });
+
+  it("does not hide a denied host credential behind a transient NVIDIA reply (#13616)", () => {
+    const result = buildSandboxInferenceRouteHealth(
+      null,
+      {
+        ok: false,
+        probed: true,
+        providerLabel: "NVIDIA Endpoints",
+        endpoint: "https://integrate.api.nvidia.com/v1/chat/completions",
+        detail: "host credential rejected",
+        failureLabel: "unauthorized",
+      },
+      { ok: false, detail: "HTTP 500", httpStatus: 500 },
+      { provider: "nvidia-prod", nativeProvider: true, model: "fixture-model" },
+    );
+    expect(result.ok).toBe(false);
+    expect(result.degraded).toBeUndefined();
+    expect(result.subprobes).toContainEqual(
+      expect.objectContaining({ failureLabel: "unauthorized" }),
+    );
+  });
+  it.each([429, 500, 502, 503, 504])(
     "treats HTTP %i as a transient inference request failure (#10709)",
     (httpStatus) => {
       expect(
@@ -405,7 +454,7 @@ describe("transient inference invocation failures", () => {
     },
   );
 
-  it.each([400, 401, 403, 404, 405, 500, 501])(
+  it.each([400, 401, 403, 404, 405, 501])(
     "treats HTTP %i as a settled inference request failure (#10709)",
     (httpStatus) => {
       expect(
@@ -430,6 +479,17 @@ describe("transient inference invocation failures", () => {
         httpStatus: 200,
       }),
     ).toBe(false);
+  });
+
+  it("retries only a curl-confirmed timeout without an HTTP response (#13616)", () => {
+    expect(
+      isTransientInferenceInvocationFailure({
+        ok: false,
+        detail: "timed out",
+        httpStatus: null,
+        timedOut: true,
+      }),
+    ).toBe(true);
   });
 
   it("treats a request that reached no HTTP status as a settled failure (#10709)", () => {
