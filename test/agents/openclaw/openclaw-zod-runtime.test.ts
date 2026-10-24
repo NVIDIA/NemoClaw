@@ -3,11 +3,15 @@
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, it } from "vitest";
-import { remediateReviewedOpenClawPluginArchive } from "../../../scripts/lib/openclaw-npm-remediation.mts";
+import {
+  remediateInstalledOfficialOpenClawPlugin,
+  remediateReviewedOpenClawPluginArchive,
+} from "../../../scripts/lib/openclaw-npm-remediation.mts";
 import { packReviewedNpmArchive } from "../../../scripts/lib/reviewed-npm-archive.mts";
 
 const REPO_ROOT = path.join(import.meta.dirname, "../../..");
@@ -37,9 +41,9 @@ for (const sdk of modules) {
 describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_ZOD_HARNESS !== "1")(
   "OpenClaw Discord reviewed Zod runtime",
   () => {
-    it(
-      "parses SDK defaults through patched Zod in both module formats",
-      () => {
+    it.each(["repacked archive", "official install"])(
+      "parses SDK defaults through patched Zod in both module formats for the %s",
+      (source) => {
         const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-discord-zod-runtime-"));
         try {
           const config = JSON.parse(
@@ -70,14 +74,24 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_ZOD_HARNESS !== "1")(
             tarballUrl: reviewed.tarballUrl,
             tempDirectory: workspace,
           });
-          const patched = remediateReviewedOpenClawPluginArchive({
-            archivePath: archive.archivePath,
-            env,
-            packageSpec: reviewed.packageSpec,
-            workingDirectory: archive.rootDirectory,
-          });
-          assert.equal(patched.remediated, true);
-          const runtime = path.join(workspace, "runtime");
+          const patched =
+            source === "repacked archive"
+              ? remediateReviewedOpenClawPluginArchive({
+                  archivePath: archive.archivePath,
+                  env,
+                  packageSpec: reviewed.packageSpec,
+                  workingDirectory: archive.rootDirectory,
+                })
+              : undefined;
+          const stateRoot = path.join(workspace, "state");
+          const runtime =
+            source === "official install"
+              ? path.join(
+                  stateRoot,
+                  "npm/projects",
+                  `openclaw-discord-${createHash("sha256").update("@openclaw/discord").digest("hex").slice(0, 10)}`,
+                )
+              : path.join(workspace, "runtime");
           const installed = spawnSync(
             "npm",
             [
@@ -87,12 +101,35 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_ZOD_HARNESS !== "1")(
               "--ignore-scripts",
               "--no-audit",
               "--no-fund",
-              patched.archivePath,
+              patched?.archivePath ?? archive.archivePath,
             ],
             { encoding: "utf8", env, timeout: RUNTIME_TIMEOUT_MS },
           );
           assert.equal(installed.status, 0, installed.stderr || installed.stdout);
           const pluginRoot = path.join(runtime, "node_modules/@openclaw/discord");
+          const afterInstall =
+            source === "official install"
+              ? () => {
+                  remediateInstalledOfficialOpenClawPlugin({
+                    archivePath: archive.archivePath,
+                    env,
+                    packageSpec: PACKAGE_SPEC,
+                    packageDirectory: pluginRoot,
+                    trustedStateRoot: stateRoot,
+                    workingDirectory: archive.rootDirectory,
+                  });
+                  assert.equal(
+                    JSON.parse(
+                      fs.readFileSync(
+                        path.join(pluginRoot, "node_modules/undici/package.json"),
+                        "utf8",
+                      ),
+                    ).version,
+                    "8.12.2",
+                  );
+                }
+              : () => undefined;
+          afterInstall();
           const probed = spawnSync(
             process.execPath,
             ["--input-type=module", "--eval", PROBE, pluginRoot],

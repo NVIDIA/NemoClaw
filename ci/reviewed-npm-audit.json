@@ -159,7 +159,7 @@
       "integrity": "sha512-M6C7UsnX815nv26qBJFYGe6aGzv+ftZLRzV6S9oRXUtXg2Yn67eVntpssT94kgkquKVSeUxerUg0j1ONp4WYQg==",
       "tarballUrl": "https://registry.npmjs.org/openclaw/-/openclaw-2026.9.2.tgz",
       "directory": "agents/openclaw/openclaw-runtime",
-      "lockSha256": "729b3fdd2ee8adf491d31e0aa27ac54520c088dd2ea7a416e97a22dc533f99be",
+      "lockSha256": "4fe0de9e31190d30afbd811dae7aaddb98960dd81794443629d2a32f028a7f11",
       "replacement": {
         "label": "OpenClaw 2026.9.5 locked runtime graph",
         "packageSpec": "openclaw@2026.9.5",

@@ -17,17 +17,20 @@
     "axios": "1.19.0",
     "body-parser": "2.4.0",
     "https-proxy-agent": "5.0.1",
+    "nemoclaw-openclaw-cache-msal5": "npm:@azure/msal-node@5.6.0",
     "nemoclaw-openclaw-override-fast-uri": "npm:fast-uri@4.1.4",
     "nemoclaw-openclaw-override-ip-address": "npm:ip-address@10.5.0",
     "nemoclaw-openclaw-override-protobufjs": "npm:protobufjs@8.7.2",
     "nemoclaw-openclaw-override-qs": "npm:qs@6.15.3",
     "nemoclaw-openclaw-override-uuid": "npm:uuid@14.0.2",
     "nemoclaw-openclaw-override-zod": "npm:zod@4.6.6",
+    "nemoclaw-openclaw-override-undici7": "npm:undici@7.30.1",
     "openclaw": "2026.9.2",
     "qs": "6.16.1",
-    "undici": "8.10.2"
+    "undici": "8.12.2"
   },
   "overrides": {
+    "@azure/msal-node": "7.1.0",
     "@modelcontextprotocol/sdk": "1.32.0",
     "@openclaw/discord@2026.9.2": {
       "@discord/embedded-app-sdk@2.5.0": {

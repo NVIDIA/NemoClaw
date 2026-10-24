@@ -78,6 +78,7 @@ describe("OpenClaw managed messaging offline image build", () => {
     };
 
     expect(runtimeManifest.overrides).toEqual({
+      "@azure/msal-node": "7.1.0",
       "@modelcontextprotocol/sdk": "1.32.0",
       "proxy-addr": "2.0.8",
       "@openclaw/discord@2026.9.2": {
