@@ -1,0 +1,329 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>NemoClaw Native Windows · Setup</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="masthead">
+        <img src="./assets/nvidia.svg" alt="NVIDIA" />
+        <span class="divider" aria-hidden="true"></span>
+        <strong>NemoClaw</strong>
+        <span class="preview">Native Windows ARM64 preview</span>
+      </header>
+
+      <nav class="steps" aria-label="Setup progress">
+        <button class="step active" data-step-target="1" type="button"><span>1</span>Agent</button>
+        <button class="step" data-step-target="2" type="button"><span>2</span>Inference</button>
+        <button class="step" data-step-target="3" type="button"><span>3</span>Experience</button>
+        <button class="step" data-step-target="4" type="button"><span>4</span>Review</button>
+      </nav>
+
+      <form id="onboarding-form">
+        <section class="panel active" data-step="1">
+          <p class="eyebrow">Choose your agent</p>
+          <h1>Start with the experience that fits your work.</h1>
+          <p class="lead">
+            NemoClaw places each qualified agent behind native OpenShell and Microsoft MXC
+            isolation. You can add another sandbox later.
+          </p>
+
+          <div class="agent-grid" role="radiogroup" aria-label="Agent runtime">
+            <button
+              class="agent-card selected"
+              type="button"
+              role="radio"
+              aria-checked="true"
+              data-agent="openclaw"
+            >
+              <span class="agent-mark openclaw"><img src="./assets/openclaw.png" alt="" /></span>
+              <span class="agent-copy">
+                <span class="card-heading"
+                  >OpenClaw <span class="badge supported">Candidate</span></span
+                >
+                <span class="vendor">OpenClaw</span>
+                <span class="description"
+                  >Gateway agent with a polished browser Control UI and plugin ecosystem.</span
+                >
+              </span>
+            </button>
+
+            <button
+              class="agent-card"
+              type="button"
+              role="radio"
+              aria-checked="false"
+              data-agent="hermes"
+            >
+              <span class="agent-mark hermes"><img src="./assets/hermes.png" alt="" /></span>
+              <span class="agent-copy">
+                <span class="card-heading"
+                  >Hermes Agent <span class="badge supported">Candidate</span></span
+                >
+                <span class="vendor">Nous Research</span>
+                <span class="description"
+                  >Native terminal agent with memory and skills. Optional PTY and cryptographic
+                  integrations remain outside this experimental slice.</span
+                >
+              </span>
+            </button>
+
+            <button
+              class="agent-card"
+              type="button"
+              role="radio"
+              aria-checked="false"
+              data-agent="langchain-deepagents-code"
+            >
+              <span class="agent-mark deepagents"
+                ><img src="./assets/deepagents.png" alt=""
+              /></span>
+              <span class="agent-copy">
+                <span class="card-heading"
+                  >Deep Agents Code <span class="badge supported">Candidate</span></span
+                >
+                <span class="vendor">LangChain</span>
+                <span class="description"
+                  >Authentic non-interactive coding-agent terminal surface with a native ARM64
+                  dependency subset.</span
+                >
+              </span>
+            </button>
+
+            <button
+              class="agent-card experimental"
+              type="button"
+              role="radio"
+              aria-checked="false"
+              data-agent="pi"
+            >
+              <span class="agent-mark pi"><img src="./assets/pi.svg" alt="" /></span>
+              <span class="agent-copy">
+                <span class="card-heading"
+                  >Pi <span class="badge">Experimental</span>
+                  <span class="badge supported">Candidate</span></span
+                >
+                <span class="vendor">Pi</span>
+                <span class="description"
+                  >Real Pi terminal runtime with the package's Windows ARM64 native clipboard
+                  component.</span
+                >
+              </span>
+            </button>
+
+            <button
+              class="agent-card experimental"
+              type="button"
+              role="radio"
+              aria-checked="false"
+              data-agent="nemocua"
+            >
+              <span class="agent-mark nemocua"><img src="./assets/nemocua.png" alt="" /></span>
+              <span class="agent-copy">
+                <span class="card-heading"
+                  >NemoCUA <span class="badge">Experimental</span>
+                  <span class="badge supported">Candidate</span></span
+                >
+                <span class="vendor">NVIDIA</span>
+                <span class="description"
+                  >Native experimental browser harness using a visible Edge surface and
+                  MXC-contained agent process.</span
+                >
+              </span>
+            </button>
+          </div>
+        </section>
+
+        <section class="panel" data-step="2">
+          <p class="eyebrow">Choose inference</p>
+          <h1>Connect the model you trust.</h1>
+          <p class="lead">
+            NemoClaw validates the connection details before launch. Credentials are protected by
+            your Windows account and never written to Windows Installer logs.
+          </p>
+          <div class="qualification-note" id="qualification-note" hidden>
+            <strong>PR qualification mode</strong>
+            This run uses a deterministic loopback endpoint so the authentic agent and model
+            transport can be tested without exposing a provider credential.
+          </div>
+          <div class="choice-grid" role="radiogroup" aria-label="Inference provider">
+            <button
+              class="choice selected"
+              type="button"
+              role="radio"
+              aria-checked="true"
+              data-inference="nvidia"
+            >
+              <strong>NVIDIA hosted inference</strong
+              ><span>Fastest path to an NVIDIA-hosted model.</span><em>Recommended</em>
+            </button>
+            <button
+              class="choice"
+              type="button"
+              role="radio"
+              aria-checked="false"
+              data-inference="openrouter"
+            >
+              <strong>OpenRouter</strong><span>Choose from a broad hosted model catalog.</span>
+            </button>
+            <button
+              class="choice"
+              type="button"
+              role="radio"
+              aria-checked="false"
+              data-inference="compatible"
+            >
+              <strong>Compatible endpoint</strong
+              ><span>Use an OpenAI-compatible HTTPS endpoint.</span>
+            </button>
+            <button
+              class="choice"
+              type="button"
+              role="radio"
+              aria-checked="false"
+              data-inference="local"
+            >
+              <strong>Local compatible endpoint</strong
+              ><span>Experimental: connect to an already-running native endpoint.</span>
+            </button>
+          </div>
+          <section class="configuration-card" id="inference-configuration">
+            <div class="configuration-heading">
+              <div>
+                <p class="eyebrow">Connection details</p>
+                <h2 id="provider-heading">NVIDIA hosted inference</h2>
+              </div>
+              <span class="secure-chip">Protected by Windows</span>
+            </div>
+            <div class="field-grid">
+              <label class="field span-two" id="endpoint-field">
+                <span>OpenAI-compatible endpoint</span>
+                <input
+                  id="endpoint"
+                  name="endpoint"
+                  type="url"
+                  inputmode="url"
+                  spellcheck="false"
+                  value="https://integrate.api.nvidia.com/v1"
+                />
+                <small id="endpoint-help">The reviewed NVIDIA API endpoint.</small>
+              </label>
+              <label class="field">
+                <span>Model</span>
+                <input
+                  id="model"
+                  name="model"
+                  type="text"
+                  spellcheck="false"
+                  value="nvidia/nemotron-3-super-120b-a12b"
+                />
+              </label>
+              <label class="field" id="credential-field">
+                <span id="credential-label">NVIDIA API key</span>
+                <input
+                  id="credential"
+                  name="credential"
+                  type="password"
+                  autocomplete="off"
+                  spellcheck="false"
+                  placeholder="nvapi-…"
+                />
+                <small id="credential-help"
+                  >Stored for your Windows account in Credential Manager; never in MSI logs.</small
+                >
+              </label>
+            </div>
+            <p class="field-error" id="inference-error" role="alert" hidden></p>
+          </section>
+        </section>
+
+        <section class="panel" data-step="3">
+          <p class="eyebrow">Shape the experience</p>
+          <h1>Begin simple. Add integrations when you need them.</h1>
+          <p class="lead">
+            These choices mirror the core onboarding decisions and remain editable after setup.
+          </p>
+          <div class="toggle-list">
+            <label
+              ><span
+                ><strong>Open the agent when setup finishes</strong
+                ><small>Launch the selected agent surface immediately.</small></span
+              ><input type="checkbox" checked disabled
+            /></label>
+            <input type="hidden" name="launch" value="on" />
+            <label
+              ><span
+                ><strong>Web search</strong
+                ><small>Not enabled in this native preview yet.</small></span
+              ><input type="checkbox" name="webSearch" disabled
+            /></label>
+            <label
+              ><span
+                ><strong>Messaging channels</strong
+                ><small>Not enabled in this native preview yet.</small></span
+              ><input type="checkbox" name="messaging" disabled
+            /></label>
+            <label
+              ><span
+                ><strong>Advanced diagnostics</strong
+                ><small>Always-on failure logs are used for this preview.</small></span
+              ><input type="checkbox" name="diagnostics" disabled
+            /></label>
+          </div>
+        </section>
+
+        <section class="panel" data-step="4">
+          <p class="eyebrow">Review</p>
+          <h1>Ready to launch NemoClaw.</h1>
+          <p class="lead">
+            Your runtime stays under Program Files. Agent state, credentials, and workspaces stay in
+            user-owned data directories.
+          </p>
+          <dl class="review">
+            <div>
+              <dt>Agent</dt>
+              <dd id="review-agent">OpenClaw</dd>
+            </div>
+            <div>
+              <dt>Inference</dt>
+              <dd id="review-inference">NVIDIA hosted inference</dd>
+            </div>
+            <div>
+              <dt>Model</dt>
+              <dd id="review-model">nvidia/nemotron-3-super-120b-a12b</dd>
+            </div>
+            <div>
+              <dt>Credential</dt>
+              <dd id="review-credential">Windows Credential Manager</dd>
+            </div>
+            <div>
+              <dt>Isolation</dt>
+              <dd>OpenShell + Microsoft MXC ProcessContainer</dd>
+            </div>
+            <div>
+              <dt>Platform</dt>
+              <dd>Native Windows ARM64 · no WSL</dd>
+            </div>
+          </dl>
+          <div class="notice" id="experimental-notice" hidden>
+            <strong>Experimental runtime</strong>
+            This option is visible for evaluation and is not part of the supported native Windows
+            set yet.
+          </div>
+          <p class="error" id="submit-error" role="alert" hidden></p>
+        </section>
+
+        <footer class="actions">
+          <button class="secondary" id="back" type="button" disabled>Back</button>
+          <span class="privacy">No configuration secret is passed through MSI.</span>
+          <button class="primary" id="next" type="button">Continue</button>
+          <button class="primary" id="launch" type="submit" hidden>Finish &amp; launch</button>
+        </footer>
+      </form>
+    </main>
+    <script src="./app.ts"></script>
+  </body>
+</html>
