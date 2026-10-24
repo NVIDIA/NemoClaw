@@ -1,0 +1,253 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+name: Process Window
+on:
+  pull_request:
+    branches: [main, v1]
+    paths: ['tools/process-window/**', '.github/workflows/process-window.yaml']
+  push:
+    branches: [v1, process-window-data]
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: Guidance branch to analyze
+        type: choice
+        options: [v1, main]
+        default: v1
+      revision:
+        description: Optional commit or tag for an artifact-only comparison
+        type: string
+      mode:
+        description: Analyze sources or rebuild the committed mapping
+        type: choice
+        options: [analyze, build]
+        default: analyze
+      publish:
+        description: Commit the mapping and deploy Pages (requires publication enabled)
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: process-window-${{ github.event_name == 'pull_request' && github.event.pull_request.number || 'refresh' }}
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  test:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+      - name: Check the independent tool
+        working-directory: tools/process-window
+        run: |
+          npm ci --ignore-scripts
+          npm run check
+          npm test
+          npx playwright install --with-deps chromium
+          npm run test:browser
+
+  analyze:
+    if: >-
+      github.event_name != 'pull_request' && github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/process-window-data' || vars.PROCESS_WINDOW_REFRESH == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      branch: ${{ steps.select.outputs.branch }}
+      mode: ${{ steps.select.outputs.mode }}
+      data_sha: ${{ steps.select.outputs.data_sha }}
+      tool_sha: ${{ steps.tool.outputs.sha }}
+      publish: ${{ steps.select.outputs.publish }}
+      selected: ${{ steps.prepare.outputs.selected }}
+    steps:
+      - name: Select the run and current mapping
+        id: select
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          ENABLED: ${{ vars.PROCESS_WINDOW_PUBLISH }}
+        with:
+          script: |
+            const event = context.eventName;
+            const input = context.payload.inputs || {};
+            const build = context.ref === 'refs/heads/process-window-data' || input.mode === 'build';
+            const branch = build ? 'build' : event === 'release' ? 'main' : input.branch || 'v1';
+            const mode = build ? 'build' : event === 'release' ? 'release' : event === 'push' ? 'branch' : 'analyze';
+            const revision = event === 'release' ? `refs/tags/${context.payload.release.tag_name}` : input.revision || (event === 'push' ? context.sha : '');
+            const trusted = ['refs/heads/main', 'refs/heads/v1', 'refs/heads/process-window-data'].includes(context.ref) || event === 'release';
+            const publish = process.env.ENABLED === 'true' && trusted && !input.revision && (event !== 'workflow_dispatch' || input.publish === 'true');
+            let dataSha = '';
+            try { dataSha = (await github.rest.git.getRef({...context.repo, ref: 'heads/process-window-data'})).data.object.sha; }
+            catch (error) { if (error.status !== 404) throw error; }
+            for (const [key, value] of Object.entries({branch, mode, revision, publish, data_sha: dataSha})) core.setOutput(key, value);
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ (github.event_name == 'release' || github.ref == 'refs/heads/process-window-data') && 'main' || github.sha }}
+          path: controller
+          persist-credentials: false
+      - name: Record the tool revision
+        id: tool
+        working-directory: controller
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.select.outputs.data_sha != ''
+        with:
+          ref: ${{ steps.select.outputs.data_sha }}
+          path: state
+          persist-credentials: false
+      - name: Find the last successful analysis artifact for this branch
+        id: baseline
+        if: steps.select.outputs.mode != 'build'
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          BRANCH: ${{ steps.select.outputs.branch }}
+        with:
+          script: |
+            const runs = await github.rest.actions.listWorkflowRuns({...context.repo, workflow_id: 'process-window.yaml', status: 'success', per_page: 100});
+            for (const run of runs.data.workflow_runs) {
+              if (!['push', 'release', 'workflow_dispatch'].includes(run.event)) continue;
+              if (run.event !== 'release' && !['main', 'v1'].includes(run.head_branch)) continue;
+              const artifacts = await github.rest.actions.listWorkflowRunArtifacts({...context.repo, run_id: run.id});
+              if (artifacts.data.artifacts.some(a => a.name === `process-window-${process.env.BRANCH}` && !a.expired)) {
+                core.setOutput('run_id', run.id); break;
+              }
+            }
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        if: steps.baseline.outputs.run_id != ''
+        with:
+          name: process-window-${{ steps.select.outputs.branch }}
+          path: baseline
+          run-id: ${{ steps.baseline.outputs.run_id }}
+          github-token: ${{ github.token }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+      - name: Install the standalone tool
+        working-directory: controller/tools/process-window
+        run: npm ci --ignore-scripts
+      - name: Prepare the pinned configuration
+        id: prepare
+        env:
+          BRANCH: ${{ steps.select.outputs.branch }}
+          REVISION: ${{ steps.select.outputs.revision }}
+          MODE: ${{ steps.select.outputs.mode }}
+        run: |
+          mkdir -p state result
+          cd controller/tools/process-window
+          node --import tsx src/ci.ts prepare config.yaml "$GITHUB_WORKSPACE/source" "$GITHUB_WORKSPACE/state" "$GITHUB_WORKSPACE/result" "$BRANCH" "$REVISION" "$MODE" "$GITHUB_WORKSPACE/baseline/revision.json"
+      - name: Analyze repository guidance
+        if: steps.prepare.outputs.selected == 'true' && steps.select.outputs.mode != 'build'
+        working-directory: controller/tools/process-window
+        env:
+          PROCESS_WINDOW_API_KEY: ${{ secrets.PR_REVIEW_ADVISOR_API_KEY }}
+          BRANCH: ${{ steps.select.outputs.branch }}
+        run: node --import tsx src/entry.ts analyze "$GITHUB_WORKSPACE/result/config.yaml" "$BRANCH"
+      - name: Rebuild a manual mapping edit
+        if: steps.prepare.outputs.selected == 'true' && steps.select.outputs.mode == 'build'
+        working-directory: controller/tools/process-window
+        run: node --import tsx src/entry.ts build "$GITHUB_WORKSPACE/result/config.yaml"
+      - name: Collect validated mapping
+        if: steps.prepare.outputs.selected == 'true'
+        run: cp state/mapping.yaml result/mapping.yaml
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: steps.prepare.outputs.selected == 'true'
+        with:
+          name: process-window-${{ steps.select.outputs.branch }}
+          path: |
+            result/mapping.yaml
+            result/revision.json
+            result/site/
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    needs: analyze
+    if: needs.analyze.outputs.publish == 'true' && needs.analyze.outputs.selected == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.analyze.outputs.tool_sha }}
+          path: controller
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.analyze.outputs.data_sha || needs.analyze.outputs.tool_sha }}
+          path: state
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: process-window-${{ needs.analyze.outputs.branch }}
+          path: result
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+      - name: Install the publication helper
+        working-directory: controller/tools/process-window
+        run: npm ci --ignore-scripts
+      - name: Bundle the publication helper
+        working-directory: controller/tools/process-window
+        run: node_modules/.bin/esbuild src/publish.ts --bundle --platform=node --format=cjs --outfile="$RUNNER_TEMP/process-window-publish.cjs"
+      - name: Publish a signed mapping commit
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          EXPECTED: ${{ needs.analyze.outputs.data_sha }}
+          TOOL_SHA: ${{ needs.analyze.outputs.tool_sha }}
+          MODE: ${{ needs.analyze.outputs.mode }}
+          PUBLISH_MODULE: ${{ runner.temp }}/process-window-publish.cjs
+        with:
+          script: |
+            const fs = require('node:fs/promises');
+            const root = process.env.GITHUB_WORKSPACE;
+            if (process.env.MODE === 'build') {
+              const ref = await github.rest.git.getRef({...context.repo, ref:'heads/process-window-data'});
+              if (ref.data.object.sha !== process.env.EXPECTED) throw new Error('Mapping changed during build; rerun.');
+            } else {
+              let previous;
+              try { previous = await fs.readFile(root + '/state/mapping.yaml', 'utf8'); }
+              catch (error) { if (error.code !== 'ENOENT') throw error; }
+              const {publishMapping} = require(process.env.PUBLISH_MODULE);
+              const sha = await publishMapping(github, context.repo.owner + '/' + context.repo.repo,
+                'process-window-data', process.env.EXPECTED, process.env.TOOL_SHA,
+                root + '/result/mapping.yaml', previous);
+              core.info('Verified mapping commit: ' + sha);
+            }
+      - uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4
+        with:
+          path: result/site
+
+  deploy:
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy validated guidance browser
+        id: deployment
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4

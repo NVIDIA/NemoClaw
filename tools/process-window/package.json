@@ -1,0 +1,25 @@
+{
+  "name": "process-window",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "analyze": "tsx src/entry.ts analyze",
+    "build": "tsx src/entry.ts build",
+    "check": "tsc --noEmit",
+    "test": "tsx --test test/*.test.ts",
+    "test:browser": "tsx --test test/browser.spec.ts",
+    "assess": "tsx src/entry.ts assess",
+    "reassess": "tsx src/entry.ts reassess"
+  },
+  "dependencies": {
+    "yaml": "^2.8.1",
+    "zod": "^3.25.76",
+    "esbuild": "^0.25.10"
+  },
+  "devDependencies": {
+    "@types/node": "^22.18.0",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2",
+    "@playwright/test": "^1.55.1"
+  }
+}
