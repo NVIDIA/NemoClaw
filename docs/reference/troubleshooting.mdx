@@ -2321,9 +2321,10 @@ $$nemoclaw <sandbox> channels add <channel>
 $$nemoclaw <sandbox> channels remove <channel>
 ```
 
-`channels add` registers credentials with the OpenShell gateway and `channels remove` clears them.
-Both offer to rebuild the sandbox so the image reflects the new channel set.
-In non-interactive mode (`NEMOCLAW_NON_INTERACTIVE=1`, or any run without a terminal on stdin), the commands stage the change and leave the rebuild to a follow-up `$$nemoclaw <sandbox> rebuild`.
+For channels with OpenShell gateway credentials, `channels add` registers those credentials and `channels remove` removes them.
+When a channel change requires rebuilding, the command prompts to rebuild the sandbox.
+In non-interactive mode (`NEMOCLAW_NON_INTERACTIVE=1`, or any run without a terminal on stdin), it queues that required rebuild for `$$nemoclaw <sandbox> rebuild`.
+For absent WhatsApp removal and session-cleanup prerequisites, refer to [Manage Messaging Channels](../manage-sandboxes/messaging-channels/manage-messaging-channels#remove-a-channel).
 Review [Choose Messaging Channels](../manage-sandboxes/messaging-channels/choose-messaging-channels) for the supported channel IDs, prerequisites, and experimental status before enabling a channel.
 
 WeChat captures its bot token through a host-side QR scan during `$$nemoclaw onboard` or `channels add wechat`. You scan the iLink QR from WeChat on your phone and NemoClaw registers the captured token with the OpenShell gateway.

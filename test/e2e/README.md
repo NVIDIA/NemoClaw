@@ -88,14 +88,19 @@ The install refuses package removals, preserving the runner's Docker and contain
   on its finite API-service boundary before registry creation. The job selects a
   1024-task limit, disabled per-container cgroups, and the `crun` OCI runtime
   because `runc` cannot launch containers without separate cgroups. The pinned
-  setup action owns rendering these settings before service startup. Focused
-  containers inherit that boundary, and the live scenario verifies that the registry shares
-  its service cgroup with sufficient remaining headroom. Setup records service,
-  user, host, and cgroup headroom in `portable-podman-process-headroom.json`.
+  setup action creates the initial service configuration. The trusted E2E workflow
+  selects SHA-256-verified crun 1.28, writes its runtime mapping, and restarts
+  the service before candidate checkout. Rootless Podman may place the registry
+  in a sibling scope even with container cgroups disabled. After registry HTTP
+  readiness, the live scenario verifies a finite effective limit and at least
+  128 tasks of headroom across the registry's actual cgroup and every non-root
+  ancestor. Cgroup v2 has no `pids.max` limit on its root.
+  Setup records service, user, host, and cgroup headroom in
+  `portable-podman-process-headroom.json`; the workflow retains its
+  runtime selection in `portable-podman-crun-authority.json`.
   It fails when RLIMIT_NPROC, service TasksMax, host-thread, or cgroup pids
   headroom is less than 128 tasks. The live scenario requires registry HTTP 200
-  and retains
-  bounded container-cgroup diagnostics if readiness fails. Unavailable
+  and retains bounded container-cgroup diagnostics if readiness fails. Unavailable
   diagnostics do not suppress the readiness failure.
 - `.github/workflows/podman-cpu-proof.yaml` publishes PR-only experimental runtime evidence.
 - `.github/workflows/sandbox-images.yaml` provides reusable sandbox-image build and test evidence.

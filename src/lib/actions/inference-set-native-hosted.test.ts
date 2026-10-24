@@ -176,6 +176,22 @@ describe.each(HOSTED_NATIVE_PROVIDERS)("inference set native $label", (definitio
     expect(deps.resolveCredentialValue).not.toHaveBeenCalled();
   });
 
+  it("points a registry-only receipt with a missing provider at destroy", async () => {
+    const { deps, calls, authorities } = fixture();
+    await runInferenceSet({ provider: definition.logicalProvider, model: "first-model" }, deps);
+    authorities.clear();
+    calls.getProvider.mockResolvedValue({
+      ok: false,
+      error: { kind: "command", reason: "not_found", message: "not found" },
+    });
+    await expect(
+      runInferenceSet({ provider: definition.logicalProvider, model: "second-model" }, deps),
+    ).rejects.toThrow(
+      /only the NemoClaw registry record for sandbox 'alpha'.*'nemoclaw alpha destroy'/su,
+    );
+    expect(calls.createProvider).toHaveBeenCalledTimes(1);
+  });
+
   it("migrates a legacy selection without changing the gateway route or deleting its provider", async () => {
     const { deps, calls, entry, attached } = fixture();
     entry.provider = definition.logicalProvider;

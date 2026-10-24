@@ -66,7 +66,7 @@ const runtimeBlock = dockerfile;
 const baseBlock = dockerfileBase;
 const optionalPluginBlock = between(
   dockerfile,
-  "# Install non-messaging OpenClaw plugins that need to match the runtime.",
+  "# Install optional plugins from verified offline archives; npm-pack preserves",
   "# Lock down npm for the next RUN",
 );
 const messagingInstallBlock = between(
