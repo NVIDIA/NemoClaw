@@ -1,0 +1,116 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+name: Live / DGX Station
+
+on:
+  workflow_dispatch:
+    inputs:
+      example_path:
+        description: Repository example to apply on the dedicated DGX Station.
+        type: string
+        default: examples/gtc-dc/hermes-dgx-station.yaml
+  # Manual dispatch requires this workflow on the default branch. Qualification
+  # uses an explicitly pushed branch; pull requests never trigger GPU workloads.
+  push:
+    branches: [run-station-v1-e2e/**]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-dgx-station-v1
+  cancel-in-progress: false
+
+env:
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  station:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/v1') ||
+       (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/run-station-v1-e2e/')))
+    runs-on: [self-hosted, Linux, ARM64, dgx-station]
+    timeout-minutes: 150
+    steps:
+      - name: Check out candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Check host and select pinned Rust
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = aarch64
+          if test -e "$HOME/.local/state/nemoclaw-station-e2e/pending.json"; then
+            echo 'Station has unfinished cleanup; recover the recorded job first.' >&2
+            exit 1
+          fi
+          nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv,noheader
+          docker info --format '{{json .DriverStatus}}' | grep -F 'io.containerd.snapshotter.v1'
+          docker buildx version
+          nvidia-ctk cdi list | grep -Fx 'nvidia.com/gpu=all'
+          export RUSTUP_HOME="$HOME/.cache/nemoclaw-ci/rustup"
+          export CARGO_HOME="$HOME/.cache/nemoclaw-ci/cargo"
+          rustup="$HOME/.local/share/nemoclaw-ci/bin/rustup"
+          "$rustup" show
+          compiler="$("$rustup" which rustc)"
+          printf '%s\n' "$(dirname "$compiler")" >> "$GITHUB_PATH"
+          printf 'RUSTUP_HOME=%s\nCARGO_HOME=%s\n' "$RUSTUP_HOME" "$CARGO_HOME" >> "$GITHUB_ENV"
+          printf '%s\n' "$HOME/.local/share/nemoclaw-ci/bin" >> "$GITHUB_PATH"
+      - uses: ./.github/actions/setup-rust
+        with:
+          platform: linux_arm64
+          save-cache: "false"
+      - name: Build candidate bundle and smoke executables
+        run: |
+          cargo run --locked -p nemoclaw-build -- bundle --platform linux_arm64
+          cargo build --locked -p nemoclaw-e2e --bin station-host
+          cargo test --locked -p nemoclaw-e2e --test station --no-run
+      - name: Create private job directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          root="$HOME/.local/state/nemoclaw-station-e2e"
+          job="$root/jobs/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          mkdir -p "$root/jobs"
+          mkdir "$job"
+          cp -a dist/linux_arm64 "$job/bundle"
+          cp target/debug/station-host "$job/station-host"
+          printf 'STATION_ROOT=%s\nSTATION_JOB_DIR=%s\n' "$root" "$job" >> "$GITHUB_ENV"
+          printf 'IMAGE_PREFIX=nc-station-%s-%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
+      - name: Build Hermes and vLLM images
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo images build --platform linux/arm64 hermes
+          docker buildx bake --set "vllm.tags=${IMAGE_PREFIX}-vllm:runtime" vllm
+          agent="$(docker image inspect "${IMAGE_PREFIX}:hermes" --format '{{index .RepoDigests 0}}')"
+          model="$(docker image inspect "${IMAGE_PREFIX}-vllm:runtime" --format '{{index .RepoDigests 0}}')"
+          printf 'STATION_AGENT_IMAGE=%s\nSTATION_MODEL_IMAGE=%s\n' "$agent" "$model" >> "$GITHUB_ENV"
+      - name: Prepare owned example and retained state
+        env:
+          STATION_EXAMPLE_PATH: ${{ inputs.example_path || 'examples/gtc-dc/hermes-dgx-station.yaml' }}
+        run: '"$STATION_JOB_DIR/station-host" prepare'
+      - name: Apply, observe four containers, and destroy workloads
+        shell: bash
+        run: |
+          if ! cargo test --locked -p nemoclaw-e2e --test station \
+            station_example_components_are_running -- --ignored --exact --nocapture \
+            > "$STATION_JOB_DIR/smoke.log" 2>&1; then
+            echo 'Station smoke failed; inspect the private smoke.log on the runner.' >&2
+            exit 1
+          fi
+      - name: Recover cleanup and verify the smoke result
+        if: always() && env.STATION_JOB_DIR != ''
+        run: '"$STATION_JOB_DIR/station-host" cleanup'
+      - name: Upload result summary
+        if: always() && env.STATION_JOB_DIR != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: station-e2e-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.STATION_JOB_DIR }}/summary.json
+          if-no-files-found: warn
+          retention-days: 14

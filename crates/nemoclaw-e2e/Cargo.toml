@@ -5,8 +5,8 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 publish = false
-# One integration-test binary links the SDK and provider once. The Brev test
-# stays separate because its workflow copies that one executable to a VM.
+# Fixture tests share one binary. Brev and Station stay separate so operators
+# can select each live suite without the fixture tests.
 autotests = false
 
 [[test]]
@@ -17,7 +17,12 @@ path = "tests/main.rs"
 name = "brev"
 path = "tests/brev.rs"
 
+[[test]]
+name = "station"
+path = "tests/station.rs"
+
 [dependencies]
+getrandom.workspace = true
 rcgen = "0.14.10"
 rustls.workspace = true
 nemoclaw-sdk = { path = "../nemoclaw-sdk" }
@@ -45,6 +50,7 @@ tokio-stream.workspace = true
 tar.workspace = true
 
 [dev-dependencies]
+reqwest.workspace = true
 base64 = "0.22.1"
 bollard.workspace = true
 nemoclaw-sdk = { path = "../nemoclaw-sdk", features = ["test-scenarios"] }
@@ -53,8 +59,6 @@ kube.workspace = true
 time.workspace = true
 url.workspace = true
 serde-saphyr.workspace = true
-getrandom.workspace = true
-reqwest.workspace = true
 toml = { version = "1.1", default-features = false, features = ["parse", "serde"] }
 
 [lints]
