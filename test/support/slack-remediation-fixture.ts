@@ -36,9 +36,10 @@ export async function createSlackRemediationFixture() {
     writePackage(source, {
       name: "@openclaw/slack",
       version: "2026.9.2",
-      dependencies: { "@slack/bolt": "5.0.0" },
-      bundledDependencies: ["@slack/bolt"],
+      dependencies: { "@slack/bolt": "5.0.0", zod: "4.4.3" },
+      bundledDependencies: ["@slack/bolt", "zod"],
     });
+    writePackage(path.join(source, "node_modules/zod"), { name: "zod", version: "4.4.3" });
     writePackage(path.join(source, "node_modules/@slack/bolt"), {
       name: "@slack/bolt",
       version: "5.0.0",
@@ -77,6 +78,11 @@ export async function createSlackRemediationFixture() {
         '  "pack:proxy-addr@2.0.8:--pack-destination")',
         '    cp "$TEST_PROXY_ADDR_ARCHIVE" "$4/proxy-addr-2.0.8.tgz"',
         '    printf \'[{"filename":"proxy-addr-2.0.8.tgz","integrity":"%s"}]\' "$TEST_PROXY_ADDR_INTEGRITY" ;;',
+        '  "view:zod@4.6.6:dist.integrity") printf "%s" "$TEST_ZOD_INTEGRITY" ;;',
+        '  "view:zod@4.6.6:dist.tarball") printf "%s" "https://registry.npmjs.org/zod/-/zod-4.6.6.tgz" ;;',
+        '  "pack:zod@4.6.6:--pack-destination")',
+        '    cp "$TEST_ZOD_ARCHIVE" "$4/zod-4.6.6.tgz"',
+        '    printf \'[{"filename":"zod-4.6.6.tgz","integrity":"%s"}]\' "$TEST_ZOD_INTEGRITY" ;;',
         "  *) exit 1 ;;",
         "esac",
         "",
@@ -103,6 +109,15 @@ export async function createSlackRemediationFixture() {
       ].join("\n"),
       { mode: 0o700 },
     );
+    const archives = path.join(root, "archives");
+    fs.mkdirSync(archives);
+    const proxyArchive = path.resolve(
+      import.meta.dirname,
+      "../fixtures/npm/proxy-addr-2.0.8/proxy-addr-2.0.8.tgz",
+    );
+    const zodArchive = path.resolve(import.meta.dirname, "../fixtures/npm/zod-4.6.6/zod-4.6.6.tgz");
+    fs.copyFileSync(proxyArchive, path.join(archives, "proxy-addr-2.0.8.tgz"));
+    fs.copyFileSync(zodArchive, path.join(archives, "zod-4.6.6.tgz"));
     const env = await withLegacyMessagingPlanEnvDirect(
       {
         PATH: `${bin}${path.delimiter}${process.env.PATH ?? "/usr/bin:/bin"}`,
@@ -110,19 +125,16 @@ export async function createSlackRemediationFixture() {
         TMPDIR: path.join(root, "tmp"),
         OPENCLAW_VERSION: "2026.9.2",
         NEMOCLAW_MESSAGING_CHANNELS_B64: Buffer.from('["slack"]').toString("base64"),
-        NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR: path.resolve(
-          import.meta.dirname,
-          "../fixtures/npm/proxy-addr-2.0.8",
-        ),
+        NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR: archives,
         TEST_SLACK_INTEGRITY: SLACK_INTEGRITY,
         TEST_SLACK_SOURCE: source,
         TEST_SLACK_INSTALL: packageDirectory,
         TEST_SLACK_TRACE: trace,
         TEST_PROXY_ADDR_INTEGRITY: PROXY_ADDR_INTEGRITY,
-        TEST_PROXY_ADDR_ARCHIVE: path.resolve(
-          import.meta.dirname,
-          "../fixtures/npm/proxy-addr-2.0.8/proxy-addr-2.0.8.tgz",
-        ),
+        TEST_PROXY_ADDR_ARCHIVE: proxyArchive,
+        TEST_ZOD_ARCHIVE: zodArchive,
+        TEST_ZOD_INTEGRITY:
+          "sha512-4UmzQUF5fxvfcYHlbjBmejU+w+hbDnWFx4aS8kBx7nPBHcO2SqPbpAG8snbdg+Xse4pRefR98hgjFgIMCI/UhA==",
         TEST_SLACK_INSPECTION: JSON.stringify({
           plugin: { id: "slack", trustedOfficialInstall: true },
           install: {
@@ -141,6 +153,7 @@ export async function createSlackRemediationFixture() {
       env,
       trace,
       proxyAddrDirectory: path.join(packageDirectory, PROXY_ADDR_PATH),
+      zodDirectory: path.join(packageDirectory, "node_modules", "zod"),
     };
   } catch (error) {
     fs.rmSync(root, { recursive: true, force: true });

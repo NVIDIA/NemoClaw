@@ -37,8 +37,9 @@ type Remediation = Readonly<{
     | "jaeger"
     | "legacy-core"
     | "slack-proxy-addr"
-    | "undici";
-  version: "2026.3.11" | "2026.6.10" | "2026.7.1" | "2026.9.2";
+    | "undici"
+    | "zod";
+  version: "2026.3.11" | "2026.6.10" | "2026.7.1" | "2026.9.2" | "2026.9.5";
 }>;
 
 type RemediationRequest = Readonly<{
@@ -164,11 +165,48 @@ const REMEDIATION_COMMAND_TIMEOUT_MS = 15 * 60_000;
 const PROXY_ADDR_INTEGRITY =
   "sha512-5nnx0yGyVUcY6t9RnWcARWtwT9F1D8O9rt08htPvnd49W1IgZtmLkhu9WfMzQj1cFxjHIO6connUNVW5k7AVyQ==";
 const PROXY_ADDR_TARBALL = "https://registry.npmjs.org/proxy-addr/-/proxy-addr-2.0.8.tgz";
+const ZOD_VERSION = "4.6.6";
+const ZOD_INTEGRITY =
+  "sha512-4UmzQUF5fxvfcYHlbjBmejU+w+hbDnWFx4aS8kBx7nPBHcO2SqPbpAG8snbdg+Xse4pRefR98hgjFgIMCI/UhA==";
+const ZOD_TARBALL = "https://registry.npmjs.org/zod/-/zod-4.6.6.tgz";
+const DISCORD_SDK_OUTPUT_INTEGRITY =
+  "sha512-jV67lNWDgUUED4SqoFvZDVyJRVMZV62987FUbN7tj+gR7KGgfhicbXlfmmkozkuhXizsj8Rhw6zXMNc3pA6gFA==";
+const BUNDLED_ZOD_VERSIONS: Readonly<Record<string, string>> = {
+  "@openclaw/discord@2026.9.2": "4.4.3",
+  "@openclaw/slack@2026.9.2": "4.4.3",
+  "@openclaw/discord@2026.9.5": "4.5.4",
+  "@openclaw/slack@2026.9.5": "4.5.4",
+  "@openclaw/googlechat@2026.9.5": "4.5.4",
+};
 
 const REMEDIATIONS: Readonly<Record<string, Remediation>> = Object.freeze({
+  "@openclaw/discord@2026.9.2": {
+    expectedPatchedTreeIntegrity:
+      "sha512-WgOiY1hlORIQ8JwXHcd5NSlZ70wYim8GCLGQgjweTtWNmQ+gY1r32Ut/8TvXJ9t9Csjz4dCSWqg4PIcTy8zNoA==",
+    kind: "zod",
+    version: "2026.9.2",
+  },
+  "@openclaw/discord@2026.9.5": {
+    expectedPatchedTreeIntegrity:
+      "sha512-zwKdVS7s6TkRMzjjIwDiMQZOIDJalvrO6vTqdaE6cbVioY5S1kRar/8q+CGTN/eT1LEWPWzkfun/NwnOUpbz4w==",
+    kind: "zod",
+    version: "2026.9.5",
+  },
+  "@openclaw/slack@2026.9.5": {
+    expectedPatchedTreeIntegrity:
+      "sha512-HWIiG2lB258ochxGyLz64hwcIH0qK4JUJVaMxkF6niM5UFfBx4+llA94wIQa4O7saDInbwADdM1wBJv5Rel3Mw==",
+    kind: "zod",
+    version: "2026.9.5",
+  },
+  "@openclaw/googlechat@2026.9.5": {
+    expectedPatchedTreeIntegrity:
+      "sha512-RC3avuKcntw7xEYGG4AQBRmrkuNaLGkbWufFt5x0ykCOVqrxXqJ9ZACdOL1Ug8RNMzOFdwtUinYrCmXZnUSLdA==",
+    kind: "zod",
+    version: "2026.9.5",
+  },
   "@openclaw/slack@2026.9.2": {
     expectedPatchedTreeIntegrity:
-      "sha512-li/y4SFf6t3Z6JvP2R2H8dfauu0eybiwzd408QMCR9+zzi6oVVVffi+LGRDDYMh2TFCGgQ8Pnv2a5FiXMmPt1A==",
+      "sha512-AlK/j97KwD/U5FfDxqEFbVGmVdmaeP849qenuD+iQbqciqx7C58CP+KVtKJcLUNQBB/Ae3ow2+olhcA8a0ix/w==",
     kind: "slack-proxy-addr",
     version: "2026.9.2",
   },
@@ -997,6 +1035,202 @@ export function patchOpenClawSlackProxyAddrPackageGraph(
   }
 
   copyReplacementPackage(replacementDirectory, proxyAddrDirectory);
+}
+
+function declarationTypeArguments(source: string, start: number): { args: string[]; end: number } {
+  const args: string[] = [];
+  let angle = 1;
+  let brackets = 0;
+  let quote = "";
+  let current = start;
+  for (let index = start; index < source.length; index += 1) {
+    const char = source[index]!;
+    if (quote) {
+      if (char === "\\") index += 1;
+      else if (char === quote) quote = "";
+      continue;
+    }
+    if (char === '"' || char === "'" || char === "`") quote = char;
+    else if (char === "<") angle += 1;
+    else if (char === ">" && source[index - 1] !== "=") angle -= 1;
+    else if ("({[".includes(char)) brackets += 1;
+    else if (")}]".includes(char)) brackets -= 1;
+    if (angle === 0 || (char === "," && angle === 1 && brackets === 0 && !quote)) {
+      args.push(source.slice(current, index).trim());
+      current = index + 1;
+      if (angle === 0) return { args, end: current };
+    }
+  }
+  throw new Error("Discord SDK declaration has an incomplete schema type");
+}
+
+export function migrateDiscordZodDeclarations(source: string): string {
+  const match =
+    /\b(zod|z)\.(ZodObject|ZodEffects|ZodArray|ZodType|ZodNativeEnum|objectOutputType|objectInputType)</u.exec(
+      source,
+    );
+  const normalize = (value: string) =>
+    value
+      .replace(
+        /\b(zod|z)\.AnyZodObject\b/gu,
+        "$1.ZodObject<$1.core.$ZodShape, $1.core.$ZodObjectConfig>",
+      )
+      .replace(/\b(zod|z)\.objectUtil\.extendShape\b/gu, "$1.core.util.Extend")
+      .replace(/\b(zod|z)\.objectUtil\.flatten\b/gu, "$1.core.util.Flatten");
+  if (!match) return normalize(source);
+  const namespace = match[1]!;
+  const { args, end } = declarationTypeArguments(source, match.index + match[0].length);
+  const visit = (value: string) => migrateDiscordZodDeclarations(value);
+  const first = visit(args[0]!);
+  let replacement: string;
+  switch (match[2]) {
+    case "ZodObject":
+      replacement = `${namespace}.ZodObject<${first}${args[1]?.includes("passthrough") ? `, ${namespace}.core.$loose` : ""}>`;
+      break;
+    case "ZodArray":
+      replacement = `${namespace}.ZodArray<${first}>`;
+      break;
+    case "ZodEffects":
+      replacement = `${namespace}.ZodType<${args[1] ? visit(args[1]) : `${namespace}.output<${first}>`}, ${args[2] ? visit(args[2]) : `${namespace}.input<${first}>`}>`;
+      break;
+    case "ZodType":
+      replacement = `${namespace}.ZodType<${first}${args[2] ? `, ${visit(args[2])}` : ""}>`;
+      break;
+    case "ZodNativeEnum":
+      replacement = `${namespace}.ZodEnum<${first}>`;
+      break;
+    default:
+      replacement = `${namespace}.${match[2] === "objectOutputType" ? "output" : "input"}<${namespace}.ZodObject<${first}>>`;
+      break;
+  }
+  return normalize(source.slice(0, match.index)) + replacement + visit(source.slice(end));
+}
+
+export function migrateDiscordZodSource(relativePath: string, source: string): string {
+  if (relativePath.endsWith(".d.ts")) {
+    return migrateDiscordZodDeclarations(source)
+      .replace("    innerType(): never;\n    _def: never;\n", "")
+      .replace(/data: ((zod|z)\.ZodUnknown);/gu, "data: $2.ZodOptional<$1>;")
+      .replace(
+        /data: ((zod|z)\.ZodNullable<(?:zod|z)\.ZodUnknown>);/gu,
+        "data: $2.ZodOptional<$1>;",
+      );
+  }
+  return source
+    .replace(/(['"])\.\.\/lib\/zod\/lib\/index\.(?:cjs|mjs)\1/gu, "$1zod$1")
+    .replace("schema._def.defaultValue()", "schema.parse(undefined)")
+    .replace(".options[0].Values", ".options[0].enum")
+    .replace(/data: (unknownType|index\.unknown)\(\)/u, "data: $1().optional()");
+}
+
+function migrateDiscordSdk(packageDirectory: string, replacementDirectory: string): void {
+  const metadataPath = join(packageDirectory, "package.json");
+  const metadata = readJson(metadataPath);
+  requirePackageIdentity(metadata, "@discord/embedded-app-sdk", "2.5.0", "Discord SDK");
+  if (
+    metadata.dependencies?.zod !== "^3.9.8" ||
+    hashPackageTree(join(packageDirectory, "output")) !== DISCORD_SDK_OUTPUT_INTEGRITY
+  ) {
+    throw new Error("Discord SDK source changed; review the Zod 4 migration");
+  }
+  const visit = (directory: string): void => {
+    for (const name of readdirSync(directory).sort()) {
+      const file = join(directory, name);
+      const relativePath = relative(packageDirectory, file).split(sep).join("/");
+      if (relativePath === "output/lib/zod") continue;
+      if (lstatSync(file).isDirectory()) visit(file);
+      else if (/\.(?:cjs|mjs|d\.ts)$/u.test(name)) {
+        const source = readFileSync(file, "utf8");
+        const migrated = migrateDiscordZodSource(relativePath, source);
+        if (migrated !== source) writeFileSync(file, migrated);
+      }
+    }
+  };
+  visit(join(packageDirectory, "output"));
+  rmSync(join(packageDirectory, "output", "lib", "zod"), { recursive: true });
+  metadata.dependencies.zod = ZOD_VERSION;
+  writeJson(metadataPath, metadata);
+  copyReplacementPackage(replacementDirectory, join(packageDirectory, "node_modules", "zod"));
+}
+
+export function patchOpenClawBundledZodPackageGraph(
+  packageDirectory: string,
+  replacementDirectory: string,
+  packageSpec: string,
+): void {
+  const expectedVersion = BUNDLED_ZOD_VERSIONS[packageSpec];
+  if (!expectedVersion) throw new Error("Unreviewed bundled Zod plugin");
+  const metadataPath = join(packageDirectory, "package.json");
+  const shrinkwrapPath = join(packageDirectory, "npm-shrinkwrap.json");
+  for (const file of [metadataPath, shrinkwrapPath].filter((file) => existsSync(file))) {
+    const metadata = lstatSync(file);
+    if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.nlink !== 1) {
+      throw new Error("Plugin metadata must be a single regular file before Zod migration");
+    }
+  }
+  const metadata = readJson(metadataPath);
+  const separator = packageSpec.lastIndexOf("@");
+  requirePackageIdentity(
+    metadata,
+    packageSpec.slice(0, separator),
+    packageSpec.slice(separator + 1),
+    "OpenClaw plugin",
+  );
+  if (metadata.dependencies?.zod !== expectedVersion) {
+    throw new Error(`${packageSpec} Zod dependency changed after review`);
+  }
+  requirePackageIdentity(
+    readJson(join(replacementDirectory, "package.json")),
+    "zod",
+    ZOD_VERSION,
+    "Zod replacement",
+  );
+  if (Object.keys(readJson(join(replacementDirectory, "package.json")).dependencies ?? {}).length) {
+    throw new Error("Zod replacement dependency graph changed after review");
+  }
+  requirePackageIdentity(
+    readJson(join(packageDirectory, "node_modules", "zod", "package.json")),
+    "zod",
+    expectedVersion,
+    "Bundled Zod",
+  );
+  if (metadata.name === "@openclaw/discord") {
+    const sdk = join(packageDirectory, "node_modules", "@discord", "embedded-app-sdk");
+    const temporary = mkdtempSync(join(dirname(sdk), ".embedded-app-sdk-zod-"));
+    try {
+      const staged = join(temporary, "package");
+      cpSync(sdk, staged, { recursive: true });
+      migrateDiscordSdk(staged, replacementDirectory);
+      copyReplacementPackage(staged, sdk);
+    } finally {
+      rmSync(temporary, { recursive: true, force: true });
+    }
+  }
+  copyReplacementPackage(replacementDirectory, join(packageDirectory, "node_modules", "zod"));
+  metadata.dependencies.zod = ZOD_VERSION;
+  writeJson(metadataPath, metadata);
+  if (existsSync(shrinkwrapPath)) {
+    const shrinkwrap = readJson(shrinkwrapPath);
+    for (const [key, value] of Object.entries(shrinkwrap.packages ?? {}) as [
+      string,
+      JsonObject,
+    ][]) {
+      if (key.endsWith("/zod")) {
+        Object.assign(value, {
+          version: ZOD_VERSION,
+          resolved: ZOD_TARBALL,
+          integrity: ZOD_INTEGRITY,
+        });
+      }
+      if (
+        (key === "" || key === "node_modules/@discord/embedded-app-sdk") &&
+        value.dependencies?.zod
+      ) {
+        value.dependencies.zod = ZOD_VERSION;
+      }
+    }
+    writeJson(shrinkwrapPath, shrinkwrap);
+  }
 }
 
 export function patchLegacyOpenClawCorePackageGraph(packageDirectory: string): void {
@@ -1867,7 +2101,7 @@ export function buildRemediatedOpenClawPluginArchive(
       join(axiosTarget, "node_modules", "https-proxy-agent", "node_modules", "agent-base"),
     );
     patchOpenClawPluginPackageGraph(sourcePackage, request.packageSpec);
-  } else {
+  } else if (remediation.kind === "jaeger") {
     const jaegerArchive = packReplacement(
       `@opentelemetry/propagator-jaeger@${JAEGER_PROPAGATOR_VERSION}`,
       JAEGER_PROPAGATOR_INTEGRITY,
@@ -1930,6 +2164,23 @@ export function buildRemediatedOpenClawPluginArchive(
     } else {
       patchOpenClawDiagnosticsOtelPackageGraph(sourcePackage);
     }
+  }
+
+  if (BUNDLED_ZOD_VERSIONS[request.packageSpec]) {
+    const zodArchive = packReplacement(
+      `zod@${ZOD_VERSION}`,
+      ZOD_INTEGRITY,
+      ZOD_TARBALL,
+      remediationRoot,
+      env,
+    );
+    const zodPackage = extractArchive(
+      zodArchive.archivePath,
+      join(remediationRoot, "zod"),
+      remediationRoot,
+      env,
+    );
+    patchOpenClawBundledZodPackageGraph(sourcePackage, zodPackage, request.packageSpec);
   }
 
   const outputDirectory = join(remediationRoot, "output");
@@ -2007,7 +2258,7 @@ export function remediateInstalledOfficialOpenClawPlugin(
       throw error;
     }
     throw new Error(
-      "OpenClaw Slack remediation requires a valid managed npm package directory and reviewed dependency graph",
+      `OpenClaw ${request.packageSpec.startsWith("@openclaw/slack@") ? "Slack" : "plugin"} remediation requires a valid managed npm package directory and reviewed dependency graph`,
     );
   }
 }
@@ -2015,7 +2266,9 @@ export function remediateInstalledOfficialOpenClawPlugin(
 function remediateVerifiedInstalledOfficialOpenClawPlugin(
   request: RemediationRequest & Readonly<{ packageDirectory?: string; trustedStateRoot: string }>,
 ): void {
-  if (REMEDIATIONS[request.packageSpec]?.kind !== "slack-proxy-addr") return;
+  const patchesProxyAddr = REMEDIATIONS[request.packageSpec]?.kind === "slack-proxy-addr";
+  const patchesZod = Boolean(BUNDLED_ZOD_VERSIONS[request.packageSpec]);
+  if (!patchesProxyAddr && !patchesZod) return;
   if (
     !request.packageDirectory ||
     !isAbsolute(request.packageDirectory) ||
@@ -2025,10 +2278,10 @@ function remediateVerifiedInstalledOfficialOpenClawPlugin(
   }
   const trustedRoot = realpathSync(request.trustedStateRoot);
   const packageDirectory = realpathSync(request.packageDirectory);
-  // OpenClaw 2026.9.2 owns npm plugins in package-specific managed projects,
-  // including artifact-generation projects. Accept only Slack's exact shape.
-  const projectName = `openclaw-slack-${createHash("sha256")
-    .update("@openclaw/slack")
+  const packageName = request.packageSpec.slice(0, request.packageSpec.lastIndexOf("@"));
+  // Preserve OpenClaw's exact managed-project and artifact-generation paths.
+  const projectName = `${packageName.slice(1).replace("/", "-")}-${createHash("sha256")
+    .update(packageName)
     .digest("hex")
     .slice(0, 10)}`;
   const installedParts = relative(trustedRoot, packageDirectory).split(sep);
@@ -2039,46 +2292,65 @@ function remediateVerifiedInstalledOfficialOpenClawPlugin(
     installedParts[1] !== "projects" ||
     (project !== projectName &&
       !new RegExp(`^${projectName}__openclaw-generation__g-[a-f0-9]{16}$`).test(project)) ||
-    installedParts.slice(3).join("/") !== "node_modules/@openclaw/slack" ||
+    installedParts.slice(3).join("/") !== `node_modules/${packageName}` ||
     relative(resolve(request.trustedStateRoot), resolve(request.packageDirectory)) !==
       relative(trustedRoot, packageDirectory)
   ) {
-    throw new Error("Official Slack install path is outside its trusted plugin root");
+    throw new Error(
+      `Official ${packageName === "@openclaw/slack" ? "Slack" : "plugin"} install path is outside its trusted plugin root`,
+    );
   }
-  let installedDependency = trustedRoot;
-  for (const component of [
-    ...installedParts,
-    "node_modules",
-    "@slack",
-    "bolt",
-    "node_modules",
-    "proxy-addr",
-  ]) {
-    installedDependency = join(installedDependency, component);
-    const metadata = lstatSync(installedDependency);
-    if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
-      throw new Error("Official plugin dependency directory must be a real directory");
+  const dependencyPaths: string[][] = [];
+  if (patchesProxyAddr)
+    dependencyPaths.push(["node_modules", "@slack", "bolt", "node_modules", "proxy-addr"]);
+  if (patchesZod) dependencyPaths.push(["node_modules", "zod"]);
+  if (packageName === "@openclaw/discord") {
+    dependencyPaths.push(["node_modules", "@discord", "embedded-app-sdk"]);
+  }
+  for (const dependencyPath of dependencyPaths) {
+    let installedDependency = trustedRoot;
+    for (const component of [...installedParts, ...dependencyPath]) {
+      installedDependency = join(installedDependency, component);
+      const metadata = lstatSync(installedDependency);
+      if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
+        throw new Error("Official plugin dependency directory must be a real directory");
+      }
     }
+    hashPackageTree(installedDependency);
   }
-  // The existing no-follow tree walk also rejects unsafe installed members.
-  hashPackageTree(installedDependency);
   const env = { ...process.env, ...request.env };
   const directory = mkdtempSync(join(request.workingDirectory, "official-plugin-remediation-"));
   try {
-    const archive = packReplacement(
-      `proxy-addr@${PROXY_ADDR_VERSION}`,
-      PROXY_ADDR_INTEGRITY,
-      PROXY_ADDR_TARBALL,
+    if (patchesProxyAddr) {
+      const archive = packReplacement(
+        `proxy-addr@${PROXY_ADDR_VERSION}`,
+        PROXY_ADDR_INTEGRITY,
+        PROXY_ADDR_TARBALL,
+        directory,
+        env,
+      );
+      const replacement = extractArchive(
+        archive.archivePath,
+        join(directory, "proxy-addr"),
+        directory,
+        env,
+      );
+      patchOpenClawSlackProxyAddrPackageGraph(packageDirectory, replacement);
+    }
+    const zodArchive = packReplacement(
+      `zod@${ZOD_VERSION}`,
+      ZOD_INTEGRITY,
+      ZOD_TARBALL,
       directory,
       env,
     );
-    const replacement = extractArchive(
-      archive.archivePath,
-      join(directory, "proxy-addr"),
+    const zodPackage = extractArchive(
+      zodArchive.archivePath,
+      join(directory, "zod"),
       directory,
       env,
     );
-    patchOpenClawSlackProxyAddrPackageGraph(packageDirectory, replacement);
+    patchOpenClawBundledZodPackageGraph(packageDirectory, zodPackage, request.packageSpec);
   } finally {
     rmSync(directory, { force: true, recursive: true });
   }

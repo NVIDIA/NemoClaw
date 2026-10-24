@@ -225,7 +225,7 @@ function verifyOriginalSlackDependencyBytes(
 
 describe("messaging-build-applier.mts: plugin archive integrity", () => {
   it.each(["reviewed archive", "npm"])(
-    "replaces Slack's bundled proxy-addr using %s after inspection",
+    "replaces Slack's reviewed bundled dependencies using %s after inspection",
     async (source) => {
       const fixture = await createSlackRemediationFixture();
       try {
@@ -255,6 +255,10 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
             .update(fs.readFileSync(path.join(fixture.proxyAddrDirectory, "index.js")))
             .digest("hex"),
         ).toBe("aa7efd29bbd61cbcc1bdafde9e674db28ead077864f33bfad3cdd19bb5a3778c");
+        expect(
+          JSON.parse(fs.readFileSync(path.join(fixture.zodDirectory, "package.json"), "utf8"))
+            .version,
+        ).toBe("4.6.6");
         expect(fs.readFileSync(fixture.trace, "utf8")).toBe("installed\ninspected-unpatched\n");
         expect(fs.readdirSync(fixture.env.TMPDIR)).toEqual([]);
       } finally {
@@ -849,9 +853,25 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
       JSON.stringify({
         name: "@openclaw/slack",
         version: "2026.9.2",
-        dependencies: { "@slack/bolt": "5.0.0" },
-        bundledDependencies: ["@slack/bolt"],
+        dependencies: { "@slack/bolt": "5.0.0", zod: "4.4.3" },
+        bundledDependencies: ["@slack/bolt", "zod"],
       }),
+    );
+    const zodDirectory = path.join(packageDirectory, "node_modules", "zod");
+    fs.mkdirSync(zodDirectory);
+    fs.writeFileSync(
+      path.join(zodDirectory, "package.json"),
+      JSON.stringify({ name: "zod", version: "4.4.3" }),
+    );
+    const archives = path.join(tmp, "archives");
+    fs.mkdirSync(archives);
+    fs.copyFileSync(
+      path.resolve(import.meta.dirname, "../../fixtures/npm/proxy-addr-2.0.8/proxy-addr-2.0.8.tgz"),
+      path.join(archives, "proxy-addr-2.0.8.tgz"),
+    );
+    fs.copyFileSync(
+      path.resolve(import.meta.dirname, "../../fixtures/npm/zod-4.6.6/zod-4.6.6.tgz"),
+      path.join(archives, "zod-4.6.6.tgz"),
     );
     const boltDirectory = path.join(packageDirectory, "node_modules/@slack/bolt");
     const expressDirectory = path.join(boltDirectory, "node_modules/express");
@@ -931,10 +951,7 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
           PATH: `${tmp}:${process.env.PATH || "/usr/bin:/bin"}`,
           HOME: tmp,
           ...overrides,
-          NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR: path.resolve(
-            import.meta.dirname,
-            "../../fixtures/npm/proxy-addr-2.0.8",
-          ),
+          NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR: archives,
           OPENCLAW_TRACE: tracePath,
           OPENCLAW_SLACK_2026_9_2_INTEGRITY,
           OPENCLAW_VERSION: "2026.9.2",
@@ -948,6 +965,9 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
       expect(
         JSON.parse(fs.readFileSync(path.join(dependencyDirectory, "package.json"), "utf8")).version,
       ).toBe("2.0.8");
+      expect(
+        JSON.parse(fs.readFileSync(path.join(zodDirectory, "package.json"), "utf8")).version,
+      ).toBe("4.6.6");
       expect(fs.readFileSync(path.join(dependencyDirectory, "index.js"), "utf8")).not.toContain(
         "vulnerable-canary",
       );
