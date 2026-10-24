@@ -198,7 +198,7 @@ describe("controlled setup-node environments", () => {
       String(step.with?.["node-version"]),
     ]);
 
-    expect(identity).toMatchObject({ nodeVersion: "24.18.1", npmVersion: "12.0.2" });
+    expect(identity).toMatchObject({ nodeVersion: "24.22.1", npmVersion: "12.0.2" });
     expect(npmSetupNodeSteps.length).toBeGreaterThan(0);
     expect(
       setupIdentities.every(

@@ -210,7 +210,7 @@ jobs:
         if: ${{ steps.changed.outputs.selected == 'true' }}
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.1
+          node-version: 24.22.1
 
       - name: Install reviewed npm
         if: ${{ steps.changed.outputs.selected == 'true' }}
@@ -412,7 +412,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.1
+          node-version: 24.22.1
           cache: npm
 
       - name: Install reviewed npm

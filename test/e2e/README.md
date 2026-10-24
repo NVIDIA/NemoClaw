@@ -205,7 +205,7 @@ and are preserved rather than interpreted as a new transaction with no submitted
 The candidate CLI comes from the source commit that an E2E run tests.
 The `generate-matrix` job prepares it once through the shared `ci-compile-artifacts` action.
 Main CI and PR CI use that action too. It always produces the CLI and full plugin,
-with Node.js 24.18.1, and verifies the embedded source revision and source maps.
+with Node.js 24.22.1, and verifies the embedded source revision and source maps.
 E2E loads the action from a separate checkout of the trusted workflow revision.
 The existing E2E artifact handoff retains the CLI and shared-module payload during this migration.
 The job publishes root `dist/` and `nemoclaw/dist/shared/` in one content-addressed artifact.
@@ -286,7 +286,7 @@ Before the action restores root `dist/` and `nemoclaw/dist/shared/` into the wor
 - The upload digest is present and well formed.
 - The candidate SHA matches the expected commit.
 - The manifest matches the source, workflow run, toolchain contract, and payload.
-- The restore action uses the pinned Node.js 24.18.1 process to stream each file as binary data when it verifies SHA-256 digests.
+- The restore action uses the pinned Node.js 24.22.1 process to stream each file as binary data when it verifies SHA-256 digests.
 - The archive contains no path traversal, links, special files, or files outside root `dist/` and `nemoclaw/dist/shared/`.
 - Neither root `dist/` nor `nemoclaw/dist/` already exists, including as a dangling symbolic link.
 - The candidate checkout's `nemoclaw/` path is a directory and is not a symbolic link.
@@ -1459,7 +1459,7 @@ dispatches test the candidate's reviewed stable OpenShell release and do not
 select the development runtime.
 
 The OpenClaw, Hermes, and LangChain Deep Agents Code shards restore and verify that same artifact with the trusted workflow revision.
-The `actions/setup-node` step selects Node.js 24.18.1 and disables automatic package manager caching before candidate checkout.
+The `actions/setup-node` step selects Node.js 24.22.1 and disables automatic package manager caching before candidate checkout.
 The trusted workflow installs the exact reviewed npm 12 archive before it installs planner dependencies.
 An argument- and asset-allowlisted `gh` shim presents only the retained files to the unchanged trusted `scripts/install-openshell.sh` path.
 A separate `curl` shim blocks network fallback.

@@ -144,7 +144,7 @@ jobs:
       - name: Set up Node for reviewed package download
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "24.18.1"
+          node-version: "24.22.1"
           registry-url: https://npm.pkg.github.com
           scope: "@nvidia"
 
@@ -249,7 +249,7 @@ jobs:
       - name: Set up Node for publication verification
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.1
+          node-version: 24.22.1
 
       - name: Install reviewed npm
         uses: ./.github/actions/setup-reviewed-npm
@@ -661,7 +661,7 @@ jobs:
       - name: Set up Node for trusted E2E planning
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.1
+          node-version: 24.22.1
 
       - name: Install reviewed npm for trusted E2E planning
         uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
@@ -997,7 +997,7 @@ jobs:
       - name: Set up Node for Spark plan compilation
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "24.18.1"
+          node-version: "24.22.1"
       - name: Install trusted Spark compiler dependencies
         uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
       - name: Install trusted Spark plan dependencies
@@ -1138,7 +1138,7 @@ jobs:
       - name: Set up Node for trusted qualification planning
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.1
+          node-version: 24.22.1
 
       - name: Install reviewed npm
         uses: ./.github/actions/setup-reviewed-npm
@@ -1673,7 +1673,7 @@ jobs:
       - name: Set up Node for candidate execution
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.1
+          node-version: 24.22.1
 
       - name: Install reviewed npm
         uses: ./.qualification-workflow/.github/actions/setup-reviewed-npm
@@ -2932,7 +2932,7 @@ jobs:
       - name: Set up Node for qualification aggregation
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.1
+          node-version: 24.22.1
 
       - name: Install reviewed npm
         uses: ./.qualification-aggregate/.github/actions/setup-reviewed-npm
@@ -3731,7 +3731,7 @@ jobs:
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_CANDIDATE_VERSION: ${{ needs.generate-matrix.outputs.openshell_version }}
       NEMOCLAW_OPENSHELL_PIN_VERSION: ${{ needs.generate-matrix.outputs.openshell_version }}
-      DOCKER_GRPC_PROBE_IMAGE: "node:24.18.1-trixie-slim@sha256:ac39e4b5fcb2b1b34b20364fd58b2e898f3bb80731ee6f62a7536f9df3d6aadc"
+      DOCKER_GRPC_PROBE_IMAGE: "node:24.22.1-trixie-slim@sha256:43b9ba1142b8dcf33fa8f922ca1be85714adc444e0586c7cf7726daaeabc1bea"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -4420,7 +4420,7 @@ jobs:
       - name: Set up Node for OpenShell dev artifact resolution
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.1
+          node-version: 24.22.1
 
       - name: Install reviewed npm
         uses: ./.trusted-openshell-dev-artifact/.github/actions/setup-reviewed-npm
@@ -4484,7 +4484,7 @@ jobs:
       - name: Set up Node.js for trusted OpenShell verification
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.1
+          node-version: 24.22.1
           package-manager-cache: false
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -6323,7 +6323,7 @@ jobs:
           ENV: /dev/null
           NODE_OPTIONS: ""
         with:
-          node-version: "24.18.1"
+          node-version: "24.22.1"
 
       - name: Reinstall reviewed npm after Node reassertion
         uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
@@ -6510,7 +6510,7 @@ jobs:
       - name: Set up Node for Jetson controller
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.1
+          node-version: 24.22.1
 
       - name: Install reviewed npm
         uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
@@ -6561,7 +6561,7 @@ jobs:
       - name: Set up Node for Station controller
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.1
+          node-version: 24.22.1
 
       - name: Install reviewed npm
         uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2

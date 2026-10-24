@@ -49,7 +49,7 @@ The reviewed audit wrapper reports lower-severity production findings and blocks
 - Installation boundary: the image materializes the reviewed lock into a root-owned dedicated npm cache and adds the exact package metadata needed by npm's offline resolver. Before that cache becomes immutable, the shared `scripts/lib/reviewed-npm-archive.mts` implementation re-packs every locked archive offline from the final cache and rejects registry-origin drift, metadata or packed-byte SRI drift, unsafe filenames, missing archives, and symlinks. The sandbox user copies that verified immutable source into a writable cache used for registry metadata lookup, archive packing, and the OpenClaw plugin install; no retrieval step falls back to `HOME/.npm`. The copy is deleted in the same image layer, and the trusted cache is never writable. The installer runs in offline, legacy-peer mode, then `verify-wechat-runtime-lock.mts` rejects integrity, version, dependency-set, or peer-range drift and refuses an image OpenClaw version below the plugin's locked peer minimum.
 - Default CI gate: `reviewed-npm-audit` in `.github/workflows/pr.yaml` and `.github/workflows/main.yaml` audits the WeChat locked graph with the shared reviewed npm implementation.
   The pull request workflow loads the audit implementation, policy, manifest, and lockfile from the candidate checkout.
-  The shared gate uses Node.js `24.18.1` and verified `npm@12.0.2`.
+  The shared gate uses Node.js `24.22.1` and verified `npm@12.0.2`.
   It installs the exact lock with lifecycle scripts disabled and legacy peer resolution, rejects any low-or-higher production advisory, and verifies registry signatures.
   It also exercises the reviewed archive through a copied writable cache while the trusted source remains read-only.
   Signature verification makes at most three attempts and retries only `npm error Failed to download`; all other failures stop immediately.
@@ -180,3 +180,10 @@ The existing direct Zod cache pin supplies the replacement. Schema comparisons
 retain existing accepted/rejected configuration behavior; an oversized bounded
 collection is rejected before visiting its elements. Original installation
 metadata remains source provenance, as with the MSAL migration.
+
+Managed image and CI tooling use Node.js 24.22.1. The base-image security probe
+checks that exact runtime as well as the Debian package inventory, because
+Node bundles native libraries that npm audit and dpkg do not cover. Older
+cached bases fail admission and follow the existing rebuild path. The reviewed
+npm target remains 12.0.2; Node’s initial npm 11.19.1 tree is replaced before
+package installation, then the existing private-package repairs are applied.

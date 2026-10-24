@@ -45,7 +45,7 @@ export const BUNDLED_NPM_TAR_COMMAND_TIMEOUT_MS = 15 * 60_000;
  * The Dockerfile contract test forces that review whenever either pin changes.
  */
 export const NODE_BASES_REQUIRING_BUNDLED_NPM_TAR_PATCH = [
-  "node:24.18.1-trixie-slim@sha256:ac39e4b5fcb2b1b34b20364fd58b2e898f3bb80731ee6f62a7536f9df3d6aadc",
+  "node:24.22.1-trixie-slim@sha256:43b9ba1142b8dcf33fa8f922ca1be85714adc444e0586c7cf7726daaeabc1bea",
 ] as const;
 
 function parseVersion(version: unknown, label: string): readonly [number, number, number] {
