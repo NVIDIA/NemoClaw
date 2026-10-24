@@ -518,7 +518,13 @@ describe("native NVIDIA onboarding", () => {
     expect(verifyOnboardInferenceSmoke).not.toHaveBeenCalled();
   });
 
-  it("reuses a gateway-owned provider for a fresh second sandbox", async () => {
+  it.each(["fresh", "recorded"])("reuses native NVIDIA without a host key (%s)", async (state) => {
+    const receipt = {
+      schemaVersion: 1 as const,
+      profileId: "nemoclaw-nvidia-inference-v1" as const,
+      providerName: "nemoclaw-nvidia-prod-v1" as const,
+      providerId: "provider-id",
+    };
     const importProviderProfile = vi.fn(async () => ({ ok: true as const }));
     const getProvider = vi.fn<OpenShellProviderAdapter["getProvider"]>(async () => ({
       ok: true,
@@ -533,6 +539,7 @@ describe("native NVIDIA onboarding", () => {
     const createProvider = vi.fn<OpenShellProviderAdapter["createProvider"]>();
     const updateProvider = vi.fn<OpenShellProviderAdapter["updateProvider"]>();
     const updateSandbox = vi.fn(() => true);
+    const verifyOnboardInferenceSmoke = vi.fn(async () => undefined);
     const setupInference = createSetupInference({
       checkGatewayRouteCompatibility: vi.fn(() => ({ ok: true as const })),
       withSandboxMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
@@ -543,16 +550,18 @@ describe("native NVIDIA onboarding", () => {
       getGatewayName: () => "onboarding-gateway",
       runOpenshell: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
       updateSandbox,
-      getSandbox: () => null,
-      getNativeNvidiaProviderAuthority: () => ({
-        schemaVersion: 1,
-        profileId: "nemoclaw-nvidia-inference-v1",
-        providerName: "nemoclaw-nvidia-prod-v1",
-        providerId: "provider-id",
-      }),
+      getSandbox: () =>
+        state === "recorded"
+          ? {
+              name: "second",
+              provider: "nvidia-prod",
+              nativeNvidiaProviderAttachment: receipt,
+            }
+          : null,
+      getNativeNvidiaProviderAuthority: () => receipt,
       upsertProvider: vi.fn(async () => ({ ok: true })),
       verifyInferenceRoute: vi.fn(),
-      verifyOnboardInferenceSmoke: vi.fn(async () => undefined),
+      verifyOnboardInferenceSmoke,
       isNonInteractive: () => true,
       hermesProviderAuth: { HERMES_PROVIDER_NAME: "hermes-provider" },
       providerAdapter: {
@@ -563,6 +572,7 @@ describe("native NVIDIA onboarding", () => {
         updateProvider,
       } as unknown as OpenShellProviderAdapter,
       hydrateCredentialEnv: vi.fn(() => null),
+      localInference: {},
       redact: (value: string) => value,
       compactText: (value: string) => value,
       log: vi.fn(),
@@ -583,13 +593,14 @@ describe("native NVIDIA onboarding", () => {
         [],
         {
           revalidateSandboxIdentity: () => undefined,
-          reuseGatewayCredentialWithoutLocalKey: true,
+          reuseGatewayCredentialWithoutLocalKey: state === "fresh",
         },
       ),
     ).resolves.toEqual({ ok: true });
 
     expect(createProvider).not.toHaveBeenCalled();
     expect(updateProvider).not.toHaveBeenCalled();
+    expect(verifyOnboardInferenceSmoke).not.toHaveBeenCalled();
     expect(updateSandbox).toHaveBeenCalledWith(
       "second",
       expect.objectContaining({
