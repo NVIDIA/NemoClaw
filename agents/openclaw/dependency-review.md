@@ -138,7 +138,7 @@ still selects them; remove this transition section when the runtime cutover is c
 
 The reviewed runtime graphs pin Zod 4.6.6 and body-parser 2.4.0. The existing
 archive remediation also updates the Discord and Slack 2026.9.2/2026.9.5 bundles,
-and Google Chat 2026.9.5, to Zod 4.6.6. Discord's embedded SDK 2.5.0 uses migrated
+and Google Chat 2026.9.2/2026.9.5, to Zod 4.6.6. Discord's embedded SDK 2.5.0 uses migrated
 CJS/ESM schemas and declarations instead of its vendored Zod 3 implementation.
 The migration checks the original SDK output digest before changing files.
 

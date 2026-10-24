@@ -58,6 +58,30 @@ describe("Discord SDK Zod 4 migration", () => {
   });
   afterAll(() => rmSync(directory, { recursive: true, force: true }));
 
+  it.each([
+    ["2026.9.2", "4.4.3"],
+    ["2026.9.5", "4.5.4"],
+  ])("replaces Google Chat %s bundled Zod with the verified patched tree", (version, original) => {
+    const plugin = path.join(directory, `googlechat-${version}`);
+    const target = path.join(plugin, "node_modules/zod");
+    mkdirSync(target, { recursive: true });
+    writeJson(path.join(plugin, "package.json"), {
+      name: "@openclaw/googlechat",
+      version,
+      dependencies: { zod: original },
+    });
+    writeJson(path.join(target, "package.json"), { name: "zod", version: original });
+    patchOpenClawBundledZodPackageGraph(
+      plugin,
+      path.join(directory, "package"),
+      `@openclaw/googlechat@${version}`,
+    );
+    expect(hashPackageTree(target)).toBe(hashPackageTree(path.join(directory, "package")));
+    expect(readJson(path.join(plugin, "package.json"))).toMatchObject({
+      dependencies: { zod: "4.6.6" },
+    });
+  });
+
   it("preserves SDK defaults, unknown scopes and optional frame data with the patched runtime", () => {
     const source = [
       "const index = require('../lib/zod/lib/index.cjs');",

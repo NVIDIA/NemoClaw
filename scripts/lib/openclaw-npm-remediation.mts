@@ -289,10 +289,17 @@ const BUNDLED_ZOD_VERSIONS: Readonly<Record<string, string>> = {
   "@openclaw/slack@2026.9.2": "4.4.3",
   "@openclaw/discord@2026.9.5": "4.5.4",
   "@openclaw/slack@2026.9.5": "4.5.4",
+  "@openclaw/googlechat@2026.9.2": "4.4.3",
   "@openclaw/googlechat@2026.9.5": "4.5.4",
 };
 
 const REMEDIATIONS: Readonly<Record<string, Remediation>> = Object.freeze({
+  "@openclaw/googlechat@2026.9.2": {
+    expectedPatchedTreeIntegrity:
+      "sha512-Eg4tVTLq3kfVB7thJU3Sarzt0BUGtg/z+Jt2Y5+pyCra6/NhQAq4/7IjWj72pfkNLGTr2xxxvq8Im++bZRrfXA==",
+    kind: "zod",
+    version: "2026.9.2",
+  },
   "@openclaw/discord@2026.9.2": {
     expectedPatchedTreeIntegrity:
       "sha512-8Vqg663sVwrfHial8BR9oDEksR3slSjbJjsS7s+UHmQW25XRr8wVtSIgqE4WT+cANzo3zTwfpiqJwAmghPFQeA==",
