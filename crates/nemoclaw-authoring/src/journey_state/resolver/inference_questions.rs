@@ -26,6 +26,7 @@ impl QuestionResolver<'_> {
                         target: QuestionTarget::sdk(path.clone()),
                         kind: JourneyQuestionKind::InferenceModel,
                         reopened_because: None,
+                        note: None,
                         id: path,
                         reason: if value.is_some() {
                             JourneyQuestionReason::ExplicitAsk
@@ -79,6 +80,7 @@ impl QuestionResolver<'_> {
                         },
                         kind: JourneyQuestionKind::Field,
                         reopened_because: None,
+                        note: None,
                         id: ROUTE_SELECTION.into(),
                         reason: JourneyQuestionReason::Missing,
                         required: true,
@@ -105,6 +107,7 @@ impl QuestionResolver<'_> {
                 },
                 kind: JourneyQuestionKind::Field,
                 reopened_because: None,
+                note: None,
                 id: INFERENCE_PRESET.into(),
                 reason: if suggestion.is_some() {
                     JourneyQuestionReason::ExplicitAsk
@@ -139,6 +142,7 @@ impl QuestionResolver<'_> {
                     target: QuestionTarget::sdk(path.clone()),
                     kind: JourneyQuestionKind::Field,
                     reopened_because: None,
+                    note: None,
                     id: path,
                     reason: if value.is_some() {
                         JourneyQuestionReason::ExplicitAsk
@@ -165,6 +169,7 @@ impl QuestionResolver<'_> {
                 target: QuestionTarget::sdk(endpoint.clone()),
                 kind: JourneyQuestionKind::Field,
                 reopened_because: None,
+                note: None,
                 id: endpoint.clone(),
                 reason: JourneyQuestionReason::ExplicitAsk,
                 required: true,

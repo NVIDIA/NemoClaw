@@ -69,6 +69,7 @@ impl QuestionResolver<'_> {
                 target: QuestionTarget::Harness,
                 kind: JourneyQuestionKind::Field,
                 reopened_because: None,
+                note: None,
                 id: HARNESS.into(),
                 reason: if chosen.is_none() {
                     JourneyQuestionReason::Missing
@@ -190,6 +191,7 @@ impl QuestionResolver<'_> {
                             },
                             kind: JourneyQuestionKind::Field,
                             reopened_because: None,
+                            note: None,
                             id,
                             reason: if value.is_some() && !valid {
                                 JourneyQuestionReason::InvalidSupplied

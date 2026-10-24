@@ -214,12 +214,10 @@ fn configured_target_prerequisite_blocks_save_until_observed() {
     assert!(wizard.question().unwrap().is_none());
     wizard.advance();
     assert!(!wizard.accepted);
+    assert_eq!(wizard.error, None);
     assert!(
-        wizard
-            .error
-            .as_deref()
-            .unwrap()
-            .contains("Target compatibility")
+        flat(&screen(&wizard, 100, 30)).contains("Target compatibility"),
+        "the review must say what it waits for"
     );
 }
 
@@ -905,28 +903,15 @@ fn review_uses_authoring_readiness_for_an_observed_target_conflict() {
         .into_iter()
         .find(|query| matches!(query, DiscoveryQuery::Engine(_)))
         .expect("a managed gateway reads its engine");
-    wizard.record(
-        engine,
-        DiscoveryObservation::Engine(nemoclaw_sdk::discovery::EngineObservation {
-            status: nemoclaw_sdk::discovery::ObservationStatus::Unavailable,
-            reason: Some("target rejected engine".into()),
-            source: "fixture".into(),
-            server_version: None,
-            architecture: None,
-            operating_system: None,
-            memory_bytes: None,
-            cpus: None,
-        }),
-    );
+    wizard.record(engine, DiscoveryObservation::Engine(conflicting_engine()));
     wizard.started = true;
     wizard.advance();
 
     assert!(!wizard.accepted);
+    assert_eq!(wizard.error, None);
     assert!(
-        wizard
-            .error
-            .as_deref()
-            .is_some_and(|error| error.contains("selected engine"))
+        flat(&screen(&wizard, 100, 40)).contains("The selected engine does not meet"),
+        "the review must say why saving is blocked"
     );
 }
 
@@ -1190,4 +1175,355 @@ fn missing_catalog_key_does_not_occupy_the_error_slot_or_hide_engine_failures() 
             .unwrap()
             .contains("Target engine and image compatibility")
     );
+}
+
+/// Ask this machine about one Docker engine, which answers as `status` says,
+/// then accept suggestions up to the engine question.
+async fn wizard_at_engine_question(
+    status: nemoclaw_sdk::discovery::ObservationStatus,
+) -> JourneyWizard {
+    let capabilities = Capabilities::available();
+    let state = load_journey(Source::Defaults, &capabilities).unwrap();
+    let candidate = DiscoveryRequest {
+        engine: "unix:///home/me/.colima/docker.sock".into(),
+        compute_driver: ComputeDriver::Docker,
+    };
+    let mut wizard =
+        JourneyWizard::new(capabilities, state).with_local_engine_candidates(vec![candidate]);
+    let queries = local_engine_probe(&wizard);
+    let reply = async move |queries: Vec<DiscoveryQuery>, _: &CancellationToken| {
+        let mut observed = DiscoveryObservations::new();
+        for query in queries {
+            observed.record(
+                query,
+                DiscoveryObservation::Engine(engine_observation(status)),
+            );
+        }
+        Ok(observed)
+    };
+    assert!(
+        ask_target(
+            &mut wizard,
+            reply,
+            queries,
+            &CancellationToken::new(),
+            &mut std::collections::VecDeque::new(),
+            || Ok(None),
+        )
+        .await
+        .unwrap()
+    );
+    wizard.started = true;
+    for _ in 0..20 {
+        if wizard
+            .question()
+            .unwrap()
+            .is_some_and(|question| question.id() == "/spec/gateway/engine")
+        {
+            return wizard;
+        }
+        wizard.advance();
+        assert!(wizard.error.is_none(), "{:?}", wizard.error);
+    }
+    panic!("the journey never asked for the engine");
+}
+
+fn screen(wizard: &JourneyWizard, width: u16, height: u16) -> String {
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+    terminal.draw(|frame| wizard.render(frame)).unwrap();
+    terminal.backend().to_string()
+}
+
+#[tokio::test]
+async fn engine_question_says_why_it_has_no_suggestion_when_no_engine_answered() {
+    use nemoclaw_sdk::discovery::ObservationStatus;
+    let wizard = wizard_at_engine_question(ObservationStatus::Unavailable).await;
+    for (width, height) in [(80, 24), (140, 40)] {
+        let screen = screen(&wizard, width, height);
+        let flat = flat(&screen);
+        assert!(
+            flat.contains("No docker engine answered on this machine."),
+            "{screen}"
+        );
+        assert!(flat.contains("to its socket."), "{screen}");
+    }
+}
+
+#[tokio::test]
+async fn engine_question_suggests_the_answering_socket_without_a_reason() {
+    use nemoclaw_sdk::discovery::ObservationStatus;
+    let wizard = wizard_at_engine_question(ObservationStatus::Available).await;
+    let screen = screen(&wizard, 140, 40);
+    assert!(
+        screen.contains("unix:///home/me/.colima/docker.sock"),
+        "{screen}"
+    );
+    assert!(!screen.contains("engine answered"), "{screen}");
+}
+
+/// The default journey at review. This machine answered for no engine, and the
+/// engine the document names was read as `engine`.
+fn reviewing_wizard(engine: EngineObservation) -> JourneyWizard {
+    let capabilities = Capabilities::available();
+    let state = load_journey(Source::Defaults, &capabilities).unwrap();
+    let document = state
+        .resolve(&capabilities)
+        .unwrap()
+        .assessment()
+        .document()
+        .unwrap()
+        .clone();
+    let query = discovery_queries(&document, state.current_route())
+        .unwrap()
+        .into_iter()
+        .find(|query| matches!(query, DiscoveryQuery::Engine(_)))
+        .expect("a managed gateway reads its engine");
+    let mut observed = DiscoveryObservations::new();
+    observed.record(query, DiscoveryObservation::Engine(engine));
+    let mut wizard = JourneyWizard::new(capabilities, state).with_local_engine_candidates(vec![]);
+    wizard.remember(observed);
+    wizard.started = true;
+    for _ in 0..40 {
+        if wizard.question().unwrap().is_none() {
+            return wizard;
+        }
+        wizard.advance();
+        assert!(wizard.error.is_none(), "{:?}", wizard.error);
+    }
+    panic!("the journey did not reach review");
+}
+
+fn unverified_engine() -> EngineObservation {
+    EngineObservation::unknown("fixture")
+}
+
+fn conflicting_engine() -> EngineObservation {
+    EngineObservation {
+        reason: Some("target rejected engine".into()),
+        ..engine_observation(nemoclaw_sdk::discovery::ObservationStatus::Unavailable)
+    }
+}
+
+/// An engine the fixture host read as `status`.
+fn engine_observation(status: nemoclaw_sdk::discovery::ObservationStatus) -> EngineObservation {
+    EngineObservation {
+        status,
+        reason: None,
+        source: "fixture".into(),
+        server_version: None,
+        architecture: None,
+        operating_system: None,
+        memory_bytes: None,
+        cpus: None,
+    }
+}
+
+/// Scroll the review as far as it goes; it draws first so the view knows its limit.
+fn scroll_to_end(wizard: &mut JourneyWizard, width: u16, height: u16) {
+    screen(wizard, width, height);
+    for _ in 0..500 {
+        wizard.next();
+    }
+}
+
+/// The last screen of the review.
+fn review_end(wizard: &mut JourneyWizard, width: u16, height: u16) -> String {
+    scroll_to_end(wizard, width, height);
+    screen(wizard, width, height)
+}
+
+fn flat(screen: &str) -> String {
+    screen.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn drawn(wizard: &JourneyWizard, width: u16, height: u16) -> ratatui::buffer::Buffer {
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+    terminal.draw(|frame| wizard.render(frame)).unwrap();
+    terminal.backend().buffer().clone()
+}
+
+/// The foreground of the first cell of `needle` on the rendered screen.
+fn foreground_of(wizard: &JourneyWizard, needle: &str) -> ratatui::style::Color {
+    let buffer = drawn(wizard, 100, 40);
+    for y in 0..buffer.area.height {
+        let row = (0..buffer.area.width)
+            .map(|x| buffer[(x, y)].symbol().to_owned())
+            .collect::<String>();
+        if let Some(column) = row.find(needle) {
+            let x = row[..column].chars().count() as u16;
+            return buffer[(x, y)].fg;
+        }
+    }
+    panic!("{needle:?} is not on screen");
+}
+
+#[test]
+fn review_opens_with_the_unverified_target_and_every_reason_above_the_yaml() {
+    let wizard = reviewing_wizard(unverified_engine());
+    for (width, height) in [(72, 24), (80, 24), (140, 40)] {
+        let screen = screen(&wizard, width, height);
+        let text = flat(&screen);
+        for expected in [
+            "Target: Unverified",
+            "No docker engine answered on this machine.",
+            "The selected engine remains unverified.",
+            "The selected image's Fabric capabilities have not been observed.",
+        ] {
+            assert!(text.contains(expected), "{width}x{height}: {screen}");
+        }
+        if let Some(yaml) = screen.find("kind:") {
+            assert!(screen.find("Target: Unverified") < Some(yaml), "{screen}");
+        }
+    }
+    assert_eq!(
+        foreground_of(&wizard, "Target: Unverified"),
+        super::view::WARNING
+    );
+}
+
+#[test]
+fn a_target_conflict_blocks_saving_and_says_why_on_the_review() {
+    let mut wizard = reviewing_wizard(conflicting_engine());
+    for (width, height) in [(80, 24), (140, 40)] {
+        wizard.review_scroll = 0;
+        let screen = screen(&wizard, width, height);
+        let text = flat(&screen);
+        assert!(text.contains("Target: Conflict"), "{screen}");
+        assert!(
+            text.contains("The selected engine does not meet gateway prerequisites."),
+            "{screen}"
+        );
+        assert!(!text.contains("Enter save"), "{screen}");
+        let end = flat(&review_end(&mut wizard, width, height));
+        assert!(!end.contains("Press Enter to save"), "{end}");
+    }
+    wizard.advance();
+    assert!(!wizard.accepted);
+    assert_eq!(wizard.error, None);
+}
+
+#[test]
+fn a_target_conflict_is_shown_in_the_error_colour() {
+    let wizard = reviewing_wizard(conflicting_engine());
+    assert_eq!(
+        foreground_of(&wizard, "Target: Conflict"),
+        super::view::ERROR
+    );
+}
+
+#[test]
+fn an_unverified_target_still_saves() {
+    let mut wizard = reviewing_wizard(unverified_engine());
+    assert!(flat(&screen(&wizard, 80, 24)).contains("Enter save"));
+    assert!(flat(&review_end(&mut wizard, 80, 24)).contains("Press Enter to save."));
+    wizard.advance();
+    assert!(wizard.accepted);
+}
+
+#[test]
+fn review_scroll_stops_at_the_last_line_and_shows_a_scrollbar() {
+    let mut wizard = reviewing_wizard(unverified_engine());
+    let last = wizard.document().map_or_else(
+        |_| String::new(),
+        |document| {
+            document
+                .yaml()
+                .unwrap()
+                .lines()
+                .last()
+                .unwrap()
+                .trim()
+                .to_owned()
+        },
+    );
+    assert!(!last.is_empty());
+    assert!(screen(&wizard, 80, 24).contains('┃'), "no scrollbar");
+    scroll_to_end(&mut wizard, 80, 24);
+    let bottom = screen(&wizard, 80, 24);
+    assert!(flat(&bottom).contains(&last), "{bottom}");
+    let capped = wizard.review_scroll;
+    wizard.previous();
+    assert_eq!(wizard.review_scroll, capped - 1);
+    assert!(
+        !screen(&wizard, 80, 200).contains('┃'),
+        "a short review needs no scrollbar"
+    );
+}
+
+#[test]
+fn an_unverified_target_the_journey_requires_blocks_saving_in_the_error_colour() {
+    let capabilities = Capabilities::available();
+    let base = PartialDocument::from_yaml(include_bytes!(
+        "../../../../examples/onboarding/openclaw.yaml"
+    ))
+    .unwrap();
+    let state = JourneyDefinition::new("target-gated", base)
+        .require_target([TargetPrerequisite::EngineAndImageCompatible])
+        .omit([
+            "adapter:nvidia.fabric.openclaw:/agent_id",
+            "adapter:nvidia.fabric.openclaw:/channel_config",
+            "adapter:nvidia.fabric.openclaw:/connect_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/openclaw_command",
+            "adapter:nvidia.fabric.openclaw:/port_range",
+            "adapter:nvidia.fabric.openclaw:/read_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/shutdown_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/startup_timeout_seconds",
+        ])
+        .start(&capabilities)
+        .unwrap();
+    let document = state
+        .resolve(&capabilities)
+        .unwrap()
+        .assessment()
+        .document()
+        .unwrap()
+        .clone();
+    let engine = discovery_queries(&document, None)
+        .unwrap()
+        .into_iter()
+        .find(|query| matches!(query, DiscoveryQuery::Engine(_)))
+        .unwrap();
+    let mut wizard = JourneyWizard::new(capabilities, state);
+    wizard.record(engine, DiscoveryObservation::Engine(unverified_engine()));
+    wizard.started = true;
+    assert!(wizard.question().unwrap().is_none());
+    let text = flat(&screen(&wizard, 100, 40));
+    assert!(text.contains("Target: Unverified"), "{text}");
+    assert!(!text.contains("Enter save"), "{text}");
+    assert_eq!(
+        foreground_of(&wizard, "Target: Unverified"),
+        super::view::ERROR
+    );
+}
+
+/// The scrollbar's symbols down the review's right edge, top to bottom.
+fn scrollbar_column(wizard: &JourneyWizard, width: u16, height: u16) -> String {
+    let buffer = drawn(wizard, width, height);
+    (9..height - 2)
+        .map(|y| buffer[(width - 3, y)].symbol().to_owned())
+        .collect()
+}
+
+#[test]
+fn the_scrollbar_thumb_reaches_each_end_with_the_review() {
+    let mut wizard = reviewing_wizard(unverified_engine());
+    let top = scrollbar_column(&wizard, 80, 24);
+    assert!(top.starts_with('┃'), "{top}");
+    scroll_to_end(&mut wizard, 80, 24);
+    let bottom = scrollbar_column(&wizard, 80, 24);
+    assert!(bottom.ends_with('┃'), "{bottom}");
+}
+
+#[test]
+fn review_opens_at_the_top_after_going_back_and_returning() {
+    let mut wizard = reviewing_wizard(unverified_engine());
+    screen(&wizard, 80, 24);
+    for _ in 0..10 {
+        wizard.next();
+    }
+    assert!(wizard.review_scroll > 0);
+    wizard.back();
+    wizard.advance();
+    assert!(wizard.question().unwrap().is_none());
+    assert_eq!(wizard.review_scroll, 0);
 }

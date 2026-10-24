@@ -36,6 +36,7 @@ impl QuestionResolver<'_> {
                 target: QuestionTarget::DeploymentName,
                 kind: JourneyQuestionKind::Field,
                 reopened_because: None,
+                note: None,
                 id: NAME.into(),
                 reason: if invalid_name {
                     JourneyQuestionReason::InvalidSupplied
@@ -77,6 +78,7 @@ impl QuestionResolver<'_> {
                     target: QuestionTarget::sdk(field.clone()),
                     kind: JourneyQuestionKind::Field,
                     reopened_because: None,
+                    note: None,
                     id: field.clone(),
                     reason: if value.is_some() && !valid {
                         JourneyQuestionReason::InvalidSupplied
@@ -146,6 +148,7 @@ impl QuestionResolver<'_> {
                 target: QuestionTarget::sdk(issue.path()),
                 kind: JourneyQuestionKind::Field,
                 reopened_because: None,
+                note: None,
                 id: issue.path().into(),
                 reason: if issue.kind() == PartialIssueKind::Missing {
                     JourneyQuestionReason::Missing

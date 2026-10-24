@@ -41,16 +41,19 @@ impl JourneyState {
         // cause. That default is Docker's socket, so it is not offered as the
         // engine either: accepting it would author a socket no engine answered on.
         if let Some(runtime) = self.runtime_without_local_engine() {
+            let reason = format!(
+                "No {runtime} engine answered on this machine. Start it, or set spec.gateway.engine to its socket."
+            );
+            // The question states the cause where the user answers; the
+            // assessment keeps it for review.
             if let Some(question) = resolution
                 .questions
                 .iter_mut()
                 .find(|question| question.id == GATEWAY_ENGINE_PATH)
             {
                 question.suggestion = None;
+                question.note = Some(reason.clone());
             }
-            let reason = format!(
-                "No {runtime} engine answered on this machine. Start it, or set spec.gateway.engine to its socket."
-            );
             // Podman has no default engine, so its document stays incomplete
             // and no target was assessed; the cause is still the first thing
             // to report.

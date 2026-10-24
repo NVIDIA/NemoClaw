@@ -4022,3 +4022,115 @@ fn minimally_supplied_inline_envelope_materializes_through_one_resolver() {
         resolution.unverified(),
     );
 }
+
+const NO_ENGINE_REASON: &str = "No podman engine answered on this machine. Start it, or set spec.gateway.engine to its socket.";
+
+fn engine_note(
+    state: &nemoclaw_authoring::JourneyState,
+    capabilities: &Capabilities,
+    observations: &DiscoveryObservations,
+) -> Option<String> {
+    state
+        .resolve_with_observations(capabilities, observations)
+        .unwrap()
+        .question("/spec/gateway/engine")
+        .expect("the engine question is asked")
+        .note()
+        .map(str::to_owned)
+}
+
+#[test]
+fn the_engine_question_states_why_a_runtime_without_a_local_engine_has_no_suggestion() {
+    let capabilities = Capabilities::available();
+    let engine = "/spec/gateway/engine";
+    let (mut state, observations) =
+        docker_only_journey(&capabilities, &["/spec/gateway/runtime/provider", engine]);
+    state
+        .answer(
+            &capabilities,
+            "/spec/gateway/runtime/provider",
+            Some(json!("podman")),
+        )
+        .unwrap();
+    let resolution = state
+        .resolve_with_observations(&capabilities, &observations)
+        .unwrap();
+    let question = resolution.question(engine).unwrap();
+    assert_eq!(question.suggestion(), None);
+    assert_eq!(question.note(), Some(NO_ENGINE_REASON));
+}
+
+#[test]
+fn the_engine_question_has_no_note_when_an_engine_answered() {
+    let capabilities = Capabilities::available();
+    let engine = "/spec/gateway/engine";
+    let (mut state, observations) =
+        docker_only_journey(&capabilities, &["/spec/gateway/runtime/provider", engine]);
+    state
+        .answer(
+            &capabilities,
+            "/spec/gateway/runtime/provider",
+            Some(json!("docker")),
+        )
+        .unwrap();
+    let resolution = state
+        .resolve_with_observations(&capabilities, &observations)
+        .unwrap();
+    let question = resolution.question(engine).unwrap();
+    assert_eq!(question.note(), None);
+    assert_eq!(
+        question.suggestion(),
+        Some(&json!("unix:///home/me/.colima/docker.sock"))
+    );
+}
+
+#[test]
+fn the_engine_question_has_no_note_before_the_machine_was_asked() {
+    let capabilities = Capabilities::available();
+    let base =
+        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    let state = JourneyDefinition::new("runtime", base)
+        .ask(["/spec/gateway/engine"])
+        .start(&capabilities)
+        .unwrap();
+    assert_eq!(
+        engine_note(&state, &capabilities, &DiscoveryObservations::new()),
+        None
+    );
+}
+
+#[test]
+fn an_authored_engine_clears_the_engine_question_note() {
+    let capabilities = Capabilities::available();
+    let engine = "/spec/gateway/engine";
+    let (mut state, observations) =
+        docker_only_journey(&capabilities, &["/spec/gateway/runtime/provider", engine]);
+    state
+        .answer(
+            &capabilities,
+            "/spec/gateway/runtime/provider",
+            Some(json!("podman")),
+        )
+        .unwrap();
+    assert_eq!(
+        engine_note(&state, &capabilities, &observations).as_deref(),
+        Some(NO_ENGINE_REASON)
+    );
+    state
+        .answer(
+            &capabilities,
+            engine,
+            Some(json!("unix:///srv/podman.sock")),
+        )
+        .unwrap();
+    let resolution = state
+        .resolve_with_observations(&capabilities, &observations)
+        .unwrap();
+    assert_eq!(
+        resolution
+            .question(engine)
+            .and_then(|question| question.note()),
+        None
+    );
+}

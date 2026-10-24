@@ -31,6 +31,9 @@ pub(crate) struct JourneyWizard {
     pub(super) started: bool,
     pub(super) accepted: bool,
     pub(super) review_scroll: u16,
+    /// The furthest the review can scroll, as of its last render: the view
+    /// alone knows how its wrapped text fits.
+    pub(super) review_scroll_limit: Cell<u16>,
 }
 
 impl JourneyWizard {
@@ -51,6 +54,7 @@ impl JourneyWizard {
             started: false,
             accepted: false,
             review_scroll: 0,
+            review_scroll_limit: Cell::new(0),
         }
     }
 
@@ -112,6 +116,14 @@ impl JourneyWizard {
 
     fn changed(&mut self) {
         *self.resolution.get_mut() = None;
+        // A changed review starts at its target verdict again.
+        self.review_scroll = 0;
+    }
+
+    /// Whether the journey is complete and its target allows saving.
+    pub(super) fn saveable(&self) -> bool {
+        self.resolution()
+            .is_ok_and(|resolution| resolution.ready_document().is_some())
     }
 
     pub(crate) fn question(&self) -> Result<Option<JourneyQuestion>, Diagnostics> {
@@ -199,7 +211,10 @@ impl JourneyWizard {
     pub(super) fn previous(&mut self) {
         match self.question() {
             Ok(None) if self.started => {
-                self.review_scroll = self.review_scroll.saturating_sub(1);
+                self.review_scroll = self
+                    .review_scroll
+                    .min(self.review_scroll_limit.get())
+                    .saturating_sub(1);
             }
             Ok(Some(question)) if !question.choices().is_empty() => {
                 self.selected = self.choice_index(&question).saturating_sub(1);
@@ -212,7 +227,10 @@ impl JourneyWizard {
     pub(super) fn next(&mut self) {
         match self.question() {
             Ok(None) if self.started => {
-                self.review_scroll = self.review_scroll.saturating_add(1);
+                self.review_scroll = self
+                    .review_scroll
+                    .saturating_add(1)
+                    .min(self.review_scroll_limit.get());
             }
             Ok(Some(question)) if !question.choices().is_empty() => {
                 self.selected = (self.choice_index(&question) + 1).min(
@@ -283,24 +301,9 @@ impl JourneyWizard {
             }
         };
         let Some(question) = resolution.next_question().cloned() else {
+            // A review that cannot be saved already says why, so Enter does nothing.
             if resolution.ready_document().is_some() {
                 self.accepted = true;
-            } else {
-                let issues = resolution
-                    .assessment()
-                    .issues()
-                    .iter()
-                    .map(|issue| format!("{}: {}", issue.path(), issue.rule()))
-                    .collect::<Vec<_>>();
-                self.error = Some(format!(
-                    "Cannot save yet: {} {} {}",
-                    resolution.unverified().join("; "),
-                    issues.join("; "),
-                    resolution
-                        .target_assessment()
-                        .map(|assessment| assessment.reasons.join("; "))
-                        .unwrap_or_default()
-                ));
             }
             return;
         };

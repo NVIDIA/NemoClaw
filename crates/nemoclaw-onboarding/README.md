@@ -89,7 +89,8 @@ Omitting `spec.gateway.engine` leaves image discovery unverified and does not se
 Image compatibility does not verify the external gateway's execution platform or readiness.
 Independent reads run concurrently, and duplicate requests are read once.
 It reads the model catalog when a model question opens for a new endpoint request.
-It reads target observations again each time you delegate with **Ctrl+D** or enter review.
+It reads target observations again each time you delegate with **Ctrl+D** or press **Enter** on the review, which then saves unless the read finds a conflict.
+The review opens with what earlier reads found, so it can report the engine or image as not observed until one of those reads runs.
 Target observations never change the questions; they only assess compatibility at delegation and review, and they need an SDK-valid document.
 Each engine, image, hardware, and catalog read has a five-second timeout; a gateway capability call has thirty seconds.
 Discovery supports cancellation and does not pull images or start containers.
@@ -99,6 +100,10 @@ The standalone example does not read the target, so target compatibility remains
 An unreachable engine or missing image metadata remains unverified; neither establishes that a harness is unsupported.
 A known engine mismatch, conflicting image platform or digest, or rejection by Fabric's planner blocks review and saving until the selection is corrected.
 Unknown observations still allow saving after answering individually, including when authoring for a target to prepare later.
+When no engine answers for the chosen runtime, the gateway engine question offers no suggestion and states why.
+Review opens with the target status and every reason, above the YAML and any credential notes.
+A conflict is shown as an error, and review omits the save action until it is corrected; an unverified target is shown as a warning and still saves.
+The review scrolls to its last line and shows a scrollbar when it exceeds the screen.
 
 Observed models supplement suggestions; you can still enter an identifier manually.
 Discovery supplies model choices and readiness checks without displaying hardware inventories, model counts or successful-check summaries.

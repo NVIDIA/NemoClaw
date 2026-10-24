@@ -6,13 +6,13 @@ use super::{
     labels::{self, terminal_text},
     logo::BrandImage,
 };
-use nemoclaw_authoring::JourneyQuestion;
+use nemoclaw_authoring::{CompatibilityStatus, DiscoveryAssessment, JourneyQuestion};
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Paragraph, Wrap},
+    widgets::{Block, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap},
 };
 use serde_json::Value;
 
@@ -21,7 +21,8 @@ const BRIGHT_GREEN: Color = Color::Rgb(163, 230, 53);
 const DIM: Color = Color::Rgb(82, 121, 84);
 const MUTED: Color = Color::Rgb(126, 145, 128);
 const WHITE: Color = Color::Rgb(238, 245, 238);
-const WARNING: Color = Color::Rgb(255, 170, 70);
+pub(super) const WARNING: Color = Color::Rgb(255, 170, 70);
+pub(super) const ERROR: Color = Color::Rgb(255, 95, 95);
 const LOGO_GRADIENT: [Color; 6] = [
     Color::Rgb(180, 246, 72),
     Color::Rgb(154, 226, 51),
@@ -99,7 +100,9 @@ impl JourneyWizard {
         } else {
             self.review_lines()
         };
+        // Review lists them after the target, so the verdict opens the screen.
         if self.started
+            && !reviewing
             && let Ok(resolution) = self.resolution()
             && !resolution.information().is_empty()
         {
@@ -112,15 +115,48 @@ impl JourneyWizard {
             information.append(&mut lines);
             lines = information;
         }
-        let mut content = Paragraph::new(lines).wrap(Wrap { trim: false });
+        let content = Paragraph::new(lines).wrap(Wrap { trim: false });
         if reviewing {
-            content = content.scroll((self.review_scroll, 0));
+            self.render_review(frame, rows[2], content);
+        } else {
+            frame.render_widget(content, rows[2]);
         }
-        frame.render_widget(content, rows[2]);
         let optional = matches!(&current, Ok(Some(question)) if !question.required());
         let choosing = matches!(&current, Ok(Some(question))
             if !question.choices().is_empty() && !self.custom_answer);
         self.render_footer(frame, rows[3], reviewing, asking, choosing, optional);
+    }
+
+    /// Draw the scrolled review with a scrollbar when it exceeds `area`. The
+    /// offset is clamped here as well as when scrolling, because a resize can
+    /// shrink the limit after the last key press.
+    fn render_review(&self, frame: &mut Frame<'_>, area: Rect, content: Paragraph<'_>) {
+        // The scrollbar takes the last column, so the text wraps one short.
+        let text = Rect {
+            width: area.width.saturating_sub(1),
+            ..area
+        };
+        let height = content.line_count(text.width);
+        let limit =
+            u16::try_from(height.saturating_sub(usize::from(text.height))).unwrap_or(u16::MAX);
+        self.review_scroll_limit.set(limit);
+        let offset = self.review_scroll.min(limit);
+        frame.render_widget(content.scroll((offset, 0)), text);
+        if limit > 0 {
+            let mut scrollbar = ScrollbarState::new(usize::from(limit))
+                .position(usize::from(offset))
+                .viewport_content_length(usize::from(text.height));
+            frame.render_stateful_widget(
+                Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                    .begin_symbol(None)
+                    .end_symbol(None)
+                    .track_symbol(Some("│"))
+                    .thumb_symbol("┃")
+                    .style(Style::new().fg(DIM)),
+                area,
+                &mut scrollbar,
+            );
+        }
     }
 
     fn question_lines(&self, question: &JourneyQuestion, width: u16) -> Vec<Line<'static>> {
@@ -169,6 +205,12 @@ impl JourneyWizard {
                     "Recheck this answer because {} changed.",
                     terminal_text(cause)
                 ),
+                Style::new().fg(WARNING),
+            )));
+        }
+        if let Some(note) = question.note() {
+            lines.push(Line::from(Span::styled(
+                terminal_text(note),
                 Style::new().fg(WARNING),
             )));
         }
@@ -224,8 +266,24 @@ impl JourneyWizard {
             )),
             Line::from(""),
         ];
+        let mut saveable = false;
         match self.resolution() {
             Ok(resolution) => {
+                saveable = resolution.ready_document().is_some();
+                if let Some(assessment) = resolution.target_assessment() {
+                    // A target that blocks saving without a conflict is one the
+                    // journey requires compatible evidence from.
+                    let blocked = assessment.status == CompatibilityStatus::Conflict
+                        || (resolution.materialized_document().is_some() && !saveable);
+                    lines.extend(target_lines(assessment, blocked));
+                    lines.push(Line::from(""));
+                }
+                if !resolution.information().is_empty() {
+                    lines.extend(resolution.information().iter().map(|note| {
+                        Line::from(Span::styled(terminal_text(note), Style::new().fg(MUTED)))
+                    }));
+                    lines.push(Line::from(""));
+                }
                 if let Some(document) = resolution.materialized_document() {
                     if let Ok(yaml) = document.yaml() {
                         lines.extend(yaml.lines().map(yaml_line));
@@ -252,27 +310,19 @@ impl JourneyWizard {
                     );
                 }
                 lines.extend(template_value_lines(resolution.kept()));
-                if let Some(assessment) = resolution.target_assessment() {
-                    lines.push(Line::from(""));
-                    lines.push(Line::from(Span::styled(
-                        format!("Target: {:?}", assessment.status),
-                        Style::new().fg(MUTED),
-                    )));
-                    lines.extend(assessment.reasons.iter().take(2).map(|reason| {
-                        Line::from(Span::styled(terminal_text(reason), Style::new().fg(MUTED)))
-                    }));
-                }
             }
             Err(error) => lines.push(Line::from(Span::styled(
                 terminal_text(&error.to_string()),
                 Style::new().fg(WARNING),
             ))),
         }
-        lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
-            "Press Enter to save.",
-            Style::new().fg(MUTED),
-        )));
+        if saveable {
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "Press Enter to save.",
+                Style::new().fg(MUTED),
+            )));
+        }
         lines
     }
 
@@ -289,7 +339,14 @@ impl JourneyWizard {
         let controls = if !self.started {
             "Enter  begin     Esc  exit".to_owned()
         } else if reviewing {
-            "Enter  save     ↑/↓  scroll     ←  back     Esc  exit".to_owned()
+            format!(
+                "{}↑/↓  scroll     ←  back     Esc  exit",
+                if self.saveable() {
+                    "Enter  save     "
+                } else {
+                    ""
+                }
+            )
         } else {
             format!(
                 "{}     Enter  continue     ←  back     Esc  exit{}",
@@ -417,6 +474,27 @@ fn texture_line(width: usize) -> Line<'static> {
             })
             .collect::<Vec<_>>(),
     )
+}
+
+/// The target's status and every reason. A reason that blocks saving is an
+/// error; one that only leaves the target unverified is a warning.
+fn target_lines(assessment: &DiscoveryAssessment, blocked: bool) -> Vec<Line<'static>> {
+    let color = match (blocked, assessment.status) {
+        (true, _) => ERROR,
+        (false, CompatibilityStatus::Unverified) => WARNING,
+        (false, _) => MUTED,
+    };
+    let mut lines = vec![Line::from(Span::styled(
+        format!("Target: {:?}", assessment.status),
+        Style::new().fg(color).add_modifier(Modifier::BOLD),
+    ))];
+    lines.extend(
+        assessment
+            .reasons
+            .iter()
+            .map(|reason| Line::from(Span::styled(terminal_text(reason), Style::new().fg(color)))),
+    );
+    lines
 }
 
 /// Template values that omission kept without a question, so the person sees

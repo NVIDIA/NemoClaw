@@ -120,6 +120,7 @@ pub struct JourneyQuestion {
     target: QuestionTarget,
     reason: JourneyQuestionReason,
     reopened_because: Option<String>,
+    note: Option<String>,
     required: bool,
     choices: Vec<Value>,
     kind: JourneyQuestionKind,
@@ -139,6 +140,10 @@ impl JourneyQuestion {
     /// The earlier answer that caused an accepted decision to reopen.
     pub fn reopened_because(&self) -> Option<&str> {
         self.reopened_because.as_deref()
+    }
+    /// Why the question has no suggestion, when the target observations explain it.
+    pub fn note(&self) -> Option<&str> {
+        self.note.as_deref()
     }
     pub fn required(&self) -> bool {
         self.required

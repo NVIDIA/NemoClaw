@@ -103,6 +103,7 @@ impl QuestionResolver<'_> {
                         },
                         kind: JourneyQuestionKind::Field,
                         reopened_because: None,
+                        note: None,
                         id: field.path,
                         reason: if value.is_some() && !valid {
                             JourneyQuestionReason::InvalidSupplied
