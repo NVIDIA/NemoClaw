@@ -35,7 +35,8 @@
       "live": "test/e2e/live/portable-profile-rootless-linux.test.ts",
       "liveSources": [
         "test/e2e/fixtures/portable-profile-rootless-finalization-helpers.ts",
-        "test/e2e/fixtures/portable-registry-readiness.ts"
+        "test/e2e/fixtures/portable-registry-readiness.ts",
+        "test/e2e/fixtures/portable-sandbox-build-diagnostics.ts"
       ],
       "fast": [
         "src/lib/actions/sandbox/doctor-flow.test.ts",
@@ -49,7 +50,8 @@
         "src/lib/onboard/sandbox-prebuild.test.ts",
         "test/agents/hermes/hermes-start.test.ts",
         "test/e2e/support/portable-registry-readiness.test.ts",
-        "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts"
+        "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts",
+        "test/e2e/support/portable-sandbox-build-diagnostics.test.ts"
       ]
     },
     {

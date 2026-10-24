@@ -84,6 +84,9 @@ The install refuses package removals, preserving the runner's Docker and contain
   attempt evidence. A failure attempts to retain redacted container state, the
   published port mapping, and a bounded registry log tail before cleanup.
   Unavailable diagnostics do not suppress the readiness failure.
+  If the fixed sandbox image build fails, the live scenario retains its exit
+  status, signal, optional allowlisted error code, and a fixed error category.
+  It discards the raw build output.
   Trusted Portable Podman setup requires at least 128 tasks of remaining headroom
   on its finite API-service boundary before registry creation. The job selects a
   1024-task limit, disabled per-container cgroups, and the `crun` OCI runtime
