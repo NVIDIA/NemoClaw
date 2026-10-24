@@ -866,6 +866,22 @@ function clearOpenClawConfigSyncPending(
   }
 }
 
+function clearHermesGatewayRestartPending(
+  sandboxName: string,
+  deps: Pick<InferenceSetDeps, "updateSandbox">,
+): void {
+  try {
+    if (!deps.updateSandbox(sandboxName, { hermesGatewayRestartPending: undefined })) {
+      throw new Error("sandbox registry entry is unavailable");
+    }
+  } catch {
+    throw new InferenceSetError(
+      `The Hermes gateway restarted, but its pending restart record could not be cleared. ` +
+        `Retry the same inference set command to finish recovery.`,
+    );
+  }
+}
+
 function failOpenClawInferenceConfigSync(
   agentName: string,
   sandboxName: string,
@@ -1070,6 +1086,19 @@ function observeInferenceRouteForSelection(input: {
   return observeInferenceRouteBeforeMutation(input.deps, input.gatewayName);
 }
 
+/** Native selections never read or write the shared route, so it cannot show a change (#13598). */
+function sharedRouteSelectionChanged(input: {
+  nativeProvider: boolean;
+  rollbackRoute: { provider: string; model: string } | null;
+  provider: string;
+  model: string;
+}): boolean {
+  if (input.nativeProvider) return false;
+  return (
+    input.rollbackRoute?.provider !== input.provider || input.rollbackRoute?.model !== input.model
+  );
+}
+
 function providerBackedRouteLacksRollbackTarget(input: {
   nativeProvider: boolean;
   directProviderBinding: boolean;
@@ -1218,6 +1247,59 @@ function resolveMatchingAgentConfigTarget(
     );
   }
   return target;
+}
+
+function shouldRestartHermesGateway(input: {
+  isHermes: boolean;
+  retryPending: boolean;
+  selectingNative: boolean;
+  previousNativeAttachment: boolean;
+  previousNativeLocalAttachment: boolean;
+  configChanged: boolean;
+  nativeAttachmentChanged: boolean;
+  nativeLocalAttachmentChanged: boolean;
+}): boolean {
+  if (!input.isHermes) return false;
+  if (input.retryPending) return true;
+  const hasNativeAttachment =
+    input.selectingNative || input.previousNativeAttachment || input.previousNativeLocalAttachment;
+  return (
+    hasNativeAttachment &&
+    (input.configChanged || input.nativeAttachmentChanged || input.nativeLocalAttachmentChanged)
+  );
+}
+
+/**
+ * Record restart intent in the registry update that commits a Hermes native attachment change,
+ * so an interruption before the restart cannot leave a retry that sees nothing to do.
+ */
+function hermesAttachmentRestartRegistryFields(input: {
+  isHermes: boolean;
+  attachmentChanged: boolean;
+  localAttachmentChanged: boolean;
+  previousDetached: boolean;
+  previousLocalDetached: boolean;
+}): { hermesGatewayRestartPending?: true } {
+  const changed =
+    input.attachmentChanged ||
+    input.localAttachmentChanged ||
+    input.previousDetached ||
+    input.previousLocalDetached;
+  return input.isHermes && changed ? { hermesGatewayRestartPending: true } : {};
+}
+
+function markHermesGatewayRestartPending(
+  required: boolean,
+  alreadyRecorded: boolean,
+  sandboxName: string,
+  deps: Pick<InferenceSetDeps, "updateSandbox">,
+): void {
+  if (!required || alreadyRecorded) return;
+  if (!deps.updateSandbox(sandboxName, { hermesGatewayRestartPending: true })) {
+    throw new InferenceSetError(
+      `Failed to record the pending Hermes gateway restart for sandbox '${sandboxName}'.`,
+    );
+  }
 }
 
 async function runInferenceSetWithoutHostLock(
@@ -1511,6 +1593,7 @@ async function runInferenceSetWithoutHostLock(
   // Capture before registry writes: a retry already has the new route, while
   // the sandbox config can still carry the previous endpoint's context window.
   const retryingOpenClawConfigSync = entry.openClawConfigSyncPending === true;
+  const retryingHermesGatewayRestart = entry.hermesGatewayRestartPending === true;
   const openClawConfigSyncPending =
     agentName === "openclaw" &&
     (retryingOpenClawConfigSync ||
@@ -1825,6 +1908,13 @@ async function runInferenceSetWithoutHostLock(
       next: nativeLocalProviderAttachment,
     });
 
+    const hermesRestartFields = hermesAttachmentRestartRegistryFields({
+      isHermes: agentName === "hermes",
+      attachmentChanged: nativeAttachmentChanged,
+      localAttachmentChanged: nativeLocalAttachmentChanged,
+      previousDetached: previousNativeDetached,
+      previousLocalDetached: previousNativeLocalDetached,
+    });
     // Write minimal registry state before any sandbox-facing config read so the
     // gateway and registry cannot split if the in-sandbox layer is unavailable.
     const registryFields = (preferredInferenceApi: string | null) => ({
@@ -1856,6 +1946,7 @@ async function runInferenceSetWithoutHostLock(
       ),
       ...nativeSelectionRegistryFields(nativeProviderAttachment, previousNativeDetached),
       ...openClawLocalRegistryFields(localSwitch.selected, previousLocalDetached),
+      ...hermesRestartFields,
       ...(nativeLocalProviderAttachment?.endpointUrl
         ? { endpointUrl: nativeLocalProviderAttachment.endpointUrl }
         : (nativeSelection.endpointUrl ?? localSwitch.selected?.endpointUrl) &&
@@ -1976,6 +2067,23 @@ async function runInferenceSetWithoutHostLock(
       );
     }
 
+    const hermesGatewayRestartRequired = shouldRestartHermesGateway({
+      isHermes: agentName === "hermes",
+      retryPending: retryingHermesGatewayRestart,
+      selectingNative: Boolean(selectingNative),
+      previousNativeAttachment: Boolean(previousNativeAttachment),
+      previousNativeLocalAttachment: Boolean(previousNativeLocalAttachment),
+      configChanged: patched.changed,
+      nativeAttachmentChanged,
+      nativeLocalAttachmentChanged,
+    });
+    markHermesGatewayRestartPending(
+      hermesGatewayRestartRequired,
+      Boolean(hermesRestartFields.hermesGatewayRestartPending),
+      sandboxName,
+      deps,
+    );
+
     deps.log(
       agentName === "hermes"
         ? `  Syncing Hermes model route in sandbox '${sandboxName}'...`
@@ -2039,13 +2147,11 @@ async function runInferenceSetWithoutHostLock(
         // A prior failed native response or receipt write can leave the new config on disk
         // without ever activating it in the running gateway.
         configChanged: patched.changed || retryingOpenClawConfigSync,
-        // A new native attachment refreshes credentials for new processes only.
-        // Restart on retries too: an earlier attempt may have committed the config.
-        hermesGatewayRestart:
-          agentName === "hermes" &&
-          (selectingNative || previousNativeAttachment || previousNativeLocalAttachment)
-            ? { gatewayName: expectedGatewayName }
-            : undefined,
+        // Native attachment and config changes reach Hermes only after a restart.
+        // The durable pending marker preserves restart recovery without disrupting a true no-op.
+        hermesGatewayRestart: hermesGatewayRestartRequired
+          ? { gatewayName: expectedGatewayName }
+          : undefined,
         openClawPairingTarget:
           agentName === "openclaw"
             ? {
@@ -2087,9 +2193,16 @@ async function runInferenceSetWithoutHostLock(
       [
         patched.changed,
         retryingOpenClawConfigSync,
+        nativeAttachmentChanged,
+        nativeLocalAttachmentChanged,
+        hermesGatewayRestartRequired,
         appliedProvider,
-        rollbackRoute?.provider !== provider,
-        rollbackRoute?.model !== model,
+        sharedRouteSelectionChanged({
+          nativeProvider: selectingNative,
+          rollbackRoute,
+          provider,
+          model,
+        }),
         previousProvider !== provider,
         previousModel !== model,
         previousInferenceApi !== preferredInferenceApi,
@@ -2269,6 +2382,9 @@ export async function runInferenceSet(
     // device-scope convergence.
     try {
       await completeInferencePostCommit(mutation, deps);
+      if (mutation.hermesGatewayRestart) {
+        clearHermesGatewayRestartPending(selected.sandboxName, deps);
+      }
       // The agent config has converged once post-commit work succeeds. Do not
       // leave its recovery marker pending if later provider cleanup fails.
       if (mutation.openClawConfigSyncPending) {

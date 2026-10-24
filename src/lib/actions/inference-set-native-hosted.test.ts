@@ -521,12 +521,14 @@ describe("Hermes native gateway credential refresh", () => {
         /managed Hermes gateway restart.*committed route was not rolled back.*alpha gateway restart/,
       );
       expect(entry.provider).toBe("gemini-api");
+      expect(entry.hermesGatewayRestartPending).toBe(true);
       expect([...attached.get("alpha")!]).toEqual([
         hostedNativeProvider("gemini-api")!.providerName,
       ]);
       expect(calls.detachProvider).not.toHaveBeenCalled();
       await runInferenceSet({ provider: "gemini-api", model: "fixture-model" }, deps);
       expect(deps.calls.restartSandboxGateway).toHaveBeenCalledTimes(2);
+      expect(entry.hermesGatewayRestartPending).toBeUndefined();
       expect(JSON.stringify(deps.calls.log.mock.calls)).not.toContain("synthetic-secret");
     },
   );

@@ -128,6 +128,8 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   agentVersion?: string | null;
   /** Route committed before OpenClaw config synchronization; invalidates retained context on retry. */
   openClawConfigSyncPending?: true;
+  /** Hermes inference config committed before its required gateway restart completed. */
+  hermesGatewayRestartPending?: true;
   // NemoClaw build fingerprint (the NemoClaw CLI/build version) stamped only on
   // NemoClaw-managed images at create/rebuild time. `upgrade-sandboxes` compares
   // it against the running NemoClaw build so an image/build change with an
