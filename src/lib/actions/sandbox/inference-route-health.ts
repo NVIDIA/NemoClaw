@@ -631,7 +631,7 @@ export async function verifyHermesNvidiaCredential(
     sandboxName: entry.name,
     target: { kind: "named", gatewayName: entry.gatewayName },
     command: [
-      "/opt/hermes/.venv/bin/python",
+      "/opt/hermes/.venv/bin/python3",
       "-I",
       "/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py",
       "verify-nvidia-credential",

@@ -42,7 +42,7 @@ describe("sandbox inference route health", () => {
         sandboxName: "alpha",
         target: { kind: "named", gatewayName: "gateway-a" },
         command: [
-          "/opt/hermes/.venv/bin/python",
+          "/opt/hermes/.venv/bin/python3",
           "-I",
           "/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py",
           "verify-nvidia-credential",

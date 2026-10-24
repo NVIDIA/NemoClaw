@@ -949,7 +949,7 @@ export async function runHermesNvidiaDiscordRebuild({
       const discordState = await sandbox.exec(
         SANDBOX_NAME,
         [
-          "/opt/hermes/.venv/bin/python",
+          "/opt/hermes/.venv/bin/python3",
           "-c",
           `import json, os, shlex
 from pathlib import Path

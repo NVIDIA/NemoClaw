@@ -93,7 +93,11 @@ describe("Hermes Discord rebuild evidence", () => {
     expect(command.mock.calls[2]![1]).toEqual([CLI, SANDBOX_NAME, "status", "--json"]);
     expect(command.mock.calls[2]![2]!.env!).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
     expect(exec).toHaveBeenCalledTimes(2);
-    expect(exec.mock.calls[0]![1]).not.toContain("-z");
+    expect(exec.mock.calls[0]![1]).toEqual([
+      "/opt/hermes/.venv/bin/python3",
+      "-c",
+      expect.any(String),
+    ]);
     expect(exec.mock.calls[1]![1]).toContain("-z");
   });
 
