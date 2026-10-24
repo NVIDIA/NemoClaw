@@ -229,7 +229,10 @@ Use these details when your first-run path needs more control.
     Hermes forwards its dashboard on port `18789` and its OpenAI-compatible API on port `8642`.
     A sandbox receives those ports when no other sandbox or host listener already holds them.
     Otherwise, NemoClaw allocates the next free dashboard port from `18789` through `18799` and the next free API port from `8642` through `8652`.
-    Run `openshell forward list` to read the host bind for each of that sandbox's forwards.
+    Read the allocated API port from the OpenAI-compatible API URL printed after onboarding.
+    Run `nemohermes my-hermes status` to check sandbox readiness.
+    Run `nemohermes my-hermes recover` to verify or restore its required forwards.
+    `openshell forward list` lists legacy and user-managed forwards; it can omit NemoClaw's receipt-owned API forward.
     Choose how the remote client reaches the host forwards.
     If a reverse proxy or tunnel already reaches the loopback dashboard forward, set `CHAT_UI_URL` to its externally reachable HTTPS origin before onboarding.
     Do not include credentials in the URL.
@@ -250,8 +253,10 @@ Use these details when your first-run path needs more control.
     Hermes rejects an external HTTP URL when the sandbox starts.
     NemoClaw preserves an external browser URL across rebuild and clone operations.
 
-    For direct dashboard or API access to a non-WSL host, set `NEMOCLAW_DASHBOARD_BIND=0.0.0.0` before onboarding.
+    For direct dashboard access to a non-WSL host, set `NEMOCLAW_DASHBOARD_BIND=0.0.0.0` before onboarding.
     Use the same setting for later `nemohermes <sandbox> connect` calls.
+    The API forward stays on `127.0.0.1`, including on WSL and with this setting enabled.
+    Use SSH port forwarding for remote API access, as shown below.
 
     ```bash
     export NEMOCLAW_AGENT=hermes
@@ -275,8 +280,9 @@ Use these details when your first-run path needs more control.
     ```
 
     These commands forward the default ports.
-    Replace them with the sandbox's own ports when `openshell forward list` reports different values.
-    Configure API clients with the base URL `http://127.0.0.1:8642/v1` after forwarding the API port.
+    Replace the dashboard port with the port in `nemohermes my-hermes dashboard-url --quiet`.
+    Replace the API port with the port in the API URL printed after onboarding.
+    Use the same local API port in the client base URL, for example `http://127.0.0.1:8642/v1` for the default port.
     Run `nemohermes my-hermes gateway-token --quiet` to retrieve the API bearer token.
     Pass the token in the client's `Authorization` header.
     Do not append an OpenClaw `#token=` fragment to either URL.

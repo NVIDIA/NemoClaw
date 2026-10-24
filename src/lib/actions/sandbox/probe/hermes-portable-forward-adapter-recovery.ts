@@ -7,6 +7,10 @@ import type {
   OpenShellForwardObservation,
   OpenShellForwardStartFailure,
 } from "../../../adapters/openshell/forward";
+import {
+  createHermesApiForwardMigration,
+  isRegisteredHermesApiForward,
+} from "../../../agent/hermes-api-forward";
 import { createOpenShellOperationDeadline } from "../../../adapters/openshell/operation-deadline";
 
 type ForwardTimingStage = "list" | "settle" | "start" | "stop";
@@ -64,6 +68,10 @@ export interface HermesPortableForwardRecoveryDeps {
   readonly assertCurrent: () => void | Promise<void>;
   readonly assertRollbackCurrent: () => void | Promise<void>;
   readonly now?: () => number;
+  readonly readSandbox?: () =>
+    | { agent?: string | null; hermesApiPort?: number | null }
+    | null
+    | undefined;
 }
 
 export interface HermesPortableForwardRecoveryInput {
@@ -220,6 +228,7 @@ function validateInput(input: HermesPortableForwardRecoveryInput): void {
 function requireUsableObservations(
   input: HermesPortableForwardRecoveryInput,
   observations: readonly OpenShellForwardObservation[],
+  allowApiMigration = false,
 ): void {
   if (observations.length !== input.forwards.length) {
     failure("forward-state-unavailable", { cause: "forward-list-invalid" });
@@ -232,7 +241,13 @@ function requireUsableObservations(
     if (observation.state === "indeterminate") {
       failure("forward-state-unavailable", { cause: "forward-list-failed" });
     }
-    if (observation.state === "foreign") {
+    if (
+      observation.state === "foreign" &&
+      !(
+        allowApiMigration &&
+        isRegisteredHermesApiForward(input.deps.readSandbox?.(), forward.port, forward.localHost)
+      )
+    ) {
       failure("forward-occupied", { cause: "port-occupied", port: forward.port });
     }
   }
@@ -243,6 +258,7 @@ async function observeForwards(
   timing: ReturnType<typeof createForwardTimingRecorder>,
   timeoutMs: number,
   rollback = false,
+  allowApiMigration = false,
 ): Promise<readonly OpenShellForwardObservation[]> {
   await requireCurrent(input, rollback);
   const observations = await timing.measureAsync("list", () =>
@@ -253,8 +269,45 @@ async function observeForwards(
     }),
   );
   await requireCurrent(input, rollback);
-  requireUsableObservations(input, observations);
+  requireUsableObservations(input, observations, allowApiMigration);
   return observations;
+}
+
+async function migrateHermesApiForward(
+  input: HermesPortableForwardRecoveryInput,
+  forward: OpenShellForwardIdentity,
+  timing: ReturnType<typeof createForwardTimingRecorder>,
+  deadline: ReturnType<typeof createOpenShellOperationDeadline>,
+) {
+  const adapter = input.deps.adapter;
+  return await createHermesApiForwardMigration({
+    forward,
+    readSandbox: () => input.deps.readSandbox?.(),
+    assertCurrent: async () => requireCurrent(input, false),
+    adapter: {
+      observeForwards: (request) =>
+        timing.measureAsync("list", () =>
+          adapter.observeForwards({
+            ...request,
+            timeoutMs: deadline.remaining(input.probeTimeoutMs, "forward recovery"),
+          }),
+        ),
+      retireLegacyForward: (request) =>
+        timing.measureAsync("stop", () =>
+          adapter.retireLegacyForward({
+            ...request,
+            timeoutMs: deadline.remaining(input.operationTimeoutMs, "forward recovery"),
+          }),
+        ),
+      startForward: (request) =>
+        timing.measureAsync("start", () =>
+          adapter.startForward({
+            ...request,
+            timeoutMs: deadline.remaining(input.operationTimeoutMs, "forward recovery"),
+          }),
+        ),
+    },
+  }).migrate();
 }
 
 async function cleanupStartedForwards(
@@ -310,7 +363,7 @@ export async function prepareHermesPortableLaunchForwards(
       input.deps.now ?? (() => performance.now()),
     );
     const remaining = () => deadline.remaining(input.probeTimeoutMs, "forward recovery");
-    const initial = await observeForwards(input, timing, remaining());
+    const initial = await observeForwards(input, timing, remaining(), false, true);
     const restoredPorts: number[] = [];
 
     for (const [index, observation] of initial.entries()) {
@@ -333,13 +386,19 @@ export async function prepareHermesPortableLaunchForwards(
           });
         }
       }
-      const started = await timing.measureAsync("start", () =>
-        input.deps.adapter.startForward({
-          forward,
-          timeoutMs: deadline.remaining(input.operationTimeoutMs, "forward recovery"),
-          assertCurrent: async () => requireCurrent(input, false),
-        }),
-      );
+      const started =
+        observation.state === "foreign"
+          ? await migrateHermesApiForward(input, forward, timing, deadline)
+          : await timing.measureAsync("start", () =>
+              input.deps.adapter.startForward({
+                forward,
+                timeoutMs: deadline.remaining(input.operationTimeoutMs, "forward recovery"),
+                assertCurrent: async () => requireCurrent(input, false),
+              }),
+            );
+      if (started === null) {
+        failure("forward-occupied", { cause: "port-occupied", port: forward.port });
+      }
       if (started.state === "started") {
         restoredPorts.push(forward.port);
         cleanups.push({ port: forward.port, cleanup: started.cleanup });

@@ -825,6 +825,10 @@ describe("E2E workflow plan", () => {
     "src/lib/adapters/openshell/forward-cli.ts",
     "src/lib/adapters/openshell/forward-runtime.ts",
     "src/lib/adapters/openshell/forward.ts",
+    "src/lib/agent/hermes-api-forward.ts",
+    "src/lib/onboard/agent-dashboard-forward.ts",
+    "src/lib/onboard/dashboard.ts",
+    "src/lib/onboard/dashboard-runtime.ts",
   ])("selects OpenClaw and Hermes forward lifecycles when %s changes (#9808)", (changedFile) => {
     const targetIds = catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id);
 
@@ -833,6 +837,10 @@ describe("E2E workflow plan", () => {
       "double-onboard-hermes",
       "onboard-resume-hermes",
     ]);
+    const plan = buildE2eWorkflowPlan({}, { changedFiles: [changedFile] });
+    expect(plan.catalogueMatrices["nvidia-inference"].map((row) => row.id)).toContain(
+      "dashboard-remote-bind",
+    );
   });
 
   it.each(["double-onboard-hermes", "onboard-resume-hermes"])(

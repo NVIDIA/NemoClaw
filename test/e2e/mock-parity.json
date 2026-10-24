@@ -385,7 +385,8 @@
       "live": "test/e2e/live/dashboard-remote-bind.test.ts",
       "liveSources": [
         "test/e2e/live/dashboard-connect-handoff.ts",
-        "test/e2e/live/json-envelope.ts"
+        "test/e2e/live/json-envelope.ts",
+        "test/e2e/live/dashboard-remote-bind-env.ts"
       ],
       "fast": [
         "src/lib/actions/sandbox/forward-recovery-declared-ports.test.ts",
@@ -394,7 +395,10 @@
         "src/lib/actions/sandbox/launch-readiness-gateway-health.test.ts",
         "test/e2e/support/json-envelope.test.ts",
         "test/e2e/support/dashboard-connect-handoff.test.ts",
-        "test/e2e/support/runtime-provider-fixture.test.ts"
+        "test/e2e/support/runtime-provider-fixture.test.ts",
+        "src/lib/onboard/agent-dashboard-forward.test.ts",
+        "test/onboarding/onboard-finalization-dashboard-forward.test.ts",
+        "test/e2e/support/dashboard-remote-bind-env.test.ts"
       ]
     },
     {

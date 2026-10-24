@@ -659,7 +659,10 @@ It runs the Ubuntu 26.04 compatibility contracts and the full Vitest suite in fo
 The matrix disables `fail-fast`.
 Each macOS Vitest shard has a 30-minute budget. The independent macOS live E2E
 job has a 150-minute budget, including its 70-minute live test and cleanup.
-The first WSL shard has a 180-minute budget for root-required contracts and live E2E; the other shards have 90 minutes.
+The first WSL shard has a 300-minute budget: 90 minutes for shared setup and non-live tests,
+100 minutes for full E2E, 50 minutes for the selected Hermes dashboard case, and 15 minutes
+after each live suite for cleanup and artifact retention. A further 30 minutes covers shard-1
+root contracts, runtime startup, and live-evidence upload. The other shards have 90 minutes.
 
 WSL setup checks the systemd manager after package installation. An unavailable bus or a timed-out
 probe permits one restart of the job's Ubuntu distro, followed by bounded readiness probes.
@@ -668,6 +671,8 @@ distro so the masks survive a restart. The test script checks Docker again immed
 Vitest. The helper removes the masks and requires Docker health before the live step.
 
 The independent macOS job and WSL shard 1 run focused live E2E only when the run tests `main` and Docker is available.
+WSL shard 1 also runs the Hermes case from `dashboard-remote-bind` through the production installer and OpenShell CLI.
+It checks remote dashboard reachability, loopback API health, and non-loopback API refusal before and after sandbox restart.
 Otherwise, the workflow records the skip and retains the platform contract evidence.
 Therefore, the workflow is platform evidence, not `Release qualification`.
 Only a full manual `.github/workflows/e2e.yaml` run can publish the release check.
@@ -691,7 +696,7 @@ and staging Launchable job own its product coverage:
 | `telegram-injection` | Unified E2E | `telegram-injection` |
 | `messaging-providers` | Unified E2E | `messaging-providers` |
 | `messaging-compatible-endpoint` | Unified E2E | `messaging-compatible-endpoint` |
-| `dashboard-remote-bind` | Unified E2E | `dashboard-remote-bind` owns install, onboard, artifacts, and terminal cleanup. |
+| `dashboard-remote-bind` | Unified E2E | `dashboard-remote-bind` owns install, onboard, artifacts, and terminal cleanup for OpenClaw and Hermes. It retains OpenClaw remote-dashboard audit findings and verifies after onboarding and restart that Hermes API health works on loopback while the host non-loopback API port refuses TCP connections. |
 | `gpu` | Unified E2E | `gpu-e2e` runs on the dedicated GPU runner. |
 | `all` | Retired | The selector only duplicated `credential-sanitization` and `telegram-injection`. |
 
