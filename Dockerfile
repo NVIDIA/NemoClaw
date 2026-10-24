@@ -65,8 +65,6 @@ COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery
 FROM scratch AS managed-startup-runtime-builder
 COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-direct-image-runtime.bundle /out/managed-startup-image-runtime.cjs
 
-# GPU builds import checksum-pinned archives from the amd64 cache.
-# Package installs stay offline.
 FROM scratch AS wechat-npm-archives
 
 ADD --checksum=sha256:467e8047f7114e45944961fcd3eda9421843c9c65db61ea24176e252ab800ee4 https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.9.tgz /openclaw-weixin-2.4.9.tgz
@@ -94,8 +92,7 @@ ADD --chmod=0444 --checksum=sha256:c5d65ff201a8178ec914736887802c38d33628c667be5
 # hadolint ignore=DL3006
 FROM codex-acp-${TARGETARCH}-archive AS codex-acp-platform-archive
 
-# Reviewed-archive invariants (#5896): checksum-addressed source archives,
-# committed SRI verification, offline installation, and architecture selection.
+# Install checksum-pinned ACP archives offline for the selected architecture.
 FROM npm12 AS codex-acp-runtime
 ARG TARGETARCH
 ARG CODEX_ACP_0_11_1_INTEGRITY
@@ -611,7 +608,6 @@ ADD --chmod=0444 --checksum=sha256:96a03e2ac0906b035085ec4e2307dd8076fb02673b8f5
 # hadolint ignore=DL3006
 FROM openclaw-managed-messaging-npm-${TARGETARCH}-archives AS openclaw-managed-messaging-npm-archives
 
-# Selected and managed-union plugins share the reviewed offline dependency cache.
 FROM npm12 AS openclaw-managed-messaging-npm-cache-1
 ARG TARGETARCH
 ENV NPM_CONFIG_AUDIT=false \
@@ -886,7 +882,8 @@ COPY --from=openclaw-plugin-payload / /
 # Copy built plugin and blueprint into the sandbox
 RUN chmod -R a+rX /opt/nemoclaw /opt/nemoclaw-blueprint/
 
-# The builder enforces the boundary dependency allowlist; this checks copied exports.
+# The builder-stage verify-openshell-policy-boundary-dependencies.mts check
+# enforces the allowlist; verify the copied exports here.
 RUN test -f /usr/local/bin/node \
     && test -d /opt/nemoclaw/node_modules/json5 \
     && node -e 'const boundary = require("/opt/nemoclaw/dist/shared/openshell-policy-boundary.cjs"); for (const name of ["parseOpenShellPolicy", "stripProviderComposedPolicies", "withoutProviderComposedPolicies"]) { if (typeof boundary[name] !== "function") throw new Error("OpenShell policy boundary export is unavailable: " + name); }' \
@@ -953,7 +950,7 @@ RUN --mount=type=secret,id=nemoclaw-mcporter-audit-receipt,required=false \
     OPENCLAW_LOCK_SHA256=none-legacy-fixture; \
     OPENCLAW_RECIPE='ignore-scripts+reviewed-lifecycle-v1'; \
     if [ "$OPENCLAW_VERSION" = "2026.9.2" ]; then \
-        OPENCLAW_LOCK_SHA256=e93660e306f2d06b155ca03f0fee9242a8d9b6b4c9e24e96e461b0202f4be060; \
+        OPENCLAW_LOCK_SHA256=0b1253c6570f55881623961c856b430a17d4271f5efe8c5beffa7ac0fc8d0199; \
         ACTUAL_OPENCLAW_LOCK_SHA256="$(sha256sum /usr/local/lib/nemoclaw/openclaw-runtime/package-lock.json | awk '{print $1}')"; \
         [ "$ACTUAL_OPENCLAW_LOCK_SHA256" = "$OPENCLAW_LOCK_SHA256" ] \
             || { echo "ERROR: OpenClaw lock SHA-256 mismatch (expected $OPENCLAW_LOCK_SHA256, found $ACTUAL_OPENCLAW_LOCK_SHA256)" >&2; exit 1; }; \
@@ -1770,13 +1767,8 @@ RUN set -eu; \
     rm -rf "$validation_root"; \
     trap - EXIT
 
-# Install non-messaging OpenClaw plugins that need to match the runtime.
-# Reviewed-archive invariants (#5896): registry SRI, packed-byte SRI, contained
-# basename in a fresh directory, local-archive-only install, and cleanup.
-# The verified tarball installs through the `npm-pack:` spec so OpenClaw
-# records npm provenance; bare archive-path installs record archive
-# provenance, which fails the trusted-official-install check gating
-# openKeyedStore on OpenClaw >= 2026.6.10.
+# Install optional plugins from verified offline archives; npm-pack preserves
+# the official npm provenance required by OpenClaw.
 # hadolint ignore=DL3059,DL4006,SC2016
 RUN --network=none --mount=from=openclaw-optional-plugin-archives,target=/opt/nemoclaw-reviewed-npm-archives,ro set -eu; \
     export NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR=/opt/nemoclaw-reviewed-npm-archives; \
@@ -1834,15 +1826,13 @@ RUN --network=none --mount=from=openclaw-optional-plugin-archives,target=/opt/ne
     fi; \
     :
 
-# Keep the reviewed cache root-owned and immutable. Add messaging source after
-# the core install so channel-only changes invalidate only this plugin layer;
-# messaging intentionally stays out of openclaw-runtime-payload.
+# Keep the reviewed cache immutable and messaging source in its own layer.
 USER root
 COPY src/lib/messaging/ /src/lib/messaging/
 RUN chmod 755 /src/lib/messaging/applier/build/messaging-build-applier.mts \
     && chmod -R a+rX /src/lib/messaging
 
-# Bake runtime metadata for entrypoints without NEMOCLAW_MESSAGING_PLAN_B64.
+# Persist the reduced messaging plan for runtime startup.
 # hadolint ignore=DL3059
 RUN OPENCLAW_VERSION="${OPENCLAW_VERSION}" node /src/lib/messaging/applier/build/messaging-build-applier.mts --agent openclaw --phase runtime-setup
 USER sandbox

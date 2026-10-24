@@ -16,6 +16,7 @@ import {
   openSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
   renameSync,
   realpathSync,
   rmSync,
@@ -170,6 +171,21 @@ const ZOD_VERSION = "4.6.6";
 const ZOD_INTEGRITY =
   "sha512-4UmzQUF5fxvfcYHlbjBmejU+w+hbDnWFx4aS8kBx7nPBHcO2SqPbpAG8snbdg+Xse4pRefR98hgjFgIMCI/UhA==";
 const ZOD_TARBALL = "https://registry.npmjs.org/zod/-/zod-4.6.6.tgz";
+const BODY_PARSER_VERSION = "2.4.0";
+const BODY_PARSER_INTEGRITY =
+  "sha512-Ifk1KcLrxaGt1occQagQNFNNOqRt1LFuehEnHHzB8Z6cRgIxRU1TBaiIsUiCdA+gy5PL7Y1IX31DNKkRmxtXjQ==";
+const BODY_PARSER_TARBALL = "https://registry.npmjs.org/body-parser/-/body-parser-2.4.0.tgz";
+const QS_VERSION = "6.16.1";
+const QS_INTEGRITY =
+  "sha512-5Px6J7rfHBAGUhNQ3es4YzcOdBBw0SDcVtThJml4RdnKw4tKs2epA0kPZ+K8X+WiHktT93RHVcQ/3ym5aTCgtg==";
+const QS_TARBALL = "https://registry.npmjs.org/qs/-/qs-6.16.1.tgz";
+const BUNDLED_BODY_PARSER_REMEDIATIONS: Readonly<
+  Record<string, { bolt: "5.0.0" | "5.1.0"; qs: "6.15.3" | "6.16.0" }>
+> = Object.freeze({
+  "@openclaw/slack@2026.9.2": { bolt: "5.0.0", qs: "6.15.3" },
+  "@openclaw/slack@2026.9.5": { bolt: "5.1.0", qs: "6.16.0" },
+});
+
 const TEAMS_REPLACEMENTS = [
   {
     name: "@azure/msal-node",
@@ -198,65 +214,15 @@ const TEAMS_REPLACEMENTS = [
 const SLACK_BODY_REPLACEMENTS = [
   {
     name: "body-parser",
-    version: "2.4.0",
-    integrity:
-      "sha512-Ifk1KcLrxaGt1occQagQNFNNOqRt1LFuehEnHHzB8Z6cRgIxRU1TBaiIsUiCdA+gy5PL7Y1IX31DNKkRmxtXjQ==",
-    sha256: "3f6e22dc9710a8bd5942fee8dfbd4632b54980cc2f33854f1ec1e314b17b2357",
-    tarball: "https://registry.npmjs.org/body-parser/-/body-parser-2.4.0.tgz",
-    dependencies: {
-      qs: "^6.16.1",
-      bytes: "^3.1.2",
-      debug: "^4.4.3",
-      "type-is": "^2.1.0",
-      "raw-body": "^3.0.2",
-      "iconv-lite": "^0.7.3",
-      "http-errors": "^2.0.1",
-      "on-finished": "^2.4.1",
-      "content-type": "^2.1.0",
-    },
-    engines: {
-      node: ">=18",
-    },
+    version: BODY_PARSER_VERSION,
+    integrity: BODY_PARSER_INTEGRITY,
+    tarball: BODY_PARSER_TARBALL,
   },
   {
     name: "qs",
-    version: "6.16.1",
-    integrity:
-      "sha512-5Px6J7rfHBAGUhNQ3es4YzcOdBBw0SDcVtThJml4RdnKw4tKs2epA0kPZ+K8X+WiHktT93RHVcQ/3ym5aTCgtg==",
-    sha256: "bdb0e06e5cde7b4d7e0117faa678416bbc2c9287b0672c35c04da2b9de1d3cbf",
-    tarball: "https://registry.npmjs.org/qs/-/qs-6.16.1.tgz",
-    dependencies: {
-      "side-channel": "^1.1.1",
-      "es-define-property": "^1.0.1",
-    },
-    engines: {
-      node: ">=0.6",
-    },
-  },
-  {
-    name: "iconv-lite",
-    version: "0.7.3",
-    integrity:
-      "sha512-IKXpvIzjnC9XTAUbVBcMfGS0EPaIXtW6v+zr+RRp+hqULEpo0owZax6wyRwPOJbWbzjYspQwusTsfVr0ifh4uQ==",
-    sha256: "40789b7733e230a0439e07075fe2f37819f4a47ee7115fe17188451fab8e3941",
-    tarball: "https://registry.npmjs.org/iconv-lite/-/iconv-lite-0.7.3.tgz",
-    dependencies: {
-      "safer-buffer": ">= 2.1.2 < 3.0.0",
-    },
-    engines: {
-      node: ">=0.10.0",
-    },
-  },
-  {
-    name: "content-type",
-    version: "2.1.0",
-    integrity:
-      "sha512-mj7UPXE0jaqaOsukNZRUEfEi2AcL7C/vwmwcHV0O97eO1E1pxBZuyjlZrx5seTaNBg1U6+o35wpa35Qfcc+7ag==",
-    sha256: "47a08ee5ddf87a96dd263aa942c5e04b2c5d26251e04affa8ace6804b450d758",
-    tarball: "https://registry.npmjs.org/content-type/-/content-type-2.1.0.tgz",
-    engines: {
-      node: ">=18",
-    },
+    version: QS_VERSION,
+    integrity: QS_INTEGRITY,
+    tarball: QS_TARBALL,
   },
 ] as const;
 const BUNDLED_UNDICI_VERSIONS: Readonly<Record<string, string>> = {
@@ -321,7 +287,7 @@ const REMEDIATIONS: Readonly<Record<string, Remediation>> = Object.freeze({
   },
   "@openclaw/slack@2026.9.5": {
     expectedPatchedTreeIntegrity:
-      "sha512-SJ1ogN75iVuchIsPQR1wqPRyiOKTrkABPkupI2TgoMr/bobOv1Z+POXhS/ohZecVXx3SN8iJPPM2X6L2mBH1tA==",
+      "sha512-NBNKPMUc7Crv2PagcGOIvxwLR51AEx3nE6pDpYkv6Gd2q/xUvbAxKMsFj9kzZPVQBADVqo86haDwBQoK9v2Iig==",
     kind: "zod",
     version: "2026.9.5",
   },
@@ -333,7 +299,7 @@ const REMEDIATIONS: Readonly<Record<string, Remediation>> = Object.freeze({
   },
   "@openclaw/slack@2026.9.2": {
     expectedPatchedTreeIntegrity:
-      "sha512-wYthrzOo71UfKq3WYy5XYykSFRTgFPk8kMmA+ebALExwEIqMWQwbypF5YRJUNhO1YAyOEVi2QdsQvUJ9JT5C/Q==",
+      "sha512-gDqUjFN17GG4Oq51xz8wxHo0xdy7YelJljOhIHTpmZDVeWA4c95dtXq1MHeK1LG16PddWAoFbncYjfcGQ54W6w==",
     kind: "slack-proxy-addr",
     version: "2026.9.2",
   },
@@ -547,11 +513,26 @@ function writeJson(path: string, value: JsonObject): void {
 // root. Pin each regular file's type and contents to the same no-follow
 // descriptor, and reject special entries after a nonblocking open.
 export function hashPackageTree(packageDirectory: string): string {
+  return hashPackageTreeEntries(packageDirectory);
+}
+
+function hashPackageTreeEntries(
+  packageDirectory: string,
+  reviewedTree?: "discord-sdk" | "uuid",
+): string {
   const hash = createHash("sha512");
   const visit = (directory: string, relativeDirectory: string): void => {
     for (const name of readdirSync(directory).sort()) {
       const absolutePath = join(directory, name);
       const relativePath = relativeDirectory ? `${relativeDirectory}/${name}` : name;
+      if (reviewedTree === "discord-sdk" && relativePath === "node_modules/.bin/uuid") {
+        const target = "../uuid/dist-node/bin/uuid";
+        if (!lstatSync(absolutePath).isSymbolicLink() || readlinkSync(absolutePath) !== target) {
+          throw new Error("Discord SDK UUID launcher changed after review");
+        }
+        hash.update(`symlink\0${relativePath}\0${target}\0`);
+        continue;
+      }
       const descriptor = openSync(
         absolutePath,
         constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
@@ -562,6 +543,9 @@ export function hashPackageTree(packageDirectory: string): string {
           hash.update(`directory\0${relativePath}\0`);
           visit(absolutePath, relativePath);
         } else if (openedStats.isFile()) {
+          if (reviewedTree && openedStats.nlink !== 1) {
+            throw new Error("Discord SDK tree contains a hard-linked file");
+          }
           hash.update(`file\0${relativePath}\0${openedStats.size}\0`);
           hash.update(readFileSync(descriptor));
           hash.update("\0");
@@ -575,6 +559,33 @@ export function hashPackageTree(packageDirectory: string): string {
   };
   visit(packageDirectory, "");
   return `sha512-${hash.digest("base64")}`;
+}
+
+// npm adds this launcher during native installation. Bind its relative link
+// to the publisher's complete UUID tree without following the link.
+function hashDiscordSdkTree(packageDirectory: string): string {
+  const digest = hashPackageTreeEntries(packageDirectory, "discord-sdk");
+  requirePackageIdentity(
+    readJson(join(packageDirectory, "package.json")),
+    "@discord/embedded-app-sdk",
+    "2.5.0",
+    "Reviewed Discord SDK",
+  );
+  if (pathIsMissing(join(packageDirectory, "node_modules", ".bin", "uuid"))) return digest;
+  const uuid = join(packageDirectory, "node_modules", "uuid");
+  requirePackageIdentity(
+    readJson(join(uuid, "package.json")),
+    "uuid",
+    "14.0.2",
+    "Discord SDK UUID",
+  );
+  if (
+    hashPackageTreeEntries(uuid, "uuid") !==
+    "sha512-cDyVkhDqmtVNNUY+TgzhgmAWCuCfmV+eMEjHSJLfjsKlM8ulzeJb9aNWRTUulvJsqV8BmDpF011Jcmd1rcMgsw=="
+  ) {
+    throw new Error("Discord SDK UUID tree changed after review");
+  }
+  return digest;
 }
 
 function hashMetadataEntries(entries: readonly (readonly [string, Buffer])[]): string {
@@ -1125,16 +1136,17 @@ export function patchOpenClawSlackProxyAddrPackageGraph(
 
   const proxyAddrDirectory = join(boltDirectory, "node_modules", "proxy-addr");
   const proxyAddrPackageJson = readJson(join(proxyAddrDirectory, "package.json"));
+  const proxyAddrAlreadyPatched = proxyAddrPackageJson.version === PROXY_ADDR_VERSION;
   requirePackageIdentity(
     proxyAddrPackageJson,
     "proxy-addr",
-    "2.0.7",
+    proxyAddrAlreadyPatched ? PROXY_ADDR_VERSION : "2.0.7",
     "OpenClaw Slack bundled proxy-addr",
   );
   requireDependencyShape(
     proxyAddrPackageJson,
     { forwarded: "0.2.0", "ipaddr.js": "1.9.1" },
-    "proxy-addr@2.0.7",
+    `proxy-addr@${proxyAddrAlreadyPatched ? PROXY_ADDR_VERSION : "2.0.7"}`,
   );
   if (proxyAddrPackageJson.license !== "MIT" || proxyAddrPackageJson.engines?.node !== ">= 0.10") {
     throw new Error("@openclaw/slack@2026.9.2 bundled proxy-addr contract changed after review");
@@ -1161,7 +1173,13 @@ export function patchOpenClawSlackProxyAddrPackageGraph(
     );
   }
 
-  copyReplacementPackage(replacementDirectory, proxyAddrDirectory);
+  if (proxyAddrAlreadyPatched) {
+    if (hashPackageTree(proxyAddrDirectory) !== hashPackageTree(replacementDirectory)) {
+      throw new Error("OpenClaw Slack bundled proxy-addr changed after remediation");
+    }
+  } else {
+    copyReplacementPackage(replacementDirectory, proxyAddrDirectory);
+  }
 }
 
 function remediateBundledUndici(
@@ -1182,12 +1200,13 @@ function remediateBundledUndici(
     throw new Error("Undici migration requires single regular plugin metadata");
   const metadata = readJson(metadataPath);
   const target = join(packageDirectory, "node_modules", "undici");
-  if (metadata.dependencies?.undici !== originalVersion)
+  if (![originalVersion, spec.version].includes(metadata.dependencies?.undici))
     throw new Error("Bundled Undici dependency changed after review");
+  const alreadyPatched = readJson(join(target, "package.json")).version === spec.version;
   requirePackageIdentity(
     readJson(join(target, "package.json")),
     "undici",
-    originalVersion,
+    alreadyPatched ? spec.version : originalVersion,
     "Bundled Undici",
   );
   const archive = packReplacement(
@@ -1210,14 +1229,20 @@ function remediateBundledUndici(
     replacementMetadata.engines?.node !== spec.engines.node
   )
     throw new Error("Undici replacement contract changed after review");
-  copyReplacementPackage(replacement, target);
+  if (alreadyPatched) {
+    if (hashPackageTree(target) !== hashPackageTree(replacement)) {
+      throw new Error("Bundled Undici changed after remediation");
+    }
+  } else {
+    copyReplacementPackage(replacement, target);
+  }
   metadata.dependencies.undici = spec.version;
   writeJson(metadataPath, metadata);
   const shrinkwrapPath = join(packageDirectory, "npm-shrinkwrap.json");
   if (existsSync(shrinkwrapPath)) {
     const shrinkwrap = readJson(shrinkwrapPath);
     const entry = shrinkwrap.packages?.["node_modules/undici"];
-    if (entry?.version !== originalVersion)
+    if (![originalVersion, spec.version].includes(entry?.version))
       throw new Error("Bundled Undici shrinkwrap changed after review");
     Object.assign(entry, {
       version: spec.version,
@@ -1229,43 +1254,155 @@ function remediateBundledUndici(
   }
 }
 
+function patchOpenClawBundledBodyParser(
+  packageDirectory: string,
+  packageSpec: string,
+  bodyParserReplacement: string,
+  qsReplacement: string,
+  remediationRoot: string,
+): void {
+  const expected = BUNDLED_BODY_PARSER_REMEDIATIONS[packageSpec];
+  if (!expected) return;
+  const packageJson = readJson(join(packageDirectory, "package.json"));
+  const version = packageSpec.slice(packageSpec.lastIndexOf("@") + 1);
+  requirePackageIdentity(packageJson, "@openclaw/slack", version, "OpenClaw Slack plugin");
+  if (
+    packageJson.dependencies?.["@slack/bolt"] !== expected.bolt ||
+    !packageJson.bundledDependencies?.includes("@slack/bolt")
+  ) {
+    throw new Error(`${packageSpec} bundled Bolt contract changed before remediation`);
+  }
+  const boltDirectory = join(packageDirectory, "node_modules", "@slack", "bolt");
+  const bolt = readJson(join(boltDirectory, "package.json"));
+  requirePackageIdentity(bolt, "@slack/bolt", expected.bolt, `${packageSpec} bundled Bolt`);
+  if (bolt.dependencies?.express !== "^5.0.0") {
+    throw new Error(`${packageSpec} bundled Bolt Express contract changed before remediation`);
+  }
+  const dependencies = join(boltDirectory, "node_modules");
+  const express = readJson(join(dependencies, "express", "package.json"));
+  requirePackageIdentity(express, "express", "5.2.1", `${packageSpec} bundled Express`);
+  if (express.dependencies?.["body-parser"] !== "^2.2.1") {
+    throw new Error(`${packageSpec} bundled Express parser contract changed before remediation`);
+  }
+  const bodyParserDirectory = join(dependencies, "body-parser");
+  const bodyParser = readJson(join(bodyParserDirectory, "package.json"));
+  const bodyParserAlreadyPatched = bodyParser.version === BODY_PARSER_VERSION;
+  requirePackageIdentity(
+    bodyParser,
+    "body-parser",
+    bodyParserAlreadyPatched ? BODY_PARSER_VERSION : "2.3.0",
+    `${packageSpec} bundled parser`,
+  );
+  requireDependencyShape(
+    bodyParser,
+    bodyParserAlreadyPatched
+      ? {
+          bytes: "^3.1.2",
+          "content-type": "^2.1.0",
+          debug: "^4.4.3",
+          "http-errors": "^2.0.1",
+          "iconv-lite": "^0.7.3",
+          "on-finished": "^2.4.1",
+          qs: "^6.16.1",
+          "raw-body": "^3.0.2",
+          "type-is": "^2.1.0",
+        }
+      : {
+          bytes: "^3.1.2",
+          "content-type": "^2.0.0",
+          debug: "^4.4.3",
+          "http-errors": "^2.0.1",
+          "iconv-lite": "^0.7.2",
+          "on-finished": "^2.4.1",
+          qs: "^6.15.2",
+          "raw-body": "^3.0.2",
+          "type-is": "^2.1.0",
+        },
+    `${packageSpec} bundled body-parser@${bodyParserAlreadyPatched ? BODY_PARSER_VERSION : "2.3.0"}`,
+  );
+  const nestedContentType = join(bodyParserDirectory, "node_modules", "content-type");
+  requirePackageIdentity(
+    readJson(join(nestedContentType, "package.json")),
+    "content-type",
+    "2.1.0",
+    `${packageSpec} bundled parser content-type`,
+  );
+  requirePackageIdentity(
+    readJson(join(dependencies, "iconv-lite", "package.json")),
+    "iconv-lite",
+    "0.7.3",
+    `${packageSpec} bundled iconv-lite`,
+  );
+  const qsDirectory = join(dependencies, "qs");
+  const qs = readJson(join(qsDirectory, "package.json"));
+  const qsAlreadyPatched = qs.version === QS_VERSION;
+  requirePackageIdentity(
+    qs,
+    "qs",
+    qsAlreadyPatched ? QS_VERSION : expected.qs,
+    `${packageSpec} bundled qs`,
+  );
+  const patchedBodyParser = readJson(join(bodyParserReplacement, "package.json"));
+  requirePackageIdentity(patchedBodyParser, "body-parser", BODY_PARSER_VERSION, "Patched parser");
+  requireDependencyShape(
+    patchedBodyParser,
+    {
+      bytes: "^3.1.2",
+      "content-type": "^2.1.0",
+      debug: "^4.4.3",
+      "http-errors": "^2.0.1",
+      "iconv-lite": "^0.7.3",
+      "on-finished": "^2.4.1",
+      qs: "^6.16.1",
+      "raw-body": "^3.0.2",
+      "type-is": "^2.1.0",
+    },
+    `body-parser@${BODY_PARSER_VERSION}`,
+  );
+  requirePackageIdentity(
+    readJson(join(qsReplacement, "package.json")),
+    "qs",
+    QS_VERSION,
+    "Patched parser qs",
+  );
+
+  const preparedBodyParser = join(remediationRoot, "slack-body-parser-prepared");
+  cpSync(bodyParserReplacement, preparedBodyParser, { recursive: true });
+  mkdirSync(join(preparedBodyParser, "node_modules"), { recursive: true });
+  cpSync(nestedContentType, join(preparedBodyParser, "node_modules", "content-type"), {
+    recursive: true,
+  });
+  if (bodyParserAlreadyPatched) {
+    if (hashPackageTree(bodyParserDirectory) !== hashPackageTree(preparedBodyParser)) {
+      throw new Error(`${packageSpec} bundled body-parser changed after remediation`);
+    }
+  } else {
+    copyReplacementPackage(preparedBodyParser, bodyParserDirectory);
+  }
+  if (qsAlreadyPatched) {
+    if (hashPackageTree(qsDirectory) !== hashPackageTree(qsReplacement)) {
+      throw new Error(`${packageSpec} bundled qs changed after remediation`);
+    }
+  } else {
+    copyReplacementPackage(qsReplacement, qsDirectory);
+  }
+}
+
 function patchSlackBodyParser(
   packageDirectory: string,
   replacements: ReadonlyMap<string, string>,
 ): void {
-  const parent = join(packageDirectory, "node_modules", "@slack", "bolt", "node_modules");
-  const target = join(parent, "body-parser");
-  const metadata = readJson(join(target, "package.json"));
-  requirePackageIdentity(metadata, "body-parser", "2.3.0", "Slack bundled body-parser");
-  if (
-    metadata.dependencies?.qs !== "^6.15.2" ||
-    metadata.dependencies?.["content-type"] !== "^2.0.0" ||
-    metadata.dependencies?.["iconv-lite"] !== "^0.7.2"
-  ) {
-    throw new Error("Slack bundled body-parser dependency graph changed after review");
-  }
-  const temporary = mkdtempSync(join(parent, ".body-parser-security-"));
-  try {
-    const staged = join(temporary, "package");
-    for (const spec of SLACK_BODY_REPLACEMENTS) {
-      const replacement = replacements.get(spec.name);
-      if (!replacement) throw new Error(`Missing reviewed Slack replacement: ${spec.name}`);
-      const replacementMetadata = readJson(join(replacement, "package.json"));
-      requirePackageIdentity(replacementMetadata, spec.name, spec.version, "Slack replacement");
-      requireDependencyShape(
-        { ...replacementMetadata, dependencies: replacementMetadata.dependencies ?? {} },
-        "dependencies" in spec ? spec.dependencies : {},
-        `Slack ${spec.name} replacement`,
-      );
-      copyReplacementPackage(
-        replacement,
-        spec.name === "body-parser" ? staged : join(staged, "node_modules", spec.name),
-      );
-    }
-    copyReplacementPackage(staged, target);
-  } finally {
-    rmSync(temporary, { recursive: true, force: true });
-  }
+  const metadata = readJson(join(packageDirectory, "package.json"));
+  const bodyParser = replacements.get("body-parser");
+  const qs = replacements.get("qs");
+  if (!bodyParser || !qs) throw new Error("Missing reviewed Slack parser replacements");
+  patchOpenClawBundledBodyParser(
+    packageDirectory,
+    `${metadata.name}@${metadata.version}`,
+    bodyParser,
+    qs,
+    dirname(bodyParser),
+  );
 }
 
 function remediateSlackBodyParser(
@@ -1380,6 +1517,17 @@ function migrateDiscordSdk(packageDirectory: string, replacementDirectory: strin
   const metadataPath = join(packageDirectory, "package.json");
   const metadata = readJson(metadataPath);
   requirePackageIdentity(metadata, "@discord/embedded-app-sdk", "2.5.0", "Discord SDK");
+  if (metadata.dependencies?.zod === ZOD_VERSION) {
+    if (
+      hashPackageTree(join(packageDirectory, "output")) !==
+        "sha512-kX5bbqc7nRT7JXuJmgNEN4k6fisAaQkHfreKMVSu8up62JufdSpKUHmIKAgPJWaVNhoJD1FvRzBoUxtr5tXFuw==" ||
+      hashPackageTree(join(packageDirectory, "node_modules", "zod")) !==
+        hashPackageTree(replacementDirectory)
+    ) {
+      throw new Error("Discord SDK changed after Zod remediation");
+    }
+    return;
+  }
   if (
     metadata.dependencies?.zod !== "^3.9.8" ||
     hashPackageTree(join(packageDirectory, "output")) !== DISCORD_SDK_OUTPUT_INTEGRITY
@@ -1429,7 +1577,7 @@ export function patchOpenClawBundledZodPackageGraph(
     packageSpec.slice(separator + 1),
     "OpenClaw plugin",
   );
-  if (metadata.dependencies?.zod !== expectedVersion) {
+  if (![expectedVersion, ZOD_VERSION].includes(metadata.dependencies?.zod)) {
     throw new Error(`${packageSpec} Zod dependency changed after review`);
   }
   requirePackageIdentity(
@@ -1441,10 +1589,12 @@ export function patchOpenClawBundledZodPackageGraph(
   if (Object.keys(readJson(join(replacementDirectory, "package.json")).dependencies ?? {}).length) {
     throw new Error("Zod replacement dependency graph changed after review");
   }
+  const target = join(packageDirectory, "node_modules", "zod");
+  const alreadyPatched = readJson(join(target, "package.json")).version === ZOD_VERSION;
   requirePackageIdentity(
-    readJson(join(packageDirectory, "node_modules", "zod", "package.json")),
+    readJson(join(target, "package.json")),
     "zod",
-    expectedVersion,
+    alreadyPatched ? ZOD_VERSION : expectedVersion,
     "Bundled Zod",
   );
   if (metadata.name === "@openclaw/discord") {
@@ -1452,14 +1602,20 @@ export function patchOpenClawBundledZodPackageGraph(
     const temporary = mkdtempSync(join(dirname(sdk), ".embedded-app-sdk-zod-"));
     try {
       const staged = join(temporary, "package");
-      cpSync(sdk, staged, { recursive: true });
+      cpSync(sdk, staged, { recursive: true, verbatimSymlinks: true });
       migrateDiscordSdk(staged, replacementDirectory);
-      copyReplacementPackage(staged, sdk);
+      copyReplacementPackage(staged, sdk, true);
     } finally {
       rmSync(temporary, { recursive: true, force: true });
     }
   }
-  copyReplacementPackage(replacementDirectory, join(packageDirectory, "node_modules", "zod"));
+  if (alreadyPatched) {
+    if (hashPackageTree(target) !== hashPackageTree(replacementDirectory)) {
+      throw new Error("Bundled Zod changed after remediation");
+    }
+  } else {
+    copyReplacementPackage(replacementDirectory, target);
+  }
   metadata.dependencies.zod = ZOD_VERSION;
   writeJson(metadataPath, metadata);
   if (existsSync(shrinkwrapPath)) {
@@ -1750,7 +1906,11 @@ function patchFsSafePackageGraph(packageDirectory: string): void {
   writeJson(packageJsonPath, packageJson);
 }
 
-function copyReplacementPackage(source: string, destination: string): void {
+function copyReplacementPackage(
+  source: string,
+  destination: string,
+  preserveDiscordSdkLauncher = false,
+): void {
   const targetDirectory = dirname(resolve(destination));
   mkdirSync(targetDirectory, { recursive: true, mode: 0o755 });
   const sourceMetadata = readJson(join(source, "package.json"));
@@ -1767,7 +1927,15 @@ function copyReplacementPackage(source: string, destination: string): void {
   let preserveRecoveryDirectory = false;
 
   try {
-    cpSync(source, stagedReplacement, { recursive: true, force: true });
+    const reviewedSdkDigest = preserveDiscordSdkLauncher ? hashDiscordSdkTree(source) : undefined;
+    cpSync(source, stagedReplacement, {
+      recursive: true,
+      force: true,
+      verbatimSymlinks: preserveDiscordSdkLauncher,
+    });
+    if (preserveDiscordSdkLauncher && hashDiscordSdkTree(stagedReplacement) !== reviewedSdkDigest) {
+      throw new Error("Staged Discord SDK tree does not match its reviewed source");
+    }
     const stagedMetadata = readJson(join(stagedReplacement, "package.json"));
     if (
       sourceMetadata.name !== stagedMetadata.name ||
@@ -2621,14 +2789,14 @@ function remediateVerifiedInstalledOfficialOpenClawPlugin(
   request: RemediationRequest & Readonly<{ packageDirectory?: string; trustedStateRoot: string }>,
 ): void {
   const patchesProxyAddr = REMEDIATIONS[request.packageSpec]?.kind === "slack-proxy-addr";
-  const patchesZod = Boolean(BUNDLED_ZOD_VERSIONS[request.packageSpec]);
+  const supportsZod = Boolean(BUNDLED_ZOD_VERSIONS[request.packageSpec]);
   const patchesBody =
     request.packageSpec === "@openclaw/slack@2026.9.2" ||
     request.packageSpec === "@openclaw/slack@2026.9.5";
   const patchesMsal =
     request.packageSpec === "@openclaw/msteams@2026.9.2" ||
     request.packageSpec === "@openclaw/msteams@2026.9.5";
-  if (!patchesProxyAddr && !patchesZod && !patchesMsal) return;
+  if (!patchesProxyAddr && !supportsZod && !patchesMsal) return;
   if (
     !request.packageDirectory ||
     !isAbsolute(request.packageDirectory) ||
@@ -2660,6 +2828,21 @@ function remediateVerifiedInstalledOfficialOpenClawPlugin(
       `Official ${packageName === "@openclaw/slack" ? "Slack" : "plugin"} install path is outside its trusted plugin root`,
     );
   }
+  const installedMetadata = readJson(join(packageDirectory, "package.json"));
+  requirePackageIdentity(
+    installedMetadata,
+    packageName,
+    request.packageSpec.slice(request.packageSpec.lastIndexOf("@") + 1),
+    "Official OpenClaw plugin",
+  );
+  const patchesZod =
+    supportsZod &&
+    (installedMetadata.dependencies?.zod !== undefined ||
+      existsSync(join(packageDirectory, "node_modules", "zod")));
+  const patchesUndici =
+    Boolean(BUNDLED_UNDICI_VERSIONS[request.packageSpec]) &&
+    (installedMetadata.dependencies?.undici !== undefined ||
+      existsSync(join(packageDirectory, "node_modules", "undici")));
   const dependencyPaths: string[][] = [];
   if (patchesMsal) {
     for (const name of ["@azure/msal-node", "@azure/identity", "@microsoft/teams.apps", "zod"]) {
@@ -2682,10 +2865,11 @@ function remediateVerifiedInstalledOfficialOpenClawPlugin(
   }
   if (patchesProxyAddr)
     dependencyPaths.push(["node_modules", "@slack", "bolt", "node_modules", "proxy-addr"]);
-  if (patchesBody)
-    dependencyPaths.push(["node_modules", "@slack", "bolt", "node_modules", "body-parser"]);
-  if (BUNDLED_UNDICI_VERSIONS[request.packageSpec])
-    dependencyPaths.push(["node_modules", "undici"]);
+  if (patchesBody) {
+    for (const name of ["body-parser", "qs", "iconv-lite"])
+      dependencyPaths.push(["node_modules", "@slack", "bolt", "node_modules", name]);
+  }
+  if (patchesUndici) dependencyPaths.push(["node_modules", "undici"]);
   if (patchesZod) dependencyPaths.push(["node_modules", "zod"]);
   if (packageName === "@openclaw/discord") {
     dependencyPaths.push(["node_modules", "@discord", "embedded-app-sdk"]);
@@ -2699,7 +2883,11 @@ function remediateVerifiedInstalledOfficialOpenClawPlugin(
         throw new Error("Official plugin dependency directory must be a real directory");
       }
     }
-    hashPackageTree(installedDependency);
+    if (packageName === "@openclaw/discord" && dependencyPath.at(-1) === "embedded-app-sdk") {
+      hashDiscordSdkTree(installedDependency);
+    } else {
+      hashPackageTree(installedDependency);
+    }
   }
   const env = { ...process.env, ...request.env };
   const directory = mkdtempSync(join(request.workingDirectory, "official-plugin-remediation-"));
@@ -2724,22 +2912,25 @@ function remediateVerifiedInstalledOfficialOpenClawPlugin(
       );
       patchOpenClawSlackProxyAddrPackageGraph(packageDirectory, replacement);
     }
-    const zodArchive = packReplacement(
-      `zod@${ZOD_VERSION}`,
-      ZOD_INTEGRITY,
-      ZOD_TARBALL,
-      directory,
-      env,
-    );
-    const zodPackage = extractArchive(
-      zodArchive.archivePath,
-      join(directory, "zod"),
-      directory,
-      env,
-    );
-    patchOpenClawBundledZodPackageGraph(packageDirectory, zodPackage, request.packageSpec);
     if (patchesBody) remediateSlackBodyParser(packageDirectory, directory, env);
-    remediateBundledUndici(packageDirectory, request.packageSpec, directory, env);
+    if (patchesZod) {
+      const zodArchive = packReplacement(
+        `zod@${ZOD_VERSION}`,
+        ZOD_INTEGRITY,
+        ZOD_TARBALL,
+        directory,
+        env,
+      );
+      const zodPackage = extractArchive(
+        zodArchive.archivePath,
+        join(directory, "zod"),
+        directory,
+        env,
+      );
+      patchOpenClawBundledZodPackageGraph(packageDirectory, zodPackage, request.packageSpec);
+    }
+    if (patchesUndici)
+      remediateBundledUndici(packageDirectory, request.packageSpec, directory, env);
   } finally {
     rmSync(directory, { force: true, recursive: true });
   }

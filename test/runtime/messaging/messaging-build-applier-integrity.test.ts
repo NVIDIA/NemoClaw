@@ -17,7 +17,10 @@ import {
 import { testTimeout } from "../../helpers/timeouts";
 import { withLegacyMessagingPlanEnvDirect } from "../../messaging-plan-test-helper";
 
-import { createSlackRemediationFixture } from "../../support/slack-remediation-fixture";
+import {
+  createSlackRemediationFixture,
+  writeSlackBundledParserFixture,
+} from "../../support/slack-remediation-fixture";
 
 import { officialPluginInspectionShell } from "./official-plugin-inspection-fixture";
 
@@ -359,7 +362,9 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
         expect(fs.readdirSync(path.dirname(fixture.proxyAddrDirectory)).sort()).toEqual([
           "body-parser",
           "express",
+          "iconv-lite",
           "proxy-addr",
+          "qs",
         ]);
       } finally {
         fs.rmSync(fixture.root, { recursive: true, force: true });
@@ -414,6 +419,10 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
           fixture,
           failRestore ? preservedPackage : fixture.proxyAddrDirectory,
         );
+        expect(
+          JSON.parse(fs.readFileSync(path.join(packageParent, "body-parser/package.json"), "utf8"))
+            .version,
+        ).toBe("2.3.0");
         expect(result.stderr).toContain(
           failRestore
             ? "OpenClaw dependency 'proxy-addr' could not be replaced."
@@ -431,8 +440,8 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
         expect(result.stderr).not.toContain("rename-failure-canary");
         expect(fs.readdirSync(packageParent).sort()).toEqual(
           failRestore
-            ? ["body-parser", "express", recoveryDirectories[0]!].sort()
-            : ["body-parser", "express", "proxy-addr"],
+            ? ["body-parser", "express", "iconv-lite", "qs", recoveryDirectories[0]!].sort()
+            : ["body-parser", "express", "iconv-lite", "proxy-addr", "qs"],
         );
       } finally {
         fs.rmSync(fixture.root, { recursive: true, force: true });
@@ -505,6 +514,55 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
             .readdirSync(packageParent)
             .filter((entry) => entry.startsWith(".proxy-addr-replacement-")),
         ).toEqual([]);
+      } finally {
+        fs.rmSync(fixture.root, { recursive: true, force: true });
+      }
+    },
+    testTimeout(45_000),
+  );
+
+  it(
+    "completes Slack remediation after a later qs replacement fails",
+    async () => {
+      const fixture = await createSlackRemediationFixture();
+      const dependencyParent = path.dirname(fixture.proxyAddrDirectory);
+      const qsDirectory = path.join(dependencyParent, "qs");
+      const renameHook = renameFailureHook(fixture.root, qsDirectory, false);
+      const env = { ...fixture.env, NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR: undefined };
+      const run = (withFailure: boolean) =>
+        spawnSync(
+          process.execPath,
+          [
+            ...(withFailure ? ["--import", renameHook] : []),
+            SCRIPT_PATH,
+            "--agent",
+            "openclaw",
+            "--phase",
+            "agent-install",
+          ],
+          { cwd: REPO_ROOT, env, encoding: "utf8", timeout: 15_000 },
+        );
+      const version = (name: string) =>
+        JSON.parse(fs.readFileSync(path.join(dependencyParent, name, "package.json"), "utf8"))
+          .version as string;
+
+      try {
+        const first = run(true);
+        expect(first.error).toBeUndefined();
+        expect(first.status, first.stderr).toBe(2);
+        expect(version("proxy-addr")).toBe("2.0.8");
+        expect(version("body-parser")).toBe("2.4.0");
+        expect(version("qs")).toBe("6.15.3");
+
+        const retry = run(false);
+        expect(retry.error).toBeUndefined();
+        expect(retry.status, retry.stderr).toBe(0);
+        expect(version("proxy-addr")).toBe("2.0.8");
+        expect(version("body-parser")).toBe("2.4.0");
+        expect(version("qs")).toBe("6.16.1");
+        expect(
+          fs.readdirSync(dependencyParent).some((name) => name.includes("-replacement-")),
+        ).toBe(false);
       } finally {
         fs.rmSync(fixture.root, { recursive: true, force: true });
       }
@@ -947,7 +1005,7 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
       JSON.stringify({
         name: "express",
         version: "5.2.1",
-        dependencies: { "proxy-addr": "^2.0.7" },
+        dependencies: { "body-parser": "^2.2.1", "proxy-addr": "^2.0.7" },
         license: "MIT",
         engines: { node: ">= 18" },
       }),
@@ -963,6 +1021,7 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
       }),
     );
     fs.writeFileSync(path.join(dependencyDirectory, "index.js"), "vulnerable-canary");
+    writeSlackBundledParserFixture(packageDirectory);
     const tracePath = path.join(tmp, "openclaw.trace");
     const inspection = JSON.stringify({
       plugin: { id: "slack", trustedOfficialInstall: true },

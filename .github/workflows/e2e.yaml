@@ -5907,8 +5907,9 @@ jobs:
             exit 1
           fi
           [[ "$(grep -Fxc 'cgroups = "disabled"' "$config")" == 1 ]]
-          # The registry must inherit the finite API-service TasksMax boundary.
-          # A per-container systemd leaf failed before the registry could serve HTTP.
+          # Podman can place a rootless registry in a sibling scope even with
+          # container cgroups disabled. The live probe verifies its actual
+          # cgroup and every limiting ancestor after registry HTTP readiness.
           service=nemoclaw-native-podman-e2e.service
           service_pid="$(/usr/bin/systemctl --user show "$service" --property=MainPID --value)"
           [[ "$service_pid" =~ ^[1-9][0-9]*$ ]]
@@ -5969,7 +5970,7 @@ jobs:
           done
           if [[ "$group" != / ]]; then failure=cgroup_depth; fi
           jq -n --arg failure "$failure" --argjson minimum "$minimum" \
-            --arg containerCgroups inherited-service \
+            --arg containerCgroups observed-after-registry-launch \
             --arg tasksMax "$tasks_max" --arg tasksCurrent "$tasks_current" \
             --arg limitNproc "$limit_nproc" \
             --arg nprocSoft "$nproc_soft" --arg userTasks "$user_tasks" \

@@ -10,12 +10,12 @@
   "overrides": {
     "@hono/node-server": "2.0.11",
     "@modelcontextprotocol/sdk": "1.32.0",
+    "body-parser": "2.4.0",
     "fast-uri": "3.1.7",
     "hono": "4.12.34",
     "ip-address": "10.3.1",
     "proxy-addr": "2.0.8",
-    "zod": "4.6.6",
-    "body-parser": "2.4.0"
+    "zod": "4.6.6"
   },
   "engines": {
     "node": ">=22.19.0"

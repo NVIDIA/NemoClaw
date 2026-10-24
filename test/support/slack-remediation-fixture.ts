@@ -8,6 +8,7 @@ import { withLegacyMessagingPlanEnvDirect } from "../messaging-plan-test-helper"
 
 const SLACK_INTEGRITY =
   "sha512-6M1M6gL3iXahpalNsYAUuA+wvnV8lbMlNNH2ToegFvaSJcIll4S9kFa5mv3GFoquhMRHQjEjnkXPHP/pXwaWcA==";
+const BOLT_DEPENDENCIES = "node_modules/@slack/bolt/node_modules";
 const PROXY_ADDR_PATH = "node_modules/@slack/bolt/node_modules/proxy-addr";
 const PROXY_ADDR_INTEGRITY =
   "sha512-5nnx0yGyVUcY6t9RnWcARWtwT9F1D8O9rt08htPvnd49W1IgZtmLkhu9WfMzQj1cFxjHIO6connUNVW5k7AVyQ==";
@@ -15,6 +16,39 @@ const PROXY_ADDR_INTEGRITY =
 function writePackage(directory: string, metadata: Record<string, unknown>): void {
   fs.mkdirSync(directory, { recursive: true });
   fs.writeFileSync(path.join(directory, "package.json"), JSON.stringify(metadata));
+}
+
+export function writeSlackBundledParserFixture(packageDirectory: string): void {
+  const dependencies = path.join(packageDirectory, BOLT_DEPENDENCIES);
+  writePackage(path.join(dependencies, "body-parser"), {
+    name: "body-parser",
+    version: "2.3.0",
+    dependencies: {
+      bytes: "^3.1.2",
+      "content-type": "^2.0.0",
+      debug: "^4.4.3",
+      "http-errors": "^2.0.1",
+      "iconv-lite": "^0.7.2",
+      "on-finished": "^2.4.1",
+      qs: "^6.15.2",
+      "raw-body": "^3.0.2",
+      "type-is": "^2.1.0",
+    },
+    license: "MIT",
+    engines: { node: ">=18" },
+  });
+  writePackage(path.join(dependencies, "body-parser/node_modules/content-type"), {
+    name: "content-type",
+    version: "2.1.0",
+  });
+  writePackage(path.join(dependencies, "iconv-lite"), {
+    name: "iconv-lite",
+    version: "0.7.3",
+  });
+  writePackage(path.join(dependencies, "qs"), {
+    name: "qs",
+    version: "6.15.3",
+  });
 }
 
 export async function createSlackRemediationFixture() {
@@ -51,15 +85,11 @@ export async function createSlackRemediationFixture() {
     writePackage(path.join(source, "node_modules/@slack/bolt/node_modules/express"), {
       name: "express",
       version: "5.2.1",
-      dependencies: { "proxy-addr": "^2.0.7" },
+      dependencies: { "body-parser": "^2.2.1", "proxy-addr": "^2.0.7" },
       license: "MIT",
       engines: { node: ">= 18" },
     });
-    writePackage(path.join(source, "node_modules/@slack/bolt/node_modules/body-parser"), {
-      name: "body-parser",
-      version: "2.3.0",
-      dependencies: { qs: "^6.15.2", "content-type": "^2.0.0", "iconv-lite": "^0.7.2" },
-    });
+    writeSlackBundledParserFixture(source);
     writePackage(path.join(source, PROXY_ADDR_PATH), {
       name: "proxy-addr",
       version: "2.0.7",

@@ -159,7 +159,7 @@
       "integrity": "sha512-M6C7UsnX815nv26qBJFYGe6aGzv+ftZLRzV6S9oRXUtXg2Yn67eVntpssT94kgkquKVSeUxerUg0j1ONp4WYQg==",
       "tarballUrl": "https://registry.npmjs.org/openclaw/-/openclaw-2026.9.2.tgz",
       "directory": "agents/openclaw/openclaw-runtime",
-      "lockSha256": "e93660e306f2d06b155ca03f0fee9242a8d9b6b4c9e24e96e461b0202f4be060",
+      "lockSha256": "0b1253c6570f55881623961c856b430a17d4271f5efe8c5beffa7ac0fc8d0199",
       "replacement": {
         "label": "OpenClaw 2026.9.5 locked runtime graph",
         "packageSpec": "openclaw@2026.9.5",
@@ -175,7 +175,7 @@
       "integrity": "sha512-egoPVYqTnWb3NjRIxo+xc8OrAI0dlPrJm9pAiZx0pImuNIV5rKhGtTnIfH/Y1ldGPVu74ibj3KR5c9U/QSdQFA==",
       "tarballUrl": "https://registry.npmjs.org/mcporter/-/mcporter-0.7.3.tgz",
       "directory": "agents/openclaw/mcporter-runtime",
-      "lockSha256": "fae7add7eb5009a00c5fb9ae132de4dd703065c4272428a8c4a0cf24eb6eef1d"
+      "lockSha256": "04e9a7801758c8ac40709572f2d8e73725839ea62caef7e07c6f0fe419ed13af"
     },
     {
       "id": "wechat-runtime",
