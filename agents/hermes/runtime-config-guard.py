@@ -3641,15 +3641,22 @@ def _provider_startup_env_matches(
     ):
         return False
     replacements = {}
-    for key in LEGACY_PROVIDER_PLACEHOLDER_KEYS:
+    # Preserve insertion order when startup adds more than one missing slot.
+    for line in current.splitlines(keepends=True):
+        parsed = _parse_env_assignment(line)
+        if parsed is None or parsed[1] not in LEGACY_PROVIDER_PLACEHOLDER_KEYS:
+            continue
+        key = parsed[1]
         previous = _first_env_assignment_value(preimage, key)
         value = _first_env_assignment_value(current, key)
         if (
-            previous is not None
-            and value is not None
-            and _provider_placeholder_for_env_key(previous, key)
+            value is not None
+            and (previous is None or _provider_placeholder_for_env_key(previous, key))
             and _provider_placeholder_for_env_key(value, key)
         ):
+            # Messaging plans can supply a scoped reference absent from the
+            # archived .env. Replay the same insertion as provider_placeholders;
+            # the strict preimage and exact final bytes still reject other drift.
             replacements[key] = value
     replayed, _changed, _keys = _upsert_env_assignments(preimage, replacements)
     if replayed == current:

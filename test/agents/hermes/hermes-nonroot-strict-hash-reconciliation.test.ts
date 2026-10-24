@@ -159,13 +159,18 @@ case = ${JSON.stringify(scenario)}
 module.ensure_api_key(hermes_dir, hash_file, "compat")
 os.environ["DISCORD_BOT_TOKEN"] = "openshell:resolve:env:v8_DISCORD_BOT_TOKEN"
 runtime_plan = None
-if case == "runtime-plan":
+if case == "runtime-plan" or case.startswith("missing-slot"):
     import json
+    bindings = [{"channelId": "discord", "providerEnvKey": "DISCORD_BOT_TOKEN"}]
+    if case == "missing-slot-multiple":
+        os.environ["SLACK_BOT_TOKEN"] = "openshell:resolve:env:v8_SLACK_BOT_TOKEN"
+        bindings.insert(0, {"channelId": "slack", "providerEnvKey": "SLACK_BOT_TOKEN"})
     runtime_plan = os.path.join(hermes_dir, "runtime-plan.json")
     with open(runtime_plan, "w") as handle:
-        json.dump({"channels": [{"channelId": "discord", "active": True}], "credentialBindings": [{"channelId": "discord", "providerEnvKey": "DISCORD_BOT_TOKEN"}]}, handle)
+        json.dump({"channels": [{"channelId": binding["channelId"], "active": True} for binding in bindings], "credentialBindings": bindings}, handle)
 module.provider_placeholders(hermes_dir, hash_file, "compat", runtime_plan, validator)
 witness = os.path.join(hermes_dir, ".provider-startup-env")
+case = case.removeprefix("missing-slot-")
 if case == "repeat-refresh":
     os.environ["DISCORD_BOT_TOKEN"] = "openshell:resolve:env:v9_DISCORD_BOT_TOKEN"
     module.provider_placeholders(hermes_dir, hash_file, "compat", None, validator)
@@ -219,9 +224,11 @@ if case in ("env-race", "witness-race"):
 `;
 }
 
-function createDiscordFixture(reference = "v7_DISCORD_BOT_TOKEN", apiKeyLine = "") {
+function createDiscordFixture(reference: string | null = "v7_DISCORD_BOT_TOKEN", apiKeyLine = "") {
   const fixture = createFixture(0o700);
-  fixture.trustedEnv += `DISCORD_BOT_TOKEN=openshell:resolve:env:${reference}\n${apiKeyLine}`;
+  fixture.trustedEnv +=
+    (reference === null ? "" : `DISCORD_BOT_TOKEN=openshell:resolve:env:${reference}\n`) +
+    apiKeyLine;
   fs.writeFileSync(fixture.envPath, fixture.trustedEnv);
   const initialHash = hashInputs(fixture);
   fs.writeFileSync(fixture.hashPath, initialHash);
@@ -392,6 +399,9 @@ print(json.dumps([private_live, canonical_mutable, foreign_private, unexpected_m
       ["minted-api-key", "v7_DISCORD_BOT_TOKEN", "", "v8", false],
       ["repeat-refresh", "v7_DISCORD_BOT_TOKEN", "", "v9", false],
       ["runtime-plan", "v7_DISCORD_BOT_TOKEN", "", "v8", false],
+      ["missing-slot", null, "", "v8", false],
+      ["missing-slot-multiple", null, "", "v8", false],
+      ["missing-slot-existing-api-key", null, `API_SERVER_KEY=${"a".repeat(64)}\n`, "v8", false],
       ["canonical-placeholder", "DISCORD_BOT_TOKEN", "", "v8", false],
       ["cleanup-failure", "v7_DISCORD_BOT_TOKEN", "", "v8", true],
     ] as const)(
@@ -435,22 +445,29 @@ print(json.dumps([private_live, canonical_mutable, foreign_private, unexpected_m
       ["witness-race", ""],
       ["symlink-witness", ""],
       ["rotated-api-key", `API_SERVER_KEY=${"a".repeat(64)}\n`],
-    ])("refuses unproved Discord startup changes (%s)", (scenario, apiKeyLine) => {
-      const { fixture, initialHash } = createDiscordFixture("v7_DISCORD_BOT_TOKEN", apiKeyLine);
-      try {
-        const result = runManagedNonrootWrite(
-          fixture,
-          expectedConfigDigest(fixture),
-          "model:\n  default: must-not-apply\n",
-          discordStartupPreparation(scenario),
-        );
-        expect(result.status, result.stderr).not.toBe(0);
-        expect(fs.readFileSync(fixture.configPath, "utf-8")).toBe(fixture.trustedConfig);
-        assertCleanRefusal(fixture, initialHash);
-      } finally {
-        fs.rmSync(fixture.root, { recursive: true, force: true });
-      }
-    });
+      ["missing-slot-unrelated-drift", "", null],
+      ["missing-slot-forged-witness", "", null],
+      ["missing-slot-wrong-provider-suffix", "", null],
+      ["missing-slot-raw-provider-value", "", null],
+    ])(
+      "refuses unproved Discord startup changes (%s)",
+      (scenario, apiKeyLine, reference: string | null = "v7_DISCORD_BOT_TOKEN") => {
+        const { fixture, initialHash } = createDiscordFixture(reference, apiKeyLine);
+        try {
+          const result = runManagedNonrootWrite(
+            fixture,
+            expectedConfigDigest(fixture),
+            "model:\n  default: must-not-apply\n",
+            discordStartupPreparation(scenario),
+          );
+          expect(result.status, result.stderr).not.toBe(0);
+          expect(fs.readFileSync(fixture.configPath, "utf-8")).toBe(fixture.trustedConfig);
+          assertCleanRefusal(fixture, initialHash);
+        } finally {
+          fs.rmSync(fixture.root, { recursive: true, force: true });
+        }
+      },
+    );
 
     it("refuses an unproven source-helper topology", () => {
       const fixture = createFixture();
