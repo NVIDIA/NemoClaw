@@ -18,6 +18,8 @@ import { resolveDefaultSandboxName } from "../tunnel/service-command";
 
 export interface SandboxEntry {
   name: string;
+  gatewayName?: string | null;
+  gatewayPort?: number | null;
   model?: string | null;
   provider?: string | null;
   gpuEnabled?: boolean;
@@ -86,8 +88,8 @@ export interface ListSandboxesCommandDeps {
    * onboards — see #2753.
    */
   loadLastSession: () => OnboardingSessionSummary | null;
-  /** Detect active SSH sessions for a sandbox. Returns session count or null if unavailable. */
-  getActiveSessionCount?: (sandboxName: string) => number | null;
+  /** Detect active sandbox sessions. Returns the count or null if unavailable. */
+  getActiveSessionCount?: (sandbox: SandboxEntry) => number | null;
   /** Derive applied preset names from the current OpenShell policy. */
   getPolicyPresets?: (sandboxName: string) => string[] | Promise<string[]>;
   log?: (message?: string) => void;
@@ -150,12 +152,12 @@ export interface ShowStatusCommandDeps {
   showServiceStatus: (options: { sandboxName?: string; dashboardPort?: number }) => void;
   getServiceStatuses?: (options: { sandboxName?: string }) => StatusServiceRow[];
   /**
-   * Active SSH-session count for a sandbox. When provided, `showStatusCommand`
-   * emits an `SSH sessions:` line under each sandbox row. Returns null when the
+   * Active-session count for a sandbox. When provided, `showStatusCommand`
+   * emits an `Active sessions:` line under each sandbox row. Returns null when the
    * probe is not available (e.g. no openshell binary); the line is omitted in
    * that case. #2604.
    */
-  getActiveSessionCount?: (sandboxName: string) => number | null;
+  getActiveSessionCount?: (sandbox: SandboxEntry) => number | null;
   /** Derive applied preset names from the current OpenShell policy. */
   getPolicyPresets?: (sandboxName: string) => string[] | Promise<string[]>;
   /**
@@ -340,10 +342,10 @@ async function projectPublicSandboxFields(
 async function buildSandboxInventoryRow(
   sandbox: SandboxEntry,
   defaultSandbox: string | null,
-  getActiveSessionCount?: (sandboxName: string) => number | null,
+  getActiveSessionCount?: (sandbox: SandboxEntry) => number | null,
   getPolicyPresets?: (sandboxName: string) => string[] | Promise<string[]>,
 ): Promise<SandboxInventoryRow> {
-  const activeSessionCount = getActiveSessionCount ? getActiveSessionCount(sandbox.name) : null;
+  const activeSessionCount = getActiveSessionCount ? getActiveSessionCount(sandbox) : null;
   const inference = getSandboxEntryDisplayInference(sandbox);
   const publicFields = await projectPublicSandboxFields(sandbox, inference, getPolicyPresets);
 
@@ -745,7 +747,7 @@ export async function showStatusCommand(deps: ShowStatusCommandDeps): Promise<vo
         log(`      (onboarded: ${storedModel || "unknown"})`);
       }
       // #2604: surface the configured Inference (provider/model) and the
-      // SSH-session count as labeled fields. Bare `nemoclaw status` previously
+      // active-session count as labeled fields. Bare `nemoclaw status` previously
       // only had the model in parens above — users had to run
       // `nemoclaw <name> status` to see provider and session state.
       // #11412: this line is documented and labeled "configured", so it must
@@ -760,9 +762,9 @@ export async function showStatusCommand(deps: ShowStatusCommandDeps): Promise<vo
         log(`      Inference (live): ${parts}`);
       }
       if (deps.getActiveSessionCount && !portablePhase) {
-        const count = deps.getActiveSessionCount(sb.name);
+        const count = deps.getActiveSessionCount(sb);
         if (count !== null) {
-          log(`      SSH sessions: ${count > 0 ? count : "none"}`);
+          log(`      Active sessions: ${count > 0 ? count : "none"}`);
         }
       }
     }

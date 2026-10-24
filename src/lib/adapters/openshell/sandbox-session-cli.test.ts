@@ -206,6 +206,22 @@ describe("OpenShell sessions", () => {
     (await session.completion).release();
   });
 
+  it("opens the selected default gateway with an explicit selector for portable detection", async () => {
+    const f = sessionHarness();
+    const session = f.executor.start({
+      kind: "connect",
+      sandboxName: "alpha",
+      target: { kind: "named", gatewayName: "nemoclaw" },
+    });
+    expect(f.spawnChild).toHaveBeenCalledWith(
+      "/bin/openshell",
+      ["sandbox", "exec", "--name", "alpha", "-g", "nemoclaw", "--tty", "--", "/bin/bash", "-i"],
+      expect.objectContaining({ stdio: ["inherit", "inherit", "inherit"] }),
+    );
+    f.events.emit("close", 0, null);
+    (await session.completion).release();
+  });
+
   it.each([
     [255, null, { kind: "failed", reason: "transport", exitCode: 255 }],
     [null, "SIGHUP", { kind: "failed", reason: "transport", exitCode: 129 }],

@@ -113,13 +113,23 @@ describe("connectSandbox route lifecycle", () => {
   });
 
   it("repairs a WSL Ollama route without requiring an auth proxy token", async () => {
+    vi.stubEnv("OPENSHELL_GATEWAY", "ambient-sibling");
     const harness = createConnectHarness({
       inferenceGetOutput: "Gateway inference:\n  Provider: ollama-local\n  Model: qwen3:0.6b\n",
-      inferenceProbeResponses: ["BROKEN 503", "BROKEN 503", "OK 200", "OK 200"],
+      inferenceProbeResponses: [
+        "BROKEN 503",
+        "BROKEN 503",
+        "BROKEN 503",
+        "BROKEN 503",
+        "OK 200",
+        "OK 200",
+      ],
       isWsl: true,
       registryEntry: {
         model: "qwen3:0.6b",
         provider: "ollama-local",
+        gatewayName: "nemoclaw-8091",
+        gatewayPort: 8091,
       },
     });
 
@@ -131,6 +141,17 @@ describe("connectSandbox route lifecycle", () => {
     });
     expect(harness.probeOllamaAuthProxyHealthSpy).not.toHaveBeenCalled();
     expect(harness.runSetupDnsProxySpy).toHaveBeenCalled();
+    const routeProbeCalls = harness.sandboxRunBufferedSpy.mock.calls.filter(([request]) =>
+      JSON.stringify(request).includes("inference.local/v1/models"),
+    );
+    expect(routeProbeCalls).toEqual([
+      [expect.objectContaining({ target: { kind: "named", gatewayName: "nemoclaw-8091" } })],
+      [expect.objectContaining({ target: { kind: "named", gatewayName: "nemoclaw-8091" } })],
+      [expect.objectContaining({ target: { kind: "named", gatewayName: "nemoclaw-8091" } })],
+      [expect.objectContaining({ target: { kind: "named", gatewayName: "nemoclaw-8091" } })],
+      [expect.objectContaining({ target: { kind: "named", gatewayName: "nemoclaw-8091" } })],
+      [expect.objectContaining({ target: { kind: "named", gatewayName: "nemoclaw-8091" } })],
+    ]);
   });
 
   it("starts the auth proxy for a WSL Ollama route when Docker is not local", async () => {
@@ -182,17 +203,27 @@ describe("connectSandbox route lifecycle", () => {
     );
   });
 
-  it("wires the forced VM DNS monkeypatch into connect route repair", async () => {
+  it("wires forced VM DNS repair and route reset through the persisted gateway", async () => {
+    vi.stubEnv("OPENSHELL_GATEWAY", "ambient-sibling");
     vi.stubEnv("NEMOCLAW_FORCE_VM_DNS_MONKEYPATCH", "1");
     try {
       const harness = createConnectHarness({
         inferenceGetOutput:
           "Gateway inference:\n  Provider: nvidia-prod\n  Model: nvidia/nemotron-3-super-120b-a12b\n",
-        inferenceProbeResponses: ['BROKEN 503 {"error":"inference service unavailable"}', "OK 200"],
+        inferenceProbeResponses: [
+          'BROKEN 503 {"error":"inference service unavailable"}',
+          "BROKEN 503",
+          "BROKEN 503",
+          "BROKEN 503",
+          "BROKEN 503",
+          "OK 200",
+        ],
         registryEntry: {
           model: "nvidia/nemotron-3-super-120b-a12b",
           openshellDriver: "vm",
           provider: "nvidia-prod",
+          gatewayName: "nemoclaw-8091",
+          gatewayPort: 8091,
         },
       });
 
@@ -203,11 +234,44 @@ describe("connectSandbox route lifecycle", () => {
         expect.objectContaining({ openshellDriver: "vm" }),
       );
       expect(harness.runSetupDnsProxySpy).not.toHaveBeenCalled();
-      expect(harness.runOpenshellSpy).not.toHaveBeenCalled();
+      const inferenceWrites = harness.runOpenshellSpy.mock.calls
+        .map(([args]) => args)
+        .filter((args) => Array.isArray(args) && args[0] === "inference" && args[1] === "set");
+      expect(inferenceWrites).toEqual([
+        [
+          "inference",
+          "set",
+          "-g",
+          "nemoclaw-8091",
+          "--no-verify",
+          "--provider",
+          "nvidia-prod",
+          "--model",
+          "nvidia/nemotron-3-super-120b-a12b",
+        ],
+        [
+          "inference",
+          "set",
+          "-g",
+          "nemoclaw-8091",
+          "--no-verify",
+          "--provider",
+          "nvidia-prod",
+          "--model",
+          "nvidia/nemotron-3-super-120b-a12b",
+        ],
+      ]);
       const routeProbeCalls = harness.sandboxRunBufferedSpy.mock.calls.filter((call) =>
         JSON.stringify(call[0]).includes("inference.local/v1/models"),
       );
-      expect(routeProbeCalls).toHaveLength(2);
+      expect(routeProbeCalls).toEqual([
+        [expect.objectContaining({ target: { kind: "named", gatewayName: "nemoclaw-8091" } })],
+        [expect.objectContaining({ target: { kind: "named", gatewayName: "nemoclaw-8091" } })],
+        [expect.objectContaining({ target: { kind: "named", gatewayName: "nemoclaw-8091" } })],
+        [expect.objectContaining({ target: { kind: "named", gatewayName: "nemoclaw-8091" } })],
+        [expect.objectContaining({ target: { kind: "named", gatewayName: "nemoclaw-8091" } })],
+        [expect.objectContaining({ target: { kind: "named", gatewayName: "nemoclaw-8091" } })],
+      ]);
     } finally {
       vi.unstubAllEnvs();
     }
