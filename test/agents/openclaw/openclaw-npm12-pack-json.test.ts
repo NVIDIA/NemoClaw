@@ -165,14 +165,12 @@ describe("OpenClaw npm 12 pack JSON compatibility", () => {
     const baseDockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile.base"), "utf8");
     const script = "patch-openclaw-npm12-pack-json.mts";
     const invocation = "node /usr/local/lib/nemoclaw/npm12.mts";
+    const installInvocation = "node /scripts/lib/install-reviewed-openclaw-plugin.mts";
 
     expect(dockerfile).toContain(`COPY scripts/lib/${script} /usr/local/lib/nemoclaw/npm12.mts`);
     expect(dockerfile).toContain(invocation);
-    expect(dockerfile.indexOf(invocation)).toBeLessThan(
-      dockerfile.indexOf(
-        'openclaw plugins install --force --accept-capabilities "npm-pack:${plugin_archive}"',
-      ),
-    );
+    expect(dockerfile).toContain(installInvocation);
+    expect(dockerfile.indexOf(invocation)).toBeLessThan(dockerfile.indexOf(installInvocation));
     expect(
       dockerfile.slice(dockerfile.indexOf(invocation), dockerfile.indexOf(invocation) + 250),
     ).toContain('"$OPENCLAW_VERSION"');

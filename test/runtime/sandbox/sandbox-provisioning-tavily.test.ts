@@ -13,6 +13,9 @@ import {
 } from "../../helpers/dockerfile-run-shell";
 
 const DOCKERFILE = path.join(import.meta.dirname, "..", "../..", "Dockerfile");
+const TAVILY_ARCHIVE = "reviewed Tavily plugin fixture";
+const TAVILY_INTEGRITY = `sha512-${createHash("sha512").update(TAVILY_ARCHIVE).digest("base64")}`;
+const TAVILY_INSTALL_ARGS = `/test-archives/tavily-plugin-2026.9.2.tgz @openclaw/tavily-plugin@2026.9.2 ${TAVILY_INTEGRITY} https://registry.npmjs.org/@openclaw/tavily-plugin/-/tavily-plugin-2026.9.2.tgz`;
 
 function runPluginInstallBlock(
   functionDefinition: string,
@@ -27,20 +30,22 @@ function runPluginInstallBlock(
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-tavily-plugin-"));
 
   try {
-    const archive = "reviewed Tavily plugin fixture";
-    fs.writeFileSync(path.join(tmp, "tavily-plugin-2026.9.2.tgz"), archive);
+    fs.writeFileSync(path.join(tmp, "tavily-plugin-2026.9.2.tgz"), TAVILY_ARCHIVE);
     const outcome = runLoggedDockerShell(
       command.replace(
         "export NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR=/opt/nemoclaw-reviewed-npm-archives;",
         'export NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR="$TAVILY_TEST_ARCHIVE_DIR";',
       ),
       tmp,
-      [functionDefinition],
+      [
+        'node() { case "$1" in /scripts/lib/install-reviewed-openclaw-plugin.mts) shift; printf "installer %s|TAVILY_API_KEY=%s\\n" "$*" "${TAVILY_API_KEY:-}" >> "$call_log"; return "${TEST_PLUGIN_INSTALL_EXIT_CODE:-0}" ;; *) command node "$@" ;; esac; }',
+        functionDefinition,
+      ],
       {
         env: {
           ...env,
           TAVILY_TEST_ARCHIVE_DIR: tmp,
-          OPENCLAW_TAVILY_PLUGIN_2026_9_2_INTEGRITY: `sha512-${createHash("sha512").update(archive).digest("base64")}`,
+          OPENCLAW_TAVILY_PLUGIN_2026_9_2_INTEGRITY: TAVILY_INTEGRITY,
         },
       },
     );
@@ -73,20 +78,18 @@ describe("sandbox provisioning: reviewed OpenClaw Tavily plugin", () => {
 
     expect(result.status, `stderr: ${result.stderr}`).toBe(0);
     expect(calls.trim().split("\n")).toEqual([
-      "plugins install --force --accept-capabilities npm-pack:/test-archives/tavily-plugin-2026.9.2.tgz|TAVILY_API_KEY=",
+      `installer ${TAVILY_INSTALL_ARGS}|TAVILY_API_KEY=`,
       "doctor --fix --non-interactive|TAVILY_API_KEY=openshell:resolve:env:TAVILY_API_KEY",
     ]);
   });
 
-  it("stops before doctor when native plugin installation fails", () => {
+  it("stops before doctor when the reviewed plugin installer fails (#12144)", () => {
     const { result, calls } = runPluginInstallBlock(
-      ["openclaw() {", '  printf "%s\\n" "$*" >> "$call_log"', "  return 41", "}"].join("\n"),
-      TAVILY_BUILD_ENV,
+      ["openclaw() {", '  printf "%s\\n" "$*" >> "$call_log"', "}"].join("\n"),
+      { ...TAVILY_BUILD_ENV, TEST_PLUGIN_INSTALL_EXIT_CODE: "41" },
     );
 
     expect(result.status).toBe(41);
-    expect(calls.trim()).toBe(
-      "plugins install --force --accept-capabilities npm-pack:/test-archives/tavily-plugin-2026.9.2.tgz",
-    );
+    expect(calls.trim()).toBe(`installer ${TAVILY_INSTALL_ARGS}|TAVILY_API_KEY=`);
   });
 });

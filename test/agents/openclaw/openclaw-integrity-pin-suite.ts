@@ -615,6 +615,7 @@ function runOptionalOpenClawPluginBlock(
     `export NEMOCLAW_REVIEWED_NPM_EXECUTABLE=${JSON.stringify(reviewedNpmExecutable)}`,
     "export NODE_OPTIONS=",
     'openclaw() { printf \'openclaw %s\\nopenclaw-env %s %s\\n\' "$*" "${NPM_CONFIG_IGNORE_SCRIPTS:-}" "${npm_config_ignore_scripts:-}" >> "$call_log"; }',
+    'node() { case "$1" in /scripts/lib/install-reviewed-openclaw-plugin.mts) printf \'node %s\\nnode-env %s %s\\n\' "$*" "${NPM_CONFIG_IGNORE_SCRIPTS:-}" "${npm_config_ignore_scripts:-}" >> "$call_log" ;; *) command node "$@" ;; esac; }',
     "npm() {",
     '  printf "npm %s\\n" "$*" >> "$call_log";',
     '  if [ "${1:-}" = "pack" ]; then',
@@ -821,7 +822,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
           `npm pack @openclaw/diagnostics-otel@${PINNED_OPENCLAW_VERSION} --pack-destination`,
         );
         expect(calls).toMatch(
-          /openclaw plugins install --force --accept-capabilities npm-pack:\S*\/diagnostics-otel-2026\.9\.2\.tgz\n/,
+          /node \/scripts\/lib\/install-reviewed-openclaw-plugin\.mts \S*\/diagnostics-otel-2026\.9\.2\.tgz @openclaw\/diagnostics-otel@2026\.9\.2 /,
         );
         expect(calls).not.toContain(`remediate --archive`);
         expect(calls).toContain(
@@ -834,9 +835,15 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
           `npm pack @openclaw/brave-plugin@${PINNED_OPENCLAW_VERSION} --pack-destination`,
         );
         expect(calls).toMatch(
-          /openclaw plugins install --force --accept-capabilities npm-pack:\S*\/brave-plugin-2026\.9\.2\.tgz\n/,
+          /node \/scripts\/lib\/install-reviewed-openclaw-plugin\.mts \S*\/brave-plugin-2026\.9\.2\.tgz @openclaw\/brave-plugin@2026\.9\.2 /,
         );
-        expect(calls).toContain("openclaw-env true true");
+        expect(calls).toContain(
+          `${PINNED_OPENCLAW_DIAGNOSTICS_OTEL_INTEGRITY} ${PINNED_OPENCLAW_DIAGNOSTICS_OTEL_TARBALL}\n`,
+        );
+        expect(calls).toContain(
+          `${PINNED_OPENCLAW_BRAVE_PLUGIN_INTEGRITY} ${PINNED_OPENCLAW_BRAVE_PLUGIN_TARBALL}\n`,
+        );
+        expect(calls).toContain("node-env true true");
       });
 
       it("fails closed before optional OpenClaw plugin install when registry integrity drifts", () => {
@@ -856,7 +863,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         expect(calls).toContain(
           `npm view @openclaw/brave-plugin@${PINNED_OPENCLAW_VERSION} dist.integrity`,
         );
-        expect(calls).not.toContain("openclaw plugins install");
+        expect(calls).not.toContain("install-reviewed-openclaw-plugin.mts");
       });
 
       it("fails closed before optional OpenClaw plugin install when the registry tarball URL drifts", () => {
@@ -879,7 +886,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
           `npm view @openclaw/brave-plugin@${PINNED_OPENCLAW_VERSION} dist.tarball`,
         );
         expect(calls).not.toContain("npm pack");
-        expect(calls).not.toContain("openclaw plugins install");
+        expect(calls).not.toContain("install-reviewed-openclaw-plugin.mts");
       });
 
       it("fails closed for optional OpenClaw plugin version overrides without committed pins", () => {
@@ -892,7 +899,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         expect(`${result.stdout}${result.stderr}`).toContain(
           `OpenClaw plugin @openclaw/diagnostics-otel@${UNPINNED_OPENCLAW_VERSION} has no committed npm integrity pin`,
         );
-        expect(calls).not.toContain("openclaw plugins install");
+        expect(calls).not.toContain("install-reviewed-openclaw-plugin.mts");
       });
 
       it("installs the reviewed OpenClaw pin when registry integrity matches", () => {
@@ -1364,7 +1371,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
             label: "optional OpenClaw plugin Dockerfile",
             outcome: optionalPlugin,
             unsafeFilename: "../diagnostics-otel-2026.9.2.tgz",
-            blockedCommand: "openclaw plugins install",
+            blockedCommand: "install-reviewed-openclaw-plugin.mts",
           },
         ]) {
           expect(item.outcome.result.status, item.label).not.toBe(0);
