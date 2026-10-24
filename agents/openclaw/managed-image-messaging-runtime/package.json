@@ -24,7 +24,8 @@
     "openclaw": "2026.9.2",
     "undici": "8.12.2",
     "zod": "4.6.6",
-    "nemoclaw-openclaw-override-undici7": "npm:undici@7.30.1"
+    "nemoclaw-openclaw-override-undici7": "npm:undici@7.30.1",
+    "nemoclaw-openclaw-override-msal-node": "npm:@azure/msal-node@7.1.0"
   },
   "overrides": {
     "@modelcontextprotocol/sdk": "1.32.0",

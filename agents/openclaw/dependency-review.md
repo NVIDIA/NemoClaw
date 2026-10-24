@@ -161,3 +161,15 @@ locks, generated runtime bundles, archive-tree pins, and offline cache inputs
 record those versions. The cache carries the 7.x replacement through the
 existing npm-alias pattern. Original bundled records remain available for
 source-archive verification before remediation.
+
+Teams 2026.9.2 and 2026.9.5 use MSAL Node 7.1.0 with Common 16.14.2 to
+address GHSA-xcx6-jx8p-x3h5. Their SDKs are nonbundled dependencies in the
+verified native npm project. After provenance and project-path checks, the
+existing remediation replaces their shared MSAL tree and its nested Common
+atomically. Azure Identity 4.13.2 and Teams Apps 2.0.15/2.0.16 retain their
+code and declared 5.x ranges; the explicit security migration overrides those
+ranges at runtime. The original installation lock remains source provenance.
+The archive audit resolves MSAL 7.1.0, and the cache supplies both the original
+installation and replacement archives. Other Common consumers retain their
+versions. Compatibility checks cover existing Teams and Azure token flows
+with simulated responses, plus the advisory's routing and state denials.

@@ -22,6 +22,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { packReviewedNpmArchive, singleNpmPackResult } from "./reviewed-npm-archive.mts";
 
@@ -169,6 +170,24 @@ const ZOD_VERSION = "4.6.6";
 const ZOD_INTEGRITY =
   "sha512-4UmzQUF5fxvfcYHlbjBmejU+w+hbDnWFx4aS8kBx7nPBHcO2SqPbpAG8snbdg+Xse4pRefR98hgjFgIMCI/UhA==";
 const ZOD_TARBALL = "https://registry.npmjs.org/zod/-/zod-4.6.6.tgz";
+const TEAMS_MSAL_REPLACEMENTS = [
+  {
+    name: "@azure/msal-node",
+    version: "7.1.0",
+    integrity:
+      "sha512-s1O6hSY/C/dmqykTmmeHY6GhSkDuY8N1gxyhuLyaCwbY7N+UBvU2Wu4flas7+NxZiAPcXNPVpgt3n/HP/5yL+w==",
+    tarball: "https://registry.npmjs.org/@azure/msal-node/-/msal-node-7.1.0.tgz",
+    dependencies: { "@azure/msal-common": "16.14.2", jsonwebtoken: "^9.0.0" },
+  },
+  {
+    name: "@azure/msal-common",
+    version: "16.14.2",
+    integrity:
+      "sha512-HOBR0Gfo39TMrkxNG8k6cfjRkrRjXZc3JQs3ebMWQc9S4cihuknMYra3sgmzbZB752oQBqBN9+WF7c826p2vIQ==",
+    tarball: "https://registry.npmjs.org/@azure/msal-common/-/msal-common-16.14.2.tgz",
+    dependencies: {},
+  },
+] as const;
 const SLACK_BODY_REPLACEMENTS = [
   {
     name: "body-parser",
@@ -2492,6 +2511,78 @@ export function remediateInstalledOfficialOpenClawPlugin(
   }
 }
 
+function remediateInstalledTeamsMsal(
+  packageDirectory: string,
+  directory: string,
+  env: NodeJS.ProcessEnv,
+): void {
+  // Teams does not bundle its SDKs. Both consumers must resolve the same MSAL
+  // inside this verified native project; never repair a parent/global module.
+  const modules = resolve(packageDirectory, "../..");
+  const msalDirectory = join(modules, "@azure/msal-node");
+  const consumers = [
+    { name: "@azure/identity", version: "4.13.2", msal: "^5.1.5" },
+    {
+      name: "@microsoft/teams.apps",
+      version:
+        readJson(join(packageDirectory, "package.json")).version === "2026.9.5"
+          ? "2.0.16"
+          : "2.0.15",
+      msal: "^5.2.2",
+    },
+  ];
+  for (const consumer of consumers) {
+    const consumerDirectory = join(modules, consumer.name);
+    const metadata = readJson(join(consumerDirectory, "package.json"));
+    requirePackageIdentity(metadata, consumer.name, consumer.version, "Teams MSAL consumer");
+    if (metadata.dependencies?.["@azure/msal-node"] !== consumer.msal) {
+      throw new Error("Teams MSAL consumer dependency graph changed before remediation");
+    }
+    const entry = createRequire(join(consumerDirectory, "package.json")).resolve(
+      "@azure/msal-node",
+    );
+    if (!entry.startsWith(`${msalDirectory}${sep}`)) {
+      throw new Error("Teams SDK must resolve MSAL inside its reviewed native project");
+    }
+  }
+  const installed = readJson(join(msalDirectory, "package.json"));
+  requirePackageIdentity(installed, "@azure/msal-node", "5.6.0", "Teams installed MSAL");
+  requireDependencyShape(
+    installed,
+    { "@azure/msal-common": "16.13.0", jsonwebtoken: "^9.0.0" },
+    "Teams installed MSAL",
+  );
+  const replacements = TEAMS_MSAL_REPLACEMENTS.map((replacement) => {
+    const archive = packReplacement(
+      `${replacement.name}@${replacement.version}`,
+      replacement.integrity,
+      replacement.tarball,
+      directory,
+      env,
+    );
+    const unpacked = extractArchive(
+      archive.archivePath,
+      join(directory, basename(replacement.name)),
+      directory,
+      env,
+    );
+    const metadata = readJson(join(unpacked, "package.json"));
+    requirePackageIdentity(metadata, replacement.name, replacement.version, "Teams replacement");
+    requireDependencyShape(
+      { dependencies: metadata.dependencies ?? {} },
+      replacement.dependencies,
+      "Teams MSAL replacement",
+    );
+    return unpacked;
+  });
+  // Promote Node and its exact Common dependency together through the existing
+  // package replacement/recovery path. Other Common consumers keep their tree.
+  cpSync(replacements[1]!, join(replacements[0]!, "node_modules/@azure/msal-common"), {
+    recursive: true,
+  });
+  copyReplacementPackage(replacements[0]!, msalDirectory);
+}
+
 function remediateVerifiedInstalledOfficialOpenClawPlugin(
   request: RemediationRequest & Readonly<{ packageDirectory?: string; trustedStateRoot: string }>,
 ): void {
@@ -2500,7 +2591,10 @@ function remediateVerifiedInstalledOfficialOpenClawPlugin(
   const patchesBody =
     request.packageSpec === "@openclaw/slack@2026.9.2" ||
     request.packageSpec === "@openclaw/slack@2026.9.5";
-  if (!patchesProxyAddr && !patchesZod) return;
+  const patchesMsal =
+    request.packageSpec === "@openclaw/msteams@2026.9.2" ||
+    request.packageSpec === "@openclaw/msteams@2026.9.5";
+  if (!patchesProxyAddr && !patchesZod && !patchesMsal) return;
   if (
     !request.packageDirectory ||
     !isAbsolute(request.packageDirectory) ||
@@ -2533,6 +2627,25 @@ function remediateVerifiedInstalledOfficialOpenClawPlugin(
     );
   }
   const dependencyPaths: string[][] = [];
+  if (patchesMsal) {
+    for (const name of ["@azure/msal-node", "@azure/identity", "@microsoft/teams.apps"]) {
+      let dependency = trustedRoot;
+      for (const component of [...installedParts.slice(0, 4), ...name.split("/")]) {
+        dependency = join(dependency, component);
+        const metadata = lstatSync(dependency);
+        if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
+          throw new Error("Teams dependency directory must be a real project directory");
+        }
+      }
+      hashPackageTree(dependency);
+    }
+    requirePackageIdentity(
+      readJson(join(packageDirectory, "package.json")),
+      packageName,
+      request.packageSpec.slice(request.packageSpec.lastIndexOf("@") + 1),
+      "Teams installed plugin",
+    );
+  }
   if (patchesProxyAddr)
     dependencyPaths.push(["node_modules", "@slack", "bolt", "node_modules", "proxy-addr"]);
   if (patchesBody)
@@ -2557,6 +2670,10 @@ function remediateVerifiedInstalledOfficialOpenClawPlugin(
   const env = { ...process.env, ...request.env };
   const directory = mkdtempSync(join(request.workingDirectory, "official-plugin-remediation-"));
   try {
+    if (patchesMsal) {
+      remediateInstalledTeamsMsal(packageDirectory, directory, env);
+      return;
+    }
     if (patchesProxyAddr) {
       const archive = packReplacement(
         `proxy-addr@${PROXY_ADDR_VERSION}`,

@@ -34,6 +34,7 @@ import {
   patchOpenClawDiscordPackageGraph,
   patchOpenClawPluginPackageGraph,
   patchOpenClawSlackProxyAddrPackageGraph,
+  remediateInstalledOfficialOpenClawPlugin,
   OpenClawNpmRemediationCommandError,
   runOpenClawNpmRemediationCommand,
 } from "../../../scripts/lib/openclaw-npm-remediation.mts";
@@ -1257,4 +1258,124 @@ describe("OpenClaw npm remediation", () => {
       ),
     ).toMatchObject({ name: "libsignal", version: "6.0.0" });
   }, 60_000);
+});
+
+describe("Teams native MSAL remediation", () => {
+  function teamsFixture() {
+    const root = mkdtempSync(path.join(tmpdir(), "nemoclaw-teams-msal-"));
+    temporaryDirectories.push(root);
+    const project = `openclaw-msteams-${createHash("sha256").update("@openclaw/msteams").digest("hex").slice(0, 10)}`;
+    const modules = path.join(root, "npm/projects", project, "node_modules");
+    const packageDirectory = path.join(modules, "@openclaw/msteams");
+    const packages = [
+      ["@openclaw/msteams", { name: "@openclaw/msteams", version: "2026.9.2" }],
+      [
+        "@azure/identity",
+        {
+          name: "@azure/identity",
+          version: "4.13.2",
+          dependencies: { "@azure/msal-node": "^5.1.5" },
+        },
+      ],
+      [
+        "@microsoft/teams.apps",
+        {
+          name: "@microsoft/teams.apps",
+          version: "2.0.15",
+          dependencies: { "@azure/msal-node": "^5.2.2" },
+        },
+      ],
+      [
+        "@azure/msal-node",
+        {
+          name: "@azure/msal-node",
+          version: "5.6.0",
+          main: "index.cjs",
+          dependencies: { "@azure/msal-common": "16.13.0", jsonwebtoken: "^9.0.0" },
+        },
+      ],
+      ["@azure/msal-common", { name: "@azure/msal-common", version: "16.14.0" }],
+    ] as const;
+    packages.forEach(([name, metadata]) => {
+      mkdirSync(path.join(modules, name), { recursive: true });
+      writeJson(path.join(modules, name, "package.json"), metadata);
+    });
+    const archives = path.join(root, "archives");
+    mkdirSync(archives);
+    ["msal-node-7.1.0", "msal-common-16.14.2"].forEach((name) =>
+      cpSync(
+        path.resolve(import.meta.dirname, "../../fixtures/npm", name, `${name}.tgz`),
+        path.join(archives, `${name}.tgz`),
+      ),
+    );
+    const target = path.join(modules, "@azure/msal-node");
+    writeFileSync(path.join(target, "index.cjs"), "vulnerable-original");
+    return {
+      root,
+      modules,
+      target,
+      request: {
+        archivePath: path.join(root, "unused.tgz"),
+        packageSpec: "@openclaw/msteams@2026.9.2",
+        workingDirectory: root,
+        trustedStateRoot: root,
+        packageDirectory,
+        env: { NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR: archives },
+      },
+    };
+  }
+
+  it("replaces shared MSAL and its Common together while preserving the browser Common", () => {
+    const fixture = teamsFixture();
+    remediateInstalledOfficialOpenClawPlugin(fixture.request);
+    expect(readJson(path.join(fixture.target, "package.json"))).toMatchObject({ version: "7.1.0" });
+    expect(
+      readJson(path.join(fixture.target, "node_modules/@azure/msal-common/package.json")),
+    ).toMatchObject({ version: "16.14.2" });
+    expect(readJson(path.join(fixture.modules, "@azure/msal-common/package.json"))).toMatchObject({
+      version: "16.14.0",
+    });
+    expect(existsSync(path.join(fixture.target, "index.cjs"))).toBe(false);
+  });
+
+  it.each(["dependency link", "nested MSAL", "unreviewed SDK", "wrong project"])(
+    "denies %s before replacing MSAL",
+    (scenario) => {
+      const fixture = teamsFixture();
+      const identity = path.join(fixture.modules, "@azure/identity");
+      const mutations: Record<string, () => void> = {
+        "dependency link": () => {
+          const original = path.join(fixture.root, "original-identity");
+          cpSync(identity, original, { recursive: true });
+          rmSync(identity, { recursive: true });
+          symlinkSync(original, identity);
+        },
+        "nested MSAL": () => {
+          const nested = path.join(identity, "node_modules/@azure/msal-node");
+          mkdirSync(nested, { recursive: true });
+          writeJson(path.join(nested, "package.json"), {
+            name: "@azure/msal-node",
+            version: "5.6.0",
+            main: "index.cjs",
+          });
+          writeFileSync(path.join(nested, "index.cjs"), "nested-vulnerable");
+        },
+        "unreviewed SDK": () =>
+          writeJson(path.join(identity, "package.json"), {
+            name: "@azure/identity",
+            version: "5.0.0",
+          }),
+        "wrong project": () => {
+          fixture.request.trustedStateRoot = fixture.modules;
+        },
+      };
+      mutations[scenario]();
+      expect(() => remediateInstalledOfficialOpenClawPlugin(fixture.request)).toThrow(
+        "reviewed dependency graph",
+      );
+      expect(readFileSync(path.join(fixture.target, "index.cjs"), "utf8")).toBe(
+        "vulnerable-original",
+      );
+    },
+  );
 });

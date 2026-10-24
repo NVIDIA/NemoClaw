@@ -296,6 +296,7 @@ export function reviewedArchiveGraphManifest(archiveTarVersion: unknown) {
     name: "nemoclaw-reviewed-production-graph",
     overrides: {
       "@modelcontextprotocol/sdk": "1.32.0",
+      "@azure/msal-node": "7.1.0",
       "proxy-addr": "2.0.8",
       tar: archiveTarVersion,
       zod: "4.6.6",
