@@ -2589,7 +2589,7 @@ public `NVIDIA_API_KEY` credential profile. The `hermes-discord` target retains
 its internal hosted inference credential and Discord security checks.
 Source tests own reference validation and settings preservation.
 `support/hermes-discord-rebuild-contract.test.ts` checks the credential-profile
-boundary and replays the live rebuild phase, including failure propagation. Each target
+boundary and calls the same typed rebuild helper as the live test, including failure propagation. Each target
 retains its existing cleanup and credential redaction.
 Discord schema defaults and nonsecret generated environment lines are covered
 by `test/generation/generate-hermes-config.test.ts`. Registry persistence is
