@@ -10,7 +10,6 @@ import type {
   ValueStatus,
 } from "../../domain/telemetry/event";
 import { readTelemetryTestLabel } from "../../domain/telemetry/event";
-import { PUBLIC_VERSION_PATTERN } from "../../domain/telemetry/schema";
 import { operationEnvelope } from "../../adapters/telemetry/gxt";
 import {
   allowedTelemetryCollection,
@@ -27,10 +26,7 @@ function publicVersion(
   value: unknown,
   missing: ValueStatus,
 ): { value: string; status: ValueStatus } {
-  return typeof value === "string" &&
-    value !== "unknown" &&
-    value.length <= 128 &&
-    new RegExp(PUBLIC_VERSION_PATTERN).test(value)
+  return typeof value === "string" && value.length > 0 && value !== "unknown"
     ? { value, status: "reported" }
     : { value: "unknown", status: value == null || value === "unknown" ? missing : "unapproved" };
 }
@@ -54,6 +50,7 @@ function missingObservation(value: unknown): boolean {
   return Object.entries(value).some(
     ([key, item]) =>
       ((key === "status" || key.endsWith("Status")) &&
+        !(key === "hostHardwarePlatformStatus" && item === "not_observed") &&
         ["collection_error", "not_observed", "not_persisted", "unavailable"].includes(item)) ||
       missingObservation(item),
   );
@@ -81,15 +78,10 @@ export async function collectOperationEvent(
       ? "not_observed"
       : "not_applicable",
   );
+  const hostPlatform = os.platform();
   const hostOS =
-    process.platform === "darwin"
-      ? "macos"
-      : process.platform === "win32"
-        ? "windows"
-        : process.platform === "linux"
-          ? "linux"
-          : "other";
-  const hostArch = ["x64", "arm64", "ia32", "arm"].includes(process.arch) ? process.arch : "other";
+    hostPlatform === "darwin" ? "macos" : hostPlatform === "win32" ? "windows" : hostPlatform;
+  const hostArch = os.arch();
   const { targetPositions: _privatePositions, ...publicSnapshot } = snapshot;
   const event: TelemetryOperationEvent = {
     name: "nemoclaw_operation_finished",
@@ -115,11 +107,13 @@ export async function collectOperationEvent(
       },
       platform: {
         hostOS,
-        hostOSStatus: hostOS === "other" ? "unapproved" : "reported",
+        hostOSStatus: "reported",
         hostArch,
-        hostArchStatus: hostArch === "other" ? "unapproved" : "reported",
+        hostArchStatus: "reported",
         hostContext: hostOS === "linux" && /microsoft/i.test(os.release()) ? "wsl" : "native",
         hostContextStatus: "reported",
+        hostHardwarePlatform: "",
+        hostHardwarePlatformStatus: "not_observed",
       },
       location: {
         countryCode: "",
@@ -171,7 +165,7 @@ export async function collectOperationEvent(
   return event;
 }
 
-/** A single complete record, one attempt, and one collection/delivery deadline. */
+/** One terminal record and one delivery attempt within the remaining operation budget. */
 export async function sendOperationTelemetry(
   context: TelemetryOperationContext,
   budgetMs: number,
@@ -192,7 +186,11 @@ export async function sendOperationTelemetry(
       controller.signal.addEventListener("abort", () => resolve(null), { once: true });
     });
     const event = await Promise.race([
-      collectOperationEvent(context, { signal: controller.signal, deadlineAt }),
+      // Reserve transport time even when an inventory observation stalls.
+      collectOperationEvent(context, {
+        signal: controller.signal,
+        deadlineAt: deadlineAt - Math.min(1_000, budgetMs / 2),
+      }),
       deadline,
     ]);
     if (event === null || controller.signal.aborted) return "failed";
