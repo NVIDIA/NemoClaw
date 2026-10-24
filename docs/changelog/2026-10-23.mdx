@@ -5,7 +5,7 @@
 
 ## v0.0.139
 
-NemoClaw v0.0.139 fixes rootless Podman cleanup for Hermes sandboxes, improves native inference recovery, reports native backup contents, and publishes compatible llama.cpp image signatures.
+NemoClaw v0.0.139 fixes rootless Podman cleanup for Hermes sandboxes, improves native inference recovery, reports host GPUs and native backup contents, and publishes compatible llama.cpp image signatures.
 
 - Destroying a Hermes sandbox on rootless Podman now retries native-home cleanup as the image's pinned sandbox user when privileged cleanup cannot remove agent-owned files.
   If that cleanup fails, NemoClaw preserves the sandbox registry entry for a retry.
@@ -16,6 +16,9 @@ NemoClaw v0.0.139 fixes rootless Podman cleanup for Hermes sandboxes, improves n
 - `nemoclaw backup-all` now reports the directory and file counts in each successful native archive, followed by its retained path.
   Directory counts include the archive root, and file counts include symbolic links.
   Related change: [PR #13073](https://github.com/NVIDIA/NemoClaw/pull/13073).
+- `nemoclaw host probe` now reports each detected GPU's index, name, and memory in its text and JSON output.
+  JSON output lists at most 256 GPU entries and reports `gpuInventory.collected`, `listed`, and `omitted` when it omits devices.
+  Related change: [PR #13070](https://github.com/NVIDIA/NemoClaw/pull/13070).
 - New llama.cpp image publications include Sigstore bundle signatures and a legacy image signature.
   The publication workflow verifies the legacy signature with Cosign 2 before it emits a receipt.
   Related change: [PR #13667](https://github.com/NVIDIA/NemoClaw/pull/13667).

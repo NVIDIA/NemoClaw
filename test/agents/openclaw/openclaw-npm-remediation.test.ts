@@ -654,8 +654,10 @@ describe("OpenClaw npm remediation", () => {
       readFileSync(path.join(replacement, "index.js"), "utf8"),
     );
     expect(readJson(path.join(target, "package.json"))).toMatchObject({ version: "2.0.8" });
+    expect(() => patchOpenClawSlackProxyAddrPackageGraph(directory, replacement)).not.toThrow();
+    writeFileSync(path.join(target, "index.js"), "changed after remediation");
     expect(() => patchOpenClawSlackProxyAddrPackageGraph(directory, replacement)).toThrow(
-      "must be proxy-addr@2.0.7",
+      "changed after remediation",
     );
   });
   it("hashes package entries through opened file descriptors", () => {

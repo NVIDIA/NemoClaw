@@ -11,10 +11,48 @@ const SLACK_INTEGRITY =
 const PROXY_ADDR_PATH = "node_modules/@slack/bolt/node_modules/proxy-addr";
 const PROXY_ADDR_INTEGRITY =
   "sha512-5nnx0yGyVUcY6t9RnWcARWtwT9F1D8O9rt08htPvnd49W1IgZtmLkhu9WfMzQj1cFxjHIO6connUNVW5k7AVyQ==";
+const BODY_PARSER_INTEGRITY =
+  "sha512-Ifk1KcLrxaGt1occQagQNFNNOqRt1LFuehEnHHzB8Z6cRgIxRU1TBaiIsUiCdA+gy5PL7Y1IX31DNKkRmxtXjQ==";
+const QS_INTEGRITY =
+  "sha512-5Px6J7rfHBAGUhNQ3es4YzcOdBBw0SDcVtThJml4RdnKw4tKs2epA0kPZ+K8X+WiHktT93RHVcQ/3ym5aTCgtg==";
+const BOLT_DEPENDENCIES = "node_modules/@slack/bolt/node_modules";
 
 function writePackage(directory: string, metadata: Record<string, unknown>): void {
   fs.mkdirSync(directory, { recursive: true });
   fs.writeFileSync(path.join(directory, "package.json"), JSON.stringify(metadata));
+}
+
+export function writeSlackBundledParserFixture(packageDirectory: string): void {
+  const dependencies = path.join(packageDirectory, BOLT_DEPENDENCIES);
+  writePackage(path.join(dependencies, "body-parser"), {
+    name: "body-parser",
+    version: "2.3.0",
+    dependencies: {
+      bytes: "^3.1.2",
+      "content-type": "^2.0.0",
+      debug: "^4.4.3",
+      "http-errors": "^2.0.1",
+      "iconv-lite": "^0.7.2",
+      "on-finished": "^2.4.1",
+      qs: "^6.15.2",
+      "raw-body": "^3.0.2",
+      "type-is": "^2.1.0",
+    },
+    license: "MIT",
+    engines: { node: ">=18" },
+  });
+  writePackage(path.join(dependencies, "body-parser/node_modules/content-type"), {
+    name: "content-type",
+    version: "2.1.0",
+  });
+  writePackage(path.join(dependencies, "iconv-lite"), {
+    name: "iconv-lite",
+    version: "0.7.3",
+  });
+  writePackage(path.join(dependencies, "qs"), {
+    name: "qs",
+    version: "6.15.3",
+  });
 }
 
 export async function createSlackRemediationFixture() {
@@ -49,10 +87,11 @@ export async function createSlackRemediationFixture() {
     writePackage(path.join(source, "node_modules/@slack/bolt/node_modules/express"), {
       name: "express",
       version: "5.2.1",
-      dependencies: { "proxy-addr": "^2.0.7" },
+      dependencies: { "body-parser": "^2.2.1", "proxy-addr": "^2.0.7" },
       license: "MIT",
       engines: { node: ">= 18" },
     });
+    writeSlackBundledParserFixture(source);
     writePackage(path.join(source, PROXY_ADDR_PATH), {
       name: "proxy-addr",
       version: "2.0.7",
@@ -77,6 +116,16 @@ export async function createSlackRemediationFixture() {
         '  "pack:proxy-addr@2.0.8:--pack-destination")',
         '    cp "$TEST_PROXY_ADDR_ARCHIVE" "$4/proxy-addr-2.0.8.tgz"',
         '    printf \'[{"filename":"proxy-addr-2.0.8.tgz","integrity":"%s"}]\' "$TEST_PROXY_ADDR_INTEGRITY" ;;',
+        '  "view:body-parser@2.4.0:dist.integrity") printf "%s" "$TEST_BODY_PARSER_INTEGRITY" ;;',
+        '  "view:body-parser@2.4.0:dist.tarball") printf "%s" "https://registry.npmjs.org/body-parser/-/body-parser-2.4.0.tgz" ;;',
+        '  "pack:body-parser@2.4.0:--pack-destination")',
+        '    cp "$TEST_BODY_PARSER_ARCHIVE" "$4/body-parser-2.4.0.tgz"',
+        '    printf \'[{"filename":"body-parser-2.4.0.tgz","integrity":"%s"}]\' "$TEST_BODY_PARSER_INTEGRITY" ;;',
+        '  "view:qs@6.16.1:dist.integrity") printf "%s" "$TEST_QS_INTEGRITY" ;;',
+        '  "view:qs@6.16.1:dist.tarball") printf "%s" "https://registry.npmjs.org/qs/-/qs-6.16.1.tgz" ;;',
+        '  "pack:qs@6.16.1:--pack-destination")',
+        '    cp "$TEST_QS_ARCHIVE" "$4/qs-6.16.1.tgz"',
+        '    printf \'[{"filename":"qs-6.16.1.tgz","integrity":"%s"}]\' "$TEST_QS_INTEGRITY" ;;',
         "  *) exit 1 ;;",
         "esac",
         "",
@@ -119,9 +168,19 @@ export async function createSlackRemediationFixture() {
         TEST_SLACK_INSTALL: packageDirectory,
         TEST_SLACK_TRACE: trace,
         TEST_PROXY_ADDR_INTEGRITY: PROXY_ADDR_INTEGRITY,
+        TEST_BODY_PARSER_INTEGRITY: BODY_PARSER_INTEGRITY,
+        TEST_QS_INTEGRITY: QS_INTEGRITY,
         TEST_PROXY_ADDR_ARCHIVE: path.resolve(
           import.meta.dirname,
           "../fixtures/npm/proxy-addr-2.0.8/proxy-addr-2.0.8.tgz",
+        ),
+        TEST_BODY_PARSER_ARCHIVE: path.resolve(
+          import.meta.dirname,
+          "../fixtures/npm/proxy-addr-2.0.8/body-parser-2.4.0.tgz",
+        ),
+        TEST_QS_ARCHIVE: path.resolve(
+          import.meta.dirname,
+          "../fixtures/npm/proxy-addr-2.0.8/qs-6.16.1.tgz",
         ),
         TEST_SLACK_INSPECTION: JSON.stringify({
           plugin: { id: "slack", trustedOfficialInstall: true },
