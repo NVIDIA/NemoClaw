@@ -40,10 +40,18 @@ export function printDockerNotReachableError(): void {
 }
 
 /** Podman under the Linux Docker-driver path is unsupported. */
-export function printUnsupportedRuntimeError(): void {
+export function printUnsupportedRuntimeError(platform: NodeJS.Platform | string = process.platform): void {
   console.error(failLine(`${cliDisplayName()} onboarding now uses OpenShell's Docker driver.`));
   console.error(`    Podman is not supported for this ${cliDisplayName()} integration path.`);
-  console.error("    Switch to Docker Engine, Docker Desktop, or Colima, then rerun onboarding.");
+  if (platform === "darwin") {
+    console.error(
+      `    Supported runtimes on macOS: Docker Desktop (https://www.docker.com/products/docker-desktop/) or Colima (https://github.com/abiosoft/colima).`,
+    );
+  } else {
+    console.error(
+      `    Supported runtimes: Docker Engine, Docker Desktop, or Colima. Switch to one of these, then rerun onboarding.`,
+    );
+  }
 }
 
 /** NVIDIA CDI state cannot support GPU passthrough for this onboarding run. */
