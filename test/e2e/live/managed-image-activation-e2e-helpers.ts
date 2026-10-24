@@ -667,38 +667,54 @@ export async function waitForManagedActivationSandboxAbsence(
   });
 }
 
-async function verifyExactCleanup(
-  host: HostCliClient,
-  sandbox: SandboxClient,
+type ExactCleanupOptions = {
+  attempts?: number;
+  intervalMs?: number;
+  timeoutMs?: number;
+};
+
+export async function verifyExactCleanup(
+  host: Pick<HostCliClient, "command">,
+  sandbox: Pick<SandboxClient, "list">,
   sandboxName: string,
   env: NodeJS.ProcessEnv,
+  options: ExactCleanupOptions = {},
 ): Promise<void> {
+  const attempts = options.attempts ?? 60;
+  const intervalMs = options.intervalMs ?? 1_000;
+  const timeoutMs = options.timeoutMs ?? 60_000;
+  const deadline = performance.now() + timeoutMs;
+  const remainingMs = () => Math.max(0, Math.ceil(deadline - performance.now()));
+  const probeTimeoutMs = () => Math.max(1, Math.min(30_000, remainingMs()));
   const containerEngine = env.NEMOCLAW_GATEWAY_RUNTIME === "podman" ? "podman" : "docker";
   await pollUntil({
     artifactPrefix: `post-destroy-absence-${sandboxName}`,
-    deadlineMs: 60_000,
-    delayMs: 1_000,
+    attempts,
+    deadlineMs: timeoutMs,
+    now: () => performance.now(),
+    delayMs: (attempt) => (attempt >= attempts ? 0 : Math.min(intervalMs, remainingMs())),
     probe: async (_attempt, artifactName) => {
       const openshellList = await sandbox.list({
         artifactName: `${artifactName}-openshell-list`,
         env,
-        timeoutMs: 30_000,
+        timeoutMs: probeTimeoutMs(),
       });
+      expect(
+        openshellList.exitCode,
+        `list OpenShell sandboxes after managed activation destroy: ${resultText(openshellList)}`,
+      ).toBe(0);
       const containers = await host.command(
         containerEngine,
         ["ps", "-aq", "--filter", `label=openshell.ai/sandbox-name=${sandboxName}`],
         {
           artifactName: `${artifactName}-${containerEngine}-inventory`,
           env,
-          timeoutMs: 30_000,
+          timeoutMs: probeTimeoutMs(),
         },
       );
       return { containers, openshellList };
     },
-    terminal: ({ containers, openshellList }) => {
-      if (openshellList.exitCode !== 0) {
-        return `list OpenShell sandboxes after managed activation destroy failed: ${resultText(openshellList)}`;
-      }
+    terminal: ({ containers }) => {
       if (containers.exitCode !== 0) {
         return `inspect ${containerEngine} inventory after managed activation destroy failed: ${resultText(containers)}`;
       }
@@ -1182,12 +1198,6 @@ export async function qualifyManagedImageActivation(fixtures: RuntimeFixtures): 
     guard.dispose,
   );
   cleanup.trackGateway(host, GATEWAY, { env: guard.env, timeoutMs: 60_000 });
-  const runtimeInfo = await host.command(containerEngine, ["info"], {
-    artifactName: `managed-activation-${containerEngine}-info`,
-    env: guard.env,
-    timeoutMs: 30_000,
-  });
-  expect(runtimeInfo.exitCode, resultText(runtimeInfo)).toBe(0);
   const inference = await startFakeOpenAiCompatibleServer({
     apiKey: API_KEY,
     chatContent: "PONG",

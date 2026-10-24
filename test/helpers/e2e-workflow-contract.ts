@@ -59,6 +59,44 @@ export function readYaml<T>(path: string): T {
   return YAML.parse(readRepoText(path)) as T;
 }
 
+export function topLevelAndTerms(expression: string | undefined): string[] {
+  if (!expression?.startsWith("${{") || !expression.endsWith("}}")) return [];
+
+  const body = expression.slice(3, -2).trim();
+  const terms: string[] = [];
+  let depth = 0;
+  let quote: "'" | '"' | undefined;
+  let termStart = 0;
+
+  for (let index = 0; index < body.length; index += 1) {
+    const character = body[index];
+    if (quote !== undefined) {
+      if (character === quote) quote = undefined;
+      continue;
+    }
+    if (character === "'" || character === '"') {
+      quote = character;
+      continue;
+    }
+    if (character === "(") {
+      depth += 1;
+      continue;
+    }
+    if (character === ")") {
+      depth -= 1;
+      continue;
+    }
+    if (depth === 0 && character === "|" && body[index + 1] === "|") return [];
+    if (depth === 0 && character === "&" && body[index + 1] === "&") {
+      terms.push(body.slice(termStart, index).trim());
+      termStart = index + 2;
+      index += 1;
+    }
+  }
+  terms.push(body.slice(termStart).trim());
+  return depth === 0 && quote === undefined ? terms : [];
+}
+
 export function readWorkflow(): Record<string, unknown> {
   return readYaml(".github/workflows/e2e.yaml");
 }

@@ -1,0 +1,66 @@
+{
+  "schemaVersion": 1,
+  "classification": "official-hermes-windows-component-feasibility-inputs",
+  "upstream": {
+    "repository": "https://github.com/NousResearch/hermes-agent",
+    "tag": "v2026.9.7",
+    "version": "0.21.1",
+    "commit": "2237be355906fbe6065ce1815711eee52b2d646e",
+    "tagObject": "9949d0d324a3a06ac238e01dd1c2103dbca09900",
+    "tagSignature": "unsigned",
+    "installerPath": "scripts/install.ps1",
+    "installerSha256": "53a077364aa28bbd6e8d987cdec11a4552e22ff2c5137845725a1c99770f392f",
+    "dependencyLockPath": "uv.lock",
+    "dependencyLockSha256": "38baf65f5960e6fd930b1aaa817d4d24df312d7b9031a4197998aa9eb8512368"
+  },
+  "artifacts": [
+    {
+      "id": "hermes-source",
+      "file": "hermes-agent-2237be355906fbe6065ce1815711eee52b2d646e.tar.gz",
+      "url": "https://codeload.github.com/NousResearch/hermes-agent/tar.gz/2237be355906fbe6065ce1815711eee52b2d646e",
+      "sha256": "c1f2401c8096e9372c46fa4ef8bdada18ed3cc84c0f5274562b86b7646ed3a87",
+      "size": 69242564,
+      "role": "Complete official stable source, plugins, tools, launchers and licenses"
+    },
+    {
+      "id": "uv",
+      "file": "uv-aarch64-pc-windows-msvc-0.9.28.zip",
+      "url": "https://github.com/astral-sh/uv/releases/download/0.9.28/uv-aarch64-pc-windows-msvc.zip",
+      "sha256": "081703fa19ae05a49f486f97468f7792e1cdacda403a091b151af7f5bd6f4595",
+      "size": 20281323,
+      "role": "Hermes-managed package manager; version pinned by the official stable CI"
+    },
+    {
+      "id": "portable-git",
+      "file": "PortableGit-2.54.0-arm64.7z.exe",
+      "url": "https://github.com/git-for-windows/git/releases/download/v2.54.0.windows.1/PortableGit-2.54.0-arm64.7z.exe",
+      "sha256": "f8e92cd3359fcbb96998cfd606a536ccc6dbfb23c04e12b29042f9ba45b6b0c7",
+      "size": 59757336,
+      "role": "Exact ARM64 PortableGit release selected by the official stable Windows installer"
+    },
+    {
+      "id": "python",
+      "file": "cpython-3.11.16+20260901-aarch64-pc-windows-msvc-install_only.tar.gz",
+      "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260901/cpython-3.11.16%2B20260901-aarch64-pc-windows-msvc-install_only.tar.gz",
+      "sha256": "3a983c8d8e60ac38653bce3063b1875b8deb9816b4e6f58c0623f537530b2025",
+      "size": 44714136,
+      "role": "Full uv-managed CPython ARM64 distribution on Hermes's official preferred 3.11 line"
+    },
+    {
+      "id": "uv-license-apache",
+      "file": "uv-LICENSE-APACHE.txt",
+      "url": "https://raw.githubusercontent.com/astral-sh/uv/0.9.28/LICENSE-APACHE",
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+      "size": 11357,
+      "role": "Required license for the official Hermes-managed uv distribution"
+    },
+    {
+      "id": "uv-license-mit",
+      "file": "uv-LICENSE-MIT.txt",
+      "url": "https://raw.githubusercontent.com/astral-sh/uv/0.9.28/LICENSE-MIT",
+      "sha256": "860e3d7a86b84e6a7012c7a635fc64df475cebc6cce34dfeb73a5982ec58176c",
+      "size": 1077,
+      "role": "Required license for the official Hermes-managed uv distribution"
+    }
+  ]
+}
