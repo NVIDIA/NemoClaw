@@ -16,6 +16,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { runInNewContext } from "node:vm";
@@ -1284,7 +1285,7 @@ describe("OpenClaw npm remediation", () => {
   }, 60_000);
 });
 
-describe("Teams native MSAL remediation", () => {
+describe("Teams native dependency remediation", () => {
   function teamsFixture() {
     const root = mkdtempSync(path.join(tmpdir(), "nemoclaw-teams-msal-"));
     temporaryDirectories.push(root);
@@ -1292,7 +1293,10 @@ describe("Teams native MSAL remediation", () => {
     const modules = path.join(root, "npm/projects", project, "node_modules");
     const packageDirectory = path.join(modules, "@openclaw/msteams");
     const packages = [
-      ["@openclaw/msteams", { name: "@openclaw/msteams", version: "2026.9.2" }],
+      [
+        "@openclaw/msteams",
+        { name: "@openclaw/msteams", version: "2026.9.2", dependencies: { zod: "4.4.3" } },
+      ],
       [
         "@azure/identity",
         {
@@ -1319,6 +1323,7 @@ describe("Teams native MSAL remediation", () => {
         },
       ],
       ["@azure/msal-common", { name: "@azure/msal-common", version: "16.14.0" }],
+      ["zod", { name: "zod", version: "4.4.3", main: "index.cjs" }],
     ] as const;
     packages.forEach(([name, metadata]) => {
       mkdirSync(path.join(modules, name), { recursive: true });
@@ -1326,7 +1331,7 @@ describe("Teams native MSAL remediation", () => {
     });
     const archives = path.join(root, "archives");
     mkdirSync(archives);
-    ["msal-node-7.1.0", "msal-common-16.14.2"].forEach((name) =>
+    ["msal-node-7.1.0", "msal-common-16.14.2", "zod-4.6.6"].forEach((name) =>
       cpSync(
         path.resolve(import.meta.dirname, "../../fixtures/npm", name, `${name}.tgz`),
         path.join(archives, `${name}.tgz`),
@@ -1334,6 +1339,7 @@ describe("Teams native MSAL remediation", () => {
     );
     const target = path.join(modules, "@azure/msal-node");
     writeFileSync(path.join(target, "index.cjs"), "vulnerable-original");
+    writeFileSync(path.join(modules, "zod/index.cjs"), "vulnerable-zod");
     return {
       root,
       modules,
@@ -1360,46 +1366,89 @@ describe("Teams native MSAL remediation", () => {
       version: "16.14.0",
     });
     expect(existsSync(path.join(fixture.target, "index.cjs"))).toBe(false);
+    const zod = createRequire(path.join(fixture.request.packageDirectory, "package.json"))("zod");
+    expect(
+      createRequire(path.join(fixture.request.packageDirectory, "package.json"))("zod/package.json")
+        .version,
+    ).toBe("4.6.6");
+    let visited = 0;
+    const bounded = zod
+      .array(
+        zod.string().superRefine(() => {
+          visited += 1;
+        }),
+      )
+      .max(1);
+    expect(bounded.safeParse(["a", "b"]).success).toBe(false);
+    expect(visited).toBe(0);
+    expect(bounded.parse(["a"])).toEqual(["a"]);
   });
 
-  it.each(["dependency link", "nested MSAL", "unreviewed SDK", "wrong project"])(
-    "denies %s before replacing MSAL",
-    (scenario) => {
-      const fixture = teamsFixture();
-      const identity = path.join(fixture.modules, "@azure/identity");
-      const mutations: Record<string, () => void> = {
-        "dependency link": () => {
-          const original = path.join(fixture.root, "original-identity");
-          cpSync(identity, original, { recursive: true });
-          rmSync(identity, { recursive: true });
-          symlinkSync(original, identity);
-        },
-        "nested MSAL": () => {
-          const nested = path.join(identity, "node_modules/@azure/msal-node");
-          mkdirSync(nested, { recursive: true });
-          writeJson(path.join(nested, "package.json"), {
-            name: "@azure/msal-node",
-            version: "5.6.0",
-            main: "index.cjs",
-          });
-          writeFileSync(path.join(nested, "index.cjs"), "nested-vulnerable");
-        },
-        "unreviewed SDK": () =>
-          writeJson(path.join(identity, "package.json"), {
-            name: "@azure/identity",
-            version: "5.0.0",
-          }),
-        "wrong project": () => {
-          fixture.request.trustedStateRoot = fixture.modules;
-        },
-      };
-      mutations[scenario]();
-      expect(() => remediateInstalledOfficialOpenClawPlugin(fixture.request)).toThrow(
-        "reviewed dependency graph",
-      );
-      expect(readFileSync(path.join(fixture.target, "index.cjs"), "utf8")).toBe(
-        "vulnerable-original",
-      );
-    },
-  );
+  it.each([
+    "dependency link",
+    "nested MSAL",
+    "unreviewed SDK",
+    "wrong project",
+    "nested Zod",
+    "Zod link",
+    "unreviewed Zod",
+  ])("denies %s before replacing MSAL", (scenario) => {
+    const fixture = teamsFixture();
+    const identity = path.join(fixture.modules, "@azure/identity");
+    const mutations: Record<string, () => void> = {
+      "dependency link": () => {
+        const original = path.join(fixture.root, "original-identity");
+        cpSync(identity, original, { recursive: true });
+        rmSync(identity, { recursive: true });
+        symlinkSync(original, identity);
+      },
+      "nested MSAL": () => {
+        const nested = path.join(identity, "node_modules/@azure/msal-node");
+        mkdirSync(nested, { recursive: true });
+        writeJson(path.join(nested, "package.json"), {
+          name: "@azure/msal-node",
+          version: "5.6.0",
+          main: "index.cjs",
+        });
+        writeFileSync(path.join(nested, "index.cjs"), "nested-vulnerable");
+      },
+      "unreviewed SDK": () =>
+        writeJson(path.join(identity, "package.json"), {
+          name: "@azure/identity",
+          version: "5.0.0",
+        }),
+      "nested Zod": () => {
+        const nested = path.join(fixture.request.packageDirectory, "node_modules/zod");
+        mkdirSync(nested, { recursive: true });
+        writeJson(path.join(nested, "package.json"), {
+          name: "zod",
+          version: "4.4.3",
+          main: "index.cjs",
+        });
+        writeFileSync(path.join(nested, "index.cjs"), "nested-vulnerable");
+      },
+      "Zod link": () => {
+        const target = path.join(fixture.modules, "zod");
+        const original = path.join(fixture.root, "original-zod");
+        cpSync(target, original, { recursive: true });
+        rmSync(target, { recursive: true });
+        symlinkSync(original, target);
+      },
+      "unreviewed Zod": () =>
+        writeJson(path.join(fixture.modules, "zod/package.json"), {
+          name: "zod",
+          version: "5.0.0",
+        }),
+      "wrong project": () => {
+        fixture.request.trustedStateRoot = fixture.modules;
+      },
+    };
+    mutations[scenario]();
+    expect(() => remediateInstalledOfficialOpenClawPlugin(fixture.request)).toThrow(
+      "reviewed dependency graph",
+    );
+    expect(readFileSync(path.join(fixture.target, "index.cjs"), "utf8")).toBe(
+      "vulnerable-original",
+    );
+  });
 });

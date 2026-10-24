@@ -170,7 +170,7 @@ const ZOD_VERSION = "4.6.6";
 const ZOD_INTEGRITY =
   "sha512-4UmzQUF5fxvfcYHlbjBmejU+w+hbDnWFx4aS8kBx7nPBHcO2SqPbpAG8snbdg+Xse4pRefR98hgjFgIMCI/UhA==";
 const ZOD_TARBALL = "https://registry.npmjs.org/zod/-/zod-4.6.6.tgz";
-const TEAMS_MSAL_REPLACEMENTS = [
+const TEAMS_REPLACEMENTS = [
   {
     name: "@azure/msal-node",
     version: "7.1.0",
@@ -185,6 +185,13 @@ const TEAMS_MSAL_REPLACEMENTS = [
     integrity:
       "sha512-HOBR0Gfo39TMrkxNG8k6cfjRkrRjXZc3JQs3ebMWQc9S4cihuknMYra3sgmzbZB752oQBqBN9+WF7c826p2vIQ==",
     tarball: "https://registry.npmjs.org/@azure/msal-common/-/msal-common-16.14.2.tgz",
+    dependencies: {},
+  },
+  {
+    name: "zod",
+    version: ZOD_VERSION,
+    integrity: ZOD_INTEGRITY,
+    tarball: ZOD_TARBALL,
     dependencies: {},
   },
 ] as const;
@@ -2518,7 +2525,7 @@ export function remediateInstalledOfficialOpenClawPlugin(
   }
 }
 
-function remediateInstalledTeamsMsal(
+function remediateInstalledTeamsDependencies(
   packageDirectory: string,
   directory: string,
   env: NodeJS.ProcessEnv,
@@ -2527,6 +2534,25 @@ function remediateInstalledTeamsMsal(
   // inside this verified native project; never repair a parent/global module.
   const modules = resolve(packageDirectory, "../..");
   const msalDirectory = join(modules, "@azure/msal-node");
+  const zodDirectory = join(modules, "zod");
+  const plugin = readJson(join(packageDirectory, "package.json"));
+  const originalZod = plugin.version === "2026.9.5" ? "4.5.4" : "4.4.3";
+  if (plugin.dependencies?.zod !== originalZod) {
+    throw new Error("Teams Zod dependency changed before remediation");
+  }
+  requirePackageIdentity(
+    readJson(join(zodDirectory, "package.json")),
+    "zod",
+    originalZod,
+    "Teams installed Zod",
+  );
+  if (
+    !createRequire(join(packageDirectory, "package.json"))
+      .resolve("zod")
+      .startsWith(`${zodDirectory}${sep}`)
+  ) {
+    throw new Error("Teams plugin must resolve Zod inside its reviewed native project");
+  }
   const consumers = [
     { name: "@azure/identity", version: "4.13.2", msal: "^5.1.5" },
     {
@@ -2559,7 +2585,7 @@ function remediateInstalledTeamsMsal(
     { "@azure/msal-common": "16.13.0", jsonwebtoken: "^9.0.0" },
     "Teams installed MSAL",
   );
-  const replacements = TEAMS_MSAL_REPLACEMENTS.map((replacement) => {
+  const replacements = TEAMS_REPLACEMENTS.map((replacement) => {
     const archive = packReplacement(
       `${replacement.name}@${replacement.version}`,
       replacement.integrity,
@@ -2588,6 +2614,7 @@ function remediateInstalledTeamsMsal(
     recursive: true,
   });
   copyReplacementPackage(replacements[0]!, msalDirectory);
+  copyReplacementPackage(replacements[2]!, zodDirectory);
 }
 
 function remediateVerifiedInstalledOfficialOpenClawPlugin(
@@ -2635,7 +2662,7 @@ function remediateVerifiedInstalledOfficialOpenClawPlugin(
   }
   const dependencyPaths: string[][] = [];
   if (patchesMsal) {
-    for (const name of ["@azure/msal-node", "@azure/identity", "@microsoft/teams.apps"]) {
+    for (const name of ["@azure/msal-node", "@azure/identity", "@microsoft/teams.apps", "zod"]) {
       let dependency = trustedRoot;
       for (const component of [...installedParts.slice(0, 4), ...name.split("/")]) {
         dependency = join(dependency, component);
@@ -2678,7 +2705,7 @@ function remediateVerifiedInstalledOfficialOpenClawPlugin(
   const directory = mkdtempSync(join(request.workingDirectory, "official-plugin-remediation-"));
   try {
     if (patchesMsal) {
-      remediateInstalledTeamsMsal(packageDirectory, directory, env);
+      remediateInstalledTeamsDependencies(packageDirectory, directory, env);
       return;
     }
     if (patchesProxyAddr) {

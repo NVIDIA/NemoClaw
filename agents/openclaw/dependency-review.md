@@ -173,3 +173,10 @@ The archive audit resolves MSAL 7.1.0, and the cache supplies both the original
 installation and replacement archives. Other Common consumers retain their
 versions. Compatibility checks cover existing Teams and Azure token flows
 with simulated responses, plus the advisory's routing and state denials.
+
+The same verified Teams projects replace their shared nonbundled Zod 4.4.3/4.5.4
+with 4.6.6 after checking the plugin dependency and actual module resolution.
+The existing direct Zod cache pin supplies the replacement. Schema comparisons
+retain existing accepted/rejected configuration behavior; an oversized bounded
+collection is rejected before visiting its elements. Original installation
+metadata remains source provenance, as with the MSAL migration.
