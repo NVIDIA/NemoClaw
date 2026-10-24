@@ -39,6 +39,7 @@ import {
   RUNTIME_SWITCH_API,
   registryState,
   runHermesCliPongWithRetry,
+  runHermesNvidiaDiscordRebuild,
   runHermesInferenceSetWithRetry,
   runHermesPongWithRetry,
   SANDBOX_NAME,
@@ -79,6 +80,7 @@ test(
         "validate switched route and mutable config",
         "exercise sandbox inference and Hermes API",
         "run Hermes CLI adapter forms against switched provider",
+        "verify NVIDIA inference after Discord state rebuild",
         "prove split provider/model credential resolution",
       ],
     },
@@ -489,6 +491,14 @@ test(
     });
     expect(hermesCli.exitCode, resultText(hermesCli)).toBe(0);
     expect(hermesCli.stdout).toMatch(/\bPONG\b/iu);
+
+    await runHermesNvidiaDiscordRebuild({
+      host,
+      sandbox,
+      progress,
+      publicApiKey,
+      redactionValues,
+    });
 
     progress.phase("prove split provider/model credential resolution");
     const { model: proxyResolutionModel, requestOffset } = await prepareProxyResolutionRoute({

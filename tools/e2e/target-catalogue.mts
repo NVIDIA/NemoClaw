@@ -889,7 +889,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
   managedRuntimeTarget("hermes-discord", {
-    displayName: "Messaging: Hermes preserves Discord configuration across rebuild",
+    displayName: "Messaging: Hermes isolates Discord credentials and verifies transport",
     agentRuntime: "hermes",
     environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference and Discord",
     profile: "nvidia-inference",
@@ -915,7 +915,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
   managedRuntimeTarget("hermes-inference-switch", {
-    displayName: "Inference: Hermes switches to native NVIDIA and remains responsive",
+    displayName: "Inference: Hermes switches to NVIDIA and preserves Discord across rebuild",
     agentRuntime: "hermes",
     environmentOrInferenceEndpoint: "Ubuntu; native NVIDIA Endpoints provider",
     profile: "nvidia-api",

@@ -7,7 +7,11 @@ import { nativeLocalIdentity } from "../../inference/native-local/contract";
 import type { ProviderHealthStatus } from "../../inference/health";
 import type { SandboxEntry } from "../../state/registry";
 import type { SandboxInferenceInvocationResult } from "./inference-invocation-probe";
-import type { SandboxInferenceRouteHealth } from "./inference-route-health";
+import {
+  HermesNvidiaCredentialRejectedError,
+  verifyHermesNvidiaCredential,
+  type SandboxInferenceRouteHealth,
+} from "./inference-route-health";
 import { collectSandboxStatusSnapshot } from "./status-snapshot";
 import { probeSandboxInferenceInvocation } from "./inference-invocation-probe";
 import { recordingProbeShell } from "../../../../test/helpers/native-local-probe-shell";
@@ -1208,4 +1212,130 @@ describe("status native local request identity (#13338)", () => {
       });
     },
   );
+});
+
+describe("Hermes NVIDIA agent credential health", () => {
+  const options = () =>
+    snapshotDeps(
+      null,
+      null,
+      { ok: true },
+      {
+        agent: "hermes",
+        provider: "nvidia-prod",
+        gatewayName: "nemoclaw",
+        nativeNvidiaProviderAttachment: {
+          schemaVersion: 1,
+          profileId: "nemoclaw-nvidia-inference-v1",
+          providerName: "nemoclaw-nvidia-prod-v1",
+          providerId: "owned",
+        },
+      },
+    );
+  it("rejects an unusable agent credential despite a healthy route", async () => {
+    const input = options();
+    const verify = vi.fn(async () => {
+      throw new HermesNvidiaCredentialRejectedError();
+    });
+    const snapshot = await collectSandboxStatusSnapshot("alpha", {
+      ...input,
+      deps: {
+        ...input.deps,
+        verifyNativeNvidiaProviderAttachmentImpl: async () => {},
+        verifyHermesNvidiaCredentialImpl: verify,
+      },
+    });
+    expect(verify).toHaveBeenCalledOnce();
+    expect(snapshot.inferenceHealth).toMatchObject({ ok: false, failureLabel: "unauthorized" });
+    expect(snapshot.inferenceHealth?.detail).toContain("Rebuild");
+    expect(JSON.stringify(snapshot.inferenceHealth)).not.toContain("private credential detail");
+  });
+  it("requires rebuild when an older Hermes guard cannot verify credentials", async () => {
+    const input = options();
+    const snapshot = await collectSandboxStatusSnapshot("alpha", {
+      ...input,
+      deps: {
+        ...input.deps,
+        verifyNativeNvidiaProviderAttachmentImpl: async () => {},
+        verifyHermesNvidiaCredentialImpl: (entry) =>
+          verifyHermesNvidiaCredential(entry, {
+            runBuffered: async () => ({
+              outcome: { kind: "completed", exitCode: 2 },
+              stdout: "",
+              stderr:
+                "hermes-runtime-config-guard.py: error: argument action: invalid choice: 'verify-nvidia-credential' (choose from 'ensure-api-key', 'refresh-hashes')",
+            }),
+          }),
+      },
+    });
+    expect(snapshot.inferenceHealth).toMatchObject({
+      ok: false,
+      probed: false,
+      failureLabel: "unreachable",
+      detail: expect.stringContaining("Rebuild"),
+    });
+    expect(snapshot.inferenceHealth?.detail).toContain("install the credential verifier");
+    expect(snapshot.inferenceHealth?.detail).not.toContain("Retry status");
+  });
+  it.each(["command timeout", "transport unavailable", "missing verifier"])(
+    "reports unavailable verification without a credential diagnosis: %s",
+    async (failure) => {
+      const input = options();
+      const snapshot = await collectSandboxStatusSnapshot("alpha", {
+        ...input,
+        deps: {
+          ...input.deps,
+          verifyNativeNvidiaProviderAttachmentImpl: async () => {},
+          verifyHermesNvidiaCredentialImpl: async () => {
+            throw new Error(failure);
+          },
+        },
+      });
+      expect(snapshot.inferenceHealth).toMatchObject({
+        ok: false,
+        probed: false,
+        failureLabel: "unreachable",
+      });
+      expect(snapshot.inferenceHealth?.detail).toContain("Retry status");
+      expect(snapshot.inferenceHealth?.detail).not.toContain("Rebuild");
+      expect(JSON.stringify(snapshot.inferenceHealth)).not.toContain(failure);
+    },
+  );
+  it("accepts verified agent credentials with a healthy route", async () => {
+    const input = options();
+    const verify = vi.fn(async () => {});
+    const snapshot = await collectSandboxStatusSnapshot("alpha", {
+      ...input,
+      deps: {
+        ...input.deps,
+        verifyNativeNvidiaProviderAttachmentImpl: async () => {},
+        verifyHermesNvidiaCredentialImpl: verify,
+      },
+    });
+    expect(verify).toHaveBeenCalledOnce();
+    expect(snapshot.inferenceHealth?.ok).toBe(true);
+  });
+});
+
+it("keeps retained shared Hermes NVIDIA inference healthy without a native credential receipt", async () => {
+  const options = snapshotDeps(
+    { ok: true, endpoint: "https://inference.local/v1/models", httpStatus: 200, detail: "OK" },
+    null,
+    { ok: true },
+    {
+      agent: "hermes",
+      provider: "nvidia-prod",
+      gatewayName: "nemoclaw",
+      endpointUrl: "https://inference.local/v1",
+    },
+  );
+  const verify = vi.fn(async () => {
+    throw new Error("native verifier must not run for shared routes");
+  });
+  const snapshot = await collectSandboxStatusSnapshot("alpha", {
+    ...options,
+    deps: { ...options.deps, verifyHermesNvidiaCredentialImpl: verify },
+  });
+  expect(snapshot.inferenceHealth?.ok).toBe(true);
+  expect(verify).not.toHaveBeenCalled();
 });

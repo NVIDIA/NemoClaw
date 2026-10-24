@@ -91,6 +91,10 @@ class UnsafePathError(RuntimeError):
     """Raised when a mutable runtime config path is unsafe to trust."""
 
 
+class NvidiaCredentialRejectedError(UnsafePathError):
+    """The persisted credential failed validation against an available generation."""
+
+
 class StrictHashMismatchError(UnsafePathError):
     """Raised only when safe strict-hash bytes do not match safe config inputs."""
 
@@ -777,7 +781,7 @@ def inspect_private_mutable_topology() -> None:
 
 
 def _validate_action_readiness(action: str, startup_owner: bool) -> None:
-    if action == "inspect-private-mutable-topology":
+    if action in {"inspect-private-mutable-topology", "verify-nvidia-credential"}:
         return
     installed_current = os.path.abspath(__file__) == INSTALLED_RUNTIME_CONFIG_GUARD
     try:
@@ -2869,23 +2873,8 @@ def _recover_restored_native_local_source(state_file: str) -> None:
         os.close(parent_fd)
 
 
-def _adopt_restored_native_local_source(
-    hermes_dir: str, hash_file: str, state_file: str,
-    expected_config_sha256: str | None, candidate_bytes: bytes,
-    hermes_meta: dict[str, int], file_states: dict[str, dict[str, object]],
-) -> None:
-    """Accept only a restored mutable source for an exact local-reference update.
-
-    The namespace is already frozen by seal_restart. General config writes keep
-    their strict-anchor requirement; this operation cannot change route or user
-    settings and must validate the restored environment before adopting it.
-    """
-    config_path = os.path.join(hermes_dir, "config.yaml")
-    env_path = os.path.join(hermes_dir, ".env")
-    source_text, config_snapshot = _read_text(config_path, MAX_CONFIG_INPUT_BYTES)
-    if not secrets.compare_digest(hashlib.sha256(source_text.encode("utf-8")).hexdigest(), expected_config_sha256 or ""):
-        raise UnsafePathError("Hermes config changed after the host read it; retry the command")
-    _validate_hermes_config_candidate(source_text.encode("utf-8"))
+def _validate_restored_native_credential(source_text: str, candidate_bytes: bytes) -> None:
+    """Restrict a restored write to one provider's three credential slots."""
     try:
         source = yaml.safe_load(source_text)
         candidate = yaml.safe_load(candidate_bytes)
@@ -2897,9 +2886,12 @@ def _adopt_restored_native_local_source(
         matches = [entry for entry in custom if isinstance(entry, dict) and entry.get("name") == provider]
         previous = model["api_key"]
         reference = candidate["model"]["api_key"]
-        pattern = r"openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_NEMOCLAW_LOCAL_INFERENCE_TOKEN"
+        nvidia = provider == "nvidia-prod"
+        env_key = "NVIDIA_INFERENCE_API_KEY" if nvidia else "NEMOCLAW_LOCAL_INFERENCE_TOKEN"
+        pattern = rf"openshell:resolve:env:(?:v[0-9]{{1,20}}|s[a-f0-9]{{64}})_{env_key}"
         if (
-            provider not in {"ollama-local", "vllm-local", "llama-cpp-local", "compatible-endpoint"}
+            provider not in {"nvidia-prod", "ollama-local", "vllm-local", "llama-cpp-local", "compatible-endpoint"}
+            or (nvidia and model.get("base_url") != "https://integrate.api.nvidia.com/v1")
             or upstream.get("provider_key") != provider
             or model.get("provider") != "custom"
             or upstream.get("model") != model.get("default")
@@ -2908,7 +2900,7 @@ def _adopt_restored_native_local_source(
             or managed.get("api") != model.get("base_url")
             or matches[0].get("base_url") != model.get("base_url")
             or not isinstance(previous, str)
-            or (previous != "${NEMOCLAW_LOCAL_INFERENCE_TOKEN}" and re.fullmatch(pattern, previous) is None)
+            or (previous != "${" + env_key + "}" and re.fullmatch(pattern, previous) is None)
             or managed.get("api_key") != previous
             or matches[0].get("api_key") != previous
             or not isinstance(reference, str)
@@ -2928,6 +2920,45 @@ def _adopt_restored_native_local_source(
             raise ValueError("candidate changed non-credential configuration")
     except (AttributeError, KeyError, TypeError, ValueError, yaml.YAMLError) as exc:
         raise UnsafePathError("restored Hermes write may change only its three native local credential slots") from exc
+
+
+def verify_nvidia_credential(hermes_dir: str, expected_model: str) -> None:
+    """Check agent slots against the fresh supervisor without changing any file."""
+    reference = os.environ.get("NVIDIA_INFERENCE_API_KEY", "")
+    if not re.fullmatch(r"openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_NVIDIA_INFERENCE_API_KEY", reference):
+        raise UnsafePathError("Hermes NVIDIA supervisor credential is unavailable")
+    text, _snapshot = _read_text(os.path.join(hermes_dir, "config.yaml"), MAX_CONFIG_INPUT_BYTES)
+    try:
+        _validate_restored_native_credential(text, text.encode("utf-8"))
+        config = yaml.safe_load(text)
+        if (
+            config["_nemoclaw_upstream"]["provider"] != "nvidia-prod"
+            or config["model"]["default"] != expected_model
+            or config["model"]["api_key"] != reference
+        ):
+            raise UnsafePathError("Hermes NVIDIA credential does not match its route or generation")
+    except UnsafePathError as exc:
+        raise NvidiaCredentialRejectedError("Hermes NVIDIA credential is invalid or stale; rebuild the sandbox") from exc
+
+
+def _adopt_restored_native_local_source(
+    hermes_dir: str, hash_file: str, state_file: str,
+    expected_config_sha256: str | None, candidate_bytes: bytes,
+    hermes_meta: dict[str, int], file_states: dict[str, dict[str, object]],
+) -> None:
+    """Accept only a restored mutable source for an exact local-reference update.
+
+    The namespace is already frozen by seal_restart. General config writes keep
+    their strict-anchor requirement; this operation cannot change route or user
+    settings and must validate the restored environment before adopting it.
+    """
+    config_path = os.path.join(hermes_dir, "config.yaml")
+    env_path = os.path.join(hermes_dir, ".env")
+    source_text, config_snapshot = _read_text(config_path, MAX_CONFIG_INPUT_BYTES)
+    if not secrets.compare_digest(hashlib.sha256(source_text.encode("utf-8")).hexdigest(), expected_config_sha256 or ""):
+        raise UnsafePathError("Hermes config changed after the host read it; retry the command")
+    _validate_hermes_config_candidate(source_text.encode("utf-8"))
+    _validate_restored_native_credential(source_text, candidate_bytes)
     env_text, env_snapshot = _read_text(env_path, MAX_ENV_BYTES)
     validator = "/usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py"
     if os.path.abspath(__file__) != INSTALLED_RUNTIME_CONFIG_GUARD:
@@ -3665,6 +3696,7 @@ def main() -> int:
             "write-config",
             "recover-prestate-lock",
             "inspect-private-mutable-topology",
+            "verify-nvidia-credential",
         ),
     )
     parser.add_argument("--hermes-dir", required=True)
@@ -3679,6 +3711,7 @@ def main() -> int:
     )
     parser.add_argument("--state-file", default="")
     parser.add_argument("--expected-config-sha256", default="")
+    parser.add_argument("--expected-model", default="")
     parser.add_argument("--lock-token", default="")
     parser.add_argument("--startup-owner", action="store_true")
     parser.add_argument("--refresh-native-local", action="store_true")
@@ -3700,7 +3733,10 @@ def main() -> int:
         if args.mcp_transition != "preserve" and args.action != "refresh-hashes":
             raise UnsafePathError("--mcp-transition requires refresh-hashes")
         _validate_action_readiness(args.action, args.startup_owner)
-        if args.action == "inspect-private-mutable-topology":
+        if args.action == "verify-nvidia-credential":
+            verify_nvidia_credential(args.hermes_dir, args.expected_model)
+            print("verified=1")
+        elif args.action == "inspect-private-mutable-topology":
             inspect_private_mutable_topology()
             print("same-uid-nonroot")
         elif args.action == "ensure-api-key":
@@ -3807,6 +3843,9 @@ def main() -> int:
                 )
             recovered = recover_dead_prestate_mutation_lock(args.state_file)
             print(f"recovered={int(recovered)}")
+    except NvidiaCredentialRejectedError as exc:
+        print("rejected=1")
+        _die(str(exc))
     except UnsafePathError as exc:
         _die(str(exc))
     except OSError as exc:
