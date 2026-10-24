@@ -137,7 +137,7 @@ pub(super) fn label(question: &JourneyQuestion) -> String {
 }
 
 /// `adapter:x:/interfaces/dashboard/port` reads as "Dashboard: port".
-fn readable(id: &str) -> String {
+pub(super) fn readable(id: &str) -> String {
     let pointer = id.rsplit_once(':').map_or(id, |(_, pointer)| pointer);
     let mut parts = pointer
         .split('/')

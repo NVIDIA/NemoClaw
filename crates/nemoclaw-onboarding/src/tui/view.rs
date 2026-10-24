@@ -14,6 +14,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Paragraph, Wrap},
 };
+use serde_json::Value;
 
 const NVIDIA_GREEN: Color = Color::Rgb(118, 185, 0);
 const BRIGHT_GREEN: Color = Color::Rgb(163, 230, 53);
@@ -215,7 +216,7 @@ impl JourneyWizard {
         lines
     }
 
-    fn review_lines(&self) -> Vec<Line<'static>> {
+    pub(super) fn review_lines(&self) -> Vec<Line<'static>> {
         let mut lines = vec![
             Line::from(Span::styled(
                 "Review desired state",
@@ -250,6 +251,7 @@ impl JourneyWizard {
                             }),
                     );
                 }
+                lines.extend(template_value_lines(resolution.kept()));
                 if let Some(assessment) = resolution.target_assessment() {
                     lines.push(Line::from(""));
                     lines.push(Line::from(Span::styled(
@@ -415,4 +417,30 @@ fn texture_line(width: usize) -> Line<'static> {
             })
             .collect::<Vec<_>>(),
     )
+}
+
+/// Template values that omission kept without a question, so the person sees
+/// where their template replaced a default.
+fn template_value_lines(kept: &[(String, Value)]) -> Vec<Line<'static>> {
+    if kept.is_empty() {
+        return Vec::new();
+    }
+    let mut lines = vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            "From your template:",
+            Style::new().fg(WHITE).add_modifier(Modifier::BOLD),
+        )),
+    ];
+    lines.extend(kept.iter().map(|(id, value)| {
+        Line::from(Span::styled(
+            terminal_text(&format!(
+                "{}: {}",
+                labels::readable(id),
+                labels::display_value(value)
+            )),
+            Style::new().fg(MUTED),
+        ))
+    }));
+    lines
 }

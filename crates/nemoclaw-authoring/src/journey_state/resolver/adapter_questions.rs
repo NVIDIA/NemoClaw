@@ -88,6 +88,11 @@ impl QuestionResolver<'_> {
             });
         } else if let Some(harness) = chosen {
             if let Some(schema) = adapter_schema(capabilities, harness)? {
+                let base = self.definition.base.supplied();
+                let base_settings = (harness_kind(base) == Some(harness))
+                    .then(|| settings_path(base))
+                    .flatten()
+                    .and_then(|path| base.pointer(&path));
                 let settings_path = format!(
                     "{}/settings",
                     active_harness
@@ -128,7 +133,7 @@ impl QuestionResolver<'_> {
                     } else {
                         settings.pointer(&field.path)
                     };
-                    if self.definition.omit.contains(&id) || self.decisions.omitted.contains(&id) {
+                    if self.decisions.omitted.contains(&id) {
                         if field.required {
                             return Err(diagnostic(
                                 "journey",
@@ -144,19 +149,29 @@ impl QuestionResolver<'_> {
                         omitted.push(id);
                         continue;
                     }
-                    if value.is_none()
-                        && !field.required
-                        && !self.definition.ask.contains(&id)
-                        && self
-                            .definition
-                            .omit_scopes
-                            .contains(&JourneyScope::ActiveAdapterSettings)
-                    {
-                        omitted.push(id);
-                        continue;
-                    }
                     let valid = value
                         .is_some_and(|value| schema_accepts(&field.schema, value) == Some(true));
+                    // Guided omission keeps a valid supplied value and leaves an
+                    // absent optional one unset; required and invalid values are asked.
+                    if self.definition.omit.contains(&id)
+                        || (!self.definition.ask.contains(&id)
+                            && self
+                                .definition
+                                .omit_scopes
+                                .contains(&JourneyScope::ActiveAdapterSettings))
+                    {
+                        if value.is_none() && !field.required {
+                            omitted.push(id);
+                            continue;
+                        }
+                        if let Some(value) = value.filter(|_| valid) {
+                            let answered = self.decisions.accepted.contains(&id);
+                            let base_value =
+                                base_settings.and_then(|settings| settings.pointer(&field.path));
+                            keep_supplied(&mut work.kept, id, value, base_value, answered);
+                            continue;
+                        }
+                    }
                     if value.is_none()
                         || !valid
                         || ((self

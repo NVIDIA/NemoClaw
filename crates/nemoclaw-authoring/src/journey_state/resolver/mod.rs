@@ -14,11 +14,27 @@ mod sdk_questions;
 
 use policy::QuestionPolicy;
 
+/// Report a value omission kept without asking, but only while it is still
+/// the base document's value and no answer replaced it.
+fn keep_supplied(
+    kept: &mut Vec<(String, Value)>,
+    id: String,
+    value: &Value,
+    base: Option<&Value>,
+    answered: bool,
+) {
+    if !answered && base == Some(value) {
+        kept.push((id, value.clone()));
+    }
+}
+
 /// Questions and diagnostics accumulated by one resolution pass.
 #[derive(Default)]
 pub(super) struct ResolutionWork {
     pub(super) questions: Vec<JourneyQuestion>,
     pub(super) omitted: Vec<String>,
+    /// Supplied values that omission guidance kept without asking.
+    pub(super) kept: Vec<(String, Value)>,
     pub(super) warnings: Vec<String>,
     pub(super) unverified: Vec<String>,
 }
@@ -47,17 +63,6 @@ impl<'a> QuestionResolver<'a> {
     pub(super) fn resolve(&self) -> Result<JourneyResolution, Diagnostics> {
         let capabilities = self.capabilities;
         self.definition.validate_guidance(capabilities)?;
-        for field in &self.definition.omit {
-            if field.starts_with('/')
-                && sdk_field_schema_for(&self.authored.values, field)
-                    .is_some_and(|(_, required)| required)
-            {
-                return Err(diagnostic(
-                    "journey",
-                    &format!("required SDK field '{field}' cannot be omitted"),
-                ));
-            }
-        }
         let assessment = PartialDocument::from_value(self.authored.values.clone()).assess();
         let mut work = ResolutionWork::default();
         let policy = QuestionPolicy::new(self);
@@ -93,6 +98,11 @@ impl<'a> QuestionResolver<'a> {
         JourneyResolution {
             questions: work.questions,
             omitted: work.omitted,
+            kept: {
+                let mut kept = work.kept;
+                kept.sort_by(|a, b| a.0.cmp(&b.0));
+                kept
+            },
             warnings: work.warnings,
             information: self.catalog_information(),
             unverified: work.unverified,

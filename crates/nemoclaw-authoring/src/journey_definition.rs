@@ -14,7 +14,6 @@ use crate::{
 
 pub(crate) const NAME: &str = "/metadata/name";
 pub(crate) const HARNESS: &str = "/spec/sandboxes/0/harness/kind";
-pub(crate) const SETTINGS: &str = "/spec/sandboxes/0/harness/settings";
 pub(crate) const INFERENCE_PRESET: &str = "inference:preset";
 
 /// A schema-discovered family of applicable questions. The schema determines
@@ -108,8 +107,9 @@ impl JourneyDefinition {
         self
     }
 
-    /// Leave absent optional values unset without a prompt. A scope omits only
-    /// the absent optional values it discovers; exact `ask` guidance still asks.
+    /// Do not prompt: keep a supplied valid value and leave an absent optional
+    /// value unset. Absent required and invalid supplied values are still
+    /// asked, and exact `ask` guidance still asks within an omitted scope.
     pub fn omit(mut self, selectors: impl IntoIterator<Item = impl Into<JourneySelector>>) -> Self {
         for selector in selectors {
             match selector.into() {
@@ -177,9 +177,7 @@ impl JourneyDefinition {
             if field == NAME || field == HARNESS || field == INFERENCE_PRESET {
                 continue;
             }
-            if sdk_field_schema_for(self.base.supplied(), field).is_some()
-                || sdk_field_possible(field)
-            {
+            if self.sdk_field_known(field) {
                 continue;
             }
             if native_field(field) {
@@ -195,23 +193,10 @@ impl JourneyDefinition {
         }
         for field in &self.omit {
             if field.starts_with('/') {
-                let current = sdk_field_schema_for(self.base.supplied(), field);
-                if current.is_none() && !sdk_field_possible(field) {
+                if !self.sdk_field_known(field) {
                     return Err(diagnostic(
                         "journey",
                         &format!("cannot omit '{field}' in this preview"),
-                    ));
-                }
-                if current.is_some_and(|(_, required)| required) {
-                    return Err(diagnostic(
-                        "journey",
-                        &format!("required SDK field '{field}' cannot be omitted"),
-                    ));
-                }
-                if self.base.supplied().pointer(field).is_some() {
-                    return Err(diagnostic(
-                        "journey",
-                        &format!("supplied SDK field '{field}' cannot be omitted"),
                     ));
                 }
                 continue;
@@ -231,26 +216,14 @@ impl JourneyDefinition {
                     "required adapter settings alternatives cannot be omitted",
                 ));
             }
-            if self
-                .base
-                .supplied()
-                .pointer(HARNESS)
-                .and_then(Value::as_str)
-                == Some(adapter)
-                && self
-                    .base
-                    .supplied()
-                    .pointer(&format!("{SETTINGS}{pointer}"))
-                    .is_some()
-            {
-                return Err(diagnostic(
-                    "journey",
-                    &format!("supplied setting '{field}' cannot be omitted"),
-                ));
-            }
             adapter_schema(capabilities, adapter)?;
         }
         Ok(())
+    }
+
+    /// Whether the field exists in the base document's SDK branch or in another branch.
+    fn sdk_field_known(&self, field: &str) -> bool {
+        sdk_field_schema_for(self.base.supplied(), field).is_some() || sdk_field_possible(field)
     }
 
     /// Print a bounded symbolic preview using the current question resolver.

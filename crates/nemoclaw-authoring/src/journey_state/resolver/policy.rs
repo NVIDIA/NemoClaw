@@ -102,19 +102,51 @@ impl<'a> QuestionPolicy<'a> {
     }
 
     pub(super) fn apply(&self, values: &Value, work: &mut ResolutionWork) {
-        for field in &self.definition.omit {
-            if field.starts_with('/') && sdk_field_schema_for(values, field).is_some() {
-                work.omitted.push(field.clone());
-            }
-        }
         let model_pending = work
             .questions
             .iter()
             .any(|question| self.is_current_model(&question.target));
-        work.questions.retain(|question| {
-            !self.definition.omit.contains(question.id())
-                && self.allows(&question.target, model_pending)
-        });
+        // Omission keeps a valid supplied value and leaves an absent optional
+        // one unset; it cannot answer a missing requirement or an invalid value.
+        let omits = |question: &JourneyQuestion| {
+            self.definition.omit.contains(question.id())
+                && question.reason != JourneyQuestionReason::InvalidSupplied
+                && !(question.required && question.reason == JourneyQuestionReason::Missing)
+        };
+        let base = self.definition.base.supplied();
+        for field in self
+            .definition
+            .omit
+            .iter()
+            .filter(|field| field.starts_with('/'))
+        {
+            match values.pointer(field) {
+                None if sdk_field_schema_for(values, field)
+                    .is_some_and(|(_, required)| !required) =>
+                {
+                    work.omitted.push(field.clone());
+                }
+                // A question omission does not remove, such as an invalid
+                // value, is still asked even when another gate holds it back.
+                Some(value)
+                    if !work
+                        .questions
+                        .iter()
+                        .any(|question| question.id() == field && !omits(question)) =>
+                {
+                    keep_supplied(
+                        &mut work.kept,
+                        field.clone(),
+                        value,
+                        base.pointer(field),
+                        self.decisions.accepted.contains(field),
+                    );
+                }
+                _ => {}
+            }
+        }
+        work.questions
+            .retain(|question| !omits(question) && self.allows(&question.target, model_pending));
         work.omitted.sort();
         work.omitted.dedup();
         for question in &mut work.questions {
