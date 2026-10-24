@@ -576,12 +576,13 @@ describe("created sandbox identity gate", () => {
     expect(deps.sleep).not.toHaveBeenCalled();
   });
 
-  it("applies a compatibility cutover when the Ready create client exits first (#11905)", async () => {
+  it("gives a Jetson compatibility cutover the heavy lifecycle budget (#13013)", async () => {
     const events: string[] = [];
     let nonce = "";
     const input = Object.assign(createGpuFlowInput(), { gatewayName: "selected-gateway" });
     input.gpuRoutePlan = "compatibility-only";
     input.initialGpuRoute = "compatibility";
+    input.sandboxGpuConfig.hostGpuPlatform = "jetson";
     input.persistRetainedSandboxRecovery = vi.fn(() => true);
     input.verifyCreatedSandboxBeforeEffects = vi.fn(
       async (_identity, beforeEffects, afterEffects) => {
@@ -595,9 +596,7 @@ describe("created sandbox identity gate", () => {
     );
     const patch = createGpuPatchFixture();
     patch.replacementRuntimeId.mockReturnValue("b".repeat(64));
-    patch.ensureApplied.mockImplementation(() => {
-      events.push("compatibility-cutover");
-    });
+    patch.ensureApplied.mockImplementation(() => events.push("compatibility-cutover"));
     mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(patch);
     mocks.streamSandboxCreate.mockImplementation(async (_command, args, _env, options) => {
       nonce = createAttemptNonce(args);
@@ -633,10 +632,11 @@ describe("created sandbox identity gate", () => {
       !args.includes("--selector") ? observeList() : observeSelector(),
     );
     await runSandboxGpuCreateFlow(input, deps);
-    expect(vi.mocked(deps.runOpenshell).mock.calls.map(([args]) => args)).toEqual(
+    const lifecycleOptions = expect.objectContaining({ timeout: 60_000 });
+    expect(vi.mocked(deps.runOpenshell).mock.calls).toEqual(
       expect.arrayContaining([
-        ["sandbox", "stop", "-g", "selected-gateway", "alpha"],
-        ["sandbox", "start", "-g", "selected-gateway", "alpha"],
+        [["sandbox", "stop", "-g", "selected-gateway", "alpha"], lifecycleOptions],
+        [["sandbox", "start", "-g", "selected-gateway", "alpha"], lifecycleOptions],
       ]),
     );
     expect(events.indexOf("create-complete")).toBeLessThan(events.indexOf("verify-created"));
