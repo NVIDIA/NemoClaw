@@ -5253,6 +5253,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          printf 'NEMOCLAW_PROTECTED_RUNTIME_STARTED_AT_MS=%s000\n' "$(date +%s)" >> "$GITHUB_ENV"
           [[ "$REPOSITORY" == "NVIDIA/NemoClaw" && ( ( "$EVENT_NAME" == "push" && "$REF" == "refs/heads/main" ) || ( "$EVENT_NAME" == "workflow_dispatch" && "$REF" == refs/heads/* ) ) ]] || {
             echo "::error::Protected managed-image runtime must run from NVIDIA/NemoClaw" >&2
             exit 1
@@ -5539,6 +5540,7 @@ jobs:
           npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/managed-image-protected-runtime.test.ts
 
       - name: Remove isolated protected runtime registry
+        timeout-minutes: 2
         if: always()
         shell: bash
         run: |
@@ -5565,6 +5567,7 @@ jobs:
           fi
 
       - name: Restore trusted OpenShell sources
+        timeout-minutes: 1
         if: ${{ always() && steps.openshell-projection.outcome == 'success' }}
         shell: bash
         env:
@@ -5575,6 +5578,7 @@ jobs:
           node tools/e2e/protected-openshell-workspace.mts restore > "$E2E_ARTIFACT_DIR/openshell-projection-restored.json"
 
       - name: Upload protected managed-image runtime artifacts
+        timeout-minutes: 4
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
         with:
@@ -5582,6 +5586,7 @@ jobs:
           path: e2e-artifacts/live/managed-image-protected-runtime/
 
       - name: Clean up Docker auth
+        timeout-minutes: 1
         if: always()
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh

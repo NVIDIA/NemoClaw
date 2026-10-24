@@ -822,6 +822,22 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     );
   });
 
+  it("detaches a managed startup hold before post-create setup without waiting for its banner", async () => {
+    const input = createInput();
+    input.sandboxStartupCommand = ["/usr/local/bin/nemoclaw-managed-startup-hold"];
+    input.sandboxEnv = { OPENSHELL_DRIVERS: "docker" };
+
+    await expect(runSandboxGpuCreateFlow(input, createDeps())).resolves.toMatchObject({
+      route: "native",
+    });
+    expect(mocks.streamSandboxCreate.mock.calls[0]?.[3]).toEqual(
+      expect.objectContaining({
+        readyCheckOutputPatterns: [],
+        waitForReadyTermination: true,
+      }),
+    );
+  });
+
   it("waits for native non-terminal startup output before detaching the create client", async () => {
     const input = createInput();
     input.sandboxEnv = { OPENSHELL_DRIVERS: "docker" };

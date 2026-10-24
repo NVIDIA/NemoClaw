@@ -513,6 +513,7 @@ describe("managed workload onboard orchestration", () => {
             ],
           },
         } as never,
+        workspace: "default",
       },
       {
         runContainerEngine: docker.runDocker as never,

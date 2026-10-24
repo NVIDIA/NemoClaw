@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { SUPPORTED_OPENSHELL_FALLBACK_VERSION } from "../../onboard/openshell-version";
 import { isValidName } from "../../../../nemoclaw/dist/shared/sandbox-name.cjs";
 import {
   assertNoOpenShellGatewayEndpointOverride,
@@ -56,15 +57,33 @@ function document(result: PolicyCommandResult): Record<string, unknown> {
 }
 
 async function requireSandboxPolicyAuthority(run: PolicyCommand): Promise<void> {
-  const result = await run(["policy", "list", "--global", "--limit", "1"]);
-  requireSuccessfulCommand(result);
-  // The pinned server returns NotFound for get when no revision exists.
-  // Only a successful history read proves absence without treating errors as permission.
-  if (
-    !String(result.stdout ?? "").trim() &&
-    String(result.stderr ?? "").trim() === "No global policy history found"
-  )
-    return;
+  if (String(SUPPORTED_OPENSHELL_FALLBACK_VERSION) === "0.1.3") {
+    const history = document(
+      await run(["policy", "list", "--global", "--page-size", "1", "--output", "json"]),
+    );
+    if (
+      !Array.isArray(history.revisions) ||
+      history.revisions.length > 1 ||
+      typeof history.next_page_token !== "string"
+    ) {
+      throw new Error("OpenShell returned invalid global policy history.");
+    }
+    if (history.revisions.length === 0) {
+      if (history.next_page_token !== "")
+        throw new Error("OpenShell returned incomplete global policy history.");
+      return;
+    }
+  } else {
+    const result = await run(["policy", "list", "--global", "--limit", "1"]);
+    requireSuccessfulCommand(result);
+    // The pinned server returns NotFound for get when no revision exists.
+    // Only a successful history read proves absence without treating errors as permission.
+    if (
+      !String(result.stdout ?? "").trim() &&
+      String(result.stderr ?? "").trim() === "No global policy history found"
+    )
+      return;
+  }
   const policy = document(await run(["policy", "get", "--global", "--output", "json"]));
   if (policy.scope === "global" && policy.status === "superseded") return;
   throw new Error(
@@ -78,6 +97,12 @@ export async function requireNativeProviderPolicy(
   command?: PolicyCommand,
 ): Promise<void> {
   const run = commandForGateway(gatewayName, command);
+  // The trusted controller projects this pin with the reviewed runtime.
+  // A mismatched server must still pass the strict policy response checks.
+  if (String(SUPPORTED_OPENSHELL_FALLBACK_VERSION) === "0.1.3") {
+    await requireSandboxPolicyAuthority(run);
+    return;
+  }
   const state = document(await run(["settings", "get", "--global", "--json"]));
   const settings = state.settings;
   if (
@@ -100,6 +125,12 @@ export async function initializeNativeProviderPolicy(
   command?: PolicyCommand,
 ): Promise<"disabled" | void> {
   const run = commandForGateway(gatewayName, command);
+  // The trusted controller projects this pin with the reviewed runtime.
+  // A mismatched server must still pass the strict policy response checks.
+  if (String(SUPPORTED_OPENSHELL_FALLBACK_VERSION) === "0.1.3") {
+    await requireSandboxPolicyAuthority(run);
+    return;
+  }
   await requireSandboxPolicyAuthority(run);
   await run([
     "settings",

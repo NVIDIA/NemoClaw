@@ -8,7 +8,11 @@ import {
   managedStartupE2eProfile,
 } from "../../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
 import { createPodmanRuntimeProviderBundle } from "../runtime-provider/podman";
-import type { RuntimeProviderBundle } from "../runtime-provider/contract";
+import type {
+  RuntimeProviderBundle,
+  RuntimeProviderPrivilegedSandboxCommandInput,
+} from "../runtime-provider/contract";
+import { MANAGED_STARTUP_SHARED_CAPTURE_MAX_BYTES } from "./shared-state-transaction";
 import {
   DirectSandboxContainerNotFoundError,
   DirectSandboxFallbackUnavailableError,
@@ -35,8 +39,13 @@ const IMAGE_ID = `sha256:${"b".repeat(64)}`;
 const SANDBOX_ID = "sandbox-podman-managed";
 const SANDBOX_NAME = "managed-podman";
 
+type LifecycleFixtureProvider = RuntimeProviderBundle & {
+  lifecycle: Extract<RuntimeProviderBundle["lifecycle"], { supported: true }>;
+};
+
 function createDockerRootApplyFixture(
   resolveTarget: (input: { readonly timeoutMs?: number }) => { resourceHandle: string },
+  agent: Parameters<typeof createManagedStartupRootApplyRequest>[0]["agent"] = "openclaw",
 ) {
   const labels = {
     "openshell.ai/managed-by": "openshell",
@@ -45,15 +54,17 @@ function createDockerRootApplyFixture(
     "openshell.ai/sandbox-workspace": "default",
   };
   const execute = vi.fn((input: { readonly command: readonly string[] }) => ({
-    status: 0,
+    status: input.command.includes("--startup-protocol") ? 1 : 0,
     stdout: input.command.includes("--shared-state-transaction-status") ? "pending\n" : "",
-    stderr: "",
+    stderr: input.command.includes("--startup-protocol")
+      ? "usage: managed-startup-image-runtime --release-startup-hold"
+      : "",
   }));
   const runtimeProvider = {
     identity: { id: "docker" },
     lifecycle: {
       supported: true,
-      privilegedSandboxControl: { resolveTarget, execute },
+      privilegedSandboxControl: { resolveTarget, execute, prepareManagedStartupWorkspace: vi.fn() },
     },
     containerEngine: {
       supported: true,
@@ -71,18 +82,269 @@ function createDockerRootApplyFixture(
         stderr: "",
       }),
     },
-  } as unknown as RuntimeProviderBundle;
+  } as unknown as LifecycleFixtureProvider;
   const request = createManagedStartupRootApplyRequest({
-    agent: "openclaw",
+    agent,
     corporateCaB64: Buffer.from(MANAGED_STARTUP_E2E_CORPORATE_CA_PEM, "utf8").toString("base64"),
-    encodedProfile: encodeManagedStartupProfile(
-      managedStartupE2eProfile("openclaw", false, true, true),
-    ),
+    encodedProfile: encodeManagedStartupProfile(managedStartupE2eProfile(agent, false, true, true)),
   });
   return { request, runtimeProvider };
 }
 
+function delegatedFixture(
+  agent: Parameters<typeof createDockerRootApplyFixture>[1] = "openclaw",
+  phase: "none" | "pending" | "committed" = "none",
+) {
+  const fixture = createDockerRootApplyFixture(() => ({ resourceHandle: CONTAINER_ID }), agent);
+  const calls: Array<RuntimeProviderPrivilegedSandboxCommandInput & { sandboxUser?: string }> = [];
+  const output: Record<string, string> = {
+    "--startup-protocol": "delegated-owner-v1\n",
+    "--prepare-delegated-transaction-stdin": phase,
+    "--capture-shared-state-stdin": "private original capture",
+    "--begin-shared-state-from-capture-stdin": "created\n",
+    "--prepare-delegated-startup-stdin":
+      phase === "committed" ? "already-committed\n" : "prepared\n",
+    "--apply-owner-startup-stdin": "private generated result",
+    "--finish-delegated-startup-stdin": "CA tool output\napplied\n",
+    "--export-shared-restoration-profile-stdin": "private original capture",
+    "--restore-shared-state-stdin": "private restored observation",
+    "--finish-shared-restoration-stdin": "restored\n",
+  };
+  const failures = new Set<string>();
+  const execute = vi.fn(
+    (input: RuntimeProviderPrivilegedSandboxCommandInput & { sandboxUser?: string }) => {
+      calls.push(input);
+      const operation = input.command.find((value) => value.startsWith("--"))!;
+      return {
+        status: failures.has(operation) ? 1 : 0,
+        signal: null,
+        stdout: Buffer.from(output[operation] ?? ""),
+        stderr: Buffer.from(failures.has(operation) ? "private-error-sentinel" : ""),
+      };
+    },
+  );
+  fixture.runtimeProvider.lifecycle.privilegedSandboxControl.execute = execute;
+  fixture.runtimeProvider.lifecycle.privilegedSandboxControl.executeAsSandboxUser = execute;
+  const input = {
+    ...fixture,
+    sandboxName: SANDBOX_NAME,
+    sandboxId: SANDBOX_ID,
+    bootstrapIdentity: "c".repeat(64),
+    environment: {},
+  };
+  return { input, calls, output, failures, execute };
+}
+
+describe("provider delegated private startup", () => {
+  it.each([
+    ["openclaw", "998:998"],
+    ["hermes", "998:999"],
+    ["langchain-deepagents-code", "999:999"],
+    ["pi", "999:999"],
+  ] as const)(
+    "orders %s capture, protected admission, generation and root finish",
+    (agent, sandboxUser) => {
+      const { input, calls } = delegatedFixture(agent);
+      const transaction = applyProviderManagedStartupRootRequest(input);
+      expect(transaction).toMatchObject({
+        protocol: "identity-bound",
+        delegatedProfile: input.request.encodedProfile,
+      });
+      expect(calls.map(({ command }) => command.find((value) => value.startsWith("--")))).toEqual([
+        "--startup-protocol",
+        "--prepare-delegated-transaction-stdin",
+        "--capture-shared-state-stdin",
+        "--begin-shared-state-from-capture-stdin",
+        "--prepare-delegated-startup-stdin",
+        "--apply-owner-startup-stdin",
+        "--finish-delegated-startup-stdin",
+      ]);
+      expect(calls.filter((call) => call.sandboxUser).map((call) => call.sandboxUser)).toEqual([
+        sandboxUser,
+        sandboxUser,
+      ]);
+      expect(calls.every((call) => call.expectedResourceHandle === CONTAINER_ID)).toBe(true);
+      expect(calls[2]?.maxOutputBytes).toBe(MANAGED_STARTUP_SHARED_CAPTURE_MAX_BYTES);
+      expect(JSON.parse(String(calls[3]?.input))).toEqual({
+        encodedProfile: input.request.encodedProfile,
+        capturedState: "private original capture",
+      });
+      expect(JSON.parse(String(calls[6]?.input)).ownerResult).toBe("private generated result");
+      expect(JSON.stringify(transaction)).not.toContain("private");
+      expect(calls.flatMap((call) => call.command)).not.toContain("--release-startup-hold");
+    },
+  );
+
+  it.each(["pending", "committed"] as const)(
+    "keeps the original snapshot on %s recovery",
+    (phase) => {
+      const { input, calls } = delegatedFixture("openclaw", phase);
+      applyProviderManagedStartupRootRequest(input);
+      expect(calls.flatMap((call) => call.command)).not.toContain("--capture-shared-state-stdin");
+      expect(calls.flatMap((call) => call.command)).not.toContain(
+        "--begin-shared-state-from-capture-stdin",
+      );
+      const generation = calls.find((call) => call.command.includes("--apply-owner-startup-stdin"));
+      expect(generation?.command.includes("--replay")).toBe(phase === "committed");
+    },
+  );
+
+  it.each([
+    "--prepare-delegated-transaction-stdin",
+    "--capture-shared-state-stdin",
+    "--begin-shared-state-from-capture-stdin",
+    "--prepare-delegated-startup-stdin",
+    "--apply-owner-startup-stdin",
+    "--finish-delegated-startup-stdin",
+  ])("retains recovery without leaking private output or falling back after %s fails", (action) => {
+    const { input, calls, failures } = delegatedFixture();
+    failures.add(action);
+    let failure: Error & { managedStartupTransaction?: unknown };
+    try {
+      applyProviderManagedStartupRootRequest(input);
+      throw new Error("expected failure");
+    } catch (error) {
+      failure = error as typeof failure;
+    }
+    expect(failure.message).toContain("retained for recovery");
+    expect(failure.message).not.toContain("private-error-sentinel");
+    expect(failure.managedStartupTransaction).toMatchObject({
+      delegatedProfile: input.request.encodedProfile,
+    });
+    expect(calls.at(-1)?.command).toContain(action);
+    expect(calls.flatMap((call) => call.command)).not.toContain("--apply-root-stdin");
+  });
+
+  it("rejects unknown protocol output before workspace changes", () => {
+    const { input, output, calls } = delegatedFixture();
+    output["--startup-protocol"] = "unknown";
+    const prepare = vi.fn();
+    input.runtimeProvider.lifecycle.privilegedSandboxControl.prepareManagedStartupWorkspace =
+      prepare;
+    expect(() => applyProviderManagedStartupRootRequest(input)).toThrow(/unknown protocol/u);
+    expect(prepare).not.toHaveBeenCalled();
+    expect(calls).toHaveLength(1);
+  });
+
+  it("restores through the native owner and retires only its returned observation", () => {
+    const { input, calls } = delegatedFixture();
+    const transaction = applyProviderManagedStartupRootRequest(input);
+    calls.length = 0;
+    expect(
+      finalizeProviderManagedStartupSharedState({ ...input, transaction, supervisorReady: false }),
+    ).toEqual({ supervisorReady: false, failure: null });
+    expect(calls.map(({ command }) => command.find((value) => value.startsWith("--")))).toEqual([
+      "--export-shared-restoration-profile-stdin",
+      "--restore-shared-state-stdin",
+      "--finish-shared-restoration-stdin",
+    ]);
+    expect(String(calls[0]?.input)).toBe(input.request.encodedProfile);
+    expect(calls[0]?.maxOutputBytes).toBe(MANAGED_STARTUP_SHARED_CAPTURE_MAX_BYTES);
+    expect(calls[1]?.sandboxUser).toBe("998:998");
+    expect(JSON.parse(String(calls[2]?.input))).toEqual({
+      encodedProfile: input.request.encodedProfile,
+      capturedState: "private restored observation",
+    });
+  });
+
+  it.each([
+    "--export-shared-restoration-profile-stdin",
+    "--restore-shared-state-stdin",
+    "--finish-shared-restoration-stdin",
+  ])("retains recovery without root fallback when %s fails", (action) => {
+    const { input, calls, failures } = delegatedFixture();
+    const transaction = applyProviderManagedStartupRootRequest(input);
+    calls.length = 0;
+    failures.add(action);
+    expect(() =>
+      finalizeProviderManagedStartupSharedState({ ...input, transaction, supervisorReady: false }),
+    ).toThrow(/recovery receipt are retained/u);
+    expect(calls.at(-1)?.command).toContain(action);
+    expect(calls.flatMap((call) => call.command)).not.toContain(
+      "--rollback-shared-state-transaction",
+    );
+  });
+});
+
 describe("provider-owned managed startup root application", () => {
+  it.each([
+    ["openclaw", { uid: 998, gid: 998, mode: 0o755 }],
+    ["hermes", { uid: 998, gid: 999, mode: 0o755 }],
+    ["langchain-deepagents-code", { uid: 0, gid: 999, mode: 0o1775 }],
+    ["pi", { uid: 999, gid: 999, mode: 0o755 }],
+  ] as const)(
+    "prepares %s workspace metadata before the first root application",
+    (agent, workspace) => {
+      const { request, runtimeProvider } = createDockerRootApplyFixture(
+        () => ({
+          resourceHandle: CONTAINER_ID,
+        }),
+        agent,
+      );
+      const control = runtimeProvider.lifecycle.privilegedSandboxControl;
+      const prepare = vi.fn();
+      control.prepareManagedStartupWorkspace = prepare;
+      applyProviderManagedStartupRootRequest({
+        runtimeProvider,
+        sandboxName: SANDBOX_NAME,
+        sandboxId: SANDBOX_ID,
+        bootstrapIdentity: "c".repeat(64),
+        request,
+        environment: {},
+      });
+      expect(prepare).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          expectedResourceHandle: CONTAINER_ID,
+          workspace,
+        }),
+      );
+      expect(prepare.mock.invocationCallOrder[0]).toBeLessThan(
+        vi.mocked(control.execute).mock.invocationCallOrder[1]!,
+      );
+    },
+  );
+
+  it("rejects a provider without workspace preparation before root application", () => {
+    const { request, runtimeProvider } = createDockerRootApplyFixture(() => ({
+      resourceHandle: CONTAINER_ID,
+    }));
+    const control = runtimeProvider.lifecycle.privilegedSandboxControl;
+    delete control.prepareManagedStartupWorkspace;
+    expect(() =>
+      applyProviderManagedStartupRootRequest({
+        runtimeProvider,
+        request,
+        sandboxName: SANDBOX_NAME,
+        sandboxId: SANDBOX_ID,
+        bootstrapIdentity: "c".repeat(64),
+        environment: {},
+      }),
+    ).toThrow(/cannot prepare the managed startup workspace/u);
+    expect(control.execute).toHaveBeenCalledOnce();
+    expect(vi.mocked(control.execute).mock.calls[0]?.[0].command).toContain("--startup-protocol");
+  });
+
+  it("does not start root application after workspace preparation fails", () => {
+    const { request, runtimeProvider } = createDockerRootApplyFixture(() => ({
+      resourceHandle: CONTAINER_ID,
+    }));
+    const control = runtimeProvider.lifecycle.privilegedSandboxControl;
+    control.prepareManagedStartupWorkspace = () => {
+      throw new Error("workspace changed");
+    };
+    expect(() =>
+      applyProviderManagedStartupRootRequest({
+        runtimeProvider,
+        sandboxName: SANDBOX_NAME,
+        sandboxId: SANDBOX_ID,
+        bootstrapIdentity: "c".repeat(64),
+        request,
+        environment: {},
+      }),
+    ).toThrow(/workspace changed/u);
+    expect(control.execute).toHaveBeenCalledOnce();
+    expect(vi.mocked(control.execute).mock.calls[0]?.[0].command).toContain("--startup-protocol");
+  });
   it("waits for the exact OpenShell container to appear after create returns", () => {
     const resolveTarget = vi
       .fn<() => { resourceHandle: string }>()
@@ -192,6 +454,7 @@ describe("provider-owned managed startup root application", () => {
     const calls: Array<{ args: readonly string[]; input?: Buffer }> = [];
     let committed = false;
     let releaseAttempts = 0;
+    let workspace = { uid: 0, gid: 0, mode: 0o700, dev: 1, ino: 2, mtime: 100 };
     const inspect = JSON.stringify([
       {
         Id: CONTAINER_ID,
@@ -213,11 +476,18 @@ describe("provider-owned managed startup root application", () => {
     const capture = vi.fn((args: readonly string[], _timeoutMs?: number, input?: Buffer) => {
       calls.push({ args, ...(input ? { input } : {}) });
       const operation = [
+        "--startup-protocol",
         "--shared-state-transaction-status",
         "--commit-shared-state-transaction",
         "--release-startup-hold",
       ].find((candidate) => args.includes(candidate));
       switch (operation) {
+        case "--startup-protocol":
+          return {
+            status: 1,
+            stdout: "",
+            stderr: "usage: managed-startup-image-runtime --release-startup-hold",
+          };
         case "--shared-state-transaction-status":
           return { status: 0, stdout: committed ? "committed\n" : "pending\n", stderr: "" };
         case "--commit-shared-state-transaction":
@@ -232,6 +502,11 @@ describe("provider-owned managed startup root application", () => {
           break;
       }
       switch (`${String(args[0])}:${String(args[1])}`) {
+        case "container:cp":
+          workspace = { ...workspace, uid: 998, gid: 998, mode: 0o755 };
+          return { status: 0, stdout: "", stderr: "" };
+        case "container:exec":
+          return { status: 0, stdout: JSON.stringify(workspace), stderr: "" };
         case "ps:--all":
           return { status: 0, stdout: `${CONTAINER_ID}\n`, stderr: "" };
         case "container:inspect":
@@ -271,6 +546,20 @@ describe("provider-owned managed startup root application", () => {
       environment: {},
     });
 
+    const copyIndex = calls.findIndex(({ args }) => args[1] === "cp");
+    expect(copyIndex).toBeGreaterThan(0);
+    expect(calls[copyIndex]?.args).toEqual([
+      "container",
+      "cp",
+      "--archive=false",
+      "-",
+      `${CONTAINER_ID}:/`,
+    ]);
+    expect(calls[copyIndex]?.input?.length).toBe(1536);
+    expect(copyIndex).toBeLessThan(
+      calls.findIndex(({ args }) => args.includes("--apply-root-stdin")),
+    );
+    expect(workspace).toEqual({ uid: 998, gid: 998, mode: 0o755, dev: 1, ino: 2, mtime: 100 });
     expect(transaction).toMatchObject({
       containerId: CONTAINER_ID,
       image: IMAGE_ID,
@@ -348,11 +637,19 @@ describe("provider-owned managed startup root application", () => {
     }));
     const execute = vi.fn((input: { readonly command: readonly string[] }) => {
       const operation = [
+        "--startup-protocol",
         "--apply-root-stdin",
         "--commit-shared-state-transaction",
         "--release-startup-hold",
       ].find((candidate) => input.command.includes(candidate));
       switch (`${String(operation)}:${String(input.command.includes("--bootstrap-identity"))}`) {
+        case "--startup-protocol:false":
+        case "--startup-protocol:true":
+          return {
+            status: 1,
+            stdout: "",
+            stderr: "usage: managed-startup-image-runtime --apply-root-stdin",
+          };
         case "--apply-root-stdin:true":
           return {
             status: 1,
@@ -373,6 +670,7 @@ describe("provider-owned managed startup root application", () => {
         supported: true,
         privilegedSandboxControl: {
           resolveTarget: () => ({ resourceHandle: CONTAINER_ID }),
+          prepareManagedStartupWorkspace: vi.fn(),
           execute,
         },
       },
@@ -417,8 +715,8 @@ describe("provider-owned managed startup root application", () => {
       profileFingerprint: request.profileFingerprint,
     });
 
-    expect(execute).toHaveBeenCalledTimes(3);
-    expect(execute.mock.calls[2]?.[0].command).not.toContain("--bootstrap-identity");
+    expect(execute).toHaveBeenCalledTimes(4);
+    expect(execute.mock.calls[3]?.[0].command).not.toContain("--bootstrap-identity");
     expect(
       execute.mock.calls.some(([input]) => input.command.includes("--release-startup-hold")),
     ).toBe(false);

@@ -2187,6 +2187,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       return managedWorkloadOnboard.createManagedStateVolumeOnboardLifecycle({
         roots: managedStateRoots,
         runtimeProvider: requireManagedWorkloadRuntime().runtimeProvider,
+        workspace: process.env.OPENSHELL_WORKSPACE ?? "default",
       });
     };
     const finalizeRecreatedSourceHermesVolume = (
