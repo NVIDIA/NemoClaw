@@ -50,14 +50,18 @@ impl QuestionResolver<'_> {
                 } else {
                     self.decisions.accepted.contains(&field.path)
                 };
-                // Guided omission keeps a valid supplied value and leaves an
-                // absent optional one unset; required and invalid values are asked.
-                if self.definition.omit.contains(&field.path) {
-                    if value.is_none() && !field.required {
+                match self
+                    .definition
+                    .omit
+                    .contains(&field.path)
+                    .then(|| guided_omission(value, valid, field.required))
+                    .flatten()
+                {
+                    Some(Omission::Unset) => {
                         omitted.push(field.path);
                         continue;
                     }
-                    if let Some(value) = value.filter(|_| valid) {
+                    Some(Omission::Keep(value)) => {
                         let base_value = native_value(
                             self.definition.base.supplied(),
                             self.position.selected_route,
@@ -66,6 +70,7 @@ impl QuestionResolver<'_> {
                         keep_supplied(&mut work.kept, field.path, value, base_value, accepted);
                         continue;
                     }
+                    None => {}
                 }
                 let omitted_route = route_key
                     .as_ref()

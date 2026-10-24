@@ -151,26 +151,28 @@ impl QuestionResolver<'_> {
                     }
                     let valid = value
                         .is_some_and(|value| schema_accepts(&field.schema, value) == Some(true));
-                    // Guided omission keeps a valid supplied value and leaves an
-                    // absent optional one unset; required and invalid values are asked.
-                    if self.definition.omit.contains(&id)
+                    let guided = self.definition.omit.contains(&id)
                         || (!self.definition.ask.contains(&id)
                             && self
                                 .definition
                                 .omit_scopes
-                                .contains(&JourneyScope::ActiveAdapterSettings))
+                                .contains(&JourneyScope::ActiveAdapterSettings));
+                    match guided
+                        .then(|| guided_omission(value, valid, field.required))
+                        .flatten()
                     {
-                        if value.is_none() && !field.required {
+                        Some(Omission::Unset) => {
                             omitted.push(id);
                             continue;
                         }
-                        if let Some(value) = value.filter(|_| valid) {
+                        Some(Omission::Keep(value)) => {
                             let answered = self.decisions.accepted.contains(&id);
                             let base_value =
                                 base_settings.and_then(|settings| settings.pointer(&field.path));
                             keep_supplied(&mut work.kept, id, value, base_value, answered);
                             continue;
                         }
+                        None => {}
                     }
                     if value.is_none()
                         || !valid

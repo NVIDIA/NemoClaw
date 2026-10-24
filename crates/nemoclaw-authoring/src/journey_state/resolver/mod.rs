@@ -14,6 +14,24 @@ mod sdk_questions;
 
 use policy::QuestionPolicy;
 
+/// What omission guidance does with one field it names.
+enum Omission<'a> {
+    /// The field is absent and optional: leave it unset.
+    Unset,
+    /// The supplied value is valid: keep it without asking.
+    Keep(&'a Value),
+}
+
+/// Omission keeps a valid supplied value and leaves an absent optional one
+/// unset; it cannot answer a missing requirement or an invalid value (`None`).
+fn guided_omission(value: Option<&Value>, valid: bool, required: bool) -> Option<Omission<'_>> {
+    match value {
+        None if !required => Some(Omission::Unset),
+        Some(value) if valid => Some(Omission::Keep(value)),
+        _ => None,
+    }
+}
+
 /// Report a value omission kept without asking, but only while it is still
 /// the base document's value and no answer replaced it.
 fn keep_supplied(
