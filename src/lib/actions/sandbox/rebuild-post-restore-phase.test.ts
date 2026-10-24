@@ -11,10 +11,9 @@ import * as openshellRuntime from "../../adapters/openshell/runtime";
 import YAML from "yaml";
 import { messagingSandboxFiles } from "../../../../test/support/messaging-sandbox-files";
 import {
-  createBuiltInChannelManifestRegistry,
-  createBuiltInRenderTemplateResolver,
-} from "../../messaging/channels";
-import { MessagingWorkflowPlanner } from "../../messaging/compiler";
+  rebuildPostRestoreInput,
+  hermesTeamsPlan,
+} from "../../../../test/support/rebuild-post-restore-fixture";
 import * as agentDefs from "../../agent/defs";
 import * as agentRuntime from "../../agent/runtime";
 import * as mutableConfigPerms from "../../sandbox/mutable-config-perms";
@@ -77,6 +76,15 @@ describe("rebuild post-restore phase", () => {
             kind: "backup",
             ...(runtimeSelection ? { runtimeSelection } : {}),
           },
+        };
+      },
+    );
+    vi.spyOn(restoreWindow, "prepareUnregisteredOpenClawPostRestoreDoctor").mockImplementation(
+      async ({ sandboxName, runtimeSelection }) => {
+        order.push("doctor");
+        return {
+          ok: true,
+          window: { sandboxName, ...(runtimeSelection ? { runtimeSelection } : {}) },
         };
       },
     );
@@ -168,44 +176,7 @@ describe("rebuild post-restore phase", () => {
     vi.unstubAllEnvs();
   });
 
-  function input() {
-    return {
-      sandboxName: "alpha",
-      targetAgentName: agentName,
-      messagingPlan: null,
-      backupManifest: null,
-      mcpEntries: [],
-      restoreSucceeded: true,
-      failedPresets: [],
-      finalBuiltinPresets: [],
-      failedPresetRemovals: [],
-      policyPresetReconciliationVerified: true,
-      preparedBackupRecovery: false,
-      versionCheck: { expectedVersion: null } as never,
-      log: vi.fn(),
-      bail: vi.fn() as never,
-    };
-  }
-
-  async function hermesTeamsPlan(disabled = false) {
-    vi.stubEnv("MSTEAMS_APP_ID", "test-teams-app");
-    vi.stubEnv("MSTEAMS_TENANT_ID", "test-teams-tenant");
-    vi.stubEnv("TEAMS_ALLOWED_USERS", "00000000-0000-0000-0000-000000000001");
-    vi.stubEnv("MSTEAMS_PORT", "3979");
-    return new MessagingWorkflowPlanner(
-      createBuiltInChannelManifestRegistry(),
-      undefined,
-      createBuiltInRenderTemplateResolver(),
-    ).buildPlan({
-      sandboxName: "alpha",
-      agent: "hermes",
-      workflow: "rebuild",
-      isInteractive: false,
-      configuredChannels: ["teams"],
-      disabledChannels: disabled ? ["teams"] : [],
-      credentialAvailability: { MSTEAMS_APP_PASSWORD: true },
-    });
-  }
+  const input = () => rebuildPostRestoreInput(agentName);
 
   it.each([false, true])(
     "restores the manifest-owned Hermes config before restart without enabling a disabled channel: disabled=%s",
@@ -338,6 +309,7 @@ describe("rebuild post-restore phase", () => {
 
     expect(order).toEqual([
       "maintenance-begin",
+      "doctor",
       "messaging",
       "native-start",
       "mcp",
@@ -558,6 +530,25 @@ describe("rebuild post-restore phase", () => {
     }
   });
 
+  it("keeps restored state offline when migration fails before messaging writes", async () => {
+    vi.mocked(processRecovery.prepareUnregisteredOpenClawPostRestoreDoctor).mockResolvedValue({
+      ok: false,
+      stage: "doctor",
+      detail: "sensitive restored config",
+    });
+    const args = input();
+    await runRebuildPostRestorePhase(args);
+    expect(rebuildMessaging.reapplyMessagingManifestBeforeAgentStart).not.toHaveBeenCalled();
+    expect(processRecovery.finishUnregisteredOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
+    expect(
+      processRecovery.abortUnregisteredOpenClawPostRestoreDoctor,
+    ).toHaveBeenCalledExactlyOnceWith({ sandboxName: "alpha", kind: "backup" });
+    expect(args.bail).toHaveBeenCalledWith(
+      "OpenClaw restored state could not be migrated before messaging configuration.",
+    );
+    expect(args.log.mock.calls.flat().join("\n")).not.toContain("sensitive restored config");
+  });
+
   it("reuses the maintenance window established before filesystem restore", async () => {
     const window = { sandboxName: "alpha", kind: "backup" } as const;
     vi.mocked(processRecovery.beginUnregisteredOpenClawBackupQuiesce).mockClear();
@@ -565,10 +556,13 @@ describe("rebuild post-restore phase", () => {
     await runRebuildPostRestorePhase({ ...input(), openClawDoctorWindow: window });
 
     expect(processRecovery.beginUnregisteredOpenClawBackupQuiesce).not.toHaveBeenCalled();
-    expect(processRecovery.finishUnregisteredOpenClawPostRestoreDoctor).toHaveBeenCalledWith(
+    expect(processRecovery.finishUnregisteredOpenClawPostRestoreDoctor).toHaveBeenCalledWith({
+      sandboxName: "alpha",
+    });
+    expect(processRecovery.prepareUnregisteredOpenClawPostRestoreDoctor).toHaveBeenCalledWith(
       window,
     );
-    expect(order).toEqual(["messaging", "native-start", "mcp", "host-forward"]);
+    expect(order).toEqual(["doctor", "messaging", "native-start", "mcp", "host-forward"]);
   });
 
   it("reuses the MCP rebuild target for every post-restore sandbox command (#10514)", async () => {
@@ -643,7 +637,6 @@ describe("rebuild post-restore phase", () => {
       processRecovery.abortUnregisteredOpenClawPostRestoreDoctor,
     ).toHaveBeenCalledExactlyOnceWith({
       sandboxName: "alpha",
-      kind: "backup",
     });
     const output = vi.mocked(console.log).mock.calls.flat().join("\n");
     expect(output).toContain("OpenClaw native final start failed after offline restoration");
@@ -703,7 +696,7 @@ describe("rebuild post-restore phase", () => {
       ).not.toHaveBeenCalled();
       expect(
         vi.mocked(processRecovery.abortUnregisteredOpenClawPostRestoreDoctor).mock.calls,
-      ).toEqual(agent === "openclaw" ? [[{ sandboxName: "alpha", kind: "backup" }]] : []);
+      ).toEqual(agent === "openclaw" ? [[{ sandboxName: "alpha" }]] : []);
       const output = [
         ...vi.mocked(console.error).mock.calls,
         ...vi.mocked(console.log).mock.calls,
@@ -737,7 +730,6 @@ describe("rebuild post-restore phase", () => {
       processRecovery.abortUnregisteredOpenClawPostRestoreDoctor,
     ).toHaveBeenCalledExactlyOnceWith({
       sandboxName: "alpha",
-      kind: "backup",
     });
     expect(processRecovery.finishUnregisteredOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
   });

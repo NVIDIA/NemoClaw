@@ -199,10 +199,6 @@ realDockerTest(
     const requiredAvailableBytes = imageStorageRequirementBytes(profile.imageDownloadSizeBytes);
 
     progress.phase("exercise the managed vLLM storage gate");
-    const fakeBinDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-vllm-storage-"));
-    const blockedHome = path.join(fakeBinDir, "blocked-home");
-    const commandLogPath = path.join(fakeBinDir, "docker-commands.jsonl");
-    const statfsLogPath = path.join(fakeBinDir, "statfs-samples.jsonl");
     const dockerPathResult = spawnSync("sh", ["-c", "command -v docker"], {
       encoding: "utf8",
       env,
@@ -230,6 +226,14 @@ realDockerTest(
       cachedImageResult.status,
       "the managed vLLM image must be absent so production cannot skip its storage guard",
     ).not.toBe(0);
+    // Hosted Linux /tmp can be a small tmpfs. Keep the real model-capacity
+    // probe on the runner's disk while retaining the production storage gate.
+    const fakeBinDir = fs.mkdtempSync(
+      path.join(process.env.RUNNER_TEMP || os.tmpdir(), "nemoclaw-vllm-storage-"),
+    );
+    const blockedHome = path.join(fakeBinDir, "blocked-home");
+    const commandLogPath = path.join(fakeBinDir, "docker-commands.jsonl");
+    const statfsLogPath = path.join(fakeBinDir, "statfs-samples.jsonl");
     let installDockerCommands: string[] = [];
     let productionStatfsSamples: StatfsSample[] = [];
     let measuredPath = "";

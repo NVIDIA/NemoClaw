@@ -135,15 +135,18 @@ function resolveOpenClawSlackApiLocation() {
 }
 
 function findPipelineRuntimePath(slackDir) {
-  try {
-    return fs
-      .readdirSync(slackDir)
-      .filter((entry) => /^pipeline\.runtime-.*\.js$/.test(entry))
-      .map((entry) => path.join(slackDir, entry))
-      .sort()[0];
-  } catch {
-    return undefined;
-  }
+  return [slackDir, path.join(slackDir, ".setup")].flatMap((directory) => {
+    try {
+      return fs
+        .readdirSync(directory)
+        .filter((entry) => /^pipeline\.runtime-.*\.m?js$/.test(entry))
+        .sort()
+        .slice(0, 1)
+        .map((entry) => path.join(directory, entry));
+    } catch {
+      return [];
+    }
+  })[0];
 }
 
 async function importProofModules(slackDir) {

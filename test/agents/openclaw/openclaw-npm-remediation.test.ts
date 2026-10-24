@@ -21,10 +21,13 @@ import {
   fatalOpenClawNpmRemediationDiagnostic,
   hashPackageTree,
   patchCurrentOpenClawCorePackageGraph,
+  patchDiscordEmbeddedZodPackage,
   patchLegacyOpenClawCorePackageGraph,
   patchOpenClawDiagnosticsOtelPackageGraph,
   patchOpenClawDiscordPackageGraph,
   patchOpenClawPluginPackageGraph,
+  patchOpenClaw105PluginDependencies,
+  remediateInstalledOfficialOpenClawPlugin,
   patchOpenClawSlackProxyAddrPackageGraph,
   OpenClawNpmRemediationCommandError,
   runOpenClawNpmRemediationCommand,
@@ -1122,4 +1125,120 @@ describe("OpenClaw npm remediation", () => {
       ),
     ).toMatchObject({ name: "libsignal", version: "6.0.0" });
   }, 60_000);
+});
+
+describe("Discord embedded Zod remediation trust boundary", () => {
+  function fixture() {
+    const root = mkdtempSync(path.join(tmpdir(), "nemoclaw-discord-zod-"));
+    temporaryDirectories.push(root);
+    const sdk = path.join(root, "sdk");
+    const replacement = path.join(root, "replacement");
+    mkdirSync(sdk);
+    mkdirSync(replacement);
+    writeFileSync(
+      path.join(sdk, "package.json"),
+      JSON.stringify({
+        name: "@discord/embedded-app-sdk",
+        version: "2.5.0",
+        dependencies: { zod: "^3.9.8" },
+      }),
+    );
+    writeFileSync(
+      path.join(replacement, "package.json"),
+      JSON.stringify({ name: "zod", version: "4.6.6" }),
+    );
+    return { root, sdk, replacement };
+  }
+
+  it("rejects unreviewed replacement bytes even when the package name and version match", () => {
+    const { sdk, replacement } = fixture();
+    const before = hashPackageTree(sdk);
+    expect(() => patchDiscordEmbeddedZodPackage(sdk, replacement)).toThrow(
+      "replacement Zod tree integrity mismatch",
+    );
+    expect(hashPackageTree(sdk)).toBe(before);
+  });
+
+  it("rejects a package directory symlink before changing its target", () => {
+    const { root, sdk, replacement } = fixture();
+    const link = path.join(root, "sdk-link");
+    symlinkSync(sdk, link);
+    const before = hashPackageTree(sdk);
+    expect(() => patchDiscordEmbeddedZodPackage(link, replacement)).toThrow(
+      "requires real package directories",
+    );
+    expect(hashPackageTree(sdk)).toBe(before);
+  });
+
+  it("rejects linked source members before reading outside the package", () => {
+    const { root, sdk, replacement } = fixture();
+    const outside = path.join(root, "outside");
+    writeFileSync(outside, "preserved");
+    symlinkSync(outside, path.join(sdk, "linked-member"));
+    expect(() => patchDiscordEmbeddedZodPackage(sdk, replacement)).toThrow();
+    expect(readFileSync(outside, "utf8")).toBe("preserved");
+    expect(
+      readJson<{ dependencies: { zod: string } }>(path.join(sdk, "package.json")),
+    ).toMatchObject({ dependencies: { zod: "^3.9.8" } });
+  });
+});
+
+describe("OpenClaw 10.5 bundled dependency repair", () => {
+  function fixture() {
+    const root = mkdtempSync(path.join(tmpdir(), "nemoclaw-plugin-security-"));
+    temporaryDirectories.push(root);
+    const plugin = path.join(root, "plugin");
+    const zod = path.join(plugin, "node_modules/zod");
+    mkdirSync(zod, { recursive: true });
+    writeFileSync(
+      path.join(plugin, "package.json"),
+      JSON.stringify({
+        name: "@openclaw/googlechat",
+        version: "2026.10.5",
+        dependencies: { zod: "4.6.5" },
+      }),
+    );
+    writeFileSync(
+      path.join(zod, "package.json"),
+      JSON.stringify({ name: "zod", version: "4.6.5" }),
+    );
+    return { root, plugin, zod };
+  }
+
+  it("rejects changed bundled bytes before fetching or replacing packages", () => {
+    const { root, plugin } = fixture();
+    const before = hashPackageTree(plugin);
+    expect(() => patchOpenClaw105PluginDependencies(plugin, root)).toThrow(
+      "source integrity mismatch",
+    );
+    expect(hashPackageTree(plugin)).toBe(before);
+  });
+
+  it("rejects a linked dependency parent without modifying its target", () => {
+    const { root, plugin } = fixture();
+    const outside = path.join(root, "outside");
+    mkdirSync(outside);
+    writeFileSync(path.join(outside, "sentinel"), "preserved");
+    rmSync(path.join(plugin, "node_modules"), { recursive: true });
+    symlinkSync(outside, path.join(plugin, "node_modules"));
+    expect(() => patchOpenClaw105PluginDependencies(plugin, root)).toThrow(
+      "requires real package directories",
+    );
+    expect(readFileSync(path.join(outside, "sentinel"), "utf8")).toBe("preserved");
+  });
+
+  it("refuses an official plugin installed outside its named managed project", () => {
+    const { root, plugin } = fixture();
+    const before = hashPackageTree(plugin);
+    expect(() =>
+      remediateInstalledOfficialOpenClawPlugin({
+        archivePath: path.join(root, "unused.tgz"),
+        packageSpec: "@openclaw/googlechat@2026.10.5",
+        packageDirectory: plugin,
+        trustedStateRoot: root,
+        workingDirectory: root,
+      }),
+    ).toThrow("requires a valid managed npm package directory");
+    expect(hashPackageTree(plugin)).toBe(before);
+  });
 });

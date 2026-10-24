@@ -215,6 +215,7 @@
         "test/onboarding/onboard-inference-gateway-scope.test.ts",
         "test/e2e/support/managed-image-activation-diagnostics.test.ts",
         "test/e2e/support/hosted-provider-smoke-selection.test.ts",
+        "test/e2e/support/openclaw-onboard-diagnostics.test.ts",
         "test/security/admin-approval-helper.test.ts"
       ]
     },
@@ -298,6 +299,7 @@
     },
     {
       "live": "test/e2e/live/launchable-smoke.test.ts",
+      "liveSources": ["test/e2e/fixtures/bootstrap-install-command.ts"],
       "fast": [
         "test/automation/e2e/brev-launchable-ci-cpu-checksum.test.ts",
         "test/e2e/support/e2e-live-target-gating.test.ts",
@@ -799,6 +801,7 @@
         "src/lib/onboard/runtime-provider/docker-stopped-state-capture.test.ts",
         "test/state/snapshot.test.ts",
         "test/e2e/support/managed-image-activation-diagnostics.test.ts",
+        "test/e2e/support/openclaw-stopped-recovery.test.ts",
         "test/security/admin-approval-helper.test.ts"
       ]
     },
@@ -988,7 +991,8 @@
         "test/e2e/support/e2e-clients.test.ts",
         "test/e2e/support/native-lifecycle-migration-contract.test.ts",
         "src/lib/onboard/runtime-provider/docker-stopped-state-capture.test.ts",
-        "test/e2e/support/managed-image-activation-diagnostics.test.ts"
+        "test/e2e/support/managed-image-activation-diagnostics.test.ts",
+        "test/e2e/support/openclaw-stopped-recovery.test.ts"
       ],
       "liveSources": [
         "test/e2e/live/openclaw-stopped-recovery.ts",

@@ -25,8 +25,8 @@ const PATCH_SCRIPT = path.join(
   "patch-openclaw-mcp-npx.mts",
 );
 
-function writeMcpFixture(dist: string): string {
-  const fixture = path.join(dist, "bundle-mcp.fixture.js");
+function writeMcpFixture(dist: string, extension = "js"): string {
+  const fixture = path.join(dist, `bundle-mcp.fixture.${extension}`);
   fs.writeFileSync(
     fixture,
     [
@@ -48,8 +48,8 @@ function writeMcpFixture(dist: string): string {
   return fixture;
 }
 
-function writeMcpTransportOnlyFixture(dist: string): string {
-  const fixture = path.join(dist, "chrome-mcp.fixture.js");
+function writeMcpTransportOnlyFixture(dist: string, extension = "js"): string {
+  const fixture = path.join(dist, `chrome-mcp.fixture.${extension}`);
   fs.writeFileSync(
     fixture,
     [
@@ -230,108 +230,111 @@ describe("OpenClaw MCP npx normalization patch", () => {
     });
   });
 
-  it("patches an OpenClaw dist fixture through the CLI", async () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-mcp-npx-"));
-    const dist = path.join(tmp, "dist");
-    fs.mkdirSync(dist);
-    const fixture = writeMcpFixture(dist);
-    const transportOnlyFixture = writeMcpTransportOnlyFixture(dist);
+  it.each(["js", "mjs"])(
+    "patches an OpenClaw %s dist fixture through the CLI",
+    async (extension) => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-mcp-npx-"));
+      const dist = path.join(tmp, "dist");
+      fs.mkdirSync(dist);
+      const fixture = writeMcpFixture(dist, extension);
+      const transportOnlyFixture = writeMcpTransportOnlyFixture(dist, extension);
 
-    try {
-      const patch = runPatch(dist);
-      expect(patch.status, `${patch.stdout}${patch.stderr}`).toBe(0);
-      expect(patch.stdout).toContain("OpenClaw MCP npx normalization");
-      expect(patch.stdout).toContain("patched,patched-no-timeout");
+      try {
+        const patch = runPatch(dist);
+        expect(patch.status, `${patch.stdout}${patch.stderr}`).toBe(0);
+        expect(patch.stdout).toContain("OpenClaw MCP npx normalization");
+        expect(patch.stdout).toContain("patched,patched-no-timeout");
 
-      const patched = fs.readFileSync(fixture, "utf-8");
-      expect(patched).toContain(MARKER);
-      expect(patched).toContain("nemoClawNormalizeMcpServerArgs(params.command, params.args)");
-      expect(patched).toContain("new NemoClawMcpStdioClientTransport({");
-      expect(patched).toContain(
-        "nemoClawMcpTimeoutMessage(serverName, server?.command, server?.args, CONNECTION_TIMEOUT_MS)",
-      );
-      expect(patched).toContain("pre-install the package");
+        const patched = fs.readFileSync(fixture, "utf-8");
+        expect(patched).toContain(MARKER);
+        expect(patched).toContain("nemoClawNormalizeMcpServerArgs(params.command, params.args)");
+        expect(patched).toContain("new NemoClawMcpStdioClientTransport({");
+        expect(patched).toContain(
+          "nemoClawMcpTimeoutMessage(serverName, server?.command, server?.args, CONNECTION_TIMEOUT_MS)",
+        );
+        expect(patched).toContain("pre-install the package");
 
-      const transportOnlyPatched = fs.readFileSync(transportOnlyFixture, "utf-8");
-      expect(transportOnlyPatched).toContain(MARKER);
-      expect(transportOnlyPatched).toContain("new NemoClawMcpStdioClientTransport({");
-      expect(transportOnlyPatched).not.toContain("new StdioClientTransport({");
-      await expect(
-        runPatchedFixture(transportOnlyPatched, "chrome", {
-          command: "npx",
-          args: ["@modelcontextprotocol/server-puppeteer"],
-        }),
-      ).resolves.toMatchObject({
-        transport: {
-          params: {
+        const transportOnlyPatched = fs.readFileSync(transportOnlyFixture, "utf-8");
+        expect(transportOnlyPatched).toContain(MARKER);
+        expect(transportOnlyPatched).toContain("new NemoClawMcpStdioClientTransport({");
+        expect(transportOnlyPatched).not.toContain("new StdioClientTransport({");
+        await expect(
+          runPatchedFixture(transportOnlyPatched, "chrome", {
             command: "npx",
-            args: ["-y", "@modelcontextprotocol/server-puppeteer"],
+            args: ["@modelcontextprotocol/server-puppeteer"],
+          }),
+        ).resolves.toMatchObject({
+          transport: {
+            params: {
+              command: "npx",
+              args: ["-y", "@modelcontextprotocol/server-puppeteer"],
+            },
           },
-        },
-      });
+        });
 
-      await expect(
-        runPatchedFixture(patched, "filesystem", {
-          command: "/usr/local/bin/npx",
-          args: ["@modelcontextprotocol/server-filesystem", "/tmp"],
-        }),
-      ).resolves.toMatchObject({
-        transport: {
-          params: {
+        await expect(
+          runPatchedFixture(patched, "filesystem", {
             command: "/usr/local/bin/npx",
-            args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
+            args: ["@modelcontextprotocol/server-filesystem", "/tmp"],
+          }),
+        ).resolves.toMatchObject({
+          transport: {
+            params: {
+              command: "/usr/local/bin/npx",
+              args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
+            },
           },
-        },
-      });
-      await expect(
-        runPatchedFixture(patched, "already-yes", {
-          command: "C:\\Program Files\\nodejs\\npx.cmd",
-          args: ["--yes", "pkg"],
-        }),
-      ).resolves.toMatchObject({
-        transport: {
-          params: {
+        });
+        await expect(
+          runPatchedFixture(patched, "already-yes", {
             command: "C:\\Program Files\\nodejs\\npx.cmd",
             args: ["--yes", "pkg"],
+          }),
+        ).resolves.toMatchObject({
+          transport: {
+            params: {
+              command: "C:\\Program Files\\nodejs\\npx.cmd",
+              args: ["--yes", "pkg"],
+            },
           },
-        },
-      });
-      await expect(
-        runPatchedFixture(patched, "node-server", {
-          command: "node",
-          args: ["server.js"],
-        }),
-      ).resolves.toMatchObject({
-        transport: {
-          params: {
+        });
+        await expect(
+          runPatchedFixture(patched, "node-server", {
             command: "node",
             args: ["server.js"],
+          }),
+        ).resolves.toMatchObject({
+          transport: {
+            params: {
+              command: "node",
+              args: ["server.js"],
+            },
           },
-        },
-      });
-      await expect(
-        runPatchedFixture(
-          patched,
-          "filesystem",
-          {
-            command: "npx",
-            args: ["@modelcontextprotocol/server-filesystem", "--api-key", "sk-live-value"],
-          },
-          true,
-        ),
-      ).rejects.toThrow(
-        /MCP server "filesystem" \(npx @modelcontextprotocol\/server-filesystem --api-key \[redacted\]\) connection timed out after 30000ms\. Hint: npx MCP servers/,
-      );
+        });
+        await expect(
+          runPatchedFixture(
+            patched,
+            "filesystem",
+            {
+              command: "npx",
+              args: ["@modelcontextprotocol/server-filesystem", "--api-key", "sk-live-value"],
+            },
+            true,
+          ),
+        ).rejects.toThrow(
+          /MCP server "filesystem" \(npx @modelcontextprotocol\/server-filesystem --api-key \[redacted\]\) connection timed out after 30000ms\. Hint: npx MCP servers/,
+        );
 
-      const rerun = runPatch(dist);
-      expect(rerun.status, `${rerun.stdout}${rerun.stderr}`).toBe(0);
-      const rerunPatched = fs.readFileSync(fixture, "utf-8");
-      expect(rerunPatched.match(/class NemoClawMcpStdioClientTransport/g)).toHaveLength(1);
-      expect(rerunPatched.match(/new NemoClawMcpStdioClientTransport/g)).toHaveLength(1);
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
+        const rerun = runPatch(dist);
+        expect(rerun.status, `${rerun.stdout}${rerun.stderr}`).toBe(0);
+        const rerunPatched = fs.readFileSync(fixture, "utf-8");
+        expect(rerunPatched.match(/class NemoClawMcpStdioClientTransport/g)).toHaveLength(1);
+        expect(rerunPatched.match(/new NemoClawMcpStdioClientTransport/g)).toHaveLength(1);
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("fails closed when no MCP stdio transport target is present", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-mcp-npx-missing-"));

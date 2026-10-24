@@ -42,6 +42,20 @@ function runTests(...tests: string[]): () => string[] {
 
 export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
+    pattern: /(?:^|\/)scripts\/lib\/openclaw_pairing_state\.py$/,
+    testsToRun: runTests(
+      "src/lib/actions/sandbox/auto-pair-approval-sqlite.test.ts",
+      "src/lib/actions/sandbox/launch-readiness/openclaw-pairing-qualification.test.ts",
+      "src/lib/onboard/managed-startup/provider-root-apply.test.ts",
+      "test/agents/openclaw/runtime/nemoclaw-start-auto-pair-sqlite.test.ts",
+      "test/e2e/support/issue-4462-gateway-snapshot.test.ts",
+      "test/e2e/support/managed-image-activation-diagnostics.test.ts",
+      "test/runtime/sandbox/sandbox-build-context.test.ts",
+      "test/runtime/sandbox/sandbox-provisioning-helper-permissions.test.ts",
+      "test/security/admin-approval-helper.test.ts",
+    ),
+  },
+  {
     pattern:
       /(?:^|\/)(?:scripts\/generate-openclaw-config\.mts|agents\/hermes\/(?:generate-config\.ts|config\/[^/]+\.ts|managed_policy\.py))$/,
     testsToRun: runTests("test/generation/providerless-agent-config.test.ts"),

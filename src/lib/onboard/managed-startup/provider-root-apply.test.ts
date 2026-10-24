@@ -1,7 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
+
 import { describe, expect, it, vi } from "vitest";
+
+import { createContainerEngineCommand } from "../../adapters/container-engine";
+import type { ContainerEngineOperationScope } from "../../adapters/container-engine";
 
 import {
   MANAGED_STARTUP_E2E_CORPORATE_CA_PEM,
@@ -23,6 +28,7 @@ import {
   PODMAN_SANDBOX_WORKSPACE_LABEL,
 } from "../runtime-provider/podman-lifecycle";
 import { encodeManagedStartupProfile } from "./profile";
+import * as ownerLease from "./openclaw-owner-lease";
 import {
   applyProviderManagedStartupRootRequest,
   finalizeProviderManagedStartupSharedState,
@@ -35,6 +41,198 @@ const IMAGE_ID = `sha256:${"b".repeat(64)}`;
 const SANDBOX_ID = "sandbox-podman-managed";
 const SANDBOX_NAME = "managed-podman";
 
+// Execute the shipped observer unchanged. Only the container account/root and
+// clock are substituted; SQLite queries and descriptor checks run against files.
+const OWNER_LEASE_FIXTURE = String.raw`
+import contextlib, json, os, pathlib, pwd, socket, sqlite3, sys, tempfile
+from unittest.mock import patch
+
+request = json.load(sys.stdin)
+fixture = request["fixture"]
+account = pwd.getpwuid(os.getuid())
+epoch = 1700000000
+clock = [0]
+sleeps = []
+attempts = [0]
+real_open = os.open
+real_connect = sqlite3.connect
+
+def sleep(seconds):
+    assert 0 < seconds <= 1
+    assert clock[0] < 301, "observer exceeded its bounded deadline"
+    sleeps.append(seconds)
+    clock[0] += seconds
+
+with tempfile.TemporaryDirectory(prefix="nemoclaw-owner-lease-") as root:
+    state = pathlib.Path(root, "sandbox/.openclaw/state")
+    state.mkdir(parents=True)
+    database_path = state / "openclaw.sqlite"
+    if fixture.get("database", True):
+        with real_connect(database_path) as db:
+            if fixture.get("table", True):
+                db.execute("CREATE TABLE state_leases (scope TEXT, lease_key TEXT, expires_at INTEGER, payload_json TEXT)")
+                # Other scopes and lease keys must not block the gateway owner.
+                unrelated = json.dumps({"owner": {"host": socket.gethostname() + "-foreign"}})
+                db.executemany("INSERT INTO state_leases VALUES (?, ?, ?, ?)", [
+                    ("unrelated", "global", epoch * 1000 + 600000, unrelated),
+                    ("gateway-owner", "other", epoch * 1000 + 600000, unrelated),
+                ])
+                row = fixture.get("row")
+                if row is not None:
+                    offset = row["expiry"]
+                    expiry = epoch * 1000 + offset if type(offset) is int else offset
+                    host = socket.gethostname() if row["host"] == "local" else socket.gethostname() + "-foreign"
+                    payload = row.get("payload", json.dumps({"owner": {"host": host}}))
+                    db.execute("INSERT INTO state_leases VALUES ('gateway-owner', 'global', ?, ?)", (expiry, payload))
+            else:
+                # A valid SQLite database without the lease table, not an empty file.
+                db.execute("CREATE TABLE unrelated(value TEXT)")
+        db.close()
+        database_path.chmod(fixture.get("mode", 0o660))
+    before = database_path.read_bytes() if database_path.exists() else None
+
+    def open_root(path, *args, **kwargs):
+        return real_open(root if path == "/" else path, *args, **kwargs)
+
+    real_stat = os.stat
+    def stat_root(path, *args, **kwargs):
+        if isinstance(path, str) and path.startswith("/sandbox/"):
+            path = root + path
+        return real_stat(path, *args, **kwargs)
+
+    def connect_descriptor(reference, *args, **kwargs):
+        # Redirect only the container root to the fixture. SQLite still opens
+        # a real pathname, and the shared reader validates its actual descriptor.
+        assert reference.startswith("file:/sandbox/.openclaw/state/openclaw.sqlite?mode=ro")
+        assert kwargs.get("uri") is True
+        race = fixture.get("race")
+        original = state / "original.sqlite"
+        if race in ("replace-before-open", "replace-and-restore"):
+            replacement = state / "replacement.sqlite"
+            with real_connect(replacement) as substitute:
+                substitute.execute("CREATE TABLE substituted(value TEXT)")
+            substitute.close()
+            database_path.rename(original)
+            replacement.rename(database_path)
+        if fixture.get("busyReads", 0) > attempts[0]:
+            attempts[0] += 1
+            raise sqlite3.OperationalError("database is locked")
+        connection = real_connect(database_path.as_uri() + reference[reference.index("?"):], *args, **kwargs)
+        if race == "replace-and-restore":
+            database_path.rename(state / "substituted.sqlite")
+            original.rename(database_path)
+        elif race == "remove-after-open":
+            database_path.unlink()
+        elif race == "replace-directory":
+            state.rename(state.with_name("retired-state"))
+            state.mkdir()
+        return connection
+
+    error = None
+    with contextlib.ExitStack() as stack:
+        stack.enter_context(patch("pwd.getpwnam", return_value=account))
+        stack.enter_context(patch("os.open", side_effect=open_root))
+        stack.enter_context(patch("os.stat", side_effect=stat_root))
+        stack.enter_context(patch("time.monotonic", side_effect=lambda: clock[0]))
+        stack.enter_context(patch("time.time", side_effect=lambda: epoch + clock[0]))
+        stack.enter_context(patch("time.sleep", side_effect=sleep))
+        stack.enter_context(patch("sqlite3.connect", side_effect=connect_descriptor))
+        try:
+            exec(compile(request["source"], "openclaw-owner-lease", "exec"), {})
+        except Exception as failure:
+            error = str(failure)
+    after = database_path.read_bytes() if database_path.exists() else None
+    print(json.dumps({"elapsedSeconds": clock[0], "sleptSeconds": sum(sleeps), "databaseUnchanged": before == after, "error": error}))
+sys.exit(1 if error is not None else 0)
+`;
+
+function observeOwnerLease(fixture: unknown) {
+  const result = spawnSync("python3", ["-I", "-c", OWNER_LEASE_FIXTURE], {
+    input: JSON.stringify({ fixture, source: ownerLease.buildOpenClawOwnerLeaseObserver() }),
+    encoding: "utf8",
+    timeout: 10_000,
+    maxBuffer: 32 * 1_024,
+  });
+  expect(result.error).toBeUndefined();
+  expect(result.stderr).toBe("");
+  return { result, observation: JSON.parse(result.stdout) };
+}
+
+describe("native OpenClaw owner lease observation", () => {
+  it.each([
+    { name: "missing database", fixture: { database: false }, elapsed: 0, error: null },
+    { name: "missing lease table", fixture: { table: false }, elapsed: 0, error: null },
+    { name: "absent global owner", fixture: {}, elapsed: 0, error: null },
+    {
+      name: "world-accessible database",
+      fixture: { mode: 0o666 },
+      elapsed: 0,
+      error: "unsafe canonical pairing-state SQLite entry",
+    },
+    {
+      name: "foreign owner that expires at the native deadline",
+      fixture: { row: { host: "foreign", expiry: 300_000 } },
+      elapsed: 300,
+      error: null,
+    },
+    {
+      name: "local owner",
+      fixture: { row: { host: "local", expiry: 600_000 } },
+      elapsed: 0,
+      error: null,
+    },
+    {
+      name: "expired foreign owner",
+      fixture: { row: { host: "foreign", expiry: -1 } },
+      elapsed: 0,
+      error: null,
+    },
+    {
+      name: "foreign owner that expires during observation",
+      fixture: { row: { host: "foreign", expiry: 2_000 } },
+      elapsed: 2,
+      error: null,
+    },
+    {
+      name: "foreign owner active beyond the native deadline",
+      fixture: { row: { host: "foreign", expiry: 600_000 } },
+      elapsed: 300,
+      error: "OpenClaw owner lease remained active through its native expiry window",
+    },
+    {
+      name: "a busy database that settles before the lease is absent",
+      fixture: { busyReads: 3 },
+      elapsed: 3,
+      error: null,
+    },
+    {
+      name: "a database that stays busy through the native deadline",
+      fixture: { busyReads: 1_000 },
+      elapsed: 300,
+      error: "OpenClaw owner lease state stayed busy through its native expiry window",
+    },
+    {
+      name: "foreign owner with an invalid expiry",
+      fixture: { row: { host: "foreign", expiry: "unbounded" } },
+      elapsed: 0,
+      error: "OpenClaw owner lease has no bounded expiry",
+    },
+    {
+      name: "owner without a host identity",
+      fixture: { row: { host: "foreign", expiry: 600_000, payload: '{"owner":{}}' } },
+      elapsed: 0,
+      error: "OpenClaw owner lease has no host identity",
+    },
+  ])("preserves the database when observing $name", ({ fixture, elapsed, error }) => {
+    const { result, observation } = observeOwnerLease(fixture);
+    expect(result.status).toBe(error === null ? 0 : 1);
+    expect(observation.elapsedSeconds).toBe(elapsed);
+    expect(observation.sleptSeconds).toBe(elapsed);
+    expect(observation.error).toBe(error);
+    expect(observation.databaseUnchanged).toBe(true);
+  });
+});
+
 function createDockerRootApplyFixture(
   resolveTarget: (input: { readonly timeoutMs?: number }) => { resourceHandle: string },
 ) {
@@ -44,11 +242,13 @@ function createDockerRootApplyFixture(
     "openshell.ai/sandbox-id": SANDBOX_ID,
     "openshell.ai/sandbox-workspace": "default",
   };
-  const execute = vi.fn((input: { readonly command: readonly string[] }) => ({
-    status: 0,
-    stdout: input.command.includes("--shared-state-transaction-status") ? "pending\n" : "",
-    stderr: "",
-  }));
+  const execute = vi.fn(
+    (input: { readonly command: readonly string[]; readonly timeoutMs?: number }) => ({
+      status: 0,
+      stdout: input.command.includes("--shared-state-transaction-status") ? "pending\n" : "",
+      stderr: "",
+    }),
+  );
   const runtimeProvider = {
     identity: { id: "docker" },
     lifecycle: {
@@ -79,10 +279,150 @@ function createDockerRootApplyFixture(
       managedStartupE2eProfile("openclaw", false, true, true),
     ),
   });
-  return { request, runtimeProvider };
+  return { request, runtimeProvider, execute };
+}
+
+function createOwnerLeaseDeadlineFixture(expiry: number) {
+  const { result, observation } = observeOwnerLease({ row: { host: "foreign", expiry } });
+  expect(observation.elapsedSeconds).toBe(300);
+  const fixture = createDockerRootApplyFixture(() => ({ resourceHandle: CONTAINER_ID }));
+  let timedOut = false;
+  fixture.execute
+    .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" })
+    .mockReturnValueOnce({ status: 0, stdout: "pending\n", stderr: "" })
+    .mockImplementationOnce(({ timeoutMs }) => {
+      // Include interpreter/container startup outside the actual observer's
+      // measured time; the supervisor must allow either native result back.
+      timedOut = observation.elapsedSeconds * 1_000 + 1_000 >= (timeoutMs ?? 0);
+      return { status: timedOut ? 1 : result.status!, stdout: "", stderr: "" };
+    });
+  const apply = () =>
+    applyProviderManagedStartupRootRequest({
+      runtimeProvider: fixture.runtimeProvider,
+      sandboxName: SANDBOX_NAME,
+      sandboxId: SANDBOX_ID,
+      bootstrapIdentity: "c".repeat(64),
+      request: fixture.request,
+      environment: {},
+    });
+  return { apply, execute: fixture.execute, timedOut: () => timedOut };
 }
 
 describe("provider-owned managed startup root application", () => {
+  it.each([
+    { race: "replace-before-open", error: "unvalidated pairing-state file identity" },
+    { race: "replace-and-restore", error: "unvalidated pairing-state file identity" },
+    { race: "remove-after-open", error: "canonical pairing-state database changed while reading" },
+    { race: "replace-directory", error: "canonical pairing-state database changed while reading" },
+  ])("retains the startup hold after the SQLite $race race", ({ race, error }) => {
+    const { result, observation } = observeOwnerLease({ race, table: false });
+    expect(result.status).toBe(1);
+    expect(observation.error).toContain(error);
+    expect(observation.elapsedSeconds).toBe(0);
+    const fixture = createDockerRootApplyFixture(() => ({ resourceHandle: CONTAINER_ID }));
+    fixture.execute.mockImplementation(({ command }) =>
+      command.includes("python3")
+        ? { status: result.status!, stdout: "", stderr: observation.error }
+        : { status: 0, stdout: "pending\n", stderr: "" },
+    );
+    expect(() =>
+      applyProviderManagedStartupRootRequest({
+        runtimeProvider: fixture.runtimeProvider,
+        sandboxName: SANDBOX_NAME,
+        sandboxId: SANDBOX_ID,
+        bootstrapIdentity: "c".repeat(64),
+        request: fixture.request,
+        environment: {},
+      }),
+    ).toThrow("OpenClaw owner lease did not settle before managed startup");
+    expect(fixture.execute.mock.calls.map(([call]) => call.command)).toHaveLength(3);
+  });
+
+  it("returns the transaction when the native lease expires at its deadline", () => {
+    const fixture = createOwnerLeaseDeadlineFixture(300_000);
+    expect(fixture.apply()?.containerId).toBe(CONTAINER_ID);
+    expect(fixture.timedOut()).toBe(false);
+    expect(fixture.execute.mock.calls).toHaveLength(3);
+  });
+
+  it("retains the startup hold after the observer reports an active lease at its deadline", () => {
+    const fixture = createOwnerLeaseDeadlineFixture(600_000);
+    expect(fixture.apply).toThrow("OpenClaw owner lease did not settle before managed startup");
+    expect(fixture.timedOut()).toBe(false);
+    expect(fixture.execute.mock.calls).toHaveLength(3);
+  });
+
+  it("retains the startup hold when the previous OpenClaw owner cannot be observed safely", () => {
+    const fixture = createDockerRootApplyFixture(() => ({ resourceHandle: CONTAINER_ID }));
+    fixture.execute.mockImplementation(({ command }) => ({
+      status: command.includes("python3") ? 1 : 0,
+      stdout: command.includes("--shared-state-transaction-status") ? "pending\n" : "",
+      stderr: "",
+    }));
+    expect(() =>
+      applyProviderManagedStartupRootRequest({
+        runtimeProvider: fixture.runtimeProvider,
+        sandboxName: SANDBOX_NAME,
+        sandboxId: SANDBOX_ID,
+        bootstrapIdentity: "c".repeat(64),
+        request: fixture.request,
+        environment: {},
+      }),
+    ).toThrow("OpenClaw owner lease did not settle before managed startup");
+    expect(fixture.execute.mock.calls.map(([call]) => call.command)).toHaveLength(3);
+  });
+
+  it("retains the pending transaction when the packaged state reader is unavailable", () => {
+    const fixture = createDockerRootApplyFixture(() => ({ resourceHandle: CONTAINER_ID }));
+    const reader = vi
+      .spyOn(ownerLease, "buildOpenClawOwnerLeaseObserver")
+      .mockImplementation(() => {
+        throw new Error("reader unavailable");
+      });
+    try {
+      expect(() =>
+        applyProviderManagedStartupRootRequest({
+          runtimeProvider: fixture.runtimeProvider,
+          sandboxName: SANDBOX_NAME,
+          sandboxId: SANDBOX_ID,
+          bootstrapIdentity: "c".repeat(64),
+          request: fixture.request,
+          environment: {},
+        }),
+      ).toThrow(
+        expect.objectContaining({
+          message: expect.stringContaining("Packaged OpenClaw state reader is unavailable"),
+          managedStartupTransaction: expect.objectContaining({ containerId: CONTAINER_ID }),
+        }),
+      );
+      expect(fixture.execute.mock.calls).toHaveLength(2);
+    } finally {
+      reader.mockRestore();
+    }
+  });
+
+  it("does not inspect owner leases again after the managed transaction is committed", () => {
+    const fixture = createDockerRootApplyFixture(() => ({ resourceHandle: CONTAINER_ID }));
+    fixture.execute.mockImplementation(({ command }) => ({
+      status: 0,
+      stdout: command.includes("--shared-state-transaction-status") ? "committed\n" : "",
+      stderr: "",
+    }));
+    expect(
+      applyProviderManagedStartupRootRequest({
+        runtimeProvider: fixture.runtimeProvider,
+        sandboxName: SANDBOX_NAME,
+        sandboxId: SANDBOX_ID,
+        bootstrapIdentity: "c".repeat(64),
+        request: fixture.request,
+        environment: {},
+      })?.containerId,
+    ).toBe(CONTAINER_ID);
+    expect(fixture.execute.mock.calls.some(([call]) => call.command.includes("python3"))).toBe(
+      false,
+    );
+  });
+
   it("waits for the exact OpenShell container to appear after create returns", () => {
     const resolveTarget = vi
       .fn<() => { resourceHandle: string }>()
@@ -241,19 +581,22 @@ describe("provider-owned managed startup root application", () => {
           return { status: 0, stdout: "", stderr: "" };
       }
     });
-    const engine = (operation: string) => ({
-      operation,
-      engineId: "podman",
-      displayName: "Podman",
-      authorityId: "podman:test",
+    const engine = (operation: ContainerEngineOperationScope) => ({
+      ...createContainerEngineCommand({
+        operation,
+        engineId: "podman",
+        displayName: "Podman",
+        authorityId: "podman:test",
+        endpointAuthorityId: "podman:test",
+        executable: "podman",
+        capture: (_executable, args, timeoutMs, input) => capture(args, timeoutMs, input),
+      }),
       endpointAuthorityId: "podman:test",
-      capture,
-      captureHost: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
     });
     const runtimeProvider = createPodmanRuntimeProviderBundle({
       engines: {
-        hostDoctor: engine("host-doctor") as never,
-        sandboxLifecycle: engine("sandbox-lifecycle") as never,
+        hostDoctor: engine("host-doctor"),
+        sandboxLifecycle: engine("sandbox-lifecycle"),
       },
     });
     const profile = managedStartupE2eProfile("openclaw", false, true, true);
@@ -323,6 +666,10 @@ describe("provider-owned managed startup root application", () => {
     expect(calls.some(({ args }) => args.includes("--apply-root-stdin"))).toBe(true);
     expect(calls.some(({ args }) => args.includes("--commit-shared-state-transaction"))).toBe(true);
     expect(calls.some(({ args }) => args.includes("--release-startup-hold"))).toBe(true);
+    const observation = calls.find(({ args }) => args.includes("python3"));
+    expect(observation?.args.slice(-3)).toEqual(["python3", "-I", "-"]);
+    expect(observation?.args).toContain("--interactive");
+    expect(observation?.input?.toString("utf8")).toBe(ownerLease.buildOpenClawOwnerLeaseObserver());
     expect(releaseAttempts).toBe(2);
     expect(JSON.stringify(calls.map(({ args }) => args))).not.toContain("docker");
   });

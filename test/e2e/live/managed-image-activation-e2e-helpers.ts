@@ -453,6 +453,24 @@ export function managedOpenClawSubagentCommand(sessionId: string): string[] {
   );
 }
 
+export function managedOpenClawSubagentSucceeded(stdout: string): boolean {
+  try {
+    const response = JSON.parse(stdout);
+    const meta = response?.result?.meta;
+    return (
+      response?.status === "ok" &&
+      meta?.aborted === false &&
+      meta?.toolSummary?.failures === 0 &&
+      Array.isArray(meta?.agentMeta?.terminalReceipt?.successfulToolNames) &&
+      meta.agentMeta.terminalReceipt.successfulToolNames.includes("sessions_spawn") &&
+      Array.isArray(response?.result?.payloads) &&
+      response.result.payloads.some((payload: { text?: string }) => payload?.text === "PONG")
+    );
+  } catch {
+    return false;
+  }
+}
+
 async function runOpenClawSubagentTurn(
   sandbox: SandboxClient,
   sandboxName: string,
@@ -468,9 +486,10 @@ async function runOpenClawSubagentTurn(
       timeoutMs: AGENT_TIMEOUT_MS,
     },
   );
-  expect(result.exitCode === 0 && /\bPONG\b/iu.test(resultText(result)), resultText(result)).toBe(
-    true,
-  );
+  expect(
+    result.exitCode === 0 && managedOpenClawSubagentSucceeded(result.stdout),
+    resultText(result),
+  ).toBe(true);
 }
 
 export function managedActivationOpenClawPluginScript(): string {
@@ -1122,6 +1141,8 @@ async function qualifyExternalImage(
     }
     await runManagedActivationAgentTurn(sandbox, agent, sandboxName, "after", env, observeRequests);
     rebuilt = true;
+  } else {
+    await collectOnboardFailureRuntimeDiagnostics(artifacts, host, agent, sandboxName, env);
   }
   registryEntry = registryDocument().sandboxes?.[sandboxName];
   receipt = registryEntry?.workload;
@@ -1200,11 +1221,14 @@ export async function qualifyManagedImageActivation(fixtures: RuntimeFixtures): 
     requireAuthModels: true,
     requestCanaryMarker: "NEMOCLAW_MANAGED_SUBAGENT",
     toolCallOnCanary: {
-      name: "sessions_spawn",
+      name: "tool_call",
       arguments: JSON.stringify({
-        task: "Reply with exactly one word: PONG",
-        mode: "run",
-        cleanup: "delete",
+        id: "sessions_spawn",
+        args: {
+          task: "Reply with exactly one word: PONG",
+          mode: "run",
+          cleanup: "delete",
+        },
       }),
     },
   });

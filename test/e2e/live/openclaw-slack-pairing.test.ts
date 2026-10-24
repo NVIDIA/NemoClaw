@@ -6,6 +6,7 @@ import fs from "node:fs";
 import { testTimeout } from "../../helpers/timeouts.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { applyFixtureProviderPolicyEndpoint } from "../fixtures/gateway-providers.ts";
+import { approveOpenClawAdminScope } from "./openclaw-admin-scope.ts";
 import {
   approveAndAssertPairing,
   assertOpenClawStateRoot,
@@ -155,6 +156,7 @@ test(
       expectExitZero(provider, `${providerName} exists`);
     }
 
+    await approveOpenClawAdminScope(host, sandbox, SANDBOX_NAME, env, redactions, false);
     await assertOpenClawStateRoot(sandbox, SANDBOX_NAME, "slack", redactions);
     await assertSlackPresetPolicySemantics({
       host,

@@ -237,6 +237,17 @@ describe("complete native home persistence", () => {
         "managed-warmup",
       );
       writeNative(".openclaw/state/openclaw.sqlite-wal", "transient-wal");
+      const privateDoctorCapture = ".openclaw.update-captures/doctor-test/payload/0";
+      const privateLegacyCapture = ".openclaw-data.update-captures/update-test/payload/0";
+      fs.mkdirSync(path.dirname(path.join(nativeRoot, privateDoctorCapture)), { recursive: true });
+      fs.mkdirSync(path.dirname(path.join(nativeRoot, privateLegacyCapture)), { recursive: true });
+      const privateCredential = `ghp_${"abcdef0123456789"}`;
+      writeNative(privateDoctorCapture, privateCredential);
+      writeNative(privateLegacyCapture, privateCredential);
+      fs.mkdirSync(path.join(nativeRoot, "workspace", ".openclaw.update-captures"), {
+        recursive: true,
+      });
+      writeNative("workspace/.openclaw.update-captures/notes.txt", "user-owned notes");
       const hermesManagedConfig = "model:\n  api_key: sk-OPENSHELL-PROXY-REWRITE\n";
       writeNative(".hermes/config.yaml", hermesManagedConfig);
       writeNative(".hermes/gateway.pid", "legacy-pid");
@@ -353,6 +364,15 @@ describe("complete native home persistence", () => {
       expect(archivedPaths).not.toContain(".openclaw/.nemoclaw-post-upgrade-doctor");
       expect(archivedPaths).not.toContain("nemoclaw-onboard-warmup-1.trajectory.jsonl");
       expect(archivedPaths).not.toContain(".openclaw/state/openclaw.sqlite-wal");
+      expect(archivedPaths).not.toContain(privateDoctorCapture);
+      expect(archivedPaths).not.toContain(privateLegacyCapture);
+      expect(archivedPaths).toContain("workspace/.openclaw.update-captures/notes.txt");
+      expect(fs.readFileSync(path.join(nativeRoot, privateDoctorCapture), "utf8")).toBe(
+        privateCredential,
+      );
+      expect(fs.readFileSync(path.join(nativeRoot, privateLegacyCapture), "utf8")).toBe(
+        privateCredential,
+      );
       expect(archivedPaths).not.toContain(".hermes/gateway.pid");
       expect(archivedPaths).not.toContain(".hermes/runtime/gateway.pid");
       expect(archivedPaths).not.toContain(".hermes/runtime/gateway.lock");
@@ -972,6 +992,11 @@ describe("complete native home persistence", () => {
       JSON.stringify({ apiKey: `ghp_${"2468ace013579bdf"}` }),
     ],
     ["an arbitrary dependency file", "node_modules/example/token.txt", `ghp_${"fedcba9876543210"}`],
+    [
+      "a similarly named user-owned capture",
+      "workspace/.openclaw.update-captures/payload/0",
+      `ghp_${"fedcba9876543210"}`,
+    ],
     ["dependency source code", "node_modules/example/token.js", `ghp_${"fedcba9876543210"}`],
     [
       "a concrete token in bundled NemoClaw runtime code",

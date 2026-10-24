@@ -77,6 +77,45 @@ describe("final onboard flow phases", () => {
     ).toBe(testCase.expected);
   });
 
+  it("passes verified sandbox identity authority to custom-image route setup (#12033)", async () => {
+    const revalidateSandboxIdentity = vi.fn();
+    const setupOpenclaw = vi.fn(async (...args) => {
+      await args[7]?.();
+    });
+    const waitForStartedOpenclawGatewayProcess = vi.fn(async () => true);
+    const settleStartedOpenclawGatewayForConfiguration = vi.fn(async () => true);
+    const [branchPhase] = createPhases("openclaw", [], {
+      setupOpenclaw,
+      waitForStartedOpenclawGatewayProcess,
+      settleStartedOpenclawGatewayForConfiguration,
+    });
+
+    await branchPhase.run(
+      context({ fromDockerfile: "/tmp/CustomDockerfile", revalidateSandboxIdentity }),
+    );
+
+    expect(setupOpenclaw).toHaveBeenCalledWith(
+      "my-sandbox",
+      "nvidia/test",
+      "nim",
+      revalidateSandboxIdentity,
+      "chat",
+      true,
+      "nemoclaw-19090",
+      expect.any(Function),
+    );
+    expect(waitForStartedOpenclawGatewayProcess).toHaveBeenCalledExactlyOnceWith(
+      "my-sandbox",
+      "nemoclaw-19090",
+    );
+    expect(waitForStartedOpenclawGatewayProcess.mock.invocationCallOrder[0]).toBeLessThan(
+      setupOpenclaw.mock.invocationCallOrder[0]!,
+    );
+    expect(settleStartedOpenclawGatewayForConfiguration).toHaveBeenCalledExactlyOnceWith(
+      "my-sandbox",
+    );
+  });
+
   it.each([false, null])(
     "refuses custom-image configuration when gateway startup returns %s",
     async (startup) => {

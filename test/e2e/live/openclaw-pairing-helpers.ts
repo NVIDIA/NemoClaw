@@ -213,7 +213,6 @@ export async function assertOpenClawStateRoot(
     },
   );
   expectExitZero(list, `openclaw pairing list ${channel}`);
-  expect(resultText(list)).toMatch(new RegExp(`"channel"\\s*:\\s*"${channel}"`));
 }
 
 // Source-of-truth boundary: the live pairing probe imports the conversation

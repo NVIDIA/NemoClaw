@@ -172,7 +172,7 @@
 
   function isOpenClawSlackFile(filename) {
     var normalized = String(filename || "").replace(/\\/g, "/");
-    return normalized.indexOf("/@openclaw/slack/") !== -1 && normalized.endsWith(".js");
+    return normalized.indexOf("/@openclaw/slack/") !== -1 && /\.m?js$/.test(normalized);
   }
 
   function hasNativeChannelDeniedMentionFeedback(source) {
@@ -228,6 +228,23 @@
       source,
       "resolveSlackExplicitMentionState",
     );
+    // OpenClaw 10.5 computes these values inside prepareSlackMessage. Accept
+    // only the reviewed block before the deny gate, preserving native checks.
+    var inlineMentionState = [
+      "\tconst currentBotUserId = normalizeSlackId(ctx.botUserId);",
+      "\tconst explicitlyMentionedBotUser = Boolean(currentBotUserId && mentionedUserIds.includes(currentBotUserId));",
+      "\tconst explicitlyMentionedBotSubteam = Boolean(ctx.botUserId && mentionMetadata.hasSubteamMention) && await isSlackSubteamMentionForBot({",
+      "\t\tclient: opts.eventScope?.client ?? ctx.app.client,",
+      "\t\ttext: messageText,",
+      "\t\tbotUserId: ctx.botUserId,",
+      "\t\tteamId: opts.eventScope?.teamId ?? ctx.teamId,",
+      "\t\tlog: logVerbose",
+      "\t});",
+    ].join("\n");
+    if (source.split(inlineMentionState).length === 2) {
+      mentionBindings.explicitlyMentionedBotUser = true;
+      mentionBindings.explicitlyMentionedBotSubteam = true;
+    }
     var missing = [];
     var requiredParamsBindings = [
       "ctx",

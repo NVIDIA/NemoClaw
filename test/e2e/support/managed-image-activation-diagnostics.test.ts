@@ -32,6 +32,7 @@ import {
   managedActivationOpenClawPluginScript,
   managedHermesBoundaryPoisonCommand,
   managedOpenClawSubagentCommand,
+  managedOpenClawSubagentSucceeded,
   normalizeExternalImageRuntimeId,
   ONBOARD_FAILURE_LOG_ARTIFACT_OPTIONS,
   preclean,
@@ -1053,6 +1054,34 @@ ${adminApprovalConnectScript("nemoclaw", "fixture-sandbox", "managed-cron", outp
       ]),
     );
   });
+
+  it.each([
+    { names: ["tool_call", "sessions_spawn"], failures: 0, aborted: false, expected: true },
+    { names: [], failures: 1, aborted: false, expected: false },
+    { names: ["tool_call"], failures: 0, aborted: false, expected: false },
+    { names: ["sessions_spawn"], failures: 1, aborted: false, expected: false },
+    { names: ["sessions_spawn"], failures: 0, aborted: true, expected: false },
+  ])("requires successful native spawn evidence: $names, $failures, $aborted", (row) => {
+    const response = {
+      status: "ok",
+      result: {
+        payloads: [{ text: "PONG" }],
+        meta: {
+          aborted: row.aborted,
+          toolSummary: { failures: row.failures },
+          agentMeta: { terminalReceipt: { successfulToolNames: row.names } },
+        },
+      },
+    };
+    expect(managedOpenClawSubagentSucceeded(JSON.stringify(response))).toBe(row.expected);
+  });
+
+  it.each(["PONG", "null", '{"status":"ok","result":{"payloads":[{"text":"PONG"}]}}'])(
+    "rejects a reply without native subagent evidence: %s",
+    (stdout) => {
+      expect(managedOpenClawSubagentSucceeded(stdout)).toBe(false);
+    },
+  );
 
   it("emits only the fixed setup signal from arbitrary container output (#8543)", () => {
     const secret = "untrusted-prompt-and-credential";

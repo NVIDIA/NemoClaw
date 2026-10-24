@@ -3,21 +3,13 @@
   "version": "0.1.0",
   "description": "Migrate and run OpenClaw inside OpenShell with optional NIM-backed inference",
   "license": "Apache-2.0",
+  "files": [
+    "dist/",
+    "openclaw.plugin.json"
+  ],
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "openclaw": {
-    "extensions": [
-      "./dist/index.js"
-    ],
-    "compat": {
-      "pluginApi": ">=2026.5.22",
-      "minGatewayVersion": "2026.5.22"
-    },
-    "build": {
-      "openclawVersion": "2026.9.2"
-    }
-  },
   "scripts": {
     "build": "npm run clean && tsc",
     "dev": "tsc --watch",
@@ -47,8 +39,16 @@
   "engines": {
     "node": ">=22.19.0"
   },
-  "files": [
-    "dist/",
-    "openclaw.plugin.json"
-  ]
+  "openclaw": {
+    "extensions": [
+      "./dist/index.js"
+    ],
+    "compat": {
+      "pluginApi": ">=2026.5.22",
+      "minGatewayVersion": "2026.5.22"
+    },
+    "build": {
+      "openclawVersion": "2026.10.5"
+    }
+  }
 }

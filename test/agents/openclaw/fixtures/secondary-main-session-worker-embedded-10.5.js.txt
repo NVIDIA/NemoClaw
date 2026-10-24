@@ -1,0 +1,1 @@
+wi=xr.canonicalKey!==`global`&&isAgentMainSessionKey(Ln,xr.canonicalKey);if((xr.canonicalKey===`global`||wi)&&!Si)return invalidSessionRequest(`Cannot delete the main session (${xr.canonicalKey}).`);

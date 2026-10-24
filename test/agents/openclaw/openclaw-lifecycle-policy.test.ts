@@ -8,6 +8,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import policy from "../../../ci/reviewed-npm-lifecycle-allowlist.json";
 import { reviewedOpenClawPluginIntegrityByPackageSpec } from "../../../src/lib/messaging/applier/build/messaging-build-applier.mts";
+import { shellCommandSegmentBetween } from "../../helpers/dockerfile-run-shell.ts";
 
 const REPO_ROOT = path.join(import.meta.dirname, "../../..");
 const PRODUCTION_BOUNDARY_AUDIT = String.raw`
@@ -64,11 +65,26 @@ const codexBlock = between(
 );
 const runtimeBlock = dockerfile;
 const baseBlock = dockerfileBase;
-const optionalPluginBlock = between(
+const migrationDockerBlock = between(
+  dockerfile,
+  "AS openclaw-migration-runtime",
+  "FROM scratch AS openclaw-plugin-payload",
+);
+const migrationBlock = migrationDockerBlock.includes("RUN /scripts/lib/install-openclaw-migration-runtimes.sh install")
+  ? fs.readFileSync("scripts/lib/install-openclaw-migration-runtimes.sh", "utf8") : "";
+const migrationVersions = [...new Set(
+  [...migrationBlock.matchAll(/for migration_version in ([0-9. ]+); do/g)]
+    .flatMap((match) => match[1].trim().split(/\s+/)),
+)];
+const migrationLifecycleCommand =
+  'node "$migration_root/node_modules/openclaw/scripts/postinstall-bundled-plugins.mjs"';
+const optionalPluginDockerBlock = between(
   dockerfile,
   "# Install non-messaging OpenClaw plugins that need to match the runtime.",
   "# Lock down npm for the next RUN",
 );
+const optionalPluginBlock = optionalPluginDockerBlock.includes(". /scripts/lib/install-openclaw-optional-plugins.sh")
+  ? fs.readFileSync("scripts/lib/install-openclaw-optional-plugins.sh", "utf8") : "";
 const messagingInstallBlock = between(
   messagingApplier,
   "export function installOpenClawMessagingPlugins",
@@ -89,12 +105,18 @@ console.log(JSON.stringify({
   optionalPluginSpecs,
   runtimeLifecycleScripts: explicitLifecycleScripts(runtimeBlock),
   baseLifecycleScripts: explicitLifecycleScripts(baseBlock),
+  migrationVersions,
+  migrationScriptsSuppressed: migrationBlock.includes(
+    'npm --prefix "$migration_root" ci --ignore-scripts --omit=dev',
+  ),
+  migrationLifecycleOffline: migrationDockerBlock.includes("RUN --network=none /scripts/lib/install-openclaw-migration-runtimes.sh materialize") &&
+    migrationBlock.includes(migrationLifecycleCommand),
   scriptsSuppressed: {
     codex: /npm install -g --offline --no-audit --no-fund --no-progress --ignore-scripts/.test(codexBlock),
     runtime: /npm install -g --no-audit --no-fund --no-progress --ignore-scripts --allow-git=root "\$OPENCLAW_PACK_PATH"/.test(runtimeBlock),
     base: /npm install -g --ignore-scripts --allow-git=root "\$OPENCLAW_PACK_PATH"/.test(baseBlock),
-    optionalPlugin: /NPM_CONFIG_IGNORE_SCRIPTS=true npm_config_ignore_scripts=true\s+\\\s*openclaw plugins install --force --accept-capabilities "npm-pack:/.test(optionalPluginBlock) &&
-      optionalPluginBlock.includes('openclaw plugins install --force --accept-capabilities "npm-pack:\${plugin_archive}"'),
+    optionalPlugin: /NPM_CONFIG_IGNORE_SCRIPTS=true npm_config_ignore_scripts=true\s+\\\s*openclaw plugins install --force --accept-capabilities "\$@" "\$plugin_spec/.test(optionalPluginBlock) &&
+      optionalPluginBlock.includes('openclaw plugins install --force --accept-capabilities "$@" "$plugin_spec"'),
     messagingPlugin: [
       '"--force",',
       '"--accept-capabilities",',
@@ -113,6 +135,50 @@ console.log(JSON.stringify({
 `;
 
 describe("reviewed npm lifecycle policy", () => {
+  it("installs a native CLI launcher owned by the reviewed OpenClaw package", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-launcher-layout-"));
+    try {
+      const installer = fs.readFileSync(
+        path.join(REPO_ROOT, "scripts/lib/install-openclaw-cli-wrapper.sh"),
+        "utf8",
+      );
+      const prefix = path.join(root, "usr/local");
+      const modules = path.join(prefix, "lib/nemoclaw/openclaw-runtime/node_modules");
+      const packageRoot = path.join(modules, "openclaw");
+      const launcher = path.join(prefix, "bin/openclaw");
+      fs.mkdirSync(packageRoot, { recursive: true });
+      fs.mkdirSync(path.join(modules, ".bin"));
+      fs.mkdirSync(path.dirname(launcher));
+      fs.writeFileSync(
+        path.join(prefix, "lib/nemoclaw/openclaw-cli-wrapper.sh"),
+        '#!/bin/sh\nprintf "launcher arg=%s\\n" "$@"\n',
+      );
+      fs.symlinkSync(path.join(modules, ".bin/openclaw"), launcher);
+      const command = shellCommandSegmentBetween(
+        installer.replace(/\\\n\s*/g, " "),
+        "rm -f /usr/local/lib/nemoclaw/openclaw-runtime/node_modules/.bin/openclaw",
+        "if [ ! -e",
+      )
+        .replace(/&&\s*$/, "")
+        .replaceAll("/usr/local", prefix)
+        .replace("-o root -g root ", "");
+      // Exercise the image's installation commands without requiring root on the test host.
+      const result = spawnSync("sh", ["-ec", command], { encoding: "utf8" });
+      expect(result.status, result.stderr).toBe(0);
+      const target = fs.realpathSync(launcher);
+      const relative = path.relative(fs.realpathSync(packageRoot), target);
+      expect(relative).not.toBe("");
+      expect(relative.split(path.sep)[0]).not.toBe("..");
+      expect(path.isAbsolute(relative)).toBe(false);
+      expect(fs.statSync(target).mode & 0o777).toBe(0o755);
+      const invoked = spawnSync(launcher, ["update", "--dry-run"], { encoding: "utf8" });
+      expect(invoked.status, invoked.stderr).toBe(0);
+      expect(invoked.stdout).toBe("launcher arg=update\nlauncher arg=--dry-run\n");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("selects the system npm owner only for native OpenClaw self-update", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-wrapper-"));
     const fakeNode = path.join(root, "node");
@@ -175,7 +241,7 @@ describe("reviewed npm lifecycle policy", () => {
 
     const messagingPackageSpecs = Object.keys(
       reviewedOpenClawPluginIntegrityByPackageSpec({
-        OPENCLAW_VERSION: "2026.9.2",
+        OPENCLAW_VERSION: "2026.10.5",
       }),
     );
     const result = spawnSync(process.execPath, ["-e", PRODUCTION_BOUNDARY_AUDIT], {
@@ -190,6 +256,7 @@ describe("reviewed npm lifecycle policy", () => {
       [
         audit.codexPackageSpec,
         ...audit.runtimeCoreSpecs,
+        ...audit.migrationVersions.map((version: string) => `openclaw@${version}`),
         ...audit.optionalPluginSpecs,
         ...messagingPackageSpecs,
       ].sort(),
@@ -208,7 +275,18 @@ describe("reviewed npm lifecycle policy", () => {
       }))
       .sort((left, right) => left.packageSpec.localeCompare(right.packageSpec));
     expect(audit.runtimeLifecycleScripts).toEqual(audit.baseLifecycleScripts);
-    expect(audit.runtimeLifecycleScripts).toEqual(allowedLifecycleScripts);
+    expect(audit.migrationVersions).toEqual(["2026.9.5", "2026.9.7"]);
+    expect(audit.migrationScriptsSuppressed).toBe(true);
+    expect(audit.migrationLifecycleOffline).toBe(true);
+    expect(
+      [
+        ...audit.runtimeLifecycleScripts,
+        ...audit.migrationVersions.map((version: string) => ({
+          packageSpec: `openclaw@${version}`,
+          explicitCommand: `node /usr/local/lib/nemoclaw/openclaw-migrations/${version}/node_modules/openclaw/scripts/postinstall-bundled-plugins.mjs`,
+        })),
+      ].sort((left, right) => left.packageSpec.localeCompare(right.packageSpec)),
+    ).toEqual(allowedLifecycleScripts);
     expect(audit.legacyCoreRunsNoLifecycle).toBe(true);
     expect(audit.unknownCoreVersionFailsClosed).toBe(true);
   });

@@ -25,6 +25,7 @@ export function runRealOpenClawCompactionRetryProof(options: {
       timeout: options.timeoutMs,
       env: {
         PATH: process.env.PATH,
+        TMPDIR: process.env.TMPDIR,
         HOME: packageRoot,
         OPENCLAW_STATE_DIR: path.join(packageRoot, ".compaction-proof-state"),
         NODE_ENV: "test",
@@ -43,7 +44,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 const dist = path.dirname(process.argv[1]);
-const files = fs.readdirSync(dist).filter((name) => /^builtin-openclaw(?:-.+)?\.js$/.test(name));
+const files = fs.readdirSync(dist).filter((name) => /^builtin-openclaw(?:-.+)?\.m?js$/.test(name));
 const modules = await Promise.all(files.map((file) => import(pathToFileURL(path.join(dist, file)).href)));
 const factories = [...new Set(modules.flatMap((module) => Object.values(module).filter(
   (value) => typeof value === "function" && value.name === "buildEmbeddedExtensionFactories",
@@ -52,7 +53,8 @@ assert.equal(factories.length, 1, "one reviewed embedded extension factory");
 const [buildFactories] = factories;
 const testing = globalThis[Symbol.for("openclaw.compactionSafeguardTestApi")];
 assert.equal(typeof buildFactories, "function");
-assert.equal(typeof testing?.setSummarizeInStagesForTest, "function");
+const setSummarizer = testing?.setSummarizeCompactionHistoryForTest ?? testing?.setSummarizeInStagesForTest;
+assert.equal(typeof setSummarizer, "function");
 const { compaction } = JSON.parse(process.argv[2]);
 
 const latestAsk = "Review the release checklist before publishing.";
@@ -87,7 +89,7 @@ async function runScenario(mode, policy = compaction) {
     factory({ on: (name, handler) => { if (name === "session_before_compact") hook = handler; } });
   }
   assert.equal(typeof hook, "function", "generated config selects the real safeguard");
-  testing.setSummarizeInStagesForTest(async (request) => {
+  setSummarizer(async (request) => {
     instructions.push(request.customInstructions);
     if (mode === "cancel" && instructions.length === 2) {
       controller.abort(new Error("controlled caller cancellation"));
@@ -139,6 +141,6 @@ try {
   assert.equal(cancelled.result, undefined);
   console.log("NEMOCLAW_COMPACTION_RETRY_PROOF=passed");
 } finally {
-  testing.setSummarizeInStagesForTest();
+  setSummarizer();
 }
 `;

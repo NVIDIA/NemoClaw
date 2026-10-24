@@ -15,6 +15,7 @@ import {
   abortUnregisteredOpenClawPostRestoreDoctor,
   beginUnregisteredOpenClawBackupQuiesce,
   finishUnregisteredOpenClawPostRestoreDoctor,
+  prepareUnregisteredOpenClawPostRestoreDoctor,
   type OpenClawPostRestoreDoctorWindow,
 } from "../actions/sandbox/runtime/openclaw-lifecycle";
 import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
@@ -1022,6 +1023,13 @@ export async function finalizeCreatedSandbox(
         preparedRegistration = await deps.revalidatePreparedRegistration!(preparedRegistration!);
         if (!options.gatewayName)
           throw new Error("OpenClaw restore reconciliation requires its selected gateway.");
+        // Native config mutation rejects legacy schemas. Complete the pinned
+        // migrations first while retaining the same gateway-down authority.
+        const prepared = await prepareUnregisteredOpenClawPostRestoreDoctor(openClawRestoreWindow);
+        if (!prepared.ok) {
+          throw new Error(`OpenClaw restored state migration failed (${prepared.stage}).`);
+        }
+        openClawRestoreWindow = prepared.window;
         await (deps.writeRestoredOpenclawInferenceRoute ?? writeRestoredOpenclawInferenceRoute)(
           options.sandboxName,
           options.model,

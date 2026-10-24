@@ -361,6 +361,10 @@ sandboxConfig.setOpenClawConfigValues = (_name, updates) => {
   }
 };
 processRecovery.beginUnregisteredOpenClawBackupQuiesce = async (sandboxName) => ({ ok: true, window: { sandboxName, kind: "backup" } });
+processRecovery.prepareUnregisteredOpenClawPostRestoreDoctor = async ({ sandboxName, runtimeSelection }) => ({
+  ok: true,
+  window: { sandboxName, ...(runtimeSelection ? { runtimeSelection } : {}) },
+});
 processRecovery.finishUnregisteredOpenClawPostRestoreDoctor = async () => {
   events.push({ kind: "restart", primary: nativeConfig.agents.defaults.model.primary });
   return { ok: true };
@@ -725,6 +729,10 @@ const { EventEmitter } = require("node:events");
 
 const events = [];
 processRecovery.beginUnregisteredOpenClawBackupQuiesce = async (sandboxName) => ({ ok: true, window: { sandboxName, kind: "backup" } });
+processRecovery.prepareUnregisteredOpenClawPostRestoreDoctor = async ({ sandboxName, runtimeSelection }) => ({
+  ok: true,
+  window: { sandboxName, ...(runtimeSelection ? { runtimeSelection } : {}) },
+});
 processRecovery.finishUnregisteredOpenClawPostRestoreDoctor = async () => ({ ok: true });
 processRecovery.abortUnregisteredOpenClawPostRestoreDoctor = async () => ({ ok: true });
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture({

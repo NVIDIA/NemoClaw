@@ -27,12 +27,22 @@ const runtimeManifest = JSON.parse(
 );
 const runtimeLockSource = fs.readFileSync(path.join(runtimeDirectory, "package-lock.json"), "utf8");
 const runtimeLock = JSON.parse(runtimeLockSource);
-const nestedOverrideLocations = managedMessagingNestedOverridePaths(runtimeManifest);
+const nestedOverrideLocations = managedMessagingNestedOverridePaths(
+  runtimeManifest,
+  runtimeLock.packages,
+);
 
 interface DockerArchivePin {
   archive: string;
   digest: string;
   resolved: string;
+}
+
+function writeInstalledOverrides(root: string): void {
+  for (const location of nestedOverrideLocations) {
+    const entry = runtimeLock.packages[location];
+    writeInstalledVersion(root, location, entry.version, entry.name);
+  }
 }
 
 // BuildKit failed at the 130th remote ADD during a cold managed-image build.
@@ -62,10 +72,18 @@ function archiveIdentity(archive: LockedArchive | DockerArchivePin): string {
   return `${archive.archive}\n${archive.resolved}`;
 }
 
-function writeInstalledVersion(root: string, location: string, version: string): void {
+function writeInstalledVersion(
+  root: string,
+  location: string,
+  version: string,
+  name?: string,
+): void {
   const packageDirectory = path.join(root, location);
   fs.mkdirSync(packageDirectory, { recursive: true });
-  fs.writeFileSync(path.join(packageDirectory, "package.json"), `${JSON.stringify({ version })}\n`);
+  fs.writeFileSync(
+    path.join(packageDirectory, "package.json"),
+    `${JSON.stringify({ version, name })}\n`,
+  );
 }
 
 describe("OpenClaw managed messaging offline image build", () => {
@@ -80,14 +98,27 @@ describe("OpenClaw managed messaging offline image build", () => {
     expect(runtimeManifest.overrides).toEqual({
       "@modelcontextprotocol/sdk": "1.32.0",
       "proxy-addr": "2.0.8",
-      "@openclaw/discord@2026.9.2": {
-        "@discord/embedded-app-sdk@2.5.0": {
-          uuid: bundledVersion(
-            "node_modules/@openclaw/discord/node_modules/@discord/embedded-app-sdk/node_modules/uuid",
-          ),
+      hono: "4.13.11",
+      tar: "7.5.22",
+      "fast-uri": "3.1.8",
+      undici: "8.12.3",
+      npm: { ".": "12.2.1", undici: "6.29.1" },
+      "@azure/msal-node": "7.1.0",
+      "body-parser": "2.4.0",
+      qs: "6.16.1",
+      zod: "4.6.6",
+      "follow-redirects": "1.16.1",
+      "@openclaw/googlechat@2026.10.5": {
+        "google-auth-library@11.1.0": {
+          "fetch-blob@3.2.0": {
+            "node-domexception": "npm:@nolyfill/domexception@1.0.28",
+          },
         },
       },
-      "@openclaw/whatsapp@2026.9.2": {
+      "@openclaw/discord@2026.10.5": {
+        uuid: bundledVersion("node_modules/@openclaw/discord/node_modules/uuid"),
+      },
+      "@openclaw/whatsapp@2026.10.5": {
         "baileys@7.0.0-rc14": {
           "file-type": bundledVersion(
             "node_modules/@openclaw/whatsapp/node_modules/baileys/node_modules/file-type",
@@ -98,7 +129,7 @@ describe("OpenClaw managed messaging offline image build", () => {
         },
       },
     });
-    expect(nestedOverrideLocations).toHaveLength(3);
+    expect(nestedOverrideLocations).toHaveLength(5);
     nestedOverrideLocations.forEach((location) => {
       expect(runtimeLock.packages[location]?.version).toMatch(/^\d/u);
     });
@@ -246,14 +277,59 @@ describe("OpenClaw managed messaging offline image build", () => {
   it("rejects nested installed versions that differ from the reviewed lock", () => {
     const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "managed-messaging-install-test-"));
     try {
-      nestedOverrideLocations.forEach((location) => {
-        writeInstalledVersion(temporary, location, runtimeLock.packages[location].version);
-      });
+      writeInstalledOverrides(temporary);
       verifyManagedMessagingOfflineInstall(
         path.join(runtimeDirectory, "package-lock.json"),
         temporary,
       );
       writeInstalledVersion(temporary, nestedOverrideLocations[0], "0.0.0");
+      expect(() =>
+        verifyManagedMessagingOfflineInstall(
+          path.join(runtimeDirectory, "package-lock.json"),
+          temporary,
+        ),
+      ).toThrow("managed messaging nested override mismatch");
+    } finally {
+      fs.rmSync(temporary, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a missing override scope or a substituted alias in the lock", () => {
+    const manifest = {
+      overrides: { "@fixture/channel@1.0.0": { shim: "npm:@fixture/replacement@2.0.0" } },
+    };
+    const scope = "node_modules/@fixture/channel";
+    const alias = `${scope}/node_modules/shim`;
+    const packages = {
+      [scope]: { version: "1.0.0", name: "@fixture/channel" },
+      [alias]: { version: "2.0.0", name: "@fixture/replacement" },
+    };
+    expect(managedMessagingNestedOverridePaths(manifest, packages)).toEqual([alias]);
+    packages[alias].name = "shim";
+    expect(() => managedMessagingNestedOverridePaths(manifest, packages)).toThrow(
+      "managed messaging locked override mismatch",
+    );
+    packages[alias].name = "@fixture/replacement";
+    packages[scope].version = "0.0.0";
+    expect(() => managedMessagingNestedOverridePaths(manifest, packages)).toThrow(
+      "managed messaging lockfile is missing override scope",
+    );
+  });
+
+  it("rejects an installed alias substitution even when its version matches", () => {
+    const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "managed-messaging-alias-test-"));
+    try {
+      writeInstalledOverrides(temporary);
+      const alias = nestedOverrideLocations.find((location) =>
+        location.endsWith("/node-domexception"),
+      );
+      expect(alias).toBeDefined();
+      writeInstalledVersion(
+        temporary,
+        alias!,
+        runtimeLock.packages[alias!].version,
+        "node-domexception",
+      );
       expect(() =>
         verifyManagedMessagingOfflineInstall(
           path.join(runtimeDirectory, "package-lock.json"),

@@ -1,0 +1,12 @@
+import fs from "node:fs";
+const CLIENT_IDENTITY = "openclaw-bundle-mcp";
+const BUNDLE_MCP_CATALOG_LIST_TIMEOUT_MS = 1e4;
+let bundleMcpCatalogListTimeoutMs;
+function getCatalogListTimeoutMs(rawServer, requestTimeoutMs) {
+	const record = asOptionalObjectRecord(rawServer);
+	const configured = ["requestTimeoutMs", "timeout"].some((key) => asPositiveFiniteNumber(record?.[key]) !== void 0);
+	return bundleMcpCatalogListTimeoutMs ?? (configured ? requestTimeoutMs : BUNDLE_MCP_CATALOG_LIST_TIMEOUT_MS);
+}
+function setBundleMcpCatalogListTimeoutMsForTest(timeoutMs) {
+	bundleMcpCatalogListTimeoutMs = typeof timeoutMs === "number" && Number.isFinite(timeoutMs) && timeoutMs > 0 ? Math.floor(timeoutMs) : void 0;
+}

@@ -19,7 +19,7 @@ import {
 import { makePreparedRecoveryManifest } from "./rebuild-flow-test-fixtures";
 import { enforceRemovedImmutabilityMigrationBoundary } from "../../state/migrations/removed-immutability";
 import type { SandboxRuntimeSnapshot } from "../../state/registry/runtime-snapshot";
-import { registry } from "../../../../test/helpers/rebuild-flow-harness";
+import { openClawLifecycle, registry } from "../../../../test/helpers/rebuild-flow-harness";
 
 const enforceRemovedImmutabilityMigrationBoundaryReal = enforceRemovedImmutabilityMigrationBoundary;
 
@@ -441,13 +441,17 @@ describe("rebuildSandbox flow: lifecycle", () => {
     expect(harness.registryUpdateSpy).toHaveBeenCalledWith("alpha", {
       agentVersion: "0.2.0",
     });
-    expect(harness.finishOpenClawMaintenanceWindowSpy).toHaveBeenCalledWith({
+    expect(openClawLifecycle.prepareUnregisteredOpenClawPostRestoreDoctor).toHaveBeenCalledWith({
       sandboxName: "alpha",
       kind: "backup",
       runtimeSelection: {
         gatewayName: "nemoclaw",
         workspace: "default",
       },
+    });
+    expect(harness.finishOpenClawMaintenanceWindowSpy).toHaveBeenCalledWith({
+      sandboxName: "alpha",
+      runtimeSelection: { gatewayName: "nemoclaw", workspace: "default" },
     });
     expect(harness.retireRemovedImmutabilityStateRecordSpy).toHaveBeenCalledWith(
       "alpha",

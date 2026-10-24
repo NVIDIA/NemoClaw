@@ -4,6 +4,7 @@
 import type { SandboxClient } from "./clients/sandbox.ts";
 import type { ShellProbeResult } from "./shell-probe.ts";
 import { captureOpenClawContainerFailure } from "./openclaw-container-diagnostics.ts";
+import type { HostCliClient } from "./clients/host.ts";
 
 const LOG_PATHS = ["/tmp/nemoclaw-start.log", "/tmp/gateway.log", "/tmp/auto-pair.log"];
 
@@ -64,6 +65,7 @@ export async function captureOpenClawOnboardFailure(
     env: NodeJS.ProcessEnv;
     redactionValues: readonly string[];
     runtime?: Parameters<typeof captureOpenClawContainerFailure>[0];
+    host?: Pick<HostCliClient, "command">;
   },
 ): Promise<void> {
   if (install.exitCode === 0) return;
@@ -88,6 +90,7 @@ export async function captureOpenClawOnboardFailure(
             options.artifactPrefix,
             probeOptions,
             buildOpenClawOnboardDiagnosticsCommand(),
+            options.host,
           ),
         ]
       : []),

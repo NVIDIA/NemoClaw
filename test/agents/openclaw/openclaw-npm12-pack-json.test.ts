@@ -45,6 +45,20 @@ function nativeResolverFixture(): string {
 export { resolveNpmJsonEntries as s };\n`;
 }
 
+function splitNativeResolverFixture(): string {
+  return `function resolveNpmJsonEntries(value) {
+  if (Array.isArray(value)) return value;
+  if (value && typeof value === "object") {
+    if (!("id" in value && typeof value.id === "string" || "name" in value && typeof value.name === "string" || "version" in value && typeof value.version === "string" || "filename" in value && typeof value.filename === "string")) {
+      const entries = Object.values(value).filter((entry) => Boolean(entry) && typeof entry === "object" && !Array.isArray(entry));
+      if (entries.length > 0) return entries;
+    }
+  }
+  return [value];
+}
+export { resolveNpmJsonEntries as s };\n`;
+}
+
 describe("OpenClaw npm 12 pack JSON compatibility", () => {
   it("accepts npm 12 keyed output without changing earlier npm output shapes", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-npm12-pack-json-"));
@@ -101,6 +115,59 @@ describe("OpenClaw npm 12 pack JSON compatibility", () => {
       fs.rmSync(root, { force: true, recursive: true });
     }
   });
+
+  it.each(["2026.9.5", "2026.10.5"])(
+    "validates the %s parser and rejects facade or resolver drift",
+    async (version) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-npm12-facade-"));
+      const source = path.join(root, "install-source-utils-parser.mjs");
+      const facade = path.join(root, "install-source-utils-facade.mjs");
+      const splitResolver = version === "2026.10.5";
+      const resolverName = splitResolver
+        ? "npm-json-output-fixture.mjs"
+        : "npm-registry-spec-fixture.mjs";
+      const resolver = path.join(root, resolverName);
+      try {
+        fs.writeFileSync(
+          source,
+          nativeParserFixture()
+            .replace(
+              "s as resolveNpmJsonEntries",
+              splitResolver
+                ? "s as resolveNpmJsonEntries"
+                : "x as unused, s as resolveNpmJsonEntries",
+            )
+            .replace("npm-registry-spec-fixture.js", resolverName) + "export { parse as s };\n",
+        );
+        const resolverSource = splitResolver
+          ? splitNativeResolverFixture()
+          : nativeResolverFixture() + "export const x = 1;\n";
+        fs.writeFileSync(resolver, resolverSource);
+        fs.writeFileSync(
+          facade,
+          'import { s as resolveNpmSpecMetadata } from "./install-source-utils-parser.mjs";\nexport { resolveNpmSpecMetadata };\n',
+        );
+        expect(patchOpenClawNpm12PackJson(root, version)).toBe("already-patched");
+        const { resolveNpmSpecMetadata } = (await import(pathToFileURL(facade).href)) as {
+          resolveNpmSpecMetadata(raw: string): unknown[];
+        };
+        const metadata = { name: "openclaw", version };
+        expect(resolveNpmSpecMetadata(JSON.stringify({ openclaw: metadata }))).toEqual([metadata]);
+        expect(resolveNpmSpecMetadata(JSON.stringify([metadata]))).toEqual([metadata]);
+        expect(resolveNpmSpecMetadata(JSON.stringify(metadata))).toEqual([metadata]);
+        expect(fs.readFileSync(resolver, "utf8")).toBe(resolverSource);
+        fs.writeFileSync(resolver, resolverSource.replace("Object.values", "Object.keys"));
+        expect(() => patchOpenClawNpm12PackJson(root, version)).toThrow(
+          /resolver shape is unsupported/,
+        );
+        fs.writeFileSync(resolver, resolverSource);
+        fs.appendFileSync(facade, "export const unexpected = true;\n");
+        expect(() => patchOpenClawNpm12PackJson(root, version)).toThrow(/facade/);
+      } finally {
+        fs.rmSync(root, { force: true, recursive: true });
+      }
+    },
+  );
 
   it("pins the two-file parser layout for OpenClaw 2026.3.11", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-npm12-2026-3-11-"));
@@ -168,11 +235,11 @@ describe("OpenClaw npm 12 pack JSON compatibility", () => {
 
     expect(dockerfile).toContain(`COPY scripts/lib/${script} /usr/local/lib/nemoclaw/npm12.mts`);
     expect(dockerfile).toContain(invocation);
-    expect(dockerfile.indexOf(invocation)).toBeLessThan(
-      dockerfile.indexOf(
-        'openclaw plugins install --force --accept-capabilities "npm-pack:${plugin_archive}"',
-      ),
+    const optionalInstallIndex = dockerfile.indexOf(
+      ". /scripts/lib/install-openclaw-optional-plugins.sh",
     );
+    expect(optionalInstallIndex).toBeGreaterThanOrEqual(0);
+    expect(dockerfile.indexOf(invocation)).toBeLessThan(optionalInstallIndex);
     expect(
       dockerfile.slice(dockerfile.indexOf(invocation), dockerfile.indexOf(invocation) + 250),
     ).toContain('"$OPENCLAW_VERSION"');

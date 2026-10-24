@@ -73,6 +73,8 @@ function stageOpenClawRuntimeGraphs(rootDir: string, buildCtx: string): void {
     "managed-image-messaging-runtime",
     "mcporter-runtime",
     "openclaw-runtime",
+    "openclaw-migration-2026.9.5-runtime",
+    "openclaw-migration-2026.9.7-runtime",
     "wechat-runtime",
   ]) {
     const sourceDir = path.join(sourceAgentDir, runtimeName);
@@ -411,6 +413,26 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedScriptsDir, "lib", "patch-openclaw-container-restart.mts"),
   );
   fs.copyFileSync(
+    path.join(rootDir, "scripts", "lib", "patch-openclaw-worker-proxy.mts"),
+    path.join(stagedScriptsDir, "lib", "patch-openclaw-worker-proxy.mts"),
+  );
+  for (const name of [
+    "patch-openclaw-worker-archive.py",
+    "patch-openclaw-worker-device-approval.mts",
+    "openclaw-device-patch-payloads.mts",
+    "openclaw-mcp-retry-payloads.mts",
+    "patch-openclaw-worker-mcp-reliability.mts",
+  ]) {
+    fs.copyFileSync(
+      path.join(rootDir, "scripts", "lib", name),
+      path.join(stagedScriptsDir, "lib", name),
+    );
+  }
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "lib", "patch-openclaw-explicit-proxy.mts"),
+    path.join(stagedScriptsDir, "lib", "patch-openclaw-explicit-proxy.mts"),
+  );
+  fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "patch-openclaw-agent-message-input.mts"),
     path.join(stagedScriptsDir, "lib", "patch-openclaw-agent-message-input.mts"),
   );
@@ -475,6 +497,27 @@ function stageOptimizedSandboxBuildContext(
   fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "reviewed-npm-archive.mts"),
     path.join(stagedScriptsDir, "lib", "reviewed-npm-archive.mts"),
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "lib", "verify-openclaw-official-plugin.mts"),
+    path.join(stagedScriptsDir, "lib", "verify-openclaw-official-plugin.mts"),
+  );
+  for (const file of [
+    "patch-bundled-npm-undici.mts",
+    "remediate-openclaw-runtime-dependencies.mts",
+    "install-openclaw-optional-plugins.sh",
+    "install-openclaw-migration-runtimes.sh",
+    "install-openclaw-cli-wrapper.sh",
+    "openclaw-legacy-session-admission.mts",
+  ]) {
+    fs.copyFileSync(
+      path.join(rootDir, "scripts", "lib", file),
+      path.join(stagedScriptsDir, "lib", file),
+    );
+  }
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "lib", "openclaw-legacy-migrations.mts"),
+    path.join(stagedScriptsDir, "lib", "openclaw-legacy-migrations.mts"),
   );
   fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "reviewed-npm-identity.mts"),

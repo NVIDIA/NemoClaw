@@ -5,6 +5,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import vm from "node:vm";
+import { patchOpenClawWorkerArchiveModule } from "../../../scripts/lib/patch-openclaw-worker-proxy.mts";
+import { OPENCLAW_WORKER_ARCHIVE_SOURCE } from "../../fixtures/openclaw-worker-proxy";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -102,4 +104,92 @@ describe("OpenClaw secondary-agent main-session delete compatibility patch", () 
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
+});
+
+const fixture105 = (name: string) =>
+  fs.readFileSync(new URL(`./fixtures/${name}.js.txt`, import.meta.url), "utf8");
+
+describe("OpenClaw 2026.10.5 session deletion", () => {
+  it("leaves the main module unchanged when its worker archive is absent", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-session-delete-archive-"));
+    const dist = path.join(root, "dist");
+    fs.mkdirSync(dist);
+    fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ version: "2026.10.5" }));
+    const modulePath = path.join(dist, "sessions-delete-fixture.mjs");
+    const source = fixture105("secondary-main-session-10.5");
+    fs.writeFileSync(modulePath, source);
+    try {
+      expect(() => patchOpenClawSecondaryAgentMainSessionDelete(dist)).toThrow(
+        /Unreviewed worker archive layout/,
+      );
+      expect(fs.readFileSync(modulePath, "utf8")).toBe(source);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each(["main", "embedded", "split"])(
+    "preserves primary protection in the %s module",
+    (layout) => {
+      const body = fixture105(
+        layout === "main"
+          ? "secondary-main-session-10.5"
+          : `secondary-main-session-worker-${layout}-10.5`,
+      );
+      const scaffold = `function rejectsDelete(canonicalKey, protectedGlobalAgentId, selectedGlobal = false) {
+      const target = { canonicalKey }, cfg = {}, isSelectedNonDefaultGlobal = selectedGlobal;
+      const parseAgentSessionKey = (key) => { const match = /^agent:([^:]+):/.exec(key); return match ? { agentId: match[1] } : undefined; };
+      const normalizeAgentId = (value) => value.toLowerCase();
+      const isAgentMainSessionKey = (_cfg, key) => /^agent:[^:]+:main$/.test(key);
+      const invalidSessionRequest = () => true;
+      const xr=target, Ln=cfg, Hr=protectedGlobalAgentId, Si=selectedGlobal;
+      const x=target, m=cfg, O=protectedGlobalAgentId, M=selectedGlobal;
+      const s=parseAgentSessionKey, a=normalizeAgentId, ue=isAgentMainSessionKey, te=invalidSessionRequest;
+      ${layout === "main" ? body : "let " + body}
+      return false;
+    }`;
+      const source =
+        layout === "embedded"
+          ? OPENCLAW_WORKER_ARCHIVE_SOURCE + ";" + scaffold.replace("rejectsDelete", "actualDelete")
+          : scaffold;
+      // The embedded proxy fixture carries its own passive delete expression.
+      const input =
+        layout === "embedded"
+          ? source.replace(/function sessionDeletion\(\)\{[^\n]*\}/, "")
+          : source;
+      const patched =
+        layout === "main"
+          ? patchSecondaryAgentMainSessionDeleteText(input, "sessions-delete.mjs").text
+          : patchOpenClawWorkerArchiveModule(
+              input,
+              layout === "split" ? "worker-chunk-DjEXxQHh.mjs" : "sqlite-store.worker.mjs",
+            ).text;
+      const functionName = layout === "embedded" ? "actualDelete" : "rejectsDelete";
+      const evaluate = (text: string) =>
+        vm.runInNewContext(`${text};${functionName}`, {}) as (
+          key: string,
+          owner: string,
+          selected?: boolean,
+        ) => boolean;
+      expect(evaluate(input)("agent:work:main", "main")).toBe(true);
+      const rejects = evaluate(patched);
+      expect(rejects("agent:main:main", "main")).toBe(true);
+      expect(rejects("agent:MAIN:main", "main")).toBe(true);
+      expect(rejects("agent:work:main", "main")).toBe(false);
+      expect(rejects("agent:work:scratch", "main")).toBe(false);
+      expect(rejects("global", "main")).toBe(true);
+      expect(rejects("global", "main", true)).toBe(false);
+      const module = layout === "split" ? "worker-chunk-DjEXxQHh.mjs" : "sqlite-store.worker.mjs";
+      const patch = (text: string) =>
+        layout === "main"
+          ? patchSecondaryAgentMainSessionDeleteText(text, "sessions-delete.mjs")
+          : patchOpenClawWorkerArchiveModule(text, module);
+      const drifted =
+        layout === "main"
+          ? input.replace("&& !isSelectedNonDefaultGlobal", "&& false")
+          : input + input;
+      expect(patch(patched).text).toBe(patched);
+      expect(() => patch(drifted)).toThrow(layout === "main" ? undefined : /Unreviewed/);
+    },
+  );
 });

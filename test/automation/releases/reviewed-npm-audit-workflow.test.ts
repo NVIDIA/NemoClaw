@@ -201,6 +201,7 @@ if (args[0] === "ci") {
   }
 }
 if (args[0] === "install" && !fs.existsSync("package-lock.json")) {
+  fs.mkdirSync("node_modules", { recursive: true });
   const manifest = JSON.parse(fs.readFileSync("package.json", "utf8"));
   fs.writeFileSync("package-lock.json", JSON.stringify({ ...manifest, lockfileVersion: 3, packages: { "": manifest } }));
 }
@@ -353,14 +354,13 @@ describe("trusted npm audit workflow (#5896)", () => {
   });
 
   it("records the selected replacement identity in locked-graph audit provenance", () => {
-    const graph = REVIEWED_AUDIT_CONFIG.lockedGraphs.find(({ id }) => id === "openclaw-runtime")!;
     const fixture = runConsolidatedAuditFixture(
       () => {},
       undefined,
       0,
       0,
       REVIEWED_AUDIT_CONFIG.npmVersion,
-      openClawReplacementGraphFixture(REPO_ROOT, graph),
+      openClawReplacementGraphFixture(REPO_ROOT),
     );
 
     expect(fixture.result.status, fixture.result.stderr.toString()).toBe(0);
@@ -527,11 +527,11 @@ describe("trusted npm audit workflow (#5896)", () => {
       fs.readFileSync(path.join(REPO_ROOT, "ci", "reviewed-npm-audit.json"), "utf-8"),
     );
     expect(config.archivePackages.map(({ packageSpec }) => packageSpec)).toContain(
-      "@openclaw/googlechat@2026.9.5",
+      "@openclaw/googlechat@2026.10.5",
     );
     expect(
       config.archivePackages.some(
-        ({ packageSpec }) => packageSpec === "@tencent-weixin/openclaw-weixin@2.4.9",
+        ({ packageSpec }) => packageSpec === "@tencent-weixin/openclaw-weixin@2.4.10",
       ),
     ).toBe(true);
     expect(config.lockedGraphs).toContainEqual(
@@ -539,7 +539,7 @@ describe("trusted npm audit workflow (#5896)", () => {
         id: "wechat-runtime",
         inputValidation: "wechat-runtime",
         installMode: "legacy-peer-deps",
-        lockSha256: "84f2b731e9ffe731d29c28ebbe795116217771971c729b577df1a8816296f9b8",
+        lockSha256: "128880428a7929f4dccec034418ff4290513ad728f8af12fbf1d3536cb468803",
         severityThreshold: "low",
         signatureAudit: "retry-download-failures",
       }),

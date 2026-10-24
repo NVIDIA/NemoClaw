@@ -10,7 +10,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const VERSION = "2026.9.2";
+const VERSIONS = ["2026.9.1", "2026.9.5", "2026.10.5"];
 const MARKER = "// nemoclaw: reload sandbox plugins with a fresh process image";
 const ORIGINAL = `\treturn {
 \t\tmode: "disabled",
@@ -25,10 +25,34 @@ const REPLACEMENT = `\t${MARKER}
 \t}
 ${ORIGINAL}`;
 
-export function patchContainerRestart(source: string): string {
+const DECISION_BOUNDARY = `\tconst decision = opts.decision ?? resolveGatewayRestartDecision();
+\tif (decision.mode === "disabled") return decision.reason === "no-respawn" ? { mode: "disabled" } : {
+\t\tmode: "disabled",
+\t\tdetail: decision.detail
+\t};`;
+const DECISION_REPLACEMENT = DECISION_BOUNDARY.replace(
+  '\n\tif (decision.mode === "disabled")',
+  `
+\t${MARKER}
+\tif (decision.mode === "disabled" && decision.reason === "unmanaged" && process.platform === "linux" && process.env.OPENSHELL_SANDBOX === "1") {
+\t\tif (typeof process.execve !== "function") throw new Error("OpenClaw sandbox restart requires process.execve");
+\t\t// OpenShell Node bootstrap arguments are single-use; replay only application argv.
+\t\tprocess.execve(process.execPath, process.argv, { ...process.env, ...opts.env });
+\t\tthrow new Error("OpenClaw sandbox process replacement unexpectedly returned");
+\t}
+\tif (decision.mode === "disabled")`,
+);
+
+export function patchContainerRestart(source: string, version = "2026.9.5"): string {
+  if (!VERSIONS.includes(version)) throw new Error(`Unsupported OpenClaw version: ${version}`);
+  const current = version === "2026.10.5";
+  const boundary = current ? DECISION_BOUNDARY : ORIGINAL;
+  const replacement = current ? DECISION_REPLACEMENT : REPLACEMENT;
   const matches = [
     ...source.matchAll(
-      /function restartGatewayProcessWithFreshPid\(_opts = \{\}\) \{[\s\S]*?\n\}/gu,
+      current
+        ? /function restartGatewayProcessWithFreshPid\(opts = \{\}\) \{[\s\S]*?\n\}/gu
+        : /function restartGatewayProcessWithFreshPid\(_opts = \{\}\) \{[\s\S]*?\n\}/gu,
     ),
   ];
   if (matches.length !== 1) throw new Error("Expected one native gateway restart function");
@@ -36,17 +60,17 @@ export function patchContainerRestart(source: string): string {
   if (source.includes(MARKER)) {
     if (
       source.split(MARKER).length !== 2 ||
-      originalFunction.split(REPLACEMENT).length !== 2 ||
-      originalFunction.split(ORIGINAL).length !== 2
+      originalFunction.split(replacement).length !== 2 ||
+      originalFunction.replace(replacement, "").includes(boundary)
     ) {
       throw new Error("Incomplete OpenClaw container restart patch");
     }
     return source;
   }
-  if (originalFunction.split(ORIGINAL).length !== 2) {
+  if (originalFunction.split(boundary).length !== 2) {
     throw new Error("Unrecognized OpenClaw container restart boundary");
   }
-  const patchedFunction = originalFunction.replace(ORIGINAL, () => REPLACEMENT);
+  const patchedFunction = originalFunction.replace(boundary, () => replacement);
   return source.replace(originalFunction, () => patchedFunction);
 }
 
@@ -85,16 +109,68 @@ export function patchHostSafeRestart(source: string): string {
   );
 }
 
+const PROXY_SHUTDOWN_MARKER = "// nemoclaw: let the gateway finish shutdown before proxy exit";
+const PROXY_SHUTDOWN_TARGET =
+  "\t\tunregisterProxySignalExitBarrier = registerSignalExitBarrier(stopStartedProxy);\n\t\tconst shutdown = (exitCode) => {";
+const PROXY_SHUTDOWN_REPLACEMENT = `\t\tunregisterProxySignalExitBarrier = registerSignalExitBarrier(stopStartedProxy);
+\t\t${PROXY_SHUTDOWN_MARKER}
+\t\tif (isGatewayRunInvocation) {
+\t\t\tonExit = () => killStartedProxy();
+\t\t\tprocess$1.once("exit", onExit);
+\t\t\treturn;
+\t\t}
+\t\tconst shutdown = (exitCode) => {`;
+
+// In 2026.9.5 the CLI proxy's signal handler exits while the gateway is still
+// closing its server, leaving its owner lease in a reused managed state volume.
+// Keep proxy cleanup registered, with process exit owned by the gateway lifecycle.
+export function patchGatewayProxyShutdown(source: string, version = "2026.9.5"): string {
+  if (!["2026.9.5", "2026.10.5"].includes(version))
+    throw new Error(`Unsupported OpenClaw proxy shutdown version: ${version}`);
+  const current = version === "2026.10.5";
+  const guard = current
+    ? "\t\tif (!proxyHandle || proxySignalHandlers.length > 0) return;\n"
+    : "\t\tif (!proxyHandle || onSigterm || onSigint || onExit) return;\n";
+  const target = guard + PROXY_SHUTDOWN_TARGET;
+  const replacement =
+    guard +
+    (current
+      ? PROXY_SHUTDOWN_REPLACEMENT.replace(
+          '\t\t\tonExit = () => killStartedProxy();\n\t\t\tprocess$1.once("exit", onExit);',
+          '\t\t\tproxySignalHandlers = [["exit", killStartedProxy]];\n\t\t\tfor (const [signal, handler] of proxySignalHandlers) process$1.once(signal, handler);',
+        )
+      : PROXY_SHUTDOWN_REPLACEMENT);
+  const matches = [
+    ...source.matchAll(/\tconst installProxySignalHandlers = \(\) => \{[\s\S]*?\n\t\};/gu),
+  ];
+  if (matches.length !== 1) throw new Error("Expected one native proxy signal installer");
+  const original = matches[0]![0];
+  if (source.includes(PROXY_SHUTDOWN_MARKER)) {
+    if (
+      source.split(PROXY_SHUTDOWN_MARKER).length !== 2 ||
+      original.split(replacement).length !== 2 ||
+      original.replace(replacement, "").includes(target)
+    ) {
+      throw new Error("Incomplete OpenClaw gateway proxy shutdown patch");
+    }
+    return source;
+  }
+  if (original.split(target).length !== 2) {
+    throw new Error("Unrecognized OpenClaw proxy shutdown boundary");
+  }
+  return source.replace(original, () => original.replace(target, () => replacement));
+}
+
 export function patchOpenClawContainerRestart(distDir: string, audit = false): void {
   const metadata = JSON.parse(fs.readFileSync(path.join(distDir, "..", "package.json"), "utf8"));
   // The Dockerfile restricts these pins to explicitly selected legacy E2E fixtures.
   if (["2026.3.11", "2026.4.24"].includes(metadata.version)) return;
-  if (metadata.version !== VERSION && metadata.version !== "2026.9.1") {
+  if (!VERSIONS.includes(metadata.version)) {
     throw new Error(`Unsupported OpenClaw version: ${metadata.version}`);
   }
   const safeRestartFiles = fs
     .readdirSync(distDir)
-    .filter((name) => name.startsWith("lifecycle-") && name.endsWith(".js"))
+    .filter((name) => name.startsWith("lifecycle-") && /\.m?js$/u.test(name))
     .map((name) => path.join(distDir, name))
     .filter((file) =>
       fs.readFileSync(file, "utf8").includes("async function runSafeGatewayRestart("),
@@ -103,9 +179,17 @@ export function patchOpenClawContainerRestart(distDir: string, audit = false): v
   const patches = [
     {
       target: path.join(distDir, "cli", "gateway-lifecycle.runtime.js"),
-      patch: patchContainerRestart,
+      patch: (source: string) => patchContainerRestart(source, metadata.version),
     },
     { target: safeRestartFiles[0]!, patch: patchHostSafeRestart },
+    ...(metadata.version !== "2026.9.1"
+      ? [
+          {
+            target: path.join(distDir, "cli", "run-main.js"),
+            patch: (source: string) => patchGatewayProxyShutdown(source, metadata.version),
+          },
+        ]
+      : []),
   ].map(({ target, patch }) => {
     const source = fs.readFileSync(target, "utf8");
     return { target, source, patched: patch(source) };

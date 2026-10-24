@@ -1,0 +1,15 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+function assertNoRetiredRuntimeStateFiles(stateDir, env = process.env, homedir = os.homedir) {
+	const defaultStateDir = path.join(resolveRequiredHomeDir(env, homedir), ".openclaw");
+	assertNoRetiredStateFiles("Runtime JSON sidecars", [
+		path.join(stateDir, "acp", "event-ledger.json"),
+		path.join(stateDir, "acp", "event-ledger.json.doctor-import"),
+		path.join(stateDir, "settings", "voicewake.json"),
+		path.join(stateDir, "settings", "voicewake-routing.json"),
+		path.join(stateDir, "bindings", "current-conversations.json"),
+		...path.resolve(stateDir) === path.resolve(defaultStateDir) ? [path.join(defaultStateDir, "plugin-binding-approvals.json")] : []
+	]);
+	assertNoRetiredRestartSentinelFiles(stateDir);
+}

@@ -710,7 +710,7 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
     try {
       [
         ...dockerfile.matchAll(
-          /^COPY (src\/lib\/messaging\/|scripts\/lib\/(?:openclaw-npm-remediation|reviewed-npm-archive)\.mts) (\/\S+)$/gm,
+          /^COPY (src\/lib\/messaging\/|scripts\/lib\/(?:openclaw-npm-remediation|reviewed-npm-archive|verify-openclaw-official-plugin)\.mts) (\/\S+)$/gm,
         ),
       ].forEach((copy) => {
         const source = copy[1] ?? "";
@@ -1081,7 +1081,7 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
       const expectedMessage =
         scenario === "untrusted provenance"
           ? "OpenClaw official npm plugin slack did not retain trusted exact registry provenance"
-          : "OpenClaw Slack remediation requires a valid managed npm package directory and reviewed dependency graph";
+          : "OpenClaw plugin remediation requires a valid managed npm package directory and reviewed dependency graph";
       expect(failure).toThrow(expect.objectContaining({ message: expectedMessage }));
 
       expect(fs.readFileSync(sentinel, "utf8")).toBe("original");
@@ -1105,8 +1105,8 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
       "@openclaw/slack@2026.9.1": OPENCLAW_SLACK_2026_9_1_TARBALL,
       "@openclaw/whatsapp@2026.9.1":
         "https://registry.npmjs.org/@openclaw/whatsapp/-/whatsapp-2026.9.1.tgz",
-      "@tencent-weixin/openclaw-weixin@2.4.9":
-        "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.9.tgz",
+      "@tencent-weixin/openclaw-weixin@2.4.10":
+        "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.10.tgz",
     });
   });
 
@@ -1244,6 +1244,7 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
             OPENCLAW_SLACK_INTEGRITY: OPENCLAW_SLACK_2026_9_1_INTEGRITY,
             OPENCLAW_PACK_INTEGRITY_OVERRIDE: OPENCLAW_SLACK_2026_9_1_INTEGRITY,
             OPENCLAW_PACK_FILENAME_OVERRIDE: "../slack-2026.9.1.tgz",
+            TMPDIR: tmp,
             OPENCLAW_VERSION: "2026.9.1",
             NEMOCLAW_MESSAGING_CHANNELS_B64: channelsB64(["slack"]),
           },

@@ -88,6 +88,40 @@ describe("OpenClaw onboarding failure diagnostics", () => {
     expect(sandbox.exec).toHaveBeenCalledTimes(2);
   });
 
+  it("retains routing failure evidence when container discovery is unavailable", async () => {
+    const sandbox = clients();
+    const runtime = {
+      resolveSandboxResourceHandle: vi.fn().mockRejectedValue(new Error("runtime unavailable")),
+      command: vi.fn(),
+    };
+    const result = Object.freeze({ exitCode: 1 });
+    const artifactPrefix = "tc-inf-11-inference-set-https-pin-endpoint";
+    await expect(
+      captureOpenClawOnboardFailure(result, sandbox, { ...options, artifactPrefix, runtime }),
+    ).resolves.toBeUndefined();
+    expect(runtime.resolveSandboxResourceHandle).toHaveBeenCalledWith(
+      options.sandboxName,
+      expect.objectContaining({
+        env: options.env,
+        redactionValues: options.redactionValues,
+        timeoutMs: 15000,
+        killGraceMs: 1000,
+        captureLimitBytes: 65536,
+        artifactName: `${artifactPrefix}-failure-container-id`,
+      }),
+    );
+    expect(runtime.command).not.toHaveBeenCalled();
+    expect(sandbox.openshell.mock.calls.map(([, probe]) => probe.artifactName)).toEqual([
+      `${artifactPrefix}-failure-status`,
+      `${artifactPrefix}-failure-openshell-logs`,
+    ]);
+    expect(sandbox.exec.mock.calls.map(([, , probe]) => probe.artifactName)).toEqual([
+      `${artifactPrefix}-failure-startup-logs`,
+      `${artifactPrefix}-failure-health`,
+    ]);
+    expect(result.exitCode).toBe(1);
+  });
+
   it("redacts JSON-escaped quotes, backslashes and newlines from log output", async () => {
     const sandbox = clients();
     const secret = 'short"value\\with\na-newline';

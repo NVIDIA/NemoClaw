@@ -1504,6 +1504,22 @@ function applyAdapter(
   if (mapped.agent !== context.agent) {
     fail(`mapped ${mapped.agent} environment for ${context.agent}`);
   }
+  if (context.agent === "openclaw") {
+    // A replacement can retain a fresh native owner from another PID namespace.
+    // Prove it has ended before the generator or validator opens restored state.
+    execute(
+      [
+        "/usr/local/bin/node",
+        "/usr/local/lib/nemoclaw/openclaw-legacy-migrations.mts",
+        "--wait-gateway-executable",
+        "/usr/local/bin/openclaw",
+        "2026.10.5",
+      ],
+      "sandbox",
+      mapped.configurationEnvironment,
+      mapped.applicationRuntime,
+    );
+  }
   const commandPlan = buildManagedStartupImageActionPlan({
     agent: mapped.agent,
     actions: mapped.actions,

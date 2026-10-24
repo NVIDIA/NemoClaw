@@ -327,6 +327,47 @@ await runRealOpenClawAgentReloadProof({
         false,
         240_000,
       );
+      // Require the native legacy-backup proof on both image architectures,
+      // using the pinned migration runtimes and coordinator shipped in the image.
+      const migrationProof = "/tmp/openclaw-real-legacy-migration-proof.ts";
+      docker([
+        "cp",
+        fileURLToPath(
+          new URL("../../test/helpers/openclaw-real-legacy-migration-proof.ts", import.meta.url),
+        ),
+        `${containerId}:${migrationProof}`,
+      ]);
+      docker(
+        [
+          "exec",
+          "--user",
+          "sandbox",
+          containerId,
+          "/usr/local/bin/node",
+          "--input-type=module",
+          "-e",
+          `import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { proveRealLegacyMigrationBridges } from '${migrationProof}';
+const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nemoclaw-migration-proof-'));
+try {
+  proveRealLegacyMigrationBridges({
+    home,
+    nodeExecutable: process.execPath,
+    runtime95: '/usr/local/lib/nemoclaw/openclaw-migrations/2026.9.5/node_modules/openclaw',
+    runtime97: '/usr/local/lib/nemoclaw/openclaw-migrations/2026.9.7/node_modules/openclaw',
+    targetRuntime: '/usr/local/lib/nemoclaw/openclaw-runtime/node_modules/openclaw',
+    migrationRunner: '/usr/local/lib/nemoclaw/openclaw-legacy-migrations.mts',
+  });
+} finally {
+  fs.rmSync(home, { recursive: true, force: true });
+}`,
+        ],
+        false,
+        1_500_000,
+      );
+      process.stdout.write(`Native legacy migration proof passed for ${input.platform}.\n`);
     }
     process.stdout.write(
       `Direct exact-image authenticated startup hold passed for ${input.agent} on ${input.platform}.\n`,

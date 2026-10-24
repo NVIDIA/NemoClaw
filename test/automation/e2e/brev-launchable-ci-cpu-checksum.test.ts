@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
+import { bootstrapInstallSudoArgs } from "../../e2e/fixtures/bootstrap-install-command.ts";
 
 const SCRIPT = path.join(import.meta.dirname, "../../..", "scripts", "brev-launchable-ci-cpu.sh");
 const NPM_DIAGNOSTICS_HELPER = path.join(
@@ -385,6 +386,61 @@ function combinedLaunchableOutput(result: ReturnType<typeof spawnSync>, launchLo
 }
 
 describe("brev-launchable-ci-cpu.sh OpenShell checksum gate", { timeout: 30_000 }, () => {
+  it.each([
+    { label: "defaults", env: {}, expectedPull: "1", expectedChannel: "stable" },
+    {
+      label: "selected options",
+      env: { SKIP_DOCKER_PULL: "0", NEMOCLAW_OPENSHELL_CHANNEL: "staging" },
+      expectedPull: "0",
+      expectedChannel: "staging",
+    },
+  ])("preserves bootstrap $label across a cleared sudo environment", (fixture) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-bootstrap-env-"));
+    try {
+      const script = path.join(root, "bootstrap probe.sh");
+      const cloneDir = path.join(root, "candidate $(printf wrong) ' checkout");
+      const installLog = path.join(root, "bootstrap log.txt");
+      fs.writeFileSync(
+        script,
+        [
+          "set -eu",
+          'printf "%s\\n" "$LAUNCH_LOG" "$NEMOCLAW_CLONE_DIR" "$NEMOCLAW_REF"',
+          'printf "%s\\n" "$SKIP_DOCKER_PULL" "$NEMOCLAW_OPENSHELL_CHANNEL"',
+          'printf "%s\\n" "${NVIDIA_INFERENCE_API_KEY-unset}" "${GH_TOKEN-unset}"',
+        ].join("\n"),
+      );
+      const args = bootstrapInstallSudoArgs({
+        script,
+        cloneDir,
+        installLog,
+        env: {
+          ...fixture.env,
+          NVIDIA_INFERENCE_API_KEY: "fixture-inference-secret",
+          GH_TOKEN: "fixture-github-secret",
+        },
+      });
+      expect(args.slice(0, 2)).toEqual(["-n", "env"]);
+      expect(args.join("\0")).not.toMatch(/fixture-(inference|github)-secret/u);
+      // Emulate sudo's cleared environment without elevating the test process.
+      const result = spawnSync("env", ["-i", "PATH=/usr/bin:/bin", ...args.slice(2)], {
+        encoding: "utf8",
+        timeout: 5_000,
+      });
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout.trimEnd().split("\n")).toEqual([
+        installLog,
+        cloneDir,
+        "main",
+        fixture.expectedPull,
+        fixture.expectedChannel,
+        "unset",
+        "unset",
+      ]);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("fits within Brev's lifecycle setup-script limit", () => {
     expect(fs.statSync(SCRIPT).size).toBeLessThanOrEqual(BREV_LIFECYCLE_SCRIPT_MAX_BYTES);
   });

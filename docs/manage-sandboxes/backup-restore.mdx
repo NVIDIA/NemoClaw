@@ -29,6 +29,19 @@ Most lifecycle operations do not need a backup or restore step. When `$$nemoclaw
 3. Clear the replacement's fresh native home/workspace and restore the complete archive.
 4. Validate the replacement before retiring the temporary handoff.
 
+<AgentOnly variant="openclaw">
+
+NemoClaw checks restored OpenClaw state before running the pinned `2026.9.5` and `2026.9.7` migration runtimes.
+It runs each runtime only when the database schemas and recorded writer version are compatible with that runtime.
+It skips an intermediate runtime when the restored state is too new for it.
+If legacy JSON sessions coexist with populated SQLite sessions, restoration stops and keeps the gateway stopped.
+Incompatible retained Telegram state also stops restoration.
+The original backup remains available for recovery.
+Restore a consistent backup or reconcile the incompatible state before retrying.
+Keep the original host backup until you verify the restored sandbox.
+
+</AgentOnly>
+
 OpenClaw's `gateway.auth` value and Hermes's `.hermes/.env` `API_SERVER_KEY` are machine-local. NemoClaw leaves both live source files unchanged, omits those values only from the private archive copy, and lets the replacement establish fresh local authority. Existing OpenClaw device and scope approvals do not transfer; approve the replacement's fresh pairing or scope-upgrade request when prompted. NemoClaw also removes credential fields from OpenClaw credential, device, identity, pairing, and pending-state JSON; replaces the archived OpenClaw device identity with a fresh non-secret identity; and removes credential fields from Hermes configuration and configuration backups. An invalid or uninspectable recognized authority file stops the transfer instead of being copied unchanged.
 
 For OpenClaw NVIDIA Endpoints, NemoClaw preserves `${NVIDIA_INFERENCE_API_KEY}` only in the generated `inference` provider entry for `https://integrate.api.nvidia.com/v1`. This reference is not a raw credential. A different provider, endpoint, or value stops the transfer.

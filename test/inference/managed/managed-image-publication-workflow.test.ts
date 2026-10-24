@@ -212,7 +212,7 @@ describe("complete managed-image publication workflow", () => {
       step(managedPublisher(managedWorkflow), "Validate exact managed image before promotion")
         .run ?? "";
     expect(validationRun).not.toContain('path.join(projectsRoot, entry.name, "package.json")');
-    expect(validationRun).toContain('tavily: ["@openclaw/tavily-plugin", "2026.9.2"]');
+    expect(validationRun).toContain('tavily: ["@openclaw/tavily-plugin", "2026.10.5"]');
     expect(validationRun).not.toContain("uninstalled OpenClaw plugin tavily");
     const channelGuardEnd = validationRun.indexOf("managed OpenClaw channel");
     const channelGuardStart = validationRun.lastIndexOf("for (const id of [", channelGuardEnd);
@@ -473,6 +473,7 @@ describe("complete managed-image publication workflow", () => {
         ".github/actions/ci-reviewed-npm-audit/**",
         "ci/reviewed-npm-audit.json",
         "test/helpers/openclaw-real-agent-reload-proof.ts",
+        "test/helpers/openclaw-real-legacy-migration-proof.ts",
       ]),
     );
     expect(reviewedAudit).toMatchObject({
@@ -797,6 +798,7 @@ describe("complete managed-image publication workflow", () => {
     expect(baseImagePaths).toEqual(
       expect.arrayContaining([
         "test/helpers/openclaw-real-agent-reload-proof.ts",
+        "test/helpers/openclaw-real-legacy-migration-proof.ts",
         "test/e2e/fixtures/gateway-runtime-start.ts",
         "test/e2e/fixtures/phases/lifecycle.ts",
       ]),
