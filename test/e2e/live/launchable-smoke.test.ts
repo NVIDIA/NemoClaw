@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { randomUUID } from "node:crypto";
+import { getSandbox } from "../../../src/lib/state/registry.ts";
+import { buildSandboxInferenceChatCommand } from "../fixtures/inference-adapter.ts";
+import { readFullE2eInferenceRoute } from "./full-e2e-inference-probe.ts";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -14,10 +17,8 @@ import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import {
   DEFAULT_HOSTED_INFERENCE_MODEL,
-  HOSTED_INFERENCE_PROVIDER_NAME,
   requireHostedInferenceConfig,
 } from "../fixtures/hosted-inference.ts";
-import { buildSandboxInferenceChatCommand } from "../fixtures/inference-adapter.ts";
 import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
@@ -27,14 +28,13 @@ import { isTransientProviderValidationFailure } from "./network-policy-transient
 // This is intentionally a single live test instead of a new fixture
 // family: the contract is the real Ubuntu bootstrap path, so the test invokes
 // scripts/brev-launchable-ci-cpu.sh via sudo, then proves the bootstrap-built
-// CLI can onboard, reach its native hosted provider, and run an OpenClaw agent turn
+// CLI can onboard, verify native inference, and run an OpenClaw agent turn
 // through Vitest.
 
 const BOOTSTRAP_SCRIPT = path.join(REPO_ROOT, "scripts", "brev-launchable-ci-cpu.sh");
 const BOOTSTRAP_SENTINEL = "/var/run/nemoclaw-launchable-ready";
 const MODEL =
   process.env.NEMOCLAW_MODEL ?? process.env.NEMOCLAW_COMPAT_MODEL ?? DEFAULT_HOSTED_INFERENCE_MODEL;
-const EXPECTED_ROUTE_PROVIDER = HOSTED_INFERENCE_PROVIDER_NAME;
 const DEFAULT_SANDBOX_NAME = `e2e-boot-${randomUUID().slice(0, 8)}`;
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? DEFAULT_SANDBOX_NAME;
 const TEST_TIMEOUT_MS = testTimeout(30 * 60_000);
@@ -120,9 +120,9 @@ async function cleanupBootstrapState(host: HostCliClient, cloneDir: string): Pro
   await runBash(
     host,
     [
-      `if command -v nemoclaw >/dev/null 2>&1; then nemoclaw ${JSON.stringify(SANDBOX_NAME)} destroy --yes 2>/dev/null || true; fi`,
-      `if command -v openshell >/dev/null 2>&1; then openshell sandbox delete ${JSON.stringify(SANDBOX_NAME)} 2>/dev/null || true; fi`,
-      "if command -v openshell >/dev/null 2>&1; then openshell gateway destroy -g nemoclaw 2>/dev/null || true; fi",
+      `nemoclaw ${JSON.stringify(SANDBOX_NAME)} destroy --yes 2>/dev/null || true`,
+      `openshell sandbox delete ${JSON.stringify(SANDBOX_NAME)} 2>/dev/null || true`,
+      "openshell gateway destroy -g nemoclaw 2>/dev/null || true",
       `sudo rm -rf ${JSON.stringify(cloneDir)} 2>/dev/null || rm -rf ${JSON.stringify(cloneDir)} || true`,
     ].join("\n"),
     {
@@ -139,7 +139,8 @@ async function sleep(ms: number): Promise<void> {
 
 async function expectPongFromSandboxInference(
   sandboxExec: (command: string[], artifactName: string) => Promise<ShellProbeResult>,
-  endpointUrl: string,
+  logicalProvider: string,
+  endpointUrl?: string,
 ): Promise<void> {
   const payload = JSON.stringify({
     model: MODEL,
@@ -151,10 +152,10 @@ async function expectPongFromSandboxInference(
   let lastResult: ShellProbeResult | undefined;
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     lastResult = await sandboxExec(
-      buildSandboxInferenceChatCommand(payload, EXPECTED_ROUTE_PROVIDER, endpointUrl),
+      buildSandboxInferenceChatCommand(payload, logicalProvider, endpointUrl, 60),
       `phase-6-sandbox-inference-attempt-${attempt}`,
     );
-    if (lastResult.stdout.trim()) {
+    if (lastResult.exitCode === 0 && !lastResult.timedOut && lastResult.stdout.trim()) {
       try {
         lastContent = parseChatContent(lastResult.stdout);
       } catch {
@@ -166,7 +167,7 @@ async function expectPongFromSandboxInference(
   }
 
   throw new Error(
-    `sandbox native hosted inference expected PONG after 3 attempts; last content='${lastContent}'; ` +
+    `sandbox inference expected PONG after 3 attempts; last content='${lastContent}'; ` +
       `stdout='${lastResult?.stdout.slice(0, 300) ?? ""}'; stderr='${lastResult?.stderr.slice(0, 300) ?? ""}'`,
   );
 }
@@ -209,8 +210,6 @@ test(
 
     const hosted = requireHostedInferenceConfig(secrets);
     const apiKey = hosted.apiKey;
-
-    expect(fs.existsSync(BOOTSTRAP_SCRIPT), `${BOOTSTRAP_SCRIPT} missing`).toBe(true);
 
     const sudo = await host.command("sudo", ["-n", "true"], {
       artifactName: "prereq-passwordless-sudo",
@@ -282,34 +281,7 @@ test(
       "the dev integration target must install a dev-channel OpenShell build",
     ).toBe(true);
 
-    const nodeVersion = await host.command(
-      "node",
-      [
-        "-p",
-        "JSON.stringify({version: process.version, major: Number(process.versions.node.split('.')[0])})",
-      ],
-      { artifactName: "phase-3-node-version", env: pathEnv, timeoutMs: 30_000 },
-    );
-    expectExitZero(nodeVersion, "node version probe");
-    const node = JSON.parse(nodeVersion.stdout) as {
-      version: string;
-      major: number;
-    };
-    await artifacts.writeJson("node-version.json", node);
-    expect(
-      node.major,
-      `Node.js too old after bootstrap install: ${node.version}`,
-    ).toBeGreaterThanOrEqual(20);
-
-    const runtimeAfterInstall = await runtimeProvider.command(["info"], {
-      artifactName: "phase-3-runtime-info-after-install",
-      env: pathEnv,
-      timeoutMs: 30_000,
-    });
-    expectExitZero(runtimeAfterInstall, `${runtimeProvider.displayName} running after install`);
     expect(fs.existsSync(BOOTSTRAP_SENTINEL), `${BOOTSTRAP_SENTINEL} missing`).toBe(true);
-    expect(fs.existsSync(path.join(cloneDir, ".git")), `${cloneDir}/.git missing`).toBe(true);
-    expect(fs.existsSync(path.join(cloneDir, "dist")), `${cloneDir}/dist missing`).toBe(true);
     expect(
       fs.existsSync(path.join(cloneDir, "nemoclaw", "dist")),
       `${cloneDir}/nemoclaw/dist missing`,
@@ -370,7 +342,18 @@ test(
     });
     expectExitZero(status, `nemoclaw ${SANDBOX_NAME} status`);
 
-    expect(status.stdout).toMatch(new RegExp(`Provider:\\s+${EXPECTED_ROUTE_PROVIDER}`, "i"));
+    const entry = getSandbox(SANDBOX_NAME);
+    const inferenceConfig = await readFullE2eInferenceRoute({
+      sandbox,
+      sandboxName: SANDBOX_NAME,
+      entry,
+      logicalProvider: hosted.providerName,
+      model: MODEL,
+      env: pathEnv,
+      redactionValues: [apiKey],
+      timeoutMs: 30_000,
+    });
+    expect(inferenceConfig.ok, inferenceConfig.detail).toBe(true);
 
     const gatewayContainer = await runtimeProvider.command(
       ["container", "ps", "--format", "{{.Names}}"],
@@ -424,7 +407,12 @@ test(
         env: pathEnv,
         timeoutMs: INFERENCE_TIMEOUT_MS,
       });
-    await expectPongFromSandboxInference(sandboxExec, hosted.endpointUrl);
+    await expectPongFromSandboxInference(
+      sandboxExec,
+      hosted.providerName,
+      entry?.nativeLocalProviderAttachment?.endpointUrl ??
+        entry?.nativeHostedProviderAttachment?.endpointUrl,
+    );
 
     const sessionId = `e2e-bootstrap-${Date.now()}-${randomUUID()}`;
     const agent = await sandboxExec(

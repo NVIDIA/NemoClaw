@@ -41,11 +41,17 @@ describe("OpenShell SDK sandbox lifecycle", () => {
     expect(connect).toHaveBeenCalledTimes(2);
     expect(get).toHaveBeenCalledTimes(4);
     expect(startSandbox).toHaveBeenCalledWith(
-      { name: "alpha", workspace: "default" },
+      {
+        name: "alpha",
+        workspaceScope: { selection: { case: "workspace", value: "default" } },
+      },
       { signal: expect.any(AbortSignal) },
     );
     expect(stopSandbox).toHaveBeenCalledWith(
-      { name: "alpha", workspace: "default" },
+      {
+        name: "alpha",
+        workspaceScope: { selection: { case: "workspace", value: "default" } },
+      },
       { signal: expect.any(AbortSignal) },
     );
     expect(get).toHaveBeenCalledWith("alpha", { signal: expect.any(AbortSignal) });
@@ -340,48 +346,73 @@ describe("OpenShell SDK sandbox lifecycle", () => {
     expect(get).toHaveBeenCalledOnce();
   });
 
-  it("waits for the same sandbox to report Stopped after the stop RPC", async () => {
-    const get = vi
-      .fn()
-      .mockResolvedValueOnce({ id: sandboxId, phase: "ready" })
-      .mockResolvedValueOnce({ id: sandboxId, phase: "stopping" })
-      .mockResolvedValueOnce({ id: sandboxId, phase: "Stopped" });
-    const waitForStopPoll = vi.fn(async () => undefined);
-    const lifecycle = createSdkOpenShellSandboxStateLifecycle({
-      connect: async () => ({
-        raw: {
-          startSandbox: async () => ({ sandbox: { metadata: { id: sandboxId } } }),
-          stopSandbox: async () => ({ sandbox: { metadata: { id: sandboxId } } }),
-        },
-        sandbox: {
-          get,
-        },
-      }),
-      waitForStopPoll,
-    });
+  it("waits through both container stop periods and confirms the same sandbox is Stopped", async () => {
+    vi.useFakeTimers();
+    try {
+      const get = vi
+        .fn()
+        .mockResolvedValueOnce({ id: sandboxId, phase: "ready" })
+        .mockResolvedValueOnce({ id: sandboxId, phase: "stopping" })
+        .mockResolvedValueOnce({ id: sandboxId, phase: "Stopped" });
+      const waitForStopPoll = vi.fn(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 45_000));
+      });
+      const lifecycle = createSdkOpenShellSandboxStateLifecycle({
+        connect: async () => ({
+          raw: {
+            startSandbox: async () => ({ sandbox: { metadata: { id: sandboxId } } }),
+            stopSandbox: async () => {
+              await new Promise((resolve) => setTimeout(resolve, 90_000));
+              return { sandbox: { metadata: { id: sandboxId } } };
+            },
+          },
+          sandbox: {
+            get,
+          },
+        }),
+        waitForStopPoll,
+      });
 
-    await expect(lifecycle.stopSandbox(request)).resolves.toEqual({ kind: "accepted" });
-    expect(get).toHaveBeenCalledTimes(3);
-    expect(waitForStopPoll).toHaveBeenCalledOnce();
+      const stopped = lifecycle.stopSandbox(request);
+      await vi.advanceTimersByTimeAsync(135_000);
+      await expect(stopped).resolves.toEqual({ kind: "accepted" });
+      expect(get).toHaveBeenCalledTimes(3);
+      expect(waitForStopPoll).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
-  it("fails at the shared deadline when the exact sandbox never reaches Stopped", async () => {
-    const lifecycle = createSdkOpenShellSandboxStateLifecycle({
-      connect: async () => ({
-        raw: {
-          startSandbox: async () => ({ sandbox: { metadata: { id: sandboxId } } }),
-          stopSandbox: async () => ({ sandbox: { metadata: { id: sandboxId } } }),
-        },
-        sandbox: {
-          get: async () => ({ id: sandboxId, phase: "stopping" }),
-        },
-      }),
-      waitForStopPoll: async () => await new Promise(() => undefined),
-    });
+  it.each([
+    { timeoutMs: undefined, elapsedMs: 150_000 },
+    { timeoutMs: 5, elapsedMs: 5 },
+  ])(
+    "fails after $elapsedMs ms when the sandbox never reaches Stopped",
+    async ({ timeoutMs, elapsedMs }) => {
+      vi.useFakeTimers();
+      try {
+        const lifecycle = createSdkOpenShellSandboxStateLifecycle({
+          connect: async () => ({
+            raw: {
+              startSandbox: async () => ({ sandbox: { metadata: { id: sandboxId } } }),
+              stopSandbox: async () => ({ sandbox: { metadata: { id: sandboxId } } }),
+            },
+            sandbox: {
+              get: async () => ({ id: sandboxId, phase: "stopping" }),
+            },
+          }),
+          waitForStopPoll: async () => await new Promise(() => undefined),
+        });
 
-    await expect(lifecycle.stopSandbox({ ...request, timeoutMs: 5 })).resolves.toEqual({
-      kind: "failed",
-      error: { kind: "timeout", message: "OpenShell timed out." },
-    });
-  });
+        const stopped = lifecycle.stopSandbox({ ...request, timeoutMs });
+        await vi.advanceTimersByTimeAsync(elapsedMs);
+        await expect(stopped).resolves.toEqual({
+          kind: "failed",
+          error: { kind: "timeout", message: "OpenShell timed out." },
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
 });

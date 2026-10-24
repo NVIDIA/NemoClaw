@@ -117,6 +117,13 @@ _MAX_FETCH_REDIRECTS = 5
 
 class _UrlValidationError(ValueError): pass
 
+# Package validation requires these upstream signatures; disclosure tests never fetch URLs.
+def _is_blocked_ip(ip):
+    raise AssertionError("disclosure fixture must not classify network destinations")
+
+def _pinned_dns(hostname, allowed_ips):
+    raise AssertionError("disclosure fixture must not open network connections")
+
 def _fetch_with_redirects(url, *, timeout):
     return url, timeout
 `,

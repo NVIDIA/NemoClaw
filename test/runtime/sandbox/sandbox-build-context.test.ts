@@ -266,7 +266,7 @@ describe("sandbox build context staging", () => {
     );
     writeFixture(path.join("src", "lib", "tool-disclosure.ts"));
     writeFixture(path.join("src", "lib", "providerless-inference.ts"));
-    for (const fileName of ["agent-config.ts", "hosted.ts", "contract.ts"]) {
+    for (const fileName of ["agent-config.ts", "catalog.ts"]) {
       writeFixture(path.join("src", "lib", "inference", "native-provider", fileName));
     }
     for (const relativePath of [
@@ -284,6 +284,7 @@ describe("sandbox build context staging", () => {
       writeFixture(path.join("src", "lib", relativePath));
     }
     writeFixture(path.join("scripts", "patch-openclaw-tool-catalog.mts"));
+    writeFixture(path.join("scripts", "lib", "patch-openclaw-native-network.mts"));
     writeFixture(path.join("scripts", "lib", "patch-openclaw-npm12-pack-json.mts"));
     writeFixture(path.join("scripts", "lib", "patch-openclaw-container-restart.mts"));
     writeFixture(

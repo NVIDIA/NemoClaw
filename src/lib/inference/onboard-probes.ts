@@ -697,7 +697,7 @@ function runDoubledTimeoutChatCompletionsRetry({
             spawnSyncImpl: options.spawnSyncImpl,
           });
         })();
-  return runChatCompletionsRetryLoop(runRetryProbe);
+  return runChatCompletionsRetryLoop(runRetryProbe, options.provider);
 }
 
 function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
@@ -948,7 +948,7 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
 
     const failures = [];
     for (const probe of probes) {
-      const result = executeProbeWithHttpRetry(probe);
+      const result = executeProbeWithHttpRetry(probe, options.provider);
       if (result.ok) {
         // Streaming event validation — catch backends like SGLang that return
         // valid non-streaming responses but emit incomplete SSE events in

@@ -241,6 +241,14 @@ def run(case):
   def body(ref):
    return guard.yaml.safe_dump({'_nemoclaw_upstream':{'provider':'compatible-endpoint','provider_key':'compatible-endpoint','model':'m'},'model':{'default':'m','provider':'custom','base_url':'http://host.openshell.internal:8000/v1','api_key':ref},'providers':{'compatible-endpoint':{'api':'http://host.openshell.internal:8000/v1','api_key':ref,'default_model':'m'}},'custom_providers':[{'name':'compatible-endpoint','base_url':'http://host.openshell.internal:8000/v1','api_key':ref}],'mcp_servers':{}},sort_keys=False).encode()
   old=body('openshell:resolve:env:v7_NEMOCLAW_LOCAL_INFERENCE_TOKEN');fresh=body('openshell:resolve:env:v8_NEMOCLAW_LOCAL_INFERENCE_TOKEN')
+  if case.startswith('registered-'):
+   old=old.replace(b'compatible-endpoint',b'operator-provider').replace(b'NEMOCLAW_LOCAL_INFERENCE_TOKEN',b'VENDOR_API_KEY')
+   fresh=fresh.replace(b'compatible-endpoint',b'operator-provider').replace(b'NEMOCLAW_LOCAL_INFERENCE_TOKEN',b'VENDOR_API_KEY')
+  if case=='registered-env-change':fresh=fresh.replace(b'VENDOR_API_KEY',b'OTHER_KEY')
+  if case=='registered-raw-source':old=old.replace(b'openshell:resolve:env:v7_VENDOR_API_KEY',b'raw-secret')
+  if case=='registered-placeholder-source':old=old.replace(b'openshell:resolve:env:v7_VENDOR_API_KEY',b'\${VENDOR_API_KEY}')
+  if case=='registered-route-drift':fresh=fresh.replace(b'host.openshell.internal',b'changed.example')
+
   oldenv=b'SAFE_SETTING=trusted\nAPI_SERVER_KEY='+b'a'*64+b'\n';freshenv=b'SAFE_SETTING=trusted\nAPI_SERVER_KEY='+b'b'*64+b'\n'
   config.write_bytes(old);env.write_bytes(oldenv);os.chmod(config,0o640);os.chmod(env,0o600)
   oldhash=guard._hash_text(str(config),str(env))[0]
@@ -292,7 +300,7 @@ def run(case):
    except Exception as e:recovery=type(e).__name__+': '+str(e)
   after={p.name:sha(p.read_bytes()) for p in paths}
   return {'state_held_before_recovery':held,'recovery':recovery,'anchors_match':strict.read_text()==compat.read_text(),'config_source_preserved':sha(config.read_bytes())==before['config.yaml'],'config_candidate_applied':config.read_bytes()==fresh,'case':case,'error':error,'files_unchanged':before==after,'before':before,'after':after,'state_removed':not state.exists(),'lock_removed':not (r/'hermes-config-mutation.lock').exists(),'config_mode':oct(config.stat().st_mode&0o7777),'env_mode':oct(env.stat().st_mode&0o7777)}
-cases=['valid-restored','ordinary-write','model-drift','route-drift','mcp-drift','user-setting-drift','invalid-new-handle','slot-disagreement','alias-side-effect','stale-read','raw-env','invalid-schema','write-failure','partial-adoption','partial-adoption-source-race']
+cases=['valid-restored','ordinary-write','model-drift','route-drift','mcp-drift','user-setting-drift','invalid-new-handle','slot-disagreement','alias-side-effect','stale-read','raw-env','invalid-schema','write-failure','partial-adoption','partial-adoption-source-race','registered-valid','registered-env-change','registered-raw-source','registered-placeholder-source','registered-route-drift']
 rows=[run(x) for x in cases]
 print(json.dumps({'source_sha256':sha(source.read_bytes()),'seams':['GatewayConfig fixture schema surface','ordinary-write nonroot topology admission only; restore admission uses real mutable posture'],'cases':rows},indent=2))
 assert rows[0]['error'] is None,rows[0]
@@ -302,6 +310,8 @@ assert rows[13]['state_held_before_recovery'] and rows[13]['recovery']=='recover
 assert rows[14]['state_held_before_recovery'] and not rows[14]['state_removed'] and 'source bytes changed' in rows[14]['recovery'],rows[14]
 assert rows[12]['error'] and rows[12]['config_source_preserved'] and rows[12]['anchors_match'] and rows[12]['state_removed'],rows[12]
 assert rows[0]['config_candidate_applied']
+assert rows[15]['error'] is None and rows[15]['config_candidate_applied'] and rows[15]['state_removed'] and rows[15]['anchors_match'],rows[15]
+for row in rows[16:]:assert row['error'] and row['files_unchanged'] and row['state_removed'] and row['lock_removed'],row
 `,
           RUNTIME_CONFIG_GUARD,
         ],
@@ -309,7 +319,7 @@ assert rows[0]['config_candidate_applied']
       );
       expect(result.status, result.stderr + result.stdout).toBe(0);
       const report = JSON.parse(result.stdout);
-      expect(report.cases).toHaveLength(15);
+      expect(report.cases).toHaveLength(20);
       expect(report.cases[0]).toMatchObject({
         error: null,
         config_candidate_applied: true,

@@ -78,6 +78,7 @@ import {
   inspectRebuildGatewayProviderRegistration,
   validateRebuildHostInferenceCredential,
   verifyRebuildNativeLocalProviderBeforeDelete,
+  verifyRebuildRegisteredProviderBeforeDelete,
   shouldVerifyRebuildGatewayProvider,
 } from "./rebuild-provider-preflight";
 import {
@@ -843,9 +844,10 @@ async function rebuildSandboxUnlocked(
         },
         validateAtDeleteEdge: async (runtimeSelection) => {
           stoppedSource?.assertCurrent();
-          const hostCredential = resumeConfig.credentialEnv
-            ? hydrateCredentialEnv(resumeConfig.credentialEnv)
-            : null;
+          const hostCredential =
+            !resumeConfig.registeredInferenceProviderAttachment && resumeConfig.credentialEnv
+              ? hydrateCredentialEnv(resumeConfig.credentialEnv)
+              : null;
           if (
             hostCredential &&
             !(await validateRebuildHostInferenceCredential(resumeConfig, hostCredential))
@@ -862,6 +864,7 @@ async function rebuildSandboxUnlocked(
           if (
             !recreateOptions.rebuildProviderReconfigure &&
             resumeConfig.nativeLocalProviderAttachment === undefined &&
+            resumeConfig.registeredInferenceProviderAttachment === undefined &&
             resumeConfig.provider &&
             (nativeAttachment || shouldVerifyRebuildGatewayProvider(resumeConfig.provider))
           ) {
@@ -927,6 +930,21 @@ async function rebuildSandboxUnlocked(
               };
             }
           })();
+          if (
+            policyValidation.ok &&
+            resumeConfig.registeredInferenceProviderAttachment !== undefined &&
+            !(await verifyRebuildRegisteredProviderBeforeDelete(
+              sandboxName,
+              recreateOptions.targetGatewayName,
+              resumeConfig,
+              runtimeSelection,
+            ))
+          ) {
+            return {
+              ok: false,
+              message: "Registered provider binding changed before sandbox deletion.",
+            };
+          }
           if (!policyValidation.ok || resumeConfig.nativeLocalProviderAttachment === undefined)
             return policyValidation;
           if (

@@ -53,6 +53,7 @@ export type HermesManagedRoute = {
   inferenceApi: string;
   contextWindow?: number | null;
   nativeCredentialHandle?: string;
+  registeredCredentialEnv?: string;
 };
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
@@ -88,16 +89,34 @@ export function hermesProviderKey(provider: string): string {
 export function applyHermesManagedRoute(
   config: Record<string, unknown>,
   route: HermesManagedRoute,
+  runtimeLocalCredentialHandle?: string,
 ): asserts config is Record<string, unknown> & HermesManagedRouting {
   const nativeHosted = nativeHostedAgentConfig(route.upstreamProvider, route.baseUrl);
-  const nativeLocal = nativeLocalCredentialReference(route.upstreamProvider, route.baseUrl);
+  const nativeLocal = nativeLocalCredentialReference(
+    route.upstreamProvider,
+    route.baseUrl,
+    undefined,
+    route.nativeCredentialHandle ?? runtimeLocalCredentialHandle,
+  );
   let apiKey = nativeLocal
     ? `\${${NATIVE_LOCAL_CREDENTIAL_ENV}}`
     : nativeHosted
       ? `\${${nativeHosted.credentialEnv}}`
       : managedInferenceApiKey(route.baseUrl, HERMES_PROXY_REWRITE_SENTINEL);
   if (route.nativeCredentialHandle !== undefined) {
-    if (nativeLocal) {
+    if (route.registeredCredentialEnv) {
+      const env = route.registeredCredentialEnv;
+      if (
+        !/^[A-Z][A-Z0-9_]{0,255}$/u.test(env) ||
+        !new RegExp(`^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_${env}$`, "u").test(
+          route.nativeCredentialHandle,
+        ) ||
+        /[\r\n]/u.test(route.nativeCredentialHandle)
+      )
+        throw new Error(
+          "Registered Hermes inference requires its provider-bound credential handle",
+        );
+    } else if (nativeLocal) {
       const match = new RegExp(NATIVE_LOCAL_RUNTIME_REFERENCE_PATTERN).exec(
         route.nativeCredentialHandle,
       );
@@ -156,31 +175,52 @@ export function applyHermesManagedRoute(
   if (apiMode) customProvider.api_mode = apiMode;
 
   const providers = isObjectRecord(config.providers) ? { ...config.providers } : {};
-  if (previousProviderKey && previousProviderKey !== providerKey) {
+  if (
+    !route.registeredCredentialEnv &&
+    previousProviderKey &&
+    previousProviderKey !== providerKey
+  ) {
     delete providers[previousProviderKey];
   }
-  providers[providerKey] = providerConfig;
+  providers[providerKey] = route.registeredCredentialEnv
+    ? {
+        ...(isObjectRecord(providers[providerKey]) ? providers[providerKey] : {}),
+        ...providerConfig,
+      }
+    : providerConfig;
 
   const customProviders = Array.isArray(config.custom_providers)
     ? config.custom_providers.filter(
         (entry) =>
           !isObjectRecord(entry) ||
-          (entry.name !== previousUpstream.provider && entry.name !== providerName),
+          ((route.registeredCredentialEnv || entry.name !== previousUpstream.provider) &&
+            entry.name !== providerName),
       )
     : [];
-  customProviders.push(customProvider);
+  const retainedProvider =
+    route.registeredCredentialEnv && Array.isArray(config.custom_providers)
+      ? config.custom_providers.find(
+          (entry) => isObjectRecord(entry) && entry.name === providerName,
+        )
+      : undefined;
+  customProviders.push({
+    ...(isObjectRecord(retainedProvider) ? retainedProvider : {}),
+    ...customProvider,
+  });
 
   config._nemoclaw_upstream = {
     provider: providerName,
     provider_key: providerKey,
     model: route.model,
   };
-  config.model = modelConfig;
+  config.model = route.registeredCredentialEnv
+    ? { ...(isObjectRecord(config.model) ? config.model : {}), ...modelConfig }
+    : modelConfig;
   config.providers = providers;
   config.custom_providers = customProviders;
 }
 
-/** Refresh an issued local reference without replacing restored model settings. */
+/** Refresh an issued native reference without replacing restored model settings. */
 export function refreshHermesNativeLocalCredential(
   config: Record<string, unknown>,
   route: HermesManagedRoute & { nativeCredentialHandle: string },
@@ -197,9 +237,19 @@ export function refreshHermesNativeLocalCredential(
     (entry) => isObjectRecord(entry) && entry.name === route.upstreamProvider,
   );
   const previous = model.api_key;
-  const reference = new RegExp(NATIVE_LOCAL_RUNTIME_REFERENCE_PATTERN).exec(String(previous));
+  const credentialEnv = route.registeredCredentialEnv ?? NATIVE_LOCAL_CREDENTIAL_ENV;
+  const referencePattern = route.registeredCredentialEnv
+    ? `^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_${credentialEnv}$`
+    : NATIVE_LOCAL_RUNTIME_REFERENCE_PATTERN;
+  const reference = new RegExp(referencePattern).exec(String(previous));
   if (
-    !nativeLocalCredentialReference(route.upstreamProvider, route.baseUrl) ||
+    (!route.registeredCredentialEnv &&
+      !nativeLocalCredentialReference(
+        route.upstreamProvider,
+        route.baseUrl,
+        undefined,
+        route.nativeCredentialHandle,
+      )) ||
     upstream.provider !== route.upstreamProvider ||
     upstream.provider_key !== providerKey ||
     upstream.model !== route.model ||
@@ -216,7 +266,8 @@ export function refreshHermesNativeLocalCredential(
     typeof previous !== "string" ||
     managed.api_key !== previous ||
     matches[0].api_key !== previous ||
-    (previous !== `\${${NATIVE_LOCAL_CREDENTIAL_ENV}}` && reference?.[0] !== previous)
+    ((Boolean(route.registeredCredentialEnv) || previous !== `\${${credentialEnv}}`) &&
+      reference?.[0] !== previous)
   ) {
     throw new Error("Restored Hermes inference configuration does not match its registered route.");
   }

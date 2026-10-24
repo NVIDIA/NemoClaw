@@ -1,6 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  attachRegisteredInferenceProvider,
+  registeredInferenceProviderRevision,
+} from "./provider-publication";
+
 import { isDeepStrictEqual } from "node:util";
 import fs from "node:fs";
 
@@ -50,11 +55,7 @@ import {
   assertProviderlessInterceptorEnvironment,
   enforceRemovedImmutabilityMigrationBoundary,
 } from "../entry-options";
-import type {
-  ManagedHermesStateVolumeCleanupResult,
-  ManagedHermesStateVolumeContext,
-} from "../managed-workload/hermes-state-volume";
-import { removeManagedHermesStateVolume } from "../managed-workload/hermes-state-volume";
+import { removeManagedAgentStateVolumes } from "../managed-workload/hermes-state-volume";
 import {
   createOnboardRecreateGatewayAuthorityRevalidator,
   shouldReconcileRestoredOpenClawSelection,
@@ -64,7 +65,7 @@ import { managedImageRuntimeIdentity } from "../managed-image/agents";
 import type { ProviderManagedStartupTransaction } from "../managed-startup/provider-root-apply";
 import {
   managedStartupStateRoots,
-  MANAGED_HERMES_STATE_ROOT,
+  type ManagedStartupStateRoot,
 } from "../managed-startup/state-roots";
 import type { SandboxGpuConfig } from "../sandbox-gpu-mode";
 import { cliName } from "../branding";
@@ -934,63 +935,64 @@ type SandboxRecreateReasonInput = {
   existingSandboxState: string;
 };
 
-type RecreatedSourceHermesStateVolumeCleanupInput = {
+type RecreatedSourceStateVolumeCleanupInput = {
   readonly sandboxName: string;
   readonly sourceEntry: SandboxEntry | null;
-  readonly targetKeepsManagedHermesStateVolume: boolean;
+  readonly targetStateRoots: readonly ManagedStartupStateRoot[];
 };
 
-type RecreatedSourceHermesStateVolumeCleanupDeps = {
+type RecreatedSourceStateVolumeCleanupDeps = {
   readonly normalizeRuntimeProviderIdentity: (driverName: string | null | undefined) => string;
-  readonly removeManagedHermesStateVolume: (
-    context: ManagedHermesStateVolumeContext,
-  ) => ManagedHermesStateVolumeCleanupResult;
+  readonly removeManagedAgentStateVolumes: typeof removeManagedAgentStateVolumes;
   readonly note: (message: string) => void;
   readonly warn: (message: string) => void;
   readonly redact: (message: string) => string;
 };
 
-type RecreatedSourceHermesStateVolumeFinalizationInput =
-  RecreatedSourceHermesStateVolumeCleanupInput & {
-    readonly sourceConfirmedAbsent: boolean;
-  };
+type RecreatedSourceStateVolumeFinalizationInput = RecreatedSourceStateVolumeCleanupInput & {
+  readonly sourceConfirmedAbsent: boolean;
+};
 
-type RecreatedSourceHermesStateVolumeFinalizationDeps =
-  RecreatedSourceHermesStateVolumeCleanupDeps & {
-    readonly removeSourceRegistryEntry: (entry: SandboxEntry, sandboxName: string) => void;
-  };
+type RecreatedSourceStateVolumeFinalizationDeps = RecreatedSourceStateVolumeCleanupDeps & {
+  readonly removeSourceRegistryEntry: (entry: SandboxEntry, sandboxName: string) => void;
+};
 
-export function cleanupRecreatedSourceHermesStateVolume(
-  input: RecreatedSourceHermesStateVolumeCleanupInput,
-  deps: RecreatedSourceHermesStateVolumeCleanupDeps,
+export function cleanupRecreatedSourceStateVolumes(
+  input: RecreatedSourceStateVolumeCleanupInput,
+  deps: RecreatedSourceStateVolumeCleanupDeps,
 ): void {
-  if (!input.sourceEntry || input.targetKeepsManagedHermesStateVolume) return;
+  if (!input.sourceEntry) return;
 
-  const cleanup = deps.removeManagedHermesStateVolume({
+  const results = deps.removeManagedAgentStateVolumes({
     agentName: input.sourceEntry.agent,
     runtimeProviderId: deps.normalizeRuntimeProviderIdentity(input.sourceEntry.openshellDriver),
     sandboxName: input.sandboxName,
     workloadKind: input.sourceEntry.workload?.kind ?? "",
+    retainedRoots: input.targetStateRoots,
   });
-  if (cleanup.status === "failed") {
-    throw new Error(
-      `OpenShell confirmed that sandbox '${input.sandboxName}' is absent, but Docker could not remove its managed Hermes state volume '${cleanup.volumeName}': ${deps.redact(cleanup.detail)}. NemoClaw preserved the sandbox registry entry so a subsequent recreation can retry the volume removal.`,
-    );
-  }
-  if (cleanup.status === "not-owned") {
-    deps.warn(`  Left Docker volume '${cleanup.volumeName}' untouched because ${cleanup.detail}.`);
-  } else if (cleanup.status === "removed") {
-    deps.note(`  Removed managed Hermes state volume for '${input.sandboxName}'.`);
+  for (const cleanup of results) {
+    if (cleanup.status === "failed") {
+      throw new Error(
+        `OpenShell confirmed that sandbox '${input.sandboxName}' is absent, but the runtime could not remove its managed state volume '${cleanup.volumeName}': ${deps.redact(cleanup.detail)}. NemoClaw preserved the sandbox registry entry so a subsequent recreation can retry the volume removal.`,
+      );
+    }
+    if (cleanup.status === "not-owned") {
+      deps.warn(
+        `  Left managed state volume '${cleanup.volumeName}' untouched because ${cleanup.detail}.`,
+      );
+    } else if (cleanup.status === "removed") {
+      deps.note(`  Removed managed state volume for '${input.sandboxName}'.`);
+    }
   }
 }
 
-export function finalizeRecreatedSourceHermesStateVolume(
-  input: RecreatedSourceHermesStateVolumeFinalizationInput,
-  deps: RecreatedSourceHermesStateVolumeFinalizationDeps,
+export function finalizeRecreatedSourceStateVolumes(
+  input: RecreatedSourceStateVolumeFinalizationInput,
+  deps: RecreatedSourceStateVolumeFinalizationDeps,
 ): void {
   if (!input.sourceConfirmedAbsent || !input.sourceEntry) return;
 
-  cleanupRecreatedSourceHermesStateVolume(input, deps);
+  cleanupRecreatedSourceStateVolumes(input, deps);
   deps.removeSourceRegistryEntry(input.sourceEntry, input.sandboxName);
 }
 
@@ -1441,6 +1443,7 @@ export function createProviderEffectBoundary(input: {
   readonly resumingVerifiedCreate?: boolean;
   readonly sandboxName: string;
   readonly gatewayName: string;
+  readonly expectedRegisteredInferenceProviderAttachment?: SandboxEntry["registeredInferenceProviderAttachment"];
   readonly expectedNativeLocalProviderAttachment?: SandboxEntry["nativeLocalProviderAttachment"];
   readonly expectedNativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
   readonly expectedNativeHostedProviderAttachment?: SandboxEntry["nativeHostedProviderAttachment"];
@@ -1456,7 +1459,19 @@ export function createProviderEffectBoundary(input: {
   const deps = { ...input.preparationDeps, providerAdapter: adapter };
   let verifiedOwnedProfileIds: readonly string[] = [];
   let verifiedHermesToolGatewayProfileId: string | null = null;
+  const validateRegistered = async () => {
+    const expected = input.expectedRegisteredInferenceProviderAttachment;
+    if (!expected) return;
+    if (
+      expected.sandboxName !== input.sandboxName ||
+      expected.gatewayName !== input.gatewayName ||
+      expected.providerName !== input.preparationInput.inferenceProvider
+    )
+      throw new Error("Registered provider binding does not match sandbox creation.");
+    await registeredInferenceProviderRevision({ adapter, expected });
+  };
   const validate = async () => {
+    await validateRegistered();
     await validateAttachedMessagingProvidersBeforeSandboxCreation(input.preparationInput, deps);
     if (!input.deferred && !input.resumingVerifiedCreate) {
       verifiedOwnedProfileIds = await validateAttachedOwnedProfilesBeforeSandboxCreation(
@@ -1477,7 +1492,14 @@ export function createProviderEffectBoundary(input: {
     }
   };
   const publish = async () =>
-    publishAttachedProvidersBeforeDockerSandboxCreation(input.preparationInput, deps);
+    publishAttachedProvidersBeforeDockerSandboxCreation(
+      {
+        ...input.preparationInput,
+        registeredInferenceProviderName:
+          input.expectedRegisteredInferenceProviderAttachment?.providerName,
+      },
+      deps,
+    );
   const verifiedDirectCreateProfileIds = () => {
     const attachedNames = new Set([
       ...(input.preparationInput.directCreateProviderNames ?? [
@@ -1502,6 +1524,16 @@ export function createProviderEffectBoundary(input: {
   const attachAndVerifyNativeInferenceProvider = async (
     context: VerifiedSandboxCreateEffectsContext,
   ) => {
+    if (input.expectedRegisteredInferenceProviderAttachment) {
+      context.revalidateSandboxIdentity("restoring registered inference attachment");
+      await validateRegistered();
+      await attachRegisteredInferenceProvider({
+        adapter,
+        expected: input.expectedRegisteredInferenceProviderAttachment,
+      });
+      context.revalidateSandboxIdentity("verifying restored registered inference attachment");
+      return;
+    }
     if (input.expectedNativeLocalProviderAttachment) {
       context.revalidateSandboxIdentity(
         `attaching native local provider for sandbox '${input.sandboxName}'`,
@@ -1557,7 +1589,7 @@ export function createProviderEffectBoundary(input: {
     };
   }
   return {
-    validateBeforeCreate: async () => undefined,
+    validateBeforeCreate: validateRegistered,
     publishBeforeCreate: async () => undefined,
     runAfterVerifiedCreate: async (context) => {
       context.revalidateSandboxIdentity(
@@ -2124,15 +2156,15 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           preferredInferenceApi,
           endpointUrl: createIntent?.endpointUrl ?? null,
           localNimSelected: createIntent?.localNimSelected === true,
+          registeredInferenceProviderAttachment:
+            resolvedCreateIntent.registeredInferenceProviderAttachment,
           nativeLocalProviderAttachment: resolvedCreateIntent.nativeLocalProviderAttachment,
-          nativeProvider:
-            createIntent?.localNimSelected === true
-              ? false
-              : Boolean(
-                  resolvedCreateIntent.nativeLocalProviderAttachment ||
-                  resolvedCreateIntent.nativeHostedProviderAttachment ||
-                  resolvedCreateIntent.nativeNvidiaProviderAttachment,
-                ),
+          nativeProvider: Boolean(
+            resolvedCreateIntent.registeredInferenceProviderAttachment ||
+            resolvedCreateIntent.nativeLocalProviderAttachment ||
+            resolvedCreateIntent.nativeHostedProviderAttachment ||
+            resolvedCreateIntent.nativeNvidiaProviderAttachment,
+          ),
           startupProfile: {
             chatUiUrl,
             effectiveDashboardPort: effectivePort,
@@ -2189,22 +2221,22 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         runtimeProvider: requireManagedWorkloadRuntime().runtimeProvider,
       });
     };
-    const finalizeRecreatedSourceHermesVolume = (
+    const finalizeRecreatedSourceVolumes = (
       sourceConfirmedAbsent: boolean,
       sourceEntry: SandboxEntry | null,
-      targetKeepsManagedHermesStateVolume: boolean,
+      targetStateRoots: readonly ManagedStartupStateRoot[],
     ) =>
-      finalizeRecreatedSourceHermesStateVolume(
+      finalizeRecreatedSourceStateVolumes(
         {
           sandboxName,
           sourceConfirmedAbsent,
           sourceEntry,
-          targetKeepsManagedHermesStateVolume,
+          targetStateRoots,
         },
         {
           normalizeRuntimeProviderIdentity: managedWorkloadOnboard.normalizeRuntimeProviderIdentity,
-          removeManagedHermesStateVolume: (context) =>
-            removeManagedHermesStateVolume(context, {
+          removeManagedAgentStateVolumes: (context) =>
+            removeManagedAgentStateVolumes(context, {
               runtimeProvider: requireManagedWorkloadRuntime().runtimeProvider ?? undefined,
             }),
           removeSourceRegistryEntry: sandboxLifecycle.removeSandboxUnlessSessionReservation,
@@ -2489,6 +2521,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
               createIntent,
               nativeLocalProviderAttachment: resolvedCreateIntent.nativeLocalProviderAttachment,
               nativeProvider: Boolean(
+                existingSandboxEntry?.registeredInferenceProviderAttachment ||
                 existingSandboxEntry?.nativeLocalProviderAttachment ||
                 existingSandboxEntry?.nativeHostedProviderAttachment ||
                 existingSandboxEntry?.nativeNvidiaProviderAttachment,
@@ -2760,13 +2793,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       // Keep the source route published through every pre-delete check. A failure
       // before confirmed deletion must leave the live source route untouched.
       await createIntent?.reservePublishedRouteAfterBackup?.();
-      finalizeRecreatedSourceHermesVolume(
-        true,
-        previousEntry,
-        managedStateVolumeLifecycle.roots.some(
-          (root) => root.mountTarget === MANAGED_HERMES_STATE_ROOT,
-        ),
-      );
+      finalizeRecreatedSourceVolumes(true, previousEntry, managedStateVolumeLifecycle.roots);
       await Promise.all([
         dashboardPortReservationScope.rebindAfterOwnedForwardDelete(),
         hermesApiPortReservationScope.rebindAfterOwnedForwardDelete(hermesApiPortReservationInput),
@@ -2780,13 +2807,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       await hermesApiPortReservationScope.selectAndReserve(hermesApiPortReservationInput);
       preparedSandboxWorkload = await ensurePreparedSandboxWorkload();
       managedStateVolumeLifecycle = prepareManagedStateVolumeLifecycle(preparedSandboxWorkload);
-      finalizeRecreatedSourceHermesVolume(
-        !liveExists,
-        existingEntry,
-        managedStateVolumeLifecycle.roots.some(
-          (root) => root.mountTarget === MANAGED_HERMES_STATE_ROOT,
-        ),
-      );
+      finalizeRecreatedSourceVolumes(!liveExists, existingEntry, managedStateVolumeLifecycle.roots);
     }
     if (!liveExists && existingEntry) {
       await createIntent?.reservePublishedRouteAfterBackup?.();
@@ -2856,6 +2877,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                   createIntent?.endpointUrl ??
                   null,
                 nativeProvider: Boolean(
+                  resolvedCreateIntent.registeredInferenceProviderAttachment ||
                   resolvedCreateIntent.nativeLocalProviderAttachment ||
                   resolvedCreateIntent.nativeHostedProviderAttachment ||
                   resolvedCreateIntent.nativeNvidiaProviderAttachment,
@@ -3765,6 +3787,8 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       resumingVerifiedCreate: Boolean(resumeVerifiedCreateInput),
       sandboxName,
       gatewayName: GATEWAY_NAME,
+      expectedRegisteredInferenceProviderAttachment:
+        resolvedCreateIntent.registeredInferenceProviderAttachment,
       expectedNativeLocalProviderAttachment: resolvedCreateIntent.nativeLocalProviderAttachment,
       expectedNativeNvidiaProviderAttachment: resolvedCreateIntent.nativeNvidiaProviderAttachment,
       expectedNativeHostedProviderAttachment: resolvedCreateIntent.nativeHostedProviderAttachment,

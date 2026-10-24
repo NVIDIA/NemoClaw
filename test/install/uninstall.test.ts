@@ -551,7 +551,7 @@ esac
         expect(fs.readFileSync(volume.callsPath, "utf8")).toContain(
           `volume rm ${volume.volumeName}`,
         );
-        expect(output).toContain("Removed managed Hermes state volume for 'hermes'.");
+        expect(output).toContain("Removed managed agent state volume for 'hermes'.");
       } finally {
         fs.rmSync(tmp, { recursive: true, force: true });
       }

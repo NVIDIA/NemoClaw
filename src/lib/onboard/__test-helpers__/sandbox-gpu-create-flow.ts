@@ -370,3 +370,14 @@ export function createGpuFlowTestHarness(mocks: Record<string, ReturnType<typeof
     resetHarness,
   };
 }
+
+export function rejectChangedDiagnosticIdentity(diagnostic: string, operation: string): void {
+  if (diagnostic === "identity-changed" && operation.startsWith("capture failed")) {
+    throw new Error("current identity changed");
+  }
+}
+
+export function diagnosticResult(diagnostic: string, failure: string, output: string): string {
+  if (diagnostic === failure) throw new Error("diagnostic operation failed");
+  return output;
+}

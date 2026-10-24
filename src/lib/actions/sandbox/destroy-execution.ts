@@ -209,6 +209,7 @@ export function wipeAgentNativeHome(
     '  for keep in "$@"; do [ "${keep#"$candidate"/}" = "$keep" ] || return 0; done',
     "  return 1",
     "}",
+    "cleanup_failed=0",
     "clean_dir() {",
     "  local directory entry",
     '  directory="$1"; shift',
@@ -222,7 +223,7 @@ export function wipeAgentNativeHome(
     "      fi",
     '      clean_dir "$entry" "$@"',
     "    else",
-    '      rm -rf -- "$entry"',
+    '      if ! rm -rf -- "$entry"; then cleanup_failed=1; fi',
     "    fi",
     "  done",
     "}",
@@ -241,6 +242,7 @@ export function wipeAgentNativeHome(
     "  done",
     "}",
     'clean_dir "$root" "$@"',
+    'if [ "$cleanup_failed" != 0 ]; then exit 1; fi',
     'if ! verify_dir "$root" "$@"; then',
     '  echo "agent native root retains sandbox-owned state" >&2',
     "  exit 22",
@@ -711,7 +713,10 @@ export async function executeSandboxDestroy({
       try {
         runtimeProvider = requireRuntimeProviderDestructiveCleanupAuthority(
           sandboxName,
-          sandbox,
+          {
+            ...sandbox,
+            openshellDriver: sandbox.openshellDriver ?? expectedRuntimeProviderIdentity?.providerId,
+          },
           runtimeProviders,
         ).provider;
         hostLocalInferenceAuthority = prepareSandboxHostLocalInferenceDestroyAuthority(

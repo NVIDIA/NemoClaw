@@ -114,12 +114,16 @@ Valid changes made by Hermes or the sandbox user are authoritative. Startup and 
 
 Use supported host config and inference commands for settings that NemoClaw owns so its registry stays aligned with the runtime. Those commands can report a registry mismatch for the operation they manage, but generic startup, restart, recovery, health, probe, and connect paths do not enforce registry equality.
 
-Hermes host-side config writes run as a sealed transaction.
-NemoClaw binds the write to the SHA-256 digest of the matching read, temporarily seals the mutable config paths, atomically installs fresh config inodes, refreshes the strict and compatibility hashes, and then restores the mutable paths.
-The root-only mutation lock stays held through every host-side Hermes config write.
+Hermes host-side `config set` writes run as the sandbox user through the sandbox's recorded OpenShell gateway.
+NemoClaw binds the write to the SHA-256 digest of the matching read and holds the native configuration transaction lock while it writes, refreshes the integrity hashes, and reloads the Hermes gateway.
+The transaction refuses changed source content, unsafe paths, and changes to MCP server definitions.
+Use the host-side `mcp` commands to change those definitions.
+If a failure occurs after a verified write, the transaction attempts to restore the previous configuration and hashes and reload the gateway; it refuses to overwrite a concurrent change during rollback.
+A failed configuration transaction does not confirm either the requested configuration or a successful rollback.
+Check gateway health with `$$nemoclaw <name> status` and resolve the reported failure before retrying.
+A retry reads the current configuration through the recorded runtime target before it attempts another write.
 
-If another host mutation is active, the command reports `Hermes config mutation is already in progress`. If another lifecycle request owns the supervisor, it reports `SUPERVISOR_BUSY`. Both errors are retryable.
-
+Legacy root-owned lifecycle transactions can still report `Hermes config mutation is already in progress` or `SUPERVISOR_BUSY`.
 Let the active command finish, then retry instead of editing lock or seal files manually.
 
 </AgentOnly>

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { recordedRegisteredInferenceProviderAttachment } from "../../inference/native-provider/registered";
 import type * as TypeBoxValueModule from "typebox/value" with { "resolution-mode": "import" };
 import { isDeepStrictEqual } from "node:util";
 import { cloneAndDeepFreeze } from "../../core/immutable";
@@ -612,6 +613,7 @@ function expectedManagedStartupProfile(entry: ObservedExportRegistry): ManagedSt
     selected.preferredInferenceApi,
     exportUsesNativeInference(entry) || entry.nativeLocalProviderAttachment !== undefined,
     exportRouteEndpoint(entry),
+    recordedRegisteredInferenceProviderAttachment(entry),
   );
   const projection = EXPORT_AGENT_PROFILE_PROJECTIONS[agent](inference);
   const search = exportWebSearchBinding(entry);
@@ -982,10 +984,74 @@ function managedEndpointEvidenceMatchesRoute(
   );
 }
 
+function registeredEndpointEvidenceMatchesRoute(
+  snapshot: QualifiedExportSnapshot,
+  evidence: NonNullable<QualifiedExportSnapshot["inference"]["endpointEvidence"]> & {
+    source: { kind: "registered-provider"; profileId: string; profileDigest: string };
+  },
+): boolean {
+  const { inference } = snapshot;
+  try {
+    const binding = recordedRegisteredInferenceProviderAttachment(snapshot.registry);
+    return (
+      !!binding &&
+      isDeepStrictEqual(
+        [
+          evidence.source.profileId,
+          evidence.source.profileDigest,
+          evidence.provider.id,
+          evidence.provider.name,
+          evidence.provider.gatewayName,
+          evidence.endpoint,
+          inference.provider,
+          inference.endpoint,
+          inference.api,
+          inference.credentialEnv,
+        ],
+        [
+          binding.profileId,
+          binding.profileDigest,
+          binding.providerId,
+          binding.providerName,
+          binding.gatewayName,
+          binding.endpointUrl,
+          binding.providerName,
+          binding.endpointUrl,
+          binding.inferenceApi,
+          binding.credentialEnv,
+        ],
+      )
+    );
+  } catch {
+    return false;
+  }
+}
+
+function providerConfigEndpointEvidenceMatches(
+  inference: QualifiedExportSnapshot["inference"],
+  evidence: NonNullable<QualifiedExportSnapshot["inference"]["endpointEvidence"]>,
+): boolean {
+  let expectedConfigKey: string | null = null;
+  if (inference.api === "anthropic-messages") expectedConfigKey = "ANTHROPIC_BASE_URL";
+  else if (["openai-completions", "openai-responses"].includes(inference.api))
+    expectedConfigKey = "OPENAI_BASE_URL";
+  return (
+    evidence.source.kind === "provider-config" &&
+    expectedConfigKey !== null &&
+    evidence.source.key === expectedConfigKey
+  );
+}
+
 function endpointEvidenceMatchesRoute(snapshot: QualifiedExportSnapshot): boolean {
   const { inference } = snapshot;
   const evidence = inference.endpointEvidence;
   if (!evidence) return false;
+  if (evidence.source.kind === "registered-provider") {
+    return registeredEndpointEvidenceMatchesRoute(snapshot, {
+      ...evidence,
+      source: evidence.source,
+    });
+  }
   if (snapshot.registry.nativeLocalProviderAttachment !== undefined)
     return nativeLocalEndpointEvidenceMatches(snapshot);
   if (evidence.source.kind === "managed-profile")
@@ -999,15 +1065,7 @@ function endpointEvidenceMatchesRoute(snapshot: QualifiedExportSnapshot): boolea
       )
     );
   }
-  let expectedConfigKey: string | null = null;
-  if (inference.api === "anthropic-messages") expectedConfigKey = "ANTHROPIC_BASE_URL";
-  else if (["openai-completions", "openai-responses"].includes(inference.api))
-    expectedConfigKey = "OPENAI_BASE_URL";
-  return (
-    evidence.source.kind === "provider-config" &&
-    expectedConfigKey !== null &&
-    evidence.source.key === expectedConfigKey
-  );
+  return providerConfigEndpointEvidenceMatches(inference, evidence);
 }
 
 function validateSandboxIdentity(

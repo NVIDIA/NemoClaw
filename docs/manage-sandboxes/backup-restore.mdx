@@ -58,6 +58,18 @@ Backups created by older NemoClaw versions from a selective per-agent path inven
 
 `$$nemoclaw <name> destroy` removes NemoClaw-owned managed state volumes and, for Deep Agents Code, clears the complete retained `/sandbox` root before asking OpenShell to delete the sandbox. Download files you need before destroy. To replace software while preserving the complete native state, use `$$nemoclaw <name> rebuild`.
 
+<AgentOnly variant="openclaw,hermes">
+
+## Legacy Managed State Volumes
+
+Managed OpenClaw and Hermes state volumes require OpenShell attachment approval for the selected workspace before onboarding or recreation.
+Missing, partial, conflicting, or workspace-mismatched approval labels stop the operation before sandbox deletion or changes to the existing volume.
+NemoClaw preserves the volume without copying its data or changing its labels.
+Keep the existing sandbox and volume available until an approved migration path is available.
+Back up required state before using `destroy` or uninstall, which retain their documented data-removal behavior.
+
+</AgentOnly>
+
 ## Related Topics
 
 - [Recover and Rebuild Sandboxes](../operate-sandboxes/recover-and-rebuild-sandboxes)

@@ -469,6 +469,8 @@ export async function runCredentialsAddAction(
           gatewayName: target.gatewayName,
           adapter: providerAdapter,
           endpointUrl: existing?.endpointUrl,
+          retainedHermesEndpoint:
+            hosted.logicalProvider === "hermes-provider" && Boolean(existing?.endpointUrl),
           credentialValue: fromExisting ? null : credentialValue,
           reuseExistingCredential: fromExisting,
           readAuthority,
@@ -524,9 +526,9 @@ export async function runCredentialsAddAction(
           });
         }
         return ok([
-          `  Registered provider '${provider}' with the OpenShell gateway.`,
+          `  Registered provider '${NVIDIA_HOSTED_LOGICAL_PROVIDER}' with the OpenShell gateway.`,
           `  Verify with '${CLI_NAME} credentials list'.`,
-          `  Select it with '${CLI_NAME} inference set --provider ${provider} --model <model>'.`,
+          `  Select it with '${CLI_NAME} inference set --provider ${NVIDIA_HOSTED_LOGICAL_PROVIDER} --model <model>'.`,
         ]);
       } catch (error) {
         const detail =

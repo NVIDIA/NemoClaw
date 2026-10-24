@@ -1,6 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { inspectInferenceProviderProfile } from "../../adapters/openshell/provider-profile";
+import { registeredInferenceFixture } from "../../../../test/helpers/registered-inference";
+import {
+  readVerifiedRegisteredCredentialHandle,
+  verifyRegisteredInferenceProviderAttachment,
+} from "../../actions/inference-set/registered";
 import { describe, expect, it, vi } from "vitest";
 import { patchHermesInferenceConfig } from "../../actions/inference-set";
 import { applyHermesManagedRoute } from "../../hermes-managed-route";
@@ -102,6 +108,9 @@ function fixture(
     readCredentialHandle: vi.fn(async () => {
       events.push("credential");
       return issued("v7");
+    }),
+    readRegisteredCredentialHandle: vi.fn(async () => {
+      throw new Error("unexpected registered selection");
     }),
     resolveAgentConfig: vi.fn(() => target),
     readSandboxConfig: vi.fn(() => {
@@ -331,14 +340,6 @@ describe("external Hermes initial native-local route", () => {
       },
     },
     {
-      name: "owned Local NIM",
-      setup(f: ReturnType<typeof fixture>) {
-        delete f.entry.nativeLocalProviderAttachment;
-        f.entry.provider = "vllm-local";
-        f.entry.nimContainer = "nemoclaw-nim-owned";
-      },
-    },
-    {
       name: "hosted",
       setup(f: ReturnType<typeof fixture>) {
         delete f.entry.nativeLocalProviderAttachment;
@@ -350,6 +351,33 @@ describe("external Hermes initial native-local route", () => {
     const f = fixture();
     setup(f);
     await f.initialize("alpha", "selected-local-model", "compatible-endpoint", "gateway-a");
+    expect(f.events).toEqual([]);
+    expect(f.deps.readCredentialHandle).not.toHaveBeenCalled();
+    expect(f.deps.writeSandboxConfig).not.toHaveBeenCalled();
+  });
+
+  it("projects an attached native NIM route", async () => {
+    const f = fixture("vllm-local");
+    const binding = { ...f.receipt, authMode: "sentinel" as const };
+    const receipt = { ...binding, ...nativeLocalIdentity(binding) };
+    f.entry.nimContainer = "nemoclaw-nim-owned";
+    f.entry.nativeLocalProviderAttachment = receipt;
+    await f.run();
+    expect(f.deps.readCredentialHandle).toHaveBeenCalledExactlyOnceWith(
+      "alpha",
+      "gateway-a",
+      receipt,
+    );
+    expect(f.config.model).toMatchObject({ base_url: receipt.endpointUrl, api_key: issued("v7") });
+    expect(f.config.providers["vllm-local"].api_key).toBe(issued("v7"));
+    expect(f.events).toEqual(["lock", "credential", "read", "write", "restart", "unlock"]);
+  });
+
+  it("rejects legacy NIM before reading credentials or changing config", async () => {
+    const f = fixture("vllm-local");
+    f.entry.nimContainer = "nemoclaw-nim-owned";
+    delete f.entry.nativeLocalProviderAttachment;
+    await expect(f.run()).rejects.toThrow("does not match");
     expect(f.events).toEqual([]);
     expect(f.deps.readCredentialHandle).not.toHaveBeenCalled();
     expect(f.deps.writeSandboxConfig).not.toHaveBeenCalled();
@@ -610,6 +638,8 @@ describe("restored Hermes native route projection", () => {
       });
       expect(f.events).toEqual(["lock", "read", "write", "unlock"]);
       expect(f.deps.writeSandboxConfig).toHaveBeenLastCalledWith("alpha", f.target, f.config, {
+        gatewayName: "gateway-a",
+        deferReload: true,
         restoreNativeLocalCredential: true,
       });
       expect(f.deps.restartGateway).not.toHaveBeenCalled();
@@ -657,5 +687,146 @@ describe("restored Hermes native route projection", () => {
     expect(f.deps.readSandboxConfig).not.toHaveBeenCalled();
     expect(f.deps.writeSandboxConfig).not.toHaveBeenCalled();
     expect(f.deps.restartGateway).not.toHaveBeenCalled();
+  });
+});
+
+describe("registered Hermes native route restoration", () => {
+  function registeredFixture() {
+    const f = fixture();
+    const native = registeredInferenceFixture(true);
+    Object.assign(f.entry, {
+      name: native.binding.sandboxName,
+      gatewayName: native.binding.gatewayName,
+      provider: native.binding.providerName,
+      endpointUrl: native.binding.endpointUrl,
+      preferredInferenceApi: native.binding.inferenceApi,
+      credentialEnv: native.binding.credentialEnv,
+      registeredInferenceProviderAttachment: native.binding,
+      nativeLocalProviderAttachment: undefined,
+    });
+    const read = vi.fn(async () => native.handle);
+    vi.mocked(f.deps.readRegisteredCredentialHandle).mockImplementation(async (attachment) => {
+      await verifyRegisteredInferenceProviderAttachment({
+        adapter: native.adapter,
+        expected: attachment,
+      });
+      return readVerifiedRegisteredCredentialHandle({
+        attachment,
+        adapter: native.adapter,
+        read,
+        sleep: async () => {},
+      });
+    });
+    const run = (projection: "route" | "credential" = "route") =>
+      createInitialHermesInferenceRoute(f.deps, {
+        activation: "deferred",
+        workload: "registered",
+        projection,
+      })(
+        f.entry.name,
+        f.entry.model!,
+        native.binding.providerName,
+        native.binding.gatewayName,
+        f.revalidate,
+      );
+    return { ...f, native, read, run };
+  }
+
+  it.each(["openai-completions", "openai-responses", "anthropic-messages"] as const)(
+    "refreshes only registered credential slots while preserving %s configuration",
+    async (api) => {
+      const f = registeredFixture();
+      // The fixture profile must match the selected API as well as its endpoint.
+      f.native.profile.credentials[0].auth_style =
+        api === "anthropic-messages" ? "header" : "bearer";
+      f.native.profile.credentials[0].header_name =
+        api === "anthropic-messages" ? "x-api-key" : "authorization";
+      f.native.binding = {
+        ...f.native.binding,
+        inferenceApi: api,
+        profileDigest: inspectInferenceProviderProfile(JSON.stringify(f.native.profile))!.digest,
+      };
+      f.entry.registeredInferenceProviderAttachment = f.native.binding;
+      f.entry.preferredInferenceApi = api;
+      await f.run();
+      f.config.model.context_length = 32768;
+      f.config.model.temperature = 0.25;
+      f.config.providers[f.native.binding.providerName].discover_models = false;
+      f.config.custom_providers.find((row) => row.name === f.native.binding.providerName)!.timeout =
+        120;
+      const restored = structuredClone(f.config);
+      const fresh = `openshell:resolve:env:s${"b".repeat(64)}_VENDOR_API_KEY`;
+      f.read.mockResolvedValue(fresh);
+      await f.run("credential");
+      restored.model.api_key = fresh;
+      restored.providers[f.native.binding.providerName].api_key = fresh;
+      restored.custom_providers.find((row) => row.name === f.native.binding.providerName)!.api_key =
+        fresh;
+      expect(f.config).toEqual(restored);
+      expect(f.deps.writeSandboxConfig).toHaveBeenLastCalledWith(f.entry.name, f.target, f.config, {
+        gatewayName: f.native.binding.gatewayName,
+        deferReload: true,
+        restoreNativeLocalCredential: true,
+      });
+      expect(f.deps.readCredentialHandle).not.toHaveBeenCalled();
+      expect(f.deps.restartGateway).not.toHaveBeenCalled();
+      expect(f.native.adapter.updateProvider).not.toHaveBeenCalled();
+      expect(f.native.adapter.deleteProvider).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    "replaced",
+    "detached",
+    "wrong-gateway",
+    "changed-selection",
+    "raw-handle",
+    "wrong-environment",
+    "missing-handle",
+    "changed-revision",
+  ])("refuses registered restore with %s before writing or restarting", async (state) => {
+    const f = registeredFixture();
+    await f.run();
+    const before = structuredClone(f.config);
+    vi.mocked(f.deps.writeSandboxConfig).mockClear();
+    const changes: Record<string, () => void> = {
+      replaced: () => {
+        f.native.state.id = "other";
+      },
+      detached: () => {
+        f.native.state.attached = false;
+      },
+      "wrong-gateway": () => {
+        f.entry.gatewayName = "other";
+      },
+      "changed-selection": () => {
+        f.read.mockImplementation(async () => {
+          f.entry.model = "other";
+          return f.native.handle;
+        });
+      },
+      "missing-handle": () => {
+        f.read.mockRejectedValue(new Error("issued handle unavailable"));
+      },
+      "changed-revision": () => {
+        f.read.mockImplementation(async () => {
+          f.native.state.revision++;
+          return f.native.handle;
+        });
+      },
+      "raw-handle": () => {
+        f.read.mockResolvedValue("raw-secret");
+      },
+      "wrong-environment": () => {
+        f.read.mockResolvedValue(`openshell:resolve:env:s${"b".repeat(64)}_OTHER_KEY`);
+      },
+    };
+    changes[state]();
+    await expect(f.run("credential")).rejects.toThrow();
+    expect(f.config).toEqual(before);
+    expect(f.deps.writeSandboxConfig).not.toHaveBeenCalled();
+    expect(f.deps.restartGateway).not.toHaveBeenCalled();
+    expect(f.native.adapter.updateProvider).not.toHaveBeenCalled();
+    expect(f.native.adapter.deleteProvider).not.toHaveBeenCalled();
   });
 });

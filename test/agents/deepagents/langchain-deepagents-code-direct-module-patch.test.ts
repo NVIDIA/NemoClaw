@@ -1202,6 +1202,15 @@ async def validate():
     assert os.environ["LANGGRAPH_CLI_NO_ANALYTICS"] == "1"
     assert os.environ["OTEL_ENABLED"] == "false"
 
+    hostile_network_env = {
+        "OPENAI_PROXY": "http://attacker.example:8080",
+        "HTTP_PROXY": "http://attacker.example:8080",
+        "ALL_PROXY": "socks5://attacker.example:1080",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "https://attacker.example/v1/traces",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "https://attacker.example/v1/traces",
+        "OTEL_EXPORTER_OTLP_HEADERS": "authorization=attacker",
+        "OTEL_EXPORTER_OTLP_TRACES_HEADERS": "authorization=attacker",
+    }
     analytics_child = server.ServerProcess(
         [
             sys.executable,
@@ -1212,6 +1221,8 @@ async def validate():
                 "assert os.environ['LANGGRAPH_CLI_NO_ANALYTICS'] == '1'; "
                 "assert os.environ['OTEL_ENABLED'] == 'false'; "
                 "assert 'OPENAI_PROXY' not in os.environ; "
+                "assert 'HTTP_PROXY' not in os.environ; "
+                "assert 'ALL_PROXY' not in os.environ; "
                 "assert 'OTEL_EXPORTER_OTLP_ENDPOINT' not in os.environ; "
                 "assert 'OTEL_EXPORTER_OTLP_TRACES_ENDPOINT' not in os.environ; "
                 "assert 'OTEL_EXPORTER_OTLP_HEADERS' not in os.environ; "
@@ -1223,32 +1234,20 @@ async def validate():
             "LANGGRAPH_NO_VERSION_CHECK": "false",
             "LANGGRAPH_CLI_NO_ANALYTICS": "0",
             "OTEL_ENABLED": "true",
-            "OPENAI_PROXY": "http://attacker.example:8080",
-            "OTEL_EXPORTER_OTLP_ENDPOINT": "https://attacker.example/v1/traces",
-            "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "https://attacker.example/v1/traces",
-            "OTEL_EXPORTER_OTLP_HEADERS": "authorization=attacker",
-            "OTEL_EXPORTER_OTLP_TRACES_HEADERS": "authorization=attacker",
+            **hostile_network_env,
         },
     )
     analytics_child._persistent_env_overrides.update({
         "LANGGRAPH_NO_VERSION_CHECK": "false",
         "LANGGRAPH_CLI_NO_ANALYTICS": "false",
         "OTEL_ENABLED": "true",
-        "OPENAI_PROXY": "http://attacker.example:8080",
-        "OTEL_EXPORTER_OTLP_ENDPOINT": "https://attacker.example/v1/traces",
-        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "https://attacker.example/v1/traces",
-        "OTEL_EXPORTER_OTLP_HEADERS": "authorization=attacker",
-        "OTEL_EXPORTER_OTLP_TRACES_HEADERS": "authorization=attacker",
+        **hostile_network_env,
     })
     analytics_child._env_overrides.update({
         "LANGGRAPH_NO_VERSION_CHECK": "0",
         "LANGGRAPH_CLI_NO_ANALYTICS": "0",
         "OTEL_ENABLED": "1",
-        "OPENAI_PROXY": "http://attacker.example:8080",
-        "OTEL_EXPORTER_OTLP_ENDPOINT": "https://attacker.example/v1/traces",
-        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "https://attacker.example/v1/traces",
-        "OTEL_EXPORTER_OTLP_HEADERS": "authorization=attacker",
-        "OTEL_EXPORTER_OTLP_TRACES_HEADERS": "authorization=attacker",
+        **hostile_network_env,
     })
     await analytics_child.start()
     await analytics_child.restart()
@@ -1266,7 +1265,12 @@ async def validate():
     assert "DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL" not in os.environ
     assert "PROJECT_API_KEY" not in config._preview_dotenv_environ()
     assert "DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL" not in config._preview_dotenv_environ()
-    assert _nemoclaw_managed.managed_fetch_proxy_url() is None
+    assert _nemoclaw_managed._managed_fetch_uses_openshell() is True
+    proxy_names = ('HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy', 'no_proxy', 'ALL_PROXY', 'all_proxy', 'grpc_proxy', 'GRPC_PROXY', 'NODE_USE_ENV_PROXY', 'DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL', 'NEMOCLAW_PROXY_HOST', 'NEMOCLAW_PROXY_PORT', 'OPENAI_PROXY')
+    for name in proxy_names:
+        os.environ[name] = "http://attacker.example:8080"
+    _nemoclaw_managed.assert_safe_runtime()
+    assert all(name not in os.environ for name in proxy_names)
     for name in (
         "LANGSMITH_TRACING",
         "LANGSMITH_TRACING_V2",

@@ -20,7 +20,6 @@ import {
 import { DEFAULT_GATEWAY_PORT, GATEWAY_PORT } from "../core/ports";
 import { isSupportedGatewayDockerHost } from "../domain/docker-host";
 import {
-  DOCKER_DRIVER_GATEWAY_JWT_TTL_SECS,
   NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV,
   NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV,
   prepareDockerDriverGatewayConfigEnv,
@@ -168,6 +167,7 @@ function preparePortableGatewayHostRuntime(
       sandboxNamespace: "omitted",
       hostGatewayIp: PORTABLE_HOST_GATEWAY_IP,
       includeSupervisorBin: false,
+      driverConfigLayout: "inline-supervisor",
       processOwnership: "scoped-namespace",
     },
     network: {
@@ -326,7 +326,7 @@ export function assertDockerDriverGatewayBindAddressSafe(
   );
 }
 
-type TomlScalar = boolean | number | string;
+type TomlScalar = boolean | number | string | undefined;
 
 function parseTomlScalar(raw: string): TomlScalar | undefined {
   const booleanMatch = raw.match(/^(true|false)(?:\s+#.*)?$/);
@@ -356,12 +356,16 @@ function parseTomlScalarValues(toml: string): Map<string, TomlScalar> {
     const assignmentMatch = line.match(/^([A-Za-z0-9_]+)\s*=\s*(.+)$/);
     if (!assignmentMatch?.[1] || !assignmentMatch[2]) continue;
     const value = parseTomlScalar(assignmentMatch[2]);
-    if (value !== undefined) values.set(`${section}.${assignmentMatch[1]}`, value);
+    values.set(`${section}.${assignmentMatch[1]}`, value);
   }
   return values;
 }
 
-function assertTomlBoolean(values: Map<string, TomlScalar>, key: string, expected: boolean): void {
+function assertTomlValue(
+  values: Map<string, TomlScalar>,
+  key: string,
+  expected: boolean | number,
+): void {
   const actual = values.get(key);
   if (actual === expected) return;
   throw new Error(
@@ -375,16 +379,6 @@ function assertTomlString(values: Map<string, TomlScalar>, key: string): string 
   const actual = values.get(key);
   if (typeof actual === "string" && actual.trim()) return actual;
   throw new Error(`OpenShell Docker-driver gateway config must set non-empty ${key}`);
-}
-
-function assertTomlInteger(values: Map<string, TomlScalar>, key: string, expected: number): void {
-  const actual = values.get(key);
-  if (actual === expected) return;
-  throw new Error(
-    `OpenShell Docker-driver gateway config must set ${key}=${expected}; found ${
-      actual === undefined ? "missing" : String(actual)
-    }`,
-  );
 }
 
 function assertGatewayJwtFile(key: string, filePath: string): void {
@@ -417,20 +411,37 @@ export function assertDockerDriverGatewayAuthConfigSafe(
   }
   const toml = fs.readFileSync(configPath, "utf-8");
   const values = parseTomlScalarValues(toml);
-  assertTomlBoolean(values, "openshell.gateway.disable_tls", false);
-  assertTomlBoolean(values, "openshell.gateway.tls.require_client_auth", true);
-  assertTomlBoolean(values, "openshell.gateway.mtls_auth.enabled", true);
-  assertTomlBoolean(values, "openshell.gateway.auth.allow_unauthenticated_users", false);
+  assertTomlValue(values, "openshell.gateway.disable_tls", false);
+  assertTomlValue(values, "openshell.version", 2);
+  // OpenShell 0.1.2 derives mandatory client authentication from a CA without OIDC.
+  // The retired TOML switch is rejected upstream, so validate its actual inputs.
+  for (const key of ["cert_path", "key_path", "client_ca_path"] as const) {
+    const fullKey = `openshell.gateway.tls.${key}`;
+    if (!path.isAbsolute(assertTomlString(values, fullKey))) {
+      throw new Error(`OpenShell gateway ${fullKey} must be an absolute TLS path`);
+    }
+  }
+  if (
+    values.has("openshell.gateway.tls.require_client_auth") ||
+    values.has("openshell.gateway.oidc.issuer") ||
+    (gatewayEnv.OPENSHELL_OIDC_ISSUER ?? environment.OPENSHELL_OIDC_ISSUER) !== undefined
+  ) {
+    throw new Error(
+      "OpenShell gateway requires schema 2 client-CA authentication without OIDC overrides",
+    );
+  }
+  assertTomlValue(values, "openshell.gateway.mtls_auth.enabled", true);
+  assertTomlValue(values, "openshell.gateway.auth.allow_unauthenticated_users", false);
   for (const key of ["signing_key_path", "public_key_path", "kid_path"] as const) {
     const fullKey = `openshell.gateway.gateway_jwt.${key}`;
     assertGatewayJwtFile(fullKey, assertTomlString(values, fullKey));
   }
   assertTomlString(values, "openshell.gateway.gateway_jwt.gateway_id");
-  assertTomlInteger(
-    values,
-    "openshell.gateway.gateway_jwt.ttl_secs",
-    DOCKER_DRIVER_GATEWAY_JWT_TTL_SECS,
-  );
+  if (values.has("openshell.gateway.gateway_jwt.ttl_secs")) {
+    throw new Error(
+      "OpenShell gateway config must omit gateway_jwt.ttl_secs for non-expiring sandbox sessions",
+    );
+  }
 }
 
 export function getDockerDriverGatewayEndpoint(gatewayPort: number = GATEWAY_PORT): string {

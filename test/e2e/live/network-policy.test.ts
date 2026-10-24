@@ -23,8 +23,8 @@ import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 import { ensureConfiguredRuntimeProviderAvailable } from "../fixtures/runtime-provider.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
-  buildNetworkPolicyCurlProbe,
-  parseNetworkPolicyCurlOutput,
+  buildNetworkPolicyRequest,
+  isNetworkPolicyDenial,
 } from "../support/network-policy-probe.ts";
 import { runRestrictedOnboardWithRetry } from "./restricted-onboard-helpers.ts";
 
@@ -100,15 +100,20 @@ async function probeUrl(
   sandbox: SandboxClient,
   url: string,
   artifactName: string,
-): Promise<string> {
-  const result = await sandboxBash(sandbox, buildNetworkPolicyCurlProbe(url), artifactName);
-  return text(result);
+): Promise<ShellProbeResult> {
+  return sandbox.exec(SANDBOX_NAME, buildNetworkPolicyRequest(url), {
+    artifactName,
+    env: baseEnv(),
+    timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
+  });
 }
 
 async function startMarkerServer(
   marker: string,
-): Promise<{ port: number; close: () => Promise<void> }> {
+): Promise<{ port: number; readonly requests: number; close: () => Promise<void> }> {
+  let requests = 0;
   const server = createServer((_req, res) => {
+    requests += 1;
     res.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
     res.end(`${marker}\n`);
   });
@@ -124,6 +129,9 @@ async function startMarkerServer(
   let closed = false;
   return {
     port: address.port,
+    get requests() {
+      return requests;
+    },
     close: async () => {
       if (closed) return;
       closed = true;
@@ -186,8 +194,8 @@ function fail(detail) {
 
 const configPath = process.env.OPENCLAW_CONFIG_PATH || "/sandbox/.openclaw/openclaw.json";
 const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
-if (config?.tools?.web?.fetch?.useTrustedEnvProxy !== true) {
-  fail("tools.web.fetch.useTrustedEnvProxy must be enabled");
+if (config?.tools?.web?.fetch?.useTrustedEnvProxy !== false) {
+  fail("tools.web.fetch.useTrustedEnvProxy must be disabled for native egress");
 }
 
 const distDir = "/usr/local/lib/node_modules/openclaw/dist";
@@ -230,16 +238,22 @@ function summary(value) {
 
 function errorChainDetail(error) {
   const details = [];
+  let nativeDenied = false;
+  const isConnectDenial = (error, depth = 0) => depth < 8 && error && typeof error === "object" && (
+    (error.code === "EACCES" && error.syscall === "connect") ||
+    (Array.isArray(error.errors) && error.errors.length > 0 && error.errors.every((child) => isConnectDenial(child, depth + 1)))
+  );
   const seen = new Set();
   let current = error;
   for (let depth = 0; depth < 8 && current !== undefined && !seen.has(current); depth += 1) {
     const detail =
       current && (current.stack || current.message) ? current.stack || current.message : current;
     details.push(String(detail));
+    nativeDenied ||= isConnectDenial(current);
     seen.add(current);
     current = current && typeof current === "object" ? current.cause : undefined;
   }
-  return details.join("\nCaused by: ");
+  return { detail: details.join("\nCaused by: "), nativeDenied };
 }
 
 const approved = await webFetch.execute("e2e-approved-host-gateway", {
@@ -265,11 +279,11 @@ try {
   }
   fail("E2E_FAIL_DENIED_PORT_UNEXPECTED_SUCCESS: " + deniedText);
 } catch (error) {
-  const detail = errorChainDetail(error);
+  const { detail, nativeDenied } = errorChainDetail(error);
   if (/E2E_FAIL_DENIED_PORT_|SsrFBlockedError|Blocked hostname|private\/internal\/special-use/i.test(detail)) {
     throw error;
   }
-  if (!/Web fetch failed \(403\)|\b403\b/i.test(detail)) {
+  if (!nativeDenied && !(/\b403\b/u.test(detail) && /policy[_ ]denied|not allowed by any policy/iu.test(detail))) {
     throw error;
   }
   console.log("E2E_WEB_FETCH_DENIED_OK " + detail.split("\n")[0].slice(0, 300));
@@ -411,7 +425,7 @@ test(
       "https://example.com/",
       "network-policy-default-denial",
     );
-    expect(defaultDenied).toMatch(/\b403\b/);
+    expect(isNetworkPolicyDenial(defaultDenied), text(defaultDenied)).toBe(true);
 
     const approvedMarker = "NEMOCLAW_HOST_GATEWAY_ALLOWED";
     const deniedMarker = "NEMOCLAW_HOST_GATEWAY_DENIED_PORT";
@@ -440,17 +454,21 @@ test(
       `http://host.openshell.internal:${approvedServer.port}/`,
       "network-policy-approved-host-gateway-port",
     );
-    expect(approved).toContain(approvedMarker);
+    expect(
+      approved.exitCode === 0 && !approved.timedOut && approved.stdout.includes(approvedMarker),
+      text(approved),
+    ).toBe(true);
     const denied = await probeUrl(
       sandbox,
       `http://host.openshell.internal:${deniedServer.port}/`,
       "network-policy-denied-host-gateway-port",
     );
-    const deniedResult = parseNetworkPolicyCurlOutput(denied);
     const deniedEvidence = "shell/network-policy-denied-host-gateway-result.json";
-    await artifacts.writeJson(deniedEvidence, deniedResult ?? { response: denied, status: null });
-    expect(denied).not.toContain(deniedMarker);
-    expect(deniedResult?.status, denied).toBe(403);
+    await artifacts.writeJson(deniedEvidence, denied);
+    expect(!text(denied).includes(deniedMarker) && deniedServer.requests === 0, text(denied)).toBe(
+      true,
+    );
+    expect(isNetworkPolicyDenial(denied), text(denied)).toBe(true);
 
     progress.phase("prove the installed OpenClaw web_fetch path obeys the host-gateway policy");
     const webFetch = await sandboxBash(
@@ -461,7 +479,10 @@ NEMOCLAW_WEB_FETCH_PROBE`,
       "network-policy-openclaw-web-fetch",
     );
     const webFetchText = text(webFetch);
-    expect(webFetch.exitCode, webFetchText).toBe(0);
+    expect(
+      webFetch.exitCode === 0 && !webFetch.timedOut && deniedServer.requests === 0,
+      webFetchText,
+    ).toBe(true);
     const startTimeAfterDeny = await readSandboxStartTime(
       sandbox,
       "network-policy-start-time-after-deny-probe",

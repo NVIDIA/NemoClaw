@@ -149,9 +149,8 @@ describe("OpenShell policy boundary package contract", () => {
     const globalMetadata = JSON.stringify({
       scope: "global",
       status: "loaded",
-      policy_source: "global",
       hash: "sha256:global",
-      active_version: 1,
+      version: 1,
       policy: { version: 1, network_policies: {} },
     });
     const expectedGlobalMetadata = {

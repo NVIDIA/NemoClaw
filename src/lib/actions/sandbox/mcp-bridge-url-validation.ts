@@ -51,12 +51,12 @@ function rejectUnsupportedOpenShellMcpHostAlias(hostname: string): void {
   // invalidState: a host alias is accepted without an attested gateway address,
   // forcing broad private-range policy instead of an exact destination pin.
   // sourceBoundary: the pinned OpenShell release owns gateway-address discovery.
-  // whyNotSourceFix: v0.0.116 exposes no attested driver gateway address.
+  // whyNotSourceFix: this integration has no attested driver gateway address.
   // regressionTest: URL validation and all three live adapters reject aliases.
   // removalCondition: remove only after a reviewed OpenShell capability exposes
   // an attested address; a future version number alone is not that capability.
   throw new McpBridgeError(
-    `Authenticated MCP OpenShell host alias '${hostname}' is unavailable with OpenShell v0.0.116 because that release does not expose an attested driver gateway address for exact policy pinning. Use a normal HTTPS DNS endpoint with public address records.`,
+    `Authenticated MCP OpenShell host alias '${hostname}' is unavailable because this integration does not expose an attested driver gateway address for exact policy pinning. Use a normal HTTPS DNS endpoint with public address records.`,
     2,
   );
 }

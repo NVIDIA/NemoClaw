@@ -31,31 +31,51 @@ sandbox_exec() {
 privileged_dpkg_sentinel() {
   local action="$1"
   local probe_path="$2"
+  local receipt="${3:-}"
   NEMOCLAW_E2E_DPKG_ACTION="$action" \
     NEMOCLAW_E2E_DPKG_PROBE="$probe_path" \
+    NEMOCLAW_E2E_DPKG_RECEIPT="$receipt" \
     NEMOCLAW_E2E_SANDBOX_NAME="$SANDBOX_NAME" \
     node <<'NODE'
-const { executePrivilegedSandboxCommand } = require("./dist/lib/sandbox/privileged-exec.js");
+const { executePrivilegedSandboxCommand, resolvePrivilegedSandboxTarget } = require("./dist/lib/sandbox/privileged-exec.js");
 
 const action = process.env.NEMOCLAW_E2E_DPKG_ACTION;
 const probe = process.env.NEMOCLAW_E2E_DPKG_PROBE;
 const sandbox = process.env.NEMOCLAW_E2E_SANDBOX_NAME;
 if (!probe || !sandbox || !["prepare", "cleanup"].includes(action)) process.exit(2);
+const recorded = action === "cleanup" ? JSON.parse(process.env.NEMOCLAW_E2E_DPKG_RECEIPT) : null;
+const resourceHandle = recorded?.resourceHandle ?? resolvePrivilegedSandboxTarget(sandbox).resourceHandle;
+// Root owns this nonsecret file. Mode 0666 makes Unix write permission a
+// positive control, so the sandbox denial must come from its outer policy.
+const source = String.raw`import os, stat, sys
+operation, target, recorded_identity = sys.argv[1:]
+if operation == "prepare":
+    fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    try:
+        os.fchmod(fd, 0o666)
+        observed = os.fstat(fd)
+        assert observed.st_uid == 0 and observed.st_nlink == 1
+        assert stat.S_ISREG(observed.st_mode) and stat.S_IMODE(observed.st_mode) == 0o666
+        print(f"{observed.st_dev}:{observed.st_ino}")
+    finally:
+        os.close(fd)
+else:
+    observed = os.lstat(target)
+    assert stat.S_ISREG(observed.st_mode) and observed.st_uid == 0 and observed.st_nlink == 1
+    assert f"{observed.st_dev}:{observed.st_ino}" == recorded_identity
+    os.unlink(target)
+`;
+const result = executePrivilegedSandboxCommand(sandbox,
+  ["/opt/venv/bin/python3", "-I", "-c", source, action, probe, recorded?.identity ?? ""],
+  { sanitizeEnvironment: true, expectedResourceHandle: resourceHandle },
+);
+if (result.status !== 0 || result.signal || result.error) process.exit(1);
+if (action === "prepare") {
+  const identity = result.stdout.toString().trim();
+  if (!/^[0-9]+:[0-9]+$/.test(identity)) process.exit(1);
+  process.stdout.write(JSON.stringify({ resourceHandle, identity }));
+}
 
-const command =
-  action === "prepare"
-    ? [
-        "sh",
-        "-c",
-        'set -eu; probe="$1"; test ! -e "$probe"; install -o sandbox -g sandbox -m 600 /dev/null "$probe"',
-        "sh",
-        probe,
-      ]
-    : ["rm", "-f", "--", probe];
-const result = executePrivilegedSandboxCommand(sandbox, command, {
-  sanitizeEnvironment: true,
-});
-process.exit(result.status ?? 1);
 NODE
 }
 
@@ -98,14 +118,14 @@ else
 fi
 
 DPKG_SENTINEL="/var/lib/dpkg/nemoclaw-e2e-write-probe-${PPID:-$$}"
-if privileged_dpkg_sentinel prepare "$DPKG_SENTINEL"; then
+if DPKG_RECEIPT="$(privileged_dpkg_sentinel prepare "$DPKG_SENTINEL")"; then
   OUT=$(sandbox_exec "set -e; dpkg-query -W dpkg >/dev/null; echo DPKG_QUERY_OK; control=/tmp/nemoclaw-e2e-dpkg-write-control; printf 'control\\n' >\"\$control\"; rm -f \"\$control\"; echo CONTROL_WRITE_OK; if printf 'denied\\n' >'$DPKG_SENTINEL' 2>/dev/null; then echo DPKG_WRITE_UNEXPECTEDLY_SUCCEEDED; exit 1; fi; echo DPKG_WRITE_DENIED" || true)
   if echo "$OUT" | grep -q "DPKG_QUERY_OK" && echo "$OUT" | grep -q "CONTROL_WRITE_OK" && echo "$OUT" | grep -q "DPKG_WRITE_DENIED"; then
     pass "package metadata is readable and the package database remains read-only"
   else
     fail_test "package database read-only boundary failed"
   fi
-  if ! privileged_dpkg_sentinel cleanup "$DPKG_SENTINEL"; then
+  if ! privileged_dpkg_sentinel cleanup "$DPKG_SENTINEL" "$DPKG_RECEIPT"; then
     fail_test "package database sentinel cleanup failed"
   fi
 else

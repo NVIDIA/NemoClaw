@@ -14,7 +14,11 @@ import {
 import { normalizeProviderBaseUrl } from "../../core/provider-endpoint";
 import type { NativeProviderDefinition } from "./contract";
 import { nativeHostedAgentConfig } from "./agent-config";
-import { isPrivateIp, isLoopbackHostname } from "../../private-networks";
+import {
+  isPrivateIp,
+  isLoopbackHostname,
+  isAllowedOpenShellSandboxBridgeUrl,
+} from "../../private-networks";
 import {
   isOperatorTrustablePrivateIp,
   isOpenShellManagedHost,
@@ -36,8 +40,8 @@ export type CustomNativeBinding = Readonly<{
   adapterEndpointUrl?: string;
 }>;
 
-/** Hosted selections exclude the existing loopback and managed bridge routes. */
-export function isHostedCustomEndpoint(
+/** Native custom routes retain the existing sandbox bridge admission boundary. */
+export function isCustomNativeEndpoint(
   provider: string,
   endpointUrl: string | null | undefined,
 ): boolean {
@@ -47,7 +51,11 @@ export function isHostedCustomEndpoint(
   )
     return false;
   const host = new URL(endpointUrl).hostname;
-  return !isLoopbackHostname(host) && !isOpenShellManagedHost(host);
+  return (
+    (provider === "compatible-anthropic-endpoint" &&
+      isAllowedOpenShellSandboxBridgeUrl(new URL(endpointUrl))) ||
+    (!isLoopbackHostname(host) && !isOpenShellManagedHost(host))
+  );
 }
 
 export function isCustomNativeProviderName(name: string): boolean {
@@ -76,7 +84,13 @@ export function customNativeProvider(value: unknown): NativeProviderDefinition &
   )
     throw new Error("Invalid custom native provider binding");
   const endpoint = new URL(binding.endpointUrl);
-  if (isOpenShellManagedHost(endpoint.hostname) || isLoopbackHostname(endpoint.hostname))
+  const bridge =
+    binding.provider === "compatible-anthropic-endpoint" &&
+    isAllowedOpenShellSandboxBridgeUrl(endpoint);
+  if (
+    !bridge &&
+    (isOpenShellManagedHost(endpoint.hostname) || isLoopbackHostname(endpoint.hostname))
+  )
     throw new Error("Custom hosted native inference requires a hosted endpoint");
   const canonical = normalizeProviderBaseUrl(
     binding.endpointUrl,
@@ -95,8 +109,8 @@ export function customNativeProvider(value: unknown): NativeProviderDefinition &
     throw new Error("Invalid native Bedrock adapter binding");
   if (
     !Array.isArray(binding.allowedIps) ||
-    (!bedrock && binding.allowedIps.length === 0) ||
-    (bedrock && binding.allowedIps.length !== 0) ||
+    (!bedrock && !bridge && binding.allowedIps.length === 0) ||
+    ((bedrock || bridge) && binding.allowedIps.length !== 0) ||
     binding.allowedIps.some(
       (address) =>
         typeof address !== "string" ||
@@ -166,7 +180,6 @@ export function boundCustomNativeProfile(
       port: Number(endpoint.port || (endpoint.protocol === "https:" ? 443 : 80)),
       ...(expected.allowedIps ? { allowed_ips: expected.allowedIps } : {}),
       protocol: "rest",
-      ...(endpoint.protocol === "https:" ? { tls: "terminate" } : {}),
       enforcement: "enforce",
       rules: [
         { allow: { method: "GET", path: `${apiPrefix}/models` } },

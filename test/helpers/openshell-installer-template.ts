@@ -4,8 +4,22 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { v00116Pins, v012Pins } from "./openshell-release-fixtures";
+import { extractInstallerPins } from "../../scripts/checks/extract-installer-pins.mts";
+import { v00116Pins } from "./openshell-release-fixtures";
 import { selectHistoricalGatewayProcessReader } from "./prepared-gateway-runtime";
+
+export function npmReplacementFixtureVersion(source: string): string {
+  const versions = new Set(
+    extractInstallerPins(source, {
+      functionName: "openshell_cli_pinned_sha256",
+      sourceLabel: "Brev launchable",
+    }).map((pin) => pin.releaseVersion),
+  );
+  assert.equal(versions.size, 1, "npm replacement fixture must select one OpenShell release");
+  const [version] = versions;
+  assert.ok(version);
+  return version;
+}
 
 /** Stage the verifier and its inert registry for both candidate and separate trusted checkouts. */
 export function copyTrustedInstallerVerifier(repoRoot: string, targetRoot: string): void {
@@ -105,6 +119,50 @@ const MACOS_METHOD_START = `MACOS_INSTALL_METHOD="\${_NEMOCLAW_OPENSHELL_INSTALL
 const MACOS_METHOD_END = "esac\n";
 
 export function installerReleaseTemplate(source: string, version: string): string {
+  // Historical fixtures must retain their reviewed pre-0.1.3 feature gate.
+  if (version !== "0.1.3") {
+    const v013SandboxBuild = String.raw`    # OpenShell v0.1.3 standalone sandbox binaries.
+    38fe063f19c72680a1bc4b0c343a3ec5b7a5cb087a627faab5b2aefd9d50d094 | \
+      23147b42d31bd0b13e1a9ed7b3834b8e6075836cba0872fffa9e7d481f6dd281)
+      printf '%s\n' "0.1.3"
+      ;;
+`;
+    assert.ok(source.includes(v013SandboxBuild), "OpenShell 0.1.3 sandbox fixture boundary");
+    source = source.replace(v013SandboxBuild, "");
+    source = source.replace(
+      "  # OpenShell 0.1.2 and 0.1.3 enforce MCP policy in their supervisor images.\n" +
+        "  # Require a pinned sandbox digest matching the CLI, not version text alone.\n",
+      "  # OpenShell 0.1.2 enforces MCP policy in its supervisor image. Recognize\n" +
+        "  # only its exact pinned sandbox artifacts here, not version text alone.\n",
+    );
+    const fallbackStart = source.indexOf(
+      "    local sandbox_digest sandbox_version openshell_version\n",
+    );
+    if (fallbackStart !== -1) {
+      const fallbackEnd = source.indexOf("    esac\n", fallbackStart);
+      assert.ok(fallbackEnd > fallbackStart, "OpenShell 0.1.3 sandbox fixture boundary");
+      source =
+        source.slice(0, fallbackStart) +
+        "    local sandbox_digest\n" +
+        '    sandbox_digest="$(file_sha256 "$sandbox_bin")" || return 1\n' +
+        '    if [ "$(pinned_sandbox_build_version "$sandbox_digest")" = "0.1.2" ]; then\n' +
+        "      return 0\n" +
+        "    fi\n" +
+        source.slice(fallbackEnd + "    esac\n".length);
+    }
+  }
+  // Historical trust fixtures must use their own reviewed guard. Keep the
+  // current guard only in the current-release fixture.
+  const guardStart = source.indexOf("# Prove absence through searchable parents;");
+  if (version !== "0.1.3" && guardStart !== -1) {
+    const guardEnd = source.indexOf(
+      "# invalidState: a consumed OpenShell release asset",
+      guardStart,
+    );
+    assert.ok(guardEnd > guardStart, "OpenShell 0.1.2 retirement guard fixture boundary");
+    source = source.slice(0, guardStart) + source.slice(guardEnd);
+    source = source.replace("verify_legacy_openshell_state\n\n", "");
+  }
   const v012Comment =
     "  # OpenShell 0.1.2 enforces MCP policy in its supervisor image. Recognize\n" +
     "  # only its exact pinned sandbox artifacts here, not version text alone.\n" +
@@ -126,7 +184,7 @@ export function installerReleaseTemplate(source: string, version: string): strin
       )
       .replace(fallback, "");
   }
-  if (version === "0.0.106" || version === "0.0.116" || version === "0.1.2") return source;
+  if (["0.0.106", "0.0.116", "0.1.2", "0.1.3"].includes(version)) return source;
   const start = source.indexOf(MACOS_METHOD_START);
   const end = source.indexOf(MACOS_METHOD_END, start);
   if (start === -1 || end === -1 || source.indexOf(MACOS_METHOD_START, start + 1) !== -1) {
@@ -207,10 +265,13 @@ export function prepareReleaseFixtureRuntime(
   // currentProcessReader selects the checkout's thread-group reader for 0.1.2 instead.
   const source = options.currentProcessReader
     ? checkoutSource.replace(
-        'const QUALIFIED_STABLE_OPENSHELL_VERSION = "0.0.116";',
+        /const QUALIFIED_STABLE_OPENSHELL_VERSION = "[0-9.]+";/,
         'const QUALIFIED_STABLE_OPENSHELL_VERSION = "0.1.2";',
       )
-    : selectHistoricalGatewayProcessReader(checkoutSource);
+    : selectHistoricalGatewayProcessReader(checkoutSource).replace(
+        /const QUALIFIED_STABLE_OPENSHELL_VERSION = "[0-9.]+";/,
+        'const QUALIFIED_STABLE_OPENSHELL_VERSION = "0.1.2";',
+      );
   const prepared = source.replace(
     /const OPENSHELL_SUPERVISOR_MANIFEST_DIGESTS: Readonly<Record<string, string>> = \{[\s\S]*?\n\};/,
     candidatePins.trim(),
@@ -322,7 +383,7 @@ export type FixtureMode =
   | "trusted-formula-mismatch";
 
 // Historical prospective templates are authorized for 0.0.116 only.
-// Keep their fixtures on that release even when the checkout selects 0.1.2.
+// Keep their fixtures on that release when the checkout selects a newer version.
 export function supervisorV00116Fixtures(selected: {
   blueprint: string;
   brevInstaller: string;
@@ -330,23 +391,28 @@ export function supervisorV00116Fixtures(selected: {
   supervisorRuntime: string;
 }) {
   const pins = v00116Pins("installer");
+  const selectedPins = extractInstallerPins(selected.installer, {
+    functionName: "openshell_pinned_sha256",
+    sourceLabel: "installer",
+  });
+  const selectedVersion = npmReplacementFixtureVersion(selected.brevInstaller);
   const restorePins = (source: string) =>
-    v012Pins("installer").reduce((result, pin) => {
+    selectedPins.reduce((result, pin) => {
       const original = pins.find((entry) => entry.asset === pin.asset);
       assert.ok(original, "0.0.116 fixture pin must exist");
       return result.replaceAll(pin.sha256, original.sha256);
     }, source);
   return {
     blueprint: selected.blueprint.replaceAll(
-      'openshell_version: "0.1.2"',
+      `openshell_version: "${selectedVersion}"`,
       'openshell_version: "0.0.116"',
     ),
-    brevInstaller: restorePins(selected.brevInstaller).replaceAll("0.1.2", "0.0.116"),
+    brevInstaller: restorePins(selected.brevInstaller).replaceAll(selectedVersion, "0.0.116"),
     installer: restorePins(installerReleaseTemplate(selected.installer, "0.0.116"))
-      .replaceAll('VERSION="0.1.2"', 'VERSION="0.0.116"')
-      .replaceAll("v0.1.2:", "v0.0.116:"),
+      .replaceAll(`VERSION="${selectedVersion}"`, 'VERSION="0.0.116"')
+      .replaceAll(`v${selectedVersion}:`, "v0.0.116:"),
     supervisorRuntime: selected.supervisorRuntime.replace(
-      'const QUALIFIED_STABLE_OPENSHELL_VERSION = "0.1.2";',
+      `const QUALIFIED_STABLE_OPENSHELL_VERSION = "${selectedVersion}";`,
       'const QUALIFIED_STABLE_OPENSHELL_VERSION = "0.0.116";',
     ),
   };

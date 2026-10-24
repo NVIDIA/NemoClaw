@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { registeredOpenclawModelConfiguration } from "../../inference-set/registered";
+import { readSandboxConfig, resolveAgentConfig } from "../../../sandbox/config";
 import { recordedNativeProviderAttachment } from "../../../inference/native-provider/recorded-selection";
 import { rebindLoopbackDashboardUrlPort } from "../../../dashboard/url";
 import { resolveContextWindowForModel } from "../../../inference/context-window";
@@ -20,6 +22,8 @@ import type { RebuildRecreateOnboardOpts } from "../rebuild-gpu-opt-out";
 import type { RebuildTargetConfig } from "../rebuild-target-preflight";
 
 export const managedRebuildProfileDependencies = {
+  readSandboxConfig,
+  resolveAgentConfig,
   resolveContextWindowForModel,
   resolveManagedStartupInferenceRoute,
 };
@@ -122,13 +126,26 @@ export function prepareManagedRebuildProfileHandoff(input: {
     recordedExternalUrl: input.recordedDashboardExternalUrl,
   });
   const nativeAttachment = recordedNativeProviderAttachment(resumeConfig);
+  const registered = resumeConfig.registeredInferenceProviderAttachment;
+  let selected: ReturnType<typeof registeredOpenclawModelConfiguration> | undefined;
+  if (registered && agent === "openclaw") {
+    const config = managedRebuildProfileDependencies.readSandboxConfig(
+      registered.sandboxName,
+      managedRebuildProfileDependencies.resolveAgentConfig(registered.sandboxName),
+      registered.gatewayName,
+    );
+    selected = registeredOpenclawModelConfiguration(config, registered, resumeConfig.model);
+  }
   const inference = managedRebuildProfileDependencies.resolveManagedStartupInferenceRoute(
     agent,
     resumeConfig.provider,
     resumeConfig.model,
     resumeConfig.preferredInferenceApi,
-    Boolean(nativeAttachment || resumeConfig.nativeLocalProviderAttachment),
-    resumeConfig.nativeLocalProviderAttachment?.endpointUrl ?? nativeAttachment?.endpointUrl,
+    Boolean(registered || nativeAttachment || resumeConfig.nativeLocalProviderAttachment),
+    registered?.endpointUrl ??
+      resumeConfig.nativeLocalProviderAttachment?.endpointUrl ??
+      nativeAttachment?.endpointUrl,
+    registered,
   );
   const upstreamProvider =
     agent === "hermes" && resumeConfig.provider === "hermes-provider"
@@ -145,7 +162,7 @@ export function prepareManagedRebuildProfileHandoff(input: {
           resumeConfig.model,
         )
       : null;
-  if (openClawRouteChanged && currentOpenClawContextWindow === null) {
+  if (openClawRouteChanged && !selected && currentOpenClawContextWindow === null) {
     throw new Error(
       `Cannot determine a context window for the current OpenClaw target '${resumeConfig.provider}/${resumeConfig.model}'.`,
     );
@@ -163,7 +180,10 @@ export function prepareManagedRebuildProfileHandoff(input: {
           agent === "langchain-deepagents-code" ? resumeConfig.endpointUrl : null,
         api: requireManagedStartupInferenceApi(inference.inferenceApi),
         primaryModelRef: agent === "openclaw" ? inference.primaryModelRef : null,
-        compatibility: agent === "openclaw" ? (inference.inferenceCompat ?? {}) : null,
+        compatibility:
+          agent === "openclaw"
+            ? (selected?.compatibility ?? inference.inferenceCompat ?? {})
+            : null,
       },
       chatUiUrl,
       effectiveDashboardPort,
@@ -184,6 +204,7 @@ export function prepareManagedRebuildProfileHandoff(input: {
     input.environment,
     agent === "openclaw"
       ? {
+          ...(selected ? { openClawSelectedModel: selected.model } : {}),
           ...(currentOpenClawContextWindow === null
             ? {}
             : { openClawContextWindow: currentOpenClawContextWindow }),

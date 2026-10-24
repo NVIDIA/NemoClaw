@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  recordedRegisteredInferenceProviderAttachment,
+  type RegisteredInferenceProviderAttachment,
+} from "../../inference/native-provider/registered";
 import { refreshHermesNativeLocalCredential } from "../../hermes-managed-route";
 import type { NativeLocalProviderAttachment } from "../../inference/native-local/contract";
 import { normalizeNativeLocalProviderAttachment } from "../../inference/native-local/profile";
@@ -18,6 +22,7 @@ export interface InitialHermesInferenceRouteDeps {
     gatewayName: string,
     expected: NativeLocalProviderAttachment,
   ): Promise<string>;
+  readRegisteredCredentialHandle(expected: RegisteredInferenceProviderAttachment): Promise<string>;
   resolveAgentConfig(sandboxName: string): AgentConfigTarget;
   readSandboxConfig(
     sandboxName: string,
@@ -29,7 +34,7 @@ export interface InitialHermesInferenceRouteDeps {
     sandboxName: string,
     target: AgentConfigTarget,
     config: ConfigObject,
-    options?: { restoreNativeLocalCredential?: true },
+    options?: { gatewayName: string; deferReload: true; restoreNativeLocalCredential?: true },
   ): void;
   restartGateway(sandboxName: string, gatewayName: string): Promise<{ ok: boolean }>;
 }
@@ -42,7 +47,7 @@ export type InitializeHermesInferenceRoute = (
   revalidateSandboxIdentity?: (operation: string) => void,
 ) => Promise<void>;
 
-/** Project an already attached local route into a publisher-owned Hermes image. */
+/** Project an already attached native route into a publisher-owned Hermes image. */
 export function createInitialHermesInferenceRoute(
   overrides: Pick<InitialHermesInferenceRouteDeps, "getSandbox"> &
     Partial<InitialHermesInferenceRouteDeps>,
@@ -63,6 +68,7 @@ export function createInitialHermesInferenceRoute(
     if (!initial) throw new Error("Initial Hermes inference route requires a registered sandbox.");
     if (!acceptsWorkload(initial)) return;
     if (
+      initial.registeredInferenceProviderAttachment === undefined &&
       initial.nativeLocalProviderAttachment === undefined &&
       !usesNativeLocalInferenceForAgent(
         "hermes",
@@ -78,6 +84,7 @@ export function createInitialHermesInferenceRoute(
     const mismatch = () =>
       new Error("Initial Hermes inference route does not match its registered selection.");
     const selection = (entry: SandboxEntry | null | undefined) => {
+      const registered = entry && recordedRegisteredInferenceProviderAttachment(entry);
       const receipt = normalizeNativeLocalProviderAttachment(entry?.nativeLocalProviderAttachment);
       if (
         !entry ||
@@ -88,21 +95,24 @@ export function createInitialHermesInferenceRoute(
         entry.gatewayName !== gatewayName ||
         entry.provider !== provider ||
         entry.model !== model ||
-        !receipt ||
-        receipt.agent !== "hermes" ||
-        receipt.sandboxName !== sandboxName ||
-        receipt.gatewayName !== gatewayName ||
-        receipt.provider !== provider ||
-        !nativeLocalAttachmentMatchesSelectedEndpoint(
-          entry.provider,
-          entry.endpointUrl,
-          receipt.endpointUrl,
-          entry.hostLocalInferenceReceipt,
-        )
+        (!registered &&
+          (!receipt ||
+            receipt.agent !== "hermes" ||
+            receipt.sandboxName !== sandboxName ||
+            receipt.gatewayName !== gatewayName ||
+            receipt.provider !== provider ||
+            !nativeLocalAttachmentMatchesSelectedEndpoint(
+              entry.provider,
+              entry.endpointUrl,
+              receipt.endpointUrl,
+              entry.hostLocalInferenceReceipt,
+            )))
       )
         throw mismatch();
       return {
         receipt,
+        registered: registered ?? undefined,
+        endpointUrl: registered?.endpointUrl ?? receipt!.endpointUrl,
         hostLocalInferenceReceipt: entry.hostLocalInferenceReceipt ?? null,
         preferredInferenceApi: entry.preferredInferenceApi ?? null,
         workload: entry.workload,
@@ -121,7 +131,9 @@ export function createInitialHermesInferenceRoute(
       assertCurrent(`read initial Hermes inference route in sandbox '${sandboxName}'`);
       const target = deps.resolveAgentConfig(sandboxName);
       if (target.agentName !== "hermes") throw mismatch();
-      const handle = await deps.readCredentialHandle(sandboxName, gatewayName, selected.receipt);
+      const handle = selected.registered
+        ? await deps.readRegisteredCredentialHandle(selected.registered)
+        : await deps.readCredentialHandle(sandboxName, gatewayName, selected.receipt!);
       assertCurrent(`read Hermes config in sandbox '${sandboxName}'`);
       const config = deps.readSandboxConfig(sandboxName, target, gatewayName);
       // Keep the same object: the guarded writer requires the non-enumerable
@@ -134,9 +146,10 @@ export function createInitialHermesInferenceRoute(
         model,
         selected.preferredInferenceApi,
         undefined,
-        selected.receipt.endpointUrl,
+        selected.endpointUrl,
         true,
         handle,
+        selected.registered,
       );
       if (options.projection === "credential") {
         refreshHermesNativeLocalCredential(config, {
@@ -145,17 +158,20 @@ export function createInitialHermesInferenceRoute(
           baseUrl: route.inferenceBaseUrl,
           inferenceApi: route.inferenceApi,
           nativeCredentialHandle: handle,
+          registeredCredentialEnv: selected.registered?.credentialEnv,
         });
       }
       assertCurrent(`apply initial Hermes inference route in sandbox '${sandboxName}'`);
       if (options.projection === "credential") {
-        // Restored state belongs to the archived generation. The guard permits
-        // only this verified credential replacement while sealing those inputs.
+        // Restored state belongs to the archived generation. The native guard
+        // validates only this credential replacement before the owning restart.
         deps.writeSandboxConfig(sandboxName, target, config, {
+          gatewayName,
+          deferReload: true,
           restoreNativeLocalCredential: true,
         });
       } else {
-        deps.writeSandboxConfig(sandboxName, target, config);
+        deps.writeSandboxConfig(sandboxName, target, config, { gatewayName, deferReload: true });
       }
       assertCurrent(`restart initial Hermes gateway in sandbox '${sandboxName}'`);
       // Restart even on a repeated projection: a prior write may have committed
@@ -188,6 +204,19 @@ const defaultDeps: Omit<InitialHermesInferenceRouteDeps, "getSandbox"> = {
     if (!handle)
       throw new Error("Initial Hermes inference route requires an issued credential handle.");
     return handle;
+  },
+  readRegisteredCredentialHandle: async (attachment) => {
+    const owner =
+      require("../../actions/inference-set/registered") as typeof import("../../actions/inference-set/registered");
+    const { createDefaultInferenceSetProviderAdapter } =
+      require("../../actions/inference-set-provider") as typeof import("../../actions/inference-set-provider");
+    const adapter = createDefaultInferenceSetProviderAdapter();
+    await owner.verifyRegisteredInferenceProviderAttachment({ adapter, expected: attachment });
+    return owner.readVerifiedRegisteredCredentialHandle({
+      attachment,
+      adapter,
+      sleep: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+    });
   },
   resolveAgentConfig: (name) =>
     (require("../../sandbox/config") as typeof import("../../sandbox/config")).resolveAgentConfig(

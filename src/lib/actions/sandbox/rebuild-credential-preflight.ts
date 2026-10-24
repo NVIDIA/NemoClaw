@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  recordedRegisteredInferenceProviderAttachment,
+  verifyRegisteredInferenceProviderAttachment,
+} from "../../inference/native-provider/registered";
 import { runOpenshell } from "../../adapters/openshell/runtime";
 import { fixedNativeProviderForAttachment } from "../../inference/native-provider/fixed";
 import { recordedNativeProviderAttachment } from "../../inference/native-provider/recorded-selection";
@@ -16,7 +20,10 @@ import {
 } from "./rebuild-provider-preflight";
 import { getRebuildCredentialEnvFromRegistry } from "./rebuild-resume-config";
 import { createManagedProviderAdapter } from "../../adapters/openshell/managed-provider-adapter";
-import { verifyRecordedNativeLocalProviderAttachment } from "../../inference/native-local/profile";
+import {
+  NativeProviderCredentialExpiredError,
+  verifyRecordedNativeLocalProviderAttachment,
+} from "../../inference/native-local/profile";
 
 const hermesProviderAuth = require("../../hermes-provider-auth") as {
   HERMES_PROVIDER_NAME: string;
@@ -175,6 +182,20 @@ export async function preflightRebuildCredentials(
   bail: RebuildBail,
   options: RebuildCredentialPreflightOptions = {},
 ): Promise<boolean> {
+  if (sb.registeredInferenceProviderAttachment !== undefined) {
+    try {
+      const expected = recordedRegisteredInferenceProviderAttachment(sb);
+      if (!expected) throw new Error("Missing registered provider binding");
+      await verifyRegisteredInferenceProviderAttachment({
+        adapter: createManagedProviderAdapter(),
+        expected,
+      });
+      return true;
+    } catch {
+      bail("Could not verify registered provider binding; sandbox is untouched");
+      return false;
+    }
+  }
   const rebuildCredentialEnv = getRebuildCredentialEnvFromRegistry(
     sb.provider,
     sb.credentialEnv,
@@ -191,7 +212,9 @@ export async function preflightRebuildCredentials(
         agent: sb.agent,
         provider: rebuildProvider,
       });
-    } catch {
+    } catch (error) {
+      if (error instanceof NativeProviderCredentialExpiredError)
+        bail("Native provider credential is expired; sandbox is untouched");
       bail("Could not verify native local provider credentials; sandbox is untouched");
       return false;
     }

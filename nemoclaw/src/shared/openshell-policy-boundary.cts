@@ -166,15 +166,31 @@ export type ActiveGlobalPolicyInspection =
 
 export type OpenShellGlobalPolicyHistoryState = "absent" | "present" | "invalid";
 
-const OPENSHELL_GLOBAL_POLICY_HISTORY_ABSENT = "No global policy history found";
-
-/** Classify the exact OpenShell 0.0.106 global-policy history output contract. */
+/** Classify the first OpenShell 0.1.3 global-policy history page. */
 export function classifyOpenShellGlobalPolicyHistory(
   stdout: string,
   stderr: string,
 ): OpenShellGlobalPolicyHistoryState {
-  if (stdout.trim().length > 0) return "present";
-  return stderr.trim() === OPENSHELL_GLOBAL_POLICY_HISTORY_ABSENT ? "absent" : "invalid";
+  if (stderr.trim().length > 0) return "invalid";
+  let page: OpenShellPolicyMapping;
+  try {
+    page = parseJsonMapping(stdout, "Invalid global policy history");
+  } catch {
+    return "invalid";
+  }
+  if (!Array.isArray(page.revisions) || typeof page.next_page_token !== "string") return "invalid";
+  if (page.revisions.length === 0) return page.next_page_token === "" ? "absent" : "invalid";
+  const revision: unknown = page.revisions[0];
+  return page.revisions.length === 1 &&
+    isMapping(revision) &&
+    revision.scope === "global" &&
+    !Object.hasOwn(revision, "sandbox") &&
+    positiveInteger(revision.version) &&
+    typeof revision.hash === "string" &&
+    POLICY_HASH_PATTERN.test(revision.hash) &&
+    ["loaded", "superseded", "pending", "failed", "unspecified"].includes(String(revision.status))
+    ? "present"
+    : "invalid";
 }
 
 const MISSING_POLICY_DOCUMENT =
@@ -254,11 +270,14 @@ export function parseActiveGlobalPolicyMetadata(raw: string): ActiveGlobalPolicy
   if (
     metadata.scope !== "global" ||
     (metadata.status !== "loaded" && metadata.status !== "superseded") ||
-    metadata.policy_source !== "global" ||
     Object.hasOwn(metadata, "sandbox")
   ) {
     throw new Error("OpenShell returned invalid global policy metadata");
   }
+  const policyIdentity = parsePolicyIdentity(
+    { hash: metadata.hash, active_version: metadata.version },
+    "OpenShell returned invalid global policy metadata",
+  );
   if (metadata.status === "superseded") return { state: "absent" };
   if (!isMapping(metadata.policy)) {
     throw new Error("OpenShell returned invalid global policy metadata");
@@ -268,10 +287,7 @@ export function parseActiveGlobalPolicyMetadata(raw: string): ActiveGlobalPolicy
     inspection: {
       policySource: "global",
       effectivePolicy: metadata.policy,
-      policyIdentity: parsePolicyIdentity(
-        metadata,
-        "OpenShell returned invalid global policy metadata",
-      ),
+      policyIdentity,
     },
   };
 }

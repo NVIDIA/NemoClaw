@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import { registeredInferenceFixture } from "../../../../test/helpers/registered-inference";
 
 import { managedStartupE2eProfile } from "../../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
 import { mapManagedStartupProfileToAgentEnvironment } from "../../onboard/managed-startup/agent-environment";
@@ -368,3 +369,111 @@ describe("managed workload rebuild mutation guard", () => {
     });
   });
 });
+
+it.each(["configured", "defaults", "wrong-endpoint"])(
+  "captures registered model settings before deletion: %s",
+  (scenario) => {
+    const binding = registeredInferenceFixture(true).binding;
+    const model =
+      scenario === "configured"
+        ? {
+            id: "selected",
+            contextWindow: 131072,
+            maxTokens: 8192,
+            input: ["text", "image"],
+            reasoning: true,
+            compat: { supportsStore: false },
+          }
+        : { id: "selected" };
+    const previousProfile = managedStartupE2eProfile("openclaw");
+    const catalog = {
+      agent: "openclaw",
+      previousProfile,
+      previousReceipt: { credentialProxyReplayRequired: false },
+      corporateCa: null,
+    } as unknown as managedWorkload.ManagedWorkloadRebuildCatalogHandoff;
+    const targetConfig = {
+      agentDefinition: null,
+      resumeConfig: {
+        provider: binding.providerName,
+        model: "selected",
+        preferredInferenceApi: binding.inferenceApi,
+        registeredInferenceProviderAttachment: binding,
+      },
+      durableConfig: { webSearchConfig: null },
+      hermesToolGateways: [],
+    } as unknown as RebuildTargetConfig;
+    const read = vi.spyOn(managedRebuildProfileDependencies, "readSandboxConfig").mockReturnValue({
+      models: {
+        providers: {
+          [binding.providerName]: {
+            baseUrl:
+              scenario === "wrong-endpoint" ? "https://other.example/v1" : binding.endpointUrl,
+            api: binding.inferenceApi,
+            models: [model],
+          },
+        },
+      },
+    });
+    vi.spyOn(managedRebuildProfileDependencies, "resolveAgentConfig").mockReturnValue({
+      agentName: "openclaw",
+    } as never);
+    const stage = vi
+      .spyOn(managedWorkload, "stageManagedWorkloadRebuildProfile")
+      .mockReturnValue(handoff);
+    const result = () =>
+      prepareManagedRebuildProfileHandoff({
+        catalogHandoff: catalog,
+        targetConfig,
+        recreateOptions: { toolDisclosure: "progressive" } as RebuildRecreateOnboardOpts,
+        messagingPlan: null,
+        environment: {},
+      });
+    const outcome = (() => {
+      try {
+        result();
+        return "prepared";
+      } catch {
+        return "refused";
+      }
+    })();
+    expect(outcome).toBe(scenario === "wrong-endpoint" ? "refused" : "prepared");
+    expect(read).toHaveBeenCalledWith(
+      binding.sandboxName,
+      { agentName: "openclaw" },
+      binding.gatewayName,
+    );
+    expect(stage.mock.calls).toEqual(
+      scenario === "wrong-endpoint"
+        ? []
+        : [
+            [
+              catalog,
+              expect.objectContaining({
+                inference: expect.objectContaining({
+                  routeProvider: binding.providerName,
+                  routedBaseUrl: binding.endpointUrl,
+                  primaryModelRef: `${binding.providerName}/selected`,
+                }),
+              }),
+              {},
+              expect.objectContaining({ openClawSelectedModel: model }),
+            ],
+          ],
+    );
+    const environment = managedWorkload.managedWorkloadRebuildProfileEnvironment(
+      catalog,
+      {},
+      { openClawSelectedModel: model },
+    );
+    expect(environment.NEMOCLAW_CONTEXT_WINDOW).toBe(
+      scenario === "configured" ? "131072" : undefined,
+    );
+    expect(environment.NEMOCLAW_MAX_TOKENS).toBe(scenario === "configured" ? "8192" : undefined);
+    expect(environment.NEMOCLAW_INFERENCE_INPUTS).toBe(
+      scenario === "configured" ? "text,image" : "text",
+    );
+    expect(environment.NEMOCLAW_REASONING).toBe(scenario === "configured" ? "true" : "false");
+    expect(environment.NEMOCLAW_SERVING_PRESET).toBeUndefined();
+  },
+);

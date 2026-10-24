@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import { prepareNativePodmanGatewayHostRuntime } from "./runtime-provider/podman-runtime-surfaces";
 
 import {
   formatSandboxBridgeUnreachableMessage,
@@ -60,6 +61,11 @@ describe("sandbox bridge reachability severity (#6004)", () => {
       try {
         await expect(
           verifySandboxBridgeGatewayReachableOrExit(false, {
+            gatewayRuntime: prepareNativePodmanGatewayHostRuntime({
+              environment: {},
+              platform: "linux",
+              socketPath: "/run/user/1000/podman/podman.sock",
+            }),
             autoApplyImpl: () => ({
               applied: false,
               reason: "sudo_unavailable",

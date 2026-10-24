@@ -16,3 +16,11 @@
  * definition instead of keeping their own copies.
  */
 export const RETRIABLE_HTTP_PROBE_STATUSES: ReadonlySet<number> = new Set([429, 502, 503, 504]);
+
+export function isRetriableHttpProbeStatus(status: number, provider?: string): boolean {
+  // NVIDIA Endpoints can return HTTP 500 before sandbox creation. Keep recovery
+  // within the existing request budget without retrying other providers' 500s.
+  return (
+    RETRIABLE_HTTP_PROBE_STATUSES.has(status) || (provider === "nvidia-prod" && status === 500)
+  );
+}

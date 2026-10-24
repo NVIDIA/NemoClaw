@@ -2,7 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import * as endpointSecurity from "../security/trusted-private-endpoint";
+import fs from "node:fs";
+import YAML from "yaml";
 import type { OpenShellProviderAdapter } from "../adapters/openshell/provider-adapter";
+import { nativeLocalIdentity } from "../inference/native-local/contract";
 import { customNativeProvider } from "../inference/native-provider/custom";
 import { HOSTED_NATIVE_PROVIDERS, hostedNativeProvider } from "../inference/native-provider/hosted";
 import type { NativeProviderAttachment } from "../inference/native-provider/contract";
@@ -11,7 +15,12 @@ import { normalizeNativeNvidiaProviderAttachment } from "../inference/native-nvi
 import type { SandboxEntry } from "../state/registry";
 import { runInferenceSet } from "./inference-set";
 import { prepareRebuildResumeConfig } from "./sandbox/rebuild-resume-config";
-import { createDeps, HERMES_TARGET, OPENCLAW_TARGET } from "../../../test/helpers/inference-set";
+import {
+  createDeps,
+  HERMES_TARGET,
+  OPENCLAW_TARGET,
+  nativeLocalTestReceipt,
+} from "../../../test/helpers/inference-set";
 
 function fixture(extraDefinitions: ReturnType<typeof hostedNativeProvider>[] = []) {
   const definitions = [
@@ -95,7 +104,7 @@ function fixture(extraDefinitions: ReturnType<typeof hostedNativeProvider>[] = [
   deps.setNativeHostedProviderAuthority = (gateway, provider, receipt) => {
     authorities.set(`${gateway}/${receipt.custom ? receipt.providerName : provider}`, receipt);
   };
-  return { deps, calls, attached, authorities, entry };
+  return { deps, calls, attached, authorities, entry, existing };
 }
 
 it("rejects Pi runtime switching before changing its native attachment (#12589)", async () => {
@@ -330,32 +339,80 @@ it("keeps a Hermes sandbox on its recorded endpoint after another sandbox change
   );
 });
 
-it.each([OPENCLAW_TARGET, HERMES_TARGET])(
-  "preserves a user-supplied Hermes endpoint in $agentName configuration",
-  async (target) => {
-    const agent = target.agentName;
-    const { deps, calls, entry } = fixture();
-    entry.provider = "hermes-provider";
-    entry.agent = agent;
-    deps.resolveAgentConfig = () => target;
-    entry.endpointUrl = "https://custom.example/v1";
-    entry.credentialEnv = "OPENAI_API_KEY";
-    entry.preferredInferenceApi = "openai-completions";
-    await runInferenceSet({ provider: "hermes-provider", model: "new-model" }, deps);
-    expect(calls.attachProvider).not.toHaveBeenCalled();
-    expect(calls.createProvider).not.toHaveBeenCalled();
-    expect(entry.nativeHostedProviderAttachment).toBeUndefined();
-    const configWrites =
-      agent === "hermes"
-        ? deps.calls.writeSandboxConfig.mock.calls
-        : deps.calls.setOpenClawConfigValues.mock.calls;
-    expect(JSON.stringify(configWrites)).toContain("https://inference.local/v1");
-    expect(JSON.stringify(configWrites)).not.toContain("https://inference-api.nousresearch.com");
-    expect(JSON.stringify(configWrites)).not.toContain("openshell:resolve:env:OPENAI_API_KEY");
-    expect(deps.inferenceRouteObserver.observeInferenceRoute).toHaveBeenCalled();
-    expect(deps.calls.captureOpenshell).toHaveBeenCalledWith(
-      expect.arrayContaining(["inference", "set", "--provider", "hermes-provider"]),
-      expect.anything(),
+describe.each([OPENCLAW_TARGET, HERMES_TARGET])(
+  "recorded Hermes endpoint for $agentName",
+  (target) => {
+    it.each([
+      "http://custom.example/team/v1",
+      "https://8.8.8.8/team/v1",
+      "http://host.openshell.internal:42103/team/v1",
+    ])(
+      "migrates %s to an attached provider and preserves it across model changes and rebuild",
+      async (endpointUrl) => {
+        const validateEndpoint = endpointSecurity.assertEndpointResolvesPublic;
+        vi.spyOn(endpointSecurity, "assertEndpointResolvesPublic").mockImplementation((url) =>
+          validateEndpoint(url, async () => [{ address: "8.8.8.8", family: 4 }]),
+        );
+        const definition = hostedNativeProvider("hermes-provider", endpointUrl)!;
+        const { deps, calls, entry, attached } = fixture([definition]);
+        entry.provider = "hermes-provider";
+        entry.agent = target.agentName;
+        entry.endpointUrl = endpointUrl;
+        entry.credentialEnv = "OPENAI_API_KEY";
+        entry.preferredInferenceApi = "openai-completions";
+        deps.resolveAgentConfig = () => target;
+        const imported: unknown[] = [];
+        calls.importProviderProfile.mockImplementation(({ profilePath }) => {
+          imported.push(YAML.parse(fs.readFileSync(profilePath, "utf8")));
+          return { ok: true };
+        });
+        await runInferenceSet({ provider: "hermes-provider", model: "new-model" }, deps);
+        expect(entry.nativeHostedProviderAttachment).toMatchObject({
+          endpointUrl,
+          providerName: definition.providerName,
+        });
+        expect([...attached.get("alpha")!]).toEqual([definition.providerName]);
+        expect(imported[0]).toMatchObject({
+          endpoints: [
+            {
+              host: new URL(endpointUrl).hostname,
+              rules: [
+                { allow: { method: "GET", path: "/team/v1/models" } },
+                { allow: { method: "POST", path: "/team/v1/chat/completions" } },
+              ],
+            },
+          ],
+        });
+        expect(calls.createProvider).toHaveBeenCalledWith(
+          expect.objectContaining({
+            credentials: [{ name: "OPENAI_API_KEY", value: "canary-host-secret" }],
+          }),
+        );
+        const configWrites =
+          target.agentName === "hermes"
+            ? deps.calls.writeSandboxConfig.mock.calls
+            : deps.calls.setOpenClawConfigValues.mock.calls;
+        expect(JSON.stringify(configWrites)).toContain(endpointUrl);
+        expect(JSON.stringify(configWrites)).toContain(
+          target.agentName === "hermes"
+            ? "${OPENAI_API_KEY}"
+            : "openshell:resolve:env:OPENAI_API_KEY",
+        );
+        expect(JSON.stringify(configWrites)).not.toContain("canary-host-secret");
+        expect(deps.inferenceRouteObserver.observeInferenceRoute).not.toHaveBeenCalled();
+        deps.resolveCredentialValue = vi.fn(() => "");
+        await runInferenceSet({ provider: "hermes-provider", model: "second-model" }, deps);
+        expect(deps.resolveCredentialValue).not.toHaveBeenCalled();
+        expect(calls.updateProvider).not.toHaveBeenCalled();
+        expect(
+          prepareRebuildResumeConfig("alpha", entry, target.agentName, vi.fn(), (message) => {
+            throw new Error(message);
+          }),
+        ).toMatchObject({
+          endpointUrl,
+          nativeHostedProviderAttachment: entry.nativeHostedProviderAttachment,
+        });
+      },
     );
   },
 );
@@ -533,6 +590,64 @@ describe("Hermes native gateway credential refresh", () => {
 });
 
 describe("custom native inference selection", () => {
+  it("rejects an unverified Anthropic bridge before replacing native local inference", async () => {
+    const binding = { ...nativeLocalTestReceipt(), agent: "hermes" as const };
+    const local = {
+      ...binding,
+      ...nativeLocalIdentity(binding),
+      providerId: `id-${nativeLocalIdentity(binding).providerName}`,
+    };
+    const bridge = customNativeProvider({
+      provider: "compatible-anthropic-endpoint",
+      api: "openai-completions",
+      endpointUrl: "http://host.openshell.internal:49152",
+      credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+      allowedIps: [],
+    });
+    const { deps, entry, calls, attached, existing } = fixture([
+      bridge,
+      {
+        ...local,
+        logicalProvider: local.provider,
+        endpoint: local.endpointUrl,
+        api: "openai-completions",
+        label: "local",
+      },
+    ]);
+    Object.assign(entry, {
+      agent: "hermes",
+      provider: local.provider,
+      endpointUrl: local.endpointUrl,
+      nativeLocalProviderAttachment: local,
+    });
+    deps.resolveAgentConfig = () => HERMES_TARGET;
+    deps.providerAdapter.inspectProviderProfile = async () => ({
+      ok: true,
+      value: { credentialKeys: [local.credentialEnv] },
+    });
+    attached.get("alpha")!.add(local.providerName);
+    existing.add(local.providerName);
+    const before = structuredClone(entry);
+    await expect(
+      runInferenceSet(
+        {
+          provider: bridge.logicalProvider,
+          model: "mock-anthropic-model",
+          endpointUrl: bridge.custom.endpointUrl,
+          inferenceApi: "openai-completions",
+        },
+        deps,
+      ),
+    ).rejects.toThrow("cannot use an unverified OpenShell host bridge endpoint");
+    expect(entry).toEqual(before);
+    expect([...attached.get("alpha")!]).toEqual([local.providerName]);
+    expect([...attached.get("beta")!]).toEqual(["unrelated-provider"]);
+    expect(deps.inferenceRouteObserver.observeInferenceRoute).not.toHaveBeenCalled();
+    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
+    expect(deps.calls.restartSandboxGateway).not.toHaveBeenCalled();
+    expect(calls.importProviderProfile).not.toHaveBeenCalled();
+    expect(calls.createProvider).not.toHaveBeenCalled();
+  });
   const custom = customNativeProvider({
     provider: "compatible-endpoint",
     api: "openai-completions",
@@ -584,6 +699,38 @@ describe("custom native inference selection", () => {
     expect([...attached.get("alpha")!]).toEqual([custom.providerName]);
     expect(deps.inferenceRouteObserver.observeInferenceRoute).not.toHaveBeenCalled();
   });
+  it("waits for a replacement endpoint credential with unchanged provider and model (#12603)", async () => {
+    const { deps, entry } = fixture([custom, replacement]);
+    await runInferenceSet({ provider: "openai-api", model: "first-model" }, deps);
+    await runInferenceSet(
+      {
+        provider: "compatible-endpoint",
+        model: "custom-model",
+        endpointUrl: custom.endpoint,
+        inferenceApi: custom.api,
+      },
+      deps,
+    );
+    let elapsed = 0;
+    deps.sleep = async (milliseconds) => {
+      elapsed += milliseconds;
+    };
+    deps.calls.probeSandboxRoute.mockImplementation(async () =>
+      elapsed >= 10_000
+        ? { ok: true }
+        : { ok: false, detail: "native credential handle pending", httpStatus: null },
+    );
+    await runInferenceSet(
+      {
+        provider: "compatible-endpoint",
+        model: "custom-model",
+        endpointUrl: replacement.endpoint,
+        inferenceApi: replacement.api,
+      },
+      deps,
+    );
+    expect(entry.nativeHostedProviderAttachment?.custom).toEqual(replacement.custom);
+  });
   it("restores the prior attachment if a changed custom endpoint fails sandbox verification", async () => {
     const { deps, calls, entry, attached, authorities } = fixture([custom, replacement]);
     await runInferenceSet({ provider: "openai-api", model: "first-model" }, deps);
@@ -629,4 +776,62 @@ describe("custom native inference selection", () => {
       `id-${replacement.providerName}`,
     );
   });
+});
+
+it("restores the prior attachment when a retained Hermes endpoint fails sandbox verification", async () => {
+  const endpointUrl = "http://host.openshell.internal:42103/team/v1";
+  const definition = hostedNativeProvider("hermes-provider", endpointUrl)!;
+  const { deps, calls, entry, attached } = fixture([definition]);
+  entry.agent = "hermes";
+  deps.resolveAgentConfig = () => HERMES_TARGET;
+  await runInferenceSet({ provider: "openai-api", model: "previous-model" }, deps);
+  const previous = structuredClone(entry);
+  deps.loadSession = () =>
+    ({
+      sandboxName: "alpha",
+      provider: "hermes-provider",
+      model: "retained-model",
+      endpointUrl,
+      credentialEnv: "NOUS_API_KEY",
+      preferredInferenceApi: "openai-completions",
+    }) as never;
+  deps.calls.probeSandboxRoute.mockResolvedValue({
+    ok: false,
+    detail: "retained endpoint refused",
+    httpStatus: 401,
+  });
+  await expect(
+    runInferenceSet({ provider: "hermes-provider", model: "retained-model" }, deps),
+  ).rejects.toThrow("retained endpoint refused");
+  expect(entry).toEqual(previous);
+  expect([...attached.get("alpha")!]).toEqual([
+    previous.nativeHostedProviderAttachment!.providerName,
+  ]);
+  expect(calls.detachProvider).toHaveBeenCalledWith(
+    expect.objectContaining({ providerName: definition.providerName }),
+  );
+  expect([...attached.get("beta")!]).toEqual(["unrelated-provider"]);
+  expect(deps.inferenceRouteObserver.observeInferenceRoute).not.toHaveBeenCalled();
+});
+
+it.each([
+  { endpointUrl: "http://host.openshell.internal:42104/team/v1" },
+  { preferredInferenceApi: "openai-responses" },
+])("rejects changed recorded Hermes authority %j before provider writes", async (change) => {
+  const endpointUrl = "http://host.openshell.internal:42103/team/v1";
+  const definition = hostedNativeProvider("hermes-provider", endpointUrl)!;
+  const { deps, calls, entry } = fixture([definition]);
+  entry.provider = "hermes-provider";
+  entry.endpointUrl = endpointUrl;
+  entry.credentialEnv = "OPENAI_API_KEY";
+  entry.preferredInferenceApi = "openai-completions";
+  await runInferenceSet({ provider: "hermes-provider", model: "first-model" }, deps);
+  Object.assign(entry, change);
+  calls.createProvider.mockClear();
+  calls.attachProvider.mockClear();
+  await expect(
+    runInferenceSet({ provider: "hermes-provider", model: "second-model" }, deps),
+  ).rejects.toThrow("Recorded Hermes selection does not match its endpoint or API authority");
+  expect(calls.createProvider).not.toHaveBeenCalled();
+  expect(calls.attachProvider).not.toHaveBeenCalled();
 });

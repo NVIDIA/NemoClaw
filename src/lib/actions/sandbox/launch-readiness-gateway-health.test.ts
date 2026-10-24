@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { registeredInferenceFixture } from "../../../../test/helpers/registered-inference";
+
 import { execFileSync } from "node:child_process";
 
 import { describe, expect, it, vi } from "vitest";
@@ -502,4 +504,34 @@ describe("OpenClaw native-local readiness identity (#13338)", () => {
       );
     },
   );
+});
+
+it("requires the recorded external identity before invoking its native route", async () => {
+  const f = registeredInferenceFixture(true);
+  const verifyRegisteredAttachment = vi.fn(async () => {});
+  const inferenceInvocationProbe = vi.fn(async () => ({ ok: true }) as const);
+  const input = {
+    sandboxName: f.binding.sandboxName,
+    gatewayName: f.binding.gatewayName,
+    agentName: "openclaw",
+    entry: {
+      name: f.binding.sandboxName,
+      gatewayName: f.binding.gatewayName,
+      provider: f.binding.providerName,
+      model: "model-a",
+      endpointUrl: f.binding.endpointUrl,
+      credentialEnv: f.binding.credentialEnv,
+      preferredInferenceApi: f.binding.inferenceApi,
+      registeredInferenceProviderAttachment: f.binding,
+    },
+    deps: { verifyRegisteredAttachment, inferenceInvocationProbe },
+  };
+  await expect(requireNativeInferenceHealth(input)).resolves.toBe(true);
+  expect(inferenceInvocationProbe).toHaveBeenCalledWith(
+    expect.objectContaining({ registeredInferenceProviderAttachment: f.binding }),
+  );
+  verifyRegisteredAttachment.mockRejectedValue(new Error("replaced"));
+  inferenceInvocationProbe.mockClear();
+  await expect(requireNativeInferenceHealth(input)).rejects.toThrow("replaced");
+  expect(inferenceInvocationProbe).not.toHaveBeenCalled();
 });

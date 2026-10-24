@@ -8,14 +8,18 @@ import {
   installRebuildFlowTestHooks,
 } from "../../../../test/helpers/rebuild-flow-generic-harness";
 import {
+  cliOpenShellInstalledVersionObserver,
   rebuildCustomImagePreflight,
   rebuildProviderPreflight,
 } from "../../../../test/helpers/rebuild-flow-harness";
 import type { preflightRebuildImage } from "./rebuild-custom-image-preflight";
 import type { HostCredentialTarget } from "./rebuild-provider-preflight";
-import { nativeProviderRebuildScenario } from "./rebuild-flow-test-fixtures";
+import {
+  customProviderRebuildEntry,
+  nativeProviderRebuildScenario,
+} from "./rebuild-flow-test-fixtures";
 
-function createRemoteRebuildHarness() {
+function createRemoteRebuildHarness(native = true) {
   const selection = {
     provider: "compatible-endpoint",
     model: "test/model",
@@ -23,22 +27,32 @@ function createRemoteRebuildHarness() {
     endpointUrl: "https://inference.example.test/v1",
   };
   const harness = createRebuildFlowHarness({
-    sandboxEntry: selection,
-    hydrateCredentialEnv: (name) => (name === selection.credentialEnv ? "host-provider-key" : null),
-    runOpenshell: (args) => {
-      const stdout =
-        args[1] === "list"
-          ? JSON.stringify([
-              { name: selection.provider, credential_keys: [selection.credentialEnv] },
-            ])
-          : [
-              `Name: ${selection.provider}`,
-              "Type: openai",
-              `Credential keys: ${selection.credentialEnv}`,
-              "Config keys: OPENAI_BASE_URL",
-            ].join("\n");
-      return args[0] === "provider" ? { status: 0, stdout, output: stdout, stderr: "" } : undefined;
+    sandboxEntry: {
+      ...selection,
+      ...(native ? customProviderRebuildEntry(selection.endpointUrl, "openai-responses") : {}),
     },
+    hydrateCredentialEnv: (name) => (name === selection.credentialEnv ? "host-provider-key" : null),
+    runOpenshell: native
+      ? undefined
+      : (args) => {
+          const stdout =
+            args[1] === "list"
+              ? JSON.stringify({
+                  providers: [
+                    { name: selection.provider, credential_keys: [selection.credentialEnv] },
+                  ],
+                  next_page_token: "",
+                })
+              : [
+                  `Name: ${selection.provider}`,
+                  "Type: openai",
+                  `Credential keys: ${selection.credentialEnv}`,
+                  "Config keys: OPENAI_BASE_URL",
+                ].join("\n");
+          return args[0] === "provider"
+            ? { status: 0, stdout, output: stdout, stderr: "" }
+            : undefined;
+        },
   });
   Object.assign(harness.session, {
     sandboxName: "alpha",
@@ -76,8 +90,12 @@ describe("rebuildSandbox flow: host credential target", () => {
     expect(harness.onboardSpy).not.toHaveBeenCalled();
   });
 
-  it("rebuilds a legacy row with the inference API recovered from its matching session", async () => {
-    const harness = createRemoteRebuildHarness();
+  it("rebuilds a legacy row on OpenShell 0.0.116 with the API from its matching session", async () => {
+    vi.spyOn(cliOpenShellInstalledVersionObserver, "observeInstalledVersion").mockReturnValue({
+      ok: true,
+      version: "0.0.116",
+    });
+    const harness = createRemoteRebuildHarness(false);
     const validate = vi.mocked(rebuildProviderPreflight.validateRebuildHostInferenceCredential);
     validate.mockImplementation(
       async (target: HostCredentialTarget) => target.preferredInferenceApi === "openai-responses",

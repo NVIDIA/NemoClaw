@@ -23,10 +23,22 @@ $$nemoclaw onboard
 Select **Other Anthropic-compatible endpoint**.
 Enter the endpoint base URL, model ID, and API key when prompted.
 Use any non-empty placeholder such as `dummy` when the endpoint does not require authentication.
-For a new hosted endpoint outside the Personal policy tier, NemoClaw attaches an endpoint-bound OpenShell provider to the sandbox.
-A new Personal-tier selection and an existing sandbox without a native attachment keep the shared `inference.local` route.
 For a direct custom endpoint, OpenShell holds the upstream credential and the sandbox receives a scoped `openshell:resolve:env:...` reference instead of the raw key.
 For AWS Bedrock Runtime, a host-local adapter holds the AWS credentials and OpenShell receives only the adapter token.
+
+## Understand Native Endpoint Selection
+
+New qualifying custom endpoints use a sandbox-attached OpenShell provider.
+Use a public endpoint or an explicitly trusted private hostname or IP address.
+NemoClaw rejects an unverified Anthropic-compatible route that uses `host.openshell.internal` because the alias does not prove which process owns the selected port.
+Follow the [custom endpoint security requirements](custom-endpoint-security) for private destinations and address pinning.
+
+The native route binds the endpoint, API, and credential source to the selected sandbox.
+OpenShell supplies the host credential at egress; the agent receives a credential reference.
+Existing sandboxes without a native attachment retain their recorded shared route on OpenShell `0.0.x`.
+For retained shared selections, follow the [resume and rebuild restrictions](../../manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes#resolve-rebuild-preflight-stops).
+OpenShell `0.1.3` removes `inference.local`; this repair does not complete migration of every shared route.
+Native local qualification remains pending for this upgrade.
 
 <AgentOnly variant="openclaw">
 
@@ -54,12 +66,12 @@ Refer to [Onboarding rejects an Anthropic-compatible tool call](../../reference/
 
 ## Understand Hermes Routing
 
-Hermes uses the OpenAI Chat Completions frontend for this provider.
-NemoClaw validates `/v1/chat/completions`.
-For a new hosted selection outside the Personal tier, NemoClaw attaches an endpoint-bound OpenAI-compatible provider.
-Hermes uses the direct custom endpoint's OpenAI-compatible `/v1` base URL or, for Bedrock, the host-local adapter URL in its model configuration.
-That configuration uses `${COMPATIBLE_ANTHROPIC_API_KEY}`; the sandbox environment supplies the scoped OpenShell credential reference.
-For a new Personal-tier selection or a retained shared route, Hermes uses `https://inference.local/v1` while NemoClaw registers the upstream with OpenShell as `type=openai` using `OPENAI_BASE_URL`.
+Hermes uses OpenAI Chat Completions for this provider.
+For a qualifying native selection, Hermes calls the recorded endpoint through its sandbox-attached OpenShell provider.
+NemoClaw validates `/v1/chat/completions` and configures the same API for inference.
+The route keeps `COMPATIBLE_ANTHROPIC_API_KEY` as its host credential binding.
+Hermes configuration uses `${COMPATIBLE_ANTHROPIC_API_KEY}`; its sandbox environment supplies a scoped OpenShell credential reference instead of the API key.
+For Bedrock, the configured endpoint is the host-local adapter URL.
 The OpenClaw-only native Anthropic `emit_ok` streaming check does not run on this route.
 
 This path avoids duplicate Anthropic SSE `message_start` events.
@@ -77,11 +89,10 @@ AWS Bedrock routes keep their existing OpenAI-compatible adapter behavior.
 
 Deep Agents Code supports only OpenAI-compatible inference for this provider.
 NemoClaw validates `/v1/chat/completions` and selects `openai-completions`.
-For a new hosted selection outside the Personal tier, `/sandbox/.deepagents/config.toml` uses the direct custom endpoint's OpenAI-compatible `/v1` surface or, for Bedrock, the host-local adapter URL.
+For a qualifying native selection, `/sandbox/.deepagents/config.toml` records the direct endpoint or, for Bedrock, the host-local adapter URL.
 The file sets `api_key_env = "COMPATIBLE_ANTHROPIC_API_KEY"`.
 The sandbox environment supplies the scoped OpenShell credential reference for that name.
-Personal-tier and retained shared selections use `https://inference.local/v1` in that file.
-For direct custom endpoints, OpenShell keeps the `COMPATIBLE_ANTHROPIC_API_KEY` credential on the host for either route.
+Retained shared selections use `https://inference.local/v1` on OpenShell `0.0.x`.
 The OpenClaw-only native Anthropic `emit_ok` streaming check does not run on this route.
 
 If the endpoint implements only Anthropic Messages, onboarding stops instead of creating a Deep Agents sandbox with an unusable runtime route.
@@ -91,10 +102,12 @@ If the endpoint implements only Anthropic Messages, onboarding stops instead of 
 ## Run Non-Interactive Onboarding
 
 Set `NEMOCLAW_PROVIDER=anthropicCompatible` and provide the endpoint URL, model, and credential.
+Replace the example endpoint and model with your server values.
+Use `dummy` only when that server does not require authentication.
 
 ```bash
 NEMOCLAW_PROVIDER=anthropicCompatible \
-  NEMOCLAW_ENDPOINT_URL=http://localhost:8080 \
+  NEMOCLAW_ENDPOINT_URL=https://inference.example.com \
   NEMOCLAW_MODEL=my-model \
   COMPATIBLE_ANTHROPIC_API_KEY=dummy \
   $$nemoclaw onboard --non-interactive

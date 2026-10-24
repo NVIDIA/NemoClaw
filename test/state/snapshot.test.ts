@@ -1098,7 +1098,9 @@ describe("complete native home persistence", () => {
         path.join(binDir, "stat"),
         `#!/usr/bin/env node
 const fs = require("node:fs");
-if (process.argv[2] !== "-c" || process.argv[3] !== "%u") process.exit(95);
+if (process.argv[2] !== "-c" || process.argv[3] !== "%u") {
+  process.exit(require("node:child_process").spawnSync("native-stat", process.argv.slice(2), { stdio: process.argv.at(-1).startsWith("/dev/fd/") ? ["inherit", "inherit", "inherit", 3] : "inherit" }).status ?? 95);
+}
 process.stdout.write(String(fs.lstatSync(process.argv.at(-1)).uid) + "\\n");
 `,
       );
@@ -1135,7 +1137,7 @@ process.stdout.write(String(fs.lstatSync(process.argv.at(-1)).uid) + "\\n");
       expect(commands).toContain('2>/dev/null < "$task/status"');
       expect(commands).not.toContain('< "$proc/status" 2>/dev/null');
       expect(commands).toContain("-links +1");
-      expect(commands).toContain('mktemp -d "$root/.nemoclaw-native-restore.XXXXXX"');
+      expect(commands).toContain('mkdir -m 700 -- "$transfer"');
       expect(commands).toContain('owner="$(stat -c %u -- "$target_item")"');
       expect(commands).toContain('[ "$owner" = "$uid" ] && [ -w "$target_dir" ]');
       expect(commands).toContain('restore_dir "$source_item" "$target_item"');
@@ -1187,7 +1189,9 @@ process.stdout.write(String(fs.lstatSync(process.argv.at(-1)).uid) + "\\n");
 const fs = require("node:fs");
 const path = require("node:path");
 const target = process.argv.at(-1);
-if (process.argv[2] !== "-c" || process.argv[3] !== "%u" || !target) process.exit(95);
+if (process.argv[2] !== "-c" || process.argv[3] !== "%u" || !target) {
+  process.exit(require("node:child_process").spawnSync("native-stat", process.argv.slice(2), { stdio: process.argv.at(-1).startsWith("/dev/fd/") ? ["inherit", "inherit", "inherit", 3] : "inherit" }).status ?? 95);
+}
 const uid = path.basename(target) === "image-owned" && (!fs.lstatSync(target).isFile() || fs.readFileSync(target, "utf8") !== "must be removed") ? (process.getuid?.() ?? 1000) + 1 : fs.lstatSync(target).uid;
 process.stdout.write(String(uid) + "\\n");
 `,

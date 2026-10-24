@@ -576,7 +576,7 @@ describe.each(["langchain-deepagents-code", "openclaw", "hermes", "pi"] as const
     it("rejects a changed legacy source before starting recreation (#13197)", async () => {
       const { row, reserve, calls, run } = nativeRecreationHarness(agentName);
       row.model = "another-model";
-      await expect(run()).rejects.toThrow("legacy route ownership changed");
+      await expect(run()).rejects.toThrow("recorded route ownership changed");
       expect(reserve).not.toHaveBeenCalled();
       expect(calls.createSandbox).not.toHaveBeenCalled();
     });
@@ -592,7 +592,7 @@ describe("Hermes staged recreation authority", () => {
   ])("rejects $label before recreation or reservation", async ({ receipt }) => {
     const { row, source, attachment, reserve, calls, run } = nativeRecreationHarness("hermes");
     Object.assign(attachment, receipt);
-    await expect(run()).rejects.toThrow("legacy route ownership changed");
+    await expect(run()).rejects.toThrow("recorded route ownership changed");
     expect(reserve).not.toHaveBeenCalled();
     expect(calls.createSandbox).not.toHaveBeenCalled();
     expect(row).toEqual(source);
@@ -604,7 +604,7 @@ describe("Hermes staged recreation authority", () => {
     { label: "missing session", options: { session: null } },
   ])("retains the $label refusal", async ({ options }) => {
     const { row, source, reserve, calls, run } = nativeRecreationHarness("hermes");
-    await expect(run(options)).rejects.toThrow("legacy route ownership changed");
+    await expect(run(options)).rejects.toThrow("recorded route ownership changed");
     expect(reserve).not.toHaveBeenCalled();
     expect(calls.createSandbox).not.toHaveBeenCalled();
     expect(row).toEqual(source);
@@ -618,9 +618,53 @@ describe("Hermes staged recreation authority", () => {
       await intent.reservePublishedRouteAfterBackup();
       throw new Error("must not reserve a changed source");
     };
-    await expect(run()).rejects.toThrow("legacy route ownership changed");
+    await expect(run()).rejects.toThrow("recorded route ownership changed");
     expect(reserve).not.toHaveBeenCalled();
     expect(row.model).toBe("concurrent-selection");
     expect(row.nativeLocalProviderAttachment).toBeUndefined();
+  });
+});
+
+describe("published native model replacement", () => {
+  it("reserves an implicit model replacement only after backup", async () => {
+    const { row, source, attachment, reserve, deps, run } = nativeRecreationHarness("openclaw");
+    row.nativeLocalProviderAttachment = attachment;
+    source.nativeLocalProviderAttachment = structuredClone(attachment);
+    deps.createSandbox = async (...args: unknown[]) => {
+      expect(row).toEqual(source);
+      expect(reserve).not.toHaveBeenCalled();
+      const intent = args.at(-2) as { reservePublishedRouteAfterBackup: () => Promise<void> };
+      await intent.reservePublishedRouteAfterBackup();
+      expect(row.model).toBe("replacement-model");
+      return "saved";
+    };
+    await run({ model: "replacement-model", recreateSandbox: () => false });
+    expect(reserve).toHaveBeenCalledOnce();
+  });
+
+  it("retains the full native source when backup refuses a model replacement", async () => {
+    const { row, source, attachment, reserve, deps, run } = nativeRecreationHarness("openclaw");
+    row.nativeLocalProviderAttachment = attachment;
+    source.nativeLocalProviderAttachment = structuredClone(attachment);
+    deps.createSandbox = async () => {
+      throw new Error("backup refused");
+    };
+    await expect(run({ model: "replacement-model", recreateSandbox: () => false })).rejects.toThrow(
+      "backup refused",
+    );
+    expect(row).toEqual(source);
+    expect(reserve).not.toHaveBeenCalled();
+  });
+
+  it("rejects a replacement provider identity without explicit recreation", async () => {
+    const { row, source, attachment, reserve, calls, run } = nativeRecreationHarness("openclaw");
+    row.nativeLocalProviderAttachment = { ...attachment, providerId: "previous-provider" };
+    source.nativeLocalProviderAttachment = structuredClone(row.nativeLocalProviderAttachment);
+    await expect(run({ model: "replacement-model", recreateSandbox: () => false })).rejects.toThrow(
+      "route ownership changed",
+    );
+    expect(row).toEqual(source);
+    expect(reserve).not.toHaveBeenCalled();
+    expect(calls.createSandbox).not.toHaveBeenCalled();
   });
 });

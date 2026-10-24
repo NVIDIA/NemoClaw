@@ -27,6 +27,12 @@ import { namedOpenShellGateway } from "../../adapters/openshell/sandbox-observer
 import { REPOSITORY_ROOT } from "../../core/repository-root";
 import { messagingProviderProfileForType } from "../../messaging/applier/provider-application";
 import {
+  credentialFamilyBaseType,
+  credentialFamilyPrimary,
+  credentialFamilyProfileContract,
+  withCredentialFamilyProfile,
+} from "../../messaging/applier/credential-family-profile";
+import {
   ensureNativeNvidiaProviderAttached,
   nativeNvidiaProviderProfilePath,
   NVIDIA_HOSTED_NATIVE_PROFILE_ID,
@@ -47,6 +53,7 @@ type ProviderPreparationInput = {
   readonly openshellDriver: SandboxEntry["openshellDriver"];
   readonly inferenceProvider: string | null;
   readonly transactionBoundInferenceProvider?: string | null;
+  readonly registeredInferenceProviderName?: string;
   readonly messagingProviders: readonly string[];
   readonly messagingProviderRequests: SandboxCreateIntent["messagingProviderRequests"];
   readonly extraProviders: readonly string[];
@@ -128,10 +135,6 @@ export async function validateAttachedOwnedProfilesBeforeSandboxCreation(
     null;
   const profileIds = new Set<string>();
   for (const providerName of new Set(providerNames)) {
-    if (expectedMessaging.has(providerName)) {
-      profileIds.add(MESSAGING_CREDENTIAL_PROVIDER_TYPE);
-      continue;
-    }
     const observed = await adapter.getProvider({ target, providerName });
     if (!observed.ok) {
       throwAfterCleanup(
@@ -140,11 +143,9 @@ export async function validateAttachedOwnedProfilesBeforeSandboxCreation(
       );
     }
     if (observed.value.type === "generic") continue;
-    let directProfile = messagingProviderProfileForType(
-      REPOSITORY_ROOT,
-      observed.value.type,
-      undefined,
-    );
+    const baseType =
+      expectedMessaging.get(providerName)?.type ?? credentialFamilyBaseType(observed.value.type);
+    let directProfile = messagingProviderProfileForType(REPOSITORY_ROOT, baseType, undefined);
     if (observed.value.type === "langfuse-hermes-v1") {
       directProfile = {
         profileType: observed.value.type,
@@ -167,23 +168,42 @@ export async function validateAttachedOwnedProfilesBeforeSandboxCreation(
     }
     const profile =
       directProfile ??
-      messagingProviderProfileForType(
-        REPOSITORY_ROOT,
-        observed.value.type,
-        bridgeProfiles?.get(observed.value.type),
-      );
+      messagingProviderProfileForType(REPOSITORY_ROOT, baseType, bridgeProfiles?.get(baseType));
     if (!profile) continue;
-    const imported = await adapter.importProviderProfile({
-      target,
-      profilePath: profile.profilePath,
-    });
+    const primary =
+      expectedMessaging.get(providerName)?.credentialKey ??
+      credentialFamilyPrimary(observed.value.credentialKeys);
+    if (observed.value.type !== baseType && !primary) {
+      throwAfterCleanup(deps, `Provider '${providerName}' has invalid credential names.`);
+    }
+    const imported =
+      observed.value.type !== baseType && primary
+        ? await withCredentialFamilyProfile(
+            profile.profilePath,
+            primary,
+            observed.value.credentialKeys,
+            (generated) => {
+              if (generated.profileType !== observed.value.type) {
+                throw new Error(
+                  `Provider '${providerName}' has an invalid credential profile identity.`,
+                );
+              }
+              return adapter.importProviderProfile({ target, profilePath: generated.profilePath });
+            },
+          ).catch(() => {
+            throwAfterCleanup(
+              deps,
+              `Could not verify the credential profile for provider '${providerName}'.`,
+            );
+          })
+        : await adapter.importProviderProfile({ target, profilePath: profile.profilePath });
     if (!imported.ok) {
       throwAfterCleanup(
         deps,
-        `Could not verify provider profile '${profile.profileType}' before sandbox creation. ${ownedProfileFailureDetail(imported)}`,
+        `Could not verify provider profile '${observed.value.type}' before sandbox creation. ${ownedProfileFailureDetail(imported)}`,
       );
     }
-    profileIds.add(profile.profileType);
+    profileIds.add(observed.value.type);
   }
   return [...profileIds];
 }
@@ -339,11 +359,23 @@ async function inspectExpectedMessagingBinding(
     providerName,
   });
   if (!result.ok) return { kind: "failed", error: result.error };
-  return {
-    kind: matchesGatewayCredentialFamilyProviderBinding(result.value, expected)
-      ? "exact"
-      : "mismatch",
-  };
+  if (!matchesGatewayCredentialFamilyProviderBinding(result.value, expected)) {
+    return { kind: "mismatch" };
+  }
+  if (result.value.type !== expected.type) {
+    const expectedProfile = credentialFamilyProfileContract(
+      messagingCredentialProviderProfilePath(REPOSITORY_ROOT),
+      expected.credentialKey,
+      result.value.credentialKeys,
+    );
+    const inspected = await adapter.inspectProviderProfile({
+      target: namedOpenShellGateway(input.gatewayName),
+      profileType: result.value.type,
+      expectedProfile,
+    });
+    if (!inspected.ok) return { kind: "failed", error: inspected.error };
+  }
+  return { kind: "exact" };
 }
 
 function throwAfterCleanup(deps: ProviderPreparationDeps, message: string): never {
@@ -440,7 +472,11 @@ export async function publishAttachedProvidersBeforeDockerSandboxCreation(
       ...providersRequiringExistenceProbe,
       ...input.messagingProviders,
       ...input.extraProviders,
-    ].filter((provider) => provider !== input.transactionBoundInferenceProvider),
+    ].filter(
+      (provider) =>
+        provider !== input.transactionBoundInferenceProvider &&
+        provider !== input.registeredInferenceProviderName,
+    ),
   );
   const adapter = resolveProviderAdapter(deps);
   const target = namedOpenShellGateway(input.gatewayName);
@@ -475,3 +511,8 @@ export async function publishAttachedProvidersBeforeDockerSandboxCreation(
     );
   }
 }
+
+export {
+  attachRegisteredInferenceProvider,
+  registeredInferenceProviderRevision,
+} from "../../inference/native-provider/registered";

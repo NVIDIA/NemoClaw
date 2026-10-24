@@ -185,6 +185,7 @@ export async function proveHermesPortableOnboardingTransaction(input: {
             "--policy",
             request.policyPath!,
             "--no-tty",
+            "--detach",
             "--",
             ...request.startupCommand,
           ];
@@ -196,7 +197,7 @@ export async function proveHermesPortableOnboardingTransaction(input: {
               initialPhase: "create",
               readyCheck: () =>
                 observeHermesPortableSandbox(sandboxName, gatewayName, capture).kind === "present",
-              readyCheckOutputPatterns: [/Setting up NemoClaw/u],
+              readyCheckOutputPatterns: [],
               waitForReadyTermination: true,
             },
           );

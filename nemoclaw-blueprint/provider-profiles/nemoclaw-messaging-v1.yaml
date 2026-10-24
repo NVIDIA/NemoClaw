@@ -1,0 +1,48 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+id: nemoclaw-messaging-v1
+display_name: NemoClaw Messaging
+description: Endpointless credentials for manifest-owned messaging channels
+category: agent
+# Each provider holds its selected channel credential; the applier requires that key.
+credentials:
+  - name: TELEGRAM_BOT_TOKEN
+    env_vars: [TELEGRAM_BOT_TOKEN]
+    required: false
+    auth_style: ""
+    header_name: ""
+    query_param: ""
+  - name: DISCORD_BOT_TOKEN
+    env_vars: [DISCORD_BOT_TOKEN]
+    required: false
+    auth_style: ""
+    header_name: ""
+    query_param: ""
+  - name: WECHAT_BOT_TOKEN
+    env_vars: [WECHAT_BOT_TOKEN]
+    required: false
+    auth_style: ""
+    header_name: ""
+    query_param: ""
+  - name: SLACK_BOT_TOKEN
+    env_vars: [SLACK_BOT_TOKEN]
+    required: false
+    auth_style: ""
+    header_name: ""
+    query_param: ""
+  - name: SLACK_APP_TOKEN
+    env_vars: [SLACK_APP_TOKEN]
+    required: false
+    auth_style: ""
+    header_name: ""
+    query_param: ""
+  - name: MSTEAMS_APP_PASSWORD
+    env_vars: [MSTEAMS_APP_PASSWORD]
+    required: false
+    auth_style: ""
+    header_name: ""
+    query_param: ""
+endpoints: []
+binaries: []
+inference_capable: false

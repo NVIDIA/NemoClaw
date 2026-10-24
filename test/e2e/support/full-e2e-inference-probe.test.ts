@@ -10,6 +10,10 @@ import path from "node:path";
 import assert from "node:assert/strict";
 import { runInNewContext } from "node:vm";
 import { customNativeProvider } from "../../../src/lib/inference/native-provider/custom.ts";
+import {
+  nativeLocalIdentity,
+  NATIVE_LOCAL_CREDENTIAL_ENV,
+} from "../../../src/lib/inference/native-local/contract.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 
 import {
@@ -38,22 +42,52 @@ function completion(content: string, finishReason = "stop"): string {
 }
 
 it.each([
-  ["owned-id", "none", true],
-  ["different-id", "none", false],
-  ["owned-id", "endpoint", false],
-  ["owned-id", "api", false],
-  ["owned-id", "credential", false],
-  ["owned-id", "model", false],
+  ["hosted", "owned-id", "none", true],
+  ["hosted", "different-id", "none", false],
+  ["hosted", "owned-id", "endpoint", false],
+  ["hosted", "owned-id", "api", false],
+  ["hosted", "owned-id", "credential", false],
+  ["hosted", "owned-id", "model", false],
+  ["local", "owned-id", "none", true],
+  ["local", "different-id", "none", false],
+  ["local", "owned-id", "endpoint", false],
+  ["local", "owned-id", "api", false],
+  ["local", "owned-id", "credential", false],
+  ["local", "owned-id", "model", false],
 ] as const)(
-  "checks custom native provider identity %s and agent drift %s on the recorded gateway",
-  async (observedId, drift, expected) => {
-    const definition = customNativeProvider({
+  "checks %s native provider identity %s and agent drift %s on the recorded gateway",
+  async (kind, observedId, drift, expected) => {
+    const binding = {
+      provider: "compatible-endpoint" as const,
+      agent: "openclaw" as const,
+      endpointUrl: "http://host.openshell.internal:42103/v1",
+      authMode: "authenticated" as const,
+      credentialEnv: NATIVE_LOCAL_CREDENTIAL_ENV,
+      gatewayName: "recorded-gateway",
+      sandboxName: "alpha",
+    };
+    const local = {
+      ...binding,
+      ...nativeLocalIdentity(binding),
+      schemaVersion: 1 as const,
+      providerId: "owned-id",
+    };
+    const hosted = customNativeProvider({
       provider: "compatible-endpoint",
       endpointUrl: "https://custom.example/v1",
       api: "openai-completions",
       credentialEnv: "SOURCE_KEY",
       allowedIps: ["8.8.8.8"],
     });
+    const definition =
+      kind === "local"
+        ? {
+            ...local,
+            logicalProvider: local.provider,
+            endpoint: local.endpointUrl,
+            api: "openai-completions" as const,
+          }
+        : hosted;
     const openshell = vi
       .fn()
       .mockResolvedValueOnce({
@@ -63,12 +97,12 @@ it.each([
           `Id: ${observedId}`,
           `Type: ${definition.profileId}`,
           "Resource version: 1",
-          "Credential keys: COMPATIBLE_API_KEY",
+          `Credential keys: ${definition.credentialEnv}`,
           "Config keys: <none>",
         ].join("\n"),
       })
       .mockResolvedValueOnce({ exitCode: 0, stdout: definition.providerName });
-    const handle = "openshell:resolve:env:v3_COMPATIBLE_API_KEY";
+    const handle = `openshell:resolve:env:v3_${definition.credentialEnv}`;
     const config = {
       agents: {
         defaults: {
@@ -94,7 +128,7 @@ it.each([
             name === "node:fs" ? { readFileSync: () => JSON.stringify(config) } : assert,
           process: {
             argv: ["node", command[3]],
-            env: { COMPATIBLE_API_KEY: handle },
+            env: { [definition.credentialEnv]: handle },
             stdout: {
               write: (value: string) => {
                 stdout += value;
@@ -114,18 +148,23 @@ it.each([
       model: "selected-model",
       env: {},
       redactionValues: ["synthetic-key"],
+      timeoutMs: 30_000,
       entry: {
         name: "alpha",
         gatewayName: "recorded-gateway",
-        nativeHostedProviderAttachment: {
-          schemaVersion: 1,
-          profileId: definition.profileId,
-          providerName: definition.providerName,
-          providerId: "owned-id",
-          endpointUrl: definition.endpointUrl,
-          allowedIps: definition.allowedIps,
-          custom: definition.custom,
-        },
+        ...(kind === "local"
+          ? { nativeLocalProviderAttachment: local }
+          : {
+              nativeHostedProviderAttachment: {
+                schemaVersion: 1,
+                profileId: hosted.profileId,
+                providerName: hosted.providerName,
+                providerId: "owned-id",
+                endpointUrl: hosted.endpointUrl,
+                allowedIps: hosted.allowedIps,
+                custom: hosted.custom,
+              },
+            }),
       },
     });
     expect(result.ok).toBe(expected);
@@ -141,34 +180,53 @@ it.each([
     expect(openshell).toHaveBeenNthCalledWith(
       1,
       expect.any(Array),
-      expect.objectContaining({ redactionValues: ["synthetic-key"], captureLimitBytes: 16 * 1024 }),
+      expect.objectContaining({
+        redactionValues: ["synthetic-key"],
+        captureLimitBytes: 16 * 1024,
+        timeoutMs: 30_000,
+      }),
     );
   },
 );
 
 describe("full E2E sandbox inference probe", () => {
   it.each([
-    ["nvidia-prod", "NVIDIA_INFERENCE_API_KEY", "https://integrate.api.nvidia.com/v1"],
-    ["compatible-endpoint", "COMPATIBLE_API_KEY", "https://custom.example/team/v1"],
-    // Bootstrap and latency smoke use this hosted endpoint through its native provider.
-    ["compatible-endpoint", "COMPATIBLE_API_KEY", "https://inference-api.nvidia.com/v1"],
-  ])(
+    ["nvidia-prod", "NVIDIA_INFERENCE_API_KEY", "https://integrate.api.nvidia.com/v1", undefined],
+    ["compatible-endpoint", "COMPATIBLE_API_KEY", "https://custom.example/team/v1", undefined],
+    ["compatible-endpoint", "COMPATIBLE_API_KEY", "https://inference-api.nvidia.com/v1", undefined],
+    ["compatible-endpoint", "COMPATIBLE_API_KEY", "https://custom.example/team/v1", 60],
+    [
+      "compatible-endpoint",
+      "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+      "http://host.openshell.internal:42103/v1",
+      60,
+    ],
+  ] as const)(
     "uses the sandbox native %s handle and preserves the request as data",
-    (provider, credentialEnv, endpointUrl) => {
+    (provider, credentialEnv, endpointUrl, maxTimeSeconds) => {
       const directory = fs.mkdtempSync(path.join(os.tmpdir(), "full-e2e-native-probe-"));
       try {
         fs.writeFileSync(path.join(directory, "curl"), '#!/bin/sh\nprintf "%s\\n" "$@"\n', {
           mode: 0o700,
         });
         const body = JSON.stringify({ prompt: 'literal $(exit 99) "quote"' });
-        const [command, ...args] = buildSandboxInferenceChatCommand(body, provider, endpointUrl);
+        const [command, ...args] = buildSandboxInferenceChatCommand(
+          body,
+          provider,
+          endpointUrl,
+          maxTimeSeconds,
+        );
         const handle = `openshell:resolve:env:v3_${credentialEnv}`;
-        const env = { PATH: `${directory}:/usr/bin:/bin`, [credentialEnv]: handle };
+        const env = {
+          HOME: directory,
+          PATH: `${directory}:/usr/bin:/bin`,
+          [credentialEnv]: handle,
+        };
         const result = execFileSync(command, args, { env, encoding: "utf8" });
         expect(result.split("\n")).toEqual([
           "-fsS",
           "--max-time",
-          "90",
+          String(maxTimeSeconds ?? 90),
           `${endpointUrl}/chat/completions`,
           "-H",
           "Content-Type: application/json",
@@ -184,9 +242,20 @@ describe("full E2E sandbox inference probe", () => {
     },
   );
 
-  it.each(["", "nvapi-raw-key", "$(exit 99)"])(
-    "rejects the invalid native credential %j before invoking curl",
-    (invalid) => {
+  it.each([
+    ["nvidia-prod", ""],
+    ["nvidia-prod", "nvapi-raw-key"],
+    ["nvidia-prod", "$(exit 99)"],
+    ["nvidia-prod", "openshell:resolve:env:NEMOCLAW_LOCAL_INFERENCE_TOKEN"],
+    ["nvidia-prod", "openshell:resolve:env:v3_NEMOCLAW_LOCAL_INFERENCE_TOKEN\nraw"],
+    ["compatible-endpoint", ""],
+    ["compatible-endpoint", "nvapi-raw-key"],
+    ["compatible-endpoint", "$(exit 99)"],
+    ["compatible-endpoint", "openshell:resolve:env:NEMOCLAW_LOCAL_INFERENCE_TOKEN"],
+    ["compatible-endpoint", "openshell:resolve:env:v3_NEMOCLAW_LOCAL_INFERENCE_TOKEN\nraw"],
+  ] as const)(
+    "rejects the invalid %s native credential %j before invoking curl",
+    (provider, invalid) => {
       const directory = fs.mkdtempSync(path.join(os.tmpdir(), "full-e2e-invalid-probe-"));
       try {
         const marker = path.join(directory, "curl-invoked");
@@ -197,11 +266,18 @@ describe("full E2E sandbox inference probe", () => {
             mode: 0o700,
           },
         );
-        const [, ...args] = buildSandboxInferenceChatCommand("{}", "nvidia-prod");
+        const [, ...args] = buildSandboxInferenceChatCommand(
+          "{}",
+          provider,
+          "http://host.openshell.internal:42103/v1",
+        );
         const denied = spawnSync("/bin/bash", args, {
           env: {
+            HOME: directory,
             PATH: `${directory}:/usr/bin:/bin`,
-            NVIDIA_INFERENCE_API_KEY: invalid,
+            [provider === "nvidia-prod"
+              ? "NVIDIA_INFERENCE_API_KEY"
+              : "NEMOCLAW_LOCAL_INFERENCE_TOKEN"]: invalid,
             CURL_MARKER: marker,
           },
           encoding: "utf8",

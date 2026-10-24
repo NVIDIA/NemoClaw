@@ -12,7 +12,7 @@ The component supplies policy. OpenShell validates effective policy and enforces
 
 This v2 implementation requires authenticated interceptor and middleware APIs,
 and interceptor-backed provider profiles.
-The shared runtime pin is OpenShell 0.0.116.
+The shared runtime pin is OpenShell 0.1.3.
 Qualify the accepted behavior against that release before claiming integration support.
 Keep runtime qualification and shared version pins in their existing owner.
 Dynamic registration is the accepted v2 contract. Do not add an insecure transport fallback.

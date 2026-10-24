@@ -7,6 +7,7 @@ import type {
   OpenShellProviderError,
   OpenShellProviderMetadata,
 } from "../../adapters/openshell/sandbox-observer";
+import { isValidName } from "../../sandbox-name-contract";
 
 export type NativeProviderAttachment = Readonly<{
   schemaVersion: 1;
@@ -17,7 +18,8 @@ export type NativeProviderAttachment = Readonly<{
 export type NativeProviderProfile = Readonly<{
   profileId: string;
   providerName: string;
-  credentialEnv: string;
+  /** Null only for an admitted profile declaring no credentials. */
+  credentialEnv: string | null;
   label: string;
   profilePath: string;
 }>;
@@ -25,6 +27,12 @@ export class NativeProviderError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "NativeProviderError";
+  }
+}
+
+export class NativeProviderCredentialExpiredError extends NativeProviderError {
+  constructor() {
+    super("Native provider credential is expired.");
   }
 }
 
@@ -42,7 +50,7 @@ function assertExpectedProfile(
   }
 }
 
-function providerErrorDetail(error: OpenShellProviderError): string {
+export function providerErrorDetail(error: OpenShellProviderError): string {
   return error.message.trim() || "OpenShell did not provide a diagnostic.";
 }
 
@@ -54,8 +62,10 @@ function exactNativeProvider(
     metadata.name === profile.providerName &&
     metadata.type === profile.profileId &&
     metadata.configKeys.length === 0 &&
-    metadata.credentialKeys.length === 1 &&
-    metadata.credentialKeys[0] === profile.credentialEnv &&
+    (profile.credentialEnv === null
+      ? metadata.credentialKeys.length === 0
+      : metadata.credentialKeys.length === 1 &&
+        metadata.credentialKeys[0] === profile.credentialEnv) &&
     Boolean(metadata.revision?.id)
   );
 }
@@ -77,14 +87,16 @@ export function nativeProviderAttachmentFromMetadata(
   };
 }
 
-async function inspectNativeProvider(
+export async function inspectNativeProvider(
   adapter: OpenShellProviderAdapter,
   target: OpenShellGatewayTarget,
   profile: NativeProviderProfile,
+  includeCredentialExpirations = false,
 ): Promise<OpenShellProviderMetadata | null> {
   const observed = await adapter.getProvider({
     target,
     providerName: profile.providerName,
+    ...(includeCredentialExpirations ? { includeCredentialExpirations: true } : {}),
   });
   if (observed.ok) return observed.value;
   if (observed.error.kind === "command" && observed.error.reason === "not_found") return null;
@@ -190,6 +202,26 @@ export async function persistNativeProviderAuthority(input: {
   }
 }
 
+/** Verify the imported profile before provider or attachment changes. */
+export async function requireNativeProviderProfileBoundary(
+  adapter: OpenShellProviderAdapter,
+  target: OpenShellGatewayTarget,
+  profile: NativeProviderProfile,
+): Promise<void> {
+  const imported = await adapter.importProviderProfile({
+    target,
+    profilePath: profile.profilePath,
+  });
+  if (imported.ok) return;
+  const collision =
+    imported.error.kind === "command" && imported.error.reason === "profile_incompatible";
+  throw new NativeProviderError(
+    collision
+      ? `OpenShell provider profile '${profile.profileId}' conflicts with NemoClaw's checked-in security boundary. No provider was changed.`
+      : `Could not verify OpenShell provider profile '${profile.profileId}': ${providerErrorDetail(imported.error)}`,
+  );
+}
+
 /** Ensure the least-privilege hosted profile and provider without retrying an ambiguous mutation. */
 export async function ensureNativeProvider(input: {
   profile: NativeProviderProfile;
@@ -200,23 +232,20 @@ export async function ensureNativeProvider(input: {
   /** Provider-owned policy preparation after identity and credential checks. */
   prepareProviderPolicy?: () => Promise<void>;
   expected?: NativeProviderAttachment;
+  /** Registry sandbox whose receipt is the only ownership evidence for `expected`. */
+  recordedSandboxName?: string;
   profilePath?: string;
 }): Promise<NativeProviderAttachment> {
   const { adapter, target, profile } = input;
+  if (profile.credentialEnv === null && (input.credentialValue || input.reuseExistingCredential))
+    throw new NativeProviderError(
+      "An anonymous native profile cannot receive or inherit credentials.",
+    );
   assertExpectedProfile(profile, input.expected);
-  const imported = await adapter.importProviderProfile({
-    target,
+  await requireNativeProviderProfileBoundary(adapter, target, {
+    ...profile,
     profilePath: input.profilePath ?? profile.profilePath,
   });
-  if (!imported.ok) {
-    const collision =
-      imported.error.kind === "command" && imported.error.reason === "profile_incompatible";
-    throw new NativeProviderError(
-      collision
-        ? `OpenShell provider profile '${profile.profileId}' conflicts with NemoClaw's checked-in security boundary. No provider was changed.`
-        : `Could not prepare OpenShell provider profile '${profile.profileId}': ${providerErrorDetail(imported.error)}`,
-    );
-  }
 
   const before = await inspectNativeProvider(adapter, target, profile);
   if (before) {
@@ -232,7 +261,7 @@ export async function ensureNativeProvider(input: {
       );
     }
     await input.prepareProviderPolicy?.();
-    if (!input.credentialValue) return receipt;
+    if (!input.credentialValue || profile.credentialEnv === null) return receipt;
     const updated = await adapter.updateProvider({
       target,
       providerName: profile.providerName,
@@ -264,13 +293,19 @@ export async function ensureNativeProvider(input: {
     return confirmed;
   }
 
+  const recordedSandboxName = input.recordedSandboxName;
+  if (input.expected && recordedSandboxName && isValidName(recordedSandboxName)) {
+    throw new NativeProviderError(
+      `OpenShell provider '${profile.providerName}' is missing, and only the NemoClaw registry record for sandbox '${recordedSandboxName}' shows that NemoClaw owned it. If that sandbox no longer exists on this gateway, run 'nemoclaw ${recordedSandboxName} destroy' to clear the stale record, then onboard again. Otherwise, recreate the sandbox before using native ${profile.label} inference. No provider was changed.`,
+    );
+  }
   if (input.expected) {
     throw new NativeProviderError(
-      `OpenShell provider '${profile.providerName}' is missing. Recreate the sandbox before using native ${profile.label} inference. No provider was changed.`,
+      `OpenShell provider '${profile.providerName}' is missing. If this gateway has no sandboxes after a reinstall, complete uninstall without --keep-openshell, then onboard again. Otherwise, recreate the sandbox before using native ${profile.label} inference. No provider was changed.`,
     );
   }
 
-  if (!input.credentialValue && !input.reuseExistingCredential) {
+  if (profile.credentialEnv !== null && !input.credentialValue && !input.reuseExistingCredential) {
     throw new NativeProviderError(
       `A host credential is required to create OpenShell provider '${profile.providerName}'.`,
     );
@@ -280,11 +315,12 @@ export async function ensureNativeProvider(input: {
     target,
     name: profile.providerName,
     type: profile.profileId,
-    credentials: input.credentialValue
-      ? [{ name: profile.credentialEnv, value: input.credentialValue }]
-      : [],
+    credentials:
+      input.credentialValue && profile.credentialEnv !== null
+        ? [{ name: profile.credentialEnv, value: input.credentialValue }]
+        : [],
     config: [],
-    fromExisting: !input.credentialValue,
+    fromExisting: profile.credentialEnv !== null && !input.credentialValue,
   });
   if (!created.ok && !mutationOutcomeMayBeAmbiguous(created.error)) {
     throw new NativeProviderError(
@@ -307,12 +343,21 @@ export async function verifyNativeProviderAttachment(input: {
   target: OpenShellGatewayTarget;
   sandboxName: string;
   expected?: NativeProviderAttachment;
+  requireUnexpiredCredential?: boolean;
+  /** Recheck a materialized hosted profile before observing its attachment. */
+  verifyProfileBoundary?: () => Promise<void>;
 }): Promise<NativeProviderAttachment> {
   const profile = input.profile;
   if (!profile)
     throw new NativeProviderError("Native inference requires a recorded provider identity.");
   assertExpectedProfile(profile, input.expected);
-  const provider = await inspectNativeProvider(input.adapter, input.target, profile);
+  await input.verifyProfileBoundary?.();
+  const provider = await inspectNativeProvider(
+    input.adapter,
+    input.target,
+    profile,
+    input.requireUnexpiredCredential,
+  );
   if (!provider) {
     throw new NativeProviderError(
       `OpenShell provider '${profile.providerName}' is missing. Recreate the sandbox to restore native ${profile.label} inference.`,
@@ -338,6 +383,23 @@ export async function verifyNativeProviderAttachment(input: {
       `Sandbox '${input.sandboxName}' does not have its native ${profile.label} inference provider attached. Recreate the sandbox; NemoClaw does not migrate existing beta sandboxes automatically.`,
     );
   }
+  if (input.requireUnexpiredCredential && profile.credentialEnv !== null) {
+    // Expiry inventory is read separately from provider metadata. Bind that
+    // observation to the same immutable provider and resource version.
+    const current = await inspectNativeProvider(input.adapter, input.target, profile);
+    if (
+      !current ||
+      !exactNativeProvider(current, profile) ||
+      current.revision?.id !== provider.revision?.id ||
+      current.revision?.resourceVersion !== provider.revision?.resourceVersion ||
+      provider.credentialExpiresAtMs === undefined
+    )
+      throw new NativeProviderError("Native provider credential expiry could not be verified.");
+    const expiresAt = provider.credentialExpiresAtMs[profile.credentialEnv] ?? 0;
+    if (!Number.isSafeInteger(expiresAt) || expiresAt < 0)
+      throw new NativeProviderError("Native provider credential expiry is invalid.");
+    if (expiresAt > 0 && expiresAt <= Date.now()) throw new NativeProviderCredentialExpiredError();
+  }
   return receipt;
 }
 
@@ -348,11 +410,14 @@ export async function ensureNativeProviderAttached(input: {
   target: OpenShellGatewayTarget;
   sandboxName: string;
   expected: NativeProviderAttachment;
+  /** Check before attaching and again during verification, with cleanup on failure. */
+  verifyProfileBoundary?: () => Promise<void>;
 }): Promise<{ receipt: NativeProviderAttachment; changed: boolean }> {
   const profile = input.profile;
   if (!profile)
     throw new NativeProviderError("Native inference requires a recorded provider identity.");
   assertExpectedProfile(profile, input.expected);
+  await input.verifyProfileBoundary?.();
   const provider = await inspectNativeProvider(input.adapter, input.target, profile);
   if (
     !provider ||

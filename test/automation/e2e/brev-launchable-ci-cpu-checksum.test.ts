@@ -26,7 +26,7 @@ const REVIEWED_NODE_VERSION = REVIEWED_RUNTIME.nodeVersion;
 const REVIEWED_NPM_VERSION = REVIEWED_RUNTIME.npmVersion;
 const BREV_LIFECYCLE_SCRIPT_MAX_BYTES = 16 * 1024;
 const ASSET = "openshell-x86_64-unknown-linux-musl.tar.gz";
-const PINNED_ASSET_SHA256 = "4fb4476d80a1875a0b83547ec3aba999cf0a2e2d75f95f2f709b622e2103520e";
+const PINNED_ASSET_SHA256 = "ed08ea7874c47f22d6e5dcc4b27d9ef1ef5d2060f83035b35ff725d5160830a3";
 const CALLER_UMASK = process.umask().toString(8).padStart(4, "0");
 
 type FakeSystemOptions = {
@@ -95,8 +95,12 @@ function makeFakeSystem(options: FakeSystemOptions): {
   linkSystemCommands(
     fakeBin,
     options.nodeSourceChecksumTool === false
-      ? ["bash", "basename", "cut", "date", "dirname", "head", "mkdir", "mktemp", "rm", "tee"]
+      ? ["bash", "basename", "cut", "date", "dirname", "head", "mkdir", "rm", "tee"]
       : [],
+  );
+  writeExecutable(
+    path.join(fakeBin, "mktemp"),
+    '#!/bin/sh\nif [ "$#" -eq 0 ] || [ "$*" = "-d" ]; then set -- "$@" "$TMPDIR/brev.XXXXXXXX"; fi\nexec /usr/bin/mktemp "$@"\n',
   );
 
   writeExecutable(
@@ -292,7 +296,7 @@ done
 case "$(basename "$out")" in
   ${ASSET})
     tmp="$(mktemp -d)"
-    printf '#!/usr/bin/env bash\\nprintf "openshell 0.0.116\\\\n"\\n' > "$tmp/openshell"
+    printf '#!/usr/bin/env bash\\nprintf "openshell 0.1.3\\\\n"\\n' > "$tmp/openshell"
     chmod +x "$tmp/openshell"
     /usr/bin/tar -czf "$out" -C "$tmp" openshell
     rm -rf "$tmp"
@@ -359,7 +363,7 @@ function runLaunchable(options: FakeSystemOptions) {
       ...process.env,
       LAUNCH_LOG: fake.launchLog,
       NEMOCLAW_CLONE_DIR: fake.cloneDir,
-      OPENSHELL_VERSION: options.openshellVersion ?? "v0.0.116",
+      OPENSHELL_VERSION: options.openshellVersion ?? "v0.1.3",
       PATH:
         options.nodeSourceChecksumTool === false ? fake.fakeBin : `${fake.fakeBin}:/usr/bin:/bin`,
       COMPATIBLE_API_KEY: "host-compatible-key",
@@ -620,7 +624,7 @@ describe("brev-launchable-ci-cpu.sh OpenShell checksum gate", { timeout: 30_000 
       const out = combinedLaunchableOutput(result, fake.launchLog);
       expect(result.status, out).toBe(1);
       expect(out).toContain(
-        `OpenShell release checksum for ${ASSET} does not match NemoClaw-pinned v0.0.116 digest`,
+        `OpenShell release checksum for ${ASSET} does not match NemoClaw-pinned v0.1.3 digest`,
       );
       expect(fs.existsSync(fake.tarLog) ? fs.readFileSync(fake.tarLog, "utf-8") : "").toBe("");
       expect(fs.existsSync(fake.sudoLog) ? fs.readFileSync(fake.sudoLog, "utf-8") : "").not.toMatch(
@@ -656,7 +660,7 @@ describe("brev-launchable-ci-cpu.sh OpenShell checksum gate", { timeout: 30_000 
     try {
       const out = combinedLaunchableOutput(result, fake.launchLog);
       expect(result.status, out).toBe(0);
-      expect(out).toContain("OpenShell CLI installed: openshell 0.0.116");
+      expect(out).toContain("OpenShell CLI installed: openshell 0.1.3");
       expect(fs.readFileSync(fake.tarLog, "utf-8")).toContain(`xzf`);
       const sudoLog = fs.readFileSync(fake.sudoLog, "utf-8");
       expect(sudoLog).toMatch(/^install -m 755 .*openshell/m);

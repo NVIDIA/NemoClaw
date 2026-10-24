@@ -23,6 +23,9 @@ const MAX_TRANSACTION_FILE_BYTES = 8 * 1024 * 1024;
 const MAX_TRANSACTION_TOTAL_BYTES = 32 * 1024 * 1024;
 const MAX_MANIFEST_BYTES = 256 * 1024;
 const MAX_COMMIT_RECEIPT_BYTES = 4096;
+// Base64 of the existing 32 MiB backup budget, canonical manifest and JSON framing.
+export const MANAGED_STARTUP_SHARED_CAPTURE_MAX_BYTES =
+  4 * Math.ceil(MAX_TRANSACTION_TOTAL_BYTES / 3) + MAX_MANIFEST_BYTES * 2;
 const TRANSACTION_PARENT_DIRECTORY_MODE = 0o755;
 const TRANSACTION_DIRECTORY_MODE = 0o700;
 const TRANSACTION_FILE_MODE = 0o400;
@@ -86,6 +89,8 @@ interface CommitReceipt {
 }
 
 export interface ManagedStartupSharedTransactionOptions {
+  /** Trusted provider stdin only, never a workload-writable file or owner-pasted receipt. */
+  readonly capturedState?: string;
   readonly sandboxRoot?: string;
   readonly transactionDirectory?: string;
   /** Test/helper seam. Production derives the fixed image-owned commit receipt path. */
@@ -1179,28 +1184,10 @@ export function beginManagedStartupSharedStateTransaction(
     verifyAllBackups(pending.files, options);
     return false;
   }
-  const targets = managedOutputTargets(profile, options);
-  if (targets.files.length > MAX_TRANSACTION_FILES) {
-    fail("managed startup transaction has too many file targets");
-  }
-  const snapshots = targets.files.map((target, index) =>
-    snapshotFile(target, index, profile.agent, options),
-  );
-  const totalBytes = snapshots.reduce((sum, snapshot) => sum + (snapshot.bytes?.length ?? 0), 0);
-  if (totalBytes > MAX_TRANSACTION_TOTAL_BYTES) {
-    fail("managed startup transaction backup exceeds the total size limit");
-  }
-  const directories = targets.directories.map((target) =>
-    snapshotDirectory(target, profile.agent, options),
-  );
-  const manifest: TransactionManifest = {
-    schemaVersion: TRANSACTION_SCHEMA_VERSION,
-    agent: profile.agent,
-    profileFingerprint,
-    bootstrapIdentity: options.bootstrapIdentity,
-    files: snapshots.map(({ receipt }) => receipt),
-    directories,
-  };
+  const { manifest, snapshots } =
+    inputOptions.capturedState === undefined
+      ? captureSharedState(profile, options)
+      : parseCapturedSharedState(inputOptions.capturedState, profile, options);
 
   let createdTransactionIdentity:
     | { readonly dev: bigint; readonly ino: bigint; readonly uid: bigint; readonly gid: bigint }
@@ -1272,6 +1259,128 @@ export function beginManagedStartupSharedStateTransaction(
     throw error;
   }
   return true;
+}
+
+function captureSharedState(profile: ManagedStartupProfile, options: ResolvedOptions) {
+  const targets = managedOutputTargets(profile, options);
+  if (targets.files.length > MAX_TRANSACTION_FILES) {
+    fail("managed startup transaction has too many file targets");
+  }
+  const snapshots = targets.files.map((target, index) =>
+    snapshotFile(target, index, profile.agent, options),
+  );
+  const totalBytes = snapshots.reduce((sum, snapshot) => sum + (snapshot.bytes?.length ?? 0), 0);
+  if (totalBytes > MAX_TRANSACTION_TOTAL_BYTES) {
+    fail("managed startup transaction backup exceeds the total size limit");
+  }
+  const directories = targets.directories.map((target) =>
+    snapshotDirectory(target, profile.agent, options),
+  );
+  const manifest: TransactionManifest = {
+    schemaVersion: TRANSACTION_SCHEMA_VERSION,
+    agent: profile.agent,
+    profileFingerprint: fingerprintManagedStartupProfile(profile),
+    bootstrapIdentity: options.bootstrapIdentity,
+    files: snapshots.map(({ receipt }) => receipt),
+    directories,
+  };
+
+  return { manifest, snapshots };
+}
+
+/** Read as the native state owner; this operation cannot create a trusted receipt. */
+export function captureManagedStartupSharedState(
+  profile: ManagedStartupProfile,
+  inputOptions: Pick<ManagedStartupSharedTransactionOptions, "sandboxRoot" | "bootstrapIdentity">,
+): string {
+  const captured = captureSharedState(profile, resolveOptions(inputOptions));
+  return serializeCapturedSharedState(
+    captured.manifest,
+    captured.snapshots.map(({ bytes }) => bytes),
+  );
+}
+
+function serializeCapturedSharedState(
+  manifest: TransactionManifest,
+  contents: readonly (Buffer | null)[],
+): string {
+  const text = `${JSON.stringify({
+    manifest: canonicalManifest(manifest),
+    contents: contents.map((bytes) => bytes?.toString("base64") ?? null),
+  })}\n`;
+  if (Buffer.byteLength(text) > MANAGED_STARTUP_SHARED_CAPTURE_MAX_BYTES) {
+    fail("shared-state capture exceeds its bounded transport");
+  }
+  return text;
+}
+
+function parseCapturedSharedState(
+  text: string,
+  profile: ManagedStartupProfile,
+  options: ResolvedOptions,
+) {
+  if (Buffer.byteLength(text) > MANAGED_STARTUP_SHARED_CAPTURE_MAX_BYTES) {
+    fail("shared-state capture exceeds its bounded transport");
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    fail("shared-state capture is not valid JSON");
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    fail("invalid shared-state capture");
+  const record = value as Record<string, unknown>;
+  requireExactKeys(record, ["manifest", "contents"]);
+  if (
+    typeof record.manifest !== "string" ||
+    Buffer.byteLength(record.manifest) > MAX_MANIFEST_BYTES ||
+    !Array.isArray(record.contents)
+  ) {
+    fail("invalid shared-state capture fields");
+  }
+  const manifest = parseManifest(record.manifest);
+  const targets = managedOutputTargets(profile, options);
+  if (
+    manifest.agent !== profile.agent ||
+    manifest.profileFingerprint !== fingerprintManagedStartupProfile(profile) ||
+    manifest.bootstrapIdentity !== options.bootstrapIdentity ||
+    options.bootstrapIdentity === null ||
+    JSON.stringify(manifest.files.map(({ path: target }) => target)) !==
+      JSON.stringify(targets.files.map((target) => relativeTarget(target, options))) ||
+    JSON.stringify(manifest.directories.map(({ path: target }) => target)) !==
+      JSON.stringify(targets.directories.map((target) => relativeTarget(target, options))) ||
+    record.contents.length !== manifest.files.length
+  ) {
+    fail("shared-state capture does not match the exact profile and bootstrap targets");
+  }
+  const contents = record.contents;
+  let total = 0;
+  const snapshots = manifest.files.map((receipt, index) => {
+    const encoded = contents[index];
+    if (receipt.state === "absent") {
+      if (encoded !== null) fail("absent captured output has unexpected contents");
+      return { receipt, bytes: null };
+    }
+    if (
+      typeof encoded !== "string" ||
+      encoded.length > 4 * Math.ceil(MAX_TRANSACTION_FILE_BYTES / 3)
+    ) {
+      fail("captured output exceeds its bounded encoding");
+    }
+    const bytes = Buffer.from(encoded, "base64");
+    total += bytes.length;
+    if (
+      total > MAX_TRANSACTION_TOTAL_BYTES ||
+      bytes.toString("base64") !== encoded ||
+      bytes.length !== receipt.size ||
+      createHash("sha256").update(bytes).digest("hex") !== receipt.sha256
+    ) {
+      fail("captured output does not match its bounded receipt");
+    }
+    return { receipt, bytes };
+  });
+  return { manifest, snapshots };
 }
 
 function ensureOriginalDirectories(
@@ -1413,6 +1522,20 @@ export function rollbackManagedStartupSharedStateTransaction(
   inputOptions: ManagedStartupSharedTransactionOptions = {},
 ): boolean {
   const options = resolveOptions(inputOptions);
+  const manifest = loadRollbackManifest(expectedAgent, options);
+  if (!manifest) return false;
+  const backups = verifyAllBackups(manifest.files, options);
+  restoreSharedState(manifest, backups, options);
+  if (!options.readOnlyReceipt) {
+    removeTransactionDirectory(options);
+  }
+  return true;
+}
+
+function loadRollbackManifest(
+  expectedAgent: ManagedStartupAgent,
+  options: ResolvedOptions,
+): TransactionManifest | null {
   requireTransactionIdentity(options);
   const committed = loadCommitReceipt(options);
   if (committed) {
@@ -1426,21 +1549,84 @@ export function rollbackManagedStartupSharedStateTransaction(
     fail("shared state is already durably committed and cannot be rolled back");
   }
   const manifest = loadManifest(options);
-  if (!manifest) return false;
+  if (!manifest) return null;
   if (manifest.agent !== expectedAgent) {
     fail(`pending transaction targets ${manifest.agent}, expected ${expectedAgent}`);
   }
   if (manifest.bootstrapIdentity !== options.bootstrapIdentity) {
     fail("pending transaction belongs to a different bootstrap attempt");
   }
-  const backups = verifyAllBackups(manifest.files, options);
-  ensureOriginalDirectories(manifest.directories, expectedAgent, options);
-  restoreFiles(manifest.files, backups, expectedAgent, options);
+  return manifest;
+}
+
+function restoreSharedState(
+  manifest: TransactionManifest,
+  backups: ReadonlyMap<string, Buffer>,
+  options: ResolvedOptions,
+): void {
+  ensureOriginalDirectories(manifest.directories, manifest.agent, options);
+  restoreFiles(manifest.files, backups, manifest.agent, options);
   restoreDirectoryMetadata(manifest.directories, options);
   verifyRestoration(manifest, options);
-  if (!options.readOnlyReceipt) {
-    removeTransactionDirectory(options);
+}
+
+/** Export only to the provider's private process transport; keep the protected receipt. */
+export function exportManagedStartupSharedStateRestoration(
+  profile: ManagedStartupProfile,
+  inputOptions: ManagedStartupSharedTransactionOptions,
+): string | null {
+  const options = resolveOptions(inputOptions);
+  const manifest = loadRollbackManifest(profile.agent, options);
+  if (!manifest) return null;
+  const backups = verifyAllBackups(manifest.files, options);
+  const captured = serializeCapturedSharedState(
+    manifest,
+    manifest.files.map((receipt) => (receipt.state === "file" ? backups.get(receipt.path)! : null)),
+  );
+  // Bind legacy or externally copied receipts to the selected profile before exporting bytes.
+  parseCapturedSharedState(captured, profile, options);
+  return captured;
+}
+
+/** Restore as the native owner. Only authenticated provider stdin may supply the root snapshot. */
+export function restoreManagedStartupCapturedSharedState(
+  profile: ManagedStartupProfile,
+  capturedState: string,
+  inputOptions: Pick<ManagedStartupSharedTransactionOptions, "sandboxRoot" | "bootstrapIdentity">,
+): string {
+  const options = resolveOptions(inputOptions);
+  const { manifest, snapshots } = parseCapturedSharedState(capturedState, profile, options);
+  // A capability-free owner cannot restore another identity. Reject before any mutation.
+  for (const receipt of [...manifest.files, ...manifest.directories]) {
+    if (receipt.state === "absent") continue;
+    if (receipt.uid !== process.geteuid?.() || receipt.gid !== process.getegid?.()) {
+      fail("captured output requires a different restoration identity");
+    }
   }
+  const backups = new Map<string, Buffer>();
+  for (const snapshot of snapshots) {
+    if (snapshot.bytes !== null) backups.set(snapshot.receipt.path, snapshot.bytes);
+  }
+  restoreSharedState(manifest, backups, options);
+  return captureManagedStartupSharedState(profile, inputOptions);
+}
+
+/** Retire authority only after the provider returns a fresh verified owner observation. */
+export function finishManagedStartupSharedStateRestoration(
+  profile: ManagedStartupProfile,
+  observedState: string,
+  inputOptions: ManagedStartupSharedTransactionOptions,
+): boolean {
+  const options = resolveOptions(inputOptions);
+  if (options.readOnlyReceipt) fail("cannot retire a read-only rollback receipt");
+  const original = loadRollbackManifest(profile.agent, options);
+  if (!original) return false;
+  verifyAllBackups(original.files, options);
+  const observed = parseCapturedSharedState(observedState, profile, options).manifest;
+  if (canonicalManifest(original) !== canonicalManifest(observed)) {
+    fail("restored state does not match the protected original snapshot");
+  }
+  removeTransactionDirectory(options);
   return true;
 }
 

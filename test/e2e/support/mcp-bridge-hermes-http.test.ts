@@ -348,7 +348,7 @@ describe("Hermes MCP HTTP failure diagnostics", () => {
         "--filter",
         "label=openshell.ai/sandbox-name=owned-hermes",
         "--format",
-        "{{.ID}}",
+        '{{.ID}}\t{{.Label "openshell.ai/isolation-role"}}',
       ]);
     },
   );

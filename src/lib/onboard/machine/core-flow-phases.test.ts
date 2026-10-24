@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import { customProviderRebuildEntry } from "../../actions/sandbox/rebuild-flow-test-fixtures";
 import * as credentialStore from "../../credentials/store";
 import {
   type InferenceEndpointSource,
@@ -910,6 +911,9 @@ describe("core onboard flow phases", () => {
       const setupInference = vi.fn(async () => ({ ok: true as const }));
       const updateSandboxRegistry = vi.fn();
       const getSandboxRegistryEntry = vi.fn((_sandboxName: string) => ({
+        ...(registeredProvider === "compatible-endpoint"
+          ? customProviderRebuildEntry(registeredEndpointUrl)
+          : {}),
         name: "my-sandbox",
         provider: registeredProvider,
         model: "custom/model",

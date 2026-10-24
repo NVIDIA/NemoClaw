@@ -42,9 +42,8 @@ describe("OpenShell policy boundary", () => {
         JSON.stringify({
           scope: "global",
           status: "loaded",
-          policy_source: "global",
           hash: "sha256:global",
-          active_version: 2,
+          version: 2,
           policy: { version: 1, network_policies: {} },
         }),
       ),
@@ -143,9 +142,12 @@ describe("OpenShell policy boundary", () => {
   });
 
   it("classifies the OpenShell global history absence contract", () => {
-    expect(classifyOpenShellGlobalPolicyHistory("", "No global policy history found\n")).toBe(
-      "absent",
-    );
+    expect(
+      classifyOpenShellGlobalPolicyHistory(
+        JSON.stringify({ revisions: [], next_page_token: "" }),
+        "",
+      ),
+    ).toBe("absent");
   });
 
   it.each([
@@ -171,24 +173,101 @@ describe("OpenShell policy boundary", () => {
   });
 
   it.each([
-    ["active revision", "VERSION STATUS\n1 loaded\n", "", "present"],
-    ["fresh history", "", "No global policy history found\n", "absent"],
-    ["empty output", "", "", "invalid"],
-    ["unexpected diagnostic", "", "gateway warning", "invalid"],
-  ] as const)("classifies $0", (_name, stdout, stderr, expected) => {
-    expect(classifyOpenShellGlobalPolicyHistory(stdout, stderr)).toBe(expected);
+    ["loaded", "loaded"],
+    ["deleted", "superseded"],
+  ])("classifies a %s global revision as present history", (_label, status) => {
+    expect(
+      classifyOpenShellGlobalPolicyHistory(
+        JSON.stringify({
+          revisions: [{ scope: "global", version: 2, hash: "sha256:global", status }],
+          next_page_token: "older-revision",
+        }),
+        "",
+      ),
+    ).toBe("present");
   });
 
-  it("treats a superseded global revision as absent without an identity", () => {
+  it.each([
+    ["fresh history", { revisions: [], next_page_token: "" }, "", "absent"],
+    ["empty page with continuation", { revisions: [], next_page_token: "more" }, "", "invalid"],
+    ["missing continuation", { revisions: [] }, "", "invalid"],
+    ["wrong collection", { revisions: {}, next_page_token: "" }, "", "invalid"],
+    [
+      "sandbox history",
+      {
+        revisions: [{ scope: "sandbox", version: 1, hash: "one", status: "loaded" }],
+        next_page_token: "",
+      },
+      "",
+      "invalid",
+    ],
+    [
+      "invalid revision",
+      {
+        revisions: [{ scope: "global", version: 0, hash: "one", status: "loaded" }],
+        next_page_token: "",
+      },
+      "",
+      "invalid",
+    ],
+    [
+      "unknown status",
+      {
+        revisions: [{ scope: "global", version: 1, hash: "one", status: "future" }],
+        next_page_token: "",
+      },
+      "",
+      "invalid",
+    ],
+    [
+      "diagnostic with empty page",
+      { revisions: [], next_page_token: "" },
+      "gateway warning",
+      "invalid",
+    ],
+  ] as const)("classifies %s", (_name, page, stderr, expected) => {
+    expect(classifyOpenShellGlobalPolicyHistory(JSON.stringify(page), stderr)).toBe(expected);
+  });
+
+  it.each(["", "not json", "null", "[]", "VERSION STATUS\n1 loaded", "{}"])(
+    "rejects malformed global history %s",
+    (raw) => {
+      expect(classifyOpenShellGlobalPolicyHistory(raw, "")).toBe("invalid");
+    },
+  );
+
+  it("treats a superseded global revision as absent", () => {
     expect(
       parseActiveGlobalPolicyMetadata(
         JSON.stringify({
           scope: "global",
           status: "superseded",
-          policy_source: "global",
+          version: 2,
+          hash: "sha256:global",
+          policy: null,
         }),
       ),
     ).toEqual({ state: "absent" });
+  });
+
+  it.each([
+    { status: "pending", version: 2 },
+    { status: "failed", version: 2 },
+    { status: "superseded", version: 0 },
+    { status: "loaded", active_version: 2 },
+    { status: "loaded", version: 2, sandbox: "alpha" },
+    { status: "loaded", version: 2, hash: "invalid hash" },
+  ])("refuses invalid global revision metadata %j", (fields) => {
+    expect(() =>
+      parseActiveGlobalPolicyMetadata(
+        JSON.stringify({
+          scope: "global",
+          hash: "sha256:global",
+          policy: { version: 1 },
+          ...fields,
+        }),
+      ),
+    ).toThrow(/invalid global policy metadata/);
   });
 
   it("requires requested sections while allowing unrelated live policy", () => {

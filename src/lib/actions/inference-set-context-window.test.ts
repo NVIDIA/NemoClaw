@@ -182,7 +182,7 @@ describe("runInferenceSet context window", () => {
       const options = {
         provider: "compatible-endpoint",
         model: "llama3.2:3b",
-        endpointUrl: "http://host.openshell.internal:11434/v1",
+        endpointUrl: "http://192.168.50.22:11434/v1",
         credentialEnv: "COMPATIBLE_API_KEY",
         inferenceApi: "openai-completions",
         noVerify: true,

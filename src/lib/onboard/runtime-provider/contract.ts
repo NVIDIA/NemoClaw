@@ -159,9 +159,13 @@ export interface RuntimeProviderGatewayHostRuntime {
     readonly sandboxNamespace: "scoped" | "omitted";
     readonly hostGatewayIp: string | null;
     readonly includeSupervisorBin: boolean;
+    /** Driver layout projected by the provider, independent of gateway schema version. */
+    readonly driverConfigLayout: "split-supervisor" | "inline-supervisor";
     readonly processOwnership: "scoped-namespace" | "runtime-marker";
   };
   readonly network: {
+    /** Supervisor topology available to host-service probes without a sandbox bridge. */
+    readonly supervisorNetwork?: { readonly name: string; readonly hostAddress: string };
     /** Provider-owned sandbox source ranges authorized to reach host services. */
     sandboxSourceCidrs(): readonly string[];
     inspect(networkName: string): RuntimeProviderGatewayNetworkInfo | undefined;
@@ -450,6 +454,16 @@ export interface RuntimeProviderStoppedNativeHomeCleanupInput {
 }
 
 export interface RuntimeProviderPrivilegedSandboxControl {
+  /** Restore only the declared workspace-directory metadata before managed bootstrap. */
+  prepareManagedStartupWorkspace?(
+    input: Pick<
+      RuntimeProviderPrivilegedSandboxCommandInput,
+      "sandbox" | "sandboxName" | "registeredSandboxNames" | "timeoutMs"
+    > & {
+      readonly expectedResourceHandle: string;
+      readonly workspace: { readonly uid: number; readonly gid: number; readonly mode: number };
+    },
+  ): void;
   resolveTarget(
     input: Pick<
       RuntimeProviderPrivilegedSandboxCommandInput,

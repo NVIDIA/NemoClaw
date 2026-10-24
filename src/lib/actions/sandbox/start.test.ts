@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { registeredInferenceFixture } from "../../../../test/helpers/registered-inference";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -1044,3 +1045,46 @@ describe("startSandbox persisted native inference selection", () => {
     },
   );
 });
+
+it.each(["valid", "replaced"] as const)(
+  "starts a recorded external provider only after identity verification: %s",
+  async (state) => {
+    const f = registeredInferenceFixture(true);
+    const binding = { ...f.binding, sandboxName: "my-sandbox" };
+    const verifyRegisteredAttachment = vi.fn(
+      state === "replaced" ? async () => Promise.reject(new Error("replaced")) : async () => {},
+    );
+    const probeInferenceInvocation = vi.fn<
+      NonNullable<SandboxStartDeps["probeInferenceInvocation"]>
+    >(async () => ({ ok: true }));
+    const h = harness({ verifyRegisteredAttachment, probeInferenceInvocation });
+    h.getSandbox.mockReturnValue(
+      sandbox({
+        stopped: true,
+        gatewayName: binding.gatewayName,
+        agent: "openclaw",
+        provider: binding.providerName,
+        model: "model-a",
+        endpointUrl: binding.endpointUrl,
+        credentialEnv: binding.credentialEnv,
+        preferredInferenceApi: binding.inferenceApi,
+        registeredInferenceProviderAttachment: binding,
+      }),
+    );
+    expect((await startSandbox("my-sandbox", h.deps)).exitCode).toBe(state === "valid" ? 0 : 1);
+    expect(verifyRegisteredAttachment).toHaveBeenCalledWith({
+      sandboxName: "my-sandbox",
+      gatewayName: binding.gatewayName,
+      expected: binding,
+    });
+    expect(probeInferenceInvocation).toHaveBeenCalledTimes(state === "valid" ? 1 : 0);
+    expect(probeInferenceInvocation.mock.calls[0]?.[0]).toEqual(
+      state === "valid"
+        ? expect.objectContaining({
+            registeredInferenceProviderAttachment: binding,
+            nativeEndpointUrl: binding.endpointUrl,
+          })
+        : undefined,
+    );
+  },
+);

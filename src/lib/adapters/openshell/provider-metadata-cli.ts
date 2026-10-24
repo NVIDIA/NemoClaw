@@ -156,7 +156,7 @@ function parseProviderKeyArray(value: unknown): readonly string[] | null {
 export function parseCliOpenShellProviderCredentialState(
   output: string,
   providerName: string,
-): CliOpenShellProviderCredentialState | null | undefined {
+): CliOpenShellProviderCredentialState | { nextPageToken: string } | null {
   if (
     !isValidCliOpenShellProviderIdentifier(providerName) ||
     Buffer.byteLength(output, "utf8") > MAX_PROVIDER_INVENTORY_OUTPUT_BYTES
@@ -170,10 +170,19 @@ export function parseCliOpenShellProviderCredentialState(
   } catch {
     return null;
   }
-  if (!Array.isArray(parsed) || parsed.length > MAX_PROVIDER_INVENTORY_ENTRIES) return null;
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  const { providers, next_page_token: nextPageToken } = parsed as Record<string, unknown>;
+  if (
+    !Array.isArray(providers) ||
+    providers.length > MAX_PROVIDER_INVENTORY_ENTRIES ||
+    typeof nextPageToken !== "string" ||
+    nextPageToken.length > 4096 ||
+    nextPageToken.includes("\0")
+  )
+    return null;
 
   const matchingProviders: Record<string, unknown>[] = [];
-  for (const candidate of parsed) {
+  for (const candidate of providers) {
     if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return null;
     const record = candidate as Record<string, unknown>;
     if (typeof record.name !== "string" || !isValidCliOpenShellProviderIdentifier(record.name)) {
@@ -181,9 +190,8 @@ export function parseCliOpenShellProviderCredentialState(
     }
     if (record.name === providerName) matchingProviders.push(record);
   }
-  // A full page without the target permits the adapter to request the next page.
-  if (matchingProviders.length === 0 && parsed.length === MAX_PROVIDER_INVENTORY_ENTRIES) {
-    return undefined;
+  if (matchingProviders.length === 0 && nextPageToken) {
+    return { nextPageToken };
   }
   if (matchingProviders.length !== 1) return null;
 

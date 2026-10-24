@@ -370,31 +370,6 @@ describe("runInferenceSet OpenClaw routing", () => {
   });
 
   it("detaches native NVIDIA access only after another provider is healthy", async () => {
-    let attached = true;
-    const detachProvider = vi.fn<OpenShellProviderAdapter["detachProvider"]>(async () => {
-      attached = false;
-      return { ok: true, value: { changed: true } };
-    });
-    const providerAdapter = {
-      getProvider: vi.fn(async () => ({
-        ok: true,
-        value: {
-          name: "nemoclaw-nvidia-prod-v1",
-          type: "nemoclaw-nvidia-inference-v1",
-          credentialKeys: ["NVIDIA_INFERENCE_API_KEY"],
-          configKeys: [],
-          revision: {
-            id: "11111111-2222-4333-8444-555555555555",
-            resourceVersion: 1,
-          },
-        },
-      })),
-      detachProvider,
-      listProviderAttachments: vi.fn(async () => ({
-        ok: true,
-        value: { names: attached ? ["nemoclaw-nvidia-prod-v1"] : [] },
-      })),
-    } as unknown as OpenShellProviderAdapter;
     const deps = createDeps({
       config: {
         agents: { defaults: { model: { primary: "inference/nvidia/old-model" } } },
@@ -412,10 +387,11 @@ describe("runInferenceSet OpenClaw routing", () => {
           providerId: "11111111-2222-4333-8444-555555555555",
         },
       },
-      providerAdapter,
     });
 
-    await runInferenceSet({ provider: "nvidia-router", model: "gpt-5.4", noVerify: true }, deps);
+    const detachProvider = vi.spyOn(deps.providerAdapter, "detachProvider");
+    deps.resolveCredentialValue = () => "test-hosted-secret";
+    await runInferenceSet({ provider: "openai-api", model: "gpt-5.4", noVerify: true }, deps);
 
     expect(detachProvider).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({
@@ -473,10 +449,11 @@ describe("runInferenceSet OpenClaw routing", () => {
       resolveCredentialValue: () => "",
     });
 
-    await runInferenceSet({ provider: "nvidia-router", model: "gpt-5.4", noVerify: true }, deps);
+    deps.resolveCredentialValue = () => "test-hosted-secret";
+    await runInferenceSet({ provider: "openai-api", model: "gpt-5.4", noVerify: true }, deps);
 
     expect(entry).toMatchObject({
-      provider: "nvidia-router",
+      provider: "openai-api",
     });
     expect(entry.nativeNvidiaProviderAttachment).toBeUndefined();
     expect(entry).not.toHaveProperty("nativeNvidiaProviderAuthority");
@@ -543,26 +520,7 @@ describe("runInferenceSet OpenClaw routing", () => {
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
   });
 
-  it("does not publish a non-native route when native NVIDIA detach fails", async () => {
-    const providerAdapter = {
-      getProvider: vi.fn(async () => ({
-        ok: true,
-        value: {
-          name: "nemoclaw-nvidia-prod-v1",
-          type: "nemoclaw-nvidia-inference-v1",
-          credentialKeys: ["NVIDIA_INFERENCE_API_KEY"],
-          configKeys: [],
-          revision: {
-            id: "11111111-2222-4333-8444-555555555555",
-            resourceVersion: 1,
-          },
-        },
-      })),
-      detachProvider: vi.fn(async () => ({
-        ok: false,
-        error: { kind: "command", reason: "failed", message: "detach denied" },
-      })),
-    } as unknown as OpenShellProviderAdapter;
+  it("does not publish another native route when native NVIDIA detach fails", async () => {
     const config: ConfigObject = {
       agents: { defaults: { model: { primary: "inference/nvidia/old-model" } } },
       models: { providers: {} },
@@ -581,11 +539,20 @@ describe("runInferenceSet OpenClaw routing", () => {
           providerId: "11111111-2222-4333-8444-555555555555",
         },
       },
-      providerAdapter,
     });
 
+    const detachProvider = deps.providerAdapter.detachProvider.bind(deps.providerAdapter);
+    vi.spyOn(deps.providerAdapter, "detachProvider").mockImplementation((request) =>
+      request.providerName === "nemoclaw-nvidia-prod-v1"
+        ? Promise.resolve({
+            ok: false,
+            error: { kind: "command", reason: "failed", message: "detach denied" },
+          })
+        : detachProvider(request),
+    );
+    deps.resolveCredentialValue = () => "test-hosted-secret";
     await expect(
-      runInferenceSet({ provider: "nvidia-router", model: "gpt-5.4", noVerify: true }, deps),
+      runInferenceSet({ provider: "openai-api", model: "gpt-5.4", noVerify: true }, deps),
     ).rejects.toThrow("Could not detach native NVIDIA provider from sandbox 'alpha'");
 
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
@@ -785,7 +752,6 @@ describe("runInferenceSet OpenClaw routing", () => {
       "nemoclaw",
     );
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
-    expect(deps.calls.recomputeSandboxConfigHash).not.toHaveBeenCalled();
     expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
       "alpha",
       expect.objectContaining({

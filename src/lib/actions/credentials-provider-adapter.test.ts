@@ -103,6 +103,10 @@ describe("credential actions use typed OpenShell provider results", () => {
     });
     expect(adapter.importProviderProfile).not.toHaveBeenCalled();
     expect(JSON.stringify(result)).not.toContain("credential-value");
+    expect(result.successLines).toContain(
+      "  Rebuild each sandbox that should use 'custom-provider' (`nemoclaw <sandbox> rebuild`).",
+    );
+    expect(result.successLines.join("\n")).not.toContain("inference set");
   });
 
   it.each([false, true])(
@@ -278,6 +282,10 @@ describe("credential actions use typed OpenShell provider results", () => {
     });
     expect(recordExtraProvider).not.toHaveBeenCalled();
     expect(JSON.stringify(result)).not.toContain("host-only-nvidia-value");
+    expect(result.successLines).toContain(
+      "  Select it with 'nemoclaw inference set --provider nvidia-prod --model <model>'.",
+    );
+    expect(result.successLines.join("\n")).not.toContain("<sandbox> rebuild");
   });
 
   it("removes the native NVIDIA provider when authority persistence fails", async () => {

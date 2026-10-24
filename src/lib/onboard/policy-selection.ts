@@ -3,6 +3,8 @@
 
 import { type WebSearchConfig, webSearchProviderForConfig } from "../inference/web-search";
 import * as policies from "../policy";
+import { customNativeProvider } from "../inference/native-provider/custom";
+import { normalizeNativeProviderAttachment } from "../inference/native-provider/contract";
 import * as tiers from "../policy/tiers";
 import {
   PERSONAL_OPEN_INTERNET_PRESET_NAME,
@@ -168,7 +170,7 @@ export type SetupPolicySelectionDeps = {
     initialSelected: string[],
   ) => Promise<Array<Preset & { access: string }>>;
   parsePolicyPresetEnv: (raw: string) => string[];
-  hasNativeCustomProvider?: (sandboxName: string) => boolean;
+  hasNativeCustomProviderWebConflict?: (sandboxName: string) => boolean;
   env?: NodeJS.ProcessEnv;
 };
 
@@ -238,7 +240,7 @@ export function createOnboardPolicyApplication(deps: OnboardPolicyApplicationDep
     selectPolicyTier,
     selectTierPresetsAndAccess,
     parsePolicyPresetEnv: deps.parsePolicyPresetEnv,
-    hasNativeCustomProvider: (name) => policies.hasNativeCustomProvider(name),
+    hasNativeCustomProviderWebConflict,
     env: deps.env,
   };
 
@@ -447,11 +449,26 @@ async function requireSandboxReady(
   }
 }
 
+/** Reject overlapping web ports or an unverified custom attachment. */
+export function hasNativeCustomProviderWebConflict(sandboxName: string): boolean {
+  const attachment = policies.getNativeCustomProviderAttachment(sandboxName);
+  if (!attachment) return false;
+  try {
+    const definition = customNativeProvider(attachment.custom);
+    if (!normalizeNativeProviderAttachment(attachment, definition)) return true;
+    const endpoint = new URL(definition.endpoint);
+    const port = Number(endpoint.port || (endpoint.protocol === "https:" ? 443 : 80));
+    return port === 80 || port === 443;
+  } catch {
+    return true;
+  }
+}
+
 // OpenShell rejects Personal's hostless web rule beside an attached provider's
-// port-443 endpoint (NVIDIA/OpenShell#4662). Refuse before submitting the policy.
+// web endpoint (NVIDIA/OpenShell#4662). Refuse before submitting the policy.
 function refusePersonalBesideNativeCustomProvider(): never {
   console.error(
-    "  The Personal tier cannot be applied because this sandbox's custom endpoint uses an attached provider. Choose another tier, or create a new sandbox with NEMOCLAW_POLICY_TIER=personal set before onboarding.",
+    "  The Personal tier cannot be applied because this sandbox's attached custom provider overlaps ports 80 or 443, or its endpoint cannot be verified. OpenShell 0.1.3 requires a compatible runtime policy for overlapping endpoints. Choose another tier.",
   );
   process.exit(1);
 }
@@ -506,7 +523,7 @@ async function setupPoliciesWithSelectionInner(
   const refusePersonalBesideNativeCustomProviderIfSelected = (selected: readonly string[]) => {
     if (
       selected.includes(PERSONAL_OPEN_INTERNET_PRESET_NAME) &&
-      deps.hasNativeCustomProvider?.(sandboxName)
+      deps.hasNativeCustomProviderWebConflict?.(sandboxName)
     ) {
       refusePersonalBesideNativeCustomProvider();
     }
@@ -607,7 +624,7 @@ async function setupPoliciesWithSelectionInner(
   if (
     (requestedTierName === PERSONAL_POLICY_TIER_NAME ||
       chosen?.includes(PERSONAL_OPEN_INTERNET_PRESET_NAME)) &&
-    deps.hasNativeCustomProvider?.(sandboxName)
+    deps.hasNativeCustomProviderWebConflict?.(sandboxName)
   ) {
     refusePersonalBesideNativeCustomProvider();
   }
@@ -632,7 +649,10 @@ async function setupPoliciesWithSelectionInner(
   }
 
   const tierName = requestedTierName ?? (await deps.selectPolicyTier());
-  if (tierName === PERSONAL_POLICY_TIER_NAME && deps.hasNativeCustomProvider?.(sandboxName)) {
+  if (
+    tierName === PERSONAL_POLICY_TIER_NAME &&
+    deps.hasNativeCustomProviderWebConflict?.(sandboxName)
+  ) {
     refusePersonalBesideNativeCustomProvider();
   }
   if (personalAlreadyActive && tierName !== PERSONAL_POLICY_TIER_NAME) {

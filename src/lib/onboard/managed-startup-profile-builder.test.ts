@@ -216,8 +216,6 @@ describe("buildManagedStartupProfile", () => {
           NEMOCLAW_CONTEXT_WINDOW: "262144",
           NEMOCLAW_MAX_TOKENS: "32000",
           NEMOCLAW_REASONING: "true",
-          NEMOCLAW_PROXY_HOST: "10.200.0.1",
-          NEMOCLAW_PROXY_PORT: "3128",
         },
       }),
     );
@@ -467,8 +465,6 @@ describe("buildManagedStartupProfile", () => {
         NEMOCLAW_DASHBOARD_BIND: "0.0.0.0",
         NEMOCLAW_WSL_DASHBOARD_EXPOSURE: "1",
         NEMOCLAW_DASHBOARD_PORT: "19443",
-        NEMOCLAW_PROXY_HOST: "host.containers.internal",
-        NEMOCLAW_PROXY_PORT: "3129",
         NEMOCLAW_MESSAGING_PLAN_B64: encodeJson(plan),
         NEMOCLAW_MINIMAL_BOOTSTRAP: "1",
         HTTP_PROXY: "http://proxy.example.test:8080",
@@ -508,8 +504,8 @@ describe("buildManagedStartupProfile", () => {
     });
     expect(built.profile.agentConfig).not.toHaveProperty("deviceAuth");
     expect(built.profile.proxy).toMatchObject({
-      managedHost: "host.containers.internal",
-      managedPort: 3129,
+      managedHost: "10.200.0.1",
+      managedPort: 3128,
       hostHttpUrl: "http://proxy.example.test:8080",
       hostHttpsUrl: "https://connect.example.test:8443",
     });
@@ -648,8 +644,6 @@ describe("buildManagedStartupProfile", () => {
           NEMOCLAW_INFERENCE_API: "openai-completions",
           NEMOCLAW_TOOL_DISCLOSURE: "direct",
           NEMOCLAW_DCODE_AUTO_APPROVAL: "thread-opt-in",
-          NEMOCLAW_PROXY_HOST: "10.200.0.1",
-          NEMOCLAW_PROXY_PORT: "3128",
           NEMOCLAW_OBSERVABILITY: "1",
           NEMOCLAW_REASONING_EFFORT: "high",
         },

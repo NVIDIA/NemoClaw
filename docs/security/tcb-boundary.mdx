@@ -96,6 +96,14 @@ They do not make the resulting agent config or state immutable after the transac
 The direct supervisor records the gateway process ID and kernel start identity and verifies the parent relationship before signalling or reaping the process.
 The Docker health fallback reads the same record and verifies process identity before and after reading its command line.
 
+For OpenShell bootstrap, the Hermes guard permits supplementary GPU groups only when validated Direct Rendering Manager (DRM) devices account for them.
+The Hermes policy grants read-only access to `/sys/class/drm` for device-name discovery; this grant does not add GPU device access.
+The guard pins `/dev` and `/dev/dri`, rejects symlinks and unsafe directory ownership or write permissions, and bounds device inspection.
+It reads device metadata without reading those directories or opening device nodes.
+It checks device type, number, owner, group, and permissions before accepting a group beyond the sandbox's primary group.
+The rootless launcher must still clear supplementary groups.
+Process identity, lifetime, capability, and `NoNewPrivs` checks remain required.
+
 The Hermes cron-restore controller pins the initial gateway identity while it validates restored cron state.
 It observes the replacement identity around health verification and releases the restore gate only for that live replacement.
 This controller protects the cron-restore transaction and does not own ordinary Hermes gateway lifecycle.

@@ -209,12 +209,10 @@ export async function normalizeCustomEndpointUrl(
   const normalized = normalizeCustomEndpointUrlWithoutDns(value);
   const shaped = normalizeEndpointUrlShape(normalized);
   if (isAllowedOpenShellSandboxBridgeUrl(shaped.url)) {
-    // This is the single sandbox-to-host bridge name that NemoClaw itself
-    // provisions for local inference. Its supported routes are explicit
-    // unprivileged HTTP listeners; do not generalize this exemption to HTTPS,
-    // default/privileged ports, localhost, RFC1918 addresses, or arbitrary
-    // internal DNS names.
-    return normalized;
+    throw new InferenceSetError(
+      `${ENDPOINT_URL_NOT_ALLOWED_PREFIX} custom inference cannot use an unverified OpenShell host bridge endpoint`,
+      2,
+    );
   }
 
   // A DNS-backed HTTPS endpoint cannot be pinned by IP substitution alone: the

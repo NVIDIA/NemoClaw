@@ -33,8 +33,8 @@ Pi is a NemoClaw agent runtime. Docker is the initial compute runtime. Pi-specif
 | Host platform       | Linux AMD64 or Linux ARM64               |
 | Compute runtime     | Docker                                   |
 | Managed API         | OpenAI Chat Completions                  |
-| Sandbox route       | Attached provider for NVIDIA, fixed hosted providers, new hosted custom endpoints outside Personal, and new qualified local selections; shared route for new Personal-tier hosted custom endpoints, Local NVIDIA NIM, and published legacy selections |
-| Qualification model | `nvidia/nemotron-3.5-super-vl-120b-a12b` |
+| Sandbox route       | Native endpoint for NVIDIA, fixed hosted providers, qualifying custom hosted endpoints, and new qualified local selections; shared route for remaining custom shared selections and published legacy selections |
+| Qualification model | `nvidia/nemotron-3.5-super-vl-120b-a12b`      |
 | Interactive command | `pi`                                     |
 | Headless command    | `pi --no-approve --print`                |
 
@@ -67,15 +67,19 @@ If the settings update fails, NemoClaw restores the previous catalog or removes 
 When NemoClaw applies a Pi configuration, existing `models.json` and `settings.json` paths must be regular files.
 A symbolic link at either path stops that update before the Pi generator runs.
 
-For direct provider routes, the upstream credential remains in OpenShell provider state.
-It survives rebuild and sandbox destruction until an operator runs `nemoclaw credentials reset <provider> --yes` after all dependent sandboxes are gone.
-NVIDIA Endpoints, supported fixed hosted providers, new hosted custom endpoints outside the Personal policy tier, and new qualified local selections use sandbox-attached providers.
-For direct hosted custom endpoints, OpenShell binds the recorded endpoint, API, credential environment name, and admitted destination addresses to that provider.
-The AWS Bedrock adapter keeps AWS credentials in its host process and gives OpenShell an adapter token instead of direct endpoint IP pins.
-For an attached hosted custom selection, Pi's generated `models.json` reads `${COMPATIBLE_API_KEY}` or `${COMPATIBLE_ANTHROPIC_API_KEY}` from its sandbox environment; the environment value is a scoped `openshell:resolve:env:...` reference.
-Shared selections use a non-secret managed-route placeholder in `models.json`.
-OpenShell supplies the issued credential at egress without putting the upstream key in Pi's configuration.
-New Personal-tier hosted custom selections, Local NVIDIA NIM, and unchanged published Pi shared-route selections use `inference.local`.
+For direct provider routes, the upstream credential remains in OpenShell provider state. It survives rebuild and sandbox destruction until an operator runs `nemoclaw credentials reset <provider> --yes` after all dependent sandboxes are gone. NVIDIA Endpoints and supported fixed hosted providers use native endpoints through sandbox-attached OpenShell providers. New Pi selections for Ollama, standalone vLLM, llama.cpp, and qualified host-local compatible endpoints use sandbox-attached providers.
+Qualifying custom hosted endpoints also use sandbox-attached providers.
+For an attached hosted custom selection, `models.json` reads `${COMPATIBLE_API_KEY}` or `${COMPATIBLE_ANTHROPIC_API_KEY}` from the sandbox environment.
+That environment value is a scoped `openshell:resolve:env:...` reference.
+OpenShell supplies the direct provider credential or Bedrock adapter token at egress.
+Pi configuration contains a non-secret placeholder or environment reference.
+Bedrock AWS credentials stay in its host-local adapter.
+Remaining custom shared selections and unchanged published Pi shared-route selections retain `inference.local`.
+Those shared routes require OpenShell `0.0.x`; OpenShell `0.1.3` removes `inference.local`.
+On OpenShell `0.1.3`, NemoClaw refuses to resume or rebuild a retained Pi local selection without a native attachment.
+Back up required state before recreating the sandbox with `nemoclaw onboard --agent pi --name <sandbox-name> --fresh --recreate-sandbox`.
+NemoClaw preserves legacy volumes and does not automatically copy their data.
+Pi native local onboarding on `0.1.3` remains unqualified for this upgrade.
 A failed native selection stops without falling back to the shared route. Direct unmanaged provider access is denied. NemoClaw rejects an unsupported API family, empty model, credential-bearing base URL, or malformed model tuning before Pi starts.
 
 For OpenRouter, Pi uses `https://openrouter.ai/api/v1` through its recorded native provider. Readiness requires a successful bounded inference request for the selected model.
@@ -94,6 +98,10 @@ A rebuild replays the recorded values. Pi does not support `NEMOCLAW_REASONING_E
 ## Network and Filesystem Policy
 
 The baseline network policy permits only the managed inference endpoint and the required Chat Completions routes. Network capability is limited to the root-owned Pi and Node runtime binaries.
+
+For an OpenShell `0.1.3` native provider route, Pi startup and managed shells clear inherited proxy and bypass variables.
+OpenShell mediates DNS and applies destination policy.
+`NEMOCLAW_PROXY_HOST` and `NEMOCLAW_PROXY_PORT` do not configure this Pi route.
 
 Direct access to provider endpoints, GitHub, npm, host control, and container-runtime sockets is denied. Operators must select an explicit maintained policy before additional services become reachable.
 

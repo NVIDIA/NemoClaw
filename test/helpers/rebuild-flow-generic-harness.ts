@@ -7,6 +7,8 @@ import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { vi } from "vitest";
 import { makePreparedRecoveryManifest } from "../../src/lib/actions/sandbox/rebuild-flow-test-fixtures";
+import { recordedNativeProviderAttachment } from "../../src/lib/inference/native-provider/recorded-selection";
+import { fixedNativeProviderForAttachment } from "../../src/lib/inference/native-provider/fixed";
 import type { OpenShellRuntimeSelection } from "../../src/lib/adapters/openshell/runtime-selection";
 import type { RebuildRecreateOnboardOpts } from "../../src/lib/actions/sandbox/rebuild-gpu-opt-out";
 import {
@@ -788,6 +790,31 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
           stderr: "sandbox alpha not found",
         };
       }
+      const attachment = recordedNativeProviderAttachment(currentSandboxEntry);
+      if (argv[0] === "provider" && attachment) {
+        const definition = fixedNativeProviderForAttachment(attachment);
+        const stdout =
+          argv[1] === "list"
+            ? JSON.stringify({
+                providers: [
+                  {
+                    name: attachment.providerName,
+                    credential_keys: [definition.credentialEnv],
+                    credential_expires_at_ms: {},
+                  },
+                ],
+                next_page_token: "",
+              })
+            : [
+                `Name: ${attachment.providerName}`,
+                `Type: ${attachment.profileId}`,
+                `Credential keys: ${definition.credentialEnv}`,
+                "Config keys: <none>",
+                `Id: ${attachment.providerId}`,
+                "Resource version: 1",
+              ].join("\n");
+        return { status: 0, stdout, output: stdout, stderr: "" };
+      }
       if (argv[0] === "provider" && argv[1] === "list") {
         const provider = String(currentSandboxEntry.provider ?? "compatible-endpoint");
         const credentialEnv =
@@ -795,12 +822,15 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
           typeof currentSandboxEntry.credentialEnv === "string"
             ? currentSandboxEntry.credentialEnv
             : "COMPATIBLE_API_KEY";
-        const output = JSON.stringify([
-          {
-            name: provider,
-            credential_keys: credentialEnv ? [credentialEnv] : [],
-          },
-        ]);
+        const output = JSON.stringify({
+          providers: [
+            {
+              name: provider,
+              credential_keys: credentialEnv ? [credentialEnv] : [],
+            },
+          ],
+          next_page_token: "",
+        });
         return { status: 0, output, stdout: output, stderr: "" };
       }
       return argv[0] === "provider" && argv[1] === "get"

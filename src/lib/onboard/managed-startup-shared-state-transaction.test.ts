@@ -13,12 +13,16 @@ import type { ManagedStartupAgent, ManagedStartupProfile } from "./managed-start
 import { fingerprintManagedStartupProfile } from "./managed-startup/profile";
 import {
   beginManagedStartupSharedStateTransaction,
+  captureManagedStartupSharedState,
   clearManagedStartupSharedStateCommitReceipt,
   commitManagedStartupSharedStateTransaction,
+  exportManagedStartupSharedStateRestoration,
+  finishManagedStartupSharedStateRestoration,
   getManagedStartupSharedStateTransactionStatus,
   MANAGED_STARTUP_SHARED_COMMIT_RECEIPT_DIRECTORY,
   type ManagedStartupSharedTransactionOptions,
   rollbackManagedStartupSharedStateTransaction,
+  restoreManagedStartupCapturedSharedState,
 } from "./managed-startup/shared-state-transaction";
 
 function mode(target: string): number {
@@ -76,6 +80,200 @@ describe("managed startup shared-state transaction", () => {
             : ".deepagents",
     );
   }
+
+  function capturedOpenClaw() {
+    const profile = managedStartupE2eProfile("openclaw", false);
+    const root = agentRoot("openclaw");
+    fs.mkdirSync(root, { mode: 0o700 });
+    const file = path.join(root, "openclaw.json");
+    fs.writeFileSync(file, '{"synthetic":"original"}', { mode: 0o600 });
+    const bootstrapIdentity = "a".repeat(64);
+    const capturedState = captureManagedStartupSharedState(profile, {
+      sandboxRoot,
+      bootstrapIdentity,
+    });
+    return { profile, file, capturedState, bootstrapIdentity };
+  }
+
+  it("installs an owner capture into the trusted transaction and restores its exact original bytes", () => {
+    const captured = capturedOpenClaw();
+    fs.writeFileSync(captured.file, "changed after capture");
+    const importedOptions = {
+      ...options,
+      bootstrapIdentity: captured.bootstrapIdentity,
+      capturedState: captured.capturedState,
+    };
+    expect(beginManagedStartupSharedStateTransaction(captured.profile, importedOptions)).toBe(true);
+    expect(mode(transactionDirectory)).toBe(0o700);
+    expect(mode(path.join(transactionDirectory, "backups", "000.bin"))).toBe(0o400);
+    expect(rollbackManagedStartupSharedStateTransaction("openclaw", importedOptions)).toBe(true);
+    expect(fs.readFileSync(captured.file, "utf8")).toBe('{"synthetic":"original"}');
+    expect(mode(captured.file)).toBe(0o600);
+  });
+
+  it("never replaces a pending original snapshot with a replayed capture", () => {
+    const captured = capturedOpenClaw();
+    const importedOptions = {
+      ...options,
+      bootstrapIdentity: captured.bootstrapIdentity,
+      capturedState: captured.capturedState,
+    };
+    beginManagedStartupSharedStateTransaction(captured.profile, importedOptions);
+    fs.writeFileSync(captured.file, "partial generator output");
+    expect(
+      beginManagedStartupSharedStateTransaction(captured.profile, {
+        ...importedOptions,
+        capturedState: "not a new receipt",
+      }),
+    ).toBe(false);
+    rollbackManagedStartupSharedStateTransaction("openclaw", importedOptions);
+    expect(fs.readFileSync(captured.file, "utf8")).toBe('{"synthetic":"original"}');
+  });
+
+  it.each([
+    ["bootstrap", { bootstrapIdentity: "b".repeat(64) }, {}, undefined, {}],
+    ["profile", { profileFingerprint: "b".repeat(64) }, {}, undefined, {}],
+    ["path", {}, { path: ".openclaw/not-selected.json" }, undefined, {}],
+    ["bytes", {}, {}, [Buffer.from("tampered").toString("base64")], {}],
+    ["metadata", {}, { mode: 0o10000 }, undefined, {}],
+    ["extra-field", {}, {}, undefined, { unexpected: true }],
+  ] as const)(
+    "rejects a mismatched captured %s before creating a receipt",
+    (_change, manifestPatch, filePatch, contents, envelopePatch) => {
+      const captured = capturedOpenClaw();
+      const envelope = JSON.parse(captured.capturedState);
+      const manifest = { ...JSON.parse(envelope.manifest), ...manifestPatch };
+      manifest.files[0] = { ...manifest.files[0], ...filePatch };
+      envelope.contents = contents ?? envelope.contents;
+      Object.assign(envelope, envelopePatch);
+      envelope.manifest = `${JSON.stringify(manifest, null, 2)}\n`;
+      expect(() =>
+        beginManagedStartupSharedStateTransaction(captured.profile, {
+          ...options,
+          bootstrapIdentity: captured.bootstrapIdentity,
+          capturedState: JSON.stringify(envelope),
+        }),
+      ).toThrow(/shared-state transaction failed/u);
+      expect(fs.existsSync(transactionDirectory)).toBe(false);
+      expect(fs.readFileSync(captured.file, "utf8")).toBe('{"synthetic":"original"}');
+    },
+  );
+
+  it("cannot create a trusted receipt while capturing private state", () => {
+    capturedOpenClaw();
+    expect(fs.existsSync(transactionDirectory)).toBe(false);
+  });
+
+  it.each([
+    ["openclaw", "openclaw.json"],
+    ["hermes", "config.yaml"],
+    ["langchain-deepagents-code", "config.toml"],
+    ["pi", "agent/models.json"],
+  ] as const)(
+    "restores %s bytes and metadata before retiring its protected receipt",
+    (agent, relative) => {
+      const profile = managedStartupE2eProfile(agent, false);
+      const file = path.join(agentRoot(agent), relative);
+      fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+      fs.writeFileSync(file, "original private state", { mode: 0o600 });
+      const sentinel = path.join(agentRoot(agent), "unselected.txt");
+      fs.writeFileSync(sentinel, "retain");
+      const bound = { ...options, bootstrapIdentity: "a".repeat(64) };
+      beginManagedStartupSharedStateTransaction(profile, bound);
+      const captured = exportManagedStartupSharedStateRestoration(profile, bound)!;
+      fs.writeFileSync(file, "partial generation");
+      fs.chmodSync(file, 0o644);
+      fs.chmodSync(path.dirname(file), 0o755);
+      const observed = restoreManagedStartupCapturedSharedState(profile, captured, bound);
+      expect(fs.existsSync(transactionDirectory)).toBe(true);
+      expect(fs.readFileSync(file, "utf8")).toBe("original private state");
+      expect(mode(file)).toBe(0o600);
+      expect(mode(path.dirname(file))).toBe(0o700);
+      expect(fs.readFileSync(sentinel, "utf8")).toBe("retain");
+      expect(finishManagedStartupSharedStateRestoration(profile, observed, bound)).toBe(true);
+      expect(fs.existsSync(transactionDirectory)).toBe(false);
+    },
+  );
+
+  it("removes newly generated selected outputs without changing unrelated files", () => {
+    const profile = managedStartupE2eProfile("hermes", false);
+    const root = agentRoot("hermes");
+    fs.mkdirSync(root, { mode: 0o700 });
+    const bound = { ...options, bootstrapIdentity: "a".repeat(64) };
+    beginManagedStartupSharedStateTransaction(profile, bound);
+    const captured = exportManagedStartupSharedStateRestoration(profile, bound)!;
+    fs.writeFileSync(path.join(root, "config.yaml"), "new");
+    fs.writeFileSync(path.join(root, ".env"), "synthetic");
+    fs.writeFileSync(path.join(root, "keep"), "retained");
+    const observed = restoreManagedStartupCapturedSharedState(profile, captured, bound);
+    expect(fs.existsSync(path.join(root, "config.yaml"))).toBe(false);
+    expect(fs.existsSync(path.join(root, ".env"))).toBe(false);
+    expect(fs.readFileSync(path.join(root, "keep"), "utf8")).toBe("retained");
+    expect(finishManagedStartupSharedStateRestoration(profile, observed, bound)).toBe(true);
+  });
+
+  it("retains the original receipt after an incomplete restoration observation", () => {
+    const original = capturedOpenClaw();
+    const bound = { ...options, bootstrapIdentity: original.bootstrapIdentity };
+    beginManagedStartupSharedStateTransaction(original.profile, bound);
+    fs.chmodSync(original.file, 0o644);
+    const observed = captureManagedStartupSharedState(original.profile, bound);
+    expect(() =>
+      finishManagedStartupSharedStateRestoration(original.profile, observed, bound),
+    ).toThrow(/does not match the protected original/u);
+    expect(fs.existsSync(transactionDirectory)).toBe(true);
+    expect(mode(original.file)).toBe(0o644);
+  });
+
+  it("rejects another restoration identity before changing any output", () => {
+    const original = capturedOpenClaw();
+    const captured = JSON.parse(original.capturedState);
+    const manifest = JSON.parse(captured.manifest);
+    manifest.files[0].uid += 1;
+    captured.manifest = `${JSON.stringify(manifest, null, 2)}\n`;
+    fs.writeFileSync(original.file, "retain partial state");
+    expect(() =>
+      restoreManagedStartupCapturedSharedState(original.profile, JSON.stringify(captured), {
+        sandboxRoot,
+        bootstrapIdentity: original.bootstrapIdentity,
+      }),
+    ).toThrow(/different restoration identity/u);
+    expect(fs.readFileSync(original.file, "utf8")).toBe("retain partial state");
+  });
+
+  it("retains recovery authority when restoring a selected directory cannot complete", () => {
+    const profile = managedStartupE2eProfile("openclaw", false);
+    const bound = { ...options, bootstrapIdentity: "a".repeat(64) };
+    beginManagedStartupSharedStateTransaction(profile, bound);
+    const captured = exportManagedStartupSharedStateRestoration(profile, bound)!;
+    fs.mkdirSync(agentRoot("openclaw"));
+    fs.writeFileSync(path.join(agentRoot("openclaw"), "unselected"), "retain");
+    expect(() => restoreManagedStartupCapturedSharedState(profile, captured, bound)).toThrow(
+      /could not remove newly created managed directory/u,
+    );
+    expect(fs.existsSync(transactionDirectory)).toBe(true);
+    expect(fs.readFileSync(path.join(agentRoot("openclaw"), "unselected"), "utf8")).toBe("retain");
+  });
+
+  it("refuses export after commit and rejects a changed backup before export", () => {
+    const original = capturedOpenClaw();
+    const bound = { ...options, bootstrapIdentity: original.bootstrapIdentity };
+    beginManagedStartupSharedStateTransaction(original.profile, bound);
+    const backup = path.join(transactionDirectory, "backups", "000.bin");
+    fs.chmodSync(backup, 0o600);
+    fs.writeFileSync(backup, "corrupt");
+    fs.chmodSync(backup, 0o400);
+    expect(() => exportManagedStartupSharedStateRestoration(original.profile, bound)).toThrow(
+      /does not match its receipt/u,
+    );
+    fs.chmodSync(backup, 0o600);
+    fs.writeFileSync(backup, '{"synthetic":"original"}');
+    fs.chmodSync(backup, 0o400);
+    commitManagedStartupSharedStateTransaction("openclaw", bound);
+    expect(() => exportManagedStartupSharedStateRestoration(original.profile, bound)).toThrow(
+      /durably committed/u,
+    );
+  });
 
   function commitReceiptDirectory(): string {
     return path.join(

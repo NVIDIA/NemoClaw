@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isIP } from "node:net";
-import { isPrivateIp } from "../../private-networks";
+import { isPrivateIp, isAllowedOpenShellSandboxBridgeUrl } from "../../private-networks";
 
 /** Durable Hermes policy accepts exact public IPs, never CIDRs or private ranges. */
 export function requireHermesPublicPins(value: unknown): readonly string[] {
@@ -13,4 +13,17 @@ export function requireHermesPublicPins(value: unknown): readonly string[] {
   )
     throw new Error("Hermes endpoint requires recorded public IP addresses");
   return [...new Set(value as string[])].sort();
+}
+
+/** The reserved alias is pinned by OpenShell; public endpoints retain exact public pins. */
+export function requireHermesEndpointPins(
+  endpointUrl: string,
+  value: unknown,
+): readonly string[] | undefined {
+  if (isAllowedOpenShellSandboxBridgeUrl(new URL(endpointUrl))) {
+    if (value !== undefined)
+      throw new Error("Hermes host alias cannot override the runtime destination");
+    return undefined;
+  }
+  return requireHermesPublicPins(value);
 }

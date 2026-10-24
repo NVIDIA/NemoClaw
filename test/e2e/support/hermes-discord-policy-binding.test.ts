@@ -18,6 +18,10 @@ import {
 } from "../fixtures/gateway-providers.ts";
 import { requireSuccessfulPolicyBoundaryBuild } from "../fixtures/hermes-discord-policy-boundary-build.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import {
+  applyRestRewritePolicy,
+  applyWebSocketRewritePolicy,
+} from "../live/messaging-providers-helpers.ts";
 
 const HELPER = path.resolve(import.meta.dirname, "../fixtures/gateway-provider-policy-binding.ts");
 const TYPESCRIPT = path.resolve("node_modules/typescript/bin/tsc");
@@ -175,13 +179,69 @@ describe("Hermes Discord E2E policy binding", () => {
     expect(applied).toEqual([]);
   });
 
+  const applySharedPolicy = (
+    host: HostCliClient,
+    protocol: "rest" | "websocket",
+    restMethods?: readonly ("GET" | "POST")[],
+  ) =>
+    applyFixtureProviderPolicyEndpoint(host, "e2e-messaging", {
+      artifactName: "apply-fake-messaging-policy",
+      endpoint: { port: 43119 },
+      protocol,
+      rewrite: {
+        rest: "request-body-credential-rewrite",
+        websocket: "websocket-credential-rewrite",
+      }[protocol] as "request-body-credential-rewrite" | "websocket-credential-rewrite",
+      env: {},
+      providerName: "messaging-provider",
+      redactionValues: [],
+      restMethods,
+    });
+  const applyMessagingPolicy = (host: HostCliClient, apply: typeof applyRestRewritePolicy) =>
+    apply(
+      host,
+      { kind: "discord-gateway", port: "43119", captureFile: "unused" },
+      "messaging-provider",
+      "DISCORD_BOT_TOKEN",
+      { DISCORD_BOT_TOKEN: "fixture-token" },
+      ["fixture-token"],
+    );
+
   it.each([
-    { requested: undefined, expected: ["GET", "POST"] },
-    { requested: ["POST"] as const, expected: ["POST"] },
-  ])(
-    "renders only declared REST methods in a rebuild-valid fixture policy [case %#]",
-    async ({ requested, expected }) => {
-      const providerName = "telegram-provider";
+    {
+      caller: "shared",
+      protocol: "rest",
+      expected: ["GET", "POST"],
+      apply: (host: HostCliClient) => applySharedPolicy(host, "rest"),
+    },
+    {
+      caller: "shared",
+      protocol: "rest",
+      expected: ["POST"],
+      apply: (host: HostCliClient) => applySharedPolicy(host, "rest", ["POST"]),
+    },
+    {
+      caller: "shared",
+      protocol: "websocket",
+      expected: ["GET", "WEBSOCKET_TEXT"],
+      apply: (host: HostCliClient) => applySharedPolicy(host, "websocket"),
+    },
+    {
+      caller: "messaging",
+      protocol: "rest",
+      expected: ["GET", "POST"],
+      apply: (host: HostCliClient) => applyMessagingPolicy(host, applyRestRewritePolicy),
+    },
+    {
+      caller: "messaging",
+      protocol: "websocket",
+      expected: ["GET", "WEBSOCKET_TEXT"],
+      apply: (host: HostCliClient) => applyMessagingPolicy(host, applyWebSocketRewritePolicy),
+    },
+  ] as const)(
+    "applies $caller $protocol fixture rules without mixing endpoint and rule updates [case %#]",
+    async ({ protocol, expected, apply }) => {
+      const providerName = "messaging-provider";
       const source = YAML.stringify({
         version: 1,
         network_policies: {
@@ -191,50 +251,61 @@ describe("Hermes Discord E2E policy binding", () => {
               {
                 host: "host.openshell.internal",
                 port: 43119,
-                protocol: "rest",
-                rules: ["GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH"].map((method) => ({
-                  allow: { method, path: "**" },
-                })),
+                protocol,
+                access: "read-write",
               },
             ],
             binaries: [{ path: "/usr/local/bin/node" }, { path: "/usr/bin/node" }],
           },
         },
       });
-      expect(() => parseAndValidateSandboxPolicy(source)).toThrow("sandbox policy schema");
       const applied: string[] = [];
+      const policyPaths: string[] = [];
       const command = vi
         .fn<HostCliClient["command"]>()
-        .mockResolvedValueOnce(successfulProbe(providerName))
-        .mockResolvedValueOnce(successfulProbe())
-        .mockResolvedValueOnce(successfulProbe(source))
-        .mockImplementationOnce(async (_command, args = []) => {
-          applied.push(fs.readFileSync(args[args.indexOf("--policy") + 1], "utf8"));
-          return successfulProbe();
+        .mockImplementation(async (_command, args = []) => {
+          // OpenShell 0.1.3 rejects mixed endpoint and rule updates before gateway access.
+          expect(args.includes("--add-endpoint") && args.includes("--add-allow")).toBe(false);
+          const responses: Record<string, () => ShellProbeResult> = {
+            "sandbox provider": () => successfulProbe(providerName),
+            "policy update": () => successfulProbe(),
+            "policy get": () => successfulProbe(source),
+            "policy set": () => {
+              const policyPath = args[args.indexOf("--policy") + 1];
+              policyPaths.push(policyPath);
+              applied.push(fs.readFileSync(policyPath, "utf8"));
+              return successfulProbe();
+            },
+          };
+          return responses[args.slice(0, 2).join(" ")]();
         });
       const host = {
         command,
         openshellCommandPath: "/usr/local/bin/openshell",
       } as unknown as HostCliClient;
-      await applyFixtureProviderPolicyEndpoint(host, "e2e-telegram", {
-        artifactName: "apply-fake-telegram-policy",
-        endpoint: { port: 43119 },
-        protocol: "rest",
-        rewrite: "request-body-credential-rewrite",
-        env: {},
-        providerName,
-        redactionValues: [],
-        restMethods: requested,
-      });
+      await apply(host);
       expect(applied).toHaveLength(1);
       const policy = parseAndValidateSandboxPolicy(applied[0]);
       expect(policy).toMatchObject({
         network_policies: {
           fixture: {
-            endpoints: [{ rules: expected.map((method) => ({ allow: { method, path: "/**" } })) }],
+            endpoints: [
+              {
+                host: "host.openshell.internal",
+                port: 43119,
+                protocol,
+                credential_binding: { provider: providerName },
+                rules: expected.map((method) => ({ allow: { method, path: "/**" } })),
+              },
+            ],
+            binaries: [{ path: "/usr/local/bin/node" }, { path: "/usr/bin/node" }],
           },
         },
       });
+      expect(YAML.parse(applied[0]).network_policies.fixture.endpoints[0]).not.toHaveProperty(
+        "access",
+      );
+      expect(policyPaths.every((policyPath) => !fs.existsSync(policyPath))).toBe(true);
     },
   );
 

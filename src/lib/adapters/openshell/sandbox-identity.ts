@@ -65,7 +65,11 @@ function parseOpenShellSandboxListJson(output: string): readonly unknown[] | nul
   } catch {
     return null;
   }
-  return Array.isArray(rows) ? rows : null;
+  if (Array.isArray(rows)) return rows;
+  if (!rows || typeof rows !== "object") return null;
+  const page = rows as Record<string, unknown>;
+  // A partial inventory cannot prove absence or unique identity.
+  return page.next_page_token === "" && Array.isArray(page.sandboxes) ? page.sandboxes : null;
 }
 
 export type OpenShellSandboxIdObservation =
@@ -236,7 +240,7 @@ export function observeCreatedOpenShellSandboxId(
         `${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${input.createAttemptNonce}`,
         "--output",
         "json",
-        "--limit",
+        "--page-size",
         "2",
       ],
       {

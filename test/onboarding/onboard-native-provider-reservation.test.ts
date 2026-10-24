@@ -11,6 +11,8 @@ import {
 } from "../../src/lib/onboard/machine/handlers/provider-inference.test-support";
 import { nativeLocalSetupReceipt } from "../support/native-local-setup-harness";
 import { createDirectSetupInferenceHarness } from "../helpers/onboard-split-context";
+import type { SetupInferenceDeps } from "../../src/lib/onboard/setup-inference";
+import { serializedHostLocalInferenceReceipt } from "../helpers/host-local-inference-receipt";
 
 // Abandoned-reservation recovery has its own state tests. Keep this harness from
 // reading the developer's registry through the CommonJS onboarding boundary.
@@ -83,6 +85,65 @@ describe("native provider ownership before route reservation", () => {
     expect(harness.updateSandbox).not.toHaveBeenCalled();
     expect(harness.native.providers.size).toBe(0);
     expect(harness.native.authorities.size).toBe(0);
+  });
+  it("clears stale host-local ownership when selecting native NVIDIA inference", async () => {
+    const providerAdapter = {
+      importProviderProfile: vi.fn(async () => ({ ok: true as const })),
+      ensureProviderPolicyComposition: vi.fn(async () => ({ ok: true as const, value: undefined })),
+      getProvider: vi
+        .fn()
+        .mockResolvedValueOnce({
+          ok: false,
+          error: { kind: "command", reason: "not_found", message: "absent" },
+        })
+        .mockResolvedValue({
+          ok: true,
+          value: {
+            name: "nemoclaw-nvidia-prod-v1",
+            type: "nemoclaw-nvidia-inference-v1",
+            credentialKeys: ["NVIDIA_INFERENCE_API_KEY"],
+            configKeys: [],
+            revision: { id: "native-identity", resourceVersion: 1 },
+          },
+        }),
+      createProvider: vi.fn(async () => ({ ok: true as const })),
+    } as unknown as NonNullable<SetupInferenceDeps["providerAdapter"]>;
+    const harness = createDirectSetupInferenceHarness({
+      overrides: {
+        providerAdapter,
+        hydrateCredentialEnv: () => "host-secret",
+        getNativeNvidiaProviderAuthority: () => undefined,
+        setNativeNvidiaProviderAuthority: vi.fn(),
+        getSandbox: () => ({
+          name: "sandbox-a",
+          provider: "vllm-local",
+          model: "qwen3.5-9b",
+          hostLocalInferenceReceipt: serializedHostLocalInferenceReceipt(),
+        }),
+      },
+    });
+    await expect(
+      harness.setupInference(
+        "sandbox-a",
+        "remote-model",
+        "nvidia-prod",
+        null,
+        "NVIDIA_API_KEY",
+        null,
+        [],
+      ),
+    ).resolves.toEqual({ ok: true });
+
+    expect(harness.updateSandbox).toHaveBeenCalledWith(
+      "sandbox-a",
+      expect.objectContaining({
+        provider: "nvidia-prod",
+        model: "remote-model",
+        hostLocalInferenceReceipt: null,
+        nativeNvidiaProviderAttachment: expect.objectContaining({ providerId: "native-identity" }),
+      }),
+    );
+    expect(harness.commands.some(({ command }) => command.startsWith("inference set"))).toBe(false);
   });
 });
 
@@ -309,4 +370,231 @@ it("stages explicit legacy Hermes recreation with a Hermes-scoped receipt", asyn
   expect(harness.updateSandbox).not.toHaveBeenCalled();
   expect(row).toEqual(before);
   expect(harness.commands.some(({ command }) => command.startsWith("inference set"))).toBe(false);
+});
+
+it.each(["openai-completions", "openai-responses"] as const)(
+  "creates a sandbox-owned OpenClaw compatible %s provider before publishing its reservation",
+  async (api) => {
+    const harness = createDirectSetupInferenceHarness({
+      overrides: {
+        hydrateCredentialEnv: () => "fixture-only-host-key",
+        isNonInteractive: () => true,
+      },
+    });
+    await expect(
+      harness.setupInference(
+        "test-box",
+        "served-alias",
+        "compatible-endpoint",
+        "http://127.0.0.1:8000/v1",
+        "HOST_COMPATIBLE_KEY",
+        null,
+        [],
+        { agentName: "openclaw", preferredInferenceApi: api },
+      ),
+    ).resolves.toEqual({ ok: true });
+    expect([...harness.native.authorities.values()]).toEqual([
+      expect.objectContaining({
+        agent: "openclaw",
+        provider: "compatible-endpoint",
+        endpointUrl: "http://host.openshell.internal:8000/v1",
+        authMode: "authenticated",
+      }),
+    ]);
+    expect(harness.native.profiles[0]).toMatchObject({
+      endpoints: [
+        {
+          rules: [
+            { allow: { method: "GET", path: "/v1/models" } },
+            {
+              allow: {
+                method: "POST",
+                path: api === "openai-responses" ? "/v1/responses" : "/v1/chat/completions",
+              },
+            },
+          ],
+        },
+      ],
+    });
+    expect(harness.commands.some(({ command }) => command.startsWith("inference "))).toBe(false);
+  },
+);
+
+it.each([
+  { agent: "openclaw", api: "openai-responses", expectedAgent: "openclaw" },
+  { agent: "hermes", api: "openai-completions", expectedAgent: "hermes" },
+  { agent: "hermes", api: "openai-responses", expectedAgent: "hermes" },
+  { agent: "langchain-deepagents-code", api: "openai-completions", expectedAgent: undefined },
+])(
+  "registers $agent compatible inference on an accepted reserved-alias port",
+  async ({ agent, api, expectedAgent }) => {
+    const harness = createDirectSetupInferenceHarness({
+      overrides: {
+        hydrateCredentialEnv: () => "fixture-only-host-key",
+        isNonInteractive: () => true,
+      },
+    });
+    await expect(
+      harness.setupInference(
+        "test-box",
+        "served-alias",
+        "compatible-endpoint",
+        "http://host.openshell.internal:42103/v1",
+        "HOST_COMPATIBLE_KEY",
+        null,
+        [],
+        { agentName: agent, preferredInferenceApi: api },
+      ),
+    ).resolves.toEqual({ ok: true });
+    expect([...harness.native.authorities.values()]).toEqual([
+      expect.objectContaining({
+        provider: "compatible-endpoint",
+        endpointUrl: "http://host.openshell.internal:42103/v1",
+        authMode: "authenticated",
+      }),
+    ]);
+    expect([...harness.native.authorities.values()][0]?.agent).toBe(expectedAgent);
+    expect(harness.native.profiles[0]).toMatchObject({
+      endpoints: [
+        {
+          port: 42103,
+          rules: [
+            { allow: { method: "GET", path: "/v1/models" } },
+            {
+              allow: {
+                method: "POST",
+                path: api === "openai-responses" ? "/v1/responses" : "/v1/chat/completions",
+              },
+            },
+          ],
+        },
+      ],
+    });
+    expect(harness.commands.some(({ command }) => command.startsWith("inference "))).toBe(false);
+  },
+);
+
+it.each(["openclaw", "hermes", "pi", "langchain-deepagents-code"])(
+  "registers Local NIM as a sentinel native provider for %s",
+  async (agent) => {
+    const nim =
+      require("../../src/lib/inference/nim.ts") as typeof import("../../src/lib/inference/nim");
+    vi.spyOn(nim, "getServedModelId").mockReturnValue("local/nim-model");
+    const getManagedVllmProviderBinding = vi.fn(() => ({
+      baseUrl: "http://host.openshell.internal:18000/v1",
+      apiKey: "managed-vllm-secret",
+    }));
+    const harness = createDirectSetupInferenceHarness({
+      overrides: { applyLocalInferenceRoute: undefined, getManagedVllmProviderBinding },
+    });
+    await expect(
+      harness.setupInference(
+        "test-box",
+        "local/nim-model",
+        "vllm-local",
+        nim.getNimInferenceEndpoints().baseUrl,
+        null,
+        null,
+        [],
+        { agentName: agent, localNimSelected: true },
+      ),
+    ).resolves.toEqual({ ok: true });
+    const attachment = [...harness.native.authorities.values()][0];
+    expect(attachment).toMatchObject({
+      provider: "vllm-local",
+      authMode: "sentinel",
+      endpointUrl: nim.getNimInferenceEndpoints().baseUrl,
+      sandboxName: "test-box",
+      credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+    });
+    expect(attachment.agent).toBe(agent === "langchain-deepagents-code" ? undefined : agent);
+    expect(harness.native.adapter.createProvider.mock.calls[0][0].credentials).toEqual([
+      { name: "NEMOCLAW_LOCAL_INFERENCE_TOKEN", value: "dummy" },
+    ]);
+    expect(getManagedVllmProviderBinding).not.toHaveBeenCalled();
+    expect(harness.commands.some(({ command }) => command.startsWith("inference set"))).toBe(false);
+  },
+);
+
+describe("published native route backup boundary", () => {
+  it.each([
+    {
+      agent: "openclaw",
+      model: "old-model",
+      staged: false,
+      key: "fixture-only-host-key",
+      reuse: false,
+    },
+    {
+      agent: "openclaw",
+      model: "new-model",
+      staged: true,
+      key: "fixture-only-host-key",
+      reuse: false,
+    },
+    { agent: "openclaw", model: "old-model", staged: false, key: null, reuse: true },
+    { agent: "openclaw", model: "new-model", staged: true, key: null, reuse: true },
+    { agent: "hermes", model: "old-model", staged: false, key: null, reuse: true },
+    { agent: "hermes", model: "new-model", staged: true, key: null, reuse: true },
+  ] as const)(
+    "preserves the source and provider credential when selecting $model",
+    async ({ agent, model, staged, key, reuse }) => {
+      const attachment = nativeLocalSetupReceipt({
+        agent,
+        provider: "compatible-endpoint",
+        sandboxName: "test-box",
+        gatewayName: "nemoclaw",
+        endpointUrl: "http://host.openshell.internal:8000/v1",
+        authMode: "authenticated",
+      });
+      const row = {
+        name: "test-box",
+        agent,
+        provider: "compatible-endpoint",
+        model: "old-model",
+        gatewayName: "nemoclaw",
+        endpointUrl: "http://127.0.0.1:8000/v1",
+        credentialEnv: "HOST_COMPATIBLE_KEY",
+        preferredInferenceApi: "openai-completions",
+        nativeLocalProviderAttachment: attachment,
+      };
+      const before = structuredClone(row);
+      const harness = createDirectSetupInferenceHarness({
+        overrides: {
+          getSandbox: () => row,
+          hydrateCredentialEnv: () => key,
+          isNonInteractive: () => true,
+        },
+      });
+      harness.native.seed(attachment);
+      const providers = structuredClone(harness.native.providers);
+      const result = await harness.setupInference(
+        "test-box",
+        model,
+        "compatible-endpoint",
+        row.endpointUrl,
+        row.credentialEnv,
+        null,
+        [],
+        {
+          agentName: agent,
+          preferredInferenceApi: "openai-completions",
+          deferPublishedRouteReservation: true,
+          reservationSessionId: "session",
+          reuseGatewayCredentialWithoutLocalKey: reuse,
+          skipHostInferenceSmoke: reuse,
+        },
+      );
+      expect(result).toEqual(
+        staged
+          ? { ok: true, stagedNativeLocalRecreation: { source: before, attachment } }
+          : { ok: true },
+      );
+      expect(row).toEqual(before);
+      expect(harness.updateSandbox).not.toHaveBeenCalled();
+      expect(harness.native.adapter.updateProvider).not.toHaveBeenCalled();
+      expect(harness.native.adapter.createProvider).not.toHaveBeenCalled();
+      expect(harness.native.providers).toEqual(providers);
+    },
+  );
 });

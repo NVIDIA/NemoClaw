@@ -888,11 +888,11 @@ parsed = subprocess.run(
         "/usr/local/bin/node",
         "-e",
         'const JSON5=require("/usr/local/lib/node_modules/openclaw/node_modules/json5");'
-        'const {hostedNativeProvider,NVIDIA_HOSTED_NATIVE_ENDPOINT,NVIDIA_HOSTED_CREDENTIAL_ENV}='
+        'const {fixedHostedNativeProvider,NVIDIA_HOSTED_NATIVE_ENDPOINT,NVIDIA_HOSTED_CREDENTIAL_ENV}='
         'require("/usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs");'
         'process.stdout.write(JSON.stringify({'
         'config:JSON5.parse(require("node:fs").readFileSync(0,"utf8")),'
-        'openrouter:hostedNativeProvider("openrouter-api"),'
+        'openrouter:fixedHostedNativeProvider("openrouter-api"),'
         'nvidia:{endpoint:NVIDIA_HOSTED_NATIVE_ENDPOINT,credentialEnv:NVIDIA_HOSTED_CREDENTIAL_ENV}}));',
     ],
     input=source,
@@ -1522,7 +1522,7 @@ validate_nemoclaw_tmp_permissions() {
     [ -n "$_target" ] && _dynamic_targets+=("$_target")
   done < <(messaging_runtime_preload_targets)
 
-  validate_tmp_permissions "$_SANDBOX_SAFETY_NET" "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT" "${_dynamic_targets[@]+"${_dynamic_targets[@]}"}"
+  validate_tmp_permissions "$_SANDBOX_SAFETY_NET" "$_NEMOTRON_FIX_SCRIPT" "${_dynamic_targets[@]+"${_dynamic_targets[@]}"}"
 }
 
 verify_messaging_runtime_secret_scans() {
@@ -1662,6 +1662,18 @@ try {
   gateway.port = gatewayPort;
   const auth = gateway.auth && typeof gateway.auth === "object" ? gateway.auth : (gateway.auth = {});
   auth.token = tokenUrlSafe(32);
+  // Restored configs must use the same native egress path as fresh images.
+  delete cfg.proxy;
+  if (cfg.tools?.web?.fetch && typeof cfg.tools.web.fetch === "object") {
+    cfg.tools.web.fetch.useTrustedEnvProxy = false;
+  }
+  const telegram = cfg.channels?.telegram;
+  if (telegram && typeof telegram === "object") {
+    delete telegram.proxy;
+    for (const account of Object.values(telegram.accounts ?? {})) {
+      if (account && typeof account === "object") delete account.proxy;
+    }
+  }
   // OpenClaw 2026.9.1 rejects the legacy timestamp key. Scrub it defensively
   // while retaining supported metadata such as `lastTouchedVersion`.
   const meta = cfg.meta;
@@ -2924,28 +2936,10 @@ prepare_auto_pair_log() {
   fi
 }
 
-# ── Proxy environment ────────────────────────────────────────────
-# OpenShell injects HTTP_PROXY/HTTPS_PROXY/NO_PROXY into the sandbox, but its
-# NO_PROXY is limited to 127.0.0.1,localhost,::1 — missing the gateway IP.
-# The gateway IP itself must bypass the proxy to avoid proxy loops.
-#
-# Do NOT add inference.local here. OpenShell intentionally routes that hostname
-# through the proxy path; bypassing the proxy forces a direct DNS lookup inside
-# the sandbox, which breaks inference.local resolution.
-#
-# NEMOCLAW_PROXY_HOST / NEMOCLAW_PROXY_PORT can be overridden at sandbox
-# creation time if the gateway IP or port changes in a future OpenShell release.
-# Ref: https://github.com/NVIDIA/NemoClaw/issues/626
-PROXY_HOST="${NEMOCLAW_PROXY_HOST:-10.200.0.1}"
-PROXY_PORT="${NEMOCLAW_PROXY_PORT:-3128}"
-_PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"
-_NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST}"
-export HTTP_PROXY="$_PROXY_URL"
-export HTTPS_PROXY="$_PROXY_URL"
-export NO_PROXY="$_NO_PROXY_VAL"
-export http_proxy="$_PROXY_URL"
-export https_proxy="$_PROXY_URL"
-export no_proxy="$_NO_PROXY_VAL"
+# OpenShell 0.1.3 mediates native egress. Clear obsolete application proxy settings.
+unset HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy
+unset ALL_PROXY all_proxy OPENAI_PROXY grpc_proxy GRPC_PROXY
+unset NODE_USE_ENV_PROXY NEMOCLAW_PROXY_HOST NEMOCLAW_PROXY_PORT
 
 # Corporate proxy CA merge (NemoClaw#6210).
 # OpenShell injects SSL_CERT_FILE for its own L7 proxy CA at runtime. When a
@@ -2981,22 +2975,6 @@ if [ -n "${SSL_CERT_FILE:-}" ] && [ -f "${SSL_CERT_FILE}" ]; then
   export GIT_SSL_CAINFO="$SSL_CERT_FILE"
 fi
 
-# HTTP library + NODE_USE_ENV_PROXY double-proxy fix (NemoClaw#2109).
-# Node.js 22 sets NODE_USE_ENV_PROXY=1 in the OpenShell base image, which
-# intercepts https.request() calls and handles proxying via CONNECT tunnel.
-# HTTP libraries (axios, follow-redirects, proxy-from-env) also read
-# HTTPS_PROXY and configure HTTP FORWARD mode, double-processing the
-# request — the L7 proxy rejects with "FORWARD rejected: HTTPS requires
-# CONNECT".
-#
-# The preload wraps http.request() — the lowest common denominator every
-# HTTP client bottoms out at — and rewrites FORWARD-mode requests back to
-# https.request() so NODE_USE_ENV_PROXY can handle the CONNECT tunnel.
-#
-# Earlier PR #2110 intercepted require('axios') via a Module._load hook;
-# that could not catch follow-redirects + proxy-from-env bundled as ESM
-# in OpenClaw's dist/ (no require() calls to intercept).
-#
 # Node runtime preload modules are copied into /usr/local/lib/nemoclaw/preloads/
 # at image build time, then copied to /tmp before NODE_OPTIONS=--require so
 # the sandbox user can read them under Landlock-constrained runtimes.
@@ -3018,9 +2996,6 @@ fi
 # preserved so errors surface promptly to users running short-lived tools.
 _SANDBOX_SAFETY_NET="/tmp/nemoclaw-sandbox-safety-net.js"
 _SANDBOX_SAFETY_NET_SOURCE="/usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js"
-
-_PROXY_FIX_SCRIPT="/tmp/nemoclaw-http-proxy-fix.js"
-_PROXY_FIX_SOURCE="/usr/local/lib/nemoclaw/preloads/http-proxy-fix.js"
 
 # NVIDIA endpoint model-specific inference parameter injection
 # (NemoClaw#1193, NemoClaw#2051).
@@ -3056,31 +3031,14 @@ install_core_runtime_preloads() {
   emit_sandbox_sourced_file "$_SANDBOX_SAFETY_NET" <"$_SANDBOX_SAFETY_NET_SOURCE" || return 1
   append_node_require_once "$_SANDBOX_SAFETY_NET"
 
-  if [ "${NODE_USE_ENV_PROXY:-}" = "1" ]; then
-    emit_sandbox_sourced_file "$_PROXY_FIX_SCRIPT" <"$_PROXY_FIX_SOURCE" || return 1
-    append_node_require_once "$_PROXY_FIX_SCRIPT"
-  fi
-
   emit_sandbox_sourced_file "$_NEMOTRON_FIX_SCRIPT" <"$_NEMOTRON_FIX_SOURCE" || return 1
   append_node_require_once "$_NEMOTRON_FIX_SCRIPT"
 }
 
 install_core_runtime_preloads || exit 1
 
-# OpenShell re-injects narrow NO_PROXY/no_proxy=127.0.0.1,localhost,::1 every
-# time a user connects via `openshell sandbox connect`. Dynamic connect-session
-# config lives in /tmp/nemoclaw-proxy-env.sh and is sourced by system-wide shell
-# hooks from the base image, keeping per-user rc files free of proxy entries.
-#
-# SECURITY: The proxy-env file is written via emit_sandbox_sourced_file()
-# which ensures root:root 444 in root mode (sandbox cannot modify) and
-# best-effort 444 in non-root mode. The /tmp sticky bit prevents the
-# sandbox user from deleting or replacing the root-owned file.
-# Ref: https://github.com/NVIDIA/NemoClaw/issues/2181
-#
-# Both uppercase and lowercase variants are required: Node.js undici prefers
-# lowercase (no_proxy) over uppercase (NO_PROXY) when both are set.
-# curl/wget use uppercase.  gRPC C-core uses lowercase.
+# Base-image shell hooks source this file on connect. Preserve its established
+# path and root-owned mode while clearing obsolete proxy settings.
 _RUNTIME_SHELL_ENV_FILE="/tmp/nemoclaw-proxy-env.sh"
 
 write_runtime_shell_env() {
@@ -3112,13 +3070,10 @@ GATEWAYTOKENRECONCILEEND
   }
   {
     cat <<PROXYEOF
-# Proxy configuration (overrides narrow OpenShell defaults on connect)
-export HTTP_PROXY="$_PROXY_URL"
-export HTTPS_PROXY="$_PROXY_URL"
-export NO_PROXY="$_NO_PROXY_VAL"
-export http_proxy="$_PROXY_URL"
-export https_proxy="$_PROXY_URL"
-export no_proxy="$_NO_PROXY_VAL"
+# OpenShell mediates native egress for connect sessions.
+unset HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy
+unset ALL_PROXY all_proxy OPENAI_PROXY grpc_proxy GRPC_PROXY
+unset NODE_USE_ENV_PROXY NEMOCLAW_PROXY_HOST NEMOCLAW_PROXY_PORT
 export AWS_EC2_METADATA_DISABLED="true"
 export JITI_FS_CACHE="false"
 PROXYEOF
@@ -3517,31 +3472,10 @@ openclaw() {
 }
 # nemoclaw-configure-guard end
 # nemoclaw-policy-denial-hint begin
-# #5978: outbound network is denied-by-default and enforced by the OpenShell L7
-# proxy. From inside the sandbox, generic CLIs (curl, git, wget, python, …) see
-# a policy denial only as the opaque protocol error
-# "CONNECT tunnel failed, response 403" — with no pointer to the detailed
-# allow/deny reason, which lives in the NemoClaw logs. Surface a one-line
-# breadcrumb when a human first lands in an interactive connect shell so a later
-# 403 is recognisable and actionable.
-#
-# This deliberately does NOT wrap or alter curl/git/wget: wrapping them to scan
-# stderr turns their stderr into a pipe, which makes the tools treat it as a
-# non-TTY and silently drop progress meters and colour — a worse regression than
-# the missing breadcrumb. The hint is therefore tool-agnostic informational
-# output that leaves every tool's stdout/stderr/TTY behaviour and exit code
-# byte-for-byte unchanged, and covers every connect path that sources this file.
-# Shown once per top-level interactive TTY session; suppress with
-# NEMOCLAW_NO_POLICY_HINT=1.
-#
-# Source-of-truth: the 403 itself is emitted by the OpenShell L7 egress proxy,
-# which lives in a separate codebase/release cycle, so the denial response
-# cannot be made self-describing from this repo. This proactive breadcrumb is
-# the NemoClaw-owned surface that points at the denial reason in the logs.
-# Regression coverage: test/runtime/policy/repro-5978-policy-denial-hint.test.ts. Removal
-# condition: drop this stanza once the OpenShell proxy returns a structured,
-# actionable denial (naming the rule / a logs pointer) at the tunnel-failure
-# site, at which point the breadcrumb is redundant.
+# Point interactive users to denial logs without wrapping their tools.
+# Preserve stdout, stderr, TTY behavior, and exit codes for curl, git, and wget.
+# Show once per top-level interactive session; NEMOCLAW_NO_POLICY_HINT=1 suppresses it.
+# Regression coverage: test/runtime/policy/repro-5978-policy-denial-hint.test.ts.
 #
 # Accepted contract (#5978, maintainer-agreed on PR #6018): the supported
 # behavior is this proactive connect-shell reminder. It does NOT make the
@@ -3609,7 +3543,7 @@ _nemoclaw_policy_denial_hint_label() {
 _nemoclaw_policy_denial_hint_text() {
   {
     printf '  Note: this sandbox restricts outbound network access by policy.\n'
-    printf "  Blocked requests fail with 'CONNECT tunnel failed, response 403'.\n"
+    printf '  OpenShell blocks requests that the network policy denies.\n'
     printf '  See which rule denied a request:  nemoclaw %s logs --tail 50\n' \
       "$(_nemoclaw_policy_denial_hint_label)"
   } >&2
@@ -3628,8 +3562,8 @@ _nemoclaw_maybe_policy_denial_hint() {
   [ -t 2 ] || return 0
   # Top-level connect shell only — don't repeat in every subshell/pane.
   [ "${SHLVL:-1}" -le 1 ] || return 0
-  # Nothing is proxied (no egress restriction) ⇒ nothing to explain.
-  [ -n "${HTTPS_PROXY:-${https_proxy:-}}" ] || return 0
+  # Show the hint only inside an OpenShell sandbox.
+  [ -n "${OPENSHELL_SANDBOX:-}" ] || return 0
   _NEMOCLAW_POLICY_HINT_SHOWN=1
   _nemoclaw_policy_denial_hint_text
 }
@@ -3638,12 +3572,6 @@ _nemoclaw_maybe_policy_denial_hint
 GUARDENVEOF
     # Global sandbox safety net for connect sessions — must be first.
     echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_SANDBOX_SAFETY_NET\""
-    # HTTP library double-proxy fix: also expose NODE_OPTIONS in connect
-    # sessions so interactive shells and user commands started via
-    # `openshell sandbox connect` benefit from the preload. (NemoClaw#2109)
-    if [ "${NODE_USE_ENV_PROXY:-}" = "1" ]; then
-      echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_PROXY_FIX_SCRIPT\""
-    fi
     # Git TLS CA bundle for connect sessions (NemoClaw#2270)
     if [ -n "${GIT_SSL_CAINFO:-}" ]; then
       printf 'export GIT_SSL_CAINFO=%q\n' "$GIT_SSL_CAINFO"

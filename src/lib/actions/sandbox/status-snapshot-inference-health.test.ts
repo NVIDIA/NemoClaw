@@ -1209,3 +1209,91 @@ describe("status native local request identity (#13338)", () => {
     },
   );
 });
+
+it.each([
+  { state: "ready", agent: "openclaw" },
+  { state: "ready", agent: "hermes" },
+  { state: "detached", agent: "openclaw" },
+  { state: "changed-binding", agent: "openclaw" },
+  { state: "request-failed", agent: "openclaw" },
+])("verifies registered provider readiness: $state for $agent", async ({ state, agent }) => {
+  const binding = {
+    schemaVersion: 1 as const,
+    gatewayName: "nemoclaw",
+    sandboxName: "alpha",
+    providerName: "operator-provider",
+    providerId: "operator-id",
+    profileId: "operator-profile",
+    profileDigest: "a".repeat(64),
+    endpointUrl: "https://api.example.test/v1",
+    inferenceApi: "openai-completions" as const,
+    credentialEnv: "OPERATOR_API_KEY",
+    attachedBySelection: false,
+  };
+  const sandbox = {
+    name: "alpha",
+    agent,
+    gatewayName: binding.gatewayName,
+    provider: binding.providerName,
+    model: "model-a",
+    endpointUrl: binding.endpointUrl,
+    preferredInferenceApi: binding.inferenceApi,
+    credentialEnv: binding.credentialEnv,
+    registeredInferenceProviderAttachment: binding,
+  };
+  sandbox.credentialEnv = state === "changed-binding" ? "OTHER_KEY" : binding.credentialEnv;
+  const options = snapshotDeps(null, null, { ok: true }, sandbox);
+  const observeInferenceRoute = vi.fn();
+  const verifyRegisteredProviderAttachmentImpl = vi.fn(
+    state === "detached"
+      ? async () => {
+          throw new Error("attachment missing");
+        }
+      : async () => undefined,
+  );
+  const probeSandboxInferenceInvocationImpl = vi.fn(async () => ({
+    ok: state !== "request-failed",
+    httpStatus: state === "request-failed" ? 403 : 200,
+    detail: "request result",
+  }));
+  const snapshot = await collectSandboxStatusSnapshot("alpha", {
+    ...options,
+    deps: {
+      ...options.deps,
+      inferenceRouteObserver: { observeInferenceRoute },
+      verifyRegisteredProviderAttachmentImpl,
+      probeSandboxInferenceInvocationImpl,
+    },
+  });
+  expect(snapshot.inferenceHealth?.ok).toBe(state === "ready");
+  expect(snapshot.routeDrift).toBeNull();
+  expect(observeInferenceRoute).not.toHaveBeenCalled();
+  expect(verifyRegisteredProviderAttachmentImpl).toHaveBeenCalledTimes(
+    state === "changed-binding" ? 0 : 1,
+  );
+  expect(probeSandboxInferenceInvocationImpl).toHaveBeenCalledTimes(
+    state === "ready" || state === "request-failed" ? 1 : 0,
+  );
+  expect(probeSandboxInferenceInvocationImpl.mock.calls).toEqual(
+    state === "ready" || state === "request-failed"
+      ? [
+          [
+            expect.objectContaining({
+              sandboxName: "alpha",
+              gatewayName: "nemoclaw",
+              agentName: agent,
+              provider: binding.providerName,
+              registeredInferenceProviderAttachment: binding,
+            }),
+            {},
+            expect.any(Number),
+          ],
+        ]
+      : [],
+  );
+  expect(snapshot.inferenceHealth?.endpoint).toBe(
+    state === "changed-binding"
+      ? ""
+      : binding.endpointUrl + (state === "detached" ? "" : "/chat/completions"),
+  );
+});

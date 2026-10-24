@@ -84,22 +84,16 @@ export async function runRawCommand(
   const redactionValues = [...(options.redactionValues ?? [])];
   const progressName = progressCommandName(options.artifactName);
   emitProgressEvent(options.progress, `command ${progressName} started`);
-  let child: ReturnType<typeof spawnObservedChild>;
-  try {
-    child = spawnObservedChild(command, args, {
-      activityLabel: `command: ${progressName}`,
-      progress: options.progress,
-      spawn: {
-        cwd: options.cwd ?? REPO_ROOT,
-        detached: true,
-        env: resolveLiveE2eWorkloadSourceEnv({ ...(options.env ?? {}) }),
-        stdio: [options.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
-      },
-    });
-  } catch (error) {
-    emitProgressEvent(options.progress, `command ${progressName} failed to start`);
-    throw error;
-  }
+  const child = spawnObservedChild(command, args, {
+    activityLabel: `command: ${progressName}`,
+    progress: options.progress,
+    spawn: {
+      cwd: options.cwd ?? REPO_ROOT,
+      detached: true,
+      env: resolveLiveE2eWorkloadSourceEnv({ ...(options.env ?? {}) }),
+      stdio: [options.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
+    },
+  });
   const fullCommand = [command, ...args];
   const stdoutCapture = boundedOutputCapture();
   const stderrCapture = boundedOutputCapture();

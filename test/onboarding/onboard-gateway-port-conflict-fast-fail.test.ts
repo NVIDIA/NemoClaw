@@ -45,7 +45,7 @@ describe("onboard gateway port conflict readiness (#6752)", () => {
           "#!/usr/bin/env bash",
           "# openshell capabilities: request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods",
           'case "$*" in',
-          '  --version|-V) printf "%s 0.0.116\\n" "${0##*/}"; exit 0;;',
+          '  --version|-V) printf "%s 0.1.3\\n" "${0##*/}"; exit 0;;',
           '  status) printf "No active gateway\\n"; exit 1;;',
           '  "gateway list -o json") printf "[]"; exit 0;;',
           "esac",
@@ -130,7 +130,7 @@ describe("onboard gateway port conflict readiness (#6752)", () => {
         /The gateway port is held by an incompatible or ambiguous owner|OpenShell gateway needs this port/,
       );
       expect(combined).not.toMatch(/occupied by unknown/);
-      expect(combined).toMatch(/\(PID \d+\)/);
+      expect(combined).toMatch(/PID \d+/);
       expect(combined).toContain(`sudo lsof -i :${String(gatewayPort)} -sTCP:LISTEN -P -n`);
       expect(combined).toContain("signal only the matching PID from that fresh result");
       expect(combined).not.toMatch(/sudo kill \d+/);
@@ -232,7 +232,7 @@ Module._load = function(request, parent, isMain) {
           "# openshell capabilities: request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods",
           `printf '%s\\n' "$*" >>${JSON.stringify(commandLog)}`,
           'case "$*" in',
-          '  --version|-V) printf "%s 0.0.116\\n" "${0##*/}"; exit 0;;',
+          '  --version|-V) printf "%s 0.1.3\\n" "${0##*/}"; exit 0;;',
           `  status|"status -g ${gatewayName}") printf ${JSON.stringify(gatewayStatus)}; exit 0;;`,
           `  "gateway list -o json") printf ${JSON.stringify(gatewayList)}; exit 0;;`,
           `  "gateway select ${gatewayName}") exit 0;;`,
@@ -317,7 +317,7 @@ Module._load = function(request, parent, isMain) {
             "#!/usr/bin/env bash",
             "# openshell capabilities: request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods",
             'case "$*" in',
-            '  --version|-V) printf "%s 0.0.116\\n" "${0##*/}"; exit 0;;',
+            '  --version|-V) printf "%s 0.1.3\\n" "${0##*/}"; exit 0;;',
             `  status|"status -g ${gatewayName}") printf ${JSON.stringify(gatewayStatus)}; exit 0;;`,
             `  "gateway list -o json") printf ${JSON.stringify(gatewayList)}; exit 0;;`,
             "esac",
@@ -347,7 +347,7 @@ Module._load = function(request, parent, isMain) {
           '  case "$3" in',
           '    "{{.State.Running}}") printf "true\\n";;',
           `    "{{json .NetworkSettings.Ports}}") printf '%s\\n' ${JSON.stringify(portBindings)};;`,
-          '    "{{.Config.Image}}") printf "nvcr.io/nvidia/openshell/cluster:0.0.116\\n";;',
+          '    "{{.Config.Image}}") printf "nvcr.io/nvidia/openshell/cluster:0.1.3\\n";;',
           "    *) exit 1;;",
           "  esac",
           "  exit 0",

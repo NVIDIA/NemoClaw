@@ -14,20 +14,13 @@ NemoClaw keeps provider credentials on the host and validates explicit custom en
 ## Protect Provider Credentials
 
 <AgentOnly variant="openclaw">
-New direct hosted custom selections outside the Personal policy tier use the recorded endpoint through a sandbox-attached OpenShell provider.
-Fresh Personal-tier selections and retained shared routes use `inference.local`.
+Qualifying custom hosted endpoints use a sandbox-attached OpenShell provider.
+Remaining custom shared selections use `inference.local` on OpenShell `0.0.x`.
 </AgentOnly>
-<AgentOnly variant="deepagents">
-New Deep Agents Code sandboxes normally use the recorded endpoint through a sandbox-attached OpenShell provider for direct hosted compatible endpoints and qualified host-local endpoints.
-Bedrock selections use a host-local adapter endpoint instead.
-A fresh Personal-tier hosted compatible selection instead uses `inference.local` without creating a native attachment.
-Other retained shared routes and owned Local NVIDIA NIM also use `inference.local`.
-Refer to [How Inference Routing Works](../about-inference-routing) for the qualification boundary.
-</AgentOnly>
-<AgentOnly variant="hermes">
-New Hermes sandboxes use the recorded endpoint through a sandbox-attached OpenShell provider for direct hosted compatible endpoints outside the Personal policy tier and qualified host-local endpoints.
-Bedrock selections use a host-local adapter endpoint instead.
-Fresh Personal-tier hosted selections and retained custom routes without an attachment use `inference.local`.
+<AgentOnly variant="hermes,deepagents">
+New Deep Agents Code and Hermes sandboxes use the recorded endpoint through a sandbox-attached OpenShell provider when the host-local selection qualifies.
+Qualifying custom hosted endpoints also use sandbox-attached providers.
+Remaining custom shared selections retain `inference.local` on OpenShell `0.0.x`.
 Refer to [How Inference Routing Works](../about-inference-routing) for the qualification boundary.
 </AgentOnly>
 <AgentOnly variant="hermes">
@@ -161,19 +154,15 @@ Hermes Provider setup, Hermes host-side `config set`, and a direct blueprint run
 
 </AgentOnly>
 
-## Use the Sandbox Host Alias
+## Use a Private Host Endpoint
 
-NemoClaw accepts `http://host.openshell.internal:<port>` only when the URL includes an explicit port from `1024` through `65535`.
-This narrow exception supports NemoClaw-managed sandbox-to-host inference routes and Hermes host-side `config set` writes to supported provider `baseUrl` fields that already use the OpenShell host bridge.
-Other Hermes `config set` keys continue to reject the bridge host.
-Accepting this URL shape does not by itself make an arbitrary local service, embedding provider, config key, or network route a supported NemoClaw integration.
+NemoClaw rejects an unverified custom route that uses `host.openshell.internal` because the alias and port do not prove which host process owns the destination.
+Qualified OpenAI-compatible native-local routes can retain their recorded host bridge endpoint.
+NemoClaw also uses the alias for routes created from recorded runtime authority, such as its managed credential and HTTPS pin adapters.
 
-For example, a containerized gateway can commonly reach a local server at `http://host.openshell.internal:8000/v1`.
-Because this name is a sandbox-internal alias, onboarding skips the host-side endpoint probe.
-Verify the runtime route after onboarding when you use it.
-
-The exception permits only HTTP, the literal `host.openshell.internal` name, and an explicit unprivileged port.
-NemoClaw still rejects HTTPS, privileged ports, subdomains, loopback names, private IP literals, userinfo, query strings, and fragments through this path.
+For an operator-owned private service, use its reachable hostname or IP address and add that exact host to `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` before onboarding.
+NemoClaw still resolves and pins every admitted address.
+It rejects wildcards, link-local metadata addresses, and other reserved destinations.
 
 ## Related Topics
 

@@ -39,7 +39,7 @@ When onboarding supplies a corporate CA, the Dockerfile sets `NODE_EXTRA_CA_CERT
 This includes registry-backed npm remediation and runtime dependency installation that cross a TLS-inspecting proxy.
 The build does not retain either variable in the image configuration.
 
-NemoClaw keeps `NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox` for OpenShell 0.0.116.
+NemoClaw keeps `NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox` when it imports a corporate CA into the managed OpenClaw image.
 The OpenClaw managed startup runtime creates `/tmp/nemoclaw-managed-startup-ca-bundle.pem` as `root:root` with mode `0444` before it releases the sandbox-user startup command.
 The `sandbox` user can read the merged bundle but cannot modify or replace it.
 Sandboxes still using the staged legacy direct-start path create `/tmp/nemoclaw-ca-bundle.pem` with mode `0444` as the same `sandbox` identity that runs the entrypoint and agent, so that compatibility path is read-only by mode but is not a privilege boundary.

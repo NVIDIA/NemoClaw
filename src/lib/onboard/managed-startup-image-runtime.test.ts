@@ -20,6 +20,9 @@ import { mockRootReplayFilesystem } from "../../../test/helpers/managed-startup-
 import {
   applyManagedStartupImageProfile,
   applyManagedStartupRootRequest,
+  applyManagedStartupOwnerRequest,
+  prepareManagedStartupDelegatedRequest,
+  finishManagedStartupDelegatedRequest,
   buildManagedStartupImageActionPlan,
   installHermesManagedPolicy,
   MANAGED_STARTUP_COMPLETION_FILE,
@@ -32,12 +35,18 @@ import {
 } from "./managed-startup/image-runtime";
 import {
   encodeManagedStartupProfile,
+  decodeManagedStartupProfile,
   fingerprintManagedStartupProfile,
   type ManagedStartupAgent,
   type ManagedStartupDashboard,
 } from "./managed-startup/profile";
-import { createManagedStartupRootApplyRequest } from "./managed-startup/root-apply";
+import {
+  createManagedStartupRootApplyRequest,
+  serializeManagedStartupRootApplyRequest,
+} from "./managed-startup/root-apply";
 import * as sharedStateTransaction from "./managed-startup/shared-state-transaction";
+import * as application from "./managed-startup/application";
+import { managedImageRuntimeIdentity } from "./managed-image/agents";
 
 function dashboard(agent: ManagedStartupAgent): ManagedStartupDashboard {
   switch (agent) {
@@ -337,6 +346,526 @@ describe("managed startup image runtime", () => {
     }
   });
 
+  function stdin(text: string) {
+    const input = Buffer.from(text);
+    let offset = 0;
+    vi.spyOn(fs, "readSync").mockImplementation(((
+      fd: number,
+      destination: Buffer,
+      start: number,
+      length: number,
+    ) => {
+      expect(fd).toBe(0);
+      const count = Math.min(length, input.length - offset);
+      input.copy(destination, start, offset, offset + count);
+      offset += count;
+      return count;
+    }) as typeof fs.readSync);
+  }
+
+  function delegatedRequest(agent: ManagedStartupAgent = "openclaw") {
+    return createManagedStartupRootApplyRequest({
+      agent,
+      encodedProfile: encodeManagedStartupProfile(managedStartupE2eProfile(agent, false)),
+    });
+  }
+
+  function preparedApplication(
+    request = delegatedRequest(),
+    status: "prepared" | "already-committed" = "prepared",
+  ) {
+    return {
+      status,
+      stateDirectory: "/var/lib/nemoclaw/startup-profile",
+      generationDirectory: "/var/lib/nemoclaw/startup-profile/generation-test",
+      profilePath: "/var/lib/nemoclaw/startup-profile/generation-test/profile.json",
+      corporateCaPath: null,
+      expectedAgent: request.agent,
+      profile: decodeManagedStartupProfile(request.encodedProfile),
+      fingerprint: request.profileFingerprint,
+    } as const;
+  }
+
+  it.each(["openclaw", "langchain-deepagents-code", "pi"] as const)(
+    "generates %s only through native-owner commands",
+    (agent) => {
+      const request = delegatedRequest(agent);
+      const identity = managedImageRuntimeIdentity(agent);
+      vi.spyOn(process, "geteuid").mockReturnValue(identity.uid);
+      vi.spyOn(process, "getegid").mockReturnValue(identity.gid);
+      vi.spyOn(fs, "lstatSync").mockReturnValue({
+        isSymbolicLink: () => false,
+        isFile: () => true,
+        uid: 0,
+        gid: 0,
+        mode: 0o755,
+      } as fs.Stats);
+      childProcessMock.spawnSync.mockImplementation((command, args) => ({
+        status: 0,
+        stdout:
+          command === "/usr/bin/id"
+            ? String(args[0] === "-u" ? identity.uid : identity.gid)
+            : command === "/usr/local/bin/openclaw"
+              ? '{"valid":true}'
+              : "private generation output",
+        stderr: "",
+      }));
+      const result = applyManagedStartupOwnerRequest(request, "a".repeat(64));
+      expect(result).toEqual({
+        agent,
+        profileFingerprint: request.profileFingerprint,
+        bootstrapIdentity: "a".repeat(64),
+        applied: true,
+        hermesPolicyB64: null,
+        hermesConfigHash: null,
+      });
+      const commands = childProcessMock.spawnSync.mock.calls.filter(
+        ([command]) => command !== "/usr/bin/id",
+      );
+      expect(
+        commands.some(([, args]) => args.some((arg: string) => /generate-.*config/u.test(arg))),
+      ).toBe(true);
+      expect(
+        commands.every(
+          ([command, , options]) => command !== "/usr/bin/setpriv" && options.stdio === "pipe",
+        ),
+      ).toBe(true);
+      expect(commands.flatMap(([, args]) => args)).not.toContain("runtime-setup");
+    },
+  );
+
+  it("does not regenerate mutable config during an owner replay", () => {
+    vi.spyOn(process, "geteuid").mockReturnValue(998);
+    vi.spyOn(process, "getegid").mockReturnValue(998);
+    expect(applyManagedStartupOwnerRequest(delegatedRequest(), "a".repeat(64), true).applied).toBe(
+      false,
+    );
+    expect(childProcessMock.spawnSync).not.toHaveBeenCalled();
+  });
+
+  it("prepares only root messaging setup and keeps generation pending", () => {
+    mockRootReplayFilesystem([]);
+    vi.spyOn(process, "geteuid").mockReturnValue(0);
+    const request = delegatedRequest();
+    vi.spyOn(
+      sharedStateTransaction,
+      "getManagedStartupSharedStateTransactionStatus",
+    ).mockReturnValue("pending");
+    vi.spyOn(application, "prepareManagedStartupApplication").mockReturnValue(
+      preparedApplication(request),
+    );
+    const commit = vi.spyOn(application, "commitManagedStartupApplication");
+    expect(prepareManagedStartupDelegatedRequest(request, "a".repeat(64))).toBe("prepared");
+    expect(childProcessMock.spawnSync).toHaveBeenCalledTimes(1);
+    expect(childProcessMock.spawnSync.mock.calls[0]?.[1]).toContain("runtime-setup");
+    expect(childProcessMock.spawnSync.mock.calls[0]?.[2].stdio).toBe("pipe");
+    expect(commit).not.toHaveBeenCalled();
+  });
+
+  it("rejects preparation without protected shared-state authority", () => {
+    vi.spyOn(process, "geteuid").mockReturnValue(0);
+    vi.spyOn(
+      sharedStateTransaction,
+      "getManagedStartupSharedStateTransactionStatus",
+    ).mockReturnValue("none");
+    expect(() => prepareManagedStartupDelegatedRequest(delegatedRequest(), "a".repeat(64))).toThrow(
+      /protected shared-state transaction/u,
+    );
+    expect(childProcessMock.spawnSync).not.toHaveBeenCalled();
+  });
+
+  it("commits a matching owner result without rerunning generation or publishing completion", async () => {
+    const writes: string[] = [];
+    const filesystem = mockRootReplayFilesystem(writes);
+    vi.spyOn(process, "geteuid").mockReturnValue(0);
+    const request = delegatedRequest();
+    const prepared = preparedApplication(request);
+    vi.spyOn(
+      sharedStateTransaction,
+      "getManagedStartupSharedStateTransactionStatus",
+    ).mockReturnValue("pending");
+    vi.spyOn(application, "prepareManagedStartupApplication").mockReturnValue(prepared);
+    coordinatorMock.coordinateManagedStartupApplication.mockImplementation(
+      async (_input, adapters) => {
+        await adapters
+          .find((adapter: { agent: string }) => adapter.agent === request.agent)
+          .apply({
+            agent: request.agent,
+            profile: prepared.profile,
+            fingerprint: prepared.fingerprint,
+            generationDirectory: prepared.generationDirectory,
+            profilePath: prepared.profilePath,
+            corporateCaPath: null,
+          });
+        return { adapterApplied: true, application: { ...prepared, status: "committed" } };
+      },
+    );
+    const result = {
+      agent: request.agent,
+      profileFingerprint: request.profileFingerprint,
+      bootstrapIdentity: "a".repeat(64),
+      applied: true,
+      hermesPolicyB64: null,
+      hermesConfigHash: null,
+    };
+    await expect(
+      finishManagedStartupDelegatedRequest(request, "a".repeat(64), JSON.stringify(result)),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        agent: "openclaw",
+        adapterApplied: true,
+        fingerprint: request.profileFingerprint,
+      }),
+    );
+    expect(childProcessMock.spawnSync.mock.calls.map(([command]) => command)).toEqual([
+      "/usr/sbin/update-ca-certificates",
+    ]);
+    expect(filesystem.hasFile(MANAGED_STARTUP_RUNTIME_ENV_FILE)).toBe(true);
+    expect(filesystem.hasFile(MANAGED_STARTUP_COMPLETION_FILE)).toBe(false);
+  });
+
+  it("does not rerun root setup for a committed application", () => {
+    mockRootReplayFilesystem([]);
+    vi.spyOn(process, "geteuid").mockReturnValue(0);
+    const request = delegatedRequest();
+    vi.spyOn(
+      sharedStateTransaction,
+      "getManagedStartupSharedStateTransactionStatus",
+    ).mockReturnValue("committed");
+    vi.spyOn(application, "prepareManagedStartupApplication").mockReturnValue(
+      preparedApplication(request, "already-committed"),
+    );
+    expect(prepareManagedStartupDelegatedRequest(request, "a".repeat(64))).toBe(
+      "already-committed",
+    );
+    expect(childProcessMock.spawnSync).not.toHaveBeenCalled();
+  });
+
+  it.each(["policy", "hash"])(
+    "rejects malformed Hermes owner %s before root installation",
+    async (field) => {
+      mockRootReplayFilesystem([]);
+      vi.spyOn(process, "geteuid").mockReturnValue(0);
+      const request = delegatedRequest("hermes");
+      vi.spyOn(
+        sharedStateTransaction,
+        "getManagedStartupSharedStateTransactionStatus",
+      ).mockReturnValue("pending");
+      vi.spyOn(application, "prepareManagedStartupApplication").mockReturnValue(
+        preparedApplication(request),
+      );
+      const result = {
+        agent: request.agent,
+        profileFingerprint: request.profileFingerprint,
+        bootstrapIdentity: "a".repeat(64),
+        applied: true,
+        hermesPolicyB64: field === "policy" ? "invalid!" : Buffer.from("{}").toString("base64"),
+        hermesConfigHash:
+          field === "hash"
+            ? "wrong-path"
+            : `${"b".repeat(64)}  /sandbox/.hermes/config.yaml\n${"c".repeat(64)}  /sandbox/.hermes/.env\n`,
+      };
+      await expect(
+        finishManagedStartupDelegatedRequest(request, "a".repeat(64), JSON.stringify(result)),
+      ).rejects.toThrow(/invalid Hermes owner materials/u);
+      expect(coordinatorMock.coordinateManagedStartupApplication).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["bootstrapIdentity", "profileFingerprint", "applied", "hermesPolicyB64"] as const)(
+    "does not commit after a mismatched owner %s",
+    async (field) => {
+      mockRootReplayFilesystem([]);
+      vi.spyOn(process, "geteuid").mockReturnValue(0);
+      const request = delegatedRequest();
+      vi.spyOn(
+        sharedStateTransaction,
+        "getManagedStartupSharedStateTransactionStatus",
+      ).mockReturnValue("pending");
+      vi.spyOn(application, "prepareManagedStartupApplication").mockReturnValue(
+        preparedApplication(request),
+      );
+      const result = {
+        agent: request.agent,
+        profileFingerprint: request.profileFingerprint,
+        bootstrapIdentity: "a".repeat(64),
+        applied: true,
+        hermesPolicyB64: null,
+        hermesConfigHash: null,
+        [field]: field === "applied" ? false : "mismatch",
+      };
+      await expect(
+        finishManagedStartupDelegatedRequest(request, "a".repeat(64), JSON.stringify(result)),
+      ).rejects.toThrow(/owner/u);
+      expect(coordinatorMock.coordinateManagedStartupApplication).not.toHaveBeenCalled();
+    },
+  );
+
+  it("captures only as the exact agent owner and sends the snapshot on its private output pipe", async () => {
+    const profile = managedStartupE2eProfile("openclaw", false);
+    const encodedProfile = encodeManagedStartupProfile(profile);
+    stdin(
+      serializeManagedStartupRootApplyRequest(
+        createManagedStartupRootApplyRequest({ agent: "openclaw", encodedProfile }),
+      ),
+    );
+    vi.spyOn(process, "geteuid").mockReturnValue(998);
+    vi.spyOn(process, "getegid").mockReturnValue(998);
+    const capture = vi
+      .spyOn(sharedStateTransaction, "captureManagedStartupSharedState")
+      .mockReturnValue("synthetic capture only\n");
+    const output = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const begin = vi.spyOn(sharedStateTransaction, "beginManagedStartupSharedStateTransaction");
+    await mainManagedStartupImageRuntime([
+      "--capture-shared-state-stdin",
+      "--agent",
+      "openclaw",
+      "--bootstrap-identity",
+      "a".repeat(64),
+    ]);
+    expect(capture).toHaveBeenCalledExactlyOnceWith(decodeManagedStartupProfile(encodedProfile), {
+      bootstrapIdentity: "a".repeat(64),
+    });
+    expect(output).toHaveBeenCalledExactlyOnceWith("synthetic capture only\n");
+    expect(begin).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [0, 0],
+    [999, 998],
+    [998, 999],
+  ])("rejects capture identity %i:%i before reading private state", async (uid, gid) => {
+    vi.spyOn(process, "geteuid").mockReturnValue(uid);
+    vi.spyOn(process, "getegid").mockReturnValue(gid);
+    const capture = vi.spyOn(sharedStateTransaction, "captureManagedStartupSharedState");
+    await expect(
+      mainManagedStartupImageRuntime([
+        "--capture-shared-state-stdin",
+        "--agent",
+        "openclaw",
+        "--bootstrap-identity",
+        "a".repeat(64),
+      ]),
+    ).rejects.toThrow(/exact native state owner/u);
+    expect(capture).not.toHaveBeenCalled();
+  });
+
+  it("admits captured state only into the root-owned transaction for the requested bootstrap", async () => {
+    const profile = managedStartupE2eProfile("openclaw", false);
+    mockRootReplayFilesystem([]);
+    stdin(
+      JSON.stringify({
+        encodedProfile: encodeManagedStartupProfile(profile),
+        capturedState: "synthetic transport",
+      }),
+    );
+    vi.spyOn(process, "geteuid").mockReturnValue(0);
+    const begin = vi
+      .spyOn(sharedStateTransaction, "beginManagedStartupSharedStateTransaction")
+      .mockReturnValue(true);
+    const output = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    await mainManagedStartupImageRuntime([
+      "--begin-shared-state-from-capture-stdin",
+      "--agent",
+      "openclaw",
+      "--bootstrap-identity",
+      "a".repeat(64),
+    ]);
+    expect(begin).toHaveBeenCalledExactlyOnceWith(
+      decodeManagedStartupProfile(encodeManagedStartupProfile(profile)),
+      {
+        bootstrapIdentity: "a".repeat(64),
+        capturedState: "synthetic transport",
+      },
+    );
+    expect(output).toHaveBeenCalledExactlyOnceWith("created\n");
+  });
+
+  it("does not let the state owner admit its own trusted receipt", async () => {
+    vi.spyOn(process, "geteuid").mockReturnValue(998);
+    const begin = vi.spyOn(sharedStateTransaction, "beginManagedStartupSharedStateTransaction");
+    await expect(
+      mainManagedStartupImageRuntime([
+        "--begin-shared-state-from-capture-stdin",
+        "--agent",
+        "openclaw",
+        "--bootstrap-identity",
+        "a".repeat(64),
+      ]),
+    ).rejects.toThrow(/requires container effective uid 0/u);
+    expect(begin).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      "--restore-shared-state-stdin",
+      "restoreManagedStartupCapturedSharedState",
+      998,
+      "observed private state",
+    ],
+    ["--finish-shared-restoration-stdin", "finishManagedStartupSharedStateRestoration", 0, true],
+  ] as const)(
+    "routes %s through the required process identity",
+    async (action, operation, uid, result) => {
+      const encodedProfile = encodeManagedStartupProfile(
+        managedStartupE2eProfile("openclaw", false),
+      );
+      vi.spyOn(process, "geteuid").mockReturnValue(uid);
+      vi.spyOn(process, "getegid").mockReturnValue(uid);
+      stdin(JSON.stringify({ encodedProfile, capturedState: "private transport" }));
+      const handler = vi.spyOn(sharedStateTransaction, operation).mockReturnValue(result);
+      const output = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+      await mainManagedStartupImageRuntime([
+        action,
+        "--agent",
+        "openclaw",
+        "--bootstrap-identity",
+        "a".repeat(64),
+      ]);
+      expect(handler).toHaveBeenCalledExactlyOnceWith(
+        decodeManagedStartupProfile(encodedProfile),
+        "private transport",
+        { bootstrapIdentity: "a".repeat(64) },
+      );
+      expect(output).toHaveBeenCalledExactlyOnceWith(uid === 0 ? "restored\n" : result);
+    },
+  );
+
+  it("exports the protected original only through a root process", async () => {
+    const encodedProfile = encodeManagedStartupProfile(managedStartupE2eProfile("openclaw", false));
+    vi.spyOn(process, "geteuid").mockReturnValue(0);
+    stdin(
+      serializeManagedStartupRootApplyRequest(
+        createManagedStartupRootApplyRequest({ agent: "openclaw", encodedProfile }),
+      ),
+    );
+    const handler = vi
+      .spyOn(sharedStateTransaction, "exportManagedStartupSharedStateRestoration")
+      .mockReturnValue("private original");
+    const output = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    await mainManagedStartupImageRuntime([
+      "--export-shared-restoration-stdin",
+      "--agent",
+      "openclaw",
+      "--bootstrap-identity",
+      "a".repeat(64),
+    ]);
+    expect(handler).toHaveBeenCalledExactlyOnceWith(decodeManagedStartupProfile(encodedProfile), {
+      bootstrapIdentity: "a".repeat(64),
+    });
+    expect(output).toHaveBeenCalledExactlyOnceWith("private original");
+  });
+
+  it("reports delegated startup without consuming input or preparing state", async () => {
+    vi.spyOn(process, "geteuid").mockReturnValue(0);
+    const read = vi.spyOn(fs, "readSync");
+    const begin = vi.spyOn(sharedStateTransaction, "beginManagedStartupSharedStateTransaction");
+    const output = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    await mainManagedStartupImageRuntime(["--startup-protocol"]);
+    expect(output).toHaveBeenCalledExactlyOnceWith("delegated-owner-v1\n");
+    expect(read).not.toHaveBeenCalled();
+    expect(begin).not.toHaveBeenCalled();
+  });
+
+  it("prepares the protected parent before querying a new delegated transaction", async () => {
+    vi.spyOn(process, "geteuid").mockReturnValue(0);
+    mockRootReplayFilesystem([]);
+    const request = createManagedStartupRootApplyRequest({
+      agent: "openclaw",
+      encodedProfile: encodeManagedStartupProfile(managedStartupE2eProfile("openclaw", false)),
+    });
+    stdin(serializeManagedStartupRootApplyRequest(request));
+    const status = vi
+      .spyOn(sharedStateTransaction, "getManagedStartupSharedStateTransactionStatus")
+      .mockImplementation(() => {
+        expect(fs.lstatSync("/var/lib/nemoclaw").isDirectory()).toBe(true);
+        return "none";
+      });
+    const begin = vi.spyOn(sharedStateTransaction, "beginManagedStartupSharedStateTransaction");
+    const output = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    await mainManagedStartupImageRuntime([
+      "--prepare-delegated-transaction-stdin",
+      "--agent",
+      "openclaw",
+      "--bootstrap-identity",
+      "a".repeat(64),
+    ]);
+    expect(status).toHaveBeenCalledExactlyOnceWith({
+      agent: "openclaw",
+      profileFingerprint: request.profileFingerprint,
+      bootstrapIdentity: "a".repeat(64),
+    });
+    expect(output).toHaveBeenCalledExactlyOnceWith("none\n");
+    expect(begin).not.toHaveBeenCalled();
+  });
+
+  it.each(["none", "pending", "committed"] as const)(
+    "reports transaction status %s without renaming it",
+    async (phase) => {
+      vi.spyOn(process, "geteuid").mockReturnValue(0);
+      vi.spyOn(
+        sharedStateTransaction,
+        "getManagedStartupSharedStateTransactionStatus",
+      ).mockReturnValue(phase);
+      const output = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+      await mainManagedStartupImageRuntime([
+        "--shared-state-transaction-status",
+        "--agent",
+        "openclaw",
+        "--profile-fingerprint",
+        "a".repeat(64),
+        "--bootstrap-identity",
+        "b".repeat(64),
+      ]);
+      expect(output).toHaveBeenCalledExactlyOnceWith(`${phase}\n`);
+    },
+  );
+
+  it("exports recovery from a profile without transporting the CA bundle again", async () => {
+    const encodedProfile = encodeManagedStartupProfile(
+      managedStartupE2eProfile("openclaw", false, true, true),
+    );
+    vi.spyOn(process, "geteuid").mockReturnValue(0);
+    stdin(encodedProfile);
+    const handler = vi
+      .spyOn(sharedStateTransaction, "exportManagedStartupSharedStateRestoration")
+      .mockReturnValue("private original");
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    await mainManagedStartupImageRuntime([
+      "--export-shared-restoration-profile-stdin",
+      "--agent",
+      "openclaw",
+      "--bootstrap-identity",
+      "a".repeat(64),
+    ]);
+    expect(handler).toHaveBeenCalledExactlyOnceWith(decodeManagedStartupProfile(encodedProfile), {
+      bootstrapIdentity: "a".repeat(64),
+    });
+  });
+
+  it.each([
+    ["--export-shared-restoration-stdin", 998, 998],
+    ["--export-shared-restoration-profile-stdin", 998, 998],
+    ["--prepare-delegated-transaction-stdin", 998, 998],
+    ["--finish-shared-restoration-stdin", 998, 998],
+    ["--restore-shared-state-stdin", 0, 0],
+    ["--restore-shared-state-stdin", 998, 999],
+  ] as const)("rejects %s as %i:%i before consuming transport", async (action, uid, gid) => {
+    vi.spyOn(process, "geteuid").mockReturnValue(uid);
+    vi.spyOn(process, "getegid").mockReturnValue(gid);
+    const read = vi.spyOn(fs, "readSync");
+    await expect(
+      mainManagedStartupImageRuntime([
+        action,
+        "--agent",
+        "openclaw",
+        "--bootstrap-identity",
+        "a".repeat(64),
+      ]),
+    ).rejects.toThrow(/requires/u);
+    expect(read).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["openclaw", 998, 998, 0o755],
     ["hermes", 998, 999, 0o755],
@@ -346,11 +875,11 @@ describe("managed startup image runtime", () => {
     const lstat = vi
       .fn()
       .mockReturnValueOnce({
-        gid: 999,
+        gid: 0,
         isDirectory: () => true,
         isSymbolicLink: () => false,
-        mode: 0o040000 | 0o755,
-        uid: 999,
+        mode: 0o040000 | 0o700,
+        uid: 0,
       })
       .mockReturnValueOnce({
         gid,
@@ -367,6 +896,80 @@ describe("managed startup image runtime", () => {
     expect(chown).toHaveBeenCalledExactlyOnceWith("/sandbox", uid, gid);
     expect(chmod).toHaveBeenCalledExactlyOnceWith("/sandbox", mode);
     expect(lstat).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ["openclaw", 998, 998, 0o755],
+    ["hermes", 998, 999, 0o755],
+    ["langchain-deepagents-code", 0, 999, 0o1775],
+    ["pi", 999, 999, 0o755],
+  ] as const)(
+    "preserves the declared %s workspace without metadata writes",
+    (agent, uid, gid, mode) => {
+      const lstat = vi.fn().mockReturnValue({
+        gid,
+        isDirectory: () => true,
+        isSymbolicLink: () => false,
+        mode: 0o040000 | mode,
+        uid,
+      });
+      const denied = () => {
+        throw Object.assign(new Error("operation not permitted"), { code: "EPERM" });
+      };
+      const chown = vi.fn(denied);
+      const chmod = vi.fn(denied);
+
+      normalizeManagedStartupWorkspaceRoot(agent, { lstat, chown, chmod });
+
+      expect(chown).not.toHaveBeenCalled();
+      expect(chmod).not.toHaveBeenCalled();
+      expect(lstat).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it("rejects workspace metadata drift after an initially matching observation", () => {
+    const initial = {
+      gid: 998,
+      isDirectory: () => true,
+      isSymbolicLink: () => false,
+      mode: 0o040755,
+      uid: 998,
+    };
+    const lstat = vi
+      .fn()
+      .mockReturnValueOnce(initial)
+      .mockReturnValueOnce({ ...initial, mode: 0o040777 });
+    const chown = vi.fn();
+    const chmod = vi.fn();
+
+    expect(() => normalizeManagedStartupWorkspaceRoot("openclaw", { lstat, chown, chmod })).toThrow(
+      /workspace root does not match its declared posture/u,
+    );
+    expect(chown).not.toHaveBeenCalled();
+    expect(chmod).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when a required workspace ownership repair is denied", () => {
+    const lstat = vi.fn().mockReturnValue({
+      gid: 0,
+      isDirectory: () => true,
+      isSymbolicLink: () => false,
+      mode: 0o040755,
+      uid: 0,
+    });
+    const chmod = vi.fn();
+
+    expect(() =>
+      normalizeManagedStartupWorkspaceRoot("openclaw", {
+        lstat,
+        chown: () => {
+          throw Object.assign(new Error("operation not permitted"), { code: "EPERM" });
+        },
+        chmod,
+      }),
+    ).toThrow(/workspace-root normalization failed/u);
+    expect(chmod).not.toHaveBeenCalled();
+    expect(lstat).toHaveBeenCalledTimes(1);
   });
 
   it("rejects a symlinked workspace root before mutation", () => {

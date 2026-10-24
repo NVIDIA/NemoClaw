@@ -26,9 +26,9 @@ export function managedBraveProfile() {
         port: 443,
         ports: [],
         protocol: "rest",
-        tls: "",
-        enforcement: "enforce",
-        access: "read-write",
+        tls: 0,
+        enforcement: 1,
+        access: 2,
         rules: [],
         allowedIps: [],
         denyRules: [],
@@ -69,7 +69,7 @@ export function managedTavilyProfile(agent: "openclaw" | "hermes" = "openclaw") 
       {
         ...base.endpoints[0],
         host: "api.tavily.com",
-        access: "",
+        access: 0,
         requestBodyCredentialRewrite: true,
         rules: ["/search", "/extract"].map((path) => ({
           allow: {

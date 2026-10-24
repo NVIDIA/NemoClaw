@@ -142,6 +142,7 @@ describe("custom native endpoint ownership", () => {
           (rule: { allow: { path: string } }) => !rule.allow.path.includes("*"),
         ),
       ).toBe(true);
+      expect(profile.endpoints[0]).not.toHaveProperty("tls");
       expect(profile.binaries).not.toContain("*");
       expect(profile.credentials[0].env_vars).toEqual([definition.credentialEnv]);
       const config = getSandboxInferenceConfig("selected-model", provider, api, true, endpointUrl);
@@ -169,6 +170,44 @@ describe("custom native endpoint ownership", () => {
         inferenceBaseUrl: definition.endpointUrl,
         primaryModelRef: `${api === "anthropic-messages" ? "anthropic" : "inference"}/selected-model`,
       });
+    },
+  );
+
+  it("rejects an unverified Anthropic bridge before provider mutation", async () => {
+    const h = harness();
+    const bridge = {
+      ...binding,
+      provider: "compatible-anthropic-endpoint",
+      endpointUrl: "http://host.openshell.internal:49152",
+      allowedIps: [],
+    };
+    await expect(prepareCustomNativeProvider({ ...h.input, ...bridge })).rejects.toThrow(
+      "cannot use an unverified OpenShell host bridge endpoint",
+    );
+    expect(h.lookup).not.toHaveBeenCalled();
+    expect(h.adapter.importProviderProfile).not.toHaveBeenCalled();
+    expect(h.adapter.createProvider).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "http://host.openshell.internal:80",
+    "https://host.openshell.internal:49152",
+    "http://host.docker.internal:49152",
+    "http://host.openshell.internal:18789",
+    "http://host.openshell.internal:8080",
+  ])(
+    "rejects unsupported or protected Anthropic bridge %s before mutation",
+    async (endpointUrl) => {
+      const h = harness();
+      await expect(
+        prepareCustomNativeProvider({
+          ...h.input,
+          provider: "compatible-anthropic-endpoint",
+          endpointUrl,
+        }),
+      ).rejects.toThrow();
+      expect(h.adapter.importProviderProfile).not.toHaveBeenCalled();
+      expect(h.adapter.createProvider).not.toHaveBeenCalled();
     },
   );
 
@@ -347,6 +386,28 @@ describe("custom native endpoint ownership", () => {
     expect(onCredentialPersisted).not.toHaveBeenCalled();
   });
 
+  it("removes a new attachment when its profile changes before verification", async () => {
+    const h = harness();
+    const receipt = await prepareCustomNativeProvider(h.input);
+    const provider = nativeProviderLifecycle(customNativeProvider(binding));
+    h.adapter.importProviderProfile.mockResolvedValueOnce({ ok: true }).mockResolvedValueOnce({
+      ok: false,
+      error: { kind: "command", reason: "profile_incompatible", message: "collision" },
+    });
+    await expect(
+      provider.ensureNativeProviderAttached({
+        adapter: h.input.adapter,
+        target: { kind: "named", gatewayName: "gateway" },
+        sandboxName: "selected",
+        expected: receipt,
+      }),
+    ).rejects.toThrow("conflicts with NemoClaw's checked-in security boundary");
+    expect(h.adapter.attachProvider).toHaveBeenCalledOnce();
+    expect(h.adapter.detachProvider).toHaveBeenCalledOnce();
+    expect(h.attachments.get("selected")).toEqual([]);
+    expect(h.attachments.get("other")).toEqual(["unrelated-provider"]);
+  });
+
   it("rejects profile collisions before provider or attachment changes", async () => {
     const h = harness();
     h.adapter.importProviderProfile.mockResolvedValue({
@@ -394,28 +455,6 @@ describe("custom native endpoint ownership", () => {
     expect(
       usesCustomNativeOnboarding(binding.provider, "http://127.0.0.1:8080/v1", "alpha", null),
     ).toBe(false);
-    // OpenShell rejects Personal's hostless web rule beside a port-443 provider endpoint.
-    expect(
-      usesCustomNativeOnboarding(
-        binding.provider,
-        binding.endpointUrl,
-        "alpha",
-        null,
-        " Personal ",
-      ),
-    ).toBe(false);
-    expect(
-      usesCustomNativeOnboarding(
-        binding.provider,
-        binding.endpointUrl,
-        "alpha",
-        { pendingRouteReservation: true },
-        "personal",
-      ),
-    ).toBe(false);
-    expect(
-      usesCustomNativeOnboarding(binding.provider, binding.endpointUrl, "alpha", null, "balanced"),
-    ).toBe(true);
     const h = harness();
     const receipt = await prepareCustomNativeProvider(h.input);
     expect(

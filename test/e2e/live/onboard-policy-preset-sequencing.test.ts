@@ -10,6 +10,7 @@ import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { discoverHostAddress } from "../fixtures/host-address.ts";
+import { buildSandboxInferenceChatCommand } from "../fixtures/inference-adapter.ts";
 import { readRegistrySandboxEntry } from "../fixtures/phases/state-validation.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import { redactString } from "../fixtures/redaction.ts";
@@ -28,8 +29,8 @@ import { driveInteractiveCommand } from "./onboard-interactive-pty.ts";
 //
 // This is a hermetic, mock-provider variant of the reporter's journey
 // (`nemoclaw onboard` with "Other OpenAI-compatible endpoint"). It selects
-// Personal so the same journey also proves the hosted custom endpoint remains
-// on inference.local without acquiring a native provider attachment.
+// Personal so the same journey also proves the hosted custom endpoint works
+// through its sandbox-attached native provider.
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-policy-order";
 validateSandboxName(SANDBOX_NAME);
@@ -59,7 +60,7 @@ test(
         "start the hosted custom compatible-endpoint fixture",
         "drive the interactive onboard wizard through a real PTY",
         "confirm every ordered onboarding step appears in order",
-        "confirm Personal keeps the hosted custom endpoint on inference.local",
+        "confirm Personal permits the hosted custom native endpoint",
       ],
     },
   },
@@ -166,7 +167,7 @@ test(
       searchFrom = index + marker.length;
     });
 
-    progress.phase("confirm Personal keeps the hosted custom endpoint on inference.local");
+    progress.phase("confirm Personal permits the hosted custom native endpoint");
     const policyList = await host.command("node", [CLI_ENTRYPOINT, SANDBOX_NAME, "policy-list"], {
       artifactName: "policy-list-personal-compatible-endpoint",
       env: buildAvailabilityProbeEnv(),
@@ -177,27 +178,24 @@ test(
     expect(policyListText).toMatch(/●\s+personal-open-internet\s+\[/u);
 
     const registered = readRegistrySandboxEntry(SANDBOX_NAME);
-    expect(recordedNativeProviderAttachment(registered)).toBeUndefined();
+    expect(recordedNativeProviderAttachment(registered)).toMatchObject({
+      endpointUrl: fake.baseUrl,
+    });
 
     const chat = await sandbox.exec(
       SANDBOX_NAME,
-      [
-        "curl",
-        "-fsS",
-        "--max-time",
-        "60",
-        "https://inference.local/v1/chat/completions",
-        "-H",
-        "Content-Type: application/json",
-        "--data-raw",
+      buildSandboxInferenceChatCommand(
         JSON.stringify({
           model: MODEL,
           messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
           max_tokens: 50,
         }),
-      ],
+        "compatible-endpoint",
+        fake.baseUrl,
+        60,
+      ),
       {
-        artifactName: "personal-compatible-endpoint-inference-local-chat",
+        artifactName: "personal-compatible-endpoint-native-chat",
         env: buildAvailabilityProbeEnv(),
         redactionValues: [apiKey],
         timeoutMs: 90_000,

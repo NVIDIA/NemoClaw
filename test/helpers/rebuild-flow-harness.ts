@@ -62,6 +62,9 @@ export const onboardSession = requireDist("../../state/onboard-session.js");
 export const removedImmutabilityMigration = requireDist(
   "../../state/migrations/removed-immutability.js",
 );
+export const { cliOpenShellInstalledVersionObserver } = requireDist(
+  "../../adapters/openshell/installed-version-cli.js",
+) as typeof import("../../src/lib/adapters/openshell/installed-version-cli");
 export const openshellRuntime = requireDist("../../adapters/openshell/runtime.js");
 export const providerCommand = requireDist("../../adapters/openshell/provider-command.js");
 export const policies = requireDist("../../policy/index.js");

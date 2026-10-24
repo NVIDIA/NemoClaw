@@ -362,7 +362,8 @@ Use these details when your first-run path needs more control.
     After you select a provider and model, review the summary and apply the configuration.
     NemoClaw writes Hermes configuration into `/sandbox/.hermes` and starts the Hermes gateway inside the sandbox.
     NVIDIA Endpoints, OpenAI, Anthropic, Gemini, OpenRouter, and Hermes Provider use native endpoints through sandbox-attached OpenShell providers.
-    Custom and local providers retain the shared `inference.local` route.
+    Qualifying custom hosted endpoints also use sandbox-attached providers.
+    Hermes local selections and remaining custom shared selections retain `inference.local` on OpenShell `0.0.x`.
     OpenShell keeps upstream credentials outside the sandbox in both cases.
     The Hermes image includes runtime dependencies for supported NemoClaw messaging integrations, the API service, and its health endpoint.
     The base image does not include unsupported Hermes integrations.
@@ -468,7 +469,7 @@ Use these details when your first-run path needs more control.
     The restart can interrupt active agent requests.
     If the restart fails, the route and configuration remain committed.
     Run `nemohermes <sandbox-name> gateway restart` to apply the switch.
-    Custom and local providers retain the shared OpenShell route.
+    Hermes local selections and remaining custom shared selections retain the shared OpenShell route on `0.0.x`.
 
     ```bash
     nemohermes inference set --model <model> --provider <provider>

@@ -107,6 +107,8 @@ export function approvedFixture() {
   ) as Record<keyof typeof CANDIDATE_OPENSHELL_SOURCES, string>;
   const selected = validateInstallerSources(candidate);
   const release = structuredClone(selected.installerReleases[0]!);
+  // Revocations belong to the registry; resolved releases carry a derived copy.
+  delete release.revokedTemplateSha256;
   candidate.installerSource += "\n# Reviewed installer fixture change.\n";
   release.installerTemplateSha256 = [
     ...release.installerTemplateSha256,

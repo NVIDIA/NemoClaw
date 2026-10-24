@@ -5,6 +5,7 @@ import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import vm from "node:vm";
 
 import { describe, expect, it, vi } from "vitest";
 
@@ -142,11 +143,129 @@ describe("P0-E cloud-experimental parity guardrails", () => {
     expect(script).not.toContain('spawnSync(\n  "docker"');
   });
 
-  it("accepts only the provider-owned Podman host address outside RFC1918", () => {
-    const script = fs.readFileSync(dcodeObservabilityCheck, "utf8");
+  it.each([
+    ["docker", "linux", "nemoclaw", "docker", "host", "127.0.0.1", "127.0.0.1"],
+    ["podman", "linux", "nemoclaw", "podman", "", "", "podman"],
+    ["docker", "darwin", "nemoclaw", "docker", "host", "127.0.0.1", null],
+    ["docker", "linux", "other", "docker", "host", "127.0.0.1", null],
+    ["docker", "linux", "nemoclaw", "podman", "host", "127.0.0.1", null],
+    ["docker", "linux", "nemoclaw", "docker", "bridge", "127.0.0.1", null],
+    ["docker", "linux", "nemoclaw", "docker", "host", "0.0.0.0", null],
+  ])(
+    "binds OTLP to its selected runtime (%s/%s/%s/%s/%s/%s)",
+    (providerId, platform, gatewayName, targetProvider, networkName, address, expected) => {
+      const script = fs.readFileSync(dcodeObservabilityCheck, "utf8");
+      const source = script.split("node <<'NODE'\n")[1].split("\nNODE")[0];
+      let output = "";
+      const provider = {
+        identity: { id: providerId },
+        gateway: {
+          observeHostRuntime: () => ({
+            network: { supervisorNetwork: { name: networkName, hostAddress: address } },
+          }),
+        },
+      };
+      const run = () =>
+        vm.runInNewContext(source, {
+          process: {
+            platform,
+            env: { SANDBOX_NAME: "fixture", OPENSHELL_GATEWAY: "nemoclaw" },
+            stdout: {
+              write: (value: string) => {
+                output += value;
+              },
+            },
+            exit: () => {
+              throw new Error("refused");
+            },
+          },
+          require: () => ({
+            getSandbox: () => ({ gatewayName }),
+            currentRuntimeProviderBundles: () => [],
+            requireRuntimeProviderBundleForSandbox: () => provider,
+            resolvePrivilegedSandboxTarget: () => ({
+              providerId: targetProvider,
+              resourceHandle: "owned",
+            }),
+          }),
+        });
+      const outcomes = expected === null ? [() => expect(run).toThrow("refused")] : [run];
+      outcomes.forEach((check) => check());
+      expect(output).toBe(expected ?? "");
+      expect(script).toContain("169.254.2.2");
+      expect(script).not.toContain("169.254.*");
+    },
+  );
 
-    expect(script).toContain("169.254.2.2");
-    expect(script).not.toContain("169.254.*");
+  it.each([
+    [1, "setpriv: setresuid failed: Operation not permitted", 0, 0],
+    [0, "", 0, 1],
+    [1, "missing entrypoint", 0, 1],
+    [1, "setpriv: setresuid failed: Operation not permitted", 1, 1],
+  ])(
+    "requires root denial and sandbox-user startup (%s/%s/%s)",
+    (rootStatus, rootOutput, userStatus, expected) => {
+      const script = fs.readFileSync(dcodeFreshReonboardCheck, "utf8");
+      const block = script.slice(
+        script.indexOf("  # Native workloads"),
+        script.indexOf("  # shellcheck disable=SC2016 # Read"),
+      );
+      const result = spawnSync(
+        "bash",
+        [
+          "-c",
+          [
+            "set -eu",
+            "resource_handle=owned",
+            "SANDBOX_NAME=fixture",
+            "HOSTILE_SHELL_ENV=/fixture-env",
+            "HOSTILE_PROFILE_MARKER=/fixture-marker",
+            "fail() { exit 1; }",
+            'privileged_exec() { printf "%s\\n" "$ROOT_OUTPUT"; return "$ROOT_STATUS"; }',
+            'openshell() { test "$5" = --no-login-shell || return 63; return "$USER_STATUS"; }',
+            block,
+          ].join("\n"),
+        ],
+        {
+          encoding: "utf8",
+          env: {
+            PATH: DEFAULT_TEST_PATH,
+            ROOT_OUTPUT: rootOutput,
+            ROOT_STATUS: String(rootStatus),
+            USER_STATUS: String(userStatus),
+          },
+        },
+      );
+      expect(result.status, result.stderr).toBe(expected);
+    },
+  );
+
+  it("prepares a writable sentinel exclusively and refuses cleanup of another inode", () => {
+    const script = fs.readFileSync(dcodeLandlockCheck, "utf8");
+    const source = script
+      .split("const source = String.raw`")[1]
+      .split("`;")[0]
+      .replaceAll("observed.st_uid == 0", `observed.st_uid == ${process.getuid?.()}`);
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "dcode-sentinel-"));
+    const probe = path.join(dir, "probe");
+    const run = (operation: string, identity = "") =>
+      spawnSync("python3", ["-I", "-c", source, operation, probe, identity], { encoding: "utf8" });
+    try {
+      const created = run("prepare");
+      expect(created.status, created.stderr).toBe(0);
+      expect(fs.statSync(probe).mode & 0o777).toBe(0o666);
+      expect(run("prepare").status).not.toBe(0);
+      expect(run("cleanup", "0:0").status).not.toBe(0);
+      expect(fs.existsSync(probe)).toBe(true);
+      expect(run("cleanup", created.stdout.trim()).status).toBe(0);
+      expect(fs.existsSync(probe)).toBe(false);
+      fs.symlinkSync(path.join(dir, "other"), probe);
+      expect(run("prepare").status).not.toBe(0);
+      expect(run("cleanup", created.stdout.trim()).status).not.toBe(0);
+      expect(fs.lstatSync(probe).isSymbolicLink()).toBe(true);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("preserves the repeated env-unset pairs from the failed observability invocation", async () => {
@@ -220,7 +339,7 @@ describe("P0-E cloud-experimental parity guardrails", () => {
     expect(script).toMatch(/"\$CLI" "\$SANDBOX_NAME" exec -- \\\n\s+\/opt\/venv\/bin\/python3/);
     expect(script).not.toContain("env -u ALL_PROXY");
     expect(script.match(/--noproxy '\*'/g)).toHaveLength(2);
-    expect(script).toContain("/usr/bin/curl --fail-with-body -sS");
+    expect(script).toContain("/usr/bin/curl --verbose --fail-with-body -sS");
     expect(script).toMatch(
       /run_deterministic_tool_trace\(\)[\s\S]*"\$CLI" "\$SANDBOX_NAME" exec --[\s\S]*\/opt\/venv\/bin\/python3/,
     );
@@ -360,46 +479,93 @@ describe("P0-E cloud-experimental parity guardrails", () => {
 
   it.each([
     [
-      "accepts an explicit non-empty success response",
+      "accepts a non-empty response",
+      { status_code: 200, content_length: 1234 },
       "fetch-success-classification",
-      "FETCH_SUCCESS:200:1234",
       0,
       "1 passed",
     ],
     [
-      "accepts explicit denial evidence",
+      "accepts a policy denial",
+      { error: "network policy denied" },
       "fetch-blocked-classification",
-      "FETCH_BLOCKED:network policy denied",
       0,
       "1 passed",
     ],
     [
-      "rejects an unclassified fetch error",
+      "accepts the managed URL rejection",
+      { error: "Fetch URL error: URL destination is blocked" },
       "fetch-blocked-classification",
-      "FETCH_ERROR:opaque 403",
+      0,
+      "1 passed",
+    ],
+    [
+      "rejects an opaque HTTP error",
+      { error: "opaque 403" },
+      "fetch-blocked-classification",
       1,
       "lacked denial evidence",
     ],
-  ] as const)("%s from the fetch_url probe", (_label, selfTest, fixture, status, expected) => {
-    const result = spawnSync(
-      "bash",
-      [
-        path.join(
-          process.cwd(),
-          "test/e2e/e2e-cloud-experimental/checks/06-deepagents-code-python-egress.sh",
-        ),
-      ],
+    [
+      "rejects a DNS error",
+      { error: "Fetch URL error: URL hostname could not be resolved" },
+      "fetch-blocked-classification",
+      1,
+      "lacked denial evidence",
+    ],
+    [
+      "rejects an unrelated blocked message",
+      { error: "remote URL destination is blocked temporarily" },
+      "fetch-blocked-classification",
+      1,
+      "lacked denial evidence",
+    ],
+    [
+      "rejects success as denial",
       {
-        encoding: "utf8",
-        env: {
-          NEMOCLAW_E2E_PYTHON_EGRESS_SELF_TEST: selfTest,
-          NEMOCLAW_E2E_FETCH_URL_PROBE_FIXTURE: fixture,
-          PATH: process.env.PATH ?? "/usr/bin:/bin",
-        },
+        status_code: 200,
+        content_length: 1234,
+        error: "Fetch URL error: URL destination is blocked",
       },
+      "fetch-blocked-classification",
+      1,
+      "reached fixture host unexpectedly",
+    ],
+  ] as const)("%s from the fetch_url probe", (_label, response, selfTest, status, expected) => {
+    const script = path.join(cloudChecksDir, "06-deepagents-code-python-egress.sh");
+    const source = fs
+      .readFileSync(script, "utf8")
+      .split("fetch_url_probe_source() {\n  cat <<'PY'\n")[1]
+      .split("\nPY\n}")[0];
+    const probe = spawnSync(
+      "python3",
+      [
+        "-c",
+        [
+          "import json, sys, types",
+          "package = types.ModuleType('deepagents_code')",
+          "tools = types.ModuleType('deepagents_code.tools')",
+          "managed = types.ModuleType('deepagents_code._nemoclaw_managed')",
+          "tools.fetch_url = lambda *args, **kwargs: json.loads(sys.argv[2])",
+          "managed._managed_fetch_uses_openshell = lambda: True",
+          "sys.modules.update({'deepagents_code': package, 'deepagents_code.tools': tools, 'deepagents_code._nemoclaw_managed': managed})",
+          source,
+        ].join("\n"),
+        "https://fixture.example/",
+        JSON.stringify(response),
+      ],
+      { encoding: "utf8", env: { PATH: DEFAULT_TEST_PATH } },
     );
-
-    expect(result.status).toBe(status);
+    expect(probe.status, probe.stderr).toBe(0);
+    const result = spawnSync("bash", [script], {
+      encoding: "utf8",
+      env: {
+        NEMOCLAW_E2E_PYTHON_EGRESS_SELF_TEST: selfTest,
+        NEMOCLAW_E2E_FETCH_URL_PROBE_FIXTURE: probe.stdout.trim(),
+        PATH: DEFAULT_TEST_PATH,
+      },
+    });
+    expect(result.status, result.stderr).toBe(status);
     expect(`${result.stdout}\n${result.stderr}`).toContain(expected);
   });
 
@@ -642,7 +808,6 @@ exit 37
 
         // The shell program is a fixed literal; repository and temporary-file paths are
         // positional arguments and are expanded only inside double quotes.
-        // lgtm[js/shell-command-injection-from-environment]
         const result = spawnSync(
           "/bin/bash",
           [

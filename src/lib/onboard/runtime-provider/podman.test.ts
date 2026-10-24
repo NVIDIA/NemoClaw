@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { DEEP_AGENTS_CODE_SANDBOX_USER } from "../../agent/deep-agents-code-runtime-identity";
 import { createPodmanHostLocalInferenceTestHarness } from "../../../../test/helpers/podman-host-local-inference-test-harness";
@@ -450,6 +451,37 @@ describe("managed Podman runtime provider", () => {
     ).not.toContain("docker");
   });
 
+  it("runs sanitized cleanup commands without an image PATH (#12603)", () => {
+    const runtime = providerHarness("hermes");
+    runtime.lifecycle.capture(["start", CONTAINER_ID]);
+    const lifecycle = runtime.providers.podman!.lifecycle;
+    const supportedLifecycle = lifecycle as Extract<typeof lifecycle, { supported: true }>;
+    supportedLifecycle.privilegedSandboxControl.execute({
+      registeredSandboxNames: [runtime.sandboxName],
+      sandbox: runtime.entry,
+      sandboxName: runtime.sandboxName,
+      expectedResourceHandle: CONTAINER_ID,
+      command: ["sh", "-c", 'test -n "$(command -v rm)" && printf cleanup-ready'],
+      sanitizeEnvironment: true,
+      timeoutMs: 9000,
+    });
+    const args = vi.mocked(runtime.lifecycle.capture).mock.lastCall![0];
+    const commandIndex = args.indexOf(CONTAINER_ID) + 1;
+    // crun cannot resolve a bare executable after OpenShell clears the image environment.
+    const helperPath =
+      args
+        .slice(0, commandIndex - 1)
+        .join("\n")
+        .match(/(?:^|\n)--env\nPATH=([^\n]*)/u)?.[1] ?? "";
+    const result = spawnSync(args[commandIndex]!, args.slice(commandIndex + 1), {
+      env: { PATH: helperPath },
+      encoding: "utf8",
+      timeout: 5000,
+    });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe("cleanup-ready");
+  });
+
   it("pins Deep Agents sandbox-user cleanup to the owned Podman resource", () => {
     const runtime = providerHarness("langchain-deepagents-code");
     const lifecycle = runtime.providers.podman?.lifecycle;
@@ -486,6 +518,19 @@ describe("managed Podman runtime provider", () => {
       expect.arrayContaining(["--user", "1234:1234", CONTAINER_ID]),
       9000,
       undefined,
+    );
+    const privateInput = Buffer.from("synthetic private snapshot");
+    control.executeAsSandboxUser?.({ ...input, input: privateInput, maxOutputBytes: 2048 });
+    expect(runtime.lifecycle.capture).toHaveBeenLastCalledWith(
+      expect.arrayContaining([
+        "--interactive",
+        "--user",
+        DEEP_AGENTS_CODE_SANDBOX_USER,
+        CONTAINER_ID,
+      ]),
+      9000,
+      privateInput,
+      { maxInputBytes: privateInput.length, maxOutputBytes: 2048 },
     );
     expect(() =>
       control.executeAsSandboxUser?.({

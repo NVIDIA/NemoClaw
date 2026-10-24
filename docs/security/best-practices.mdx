@@ -114,7 +114,7 @@ NemoClaw allows a credential source only in the process that is intended to hold
 
 | Execution path | Rule |
 |---|---|
-| Host-brokered provider | Keep provider credentials outside the sandbox. NVIDIA Endpoints, supported fixed hosted providers, new hosted compatible endpoints outside the Personal tier, and qualified new local selections use sandbox-attached providers where supported. A fresh Personal-tier hosted compatible selection, owned Local NVIDIA NIM, compatible endpoints without an attachment, and retained shared routes use `inference.local`. The Personal selection creates no native provider attachment. Bedrock AWS credentials stay in the host-local adapter. The sandbox receives no raw host credential. |
+| Host-brokered provider | Keep provider credentials outside the sandbox. Bedrock AWS credentials stay in its host-local adapter. NVIDIA Endpoints, supported fixed hosted providers, qualifying custom hosted endpoints, and qualifying local selections use sandbox-attached native providers. Remaining shared selections retain `inference.local` on OpenShell `0.0.x`. The sandbox receives no raw host credential. |
 | Sandbox-direct provider | Keep only credential sources that are deliberately provisioned and reachable inside the sandbox. |
 | Ambient metadata provider | Disable SDK discovery when the metadata endpoint cannot exist across the sandbox boundary. Do not make an internal or link-local endpoint reachable merely to satisfy an automatic probe. |
 | New agent or provider | Declare the enabled credential sources and add agent-specific tests proving that unavailable sources are not probed. |
@@ -145,9 +145,9 @@ NemoClaw's host-local Amazon Bedrock adapter runs outside this sandbox credentia
 #### Hermes Managed Inference Credential Discovery
 
 NemoClaw configures Hermes with a custom provider.
-NVIDIA Endpoints, supported fixed hosted providers, new hosted compatible endpoints outside the Personal tier, and qualifying local selections use sandbox-attached OpenShell providers.
+NVIDIA Endpoints, supported fixed hosted providers, qualifying custom hosted endpoints, and new qualifying local selections use sandbox-attached OpenShell providers.
 Hermes receives a scoped credential reference; OpenShell keeps the upstream credential outside the sandbox.
-Owned Local NVIDIA NIM, nonqualifying custom endpoints, and retained legacy routes use `inference.local`.
+Remaining custom shared selections and retained legacy routes use `inference.local` on OpenShell `0.0.x`.
 Hermes live qualification for the new local lifecycle remains pending.
 The shipped Hermes image does not install the optional native Bedrock dependency.
 AWS credential discovery for supported Bedrock inference therefore remains in NemoClaw's host-local adapter, outside the sandbox.
@@ -159,9 +159,9 @@ If direct Hermes Bedrock support is added later, it must apply the same unavaila
 #### Deep Agents Managed Inference Credential Discovery
 
 NemoClaw configures the managed `dcode` runtime with a generated OpenAI-compatible route.
-New NVIDIA Endpoints, supported fixed hosted providers, hosted compatible endpoints outside the Personal tier, Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible selections use sandbox-attached providers.
-A fresh Personal-tier hosted compatible selection uses `inference.local` without creating a native attachment.
-Owned Local NVIDIA NIM, other compatible endpoints without an attachment, and retained shared routes also use `inference.local`.
+New NVIDIA Endpoints, supported fixed hosted providers, Ollama, standalone vLLM, llama.cpp, and qualifying local compatible selections use sandbox-attached native providers.
+Qualifying custom hosted endpoints also use sandbox-attached providers.
+Remaining shared selections retain `inference.local` on OpenShell `0.0.x`.
 The sandbox receives a scoped credential reference for native providers or a placeholder key for shared routes.
 OpenShell keeps the upstream provider credential outside the sandbox.
 The managed launchers reject credential-shaped environment values and upstream auth files before Deep Agents Code starts, so provider discovery stays on the host-side OpenShell boundary.
@@ -189,7 +189,7 @@ Endpoint rules restrict allowed HTTP methods and URL paths.
 
 | Aspect | Detail |
 |---|---|
-| Default | Some endpoints allow GET and POST on `/**` (for example, `clawhub.ai`). Others restrict methods and paths to specific API routes. The sandbox-attached NVIDIA inference provider allows POST only to `/v1/chat/completions` and GET only to `/v1/models`; it does not permit embedding requests. Read-only endpoints such as `docs.openclaw.ai`, the OpenClaw `npm_registry` baseline entry, and the `pypi` preset allow GET only (PyPI also allows HEAD). The broader `npm` preset is an intentional exception: npm/Yarn registry traffic uses L4 pass-through for Node 22 undici CONNECT compatibility. While that preset is active, NemoClaw temporarily aligns the overlapping baseline npm endpoint with the same reviewed L4 metadata because OpenShell 0.0.116 requires a single connection mode. |
+| Default | Some endpoints allow GET and POST on `/**` (for example, `clawhub.ai`). Others restrict methods and paths to specific API routes. The sandbox-attached NVIDIA inference provider allows POST only to `/v1/chat/completions` and GET only to `/v1/models`; it does not permit embedding requests. Read-only endpoints such as `docs.openclaw.ai`, the OpenClaw `npm_registry` baseline entry, and the `pypi` preset allow GET only (PyPI also allows HEAD). The broader `npm` preset is an intentional exception: npm/Yarn registry traffic uses L4 pass-through for Node 22 undici CONNECT compatibility. While that preset is active, NemoClaw temporarily aligns the overlapping baseline npm endpoint with the same reviewed L4 metadata. OpenShell 0.1.3 rejects overlapping selectors with conflicting connection metadata, including TLS inspection mode. |
 | What you can change | Add methods (PUT, DELETE, PATCH) or restrict paths to specific prefixes. |
 | Risk if relaxed | Allowing all methods on an API endpoint gives the agent write and delete access. For example, allowing DELETE on `api.github.com` lets the agent delete repositories. |
 | Recommendation | Use GET-only rules for endpoints that the agent only reads. Add write methods only for endpoints where the agent must create or modify resources. Restrict paths to specific API routes when possible. |
@@ -337,7 +337,7 @@ The agent never receives the provider API key.
 
 | Aspect | Detail |
 |---|---|
-| Default | NVIDIA Endpoints, supported fixed hosted providers, new hosted compatible endpoints outside the Personal tier, and qualified new local selections use sandbox-attached providers where supported. A fresh Personal-tier hosted compatible selection, owned Local NVIDIA NIM, compatible endpoints without an attachment, and retained shared routes use `inference.local`; the Personal selection creates no native provider attachment. Provider credentials stay outside the sandbox. Bedrock AWS credentials stay in the host-local adapter. |
+| Default | NVIDIA Endpoints, supported fixed hosted providers, qualifying custom hosted endpoints, and qualifying local selections use sandbox-attached native providers. Remaining shared selections retain `inference.local` on OpenShell `0.0.x`. OpenShell owns the direct provider credential and upstream endpoint. Bedrock AWS credentials stay in its host-local adapter. |
 | What you can change | You select a supported provider. NemoClaw selects and enforces that provider's managed path. |
 | Risk if bypassed | Adding an unowned provider endpoint to network policy bypasses NemoClaw's managed provider boundary and could let an agent use a stolen or hardcoded key. The NVIDIA Endpoints path is not a bypass: its checked-in OpenShell provider profile restricts the endpoint, methods, paths, and binaries, then rewrites a placeholder credential at the egress boundary. |
 | Recommendation | Do not add inference provider hosts to network policy for NemoClaw model traffic. Use the provider path created by onboarding. The `claude-code` preset is a separate opt-in exception for running the Claude Code CLI with its own credentials, not a way to configure NemoClaw inference. |

@@ -68,7 +68,7 @@ COPY agents/hermes/managed_policy.py /opt/nemoclaw-hermes-config/managed_policy.
 COPY agents/hermes/host/managed-tool-gateway-matrix.json /opt/nemoclaw-hermes-config/managed-tool-gateway-matrix.json
 COPY src/lib/hermes-managed-route.ts /src/lib/hermes-managed-route.ts
 COPY src/lib/tool-disclosure.ts src/lib/providerless-inference.ts src/lib/inference-credential.ts /src/lib/
-COPY src/lib/inference/native-provider/agent-config.ts src/lib/inference/native-provider/hosted.ts src/lib/inference/native-provider/contract.ts /src/lib/inference/native-provider/
+COPY src/lib/inference/native-provider/agent-config.ts src/lib/inference/native-provider/catalog.ts /src/lib/inference/native-provider/
 COPY src/lib/inference/native-local/agent-config.ts /src/lib/inference/native-local/
 COPY src/lib/core/endpoint-url-safety.ts /src/lib/core/
 COPY src/lib/messaging/ /src/lib/messaging/
@@ -98,9 +98,10 @@ COPY agents/hermes/patch-langfuse-credentials.mts /usr/local/lib/nemoclaw/patch-
 COPY agents/hermes/runtime-config-guard.py /usr/local/lib/nemoclaw/hermes-runtime-config-guard.py
 COPY agents/hermes/migrate-dashboard-state.py /usr/local/lib/nemoclaw/migrate-hermes-dashboard-state.py
 COPY agents/hermes/finalize-tirith-marker.py /usr/local/lib/nemoclaw/finalize-tirith-marker.py
+COPY agents/hermes/startup-completion.py /usr/local/lib/nemoclaw/hermes-startup-completion.py
 COPY agents/hermes/mcp-config-transaction.py /usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py
 COPY agents/hermes/cron-restore-control.py /usr/local/lib/nemoclaw/hermes-cron-restore-control.py
-COPY src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.116.json /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.116.json
+COPY src/lib/actions/sandbox/openshell-child-visible-credentials.v0.1.3.json /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.1.3.json
 COPY nemoclaw-blueprint/scripts/*.js /usr/local/lib/nemoclaw/preloads/
 
 FROM scratch AS hermes-wrapper-payload
@@ -348,13 +349,10 @@ FROM hermes-system
 
 # Hermes' WeChat adapter (gateway/platforms/weixin.py:_make_ssl_connector)
 # builds aiohttp with ssl.create_default_context(cafile=certifi.where()),
-# bypassing SSL_CERT_FILE. Symlink certifi's bundle at SSL_CERT_FILE so
-# weixin TLS trusts the OpenShell L7 proxy CA. Done at image build (as
-# root, which has write perms on the venv) because at runtime root doesn't
-# see SSL_CERT_FILE and the gateway user can't write the venv.
-# The target doesn't need to exist at build time — OpenShell mounts it at
-# sandbox start; the forward-referencing symlink resolves then.
-ARG SSL_CERT_FILE=/etc/openshell-tls/ca-bundle.pem
+# bypassing SSL_CERT_FILE. Link certifi to the workload CA bundle installed by
+# OpenShell 0.1.3 before launch. The image build owns the venv; the sandbox user
+# cannot change the link. The target is absent until OpenShell starts the sandbox.
+ARG SSL_CERT_FILE=/run/openshell-supervisor-ca/material/ca-bundle.crt
 # hadolint ignore=DL3059
 RUN _hermes_certifi=$(/opt/hermes/.venv/bin/python -c 'import certifi; print(certifi.where())') \
     && ln -sf "$SSL_CERT_FILE" "$_hermes_certifi"
@@ -471,11 +469,11 @@ RUN chmod -R a+rX /opt/nemoclaw-blueprint/
 # minimum supported Hermes sandbox base tag guarantees those artifacts and
 # test/runtime/sandbox/sandbox-rlimit-hooks.test.ts covers that base.
 RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-managed-startup-hold /usr/local/lib/nemoclaw/sandbox-init.sh /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py /usr/local/lib/nemoclaw/patch-hermes-sqlite-temp-store.py /usr/local/lib/nemoclaw/patch-hermes-discord-recovery-permissions.py /usr/local/lib/nemoclaw/hermes-runtime-config-guard.py /usr/local/lib/nemoclaw/migrate-hermes-dashboard-state.py /usr/local/lib/nemoclaw/finalize-tirith-marker.py /usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py \
-    && chown root:root /usr/local/lib/nemoclaw/hermes-cron-restore-control.py /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.116.json \
+    && chown root:root /usr/local/lib/nemoclaw/hermes-cron-restore-control.py /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.1.3.json \
     && chmod 700 /usr/local/lib/nemoclaw/hermes-cron-restore-control.py \
     && chmod 444 /usr/local/lib/nemoclaw/corporate-ca-runtime.sh /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh /usr/local/lib/nemoclaw/managed_policy.py \
     && chmod 444 /usr/local/lib/nemoclaw/patch-hermes-langfuse-credentials.mts \
-    && chmod 444 /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.116.json \
+    && chmod 444 /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.1.3.json \
     && /opt/hermes/.venv/bin/python3 -I -c 'import runpy, yaml; assert yaml.safe_load("ready: true")["ready"] is True; runpy.run_path("/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py", run_name="nemoclaw_runtime_config_guard_probe")' \
     && if [ -d /usr/local/lib/nemoclaw/preloads ]; then \
         chown -R 0:0 /usr/local/lib/nemoclaw/preloads \
@@ -775,9 +773,9 @@ RUN node \
 ARG NEMOCLAW_HERMES_CLI_ADAPTER_SHA256=d892e57585485880e41c9bd0afe5b851e131997ab6ac86956a58db0704147781
 ARG NEMOCLAW_HERMES_WRAPPER_SHA256=ca37193cfa1fd972f64db1e3feb77a0b605e2dec507ee8414310ce002aba6985
 ARG NEMOCLAW_HERMES_CLI_ADAPTER_VALIDATOR_SHA256=5205a5446d0a509c5bc60f77fd97ec579449c2c7291dcc2878a788f25f078d6f
-ARG NEMOCLAW_HERMES_VALIDATOR_SHA256=8a034b4ecd32b69487d7524200c59446cf8df40a19e92b064d81f052dd8a51c4
+ARG NEMOCLAW_HERMES_VALIDATOR_SHA256=4ffe5790879d54a93705e218fe886ad8916b9e92766cbe38a48fa452366a93af
 ARG NEMOCLAW_HERMES_TIRITH_FINALIZER_SHA256=a1e6b1c53ab297569abb87c29d15c294d729e46005bfd022136b4c447a791819
-ARG NEMOCLAW_HERMES_CRON_RESTORE_CONTROLLER_SHA256=408c80aacb38ef52cad87278c73f4b0f8863eea75bc7f0ee4f80864137ebf0b0
+ARG NEMOCLAW_HERMES_CRON_RESTORE_CONTROLLER_SHA256=d5b11ec89367cdbdf60390e6fb102fef55cf0cb4b9f4359414c3c3352b962cd4
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_VALIDATOR_SHA256" /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py \

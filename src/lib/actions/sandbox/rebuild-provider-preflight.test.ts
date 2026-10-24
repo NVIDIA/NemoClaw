@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { registeredInferenceFixture } from "../../../../test/helpers/registered-inference";
 import {
   HOSTED_NATIVE_PROVIDERS,
   hostedNativeProvider,
@@ -20,6 +21,7 @@ import {
   inspectRebuildGatewayProviderRegistration,
   shouldVerifyRebuildGatewayProvider,
   verifyRebuildNativeLocalProviderBeforeDelete,
+  verifyRebuildRegisteredProviderBeforeDelete,
 } from "./rebuild-provider-preflight";
 import type { RebuildResumeConfig } from "./rebuild-resume-config";
 import * as managedProviderAdapter from "../../adapters/openshell/managed-provider-adapter";
@@ -108,6 +110,7 @@ describe.each(["langchain-deepagents-code", "hermes", "openclaw"] as const)(
             type: attachment.profileId,
             credentialKeys: [binding.credentialEnv],
             configKeys: [],
+            credentialExpiresAtMs: {} as Record<string, number> | undefined,
             revision: { id: "owned", resourceVersion: 1 },
           },
         })),
@@ -159,6 +162,20 @@ describe.each(["langchain-deepagents-code", "hermes", "openclaw"] as const)(
           {
             target: { kind: "named", gatewayName: "nemoclaw" },
             providerName: f.attachment.providerName,
+            includeCredentialExpirations: true,
+          },
+        ],
+        [
+          {
+            target: { kind: "named", gatewayName: "nemoclaw" },
+            providerName: f.attachment.providerName,
+          },
+        ],
+        [
+          {
+            target: { kind: "named", gatewayName: "nemoclaw" },
+            providerName: f.attachment.providerName,
+            includeCredentialExpirations: true,
           },
         ],
         [
@@ -189,14 +206,95 @@ describe.each(["langchain-deepagents-code", "hermes", "openclaw"] as const)(
       ).resolves.toBe(true);
       expect(getSandbox.mock.calls).toEqual([["alpha"], ["alpha"]]);
       expect(f.adapter.inspectProviderProfile).toHaveBeenCalledOnce();
-      expect(f.adapter.getProvider).toHaveBeenCalledExactlyOnceWith({
-        target: { kind: "named", gatewayName: "nemoclaw" },
-        providerName: f.attachment.providerName,
-      });
+      expect(f.adapter.getProvider.mock.calls).toEqual([
+        [
+          {
+            target: { kind: "named", gatewayName: "nemoclaw" },
+            providerName: f.attachment.providerName,
+            includeCredentialExpirations: true,
+          },
+        ],
+        [
+          {
+            target: { kind: "named", gatewayName: "nemoclaw" },
+            providerName: f.attachment.providerName,
+          },
+        ],
+      ]);
       expect(f.adapter.listProviderAttachments).toHaveBeenCalledExactlyOnceWith({
         target: { kind: "named", gatewayName: "nemoclaw" },
         sandboxName: "alpha",
       });
+    });
+
+    it.each([
+      { label: "expired", metadata: { NEMOCLAW_LOCAL_INFERENCE_TOKEN: 1 }, accepted: false },
+      { label: "missing expiry inventory", metadata: undefined, accepted: false },
+      {
+        label: "negative expiry",
+        metadata: { NEMOCLAW_LOCAL_INFERENCE_TOKEN: -1 },
+        accepted: false,
+      },
+      {
+        label: "invalid expiry",
+        metadata: { NEMOCLAW_LOCAL_INFERENCE_TOKEN: NaN },
+        accepted: false,
+      },
+      {
+        label: "fractional expiry",
+        metadata: { NEMOCLAW_LOCAL_INFERENCE_TOKEN: 1.5 },
+        accepted: false,
+      },
+      {
+        label: "explicit non-expiring",
+        metadata: { NEMOCLAW_LOCAL_INFERENCE_TOKEN: 0 },
+        accepted: true,
+      },
+      {
+        label: "future expiry",
+        metadata: { NEMOCLAW_LOCAL_INFERENCE_TOKEN: Number.MAX_SAFE_INTEGER },
+        accepted: true,
+      },
+    ])("checks $label credentials at the delete edge", async ({ metadata, accepted }) => {
+      const f = nativeFixture();
+      const observed = await f.adapter.getProvider();
+      f.adapter.getProvider.mockClear().mockResolvedValue({
+        ...observed,
+        value: { ...observed.value, credentialExpiresAtMs: metadata },
+      });
+      await expect(
+        verifyRebuildNativeLocalProviderBeforeDelete(
+          "alpha",
+          "nemoclaw",
+          f.selection,
+          undefined,
+          () => f.entry,
+        ),
+      ).resolves.toBe(accepted);
+    });
+
+    it.each([
+      { label: "provider replacement", revision: { id: "replacement", resourceVersion: 1 } },
+      { label: "credential update", revision: { id: "owned", resourceVersion: 2 } },
+    ])("rejects $label during expiry observation", async ({ revision }) => {
+      const f = nativeFixture();
+      const observed = await f.adapter.getProvider();
+      f.adapter.getProvider
+        .mockClear()
+        .mockResolvedValueOnce(observed)
+        .mockResolvedValue({
+          ...observed,
+          value: { ...observed.value, revision },
+        });
+      await expect(
+        verifyRebuildNativeLocalProviderBeforeDelete(
+          "alpha",
+          "nemoclaw",
+          f.selection,
+          undefined,
+          () => f.entry,
+        ),
+      ).resolves.toBe(false);
     });
 
     it.each([
@@ -217,6 +315,7 @@ describe.each(["langchain-deepagents-code", "hermes", "openclaw"] as const)(
               type: f.attachment.profileId,
               credentialKeys: [f.attachment.credentialEnv],
               configKeys: [],
+              credentialExpiresAtMs: {},
               revision: { id: "replacement", resourceVersion: 2 },
             },
           }),
@@ -355,6 +454,31 @@ describe("shouldVerifyRebuildGatewayProvider", () => {
     );
     expect(log).not.toHaveBeenCalled();
     expect(bail).not.toHaveBeenCalled();
+  });
+
+  it("does not print malformed provider or credential identifiers", async () => {
+    const adapter = createCliOpenShellProviderAdapter();
+    vi.spyOn(adapter, "getProvider").mockResolvedValue({
+      ok: false,
+      error: { kind: "command", reason: "not_found", message: "missing" },
+    });
+    vi.spyOn(managedProviderAdapter, "createManagedProviderAdapter").mockReturnValue(adapter);
+    const output: string[] = [];
+    vi.spyOn(console, "error").mockImplementation((message = "") => output.push(String(message)));
+    const log = vi.fn((message: string) => output.push(message));
+    const secret = "nvapi-test-secret";
+
+    await expect(
+      checkRebuildGatewayProviderOrBail(
+        `provider\n${secret}`,
+        `CREDENTIAL\n${secret}`,
+        log,
+        throwingBail,
+      ),
+    ).rejects.toThrow("Missing gateway provider: unavailable");
+
+    expect(output.join("\n")).not.toContain(secret);
+    expect(output.join("\n")).toContain("provider 'unavailable'");
   });
 });
 
@@ -729,3 +853,39 @@ describe("hosted native rebuild provider preflight", () => {
     },
   );
 });
+
+it.each(["valid", "replaced", "detached", "selection-changed"] as const)(
+  "checks the external binding at the destructive rebuild boundary: %s",
+  async (state) => {
+    const f = registeredInferenceFixture(state !== "detached");
+    f.state.id = state === "replaced" ? "replacement" : f.state.id;
+    vi.spyOn(managedProviderAdapter, "createManagedProviderAdapter").mockReturnValue(f.adapter);
+    const resume = config({
+      agent: "openclaw",
+      provider: f.binding.providerName,
+      model: "model-a",
+      endpointUrl: f.binding.endpointUrl,
+      credentialEnv: f.binding.credentialEnv,
+      preferredInferenceApi: f.binding.inferenceApi,
+      registeredInferenceProviderAttachment: f.binding,
+    });
+    const entry = {
+      ...resume,
+      name: f.binding.sandboxName,
+      gatewayName: f.binding.gatewayName,
+      model: state === "selection-changed" ? "other-model" : resume.model,
+    };
+    expect(
+      await verifyRebuildRegisteredProviderBeforeDelete(
+        f.binding.sandboxName,
+        f.binding.gatewayName,
+        resume,
+        undefined,
+        () => entry,
+      ),
+    ).toBe(state === "valid");
+    expect(f.adapter.attachProvider).not.toHaveBeenCalled();
+    expect(f.adapter.deleteProvider).not.toHaveBeenCalled();
+    expect(f.adapter.updateProvider).not.toHaveBeenCalled();
+  },
+);

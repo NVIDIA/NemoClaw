@@ -10,20 +10,12 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { redact, run, runCapture, runCaptureEx } from "../../src/lib/runner";
+import { PINNED_OPEN_SHELL_SHA256 } from "../helpers/openshell-release-fixtures";
+import { prepareInstallerBin } from "../support/openshell-installed-version";
 
 const require = createRequire(import.meta.url);
 const runnerPath = path.join(import.meta.dirname, "..", "..", "src", "lib", "runner.ts");
 const platformPath = path.join(import.meta.dirname, "..", "..", "src", "lib", "platform.ts");
-const PINNED_OPEN_SHELL_SHA256 = {
-  cliDarwinArm64: "e582f2374053bebac8e6aaeb4a369931b7d4bb97bd55055e2c02e85502627e22",
-  cliLinuxArm64: "7a949c48d1e000cd280869eea1e203e24816b9cfefc575b68a8b72b939cb3f43",
-  cliLinuxX64: "4fb4476d80a1875a0b83547ec3aba999cf0a2e2d75f95f2f709b622e2103520e",
-  gatewayDarwinArm64: "f192d3d737c125264e13ef73458541df2ca6a9eb2fa599736a7f2587d5d2ce8d",
-  gatewayLinuxArm64: "292c379193a339220234ffea585350901468bb8f4076e2076bc074e8ed18974b",
-  gatewayLinuxX64: "59c6da724eae7a00c28826f9191efbdf4fbaa5c768afdc8dea6a80a949ebcc89",
-  sandboxLinuxArm64: "959d9a88270e0336f04342560df750591da603424d0a9bfb481ee29670342557",
-  sandboxLinuxX64: "0bb160f73e5007338b94e3c868f66f50c71cd65c27c932ed9a4fa67c49e6d423",
-};
 
 type SpawnCallOptions = {
   stdio?: StdioOptions;
@@ -1091,7 +1083,9 @@ describe("regression guards", () => {
         "scripts",
         "install-openshell.sh",
       );
-      const tmpBin = fs.mkdtempSync(path.join(os.tmpdir(), "gh-absent-"));
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "gh-absent-"));
+      const tmpBin = path.join(root, "bin");
+      prepareInstallerBin(tmpBin);
       const stub = `
         #!/usr/bin/env bash
         printf '%s\n' '#!/bin/sh' 'echo "openshell 0.0.1"' > "${tmpBin}/openshell"
@@ -1164,7 +1158,7 @@ describe("regression guards", () => {
               shift || true
             done
             [ -n "$destination" ] || return 2
-            printf '%s\n' '#!/bin/sh' 'echo "0.0.116"' > "$destination/$expected"
+            printf '%s\n' '#!/bin/sh' 'echo "0.1.3"' > "$destination/$expected"
             chmod +x "$destination/$expected"
             ;;
           *) return 2 ;;
@@ -1176,6 +1170,13 @@ describe("regression guards", () => {
       try {
         const result = spawnSync("bash", ["-c", stub], {
           encoding: "utf-8",
+          env: {
+            ...process.env,
+            HOME: path.join(tmpBin, "home"),
+            XDG_CONFIG_HOME: path.join(tmpBin, "config"),
+            XDG_BIN_HOME: path.join(tmpBin, "install-bin"),
+            OPENSHELL_SYSTEM_GATEWAY_DIR: path.join(tmpBin, "system-gateways"),
+          },
           timeout: 5000,
         });
         const out = (result.stdout || "") + (result.stderr || "");
@@ -1183,7 +1184,7 @@ describe("regression guards", () => {
         expect(out).toContain("CURL_DIRECT");
         expect(out).not.toContain("gh CLI download failed");
       } finally {
-        fs.rmSync(tmpBin, { recursive: true, force: true });
+        fs.rmSync(root, { recursive: true, force: true });
       }
     });
 
@@ -1195,7 +1196,9 @@ describe("regression guards", () => {
         "scripts",
         "install-openshell.sh",
       );
-      const tmpBin = fs.mkdtempSync(path.join(os.tmpdir(), "gh-stub-"));
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "gh-stub-"));
+      const tmpBin = path.join(root, "bin");
+      prepareInstallerBin(tmpBin);
       const checksumLog = path.join(tmpBin, "sha256sum.log");
       const ghStub = path.join(tmpBin, "gh");
       fs.writeFileSync(ghStub, "#!/bin/sh\nexit 4\n");
@@ -1272,7 +1275,7 @@ describe("regression guards", () => {
               shift || true
             done
             [ -n "$destination" ] || return 2
-            printf '%s\n' '#!/bin/sh' 'echo "0.0.116"' > "$destination/$expected"
+            printf '%s\n' '#!/bin/sh' 'echo "0.1.3"' > "$destination/$expected"
             chmod +x "$destination/$expected"
             ;;
           *) return 2 ;;
@@ -1284,6 +1287,13 @@ describe("regression guards", () => {
       try {
         const result = spawnSync("bash", ["-c", stub], {
           encoding: "utf-8",
+          env: {
+            ...process.env,
+            HOME: path.join(tmpBin, "home"),
+            XDG_CONFIG_HOME: path.join(tmpBin, "config"),
+            XDG_BIN_HOME: path.join(tmpBin, "install-bin"),
+            OPENSHELL_SYSTEM_GATEWAY_DIR: path.join(tmpBin, "system-gateways"),
+          },
           timeout: 5000,
         });
         const out = (result.stdout || "") + (result.stderr || "");
@@ -1291,7 +1301,7 @@ describe("regression guards", () => {
         expect(out).toContain("CURL_FALLBACK");
         expect(fs.readFileSync(checksumLog, "utf-8")).toContain("SHA256SUM -c -");
       } finally {
-        fs.rmSync(tmpBin, { recursive: true, force: true });
+        fs.rmSync(root, { recursive: true, force: true });
       }
     });
   });

@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { registeredInferenceFixture } from "../../../../../test/helpers/registered-inference";
+
 import { describe, expect, it, vi } from "vitest";
 
 import { decisionSelected, decisionUnset } from "../../../state/onboard-checkpoint-decision";
@@ -1202,74 +1204,7 @@ describe("handleProviderInferenceState", () => {
     );
   });
 
-  it("reconciles model router on resumed routed inference", async () => {
-    const session = createSession({
-      sandboxName: "router-sandbox",
-      provider: "nvidia-router",
-      model: "router/model",
-      sandboxPromptProgress: {
-        sandboxName: true,
-        webSearch: false,
-        messaging: false,
-        resourceProfile: false,
-      },
-    });
-    session.steps.provider_selection.status = "complete";
-    const { deps, calls } = createDeps({ isInferenceRouteReady: vi.fn(() => true) });
-
-    await handleProviderInferenceState({
-      ...baseOptions(deps, session),
-      resume: true,
-      sandboxName: "router-sandbox",
-    });
-
-    expect(calls.reconcileRouter).toHaveBeenCalledOnce();
-    expect(calls.reserveRoute).toHaveBeenCalledWith("router-sandbox", {
-      provider: "nvidia-router",
-      model: "router/model",
-      endpointUrl: "http://host.openshell.internal:4000/v1",
-      endpointSource: null,
-      credentialEnv: null,
-      preferredInferenceApi: null,
-      gatewayName: "nemoclaw",
-      reservationSessionId: session.sessionId,
-    });
-  });
-
-  // #5974 instance 5: the Model Router Python preflight (`prepareModelRouterVenv`)
-  // throws a plain Error (e.g. "above supported ceiling", with no `oclif.exit`)
-  // out of `reconcileModelRouter`. The routed branch must catch that throw and
-  // exit non-zero via `exitProcess(1)` so onboard reports the failure to `$?`,
-  // rather than the throw being swallowed or riding the oclif runner. The error
-  // reasons themselves are locked by `model-router-python.test.ts`.
-  it("exits non-zero when model router reconciliation throws (#5974)", async () => {
-    const session = createSession({ provider: "nvidia-router", model: "router/model" });
-    session.steps.provider_selection.status = "complete";
-    const { deps, calls } = createDeps({
-      isInferenceRouteReady: vi.fn(() => true),
-      reconcileModelRouter: vi.fn(async () => {
-        throw new Error("version 3.14.0 above supported ceiling 3.14.0 (exclusive)");
-      }),
-    });
-
-    await expect(
-      handleProviderInferenceState({
-        ...baseOptions(deps, session),
-        resume: true,
-        sandboxName: "router-sandbox",
-      }),
-    ).rejects.toThrow("exit 1");
-
-    expect(calls.exit).toHaveBeenCalledWith(1);
-    expect(calls.error).toHaveBeenCalledWith(
-      expect.stringContaining("Failed to reconcile model router"),
-    );
-  });
-
-  // Regression: #4564. On resume the routed provider was only reconciled, never
-  // re-upserted, so a stale localhost base URL recorded by an earlier run could
-  // survive in the gateway and break inference.local from the sandbox.
-  it("re-upserts the routed provider with the host alias on resume (#4564)", async () => {
+  it("delegates routed resume to native setup without querying the retired shared route", async () => {
     const session = createSession({
       provider: "nvidia-router",
       model: "router/model",
@@ -1277,113 +1212,44 @@ describe("handleProviderInferenceState", () => {
       credentialEnv: "NVIDIA_INFERENCE_API_KEY",
     });
     session.steps.provider_selection.status = "complete";
-    const { deps, calls } = createDeps({ isInferenceRouteReady: vi.fn(() => true) });
-
-    const result = await handleProviderInferenceState({
+    const isInferenceRouteReady = vi.fn(() => {
+      throw new Error("retired route");
+    });
+    const { deps, calls } = createDeps({ isInferenceRouteReady });
+    await handleProviderInferenceState({
       ...baseOptions(deps, session),
       resume: true,
       sandboxName: "router-sandbox",
     });
-
-    expect(calls.reconcileRouter).toHaveBeenCalledOnce();
-    expect(calls.reupsertRoutedProvider).toHaveBeenCalledWith(
-      "nemoclaw",
+    expect(calls.setupInference).toHaveBeenCalledWith(
+      "router-sandbox",
+      "router/model",
       "nvidia-router",
       "http://localhost:4000/v1",
       "NVIDIA_INFERENCE_API_KEY",
+      null,
+      [],
+      expect.any(Object),
     );
-    expect(calls.setupInference).not.toHaveBeenCalled();
-    expect(result.endpointUrl).toBe("http://host.openshell.internal:4000/v1");
+    expect(isInferenceRouteReady).not.toHaveBeenCalled();
+    expect(calls.reupsertRoutedProvider).not.toHaveBeenCalled();
   });
 
-  it("reserves an authoritative routed repair inside the same gateway lock", async () => {
-    const session = createSession({
-      provider: "nvidia-router",
-      model: "router/model",
-      endpointUrl: "http://localhost:4000/v1",
-      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
-    });
+  it("propagates native router setup failure during resume", async () => {
+    const session = createSession({ provider: "nvidia-router", model: "router/model" });
     session.steps.provider_selection.status = "complete";
-    let insideGatewayLock = false;
-    const gatewayLocks: string[] = [];
-    const withGatewayRouteMutationLock: ProviderInferenceStateOptions<
-      Gpu,
-      Agent,
-      Host
-    >["deps"]["withGatewayRouteMutationLock"] = async (gatewayName, operation) => {
-      gatewayLocks.push(gatewayName);
-      insideGatewayLock = true;
-      try {
-        return await operation();
-      } finally {
-        insideGatewayLock = false;
-      }
-    };
-    const { deps, calls } = createDeps({
-      isInferenceRouteReady: vi.fn(() => true),
-      withGatewayRouteMutationLock,
+    const { deps } = createDeps({
+      setupInference: vi.fn(async () => {
+        throw new Error("router ownership changed");
+      }),
     });
-    const rebuiltSession = createSession({ sessionId: "router-rebuild-session-id" });
-    calls.complete.mockResolvedValueOnce(rebuiltSession);
-    calls.reconcileRouter.mockImplementation(async () => {
-      expect(insideGatewayLock).toBe(true);
-    });
-    calls.reupsertRoutedProvider.mockImplementation(() => {
-      expect(insideGatewayLock).toBe(true);
-      return { ok: true, endpointUrl: "http://host.openshell.internal:4000/v1" };
-    });
-    calls.reserveRoute.mockImplementation(() => {
-      expect(insideGatewayLock).toBe(true);
-      return true;
-    });
-
-    await handleProviderInferenceState({
-      ...baseOptions(deps, session),
-      resume: true,
-      authoritativeResumeConfig: true,
-      sandboxName: "router-rebuild",
-    });
-
-    expect(gatewayLocks).toEqual(["nemoclaw"]);
-    expect(calls.reserveRoute).toHaveBeenCalledWith("router-rebuild", {
-      provider: "nvidia-router",
-      model: "router/model",
-      endpointUrl: "http://host.openshell.internal:4000/v1",
-      endpointSource: null,
-      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
-      preferredInferenceApi: null,
-      gatewayName: "nemoclaw",
-      reservationSessionId: rebuiltSession.sessionId,
-    });
-  });
-
-  it("aborts resume when re-upserting the routed provider fails (#4564)", async () => {
-    const session = createSession({
-      provider: "nvidia-router",
-      model: "router/model",
-      endpointUrl: "http://localhost:4000/v1",
-    });
-    session.steps.provider_selection.status = "complete";
-    const { deps, calls } = createDeps({
-      isInferenceRouteReady: vi.fn(() => true),
-      reupsertRoutedProvider: vi.fn(() => ({
-        ok: false,
-        endpointUrl: "http://host.openshell.internal:4000/v1",
-        message: "provider update failed",
-        status: 7,
-      })),
-    });
-
     await expect(
       handleProviderInferenceState({
         ...baseOptions(deps, session),
         resume: true,
         sandboxName: "router-sandbox",
       }),
-    ).rejects.toThrow("exit 7");
-
-    expect(calls.error).toHaveBeenCalledWith("  provider update failed");
-    expect(calls.exit).toHaveBeenCalledWith(7);
+    ).rejects.toThrow("router ownership changed");
   });
 
   it("returns to provider selection when inference setup requests a retry", async () => {
@@ -1488,4 +1354,45 @@ describe("handleProviderInferenceState", () => {
       }),
     );
   });
+});
+
+it("resumes a verified external selection without reading or rewriting the shared route", async () => {
+  const f = registeredInferenceFixture();
+  const binding = { ...f.binding, gatewayName: "nemoclaw", sandboxName: "my-assistant" };
+  const selection = {
+    provider: binding.providerName,
+    model: "model-a",
+    endpointUrl: binding.endpointUrl,
+    credentialEnv: binding.credentialEnv,
+    preferredInferenceApi: binding.inferenceApi,
+  };
+  const session = createSession({ sandboxName: binding.sandboxName, ...selection });
+  session.steps.provider_selection.status = "complete";
+  const isInferenceRouteReady = vi.fn(() => {
+    throw new Error("retired shared route");
+  });
+  const { deps, calls } = createDeps({
+    isInferenceRouteReady,
+    getSandboxRegistryEntry: () => ({
+      name: binding.sandboxName,
+      gatewayName: binding.gatewayName,
+      ...selection,
+      registeredInferenceProviderAttachment: binding,
+    }),
+    ensureResumeProviderReady: vi.fn(async () => ({
+      forceInferenceSetup: false,
+      credentialEnv: binding.credentialEnv,
+      registeredNativeSetup: true,
+    })),
+  });
+  await handleProviderInferenceState({
+    ...baseOptions(deps, session),
+    resume: true,
+    authoritativeResumeConfig: true,
+    sandboxName: binding.sandboxName,
+  });
+  expect(isInferenceRouteReady).not.toHaveBeenCalled();
+  expect(calls.setupInference).not.toHaveBeenCalled();
+  expect(calls.hydrate).not.toHaveBeenCalled();
+  expect(calls.reupsertRoutedProvider).not.toHaveBeenCalled();
 });

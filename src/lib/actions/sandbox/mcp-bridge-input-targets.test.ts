@@ -201,7 +201,7 @@ replace(provider, "upsertMcpProvider", () => ({
   action: "created",
   inspection: {
     credentialKeys: ["LOCAL_MCP_TOKEN"], exists: true,
-    id: "11111111-2222-4333-8444-555555555555", resourceVersion: 1, type: "nemoclaw-mcp-v1",
+    id: "11111111-2222-4333-8444-555555555555", resourceVersion: 1, type: provider.mcpBridgeProviderType("LOCAL_MCP_TOKEN"),
   },
 }));
 replace(provider, "attachProvider", () => {});
@@ -317,7 +317,7 @@ replace(provider, "getMcpProviderInspectionRuntimeSelection", () => ({
 replace(provider, "inspectMcpProvider", () => ({
   credentialKeys: ["GITHUB_TOKEN"], exists: true,
   id: "11111111-2222-4333-8444-555555555555", resourceVersion: 7,
-  type: "nemoclaw-mcp-v1",
+  type: provider.mcpBridgeProviderType("GITHUB_TOKEN"),
 }));
 replace(provider, "inspectMcpProviderAttachments", () => ({ attachments: [] }));
 replace(policies, "getPresetContentGatewayState", () => "absent");
@@ -433,7 +433,7 @@ replace(validation, "assertMcpCredentialBoundaryRuntimeVersion", () => {});
 replace(provider, "getMcpProviderInspectionRuntimeSelection", () => ({ gatewayName: "nemoclaw", workspace: "default" }));
 replace(provider, "inspectMcpProvider", () => state.provider ? ({
   exists: true, id: providerId, resourceVersion: 7,
-  type: "nemoclaw-mcp-v1", credentialKeys: ["GITHUB_TOKEN"],
+  type: provider.mcpBridgeProviderType("GITHUB_TOKEN"), credentialKeys: ["GITHUB_TOKEN"],
 }) : ({ exists: false, id: null, resourceVersion: null, type: null, credentialKeys: null }));
 replace(provider, "inspectMcpProviderAttachments", () => ({
   attachments: state.attachment ? [{ name: "alpha-mcp-github", providerId, credentialKeys: ["GITHUB_TOKEN"] }] : [],

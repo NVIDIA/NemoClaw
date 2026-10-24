@@ -17,6 +17,7 @@ const QUALIFICATION_MARKER = "__NEMOCLAW_OPENCLAW_PAIRING_QUALIFICATION__=";
 const SETTLEMENT_MARKER = "__NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT__=";
 const RETRYABLE_OBSERVATION_EXIT_STATUS = 3;
 const INCOMPATIBLE_OBSERVATION_EXIT_STATUS = 4;
+const INCOMPATIBLE_MARKER = "__NEMOCLAW_PAIRING_INCOMPATIBLE__=";
 const SHA256_RE = /^[a-f0-9]{64}$/;
 const OPENCLAW_VERSION_RE = /\bopenclaw\b[^\r\n0-9]*([0-9]+\.[0-9]+\.[0-9]+)(?![0-9.])/i;
 export const OPENCLAW_PAIRING_OBSERVATION_TIMEOUT_MS = 3_000;
@@ -267,8 +268,11 @@ ED25519_SPKI_PREFIX = bytes.fromhex('302a300506032b6570032100')
 RAW_PUBLIC_KEY_RE = re.compile(r'^[A-Za-z0-9_-]{43}$')
 
 incompatible_pairing = False
+incompatible_reason = "unclassified"
 
 def reject():
+    if incompatible_pairing:
+        print("${INCOMPATIBLE_MARKER}" + incompatible_reason)
     sys.exit(${INCOMPATIBLE_OBSERVATION_EXIT_STATUS} if incompatible_pairing else 1)
 
 def retry_observation():
@@ -663,9 +667,11 @@ try:
         )
     ]
     incompatible_pairing = bool(local_paired)
+    incompatible_reason = "local-record-count"
     if len(local_paired) != 1:
         reject()
     map_key, paired_device = local_paired[0]
+    incompatible_reason = "paired-metadata"
     if (
         map_key != device_id
         or not isinstance(paired_device, dict)
@@ -679,6 +685,7 @@ try:
         or 'publicKeyPem' in paired_device
     ):
         reject()
+    incompatible_reason = "paired-token"
     paired_tokens = paired_device.get('tokens')
     paired_operator = paired_tokens.get('operator') if isinstance(paired_tokens, dict) and set(paired_tokens) == {'operator'} else None
     if (
@@ -691,7 +698,17 @@ try:
         or any(alias in paired_operator for alias in ('requestedScopes', 'approvedScopes', 'roles'))
     ):
         reject()
+    incompatible_reason = "client-token"
     auth_tokens = auth.get('tokens')
+    # OpenClaw commits approval before the client stores the hello response token.
+    # Ordinary onboarding can observe that gap; qualification still requires the token.
+    if (
+        ORDINARY_SETTLEMENT and first.get('layout') == 'sqlite'
+        and type(auth.get('version')) is int and auth.get('version') == 1
+        and auth.get('deviceId') == device_id
+        and isinstance(auth_tokens, dict) and not auth_tokens
+    ):
+        retry_observation()
     auth_operator = auth_tokens.get('operator') if isinstance(auth_tokens, dict) and set(auth_tokens) == {'operator'} else None
     if (
         type(auth.get('version')) is not int
@@ -704,6 +721,18 @@ try:
         or auth_operator.get('token') != paired_operator.get('token')
         or any(alias in auth_operator for alias in ('requestedScopes', 'approvedScopes', 'roles'))
     ):
+        # Report only fixed categories after the unchanged credential checks fail.
+        client_token_failures = (
+            ('missing-operator', not isinstance(auth_tokens, dict) or 'operator' not in auth_tokens),
+            ('role-set', isinstance(auth_tokens, dict) and set(auth_tokens) != {'operator'}),
+            ('token-mismatch', isinstance(auth_operator, dict)
+                and isinstance(auth_operator.get('token'), str)
+                and auth_operator.get('token') != paired_operator.get('token')),
+        )
+        incompatible_reason += ':' + next(
+            filter(lambda failure: failure[1], client_token_failures),
+            ('metadata', True),
+        )[0]
         reject()
 
     incompatible_pairing = False
@@ -812,6 +841,7 @@ try:
             reject()
     if not settled and not pairing_only and not upgrade_required:
         incompatible_pairing = True
+        incompatible_reason = "scope-set"
         reject()
 
     device_identity_sha256 = hashlib.sha256(json.dumps({
@@ -923,6 +953,15 @@ function runOpenClawPairingObservation(
     throw new OpenClawPairingObservationRetryableError();
   }
   if (!result.error && !result.signal && result.status === INCOMPATIBLE_OBSERVATION_EXIT_STATUS) {
+    // Export only a closed reason vocabulary, never the observed device or credential state.
+    const reason = String(result.stdout ?? "")
+      .trim()
+      .match(
+        /^__NEMOCLAW_PAIRING_INCOMPATIBLE__=(local-record-count|paired-metadata|paired-token|client-token(?::(?:missing-operator|role-set|token-mismatch|metadata))?|scope-set)$/,
+      )?.[1];
+    console.error(
+      `OpenClaw CLI pairing incompatible: ${(reason ?? "unclassified").replace(":", " / ")}.`,
+    );
     throw new OpenClawPairingIncompatibleError();
   }
   if (result.error || result.signal || result.status !== 0) {

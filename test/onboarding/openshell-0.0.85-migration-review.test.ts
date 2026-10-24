@@ -7,16 +7,11 @@ import { describe, expect, it } from "vitest";
 
 const repoRoot = path.resolve(import.meta.dirname, "../..");
 describe("OpenShell migration executable contracts", () => {
-  it("keeps exact-main runtime proofs separate from upstream-only fault injection", () => {
+  it("wires native runtime and MCP privacy proofs without upstream fault injection", () => {
     const helper = fs.readFileSync(
       path.join(repoRoot, "test", "e2e", "live", "openshell-exact-main-runtime-contracts.ts"),
       "utf8",
     );
-    expect(helper).toContain('chain.policy !== "accept"');
-    expect(helper).toContain("expected exactly one ${family} ${protocol} reject rule");
-    expect(helper).toContain("DIRECT_BYPASS_PROBE_CODE");
-    expect(helper).toContain('sha256sum \\"/proc/$old_pid/exe\\"');
-    expect(helper).toContain('[ "$new_status" = 403 ]');
     expect(helper).toContain("line.includes(`tools=${options.expectedTool}`)");
     expect(helper).toContain("not.toMatch(/\\barguments\\b[\"']?\\s*[:=]/iu)");
     expect(helper).not.toContain("iptables -F");
@@ -26,7 +21,7 @@ describe("OpenShell migration executable contracts", () => {
       path.join(repoRoot, "test", "e2e", "live", "openshell-exact-main-mcp-proof.ts"),
       "utf8",
     );
-    expect(mcpProof).toContain("assertExactMainPolicyNftAndIdentityContracts({");
+    expect(mcpProof).toContain("assertExactMainPolicyAndIdentityContracts({");
     expect(mcpProof).toContain("assertExactMainMcpLogPrivacy({");
   });
 
@@ -36,8 +31,9 @@ describe("OpenShell migration executable contracts", () => {
       "utf8",
     );
     expect(helper).toContain("parse as parseToml");
-    expect(helper).toContain('expect(gateway.compute_drivers).toEqual(["docker"])');
-    expect(helper).toContain("Object.keys(drivers)");
+    expect(helper).toContain('expect(gateway.compute_driver).toBe("docker")');
+    expect(helper).toContain("expect(openshell.version).toBe(2)");
+    expect(helper).toContain('requireRecord(drivers.docker, "openshell.drivers.docker")');
     expect(helper).toContain("fs.realpathSync(`/proc/${gatewayPid}/exe`)");
     expect(helper).toContain('["-H", "-ltnp"]');
     expect(helper).toContain('"{{json .HostConfig.Binds}}"');
@@ -54,9 +50,13 @@ describe("OpenShell migration executable contracts", () => {
     expect(mcpProof).toContain("driverConfig.assertAfterRebuild()");
     expect(mcpProof).toContain("from deepagents_code import _nemoclaw_managed as managed");
     expect(mcpProof).not.toContain("/opt/nemoclaw-deepagents-code/managed-dcode-runtime.py");
-    expect(mcpProof).toContain("def reject_primary_tmpfile(path, flags, *args, **kwargs):");
-    expect(mcpProof).toContain("if directory == managed._MCP_ANONYMOUS_DIRECTORY:");
-    expect(mcpProof).toContain("managed._MCP_PRIVATE_ANONYMOUS_DIRECTORY,");
+    expect(mcpProof).toContain("managed._validate_private_managed_mcp_tmpfs()");
+    expect(mcpProof).toContain(
+      "managed._anonymous_managed_mcp_snapshot_at(\n    payload, managed._MCP_PRIVATE_ANONYMOUS_DIRECTORY",
+    );
+    expect(mcpProof).toContain(
+      "managed._read_bound_managed_mcp_descriptor(descriptor, binding) == payload",
+    );
   });
   it("keeps current stable selectors aligned", () => {
     const blueprint = fs.readFileSync(
@@ -71,15 +71,15 @@ describe("OpenShell migration executable contracts", () => {
           "lib",
           "actions",
           "sandbox",
-          "openshell-child-visible-credentials.v0.0.116.json",
+          "openshell-child-visible-credentials.v0.1.3.json",
         ),
         "utf8",
       ),
     ) as { openshellVersion: string };
 
-    expect(blueprint).toContain('min_openshell_version: "0.0.116"');
-    expect(blueprint).toContain('max_openshell_version: "0.0.116"');
-    expect(manifest.openshellVersion).toBe("0.0.116");
+    expect(blueprint).toContain('min_openshell_version: "0.1.3"');
+    expect(blueprint).toContain('max_openshell_version: "0.1.3"');
+    expect(manifest.openshellVersion).toBe("0.1.3");
   });
   it("does not reintroduce newline-only code transports at migrated consumers", () => {
     const migratedConsumers = [

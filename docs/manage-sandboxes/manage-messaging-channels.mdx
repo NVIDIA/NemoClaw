@@ -37,6 +37,21 @@ For Google Chat, re-add the channel and paste the replacement service-account JS
 
 For detailed token rotation procedures, refer to [Credential Rotation](../../security/credential-rotation).
 
+### Shared Messaging Credential Profile
+
+The shared messaging profile is `nemoclaw-messaging-v1`.
+It declares `TELEGRAM_BOT_TOKEN`, `DISCORD_BOT_TOKEN`, `WECHAT_BOT_TOKEN`, `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, and `MSTEAMS_APP_PASSWORD` for the existing channel bindings.
+Each declaration is optional in the profile because individual providers hold the credentials selected for their channel; creating a provider still requires its primary credential.
+The profile grants no endpoints, binaries, files, or inference access.
+Channel policy and provider-binding checks control where each credential can be used.
+Channels with their own provider profiles, including Hermes Discord and Google Chat, retain those profiles.
+
+An older shared messaging provider can have the `nemoclaw-mcp-v1` type.
+That type does not match the new shared messaging profile, and NemoClaw does not relabel the existing provider automatically.
+If an operation reports that the named provider does not match the required endpointless credential binding, inspect that provider and its sandbox attachments.
+To replace the binding for the intended sandbox, rerun `$$nemoclaw <sandbox> channels add <channel>` with the channel's complete credentials.
+The replacement remains subject to the attachment restrictions and failure recovery above.
+
 ## Remove a Channel
 
 Remove the channel and clear its stored credentials:

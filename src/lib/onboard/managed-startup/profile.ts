@@ -531,8 +531,6 @@ export const MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY = {
     affordance("NEMOCLAW_DASHBOARD_BIND", "dashboard.bindAddress"),
     affordance("NEMOCLAW_WSL_DASHBOARD_EXPOSURE", "dashboard.wslExposure"),
     affordance("NEMOCLAW_DASHBOARD_PORT", "dashboard.port", "runtime-env"),
-    affordance("NEMOCLAW_PROXY_HOST", "proxy.managedHost"),
-    affordance("NEMOCLAW_PROXY_PORT", "proxy.managedPort"),
     affordance("NEMOCLAW_MESSAGING_PLAN_B64", "messaging.plan"),
     affordance("NEMOCLAW_MINIMAL_BOOTSTRAP", "agentConfig.minimalBootstrap", "runtime-env"),
     affordance(
@@ -567,8 +565,6 @@ export const MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY = {
     affordance("NEMOCLAW_HERMES_DASHBOARD_PORT", "dashboard.publicPort", "runtime-env"),
     affordance("NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT", "dashboard.internalPort", "runtime-env"),
     affordance("NEMOCLAW_HERMES_DASHBOARD_TUI", "dashboard.tuiEnabled", "runtime-env"),
-    affordance("NEMOCLAW_PROXY_HOST", "proxy.managedHost", "runtime-env"),
-    affordance("NEMOCLAW_PROXY_PORT", "proxy.managedPort", "runtime-env"),
     affordance(
       "NEMOCLAW_CORPORATE_CA_B64",
       "corporateCa.bundleSha256",
@@ -587,8 +583,6 @@ export const MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY = {
     affordance("NEMOCLAW_REASONING_EFFORT", "tuning.reasoningEffort"),
     affordance("NEMOCLAW_TOOL_DISCLOSURE", "tools.disclosure"),
     affordance("NEMOCLAW_DCODE_AUTO_APPROVAL", "agentConfig.autoApprovalMode"),
-    affordance("NEMOCLAW_PROXY_HOST", "proxy.managedHost"),
-    affordance("NEMOCLAW_PROXY_PORT", "proxy.managedPort"),
     affordance("NEMOCLAW_OBSERVABILITY", "agentConfig.observabilityEnabled", "runtime-env"),
     affordance(
       "NEMOCLAW_CORPORATE_CA_B64",
@@ -608,8 +602,6 @@ export const MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY = {
     affordance("NEMOCLAW_MAX_TOKENS", "tuning.maxTokens"),
     affordance("NEMOCLAW_REASONING", "tuning.reasoning"),
     affordance("NEMOCLAW_TOOL_DISCLOSURE", "tools.disclosure"),
-    affordance("NEMOCLAW_PROXY_HOST", "proxy.managedHost"),
-    affordance("NEMOCLAW_PROXY_PORT", "proxy.managedPort"),
     affordance(
       "NEMOCLAW_CORPORATE_CA_B64",
       "corporateCa.bundleSha256",

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { registeredInferenceFixture } from "../../../../test/helpers/registered-inference";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as projection from "../../onboard/hermes/initial-inference-route";
 import * as registry from "../../state/registry";
@@ -210,7 +211,11 @@ describe("Hermes rebuild post-restore verification", () => {
         detachedProviderEntries: [mcpEntry],
         scrubbedAdapterEntries: [mcpEntry],
       },
-      sandboxEntry: { agent: "hermes", provider: "nvidia-router" },
+      sandboxEntry: {
+        agent: "hermes",
+        provider: "nvidia-prod",
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      },
     });
 
     await expect(
@@ -243,7 +248,11 @@ describe("Hermes rebuild post-restore verification", () => {
         detachedProviderEntries: [mcpEntry],
         scrubbedAdapterEntries: [mcpEntry],
       },
-      sandboxEntry: { agent: "hermes", provider: "nvidia-router" },
+      sandboxEntry: {
+        agent: "hermes",
+        provider: "nvidia-prod",
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      },
     });
     harness.restoreMcpBridgesAfterRebuildSpy.mockRejectedValueOnce(new Error("reload failed"));
 
@@ -260,7 +269,11 @@ describe("Hermes rebuild post-restore verification", () => {
     const harness = createRebuildFlowHarness({
       agentName: "hermes",
       sessionAgentName: null,
-      sandboxEntry: { agent: "hermes", provider: "nvidia-router" },
+      sandboxEntry: {
+        agent: "hermes",
+        provider: "nvidia-prod",
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      },
     });
 
     await expect(
@@ -279,7 +292,11 @@ describe("Hermes rebuild post-restore verification", () => {
   it("rebinds and verifies ordinary Hermes after restoring its durable state", async () => {
     const harness = createRebuildFlowHarness({
       agentName: "hermes",
-      sandboxEntry: { agent: "hermes", provider: "nvidia-router" },
+      sandboxEntry: {
+        agent: "hermes",
+        provider: "nvidia-prod",
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      },
     });
 
     await expect(
@@ -298,7 +315,11 @@ describe("Hermes rebuild post-restore verification", () => {
     const harness = createRebuildFlowHarness({
       agentName: "hermes",
       sessionAgentName: "langchain-deepagents-code",
-      sandboxEntry: { agent: "hermes", provider: "nvidia-router" },
+      sandboxEntry: {
+        agent: "hermes",
+        provider: "nvidia-prod",
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      },
     });
 
     await expect(
@@ -359,40 +380,51 @@ describe("restored Hermes route identity", () => {
 
   afterEach(() => vi.restoreAllMocks());
 
-  it("pins the replacement live identity and selected runtime before deferred projection", async () => {
-    const f = fixture();
-    await refreshRestoredHermesInferenceRoute(
-      "alpha",
-      runtime,
-      registry.getSandbox,
-      commandEnvironment,
-    );
-    expect(f.factory).toHaveBeenCalledWith(
-      expect.objectContaining({ getSandbox: expect.any(Function) }),
-      { activation: "deferred", workload: "registered", projection: "credential" },
-    );
-    expect(f.project).toHaveBeenCalledWith(
-      "alpha",
-      "selected-model",
-      "compatible-endpoint",
-      runtime.gatewayName,
-      expect.any(Function),
-    );
-    expect(f.observe).toHaveBeenCalledWith(
-      ["sandbox", "get", "-g", runtime.gatewayName, "alpha"],
-      expect.objectContaining({
-        env: expect.objectContaining({
-          OPENSHELL_GATEWAY: runtime.gatewayName,
-          OPENSHELL_WORKSPACE: runtime.workspace,
-          OPENSHELL_LOCAL_TLS_DIR: runtime.localTlsDir,
+  it.each(["compatible-endpoint", "native-extra"])(
+    "pins %s replacement identity and selected runtime before deferred projection",
+    async (provider) => {
+      const f = fixture();
+      f.entry.provider = provider;
+      f.entry.registeredInferenceProviderAttachment =
+        provider === "native-extra"
+          ? {
+              ...registeredInferenceFixture(true).binding,
+              gatewayName: runtime.gatewayName,
+            }
+          : undefined;
+      await refreshRestoredHermesInferenceRoute(
+        "alpha",
+        runtime,
+        registry.getSandbox,
+        commandEnvironment,
+      );
+      expect(f.factory).toHaveBeenCalledWith(
+        expect.objectContaining({ getSandbox: expect.any(Function) }),
+        { activation: "deferred", workload: "registered", projection: "credential" },
+      );
+      expect(f.project).toHaveBeenCalledWith(
+        "alpha",
+        "selected-model",
+        provider,
+        runtime.gatewayName,
+        expect.any(Function),
+      );
+      expect(f.observe).toHaveBeenCalledWith(
+        ["sandbox", "get", "-g", runtime.gatewayName, "alpha"],
+        expect.objectContaining({
+          env: expect.objectContaining({
+            OPENSHELL_GATEWAY: runtime.gatewayName,
+            OPENSHELL_WORKSPACE: runtime.workspace,
+            OPENSHELL_LOCAL_TLS_DIR: runtime.localTlsDir,
+          }),
+          replaceEnv: true,
+          timeout: 30000,
         }),
-        replaceEnv: true,
-        timeout: 30000,
-      }),
-    );
-    expect(f.observe.mock.calls[0][1]?.env).not.toHaveProperty("ABSENT");
-    expect(f.write).toHaveBeenCalledOnce();
-  });
+      );
+      expect(f.observe.mock.calls[0][1]?.env).not.toHaveProperty("ABSENT");
+      expect(f.write).toHaveBeenCalledOnce();
+    },
+  );
 
   it.each([
     {

@@ -37,7 +37,7 @@ describe("config rotate-token CLI", () => {
           "#!/bin/sh",
           'printf \'%s\\n\' "$*" >> "$OPENSHELL_TEST_COMMAND_LOG"',
           'if [ "$1" = "--version" ]; then',
-          "  printf 'openshell 0.0.116\\n'",
+          "  printf 'openshell 0.1.3\\n'",
           "  exit 0",
           "fi",
           'if [ "$1" = "provider" ] && [ "$2" = "update" ]; then',

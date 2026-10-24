@@ -222,7 +222,7 @@ async function terminateRemoteHermesAcp(
   return result.exitCode === 0;
 }
 
-async function verifyNoRemoteHermesAcpProcess(
+export async function verifyNoRemoteHermesAcpProcess(
   sandbox: SandboxClient,
   sandboxName: string,
   env: NodeJS.ProcessEnv,
@@ -234,7 +234,13 @@ async function verifyNoRemoteHermesAcpProcess(
       env: hermesAcpLiveHostEnv(env),
       timeoutMs: 30_000,
     });
-    if (result.exitCode === 1) return true;
+    if (result.exitCode === 1)
+      return (
+        !result.timedOut &&
+        result.signal === null &&
+        result.stdout.trim() === "" &&
+        result.stderr.trim() === ""
+      );
     if (result.exitCode !== 0) return false;
     await sleep(1_000);
   }

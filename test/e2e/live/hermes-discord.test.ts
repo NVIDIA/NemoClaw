@@ -1,6 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  NETWORK_POLICY_ERROR_REPORT,
+  NETWORK_POLICY_RESULT_PREFIX,
+  isNetworkPolicyDenial,
+} from "../support/network-policy-probe.ts";
+
 import fs from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 
@@ -309,7 +315,7 @@ const request = http.request({
   response.setEncoding("utf8");
   response.on("data", (chunk) => { body += chunk; });
   response.on("end", () => {
-    console.log("response " + response.statusCode + " " + body.slice(0, 200));
+    console.log(${JSON.stringify(NETWORK_POLICY_RESULT_PREFIX)} + JSON.stringify({ status: response.statusCode, response: body.slice(0, 200) }));
   });
 });
 request.on("upgrade", () => {
@@ -318,7 +324,7 @@ request.on("upgrade", () => {
 });
 request.setTimeout(20000, () => request.destroy(new Error("timeout")));
 request.on("error", (error) => {
-  console.log("error " + error.message);
+  ${NETWORK_POLICY_ERROR_REPORT}
 });
 request.end();
 NODE`,
@@ -353,12 +359,12 @@ const request = http.request({
   response.setEncoding("utf8");
   response.on("data", (chunk) => { body += chunk; });
   response.on("end", () => {
-    console.log("response " + response.statusCode + " " + body.slice(0, 200));
+    console.log(${JSON.stringify(NETWORK_POLICY_RESULT_PREFIX)} + JSON.stringify({ status: response.statusCode, response: body.slice(0, 200) }));
   });
 });
 request.setTimeout(20000, () => request.destroy(new Error("timeout")));
 request.on("error", (error) => {
-  console.log("error " + error.message);
+  ${NETWORK_POLICY_ERROR_REPORT}
 });
 request.end();
 NODE`,
@@ -623,9 +629,11 @@ PY`,
       fakeGateway.port,
       redactionValues,
     );
-    expect(resultText(deniedNodeGateway)).toMatch(
-      /response 403|policy[_ ]denied|not allowed by any policy/i,
-    );
+    expect(
+      isNetworkPolicyDenial(deniedNodeGateway) &&
+        !readDiscordRestRequests(fakeGateway.captureFile).some((row) => row.event === "upgrade"),
+      resultText(deniedNodeGateway),
+    ).toBe(true);
 
     const nativeGateway = await runHermesPythonDiscordGatewayProof(
       sandbox,
@@ -697,9 +705,11 @@ PY`,
       fakeRest.port,
       redactionValues,
     );
-    expect(resultText(deniedNodeRest)).toMatch(
-      /(?=[\s\S]*TOKEN_PLACEHOLDER true)(?=[\s\S]*(?:response 403|policy[_ ]denied|not allowed by any policy))/iu,
-    );
+    expect(
+      isNetworkPolicyDenial(deniedNodeRest) &&
+        /^TOKEN_PLACEHOLDER true$/mu.test(deniedNodeRest.stdout),
+      resultText(deniedNodeRest),
+    ).toBe(true);
     expect(
       readDiscordRestRequests(fakeRest.captureFile),
       "denied Node REST request changed the fake Discord capture",

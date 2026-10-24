@@ -10,13 +10,6 @@ import { writeLocalAdapterJsonFile } from "../local-adapter-lifecycle";
 import { loadManagedVllmApiKey, managedVllmStateDir } from "../vllm-api-key";
 import { buildLocalManagedVllmDockerEnv } from "../vllm-docker-env";
 import { runtimeAuthFingerprint } from "./runtime-auth-fingerprint";
-import {
-  resolveManagedVllmBridgeHost,
-  validateManagedVllmBridgeHost,
-} from "./vllm-host-local-network";
-
-export { resolveManagedVllmBridgeHost };
-
 export const HOST_LOCAL_VLLM_CONTAINER_NAME = "nemoclaw-vllm" as const;
 export const HOST_LOCAL_VLLM_MANAGED_LABEL = "com.nvidia.nemoclaw.managed-vllm" as const;
 export const HOST_LOCAL_VLLM_AUTH_LABEL = "com.nvidia.nemoclaw.managed-vllm-auth" as const;
@@ -60,7 +53,6 @@ export interface RecoverHostLocalManagedVllmOptions {
   dockerInspect?: () => string;
   loadApiKey?: () => string | null;
   onManagedContainerObserved?: () => void;
-  resolveBridgeHost?: () => string;
   stateDir?: string;
 }
 
@@ -325,17 +317,6 @@ export function recoverHostLocalManagedVllmEndpoint(
       typeof binding === "object" &&
       (binding as { HostIp?: unknown }).HostIp === "127.0.0.1",
   );
-  const expectedBridgeHost = validateManagedVllmBridgeHost(
-    options.resolveBridgeHost
-      ? options.resolveBridgeHost()
-      : resolveManagedVllmBridgeHost(capture, dockerEnv),
-  );
-  const bridgeBinding = bindings.find(
-    (binding) =>
-      binding &&
-      typeof binding === "object" &&
-      (binding as { HostIp?: unknown }).HostIp === expectedBridgeHost,
-  );
   const env = Array.isArray(row.Config?.Env) ? row.Config.Env : [];
   const configuredKeyRows = env.filter(
     (value): value is string => typeof value === "string" && value.startsWith("VLLM_API_KEY="),
@@ -346,27 +327,18 @@ export function recoverHostLocalManagedVllmEndpoint(
     /^\d{4,5}$/u.test((loopbackBinding as { HostPort: string }).HostPort)
       ? Number((loopbackBinding as { HostPort: string }).HostPort)
       : Number.NaN;
-  const bridgeHostPort =
-    bridgeBinding &&
-    typeof (bridgeBinding as { HostPort?: unknown }).HostPort === "string" &&
-    /^\d{4,5}$/u.test((bridgeBinding as { HostPort: string }).HostPort)
-      ? Number((bridgeBinding as { HostPort: string }).HostPort)
-      : Number.NaN;
   if (
     row.Id === undefined ||
     typeof row.Id !== "string" ||
     !/^[a-f0-9]{12,64}$/.test(row.Id) ||
     row.Name !== `/${HOST_LOCAL_VLLM_CONTAINER_NAME}` ||
     row.State?.Running !== true ||
-    bindings.length !== 2 ||
+    bindings.length !== 1 ||
     !loopbackBinding ||
-    !bridgeBinding ||
     !Number.isSafeInteger(loopbackHostPort) ||
     loopbackHostPort < 1024 ||
     loopbackHostPort > 65_535 ||
     String(loopbackHostPort) !== (loopbackBinding as { HostPort: string }).HostPort ||
-    bridgeHostPort !== loopbackHostPort ||
-    String(bridgeHostPort) !== (bridgeBinding as { HostPort: string }).HostPort ||
     configuredKeyRows.length !== 1 ||
     typeof authFingerprint !== "string"
   ) {

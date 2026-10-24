@@ -46,7 +46,7 @@ describe("runInferenceSet status-zero route ambiguity", () => {
             provider: "compatible-endpoint",
             model: "mock-model",
             noVerify: true,
-            endpointUrl: "http://host.openshell.internal:18767/v1",
+            endpointUrl: "http://192.168.50.22:18767/v1",
             credentialEnv: "COMPATIBLE_API_KEY",
             inferenceApi: "openai-completions",
           },

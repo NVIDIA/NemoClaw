@@ -8,6 +8,7 @@ import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import type { RuntimeProviderPrivilegedSandboxControl } from "../onboard/runtime-provider/contract";
 import {
   dockerContainerNameMatchesSandbox as containerNameMatchesSandbox,
   selectDockerPrivilegedSandboxTarget as selectDirectSandboxContainer,
@@ -25,6 +26,7 @@ const dockerControlPath =
 const dockerOperationAuthorityPath =
   require.resolve("../onboard/runtime-provider/docker-operation-authority");
 const dockerRunPath = require.resolve("../adapters/docker/run");
+const dockerExecPath = require.resolve("../adapters/docker/exec");
 const portableLifecyclePath = require.resolve("../onboard/experimental/portable-demo-lifecycle");
 const registryPath = require.resolve("../state/registry");
 const lifecycleGenerationPath = require.resolve("../state/registry/lifecycle-generation");
@@ -44,6 +46,8 @@ function restoreRequireCacheEntry(modulePath: string, priorEntry: unknown): void
 
 function withPrivilegedExecMocks<T>(
   deps: {
+    control?: RuntimeProviderPrivilegedSandboxControl;
+    dockerSpawnSync?: typeof import("../adapters/docker/exec").dockerSpawnSync;
     dockerCapture: (args: readonly string[], options?: { timeout?: number }) => string;
     dockerRun?: (
       args: readonly string[],
@@ -79,6 +83,7 @@ function withPrivilegedExecMocks<T>(
   const priorDockerControl = require.cache[dockerControlPath];
   const priorDockerOperationAuthority = require.cache[dockerOperationAuthorityPath];
   const priorDockerRun = require.cache[dockerRunPath];
+  const priorDockerExec = require.cache[dockerExecPath];
   const priorPortableLifecycle = require.cache[portableLifecyclePath];
   const priorRegistry = require.cache[registryPath];
   const priorLifecycleGeneration = require.cache[lifecycleGenerationPath];
@@ -87,6 +92,18 @@ function withPrivilegedExecMocks<T>(
   delete require.cache[helperPath];
   delete require.cache[dockerControlPath];
   delete require.cache[runtimeProviderSelectionPath];
+  requireCache[dockerExecPath] = {
+    id: dockerExecPath,
+    filename: dockerExecPath,
+    loaded: true,
+    exports: {
+      dockerSpawnSync:
+        deps.dockerSpawnSync ??
+        (() => {
+          throw new Error("Unexpected Docker execution in test");
+        }),
+    },
+  } as any;
   requireCache[dockerOperationAuthorityPath] = {
     id: dockerOperationAuthorityPath,
     filename: dockerOperationAuthorityPath,
@@ -157,7 +174,8 @@ function withPrivilegedExecMocks<T>(
         deps.compareAndSetLegacySandboxLifecycleGeneration ?? (() => false),
     },
   } as any;
-  const dockerControl = require(dockerControlPath).createDockerPrivilegedSandboxControl();
+  const dockerControl =
+    deps.control ?? require(dockerControlPath).createDockerPrivilegedSandboxControl();
   requireCache[currentRuntimeProvidersPath] = {
     id: currentRuntimeProvidersPath,
     filename: currentRuntimeProvidersPath,
@@ -199,6 +217,7 @@ function withPrivilegedExecMocks<T>(
     restoreRequireCacheEntry(dockerControlPath, priorDockerControl);
     restoreRequireCacheEntry(dockerOperationAuthorityPath, priorDockerOperationAuthority);
     restoreRequireCacheEntry(dockerRunPath, priorDockerRun);
+    restoreRequireCacheEntry(dockerExecPath, priorDockerExec);
     restoreRequireCacheEntry(portableLifecyclePath, priorPortableLifecycle);
     restoreRequireCacheEntry(registryPath, priorRegistry);
     restoreRequireCacheEntry(lifecycleGenerationPath, priorLifecycleGeneration);
@@ -207,6 +226,114 @@ function withPrivilegedExecMocks<T>(
 }
 
 describe("privileged sandbox exec routing", () => {
+  it.each([undefined, "998:999"])(
+    "executes with the requested owner %s and retains the pinned target",
+    (sandboxUser) => {
+      const target = "a".repeat(64);
+      const dockerSpawnSync = vi.fn((_args: readonly string[], _options?: unknown) => ({
+        status: 0,
+        signal: null,
+        stdout: Buffer.from("observed"),
+        stderr: Buffer.alloc(0),
+        pid: 1,
+        output: [],
+      }));
+      const capture = vi.fn(
+        (_args: readonly string[]) =>
+          `${target}\t/openshell-demo\ttrue\t${JSON.stringify({ "openshell.ai/managed-by": "openshell", "openshell.ai/sandbox-name": "demo" })}`,
+      );
+      withPrivilegedExecMocks(
+        {
+          dockerCapture: capture,
+          dockerSpawnSync,
+          getSandbox: () => ({ name: "demo", openshellDriver: "docker" }),
+          listSandboxes: () => ({ sandboxes: [{ name: "demo" }] }),
+        },
+        ({ executePrivilegedSandboxCommand }) => {
+          const result = executePrivilegedSandboxCommand("demo", ["/usr/bin/python3", "-I"], {
+            expectedResourceHandle: target,
+            sandboxUser,
+            sanitizeEnvironment: true,
+            input: "probe",
+            timeout: 30000,
+            maxOutputBytes: 4096,
+          });
+          expect(result.stdout.toString()).toBe("observed");
+        },
+      );
+      expect(capture.mock.calls[0]?.[0]).toEqual(expect.arrayContaining(["inspect", target]));
+      expect(dockerSpawnSync).toHaveBeenCalledWith(
+        expect.arrayContaining(["--user", sandboxUser ?? "root", target, "/usr/bin/python3", "-I"]),
+        expect.objectContaining({ input: Buffer.from("probe"), timeout: 30000, maxBuffer: 4096 }),
+      );
+      const argv = dockerSpawnSync.mock.calls[0]?.[0];
+      expect(argv).toContain("--env");
+      expect(argv).not.toContain("--privileged");
+    },
+  );
+
+  it.each(["0:0", "998:0", "--privileged", "998"])(
+    "rejects invalid owner %s before discovery or execution",
+    (sandboxUser) => {
+      const dockerCapture = vi.fn(() => "");
+      const dockerSpawnSync = vi.fn();
+      withPrivilegedExecMocks(
+        {
+          dockerCapture,
+          dockerSpawnSync,
+          getSandbox: () => ({ name: "demo", openshellDriver: "docker" }),
+          listSandboxes: () => ({ sandboxes: [] }),
+        },
+        ({ executePrivilegedSandboxCommand }) => {
+          expect(() => executePrivilegedSandboxCommand("demo", ["id"], { sandboxUser })).toThrow(
+            /non-root numeric UID and GID/u,
+          );
+        },
+      );
+      expect(dockerCapture).not.toHaveBeenCalled();
+      expect(dockerSpawnSync).not.toHaveBeenCalled();
+    },
+  );
+
+  it("does not fall back to root when owner execution is unavailable", () => {
+    const execute = vi.fn();
+    withPrivilegedExecMocks(
+      {
+        control: { resolveTarget: vi.fn(), execute },
+        dockerCapture: vi.fn(),
+        getSandbox: () => ({ name: "demo", openshellDriver: "docker" }),
+        listSandboxes: () => ({ sandboxes: [] }),
+      },
+      ({ executePrivilegedSandboxCommand }) => {
+        expect(() =>
+          executePrivilegedSandboxCommand("demo", ["id"], { sandboxUser: "998:999" }),
+        ).toThrow(/cannot execute as the sandbox owner/u);
+      },
+    );
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("refuses owner execution when the pinned container changed", () => {
+    const dockerSpawnSync = vi.fn();
+    withPrivilegedExecMocks(
+      {
+        dockerCapture: () => "container changed",
+        dockerSpawnSync,
+        getSandbox: () => ({ name: "demo", openshellDriver: "docker" }),
+        listSandboxes: () => ({ sandboxes: [] }),
+      },
+      ({ executePrivilegedSandboxCommand }) => {
+        expect(() =>
+          executePrivilegedSandboxCommand("demo", ["id"], {
+            sandboxUser: "998:998",
+            expectedResourceHandle: "a".repeat(64),
+          }),
+        ).toThrow(/identity/u);
+      },
+    );
+    expect(dockerSpawnSync).not.toHaveBeenCalled();
+  });
+
   it("matches only the requested OpenShell sandbox container name pattern", () => {
     expect(containerNameMatchesSandbox("openshell-demo", "demo")).toBe(true);
     expect(containerNameMatchesSandbox("openshell-demo-abc123", "demo")).toBe(true);
@@ -304,7 +431,9 @@ describe("privileged sandbox exec routing", () => {
 
     withPrivilegedExecMocks(
       {
-        dockerCapture: () => `${containerId}\topenshell-alpha\n`,
+        dockerCapture: () =>
+          `${containerId}\topenshell-alpha\tsandbox\n` +
+          `${"c".repeat(64)}\topenshell-alpha-supervisor\tsupervisor\n`,
         dockerRun: runDocker,
         getSandbox: () => ({ name: "alpha", openshellDriver: "docker" }),
         listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
@@ -723,10 +852,22 @@ describe("privileged sandbox exec routing", () => {
     );
   });
 
-  it("rejects malformed Docker metadata", () => {
-    expect(() => selectDirectSandboxContainer("demo", "openshell-demo\n", ["demo"])).toThrow(
+  it.each([
+    "openshell-demo\n",
+    "abc123\topenshell-demo\tunknown\n",
+    "abc123\topenshell-demo\tsandbox\textra\n",
+  ])("rejects malformed Docker metadata %j", (output) => {
+    expect(() => selectDirectSandboxContainer("demo", output, ["demo"])).toThrow(
       /malformed OpenShell sandbox container metadata/,
     );
+  });
+
+  it("does not return a supervisor when no workload remains", () => {
+    expect(
+      selectDirectSandboxContainer("demo", "abc123\topenshell-demo-supervisor\tsupervisor\n", [
+        "demo",
+      ]),
+    ).toBeNull();
   });
 
   it("rejects an authoritative label and container-name mismatch", () => {
@@ -816,6 +957,8 @@ describe("privileged sandbox exec routing", () => {
           "--host",
           "unix:///run/user/1001/podman/podman.sock",
           "exec",
+          "--env",
+          "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
           "--env",
           "BASH_ENV=",
           "--env",
@@ -952,7 +1095,7 @@ describe("privileged sandbox exec routing", () => {
           "--filter",
           "label=openshell.ai/sandbox-name=alpha",
           "--format",
-          "{{.ID}}\t{{.Names}}",
+          '{{.ID}}\t{{.Names}}\t{{.Label "openshell.ai/isolation-role"}}',
         ],
         timeout: 5000,
       },

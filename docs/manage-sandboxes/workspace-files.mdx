@@ -201,7 +201,6 @@ It does not continue with a partial backup.
 ### Deleted During Sandbox Destroy
 
 Running `$$nemoclaw <name> destroy` deletes the sandbox and its persistent state volume.
-OpenShell removes the native home and workspace with the sandbox.
 
 <Warning>
 Back up your workspace files before running `$$nemoclaw <name> destroy`.
@@ -283,7 +282,7 @@ Deep Agents Code normally creates the `/sandbox/.deepagents/agent/` paths below 
 
 | Path | Purpose |
 |---|---|
-| `/sandbox/.deepagents/config.toml` | NemoClaw-generated model and provider configuration. New NVIDIA Endpoints, supported fixed hosted providers, hosted compatible endpoints outside the Personal tier, Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible selections use sandbox-attached providers with scoped credential references. A fresh Personal-tier hosted compatible selection uses `inference.local` without a native attachment. Owned Local NVIDIA NIM, other compatible endpoints without an attachment, and retained shared routes also use `inference.local`. |
+| `/sandbox/.deepagents/config.toml` | NemoClaw-generated model and provider configuration. New NVIDIA Endpoints, supported fixed hosted providers, qualifying custom hosted endpoints, Ollama, standalone vLLM, llama.cpp, and qualifying local compatible selections use native endpoints with scoped credential references. Remaining shared selections use `inference.local` only on OpenShell `0.0.x`. |
 | `/sandbox/.deepagents/.state/` | Deep Agents Code runtime state, including persisted session and MCP-related state. |
 | `/sandbox/.deepagents/agent/AGENTS.md` | Global memory file for the default Deep Agents Code agent, loaded at session start. |
 | `/sandbox/.deepagents/agent/memories/` | Topic-specific markdown memories that Deep Agents Code can read and update across sessions. |
@@ -294,6 +293,11 @@ Deep Agents Code normally creates the `/sandbox/.deepagents/agent/` paths below 
 | `/sandbox/.deepagents/.state/auth.json` | Upstream auth state. The managed launchers refuse to start when this file contains credentials. |
 | `/sandbox/.deepagents/.state/chatgpt-auth.json` | Upstream ChatGPT auth state. The managed launchers refuse to start when this file exists. |
 | `/sandbox/.deepagents/.env` | User-managed Deep Agents Code environment file. It persists as agent-written native-home state; do not place raw credentials here when an OpenShell credential binding is available. |
+
+<Note>
+OpenShell `0.1.3` removes the shared `inference.local` route; migration of the remaining selections is incomplete and blocks this upgrade.
+Native local onboarding on `0.1.3` remains unqualified for this upgrade.
+</Note>
 
 Project-level Deep Agents files can also exist inside the working repository, such as `.deepagents/AGENTS.md`, `.deepagents/skills/`, and `.deepagents/.mcp.json`.
 Those files are ordinary project files.

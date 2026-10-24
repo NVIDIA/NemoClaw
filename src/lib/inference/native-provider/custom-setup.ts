@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { OpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter";
+import { isAllowedOpenShellSandboxBridgeUrl } from "../../private-networks";
 import { unsafeEndpointUrlViolation } from "../../core/endpoint-url-safety";
 import { normalizeProviderBaseUrl } from "../../core/provider-endpoint";
 import {
@@ -10,7 +11,7 @@ import {
 } from "../../security/trusted-private-endpoint";
 import { parseTrustedPrivateInferenceHostsFromEnv } from "../endpoint-ssrf-preflight";
 import type { NativeProviderAttachment } from "./contract";
-import { customNativeProvider, isHostedCustomEndpoint, type CustomNativeBinding } from "./custom";
+import { customNativeProvider, isCustomNativeEndpoint, type CustomNativeBinding } from "./custom";
 import { requireHostedProviderAttachment } from "./hosted-attachment";
 import { nativeProviderLifecycle } from "./index";
 import {
@@ -19,18 +20,10 @@ import {
   hasBedrockRuntimeAwsAuthEnv,
 } from "../bedrock-runtime";
 import { ensureBedrockRuntimeAdapter } from "../bedrock-runtime-adapter";
-import { PERSONAL_POLICY_TIER_NAME } from "../../policy/tiers";
 
-export { isHostedCustomEndpoint };
+export { isCustomNativeEndpoint };
 
-/**
- * Existing shared-route sandboxes retain their route until recreated.
- *
- * A Personal sandbox keeps a new custom endpoint on the shared inference.local
- * route. OpenShell rejects Personal's hostless port-443 rule beside an attached
- * provider endpoint on the same port (NVIDIA/OpenShell#4662), so a native
- * provider would make the Personal policy unappliable.
- */
+/** Existing shared-route sandboxes retain their route until recreated. */
 export function usesCustomNativeOnboarding(
   provider: string,
   endpointUrl: string | null,
@@ -42,14 +35,13 @@ export function usesCustomNativeOnboarding(
       }
     | null
     | undefined,
-  policyTier: string | undefined = process.env.NEMOCLAW_POLICY_TIER,
 ): boolean {
-  const personal = policyTier?.trim().toLowerCase() === PERSONAL_POLICY_TIER_NAME;
   return Boolean(
     sandboxName &&
-    isHostedCustomEndpoint(provider, endpointUrl) &&
-    (recorded?.nativeHostedProviderAttachment?.custom ||
-      (!personal && (!recorded || recorded.pendingRouteReservation))),
+    isCustomNativeEndpoint(provider, endpointUrl) &&
+    (!recorded ||
+      recorded.pendingRouteReservation ||
+      recorded.nativeHostedProviderAttachment?.custom),
   );
 }
 
@@ -94,6 +86,13 @@ export async function prepareCustomNativeProvider(input: {
     input.endpointUrl,
     input.provider === "compatible-anthropic-endpoint" ? "anthropic" : "openai",
   );
+  const bridge =
+    input.provider === "compatible-anthropic-endpoint" &&
+    isAllowedOpenShellSandboxBridgeUrl(new URL(endpointUrl));
+  if (bridge)
+    throw new Error(
+      "Custom native inference cannot use an unverified OpenShell host bridge endpoint",
+    );
   const classified =
     input.provider === "compatible-anthropic-endpoint"
       ? classifyCustomAnthropicEndpoint(input.endpointUrl)

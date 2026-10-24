@@ -22,7 +22,10 @@ const NODE_SPAWN_TIMEOUT_STATUS = -110;
 // the sandbox status probe classifies the same four (#10709). The definition
 // and its rationale live in ./probe/transient-http-policy; this module keeps
 // re-exporting the set so existing consumers are unaffected.
-const { RETRIABLE_HTTP_PROBE_STATUSES } = require("./probe/transient-http-policy");
+const {
+  RETRIABLE_HTTP_PROBE_STATUSES,
+  isRetriableHttpProbeStatus,
+} = require("./probe/transient-http-policy");
 const HTTP_PROBE_RETRY_DELAYS_MS = [5_000, 15_000, 30_000];
 
 function sleepSync(ms) {
@@ -34,13 +37,13 @@ function sleepSync(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
-function shouldRetryHttpProbe(result) {
+function shouldRetryHttpProbe(result, provider) {
   return (
     result &&
     !result.ok &&
     result.reasoningRetryAttempted !== true &&
     result.curlStatus === 0 &&
-    RETRIABLE_HTTP_PROBE_STATUSES.has(result.httpStatus)
+    isRetriableHttpProbeStatus(result.httpStatus, provider)
   );
 }
 
@@ -61,15 +64,15 @@ function isTimeoutOrConnFailureStatus(curlStatus) {
   );
 }
 
-function isRetriableProbeResult(result) {
+function isRetriableProbeResult(result, provider) {
   if (result.reasoningRetryAttempted === true) return false;
   return (
     isTimeoutOrConnFailureStatus(result.curlStatus) ||
-    RETRIABLE_HTTP_PROBE_STATUSES.has(result.httpStatus)
+    isRetriableHttpProbeStatus(result.httpStatus, provider)
   );
 }
 
-function executeProbeWithHttpRetry(probe) {
+function executeProbeWithHttpRetry(probe, provider) {
   return trace.withTraceSpan(
     "nemoclaw.inference.validation_probe",
     { probe_name: probe.name, api: probe.api || null },
@@ -89,7 +92,7 @@ function executeProbeWithHttpRetry(probe) {
         {
           accept: (result) => {
             customRetryReason = probe.retryReason?.(result);
-            return !shouldRetryHttpProbe(result) && !customRetryReason;
+            return !shouldRetryHttpProbe(result, provider) && !customRetryReason;
           },
           retryDelaysMs: HTTP_PROBE_RETRY_DELAYS_MS,
           onRetry: (result, delayMs) => {
@@ -114,9 +117,9 @@ function executeProbeWithHttpRetry(probe) {
 // the OpenAI-like probe runs after a connection/timeout failure. Returns the
 // final probe result. Logs the same "retrying in Xs" notice the responses
 // retry loop emits so users on slow links see consistent progress messages.
-function runChatCompletionsRetryLoop(runProbe) {
+function runChatCompletionsRetryLoop(runProbe, provider) {
   return retryUntil(runProbe, {
-    accept: (result) => result.ok || !isRetriableProbeResult(result),
+    accept: (result) => result.ok || !isRetriableProbeResult(result, provider),
     retryDelaysMs: HTTP_PROBE_RETRY_DELAYS_MS,
     onRetry: (result, delayMs) => {
       const reason = isTimeoutOrConnFailureStatus(result.curlStatus)

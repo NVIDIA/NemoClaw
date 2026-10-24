@@ -10,12 +10,17 @@ content:
   type: "how_to"
 ---
 
-These rules apply to providers that still use the shared route, including compatible endpoints without an attachment, Local NVIDIA NIM, and retained shared local selections.
-NVIDIA Endpoints, fixed hosted providers, new hosted compatible selections outside the Personal tier, new Deep Agents Code, Hermes, and Pi qualified local selections, and new OpenClaw Ollama, standalone vLLM, and llama.cpp selections use sandbox-attached providers.
+These rules apply to providers that still use the shared route, including retained custom shared routes and retained shared local selections.
+They require an OpenShell `0.0.x` gateway.
+OpenShell `0.1.3` removes `inference.local`, so do not use these procedures with that runtime.
+NVIDIA Endpoints, fixed hosted providers, and qualifying custom hosted endpoints use sandbox-attached providers.
+New Ollama, standalone vLLM, llama.cpp, and Local NVIDIA NIM selections use these attachments for Deep Agents Code, Hermes, OpenClaw, and Pi.
+Deep Agents Code, Hermes, OpenClaw, and Pi also use attachments for qualifying host-local compatible endpoints.
 Their selected model or provider does not re-point the shared route.
 
-Unchanged published Pi local selections retain their recorded shared route during resume and rebuild.
-Fresh Pi local selections require a native provider attachment.
+Unchanged published Pi local selections without native attachments retain their recorded shared route during resume and rebuild on OpenShell `0.0.x`.
+These retained routes include Local NVIDIA NIM.
+Fresh Pi selections for Ollama, standalone vLLM, llama.cpp, Local NVIDIA NIM, and qualifying host-local compatible endpoints require a native provider attachment.
 
 OpenShell exposes one shared inference route per gateway.
 NemoClaw records each sandbox's intended provider and model so compatible sandboxes can take turns using that route.
@@ -44,9 +49,10 @@ $$nemoclaw <name> inference set --provider <provider> --model <model>
 ```
 
 For a shared-route selection, when only the provider or model differs, the command warns immediately before it re-points the shared route.
-An OpenClaw model switch on its recorded native local attachment keeps the shared route unchanged.
 The warning names every affected registered sandbox and its recorded provider and model.
 Those sandboxes use the new live route until `connect`, onboarding, or another `inference set` command re-points it.
+
+An OpenClaw model switch on its recorded native local attachment keeps the shared route unchanged.
 
 For the same provider name, custom endpoint, API-family, and credential environment-variable values must remain compatible.
 Incomplete routes and invalid gateway bindings also stop the command before route, agent config, or registry mutation.

@@ -1212,11 +1212,14 @@ test(
       },
     );
 
-    const nativeEndpointUrl = getSandbox(SANDBOX_NAME)?.nativeHostedProviderAttachment?.endpointUrl;
+    const selectedEntry = getSandbox(SANDBOX_NAME);
+    const nativeEndpointUrl =
+      selectedEntry?.nativeLocalProviderAttachment?.endpointUrl ??
+      selectedEntry?.nativeHostedProviderAttachment?.endpointUrl;
     const inferenceRoute = await readFullE2eInferenceRoute({
       sandbox,
       sandboxName: SANDBOX_NAME,
-      entry: getSandbox(SANDBOX_NAME),
+      entry: selectedEntry,
       logicalProvider: hosted.providerName,
       model: hosted.model,
       env: env(),

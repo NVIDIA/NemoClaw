@@ -21,6 +21,7 @@ import {
   detachProvider,
   ensureMcpBridgeProviderProfile,
   MCP_BRIDGE_PROVIDER_TYPE,
+  mcpBridgeProviderType,
   observeMcpCredentialRevision,
   refreshMcpProviderEnvironment,
   upsertMcpProvider,
@@ -45,7 +46,7 @@ function providerMetadataOutput(
   return [
     `Name: ${name}`,
     `Id: ${id}`,
-    `Type: ${type}`,
+    `Type: ${type === MCP_BRIDGE_PROVIDER_TYPE ? mcpBridgeProviderType(credentialKey) : type}`,
     `Resource version: ${resourceVersion}`,
     `Credential keys: ${credentialKey}`,
     "Config keys: <none>",
@@ -118,7 +119,7 @@ describe("OpenShell MCP provider state", () => {
     };
 
     await expect(assertMcpProviderRecoverable(entry, runtimeSelection)).rejects.toThrow(
-      /legacy generic profile.*cannot bind to an MCP endpoint/,
+      /legacy generic profile.*cannot bind its credential to an MCP endpoint/,
     );
   });
 
@@ -209,7 +210,16 @@ describe("OpenShell MCP provider state", () => {
     const profileOutput = (id: string, inferenceCapable: boolean) =>
       JSON.stringify({
         id,
-        credentials: [],
+        credentials: [
+          {
+            name: "EXPECTED_TOKEN",
+            env_vars: ["EXPECTED_TOKEN"],
+            required: true,
+            auth_style: "bearer",
+            header_name: "Authorization",
+            query_param: "",
+          },
+        ],
         endpoints: [],
         binaries: [],
         inference_capable: inferenceCapable,
@@ -289,7 +299,7 @@ describe("OpenShell MCP provider state", () => {
     providerCommand.setProviderCommandRuntimeHooksForTest({ runOpenshell: runOpenshell as never });
 
     const providerAdapter = createMcpProviderAdapterBoundary(runtimeSelection).adapter;
-    await ensureMcpBridgeProviderProfile(runtimeSelection, providerAdapter);
+    await ensureMcpBridgeProviderProfile(runtimeSelection, "EXPECTED_TOKEN", providerAdapter);
     const created = await upsertMcpProvider("alpha-mcp-fake", [{ name: "EXPECTED_TOKEN" }], {
       allowExisting: false,
       runtimeSelection,

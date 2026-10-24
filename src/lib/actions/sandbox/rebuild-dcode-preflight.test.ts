@@ -27,7 +27,7 @@ describe("rebuildSandbox DCode flow: preflight", () => {
     async (provider) => {
       const harness = createRebuildFlowHarness({
         agentName: "langchain-deepagents-code",
-        sandboxEntry: { ...makeDcodeSandboxEntry(), provider },
+        sandboxEntry: { ...makeDcodeSandboxEntry(false), provider },
       });
       configureDcodeSession(harness);
 
@@ -47,7 +47,7 @@ describe("rebuildSandbox DCode flow: preflight", () => {
       const harness = createRebuildFlowHarness({
         agentName: "langchain-deepagents-code",
         sandboxEntry: {
-          ...makeDcodeSandboxEntry(),
+          ...makeDcodeSandboxEntry(false),
           provider: "nvidia-prod",
           credentialEnv: "NVIDIA_INFERENCE_API_KEY",
           nativeNvidiaProviderAttachment: {
@@ -82,7 +82,7 @@ describe("rebuildSandbox DCode flow: preflight", () => {
       const harness = createRebuildFlowHarness({
         agentName: "langchain-deepagents-code",
         sandboxEntry: {
-          ...makeDcodeSandboxEntry(),
+          ...makeDcodeSandboxEntry(false),
           provider: "nvidia-prod",
           credentialEnv: "NVIDIA_INFERENCE_API_KEY",
         },

@@ -142,6 +142,7 @@ type DestroyHarnessOptions = {
   promptResponses?: string[];
   provider?: string;
   registryEntryPresent?: boolean;
+  registryGatewayPort?: number;
   registryEntryOverrides?: Partial<SandboxEntry>;
   registeredSandboxCount?: number;
   recoveredGatewayRuntimeProviderId?: string | null;
@@ -294,6 +295,10 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   vi.spyOn(forwardRecovery, "teardownSandboxDashboardForward").mockResolvedValue(true);
   const destroyCommand = requireSource("../../../commands/sandbox/destroy.js").default;
   const destroyPreflight = requireSource("./destroy-preflight.js");
+  const googlechatLifecycle = requireSource(
+    "../../messaging/channels/googlechat/tunnel/lifecycle.js",
+  );
+  vi.spyOn(googlechatLifecycle, "stopGooglechatWebhookTunnel").mockReturnValue("");
   const sandboxSession = requireSource("../../state/sandbox-session.js");
   const mcpBridge = requireSource("./mcp-bridge.js");
   const mcpBridgeProvider = requireSource("./mcp-bridge-provider.js");
@@ -418,6 +423,20 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     }
     return true;
   });
+  const registryGatewayPort = options.registryGatewayPort;
+  if (registryGatewayPort !== undefined) {
+    const { resolveNemoclawStateDir } = requireSource("../../state/paths.js");
+    vi.spyOn(destroyPreflight, "resolveSandboxDestroyRegistryAuthority").mockImplementation(
+      (name: unknown) => ({
+        entry: registry.getSandbox(name),
+        gatewayPort: registryGatewayPort,
+        stateDir: resolveNemoclawStateDir(undefined, registryGatewayPort),
+        getSandbox: registry.getSandbox,
+        listSandboxes: registry.listSandboxes,
+        removeSandbox: registry.removeSandbox,
+      }),
+    );
+  }
   const stopModelRouterForDestroyedSandboxSpy = vi.spyOn(
     destroyPreflight,
     "stopModelRouterForDestroyedSandbox",
@@ -618,12 +637,14 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     options.onDockerRun?.(identityProbeCall);
     const defaultIdentityResult = {
       status: 0,
-      stdout: sandboxPresent ? "aaaaaaaaaaaa\topenshell\tdefault\tsb-alpha" : "",
+      stdout: sandboxPresent ? "aaaaaaaaaaaa\topenshell\tdefault\tsb-alpha\t\t" : "",
     };
     const sequencedResult = options.dockerRunResultSequence?.[identityProbeCall - 1];
     const exactCleanupResult = {
       status: options.dockerOrphanQueryStatus ?? 0,
-      stdout: dockerNameLabeledIds.map((id) => `${id}\topenshell\tdefault\tsb-alpha`).join("\n"),
+      stdout: dockerNameLabeledIds
+        .map((id) => `${id}\topenshell\tdefault\tsb-alpha\t\t`)
+        .join("\n"),
       stderr: "",
     };
     const result =

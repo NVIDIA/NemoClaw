@@ -209,14 +209,16 @@ Every configured route must serve a valid response to a bounded request for the 
 Shared-route providers use `inference.local`.
 Their models probe must return HTTP 2xx, except that a retained legacy `openrouter-api` shared route can return HTTP 404 for `GET /v1/models` when the bounded model request succeeds.
 NVIDIA Endpoints, supported fixed hosted selections, and new OpenClaw Ollama, standalone vLLM, and llama.cpp selections verify their recorded sandbox-attached provider and run the bounded model request at its native endpoint without the shared-route models probe.
-For Hermes, new Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible selections use the same native attachment check. Owned Local NVIDIA NIM and retained legacy shared routes continue to use `inference.local`.
-Retained OpenClaw local selections with a valid shared route continue to use `inference.local` for supported model switches. An older OpenClaw Ollama, standalone vLLM, or llama.cpp sandbox without a native attachment cannot resume or rebuild. Back it up and re-onboard it with `--fresh --name <sandbox-name> --recreate-sandbox`. Owned Local NVIDIA NIM sandboxes retain the shared route and can resume or rebuild without a native attachment.
+For Hermes, new Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible selections use the same native attachment check.
+New Local NVIDIA NIM selections also use the native attachment check for both agents.
+Retained legacy shared routes continue to use `inference.local`.
+Retained OpenClaw local selections with a valid shared route continue to use `inference.local` for supported model switches. An older OpenClaw Ollama, standalone vLLM, or llama.cpp sandbox without a native attachment cannot resume or rebuild. Back it up and re-onboard it with `--fresh --name <sandbox-name> --recreate-sandbox`. New Local NVIDIA NIM sandboxes also use their recorded native attachment for resume and rebuild. Back up and recreate older shared-route NIM sandboxes before upgrading OpenShell.
 A failed required probe or model request rejects launch readiness.
 This check is stricter than the HTTP 200–499 reachability diagnostic used by ordinary `connect`.
 </AgentOnly>
 <AgentOnly variant="deepagents">
 Every configured route must serve a valid response to a bounded request for the recorded model before NemoClaw accepts or publishes launch readiness.
-For new Deep Agents Code standalone local selections, NemoClaw verifies the recorded sandbox-attached provider and requests the model through its qualified host-local endpoint. Older Deep Agents Code standalone local shared routes without an attachment stop before resume or rebuild; back up and recreate the sandbox with `nemo-deepagents onboard --fresh --name <sandbox-name> --recreate-sandbox`. Owned Local NVIDIA NIM retains its shared route and does not require a native attachment to resume or rebuild. For retained legacy and custom shared routes, the models probe must return HTTP 2xx, except that a legacy `openrouter-api` route can return HTTP 404 for `GET /v1/models` when the model request succeeds. NVIDIA Endpoints and supported fixed hosted selections instead verify the recorded native attachment and request the model through its native endpoint.
+For new Deep Agents Code standalone local selections, NemoClaw verifies the recorded sandbox-attached provider and requests the model through its qualified host-local endpoint. Older Deep Agents Code standalone local shared routes without an attachment stop before resume or rebuild; back up and recreate the sandbox with `nemo-deepagents onboard --fresh --name <sandbox-name> --recreate-sandbox`. Local NVIDIA NIM also requires its recorded native attachment for resume and rebuild. For retained legacy and custom shared routes, the models probe must return HTTP 2xx, except that a legacy `openrouter-api` route can return HTTP 404 for `GET /v1/models` when the model request succeeds. NVIDIA Endpoints and supported fixed hosted selections instead verify the recorded native attachment and request the model through its native endpoint.
 A failed request rejects launch readiness and identifies the inference request as the failed check.
 </AgentOnly>
 <AgentOnly variant="openclaw">
@@ -269,6 +271,9 @@ The OpenShell CLI has no command that starts a gateway, and `openshell status` o
   native home, use `rebuild` instead of destroying and recreating.
 </AgentOnly>
 
+Rebuild requires the OpenSSH `sftp` client on the host.
+If it is unavailable, install the OpenSSH client tools before running rebuild.
+
 ```bash
 $$nemoclaw <sandbox-name> rebuild
 ```
@@ -294,9 +299,9 @@ When NemoClaw can identify the exact stopped Docker container and prove its immu
 
 When that provider-owned capture is not available, rebuild asks OpenShell to start the exact stopped sandbox for the duration of the pre-recreate state backup and asks OpenShell to return it to `Stopped` afterward, the same lifecycle path `$$nemoclaw backup-all` uses. If OpenShell cannot start the sandbox, or the retried backup still fails, rebuild aborts without recreating the sandbox; it reports an incomplete-backup notice only when a partial backup was retained. If the backup succeeds but OpenShell cannot return the sandbox to `Stopped`, rebuild also aborts and reports the failed transition. If neither path can establish stopped-source authority, repair the OpenShell lifecycle state or recover the data manually before retrying; NemoClaw does not fall back to a selective directory copy.
 
-<AgentOnly variant="openclaw">
-On OpenShell 0.0.116, `start` cannot restart a sandbox in `Phase: Error`.
-</AgentOnly>
+OpenShell 0.1.3 can restart a sandbox in `Phase: Error` when it records a failed main process and its exit code.
+It also permits retry after a provisioning timeout once compute cleanup completes.
+Other `Error` states remain rejected; inspect the reported failure instead of assuming every error is restartable.
 
 If OpenShell still reports the sandbox in `Phase: Error` but its Docker-driver container is missing,
 rebuild cannot back up its live workspace and stops before replacement. Recover the workspace from
@@ -328,6 +333,14 @@ Correct the reported configuration or route error, then rerun `$$nemoclaw <sandb
 ### Resolve Rebuild Preflight Stops
 
 Before it backs up or deletes the existing sandbox, `rebuild` validates the recorded sandbox, gateway, inference route, policy, MCP, agent, and operation-lock state. When one of these checks fails, NemoClaw prints `Rebuild preflight failed`, explains how to recover, and ends with `Aborting rebuild`. At this boundary, the existing sandbox is unchanged and no sandbox data has been removed.
+
+Retained `compatible-endpoint` and `compatible-anthropic-endpoint` selections without a native attachment require a verified OpenShell `0.0.x` installation for shared-route resume or rebuild.
+Existing host-local route restrictions still apply.
+For any other or unverified OpenShell version, resume stops before changing provider or sandbox state, and rebuild stops before backup or deletion.
+Valid native attachments continue through the normal verification path.
+Preserve the existing installation and sandbox data.
+Follow the [OpenShell upgrade restrictions](update-sandboxes#use-the-automatic-upgrade-path).
+NemoClaw does not automatically migrate these providers or their state volumes.
 
 For a remote inference provider other than Hermes Provider, preflight checks the selected credential's non-secret expiration metadata from OpenShell.
 For these providers, a provider that no longer exposes the recorded credential key, an expired credential, or expiration metadata that NemoClaw cannot verify stops rebuild before backup or deletion, including with `--force`.

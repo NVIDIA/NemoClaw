@@ -15,7 +15,6 @@ import {
 import { namedOpenShellGateway } from "../adapters/openshell/sandbox-observer";
 import { printSandboxCreateRecoveryHints } from "../build-context";
 import type { StreamSandboxCreateResult } from "../sandbox/create-stream";
-import { getReadyCheckOutputPatternsForAgent } from "../sandbox/create-stream-ready-gate";
 import type { SandboxGpuProofResult } from "../state/registry";
 import { classifySandboxCreateFailure } from "../validation";
 import {
@@ -47,6 +46,7 @@ import { SANDBOX_RECREATE_PROBE_TIMEOUT_MS } from "./sandbox-recreate-probe";
 import type { CreatedSandboxReadyIdentityCheck } from "./sandbox-readiness-tracing";
 import * as sandboxReadinessTracing from "./sandbox-readiness-tracing";
 import { addTraceEvent } from "./tracing";
+import { managedStartupCreateReadiness } from "./managed-startup/hold";
 
 type NativeRuntimeSnapshot = Readonly<{
   imageId: string | null;
@@ -192,26 +192,6 @@ async function verifyCreatedSandboxBeforeEffects(
     beforeEffects,
     afterEffects,
   );
-}
-
-function requireCompatibilityLifecycleCommand(
-  action: "start" | "stop",
-  sandboxName: string,
-  gatewayName: string,
-  deps: SandboxGpuCreateFlowDeps,
-): void {
-  const result = deps.runOpenshell(["sandbox", action, "-g", gatewayName, sandboxName], {
-    ignoreError: true,
-    killProcessTreeOnTimeout: true,
-    killSignal: "SIGKILL",
-    suppressOutput: true,
-    timeout: SANDBOX_READY_PROBE_TIMEOUT_MS,
-  });
-  if (Number(result.status ?? 1) !== 0 || result.error || ("signal" in result && result.signal)) {
-    throw new Error(
-      `OpenShell could not ${action} sandbox '${sandboxName}' for the exact compatibility cutover.`,
-    );
-  }
 }
 
 function resolveCreateAttemptNonce(
@@ -681,9 +661,46 @@ export function createSandboxGpuCreateAttemptRunner(
     };
     let createdSandboxVerified = false;
     let compatibilityCreatePollError: unknown = null;
+    let compatibilitySandboxId: string | null = null;
+    const runCompatibilityLifecycle = (action: "start" | "stop"): void => {
+      try {
+        sandboxGpuCreateAttempt.requireCompatibilityLifecycleCommand(
+          action,
+          input.sandboxName,
+          input.gatewayName,
+          deps,
+        );
+      } catch (error) {
+        try {
+          // Recheck current authority before reading a failed runtime; never rediscover ownership by name.
+          revalidatePostCreateEffect(
+            `capture failed compatibility ${action} for sandbox '${input.sandboxName}'`,
+          );
+          if (compatibilitySandboxId) {
+            const containerId = runtimePatch.replacementRuntimeId?.() ?? null;
+            const sandboxContainerOutput = deps.captureSandboxContainerOutput
+              ? deps.captureSandboxContainerOutput(
+                  input.sandboxName,
+                  containerId,
+                  compatibilitySandboxId,
+                )
+              : captureOpenShellDockerSandboxFailureOutput(input.sandboxName, containerId, {
+                  expectedSandboxId: compatibilitySandboxId,
+                });
+            printCreateFailureDiagnostics(input.sandboxName, {
+              backupPath: input.restoreBackupPath,
+              sandboxContainerOutput,
+            });
+          }
+        } catch {
+          // Evidence collection must not replace the original lifecycle failure.
+        }
+        throw error;
+      }
+    };
     const applyVerifiedCompatibilityCutover = async (): Promise<string | null> => {
       revalidatePostCreateEffect(`apply runtime patch for sandbox '${input.sandboxName}'`);
-      requireCompatibilityLifecycleCommand("stop", input.sandboxName, input.gatewayName, deps);
+      runCompatibilityLifecycle("stop");
       revalidatePostCreateEffect(`confirm stopped compatibility sandbox '${input.sandboxName}'`);
       await runtimePatch.ensureApplied();
       await runtimePatch.exitOnPatchError();
@@ -691,7 +708,7 @@ export function createSandboxGpuCreateAttemptRunner(
     };
     const publishVerifiedCompatibilityCutover = async (): Promise<void> => {
       revalidatePostCreateEffect(`publish replacement runtime for sandbox '${input.sandboxName}'`);
-      requireCompatibilityLifecycleCommand("start", input.sandboxName, input.gatewayName, deps);
+      runCompatibilityLifecycle("start");
     };
     const verifyAndPatchCompatibilityDuringCreate = async (): Promise<void> => {
       if (!compatibility || !deferPostCreateEffects || !createAttemptNonce) return;
@@ -732,6 +749,7 @@ export function createSandboxGpuCreateAttemptRunner(
           deps.verifyExactFinalHandoffRuntime ?? isExactOpenShellDockerSandboxReplacement;
         if (!runtimeId || !verifyExactRuntime(input.sandboxName, runtimeId, true)) return;
         waitForCreatedSandboxPublication(sandboxId);
+        compatibilitySandboxId = sandboxId;
         await verifyCreatedSandboxBeforeEffects(
           sandboxId,
           createAttemptNonce,
@@ -804,14 +822,14 @@ export function createSandboxGpuCreateAttemptRunner(
                 if (!deferRestartSafeCutover) void runtimePatch.maybeApplyDuringCreate();
               },
             }),
-        readyCheckOutputPatterns: getReadyCheckOutputPatternsForAgent({
+        ...managedStartupCreateReadiness({
+          startupCommand: attemptRequest.startupCommand,
           isTerminalAgent: input.terminalAgent,
-          startupRunsDuringCreate: true,
           env: input.sandboxEnv,
+          deferPostCreateEffects: deferRestartSafeCutover || deferPostCreateEffects,
         }),
         failureCheck: runtimePatch.createFailureMessage,
         traceEvent: addTraceEvent,
-        waitForReadyTermination: deferRestartSafeCutover || deferPostCreateEffects,
         initialPhase:
           compatibility && (input.prebuild.imageRef || state.compatibilityRequest)
             ? "create"
@@ -968,6 +986,7 @@ export function createSandboxGpuCreateAttemptRunner(
         );
       }
       waitForCreatedSandboxPublication(sandboxId);
+      compatibilitySandboxId = sandboxId;
       await verifyCreatedSandboxBeforeEffects(
         sandboxId,
         createAttemptNonce!,

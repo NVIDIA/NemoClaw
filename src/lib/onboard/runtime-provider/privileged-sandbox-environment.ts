@@ -1,8 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-/** Remove interpreter and loader hooks before entering a privileged container helper. */
+/** Supply helper executables and remove interpreter and loader hooks in privileged commands. */
 export const SANITIZED_PRIVILEGED_ENV = [
+  // OpenShell clears the image environment; privileged engine exec needs its own search path.
+  "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
   "BASH_ENV=",
   "ENV=",
   "GCONV_PATH=",

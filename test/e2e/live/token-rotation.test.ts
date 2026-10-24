@@ -16,6 +16,7 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { captureOpenClawOnboardFailure } from "../fixtures/openclaw-onboard-diagnostics.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
+import type { LifecyclePhaseFixture } from "../fixtures/phases/lifecycle.ts";
 
 // Keep this free-standing and direct: the contract is the real CLI +
 // OpenShell/provider boundary for messaging credential reuse/rotation, not the
@@ -262,21 +263,19 @@ async function deleteSandboxIfOpenshellExists(
   );
 }
 
-async function destroyGatewayIfOpenshellExists(
+async function cleanupGateway(
   host: import("../fixtures/clients/host.ts").HostCliClient,
+  lifecycle: LifecyclePhaseFixture,
   artifactName: string,
 ): Promise<void> {
-  await host.command(
-    "bash",
-    [
-      "-lc",
-      "if command -v openshell >/dev/null 2>&1; then openshell gateway destroy -g nemoclaw; fi",
-    ],
-    {
-      artifactName,
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 60_000,
-    },
+  const env = buildAvailabilityProbeEnv();
+  const options = { env, redactionValues: redactionValues() };
+  await lifecycle.stopGatewayRuntime({ env, userServiceMode: "permanent" });
+  await cleanupWhenOpenShellAvailable(
+    host,
+    { artifactName: `${artifactName}-probe`, ...options, timeoutMs: 30_000 },
+    () =>
+      host.cleanupGatewayRegistration("nemoclaw", { artifactName, ...options, timeoutMs: 60_000 }),
   );
 }
 
@@ -294,7 +293,7 @@ test(
       ],
     },
   },
-  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
+  async ({ artifacts, cleanup, host, lifecycle, progress, runtimeProvider, sandbox }) => {
     assertTokenPairsDiffer();
 
     await runtimeProvider.requireAvailable({
@@ -347,17 +346,8 @@ test(
     };
     cleanup.trackGateway(
       {
-        cleanupGatewayRegistration: (name: string) =>
-          cleanupWhenOpenShellAvailable(
-            host,
-            {
-              artifactName: "cleanup-probe-openshell-gateway-token-rotation",
-              env: gatewayCleanupOptions.env,
-              redactionValues: gatewayCleanupOptions.redactionValues,
-              timeoutMs: 30_000,
-            },
-            () => host.cleanupGatewayRegistration(name, gatewayCleanupOptions),
-          ),
+        cleanupGatewayRegistration: () =>
+          cleanupGateway(host, lifecycle, gatewayCleanupOptions.artifactName),
       },
       "nemoclaw",
       gatewayCleanupOptions,
@@ -414,10 +404,7 @@ test(
       host,
       "pre-cleanup-openshell-sandbox-delete-token-rotation",
     );
-    await destroyGatewayIfOpenshellExists(
-      host,
-      "pre-cleanup-openshell-gateway-destroy-token-rotation",
-    );
+    await cleanupGateway(host, lifecycle, "pre-cleanup-openshell-gateway-destroy-token-rotation");
 
     progress.phase("install the sandbox and confirm provider hashes");
     const first = await runInstall(host, fakeOpenAI.baseUrl, TOKEN_A, {

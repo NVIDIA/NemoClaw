@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { OPENSHELL_DEFAULT_WORKSPACE } from "../../adapters/openshell/sandbox-ssh-host";
 import type { ManagedStartupStateRoot } from "../managed-startup/state-roots";
 import type { RuntimeProviderBundle } from "../runtime-provider/contract";
 
@@ -42,6 +43,7 @@ type ContainerEngineRun = (
 ) => ContainerEngineRunResult;
 
 export type ManagedStateVolumeDeps = {
+  readonly workspace?: string;
   readonly runContainerEngine?: ContainerEngineRun;
   readonly runtimeProvider?: RuntimeProviderBundle;
   readonly registerExitCleanup?: (cleanup: () => void) => () => void;
@@ -189,6 +191,44 @@ function supportsManagedStateVolumes(provider?: RuntimeProviderBundle): boolean 
   return provider?.containerEngine.supported !== false;
 }
 
+function managedStateVolumeApproval(deps: ManagedStateVolumeDeps): Record<string, string> {
+  const workspace =
+    deps.workspace ?? process.env.OPENSHELL_WORKSPACE ?? OPENSHELL_DEFAULT_WORKSPACE;
+  if (!workspace || workspace.trim() !== workspace || /[\0\r\n]/u.test(workspace)) {
+    throw new Error("Managed state volume requires an exact OpenShell workspace.");
+  }
+  return {
+    "openshell.ai/sandbox-attachable": "true",
+    "openshell.ai/sandbox-attachable-workspace": workspace,
+  };
+}
+
+/** Reject legacy state before the caller deletes the source sandbox. */
+export function preflightManagedStateVolumes(
+  input: { readonly roots: readonly ManagedStartupStateRoot[] },
+  deps: ManagedStateVolumeDeps = {},
+): void {
+  if (input.roots.length === 0 || !supportsManagedStateVolumes(deps.runtimeProvider)) return;
+  const run =
+    deps.runContainerEngine ??
+    (deps.runtimeProvider ? defaultRuntimeVolumeRun(deps.runtimeProvider) : undefined);
+  if (!run) throw new Error("Managed state volumes require runtime provider authority.");
+  const approval = managedStateVolumeApproval(deps);
+  for (const root of input.roots) {
+    const observed = inspectVolume(root, run);
+    if (observed.status === "failed")
+      throw new Error(`Cannot inspect managed state volume: ${observed.detail}`);
+    if (observed.status === "absent") continue;
+    if (!labelsMatch(observed.labels, root.ownershipLabels))
+      throw new Error("Managed state volume ownership changed.");
+    if (!labelsMatch(observed.labels, approval)) {
+      throw new Error(
+        "Managed state volume lacks OpenShell attachment approval. Retained data was not changed.",
+      );
+    }
+  }
+}
+
 export function prepareManagedStateVolumes(
   input: {
     readonly roots: readonly ManagedStartupStateRoot[];
@@ -206,6 +246,7 @@ export function prepareManagedStateVolumes(
       : (() => {
           throw new Error("Managed state volumes require runtime provider authority.");
         })());
+  const approvalLabels = managedStateVolumeApproval(deps);
   const created: ManagedStartupStateRoot[] = [];
   const reused: boolean[] = [];
   try {
@@ -218,9 +259,10 @@ export function prepareManagedStateVolumes(
       }
       if (before.status === "absent") {
         const createArgs = ["create"];
-        for (const [name, value] of Object.entries(root.ownershipLabels).sort(([left], [right]) =>
-          left.localeCompare(right),
-        )) {
+        for (const [name, value] of Object.entries({
+          ...root.ownershipLabels,
+          ...approvalLabels,
+        }).sort(([left], [right]) => left.localeCompare(right))) {
           createArgs.push("--label", `${name}=${value}`);
         }
         createArgs.push(root.resourceIdentity);
@@ -245,6 +287,12 @@ export function prepareManagedStateVolumes(
               ? "the volume disappeared after creation"
               : "the exact NemoClaw ownership labels do not match";
         throw new Error(`Cannot use managed state volume '${root.resourceIdentity}': ${detail}.`);
+      }
+      if (!labelsMatch(verified.labels, approvalLabels)) {
+        throw new Error(
+          "Managed state volume lacks OpenShell attachment approval for the selected workspace. " +
+            "Retained data was not changed; operator reconciliation is required.",
+        );
       }
       reused.push(before.status === "observed");
     }

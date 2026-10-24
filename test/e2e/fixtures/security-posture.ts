@@ -6,6 +6,7 @@ import type {
   RuntimeProviderPrivilegedSandboxTarget,
 } from "../../../src/lib/onboard/runtime-provider/contract.ts";
 import { liveE2eManagedImageCatalog } from "../../../src/lib/onboard/workload/preparation.ts";
+import { managedImageRuntimeIdentity } from "../../../src/lib/onboard/managed-image/agents.ts";
 import {
   executePrivilegedSandboxCommand,
   resolvePrivilegedSandboxTarget,
@@ -14,6 +15,10 @@ import { buildAvailabilityProbeEnv } from "./availability-env.ts";
 import type { HostCliClient } from "./clients/host.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "./clients/sandbox.ts";
 import type { ShellProbeResult } from "./shell-probe.ts";
+import {
+  inspectSecurityContainerPair,
+  type SecurityContainerPair,
+} from "./security-posture-containers.ts";
 
 export type SecurityPostureAgent = "hermes" | "openclaw";
 
@@ -31,7 +36,8 @@ export interface ProcessSecurityStatus {
 
 export interface ProcessSecurityIdentity {
   argv: string[];
-  executable: string;
+  // Null records PermissionError from /proc/<pid>/exe, not an inferred path.
+  executable: string | null;
   pid: number;
   ppid: number;
   state: string;
@@ -45,11 +51,13 @@ export interface SplitProcessSecurityReport {
   observedProcEntries: number;
   sandboxGid: number;
   sandboxUid: number;
-  supervisor: ProcessSecurityIdentity;
-  version: 2;
+  workloadBoundary: ProcessSecurityIdentity;
+  version: 3;
 }
 
 export interface SecurityPostureSummary {
+  processScope: "workload-container";
+  containerPair: SecurityContainerPair;
   capabilitySurfaces: {
     connect: CapabilitySurfaceReport;
     entrypoint: CapabilitySurfaceReport;
@@ -65,7 +73,7 @@ export interface SecurityPostureSummary {
   };
   splitProcess: {
     childSupervisor: ProcessSecurityIdentity;
-    supervisor: ProcessSecurityIdentity;
+    workloadBoundary: ProcessSecurityIdentity;
   };
   startupLogClean: true;
 }
@@ -88,16 +96,16 @@ export interface SecurityPostureExpectations {
 
 export interface SecurityPostureDependencies {
   environment?: NodeJS.ProcessEnv;
+  inspectContainerPair?: typeof inspectSecurityContainerPair;
   executePrivilegedCommand?: typeof executePrivilegedSandboxCommand;
   resolvePrivilegedTarget?: typeof resolvePrivilegedSandboxTarget;
 }
 
-const OPENSHELL_SUPERVISOR_EXECUTABLE = "/opt/openshell/bin/openshell-sandbox";
-const OPENSHELL_SUPERVISOR_ARGV = [
-  OPENSHELL_SUPERVISOR_EXECUTABLE,
-  "--workdir",
-  "/sandbox",
-] as const;
+const WORKLOAD_BOUNDARY_EXECUTABLES = Object.freeze({
+  docker: "/.openshell/runtime/openshell-sandbox",
+  podman: "/opt/openshell/bin/openshell-sandbox",
+});
+const WORKLOAD_BOOTSTRAP_ARGV = ["--bootstrap", "/.openshell/channel/sandbox/bootstrap.json"];
 const SYSTEM_BASH_EXECUTABLES = ["/bin/bash", "/usr/bin/bash"] as const;
 const NEMOCLAW_START_SUPERVISOR_PATHS = [
   "nemoclaw-start",
@@ -109,29 +117,15 @@ const MAX_PROC_ENTRIES = 32_768;
 const MAX_CENSUS_STABILITY_ATTEMPTS = 4;
 const MAX_CENSUS_DIAGNOSTIC_IDENTITIES = 16;
 const CAPABILITY_SURFACE_MARKER = "NEMOCLAW_SECURITY_CAPABILITY_SURFACE";
-const EXPECTED_OPENSHELL_VERSION = "0.0.116";
+const EXPECTED_OPENSHELL_VERSION = "0.1.3";
 const REVISION_PATTERN = /^[0-9a-f]{40}$/u;
-// The pinned OpenShell supervisor has the Docker default capabilities plus
-// NET_ADMIN, SYS_ADMIN, SYS_PTRACE, and SYSLOG. Freeze the
-// resulting Linux capability mask so additions and removals both require an
-// explicit security review.
-export const OPENSHELL_SUPERVISOR_CAPABILITY_MASK = "00000004a82c35fb";
-export const PODMAN_OPENSHELL_SUPERVISOR_CAPABILITY_MASK = "00000004002811cd";
-
-const OPENSHELL_SUPERVISOR_CAPABILITY_MASKS = Object.freeze({
-  docker: OPENSHELL_SUPERVISOR_CAPABILITY_MASK,
-  podman: PODMAN_OPENSHELL_SUPERVISOR_CAPABILITY_MASK,
-});
-
-function supervisorCapabilityMask(providerId: string): string {
-  const mask =
-    OPENSHELL_SUPERVISOR_CAPABILITY_MASKS[
-      providerId as keyof typeof OPENSHELL_SUPERVISOR_CAPABILITY_MASKS
-    ];
-  if (!mask) {
-    throw new Error(`security-posture has no reviewed capability mask for '${providerId}'`);
+function workloadBoundaryArgv(providerId: string): string[] {
+  const executable =
+    WORKLOAD_BOUNDARY_EXECUTABLES[providerId as keyof typeof WORKLOAD_BOUNDARY_EXECUTABLES];
+  if (!Object.hasOwn(WORKLOAD_BOUNDARY_EXECUTABLES, providerId)) {
+    throw new Error(`security-posture has no reviewed workload boundary for '${providerId}'`);
   }
-  return mask;
+  return [executable, ...WORKLOAD_BOOTSTRAP_ARGV];
 }
 
 export const SPLIT_PROCESS_SECURITY_PROBE = String.raw`import grp
@@ -144,12 +138,11 @@ PROC_ROOT = Path("/proc")
 MAX_PROC_ENTRIES = ${MAX_PROC_ENTRIES}
 MAX_CENSUS_STABILITY_ATTEMPTS = ${MAX_CENSUS_STABILITY_ATTEMPTS}
 MAX_CENSUS_DIAGNOSTIC_IDENTITIES = ${MAX_CENSUS_DIAGNOSTIC_IDENTITIES}
-OPENSHELL_SUPERVISOR_ARGV = tuple(item.encode("utf-8") for item in ${JSON.stringify(OPENSHELL_SUPERVISOR_ARGV)})
-OPENSHELL_SUPERVISOR_EXECUTABLE = ${JSON.stringify(OPENSHELL_SUPERVISOR_EXECUTABLE)}
 NEMOCLAW_START_SUPERVISOR = tuple(item.encode("utf-8") for item in ${JSON.stringify(NEMOCLAW_START_SUPERVISOR_PATHS)})
 BASH = tuple(item.encode("utf-8") for item in ${JSON.stringify(BASH_ARGV0)})
 SYSTEM_BASH_EXECUTABLES = set(${JSON.stringify(SYSTEM_BASH_EXECUTABLES)})
 LIVE_PROCESS_STATES = set(${JSON.stringify(LIVE_PROCESS_STATES)})
+WORKLOAD_BOUNDARY_COMMANDS = ${JSON.stringify(Object.values(WORKLOAD_BOUNDARY_EXECUTABLES).map((executable) => [executable, ...WORKLOAD_BOOTSTRAP_ARGV]))}
 
 def argv_for(path):
     raw = (path / "cmdline").read_bytes()
@@ -196,6 +189,16 @@ def selected_status(raw):
         "noNewPrivs": (values.get("NoNewPrivs") or [""])[0],
     }
 
+def executable_for(path, pid):
+    try:
+        return os.readlink(path / "exe")
+    except PermissionError:
+        # OpenShell 0.1.3 makes PID 1 nondumpable before reading its bootstrap.
+        # Do not invent an executable identity or hide denied child inspection.
+        if int(pid) != 1:
+            raise
+        return None
+
 def stable_process(pid):
     path = PROC_ROOT / str(pid)
     before = os.stat(path, follow_symlinks=False)
@@ -204,13 +207,13 @@ def stable_process(pid):
     )
     first_status = selected_status((path / "status").read_text(encoding="utf-8"))
     first_argv = argv_for(path)
-    first_executable = os.readlink(path / "exe")
+    first_executable = executable_for(path, pid)
     second_state, second_ppid, second_start_time = stat_identity(
         (path / "stat").read_text(encoding="utf-8")
     )
     second_status = selected_status((path / "status").read_text(encoding="utf-8"))
     second_argv = argv_for(path)
-    second_executable = os.readlink(path / "exe")
+    second_executable = executable_for(path, pid)
     after = os.stat(path, follow_symlinks=False)
     if first_state not in LIVE_PROCESS_STATES or second_state not in LIVE_PROCESS_STATES:
         raise RuntimeError(f"process {pid} is not live")
@@ -375,31 +378,30 @@ sandbox_uid = sandbox_user.pw_uid
 sandbox_gid = sandbox_group.gr_gid
 if sandbox_user.pw_gid != sandbox_gid:
     raise RuntimeError("sandbox user and group identities disagree")
-supervisor_before = stable_process(1)
+if os.getresuid() != (sandbox_uid,) * 3 or os.getresgid() != (sandbox_gid,) * 3:
+    raise RuntimeError("process observer must run as the sandbox owner")
+boundary_before = stable_process(1)
+if boundary_before["argv"] not in WORKLOAD_BOUNDARY_COMMANDS:
+    raise RuntimeError("unexpected OpenShell workload boundary command")
 (
     observed_proc_entries,
     child_supervisors,
     observed_child_supervisors,
 ) = acquire_stable_child_supervisor_census()
-supervisor_after = stable_process(1)
-if stable_security_identity(supervisor_before) != stable_security_identity(supervisor_after):
-    raise RuntimeError("OpenShell supervisor changed during inspection")
-if (
-    tuple(supervisor_before["argv"]) != tuple(item.decode("ascii") for item in OPENSHELL_SUPERVISOR_ARGV)
-    or supervisor_before["executable"] != OPENSHELL_SUPERVISOR_EXECUTABLE
-):
-    raise RuntimeError("unexpected OpenShell supervisor command")
+boundary_after = stable_process(1)
+if stable_security_identity(boundary_before) != stable_security_identity(boundary_after):
+    raise RuntimeError("OpenShell workload boundary changed during inspection")
 if any(
     item["executable"] not in SYSTEM_BASH_EXECUTABLES
     for item in observed_child_supervisors
 ):
     raise RuntimeError("unexpected nemoclaw-start child supervisor executable")
 print(json.dumps({
-    "version": 2,
+    "version": 3,
     "observedProcEntries": observed_proc_entries,
     "sandboxUid": sandbox_uid,
     "sandboxGid": sandbox_gid,
-    "supervisor": supervisor_before,
+    "workloadBoundary": boundary_before,
     "childSupervisors": child_supervisors,
     "observedChildSupervisors": observed_child_supervisors,
 }, sort_keys=True))`;
@@ -498,7 +500,10 @@ function processIdentity(value: unknown, label: string): ProcessSecurityIdentity
   const process = requiredRecord(value, label);
   const identity = {
     argv: requiredStringArray(process.argv, `${label}.argv`),
-    executable: requiredString(process.executable, `${label}.executable`),
+    executable:
+      process.executable === null
+        ? null
+        : requiredString(process.executable, `${label}.executable`),
     pid: requiredInteger(process.pid, `${label}.pid`, 1),
     ppid: requiredInteger(process.ppid, `${label}.ppid`, 0),
     state: requiredString(process.state, `${label}.state`),
@@ -636,46 +641,41 @@ function canonicalNemoclawStartSupervisorArgv(argv: string[]): boolean {
   );
 }
 
-function validateSupervisor(
+function validateWorkloadBoundary(
   process: ProcessSecurityIdentity,
+  sandboxUid: number,
   sandboxGid: number,
-  expectedCapabilityMask: string,
+  providerId: string,
 ): void {
   if (process.pid !== 1 || process.ppid !== 0) {
     throw new Error(
-      `OpenShell supervisor expected pid=1 ppid=0, got ${process.pid}/${process.ppid}`,
+      `OpenShell workload boundary expected pid=1 ppid=0, got ${process.pid}/${process.ppid}`,
     );
   }
+  const argv = workloadBoundaryArgv(providerId);
   if (
-    process.executable !== OPENSHELL_SUPERVISOR_EXECUTABLE ||
-    process.argv.length !== OPENSHELL_SUPERVISOR_ARGV.length ||
-    process.argv.some((argument, index) => argument !== OPENSHELL_SUPERVISOR_ARGV[index])
+    process.argv.length !== argv.length ||
+    process.argv.some((argument, index) => argument !== argv[index])
   ) {
-    throw new Error("PID 1 does not have the expected OpenShell supervisor command");
+    throw new Error("PID 1 does not have the expected OpenShell workload boundary command");
   }
-  requireExactIds(process.status.uid, 0, "OpenShell supervisor Uid");
-  requireExactIds(process.status.gid, 0, "OpenShell supervisor Gid");
-  requireExactSupplementaryGroups(process.status.groups, [0], "OpenShell supervisor Groups", [
-    [0, sandboxGid],
-  ]);
-  for (const field of ["capInh", "capPrm", "capEff", "capBnd", "capAmb"] as const) {
-    requireCapabilityHex(process.status[field], `OpenShell supervisor ${field}`);
+  if (process.executable !== null) {
+    throw new Error(
+      "OpenShell workload boundary must deny executable-link access to the sandbox owner",
+    );
   }
-  if (process.status.capInh !== "0000000000000000") {
-    throw new Error(`OpenShell supervisor CapInh drifted to ${process.status.capInh}`);
-  }
-  for (const field of ["capPrm", "capEff", "capBnd"] as const) {
-    if (process.status[field] !== expectedCapabilityMask) {
-      throw new Error(
-        `OpenShell supervisor ${field} expected ${expectedCapabilityMask}, got ${process.status[field]}`,
-      );
-    }
-  }
-  if (process.status.capAmb !== "0000000000000000") {
-    throw new Error(`OpenShell supervisor CapAmb drifted to ${process.status.capAmb}`);
-  }
+  requireExactIds(process.status.uid, sandboxUid, "OpenShell workload boundary Uid");
+  requireExactIds(process.status.gid, sandboxGid, "OpenShell workload boundary Gid");
+  requireExactSupplementaryGroups(
+    process.status.groups,
+    [sandboxGid],
+    "OpenShell workload boundary Groups",
+  );
+  requireZeroCapabilities(process.status, "OpenShell workload boundary");
   if (process.status.noNewPrivs !== "1") {
-    throw new Error(`OpenShell supervisor expected NoNewPrivs=1, got ${process.status.noNewPrivs}`);
+    throw new Error(
+      `OpenShell workload boundary expected NoNewPrivs=1, got ${process.status.noNewPrivs}`,
+    );
   }
 }
 
@@ -685,12 +685,17 @@ function validateNemoclawStartProcess(
   sandboxGid: number,
 ): void {
   if (process.pid === 1) {
-    throw new Error("nemoclaw-start process must not replace the OpenShell supervisor at PID 1");
+    throw new Error(
+      "nemoclaw-start process must not replace the OpenShell workload boundary at PID 1",
+    );
   }
   if (!canonicalNemoclawStartSupervisorArgv(process.argv)) {
     throw new Error("nemoclaw-start process does not have the expected argv");
   }
-  if (!(SYSTEM_BASH_EXECUTABLES as readonly string[]).includes(process.executable)) {
+  if (
+    process.executable === null ||
+    !(SYSTEM_BASH_EXECUTABLES as readonly string[]).includes(process.executable)
+  ) {
     throw new Error(
       `nemoclaw-start process expected the system Bash executable, got ${process.executable}`,
     );
@@ -772,11 +777,10 @@ function processIdentityArray(value: unknown, label: string): ProcessSecurityIde
 
 export function validateSplitProcessSecurityReport(
   value: unknown,
-  expectedCapabilityMask = OPENSHELL_SUPERVISOR_CAPABILITY_MASK,
+  providerId = "docker",
 ): SplitProcessSecurityReport {
-  requireCapabilityHex(expectedCapabilityMask, "reviewed OpenShell supervisor capability mask");
   const report = requiredRecord(value, "split-process security report");
-  if (report.version !== 2) throw new Error("split-process security report version must be 2");
+  if (report.version !== 3) throw new Error("split-process security report version must be 3");
   const observedProcEntries = requiredInteger(
     report.observedProcEntries,
     "split-process security report observedProcEntries",
@@ -787,7 +791,7 @@ export function validateSplitProcessSecurityReport(
   }
   const sandboxUid = requiredInteger(report.sandboxUid, "sandbox uid", 1);
   const sandboxGid = requiredInteger(report.sandboxGid, "sandbox gid", 1);
-  const supervisor = processIdentity(report.supervisor, "supervisor");
+  const workloadBoundary = processIdentity(report.workloadBoundary, "workloadBoundary");
   const childSupervisors = processIdentityArray(
     report.childSupervisors,
     "split-process security report childSupervisors",
@@ -801,7 +805,7 @@ export function validateSplitProcessSecurityReport(
       "split-process security report retained more child supervisors than observed processes",
     );
   }
-  validateSupervisor(supervisor, sandboxGid, expectedCapabilityMask);
+  validateWorkloadBoundary(workloadBoundary, sandboxUid, sandboxGid, providerId);
   for (const process of childSupervisors) {
     validateNemoclawStartProcess(process, sandboxUid, sandboxGid);
   }
@@ -829,14 +833,14 @@ export function validateSplitProcessSecurityReport(
     observedProcEntries,
     sandboxGid,
     sandboxUid,
-    supervisor,
-    version: 2,
+    workloadBoundary,
+    version: 3,
   };
 }
 
 export function parseSplitProcessSecurityReport(
   output: string,
-  expectedCapabilityMask = OPENSHELL_SUPERVISOR_CAPABILITY_MASK,
+  providerId = "docker",
 ): SplitProcessSecurityReport {
   let parsed: unknown;
   try {
@@ -844,7 +848,7 @@ export function parseSplitProcessSecurityReport(
   } catch (error) {
     throw new Error("split-process security probe emitted invalid JSON", { cause: error });
   }
-  return validateSplitProcessSecurityReport(parsed, expectedCapabilityMask);
+  return validateSplitProcessSecurityReport(parsed, providerId);
 }
 
 export function securityPostureEnabled(): boolean {
@@ -910,11 +914,16 @@ export async function assertSecurityPosture(
   const splitProcessProbeCommand = ["/usr/bin/python3", "-I", "-c", SPLIT_PROCESS_SECURITY_PROBE];
   const initialTarget: RuntimeProviderPrivilegedSandboxTarget =
     resolvePrivilegedTarget(sandboxName);
+  workloadBoundaryArgv(initialTarget.providerId);
+  const identity = managedImageRuntimeIdentity(agent);
+  const inspectContainerPair = dependencies.inspectContainerPair ?? inspectSecurityContainerPair;
+  const containerPair = inspectContainerPair(sandboxName, initialTarget, identity);
   const splitProcessProbe: RuntimeProviderPrivilegedSandboxCommandResult = executePrivilegedCommand(
     sandboxName,
     splitProcessProbeCommand,
     {
       expectedResourceHandle: initialTarget.resourceHandle,
+      sandboxUser: `${identity.uid}:${identity.gid}`,
       sanitizeEnvironment: true,
       timeout: 30_000,
     },
@@ -940,8 +949,17 @@ export async function assertSecurityPosture(
   }
   const splitProcess = parseSplitProcessSecurityReport(
     splitProcessProbe.stdout.toString("utf8"),
-    supervisorCapabilityMask(initialTarget.providerId),
+    initialTarget.providerId,
   );
+  if (splitProcess.sandboxUid !== identity.uid || splitProcess.sandboxGid !== identity.gid) {
+    throw new Error("security-posture observed a different managed-image sandbox identity");
+  }
+  if (
+    JSON.stringify(containerPair) !==
+    JSON.stringify(inspectContainerPair(sandboxName, finalTarget, identity))
+  ) {
+    throw new Error("OpenShell container pair changed during process inspection");
+  }
 
   const execCapabilities = await sandbox.execShell(
     sandboxName,
@@ -1117,6 +1135,8 @@ tail -n 20 "$log"
   requireSuccess("sandbox startup log security posture", startLog);
 
   return {
+    processScope: "workload-container",
+    containerPair,
     capabilitySurfaces: {
       connect: connectCapabilitySurface,
       entrypoint: entrypointCapabilitySurface,
@@ -1132,7 +1152,7 @@ tail -n 20 "$log"
     },
     splitProcess: {
       childSupervisor,
-      supervisor: splitProcess.supervisor,
+      workloadBoundary: splitProcess.workloadBoundary,
     },
     startupLogClean: true,
   };

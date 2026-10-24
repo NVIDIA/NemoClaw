@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import path from "node:path";
+import { createServer } from "node:net";
+import { createSocket } from "node:dgram";
 
 import YAML from "yaml";
 
@@ -19,12 +21,12 @@ import {
   trustedSandboxShellScript,
 } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
-import { MCP_BRIDGE_TEST_CREDENTIALS } from "../fixtures/mcp-bridge-credentials.ts";
+
+import { exactMainDockerContainerId } from "./openshell-exact-main-exec.ts";
 
 const EXACT_MAIN_POLICY_KEY = "exact_main_live_exe_identity";
-const LIVE_EXE_PATH = "/tmp/nemoclaw-exact-main-live-exe/live-bash";
-const NETNS_PROXY_HOST = "10.200.0.1";
-const NETNS_PROXY_PORT = 3128;
+const LIVE_EXE_PATH = "/tmp/nemoclaw-exact-main-live-exe/live-python";
+const CONTROLLED_HOST = "host.openshell.internal";
 const POLICY_TIMEOUT_MS = 120_000;
 const SANDBOX_CONTAINER_LABEL = "openshell.ai/sandbox-name";
 
@@ -38,14 +40,6 @@ export interface ExactMainPolicyStatus {
   sandbox: string;
   status: string;
   version: number;
-}
-
-export interface ExactMainNftInspection {
-  chainPolicy: string;
-  loopbackAcceptIndex: number;
-  proxyAcceptIndex: number;
-  rejectIndexes: Record<"ipv4Tcp" | "ipv4Udp" | "ipv6Tcp" | "ipv6Udp", number>;
-  ruleCount: number;
 }
 
 function isRecord(value: unknown): value is JsonRecord {
@@ -97,146 +91,29 @@ export function parseExactMainPolicyStatus(raw: string): ExactMainPolicyStatus {
   };
 }
 
-function containsObject(value: unknown, predicate: (candidate: JsonRecord) => boolean): boolean {
-  if (Array.isArray(value)) return value.some((entry) => containsObject(entry, predicate));
-  if (!isRecord(value)) return false;
-  if (predicate(value)) return true;
-  return Object.values(value).some((entry) => containsObject(entry, predicate));
-}
-
-function hasVerdict(rule: JsonRecord, verdict: "accept" | "reject"): boolean {
-  return containsObject(rule, (candidate) => Object.hasOwn(candidate, verdict));
-}
-
-function hasMatch(rule: JsonRecord, selector: JsonRecord, right: string | number): boolean {
-  return containsObject(
-    rule,
-    (candidate) =>
-      isRecord(candidate.match) &&
-      containsObject(candidate.match, (nested) =>
-        Object.entries(selector).every(([key, value]) => nested[key] === value),
-      ) &&
-      candidate.match.right === right,
-  );
-}
-
-function nftRuleMatchesReject(
-  rule: JsonRecord,
-  family: "ipv4" | "ipv6",
-  protocol: "tcp" | "udp",
-): boolean {
-  const rejectType = family === "ipv4" ? "icmp" : "icmpv6";
-  return (
-    hasVerdict(rule, "reject") &&
-    hasMatch(rule, { key: "l4proto" }, protocol) &&
-    containsObject(
-      rule,
-      (candidate) =>
-        isRecord(candidate.reject) &&
-        candidate.reject.type === rejectType &&
-        candidate.reject.expr === "port-unreachable",
-    )
-  );
-}
-
-export function inspectExactMainNftRuleset(raw: string): ExactMainNftInspection {
+export function inspectExactMainIsolation(raw: string, containerId: string): JsonRecord {
   const parsed: unknown = JSON.parse(raw);
-  if (!isRecord(parsed) || !Array.isArray(parsed.nftables)) {
-    throw new Error("nft -j output must contain an nftables array");
+  if (!Array.isArray(parsed) || parsed.length !== 1 || !isRecord(parsed[0])) {
+    throw new Error("expected exactly one workload inspection");
   }
-  const entries = parsed.nftables.filter(isRecord);
-  const table = entries
-    .map((entry) => entry.table)
-    .find(
-      (candidate) =>
-        isRecord(candidate) && candidate.family === "inet" && candidate.name === "openshell_bypass",
-    );
-  if (!table) throw new Error("missing inet openshell_bypass nft table");
-  const chain = entries
-    .map((entry) => entry.chain)
-    .find(
-      (candidate) =>
-        isRecord(candidate) &&
-        candidate.family === "inet" &&
-        candidate.table === "openshell_bypass" &&
-        candidate.name === "output",
-    );
-  if (!isRecord(chain)) throw new Error("missing openshell_bypass output chain");
+  const container = parsed[0];
+  const config = container.HostConfig;
   if (
-    chain.type !== "filter" ||
-    chain.hook !== "output" ||
-    chain.prio !== 0 ||
-    chain.policy !== "accept"
+    container.Id !== containerId ||
+    !isRecord(config) ||
+    config.NetworkMode !== "none" ||
+    !Array.isArray(config.CapDrop) ||
+    !config.CapDrop.includes("ALL") ||
+    (config.CapAdd !== null && (!Array.isArray(config.CapAdd) || config.CapAdd.length !== 0)) ||
+    config.Privileged !== false
   ) {
-    throw new Error(
-      `unexpected openshell_bypass chain contract: ${JSON.stringify({
-        hook: chain.hook,
-        policy: chain.policy,
-        prio: chain.prio,
-        type: chain.type,
-      })}`,
-    );
-  }
-
-  const rules = entries
-    .map((entry) => entry.rule)
-    .filter(
-      (candidate): candidate is JsonRecord =>
-        isRecord(candidate) &&
-        candidate.family === "inet" &&
-        candidate.table === "openshell_bypass" &&
-        candidate.chain === "output",
-    );
-  const proxyAcceptIndex = rules.findIndex(
-    (rule) =>
-      hasVerdict(rule, "accept") &&
-      hasMatch(rule, { protocol: "ip", field: "daddr" }, NETNS_PROXY_HOST) &&
-      hasMatch(rule, { protocol: "tcp", field: "dport" }, NETNS_PROXY_PORT),
-  );
-  const loopbackAcceptIndex = rules.findIndex(
-    (rule) => hasVerdict(rule, "accept") && hasMatch(rule, { key: "oifname" }, "lo"),
-  );
-  if (proxyAcceptIndex < 0) throw new Error("missing exact proxy IPv4 accept rule");
-  if (loopbackAcceptIndex < 0) throw new Error("missing loopback accept rule");
-
-  const rejectKinds = [
-    ["ipv4Tcp", "ipv4", "tcp"],
-    ["ipv6Tcp", "ipv6", "tcp"],
-    ["ipv4Udp", "ipv4", "udp"],
-    ["ipv6Udp", "ipv6", "udp"],
-  ] as const;
-  const rejectIndexes = {} as ExactMainNftInspection["rejectIndexes"];
-  for (const [key, family, protocol] of rejectKinds) {
-    const matches = rules
-      .map((rule, index) => ({ index, matches: nftRuleMatchesReject(rule, family, protocol) }))
-      .filter((entry) => entry.matches);
-    if (matches.length !== 1) {
-      throw new Error(
-        `expected exactly one ${family} ${protocol} reject rule, got ${matches.length}`,
-      );
-    }
-    rejectIndexes[key] = matches[0]?.index ?? -1;
-  }
-
-  const firstReject = Math.min(...Object.values(rejectIndexes));
-  if (proxyAcceptIndex >= firstReject || loopbackAcceptIndex >= firstReject) {
-    throw new Error("nft accept rules must precede every required reject rule");
-  }
-  if (
-    !(
-      rejectIndexes.ipv4Tcp < rejectIndexes.ipv6Tcp &&
-      rejectIndexes.ipv6Tcp < rejectIndexes.ipv4Udp &&
-      rejectIndexes.ipv4Udp < rejectIndexes.ipv6Udp
-    )
-  ) {
-    throw new Error("required nft rejects are not in IPv4/IPv6 TCP then IPv4/IPv6 UDP order");
+    throw new Error("workload does not preserve native network/capability isolation");
   }
   return {
-    chainPolicy: "accept",
-    loopbackAcceptIndex,
-    proxyAcceptIndex,
-    rejectIndexes,
-    ruleCount: rules.length,
+    containerId,
+    networkMode: config.NetworkMode,
+    capDrop: config.CapDrop,
+    privileged: false,
   };
 }
 
@@ -260,60 +137,35 @@ function buildIdentityPolicy(basePolicyYaml: string, mcpUrl: string): string {
   return YAML.stringify(parsed);
 }
 
-const LIVE_EXE_CONNECT_SCRIPT = String.raw`set -eu
-endpoint_host=$1
-endpoint_port=$2
-first_result=$3
-second_result=$4
-trigger=$5
-proxy_url=$(printenv HTTPS_PROXY 2>/dev/null || printenv https_proxy 2>/dev/null || printenv HTTP_PROXY 2>/dev/null || printenv http_proxy 2>/dev/null || true)
-[ -n "$proxy_url" ] || { printf '%s\n' 'proxy environment missing' >&2; exit 1; }
-proxy_authority=$(printf '%s' "$proxy_url" | sed -E 's#^[^:]+://##; s#/.*$##')
-proxy_host=$(printf '%s' "$proxy_authority" | cut -d: -f1)
-proxy_port=$(printf '%s' "$proxy_authority" | cut -d: -f2)
-[ -n "$proxy_host" ] && [ "$proxy_port" -ge 1 ] 2>/dev/null
-connect_status() {
-  status=000
-  if exec 7<>"/dev/tcp/$proxy_host/$proxy_port"; then
-    printf 'CONNECT %s:%s HTTP/1.1\r\nHost: %s:%s\r\nConnection: close\r\n\r\n' "$endpoint_host" "$endpoint_port" "$endpoint_host" "$endpoint_port" >&7
-    IFS=' ' read -r -t 30 _ status _ <&7 || status=000
-    exec 7<&-
-    exec 7>&-
-  fi
-  printf '%s\n' "$status"
-}
-connect_until_allowed() {
-  result_path=$1
-  allowed_status=000
-  allowed_attempt=0
-  while [ "$allowed_attempt" -lt 50 ]; do
-    allowed_attempt=$((allowed_attempt + 1))
-    allowed_status=$(connect_status)
-    [ "$allowed_status" = 200 ] && break
-    sleep 0.1
-  done
-  printf '%s\n' "$allowed_status" > "$result_path"
-}
-connect_until_allowed "$first_result"
-IFS= read -r _ < "$trigger"
-connect_until_allowed "$second_result"`;
+const LIVE_EXE_CONNECT_SCRIPT = String.raw`import errno
+import socket
+import sys
+import time
 
-const LIVE_EXE_ONESHOT_SCRIPT = String.raw`set -eu
-endpoint_host=$1
-endpoint_port=$2
-proxy_url=$(printenv HTTPS_PROXY 2>/dev/null || printenv https_proxy 2>/dev/null || printenv HTTP_PROXY 2>/dev/null || printenv http_proxy 2>/dev/null || true)
-[ -n "$proxy_url" ] || { printf '%s\n' '000'; exit 0; }
-proxy_authority=$(printf '%s' "$proxy_url" | sed -E 's#^[^:]+://##; s#/.*$##')
-proxy_host=$(printf '%s' "$proxy_authority" | cut -d: -f1)
-proxy_port=$(printf '%s' "$proxy_authority" | cut -d: -f2)
-status=000
-if exec 7<>"/dev/tcp/$proxy_host/$proxy_port"; then
-  printf 'CONNECT %s:%s HTTP/1.1\r\nHost: %s:%s\r\nConnection: close\r\n\r\n' "$endpoint_host" "$endpoint_port" "$endpoint_host" "$endpoint_port" >&7
-  IFS=' ' read -r -t 30 _ status _ <&7 || status=000
-  exec 7<&-
-  exec 7>&-
-fi
-printf '%s\n' "$status"`;
+host, port = sys.argv[1], int(sys.argv[2])
+def connect_status():
+    try:
+        with socket.create_connection((host, port), timeout=3) as stream:
+            stream.sendall(b"NEMOCLAW_IDENTITY_CONTROL")
+            return "allowed" if stream.recv(128) == b"NEMOCLAW_IDENTITY_CONTROL" else "invalid-echo"
+    except OSError as exc:
+        return "EACCES" if exc.errno == errno.EACCES else f"unexpected-{exc.errno}"
+def publish(result_path):
+    status = "unattempted"
+    for _ in range(50):
+        status = connect_status()
+        if status == "allowed":
+            break
+        time.sleep(0.1)
+    with open(result_path, "w", encoding="utf-8") as output:
+        output.write(status)
+if len(sys.argv) == 3:
+    print(connect_status())
+else:
+    publish(sys.argv[3])
+    with open(sys.argv[5], encoding="utf-8") as trigger:
+        trigger.readline()
+    publish(sys.argv[4])`;
 
 export function buildExactMainLiveExeIdentityScript(mcpUrl: string): string {
   const endpoint = new URL(mcpUrl);
@@ -331,17 +183,17 @@ export function buildExactMainLiveExeIdentityScript(mcpUrl: string): string {
     'trap \'if [ -n "${old_pid:-}" ]; then kill "$old_pid" 2>/dev/null || true; fi; rm -rf "$root"\' EXIT',
     'rm -rf "$root"',
     'mkdir -p "$root"',
-    "bash_source=$(command -v bash)",
-    '[ -n "$bash_source" ]',
-    'cp "$bash_source" "$live"',
+    "python_source=$(command -v python3)",
+    '[ -n "$python_source" ]',
+    'cp "$python_source" "$live"',
     'chmod 0755 "$live"',
     'first="$root/old-first.status"',
     'second="$root/old-second.status"',
     'trigger="$root/old-second.trigger"',
     'mkfifo "$trigger"',
     `worker_script=${shellQuote(LIVE_EXE_CONNECT_SCRIPT)}`,
-    `oneshot_script=${shellQuote(LIVE_EXE_ONESHOT_SCRIPT)}`,
-    `"$live" -c "$worker_script" exact-main-old ${shellQuote(endpoint.hostname)} ${endpointPort} "$first" "$second" "$trigger" &`,
+    `oneshot_script=${shellQuote(LIVE_EXE_CONNECT_SCRIPT)}`,
+    `"$live" -c "$worker_script" ${shellQuote(endpoint.hostname)} ${endpointPort} "$first" "$second" "$trigger" &`,
     "old_pid=$!",
     "wait_for_result() {",
     "  result_path=$1",
@@ -358,8 +210,8 @@ export function buildExactMainLiveExeIdentityScript(mcpUrl: string): string {
     "}",
     'wait_for_result "$first"',
     "old_first=$(tr -d '\\r\\n' < \"$first\")",
-    '[ "$old_first" = 200 ] || { printf \'expected initial live-exe CONNECT 200, got %s\\n\' "$old_first" >&2; exit 1; }',
-    'replacement="$root/live-bash.next"',
+    '[ "$old_first" = allowed ] || { printf \'expected initial live-exe broker connection allowed, got %s\\n\' "$old_first" >&2; exit 1; }',
+    'replacement="$root/live-python.next"',
     'cp "$live" "$replacement"',
     "printf '\\nNEMOCLAW_EXACT_MAIN_REPLACEMENT\\n' >> \"$replacement\"",
     'chmod 0755 "$replacement"',
@@ -371,70 +223,63 @@ export function buildExactMainLiveExeIdentityScript(mcpUrl: string): string {
     "printf 'go\\n' > \"$trigger\"",
     'wait_for_result "$second"',
     "old_second=$(tr -d '\\r\\n' < \"$second\")",
-    '[ "$old_second" = 200 ] || { printf \'expected retained live-exe CONNECT 200, got %s\\n\' "$old_second" >&2; exit 1; }',
+    '[ "$old_second" = allowed ] || { printf \'expected retained live-exe broker connection allowed, got %s\\n\' "$old_second" >&2; exit 1; }',
     'wait "$old_pid"',
     'old_pid=""',
-    `new_status=$("$live" -c "$oneshot_script" exact-main-new ${shellQuote(endpoint.hostname)} ${endpointPort} | tr -d '\\r\\n')`,
+    `new_status=$("$live" -c "$oneshot_script" ${shellQuote(endpoint.hostname)} ${endpointPort} | tr -d '\\r\\n')`,
     "printf 'NEMOCLAW_LIVE_EXE_OLD_FIRST=%s\\n' \"$old_first\"",
     "printf 'NEMOCLAW_LIVE_EXE_OLD_SECOND=%s\\n' \"$old_second\"",
     "printf 'NEMOCLAW_LIVE_EXE_NEW=%s\\n' \"$new_status\"",
     "printf 'NEMOCLAW_LIVE_EXE_OLD_LINK=%s\\n' \"$old_exe\"",
     "printf 'NEMOCLAW_LIVE_EXE_OLD_HASH=%s\\n' \"$old_hash\"",
     "printf 'NEMOCLAW_LIVE_EXE_NEW_HASH=%s\\n' \"$new_hash\"",
-    '[ "$new_status" = 403 ] || { printf \'expected replacement live-exe CONNECT 403, got %s\\n\' "$new_status" >&2; exit 1; }',
+    '[ "$new_status" = EACCES ] || { printf \'expected replacement live-exe broker EACCES, got %s\\n\' "$new_status" >&2; exit 1; }',
   ].join("\n");
 }
 
-const BYPASS_SERVER_CODE = String.raw`import os
-import selectors
-import socket
-import sys
-
-ready_path = sys.argv[1]
-bind_host = sys.argv[2]
-tcp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-tcp.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-tcp.bind((bind_host, 0))
-port = tcp.getsockname()[1]
-tcp.listen(8)
-udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-udp.bind((bind_host, port))
-selector = selectors.DefaultSelector()
-selector.register(tcp, selectors.EVENT_READ, "tcp")
-selector.register(udp, selectors.EVENT_READ, "udp")
-with open(ready_path, "w", encoding="utf-8") as ready:
-    ready.write(f"{os.getpid()} {port}\n")
-    ready.flush()
-while True:
-    for key, _ in selector.select(timeout=30):
-        if key.data == "tcp":
-            client, _ = tcp.accept()
-            with client:
-                client.settimeout(2)
-                payload = client.recv(4096)
-                client.sendall(payload or b"NEMOCLAW_TCP_ECHO")
-        else:
-            payload, address = udp.recvfrom(4096)
-            udp.sendto(payload or b"NEMOCLAW_UDP_ECHO", address)`;
-
-const START_BYPASS_SERVER_SCRIPT = String.raw`ready=$1
-log=$2
-server_code=$3
-bind_host=$4
-rm -f "$ready" "$log"
-nohup python3 -c "$server_code" "$ready" "$bind_host" >"$log" 2>&1 </dev/null &
-pid=$!
-attempts=0
-while [ ! -s "$ready" ]; do
-  if ! kill -0 "$pid" 2>/dev/null; then
-    cat "$log" >&2 || true
-    exit 1
-  fi
-  attempts=$((attempts + 1))
-  [ "$attempts" -lt 100 ] || { cat "$log" >&2 || true; exit 1; }
-  sleep 0.1
-done
-cat "$ready"`;
+async function startControlledListener(cleanup: CleanupRegistry) {
+  const observed = { tcp: 0, udp: 0 };
+  const tcp = createServer((socket) => {
+    observed.tcp += 1;
+    socket.setTimeout(3_000, () => socket.destroy());
+    socket.on("error", () => socket.destroy());
+    socket.on("data", (data) => socket.end(data));
+  });
+  const udp = createSocket("udp4");
+  let closed = false;
+  const close = async () => {
+    if (closed) return;
+    await Promise.all([
+      new Promise<void>((resolve, reject) =>
+        tcp.close((error) => (error ? reject(error) : resolve())),
+      ),
+      new Promise<void>((resolve) => udp.close(() => resolve())),
+    ]);
+    closed = true;
+  };
+  await new Promise<void>((resolve, reject) => {
+    tcp.once("error", reject);
+    tcp.listen(0, "127.0.0.1", resolve);
+  });
+  const address = tcp.address();
+  if (!address || typeof address === "string") throw new Error("listener has no TCP address");
+  try {
+    await new Promise<void>((resolve, reject) => {
+      udp.once("error", reject);
+      udp.bind(address.port, "127.0.0.1", resolve);
+    });
+  } catch (error) {
+    await new Promise<void>((resolve) => tcp.close(() => resolve()));
+    udp.close();
+    throw error;
+  }
+  udp.on("message", (data, peer) => {
+    observed.udp += 1;
+    udp.send(data, peer.port, peer.address);
+  });
+  cleanup.add("stop exact-main controlled TCP/UDP listener", close);
+  return { port: address.port, observed, close };
+}
 
 export const DIRECT_BYPASS_PROBE_CODE = String.raw`import errno
 import json
@@ -480,7 +325,7 @@ tcp_error = result["tcp"]["error"] or {}
 udp_error = result["udp"]["error"] or {}
 if result["tcp"]["connected"] or result["udp"]["echoed"]:
     raise SystemExit(1)
-denial_errnos = {errno.ECONNREFUSED, errno.EPERM}
+denial_errnos = {errno.EACCES}
 if tcp_error.get("errno") not in denial_errnos or udp_error.get("errno") not in denial_errnos:
     raise SystemExit(1)
 if result["tcp"]["elapsedMs"] >= 2500 or result["udp"]["elapsedMs"] >= 2500:
@@ -500,57 +345,39 @@ async function findSandboxContainer(
       "label=openshell.ai/managed-by=openshell",
       "--filter",
       `label=${SANDBOX_CONTAINER_LABEL}=${sandboxName}`,
+      "--filter",
+      "label=openshell.ai/isolation-role=sandbox",
       "--format",
-      "{{.ID}}",
+      '{{.ID}}\t{{.Names}}\t{{.Label "openshell.ai/sandbox-id"}}\t{{.Label "openshell.ai/sandbox-workspace"}}',
     ],
     { artifactName, env: buildAvailabilityProbeEnv(), timeoutMs: 30_000 },
   );
   expectExitZero(result, `locate OpenShell sandbox container ${sandboxName}`);
-  const ids = result.stdout.trim().split(/\s+/u).filter(Boolean);
-  expect(ids, resultText(result)).toHaveLength(1);
-  return ids[0] ?? "";
+  return exactMainDockerContainerId(result.stdout, sandboxName);
 }
 
-export function buildExactMainNftInspectionScript(): string {
-  return [
-    "nft_path=",
-    "for candidate in /usr/sbin/nft /sbin/nft /usr/bin/nft; do",
-    '  if [ -x "$candidate" ]; then nft_path="$candidate"; break; fi',
-    "done",
-    "[ -n \"$nft_path\" ] || { printf 'nft executable not found\\n' >&2; exit 127; }",
-    "active_namespace_count=0",
-    "namespace_path=",
-    "for namespace_candidate in /var/run/netns/sandbox-*; do",
-    '  [ -e "$namespace_candidate" ] || continue',
-    "  namespace=${namespace_candidate##*/}",
-    '  [ -n "$(ip netns pids "$namespace" 2>/dev/null)" ] || continue',
-    "  active_namespace_count=$((active_namespace_count + 1))",
-    '  namespace_path="$namespace_candidate"',
-    "done",
-    'if [ "$active_namespace_count" -gt 1 ]; then',
-    "  printf 'expected at most one active sandbox netns, got %s\\n' \"$active_namespace_count\" >&2",
-    "  ip netns list >&2 || true",
-    "  exit 1",
-    "fi",
-    'if [ "$active_namespace_count" -eq 1 ]; then',
-    '  exec nsenter --net="$namespace_path" -- "$nft_path" -j list table inet openshell_bypass',
-    "fi",
-    'exec "$nft_path" -j list table inet openshell_bypass',
-  ].join("\n");
-}
-
-async function inspectNftRules(
+async function inspectIsolation(
   host: HostCliClient,
   containerId: string,
   artifactName: string,
-): Promise<{ inspection: ExactMainNftInspection; raw: string }> {
+): Promise<JsonRecord> {
   const result = await host.command(
     "docker",
-    ["exec", "--user", "0", containerId, "sh", "-ceu", buildExactMainNftInspectionScript()],
-    { artifactName, env: buildAvailabilityProbeEnv(), timeoutMs: 30_000 },
+    [
+      "inspect",
+      "--format",
+      '{"Id":{{json .Id}},"HostConfig":{"NetworkMode":{{json .HostConfig.NetworkMode}},"CapDrop":{{json .HostConfig.CapDrop}},"CapAdd":{{json .HostConfig.CapAdd}},"Privileged":{{json .HostConfig.Privileged}}}}',
+      containerId,
+    ],
+    {
+      artifactName,
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 30_000,
+      persistArtifacts: false,
+    },
   );
-  expectExitZero(result, "inspect exact-main nft bypass rules");
-  return { inspection: inspectExactMainNftRuleset(result.stdout), raw: result.stdout };
+  expectExitZero(result, "inspect exact-main native workload isolation");
+  return inspectExactMainIsolation(`[${result.stdout.trim()}]`, containerId);
 }
 
 async function readPolicyStatus(
@@ -571,10 +398,11 @@ async function readPolicyStatus(
   return parseExactMainPolicyStatus(result.stdout);
 }
 
-async function waitForRestartedPolicy(
+export async function waitForRestartedPolicy(
   sandbox: SandboxClient,
   sandboxName: string,
   expected: ExactMainPolicyStatus,
+  expectedRevision: ExactMainPolicyStatus,
 ): Promise<{ effective: ExactMainPolicyStatus; revision: ExactMainPolicyStatus }> {
   const deadline = Date.now() + POLICY_TIMEOUT_MS;
   let last = "no status response";
@@ -594,7 +422,7 @@ async function waitForRestartedPolicy(
       );
       if (
         revision.status === "loaded" &&
-        revision.hash === expected.hash &&
+        revision.hash === expectedRevision.hash &&
         revision.activeVersion === expected.version &&
         effective.status === "effective" &&
         effective.hash === expected.hash &&
@@ -639,117 +467,51 @@ async function waitForInitialPolicyAcknowledgement(
   throw new Error(`missing exact initial policy acknowledgement ${marker}\n${last}`);
 }
 
-async function stopBypassServer(
-  host: HostCliClient,
-  containerId: string,
-  pid: number,
-  readyPath: string,
-  logPath: string,
-): Promise<void> {
-  const result = await host.command(
-    "docker",
-    [
-      "exec",
-      "--user",
-      "0",
-      containerId,
-      "sh",
-      "-ceu",
-      'kill "$1" 2>/dev/null || true; rm -f "$2" "$3"',
-      "exact-main-bypass-cleanup",
-      String(pid),
-      readyPath,
-      logPath,
-    ],
-    {
-      artifactName: "exact-main-bypass-listener-cleanup",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 30_000,
-    },
-  );
-  expectExitZero(result, "stop exact-main controlled bypass listener");
-}
-
 async function assertDirectBypassDenied(options: {
-  cleanup: CleanupRegistry;
   host: HostCliClient;
-  containerId: string;
   sandbox: SandboxClient;
   sandboxName: string;
-  version: number;
+  listener: Awaited<ReturnType<typeof startControlledListener>>;
 }): Promise<JsonRecord> {
-  const readyPath = `/tmp/nemoclaw-exact-main-bypass-${options.version}.ready`;
-  const logPath = `/tmp/nemoclaw-exact-main-bypass-${options.version}.log`;
-  const start = await options.host.command(
-    "docker",
-    [
-      "exec",
-      "--user",
-      "0",
-      options.containerId,
-      "sh",
-      "-ceu",
-      START_BYPASS_SERVER_SCRIPT,
-      "exact-main-bypass-listener",
-      readyPath,
-      logPath,
-      BYPASS_SERVER_CODE,
-      NETNS_PROXY_HOST,
-    ],
+  const control = () =>
+    options.host.command(
+      "python3",
+      [
+        "-c",
+        String.raw`import socket, sys
+port = int(sys.argv[1])
+with socket.create_connection(("127.0.0.1", port), timeout=3) as tcp:
+    tcp.sendall(b"host-control")
+    assert tcp.recv(128) == b"host-control"
+with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp:
+    udp.settimeout(3)
+    udp.sendto(b"host-control", ("127.0.0.1", port))
+    assert udp.recv(128) == b"host-control"
+`,
+        String(options.listener.port),
+      ],
+      { artifactName: "exact-main-listener-positive-control", timeoutMs: 30_000 },
+    );
+  expectExitZero(await control(), "controlled TCP/UDP listeners echo before denial probe");
+  const before = { ...options.listener.observed };
+  const probe = await options.sandbox.exec(
+    options.sandboxName,
+    ["python3", "-c", DIRECT_BYPASS_PROBE_CODE, CONTROLLED_HOST, String(options.listener.port)],
     {
-      artifactName: "exact-main-bypass-listener-start",
-      env: buildAvailabilityProbeEnv(),
+      artifactName: "exact-main-direct-tcp-udp-bypass-denied",
+      env: sandboxAccessEnv(),
       timeoutMs: 30_000,
     },
   );
-  expectExitZero(start, "start controlled TCP/UDP bypass listener");
-  const match = start.stdout.trim().match(/^(\d+)\s+(\d+)$/u);
-  if (!match) throw new Error(`unexpected bypass listener identity: ${start.stdout}`);
-  const pid = Number(match[1]);
-  const port = Number(match[2]);
-  let listenerRunning = true;
-  const cleanupListener = async () => {
-    if (!listenerRunning) return;
-    await stopBypassServer(options.host, options.containerId, pid, readyPath, logPath);
-    listenerRunning = false;
-  };
-  options.cleanup.add("stop exact-main controlled TCP/UDP bypass listener", cleanupListener);
-  try {
-    const probe = await options.sandbox.exec(
-      options.sandboxName,
-      ["python3", "-c", DIRECT_BYPASS_PROBE_CODE, NETNS_PROXY_HOST, String(port)],
-      {
-        artifactName: "exact-main-direct-tcp-udp-bypass-denied",
-        env: sandboxAccessEnv(),
-        timeoutMs: 30_000,
-      },
-    );
-    if (probe.exitCode !== 0) {
-      await Promise.allSettled([
-        Promise.resolve().then(() =>
-          options.sandbox.openshell(
-            ["logs", options.sandboxName, "-n", "500", "--since", "2m", "--source", "all"],
-            {
-              artifactName: "exact-main-post-restart-failure-logs",
-              captureLimitBytes: 32_768,
-              env: sandboxAccessEnv(),
-              redactionValues: Object.values(MCP_BRIDGE_TEST_CREDENTIALS),
-              timeoutMs: 30_000,
-            },
-          ),
-        ),
-      ]);
-    }
-    expectExitZero(probe, "deny direct IPv4 TCP and UDP bypass to controlled listeners");
-    const parsed: unknown = JSON.parse(probe.stdout);
-    if (!isRecord(parsed)) throw new Error("direct bypass probe must return a JSON object");
-    return parsed;
-  } finally {
-    await cleanupListener();
-  }
+  expectExitZero(probe, "native broker rejects unauthorized TCP and non-DNS UDP");
+  const parsed: unknown = JSON.parse(probe.stdout);
+  if (!isRecord(parsed)) throw new Error("direct bypass probe must return a JSON object");
+  expect(options.listener.observed).toEqual(before);
+  expectExitZero(await control(), "controlled TCP/UDP listeners remain reachable after denial");
+  return parsed;
 }
 
-export async function assertExactMainPolicyNftAndIdentityContracts(options: {
+export async function assertExactMainPolicyAndIdentityContracts(options: {
   artifacts: ArtifactSink;
   cleanup: CleanupRegistry;
   host: HostCliClient;
@@ -767,6 +529,8 @@ export async function assertExactMainPolicyNftAndIdentityContracts(options: {
   expectExitZero(base, "capture exact-main base policy");
   const basePolicyYaml = parseOpenShellPolicy(base.stdout).yamlBody;
 
+  const listener = await startControlledListener(options.cleanup);
+  const controlledUrl = `http://${CONTROLLED_HOST}:${listener.port}`;
   let restoreRequired = false;
   const restorePolicy = async () => {
     if (!restoreRequired) return;
@@ -791,6 +555,7 @@ export async function assertExactMainPolicyNftAndIdentityContracts(options: {
   };
   options.cleanup.add("restore exact-main base policy", restorePolicy);
 
+  let primaryFailure: unknown;
   try {
     const before = await readPolicyStatus(
       options.sandbox,
@@ -802,7 +567,7 @@ export async function assertExactMainPolicyNftAndIdentityContracts(options: {
     expect(
       await setPolicyDocument(
         options.sandboxName,
-        buildIdentityPolicy(basePolicyYaml, options.mcpUrl),
+        buildIdentityPolicy(basePolicyYaml, controlledUrl),
         {
           nonFatal: true,
           operation: "apply the exact-main live-exe identity policy",
@@ -828,23 +593,24 @@ export async function assertExactMainPolicyNftAndIdentityContracts(options: {
     );
     expect(revision).toMatchObject({
       activeVersion: effective.version,
-      hash: effective.hash,
       sandbox: options.sandboxName,
       status: "loaded",
       version: effective.version,
     });
+    // Effective policy includes attached provider rules. Its hash and the
+    // stored base revision hash each remain stable across the restart.
 
     const containerId = await findSandboxContainer(
       options.host,
       options.sandboxName,
       "exact-main-sandbox-container-before-restart",
     );
-    const beforeRestartNft = await inspectNftRules(
+    const beforeRestartIsolation = await inspectIsolation(
       options.host,
       containerId,
-      "exact-main-nft-rules-before-restart",
+      "exact-main-native-isolation-before-restart",
     );
-    // OpenShell 0.0.116 treats an unexpected main-process exit as terminal Error.
+    // OpenShell treats an unexpected main-process exit as terminal Error.
     // Its lifecycle commands retain the container and wait for Stopped/Ready.
     for (const operation of ["stop", "start"]) {
       const result = await options.sandbox.openshell(["sandbox", operation, options.sandboxName], {
@@ -864,29 +630,22 @@ export async function assertExactMainPolicyNftAndIdentityContracts(options: {
       options.sandbox,
       options.sandboxName,
       effective,
+      revision,
     );
     const acknowledgement = await waitForInitialPolicyAcknowledgement(
       options.sandbox,
       options.sandboxName,
       effective.version,
     );
-    const afterRestartNft = await inspectNftRules(
+    const afterRestartIsolation = await inspectIsolation(
       options.host,
       restartedContainerId,
-      "exact-main-nft-rules-after-restart",
+      "exact-main-native-isolation-after-restart",
     );
-    const bypass = await assertDirectBypassDenied({
-      cleanup: options.cleanup,
-      containerId: restartedContainerId,
-      host: options.host,
-      sandbox: options.sandbox,
-      sandboxName: options.sandboxName,
-      version: effective.version,
-    });
 
     const liveExe = await options.sandbox.execShell(
       options.sandboxName,
-      trustedSandboxShellScript(buildExactMainLiveExeIdentityScript(options.mcpUrl)),
+      trustedSandboxShellScript(buildExactMainLiveExeIdentityScript(controlledUrl)),
       {
         artifactName: "exact-main-live-proc-exe-identity",
         env: sandboxAccessEnv(),
@@ -894,21 +653,34 @@ export async function assertExactMainPolicyNftAndIdentityContracts(options: {
       },
     );
     expectExitZero(liveExe, "prove live /proc/<pid>/exe identity across on-disk replacement");
-    expect(liveExe.stdout).toContain("NEMOCLAW_LIVE_EXE_OLD_FIRST=200");
-    expect(liveExe.stdout).toContain("NEMOCLAW_LIVE_EXE_OLD_SECOND=200");
-    expect(liveExe.stdout).toContain("NEMOCLAW_LIVE_EXE_NEW=403");
-    expect(liveExe.stdout).toMatch(/NEMOCLAW_LIVE_EXE_OLD_LINK=.*live-bash \(deleted\)/u);
+    expect(listener.observed.tcp).toBe(2);
+    expect(listener.observed.udp).toBe(0);
+    expect(liveExe.stdout).toContain("NEMOCLAW_LIVE_EXE_NEW=EACCES");
+    expect(liveExe.stdout).toMatch(/NEMOCLAW_LIVE_EXE_OLD_LINK=.*live-python \(deleted\)/u);
 
-    await options.artifacts.writeJson("exact-main-policy-nft-identity-summary.json", {
+    const bypass = await assertDirectBypassDenied({ ...options, listener });
+    await options.artifacts.writeJson("exact-main-policy-native-identity-summary.json", {
       acknowledgement,
       bypass,
-      nftAfterRestart: afterRestartNft.inspection,
-      nftBeforeRestart: beforeRestartNft.inspection,
+      isolationAfterRestart: afterRestartIsolation,
+      isolationBeforeRestart: beforeRestartIsolation,
       policyAfterRestart: restartedPolicy,
       policyHotUpdate: { effective, revision },
     });
+  } catch (error) {
+    primaryFailure = error;
+    throw error;
   } finally {
-    await restorePolicy();
+    const cleanupResults = await Promise.allSettled([restorePolicy(), listener.close()]);
+    const failures = cleanupResults.flatMap((result) =>
+      result.status === "rejected" ? [result.reason] : [],
+    );
+    if (failures.length) {
+      throw new AggregateError(
+        primaryFailure === undefined ? failures : [primaryFailure, ...failures],
+        "Exact-main proof cleanup failed",
+      );
+    }
   }
 }
 

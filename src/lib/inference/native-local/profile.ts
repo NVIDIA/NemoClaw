@@ -25,6 +25,7 @@ import {
 } from "./contract";
 
 export { normalizeNativeLocalProviderAttachment, nativeLocalIdentity };
+export { NativeProviderCredentialExpiredError } from "../native-provider/lifecycle";
 export type { NativeLocalProviderAttachment };
 
 export function prepareNativeLocalProfile(input: NativeLocalBinding) {
@@ -70,7 +71,12 @@ export function prepareNativeLocalProfile(input: NativeLocalBinding) {
             : ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", ...(dualStack ? ["fc00::/7"] : [])],
           rules: [
             { allow: { method: "GET", path: `${endpoint.pathname}/models` } },
-            { allow: { method: "POST", path: `${endpoint.pathname}/chat/completions` } },
+            {
+              allow: {
+                method: "POST",
+                path: `${endpoint.pathname}/${binding.api === "openai-responses" ? "responses" : "chat/completions"}`,
+              },
+            },
           ],
         },
       ],
@@ -78,8 +84,15 @@ export function prepareNativeLocalProfile(input: NativeLocalBinding) {
         // The provider-neutral onboarding smoke probe uses Python urllib.
         "/usr/bin/python3",
         ...(binding.agent === "hermes"
-          ? ["/opt/hermes/.venv/bin/python", "/opt/hermes/.venv/bin/python3"]
+          ? [
+              "/opt/hermes/.venv/bin/python",
+              "/opt/hermes/.venv/bin/python3",
+              // OpenShell checks the pinned Hermes image's resolved interpreter.
+              "/usr/bin/python3.13",
+            ]
           : []),
+        // OpenShell 0.1.3 matches the images' resolved smoke interpreter path.
+        ...(binding.agent === "openclaw" || binding.agent === "pi" ? ["/usr/bin/python3.13"] : []),
         ...(binding.agent === "openclaw" || binding.agent === "pi"
           ? ["/usr/local/bin/node", "/usr/bin/node"]
           : ["/opt/venv/bin/python3"]),
@@ -157,7 +170,9 @@ async function checkedAttachment(input: AttachmentInput, requirePolicy = true) {
   return { expected, target, profile: { ...prepared, profilePath: "", label: "host-local" } };
 }
 
-export async function verifyNativeLocalProviderAttachment(input: AttachmentInput) {
+export async function verifyNativeLocalProviderAttachment(
+  input: AttachmentInput & { requireUnexpiredCredential?: boolean },
+) {
   const checked = await checkedAttachment(input);
   await verifyNativeProviderAttachment({ ...input, ...checked });
   return checked.expected;
@@ -181,7 +196,11 @@ export async function verifyRecordedNativeLocalProviderAttachment(input: {
     (input.gatewayName !== undefined && expected.gatewayName !== input.gatewayName)
   )
     throw new Error("Native local provider authority does not match the rebuild target.");
-  return verifyNativeLocalProviderAttachment({ ...input, expected });
+  return verifyNativeLocalProviderAttachment({
+    ...input,
+    expected,
+    requireUnexpiredCredential: true,
+  });
 }
 
 export async function ensureNativeLocalProviderAttached(input: AttachmentInput) {

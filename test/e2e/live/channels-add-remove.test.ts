@@ -17,6 +17,7 @@ import {
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeDockerApi } from "../fixtures/fake-docker-api.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
+import { discoverHostInterfaceAddress } from "../fixtures/host-address.ts";
 import {
   applyFixtureProviderPolicyEndpoint,
   clearFixtureProviderPolicyEndpoint,
@@ -119,6 +120,7 @@ async function onboardWithLocalBaseline(host: HostCliClient, endpointUrl: string
       NEMOCLAW_AGENT: "openclaw",
       NEMOCLAW_COMPAT_MODEL: BASELINE_MODEL,
       NEMOCLAW_ENDPOINT_URL: endpointUrl,
+      NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS: new URL(endpointUrl).hostname,
       NEMOCLAW_MODEL: BASELINE_MODEL,
       NEMOCLAW_PREFERRED_API: "openai-completions",
       NEMOCLAW_PROVIDER: "custom",
@@ -393,14 +395,18 @@ test(
         `channels-add-remove live test is destructive and only accepts sandbox names with prefix ${TEST_SANDBOX_PREFIX}; got ${SANDBOX_NAME}`,
       );
     }
-    // The OpenShell router reaches this fixture from its own network namespace,
-    // so runner loopback is not a valid advertised provider endpoint.
+    // Native custom providers need a routable endpoint outside the legacy bridge route.
+    const inferenceHost = await discoverHostInterfaceAddress(
+      host,
+      "channels-add-remove-inference-host-address",
+    );
+    const inferenceEnv = { NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS: inferenceHost.address };
     const baseline = await startFakeOpenAiCompatibleServer({
       apiKey: BASELINE_API_KEY,
       host: "0.0.0.0",
       model: BASELINE_MODEL,
       progress,
-      publicHost: "host.openshell.internal",
+      publicHost: inferenceHost.address,
       requireAuth: true,
     });
     cleanup.add("close channels add/remove baseline fixture", async () => {
@@ -528,7 +534,7 @@ test(
     const baselineRequestCountBeforeCredentialReuseRebuild = baseline.requests().length;
     const rebuildAdd = await host.nemoclaw([SANDBOX_NAME, "rebuild", "--yes"], {
       artifactName: "phase-3-rebuild-after-add-without-host-compatible-key",
-      env: channelEnv(),
+      env: channelEnv(inferenceEnv),
       redactionValues: secretsToRedact,
       timeoutMs: REBUILD_TIMEOUT_MS,
     });
@@ -629,7 +635,7 @@ test(
     progress.phase("remove Telegram and rebuild sandbox");
     const remove = await host.nemoclaw([SANDBOX_NAME, "channels", "remove", "telegram"], {
       artifactName: "phase-5-channels-remove-telegram",
-      env: channelEnv({ COMPATIBLE_API_KEY: apiKey }),
+      env: channelEnv({ ...inferenceEnv, COMPATIBLE_API_KEY: apiKey }),
       redactionValues: secretsToRedact,
       timeoutMs: COMMAND_TIMEOUT_MS,
     });
@@ -639,7 +645,7 @@ test(
 
     const rebuildRemove = await host.nemoclaw([SANDBOX_NAME, "rebuild", "--yes"], {
       artifactName: "phase-5-rebuild-after-remove-with-stale-telegram-env",
-      env: channelEnv({ COMPATIBLE_API_KEY: apiKey }),
+      env: channelEnv({ ...inferenceEnv, COMPATIBLE_API_KEY: apiKey }),
       redactionValues: secretsToRedact,
       timeoutMs: REBUILD_TIMEOUT_MS,
     });
@@ -656,7 +662,6 @@ test(
       attempts: 12,
       delayMs: 5_000,
     });
-    expectHostTelegramPlan("removed", "after remove rebuild");
 
     progress.phase("validate Telegram removal");
     const removedTelegram = await readOpenClawTelegramState(

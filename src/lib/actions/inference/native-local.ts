@@ -1,11 +1,19 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { nativeModelRouterEndpoint } from "../../inference/native-local/model-router";
+import {
+  assertNativeModelRouterOwner,
+  prepareNativeModelRouterSelection,
+} from "../../onboard/routed-inference";
 import { requireNativeProviderPolicy } from "../../adapters/openshell/provider-policy";
 import { InferenceSetError } from "../inference-set-error";
 import type { SandboxEntry } from "../../state/registry";
 import type { OpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter";
-import { resolveHermesLocalSwitchRuntime } from "../inference-set/local-runtime";
+import {
+  resolveHermesLocalSwitchRuntime,
+  type NimSwitchSelection,
+} from "../inference-set/local-runtime";
 import {
   normalizeNativeLocalProviderAttachment,
   nativeLocalIdentity,
@@ -18,8 +26,12 @@ import {
   ensureNativeLocalProviderAttached,
   detachNativeLocalProvider,
 } from "../../inference/native-local/profile";
+import { gatewayReachableCompatibleEndpointUrl } from "../../inference/native-local/eligibility";
 import { prepareNativeLocalSelection } from "../../inference/native-local/selection";
-import type { InferenceSetProviderBinding } from "../inference-set-route-containment";
+import {
+  usesLoopbackNoAuthProxyRoute,
+  type InferenceSetProviderBinding,
+} from "../inference-set-route-containment";
 
 export async function prepareNativeLocalSwitch(input: {
   provider: string;
@@ -28,31 +40,110 @@ export async function prepareNativeLocalSwitch(input: {
   sandboxName: string;
   previous?: NativeLocalProviderAttachment;
   binding: InferenceSetProviderBinding | null;
+  entry?: Pick<SandboxEntry, "provider" | "endpointUrl" | "credentialEnv">;
+  endpointUrl?: string | null;
+  credentialEnv?: string | null;
+  inferenceApi?: string | null;
+  explicitCustomRoute?: boolean;
+  nimSelection?: NimSwitchSelection;
   adapter: OpenShellProviderAdapter;
   resolveCredentialValue: (name: string) => string;
   readAuthority?: Parameters<typeof prepareNativeLocalSelection>[0]["readAuthority"];
   writeAuthority?: Parameters<typeof prepareNativeLocalSelection>[0]["writeAuthority"];
 }) {
+  let binding = input.binding;
+  const ownedProxy = Boolean(
+    input.previous && input.entry && usesLoopbackNoAuthProxyRoute(input.entry, input.provider),
+  );
   if (
-    input.previous?.provider === input.provider &&
-    !input.binding &&
-    input.previous.profileId === nativeLocalIdentity(input.previous).profileId
+    !binding &&
+    input.provider === "compatible-endpoint" &&
+    (!input.previous || input.explicitCustomRoute) &&
+    input.endpointUrl &&
+    input.credentialEnv
   ) {
-    return {
-      ...(await ensureNativeLocalProviderAttached({
-        adapter: input.adapter,
-        expected: input.previous,
-        sandboxName: input.sandboxName,
-      })),
-      previousDetached: false,
+    const recordedMapping =
+      input.previous &&
+      input.entry?.endpointUrl &&
+      new URL(input.endpointUrl).href.replace(/\/+$/, "") ===
+        new URL(input.entry.endpointUrl).href.replace(/\/+$/, "") &&
+      gatewayReachableCompatibleEndpointUrl(input.provider, input.endpointUrl) ===
+        input.previous.endpointUrl;
+    const reuseRecorded =
+      input.previous &&
+      (ownedProxy || recordedMapping) &&
+      (input.previous.api ?? "openai-completions") === (input.inferenceApi ?? "openai-completions");
+    if (!reuseRecorded)
+      binding = {
+        baseUrl: ownedProxy || recordedMapping ? input.previous!.endpointUrl : input.endpointUrl,
+        credentialEnv: input.credentialEnv,
+        token: input.resolveCredentialValue(input.credentialEnv),
+        providerType: "openai",
+      };
+  }
+  if (input.previous?.provider === input.provider && !binding) {
+    if (
+      input.provider === "compatible-endpoint" &&
+      (input.previous.api ?? "openai-completions") !== (input.inferenceApi ?? "openai-completions")
+    )
+      throw new InferenceSetError(
+        "Recorded compatible provider API does not match its native attachment.",
+      );
+    if (nativeModelRouterEndpoint(input.provider)) {
+      const runtime = resolveHermesLocalSwitchRuntime(
+        input.provider,
+        null,
+        input.resolveCredentialValue,
+      );
+      if (runtime.endpointUrl !== input.previous.endpointUrl || !runtime.credentialValue)
+        throw new InferenceSetError(
+          "Model Router endpoint ownership changed. Recreate this sandbox before changing inference.",
+          2,
+        );
+      assertNativeModelRouterOwner(runtime.endpointUrl, runtime.credentialValue);
+    }
+
+    if (input.previous.profileId === nativeLocalIdentity(input.previous).profileId)
+      return {
+        ...(await ensureNativeLocalProviderAttached({
+          adapter: input.adapter,
+          expected: input.previous,
+          sandboxName: input.sandboxName,
+        })),
+        previousDetached: false,
+      };
+  }
+  if (
+    !binding &&
+    input.provider === "compatible-endpoint" &&
+    input.previous?.provider === input.provider
+  ) {
+    const credentialEnv = input.credentialEnv ?? input.entry?.credentialEnv;
+    const token = credentialEnv ? input.resolveCredentialValue(credentialEnv) : "";
+    if (!credentialEnv || !token)
+      throw new InferenceSetError(
+        "The recorded compatible endpoint credential is required to replace its IPv4-only profile.",
+        2,
+      );
+    binding = {
+      baseUrl: input.previous.endpointUrl,
+      credentialEnv,
+      token,
+      providerType: "openai",
     };
   }
   const runtime = resolveHermesLocalSwitchRuntime(
     input.provider,
-    input.binding,
+    binding,
     input.resolveCredentialValue,
+    input.nimSelection,
   );
-  const receipt = await prepareNativeLocalSelection({
+  if (!runtime.endpointUrl) throw new Error("Native local inference endpoint is missing.");
+  const receipt = await (
+    nativeModelRouterEndpoint(input.provider)
+      ? prepareNativeModelRouterSelection
+      : prepareNativeLocalSelection
+  )({
     adapter: input.adapter,
     binding: {
       provider: input.provider as NativeLocalProvider,
@@ -61,9 +152,14 @@ export async function prepareNativeLocalSwitch(input: {
       endpointUrl: runtime.endpointUrl,
       ...(input.agentName === "hermes" ? { agent: "hermes" as const } : {}),
       authMode: runtime.authMode,
+      ...(input.agentName === "hermes" &&
+      input.provider === "compatible-endpoint" &&
+      input.inferenceApi === "openai-responses"
+        ? { api: "openai-responses" as const }
+        : {}),
     },
     credentialValue: runtime.credentialValue || null,
-    ownedProxy: runtime.ownedProxy,
+    ownedProxy: ownedProxy || runtime.ownedProxy,
     readAuthority: input.readAuthority,
     writeAuthority: input.writeAuthority,
   });
@@ -202,6 +298,19 @@ export async function prepareNativeLocalSelectionBoundary(input: {
   ) {
     throw new InferenceSetError(
       "Recreate this beta sandbox before changing its native local inference selection.",
+      2,
+    );
+  }
+  if (
+    selectingNativeLocal &&
+    previous &&
+    input.endpointUrl &&
+    usesLoopbackNoAuthProxyRoute(input.entry, input.provider) &&
+    new URL(input.endpointUrl).href.replace(/\/+$/, "") !==
+      new URL(input.entry.endpointUrl!).href.replace(/\/+$/, "")
+  ) {
+    throw new InferenceSetError(
+      "The no-auth proxy is bound to the recorded backend. Reuse that endpoint; inference set cannot change its host, port, or path.",
       2,
     );
   }

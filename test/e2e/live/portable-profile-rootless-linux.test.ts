@@ -8,6 +8,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { redactFullWithUrls } from "../../../src/lib/security/redact.ts";
+
 import * as importedGatewayEnv from "../../../src/lib/onboard/docker-driver-gateway-env.ts";
 import * as importedGatewayLocalTls from "../../../src/lib/onboard/docker-driver-gateway-local-tls.ts";
 import * as importedBuildContextStage from "../../../src/lib/onboard/build-context-stage.ts";
@@ -17,6 +19,7 @@ import * as importedSandboxPrebuild from "../../../src/lib/onboard/sandbox-prebu
 import * as importedBuildContext from "../../../src/lib/sandbox/build-context.ts";
 import { capturePodmanSocketAuthority } from "../../../src/lib/adapters/podman/index.ts";
 import { captureHermesPortableOpenShellExecutableAuthority } from "../../../src/lib/adapters/openshell/resolve-shared.ts";
+import { parseStrictOpenShellSandboxListJson } from "../../../src/lib/adapters/openshell/sandbox-identity.ts";
 import { OPENSHELL_HEAVY_TIMEOUT_MS } from "../../../src/lib/adapters/openshell/timeouts.ts";
 import { loadAgent } from "../../../src/lib/agent/defs.ts";
 import {
@@ -62,8 +65,8 @@ import type { SandboxEntry } from "../../../src/lib/state/registry/types.ts";
 import { retryUntil } from "../../../src/lib/core/retry.ts";
 import { streamSandboxCreate } from "../../../src/lib/sandbox/create-stream.ts";
 import { test } from "../fixtures/e2e-test.ts";
+import { OPENSHELL_V013_QUALIFICATION } from "../fixtures/openshell-v0116-qualification.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
-import { OPENSHELL_V0116_QUALIFICATION } from "../fixtures/openshell-v0116-qualification.ts";
 import {
   capturePortableRegistryProcessBoundary,
   collectPortableRegistryReadinessFailure,
@@ -80,13 +83,13 @@ import {
   writePortableRegistry,
 } from "../fixtures/portable-profile-rootless-finalization-helpers.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
+import { runSandboxTokenContainerProbe } from "./openshell-gateway-auth-probe.ts";
 import type { ShellProbe } from "../fixtures/shell-probe.ts";
 import {
-  getSandboxConfigRequest,
-  mintSandboxJwt,
-  runSandboxTokenContainerProbe,
-} from "./openshell-gateway-auth-probe.ts";
-import { verifyPinnedPodmanGatewayStarts } from "./portable-profile-gateway-proof.ts";
+  captureOpenShell,
+  recordPortableSandboxDiagnostics,
+  verifyPinnedPodmanGatewayStarts,
+} from "./portable-profile-gateway-proof.ts";
 import {
   proveHermesPortableOnboardingTransaction,
   withAmbientPodmanHost,
@@ -369,44 +372,13 @@ function selectInstallerPodmanRuntime(repoRoot: string): string {
   return run("bash", ["-c", script]);
 }
 
-function captureOpenShell(
-  executablePath: string,
-  env: NodeJS.ProcessEnv,
-  args: readonly string[],
-  timeoutMs = 30_000,
-): HermesPortableLifecycleCommandResult {
-  const result = spawnSync(executablePath, [...args], {
-    encoding: "utf-8",
-    env,
-    killSignal: "SIGKILL",
-    maxBuffer: 512 * 1024,
-    stdio: ["ignore", "pipe", "pipe"],
-    timeout:
-      timeoutMs <= 10_000
-        ? 10_000
-        : timeoutMs <= 30_000
-          ? 30_000
-          : timeoutMs <= 40_000
-            ? 40_000
-            : timeoutMs <= 60_000
-              ? 60_000
-              : 240_000,
-  });
-  return {
-    status: result.status,
-    stdout: result.stdout ?? "",
-    stderr: result.stderr ?? "",
-    ...(result.error ? { error: result.error } : {}),
-  };
-}
-
 function requireOpenShellResult(
   result: HermesPortableLifecycleCommandResult,
   label: string,
 ): string {
   assert.ok(
     result.status === 0 && !result.error,
-    `${label} failed: ${String(result.error?.message ?? result.stderr ?? result.stdout)}`,
+    `${label} failed (status ${String(result.status)}): ${redactFullWithUrls(String(result.error?.message || result.stderr || result.stdout))}`,
   );
   return String(result.stdout).trim();
 }
@@ -542,7 +514,7 @@ function waitForOpenShellSandboxAbsent(
         10_000,
       );
       try {
-        const sandboxes = JSON.parse(String(result.stdout)) as unknown;
+        const sandboxes = parseStrictOpenShellSandboxListJson(String(result.stdout));
         return {
           absent:
             result.status === 0 &&
@@ -655,6 +627,7 @@ async function proveHistoricalHermesPortableLifecycle(input: {
     "--policy",
     qualifiedPolicyPath,
     "--no-tty",
+    "--detach",
     "--",
     ...startupArgv,
   ];
@@ -681,9 +654,16 @@ async function proveHistoricalHermesPortableLifecycle(input: {
         observedCreatePhase === "Error"
           ? "OpenShell Hermes sandbox entered Error during creation."
           : null,
-      readyCheckOutputPatterns: [/Setting up NemoClaw/u],
+      // A detached create has no startup stream to wait for. Terminating an
+      // attached create client also terminates its canonical main process.
+      readyCheckOutputPatterns: [],
       waitForReadyTermination: true,
     },
+  );
+  recordPortableSandboxDiagnostics(
+    input.runtimeAuthority.socketPath,
+    sandboxName,
+    createResult.status,
   );
   requireOpenShellResult(
     {
@@ -839,13 +819,30 @@ async function proveHistoricalHermesPortableLifecycle(input: {
         },
       } satisfies Parameters<typeof startSandbox>[1];
       const upgradeResult = await startSandbox(sandboxName, publicStartDeps);
-      const firstStop = await withMcpLifecycleLock(
+      console.log("Historical Hermes public start:", JSON.stringify(upgradeResult));
+      recordPortableSandboxDiagnostics(
+        input.runtimeAuthority.socketPath,
         sandboxName,
-        () =>
-          stopHermesPortableSandboxLifecycle(sandboxName, context, () => undefined, lifecycleDeps),
-        { stateDir: path.join(receiptStateDir, "state") },
+        upgradeResult.exitCode,
       );
-      assert.equal(firstStop.kind, "stopped", "Historical Hermes receipt did not stop");
+      const firstStop =
+        upgradeResult.exitCode === 0
+          ? await withMcpLifecycleLock(
+              sandboxName,
+              () =>
+                stopHermesPortableSandboxLifecycle(
+                  sandboxName,
+                  context,
+                  () => undefined,
+                  lifecycleDeps,
+                ),
+              { stateDir: path.join(receiptStateDir, "state") },
+            )
+          : null;
+      assert.ok(
+        firstStop?.kind === "stopped",
+        `Historical Hermes public start or first stop failed: upgrade=${JSON.stringify(upgradeResult)} stop=${firstStop?.kind ?? "not attempted"}`,
+      );
       const firstStoppedContainerStatus = waitForReceiptOwnedContainerExit(activeContainerId);
       const firstTerminalPhase = waitForOpenShellTerminalPhase(
         input.openshellBin,
@@ -1252,7 +1249,7 @@ async function main(
       gatewayPort: 8080,
       stateDir,
       podmanSocketPath: `${runtimeDir}/podman/podman.sock`,
-      getDockerSupervisorImage: () => OPENSHELL_V0116_QUALIFICATION.supervisorImage,
+      getDockerSupervisorImage: () => OPENSHELL_V013_QUALIFICATION.supervisorImage,
       resolveSandboxBin: () => sandboxBin,
     });
     assert.equal(gatewayEnv.OPENSHELL_GRPC_ENDPOINT, `https://${PORTABLE_HOST_GATEWAY_IP}:8080`);
@@ -1299,17 +1296,12 @@ async function main(
       waitForOpenShellGateway(openshellBin, openshellClientEnv);
 
       progress.phase("verify distinct same-network routes");
-      const sandboxId = "portable-e2e";
-      const sandboxToken = mintSandboxJwt({
-        configPath: gatewayEnv.OPENSHELL_GATEWAY_CONFIG,
-        sandboxId,
-      });
       const gatewayProbe = runSandboxTokenContainerProbe({
-        authorization: `Bearer ${sandboxToken}`,
         dockerBin: "podman",
+        grpcPath: "/openshell.v1.OpenShell/Health",
         hostGatewayIp: PORTABLE_HOST_GATEWAY_IP,
         networkName: PORTABLE_DOCKER_NETWORK_NAME,
-        payload: getSandboxConfigRequest(sandboxId),
+        payload: Buffer.alloc(0),
         port: 8080,
         stateDir,
       });
@@ -1319,8 +1311,7 @@ async function main(
         httpStatus?: number;
       };
       assert.equal(gatewayResult.httpStatus, 200);
-      assert.ok(gatewayResult.grpcStatus);
-      assert.ok(!["7", "16"].includes(gatewayResult.grpcStatus));
+      assert.equal(gatewayResult.grpcStatus, "0");
 
       const registryRouteProof = [
         `exec 3<>/dev/tcp/${PORTABLE_REGISTRY_IP}/5000`,

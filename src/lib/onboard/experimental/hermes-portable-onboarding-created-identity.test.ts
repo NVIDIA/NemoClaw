@@ -23,7 +23,7 @@ const CREATED_IDENTITY_SELECTOR_ARGS = [
   `${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${CREATE_ATTEMPT_NONCE}`,
   "--output",
   "json",
-  "--limit",
+  "--page-size",
   "2",
 ];
 
@@ -172,7 +172,7 @@ describe("Hermes Portable created-identity capture", () => {
         "json",
         "--selector",
         `${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${CREATE_ATTEMPT_NONCE}`,
-        "--limit",
+        "--page-size",
         "2",
       ],
     ],
