@@ -10,6 +10,7 @@ import { dockerSpawn, dockerSpawnSync } from "../../adapters/docker/exec";
 import { fingerprintOpenShellSandboxId } from "../../domain/sandbox/openshell-identity";
 import { NATIVE_STATE_CAPTURE_TIMEOUT_MS } from "../../state/sandbox";
 import type { SandboxEntry } from "../../state/registry/types";
+import { normalizeRuntimeProviderIdentity } from "./contract";
 import type {
   RuntimeProviderSnapshotRestoreSource,
   RuntimeProviderStoppedStateCapture,
@@ -461,7 +462,7 @@ export function prepareStoppedDockerStateCapture(
   const agentName = sandbox.agent ?? "openclaw";
   if (
     !["openclaw", "langchain-deepagents-code"].includes(agentName) ||
-    sandbox.openshellDriver !== "docker" ||
+    normalizeRuntimeProviderIdentity(sandbox.openshellDriver) !== "docker" ||
     !sandbox.lifecycleLiveIdentityFingerprint ||
     runtime.providerId !== "docker" ||
     runtime.lifecycleState !== "stopped" ||
