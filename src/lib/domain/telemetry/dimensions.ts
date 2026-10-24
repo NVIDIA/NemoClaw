@@ -243,9 +243,8 @@ function projectModel(
       : undefined;
   const provider = reference.managed
     ? (bound?.providerProfile ?? gatewayProvider ?? classifyTelemetryProvider(authority.provider))
-    : reference.providerKey
-      ? (NATIVE_PROVIDERS[reference.providerKey] ?? "custom")
-      : "unknown";
+    : (bound?.providerProfile ??
+      (reference.providerKey ? (NATIVE_PROVIDERS[reference.providerKey] ?? "custom") : "unknown"));
   const api = observedString(reference.api, "unavailable");
   return {
     assignment,
