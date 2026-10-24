@@ -28,6 +28,11 @@ const {
   nativeOpenClawProviderKey,
 }: typeof import("../inference/native-provider/fixed") = require("../inference/native-provider/fixed");
 const {
+  NATIVE_LOCAL_CREDENTIAL_ENV,
+  isLocalInferenceProvider,
+  nativeLocalCredentialReference,
+}: typeof import("../inference/native-local/agent-config") = require("../inference/native-local/agent-config");
+const {
   isConfigObject,
 }: typeof import("../security/credential-filter") = require("../security/credential-filter");
 const { redactFull }: typeof import("../security/redact") = require("../security/redact");
@@ -122,6 +127,18 @@ const materializeNativeProviderHandle = [
   "    stream.truncate()",
 ].join("\n");
 
+/** Provider credential identity for a config update that still carries a generic placeholder. */
+function nativeProviderHandleIdentity(
+  provider: string | null | undefined,
+  baseUrl: string,
+): { credentialEnv: string; apiKey: string } | undefined {
+  if (isLocalInferenceProvider(provider)) {
+    const apiKey = nativeLocalCredentialReference(provider, baseUrl);
+    return apiKey ? { credentialEnv: NATIVE_LOCAL_CREDENTIAL_ENV, apiKey } : undefined;
+  }
+  return nativeHostedAgentConfig(provider, baseUrl);
+}
+
 function nativeProviderHandleUpdate(updates: readonly OpenClawConfigUpdate[]) {
   const matching = updates.filter(({ dotpath, value }) => {
     if (!dotpath.startsWith("models.providers.") || !isConfigObject(value)) return false;
@@ -136,6 +153,7 @@ function nativeProviderHandleUpdate(updates: readonly OpenClawConfigUpdate[]) {
     return (
       typeof provider === "string" &&
       (Boolean(fixedNativeProvider(provider)) ||
+        isLocalInferenceProvider(provider) ||
         (typeof value.baseUrl === "string" &&
           Boolean(nativeHostedAgentConfig(provider, value.baseUrl))))
     );
@@ -153,7 +171,7 @@ function nativeProviderHandleUpdate(updates: readonly OpenClawConfigUpdate[]) {
           apiKey: NVIDIA_INFERENCE_PLACEHOLDER,
         }
       : typeof provider === "string" && typeof value.baseUrl === "string"
-        ? nativeHostedAgentConfig(provider, value.baseUrl)
+        ? nativeProviderHandleIdentity(provider, value.baseUrl)
         : undefined;
   if (!native) {
     throw new Error("Native provider identity does not match its credential placeholder");

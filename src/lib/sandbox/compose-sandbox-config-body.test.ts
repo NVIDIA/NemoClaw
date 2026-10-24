@@ -232,6 +232,113 @@ describe("composeSandboxConfigBody", () => {
   });
 
   it.each([
+    ["ollama-local", "http://host.openshell.internal:11435/v1"],
+    ["vllm-local", "http://host.openshell.internal:8000/v1"],
+    ["llama-cpp-local", "http://host.openshell.internal:8123/v1"],
+  ])(
+    "pins the scoped %s handle before OpenClaw applies the native config batch",
+    (provider, baseUrl) => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-config-"));
+      try {
+        fs.writeFileSync(path.join(directory, "openclaw"), '#!/bin/sh\ncat "$4"\n', {
+          mode: 0o700,
+        });
+        const placeholder = "openshell:resolve:env:NEMOCLAW_LOCAL_INFERENCE_TOKEN";
+        const handle = "openshell:resolve:env:v42_NEMOCLAW_LOCAL_INFERENCE_TOKEN";
+        const invocation = buildOpenClawNativeConfigBatchInvocation("alpha", [
+          { dotpath: "agents.defaults.model.primary", value: "inference/model-a" },
+          {
+            dotpath: "models.providers.inference",
+            value: {
+              baseUrl,
+              api: "openai-completions",
+              apiKey: placeholder,
+              headers: { "X-NemoClaw-Upstream-Provider": provider },
+              models: [{ id: "model-a" }],
+            },
+          },
+        ]);
+        const command = invocation.args.slice(invocation.args.indexOf("--") + 1);
+        const result = spawnSync(command[0]!, command.slice(1), {
+          input: invocation.input,
+          encoding: "utf8",
+          timeout: 5_000,
+          env: {
+            ...process.env,
+            PATH: `${directory}:${process.env.PATH ?? ""}`,
+            NEMOCLAW_LOCAL_INFERENCE_TOKEN: handle,
+          },
+        });
+        expect(result.error?.message ?? "").toBe("");
+        expect(result.status, result.stderr).toBe(0);
+        const batch = JSON.parse(result.stdout) as Array<{ path: string; value: unknown }>;
+        expect(batch).toEqual([
+          { path: "agents.defaults.model.primary", value: "inference/model-a" },
+          {
+            path: "models.providers.inference",
+            value: {
+              baseUrl,
+              api: "openai-completions",
+              apiKey: handle,
+              headers: { "X-NemoClaw-Upstream-Provider": provider },
+              models: [{ id: "model-a" }],
+            },
+          },
+        ]);
+        expect(invocation.input).not.toContain(handle);
+        expect(invocation.args.join(" ")).not.toContain(handle);
+        expect(invocation.input).toContain(placeholder);
+        expect(invocation.args.join(" ")).toContain("NEMOCLAW_LOCAL_INFERENCE_TOKEN");
+      } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.each([
+    { value: undefined, expectedStatus: 75 },
+    { value: "raw-local-secret", expectedStatus: 1 },
+    { value: "openshell:resolve:env:NEMOCLAW_LOCAL_INFERENCE_TOKEN", expectedStatus: 1 },
+    { value: "openshell:resolve:env:sabc_NEMOCLAW_LOCAL_INFERENCE_TOKEN", expectedStatus: 1 },
+  ])(
+    "refuses an unavailable or invalid local provider handle $value before config mutation",
+    ({ value, expectedStatus }) => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-config-"));
+      try {
+        fs.writeFileSync(path.join(directory, "openclaw"), '#!/bin/sh\ncat "$4"\n', {
+          mode: 0o700,
+        });
+        const invocation = buildOpenClawNativeConfigBatchInvocation("alpha", [
+          {
+            dotpath: "models.providers.inference",
+            value: {
+              baseUrl: "http://host.openshell.internal:11435/v1",
+              apiKey: "openshell:resolve:env:NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+              headers: { "X-NemoClaw-Upstream-Provider": "ollama-local" },
+            },
+          },
+        ]);
+        const command = invocation.args.slice(invocation.args.indexOf("--") + 1);
+        const failed = spawnSync(command[0]!, command.slice(1), {
+          input: invocation.input,
+          encoding: "utf8",
+          timeout: 5_000,
+          env: {
+            ...process.env,
+            PATH: `${directory}:${process.env.PATH ?? ""}`,
+            ...(value === undefined
+              ? { NEMOCLAW_LOCAL_INFERENCE_TOKEN: undefined }
+              : { NEMOCLAW_LOCAL_INFERENCE_TOKEN: value }),
+          },
+        });
+        expect(failed.status).toBe(expectedStatus);
+      } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.each([
     [
       "compatible-endpoint",
       "inference",
