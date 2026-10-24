@@ -259,6 +259,14 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
           JSON.parse(fs.readFileSync(path.join(fixture.zodDirectory, "package.json"), "utf8"))
             .version,
         ).toBe("4.6.6");
+        expect(
+          JSON.parse(
+            fs.readFileSync(
+              path.join(fixture.proxyAddrDirectory, "../body-parser/package.json"),
+              "utf8",
+            ),
+          ).version,
+        ).toBe("2.4.0");
         expect(fs.readFileSync(fixture.trace, "utf8")).toBe("installed\ninspected-unpatched\n");
         expect(fs.readdirSync(fixture.env.TMPDIR)).toEqual([]);
       } finally {
@@ -349,6 +357,7 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
         });
         expect(fs.readdirSync(fixture.env.TMPDIR)).toEqual([]);
         expect(fs.readdirSync(path.dirname(fixture.proxyAddrDirectory)).sort()).toEqual([
+          "body-parser",
           "express",
           "proxy-addr",
         ]);
@@ -421,7 +430,9 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
         expect(result.stderr).not.toContain(fixture.root);
         expect(result.stderr).not.toContain("rename-failure-canary");
         expect(fs.readdirSync(packageParent).sort()).toEqual(
-          failRestore ? ["express", recoveryDirectories[0]!].sort() : ["express", "proxy-addr"],
+          failRestore
+            ? ["body-parser", "express", recoveryDirectories[0]!].sort()
+            : ["body-parser", "express", "proxy-addr"],
         );
       } finally {
         fs.rmSync(fixture.root, { recursive: true, force: true });
@@ -872,6 +883,41 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
     fs.copyFileSync(
       path.resolve(import.meta.dirname, "../../fixtures/npm/zod-4.6.6/zod-4.6.6.tgz"),
       path.join(archives, "zod-4.6.6.tgz"),
+    );
+    const bodyDirectory = path.join(
+      packageDirectory,
+      "node_modules/@slack/bolt/node_modules/body-parser",
+    );
+    fs.mkdirSync(bodyDirectory, { recursive: true });
+    fs.writeFileSync(
+      path.join(bodyDirectory, "package.json"),
+      JSON.stringify({
+        name: "body-parser",
+        version: "2.3.0",
+        dependencies: { qs: "^6.15.2", "content-type": "^2.0.0", "iconv-lite": "^0.7.2" },
+      }),
+    );
+    fs.copyFileSync(
+      path.resolve(
+        import.meta.dirname,
+        "../../fixtures/npm/body-parser-2.4.0/body-parser-2.4.0.tgz",
+      ),
+      path.join(archives, "body-parser-2.4.0.tgz"),
+    );
+    fs.copyFileSync(
+      path.resolve(import.meta.dirname, "../../fixtures/npm/qs-6.16.1/qs-6.16.1.tgz"),
+      path.join(archives, "qs-6.16.1.tgz"),
+    );
+    fs.copyFileSync(
+      path.resolve(import.meta.dirname, "../../fixtures/npm/iconv-lite-0.7.3/iconv-lite-0.7.3.tgz"),
+      path.join(archives, "iconv-lite-0.7.3.tgz"),
+    );
+    fs.copyFileSync(
+      path.resolve(
+        import.meta.dirname,
+        "../../fixtures/npm/content-type-2.1.0/content-type-2.1.0.tgz",
+      ),
+      path.join(archives, "content-type-2.1.0.tgz"),
     );
     const boltDirectory = path.join(packageDirectory, "node_modules/@slack/bolt");
     const expressDirectory = path.join(boltDirectory, "node_modules/express");

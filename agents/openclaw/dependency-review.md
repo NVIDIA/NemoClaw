@@ -133,3 +133,23 @@ dispatched and is not an automatically enforced PR check. The runtime CI also ex
 actual-package patch harness.
 Prekshi Vyas owns completion of these two PRs. Retain the old archive records only while production
 still selects them; remove this transition section when the runtime cutover is complete.
+
+## Bundled schema and request-body repairs
+
+The reviewed runtime graphs pin Zod 4.6.6 and body-parser 2.4.0. The existing
+archive remediation also updates the Discord and Slack 2026.9.2/2026.9.5 bundles,
+and Google Chat 2026.9.5, to Zod 4.6.6. Discord's embedded SDK 2.5.0 uses migrated
+CJS/ESM schemas and declarations instead of its vendored Zod 3 implementation.
+The migration checks the original SDK output digest before changing files.
+
+Both Slack bundles receive body-parser 2.4.0 with nested qs 6.16.1,
+iconv-lite 0.7.3, and content-type 2.1.0. Express retains its separate
+content-type 1.0.5 copy. Publisher SRI pins and final package-tree digests remain
+in `scripts/lib/openclaw-npm-remediation.mts`. The verified native-install path
+applies the same replacements after checking the managed plugin location.
+
+The managed messaging cache retains the original bundled dependency records
+and supplies the replacement archives offline. Its direct Zod 4.6.6 pin and
+body-parser 2.4.0 override are included in the committed lock and checksum-pinned
+Docker archive inputs. The WeChat cache separately supplies its locked Zod
+4.6.6 archive. These repairs add no advisory exceptions.

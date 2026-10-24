@@ -54,6 +54,11 @@ export async function createSlackRemediationFixture() {
       license: "MIT",
       engines: { node: ">= 18" },
     });
+    writePackage(path.join(source, "node_modules/@slack/bolt/node_modules/body-parser"), {
+      name: "body-parser",
+      version: "2.3.0",
+      dependencies: { qs: "^6.15.2", "content-type": "^2.0.0", "iconv-lite": "^0.7.2" },
+    });
     writePackage(path.join(source, PROXY_ADDR_PATH), {
       name: "proxy-addr",
       version: "2.0.7",
@@ -83,6 +88,26 @@ export async function createSlackRemediationFixture() {
         '  "pack:zod@4.6.6:--pack-destination")',
         '    cp "$TEST_ZOD_ARCHIVE" "$4/zod-4.6.6.tgz"',
         '    printf \'[{"filename":"zod-4.6.6.tgz","integrity":"%s"}]\' "$TEST_ZOD_INTEGRITY" ;;',
+        '  "view:body-parser@2.4.0:dist.integrity") printf "%s" "sha512-Ifk1KcLrxaGt1occQagQNFNNOqRt1LFuehEnHHzB8Z6cRgIxRU1TBaiIsUiCdA+gy5PL7Y1IX31DNKkRmxtXjQ==" ;;',
+        '  "view:body-parser@2.4.0:dist.tarball") printf "%s" "https://registry.npmjs.org/body-parser/-/body-parser-2.4.0.tgz" ;;',
+        '  "pack:body-parser@2.4.0:--pack-destination")',
+        '    cp "$TEST_BODY_ARCHIVES/body-parser-2.4.0.tgz" "$4/body-parser-2.4.0.tgz"',
+        '    printf \'[{"filename":"body-parser-2.4.0.tgz","integrity":"sha512-Ifk1KcLrxaGt1occQagQNFNNOqRt1LFuehEnHHzB8Z6cRgIxRU1TBaiIsUiCdA+gy5PL7Y1IX31DNKkRmxtXjQ=="}]\' ;;',
+        '  "view:qs@6.16.1:dist.integrity") printf "%s" "sha512-5Px6J7rfHBAGUhNQ3es4YzcOdBBw0SDcVtThJml4RdnKw4tKs2epA0kPZ+K8X+WiHktT93RHVcQ/3ym5aTCgtg==" ;;',
+        '  "view:qs@6.16.1:dist.tarball") printf "%s" "https://registry.npmjs.org/qs/-/qs-6.16.1.tgz" ;;',
+        '  "pack:qs@6.16.1:--pack-destination")',
+        '    cp "$TEST_BODY_ARCHIVES/qs-6.16.1.tgz" "$4/qs-6.16.1.tgz"',
+        '    printf \'[{"filename":"qs-6.16.1.tgz","integrity":"sha512-5Px6J7rfHBAGUhNQ3es4YzcOdBBw0SDcVtThJml4RdnKw4tKs2epA0kPZ+K8X+WiHktT93RHVcQ/3ym5aTCgtg=="}]\' ;;',
+        '  "view:iconv-lite@0.7.3:dist.integrity") printf "%s" "sha512-IKXpvIzjnC9XTAUbVBcMfGS0EPaIXtW6v+zr+RRp+hqULEpo0owZax6wyRwPOJbWbzjYspQwusTsfVr0ifh4uQ==" ;;',
+        '  "view:iconv-lite@0.7.3:dist.tarball") printf "%s" "https://registry.npmjs.org/iconv-lite/-/iconv-lite-0.7.3.tgz" ;;',
+        '  "pack:iconv-lite@0.7.3:--pack-destination")',
+        '    cp "$TEST_BODY_ARCHIVES/iconv-lite-0.7.3.tgz" "$4/iconv-lite-0.7.3.tgz"',
+        '    printf \'[{"filename":"iconv-lite-0.7.3.tgz","integrity":"sha512-IKXpvIzjnC9XTAUbVBcMfGS0EPaIXtW6v+zr+RRp+hqULEpo0owZax6wyRwPOJbWbzjYspQwusTsfVr0ifh4uQ=="}]\' ;;',
+        '  "view:content-type@2.1.0:dist.integrity") printf "%s" "sha512-mj7UPXE0jaqaOsukNZRUEfEi2AcL7C/vwmwcHV0O97eO1E1pxBZuyjlZrx5seTaNBg1U6+o35wpa35Qfcc+7ag==" ;;',
+        '  "view:content-type@2.1.0:dist.tarball") printf "%s" "https://registry.npmjs.org/content-type/-/content-type-2.1.0.tgz" ;;',
+        '  "pack:content-type@2.1.0:--pack-destination")',
+        '    cp "$TEST_BODY_ARCHIVES/content-type-2.1.0.tgz" "$4/content-type-2.1.0.tgz"',
+        '    printf \'[{"filename":"content-type-2.1.0.tgz","integrity":"sha512-mj7UPXE0jaqaOsukNZRUEfEi2AcL7C/vwmwcHV0O97eO1E1pxBZuyjlZrx5seTaNBg1U6+o35wpa35Qfcc+7ag=="}]\' ;;',
         "  *) exit 1 ;;",
         "esac",
         "",
@@ -118,6 +143,25 @@ export async function createSlackRemediationFixture() {
     const zodArchive = path.resolve(import.meta.dirname, "../fixtures/npm/zod-4.6.6/zod-4.6.6.tgz");
     fs.copyFileSync(proxyArchive, path.join(archives, "proxy-addr-2.0.8.tgz"));
     fs.copyFileSync(zodArchive, path.join(archives, "zod-4.6.6.tgz"));
+    fs.copyFileSync(
+      path.resolve(import.meta.dirname, "../fixtures/npm/body-parser-2.4.0/body-parser-2.4.0.tgz"),
+      path.join(archives, "body-parser-2.4.0.tgz"),
+    );
+    fs.copyFileSync(
+      path.resolve(import.meta.dirname, "../fixtures/npm/qs-6.16.1/qs-6.16.1.tgz"),
+      path.join(archives, "qs-6.16.1.tgz"),
+    );
+    fs.copyFileSync(
+      path.resolve(import.meta.dirname, "../fixtures/npm/iconv-lite-0.7.3/iconv-lite-0.7.3.tgz"),
+      path.join(archives, "iconv-lite-0.7.3.tgz"),
+    );
+    fs.copyFileSync(
+      path.resolve(
+        import.meta.dirname,
+        "../fixtures/npm/content-type-2.1.0/content-type-2.1.0.tgz",
+      ),
+      path.join(archives, "content-type-2.1.0.tgz"),
+    );
     const env = await withLegacyMessagingPlanEnvDirect(
       {
         PATH: `${bin}${path.delimiter}${process.env.PATH ?? "/usr/bin:/bin"}`,
@@ -133,6 +177,7 @@ export async function createSlackRemediationFixture() {
         TEST_PROXY_ADDR_INTEGRITY: PROXY_ADDR_INTEGRITY,
         TEST_PROXY_ADDR_ARCHIVE: proxyArchive,
         TEST_ZOD_ARCHIVE: zodArchive,
+        TEST_BODY_ARCHIVES: archives,
         TEST_ZOD_INTEGRITY:
           "sha512-4UmzQUF5fxvfcYHlbjBmejU+w+hbDnWFx4aS8kBx7nPBHcO2SqPbpAG8snbdg+Xse4pRefR98hgjFgIMCI/UhA==",
         TEST_SLACK_INSPECTION: JSON.stringify({

@@ -169,6 +169,70 @@ const ZOD_VERSION = "4.6.6";
 const ZOD_INTEGRITY =
   "sha512-4UmzQUF5fxvfcYHlbjBmejU+w+hbDnWFx4aS8kBx7nPBHcO2SqPbpAG8snbdg+Xse4pRefR98hgjFgIMCI/UhA==";
 const ZOD_TARBALL = "https://registry.npmjs.org/zod/-/zod-4.6.6.tgz";
+const SLACK_BODY_REPLACEMENTS = [
+  {
+    name: "body-parser",
+    version: "2.4.0",
+    integrity:
+      "sha512-Ifk1KcLrxaGt1occQagQNFNNOqRt1LFuehEnHHzB8Z6cRgIxRU1TBaiIsUiCdA+gy5PL7Y1IX31DNKkRmxtXjQ==",
+    sha256: "3f6e22dc9710a8bd5942fee8dfbd4632b54980cc2f33854f1ec1e314b17b2357",
+    tarball: "https://registry.npmjs.org/body-parser/-/body-parser-2.4.0.tgz",
+    dependencies: {
+      qs: "^6.16.1",
+      bytes: "^3.1.2",
+      debug: "^4.4.3",
+      "type-is": "^2.1.0",
+      "raw-body": "^3.0.2",
+      "iconv-lite": "^0.7.3",
+      "http-errors": "^2.0.1",
+      "on-finished": "^2.4.1",
+      "content-type": "^2.1.0",
+    },
+    engines: {
+      node: ">=18",
+    },
+  },
+  {
+    name: "qs",
+    version: "6.16.1",
+    integrity:
+      "sha512-5Px6J7rfHBAGUhNQ3es4YzcOdBBw0SDcVtThJml4RdnKw4tKs2epA0kPZ+K8X+WiHktT93RHVcQ/3ym5aTCgtg==",
+    sha256: "bdb0e06e5cde7b4d7e0117faa678416bbc2c9287b0672c35c04da2b9de1d3cbf",
+    tarball: "https://registry.npmjs.org/qs/-/qs-6.16.1.tgz",
+    dependencies: {
+      "side-channel": "^1.1.1",
+      "es-define-property": "^1.0.1",
+    },
+    engines: {
+      node: ">=0.6",
+    },
+  },
+  {
+    name: "iconv-lite",
+    version: "0.7.3",
+    integrity:
+      "sha512-IKXpvIzjnC9XTAUbVBcMfGS0EPaIXtW6v+zr+RRp+hqULEpo0owZax6wyRwPOJbWbzjYspQwusTsfVr0ifh4uQ==",
+    sha256: "40789b7733e230a0439e07075fe2f37819f4a47ee7115fe17188451fab8e3941",
+    tarball: "https://registry.npmjs.org/iconv-lite/-/iconv-lite-0.7.3.tgz",
+    dependencies: {
+      "safer-buffer": ">= 2.1.2 < 3.0.0",
+    },
+    engines: {
+      node: ">=0.10.0",
+    },
+  },
+  {
+    name: "content-type",
+    version: "2.1.0",
+    integrity:
+      "sha512-mj7UPXE0jaqaOsukNZRUEfEi2AcL7C/vwmwcHV0O97eO1E1pxBZuyjlZrx5seTaNBg1U6+o35wpa35Qfcc+7ag==",
+    sha256: "47a08ee5ddf87a96dd263aa942c5e04b2c5d26251e04affa8ace6804b450d758",
+    tarball: "https://registry.npmjs.org/content-type/-/content-type-2.1.0.tgz",
+    engines: {
+      node: ">=18",
+    },
+  },
+] as const;
 const DISCORD_SDK_OUTPUT_INTEGRITY =
   "sha512-jV67lNWDgUUED4SqoFvZDVyJRVMZV62987FUbN7tj+gR7KGgfhicbXlfmmkozkuhXizsj8Rhw6zXMNc3pA6gFA==";
 const BUNDLED_ZOD_VERSIONS: Readonly<Record<string, string>> = {
@@ -194,7 +258,7 @@ const REMEDIATIONS: Readonly<Record<string, Remediation>> = Object.freeze({
   },
   "@openclaw/slack@2026.9.5": {
     expectedPatchedTreeIntegrity:
-      "sha512-HWIiG2lB258ochxGyLz64hwcIH0qK4JUJVaMxkF6niM5UFfBx4+llA94wIQa4O7saDInbwADdM1wBJv5Rel3Mw==",
+      "sha512-+b+rQQ1yigciz5be6dIR2S9c9lxHxyFq9XiwsoywwqNbd6mTDbXMU44Xd3nMyFERB82HR5ihx3OYCKp0/XRV1w==",
     kind: "zod",
     version: "2026.9.5",
   },
@@ -206,7 +270,7 @@ const REMEDIATIONS: Readonly<Record<string, Remediation>> = Object.freeze({
   },
   "@openclaw/slack@2026.9.2": {
     expectedPatchedTreeIntegrity:
-      "sha512-AlK/j97KwD/U5FfDxqEFbVGmVdmaeP849qenuD+iQbqciqx7C58CP+KVtKJcLUNQBB/Ae3ow2+olhcA8a0ix/w==",
+      "sha512-4p5LNNu0V88yQY1pSJDg3d5+g5FxdsFhE+Y1Q13jG7LPsX+ynjv0lS028KJslPJbixNmAWNB1Oy7O+QWOts3wQ==",
     kind: "slack-proxy-addr",
     version: "2026.9.2",
   },
@@ -1035,6 +1099,67 @@ export function patchOpenClawSlackProxyAddrPackageGraph(
   }
 
   copyReplacementPackage(replacementDirectory, proxyAddrDirectory);
+}
+
+function patchSlackBodyParser(
+  packageDirectory: string,
+  replacements: ReadonlyMap<string, string>,
+): void {
+  const parent = join(packageDirectory, "node_modules", "@slack", "bolt", "node_modules");
+  const target = join(parent, "body-parser");
+  const metadata = readJson(join(target, "package.json"));
+  requirePackageIdentity(metadata, "body-parser", "2.3.0", "Slack bundled body-parser");
+  if (
+    metadata.dependencies?.qs !== "^6.15.2" ||
+    metadata.dependencies?.["content-type"] !== "^2.0.0" ||
+    metadata.dependencies?.["iconv-lite"] !== "^0.7.2"
+  ) {
+    throw new Error("Slack bundled body-parser dependency graph changed after review");
+  }
+  const temporary = mkdtempSync(join(parent, ".body-parser-security-"));
+  try {
+    const staged = join(temporary, "package");
+    for (const spec of SLACK_BODY_REPLACEMENTS) {
+      const replacement = replacements.get(spec.name);
+      if (!replacement) throw new Error(`Missing reviewed Slack replacement: ${spec.name}`);
+      const replacementMetadata = readJson(join(replacement, "package.json"));
+      requirePackageIdentity(replacementMetadata, spec.name, spec.version, "Slack replacement");
+      requireDependencyShape(
+        { ...replacementMetadata, dependencies: replacementMetadata.dependencies ?? {} },
+        "dependencies" in spec ? spec.dependencies : {},
+        `Slack ${spec.name} replacement`,
+      );
+      copyReplacementPackage(
+        replacement,
+        spec.name === "body-parser" ? staged : join(staged, "node_modules", spec.name),
+      );
+    }
+    copyReplacementPackage(staged, target);
+  } finally {
+    rmSync(temporary, { recursive: true, force: true });
+  }
+}
+
+function remediateSlackBodyParser(
+  packageDirectory: string,
+  root: string,
+  env: NodeJS.ProcessEnv,
+): void {
+  const replacements = new Map<string, string>();
+  for (const spec of SLACK_BODY_REPLACEMENTS) {
+    const archive = packReplacement(
+      `${spec.name}@${spec.version}`,
+      spec.integrity,
+      spec.tarball,
+      root,
+      env,
+    );
+    replacements.set(
+      spec.name,
+      extractArchive(archive.archivePath, join(root, spec.name), root, env),
+    );
+  }
+  patchSlackBodyParser(packageDirectory, replacements);
 }
 
 function declarationTypeArguments(source: string, start: number): { args: string[]; end: number } {
@@ -2183,6 +2308,13 @@ export function buildRemediatedOpenClawPluginArchive(
     patchOpenClawBundledZodPackageGraph(sourcePackage, zodPackage, request.packageSpec);
   }
 
+  if (
+    request.packageSpec === "@openclaw/slack@2026.9.2" ||
+    request.packageSpec === "@openclaw/slack@2026.9.5"
+  ) {
+    remediateSlackBodyParser(sourcePackage, remediationRoot, env);
+  }
+
   const outputDirectory = join(remediationRoot, "output");
   mkdirSync(outputDirectory, { recursive: true, mode: 0o700 });
   const packedJson = run(
@@ -2268,6 +2400,9 @@ function remediateVerifiedInstalledOfficialOpenClawPlugin(
 ): void {
   const patchesProxyAddr = REMEDIATIONS[request.packageSpec]?.kind === "slack-proxy-addr";
   const patchesZod = Boolean(BUNDLED_ZOD_VERSIONS[request.packageSpec]);
+  const patchesBody =
+    request.packageSpec === "@openclaw/slack@2026.9.2" ||
+    request.packageSpec === "@openclaw/slack@2026.9.5";
   if (!patchesProxyAddr && !patchesZod) return;
   if (
     !request.packageDirectory ||
@@ -2303,6 +2438,8 @@ function remediateVerifiedInstalledOfficialOpenClawPlugin(
   const dependencyPaths: string[][] = [];
   if (patchesProxyAddr)
     dependencyPaths.push(["node_modules", "@slack", "bolt", "node_modules", "proxy-addr"]);
+  if (patchesBody)
+    dependencyPaths.push(["node_modules", "@slack", "bolt", "node_modules", "body-parser"]);
   if (patchesZod) dependencyPaths.push(["node_modules", "zod"]);
   if (packageName === "@openclaw/discord") {
     dependencyPaths.push(["node_modules", "@discord", "embedded-app-sdk"]);
@@ -2351,6 +2488,7 @@ function remediateVerifiedInstalledOfficialOpenClawPlugin(
       env,
     );
     patchOpenClawBundledZodPackageGraph(packageDirectory, zodPackage, request.packageSpec);
+    if (patchesBody) remediateSlackBodyParser(packageDirectory, directory, env);
   } finally {
     rmSync(directory, { force: true, recursive: true });
   }
