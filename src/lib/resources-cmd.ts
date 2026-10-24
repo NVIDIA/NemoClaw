@@ -274,7 +274,7 @@ export function printHardwareResources(json: boolean): HardwareResources {
 
 /**
  * Resolve a resource value that may be a percentage or absolute quantity.
- * Throws on invalid percentages or memory quantities before OpenShell create.
+ * Throws on invalid percentages or absolute quantities before OpenShell create.
  */
 export function resolveResourceValue(value: string, total: number, unit: "cpu" | "memory"): string {
   if (!value) return "";
@@ -315,6 +315,13 @@ export function resolveResourceValue(value: string, total: number, unit: "cpu" |
       );
     }
     return quantity;
+  }
+  const cpuQuantity = /^\+?(?:\d+(?:\.\d*)?|\.\d+)(?:m|[eE][+-]?\d+)?$/;
+  const cores = Number(trimmed.endsWith("m") ? trimmed.slice(0, -1) : trimmed);
+  if (!cpuQuantity.test(trimmed) || !Number.isFinite(cores) || cores < 0) {
+    throw new Error(
+      `Invalid CPU quantity '${trimmed}': use cores such as 4, millicores such as 750m, or a percentage`,
+    );
   }
   return trimmed;
 }

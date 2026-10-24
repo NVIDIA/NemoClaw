@@ -44,6 +44,17 @@ describe("resources-cmd", () => {
     expect(resolveResourceValue("8Gi", 8192, "memory")).toBe("8Gi");
   });
 
+  it.each(["4", "0.5", "750m", "0", "1e2"])("preserves valid absolute CPU quantity %s", (value) => {
+    expect(resolveResourceValue(value, 16, "cpu")).toBe(value);
+  });
+
+  it.each(["bogus", "4cores", "4Gi", "-1", "NaN", "Infinity", "1e999", "1 2"])(
+    "rejects invalid absolute CPU quantity %s",
+    (value) => {
+      expect(() => resolveResourceValue(value, 16, "cpu")).toThrow("Invalid CPU quantity");
+    },
+  );
+
   it.each([
     ["8g", "8Gi"],
     ["1.5g", "1.5Gi"],

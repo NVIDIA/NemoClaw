@@ -58,6 +58,14 @@ describe("selectResourceProfileForSandbox", () => {
     expect(deps.promptOrDefault).not.toHaveBeenCalled();
   });
 
+  it("rejects malformed CPU environment overrides before returning a profile", async () => {
+    const deps = makeDeps({ env: { NEMOCLAW_CPU: "bogus" } });
+
+    await expect(selectResourceProfileForSandbox(deps)).rejects.toThrow("Invalid CPU quantity");
+    expect(deps.prompt).not.toHaveBeenCalled();
+    expect(deps.promptOrDefault).not.toHaveBeenCalled();
+  });
+
   it("rejects malformed RAM environment overrides before returning a profile (#13623)", async () => {
     const deps = makeDeps({ env: { NEMOCLAW_RAM: "8GB" } });
 

@@ -178,12 +178,13 @@ export async function runRebuildPreflightPhase(
     skipConfirm,
   } = createRebuildCommandContext(options, opts);
   try {
+    resolveResourceValue(process.env.NEMOCLAW_CPU ?? "", 1, "cpu");
     resolveResourceValue(process.env.NEMOCLAW_RAM ?? "", 1, "memory");
   } catch (error) {
     printRebuildPreflightFailure(
-      "the requested memory limit is invalid.",
+      "the requested resource limit is invalid.",
       error instanceof Error ? error.message : String(error),
-      "Invalid rebuild memory limit.",
+      "Invalid rebuild resource limit.",
       bail,
     );
     return null;

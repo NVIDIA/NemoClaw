@@ -166,14 +166,18 @@ function makeStagedHermesMessagingPlan() {
 describe("rebuildSandbox flow: credential preflight", () => {
   installRebuildFlowTestHooks();
 
-  it("rejects an invalid RAM override before backup or deletion (#13623)", async () => {
-    vi.stubEnv("NEMOCLAW_RAM", "8GB");
+  it.each([
+    ["NEMOCLAW_RAM", "8GB"],
+    ["NEMOCLAW_CPU", "bogus"],
+    ["NEMOCLAW_CPU", "101%"],
+  ])("rejects invalid %s=%s before backup or deletion (#13623)", async (name, value) => {
+    vi.stubEnv(name, value);
     const beforeBackup = vi.fn();
     const harness = createRebuildFlowHarness({ beforeBackup });
     try {
       await expect(
         harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-      ).rejects.toThrow("Invalid rebuild memory limit");
+      ).rejects.toThrow("Invalid rebuild resource limit");
       expect(beforeBackup).not.toHaveBeenCalled();
       expectNoSandboxDelete(harness.runOpenshellSpy);
     } finally {
