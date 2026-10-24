@@ -189,6 +189,47 @@ describe("rebuild recreate OpenClaw dashboard origin (#13177)", () => {
     return () => observed;
   }
 
+  it.each([{ cpu: "4", memory: "8Gi" }, null])(
+    "preserves the recorded resource decision %j during recreation (#13623)",
+    async (resourceProfile) => {
+      const source = onboardSession.createSession({ sandboxName: SANDBOX_NAME });
+      source.resourceProfile = resourceProfile;
+      source.sandboxPromptProgress.resourceProfile = true;
+      vi.spyOn(rebuildOnboardDependencies, "onboard").mockImplementation(async () => {
+        expect(session.resourceProfile).toEqual(resourceProfile);
+        expect(session.sandboxPromptProgress.resourceProfile).toBe(true);
+        expect(session.checkpoint?.resourceProfile).toEqual(
+          deriveCheckpointFromSession(source).resourceProfile,
+        );
+      });
+
+      await expect(runRebuildRecreatePhase(makeInput({ sessionSnapshot: source }))).resolves.toBe(
+        true,
+      );
+      expect(rebuildOnboardDependencies.onboard).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("does not reuse resource limits from a different sandbox session (#13623)", async () => {
+    const source = onboardSession.createSession({ sandboxName: "different" });
+    source.resourceProfile = { cpu: "4", memory: "8Gi" };
+    source.sandboxPromptProgress.resourceProfile = true;
+    vi.spyOn(rebuildOnboardDependencies, "onboard").mockImplementation(async () => {
+      expect(session.resourceProfile).toBeNull();
+      expect(session.sandboxPromptProgress.resourceProfile).toBe(false);
+    });
+
+    await expect(
+      runRebuildRecreatePhase(
+        makeInput({
+          sessionSnapshot: source,
+          sessionMatchesSandbox: false,
+        }),
+      ),
+    ).resolves.toBe(true);
+    expect(rebuildOnboardDependencies.onboard).toHaveBeenCalledOnce();
+  });
+
   it("replays the recorded origin instead of the rebuild environment's CHAT_UI_URL", async () => {
     process.env.CHAT_UI_URL = "https://ambient.example.test";
     const observed = observeInnerChatUiUrl();

@@ -44,6 +44,25 @@ describe("resources-cmd", () => {
     expect(resolveResourceValue("8Gi", 8192, "memory")).toBe("8Gi");
   });
 
+  it.each([
+    ["8g", "8Gi"],
+    ["1.5g", "1.5Gi"],
+    ["2t", "2Ti"],
+    ["8Gi", "8Gi"],
+    ["8G", "8G"],
+    ["750m", "750m"],
+    ["1e6", "1e6"],
+  ])("resolves memory quantity %s as %s (#13623)", (value, expected) => {
+    expect(resolveResourceValue(value, 8192, "memory")).toBe(expected);
+  });
+
+  it.each(["8GB", "eight", "-8Gi", "NaN", "8 Gi", "1e999"])(
+    "rejects invalid absolute memory %s (#13623)",
+    (value) => {
+      expect(() => resolveResourceValue(value, 8192, "memory")).toThrow("Invalid memory quantity");
+    },
+  );
+
   it("rejects malformed percentages before they reach OpenShell", () => {
     expect(() => resolveResourceValue("0%", 16, "cpu")).toThrow("integer between 1% and 100%");
     expect(() => resolveResourceValue("101%", 16, "cpu")).toThrow("integer between 1% and 100%");

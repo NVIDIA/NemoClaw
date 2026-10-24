@@ -166,6 +166,21 @@ function makeStagedHermesMessagingPlan() {
 describe("rebuildSandbox flow: credential preflight", () => {
   installRebuildFlowTestHooks();
 
+  it("rejects an invalid RAM override before backup or deletion (#13623)", async () => {
+    vi.stubEnv("NEMOCLAW_RAM", "8GB");
+    const beforeBackup = vi.fn();
+    const harness = createRebuildFlowHarness({ beforeBackup });
+    try {
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).rejects.toThrow("Invalid rebuild memory limit");
+      expect(beforeBackup).not.toHaveBeenCalled();
+      expectNoSandboxDelete(harness.runOpenshellSpy);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it.each(["hermes", "langchain-deepagents-code"] as const)(
     "rebuilds native local %s with only its scoped provider",
     async (agent) => {

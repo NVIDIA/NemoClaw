@@ -200,6 +200,14 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     s.resumable = true;
     s.status = "in_progress";
     s.agent = rebuildAgent;
+    // Only the matching source session can supply a completed resource choice.
+    // Inner onboarding still applies explicit environment overrides first.
+    if (sessionMatchesSandbox && sessionBefore?.sandboxPromptProgress.resourceProfile === true) {
+      s.resourceProfile = sessionBefore.resourceProfile
+        ? { ...sessionBefore.resourceProfile }
+        : null;
+      s.sandboxPromptProgress.resourceProfile = true;
+    }
     s.messagingPlan = rebuildMessagingPlan;
     s.hermesToolGateways = rebuildsHermesSandbox ? rebuildHermesToolGateways : [];
     s.gpuPassthrough = rebuildGpuOverrides.sessionGpuPassthrough;

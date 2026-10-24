@@ -118,7 +118,12 @@ export async function selectResourceProfileForSandbox(
     }
   }
 
-  return applyResourceEnvOverrides(selectedProfile, deps);
+  const profile = applyResourceEnvOverrides(selectedProfile, deps);
+  if (profile) {
+    resolveResourceValue(profile.cpu, 1, "cpu");
+    resolveResourceValue(profile.memory, 1, "memory");
+  }
+  return profile;
 }
 
 export function appendResourceFlagsForProfile(

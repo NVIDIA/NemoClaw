@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import path from "node:path";
+import { resolveResourceValue } from "../../resources-cmd";
 
 import type { RebuildSandboxOptions } from "../../domain/lifecycle/options";
 import {
@@ -176,6 +177,17 @@ export async function runRebuildPreflightPhase(
     requestedObservabilityEnabled,
     skipConfirm,
   } = createRebuildCommandContext(options, opts);
+  try {
+    resolveResourceValue(process.env.NEMOCLAW_RAM ?? "", 1, "memory");
+  } catch (error) {
+    printRebuildPreflightFailure(
+      "the requested memory limit is invalid.",
+      error instanceof Error ? error.message : String(error),
+      "Invalid rebuild memory limit.",
+      bail,
+    );
+    return null;
+  }
   const sandboxEntry = getRebuildSandboxEntryOrBail(sandboxName, bail);
   if (!sandboxEntry) return null;
   if (blockRebuildOnLegacySharedLocalRoute(sandboxName, sandboxEntry, bail)) return null;

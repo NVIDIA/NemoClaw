@@ -58,6 +58,14 @@ describe("selectResourceProfileForSandbox", () => {
     expect(deps.promptOrDefault).not.toHaveBeenCalled();
   });
 
+  it("rejects malformed RAM environment overrides before returning a profile (#13623)", async () => {
+    const deps = makeDeps({ env: { NEMOCLAW_RAM: "8GB" } });
+
+    await expect(selectResourceProfileForSandbox(deps)).rejects.toThrow("Invalid memory quantity");
+    expect(deps.prompt).not.toHaveBeenCalled();
+    expect(deps.promptOrDefault).not.toHaveBeenCalled();
+  });
+
   it("rejects unknown environment-selected profiles", async () => {
     const deps = makeDeps({ env: { NEMOCLAW_RESOURCE_PROFILE: "missing" } as NodeJS.ProcessEnv });
 
