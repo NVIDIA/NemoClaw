@@ -764,7 +764,16 @@ print(json.dumps({
 `);
 
     expect(JSON.parse(output)).toEqual({
-      hooks: ["on_session_start", "pre_llm_call"],
+      hooks: [
+        "on_session_end",
+        "on_session_start",
+        "post_llm_call",
+        "post_tool_call",
+        "pre_llm_call",
+        "pre_tool_call",
+        "transform_llm_output",
+        "transform_tool_result",
+      ],
       normalized: "registration completed",
       patched: true,
     });
