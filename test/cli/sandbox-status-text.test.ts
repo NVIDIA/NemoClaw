@@ -592,7 +592,7 @@ describe.concurrent("CLI sandbox status text output", () => {
   );
 
   it.each(["missing", "present"] as const)(
-    "sandbox <name> status reports Stopped state with a %s live lookup (#11025)",
+    "sandbox <name> status fails for Stopped state with a %s live lookup (#11025, #12746)",
     testTimeoutOptions(30_000),
     async (gatewayState) => {
       const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-status-stopped-"));
@@ -602,6 +602,7 @@ describe.concurrent("CLI sandbox status text output", () => {
       writeSandboxRegistry(home, "alpha", {
         openshellDriver: "docker",
         openshellVersion: "0.0.44",
+        nimContainer: "nemoclaw-nim-alpha",
         stopped: true,
       });
       fs.writeFileSync(stoppedState, "stopped\n");
@@ -663,7 +664,7 @@ describe.concurrent("CLI sandbox status text output", () => {
           '    case "$a" in',
           `      *Running*) if [ -f ${JSON.stringify(stoppedState)} ]; then echo "false"; else echo "true"; fi; exit 0 ;;`,
           '      *Paused*) echo "false"; exit 0 ;;',
-          '      *Health*) echo "none"; exit 0 ;;',
+          '      *Health*) echo "unhealthy"; exit 0 ;;',
           "    esac",
           "  done",
           '  echo ""; exit 0',
@@ -682,7 +683,7 @@ describe.concurrent("CLI sandbox status text output", () => {
         30000,
       );
 
-      expect(r.code, r.out).toBe(gatewayState === "present" ? 1 : 0);
+      expect(r.code, r.out).toBe(1);
       expect(r.out).not.toContain("Failure layer:");
       expect(r.out).toContain("Phase: Stopped");
       expect(r.out).not.toContain("Phase: Provisioning");
@@ -690,6 +691,11 @@ describe.concurrent("CLI sandbox status text output", () => {
       expect(r.out).toContain("Sandbox 'alpha' is stopped.");
       expect(r.out).toContain("Workspace state is preserved.");
       expect(r.out).toContain("Start it again with `nemoclaw alpha start`.");
+      const startGuidanceIndex = r.out.indexOf("Start it again with `nemoclaw alpha start`.");
+      const dockerHealthIndex = r.out.indexOf("Docker health: unhealthy");
+      expect(dockerHealthIndex > startGuidanceIndex).toBe(gatewayState === "present");
+      const nimDiagnosticIndex = r.out.indexOf("NIM:      not running");
+      expect(nimDiagnosticIndex > startGuidanceIndex).toBe(true);
       expect(r.out).not.toContain("rebuild --yes");
       expect(r.out).not.toContain("The sandbox is alive but the");
 
@@ -701,8 +707,8 @@ describe.concurrent("CLI sandbox status text output", () => {
         },
         30000,
       );
-      expect(j.code).toBe(0);
-      const parsed = JSON.parse(j.out);
+      expect(j.code).toBe(1);
+      const parsed = JSON.parse(j.stdout ?? j.out);
       expect(parsed.phase).toBe("Stopped");
       expect(parsed.gatewayState).toBe(gatewayState);
       expect(parsed.failureLayer).toBeNull();

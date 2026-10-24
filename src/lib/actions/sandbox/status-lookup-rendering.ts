@@ -35,11 +35,10 @@ type SandboxGatewayLookupStatusContext = {
 
 export async function printSandboxGatewayLookupStatus(
   context: SandboxGatewayLookupStatusContext,
-): Promise<void> {
+): Promise<1 | undefined> {
   switch (context.lookup.state) {
     case "present":
-      printPresentSandboxGatewayLookupStatus(context);
-      return;
+      return printPresentSandboxGatewayLookupStatus(context);
     case "wrong_gateway_active":
       printWrongGatewayActiveLookupStatus(context);
       return;
@@ -49,7 +48,7 @@ export async function printSandboxGatewayLookupStatus(
     case "missing":
       if (context.effectivePreflight.intentionalStopConfirmed) {
         printConfirmedStoppedSandboxStatus(context.sandboxName);
-        return;
+        return 1;
       }
       printMissingLiveSandboxStatusGuidance(context);
       deferSandboxLifecycleExit(1);
@@ -151,7 +150,7 @@ function printPresentSandboxGatewayLookupStatus({
   openshellDriver,
   dockerRuntime,
   dockerRuntimeDown,
-}: SandboxGatewayLookupStatusContext): void {
+}: SandboxGatewayLookupStatusContext): 1 | undefined {
   console.log("");
   if ("recoveredGateway" in lookup && lookup.recoveredGateway) {
     console.log(
@@ -175,7 +174,7 @@ function printPresentSandboxGatewayLookupStatus({
       ? lookup.output.replace(/^(\s*Phase:\s*)\S+\s*$/gmu, "$1Stopped")
       : lookup.output;
   if (renderedOutput) console.log(renderedOutput);
-  printNonReadySandboxPhaseGuidance({
+  return printNonReadySandboxPhaseGuidance({
     sandboxName,
     phase,
     openshellDriver,
@@ -286,7 +285,7 @@ function printNonReadySandboxPhaseGuidance({
   openshellDriver: string | null;
   dockerRuntime: ReturnType<typeof getSandboxDockerRuntime> | null;
   dockerRuntimeDown: boolean;
-}): void {
+}): 1 | undefined {
   if (!phase || phase === "Ready") return;
   if (
     phase === "Stopped" ||
@@ -296,7 +295,7 @@ function printNonReadySandboxPhaseGuidance({
     console.log(`  Sandbox '${sandboxName}' is stopped.`);
     console.log("  Workspace state is preserved.");
     console.log(`  Start it again with \`${CLI_NAME} ${sandboxName} start\`.`);
-    return;
+    return 1;
   }
   // A non-ready, non-terminal phase can mean two very different things. If
   // the Docker daemon is down, OpenShell can still return a present-but-

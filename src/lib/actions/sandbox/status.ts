@@ -252,7 +252,7 @@ async function showLegacySandboxStatus(sandboxName: string): Promise<void> {
     process.exitCode = textOutcome.exitCode || 1;
   }
 
-  await printSandboxGatewayLookupStatus({
+  const gatewayLookupExitCode = await printSandboxGatewayLookupStatus({
     sandboxName,
     registered: sb !== null,
     lookup,
@@ -285,6 +285,7 @@ async function showLegacySandboxStatus(sandboxName: string): Promise<void> {
     }
   }
   console.log("");
+  process.exitCode ||= gatewayLookupExitCode;
 }
 
 export { sandboxGpuProofStatusSuffix, sandboxGpuProofUnverified } from "./status-text";
