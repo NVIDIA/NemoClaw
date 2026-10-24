@@ -21,7 +21,7 @@ const roots = managedStartupStateRoots({
 
 afterEach(() => vi.unstubAllEnvs());
 
-it("creates workspace-approved volumes and removes only its incomplete creation", () => {
+it("creates workspace-approved volumes and retains incomplete creation for explicit cleanup", () => {
   const docker = createHermesStateVolumeDockerHarness();
   const scope = prepareManagedStateVolumes(
     { roots },
@@ -38,8 +38,9 @@ it("creates workspace-approved volumes and removes only its incomplete creation"
     "io.nvidia.nemoclaw.state-volume.creation-id": expect.any(String),
   });
   expect(scope?.reused).toEqual([false]);
-  scope?.cleanupIncompleteCreate();
-  expect(docker.volume).toBeNull();
+  expect(scope?.cleanupIncompleteCreate()).toMatchObject([{ status: "retained" }]);
+  expect(docker.volume).not.toBeNull();
+  expect(docker.calls.filter(([command]) => command === "rm")).toEqual([]);
 });
 
 it("binds lifecycle volume approval to the selected workspace", () => {
@@ -237,3 +238,38 @@ it("preserves a replacement volume during exit cleanup", () => {
   expect(docker.volume).toEqual(replacement);
   expect(docker.calls.slice(callsBeforeCleanup).map(([command]) => command)).toEqual(["inspect"]);
 });
+
+it.each(["rollback", "exit"] as const)(
+  "preserves replacement after the final %s cleanup inspection",
+  (cleanupPath) => {
+    const docker = createHermesStateVolumeDockerHarness();
+    let exitCleanup = () => undefined as void;
+    const scope = prepareManagedStateVolumes(
+      { roots },
+      {
+        workspace: "qualification",
+        runContainerEngine: docker.runDocker,
+        registerExitCleanup: (callback) => {
+          exitCleanup = callback;
+          return () => undefined;
+        },
+      },
+    )!;
+    const originalRun = docker.runDocker.getMockImplementation()!;
+    const replacementLabel = "io.nvidia.nemoclaw.state-volume.creation-id=competitor";
+    docker.runDocker.mockImplementationOnce((args) => {
+      expect(args).toEqual(["inspect", "--format", "{{json .}}", roots[0]!.resourceIdentity]);
+      const staleObservation = originalRun(args);
+      originalRun(["rm", roots[0]!.resourceIdentity]);
+      originalRun(["create", "--label", replacementLabel, roots[0]!.resourceIdentity]);
+      return staleObservation;
+    });
+    docker.runDocker.mockClear();
+    const actions = { rollback: () => scope.cleanupIncompleteCreate(), exit: exitCleanup };
+    actions[cleanupPath]();
+    expect(docker.volume?.labels).toEqual({
+      "io.nvidia.nemoclaw.state-volume.creation-id": "competitor",
+    });
+    expect(docker.runDocker.mock.calls.map(([args]) => args[0])).toEqual(["inspect"]);
+  },
+);

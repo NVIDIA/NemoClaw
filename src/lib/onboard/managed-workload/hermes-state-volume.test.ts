@@ -63,7 +63,8 @@ describe("managed Hermes state volume", () => {
     });
 
     exitCleanup!();
-    expect(docker.volume).toBeNull();
+    expect(docker.volume).not.toBeNull();
+    expect(docker.calls.filter((args) => args[0] === "rm")).toEqual([]);
     expect(unregister).not.toHaveBeenCalled();
   });
 

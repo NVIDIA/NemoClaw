@@ -22,7 +22,7 @@ export type ManagedStateVolumeMount = {
 export type ManagedStateVolumeCleanupResult =
   | { readonly status: "not-applicable" | "absent" | "removed" }
   | {
-      readonly status: "not-owned" | "failed";
+      readonly status: "not-owned" | "failed" | "retained";
       readonly detail: string;
       readonly volumeName: string;
     };
@@ -160,6 +160,7 @@ function inspectVolume(root: ManagedStartupStateRoot, run: ContainerEngineRun): 
 function removeOwnedVolume(
   root: ManagedStartupStateRoot,
   run: ContainerEngineRun,
+  preserve = false,
 ): ManagedStateVolumeCleanupResult {
   const observation = inspectVolume(root, run);
   if (observation.status === "absent") return { status: "absent" };
@@ -174,6 +175,15 @@ function removeOwnedVolume(
     return {
       status: "not-owned",
       detail: "the exact NemoClaw ownership labels are absent or changed",
+      volumeName: root.resourceIdentity,
+    };
+  }
+  // Named volumes have no immutable deletion handle. Even matching labels can
+  // become stale before rm, so automatic rollback must retain the named state.
+  if (preserve) {
+    return {
+      status: "retained",
+      detail: "automatic cleanup preserves named state; explicit operator cleanup is required",
       volumeName: root.resourceIdentity,
     };
   }
@@ -260,8 +270,8 @@ export function prepareManagedStateVolumes(
       }
       const verified = inspectVolume(root, run);
       // Named volume creation is idempotent: a competing invocation may have
-      // created this name after our first inspection. Only our creation label
-      // grants rollback authority, and removeOwnedVolume rechecks it on cleanup.
+      // created this name after our first inspection. The creation label only
+      // identifies reuse; it cannot authorize deletion by a reusable name.
       const createdHere =
         before.status === "absent" &&
         verified.status === "observed" &&
@@ -290,12 +300,12 @@ export function prepareManagedStateVolumes(
       reused.push(!createdHere);
     }
   } catch (error) {
-    for (const root of [...created].reverse()) removeOwnedVolume(root, run);
+    for (const root of [...created].reverse()) removeOwnedVolume(root, run, true);
     throw error;
   }
   let committed = false;
   const cleanup = (): readonly ManagedStateVolumeCleanupResult[] =>
-    committed ? [] : [...created].reverse().map((root) => removeOwnedVolume(root, run));
+    committed ? [] : [...created].reverse().map((root) => removeOwnedVolume(root, run, true));
   const unregisterExitCleanup =
     created.length > 0
       ? (deps.registerExitCleanup ?? defaultRegisterExitCleanup)(() => {

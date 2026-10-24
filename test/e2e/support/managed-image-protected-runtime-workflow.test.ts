@@ -170,6 +170,27 @@ describe("protected managed-image runtime workflow", () => {
     );
   });
 
+  it("rejects omission of the job start used by the shared runtime budget", () => {
+    const value = workflow();
+    const guard = namedStep(value, "Validate protected runtime exact-head dispatch");
+    guard.run = String(guard.run)
+      .split("\n")
+      .filter((line) => !line.includes("NEMOCLAW_PROTECTED_RUNTIME_STARTED_AT_MS"))
+      .join("\n");
+    expect(validateManagedImageProtectedRuntimeWorkflow(value)).not.toEqual([]);
+  });
+
+  it.each([
+    "Remove isolated protected runtime registry",
+    "Restore trusted OpenShell sources",
+    "Upload protected managed-image runtime artifacts",
+    "Clean up Docker auth",
+  ])("rejects unbounded finalization step %s", (name) => {
+    const value = workflow();
+    delete namedStep(value, name)["timeout-minutes"];
+    expect(validateManagedImageProtectedRuntimeWorkflow(value)).not.toEqual([]);
+  });
+
   // source-shape-contract: security -- The isolated registry must be gone before reporter-backed validations can publish passing risk evidence
   test("cleans the protected registry before passing risk evidence", () => {
     const steps = multiarchJob(workflow()).steps as Array<Record<string, unknown>>;

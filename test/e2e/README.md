@@ -2319,6 +2319,13 @@ or automatically replay the base.
 For the default same-repository PR revision selection, leave `jobs` and `targets` empty and keep `include_staging_brev_launchable=false`.
 Keep `allow_jetson_dispatch=false` for the default PR revision selection.
 To select the protected managed-image runtime qualification, set `jobs=managed-image-protected-runtime`.
+The 75-minute job records its start before checkout. Setup and provider qualification share the first
+45 minutes; rollback and final inventory share the next 15 minutes. Commands retain their individual
+limits and are capped by the remaining phase budget. The fixture reserves five minutes for cleanup,
+and the workflow reserves eight minutes for registry removal, source restoration, artifact upload,
+and Docker credential cleanup, with two minutes of runner headroom. A late setup or exhausted phase
+fails qualification; it cannot publish a passing receipt by skipping agent or cleanup assertions.
+NIM login and image preparation run in a supervised child so registry waits obey the same deadline.
 Leave `targets` empty.
 Keep `include_staging_brev_launchable=false`.
 The candidate must contain `ci/protected-managed-image-multiarch-activation-v1.json` and `ci/protected-managed-image-runtime-activation-v1.json`.

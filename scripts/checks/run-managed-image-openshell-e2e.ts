@@ -529,8 +529,7 @@ export async function cleanupInterruptedManagedImageOpenShellE2e(
       onboard,
       runtimeProvider: provider,
       roots,
-      scope: null,
-      committed: true,
+      prepared: true,
     });
     if (failures.length) throw new Error("managed recovery volume cleanup is unproven");
     commandResult(["docker", "network", "rm", scope.networkName], process.env, 15000);
@@ -633,7 +632,7 @@ type ProtectedManagedStateVolumeMount = {
 type ProtectedManagedStateVolumeCleanupResult =
   | { readonly status: "not-applicable" | "absent" | "removed" }
   | {
-      readonly status: "not-owned" | "failed";
+      readonly status: "not-owned" | "failed" | "retained";
       readonly detail: string;
       readonly volumeName: string;
     };
@@ -732,25 +731,25 @@ export function resolveManagedImageOnboardModule(onboardImport: unknown): Onboar
   return candidate as OnboardModule;
 }
 
-function cleanupProtectedManagedStateVolumes(input: {
+export function cleanupProtectedManagedStateVolumes(input: {
   readonly onboard: OnboardModule | null;
   readonly runtimeProvider: RuntimeProviderBundle | null;
   readonly roots: readonly ProtectedManagedStateRoot[];
-  readonly scope: ProtectedManagedStateVolumeScope | null;
-  readonly committed: boolean;
+  readonly prepared: boolean;
 }): string[] {
   try {
     let results: readonly ProtectedManagedStateVolumeCleanupResult[] = [];
-    if (input.committed && input.onboard && input.runtimeProvider) {
+    // This is the fixture owner's explicit teardown after sandbox/container
+    // cleanup, including injected bootstrap failures. Automatic create rollback
+    // preserves named volumes and cannot establish an empty fixture inventory.
+    if (input.prepared && input.onboard && input.runtimeProvider) {
       results = input.onboard.managedWorkloadOnboard.removeManagedStateVolumes(
         { roots: input.roots },
         { runtimeProvider: input.runtimeProvider },
       );
-    } else if (!input.committed) {
-      results = input.scope?.cleanupIncompleteCreate() ?? [];
     }
     return results.flatMap((result) =>
-      result.status === "not-owned" || result.status === "failed"
+      result.status === "not-owned" || result.status === "failed" || result.status === "retained"
         ? [`managed state volume ${result.volumeName} cleanup ${result.status}: ${result.detail}`]
         : [],
     );
@@ -1525,7 +1524,6 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
   let runtimeProvider: RuntimeProviderBundle | null = null;
   let managedStateRoots: readonly ProtectedManagedStateRoot[] = [];
   let managedStateVolumeScope: ProtectedManagedStateVolumeScope | null = null;
-  let managedStateVolumesCommitted = false;
   let failureInjectionQualified = false;
   let probeEvidence: T | undefined;
   let primaryError: unknown;
@@ -1813,7 +1811,6 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
         await waitForCommittedSandboxProbe(onboard, input, launch.sandboxEnv);
       }
       managedStateVolumeScope?.commit();
-      managedStateVolumesCommitted = managedStateVolumeScope !== null;
       if (afterLocalInference) {
         if (!input.localProvider) {
           throw new Error("managed-image post-route probe requires protected local inference");
@@ -1950,8 +1947,7 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
           onboard,
           runtimeProvider,
           roots: managedStateRoots,
-          scope: managedStateVolumeScope,
-          committed: managedStateVolumesCommitted,
+          prepared: managedStateVolumeScope !== null,
         }),
       );
       const removeNetwork = commandResult(

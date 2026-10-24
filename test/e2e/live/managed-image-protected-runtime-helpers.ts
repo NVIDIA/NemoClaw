@@ -14,11 +14,7 @@ import {
   parseProtectedManagedImageContracts,
 } from "../../../scripts/checks/managed-image-protected-runtime-contract.ts";
 import { PROTECTED_MANAGED_IMAGE_COHORT_PATTERN } from "../../../scripts/checks/protected-managed-image-contract.ts";
-import {
-  adoptServedModelId,
-  dockerLoginNgc,
-  pullNimImage,
-} from "../../../src/lib/inference/nim.ts";
+import { adoptServedModelId, getImageForModel } from "../../../src/lib/inference/nim.ts";
 import {
   getOllamaProxyToken,
   killStaleProxy,
@@ -37,6 +33,11 @@ import {
   env as gpuEnv,
   REPO_ROOT,
 } from "./gpu-e2e-helpers.ts";
+
+import {
+  protectedRuntimeDeadlineHost,
+  protectedRuntimeDeadlines,
+} from "./managed-image-protected-runtime-budget.ts";
 
 const OLLAMA_MODEL = "qwen3.5:9b";
 const VLLM_MODEL = "Qwen/Qwen2.5-0.5B-Instruct";
@@ -725,10 +726,33 @@ async function startProtectedNim(
   state: ProtectedProviderContainerState,
   apiKey: string,
 ): Promise<string> {
-  expect(dockerLoginNgc(apiKey), "NGC login must succeed for protected NIM qualification").toBe(
-    true,
+  const image = getImageForModel(NIM_CATALOG_MODEL);
+  if (!image) throw new Error("protected NIM catalog model has no image");
+  // NIM's production login and platform-aware pull are synchronous. Run them
+  // in the supervised child so a slow registry cannot block the suite deadline.
+  const prepare = await host.command(
+    "node",
+    [
+      "--import",
+      "tsx",
+      "--input-type=module",
+      "--eval",
+      `
+    import * as importedNim from './src/lib/inference/nim.ts';
+    const { dockerLoginNgc, pullNimImage } = importedNim.default ?? importedNim;
+    if (!dockerLoginNgc(process.env.NGC_API_KEY)) throw new Error('NGC login failed');
+    pullNimImage(${JSON.stringify(NIM_CATALOG_MODEL)});
+  `,
+    ],
+    {
+      artifactName: "prepare-protected-nim-image",
+      cwd: REPO_ROOT,
+      env: { ...buildAvailabilityProbeEnv(), NGC_API_KEY: apiKey },
+      redactionValues: [apiKey],
+      timeoutMs: 20 * 60_000,
+    },
   );
-  const image = pullNimImage(NIM_CATALOG_MODEL);
+  expect(prepare.exitCode, resultText(prepare)).toBe(0);
   const start = await host.command(
     "docker",
     [
@@ -923,8 +947,11 @@ async function proveOwnedRuntimeInventoryClean(
 export async function qualifyProtectedManagedImageRuntime(
   fixtures: RuntimeFixtures,
   ngcApiKeyInput: string,
+  deadlines = protectedRuntimeDeadlines(process.env.NEMOCLAW_PROTECTED_RUNTIME_STARTED_AT_MS),
 ): Promise<void> {
-  const { artifacts, cleanup, host, progress } = fixtures;
+  const { artifacts, cleanup, progress } = fixtures;
+  const host = protectedRuntimeDeadlineHost(fixtures.host, deadlines.providers);
+  const rollbackHost = protectedRuntimeDeadlineHost(fixtures.host, deadlines.rollback);
   const contracts = imageContracts();
   const ngcApiKey = requiredNgcApiKey(ngcApiKeyInput);
   const cohort = process.env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT ?? "";
@@ -933,14 +960,14 @@ export async function qualifyProtectedManagedImageRuntime(
   const providerStates = [vllmState, nimState] as const;
 
   cleanup.trackDisposable("remove protected vLLM container", async () => {
-    await removeProtectedProviderContainer(host, vllmState, "cleanup-vllm-container");
+    await removeProtectedProviderContainer(fixtures.host, vllmState, "cleanup-vllm-container");
   });
   cleanup.trackDisposable("remove protected NIM container", async () => {
-    await removeProtectedProviderContainer(host, nimState, "cleanup-nim-container");
+    await removeProtectedProviderContainer(fixtures.host, nimState, "cleanup-nim-container");
   });
   cleanup.trackDisposable("stop protected Ollama runtime", async () => {
     killStaleProxy();
-    const result = await cleanupOllama(host, "cleanup-managed-image-ollama");
+    const result = await cleanupOllama(fixtures.host, "cleanup-managed-image-ollama");
     expect(result.exitCode, resultText(result)).toBe(0);
   });
 
@@ -1002,8 +1029,8 @@ export async function qualifyProtectedManagedImageRuntime(
 
     activePhase = "prove all-agent managed bootstrap rollback and exact cleanup";
     progress.phase("prove all-agent managed bootstrap rollback and exact cleanup");
-    await qualifyEveryRollback(host, contracts);
-    await proveOwnedRuntimeInventoryClean(host, cohort, providerStates);
+    await qualifyEveryRollback(rollbackHost, contracts);
+    await proveOwnedRuntimeInventoryClean(rollbackHost, cohort, providerStates);
     const providerContainers = providerStates.map(({ authority }) => {
       if (!authority) throw new Error("protected provider authority is missing from the receipt");
       return authority;
