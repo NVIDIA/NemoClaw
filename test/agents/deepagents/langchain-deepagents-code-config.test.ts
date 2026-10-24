@@ -145,13 +145,29 @@ describe("LangChain Deep Agents Code config generator", () => {
     expect(config).toContain(
       "# NemoClaw provider route: inference; upstream provider: nvidia-prod; API: openai-completions.",
     );
+    expect(config).toContain('auto_classifier = "openai:nvidia/nemotron-3-super-120b-a12b"');
     expect(config).toContain("use_responses_api = false");
     expect(config).not.toContain("force_nonempty_content");
+    expect(config).not.toContain("gpt-5.6-luna");
     expect(config).toContain("check = false");
     expect(config).toContain("auto_update = false");
     expect(config).toContain("[warnings]");
     expect(config).toContain('suppress = ["tavily"]');
     expect(config).not.toMatch(/NVIDIA_API_KEY|OPENAI_API_KEY=|sk-/);
+  });
+
+  it("keeps the NVIDIA managed-route Auto classifier on the sandbox model (#13331)", () => {
+    // A DCode sandbox onboarded on NVIDIA endpoints with nemotron-3-super must
+    // route its Auto-approval classifier through the managed model identity,
+    // never the Deep Agents Code runtime default (openai:gpt-5.6-luna) that the
+    // managed inference route cannot serve. Without this the first
+    // classifier-backed decision after enabling Auto is denied with
+    // "classifier unavailable", so Auto mode never auto-approves (#13331).
+    const config = runGenerator({});
+
+    expect(config).toContain('auto_classifier = "openai:nvidia/nemotron-3-super-120b-a12b"');
+    expect(config).toContain('models = ["nvidia/nemotron-3-super-120b-a12b"]');
+    expect(config).not.toContain("gpt-5.6-luna");
   });
 
   it("uses the attached-provider placeholder for native NVIDIA inference (#12558)", () => {
