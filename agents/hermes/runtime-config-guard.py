@@ -55,6 +55,7 @@ OPENSHELL_SUPERVISOR_ARGV0 = b"/opt/openshell/bin/openshell-sandbox"
 # The integration test protects this separate in-image recovery boundary.
 SEALED_FILE_NAMES = ("config.yaml", ".env", ".config-hash")
 NATIVE_LOCAL_STARTUP_CONFIG = ".native-local-startup-config"
+PROVIDER_STARTUP_ENV = ".provider-startup-env"
 RESTART_ORPHAN_MARKER_NAME = ".nemoclaw-hermes-restart-seal"
 STATE_WORKER_LEASE_SECONDS = 15 * 60
 HERMES_STARTUP_READY_FILE = "/run/nemoclaw/hermes-startup-ready"
@@ -1652,8 +1653,9 @@ def _reconcile_nonroot_startup_api_key_hash(
     OpenShell starts the Hermes entrypoint as ``sandbox``. That process must
     mint a per-sandbox API bearer token, but it cannot update the root-owned
     strict hash. Native local startup also refreshes three managed credential
-    slots. Its untrusted config preimage must match the strict digest and replay
-    exactly to the frozen current bytes. All other drift remains a refusal.
+    slots. Messaging startup refreshes scoped provider references in .env.
+    Each untrusted preimage must match its strict digest and replay exactly
+    to the frozen current bytes. All other drift remains a refusal.
     """
 
     if not _managed_nonroot_reconciliation_is_allowed():
@@ -1692,7 +1694,7 @@ def _reconcile_nonroot_startup_api_key_hash(
         )
     if not secrets.compare_digest(actual_config_sha256, expected_config_sha256):
         raise UnsafePathError("Hermes config changed after the host read it; retry the command")
-    witness: tuple[str, FileSnapshot] | None = None
+    witnesses: list[tuple[str, FileSnapshot]] = []
     if not secrets.compare_digest(actual_config_sha256, strict_config_sha256):
         config_text, read_snapshot = _read_text(config_path, MAX_CONFIG_INPUT_BYTES)
         if read_snapshot != config_snapshot:
@@ -1701,7 +1703,7 @@ def _reconcile_nonroot_startup_api_key_hash(
         _preimage, witness_snapshot = _prove_native_local_startup_config(
             witness_path, config_text, strict_config_sha256, config_snapshot
         )
-        witness = (witness_path, witness_snapshot)
+        witnesses.append((witness_path, witness_snapshot))
 
     env_text, env_read_snapshot = _read_text(env_path, MAX_ENV_BYTES)
     if env_read_snapshot != env_snapshot:
@@ -1709,13 +1711,29 @@ def _reconcile_nonroot_startup_api_key_hash(
     if not secrets.compare_digest(
         hashlib.sha256(env_text.encode("utf-8")).hexdigest(), strict_env_sha256
     ):
-        prior_env_text = _without_single_generated_api_server_key(env_text)
+        api_key_error = None
+        try:
+            prior_env_text = _without_single_generated_api_server_key(env_text)
+        except UnsafePathError as exc:
+            api_key_error = exc
+            prior_env_text = env_text
         if not secrets.compare_digest(
             hashlib.sha256(prior_env_text.encode("utf-8")).hexdigest(), strict_env_sha256
         ):
-            raise UnsafePathError(
-                "refusing non-API-key env drift during non-root strict hash reconciliation"
-            )
+            witness_path = os.path.join(hermes_dir, PROVIDER_STARTUP_ENV)
+            try:
+                preimage, witness_snapshot = _read_provider_startup_env(witness_path, env_snapshot)
+            except FileNotFoundError as exc:
+                if api_key_error is not None:
+                    raise api_key_error
+                raise UnsafePathError(
+                    "refusing non-API-key env drift during non-root strict hash reconciliation"
+                ) from exc
+            if not _provider_startup_env_matches(preimage, env_text, strict_env_sha256):
+                raise UnsafePathError(
+                    "refusing non-API-key env drift during non-root strict hash reconciliation"
+                )
+            witnesses.append((witness_path, witness_snapshot))
 
     # Recheck both path snapshots immediately before the root-owned commit.
     # A writable descriptor retained before the namespace freeze must not race
@@ -1723,7 +1741,7 @@ def _reconcile_nonroot_startup_api_key_hash(
     for path, expected_snapshot in (
         (config_path, config_snapshot),
         (env_path, env_snapshot),
-    ) + ((witness,) if witness is not None else ()):
+    ) + tuple(witnesses):
         opened = _open_regular(path)
         try:
             if opened.snapshot != expected_snapshot:
@@ -1737,7 +1755,7 @@ def _reconcile_nonroot_startup_api_key_hash(
     # Advance the root-owned strict anchor last, then let the ordinary seal
     # verification and inode replacement path re-prove both anchors.
     _write_hash(hash_file, actual_text)
-    if witness is not None:
+    for witness in witnesses:
         # Strict trust is already committed. A crash or failed unlink leaves
         # an untrusted stale witness, never a reason to pretend rollback.
         directory_fd = None
@@ -1747,7 +1765,8 @@ def _reconcile_nonroot_startup_api_key_hash(
             os.unlink(basename, dir_fd=directory_fd)
             _fsync_directory_after_replace(directory_fd)
         except (OSError, UnsafePathError):
-            print("[config] Retained stale native local startup witness after strict commit", file=sys.stderr)
+            label = "native local" if os.path.basename(witness[0]) == NATIVE_LOCAL_STARTUP_CONFIG else "provider env"
+            print(f"[config] Retained stale {label} startup witness after strict commit", file=sys.stderr)
         finally:
             if directory_fd is not None:
                 os.close(directory_fd)
@@ -3600,6 +3619,92 @@ def _refresh_native_local_config(hermes_dir: str, hash_file: str, mode: str) -> 
     print("[config] Refreshed Hermes native local credential reference", file=sys.stderr)
 
 
+def _read_provider_startup_env(
+    path: str, env_snapshot: FileSnapshot
+) -> tuple[str, FileSnapshot]:
+    text, snapshot = _read_text(path, MAX_ENV_BYTES)
+    if (
+        snapshot.mode != 0o600
+        or snapshot.uid != env_snapshot.uid
+        or snapshot.gid != env_snapshot.gid
+    ):
+        raise UnsafePathError("refusing unsafe provider startup env witness")
+    return text, snapshot
+
+
+def _provider_startup_env_matches(
+    preimage: str, current: str, strict_env_sha256: str
+) -> bool:
+    # The witness is sandbox-owned. Authenticate it before using any of its bytes.
+    if not secrets.compare_digest(
+        hashlib.sha256(preimage.encode("utf-8")).hexdigest(), strict_env_sha256
+    ):
+        return False
+    replacements = {}
+    for key in LEGACY_PROVIDER_PLACEHOLDER_KEYS:
+        previous = _first_env_assignment_value(preimage, key)
+        value = _first_env_assignment_value(current, key)
+        if (
+            previous is not None
+            and value is not None
+            and _provider_placeholder_for_env_key(previous, key)
+            and _provider_placeholder_for_env_key(value, key)
+        ):
+            replacements[key] = value
+    replayed, _changed, _keys = _upsert_env_assignments(preimage, replacements)
+    if replayed == current:
+        return True
+    try:
+        return replayed == _without_single_generated_api_server_key(current)
+    except UnsafePathError:
+        return False
+
+
+def _record_provider_startup_env(
+    hermes_dir: str, hash_file: str, text: str, snapshot: FileSnapshot
+) -> None:
+    env_path = os.path.join(hermes_dir, ".env")
+    try:
+        strict_text, strict_snapshot = _read_text(hash_file, MAX_HASH_BYTES)
+    except FileNotFoundError:
+        # No preimage can establish trust without an anchor. A later config
+        # write still requires the ordinary strict-hash verification.
+        return
+    _config_sha256, strict_env_sha256, _state = _parse_config_hash(
+        strict_text, os.path.join(hermes_dir, "config.yaml"), env_path
+    )
+    preimage = text
+    if not secrets.compare_digest(
+        hashlib.sha256(preimage.encode("utf-8")).hexdigest(), strict_env_sha256
+    ):
+        # API-key minting runs first. Its single generated assignment already
+        # has a constrained proof, so retain the strict bytes that preceded it.
+        try:
+            preimage = _without_single_generated_api_server_key(text)
+        except UnsafePathError:
+            return
+        if not secrets.compare_digest(
+            hashlib.sha256(preimage.encode("utf-8")).hexdigest(), strict_env_sha256
+        ):
+            # Keep the original witness across repeated supervisor starts.
+            return
+    path = os.path.join(hermes_dir, PROVIDER_STARTUP_ENV)
+    try:
+        _old, previous = _read_provider_startup_env(path, snapshot)
+    except FileNotFoundError:
+        previous = None
+    _atomic_replace(
+        path, preimage.encode("utf-8"), expected=previous,
+        mode=0o600, uid=snapshot.uid, gid=snapshot.gid,
+    )
+    opened = _open_regular(hash_file)
+    try:
+        if opened.snapshot != strict_snapshot:
+            raise UnsafePathError("refusing raced provider startup strict anchor")
+    finally:
+        opened.close()
+
+
 def provider_placeholders(
     hermes_dir: str,
     hash_file: str,
@@ -3653,6 +3758,8 @@ def provider_placeholders(
             "Hermes startup cannot update read-only provider placeholders; rebuild or recreate the sandbox"
         )
 
+    if mode == "compat":
+        _record_provider_startup_env(hermes_dir, hash_file, text, snapshot)
     try:
         _write_existing(env_path, updated_text, snapshot)
         refresh_hashes(hermes_dir, hash_file, mode)
