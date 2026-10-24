@@ -1046,16 +1046,17 @@ export function patchOpenClawSlackProxyAddrPackageGraph(
 
   const proxyAddrDirectory = join(boltDirectory, "node_modules", "proxy-addr");
   const proxyAddrPackageJson = readJson(join(proxyAddrDirectory, "package.json"));
+  const proxyAddrAlreadyPatched = proxyAddrPackageJson.version === PROXY_ADDR_VERSION;
   requirePackageIdentity(
     proxyAddrPackageJson,
     "proxy-addr",
-    "2.0.7",
+    proxyAddrAlreadyPatched ? PROXY_ADDR_VERSION : "2.0.7",
     "OpenClaw Slack bundled proxy-addr",
   );
   requireDependencyShape(
     proxyAddrPackageJson,
     { forwarded: "0.2.0", "ipaddr.js": "1.9.1" },
-    "proxy-addr@2.0.7",
+    `proxy-addr@${proxyAddrAlreadyPatched ? PROXY_ADDR_VERSION : "2.0.7"}`,
   );
   if (proxyAddrPackageJson.license !== "MIT" || proxyAddrPackageJson.engines?.node !== ">= 0.10") {
     throw new Error("@openclaw/slack@2026.9.2 bundled proxy-addr contract changed after review");
@@ -1082,7 +1083,13 @@ export function patchOpenClawSlackProxyAddrPackageGraph(
     );
   }
 
-  copyReplacementPackage(replacementDirectory, proxyAddrDirectory);
+  if (proxyAddrAlreadyPatched) {
+    if (hashPackageTree(proxyAddrDirectory) !== hashPackageTree(replacementDirectory)) {
+      throw new Error("OpenClaw Slack bundled proxy-addr changed after remediation");
+    }
+  } else {
+    copyReplacementPackage(replacementDirectory, proxyAddrDirectory);
+  }
 }
 
 function patchOpenClawBundledUndici(
@@ -1101,8 +1108,10 @@ function patchOpenClawBundledUndici(
     packageSpec.slice(separator + 1),
     "OpenClaw bundled Undici remediation package",
   );
+  const manifestVersion = packageJson.dependencies?.undici;
   if (
-    packageJson.dependencies?.undici !== expected.expectedVersion ||
+    (manifestVersion !== expected.expectedVersion &&
+      manifestVersion !== expected.replacement.version) ||
     !Array.isArray(packageJson.bundledDependencies) ||
     !packageJson.bundledDependencies.includes("undici")
   ) {
@@ -1110,10 +1119,11 @@ function patchOpenClawBundledUndici(
   }
   const bundledDirectory = join(packageDirectory, "node_modules", "undici");
   const bundled = readJson(join(bundledDirectory, "package.json"));
+  const bundledAlreadyPatched = bundled.version === expected.replacement.version;
   requirePackageIdentity(
     bundled,
     "undici",
-    expected.expectedVersion,
+    bundledAlreadyPatched ? expected.replacement.version : expected.expectedVersion,
     `${packageSpec} bundled Undici`,
   );
   const replacement = readJson(join(replacementDirectory, "package.json"));
@@ -1130,9 +1140,17 @@ function patchOpenClawBundledUndici(
   ) {
     throw new Error(`${packageSpec} bundled Undici package contract changed before remediation`);
   }
-  packageJson.dependencies.undici = expected.replacement.version;
-  writeJson(packageJsonPath, packageJson);
-  copyReplacementPackage(replacementDirectory, bundledDirectory);
+  if (manifestVersion === expected.expectedVersion) {
+    packageJson.dependencies.undici = expected.replacement.version;
+    writeJson(packageJsonPath, packageJson);
+  }
+  if (bundledAlreadyPatched) {
+    if (hashPackageTree(bundledDirectory) !== hashPackageTree(replacementDirectory)) {
+      throw new Error(`${packageSpec} bundled Undici changed after remediation`);
+    }
+  } else {
+    copyReplacementPackage(replacementDirectory, bundledDirectory);
+  }
 }
 
 function patchOpenClawBundledZod(
@@ -1151,18 +1169,21 @@ function patchOpenClawBundledZod(
     packageSpec.slice(separator + 1),
     "OpenClaw bundled Zod remediation package",
   );
+  const manifestVersion = packageJson.dependencies?.zod;
   if (
-    packageJson.dependencies?.zod !== expectedVersion ||
+    (manifestVersion !== expectedVersion && manifestVersion !== ZOD_VERSION) ||
     !Array.isArray(packageJson.bundledDependencies) ||
     !packageJson.bundledDependencies.includes("zod")
   ) {
     throw new Error(`${packageSpec} bundled Zod contract changed before remediation`);
   }
   const bundledZod = join(packageDirectory, "node_modules", "zod");
+  const bundledZodMetadata = readJson(join(bundledZod, "package.json"));
+  const bundledAlreadyPatched = bundledZodMetadata.version === ZOD_VERSION;
   requirePackageIdentity(
-    readJson(join(bundledZod, "package.json")),
+    bundledZodMetadata,
     "zod",
-    expectedVersion,
+    bundledAlreadyPatched ? ZOD_VERSION : expectedVersion,
     `${packageSpec} bundled Zod`,
   );
   requirePackageIdentity(
@@ -1214,9 +1235,17 @@ function patchOpenClawBundledZod(
     }
   }
 
-  packageJson.dependencies.zod = ZOD_VERSION;
-  writeJson(packageJsonPath, packageJson);
-  copyReplacementPackage(replacementDirectory, bundledZod);
+  if (manifestVersion === expectedVersion) {
+    packageJson.dependencies.zod = ZOD_VERSION;
+    writeJson(packageJsonPath, packageJson);
+  }
+  if (bundledAlreadyPatched) {
+    if (hashPackageTree(bundledZod) !== hashPackageTree(replacementDirectory)) {
+      throw new Error(`${packageSpec} bundled Zod changed after remediation`);
+    }
+  } else {
+    copyReplacementPackage(replacementDirectory, bundledZod);
+  }
 }
 
 function patchOpenClawBundledBodyParser(
@@ -1251,21 +1280,39 @@ function patchOpenClawBundledBodyParser(
   }
   const bodyParserDirectory = join(dependencies, "body-parser");
   const bodyParser = readJson(join(bodyParserDirectory, "package.json"));
-  requirePackageIdentity(bodyParser, "body-parser", "2.3.0", `${packageSpec} bundled parser`);
+  const bodyParserAlreadyPatched = bodyParser.version === BODY_PARSER_VERSION;
+  requirePackageIdentity(
+    bodyParser,
+    "body-parser",
+    bodyParserAlreadyPatched ? BODY_PARSER_VERSION : "2.3.0",
+    `${packageSpec} bundled parser`,
+  );
   requireDependencyShape(
     bodyParser,
-    {
-      bytes: "^3.1.2",
-      "content-type": "^2.0.0",
-      debug: "^4.4.3",
-      "http-errors": "^2.0.1",
-      "iconv-lite": "^0.7.2",
-      "on-finished": "^2.4.1",
-      qs: "^6.15.2",
-      "raw-body": "^3.0.2",
-      "type-is": "^2.1.0",
-    },
-    `${packageSpec} bundled body-parser@2.3.0`,
+    bodyParserAlreadyPatched
+      ? {
+          bytes: "^3.1.2",
+          "content-type": "^2.1.0",
+          debug: "^4.4.3",
+          "http-errors": "^2.0.1",
+          "iconv-lite": "^0.7.3",
+          "on-finished": "^2.4.1",
+          qs: "^6.16.1",
+          "raw-body": "^3.0.2",
+          "type-is": "^2.1.0",
+        }
+      : {
+          bytes: "^3.1.2",
+          "content-type": "^2.0.0",
+          debug: "^4.4.3",
+          "http-errors": "^2.0.1",
+          "iconv-lite": "^0.7.2",
+          "on-finished": "^2.4.1",
+          qs: "^6.15.2",
+          "raw-body": "^3.0.2",
+          "type-is": "^2.1.0",
+        },
+    `${packageSpec} bundled body-parser@${bodyParserAlreadyPatched ? BODY_PARSER_VERSION : "2.3.0"}`,
   );
   const nestedContentType = join(bodyParserDirectory, "node_modules", "content-type");
   requirePackageIdentity(
@@ -1280,10 +1327,13 @@ function patchOpenClawBundledBodyParser(
     "0.7.3",
     `${packageSpec} bundled iconv-lite`,
   );
+  const qsDirectory = join(dependencies, "qs");
+  const qs = readJson(join(qsDirectory, "package.json"));
+  const qsAlreadyPatched = qs.version === QS_VERSION;
   requirePackageIdentity(
-    readJson(join(dependencies, "qs", "package.json")),
+    qs,
     "qs",
-    expected.qs,
+    qsAlreadyPatched ? QS_VERSION : expected.qs,
     `${packageSpec} bundled qs`,
   );
   const patchedBodyParser = readJson(join(bodyParserReplacement, "package.json"));
@@ -1310,14 +1360,26 @@ function patchOpenClawBundledBodyParser(
     "Patched parser qs",
   );
 
-  const preservedContentType = join(remediationRoot, "slack-body-parser-content-type");
-  cpSync(nestedContentType, preservedContentType, { recursive: true });
-  copyReplacementPackage(bodyParserReplacement, bodyParserDirectory);
-  copyReplacementPackage(
-    preservedContentType,
-    join(bodyParserDirectory, "node_modules", "content-type"),
-  );
-  copyReplacementPackage(qsReplacement, join(dependencies, "qs"));
+  const preparedBodyParser = join(remediationRoot, "slack-body-parser-prepared");
+  cpSync(bodyParserReplacement, preparedBodyParser, { recursive: true });
+  mkdirSync(join(preparedBodyParser, "node_modules"), { recursive: true });
+  cpSync(nestedContentType, join(preparedBodyParser, "node_modules", "content-type"), {
+    recursive: true,
+  });
+  if (bodyParserAlreadyPatched) {
+    if (hashPackageTree(bodyParserDirectory) !== hashPackageTree(preparedBodyParser)) {
+      throw new Error(`${packageSpec} bundled body-parser changed after remediation`);
+    }
+  } else {
+    copyReplacementPackage(preparedBodyParser, bodyParserDirectory);
+  }
+  if (qsAlreadyPatched) {
+    if (hashPackageTree(qsDirectory) !== hashPackageTree(qsReplacement)) {
+      throw new Error(`${packageSpec} bundled qs changed after remediation`);
+    }
+  } else {
+    copyReplacementPackage(qsReplacement, qsDirectory);
+  }
 }
 
 export function patchLegacyOpenClawCorePackageGraph(packageDirectory: string): void {

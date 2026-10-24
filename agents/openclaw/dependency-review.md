@@ -41,6 +41,17 @@ The reviewed audit wrapper reports lower-severity production findings and blocks
 - Removal condition: remove the Slack-specific rewrite only after the reviewed Slack archive bundles `proxy-addr@2.0.8` or newer. Keep the ordinary exact override until every supported managed-messaging path resolves outside the affected range and a regenerated lock plus reviewed audit proves the replacement is unnecessary.
 - Regression evidence: `test/agents/openclaw/openclaw-npm-remediation.test.ts` guards the exact source and replacement contracts; `test/runtime/messaging/messaging-build-applier-integrity.test.ts` proves the installed official plugin is patched only after provenance verification; `test/agents/openclaw/openclaw-managed-messaging-offline-build.test.ts` guards the ordinary graph; and `test/agents/openclaw/openclaw-dependency-review.test.ts` keeps the audit and runtime remediation wiring present.
 
+## Reviewed OpenClaw plugin remediation
+
+The reviewed archive audit and image build use the package identities in `ci/reviewed-npm-audit.json`. They verify registry integrity before replacing bundled packages. Official plugin installs also require OpenClaw's trusted install record. A changed source package, replacement identity, dependency layout, or patched tree stops remediation.
+
+- Discord, Slack, and Google Chat: the reviewed 2026.9.2 and 2026.9.5 archives listed in `scripts/lib/openclaw-npm-remediation.mts` replace affected bundled Zod copies with `zod@4.6.6`. The Discord SDK wrapper also receives a digest-checked compatibility update. Remove each rewrite when that reviewed upstream archive ships a patched Zod and passes the archive and runtime probes in `test/agents/openclaw/openclaw-zod-runtime.test.ts`.
+- Discord and Slack: the reviewed 2026.9.2 and 2026.9.5 archives replace bundled Undici with `8.12.2` for Discord and `7.30.1` for Slack. The replacement checks the plugin manifest, bundled package, and reviewed registry package. Remove each rewrite when the reviewed upstream archive ships a patched Undici and passes the real patched distribution and plugin runtime probes.
+- Slack: the official 2026.9.2 install and reviewed 2026.9.5 archive replace bundled `body-parser@2.3.0` with `2.4.0` and affected `qs` copies with `6.16.1`. The replacement checks the Slack, Bolt, Express, parser, and `qs` identities. A retry verifies completed replacements before resuming. Remove this rewrite when the reviewed Slack archives ship patched parser and `qs` versions. The failure-and-retry test is in `test/runtime/messaging/messaging-build-applier-integrity.test.ts`; the process probe is in `test/agents/openclaw/openclaw-body-parser-runtime.test.ts`.
+- Microsoft Teams: the official 2026.9.2 install updates its npm project to `@azure/msal-node@7.1.0`, `@azure/msal-common@16.14.2`, and `zod@4.6.6` after source and install-path checks. Remove this update when a reviewed upstream plugin install resolves those patched versions without it. `test/agents/openclaw/openclaw-msal-runtime.test.ts` probes the token manager and Azure identity constructors.
+
+The PR and main `real-openclaw-dist-harness` jobs run those three runtime probes with scripts disabled during package installation. The audit still verifies the final production graph separately.
+
 ## WeChat plugin runtime graph
 
 - Package: `@tencent-weixin/openclaw-weixin@2.4.9`. This version uses the supported channel SDK and binds inbound replies to the OpenClaw 2026.9.x model runtime. The locked production dependencies remain `qrcode-terminal@0.12.0` and `zod@4.6.6`.

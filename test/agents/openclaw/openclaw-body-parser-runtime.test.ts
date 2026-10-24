@@ -130,6 +130,7 @@ function runSlackParserHarness(
     assert.equal(installed.status, 0, installed.stderr || installed.stdout);
     const pluginRoot = path.join(plan.project, "node_modules/@openclaw/slack");
     plan.afterInstall(pluginRoot);
+    plan.afterInstall(pluginRoot);
     const probed = spawnSync(process.execPath, ["--eval", PROBE, pluginRoot], {
       encoding: "utf8",
       env,
@@ -145,7 +146,7 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_BODY_PARSER_HARNESS !== "1")(
   "OpenClaw Slack reviewed body-parser runtime",
   () => {
     it(
-      "keeps the official 2026.9.2 plugin process alive after malformed compressed input",
+      "keeps the official 2026.9.2 plugin process alive after repeated remediation and malformed compressed input",
       () =>
         runSlackParserHarness("2026.9.2", ({ archive, env, packageSpec, workspace }) => {
           const stateRoot = path.join(workspace, "state");

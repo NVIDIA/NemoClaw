@@ -518,6 +518,55 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
   );
 
   it(
+    "completes Slack remediation after a later qs replacement fails",
+    async () => {
+      const fixture = await createSlackRemediationFixture();
+      const dependencyParent = path.dirname(fixture.proxyAddrDirectory);
+      const qsDirectory = path.join(dependencyParent, "qs");
+      const renameHook = renameFailureHook(fixture.root, qsDirectory, false);
+      const env = { ...fixture.env, NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR: undefined };
+      const run = (withFailure: boolean) =>
+        spawnSync(
+          process.execPath,
+          [
+            ...(withFailure ? ["--import", renameHook] : []),
+            SCRIPT_PATH,
+            "--agent",
+            "openclaw",
+            "--phase",
+            "agent-install",
+          ],
+          { cwd: REPO_ROOT, env, encoding: "utf8", timeout: 15_000 },
+        );
+      const version = (name: string) =>
+        JSON.parse(fs.readFileSync(path.join(dependencyParent, name, "package.json"), "utf8"))
+          .version as string;
+
+      try {
+        const first = run(true);
+        expect(first.error).toBeUndefined();
+        expect(first.status, first.stderr).toBe(2);
+        expect(version("proxy-addr")).toBe("2.0.8");
+        expect(version("body-parser")).toBe("2.4.0");
+        expect(version("qs")).toBe("6.15.3");
+
+        const retry = run(false);
+        expect(retry.error).toBeUndefined();
+        expect(retry.status, retry.stderr).toBe(0);
+        expect(version("proxy-addr")).toBe("2.0.8");
+        expect(version("body-parser")).toBe("2.4.0");
+        expect(version("qs")).toBe("6.16.1");
+        expect(
+          fs.readdirSync(dependencyParent).some((name) => name.includes("-replacement-")),
+        ).toBe(false);
+      } finally {
+        fs.rmSync(fixture.root, { recursive: true, force: true });
+      }
+    },
+    testTimeout(45_000),
+  );
+
+  it(
     "reports and reconciles stale recovery state after a successful replacement",
     async () => {
       const fixture = await createSlackRemediationFixture();
