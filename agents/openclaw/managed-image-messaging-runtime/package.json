@@ -22,6 +22,7 @@
     "nemoclaw-openclaw-override-protobufjs": "npm:protobufjs@8.7.2",
     "nemoclaw-openclaw-override-qs": "npm:qs@6.15.3",
     "nemoclaw-openclaw-override-uuid": "npm:uuid@14.0.2",
+    "nemoclaw-openclaw-override-zod": "npm:zod@4.6.6",
     "openclaw": "2026.9.2",
     "qs": "6.16.1",
     "undici": "8.10.2"
