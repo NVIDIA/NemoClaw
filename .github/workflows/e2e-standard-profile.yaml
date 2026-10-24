@@ -421,7 +421,7 @@ jobs:
           packages: ${{ inputs.host_packages }}
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@7fcbf13ecd7bc0ea835a949417cf9eb68067adf9
         with:
           build-cli: "false"
 

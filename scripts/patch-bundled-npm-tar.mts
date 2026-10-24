@@ -6,6 +6,7 @@
 import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import {
+  chmodSync,
   closeSync,
   constants,
   cpSync,
@@ -130,9 +131,11 @@ export function patchBundledNpmTar(options: {
   }
 
   const current = inspectBundledNpmTar(npmRoot);
-  if (current.state === "fixed") return current;
-
   const livePath = join(npmRoot, "node_modules", "tar");
+  if (current.state === "fixed") {
+    chmodSync(realDirectory(livePath, "npm bundled tar root"), 0o755);
+    return current;
+  }
   const transactionId = `${process.pid}-${randomBytes(8).toString("hex")}`;
   const stagingRoot = mkdtempSync(join(dirname(livePath), ".tar.nemoclaw-stage-"));
   const stagedPath = join(stagingRoot, "replacement");
@@ -140,6 +143,8 @@ export function patchBundledNpmTar(options: {
   let rollbackRequired = false;
   try {
     cpSync(replacementRoot, stagedPath, { dereference: false, recursive: true });
+    // The transaction stays private; its installed package must be readable by the sandbox.
+    chmodSync(stagedPath, 0o755);
     cpSync(livePath, backupPath, {
       dereference: false,
       errorOnExist: true,
@@ -293,6 +298,7 @@ function patchBundledNpmTarWithPreparedReplacement(
 ): BundledNpmTarState {
   const current = inspectBundledNpmTar(npmRoot);
   if (current.state === "fixed") {
+    chmodSync(realDirectory(join(npmRoot, "node_modules", "tar"), "npm bundled tar root"), 0o755);
     commandRunner("npm", ["--version"]);
     commandRunner("npx", ["--version"]);
     return current;

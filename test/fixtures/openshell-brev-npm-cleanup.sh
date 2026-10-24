@@ -317,8 +317,8 @@ sudo usermod -aG docker "$TARGET_USER" 2>/dev/null || true
 # New Docker group membership takes effect in a new login session.
 info "Docker enabled ($(docker --version 2>/dev/null | head -c 40))"
 
-# 3. Node.js 24.22.1
-NODE_VERSION="24.22.1"
+# 3. Node.js 24.18.1
+NODE_VERSION="24.18.1"
 if command -v node >/dev/null 2>&1 && [[ "$(node --version)" == "v${NODE_VERSION}" ]]; then
   info "Node.js already installed: $(node --version)"
 else

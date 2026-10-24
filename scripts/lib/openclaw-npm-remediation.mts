@@ -10,6 +10,7 @@ import {
   cpSync,
   existsSync,
   fstatSync,
+  ftruncateSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
@@ -21,6 +22,7 @@ import {
   realpathSync,
   rmSync,
   writeFileSync,
+  writeSync,
 } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { createRequire } from "node:module";
@@ -1535,15 +1537,39 @@ function migrateDiscordSdk(packageDirectory: string, replacementDirectory: strin
     throw new Error("Discord SDK source changed; review the Zod 4 migration");
   }
   const visit = (directory: string): void => {
-    for (const name of readdirSync(directory).sort()) {
+    for (const entry of readdirSync(directory, { withFileTypes: true }).sort((left, right) =>
+      left.name.localeCompare(right.name),
+    )) {
+      const name = entry.name;
       const file = join(directory, name);
       const relativePath = relative(packageDirectory, file).split(sep).join("/");
       if (relativePath === "output/lib/zod") continue;
-      if (lstatSync(file).isDirectory()) visit(file);
+      if (entry.isDirectory()) visit(file);
       else if (/\.(?:cjs|mjs|d\.ts)$/u.test(name)) {
-        const source = readFileSync(file, "utf8");
-        const migrated = migrateDiscordZodSource(relativePath, source);
-        if (migrated !== source) writeFileSync(file, migrated);
+        const descriptor = openSync(
+          file,
+          constants.O_RDWR | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+        );
+        try {
+          const metadata = fstatSync(descriptor);
+          if (!metadata.isFile() || metadata.nlink !== 1) {
+            throw new Error("Discord SDK source must be a single regular file");
+          }
+          const source = readFileSync(descriptor, "utf8");
+          const migrated = migrateDiscordZodSource(relativePath, source);
+          if (migrated !== source) {
+            const bytes = Buffer.from(migrated);
+            let offset = 0;
+            while (offset < bytes.length) {
+              const written = writeSync(descriptor, bytes, offset, bytes.length - offset, offset);
+              if (written === 0) throw new Error("Discord SDK source rewrite made no progress");
+              offset += written;
+            }
+            ftruncateSync(descriptor, bytes.length);
+          }
+        } finally {
+          closeSync(descriptor);
+        }
       }
     }
   };
