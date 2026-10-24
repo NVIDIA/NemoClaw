@@ -220,10 +220,26 @@ const BUNDLED_ZOD_REMEDIATIONS: Readonly<Record<string, "4.4.3" | "4.5.4">> = Ob
   "@openclaw/slack@2026.9.5": "4.5.4",
 });
 const DISCORD_SDK_ZOD_FILES = [
-  ["lib/zod/lib/index.mjs", "3030e5b032805870bb4a8674e36fd916885552832e52c6a0f2465a929ecec231"],
-  ["lib/zod/lib/index.cjs", "feb2389d716ac303c1e7df76df1d7c4c4d7fb35d5aef3456d43718b68cf46aa1"],
-  ["utils/zodUtils.mjs", "ee5a039abb94c7d6da4289e2a363fd8496110c3f9e3dbd710306bfa091d66214"],
-  ["utils/zodUtils.cjs", "36138eaf2094a5fa96a14fbc08153f8236055ebdb1956bf1553ed21d1e9f72db"],
+  [
+    "lib/zod/lib/index.mjs",
+    "3030e5b032805870bb4a8674e36fd916885552832e52c6a0f2465a929ecec231",
+    "b9ed41cdea1aa3511938b755e8a257c6366edb65bacf6ae50e8f0b1650959f87",
+  ],
+  [
+    "lib/zod/lib/index.cjs",
+    "feb2389d716ac303c1e7df76df1d7c4c4d7fb35d5aef3456d43718b68cf46aa1",
+    "175b7f1be5238349d04ea0045dfada6ed3013d362e456d2497db3f41ef735317",
+  ],
+  [
+    "utils/zodUtils.mjs",
+    "ee5a039abb94c7d6da4289e2a363fd8496110c3f9e3dbd710306bfa091d66214",
+    "5014a3f6f2c7aa0bd8141650dac6f3fec7fbf857f1415bd027e0e4afa282bc63",
+  ],
+  [
+    "utils/zodUtils.cjs",
+    "36138eaf2094a5fa96a14fbc08153f8236055ebdb1956bf1553ed21d1e9f72db",
+    "3a2042b3a1536c3a3b7ded91142fca617be4b0bbf3b166fd513747499d902cc5",
+  ],
 ] as const;
 
 const REMEDIATIONS: Readonly<Record<string, Remediation>> = Object.freeze({
@@ -1198,25 +1214,36 @@ function patchOpenClawBundledZod(
     const sdkPackageJsonPath = join(sdkDirectory, "package.json");
     const sdkPackageJson = readJson(sdkPackageJsonPath);
     requirePackageIdentity(sdkPackageJson, "@discord/embedded-app-sdk", "2.5.0", "Discord SDK");
-    if (sdkPackageJson.dependencies?.zod !== "^3.9.8") {
+    if (!["^3.9.8", ZOD_VERSION].includes(sdkPackageJson.dependencies?.zod)) {
       throw new Error(`${packageSpec} bundled Discord SDK Zod contract changed before remediation`);
     }
     const sdkZod = join(sdkDirectory, "node_modules", "zod");
+    const sdkZodMetadata = readJson(join(sdkZod, "package.json"));
+    const sdkZodAlreadyPatched = sdkZodMetadata.version === ZOD_VERSION;
     requirePackageIdentity(
-      readJson(join(sdkZod, "package.json")),
+      sdkZodMetadata,
       "zod",
-      "3.25.76",
+      sdkZodAlreadyPatched ? ZOD_VERSION : "3.25.76",
       "Discord SDK Zod",
     );
-    sdkPackageJson.dependencies.zod = ZOD_VERSION;
-    writeJson(sdkPackageJsonPath, sdkPackageJson);
-    copyReplacementPackage(replacementDirectory, sdkZod);
+    if (sdkPackageJson.dependencies.zod !== ZOD_VERSION) {
+      sdkPackageJson.dependencies.zod = ZOD_VERSION;
+      writeJson(sdkPackageJsonPath, sdkPackageJson);
+    }
+    if (sdkZodAlreadyPatched) {
+      if (hashPackageTree(sdkZod) !== hashPackageTree(replacementDirectory)) {
+        throw new Error(`${packageSpec} bundled Discord SDK Zod changed after remediation`);
+      }
+    } else {
+      copyReplacementPackage(replacementDirectory, sdkZod);
+    }
 
     const outputDirectory = join(sdkDirectory, "output");
-    for (const [relativePath, expectedSha256] of DISCORD_SDK_ZOD_FILES) {
+    for (const [relativePath, expectedSha256, patchedSha256] of DISCORD_SDK_ZOD_FILES) {
       const file = join(outputDirectory, relativePath);
       const original = readFileSync(file);
       const actualSha256 = createHash("sha256").update(original).digest("hex");
+      if (actualSha256 === patchedSha256) continue;
       if (actualSha256 !== expectedSha256) {
         throw new Error(`${packageSpec} embedded Discord SDK Zod file changed: ${relativePath}`);
       }
