@@ -224,6 +224,25 @@ describe("describeStaleUpgrade version-change labeling (#6520)", () => {
     ).toBe("v2026.6.10 → v2026.5.1 (downgrade)");
   });
 
+  it.each([
+    ["0.0.134-rc.1", "0.0.134", false],
+    ["0.0.134", "0.0.134-rc.1", true],
+    ["0.0.134-rc.1", "0.0.134-rc.2", false],
+    ["0.0.134-rc.2", "0.0.134-rc.1", true],
+    ["0.0.133", "0.0.133-11-gaaaaaaa", false],
+    ["0.0.133-11-gaaaaaaa", "0.0.133", false],
+    ["0.0.133-11-gaaaaaaa", "0.0.133-10-gbbbbbbb", false],
+  ])("labels a downgrade only when %s to %s is older (#13076)", (current, expected, downgrade) => {
+    const text = describeStaleUpgrade({
+      name: "my-assistant",
+      running: false,
+      current,
+      expected,
+      reasons: ["agent-version"],
+    });
+    expect(text.endsWith("(downgrade)")).toBe(downgrade);
+  });
+
   it("keeps upgrade descriptions unchanged", () => {
     expect(
       describeStaleUpgrade({
