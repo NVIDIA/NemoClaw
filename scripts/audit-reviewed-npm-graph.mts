@@ -299,6 +299,8 @@ export function reviewedArchiveGraphManifest(archiveTarVersion: unknown) {
       "proxy-addr": "2.0.8",
       tar: archiveTarVersion,
       zod: "4.6.6",
+      "undici@>=8.0.0 <8.12.2": "8.12.2",
+      "undici@>=7.18.0 <7.30.1": "7.30.1",
     },
     private: true,
     version: "1.0.0",

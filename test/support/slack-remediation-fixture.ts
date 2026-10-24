@@ -36,9 +36,10 @@ export async function createSlackRemediationFixture() {
     writePackage(source, {
       name: "@openclaw/slack",
       version: "2026.9.2",
-      dependencies: { "@slack/bolt": "5.0.0", zod: "4.4.3" },
-      bundledDependencies: ["@slack/bolt", "zod"],
+      dependencies: { "@slack/bolt": "5.0.0", zod: "4.4.3", undici: "7.29.1" },
+      bundledDependencies: ["@slack/bolt", "zod", "undici"],
     });
+    writePackage(path.join(source, "node_modules/undici"), { name: "undici", version: "7.29.1" });
     writePackage(path.join(source, "node_modules/zod"), { name: "zod", version: "4.4.3" });
     writePackage(path.join(source, "node_modules/@slack/bolt"), {
       name: "@slack/bolt",
@@ -108,6 +109,11 @@ export async function createSlackRemediationFixture() {
         '  "pack:content-type@2.1.0:--pack-destination")',
         '    cp "$TEST_BODY_ARCHIVES/content-type-2.1.0.tgz" "$4/content-type-2.1.0.tgz"',
         '    printf \'[{"filename":"content-type-2.1.0.tgz","integrity":"sha512-mj7UPXE0jaqaOsukNZRUEfEi2AcL7C/vwmwcHV0O97eO1E1pxBZuyjlZrx5seTaNBg1U6+o35wpa35Qfcc+7ag=="}]\' ;;',
+        '  "view:undici@7.30.1:dist.integrity") printf "%s" "sha512-03KrMbjIFDWQR5RNPrSw3bd1r12JpyFQl9/yxjUbJtqkjmllqC5lFjZh6ujeuJCKr8EOQvRW872Oy/az+nLYxg==" ;;',
+        '  "view:undici@7.30.1:dist.tarball") printf "%s" "https://registry.npmjs.org/undici/-/undici-7.30.1.tgz" ;;',
+        '  "pack:undici@7.30.1:--pack-destination")',
+        '    cp "$TEST_BODY_ARCHIVES/undici-7.30.1.tgz" "$4/undici-7.30.1.tgz"',
+        '    printf \'[{"filename":"undici-7.30.1.tgz","integrity":"sha512-03KrMbjIFDWQR5RNPrSw3bd1r12JpyFQl9/yxjUbJtqkjmllqC5lFjZh6ujeuJCKr8EOQvRW872Oy/az+nLYxg=="}]\' ;;',
         "  *) exit 1 ;;",
         "esac",
         "",
@@ -161,6 +167,10 @@ export async function createSlackRemediationFixture() {
         "../fixtures/npm/content-type-2.1.0/content-type-2.1.0.tgz",
       ),
       path.join(archives, "content-type-2.1.0.tgz"),
+    );
+    fs.copyFileSync(
+      path.resolve(import.meta.dirname, "../fixtures/npm/undici-7.30.1/undici-7.30.1.tgz"),
+      path.join(archives, "undici-7.30.1.tgz"),
     );
     const env = await withLegacyMessagingPlanEnvDirect(
       {

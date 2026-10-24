@@ -1000,10 +1000,10 @@ describe("OpenClaw npm remediation", () => {
         "sha512-dOvZVzjdZdz7phd9v6jCbwxrBW3fK6n8Rc0CtdmM4bumzMnxywBYhuph6J819RRw/ku+rLbelwfMunktuzVVHg==",
     });
     expect(shrinkwrap.packages["node_modules/undici"]).toMatchObject({
-      version: "8.10.0",
-      resolved: "https://registry.npmjs.org/undici/-/undici-8.10.0.tgz",
+      version: "8.12.2",
+      resolved: "https://registry.npmjs.org/undici/-/undici-8.12.2.tgz",
       integrity:
-        "sha512-HvltHd7avK13QIw/oLe4qoOLyoVSoafqJ2jYOrtMRBkbYT31eiBQ8O0ehRKZiEZCMEyLFQNIADpgCWC5fALvYQ==",
+        "sha512-XtuDWVdqTLr3NAxm2ly9/hU6kUsJOgGh1RASzMBbsw6aWCOaQzHdW+QQDfdERjfJ2V5vL5pRPa4RetO9UfivDg==",
     });
     expect(shrinkwrap.packages["node_modules/ip-address"]).toMatchObject({
       version: "10.3.1",
@@ -1024,7 +1024,7 @@ describe("OpenClaw npm remediation", () => {
     expect(shrinkwrap.packages[""].dependencies).toMatchObject({ tar: "7.5.21" });
     expect(
       readJson<{ dependencies: Record<string, string> }>(path.join(directory, "package.json")),
-    ).toMatchObject({ dependencies: { tar: "7.5.21", undici: "8.10.0" } });
+    ).toMatchObject({ dependencies: { tar: "7.5.21", undici: "8.12.2" } });
   });
 
   it("rejects a current OpenClaw manifest with a changed tar dependency", () => {
@@ -1116,7 +1116,7 @@ describe("OpenClaw npm remediation", () => {
 
     patchOpenClawDiscordPackageGraph(directory);
 
-    expect(readPackageField<string>(directory, "dependencies.undici")).toBe("8.10.0");
+    expect(readPackageField<string>(directory, "dependencies.undici")).toBe("8.12.2");
     const shrinkwrap = readJson<{
       packages: Record<
         string,
@@ -1128,12 +1128,12 @@ describe("OpenClaw npm remediation", () => {
         }
       >;
     }>(path.join(directory, "npm-shrinkwrap.json"));
-    expect(shrinkwrap.packages[""].dependencies).toMatchObject({ undici: "8.10.0" });
+    expect(shrinkwrap.packages[""].dependencies).toMatchObject({ undici: "8.12.2" });
     expect(shrinkwrap.packages["node_modules/undici"]).toMatchObject({
-      version: "8.10.0",
-      resolved: "https://registry.npmjs.org/undici/-/undici-8.10.0.tgz",
+      version: "8.12.2",
+      resolved: "https://registry.npmjs.org/undici/-/undici-8.12.2.tgz",
       integrity:
-        "sha512-HvltHd7avK13QIw/oLe4qoOLyoVSoafqJ2jYOrtMRBkbYT31eiBQ8O0ehRKZiEZCMEyLFQNIADpgCWC5fALvYQ==",
+        "sha512-XtuDWVdqTLr3NAxm2ly9/hU6kUsJOgGh1RASzMBbsw6aWCOaQzHdW+QQDfdERjfJ2V5vL5pRPa4RetO9UfivDg==",
     });
   });
 

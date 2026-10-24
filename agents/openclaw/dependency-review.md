@@ -153,3 +153,11 @@ and supplies the replacement archives offline. Its direct Zod 4.6.6 pin and
 body-parser 2.4.0 override are included in the committed lock and checksum-pinned
 Docker archive inputs. The WeChat cache separately supplies its locked Zod
 4.6.6 archive. These repairs add no advisory exceptions.
+
+The affected Undici 8.x graphs and bundles use 8.12.2; Slack's bundled 7.x
+copy uses 7.30.1. Both versions reject excessive response content encodings
+without changing the existing major-version boundary. The CLI and OpenClaw
+locks, generated runtime bundles, archive-tree pins, and offline cache inputs
+record those versions. The cache carries the 7.x replacement through the
+existing npm-alias pattern. Original bundled records remain available for
+source-archive verification before remediation.

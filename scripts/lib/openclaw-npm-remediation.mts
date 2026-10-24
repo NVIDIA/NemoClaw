@@ -138,10 +138,10 @@ const CURRENT_FAST_URI_VERSION = "3.1.7";
 const CURRENT_FAST_URI_INTEGRITY =
   "sha512-dOvZVzjdZdz7phd9v6jCbwxrBW3fK6n8Rc0CtdmM4bumzMnxywBYhuph6J819RRw/ku+rLbelwfMunktuzVVHg==";
 const CURRENT_FAST_URI_TARBALL = "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.7.tgz";
-const CURRENT_UNDICI_VERSION = "8.10.0";
+const CURRENT_UNDICI_VERSION = "8.12.2";
 const CURRENT_UNDICI_INTEGRITY =
-  "sha512-HvltHd7avK13QIw/oLe4qoOLyoVSoafqJ2jYOrtMRBkbYT31eiBQ8O0ehRKZiEZCMEyLFQNIADpgCWC5fALvYQ==";
-const CURRENT_UNDICI_TARBALL = "https://registry.npmjs.org/undici/-/undici-8.10.0.tgz";
+  "sha512-XtuDWVdqTLr3NAxm2ly9/hU6kUsJOgGh1RASzMBbsw6aWCOaQzHdW+QQDfdERjfJ2V5vL5pRPa4RetO9UfivDg==";
+const CURRENT_UNDICI_TARBALL = "https://registry.npmjs.org/undici/-/undici-8.12.2.tgz";
 const CURRENT_IP_ADDRESS_VERSION = "10.3.1";
 const CURRENT_IP_ADDRESS_INTEGRITY =
   "sha512-1e9d3kb97NHJTIJDZW9rKqW2h6+dFa50Dy0fpPSMQp2ADje5gvKsXmdiK6dwY5t76TaTt5+P5N1Y/LoToIxP6g==";
@@ -233,6 +233,36 @@ const SLACK_BODY_REPLACEMENTS = [
     },
   },
 ] as const;
+const BUNDLED_UNDICI_VERSIONS: Readonly<Record<string, string>> = {
+  "@openclaw/discord@2026.9.2": "8.10.2",
+  "@openclaw/discord@2026.9.5": "8.10.2",
+  "@openclaw/slack@2026.9.2": "7.29.1",
+  "@openclaw/slack@2026.9.5": "7.29.1",
+};
+const UNDICI_REPLACEMENTS = [
+  {
+    name: "undici",
+    version: "8.12.2",
+    integrity:
+      "sha512-XtuDWVdqTLr3NAxm2ly9/hU6kUsJOgGh1RASzMBbsw6aWCOaQzHdW+QQDfdERjfJ2V5vL5pRPa4RetO9UfivDg==",
+    sha256: "a765b5e63ab5c6b1b91a59072c88f7857b36f47b09c376762241d177279cdefd",
+    tarball: "https://registry.npmjs.org/undici/-/undici-8.12.2.tgz",
+    engines: {
+      node: ">=22.19.0",
+    },
+  },
+  {
+    name: "undici",
+    version: "7.30.1",
+    integrity:
+      "sha512-03KrMbjIFDWQR5RNPrSw3bd1r12JpyFQl9/yxjUbJtqkjmllqC5lFjZh6ujeuJCKr8EOQvRW872Oy/az+nLYxg==",
+    sha256: "c98bd3881137c11341e8be8d2ec509ebf973b6f8b36d0a4c6d2afcda15e0d712",
+    tarball: "https://registry.npmjs.org/undici/-/undici-7.30.1.tgz",
+    engines: {
+      node: ">=20.18.1",
+    },
+  },
+] as const;
 const DISCORD_SDK_OUTPUT_INTEGRITY =
   "sha512-jV67lNWDgUUED4SqoFvZDVyJRVMZV62987FUbN7tj+gR7KGgfhicbXlfmmkozkuhXizsj8Rhw6zXMNc3pA6gFA==";
 const BUNDLED_ZOD_VERSIONS: Readonly<Record<string, string>> = {
@@ -246,19 +276,19 @@ const BUNDLED_ZOD_VERSIONS: Readonly<Record<string, string>> = {
 const REMEDIATIONS: Readonly<Record<string, Remediation>> = Object.freeze({
   "@openclaw/discord@2026.9.2": {
     expectedPatchedTreeIntegrity:
-      "sha512-WgOiY1hlORIQ8JwXHcd5NSlZ70wYim8GCLGQgjweTtWNmQ+gY1r32Ut/8TvXJ9t9Csjz4dCSWqg4PIcTy8zNoA==",
+      "sha512-8Vqg663sVwrfHial8BR9oDEksR3slSjbJjsS7s+UHmQW25XRr8wVtSIgqE4WT+cANzo3zTwfpiqJwAmghPFQeA==",
     kind: "zod",
     version: "2026.9.2",
   },
   "@openclaw/discord@2026.9.5": {
     expectedPatchedTreeIntegrity:
-      "sha512-zwKdVS7s6TkRMzjjIwDiMQZOIDJalvrO6vTqdaE6cbVioY5S1kRar/8q+CGTN/eT1LEWPWzkfun/NwnOUpbz4w==",
+      "sha512-7uwGN6NLAyE05OlkLyGU8/DneCfFWvTGq8QxUjR22dflsrQXasY7rEz14lpCMA3dTiFZakkQcdxHDhA2G4iUZg==",
     kind: "zod",
     version: "2026.9.5",
   },
   "@openclaw/slack@2026.9.5": {
     expectedPatchedTreeIntegrity:
-      "sha512-+b+rQQ1yigciz5be6dIR2S9c9lxHxyFq9XiwsoywwqNbd6mTDbXMU44Xd3nMyFERB82HR5ihx3OYCKp0/XRV1w==",
+      "sha512-SJ1ogN75iVuchIsPQR1wqPRyiOKTrkABPkupI2TgoMr/bobOv1Z+POXhS/ohZecVXx3SN8iJPPM2X6L2mBH1tA==",
     kind: "zod",
     version: "2026.9.5",
   },
@@ -270,7 +300,7 @@ const REMEDIATIONS: Readonly<Record<string, Remediation>> = Object.freeze({
   },
   "@openclaw/slack@2026.9.2": {
     expectedPatchedTreeIntegrity:
-      "sha512-4p5LNNu0V88yQY1pSJDg3d5+g5FxdsFhE+Y1Q13jG7LPsX+ynjv0lS028KJslPJbixNmAWNB1Oy7O+QWOts3wQ==",
+      "sha512-wYthrzOo71UfKq3WYy5XYykSFRTgFPk8kMmA+ebALExwEIqMWQwbypF5YRJUNhO1YAyOEVi2QdsQvUJ9JT5C/Q==",
     kind: "slack-proxy-addr",
     version: "2026.9.2",
   },
@@ -301,7 +331,7 @@ const REMEDIATIONS: Readonly<Record<string, Remediation>> = Object.freeze({
   },
   "@openclaw/discord@2026.7.1": {
     expectedPatchedTreeIntegrity:
-      "sha512-KUDcFJnqI3O7yKiBUh20ZijM7J7gkbpKGDw4bb8y+uO8s914US6PieyzwAzgycRXWfXPxHQx5CTDrg28PdKfaw==",
+      "sha512-zyRk1ddDzvHwcDAWGbiyKm1D2OJQoQo8lNB0TRudWL+a2eHvvh0Zt3r0Jxa/ah1PdfmVWnxZd/VGcQasAHwjDw==",
     kind: "undici",
     version: "2026.7.1",
   },
@@ -330,7 +360,7 @@ const REMEDIATIONS: Readonly<Record<string, Remediation>> = Object.freeze({
   // exact npm 12 packed tree so either a packlist or bundled-graph change fails.
   "openclaw@2026.7.1": {
     expectedPatchedTreeIntegrity:
-      "sha512-j/ArEzhwh+FDiIqgKQBFMiDUk5wHOHzGxbvl5hnh2W8X0nTpJ5oW/VzO8T5B7HqI6MVlQp4NLadFveN209TLLg==",
+      "sha512-NIcEgu7zgU+3NdWIDeWSABtVv4RCZABNQv7i5NwG+qn3VrfYfFru0ZWH4f85Xwvrp94VOxYRQB0Uz5BRLCuH2Q==",
     kind: "current-core",
     version: "2026.7.1",
   },
@@ -1099,6 +1129,71 @@ export function patchOpenClawSlackProxyAddrPackageGraph(
   }
 
   copyReplacementPackage(replacementDirectory, proxyAddrDirectory);
+}
+
+function remediateBundledUndici(
+  packageDirectory: string,
+  packageSpec: string,
+  root: string,
+  env: NodeJS.ProcessEnv,
+): void {
+  const originalVersion = BUNDLED_UNDICI_VERSIONS[packageSpec];
+  if (!originalVersion) return;
+  const spec = UNDICI_REPLACEMENTS.find((entry) =>
+    entry.version.startsWith(originalVersion.slice(0, 2)),
+  );
+  if (!spec) throw new Error("Unreviewed bundled Undici major");
+  const metadataPath = join(packageDirectory, "package.json");
+  const metadataStat = lstatSync(metadataPath);
+  if (!metadataStat.isFile() || metadataStat.isSymbolicLink() || metadataStat.nlink !== 1)
+    throw new Error("Undici migration requires single regular plugin metadata");
+  const metadata = readJson(metadataPath);
+  const target = join(packageDirectory, "node_modules", "undici");
+  if (metadata.dependencies?.undici !== originalVersion)
+    throw new Error("Bundled Undici dependency changed after review");
+  requirePackageIdentity(
+    readJson(join(target, "package.json")),
+    "undici",
+    originalVersion,
+    "Bundled Undici",
+  );
+  const archive = packReplacement(
+    `undici@${spec.version}`,
+    spec.integrity,
+    spec.tarball,
+    root,
+    env,
+  );
+  const replacement = extractArchive(
+    archive.archivePath,
+    join(root, `undici-${spec.version}`),
+    root,
+    env,
+  );
+  const replacementMetadata = readJson(join(replacement, "package.json"));
+  requirePackageIdentity(replacementMetadata, "undici", spec.version, "Undici replacement");
+  if (
+    Object.keys(replacementMetadata.dependencies ?? {}).length ||
+    replacementMetadata.engines?.node !== spec.engines.node
+  )
+    throw new Error("Undici replacement contract changed after review");
+  copyReplacementPackage(replacement, target);
+  metadata.dependencies.undici = spec.version;
+  writeJson(metadataPath, metadata);
+  const shrinkwrapPath = join(packageDirectory, "npm-shrinkwrap.json");
+  if (existsSync(shrinkwrapPath)) {
+    const shrinkwrap = readJson(shrinkwrapPath);
+    const entry = shrinkwrap.packages?.["node_modules/undici"];
+    if (entry?.version !== originalVersion)
+      throw new Error("Bundled Undici shrinkwrap changed after review");
+    Object.assign(entry, {
+      version: spec.version,
+      integrity: spec.integrity,
+      resolved: spec.tarball,
+    });
+    shrinkwrap.packages[""].dependencies.undici = spec.version;
+    writeJson(shrinkwrapPath, shrinkwrap);
+  }
 }
 
 function patchSlackBodyParser(
@@ -2315,6 +2410,8 @@ export function buildRemediatedOpenClawPluginArchive(
     remediateSlackBodyParser(sourcePackage, remediationRoot, env);
   }
 
+  remediateBundledUndici(sourcePackage, request.packageSpec, remediationRoot, env);
+
   const outputDirectory = join(remediationRoot, "output");
   mkdirSync(outputDirectory, { recursive: true, mode: 0o700 });
   const packedJson = run(
@@ -2440,6 +2537,8 @@ function remediateVerifiedInstalledOfficialOpenClawPlugin(
     dependencyPaths.push(["node_modules", "@slack", "bolt", "node_modules", "proxy-addr"]);
   if (patchesBody)
     dependencyPaths.push(["node_modules", "@slack", "bolt", "node_modules", "body-parser"]);
+  if (BUNDLED_UNDICI_VERSIONS[request.packageSpec])
+    dependencyPaths.push(["node_modules", "undici"]);
   if (patchesZod) dependencyPaths.push(["node_modules", "zod"]);
   if (packageName === "@openclaw/discord") {
     dependencyPaths.push(["node_modules", "@discord", "embedded-app-sdk"]);
@@ -2489,6 +2588,7 @@ function remediateVerifiedInstalledOfficialOpenClawPlugin(
     );
     patchOpenClawBundledZodPackageGraph(packageDirectory, zodPackage, request.packageSpec);
     if (patchesBody) remediateSlackBodyParser(packageDirectory, directory, env);
+    remediateBundledUndici(packageDirectory, request.packageSpec, directory, env);
   } finally {
     rmSync(directory, { force: true, recursive: true });
   }

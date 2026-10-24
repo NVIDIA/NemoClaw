@@ -864,9 +864,15 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
       JSON.stringify({
         name: "@openclaw/slack",
         version: "2026.9.2",
-        dependencies: { "@slack/bolt": "5.0.0", zod: "4.4.3" },
-        bundledDependencies: ["@slack/bolt", "zod"],
+        dependencies: { "@slack/bolt": "5.0.0", zod: "4.4.3", undici: "7.29.1" },
+        bundledDependencies: ["@slack/bolt", "zod", "undici"],
       }),
+    );
+    const undiciDirectory = path.join(packageDirectory, "node_modules", "undici");
+    fs.mkdirSync(undiciDirectory);
+    fs.writeFileSync(
+      path.join(undiciDirectory, "package.json"),
+      JSON.stringify({ name: "undici", version: "7.29.1" }),
     );
     const zodDirectory = path.join(packageDirectory, "node_modules", "zod");
     fs.mkdirSync(zodDirectory);
@@ -883,6 +889,10 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
     fs.copyFileSync(
       path.resolve(import.meta.dirname, "../../fixtures/npm/zod-4.6.6/zod-4.6.6.tgz"),
       path.join(archives, "zod-4.6.6.tgz"),
+    );
+    fs.copyFileSync(
+      path.resolve(import.meta.dirname, "../../fixtures/npm/undici-7.30.1/undici-7.30.1.tgz"),
+      path.join(archives, "undici-7.30.1.tgz"),
     );
     const bodyDirectory = path.join(
       packageDirectory,

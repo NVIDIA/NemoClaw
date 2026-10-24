@@ -535,7 +535,9 @@ ADD --chmod=0444 --checksum=sha256:bd128caf48915fc9be919de1b05e37debd43258aca266
 ADD --chmod=0444 --checksum=sha256:33cd0ee1beaa8c9e9d15a9da836c62ddea4c34a42d7c2d349dbc80d94165d22a https://registry.npmjs.org/typescript/-/typescript-6.0.3.tgz /typescript-6.0.3.tgz
 ADD --chmod=0444 --checksum=sha256:f3fb42099ea7a0efa2753b3e770fa0d505714e1c7d75fc1fa6c5aac9ba1baad1 https://registry.npmjs.org/uhyphen/-/uhyphen-0.2.0.tgz /uhyphen-0.2.0.tgz
 ADD --chmod=0444 --checksum=sha256:65834dc9ce7ecceff4334a14796c85960cbf665d09364698bf3196ceed04d677 https://registry.npmjs.org/uint8array-extras/-/uint8array-extras-1.5.0.tgz /uint8array-extras-1.5.0.tgz
+ADD --chmod=0444 --checksum=sha256:c98bd3881137c11341e8be8d2ec509ebf973b6f8b36d0a4c6d2afcda15e0d712 https://registry.npmjs.org/undici/-/undici-7.30.1.tgz /undici-7.30.1.tgz
 ADD --chmod=0444 --checksum=sha256:740638ae32d78d2646a6727950e365fa26b6fa87913fa096e60ed4afeb4634aa https://registry.npmjs.org/undici/-/undici-8.10.2.tgz /undici-8.10.2.tgz
+ADD --chmod=0444 --checksum=sha256:a765b5e63ab5c6b1b91a59072c88f7857b36f47b09c376762241d177279cdefd https://registry.npmjs.org/undici/-/undici-8.12.2.tgz /undici-8.12.2.tgz
 ADD --chmod=0444 --checksum=sha256:07a721cb2cd0dd798c24757de34d14e8b640ff8fddef85d662e00b392562a1f2 https://registry.npmjs.org/undici-types/-/undici-types-8.3.0.tgz /undici-types-8.3.0.tgz
 ADD --chmod=0444 --checksum=sha256:e4bfbbe867144ff24f73198367479378c8b6cffc798a2ec0756a81097606908e https://registry.npmjs.org/unicorn-magic/-/unicorn-magic-0.3.0.tgz /unicorn-magic-0.3.0.tgz
 ADD --chmod=0444 --checksum=sha256:2dfb5e06d1d4bf1fe9f0fa7f633c4a2fde04d8b41cf0b9bd249a42561d5edfb6 https://registry.npmjs.org/unpipe/-/unpipe-1.0.0.tgz /unpipe-1.0.0.tgz
@@ -953,7 +955,7 @@ RUN --mount=type=secret,id=nemoclaw-mcporter-audit-receipt,required=false \
     OPENCLAW_LOCK_SHA256=none-legacy-fixture; \
     OPENCLAW_RECIPE='ignore-scripts+reviewed-lifecycle-v1'; \
     if [ "$OPENCLAW_VERSION" = "2026.9.2" ]; then \
-        OPENCLAW_LOCK_SHA256=49f871d5cb3b7b3b8387c6c8e23558fcac30093e12db669c8b3237bdf8e864a9; \
+        OPENCLAW_LOCK_SHA256=e93660e306f2d06b155ca03f0fee9242a8d9b6b4c9e24e96e461b0202f4be060; \
         ACTUAL_OPENCLAW_LOCK_SHA256="$(sha256sum /usr/local/lib/nemoclaw/openclaw-runtime/package-lock.json | awk '{print $1}')"; \
         [ "$ACTUAL_OPENCLAW_LOCK_SHA256" = "$OPENCLAW_LOCK_SHA256" ] \
             || { echo "ERROR: OpenClaw lock SHA-256 mismatch (expected $OPENCLAW_LOCK_SHA256, found $ACTUAL_OPENCLAW_LOCK_SHA256)" >&2; exit 1; }; \
@@ -2240,16 +2242,10 @@ RUN set -eu; \
         chmod 660 /sandbox/.openclaw/openclaw.json; \
     fi
 
-# System-wide shell hooks for shells where ~/.bashrc / ~/.profile aren't
-# sourced (e.g. `bash -ic` / `bash -lc` invoked under a different user or
-# without HOME=/sandbox). Dockerfile.base is the source of truth. This final
-# image replay only repairs stale published bases that predate the v0.0.69
-# base layer and therefore lack /etc/profile.d/nemoclaw-rlimits.sh, the
-# /etc/bash.bashrc hook, or the root-owned helper mode. Remove this block after
-# the minimum supported OpenClaw sandbox base tag is v0.0.69 or newer and those
-# three artifacts are guaranteed by the base image and covered by
-# test/runtime/sandbox/sandbox-provisioning.test.ts.
-# Ref: https://github.com/NVIDIA/NemoClaw/issues/2704
+# System-wide shell hooks cover login/interactive shells with other users or HOME values.
+# Replay Dockerfile.base's hooks and helper modes for pre-v0.0.69 bases.
+# Remove after v0.0.69 is required and test/runtime/sandbox/sandbox-provisioning.test.ts
+# covers these files (#2704).
 # hadolint ignore=SC2028,DL4006
 RUN chmod 444 /usr/local/lib/nemoclaw/sandbox-rlimits.sh \
     && if ! grep -q "sandbox-rlimits.sh" /etc/profile.d/nemoclaw-rlimits.sh 2>/dev/null; then \
