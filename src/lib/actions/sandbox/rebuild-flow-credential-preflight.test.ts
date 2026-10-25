@@ -170,8 +170,8 @@ describe("rebuildSandbox flow: credential preflight", () => {
     ["NEMOCLAW_RAM", "8GB"],
     ["NEMOCLAW_CPU", "bogus"],
     ["NEMOCLAW_CPU", "101%"],
-    ["NEMOCLAW_CPU", "1e-9223372036854775809"],
-    ["NEMOCLAW_CPU", "0e9223372036854775808"],
+    ["NEMOCLAW_CPU", "1e-2147483649"],
+    ["NEMOCLAW_CPU", "0e2147483648"],
   ])("rejects invalid %s=%s before backup or deletion (#13623)", async (name, value) => {
     vi.stubEnv(name, value);
     const beforeBackup = vi.fn();

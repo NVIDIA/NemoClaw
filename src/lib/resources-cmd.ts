@@ -317,15 +317,15 @@ export function resolveResourceValue(value: string, total: number, unit: "cpu" |
     return quantity;
   }
   const cpuQuantity = /^\+?(?:\d+(?:\.\d*)?|\.\d+)(?:m|[eE]([+-]?\d+))?$/.exec(trimmed);
-  // Kubernetes parses exponent suffixes as signed 64-bit integers.
+  // Reject exponents that Kubernetes would narrow to a different int32 value.
   const exponent = BigInt(cpuQuantity?.[1] ?? "0");
   const cores = Number(trimmed.endsWith("m") ? trimmed.slice(0, -1) : trimmed);
   if (
     !cpuQuantity ||
     !Number.isFinite(cores) ||
     cores < 0 ||
-    exponent < -9223372036854775808n ||
-    exponent > 9223372036854775807n
+    exponent < -2147483648n ||
+    exponent > 2147483647n
   ) {
     throw new Error(
       `Invalid CPU quantity '${trimmed}': use cores such as 4, millicores such as 750m, or a percentage`,

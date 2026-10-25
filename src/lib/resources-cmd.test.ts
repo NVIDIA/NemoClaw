@@ -44,18 +44,12 @@ describe("resources-cmd", () => {
     expect(resolveResourceValue("8Gi", 8192, "memory")).toBe("8Gi");
   });
 
-  it.each([
-    "4",
-    "0.5",
-    "750m",
-    "0",
-    "1e2",
-    "1e-9223372036854775808",
-    "0e9223372036854775807",
-    "0E+0009223372036854775807",
-  ])("preserves valid absolute CPU quantity %s", (value) => {
-    expect(resolveResourceValue(value, 16, "cpu")).toBe(value);
-  });
+  it.each(["4", "0.5", "750m", "0", "1e2", "1e-2147483648", "0e2147483647", "0E+0002147483647"])(
+    "preserves valid absolute CPU quantity %s",
+    (value) => {
+      expect(resolveResourceValue(value, 16, "cpu")).toBe(value);
+    },
+  );
 
   it.each([
     "bogus",
@@ -66,9 +60,9 @@ describe("resources-cmd", () => {
     "Infinity",
     "1e999",
     "1 2",
-    "1e-9223372036854775809",
-    "0e9223372036854775808",
-    "0E+9223372036854775808",
+    "1e-2147483649",
+    "0e2147483648",
+    "0E+2147483648",
     "1e-9999999999999999999999999",
   ])("rejects invalid absolute CPU quantity %s", (value) => {
     expect(() => resolveResourceValue(value, 16, "cpu")).toThrow("Invalid CPU quantity");
