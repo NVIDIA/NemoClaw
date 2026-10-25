@@ -19,7 +19,7 @@ cargo ci bundle
 cargo ci live-kind
 ```
 
-The runner builds Pi, exports its metadata bundle, loads it by digest, and installs the pinned Agent Sandbox prerequisite.
+The runner builds OpenClaw, exports its metadata bundle, loads it by digest, and installs the pinned Agent Sandbox prerequisite.
 The gateway test checks authentication, forged-token rejection, repeated install/removal, and retained storage without a Helm executable on `PATH`.
 The OpenShift-profile and registry tests use the public SDK to deploy a gateway and sandbox from that image.
 Each supplies a caller-relative kubeconfig and expects apply to complete with the agent started.
