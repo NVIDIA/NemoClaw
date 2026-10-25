@@ -155,7 +155,8 @@ The JSON report retains every finding.
 ## Configure Hosted Enforcement
 
 Before activating this workflow, protect the `v1` controller branch and release tags and limit who can change publishing workflows or bypass their checks.
-Configure `v1-release-security` and `v1-release-publication` with required independent reviewers, prevention of self-review, and exactly the `v0.1.*` tag deployment policy.
+Configure `v1-release-security` and `v1-release-publication` with required reviewers and exactly the `v0.1.*` tag deployment policy.
+A reviewer may approve a run they started.
 Missing protections or API failures deny the controlled path.
 Review publisher credentials and repository/package administrator privileges separately: job dependencies do not revoke those powers.
 

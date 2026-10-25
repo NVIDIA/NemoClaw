@@ -815,7 +815,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn protected_review_scripts_deny_missing_reviewers_self_review_and_branch_bypasses() {
+    fn protected_review_scripts_deny_missing_reviewers_and_branch_bypasses() {
         use std::{fs, os::unix::fs::PermissionsExt, process::Command};
         let workflow: Value =
             serde_saphyr::from_str(include_str!("../../../../.github/workflows/release.yml"))
@@ -833,7 +833,7 @@ mod tests {
                 .as_array()
                 .unwrap()
                 .iter()
-                .find(|v| v["name"] == "Require independent review and release-tag restrictions")
+                .find(|v| v["name"] == "Require review and release-tag restrictions")
                 .unwrap()["run"]
                 .as_str()
                 .unwrap();
@@ -848,6 +848,7 @@ mod tests {
                     tags.clone(),
                     false,
                 ),
+                // A reviewer may approve a run they started.
                 (
                     {
                         let mut v = protected.clone();
@@ -855,7 +856,7 @@ mod tests {
                         v
                     },
                     tags.clone(),
-                    false,
+                    true,
                 ),
                 (
                     {

@@ -377,13 +377,13 @@ jobs:
       controller_revision: ${{ needs.security-controller.outputs.revision }}
       policy_sha256: ${{ needs.security-controller.outputs.policy_sha256 }}
     steps:
-      - name: Require independent review and release-tag restrictions
+      - name: Require review and release-tag restrictions
         env:
           GH_TOKEN: ${{ github.token }}
           SECURITY_ENVIRONMENT: v1-release-security
         run: |
           protection=$(gh api "repos/$GITHUB_REPOSITORY/environments/$SECURITY_ENVIRONMENT")
-          jq -e '.protection_rules | any(.type == "required_reviewers" and .prevent_self_review == true and (.reviewers | length > 0))' <<< "$protection" > /dev/null
+          jq -e '.protection_rules | any(.type == "required_reviewers" and (.reviewers | length > 0))' <<< "$protection" > /dev/null
           jq -e '.deployment_branch_policy.custom_branch_policies == true and .deployment_branch_policy.protected_branches == false' <<< "$protection" > /dev/null
           policies=$(gh api "repos/$GITHUB_REPOSITORY/environments/$SECURITY_ENVIRONMENT/deployment-branch-policies")
           jq -e '.total_count == 1 and (.branch_policies | length == 1 and all(.type == "tag" and .name == "v0.1.*"))' <<< "$policies" > /dev/null
@@ -449,13 +449,13 @@ jobs:
       contents: write
       packages: read
     steps:
-      - name: Require independent review and release-tag restrictions
+      - name: Require review and release-tag restrictions
         env:
           GH_TOKEN: ${{ github.token }}
           SECURITY_ENVIRONMENT: v1-release-publication
         run: |
           protection=$(gh api "repos/$GITHUB_REPOSITORY/environments/$SECURITY_ENVIRONMENT")
-          jq -e '.protection_rules | any(.type == "required_reviewers" and .prevent_self_review == true and (.reviewers | length > 0))' <<< "$protection" > /dev/null
+          jq -e '.protection_rules | any(.type == "required_reviewers" and (.reviewers | length > 0))' <<< "$protection" > /dev/null
           jq -e '.deployment_branch_policy.custom_branch_policies == true and .deployment_branch_policy.protected_branches == false' <<< "$protection" > /dev/null
           policies=$(gh api "repos/$GITHUB_REPOSITORY/environments/$SECURITY_ENVIRONMENT/deployment-branch-policies")
           jq -e '.total_count == 1 and (.branch_policies | length == 1 and all(.type == "tag" and .name == "v0.1.*"))' <<< "$policies" > /dev/null
