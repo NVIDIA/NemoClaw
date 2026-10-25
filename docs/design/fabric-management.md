@@ -40,7 +40,7 @@ Success exits 0; failure and unsupported operations exit 1.
 Requests are limited to 512 KiB and responses to 4 MiB.
 Diagnostics carry only Fabric's fixed stages and codes, never its messages.
 A timeout, malformed response, or disconnection leaves the outcome unconfirmed; callers do not replay starts or invocations.
-Fabric's [runtime server documentation](https://github.com/NVIDIA/NeMo-Fabric/blob/5574117feb4be948c1b03f4c36a2fe9a11af910d/sdk/python/nemo-fabric-runtime/src/nemo_fabric/runtime_server/README.md) defines the commands.
+Fabric's [runtime server documentation](https://github.com/NVIDIA/NeMo-Fabric/blob/67acf1cff0d598fc3e6a32370cd63fc088e86958/sdk/python/nemo-fabric-runtime/src/nemo_fabric/runtime_server/README.md) defines the commands.
 
 A sandbox runs one runtime lifecycle.
 After a stop, or after a start whose effects Fabric reports as uncertain, another start returns `runtime_exists`.
@@ -98,7 +98,7 @@ The following boundaries need coordination; these notes do not claim upstream ac
 | Owner | Work or agreement |
 |---|---|
 | NeMo-Fabric | A read-only runtime status command, so refresh can find a stopped runtime ([NVIDIA/NeMo-Fabric#420](https://github.com/NVIDIA/NeMo-Fabric/issues/420)). |
-| NeMo-Fabric | OpenClaw's adapter starting in OpenShell sandboxes, and configuring its dashboard and web search ([#13372](https://github.com/NVIDIA/NemoClaw/issues/13372), [#13360](https://github.com/NVIDIA/NemoClaw/issues/13360), [#13361](https://github.com/NVIDIA/NemoClaw/issues/13361)). |
+| NeMo-Fabric | Configuring OpenClaw's dashboard and web search ([#13360](https://github.com/NVIDIA/NemoClaw/issues/13360), [#13361](https://github.com/NVIDIA/NemoClaw/issues/13361)). |
 | OpenShell | Qualify completed sandbox stop as the boundary that terminates all old workload processes before start, while retaining required data; request implementation changes only for demonstrated gaps. |
 
 ## Observation Limits

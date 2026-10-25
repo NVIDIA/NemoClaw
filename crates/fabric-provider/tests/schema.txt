@@ -308,6 +308,16 @@ resource fabric_agent (version 0)
       > Undeclared properties, as JSON text.
     paths: list(string), optional
       > Skill paths resolved relative to the config base directory.
+  block system_stats: optional
+    collect: list(string), optional
+      > Groups to collect and persist. Omission selects all supported groups.
+    block sampling: optional
+      > Optional bounded periodic collection; absence means endpoints only.
+      interval_ms: number, optional
+        > Target sample cadence, in milliseconds. Actual cadence is reported.
+      max_samples: number, optional
+        > Maximum retained readings, including both endpoints. Intermediate
+        > readings are dropped at this bound; the final reading is preserved.
   block telemetry: optional
     extensions: string, optional
       > Undeclared properties, as JSON text.

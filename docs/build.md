@@ -150,10 +150,12 @@ When you change the Fabric pin, check that set; if it changed, pin the digest of
 ### Regenerate the Bundled Catalog
 
 The SDK build fails with `stale Fabric catalog` when `image/fabric/catalog.json` no longer matches the Fabric pin in the Dockerfile.
-Run `image/fabric/catalog.py` with a Python environment that has the pinned Fabric wheels installed, and pass that revision and checksum:
+Run `image/fabric/catalog.py` with a Python environment that has the pinned Fabric wheels installed, such as a freshly built agent image's `/opt/fabric/bin/python`. Pass that revision and checksum, and `--adapter` once for each adapter ID the current catalog lists:
 
 ```sh
-python image/fabric/catalog.py --revision REVISION --source-sha256 CHECKSUM --output image/fabric/catalog.json
+python image/fabric/catalog.py --revision REVISION --source-sha256 CHECKSUM \
+  --adapter nvidia.fabric.claude --adapter nvidia.fabric.codex ... \
+  --output image/fabric/catalog.json
 ```
 
 Use the values of `FABRIC_REVISION` and `FABRIC_SHA256` from the [shared agent Dockerfile](../image/fabric/Dockerfile).

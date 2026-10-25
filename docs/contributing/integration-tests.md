@@ -244,7 +244,7 @@ The SDK's [compatibility tests](../../crates/nemoclaw-sdk/tests/fabric_compatibi
 
 ### Inference API Fixtures
 
-Native adapter protocol and configuration tests belong to [Fabric](https://github.com/NVIDIA/NeMo-Fabric/tree/5574117feb4be948c1b03f4c36a2fe9a11af910d/tests), alongside the implementation.
+Native adapter protocol and configuration tests belong to [Fabric](https://github.com/NVIDIA/NeMo-Fabric/tree/67acf1cff0d598fc3e6a32370cd63fc088e86958/tests), alongside the implementation.
 The [image source checks](testing.md#image-source-checks) cover NemoClaw packaging separately.
 
 

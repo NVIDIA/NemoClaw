@@ -141,7 +141,7 @@ NemoClaw uses it to read the endpoint's model catalog.
 The harness name does not change these defaults.
 
 Agents use the protocol their harness's adapter selects for the provider transport.
-Fabric v0.5.0 has no per-model API setting, so an endpoint that accepts only a protocol the adapter doesn't select can't serve that agent ([#13320](https://github.com/NVIDIA/NemoClaw/issues/13320)).
+The pinned Fabric has no per-model API setting, so an endpoint that accepts only a protocol the adapter doesn't select can't serve that agent ([#13320](https://github.com/NVIDIA/NemoClaw/issues/13320)).
 Fabric validates the rest of its configuration when the agent is configured.
 
 Use `provider: anthropic` with `anthropic-messages` and `provider: openai` with either OpenAI API.
