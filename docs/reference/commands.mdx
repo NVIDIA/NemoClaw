@@ -1800,7 +1800,11 @@ For a Hermes native NVIDIA route, `status` also verifies the agent's managed cre
 If the verifier confirms an invalid or stale reference, `inferenceHealth` reports `ok: false`, `probed: false`, and `failureLabel: "unauthorized"`, even when the provider-path request succeeded.
 The text output reports `not probed` for the agent credential check. For a confirmed rejection, it directs you to `$$nemoclaw <name> rebuild` to refresh the managed credential.
 After rebuilding, rerun `$$nemoclaw <name> status`; healthy inference requires both a successful provider-path request and a verified managed credential reference.
-If verification is unavailable because the command times out, sandbox access fails, or the installed image lacks the verifier, status instead reports `failureLabel: "unreachable"` with `ok: false` and `probed: false`.
+If verification is unavailable because the credential check times out, sandbox access fails, or the installed image lacks the verifier, the agent credential result reports `failureLabel: "unreachable"`, `ok: false`, and `probed: false`.
+If the provider-path result already failed, `inferenceHealth` keeps that result and adds the unavailable credential result to `subprobes`.
+Otherwise, the unavailable credential result becomes the main inference result.
+When a credential failure becomes the main result, the provider-path result and its existing diagnostics remain in `subprobes`.
+The command exits nonzero in each failure case.
 If status reports that the installed image lacks the verifier, rebuild the sandbox to install it, then rerun status.
 For other unavailable-verification results, retry status. If verification remains unavailable, check sandbox health and recover access before retrying.
 Retained shared NVIDIA routes do not use this additional check.
@@ -1838,7 +1842,7 @@ $$nemoclaw my-assistant status --json
 $$nemoclaw sandbox status my-assistant --json
 ```
 
-The command probes the selected provider path from inside the sandbox, and when that probe reports the path reachable it sends an inference request over the same path. NVIDIA Endpoints, supported fixed hosted providers, new hosted compatible selections outside the Personal tier, and qualified new local selections use native endpoints through sandbox-attached OpenShell providers. Owned Local NVIDIA NIM, fresh Personal-tier hosted compatible selections, custom endpoints without an attachment, and retained shared routes use `inference.local`. The inference request verifies the selected provider path, and both checks exercise the path that agent traffic uses. The main `Inference` line reports the provider-path result using these states:
+The command probes the selected provider path from inside the sandbox, and when that probe reports the path reachable it sends an inference request over the same path. NVIDIA Endpoints, supported fixed hosted providers, new hosted compatible selections outside the Personal tier, and qualified new local selections use native endpoints through sandbox-attached OpenShell providers. Owned Local NVIDIA NIM, fresh Personal-tier hosted compatible selections, custom endpoints without an attachment, and retained shared routes use `inference.local`. The inference request verifies the selected provider path, and both checks exercise the path that agent traffic uses. For provider-path results, the main `Inference` line uses these states:
 
 | State          | Meaning                                                                                                                                                                                                               |
 | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

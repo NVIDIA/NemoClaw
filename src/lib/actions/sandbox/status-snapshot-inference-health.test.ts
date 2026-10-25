@@ -9,10 +9,11 @@ import type { SandboxEntry } from "../../state/registry";
 import type { SandboxInferenceInvocationResult } from "./inference-invocation-probe";
 import {
   HermesNvidiaCredentialRejectedError,
+  HermesNvidiaCredentialVerifierMissingError,
   verifyHermesNvidiaCredential,
   type SandboxInferenceRouteHealth,
 } from "./inference-route-health";
-import { collectSandboxStatusSnapshot } from "./status-snapshot";
+import { collectSandboxStatusSnapshot, isInferenceHealthFailing } from "./status-snapshot";
 import { probeSandboxInferenceInvocation } from "./inference-invocation-probe";
 import { recordingProbeShell } from "../../../../test/helpers/native-local-probe-shell";
 import { nativeLocalTestReceipt } from "../../../../test/helpers/inference-set";
@@ -1301,6 +1302,145 @@ describe("Hermes NVIDIA agent credential health", () => {
       expect(JSON.stringify(snapshot.inferenceHealth)).not.toContain(failure);
     },
   );
+  it.each([
+    {
+      label: "timeout",
+      error: new Error("timeout: private credential detail"),
+      recovery: "Retry status",
+    },
+    {
+      label: "transport error",
+      error: new Error("transport: private credential detail"),
+      recovery: "Retry status",
+    },
+    {
+      label: "missing verifier",
+      error: new HermesNvidiaCredentialVerifierMissingError(),
+      recovery: "Rebuild",
+    },
+  ])(
+    "retains failed provider-path diagnostics after a verifier $label",
+    async ({ error, recovery }) => {
+      const input = options();
+      const upstream: ProviderHealthStatus = {
+        ok: false,
+        probed: true,
+        providerLabel: "NVIDIA Endpoints",
+        endpoint: "https://integrate.api.nvidia.com/v1/chat/completions",
+        detail: "Upstream provider returned HTTP 403.",
+        failureLabel: "unauthorized",
+      };
+      input.deps.probeProviderHealthImpl = () => upstream;
+      input.deps.probeSandboxInferenceInvocationImpl = async () => ({
+        ok: false,
+        httpStatus: 401,
+        detail: "Native provider-path request returned HTTP 401.",
+      });
+      const deps = {
+        ...input.deps,
+        verifyNativeNvidiaProviderAttachmentImpl: async () => {},
+        verifyHermesNvidiaCredentialImpl: async () => {},
+      };
+      const baseline = await collectSandboxStatusSnapshot("alpha", { ...input, deps });
+      const snapshot = await collectSandboxStatusSnapshot("alpha", {
+        ...input,
+        deps: {
+          ...deps,
+          verifyHermesNvidiaCredentialImpl: async () => {
+            throw error;
+          },
+        },
+      });
+      const { subprobes = [], ...providerPath } = baseline.inferenceHealth!;
+      expect(providerPath).toMatchObject({
+        ok: false,
+        probed: true,
+        detail: expect.stringContaining("HTTP 401"),
+        failureLabel: "unauthorized",
+      });
+      expect(snapshot.inferenceHealth).toEqual({
+        ...providerPath,
+        subprobes: [
+          ...subprobes,
+          expect.objectContaining({
+            ok: false,
+            probed: false,
+            probeLabel: "agent credential",
+            detail: expect.stringContaining(recovery),
+          }),
+        ],
+      });
+      expect(snapshot.inferenceHealth?.subprobes).toContainEqual({
+        ...upstream,
+        probeLabel: "upstream",
+      });
+      expect(isInferenceHealthFailing(snapshot.inferenceHealth)).toBe(true);
+      expect(JSON.stringify(snapshot.inferenceHealth)).not.toContain("private credential detail");
+    },
+  );
+
+  it.each([
+    {
+      label: "unavailable verification after a served request",
+      invocation: { ok: true as const },
+      error: new Error("transport: private credential detail"),
+      failureLabel: "unreachable",
+    },
+    {
+      label: "credential rejection after a served request",
+      invocation: { ok: true as const },
+      error: new HermesNvidiaCredentialRejectedError(),
+      failureLabel: "unauthorized",
+    },
+    {
+      label: "credential rejection after a failed request",
+      invocation: {
+        ok: false as const,
+        httpStatus: 401,
+        detail: "Native provider-path request returned HTTP 401.",
+      },
+      error: new HermesNvidiaCredentialRejectedError(),
+      failureLabel: "unauthorized",
+    },
+  ])(
+    "retains provider-path diagnostics for $label",
+    async ({ invocation, error, failureLabel }) => {
+      const input = options();
+      const upstream: ProviderHealthStatus = {
+        ok: false,
+        probed: true,
+        providerLabel: "NVIDIA Endpoints",
+        endpoint: "https://integrate.api.nvidia.com/v1/chat/completions",
+        detail: "Upstream endpoint unavailable.",
+        failureLabel: "unreachable",
+      };
+      input.deps.probeProviderHealthImpl = () => upstream;
+      input.deps.probeSandboxInferenceInvocationImpl = async () => invocation;
+      const snapshot = await collectSandboxStatusSnapshot("alpha", {
+        ...input,
+        deps: {
+          ...input.deps,
+          verifyNativeNvidiaProviderAttachmentImpl: async () => {},
+          verifyHermesNvidiaCredentialImpl: async () => {
+            throw error;
+          },
+        },
+      });
+      expect(snapshot.inferenceHealth).toMatchObject({
+        ok: false,
+        probed: false,
+        probeLabel: "agent credential",
+        failureLabel,
+      });
+      expect(snapshot.inferenceHealth?.subprobes).toEqual([
+        expect.objectContaining({ ok: invocation.ok, probed: true, probeLabel: "provider path" }),
+        { ...upstream, probeLabel: "upstream" },
+      ]);
+      expect(isInferenceHealthFailing(snapshot.inferenceHealth)).toBe(true);
+      expect(JSON.stringify(snapshot.inferenceHealth)).not.toContain("private credential detail");
+    },
+  );
+
   it("accepts verified agent credentials with a healthy route", async () => {
     const input = options();
     const verify = vi.fn(async () => {});

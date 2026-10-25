@@ -873,7 +873,7 @@ export async function collectSandboxStatusSnapshot(
         detail =
           "The installed Hermes image lacks the credential verifier. Rebuild the sandbox to install the credential verifier, then rerun status.";
       }
-      inferenceHealth = {
+      const credentialHealth: ProviderHealthStatus = {
         ok: false,
         probed: false,
         providerLabel: "Hermes NVIDIA inference",
@@ -882,6 +882,23 @@ export async function collectSandboxStatusSnapshot(
         failureLabel: rejected ? "unauthorized" : "unreachable",
         detail,
       };
+      if (!rejected && inferenceHealth && isInferenceHealthFailing(inferenceHealth)) {
+        // An unavailable verifier cannot replace an observed provider-path failure.
+        inferenceHealth = {
+          ...inferenceHealth,
+          subprobes: [...(inferenceHealth.subprobes ?? []), credentialHealth],
+        };
+      } else {
+        const subprobes: ProviderHealthStatus[] = [];
+        if (inferenceHealth) {
+          const { subprobes: diagnostics = [], ...providerPath } = inferenceHealth;
+          subprobes.push(
+            { ...providerPath, probeLabel: providerPath.probeLabel ?? "provider path" },
+            ...diagnostics,
+          );
+        }
+        inferenceHealth = { ...credentialHealth, subprobes };
+      }
     }
   }
   // Classify once per snapshot so every renderer observes the same receipt state.
