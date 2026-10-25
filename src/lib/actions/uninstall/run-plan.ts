@@ -29,6 +29,7 @@ import {
   providerDeleteSkipMessage,
   sandboxDeleteAbsentMessage,
   sandboxDeleteFailureMessage,
+  warnSandboxCleanupReason,
 } from "../../domain/uninstall/messaging";
 import {
   cleanupManagedLlamaCppRuntimeForSandbox,
@@ -979,6 +980,7 @@ async function deletePortableOpenShellSandbox(
   if (result.kind === "failed") {
     runtime.warn(sandboxDeleteFailureMessage(sandboxName));
     if (result.error.kind === "command" && result.error.reason === "invalid_request") return false;
+    warnSandboxCleanupReason(runtime.warn, result);
   }
   if (result.kind === "absent") {
     runtime.warn(sandboxDeleteAbsentMessage(sandboxName));

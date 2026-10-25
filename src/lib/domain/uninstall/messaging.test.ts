@@ -8,6 +8,7 @@ import {
   OPENSHELL_SANDBOXES_DELETE_SKIP_MESSAGE,
   preservedRegistryUnrecoverableWarnings,
   providerDeleteSkipMessage,
+  warnSandboxCleanupReason,
 } from "./messaging";
 
 describe("uninstall no-op delete wording (#6520, #3456)", () => {
@@ -19,6 +20,33 @@ describe("uninstall no-op delete wording (#6520, #3456)", () => {
       "Provider 'nvidia-nim' already removed or unreachable",
     );
     expect(gatewayDestroySkipMessage("nemoclaw")).toBe("Gateway 'nemoclaw' is already absent");
+  });
+});
+
+describe("warnSandboxCleanupReason (#13443)", () => {
+  const reasonOf = (diagnostic: string, message = "failed") => {
+    const warnings: string[] = [];
+    warnSandboxCleanupReason((line) => warnings.push(line), { diagnostic, error: { message } });
+    return warnings;
+  };
+
+  it("prefers the OpenShell diagnostic and falls back to the error message", () => {
+    expect(reasonOf("Error: status: Unavailable", "generic")).toEqual([
+      "Reason: Error: status: Unavailable",
+    ]);
+    expect(reasonOf("", "generic")).toEqual(["Reason: generic"]);
+  });
+
+  it("keeps one plain line", () => {
+    expect(reasonOf("\u001b[31mboom\u001b[0m\r\nsecond\tline\u0007")).toEqual([
+      "Reason: boom second line",
+    ]);
+  });
+
+  it("bounds long output and stays silent without a reason", () => {
+    const [line] = reasonOf("x".repeat(500));
+    expect(line).toBe(`Reason: ${"x".repeat(197)}...`);
+    expect(reasonOf(" \n ", "")).toEqual([]);
   });
 });
 

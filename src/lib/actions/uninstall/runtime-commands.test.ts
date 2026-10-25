@@ -162,9 +162,10 @@ describe("uninstall bulk sandbox cleanup", () => {
     [
       "the submission is ambiguous",
       result(null, "", "", Object.assign(new Error("timed out"), { code: "ETIMEDOUT" })),
+      "Reason: OpenShell sandbox delete timed out after 60 seconds. Deletion could not be confirmed.",
     ],
-    ["OpenShell rejects the command", result(1, "", "cleanup failed")],
-  ])("preserves cleanup authority when %s (#11831)", async (_case, deleteResult) => {
+    ["OpenShell rejects the command", result(1, "", "cleanup failed"), "Reason: cleanup failed"],
+  ])("preserves cleanup authority when %s (#11831)", async (_case, deleteResult, reason) => {
     const calls: string[][] = [];
     const warnings: string[] = [];
     const runtime = {
@@ -190,6 +191,7 @@ describe("uninstall bulk sandbox cleanup", () => {
     expect(warnings).toContain(
       "OpenShell sandbox cleanup was not accepted; preserving its state for retry.",
     );
+    expect(warnings).toContain(reason);
   });
 
   it("preserves cleanup authority when empty inventory is not stable (#11831)", async () => {
