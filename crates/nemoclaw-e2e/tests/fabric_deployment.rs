@@ -523,12 +523,12 @@ async fn failed_configuration_reports_safe_runtime_state_and_recovers_on_the_nex
             .state
             .lock()
             .unwrap()
-            .fabric_stopped
+            .fabric_uncertain
             .contains(&replaced)
     );
     let _ = (original, effects);
-    // The failed start may have used that sandbox's one runtime, so the next
-    // apply starts the agent in yet another new sandbox.
+    // The failed start may have left a runtime running, so the next apply
+    // starts the agent in yet another new sandbox.
     fixture.state.lock().unwrap().configuration_error = None;
     deployment.apply(&document, &cancel).await.unwrap();
     let recovered = current();

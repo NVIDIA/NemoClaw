@@ -1,9 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+# Security review, scan binding, and controlled draft publication added for #13523.
 # Stage a release from a semver tag such as v0.1.0-rc1 on the v1 branch. Promote
 # the images CI checked on the tagged history to v1/<image>:<tag>, build the runtime
-# images, and create a draft release listing every digest. Nothing here makes a
-# package or the release public, and nothing pushes to a package an
+# images, and create a draft release listing every digest. The protected
+# publisher stays disabled until v1 signoff; no job changes package visibility.
+# Nothing pushes to a package an
 # administrator hasn't created as internal: packages a workflow creates inherit
 # this public repository's visibility.
 name: Release / Stage
@@ -28,6 +30,7 @@ jobs:
     outputs:
       source: ${{ steps.select.outputs.source }}
       rebuild: ${{ steps.select.outputs.rebuild }}
+      catalog: ${{ steps.select.outputs.catalog }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -60,6 +63,11 @@ jobs:
           [ "$rebuild" = true ] && source=$GITHUB_SHA
           echo "source=$source" >> "$GITHUB_OUTPUT"
           echo "rebuild=$rebuild" >> "$GITHUB_OUTPUT"
+          # Evaluate the Bake configuration here, without publication credentials;
+          # only the agent names reach the stage job, which validates them.
+          catalog=$(docker buildx bake --print agents | jq -ce --arg candidate "$GITHUB_SHA" --arg source "$source" \
+            '{candidate_revision:$candidate,source_revision:$source,agents:(.target | keys)}')
+          echo "catalog=$catalog" >> "$GITHUB_OUTPUT"
           echo "Agent and proxy images from \`$source\`; rebuilt: $rebuild." >> "$GITHUB_STEP_SUMMARY"
   build:
     needs: select
@@ -102,23 +110,46 @@ jobs:
           names: v1-ci
           required: "true"
           token: ${{ github.token }}
+      - name: Install the pinned SBOM generator
+        id: syft
+        uses: anchore/sbom-action/download-syft@fffec3d851af758d56fee099cf3fbf8aa8779843 # v0.24.3
+        with:
+          syft-version: v1.55.0
       - name: Build and push the vLLM and Ollama runtime images
         env:
           GH_TOKEN: ${{ github.token }}
           PLATFORM: ${{ matrix.platform }}
+          PACKAGE: ${{ env.CI_PACKAGE }}
+          SYFT: ${{ steps.syft.outputs.cmd }}
         run: |
           printf '%s\n' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           tag="$GITHUB_SHA-${PLATFORM#linux_}"
+          # Runtime images are reproducible only when every layer's timestamps
+          # are clamped to SOURCE_DATE_EPOCH. The runners' built-in BuildKit
+          # can't clamp and push (it ignores rewrite-timestamp in the classic
+          # image store, and rejects it with unpack=false in the containerd
+          # one), so a pinned BuildKit in a container pushes them instead.
+          docker buildx create --name runtimes --driver docker-container \
+            --driver-opt image=moby/buildkit@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8
           output='type=image,push=true,rewrite-timestamp=true'
-          docker buildx bake runtimes \
+          docker buildx bake --builder runtimes runtimes \
             --set "vllm.tags=$CI_PACKAGE:vllm-$tag" --set "vllm.output=$output" \
             --set "ollama.tags=$CI_PACKAGE:ollama-$tag" --set "ollama.output=$output"
+          # A runtime image's digest only changes with its inputs, so its SBOM
+          # is usually already recorded.
+          for name in vllm ollama; do
+            sh .github/scripts/image-sbom.sh "$CI_PACKAGE:$name-$tag" "linux/${PLATFORM#linux_}"
+          done
           docker logout ghcr.io
   stage:
     name: Stage the release
-    needs: [select, build, runtimes]
+    outputs:
+      inventory_sha256: ${{ steps.draft.outputs.inventory_sha256 }}
+      sboms_sha256: ${{ steps.draft.outputs.sboms_sha256 }}
+    needs: [select, build, runtimes, security-controller]
     if: >-
-      !cancelled() && needs.select.result == 'success' && needs.runtimes.result == 'success' &&
+      !cancelled() && needs.security-controller.result == 'success' &&
+      needs.select.result == 'success' && needs.runtimes.result == 'success' &&
       (needs.build.result == 'success' || needs.build.result == 'skipped')
     runs-on: ubuntu-24.04
     permissions:
@@ -128,12 +159,26 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Install the pinned SBOM generator
+        id: syft
+        uses: anchore/sbom-action/download-syft@fffec3d851af758d56fee099cf3fbf8aa8779843 # v0.24.3
+        with:
+          syft-version: v1.55.0
       - name: List the release images
         id: images
+        env:
+          CANDIDATE_CATALOG: ${{ needs.select.outputs.catalog }}
+          CANDIDATE_REVISION: ${{ github.sha }}
+          SOURCE: ${{ needs.select.outputs.source }}
         run: |
-          agents=$(docker buildx bake --print agents | jq -er '.target | keys[]' | xargs)
+          printf '%s\n' "$CANDIDATE_CATALOG" > "$RUNNER_TEMP/candidate-catalog.json"
+          cargo run --locked -q -p nemoclaw-build --no-default-features -- release-catalog \
+            --catalog "$RUNNER_TEMP/candidate-catalog.json" --candidate-revision "$CANDIDATE_REVISION" --source-revision "$SOURCE" \
+            > "$RUNNER_TEMP/validated-catalog.json"
+          agents=$(jq -er '.agents | join(" ")' "$RUNNER_TEMP/validated-catalog.json")
+          names=$(jq -er '.images | join(" ")' "$RUNNER_TEMP/validated-catalog.json")
           echo "agents=$agents" >> "$GITHUB_OUTPUT"
-          echo "names=$agents ollama-proxy vllm ollama" >> "$GITHUB_OUTPUT"
+          echo "names=$names" >> "$GITHUB_OUTPUT"
       - name: Require internal packages
         uses: ./.github/actions/internal-packages
         with:
@@ -142,17 +187,22 @@ jobs:
           required: "true"
           token: ${{ github.token }}
       - name: Join each image's platforms and draft the release
+        id: draft
         env:
           NAMES: ${{ steps.images.outputs.names }}
           AGENTS: ${{ steps.images.outputs.agents }}
           GH_TOKEN: ${{ github.token }}
           SOURCE: ${{ needs.select.outputs.source }}
           TAG: ${{ github.ref_name }}
+          PACKAGE: ${{ env.CI_PACKAGE }}
+          SYFT: ${{ steps.syft.outputs.cmd }}
         run: |
           printf '%s\n' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           notes="$RUNNER_TEMP/notes.md"
           bundles="$RUNNER_TEMP/bundles"
           mkdir "$bundles"
+          inventory="$RUNNER_TEMP/inventory.json"
+          echo '[]' > "$inventory"
           {
             echo "Staged from \`$GITHUB_SHA\`. The agent and proxy images are the ones CI checked at \`$SOURCE\`."
             echo
@@ -170,7 +220,13 @@ jobs:
             docker buildx imagetools create --tag "$target" \
               "$CI_PACKAGE:$image-$from-arm64" "$CI_PACKAGE:$image-$from-amd64"
             digest=$(docker buildx imagetools inspect "$target" --format '{{.Manifest.Digest}}')
-            metadata=—
+            docker buildx imagetools inspect "$RELEASE_NAMESPACE/$image@$digest" --raw > "$RUNNER_TEMP/index.json"
+            jq --arg name "$image" --arg repository "$RELEASE_NAMESPACE/$image" --arg index_digest "$digest" \
+              --slurpfile manifests "$RUNNER_TEMP/index.json" \
+              '. + [{name: $name, repository: $repository, index_digest: $index_digest, manifests: $manifests[0]}]' \
+              "$inventory" > "$inventory.next"
+            mv "$inventory.next" "$inventory"
+            metadata=-
             # Each agent image's bundle covers both platforms of its index.
             case " $AGENTS " in *" $image "*) agent=true ;; *) agent=false ;; esac
             if [ "$agent" = true ]; then
@@ -182,8 +238,37 @@ jobs:
             fi
             echo "| \`$image\` | \`$RELEASE_NAMESPACE/$image@$digest\` | $metadata |" >> "$notes"
           done
+          # Each platform's SPDX document was recorded where the image was built,
+          # under its digest. Syft scans only an image whose record doesn't name it.
+          sboms="$RUNNER_TEMP/sboms"
+          mkdir "$sboms"
+          echo '[]' > "$sboms/sboms.json"
+          jq -r '.[] | .repository as $repository | .name as $name | .manifests.manifests[]
+            | select(.platform.os == "linux")
+            | [$name, $repository, .digest, .platform.architecture] | @tsv' "$inventory" > "$RUNNER_TEMP/platforms.tsv"
+          while IFS="$(printf '\t')" read -r name repository digest arch; do
+            asset="$name-linux-$arch-${digest#sha256:}.spdx.json"
+            sh .github/scripts/image-sbom.sh "$repository@$digest" "linux/$arch" "$sboms/$asset"
+            jq --arg platform "linux/$arch" --arg reference "$repository@$digest" --arg asset "$asset" \
+              --arg sha256 "$(sha256sum "$sboms/$asset" | cut -d' ' -f1)" \
+              '. + [{platform: $platform, reference: $reference, asset: $asset, sha256: $sha256}]' \
+              "$sboms/sboms.json" > "$sboms/sboms.next"
+            mv "$sboms/sboms.next" "$sboms/sboms.json"
+          done < "$RUNNER_TEMP/platforms.tsv"
+          {
+            echo
+            echo '## Software bills of materials'
+            echo
+            cat <<'NOTES'
+          Each platform has an SPDX JSON asset, and `sboms.json` records each asset's image reference, platform and SHA-256. These stay private draft assets: release candidates publish nothing about their images, and only final releases attest them (#13521).
+          NOTES
+            echo
+            echo '| Platform | Image reference | SPDX asset |'
+            echo '|---|---|---|'
+            jq -r '.[] | "| `\(.platform)` | `\(.reference)` | `\(.asset)` |"' "$sboms/sboms.json"
+          } >> "$notes"
           docker logout ghcr.io
-          cat "$notes" >> "$GITHUB_STEP_SUMMARY"
+          # Inventories and package details stay in the private draft, never the public run summary.
           prerelease=
           case "$TAG" in *-*) prerelease=--prerelease ;; esac
           if draft=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2> /dev/null); then
@@ -197,3 +282,245 @@ jobs:
               --title "NemoClaw $TAG" --notes-file "$notes"
           fi
           gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber "$bundles"/*.metadata.json
+          cp "$inventory" "$sboms/inventory.json"
+          echo "inventory_sha256=$(sha256sum "$inventory" | cut -d ' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "sboms_sha256=$(sha256sum "$sboms/sboms.json" | cut -d ' ' -f1)" >> "$GITHUB_OUTPUT"
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber "$sboms"/*.spdx.json "$sboms/sboms.json" "$sboms/inventory.json"
+  security-controller:
+    name: Freeze the trusted security controller
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      revision: ${{ steps.controller.outputs.revision }}
+      policy_sha256: ${{ steps.controller.outputs.policy_sha256 }}
+    steps:
+      # Freeze before the protected review starts. Candidate files are data;
+      # only the protected v1 controller runs with reporting/publishing access.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: v1
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Bind the controller and policy to this review
+        id: controller
+        env:
+          CANDIDATE_REVISION: ${{ github.sha }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          [[ "$TAG" =~ ^v0\.1\.[0-9]+(-[A-Za-z0-9.-]+)?$ ]]
+          test "$(git rev-parse "$TAG^{commit}")" = "$CANDIDATE_REVISION"
+          git merge-base --is-ancestor "$CANDIDATE_REVISION" HEAD
+          echo "revision=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          policy=.github/security/v1-vulnerability-exceptions.json
+          echo "policy_sha256=$(sha256sum "$policy" | cut -d ' ' -f1)" >> "$GITHUB_OUTPUT"
+  candidate-security:
+    name: Assess the release candidate privately
+    needs: [stage, security-controller]
+    # Report-only, so blocking findings surface before the final tag. The
+    # findings stay in the private draft, and a blocked result doesn't fail the run.
+    # Without !cancelled(), a skipped Build would skip this job too.
+    if: >-
+      !cancelled() && contains(github.ref_name, '-') &&
+      needs.stage.result == 'success' && needs.security-controller.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.security-controller.outputs.revision }}
+          persist-credentials: false
+      - name: Assess the staged release
+        id: gate
+        uses: ./.github/actions/release-assessment
+        with:
+          tag: ${{ github.ref_name }}
+          inventory-sha256: ${{ needs.stage.outputs.inventory_sha256 }}
+          sboms-sha256: ${{ needs.stage.outputs.sboms_sha256 }}
+          policy-sha256: ${{ needs.security-controller.outputs.policy_sha256 }}
+          controller-revision: ${{ needs.security-controller.outputs.revision }}
+          token: ${{ github.token }}
+      - name: Attach the assessment to the draft
+        if: steps.gate.outputs.report == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          test "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" = true
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber "$RUNNER_TEMP/security-report"/*
+      - name: Report the result without disclosing findings
+        env:
+          RESULT: ${{ steps.gate.outputs.result }}
+        run: |
+          case "$RESULT" in
+            0) echo 'The release candidate passes the release security policy.' >> "$GITHUB_STEP_SUMMARY" ;;
+            2) echo "::warning::The release security policy would block publishing; the draft holds the assessment." ;;
+            *) echo "::error::The security assessment is incomplete; the draft holds what it recorded."; exit 1 ;;
+          esac
+  security:
+    name: Review security and approve finding disclosure
+    needs: [stage, security-controller]
+    # Without !cancelled(), a skipped Build would skip this review too.
+    if: >-
+      !cancelled() && !contains(github.ref_name, '-') &&
+      needs.stage.result == 'success' && needs.security-controller.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    environment: v1-release-security
+    permissions:
+      contents: read
+      packages: read
+      security-events: write
+    outputs:
+      controller_revision: ${{ needs.security-controller.outputs.revision }}
+      policy_sha256: ${{ needs.security-controller.outputs.policy_sha256 }}
+    steps:
+      - name: Require independent review and release-tag restrictions
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SECURITY_ENVIRONMENT: v1-release-security
+        run: |
+          protection=$(gh api "repos/$GITHUB_REPOSITORY/environments/$SECURITY_ENVIRONMENT")
+          jq -e '.protection_rules | any(.type == "required_reviewers" and .prevent_self_review == true and (.reviewers | length > 0))' <<< "$protection" > /dev/null
+          jq -e '.deployment_branch_policy.custom_branch_policies == true and .deployment_branch_policy.protected_branches == false' <<< "$protection" > /dev/null
+          policies=$(gh api "repos/$GITHUB_REPOSITORY/environments/$SECURITY_ENVIRONMENT/deployment-branch-policies")
+          jq -e '.total_count == 1 and (.branch_policies | length == 1 and all(.type == "tag" and .name == "v0.1.*"))' <<< "$policies" > /dev/null
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.security-controller.outputs.revision }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Assess the staged release
+        id: gate
+        uses: ./.github/actions/release-assessment
+        with:
+          tag: ${{ github.ref_name }}
+          inventory-sha256: ${{ needs.stage.outputs.inventory_sha256 }}
+          sboms-sha256: ${{ needs.stage.outputs.sboms_sha256 }}
+          policy-sha256: ${{ needs.security-controller.outputs.policy_sha256 }}
+          controller-revision: ${{ needs.security-controller.outputs.revision }}
+          token: ${{ github.token }}
+      - name: Report approved findings to code scanning
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_REVISION: ${{ github.sha }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          # GitHub may retain only the first 5,000 results in a run.
+          # Refuse truncation while retaining the complete approved report.
+          jq -e 'all(.runs[]; (.results | length) <= 5000)' "$RUNNER_TEMP/security-report/assessment.sarif" > /dev/null
+          gzip -nc "$RUNNER_TEMP/security-report/assessment.sarif" | base64 | tr -d '\n' > "$RUNNER_TEMP/encoded-sarif"
+          jq -n --arg commit "$CANDIDATE_REVISION" --arg ref "refs/tags/$TAG" --rawfile sarif "$RUNNER_TEMP/encoded-sarif" \
+            '{commit_sha:$commit,ref:$ref,sarif:$sarif}' > "$RUNNER_TEMP/sarif-upload.json"
+          upload=$(gh api --method POST "repos/$GITHUB_REPOSITORY/code-scanning/sarifs" --input "$RUNNER_TEMP/sarif-upload.json" --jq .id)
+          for attempt in $(seq 1 30); do
+            state=$(gh api "repos/$GITHUB_REPOSITORY/code-scanning/sarifs/$upload" --jq .processing_status)
+            case "$state" in complete) exit 0 ;; failed) exit 1 ;; pending) sleep 2 ;; *) exit 1 ;; esac
+          done
+          echo '::error::Code scanning did not confirm the SARIF upload'
+          exit 1
+      - name: Retain approved assessment evidence
+        if: always() && steps.gate.outputs.report == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: reviewed-release-security
+          path: ${{ runner.temp }}/security-report
+          if-no-files-found: error
+          retention-days: 7
+      - name: Require a passing release policy
+        env:
+          RESULT: ${{ steps.gate.outputs.result }}
+        run: test "$RESULT" = 0
+  publish-security-reviewed:
+    name: Publish the security-reviewed draft
+    needs: [stage, security]
+    # Existing v1 private-release signoff remains separate. Missing or false
+    # configuration never turns a tag push into an automatic publication.
+    if: >-
+      !cancelled() && !contains(github.ref_name, '-') &&
+      vars.V1_SECURITY_PUBLICATION_ENABLED == 'true' &&
+      needs.stage.result == 'success' && needs.security.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    environment: v1-release-publication
+    permissions:
+      contents: write
+      packages: read
+    steps:
+      - name: Require independent review and release-tag restrictions
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SECURITY_ENVIRONMENT: v1-release-publication
+        run: |
+          protection=$(gh api "repos/$GITHUB_REPOSITORY/environments/$SECURITY_ENVIRONMENT")
+          jq -e '.protection_rules | any(.type == "required_reviewers" and .prevent_self_review == true and (.reviewers | length > 0))' <<< "$protection" > /dev/null
+          jq -e '.deployment_branch_policy.custom_branch_policies == true and .deployment_branch_policy.protected_branches == false' <<< "$protection" > /dev/null
+          policies=$(gh api "repos/$GITHUB_REPOSITORY/environments/$SECURITY_ENVIRONMENT/deployment-branch-policies")
+          jq -e '.total_count == 1 and (.branch_policies | length == 1 and all(.type == "tag" and .name == "v0.1.*"))' <<< "$policies" > /dev/null
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.security.outputs.controller_revision }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Recheck the tag and draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          CANDIDATE_REVISION: ${{ github.sha }}
+        run: |
+          test "$(git rev-parse "$TAG^{commit}")" = "$CANDIDATE_REVISION"
+          git merge-base --is-ancestor "$CANDIDATE_REVISION" HEAD
+          test "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" = true
+      - name: Reassess immediately before publishing
+        id: publication-gate
+        uses: ./.github/actions/release-assessment
+        with:
+          tag: ${{ github.ref_name }}
+          inventory-sha256: ${{ needs.stage.outputs.inventory_sha256 }}
+          sboms-sha256: ${{ needs.stage.outputs.sboms_sha256 }}
+          policy-sha256: ${{ needs.security.outputs.policy_sha256 }}
+          controller-revision: ${{ needs.security.outputs.controller_revision }}
+          token: ${{ github.token }}
+      - name: Recheck the registry digests
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          inputs="$RUNNER_TEMP/security-inputs"
+          printf '%s\n' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          echo '[]' > "$RUNNER_TEMP/observed-inventory.json"
+          while IFS=$'\t' read -r name repository digest; do
+            actual=$(docker buildx imagetools inspect "$repository:$TAG" --format '{{.Manifest.Digest}}')
+            test "$actual" = "$digest"
+            docker buildx imagetools inspect "$repository@$digest" --raw > "$RUNNER_TEMP/observed-index.json"
+            jq --arg name "$name" --arg repository "$repository" --arg digest "$actual" --slurpfile manifests "$RUNNER_TEMP/observed-index.json" \
+              '. + [{name:$name,repository:$repository,index_digest:$digest,manifests:$manifests[0]}]' \
+              "$RUNNER_TEMP/observed-inventory.json" > "$RUNNER_TEMP/observed-inventory.next"
+            mv "$RUNNER_TEMP/observed-inventory.next" "$RUNNER_TEMP/observed-inventory.json"
+          done < <(jq -r '.[] | [.name,.repository,.index_digest] | @tsv' "$inputs/inventory.json")
+          docker logout ghcr.io
+          cargo run --locked -q -p nemoclaw-build --no-default-features -- release-verify-promotion \
+            --expected "$inputs/inventory.json" --actual "$RUNNER_TEMP/observed-inventory.json"
+      - name: Retain the final approved assessment evidence
+        if: always() && steps.publication-gate.outputs.report == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: publication-release-security
+          path: ${{ runner.temp }}/security-report
+          if-no-files-found: error
+          retention-days: 7
+      - name: Require a passing final release policy
+        env:
+          RESULT: ${{ steps.publication-gate.outputs.result }}
+        run: test "$RESULT" = 0
+      - name: Publish the approved draft and exact assessment evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          test "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" = true
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber "$RUNNER_TEMP/security-report/gate.json" \
+            "$RUNNER_TEMP/security-report/assessment.json" "$RUNNER_TEMP/security-report/assessment.sarif"
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false

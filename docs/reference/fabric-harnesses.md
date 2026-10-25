@@ -27,6 +27,7 @@ Managed inference means an accepted Ollama or vLLM service configuration, with t
 It does not promise arbitrary model compatibility.
 The selected adapter’s settings schema supplies native constraints.
 The current Fabric descriptor contract does not establish API-subtype compatibility for every adapter; missing claims remain unknown.
+OpenCode refuses a plain-HTTP model endpoint outside loopback unless `harness.settings.insecure_http_model_hosts` lists its host; NemoClaw adds the host of each such endpoint the deployment sends, and keeps any hosts you list.
 Apply verifies configuration and readiness without generating a model response.
 The external Ollama proxy uses OpenAI Completions; Fabric metadata determines adapter compatibility.
 The inference provider stays `management: external`, while NemoClaw manages only the proxy and its credential storage.
@@ -39,4 +40,4 @@ Keep the image, schema, and bundle matched to the desired configuration.
 
 The [configuration validator](../../crates/nemoclaw-sdk/src/config/validation.rs) checks deployment structure and transport contracts.
 [Fabric compatibility assessment](../../crates/nemoclaw-fabric/src/capabilities.rs) checks the advertised native constraints for both onboarding and OpenTofu planning.
-The [first-request procedure](../agents.md#run-one-deep-agents-or-pi-request) has been rehearsed with Hermes, Deep Agents and Pi; a tested harness, model and platform matrix is tracked in [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641).
+The [first-request procedure](../agents.md#run-one-deep-agents-or-pi-request) has been rehearsed with Hermes, Deep Agents, Pi and OpenCode; a tested harness, model and platform matrix is tracked in [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641).

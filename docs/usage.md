@@ -364,7 +364,7 @@ For records with per-resource recovery evidence, plan, apply, and destroy compar
 A saved ID with matching name, workspace, owner, and generation removes that resource from the pending-creation guard; live provider observations and plan checks still verify its identity before mutation.
 A failed agent start keeps its sandbox binding.
 Start failures report a fixed stage, failure code, and agent runtime state without forwarding native error text.
-A sandbox runs one agent runtime, and a failed start may have used it, so the next apply creates the agent in a new sandbox and deletes the old sandbox's files.
+A failed start may have left a runtime running, so the next apply creates the agent in a new sandbox and deletes the old sandbox's files.
 When Fabric rejected the configuration, correct the settings before reapplying.
 An invocation failure can also leave a runtime unusable; NemoClaw cannot detect that, and an unchanged apply leaves it alone.
 To recover from that, or from a sandbox that exited, see [workload replacement](#replace-workloads-after-an-unusable-runtime).

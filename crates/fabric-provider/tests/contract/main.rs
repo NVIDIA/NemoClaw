@@ -188,8 +188,8 @@ async fn a_changed_pi_configuration_replaces_the_sandbox() {
     assert_eq!(writes(), 3);
     let _ = effects;
     // Lose the reply to a new agent's start. Apply fails without retrying and
-    // the agent is left tainted. The runtime may have started, so the sandbox
-    // can't start another: replacing the sandbox recovers.
+    // the agent is left tainted. The runtime may have started, and another
+    // start would run beside it: replacing the sandbox recovers.
     tofu.run(
         &[
             "plan",
@@ -346,8 +346,8 @@ fn sandbox_id(fixture: &Fixture) -> String {
 }
 
 /// Removing an agent stops it, as removing an attachment does, and leaves its
-/// sandbox. The sandbox can't start another runtime, so adding the agent back
-/// needs a new sandbox. A sandbox that is already gone took its agent with it.
+/// sandbox, where adding the agent back starts a new runtime. A sandbox that is
+/// already gone took its agent with it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires NEMOCLAW_TEST_BUNDLE; fake OpenShell gateway"]
 async fn removing_an_agent_stops_it_and_keeps_its_sandbox() {
@@ -383,21 +383,15 @@ async fn removing_an_agent_stops_it_and_keeps_its_sandbox() {
         );
         assert_eq!(state.sandboxes.len(), 1, "the sandbox stays");
     }
-    let readded = tofu.run(&["apply", "-auto-approve", "-input=false"], false);
-    assert!(
-        String::from_utf8_lossy(&readded.stderr).contains("replace the sandbox"),
-        "{}",
-        String::from_utf8_lossy(&readded.stderr)
-    );
-    tofu.run(
-        &[
-            "apply",
-            "-auto-approve",
-            "-input=false",
-            "-replace=openshell_sandbox.agent[0]",
-        ],
-        true,
-    );
+    tofu.run(&["apply", "-auto-approve", "-input=false"], true);
+    {
+        let state = fixture.state.lock().unwrap();
+        assert!(
+            state.fabric_configurations.contains_key(&sandbox),
+            "the agent starts again in the same sandbox"
+        );
+        assert_eq!(state.sandboxes.len(), 1);
+    }
     // Skip refresh so the removal itself meets the missing sandbox.
     fixture.state.lock().unwrap().sandboxes.clear();
     tofu.run(&[&remove_agent[..], &["-refresh=false"]].concat(), true);

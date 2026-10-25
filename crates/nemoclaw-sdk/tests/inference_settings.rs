@@ -38,7 +38,7 @@ fn api_and_tuning_survive_compilation_and_yaml() {
         &rows.iter().find(|row| row.kind == "agent").unwrap().values,
     )
     .unwrap();
-    // The authored API selects how catalogs are read; Fabric v0.5.0 has no
+    // The authored API selects how catalogs are read; the pinned Fabric has no
     // per-model API field (#13320).
     assert!(settings["models"]["default"].get("api").is_none());
     assert_eq!(

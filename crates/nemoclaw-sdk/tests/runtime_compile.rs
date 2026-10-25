@@ -393,7 +393,7 @@ fn remote_service_is_independent_of_the_external_sandbox_gateway() {
     value["spec"]["gateway"] = json!({"management":"external","endpoint":"http://127.0.0.1:17670"});
     value["spec"]["gateway"]["runtime"]["provider"] = json!("podman");
     value["spec"]["services"]["qwen"]["placement"] =
-        json!({"engine":"ssh://operator@gpu-box","networkCidr":"172.30.119.0/24"});
+        json!({"engine":"ssh://operator@gpu-box","networkCIDR":"172.30.119.0/24"});
     value["spec"]["services"]["qwen"]["publication"] =
         json!({"endpoint":"http://10.0.0.8:18888/v1","bindAddress":"10.0.0.8"});
     let bytes = serde_json::to_vec(&value).unwrap();
@@ -469,7 +469,7 @@ fn remote_service_is_independent_of_the_external_sandbox_gateway() {
     }
     for cidr in ["172.30.119.8/24", "10.0.0.0/24"] {
         let mut invalid = value.clone();
-        invalid["spec"]["services"]["qwen"]["placement"]["networkCidr"] = json!(cidr);
+        invalid["spec"]["services"]["qwen"]["placement"]["networkCIDR"] = json!(cidr);
         assert!(Document::parse(serde_json::to_vec(&invalid).unwrap().as_slice()).is_err());
     }
     let mut invalid = value.clone();

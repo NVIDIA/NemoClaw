@@ -74,8 +74,8 @@ Use Docker with Buildx on a native host that matches the selected image target.
 Pass `--platform linux/arm64` or `--platform linux/amd64` to the agent image builder.
 Direct Bake builds and checks use the host's platform unless the `AGENT_PLATFORM` environment variable selects the other one.
 Both platforms build every harness in the Bake file's `HARNESSES` map.
-Agent images share a Python 3.13.16 base without pip.
-Only OpenClaw, Hermes, and Pi add Node.js 24.22.0 LTS: OpenClaw's CLI and Pi's adapter run on it, and Hermes's browser tool and `npx`-launched MCP servers require it.
+Agent images share a Python 3.13.17 base without pip.
+Only OpenClaw, Hermes, and Pi add Node.js 24.22.1 LTS: OpenClaw's CLI and Pi's adapter run on it, and Hermes's browser tool and `npx`-launched MCP servers require it.
 Image qualification checks that interpreter against every Python adapter’s declared version range in the pinned Fabric source.
 Build stages use pinned Rust, Node, Python, and uv images, so the host needs no language toolchains for image assembly.
 Initial builds need network access to fetch the pinned base images, source archives, and package dependencies.
@@ -150,10 +150,12 @@ When you change the Fabric pin, check that set; if it changed, pin the digest of
 ### Regenerate the Bundled Catalog
 
 The SDK build fails with `stale Fabric catalog` when `image/fabric/catalog.json` no longer matches the Fabric pin in the Dockerfile.
-Run `image/fabric/catalog.py` with a Python environment that has the pinned Fabric wheels installed, and pass that revision and checksum:
+Run `image/fabric/catalog.py` with a Python environment that has the pinned Fabric wheels installed, such as a freshly built agent image's `/opt/fabric/bin/python`. Pass that revision and checksum, and `--adapter` once for each adapter ID the current catalog lists:
 
 ```sh
-python image/fabric/catalog.py --revision REVISION --source-sha256 CHECKSUM --output image/fabric/catalog.json
+python image/fabric/catalog.py --revision REVISION --source-sha256 CHECKSUM \
+  --adapter nvidia.fabric.claude --adapter nvidia.fabric.codex ... \
+  --output image/fabric/catalog.json
 ```
 
 Use the values of `FABRIC_REVISION` and `FABRIC_SHA256` from the [shared agent Dockerfile](../image/fabric/Dockerfile).

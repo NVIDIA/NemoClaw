@@ -101,11 +101,15 @@ package(nemoclaw-e2e) & binary(=integration) & (test(/^kubernetes_live::/) | tes
 filter = 'test(/^kubernetes_live::registry::/)'
 threads-required = "num-test-threads"
 
+# The live reports are a run's shareable result: outcomes and times only.
+# Failing tests' output stays in the job log.
 [profile.live-kind.junit]
 path = "live-kind.xml"
+store-failure-output = false
 
 [profile.live-docker.junit]
 path = "live-docker.xml"
+store-failure-output = false
 
 [test-groups]
 docker-engine = { max-threads = 1 }

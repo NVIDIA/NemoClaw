@@ -41,6 +41,7 @@ pub(crate) async fn run(
     lock.try_lock().map_err(|_| {
         Error::Conflict("persistent storage already has a writer or locking failed")
     })?;
+    crate::execution::begin()?;
     // A platform may supply the key; otherwise the runtime generates one in its
     // credential storage, which keeps its own writer lock even if the model
     // cache is replaced.
