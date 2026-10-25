@@ -265,7 +265,7 @@ Deployment identity and ownership checks protect provider registrations and reta
 
 Fabric validates public Fabric configuration when the runtime starts.
 Apply starts the agent after OpenTofu establishes the required dependencies.
-A configuration change replaces the agent's sandbox, because a sandbox runs one runtime; removing `fabric_agent` stops the runtime.
+A configuration change replaces the agent's sandbox rather than starting another runtime inside it; removing `fabric_agent` stops the runtime.
 Unchanged configuration does not request inference or restart the runtime.
 The host reports its active runtime identity and remembered public configuration.
 This observation is not a native filesystem audit or proof of successful inference.

@@ -963,8 +963,8 @@ async fn startup_and_observation_failures_retain_bindings_and_recover() {
         sandbox.status.as_mut().unwrap().phase = openshell_core::proto::SandboxPhase::Ready as i32;
     }
     let recovery = deployment.apply(&document, &cancel).await.unwrap();
-    // The failed start may have used the sandbox's one runtime, so the retry
-    // creates the agent in a new sandbox.
+    // The failed start may have left a runtime running, so the retry creates
+    // the agent in a new sandbox.
     let action = |prefix: &str| {
         recovery
             .changes

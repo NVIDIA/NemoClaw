@@ -18,7 +18,7 @@ Agent images run Fabric's own sandbox bridge, `fabric-agent-ctl`; NemoClaw adds 
 | Authoring | Generic questions from owner schemas, accepted intent and unresolved work |
 
 `fabric_agent` starts the public Fabric document its typed inputs compose, after sandbox creation and route setup.
-A sandbox runs one runtime in its lifetime, so any configuration change replaces the sandbox; see [Fabric agents](../provider.md#fabric-agents).
+NemoClaw runs one runtime per sandbox, so any configuration change replaces the sandbox; see [Fabric agents](../provider.md#fabric-agents).
 The resource is reconstructible and separate from immutable sandbox identity and retained deployment bindings.
 It does not promise conversation continuity across a sandbox replacement.
 
@@ -42,9 +42,10 @@ Diagnostics carry only Fabric's fixed stages and codes, never its messages.
 A timeout, malformed response, or disconnection leaves the outcome unconfirmed; callers do not replay starts or invocations.
 Fabric's [runtime server documentation](https://github.com/NVIDIA/NeMo-Fabric/blob/67acf1cff0d598fc3e6a32370cd63fc088e86958/sdk/python/nemo-fabric-runtime/src/nemo_fabric/runtime_server/README.md) defines the commands.
 
-A sandbox runs one runtime lifecycle.
-After a stop, or after a start whose effects Fabric reports as uncertain, another start returns `runtime_exists`.
-The provider reports it with guidance to replace the sandbox, and the SDK replaces the sandbox itself when a plan would create an agent in an existing one.
+Fabric can start another runtime in a sandbox after a stop.
+After a start whose effects Fabric reports as uncertain, another start returns `runtime_exists`, which the provider reports with guidance to replace the sandbox.
+A start whose reply was lost can't be retried safely, because Fabric would start a second runtime beside one the lost start may have left ([NVIDIA/NeMo-Fabric#487](https://github.com/NVIDIA/NeMo-Fabric/issues/487)).
+The SDK replaces the sandbox itself whenever a plan would create an agent in an existing one.
 `fabric-agent-ctl` does not confirm that an agent's descendant processes stopped; deleting the sandbox does.
 
 ## Image Contract and Reference Implementation
