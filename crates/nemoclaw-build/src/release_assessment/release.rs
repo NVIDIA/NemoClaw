@@ -678,16 +678,10 @@ mod tests {
         // Release candidates report a blocked result without failing.
         for (job, id, pass_name, passing) in [
             (
-                "security",
+                "publish",
                 "gate",
                 "Require a passing release policy",
                 &[0][..],
-            ),
-            (
-                "publish-security-reviewed",
-                "publication-gate",
-                "Require a passing final release policy",
-                &[0],
             ),
             (
                 "candidate-security",
@@ -763,11 +757,11 @@ mod tests {
         let workflow: Value =
             serde_saphyr::from_str(include_str!("../../../../.github/workflows/release.yml"))
                 .unwrap();
-        let script = workflow["jobs"]["security"]["steps"]
+        let script = workflow["jobs"]["publish"]["steps"]
             .as_array()
             .unwrap()
             .iter()
-            .find(|v| v["name"] == "Report approved findings to code scanning")
+            .find(|v| v["name"] == "Report findings to code scanning")
             .unwrap()["run"]
             .as_str()
             .unwrap();
@@ -815,101 +809,99 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn protected_review_scripts_deny_missing_reviewers_and_branch_bypasses() {
+    fn a_final_release_publishes_only_images_a_release_candidate_staged() {
         use std::{fs, os::unix::fs::PermissionsExt, process::Command};
         let workflow: Value =
             serde_saphyr::from_str(include_str!("../../../../.github/workflows/release.yml"))
                 .unwrap();
-        let root = tempfile::tempdir().unwrap();
-        let bin = root.path().join("bin");
-        fs::create_dir(&bin).unwrap();
-        let gh = bin.join("gh");
-        fs::write(&gh,"#!/bin/sh\ncase \"$*\" in *deployment-branch-policies*) /bin/cat \"$FIXTURE/policies.json\" ;; *) /bin/cat \"$FIXTURE/environment.json\" ;; esac\n").unwrap();
-        fs::set_permissions(&gh, fs::Permissions::from_mode(0o700)).unwrap();
-        let protected = json!({"protection_rules":[{"type":"required_reviewers","prevent_self_review":true,"reviewers":[{"type":"Team","reviewer":{"id":1}}]}],"deployment_branch_policy":{"custom_branch_policies":true,"protected_branches":false}});
-        let tags = json!({"total_count":1,"branch_policies":[{"type":"tag","name":"v0.1.*"}]});
-        for job in ["security", "publish-security-reviewed"] {
-            let script = workflow["jobs"][job]["steps"]
-                .as_array()
-                .unwrap()
+        let job = &workflow["jobs"]["publish"];
+        // Anyone who may push a final tag may release: no approval gates it.
+        assert!(job.get("environment").is_none());
+        assert!(!job["if"].as_str().unwrap().contains("vars."));
+        let script = job["steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|v| v["name"] == "Require a tested release candidate")
+            .unwrap()["run"]
+            .as_str()
+            .unwrap();
+        let inventory = |images: &[(&str, &[&str])]| {
+            let images: Vec<Value> = images
                 .iter()
-                .find(|v| v["name"] == "Require review and release-tag restrictions")
-                .unwrap()["run"]
-                .as_str()
-                .unwrap();
-            for (environment, policies, allowed) in [
-                (protected.clone(), tags.clone(), true),
-                (
-                    {
-                        let mut v = protected.clone();
-                        v["protection_rules"] = json!([]);
-                        v
-                    },
-                    tags.clone(),
-                    false,
-                ),
-                // A reviewer may approve a run they started.
-                (
-                    {
-                        let mut v = protected.clone();
-                        v["protection_rules"][0]["prevent_self_review"] = json!(false);
-                        v
-                    },
-                    tags.clone(),
-                    true,
-                ),
-                (
-                    {
-                        let mut v = protected.clone();
-                        v["protection_rules"][0]["reviewers"] = json!([]);
-                        v
-                    },
-                    tags.clone(),
-                    false,
-                ),
-                (
-                    protected.clone(),
-                    json!({"total_count":1,"branch_policies":[{"type":"branch","name":"v1"}]}),
-                    false,
-                ),
-                (
-                    protected.clone(),
-                    json!({"total_count":2,"branch_policies":[{"type":"tag","name":"v0.1.*"},{"type":"branch","name":"*"}]}),
-                    false,
-                ),
-                (
-                    protected.clone(),
-                    json!({"total_count":1,"branch_policies":[{"type":"tag","name":"*"}]}),
-                    false,
-                ),
-                (protected.clone(), json!({}), false),
-            ] {
-                fs::write(
-                    root.path().join("environment.json"),
-                    serde_json::to_vec(&environment).unwrap(),
-                )
-                .unwrap();
-                fs::write(
-                    root.path().join("policies.json"),
-                    serde_json::to_vec(&policies).unwrap(),
-                )
-                .unwrap();
-                let output = Command::new("/bin/bash")
-                    .args(["-euo", "pipefail", "-c", script])
-                    .env_clear()
-                    .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
-                    .env("FIXTURE", root.path())
-                    .env("GITHUB_REPOSITORY", "fixture/repository")
-                    .env("SECURITY_ENVIRONMENT", job)
-                    .output()
-                    .unwrap();
-                assert_eq!(
-                    output.status.success(),
-                    allowed,
-                    "{job}: {}",
-                    String::from_utf8_lossy(&output.stderr)
-                );
+                .map(|(name, platforms)| {
+                    json!({
+                        "name": name,
+                        "repository": format!("ghcr.io/nvidia/nemoclaw/v1/{name}"),
+                        "index_digest": "sha256:index",
+                        "manifests": {"manifests": platforms
+                            .iter()
+                            .map(|digest| json!({"digest": digest}))
+                            .collect::<Vec<_>>()},
+                    })
+                })
+                .collect();
+            serde_json::to_vec(&images).unwrap()
+        };
+        let tested = inventory(&[("pi", &["sha256:a", "sha256:b"]), ("proxy", &["sha256:c"])]);
+        // The same images, listed in another order.
+        let reordered = inventory(&[("proxy", &["sha256:c"]), ("pi", &["sha256:b", "sha256:a"])]);
+        let changed = inventory(&[("pi", &["sha256:a", "sha256:d"]), ("proxy", &["sha256:c"])]);
+        let checksum = |bytes: &[u8]| {
+            use sha2::Digest;
+            sha2::Sha256::digest(bytes)
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+        };
+        for (candidates, final_checksum, allowed) in [
+            (vec![("v0.1.1-rc2", reordered.clone())], checksum(&tested), true),
+            (
+                vec![("v0.1.1-rc1", changed.clone()), ("v0.1.1-rc2", tested.clone())],
+                checksum(&tested),
+                true,
+            ),
+            (vec![("v0.1.1-rc1", changed.clone())], checksum(&tested), false),
+            // A candidate for another version doesn't count.
+            (vec![("v0.1.10-rc1", tested.clone())], checksum(&tested), false),
+            (vec![], checksum(&tested), false),
+            // The final inventory must be the one staging recorded.
+            (vec![("v0.1.1-rc2", tested.clone())], checksum(b"other"), false),
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            let fixture = root.path().join("fixture");
+            let bin = root.path().join("bin");
+            fs::create_dir(&fixture).unwrap();
+            fs::create_dir(&bin).unwrap();
+            fs::write(fixture.join("v0.1.1.json"), &tested).unwrap();
+            let mut tags = String::from("v0.1.1\n");
+            for (tag, bytes) in &candidates {
+                fs::write(fixture.join(format!("{tag}.json")), bytes).unwrap();
+                tags.push_str(&format!("{tag}\n"));
             }
+            fs::write(fixture.join("tags"), tags).unwrap();
+            let gh = bin.join("gh");
+            fs::write(&gh, "#!/bin/sh\ncase \"$1 $2\" in\n'release list') /bin/cat \"$FIXTURE/tags\" ;;\n'release download') tag=$3; out=; while [ $# -gt 0 ]; do [ \"$1\" = --output ] && out=$2; shift; done; [ -f \"$FIXTURE/$tag.json\" ] || exit 1; /bin/cat \"$FIXTURE/$tag.json\" > \"$out\" ;;\n*) exit 2 ;;\nesac\n").unwrap();
+            fs::set_permissions(&gh, fs::Permissions::from_mode(0o700)).unwrap();
+            let output = Command::new("/bin/bash")
+                .args(["-euo", "pipefail", "-c", script])
+                .env_clear()
+                .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+                .env("FIXTURE", &fixture)
+                .env("RUNNER_TEMP", root.path())
+                .env("GITHUB_STEP_SUMMARY", root.path().join("summary"))
+                .env("GITHUB_REPOSITORY", "fixture/repository")
+                .env("TAG", "v0.1.1")
+                .env("INVENTORY_SHA256", &final_checksum)
+                .output()
+                .unwrap();
+            let names: Vec<_> = candidates.iter().map(|(tag, _)| *tag).collect();
+            assert_eq!(
+                output.status.success(),
+                allowed,
+                "{names:?}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
     }
 }
