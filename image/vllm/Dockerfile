@@ -5,6 +5,7 @@
 FROM vllm/vllm-openai@sha256:befccf0e7e4089aa23926bb6f887a85c0d46c2a99e6de5c5ffdf5cb7957c5b34
 COPY --from=supervisor /nemoclaw-runtime /usr/local/bin/nemoclaw-runtime
 COPY --from=supervisor /supervisor-source.tar.gz /opt/nemoclaw/source/
+COPY --from=supervisor /Cargo.lock /opt/nemoclaw/source/supervisor/Cargo.lock
 COPY LICENSE /opt/nemoclaw/source/LICENSE
 COPY image/supervisor/Dockerfile /opt/nemoclaw/source/supervisor.Dockerfile
 COPY image/vllm/NOTICE.md image/vllm/Dockerfile /opt/nemoclaw/source/

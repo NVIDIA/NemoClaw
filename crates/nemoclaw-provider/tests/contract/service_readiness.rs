@@ -29,7 +29,7 @@ async fn standalone_readiness(proxy: bool) {
     let mut document = serde_json::to_value(document).unwrap();
     document["spec"]["gateway"] = json!({"management":"external","endpoint":"http://127.0.0.1:1"});
     document["spec"]["services"]["qwen"]["placement"] =
-        json!({"engine":"ssh://operator@gpu-box","networkCidr":"172.30.119.0/24"});
+        json!({"engine":"ssh://operator@gpu-box","networkCIDR":"172.30.119.0/24"});
     document["spec"]["services"]["qwen"]["publication"] =
         json!({"endpoint":"http://10.0.0.8:18888/v1","bindAddress":"10.0.0.8"});
     let document = Document::parse(document.to_string().as_bytes()).unwrap();

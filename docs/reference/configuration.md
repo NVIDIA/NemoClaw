@@ -1311,7 +1311,7 @@ Paths:
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `engine` | string | Yes | — | SSH Docker endpoint used for an explicitly placed service. Constraints: pattern `^ssh://`. |
-| `networkCidr` | string | Yes | — | Canonical private IPv4 /24 on the selected Docker engine. Constraints: pattern `/24$`. |
+| `networkCIDR` | string | Yes | — | Canonical private IPv4 /24 on the selected Docker engine. Constraints: pattern `/24$`. |
 
 ## ServicePublication
 

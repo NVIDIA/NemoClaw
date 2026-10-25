@@ -53,7 +53,7 @@ Check `result.status` as well as the outer `status`: the outer one only reports 
 ### Run One Headless OpenClaw Request
 
 Headless operation follows the same public Fabric invocation boundary.
-The [pinned OpenClaw adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/5574117feb4be948c1b03f4c36a2fe9a11af910d/adapters/python/openclaw/README.md) takes a text prompt and sends it to the native OpenClaw agent selected by `harness.settings.agent_id`, which defaults to `default`.
+The [pinned OpenClaw adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/67acf1cff0d598fc3e6a32370cd63fc088e86958/adapters/python/openclaw/README.md) takes a text prompt and sends it to the native OpenClaw agent selected by `harness.settings.agent_id`, which defaults to `default`.
 A request can incur inference charges and affect retained conversation history.
 
 With a running agent whose YAML `agent.name` is `assistant`, read its runtime ID from the deployment's state directory with `jq`, then send the request from the client host:
@@ -265,7 +265,7 @@ Deployment identity and ownership checks protect provider registrations and reta
 
 Fabric validates public Fabric configuration when the runtime starts.
 Apply starts the agent after OpenTofu establishes the required dependencies.
-A configuration change replaces the agent's sandbox, because a sandbox runs one runtime; removing `fabric_agent` stops the runtime.
+A configuration change replaces the agent's sandbox rather than starting another runtime inside it; removing `fabric_agent` stops the runtime.
 Unchanged configuration does not request inference or restart the runtime.
 The host reports its active runtime identity and remembered public configuration.
 This observation is not a native filesystem audit or proof of successful inference.

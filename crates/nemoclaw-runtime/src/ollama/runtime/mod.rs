@@ -35,6 +35,7 @@ pub(crate) async fn run(
     lock.try_lock().map_err(|_| {
         Error::Conflict("persistent storage already has a writer or locking failed")
     })?;
+    crate::execution::begin()?;
     let result = run_owned(service, cancel, trip).await;
     if let Err(error) = &result {
         let _ = report("stopped", &error.to_string(), 0);

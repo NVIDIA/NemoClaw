@@ -11,7 +11,7 @@ On DGX Spark, the Hermes and Deep Agents templates are verified; the other combi
 |---|---|
 | Hermes | Applies and answers, including tool calls |
 | Deep Agents | Applies and answers, including file tool calls |
-| OpenClaw | Agent start fails, because the OpenClaw adapter can't run `setpriv` in OpenShell sandboxes ([#13372](https://github.com/NVIDIA/NemoClaw/issues/13372)) |
+| OpenClaw | Not yet run with this template |
 
 The first apply downloads the 74.8 GiB model; on the verified DGX Spark the download took about 55 minutes and loading about 15.
 After the model loaded, a short question took about 5 seconds, a five-point itinerary about 15–18 seconds, and a task with a tool call 17–29 seconds.
