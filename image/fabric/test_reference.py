@@ -99,8 +99,10 @@ class ReferenceAgent(unittest.TestCase):
         self.assertEqual(failed["result"]["error"]["code"], "dummy_invocation_failed")
 
         self.assertEqual(self.stop(runtime_id)["status"], "succeeded")
-        # One runtime lifecycle per server: a new one needs a new sandbox.
-        self.assertEqual(self.start(config())["error"]["code"], "runtime_exists")
+        # Fabric's server starts another runtime once the previous one stops.
+        restarted = self.start(config())
+        self.assertEqual(restarted["status"], "succeeded", restarted["error"])
+        self.assertNotEqual(restarted["result"]["runtime_id"], runtime_id)
 
     def test_replies_with_the_configured_text(self):
         runtime_id = self.start(config(reply="fixed"))["result"]["runtime_id"]
