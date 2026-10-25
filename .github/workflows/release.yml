@@ -319,7 +319,10 @@ jobs:
     needs: [stage, security-controller]
     # Report-only, so blocking findings surface before the final tag. The
     # findings stay in the private draft, and a blocked result doesn't fail the run.
-    if: ${{ contains(github.ref_name, '-') }}
+    # Without !cancelled(), a skipped Build would skip this job too.
+    if: >-
+      !cancelled() && contains(github.ref_name, '-') &&
+      needs.stage.result == 'success' && needs.security-controller.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
@@ -359,7 +362,10 @@ jobs:
   security:
     name: Review security and approve finding disclosure
     needs: [stage, security-controller]
-    if: ${{ !contains(github.ref_name, '-') }}
+    # Without !cancelled(), a skipped Build would skip this review too.
+    if: >-
+      !cancelled() && !contains(github.ref_name, '-') &&
+      needs.stage.result == 'success' && needs.security-controller.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     environment: v1-release-security
@@ -432,7 +438,10 @@ jobs:
     needs: [stage, security]
     # Existing v1 private-release signoff remains separate. Missing or false
     # configuration never turns a tag push into an automatic publication.
-    if: ${{ !contains(github.ref_name, '-') && vars.V1_SECURITY_PUBLICATION_ENABLED == 'true' }}
+    if: >-
+      !cancelled() && !contains(github.ref_name, '-') &&
+      vars.V1_SECURITY_PUBLICATION_ENABLED == 'true' &&
+      needs.stage.result == 'success' && needs.security.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     environment: v1-release-publication
