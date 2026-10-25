@@ -1,11 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { vi } from "vitest";
+import { expect, vi } from "vitest";
 import type { Session } from "../../src/lib/state/onboard-session";
 import { onboardSession, portableRetirementAuthority, resolve } from "./rebuild-flow-harness";
 import type { RebuildFlowHarness } from "./rebuild-flow-test-support";
 
+const sessionStore: typeof import("../../src/lib/state/onboard-session") = onboardSession;
 const core: typeof import("../../src/lib/onboard/machine/core-flow-composition") = require("../../src/lib/onboard/machine/core-flow-composition");
 const initial: typeof import("../../src/lib/onboard/machine/initial-flow-composition") = require("../../src/lib/onboard/machine/initial-flow-composition");
 const runtime: typeof import("../../src/lib/onboard/resume/locked-runtime") = require("../../src/lib/onboard/resume/locked-runtime");
@@ -26,12 +27,33 @@ export function installRebuildResourceOnboardFixture(harness: RebuildFlowHarness
   const onboardPath = require.resolve("../../src/lib/onboard");
   delete require.cache[onboardPath];
   harness.onboardSpy.mockRestore();
-  // Disk reads return independent snapshots; the generic handoff fixture shares one object.
-  vi.mocked(onboardSession.loadSession).mockImplementation(() => structuredClone(session));
-  vi.spyOn(onboardSession, "saveSession").mockImplementation(() => undefined);
-  vi.spyOn(onboardSession, "markStepStarted").mockReturnValue(session);
-  vi.spyOn(onboardSession, "markStepSkipped").mockReturnValue(session);
-  vi.spyOn(onboardSession, "markStepFailed").mockReturnValue(session);
+  // Model disk reads and writes without sharing the source session object.
+  let persistedSession = structuredClone(session);
+  const loadPersistedSession = () => structuredClone(persistedSession);
+  const savePersistedSession = (updated: Session) => {
+    persistedSession = structuredClone(updated);
+    return updated;
+  };
+  vi.mocked(sessionStore.loadSession).mockImplementation(loadPersistedSession);
+  vi.mocked(sessionStore.loadRebuildSession).mockImplementation(loadPersistedSession);
+  vi.spyOn(sessionStore, "saveSession").mockImplementation(savePersistedSession);
+  vi.mocked(sessionStore.updateSession).mockImplementation(
+    (mutator: (current: Session) => Session | void) => {
+      const current = loadPersistedSession();
+      return sessionStore.saveSession(mutator(current) ?? current);
+    },
+  );
+  vi.mocked(sessionStore.compareAndSwapSession).mockImplementation(
+    (matches: (current: Session) => boolean, mutator: (current: Session) => Session | void) => {
+      const current = loadPersistedSession();
+      if (!matches(current)) return "mismatch";
+      sessionStore.saveSession(mutator(current) ?? current);
+      return "updated";
+    },
+  );
+  vi.spyOn(sessionStore, "markStepStarted").mockImplementation(loadPersistedSession);
+  vi.spyOn(sessionStore, "markStepSkipped").mockImplementation(loadPersistedSession);
+  vi.spyOn(sessionStore, "markStepFailed").mockImplementation(loadPersistedSession);
   vi.spyOn(portableRetirementAuthority, "beginPortableOnboardRetirementEntry").mockReturnValue({
     release: () => undefined,
     run: async (operation: () => unknown) => operation(),
@@ -43,18 +65,19 @@ export function installRebuildResourceOnboardFixture(harness: RebuildFlowHarness
     portableRuntimeContext: null,
   });
   vi.spyOn(bootstrap, "prepareOnboardSessionValidated").mockImplementation(async () => ({
-    session,
+    session: sessionStore.loadSession(),
     fromDockerfile: null,
     fromImage: null,
   }));
   // The outer rebuild harness already supplies the validated provider/model.
   vi.spyOn(initial, "runInitialOnboardFlowSlice").mockImplementation(async ({ context }) => ({
     context: { ...context, sandboxGpuConfig: { sandboxGpuEnabled: false, mode: "0" } },
-    session,
+    session: context.session as Session,
   }));
   vi.spyOn(core, "runCoreOnboardFlowSlice").mockImplementation(async ({ context, phases }) => {
+    expect(context.session).toEqual(persistedSession);
     await phases.sandbox.run(context);
-    return { context, session };
+    return { context, session: context.session as Session };
   });
   vi.spyOn(registration, "withSandboxImageRegistrationFence").mockImplementation(
     async (operation) => operation(),
@@ -100,6 +123,7 @@ export function installRebuildResourceOnboardFixture(harness: RebuildFlowHarness
   return {
     createSandbox,
     selectResourceProfile,
+    loadPersistedSession,
     cleanup: () => {
       delete require.cache[onboardPath];
     },

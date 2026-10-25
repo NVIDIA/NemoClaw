@@ -469,8 +469,10 @@ describe("public rebuild resource replay through inner onboarding (#13623)", () 
       expect((createArgs[15] as SandboxCreateIntent).resolved?.resourceCreateArgs).toEqual(
         resourceArgs,
       );
-      expect(resourceSession.resourceProfile).toEqual(resourceProfile);
-      expect(resourceSession.sandboxPromptProgress.resourceProfile).toBe(true);
+      expect(fixture.loadPersistedSession()).toMatchObject({
+        resourceProfile,
+        sandboxPromptProgress: { resourceProfile: true },
+      });
       expect(harness.errorSpy).toHaveBeenCalledWith(
         expect.stringContaining(RESOURCE_CREATE_BOUNDARY),
       );
