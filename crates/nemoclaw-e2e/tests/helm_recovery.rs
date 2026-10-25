@@ -151,22 +151,63 @@ impl Api {
     }
 
     fn release(&self, name: &str, namespace: &str) {
-        // Helm accepts its original uncompressed JSON storage format. The
-        // release has no workloads: these tests qualify recovery, not a chart.
-        let release = json!({
-            "name": name, "namespace": namespace, "version":1,
-            "info":{"status":"deployed", "description":"recovery fixture",
-                "first_deployed":"2026-01-01T00:00:00Z", "last_deployed":"2026-01-01T00:00:00Z"},
-            "chart":{"metadata":{"name":nemoclaw_sdk::kubernetes::gateway::CHART, "version":"0.0.115", "apiVersion":"v2"}},
-            "config":{}, "manifest":"", "hooks":[]
-        });
-        self.objects.insert(
-            json!({"apiVersion":"v1", "kind":"Secret", "type":"helm.sh/release.v1",
-            "metadata":{"name":format!("sh.helm.release.v1.{name}.v1"), "namespace":namespace,
-                "labels":{"owner":"helm", "name":name, "status":"deployed", "version":"1"}},
-            "data":{"release":STANDARD.encode(STANDARD.encode(release.to_string()))}}),
-        );
+        self.objects.insert(release_record(name, namespace));
     }
+
+    /// Objects that belong to someone else: a second deployment's retained
+    /// namespace, key-encryption key, and gateway claim; another release's
+    /// record in `namespace`; and a ConfigMap there that the second deployment
+    /// owns. Their UIDs do not have the API's `uid-N` form, so no object a test
+    /// creates can share one, and no name is one the fixture deployment uses.
+    fn neighbors(&self, namespace: &str) -> Vec<Value> {
+        let owner = json!({"nemoclaw.nvidia.com/uid": NEIGHBOR_OWNER});
+        let mut release = release_record(NEIGHBOR, namespace);
+        release["metadata"]["uid"] = json!("neighbor-release");
+        let neighbors = vec![
+            json!({"apiVersion":"v1", "kind":"Namespace",
+                "metadata":{"name":"neighbor-agents", "uid":"neighbor-namespace", "labels":owner}}),
+            json!({"apiVersion":"v1", "kind":"Secret", "type":"Opaque",
+                "metadata":{"name":format!("{NEIGHBOR}-kek"), "namespace":"neighbor-agents",
+                    "uid":"neighbor-kek", "labels":owner},
+                "data":{"key-encryption-key":STANDARD.encode("neighbor key")}}),
+            json!({"apiVersion":"v1", "kind":"PersistentVolumeClaim",
+                "metadata":{"name":format!("data-{NEIGHBOR}-0"), "namespace":"neighbor-agents",
+                    "uid":"neighbor-claim", "labels":{"app.kubernetes.io/instance":NEIGHBOR}},
+                "spec":{"accessModes":["ReadWriteOnce"], "resources":{"requests":{"storage":"1Gi"}}},
+                "status":{"phase":"Bound"}}),
+            release,
+            json!({"apiVersion":"v1", "kind":"ConfigMap",
+                "metadata":{"name":format!("{NEIGHBOR}-oidc"), "namespace":namespace,
+                    "uid":"neighbor-issuer", "labels":owner},
+                "data":{"jwks":"{\"keys\":[]}"}}),
+        ];
+        for object in &neighbors {
+            self.objects.insert(object.clone());
+        }
+        neighbors
+    }
+}
+
+/// The owner label value and gateway release of another deployment on the
+/// fixture's cluster.
+const NEIGHBOR_OWNER: &str = "0f6d3c52-8a1e-4b7f-9d20-6e4b5a3c1f87";
+const NEIGHBOR: &str = "nc-neighbor-gateway";
+
+/// Helm's record of release `name`. Helm accepts its original uncompressed
+/// JSON storage format. The release has no workloads: these tests qualify
+/// recovery, not a chart.
+fn release_record(name: &str, namespace: &str) -> Value {
+    let release = json!({
+        "name": name, "namespace": namespace, "version":1,
+        "info":{"status":"deployed", "description":"recovery fixture",
+            "first_deployed":"2026-01-01T00:00:00Z", "last_deployed":"2026-01-01T00:00:00Z"},
+        "chart":{"metadata":{"name":nemoclaw_sdk::kubernetes::gateway::CHART, "version":"0.0.115", "apiVersion":"v2"}},
+        "config":{}, "manifest":"", "hooks":[]
+    });
+    json!({"apiVersion":"v1", "kind":"Secret", "type":"helm.sh/release.v1",
+    "metadata":{"name":format!("sh.helm.release.v1.{name}.v1"), "namespace":namespace,
+        "labels":{"owner":"helm", "name":name, "status":"deployed", "version":"1"}},
+    "data":{"release":STANDARD.encode(STANDARD.encode(release.to_string()))}})
 }
 
 struct Kubeconfig(String);
@@ -333,6 +374,8 @@ struct Fixture {
     directory: tempfile::TempDir,
     name: String,
     namespace: String,
+    /// Other owners' objects, as `Api::neighbors` seeded them.
+    neighbors: Vec<Value>,
 }
 
 /// Prepares the runtime stage's storage and authentication, which a Helm
@@ -416,6 +459,7 @@ impl Fixture {
             .namespace
             .clone();
         api.release(&name, &namespace);
+        let neighbors = api.neighbors(&namespace);
         let deployment = Deployment::new(&directory.path().join("state"), &bundle).with_secrets(
             Arc::new(Kubeconfig(kubeconfig.to_string_lossy().into_owned())),
         );
@@ -427,6 +471,7 @@ impl Fixture {
             directory,
             name,
             namespace,
+            neighbors,
         };
         fixture.deployment.scenario_save_record(&document).unwrap();
         fixture
@@ -506,6 +551,9 @@ impl Fixture {
         );
     }
 
+    /// Destroy again with the API healthy, which must finish: storage stays,
+    /// the release and the issuer go, and no request in the test has written
+    /// to a neighbor or changed it from what was seeded.
     async fn finish(&self) {
         *self.api.fault.lock().unwrap() = Fault::Healthy;
         self.deployment()
@@ -529,6 +577,36 @@ impl Fixture {
         assert!(secret(format!("{}-kek", self.name)).is_some());
         assert!(secret(format!("sh.helm.release.v1.{}.v1", self.name)).is_none());
         assert!(secret(format!("{}-oidc", self.name)).is_none());
+        // The API acknowledges a PUT without storing its body, so only the
+        // request log shows an update.
+        let writes = self.api.writes();
+        for neighbor in &self.neighbors {
+            let text = |pointer: &str| {
+                neighbor
+                    .pointer(pointer)
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+            };
+            let (api_version, kind, namespace, name) = (
+                text("/apiVersion"),
+                text("/kind"),
+                text("/metadata/namespace"),
+                text("/metadata/name"),
+            );
+            let path = format!(
+                "{}/{name}",
+                kube_api::collection(api_version, kind, namespace)
+            );
+            assert!(
+                writes.iter().all(|(_, written)| *written != path),
+                "the scenario wrote to another owner's {kind} {name}"
+            );
+            assert_eq!(
+                objects.get(api_version, kind, namespace, name).as_ref(),
+                Some(neighbor),
+                "destroy changed another owner's {kind} {name}"
+            );
+        }
     }
 }
 

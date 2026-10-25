@@ -4,7 +4,7 @@
 # The runtime supervisor that the vLLM and Ollama images run, with the sources
 # they retain. Bake builds it for the host's platform only, so it never
 # compiles under emulation.
-ARG RUST_IMAGE=rust:1.99.1-bookworm@sha256:e12566d5abc17a0da741628782cdb504b68b8961f5bfcf677936bf3e8b32de29
+ARG RUST_IMAGE=rust:1.99.1-bookworm@sha256:48b7f435b8fc6378ce43b44f15e3a47fd8919b2825f835c39bd4bd3da50af5b8
 
 # The supervisor's Cargo package and its locked dependency sources, with their
 # licenses: the archive the runtime images retain and compile from.
@@ -39,5 +39,8 @@ RUN --mount=type=cache,target=/target \
     cargo build --locked --offline --release -p nemoclaw-runtime --target-dir /target; \
     install -m 0755 /target/release/nemoclaw-runtime /out/nemoclaw-runtime
 
+# Keep the locked build inventory visible to image SBOM catalogers, which
+# cannot discover Rust dependencies from the stripped executable or tarball.
 FROM scratch AS supervisor
+COPY --from=source /source/Cargo.lock /Cargo.lock
 COPY --from=build /out/ /

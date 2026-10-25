@@ -31,3 +31,53 @@ jobs:
       run: ${{ needs.plan.outputs.images == 'true' }}
       # Only v1 commits publish their checked images, for releases to promote.
       push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/v1' }}
+  prune:
+    needs: [plan, images]
+    # After a v1 push publishes its checked images; it never gates the push.
+    if: >-
+      needs.images.result == 'success' && needs.plan.outputs.images == 'true' &&
+      github.event_name == 'push' && github.ref == 'refs/heads/v1'
+    name: Prune per-commit images
+    runs-on: ubuntu-24.04
+    permissions:
+      packages: write
+    steps:
+      # Keep the images of the latest commits, which releases promote from.
+      # Releases copy promoted images into their own packages, so older
+      # per-commit images aren't needed. Untagged platform manifests go only
+      # when they predate every kept commit, so no kept image loses a child.
+      # Deleting needs the workflow's admin role on the package; without it
+      # this warns and stops.
+      - name: Delete per-commit images older than the latest commits
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PACKAGE: /orgs/NVIDIA/packages/container/nemoclaw%2Fv1-ci
+          KEEP: "10"
+        run: |
+          gh api --paginate "$PACKAGE/versions?per_page=100" \
+            --jq '.[] | {id, created_at, tags: .metadata.container.tags}' | jq -s . > versions.json
+          keep=$(jq -c --argjson count "$KEEP" '
+            [.[] | .created_at as $created | .tags[]
+              | capture("-(?<commit>[0-9a-f]{40})-(arm64|amd64)$") | {commit, created: $created}]
+            | group_by(.commit) | map({commit: .[0].commit, created: (map(.created) | max)})
+            | sort_by(.created) | reverse | .[:$count] | map(.commit)' versions.json)
+          cutoff=$(jq -r --argjson keep "$keep" '
+            [.[] | select(any(.tags[]; . as $tag | any($keep[]; . as $commit | $tag | contains($commit))))
+              | .created_at] | min // empty' versions.json)
+          if [ -z "$cutoff" ]; then
+            echo "No per-commit images to keep yet"
+            exit 0
+          fi
+          jq -r --argjson keep "$keep" --arg cutoff "$cutoff" '
+            .[] | select(.created_at < $cutoff)
+            | select(all(.tags[]; . != "provision" and (. as $tag | all($keep[]; . as $commit | $tag | contains($commit) | not))))
+            | .id' versions.json > stale
+          deleted=0
+          while read -r id; do
+            if ! gh api --silent -X DELETE "$PACKAGE/versions/$id" 2> error; then
+              echo "::warning::Cannot delete per-commit images: $(head -c 200 error). Grant NVIDIA/NemoClaw's Actions the admin role on nemoclaw/v1-ci."
+              break
+            fi
+            deleted=$((deleted + 1))
+          done < stale
+          echo "Kept $(jq length <<< "$keep") commits; deleted $deleted of $(wc -l < stale) older versions" >> "$GITHUB_STEP_SUMMARY"

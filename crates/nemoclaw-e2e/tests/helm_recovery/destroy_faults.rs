@@ -111,16 +111,15 @@ async fn an_authentication_failure_reading_the_issuer_after_the_release_is_unins
         "apply",
         &["Destroy incomplete", "observation authentication failed"],
     );
+    let record = format!("/sh.helm.release.v1.{}.", fixture.name);
     let writes = fixture.api.writes();
     let issued = &writes[before.writes.len()..];
     assert!(
-        issued
-            .iter()
-            .all(|(_, path)| path.contains("sh.helm.release.")),
-        "only the release record may change: {issued:?}"
+        issued.iter().all(|(_, path)| path.contains(&record)),
+        "only this deployment's release record may change: {issued:?}"
     );
     let mut remaining = before.objects.clone();
-    remaining.retain(|path, _| !path.contains("sh.helm.release."));
+    remaining.retain(|path, _| !path.contains(&record));
     assert!(
         fixture.objects() == remaining,
         "the uninstall changed more than the release record"

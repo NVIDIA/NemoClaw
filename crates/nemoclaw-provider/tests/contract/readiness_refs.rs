@@ -24,7 +24,7 @@ async fn container_readiness_exports_the_server_ref_with_its_observed_credential
     let service = &mut document["spec"]["services"]["qwen"];
     service["authentication"] = json!("bearer");
     service["placement"] =
-        json!({"engine":"ssh://operator@gpu-box","networkCidr":"172.30.119.0/24"});
+        json!({"engine":"ssh://operator@gpu-box","networkCIDR":"172.30.119.0/24"});
     service["publication"] =
         json!({"endpoint":"http://10.0.0.8:18888/v1","bindAddress":"10.0.0.8"});
     let document = Document::parse(document.to_string().as_bytes()).unwrap();

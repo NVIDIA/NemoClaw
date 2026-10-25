@@ -861,11 +861,11 @@ spec:
 ",
         context = required("NEMOCLAW_TEST_KUBE_CONTEXT"),
         pull_secrets = serde_json::to_string(pull_secrets).unwrap(),
-        // Pi needs a context window and input types for a model it does not
-        // ship, as examples/fabric-pi.yaml declares; without `input`, Pi fails
-        // every request. OpenClaw declares no model extensions.
+        // Pi needs a context window, input types and cost for a model it does
+        // not ship, as examples/fabric-pi.yaml declares; without `input`, Pi
+        // fails every request. OpenClaw declares no model extensions.
         extensions = if harness == "nvidia.fabric.pi" {
-            "\n            extensions:\n              context_window: 8192\n              input: [\"text\"]"
+            "\n            extensions:\n              context_window: 8192\n              input: [text]\n              cost: {input: 0, output: 0, cacheRead: 0, cacheWrite: 0}"
         } else {
             ""
         },

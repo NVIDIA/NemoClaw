@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 use nemoclaw_e2e::{assert_same_managed_resources, openshell::Fixture};
 use nemoclaw_sdk::{CancellationToken, Deployment, Outcome, config::Document};
-use std::{fs, path::PathBuf, process::Command};
+use std::{collections::BTreeMap, fs, path::PathBuf, process::Command};
 
 /// Export refuses a deployment whose apply is unfinished before it observes
 /// anything, so this checks the saved state without reading the SDK's files.
@@ -495,44 +495,101 @@ async fn network_grants_apply_export_and_reapply_unchanged() {
 type Recorded<T> = std::sync::Arc<std::sync::Mutex<Vec<T>>>;
 
 /// A deployment through the SDK and the bundle's CLI against the fixture gateway.
-/// Fields drop in declaration order: the deployment before the image engine,
-/// gateway, and state directory.
+/// Fields drop in declaration order: the deployment before the image engine or
+/// metadata bundle, gateway, and state directory.
 pub(crate) struct Lifecycle {
     pub(crate) cancel: CancellationToken,
     pub(crate) deployment: Deployment,
     resource_events: Recorded<(&'static str, &'static str, &'static str)>,
     timings: Recorded<(&'static str, nemoclaw_sdk::StepOutcome)>,
-    _image_engine: nemoclaw_e2e::http_fixture::Fixture,
+    _image_engine: Option<nemoclaw_e2e::http_fixture::Fixture>,
+    _image_metadata: Option<tempfile::TempDir>,
     pub(crate) document: Document,
     pub(crate) fixture: Fixture,
     pub(crate) directory: tempfile::TempDir,
     pub(crate) bundle: PathBuf,
 }
 
+/// Fixture values for the credentials the tests reference, and the image
+/// metadata bundle's path for each variable that names it.
+struct FixtureSecrets {
+    image_metadata: BTreeMap<String, String>,
+}
+impl nemoclaw_sdk::Secrets for FixtureSecrets {
+    fn resolve(&self, name: &str) -> Result<String, nemoclaw_sdk::ObservationError> {
+        if let Some(path) = self.image_metadata.get(name) {
+            return Ok(path.clone());
+        }
+        assert!(["NOUS_API_KEY", "SEARCH_KEY", "BOOKINGS_API_KEY"].contains(&name));
+        Ok("fixture-only-inference-key".into())
+    }
+}
+
 impl Lifecycle {
     /// Start the fixture gateway and image engine, and create a deployment of `input`.
     pub(crate) async fn start(input: &str) -> Self {
+        let fixture = Fixture::start().await;
+        let mut document = Document::parse(input.as_bytes()).unwrap();
+        *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
+        let image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
+        let secrets = FixtureSecrets {
+            image_metadata: BTreeMap::new(),
+        };
+        Self {
+            _image_engine: Some(image_engine),
+            ..Self::new(document, fixture, secrets)
+        }
+    }
+
+    /// Start the fixture gateway as the external Kubernetes or OpenShift
+    /// gateway of `input`, and create a deployment of `input` whose sandboxes
+    /// all run the image of one metadata bundle. `Fixture::start` serves plain
+    /// gRPC without a bearer, so the gateway's credential and TLS references
+    /// are dropped.
+    pub(crate) async fn start_on_cluster(input: &str) -> Self {
+        let fixture = Fixture::start().await;
+        // OpenShell serves OpenShift with its Kubernetes driver.
+        fixture.state.lock().unwrap().driver = Some("kubernetes".into());
+        let mut document = Document::parse(input.as_bytes()).unwrap();
+        let nemoclaw_sdk::config::Gateway::External(gateway) = &mut document.spec.gateway else {
+            panic!("the cluster fixture requires an external gateway")
+        };
+        assert!(gateway.runtime.provider.is_kubernetes());
+        gateway.endpoint = fixture.endpoint.clone();
+        gateway.credential = None;
+        gateway.tls = None;
+        // No engine inspects a cluster's images; the bundle describes them.
+        let image_metadata = tempfile::tempdir().unwrap();
+        let (image, path) = nemoclaw_e2e::image_runtime::metadata_bundle(image_metadata.path());
+        let mut secrets = FixtureSecrets {
+            image_metadata: BTreeMap::new(),
+        };
+        for sandbox in &mut document.spec.sandboxes {
+            sandbox.image.ref_ = image.clone();
+            secrets.image_metadata.insert(
+                sandbox.image.metadata.as_ref().unwrap().env.clone(),
+                path.to_string_lossy().into_owned(),
+            );
+        }
+        Self {
+            _image_metadata: Some(image_metadata),
+            ..Self::new(document, fixture, secrets)
+        }
+    }
+
+    /// Create a deployment of `document` on `fixture` that records its
+    /// progress, without an image engine or metadata bundle.
+    fn new(document: Document, fixture: Fixture, secrets: FixtureSecrets) -> Self {
         let bundle =
             PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").expect("explicit bundle path"));
         assert!(bundle.is_absolute());
         let directory = tempfile::tempdir().unwrap();
-        let fixture = Fixture::start().await;
-        let mut document = Document::parse(input.as_bytes()).unwrap();
-        *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
-        let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
-        struct FixtureSecrets;
-        impl nemoclaw_sdk::Secrets for FixtureSecrets {
-            fn resolve(&self, name: &str) -> Result<String, nemoclaw_sdk::ObservationError> {
-                assert!(["NOUS_API_KEY", "SEARCH_KEY", "BOOKINGS_API_KEY"].contains(&name));
-                Ok("fixture-only-inference-key".into())
-            }
-        }
         let timings = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let received = timings.clone();
         let resource_events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let resources = resource_events.clone();
         let deployment = Deployment::new(directory.path(), &bundle)
-            .with_secrets(std::sync::Arc::new(FixtureSecrets))
+            .with_secrets(std::sync::Arc::new(secrets))
             .with_progress(std::sync::Arc::new(move |event| {
                 if let nemoclaw_sdk::Progress::Resource {
                     resource,
@@ -555,7 +612,8 @@ impl Lifecycle {
             deployment,
             resource_events,
             timings,
-            _image_engine,
+            _image_engine: None,
+            _image_metadata: None,
             document,
             fixture,
             directory,
@@ -905,8 +963,8 @@ async fn startup_and_observation_failures_retain_bindings_and_recover() {
         sandbox.status.as_mut().unwrap().phase = openshell_core::proto::SandboxPhase::Ready as i32;
     }
     let recovery = deployment.apply(&document, &cancel).await.unwrap();
-    // The failed start may have used the sandbox's one runtime, so the retry
-    // creates the agent in a new sandbox.
+    // The failed start may have left a runtime running, so the retry creates
+    // the agent in a new sandbox.
     let action = |prefix: &str| {
         recovery
             .changes

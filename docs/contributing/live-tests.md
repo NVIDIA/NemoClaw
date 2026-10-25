@@ -19,7 +19,7 @@ cargo ci bundle
 cargo ci live-kind
 ```
 
-The runner builds Pi on every platform until OpenClaw can start in an OpenShell sandbox ([#13372](https://github.com/NVIDIA/NemoClaw/issues/13372)), exports its metadata bundle, loads it by digest, and installs the pinned Agent Sandbox prerequisite.
+The runner builds Pi, exports its metadata bundle, loads it by digest, and installs the pinned Agent Sandbox prerequisite.
 The gateway test checks authentication, forged-token rejection, repeated install/removal, and retained storage without a Helm executable on `PATH`.
 The OpenShift-profile and registry tests share one flow that uses the public SDK to deploy a gateway and agent sandboxes from that image, with one inference profile for all of them as in `examples/kubernetes/managed-development.yaml`.
 Each sandbox also grants one endpoint named for it, so no two sandboxes have the same policy.

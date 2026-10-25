@@ -10,6 +10,18 @@ pub use nemoclaw_test_fixtures::{openshell, tofu};
 #[path = "../../test-support/http.rs"]
 pub mod http_fixture;
 
+// Tested here, not in image_runtime.rs, which nemoclaw-provider's contract
+// binary also includes.
+#[test]
+fn the_metadata_bundle_verifies_against_its_reference_and_carries_the_fixture_catalog() {
+    let directory = tempfile::tempdir().unwrap();
+    let (image, path) = image_runtime::metadata_bundle(directory.path());
+    let observed =
+        nemoclaw_sdk::image_metadata::verify(&std::fs::read(path).unwrap(), &image).unwrap();
+    assert_eq!(observed.image.repo_digests, [image]);
+    assert_eq!(observed.catalog, Some(image_runtime::catalog()));
+}
+
 /// OpenTofu may reorder cached precondition results and advance the serial on
 /// otherwise unchanged apply. Sandbox observations also carry a fresh operation
 /// token. Every other field, including health, bindings and check outcomes, must

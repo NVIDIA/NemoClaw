@@ -20,7 +20,7 @@ pub(crate) fn constrain(defs: &mut serde_json::Map<String, Value>, normalized: b
     );
     property(
         &mut defs["ServicePlacement"],
-        "networkCidr",
+        "networkCIDR",
         json!({"pattern": "/24$"}),
     );
     property(

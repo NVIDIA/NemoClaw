@@ -30,7 +30,7 @@ fn production_capacity_data_blocks_overcommit_defers_unknowns_and_preserves_stat
         .values_mut()
     {
         service["placement"] =
-            json!({"engine":"ssh://operator@gpu-box", "networkCidr":"172.30.180.0/24"});
+            json!({"engine":"ssh://operator@gpu-box", "networkCIDR":"172.30.180.0/24"});
         service["publication"] = json!({"endpoint":format!("http://10.0.0.8:{}/v1",service["serving"]["port"]),"bindAddress":"10.0.0.8"});
         service["memory"]["gpuMemoryGiB"] = json!(64);
     }
@@ -168,7 +168,7 @@ fn ollama_reads_reject_a_vllm_contract() {
         .values_mut()
     {
         service["placement"] =
-            json!({"engine":"ssh://operator@gpu-box", "networkCidr":"172.30.180.0/24"});
+            json!({"engine":"ssh://operator@gpu-box", "networkCIDR":"172.30.180.0/24"});
         service["publication"] = json!({"endpoint":format!("http://10.0.0.8:{}/v1",service["serving"]["port"]),"bindAddress":"10.0.0.8"});
     }
     let document = Document::parse(value.to_string().as_bytes()).unwrap();

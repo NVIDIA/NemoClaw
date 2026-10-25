@@ -89,7 +89,7 @@ The selected engine, any SSH execution setup, and the harness image are [operato
   An external gateway must already be reachable for planning.
 - The deployment graph can also contain an [Ollama proxy](../inference.md#use-external-ollama-through-a-managed-proxy), its credential storage, model observation, and readiness dependencies.
 - Each adapter uses `fabric_agent` after sandbox creation and route setup.
-  A sandbox runs one agent runtime, so a new agent always gets a new sandbox.
+  NemoClaw runs one agent runtime per sandbox, so a new agent always gets a new sandbox.
 - Fabric reports no runtime status ([NVIDIA/NeMo-Fabric#420](https://github.com/NVIDIA/NeMo-Fabric/issues/420)); a runtime that stops is found at its next invocation.
   See [agent runtimes during apply](../usage.md#agent-runtimes-during-apply).
 
