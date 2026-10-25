@@ -50,7 +50,7 @@ impl ManagedService {
             "model":{"name":"llama3:fixture","digest":"a".repeat(64)},
             "serving":{"port":port,"contextTokens":8192},
             "memory":{"gpuMemoryGiB":16},
-            "placement":{"engine":"ssh://operator@service-fixture","networkCidr":"172.30.119.0/24"},
+            "placement":{"engine":"ssh://operator@service-fixture","networkCIDR":"172.30.119.0/24"},
             "publication":{"endpoint":endpoint,"bindAddress":address}
         });
         let document = Document::parse(document.to_string().as_bytes()).unwrap();

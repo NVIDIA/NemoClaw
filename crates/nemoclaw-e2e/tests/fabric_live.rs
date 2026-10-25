@@ -77,10 +77,17 @@ fn bindings(directory: &Path) -> (Value, Row) {
             attributes["id"].clone(),
         );
         if resource["type"] == "openshell_sandbox" {
+            // Convert typed refs to the row fields the gateway client expects.
+            let mut flat = attributes.clone();
+            nemoclaw_openshell::flatten("openshell_sandbox", &mut flat);
+            let row: Row = flat
+                .as_object()
+                .unwrap()
+                .iter()
+                .filter_map(|(key, value)| Some((key.clone(), value.as_str()?.to_owned())))
+                .collect();
             assert!(
-                sandbox
-                    .replace(serde_json::from_value(attributes.clone()).unwrap())
-                    .is_none(),
+                sandbox.replace(row).is_none(),
                 "expected one sandbox binding"
             );
         }
@@ -125,9 +132,11 @@ async fn invoke(
     runtime_id: &str,
     input: &Value,
 ) -> Vec<u8> {
+    // The bridge reads the agent and its runtime from the sandbox's launch record.
+    let binding = fabric_provider::fabric_binding(binding.clone()).unwrap();
     assert_eq!(binding["agent_name"], name);
     let result = client
-        .invoke_agent(binding, runtime_id, input)
+        .invoke_agent(&binding, runtime_id, input)
         .await
         .unwrap();
     serde_json::to_vec(&result).unwrap()
@@ -283,7 +292,7 @@ async fn dependency_upgrade_survives_apply_process_exit() {
     // Wait for the real CLI to exit before probing the hosted agent. This test
     // neither serves inference nor starts a replacement agent through exec.
     let apply = std::process::Command::new(&executable)
-        .args(["apply", "--state-dir"])
+        .args(["apply", "--output", "json", "--state-dir"])
         .arg(&directory)
         .arg(&config)
         .output()

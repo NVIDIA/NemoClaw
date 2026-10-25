@@ -11,6 +11,7 @@ pub struct ServicePlacement {
     /// SSH Docker endpoint used for an explicitly placed service.
     pub engine: String,
     /// Canonical private IPv4 /24 on the selected Docker engine.
+    #[serde(rename = "networkCIDR")]
     pub network_cidr: String,
 }
 

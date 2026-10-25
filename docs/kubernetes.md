@@ -211,7 +211,6 @@ spec:
 - **The server:** NemoClaw's vLLM and Ollama runtime images can run it; `vllm_runtime` and `ollama_runtime` describe the launch and requirements a platform needs ([Direct OpenTofu Usage](provider.md#direct-opentofu-usage)). Readiness is the platform's: point its probe at the server's health endpoint.
 
 Start from [the in-cluster vLLM example](../examples/kubernetes/in-cluster-vllm.yaml), or from [the in-cluster Ollama example](../examples/kubernetes/in-cluster-ollama.yaml) for a server without a key.
-Both examples use OpenClaw, which can't start in an OpenShell sandbox with the pinned Fabric, so apply stops at the agent until [#13372](https://github.com/NVIDIA/NemoClaw/issues/13372) is fixed.
 
 ## Destroy a Deployment
 

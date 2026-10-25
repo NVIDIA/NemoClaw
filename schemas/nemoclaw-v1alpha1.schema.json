@@ -3459,7 +3459,7 @@
           "pattern": "^ssh://",
           "type": "string"
         },
-        "networkCidr": {
+        "networkCIDR": {
           "description": "Canonical private IPv4 /24 on the selected Docker engine.",
           "pattern": "/24$",
           "type": "string"
@@ -3467,7 +3467,7 @@
       },
       "required": [
         "engine",
-        "networkCidr"
+        "networkCIDR"
       ],
       "type": "object"
     },

@@ -58,7 +58,7 @@ fn anthropic_providers_register_messages_without_a_per_model_api() {
         .find(|resource| resource.kind == "agent")
         .unwrap();
     let settings: serde_json::Value = nemoclaw_fabric::agent::compose(&sandbox.values).unwrap();
-    // Fabric v0.5.0 has no per-model API field (#13320); OpenShell routes the
+    // The pinned Fabric has no per-model API field (#13320); OpenShell routes the
     // provider's protocol.
     assert!(settings["models"]["default"].get("api").is_none());
     let registration = resources

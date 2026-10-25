@@ -18,8 +18,7 @@ fn docker() -> Command {
 }
 
 /// The agent image the live tests run, and its Fabric harness: Pi, the
-/// smallest agent image, until OpenClaw can start in an OpenShell sandbox
-/// again (#13372).
+/// smallest agent image.
 pub(super) fn agent() -> (&'static str, &'static str) {
     ("pi", "nvidia.fabric.pi")
 }

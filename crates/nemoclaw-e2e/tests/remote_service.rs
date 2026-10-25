@@ -118,7 +118,7 @@ impl Scenario {
         value["spec"]["gateway"] = json!({"management":"external","endpoint":gateway.endpoint});
         value["spec"]["gateway"]["runtime"]["provider"] = json!("podman");
         value["spec"]["services"]["qwen"]["placement"] =
-            json!({"engine":"ssh://operator@gpu-box","networkCidr":"172.30.119.0/24"});
+            json!({"engine":"ssh://operator@gpu-box","networkCIDR":"172.30.119.0/24"});
         value["spec"]["services"]["qwen"]["publication"] =
             json!({"endpoint":"http://10.0.0.8:18888/v1","bindAddress":"10.0.0.8"});
         value["spec"]["services"]["qwen"]["container"] = json!({

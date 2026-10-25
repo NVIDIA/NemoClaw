@@ -390,7 +390,7 @@ fn managed_plans_query_selected_engine_and_image_without_probe_resources() {
                 .kind
                 .as_str()
         );
-        // Fabric v0.5.0 has no per-model API field (#13320); the adapter
+        // The pinned Fabric has no per-model API field (#13320); the adapter
         // selects the protocol from the model's provider.
         assert!(configuration["models"]["default"].get("api").is_none());
         assert_eq!(configuration["models"]["default"]["provider"], "openai");
@@ -422,7 +422,7 @@ fn arbitrary_fabric_harness_identifier_survives_runtime_compilation() {
             .values,
     )
     .unwrap();
-    // Fabric v0.5.0 has no per-model API field (#13320).
+    // The pinned Fabric has no per-model API field (#13320).
     assert!(settings["models"]["default"].get("api").is_none());
     assert_eq!(
         settings["harness"]["settings"]["custom_option"],

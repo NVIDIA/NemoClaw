@@ -41,6 +41,41 @@
               }
             },
             "type": "object"
+          },
+          "usage": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "additionalProperties": false,
+            "properties": {
+              "nemo_fabric.detailed_token_usage.v1": {
+                "additionalProperties": false,
+                "properties": {
+                  "cache_write_input_tokens": {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "cached_input_tokens": {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "input_tokens": {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "input_tokens_include_cache": {
+                    "type": "boolean"
+                  },
+                  "output_tokens": {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "output_tokens_include_reasoning": {
+                    "type": "boolean"
+                  }
+                },
+                "type": "object"
+              }
+            },
+            "type": "object"
           }
         },
         "model_schema": {
@@ -105,6 +140,11 @@
               "description": "Maximum amount in US dollars that Claude may spend during one invocation.",
               "exclusiveMinimum": 0,
               "type": "number"
+            },
+            "max_buffer_size": {
+              "description": "Size limit the Claude Agent SDK applies to one JSON message from Claude Code. Omit to use the SDK default.",
+              "minimum": 1,
+              "type": "integer"
             },
             "permission_mode": {
               "description": "Claude permission handling mode.",
@@ -1706,8 +1746,8 @@
       ]
     }
   ],
-  "fabric_revision": "5574117feb4be948c1b03f4c36a2fe9a11af910d",
+  "fabric_revision": "67acf1cff0d598fc3e6a32370cd63fc088e86958",
   "schema_version": 2,
-  "source_sha256": "b1a7f2759ea26fd3dcf8136be30045897fa5d7c38a7b96e81afaecdde798e523",
+  "source_sha256": "ca88f31e3bfbc3d3e408410d538a8d4a79e4f65adc6fe987aca929216e6b6d32",
   "targets": []
 }

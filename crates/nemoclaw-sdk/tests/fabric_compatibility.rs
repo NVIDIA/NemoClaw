@@ -276,6 +276,61 @@ fn generated_base_urls_go_only_to_adapters_that_accept_them() {
 }
 
 #[test]
+fn opencode_trusts_the_plain_http_model_hosts_the_deployment_names() {
+    // Fabric's OpenCode adapter refuses a plain-HTTP model endpoint outside
+    // loopback unless its harness settings list the host, so the deployment
+    // lists the hosts of the endpoints it sends.
+    let text = include_str!("../../../examples/fabric-opencode.yaml");
+    let project = |text: &str| {
+        let doc = nemoclaw_sdk::config::Document::parse(text.as_bytes()).unwrap();
+        nemoclaw_sdk::fabric_config::for_sandbox(&doc, doc.sandboxes().next().unwrap()).unwrap()
+    };
+    let config = project(text);
+    assert_eq!(
+        config["models"]["default"]["base_url"],
+        "http://172.20.0.1:11446/v1"
+    );
+    assert_eq!(
+        config["harness"]["settings"]["insecure_http_model_hosts"],
+        json!(["172.20.0.1"]),
+        "{config}"
+    );
+
+    // An authored host stays beside the endpoint's.
+    let authored = text.replace(
+        "        kind: nvidia.fabric.opencode\n",
+        "        kind: nvidia.fabric.opencode\n        settings:\n          insecure_http_model_hosts: [models.example.com]\n",
+    );
+    assert_ne!(authored, text);
+    let config = project(&authored);
+    assert_eq!(
+        config["harness"]["settings"]["insecure_http_model_hosts"],
+        json!(["models.example.com", "172.20.0.1"]),
+        "{config}"
+    );
+
+    // An HTTPS endpoint needs no trust.
+    let https = text.replace(
+        "http://172.20.0.1:11446/v1",
+        "https://inference.example.com/v1",
+    );
+    assert_ne!(https, text);
+    let config = project(&https);
+    assert_eq!(config["harness"]["settings"], json!({}), "{config}");
+
+    // Pi declares no such setting, and Fabric rejects undeclared settings.
+    let pi = include_str!("../../../examples/fabric-pi.yaml");
+    let config = project(pi);
+    assert!(
+        config["models"]["default"]["base_url"]
+            .as_str()
+            .is_some_and(|url| url.starts_with("http://")),
+        "{config}"
+    );
+    assert_eq!(config["harness"]["settings"], json!({}), "{config}");
+}
+
+#[test]
 fn declared_model_extensions_get_the_provider_api_and_authored_fields() {
     // Pi declares `api`, `context_window`, and `max_tokens` as model extensions.
     let pi = nemoclaw_sdk::config::Document::parse(

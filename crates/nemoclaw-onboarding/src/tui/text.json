@@ -125,7 +125,7 @@
     "/spec/services/*/placement/engine": {
       "title": "Service engine"
     },
-    "/spec/services/*/placement/networkCidr": {
+    "/spec/services/*/placement/networkCIDR": {
       "title": "Service network (CIDR)"
     },
     "/spec/services/*/publication/bindAddress": {

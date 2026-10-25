@@ -24,7 +24,7 @@ pub const NEMOCLAW_PROVIDERS: [&str; 4] = ["openshell", "fabric", "vllm", "ollam
 
 /// The kind of the `terraform_data` that holds an agent's configuration. A
 /// changed configuration replaces the agent's sandbox through
-/// `replace_triggered_by`, because Fabric starts one agent runtime per sandbox.
+/// `replace_triggered_by`, rather than starting another runtime beside the first.
 pub const AGENT_CONFIGURATION: &str = "agent_configuration";
 
 /// The address of the `terraform_data` holding a sandbox's agent configuration.
