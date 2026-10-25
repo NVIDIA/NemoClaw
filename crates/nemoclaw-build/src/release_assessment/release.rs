@@ -902,6 +902,15 @@ mod tests {
             let gh = bin.join("gh");
             fs::write(&gh, "#!/bin/sh\ncase \"$1 $2\" in\n'release list') /bin/cat \"$FIXTURE/tags\" ;;\n'release download') tag=$3; out=; while [ $# -gt 0 ]; do [ \"$1\" = --output ] && out=$2; shift; done; [ -f \"$FIXTURE/$tag.json\" ] || exit 1; /bin/cat \"$FIXTURE/$tag.json\" > \"$out\" ;;\n*) exit 2 ;;\nesac\n").unwrap();
             fs::set_permissions(&gh, fs::Permissions::from_mode(0o700)).unwrap();
+            // The Ubuntu runner has sha256sum; macOS has shasum instead.
+            if !["/usr/bin/sha256sum", "/bin/sha256sum"]
+                .iter()
+                .any(|path| std::path::Path::new(path).exists())
+            {
+                let shim = bin.join("sha256sum");
+                fs::write(&shim, "#!/bin/sh\nexec /usr/bin/shasum -a 256 \"$@\"\n").unwrap();
+                fs::set_permissions(&shim, fs::Permissions::from_mode(0o700)).unwrap();
+            }
             let output = Command::new("/bin/bash")
                 .args(["-euo", "pipefail", "-c", script])
                 .env_clear()
