@@ -855,18 +855,37 @@ mod tests {
                 .collect::<String>()
         };
         for (candidates, final_checksum, allowed) in [
-            (vec![("v0.1.1-rc2", reordered.clone())], checksum(&tested), true),
             (
-                vec![("v0.1.1-rc1", changed.clone()), ("v0.1.1-rc2", tested.clone())],
+                vec![("v0.1.1-rc2", reordered.clone())],
                 checksum(&tested),
                 true,
             ),
-            (vec![("v0.1.1-rc1", changed.clone())], checksum(&tested), false),
+            (
+                vec![
+                    ("v0.1.1-rc1", changed.clone()),
+                    ("v0.1.1-rc2", tested.clone()),
+                ],
+                checksum(&tested),
+                true,
+            ),
+            (
+                vec![("v0.1.1-rc1", changed.clone())],
+                checksum(&tested),
+                false,
+            ),
             // A candidate for another version doesn't count.
-            (vec![("v0.1.10-rc1", tested.clone())], checksum(&tested), false),
+            (
+                vec![("v0.1.10-rc1", tested.clone())],
+                checksum(&tested),
+                false,
+            ),
             (vec![], checksum(&tested), false),
             // The final inventory must be the one staging recorded.
-            (vec![("v0.1.1-rc2", tested.clone())], checksum(b"other"), false),
+            (
+                vec![("v0.1.1-rc2", tested.clone())],
+                checksum(b"other"),
+                false,
+            ),
         ] {
             let root = tempfile::tempdir().unwrap();
             let fixture = root.path().join("fixture");
