@@ -275,6 +275,8 @@ export interface BackupOptions {
 
 export interface BackupResult {
   success: boolean;
+  /** Directory and non-directory member counts; symbolic links count as files. */
+  nativeArchiveCounts?: { directories: number; files: number };
   // Only set once the backup has been written to disk — absent on
   // precondition failures like an invalid --name.
   manifest?: RebuildManifest;
@@ -641,12 +643,17 @@ export function validateTarEntries(
 export function rejectSymlinkExtractionTraversal(
   tarArchive: TarListingSource,
   entries: readonly string[],
+  counts?: BackupResult["nativeArchiveCounts"],
 ): string[] {
   const symlinks: Array<{ entry: string; index: number }> = [];
   let index = 0;
   const listingFailure = runTarListing(tarArchive, ["-tvf", "-"], "tar symlink listing", (line) => {
     const entry = entries[index];
     if (entry === undefined) return;
+    if (counts) {
+      const kind = line.startsWith("d") ? "directories" : "files";
+      counts[kind] += 1;
+    }
     if (line.startsWith("l")) symlinks.push({ entry, index });
     index += 1;
   });
@@ -1025,7 +1032,9 @@ function sha256File(filePath: string): string {
   }
 }
 
-function structuredContentIsCredentialFree(fileName: string, raw: string): boolean {
+function structuredContentIsCredentialFree(entry: string, raw: string): boolean {
+  const normalized = path.posix.normalize(entry.replace(/^\.\//u, ""));
+  const fileName = path.posix.basename(normalized).toLowerCase();
   let value: unknown;
   try {
     value = fileName.endsWith(".json") ? JSON.parse(raw) : parseYaml(raw);
@@ -1035,6 +1044,22 @@ function structuredContentIsCredentialFree(fileName: string, raw: string): boole
   if (value === null || value === undefined) return true;
   if (!isConfigValue(value)) return false;
   if (typeof value === "string" && valueLooksLikeSecret(value)) return false;
+  if (nativeStructuredAuthorityKind(normalized, fileName) === "openclaw-config") {
+    const models = isObjectRecord(value) ? value.models : null;
+    const providers = isObjectRecord(models) ? models.providers : null;
+    const inference = isObjectRecord(providers) ? providers.inference : null;
+    if (
+      isObjectRecord(inference) &&
+      inference.apiKey === "${NVIDIA_INFERENCE_API_KEY}" &&
+      inference.baseUrl === "https://integrate.api.nvidia.com/v1"
+    ) {
+      value = structuredClone(value);
+      const clonedModels = (value as Record<string, unknown>).models as Record<string, unknown>;
+      const clonedProviders = clonedModels.providers as Record<string, unknown>;
+      const clonedInference = clonedProviders.inference as Record<string, unknown>;
+      clonedInference.apiKey = "unused";
+    }
+  }
   return isDeepStrictEqual(stripCredentials(value), value);
 }
 
@@ -1588,9 +1613,10 @@ function shouldScanNativeOpaqueAssignments(
   providerProfileSchema: boolean,
 ): boolean {
   const normalized = path.posix.normalize(entry.replace(/^\.\//u, ""));
+  const structuredKind = nativeStructuredAuthorityKind(normalized, fileName);
   return (
     providerProfileSchema ||
-    nativeStructuredAuthorityKind(normalized, fileName) !== null ||
+    structuredKind !== null ||
     fileName === ".env" ||
     fileName.endsWith(".env") ||
     /^\.openclaw\/agents\/[^/]+\/(?:history|session)\.log$/u.test(normalized)
@@ -1604,14 +1630,17 @@ function scanNativeTarFilePayload(
   opaqueAssignments: boolean,
   npmConfig: boolean,
   providerProfileSchema: boolean,
+  openclawConfig: boolean,
   privateKeyHeader: boolean,
   dependencyBinary: boolean,
-): boolean | null {
+  deadlineMs: number | undefined,
+): boolean | null | "deadline" {
   const chunk = Buffer.allocUnsafe(NATIVE_CREDENTIAL_SCAN_CHUNK_BYTES);
   let remaining = size;
   let offset = position;
   let overlap = "";
   while (remaining > 0) {
+    if (backupDeadlineExpired(deadlineMs)) return "deadline";
     const requested = Math.min(remaining, chunk.byteLength);
     const count = readSync(descriptor, chunk, 0, requested, offset);
     if (count === 0) return null;
@@ -1628,7 +1657,9 @@ function scanNativeTarFilePayload(
           /^([ \t]*(?:"secret"|secret)[ \t]*:[ \t]*)(?:true|false)([ \t]*,?[ \t]*(?:#.*)?)$/gimu,
           "$1unused$2",
         )
-      : raw;
+      : openclawConfig
+        ? raw.replace(/("apiKey"\s*:\s*")\$\{NVIDIA_INFERENCE_API_KEY\}(")/gu, "$1unused$2")
+        : raw;
     if (
       textContainsCredential(credentialScanInput, {
         opaqueAssignments,
@@ -1644,7 +1675,12 @@ function scanNativeTarFilePayload(
   return false;
 }
 
-function nativeArchiveRawCredentialViolation(archivePath: string): string | null {
+type NativeArchiveCredentialViolation = string | { entry: string; deadlineExpired: true } | null;
+
+function nativeArchiveRawCredentialViolation(
+  archivePath: string,
+  deadlineMs: number | undefined,
+): NativeArchiveCredentialViolation {
   let descriptor: number | null = null;
   try {
     descriptor = openSync(archivePath, constants.O_RDONLY | constants.O_NOFOLLOW);
@@ -1688,25 +1724,36 @@ function nativeArchiveRawCredentialViolation(archivePath: string): string | null
         nextPath = null;
         if (type === "0" || type === "\0" || type === "7") {
           const fileName = path.posix.basename(entry).toLowerCase();
+          const dcodeSessionsDatabaseRole = dcodeSessionsDatabaseEntryRole(entry);
+          // SQLite inspection of the main database does not cover unused sidecar bytes.
           if (
             !shouldSkipNativeRawCredentialScan(fileName) &&
-            dcodeSessionsDatabaseEntryRole(entry) === null
+            dcodeSessionsDatabaseRole !== "database"
           ) {
             // Dependency source is not a credential authority and generated
             // bundles can contain accidental token-shaped bytes. Package
             // manifests still receive a structure-aware scan below.
             const providerProfileSchema = isBundledProviderProfileSchema(entry);
             const dependencyTree = isNativeDependencyTreeEntry(entry);
+            const openclawConfig =
+              nativeStructuredAuthorityKind(
+                path.posix.normalize(entry.replace(/^\.\//u, "")),
+                fileName,
+              ) === "openclaw-config";
             const violation = scanNativeTarFilePayload(
               descriptor,
               dataOffset,
               size,
-              shouldScanNativeOpaqueAssignments(entry, fileName, providerProfileSchema),
+              dcodeSessionsDatabaseRole === "sidecar" ||
+                shouldScanNativeOpaqueAssignments(entry, fileName, providerProfileSchema),
               fileName === ".npmrc",
               providerProfileSchema,
+              openclawConfig,
               !dependencyTree,
               dependencyTree,
+              deadlineMs,
             );
+            if (violation === "deadline") return { entry, deadlineExpired: true };
             if (violation === null) return "native state credential scan";
             if (violation) return entry;
           }
@@ -1725,8 +1772,9 @@ function nativeArchiveRawCredentialViolation(archivePath: string): string | null
 function nativeArchiveCredentialViolation(
   archivePath: string,
   entries: readonly string[],
-): string | null {
-  const rawViolation = nativeArchiveRawCredentialViolation(archivePath);
+  deadlineMs: number | undefined,
+): NativeArchiveCredentialViolation {
+  const rawViolation = nativeArchiveRawCredentialViolation(archivePath, deadlineMs);
   if (rawViolation) return rawViolation;
   const candidates: Array<{
     entry: string;
@@ -1744,13 +1792,17 @@ function nativeArchiveCredentialViolation(
     const isDependencyPackage = fileName === "package.json" && segments.includes("node_modules");
     const dcodeSessionsDatabaseRole = dcodeSessionsDatabaseEntryRole(entry);
     const isSensitive = isSensitiveFile(fileName);
+    const isOpenClawConfig =
+      nativeStructuredAuthorityKind(path.posix.normalize(entry.replace(/^\.\//u, "")), fileName) ===
+      "openclaw-config";
     const isEnv = fileName === ".env" || fileName.endsWith(".env");
     if (
       !isLockfile &&
       !isDependencyPackage &&
       dcodeSessionsDatabaseRole === null &&
       !isEnv &&
-      !isSensitive
+      !isSensitive &&
+      !isOpenClawConfig
     ) {
       continue;
     }
@@ -1825,7 +1877,7 @@ function nativeArchiveCredentialViolation(
         (!candidate.isLockfile &&
           !candidate.isDependencyPackage &&
           !candidate.isEnv &&
-          !structuredContentIsCredentialFree(candidate.fileName, raw))
+          !structuredContentIsCredentialFree(candidate.entry, raw))
       ) {
         return candidate.entry;
       }
@@ -2413,7 +2465,16 @@ function backupNativeSandboxState(
     // Reject sparse encodings with the bounded raw parser before invoking the
     // platform tar. GNU tar and bsdtar diagnose malformed or unsupported sparse
     // fixtures differently, but the security boundary must be deterministic.
-    const rawArchiveViolation = nativeArchiveRawCredentialViolation(archivePath);
+    const rawArchiveViolation = nativeArchiveRawCredentialViolation(
+      archivePath,
+      options.deadlineMs,
+    );
+    if (rawArchiveViolation && typeof rawArchiveViolation !== "string") {
+      rmSync(backupPath, { recursive: true, force: true });
+      return nativeStateFailure(
+        `Native archive credential scan exceeded the backup deadline at '${rawArchiveViolation.entry}'`,
+      );
+    }
     if (rawArchiveViolation === "native state sparse archive entry") {
       rmSync(backupPath, { recursive: true, force: true });
       return nativeStateFailure(`Native state archive validation failed: ${rawArchiveViolation}`);
@@ -2425,9 +2486,11 @@ function backupNativeSandboxState(
         `Native state archive validation failed: ${validation.violations.join("; ")}`,
       );
     }
+    const nativeArchiveCounts = { directories: 0, files: 0 };
     const symlinkTraversalViolations = rejectSymlinkExtractionTraversal(
       { filePath: archivePath },
       validation.entries,
+      nativeArchiveCounts,
     );
     if (symlinkTraversalViolations.length > 0) {
       rmSync(backupPath, { recursive: true, force: true });
@@ -2451,9 +2514,18 @@ function backupNativeSandboxState(
       rmSync(backupPath, { recursive: true, force: true });
       return nativeStateFailure(`Native state archive sanitation failed: ${sanitationFailure}`);
     }
-    const credentialViolation = nativeArchiveCredentialViolation(archivePath, validation.entries);
+    const credentialViolation = nativeArchiveCredentialViolation(
+      archivePath,
+      validation.entries,
+      options.deadlineMs,
+    );
     if (credentialViolation) {
       rmSync(backupPath, { recursive: true, force: true });
+      if (typeof credentialViolation !== "string") {
+        return nativeStateFailure(
+          `Native archive credential scan exceeded the backup deadline at '${credentialViolation.entry}'`,
+        );
+      }
       return nativeStateFailure(
         `Rebuild was aborted because the native state archive contains credential-bearing or uninspectable content at '${credentialViolation}'. Move credentials to supported OpenShell credential storage and retry.`,
       );
@@ -2533,6 +2605,7 @@ function backupNativeSandboxState(
     return {
       success: true,
       manifest,
+      nativeArchiveCounts,
       backedUpDirs: ["."],
       failedDirs: [],
       backedUpFiles: [],

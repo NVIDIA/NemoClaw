@@ -21,11 +21,22 @@ import {
   projectProtectedOpenShellSdk,
 } from "./protected-openshell-projection.mts";
 
+import {
+  readOpenShellTrustRegistry,
+  resolveOpenShellTrustRegistry,
+} from "../../scripts/checks/extract-installer-pins.mts";
+import { parseOpenShellTrustRegistry } from "../../scripts/checks/openshell-trust-data.mts";
+import {
+  CANDIDATE_OPENSHELL_SOURCES,
+  CANDIDATE_OPENSHELL_TRUST_PATH,
+  registryCoveredByTrusted,
+  reviewedCandidateOpenShellTrust,
+} from "./candidate-openshell-trust.mts";
+import { type UpgradeRequest } from "./candidate-upgrade-admission.mts";
+import { githubRequest } from "./base-image-publication.mts";
+
 const SOURCE_PATHS = {
-  blueprintSource: "nemoclaw-blueprint/blueprint.yaml",
-  installerSource: "scripts/install-openshell.sh",
-  brevInstallerSource: "scripts/brev-launchable-ci-cpu.sh",
-  supervisorRuntimeSource: "src/lib/onboard/docker-driver-gateway-runtime.ts",
+  ...CANDIDATE_OPENSHELL_SOURCES,
   featureGateSource: "src/lib/onboard/openshell-feature-gate.ts",
   packageSource: "package.json",
   lockSource: "package-lock.json",
@@ -38,6 +49,7 @@ export interface ProtectedOpenShellWorkspace {
   candidateRoot: string;
   workflowSha: string;
   candidateSha: string;
+  admission?: { prNumber: number; baseSha: string; request: UpgradeRequest };
 }
 
 function git(root: string, args: string[]): string {
@@ -119,8 +131,53 @@ function replaceSource(path: string, source: string, mode: number): void {
   }
 }
 
+/** Recheck approval for each phase; local receipts cannot authorize new executable templates. */
+async function candidateReleases(
+  input: ProtectedOpenShellWorkspace,
+  candidate: Record<keyof typeof SOURCE_PATHS, string>,
+) {
+  const registryPath = CANDIDATE_OPENSHELL_TRUST_PATH;
+  const present = git(input.candidateRoot, [
+    "ls-tree",
+    "-z",
+    input.candidateSha,
+    "--",
+    registryPath,
+  ]);
+  const registrySource = present
+    ? committedSource(input.candidateRoot, input.candidateSha, registryPath)
+    : undefined;
+  const registry =
+    registrySource === undefined
+      ? { schemaVersion: 1 as const, releases: [], revokedTemplateSha256: [] }
+      : parseOpenShellTrustRegistry(registrySource);
+  const trusted = readOpenShellTrustRegistry();
+  if (registryCoveredByTrusted(registry, trusted)) return resolveOpenShellTrustRegistry(trusted);
+  if (!input.admission)
+    throw new Error("Candidate OpenShell trust requires live upgrade admission");
+  const approved = await reviewedCandidateOpenShellTrust(
+    {
+      prNumber: input.admission.prNumber,
+      baseSha: input.admission.baseSha,
+      candidateSha: input.candidateSha,
+    },
+    input.admission.request,
+  );
+  if (registrySource !== approved.registrySource)
+    throw new Error("Committed candidate registry differs from the approved commit");
+  for (const key of Object.keys(
+    CANDIDATE_OPENSHELL_SOURCES,
+  ) as (keyof typeof CANDIDATE_OPENSHELL_SOURCES)[]) {
+    if (candidate[key] !== approved.sources[key])
+      throw new Error(
+        `Committed candidate source differs from the approved commit: ${CANDIDATE_OPENSHELL_SOURCES[key]}`,
+      );
+  }
+  return approved.releases;
+}
+
 /** Apply only reviewed modules and release literals to an isolated trusted workflow checkout. */
-export function manageProtectedOpenShellWorkspace(
+export async function manageProtectedOpenShellWorkspace(
   operation: "prepare" | "verify" | "restore",
   input: ProtectedOpenShellWorkspace,
 ) {
@@ -134,14 +191,19 @@ export function manageProtectedOpenShellWorkspace(
       committedSource(input.candidateRoot, input.candidateSha, path),
     ]),
   ) as Record<keyof typeof SOURCE_PATHS, string>;
-  const projected = projectProtectedOpenShellSources(candidate, {
-    blueprintSource: committedSource(
-      input.trustedRoot,
-      input.workflowSha,
-      SOURCE_PATHS.blueprintSource,
-    ),
-    versionSource: committedSource(input.trustedRoot, input.workflowSha, VERSION_PATH),
-  });
+  const releases = await candidateReleases(input, candidate);
+  const projected = projectProtectedOpenShellSources(
+    candidate,
+    {
+      blueprintSource: committedSource(
+        input.trustedRoot,
+        input.workflowSha,
+        SOURCE_PATHS.blueprintSource,
+      ),
+      versionSource: committedSource(input.trustedRoot, input.workflowSha, VERSION_PATH),
+    },
+    releases,
+  );
   const sdk = projectProtectedOpenShellSdk(
     candidate,
     {
@@ -231,11 +293,21 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   }
   console.log(
     JSON.stringify(
-      manageProtectedOpenShellWorkspace(operation as "prepare" | "verify" | "restore", {
+      await manageProtectedOpenShellWorkspace(operation as "prepare" | "verify" | "restore", {
         trustedRoot: process.env.GITHUB_WORKSPACE!,
         candidateRoot: process.env.NEMOCLAW_E2E_TESTED_ROOT!,
         workflowSha: process.env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_WORKFLOW_SHA!,
         candidateSha: process.env.CHECKOUT_SHA!,
+        admission: {
+          prNumber: Number(process.env.UPGRADE_PR_NUMBER),
+          baseSha: process.env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_BASE_SHA ?? "",
+          request: (url) => {
+            const token = process.env.GITHUB_TOKEN;
+            if (!token)
+              throw new Error("Candidate upgrade admission requires authenticated GitHub access");
+            return githubRequest(url, token);
+          },
+        },
       }),
       null,
       2,

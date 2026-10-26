@@ -800,7 +800,7 @@ describe("LangChain Deep Agents Code managed Nemotron profile plugin (#6424)", (
   it.each(
     Array.from(
       [
-        path.join(agentDir, "generate-config.ts"),
+        path.join(repoRoot, "src/lib/inference/managed-dcode/identity.ts"),
         path.join(agentDir, "patch-managed-deepagents-code.py"),
         validatorPath,
         pluginSourcePath,

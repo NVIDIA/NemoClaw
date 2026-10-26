@@ -18,8 +18,10 @@ import {
 import {
   finalizeManagedLlamaCppLifecycleCleanup,
   prepareManagedLlamaCppLifecycleCleanup,
+  prepareManagedLlamaCppRuntimeCleanupForSandbox,
 } from "../local-model-profile/cleanup";
 import {
+  assertManagedLlamaCppResumeSupported,
   rehydrateManagedLlamaCppLifecycle,
   requireStationGb300StartupGpuAuthority,
   type ManagedLlamaCppLifecycleRehydration,
@@ -37,6 +39,7 @@ export interface ManagedLlamaCppLifecycleAdapterOptions {
   readonly operation?: HostLocalInferenceOperation;
   readonly finalizeCleanup?: typeof finalizeManagedLlamaCppLifecycleCleanup;
   readonly prepareCleanup?: typeof prepareManagedLlamaCppLifecycleCleanup;
+  readonly prepareRuntimeCleanup?: typeof prepareManagedLlamaCppRuntimeCleanupForSandbox;
   readonly rehydrate?: typeof rehydrateManagedLlamaCppLifecycle;
 }
 
@@ -85,8 +88,14 @@ export function createManagedLlamaCppLifecycleAdapter(
   const paths = managedLlamaCppStatePaths(homeDir, gatewayPort);
   const finalizeCleanup = options.finalizeCleanup ?? finalizeManagedLlamaCppLifecycleCleanup;
   const prepareCleanup = options.prepareCleanup ?? prepareManagedLlamaCppLifecycleCleanup;
-  const cleanupOnlyAdapter = (): ManagedLlamaCppLifecycleAdapter => {
+  const prepareRuntimeCleanup =
+    options.prepareRuntimeCleanup ?? prepareManagedLlamaCppRuntimeCleanupForSandbox;
+  const cleanupOnlyAdapter = (
+    existingOperation?: HostLocalInferenceOperation,
+    startupFailure?: unknown,
+  ): ManagedLlamaCppLifecycleAdapter => {
     const operation =
+      existingOperation ??
       options.operation ??
       (() => {
         throw new Error("Managed llama.cpp cleanup retry requires its exact provider operation.");
@@ -109,6 +118,7 @@ export function createManagedLlamaCppLifecycleAdapter(
       );
     };
     const unavailable = (): never => {
+      if (startupFailure instanceof Error) throw startupFailure;
       throw new Error("Managed llama.cpp private lifecycle state is unavailable.");
     };
     const runtime: HostLocalInferenceRuntime = Object.freeze({
@@ -124,12 +134,24 @@ export function createManagedLlamaCppLifecycleAdapter(
       prepareDestroy: prepareExactCleanup,
       destroy(value: HostLocalInferenceReceipt) {
         const receipt = prepareExactCleanup(value);
-        const finalized = finalizeCleanup(options.runtimeOwnerSandboxName, receipt, {
+        const cleanupOptions = {
           gatewayPort,
           homeDir,
           ...(options.environment === undefined ? {} : { env: options.environment }),
           engine: operation.engine,
-        });
+        };
+        const prepared = prepareRuntimeCleanup(options.runtimeOwnerSandboxName, cleanupOptions);
+        let finalized: ReturnType<typeof finalizeManagedLlamaCppLifecycleCleanup>;
+        try {
+          // Preparation acquires the existing owner's lease. Recheck the retained
+          // registry receipt under that lease before allowing any removal.
+          prepareExactCleanup(receipt);
+          finalized = prepared
+            ? prepared.cleanup()
+            : finalizeCleanup(options.runtimeOwnerSandboxName, receipt, cleanupOptions);
+        } finally {
+          prepared?.abort();
+        }
         if (!finalized.ok) throw new Error(finalized.reason);
         return Object.freeze({
           status: finalized.removed.length > 0 ? ("removed" as const) : ("already-absent" as const),
@@ -163,7 +185,8 @@ export function createManagedLlamaCppLifecycleAdapter(
     if (
       error instanceof Error &&
       (error.message === "Managed llama.cpp catalog authority changed; rerun onboarding." ||
-        error.message === "Managed llama.cpp recipe authority changed; rerun onboarding.")
+        error.message === "Managed llama.cpp recipe authority changed; rerun onboarding." ||
+        error.message === "Managed llama.cpp declarative authority is unavailable.")
     ) {
       // A newly pinned image changes catalog authority. Exact receipt cleanup must remain available.
       return cleanupOnlyAdapter();
@@ -177,6 +200,11 @@ export function createManagedLlamaCppLifecycleAdapter(
   );
   if (rehydrated.selection.recipe.spec.model.servedName !== options.expectedModel) {
     throw new Error("Managed llama.cpp private model differs from registry lifecycle authority.");
+  }
+  try {
+    assertManagedLlamaCppResumeSupported(rehydrated.selection);
+  } catch (error) {
+    return cleanupOnlyAdapter(rehydrated.operation, error);
   }
   const providerRuntime = rehydrated.lifecycle.runtime;
   if (
@@ -220,6 +248,7 @@ export function createManagedLlamaCppLifecycleAdapter(
     receipt,
     runtime,
     prepareStartup(): HostLocalInferencePreparedStartup {
+      assertManagedLlamaCppResumeSupported(rehydrated.selection);
       requireStationGb300StartupGpuAuthority(rehydrated.owner, rehydrated.selection);
       const atEntry = runtime.inspectManaged(receipt);
       requireExactReceipt(

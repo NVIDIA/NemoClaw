@@ -83,6 +83,7 @@ check_openshell_release_assets() {
   local pin_records parser_error parser_errors record_type parsed_version release_version record_extra
   local selected_release_version="" release_versions="" version_pin_records
   local count brev_count published_count expected_published_count failures=0
+  local -a parser_command=()
   local -a manifest_specs=()
   workspace=$(mktemp -d)
   trap 'rm -rf "$workspace"' RETURN
@@ -101,13 +102,17 @@ check_openshell_release_assets() {
   # removalCondition: replace this parser when both installers directly consume
   # one canonical machine-readable pin manifest.
   parser_errors="${workspace}/pin-parser-errors.txt"
-  if ! pin_records=$(node \
-    "${CHECKER_ROOT}/checks/extract-installer-pins.mts" \
-    --blueprint "${REPO_ROOT}/nemoclaw-blueprint/blueprint.yaml" \
-    --installer "$installer" \
-    --brev-installer "$brev_installer" \
-    --supervisor-runtime "$supervisor_runtime" \
-    --format release-tsv 2>"$parser_errors"); then
+  parser_command=(node "${CHECKER_ROOT}/checks/extract-installer-pins.mts"
+    --blueprint "${REPO_ROOT}/nemoclaw-blueprint/blueprint.yaml"
+    --installer "$installer"
+    --brev-installer "$brev_installer"
+    --supervisor-runtime "$supervisor_runtime"
+    --format release-tsv)
+  if [[ -n "${UPGRADE_PR_NUMBER:-}" ]]; then
+    export UPGRADE_CANDIDATE_ROOT="$REPO_ROOT"
+    parser_command=(node "${CHECKER_ROOT}/../tools/e2e/candidate-openshell-trust.mts")
+  fi
+  if ! pin_records=$("${parser_command[@]}" 2>"$parser_errors"); then
     echo "  STALE: unable to extract the OpenShell installer pin tables with trusted parser code."
     while IFS= read -r parser_error; do
       echo "    ${parser_error}"

@@ -8,8 +8,6 @@ import { isSafeLlamaCppServedModelAlias } from "./contract";
 
 export const LLAMA_CPP_HOST_LOCAL_CONTAINER_API_KEY_PATH =
   "/run/secrets/llama-cpp-api-key" as const;
-export const LLAMA_CPP_HOST_LOCAL_REQUEST_GUARD_PATH =
-  "/usr/local/bin/nemoclaw-llama-cpp-request-guard" as const;
 export const LLAMA_CPP_HOST_LOCAL_SERVER_PATH = "/usr/local/bin/llama-server" as const;
 
 const SAFE_HOST_PATH = /^\/(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+$/u;
@@ -73,14 +71,7 @@ export interface LlamaCppHostLocalLaunchContract {
       readonly value: "f16" | "q8_0" | "q4_0";
     };
     readonly limits: {
-      readonly maxRequestBodyBytes: number;
-      readonly maxRequestHeaderBytes: number;
-      readonly maxOutputTokens: number;
       readonly requestTimeoutSeconds: number;
-      readonly shutdownTimeoutSeconds: number;
-    };
-    readonly requestGuard: {
-      readonly upstreamPort: number;
     };
     readonly microBatchSize: number;
     readonly port: number;
@@ -105,8 +96,10 @@ export interface LlamaCppHostLocalRuntimeBindings {
   readonly imageReference: string;
   /** Exact device selected from the provider-bound CUDA proof on Station WSL. */
   readonly gpuDeviceUuid?: string;
-  /** Fixed host bridge port for product installs; omitted only by isolated qualification. */
+  /** Fixed host bridge port for product installs; omitted by isolated qualification. */
   readonly hostPort?: number;
+  /** Docker Desktop exposes the existing bridge through the distro loopback. */
+  readonly bridgeLoopbackOnly?: true;
   readonly model: VerifiedLocalModelArtifact;
   /** The caller must create this named Docker network with `--internal` before launch. */
   readonly network: {
@@ -184,33 +177,10 @@ function validateContract(contract: LlamaCppHostLocalLaunchContract): void {
   positiveInteger(contract.serve.batchSize, "llama.cpp batch size");
   positiveInteger(contract.serve.microBatchSize, "llama.cpp micro-batch size");
   positiveInteger(
-    contract.serve.limits.maxRequestBodyBytes,
-    "llama.cpp maximum request body bytes",
-    64 * 1_024 * 1_024,
-  );
-  positiveInteger(
-    contract.serve.limits.maxRequestHeaderBytes,
-    "llama.cpp maximum request header bytes",
-    1_024 * 1_024,
-  );
-  positiveInteger(
-    contract.serve.limits.maxOutputTokens,
-    "llama.cpp maximum output tokens",
-    1_024 * 1_024,
-  );
-  positiveInteger(contract.serve.limits.requestTimeoutSeconds, "llama.cpp request timeout", 86_400);
-  positiveInteger(
-    contract.serve.limits.shutdownTimeoutSeconds,
-    "llama.cpp shutdown timeout",
+    contract.serve.limits.requestTimeoutSeconds,
+    "llama.cpp native socket timeout",
     86_400,
   );
-  positiveInteger(contract.serve.requestGuard.upstreamPort, "llama.cpp upstream port", 65_535);
-  if (
-    contract.serve.limits.maxOutputTokens > contract.serve.contextSize ||
-    contract.serve.requestGuard.upstreamPort === contract.serve.port
-  ) {
-    throw new Error("llama.cpp request-guard limits or ports are invalid");
-  }
   if (contract.serve.microBatchSize > contract.serve.batchSize) {
     throw new Error("llama.cpp micro-batch size exceeds the batch size");
   }
@@ -417,57 +387,6 @@ export function consumeDockerLoopbackPublishAuthority(
   consumedDockerLoopbackPublishAuthorities.add(authority);
 }
 
-/** Activate the request guard only for an image that declares the owned guard artifact. */
-export function buildLlamaCppRequestGuardDockerArgv(
-  contract: LlamaCppHostLocalLaunchContract,
-  bindings: LlamaCppHostLocalRuntimeBindings,
-): string[] {
-  validateContract(contract);
-  validateBindings(contract, bindings);
-  return [
-    ...buildLlamaCppHostLocalDockerRunArgv(contract, bindings),
-    "--entrypoint",
-    LLAMA_CPP_HOST_LOCAL_REQUEST_GUARD_PATH,
-    bindings.imageReference,
-    ...buildLlamaCppRequestGuardCommandArgv(contract),
-  ];
-}
-
-/** Reconstruct the immutable request-guard command for lifecycle inspection. */
-export function buildLlamaCppRequestGuardCommandArgv(
-  contract: LlamaCppHostLocalLaunchContract,
-): readonly string[] {
-  validateContract(contract);
-  const { limits } = contract.serve;
-  return Object.freeze([
-    "--listen-host",
-    "0.0.0.0",
-    "--listen-port",
-    String(contract.serve.port),
-    "--upstream-host",
-    "127.0.0.1",
-    "--upstream-port",
-    String(contract.serve.requestGuard.upstreamPort),
-    "--max-request-body-bytes",
-    String(limits.maxRequestBodyBytes),
-    "--max-request-header-bytes",
-    String(limits.maxRequestHeaderBytes),
-    "--max-output-tokens",
-    String(limits.maxOutputTokens),
-    "--request-timeout-seconds",
-    String(limits.requestTimeoutSeconds),
-    "--shutdown-timeout-seconds",
-    String(limits.shutdownTimeoutSeconds),
-    "--",
-    LLAMA_CPP_HOST_LOCAL_SERVER_PATH,
-    ...buildLlamaCppHostLocalServerArgvForAddress(contract, {
-      host: "127.0.0.1",
-      maxOutputTokens: limits.maxOutputTokens,
-      port: contract.serve.requestGuard.upstreamPort,
-    }),
-  ]);
-}
-
 function buildLlamaCppHostLocalDockerRunArgv(
   contract: LlamaCppHostLocalLaunchContract,
   bindings: LlamaCppHostLocalRuntimeBindings,
@@ -532,7 +451,6 @@ function buildLlamaCppHostLocalServerArgvForAddress(
   contract: LlamaCppHostLocalLaunchContract,
   address: {
     readonly host: "0.0.0.0" | "127.0.0.1";
-    readonly maxOutputTokens?: number;
     readonly port: number;
   },
 ): readonly string[] {
@@ -581,9 +499,6 @@ function buildLlamaCppHostLocalServerArgvForAddress(
     ...(serve.reasoning
       ? ["--reasoning-format", serve.reasoning.format, "--reasoning", serve.reasoning.mode]
       : []),
-    ...(address.maxOutputTokens === undefined
-      ? []
-      : ["--n-predict", String(address.maxOutputTokens)]),
     "--api-key-file",
     LLAMA_CPP_HOST_LOCAL_CONTAINER_API_KEY_PATH,
     "--metrics",

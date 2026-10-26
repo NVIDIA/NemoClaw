@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 import type {
   ManagedClusterConfirmedManagedServingCapability,
@@ -107,7 +110,16 @@ function successfulStart(reusedExisting = false) {
 }
 
 describe("managed-cluster vLLM installer selection", () => {
-  beforeEach(() => vi.restoreAllMocks());
+  let fixtureHome: string;
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    fixtureHome = mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cluster-install-"));
+    vi.spyOn(os, "homedir").mockReturnValue(fixtureHome);
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    rmSync(fixtureHome, { recursive: true, force: true });
+  });
 
   it("leaves non-Spark and conflict-free explicit legacy vLLM intent untouched", async () => {
     const probeCapability = vi.fn(() => ({

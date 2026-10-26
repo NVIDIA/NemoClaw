@@ -3,7 +3,7 @@
 #
 # NemoClaw sandbox base image — expensive, rarely-changing layers.
 #
-# Contains: node:24.18.1-trixie-slim, apt packages, setpriv, user/group setup,
+# Contains: node:24.22.1-trixie-slim, apt packages, setpriv, user/group setup,
 # .openclaw directory structure, OpenClaw CLI, and PyYAML.
 #
 # Built on main merges and pushed to GHCR. The production Dockerfile
@@ -15,7 +15,7 @@
 # structural (users, directories, symlinks) that doesn't depend on
 # NemoClaw application code. Specifically:
 #
-#   node:24.18.1-trixie-slim — pinned by sha256 digest, checked weekly by
+#   node:24.22.1-trixie-slim — pinned by sha256 digest, checked weekly by
 #                          docker-pin-check.yaml
 #   apt packages        — pinned to Debian trixie versions
 #   util-linux          — pinned Debian package providing setpriv
@@ -40,7 +40,7 @@
 #   1. OpenClaw CLI version bump    — update OPENCLAW_VERSION default below, or override via --build-arg / workflow_dispatch
 #   2. New apt package needed       — add it to the apt-get install list
 #   3. util-linux upgrade           — update the pinned apt package version
-#   4. node:24.18.1-trixie-slim digest rotated — run:
+#   4. node:24.22.1-trixie-slim digest rotated — run:
 #        DOCKERFILE=Dockerfile.base scripts/update-docker-pin.sh
 #      Then repeat with DOCKERFILE=<path> for each remaining Dockerfile containing the pin.
 #   5. npm upgrade                  — update upgrade-bundled-npm.mts
@@ -57,10 +57,10 @@ ARG PERL_VERSION=5.44.0
 ARG PERL_SHA256=505cf43912e9480495c344c70260452e32aa2a73c546a026b3f100053b23ce91
 ARG PERL_PACKAGE_REVISION=1nemoclaw1
 
-# Debian trixie has not published libssh2 or Python packages containing the
-# reviewed upstream fixes. Build native packages once and install the same
+# Preserve NemoClaw libssh2 hardening on the Debian security fixes and build
+# the reviewed Python backport. Build native packages once and install the same
 # artifacts into the managed OpenClaw image.
-FROM node:24.18.1-trixie-slim@sha256:ac39e4b5fcb2b1b34b20364fd58b2e898f3bb80731ee6f62a7536f9df3d6aadc AS native-security-builder
+FROM node:24.22.1-trixie-slim@sha256:43b9ba1142b8dcf33fa8f922ca1be85714adc444e0586c7cf7726daaeabc1bea AS native-security-builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential=12.12 \
@@ -77,6 +77,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY scripts/security/build-native-security-packages.sh /scripts/security/build-native-security-packages.sh
 COPY scripts/security/patches/libssh2-1.11.1-cve-2026.patch /scripts/security/patches/libssh2-1.11.1-cve-2026.patch
 COPY scripts/security/patches/python3.13-htmlparser-cve-2026-15308.patch /scripts/security/patches/python3.13-htmlparser-cve-2026-15308.patch
+COPY scripts/security/patches/zlib-1.3.1-write-error.patch /scripts/security/patches/zlib-1.3.1-write-error.patch
+COPY scripts/security/zlib-write-error.c /scripts/security/zlib-write-error.c
+COPY scripts/security/libssh2-sftp-response-regression.c /scripts/security/libssh2-sftp-response-regression.c
 
 RUN bash /scripts/security/build-native-security-packages.sh /out
 
@@ -99,7 +102,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN bash /scripts/security/build-perl-security-packages.sh \
     /out "${PERL_VERSION}" "${PERL_SHA256}" "${PERL_PACKAGE_REVISION}"
 
-FROM node:24.18.1-trixie-slim@sha256:ac39e4b5fcb2b1b34b20364fd58b2e898f3bb80731ee6f62a7536f9df3d6aadc
+FROM node:24.22.1-trixie-slim@sha256:43b9ba1142b8dcf33fa8f922ca1be85714adc444e0586c7cf7726daaeabc1bea
 
 COPY --from=perl-builder /out /tmp/nemoclaw-native-security
 
@@ -130,7 +133,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         nftables=1.1.3-1 \
         libcap2-bin=1:2.75-10+deb13u1+b3 \
         libssl3t64=3.5.7-1~deb13u3 \
-        util-linux=2.41-5 \
+        libc6=2.41-12+deb13u4 \
+        libc-bin=2.41-12+deb13u4 \
+        bsdutils=1:2.41.5-0+deb13u1 \
+        login=1:4.16.0-2+really2.41.5-0+deb13u1 \
+        mount=2.41.5-0+deb13u1 \
+        util-linux=2.41.5-0+deb13u1 \
+        libblkid1=2.41.5-0+deb13u1 \
+        liblastlog2-2=2.41.5-0+deb13u1 \
+        libmount1=2.41.5-0+deb13u1 \
+        libsmartcols1=2.41.5-0+deb13u1 \
+        libuuid1=2.41.5-0+deb13u1 \
+        libpcre2-8-0=10.46-1~deb13u3 \
+        libsqlite3-0=3.46.1-7+deb13u2 \
+        gzip=1.13-1+deb13u1 \
         procps=2:4.0.4-9 \
         e2fsprogs=1.47.2-3+b12 \
         lsof=4.99.4+dfsg-2 \
@@ -213,17 +229,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         "$security_deb_dir/vim-tiny.deb" \
         /tmp/nemoclaw-native-security/libssh2-1t64.deb \
         /tmp/nemoclaw-native-security/nemoclaw-python3.13-htmlparser-fix.deb \
-    && test "$(dpkg-query -W -f='${Version}' libexpat1)" = "2.8.3-1" \
-    && test "$(dpkg-query -W -f='${Version}' libevent-core-2.1-7t64)" = "2.1.13-stable-1" \
-    && test "$(dpkg-query -W -f='${Version}' libonig5)" = "6.9.9-1+b1" \
-    && test "$(dpkg-query -W -f='${Version}' libjq1)" = "1.8.2-1" \
-    && test "$(dpkg-query -W -f='${Version}' jq)" = "1.8.2-1" \
-    && test "$(dpkg-query -W -f='${Version}' vim-common)" = "2:9.2.0858-1" \
-    && test "$(dpkg-query -W -f='${Version}' vim-tiny)" = "2:9.2.0858-1" \
-    && test "$(dpkg-query -W -f='${Version}' libssh2-1t64)" = "1.11.1-1+deb13u1+nemoclaw2" \
-    && test "$(dpkg-query -W -f='${Version}' libssl3t64)" = "3.5.7-1~deb13u3" \
+        /tmp/nemoclaw-native-security/zlib1g.deb \
     && test "$(dpkg-query -W -f='${Version}' lsof)" = "4.99.4+dfsg-2" \
-    && test "$(dpkg-query -W -f='${Version}' nemoclaw-python3.13-htmlparser-fix)" = "3.13.5-2+deb13u5+nemoclaw1" \
     && test "$(dpkg-query -W -f='${Version}' perl)" = "$perl_version_before" \
     && test "$(jq --version)" = "jq-1.8.2" \
     && ldd /usr/bin/jq | grep -Eq 'libonig[.]so[.]5' \
@@ -241,33 +248,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && vim.tiny --version | head -n 1 | grep -Eq '^VIM - Vi IMproved 9[.]2 ' \
     && vim.tiny --version | grep -Fx 'Included patches: 1-858' \
     && install -d -o root -g root -m 0755 /usr/local/share/nemoclaw \
-    && printf '%s\n' \
-        "architecture=$arch" \
-        "libexpat1=2.8.3-1" \
-        "libonig5=6.9.9-1+b1" \
-        "libjq1=1.8.2-1" \
-        "jq=1.8.2-1" \
-        "vim-common=2:9.2.0858-1" \
-        "vim-tiny=2:9.2.0858-1" \
-        "libssh2-1t64=1.11.1-1+deb13u1+nemoclaw2" \
-        "libssl3t64=3.5.7-1~deb13u3" \
-        "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u5+nemoclaw1" \
-        > /usr/local/share/nemoclaw/security-packages.txt \
-    && chown root:root /usr/local/share/nemoclaw/security-packages.txt \
-    && chmod 0644 /usr/local/share/nemoclaw/security-packages.txt \
     && rm -rf "$security_deb_dir" \
     && rm -rf /var/lib/apt/lists/* \
     && ln -s /usr/bin/python3 /usr/local/bin/python
 
-RUN apt-get update \
+# Finish the security inventory after installing the reviewed Perl packages.
+RUN --mount=type=bind,source=scripts/security/security-package-inventory.mts,target=/tmp/nemoclaw-security/scripts/security/security-package-inventory.mts \
+    --mount=type=bind,source=src/lib/sandbox-base-image/security-package-specs.ts,target=/tmp/nemoclaw-security/src/lib/sandbox-base-image/security-package-specs.ts \
+    apt-get update \
     && apt-get install -y --no-install-recommends \
         /tmp/nemoclaw-native-security/perl-base.deb \
         /tmp/nemoclaw-native-security/perl.deb \
     && rm -rf /tmp/nemoclaw-native-security \
     && rm -rf /var/lib/apt/lists/* \
-    && test "$(dpkg-query -W -f='${Version}' perl-base)" = "5.44.0-1nemoclaw1" \
-    && test "$(dpkg-query -W -f='${Version}' perl)" = "5.44.0-1nemoclaw1" \
     && test "$(perl -e 'print $^V')" = "v5.44.0" \
+    && perl -MDebconf::Log -e 1 \
     && test "$(perl -MSocket -e 'print Socket->VERSION')" = "2.041" \
     && test "$(perl -MStorable -e 'print Storable->VERSION')" = "3.41" \
     && test "$(perl -MHTTP::Tiny -e 'print HTTP::Tiny->VERSION')" = "0.096" \
@@ -278,12 +273,12 @@ RUN apt-get update \
         'eval { pack_ip_mreq_source("\0" x 4, "\0" x 3) }; die "short source accepted" unless $@ =~ /Bad arg length/' \
     && perl -e \
         'my $x = join "|", "aaa".."mzz"; my $y = join "|", "naa".."zzz"; use re "Debug"; "fnord" =~ m/(?:$x)|(?:$y)/' \
-    && printf '%s\n' \
-        "perl-base=5.44.0-1nemoclaw1" \
-        "perl=5.44.0-1nemoclaw1" \
-        "libevent-core-2.1-7t64=2.1.13-stable-1" \
-        >> /usr/local/share/nemoclaw/security-packages.txt \
+    && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON /tmp/nemoclaw-security/scripts/security/security-package-inventory.mts inventory openclaw "$(dpkg --print-architecture)" \
+        > /usr/local/share/nemoclaw/security-packages.txt \
+    && chown root:root /usr/local/share/nemoclaw/security-packages.txt \
     && chmod 0444 /usr/local/share/nemoclaw/security-packages.txt \
+    && security_probe="$(node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON /tmp/nemoclaw-security/scripts/security/security-package-inventory.mts probe openclaw)" \
+    && sh -ec "$security_probe" \
     && git --version \
     && test -z "$(dpkg --audit)"
 
@@ -442,7 +437,7 @@ COPY scripts/lib/reviewed-npm-identity.mts /scripts/lib/reviewed-npm-identity.mt
 COPY scripts/upgrade-bundled-npm.mts /scripts/upgrade-bundled-npm.mts
 COPY ci/reviewed-npm-audit.json /ci/reviewed-npm-audit.json
 
-# npm 11.16.0 in the pinned Node 24.18.1 image bundles affected tar 7.5.15.
+# The pinned Node image ships npm 11.19.1; verify its bundled tar before use.
 # Replace it before npm processes the reviewed npm archive.
 RUN node /scripts/patch-bundled-npm-tar.mts \
     --npm-root /usr/local/lib/node_modules/npm
@@ -516,7 +511,7 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
     OPENCLAW_LOCK_SHA256=none-legacy-fixture; \
     OPENCLAW_RECIPE='ignore-scripts+reviewed-lifecycle-v1'; \
     if [ "$OPENCLAW_VERSION" = "2026.9.2" ]; then \
-        OPENCLAW_LOCK_SHA256=b44c7f475fe36a378ebc078dbf068bd225f8470002834ce1308872049213b633; \
+        OPENCLAW_LOCK_SHA256=0b1253c6570f55881623961c856b430a17d4271f5efe8c5beffa7ac0fc8d0199; \
         ACTUAL_OPENCLAW_LOCK_SHA256="$(sha256sum /usr/local/lib/nemoclaw/openclaw-runtime/package-lock.json | awk '{print $1}')"; \
         [ "$ACTUAL_OPENCLAW_LOCK_SHA256" = "$OPENCLAW_LOCK_SHA256" ] \
             || { echo "Error: OpenClaw lock SHA-256 mismatch (expected $OPENCLAW_LOCK_SHA256, found $ACTUAL_OPENCLAW_LOCK_SHA256)"; exit 1; }; \

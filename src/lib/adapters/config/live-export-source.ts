@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import os from "node:os";
+import { normalizeNativeLocalProviderAttachment } from "../../inference/native-local/contract";
 import {
   providerContract,
   matchesProviderMetadata,
@@ -161,7 +162,9 @@ function inferenceTopology(
 function profileContractFor(
   routeProvider: string,
   nativeReceipt: NativeInferenceReceipt | undefined,
-): "native-nvidia" | "native-hosted" | "openai" | undefined {
+): Parameters<ReturnType<typeof createProviders>["get"]>[0]["profileContract"] {
+  const local = normalizeNativeLocalProviderAttachment(nativeReceipt);
+  if (local) return { kind: "native-local", binding: local };
   if (nativeReceipt)
     return nativeReceipt.profileId === "nemoclaw-nvidia-inference-v1"
       ? "native-nvidia"
@@ -194,10 +197,11 @@ async function readProviderEvidence(
     workspace: "default",
     name: routeProvider,
     ...(profileContract ? { profileContract } : {}),
-    ...(nativeReceipt?.endpointUrl
+    ...(nativeReceipt?.endpointUrl && !normalizeNativeLocalProviderAttachment(nativeReceipt)
       ? {
           nativeHostedEndpoint: nativeReceipt.endpointUrl,
           nativeHostedAllowedIps: nativeReceipt.allowedIps,
+          nativeHostedCustom: nativeReceipt.custom,
         }
       : {}),
     configKeys: [configKey],

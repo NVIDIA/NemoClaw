@@ -102,7 +102,7 @@ describe("E2E workflow plan", () => {
       }),
     ]);
     expect(plan.hermesSelected).toBe(true);
-    expect(plan.coverageMatrix).toHaveLength(79);
+    expect(plan.coverageMatrix).toHaveLength(80);
     expect(selectedWorkflowJobs(plan)).toEqual([
       "catalogue-github-read",
       "catalogue-nvidia-api",
@@ -155,7 +155,7 @@ describe("E2E workflow plan", () => {
       "ubuntu-repo-cloud-openclaw",
     ]);
     expect(plan.testMatrix).toEqual([]);
-    expect(catalogueIds).toHaveLength(48);
+    expect(catalogueIds).toHaveLength(49);
     expect(catalogueIds).not.toEqual(
       expect.arrayContaining([
         "bootstrap-install-smoke",
@@ -264,6 +264,16 @@ describe("E2E workflow plan", () => {
   ])("selects live config export coverage when %s changes", (changedFile) => {
     expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toContain(
       "network-policy",
+    );
+  });
+
+  it.each([
+    "src/lib/actions/inference-set/native-local.ts",
+    "src/lib/actions/inference-set/local-runtime.ts",
+    "src/lib/inference/native-local/profile.ts",
+  ])("selects native OpenClaw live evidence when %s changes", (changedFile) => {
+    expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toContain(
+      "inference-routing-openclaw-native",
     );
   });
 
@@ -684,6 +694,19 @@ describe("E2E workflow plan", () => {
 
     expect(plan.catalogueMatrices.standard.map((row) => row.id)).toEqual(["gpu-e2e"]);
     expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-standard", "jetson-nvmap-gpu"]);
+  });
+
+  it.each<[string, string[]]>([
+    ["test/e2e/fixtures/native-local-chat.ts", ["gpu-double-onboard", "gpu-e2e"]],
+    [
+      "src/lib/actions/sandbox/inference-invocation-probe.ts",
+      ["inference-routing-openclaw-native"],
+    ],
+    ["src/lib/actions/sandbox/inference-route-health.ts", ["inference-routing-openclaw-native"]],
+  ])("selects the live owners of %s", (changedFile, targets) => {
+    expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toEqual(
+      expect.arrayContaining(targets),
+    );
   });
 
   it("selects Hermes GPU startup when its output proof changes", () => {
@@ -1392,7 +1415,7 @@ describe("E2E workflow plan", () => {
       "| Repository install onboarding and hosted inference succeed | `ubuntu-repo-cloud-langchain-deepagents-code / docker`, `ubuntu-repo-cloud-openclaw / docker` | agent runtime |",
     );
     expect(complete.stdout).toContain("### Intentional exclusions");
-    expect(complete.stdout).not.toContain("llama-cpp-dgx-spark-qualification");
+    expect(complete.stdout).toContain("llama-cpp-dgx-spark-qualification");
     expect(complete.stdout).not.toContain("Unsupported or unresolved typed declarations");
     expect(complete.stdout).not.toContain("inert typed declarations");
   });

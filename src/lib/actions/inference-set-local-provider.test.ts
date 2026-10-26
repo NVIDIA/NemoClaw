@@ -3,8 +3,15 @@
 
 import { describe, expect, it } from "vitest";
 import type { ConfigObject } from "../security/credential-filter";
+import type { SandboxEntry } from "../state/registry";
 import { runInferenceSet } from "./inference-set";
 import { baseSession, createDeps } from "../../../test/helpers/inference-set";
+
+const legacyLocalEntry: SandboxEntry = {
+  name: "alpha",
+  agent: "openclaw",
+  provider: "ollama-local",
+};
 
 describe("runInferenceSet local-provider verification", () => {
   const localConfig = (): ConfigObject => ({
@@ -20,7 +27,11 @@ describe("runInferenceSet local-provider verification", () => {
   });
 
   it("forces --no-verify for a local provider whose host validation passes", async () => {
-    const deps = createDeps({ config: localConfig(), session: baseSession() });
+    const deps = createDeps({
+      config: localConfig(),
+      entry: legacyLocalEntry,
+      session: baseSession(),
+    });
 
     await runInferenceSet({ provider: "ollama-local", model: "qwen2.5:7b" }, deps);
 
@@ -34,7 +45,11 @@ describe("runInferenceSet local-provider verification", () => {
     // The reporter's exact input `ollama_local` must reach the local-provider
     // path as the canonical `ollama-local`, so host validation and the OpenShell
     // selection both use the normalized name (not the underscore spelling).
-    const deps = createDeps({ config: localConfig(), session: baseSession() });
+    const deps = createDeps({
+      config: localConfig(),
+      entry: legacyLocalEntry,
+      session: baseSession(),
+    });
 
     await runInferenceSet({ provider: "ollama_local", model: "qwen2.5:7b" }, deps);
 
@@ -54,6 +69,7 @@ describe("runInferenceSet local-provider verification", () => {
   it("warns and proceeds with --no-verify when the host stack is reachable despite a failed probe", async () => {
     const deps = createDeps({
       config: localConfig(),
+      entry: legacyLocalEntry,
       session: baseSession(),
       localValidation: {
         ok: false,
@@ -75,6 +91,7 @@ describe("runInferenceSet local-provider verification", () => {
   it("aborts without touching the route when the host stack is unreachable", async () => {
     const deps = createDeps({
       config: localConfig(),
+      entry: legacyLocalEntry,
       session: baseSession(),
       localValidation: {
         ok: false,

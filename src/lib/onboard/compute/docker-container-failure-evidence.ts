@@ -21,6 +21,8 @@ type DockerContainerFailureEvidenceDeps = Required<
 export type DockerContainerFailureEvidence = {
   readonly state: DockerContainerState | null;
   readonly redactedLogTail: string;
+  /** True only when inspect data taught the redactor the container's opaque environment values. */
+  readonly inspectRedactionApplied: boolean;
   readonly managedStartupCommandMissing: boolean;
 };
 
@@ -76,26 +78,41 @@ export function formatDockerContainerState(
 export function captureDockerContainerFailureEvidence(
   containerId: string,
   deps: DockerContainerFailureEvidenceDeps,
-  options: { enrichInspect?: boolean } = {},
+  options: {
+    enrichInspect?: boolean;
+    /** Shared deadline; later Docker calls get only the remaining time and are skipped after it. */
+    deadlineMs?: number;
+    now?: () => number;
+  } = {},
 ): DockerContainerFailureEvidence {
   const { dockerCapture: capture, dockerLogs: logs } = deps;
+  const now = options.now ?? Date.now;
+  const callTimeout = (): number | null => {
+    if (options.deadlineMs === undefined) return FAILURE_EVIDENCE_CALL_TIMEOUT_MS;
+    const remaining = Math.floor(options.deadlineMs - now());
+    return remaining > 0 ? Math.min(FAILURE_EVIDENCE_CALL_TIMEOUT_MS, remaining) : null;
+  };
   const redactor = createDockerGpuDiagnosticRedactor();
   let state: DockerContainerState | null = null;
   let inspect: DockerContainerInspect | null = null;
+  const stateTimeout = callTimeout();
   try {
-    const output = capture(["inspect", "--format", "{{json .State}}", containerId], {
-      ignoreError: true,
-      timeout: FAILURE_EVIDENCE_CALL_TIMEOUT_MS,
-    });
-    ({ inspect, state } = parseStateEvidence(output));
+    if (stateTimeout !== null) {
+      const output = capture(["inspect", "--format", "{{json .State}}", containerId], {
+        ignoreError: true,
+        timeout: stateTimeout,
+      });
+      ({ inspect, state } = parseStateEvidence(output));
+    }
   } catch {
     // Failure evidence is best effort and must never obstruct rollback.
   }
-  if (!inspect && options.enrichInspect !== false) {
+  const inspectTimeout = !inspect && options.enrichInspect !== false ? callTimeout() : null;
+  if (inspectTimeout !== null) {
     try {
       const output = capture(["inspect", containerId], {
         ignoreError: true,
-        timeout: FAILURE_EVIDENCE_CALL_TIMEOUT_MS,
+        timeout: inspectTimeout,
       });
       const parsed = JSON.parse(output) as unknown;
       inspect = Array.isArray(parsed) && parsed.length === 1 ? parsed[0] : null;
@@ -105,17 +122,21 @@ export function captureDockerContainerFailureEvidence(
   }
   if (inspect) redactor.rememberInspect(inspect);
   let logTail = "";
+  const logsTimeout = callTimeout();
   try {
-    logTail = logs(containerId, {
-      tail: FAILURE_EVIDENCE_LOG_LINES,
-      timeout: FAILURE_EVIDENCE_CALL_TIMEOUT_MS,
-    });
+    if (logsTimeout !== null) {
+      logTail = logs(containerId, {
+        tail: FAILURE_EVIDENCE_LOG_LINES,
+        timeout: logsTimeout,
+      });
+    }
   } catch {
     // The state remains useful when logs are unavailable.
   }
   return {
     state: redactor.redactValue(state) as DockerContainerState | null,
     redactedLogTail: redactor.redactText(logTail).trim().slice(-FAILURE_EVIDENCE_LOG_CHARS),
+    inspectRedactionApplied: Array.isArray(inspect?.Config?.Env),
     managedStartupCommandMissing: MISSING_MANAGED_STARTUP_COMMAND_LOG.test(logTail),
   };
 }

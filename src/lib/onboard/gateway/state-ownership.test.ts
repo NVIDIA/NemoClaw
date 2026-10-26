@@ -6,7 +6,11 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { gatewayIdForStateDir } from "../docker-driver-gateway-config";
+import * as dockerClient from "../../adapters/docker/client-isolation";
+import * as dockerCommands from "../../adapters/docker/run";
+import * as gatewayProcess from "../host-gateway-process";
 import {
+  captureNativeDockerRecoveryAuthority,
   createDockerDriverGatewayStateOwnership,
   processEnvironmentUsesSelectedGatewayState,
 } from "./state-ownership";
@@ -31,6 +35,29 @@ function makeOwnership(
 }
 
 describe("docker-driver gateway selected-state ownership", () => {
+  it.each(["podman", null])("does not probe Docker for a gateway owned by %s", (runtime) => {
+    const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+    const owner = vi
+      .spyOn(gatewayProcess, "resolveOwnedHostGatewayRuntimeProviderId")
+      .mockReturnValue(runtime);
+    const context = vi.spyOn(dockerClient, "dockerContextIsDefaultFromBuild").mockReturnValue(true);
+    const docker = vi.spyOn(dockerCommands, "dockerRun");
+    try {
+      Object.defineProperty(process, "platform", { ...platform, value: "linux" });
+      vi.stubEnv("DOCKER_HOST", undefined);
+      expect(captureNativeDockerRecoveryAuthority("nemoclaw", 8080, "session")).toBeUndefined();
+      expect(owner).toHaveBeenCalledOnce();
+      expect(context).not.toHaveBeenCalled();
+      expect(docker).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(process, "platform", platform);
+      owner.mockRestore();
+      context.mockRestore();
+      docker.mockRestore();
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("matches the scoped namespace and rejects a conflicting database", () => {
     const namespace = gatewayIdForStateDir(STATE_DIR);
 

@@ -2,6 +2,11 @@
   "maxSourceShapeCases": 0,
   "sourceShapeContractExceptions": [
     {
+      "file": "test/repository/dockerignore-security-contract.test.ts",
+      "test": "excludes secret-bearing names at every directory depth",
+      "category": "security"
+    },
+    {
       "file": "src/lib/readiness/host.test.ts",
       "test": "bounds and redacts successful probe text before schema validation",
       "category": "compatibility"
@@ -353,7 +358,7 @@
     },
     {
       "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
-      "test": "passes only the base-packaged SDK archive to pull request dependency jobs",
+      "test": "passes only an SDK archive admitted by the base-controlled verifier to dependency jobs",
       "category": "security"
     },
     {

@@ -34,7 +34,10 @@ vi.mock("./hermes-portable-receipt", () => ({
   inspectPortableAgentReceiptAuthorityForClassification: mocks.inspectClassification,
   inspectPortableAgentReceiptAuthorityForRequalification: mocks.inspectRequalification,
 }));
-vi.mock("./hermes-portable-lifecycle", () => ({
+vi.mock("./hermes-portable-lifecycle", async (importOriginal) => ({
+  HermesPortableLifecycleAuthorityError: (
+    await importOriginal<typeof import("./hermes-portable-lifecycle")>()
+  ).HermesPortableLifecycleAuthorityError,
   assertHermesPortableSandboxLifecycleAuthority: mocks.assertHermesAuthority,
   buildHermesPortableOpenShellCommandAuthority: mocks.buildOpenShellCommandAuthority,
   buildHermesPortableOpenShellEnv: mocks.buildOpenShellEnv,

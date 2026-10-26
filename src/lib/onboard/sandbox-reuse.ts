@@ -115,6 +115,13 @@ export interface ReusedSandboxDashboardStateInput {
   hermesDashboardForwarding: ReusedSandboxDashboardForwarding;
   updateSandbox?(sandboxName: string, updates: Partial<SandboxEntry>): unknown;
   revalidateSandboxIdentity?(operation: string): void;
+  /** Print operator guidance; defaults to `console.log`. */
+  note?(message: string): void;
+  /**
+   * CLI name for operator guidance. Without it, reuse does not report a
+   * changed OpenClaw dashboard origin.
+   */
+  cliName?: string;
   updateReusedSandboxMetadata(
     sandboxName: string,
     agent: AgentDefinition | null | undefined,
@@ -133,6 +140,11 @@ export interface ReusedSandboxDashboardStateResult {
   hermesDashboardState: HermesDashboardOnboardState;
 }
 
+/**
+ * Restore the dashboard forward and registry state for a reused sandbox. For
+ * OpenClaw, a changed or removed external origin prints a note: the running
+ * gateway keeps its previous origins until the next rebuild.
+ */
 export async function applyReusedSandboxDashboardState(
   input: ReusedSandboxDashboardStateInput,
 ): Promise<ReusedSandboxDashboardStateResult> {
@@ -141,6 +153,10 @@ export async function applyReusedSandboxDashboardState(
   // overwrites `input.env.CHAT_UI_URL`, so the persisted external URL reflects
   // the browser-facing address rather than the internal loopback bind (#11439).
   const externalDashboardOrigin = input.env.CHAT_UI_URL;
+  // Read before this reuse overwrites the record: the running OpenClaw
+  // gateway's allowed origins were generated from it (#13177).
+  const previousExternalDashboardUrl =
+    (input.getSandbox ?? registry.getSandbox)(input.sandboxName)?.dashboardExternalUrl ?? null;
   if (
     manageDashboard &&
     input.env.NEMOCLAW_DASHBOARD_BIND === "0.0.0.0" &&
@@ -211,6 +227,21 @@ export async function applyReusedSandboxDashboardState(
     gatewayName: input.gatewayName,
     gatewayPort: input.gatewayPort,
   });
+  if (
+    manageDashboard &&
+    input.cliName !== undefined &&
+    (input.agent?.name ?? "openclaw") === "openclaw" &&
+    externalDashboardUrl !== previousExternalDashboardUrl
+  ) {
+    // Reuse keeps the running sandbox; its gateway config still carries the
+    // previous origins until a rebuild regenerates it from the new record.
+    const rebuildCommand = `${input.cliName} ${input.sandboxName} rebuild`;
+    (input.note ?? console.log)(
+      externalDashboardUrl
+        ? `  Dashboard origin changed to ${externalDashboardUrl}. The running sandbox still allows only its previous origins; run: ${rebuildCommand}`
+        : `  Dashboard origin ${previousExternalDashboardUrl} was removed. The running sandbox still allows it until you run: ${rebuildCommand}`,
+    );
+  }
   return { chatUiUrl, dashboardPort, hermesDashboardState };
 }
 

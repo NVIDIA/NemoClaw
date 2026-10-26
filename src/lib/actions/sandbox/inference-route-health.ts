@@ -1,9 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  normalizeNativeLocalProviderAttachment,
+  type NativeLocalProviderAttachment,
+} from "../../inference/native-local/contract";
+import { verifyNativeLocalProviderAttachment } from "../../inference/native-local/profile";
 import type { SandboxEntry } from "../../state/registry/types";
 import { recordedNativeProviderAttachment } from "../../inference/native-provider/recorded-selection";
 import { hostedNativeProvider } from "../../inference/native-provider/hosted";
+import { hostedNativeProviderForAttachment } from "../../inference/native-provider/hosted-attachment";
 import {
   fixedNativeProvider,
   fixedNativeProviderForAttachment,
@@ -21,6 +27,7 @@ import { REPOSITORY_ROOT } from "../../core/repository-root";
 import type { ProviderHealthStatus } from "../../inference/health";
 import {
   NVIDIA_HOSTED_NATIVE_ENDPOINT,
+  isNativeNvidiaProvider,
   verifyNativeNvidiaProviderAttachment,
   type NativeNvidiaProviderAttachment,
 } from "../../inference/native-nvidia";
@@ -69,6 +76,23 @@ export async function verifyNativeNvidiaStatusAttachment(input: {
   });
 }
 
+export type VerifyNativeLocalStatusAttachment = (input: {
+  gatewayName: string;
+  sandboxName: string;
+  expected: NativeLocalProviderAttachment;
+}) => Promise<void>;
+
+export const verifyNativeLocalStatusAttachment: VerifyNativeLocalStatusAttachment = async (
+  input,
+) => {
+  if (input.expected.gatewayName !== input.gatewayName)
+    throw new Error("Native local provider gateway authority changed.");
+  await verifyNativeLocalProviderAttachment({
+    adapter: createCliOpenShellProviderAdapter(),
+    sandboxName: input.sandboxName,
+    expected: input.expected,
+  });
+};
 export type VerifyNativeHostedStatusAttachment = (input: {
   gatewayName: string;
   sandboxName: string;
@@ -298,16 +322,33 @@ function classifyInferenceInvocationFailureLabel(
  * True only when the inference request itself was declined with a transient
  * gateway or availability status, so sending it again is worthwhile.
  *
- * HTTP 401, 403, 404, and 500, an invalid 2xx response body, and a request
- * that never reached an HTTP status all return false: those describe the route
- * as it is, so a caller must report them without retrying. A null invocation
- * also returns false, because no inference request was sent.
+ * Credential, model, malformed-response, and unavailable-probe failures stay
+ * terminal. A curl-confirmed timeout is transient even without an HTTP status.
  */
 export function isTransientInferenceInvocationFailure(
   invocation: SandboxInferenceInvocationResult | null,
 ): boolean {
   if (invocation === null || invocation.ok) return false;
-  return invocation.httpStatus !== null && RETRIABLE_HTTP_PROBE_STATUSES.has(invocation.httpStatus);
+  return (
+    (invocation.timedOut === true && invocation.httpStatus === null) ||
+    (invocation.httpStatus !== null && RETRIABLE_HTTP_PROBE_STATUSES.has(invocation.httpStatus))
+  );
+}
+
+function degradedNvidiaInferenceHealth(
+  endpoint: string,
+  invocation: Extract<SandboxInferenceInvocationResult, { ok: false }>,
+  subprobes: ProviderHealthStatus[],
+): ProviderHealthStatus {
+  return {
+    ok: true,
+    probed: false,
+    degraded: true,
+    providerLabel: "Inference route",
+    endpoint,
+    detail: `NVIDIA upstream is temporarily unavailable; model inference was not verified. ${invocation.detail}`,
+    ...(subprobes.length ? { subprobes } : {}),
+  };
 }
 
 /**
@@ -373,6 +414,7 @@ function buildInvokedRouteHealth(
 export type SandboxInferenceRouteHealthContext = {
   provider: string | null;
   nativeNvidia?: boolean;
+  nativeLocalEndpoint?: string;
   nativeProvider?: boolean;
   nativeEndpointUrl?: string;
   model?: string | null;
@@ -409,7 +451,34 @@ export function buildSandboxInferenceRouteHealth(
   invocation: SandboxInferenceInvocationResult | null,
   context: SandboxInferenceRouteHealthContext,
 ): ProviderHealthStatus {
-  const definition = fixedNativeProvider(context.provider);
+  if (context.nativeLocalEndpoint) {
+    return {
+      ok: invocation?.ok === true,
+      probed: invocation !== null,
+      providerLabel: "Native local inference",
+      endpoint:
+        (invocation?.ok === false && invocation.endpoint) ||
+        `${context.nativeLocalEndpoint}/chat/completions`,
+      detail: invocation?.ok
+        ? "The attached provider served a native local inference request."
+        : invocation
+          ? `Native local inference failed: ${invocation.detail}`
+          : "Native local inference could not be verified inside the sandbox.",
+      ...(invocation?.ok
+        ? {}
+        : {
+            failureLabel: classifyInferenceInvocationFailureLabel(invocation?.httpStatus ?? null),
+          }),
+      subprobes: providerHealthDiagnostics(providerHealth, invocation?.ok === true),
+    };
+  }
+  const definition =
+    fixedNativeProvider(context.provider) ??
+    (context.nativeProvider &&
+    (context.provider === "compatible-endpoint" ||
+      context.provider === "compatible-anthropic-endpoint")
+      ? { logicalProvider: context.provider, label: "custom hosted" }
+      : undefined);
   if ((context.nativeProvider || context.nativeNvidia) && definition) {
     const endpoint =
       invocation && !invocation.ok && invocation.endpoint
@@ -423,6 +492,15 @@ export function buildSandboxInferenceRouteHealth(
             nativeEndpointUrl: context.nativeEndpointUrl,
           });
     const diagnostics = providerHealthDiagnostics(providerHealth, Boolean(invocation?.ok));
+    if (
+      invocation &&
+      !invocation.ok &&
+      (!providerHealth || providerHealth.ok) &&
+      isNativeNvidiaProvider(context.provider ?? "") &&
+      isTransientInferenceInvocationFailure(invocation)
+    ) {
+      return degradedNvidiaInferenceHealth(endpoint, invocation, diagnostics);
+    }
     const nativeHealth: ProviderHealthStatus = invocation?.ok
       ? {
           ok: true,
@@ -449,6 +527,18 @@ export function buildSandboxInferenceRouteHealth(
     gateway !== null && gateway.ok && routeStatusAccepted(gateway, invocation, context);
   let routeHealth: ProviderHealthStatus;
   if (gateway?.ok && invocation) {
+    if (
+      !invocation.ok &&
+      accepted &&
+      (!providerHealth || providerHealth.ok) &&
+      isNativeNvidiaProvider(context.provider ?? "") &&
+      isTransientInferenceInvocationFailure(invocation)
+    ) {
+      return degradedNvidiaInferenceHealth(invocation.endpoint ?? endpoint, invocation, [
+        reachableRouteSubprobe(gateway, endpoint),
+        ...diagnostics,
+      ]);
+    }
     const invoked = buildInvokedRouteHealth(gateway, endpoint, invocation);
     routeHealth =
       invoked.ok && !accepted
@@ -493,6 +583,13 @@ export function buildSandboxInferenceRouteHealth(
       detail: `Could not probe ${endpoint} from inside the sandbox.`,
     };
   }
+  if (
+    !routeHealth.ok &&
+    gateway?.httpStatus === 0 &&
+    new URL(endpoint).hostname === "inference.local"
+  )
+    routeHealth.detail +=
+      " If this legacy route is no longer available, recreate the sandbox to use native inference.";
   const subprobes = [...(routeHealth.subprobes ?? []), ...diagnostics];
   return subprobes.length > 0 ? { ...routeHealth, subprobes } : routeHealth;
 }
@@ -522,15 +619,88 @@ export function readNativeStatusSelection(entry: SandboxEntry | null | undefined
   let attachment: NativeProviderAttachment | undefined;
   let failure: string | null = null;
   try {
-    attachment = entry ? recordedNativeProviderAttachment(entry) : undefined;
+    if (entry?.nativeLocalProviderAttachment !== undefined) {
+      attachment = normalizeNativeLocalProviderAttachment(entry.nativeLocalProviderAttachment);
+      if (!attachment)
+        failure =
+          "Recorded native local provider ownership is invalid; no inference request was sent.";
+    } else {
+      attachment = entry ? recordedNativeProviderAttachment(entry) : undefined;
+    }
   } catch {
     failure = "Recorded native provider ownership is invalid; no inference request was sent.";
   }
-  const definition = hostedNativeProvider(entry?.provider, attachment?.endpointUrl);
+  const local = entry?.nativeLocalProviderAttachment !== undefined;
+  const definition = local
+    ? null
+    : attachment
+      ? hostedNativeProviderForAttachment(attachment)
+      : hostedNativeProvider(entry?.provider);
   return {
     attachment,
     failure,
-    label: definition?.label ?? "NVIDIA",
-    endpoint: definition?.endpoint ?? NVIDIA_HOSTED_NATIVE_ENDPOINT,
+    label: local ? "local" : (definition?.label ?? "NVIDIA"),
+    endpoint: local
+      ? (attachment?.endpointUrl ?? "")
+      : (definition?.endpoint ?? NVIDIA_HOSTED_NATIVE_ENDPOINT),
   };
+}
+
+export class HermesNvidiaCredentialRejectedError extends Error {
+  constructor() {
+    super("Hermes NVIDIA credential is invalid or stale.");
+  }
+}
+
+export class HermesNvidiaCredentialVerifierMissingError extends Error {
+  constructor() {
+    super("The installed Hermes image lacks the NVIDIA credential verifier.");
+  }
+}
+
+/** Check the agent's persisted slots against the fresh supervisor generation. */
+export async function verifyHermesNvidiaCredential(
+  entry: SandboxEntry,
+  commandExecutor: OpenShellSandboxBufferedCommandExecutor = createCliOpenShellSandboxCommandExecutor(
+    { hostCwd: REPOSITORY_ROOT },
+  ),
+): Promise<void> {
+  if (!entry.gatewayName || !entry.model) throw new Error("Hermes route identity is missing.");
+  const result = await commandExecutor.runBuffered({
+    sandboxName: entry.name,
+    target: { kind: "named", gatewayName: entry.gatewayName },
+    command: [
+      "/opt/hermes/.venv/bin/python3",
+      "-I",
+      "/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py",
+      "verify-nvidia-credential",
+      "--hermes-dir",
+      "/sandbox/.hermes",
+      "--expected-model",
+      entry.model,
+    ],
+    environment: buildSandboxCommandEnvironment(),
+    timeoutMilliseconds: OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS,
+  });
+  if (
+    result.outcome.kind === "completed" &&
+    result.outcome.exitCode === 1 &&
+    result.stdout.trim() === "rejected=1"
+  ) {
+    throw new HermesNvidiaCredentialRejectedError();
+  }
+  if (
+    result.outcome.kind === "completed" &&
+    result.outcome.exitCode === 2 &&
+    /argument action: invalid choice: 'verify-nvidia-credential'/u.test(result.stderr)
+  ) {
+    throw new HermesNvidiaCredentialVerifierMissingError();
+  }
+  if (
+    result.outcome.kind !== "completed" ||
+    result.outcome.exitCode !== 0 ||
+    result.stdout.trim() !== "verified=1"
+  ) {
+    throw new Error("Hermes NVIDIA credential verification is unavailable.");
+  }
 }

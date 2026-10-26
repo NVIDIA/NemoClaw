@@ -24,11 +24,11 @@ import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 
 export const STATION_SMOKE_SANDBOX = "e2e-station-express";
-export const STATION_SMOKE_MODEL = "nvidia/nemotron-3-ultra-550b-a55b";
+export const STATION_SMOKE_MODEL = "nvidia-nemotron-3.5-super-vl-120b-a12b-nvfp4";
 export const STATION_SMOKE_PHASES = [
   "inspect the prepared Station",
   "install Station Express from the candidate checkout",
-  "assert managed Ultra and routed inference",
+  "assert managed Super VL and routed inference",
   "clean up the job runtime",
 ] as const;
 
@@ -113,7 +113,7 @@ export function stationSmokeEnvironment(
 export function stationModelCacheMetadata(home: string): { sha256: string; entries: number } {
   const root = path.join(
     home,
-    ".cache/huggingface/hub/models--nvidia--NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4",
+    ".cache/huggingface/hub/models--nvidia--NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4",
   );
   const rows: string[] = [];
   const visit = (directory: string) => {
@@ -155,20 +155,20 @@ export function stationModelCacheMetadata(home: string): { sha256: string; entri
 
 export function stationVllmCommands(): readonly string[] {
   const recipe = getManagedInferenceCompiledRecipe(
-    "vllm.nemotron-3-ultra-550b-a55b-nvfp4.station-arm64-single.v1",
+    "vllm.nemotron-3.5-super-vl-120b-a12b-nvfp4.station-arm64-single.v1",
   );
   requireCondition(
     recipe && isHostLocalInferenceServingRecipe(recipe) && recipe.spec.serve.directInstall,
-    "Station Ultra serving recipe is unavailable",
+    "Station Super VL serving recipe is unavailable",
   );
-  const registered = resolveVllmModelAlias("nemotron-3-ultra-550b-a55b");
+  const registered = resolveVllmModelAlias("nemotron-3.5-super-vl-120b");
   const profile = detectVllmProfile({ platform: "station" });
-  requireCondition(registered && profile, "Station Ultra runtime is unavailable");
+  requireCondition(registered && profile, "Station Super VL runtime is unavailable");
   requireCondition(
-    recipe.spec.model.id === "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4" &&
+    recipe.spec.model.id === "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4" &&
       registered.id === recipe.spec.model.id &&
       recipe.spec.model.servedName === STATION_SMOKE_MODEL,
-    "Station smoke requires the default Ultra weights and serving alias",
+    "Station smoke requires the default Super VL weights and serving alias",
   );
   return [
     buildVllmServeCommand(
@@ -203,7 +203,7 @@ export function assertStationVllm(output: string): string {
       args.length === 2 &&
       args[0] === "-lc" &&
       stationVllmCommands().includes(args[1]),
-    "Station Express must serve the default Ultra model",
+    "Station Express must serve the default Super VL model",
   );
   requireCondition(
     typeof value.Image === "string" && /^sha256:[a-f0-9]{64}$/u.test(value.Image),
@@ -237,7 +237,7 @@ export function assertStationInference(output: string): void {
   const choices = response.choices;
   requireCondition(
     response.model === STATION_SMOKE_MODEL && Array.isArray(choices) && choices.length > 0,
-    "Station inference must come from the default Ultra model",
+    "Station inference must come from the default Super VL model",
   );
   const content = record(record(choices[0]).message).content;
   requireCondition(
@@ -412,7 +412,8 @@ export async function runStationExpressSmoke(options: {
         JSON.stringify({
           model: STATION_SMOKE_MODEL,
           messages: [{ role: "user", content: "Reply with one word: PONG" }],
-          max_tokens: 512,
+          max_tokens: 8192,
+          parallel_tool_calls: false,
         }),
       ],
       { env, artifactName: "station-routed-inference", timeoutMs: 120_000 },
