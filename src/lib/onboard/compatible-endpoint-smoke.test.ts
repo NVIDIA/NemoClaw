@@ -231,6 +231,8 @@ class FakeOpener:
             )
             if responses[0] == "__timeout__":
                 raise TimeoutError("timed out after %s seconds" % timeout)
+            if responses[0] == "__wrapped_timeout__":
+                raise urllib.error.URLError(TimeoutError("timed out after %s seconds" % timeout))
             return FakeResponse(200, responses.pop(0))
         direct_request_count.append(1)
         direct_request_urls.append(request.full_url)
@@ -523,26 +525,72 @@ describe("compatible endpoint sandbox smoke helpers", () => {
     );
   });
 
-  it("reports a timed-out inference proof once, without a traceback (#13663)", () => {
-    const authority = allAgentProofAuthorities[0].authority;
-    const result = runProviderNeutralScript({
-      authority,
-      responses: ["__timeout__"],
-      script: buildProviderNeutralInferenceSandboxSmokeScript(
-        "qwen3.5-9b",
-        authority,
-        undefined,
-        300,
-      ),
-    });
+  it("passes the local timeout override through the sandbox request and outer deadline (#13663)", async () => {
+    vi.stubEnv("NEMOCLAW_LOCAL_INFERENCE_TIMEOUT", "300");
+    vi.resetModules();
+    try {
+      const { verifyCompatibleEndpointSandboxSmoke: verifyWithOverride } =
+        await import("./compatible-endpoint-smoke");
+      const runOpenshell = vi
+        .fn()
+        .mockImplementationOnce((args: string[]) => ({
+          status: 0,
+          stdout: providerMetadata(args.at(-1) ?? ""),
+        }))
+        .mockReturnValueOnce({ status: 0, stdout: "INFERENCE_SMOKE_OK PONG" });
 
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain("content proof timed out after 300 seconds without a response");
-    expect(result.stderr).toContain("raise NEMOCLAW_LOCAL_INFERENCE_TIMEOUT");
-    expect(result.stderr).not.toContain("Traceback");
-    expect(result.stdout).toContain("INFERENCE_REQUEST_TOKENS=512\n");
-    expect(result.stdout).toContain("SLEEP_DELAYS=\n");
+      await verifyWithOverride({
+        sandboxName: "managed-inference-sandbox",
+        provider: "vllm-local",
+        model: "qwen3.5-9b",
+        runOpenshell,
+        sandboxCommandExecutor: bufferedExecutorThrough(runOpenshell),
+        redact: (value) => value,
+        forceCanonicalRoute: true,
+        hostLocalInferenceProofAuthority: allAgentProofAuthorities[0].authority,
+      });
+
+      expect(runOpenshell).toHaveBeenNthCalledWith(
+        2,
+        expect.any(Array),
+        expect.objectContaining({ timeout: 2_785_000 }),
+      );
+      expect(String(runOpenshell.mock.calls[1]?.[0]?.at(-1))).toContain(
+        "request_timeout_seconds = 300",
+      );
+    } finally {
+      vi.unstubAllEnvs();
+      vi.resetModules();
+    }
   });
+
+  it.each(["__timeout__", "__wrapped_timeout__"])(
+    "reports a %s inference timeout once, without a traceback (#13663)",
+    (timeoutResponse) => {
+      const authority = allAgentProofAuthorities[0].authority;
+      const result = runProviderNeutralScript({
+        authority,
+        responses: [timeoutResponse],
+        script: buildProviderNeutralInferenceSandboxSmokeScript(
+          "qwen3.5-9b",
+          authority,
+          undefined,
+          300,
+        ),
+      });
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain(
+        "content proof timed out after 300 seconds without a response",
+      );
+      expect(result.stderr).toContain("raise NEMOCLAW_LOCAL_INFERENCE_TIMEOUT");
+      expect(result.stderr).toContain("retry the failed operation");
+      expect(result.stderr).not.toContain("resume onboarding");
+      expect(result.stderr).not.toContain("Traceback");
+      expect(result.stdout).toContain("INFERENCE_REQUEST_TOKENS=512\n");
+      expect(result.stdout).toContain("SLEEP_DELAYS=\n");
+    },
+  );
 
   it.each([
     {

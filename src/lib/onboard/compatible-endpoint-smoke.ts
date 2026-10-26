@@ -763,12 +763,20 @@ def post_inference(payload, label):
         except socket.timeout:
             print(
                 "${endpointLabel} %s proof timed out after %s seconds without a response; "
-                "raise NEMOCLAW_LOCAL_INFERENCE_TIMEOUT for a slow model and resume onboarding"
+                "raise NEMOCLAW_LOCAL_INFERENCE_TIMEOUT for a slow model and retry the failed operation"
                 % (label, request_timeout_seconds),
                 file=sys.stderr,
             )
             sys.exit(1)
-        except urllib.error.URLError:
+        except urllib.error.URLError as error:
+            if isinstance(error.reason, socket.timeout):
+                print(
+                    "${endpointLabel} %s proof timed out after %s seconds without a response; "
+                    "raise NEMOCLAW_LOCAL_INFERENCE_TIMEOUT for a slow model and retry the failed operation"
+                    % (label, request_timeout_seconds),
+                    file=sys.stderr,
+                )
+                sys.exit(1)
             if attempt < 2:
                 time.sleep(5 * (attempt + 1))
                 continue
