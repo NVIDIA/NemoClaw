@@ -80,6 +80,7 @@ test(
         "validate switched route and mutable config",
         "exercise sandbox inference and Hermes API",
         "run Hermes CLI adapter forms against switched provider",
+        "reapply Hermes inference after CLI and verify integrity",
         "verify NVIDIA inference after Discord state rebuild",
         "prove split provider/model credential resolution",
       ],
@@ -413,29 +414,6 @@ test(
       messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
       max_tokens: inferenceLocalMaxTokens(),
     });
-    const inferenceLocal = await runHermesPongWithRetry({
-      expectedModel: SWITCH_MODEL,
-      onEvidence: async (evidence) => {
-        await artifacts.writeJson("retry/hermes-sandbox-inference-after-switch.json", evidence);
-      },
-      run: (attempt) =>
-        sandbox.execShell(
-          SANDBOX_NAME,
-          trustedSandboxShellScript(sandboxInferenceCommand(inferenceLocalPayload)),
-          {
-            artifactName: `hermes-sandbox-inference-chat-after-switch-${attempt}`,
-            env: env(),
-            redactionValues,
-            timeoutMs: 120_000,
-          },
-        ),
-    });
-    expect(inferenceLocal.exitCode, resultText(inferenceLocal)).toBe(0);
-    expect(chatContent(inferenceLocal.stdout)).toMatch(/PONG/i);
-    expect(acceptedSwitchResponseModels(SWITCH_MODEL)).toContain(
-      inferenceResponseModel(inferenceLocal.stdout),
-    );
-
     const hermesApiPayload = JSON.stringify({
       model: SWITCH_MODEL,
       messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
@@ -491,6 +469,67 @@ test(
     });
     expect(hermesCli.exitCode, resultText(hermesCli)).toBe(0);
     expect(hermesCli.stdout).toMatch(/\bPONG\b/iu);
+
+    progress.phase("reapply Hermes inference after CLI and verify integrity");
+    const policyContext = await sandbox.exec(
+      SANDBOX_NAME,
+      ["test", "!", "-e", "/sandbox/.openclaw/workspace/POLICY.md"],
+      {
+        artifactName: "hermes-openclaw-policy-context-absent-after-cli",
+        env: env(),
+        timeoutMs: 30_000,
+      },
+    );
+    expect(policyContext.exitCode, resultText(policyContext)).toBe(0);
+    const reapplied = await runHermesInferenceSetWithRetry(
+      host,
+      redactionValues,
+      compatibleMetadataArgs,
+      {
+        artifactNamePrefix: "hermes-inference-set-after-cli",
+        artifacts: {
+          writeJson: (_path, value) =>
+            artifacts.writeJson("retry/hermes-inference-set-after-cli.json", value),
+        },
+        compatibleBinding: switchBinding,
+        publicNvidiaApiKey: publicApiKey,
+      },
+    );
+    expect(reapplied.exitCode, resultText(reapplied)).toBe(0);
+    const strictHashAfterCli = await hashCheck(
+      sandbox,
+      "/etc/nemoclaw/hermes.config-hash",
+      "strict-after-cli",
+    );
+    expect(strictHashAfterCli.exitCode, resultText(strictHashAfterCli)).toBe(0);
+    const compatHashAfterCli = await hashCheck(
+      sandbox,
+      "/sandbox/.hermes/.config-hash",
+      "compat-after-cli",
+    );
+    expect(compatHashAfterCli.exitCode, resultText(compatHashAfterCli)).toBe(0);
+    const inferenceAfterCli = await runHermesPongWithRetry({
+      expectedModel: SWITCH_MODEL,
+      onEvidence: async (evidence) => {
+        await artifacts.writeJson("retry/hermes-inference-after-cli.json", evidence);
+      },
+      run: (attempt) =>
+        sandbox.execShell(
+          SANDBOX_NAME,
+          trustedSandboxShellScript(sandboxInferenceCommand(inferenceLocalPayload)),
+          {
+            artifactName: `hermes-sandbox-inference-after-cli-${attempt}`,
+            env: env(),
+            redactionValues,
+            timeoutMs: 120_000,
+          },
+        ),
+    });
+    expect(inferenceAfterCli.exitCode, resultText(inferenceAfterCli)).toBe(0);
+    expect(chatContent(inferenceAfterCli.stdout)).toMatch(/PONG/i);
+    expect(acceptedSwitchResponseModels(SWITCH_MODEL)).toContain(
+      inferenceResponseModel(inferenceAfterCli.stdout),
+    );
 
     await runHermesNvidiaDiscordRebuild({
       host,

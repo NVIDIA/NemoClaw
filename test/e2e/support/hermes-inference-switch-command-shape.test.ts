@@ -796,6 +796,7 @@ describe("Hermes inference switch command shape", () => {
 
     await expect(
       runHermesInferenceSetWithRetry({ command } as unknown as HostCliClient, ["hosted-key"], [], {
+        artifactNamePrefix: "hermes-inference-set-after-cli",
         artifacts: { writeJson },
         attempts: 2,
         delay: async () => {},
@@ -803,6 +804,8 @@ describe("Hermes inference switch command shape", () => {
     ).resolves.toMatchObject({ exitCode: 0 });
 
     expect(command).toHaveBeenCalledTimes(2);
+    expect(command.mock.calls[0]?.[2]?.artifactName).toBe("hermes-inference-set-after-cli-1");
+    expect(command.mock.calls[1]?.[2]?.artifactName).toBe("hermes-inference-set-after-cli-2");
     expect(writeJson).toHaveBeenCalledWith(
       "inference-switch-retry-evidence.json",
       expect.objectContaining({ outcome: "passed-after-retry" }),

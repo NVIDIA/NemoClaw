@@ -730,6 +730,7 @@ export async function runHermesInferenceSetWithRetry(
   compatibleMetadataArgs: string[],
   options: {
     attempts?: number;
+    artifactNamePrefix?: string;
     artifacts?: InferenceSwitchRetryArtifactSink;
     compatibleBinding?: CompatibleAnthropicSwitchBinding | null;
     delay?: (milliseconds: number) => Promise<void>;
@@ -756,7 +757,7 @@ export async function runHermesInferenceSetWithRetry(
       : undefined,
     run: (attempt) =>
       host.command("node", args, {
-        artifactName: `hermes-inference-set-${attempt}`,
+        artifactName: `${options.artifactNamePrefix ?? "hermes-inference-set"}-${attempt}`,
         env: env(undefined, {
           ...compatibleAnthropicSwitchEnv(options.compatibleBinding ?? null),
           ...(options.publicNvidiaApiKey
