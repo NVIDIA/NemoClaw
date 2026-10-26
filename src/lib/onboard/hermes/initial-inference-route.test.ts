@@ -659,3 +659,85 @@ describe("restored Hermes native route projection", () => {
     expect(f.deps.restartGateway).not.toHaveBeenCalled();
   });
 });
+
+describe("restored Hermes NVIDIA route", () => {
+  it.each([false, true])(
+    "rebinds NVIDIA credentials with Discord enrolled: %s",
+    async (discord) => {
+      const f = fixture();
+      f.entry.provider = "nvidia-prod";
+      f.entry.endpointUrl = "https://integrate.api.nvidia.com/v1";
+      f.entry.nativeLocalProviderAttachment = undefined;
+      f.entry.nativeNvidiaProviderAttachment = {
+        schemaVersion: 1,
+        profileId: "nemoclaw-nvidia-inference-v1",
+        providerName: "nemoclaw-nvidia-prod-v1",
+        providerId: "nvidia-provider-id",
+      };
+      applyHermesManagedRoute(f.config, {
+        upstreamProvider: "nvidia-prod",
+        baseUrl: f.entry.endpointUrl,
+        model: f.entry.model!,
+        inferenceApi: "openai-completions",
+        nativeCredentialHandle: "openshell:resolve:env:v6_NVIDIA_INFERENCE_API_KEY",
+      });
+      f.entry.endpointUrl = discord ? f.entry.endpointUrl : undefined;
+      f.config.discord = discord ? { require_mention: true, allowed_users: ["123"] } : undefined;
+      f.config.model.temperature = 0.25;
+      const before = structuredClone(f.config);
+      const handle = "openshell:resolve:env:v8_NVIDIA_INFERENCE_API_KEY";
+      const readNvidiaCredentialHandle = vi.fn(async () => handle);
+      const restore = createInitialHermesInferenceRoute(
+        { ...f.deps, readNvidiaCredentialHandle },
+        {
+          activation: "deferred",
+          workload: "registered",
+          projection: "credential",
+        },
+      );
+      await restore("alpha", f.entry.model!, "nvidia-prod", "gateway-a", f.revalidate);
+      before.model.api_key = handle;
+      before.providers["nvidia-prod"].api_key = handle;
+      before.custom_providers.find((p) => p.name === "nvidia-prod")!.api_key = handle;
+      expect(f.config).toEqual(before);
+      expect(readNvidiaCredentialHandle).toHaveBeenCalled();
+      expect(f.deps.writeSandboxConfig).toHaveBeenCalled();
+      expect(f.deps.restartGateway).not.toHaveBeenCalled();
+    },
+  );
+});
+
+it("keeps a retained shared NVIDIA route during credential-only restore", async () => {
+  const f = fixture();
+  f.entry.provider = "nvidia-prod";
+  f.entry.nativeLocalProviderAttachment = undefined;
+  f.entry.endpointUrl = "https://inference.local/v1";
+  const restored = structuredClone(f.config);
+  const restore = createInitialHermesInferenceRoute(f.deps, {
+    activation: "deferred",
+    workload: "registered",
+    projection: "credential",
+  });
+  await expect(
+    restore("alpha", f.entry.model!, "nvidia-prod", "gateway-a", f.revalidate),
+  ).resolves.toBeUndefined();
+  expect(f.config).toEqual(restored);
+  expect(f.deps.readSandboxConfig).not.toHaveBeenCalled();
+  expect(f.deps.writeSandboxConfig).not.toHaveBeenCalled();
+});
+
+it.each([null, {}])("rejects a malformed present NVIDIA receipt: %s", async (receipt) => {
+  const f = fixture();
+  f.entry.provider = "nvidia-prod";
+  f.entry.nativeLocalProviderAttachment = undefined;
+  Object.assign(f.entry, { nativeNvidiaProviderAttachment: receipt });
+  const restore = createInitialHermesInferenceRoute(f.deps, {
+    activation: "deferred",
+    workload: "registered",
+    projection: "credential",
+  });
+  await expect(
+    restore("alpha", f.entry.model!, "nvidia-prod", "gateway-a", f.revalidate),
+  ).rejects.toThrow("does not match its registered selection");
+  expect(f.deps.writeSandboxConfig).not.toHaveBeenCalled();
+});

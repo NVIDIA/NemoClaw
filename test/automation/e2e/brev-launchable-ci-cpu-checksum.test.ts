@@ -328,7 +328,7 @@ if [ "\${1:-}" = "-c" ]; then
   exit 0
 fi
 if [ ${JSON.stringify(options.nodeArchiveChecksum !== undefined)} = true ]; then
-  printf '%s  %s\\n' '${options.nodeArchiveChecksum === "mismatch" ? "0".repeat(64) : "9f5eb6ac21845a66c493c91a253b1da32fd684e89e9b7202d4936982336be4ca"}' "$1"
+  printf '%s  %s\\n' '${options.nodeArchiveChecksum === "mismatch" ? "0".repeat(64) : "eb6728e77c576a35162c122c45ccadf224d89ff00abc8dae46cc2897c6002d7c"}' "$1"
   exit 0
 fi
 exec /usr/bin/sha256sum "$@"
@@ -433,10 +433,10 @@ describe("brev-launchable-ci-cpu.sh OpenShell checksum gate", { timeout: 30_000 
     expect(source).not.toContain('source "$NEMOCLAW_CLONE_DIR/scripts/lib/npm-diagnostics.sh"');
     expect(source).toContain(`NODE_VERSION="${REVIEWED_NODE_VERSION}"`);
     expect(source).toContain(
-      'node_sha256="9f5eb6ac21845a66c493c91a253b1da32fd684e89e9b7202d4936982336be4ca"',
+      'node_sha256="eb6728e77c576a35162c122c45ccadf224d89ff00abc8dae46cc2897c6002d7c"',
     );
     expect(source).toContain(
-      'node_sha256="df224555a083b918e46260cc969838501b9f9a87140c1195e5b9597b56d5dae2"',
+      'node_sha256="33c37be234ba8bee041961047b19160f4d7d0f164e8e246f78bdd10feff148b3"',
     );
     expect(source).toContain(
       "bash .github/actions/setup-reviewed-npm/verify-and-install-npm.sh ci/reviewed-npm-audit.json",
