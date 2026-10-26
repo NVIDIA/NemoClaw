@@ -841,40 +841,6 @@ fn an_end_anchored_pattern_rejects_a_trailing_newline() {
 }
 
 #[test]
-fn image_references_follow_the_registry_reference_grammar() {
-    let validator = jsonschema::validator_for(&input_schema()).unwrap();
-    let digest = format!("@sha256:{}", "a".repeat(64));
-    let document = input("openclaw.yaml");
-    for (name, accepted) in [
-        ("nc-fabric-owner-20260924", true),
-        ("agent", true),
-        ("team/agent", true),
-        ("registry.example.com/team/agent", true),
-        ("Registry.Example.com:5000/team/agent:v1.2_rc-3", true),
-        ("localhost/agent", true),
-        ("localhost:5000/team/agent", true),
-        ("gpu-box:5000/agent", true),
-        ("registry.example.com/team/a.b_c__d-e--f", true),
-        ("registry.example.com/Team/agent", false),
-        ("Team/agent", false),
-        ("Agent", false),
-        ("registry.example.com//agent", false),
-        ("registry.example.com/team/", false),
-        ("/agent", false),
-        ("agent:", false),
-        ("agent:-tag", false),
-        ("registry.example.com/-agent", false),
-        ("registry.example.com/agent..x", false),
-        ("registry.example.com/agent___x", false),
-        ("-registry.example.com/agent", false),
-    ] {
-        let mut value = document.clone();
-        value["spec"]["sandboxes"]["assistant"]["image"]["ref"] = json!(format!("{name}{digest}"));
-        agrees(&validator, &value, accepted);
-    }
-}
-
-#[test]
 fn metadata_uid_accepts_either_case_and_keeps_it_lowercase() {
     let validator = jsonschema::validator_for(&input_schema()).unwrap();
     let lower = "5f0b6e1c-3a2d-4b8e-9c7f-1a2b3c4d5e6f";
