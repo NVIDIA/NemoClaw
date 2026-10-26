@@ -33,6 +33,7 @@ export default class InternalUninstallRunPlanCommand extends NemoClawCommand {
         "Uninstall every gateway port on this host, not only the port NEMOCLAW_GATEWAY_PORT selects",
     }),
     "all-gateway-ports-child": Flags.boolean({ hidden: true }),
+    "sweep-default-gateway-absent": Flags.boolean({ hidden: true }),
     "retained-gateway-port": Flags.string({ hidden: true, multiple: true }),
     "force-fresh-ownership-preflight": Flags.boolean({ hidden: true }),
     "force-fresh-reset": Flags.boolean({ hidden: true }),
@@ -74,6 +75,9 @@ export default class InternalUninstallRunPlanCommand extends NemoClawCommand {
       }
       return port;
     });
+    if (flags["sweep-default-gateway-absent"] && !flags["all-gateway-ports-child"]) {
+      this.error("The default gateway sweep marker requires an all-gateway-ports child pass.");
+    }
     const backupAllBeforeUninstall = (sandboxNames: readonly string[]) =>
       backupAllUnderPortableHostFence({
         purpose: "pre-uninstall",
@@ -95,6 +99,7 @@ export default class InternalUninstallRunPlanCommand extends NemoClawCommand {
         backupAllBeforeUninstall,
         requireCompleteGatewayProcessCleanup: flags["all-gateway-ports-child"] ?? false,
         retainedGatewayPorts,
+        sweepDefaultGatewayAbsent: flags["sweep-default-gateway-absent"] ?? false,
         withSandboxMutationLock,
       }),
     );

@@ -65,6 +65,8 @@ describe("internal uninstall command", () => {
           "force-fresh-reset": true,
           "keep-openshell": true,
           "retained-gateway-port": ["9000", "18080"],
+          "all-gateway-ports-child": true,
+          "sweep-default-gateway-absent": true,
         },
       }),
     });
@@ -78,6 +80,7 @@ describe("internal uninstall command", () => {
         expect.objectContaining({
           backupAllBeforeUninstall: expect.any(Function),
           retainedGatewayPorts: [9000, 18080],
+          sweepDefaultGatewayAbsent: true,
           withSandboxMutationLock: expect.any(Function),
         }),
       );

@@ -368,6 +368,7 @@ describe("uninstall across every gateway port (#7791)", () => {
     fs.mkdirSync(selectedStateDir, { mode: 0o700, recursive: true });
     fs.writeFileSync(path.join(selectedStateDir, "selected-only"), "remove me\n");
     fs.writeFileSync(apiKeyPath, "ab".repeat(32), { mode: 0o600 });
+    fs.writeFileSync(path.join(sharedStateDir, "unrecognized-old-state"), "stale\n");
 
     try {
       vi.stubEnv("NEMOCLAW_GATEWAY_PORT", "9123");
@@ -419,6 +420,83 @@ describe("uninstall across every gateway port (#7791)", () => {
       fs.rmSync(home, { force: true, recursive: true });
     }
   });
+
+  it.each(["registry", "configuration", "live gateway"] as const)(
+    "retains shared cleanup when %s proves a default gateway after the sweep omitted it",
+    async (evidence) => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-default-race-"));
+      const sharedRoot = path.join(home, ".nemoclaw");
+      const selectedRoot = path.join(sharedRoot, "gateways", "9123");
+      const apiKeyPath = path.join(sharedRoot, "dual-station-vllm-api-key");
+      fs.mkdirSync(selectedRoot, { recursive: true });
+      fs.writeFileSync(apiKeyPath, "ab".repeat(32), { mode: 0o600 });
+      fs.writeFileSync(path.join(sharedRoot, "unrecognized-old-state"), "stale\n");
+      if (evidence === "registry") {
+        fs.writeFileSync(
+          path.join(sharedRoot, "sandboxes.json"),
+          JSON.stringify({
+            defaultSandbox: "default-box",
+            sandboxes: { "default-box": { name: "default-box", gatewayPort: 8080 } },
+          }),
+        );
+      }
+      if (evidence === "configuration") {
+        const stateDir = resolveGatewayStateDirForPort({ home, port: 8080 });
+        fs.mkdirSync(stateDir, { recursive: true });
+        fs.writeFileSync(path.join(stateDir, "openshell-gateway.toml"), "gateway config\n");
+      }
+      try {
+        vi.stubEnv("NEMOCLAW_GATEWAY_PORT", "9123");
+        vi.resetModules();
+        const { runUninstallAllGatewayPorts: runSweep } = await import("./all-gateway-ports");
+        const result = await runSweep(OPTIONS, {
+          commandExists: () => true,
+          env: { HOME: home, NEMOCLAW_GATEWAY_PORT: "9123" },
+          existsSync: fs.existsSync,
+          hasPortableRuntimeCleanup: () => false,
+          home,
+          isTty: false,
+          kill: () => true,
+          listGatewayPorts: () => [9123],
+          log: vi.fn(),
+          resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
+            gatewayName,
+            gatewayPort,
+            mode: "nemoclaw-managed",
+            source: "standalone",
+            endpoint: null,
+            stateDir: null,
+            supervisor: null,
+            requiredCapabilities: [],
+          }),
+          rmSync: fs.rmSync,
+          run: (command, args) =>
+            command === "openshell" && args.join(" ") === "gateway list -o json"
+              ? {
+                  status: 0,
+                  stdout: JSON.stringify([
+                    { name: "nemoclaw-9123" },
+                    ...(evidence === "live gateway" ? [{ name: "nemoclaw" }] : []),
+                  ]),
+                  stderr: "",
+                }
+              : { status: 0, stdout: "", stderr: "" },
+          runDocker: () => ({ status: 0, stdout: "", stderr: "" }),
+          runLocalModelRuntimeCleanup: () => ({
+            status: 0,
+            stdout: JSON.stringify({ ok: true, removed: [], skipped: [] }),
+            stderr: "",
+          }),
+          withSandboxMutationLock: async (_sandboxName, operation) => await operation(),
+        });
+
+        expect(result).toEqual({ exitCode: 1, ports: [9123] });
+        expect(fs.existsSync(apiKeyPath)).toBe(true);
+      } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("does not treat the shared home root as a default gateway without gateway evidence (#13332)", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-no-default-"));
@@ -748,5 +826,17 @@ describe("uninstall across every gateway port (#7791)", () => {
       "--retained-gateway-port",
       "18080",
     ]);
+  });
+
+  it("passes validated default-gateway absence only to the final child", async () => {
+    const { deps, runPortPass } = sweepDeps({ listGatewayPorts: () => [9000, 9123] });
+
+    await runUninstallAllGatewayPorts(OPTIONS, deps);
+
+    expect(runPortPass.mock.calls.map(([port, , , , absent]) => [port, absent])).toEqual([
+      [9000, false],
+      [9123, true],
+    ]);
+    expect(uninstallChildArgs(OPTIONS, [], true)).toContain("--sweep-default-gateway-absent");
   });
 });

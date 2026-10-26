@@ -22,22 +22,15 @@
  */
 
 import { spawnSync } from "node:child_process";
-import fs from "node:fs";
 import os from "node:os";
-import path from "node:path";
 
 import { type AgentBranding, getAgentBranding } from "../../cli/branding";
 import { DEFAULT_GATEWAY_PORT, GATEWAY_PORT } from "../../core/ports";
 import { spawnExitCode } from "../../core/process-exit";
 import { readLineFromStdin } from "../../core/stdin";
-import { resolveGatewayName, resolveGatewayStateDirForPort } from "../../onboard/gateway-binding";
-import { DOCKER_DRIVER_GATEWAY_CONFIG_NAME } from "../../onboard/docker-driver-gateway-config";
-import {
-  listGatewayStateRoots,
-  readGatewayOpenShellStateDir,
-  readGatewayRegistryFile,
-  registryEntryGatewayPort,
-} from "../../state/gateway-registry";
+import { resolveGatewayName } from "../../onboard/gateway-binding";
+import { listGatewayStateRoots, readGatewayOpenShellStateDir } from "../../state/gateway-registry";
+import { hasDefaultGatewayEvidence } from "./default-gateway-evidence";
 import {
   runUninstallPlanProduction,
   type UninstallRunDeps,
@@ -56,6 +49,7 @@ export interface AllGatewayPortsDeps extends UninstallRunDeps {
     options: UninstallRunOptions,
     env: NodeJS.ProcessEnv,
     retainedGatewayPorts?: readonly number[],
+    sweepDefaultGatewayAbsent?: boolean,
   ) => number;
   runSelectedPass?: (
     options: UninstallRunOptions,
@@ -78,38 +72,19 @@ export function allGatewayPortsRequested(
 
 function defaultListGatewayPorts(home: string): readonly number[] {
   const roots = listGatewayStateRoots(home);
-  const sharedRoot =
-    roots.find(({ gatewayPort }) => gatewayPort === DEFAULT_GATEWAY_PORT)?.root ??
-    path.join(home, ".nemoclaw");
-  const registry = readGatewayRegistryFile(home, path.join(sharedRoot, "sandboxes.json"));
-  const hasDefaultRegistryEntry =
-    registry !== null &&
-    Object.values(registry.sandboxes).some(
-      (entry) => registryEntryGatewayPort(entry) === DEFAULT_GATEWAY_PORT,
-    );
-  const defaultGatewayStateDir = resolveGatewayStateDirForPort({
-    home,
-    port: DEFAULT_GATEWAY_PORT,
-  });
-  const defaultGatewayConfig = fs.lstatSync(
-    path.join(defaultGatewayStateDir, DOCKER_DRIVER_GATEWAY_CONFIG_NAME),
-    { throwIfNoEntry: false },
-  );
-  const hasDefaultGatewayConfig = defaultGatewayConfig?.isFile() === true;
-
+  const hasDefaultGateway = hasDefaultGatewayEvidence(home);
   return roots
-    .filter(
-      ({ gatewayPort }) =>
-        gatewayPort !== DEFAULT_GATEWAY_PORT || hasDefaultRegistryEntry || hasDefaultGatewayConfig,
-    )
+    .filter(({ gatewayPort }) => gatewayPort !== DEFAULT_GATEWAY_PORT || hasDefaultGateway)
     .map((root) => root.gatewayPort);
 }
 
 export function uninstallChildArgs(
   options: UninstallRunOptions,
   retainedGatewayPorts: readonly number[] = [],
+  sweepDefaultGatewayAbsent = false,
 ): string[] {
   const args = ["internal", "uninstall", "run-plan", "--yes", "--all-gateway-ports-child"];
+  if (sweepDefaultGatewayAbsent) args.push("--sweep-default-gateway-absent");
   if (options.deleteModels) args.push("--delete-models");
   if (options.destroyUserData) args.push("--destroy-user-data");
   if (options.forceFreshReset) args.push("--force-fresh-reset");
@@ -146,14 +121,19 @@ function defaultRunPortPass(
   options: UninstallRunOptions,
   env: NodeJS.ProcessEnv,
   retainedGatewayPorts: readonly number[] = [],
+  sweepDefaultGatewayAbsent = false,
 ): number {
   const entry = process.argv[1];
   if (!entry) return 1;
   return spawnExitCode(
-    spawnSync(process.execPath, [entry, ...uninstallChildArgs(options, retainedGatewayPorts)], {
-      env,
-      stdio: "inherit",
-    }),
+    spawnSync(
+      process.execPath,
+      [entry, ...uninstallChildArgs(options, retainedGatewayPorts, sweepDefaultGatewayAbsent)],
+      {
+        env,
+        stdio: "inherit",
+      },
+    ),
   );
 }
 
@@ -218,6 +198,7 @@ export async function runUninstallAllGatewayPorts(
   }
 
   const selectedPortIsDiscovered = discovered.includes(GATEWAY_PORT);
+  const sweepDefaultGatewayAbsent = !discovered.includes(DEFAULT_GATEWAY_PORT);
   const otherPorts = [...new Set(discovered)]
     .filter((port) => port !== GATEWAY_PORT)
     .sort((left, right) => left - right);
@@ -250,6 +231,7 @@ export async function runUninstallAllGatewayPorts(
         ...runDeps,
         requireCompleteGatewayProcessCleanup: true,
         retainedGatewayPorts: [],
+        sweepDefaultGatewayAbsent,
       });
     } catch (failure) {
       error(
@@ -286,6 +268,7 @@ export async function runUninstallAllGatewayPorts(
         options,
         uninstallChildEnv(env, port, recordedStateDir),
         retainedForChild,
+        port === finalOtherPort && sweepDefaultGatewayAbsent,
       ) !== 0
     ) {
       exitCode = 1;
@@ -309,6 +292,7 @@ export async function runUninstallAllGatewayPorts(
         ...runDeps,
         requireCompleteGatewayProcessCleanup: true,
         retainedGatewayPorts,
+        sweepDefaultGatewayAbsent,
       },
     );
   } catch (failure) {
