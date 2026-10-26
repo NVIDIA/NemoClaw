@@ -76,17 +76,11 @@ export function enforceTransportTrust(entry: McpSourceEntry, requireOAuth: boole
   }
 
   if (transport === "stdio") {
-    if (requireOAuth) {
-      throw new McpBridgeError(
-        "STDIO transport does not support OAuth authentication. Use --transport sse with an HTTPS endpoint.",
-        2,
-        "supply-chain",
-      );
-    }
     // Warn but allow for backward compatibility with local development
     console.warn(
       `  WARNING: MCP server '${entry.server}' uses STDIO transport. This bypasses OpenShell network policies and credential boundaries. Prefer SSE (--transport sse) for production.`,
     );
+  }
 }
 
 /**

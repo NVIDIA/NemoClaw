@@ -604,7 +604,7 @@ export function parseMcpUpdateArgs(argv: string[]): ParsedMcpUpdateArgs {
   if (clearAllowTools) {
     if (denyTools.length > 0 || clearDenyTools || allowTools.length > 0) {
       throw new McpBridgeError(
-        "Pass --clear-allow-tools alone to remove the allowlist and return to deny-by-default mode.",
+        "Pass --clear-allow-tools alone to remove the allowlist and return to denylist mode, where tools are allowed unless denied.",
         2,
       );
     }

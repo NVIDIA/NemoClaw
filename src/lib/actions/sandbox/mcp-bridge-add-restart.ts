@@ -139,7 +139,9 @@ function sameMcpAddIntent(existing: McpSourceEntry, requested: McpSourceEntry): 
     // server/url/env plus policy-derived pins). An absent stored value therefore
     // cannot distinguish an exact retry from a conflicting one: the retry adopts
     // the requested intent fail-open. Compare strictly whenever the stored entry
-    // carries them; the add path warns when it adopts unverifiable intent.
+    // carries them; the add path warns when it adopts an unverifiable pin.
+    // requireOAuth is additionally rejected outright at the transport-trust
+    // boundary, so no OAuth intent can reach this comparison today.
     (existing.requireOAuth === undefined || existing.requireOAuth === requested.requireOAuth) &&
     (existing.serverIdentity?.digest === undefined ||
       existing.serverIdentity.digest === requested.serverIdentity?.digest)
@@ -959,8 +961,28 @@ async function addMcpBridgeUnlocked(
   );
   assertNoDerivedResourceCollision(observed.bridges, options.server, providerName, policyName);
 
-  // Compute tool policy (allowlist vs denylist)
-  const toolPolicy = computeToolPolicy(options.allowTools, denyTools);
+  // Normalize and validate the requested allowlist at the action boundary, so
+  // direct callers and retry definitions stay stable and deduplicated.
+  let normalizedAllowTools: string[] | undefined;
+  if (options.allowTools && options.allowTools.length > 0) {
+    const deduplicated = [...new Set(options.allowTools)].sort();
+    for (const tool of deduplicated) {
+      if (!VALID_ALLOW_TOOL_RE.test(tool)) {
+        throw new McpBridgeError(
+          `Invalid --allow-tool selector '${tool}'. Use 1-128 letters, digits, dots, underscores, or hyphens starting with a letter.`,
+          2,
+        );
+      }
+    }
+    if (denyTools.length > 0) {
+      throw new McpBridgeError(
+        "Cannot specify both --deny-tool and --allow-tool. Choose one mode: explicit denials or explicit allowlist (deny-by-default).",
+        2,
+      );
+    }
+    normalizedAllowTools = deduplicated;
+  }
+  const toolPolicy = computeToolPolicy(normalizedAllowTools, denyTools);
 
   // Resolve transport independently of identity pinning
   const transport = options.transport ?? inferTransportFromUrl(normalizedUrl);
@@ -1029,16 +1051,15 @@ async function addMcpBridgeUnlocked(
   }
   if (
     existingEntry &&
-    (options.serverIdentity !== undefined || options.requireOAuth !== undefined) &&
-    existingEntry.serverIdentity === undefined &&
-    existingEntry.requireOAuth === undefined
+    options.serverIdentity !== undefined &&
+    existingEntry.serverIdentity === undefined
   ) {
-    // Durable state cannot prove the prior identity/OAuth intent, so an exact
-    // retry and a conflicting retry are indistinguishable. Adopt the requested
-    // intent for crash-consistent resume and make that visible; changing intent
+    // Durable state cannot prove the prior identity intent, so an exact retry
+    // and a conflicting retry are indistinguishable. Adopt the requested pin
+    // for crash-consistent resume and make that visible; changing the pin
     // deliberately still requires remove with --force and re-add.
     console.warn(
-      `  WARNING: MCP server '${options.server}' retry cannot validate --server-identity/--require-oauth against durable state. Adopting the requested intent.`,
+      `  WARNING: MCP server '${options.server}' retry cannot validate --server-identity against durable state. Adopting the requested pin.`,
     );
   }
 

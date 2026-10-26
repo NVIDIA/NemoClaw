@@ -724,11 +724,11 @@ describe("Hermes MCP add reload finality", () => {
     expect(String(failure)).not.toContain("host-only-secret");
   });
 
-  it("accepts an exact retry when durable state cannot retain identity and OAuth intent", async () => {
+  it("accepts an exact retry when durable state cannot retain identity intent", async () => {
     // Agent-native readers reconstruct only server/url/env: after a successful
-    // add with --server-identity/--require-oauth, the observed entry carries
-    // neither field. The retry must adopt the requested intent, not report a
-    // definition mismatch or a missing recorded pin.
+    // add with --server-identity, the observed entry carries no identity pin.
+    // The retry must adopt the requested intent, not report a definition
+    // mismatch or a missing recorded pin.
     const url = normalizeMcpServerUrl("https://8.8.8.8/mcp");
     const reconstructed: McpSourceEntry = {
       server: "github",
@@ -751,7 +751,6 @@ describe("Hermes MCP add reload finality", () => {
         server: "github",
         url: "https://8.8.8.8/mcp",
         serverIdentity: `sha256:${"a".repeat(64)}`,
-        requireOAuth: true,
       }),
     ).resolves.toBeDefined();
     expect(mocks.registerAgentAdapterAtCurrentCredentialRevision).toHaveBeenCalled();
