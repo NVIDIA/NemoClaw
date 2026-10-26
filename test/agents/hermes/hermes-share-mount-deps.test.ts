@@ -143,7 +143,7 @@ describe("Hermes source archive download", () => {
     expect(result.stderr).toContain("outcome=transient-external attempt=1/3");
     expect(result.stderr).toContain("outcome=passed-after-retry attempt=2/3");
     expect(result.stderr).not.toContain(PRIVATE_CURL_DIAGNOSTIC);
-    expect(calls).toEqual(["curl http:429", "sleep 1", "curl http:200"]);
+    expect(calls).toEqual(["curl http:429", "sleep 60", "curl http:200"]);
     expect(fs.readFileSync(output, "utf8")).toBe("verified archive payload\n");
   });
 
@@ -155,9 +155,9 @@ describe("Hermes source archive download", () => {
     expect(result.stderr).not.toContain(PRIVATE_CURL_DIAGNOSTIC);
     expect(calls).toEqual([
       "curl http:429",
-      "sleep 1",
+      "sleep 60",
       "curl http:429",
-      "sleep 2",
+      "sleep 120",
       "curl http:429",
     ]);
     expect(fs.existsSync(output)).toBe(false);

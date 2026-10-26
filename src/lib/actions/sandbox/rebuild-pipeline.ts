@@ -846,14 +846,23 @@ async function rebuildSandboxUnlocked(
           const hostCredential = resumeConfig.credentialEnv
             ? hydrateCredentialEnv(resumeConfig.credentialEnv)
             : null;
-          if (
-            hostCredential &&
-            !(await validateRebuildHostInferenceCredential(resumeConfig, hostCredential))
-          ) {
+          let indeterminate = false;
+          const valid =
+            !hostCredential ||
+            (await validateRebuildHostInferenceCredential(
+              resumeConfig,
+              hostCredential,
+              undefined,
+              () => {
+                indeterminate = true;
+              },
+            ));
+          if (!valid) {
             return {
               ok: false,
-              message:
-                "Host inference credential could not be validated before sandbox deletion. Check the credential and recorded endpoint, then retry rebuild.",
+              message: indeterminate
+                ? "NVIDIA upstream inference was temporarily unavailable before sandbox deletion. The sandbox is untouched; retry rebuild when inference recovers."
+                : "Host inference credential could not be validated before sandbox deletion. Check the credential and recorded endpoint, then retry rebuild.",
             };
           }
           const nativeAttachment =
