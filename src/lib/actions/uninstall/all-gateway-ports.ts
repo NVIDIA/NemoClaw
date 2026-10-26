@@ -29,8 +29,11 @@ import { DEFAULT_GATEWAY_PORT, GATEWAY_PORT } from "../../core/ports";
 import { spawnExitCode } from "../../core/process-exit";
 import { readLineFromStdin } from "../../core/stdin";
 import { resolveGatewayName } from "../../onboard/gateway-binding";
-import { listGatewayStateRoots, readGatewayOpenShellStateDir } from "../../state/gateway-registry";
-import { hasDefaultGatewayEvidence } from "./default-gateway-evidence";
+import {
+  hasDefaultGatewayEvidence,
+  listGatewayStateRoots,
+  readGatewayOpenShellStateDir,
+} from "../../state/gateway-registry";
 import {
   runUninstallPlanProduction,
   type UninstallRunDeps,

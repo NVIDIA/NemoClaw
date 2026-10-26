@@ -35,7 +35,13 @@ afterEach(() => {
 function sweepDeps(overrides: AllGatewayPortsDeps = {}) {
   const error = vi.fn();
   const runPortPass = vi.fn(
-    (_port: number, _options: UninstallRunOptions, _env: NodeJS.ProcessEnv) => 0,
+    (
+      _port: number,
+      _options: UninstallRunOptions,
+      _env: NodeJS.ProcessEnv,
+      _retainedGatewayPorts?: readonly number[],
+      _sweepDefaultGatewayAbsent?: boolean,
+    ) => 0,
   );
   const runSelectedPass = vi.fn(async (_options: UninstallRunOptions, _deps: UninstallRunDeps) => ({
     exitCode: 0,
@@ -424,7 +430,7 @@ describe("uninstall across every gateway port (#7791)", () => {
   it.each([
     [
       "registry",
-      (home: string) => {
+      (home: string): void => {
         const sharedRoot = path.join(home, ".nemoclaw");
         fs.writeFileSync(
           path.join(sharedRoot, "sandboxes.json"),
@@ -437,13 +443,13 @@ describe("uninstall across every gateway port (#7791)", () => {
     ],
     [
       "configuration",
-      (home: string) => {
+      (home: string): void => {
         const stateDir = resolveGatewayStateDirForPort({ home, port: 8080 });
         fs.mkdirSync(stateDir, { recursive: true });
         fs.writeFileSync(path.join(stateDir, "openshell-gateway.toml"), "gateway config\n");
       },
     ],
-    ["live gateway", (_home: string) => undefined],
+    ["live gateway", (_home: string): void => undefined],
   ] as const)(
     "retains shared cleanup when %s proves a default gateway after the sweep omitted it",
     async (evidence, writeEvidence) => {

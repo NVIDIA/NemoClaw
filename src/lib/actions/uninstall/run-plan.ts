@@ -89,9 +89,9 @@ import {
   type StopHostGatewayOptions,
   stopHostGatewayProcesses,
 } from "../../onboard/host-gateway-process";
-import { hasDefaultGatewayEvidence } from "./default-gateway-evidence";
 import {
   assertGatewayStatePathSafe,
+  hasDefaultGatewayEvidence,
   prepareGatewayProviderAuthorityRetirement,
   GATEWAYS_SUBDIR,
   type GatewayRegistryEntry,
