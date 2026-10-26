@@ -302,16 +302,16 @@ export function qualifyPiReadTask(
     throw new PiInferenceFailure(`Pi inference failed: ${latestAssistantError.error}`);
   }
   if (starts.length !== 1 || startInvalid) {
-    const Failure = !start && !completion && !reply ? PiReadTaskPendingFailure : Error;
-    throw new Failure(
-      startInvalid
-        ? "Pi task did not issue the exact read tool call"
-        : `Pi task must start exactly one tool, observed ${String(starts.length)}`,
-    );
+    const message = startInvalid
+      ? "Pi task did not issue the exact read tool call"
+      : `Pi task must start exactly one tool, observed ${String(starts.length)}`;
+    if (!start && !completion && !reply) throw new PiReadTaskPendingFailure(message);
+    throw new Error(message);
   }
   if (completions.length !== 1 || completionInvalid || (reply && !completion)) {
-    const Failure = !completion && !reply ? PiReadTaskPendingFailure : Error;
-    throw new Failure("Pi read tool call did not complete successfully");
+    if (!completion && !reply)
+      throw new PiReadTaskPendingFailure("Pi read tool call did not complete successfully");
+    throw new Error("Pi read tool call did not complete successfully");
   }
   if (replies.length !== 1 || replyOutOfOrder || replyInvalid) {
     const Failure = !reply ? PiReadTaskPendingFailure : Error;
