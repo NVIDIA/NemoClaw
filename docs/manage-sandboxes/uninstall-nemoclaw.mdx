@@ -59,6 +59,16 @@ NemoClaw removes only a volume with exact ownership labels; inspection or remova
 </Warning>
 </AgentOnly>
 
+<AgentOnly variant="openclaw">
+<Warning>
+For a Docker OpenClaw sandbox that uses the NemoClaw-managed image, uninstall removes its managed `/sandbox/.openclaw` state volume even without `--destroy-user-data`, as `$$nemoclaw <name> destroy` does.
+When the gateway is externally supervised, uninstall does not delete the sandbox and keeps its state volume; restore a NemoClaw-managed lifecycle authority and retry before onboarding the same sandbox name again.
+Default uninstall backs up eligible sandbox state first.
+When using `--destroy-user-data`, back up required state separately before uninstall.
+NemoClaw removes only a volume with exact ownership labels; inspection or removal failure exits nonzero and preserves registry state for retry.
+</Warning>
+</AgentOnly>
+
 On macOS, Homebrew owns its OpenShell formula and executable links.
 Full uninstall preserves OpenShell executable paths instead of assuming NemoClaw owns them.
 When Homebrew confirms the `nvidia/openshell/openshell` formula, NemoClaw reports this separate removal command:
@@ -244,6 +254,11 @@ If marked Linux unit cleanup fails, uninstall exits nonzero before it scans for 
 OpenShell resource and Linux unit cleanup can partially complete before either failure.
 After selected sandbox cleanup succeeds, uninstall removes those entries from `sandboxes.json` before gateway registration and Linux unit cleanup.
 If a later step fails, the retry skips the completed sandbox deletions and resumes the remaining cleanup.
+After managed gateway cleanup and gateway-state removal succeed, uninstall removes that gateway's native-provider authority records from the preserved registry.
+This lets onboarding on the same port create its native provider again.
+If gateway cleanup or state removal fails, uninstall retains those records for recovery.
+It also retains them with `--keep-openshell` or if the selected registry state changes concurrently.
+Sibling gateway authority records remain unchanged.
 Resolve the reported error.
 Inspect the remaining gateways with `openshell gateway list`.
 Rerun `NEMOCLAW_GATEWAY_PORT=<port> $$nemoclaw uninstall` with the gateway port from the failed uninstall.
@@ -337,6 +352,7 @@ This preservation also applies when you pass `--destroy-user-data`.
 If the OpenShell command is unavailable or its gateway list cannot be read, uninstall cannot confirm that the selected gateway is the last one, so it uses the same scoped path and preserves the shared resources.
 When the command itself is unavailable, uninstall exits nonzero before OpenShell cleanup so you can restore the command and retry.
 The preserved `rebuild-backups/`, `backups/`, and `sandboxes.json` entries stay unless you pass `--destroy-user-data`.
+Preserving `sandboxes.json` preserves the file, but successful cleanup still removes the selected gateway's native-provider authority records as described above.
 That flag does not override gateway-scoped preservation of the managed runtime receipt, copied SSH bindings, or temporary discovery claims.
 
 Interactive runs prompt before they skip eligible fresh backups and remove the preserved entries, and the default answer keeps them.

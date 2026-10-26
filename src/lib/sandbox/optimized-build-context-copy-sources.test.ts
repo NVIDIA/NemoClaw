@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   directDockerfileCopySources,
+  directDockerfileContextSources,
   formatMissingDockerfileCopySources,
   missingDockerfileCopySources,
 } from "../../../scripts/lib/dockerfile-copy-sources.mts";
@@ -75,6 +76,43 @@ describe("optimized build-context Dockerfile sources", () => {
     expect(formatMissingDockerfileCopySources(missing)).toContain(
       "Dockerfile:2 missing scripts/lib/corporate-ca-runtime.sh",
     );
+  });
+
+  it("tracks context bind mounts while ignoring cache and stage mounts", () => {
+    const directory = makeTemporaryDirectory();
+    const dockerfilePath = writeDockerfile(
+      directory,
+      [
+        "FROM base",
+        "RUN --mount=type=cache,target=/cache \\",
+        "    --mount=type=bind,from=build,source=/out,target=/out \\",
+        "    --mount=type=bind,source=scripts/probe.mts,target=/probe.mts \\",
+        "    --mount=src=src/specs.ts,target=/specs.ts node /probe.mts",
+      ].join("\n"),
+    );
+    expect(directDockerfileContextSources(dockerfilePath)).toEqual([
+      { lineNumber: 2, source: "scripts/probe.mts" },
+      { lineNumber: 2, source: "src/specs.ts" },
+    ]);
+    expect(missingDockerfileCopySources(dockerfilePath, directory)).toHaveLength(2);
+    fs.mkdirSync(path.join(directory, "scripts"));
+    fs.mkdirSync(path.join(directory, "src"));
+    fs.writeFileSync(path.join(directory, "scripts/probe.mts"), "fixture\n");
+    fs.writeFileSync(path.join(directory, "src/specs.ts"), "fixture\n");
+    expect(missingDockerfileCopySources(dockerfilePath, directory)).toEqual([]);
+  });
+
+  it.each([
+    "--mount=type=bind,target=/workspace",
+    "--mount=type=bind,source=../outside,target=/workspace",
+    "--mount=type=bind,source=$INPUT,target=/workspace",
+    "--mount=type=bind,source=first,source=second,target=/workspace",
+    "--mount=type=bind,source=first,src=second,target=/workspace",
+    "--mount type=bind,source=first,target=/workspace",
+  ])("rejects an untracked context bind form: %s", (mount) => {
+    const directory = makeTemporaryDirectory();
+    const dockerfilePath = writeDockerfile(directory, `FROM base\nRUN ${mount} true\n`);
+    expect(() => directDockerfileContextSources(dockerfilePath)).toThrow(/Unsupported|Missing/u);
   });
 
   it("requires a wildcard source to match at least one staged path", () => {

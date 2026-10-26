@@ -165,6 +165,9 @@ export function createPendingPolicySelectionStore(
   ) => Pick<SandboxEntry, "lifecycleLiveIdentityFingerprint" | "createdAt"> | null,
 ) {
   return {
+    loadTier(): string | null {
+      return loadSession()?.pendingPolicySelection?.tierName ?? null;
+    },
     hasPending(sandboxName: string): boolean {
       return loadSession()?.pendingPolicySelection?.sandboxName === sandboxName;
     },

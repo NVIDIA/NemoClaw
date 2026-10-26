@@ -1,6 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  normalizeNativeNvidiaProviderAttachment,
+  NVIDIA_HOSTED_NATIVE_ENDPOINT,
+  verifyNativeNvidiaProviderAttachment,
+} from "../../inference/native-nvidia";
+import type { NativeNvidiaProviderAttachment } from "../../inference/native-nvidia/contract";
 import { refreshHermesNativeLocalCredential } from "../../hermes-managed-route";
 import type { NativeLocalProviderAttachment } from "../../inference/native-local/contract";
 import { normalizeNativeLocalProviderAttachment } from "../../inference/native-local/profile";
@@ -17,6 +23,11 @@ export interface InitialHermesInferenceRouteDeps {
     sandboxName: string,
     gatewayName: string,
     expected: NativeLocalProviderAttachment,
+  ): Promise<string>;
+  readNvidiaCredentialHandle?(
+    sandboxName: string,
+    gatewayName: string,
+    expected: NativeNvidiaProviderAttachment,
   ): Promise<string>;
   resolveAgentConfig(sandboxName: string): AgentConfigTarget;
   readSandboxConfig(
@@ -62,7 +73,12 @@ export function createInitialHermesInferenceRoute(
     const initial = deps.getSandbox(sandboxName);
     if (!initial) throw new Error("Initial Hermes inference route requires a registered sandbox.");
     if (!acceptsWorkload(initial)) return;
+    const nvidia =
+      options.projection === "credential" &&
+      provider === "nvidia-prod" &&
+      initial.nativeNvidiaProviderAttachment !== undefined;
     if (
+      !nvidia &&
       initial.nativeLocalProviderAttachment === undefined &&
       !usesNativeLocalInferenceForAgent(
         "hermes",
@@ -78,7 +94,10 @@ export function createInitialHermesInferenceRoute(
     const mismatch = () =>
       new Error("Initial Hermes inference route does not match its registered selection.");
     const selection = (entry: SandboxEntry | null | undefined) => {
-      const receipt = normalizeNativeLocalProviderAttachment(entry?.nativeLocalProviderAttachment);
+      const receipt = nvidia
+        ? normalizeNativeNvidiaProviderAttachment(entry?.nativeNvidiaProviderAttachment)
+        : normalizeNativeLocalProviderAttachment(entry?.nativeLocalProviderAttachment);
+      const local = normalizeNativeLocalProviderAttachment(entry?.nativeLocalProviderAttachment);
       if (
         !entry ||
         !acceptsWorkload(entry) ||
@@ -89,16 +108,19 @@ export function createInitialHermesInferenceRoute(
         entry.provider !== provider ||
         entry.model !== model ||
         !receipt ||
-        receipt.agent !== "hermes" ||
-        receipt.sandboxName !== sandboxName ||
-        receipt.gatewayName !== gatewayName ||
-        receipt.provider !== provider ||
-        !nativeLocalAttachmentMatchesSelectedEndpoint(
-          entry.provider,
-          entry.endpointUrl,
-          receipt.endpointUrl,
-          entry.hostLocalInferenceReceipt,
-        )
+        (nvidia
+          ? entry.endpointUrl != null && entry.endpointUrl !== NVIDIA_HOSTED_NATIVE_ENDPOINT
+          : !local ||
+            local.agent !== "hermes" ||
+            local.sandboxName !== sandboxName ||
+            local.gatewayName !== gatewayName ||
+            local.provider !== provider ||
+            !nativeLocalAttachmentMatchesSelectedEndpoint(
+              entry.provider,
+              entry.endpointUrl,
+              local.endpointUrl,
+              entry.hostLocalInferenceReceipt,
+            ))
       )
         throw mismatch();
       return {
@@ -121,7 +143,17 @@ export function createInitialHermesInferenceRoute(
       assertCurrent(`read initial Hermes inference route in sandbox '${sandboxName}'`);
       const target = deps.resolveAgentConfig(sandboxName);
       if (target.agentName !== "hermes") throw mismatch();
-      const handle = await deps.readCredentialHandle(sandboxName, gatewayName, selected.receipt);
+      const handle = nvidia
+        ? await deps.readNvidiaCredentialHandle!(
+            sandboxName,
+            gatewayName,
+            selected.receipt as NativeNvidiaProviderAttachment,
+          )
+        : await deps.readCredentialHandle(
+            sandboxName,
+            gatewayName,
+            selected.receipt as NativeLocalProviderAttachment,
+          );
       assertCurrent(`read Hermes config in sandbox '${sandboxName}'`);
       const config = deps.readSandboxConfig(sandboxName, target, gatewayName);
       // Keep the same object: the guarded writer requires the non-enumerable
@@ -134,7 +166,9 @@ export function createInitialHermesInferenceRoute(
         model,
         selected.preferredInferenceApi,
         undefined,
-        selected.receipt.endpointUrl,
+        nvidia
+          ? NVIDIA_HOSTED_NATIVE_ENDPOINT
+          : (selected.receipt as NativeLocalProviderAttachment).endpointUrl,
         true,
         handle,
       );
@@ -187,6 +221,20 @@ const defaultDeps: Omit<InitialHermesInferenceRouteDeps, "getSandbox"> = {
     });
     if (!handle)
       throw new Error("Initial Hermes inference route requires an issued credential handle.");
+    return handle;
+  },
+  readNvidiaCredentialHandle: async (sandboxName, gatewayName, expected) => {
+    const handle = await (
+      require("../../actions/inference-set-provider") as typeof import("../../actions/inference-set-provider")
+    ).readNativeNvidiaCredentialHandle(sandboxName, gatewayName);
+    await verifyNativeNvidiaProviderAttachment({
+      adapter: (
+        require("../../actions/inference-set-provider") as typeof import("../../actions/inference-set-provider")
+      ).createDefaultInferenceSetProviderAdapter(),
+      target: { kind: "named", gatewayName },
+      sandboxName,
+      expected,
+    });
     return handle;
   },
   resolveAgentConfig: (name) =>

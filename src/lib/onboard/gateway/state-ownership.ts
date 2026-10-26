@@ -133,11 +133,6 @@ export function captureNativeDockerRecoveryAuthority(
   reservationSessionId: string,
 ): RetainedSandboxCreateAuthority | undefined {
   if (process.platform !== "linux") return undefined;
-  if (
-    process.env.DOCKER_HOST?.trim() !== "unix:///var/run/docker.sock" &&
-    !dockerContextIsDefaultFromBuild(process.env)
-  )
-    return undefined;
   const gatewayStateDir = resolveGatewayStateDirForPort({
     configured: process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR,
     home: os.homedir(),
@@ -151,6 +146,11 @@ export function captureNativeDockerRecoveryAuthority(
       requireDefaultDockerDaemon: true,
     });
   if (ownedRuntime() !== "docker") return undefined;
+  if (
+    process.env.DOCKER_HOST?.trim() !== "unix:///var/run/docker.sock" &&
+    !dockerContextIsDefaultFromBuild(process.env)
+  )
+    return undefined;
   const result = dockerRun(["--context", "default", "info", "--format", "{{.ID}}"], {
     ignoreError: true,
     suppressOutput: true,

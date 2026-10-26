@@ -8,6 +8,7 @@ import {
   detachNativeLocalProvider,
   ensureNativeLocalProviderAttached,
   normalizeNativeLocalProviderAttachment,
+  nativeLocalIdentity,
   retireNativeLocalProvider,
   type NativeLocalProviderAttachment,
   verifyNativeLocalProviderAttachment,
@@ -61,7 +62,12 @@ export async function resolveOpenClawLocalSwitch(input: {
     return { previous };
   // A retained OpenClaw row may still own the historical shared route.
   if (!previous && entry.provider === provider) return {};
-  if (!previous || entry.provider !== provider) return { previous, prepare: true };
+  if (
+    !previous ||
+    entry.provider !== provider ||
+    previous.profileId !== nativeLocalIdentity(previous).profileId
+  )
+    return { previous, prepare: true };
   return { selected: previous, previous };
 }
 

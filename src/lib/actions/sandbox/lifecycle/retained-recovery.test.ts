@@ -20,7 +20,7 @@ const emptyDockerResult = {
 beforeAll(async () => {
   // Load the shared CLI graph before timing recovery operations in each isolated state root.
   await import("../destroy");
-});
+}, 60_000);
 
 beforeEach(() => {
   testHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-recovery-metadata-"));
@@ -33,7 +33,12 @@ afterEach(() => {
   fs.rmSync(testHome, { recursive: true, force: true });
 });
 
-async function setup(port = 19260, dockerHost?: string, captureAuthority = false) {
+async function setup(
+  port = 19260,
+  dockerHost?: string,
+  captureAuthority = false,
+  lifecycleGeneration = "failed-generation",
+) {
   vi.stubEnv("NEMOCLAW_GATEWAY_PORT", String(port));
   vi.stubEnv("DOCKER_HOST", dockerHost);
   vi.stubEnv("DOCKER_CONTEXT", "default");
@@ -97,7 +102,7 @@ async function setup(port = 19260, dockerHost?: string, captureAuthority = false
   session.markRetainedSandboxRecovery("alpha", "identity lookup failed", undefined, {
     gatewayName,
     gatewayPort: port,
-    lifecycleGeneration: "failed-generation",
+    lifecycleGeneration,
     createAttemptNonce: "a".repeat(62),
     ...(createAuthority ? { createAuthority } : {}),
   });
@@ -202,6 +207,219 @@ async function setupDestroy(port = 19260) {
     assertMigrationClear: () => enforceRemovedImmutabilityMigrationBoundary("alpha"),
   };
 }
+
+async function setupJournaledRebuild() {
+  const h = await setup(19260, undefined, true, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+  h.registry.updateSandbox("alpha", {
+    agent: "openclaw",
+    pendingRouteReservation: undefined,
+    lifecycleGeneration: "old-generation",
+    lifecycleLiveIdentityFingerprint: "b".repeat(64),
+  });
+  const source = h.registry.getSandbox("alpha")!;
+  const recreate = await import("../../../onboard/sandbox-recreate-transaction");
+  h.session.updateSession((current) => {
+    const transaction = recreate.beginSandboxRecreateTransaction(current, {
+      sandboxName: "alpha",
+      gatewayName: h.record.gatewayName,
+      gatewayPort: h.record.gatewayPort,
+      sourceEntry: source,
+      observation: { state: "missing", liveIdentityFingerprint: null },
+      targetIntentFingerprint: recreate.fingerprintSandboxRecreateValue("target"),
+      targetGeneration: h.record.lifecycleGeneration!,
+    });
+    recreate.advanceSandboxRecreateTransaction(current, transaction.id, "creating");
+    current.checkpoint = {
+      ...current.checkpoint!,
+      sandboxIdentity: { kind: "selected", value: { name: "alpha", agent: "openclaw" } },
+      gatewayAuthority: {
+        kind: "selected",
+        value: {
+          gatewayName: h.record.gatewayName,
+          gatewayPort: h.record.gatewayPort,
+          mode: "nemoclaw-managed",
+          source: "standalone",
+          endpoint: null,
+          stateDir: null,
+          supervisor: null,
+          requiredCapabilities: [],
+        },
+      },
+    };
+    return current;
+  });
+  expect(h.session.loadSession()?.checkpoint?.sandboxRecreate?.phase).toBe("creating");
+  const { reconcileJournaledRebuildRecovery } = await import("../destroy-preflight");
+  const run = () =>
+    reconcileJournaledRebuildRecovery(source, h.session.listRetainedSandboxRecoveryRecords(), {
+      session: h.session,
+      registry: h.registry,
+      captureOpenshell: h.capture,
+    });
+  return { ...h, source, run };
+}
+
+describe("journaled rebuild recovery", () => {
+  type JournalHarness = Awaited<ReturnType<typeof setupJournaledRebuild>>;
+  beforeEach(() => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+  });
+
+  it("retains the deleted source row and rebuild journal while clearing an absent replacement (#7475)", async () => {
+    const h = await setupJournaledRebuild();
+    const journal = h.session.loadSession()?.checkpoint?.sandboxRecreate;
+
+    expect(h.run()).toBe(true);
+
+    expect(h.registry.getSandbox("alpha")).toEqual(h.source);
+    expect(h.session.listRetainedSandboxRecoveryRecords()).toEqual([]);
+    expect(h.session.loadSession()).toMatchObject({
+      sandboxName: "alpha",
+      status: "failed",
+      cancellationRecovery: null,
+      checkpoint: { sandboxRecreate: journal },
+    });
+    expect(h.capture).toHaveBeenCalledTimes(2);
+  });
+
+  it("selects the retained target recovery while preserving another active rebuild (#7475)", async () => {
+    const h = await setupJournaledRebuild();
+    expect(h.session.acquireOnboardLock("retain alpha recovery").acquired).toBe(true);
+    try {
+      h.session.selectRebuildSession("beta");
+    } finally {
+      h.session.releaseOnboardLock();
+    }
+    const recreate = await import("../../../onboard/sandbox-recreate-transaction");
+    const beta = h.session.updateSession((current) => {
+      const transaction = recreate.beginSandboxRecreateTransaction(current, {
+        sandboxName: "beta",
+        gatewayName: h.record.gatewayName,
+        gatewayPort: h.record.gatewayPort,
+        sourceEntry: { name: "beta", agent: "openclaw" },
+        observation: { state: "missing", liveIdentityFingerprint: null },
+        targetIntentFingerprint: recreate.fingerprintSandboxRecreateValue("beta-target"),
+      });
+      current.checkpoint = {
+        ...current.checkpoint!,
+        sandboxIdentity: { kind: "selected", value: { name: "beta", agent: "openclaw" } },
+        gatewayAuthority: {
+          kind: "selected",
+          value: {
+            gatewayName: h.record.gatewayName,
+            gatewayPort: h.record.gatewayPort,
+            mode: "nemoclaw-managed",
+            source: "standalone",
+            endpoint: null,
+            stateDir: null,
+            supervisor: null,
+            requiredCapabilities: [],
+          },
+        },
+        sandboxRecreate: transaction,
+      };
+      return current;
+    });
+    const target = h.session.loadRebuildSession("alpha");
+    expect(target?.checkpoint?.sandboxRecreate?.sandboxName).toBe("alpha");
+
+    expect(h.run()).toBe(true);
+
+    expect(h.session.loadSession()).toMatchObject({
+      sandboxName: "alpha",
+      status: "failed",
+      cancellationRecovery: null,
+      checkpoint: { sandboxRecreate: target?.checkpoint?.sandboxRecreate },
+    });
+    expect(h.session.loadRebuildSession("beta")).toEqual(beta);
+    expect(h.session.listRetainedSandboxRecoveryRecords()).toEqual([]);
+    expect(h.registry.getSandbox("alpha")).toEqual(h.source);
+  });
+
+  it("lets the rebuild guard continue after reconciling the saved replacement (#7475)", async () => {
+    const h = await setupJournaledRebuild();
+    const preflight = await import("../destroy-preflight");
+    const reconcile = preflight.reconcileJournaledRebuildRecovery;
+    vi.spyOn(preflight, "reconcileJournaledRebuildRecovery").mockImplementation(
+      (source, records, state) =>
+        reconcile(source, records, { ...state, captureOpenshell: h.capture }),
+    );
+    const { blockRebuildOnRetainedSandboxRecovery } = await import("../rebuild-preflight-guards");
+    const bail = vi.fn() as unknown as (message: string, code?: number) => never;
+
+    expect(blockRebuildOnRetainedSandboxRecovery(h.source, bail)).toBe(false);
+
+    expect(bail).not.toHaveBeenCalled();
+    expect(h.session.listRetainedSandboxRecoveryRecords()).toEqual([]);
+    expect(h.registry.getSandbox("alpha")).toEqual(h.source);
+  });
+
+  it.each([
+    {
+      condition: "live replacement",
+      prepare: (h: JournalHarness) =>
+        h.capture.mockReturnValue({
+          status: 0,
+          output: '[{"name":"alpha","phase":"Ready"}]',
+          stdout: '[{"name":"alpha","phase":"Ready"}]',
+          stderr: "",
+        }),
+    },
+    {
+      condition: "changed source row",
+      prepare: (h: JournalHarness) =>
+        h.registry.updateSandbox("alpha", { imageTag: "another-source" }),
+    },
+    {
+      condition: "changed generation",
+      prepare: (h: JournalHarness) =>
+        h.session.updateSession((current) => {
+          current.checkpoint = {
+            ...current.checkpoint!,
+            sandboxRecreate: {
+              ...current.checkpoint!.sandboxRecreate!,
+              targetGeneration: "another-generation",
+            },
+          };
+          return current;
+        }),
+    },
+    {
+      condition: "unconfirmed source deletion",
+      prepare: (h: JournalHarness) =>
+        h.session.updateSession((current) => {
+          current.checkpoint = {
+            ...current.checkpoint!,
+            sandboxRecreate: { ...current.checkpoint!.sandboxRecreate!, phase: "deleting" },
+          };
+          return current;
+        }),
+    },
+    {
+      condition: "changed Docker daemon",
+      prepare: (h: JournalHarness) => h.setDaemonId("replacement-daemon-id"),
+    },
+    {
+      condition: "unknown gateway",
+      prepare: (h: JournalHarness) =>
+        h.capture.mockReturnValue({
+          status: 1,
+          output: "",
+          stdout: "",
+          stderr: "unavailable",
+        }),
+    },
+  ])("keeps recovery when $condition makes resume ambiguous (#7475)", async ({ prepare }) => {
+    const h = await setupJournaledRebuild();
+    prepare(h);
+    const before = h.snapshot();
+
+    expect(() => h.run()).toThrow();
+
+    expect(h.snapshot()).toEqual(before);
+    expect(h.session.listRetainedSandboxRecoveryRecords()).toHaveLength(1);
+  });
+});
 
 describe.skipIf(process.platform !== "linux")("identity-free retained recovery", () => {
   type Harness = Awaited<ReturnType<typeof setup>>;
