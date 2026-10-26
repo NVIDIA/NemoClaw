@@ -130,10 +130,81 @@ pub async fn health(client: &OpenShellClient) -> Result<(), ObservationError> {
     Ok(())
 }
 
+const SERVER_UNTRUSTED: &str =
+    "the gateway's TLS server certificate is not signed by the configured certificate authority";
+const SERVER_ELSEWHERE: &str =
+    "the gateway's TLS server certificate does not name the endpoint's host";
+const CLIENT_REFUSED: &str = "the gateway refused the TLS client certificate";
+
+/// Alerts a server sends when it refuses the client's certificate, or the
+/// signature that proves the client holds its key.
+const CLIENT_ALERTS: [rustls::AlertDescription; 8] = [
+    rustls::AlertDescription::BadCertificate,
+    rustls::AlertDescription::UnsupportedCertificate,
+    rustls::AlertDescription::CertificateRevoked,
+    rustls::AlertDescription::CertificateExpired,
+    rustls::AlertDescription::CertificateUnknown,
+    rustls::AlertDescription::UnknownCA,
+    rustls::AlertDescription::CertificateRequired,
+    rustls::AlertDescription::DecryptError,
+];
+
+/// What a refused TLS handshake says about the gateway's certificates, if
+/// `error` or one of its sources is one.
+///
+/// Rustls errors arrive inside I/O errors, whose `source` skips the wrapped
+/// error, so those are unwrapped too. An alert the server sends after the
+/// handshake reaches the client as an I/O error holding only rustls's text,
+/// so it is recognized by that text.
+pub fn tls_failure(error: &(dyn std::error::Error + 'static)) -> Option<ObservationError> {
+    use rustls::{CertificateError, Error};
+    let mut next = Some(error);
+    while let Some(error) = next {
+        let inner = error
+            .downcast_ref::<std::io::Error>()
+            .and_then(std::io::Error::get_ref);
+        let tls = error
+            .downcast_ref::<Error>()
+            .or_else(|| inner.and_then(|inner| inner.downcast_ref::<Error>()));
+        let message = match tls {
+            // A regenerated authority with the same name gives BadSignature.
+            Some(Error::InvalidCertificate(
+                CertificateError::UnknownIssuer | CertificateError::BadSignature,
+            )) => Some(SERVER_UNTRUSTED),
+            Some(Error::InvalidCertificate(
+                CertificateError::NotValidForName | CertificateError::NotValidForNameContext { .. },
+            )) => Some(SERVER_ELSEWHERE),
+            Some(Error::AlertReceived(alert)) if CLIENT_ALERTS.contains(alert) => {
+                Some(CLIENT_REFUSED)
+            }
+            Some(_) => None,
+            None => inner
+                .map(ToString::to_string)
+                .filter(|text| {
+                    CLIENT_ALERTS
+                        .iter()
+                        .any(|alert| *text == Error::AlertReceived(*alert).to_string())
+                })
+                .map(|_| CLIENT_REFUSED),
+        };
+        if let Some(message) = message {
+            return Some(ObservationError::Backend(message));
+        }
+        next = error.source();
+    }
+    None
+}
+
 pub fn remote_error(status: &tonic::Status) -> ObservationError {
     match status.code() {
         tonic::Code::Unauthenticated => ObservationError::Authentication,
         tonic::Code::PermissionDenied => ObservationError::Permission,
+        // A refused handshake is a configuration error, not an outage to wait out.
+        tonic::Code::Unavailable | tonic::Code::Unknown
+            if let Some(failure) = tls_failure(status) =>
+        {
+            failure
+        }
         tonic::Code::Unavailable | tonic::Code::DeadlineExceeded | tonic::Code::Cancelled => {
             ObservationError::Transport
         }

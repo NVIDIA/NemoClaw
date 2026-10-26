@@ -2711,6 +2711,7 @@ dependencies = [
  "nemoclaw-tofu",
  "openshell-policy",
  "openshell-sdk",
+ "rustls",
  "schemars",
  "serde",
  "serde_json",
