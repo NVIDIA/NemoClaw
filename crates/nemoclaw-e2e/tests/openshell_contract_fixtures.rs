@@ -33,7 +33,7 @@ fn fixture(mut document: Document) -> Option<String> {
     if encoded.contains("managedService") {
         return None;
     }
-    for (index, sandbox) in document.spec.sandboxes.iter().enumerate() {
+    for (index, sandbox) in document.spec.sandboxes.values().enumerate() {
         let kind = sandbox.harness.as_ref().map_or_else(
             || "nvidia.fabric.openclaw".to_owned(),
             |harness| harness.kind.to_string(),

@@ -8,7 +8,8 @@ fn external_document() -> Value {
         Document::parse(include_bytes!("fixtures/config/local.yaml").as_slice()).unwrap();
     let mut input = serde_json::to_value(document).unwrap();
     input["spec"]["gateway"]["runtime"] = json!({"provider": "kubernetes"});
-    input["spec"]["sandboxes"][0]["image"]["metadata"] = json!({"env":"TEST_IMAGE_METADATA"});
+    input["spec"]["sandboxes"]["assistant"]["image"]["metadata"] =
+        json!({"env":"TEST_IMAGE_METADATA"});
     input
 }
 
@@ -173,7 +174,7 @@ fn kubernetes_sandboxes_must_name_their_image_metadata() {
     // No local engine can be inspected, so each image's metadata bundle is
     // required up front.
     let mut input = external_document();
-    input["spec"]["sandboxes"][0]["image"]
+    input["spec"]["sandboxes"]["assistant"]["image"]
         .as_object_mut()
         .unwrap()
         .remove("metadata");
@@ -326,12 +327,13 @@ fn authored_credentials_cannot_shadow_managed_kubernetes_runtime_controls() {
     ] {
         for path in [
             "/spec/gateway/kubernetes/kubeconfig",
-            "/spec/inferenceProviders/0/credential",
+            "/spec/inferenceProviders/local/credential",
         ] {
             let mut input = managed_document();
-            input["spec"]["inferenceProviders"][0]["endpoint"] =
+            input["spec"]["inferenceProviders"]["local"]["endpoint"] =
                 json!("https://inference.example/v1");
-            input["spec"]["inferenceProviders"][0]["credential"] = json!({"env":"HOSTED_API_KEY"});
+            input["spec"]["inferenceProviders"]["local"]["credential"] =
+                json!({"env":"HOSTED_API_KEY"});
             *input.pointer_mut(path).unwrap() = json!({"env":name});
             assert!(!validator.is_valid(&input));
             assert!(Document::parse(input.to_string().as_bytes()).is_err());
@@ -429,12 +431,13 @@ fn managed_kubeconfig_controls_do_not_restrict_other_credential_references() {
     ] {
         let mut input = external_document();
         input["spec"]["gateway"]["runtime"]["provider"] = json!("docker");
-        input["spec"]["sandboxes"][0]["image"]
+        input["spec"]["sandboxes"]["assistant"]["image"]
             .as_object_mut()
             .unwrap()
             .remove("metadata");
-        input["spec"]["inferenceProviders"][0]["endpoint"] = json!("https://inference.example/v1");
-        input["spec"]["inferenceProviders"][0]["credential"] = json!({"env": name});
+        input["spec"]["inferenceProviders"]["local"]["endpoint"] =
+            json!("https://inference.example/v1");
+        input["spec"]["inferenceProviders"]["local"]["credential"] = json!({"env": name});
         Document::parse(input.to_string().as_bytes()).unwrap();
     }
 }
@@ -482,7 +485,9 @@ fn kubernetes_requires_an_explicit_nonempty_image_before_defaults() {
     let validator = jsonschema::validator_for(&schema::input_schema()).unwrap();
     for image in [None, Some(json!({})), Some(json!({"ref": ""}))] {
         let mut input = external_document();
-        let sandbox = input["spec"]["sandboxes"][0].as_object_mut().unwrap();
+        let sandbox = input["spec"]["sandboxes"]["assistant"]
+            .as_object_mut()
+            .unwrap();
         match image {
             Some(image) => {
                 sandbox.insert("image".into(), image);
@@ -499,10 +504,10 @@ fn kubernetes_requires_an_explicit_nonempty_image_before_defaults() {
 #[test]
 fn directly_constructed_kubernetes_sandboxes_never_default_their_image() {
     let mut document = Document::parse(external_document().to_string().as_bytes()).unwrap();
-    document.spec.sandboxes[0].image = Default::default();
+    document.spec.sandboxes.get_mut("assistant").unwrap().image = Default::default();
     assert!(document.validate().is_err());
     document.defaults();
-    assert!(document.spec.sandboxes[0].image.ref_.is_empty());
+    assert!(document.spec.sandboxes["assistant"].image.ref_.is_empty());
     assert!(document.validate().is_err());
 }
 
@@ -565,9 +570,11 @@ fn a_reserved_reference_name_states_whether_the_reference_holds_a_secret_or_a_fi
         "certificate": {"env": "GATEWAY_CERT"},
         "key": {"env": "GATEWAY_KEY"}
     });
-    external["spec"]["inferenceProviders"][0]["endpoint"] = json!("https://inference.example/v1");
-    external["spec"]["inferenceProviders"][0]["credential"] = json!({"env": "HOSTED_API_KEY"});
-    external["spec"]["sandboxes"][0]["integrations"] = json!({
+    external["spec"]["inferenceProviders"]["local"]["endpoint"] =
+        json!("https://inference.example/v1");
+    external["spec"]["inferenceProviders"]["local"]["credential"] =
+        json!({"env": "HOSTED_API_KEY"});
+    external["spec"]["sandboxes"]["assistant"]["integrations"] = json!({
         "search": {"kind": "webSearch", "provider": "brave", "credential": {"env": "SEARCH_KEY"}},
         "bookings": {
             "kind": "api",
@@ -575,7 +582,8 @@ fn a_reserved_reference_name_states_whether_the_reference_holds_a_secret_or_a_fi
             "credential": {"env": "BOOKINGS_API_KEY"}
         }
     });
-    external["spec"]["sandboxes"][0]["agent"]["integrationRefs"] = json!(["search", "bookings"]);
+    external["spec"]["sandboxes"]["assistant"]["agent"]["integrationRefs"] =
+        json!(["search", "bookings"]);
     Document::parse(external.to_string().as_bytes()).unwrap();
     let mut oidc = managed_document();
     oidc["spec"]["gateway"]["kubernetes"]["authentication"] = json!({
@@ -596,20 +604,20 @@ fn a_reserved_reference_name_states_whether_the_reference_holds_a_secret_or_a_fi
         ),
         (
             external.clone(),
-            "/spec/inferenceProviders/0/credential",
-            "spec.inferenceProviders[0].credential.env",
+            "/spec/inferenceProviders/local/credential",
+            "spec.inferenceProviders.local.credential.env",
             secret,
         ),
         (
             external.clone(),
-            "/spec/sandboxes/0/integrations/search/credential",
-            "spec.sandboxes[0].integrations.search.credential.env",
+            "/spec/sandboxes/assistant/integrations/search/credential",
+            "spec.sandboxes.assistant.integrations.search.credential.env",
             secret,
         ),
         (
             external.clone(),
-            "/spec/sandboxes/0/integrations/bookings/credential",
-            "spec.sandboxes[0].integrations.bookings.credential.env",
+            "/spec/sandboxes/assistant/integrations/bookings/credential",
+            "spec.sandboxes.assistant.integrations.bookings.credential.env",
             secret,
         ),
         (
@@ -632,8 +640,8 @@ fn a_reserved_reference_name_states_whether_the_reference_holds_a_secret_or_a_fi
         ),
         (
             external,
-            "/spec/sandboxes/0/image/metadata",
-            "spec.sandboxes[0].image.metadata.env",
+            "/spec/sandboxes/assistant/image/metadata",
+            "spec.sandboxes.assistant.image.metadata.env",
             file,
         ),
         (

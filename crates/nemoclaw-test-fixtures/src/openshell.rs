@@ -47,6 +47,13 @@ pub struct State {
     pub exec_environments: Vec<HashMap<String, String>>,
     pub fabric_configurations: HashMap<String, serde_json::Value>,
     pub fabric_stopped: HashSet<String>,
+    /// Running Fabric runtimes by ID, each naming its sandbox ID.
+    pub fabric_runtimes: HashMap<String, String>,
+    /// Successful starts by sandbox ID, which number later runtime IDs.
+    pub fabric_starts: HashMap<String, usize>,
+    /// Sandboxes where a start failed with unknown effects; Fabric refuses
+    /// another start there.
+    pub fabric_uncertain: HashSet<String>,
     /// Stdin sent with each exec call, parallel to `exec_calls`.
     pub exec_stdin: Vec<Vec<u8>>,
     /// The sandbox name each exec call targets, parallel to `exec_calls`.
@@ -886,21 +893,21 @@ impl tonic::server::ServerStreamingService<p::ExecSandboxRequest> for Exec {
                     .map(|args| args[1].as_str())
             };
             let failure = |code: &str, stage: &str, effects: &str| serde_json::json!({"code":code, "stage":stage, "message":"fixture failure", "effects":effects});
-            let runtime_id = format!("fixture-runtime-{sandbox_id}");
-            let running = state.fabric_configurations.contains_key(&sandbox_id)
-                && !state.fabric_stopped.contains(&sandbox_id);
+            let requested_runtime = flag("--runtime-id").map(str::to_owned);
+            let running = requested_runtime
+                .as_ref()
+                .is_some_and(|id| state.fabric_runtimes.get(id) == Some(&sandbox_id));
             let mut error = None;
             let mut changed = None;
             let mut result = serde_json::Value::Null;
             match operation {
-                // Like fabric-agent-ctl: one runtime lifecycle per sandbox.
+                // Like fabric-agent-ctl: a sandbox may run several runtimes,
+                // but Fabric refuses a start after one with unknown effects.
                 "start" => {
                     if state.host_unavailable_starts > 0 {
                         state.host_unavailable_starts -= 1;
                         error = Some(failure("host_unavailable", "transport", "none"));
-                    } else if state.fabric_configurations.contains_key(&sandbox_id)
-                        || state.fabric_stopped.contains(&sandbox_id)
-                    {
+                    } else if state.fabric_uncertain.contains(&sandbox_id) {
                         error = Some(failure("runtime_exists", "start", "none"));
                     } else if let Some(config) = (flag("--config") == Some("-"))
                         .then(|| serde_json::from_slice::<serde_json::Value>(&request.stdin).ok())
@@ -915,14 +922,14 @@ impl tonic::server::ServerStreamingService<p::ExecSandboxRequest> for Exec {
                             let code = rejected["error"]["code"].as_str().unwrap_or("start_failed");
                             // Fabric rejects an invalid configuration before
                             // starting anything; any other failed start may
-                            // have consumed the sandbox's one runtime.
+                            // have left a runtime behind.
                             let effects = if code.starts_with("validation_") {
                                 "none"
                             } else {
                                 "unknown"
                             };
                             if effects != "none" {
-                                state.fabric_stopped.insert(sandbox_id.clone());
+                                state.fabric_uncertain.insert(sandbox_id.clone());
                             }
                             let mut rejection = failure(
                                 code,
@@ -936,6 +943,15 @@ impl tonic::server::ServerStreamingService<p::ExecSandboxRequest> for Exec {
                             }
                             error = Some(rejection);
                         } else {
+                            let starts = state.fabric_starts.entry(sandbox_id.clone()).or_default();
+                            let runtime_id = match *starts {
+                                0 => format!("fixture-runtime-{sandbox_id}"),
+                                n => format!("fixture-runtime-{sandbox_id}-{n}"),
+                            };
+                            *starts += 1;
+                            state
+                                .fabric_runtimes
+                                .insert(runtime_id.clone(), sandbox_id.clone());
                             result = serde_json::json!({
                                 "runtime_id": runtime_id,
                                 "agent_name": flag("--agent"),
@@ -951,7 +967,7 @@ impl tonic::server::ServerStreamingService<p::ExecSandboxRequest> for Exec {
                     }
                 }
                 "invoke" => {
-                    if running && flag("--runtime-id") == Some(runtime_id.as_str()) {
+                    if running {
                         let input = serde_json::from_slice::<serde_json::Value>(&request.stdin)
                             .unwrap_or(serde_json::Value::Null);
                         result =
@@ -961,9 +977,12 @@ impl tonic::server::ServerStreamingService<p::ExecSandboxRequest> for Exec {
                     }
                 }
                 "stop" => {
-                    if running && flag("--runtime-id") == Some(runtime_id.as_str()) {
+                    if let Some(runtime_id) = requested_runtime.filter(|_| running) {
+                        state.fabric_runtimes.remove(&runtime_id);
                         state.fabric_stopped.insert(sandbox_id.clone());
-                        state.fabric_configurations.remove(&sandbox_id);
+                        if !state.fabric_runtimes.values().any(|id| id == &sandbox_id) {
+                            state.fabric_configurations.remove(&sandbox_id);
+                        }
                         changed = Some(true);
                     } else {
                         error = Some(failure("runtime_unavailable", "stop", "none"));

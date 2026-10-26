@@ -75,22 +75,22 @@ spec:
             size: 1
             sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
   inferenceProviders:
-  - name: qwen
-    provider: openai
-    serviceRef: qwen
+    qwen:
+      provider: openai
+      serviceRef: qwen
   sandboxes:
-  - name: assistant
-    image:
-      ref: nc-multi-models@sha256:3ab70ded67440e838a37d6c9f0e3b08b95e2acf416c6076f8817bac190525cf0
-    network:
-      tier: isolated
-    harness:
-      kind: nvidia.fabric.openclaw
-    agent:
-      name: assistant
-      inference:
-        routes:
-        - name: primary
-          providerRef: qwen
-          overrides:
-            model: fixture-model
+    assistant:
+      image:
+        ref: nc-multi-models@sha256:3ab70ded67440e838a37d6c9f0e3b08b95e2acf416c6076f8817bac190525cf0
+      network:
+        tier: isolated
+      harness:
+        kind: nvidia.fabric.openclaw
+      agent:
+        name: assistant
+        inference:
+          routes:
+          - name: primary
+            providerRef: qwen
+            overrides:
+              model: fixture-model

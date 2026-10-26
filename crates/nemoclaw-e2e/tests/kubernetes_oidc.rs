@@ -4,10 +4,7 @@
 //! SDK's development issuer image, run in its own namespace as a stand-in for
 //! an identity provider.
 use super::*;
-use k8s_openapi::api::{
-    apps::v1::Deployment as KubeDeployment,
-    core::v1::{ConfigMap, Service},
-};
+use k8s_openapi::api::{apps::v1::Deployment as KubeDeployment, core::v1::ConfigMap};
 use kube::api::PostParams;
 use nemoclaw_sdk::kubernetes::{
     auth::{ADMIN_ROLE, Development, USER_ROLE},
@@ -16,12 +13,6 @@ use nemoclaw_sdk::kubernetes::{
 
 const TOKEN_ENV: &str = "NEMOCLAW_TEST_OIDC_TOKEN";
 const CA_CONFIG_MAP: &str = "existing-issuer-ca";
-
-fn random_hex(bytes: usize) -> String {
-    let mut buffer = vec![0u8; bytes];
-    getrandom::fill(&mut buffer).unwrap();
-    buffer.iter().map(|byte| format!("{byte:02x}")).collect()
-}
 
 fn uuid() -> String {
     let mut uid = [0u8; 16];
@@ -54,41 +45,6 @@ async fn cluster_client() -> kube::Client {
     .unwrap()
 }
 
-/// Create one of the development issuer's objects. Its NetworkPolicy admits
-/// only a gateway in its own namespace, so an existing issuer omits it.
-async fn create(client: &kube::Client, object: Value) {
-    let namespace = object["metadata"]["namespace"].as_str().unwrap().to_owned();
-    let post = PostParams::default();
-    match object["kind"].as_str().unwrap() {
-        "ConfigMap" => {
-            Api::<ConfigMap>::namespaced(client.clone(), &namespace)
-                .create(&post, &serde_json::from_value(object).unwrap())
-                .await
-                .unwrap();
-        }
-        "Secret" => {
-            Api::<Secret>::namespaced(client.clone(), &namespace)
-                .create(&post, &serde_json::from_value(object).unwrap())
-                .await
-                .unwrap();
-        }
-        "Service" => {
-            Api::<Service>::namespaced(client.clone(), &namespace)
-                .create(&post, &serde_json::from_value(object).unwrap())
-                .await
-                .unwrap();
-        }
-        "Deployment" => {
-            Api::<KubeDeployment>::namespaced(client.clone(), &namespace)
-                .create(&post, &serde_json::from_value(object).unwrap())
-                .await
-                .unwrap();
-        }
-        "NetworkPolicy" => {}
-        other => panic!("unexpected issuer object {other}"),
-    }
-}
-
 fn document(uid: &str, namespace: &str, issuer: &str, audience: &str) -> Document {
     let port = std::net::TcpListener::bind("127.0.0.1:0")
         .unwrap()
@@ -96,8 +52,9 @@ fn document(uid: &str, namespace: &str, issuer: &str, audience: &str) -> Documen
         .unwrap()
         .port();
     let harness = required("NEMOCLAW_TEST_AGENT_HARNESS");
+    // Pi needs a context window, input types and cost for a model it does not ship.
     let extensions = if harness == "nvidia.fabric.pi" {
-        "\n                extensions:\n                  context_window: 8192"
+        "\n                extensions:\n                  context_window: 8192\n                  input: [text]\n                  cost: {input: 0, output: 0, cacheRead: 0, cacheWrite: 0}"
     } else {
         ""
     };
@@ -131,11 +88,11 @@ spec:
         user_role: {USER_ROLE}
         scopes_claim: scope
   inferenceProviders:
-    - name: hosted
+    hosted:
       provider: openai
       endpoint: https://inference.example.test/v1
   sandboxes:
-    - name: assistant
+    assistant:
       image:
         ref: {image}
         metadata: {{env: NEMOCLAW_TEST_AGENT_METADATA}}
@@ -159,84 +116,6 @@ spec:
     Document::parse(yaml.as_bytes()).unwrap()
 }
 
-/// What the deployment's namespace shows when apply fails: each pod's phase
-/// and container states, recent events, and the end of each container's log.
-/// Live failures otherwise leave only the SDK's summary in CI logs.
-async fn namespace_diagnostics(client: &kube::Client, namespace: &str) -> String {
-    use k8s_openapi::api::core::v1::{Event, Pod};
-    use kube::api::LogParams;
-    let mut out = format!("diagnostics for namespace {namespace}:\n");
-    let pods = Api::<Pod>::namespaced(client.clone(), namespace);
-    match pods.list(&ListParams::default()).await {
-        Ok(list) => {
-            for pod in list.items {
-                let name = pod.metadata.name.clone().unwrap_or_default();
-                let status = pod.status.clone().unwrap_or_default();
-                out += &format!("pod {name}: {}\n", status.phase.unwrap_or_default());
-                for container in status.container_statuses.unwrap_or_default() {
-                    let state = container.state.as_ref().map(|state| {
-                        if let Some(waiting) = &state.waiting {
-                            format!(
-                                "waiting {} {}",
-                                waiting.reason.clone().unwrap_or_default(),
-                                waiting.message.clone().unwrap_or_default()
-                            )
-                        } else if let Some(done) = &state.terminated {
-                            format!(
-                                "terminated {} exit {}",
-                                done.reason.clone().unwrap_or_default(),
-                                done.exit_code
-                            )
-                        } else {
-                            "running".into()
-                        }
-                    });
-                    out += &format!(
-                        "  container {}: ready={} restarts={} {}\n",
-                        container.name,
-                        container.ready,
-                        container.restart_count,
-                        state.unwrap_or_default()
-                    );
-                    let params = LogParams {
-                        container: Some(container.name.clone()),
-                        tail_lines: Some(40),
-                        ..LogParams::default()
-                    };
-                    if let Ok(log) = pods.logs(&name, &params).await {
-                        for line in log.lines() {
-                            out += &format!("    | {line}\n");
-                        }
-                    }
-                }
-            }
-        }
-        Err(error) => out += &format!("cannot list pods: {error}\n"),
-    }
-    if let Ok(list) = Api::<Event>::namespaced(client.clone(), namespace)
-        .list(&ListParams::default())
-        .await
-    {
-        let mut events = list.items;
-        events.sort_by_key(|event| event.last_timestamp.clone().map(|time| time.0));
-        for event in events.iter().rev().take(15).rev() {
-            out += &format!(
-                "event {} {}: {}\n",
-                event.reason.clone().unwrap_or_default(),
-                event.involved_object.name.clone().unwrap_or_default(),
-                event
-                    .message
-                    .clone()
-                    .unwrap_or_default()
-                    .chars()
-                    .take(240)
-                    .collect::<String>()
-            );
-        }
-    }
-    out
-}
-
 #[tokio::test]
 #[ignore = "needs a Kubernetes cluster with Agent Sandbox and a loaded agent image; run through cargo ci live-kind"]
 async fn a_managed_gateway_accepts_an_existing_issuers_tokens_and_refuses_another_audience() {
@@ -257,8 +136,12 @@ async fn a_managed_gateway_accepts_an_existing_issuers_tokens_and_refuses_anothe
     let material = Development::new(keys.path().into(), "existing", &issuer_namespace, &audience)
         .ensure()
         .unwrap();
+    // The issuer's NetworkPolicy admits only a gateway in its own namespace,
+    // so an existing issuer omits it.
     for object in issuer::objects(&material, "existing", &issuer_namespace) {
-        create(&client, object).await;
+        if object["kind"] != "NetworkPolicy" {
+            create(&client, object).await;
+        }
     }
     let deployments = Api::<KubeDeployment>::namespaced(client.clone(), &issuer_namespace);
     let deadline = std::time::Instant::now() + Duration::from_secs(180);

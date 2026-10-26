@@ -36,7 +36,7 @@ pub struct ResourceSource {
 impl OperationResult {
     pub(super) fn describe_sources(&mut self, document: &Document) -> Result<(), Error> {
         for provider in document.selected_providers()? {
-            if provider.key != provider.definition.name {
+            if provider.key != provider.name {
                 self.resource_sources.insert(
                     format!(
                         "{}.inference_{}",
@@ -44,7 +44,7 @@ impl OperationResult {
                         provider.key
                     ),
                     ResourceSource {
-                        name: provider.definition.name.clone(),
+                        name: provider.name.to_owned(),
                         path: provider.path.clone(),
                     },
                 );
@@ -417,14 +417,13 @@ mod tests {
     fn inline_and_scoped_provider_sources_preserve_authored_names_without_values() {
         let mut input: Value =
             serde_saphyr::from_str(include_str!("../../tests/fixtures/config/local.yaml")).unwrap();
-        let mut provider = input["spec"]["inferenceProviders"][0].take();
-        provider["name"] = "responses".into();
+        let provider = input["spec"]["inferenceProviders"]["local"].take();
         input["spec"]
             .as_object_mut()
             .unwrap()
             .remove("inferenceProviders");
-        let sandbox = &mut input["spec"]["sandboxes"][0];
-        sandbox["inferenceProviders"] = json!([provider]);
+        let sandbox = &mut input["spec"]["sandboxes"]["assistant"];
+        sandbox["inferenceProviders"] = json!({"responses": provider});
         let route = &mut sandbox["agent"]["inference"]["routes"][0];
         route["providerRef"] = "responses".into();
         let document = Document::parse(input.to_string().as_bytes()).unwrap();
@@ -438,8 +437,8 @@ mod tests {
                 .all(|source| source.name == "responses"
                     && source.path == "spec.sandboxes[assistant].inferenceProviders[responses]")
         );
-        let sandbox = &mut input["spec"]["sandboxes"][0];
-        let mut provider = sandbox["inferenceProviders"][0].take();
+        let sandbox = &mut input["spec"]["sandboxes"]["assistant"];
+        let mut provider = sandbox["inferenceProviders"]["responses"].take();
         sandbox
             .as_object_mut()
             .unwrap()

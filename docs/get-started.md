@@ -6,7 +6,6 @@
 Create one OpenClaw sandbox using an existing OpenShell gateway and inference endpoint, then send its agent a request.
 This development procedure uses a source-built bundle and agent image.
 This guide builds NemoClaw from source because there are no releases yet ([#12638](https://github.com/NVIDIA/NemoClaw/issues/12638)).
-With the pinned Fabric, OpenClaw can't start in an OpenShell sandbox, so apply stops at the agent until [#13372](https://github.com/NVIDIA/NemoClaw/issues/13372) is fixed.
 
 ## 1. Prepare the Hosts and Bundle
 
@@ -69,10 +68,10 @@ Edit the copied YAML before executing it:
 | `spec.gateway.endpoint` | Your existing gateway's endpoint |
 | `spec.gateway.engine` | The Docker or Podman engine containing the immutable sandbox image; replace the example's illustrative socket with that engine's address |
 | `spec.gateway.credential` and `spec.gateway.tls` | References required by that gateway; omit optional fields when unused |
-| `spec.inferenceProviders[0].endpoint` | Your upstream inference base URL |
-| `spec.inferenceProviders[0].provider` and `.api` | The [matching protocol and API](inference.md); the example selects OpenAI Responses |
-| `spec.inferenceProviders[0].credential` | An environment reference when the endpoint needs a key |
-| `spec.sandboxes[0].image.ref` | The immutable reference from your image build |
+| `spec.inferenceProviders.local.endpoint` | Your upstream inference base URL |
+| `spec.inferenceProviders.local.provider` and `.api` | The [matching protocol and API](inference.md); the example selects OpenAI Responses |
+| `spec.inferenceProviders.local.credential` | An environment reference when the endpoint needs a key |
+| `spec.sandboxes.assistant.image.ref` | The immutable reference from your image build |
 | `spec.gateway.runtime.provider` | `docker` or `podman`, matching your gateway's compute driver |
 | The primary route's `overrides.model` | The exact model ID served by your endpoint |
 | Other route `overrides` | Limits supported by that model; remove optional tuning you have not verified |

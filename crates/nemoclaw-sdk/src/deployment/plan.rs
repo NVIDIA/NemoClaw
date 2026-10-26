@@ -85,9 +85,10 @@ pub(super) struct PlannedChange {
 }
 /// Sandboxes to replace so each newly created agent gets a new sandbox.
 ///
-/// A Fabric sandbox runs one agent runtime in its lifetime, and a start that
-/// failed or lost its reply may have used it. So an agent created in a sandbox
-/// that already exists replaces that sandbox too, and the plan shows it.
+/// A start that failed or lost its reply may have left a runtime running, and
+/// Fabric can't tell a retry from a new start (NVIDIA/NeMo-Fabric#487). So an
+/// agent created in a sandbox that already exists replaces that sandbox too,
+/// and the plan shows it.
 pub(super) fn sandboxes_for_new_agents(plan: &Plan) -> Vec<String> {
     let managed = |change: &&ResourceChange| {
         change.mode.as_deref() != Some("data") && change.deposed.is_none()

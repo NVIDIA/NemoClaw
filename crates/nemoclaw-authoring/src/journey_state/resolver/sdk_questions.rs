@@ -56,7 +56,7 @@ impl QuestionResolver<'_> {
 
         for field in &self.definition.ask {
             if field == NAME
-                || field == HARNESS
+                || is_harness_question(field)
                 || field == INFERENCE_PRESET
                 || adapter_field(field).is_some()
             {
@@ -103,7 +103,7 @@ impl QuestionResolver<'_> {
         // arrays and conditional alternatives remain an explicit frontier.
         for issue in assessment.issues() {
             if issue.path() == NAME
-                || issue.path() == HARNESS
+                || is_harness_question(issue.path())
                 || questions.iter().any(|question| question.id == issue.path())
             {
                 continue;

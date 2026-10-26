@@ -485,7 +485,7 @@ fn definition<'a>(
         .map(|(name, definition)| Some((name.as_str(), definition)))
         .ok_or_else(|| {
             crate::config::references::missing_reference(
-                "inferenceProviders[].serviceRef",
+                "inferenceProviders.<name>.serviceRef",
                 "service",
                 name,
                 document.spec.services.keys().map(String::as_str),

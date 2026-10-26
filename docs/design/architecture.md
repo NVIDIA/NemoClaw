@@ -169,7 +169,7 @@ See [provider discovery](../provider.md#engine-and-fabric-discovery) for observa
 Native interface, tool-disclosure, and reasoning settings are authored through Fabric's configuration and adapter settings.
 Managed search credentials, endpoint protocols, and network grants remain SDK deployment behavior.
 The reconstructible `fabric_agent` resource starts the agent's Fabric runtime after provider routes are established.
-A sandbox runs one runtime, so a configuration change replaces the sandbox rather than restarting the runtime inside it.
+NemoClaw runs one runtime per sandbox, so a configuration change replaces the sandbox rather than starting another runtime inside it.
 Fabric's `fabric-agent-ctl` calls Fabric's public start, invoke, and stop APIs.
 Fabric reports no runtime status or health, and native model or agent probes with no Fabric contract remain unavailable.
 
@@ -253,7 +253,7 @@ The SDK requires the gateway's independent storage binding, the compiler orders 
 Missing or substituted bound credentials and gateway storage stop planning; reproducible model caches can be rebuilt.
 
 The shared [OpenShell lifecycle contract](../../crates/nemoclaw-openshell/src/lifecycle.rs) distinguishes retained workspace identity from reconstructible sandboxes, registrations and configuration.
-Fabric starts one agent runtime per sandbox, so a changed agent replaces its sandbox, deleting its files and conversation history; data that must survive belongs on a mounted volume.
+NemoClaw runs one agent runtime per sandbox, so a changed agent replaces its sandbox, deleting its files and conversation history; data that must survive belongs on a mounted volume.
 Explicit destroy deletes those files even though the OpenShell workspace remains.
 The [retention reference](../state.md#deletion-and-retention) lists what survives.
 

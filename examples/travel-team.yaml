@@ -41,11 +41,11 @@ spec:
         gpuMemoryGiB: 48
 
   inferenceProviders:
-    - name: local
+    local:
       provider: openai
       api: openai-completions
       serviceRef: nemotron
-    - name: frontier
+    frontier:
       provider: openai
       endpoint: https://integrate.api.nvidia.com/v1
       credential:
@@ -66,7 +66,7 @@ spec:
         env: BOOKINGS_API_KEY
 
   sandboxes:
-    - name: flights
+    flights:
       image:
         # Replace with the digest from a current Hermes image build.
         ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
@@ -100,7 +100,7 @@ spec:
                 temperature: 0.2
                 maxTokens: 2048
 
-    - name: stays
+    stays:
       image:
         # Replace with the digest from a current Hermes image build.
         ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
@@ -134,7 +134,7 @@ spec:
                 temperature: 0.2
                 maxTokens: 2048
 
-    - name: transport
+    transport:
       image:
         # Replace with the digest from a current Hermes image build.
         ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
@@ -168,7 +168,7 @@ spec:
                 temperature: 0.2
                 maxTokens: 2048
 
-    - name: attractions
+    attractions:
       image:
         # Replace with the digest from a current Hermes image build.
         ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
@@ -202,7 +202,7 @@ spec:
                 temperature: 0.2
                 maxTokens: 2048
 
-    - name: scheduler
+    scheduler:
       image:
         # Replace with the digest from a current Hermes image build.
         ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
@@ -235,7 +235,7 @@ spec:
                 temperature: 0.3
                 maxTokens: 8192
 
-    - name: buyer
+    buyer:
       image:
         # Replace with the digest from a current Hermes image build.
         ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000

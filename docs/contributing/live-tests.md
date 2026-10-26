@@ -19,16 +19,34 @@ cargo ci bundle
 cargo ci live-kind
 ```
 
-The runner builds Pi, exports its metadata bundle, loads it by digest, and installs the pinned Agent Sandbox prerequisite.
+The runner builds OpenClaw, exports its metadata bundle, loads it by digest, and installs the pinned Agent Sandbox prerequisite.
 The gateway test checks authentication, forged-token rejection, repeated install/removal, and retained storage without a Helm executable on `PATH`.
-The OpenShift-profile and registry tests use the public SDK to deploy a gateway and sandbox from that image.
-Each supplies a caller-relative kubeconfig and expects apply to complete with the agent started.
-Export must reproduce the authored configuration; destroy then keeps the namespace, encryption key, and gateway PVC with unchanged UIDs.
-The OpenShift-profile test supplies namespace UID-range annotations on kind and checks that gateway and sandbox pods use the assigned UID.
+The OpenShift-profile and registry tests share one flow that uses the public SDK to deploy a gateway and agent sandboxes from that image, with one inference profile for all of them as in `examples/kubernetes/managed-development.yaml`.
+Each sandbox also grants one endpoint named for it, so no two sandboxes have the same policy.
+Before deploying, the flow starts a stub model server in its own namespace, as a platform would: the pinned `nginx-unprivileged` image that the development issuer runs, behind a Service named `model` on port 8000.
+The inference profile names that Service by its cluster DNS name, without a key, as [Use a Model Server in the Cluster](../kubernetes.md#use-a-model-server-in-the-cluster) describes.
+The stub answers every `POST /v1/chat/completions` with the same streamed chat completion, which holds a value unique to the run.
+The OpenShift-profile test deploys three sandboxes, `assistant`, `researcher`, and `reviewer`; the registry test deploys `assistant` alone.
+The flow supplies a caller-relative kubeconfig and expects apply to complete with every agent started.
+A second apply must report no changes.
+Its refresh records two values the first apply leaves for later: the sandbox's loaded policy hash and the auth resource's Helm release presence.
+Export must reproduce the authored configuration, and applying the export must report no changes and leave OpenTofu state as the second apply left it, apart from its serial and the order of check results.
+Export refreshes each sandbox from the gateway and compares its provider registrations and policy with those NemoClaw compiles for it; this covers NemoClaw's mapping, not OpenShell's isolation.
+Each sandbox must have its own ID, with its agent bound to it, and keep that ID, the binding, and the agent's Fabric runtime ID through the second apply and the export's apply.
+After the second apply, and again after the export's apply, the flow sends every agent one text prompt through Fabric's bridge, all at once, addressed to the runtime ID the first apply recorded.
+Each agent must answer from that runtime, as that agent, with a succeeded run whose output holds the stub's value.
+Each round ends after 30 seconds and abandons a request that has not answered; Fabric keeps running that request, so the export's round skips its agent, and destroy's stop of that agent waits for the request to end.
+Fabric reports no runtime status, so a runtime that stops is found at its next invocation ([NVIDIA/NeMo-Fabric#420](https://github.com/NVIDIA/NeMo-Fabric/issues/420)); the answer shows that the runtime the first apply started still runs and that the agent's request reached the stub.
+Destroy must then remove every `Sandbox` object within 60 seconds and keep the namespace, encryption key, and gateway PVC with unchanged UIDs; afterward the flow deletes the stub's namespace without waiting.
+If an apply fails, the flow prints each pod's phase and container states, the last 40 lines of each container's log, and the namespace's 15 most recent events; if the stub is not ready or a request fails, it prints the same for the stub's namespace and the deployment's.
+CI keeps that output in the suite's JUnit report for 14 days.
+The OpenShift-profile test also supplies namespace UID-range annotations on kind and checks that the gateway pod and each sandbox's agent pod use the assigned UID.
+Before deploying, it refuses a cluster that serves the `security.openshift.io` API group, where its annotations would replace the range that cluster assigns; on such a cluster, run the gateway test below with `NEMOCLAW_TEST_KUBE_RUNTIME=openshift`, which checks the gateway's pods and deploys no sandbox.
+Its three agents share one gateway to keep the `live-kind` suite within its 270-second budget.
 The registry test starts a pinned, authenticated registry on the run's kind network and uploads only the run's agent fixture there.
 It checks anonymous and wrong-credential rejection, then deploys an agent with a caller-managed image pull Secret provisioned after namespace creation.
 A new image-index digest prevents cached image metadata from bypassing the pull; the agent's layers and configuration remain unchanged.
-Apply, export and destroy must preserve the authored references, keep registry values out of OpenTofu state, and retain the caller-managed Secret.
+Export must preserve the authored image and Secret references; OpenTofu state must hold no registry values, and destroy must retain the caller-managed Secret.
 The fixture removes its registry afterward; HTTP configuration is confined to that registry on the disposable node.
 
 The OIDC test, `kubernetes_live::oidc`, runs the SDK's development issuer image in a fresh `nc-issuer-*` namespace as a stand-in for an existing identity provider.
@@ -37,7 +55,7 @@ Apply must complete with the agent started and no development issuer in the depl
 A plan with a token for another audience, signed with the same key, must be refused without echoing the token.
 Export must reproduce the authored configuration, and destroy must keep the gateway's storage.
 
-These live tests request no inference and need no GPU or user registry credentials.
+These live tests run no model and need no GPU or user registry credentials; the stub's fixed reply does not establish inference or model compatibility.
 The render tests check the Kubernetes gateway UID, observed OpenShift UID and group, and image pull references in gateway/helper pods and sandbox-driver configuration.
 Kind does not enforce OpenShift security context constraints; these checks do not establish OpenShift admission or platform compatibility.
 
@@ -55,7 +73,13 @@ NEMOCLAW_TEST_BUNDLE=/absolute/path/to/immutable/bundle \
 
 The render test also rejects an unavailable chart digest.
 
-To run only the gateway test, use an owned disposable cluster with Agent Sandbox installed and exactly one default StorageClass.
+To run only the gateway test, use an owned disposable cluster with the Kubernetes guide's [cluster setup](../kubernetes.md#prerequisites): Agent Sandbox and exactly one default StorageClass.
+The host pulls the pinned chart from ghcr.io, and the cluster pulls the gateway image from ghcr.io and the development issuer image from Docker Hub.
+Besides the [cluster access](../kubernetes.md#prerequisites) rights, the chart creates a ClusterRole and a ClusterRoleBinding, and the test deletes its namespace and can change the reclaim policy of the volumes bound to its PVCs, so use a cluster administrator's context.
+Use a kubeconfig that holds its credentials, such as a client certificate or a token: the test runs OpenTofu with an empty `PATH` and an isolated home, so an exec plugin that relies on either fails.
+On OpenShift Local, write the `system:admin` kubeconfig to a private file outside the checkout with `(umask 077 && crc generate-kubeconfig > /absolute/path/to/crc-kubeconfig)` and use its `admin` context.
+Its client certificate is valid for ten years from the instance's first start, and deleting the copy does not revoke it; keep the file private and delete it once any cleanup below is done.
+On OpenShift, set `NEMOCLAW_TEST_KUBE_RUNTIME=openshift` to deploy the gateway with `runtime.provider: openshift`; the default is `kubernetes`, and any other value fails the test.
 Supply the cluster's kubeconfig and context, and a verified immutable bundle built from the checkout:
 
 ```sh
@@ -71,13 +95,38 @@ The test runs the compiled runtime and teardown graphs through the bundled OpenT
 Each OpenTofu process has an empty `PATH` and an isolated home, so a host Helm executable cannot satisfy the test.
 The test creates a fresh namespace, installs the gateway, requires an unchanged plan, verifies authenticated `GetGatewayInfo`, and rejects a forged token.
 It removes and reinstalls the Helm release, then removes it again, checking that the namespace, encryption key, and PVC identities survive both removals.
+With `NEMOCLAW_TEST_KUBE_RUNTIME=openshift`, after each installation it also requires every pod in the namespace to be admitted under the `restricted-v2` security context constraint, to run every container as the first UID of the range OpenShift assigned to the namespace, and to use the first group of the namespace's supplemental-group range as `fsGroup`.
+Finally it switches each volume bound to its PVCs whose reclaim policy is not `Delete`, such as OpenShift Local's `Retain`, to `Delete`, and stops instead if that volume was not provisioned dynamically for its PVC.
+It then deletes the namespace, which removes the encryption key and the PVCs, and requires the namespace and every volume bound to its PVCs to be gone within 2 minutes; the provisioner removes each volume only after deleting its storage.
 It creates no agent sandbox and requests no inference.
 
 The test prints the path to its private temporary state directory and retains it after success or failure.
 That directory contains OpenTofu state, saved plans, the authored document, generated signing and TLS material, and private diagnostic output; keep it private and outside Git.
 Raw OpenTofu output is suppressed from the test log because it can contain deployment values; each command's stdout and stderr remain in `diagnostics/` with mode `0600` on Unix.
-Successful completion retains cluster storage; dispose of the owned test cluster and then remove the printed state directory when finished.
-If the test fails, keep the same state and inspect its owned resources before cleanup.
+After success, images the cluster pulled remain on its nodes; remove the printed state directory when finished.
+
+If the test fails, its namespace, the volumes bound to its PVCs, and the chart's ClusterRole and ClusterRoleBinding, both named `<release>-node-reader-<namespace>`, can remain.
+In the state directory, `kubernetes/receipt.json` gives the release as `name` and the namespace in the `Namespace` entry of `objects`; without the directory, find the namespace as `nc-live-` followed by 16 hexadecimal digits.
+Inspect those resources, then delete the ClusterRole and ClusterRoleBinding:
+
+```sh
+jq -r '.name, (.objects[] | select(.kind == "Namespace") | .name)' /absolute/path/to/state/kubernetes/receipt.json
+kubectl --kubeconfig /absolute/path/to/owned-kubeconfig --context kind-owned-test \
+  delete --ignore-not-found \
+  clusterrolebinding/RELEASE-node-reader-NAMESPACE clusterrole/RELEASE-node-reader-NAMESPACE
+```
+
+Then remove the namespace with the Kubernetes steps of [Remove Retained Resources](../usage.md#remove-retained-resources).
+Skip that procedure's destroy check and its requirement that no pods remain: `nemoclaw` cannot use the test's state directory, and the test's gateway can still be running.
+Under `Retain`, the volumes that procedure lists remain `Released` after the namespace goes; set each one's reclaim policy to `Delete`, as the test does, so that the provisioner deletes the volume and its storage:
+
+```sh
+kubectl --kubeconfig /absolute/path/to/owned-kubeconfig --context kind-owned-test \
+  patch persistentvolume VOLUME_NAME --type merge \
+  --patch '{"spec":{"persistentVolumeReclaimPolicy":"Delete"}}'
+```
+
+Rerun `kubectl get persistentvolume VOLUME_NAME` with the same kubeconfig and context until it reports that the volume is not found.
 
 ## Dependency Upgrade Test
 

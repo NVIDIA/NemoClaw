@@ -454,9 +454,10 @@ fn live_images_builds_the_agent_dummy_and_proxy_images_once_and_saves_them_compr
         String::from_utf8_lossy(&output.stderr)
     );
     let log = fixture.docker_log();
-    // ARM64 builds Pi and the reference dummy, under the shared prefix the live
-    // steps load: each exports its catalog, then builds its labeled stage.
-    for name in ["pi", "dummy"] {
+    // ARM64 builds OpenClaw and the reference dummy, under the shared prefix
+    // the live steps load: each exports its catalog, then builds its labeled
+    // stage.
+    for name in ["openclaw", "dummy"] {
         assert!(
             log.contains(&format!("buildx bake {name} --set {name}.target=catalog")),
             "{log}"
@@ -486,7 +487,7 @@ fn live_images_builds_the_agent_dummy_and_proxy_images_once_and_saves_them_compr
         fs::read_to_string(fixture.0.path().join(".build/ci/live-images.tar.zst")).unwrap();
     assert!(
         archive.trim()
-            == "exported docker.io/library/nc-live-images:pi docker.io/library/nc-live-images:dummy docker.io/library/nc-live-images:proxy-a docker.io/library/nc-live-images:proxy-b",
+            == "exported docker.io/library/nc-live-images:openclaw docker.io/library/nc-live-images:dummy docker.io/library/nc-live-images:proxy-a docker.io/library/nc-live-images:proxy-b",
         "{archive}"
     );
 }
@@ -498,7 +499,7 @@ fn live_images_report_each_build_duration() {
     let output = fixture.run(&["live-images"]);
     let report = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success(), "{report}");
-    for image in ["pi", "dummy", "proxy-a", "proxy-b"] {
+    for image in ["openclaw", "dummy", "proxy-a", "proxy-b"] {
         let tag = format!("nc-live-images:{image}");
         let start = report
             .find(&format!("Building live image {tag}\n"))
@@ -522,7 +523,7 @@ fn live_images_report_each_build_duration() {
 
 #[test]
 fn live_images_report_failed_build_duration_and_stop() {
-    let images = ["pi", "dummy", "proxy-a", "proxy-b"];
+    let images = ["openclaw", "dummy", "proxy-a", "proxy-b"];
     for (index, image) in images.iter().enumerate() {
         let fixture = Fixture::new();
         fixture.fake_container_tools();
@@ -596,7 +597,7 @@ fn live_docker_loads_prebuilt_images_under_its_own_names_instead_of_building() {
     );
     let loaded = fs::read_to_string(fixture.0.path().join("docker.stdin")).unwrap();
     assert_eq!(loaded, "prebuilt images\n");
-    for image in ["pi", "dummy", "proxy-a", "proxy-b"] {
+    for image in ["openclaw", "dummy", "proxy-a", "proxy-b"] {
         assert!(
             log.lines().any(|line| line
                 .strip_prefix(&format!("tag nc-live-images:{image} nc-live-"))

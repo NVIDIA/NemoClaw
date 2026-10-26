@@ -88,7 +88,7 @@ cargo images build --platform linux/arm64 openclaw
 docker image inspect nc-fabric:openclaw --format '{{index .RepoDigests 0}}'
 ```
 
-Use the printed immutable reference in `sandboxes[].image.ref`.
+Use the printed immutable reference in `sandboxes.<name>.image.ref`.
 Examples that omit `image` use the generic default agent image pin from `versions.json`.
 Select an explicit image containing the chosen Fabric adapter; a harness identifier does not select a different image.
 The selected image must still exist on the compute daemon.
@@ -114,7 +114,7 @@ cargo images build --platform linux/amd64 deepagents
 docker image inspect nc-fabric:deepagents --format '{{index .RepoDigests 0}}'
 ```
 
-Use the printed immutable reference in `sandboxes[].image.ref`.
+Use the printed immutable reference in `sandboxes.<name>.image.ref`.
 Replace `deepagents` with another harness name, or use `agents` to build all ten.
 The AMD64 builds and image tests do not establish successful gateway provisioning or an end-to-end agent response.
 
@@ -150,10 +150,12 @@ When you change the Fabric pin, check that set; if it changed, pin the digest of
 ### Regenerate the Bundled Catalog
 
 The SDK build fails with `stale Fabric catalog` when `image/fabric/catalog.json` no longer matches the Fabric pin in the Dockerfile.
-Run `image/fabric/catalog.py` with a Python environment that has the pinned Fabric wheels installed, and pass that revision and checksum:
+Run `image/fabric/catalog.py` with a Python environment that has the pinned Fabric wheels installed, such as a freshly built agent image's `/opt/fabric/bin/python`. Pass that revision and checksum, and `--adapter` once for each adapter ID the current catalog lists:
 
 ```sh
-python image/fabric/catalog.py --revision REVISION --source-sha256 CHECKSUM --output image/fabric/catalog.json
+python image/fabric/catalog.py --revision REVISION --source-sha256 CHECKSUM \
+  --adapter nvidia.fabric.claude --adapter nvidia.fabric.codex ... \
+  --output image/fabric/catalog.json
 ```
 
 Use the values of `FABRIC_REVISION` and `FABRIC_SHA256` from the [shared agent Dockerfile](../image/fabric/Dockerfile).

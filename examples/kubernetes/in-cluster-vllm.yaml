@@ -27,14 +27,14 @@ spec:
       authentication:
         profile: development
   inferenceProviders:
-    - name: qwen
+    qwen:
       provider: openai
       api: openai-completions
       # http://<service>.<namespace>.svc.cluster.local:<port>, resolved in the cluster.
       endpoint: http://qwen.models.svc.cluster.local:8000/v1
       credential: {env: QWEN_INFERENCE_KEY}
   sandboxes:
-    - name: assistant
+    assistant:
       harness:
         kind: nvidia.fabric.openclaw
       image:
