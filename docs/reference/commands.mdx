@@ -359,7 +359,9 @@ It omits settings only when the v1 target has the same effective behavior withou
 Hermes export fails when Hermes tool gateways are enabled.
 It preserves Hermes dashboard and in-browser TUI behavior, including explicit disabled values when omission would enable them, plus nondefault API and enabled-dashboard ports.
 For a disabled Hermes dashboard, export writes `interfaces.dashboard.enabled: false` and omits the recorded dashboard port because v1 rejects a port on a disabled dashboard.
-Export fails when the recorded dashboard port differs from the port in the retained dashboard URL.
+The retained dashboard URL must be `http://127.0.0.1:<port>` with a port from `1024` through `65535`; a retained `browserUrl` must match it.
+The registry `dashboardPort` must match the URL port, except that it may be absent for port `18789`.
+Export rejects other URL forms, invalid ports, and mismatches.
 The default API port is omitted.
 It exports Hermes API-key authentication only when the retained authentication proof matches the managed Hermes provider, OpenAI-compatible API, endpoint, and `NOUS_API_KEY` credential reference.
 The exporter validates that source binding, then emits API-key authentication without a provider reference because v1 derives the association from the provider configuration.
