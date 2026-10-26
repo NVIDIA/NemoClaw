@@ -34,12 +34,7 @@ pub fn targets(
                 serde_json::json!(["/usr/local/bin/python3.99"]).to_string(),
             );
         } else if target.kind == "sandbox" {
-            let sandbox = document
-                .spec
-                .sandboxes
-                .iter()
-                .find(|sandbox| sandbox.name == target.values["name"])
-                .unwrap();
+            let sandbox = document.sandbox(&target.values["name"])?;
             let requirements =
                 nemoclaw_sdk::fabric_capabilities::requirements_for_sandbox(document, sandbox)?;
             let adapter = requirements.configuration["harness"]["adapter_id"]
@@ -77,6 +72,39 @@ pub fn catalog() -> nemoclaw_sdk::fabric_catalog::FabricCatalog {
     catalog
 }
 
+/// Write the metadata bundle of a fixture image labeled with `catalog()` to
+/// `directory`, for deployments on Kubernetes or OpenShift, where no engine
+/// inspects images. Returns the image's digest reference and the bundle's path.
+pub fn metadata_bundle(directory: &std::path::Path) -> (String, std::path::PathBuf) {
+    use nemoclaw_sdk::fabric_catalog::IMAGE_CATALOG_LABEL;
+    use sha2::{Digest, Sha256};
+    let digest = |raw: &str| {
+        let hex: String = Sha256::digest(raw.as_bytes())
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        format!("sha256:{hex}")
+    };
+    let label = serde_json::to_string(&catalog()).unwrap();
+    let config = serde_json::json!({"os":"linux", "architecture":"arm64", "config":{"Labels":{IMAGE_CATALOG_LABEL:label}}})
+        .to_string();
+    let config_digest = digest(&config);
+    // Verification checks each descriptor's media type and size against its blob.
+    let manifest = serde_json::json!({
+        "schemaVersion":2, "mediaType":"application/vnd.oci.image.manifest.v1+json",
+        "config":{"mediaType":"application/vnd.oci.image.config.v1+json", "digest":config_digest, "size":config.len()},
+        "layers":[]
+    })
+    .to_string();
+    let manifest_digest = digest(&manifest);
+    // The reference names the root blob, so the bundle carries only blobs.
+    let bundle = serde_json::json!({"schema_version":2,
+        "blobs":{&manifest_digest:manifest, &config_digest:config}});
+    let path = directory.join("image-metadata.json");
+    std::fs::write(&path, serde_json::to_vec(&bundle).unwrap()).unwrap();
+    (format!("fixture/agent@{manifest_digest}"), path)
+}
+
 /// Installed-image evidence for isolated deployment tests; never queries a live engine.
 pub async fn engine(document: &mut Document) -> transport::Fixture {
     use nemoclaw_sdk::fabric_catalog::IMAGE_CATALOG_LABEL;
@@ -85,7 +113,7 @@ pub async fn engine(document: &mut Document) -> transport::Fixture {
     // and the tag separately, so OpenTofu's Docker provider finds it.
     let mut references = Vec::new();
     let mut tags = Vec::new();
-    for sandbox in &document.spec.sandboxes {
+    for sandbox in document.spec.sandboxes.values() {
         let reference = &sandbox.image.ref_;
         let (name, digest) = reference.split_once('@').unwrap_or((reference, ""));
         let slash = name.rfind('/').map_or(0, |index| index + 1);

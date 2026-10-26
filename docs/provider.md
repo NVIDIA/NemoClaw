@@ -359,8 +359,9 @@ Triggering on the `fabric_agent` itself would be a cycle, because the agent refe
 Keep the input to values known while planning: a value known only during apply, such as a read postponed to apply, replaces the sandbox on every apply.
 Replacing a sandbox deletes its files and conversation history; keep data that must survive on a [mounted volume](agents.md#skills-on-a-mounted-volume).
 
-A Fabric sandbox runs one agent runtime in its lifetime.
-Once its agent stops, or a start fails or loses its reply, the sandbox cannot start another, and creating the agent there again fails with guidance to replace the sandbox: `tofu apply -replace=openshell_sandbox.<name>`.
+After a start fails with uncertain effects, creating the agent in that sandbox again fails with guidance to replace the sandbox: `tofu apply -replace=openshell_sandbox.<name>`.
+After a start loses its reply, replace the sandbox the same way before creating the agent again: Fabric would start a second runtime beside one the lost start may have left ([NVIDIA/NeMo-Fabric#487](https://github.com/NVIDIA/NeMo-Fabric/issues/487)).
+Creating an agent again after removing it starts a new runtime in the same sandbox.
 Generated graphs need no such step: when a plan would create an agent in a sandbox that already exists, the SDK plans again with that sandbox replaced, and the plan shows it.
 
 Starting an agent waits for its sandbox to be ready and for `fabric-agent-ctl serve` to answer.

@@ -49,9 +49,6 @@
     "/spec/sandboxes/*/image/ref": {
       "title": "Sandbox image"
     },
-    "/spec/sandboxes/*/name": {
-      "title": "Name this sandbox"
-    },
     "/spec/sandboxes/*/network/policy": {
       "title": "Network policy"
     },
@@ -128,7 +125,7 @@
     "/spec/services/*/placement/engine": {
       "title": "Service engine"
     },
-    "/spec/services/*/placement/networkCidr": {
+    "/spec/services/*/placement/networkCIDR": {
       "title": "Service network (CIDR)"
     },
     "/spec/services/*/publication/bindAddress": {

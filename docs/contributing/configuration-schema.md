@@ -86,7 +86,7 @@ For a semantic check outside the schema, document the distinction in the generat
 
 `Document::parse` owns YAML syntax restrictions and invokes both validation stages.
 Schema diagnostics identify document fields, array indices, and constraints without echoing rejected values or unknown properties.
-Valid names in the declared service, harness, inference, and integration collections identify the failing definition; other map keys appear as `[entry]`.
+Valid names in the declared sandbox, service, harness, inference, inference provider, and integration collections identify the failing definition; other map keys appear as `[entry]`.
 Parsing a document also reports the source line and column for schema failures and YAML syntax errors.
 The parser rejects all explicit YAML tags, including core tags such as `!!binary` and `!!str`; quoted strings containing tag text remain strings.
 The reference generator renders presence-conditioned scalar bounds beside the containing field table, including the conditional `kvCacheGiB` limits.

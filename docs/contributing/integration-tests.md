@@ -123,6 +123,7 @@ The fixtures return protocol responses; they do not establish agent inference, n
 | `deployment` | Configuration lifecycles through the SDK and CLI: shared state, interrupted creation, unchanged apply, startup failure recovered in a new sandbox, failed observation without state loss, export and reapply, policy and tool drift, web search, credential redaction, startup failure messages, and destroy |
 | `export_observations` | Export through provider refresh without applying, without inference or search credentials, rejection of observed drift without changes to saved state, and a Pi model changed inside the sandbox, which export ignores |
 | `fabric_deployment` | One harness test each for OpenClaw and Pi, where a changed configuration replaces the agent with its sandbox, and missing or failed runtime declarations |
+| `kubernetes_agents` | The three-agent `external-gateway.yaml` examples for Kubernetes and OpenShift, one test each, against the fixture gateway reporting OpenShell's Kubernetes driver, with a metadata bundle describing the images and inference at a cluster Service URL without a key: a plan without effects; three sandboxes, each with a policy rule for the Service's name and no address grant; each agent's Fabric configuration with its own name and the Service URL; an unchanged apply without changes or gateway effects; export and reapply; and destroy. It does not check that a cluster resolves or reaches the Service |
 | `multi_agent` | Three OpenClaw agents in separate sandboxes, each with its own model, sharing one provider registration: one agent's rejected start, its removal, or another owner's label on its sandbox changes no agent that the document leaves unchanged |
 | `multiple_providers` | Two deployments' provider attachments, export and reapply, drift, and destroy, each scoped to its sandbox |
 | `fabric_bridge` | The provider's `fabric-agent-ctl` client: the image's own command and environment, input on stdin, and uncertain invocations never replayed. These tests are not ignored and run with the unit tests |
@@ -243,7 +244,7 @@ The SDK's [compatibility tests](../../crates/nemoclaw-sdk/tests/fabric_compatibi
 
 ### Inference API Fixtures
 
-Native adapter protocol and configuration tests belong to [Fabric](https://github.com/NVIDIA/NeMo-Fabric/tree/5574117feb4be948c1b03f4c36a2fe9a11af910d/tests), alongside the implementation.
+Native adapter protocol and configuration tests belong to [Fabric](https://github.com/NVIDIA/NeMo-Fabric/tree/67acf1cff0d598fc3e6a32370cd63fc088e86958/tests), alongside the implementation.
 The [image source checks](testing.md#image-source-checks) cover NemoClaw packaging separately.
 
 

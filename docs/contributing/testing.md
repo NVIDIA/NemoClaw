@@ -117,7 +117,7 @@ A coverage test in each binary requires a contract test for every type the provi
 ### System
 
 A system test runs the SDK or the bundled CLI through a whole lifecycle over a bundle: export, unchanged reapply, interrupted creation, failed readiness, and destroy with retained storage.
-System tests live in `nemoclaw-e2e`'s `integration` binary; the `lifecycle` profile in [`.config/nextest.toml`](../../.config/nextest.toml) selects its `deployment`, `export_observations`, `fabric_deployment`, `multi_agent`, `multiple_providers`, `remote_service`, `helm_recovery`, `travel_example`, and `travel_team_example` modules.
+System tests live in `nemoclaw-e2e`'s `integration` binary; the `lifecycle` profile in [`.config/nextest.toml`](../../.config/nextest.toml) selects its `deployment`, `export_observations`, `fabric_deployment`, `kubernetes_agents`, `multi_agent`, `multiple_providers`, `remote_service`, `helm_recovery`, `travel_example`, and `travel_team_example` modules.
 On Unix, `helm_recovery` runs the bundle's OpenTofu and Helm provider against an in-memory Kubernetes API.
 The profile also selects one ignored test each in `nemoclaw-test-fixtures` and `nemoclaw-fixture-provider`, so that `cargo ci archive` packages their fixture executables with the tests.
 [Run integration tests](integration-tests.md#system-tests) describes the scenarios.
@@ -265,6 +265,9 @@ cargo run -q --locked -p nemoclaw-build --no-default-features -- lifecycle-timin
 ```
 
 CI keeps each step's JUnit report, with per-test durations, for 14 days in the `test-PLATFORM-ATTEMPT`, `lifecycle-PLATFORM-SHARD-ATTEMPT`, `live-docker-PLATFORM-ATTEMPT`, and `live-kind-PLATFORM-ATTEMPT` artifacts; the `live-docker` report joins its four nextest commands.
+The live reports hold outcomes and times only, so they can be shared as a run's result; failing tests' output stays in the job log.
+The rest of what a live run used is on its GitHub run: the commit and runner, and the `bundle-PLATFORM-COMMIT-ATTEMPT` and `live-images-PLATFORM-COMMIT-ATTEMPT` artifacts it downloaded, each with its digest.
+Versions it pinned are in the repository at that commit, and known gaps are in [current limits](../limits.md).
 
 ## How CI Runs the Tests
 
@@ -428,6 +431,7 @@ The image workflow obtains its image decision from the shared validation plan an
 On `v1` pushes that build images, it then pushes the checked agent and proxy images by digest to `ghcr.io/nvidia/nemoclaw/v1-ci:<image>-<commit>-<arch>`, an internal package that releases promote from ([#13516](https://github.com/NVIDIA/NemoClaw/issues/13516)).
 It pushes only to packages that already exist and aren't public, and otherwise skips with a warning; see [provisioning the packages](releases.md#provision-the-packages).
 The job summary lists each digest and how long its push took.
+A following job keeps the images of the latest ten commits and deletes older ones; releases keep their own copies of the images they promote.
 A failed planning job fails those checks instead of skipping them.
 A file inside a crate counts when that crate is part of the image build: `nemoclaw-build` without default features, or the Ollama proxy, with their dependencies.
 [Path rules](../../.config/determinator-images.toml) classify other files by the `.dockerignore` build context.

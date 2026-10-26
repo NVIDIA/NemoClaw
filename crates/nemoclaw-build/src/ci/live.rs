@@ -84,11 +84,11 @@ spec:
     endpoint: http://127.0.0.1:{port}
     networkCIDR: {subnet}
   inferenceProviders:
-    - name: hosted
+    hosted:
       provider: openai
       endpoint: https://inference.example.test/v1
   sandboxes:
-    - name: assistant
+    assistant:
       image:
         ref: {image}
       network:

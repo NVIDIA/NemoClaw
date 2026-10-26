@@ -117,9 +117,21 @@ async fn an_agent_starts_once_its_bridge_serves_and_stops_when_removed() {
         .unwrap();
     assert_eq!(reply["output"]["message"], "hello");
 
-    // A sandbox runs one runtime: another start is refused with guidance.
+    // Fabric starts another runtime in the same sandbox when asked.
     let again = fabric.ensure("agent", &desired).await;
-    let message = again.error().unwrap().to_string();
+    assert!(again.error().is_none(), "{:?}", again.error());
+    let second = again.into_parts().0.unwrap();
+    assert_eq!(second["runtime_id"], format!("{runtime_id}-1"));
+
+    // After a start whose effects are unknown, Fabric refuses another one,
+    // and the error says to replace the sandbox.
+    fixture.state.lock().unwrap().configuration_error = Some(serde_json::json!({
+        "error": {"stage": "start", "code": "start_failed", "message": "harness exited"}
+    }));
+    assert!(fabric.ensure("agent", &desired).await.error().is_some());
+    fixture.state.lock().unwrap().configuration_error = None;
+    let refused = fabric.ensure("agent", &desired).await;
+    let message = refused.error().unwrap().to_string();
     assert!(message.contains("replace the sandbox"), "{message}");
 
     fabric.remove("agent", &agent, false).await.unwrap();

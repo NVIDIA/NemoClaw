@@ -32,7 +32,12 @@ async fn search_credential_lifecycle(provider_type: &str, credential_env: &str) 
         "search":{"kind":"webSearch","provider":provider_type,"credential":{"env":"SEARCH_KEY"}}
     }))
     .unwrap();
-    doc.spec.sandboxes[0].agent.integration_refs = vec!["search".into()];
+    doc.spec
+        .sandboxes
+        .get_mut("assistant")
+        .unwrap()
+        .agent
+        .integration_refs = vec!["search".into()];
     let client = OpenShell::connect(
         &doc.spec.gateway.connection(),
         Arc::new(Key("owned-search-key")),
@@ -156,10 +161,14 @@ async fn separate_search_credentials_reach_only_their_selected_sandbox_attachmen
     let mut doc =
         Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes()).unwrap();
     *doc.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
-    let mut other = doc.spec.sandboxes[0].clone();
-    other.name = "other".into();
-    doc.spec.sandboxes.push(other);
-    for (sandbox, reference) in doc.spec.sandboxes.iter_mut().zip(["SEARCH_A", "SEARCH_B"]) {
+    let other = doc.spec.sandboxes["assistant"].clone();
+    doc.spec.sandboxes.insert("other".into(), other);
+    for (sandbox, reference) in doc
+        .spec
+        .sandboxes
+        .values_mut()
+        .zip(["SEARCH_A", "SEARCH_B"])
+    {
         sandbox.integrations = serde_json::from_value(serde_json::json!({"search":{"kind":"webSearch","provider":"brave","credential":{"env":reference}}})).unwrap();
         sandbox.agent.integration_refs = vec!["search".into()];
     }
@@ -191,7 +200,7 @@ async fn separate_search_credentials_reach_only_their_selected_sandbox_attachmen
         }
     }
     let state = fixture.state.lock().unwrap();
-    for (sandbox, reference) in doc.spec.sandboxes.iter().zip(["SEARCH_A", "SEARCH_B"]) {
+    for (sandbox, reference) in doc.sandboxes().zip(["SEARCH_A", "SEARCH_B"]) {
         let search = targets
             .iter()
             .find(|t| t.kind == "web_search" && t.values["credential_env"] == reference)

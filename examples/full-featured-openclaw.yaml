@@ -34,7 +34,7 @@ spec:
         nc-prototype-vllm@sha256:0000000000000000000000000000000000000000000000000000000000000000
       placement:
         engine: ssh://gpu-box
-        networkCidr: 172.30.119.0/24
+        networkCIDR: 172.30.119.0/24
       publication:
         endpoint: http://10.0.0.8:18898/v1
         bindAddress: 10.0.0.8
@@ -63,12 +63,12 @@ spec:
       memory:
         gpuMemoryUtilization: 0.75
   inferenceProviders:
-    - name: nemotron
+    nemotron:
       provider: openai
       api: openai-completions
       serviceRef: nemotron
   sandboxes:
-    - name: researcher
+    researcher:
       image:
         # Build a current Fabric OpenClaw image; the default image lacks these features.
         ref:
@@ -112,7 +112,7 @@ spec:
               overrides:
                 model: nvidia-nemotron-3.5-lightning-30b-a3b-nvfp4
                 maxTokens: 8192
-    - name: writer
+    writer:
       image:
         # Build a current Fabric OpenClaw image; the default image lacks these features.
         ref:
@@ -156,7 +156,7 @@ spec:
               overrides:
                 model: nvidia-nemotron-3.5-lightning-30b-a3b-nvfp4
                 maxTokens: 8192
-    - name: reader
+    reader:
       image:
         # Build a current Fabric OpenClaw image; the default image lacks these features.
         ref:

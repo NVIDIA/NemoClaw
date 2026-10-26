@@ -1,12 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //! Deployment-owned projection into the public Fabric configuration contract.
-use crate::config::{ConfigError, Document, Sandbox};
+use crate::config::{ConfigError, Document, NamedSandbox};
 use serde_json::{Value, json};
 
 /// Resolve deployment references without interpreting native adapter settings.
 /// This exact configuration is planned against the image descriptors and sent to Fabric.
-pub fn for_sandbox(document: &Document, sandbox: &Sandbox) -> Result<Value, ConfigError> {
+pub fn for_sandbox(document: &Document, sandbox: NamedSandbox<'_>) -> Result<Value, ConfigError> {
     let harness = document.sandbox_harness(sandbox)?;
     let selection = document.scoped_inference(sandbox)?;
     let mut result = json!({
@@ -116,6 +116,37 @@ pub fn for_sandbox(document: &Document, sandbox: &Sandbox) -> Result<Value, Conf
             result["models"]["default"] = projected;
         }
     }
+    // Fabric's OpenCode adapter refuses a plain-HTTP model endpoint outside
+    // loopback unless its settings list the host. The deployment names each
+    // endpoint, so an adapter that declares the setting trusts their hosts.
+    let lists_trusted_hosts = descriptor.is_some_and(|descriptor| {
+        descriptor["settings_schema"]["properties"]
+            .get(TRUSTED_HTTP_HOSTS)
+            .is_some()
+    });
+    if lists_trusted_hosts {
+        let hosts: Vec<String> = result["models"]
+            .as_object()
+            .into_iter()
+            .flat_map(|models| models.values())
+            .filter_map(|model| model["base_url"].as_str())
+            .filter_map(plain_http_host)
+            .collect();
+        if let Some(settings) = result["harness"]["settings"].as_object_mut()
+            && !hosts.is_empty()
+        {
+            let listed = settings
+                .entry(TRUSTED_HTTP_HOSTS)
+                .or_insert_with(|| Value::Array(Vec::new()));
+            if let Some(listed) = listed.as_array_mut() {
+                for host in hosts {
+                    if !listed.iter().any(|value| value == host.as_str()) {
+                        listed.push(host.into());
+                    }
+                }
+            }
+        }
+    }
     if let Some(authored) = &harness.config {
         for reserved in ["models", "harness", "metadata", "schema_version"] {
             if authored.contains_key(reserved) {
@@ -131,6 +162,24 @@ pub fn for_sandbox(document: &Document, sandbox: &Sandbox) -> Result<Value, Conf
     serde_json::from_value::<nemo_fabric_core::FabricConfig>(result.clone())
         .map_err(|_| ConfigError::new("invalid public Fabric configuration"))?;
     Ok(result)
+}
+
+const TRUSTED_HTTP_HOSTS: &str = "insecure_http_model_hosts";
+
+/// The host of a plain-HTTP endpoint that Fabric would refuse without trust:
+/// not loopback, and spelled as the setting's hostname pattern allows.
+fn plain_http_host(endpoint: &str) -> Option<String> {
+    let url = url::Url::parse(endpoint).ok()?;
+    if url.scheme() != "http" {
+        return None;
+    }
+    match url.host()? {
+        url::Host::Domain(name) if name.eq_ignore_ascii_case("localhost") => None,
+        url::Host::Domain(name) => Some(name.to_ascii_lowercase()),
+        url::Host::Ipv4(address) if address.is_loopback() => None,
+        url::Host::Ipv4(address) => Some(address.to_string()),
+        url::Host::Ipv6(_) => None,
+    }
 }
 
 fn merge_owned(authored: &mut Value, owned: Value) -> Result<(), ConfigError> {

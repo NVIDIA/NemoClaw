@@ -107,18 +107,18 @@ impl Scenario {
             ))
             .unwrap();
             value["spec"]["services"]["qwen"] = source["spec"]["services"]["ollama-server"].clone();
-            value["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"]["model"] =
-                json!("qwen3:0.6b");
+            value["spec"]["sandboxes"]["assistant"]["agent"]["inference"]["routes"][0]["overrides"]
+                ["model"] = json!("qwen3:0.6b");
         }
         let check_pulls = harness == "nvidia.fabric.openclaw" && !authenticated;
         if check_pulls {
             value["spec"]["services"]["qwen"]["imagePullPolicy"] = json!("IfNotPresent");
         }
-        value["spec"]["sandboxes"][0]["harness"]["kind"] = harness.into();
+        value["spec"]["sandboxes"]["assistant"]["harness"]["kind"] = harness.into();
         value["spec"]["gateway"] = json!({"management":"external","endpoint":gateway.endpoint});
         value["spec"]["gateway"]["runtime"]["provider"] = json!("podman");
         value["spec"]["services"]["qwen"]["placement"] =
-            json!({"engine":"ssh://operator@gpu-box","networkCidr":"172.30.119.0/24"});
+            json!({"engine":"ssh://operator@gpu-box","networkCIDR":"172.30.119.0/24"});
         value["spec"]["services"]["qwen"]["publication"] =
             json!({"endpoint":"http://10.0.0.8:18888/v1","bindAddress":"10.0.0.8"});
         value["spec"]["services"]["qwen"]["container"] = json!({
@@ -127,7 +127,7 @@ impl Scenario {
         });
         if authenticated {
             value["spec"]["services"]["qwen"]["authentication"] = "bearer".into();
-            value["spec"]["sandboxes"][0]["agent"]["auth"] = json!({"method":"api-key"});
+            value["spec"]["sandboxes"]["assistant"]["agent"]["auth"] = json!({"method":"api-key"});
         }
         let mut image_document =
             Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap();
@@ -966,12 +966,8 @@ async fn failed_sandbox_and_runtime_change_preserves_retained_intent(
     gateway: &Fixture,
 ) {
     let mut original = read(root, "config.yaml");
-    let mut reviewer = original["spec"]["sandboxes"][0].clone();
-    reviewer["name"] = json!("reviewer");
-    original["spec"]["sandboxes"]
-        .as_array_mut()
-        .unwrap()
-        .push(reviewer);
+    let reviewer = original["spec"]["sandboxes"]["assistant"].clone();
+    original["spec"]["sandboxes"]["reviewer"] = reviewer;
     save(root, "config.yaml", &original);
     run(root, bundle, "apply", "config.yaml", true).await;
     let before = ["intent.json", "terraform.tfstate"]
@@ -982,7 +978,7 @@ async fn failed_sandbox_and_runtime_change_preserves_retained_intent(
     // case proves a replacement whose new images fail their checks stops before
     // any change, without partially updating its model runtime.
     let mut rejected = original.clone();
-    rejected["spec"]["sandboxes"][1]["image"]["ref"] =
+    rejected["spec"]["sandboxes"]["reviewer"]["image"]["ref"] =
         json!(format!("sandbox@sha256:{}", "c".repeat(64)));
     rejected["spec"]["services"]["qwen"]["image"] =
         json!(format!("runtime@sha256:{}", "f".repeat(64)));

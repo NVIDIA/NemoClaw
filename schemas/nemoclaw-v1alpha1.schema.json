@@ -1017,8 +1017,117 @@
           "type": "string",
           "x-nemoclaw-required": "Without serviceRef"
         },
+        "provider": {
+          "description": "OpenShell provider implementation. Must match the selected API family.",
+          "enum": [
+            "openai",
+            "anthropic"
+          ],
+          "type": "string"
+        },
+        "serviceRef": {
+          "description": "Name of a managed service in spec.services. Excludes endpoint and credential.",
+          "pattern": "^[a-z][a-z0-9-]{0,39}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider"
+      ],
+      "then": {
+        "allOf": [
+          {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "credential"
+                  ]
+                }
+              ]
+            }
+          }
+        ],
+        "properties": {
+          "endpoint": {
+            "const": ""
+          },
+          "provider": {
+            "const": "openai"
+          }
+        }
+      },
+      "type": "object"
+    },
+    "InlineInferenceProvider": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "api"
+            ]
+          },
+          "then": {
+            "else": {
+              "properties": {
+                "provider": {
+                  "const": "openai"
+                }
+              }
+            },
+            "if": {
+              "properties": {
+                "api": {
+                  "const": "anthropic-messages"
+                }
+              },
+              "required": [
+                "api"
+              ]
+            },
+            "then": {
+              "properties": {
+                "provider": {
+                  "const": "anthropic"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "description": "Inference definition owned by one route, with the fields of an inferenceProviders entry and its own name.",
+      "else": {
+        "properties": {
+          "endpoint": {
+            "pattern": "^https?://"
+          }
+        },
+        "required": [
+          "endpoint"
+        ]
+      },
+      "if": {
+        "required": [
+          "serviceRef"
+        ]
+      },
+      "properties": {
+        "api": {
+          "$ref": "#/$defs/InferenceApi",
+          "description": "Request API. Omission selects anthropic-messages for Anthropic providers and openai-completions for OpenAI providers. NemoClaw uses it to read the endpoint's model catalog; agents use the protocol their adapter selects for the provider."
+        },
+        "credential": {
+          "$ref": "#/$defs/SecretRef",
+          "description": "Optional API credential reference for an external HTTPS endpoint. Excluded by serviceRef."
+        },
+        "endpoint": {
+          "description": "Inference HTTP(S) URL owned outside the deployment. Required without serviceRef and excluded with serviceRef.",
+          "type": "string",
+          "x-nemoclaw-required": "Without serviceRef"
+        },
         "name": {
-          "description": "Provider name referenced by model choices.",
+          "description": "Provider name. Must not shadow an enclosing definition.",
           "pattern": "^[a-z][a-z0-9-]{0,39}$",
           "type": "string"
         },
@@ -2479,7 +2588,7 @@
           "description": "Model selection, shared limits, and optional native settings."
         },
         "provider": {
-          "$ref": "#/$defs/InferenceProvider",
+          "$ref": "#/$defs/InlineInferenceProvider",
           "description": "Inline inference definition owned by this route. Excludes providerRef and must not shadow an enclosing definition."
         },
         "providerRef": {
@@ -2576,11 +2685,14 @@
           "x-nemoclaw-required": "For Kubernetes sandboxes"
         },
         "inferenceProviders": {
-          "description": "Named inference definitions visible to this sandbox's routes. Names must not shadow deployment definitions.",
-          "items": {
+          "additionalProperties": {
             "$ref": "#/$defs/InferenceProvider"
           },
-          "type": "array"
+          "description": "Named inference definitions visible to this sandbox's routes through providerRef. Names must not shadow deployment definitions.",
+          "propertyNames": {
+            "pattern": "^[a-z][a-z0-9-]{0,39}$"
+          },
+          "type": "object"
         },
         "inferences": {
           "additionalProperties": {
@@ -2602,18 +2714,12 @@
           },
           "type": "object"
         },
-        "name": {
-          "description": "Lowercase sandbox name.",
-          "pattern": "^[a-z][a-z0-9-]{0,39}$",
-          "type": "string"
-        },
         "network": {
           "$ref": "#/$defs/Network",
           "description": "Sandbox network policy; omission selects isolated egress with grants for declared inference."
         }
       },
       "required": [
-        "name",
         "agent"
       ],
       "type": "object"
@@ -3353,7 +3459,7 @@
           "pattern": "^ssh://",
           "type": "string"
         },
-        "networkCidr": {
+        "networkCIDR": {
           "description": "Canonical private IPv4 /24 on the selected Docker engine.",
           "pattern": "/24$",
           "type": "string"
@@ -3361,7 +3467,7 @@
       },
       "required": [
         "engine",
-        "networkCidr"
+        "networkCIDR"
       ],
       "type": "object"
     },
@@ -3674,11 +3780,14 @@
           "type": "object"
         },
         "inferenceProviders": {
-          "description": "Named inference definitions available to sandbox routes. Unselected definitions create no resources or credential requirements.",
-          "items": {
+          "additionalProperties": {
             "$ref": "#/$defs/InferenceProvider"
           },
-          "type": "array"
+          "description": "Named inference definitions available to sandbox routes through providerRef. Unselected definitions create no resources or credential requirements.",
+          "propertyNames": {
+            "pattern": "^[a-z][a-z0-9-]{0,39}$"
+          },
+          "type": "object"
         },
         "inferences": {
           "additionalProperties": {
@@ -3709,13 +3818,16 @@
           "type": "array"
         },
         "sandboxes": {
-          "description": "One to 32 uniquely named sandboxes. Each runs one agent through its selected Fabric adapter. Declaration order does not select a default sandbox or agent.",
-          "items": {
+          "additionalProperties": {
             "$ref": "#/$defs/Sandbox"
           },
-          "maxItems": 32,
-          "minItems": 1,
-          "type": "array"
+          "description": "One to 32 named sandboxes. Each runs one agent through its selected Fabric adapter. Declaration order does not select a default sandbox or agent.",
+          "maxProperties": 32,
+          "minProperties": 1,
+          "propertyNames": {
+            "pattern": "^[a-z][a-z0-9-]{0,39}$"
+          },
+          "type": "object"
         },
         "services": {
           "additionalProperties": {
@@ -3947,7 +4059,7 @@
           "spec": {
             "properties": {
               "sandboxes": {
-                "items": {
+                "additionalProperties": {
                   "properties": {
                     "image": {
                       "not": {
@@ -4006,7 +4118,7 @@
           "spec": {
             "properties": {
               "sandboxes": {
-                "items": {
+                "additionalProperties": {
                   "properties": {
                     "image": {
                       "properties": {

@@ -56,7 +56,7 @@ Guide: [Agent runtimes](../agents.md).
 
 Paths:
 
-- `spec.sandboxes[].agent`
+- `spec.sandboxes.{key}.agent`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -76,7 +76,7 @@ Guide: [Inference configuration](../inference.md).
 
 Paths:
 
-- `spec.sandboxes[].agent.auth`
+- `spec.sandboxes.{key}.agent.auth`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -91,8 +91,8 @@ Guide: [Agent runtimes](../agents.md).
 Paths:
 
 - `spec.harnesses.{key}.execution`
-- `spec.sandboxes[].harness.execution`
-- `spec.sandboxes[].harnesses.{key}.execution`
+- `spec.sandboxes.{key}.harness.execution`
+- `spec.sandboxes.{key}.harnesses.{key}.execution`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -106,7 +106,7 @@ Guide: [Agent runtimes](../agents.md).
 
 Paths:
 
-- `spec.sandboxes[].agent.tools`
+- `spec.sandboxes.{key}.agent.tools`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -121,8 +121,8 @@ Guide: [Configuration and credentials](../usage.md#configuration-and-credentials
 Paths:
 
 - `spec.integrations.{key}.authStyle`
-- `spec.sandboxes[].agent.integrations.{key}.authStyle`
-- `spec.sandboxes[].integrations.{key}.authStyle`
+- `spec.sandboxes.{key}.agent.integrations.{key}.authStyle`
+- `spec.sandboxes.{key}.integrations.{key}.authStyle`
 
 Accepted input: string.
 
@@ -136,7 +136,7 @@ Guide: [Inference configuration](../inference.md).
 
 Paths:
 
-- `spec.sandboxes[].agent.auth.method`
+- `spec.sandboxes.{key}.agent.auth.method`
 
 Accepted input: string.
 
@@ -265,7 +265,7 @@ Guide: [Sandbox policy](../sandbox-network.md).
 
 Paths:
 
-- `spec.sandboxes[].network.policy.explicit`
+- `spec.sandboxes.{key}.network.policy.explicit`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -283,7 +283,7 @@ Guide: [Sandbox policy](../sandbox-network.md).
 
 Paths:
 
-- `spec.sandboxes[].network.policy`
+- `spec.sandboxes.{key}.network.policy`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -347,7 +347,7 @@ Paths:
 - `spec.gateway.tls.ca`
 - `spec.gateway.tls.certificate`
 - `spec.gateway.tls.key`
-- `spec.sandboxes[].image.metadata`
+- `spec.sandboxes.{key}.image.metadata`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -404,7 +404,7 @@ Guide: [Configuration and credentials](../usage.md#configuration-and-credentials
 
 Paths:
 
-- `spec.sandboxes[].network.grants.{key}`
+- `spec.sandboxes.{key}.network.grants.{key}`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -434,8 +434,8 @@ Guide: [Configuration and credentials](../usage.md#configuration-and-credentials
 Paths:
 
 - `spec.harnesses.{key}`
-- `spec.sandboxes[].harness`
-- `spec.sandboxes[].harnesses.{key}`
+- `spec.sandboxes.{key}.harness`
+- `spec.sandboxes.{key}.harnesses.{key}`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -452,7 +452,7 @@ Guide: [Configuration and credentials](../usage.md#configuration-and-credentials
 
 Paths:
 
-- `spec.sandboxes[].image`
+- `spec.sandboxes.{key}.image`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -483,8 +483,8 @@ Guide: [Inference configuration](../inference.md).
 Paths:
 
 - `spec.inferences.{key}`
-- `spec.sandboxes[].agent.inference`
-- `spec.sandboxes[].inferences.{key}`
+- `spec.sandboxes.{key}.agent.inference`
+- `spec.sandboxes.{key}.inferences.{key}`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -499,11 +499,11 @@ Guide: [Inference configuration](../inference.md).
 
 Paths:
 
-- `spec.inferenceProviders[].api`
+- `spec.inferenceProviders.{key}.api`
 - `spec.inferences.{key}.routes[].provider.api`
-- `spec.sandboxes[].agent.inference.routes[].provider.api`
-- `spec.sandboxes[].inferenceProviders[].api`
-- `spec.sandboxes[].inferences.{key}.routes[].provider.api`
+- `spec.sandboxes.{key}.agent.inference.routes[].provider.api`
+- `spec.sandboxes.{key}.inferenceProviders.{key}.api`
+- `spec.sandboxes.{key}.inferences.{key}.routes[].provider.api`
 
 Accepted input: string.
 
@@ -517,18 +517,35 @@ Guide: [Inference configuration](../inference.md).
 
 Paths:
 
-- `spec.inferenceProviders[]`
-- `spec.inferences.{key}.routes[].provider`
-- `spec.sandboxes[].agent.inference.routes[].provider`
-- `spec.sandboxes[].inferenceProviders[]`
-- `spec.sandboxes[].inferences.{key}.routes[].provider`
+- `spec.inferenceProviders.{key}`
+- `spec.sandboxes.{key}.inferenceProviders.{key}`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `api` | [InferenceApi](#inferenceapi) | No | — | Request API. Omission selects anthropic-messages for Anthropic providers and openai-completions for OpenAI providers. NemoClaw uses it to read the endpoint's model catalog; agents use the protocol their adapter selects for the provider. |
 | `credential` | [SecretRef](#secretref) | No | — | Optional API credential reference for an external HTTPS endpoint. Excluded by serviceRef. |
 | `endpoint` | string | Without serviceRef | — | Inference HTTP(S) URL owned outside the deployment. Required without serviceRef and excluded with serviceRef. |
-| `name` | string | Yes | — | Provider name referenced by model choices. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
+| `provider` | string | Yes | — | OpenShell provider implementation. Must match the selected API family. Constraints: `"openai"` or `"anthropic"`. |
+| `serviceRef` | string | No | — | Name of a managed service in spec.services. Excludes endpoint and credential. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
+
+## InlineInferenceProvider
+
+Inference definition owned by one route, with the fields of an inferenceProviders entry and its own name.
+
+Guide: [Inference configuration](../inference.md).
+
+Paths:
+
+- `spec.inferences.{key}.routes[].provider`
+- `spec.sandboxes.{key}.agent.inference.routes[].provider`
+- `spec.sandboxes.{key}.inferences.{key}.routes[].provider`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `api` | [InferenceApi](#inferenceapi) | No | — | Request API. Omission selects anthropic-messages for Anthropic providers and openai-completions for OpenAI providers. NemoClaw uses it to read the endpoint's model catalog; agents use the protocol their adapter selects for the provider. |
+| `credential` | [SecretRef](#secretref) | No | — | Optional API credential reference for an external HTTPS endpoint. Excluded by serviceRef. |
+| `endpoint` | string | Without serviceRef | — | Inference HTTP(S) URL owned outside the deployment. Required without serviceRef and excluded with serviceRef. |
+| `name` | string | Yes | — | Provider name. Must not shadow an enclosing definition. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `provider` | string | Yes | — | OpenShell provider implementation. Must match the selected API family. Constraints: `"openai"` or `"anthropic"`. |
 | `serviceRef` | string | No | — | Name of a managed service in spec.services. Excludes endpoint and credential. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 
@@ -564,8 +581,8 @@ Guide: [Agent runtimes](../agents.md).
 Paths:
 
 - `spec.integrations.{key}`
-- `spec.sandboxes[].agent.integrations.{key}`
-- `spec.sandboxes[].integrations.{key}`
+- `spec.sandboxes.{key}.agent.integrations.{key}`
+- `spec.sandboxes.{key}.integrations.{key}`
 
 Accepted input: object.
 
@@ -706,7 +723,7 @@ Guide: [Sandbox policy](../sandbox-network.md).
 
 Paths:
 
-- `spec.sandboxes[].network`
+- `spec.sandboxes.{key}.network`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -775,8 +792,8 @@ Guide: [Inference configuration](../inference.md).
 Paths:
 
 - `spec.inferences.{key}.routes[].overrides`
-- `spec.sandboxes[].agent.inference.routes[].overrides`
-- `spec.sandboxes[].inferences.{key}.routes[].overrides`
+- `spec.sandboxes.{key}.agent.inference.routes[].overrides`
+- `spec.sandboxes.{key}.inferences.{key}.routes[].overrides`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -796,8 +813,8 @@ Guide: [Sandbox policy](../sandbox-network.md).
 
 Paths:
 
-- `spec.sandboxes[].network.grants.{key}.endpoints[].rules[]`
-- `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[].rules[]`
+- `spec.sandboxes.{key}.network.grants.{key}.endpoints[].rules[]`
+- `spec.sandboxes.{key}.network.policy.explicit.network_policies.{key}.endpoints[].rules[]`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -811,14 +828,14 @@ Guide: [Sandbox policy](../sandbox-network.md).
 
 Paths:
 
-- `spec.sandboxes[].network.grants.{key}.endpoints[].deny_rules[].params.{key}`
-- `spec.sandboxes[].network.grants.{key}.endpoints[].deny_rules[].tool`
-- `spec.sandboxes[].network.grants.{key}.endpoints[].rules[].allow.params.{key}`
-- `spec.sandboxes[].network.grants.{key}.endpoints[].rules[].allow.tool`
-- `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[].deny_rules[].params.{key}`
-- `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[].deny_rules[].tool`
-- `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[].rules[].allow.params.{key}`
-- `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[].rules[].allow.tool`
+- `spec.sandboxes.{key}.network.grants.{key}.endpoints[].deny_rules[].params.{key}`
+- `spec.sandboxes.{key}.network.grants.{key}.endpoints[].deny_rules[].tool`
+- `spec.sandboxes.{key}.network.grants.{key}.endpoints[].rules[].allow.params.{key}`
+- `spec.sandboxes.{key}.network.grants.{key}.endpoints[].rules[].allow.tool`
+- `spec.sandboxes.{key}.network.policy.explicit.network_policies.{key}.endpoints[].deny_rules[].params.{key}`
+- `spec.sandboxes.{key}.network.policy.explicit.network_policies.{key}.endpoints[].deny_rules[].tool`
+- `spec.sandboxes.{key}.network.policy.explicit.network_policies.{key}.endpoints[].rules[].allow.params.{key}`
+- `spec.sandboxes.{key}.network.policy.explicit.network_policies.{key}.endpoints[].rules[].allow.tool`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -832,8 +849,8 @@ Guide: [Sandbox policy](../sandbox-network.md).
 
 Paths:
 
-- `spec.sandboxes[].network.grants.{key}.binaries[]`
-- `spec.sandboxes[].network.policy.explicit.network_policies.{key}.binaries[]`
+- `spec.sandboxes.{key}.network.grants.{key}.binaries[]`
+- `spec.sandboxes.{key}.network.policy.explicit.network_policies.{key}.binaries[]`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -847,8 +864,8 @@ Guide: [Sandbox policy](../sandbox-network.md).
 
 Paths:
 
-- `spec.sandboxes[].network.grants.{key}.endpoints[]`
-- `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[]`
+- `spec.sandboxes.{key}.network.grants.{key}.endpoints[]`
+- `spec.sandboxes.{key}.network.policy.explicit.network_policies.{key}.endpoints[]`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -877,7 +894,7 @@ Guide: [Sandbox policy](../sandbox-network.md).
 
 Paths:
 
-- `spec.sandboxes[].network.policy.explicit.filesystem_policy`
+- `spec.sandboxes.{key}.network.policy.explicit.filesystem_policy`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -893,8 +910,8 @@ Guide: [Sandbox policy](../sandbox-network.md).
 
 Paths:
 
-- `spec.sandboxes[].network.grants.{key}.endpoints[].json_rpc`
-- `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[].json_rpc`
+- `spec.sandboxes.{key}.network.grants.{key}.endpoints[].json_rpc`
+- `spec.sandboxes.{key}.network.policy.explicit.network_policies.{key}.endpoints[].json_rpc`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -908,7 +925,7 @@ Guide: [Sandbox policy](../sandbox-network.md).
 
 Paths:
 
-- `spec.sandboxes[].network.policy.explicit.landlock`
+- `spec.sandboxes.{key}.network.policy.explicit.landlock`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -922,10 +939,10 @@ Guide: [Sandbox policy](../sandbox-network.md).
 
 Paths:
 
-- `spec.sandboxes[].network.grants.{key}.endpoints[].deny_rules[]`
-- `spec.sandboxes[].network.grants.{key}.endpoints[].rules[].allow`
-- `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[].deny_rules[]`
-- `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[].rules[].allow`
+- `spec.sandboxes.{key}.network.grants.{key}.endpoints[].deny_rules[]`
+- `spec.sandboxes.{key}.network.grants.{key}.endpoints[].rules[].allow`
+- `spec.sandboxes.{key}.network.policy.explicit.network_policies.{key}.endpoints[].deny_rules[]`
+- `spec.sandboxes.{key}.network.policy.explicit.network_policies.{key}.endpoints[].rules[].allow`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -942,8 +959,8 @@ Guide: [Sandbox policy](../sandbox-network.md).
 
 Paths:
 
-- `spec.sandboxes[].network.grants.{key}.endpoints[].mcp`
-- `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[].mcp`
+- `spec.sandboxes.{key}.network.grants.{key}.endpoints[].mcp`
+- `spec.sandboxes.{key}.network.policy.explicit.network_policies.{key}.endpoints[].mcp`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -960,7 +977,7 @@ Guide: [Sandbox policy](../sandbox-network.md).
 
 Paths:
 
-- `spec.sandboxes[].network.policy.explicit.process`
+- `spec.sandboxes.{key}.network.policy.explicit.process`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -975,7 +992,7 @@ Guide: [Sandbox policy](../sandbox-network.md).
 
 Paths:
 
-- `spec.sandboxes[].network.policy.explicit.network_policies.{key}`
+- `spec.sandboxes.{key}.network.policy.explicit.network_policies.{key}`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -991,14 +1008,14 @@ Guide: [Sandbox policy](../sandbox-network.md).
 
 Paths:
 
-- `spec.sandboxes[].network.grants.{key}.endpoints[].deny_rules[].params.{key}`
-- `spec.sandboxes[].network.grants.{key}.endpoints[].deny_rules[].tool`
-- `spec.sandboxes[].network.grants.{key}.endpoints[].rules[].allow.params.{key}`
-- `spec.sandboxes[].network.grants.{key}.endpoints[].rules[].allow.tool`
-- `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[].deny_rules[].params.{key}`
-- `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[].deny_rules[].tool`
-- `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[].rules[].allow.params.{key}`
-- `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[].rules[].allow.tool`
+- `spec.sandboxes.{key}.network.grants.{key}.endpoints[].deny_rules[].params.{key}`
+- `spec.sandboxes.{key}.network.grants.{key}.endpoints[].deny_rules[].tool`
+- `spec.sandboxes.{key}.network.grants.{key}.endpoints[].rules[].allow.params.{key}`
+- `spec.sandboxes.{key}.network.grants.{key}.endpoints[].rules[].allow.tool`
+- `spec.sandboxes.{key}.network.policy.explicit.network_policies.{key}.endpoints[].deny_rules[].params.{key}`
+- `spec.sandboxes.{key}.network.policy.explicit.network_policies.{key}.endpoints[].deny_rules[].tool`
+- `spec.sandboxes.{key}.network.policy.explicit.network_policies.{key}.endpoints[].rules[].allow.params.{key}`
+- `spec.sandboxes.{key}.network.policy.explicit.network_policies.{key}.endpoints[].rules[].allow.tool`
 
 Accepted input: string or [PolicyAnyMatcher](#policyanymatcher).
 
@@ -1058,14 +1075,14 @@ Guide: [Inference configuration](../inference.md).
 Paths:
 
 - `spec.inferences.{key}.routes[]`
-- `spec.sandboxes[].agent.inference.routes[]`
-- `spec.sandboxes[].inferences.{key}.routes[]`
+- `spec.sandboxes.{key}.agent.inference.routes[]`
+- `spec.sandboxes.{key}.inferences.{key}.routes[]`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `name` | string | Yes | — | Unique lowercase name for this model choice. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `overrides` | [Overrides](#overrides) | Yes | — | Model selection, shared limits, and optional native settings. |
-| `provider` | [InferenceProvider](#inferenceprovider) | No | — | Inline inference definition owned by this route. Excludes providerRef and must not shadow an enclosing definition. |
+| `provider` | [InlineInferenceProvider](#inlineinferenceprovider) | No | — | Inline inference definition owned by this route. Excludes providerRef and must not shadow an enclosing definition. |
 | `providerRef` | string | No | — | Name of an enclosing inference provider. Exactly one of providerRef or provider is required. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 
 ## Runtime
@@ -1090,7 +1107,7 @@ Guide: [Configuration and credentials](../usage.md#configuration-and-credentials
 
 Paths:
 
-- `spec.sandboxes[]`
+- `spec.sandboxes.{key}`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -1100,10 +1117,9 @@ Paths:
 | `harnessRef` | string | No | — | Name of a visible harness configuration. Excludes inline harness. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `harnesses` | map of [Harness](#harness) | No | — | Named harness configurations available through harnessRef. Selecting a definition reuses configuration; runtime processes belong to each sandbox. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `image` | [Image](#image) | For Kubernetes sandboxes | — | Kubernetes requires an explicit immutable agent image compatible with the gateway's runtime user and group IDs. For other drivers, omission selects the generic SDK agent image pin; verify that it contains the selected Fabric adapter. |
-| `inferenceProviders` | array of [InferenceProvider](#inferenceprovider) | No | — | Named inference definitions visible to this sandbox's routes. Names must not shadow deployment definitions. |
+| `inferenceProviders` | map of [InferenceProvider](#inferenceprovider) | No | — | Named inference definitions visible to this sandbox's routes through providerRef. Names must not shadow deployment definitions. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `inferences` | map of [Inference](#inference) | No | — | Named inference configurations available through inferenceRef. Definitions resolve providers in their own scope and create no resources until selected. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `integrations` | map of [Integration](#integration) | No | — | Named integration definitions selected by this sandbox's agent through integrationRefs. Names must not collide with deployment definitions. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
-| `name` | string | Yes | — | Lowercase sandbox name. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `network` | [Network](#network) | No | — | Sandbox network policy; omission selects isolated egress with grants for declared inference. |
 
 ## SearchProvider
@@ -1115,8 +1131,8 @@ Guide: [Agent runtimes](../agents.md).
 Paths:
 
 - `spec.integrations.{key}.provider`
-- `spec.sandboxes[].agent.integrations.{key}.provider`
-- `spec.sandboxes[].integrations.{key}.provider`
+- `spec.sandboxes.{key}.agent.integrations.{key}.provider`
+- `spec.sandboxes.{key}.integrations.{key}.provider`
 
 Accepted input: string.
 
@@ -1132,14 +1148,14 @@ Paths:
 
 - `spec.gateway.credential`
 - `spec.gateway.kubernetes.authentication.token`
-- `spec.inferenceProviders[].credential`
+- `spec.inferenceProviders.{key}.credential`
 - `spec.inferences.{key}.routes[].provider.credential`
 - `spec.integrations.{key}.credential`
-- `spec.sandboxes[].agent.inference.routes[].provider.credential`
-- `spec.sandboxes[].agent.integrations.{key}.credential`
-- `spec.sandboxes[].inferenceProviders[].credential`
-- `spec.sandboxes[].inferences.{key}.routes[].provider.credential`
-- `spec.sandboxes[].integrations.{key}.credential`
+- `spec.sandboxes.{key}.agent.inference.routes[].provider.credential`
+- `spec.sandboxes.{key}.agent.integrations.{key}.credential`
+- `spec.sandboxes.{key}.inferenceProviders.{key}.credential`
+- `spec.sandboxes.{key}.inferences.{key}.routes[].provider.credential`
+- `spec.sandboxes.{key}.integrations.{key}.credential`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -1311,7 +1327,7 @@ Paths:
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `engine` | string | Yes | — | SSH Docker endpoint used for an explicitly placed service. Constraints: pattern `^ssh://`. |
-| `networkCidr` | string | Yes | — | Canonical private IPv4 /24 on the selected Docker engine. Constraints: pattern `/24$`. |
+| `networkCIDR` | string | Yes | — | Canonical private IPv4 /24 on the selected Docker engine. Constraints: pattern `/24$`. |
 
 ## ServicePublication
 
@@ -1403,11 +1419,11 @@ Paths:
 |---|---|---|---|---|
 | `gateway` | [Gateway](#gateway) | Yes | — | OpenShell gateway connection or managed gateway settings. |
 | `harnesses` | map of [Harness](#harness) | No | — | Named harness configurations available through harnessRef. Selecting a definition reuses configuration; runtime processes belong to each sandbox. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
-| `inferenceProviders` | array of [InferenceProvider](#inferenceprovider) | No | — | Named inference definitions available to sandbox routes. Unselected definitions create no resources or credential requirements. |
+| `inferenceProviders` | map of [InferenceProvider](#inferenceprovider) | No | — | Named inference definitions available to sandbox routes through providerRef. Unselected definitions create no resources or credential requirements. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `inferences` | map of [Inference](#inference) | No | — | Named inference configurations available through inferenceRef. Definitions resolve providers in their own scope and create no resources until selected. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `integrations` | map of [Integration](#integration) | No | — | Named integration definitions shared by agents through integrationRefs. Definitions alone grant no access. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `registries` | array of [Registry](#registry) | No | — | Registries whose images NemoClaw pulls through Docker with the logins of the machine running OpenTofu, from its Docker configuration file. Lists addresses only; credentials stay in that file or its credential store. Constraints: maximum items 32. |
-| `sandboxes` | array of [Sandbox](#sandbox) | Yes | — | One to 32 uniquely named sandboxes. Each runs one agent through its selected Fabric adapter. Declaration order does not select a default sandbox or agent. Constraints: minimum items 1; maximum items 32. |
+| `sandboxes` | map of [Sandbox](#sandbox) | Yes | — | One to 32 named sandboxes. Each runs one agent through its selected Fabric adapter. Declaration order does not select a default sandbox or agent. Constraints: minimum entries 1; maximum entries 32; keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `services` | map of [ServiceDefinition](#servicedefinition) | No | — | Named managed container services to install, verify once, and remove during destroy. Inference providers may consume their connection through serviceRef. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 
 ## TLS

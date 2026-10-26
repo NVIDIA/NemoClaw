@@ -11,7 +11,7 @@ fn native_telemetry_settings_are_opaque_and_do_not_implicitly_grant_network_acce
     let mut input: Value =
         serde_saphyr::from_str(include_str!("fixtures/config/local.yaml")).unwrap();
     let settings = json!({"telemetry":{"future":null,"service":"agent ${fixture} %{literal}"}});
-    input["spec"]["sandboxes"][0]["harness"]["settings"] = settings.clone();
+    input["spec"]["sandboxes"]["assistant"]["harness"]["settings"] = settings.clone();
     let document = Document::parse(input.to_string().as_bytes()).unwrap();
     let generations: Generations = ["workspace", "provider", "sandbox"]
         .map(|key| (key.into(), "a".repeat(32)))
@@ -38,7 +38,7 @@ fn native_telemetry_settings_are_opaque_and_do_not_implicitly_grant_network_acce
             .any(|rule| rule["name"] == "nemoclaw-otlp")
     );
     let graph = compile(&document, &generations, "0.1.0").unwrap();
-    let encoded = graph["resource"]["fabric_agent"][&document.spec.sandboxes[0].name].to_string();
+    let encoded = graph["resource"]["fabric_agent"]["assistant"].to_string();
     assert!(encoded.contains("agent $${fixture} %%{literal}"));
     assert_eq!(
         Document::parse(document.yaml().unwrap().as_bytes()).unwrap(),

@@ -210,7 +210,7 @@ pub(crate) async fn remove(
         return Err(ObservationError::BindingMismatch);
     }
     // Removing the agent stops its runtime, as removing an attachment does.
-    // The sandbox stays, and can never start another runtime.
+    // The sandbox stays; creating the agent again starts a new runtime.
     let runtime_id = value(prior, "runtime_id");
     if runtime_id.is_empty() {
         return Ok(());

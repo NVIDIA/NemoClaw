@@ -33,6 +33,17 @@ pub(super) fn report(phase: &str, detail: &str, pid: u32) -> Result<(), Error> {
     report_at(Path::new("/data"), phase, detail, pid)
 }
 
+/// Record that this runtime holds the storage lock and hasn't started its
+/// service yet, replacing any status an earlier container left on retained
+/// storage, so nothing reads that status as this runtime's.
+pub(super) fn begin() -> Result<(), Error> {
+    begin_at(Path::new("/data"))
+}
+
+fn begin_at(root: &Path) -> Result<(), Error> {
+    report_at(root, "initializing", "runtime started", 0)
+}
+
 fn report_at(root: &Path, phase: &str, detail: &str, pid: u32) -> Result<(), Error> {
     let updated = time::OffsetDateTime::now_utc()
         .format(&time::format_description::well_known::Rfc3339)
@@ -69,5 +80,17 @@ mod status_tests {
             serde_json::from_slice(&std::fs::read(root.path().join("status.json")).unwrap())
                 .unwrap();
         assert_eq!(preserved, status);
+    }
+
+    #[test]
+    fn a_started_runtime_replaces_a_ready_status_left_by_an_earlier_container() {
+        let root = tempfile::tempdir().unwrap();
+        super::report_at(root.path(), "ready", "serving", 123).unwrap();
+        super::begin_at(root.path()).unwrap();
+        let status: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(root.path().join("status.json")).unwrap())
+                .unwrap();
+        assert_eq!(status["phase"], "initializing");
+        assert_eq!(status["pid"], 0);
     }
 }

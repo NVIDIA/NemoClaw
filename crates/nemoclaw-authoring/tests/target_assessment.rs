@@ -261,8 +261,13 @@ fn editing_the_target_leaves_only_the_edited_observation_unfound() {
             before: document(),
             engine_observed: true,
             change: |document| {
-                document.spec.sandboxes[0].image.ref_ =
-                    format!("another-image@sha256:{}", "0".repeat(64));
+                document
+                    .spec
+                    .sandboxes
+                    .get_mut("assistant")
+                    .unwrap()
+                    .image
+                    .ref_ = format!("another-image@sha256:{}", "0".repeat(64));
             },
             engine_unobserved: false,
             image_unobserved: true,

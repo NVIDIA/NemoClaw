@@ -18,14 +18,14 @@ spec:
     engine: unix:///var/run/docker.sock
     networkCIDR: 172.30.60.0/24
   inferenceProviders:
-    - name: hosted-nvidia-prod
+    hosted-nvidia-prod:
       provider: openai
       api: openai-completions
       endpoint: https://integrate.api.nvidia.com/v1
       credential:
         env: NVIDIA_INFERENCE_API_KEY
   sandboxes:
-    - name: assistant
+    assistant:
       harness:
         kind: nvidia.fabric.openclaw
       image:

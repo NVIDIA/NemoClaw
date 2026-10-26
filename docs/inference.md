@@ -141,11 +141,11 @@ NemoClaw uses it to read the endpoint's model catalog.
 The harness name does not change these defaults.
 
 Agents use the protocol their harness's adapter selects for the provider transport.
-Fabric v0.5.0 has no per-model API setting, so an endpoint that accepts only a protocol the adapter doesn't select can't serve that agent ([#13320](https://github.com/NVIDIA/NemoClaw/issues/13320)).
+The pinned Fabric has no per-model API setting, so an endpoint that accepts only a protocol the adapter doesn't select can't serve that agent ([#13320](https://github.com/NVIDIA/NemoClaw/issues/13320)).
 Fabric validates the rest of its configuration when the agent is configured.
 
 Use `provider: anthropic` with `anthropic-messages` and `provider: openai` with either OpenAI API.
-The provider name is the local reference used by routes; it does not select a vendor.
+The provider's key under `inferenceProviders` is the local name routes reference; it does not select a vendor.
 For example, a Nous endpoint using the OpenAI protocol still uses `provider: openai`.
 
 ### Prepare an External Endpoint
@@ -179,7 +179,7 @@ If the machine running NemoClaw does not trust the certificate, onboarding repor
 
 ## Use an Image Built from This Revision
 
-Explicit API selection, tuning, and authentication require an agent image built from this revision; [build it](build.md#build-agent-images) and use its immutable digest in `sandboxes[].image.ref`.
+Explicit API selection, tuning, and authentication require an agent image built from this revision; [build it](build.md#build-agent-images) and use its immutable digest in `sandboxes.<name>.image.ref`.
 The [tuning example](../examples/inference-tuning.yaml) and [Hermes authentication example](../examples/hermes-auth.yaml) contain zero-digest placeholders that must be replaced before deployment.
 Set their gateway and inference endpoints and model IDs for your services, and assign a fresh deployment UID.
 Model and native settings changes restart the runtime inside the existing sandbox; changing its image requires a separate deployment, as described in [the change path](usage.md#choose-the-change-path).
@@ -228,7 +228,7 @@ services:
     memory:
       gpuMemoryGiB: 16
 inferenceProviders:
-  - name: qwen
+  qwen:
     provider: openai
     api: openai-completions
     serviceRef: qwen
@@ -279,7 +279,7 @@ Set `authentication: bearer` under `spec.services.<name>` to generate a private 
 Omission preserves the existing unauthenticated serving behavior.
 Build the [runtime image](build.md#build-a-runtime-image) from this revision and use its immutable digest.
 Authenticated services require both `org.nemoclaw.inference.authentication=bearer-v1` and `org.nemoclaw.inference.routes=openai-v2`; image validation rejects other images before creating the runtime, including `openai-v1` images from earlier revisions, whose middleware passed every `/v1` path.
-Do not supply `inferenceProviders[].credential` for a managed service.
+Do not supply `inferenceProviders.<name>.credential` for a managed service.
 
 The supervisor creates a mode-0600 key in `/credentials/inference-key` on a separate credential volume under its own writer lock and reuses it after restart.
 It passes the key only to the vLLM child process through `VLLM_API_KEY`, then verifies `/v1/models` through the route filter below, using bearer authentication, before reporting readiness.
@@ -339,8 +339,14 @@ env:
 ```
 
 Register the server with OpenShell using the same key: give `openshell_inference` a `server` object whose `credential_env` names a variable holding the key where OpenTofu runs.
-Readiness on those platforms is the platform's job; point its readiness probe at `GET /health`, which needs no key.
 In YAML, set the provider's `credential` to that variable; [Use a Model Server in the Cluster](kubernetes.md#use-a-model-server-in-the-cluster) shows a Kubernetes example.
+
+Readiness on those platforms is the platform's job, using the server's own checks:
+
+- For vLLM, probe `GET /health`, which needs no key; vLLM serves it only once the model is loaded.
+- For Ollama, use an exec probe that runs `ollama show MODEL`; it succeeds only once the runtime has pulled the model, while Ollama's HTTP API answers before then.
+
+When memory protection stops the server, the runtime exits. Choose a restart policy that doesn't start the model again under the same memory pressure, such as Kubernetes' `restartPolicy: Never` for a pod that should stay down.
 
 ## Use External Ollama through a Managed Proxy
 
@@ -375,7 +381,7 @@ services:
         name: qwen3:4b
         digest: REPLACE_WITH_MODEL_DIGEST
 inferenceProviders:
-  - name: local
+  local:
     provider: openai
     serviceRef: local
 ```
@@ -451,7 +457,7 @@ Declare an external HTTPS provider with a credential reference, then select it f
 
 ```yaml
 # Under spec.inferenceProviders:
-- name: nous
+nous:
   provider: openai
   api: openai-completions
   endpoint: https://inference-api.nousresearch.com/v1

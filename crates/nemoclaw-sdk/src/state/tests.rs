@@ -125,7 +125,8 @@ fn removed_ownership_annotations_preserve_intent_and_resource_bindings_for_recov
     .unwrap();
     let record = Record::new(document).unwrap();
     let mut old = serde_json::to_value(&record).unwrap();
-    old["document"]["spec"]["inferenceProviders"][0]["management"] = serde_json::json!("external");
+    old["document"]["spec"]["inferenceProviders"]["local"]["management"] =
+        serde_json::json!("external");
     let bytes = serde_json::to_vec(&old).unwrap();
     let intent = dir.path().join("intent.json");
     let state = dir.path().join("terraform.tfstate");
@@ -266,18 +267,26 @@ fn pending_creation_guards_only_unresolved_targets() {
     record.pending = true;
     record.pending_creations = [(pending.address.clone(), pending.values.clone())].into();
     let mut revised = document.clone();
-    let mut unrelated = revised.spec.inference_providers[0].clone();
-    unrelated.name = "unrelated".into();
-    revised.spec.inference_providers.push(unrelated);
+    let unrelated = revised.spec.inference_providers["local"].clone();
+    revised
+        .spec
+        .inference_providers
+        .insert("unrelated".into(), unrelated);
     assert!(record.validate_pending_intent(&revised).is_ok());
-    revised.spec.sandboxes[0].image.ref_ =
-        format!("example.invalid/changed@sha256:{}", "b".repeat(64));
+    revised
+        .spec
+        .sandboxes
+        .get_mut("assistant")
+        .unwrap()
+        .image
+        .ref_ = format!("example.invalid/changed@sha256:{}", "b".repeat(64));
     revised.validate().unwrap();
     assert!(matches!(
         record.validate_pending_intent(&revised),
         Err(Error::Conflict(_))
     ));
-    revised.spec.sandboxes[0].name = "replacement".into();
+    let sandbox = revised.spec.sandboxes.remove("assistant").unwrap();
+    revised.spec.sandboxes.insert("replacement".into(), sandbox);
     revised.validate().unwrap();
     assert!(matches!(
         record.validate_pending_intent(&revised),
@@ -413,7 +422,7 @@ fn a_kubernetes_records_generations_reload_and_stay_stable() {
             "namespace": "test-agents", "authentication": {"profile": "development"}
         }
     });
-    value["spec"]["sandboxes"][0]["image"]["metadata"] =
+    value["spec"]["sandboxes"]["assistant"]["image"]["metadata"] =
         serde_json::json!({"env": "TEST_IMAGE_METADATA"});
     let document = Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap();
     let mut record = Record::new(document.clone()).unwrap();

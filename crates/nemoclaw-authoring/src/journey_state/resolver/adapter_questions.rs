@@ -13,13 +13,16 @@ impl QuestionResolver<'_> {
         let omitted = &mut work.omitted;
         let warnings = &mut work.warnings;
         let unverified = &mut work.unverified;
+        let sandbox = sandbox_path(&self.authored.values);
+        let harness_id = harness_question(&self.authored.values);
         let active_harness = harness_path(&self.authored.values).or_else(|| {
+            let sandbox = sandbox.as_ref()?;
             (self
                 .position
                 .selected_forms
-                .get("/spec/sandboxes/0")
+                .get(sandbox)
                 .is_some_and(|form| form == "harness"))
-            .then(|| "/spec/sandboxes/0/harness".into())
+            .then(|| format!("{sandbox}/harness"))
         });
         let chosen = active_harness
             .as_ref()
@@ -27,8 +30,9 @@ impl QuestionResolver<'_> {
             .and_then(Value::as_str);
         let harness_open = active_harness.is_some()
             && (chosen.is_none()
-                || (self.definition.ask.contains(HARNESS)
-                    && !self.decisions.accepted.contains(HARNESS)));
+                || harness_id.as_ref().is_some_and(|id| {
+                    self.definition.ask.contains(id) && !self.decisions.accepted.contains(id)
+                }));
         let reachable: Vec<&str> = if harness_open {
             capabilities
                 .harnesses()
@@ -52,10 +56,11 @@ impl QuestionResolver<'_> {
                 warnings.push(format!("{field} is not reachable from {reason}"));
             }
         }
-        if harness_open {
+        // An active harness implies the one sandbox, so the harness question has an ID.
+        if harness_open && let Some(id) = harness_id {
             // Fabric supplies the active harness choices; replace the generic
             // SDK leaf question if sparse traversal found the same field.
-            questions.retain(|question| question.id != HARNESS);
+            questions.retain(|question| question.id != id);
             if let Some(harness) = chosen
                 && adapter_schema(capabilities, harness)?.is_none()
             {
@@ -69,7 +74,7 @@ impl QuestionResolver<'_> {
                 target: QuestionTarget::Harness,
                 kind: JourneyQuestionKind::Field,
                 reopened_because: None,
-                id: HARNESS.into(),
+                id,
                 reason: if chosen.is_none() {
                     JourneyQuestionReason::Missing
                 } else {
@@ -88,6 +93,11 @@ impl QuestionResolver<'_> {
             });
         } else if let Some(harness) = chosen {
             if let Some(schema) = adapter_schema(capabilities, harness)? {
+                let base = self.definition.base.supplied();
+                let base_settings = (harness_kind(base) == Some(harness))
+                    .then(|| settings_path(base))
+                    .flatten()
+                    .and_then(|path| base.pointer(&path));
                 let settings_path = format!(
                     "{}/settings",
                     active_harness
@@ -128,7 +138,7 @@ impl QuestionResolver<'_> {
                     } else {
                         settings.pointer(&field.path)
                     };
-                    if self.definition.omit.contains(&id) || self.decisions.omitted.contains(&id) {
+                    if self.decisions.omitted.contains(&id) {
                         if field.required {
                             return Err(diagnostic(
                                 "journey",
@@ -144,19 +154,31 @@ impl QuestionResolver<'_> {
                         omitted.push(id);
                         continue;
                     }
-                    if value.is_none()
-                        && !field.required
-                        && !self.definition.ask.contains(&id)
-                        && self
-                            .definition
-                            .omit_scopes
-                            .contains(&JourneyScope::ActiveAdapterSettings)
-                    {
-                        omitted.push(id);
-                        continue;
-                    }
                     let valid = value
                         .is_some_and(|value| schema_accepts(&field.schema, value) == Some(true));
+                    let guided = self.definition.omit.contains(&id)
+                        || (!self.definition.ask.contains(&id)
+                            && self
+                                .definition
+                                .omit_scopes
+                                .contains(&JourneyScope::ActiveAdapterSettings));
+                    match guided
+                        .then(|| guided_omission(value, valid, field.required))
+                        .flatten()
+                    {
+                        Some(Omission::Unset) => {
+                            omitted.push(id);
+                            continue;
+                        }
+                        Some(Omission::Keep(value)) => {
+                            let answered = self.decisions.accepted.contains(&id);
+                            let base_value =
+                                base_settings.and_then(|settings| settings.pointer(&field.path));
+                            keep_supplied(&mut work.kept, id, value, base_value, answered);
+                            continue;
+                        }
+                        None => {}
+                    }
                     if value.is_none()
                         || !valid
                         || ((self

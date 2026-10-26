@@ -74,7 +74,7 @@ NemoClaw keeps these by decision, as its own promises:
 - Verify ownership, generation, and durable identity before modifying gateway storage, credentials, Podman gateway processes, or OpenShell resources.
 - Let the Docker provider reconcile disposable containers, service networks, and reproducible caches during explicit apply without requiring stable physical IDs.
 - Let OpenTofu reconcile reconstructible OpenShell profiles, registrations, and Fabric configuration through provider lifecycle contracts.
-- Replace a sandbox with its agent, because Fabric starts one agent runtime per sandbox; the plan shows the replacement, and durable data belongs on mounted volumes.
+- Replace a sandbox with its agent, so each sandbox runs one agent runtime; the plan shows the replacement, and durable data belongs on mounted volumes.
 - Only confirmed absence may remove a resource from state; authentication, transport, extension, query, and incomplete-observation failures must stop planning and preserve bindings.
 - Retain storage on destroy by default, and persistent data and provider state after readiness failure; recovery need not reuse the same container.
 - Missing or substituted bound credential storage must stop planning before compute changes; keep credentials in separate durable volumes.

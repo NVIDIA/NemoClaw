@@ -95,12 +95,19 @@ jobs:
           names: v1-ci
           required: "false"
           token: ${{ github.token }}
+      - name: Install the pinned SBOM generator
+        id: syft
+        if: inputs.run && inputs.push && steps.packages.outputs.ready == 'true'
+        uses: anchore/sbom-action/download-syft@fffec3d851af758d56fee099cf3fbf8aa8779843 # v0.24.3
+        with:
+          syft-version: v1.55.0
       - name: Push the checked images for this commit
         if: inputs.run && inputs.push && steps.packages.outputs.ready == 'true'
         env:
           PACKAGE: ${{ inputs.package }}
           GH_TOKEN: ${{ github.token }}
           PLATFORM: ${{ matrix.platform }}
+          SYFT: ${{ steps.syft.outputs.cmd }}
         run: |
           printf '%s\n' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           printf 'ollama-proxy\tnc-fabric:ollama-proxy\n' >> .build-image-list
@@ -118,6 +125,8 @@ jobs:
             docker tag "$image" "$target"
             docker push --quiet "$target" > /dev/null
             digest=$(docker buildx imagetools inspect "$target" --format '{{.Manifest.Digest}}')
+            # Record the pushed image's SBOM; staging copies it.
+            sh .github/scripts/image-sbom.sh "$target" "linux/${PLATFORM#linux_}"
             echo "| \`$name\` | \`$digest\` | $(( $(date +%s) - start )) s |" >> "$GITHUB_STEP_SUMMARY"
           done < .build-image-list
           echo >> "$GITHUB_STEP_SUMMARY"

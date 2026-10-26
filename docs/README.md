@@ -66,6 +66,7 @@ These guides describe the v1 development branch.
 | Exercise OpenTofu and bundles with local fixtures | [Run integration tests](contributing/integration-tests.md) |
 | Test explicitly owned live resources | [Run live tests](contributing/live-tests.md) |
 | Stage a private v1 release | [Stage a v1 release](contributing/releases.md) |
+| Assess saved image inventories | [Image assessment](contributing/image-assessment.md) |
 | Write or reorganize documentation | [Contribute documentation](contributing/documentation.md) |
 | Validate, preview, or publish the v1 site | [Documentation build](contributing/documentation-build.md) |
 | Update the generated schema and field reference | [Schema maintenance](contributing/configuration-schema.md) |
