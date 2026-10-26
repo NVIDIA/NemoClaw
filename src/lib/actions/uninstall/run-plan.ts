@@ -50,9 +50,12 @@ import { buildDockerGatewayDebEnvFile } from "../../onboard/docker-driver-gatewa
 import {
   getTrustedActiveOpenShellGatewayUserServiceIdentity,
   getNemoclawOpenShellGatewayUserServicePath,
+  findNemoclawGatewayUserServiceActivationPath,
   getOpenShellUserConfigHome,
   NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE,
   NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER_LINE,
+  systemctlUserEnv,
+  userManagerLooksUnavailable,
 } from "../../onboard/docker-driver-gateway-service";
 import {
   assertManagedGatewayStateDirectoryParentTrusted,
@@ -80,6 +83,7 @@ import {
 } from "./gateway-cleanup";
 import {
   externallySupervisedHostGatewayProcessOwnershipFailure,
+  gatewayEnvSelectsStateConfig,
   hasStateScopedSandboxNamespace,
   isHostPortFree,
   processUsesStateScopedSandboxNamespace,
@@ -91,6 +95,7 @@ import {
 } from "../../onboard/host-gateway-process";
 import {
   assertGatewayStatePathSafe,
+  hasDefaultGatewayEvidence,
   prepareGatewayProviderAuthorityRetirement,
   GATEWAYS_SUBDIR,
   type GatewayRegistryEntry,
@@ -197,6 +202,7 @@ export interface UninstallRunDeps {
   requireCompleteGatewayProcessCleanup?: boolean;
   resolveGatewayTeardownAuthority?: GatewayTeardownAuthorityResolver;
   retainedGatewayPorts?: readonly number[];
+  sweepDefaultGatewayAbsent?: boolean;
   rmSync?: typeof fs.rmSync;
   run?: (command: string, args: string[], options?: SpawnSyncOptions) => RunResult;
   runDocker?: (args: string[], options?: SpawnSyncOptions) => RunResult;
@@ -544,6 +550,7 @@ interface UninstallRuntime {
   requireCompleteGatewayProcessCleanup: boolean;
   resolveGatewayTeardownAuthority: GatewayTeardownAuthorityResolver;
   retainedGatewayPorts: readonly number[];
+  sweepDefaultGatewayAbsent: boolean;
   rmSync: typeof fs.rmSync;
   run: (command: string, args: string[], options?: SpawnSyncOptions) => RunResult;
   runDocker: (args: string[], options?: SpawnSyncOptions) => RunResult;
@@ -610,6 +617,7 @@ function buildRuntime(deps: UninstallRunDeps): UninstallRuntime {
     resolveGatewayTeardownAuthority:
       deps.resolveGatewayTeardownAuthority ?? resolveGatewayTeardownAuthority,
     retainedGatewayPorts: deps.retainedGatewayPorts ?? [],
+    sweepDefaultGatewayAbsent: deps.sweepDefaultGatewayAbsent ?? false,
     rmSync: deps.rmSync ?? fs.rmSync,
     run: deps.run ?? defaultRun,
     runDocker: deps.runDocker ?? defaultRunDocker,
@@ -1354,6 +1362,15 @@ function removeNemoclawOpenShellGatewayUserService(
   }
 
   const hasSystemctl = runtime.commandExists("systemctl");
+  // Reach the user manager through its runtime directory even when the caller
+  // (for example `sudo -u`) did not export XDG_RUNTIME_DIR, so a missing client
+  // variable is never mistaken for an unavailable manager.
+  const systemctlEnv = systemctlUserEnv(runtime.env);
+  // True only when the scoped `show` or the disable failed because the systemd
+  // user manager is unreachable ("Failed to connect to bus: ..."). In that case the unit file
+  // is dead on disk: remove it and skip daemon-reload, mirroring install and
+  // destroy's standalone-gateway fallback on headless accounts.
+  let userManagerUnavailable = false;
   if (hasSystemctl) {
     if (scopedStateDir !== undefined) {
       const inspected = runtime.run(
@@ -1365,16 +1382,32 @@ function removeNemoclawOpenShellGatewayUserService(
           "--property=MainPID",
           "--value",
         ],
-        { env: runtime.env },
+        { env: systemctlEnv },
       );
+      // An unreachable user manager has no loaded unit, so there is no
+      // service process whose namespace needs proof before the dead marked
+      // unit file is removed.
+      userManagerUnavailable =
+        inspected.status !== 0 && userManagerLooksUnavailable(inspected.stderr);
+      // The fixed per-user unit path can belong to another state directory, so
+      // without a loaded process to prove, require the unit's EnvironmentFile
+      // to name the selected state's gateway config.
+      if (userManagerUnavailable && !markedUnitSelectsState(runtime, scopedStateDir)) {
+        runtime.warn(
+          `Leaving ${servicePath} in place because the systemd user manager is unavailable and the unit's gateway state cannot be proven.`,
+        );
+        return false;
+      }
       const mainPid = Number(inspected.stdout.trim());
       if (
-        !hasStateScopedSandboxNamespace(scopedStateDir) ||
-        inspected.status !== 0 ||
-        !inspected.stdout.trim() ||
-        !Number.isSafeInteger(mainPid) ||
-        mainPid < 0 ||
-        (mainPid > 0 && !processUsesStateScopedSandboxNamespace(mainPid, scopedStateDir, runtime))
+        !userManagerUnavailable &&
+        (!hasStateScopedSandboxNamespace(scopedStateDir) ||
+          inspected.status !== 0 ||
+          !inspected.stdout.trim() ||
+          !Number.isSafeInteger(mainPid) ||
+          mainPid < 0 ||
+          (mainPid > 0 &&
+            !processUsesStateScopedSandboxNamespace(mainPid, scopedStateDir, runtime)))
       ) {
         runtime.warn(
           "Refusing scoped gateway service stop because its loaded sandbox namespace cannot be proven.",
@@ -1382,18 +1415,44 @@ function removeNemoclawOpenShellGatewayUserService(
         return false;
       }
     }
-    const disabled = runtime.run(
-      "systemctl",
-      ["--user", "disable", "--now", NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE],
-      { env: runtime.env, stdio: "ignore" },
-    );
-    if (disabled.status !== 0) {
-      runtime.warn(`Failed to disable ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE}.service`);
-      return false;
+    if (!userManagerUnavailable) {
+      const disabled = runtime.run(
+        "systemctl",
+        ["--user", "disable", "--now", NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE],
+        { env: systemctlEnv, stdio: ["ignore", "pipe", "pipe"] },
+      );
+      userManagerUnavailable =
+        disabled.status !== 0 && userManagerLooksUnavailable(disabled.stderr);
+      // On a headless account without a reachable systemd user manager
+      // ("Failed to connect to bus: ...", /run/user/<uid>/bus missing), the
+      // unit file exists on disk but cannot be managed or started. Installation
+      // and destroy already treat this as the standalone-gateway fallback, so
+      // uninstall removes the dead unit instead of reporting a failure and
+      // leaving it behind. Any other disable failure stays conservative.
+      if (disabled.status !== 0 && !userManagerUnavailable) {
+        runtime.warn(`Failed to disable ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE}.service`);
+        return false;
+      }
     }
-    runtime.log(`Disabled ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE}.service`);
+    if (!userManagerUnavailable) {
+      runtime.log(`Disabled ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE}.service`);
+    }
   } else {
     runtime.warn("systemctl not found; removing NemoClaw gateway user service file only.");
+  }
+  // `disable` did not run, so remove its enablement link ourselves, and keep
+  // the unit while any other activation path could still start it.
+  if (
+    userManagerUnavailable &&
+    (!removeMarkedUnitEnablementLink(runtime, servicePath) ||
+      !noOtherActivationPath(runtime, servicePath, systemctlEnv))
+  ) {
+    return false;
+  }
+  if (userManagerUnavailable) {
+    runtime.warn(
+      `The systemd user manager is unavailable; removing ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE}.service without disabling or reloading it.`,
+    );
   }
   try {
     runtime.rmSync(servicePath, { force: true });
@@ -1404,9 +1463,9 @@ function removeNemoclawOpenShellGatewayUserService(
     );
     return false;
   }
-  if (hasSystemctl) {
+  if (hasSystemctl && !userManagerUnavailable) {
     const reloaded = runtime.run("systemctl", ["--user", "daemon-reload"], {
-      env: runtime.env,
+      env: systemctlEnv,
       stdio: "ignore",
     });
     if (reloaded.status !== 0) {
@@ -1415,6 +1474,77 @@ function removeNemoclawOpenShellGatewayUserService(
     }
   }
   return true;
+}
+
+function markedUnitSelectsState(runtime: UninstallRuntime, stateDir: string): boolean {
+  const envPath = path.join(
+    getOpenShellUserConfigHome(runtime.env.HOME || os.homedir(), runtime.env),
+    "openshell",
+    "gateway.env",
+  );
+  let envFile: OpenRegularFile;
+  try {
+    envFile = runtime.openRegularFile(envPath);
+  } catch {
+    return false;
+  }
+  try {
+    return gatewayEnvSelectsStateConfig(envFile.readUtf8(), stateDir);
+  } catch {
+    return false;
+  } finally {
+    envFile.close();
+  }
+}
+
+// The packaged unit is `WantedBy=default.target`. Remove only a symbolic link
+// that points at the marked unit; a missing link needs no cleanup.
+function removeMarkedUnitEnablementLink(runtime: UninstallRuntime, servicePath: string): boolean {
+  const linkPath = path.join(
+    path.dirname(servicePath),
+    "default.target.wants",
+    path.basename(servicePath),
+  );
+  let target: string;
+  try {
+    if (!fs.lstatSync(linkPath).isSymbolicLink()) return true;
+    target = fs.readlinkSync(linkPath);
+  } catch (error) {
+    if (isErrnoException(error) && error.code === "ENOENT") return true;
+    runtime.warn(`Failed to inspect ${linkPath}: ${formatError(error)}`);
+    return false;
+  }
+  if (path.resolve(path.dirname(linkPath), target) !== servicePath) return true;
+  try {
+    runtime.rmSync(linkPath, { force: true });
+    runtime.log(`Removed ${linkPath}`);
+    return true;
+  } catch (error) {
+    runtime.warn(`Failed to remove ${linkPath}: ${formatError(error)}`);
+    return false;
+  }
+}
+
+function noOtherActivationPath(
+  runtime: UninstallRuntime,
+  servicePath: string,
+  env: NodeJS.ProcessEnv,
+): boolean {
+  let activationPath: string | null;
+  try {
+    activationPath = findNemoclawGatewayUserServiceActivationPath(
+      runtime.env.HOME || os.homedir(),
+      env,
+    );
+  } catch (error) {
+    runtime.warn(`Leaving ${servicePath} in place: ${formatError(error)}`);
+    return false;
+  }
+  if (activationPath === null) return true;
+  runtime.warn(
+    `Leaving ${servicePath} in place because ${activationPath} can still activate it. Remove that link, then rerun uninstall.`,
+  );
+  return false;
 }
 
 // scripts/install.sh stages the NemoClaw-managed gateway user service only for
@@ -3071,6 +3201,8 @@ async function discoverOtherGatewayEnvironments(
   if (!selectedIsDefault && pathEntryExists(sharedRoot, runtime)) {
     try {
       if (
+        (!runtime.sweepDefaultGatewayAbsent ||
+          hasDefaultGatewayEvidence(path.dirname(sharedRoot))) &&
         fs
           .readdirSync(sharedRoot)
           .some(
