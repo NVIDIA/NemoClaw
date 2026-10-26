@@ -8,6 +8,8 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
+import { boundedTestTempRoot } from "../../../../test/helpers/bounded-temp-root";
+
 import { EXTERNAL_COMPONENT_ACTIVATION_TIMEOUT_MS, type PreparedExternalComponent } from "./index";
 import {
   activateExternalComponent,
@@ -72,7 +74,9 @@ describe("external component activation", () => {
   });
 
   it("completes a delayed response without half-closing the request (#11340)", async () => {
-    const root = fs.mkdtempSync(path.join("/tmp", "nc-component-http-"));
+    const root = fs.mkdtempSync(
+      path.join(boundedTestTempRoot("nc-XXXXXX/activation.sock", 104), "nc-"),
+    );
     const socketPath = path.join(root, "activation.sock");
     let serverSocket: net.Socket | undefined;
     let resolveRequest!: (request: {
@@ -134,7 +138,9 @@ describe("external component activation", () => {
     { delivery: "one chunk", firstCopies: 2, lastCopies: 0 },
     { delivery: "separate chunks", firstCopies: 1, lastCopies: 1 },
   ])("rejects extra responses in $delivery (#11340)", async ({ firstCopies, lastCopies }) => {
-    const root = fs.mkdtempSync("/tmp/nc-extra-response-");
+    const root = fs.mkdtempSync(
+      path.join(boundedTestTempRoot("nc-XXXXXX/activation.sock", 104), "nc-"),
+    );
     const socketPath = `${root}/activation.sock`;
     const body = JSON.stringify({
       schemaVersion: 1,
@@ -176,7 +182,9 @@ describe("external component activation", () => {
   });
 
   it("closes a pending activation socket when the fixed deadline expires (#11340)", async () => {
-    const root = fs.mkdtempSync(path.join("/tmp", "nc-component-timeout-"));
+    const root = fs.mkdtempSync(
+      path.join(boundedTestTempRoot("nc-XXXXXX/activation.sock", 104), "nc-"),
+    );
     const socketPath = path.join(root, "activation.sock");
     let resolveAccepted!: () => void;
     const accepted = new Promise<void>((resolve) => {

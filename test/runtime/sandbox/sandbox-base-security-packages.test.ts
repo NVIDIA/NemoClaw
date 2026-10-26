@@ -11,6 +11,11 @@ import {
   SANDBOX_BASE_SECURITY_PACKAGE_INVENTORY,
 } from "../../../src/lib/sandbox-base-image/security-inventory";
 import {
+  PINNED_HERMES_BASE_SECURITY_PACKAGE_INVENTORY,
+  SANDBOX_BASE_NODE_VERSION,
+  securityInventoryProbe,
+} from "../../../src/lib/sandbox-base-image/security-package-specs";
+import {
   BASE_APT_SECURITY_HASHES,
   baseAptSecurityFunctions,
 } from "../../helpers/base-apt-security-functions";
@@ -104,11 +109,59 @@ const SECURITY_CASES = SECURITY_IMAGES.flatMap((image) =>
 );
 const OPENCLAW_SECURITY_CASES = SECURITY_CASES.filter(([name]) => name === "OpenClaw");
 
+const REDUCED_CONTEXT_PROFILES = [
+  ["shared", SANDBOX_BASE_SECURITY_PACKAGE_INVENTORY, undefined],
+  ["openclaw", OPENCLAW_SANDBOX_BASE_SECURITY_PACKAGE_INVENTORY, undefined],
+  [
+    "hermes-compatible",
+    SANDBOX_BASE_SECURITY_PACKAGE_INVENTORY,
+    PINNED_HERMES_BASE_SECURITY_PACKAGE_INVENTORY,
+  ],
+] as const;
+
+function runReducedContextRenderer(...args: string[]) {
+  const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-security-renderer-"));
+  const renderer = path.join(temporaryDirectory, "security-package-inventory.mts");
+  fs.copyFileSync(
+    path.join(ROOT, "scripts/security/standalone-security-package-inventory.mts"),
+    renderer,
+  );
+  try {
+    return spawnSync(process.execPath, [renderer, ...args], { encoding: "utf8" });
+  } finally {
+    fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+  }
+}
+
+it.each(REDUCED_CONTEXT_PROFILES)(
+  "renders the canonical %s probe from the reduced Launchable context",
+  (profile, inventory, compatibleInventory) => {
+    const result = runReducedContextRenderer("probe", profile);
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toBe(securityInventoryProbe(inventory, compatibleInventory) + "\n");
+  },
+);
+
+it.each(
+  REDUCED_CONTEXT_PROFILES.flatMap(([profile, inventory]) =>
+    ARCHITECTURES.map((architecture) => [profile, architecture, inventory] as const),
+  ),
+)("renders the canonical %s inventory for %s", (profile, architecture, inventory) => {
+  const result = runReducedContextRenderer("inventory", profile, architecture);
+  expect(result.status, result.stderr).toBe(0);
+  expect(result.stdout).toBe([`architecture=${architecture}`, ...inventory, ""].join("\n"));
+});
+
 function quoteShell(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
-function stageInventoryRenderer(command: string, inventory: string, baseImage = false): string {
+function stageInventoryRenderer(
+  command: string,
+  inventory: string,
+  baseImage = false,
+  nodeVersion = SANDBOX_BASE_NODE_VERSION,
+): string {
   const renderer = path.join(ROOT, "scripts/security/security-package-inventory.mts");
   const mountedRenderer = "/tmp/nemoclaw-security/scripts/security/security-package-inventory.mts";
   // Execute the real renderer with the fixture's simulated installed packages.
@@ -128,6 +181,7 @@ function stageInventoryRenderer(command: string, inventory: string, baseImage = 
     },
   );
   return [
+    `node() { if [[ "$#" -eq 2 && "$1" == "-p" && "$2" == "process.versions.node" ]]; then printf '%s' ${quoteShell(nodeVersion)}; else command node "$@"; fi; }`,
     // chown is simulated by the base fixture; final-image tests supply their
     // own stricter stat stub.
     baseImage ? 'stat() { printf "0:0:444\\n"; }' : "",
@@ -135,7 +189,7 @@ function stageInventoryRenderer(command: string, inventory: string, baseImage = 
       .replaceAll(mountedRenderer, quoteShell(renderer))
       .replaceAll(
         'sh -ec "$security_probe"',
-        'bash -ec "$(declare -f dpkg dpkg-query stat); $(declare -p perl_base_installed perl_installed); $security_probe"',
+        'bash -ec "$(declare -f dpkg dpkg-query stat node); $(declare -p perl_base_installed perl_installed); $security_probe"',
       ),
   ].join("\n");
 }
@@ -241,6 +295,7 @@ function completedImageSecurityCommand(
   tmp: string,
   architecture: (typeof ARCHITECTURES)[number],
   packageInventory: readonly string[] = image.expectedInventory,
+  nodeVersion = SANDBOX_BASE_NODE_VERSION,
 ): { command: string; inventory: string; pythonShim: string } {
   const inventory = path.join(tmp, "security-packages.txt");
   const { fixedParser, pythonShim } = stageFixedParser(tmp);
@@ -255,10 +310,45 @@ function completedImageSecurityCommand(
   )
     .replaceAll("/usr/local/share/nemoclaw/security-packages.txt", inventory)
     .replaceAll("/usr/lib/python3.13/html/parser.py", fixedParser);
-  return { command: stageInventoryRenderer(command, inventory), inventory, pythonShim };
+  return {
+    command: stageInventoryRenderer(command, inventory, false, nodeVersion),
+    inventory,
+    pythonShim,
+  };
 }
 
 describe("sandbox base security packages", () => {
+  it.each(SECURITY_CASES)(
+    "rejects vulnerable Node despite a current package inventory for %s on %s",
+    (_name, architecture, image) => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-stale-node-"));
+      const prepared = completedImageSecurityCommand(
+        image,
+        tmp,
+        architecture,
+        image.expectedInventory,
+        "24.18.1",
+      );
+      try {
+        const { result } = runLoggedDockerShell(
+          prepared.command,
+          tmp,
+          [
+            "perl_base_installed=1",
+            "perl_installed=1",
+            'stat() { printf "0:0:444\\n"; }',
+            ...useRealPatchedParser(baseAptSecurityFunctions(architecture), prepared.pythonShim),
+          ],
+          { timeoutMs: 15_000 },
+        );
+        expect(result.status).not.toBe(0);
+        expect(result.stdout).not.toContain("nemoclaw-security-inventory-ok");
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    },
+  );
+
   const stalePackageCases = [
     ["libc6", "2.41-12+deb13u3"],
     ["util-linux", "2.41-5"],
@@ -312,6 +402,10 @@ describe("sandbox base security packages", () => {
   );
 
   it("keeps runtime validation aligned with the independent image inventory", () => {
+    expect(SANDBOX_BASE_NODE_VERSION).toBe(
+      JSON.parse(fs.readFileSync(path.join(ROOT, "ci/reviewed-npm-audit.json"), "utf8"))
+        .nodeVersion,
+    );
     expect(SANDBOX_BASE_SECURITY_PACKAGE_INVENTORY).toEqual(EXPECTED_SECURITY_PACKAGE_INVENTORY);
     expect(OPENCLAW_SANDBOX_BASE_SECURITY_PACKAGE_INVENTORY).toEqual(
       EXPECTED_OPENCLAW_SECURITY_PACKAGE_INVENTORY,

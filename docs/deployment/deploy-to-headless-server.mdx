@@ -206,7 +206,15 @@ $$nemoclaw headless-agent status
 $$nemoclaw headless-agent connect --probe-only
 ```
 
-`$$nemoclaw headless-agent status` exits nonzero when the sandbox, gateway, local container, or authoritative inference route is not verified. Its main `Inference` line probes the selected provider path from inside the sandbox. Shared providers use `https://inference.local/v1/models`, then send an inference request over the same route when that probe reports the route reachable. NVIDIA Endpoints, supported fixed hosted providers, new Deep Agents Code hosted compatible endpoints, and qualified Deep Agents Code local selections verify the recorded sandbox-attached OpenShell provider with an inference request. Status repeats inference requests up to three total attempts when they return a transient gateway status; refer to the [CLI commands reference](../reference/commands) for the retried statuses and their token cost. The line reports `healthy` when the route served the request, `unauthorized` when the route rejected it with HTTP `401` or `403`, and `unhealthy` after a final failure or after all transient attempts fail.
+`$$nemoclaw headless-agent status` exits nonzero when the sandbox, gateway, local container, or authoritative inference route is not verified, except for a degraded native NVIDIA result. Its main `Inference` line probes the selected provider path from inside the sandbox. Shared providers use `https://inference.local/v1/models`, then send an inference request over the same route when that probe reports the route reachable. NVIDIA Endpoints, supported fixed hosted providers, new hosted compatible endpoints outside the Personal tier, and qualified new local selections verify the recorded sandbox-attached OpenShell provider with an inference request. A fresh Personal-tier hosted compatible selection verifies the shared route and has no native attachment. Status repeats inference requests up to three total attempts when they return a transient gateway status; refer to the [CLI commands reference](../reference/commands) for the retried statuses and their token cost. The line reports `healthy` when the route served the request, `unauthorized` when the route rejected it with HTTP `401` or `403`, and `unhealthy` after other final failures. A verified native NVIDIA route instead reports `degraded` and exits `0` after a final HTTP `429`, `500`, `502`, `503`, or `504` response or a confirmed request timeout. The model response remains unverified.
+
+<AgentOnly variant="hermes">
+
+Hermes native NVIDIA routes also require a verified managed credential reference.
+If verification fails, `status` exits nonzero and reports the agent credential as `not probed`; follow its recovery guidance.
+Refer to the [status reference](../reference/commands#$$nemoclaw-name-status) for the JSON result and recovery check.
+
+</AgentOnly>
 
 <AgentOnly variant="openclaw,hermes">
 
@@ -216,7 +224,7 @@ During an SSH session, `status` points to `$$nemoclaw headless-agent dashboard-u
 
 `connect --probe-only` waits up to 300 seconds by default for a cold sandbox to become ready. It then verifies or repairs the in-sandbox agent process and host forwards without opening a shell. It does not restart or replace the shared host OpenShell gateway.
 
-The command prints one `Probe timing:` line with elapsed milliseconds for `readiness`, `authority`, `lifecycle`, `gateway`, `processes`, `forward`, `inference`, `pairing`, and `publication` stages. Use the stage values to identify where a slow or failed deployment spent its time. The line also reports lifecycle and forward actions and names the failed stage when available. Timing collection is diagnostic and fail-open. The command exit status remains the readiness decision: status `0` means the complete probe passed, and any nonzero status means the host is not ready for launch.
+The command prints one `Probe timing:` line with elapsed milliseconds for `readiness`, `authority`, `lifecycle`, `gateway`, `processes`, `forward`, `inference`, `pairing`, and `publication` stages. Use the stage values to identify where a slow or failed deployment spent its time. The line also reports lifecycle and forward actions and names the failed stage when available. Timing collection is diagnostic and fail-open. The command exit status remains the readiness decision: status `0` means the complete probe passed, including a successful inference request, and any nonzero status means the host is not ready for launch.
 Refer to the [probe timing reference](../reference/commands#$$nemoclaw-name-connect) for observation counts and readiness decisions.
 
 Readiness requires all of these results:
@@ -269,13 +277,13 @@ unset TOKEN
 </AgentOnly>
 <AgentOnly variant="deepagents">
 
-Deep Agents Code does not expose a dashboard URL or gateway token. NVIDIA Endpoints, supported fixed hosted providers, and new Ollama, standalone vLLM, llama.cpp, hosted compatible, and qualifying host-local compatible selections use native endpoints through sandbox-attached OpenShell providers. Owned Local NVIDIA NIM, retained legacy routes, and other custom routes without an attachment use the OpenShell-managed `inference.local` route.
+Deep Agents Code does not expose a dashboard URL or gateway token. NVIDIA Endpoints, supported fixed hosted providers, and new Ollama, standalone vLLM, llama.cpp, hosted compatible outside the Personal tier, and qualifying host-local compatible selections use native endpoints through sandbox-attached OpenShell providers. A fresh Personal-tier hosted compatible selection uses the OpenShell-managed `inference.local` route without creating a native attachment. Owned Local NVIDIA NIM, retained legacy routes, and other custom routes without an attachment also use that shared route.
 
 </AgentOnly>
 
 <AgentOnly variant="openclaw">
 
-New OpenClaw Ollama, standalone vLLM, and llama.cpp selections use a sandbox-attached native provider. Local NVIDIA NIM and user-supplied compatible endpoints retain the shared `inference.local` route; an older local selection without an attachment may also retain it until a safe fresh recreation.
+New OpenClaw Ollama, standalone vLLM, llama.cpp, and hosted compatible selections outside the Personal tier use a sandbox-attached provider. Local NVIDIA NIM, a fresh Personal-tier hosted compatible selection, and custom endpoints without an attachment use `inference.local`; an older local selection without an attachment may retain it until a safe fresh recreation.
 
 OpenClaw generates a new gateway token when the sandbox container starts with mutable configuration.
 Retrieve the dashboard URL or token again after the container starts or a replacement sandbox is created.
@@ -432,7 +440,7 @@ Run `openshell sandbox list` and inspect the row for `headless-agent`. `NotReady
 
 ### Inference Returns HTTP 5xx
 
-A final HTTP status from `500` through `599` makes the selected provider path unhealthy. HTTP `502`, `503`, and `504` report unhealthy only after all transient attempts fail. Check the configured provider and host egress, then run:
+A final HTTP status from `500` through `599` makes most selected provider paths unhealthy. A verified native NVIDIA route instead reports `degraded` and exits `0` after HTTP `429`, `500`, `502`, `503`, or `504`, or a confirmed request timeout, exhausts its bounded retries. The model response remains unverified. Run `connect --probe-only` to require a successful request before accepting readiness. Check the configured provider and host egress, then run:
 
 ```bash
 $$nemoclaw headless-agent doctor

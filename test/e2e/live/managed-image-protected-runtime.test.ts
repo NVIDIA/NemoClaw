@@ -5,13 +5,23 @@ import { PROTECTED_MANAGED_IMAGE_AGENTS } from "../../../scripts/checks/managed-
 import { test } from "../fixtures/e2e-test.ts";
 import { qualifyProtectedManagedImageRuntime } from "./managed-image-protected-runtime-helpers.ts";
 
-const TIMEOUT_MS = 220 * 60_000;
+import {
+  protectedRuntimeDeadlines,
+  PROTECTED_RUNTIME_CLEANUP_MS,
+} from "./managed-image-protected-runtime-budget.ts";
+
+// Discovery runs outside the protected workflow. Execution below still requires
+// its real start timestamp before declaring or mutating a fixture.
+const discoveryTimeout = protectedRuntimeDeadlines(
+  process.env.NEMOCLAW_PROTECTED_RUNTIME_STARTED_AT_MS ?? String(Date.now()),
+).testTimeoutMs;
 
 test(
   "exact all-agent managed images retain GPU, Ollama, NIM, vLLM, rollback, and cleanup (#7744)",
   {
-    timeout: TIMEOUT_MS,
+    timeout: discoveryTimeout,
     meta: {
+      e2eCleanupTimeoutMs: PROTECTED_RUNTIME_CLEANUP_MS,
       e2ePhases: [
         "qualify all managed agents with GPU-backed Ollama",
         "qualify all managed agents with GPU-backed vLLM",
@@ -21,6 +31,9 @@ test(
     },
   },
   async ({ artifacts, cleanup, host, progress, secrets }) => {
+    const deadlines = protectedRuntimeDeadlines(
+      process.env.NEMOCLAW_PROTECTED_RUNTIME_STARTED_AT_MS,
+    );
     await artifacts.target.declare({
       id: "managed-image-protected-runtime",
       boundary:
@@ -33,6 +46,7 @@ test(
     await qualifyProtectedManagedImageRuntime(
       { artifacts, cleanup, host, progress },
       secrets.optional("NVIDIA_API_KEY") ?? "",
+      deadlines,
     );
   },
 );

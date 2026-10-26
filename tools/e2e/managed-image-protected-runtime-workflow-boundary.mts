@@ -157,6 +157,10 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     workflowSteps,
     "Validate protected runtime exact-head dispatch",
   );
+  if (workflowSteps[0] !== guard) errors.push(`${JOB_ID} must record its deadline before setup`);
+  requireFragments(errors, guard, [
+    `printf 'NEMOCLAW_PROTECTED_RUNTIME_STARTED_AT_MS=%s000\\n' "$(date +%s)" >> "$GITHUB_ENV"`,
+  ]);
   requireValues(errors, `${JOB_ID} exact-head guard env`, record(guard?.env), {
     BASE_SHA: "${{ inputs.base_sha || github.event.before || github.sha }}",
     CHECKOUT_SHA: "${{ inputs.checkout_sha || github.sha }}",
@@ -250,7 +254,7 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
   const prepare = requireStep(errors, workflowSteps, "Prepare E2E workspace");
   if (
     prepare?.uses !==
-    "NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c"
+    "NVIDIA/NemoClaw/.github/actions/prepare-e2e@7fcbf13ecd7bc0ea835a949417cf9eb68067adf9"
   ) {
     errors.push(`${JOB_ID} must pin the trusted E2E preparation action`);
   }
@@ -529,6 +533,17 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     path: "e2e-artifacts/live/managed-image-protected-runtime/",
   });
   requireStep(errors, workflowSteps, "Clean up Docker auth");
+  for (const [name, minutes] of [
+    ["Remove isolated protected runtime registry", 2],
+    ["Restore trusted OpenShell sources", 1],
+    ["Upload protected managed-image runtime artifacts", 4],
+    ["Clean up Docker auth", 1],
+  ] as const) {
+    const step = workflowSteps.find((candidate) => candidate.name === name);
+    if (step?.["timeout-minutes"] !== minutes) {
+      errors.push(`${JOB_ID} step '${name}' must fit its ${minutes} minute finalization budget`);
+    }
+  }
   requireOrderedSteps(errors, workflowSteps, [
     "Validate protected runtime exact-head dispatch",
     "Checkout trusted protected runtime qualification",

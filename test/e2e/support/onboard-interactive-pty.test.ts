@@ -69,6 +69,30 @@ describe("interactive PTY driver", () => {
     }
   });
 
+  it("delivers paced raw-mode key sequences in order", async () => {
+    const progress = observedProgress("onboard-interactive-pty key sequence");
+    try {
+      const result = await driveInteractiveCommand({
+        activityLabel: "command: onboard-interactive-pty-key-sequence",
+        cmd: [
+          "python3",
+          "-c",
+          "import os, sys, tty\ntty.setraw(sys.stdin.fileno())\nprint('RAW_PROMPT', flush=True)\nkeys = [os.read(sys.stdin.fileno(), 1).decode() for _ in range(4)]\nprint('KEYS=' + ','.join(str(ord(key)) for key in keys), flush=True)",
+        ],
+        env: process.env,
+        progress,
+        rules: [{ trigger: "RAW_PROMPT", response: ["j", "j", " ", "\r"] }],
+        timeoutMs: 10_000,
+      });
+
+      expect(result.timedOut).toBe(false);
+      expect(result.exitCode).toBe(0);
+      expect(result.visibleOutput).toContain("KEYS=106,106,32,13");
+    } finally {
+      progress.stop();
+    }
+  });
+
   it("restarts the settling period when output arrives after the trigger", async () => {
     const progress = observedProgress("onboard-interactive-pty settled trigger");
     try {

@@ -123,6 +123,7 @@ const MANAGED_POLICY_PATHS = [
   "updates.pre_update_backup",
   "updates.refresh_cua_driver",
 ] as const;
+const WEB_KEYLESS_FALLBACK_PATH = "web.keyless_fallback";
 
 type HermesManagedConfigBase = Record<string, unknown> & {
   _config_version: number;
@@ -160,7 +161,7 @@ export type HermesManagedPolicyV3 = {
   schema_version: typeof HERMES_MANAGED_POLICY_SCHEMA_VERSION;
   config: HermesManagedConfig;
   env_lines: string[];
-  managed_paths: [...typeof MANAGED_POLICY_PATHS];
+  managed_paths: string[];
   shadow_migration: {
     routing_keys: [...typeof SHADOW_MIGRATION_ROUTING_KEYS];
     env_keys: [...typeof SHADOW_MIGRATION_ENV_KEYS];
@@ -302,12 +303,22 @@ export function buildHermesManagedPolicy(
 
   // An explicit Tavily selection replaces managed Firecrawl settings.
   if (settings.webSearchProvider === "tavily") config.web = { backend: "tavily" };
+  // Without any web backend, Hermes falls back to anonymous public search
+  // backends that sandbox egress blocks. Disable that fallback so web_search is
+  // not offered. A managed gateway backend keeps the Hermes default: its tool
+  // availability check still depends on the fallback. The managed path carries
+  // the value to config-less named profiles through the profile-default patch.
+  const keylessDisabled = settings.webSearchProvider === null && config.web === undefined;
+  if (keylessDisabled) config.web = { keyless_fallback: false };
 
   return {
     schema_version: HERMES_MANAGED_POLICY_SCHEMA_VERSION,
     config,
     env_lines: buildHermesEnvLines(settings, env),
-    managed_paths: [...MANAGED_POLICY_PATHS],
+    managed_paths: [
+      ...MANAGED_POLICY_PATHS,
+      ...(keylessDisabled ? [WEB_KEYLESS_FALLBACK_PATH] : []),
+    ],
     shadow_migration: {
       routing_keys: [...SHADOW_MIGRATION_ROUTING_KEYS],
       env_keys: [...SHADOW_MIGRATION_ENV_KEYS],

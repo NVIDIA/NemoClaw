@@ -5,7 +5,6 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import readline from "node:readline";
 import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 
@@ -25,6 +24,13 @@ export { isPolicyObservationError } from "../adapters/openshell/policy-state";
 import type { OpenShellRuntimeSelection } from "../adapters/openshell/runtime-selection";
 import { loadAgent, requireAgentPolicyAdditionsPath } from "../agent/defs";
 import { CLI_NAME } from "../cli/branding";
+import {
+  cancelPromptWithPendingEof,
+  createStdinPromptInterface,
+  pendingStdinEofError,
+  raisePromptInterrupt,
+  takePendingStdinEof,
+} from "../core/prompt-terminal";
 import {
   getMessagingPolicyKeyAliases,
   getMessagingPolicyPresetValidationWarnings,
@@ -1280,6 +1286,15 @@ function mergePresetIntoPolicy(currentPolicy: string, presetEntries: string): st
 }
 
 /**
+ * An attached custom provider adds an exact endpoint on port 443 that NemoClaw
+ * cannot remove. OpenShell rejects Personal's hostless web rule beside it
+ * (NVIDIA/OpenShell#4662), so Personal cannot be applied to such a sandbox.
+ */
+export function hasNativeCustomProvider(sandboxName: string): boolean {
+  return Boolean(registry.getSandbox(sandboxName)?.nativeHostedProviderAttachment?.custom);
+}
+
+/**
  * OpenShell 0.0.101 rejects a hostless `allowed_ips` endpoint when any other
  * endpoint selects the same port with different connection metadata. Personal
  * deliberately grants every sandbox binary direct L4 access on ports 80/443,
@@ -2195,11 +2210,22 @@ type LiveBaselineEntryState =
  * This matches the `prompt()` contract in `credentials/store.ts` (#5976).
  */
 function askPreset(question: string): Promise<string> {
+  // Re-attach stdin to the event loop — unref() on exit is sticky and
+  // would otherwise leave a follow-up prompt waiting on a detached handle.
+  if (typeof process.stdin.ref === "function") process.stdin.ref();
+  // A Ctrl-D that arrived between questions is this prompt's cancellation;
+  // readline drops it when it switches the TTY to raw mode (#12169).
+  const pending = takePendingStdinEof();
+  if (pending === false) return readPresetAnswer(question);
+  return pending.then((ended) => {
+    if (ended) cancelPromptWithPendingEof(question);
+    return readPresetAnswer(question);
+  });
+}
+
+function readPresetAnswer(question: string): Promise<string> {
   return new Promise<string>((resolve, reject) => {
-    // Re-attach stdin to the event loop — unref() on exit is sticky and
-    // would otherwise leave a follow-up prompt waiting on a detached handle.
-    if (typeof process.stdin.ref === "function") process.stdin.ref();
-    const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
+    const rl = createStdinPromptInterface();
     let finished = false;
     const finish = (settle: () => void) => {
       if (finished) return;
@@ -2215,11 +2241,9 @@ function askPreset(question: string): Promise<string> {
     // SIGINT and the close that follows is ignored.
     rl.on("SIGINT", () => {
       finish(() => reject(Object.assign(new Error("Prompt interrupted"), { code: "SIGINT" })));
-      process.kill(process.pid, "SIGINT");
+      raisePromptInterrupt();
     });
-    rl.on("close", () =>
-      finish(() => reject(Object.assign(new Error("Prompt closed before input"), { code: "EOF" }))),
-    );
+    rl.on("close", () => finish(() => reject(pendingStdinEofError())));
     rl.question(question, (answer: string) => finish(() => resolve(answer)));
   });
 }

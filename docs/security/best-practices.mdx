@@ -114,7 +114,7 @@ NemoClaw allows a credential source only in the process that is intended to hold
 
 | Execution path | Rule |
 |---|---|
-| Host-brokered provider | Discover and use host credentials only through OpenShell-managed providers. NVIDIA Endpoints, supported fixed hosted providers, new Deep Agents Code hosted compatible endpoints, qualified Deep Agents Code and Hermes local selections, and new OpenClaw Ollama, standalone vLLM, and llama.cpp selections use sandbox-attached providers. Owned Local NVIDIA NIM, compatible endpoints without an attachment, and retained shared routes use `inference.local`. The sandbox receives no raw host credential. |
+| Host-brokered provider | Keep provider credentials outside the sandbox. NVIDIA Endpoints, supported fixed hosted providers, new hosted compatible endpoints outside the Personal tier, and qualified new local selections use sandbox-attached providers where supported. A fresh Personal-tier hosted compatible selection, owned Local NVIDIA NIM, compatible endpoints without an attachment, and retained shared routes use `inference.local`. The Personal selection creates no native provider attachment. Bedrock AWS credentials stay in the host-local adapter. The sandbox receives no raw host credential. |
 | Sandbox-direct provider | Keep only credential sources that are deliberately provisioned and reachable inside the sandbox. |
 | Ambient metadata provider | Disable SDK discovery when the metadata endpoint cannot exist across the sandbox boundary. Do not make an internal or link-local endpoint reachable merely to satisfy an automatic probe. |
 | New agent or provider | Declare the enabled credential sources and add agent-specific tests proving that unavailable sources are not probed. |
@@ -145,7 +145,7 @@ NemoClaw's host-local Amazon Bedrock adapter runs outside this sandbox credentia
 #### Hermes Managed Inference Credential Discovery
 
 NemoClaw configures Hermes with a custom provider.
-NVIDIA Endpoints, supported fixed hosted providers, and new qualifying local selections use sandbox-attached OpenShell providers.
+NVIDIA Endpoints, supported fixed hosted providers, new hosted compatible endpoints outside the Personal tier, and qualifying local selections use sandbox-attached OpenShell providers.
 Hermes receives a scoped credential reference; OpenShell keeps the upstream credential outside the sandbox.
 Owned Local NVIDIA NIM, nonqualifying custom endpoints, and retained legacy routes use `inference.local`.
 Hermes live qualification for the new local lifecycle remains pending.
@@ -159,8 +159,9 @@ If direct Hermes Bedrock support is added later, it must apply the same unavaila
 #### Deep Agents Managed Inference Credential Discovery
 
 NemoClaw configures the managed `dcode` runtime with a generated OpenAI-compatible route.
-New NVIDIA Endpoints, supported fixed hosted providers, hosted compatible endpoints, Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible selections use sandbox-attached providers.
-Owned Local NVIDIA NIM, compatible endpoints without an attachment, and retained shared routes use `inference.local`.
+New NVIDIA Endpoints, supported fixed hosted providers, hosted compatible endpoints outside the Personal tier, Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible selections use sandbox-attached providers.
+A fresh Personal-tier hosted compatible selection uses `inference.local` without creating a native attachment.
+Owned Local NVIDIA NIM, other compatible endpoints without an attachment, and retained shared routes also use `inference.local`.
 The sandbox receives a scoped credential reference for native providers or a placeholder key for shared routes.
 OpenShell keeps the upstream provider credential outside the sandbox.
 The managed launchers reject credential-shaped environment values and upstream auth files before Deep Agents Code starts, so provider discovery stays on the host-side OpenShell boundary.
@@ -292,26 +293,14 @@ Broader binary access would let unrelated sandbox processes send data to Tavily 
 
 ## Operation Telemetry
 
-The installer and supported CLI commands attempt to send anonymous operation telemetry to NVIDIA's fixed TEST receiver by default.
-Ordinary runs send an empty `testLabel`.
-QA runs can set `NEMOCLAW_TELEMETRY_TEST_LABEL` to attach a valid label to the same receiver.
-Use `qa-<label>:<client>:attempt-<number>`, for example, `qa-telemetry:client:attempt-1`.
-`<label>` allows 1 to 32 lowercase letters, digits, or hyphens; `<client>` allows 1 to 40 of the same characters.
-Each segment must start with a letter or digit, and the attempt number must be 1 to 999 without a leading zero.
-A missing label sends ordinary telemetry; an invalid value disables telemetry for that run.
-Telemetry covers onboarding, CLI update, sandbox upgrade, rebuild, destroy, and recover.
-It also covers inference selection, agent and channel changes, policy changes, and approved sandbox settings changes.
-NemoClaw attempts to send one record when a covered operation finishes.
-`--force-station-install` stops after Station validation and does not emit an operation record.
-It limits telemetry collection and delivery to five seconds total.
-If either step fails or times out, the operation result stays the same.
-Help requests and other CLI commands do not emit a record.
-The record describes the operation result and approved configuration categories, such as model and policy choices.
-Production delivery is not enabled.
+NemoClaw collects anonymous telemetry to help improve the project.
+The data shows usage of installation, sandbox, and configuration workflows.
 
-Set `NEMOCLAW_DISABLE_TELEMETRY=1` in the installer or CLI process environment to suppress collection and delivery.
-NemoClaw also suppresses telemetry for `CI=true`, `CI=1`, `GITHUB_ACTIONS=true`, `VITEST=true`, or `NODE_ENV=test`.
-This setting controls NemoClaw operation telemetry; an agent or third-party tool can have separate diagnostics settings.
+Records include operation outcomes, timestamps, software versions, platform categories, environment and agent counts, and approved public model, provider, and configuration choices.
+
+Telemetry payloads exclude user content, credentials, private endpoints, file paths, and persistent user, device, session, or sandbox identifiers.
+
+To disable NemoClaw telemetry, run `export NEMOCLAW_DISABLE_TELEMETRY=1` before installation or CLI use.
 
 ## Filesystem Controls
 
@@ -336,7 +325,7 @@ The agent never receives the provider API key.
 
 | Aspect | Detail |
 |---|---|
-| Default | NVIDIA Endpoints, supported fixed hosted providers, new Deep Agents Code hosted compatible endpoints, qualified Deep Agents Code and Hermes local selections, and new OpenClaw Ollama, standalone vLLM, and llama.cpp selections use sandbox-attached providers. Owned Local NVIDIA NIM, compatible endpoints without an attachment, and retained shared routes use `inference.local`. OpenShell owns the credential and upstream endpoint in both cases. |
+| Default | NVIDIA Endpoints, supported fixed hosted providers, new hosted compatible endpoints outside the Personal tier, and qualified new local selections use sandbox-attached providers where supported. A fresh Personal-tier hosted compatible selection, owned Local NVIDIA NIM, compatible endpoints without an attachment, and retained shared routes use `inference.local`; the Personal selection creates no native provider attachment. Provider credentials stay outside the sandbox. Bedrock AWS credentials stay in the host-local adapter. |
 | What you can change | You select a supported provider. NemoClaw selects and enforces that provider's managed path. |
 | Risk if bypassed | Adding an unowned provider endpoint to network policy bypasses NemoClaw's managed provider boundary and could let an agent use a stolen or hardcoded key. The NVIDIA Endpoints path is not a bypass: its checked-in OpenShell provider profile restricts the endpoint, methods, paths, and binaries, then rewrites a placeholder credential at the egress boundary. |
 | Recommendation | Do not add inference provider hosts to network policy for NemoClaw model traffic. Use the provider path created by onboarding. The `claude-code` preset is a separate opt-in exception for running the Claude Code CLI with its own credentials, not a way to configure NemoClaw inference. |

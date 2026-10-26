@@ -889,7 +889,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
   managedRuntimeTarget("hermes-discord", {
-    displayName: "Messaging: Hermes preserves Discord configuration across rebuild",
+    displayName: "Messaging: Hermes isolates Discord credentials and verifies transport",
     agentRuntime: "hermes",
     environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference and Discord",
     profile: "nvidia-inference",
@@ -915,7 +915,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
   managedRuntimeTarget("hermes-inference-switch", {
-    displayName: "Inference: Hermes switches to native NVIDIA and remains responsive",
+    displayName: "Inference: Hermes switches to NVIDIA and preserves Discord across rebuild",
     agentRuntime: "hermes",
     environmentOrInferenceEndpoint: "Ubuntu; native NVIDIA Endpoints provider",
     profile: "nvidia-api",
@@ -939,7 +939,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       NEMOCLAW_AGENT: "hermes",
       NEMOCLAW_SANDBOX_NAME: "e2e-hm-inf-switch",
       NEMOCLAW_SWITCH_PROVIDER: "nvidia-prod",
-      NEMOCLAW_SWITCH_MODEL: "nvidia/nemotron-3-super-120b-a12b",
+      NEMOCLAW_SWITCH_MODEL: "nvidia/nemotron-3.5-super-vl-120b-a12b",
       NEMOCLAW_SWITCH_INFERENCE_API: "openai-completions",
       OPENSHELL_GATEWAY: "nemoclaw",
     },
@@ -1052,7 +1052,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     displayName: "Inference: OpenClaw native local requests and isolation",
     agentRuntime: "openclaw",
     environmentOrInferenceEndpoint:
-      "Ubuntu; authenticated llama.cpp and credentialless vLLM fixtures",
+      "Ubuntu; authenticated llama.cpp and credentialless vLLM fixtures; skips WSL-only TC-INF-19",
     profile: "standard",
     timeoutMinutes: OPENCLAW_NATIVE_LOCAL_TARGET_TIMEOUT_MINUTES,
     installMode: "none",
@@ -1068,6 +1068,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       "src/lib/actions/sandbox/inference-invocation-probe.ts",
       "src/lib/actions/sandbox/inference-route-health.ts",
       "test/e2e/fixtures/inference-routing-openclaw-native.ts",
+      "test/e2e/fixtures/native-local-ipv6-evidence.ts",
       "tools/e2e/onboard-timeout-contract.mts",
     ],
   }),
@@ -1118,6 +1119,9 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     installMode: "none",
     restoreCli: true,
     exposeCliBin: true,
+    // ubuntu-latest (26.04) ships only Python 3.14, which Model Router does not
+    // yet support (src/lib/onboard/model-router-python.ts). Pin until 3.14 is qualified.
+    runner: "ubuntu-24.04",
     owningPaths: [
       "nemoclaw-blueprint/router/pool-config.yaml",
       "src/lib/actions/sandbox/destroy-preflight.ts",
@@ -1291,7 +1295,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       NEMOCLAW_E2E_SHARD: "native-nvidia",
       NEMOCLAW_SANDBOX_NAME: "e2e-oc-inf-switch",
       NEMOCLAW_SWITCH_PROVIDER: "nvidia-prod",
-      NEMOCLAW_SWITCH_MODEL: "nvidia/nemotron-3-super-120b-a12b",
+      NEMOCLAW_SWITCH_MODEL: "nvidia/nemotron-3.5-super-vl-120b-a12b",
       NEMOCLAW_SWITCH_INFERENCE_API: "openai-completions",
       OPENSHELL_GATEWAY: "nemoclaw",
     },
@@ -1377,7 +1381,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       NEMOCLAW_CANDIDATE_AGENTS: "1",
       NEMOCLAW_CANDIDATE_QUALIFICATION_RECEIPT: "ci/pi-agent-qualification-v1-linux-amd64.json",
       NEMOCLAW_E2E_INFERENCE_MODE: "public-nvidia",
-      NEMOCLAW_MODEL: "nvidia/nemotron-3-super-120b-a12b",
+      NEMOCLAW_MODEL: "nvidia/nemotron-3.5-super-vl-120b-a12b",
       NEMOCLAW_PI_QUALIFICATION_PLATFORM: "linux/amd64",
       NEMOCLAW_SANDBOX_NAME: "e2e-pi-qual-amd64",
       OPENSHELL_GATEWAY: "nemoclaw",

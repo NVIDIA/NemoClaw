@@ -143,6 +143,15 @@ describe("Vitest opaque-input watch triggers", () => {
     },
   );
 
+  it.each([".github/pr-limits.json", ".github/workflows/pr-limit.yaml"])(
+    "maps each PR-limit input to its enforcement test [%s]",
+    (inputPath) => {
+      expect(triggeredBy(inputPath)).toEqual([
+        "test/automation/pull-requests/pr-limit-workflow.test.ts",
+      ]);
+    },
+  );
+
   it.each([
     ".github/workflows/release-daily-brev-image.yaml",
     "scripts/release-daily-brev-image.sh",
@@ -257,6 +266,8 @@ describe("Vitest opaque-input watch triggers", () => {
     ]);
     expect(triggeredBy("agents/hermes/runtime-config-guard.py")).toEqual([
       "src/lib/actions/sandbox/gateway-restart-hermes-drift.test.ts",
+      "test/agents/hermes/hermes-restart-config-seal-write-lock.test.ts",
+      "test/agents/hermes/hermes-nvidia-restore-validation.test.ts",
     ]);
     expect(triggeredBy("agents/hermes/mcp-config-transaction.py")).toEqual([
       "src/lib/actions/sandbox/gateway-restart-hermes-drift.test.ts",

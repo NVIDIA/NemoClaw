@@ -2330,7 +2330,6 @@ export type SetupInference = import("./onboard/setup-inference").SetupInference;
 function createSetupInference(overrides: Partial<SetupInferenceDeps> = {}): SetupInference {
   return setupInferenceFactory.createSetupInference(getSetupInferenceDeps(), overrides);
 }
-const setupInference = createSetupInference();
 const MESSAGING_CHANNELS = listChannels();
 const sandboxCreateIntentResolver = sandboxCreateIntentResolution.createSandboxCreateIntentResolver<
   AgentDefinition | null,
@@ -2453,6 +2452,7 @@ const {
   mergePolicyMessagingChannels,
   preparePolicyPresetResumeSelection,
   presetsCheckboxSelector,
+  resetPolicyTierSelection,
   resolveSandboxBaselinePolicy,
   selectPolicyTier,
   selectTierPresetsAndAccess,
@@ -2475,6 +2475,7 @@ const {
   env: process.env,
   pendingSelection: onboardSession.createPendingPolicySelectionStore(registry.getSandbox),
 });
+const setupInference = createSetupInference({ resolvePolicyTier: selectPolicyTier });
 const startRecordedStep = onboardRuntimeBoundary.startRecordedStep.bind(onboardRuntimeBoundary);
 const recordStepComplete = onboardRuntimeBoundary.recordStepComplete.bind(onboardRuntimeBoundary);
 const recordStepRejected = onboardRuntimeBoundary.recordStepRejected.bind(onboardRuntimeBoundary);
@@ -2482,7 +2483,6 @@ const recordStepSkipped = onboardRuntimeBoundary.recordStepSkipped.bind(onboardR
 const recordStepFailed = onboardRuntimeBoundary.recordStepFailed.bind(onboardRuntimeBoundary);
 const recordStateSkipped = onboardRuntimeBoundary.recordStateSkipped.bind(onboardRuntimeBoundary);
 const recordRepairEvent = onboardRuntimeBoundary.recordRepairEvent.bind(onboardRuntimeBoundary);
-/** Run readiness gates while the authoritative rebuild target is still intact. */
 async function preflightAuthoritativeRebuildTarget(
   opts: import("./onboard/authoritative-rebuild-target").AuthoritativeRebuildPreflightOptions,
 ): Promise<import("./state/onboard-checkpoint-types").CheckpointGatewayAuthority> {
@@ -2534,7 +2534,6 @@ async function preflightAuthoritativeRebuildTarget(
     _preflightDashboardPort = previous.dashboardPort;
   }
 }
-
 const wrappedOnboard = onboardEntryOptions.wrapOnboard(runOnboard, onboardSession);
 const onboard = onboardSessionBootstrap.wrapOnboardDeferredExit(wrappedOnboard);
 async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
@@ -3265,6 +3264,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       onboardSessionBootstrap.shouldPreserveIncompleteOnboardSession(error);
     throw error;
   } finally {
+    resetPolicyTierSelection();
     const telemetryGatewayName = GATEWAY_NAME;
     try {
       await hermesApiPortReservationScope.release();
