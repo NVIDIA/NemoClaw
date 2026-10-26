@@ -9,8 +9,12 @@ on:
   # Stacked v1 PRs target feature branches, so do not filter by base branch.
   pull_request:
   workflow_dispatch:
+# The planner and the Linux live suites read the per-commit image package for
+# images to reuse. GitHub checks a reusable workflow's job permissions for every
+# caller, including platforms whose live jobs never run, so grant it here.
 permissions:
   contents: read
+  packages: read
 concurrency:
   group: ci-bundle-${{ github.event_name }}-${{ github.ref }}
   # Only v1 pushes save the shared Rust caches, and a cold Windows or macOS build
@@ -18,19 +22,11 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   plan:
-    # The planner reads the per-commit image package for live images to reuse.
-    permissions:
-      contents: read
-      packages: read
     uses: ./.github/workflows/validation-plan.yml
     with:
       full: ${{ github.event_name != 'pull_request' }}
   linux_arm64:
     needs: plan
-    # The live suites pull reused images from the per-commit package.
-    permissions:
-      contents: read
-      packages: read
     uses: ./.github/workflows/bundle-platform.yml
     with:
       runner: ubuntu-24.04-arm
@@ -41,9 +37,6 @@ jobs:
       live-images-commit: ${{ needs.plan.outputs.live_images }}
   linux_amd64:
     needs: plan
-    permissions:
-      contents: read
-      packages: read
     uses: ./.github/workflows/bundle-platform.yml
     with:
       runner: ubuntu-24.04
