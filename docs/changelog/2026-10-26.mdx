@@ -5,7 +5,7 @@
 
 ## v0.0.139
 
-NemoClaw v0.0.139 fixes sandbox cleanup and native inference recovery, improves WhatsApp removal, reports host GPUs and native backup contents, qualifies a 64 GB DGX Spark vLLM profile, and publishes compatible llama.cpp image signatures.
+NemoClaw v0.0.139 improves sandbox recovery and native inference checks, fixes WhatsApp removal, reports host GPUs and native backup contents, qualifies a 64 GB DGX Spark vLLM profile, and publishes compatible llama.cpp image signatures.
 
 - Destroying a Hermes sandbox on rootless Podman now retries native-home cleanup as the image's pinned sandbox user when privileged cleanup cannot remove agent-owned files.
   If that cleanup fails, NemoClaw preserves the sandbox registry entry for a retry.
@@ -31,3 +31,10 @@ NemoClaw v0.0.139 fixes sandbox cleanup and native inference recovery, improves 
 - The Qwen vLLM profile for a 64 GB DGX Spark is now supported.
   Automatic selection accepts hosts with at least 60 GB of detected unified memory.
   Related change: [PR #12780](https://github.com/NVIDIA/NemoClaw/pull/12780).
+- Operation telemetry uses the sandbox's recorded inference route to identify managed native model selections.
+  This corrects the reported source for hosted native models whose route does not use `inference.local`.
+  Related change: [PR #13589](https://github.com/NVIDIA/NemoClaw/pull/13589).
+- For a verified native NVIDIA provider, `nemoclaw <name> status` reports `degraded` and exits `0` after a transient inference failure or confirmed timeout.
+  The model response remains unverified. Run `nemoclaw <name> connect --probe-only` to require a successful response.
+  Rebuild stops before sandbox deletion when a temporary upstream failure prevents credential verification.
+  Related change: [PR #13642](https://github.com/NVIDIA/NemoClaw/pull/13642).
