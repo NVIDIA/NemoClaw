@@ -10,12 +10,19 @@ content:
   type: "how_to"
 ---
 
-OpenShell exposes one live inference route per gateway.
+These rules apply to providers that still use the shared route, including compatible endpoints without an attachment, Local NVIDIA NIM, and retained shared local selections.
+NVIDIA Endpoints, fixed hosted providers, new hosted compatible selections outside the Personal tier, new Deep Agents Code, Hermes, and Pi qualified local selections, and new OpenClaw Ollama, standalone vLLM, and llama.cpp selections use sandbox-attached providers.
+Their selected model or provider does not re-point the shared route.
+
+Unchanged published Pi local selections retain their recorded shared route during resume and rebuild.
+Fresh Pi local selections require a native provider attachment.
+
+OpenShell exposes one shared inference route per gateway.
 NemoClaw records each sandbox's intended provider and model so compatible sandboxes can take turns using that route.
 
 ## Change the Live Route During Onboarding
 
-Onboarding a sandbox with another valid provider or model warns immediately before it re-points the shared route.
+Onboarding a sandbox with another valid shared-route provider or model warns immediately before it re-points the shared route.
 The warning names every affected registered sandbox and its recorded provider and model.
 Those sandboxes use the new live route until another onboarding run or connection re-points it again.
 
@@ -36,7 +43,8 @@ Use `$$nemoclaw <name> inference set` to change a registered sandbox's provider 
 $$nemoclaw <name> inference set --provider <provider> --model <model>
 ```
 
-When only the provider or model differs, the command warns immediately before it re-points the shared route.
+For a shared-route selection, when only the provider or model differs, the command warns immediately before it re-points the shared route.
+An OpenClaw model switch on its recorded native local attachment keeps the shared route unchanged.
 The warning names every affected registered sandbox and its recorded provider and model.
 Those sandboxes use the new live route until `connect`, onboarding, or another `inference set` command re-points it.
 
@@ -81,6 +89,7 @@ Text output shows the provider and model recorded for the sandbox and adds a war
 JSON output exposes the two sources as `recordedRoute` and `liveRoute` and adds `routeDrift` when they differ.
 The schema-version `1` `provider` and `model` fields remain live-first when the gateway route is readable and fall back to the recorded route otherwise.
 When `routeDrift.canConnect` is `false`, `connect` cannot safely restore the recorded route because provider-global identity differs or required route or gateway metadata is incomplete.
+Sandboxes that use a native NVIDIA, fixed hosted, or native local provider attachment do not use the shared route, so `liveRoute` and `routeDrift` are always `null` for them, and `https://inference.local` inside those sandboxes can answer `cluster inference is not configured` when no shared route is set.
 
 ## Handle a Hard Route Conflict
 

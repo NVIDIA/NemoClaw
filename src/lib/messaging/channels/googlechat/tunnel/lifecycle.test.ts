@@ -1,8 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { resolveServicePidDir } from "../../../../tunnel/services";
+import { resolveServicePidDir, stopCloudflared } from "../../../../tunnel/services";
 import { createDefaultGooglechatTunnelGateOptions } from "../hooks/tunnel-runtime";
 import { googlechatWebhookTunnelPidDir, stopGooglechatWebhookTunnel } from "./lifecycle";
 
@@ -22,6 +25,41 @@ describe("Google Chat webhook tunnel lifecycle", () => {
     expect(pidDir).toBe("/tmp/nemoclaw-services-alpha-googlechat");
     expect(stopCloudflared).toHaveBeenCalledWith({ pidDir });
     expect(stopGooglechatWebhookProxy).toHaveBeenCalledWith(pidDir);
+  });
+
+  it("retains the proxy and tunnel state when the tunnel cannot be stopped", () => {
+    const pidDir = mkdtempSync(join(tmpdir(), "googlechat-stop-"));
+    const stopGooglechatWebhookProxy = vi.fn();
+    const signal = vi.fn(() => {
+      throw new Error("signal denied");
+    });
+    writeFileSync(join(pidDir, "cloudflared.pid"), "999999999");
+    writeFileSync(join(pidDir, "cloudflared.dashboard-port"), "24680");
+    try {
+      expect(() =>
+        stopGooglechatWebhookTunnel("alpha", {
+          services: {
+            resolveServicePidDir: () => "/unused",
+            stopCloudflared: () =>
+              stopCloudflared({
+                pidDir,
+                processControl: {
+                  isAlive: () => true,
+                  commandLine: () => "cloudflared tunnel --url http://localhost:24680",
+                  signalCloudflared: signal,
+                },
+              }),
+          },
+          webhookProxy: { stopGooglechatWebhookProxy },
+        }),
+      ).toThrow("signal denied");
+      expect(signal).toHaveBeenCalledWith(999999999, "SIGTERM");
+      expect(stopGooglechatWebhookProxy).not.toHaveBeenCalled();
+      expect(readFileSync(join(pidDir, "cloudflared.pid"), "utf-8")).toBe("999999999");
+      expect(readFileSync(join(pidDir, "cloudflared.dashboard-port"), "utf-8")).toBe("24680");
+    } finally {
+      rmSync(pidDir, { recursive: true, force: true });
+    }
   });
 
   it("derives a separate state directory from the normal tunnel", () => {

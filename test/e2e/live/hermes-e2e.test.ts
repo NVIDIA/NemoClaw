@@ -5,6 +5,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
+import type { SandboxEntry } from "../../../src/lib/state/registry/types.ts";
+import { recordedNativeProviderAttachment } from "../../../src/lib/inference/native-provider/recorded-selection.ts";
+import { buildSandboxInferenceChatCommand } from "../fixtures/inference-adapter.ts";
 import { HERMES_E2E_TEST_TIMEOUT_MS } from "../../../tools/e2e/hermes-timeout-contract.mts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
@@ -873,21 +876,17 @@ test(
     ).toBe(false);
     expectPong(`${inference.mode} direct chat`, directChat);
 
+    const chatSelection = registryEntry(SANDBOX_NAME) as unknown as SandboxEntry;
+    const chatAttachment = recordedNativeProviderAttachment(chatSelection);
     const sandboxChat = await sandbox.exec(
       SANDBOX_NAME,
-      [
-        "curl",
-        "-fsS",
-        "--max-time",
-        "90",
-        "-H",
-        "Content-Type: application/json",
-        "--data-raw",
+      buildSandboxInferenceChatCommand(
         chatPayload(inference.model, "Reply with exactly one word: PONG", 1024),
-        "https://inference.local/v1/chat/completions",
-      ],
+        chatSelection.provider!,
+        chatAttachment?.endpointUrl,
+      ),
       {
-        artifactName: "phase-5-inference-local-chat",
+        artifactName: "phase-5-selected-route-chat",
         env: commandEnv(),
         timeoutMs: 120_000,
       },
@@ -895,7 +894,7 @@ test(
     expect(sandboxChat.exitCode, resultText(sandboxChat)).toBe(0);
     const sandboxChatJson = JSON.parse(sandboxChat.stdout) as unknown;
     expect(exhaustedReasoningBudget(sandboxChatJson)).toBe(false);
-    expectPong("Hermes sandbox inference.local chat", sandboxChatJson);
+    expectPong("Hermes sandbox selected-route chat", sandboxChatJson);
 
     progress.phase("read logs and validate Hermes configuration integrity");
     // Phase 6: host CLI diagnostics and configuration integrity.

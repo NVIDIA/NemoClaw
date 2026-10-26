@@ -1,12 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import * as childProcess from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { loadLlamaCppImageConfig } from "../../../scripts/checks/export-llama-cpp-image-config.mts";
 import {
@@ -16,7 +18,7 @@ import {
   expectedRegistryName,
   expectedRegistryOwner,
   hashModelFile,
-  insertQualificationLoopbackPublishArgv,
+  parseQualificationBridgeGateway,
   parseNvidiaSmi,
   parseQualificationInvocation,
   type QualificationInvocation,
@@ -30,11 +32,17 @@ import {
   validateQualificationPlan,
   validateRuntimeLogRedaction,
   validateStartupLog,
+  runQualification,
+  QualificationFailureError,
 } from "../../../scripts/checks/run-llama-cpp-dgx-spark-qualification.mts";
 import {
   consumeDockerLoopbackPublishAuthority,
   type DockerLoopbackPublishAuthority,
 } from "../../../src/lib/inference/llama-cpp/host-local-runtime";
+
+vi.mock("node:child_process", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("node:child_process")>()),
+}));
 
 const BASE_SHA = "b".repeat(40);
 const HEAD_SHA = "a".repeat(40);
@@ -50,9 +58,6 @@ const config = loadLlamaCppImageConfig();
 const planSource = config.publication_qualification_plan;
 const planDigest = config.publication_qualification_plan_sha256;
 const plan = validateQualificationPlan(planSource, planDigest);
-function loopbackPublishAuthority(): ReturnType<typeof qualifyDockerLoopbackPublishAuthority> {
-  return qualifyDockerLoopbackPublishAuthority("28.3.3");
-}
 
 function trustedEnvironment(overrides: Record<string, string | undefined> = {}) {
   return {
@@ -102,6 +107,206 @@ function parsedInvocation(): QualificationInvocation {
   return invocation as QualificationInvocation;
 }
 
+it("retains a phase-specific failure without leaking exception data", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "spark-diagnostic-"));
+  const privateValue = "private-key-and-model-prompt-must-not-be-retained";
+  const spawn = vi.spyOn(childProcess, "spawnSync").mockImplementationOnce(() => {
+    throw new Error(privateValue);
+  });
+  try {
+    const invocation = { ...parsedInvocation(), output: path.join(root, "receipt.json") };
+    await expect(
+      runQualification(invocation, trustedEnvironment({ RUNNER_TEMP: root })),
+    ).rejects.toMatchObject({
+      name: "Error",
+      diagnostic: {
+        phase: "prerequisites",
+        status: "failed",
+        owner: expectedRegistryOwner(RUN_ID, RUN_ATTEMPT),
+      },
+    });
+    const source = fs.readFileSync(path.join(root, "failure.json"), "utf8");
+    expect(source).not.toContain(privateValue);
+    const failure = JSON.parse(source);
+    expect(new QualificationFailureError(failure).message).toContain("prerequisites");
+    expect(fs.existsSync(path.join(root, "receipt.json"))).toBe(false);
+  } finally {
+    spawn.mockRestore();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+const readableInterruptionDiagnostic = {
+  label: "retained",
+  prepare: (_file: string) => undefined,
+  assert: (file: string, owner: string) => {
+    const source = fs.readFileSync(file, "utf8");
+    expect(source).not.toContain("private-test-key");
+    expect(JSON.parse(source)).toMatchObject({
+      phase: "interrupted",
+      status: "failed",
+      owner,
+      cleanupComplete: true,
+    });
+  },
+};
+const unavailableInterruptionDiagnostic = {
+  label: "unavailable",
+  prepare: (file: string) => fs.mkdirSync(file),
+  assert: (file: string) => expect(fs.statSync(file).isDirectory()).toBe(true),
+};
+
+it.runIf(process.platform === "linux" && process.arch === "arm64").each([
+  ["SIGINT", readableInterruptionDiagnostic],
+  ["SIGTERM", readableInterruptionDiagnostic],
+  ["SIGINT", unavailableInterruptionDiagnostic],
+  ["SIGTERM", unavailableInterruptionDiagnostic],
+] as const)(
+  "interrupts a real worker with %s (diagnostic: %s) without claiming success",
+  async (signal, diagnostic) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "spark-signal-process-"));
+    const owner = expectedRegistryOwner(RUN_ID, RUN_ATTEMPT);
+    const stateFile = path.join(root, "resources.json");
+    const marker = path.join(root, "blocked.json");
+    const tempRoot = path.join(root, owner);
+    const resources = {
+      [`nemoclaw-llama-cpp-server-${RUN_ID}-${RUN_ATTEMPT}`]: owner,
+      [`nemoclaw-llama-cpp-network-${RUN_ID}-${RUN_ATTEMPT}`]: owner,
+      [expectedRegistryName(RUN_ID, RUN_ATTEMPT)]: owner,
+      "foreign-container": "foreign-owner",
+    };
+    fs.writeFileSync(stateFile, JSON.stringify(resources));
+    fs.mkdirSync(tempRoot);
+    diagnostic.prepare(path.join(root, "failure.json"));
+    fs.writeFileSync(path.join(tempRoot, "api-key"), "private-test-key", { mode: 0o600 });
+    const docker = path.join(root, "docker");
+    fs.writeFileSync(
+      docker,
+      `#!${process.execPath}
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+const stateFile = ${JSON.stringify(stateFile)};
+if (args[0] === "--version") {
+  const listener = require("node:net").createServer();
+  listener.listen(0, "127.0.0.1", () => {
+    fs.writeFileSync(${JSON.stringify(marker)}, JSON.stringify({pid: process.pid, port: listener.address().port}));
+    require("node:child_process").spawnSync(process.execPath, ["-e", "setInterval(() => {}, 1000)"]);
+    process.exit(0);
+  });
+} else {
+const state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+const name = args.at(-1);
+if (args.includes("inspect")) {
+  if (state[name]) process.stdout.write(state[name]);
+  else { process.stderr.write("Error: No such object: " + name); process.exitCode = 1; }
+} else if (args.includes("rm") && state[name] === ${JSON.stringify(owner)}) {
+  delete state[name];
+  fs.writeFileSync(stateFile, JSON.stringify(state));
+} else process.exitCode = 1;
+}
+`,
+      { mode: 0o700 },
+    );
+    const args = invocationArguments();
+    args[args.indexOf("--output") + 1] = path.join(root, "receipt.json");
+    const launcher = childProcess.spawn(
+      process.execPath,
+      [
+        "--no-warnings",
+        "--import",
+        "tsx",
+        path.join(repoRoot, "scripts/checks/run-llama-cpp-dgx-spark-qualification.cts"),
+        ...args,
+      ],
+      {
+        cwd: repoRoot,
+        stdio: "ignore",
+        env: { ...trustedEnvironment(), RUNNER_TEMP: root, PATH: root, HOME: root },
+      },
+    );
+    const closed = new Promise<number | null>((resolve, reject) => {
+      launcher.once("error", reject);
+      launcher.once("close", resolve);
+    });
+    try {
+      await vi.waitFor(() => expect(fs.existsSync(marker)).toBe(true), {
+        timeout: 10000,
+        interval: 25,
+      });
+      launcher.kill(signal);
+      expect(await closed).toBe(signal === "SIGINT" ? 130 : 143);
+      expect(JSON.parse(fs.readFileSync(stateFile, "utf8"))).toEqual({
+        "foreign-container": "foreign-owner",
+      });
+      expect(fs.existsSync(tempRoot)).toBe(false);
+      expect(fs.existsSync(path.join(root, "receipt.json"))).toBe(false);
+      diagnostic.assert(path.join(root, "failure.json"), owner);
+      const blockedPid = JSON.parse(fs.readFileSync(marker, "utf8")).pid;
+      expect(() => process.kill(blockedPid, 0)).toThrow();
+      const port = JSON.parse(fs.readFileSync(marker, "utf8")).port;
+      await expect(
+        new Promise<void>((resolve, reject) => {
+          const socket = net.createConnection({ host: "127.0.0.1", port });
+          socket.once("connect", () => {
+            socket.destroy();
+            reject(new Error("interrupted listener remains open"));
+          });
+          socket.once("error", () => {
+            socket.destroy();
+            resolve();
+          });
+          socket.setTimeout(1000, () => {
+            socket.destroy();
+            reject(new Error("listener check timed out"));
+          });
+        }),
+      ).resolves.toBeUndefined();
+    } finally {
+      launcher.kill("SIGTERM");
+      await closed;
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  },
+  20000,
+);
+
+it("boots the actual trusted CLI and records a failed prerequisite without running Docker", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "spark-cli-"));
+  try {
+    const args = invocationArguments();
+    args[args.indexOf("--output") + 1] = path.join(root, "receipt.json");
+    const result = childProcess.spawnSync(
+      process.execPath,
+      [
+        "--no-warnings",
+        "--import",
+        "tsx",
+        path.join(repoRoot, "scripts/checks/run-llama-cpp-dgx-spark-qualification.cts"),
+        ...args,
+      ],
+      {
+        cwd: repoRoot,
+        encoding: "utf8",
+        env: { ...trustedEnvironment(), RUNNER_TEMP: root, PATH: "", HOME: root },
+        timeout: 20000,
+      },
+    );
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      `failed at prerequisites for ${expectedRegistryOwner(RUN_ID, RUN_ATTEMPT)}`,
+    );
+    expect(JSON.parse(fs.readFileSync(path.join(root, "failure.json"), "utf8"))).toMatchObject({
+      phase: "prerequisites",
+      status: "failed",
+      cleanupComplete: false,
+    });
+    expect(fs.existsSync(path.join(root, "receipt.json"))).toBe(false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 function mutatedPlan(mutate: (value: Record<string, any>) => void): [string, string] {
   const value = JSON.parse(planSource) as Record<string, any>;
   mutate(value);
@@ -109,9 +314,79 @@ function mutatedPlan(mutate: (value: Record<string, any>) => void): [string, str
   return [source, sha256Text(source)];
 }
 
+it("rejects cleanup when Docker inspection is unavailable and identifies the owned run", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "spark-cleanup-cli-"));
+  try {
+    const result = childProcess.spawnSync(
+      process.execPath,
+      [
+        "--no-warnings",
+        "--import",
+        "tsx",
+        path.join(repoRoot, "scripts/checks/run-llama-cpp-dgx-spark-qualification.cts"),
+        "--cleanup-only",
+        "--registry-name",
+        expectedRegistryName(RUN_ID, RUN_ATTEMPT),
+        "--run-id",
+        RUN_ID,
+        "--run-attempt",
+        RUN_ATTEMPT,
+      ],
+      {
+        cwd: repoRoot,
+        encoding: "utf8",
+        timeout: 20000,
+        env: {
+          ...trustedEnvironment(),
+          BASE_SHA,
+          CHECKOUT_SHA: HEAD_SHA,
+          WORKFLOW_SHA,
+          PLAN_SHA256: planDigest,
+          RUNNER_TEMP: root,
+          PATH: "",
+          HOME: root,
+        },
+      },
+    );
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      `failed at cleanup for ${expectedRegistryOwner(RUN_ID, RUN_ATTEMPT)}: cleanup-incomplete`,
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 function valuesAfter(argv: string[], option: string): string[] {
   return argv.flatMap((value, index) => (argv[index - 1] === option ? [value] : []));
 }
+
+it("loads the deferred OpenClaw consumer dependency with the actual CLI loader", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "spark-agent-loader-"));
+  try {
+    const source = `const {resolveManagedImageOnboardModule} = require('./scripts/checks/run-managed-image-openshell-e2e.ts');
+      import('./src/lib/onboard.ts').then(value => {
+        const onboard = resolveManagedImageOnboardModule(value);
+        process.stdout.write(JSON.stringify({ready: typeof onboard.startGatewayForRecovery === 'function'}));
+      });`;
+    const result = childProcess.spawnSync(
+      process.execPath,
+      ["--no-warnings", "--import", "tsx", "-e", source],
+      {
+        cwd: repoRoot,
+        encoding: "utf8",
+        timeout: 20000,
+        env: { HOME: root, PATH: process.env.PATH },
+      },
+    );
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({ ready: true });
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 
 function qualificationPlanForModel(content: Buffer): QualificationPlan {
   return {
@@ -304,7 +579,7 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
     expect(argv).not.toContain("/work/candidate");
     expect(valuesAfter(argv, "--build-arg")).toEqual(
       expect.arrayContaining([
-        "CUDA_ARCHITECTURES=121a-real",
+        "CUDA_ARCHITECTURES=103-real;120-real;121a-real",
         `CUDA_DEV_IMAGE=${plan.imageBuild.cuda.developmentBase}`,
         `CUDA_RUNTIME_IMAGE=${plan.imageBuild.cuda.runtimeBase}`,
         `LLAMA_CPP_ARCHIVE_SHA256=${plan.imageBuild.source.archiveSha256}`,
@@ -337,7 +612,7 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
     }
   });
 
-  it("publishes the recipe-selected request guard on the loopback address without putting the API key in Docker arguments (#8667)", () => {
+  it("launches native llama.cpp with unpublished ports and no API key in Docker arguments (#8667)", () => {
     const content = Buffer.from("qualification model fixture\n", "utf8");
     const testPlan = qualificationPlanForModel(content);
     const modelRoot = fs.realpathSync(
@@ -368,7 +643,6 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
       } as const;
       const argv = buildServerContainerArgv(testPlan, {
         ...containerOptions,
-        loopbackPublishAuthority: loopbackPublishAuthority(),
       });
       expect(argv).toEqual(
         expect.arrayContaining([
@@ -397,54 +671,15 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
           "--no-agent",
         ]),
       );
-      const publishMappings = valuesAfter(argv, "--publish");
-      expect(publishMappings).toEqual([`127.0.0.1::${String(testPlan.recipe.serve.port)}`]);
-      expect(publishMappings.some((mapping) => mapping.startsWith("0.0.0.0:"))).toBe(false);
-      const imageIndex = argv.indexOf(imageReference);
-      expect(argv.slice(imageIndex - 2, imageIndex + 1)).toEqual([
-        "--publish",
-        publishMappings[0],
-        imageReference,
-      ]);
-      expect(valuesAfter(argv, "--entrypoint")).toEqual([
-        "/usr/local/bin/nemoclaw-llama-cpp-request-guard",
-      ]);
-      expect(valuesAfter(argv, "--listen-port")).toEqual([String(testPlan.recipe.serve.port)]);
-      expect(valuesAfter(argv, "--upstream-port")).toEqual([
-        String(testPlan.recipe.serve.requestGuard.upstreamPort),
-      ]);
-      expect(valuesAfter(argv, "--max-request-body-bytes")).toEqual([
-        String(testPlan.recipe.serve.limits.maxRequestBodyBytes),
-      ]);
-      expect(valuesAfter(argv, "--max-request-header-bytes")).toEqual([
-        String(testPlan.recipe.serve.limits.maxRequestHeaderBytes),
-      ]);
-      expect(valuesAfter(argv, "--max-output-tokens")).toEqual([
-        String(testPlan.recipe.serve.limits.maxOutputTokens),
-      ]);
-      expect(valuesAfter(argv, "--request-timeout-seconds")).toEqual([
+      expect(valuesAfter(argv, "--env")).toEqual(["LLAMA_ARG_LOG_VERBOSITY=4"]);
+      expect(valuesAfter(argv, "--publish")).toEqual([]);
+      expect(valuesAfter(argv, "--network")).toEqual(["qualified-internal"]);
+      expect(valuesAfter(argv, "--host")).toEqual(["0.0.0.0"]);
+      expect(valuesAfter(argv, "--port")).toEqual([String(testPlan.recipe.serve.port)]);
+      expect(valuesAfter(argv, "--timeout")).toEqual([
         String(testPlan.recipe.serve.limits.requestTimeoutSeconds),
       ]);
-      expect(valuesAfter(argv, "--shutdown-timeout-seconds")).toEqual([
-        String(testPlan.recipe.serve.limits.shutdownTimeoutSeconds),
-      ]);
-      const separator = argv.indexOf("--");
-      expect(argv[separator + 1]).toBe("/usr/local/bin/llama-server");
-      expect(valuesAfter(argv.slice(separator), "--host")).toEqual(["127.0.0.1"]);
-      expect(valuesAfter(argv.slice(separator), "--port")).toEqual([
-        String(testPlan.recipe.serve.requestGuard.upstreamPort),
-      ]);
-      expect(valuesAfter(argv.slice(separator), "--n-predict")).toEqual([
-        String(testPlan.recipe.serve.limits.maxOutputTokens),
-      ]);
-      const agentQualificationArgv = buildServerContainerArgv(testPlan, {
-        ...containerOptions,
-        hostPort: testPlan.recipe.serve.port,
-        loopbackPublishAuthority: loopbackPublishAuthority(),
-      });
-      expect(valuesAfter(agentQualificationArgv, "--publish")).toEqual([
-        `127.0.0.1:${String(testPlan.recipe.serve.port)}:${String(testPlan.recipe.serve.port)}`,
-      ]);
+      expect(valuesAfter(argv, "--api-key-file")).toEqual(["/run/secrets/llama-cpp-api-key"]);
       const alternateContainerPort = 9_081;
       // The adapter must use its validated plan input instead of duplicating the current recipe port.
       const alternatePortPlan = {
@@ -456,14 +691,9 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
       } as unknown as QualificationPlan;
       const alternatePortArgv = buildServerContainerArgv(alternatePortPlan, {
         ...containerOptions,
-        loopbackPublishAuthority: loopbackPublishAuthority(),
       });
-      expect(valuesAfter(alternatePortArgv, "--publish")).toEqual([
-        `127.0.0.1::${String(alternateContainerPort)}`,
-      ]);
-      expect(valuesAfter(alternatePortArgv, "--listen-port")).toEqual([
-        String(alternateContainerPort),
-      ]);
+      expect(valuesAfter(alternatePortArgv, "--publish")).toEqual([]);
+      expect(valuesAfter(alternatePortArgv, "--port")).toEqual([String(alternateContainerPort)]);
       expect(valuesAfter(argv, "--network")).toEqual(["qualified-internal"]);
       expect(valuesAfter(argv, "--user")).toEqual(["1001:1001"]);
       expect(valuesAfter(argv, "--gpus")).toEqual(["driver=nvidia,count=1"]);
@@ -497,7 +727,6 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
           registryOwner: expectedRegistryOwner(RUN_ID, RUN_ATTEMPT),
           runtimeGid: 1001,
           runtimeUid: 0,
-          loopbackPublishAuthority: loopbackPublishAuthority(),
         }),
       ).toThrow(/runtime uid/u);
     } finally {
@@ -505,75 +734,32 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
     }
   });
 
-  it.each([
-    { publishArgv: ["--publish", "0.0.0.0:8081:8081"] },
-    { publishArgv: ["--publish=0.0.0.0:8081:8081"] },
-    { publishArgv: ["-p", "0.0.0.0:8081:8081"] },
-    { publishArgv: ["-p0.0.0.0:8081:8081"] },
-    { publishArgv: ["--publish-all"] },
-    { publishArgv: ["--publish-all=true"] },
-    { publishArgv: ["-P"] },
-    { publishArgv: ["-P=true"] },
-  ])(
-    "rejects Docker publish aliases before inserting one loopback mapping at the image boundary [case %#] (#8667)",
-    ({ publishArgv }) => {
-      const imageReference = `localhost:5000/repo@sha256:${"d".repeat(64)}`;
-      const containerPort = 9_081;
-      const options = () => ({
-        containerPort,
-        imageReference,
-        loopbackPublishAuthority: loopbackPublishAuthority(),
-      });
-      const consumedAuthority = loopbackPublishAuthority();
-
-      expect(
-        insertQualificationLoopbackPublishArgv(["run", imageReference], {
-          ...options(),
-          loopbackPublishAuthority: consumedAuthority,
-        }),
-      ).toEqual(["run", "--publish", `127.0.0.1::${String(containerPort)}`, imageReference]);
-      expect(() =>
-        insertQualificationLoopbackPublishArgv(["run", imageReference], {
-          ...options(),
-          loopbackPublishAuthority: consumedAuthority,
-        }),
-      ).toThrow(/already consumed/u);
-      const authorityAfterRejectedBoundary = loopbackPublishAuthority();
-      expect(() =>
-        insertQualificationLoopbackPublishArgv(["run"], {
-          ...options(),
-          loopbackPublishAuthority: authorityAfterRejectedBoundary,
-        }),
-      ).toThrow(/exactly one Docker image reference/u);
-      expect(
-        insertQualificationLoopbackPublishArgv(["run", imageReference], {
-          ...options(),
-          loopbackPublishAuthority: authorityAfterRejectedBoundary,
-        }),
-      ).toEqual(["run", "--publish", `127.0.0.1::${String(containerPort)}`, imageReference]);
-      expect(() =>
-        insertQualificationLoopbackPublishArgv(["run", imageReference, imageReference], options()),
-      ).toThrow(/exactly one Docker image reference/u);
-
-      expect(() =>
-        insertQualificationLoopbackPublishArgv(["run", ...publishArgv, imageReference], options()),
-      ).toThrow(/must not publish/u);
-
-      expect(
-        insertQualificationLoopbackPublishArgv(
-          ["run", imageReference, "-p", "guard-value"],
-          options(),
-        ),
-      ).toEqual([
-        "run",
-        "--publish",
-        `127.0.0.1::${String(containerPort)}`,
-        imageReference,
-        "-p",
-        "guard-value",
-      ]);
-    },
-  );
+  it("accepts only the selected private Docker bridge gateway", () => {
+    const network = {
+      Name: "nemoclaw-managed-run-1",
+      Driver: "bridge",
+      Internal: false,
+      IPAM: { Config: [{ Gateway: "172.20.0.1", Subnet: "172.20.0.0/16" }] },
+    };
+    expect(parseQualificationBridgeGateway(JSON.stringify(network), network.Name)).toBe(
+      "172.20.0.1",
+    );
+    expect(() => parseQualificationBridgeGateway(JSON.stringify(network), "another-run")).toThrow(
+      /exact private IPv4 gateway/u,
+    );
+    expect(() =>
+      parseQualificationBridgeGateway(
+        JSON.stringify({ ...network, IPAM: { Config: [{ Gateway: "8.8.8.8" }] } }),
+        network.Name,
+      ),
+    ).toThrow(/exact private IPv4 gateway/u);
+    expect(() =>
+      parseQualificationBridgeGateway(
+        JSON.stringify({ ...network, Driver: "macvlan" }),
+        network.Name,
+      ),
+    ).toThrow(/exact private IPv4 gateway/u);
+  });
 
   it("accepts only the exact NVIDIA OpenClaw ARM64 managed-image labels", () => {
     const labels = {
@@ -664,6 +850,7 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
     "NVIDIA GB10, 580.65.05",
     "NVIDIA H100 80GB HBM3, 580.65.06",
     "NVIDIA GB10, 580.65.06\nNVIDIA GB10, 580.65.06",
+    "NVIDIA GB10, 580.1599.03",
   ])(
     "accepts only one NVIDIA GB10 at or above the declarative driver floor [%s] (#8260)",
     (output) => {
@@ -676,6 +863,14 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
       expect(() => parseNvidiaSmi(output, "580.65.06")).toThrow();
     },
   );
+
+  it("accepts the GB10 driver with a three-digit minor version", () => {
+    expect(parseNvidiaSmi("NVIDIA GB10, 580.159.03\n", "580.65.06")).toEqual({
+      count: 1,
+      driverVersion: "580.159.03",
+      name: "NVIDIA GB10",
+    });
+  });
 
   it("validates exact served-model and authenticated completion response shapes (#8260)", () => {
     expect(() =>

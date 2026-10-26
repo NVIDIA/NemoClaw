@@ -17,6 +17,7 @@ import {
   createDockerLlamaCppPrivateBridgeController,
   type DockerLlamaCppPrivateBridgeController,
 } from "../../onboard/runtime-provider/docker-llama-cpp-private-bridge";
+import { LLAMA_CPP_PORT } from "../llama-cpp/contract";
 import {
   createHostLocalCreateJournalStore,
   HOST_LOCAL_CREATE_JOURNAL_DIRECTORY,
@@ -963,13 +964,7 @@ function cleanupLlamaCpp(
   try {
     executionOwnership.assert();
     requireManagedLlamaCppPrivateAuthority(paths, options.expectedPrivateAuthority);
-    const privateBridge =
-      options.privateBridge ??
-      (process.platform === "linux" ? createDockerLlamaCppPrivateBridgeController() : undefined);
-    if (privateBridge) {
-      privateBridge.stopTransaction(journal.transactionId);
-      privateBridge.assertStopped(journal.transactionId);
-    }
+
     executionOwnership.assert();
     const engine = options.engine ?? createManagedLlamaCppEngine(options.env ?? process.env);
     requireQualifiedEngine(receipt?.engineAuthority ?? journal.engineAuthority, engine);
@@ -979,6 +974,23 @@ function cleanupLlamaCpp(
     );
     executionOwnership.assert();
     requireManagedLlamaCppPrivateAuthority(paths, options.expectedPrivateAuthority);
+    const privateBridge =
+      options.privateBridge ??
+      (process.platform === "linux"
+        ? createDockerLlamaCppPrivateBridgeController({
+            remoteRequests: {
+              engine,
+              apiKeyPath: paths.apiKeyPath,
+              targetPort: receipt?.endpoint.port ?? LLAMA_CPP_PORT,
+            },
+          })
+        : undefined);
+    if (privateBridge) {
+      inspectExactContainerForJournal(engine, journal);
+      privateBridge.stopTransaction(journal.transactionId);
+      privateBridge.assertStopped(journal.transactionId);
+    }
+    executionOwnership.assert();
     removeExactContainerForJournal(engine, journal, removed);
     executionOwnership.assert();
     requireManagedLlamaCppPrivateAuthority(paths, options.expectedPrivateAuthority);
@@ -1032,9 +1044,7 @@ export interface ManagedLlamaCppSandboxCleanupOptions {
   readonly deps?: Partial<CleanupDeps>;
 }
 
-export interface ManagedLlamaCppLifecycleCleanupOptions extends ManagedLlamaCppSandboxCleanupOptions {
-  readonly privateBridge?: DockerLlamaCppPrivateBridgeController;
-}
+export interface ManagedLlamaCppLifecycleCleanupOptions extends ManagedLlamaCppSandboxCleanupOptions {}
 
 export interface PreparedManagedLlamaCppRuntimeCleanup {
   readonly abort: () => void;
@@ -1286,7 +1296,7 @@ export function prepareManagedLlamaCppLifecycleCleanup(
 
 /**
  * Complete a common-lifecycle llama.cpp retirement after its provider runtime
- * has stopped the bridge, removed the exact container, and retired the journal.
+ * has removed the exact container and retired the journal.
  * The registry receipt remains the retry authority if this final phase fails.
  */
 export function finalizeManagedLlamaCppLifecycleCleanup(
@@ -1307,7 +1317,11 @@ export function finalizeManagedLlamaCppLifecycleCleanup(
       engine.capture(["info"], DOCKER_INSPECT_TIMEOUT_MS),
     );
     const transactionId = receipt.runtime.model.generation;
-    const privateBridge = options.privateBridge ?? createDockerLlamaCppPrivateBridgeController();
+    const privateBridge =
+      options.privateBridge ??
+      createDockerLlamaCppPrivateBridgeController({
+        remoteRequests: { engine, apiKeyPath: paths.apiKeyPath, targetPort: receipt.endpoint.port },
+      });
     privateBridge.stopTransaction(transactionId);
     privateBridge.assertStopped(transactionId);
 

@@ -33,6 +33,74 @@ import {
 describe("rebuildSandbox flow: recovery", () => {
   installRebuildFlowTestHooks();
 
+  it.each([null, "disabled", "thread-opt-in"] as const)(
+    "runs the printed zero-MCP recovery command with DCode mode %s against the retained transaction",
+    async (mode) => {
+      const dcode = mode !== null;
+      const overrides = dcode
+        ? {
+            agentName: "langchain-deepagents-code",
+            sandboxEntry: makeDcodeSandboxEntry(),
+            hydrateCredentialEnv: () => "fixture-credential",
+          }
+        : {};
+      const interrupted = createRebuildFlowHarness({
+        ...overrides,
+        captureOpenshell: sandboxGetProbes([SOURCE_PROBE, null]),
+        onboard: () => {
+          throw new Error("replacement create failed");
+        },
+      });
+      process.env.NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE = "1";
+      const configureSession = dcode ? configureDcodeSession : () => undefined;
+      configureSession(interrupted);
+      await expect(
+        interrupted.rebuildSandbox(
+          "alpha",
+          [
+            "--yes",
+            "--tool-disclosure",
+            "direct",
+            ...(mode ? ["--dcode-auto-approval", mode] : []),
+          ],
+          {
+            throwOnError: true,
+          },
+        ),
+      ).rejects.toThrow("Recreate failed");
+      const printed = interrupted.errorSpy.mock.calls
+        .flat()
+        .map(String)
+        .find((line) => line.includes("2. Run:"));
+      expect(printed).toBeDefined();
+      const [name, verb, ...args] = printed!
+        .trim()
+        .replace(/^2\. Run: nemoclaw /, "")
+        .split(/\s+/);
+      expect([name, verb]).toEqual(["alpha", "rebuild"]);
+      const checkpoint = structuredClone(interrupted.session.checkpoint);
+      let recreatedPolicy = "";
+      const restarted = createRebuildFlowHarness({
+        ...overrides,
+        staleRecovery: true,
+        captureOpenshell: sandboxGetProbes([null]),
+        onboard: (_session, options) => {
+          recreatedPolicy = fs.readFileSync(String(options.rebuildPolicySourcePath), "utf8");
+        },
+      });
+      configureSession(restarted);
+      restarted.session.checkpoint = checkpoint;
+      restarted.backupSandboxStateSpy.mockClear();
+      restarted.restoreSandboxStateSpy.mockClear();
+      await expect(
+        restarted.rebuildSandbox(name!, args, { throwOnError: true }),
+      ).resolves.toBeUndefined();
+      expect(recreatedPolicy).toContain("host_preserved");
+      expect(restarted.backupSandboxStateSpy).not.toHaveBeenCalled();
+      expect(restarted.restoreSandboxStateSpy).toHaveBeenCalled();
+    },
+  );
+
   it("retains prepared recovery when baseline write pairing is still pending", async () => {
     const manifest = makePreparedRecoveryManifest();
     const harness = createRebuildFlowHarness();
@@ -877,7 +945,7 @@ describe("rebuildSandbox flow: recovery", () => {
       {},
     );
     expect(harness.errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining("onboard --resume --name alpha --tool-disclosure direct"),
+      expect.stringContaining("alpha rebuild --yes --tool-disclosure direct"),
     );
   });
 

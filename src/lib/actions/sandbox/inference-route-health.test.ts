@@ -8,20 +8,82 @@ import {
   DCODE_MANAGED_EXEC_MISSING_DETAIL,
 } from "./connect-inference-route-probe";
 import {
+  HermesNvidiaCredentialRejectedError,
+  verifyHermesNvidiaCredential,
   buildSandboxInferenceRouteHealth,
   isTransientInferenceInvocationFailure,
   probeSandboxInferenceGatewayHealth,
+  probeSandboxNativeNvidiaModelsHealth,
   runSandboxInferenceInvocationProbe,
   type SandboxInferenceRouteHealth,
 } from "./inference-route-health";
 
 describe("sandbox inference route health", () => {
-  const makeExecutor = (stdout: string, status = 0): OpenShellSandboxBufferedCommandExecutor => ({
+  const makeExecutor = (
+    stdout: string,
+    status = 0,
+    stderr = "",
+  ): OpenShellSandboxBufferedCommandExecutor => ({
     runBuffered: vi.fn(async () => ({
       outcome: { kind: "completed" as const, exitCode: status },
       stdout,
-      stderr: "",
+      stderr,
     })),
+  });
+
+  it("verifies the Hermes credential through the selected sandbox guard", async () => {
+    const executor = makeExecutor("verified=1\n");
+    await verifyHermesNvidiaCredential(
+      { name: "alpha", gatewayName: "gateway-a", model: "m" },
+      executor,
+    );
+    expect(executor.runBuffered).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sandboxName: "alpha",
+        target: { kind: "named", gatewayName: "gateway-a" },
+        command: [
+          "/opt/hermes/.venv/bin/python3",
+          "-I",
+          "/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py",
+          "verify-nvidia-credential",
+          "--hermes-dir",
+          "/sandbox/.hermes",
+          "--expected-model",
+          "m",
+        ],
+      }),
+    );
+  });
+  it("distinguishes confirmed credential rejection from unavailable verification", async () => {
+    await expect(
+      verifyHermesNvidiaCredential(
+        { name: "alpha", gatewayName: "gateway-a", model: "m" },
+        makeExecutor("rejected=1", 1),
+      ),
+    ).rejects.toBeInstanceOf(HermesNvidiaCredentialRejectedError);
+  });
+  it.each([
+    makeExecutor("private diagnostic", 1),
+    makeExecutor("unexpected"),
+    makeExecutor("", 2, "argument --hermes-dir: invalid value"),
+    makeExecutor("", 1, "argument action: invalid choice: 'verify-nvidia-credential'"),
+    {
+      runBuffered: vi.fn(async () => ({
+        outcome: {
+          kind: "failed" as const,
+          error: { kind: "timeout" as const, message: "private diagnostic" },
+        },
+        stdout: "",
+        stderr: "private diagnostic",
+      })),
+    },
+  ])("rejects failed or unrecognized Hermes credential verification [%#]", async (executor) => {
+    await expect(
+      verifyHermesNvidiaCredential(
+        { name: "alpha", gatewayName: "gateway-a", model: "m" },
+        executor,
+      ),
+    ).rejects.toThrow("Hermes NVIDIA credential verification is unavailable.");
   });
 
   it.each([200, 401, 403])(
@@ -116,6 +178,29 @@ describe("sandbox inference route health", () => {
       detail: DCODE_MANAGED_EXEC_MISSING_DETAIL,
     });
   });
+
+  it("probes native NVIDIA models through the attached provider placeholder", async () => {
+    const commandExecutor = makeExecutor("OK 200");
+
+    const result = await probeSandboxNativeNvidiaModelsHealth("alpha", {
+      gatewayName: "nemoclaw-19080",
+      agentName: "openclaw",
+      commandExecutor,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      httpStatus: 200,
+      endpoint: "https://integrate.api.nvidia.com/v1/models",
+    });
+    expect(commandExecutor.runBuffered).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sandboxName: "alpha",
+        target: { kind: "named", gatewayName: "nemoclaw-19080" },
+        command: ["sh", "-c", expect.stringContaining("NVIDIA_INFERENCE_API_KEY")],
+      }),
+    );
+  });
 });
 
 describe("buildSandboxInferenceRouteHealth (#10080)", () => {
@@ -124,6 +209,44 @@ describe("buildSandboxInferenceRouteHealth (#10080)", () => {
     endpoint: "https://inference.local/v1/models",
     httpStatus,
     detail: `probe returned ${httpStatus}`,
+  });
+
+  it("uses the native NVIDIA invocation instead of the legacy gateway route", () => {
+    const result = buildSandboxInferenceRouteHealth(
+      gateway(503, false),
+      null,
+      { ok: true },
+      { provider: "nvidia-prod", nativeNvidia: true },
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      probed: true,
+      endpoint: "https://integrate.api.nvidia.com/v1/chat/completions",
+    });
+    expect(result.subprobes).toBeUndefined();
+  });
+
+  it("does not let a healthy legacy gateway mask a failed native NVIDIA request", () => {
+    const result = buildSandboxInferenceRouteHealth(
+      gateway(200),
+      null,
+      {
+        ok: false,
+        detail: "sandbox inference invocation probe returned HTTP 401",
+        httpStatus: 401,
+        endpoint: "https://integrate.api.nvidia.com/v1/chat/completions",
+      },
+      { provider: "nvidia-prod", nativeNvidia: true },
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      probed: true,
+      failureLabel: "unauthorized",
+      endpoint: "https://integrate.api.nvidia.com/v1/chat/completions",
+    });
+    expect(result.subprobes).toBeUndefined();
   });
 
   it.each([
@@ -146,7 +269,6 @@ describe("buildSandboxInferenceRouteHealth (#10080)", () => {
     expect(invocation).toMatchObject({ ok: false, httpStatus: null, endpoint });
     expect(
       buildSandboxInferenceRouteHealth(gateway(200), null, invocation, {
-        agentName: "openclaw",
         provider: "compatible-endpoint",
       }).endpoint,
     ).toBe(endpoint);
@@ -162,7 +284,7 @@ describe("buildSandboxInferenceRouteHealth (#10080)", () => {
         httpStatus: 404,
         endpoint: "https://inference.local/v1/chat/completions",
       },
-      { agentName: "openclaw", provider: "nvidia-prod" },
+      { provider: "nvidia-prod" },
     );
 
     expect(result.ok).toBe(false);
@@ -178,7 +300,7 @@ describe("buildSandboxInferenceRouteHealth (#10080)", () => {
       gateway(200),
       null,
       { ok: false, detail: "probe was unavailable", httpStatus: null },
-      { agentName: "openclaw", provider: "nvidia-prod" },
+      { provider: "nvidia-prod" },
     );
 
     expect(result.endpoint).toBe("https://inference.local/v1/models");
@@ -196,7 +318,7 @@ describe("buildSandboxInferenceRouteHealth (#10080)", () => {
           httpStatus: 404,
           endpoint: "https://inference.local/v1/chat/completions",
         },
-        { agentName: "openclaw", provider: "nvidia-prod" },
+        { provider: "nvidia-prod" },
       );
 
       expect(result.subprobes?.[0]).toMatchObject({
@@ -212,42 +334,27 @@ describe("buildSandboxInferenceRouteHealth (#10080)", () => {
       gateway(200),
       null,
       { ok: true },
-      { agentName: "openclaw", provider: "nvidia-prod" },
+      { provider: "nvidia-prod" },
     );
 
     expect(result.subprobes?.[0]).toMatchObject({ ok: true, okLabel: "reachable" });
   });
 
-  it("fails closed for a non-DCode agent when the route 404s, even if invocation succeeds", () => {
+  it("accepts the OpenRouter adapter 404 when the invocation succeeds (#12621)", () => {
     const result = buildSandboxInferenceRouteHealth(
       gateway(404),
       null,
       { ok: true },
       {
-        agentName: "openclaw",
         provider: "openrouter-api",
       },
     );
 
-    expect(result.ok).toBe(false);
-    expect(result.failureLabel).toBe("unreachable");
-    expect(result.detail).toContain("never validated against a model catalog");
+    expect(result.ok).toBe(true);
   });
 
-  it("fails closed for a non-DCode agent when the route 404s and invocation was never attempted", () => {
+  it("fails closed for the OpenRouter adapter 404 when no invocation was attempted (#12621)", () => {
     const result = buildSandboxInferenceRouteHealth(gateway(404), null, null, {
-      agentName: "openclaw",
-      provider: "openrouter-api",
-    });
-
-    expect(result.ok).toBe(false);
-    expect(result.okLabel).toBeUndefined();
-    expect(result.failureLabel).toBe("unreachable");
-  });
-
-  it("fails closed for Deep Agents Code on OpenRouter when no invocation was attempted", () => {
-    const result = buildSandboxInferenceRouteHealth(gateway(404), null, null, {
-      agentName: "langchain-deepagents-code",
       provider: "openrouter-api",
     });
 
@@ -256,60 +363,38 @@ describe("buildSandboxInferenceRouteHealth (#10080)", () => {
     expect(result.detail).toContain("no inference request confirmed the selected model");
   });
 
-  it("fails closed for Deep Agents Code on OpenRouter when the invocation fails", () => {
+  it("fails closed for the OpenRouter adapter 404 when the invocation fails", () => {
     const result = buildSandboxInferenceRouteHealth(
       gateway(404),
       null,
       { ok: false, detail: "provider rejected the request", httpStatus: 401 },
-      {
-        agentName: "langchain-deepagents-code",
-        provider: "openrouter-api",
-      },
+      { provider: "openrouter-api" },
     );
 
     expect(result.ok).toBe(false);
   });
 
-  it("still tolerates a 404 for Deep Agents Code on OpenRouter when invocation succeeds", () => {
+  it("normalizes the provider before matching the OpenRouter adapter 404", () => {
     const result = buildSandboxInferenceRouteHealth(
       gateway(404),
       null,
       { ok: true },
-      {
-        agentName: "langchain-deepagents-code",
-        provider: "openrouter-api",
-      },
+      { provider: " openrouter-api " },
     );
 
     expect(result.ok).toBe(true);
   });
 
-  it("normalizes the provider before matching the Deep Agents Code 404 exception", () => {
+  it("does not extend the adapter 404 tolerance to a different provider", () => {
     const result = buildSandboxInferenceRouteHealth(
       gateway(404),
       null,
       { ok: true },
-      {
-        agentName: "langchain-deepagents-code",
-        provider: " openrouter-api ",
-      },
-    );
-
-    expect(result.ok).toBe(true);
-  });
-
-  it("does not extend the DCode 404 tolerance to a different provider", () => {
-    const result = buildSandboxInferenceRouteHealth(
-      gateway(404),
-      null,
-      { ok: true },
-      {
-        agentName: "langchain-deepagents-code",
-        provider: "nvidia-nim",
-      },
+      { provider: "nvidia-nim" },
     );
 
     expect(result.ok).toBe(false);
+    expect(result.detail).toContain("provider does not have a supported catalog-less route");
   });
 
   it.each([401, 403])(
@@ -319,7 +404,7 @@ describe("buildSandboxInferenceRouteHealth (#10080)", () => {
         gateway(httpStatus),
         null,
         { ok: true },
-        { agentName: "openclaw", provider: "openrouter-api" },
+        { provider: "openrouter-api" },
       );
 
       expect(result.ok).toBe(true);
@@ -333,7 +418,7 @@ describe("buildSandboxInferenceRouteHealth (#10080)", () => {
         gateway(httpStatus),
         null,
         { ok: false, detail: "provider rejected the request", httpStatus },
-        { agentName: "openclaw", provider: "openrouter-api" },
+        { provider: "openrouter-api" },
       );
 
       expect(result.ok).toBe(false);
@@ -347,7 +432,7 @@ describe("buildSandboxInferenceRouteHealth (#10080)", () => {
         gateway(httpStatus),
         null,
         { ok: true },
-        { agentName: "openclaw", provider: "openrouter-api" },
+        { provider: "openrouter-api" },
       );
 
       expect(result.ok).toBe(false);
@@ -360,10 +445,7 @@ describe("buildSandboxInferenceRouteHealth (#10080)", () => {
       gateway(200),
       null,
       { ok: true },
-      {
-        agentName: "openclaw",
-        provider: "openrouter-api",
-      },
+      { provider: "openrouter-api" },
     );
 
     expect(result.ok).toBe(true);
@@ -371,7 +453,56 @@ describe("buildSandboxInferenceRouteHealth (#10080)", () => {
 });
 
 describe("transient inference invocation failures", () => {
-  it.each([429, 502, 503, 504])(
+  it.each([429, 500, 503])(
+    "reports NVIDIA HTTP %i as degraded after route verification (#13616)",
+    (httpStatus) => {
+      const result = buildSandboxInferenceRouteHealth(
+        null,
+        null,
+        {
+          ok: false,
+          detail: `sandbox inference invocation probe returned HTTP ${httpStatus}`,
+          httpStatus,
+        },
+        { provider: "nvidia-prod", nativeProvider: true, model: "fixture-model" },
+      );
+      expect(result).toMatchObject({ ok: true, probed: false, degraded: true });
+      expect(result.detail).toContain("NVIDIA upstream is temporarily unavailable");
+    },
+  );
+
+  it.each([401, 403, 404])("keeps NVIDIA HTTP %i unhealthy (#13616)", (httpStatus) => {
+    const result = buildSandboxInferenceRouteHealth(
+      null,
+      null,
+      { ok: false, detail: `HTTP ${httpStatus}`, httpStatus },
+      { provider: "nvidia-prod", nativeProvider: true, model: "fixture-model" },
+    );
+    expect(result.ok).toBe(false);
+    expect(result.degraded).toBeUndefined();
+  });
+
+  it("does not hide a denied host credential behind a transient NVIDIA reply (#13616)", () => {
+    const result = buildSandboxInferenceRouteHealth(
+      null,
+      {
+        ok: false,
+        probed: true,
+        providerLabel: "NVIDIA Endpoints",
+        endpoint: "https://integrate.api.nvidia.com/v1/chat/completions",
+        detail: "host credential rejected",
+        failureLabel: "unauthorized",
+      },
+      { ok: false, detail: "HTTP 500", httpStatus: 500 },
+      { provider: "nvidia-prod", nativeProvider: true, model: "fixture-model" },
+    );
+    expect(result.ok).toBe(false);
+    expect(result.degraded).toBeUndefined();
+    expect(result.subprobes).toContainEqual(
+      expect.objectContaining({ failureLabel: "unauthorized" }),
+    );
+  });
+  it.each([429, 500, 502, 503, 504])(
     "treats HTTP %i as a transient inference request failure (#10709)",
     (httpStatus) => {
       expect(
@@ -384,7 +515,7 @@ describe("transient inference invocation failures", () => {
     },
   );
 
-  it.each([400, 401, 403, 404, 405, 500, 501])(
+  it.each([400, 401, 403, 404, 405, 501])(
     "treats HTTP %i as a settled inference request failure (#10709)",
     (httpStatus) => {
       expect(
@@ -411,6 +542,17 @@ describe("transient inference invocation failures", () => {
     ).toBe(false);
   });
 
+  it("retries only a curl-confirmed timeout without an HTTP response (#13616)", () => {
+    expect(
+      isTransientInferenceInvocationFailure({
+        ok: false,
+        detail: "timed out",
+        httpStatus: null,
+        timedOut: true,
+      }),
+    ).toBe(true);
+  });
+
   it("treats a request that reached no HTTP status as a settled failure (#10709)", () => {
     expect(
       isTransientInferenceInvocationFailure({
@@ -424,4 +566,20 @@ describe("transient inference invocation failures", () => {
   it("reports no failure when no inference request was sent (#10709)", () => {
     expect(isTransientInferenceInvocationFailure(null)).toBe(false);
   });
+});
+
+it("offers conditional recreation guidance when the legacy route cannot be reached", () => {
+  const health = buildSandboxInferenceRouteHealth(
+    {
+      ok: false,
+      endpoint: "https://inference.local/v1/models",
+      httpStatus: 0,
+      detail: "Inference gateway is unreachable.",
+    },
+    null,
+    null,
+    { provider: "compatible-endpoint", model: "selected" },
+  );
+  expect(health.ok).toBe(false);
+  expect(health.detail).toContain("If this legacy route is no longer available");
 });

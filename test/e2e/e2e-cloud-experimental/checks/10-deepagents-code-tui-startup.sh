@@ -5,9 +5,9 @@
 # Case: Deep Agents Code interactive TUI model turn (#5620, #11847).
 #
 # This live check runs two interactive sessions against a real Deep Agents Code
-# sandbox. It proves the sandbox still blocks memfd creation, the real QuickJS
-# runtime initializes without that optimization, and each TUI completes a model
-# turn. Completed sessions must not leak DCode/LangGraph processes. The check
+# sandbox. It proves the sandbox still blocks memfd creation, the pinned QuickJS
+# tool bridge executes a shell command and restores interpreter state. Each TUI
+# completes a model turn. Completed sessions must not leak DCode/LangGraph processes. The check
 # retains only sanitized, secret-free capture artifacts.
 #
 # shellcheck disable=SC2016
@@ -28,13 +28,13 @@ SANDBOX_EXEC_KILL_AFTER_SECONDS=5
 # test/agents/deepagents/deepagents-code-tui-startup-check.test.ts pins this to secret-patterns.ts.
 SECRET_PATTERN='(?:nvapi-[A-Za-z0-9_-]{10,}|nvcf-[A-Za-z0-9_-]{10,}|ghp_[A-Za-z0-9_-]{10,}|github_pat_[A-Za-z0-9_]{30,}|sk-proj-[A-Za-z0-9_-]{10,}|sk-ant-[A-Za-z0-9_-]{10,}|sk-[A-Za-z0-9_-]{20,}|(?:xox[bpas]|xapp)-[A-Za-z0-9-]{10,}|A(?:K|S)IA[A-Z0-9]{16}|hf_[A-Za-z0-9]{10,}|glpat-[A-Za-z0-9_-]{10,}|gsk_[A-Za-z0-9]{10,}|pypi-[A-Za-z0-9_-]{10,}|\bbot[0-9]{8,10}:[A-Za-z0-9_-]{35}\b|\b[0-9]{8,10}:[A-Za-z0-9_-]{35}\b|\b[A-Za-z0-9]{24}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,}\b|tvly-[A-Za-z0-9_-]{10,}|lsv2_(?:pt|sk)_[A-Za-z0-9]{10,}(?:_[A-Za-z0-9]+)*)'
 CONTEXT_SECRET_VALUE_PATTERN='[A-Za-z0-9_.+\/=-]{10,}'
-# Pinned DCode 0.1.55 renders this exact modal title for `/agents`. Opening it
+# Pinned DCode 0.1.71 renders this exact modal title for `/agents`. Opening it
 # proves input reached the main composer after optional onboarding. Check 07
 # independently owns backend readiness and inference acceptance.
 TUI_READY_PATTERN='(select agent)'
 # Wait for the pinned main TUI banner before sending `/agents`; a fixed delay
 # can race startup and submit `agents` as an ordinary chat prompt instead.
-TUI_COMPOSER_PATTERN='(dcode[^\r\n]*v0\.1\.55)'
+TUI_COMPOSER_PATTERN='(dcode[^\r\n]*v0\.1\.71)'
 # NemoClaw configures DCode's model and managed provider before launch, so
 # the model picker is a regression. The name prompt is allowed on first run.
 TUI_FIRST_RUN_PATTERN='(choose a recommended model)'
@@ -83,7 +83,7 @@ sandbox_exec() {
 }
 
 sandbox_quickjs_memfd_probe() {
-  sandbox_exec '/opt/venv/bin/python3 -I -c '\''import ctypes, errno; from quickjs_rs import Runtime; libc = ctypes.CDLL(None, use_errno=True); libc.memfd_create.argtypes = (ctypes.c_char_p, ctypes.c_uint); libc.memfd_create.restype = ctypes.c_int; descriptor = libc.memfd_create(b"nemoclaw-denial-probe", 3); assert descriptor == -1 and ctypes.get_errno() == errno.EPERM; runtime = Runtime(); context = runtime.new_context(); assert context.eval("20 + 22") == 42; context.close(); runtime.close(); print("NEMOCLAW_MEMFD_BLOCKED_QUICKJS_OK")'\'''
+  sandbox_exec 'timeout --signal=TERM --kill-after=5s 35s /opt/venv/bin/python3 -I /usr/local/lib/nemoclaw/validate-quickjs-runtime.py --require-memfd-denied'
 }
 
 is_positive_integer() {
@@ -230,7 +230,7 @@ proc append_marker {markers marker} {
 }
 
 proc submit_agents {markers} {
-  # Type at human cadence so DCode 0.1.55's reactive slash completion processes
+  # Type at human cadence so DCode 0.1.71's reactive slash completion processes
   # the exact command before Enter submits the selected /agents entry.
   foreach char [split "/agents" ""] {
     send -- $char
@@ -293,7 +293,7 @@ if {$expect_name_prompt eq "1"} {
       append_marker $markers "NEMOCLAW_TUI_NAME_PROMPT"
       puts "\nNEMOCLAW_TUI_NAME_PROMPT"
       # The prompt copy can render just before its input receives focus. Let the
-      # first frame settle, then submit the empty optional name accepted by 0.1.55.
+      # first frame settle, then submit the empty optional name accepted by 0.1.71.
       after 500
       send -- "\r"
       after 500
@@ -406,7 +406,7 @@ expect {
   }
 }
 
-# DCode 0.1.55 binds Ctrl-D to its dedicated quit action. At the empty main
+# DCode 0.1.71 binds Ctrl-D to its dedicated quit action. At the empty main
 # composer this starts graceful shutdown without passing through Ctrl-C's
 # interrupt/copy/quit-arm state machine.
 send -- "\004"
@@ -535,10 +535,10 @@ main() {
 
   local quickjs_probe_output
   if quickjs_probe_output="$(sandbox_quickjs_memfd_probe)" \
-    && grep -Fxq "NEMOCLAW_MEMFD_BLOCKED_QUICKJS_OK" <<<"$quickjs_probe_output"; then
-    pass "OpenShell blocks memfd creation and the real QuickJS runtime initializes"
+    && grep -Fxq "NEMOCLAW_QUICKJS_TOOL_RUNTIME_OK" <<<"$quickjs_probe_output"; then
+    pass "OpenShell blocks memfd creation and QuickJS tool execution survives REPL restoration"
   else
-    fail_test "QuickJS runtime did not initialize while OpenShell blocked memfd creation"
+    fail_test "QuickJS memfd-denial, tool execution, or REPL restoration validation failed"
     printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"
     exit 1
   fi

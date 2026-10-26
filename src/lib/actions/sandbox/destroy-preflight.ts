@@ -28,6 +28,7 @@ import {
   listHostGatewayRegistryEntries,
   registryEntryGatewayPort,
 } from "../../state/gateway-registry";
+import { resolveNemoclawStateGatewayPort } from "../../state/paths";
 import type {
   acquireOnboardLock,
   compareAndSwapSession,
@@ -54,6 +55,84 @@ import {
 } from "./gateway-target";
 
 export { teardownSandboxDashboardForward } from "./forward-recovery";
+import {
+  reconcileIdentityFreeRecovery as reconcileRetainedMetadata,
+  reconcileJournaledRebuildRecovery as reconcileRebuildMetadata,
+} from "./lifecycle/retained-recovery";
+
+/** Probe only the recorded gateway before reconciling identity-free local metadata. */
+export function reconcileIdentityFreeRecovery(
+  sandboxName: string,
+  records: Parameters<typeof reconcileRetainedMetadata>[1],
+  owningGatewayPort: number,
+  state: Omit<
+    Parameters<typeof reconcileRetainedMetadata>[3],
+    "observeSandbox" | "timeoutMs" | "registryEntryGatewayPort"
+  > & {
+    captureOpenshell?: typeof import("../../adapters/openshell/runtime").captureOpenshell;
+  },
+): boolean {
+  return reconcileRetainedRecovery(
+    reconcileRetainedMetadata,
+    sandboxName,
+    records,
+    owningGatewayPort,
+    state,
+  );
+}
+
+/** Observe the same owning gateway for a journal-bound rebuild resume. */
+export function reconcileJournaledRebuildRecovery(
+  source: Pick<SandboxEntry, "name" | "gatewayName" | "gatewayPort">,
+  records: Parameters<typeof reconcileRebuildMetadata>[1],
+  state: Omit<
+    Parameters<typeof reconcileRebuildMetadata>[3],
+    "observeSandbox" | "timeoutMs" | "registryEntryGatewayPort"
+  > & {
+    captureOpenshell?: typeof import("../../adapters/openshell/runtime").captureOpenshell;
+  },
+): boolean {
+  return reconcileRetainedRecovery(
+    reconcileRebuildMetadata,
+    source.name,
+    records,
+    registryEntryGatewayPort(source),
+    state,
+  );
+}
+
+function reconcileRetainedRecovery(
+  reconcile: typeof reconcileRetainedMetadata,
+  sandboxName: string,
+  records: Parameters<typeof reconcileRetainedMetadata>[1],
+  owningGatewayPort: number,
+  state: Omit<
+    Parameters<typeof reconcileRetainedMetadata>[3],
+    "observeSandbox" | "timeoutMs" | "registryEntryGatewayPort"
+  > & {
+    captureOpenshell?: typeof import("../../adapters/openshell/runtime").captureOpenshell;
+  },
+): boolean {
+  const captureOpenshell =
+    state.captureOpenshell ??
+    (
+      require("../../adapters/openshell/runtime") as typeof import("../../adapters/openshell/runtime")
+    ).captureOpenshell;
+  return reconcile(sandboxName, records, owningGatewayPort, {
+    ...state,
+    registryEntryGatewayPort,
+    timeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
+    observeSandbox: (gatewayName) =>
+      classifyDestroySandboxPresence(
+        sandboxName,
+        captureOpenshell(["sandbox", "list", "-g", gatewayName, "--output", "json"], {
+          ignoreError: true,
+          includeStreams: true,
+          timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+        }),
+      ),
+  });
+}
 
 export type SandboxDestroyPreflight = {
   cleanupGatewayName: string;
@@ -68,6 +147,7 @@ export type SandboxDestroyPreflight = {
 
 export type SandboxDestroyRegistryAuthority = {
   entry: SandboxEntry | null;
+  gatewayPort: number;
   getSandbox: typeof registry.getSandbox;
   listSandboxes: typeof registry.listSandboxes;
   removeSandbox: typeof registry.removeSandbox;
@@ -81,6 +161,7 @@ export function resolveSandboxDestroyRegistryAuthority(
   if (!hit) {
     return {
       entry: registry.getSandbox(sandboxName),
+      gatewayPort: resolveNemoclawStateGatewayPort(),
       getSandbox: registry.getSandbox,
       listSandboxes: registry.listSandboxes,
       removeSandbox: registry.removeSandbox,
@@ -88,6 +169,7 @@ export function resolveSandboxDestroyRegistryAuthority(
   }
   return {
     entry: hit.entry,
+    gatewayPort: hit.registryGatewayPort ?? sandboxGatewayPort(hit.entry),
     getSandbox: getSandboxAcrossGatewayRoots,
     listSandboxes: () => ({
       sandboxes: listPublishedSandboxesAcrossGatewayRoots(),
@@ -122,23 +204,6 @@ export function resolveSandboxDestroyRuntimeSelection(
   // MCP source inspection freezes its gateway target during preparation. The
   // non-MCP registry is only a routing hint and cannot assert MCP ownership.
   return undefined;
-}
-
-export function stopSandboxInferenceResources(
-  sandboxName: string,
-  sandbox: SandboxEntry | null,
-): void {
-  const nim = require("../../inference/nim") as {
-    stopNimContainer: (name: string, opts?: { silent?: boolean }) => void;
-    stopNimContainerByName: (name: string) => void;
-  };
-  if (sandbox?.nimContainer) {
-    console.log(`  Stopping NIM for '${sandboxName}'...`);
-    nim.stopNimContainerByName(sandbox.nimContainer);
-  } else {
-    // Older registry entries may not record the convention-named container.
-    nim.stopNimContainer(sandboxName, { silent: true });
-  }
 }
 
 function sandboxGatewayPort(entry: SandboxEntry): number {

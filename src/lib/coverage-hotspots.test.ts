@@ -54,14 +54,17 @@ describe("small CLI helper coverage", () => {
     expect(resolveDefaultSandboxName(() => ({ defaultSandbox: "alpha" }))).toBe("alpha");
     expect(resolveDefaultSandboxName(() => ({ defaultSandbox: "bad name" }))).toBeUndefined();
 
-    const startCalls: Array<{ sandboxName?: string }> = [];
+    const startCalls: Array<{ sandboxName?: string; dashboardPort?: number }> = [];
     await runStartCommand({
-      listSandboxes: () => ({ defaultSandbox: "alpha" }),
+      listSandboxes: () => ({
+        defaultSandbox: "alpha",
+        sandboxes: [{ name: "alpha", dashboardPort: 18_791 }],
+      }),
       startAll: async (options) => {
         startCalls.push(options);
       },
     });
-    expect(startCalls).toEqual([{ sandboxName: "alpha" }]);
+    expect(startCalls).toEqual([{ sandboxName: "alpha", dashboardPort: 18_791 }]);
 
     const stopCalls: Array<{ sandboxName?: string }> = [];
     runStopCommand({

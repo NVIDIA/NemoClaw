@@ -259,6 +259,7 @@ describe("credentials oclif adapter source coverage", () => {
           "tavily-hermes-v1",
           "--from-existing",
         ],
+        ["provider", "profile", "-g", "nemoclaw", "export", "tavily-hermes-v1", "--output", "json"],
       ]);
     } finally {
       log.mockRestore();
@@ -343,7 +344,7 @@ describe("credentials oclif adapter source coverage", () => {
 
     expect(mocks.prompt).not.toHaveBeenCalled();
     expect(mocks.runOpenshellProviderCommand).toHaveBeenCalledWith(
-      ["provider", "delete", "-g", "nemoclaw", "nvidia-prod"],
+      ["provider", "delete", "-g", "nemoclaw", "nemoclaw-nvidia-prod-v1"],
       {
         ignoreError: true,
         stdio: ["ignore", "pipe", "pipe"],
@@ -456,14 +457,71 @@ describe("credentials oclif adapter source coverage", () => {
     expect(mocks.resolveGatewayCredentialMutationAuthority).not.toHaveBeenCalled();
   });
 
+  describe.each([false, true])("profile inspection recovery fromExisting=%s", (fromExisting) => {
+    it.each([
+      [
+        "authentication",
+        { status: 1, stderr: "unauthorized host-only-secret" },
+        "Restore OpenShell authentication",
+      ],
+      [
+        "timeout",
+        { status: null, error: Object.assign(new Error(), { code: "ETIMEDOUT" }) },
+        "gateway is available",
+      ],
+      [
+        "unreachable gateway",
+        { status: 1, stderr: "connection refused host-only-secret" },
+        "Start the gateway",
+      ],
+      [
+        "identity mismatch",
+        { status: 1, stderr: "handshake verification failed host-only-secret" },
+        "restore its recorded identity",
+      ],
+      [
+        "process start",
+        { status: null, error: Object.assign(new Error(), { code: "ENOENT" }) },
+        "Repair OpenShell",
+      ],
+      [
+        "connection loss",
+        { status: 1, stderr: "connection reset host-only-secret" },
+        "Restore the connection",
+      ],
+    ])("reports %s recovery before registration (#13343)", async (_case, exported, recovery) => {
+      vi.stubEnv("CUSTOM_TOKEN", "host-only-secret");
+      mocks.runOpenshellProviderCommand.mockReturnValueOnce(exported);
+
+      const result = await runCredentialsAddAction({
+        provider: "custom-provider",
+        type: "generic",
+        credentials: fromExisting ? [] : ["CUSTOM_TOKEN"],
+        configPairs: [],
+        fromExisting,
+      });
+
+      expect(result.exitCode).toBe(1);
+      expect(result.failureLines.join("\n")).toContain(recovery);
+      expect(JSON.stringify(result)).not.toContain("host-only-secret");
+      expect(mocks.runOpenshellProviderCommand).toHaveBeenCalledExactlyOnceWith(
+        ["provider", "profile", "-g", "nemoclaw", "export", "generic", "--output", "json"],
+        expect.objectContaining({ timeout: 30_000 }),
+      );
+      expect(mocks.recordExtraProvider).not.toHaveBeenCalled();
+      expect(mocks.forgetExtraProvider).not.toHaveBeenCalled();
+    });
+  });
+
   it("releases a provider reservation when credential registration fails (#9388)", async () => {
     vi.stubEnv("CUSTOM_TOKEN", "host-only-secret");
     mocks.recordExtraProvider.mockReturnValueOnce(true);
-    mocks.runOpenshellProviderCommand.mockReturnValueOnce({
-      status: 1,
-      stdout: "",
-      stderr: "provider creation failed",
-    });
+    mocks.runOpenshellProviderCommand
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: JSON.stringify({ id: "generic", credentials: [{ env_vars: ["CUSTOM_TOKEN"] }] }),
+      })
+      .mockReturnValueOnce({ status: 1, stdout: "", stderr: "provider creation failed" });
 
     const result = await runCredentialsAddAction({
       provider: "custom-provider",
@@ -476,8 +534,29 @@ describe("credentials oclif adapter source coverage", () => {
     expect(result.exitCode).toBe(1);
     expect(mocks.recordExtraProvider).toHaveBeenCalledWith("custom-provider");
     expect(mocks.forgetExtraProvider).toHaveBeenCalledWith("custom-provider");
+    expect(mocks.runOpenshellProviderCommand.mock.calls.map(([args]) => args)).toEqual([
+      ["provider", "profile", "-g", "nemoclaw", "export", "generic", "--output", "json"],
+      [
+        "provider",
+        "create",
+        "-g",
+        "nemoclaw",
+        "--name",
+        "custom-provider",
+        "--type",
+        "generic",
+        "--credential",
+        "CUSTOM_TOKEN",
+      ],
+    ]);
+    expect(mocks.runOpenshellProviderCommand.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.recordExtraProvider.mock.invocationCallOrder[0],
+    );
     expect(mocks.recordExtraProvider.mock.invocationCallOrder[0]).toBeLessThan(
-      mocks.runOpenshellProviderCommand.mock.invocationCallOrder[0],
+      mocks.runOpenshellProviderCommand.mock.invocationCallOrder[1],
+    );
+    expect(mocks.runOpenshellProviderCommand.mock.invocationCallOrder[1]).toBeLessThan(
+      mocks.forgetExtraProvider.mock.invocationCallOrder[0],
     );
   });
 });

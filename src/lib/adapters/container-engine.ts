@@ -6,6 +6,7 @@ import path from "node:path";
 
 export type ContainerEngineOperationScope =
   | "host-doctor"
+  | "external-image-preparation"
   | "host-local-inference"
   | "gateway-inspection"
   | "sandbox-lifecycle"
@@ -24,7 +25,13 @@ export type ContainerEngineCommandCapture = (
   timeoutMs: number,
   input?: Buffer,
   environment?: Readonly<Record<string, string>>,
+  maxOutputBytes?: number,
 ) => ContainerEngineCommandResult;
+
+export interface ContainerEnginePrivateTransport {
+  readonly maxInputBytes: number;
+  readonly maxOutputBytes: number;
+}
 
 /**
  * Immutable command boundary injected into one provider operation. The
@@ -46,6 +53,7 @@ export interface ContainerEngine {
     args: readonly string[],
     timeoutMs?: number,
     input?: Buffer,
+    privateTransport?: ContainerEnginePrivateTransport,
   ) => ContainerEngineCommandResult;
   /** Available only to a host-local-inference engine; values remain operation-scoped. */
   readonly captureWithEnvironment?: (
@@ -81,6 +89,9 @@ const MAX_ARGUMENTS = 512;
 const MAX_ARGUMENT_BYTES = 16 * 1024;
 const MAX_OUTPUT_BYTES = 1024 * 1024;
 const MAX_INPUT_BYTES = 1024 * 1024;
+// Encoded bounded startup snapshots can exceed the normal command pipe size.
+// This opt-in transport does not change snapshot, file or default command bounds.
+const MAX_PRIVATE_TRANSPORT_BYTES = 48 * 1024 * 1024;
 const MAX_ENVIRONMENT_ENTRIES = 32;
 const MAX_ENVIRONMENT_BYTES = 64 * 1024;
 const ENGINE_ID_PATTERN = /^[a-z][a-z0-9-]{0,62}$/u;
@@ -291,13 +302,14 @@ function defaultCapture(
   timeoutMs: number,
   input?: Buffer,
   environment?: Readonly<Record<string, string>>,
+  maxOutputBytes = MAX_OUTPUT_BYTES,
 ): ContainerEngineCommandResult {
   const result = spawnSync(executable, [...args], {
     cwd: process.cwd(),
     env: environment ?? containerEngineCommandEnvironment(),
     encoding: "utf8",
     killSignal: "SIGKILL",
-    maxBuffer: MAX_OUTPUT_BYTES,
+    maxBuffer: maxOutputBytes,
     shell: false,
     stdio: [input ? "pipe" : "ignore", "pipe", "pipe"],
     ...(input ? { input } : {}),
@@ -372,15 +384,41 @@ export function createContainerEngineCommand(
     endpoint: boolean,
     input?: Buffer,
     environment?: Readonly<Record<string, string>>,
+    privateTransport?: ContainerEnginePrivateTransport,
   ) => {
     const normalized = normalizedArguments(args, "Container engine command arguments");
     const commandArgs = endpoint ? [...endpointArgs, ...normalized] : [...normalized];
-    if (input !== undefined && (!Buffer.isBuffer(input) || input.length > MAX_INPUT_BYTES)) {
+    if (
+      privateTransport !== undefined &&
+      (options.operation !== "sandbox-lifecycle" ||
+        !endpoint ||
+        normalized[0] !== "container" ||
+        normalized[1] !== "exec" ||
+        ![privateTransport.maxInputBytes, privateTransport.maxOutputBytes].every(
+          (bound) =>
+            Number.isSafeInteger(bound) && bound > 0 && bound <= MAX_PRIVATE_TRANSPORT_BYTES,
+        ))
+    )
+      throw new Error("Private container transport requires bounded sandbox lifecycle execution.");
+    if (
+      input !== undefined &&
+      (!Buffer.isBuffer(input) ||
+        input.length > (privateTransport?.maxInputBytes ?? MAX_INPUT_BYTES))
+    ) {
       throw new Error("Container engine command input is invalid or exceeds its byte bound.");
     }
     const boundedTimeout = positiveTimeout(timeoutMs);
-    return invokeGuarded(options.guard, () => {
+    const result = invokeGuarded(options.guard, () => {
       const selectedEnvironment = environment ?? commandEnvironment;
+      if (privateTransport)
+        return capture(
+          executable,
+          commandArgs,
+          boundedTimeout,
+          input === undefined ? undefined : Buffer.from(input),
+          selectedEnvironment,
+          privateTransport.maxOutputBytes,
+        );
       if (selectedEnvironment !== undefined) {
         return capture(
           executable,
@@ -394,6 +432,13 @@ export function createContainerEngineCommand(
         ? capture(executable, commandArgs, boundedTimeout)
         : capture(executable, commandArgs, boundedTimeout, Buffer.from(input));
     });
+    if (
+      privateTransport &&
+      (Buffer.byteLength(result.stdout) > privateTransport.maxOutputBytes ||
+        Buffer.byteLength(result.stderr) > privateTransport.maxOutputBytes)
+    )
+      throw new Error("Private container output exceeds its byte bound.");
+    return result;
   };
 
   return Object.freeze({
@@ -402,8 +447,12 @@ export function createContainerEngineCommand(
     displayName,
     authorityId: options.authorityId,
     endpointAuthorityId,
-    capture: (args: readonly string[], timeoutMs = DEFAULT_TIMEOUT_MS, input?: Buffer) =>
-      run(args, timeoutMs, true, input),
+    capture: (
+      args: readonly string[],
+      timeoutMs = DEFAULT_TIMEOUT_MS,
+      input?: Buffer,
+      privateTransport?: ContainerEnginePrivateTransport,
+    ) => run(args, timeoutMs, true, input, undefined, privateTransport),
     ...(options.operation === "host-local-inference"
       ? {
           captureWithEnvironment: (

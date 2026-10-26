@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createSession } from "../../../state/onboard-session";
+import { recordCheckpointEffectGroup } from "../../checkpoint-record";
 import { handleSandboxState } from "./sandbox";
 import {
   baseOptions,
@@ -16,7 +17,104 @@ vi.mock("../../messaging-channel-setup", () => ({
   detectMessagingChannelsFromEnv: vi.fn(() => []),
 }));
 
+const GPU_PROOF = {
+  status: "verified",
+  cudaVerified: true,
+  at: "2026-09-28T00:00:00.000Z",
+};
+const RECORDED_RECEIPTS = [
+  ["omits the GPU proof", { sandboxGpuEnabled: true, mode: "auto" }],
+  ["contains the GPU proof", { sandboxGpuEnabled: true, mode: "auto", sandboxGpuProof: GPU_PROOF }],
+] as const;
+
+async function prepareResumedGpuSandboxRecreate(
+  resumedGpuMode: string,
+  recordedGpuSettings: object,
+) {
+  const session = createSession({ sandboxName: "saved" });
+  const journal = bindJournaledRecreate(session);
+  const firstRun = createDeps(
+    {
+      createSandbox: vi.fn(async (...args: unknown[]) => {
+        Object.assign(args[10] as object, { sandboxGpuProof: GPU_PROOF });
+        return "saved";
+      }),
+    },
+    session,
+  );
+  await handleSandboxState({
+    ...baseOptions(firstRun.deps, session),
+    sandboxName: "saved",
+    sandboxGpuConfig: { sandboxGpuEnabled: true, mode: "auto" },
+  });
+  recordCheckpointEffectGroup(
+    session,
+    "sandbox_create",
+    (session.checkpoint?.effectGroups.sandbox_create?.fingerprint ?? "").replace(
+      JSON.stringify({ sandboxGpuEnabled: true, mode: "auto" }),
+      JSON.stringify(recordedGpuSettings),
+    ),
+  );
+  expect(session.checkpoint?.effectGroups.sandbox_create?.fingerprint).toContain(
+    JSON.stringify(recordedGpuSettings),
+  );
+  const { deps, calls } = createDeps(
+    {
+      getSandboxReuseState: () => "not_ready",
+      getSandboxRecreateObservation: journal.observe,
+      createSandbox: journal.completeCreate,
+    },
+    session,
+  );
+  return {
+    calls,
+    journal,
+    resume: () =>
+      handleSandboxState({
+        ...baseOptions(deps, session),
+        resume: true,
+        sandboxName: "saved",
+        sandboxGpuConfig: { sandboxGpuEnabled: true, mode: resumedGpuMode },
+      }),
+  };
+}
+
 describe("handleSandboxState resume recreation", () => {
+  it.each(RECORDED_RECEIPTS)(
+    "recreates a not-ready GPU sandbox on resume when the recorded create receipt %s",
+    async (_receipt, recordedGpuSettings) => {
+      const { calls, journal, resume } = await prepareResumedGpuSandboxRecreate(
+        "auto",
+        recordedGpuSettings,
+      );
+
+      await resume();
+
+      expect(calls.note).toHaveBeenCalledWith(
+        "  [resume] Recorded sandbox 'saved' exists but is not ready; recreating it.",
+      );
+      expect(calls.exit).not.toHaveBeenCalled();
+      expect(journal.completeCreate).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each(RECORDED_RECEIPTS)(
+    "rejects recreating a not-ready GPU sandbox on resume when the sandbox GPU mode changed and the recorded create receipt %s",
+    async (_receipt, recordedGpuSettings) => {
+      const { calls, journal, resume } = await prepareResumedGpuSandboxRecreate(
+        "1",
+        recordedGpuSettings,
+      );
+
+      await expect(resume()).rejects.toThrow("exit 1");
+
+      expect(calls.error).toHaveBeenCalledWith(
+        "  A previous onboarding attempt recorded sandbox 'saved' with different build or policy inputs than this run requests.",
+      );
+      expect(journal.completeCreate).not.toHaveBeenCalled();
+    },
+  );
+
   it("recreates a ready sandbox when its baked reasoning capability drifted (#7570)", async () => {
     const session = createSession({ sandboxName: "saved" });
     session.steps.sandbox.status = "complete";

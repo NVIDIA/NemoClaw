@@ -64,6 +64,7 @@ jobs:
           sparse-checkout: |
             .github/actions/setup-reviewed-npm
             ci/reviewed-npm-audit.json
+            scripts/lib/npm-diagnostics.sh
             scripts/lib/reviewed-npm-audit.mts
             scripts/lib/read-artifact-zip.mts
             src/lib/onboard/runtime-provider/native-qualification-authority.ts
@@ -74,7 +75,7 @@ jobs:
       - name: Set up pinned Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.1
+          node-version: 24.22.1
 
       - name: Install reviewed npm
         uses: ./trusted/.github/actions/setup-reviewed-npm

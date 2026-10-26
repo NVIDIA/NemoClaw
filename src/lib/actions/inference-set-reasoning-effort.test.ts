@@ -5,7 +5,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { REASONING_EFFORT_ENV } from "../onboard/reasoning-mode";
 import type { ConfigObject } from "../security/credential-filter";
 import { patchOpenClawInferenceConfig, runInferenceSet } from "./inference-set";
-import { baseSession, createDeps, OPENAI_ENDPOINTLESS_PROFILE } from "./inference-set.test-support";
+import {
+  baseSession,
+  createDeps,
+  OPENAI_ENDPOINTLESS_PROFILE,
+} from "../../../test/helpers/inference-set";
 
 function compatibleEndpointConfig(modelOverrides: ConfigObject = {}): ConfigObject {
   return {

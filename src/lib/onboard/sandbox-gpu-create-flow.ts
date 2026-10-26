@@ -169,7 +169,7 @@ export function resolveAgentCreateInput(
 ) {
   return {
     dockerDriverGateway,
-    ...resolveDockerStartupCommandPatch(agent, dockerDriverGateway, env),
+    ...resolveDockerStartupCommandPatch(agent, dockerDriverGateway),
     portableLifecycle: resolvePortableLifecycleMode(agent, env),
     hermesPortableLifecycle: isHermesPortableLifecycleMode(agent, env),
   };
@@ -203,6 +203,8 @@ export interface SandboxGpuCreateFlowInput {
     sandboxIdentityFingerprint?: string,
     createAttemptNonce?: string,
   ) => boolean;
+  /** Capture recovery authority before submitting each create request. */
+  beforeCreateAttempt?: (createAttemptNonce: string) => void;
   provider: string;
   sandboxGpuConfig: SandboxGpuConfig;
   gpuRoutePlan: import("./docker-gpu-route").DockerGpuRoutePlan;
@@ -283,8 +285,16 @@ export interface SandboxGpuCreateFlowDeps {
   ) => boolean;
   printCreateFailureDiagnostics?: (
     sandboxName: string,
-    options: { readonly backupPath?: string | null },
+    options: {
+      readonly backupPath?: string | null;
+      readonly sandboxContainerOutput?: string | null;
+    },
   ) => void;
+  /** Test seam for failed-container output captured before rollback (#13178). */
+  captureSandboxContainerOutput?: (
+    sandboxName: string,
+    expectedContainerId: string | null,
+  ) => string | null;
   /** Production callers configure the hidden portable lifecycle through the default implementation. */
   installPortableDemoLifecycle?: typeof installPortableDemoSandboxLifecycle;
   /** Production callers omit this factory and use the runtime provider's adapter. */

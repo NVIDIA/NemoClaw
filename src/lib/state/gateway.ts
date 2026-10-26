@@ -114,7 +114,10 @@ export const TERMINAL_SANDBOX_PHASES = new Set<string>([
 ]);
 
 export function isTerminalSandboxPhase(phase: string | null | undefined): boolean {
-  return !!phase && TERMINAL_SANDBOX_PHASES.has(phase);
+  return (
+    !!phase &&
+    [...TERMINAL_SANDBOX_PHASES].some((terminal) => terminal.toLowerCase() === phase.toLowerCase())
+  );
 }
 
 export function getSandboxStateFromOutputs(

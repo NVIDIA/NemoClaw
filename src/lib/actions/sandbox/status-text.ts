@@ -93,7 +93,9 @@ export function sandboxGpuProofStatusSuffix(
 function printInferenceProbeLine(probe: ProviderHealthStatus): void {
   const label = probe.probeLabel ? `Inference (${probe.probeLabel})` : "Inference";
   if (!probe.probed) {
-    console.log(`    ${label}: ${D}not probed${R} (${probe.detail})`);
+    console.log(
+      `    ${label}: ${D}${probe.degraded ? "degraded" : "not probed"}${R} (${probe.detail})`,
+    );
     return;
   }
   if (probe.ok) {
@@ -338,7 +340,12 @@ export async function printSandboxDetails(
   if (reasoningEffort) console.log(`    Reasoning effort: ${reasoningEffort}`);
   printInferenceRouteDrift(context.routeDrift, sb.name);
   printInferenceStatus(context);
-  const inferenceExitCode = inferenceHealthExitCode(context.inferenceHealth);
+  // A healthy response from a different live route does not prove readiness
+  // for this sandbox's recorded selection. Keep the drift diagnostic distinct,
+  // but fail status until the routes are reconciled (#12621).
+  const inferenceExitCode = context.routeDrift
+    ? 1
+    : inferenceHealthExitCode(context.inferenceHealth);
   printSandboxGpuStatus(sb);
   printSandboxHostMounts(sb);
   console.log(

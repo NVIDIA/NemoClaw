@@ -62,7 +62,7 @@ The following endpoint groups are allowed by default:
 
 | Policy | Endpoints | Binaries | Rules |
 | --- | --- | --- | --- |
-| `nvidia` | `integrate.api.nvidia.com:443` | `/usr/local/bin/openclaw` | POST to inference and embedding paths, GET to model listings |
+| `nvidia` | `integrate.api.nvidia.com:443` | `/usr/local/bin/openclaw` | Retained baseline compatibility rule: POST to inference and embedding paths, GET to model listings. NVIDIA Endpoints selection uses the narrower attached-provider rule described below. |
 | `clawhub` | `clawhub.ai:443` | `/usr/local/bin/openclaw`, `/usr/local/bin/node` | GET, POST, including scoped package paths |
 | `openclaw_api` | `openclaw.ai:443`, `catalog.openclaw.ai:443` | `/usr/local/bin/openclaw`, `/usr/local/bin/node` | GET and POST to `openclaw.ai`; GET only to `catalog.openclaw.ai` |
 | `openclaw_docs` | `docs.openclaw.ai:443` | `/usr/local/bin/openclaw` | GET only |
@@ -86,7 +86,13 @@ The separate `raw.githubusercontent.com` route lets Deep Agents Code follow GitH
 
 </AgentOnly>
 
-All endpoints use TLS termination and are enforced at port 443.
+When you select NVIDIA Endpoints, NemoClaw attaches the `nemoclaw-nvidia-prod-v1` provider to the sandbox instead of using `inference.local` or the broader baseline compatibility rule.
+This attached provider is the effective NVIDIA Endpoints route. Its profile permits only `GET /v1/models` and `POST /v1/chat/completions` at `integrate.api.nvidia.com:443` from the listed agent-runtime and readiness-verification binaries.
+The NVIDIA API key remains in OpenShell provider state and does not enter the sandbox.
+
+OpenAI, Anthropic, Google Gemini, OpenRouter, and Hermes Provider also use sandbox-attached native providers. NemoClaw derives the `native_hosted_inference` policy from the selected provider profile, restricting endpoint hosts, request paths, methods, and agent-runtime binaries. OpenShell replaces credential placeholders at that boundary; raw provider credentials remain outside the sandbox. Refer to [Inference](#inference) for the local-provider and custom-endpoint routing rules.
+
+The baseline HTTPS endpoint groups above use TLS termination on port `443`. Local inference and other explicit policy entries can use different ports.
 
 <AgentOnly variant="openclaw">
 
@@ -139,6 +145,10 @@ To narrow it, explicitly remove `brew` and apply `brew-balanced`.
 Resuming onboarding reapplies the saved selection; skipping optional setup preserves existing grants.
 
 When Personal is selected or carried forward, the `personal-open-internet` preset is mandatory for every agent and every onboarding entry point. Interactive choices, `NEMOCLAW_POLICY_MODE=custom`, and `NEMOCLAW_POLICY_MODE=skip` control only additional presets; they cannot deselect, skip, or replace Personal's required web authority.
+Fresh onboarding keeps a hosted custom endpoint on the shared `inference.local` route when you select Personal.
+NemoClaw refuses Personal for an existing sandbox that already has a custom native provider attachment.
+Create a new sandbox, enter the custom endpoint, and choose Personal when prompted for the policy tier.
+For non-interactive onboarding, set `NEMOCLAW_POLICY_TIER=personal` before onboarding.
 
 <Warning title="Personal Tier Network Access">
 The Personal tier applies the `personal-open-internet` policy preset with a hostless L4 endpoint on destination ports `80` and `443`.
@@ -199,7 +209,7 @@ The `policy list` provenance tags are inferred from the current tier YAML and th
 A preset whose name matches an entry in the sandbox's current tier definition is labelled `[from <tier> tier]` even when an operator added it manually with `policy add` after onboarding; agent-specific preset names are only labelled `[from <agent> agent]` when the active agent matches.
 Claude Code direct egress is not included in the Restricted, Balanced, or Open tiers.
 Personal's broad route permits its port `443` transport but does not install or configure Claude Code; on other tiers, apply the `claude-code` preset explicitly if you install and run the CLI inside the sandbox with its own credentials.
-Normal NemoClaw Anthropic inference still routes through the OpenShell gateway.
+NemoClaw-managed Anthropic inference remains mediated by OpenShell.
 
 Tier definitions are stored in `nemoclaw-blueprint/policies/tiers.yaml`.
 
@@ -213,7 +223,41 @@ Unset, blank, or whitespace-only `NEMOCLAW_POLICY_TIER` values use the `balanced
 
 ### Inference
 
-The baseline policy allows only the `local` inference route. External inference providers are reached through the OpenShell gateway, not by direct sandbox egress.
+NVIDIA Endpoints and supported fixed hosted providers use native endpoints through sandbox-attached OpenShell providers.
+OpenShell mediates inference traffic and keeps provider credentials outside the sandbox.
+
+<AgentOnly variant="openclaw">
+
+New hosted custom endpoints outside the Personal tier use sandbox-attached providers. A fresh Personal-tier hosted selection, custom endpoints without an attachment, owned Local NVIDIA NIM, and retained shared selections use `inference.local`. Qualified new Ollama, standalone vLLM, and llama.cpp selections also use attached providers.
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+New Hermes hosted compatible selections outside the Personal tier, Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible selections use sandbox-attached providers.
+The profile restricts the recorded host, port, methods, paths, and Hermes runtime binaries.
+OpenShell replaces the scoped credential reference at the allowed endpoint; the upstream credential remains outside the sandbox.
+Owned Local NVIDIA NIM, nonqualifying custom endpoints, and retained legacy local routes continue to use `inference.local`.
+Hermes live qualification for the new local lifecycle remains pending.
+Refer to [How Inference Routing Works](../inference/about-inference-routing) for the route boundary.
+
+</AgentOnly>
+<AgentOnly variant="deepagents">
+
+New Deep Agents Code sandboxes use attached providers for hosted compatible endpoints outside the Personal tier.
+A fresh Personal-tier hosted compatible selection instead stays on `inference.local` without creating a native attachment.
+Qualified Ollama, standalone vLLM, llama.cpp, and host-local compatible endpoints also use native providers.
+The local attached profile permits only `GET /v1/models` and `POST /v1/chat/completions` on the recorded host and port, using the listed Python and curl binaries.
+These local HTTP endpoints do not use TLS termination on port `443`.
+OpenShell replaces the sandbox's credential placeholder at the allowed endpoint.
+For a credentialless upstream, the protected local proxy removes the sentinel authorization header before forwarding the request.
+
+Custom endpoints without a native attachment and owned Local NVIDIA NIM retain the shared `inference.local` route.
+Existing DCode local sandboxes without native authority require explicit recreation; NemoClaw does not migrate them automatically.
+Before recreation, download the state you need to an independently managed location and verify that the download is complete.
+Follow [Transfer State Manually](../manage-sandboxes/state-and-backups/transfer-state-manually) before deleting the existing sandbox.
+Refer to [How Inference Routing Works](../inference/about-inference-routing) for the qualification boundary.
+
+</AgentOnly>
 
 <AgentOnly variant="deepagents">
 

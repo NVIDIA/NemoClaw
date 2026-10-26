@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { recordedNativeProviderAttachment } from "../../inference/native-provider/recorded-selection";
 import { createHash } from "node:crypto";
 
 import { cloneAndDeepFreeze } from "../../core/immutable";
@@ -38,6 +39,8 @@ const MANAGED_INFERENCE_API_SET = new Set([
  * state before a clone handoff can be prepared.
  */
 export interface ManagedStartupCloneCurrentState {
+  readonly nativeNvidiaProviderAttachment?: unknown;
+  readonly nativeHostedProviderAttachment?: unknown;
   readonly provider?: string | null;
   readonly model?: string | null;
   readonly endpointUrl?: string | null;
@@ -138,11 +141,14 @@ function currentInference(
   if (preferredApi !== null && !MANAGED_INFERENCE_API_SET.has(preferredApi)) {
     fail("current source preferred inference API is unsupported");
   }
+  const nativeAttachment = recordedNativeProviderAttachment(current);
   const resolved = resolveManagedStartupInferenceRoute(
     profile.agent,
     provider,
     model,
     preferredApi,
+    Boolean(nativeAttachment),
+    nativeAttachment?.endpointUrl,
   );
   if (!MANAGED_INFERENCE_API_SET.has(resolved.inferenceApi)) {
     fail("current source inference route resolved an unsupported API");

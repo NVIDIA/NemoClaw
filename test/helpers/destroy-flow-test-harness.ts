@@ -6,7 +6,7 @@ import { createRequire } from "node:module";
 import { expect, type MockInstance, vi } from "vitest";
 import type { SandboxDestroyExecutionResult } from "../../src/lib/actions/sandbox/destroy-execution";
 import type { PreparedManagedLlamaCppRuntimeCleanup } from "../../src/lib/inference/local-model-profile/cleanup";
-import type { ManagedAgentStateVolumeCleanupResult } from "../../src/lib/onboard/managed-workload/hermes-state-volume";
+import type { ManagedAgentStateVolumeCleanupResult } from "../../src/lib/onboard/managed-workload/agent-state-volumes";
 import type { RuntimeProviderDestroyIdentityReceipt } from "../../src/lib/onboard/runtime-provider/contract";
 import type { Session } from "../../src/lib/state/onboard-session";
 import type { RetainedSandboxRecoveryRecord } from "../../src/lib/state/onboard-session/retained-sandbox-recovery";
@@ -43,6 +43,7 @@ export type DestroyHarness = {
   listHostGatewayRegistryEntriesSpy: MockInstance;
   logSpy: MockInstance;
   mcpRuntimeSelectionSpy: MockInstance;
+  migrateLegacyCloudflaredStateSpy: MockInstance;
   /** In-memory pending managed vLLM retirement record; null when none is recorded. */
   pendingVllmRetirement: { sandboxName: string | null };
   clearPendingVllmRetirementSpy: MockInstance;
@@ -82,6 +83,7 @@ export type DestroyHarness = {
   stopAllSpy: MockInstance;
   stopModelRouterForDestroyedSandboxSpy: MockInstance;
   stopNimByNameSpy: MockInstance;
+  stopNimSpy: MockInstance;
   unloadOllamaModelsSpy: MockInstance;
   updateSessionSpy: MockInstance;
   warnSpy: MockInstance;
@@ -680,7 +682,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
       throw new Error(options.stopInferenceError);
     }
   });
-  vi.spyOn(nim, "stopNimContainer").mockImplementation(() => undefined);
+  const stopNimSpy = vi.spyOn(nim, "stopNimContainer").mockImplementation(() => undefined);
   const killStaleProxySpy = vi
     .spyOn(ollamaProxy, "killStaleProxy")
     .mockImplementation(() => undefined);
@@ -700,6 +702,9 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     requests: [],
   });
   const stopAllSpy = vi.spyOn(tunnelServices, "stopAll").mockImplementation(() => undefined);
+  const migrateLegacyCloudflaredStateSpy = vi
+    .spyOn(tunnelServices, "migrateLegacyCloudflaredState")
+    .mockReturnValue(false);
   const preparedServers = options.mcpAddState === "prepared" ? [] : (options.mcpServers ?? []);
   const resolvedMcpRuntimeSelection = options.mcpRuntimeSelection ?? {
     gatewayName: "nemoclaw-19080",
@@ -786,6 +791,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     listHostGatewayRegistryEntriesSpy,
     logSpy,
     mcpRuntimeSelectionSpy,
+    migrateLegacyCloudflaredStateSpy,
     pendingVllmRetirement,
     clearPendingVllmRetirementSpy,
     recordPendingVllmRetirementSpy,
@@ -829,6 +835,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     stopAllSpy,
     stopModelRouterForDestroyedSandboxSpy,
     stopNimByNameSpy,
+    stopNimSpy,
     unloadOllamaModelsSpy,
     updateSessionSpy,
     warnSpy,

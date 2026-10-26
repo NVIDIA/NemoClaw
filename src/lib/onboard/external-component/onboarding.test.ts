@@ -7,6 +7,8 @@ import path from "node:path";
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { boundedTestTempRoot } from "../../../../test/helpers/bounded-temp-root";
+
 const mocks = vi.hoisted(() => ({
   inspectPolicyMutationContext: vi.fn(),
   loadExternalComponentDeclaration: vi.fn(),
@@ -95,7 +97,9 @@ describe("external component onboarding lifecycle", () => {
   });
 
   it("activates with final proof from registry, policy, and OpenShell evidence (#11340)", async () => {
-    const root = fs.mkdtempSync(path.join("/tmp", "nc-component-final-deps-"));
+    const root = fs.mkdtempSync(
+      path.join(boundedTestTempRoot("nc-XXXXXX/activation.sock", 104), "nc-"),
+    );
     const socketPath = path.join(root, "activation.sock");
     const sandboxId = "sandbox-123";
     const sandboxName = "assistant";

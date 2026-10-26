@@ -16,6 +16,7 @@ import {
   managedLlamaCppStatePaths,
   reserveManagedLlamaCppOwner,
 } from "../../inference/llama-cpp/managed-state";
+import { HOSTED_NATIVE_PROVIDERS } from "../../inference/native-provider/hosted";
 import type { SandboxEntry } from "../../state/registry";
 import { collectSandboxStatusSnapshot, getSandboxStatusReport } from "./status-snapshot";
 
@@ -468,5 +469,283 @@ describe("collectSandboxStatusSnapshot inference invocation route (#9302)", () =
         preferredInferenceApi: null,
       }),
     ).toMatchObject({ ok: true, probed: true });
+  });
+
+  it("probes the recorded native NVIDIA attachment when a different shared route exists", async () => {
+    liveGatewayInference("compatible-endpoint", "other/model");
+    const sandbox = {
+      name: "alpha",
+      agent: "openclaw",
+      gatewayName: "nemoclaw",
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      preferredInferenceApi: "openai-completions",
+      nativeNvidiaProviderAttachment: {
+        schemaVersion: 1,
+        profileId: "nemoclaw-nvidia-inference-v1",
+        providerName: "nemoclaw-nvidia-prod-v1",
+        providerId: "provider-123",
+      },
+    } as SandboxEntry;
+    const invoke = vi.fn(async () => ({ ok: true }) as const);
+    const probeSharedRoute = vi.fn(async () => ({
+      ok: true,
+      endpoint: "https://inference.local/v1/models",
+      detail: "reachable",
+      httpStatus: 200,
+    }));
+
+    const snapshot = await collectSandboxStatusSnapshot("alpha", {
+      deps: {
+        getSandbox: () => sandbox,
+        listPublishedSandboxesAcrossGatewayRoots: () => [sandbox],
+        reconcile: async () => ({ state: "present", output: "Phase: Ready" }),
+        probeProviderHealthImpl: () => null,
+        probeSandboxInferenceGatewayHealthImpl: probeSharedRoute,
+        probeSandboxInferenceInvocationImpl: invoke,
+        verifyNativeNvidiaProviderAttachmentImpl: async () => undefined,
+      },
+    } as never);
+
+    expect(snapshot.routeDrift).toBeNull();
+    expect(probeSharedRoute).not.toHaveBeenCalled();
+    expect(invoke).toHaveBeenCalledWith(
+      {
+        sandboxName: "alpha",
+        gatewayName: "nemoclaw",
+        provider: "nvidia-prod",
+        model: "nvidia/nemotron-3-super-120b-a12b",
+        preferredInferenceApi: "openai-completions",
+        nativeProvider: true,
+      },
+      {},
+      95_000,
+    );
+    expect(snapshot.inferenceHealth).toMatchObject({ ok: true, probed: true });
+  });
+
+  it.each(HOSTED_NATIVE_PROVIDERS)(
+    "checks $label status against its own native attachment",
+    async (definition) => {
+      const receipt = {
+        schemaVersion: 1 as const,
+        profileId: definition.profileId,
+        providerName: definition.providerName,
+        providerId: "native-provider-id",
+      };
+      const sandbox = {
+        name: "alpha",
+        agent: "openclaw",
+        gatewayName: "nemoclaw",
+        provider: definition.logicalProvider,
+        model: "selected-model",
+        preferredInferenceApi: definition.api,
+        nativeHostedProviderAttachment: receipt,
+      } as SandboxEntry;
+      const observeInferenceRoute = vi.fn();
+      const verify = vi.fn(async () => undefined);
+      const invoke = vi.fn(async () => ({ ok: true }) as const);
+      const sharedProbe = vi.fn();
+      const snapshot = await collectSandboxStatusSnapshot("alpha", {
+        deps: {
+          getSandbox: () => sandbox,
+          listPublishedSandboxesAcrossGatewayRoots: () => [sandbox],
+          reconcile: async () => ({ state: "present", output: "Phase: Ready" }),
+          inferenceRouteObserver: { observeInferenceRoute },
+          probeProviderHealthImpl: () => null,
+          probeSandboxInferenceGatewayHealthImpl: sharedProbe,
+          probeSandboxInferenceInvocationImpl: invoke,
+          verifyNativeHostedProviderAttachmentImpl: verify,
+        },
+      } as never);
+      expect(verify).toHaveBeenCalledWith({
+        gatewayName: "nemoclaw",
+        sandboxName: "alpha",
+        expected: receipt,
+      });
+      expect(observeInferenceRoute).not.toHaveBeenCalled();
+      expect(sharedProbe).not.toHaveBeenCalled();
+      expect(invoke).toHaveBeenCalledWith(
+        expect.objectContaining({
+          provider: definition.logicalProvider,
+          model: "selected-model",
+          nativeProvider: true,
+          preferredInferenceApi: definition.api,
+        }),
+        {},
+        95_000,
+      );
+      expect(snapshot.inferenceHealth).toMatchObject({ ok: true, probed: true });
+      expect(snapshot.routeDrift).toBeNull();
+    },
+  );
+
+  it.each(["malformed", "mismatched", "live identity changed"])(
+    "refuses %s native hosted authority without falling back",
+    async (failure) => {
+      const receipt = {
+        schemaVersion: 1 as const,
+        profileId: "nemoclaw-openai-inference-v1",
+        providerName: "nemoclaw-openai-api-v1",
+        providerId: failure === "malformed" ? "" : "native-provider-id",
+      };
+      const sandbox = {
+        name: "alpha",
+        agent: "openclaw",
+        gatewayName: "nemoclaw",
+        provider: failure === "mismatched" ? "anthropic-prod" : "openai-api",
+        model: "selected-model",
+        nativeHostedProviderAttachment: receipt,
+      } as SandboxEntry;
+      const observeInferenceRoute = vi.fn();
+      const verify = vi.fn(async () => {
+        throw new Error("Provider identity changed");
+      });
+      const invoke = vi.fn();
+      const providerProbe = vi.fn();
+      const snapshot = await collectSandboxStatusSnapshot("alpha", {
+        deps: {
+          getSandbox: () => sandbox,
+          listPublishedSandboxesAcrossGatewayRoots: () => [sandbox],
+          reconcile: async () => ({ state: "present", output: "Phase: Ready" }),
+          inferenceRouteObserver: { observeInferenceRoute },
+          probeProviderHealthImpl: providerProbe,
+          probeSandboxInferenceInvocationImpl: invoke,
+          verifyNativeHostedProviderAttachmentImpl: verify,
+        },
+      } as never);
+      expect(observeInferenceRoute).not.toHaveBeenCalled();
+      expect(invoke).not.toHaveBeenCalled();
+      expect(providerProbe).not.toHaveBeenCalled();
+      expect(snapshot.inferenceHealth).toMatchObject({ ok: false, probed: false });
+    },
+  );
+
+  it("ignores a shared-route protocol mismatch for a native NVIDIA attachment", async () => {
+    const sandbox = {
+      name: "alpha",
+      agent: "openclaw",
+      gatewayName: "nemoclaw",
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      preferredInferenceApi: "openai-completions",
+      nativeNvidiaProviderAttachment: {
+        schemaVersion: 1,
+        profileId: "nemoclaw-nvidia-inference-v1",
+        providerName: "nemoclaw-nvidia-prod-v1",
+        providerId: "provider-123",
+      },
+    } as SandboxEntry;
+    const observeInferenceRoute = vi.fn(
+      async () =>
+        ({
+          ok: false,
+          error: {
+            kind: "schema",
+            reason: "protocol_mismatch",
+            message: "The OpenShell CLI and gateway inference schemas do not match.",
+          },
+        }) as const,
+    );
+    const invoke = vi.fn(async () => ({ ok: true }) as const);
+
+    const snapshot = await collectSandboxStatusSnapshot("alpha", {
+      deps: {
+        getSandbox: () => sandbox,
+        listPublishedSandboxesAcrossGatewayRoots: () => [sandbox],
+        reconcile: async () => ({ state: "present", output: "Phase: Ready" }),
+        inferenceRouteObserver: { observeInferenceRoute },
+        probeProviderHealthImpl: () => null,
+        probeSandboxInferenceInvocationImpl: invoke,
+        verifyNativeNvidiaProviderAttachmentImpl: async () => undefined,
+      },
+    } as never);
+
+    expect(observeInferenceRoute).not.toHaveBeenCalled();
+    expect(snapshot.rpcIssue).toBeNull();
+    expect(invoke).toHaveBeenCalledOnce();
+    expect(snapshot.inferenceHealth).toMatchObject({ ok: true, probed: true });
+  });
+
+  it("reports a missing native NVIDIA attachment before probing inference", async () => {
+    liveGatewayInference("compatible-endpoint", "other/model");
+    const sandbox = {
+      name: "alpha",
+      agent: "openclaw",
+      gatewayName: "nemoclaw",
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      nativeNvidiaProviderAttachment: {
+        schemaVersion: 1,
+        profileId: "nemoclaw-nvidia-inference-v1",
+        providerName: "nemoclaw-nvidia-prod-v1",
+        providerId: "provider-123",
+      },
+    } as SandboxEntry;
+    const invoke = vi.fn(async () => ({ ok: true }) as const);
+    const probeProvider = vi.fn(() => null);
+    const verifyAttachment = vi.fn(async () => {
+      throw new Error(
+        "Sandbox 'alpha' does not have its native NVIDIA inference provider attached.",
+      );
+    });
+
+    const snapshot = await collectSandboxStatusSnapshot("alpha", {
+      deps: {
+        getSandbox: () => sandbox,
+        listPublishedSandboxesAcrossGatewayRoots: () => [sandbox],
+        reconcile: async () => ({ state: "present", output: "Phase: Ready" }),
+        probeProviderHealthImpl: probeProvider,
+        probeSandboxInferenceInvocationImpl: invoke,
+        verifyNativeNvidiaProviderAttachmentImpl: verifyAttachment,
+      },
+    } as never);
+
+    expect(verifyAttachment).toHaveBeenCalledOnce();
+    expect(probeProvider).not.toHaveBeenCalled();
+    expect(invoke).not.toHaveBeenCalled();
+    expect(snapshot.inferenceHealth).toMatchObject({
+      ok: false,
+      probed: false,
+      providerLabel: "Native NVIDIA provider attachment",
+      detail: expect.stringContaining(
+        "Native NVIDIA provider 'nemoclaw-nvidia-prod-v1' is unavailable for sandbox 'alpha'",
+      ),
+    });
+    expect(snapshot.inferenceHealth?.detail).toContain(
+      "Recreate the sandbox to restore native NVIDIA inference.",
+    );
+  });
+
+  it("reports the recorded native NVIDIA route when the shared route differs", async () => {
+    liveGatewayInference("compatible-endpoint", "other/model");
+    const sandbox = {
+      name: "alpha",
+      agent: "openclaw",
+      gatewayName: "nemoclaw",
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      nativeNvidiaProviderAttachment: {
+        schemaVersion: 1,
+        profileId: "nemoclaw-nvidia-inference-v1",
+        providerName: "nemoclaw-nvidia-prod-v1",
+        providerId: "provider-123",
+      },
+    } as SandboxEntry;
+    const options = snapshotDeps(sandbox);
+
+    const report = await getSandboxStatusReport("alpha", {
+      ...options.deps,
+      getGatewayPresets: async () => [],
+    } as never);
+
+    expect(report.provider).toBe("nvidia-prod");
+    expect(report.model).toBe("nvidia/nemotron-3-super-120b-a12b");
+    expect(report.recordedRoute).toEqual({
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+    });
+    expect(report.liveRoute).toBeNull();
+    expect(report.routeDrift).toBeNull();
   });
 });

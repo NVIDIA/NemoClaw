@@ -1,0 +1,33 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+id: nemoclaw-nvidia-inference-v1
+display_name: NemoClaw NVIDIA Hosted Inference
+description: Native NVIDIA hosted inference access for NemoClaw agents
+category: inference
+credentials:
+  - name: api_key
+    description: NVIDIA hosted inference API key
+    env_vars:
+      - NVIDIA_INFERENCE_API_KEY
+    required: true
+    auth_style: bearer
+    header_name: authorization
+    query_param: ''
+endpoints:
+  - host: integrate.api.nvidia.com
+    port: 443
+    protocol: rest
+    enforcement: enforce
+    rules:
+      - allow: { method: GET, path: "/v1/models" }
+      - allow: { method: POST, path: "/v1/chat/completions" }
+binaries:
+  - /usr/local/bin/node
+  - /usr/bin/node
+  - /opt/hermes/.venv/bin/python
+  - /opt/hermes/.venv/bin/python3
+  - /opt/venv/bin/python3
+  - /usr/local/bin/curl
+  - /usr/bin/curl
+inference_capable: true

@@ -6,6 +6,7 @@ import { createRequire } from "node:module";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { managedStartupE2eProfile } from "../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
+import type { AgentDefinition } from "../agent/defs";
 import {
   serializedHostLocalInferenceReceipt,
   serializedLlamaCppHostLocalInferenceReceipt,
@@ -19,11 +20,13 @@ import {
   type ManagedImageAgent,
 } from "./managed-image/contract";
 import { encodeManagedStartupProfile } from "./managed-startup/profile";
+import { gatewayReachableCompatibleEndpointUrl } from "./inference-providers/compatible-endpoint-gateway-route";
 
 const requireDist = createRequire(import.meta.url);
 const onboardSession = requireDist("../state/onboard-session.js");
 const {
   buildCreatedSandboxRegistryEntry,
+  nativeInferenceCreateIntentFields,
   prepareCreatedSandboxRegistration,
   registerCreatedSandbox,
   registerPreparedCreatedSandbox,
@@ -93,6 +96,88 @@ function createdRegistryEntryInput(
 }
 
 describe("buildCreatedSandboxRegistryEntry", () => {
+  it("omits stale Local NIM native attachments while retaining standalone vLLM attachments", () => {
+    const { nativeLocalIdentity } = requireDist(
+      "../inference/native-local/contract.ts",
+    ) as typeof import("../inference/native-local/contract");
+    const binding = {
+      provider: "vllm-local" as const,
+      endpointUrl: "http://host.openshell.internal:8000/v1",
+      credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+      authMode: "sentinel" as const,
+      gatewayName: "nemoclaw",
+      sandboxName: "demo",
+    };
+    const attachment = {
+      ...binding,
+      ...nativeLocalIdentity(binding),
+      schemaVersion: 1 as const,
+      providerId: "vllm-provider",
+    };
+    const makeEntry = (nimContainer: string | null) => {
+      const base = createdRegistryEntryInput();
+      return buildCreatedSandboxRegistryEntry({
+        ...base,
+        agent: { name: "langchain-deepagents-code" } as AgentDefinition,
+        nativeLocalProviderAttachment: attachment,
+        inferenceSelection: {
+          ...base.inferenceSelection,
+          provider: "vllm-local",
+          endpointUrl: binding.endpointUrl,
+          nimContainer,
+        },
+      });
+    };
+    const nim = makeEntry("nemoclaw-nim-owned");
+    const standalone = makeEntry(null);
+
+    expect(nim.nativeLocalProviderAttachment).toBeUndefined();
+    expect(standalone.nativeLocalProviderAttachment).toEqual(attachment);
+    expect(
+      nativeInferenceCreateIntentFields("vllm-local", nim).nativeLocalProviderAttachment,
+    ).toBeUndefined();
+    expect(
+      nativeInferenceCreateIntentFields("vllm-local", standalone).nativeLocalProviderAttachment,
+    ).toEqual(attachment);
+    expect(
+      nativeInferenceCreateIntentFields("vllm-local", standalone, true)
+        .nativeLocalProviderAttachment,
+    ).toBeUndefined();
+  });
+
+  it("records only an exact native NVIDIA provider identity", () => {
+    const attachment = {
+      schemaVersion: 1 as const,
+      profileId: "nemoclaw-nvidia-inference-v1" as const,
+      providerName: "nemoclaw-nvidia-prod-v1" as const,
+      providerId: "11111111-2222-4333-8444-555555555555",
+    };
+    const entry = buildCreatedSandboxRegistryEntry(
+      createdRegistryEntryInput({
+        inferenceSelection: {
+          model: "nvidia/nemotron-3-super-120b-a12b",
+          provider: "nvidia-prod",
+          endpointUrl: null,
+          credentialEnv: null,
+          preferredInferenceApi: null,
+          compatibleEndpointReasoning: null,
+          compatibleEndpointReasoningEffort: null,
+          nimContainer: null,
+        },
+        nativeNvidiaProviderAttachment: attachment,
+      }),
+    );
+
+    expect(entry.nativeNvidiaProviderAttachment).toEqual(attachment);
+    expect(() =>
+      buildCreatedSandboxRegistryEntry(
+        createdRegistryEntryInput({
+          nativeNvidiaProviderAttachment: { ...attachment, providerId: "" },
+        }),
+      ),
+    ).toThrow(/native NVIDIA provider attachment failed closed validation/u);
+  });
+
   it("records the resolved custom OpenShell gateway state directory (#10665)", () => {
     const entry = buildCreatedSandboxRegistryEntry(
       createdRegistryEntryInput({
@@ -142,7 +227,10 @@ describe("buildCreatedSandboxRegistryEntry", () => {
 
     expect(() =>
       registerCreatedSandbox({
-        ...createdRegistryEntryInput({ imageTag: workload.reference, workload }),
+        ...createdRegistryEntryInput({
+          imageTag: workload.reference,
+          workload,
+        }),
         registerSandbox,
       }),
     ).toThrow(/agent identity does not match its managed workload receipt/u);
@@ -235,7 +323,12 @@ describe("buildCreatedSandboxRegistryEntry", () => {
       hermesToolGateways: ["filesystem"],
       hermesDashboardState: {
         enabled: true,
-        config: { enabled: true, port: 18790, internalPort: 19123, tuiEnabled: true },
+        config: {
+          enabled: true,
+          port: 18790,
+          internalPort: 19123,
+          tuiEnabled: true,
+        },
       },
       dashboardPort: 18789,
       lifecycleGeneration: "22222222-2222-4222-8222-222222222222",
@@ -340,6 +433,21 @@ describe("buildCreatedSandboxRegistryEntry", () => {
     expect(entry.toolDisclosure).toBe("progressive");
     expect(entry.observabilityEnabled).toBe(false);
     expect(entry.dcodeAutoApprovalMode).toBeUndefined();
+
+    const sessionRead = vi.spyOn(onboardSession, "loadSession").mockReturnValue({
+      sandboxName: "demo",
+      agent: null,
+      messagingPlan: null,
+      checkpoint: { messaging: { kind: "declined" } },
+    });
+    const knownEmptyEntry = buildCreatedSandboxRegistryEntry(createdRegistryEntryInput());
+    expect(knownEmptyEntry.messaging?.plan).toMatchObject({
+      sandboxName: "demo",
+      agent: "openclaw",
+      channels: [],
+      credentialBindings: [],
+    });
+    sessionRead.mockRestore();
   });
 
   it("normalizes invalid preferred inference API values", () => {
@@ -810,5 +918,89 @@ describe("registerCreatedSandbox", () => {
       }),
     ).toThrow(/not registered/u);
     expect(registerSandbox).not.toHaveBeenCalled();
+  });
+});
+
+describe("Hermes native attachment registration", () => {
+  const makeInput = (
+    attachmentAgent?: "hermes",
+    sandboxName = "demo",
+    endpointUrl = "http://host.openshell.internal:8000/v1",
+  ) => {
+    const { nativeLocalIdentity } = requireDist(
+      "../inference/native-local/contract.ts",
+    ) as typeof import("../inference/native-local/contract");
+    const binding = {
+      provider: "compatible-endpoint" as const,
+      endpointUrl,
+      credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+      authMode: "authenticated" as const,
+      gatewayName: "nemoclaw",
+      sandboxName,
+      ...(attachmentAgent ? { agent: attachmentAgent } : {}),
+    };
+    const base = createdRegistryEntryInput();
+    return createdRegistryEntryInput({
+      agent: { name: "hermes" } as AgentDefinition,
+      hermesApiPort: 8642,
+      inferenceSelection: {
+        ...base.inferenceSelection,
+        provider: binding.provider,
+        endpointUrl: binding.endpointUrl,
+      },
+      nativeLocalProviderAttachment: {
+        ...binding,
+        ...nativeLocalIdentity(binding),
+        schemaVersion: 1,
+        providerId: "fixture-provider",
+      },
+    });
+  };
+  it.each(["localhost", "127.0.0.1", "[::1]"])(
+    "retains the raw %s selection and its gateway-mapped Hermes attachment",
+    (host) => {
+      const rawEndpoint = `http://${host}:11434/v1/`;
+      const mapped = gatewayReachableCompatibleEndpointUrl("compatible-endpoint", rawEndpoint);
+      expect(mapped).toBe("http://host.openshell.internal:11434/v1");
+      const input = makeInput("hermes", "demo", mapped as string);
+      input.inferenceSelection = { ...input.inferenceSelection, endpointUrl: rawEndpoint };
+      const registered = buildCreatedSandboxRegistryEntry(input);
+      expect(registered.endpointUrl).toBe(rawEndpoint);
+      expect(registered.nativeLocalProviderAttachment).toEqual(input.nativeLocalProviderAttachment);
+    },
+  );
+  it.each(["http://localhost:11436/v1", "http://localhost:11434/other"])(
+    "rejects an attachment that does not map from %s",
+    (endpointUrl) => {
+      const input = makeInput("hermes", "demo", "http://host.openshell.internal:11434/v1");
+      input.inferenceSelection = { ...input.inferenceSelection, endpointUrl };
+      expect(() => buildCreatedSandboxRegistryEntry(input)).toThrow(
+        "does not match the selected Hermes sandbox",
+      );
+    },
+  );
+  it("accepts the existing qualifier's canonical trailing slash while preserving the selection", () => {
+    const input = makeInput("hermes");
+    input.inferenceSelection = {
+      ...input.inferenceSelection,
+      endpointUrl: "http://host.openshell.internal:8000/v1/",
+    };
+    const registered = buildCreatedSandboxRegistryEntry(input);
+    expect(registered.endpointUrl).toBe(input.inferenceSelection.endpointUrl);
+    expect(registered.nativeLocalProviderAttachment).toEqual(input.nativeLocalProviderAttachment);
+  });
+  it("retains its exact Hermes provider receipt", () => {
+    const input = makeInput("hermes");
+    expect(buildCreatedSandboxRegistryEntry(input).nativeLocalProviderAttachment).toEqual(
+      input.nativeLocalProviderAttachment,
+    );
+  });
+  it.each([
+    { name: "another agent", input: () => makeInput() },
+    { name: "a sibling sandbox", input: () => makeInput("hermes", "sibling") },
+  ])("rejects an attachment scoped to $name", ({ input }) => {
+    expect(() => buildCreatedSandboxRegistryEntry(input())).toThrow(
+      "does not match the selected Hermes sandbox",
+    );
   });
 });

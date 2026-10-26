@@ -9,8 +9,19 @@
 // env or global session. Extracted from rebuild.ts so the trust-boundary logic
 // is auditable on its own (PRA-5).
 
+import {
+  normalizeNativeLocalProviderAttachment,
+  type NativeLocalProviderAttachment,
+} from "../../inference/native-local/contract";
 import { CLI_NAME } from "../../cli/branding";
 import { RD as _RD, D, R } from "../../cli/terminal-style";
+import {
+  normalizeNativeNvidiaProviderAttachment,
+  type NativeNvidiaProviderAttachment,
+} from "../../inference/native-nvidia/contract";
+import { recordedNativeProviderAttachment } from "../../inference/native-provider/recorded-selection";
+import { hostedNativeProviderForAttachment } from "../../inference/native-provider/hosted-attachment";
+import type { NativeProviderAttachment } from "../../inference/native-provider/contract";
 import { normalizeInferenceSelection } from "../../inference/selection";
 import type { ReasoningEffort } from "../../onboard/reasoning-mode";
 import type { RegistryInferenceRoute } from "../../onboard/rebuild-route-handoff";
@@ -42,6 +53,8 @@ const hermesProviderAuth = require("../../hermes-provider-auth") as {
  * from ambient selection env.
  */
 export interface RebuildResumeConfig {
+  readonly nativeNvidiaProviderAttachment?: NativeNvidiaProviderAttachment;
+  readonly nativeHostedProviderAttachment?: NativeProviderAttachment;
   readonly agent: string | null;
   readonly provider: string;
   readonly model: string;
@@ -58,6 +71,7 @@ export interface RebuildResumeConfig {
    */
   readonly pinEndpoint: boolean;
   readonly endpointUrl: string | null;
+  readonly nativeLocalProviderAttachment?: NativeLocalProviderAttachment;
   /** Durable pre-delete route used only for credential-safe provider recovery. */
   readonly registryInferenceRoute: RegistryInferenceRoute | null;
   readonly ambient: AmbientRecreateEnvAssessment;
@@ -92,6 +106,22 @@ export function prepareRebuildResumeConfig(
   log: (msg: string) => void,
   bail: (msg: string, code?: number) => never,
 ): RebuildResumeConfig | null {
+  let nativeAttachment;
+  try {
+    nativeAttachment = recordedNativeProviderAttachment({ ...sb, provider: sb.provider });
+  } catch {
+    bail("Malformed native provider attachment; sandbox is untouched");
+    return null;
+  }
+  const nativeNvidiaProviderAttachment = normalizeNativeNvidiaProviderAttachment(
+    sb.nativeNvidiaProviderAttachment,
+  );
+  const nativeHostedProviderAttachment = sb.nativeHostedProviderAttachment
+    ? nativeAttachment
+    : undefined;
+  const hostedDefinition = nativeHostedProviderAttachment
+    ? hostedNativeProviderForAttachment(nativeHostedProviderAttachment)
+    : undefined;
   const ambient = assessRebuildAmbientEnv(sandboxName, rebuildAgent, log);
 
   const session = onboardSession.loadSession();
@@ -231,13 +261,41 @@ export function prepareRebuildResumeConfig(
     );
     return null;
   }
-  const credentialEnv = getRebuildCredentialEnvFromRegistry(
-    trustedSelection.provider,
-    trustedSelection.credentialEnv,
-    endpointUrl,
+  if (hostedDefinition) {
+    const expectedEndpoint = hostedDefinition.custom?.endpointUrl ?? hostedDefinition.endpoint;
+    if (
+      (sb.endpointUrl &&
+        sb.endpointUrl.replace(/\/+$/, "") !== expectedEndpoint.replace(/\/+$/, "")) ||
+      (sb.credentialEnv &&
+        sb.credentialEnv !==
+          (hostedDefinition.custom?.credentialEnv ?? hostedDefinition.credentialEnv))
+    ) {
+      bail(
+        "Native provider selection does not match recorded credential or endpoint; sandbox is untouched",
+      );
+      return null;
+    }
+    endpointUrl = expectedEndpoint;
+  }
+  const nativeLocalProviderAttachment = normalizeNativeLocalProviderAttachment(
+    sb.nativeLocalProviderAttachment,
   );
+  if (sb.nativeLocalProviderAttachment !== undefined && !nativeLocalProviderAttachment) {
+    bail("Malformed native local provider attachment; sandbox is untouched");
+    return null;
+  }
+  const credentialEnv =
+    hostedDefinition?.custom?.credentialEnv ??
+    hostedDefinition?.credentialEnv ??
+    getRebuildCredentialEnvFromRegistry(
+      trustedSelection.provider,
+      trustedSelection.credentialEnv,
+      endpointUrl,
+    );
 
   return {
+    ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),
+    ...(nativeHostedProviderAttachment ? { nativeHostedProviderAttachment } : {}),
     agent: rebuildAgent,
     provider: trustedSelection.provider,
     model: trustedSelection.model,
@@ -252,6 +310,7 @@ export function prepareRebuildResumeConfig(
     pinEndpoint: rebuildEndpoint.known || explicitTargetEndpoint !== null,
     endpointUrl,
     registryInferenceRoute,
+    ...(nativeLocalProviderAttachment ? { nativeLocalProviderAttachment } : {}),
     ambient,
   };
 }

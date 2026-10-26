@@ -46,6 +46,35 @@ When a defect escapes normal controls, record the product cause, detection gap, 
 prevention evidence in the issue or pull request. Search a bounded set of sibling paths for the same
 failure class. Fix sibling instances only when they share the cause and fit the current scope.
 
+### Native llama.cpp cancellation on Docker
+
+Run the opt-in cancellation regression against an approved local Docker daemon, a cached
+SmolLM2-135M Q4_K_M model, and the approved native CPU image. The image must contain stock curl
+and llama.cpp revision `8e7f22b67ef4667b4ddd50230771287f328cfb3f`; the test verifies that revision.
+Build the CLI, then set the image and model paths explicitly:
+
+```bash
+npm run build:cli
+NEMOCLAW_NATIVE_LLAMA_TEST_IMAGE='<approved-local-image-id>' \
+NEMOCLAW_NATIVE_LLAMA_TEST_MODEL='<absolute-path-to-cached-model.gguf>' \
+NEMOCLAW_NATIVE_LLAMA_TEST_EVIDENCE='<absolute-path-to-result.json>' \
+npx vitest run --project package-contract test/package-contract/inference/llama-cpp-native-cancellation.test.ts
+```
+
+The test starts the compiled TypeScript bridge and one native server on an owned internal
+network, with unpublished ports. Five cancellations cross the bridge and the real Docker daemon.
+Docker events and generation metrics verify remote client exit and stopped generation; the next
+completion must recover normal latency. The suite also checks bearer rejection, request-client
+isolation, SIGTERM cleanup, and closed admission when Docker refuses remote cleanup. The deadline
+case invokes the production 900-second timer callback after consuming an SSE chunk, while cleanup
+still uses real Docker. The fixture removes its containers, network, and temporary credentials and
+retains the cached image and model.
+
+The native llama.cpp image PR workflow supplies the pinned model and runs this test against each
+image it builds, on CPU. Other jobs skip it when the image or model variable is absent.
+A passing manual run proves the bridge cancellation path with the approved CPU image; it does not prove OpenShell
+onboarding, production CUDA image qualification, or the complete supported E2E fanout.
+
 ## Test contracts
 
 Do not read shipped YAML, JSON, manifests, workflows, or E2E runtime files only to assert literal
@@ -76,12 +105,39 @@ distinct quality value. Do not move assertions into helpers, aggregate objects, 
 After a valid reduction, run `npm run e2e:assertions:update` and include the lower baseline in the
 same change. The ratchet rejects growth and stale baselines.
 
-Maintainer-approved exceptions are recorded in `ci/e2e-assertion-growth-exceptions.json`.
-Each entry binds a PR number to SHA-256 digests of the exact base and candidate budget files.
-Local hooks and candidate CI use the branch policy. The independent GitHub growth check uses only trusted-base
-policy and the event's PR number; a candidate cannot authorize its own independent check.
-A new exception must either land on `main` first or have its expected independent-check failure
-explicitly waived by a maintainer. Remove the entry after its PR merges.
+Maintainer-approved exceptions can use `changeSha256` in `ci/e2e-assertion-growth-exceptions.json`.
+This digest binds every assertion-count and file-inventory change, including reductions, to a PR.
+Formatting and unrelated base changes do not invalidate it. Changed deltas, paths, or reference metadata do.
+Legacy entries with exact `baseBudgetSha256` and `headBudgetSha256` remain supported and retain their original scope.
+Do not convert a legacy approval without maintainer acceptance of the new scope.
+
+The failed growth check prints the change digest. A maintainer can authorize it on the affected PR:
+
+```text
+NemoClaw-E2E-Growth: approve <change-sha256>
+```
+
+Post the command as the entire comment, without a code fence or explanatory text.
+Edited comments are ineligible because moderation can preserve the original author. Post a new record to change a decision.
+Inspect the reported budget changes before recording approval.
+A request to repair CI does not itself authorize increasing the assertion budget. Use `revoke` instead of `approve` to revoke it.
+The independent check reads paginated comments from GitHub and verifies each author's current maintain
+or admin role. Bot comments and candidate-defined approvals cannot authorize that check.
+The last matching maintainer record wins. Deleting a record removes it from subsequent evaluations.
+Creating, editing, or deleting an approval record automatically refreshes the growth check for the current PR commit.
+Both PR events and approval changes mark the current commit's required `checks` status pending before running trusted-base checks.
+The independent status uses the repository's existing required context. The native CI job produces a check run;
+this workflow writes a separate commit status. GitHub requires [both records to pass when their shared name is required](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/troubleshooting-required-status-checks).
+After invalidation, a failed or incomplete check cannot restore the earlier green commit status.
+PR and comment evaluations run serially per PR and read current comments instead of replaying old decisions.
+Comments quoting the approval marker also trigger reevaluation, but malformed or quoted records are ignored when reading approvals. A quote does not revoke a valid approval. Keeping these events eligible ensures the latest queued evaluation still reads a revocation if GitHub replaces an older pending run in the concurrency group.
+No policy PR or manual rerun is required for an approval change.
+If cancellation or runner loss prevents the final status report, the pending status continues to block merging. Its Details link identifies the interrupted workflow. After diagnosing the interruption, rerun that workflow under the bounded retry policy; it rereads the current PR and approvals before replacing the status. Ordinary validation failures and cancellations that reach the final reporting step publish failure.
+Normal code review and the assertion census still apply. This record authorizes only the stated budget delta.
+
+Local hooks and candidate CI may use the matching branch entry for preliminary validation.
+Independent CI accepts trusted-base entries or the GitHub maintainer record, never a candidate's own exception.
+Preserve reference metadata and every retained file's budget. Remove branch entries after their PR merges.
 
 New test files must use TypeScript. Each plugin test must execute at least one Vitest `expect`
 assertion. The repository test configuration owns automatic mock and environment cleanup; restore
@@ -100,3 +156,16 @@ first on `PATH` and exposes `gtar` as `tar` only to the Vitest process through a
 This workflow runs only after pushes to `main`; candidate-controlled and manually dispatched code
 does not receive its package credential. WSL installs `gnu-coreutils` for fixtures that require GNU
 utility behavior, keeps Ubuntu's default utilities intact, and stops Docker before non-live tests.
+
+Some tests also run host `python3` helper scripts. The same job installs their packages from
+[`ci/platform-vitest-macos-requirements.lock`](../ci/platform-vitest-macos-requirements.lock), which
+owns the authoritative list. Use a virtual environment with the workflow's Python version.
+Install the packages before you run the `cli` project:
+
+```bash
+python3 -m pip install --requirement ci/platform-vitest-macos-requirements.lock
+```
+
+A host without those packages fails on the helper's empty output rather than on the import error, so
+the failure does not name the missing package. `mcp-bridge-adapter-hermes.test.ts` reports
+`expected '' to be 'registered'` when `python3` cannot import `yaml`.

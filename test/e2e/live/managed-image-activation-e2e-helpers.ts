@@ -17,9 +17,11 @@ import {
   SHIPPED_MANAGED_IMAGE_AGENTS,
   type ShippedManagedImageAgent,
 } from "../../../src/lib/onboard/managed-image/contract.ts";
-import type { ExternalImageAgent } from "../../../src/lib/onboard/workload/source.ts";
+import {
+  EXTERNAL_IMAGE_AGENTS,
+  type ExternalImageAgent,
+} from "../../../src/lib/onboard/workload/source.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
-import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { approveOpenClawAdminScope } from "./openclaw-admin-scope.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import {
@@ -33,11 +35,15 @@ import {
 } from "../fixtures/clients/index.ts";
 import { expect } from "../fixtures/e2e-test.ts";
 import {
-  type DockerBuildGuard,
-  assertNoDockerfileBuild,
-  createDockerBuildGuard,
+  type ContainerBuildGuard,
+  assertNoLocalImageBuild,
+  countLocalImageBuildCommands,
+  createContainerBuildGuard,
 } from "../fixtures/docker-build-guard.ts";
-import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
+import {
+  startFakeOpenAiCompatibleServer,
+  type FakeOpenAiCompatibleRequest,
+} from "../fixtures/fake-openai-compatible.ts";
 import { captureIssue4462FailureDiagnostics } from "../fixtures/issue-4462-diagnostics.ts";
 import { initializeGatewayForCleanup } from "../fixtures/gateway-runtime-start.ts";
 import type { LifecyclePhaseFixture } from "../fixtures/phases/lifecycle.ts";
@@ -97,10 +103,6 @@ const EXTERNAL_IMAGE_SANDBOX_NAMES: Record<ExternalImageAgent, string> = {
   openclaw: "ext-img-openclaw",
   hermes: "ext-img-hermes",
 };
-const EXTERNAL_IMAGE_AGENTS = [
-  "openclaw",
-  "hermes",
-] as const satisfies readonly ExternalImageAgent[];
 type ContainerEngine = "docker" | "podman";
 type RuntimeFixtures = {
   readonly artifacts: ArtifactSink;
@@ -133,9 +135,9 @@ export function managedActivationOnboardArgs(
 }
 
 export function externalImageActivationAgents(
-  containerEngine: ContainerEngine,
+  _containerEngine: ContainerEngine,
 ): readonly ExternalImageAgent[] {
-  return containerEngine === "docker" ? EXTERNAL_IMAGE_AGENTS : [];
+  return EXTERNAL_IMAGE_AGENTS;
 }
 
 export function externalImageActivationOnboardArgs(
@@ -201,7 +203,7 @@ function exactCatalog(
 }
 
 function commandEnv(
-  guard: DockerBuildGuard,
+  guard: ContainerBuildGuard,
   catalogPath: string,
   endpointUrl: string,
 ): NodeJS.ProcessEnv {
@@ -303,27 +305,48 @@ function replaceExternalImageReceipt(sandboxName: string, workload: Record<strin
   fs.writeFileSync(registryPath, `${JSON.stringify(registry, null, 2)}\n`, "utf8");
 }
 
-async function inspectDockerImageId(
+export function normalizeExternalImageRuntimeId(
+  containerEngine: ContainerEngine,
+  value: string,
+): string {
+  const normalized = value.trim();
+  if (containerEngine === "podman" && /^[a-f0-9]{64}$/u.test(normalized)) {
+    return `sha256:${normalized}`;
+  }
+  return normalized;
+}
+
+async function inspectRuntimeImageId(
   host: HostCliClient,
+  containerEngine: ContainerEngine,
   reference: string,
   artifactName: string,
   env: NodeJS.ProcessEnv,
 ): Promise<Awaited<ReturnType<HostCliClient["command"]>>> {
-  return await host.command("docker", ["image", "inspect", "--format", "{{.Id}}", reference], {
-    artifactName,
-    env,
-    timeoutMs: 30_000,
-  });
+  const result = await host.command(
+    containerEngine,
+    ["image", "inspect", "--format", "{{.Id}}", reference],
+    {
+      artifactName,
+      env,
+      timeoutMs: 30_000,
+    },
+  );
+  return {
+    ...result,
+    stdout: normalizeExternalImageRuntimeId(containerEngine, result.stdout),
+  };
 }
 
-async function inspectDockerSandboxContainerId(
+async function inspectRuntimeSandboxContainerId(
   host: HostCliClient,
+  containerEngine: ContainerEngine,
   sandboxName: string,
   artifactName: string,
   env: NodeJS.ProcessEnv,
 ): Promise<Awaited<ReturnType<HostCliClient["command"]>>> {
   return await host.command(
-    "docker",
+    containerEngine,
     ["ps", "-aq", "--filter", `label=openshell.ai/sandbox-name=${sandboxName}`],
     { artifactName, env, timeoutMs: 30_000 },
   );
@@ -375,13 +398,15 @@ export function externalImageActivationMatches(input: {
   );
 }
 
-async function runAgentTurn(
+export async function runManagedActivationAgentTurn(
   sandbox: SandboxClient,
   agent: ShippedManagedImageAgent,
   sandboxName: string,
   phase: "before" | "boundary" | "after",
   env: NodeJS.ProcessEnv,
+  observeRequests?: () => readonly FakeOpenAiCompatibleRequest[],
 ): Promise<void> {
+  const requestStart = observeRequests?.().length ?? 0;
   const command = agentTurnCommand(agent, `managed-${agent}-${phase}-${Date.now()}`);
   const postRestartScript = managedActivationPostRestartAgentTurnScript(
     agent,
@@ -405,6 +430,19 @@ async function runAgentTurn(
   expect(result.exitCode === 0 && /\bPONG\b/iu.test(resultText(result)), resultText(result)).toBe(
     true,
   );
+  observeRequests &&
+    expect(
+      observeRequests()
+        .slice(requestStart)
+        .some(
+          (request) =>
+            request.auth === "ok" &&
+            request.method === "POST" &&
+            request.path === "/v1/chat/completions" &&
+            request.model === MODEL,
+        ),
+      `${sandboxName} ${phase} turn must send a new authenticated completion to its selected endpoint and model`,
+    ).toBe(true);
 }
 
 export function managedOpenClawSubagentCommand(sessionId: string): string[] {
@@ -541,7 +579,7 @@ async function proveHermesRestartSecretBoundary(
       !output.includes(HERMES_BOUNDARY_SENTINEL),
     output,
   ).toBe(true);
-  await runAgentTurn(sandbox, "hermes", sandboxName, "boundary", env);
+  await runManagedActivationAgentTurn(sandbox, "hermes", sandboxName, "boundary", env);
 }
 
 export async function preclean(
@@ -636,7 +674,7 @@ async function verifyExactCleanup(
   env: NodeJS.ProcessEnv,
 ): Promise<void> {
   const containerEngine = env.NEMOCLAW_GATEWAY_RUNTIME === "podman" ? "podman" : "docker";
-  const settled = await pollUntil({
+  await pollUntil({
     artifactPrefix: `post-destroy-absence-${sandboxName}`,
     deadlineMs: 60_000,
     delayMs: 1_000,
@@ -669,14 +707,8 @@ async function verifyExactCleanup(
     accept: ({ containers, openshellList }) =>
       !outputContainsSandbox(openshellList, sandboxName) && containers.stdout.trim() === "",
   });
-  const { containers, openshellList } = settled.value;
-  assertExitZero(openshellList, "list OpenShell sandboxes after managed activation destroy");
-  expect(outputContainsSandbox(openshellList, sandboxName), resultText(openshellList)).toBe(false);
-  assertExitZero(
-    containers,
-    `inspect ${containerEngine} inventory after managed activation destroy`,
-  );
-  expect(containers.stdout.trim(), resultText(containers)).toBe("");
+  // pollUntil returns only after both successful inventory commands prove
+  // absence. Its terminal and deadline failures already reject this cleanup.
 }
 
 function enterOnboardPhase(progress: TestProgress, agent: ShippedManagedImageAgent): void {
@@ -721,7 +753,7 @@ function enterCleanupPhase(progress: TestProgress, agent: ShippedManagedImageAge
   }
 }
 
-export async function collectOnboardFailureDockerDiagnostics(
+export async function collectOnboardFailureRuntimeDiagnostics(
   artifacts: ArtifactSink,
   host: HostCliClient,
   agent: ShippedManagedImageAgent,
@@ -842,13 +874,14 @@ export async function collectOnboardFailureDockerDiagnostics(
   }
 }
 
-async function qualifyAgent(
+export async function qualifyAgent(
   fixtures: RuntimeFixtures,
-  guard: DockerBuildGuard,
+  guard: ContainerBuildGuard,
   catalogPath: string,
   endpointUrl: string,
   agent: ShippedManagedImageAgent,
   contract: ManagedImageContractV1,
+  observeRequests?: () => readonly FakeOpenAiCompatibleRequest[],
 ): Promise<void> {
   const { artifacts, cleanup, host, lifecycle, progress, sandbox } = fixtures;
   const sandboxName = SANDBOX_NAMES[agent];
@@ -871,13 +904,13 @@ async function qualifyAgent(
   );
   if (onboard.exitCode !== 0) {
     await captureManagedImageOnboardPairingDiagnostics(sandbox, agent, sandboxName, env);
-    await collectOnboardFailureDockerDiagnostics(artifacts, host, agent, sandboxName, env);
+    await collectOnboardFailureRuntimeDiagnostics(artifacts, host, agent, sandboxName, env);
   }
   expect(onboard.exitCode, resultText(onboard)).toBe(0);
   if (agent === "openclaw") {
     await approveOpenClawAdminScope(host, sandbox, sandboxName, env, [API_KEY]);
   }
-  await runAgentTurn(sandbox, agent, sandboxName, "before", env);
+  await runManagedActivationAgentTurn(sandbox, agent, sandboxName, "before", env, observeRequests);
   if (agent === "openclaw") await runOpenClawSubagentTurn(sandbox, sandboxName, env);
   if (agent === "hermes") {
     progress.phase("prove Hermes secret-boundary refusal before native restart");
@@ -909,12 +942,18 @@ async function qualifyAgent(
     redactionValues: [API_KEY],
     timeoutMs: 120_000,
   });
+  if (stop.exitCode !== 0) {
+    await collectOnboardFailureRuntimeDiagnostics(artifacts, host, agent, sandboxName, env);
+  }
   const start = await host.nemoclaw([sandboxName, "start"], {
     artifactName: `${agent}-public-start`,
     env,
     redactionValues: [API_KEY],
     timeoutMs: 10 * 60_000,
   });
+  if (stop.exitCode === 0 && start.exitCode !== 0) {
+    await collectOnboardFailureRuntimeDiagnostics(artifacts, host, agent, sandboxName, env);
+  }
   expect(
     stop.exitCode === 0 && start.exitCode === 0,
     `${resultText(stop)}\n${resultText(start)}`,
@@ -946,7 +985,7 @@ async function qualifyAgent(
     readMarker.exitCode === 0 && readMarker.stdout.trim() === marker,
     resultText(readMarker),
   ).toBe(true);
-  await runAgentTurn(sandbox, agent, sandboxName, "after", env);
+  await runManagedActivationAgentTurn(sandbox, agent, sandboxName, "after", env, observeRequests);
 
   enterCleanupPhase(progress, agent);
   await sandbox.cleanupSandbox(sandboxName, {
@@ -959,11 +998,13 @@ async function qualifyAgent(
 
 async function qualifyExternalImage(
   fixtures: RuntimeFixtures,
-  guard: DockerBuildGuard,
+  guard: ContainerBuildGuard,
+  containerEngine: ContainerEngine,
   catalogPath: string,
   endpointUrl: string,
   agent: ExternalImageAgent,
   contract: ManagedImageContractV1,
+  observeRequests?: () => readonly FakeOpenAiCompatibleRequest[],
 ): Promise<{
   readonly agent: ExternalImageAgent;
   readonly reference: string;
@@ -994,7 +1035,7 @@ async function qualifyExternalImage(
   );
   if (onboard.exitCode !== 0) {
     await captureManagedImageOnboardPairingDiagnostics(sandbox, agent, sandboxName, env);
-    await collectOnboardFailureDockerDiagnostics(artifacts, host, agent, sandboxName, env);
+    await collectOnboardFailureRuntimeDiagnostics(artifacts, host, agent, sandboxName, env);
     return Promise.reject(
       new Error(`external image onboard ${agent} failed:\n${resultText(onboard)}`),
     );
@@ -1003,10 +1044,11 @@ async function qualifyExternalImage(
     artifactNamePrefix: `external-image-${agent}-ready`,
     env,
   });
-  await runAgentTurn(sandbox, agent, sandboxName, "before", env);
+  await runManagedActivationAgentTurn(sandbox, agent, sandboxName, "before", env, observeRequests);
 
-  const beforeInspection = await inspectDockerImageId(
+  const beforeInspection = await inspectRuntimeImageId(
     host,
+    containerEngine,
     contract.reference,
     `external-image-${agent}-identity-before-lifecycle`,
     env,
@@ -1022,8 +1064,9 @@ async function qualifyExternalImage(
     );
   }
   if (agent === "openclaw" && receipt) {
-    const sourceContainer = await inspectDockerSandboxContainerId(
+    const sourceContainer = await inspectRuntimeSandboxContainerId(
       host,
+      containerEngine,
       sandboxName,
       "external-image-openclaw-container-before-drifted-rebuild",
       env,
@@ -1039,8 +1082,9 @@ async function qualifyExternalImage(
         redactionValues: [API_KEY],
         timeoutMs: 10 * 60_000,
       });
-      const retainedContainer = await inspectDockerSandboxContainerId(
+      const retainedContainer = await inspectRuntimeSandboxContainerId(
         host,
+        containerEngine,
         sandboxName,
         "external-image-openclaw-container-after-drifted-rebuild",
         env,
@@ -1076,7 +1120,7 @@ async function qualifyExternalImage(
       // before exercising the same privileged CLI boundary again.
       await approveOpenClawAdminScope(host, sandbox, sandboxName, env, [API_KEY]);
     }
-    await runAgentTurn(sandbox, agent, sandboxName, "after", env);
+    await runManagedActivationAgentTurn(sandbox, agent, sandboxName, "after", env, observeRequests);
     rebuilt = true;
   }
   registryEntry = registryDocument().sandboxes?.[sandboxName];
@@ -1089,8 +1133,9 @@ async function qualifyExternalImage(
     timeoutMs: 15 * 60_000,
   });
   await verifyExactCleanup(host, sandbox, sandboxName, env);
-  const afterInspection = await inspectDockerImageId(
+  const afterInspection = await inspectRuntimeImageId(
     host,
+    containerEngine,
     contract.reference,
     `external-image-${agent}-identity-after-destroy`,
     env,
@@ -1131,11 +1176,11 @@ export async function qualifyManagedImageActivation(fixtures: RuntimeFixtures): 
   const contracts = exactCatalog(catalogPath);
   const containerEngine: ContainerEngine =
     process.env.NEMOCLAW_GATEWAY_RUNTIME === "podman" ? "podman" : "docker";
-  const guard: DockerBuildGuard =
-    containerEngine === "docker"
-      ? createDockerBuildGuard()
-      : { env: buildAvailabilityProbeEnv(), tracePath: "", dispose: () => undefined };
-  cleanup.trackDisposable("remove managed activation build guard", guard.dispose);
+  const guard = createContainerBuildGuard(containerEngine);
+  cleanup.trackDisposable(
+    `remove managed activation ${containerEngine} build guard`,
+    guard.dispose,
+  );
   cleanup.trackGateway(host, GATEWAY, { env: guard.env, timeoutMs: 60_000 });
   const runtimeInfo = await host.command(containerEngine, ["info"], {
     artifactName: `managed-activation-${containerEngine}-info`,
@@ -1148,6 +1193,7 @@ export async function qualifyManagedImageActivation(fixtures: RuntimeFixtures): 
     chatContent: "PONG",
     host: "0.0.0.0",
     model: MODEL,
+    port: 8000,
     progress,
     publicHost: "host.openshell.internal",
     requireAuth: true,
@@ -1175,11 +1221,12 @@ export async function qualifyManagedImageActivation(fixtures: RuntimeFixtures): 
       inference.baseUrl,
       agent,
       contracts.get(agent)!,
+      agent === "hermes" ? inference.requests : undefined,
     );
   }
 
   progress.phase(
-    "prove buildless Docker external-image onboarding, drift rejection, rebuild, and retention",
+    "prove buildless external-image onboarding, drift rejection, rebuild, and retention",
   );
   const externalImages = [];
   for (const agent of externalImageActivationAgents(containerEngine)) {
@@ -1187,22 +1234,24 @@ export async function qualifyManagedImageActivation(fixtures: RuntimeFixtures): 
       await qualifyExternalImage(
         fixtures,
         guard,
+        containerEngine,
         catalogPath,
         inference.baseUrl,
         agent,
         contracts.get(agent)!,
+        agent === "hermes" ? inference.requests : undefined,
       ),
     );
   }
   const trace = fs.existsSync(guard.tracePath) ? fs.readFileSync(guard.tracePath, "utf8") : "";
-  assertNoDockerfileBuild(trace);
-  await artifacts.writeText("docker-argv.log", trace);
-  if (containerEngine === "docker") {
-    await artifacts.writeJson("external-image-activation-summary.json", {
-      agents: externalImages,
-      buildCommands: 0,
-    });
-  }
+  const buildCommands = countLocalImageBuildCommands(trace);
+  assertNoLocalImageBuild(trace, containerEngine);
+  await artifacts.writeText(`${containerEngine}-argv.log`, trace);
+  await artifacts.writeJson("external-image-activation-summary.json", {
+    agents: externalImages,
+    buildCommands,
+    containerEngine,
+  });
   const chatRequests = inference
     .requests()
     .filter((request) => request.method === "POST" && request.path === "/v1/chat/completions");
@@ -1216,7 +1265,7 @@ export async function qualifyManagedImageActivation(fixtures: RuntimeFixtures): 
   await artifacts.writeJson("managed-image-activation-summary.json", {
     agents: SHIPPED_MANAGED_IMAGE_AGENTS,
     agentTurns: chatRequests.length,
-    buildCommands: 0,
+    buildCommands,
     containerEngine,
     catalog: [...contracts.values()].map((contract) => ({
       agent: contract.agent,
@@ -1243,10 +1292,8 @@ export async function qualifyManagedImageActivation(fixtures: RuntimeFixtures): 
   await artifacts.target.complete({
     id: "managed-image-activation",
     agents: SHIPPED_MANAGED_IMAGE_AGENTS,
-    buildCommands: 0,
+    buildCommands,
     exactPublishedDigests: [...contracts.values()].map((contract) => contract.reference),
-    ...(containerEngine === "docker"
-      ? { externalImageDigests: externalImages.map((image) => image.reference) }
-      : {}),
+    externalImageDigests: externalImages.map((image) => image.reference),
   });
 }

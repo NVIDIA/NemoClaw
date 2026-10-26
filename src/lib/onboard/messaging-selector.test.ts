@@ -78,6 +78,13 @@ describe("messaging selector key handling", () => {
     expect(applyMessagingSelectorKey("\r", enabled, channels)).toBe("finish");
   });
 
+  it("treats a raw Ctrl-D as a closed stdin (#12169)", () => {
+    const enabled = new Set<string>(["telegram"]);
+
+    expect(applyMessagingSelectorKey("\u0004", enabled, channels)).toBe("eof");
+    expect([...enabled]).toEqual(["telegram"]);
+  });
+
   it("normalizes complete terminal keypad and extended numeric sequences", () => {
     expect(normalizeMessagingSelectorInput("\x1bOq")).toBe("1");
     expect(normalizeMessagingSelectorInput("\x1b[49;5u")).toBe("1");
@@ -177,6 +184,30 @@ describe("messaging selector key handling", () => {
 
     await expect(selection).rejects.toMatchObject({ code: "EOF" });
     expect(isAnyPromptActive()).toBe(false);
+    expect(input.listenerCount("data")).toBe(0);
+    expect(input.listenerCount("end")).toBe(0);
+    expect(input.listenerCount("close")).toBe(0);
+  });
+
+  it("cancels and restores the terminal when Ctrl-D is pressed in the raw menu (#12169)", async () => {
+    const input = createMockSelectorInput();
+    const output = { write: vi.fn() };
+    Object.defineProperty(process, "stdin", {
+      configurable: true,
+      value: input,
+    });
+    Object.defineProperty(process, "stderr", {
+      configurable: true,
+      value: output,
+    });
+
+    const selection = readMessagingChannelSelection(channels, new Set<string>(), () => {});
+    input.emit("data", "\u0004");
+
+    await expect(selection).rejects.toMatchObject({ code: "EOF" });
+    expect(isAnyPromptActive()).toBe(false);
+    expect(input.setRawMode).toHaveBeenNthCalledWith(1, true);
+    expect(input.setRawMode).toHaveBeenLastCalledWith(false);
     expect(input.listenerCount("data")).toBe(0);
     expect(input.listenerCount("end")).toBe(0);
     expect(input.listenerCount("close")).toBe(0);

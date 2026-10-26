@@ -36,6 +36,11 @@ Review the [Prerequisites](prerequisites) before you begin.
 
 <Steps>
   <Step title="Install NemoClaw for Hermes">
+    The installer and supported CLI operations attempt anonymous completion telemetry to NVIDIA's fixed TEST receiver by default.
+    Run `export NEMOCLAW_DISABLE_TELEMETRY=1` in this shell before installation to suppress collection and delivery.
+    Repeat it in any new shell used for NemoClaw CLI commands.
+    Refer to [Operation Telemetry](/user-guide/hermes/security/best-practices#operation-telemetry) for details.
+
     Run the hosted installer.
 
     ```bash
@@ -189,7 +194,7 @@ Use these details when your first-run path needs more control.
 
   <Accordion title="Use Portable Ollama">
     Hermes Portable uses a current-user rootless Podman container for the selected Ollama model.
-    Before onboarding, complete the [Portable Ollama prerequisites](../inference/set-up-ollama#use-portable-ollama-with-hermes), including the required Podman version check.
+    Before onboarding, complete the [Portable Ollama prerequisites](../inference/local-inference/set-up-ollama#use-portable-ollama-with-hermes), including the required Podman version check.
     This path also requires the Portable preflight to accept the current user's Podman and NVIDIA GPU authority.
     Start fresh onboarding with an explicit Ollama model:
 
@@ -345,13 +350,20 @@ Use these details when your first-run path needs more control.
     NemoClaw validates the key, stores it in a sandbox-scoped OpenShell provider, writes `web.backend: tavily` into the Hermes configuration, and writes only an OpenShell resolver placeholder into the generated environment.
 
     When you authenticate through Nous Portal OAuth, the wizard can also prompt for managed Nous tool gateways such as web search, image generation, audio, browser automation, and managed code execution.
+    When it creates a tool-gateway provider, NemoClaw uses a dedicated credential-only OpenShell provider profile.
+    It uses an opaque broker token instead of the OAuth refresh token.
+    NemoClaw verifies the profile and provider binding before it creates or reuses the provider.
+    It updates a compatible legacy provider in place.
     Those choices add matching Hermes policy presets to the sandbox.
     If you select Tavily Search and the managed Nous web gateway, Tavily becomes the Hermes web search and extract backend.
     NemoClaw removes `nous-web` from the effective managed-tool selection while preserving selected Nous image, audio, browser, and code tools.
     API-key mode is inference-only and does not enable managed tool gateways.
 
     After you select a provider and model, review the summary and apply the configuration.
-    NemoClaw writes Hermes configuration into `/sandbox/.hermes`, routes model traffic through `inference.local`, and starts the Hermes gateway inside the sandbox.
+    NemoClaw writes Hermes configuration into `/sandbox/.hermes` and starts the Hermes gateway inside the sandbox.
+    NVIDIA Endpoints, OpenAI, Anthropic, Gemini, OpenRouter, and Hermes Provider use native endpoints through sandbox-attached OpenShell providers.
+    Custom and local providers retain the shared `inference.local` route.
+    OpenShell keeps upstream credentials outside the sandbox in both cases.
     The Hermes image includes runtime dependencies for supported NemoClaw messaging integrations, the API service, and its health endpoint.
     The base image does not include unsupported Hermes integrations.
 
@@ -400,7 +412,7 @@ Use these details when your first-run path needs more control.
     NemoHermes is ready
 
     Sandbox:  my-hermes
-    Model:    nvidia/nemotron-3-super-120b-a12b (NVIDIA Endpoints)
+    Model:    nvidia/nemotron-3.5-super-vl-120b-a12b (NVIDIA Endpoints)
 
     Access
 
@@ -451,14 +463,19 @@ Use these details when your first-run path needs more control.
     ```
 
     `nemohermes inference set` changes the active model or provider without rebuilding the sandbox.
-    It updates the OpenShell inference route and patches `/sandbox/.hermes/config.yaml` without restarting Hermes.
+    For shared routes, it patches `/sandbox/.hermes/config.yaml` without restarting Hermes.
+    If the current or selected route uses a native hosted provider, NemoClaw restarts the Hermes gateway after configuration sync.
+    The restart can interrupt active agent requests.
+    If the restart fails, the route and configuration remain committed.
+    Run `nemohermes <sandbox-name> gateway restart` to apply the switch.
+    Custom and local providers retain the shared OpenShell route.
 
     ```bash
     nemohermes inference set --model <model> --provider <provider>
     ```
 
-    If the in-sandbox config write or integrity hash update fails, `nemohermes inference set` exits with status `1` after committing the OpenShell route and NemoClaw registry.
-    Run the printed `nemohermes <sandbox-name> rebuild` command to make the in-sandbox Hermes configuration match the committed route.
+    If the in-sandbox config write or integrity hash update fails, `nemohermes inference set` exits with status `1` after committing the OpenShell selection and NemoClaw registry.
+    Run the printed `nemohermes <sandbox-name> rebuild` command to make the in-sandbox Hermes configuration match the committed selection.
   </Accordion>
 </AccordionGroup>
 

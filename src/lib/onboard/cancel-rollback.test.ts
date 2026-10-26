@@ -37,8 +37,6 @@ describe("createSandboxCancelRollback", () => {
     expect(guidance).toContain(
       `ai.nvidia.nemoclaw.create-attempt=${RECOVERY_CONTEXT.createAttemptNonce}`,
     );
-    expect(guidance).toContain("did not run OpenShell's mutable-name deletion command");
-    expect(guidance).toContain("Do not delete the sandbox by mutable sandbox name");
     expect(guidance).toContain("Shared inference providers are gateway configuration");
     expect(guidance).toContain("not sandbox cleanup targets");
     expect(guidance).toContain("nemoclaw new-sb destroy");
@@ -301,7 +299,7 @@ describe("makeOnboardCancelExit", () => {
 });
 
 describe("buildCancelRollbackMessage", () => {
-  it("preserves identity-bound recovery guidance", () => {
+  it("places supported destroy guidance before recovery diagnostics (#10863)", () => {
     const message = buildCancelRollbackMessage("sb", SANDBOX_FINGERPRINT, RECOVERY_CONTEXT).join(
       "\n",
     );
@@ -309,8 +307,11 @@ describe("buildCancelRollbackMessage", () => {
     expect(message).toContain("preserved incomplete sandbox 'sb'");
     expect(message).toContain(SANDBOX_FINGERPRINT);
     expect(message).toContain(RECOVERY_CONTEXT.createAttemptNonce);
-    expect(message).toContain("retained recovery evidence");
-    expect(message).toContain("does not authorize deletion by mutable name");
+    expect(message).toContain("nemoclaw sb destroy");
+    expect(message).toContain("verify and remove the retained sandbox");
+    expect(message.indexOf("nemoclaw sb destroy")).toBeLessThan(
+      message.indexOf(RECOVERY_CONTEXT.createAttemptNonce),
+    );
     expect(message).not.toContain("openshell sandbox delete");
     expect(message).not.toContain("cannot delete it by immutable identity");
   });
@@ -318,7 +319,8 @@ describe("buildCancelRollbackMessage", () => {
   it("does not refer to an undisplayed create-attempt label", () => {
     const message = buildCancelRollbackMessage("sb", SANDBOX_FINGERPRINT).join("\n");
 
-    expect(message).toContain("preserve the displayed fingerprint");
+    expect(message).toContain("nemoclaw sb destroy");
+    expect(message).toContain(SANDBOX_FINGERPRINT);
     expect(message).not.toContain("displayed create-attempt label");
   });
 });

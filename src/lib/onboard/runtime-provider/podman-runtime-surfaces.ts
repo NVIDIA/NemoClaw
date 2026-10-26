@@ -343,6 +343,7 @@ export function prepareNativePodmanGatewayHostRuntime(
       sandboxNamespace: "omitted" as const,
       hostGatewayIp: NATIVE_PODMAN_SANDBOX_HOST_ADDRESS,
       includeSupervisorBin: false,
+      driverConfigLayout: "inline-supervisor" as const,
       processOwnership: "runtime-marker" as const,
     }),
     network: Object.freeze({
@@ -398,6 +399,9 @@ export function createCurrentPodmanOperationEngine(
         HOME: environment.HOME ?? os.homedir(),
         PATH: environment.PATH ?? "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
         ...(environment.XDG_RUNTIME_DIR ? { XDG_RUNTIME_DIR: environment.XDG_RUNTIME_DIR } : {}),
+        ...(operation === "external-image-preparation" && environment.REGISTRY_AUTH_FILE
+          ? { REGISTRY_AUTH_FILE: environment.REGISTRY_AUTH_FILE }
+          : {}),
       }),
     });
     return bound;
@@ -414,7 +418,8 @@ export function createCurrentPodmanOperationEngine(
       args: Parameters<PodmanBoundContainerEngine["capture"]>[0],
       timeout?: number,
       input?: Buffer,
-    ) => resolve().capture(args, timeout, input),
+      privateTransport?: Parameters<PodmanBoundContainerEngine["capture"]>[3],
+    ) => resolve().capture(args, timeout, input, privateTransport),
     captureHost: (
       args: Parameters<PodmanBoundContainerEngine["captureHost"]>[0],
       timeout?: number,
@@ -662,7 +667,7 @@ export function planOwnedPodmanWorkloadCleanup(
   if (!workload || workload.kind === "native-artifact") {
     return { action: "retain", reason: "no-owned-image" };
   }
-  if (workload.kind === "managed-image") {
+  if (workload.shared === true) {
     return { action: "retain", reason: "shared-image" };
   }
   if (workload.reference === null) return { action: "retain", reason: "no-owned-image" };

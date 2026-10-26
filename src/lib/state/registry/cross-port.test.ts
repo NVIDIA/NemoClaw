@@ -194,6 +194,7 @@ describe("listSandboxNamesAcrossGatewayRoots", () => {
       listPublishedSandboxesAcrossGatewayRoots,
       listInferenceRouteOwnersAcrossGatewayRoots,
       listPendingSandboxNamesAcrossGatewayRoots,
+      listSandboxNamesInGatewayRoot,
     } = await loadModule();
 
     expect(listPublishedSandboxNamesAcrossGatewayRoots()).toEqual(["owner-b", "owner-a"]);
@@ -208,6 +209,7 @@ describe("listSandboxNamesAcrossGatewayRoots", () => {
       { name: "owner-b", gatewayPort: 8245 },
     ]);
     expect(listPendingSandboxNamesAcrossGatewayRoots()).toEqual(["reserved", "pending"]);
+    expect(listSandboxNamesInGatewayRoot(8245)).toEqual(["owner-a", "owner-b", "pending"]);
     expect(listInferenceRouteOwnersAcrossGatewayRoots().map(({ name }) => name)).toEqual([
       "owner-b",
       "reserved",
@@ -223,11 +225,13 @@ describe("listSandboxNamesAcrossGatewayRoots", () => {
       listPublishedSandboxesAcrossGatewayRoots,
       listInferenceRouteOwnersAcrossGatewayRoots,
       listPendingSandboxNamesAcrossGatewayRoots,
+      listSandboxNamesInGatewayRoot,
     } = await loadModule();
 
     expect(listPublishedSandboxNamesAcrossGatewayRoots()).toEqual([]);
     expect(listPublishedSandboxesAcrossGatewayRoots()).toEqual([]);
     expect(listPendingSandboxNamesAcrossGatewayRoots()).toEqual([]);
+    expect(listSandboxNamesInGatewayRoot(8080)).toEqual([]);
     expect(listInferenceRouteOwnersAcrossGatewayRoots()).toEqual([]);
   });
 });

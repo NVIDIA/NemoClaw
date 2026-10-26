@@ -12,7 +12,24 @@ function buildWebSearchConfig(env: Record<string, string>) {
   return buildConfig({ ...BASE_ENV, ...env });
 }
 
-describe("generate-openclaw-config.mts: Tavily web search", () => {
+describe("generate-openclaw-config.mts: web search", () => {
+  it("disables web search when an OpenRouter inference key is present (#12886)", () => {
+    const config = buildWebSearchConfig({
+      NEMOCLAW_MODEL: "openai/gpt-4o-mini",
+      NEMOCLAW_PROVIDER_KEY: "inference",
+      NEMOCLAW_UPSTREAM_PROVIDER: "openrouter-api",
+      NEMOCLAW_INFERENCE_BASE_URL: "https://openrouter.ai/api/v1",
+      NEMOCLAW_INFERENCE_API: "openai-completions",
+      NEMOCLAW_WEB_SEARCH_ENABLED: "0",
+      OPENROUTER_API_KEY: "sk-or-test",
+    });
+
+    expect(config.tools?.web?.search).toEqual({ enabled: false });
+    expect(config.models?.providers?.inference?.apiKey).toBe(
+      "openshell:resolve:env:OPENROUTER_API_KEY",
+    );
+  });
+
   it.each(["brave", "tavily"])(
     "enables only the selected %s search plugin in the managed image (#11294)",
     (provider) => {

@@ -15,6 +15,7 @@ import {
 import {
   validateE2eWorkflowBoundary,
   validateNativePodmanStagingAction,
+  validatePortableCrunWorkflow,
 } from "../../../tools/e2e/workflow-boundary.mts";
 import { validateE2eOperationsWorkflowBoundary } from "../../../tools/e2e/operations-workflow-boundary.mts";
 import { readWorkflow } from "../../helpers/e2e-workflow-contract";
@@ -65,6 +66,12 @@ function validateMutatedWorkflow(
   } finally {
     fs.rmSync(directory, { force: true, recursive: true });
   }
+}
+
+function validatePortableMutation(mutator: (workflow: Workflow) => void): string[] {
+  const workflow = readWorkflow() as Workflow;
+  mutator(workflow);
+  return validatePortableCrunWorkflow(workflow);
 }
 
 type WorkflowSteps = NonNullable<Workflow["jobs"][string]["steps"]>;
@@ -144,9 +151,12 @@ const stagingReferenceVariants = [
 ];
 
 const actionMutations: Array<[string, (source: string) => string]> = [
-  ["artifact-id", (source) => source.replace('artifact-ids: "11204862350"', 'artifact-ids: "1"')],
+  ["asset-id", (source) => source.replace("602749331", "1")],
   ["digest", (source) => source.replace(/sha256:[a-f0-9]{64}/, "sha256:" + "0".repeat(64))],
-  ["source-run", (source) => source.replace('run-id: "36952890255"', 'run-id: "1"')],
+  [
+    "source-release",
+    (source) => source.replace('SOURCE_RELEASE_ID: "400756116"', 'SOURCE_RELEASE_ID: "1"'),
+  ],
   [
     "verification-order",
     (source) => {
@@ -344,6 +354,125 @@ describe("shared E2E workflow boundary", () => {
     );
   });
 
+  it(
+    "rejects a stale Portable Hermes CLI artifact restore action",
+    testTimeoutOptions(15_000),
+    () => {
+      const errors = validateMutatedWorkflow((workflow) => {
+        const restore = workflow.jobs["portable-hermes-finalization"].steps!.find(
+          (step) => step.name === "Restore exact-commit CLI artifact",
+        )!;
+        restore.uses = "NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@" + "0".repeat(40);
+      });
+      expect(errors).toContain(
+        "portable-hermes-finalization must restore the exact-commit CLI artifact with the reviewed action reference",
+      );
+    },
+  );
+
+  it("requires the Portable Hermes CLI artifact restore step", testTimeoutOptions(15_000), () => {
+    const errors = validateMutatedWorkflow((workflow) => {
+      const job = workflow.jobs["portable-hermes-finalization"];
+      job.steps = job.steps!.filter((step) => step.name !== "Restore exact-commit CLI artifact");
+    });
+    expect(errors).toContain(
+      "portable-hermes-finalization must restore the exact-commit CLI artifact with the reviewed action reference",
+    );
+  });
+
+  it.each([
+    { field: "if" as const, value: true },
+    { field: "if" as const, value: false },
+    { field: "if" as const, value: "${{ always() }}" },
+    { field: "continue-on-error" as const, value: true },
+    { field: "continue-on-error" as const, value: false },
+    { field: "continue-on-error" as const, value: "${{ always() }}" },
+  ])("rejects Portable Hermes CLI artifact restore $field=$value", ({ field, value }) => {
+    const errors = validateMutatedWorkflow((workflow) => {
+      workflow.jobs["portable-hermes-finalization"].steps!.find(
+        (step) => step.name === "Restore exact-commit CLI artifact",
+      )![field] = value;
+    });
+    expect(errors).toContain(
+      "portable-hermes-finalization exact-commit CLI artifact restore must run unconditionally and propagate failures",
+    );
+  });
+
+  it("binds the Portable Hermes CLI artifact restore to planned provenance", () => {
+    const errors = validateMutatedWorkflow((workflow) => {
+      const restore = workflow.jobs["portable-hermes-finalization"].steps!.find(
+        (step) => step.name === "Restore exact-commit CLI artifact",
+      )!;
+      restore.with!["provenance-json"] = "${{ inputs.checkout_sha }}";
+    });
+    expect(errors).toContain(
+      "portable-hermes-finalization must bind the exact-commit CLI artifact restore to the planned provenance output",
+    );
+  });
+
+  it.each([
+    ["Select pinned compatible Portable crun", "--proto-redir '=https'", "HTTPS, digest"],
+    ["Select pinned compatible Portable crun", "sha256sum --check --strict", "HTTPS, digest"],
+    ["Select pinned compatible Portable crun", "sudo install --owner=root", "HTTPS, digest"],
+    [
+      "Select pinned compatible Portable crun",
+      'podman --url "unix://$socket" info',
+      "restarted API",
+    ],
+    [
+      "Prove Portable Podman OCI execution before Hermes",
+      "run --rm --pull=always",
+      "pinned OCI probe",
+    ],
+    ["Run Portable Hermes finalization live Vitest test", "--runtime", "pinned OCI probe"],
+    [
+      "Retain Portable Podman process headroom",
+      "portable-podman-crun-authority",
+      "selection and headroom",
+    ],
+    ["Remove pinned Portable crun", 'user_systemctl stop "$service.socket"', "teardown"],
+    ["Remove pinned Portable crun", 'user_systemctl is-active "$service.service"', "teardown"],
+    ["Remove pinned Portable crun", "sudo stat -c '%u:%g'", "teardown"],
+    ["Remove pinned Portable crun", 'sudo rm -f -- "$runtime"', "teardown"],
+    ["Remove pinned Portable crun after restoration", 'sudo rm -f -- "$runtime"', "fallback"],
+  ])("rejects weakened Portable crun control in %s", (name, control, diagnostic) => {
+    const errors = validatePortableMutation((workflow) => {
+      const target = workflow.jobs["portable-hermes-finalization"].steps!.find(
+        (candidate) => candidate.name === name,
+      )!;
+      target.run = target.run!.replace(control, "");
+    });
+    expect(errors.some((error) => error.includes(diagnostic))).toBe(true);
+  });
+
+  it("rejects Portable crun removal after Docker restoration", () => {
+    const errors = validatePortableMutation((workflow) => {
+      const jobSteps = workflow.jobs["portable-hermes-finalization"].steps!;
+      const index = jobSteps.findIndex((step) => step.name === "Remove pinned Portable crun");
+      const [removal] = jobSteps.splice(index, 1);
+      const restore = jobSteps.findIndex(
+        (step) => step.name === "Restore Docker and retire Portable Podman runtime",
+      );
+      jobSteps.splice(restore + 1, 0, removal!);
+    });
+    expect(errors).toContain(
+      "Portable crun trust, evidence, and teardown steps must retain their reviewed order",
+    );
+  });
+
+  it("requires the fallback when pre-restore removal cannot prove service state", () => {
+    const errors = validatePortableMutation((workflow) => {
+      const steps = workflow.jobs["portable-hermes-finalization"].steps!;
+      const removal = steps.find((step) => step.name === "Remove pinned Portable crun")!;
+      removal.run = removal.run!.replace('user_systemctl is-active "$service.service"', "");
+      steps.splice(
+        steps.findIndex((step) => step.name === "Remove pinned Portable crun after restoration"),
+        1,
+      );
+    });
+    expect(errors).toContain("Portable crun must retain a safe post-restoration removal fallback");
+  });
+
   it("keeps action paths case-sensitive when classifying staging references", () => {
     const errors = validateMutatedWorkflow((workflow) => {
       workflow.jobs["generate-matrix"].steps!.push({
@@ -508,6 +637,7 @@ describe("pre-candidate execution environment identity", () => {
     "Install trusted E2E planner dependencies",
     "Generate E2E target matrix",
     "Stage immutable native Podman E2E toolchains",
+    "Resolve reviewed candidate OpenShell version",
   ];
   const owners = [
     { name: "workflow", select: (workflow: Workflow) => workflow },
@@ -562,6 +692,9 @@ describe("pre-candidate execution environment identity", () => {
     { owner: owners[4]!, bindingName: "CANDIDATE_SHA" },
     { owner: owners[6]!, bindingName: "GITHUB_TOKEN" },
     { owner: owners[11]!, bindingName: "NEMOCLAW_E2E_CREDENTIALS_ALLOWED" },
+    { owner: owners[11]!, bindingName: "NEMOCLAW_E2E_INCLUDE_STAGING_BREV_LAUNCHABLE" },
+    { owner: owners[13]!, bindingName: "UPGRADE_PR_NUMBER" },
+    { owner: owners[13]!, bindingName: "UPGRADE_BASE_SHA" },
   ];
   const bindingChanges = [
     {
@@ -581,7 +714,7 @@ describe("pre-candidate execution environment identity", () => {
     boundOwners.flatMap(({ owner, bindingName }) =>
       bindingChanges.map((change) => ({ ...owner, bindingName, ...change })),
     ),
-  )("rejects $label binding in $name", ({ name, select, bindingName, apply }) => {
+  )("rejects $label $bindingName binding in $name", ({ name, select, bindingName, apply }) => {
     const errors = validateMutatedWorkflow((workflow) => {
       apply(select(workflow).env as Record<string, unknown>, bindingName);
     });

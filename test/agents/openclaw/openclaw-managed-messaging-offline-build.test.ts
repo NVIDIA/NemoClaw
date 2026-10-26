@@ -78,6 +78,9 @@ describe("OpenClaw managed messaging offline image build", () => {
     };
 
     expect(runtimeManifest.overrides).toEqual({
+      "@modelcontextprotocol/sdk": "1.32.0",
+      "body-parser": "2.4.0",
+      "proxy-addr": "2.0.8",
       "@openclaw/discord@2026.9.2": {
         "@discord/embedded-app-sdk@2.5.0": {
           uuid: bundledVersion(
@@ -101,10 +104,12 @@ describe("OpenClaw managed messaging offline image build", () => {
       expect(runtimeLock.packages[location]?.version).toMatch(/^\d/u);
     });
     expect(runtimeManifest.dependencies).toMatchObject({
+      zod: "4.6.6",
       "@emnapi/core": "1.11.1",
       "@emnapi/runtime": "1.11.3",
     });
     expect(runtimeLock.packages[""].dependencies).toMatchObject({
+      zod: "4.6.6",
       "@emnapi/core": "1.11.1",
       "@emnapi/runtime": "1.11.3",
     });
@@ -120,19 +125,31 @@ describe("OpenClaw managed messaging offline image build", () => {
     expect(runtimeLock.packages["node_modules/@emnapi/wasi-threads"]).toMatchObject({
       version: "1.2.2",
     });
+    expect(runtimeLock.packages["node_modules/proxy-addr"]).toMatchObject({
+      version: "2.0.8",
+      dependencies: { forwarded: "0.2.0", "ipaddr.js": "1.9.1" },
+    });
   });
 
   it("pins the complete lock graphs below the cold-build layer limit", () => {
-    const amd64Lock = lockedArchives(runtimeLockSource, {
-      cpu: "x64",
-      libc: "glibc",
-      os: "linux",
-    });
-    const arm64Lock = lockedArchives(runtimeLockSource, {
-      cpu: "arm64",
-      libc: "glibc",
-      os: "linux",
-    });
+    const amd64Lock = lockedArchives(
+      runtimeLockSource,
+      {
+        cpu: "x64",
+        libc: "glibc",
+        os: "linux",
+      },
+      JSON.stringify(runtimeManifest),
+    );
+    const arm64Lock = lockedArchives(
+      runtimeLockSource,
+      {
+        cpu: "arm64",
+        libc: "glibc",
+        os: "linux",
+      },
+      JSON.stringify(runtimeManifest),
+    );
     const amd64Names = new Set(amd64Lock.map(({ archive }) => archive));
     const arm64Names = new Set(arm64Lock.map(({ archive }) => archive));
     const commonLock = amd64Lock.filter(({ archive }) => arm64Names.has(archive));
@@ -196,7 +213,7 @@ describe("OpenClaw managed messaging offline image build", () => {
   it("runs and verifies the real offline clean install in the managed-image build", () => {
     const cacheStage = dockerfileSection(
       "AS openclaw-managed-messaging-npm-cache-1",
-      "FROM openclaw-managed-messaging-npm-cache-${NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION}",
+      "FROM openclaw-managed-messaging-npm-cache-1 AS openclaw-managed-messaging-npm-cache\n",
     );
 
     expect(dockerfile).toContain(

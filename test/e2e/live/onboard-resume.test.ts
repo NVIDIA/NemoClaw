@@ -43,7 +43,7 @@ import {
 } from "../fixtures/fake-openai-compatible.ts";
 import {
   expectSandboxProviderAttachment,
-  upsertGenericGatewayProvider,
+  createExtraGatewayProvider,
 } from "../fixtures/gateway-providers.ts";
 import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 import { captureOpenClawOnboardFailure } from "../fixtures/openclaw-onboard-diagnostics.ts";
@@ -441,11 +441,9 @@ test(
     await artifacts.writeJson("phase-2-fake-openai-compatible-requests.json", fake.requests());
     expectHermeticCompatibleEndpointUsed(fake, onboardingRequestOffset);
 
-    await upsertGenericGatewayProvider(host, LIVE_EXTRA_PROVIDER, {
-      artifactName: "phase-2-live-extra-provider-upsert",
-      credentialEnv: EXTRA_PROVIDER_TOKEN_ENV,
+    await createExtraGatewayProvider(host, LIVE_EXTRA_PROVIDER, {
+      artifactName: "phase-2-live-extra-provider-create",
       env: { ...buildAvailabilityProbeEnv(), [EXTRA_PROVIDER_TOKEN_ENV]: EXTRA_PROVIDER_TOKEN },
-      redactionValues: [EXTRA_PROVIDER_TOKEN],
     });
     const seededExtraProviders = updateExtraProviders((providers) => {
       providers.add(STALE_EXTRA_PROVIDER);

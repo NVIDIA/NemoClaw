@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { consumeNativeGatewayCreation } from "./native-creation";
+import { initializeNativeProviderPolicy } from "../../adapters/openshell/provider-policy";
+import { captureSanitizedResolvedOpenshellAsync } from "../../adapters/openshell/sanitized-capture";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -12,6 +15,11 @@ import {
 import { gatewayHostRuntimeEnvironment } from "../runtime-provider/configured-runtime";
 import { trackChildExit } from "../child-exit-tracker";
 import * as dockerDriverGatewayCutover from "../docker-driver-gateway-cutover";
+import {
+  readDockerDriverGatewayBinding,
+  resolveDockerDriverGatewayBinding,
+  writeDockerDriverGatewayBinding,
+} from "./state-dir";
 import { reportDockerDriverGatewayStartFailure } from "../docker-driver-gateway-failure";
 import * as dockerDriverGatewayLaunch from "../docker-driver-gateway-launch";
 import {
@@ -41,6 +49,7 @@ type DynamicGatewayHelpers = ReturnType<
 >;
 
 export interface DockerDriverGatewayStartDeps {
+  initializeNativeProviderPolicy?: typeof initializeNativeProviderPolicy;
   observer: import("../../adapters/openshell/gateway-reuse").OpenShellGatewayReuseObserver;
   SUPPORTED_OPENSHELL_FALLBACK_VERSION: string;
   checkGatewayPortAvailable(): Promise<import("../preflight").PortProbeResult>;
@@ -203,7 +212,7 @@ export function createDockerDriverGatewayStart(
     const runtimeOptions = selectedRuntimeEnv
       ? {
           env: selectedRuntimeEnv,
-          replaceEnv: true,
+          replaceEnv: true as const,
         }
       : {};
     const runCaptureOpenshell: DockerDriverGatewayStartDeps["runCaptureOpenshell"] = (
@@ -217,12 +226,19 @@ export function createDockerDriverGatewayStart(
       observeGatewayReuse: (request: Parameters<typeof deps.observer.observeGatewayReuse>[0]) =>
         deps.observer.observeGatewayReuse({ ...request, runtimeSelection }),
     };
+    const binding = resolveDockerDriverGatewayBinding(
+      process.env,
+      os.homedir(),
+      deps.gatewayPort(),
+    );
     const stateDir = deps.gatewayBinding.resolveGatewayStateDirForPort({
-      configured: process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR,
+      configured: binding.stateDir,
       home: os.homedir(),
       port: deps.gatewayPort(),
     });
-    const configuredStateDir = process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR?.trim();
+    const creationGatewayName = deps.gatewayName();
+    const creationGatewayPort = deps.gatewayPort();
+    const configuredStateDir = binding.stateDir?.trim();
     const stateLifecycleLock = configuredStateDir
       ? gatewayStateLifecycleLock.acquireManagedGatewayStateLifecycleLock(stateDir)
       : null;
@@ -243,6 +259,30 @@ export function createDockerDriverGatewayStart(
       const gatewayBin = deps.resolveOpenShellGatewayBinary();
       const openshellVersionOutput = runCaptureOpenshell(["--version"], { ignoreError: true });
       const gatewayEnv = deps.getDockerDriverGatewayEnv(openshellVersionOutput);
+      const rememberBinding = () => {
+        const network = gatewayEnv.OPENSHELL_DOCKER_NETWORK_NAME;
+        if (!network) return;
+        const defaultStateDir = deps.gatewayBinding.resolveGatewayStateDirForPort({
+          home: os.homedir(),
+          port: deps.gatewayPort(),
+        });
+        if (
+          stateDir === defaultStateDir &&
+          network === "openshell-docker" &&
+          !readDockerDriverGatewayBinding(os.homedir(), deps.gatewayPort())
+        )
+          return;
+        try {
+          writeDockerDriverGatewayBinding(os.homedir(), deps.gatewayPort(), {
+            stateDir,
+            dockerNetworkName: network,
+          });
+        } catch {
+          (output?.warn ?? console.warn)(
+            "  Gateway is healthy, but its custom binding could not be saved. Preserve NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR and OPENSHELL_DOCKER_NETWORK_NAME for recovery.",
+          );
+        }
+      };
       const runtimeIdentity = gatewayBin
         ? dockerDriverGatewayLaunch.buildDockerDriverGatewayRuntimeIdentity({
             gatewayBin,
@@ -264,7 +304,43 @@ export function createDockerDriverGatewayStart(
       );
       const driftGatewayEnv = runtimeIdentity?.desiredEnv ?? gatewayEnv;
       const identityGatewayBin = runtimeIdentity?.identityGatewayBin ?? gatewayBin;
+      const creation = consumeNativeGatewayCreation(
+        stateDir,
+        gatewayEnv.OPENSHELL_GRPC_ENDPOINT ?? "",
+      );
       const initialPortCheck = await deps.checkGatewayPortAvailable();
+      const initializeFreshGateway = async () => {
+        if (!creation || !initialPortCheck.ok || initialPortCheck.warning) return;
+        if (
+          deps.gatewayName() !== creationGatewayName ||
+          deps.gatewayPort() !== creationGatewayPort ||
+          !creation()
+        )
+          throw new Error("Fresh gateway configuration changed before policy initialization.");
+        const policy = await (
+          deps.initializeNativeProviderPolicy ?? initializeNativeProviderPolicy
+        )(creationGatewayName, (args) =>
+          captureSanitizedResolvedOpenshellAsync(args, {
+            ...runtimeOptions,
+            ignoreError: true,
+            includeStreams: true,
+            includeStderr: true,
+            timeout: 30_000,
+            outputLimitBytes: 65_536,
+          }),
+        );
+        if (policy === "disabled") {
+          if (
+            deps.gatewayName() !== creationGatewayName ||
+            deps.gatewayPort() !== creationGatewayPort ||
+            !creation()
+          )
+            throw new Error("Fresh gateway configuration changed during policy initialization.");
+          (output?.warn ?? console.warn)(
+            "Native local inference is unavailable because provider composition remains disabled. Hosted provider onboarding can continue.",
+          );
+        }
+      };
       const servicePortOwnership = deps.createGatewayServicePortOwnership(initialPortCheck, {
         exitOnFailure,
         gatewayBin: identityGatewayBin,
@@ -381,7 +457,11 @@ export function createDockerDriverGatewayStart(
             },
           ),
       );
-      if (cutover !== "launch") return;
+      if (cutover !== "launch") {
+        if (cutover === "managed") await initializeFreshGateway();
+        rememberBinding();
+        return;
+      }
       if (!gatewayBin || !gatewayLaunch) {
         throw new Error("OpenShell gateway launch missing after cutover");
       }
@@ -438,6 +518,8 @@ export function createDockerDriverGatewayStart(
         sleepSeconds: deps.sleepSeconds,
       });
       if (startup === "healthy") {
+        await initializeFreshGateway();
+        rememberBinding();
         (output?.log ?? console.log)("  ✓ Docker-driver gateway is healthy");
         return;
       }

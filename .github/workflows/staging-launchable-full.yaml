@@ -29,6 +29,7 @@ jobs:
           sparse-checkout: |
             .github/actions/setup-reviewed-npm
             ci/reviewed-npm-audit.json
+            scripts/lib/npm-diagnostics.sh
             scripts/lib/reviewed-npm-audit.mts
             ci/cli-test-timing-hints.json
             nemoclaw/vitest.project.ts
@@ -63,7 +64,7 @@ jobs:
         timeout-minutes: 10
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "24.18.1"
+          node-version: "24.22.1"
           cache: npm
 
       - name: Install reviewed npm

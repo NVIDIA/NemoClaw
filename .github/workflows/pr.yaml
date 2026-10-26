@@ -11,6 +11,12 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
+
+env:
+  UPGRADE_PR_NUMBER: ${{ github.event.pull_request.number }}
+  CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
+  UPGRADE_BASE_SHA: ${{ github.event.pull_request.base.sha }}
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event.action != 'edited' || github.event.changes.base != null }}
@@ -63,7 +69,7 @@ jobs:
       - name: Setup Node.js for docs-only checks
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "24.18.1"
+          node-version: "24.22.1"
           cache: npm
 
       - name: Install reviewed npm
@@ -132,6 +138,10 @@ jobs:
             ci/reviewed-npm-audit.json
             scripts/audit-reviewed-npm-graph.mts
             scripts/checks/prepare-ci-npm-install.mts
+            scripts/lib/reviewed-ci-npm-install.mts
+            scripts/checks/candidate-openshell-sdk.mts
+            tools/e2e/candidate-upgrade-admission.mts
+            tools/e2e/base-image-publication.mts
             scripts/lib/openclaw-npm-remediation.mts
             scripts/lib/reviewed-npm-archive.mts
             scripts/lib/reviewed-npm-cache.mts
@@ -181,7 +191,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "24.18.1"
+          node-version: "24.22.1"
           cache: npm
 
       - name: Install reviewed npm
@@ -199,6 +209,7 @@ jobs:
     permissions:
       actions: read
       contents: read
+      pull-requests: read
     outputs:
       required: ${{ steps.locate.outputs.required }}
     runs-on: ubuntu-latest
@@ -209,7 +220,9 @@ jobs:
         with:
           persist-credentials: false
           sparse-checkout: |
+            package.json
             package-lock.json
+            nemoclaw/package.json
             nemoclaw/package-lock.json
           sparse-checkout-cone-mode: false
 
@@ -224,6 +237,11 @@ jobs:
             ci/reviewed-npm-audit.json
             scripts/audit-reviewed-npm-graph.mts
             scripts/checks/prepare-ci-npm-install.mts
+            scripts/lib/reviewed-ci-npm-install.mts
+            scripts/checks/candidate-openshell-sdk.mts
+            tools/e2e/candidate-upgrade-admission.mts
+            tools/e2e/base-image-publication.mts
+            scripts/lib/npm-diagnostics.sh
             scripts/lib/openclaw-npm-remediation.mts
             scripts/lib/reviewed-npm-archive.mts
             scripts/lib/reviewed-npm-cache.mts
@@ -236,6 +254,7 @@ jobs:
         id: locate
         env:
           GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
           HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
           REPOSITORY_ID: ${{ github.repository_id }}
         run: |
@@ -252,22 +271,34 @@ jobs:
           artifact_name="$(jq -er '.artifactName | select(type == "string" and test("^[a-z0-9][a-z0-9._-]*\\.tgz$"))' <<<"$decision")"
           bundle="$(jq -cS '[.sourceRegistryPackage, .sourceRegistryPackageReplacement // empty]' .trusted-sdk-package-decision/ci/reviewed-npm-audit.json | sha256sum | cut -d ' ' -f 1)"
           bundle_name="reviewed-openshell-sdk-$bundle"
+          candidate="$(jq -er '.candidate // false | tostring' <<<"$decision")"
+          if [ "$candidate" = "true" ]; then
+            bundle_name="$(jq -er '.bundleName | select(test("^candidate-openshell-sdk-[0-9]+-[a-f0-9]{40}-[a-f0-9]{40}-[0-9]+$"))' <<<"$decision")"
+          fi
           if ! artifacts="$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/artifacts?name=$bundle_name&per_page=100" 2>/dev/null)"; then
             echo "::error::Could not list approved SDK artifacts. Restore Actions access, then rerun this CI job."
             exit 1
           fi
-          artifact="$(jq -cer --arg name "$bundle_name" --argjson repo "$REPOSITORY_ID" '
+          artifact="$(jq -cer --arg name "$bundle_name" --arg candidate "$candidate" --argjson repo "$REPOSITORY_ID" '
             [.[] | .artifacts[] | select(.name == $name and .expired == false
-              and .workflow_run.head_branch == "main" and .workflow_run.head_repository_id == $repo)]
+              and ($candidate == "true" or .workflow_run.head_branch == "main") and .workflow_run.head_repository_id == $repo)]
             | max_by(.id) // error("missing SDK artifact")' <<<"$artifacts")" || {
-            echo "::error::No retained SDK archive matches the approved package identities. Run gh workflow run main.yaml --ref main and wait for package-openshell-sdk. Rerun CI, or update the PR against main if the approved package policy changed."
+            echo "::error::No retained SDK archive matches the approved identity. For a new SDK, wait for Candidate Upgrade Admission to publish its archive after approval, then rerun CI. For a trusted SDK, run gh workflow run main.yaml --ref main to restore its archive."
             exit 1
           }
           run_id="$(jq -er '.workflow_run.id | select(type == "number" and . > 0 and . <= 9007199254740991)' <<<"$artifact")"
           artifact_id="$(jq -er '.id | select(type == "number" and . > 0 and . <= 9007199254740991)' <<<"$artifact")"
-          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id" 2>/dev/null | jq -e --arg repo "$GITHUB_REPOSITORY" '
-            (.path | split("@")[0]) == ".github/workflows/main.yaml" and .head_branch == "main"
-            and (.event == "push" or .event == "workflow_dispatch")
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id" 2>/dev/null | jq -e --arg repo "$GITHUB_REPOSITORY" --arg candidate "$candidate" --arg sha "$CANDIDATE_SHA" --arg base "$UPGRADE_BASE_SHA" --argjson pr "$UPGRADE_PR_NUMBER" '
+            (if $candidate == "true" then
+              (.path | split("@")[0]) == ".github/workflows/candidate-upgrade-admission.yaml"
+              and .status == "completed" and .conclusion == "success"
+              and ((.event == "pull_request_target" and .head_sha == $sha
+                and any(.pull_requests[]?; .number == $pr and .head.sha == $sha and .base.sha == $base))
+                or (.event == "issue_comment" and .head_branch == "main"))
+            else
+              (.path | split("@")[0]) == ".github/workflows/main.yaml" and .head_branch == "main"
+              and (.event == "push" or .event == "workflow_dispatch")
+            end)
             and .head_repository.full_name == $repo and .repository.full_name == $repo' >/dev/null
           printf 'artifact_id=%s\nrun_id=%s\nartifact_name=%s\n' "$artifact_id" "$run_id" "$artifact_name" >> "$GITHUB_OUTPUT"
 
@@ -286,7 +317,7 @@ jobs:
         if: steps.locate.outputs.required == 'true'
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "24.18.1"
+          node-version: "24.22.1"
 
       - name: Install reviewed npm for archive verification
         if: steps.locate.outputs.required == 'true'
@@ -295,6 +326,7 @@ jobs:
       - name: Verify selected SDK archive against base policy and PR locks
         if: steps.locate.outputs.required == 'true'
         env:
+          GITHUB_TOKEN: ${{ github.token }}
           ARTIFACT_NAME: ${{ steps.locate.outputs.artifact_name }}
           NEMOCLAW_CI_NPM_PACKAGE_MODE: artifact
           NEMOCLAW_CI_TARGET_ROOT: ${{ github.workspace }}
@@ -320,6 +352,7 @@ jobs:
     if: needs.changes.outputs.code == 'true'
     permissions:
       contents: read
+      pull-requests: read
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -347,6 +380,10 @@ jobs:
             scripts/audit-reviewed-npm-graph.mts
             scripts/check-dist-sourcemaps.mts
             scripts/checks/prepare-ci-npm-install.mts
+            scripts/lib/reviewed-ci-npm-install.mts
+            scripts/checks/candidate-openshell-sdk.mts
+            tools/e2e/candidate-upgrade-admission.mts
+            tools/e2e/base-image-publication.mts
             scripts/lib/openclaw-npm-remediation.mts
             scripts/lib/reviewed-npm-archive.mts
             scripts/lib/reviewed-npm-cache.mts
@@ -397,6 +434,7 @@ jobs:
     permissions:
       actions: read
       contents: read
+      pull-requests: read
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -417,6 +455,10 @@ jobs:
             ci/reviewed-npm-audit.json
             scripts/audit-reviewed-npm-graph.mts
             scripts/checks/prepare-ci-npm-install.mts
+            scripts/lib/reviewed-ci-npm-install.mts
+            scripts/checks/candidate-openshell-sdk.mts
+            tools/e2e/candidate-upgrade-admission.mts
+            tools/e2e/base-image-publication.mts
             scripts/lib/openclaw-npm-remediation.mts
             scripts/lib/reviewed-npm-archive.mts
             scripts/lib/reviewed-npm-cache.mts
@@ -441,7 +483,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "24.18.1"
+          node-version: "24.22.1"
           cache: npm
           cache-dependency-path: |
             package-lock.json
@@ -453,6 +495,7 @@ jobs:
       - name: Install dependencies
         run: bash .trusted-ci-actions/.github/actions/ci-install-dependencies.sh
         env:
+          GITHUB_TOKEN: ${{ github.token }}
           NPM_CONFIG_ALLOW_REMOTE: root
 
       - name: Run package-contract and type checks
@@ -463,6 +506,7 @@ jobs:
     if: needs.changes.outputs.code == 'true'
     permissions:
       contents: read
+      pull-requests: read
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -483,6 +527,10 @@ jobs:
             ci/reviewed-npm-audit.json
             scripts/audit-reviewed-npm-graph.mts
             scripts/checks/prepare-ci-npm-install.mts
+            scripts/lib/reviewed-ci-npm-install.mts
+            scripts/checks/candidate-openshell-sdk.mts
+            tools/e2e/candidate-upgrade-admission.mts
+            tools/e2e/base-image-publication.mts
             scripts/lib/openclaw-npm-remediation.mts
             scripts/lib/reviewed-npm-archive.mts
             scripts/lib/reviewed-npm-cache.mts
@@ -540,7 +588,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "24.18.1"
+          node-version: "24.22.1"
           cache: npm
 
       - name: Install reviewed npm
@@ -557,12 +605,25 @@ jobs:
           NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS: "1"
         run: npx vitest run --project integration test/agents/openclaw/openclaw-real-patched-dist-harness.test.ts --silent=false --reporter=default
 
+      - name: Verify remediated OpenClaw plugin runtimes
+        env:
+          NEMOCLAW_REAL_OPENCLAW_ZOD_HARNESS: "1"
+          NEMOCLAW_REAL_OPENCLAW_BODY_PARSER_HARNESS: "1"
+          NEMOCLAW_REAL_OPENCLAW_MSAL_HARNESS: "1"
+        run: >-
+          npx vitest run --project integration
+          test/agents/openclaw/openclaw-zod-runtime.test.ts
+          test/agents/openclaw/openclaw-body-parser-runtime.test.ts
+          test/agents/openclaw/openclaw-msal-runtime.test.ts
+          --silent=false --reporter=default
+
   cli-test-shards:
     needs: [changes, compile-artifacts, openshell-sdk-package]
     if: needs.changes.outputs.code == 'true'
     permissions:
       actions: read
       contents: read
+      pull-requests: read
     runs-on: ubuntu-24.04
     # Coverage startup plus the stable, duration-weighted roster can exceed
     # the former 15-minute cap before Vitest writes its shard artifacts.
@@ -581,6 +642,8 @@ jobs:
       - name: Checkout trusted CI actions
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # PR shards run the base action. The revised action and sibling installer
+          # first run together after both land on main.
           ref: ${{ github.event.pull_request.base.sha }}
           path: .trusted-ci-actions
           persist-credentials: false
@@ -589,6 +652,7 @@ jobs:
             .github/actions/ci-build-typecheck
             .github/actions/ci-compile-artifacts
             .github/actions/ci-cli-coverage-shard
+            .github/actions/ci-install-pinned-ubuntu-packages.sh
             .github/actions/ci-cli-coverage-merge
             .github/actions/ci-plugin-coverage
             .github/actions/ci-installer-integration
@@ -596,6 +660,10 @@ jobs:
             ci/reviewed-npm-audit.json
             scripts/audit-reviewed-npm-graph.mts
             scripts/checks/prepare-ci-npm-install.mts
+            scripts/lib/reviewed-ci-npm-install.mts
+            scripts/checks/candidate-openshell-sdk.mts
+            tools/e2e/candidate-upgrade-admission.mts
+            tools/e2e/base-image-publication.mts
             scripts/lib/openclaw-npm-remediation.mts
             scripts/lib/reviewed-npm-archive.mts
             scripts/lib/reviewed-npm-cache.mts
@@ -729,6 +797,10 @@ jobs:
             ci/reviewed-npm-audit.json
             scripts/audit-reviewed-npm-graph.mts
             scripts/checks/prepare-ci-npm-install.mts
+            scripts/lib/reviewed-ci-npm-install.mts
+            scripts/checks/candidate-openshell-sdk.mts
+            tools/e2e/candidate-upgrade-admission.mts
+            tools/e2e/base-image-publication.mts
             scripts/lib/openclaw-npm-remediation.mts
             scripts/lib/reviewed-npm-archive.mts
             scripts/lib/reviewed-npm-cache.mts
@@ -782,6 +854,10 @@ jobs:
             ci/reviewed-npm-audit.json
             scripts/audit-reviewed-npm-graph.mts
             scripts/checks/prepare-ci-npm-install.mts
+            scripts/lib/reviewed-ci-npm-install.mts
+            scripts/checks/candidate-openshell-sdk.mts
+            tools/e2e/candidate-upgrade-admission.mts
+            tools/e2e/base-image-publication.mts
             scripts/lib/openclaw-npm-remediation.mts
             scripts/lib/reviewed-npm-archive.mts
             scripts/lib/reviewed-npm-cache.mts

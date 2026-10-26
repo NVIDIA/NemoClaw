@@ -8,7 +8,7 @@ import {
   baseSession,
   createCompatibleProviderCapture,
   createDeps,
-} from "./inference-set.test-support";
+} from "../../../test/helpers/inference-set";
 
 const NO_AUTH_ENDPOINT_URL = "http://127.0.0.1:11434/v1";
 const NO_AUTH_CREDENTIAL_ENV = "NEMOCLAW_OLLAMA_PROXY_TOKEN";
@@ -103,6 +103,8 @@ describe("runInferenceSet on a loopback no-auth compatible endpoint", () => {
       ],
     ]);
     expect(deps.calls.probeSandboxRoute).toHaveBeenCalledWith({
+      agentName: "openclaw",
+      gatewayName: "nemoclaw",
       sandboxName: "alpha",
       provider: "compatible-endpoint",
       model: "model-b",
@@ -162,7 +164,7 @@ describe("runInferenceSet on a loopback no-auth compatible endpoint", () => {
     try {
       const [{ runInferenceSet: runWithMovedProxy }, support] = await Promise.all([
         import("./inference-set"),
-        import("./inference-set.test-support"),
+        import("../../../test/helpers/inference-set"),
       ]);
       const endpointUrl = "http://127.0.0.1:11435/v1";
       const entry = {
@@ -210,6 +212,8 @@ describe("runInferenceSet on a loopback no-auth compatible endpoint", () => {
         ],
       ]);
       expect(deps.calls.probeSandboxRoute).toHaveBeenCalledWith({
+        agentName: "openclaw",
+        gatewayName: "nemoclaw",
         sandboxName: "alpha",
         provider: "compatible-endpoint",
         model: "model-b",

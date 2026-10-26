@@ -2,7 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import os from "node:os";
-import { isDeepStrictEqual } from "node:util";
+import { normalizeNativeLocalProviderAttachment } from "../../inference/native-local/contract";
+import {
+  providerContract,
+  matchesProviderMetadata,
+  resolveExportInferenceSelection,
+  type NativeInferenceReceipt,
+} from "./live-export-inference-contract";
 import { isValidNemoClawPort } from "../../config/model";
 
 import { createProviders, type Provider } from "../openshell/providers";
@@ -28,12 +34,10 @@ import type {
   ObservedExportSandboxIdentity,
   RawExportSnapshot,
 } from "../../domain/config/export-evidence";
-import { VLLM_LOCAL_CREDENTIAL_ENV } from "../../inference/serving/vllm-credential-contract";
 import { observeManagedVllmForExport } from "../../inference/serving/vllm-export-runtime";
 import { createOllamaExportProbe } from "../../inference/ollama/proxy";
-import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../../inference/ollama/contract";
 import { observeOllamaProxy } from "../../inference/ollama/proxy-observation";
-import { normalizeInferenceSelection } from "../../inference/selection";
+import type { normalizeInferenceSelection } from "../../inference/selection";
 import { resolveGatewayName } from "../../onboard/gateway-binding/identity";
 import {
   managedGatewayStateRootOwnershipFailure,
@@ -127,15 +131,11 @@ async function readInferenceRoute(entry: Readonly<SandboxEntry>, gatewayName: st
   return live;
 }
 
-function providerContract(api: string | null | undefined) {
-  if (api?.startsWith("anthropic")) {
-    return { type: "anthropic", configKey: "ANTHROPIC_BASE_URL" } as const;
-  }
-  const type = api?.startsWith("openai") ? "openai" : null;
-  return { type, configKey: "OPENAI_BASE_URL" } as const;
-}
-
-function providerIdentity(provider: Provider, gatewayName: string, managed: boolean) {
+function providerIdentity(
+  provider: Provider,
+  gatewayName: string,
+  managed: boolean,
+): ObservedExportEndpointEvidence["provider"] {
   return {
     gatewayName,
     workspace: provider.workspace,
@@ -146,16 +146,6 @@ function providerIdentity(provider: Provider, gatewayName: string, managed: bool
       ? { profileWorkspace: provider.profileWorkspace, managedProfile: provider.managedProfile }
       : {}),
   };
-}
-
-function expectedCredentialKeys(credentialEnv: string | null, routeProvider: string): string[] {
-  // vLLM onboarding always registers this gateway-owned key, including for
-  // legacy host-local installs whose registry credential remains null.
-  if (routeProvider === "vllm-local") return [VLLM_LOCAL_CREDENTIAL_ENV];
-  // Ollama onboarding has no user credential; its managed proxy still authenticates the route.
-  if (routeProvider === "ollama-local" && credentialEnv === null)
-    return [OLLAMA_LOCAL_CREDENTIAL_ENV];
-  return credentialEnv === null ? [] : [credentialEnv];
 }
 
 function inferenceTopology(
@@ -169,36 +159,27 @@ function inferenceTopology(
     : "hosted";
 }
 
-function matchesProviderMetadata(
-  provider: Provider,
-  normalized: ReturnType<typeof normalizeInferenceSelection>,
+function profileContractFor(
   routeProvider: string,
-  managed: boolean,
-): boolean {
-  const { type, configKey } = providerContract(normalized.preferredInferenceApi);
-  const builtin = provider.builtinInferenceEndpoint !== undefined;
-  // OpenShell's CLI writes the selected workspace for a newly created
-  // provider, while legacy records and protobuf defaults can leave the field
-  // empty. A different workspace is outside this direct provider contract.
-  const managedBindingMatches =
-    !managed ||
-    ((provider.profileWorkspace === undefined ||
-      provider.profileWorkspace === "" ||
-      provider.profileWorkspace === provider.workspace) &&
-      provider.managedProfile === undefined);
-  return (
-    type !== null &&
-    managedBindingMatches &&
-    isDeepStrictEqual(
-      [provider.name, provider.type, provider.credentialKeys, provider.configKeys],
-      [
-        routeProvider,
-        builtin ? "nvidia" : type,
-        expectedCredentialKeys(normalized.credentialEnv, routeProvider),
-        builtin ? [] : [configKey],
-      ],
-    )
-  );
+  nativeReceipt: NativeInferenceReceipt | undefined,
+): Parameters<ReturnType<typeof createProviders>["get"]>[0]["profileContract"] {
+  const local = normalizeNativeLocalProviderAttachment(nativeReceipt);
+  if (local) return { kind: "native-local", binding: local };
+  if (nativeReceipt)
+    return nativeReceipt.profileId === "nemoclaw-nvidia-inference-v1"
+      ? "native-nvidia"
+      : "native-hosted";
+  return routeProvider === "ollama-local" ? "openai" : undefined;
+}
+
+function endpointSourceFor(
+  nativeReceipt: NativeInferenceReceipt | undefined,
+  builtin: boolean,
+  configKey: "ANTHROPIC_BASE_URL" | "OPENAI_BASE_URL",
+): ObservedExportEndpointEvidence["source"] {
+  if (nativeReceipt) return { kind: "managed-profile", profileId: nativeReceipt.profileId };
+  if (builtin) return { kind: "builtin-profile", profileId: "nvidia" };
+  return { kind: "provider-config", key: configKey };
 }
 
 async function readProviderEvidence(
@@ -207,28 +188,60 @@ async function readProviderEvidence(
   gatewayName: string,
   signal: AbortSignal,
   managedServing?: ObservedManagedVllmRuntime,
+  nativeReceipt?: NativeInferenceReceipt,
 ): Promise<ObservedExportEndpointEvidence> {
   const { configKey } = providerContract(normalized.preferredInferenceApi);
-  const inspectOpenAiProfile = routeProvider === "ollama-local";
+  const profileContract = profileContractFor(routeProvider, nativeReceipt);
   const provider = await createProviders().get({
     target: namedOpenShellGateway(gatewayName),
     workspace: "default",
     name: routeProvider,
-    ...(inspectOpenAiProfile ? { profileContract: "openai" as const } : {}),
+    ...(profileContract ? { profileContract } : {}),
+    ...(nativeReceipt?.endpointUrl && !normalizeNativeLocalProviderAttachment(nativeReceipt)
+      ? {
+          nativeHostedEndpoint: nativeReceipt.endpointUrl,
+          nativeHostedAllowedIps: nativeReceipt.allowedIps,
+          nativeHostedCustom: nativeReceipt.custom,
+        }
+      : {}),
     configKeys: [configKey],
     signal,
   });
   if (!provider) throw new Error("The live inference provider is missing.");
   const builtin = provider.builtinInferenceEndpoint !== undefined;
-  if (!matchesProviderMetadata(provider, normalized, routeProvider, !!managedServing)) {
+  if (
+    !matchesProviderMetadata(provider, normalized, routeProvider, !!managedServing, nativeReceipt)
+  ) {
     throw new Error("The live inference provider metadata does not match the registry.");
   }
   return {
-    provider: providerIdentity(provider, gatewayName, inspectOpenAiProfile),
-    endpoint: provider.builtinInferenceEndpoint ?? provider.config[configKey] ?? "",
-    source: builtin
-      ? { kind: "builtin-profile", profileId: "nvidia" }
-      : { kind: "provider-config", key: configKey },
+    provider: providerIdentity(provider, gatewayName, profileContract !== undefined),
+    endpoint:
+      provider.managedInferenceEndpoint ??
+      provider.builtinInferenceEndpoint ??
+      provider.config[configKey] ??
+      "",
+    source: endpointSourceFor(nativeReceipt, builtin, configKey),
+  };
+}
+
+async function resolveLiveInference(
+  entry: Readonly<SandboxEntry>,
+  gatewayName: string,
+  nativeReceipt: NativeInferenceReceipt | undefined,
+): Promise<Readonly<{ provider: string; model: string; logicalProvider: string }>> {
+  if (!nativeReceipt) {
+    const live = await readInferenceRoute(entry, gatewayName);
+    return { ...live, logicalProvider: live.provider };
+  }
+  const selected = getSandboxEntryInference(entry);
+  if (selected.kind !== "configured") {
+    throw new Error("The native inference selection is incomplete.");
+  }
+  return {
+    provider: nativeReceipt.providerName,
+    model: selected.model,
+    logicalProvider: selected.provider,
   };
 }
 
@@ -236,11 +249,15 @@ async function inferenceFor(
   entry: Readonly<SandboxEntry>,
   beforeRead: (stage: ExportSnapshotReadStage) => void,
   signal: AbortSignal,
+  sandbox: ObservedExportSandboxIdentity,
   managedServing?: ObservedManagedVllmRuntime,
 ): Promise<ObservedExportInference> {
-  const normalized = normalizeInferenceSelection(entry);
+  const { normalized, nativeReceipt } = resolveExportInferenceSelection(entry);
   const gateway = resolveGatewayBinding(entry);
-  const live = await readInferenceRoute(entry, gateway.name);
+  if (nativeReceipt && !sandbox.providerNames.includes(nativeReceipt.providerName)) {
+    throw new Error("The native provider is not attached to the sandbox.");
+  }
+  const live = await resolveLiveInference(entry, gateway.name, nativeReceipt);
   beforeRead("provider-metadata");
   const endpointEvidence = await readProviderEvidence(
     normalized,
@@ -248,6 +265,7 @@ async function inferenceFor(
     gateway.name,
     signal,
     managedServing,
+    nativeReceipt,
   );
   let ollamaServing: ObservedExportInference["ollamaServing"];
   if (entry.provider === "ollama-local") {
@@ -256,7 +274,7 @@ async function inferenceFor(
   }
   return {
     topology: inferenceTopology(entry, !!managedServing),
-    provider: live.provider,
+    provider: live.logicalProvider,
     model: live.model,
     api: normalized.preferredInferenceApi ?? "",
     endpoint: normalized.endpointUrl ?? "",
@@ -358,6 +376,7 @@ async function readSnapshot(sandboxName: string): Promise<RawExportSnapshot> {
         stage = nextStage;
       },
       signal,
+      sandbox,
       managedServing,
     );
     let webSearchProvider: ObservedExportWebSearchProvider | undefined;

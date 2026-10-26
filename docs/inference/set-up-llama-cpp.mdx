@@ -5,20 +5,40 @@ title: "Set Up llama.cpp"
 sidebar-title: "Set Up llama.cpp"
 description: "Attach an existing llama.cpp server or select an experimental managed llama.cpp profile."
 description-agent: "Sets up llama.cpp for NemoClaw. Use for an authenticated existing server or an experimental declarative managed profile."
-keywords: ["nemoclaw llama.cpp", "llama.cpp dgx spark", "managed llama.cpp", "muse glimmer gguf", "nemotron gguf"]
+keywords:
+  [
+    "nemoclaw llama.cpp",
+    "llama.cpp dgx spark",
+    "managed llama.cpp",
+    "muse glimmer gguf",
+    "nemotron gguf",
+  ]
 content:
   type: "how_to"
 ---
+
 NemoClaw provides two first-class llama.cpp paths.
 You can attach an authenticated server that you operate, or let NemoClaw select and materialize a compatible repository-owned profile.
-Both paths are experimental and use OpenAI Chat Completions through `https://inference.local/v1`.
+Both paths are experimental and use OpenAI Chat Completions.
+
+<AgentOnly variant="openclaw">
+Agent requests use `https://inference.local/v1`.
+</AgentOnly>
+<AgentOnly variant="hermes,deepagents">
+New Deep Agents Code and Hermes sandboxes use the recorded local endpoint through a sandbox-attached OpenShell provider.
+OpenShell supplies the credential at egress; the sandbox receives only a credential reference.
+Refer to [How Inference Routing Works](../about-inference-routing) for the qualification and existing-sandbox boundaries.
+</AgentOnly>
+<AgentOnly variant="hermes">
+Live qualification of the Hermes native local lifecycle is pending.
+</AgentOnly>
 
 ## Choose a llama.cpp Path
 
 | Path | NemoClaw manages | You manage | Use it when |
 |---|---|---|---|
-| Existing server | Provider registration, route validation, and sandbox traffic through `inference.local`. | The server binary or container, GGUF file, launch configuration, credential, upgrades, and lifecycle. | Your authenticated server already satisfies the llama.cpp fingerprint contract on loopback port `8081`. |
-| Managed NVIDIA GPU host | The exact YAML-selected image, GGUF acquisition and verification, launch configuration, credential, Docker lifecycle, diagnostics, and cleanup. | A qualified DGX Spark Arm64, Linux x86_64 NVIDIA GPU, or Windows WSL N1x host, plus the recipe readiness requirements and any required Hugging Face credential. | You want a repository-owned managed llama.cpp profile without managing `llama-server` directly. |
+| Existing server | Provider registration, route validation, and sandbox inference through OpenShell. | The server binary or container, GGUF file, launch configuration, credential, upgrades, and lifecycle. | Your authenticated server already satisfies the llama.cpp fingerprint contract on loopback port `8081`. |
+| Managed NVIDIA GPU host | The exact YAML-selected image, GGUF acquisition and verification, launch configuration, credential, Docker lifecycle, diagnostics, and cleanup. | A qualified DGX Spark Arm64, Linux x86_64 NVIDIA GPU, or Windows WSL N1x or Station GB300 host, plus the recipe readiness requirements and any required Hugging Face credential. | You want a repository-owned managed llama.cpp profile without managing `llama-server` directly. |
 
 Compared with other local options, Ollama emphasizes a simple local model workflow, while managed vLLM provides host-specific NVIDIA GPU profiles and broader model selection.
 NVIDIA NIM provides NVIDIA-packaged inference containers for validated NIM-capable GPUs.
@@ -101,27 +121,30 @@ That path supports operator-selected endpoints and ports without claiming llama.
 
 ## Install Managed llama.cpp on an NVIDIA GPU Host
 
-Use this experimental path when you want NemoClaw to manage one declarative llama.cpp recipe on a qualified DGX Spark Arm64, Linux x86_64 NVIDIA GPU, or Windows WSL N1x host.
+Use this experimental path when you want NemoClaw to manage one declarative llama.cpp recipe on a qualified DGX Spark Arm64, Linux x86_64 NVIDIA GPU, or Windows WSL N1x or Station GB300 host.
 On DGX Spark, the recommended recipe serves NVIDIA Nemotron 3 Nano 30B-A3B through the OpenAI Chat Completions API.
 The Meta Muse Glimmer 30B recipe remains available by explicit selection, and existing Muse-owned installations are not migrated.
-Windows WSL N1x Express leaves provider selection to onboarding.
+Windows WSL N1x and Station GB300 Express leave provider selection to onboarding.
 Accepting Windows Express and its third-party software notice is the explicit opt-in to this Experimental surface.
-During Windows Express, onboarding automatically selects the Qwen 3.6 35B-A3B recipe after the N1x readiness requirements pass.
+During Windows Express, onboarding automatically selects the Qwen 3.6 35B-A3B recipe after the applicable N1x or Station GB300 readiness requirements pass.
 
 <Note>
-This path is an experimental implementation.
-It does not establish a supported agent, model, and runtime tuple until the protected qualification and activation gates pass.
-The protected qualification runner requires Docker Engine `28.3.3` or newer and the trusted daemon's default protected NAT and firewall behavior; it re-queries the live daemon and consumes a fresh single-use authority immediately before each temporary loopback publication.
-That requirement supersedes older Docker 27 qualification evidence.
-Ordinary managed onboarding does not publish a Docker port: it retains its no-publication container contract and uses the host-owned private bridge, so this runner-specific version floor does not apply to onboarding.
-The Muse Glimmer profile remains Experimental after bounded physical DGX Spark qualification of text, separated reasoning, and one structured tool call.
+  This path is an experimental implementation. It does not establish a supported agent, model, and
+  runtime tuple until the protected qualification and activation gates pass.
+  The managed image must contain native `llama-server` and curl.
+  The model container has no published ports and remains on an internal Docker network.
+  NemoClaw uses its authenticated host bridge and requires successful host-loopback and OpenShell route checks before activation.
+  The protected qualification runner's temporary registry still requires Docker Engine `28.3.3` or newer with its default protected NAT and firewall behavior.
+  The Muse Glimmer
+  profile remains Experimental after bounded physical DGX Spark qualification of text, separated
+  reasoning, and one structured tool call.
 </Note>
 
 Before you start, confirm these prerequisites:
 
-- Use a qualified DGX Spark Arm64 host, a Linux x86_64 host with one NVIDIA GPU, or a qualifying Windows WSL N1x host.
+- Use a qualified DGX Spark Arm64 host, a Linux x86_64 host with one NVIDIA GPU, or a qualifying Windows WSL N1x or Station GB300 host.
 - Use NVIDIA driver version `580.65.06` or later on each managed host profile.
-- Confirm that Docker is operational on the host.
+- Confirm that Docker is operational and satisfies the selected profile's readiness checks.
 - Confirm that the NVIDIA Container Toolkit is operational.
 - Confirm that NVIDIA Container Device Interface support is healthy.
 - Stop any process that uses host port `8081`.
@@ -136,19 +159,30 @@ For Windows WSL N1x, also confirm these requirements:
 - Provide at least 48,000 MiB of GPU memory.
 - Pass Docker storage, runtime, NVIDIA GPU integration, and Docker Desktop GPU passthrough readiness.
 
-If N1x readiness does not match, Windows Express selects WSL-local Ollama during onboarding.
-If a required N1x readiness check fails after selection starts, onboarding stops before installation.
-Managed N1x WSL selection rejects any other Docker selector.
+For Windows WSL Station GB300, also confirm these requirements:
+
+- Use Arm64 WSL on a Windows product identified as Station GB300.
+- Require the Docker Desktop proof to reconcile every reported GPU and identify exactly one proved `NVIDIA GB300` GPU UUID.
+- Use the default local Docker Desktop context with at least 48,000 MiB of Docker memory.
+- Unset `DOCKER_HOST` and select Docker's `default` context before you select the managed recipe.
+- Provide at least 48,000 MiB of aggregate GPU memory.
+- Pass Docker storage, runtime, NVIDIA GPU integration, and Docker Desktop GPU passthrough readiness.
+
+If neither readiness contract matches, Windows Express selects WSL-local Ollama during onboarding.
+If a required readiness check fails after selection starts, onboarding stops before installation.
+Managed WSL selection rejects any other Docker selector.
 
 NemoClaw uses `HF_TOKEN` only while it acquires the model.
 It does not write the value to managed llama.cpp state, the receipt, the serving container environment, or the sandbox registry.
 Run `unset HF_TOKEN` after onboarding when no other process needs it.
 
 <Warning>
-When the artifacts are not already present, onboarding pulls digest-pinned images from external registries and acquires the YAML-declared GGUF file through the standard Hugging Face cache.
-It reuses locally present pinned images and a cached GGUF only after NemoClaw verifies their identities.
-It creates an owner-only API key, a host-loopback listener on port `8081`, and a Docker internal network.
-Only one managed llama.cpp runtime can exist per Docker authority, regardless of the owning OpenShell gateway or sandbox.
+  When the artifacts are not already present, onboarding pulls digest-pinned images from external
+  registries and acquires the YAML-declared GGUF file through the standard Hugging Face cache. It
+  reuses locally present pinned images and a cached GGUF only after NemoClaw verifies their
+  identities. It creates an owner-only API key, a host-loopback listener on port `8081`, and a
+  Docker internal network. Only one managed llama.cpp runtime can exist per Docker authority,
+  regardless of the owning OpenShell gateway or sandbox.
 </Warning>
 
 Run interactive onboarding on the qualified host:
@@ -161,8 +195,8 @@ NemoClaw lists compatible managed llama.cpp profiles with automatic selection in
 During interactive onboarding without an explicit provider request, the menu ignores `NEMOCLAW_LLAMACPP_RECIPE` and `NEMOCLAW_SERVING_PRESET` and marks the unique highest-priority compatible profile as `(recommended)`.
 On DGX Spark, the recommended profile appears as **Managed llama.cpp: NVIDIA Nemotron 3 Nano 30B-A3B on one DGX Spark (recommended)**.
 On Linux x86_64, the recommended profile identifies one NVIDIA GPU instead.
-During Windows Express or non-interactive onboarding, a qualifying Windows WSL N1x host selects managed llama.cpp without a provider prompt when no provider is requested or recorded and `NEMOCLAW_MODEL` is unset.
-With `NEMOCLAW_LLAMACPP_RECIPE` unset, it selects **Managed llama.cpp: Qwen 3.6 35B-A3B on N1x WSL (recommended)**; a compatible explicit recipe selects that managed recipe.
+During Windows Express or non-interactive onboarding, a qualifying Windows WSL N1x or Station GB300 host selects managed llama.cpp without a provider prompt when no provider is requested or recorded and `NEMOCLAW_MODEL` is unset.
+With `NEMOCLAW_LLAMACPP_RECIPE` unset, it selects the compatible **Qwen 3.6 35B-A3B** managed profile for that host; a compatible explicit recipe selects the same managed recipe.
 Ordinary interactive onboarding lists the same recommended profile but allows another provider selection.
 The explicit-only Meta Muse Glimmer profile does not appear in the menu.
 Select any listed profile to install its exact repository-owned recipe.
@@ -189,7 +223,7 @@ NEMOCLAW_SANDBOX_NAME=my-assistant \
 ```
 
 Use `llama-cpp.muse-glimmer-30b.spark-single.v1` to select the Meta Muse Glimmer recipe explicitly.
-For Windows Express or non-interactive onboarding on a qualifying Windows WSL N1x host, leave `NEMOCLAW_PROVIDER` and `NEMOCLAW_MODEL` unset for automatic managed-provider selection.
+For Windows Express or non-interactive onboarding on a qualifying Windows WSL N1x or Station GB300 host, leave `NEMOCLAW_PROVIDER` and `NEMOCLAW_MODEL` unset for automatic managed-provider selection.
 Leave `NEMOCLAW_LLAMACPP_RECIPE` unset for the automatic Qwen recipe, or set `NEMOCLAW_LLAMACPP_RECIPE=llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1` when automation must make the selected recipe explicit.
 
 For non-interactive onboarding or an explicit `install-llama-cpp` provider request, an unset `NEMOCLAW_LLAMACPP_RECIPE` selects the unique highest-priority compatible automatic profile.
@@ -237,12 +271,22 @@ Onboarding performs these actions:
 - Reuses a verified GGUF from the shared `~/.cache/huggingface/` cache, or acquires the file through the existing Hugging Face mechanism when it is absent or invalid.
 - Verifies the GGUF size and SHA-256 digest before it starts the runtime.
 - Runs the authenticated container as the current non-root user with one NVIDIA GPU and no CPU fallback.
+- Configures native `llama-server` with its API-key file, one serving slot, and the recipe's context and socket-timeout settings.
 - Starts a host-owned private bridge on `127.0.0.1:8081` and connects the container to a Docker internal network without a Docker-published port.
-- Registers `llama-cpp-local` and routes agent traffic through `https://inference.local/v1`.
+- Verifies host-loopback and OpenShell reachability before registering the provider.
+- Registers `llama-cpp-local` and configures the agent's OpenShell inference route described above.
 
 The runtime cannot download a model and has no egress on its internal Docker network.
 The recipe disables the Web UI, slot inspection, server tools, agent mode, Model Context Protocol proxy, router, and multimodal projection.
 The API key enters the container through an owner-only read-only file, not a process argument.
+Managed requests have a 1 MiB body limit, a header ceiling of 32 KiB, a 4,096-token output ceiling, and a 900-second request deadline.
+The host's stricter HTTP header limit continues to apply when present.
+The recipe's `serve.limits.requestTimeoutSeconds` configures native `llama-server` read/write timeouts.
+The bridge's fixed 900-second budget applies to the total request.
+On cancellation, deadline expiry, or bridge shutdown, NemoClaw verifies that the owned remote request has stopped before releasing admission.
+If cleanup cannot be verified, the bridge closes its listeners and exits with an error; it does not admit another request.
+Correct the reported Docker or ownership failure, then rerun the same onboarding selection.
+The new bridge reconciles the exact owned requests before opening its listeners.
 
 The Muse Glimmer profile enables text responses, reasoning, and structured tool calls.
 It does not load a multimodal projector or a DFlash draft model because multimodal projection and speculative decoding remain disabled.
@@ -258,11 +302,13 @@ Run the managed runtime, route, and host-port checks:
 $$nemoclaw my-assistant status
 $$nemoclaw my-assistant doctor
 docker inspect --format '{{json .HostConfig.PortBindings}}' nemoclaw-llama-cpp
+docker inspect --format '{{json .NetworkSettings.Ports}}' nemoclaw-llama-cpp
 ```
 
 Accept the result when `status` reports `Managed llama.cpp: running`, the inference route is `healthy`, and `doctor` exits with status `0`.
-The Docker inspection output must be `{}`, confirming that the container has no Docker-published port.
-The host-owned private bridge still listens on loopback.
+`HostConfig.PortBindings` must be empty.
+`NetworkSettings.Ports` must contain no host bindings; `8081/tcp` can appear with a `null` value when the image declares that port.
+The authenticated host bridge provides reachability without publishing the model container's ports.
 These checks do not establish agent and model qualification.
 
 `status` reports the recipe ID, model digest, image reference, endpoint, and lifecycle state without exposing the API key.
@@ -275,8 +321,10 @@ During managed installation, NemoClaw first checks internal runtime readiness an
 It repeats these checks when onboarding resumes.
 It then runs the authoritative OpenShell Docker bridge probe on fixed port `8081`.
 On Docker Desktop in WSL, NemoClaw runs the loopback health probe from the WSL CLI process because a host-network container cannot reach the WSL loopback listener.
-If that bridge probe cannot connect or times out after the earlier checks pass, onboarding stops without changing UFW.
-When the bridge reports a valid narrow subnet and a gateway IP address inside that subnet, the error reports these values:
+If the bridge probe cannot connect or times out after the earlier checks pass, onboarding stops without changing UFW.
+On Docker Desktop in WSL, this failure reports the private sandbox bridge probe result. Check that Docker Desktop is running, that its WSL integration is enabled for this distribution, and that the OpenShell Docker network and host gateway are available before retrying onboarding. The WSL path does not print a UFW command.
+
+On native Linux, when the bridge reports a valid narrow subnet and a gateway IP address inside that subnet, the error reports these values:
 
 - The detected Docker network.
 - The source subnet.
@@ -284,39 +332,40 @@ When the bridge reports a valid narrow subnet and a gateway IP address inside th
 - The fixed port `8081`.
 - The narrow UFW command.
 
-If the bridge topology is missing or invalid, onboarding fails closed without printing topology or a UFW command.
+On native Linux, if the bridge topology is missing or invalid, onboarding fails closed without printing topology or a UFW command.
 Inspect the OpenShell Docker bridge configuration before you retry onboarding.
 
 <Warning>
-The printed command changes UFW.
-Confirm that the reported Docker network, source subnet, and gateway IP address belong to the OpenShell Docker bridge before you run it.
-The rule allows TCP traffic only from that subnet to port `8081` on that gateway IP address.
+  On native Linux, the printed command changes UFW. Confirm that the reported Docker network, source subnet, and
+  gateway IP address belong to the OpenShell Docker bridge before you run it. The rule allows TCP
+  traffic only from that subnet to port `8081` on that gateway IP address.
 </Warning>
 
-Run the command from the onboarding error.
+On native Linux, run the command from the onboarding error.
 It has this form:
 
 ```bash
 sudo ufw allow from <subnet> to <gateway-ip> port 8081 proto tcp
 ```
 
-After you apply the rule, rerun the same onboarding selection.
+On native Linux, after you apply the rule, rerun the same onboarding selection.
 
-If onboarding still reports the bridge failure, or when the managed runtime no longer needs the rule, remove the rule that you added:
+On native Linux, remove the rule if onboarding still reports the bridge failure or the managed runtime no longer needs it:
 
 ```bash
 sudo ufw --force delete allow from <subnet> to <gateway-ip> port 8081 proto tcp
 ```
 
-Use the same subnet and gateway IP address that appeared in the original command.
+On native Linux, use the same subnet and gateway IP address that appeared in the original command.
 
 If resumed onboarding reports that it cannot reserve host-local inference, run `$$nemoclaw <sandbox-name> doctor`.
-Correct the reported runtime or gateway-authority condition before you rerun the same provider and recipe selection.
+If the diagnostic identifies the former WSL Qwen image, resume is unavailable. Follow the exact owned-runtime removal and fresh onboarding procedure in [Upgrade or Roll Back](#upgrade-or-roll-back) after a qualified native image is pinned.
+For other runtime or gateway-authority conditions, correct the reported condition before you rerun the same provider and recipe selection.
 NemoClaw resumes only the persisted Docker authority, image, recipe, model digest, network, and runtime identity.
 It reconciles an unfinished create journal before it starts a new runtime.
 Phases before `receipt-prepared` are rolled back and retired, while `receipt-prepared` is finalized.
 
-If `status` reports `stopped` or `preparing`, rerun the same onboarding selection to resume the runtime.
+For a current managed image, if `status` reports `stopped` or `preparing`, rerun the same onboarding selection to resume the runtime.
 If it reports `absent`, `conflict`, or `unknown`, inspect the reported identity or Docker-authority error before retrying.
 Do not remove a same-name container or network unless its labels and identifiers match the persisted ownership state.
 
@@ -333,9 +382,20 @@ The managed path does not provide an in-place model, image, recipe upgrade, down
 The installed runtime remains bound to the repository YAML authority recorded during onboarding.
 Do not edit the ownership, receipt, or recipe-digest state to force a migration.
 
-If an updated NemoClaw release changes that authority, resume fails closed and preserves the existing state.
-NemoClaw does not currently define a managed llama.cpp migration procedure for that case.
-Follow release-specific migration guidance when it becomes available.
+If an updated NemoClaw release changes the recorded authority, resume fails closed and preserves the existing state.
+
+An existing Windows WSL Qwen runtime with the former pinned image remains bound to its recorded recipe, receipt, and journal.
+NemoClaw can remove that runtime through the existing journal-aware cleanup owner without replacing its image.
+The former image cannot start or resume.
+Other unrecognized authority changes fail closed and preserve the existing state.
+
+After a qualified native image is pinned, run `$$nemoclaw <sandbox-name> destroy` for the existing managed runtime, then run onboarding again.
+This removes the owned runtime and network but preserves the shared model cache.
+
+For an earlier Station GB300 runtime with no recorded GPU UUID, NemoClaw also refuses startup because the old one-GPU request can select another card.
+After a qualified GB300 image is pinned in the recipe, save any sandbox files you need, run `$$nemoclaw <sandbox-name> destroy --yes`, confirm the sandbox is absent with `$$nemoclaw list`, and onboard again.
+The destroy command verifies and removes the exact owned runtime; do not edit the owner file or remove a same-name Docker resource by hand.
+Other managed llama.cpp recipe changes need release-specific migration guidance.
 
 ## Remove the Managed Runtime
 

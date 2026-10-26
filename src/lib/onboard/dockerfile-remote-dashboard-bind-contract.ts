@@ -64,13 +64,19 @@ const CANONICAL_POST_GENERATOR_INSTRUCTION_SHA256 = new Set([
   "7e6a6879382f833f17be02ca7d287685b6afa1c423b1e087b3b05dd677d6e325",
   "4a54da2c1c33c681ae0dad181a5a7456c926051d91420aa60cf7edef6330ba65",
   "e69b86c132e44c502b3dce8b9359c8798079e93489bd2d27f75d514b45502d4e",
-  "d4b6c80ecc6f243f2141a439e2690aa563c55e19e7d6f3965d3d8685507866c1",
+  "a2f5db30933d1ce0c62e9f5a582bc5e0652e4b500e5f2df8e87bf3f196059224",
   "e1b6dca3e6b30624f364b36ff52e654978bc120cc7800df2ff209c14949acd64",
   "c682148fc7efec9f947c326c6029181cd879b7cba3e8361246aba7d0e6fe70a3",
   "2801e488822e10a39a5586bd150279e54df4612e30c2fa782453534a466def59",
   "8f0861e48c0cec37faa662fccd130ab21f972ac3ed2a0ce5f4e5a1e9ec223130",
   // Security inventory verification with matching Debian OpenSSL u3 pins.
   "8d0214ab5fec6f6c255e5177ba91c579b36be81ae98c4c5301c483effd750d30",
+  // Updated system-library inventory and read-only installed-version checks.
+  "a9ac5dafe116add404a89434534c626719f6752a7d8f26a7b997560789986c38",
+  // Shared package inventory probe and runtime checks preserve dashboard config.
+  "e96d02526fb3449d631f2a7f551d5dc81a2071ae747cdeb0ac0107a5b878c7be",
+  // Standalone inventory probe reads the same pins and preserves dashboard config.
+  "58888f93a5f7c1bd8067137a7593399939903810354cbd4406c7b94b28e19335",
   // Sandbox-user native OpenClaw state modes with root-mode shared access;
   // this exact instruction changes filesystem metadata, not dashboard config.
   "402ffef36760a20e70316a145fa37908c99774496d3dcd0da5f8547b9ac80071",

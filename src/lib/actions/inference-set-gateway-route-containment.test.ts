@@ -10,7 +10,7 @@ import { HTTPS_PIN_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV } from "../inference/
 import type { ConfigObject } from "../security/credential-filter";
 import type { SandboxEntry } from "../state/registry";
 import { runInferenceSet } from "./inference-set";
-import { baseSession, createDeps, HERMES_TARGET } from "./inference-set.test-support";
+import { baseSession, createDeps, HERMES_TARGET } from "../../../test/helpers/inference-set";
 import {
   finalizeInferenceSetRoute,
   prepareInferenceSetRoute,
@@ -30,6 +30,25 @@ describe("runtime shared gateway route containment", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
     delete process.env[HTTPS_PIN_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV];
+  });
+
+  it("retains native Hermes metadata when switching models on the same provider", () => {
+    const metadata = {
+      endpointUrl: "https://integrate.api.nvidia.com/v1",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      preferredInferenceApi: "openai-completions",
+    };
+    const baseline = entry("hermes-switch", { agent: "hermes", ...metadata });
+    const prepared = prepareInferenceSetRoute({
+      entry: baseline,
+      sandboxName: baseline.name,
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      customRoute: {},
+      session: null,
+      sandboxes: [baseline],
+    });
+    expect(prepared.preliminaryRegistryMetadata).toMatchObject(metadata);
   });
 
   it("rejects an ambient gateway endpoint before OpenShell prep or state mutation", async () => {
@@ -81,16 +100,19 @@ describe("runtime shared gateway route containment", () => {
   it("warns and re-points a same-gateway provider/model-only route (#11890)", async () => {
     const deps = createDeps({
       config: {},
-      entries: [entry("alpha"), entry("stopped-peer")],
+      entries: [
+        entry("alpha", { provider: "nvidia-router", model: "router/model-a" }),
+        entry("stopped-peer", { provider: "nvidia-router", model: "router/model-a" }),
+      ],
       defaultSandbox: "alpha",
     });
 
     await expect(
       runInferenceSet(
-        { provider: "nvidia-prod", model: "nvidia/model-b", sandboxName: "alpha" },
+        { provider: "nvidia-router", model: "router/model-b", sandboxName: "alpha" },
         deps,
       ),
-    ).resolves.toMatchObject({ sandboxName: "alpha", model: "nvidia/model-b" });
+    ).resolves.toMatchObject({ sandboxName: "alpha", model: "router/model-b" });
 
     expect(deps.calls.captureOpenshell).toHaveBeenCalledWith(
       [
@@ -99,9 +121,9 @@ describe("runtime shared gateway route containment", () => {
         "-g",
         "nemoclaw",
         "--provider",
-        "nvidia-prod",
+        "nvidia-router",
         "--model",
-        "nvidia/model-b",
+        "router/model-b",
       ],
       expect.objectContaining({ ignoreError: true }),
     );
@@ -113,7 +135,7 @@ describe("runtime shared gateway route containment", () => {
       message.includes("Setting OpenShell inference route"),
     );
     expect(warningIndex).toBeGreaterThanOrEqual(0);
-    expect(messages[warningIndex]).toContain("'stopped-peer' (nvidia-prod / nvidia/model-a)");
+    expect(messages[warningIndex]).toContain("'stopped-peer' (nvidia-router / router/model-a)");
     expect(warningIndex).toBeLessThan(mutationIndex);
   });
 
@@ -122,7 +144,12 @@ describe("runtime shared gateway route containment", () => {
     const deps = createDeps({
       config: {},
       entries: [
-        entry("alpha", { gatewayName: "nemoclaw-9090", gatewayPort: 9090 }),
+        entry("alpha", {
+          gatewayName: "nemoclaw-9090",
+          gatewayPort: 9090,
+          provider: "nvidia-router",
+          model: "router/model-a",
+        }),
         entry("default-gateway-peer"),
       ],
       defaultSandbox: "alpha",
@@ -131,10 +158,10 @@ describe("runtime shared gateway route containment", () => {
 
     await expect(
       runInferenceSet(
-        { provider: "nvidia-prod", model: "nvidia/model-b", sandboxName: "alpha" },
+        { provider: "nvidia-router", model: "router/model-b", sandboxName: "alpha" },
         deps,
       ),
-    ).resolves.toMatchObject({ sandboxName: "alpha", model: "nvidia/model-b" });
+    ).resolves.toMatchObject({ sandboxName: "alpha", model: "router/model-b" });
 
     expect(deps.calls.captureOpenshell).toHaveBeenCalledWith(
       [
@@ -143,9 +170,9 @@ describe("runtime shared gateway route containment", () => {
         "-g",
         "nemoclaw-9090",
         "--provider",
-        "nvidia-prod",
+        "nvidia-router",
         "--model",
-        "nvidia/model-b",
+        "router/model-b",
       ],
       expect.objectContaining({ ignoreError: true }),
     );
@@ -155,7 +182,18 @@ describe("runtime shared gateway route containment", () => {
     vi.stubEnv("OPENSHELL_GATEWAY", "other-gateway");
     const deps = createDeps({
       config: {},
-      entries: [entry("alpha", { gatewayName: "nemoclaw-9090", gatewayPort: 9090 })],
+      entries: [
+        entry("alpha", {
+          gatewayName: "nemoclaw-9090",
+          gatewayPort: 9090,
+          nativeNvidiaProviderAttachment: {
+            schemaVersion: 1,
+            profileId: "nemoclaw-nvidia-inference-v1",
+            providerName: "nemoclaw-nvidia-prod-v1",
+            providerId: "11111111-2222-4333-8444-555555555555",
+          },
+        }),
+      ],
       defaultSandbox: "alpha",
     });
     await runInferenceSet(
@@ -657,10 +695,16 @@ describe("runtime shared gateway route containment", () => {
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
   });
 
-  it("serializes same-gateway provider/model mutations and warns about route impact (#11890)", async () => {
+  it("serializes native provider changes without redirecting another sandbox (#12589)", async () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-route-lock-"));
     try {
-      const entries = [entry("route-lock-alpha"), entry("route-lock-beta")];
+      const entries = [
+        entry("route-lock-alpha", {
+          provider: "openrouter-api",
+          model: "openrouter/model-a",
+        }),
+        entry("route-lock-beta"),
+      ];
       const deps = createDeps({
         config: { agents: { defaults: { model: {} } } },
         entries,
@@ -682,7 +726,11 @@ describe("runtime shared gateway route containment", () => {
 
       const results = await Promise.allSettled([
         runInferenceSet(
-          { provider: "nvidia-prod", model: "nvidia/model-a", sandboxName: entries[0].name },
+          {
+            provider: "openrouter-api",
+            model: "openrouter/model-a",
+            sandboxName: entries[0].name,
+          },
           deps,
         ),
         runInferenceSet(
@@ -696,16 +744,16 @@ describe("runtime shared gateway route containment", () => {
         deps.calls.captureOpenshell.mock.calls.filter(
           ([args]) => args[0] === "inference" && args[1] === "set",
         ),
-      ).toHaveLength(2);
+      ).toHaveLength(0);
       expect(entries).toEqual([
-        expect.objectContaining({ provider: "nvidia-prod", model: "nvidia/model-a" }),
+        expect.objectContaining({ provider: "openrouter-api", model: "openrouter/model-a" }),
         expect.objectContaining({ provider: "anthropic-prod", model: "claude-new" }),
       ]);
       expect(
         deps.calls.log.mock.calls.some(([message]) =>
           message.includes("will re-point the one shared inference route"),
         ),
-      ).toBe(true);
+      ).toBe(false);
       expect(deps.calls.withGatewayRouteMutationLock).toHaveBeenCalledTimes(2);
     } finally {
       await fs.rm(stateDir, { recursive: true, force: true });

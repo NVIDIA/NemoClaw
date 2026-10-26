@@ -13,6 +13,79 @@ function providerModels(config: ConfigObject, providerKey: string): ConfigObject
 }
 
 describe("patchOpenClawInferenceConfig", () => {
+  it("uses a local provider handle and clears it on departure", () => {
+    const config: ConfigObject = {
+      models: { providers: { inference: { apiKey: "unused", models: [] } } },
+    };
+    patchOpenClawInferenceConfig(
+      config,
+      "ollama-local",
+      "local-model",
+      "openai-completions",
+      undefined,
+      undefined,
+      undefined,
+      true,
+      "http://host.openshell.internal:11435/v1",
+      true,
+    );
+    expect(config).toMatchObject({
+      models: {
+        providers: {
+          inference: {
+            baseUrl: "http://host.openshell.internal:11435/v1",
+            apiKey: "openshell:resolve:env:NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+          },
+        },
+      },
+    });
+    patchOpenClawInferenceConfig(
+      config,
+      "nvidia-nim",
+      "nim-model",
+      "openai-completions",
+      undefined,
+      undefined,
+      undefined,
+      true,
+      undefined,
+      false,
+    );
+    expect(config).toMatchObject({
+      models: {
+        providers: {
+          inference: {
+            baseUrl: "https://inference.local/v1",
+            apiKey: "unused",
+          },
+        },
+      },
+    });
+  });
+
+  it("replaces the vLLM credential when switching to native NVIDIA inference", () => {
+    const config: ConfigObject = {
+      models: { providers: { inference: { apiKey: "unused", models: [] } } },
+    };
+    patchOpenClawInferenceConfig(config, "nvidia-prod", "nvidia/test-model");
+    expect(config).toMatchObject({
+      models: {
+        providers: {
+          inference: {
+            baseUrl: "https://integrate.api.nvidia.com/v1",
+            apiKey: "${NVIDIA_INFERENCE_API_KEY}",
+          },
+        },
+      },
+    });
+    patchOpenClawInferenceConfig(config, "vllm-local", "local-model");
+    expect(config).toMatchObject({
+      models: {
+        providers: { inference: { baseUrl: "https://inference.local/v1", apiKey: "unused" } },
+      },
+    });
+  });
+
   it.each([undefined, null, 16384])(
     "updates only the selected model's context when the resolved window is %s",
     (contextWindow) => {
@@ -81,14 +154,15 @@ describe("patchOpenClawInferenceConfig", () => {
       mode: "merge",
       providers: {
         inference: {
-          baseUrl: "https://inference.local/v1",
-          apiKey: "unused",
+          baseUrl: "https://integrate.api.nvidia.com/v1",
+          apiKey: "${NVIDIA_INFERENCE_API_KEY}",
           api: "openai-completions",
           models: [
             {
               id: "nvidia/nemotron-3-super-120b-a12b",
               name: "inference/nvidia/nemotron-3-super-120b-a12b",
               reasoning: true,
+              compat: { supportsStore: false },
             },
             {
               id: "moonshotai/kimi-k2.6",
@@ -150,11 +224,15 @@ describe("patchOpenClawInferenceConfig", () => {
     });
     expect((config.models as ConfigObject).providers).toEqual({
       inference: {
-        baseUrl: "https://inference.local/v1",
-        apiKey: "unused",
+        baseUrl: "https://integrate.api.nvidia.com/v1",
+        apiKey: "${NVIDIA_INFERENCE_API_KEY}",
         api: "openai-completions",
         models: [
-          { id: "nvidia/new-model", name: "inference/nvidia/new-model" },
+          {
+            id: "nvidia/new-model",
+            name: "inference/nvidia/new-model",
+            compat: { supportsStore: false },
+          },
           { id: "old-model", name: "inference/nvidia/old-model" },
           { id: "secondary-model", name: "inference/nvidia/secondary-model" },
         ],
@@ -202,10 +280,16 @@ describe("patchOpenClawInferenceConfig", () => {
         mode: "merge",
         providers: {
           inference: {
-            baseUrl: "https://inference.local/v1",
-            apiKey: "unused",
+            baseUrl: "https://integrate.api.nvidia.com/v1",
+            apiKey: "${NVIDIA_INFERENCE_API_KEY}",
             api: "openai-completions",
-            models: [{ id: "nvidia/model-a", name: "inference/nvidia/model-a" }],
+            models: [
+              {
+                id: "nvidia/model-a",
+                name: "inference/nvidia/model-a",
+                compat: { supportsStore: false },
+              },
+            ],
           },
         },
       },
@@ -298,8 +382,8 @@ describe("patchOpenClawInferenceConfig", () => {
       mode: "merge",
       providers: {
         anthropic: {
-          baseUrl: "https://inference.local",
-          apiKey: "unused",
+          baseUrl: "https://api.anthropic.com",
+          apiKey: "openshell:resolve:env:ANTHROPIC_API_KEY",
           api: "anthropic-messages",
           models: [
             {

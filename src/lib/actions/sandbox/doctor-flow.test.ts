@@ -34,6 +34,7 @@ type DoctorHarnessOptions = {
   registryAgent?: "openclaw" | "hermes";
   registryOverrides?: Record<string, unknown>;
   withMcpLifecycleLock?: WithMcpLifecycleLock;
+  portableReadiness?: "ready" | "unavailable" | "authority-unavailable";
 };
 
 const requireDist = createRequire(import.meta.url);
@@ -54,12 +55,15 @@ function createDoctorHarness(
   ollamaInventoryProbeSpy: MockInstance;
   loadAgentSpy: MockInstance;
   probeSandboxInferenceGatewayHealthSpy: MockInstance;
+  probeSandboxNativeNvidiaModelsHealthSpy: MockInstance;
+  verifyNativeNvidiaStatusAttachmentSpy: MockInstance;
   logSpy: MockInstance;
   recoverNamedGatewayRuntimeSpy: MockInstance;
   resolveOpenShellSpy: MockInstance;
   resolveSandboxGatewayNameSpy: MockInstance;
   runSandboxDoctor: RunSandboxDoctor;
   withMcpLifecycleLockSpy: MockInstance;
+  assertHermesPortableAgentLifecycleAuthoritySpy: MockInstance;
 } {
   delete require.cache[requireDist.resolve(doctorModulePath)];
 
@@ -89,6 +93,21 @@ function createDoctorHarness(
 
   const qualifyPortableAgentLifecycleAuthority =
     portableAgentLifecycle.qualifyPortableAgentLifecycleAuthority;
+  const portableReadinessImplementations = {
+    "authority-unavailable": async () => {
+      throw new portableAgentLifecycle.HermesPortableLifecycleAuthorityError(
+        "receipt-registry-disagreement",
+        "untrusted authority diagnostic",
+      );
+    },
+    ready: async () => undefined,
+    unavailable: async () => {
+      throw new Error("untrusted runtime diagnostic");
+    },
+  };
+  const assertHermesPortableAgentLifecycleAuthoritySpy = vi
+    .spyOn(portableAgentLifecycle, "assertHermesPortableAgentLifecycleAuthority")
+    .mockImplementation(portableReadinessImplementations[options.portableReadiness ?? "ready"]);
   vi.spyOn(doctorSystemChecks, "inspectSandboxDoctorPortableAuthority").mockImplementation(((
     sandboxName: string,
   ) => {
@@ -99,12 +118,22 @@ function createDoctorHarness(
     switch (disposition instanceof Error) {
       case true:
         throw disposition;
-      default:
-        return qualifyPortableAgentLifecycleAuthority(sandboxName, {
-          inspectReceiptDisposition: () => disposition ?? { kind: "absent" },
-          readRegistry: () =>
-            options.registryEntry === "missing" ? null : (registryEntry as never),
-        });
+      default: {
+        try {
+          return qualifyPortableAgentLifecycleAuthority(sandboxName, {
+            inspectReceiptDisposition: () => disposition ?? { kind: "absent" },
+            readRegistry: () =>
+              options.registryEntry === "missing" ? null : (registryEntry as never),
+          });
+        } catch (error) {
+          switch (error instanceof portableAgentLifecycle.HermesPortableLifecycleAuthorityError) {
+            case true:
+              return { kind: "hermes-authority-unavailable" as const };
+            default:
+              throw error;
+          }
+        }
+      }
     }
   }) as never);
   const withMcpLifecycleLockSpy = vi
@@ -213,6 +242,17 @@ function createDoctorHarness(
       httpStatus: 0,
       detail: "Inference gateway unreachable inside the sandbox.",
     });
+  const probeSandboxNativeNvidiaModelsHealthSpy = vi
+    .spyOn(inferenceRouteHealth, "probeSandboxNativeNvidiaModelsHealth")
+    .mockResolvedValue({
+      ok: true,
+      endpoint: "https://integrate.api.nvidia.com/v1/models",
+      httpStatus: 200,
+      detail: "native NVIDIA models route reachable",
+    });
+  const verifyNativeNvidiaStatusAttachmentSpy = vi
+    .spyOn(inferenceRouteHealth, "verifyNativeNvidiaStatusAttachment")
+    .mockResolvedValue(undefined);
   const loadAgentSpy = vi.spyOn(agentDefs, "loadAgent").mockReturnValue({
     name: "openclaw",
     configPaths: { dir: "/sandbox/.openclaw", configFile: "openclaw.json", format: "json" },
@@ -225,6 +265,7 @@ function createDoctorHarness(
     isStale: true,
   });
   vi.spyOn(statusCommandDeps, "buildStatusCommandDeps").mockReturnValue({});
+  vi.spyOn(tunnelServices, "migrateLegacyCloudflaredState").mockImplementation(() => undefined);
   vi.spyOn(tunnelServices, "readCloudflaredState").mockReturnValue({ kind: "running", pid: 1234 });
   const executeSandboxCommandForVerificationSpy = vi
     .spyOn(sandboxVerificationExec, "executeSandboxCommandForVerification")
@@ -266,12 +307,15 @@ function createDoctorHarness(
     ollamaInventoryProbeSpy,
     loadAgentSpy,
     probeSandboxInferenceGatewayHealthSpy,
+    probeSandboxNativeNvidiaModelsHealthSpy,
+    verifyNativeNvidiaStatusAttachmentSpy,
     logSpy,
     recoverNamedGatewayRuntimeSpy,
     resolveOpenShellSpy,
     resolveSandboxGatewayNameSpy,
     runSandboxDoctor,
     withMcpLifecycleLockSpy,
+    assertHermesPortableAgentLifecycleAuthoritySpy,
   };
 }
 
@@ -309,6 +353,15 @@ describe("runSandboxDoctor flow", () => {
             label: "Portable lifecycle",
             detail: `agent=Hermes; phase=${phase}`,
           },
+          ...(phase === "active"
+            ? [
+                {
+                  label: "Hermes gateway",
+                  status: "ok",
+                  detail: "receipt-qualified gateway readiness is confirmed",
+                },
+              ]
+            : []),
         ],
       });
       expect(harness.captureOpenShellSpy).not.toHaveBeenCalled();
@@ -316,8 +369,64 @@ describe("runSandboxDoctor flow", () => {
       expect(harness.recoverNamedGatewayRuntimeSpy).not.toHaveBeenCalled();
       expect(harness.executeSandboxCommandForVerificationSpy).not.toHaveBeenCalled();
       expect(harness.withMcpLifecycleLockSpy).toHaveBeenCalledWith("alpha", expect.any(Function));
+      expect(harness.assertHermesPortableAgentLifecycleAuthoritySpy).toHaveBeenCalledTimes(
+        phase === "active" ? 1 : 0,
+      );
     },
   );
+
+  it("fails active Hermes portable doctor when authenticated health is unavailable (#11892)", async () => {
+    const harness = createDoctorHarness("ollama-local", {
+      portableDisposition: hermesPortableDisposition("active"),
+      registryAgent: "hermes",
+      portableReadiness: "unavailable",
+    });
+
+    const report = await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
+
+    expect(report).toMatchObject({
+      sandbox: "alpha",
+      status: "fail",
+      failed: 1,
+      checks: [
+        { label: "Portable lifecycle", status: "ok" },
+        {
+          label: "Hermes gateway",
+          status: "fail",
+          detail: "receipt-qualified gateway readiness could not be confirmed",
+          hint: "run nemoclaw alpha recover, then retry this command",
+        },
+      ],
+    });
+    expect(JSON.stringify(report)).not.toContain("untrusted runtime diagnostic");
+    expect(harness.captureHostCommandSpy).not.toHaveBeenCalled();
+    expect(harness.recoverNamedGatewayRuntimeSpy).not.toHaveBeenCalled();
+  });
+
+  it("preserves authority failures discovered during Hermes readiness (#11892)", async () => {
+    const harness = createDoctorHarness("ollama-local", {
+      portableDisposition: hermesPortableDisposition("active"),
+      registryAgent: "hermes",
+      portableReadiness: "authority-unavailable",
+    });
+
+    const report = await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
+
+    expect(report).toMatchObject({
+      status: "fail",
+      checks: [
+        {
+          label: "Portable lifecycle authority",
+          status: "fail",
+          hint: expect.stringContaining("preserve the registry and lifecycle receipt files"),
+        },
+      ],
+    });
+    expect(JSON.stringify(report)).not.toContain("untrusted authority diagnostic");
+    expect(JSON.stringify(report)).not.toContain("recover");
+    expect(harness.assertHermesPortableAgentLifecycleAuthoritySpy).toHaveBeenCalledOnce();
+    expect(harness.recoverNamedGatewayRuntimeSpy).not.toHaveBeenCalled();
+  });
 
   it("renders plain Hermes portable doctor output without recovery (#9203)", async () => {
     const harness = createDoctorHarness("ollama-local", {
@@ -371,31 +480,53 @@ describe("runSandboxDoctor flow", () => {
     { field: "gatewayName", value: "other-gateway" },
     { field: "lifecycleGeneration", value: "other-generation" },
     { field: "lifecycleLiveIdentityFingerprint", value: "other-fingerprint" },
-  ] as const)("rejects Hermes portable registry disagreement in $field (#9203)", async (drift) => {
+  ] as const)("reports Hermes portable registry disagreement in $field (#11892)", async (drift) => {
     const harness = createDoctorHarness("ollama-local", {
       portableDisposition: hermesPortableDisposition("active"),
       registryAgent: "hermes",
       registryOverrides: { [drift.field]: drift.value },
     });
 
-    await expect(
-      harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true }),
-    ).rejects.toThrow("receipt and registry authority disagree");
+    const report = await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
+
+    expect(report).toMatchObject({
+      sandbox: "alpha",
+      status: "fail",
+      checks: [
+        {
+          label: "Portable lifecycle authority",
+          status: "fail",
+          hint: expect.stringContaining("preserve the registry and lifecycle receipt files"),
+        },
+      ],
+    });
     expect(harness.captureOpenShellSpy).not.toHaveBeenCalled();
     expect(harness.captureHostCommandSpy).not.toHaveBeenCalled();
   });
 
-  it("rejects an active Hermes receipt with no registry row (#9203)", async () => {
+  it("reports an active Hermes receipt with no registry row (#11892)", async () => {
     const harness = createDoctorHarness("ollama-local", {
       portableDisposition: hermesPortableDisposition("active"),
       registryEntry: "missing",
     });
 
-    await expect(
-      harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true }),
-    ).rejects.toThrow("missing its registry authority");
+    const report = await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
+
+    expect(report).toMatchObject({
+      sandbox: "alpha",
+      status: "fail",
+      checks: [
+        {
+          label: "Portable lifecycle authority",
+          status: "fail",
+          detail: "Hermes portable receipt and registry authority could not be qualified",
+          hint: expect.stringContaining("do not edit or recreate either file"),
+        },
+      ],
+    });
     expect(harness.captureOpenShellSpy).not.toHaveBeenCalled();
     expect(harness.captureHostCommandSpy).not.toHaveBeenCalled();
+    expect(harness.assertHermesPortableAgentLifecycleAuthoritySpy).not.toHaveBeenCalled();
   });
 
   it("preserves schema-4 OpenClaw doctor behavior under the lifecycle fence (#9203)", async () => {
@@ -425,6 +556,9 @@ describe("runSandboxDoctor flow", () => {
 
     expect(report?.checks).toEqual([
       expect.objectContaining({ detail: "agent=Hermes; phase=active" }),
+      expect.objectContaining({
+        detail: "receipt-qualified gateway readiness is confirmed",
+      }),
     ]);
     expect(harness.captureOpenShellSpy).not.toHaveBeenCalled();
     expect(harness.captureHostCommandSpy).not.toHaveBeenCalled();
@@ -613,6 +747,80 @@ describe("runSandboxDoctor flow", () => {
       );
     },
   );
+
+  it("uses hosted attachment authority and never reads the shared gateway route", async () => {
+    const receipt = {
+      schemaVersion: 1,
+      profileId: "nemoclaw-openai-inference-v1",
+      providerName: "nemoclaw-openai-api-v1",
+      providerId: "owned-id",
+    };
+    const harness = createDoctorHarness("openai-api", {
+      registryOverrides: { nativeHostedProviderAttachment: receipt },
+    });
+    const health = requireDist("./inference-route-health.js");
+    const invocation = requireDist("./inference-invocation-probe.js");
+    const verify = vi
+      .spyOn(health, "verifyNativeHostedStatusAttachment")
+      .mockResolvedValue(undefined);
+    const probe = vi
+      .spyOn(invocation, "probeSandboxInferenceInvocation")
+      .mockResolvedValue({ ok: true });
+    const report = await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
+    expect(harness.captureOpenShellSpy).not.toHaveBeenCalledWith(
+      expect.arrayContaining(["inference", "get"]),
+      expect.anything(),
+    );
+    expect(harness.probeSandboxInferenceGatewayHealthSpy).not.toHaveBeenCalled();
+    expect(verify).toHaveBeenCalledWith({
+      sandboxName: "alpha",
+      gatewayName: "nemoclaw-19080",
+      expected: receipt,
+    });
+    expect(probe).toHaveBeenCalledWith(
+      expect.objectContaining({ nativeProvider: true, provider: "openai-api" }),
+      {},
+      95_000,
+    );
+    expect(report?.checks).toContainEqual(
+      expect.objectContaining({ label: "Inference route (native hosted)", status: "ok" }),
+    );
+  });
+
+  it("uses the recorded native NVIDIA attachment instead of an unrelated shared route", async () => {
+    const receipt = {
+      schemaVersion: 1,
+      profileId: "nemoclaw-nvidia-inference-v1",
+      providerName: "nemoclaw-nvidia-prod-v1",
+      providerId: "11111111-2222-4333-8444-555555555555",
+    };
+    const harness = createDoctorHarness("nvidia-prod", {
+      registryOverrides: { nativeNvidiaProviderAttachment: receipt },
+    });
+
+    const report = await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
+
+    expect(harness.captureOpenShellSpy).not.toHaveBeenCalledWith(
+      expect.arrayContaining(["inference", "get"]),
+      expect.anything(),
+    );
+    expect(harness.probeSandboxInferenceGatewayHealthSpy).not.toHaveBeenCalled();
+    expect(harness.verifyNativeNvidiaStatusAttachmentSpy).toHaveBeenCalledWith({
+      gatewayName: "nemoclaw-19080",
+      sandboxName: "alpha",
+      expected: receipt,
+    });
+    expect(harness.probeSandboxNativeNvidiaModelsHealthSpy).toHaveBeenCalledWith("alpha", {
+      gatewayName: "nemoclaw-19080",
+      agentName: "openclaw",
+    });
+    expect(report?.checks).toContainEqual(
+      expect.objectContaining({
+        label: "Inference route (native NVIDIA)",
+        status: "ok",
+      }),
+    );
+  });
 
   it("rejects mutating --fix when JSON output was requested", async () => {
     const harness = createDoctorHarness();

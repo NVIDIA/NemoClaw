@@ -8,6 +8,7 @@ import {
   CLOUD_MODEL_OPTIONS,
   coerceAgentInferenceApi,
   DEFAULT_CLOUD_MODEL,
+  DEFAULT_OPENROUTER_MODEL,
   DEFAULT_HERMES_PROVIDER_MODEL,
   DEFAULT_OLLAMA_MODEL,
   DEFAULT_ROUTE_CREDENTIAL_ENV,
@@ -22,6 +23,7 @@ import {
   LLAMA_CPP_LOCAL_CREDENTIAL_ENV,
   MANAGED_PROVIDER_ID,
   OLLAMA_LOCAL_CREDENTIAL_ENV,
+  OPENROUTER_CLOUD_MODEL_OPTIONS,
   planInferenceRouteReconcile,
   resolveAgentDefaultCloudModel,
   resolveAgentInferenceApi,
@@ -29,6 +31,7 @@ import {
   sanitizeRouteValueForDisplay,
   VLLM_LOCAL_CREDENTIAL_ENV,
 } from "./config";
+import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "./native-nvidia";
 
 describe("resolveAgentDefaultCloudModel", () => {
   it("uses the Deep Agents manifest default", () => {
@@ -102,6 +105,7 @@ describe("inference selection config", () => {
     expect(CLOUD_MODEL_OPTIONS).toEqual([
       { id: "nvidia/nemotron-3-ultra-550b-a55b", label: "Nemotron 3 Ultra 550B" },
       { id: "nvidia/nemotron-3-super-120b-a12b", label: "Nemotron 3 Super 120B" },
+      { id: "nvidia/nemotron-3.5-super-vl-120b-a12b", label: "Nemotron 3.5 Super VL 120B" },
     ]);
     expect(CLOUD_MODEL_OPTIONS.map((option: { id: string }) => option.id)).not.toContain(
       "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
@@ -120,11 +124,21 @@ describe("inference selection config", () => {
     );
   });
 
-  it("keeps the NVIDIA Endpoints default on Nemotron 3 Super", () => {
-    expect(DEFAULT_CLOUD_MODEL).toBe("nvidia/nemotron-3-super-120b-a12b");
+  it("defaults NVIDIA Endpoints to Nemotron 3.5 Super VL", () => {
+    expect(DEFAULT_CLOUD_MODEL).toBe("nvidia/nemotron-3.5-super-vl-120b-a12b");
     expect(CLOUD_MODEL_OPTIONS.map((option: { id: string }) => option.id)).toContain(
-      "nvidia/nemotron-3-super-120b-a12b",
+      DEFAULT_CLOUD_MODEL,
     );
+  });
+
+  it("uses the OpenRouter model ID for Nemotron 3.5 Super VL", () => {
+    expect(DEFAULT_OPENROUTER_MODEL).toBe("nvidia/nemotron-3.5-super-vl");
+    expect(OPENROUTER_CLOUD_MODEL_OPTIONS.map((option) => option.id)).toEqual([
+      "nvidia/nemotron-3-ultra-550b-a55b",
+      "nvidia/nemotron-3-super-120b-a12b",
+      "nvidia/nemotron-3.5-super-vl",
+      "minimaxai/minimax-m3",
+    ]);
   });
 
   it("aligns Hermes Provider defaults with the Hermes Agent Nous catalog", () => {
@@ -230,11 +244,11 @@ describe("inference selection config", () => {
     });
   });
 
-  it("maps the remaining hosted providers to the sandbox inference route", () => {
+  it("maps the remaining hosted providers to native endpoints (#12589)", () => {
     // Full-object assertion for one hosted provider to catch structural regressions
     expect(getProviderSelectionConfig("openai-api", "gpt-5.4-mini")).toEqual({
       endpointType: "custom",
-      endpointUrl: INFERENCE_ROUTE_URL,
+      endpointUrl: "https://api.openai.com/v1",
       ncpPartner: null,
       model: "gpt-5.4-mini",
       profile: DEFAULT_ROUTE_PROFILE,
@@ -244,7 +258,7 @@ describe("inference selection config", () => {
     });
     expect(getProviderSelectionConfig("openrouter-api", "moonshotai/kimi-k2.6")).toEqual({
       endpointType: "custom",
-      endpointUrl: INFERENCE_ROUTE_URL,
+      endpointUrl: "https://openrouter.ai/api/v1",
       ncpPartner: null,
       model: "moonshotai/kimi-k2.6",
       profile: DEFAULT_ROUTE_PROFILE,
@@ -270,7 +284,7 @@ describe("inference selection config", () => {
     });
     expect(getProviderSelectionConfig("hermes-provider", "anthropic/claude-opus-4.7")).toEqual({
       endpointType: "custom",
-      endpointUrl: INFERENCE_ROUTE_URL,
+      endpointUrl: "https://inference-api.nousresearch.com/v1",
       ncpPartner: null,
       model: "anthropic/claude-opus-4.7",
       profile: DEFAULT_ROUTE_PROFILE,
@@ -337,7 +351,7 @@ describe("inference selection config", () => {
 
   it("falls back to provider defaults when model is omitted", () => {
     expect(getProviderSelectionConfig("openai-api")?.model).toBe("gpt-5.4");
-    expect(getProviderSelectionConfig("openrouter-api")?.model).toBe(DEFAULT_CLOUD_MODEL);
+    expect(getProviderSelectionConfig("openrouter-api")?.model).toBe(DEFAULT_OPENROUTER_MODEL);
     expect(getProviderSelectionConfig("anthropic-prod")?.model).toBe("claude-sonnet-4-6");
     expect(getProviderSelectionConfig("gemini-api")?.model).toBe("gemini-3.6-flash");
     expect(getProviderSelectionConfig("compatible-endpoint")?.model).toBe("custom-model");
@@ -358,7 +372,10 @@ describe("inference selection config", () => {
 
   it("builds a default OpenClaw primary model for non-ollama providers", () => {
     expect(getOpenClawPrimaryModel("nvidia-prod")).toBe(
-      `${MANAGED_PROVIDER_ID}/nvidia/nemotron-3-super-120b-a12b`,
+      `${MANAGED_PROVIDER_ID}/nvidia/nemotron-3.5-super-vl-120b-a12b`,
+    );
+    expect(getOpenClawPrimaryModel("openrouter-api")).toBe(
+      `${MANAGED_PROVIDER_ID}/nvidia/nemotron-3.5-super-vl`,
     );
     expect(getOpenClawPrimaryModel("ollama-local")).toBe(
       `${MANAGED_PROVIDER_ID}/${DEFAULT_OLLAMA_MODEL}`,
@@ -379,7 +396,7 @@ describe("getSandboxInferenceConfig", () => {
     });
   });
 
-  it("maps NVIDIA Endpoints to the routed inference provider", () => {
+  it("maps NVIDIA Endpoints to its native endpoint while preserving the agent provider key (#12558)", () => {
     expect(
       getSandboxInferenceConfig(
         "nvidia/nemotron-3-super-120b-a12b",
@@ -389,9 +406,9 @@ describe("getSandboxInferenceConfig", () => {
     ).toEqual({
       providerKey: MANAGED_PROVIDER_ID,
       primaryModelRef: `${MANAGED_PROVIDER_ID}/nvidia/nemotron-3-super-120b-a12b`,
-      inferenceBaseUrl: INFERENCE_ROUTE_URL,
+      inferenceBaseUrl: NVIDIA_HOSTED_NATIVE_ENDPOINT,
       inferenceApi: "openai-completions",
-      inferenceCompat: null,
+      inferenceCompat: { supportsStore: false },
     });
   });
 
@@ -411,9 +428,9 @@ describe("getSandboxInferenceConfig", () => {
     ).toEqual({
       providerKey: MANAGED_PROVIDER_ID,
       primaryModelRef: `${MANAGED_PROVIDER_ID}/moonshotai/kimi-k2.6`,
-      inferenceBaseUrl: INFERENCE_ROUTE_URL,
+      inferenceBaseUrl: NVIDIA_HOSTED_NATIVE_ENDPOINT,
       inferenceApi: "openai-completions",
-      inferenceCompat: null,
+      inferenceCompat: { supportsStore: false },
     });
   });
 
@@ -431,11 +448,11 @@ describe("getSandboxInferenceConfig", () => {
     });
   });
 
-  it("maps OpenRouter to the managed inference provider with store disabled (#5826)", () => {
+  it("uses native OpenRouter access with store disabled (#12589)", () => {
     expect(getSandboxInferenceConfig("moonshotai/kimi-k2.6", "openrouter-api")).toEqual({
       providerKey: MANAGED_PROVIDER_ID,
       primaryModelRef: `${MANAGED_PROVIDER_ID}/moonshotai/kimi-k2.6`,
-      inferenceBaseUrl: INFERENCE_ROUTE_URL,
+      inferenceBaseUrl: "https://openrouter.ai/api/v1",
       inferenceApi: "openai-completions",
       inferenceCompat: {
         supportsStore: false,
@@ -496,11 +513,11 @@ describe("getSandboxInferenceConfig", () => {
     });
   });
 
-  it("maps Gemini to the routed inference provider with supportsStore disabled", () => {
+  it("uses the native Gemini OpenAI-compatible endpoint with store disabled (#12589)", () => {
     expect(getSandboxInferenceConfig("gemini-2.5-flash", "gemini-api")).toEqual({
       providerKey: MANAGED_PROVIDER_ID,
       primaryModelRef: `${MANAGED_PROVIDER_ID}/gemini-2.5-flash`,
-      inferenceBaseUrl: INFERENCE_ROUTE_URL,
+      inferenceBaseUrl: "https://generativelanguage.googleapis.com/v1beta/openai/",
       inferenceApi: "openai-completions",
       inferenceCompat: {
         supportsStore: false,
@@ -512,7 +529,7 @@ describe("getSandboxInferenceConfig", () => {
     expect(getSandboxInferenceConfig("gpt-5.4", "openai-api", "openai-responses")).toEqual({
       providerKey: "openai",
       primaryModelRef: "openai/gpt-5.4",
-      inferenceBaseUrl: INFERENCE_ROUTE_URL,
+      inferenceBaseUrl: "https://api.openai.com/v1",
       inferenceApi: "openai-responses",
       inferenceCompat: null,
     });
@@ -647,4 +664,64 @@ describe("formatInferenceRouteDriftForDisplay", () => {
         "gateway inference route (openai[2J/gpt-5.2) differs from the recorded route for sandbox 'alpha' (nvidia/nvidia/nemotron).",
     });
   });
+});
+
+it.each([
+  ["openclaw", true, "https://inference.local/v1"],
+  ["pi", true, "http://host.openshell.internal:8000/v1"],
+  ["pi", false, "https://inference.local/v1"],
+  ["langchain-deepagents-code", false, "https://inference.local/v1"],
+  ["langchain-deepagents-code", true, "http://host.openshell.internal:8000/v1"],
+  ["hermes", true, "http://host.openshell.internal:8000/v1"],
+  ["hermes", false, "https://inference.local/v1"],
+] as const)("routes %s with native attachment %s to %s (#13197)", (agent, attached, expected) => {
+  expect(
+    getSandboxInferenceConfig(
+      "fixture-model",
+      "compatible-endpoint",
+      "openai-completions",
+      attached,
+      "http://host.openshell.internal:8000/v1",
+      agent,
+    ).inferenceBaseUrl,
+  ).toBe(expected);
+});
+
+it.each([
+  ["openclaw", true, "http://host.openshell.internal:8000/v1"],
+  ["openclaw", false, "https://inference.local/v1"],
+  ["hermes", true, "http://host.openshell.internal:8000/v1"],
+  ["pi", true, "http://host.openshell.internal:8000/v1"],
+  ["pi", false, "https://inference.local/v1"],
+] as const)(
+  "routes %s standalone vLLM with native attachment %s to %s",
+  (agent, attached, expected) => {
+    expect(
+      getSandboxInferenceConfig(
+        "fixture-model",
+        "vllm-local",
+        "openai-completions",
+        attached,
+        "http://host.openshell.internal:8000/v1",
+        agent,
+      ).inferenceBaseUrl,
+    ).toBe(expected);
+  },
+);
+
+it.each([
+  ["pi", "openai-completions"],
+  ["hermes", "openai-responses"],
+] as const)("preserves the %s private compatible route family", (agent, expectedApi) => {
+  const endpoint = "http://192.168.1.20:9001/v1";
+  const config = getSandboxInferenceConfig(
+    "fixture-model",
+    "compatible-endpoint",
+    "openai-responses",
+    true,
+    endpoint,
+    agent,
+  );
+  expect(config.inferenceBaseUrl).toBe(endpoint);
+  expect(config.inferenceApi).toBe(expectedApi);
 });

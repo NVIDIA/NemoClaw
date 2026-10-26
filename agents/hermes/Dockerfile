@@ -6,7 +6,7 @@
 # Layers PR-specific code (plugin, config, startup script) on top of the
 # pre-built Hermes base image. Mirrors the OpenClaw Dockerfile structure.
 
-ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:c50a0db0efb317ee4c48438435ca6d754b894d61acc7f91c4c4b0e615b09c5a5
+ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:4574777698fa65e270f53ee4c6fca90640cc89867e7dcc726c2ca03429d4ed8b
 ARG NEMOCLAW_CORPORATE_CA_B64=
 ARG NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=0
 # BuildKit supplies this automatic platform argument. The Portable staged
@@ -42,11 +42,16 @@ COPY agents/hermes/dashboard-external-host.patch /scripts/hermes-dashboard-exter
 
 FROM scratch AS hermes-agent-payload
 
+# Portable builds reject RUN mounts. Reuse the existing payload layer for
+# the shared inventory tooling instead of adding final-image COPY layers.
+# Copying a scratch /tmp would replace the runtime's sticky writable mode.
+COPY scripts/security/standalone-security-package-inventory.mts /opt/nemoclaw-security/scripts/security/security-package-inventory.mts
+
 COPY agents/hermes/plugin/__init__.py agents/hermes/plugin/plugin.yaml /opt/nemoclaw-hermes-plugin/
 # Channel-owned Google Chat runtime asset, loaded by the plugin beside its own
 # __init__.py.
 COPY src/lib/messaging/channels/googlechat/runtime/hermes-adapter.py /opt/nemoclaw-hermes-plugin/googlechat_adapter.py
-COPY agents/hermes/generate-config.ts /opt/nemoclaw-hermes-config/generate-config.ts
+COPY agents/hermes/generate-config.ts agents/hermes/check-native-credentials.ts /opt/nemoclaw-hermes-config/
 COPY agents/hermes/config/ /opt/nemoclaw-hermes-config/config/
 COPY agents/hermes/image-build-probes.py agents/hermes/finalize-image-layout.sh /opt/nemoclaw-hermes-config/
 COPY agents/hermes/a2a-neutral.patch agents/hermes/patch-gateway-runtime-metadata.py /opt/nemoclaw-hermes-config/
@@ -63,11 +68,19 @@ COPY agents/hermes/patch-profile-policy-defaults.py /opt/nemoclaw-hermes-config/
 COPY agents/hermes/managed_policy.py /opt/nemoclaw-hermes-config/managed_policy.py
 COPY agents/hermes/host/managed-tool-gateway-matrix.json /opt/nemoclaw-hermes-config/managed-tool-gateway-matrix.json
 COPY src/lib/hermes-managed-route.ts /src/lib/hermes-managed-route.ts
-COPY src/lib/tool-disclosure.ts src/lib/providerless-inference.ts /src/lib/
+COPY src/lib/tool-disclosure.ts src/lib/providerless-inference.ts src/lib/inference-credential.ts /src/lib/
+COPY src/lib/inference/native-provider/agent-config.ts src/lib/inference/native-provider/hosted.ts src/lib/inference/native-provider/contract.ts /src/lib/inference/native-provider/
+COPY src/lib/inference/native-local/agent-config.ts /src/lib/inference/native-local/
+COPY src/lib/core/endpoint-url-safety.ts /src/lib/core/
 COPY src/lib/messaging/ /src/lib/messaging/
 COPY scripts/lib/openclaw-npm-remediation.mts /scripts/lib/openclaw-npm-remediation.mts
 
 FROM scratch AS hermes-runtime-payload
+
+# The base uses temporary mounts for these probes. The final image also runs
+# them after materializing its dependencies; Portable requires copied inputs.
+COPY agents/hermes/dependency-security-probes.py /usr/local/libexec/nemoclaw-hermes-dependency-security.py
+COPY agents/hermes/sharp-security-probes.mts /usr/local/libexec/nemoclaw-hermes-sharp-security.mts
 
 COPY --from=mcp-tool-discovery-runtime /opt/mcp-tool-discovery-runtime/dist/ /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime/
 COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
@@ -378,7 +391,7 @@ RUN chmod -R a+rX /opt/nemoclaw-hermes-plugin/
 # read-only.
 RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
     && find /opt/nemoclaw-hermes-config -type f -exec chmod 444 {} + \
-    && chmod 444 /src/lib/hermes-managed-route.ts /src/lib/tool-disclosure.ts /src/lib/providerless-inference.ts \
+    && chmod 444 /src/lib/hermes-managed-route.ts /src/lib/tool-disclosure.ts /src/lib/providerless-inference.ts /src/lib/inference-credential.ts \
     && chmod 444 /scripts/lib/reviewed-npm-archive.mts /scripts/lib/bundled-npm-package.mts \
         /scripts/lib/openclaw-npm-remediation.mts /scripts/lib/reviewed-npm-audit.mts \
         /scripts/lib/reviewed-npm-identity.mts \
@@ -391,6 +404,10 @@ ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=fbbc01d0fd6f0289700a3e94bf8f0e6bde
 
 # hadolint ignore=DL3067
 COPY --from=hermes-runtime-payload / /
+
+# The startup guard comes from the runtime payload. Verify its credential
+# projection through the pinned Hermes consumer after installing that payload.
+RUN node /opt/nemoclaw-hermes-config/check-native-credentials.ts
 
 # Keep the root-owned managed-startup handoff in this image-only layer. The
 # following permissions block is replayed on the host by regression tests.
@@ -770,9 +787,9 @@ RUN node \
 # file has to also rewrite the Dockerfile-committed hash, which reviewers gate).
 # Regenerate with `sha256sum agents/hermes/{hermes-wrapper.py,hermes-cli-adapter-v1.json,validate-cli-adapter.py,validate-env-secret-boundary.py,finalize-tirith-marker.py,cron-restore-control.py}`.
 ARG NEMOCLAW_HERMES_CLI_ADAPTER_SHA256=d892e57585485880e41c9bd0afe5b851e131997ab6ac86956a58db0704147781
-ARG NEMOCLAW_HERMES_WRAPPER_SHA256=1d6e6e46de34ccd5904e1a1add45eca536790902e610a46303a1811bb926eb81
+ARG NEMOCLAW_HERMES_WRAPPER_SHA256=ca37193cfa1fd972f64db1e3feb77a0b605e2dec507ee8414310ce002aba6985
 ARG NEMOCLAW_HERMES_CLI_ADAPTER_VALIDATOR_SHA256=5205a5446d0a509c5bc60f77fd97ec579449c2c7291dcc2878a788f25f078d6f
-ARG NEMOCLAW_HERMES_VALIDATOR_SHA256=8173abf39766a41afad3110622ce7dc78612a4cc96ea75e88150125e7dabc8b5
+ARG NEMOCLAW_HERMES_VALIDATOR_SHA256=8a034b4ecd32b69487d7524200c59446cf8df40a19e92b064d81f052dd8a51c4
 ARG NEMOCLAW_HERMES_TIRITH_FINALIZER_SHA256=a1e6b1c53ab297569abb87c29d15c294d729e46005bfd022136b4c447a791819
 ARG NEMOCLAW_HERMES_CRON_RESTORE_CONTROLLER_SHA256=408c80aacb38ef52cad87278c73f4b0f8863eea75bc7f0ee4f80864137ebf0b0
 # hadolint ignore=DL4006
@@ -1460,40 +1477,8 @@ RUN check_metadata() { \
 # Verify the immutable security package inventory in the completed image.
 # hadolint ignore=DL4006
 RUN set -eu; \
-    security_inventory=/usr/local/share/nemoclaw/security-packages.txt; \
-    arch="$(dpkg --print-architecture)"; \
-    python_fix_version="$(dpkg-query -W -f='${Version}' nemoclaw-python3.13-htmlparser-fix)"; \
-    case "$python_fix_version" in \
-        3.13.5-2+deb13u4+nemoclaw1|3.13.5-2+deb13u5+nemoclaw1) ;; \
-        *) echo "ERROR: unexpected patched Python package version: $python_fix_version" >&2; exit 1 ;; \
-    esac; \
-    test -f "$security_inventory"; \
-    test ! -L "$security_inventory"; \
-    test "$(stat -c '%u:%g:%a' "$security_inventory")" = "0:0:444"; \
-    printf '%s\n' \
-        "architecture=$arch" \
-        "libexpat1=2.8.3-1" \
-        "libonig5=6.9.9-1+b1" \
-        "libjq1=1.8.2-1" \
-        "jq=1.8.2-1" \
-        "vim-common=2:9.2.0858-1" \
-        "vim-tiny=2:9.2.0858-1" \
-        "libssh2-1t64=1.11.1-1+deb13u1+nemoclaw2" \
-        "libssl3t64=3.5.7-1~deb13u3" \
-        "nemoclaw-python3.13-htmlparser-fix=$python_fix_version" \
-        "perl-base=5.44.0-1nemoclaw1" \
-        "perl=5.44.0-1nemoclaw1" \
-        | cmp -s - "$security_inventory"; \
-    test "$(dpkg-query -W -f='${Version}' libexpat1)" = "2.8.3-1"; \
-    test "$(dpkg-query -W -f='${Version}' libonig5)" = "6.9.9-1+b1"; \
-    test "$(dpkg-query -W -f='${Version}' libjq1)" = "1.8.2-1"; \
-    test "$(dpkg-query -W -f='${Version}' jq)" = "1.8.2-1"; \
-    test "$(dpkg-query -W -f='${Version}' vim-common)" = "2:9.2.0858-1"; \
-    test "$(dpkg-query -W -f='${Version}' vim-tiny)" = "2:9.2.0858-1"; \
-    test "$(dpkg-query -W -f='${Version}' libssh2-1t64)" = "1.11.1-1+deb13u1+nemoclaw2"; \
-    test "$(dpkg-query -W -f='${Version}' libssl3t64)" = "3.5.7-1~deb13u3"; \
-    test "$(dpkg-query -W -f='${Version}' perl-base)" = "5.44.0-1nemoclaw1"; \
-    test "$(dpkg-query -W -f='${Version}' perl)" = "5.44.0-1nemoclaw1"; \
+    security_probe="$(node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON /opt/nemoclaw-security/scripts/security/security-package-inventory.mts probe hermes-compatible)"; \
+    sh -ec "$security_probe"; \
     test "$(perl -e 'print $^V')" = "v5.44.0"; \
     ldd /usr/bin/jq | grep -Eq 'libonig[.]so[.]5'; \
     test "$(jq --version)" = "jq-1.8.2"; \
@@ -1507,7 +1492,8 @@ RUN set -eu; \
     python3 -c "import ctypes, sys; lib=ctypes.CDLL('libssh2.so.1'); lib.libssh2_version.restype=ctypes.c_char_p; lib.libssh2_version(0) == b'1.11.1' or sys.exit('unexpected libssh2 runtime version')"; \
     vim.tiny --version | head -n 1 | grep -Eq '^VIM - Vi IMproved 9[.]2 '; \
     vim.tiny --version | grep -Fx 'Included patches: 1-858'; \
-    test -z "$(dpkg --audit)"
+    test -z "$(dpkg --audit)"; \
+    rm -rf /opt/nemoclaw-security
 # End completed-image security package verification.
 
 # OpenShell 0.0.116 launches the image as the non-root sandbox account.
@@ -1515,3 +1501,13 @@ RUN set -eu; \
 USER ${NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER}
 ENTRYPOINT ["/usr/local/bin/nemoclaw-start"]
 CMD ["/bin/bash"]
+
+# Recheck after final-image dependency installation and bridge materialization.
+# The runtime CA bundle is mounted only at startup; use system trust for this offline probe.
+RUN SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
+    /opt/hermes/.venv/bin/python /usr/local/libexec/nemoclaw-hermes-dependency-security.py \
+    && node /usr/local/libexec/nemoclaw-hermes-sharp-security.mts \
+        /opt/hermes/scripts/whatsapp-bridge \
+    && if [ -d /sandbox/.hermes/scripts/whatsapp-bridge ]; then \
+        node /usr/local/libexec/nemoclaw-hermes-sharp-security.mts /sandbox/.hermes/scripts/whatsapp-bridge; \
+    fi

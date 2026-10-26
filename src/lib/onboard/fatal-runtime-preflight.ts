@@ -130,6 +130,7 @@ export interface OnboardHostReadinessOptions {
   /** Preserve provider-bound proof state across readiness collection phases. */
   containerGpuProof?: GpuDetection["containerGpuProof"];
   n1xWslProduct?: boolean | null;
+  stationGb300WslProduct?: boolean | null;
   resuming?: boolean;
   allowStorageRemediation?: boolean;
   allowPortableHostPreparation?: boolean;
@@ -320,12 +321,13 @@ export function assertOnboardGatewayReadiness(
 /** Collect and admit production gateway facts before onboarding effects. */
 export async function collectOnboardGatewayReadiness(
   options: ProductionGatewayReadinessOptions,
+  exitProcess?: FatalRuntimePreflightContext["exitProcess"],
 ): Promise<CollectedGatewayReadiness> {
   const snapshot = await collectGatewayObservations(
     createProductionGatewayReadinessDependencies(options),
   );
   const projection = projectGatewayReadiness(snapshot);
-  assertOnboardGatewayReadiness(projection);
+  assertOnboardGatewayReadiness(projection, exitProcess);
   return { projection, snapshot };
 }
 
@@ -403,7 +405,10 @@ function collectOnboardHostReadiness(
     detectGpu: () => gpu,
     runtimeProvider: runtimeProvider ?? undefined,
     containerGpuProof: runtimeGpu?.containerGpuProof,
-    platformIdentityOptions: { n1xWslProductObservation: n1xWslProduct },
+    platformIdentityOptions: {
+      n1xWslProductObservation: n1xWslProduct,
+      stationGb300WslProductObservation: stationGb300WslProduct,
+    },
     now,
   });
   const readinessReport = projectHostReadiness(snapshot, {
@@ -582,13 +587,27 @@ export function assertOnboardHostReadiness(
   const n1xWslProductObservation = Object.prototype.hasOwnProperty.call(options, "n1xWslProduct")
     ? (options.n1xWslProduct ?? null)
     : (gpu?.n1xWslProduct ?? null);
+  const hasStationGb300WslProductObservation =
+    Object.prototype.hasOwnProperty.call(options, "stationGb300WslProduct") ||
+    Boolean(gpu && Object.prototype.hasOwnProperty.call(gpu, "stationGb300WslProduct"));
+  const stationGb300WslProductObservation = Object.prototype.hasOwnProperty.call(
+    options,
+    "stationGb300WslProduct",
+  )
+    ? (options.stationGb300WslProduct ?? null)
+    : (gpu?.stationGb300WslProduct ?? null);
   const collected = collectHostObservations({
     assess: () => host,
     detectGpu: () => gpu,
     runtimeProvider: runtimeProviderReadinessAuthority(host) ?? undefined,
     containerGpuProof: options.containerGpuProof,
-    ...(hasN1xWslProductObservation
-      ? { platformIdentityOptions: { n1xWslProductObservation } }
+    ...(hasN1xWslProductObservation || hasStationGb300WslProductObservation
+      ? {
+          platformIdentityOptions: {
+            ...(hasN1xWslProductObservation ? { n1xWslProductObservation } : {}),
+            ...(hasStationGb300WslProductObservation ? { stationGb300WslProductObservation } : {}),
+          },
+        }
       : {}),
     now,
   });
@@ -785,6 +804,7 @@ export function runFatalOnboardRuntimePreflight(
     collectedAt,
     now,
     n1xWslProduct,
+    stationGb300WslProduct,
   });
   let result = {
     gpu,

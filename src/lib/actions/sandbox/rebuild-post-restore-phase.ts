@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { buildSandboxCommandEnvironment } from "../../adapters/sandbox/command-transport";
+import { rebuildOnboardDependencies } from "./rebuild-onboard-dependencies";
 import { loadAgent } from "../../agent/defs";
 import * as agentRuntime from "../../agent/runtime";
 import { CLI_NAME } from "../../cli/branding";
@@ -18,6 +20,7 @@ import { settlePortableOpenClawPairing } from "./launch-readiness";
 import { ensureMessagingHostForwardAfterRebuild } from "./messaging-host-forward-lifecycle";
 import type { RebuildBackupManifest } from "./rebuild-backup-phase";
 import type { RebuildBail, RebuildLog } from "./rebuild-credential-preflight";
+import { redactBoundedRebuildTerminalDiagnostic } from "./rebuild-preflight-confirmation";
 import {
   completeHermesCronRestoreAfterGatewayReplacement,
   type HermesCronRestoreIdentity,
@@ -25,6 +28,7 @@ import {
   isHermesCronRestoreDrainMarkerRollbackFailure,
   printHermesGatewayRestoreRecovery,
   restartHermesGatewayAfterStateRestore,
+  refreshRestoredHermesInferenceRoute,
   verifyHermesGatewayAfterStateRestore,
   verifyHermesGatewayAfterStateRestoreForCronGate,
 } from "./rebuild-hermes-post-restore";
@@ -37,7 +41,7 @@ import {
 } from "./rebuild-mcp-phase";
 import {
   finalizePendingMessagingRemovalsAfterRestore,
-  reapplyMessagingManifestBeforeOpenClawStart,
+  reapplyMessagingManifestBeforeAgentStart,
 } from "./rebuild-messaging-phase";
 import {
   abortUnregisteredOpenClawPostRestoreDoctor,
@@ -100,6 +104,7 @@ export interface RebuildPostRestorePhaseInput {
 }
 
 export interface RebuildPostRestoreVerification {
+  readonly complete: boolean;
   readonly mutableConfigPermissionsVerified: boolean;
 }
 
@@ -297,22 +302,33 @@ export async function runRebuildPostRestorePhase(
         bail,
       );
       if (!openClawDoctorWindow) return;
+    }
 
+    if (targetAgentName === "openclaw" || targetAgentName === "hermes") {
       try {
-        await reapplyMessagingManifestBeforeOpenClawStart(
+        await reapplyMessagingManifestBeforeAgentStart(
           sandboxName,
+          targetAgentName,
           messagingPlan,
           log,
           mcpRuntimeSelection,
         );
-      } catch (error) {
-        log(
-          `Messaging manifest reapply failed: ${error instanceof Error ? error.message : String(error)}`,
-        );
+      } catch {
+        // Parser errors can include credential-bearing configuration excerpts.
+        log("Messaging manifest reapply failed; configuration details omitted.");
         console.error(
           `  ${YW}\u26a0${R} Messaging manifest config reapply failed before gateway start.`,
         );
-        bail("OpenClaw messaging manifest config reapply failed during rebuild.");
+        if (hermesCronRestoreIdentity) {
+          return bailAfterHermesCronRestoreFailure(
+            sandboxName,
+            backupManifest,
+            "Hermes cron dispatch remains drained because messaging config could not be restored.",
+            "Messaging manifest config reapply failed during rebuild.",
+            bail,
+          );
+        }
+        bail("Messaging manifest config reapply failed during rebuild.");
         return;
       }
     }
@@ -341,6 +357,32 @@ export async function runRebuildPostRestorePhase(
         }`,
       );
       return;
+    }
+
+    if (targetAgentName === "hermes") {
+      try {
+        await refreshRestoredHermesInferenceRoute(
+          sandboxName,
+          mcpRuntimeSelection,
+          registry.getSandbox,
+          buildSandboxCommandEnvironment(mcpRuntimeSelection),
+        );
+      } catch {
+        // Config parser failures can contain credentials or restored user content.
+        const message = "Hermes inference configuration could not be rebound after state restore.";
+        if (hermesCronRestoreIdentity) {
+          return bailAfterHermesCronRestoreFailure(
+            sandboxName,
+            backupManifest,
+            "Hermes cron dispatch remains drained because inference configuration was not rebound.",
+            message,
+            bail,
+          );
+        }
+        if (backupManifest) console.error(`  Backup is preserved at: ${backupManifest.backupPath}`);
+        bail(message);
+        return;
+      }
     }
 
     // Recreation starts Hermes before restore replaces its durable home. Rebind
@@ -458,8 +500,15 @@ export async function runRebuildPostRestorePhase(
     if (mutableConfigPermissionsVerified) {
       log("Verified the rebuilt Hermes mutable config posture");
     } else {
-      log(
-        `Hermes mutable config posture was not verified: ${mutableConfigVerification.errors.join("; ")}`,
+      const detail = redactBoundedRebuildTerminalDiagnostic(
+        mutableConfigVerification.errors.join("; "),
+      );
+      log(`Hermes mutable config posture was not verified: ${detail}`);
+      console.error(
+        `  Hermes config write permissions could not be verified: ${detail || "No diagnostic was returned."}`,
+      );
+      console.error(
+        `  Correct the reported problem, then run \`${CLI_NAME} ${sandboxName} rebuild\` to repeat verification.`,
       );
     }
   }
@@ -581,6 +630,31 @@ export async function runRebuildPostRestorePhase(
       return;
     }
   }
+  if (
+    postRestoreComplete &&
+    targetAgentName === "openclaw" &&
+    recreatedEntry.provider === "compatible-endpoint"
+  ) {
+    try {
+      await rebuildOnboardDependencies.verifyRebuiltOpenClawCompatibleEndpoint({
+        sandboxName,
+        provider: recreatedEntry.provider,
+        model: recreatedEntry.model ?? "",
+        endpointUrl: recreatedEntry.endpointUrl,
+        credentialEnv: recreatedEntry.credentialEnv,
+        environment: buildSandboxCommandEnvironment(mcpRuntimeSelection),
+        gatewayName: mcpRuntimeSelection?.gatewayName,
+      });
+    } catch {
+      console.error(`  OpenClaw inference verification failed after rebuilding '${sandboxName}'.`);
+      if (backupManifest) console.error(`  Backup is preserved at: ${backupManifest.backupPath}`);
+      console.error(
+        `  Correct the provider or route configuration, then rerun \`${CLI_NAME} ${sandboxName} rebuild --yes\`.`,
+      );
+      bail("OpenClaw inference verification failed after rebuild.");
+      return;
+    }
+  }
   if (postRestoreComplete) {
     console.log(`  ${G}✓${R} Sandbox '${sandboxName}' rebuild completed`);
     if (versionCheck.expectedVersion) {
@@ -633,5 +707,7 @@ export async function runRebuildPostRestorePhase(
     return;
   }
   printHermesApiTokenChangeNotice(sandboxName, targetAgentName);
-  return { mutableConfigPermissionsVerified };
+  return { complete: postRestoreComplete, mutableConfigPermissionsVerified };
 }
+
+export { recordRebuildCompletion } from "../telemetry/upgrade";

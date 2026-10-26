@@ -3,6 +3,12 @@
 
 import { loadState } from "./blueprint/state.js";
 import type { NemoClawConfig, OpenClawPluginApi } from "./index.js";
+import * as importedSandboxName from "./shared/sandbox-name.cjs";
+
+const sourceOrGeneratedSandboxName = importedSandboxName as typeof importedSandboxName & {
+  default?: typeof importedSandboxName;
+};
+const { isValidName } = sourceOrGeneratedSandboxName.default ?? sourceOrGeneratedSandboxName;
 
 interface RuntimeSummary {
   sandboxName: string;
@@ -12,8 +18,8 @@ interface RuntimeSummary {
 }
 
 const STATIC_NETWORK_LINES = [
-  "outbound network is deny-by-default, but allowed endpoints work, so verify by attempting a request rather than assuming a host is unreachable",
-  "attempting a restricted endpoint is productive: a proxy or policy denial raises an operator approval request in OpenShell, so make the request rather than refusing preemptively; if it fails, report the actual error and distinguish a policy denial (which the operator can approve) from other network errors such as DNS, timeout, or TLS failures",
+  "Outbound network access is deny-by-default, but allowed endpoints work. Try the request before declaring a host unreachable.",
+  "OpenShell policy denials can raise operator approval requests. Report the actual error when a request fails.",
 ];
 
 const STATIC_FILESYSTEM_LINES = [
@@ -54,9 +60,10 @@ export function getRuntimeSummary(pluginConfig: NemoClawConfig): RuntimeSummary 
 }
 
 function buildRuntimeContextText(summary: RuntimeSummary): string {
+  const displaySandboxName = isValidName(summary.sandboxName) ? summary.sandboxName : "<name>";
   const lines = [
     "<nemoclaw-runtime>",
-    `You are running inside OpenShell sandbox "${summary.sandboxName}" via NemoClaw.`,
+    `You are running inside OpenShell sandbox "${displaySandboxName}" via NemoClaw.`,
     "Treat this as a sandboxed environment, not unrestricted host access.",
     summary.sandboxPhase ? `Current sandbox phase: ${summary.sandboxPhase}.` : null,
     "Network policy:",
@@ -65,7 +72,12 @@ function buildRuntimeContextText(summary: RuntimeSummary): string {
     ...summary.filesystemLines.map((line) => `- ${line}`),
     "Behavior:",
     "- Do not assert that a URL or host is blocked or unreachable unless you have actually attempted it this turn; report the actual result rather than speculating.",
-    "- Distinguish a proxy/policy denial, which raises an operator approval request in OpenShell, from other failures such as DNS, timeout, or TLS errors; only a policy denial is something the operator can approve.",
+    "- If a tool reports `CONNECT tunnel failed, response 403`, state that the proxy refused the request.",
+    "- OpenShell policy may be the cause. The error alone does not confirm a policy denial.",
+    `- Ask the operator to check \`nemoclaw ${displaySandboxName} logs --tail 50\` on the host before suggesting a policy change.`,
+    "- Only suggest a policy change if a logged denial's destination and time match the failed request. The merged logs can contain unrelated denials.",
+    "- If the last 50 log lines have no matching denial, ask the operator to inspect more logs; do not infer that policy allowed or blocked this request.",
+    "- Do not call a proxy 403 a generic connectivity failure. Treat proxy 407, DNS, timeout, and TLS failures separately.",
     "- Do not claim unrestricted host or internet access either. When unsure, attempt the action and rely on the real result instead of speculating about the environment.",
     "</nemoclaw-runtime>",
   ].filter((line): line is string => Boolean(line));

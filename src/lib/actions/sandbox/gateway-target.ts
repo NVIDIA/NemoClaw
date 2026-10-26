@@ -19,6 +19,10 @@ export function listPersistedSandboxTargets(): registry.SandboxEntry[] {
   return registry.listSandboxes().sandboxes;
 }
 
+export function getDefaultSandboxTargetName(): string | null {
+  return registry.getDefault();
+}
+
 export function getKnownSandboxTargetGatewayName(sandboxName = ""): string | null {
   const sb = sandboxName ? getKnownSandboxTarget(sandboxName) : null;
   return sb ? resolveSandboxGatewayName(sb) : null;

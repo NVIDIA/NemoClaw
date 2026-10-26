@@ -21,7 +21,11 @@ function restoreSandboxEnv(saved: Record<(typeof SANDBOX_ENV_NAMES)[number], str
 }
 
 function stopAllWithoutOllama(opts: Parameters<typeof stopAll>[0] = {}) {
-  return stopAll({ ...opts, cleanupOllamaModels: false });
+  return stopAll({
+    unmanagedCloudflaredPids: () => [],
+    ...opts,
+    cleanupOllamaModels: false,
+  });
 }
 
 describe("stopAll with sandbox channels", () => {

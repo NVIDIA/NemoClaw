@@ -20,7 +20,7 @@ const SETUP_NODE = "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020"
 const IMMUTABLE_REVIEWED_NPM_ACTION =
   "NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2";
 const IMMUTABLE_PREPARE_E2E_ACTION =
-  "NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c";
+  "NVIDIA/NemoClaw/.github/actions/prepare-e2e@7fcbf13ecd7bc0ea835a949417cf9eb68067adf9";
 const LOCAL_REVIEWED_NPM_ACTION = /^\.\/(?:[^/\s]+\/)*\.github\/actions\/setup-reviewed-npm$/u;
 
 type Step = {
@@ -172,11 +172,20 @@ describe("controlled setup-node environments", () => {
       YAML.parse(
         fs.readFileSync(path.join(GITHUB_ROOT, "workflows", file), "utf8"),
       ) as WorkflowDocument;
+    const windowsTunnelWorkflow = readWorkflow("tunnel-windows-process-identity.yaml");
 
     expect(readWorkflow("managed-images.yaml").on?.pull_request?.paths).toContain(
       reviewedNpmBootstrap,
     );
     expect(readWorkflow("base-image.yaml").on?.push?.paths).toContain(reviewedNpmBootstrap);
+    expect(windowsTunnelWorkflow.on?.pull_request?.paths).toContain(reviewedNpmBootstrap);
+    expect(windowsTunnelWorkflow.on?.push?.paths).toContain(reviewedNpmBootstrap);
+    expect(windowsTunnelWorkflow.on?.pull_request?.paths).toContain("ci/reviewed-npm-audit.json");
+    expect(windowsTunnelWorkflow.on?.push?.paths).toContain("ci/reviewed-npm-audit.json");
+    expect(windowsTunnelWorkflow.on?.pull_request?.paths).toContain(
+      "scripts/lib/reviewed-npm-audit.mts",
+    );
+    expect(windowsTunnelWorkflow.on?.push?.paths).toContain("scripts/lib/reviewed-npm-audit.mts");
   });
 
   // source-shape-contract: security -- Every setup-node environment that later runs npm must install the integrity-bound npm release first.
@@ -189,7 +198,7 @@ describe("controlled setup-node environments", () => {
       String(step.with?.["node-version"]),
     ]);
 
-    expect(identity).toMatchObject({ nodeVersion: "24.18.1", npmVersion: "12.0.2" });
+    expect(identity).toMatchObject({ nodeVersion: "24.22.1", npmVersion: "12.0.2" });
     expect(npmSetupNodeSteps.length).toBeGreaterThan(0);
     expect(
       setupIdentities.every(
@@ -257,6 +266,7 @@ describe("controlled setup-node environments", () => {
           sparsePaths === undefined ||
           (sparsePaths.includes(".github/actions/setup-reviewed-npm") &&
             sparsePaths.includes("ci/reviewed-npm-audit.json") &&
+            sparsePaths.includes("scripts/lib/npm-diagnostics.sh") &&
             sparsePaths.includes("scripts/lib/reviewed-npm-audit.mts"));
         return {
           label: `${path.relative(REPO_ROOT, file)}:${label}:${step.uses}`,
@@ -273,6 +283,7 @@ describe("controlled setup-node environments", () => {
     const requiredSparsePaths = [
       ".github/actions/setup-reviewed-npm",
       "ci/reviewed-npm-audit.json",
+      "scripts/lib/npm-diagnostics.sh",
     ];
 
     const invalidCheckouts = workflowGroups

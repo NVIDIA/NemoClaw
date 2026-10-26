@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   chmodSync,
   existsSync,
@@ -57,8 +58,20 @@ set -euo pipefail
 printf '%s\n' "$*" >>"$NEMOCLAW_TEST_DOCKER_LOG"
 printf '%s\n' "\${BUILDX_CONFIG:-}" >>"$NEMOCLAW_TEST_BUILDX_CONFIG_LOG"
 case "$*" in
+  "buildx imagetools inspect localhost:5000/nemoclaw-managed-protected-base/"*)
+    cat "$NEMOCLAW_TEST_BASE_MANIFEST"
+    ;;
   "buildx imagetools inspect "*) printf '{}\n' ;;
   "buildx build "*)
+    if [[ "$*" == *"/Dockerfile.base "* ]]; then
+      for argument in "$@"; do
+        if [[ "$argument" == type=oci,dest=*,tar=false ]]; then
+          destination="\${argument#type=oci,dest=}"
+          destination="\${destination%,tar=false}"
+          cp -R "$NEMOCLAW_TEST_BASE_LAYOUT" "$destination"
+        fi
+      done
+    fi
     build_count=0
     if [[ -f "$NEMOCLAW_TEST_DOCKER_BUILD_COUNT" ]]; then
       read -r build_count <"$NEMOCLAW_TEST_DOCKER_BUILD_COUNT"
@@ -93,8 +106,8 @@ case "$*" in
       *"/langchain-deepagents-code@"*) agent=langchain-deepagents-code ;;
       *) exit 93 ;;
     esac
-    printf '[{"Id":"sha256:${DIGEST}","Config":{"User":"%s","Labels":{"io.nvidia.nemoclaw.agent":"%s","io.nvidia.nemoclaw.managed-image.contract":"1","io.nvidia.nemoclaw.managed-image.platform":"%s","io.nvidia.nemoclaw.managed-image.startup-profile":"1","io.nvidia.nemoclaw.managed-image.capabilities":"1","io.nvidia.nemoclaw.managed-image.cohort":"protected-1-1","org.opencontainers.image.revision":"${REVISION}"}}}]\n' \
-      "$NEMOCLAW_TEST_IMAGE_USER" "$agent" "$NEMOCLAW_TEST_IMAGE_PLATFORM"
+    printf '[{"Id":"sha256:${DIGEST}","Config":{"User":"%s","Labels":{"io.nvidia.nemoclaw.agent":"%s","io.nvidia.nemoclaw.managed-image.contract":"1","io.nvidia.nemoclaw.managed-image.platform":"%s","io.nvidia.nemoclaw.managed-image.startup-profile":"1","io.nvidia.nemoclaw.managed-image.capabilities":"1","io.nvidia.nemoclaw.managed-image.cohort":"%s","org.opencontainers.image.revision":"${REVISION}"}}}]\n' \
+      "$NEMOCLAW_TEST_IMAGE_USER" "$agent" "$NEMOCLAW_TEST_IMAGE_PLATFORM" "$NEMOCLAW_TEST_IMAGE_COHORT"
     ;;
   *) exit 91 ;;
 esac
@@ -112,12 +125,24 @@ case "$*" in
 esac
 `,
   );
-  writeExecutable("sha256sum", `#!/usr/bin/env bash\nprintf '%s  %s\\n' '${DIGEST}' "$1"\n`);
+  writeExecutable(
+    "sha256sum",
+    `#!/usr/bin/env bash
+if [[ "$1" == */*-candidate-base.raw ]]; then
+  PATH="$NEMOCLAW_TEST_REAL_PATH" command sha256sum "$@"
+else
+  printf '%s  %s\\n' '${DIGEST}' "$1"
+fi
+`,
+  );
   writeExecutable(
     "node",
     `#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >>"$NEMOCLAW_TEST_SEED_LOG"
+if [[ "$1" == */scripts/checks/protected-dcode-base-receipt.mts ]]; then
+  exec "$NEMOCLAW_TEST_REAL_NODE" "$@"
+fi
 if [[ "$*" == *"/scripts/lib/npm-audit-receipt.mts"* ]]; then
   while (($# > 0)); do
     if [[ "$1" == "--result" && "$NEMOCLAW_TEST_RECEIPT_VERIFY_STATUS" == 0 ]]; then
@@ -205,6 +230,66 @@ function completeAuditEvidence(auditDirectory: string): void {
   writeFileSync(path.join(auditDirectory, "mcporter-runtime.raw.json"), '{"metadata":{}}\n');
 }
 
+// Docker is the stubbed process boundary; the production receipt CLI still
+// hashes and validates every byte exported by this synthetic builder fixture.
+function candidateBaseFixture(platform = "linux/amd64", agent = "langchain-deepagents-code") {
+  const layout = path.join(testRoot, "base-fixture");
+  mkdirSync(path.join(layout, "blobs/sha256"), { recursive: true });
+  function blob(value: unknown, mediaType: string) {
+    const bytes = Buffer.from(JSON.stringify(value));
+    const digest = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+    writeFileSync(path.join(layout, "blobs/sha256", digest.slice(7)), bytes);
+    return { digest, size: bytes.length, mediaType };
+  }
+  const config = blob(
+    {
+      os: "linux",
+      architecture: platform.slice(6),
+      config: {
+        Labels: {
+          "org.opencontainers.image.revision": REVISION,
+          "org.opencontainers.image.source": "https://github.com/NVIDIA/NemoClaw",
+          "io.nvidia.nemoclaw.agent": agent,
+          "io.nvidia.nemoclaw.managed-image.cohort": "protected-1-1",
+        },
+      },
+    },
+    "application/vnd.oci.image.config.v1+json",
+  );
+  const manifest = blob(
+    {
+      schemaVersion: 2,
+      mediaType: "application/vnd.oci.image.manifest.v1+json",
+      config,
+      layers: [blob("synthetic layer", "application/vnd.oci.image.layer.v1.tar")],
+    },
+    "application/vnd.oci.image.manifest.v1+json",
+  );
+  writeFileSync(
+    path.join(layout, "index.json"),
+    JSON.stringify({ schemaVersion: 2, manifests: [manifest] }),
+  );
+  writeFileSync(path.join(layout, "oci-layout"), JSON.stringify({ imageLayoutVersion: "1.0.0" }));
+  writeExecutable(
+    "git",
+    `#!/usr/bin/env bash
+case "$*" in
+  *"rev-parse --verify HEAD") printf '%s\\n' "\${NEMOCLAW_TEST_GIT_HEAD:-${REVISION}}" ;;
+  *"diff --quiet HEAD --") exit "\${NEMOCLAW_TEST_GIT_DIRTY:-0}" ;;
+  *) exit 97 ;;
+esac
+`,
+  );
+  return {
+    reference: `localhost:5000/nemoclaw-managed-protected-base/${agent}@${manifest.digest}`,
+    environment: {
+      NEMOCLAW_TEST_BASE_LAYOUT: layout,
+      NEMOCLAW_TEST_BASE_MANIFEST: path.join(layout, "blobs/sha256", manifest.digest.slice(7)),
+      NEMOCLAW_PROTECTED_MANAGED_IMAGE_WORKFLOW_SHA: "c".repeat(40),
+    },
+  };
+}
+
 function completeSourceBoundary(sourceRoot: string): void {
   mkdirSync(path.join(sourceRoot, "nemoclaw"), { recursive: true });
   mkdirSync(path.join(sourceRoot, "scripts", "checks"), { recursive: true });
@@ -272,6 +357,8 @@ function runBuild(
   const output = path.join(testRoot, "contracts.json");
   const platformOverride = extraArgs.findIndex((argument) => argument === "--platform");
   const effectivePlatform = platformOverride >= 0 ? extraArgs[platformOverride + 1] : platform;
+  const cohortOverride = extraArgs.findIndex((argument) => argument === "--cohort");
+  const effectiveCohort = cohortOverride >= 0 ? extraArgs[cohortOverride + 1] : "protected-1-1";
   return spawnSync(
     "bash",
     [
@@ -308,11 +395,13 @@ function runBuild(
         NEMOCLAW_TEST_DOCKER_BUILD_FAILURE_MODE: dockerBuildFailureMode,
         NEMOCLAW_TEST_DOCKER_LOG: dockerLog,
         NEMOCLAW_TEST_IMAGE_PLATFORM: effectivePlatform,
+        NEMOCLAW_TEST_IMAGE_COHORT: effectiveCohort,
         NEMOCLAW_TEST_IMAGE_USER: imageUser,
         NEMOCLAW_TEST_REGISTRY_CURL_EXIT: registryCurlExit,
         NEMOCLAW_TEST_REGISTRY_LOG: registryLog,
         NEMOCLAW_TEST_REGISTRY_STATUS: registryStatus,
         NEMOCLAW_TEST_REAL_PATH: process.env.PATH ?? "",
+        NEMOCLAW_TEST_REAL_NODE: process.execPath,
         NEMOCLAW_TEST_RECEIPT_VERIFY_STATUS: receiptVerifyStatus,
         NEMOCLAW_TEST_SEED_LOG: seedLog,
         NEMOCLAW_TEST_TEE_FAILURE_MODE: teeFailureMode,
@@ -349,6 +438,137 @@ beforeEach(() => {
 
 afterEach(() => {
   rmSync(testRoot, { force: true, recursive: true });
+});
+
+describe.each([
+  ["openclaw", "openclaw", OPENCLAW_BASE],
+  ["hermes", "hermes", HERMES_BASE],
+  ["langchain-deepagents-code", "dcode", DCODE_BASE],
+])("protected candidate %s base handoff", (agent, cacheName, publishedBase) => {
+  it.each(["linux/amd64", "linux/arm64"])(
+    "exports a verified base and consumes it offline on %s",
+    (platform) => {
+      stubBuildInvocation();
+      const fixture = candidateBaseFixture(platform, agent);
+      const cache = path.join(testRoot, "candidate-cache");
+      const source = path.join(testRoot, "candidate-source");
+      completeSourceBoundary(source);
+      const produced = runBuild(
+        source,
+        [`--${cacheName}-base`, "candidate", "--cache-to", cache],
+        platform,
+        fixture.environment,
+      );
+      expect(produced.status, produced.stderr).toBe(0);
+      const realCache = realpathSync(cache);
+      expect(readFileSync(path.join(cache, "prepared-inputs"), "utf8")).toBe(
+        `${REVISION} ${platform} ${[OPENCLAW_BASE, HERMES_BASE, DCODE_BASE].map((base) => (base === publishedBase ? fixture.reference : base)).join(" ")}\n`,
+      );
+      const receipt = JSON.parse(
+        readFileSync(path.join(cache, `${cacheName}-base-receipt.json`), "utf8"),
+      );
+      expect(receipt).toMatchObject({
+        reference: fixture.reference,
+        platform,
+        sourceRevision: REVISION,
+        workflowSha: "c".repeat(40),
+        cohort: "protected-1-1",
+      });
+      const baseBuild = recordedBuildInvocations()[0];
+      expect(baseBuild).toContain(`/Dockerfile.base --platform ${platform}`);
+      expect(baseBuild).toContain(
+        `--output type=oci,dest=${realCache}/${cacheName}-base,tar=false`,
+      );
+      expect(baseBuild).toContain(
+        `--output type=image,name=localhost:5000/nemoclaw-managed-protected-base/${agent}:${REVISION},push=true,oci-mediatypes=true`,
+      );
+      expect(baseBuild).not.toContain("ghcr.io");
+
+      completeImportedAgentCaches(cache);
+      const audit = path.join(testRoot, "audit");
+      completeAuditEvidence(audit);
+      writeFileSync(dockerLog, "");
+      const consumed = runBuild(
+        source,
+        [
+          `--${cacheName}-base`,
+          fixture.reference,
+          "--cache-from",
+          cache,
+          "--cohort",
+          "protected-1-2",
+          "--audit-evidence-from",
+          audit,
+        ],
+        platform,
+        fixture.environment,
+      );
+      expect(consumed.status, consumed.stderr).toBe(0);
+      const builds = recordedBuildInvocations();
+      expect(builds).toHaveLength(3);
+      expect(builds.every((line) => line.includes("--network none"))).toBe(true);
+      expect(recordedBuildInvocation(agent)).toContain(
+        `--build-context ${fixture.reference}=oci-layout://${realCache}/${cacheName}-base@${receipt.digest}`,
+      );
+      const calls = readFileSync(dockerLog, "utf8");
+      expect(calls).not.toContain("/Dockerfile.base");
+      expect(calls).not.toContain(`buildx imagetools inspect ${fixture.reference}`);
+      expect(readFileSync(seedLog, "utf8")).toContain(
+        "protected-dcode-base-receipt.mts verify-reusable",
+      );
+
+      // A receipt from another controller revision must fail before Docker,
+      // rather than silently selecting the published main base.
+      writeFileSync(dockerLog, "");
+      const rejected = runBuild(
+        source,
+        [
+          `--${cacheName}-base`,
+          fixture.reference,
+          "--cache-from",
+          cache,
+          "--cohort",
+          "protected-1-2",
+          "--audit-evidence-from",
+          audit,
+        ],
+        platform,
+        { ...fixture.environment, NEMOCLAW_PROTECTED_MANAGED_IMAGE_WORKFLOW_SHA: "d".repeat(40) },
+      );
+      expect(rejected.status, rejected.stderr).toBe(1);
+      expect(rejected.stderr).toContain("receipt does not match");
+      expect(readFileSync(dockerLog, "utf8")).toBe("");
+    },
+  );
+
+  it.each([
+    [{ NEMOCLAW_TEST_GIT_HEAD: "d".repeat(40) }, "does not match its revision"],
+    [{ NEMOCLAW_TEST_GIT_DIRTY: "1" }, "tracked modifications"],
+  ] as const)("rejects an unbound candidate checkout %j", (change, diagnostic) => {
+    stubBuildInvocation();
+    const fixture = candidateBaseFixture("linux/amd64", agent);
+    const result = runBuild(REPO_ROOT, [`--${cacheName}-base`, "candidate"], "linux/amd64", {
+      ...fixture.environment,
+      ...change,
+    });
+    expect(result.status, result.stderr).toBe(1);
+    expect(result.stderr).toContain(diagnostic);
+    expect(existsSync(dockerLog)).toBe(false);
+  });
+
+  it("rejects different registry and OCI manifests before building managed images", () => {
+    stubBuildInvocation();
+    const fixture = candidateBaseFixture("linux/amd64", agent);
+    const mismatch = path.join(testRoot, "different-manifest");
+    writeFileSync(mismatch, "{}");
+    const result = runBuild(REPO_ROOT, [`--${cacheName}-base`, "candidate"], "linux/amd64", {
+      ...fixture.environment,
+      NEMOCLAW_TEST_BASE_MANIFEST: mismatch,
+    });
+    expect(result.status, result.stderr).toBe(1);
+    expect(result.stderr).toContain("registry and OCI artifact digests differ");
+    expect(recordedBuildInvocations()).toHaveLength(1);
+  });
 });
 
 describe("protected managed-image source-root boundary", () => {

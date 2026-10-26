@@ -159,6 +159,7 @@ export interface RuntimeProviderGatewayHostRuntime {
     readonly sandboxNamespace: "scoped" | "omitted";
     readonly hostGatewayIp: string | null;
     readonly includeSupervisorBin: boolean;
+    readonly driverConfigLayout: "split-supervisor" | "inline-supervisor";
     readonly processOwnership: "scoped-namespace" | "runtime-marker";
   };
   readonly network: {
@@ -450,6 +451,17 @@ export interface RuntimeProviderStoppedNativeHomeCleanupInput {
 }
 
 export interface RuntimeProviderPrivilegedSandboxControl {
+  /** Restore only the declared workspace-directory metadata before managed bootstrap. */
+  prepareManagedStartupWorkspace?(
+    input: Pick<
+      RuntimeProviderPrivilegedSandboxCommandInput,
+      "sandbox" | "sandboxName" | "registeredSandboxNames" | "timeoutMs"
+    > & {
+      readonly expectedResourceHandle: string;
+      readonly workspace: { readonly uid: number; readonly gid: number; readonly mode: number };
+    },
+  ): void;
+
   resolveTarget(
     input: Pick<
       RuntimeProviderPrivilegedSandboxCommandInput,
@@ -458,6 +470,10 @@ export interface RuntimeProviderPrivilegedSandboxControl {
   ): RuntimeProviderPrivilegedSandboxTarget;
   execute(
     input: RuntimeProviderPrivilegedSandboxCommandInput,
+  ): RuntimeProviderPrivilegedSandboxCommandResult;
+  /** Provider-owned execution as the pinned native-home sandbox user. */
+  executeAsSandboxUser?(
+    input: RuntimeProviderPrivilegedSandboxCommandInput & { readonly sandboxUser: string },
   ): RuntimeProviderPrivilegedSandboxCommandResult;
   clearStoppedStateRoots?(
     input: RuntimeProviderStoppedSandboxStateCleanupInput,
@@ -817,6 +833,23 @@ export interface RuntimeProviderNvidiaContainerSurface {
   ): RuntimeProviderOwnedContainerCleanupResult;
 }
 
+export type RuntimeProviderExternalImageLocalInspection =
+  | {
+      readonly status: "present";
+      readonly inspection: RuntimeProviderCommandCapture;
+    }
+  | { readonly status: "absent" }
+  | { readonly status: "failed"; readonly error?: Error };
+
+/** Provider-owned commands and identity normalization for immutable external images. */
+export interface RuntimeProviderExternalImagePreparationSurface {
+  readonly displayName: string;
+  inspectLocal(reference: string, timeoutMs: number): RuntimeProviderExternalImageLocalInspection;
+  pull(reference: string, timeoutMs: number): RuntimeProviderCommandCapture;
+  inspectPulled(reference: string, timeoutMs: number): RuntimeProviderCommandCapture;
+  normalizeContentId(value: unknown): string | null;
+}
+
 export type RuntimeProviderContainerEngineSurface =
   | RuntimeProviderSupportedSurface<{
       readonly identities: readonly {
@@ -829,6 +862,7 @@ export type RuntimeProviderContainerEngineSurface =
         args: readonly string[],
         timeoutMs?: number,
       ): RuntimeProviderCommandCapture;
+      readonly externalImagePreparation?: RuntimeProviderExternalImagePreparationSurface;
       readonly nvidiaContainer?: RuntimeProviderNvidiaContainerSurface;
     }>
   | RuntimeProviderUnsupportedSurface;

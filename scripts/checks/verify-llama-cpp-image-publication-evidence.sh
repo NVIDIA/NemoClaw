@@ -135,6 +135,15 @@ digest_pattern='sha256:[0-9a-f]{64}'
 owned_image='ghcr.io/nvidia/nemoclaw/llama-cpp-server'
 image="${reference%@*}"
 reference_digest="${reference##*@}"
+if [ "$certificate_identity" != "https://github.com/NVIDIA/NemoClaw/.github/workflows/llama-cpp-image-attest.yaml@refs/heads/main" ]; then
+  # Branch publication executes this verifier from its immutable publisher source.
+  trusted_revision="$(git -C "$(dirname "$0")/../.." rev-parse HEAD)"
+  if [[ ! "$trusted_revision" =~ ^[0-9a-f]{40}$ ]] \
+    || [ "$certificate_identity" != "https://github.com/NVIDIA/NemoClaw/.github/workflows/llama-cpp-image-attest.yaml@$trusted_revision" ]; then
+    echo "ERROR: llama.cpp publication signer is not approved." >&2
+    exit 1
+  fi
+fi
 if [[ ! "$reference" =~ ^ghcr\.io/nvidia/nemoclaw/llama-cpp-server@${digest_pattern}$ ]] \
   || [ "$image" != "$owned_image" ] \
   || [ "$repository" != "NVIDIA/NemoClaw" ] \
@@ -145,7 +154,6 @@ if [[ ! "$reference" =~ ^ghcr\.io/nvidia/nemoclaw/llama-cpp-server@${digest_patt
   || [[ ! "$cuda_runtime_base" =~ ^docker\.io/nvidia/cuda@${digest_pattern}$ ]] \
   || [[ ! "$run_id" =~ ^[1-9][0-9]{0,19}$ ]] \
   || [[ ! "$run_attempt" =~ ^[1-9][0-9]{0,9}$ ]] \
-  || [ "$certificate_identity" != "https://github.com/NVIDIA/NemoClaw/.github/workflows/llama-cpp-image-attest.yaml@refs/heads/main" ] \
   || [ "$certificate_oidc_issuer" != "https://token.actions.githubusercontent.com" ] \
   || [ -z "$output" ]; then
   echo "ERROR: llama.cpp publication identity is invalid." >&2

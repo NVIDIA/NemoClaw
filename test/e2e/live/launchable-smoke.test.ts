@@ -17,16 +17,18 @@ import {
   HOSTED_INFERENCE_PROVIDER_NAME,
   requireHostedInferenceConfig,
 } from "../fixtures/hosted-inference.ts";
+import { buildSandboxInferenceChatCommand } from "../fixtures/inference-adapter.ts";
 import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
+import { bootstrapInstallSudoArgs } from "../fixtures/bootstrap-install-command.ts";
 
 // This is intentionally a single live test instead of a new fixture
 // family: the contract is the real Ubuntu bootstrap path, so the test invokes
 // scripts/brev-launchable-ci-cpu.sh via sudo, then proves the bootstrap-built
-// CLI can onboard, route inference.local, and run an OpenClaw agent turn
+// CLI can onboard, reach its native hosted provider, and run an OpenClaw agent turn
 // through Vitest.
 
 const BOOTSTRAP_SCRIPT = path.join(REPO_ROOT, "scripts", "brev-launchable-ci-cpu.sh");
@@ -138,6 +140,7 @@ async function sleep(ms: number): Promise<void> {
 
 async function expectPongFromSandboxInference(
   sandboxExec: (command: string[], artifactName: string) => Promise<ShellProbeResult>,
+  endpointUrl: string,
 ): Promise<void> {
   const payload = JSON.stringify({
     model: MODEL,
@@ -149,17 +152,7 @@ async function expectPongFromSandboxInference(
   let lastResult: ShellProbeResult | undefined;
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     lastResult = await sandboxExec(
-      [
-        "curl",
-        "-s",
-        "--max-time",
-        "60",
-        "https://inference.local/v1/chat/completions",
-        "-H",
-        "Content-Type: application/json",
-        "-d",
-        payload,
-      ],
+      buildSandboxInferenceChatCommand(payload, EXPECTED_ROUTE_PROVIDER, endpointUrl),
       `phase-6-sandbox-inference-attempt-${attempt}`,
     );
     if (lastResult.stdout.trim()) {
@@ -174,7 +167,7 @@ async function expectPongFromSandboxInference(
   }
 
   throw new Error(
-    `sandbox inference.local expected PONG after 3 attempts; last content='${lastContent}'; ` +
+    `sandbox native hosted inference expected PONG after 3 attempts; last content='${lastContent}'; ` +
       `stdout='${lastResult?.stdout.slice(0, 300) ?? ""}'; stderr='${lastResult?.stderr.slice(0, 300) ?? ""}'`,
   );
 }
@@ -260,29 +253,33 @@ test(
 
     progress.phase("run the Brev bootstrap script");
     const installLog = artifacts.pathFor("bootstrap.log");
-    const install = await host.command("sudo", ["-E", "bash", BOOTSTRAP_SCRIPT], {
-      artifactName: "phase-2-brev-bootstrap-script",
-      env: runEnv({
-        LAUNCH_LOG: installLog,
-        NEMOCLAW_CLONE_DIR: cloneDir,
-        NEMOCLAW_REF: "main",
-        SKIP_DOCKER_PULL: process.env.SKIP_DOCKER_PULL ?? "1",
+    // sudo implementations may ignore -E. Pass only the bootstrap's non-secret
+    // inputs explicitly so it builds the preseeded candidate checkout.
+    const install = await host.command(
+      "sudo",
+      bootstrapInstallSudoArgs({
+        script: BOOTSTRAP_SCRIPT,
+        cloneDir,
+        installLog,
+        env: process.env,
       }),
-      timeoutMs: INSTALL_TIMEOUT_MS,
-    });
+      {
+        artifactName: "phase-2-brev-bootstrap-script",
+        env: runEnv({
+          LAUNCH_LOG: installLog,
+          NEMOCLAW_CLONE_DIR: cloneDir,
+          NEMOCLAW_REF: "main",
+          SKIP_DOCKER_PULL: process.env.SKIP_DOCKER_PULL ?? "1",
+        }),
+        timeoutMs: INSTALL_TIMEOUT_MS,
+      },
+    );
     expectExitZero(install, "Brev bootstrap script completed");
 
     progress.phase("inspect installed CLI and runtime artifacts");
     const pathEnv = runEnv({
       PATH: `/usr/local/bin:${process.env.PATH ?? ""}`,
     });
-
-    const nemoclawHelp = await runBash(host, "command -v nemoclaw && nemoclaw --help >/dev/null", {
-      artifactName: "phase-3-nemoclaw-help",
-      env: pathEnv,
-      timeoutMs: 30_000,
-    });
-    expectExitZero(nemoclawHelp, "nemoclaw is on PATH and --help works");
 
     const openshellVersion = await runBash(host, "command -v openshell && openshell --version", {
       artifactName: "phase-3-openshell-version",
@@ -385,13 +382,7 @@ test(
     });
     expectExitZero(status, `nemoclaw ${SANDBOX_NAME} status`);
 
-    const inferenceConfig = await host.command("openshell", ["inference", "get"], {
-      artifactName: "phase-5-openshell-inference-get",
-      env: pathEnv,
-      timeoutMs: 30_000,
-    });
-    expectExitZero(inferenceConfig, "openshell inference get");
-    expect(inferenceConfig.stdout).toMatch(new RegExp(EXPECTED_ROUTE_PROVIDER, "i"));
+    expect(status.stdout).toMatch(new RegExp(`Provider:\\s+${EXPECTED_ROUTE_PROVIDER}`, "i"));
 
     const gatewayContainer = await runtimeProvider.command(
       ["container", "ps", "--format", "{{.Names}}"],
@@ -445,7 +436,7 @@ test(
         env: pathEnv,
         timeoutMs: INFERENCE_TIMEOUT_MS,
       });
-    await expectPongFromSandboxInference(sandboxExec);
+    await expectPongFromSandboxInference(sandboxExec, hosted.endpointUrl);
 
     const sessionId = `e2e-bootstrap-${Date.now()}-${randomUUID()}`;
     const agent = await sandboxExec(
