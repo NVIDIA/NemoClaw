@@ -568,15 +568,15 @@ If the error names an invalid gateway binding, restore the affected row's known-
 
 ## Onboarding
 
-### Native local inference requires provider composition on a reused gateway
+### Enable Native Local Inference on a Reused Gateway
 
-If onboarding reports that native local inference requires `providers_v2_enabled=true`, ask the gateway administrator to review attached providers before enabling composition on the recorded gateway:
+If onboarding reports that native local inference requires `providers_v2_enabled=true`, ask the gateway administrator to review attached providers and run the command printed in the error.
+For a gateway named `nemoclaw`, that command is:
 
 ```bash
-openshell settings set -g <gateway> --global --key providers_v2_enabled --value true --yes
+openshell settings set -g nemoclaw --global --key providers_v2_enabled --value true --yes
 ```
 
-Replace `<gateway>` with the gateway name in the error.
 NemoClaw does not change this setting on an existing gateway.
 After the administrator enables it, resume the failed onboarding session:
 
@@ -584,7 +584,7 @@ After the administrator enables it, resume the failed onboarding session:
 $$nemoclaw onboard --resume
 ```
 
-Resume reruns native local inference setup when this sandbox has no recorded provider attachment, even if another sandbox already has the same shared gateway route.
+Resume reruns native local inference setup when NemoClaw has no recorded native local provider for this sandbox, even if another sandbox already has the same shared gateway route.
 If the setting is still missing, onboarding stops before creating the sandbox and retains the session for another attempt.
 
 ### Cgroup v2 errors during onboard
