@@ -33,6 +33,12 @@ unsafe_code = "forbid"
 
 [workspace.lints.clippy]
 all = "warn"
+# A suppression states why it is needed, and leftover debugging or placeholder
+# code does not merge.
+allow_attributes_without_reason = "warn"
+dbg_macro = "warn"
+todo = "warn"
+unimplemented = "warn"
 
 [workspace.dependencies]
 quick-junit = "0.8.0"

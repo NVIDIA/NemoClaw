@@ -195,7 +195,10 @@ fn inventories(bytes: &[u8]) -> Result<Inventory, AssessmentError> {
 
 /// This records what a trusted controller just scanned. It is neither a signature
 /// nor an approval token; the controller owns review, disclosure, and publishing.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each argument is a separate input the release evidence binds"
+)]
 pub fn bind(
     tag: &str,
     controller_revision: &str,

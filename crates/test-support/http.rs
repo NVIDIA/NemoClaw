@@ -3,7 +3,10 @@
 // A minimal HTTP/1.1 test server, shared through private source modules by
 // SDK, provider, runtime and E2E tests. It has no NemoClaw dependency, so
 // reuse does not create a crate dependency cycle. Each includer uses a subset.
-#![allow(dead_code)]
+#![allow(
+    dead_code,
+    reason = "each test binary that includes this module uses a different subset of it"
+)]
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 pub struct Request {
     pub method: String,

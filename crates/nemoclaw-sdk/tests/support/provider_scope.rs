@@ -2,12 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 use nemoclaw_sdk::compile::Target;
 
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "not every test binary that includes this module calls this helper"
+)]
 pub fn normalized(rows: Vec<Target>) -> Vec<Target> {
     normalized_as(rows, "local")
 }
 
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "not every test binary that includes this module calls this helper"
+)]
 pub fn normalized_as(rows: Vec<Target>, original: &str) -> Vec<Target> {
     let names: Vec<_> = rows
         .iter()
@@ -26,7 +32,10 @@ pub fn normalized_as(rows: Vec<Target>, original: &str) -> Vec<Target> {
     serde_json::from_str(&text).unwrap()
 }
 
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "not every test binary that includes this module calls this helper"
+)]
 pub fn resource<'a>(instances: &'a serde_json::Value, name: &str) -> &'a serde_json::Value {
     let prefix = format!("inference_{name}-");
     let matches: Vec<_> = instances
@@ -38,7 +47,10 @@ pub fn resource<'a>(instances: &'a serde_json::Value, name: &str) -> &'a serde_j
     assert_eq!(matches.len(), 1, "expected one registration for {name}");
     matches[0].1
 }
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "not every test binary that includes this module calls this helper"
+)]
 pub fn address(instances: &serde_json::Value, kind: &str, name: &str) -> String {
     format!(
         "{}.inference_{}",
