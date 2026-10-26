@@ -44,6 +44,7 @@ NemoClaw v0.0.139 improves sandbox recovery and native inference checks, fixes W
 - On a reused gateway that lacks native provider composition, local inference onboarding now prints the complete administrator recovery command.
   `nemoclaw onboard --resume` reruns native local inference setup before it creates a sandbox when NemoClaw has no recorded native local provider for that sandbox.
   Related change: [PR #13650](https://github.com/NVIDIA/NemoClaw/pull/13650).
-- Default `nemoclaw uninstall` backs up eligible sandbox state, then removes owned OpenClaw state volumes even without `--destroy-user-data`.
+- For NemoClaw-managed gateways, default `nemoclaw uninstall` backs up eligible sandbox state, then removes owned OpenClaw state volumes even without `--destroy-user-data`.
+  Externally supervised gateways retain their sandboxes and state volumes.
   If you use `--destroy-user-data`, back up any state you need separately before uninstall.
   Related change: [PR #13596](https://github.com/NVIDIA/NemoClaw/pull/13596).
