@@ -421,17 +421,11 @@ describe("uninstall across every gateway port (#7791)", () => {
     }
   });
 
-  it.each(["registry", "configuration", "live gateway"] as const)(
-    "retains shared cleanup when %s proves a default gateway after the sweep omitted it",
-    async (evidence) => {
-      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-default-race-"));
-      const sharedRoot = path.join(home, ".nemoclaw");
-      const selectedRoot = path.join(sharedRoot, "gateways", "9123");
-      const apiKeyPath = path.join(sharedRoot, "dual-station-vllm-api-key");
-      fs.mkdirSync(selectedRoot, { recursive: true });
-      fs.writeFileSync(apiKeyPath, "ab".repeat(32), { mode: 0o600 });
-      fs.writeFileSync(path.join(sharedRoot, "unrecognized-old-state"), "stale\n");
-      if (evidence === "registry") {
+  it.each([
+    [
+      "registry",
+      (home: string) => {
+        const sharedRoot = path.join(home, ".nemoclaw");
         fs.writeFileSync(
           path.join(sharedRoot, "sandboxes.json"),
           JSON.stringify({
@@ -439,12 +433,28 @@ describe("uninstall across every gateway port (#7791)", () => {
             sandboxes: { "default-box": { name: "default-box", gatewayPort: 8080 } },
           }),
         );
-      }
-      if (evidence === "configuration") {
+      },
+    ],
+    [
+      "configuration",
+      (home: string) => {
         const stateDir = resolveGatewayStateDirForPort({ home, port: 8080 });
         fs.mkdirSync(stateDir, { recursive: true });
         fs.writeFileSync(path.join(stateDir, "openshell-gateway.toml"), "gateway config\n");
-      }
+      },
+    ],
+    ["live gateway", (_home: string) => undefined],
+  ] as const)(
+    "retains shared cleanup when %s proves a default gateway after the sweep omitted it",
+    async (evidence, writeEvidence) => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-default-race-"));
+      const sharedRoot = path.join(home, ".nemoclaw");
+      const selectedRoot = path.join(sharedRoot, "gateways", "9123");
+      const apiKeyPath = path.join(sharedRoot, "dual-station-vllm-api-key");
+      fs.mkdirSync(selectedRoot, { recursive: true });
+      fs.writeFileSync(apiKeyPath, "ab".repeat(32), { mode: 0o600 });
+      fs.writeFileSync(path.join(sharedRoot, "unrecognized-old-state"), "stale\n");
+      writeEvidence(home);
       try {
         vi.stubEnv("NEMOCLAW_GATEWAY_PORT", "9123");
         vi.resetModules();
