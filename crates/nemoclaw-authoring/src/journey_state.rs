@@ -174,6 +174,7 @@ impl JourneyQuestion {
 pub struct JourneyResolution {
     questions: Vec<JourneyQuestion>,
     omitted: Vec<String>,
+    kept: Vec<(String, Value)>,
     warnings: Vec<String>,
     information: Vec<String>,
     unverified: Vec<String>,
@@ -194,6 +195,10 @@ impl JourneyResolution {
     }
     pub fn omitted(&self) -> &[String] {
         &self.omitted
+    }
+    /// Supplied values that omission guidance kept without asking, by question ID.
+    pub fn kept(&self) -> &[(String, Value)] {
+        &self.kept
     }
     pub fn warnings(&self) -> &[String] {
         &self.warnings

@@ -391,6 +391,190 @@ fn default_path_reaches_a_valid_document_through_the_new_wizard() {
     assert!(wizard.document().is_ok());
 }
 
+/// Accept every suggestion and return the questions in the order asked.
+fn questions_until_review(wizard: &mut JourneyWizard) -> Vec<String> {
+    wizard.started = true;
+    let mut asked = Vec::new();
+    for _ in 0..40 {
+        if let Some(question) = wizard.question().unwrap() {
+            asked.push(question.id().to_owned());
+        }
+        wizard.advance();
+        assert!(wizard.error.is_none(), "{asked:?}: {:?}", wizard.error);
+        if wizard.accepted {
+            return asked;
+        }
+    }
+    panic!("the journey did not reach review: {asked:?}");
+}
+
+#[test]
+fn default_journey_asks_route_choices_and_leaves_tuning_settings_at_their_defaults() {
+    let capabilities = Capabilities::available();
+    let state = load_journey(Source::Defaults, &capabilities).unwrap();
+    let mut wizard = JourneyWizard::new(capabilities, state);
+    assert_eq!(
+        questions_until_review(&mut wizard),
+        [
+            "/metadata/name",
+            "/spec/sandboxes/assistant/harness/kind",
+            "/spec/gateway/runtime/provider",
+            "inference:preset",
+            "adapter:nvidia.fabric.openclaw:/channel_config",
+            "/spec/inferenceProviders/nvidia-prod/api",
+            "/spec/sandboxes/assistant/agent/inference/routes/0/overrides/model",
+            "/spec/gateway/engine",
+            "/spec/sandboxes/assistant/image/ref",
+            "/spec/sandboxes/assistant/network/tier",
+        ]
+    );
+}
+
+#[test]
+fn default_journey_saves_sdk_gateway_defaults_and_no_adapter_settings() {
+    let capabilities = Capabilities::available();
+    let state = load_journey(Source::Defaults, &capabilities).unwrap();
+    let mut wizard = JourneyWizard::new(capabilities, state);
+    questions_until_review(&mut wizard);
+    let document = wizard.document().unwrap();
+    let settings = document.spec.sandboxes["assistant"]
+        .harness
+        .as_ref()
+        .and_then(|harness| harness.settings.clone())
+        .unwrap_or_default();
+    assert!(settings.is_empty(), "{settings:?}");
+    let saved: Value = serde_saphyr::from_str(&document.yaml().unwrap()).unwrap();
+    let mut unsaved = saved.clone();
+    let gateway = unsaved["spec"]["gateway"].as_object_mut().unwrap();
+    gateway.remove("endpoint");
+    gateway.remove("networkCIDR");
+    let defaulted: Value = serde_saphyr::from_str(
+        &Document::parse(unsaved.to_string().as_bytes())
+            .unwrap()
+            .yaml()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(saved["spec"]["gateway"], defaulted["spec"]["gateway"]);
+}
+
+#[test]
+fn another_harness_omits_its_optional_settings_and_asks_required_ones() {
+    let capabilities = Capabilities::available();
+    let harness = "/spec/sandboxes/assistant/harness/kind";
+    let mut state = load_journey(Source::Defaults, &capabilities).unwrap();
+    state
+        .answer(
+            &capabilities,
+            harness,
+            Some(serde_json::json!("nvidia.fabric.hermes")),
+        )
+        .unwrap();
+    let resolution = state.resolve(&capabilities).unwrap();
+    assert!(
+        resolution
+            .questions()
+            .iter()
+            .all(|question| !question.id().starts_with("adapter:")),
+        "{:?}",
+        resolution.questions()
+    );
+    state
+        .answer(
+            &capabilities,
+            harness,
+            Some(serde_json::json!("nvidia.fabric.remote-agent")),
+        )
+        .unwrap();
+    let adapter_questions = state
+        .resolve(&capabilities)
+        .unwrap()
+        .questions()
+        .iter()
+        .filter(|question| question.id().starts_with("adapter:"))
+        .map(|question| question.id().to_owned())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        adapter_questions,
+        ["adapter:nvidia.fabric.remote-agent:/base_url"]
+    );
+}
+
+/// Lines of the review section listing template values kept by omission.
+fn from_template_section(wizard: &JourneyWizard) -> Option<Vec<String>> {
+    let lines = wizard
+        .review_lines()
+        .iter()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>();
+    let start = lines
+        .iter()
+        .position(|line| line == "From your template:")?;
+    Some(
+        lines[start + 1..]
+            .iter()
+            .take_while(|line| !line.is_empty())
+            .cloned()
+            .collect(),
+    )
+}
+
+#[test]
+fn default_journey_suggests_its_own_name_and_lists_nothing_from_a_template() {
+    let capabilities = Capabilities::available();
+    let state = load_journey(Source::Defaults, &capabilities).unwrap();
+    let mut wizard = JourneyWizard::new(capabilities, state);
+    assert_eq!(
+        wizard.question().unwrap().unwrap().suggestion(),
+        Some(&serde_json::json!("openclaw"))
+    );
+    questions_until_review(&mut wizard);
+    assert_eq!(from_template_section(&wizard), None);
+}
+
+#[test]
+fn template_values_kept_by_omission_are_listed_at_review() {
+    let mut values: Value = serde_saphyr::from_slice(include_bytes!(
+        "../../../../examples/onboarding/openclaw.yaml"
+    ))
+    .unwrap();
+    values["spec"]["sandboxes"]["assistant"]["harness"]["settings"] =
+        serde_json::json!({"startup_timeout_seconds": 45});
+    values["spec"]["gateway"]["networkCIDR"] = serde_json::json!("172.30.77.0/24");
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("template.yaml");
+    std::fs::write(&path, values.to_string()).unwrap();
+    let capabilities = Capabilities::available();
+    let state = load_journey(Source::Template(&path), &capabilities).unwrap();
+    let mut wizard = JourneyWizard::new(capabilities, state);
+    let asked = questions_until_review(&mut wizard);
+    assert!(
+        !asked.iter().any(|id| id.ends_with("/startup_timeout_seconds")
+            || id == "/spec/gateway/networkCIDR"),
+        "{asked:?}"
+    );
+    let document = wizard.document().unwrap();
+    assert_eq!(
+        document.spec.sandboxes["assistant"]
+            .harness
+            .as_ref()
+            .and_then(|harness| harness.settings.as_ref())
+            .and_then(|settings| settings.get("startup_timeout_seconds")),
+        Some(&serde_json::json!(45))
+    );
+    // Values set through a question, such as the provider behind the
+    // inference preset, were part of the journey and are not repeated.
+    let mut section = from_template_section(&wizard).expect("From your template section");
+    section.sort();
+    assert_eq!(
+        section,
+        [
+            "Gateway: network CIDR: 172.30.77.0/24",
+            "Startup timeout seconds: 45",
+        ]
+    );
+}
+
 #[test]
 fn mixed_local_and_hosted_template_reaches_review_without_losing_routes() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

@@ -199,6 +199,7 @@ pub(super) async fn run_live_kind(
     command
         .env("NEMOCLAW_TEST_KUBECONFIG", &kubeconfig)
         .env("NEMOCLAW_TEST_KUBE_CONTEXT", format!("kind-{name}"))
+        .env("NEMOCLAW_TEST_KUBE_RUNTIME", "kubernetes")
         .env("NEMOCLAW_TEST_KIND_NODE", &node_container)
         .env("NEMOCLAW_TEST_BUNDLE", &bundle)
         .env("NEMOCLAW_TEST_AGENT_IMAGE", &image)
@@ -256,7 +257,7 @@ mod tests {
             |bytes: &[u8]| format!("sha256:{}", nemoclaw_build::hex(&Sha256::digest(bytes)));
         let manifest = serde_json::json!({"schemaVersion": 2, "config": {"digest": digest(config)}, "layers": []}).to_string();
         let id = digest(manifest.as_bytes());
-        let index = serde_json::json!({"manifests": [{"digest": id, "annotations": {"io.containerd.image.name": "docker.io/library/nc-live-images:pi"}}]}).to_string();
+        let index = serde_json::json!({"manifests": [{"digest": id, "annotations": {"io.containerd.image.name": "docker.io/library/nc-live-images:openclaw"}}]}).to_string();
         let mut archive = tar::Builder::new(Vec::new());
         for (path, bytes) in [
             (

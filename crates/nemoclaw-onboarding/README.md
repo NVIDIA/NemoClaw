@@ -22,9 +22,12 @@ A built CLI accepts the same arguments:
 nemoclaw onboard examples/onboarding/openclaw.yaml --output my-deployment.yaml
 ```
 
-Omit the template to use the built-in defaults.
-Those defaults come from the example YAML template.
+Omit the template to use the built-in defaults: a managed Docker gateway running OpenClaw with NVIDIA Endpoints inference.
 The journey definition asks for deployment name, harness, runtime, inference preset, API, and model, then covers applicable Fabric and deployment settings.
+It does not ask for the harness's optional tuning settings or for the managed gateway's endpoint and network CIDR.
+Settings left out of the saved YAML take their adapter defaults; the SDK writes its gateway endpoint and network defaults into the saved YAML.
+A value your template supplies for one of these fields is kept without a question.
+Onboarding still asks for one of them when your configuration requires it and the template leaves it out, such as an external gateway's endpoint.
 The template's choices are preselected; Enter accepts an answer.
 The authoring resolver recomputes applicable questions after each answer and follows the definition's order for explicitly asked fields.
 You can go back to change an answer.
@@ -128,6 +131,7 @@ Fabric's public configuration schema determines whether a workflow is required; 
 The selected adapter's model schema supplies native model-setting questions for the current route; answers are preserved under `overrides.settings`.
 The complete public model configuration remains subject to Fabric's planner, including conditions involving provider or protocol.
 Omitted optional settings remain unset, even when their schema declares a default.
+When you start from a template, review lists under **From your template** the values it supplies for settings onboarding does not ask about, since they replace the defaults.
 Existing values and required schema defaults are suggestions until accepted or explicitly delegated; a required setting without a default needs an answer.
 Review checks the complete settings object against the current schema, including constraints spanning multiple fields.
 Saved YAML can supply settings and arbitrary harness identifiers as defaults for a new deployment, without requiring an entry in the bundled catalog.

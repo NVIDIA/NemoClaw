@@ -155,7 +155,7 @@ A contract test runs the provider built from the checkout, but a system test run
 [Run integration tests](integration-tests.md#opentofu-and-bundle-lifecycle) covers the fixture executables that a single `cargo test` needs.
 
 `cargo ci live-docker` needs Linux with a local Docker engine that uses the [containerd image store](../build.md).
-It pulls the pinned OpenShell and Ollama images; builds the Pi agent image, the reference dummy image, an image derived from the dummy, and two proxy images under a fresh `nc-live-` prefix; and writes gateway documents with fresh UUIDs, ports, and subnets in `172.30.200-254.0/24`.
+It pulls the pinned OpenShell and Ollama images; builds the OpenClaw agent image, the reference dummy image, an image derived from the dummy, and two proxy images under a fresh `nc-live-` prefix; and writes gateway documents with fresh UUIDs, ports, and subnets in `172.30.200-254.0/24`.
 It runs the `live-docker` profile in four nextest commands: one for the tests that need no gateway document, then one for each of the three gateway tests with its own document.
 The tests that use Docker run one at a time, in the profile's `docker-engine` test group; the offline runtime rebuild uses no engine and compiles alongside them.
 Afterward it removes every container, volume, and network labelled with the documents' UUIDs, any sandbox objects in their gateways' OpenShell namespaces, and the images it built, whether or not the tests pass; pulled images remain.

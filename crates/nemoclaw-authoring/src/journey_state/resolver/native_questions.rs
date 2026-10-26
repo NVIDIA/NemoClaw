@@ -39,22 +39,6 @@ impl QuestionResolver<'_> {
                 );
                 let valid =
                     value.is_some_and(|value| schema_accepts(&field.schema, value) == Some(true));
-                if self.definition.omit.contains(&field.path) {
-                    if field.required {
-                        return Err(diagnostic(
-                            "journey",
-                            &format!("required native setting '{}' cannot be omitted", field.path),
-                        ));
-                    }
-                    if value.is_some() {
-                        return Err(diagnostic(
-                            "journey",
-                            &format!("supplied native setting '{}' cannot be omitted", field.path),
-                        ));
-                    }
-                    omitted.push(field.path);
-                    continue;
-                }
                 let route_key = self
                     .position
                     .selected_route
@@ -66,6 +50,28 @@ impl QuestionResolver<'_> {
                 } else {
                     self.decisions.accepted.contains(&field.path)
                 };
+                match self
+                    .definition
+                    .omit
+                    .contains(&field.path)
+                    .then(|| guided_omission(value, valid, field.required))
+                    .flatten()
+                {
+                    Some(Omission::Unset) => {
+                        omitted.push(field.path);
+                        continue;
+                    }
+                    Some(Omission::Keep(value)) => {
+                        let base_value = native_value(
+                            self.definition.base.supplied(),
+                            self.position.selected_route,
+                            &field.path,
+                        );
+                        keep_supplied(&mut work.kept, field.path, value, base_value, accepted);
+                        continue;
+                    }
+                    None => {}
+                }
                 let omitted_route = route_key
                     .as_ref()
                     .is_some_and(|key| self.decisions.omitted_model_settings.contains(key));
