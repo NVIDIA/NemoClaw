@@ -151,6 +151,10 @@ function projectConfiguration(
         : "reported";
   } else if (entry.sandboxGpuEnabled !== undefined) gpuStatus = "collection_error";
   const policy = readAppliedPolicySelection(entry.appliedPolicySelection);
+  const policyTier = observedString(
+    policy?.tier,
+    entry.appliedPolicySelection === undefined ? "not_persisted" : "collection_error",
+  );
   const policyWriteFailed = metadataErrors.some((error) => error.category === "policy_tier");
   const settings: TelemetrySettings = {
     computeDriver: driver.value,
@@ -163,14 +167,8 @@ function projectConfiguration(
     observabilityStatus: observability.status,
     imageOwnership,
     imageOwnershipStatus,
-    policyTier: policyWriteFailed ? "unknown" : (policy?.tier ?? "unknown"),
-    policyTierStatus: policyWriteFailed
-      ? "collection_error"
-      : policy
-        ? "reported"
-        : entry.appliedPolicySelection === undefined
-          ? "not_persisted"
-          : "collection_error",
+    policyTier: policyWriteFailed ? "unknown" : policyTier.value,
+    policyTierStatus: policyWriteFailed ? "collection_error" : policyTier.status,
   };
   let configuredMessagingChannels: string[] = [];
   let messagingStatus: ValueStatus =
@@ -460,7 +458,7 @@ export async function collectOperationSnapshot(options: {
   const timer = setTimeout(cancel, Math.max(0, remaining));
   if (parentSignal.aborted || remaining <= 0) cancel();
   options = { ...options, signal: controller.signal };
-  const reader = createSupervisedSandboxCommandReader(options.signal, true);
+  const reader = createSupervisedSandboxCommandReader(options.signal);
   const routes = new Map<string, Promise<OpenShellInferenceRouteResult>>();
   let nextIndex = 0;
   let observationIncomplete = false;

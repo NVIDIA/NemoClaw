@@ -18,15 +18,13 @@ import { selectedOpenShellGateway } from "../../adapters/openshell/sandbox-obser
 import { OPENSHELL_DEFAULT_WORKSPACE } from "../../adapters/openshell/sandbox-ssh-host";
 import { getDockerDriverGatewayLocalTlsDir } from "../../onboard/docker-driver-gateway-local-tls";
 import { resolveGatewayStateDirForPort } from "../../onboard/gateway/state-dir";
-import { resolveGatewayCredentialMutationAuthority } from "../../onboard/gateway-teardown-authority";
 import {
-  invalidGatewayManagementDeclarationError,
-  loadGatewayManagementDeclaration,
-} from "../../onboard/gateway-management";
+  resolveGatewayCredentialMutationAuthority,
+  resolveGatewayObservationAuthority,
+} from "../../onboard/gateway-teardown-authority";
 import {
   evaluateGatewayAttachmentConfiguration,
   isExternallySupervised,
-  resolveGatewayOwner,
   type GatewayOwner,
 } from "../../onboard/gateway-ownership";
 import { replayTrustedPrivateEndpoint } from "../../security/trusted-private-endpoint";
@@ -144,18 +142,9 @@ export function getMcpProviderInspectionRuntimeSelection(
 ): McpProviderInspectionRuntimeSelection {
   const providerRuntimeGateway = getPersistedSandboxTargetGateway(sandbox);
   const { gatewayName, gatewayPort } = providerRuntimeGateway;
-  let owner: GatewayOwner;
-  if (options.observationOnly) {
-    const loaded = loadGatewayManagementDeclaration();
-    if (!loaded.ok) throw invalidGatewayManagementDeclarationError(loaded.reason);
-    // Observation needs routing and TLS, not service installation or lifecycle authority.
-    owner = resolveGatewayOwner({
-      gatewayName,
-      gatewayPort,
-      declaration: loaded.declaration,
-      hasPackagedService: false,
-    });
-  } else owner = resolveGatewayCredentialMutationAuthority({ gatewayName, gatewayPort });
+  const owner = options.observationOnly
+    ? resolveGatewayObservationAuthority({ gatewayName, gatewayPort })
+    : resolveGatewayCredentialMutationAuthority({ gatewayName, gatewayPort });
   const localTlsDir = providerRuntimeLocalTlsDir(owner, providerRuntimeGateway.selectedInProcess);
   return {
     gatewayName,

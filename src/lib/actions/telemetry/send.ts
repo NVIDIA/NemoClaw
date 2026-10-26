@@ -10,6 +10,7 @@ import type {
   ValueStatus,
 } from "../../domain/telemetry/event";
 import { readTelemetryTestLabel } from "../../domain/telemetry/event";
+import { observedString } from "../../domain/telemetry/dimensions";
 import { operationEnvelope } from "../../adapters/telemetry/gxt";
 import {
   allowedTelemetryCollection,
@@ -27,7 +28,7 @@ function publicVersion(
   missing: ValueStatus,
 ): { value: string; status: ValueStatus } {
   return typeof value === "string" && value.length > 0 && value !== "unknown"
-    ? { value, status: "reported" }
+    ? observedString(value)
     : { value: "unknown", status: value == null || value === "unknown" ? missing : "unapproved" };
 }
 function installedVersion(): unknown {

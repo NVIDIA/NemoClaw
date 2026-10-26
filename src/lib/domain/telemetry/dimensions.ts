@@ -59,7 +59,7 @@ export function observedString(
 ): { value: string; status: ValueStatus } {
   if (value === undefined || value === null || value === "" || value === "unknown")
     return { value: "unknown", status: missingStatus };
-  return typeof value === "string"
+  return typeof value === "string" && value.length <= 64
     ? { value, status: "reported" }
     : { value: "unknown", status: "collection_error" };
 }
