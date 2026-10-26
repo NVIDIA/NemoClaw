@@ -3,6 +3,7 @@
 
 import path from "node:path";
 import { withHermesNativeProfile } from "./hermes-profile";
+import { withCustomNativeProfile } from "./custom";
 
 import type {
   OpenShellGatewayTarget,
@@ -11,6 +12,7 @@ import type {
   OpenShellProviderMetadata,
 } from "../../adapters/openshell/sandbox-observer";
 import { REPOSITORY_ROOT } from "../../core/repository-root";
+import { isValidName } from "../../sandbox-name-contract";
 import {
   normalizeNativeProviderAttachment,
   type NativeProviderAttachment,
@@ -40,7 +42,7 @@ export class NativeProviderLifecycle<ProfileId extends string, ProviderName exte
       root,
       "managed-inference",
       "provider-profiles",
-      `${this.definition.profileId}.yaml`,
+      `${this.definition.custom ? (this.definition.custom.api === "anthropic-messages" ? "nemoclaw-anthropic-inference-v1" : "nemoclaw-openai-inference-v1") : this.definition.profileId}.yaml`,
     );
   }
 
@@ -82,11 +84,17 @@ export class NativeProviderLifecycle<ProfileId extends string, ProviderName exte
     target: OpenShellGatewayTarget,
     profilePath = this.nativeProviderProfilePath(),
   ): Promise<void> {
-    const imported = this.definition.endpointUrl
-      ? await withHermesNativeProfile(this.definition, (boundPath) =>
-          adapter.importProviderProfile({ target, profilePath: boundPath }),
+    const imported = this.definition.custom
+      ? await withCustomNativeProfile(
+          this.definition,
+          (boundPath) => adapter.importProviderProfile({ target, profilePath: boundPath }),
+          profilePath,
         )
-      : await adapter.importProviderProfile({ target, profilePath });
+      : this.definition.endpointUrl
+        ? await withHermesNativeProfile(this.definition, (boundPath) =>
+            adapter.importProviderProfile({ target, profilePath: boundPath }),
+          )
+        : await adapter.importProviderProfile({ target, profilePath });
     if (imported.ok) return;
     const collision =
       imported.error.kind === "command" && imported.error.reason === "profile_incompatible";
@@ -123,6 +131,7 @@ export class NativeProviderLifecycle<ProfileId extends string, ProviderName exte
       providerId: metadata.revision.id,
       ...(this.definition.endpointUrl ? { endpointUrl: this.definition.endpointUrl } : {}),
       ...(this.definition.allowedIps ? { allowedIps: [...this.definition.allowedIps] } : {}),
+      ...(this.definition.custom ? { custom: this.definition.custom } : {}),
     };
   }
 
@@ -151,7 +160,7 @@ export class NativeProviderLifecycle<ProfileId extends string, ProviderName exte
   }
 
   authorityPersistenceRecovery(gatewayName: string): string {
-    return `Run 'nemoclaw credentials reset ${this.definition.logicalProvider} --yes' against gateway '${gatewayName}', then retry.`;
+    return `Run 'nemoclaw credentials reset ${this.definition.custom ? this.definition.providerName : this.definition.logicalProvider} --yes' against gateway '${gatewayName}', then retry.`;
   }
 
   async removeNewNativeProvider(input: {
@@ -251,6 +260,8 @@ export class NativeProviderLifecycle<ProfileId extends string, ProviderName exte
     credentialValue: string | null;
     reuseExistingCredential?: boolean;
     expected?: NativeProviderAttachment<ProfileId, ProviderName>;
+    /** Registry sandbox whose receipt is the only ownership evidence for `expected`. */
+    recordedSandboxName?: string;
     profilePath?: string;
   }): Promise<NativeProviderAttachment<ProfileId, ProviderName>> {
     if (input.expected) this.requireExpectedReceipt(input.expected);
@@ -316,9 +327,16 @@ export class NativeProviderLifecycle<ProfileId extends string, ProviderName exte
       return observedReceipt;
     }
 
+    // The registry name is untrusted input; print it as a command only when it is a valid sandbox name.
+    const sandbox = input.recordedSandboxName;
+    if (input.expected && sandbox && isValidName(sandbox)) {
+      throw new NativeProviderError(
+        `OpenShell provider '${this.definition.providerName}' is missing, and only the NemoClaw registry record for sandbox '${sandbox}' shows that NemoClaw owned it. If that sandbox no longer exists on this gateway, run 'nemoclaw ${sandbox} destroy' to clear the stale record, then onboard again. Otherwise, recreate the sandbox before using native ${this.definition.label} inference. No provider was changed.`,
+      );
+    }
     if (input.expected) {
       throw new NativeProviderError(
-        `OpenShell provider '${this.definition.providerName}' is missing. Recreate the sandbox before using native ${this.definition.label} inference. No provider was changed.`,
+        `OpenShell provider '${this.definition.providerName}' is missing. If this gateway has no sandboxes after a reinstall, complete uninstall without --keep-openshell, then onboard again. Otherwise, recreate the sandbox before using native ${this.definition.label} inference. No provider was changed.`,
       );
     }
 

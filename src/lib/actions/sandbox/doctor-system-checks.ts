@@ -14,7 +14,11 @@ import {
   resolveCurrentRuntimeProviderBundle,
   resolveRuntimeProviderBundle,
 } from "../../onboard/runtime-provider/access";
-import { qualifyPortableAgentLifecycleAuthority } from "../../onboard/experimental/portable-agent-lifecycle";
+import {
+  assertHermesPortableAgentLifecycleAuthority,
+  HermesPortableLifecycleAuthorityError,
+  qualifyPortableAgentLifecycleAuthority,
+} from "../../onboard/experimental/portable-agent-lifecycle";
 import { withSandboxLifecycleLock } from "./lifecycle/lock";
 import type { SandboxEntry } from "../../state/registry";
 import {
@@ -40,7 +44,46 @@ export function inspectSandboxDoctorPortableAuthority(
   sandboxName: string,
   readRegistry: (sandboxName: string) => SandboxEntry | null,
 ) {
-  return qualifyPortableAgentLifecycleAuthority(sandboxName, { readRegistry });
+  try {
+    return qualifyPortableAgentLifecycleAuthority(sandboxName, { readRegistry });
+  } catch (error) {
+    if (error instanceof HermesPortableLifecycleAuthorityError) {
+      return { kind: "hermes-authority-unavailable" as const };
+    }
+    throw error;
+  }
+}
+
+type HermesPortableDoctorAuthority = Extract<
+  ReturnType<typeof qualifyPortableAgentLifecycleAuthority>,
+  { readonly kind: "hermes" }
+>;
+
+/** Confirm active Hermes readiness without exposing untrusted runtime diagnostics. */
+export async function observeSandboxDoctorHermesReadiness(
+  sandboxName: string,
+  authority: HermesPortableDoctorAuthority,
+  readRegistry: (sandboxName: string) => SandboxEntry | null,
+): Promise<"ready" | "unavailable" | "authority-unavailable" | null> {
+  if (authority.phase !== "active" || !authority.entry) return null;
+  try {
+    await assertHermesPortableAgentLifecycleAuthority(
+      sandboxName,
+      {
+        agent: authority.entry.agent,
+        gatewayName: authority.gatewayName,
+        lifecycleGeneration: authority.lifecycleGeneration,
+        openshellDriver: authority.entry.openshellDriver,
+        provider: authority.entry.provider,
+      },
+      { readRegistry },
+    );
+    return "ready";
+  } catch (error) {
+    return error instanceof HermesPortableLifecycleAuthorityError
+      ? "authority-unavailable"
+      : "unavailable";
+  }
 }
 
 export function oneLine(value = ""): string {

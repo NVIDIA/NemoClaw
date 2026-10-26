@@ -9,9 +9,9 @@
 // "gateway startup failed: ... Process will stay alive; fix the issue and
 // restart." to /tmp/gateway.log.
 // Source boundary: that park-alive behavior lives in OpenClaw's gateway run
-// loop, outside NemoClaw; NemoClaw can only detect it and hand recovery back
-// to its supervisor. The sandbox-side prevention (gateway.reload.mode=off pin
-// and the serving watchdog) ships separately in the #4710 sandbox PR.
+// loop, outside NemoClaw. Current managed images patch container restarts to
+// replace the gateway process and exit on failure. These diagnostics detect
+// the park-alive state in older images and hand recovery to the supervisor.
 // Removal condition: when sandbox images pin an OpenClaw release whose failed
 // in-process restart exits non-zero (so the PID-wait supervisor respawns it),
 // this detection can be narrowed and the recovery settle window shortened or

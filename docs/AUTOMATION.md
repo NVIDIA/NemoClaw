@@ -56,6 +56,26 @@ The publisher also leaves a draft with previous workflow metadata unchanged. It 
 and stops without writing. Close that legacy draft so a later qualifying push can create a current
 workflow-owned draft, or mark it ready for review to transfer ownership to maintainers.
 
+### Resolve a Draft Merge Conflict
+
+Each run merges the open managed draft with the triggering `main` commit before authoring.
+When both changed the same lines, the author step fails before it creates a sandbox.
+The error names the draft commit, the `main` commit, and each conflicting file.
+Rerunning without a change hits the same conflict.
+
+1. Reproduce the conflict locally with
+   `git merge-tree --write-tree <main-sha> <draft-sha>`.
+2. Check the conflicting text against current source and tests, then choose the accurate wording.
+3. Choose one recovery path:
+   - To keep automation ownership, open a PR that updates the conflicting `main` text so it
+     merges cleanly with the draft. Confirm with `git merge-tree` against the draft head. The next
+     qualifying push to `main` refreshes the draft.
+   - To take ownership, mark the draft PR ready for review and resolve the conflict on its branch.
+     Later workflow runs leave the PR unchanged.
+
+Do not push a resolution commit to the draft branch while automation owns it. The publisher
+accepts only commits that the workflow created.
+
 ### Recover an Orphaned Managed Branch
 
 If draft PR creation fails after branch creation, the publisher reports the exact branch and commit.

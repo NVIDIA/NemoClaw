@@ -41,10 +41,10 @@ export const LLAMA_CPP_DGX_SPARK_CUDA_RUNTIME_BASE =
 export const LLAMA_CPP_DGX_SPARK_TOOL_IMAGE =
   "nvcr.io/nvidia/vllm@sha256:94e21552f644e0c1627464ba89d2f7a4ce7442e196f72afa0bb5d7fba23cbb03" as const;
 export const LLAMA_CPP_DGX_SPARK_MINIMUM_DRIVER_VERSION = "580.65.06" as const;
-const LLAMA_CPP_DGX_SPARK_REQUEST_GUARD_GO_VERSION = "1.26.9" as const;
-const LLAMA_CPP_DGX_SPARK_REQUEST_GUARD_GO_ARCHIVE_SHA256 =
-  "sha256:4a97373d49fcacdcf3694fea368a500b00ee3e963974f3e7514132717632f052" as const;
+export const LLAMA_CPP_DGX_SPARK_ACCEPTED_REQUEST_BODY_BYTES = 1_048_576 as const;
+export const LLAMA_CPP_DGX_SPARK_MAX_OUTPUT_TOKENS = 4_096 as const;
 export const LLAMA_CPP_DGX_SPARK_REJECTED_REQUEST_BODY_BYTES = 1_100_000 as const;
+
 export const LLAMA_CPP_DGX_SPARK_PROTOCOL_PROBES = [
   "health",
   "models",
@@ -158,7 +158,6 @@ export type LlamaCppDgxSparkQualificationPlan = {
   readonly probes: typeof LLAMA_CPP_DGX_SPARK_QUALIFICATION_PROBES;
   readonly profile: typeof LLAMA_CPP_DGX_SPARK_QUALIFICATION_PROFILE;
   readonly recipeRef: typeof LLAMA_CPP_DGX_SPARK_QUALIFICATION_RECIPE;
-  readonly requestGuard: "required";
   readonly required: true;
   readonly runner: string | null;
 };
@@ -189,10 +188,6 @@ export type LlamaCppDgxSparkExecutionPlan = {
       readonly platform: typeof LLAMA_CPP_DGX_SPARK_QUALIFICATION_PLATFORM;
     };
     readonly repository: typeof LLAMA_CPP_DGX_SPARK_OWNED_IMAGE_REPOSITORY;
-    readonly requestGuardToolchain: {
-      readonly archiveSha256: typeof LLAMA_CPP_DGX_SPARK_REQUEST_GUARD_GO_ARCHIVE_SHA256;
-      readonly version: typeof LLAMA_CPP_DGX_SPARK_REQUEST_GUARD_GO_VERSION;
-    };
     readonly runtime: {
       readonly gid: number;
       readonly port: 8081;
@@ -208,7 +203,6 @@ export type LlamaCppDgxSparkExecutionPlan = {
     readonly agentQualification: LlamaCppDgxSparkAgentQualificationPlan;
     readonly probeBounds: LlamaCppDgxSparkQualificationPlan["probeBounds"];
     readonly probes: typeof LLAMA_CPP_DGX_SPARK_QUALIFICATION_PROBES;
-    readonly requestGuard: "required";
   };
   readonly recipe: {
     readonly capabilities: {
@@ -287,14 +281,7 @@ export type LlamaCppDgxSparkExecutionPlan = {
         readonly value: "f16" | "q8_0" | "q4_0";
       };
       readonly limits: {
-        readonly maxRequestBodyBytes: number;
-        readonly maxRequestHeaderBytes: number;
-        readonly maxOutputTokens: number;
         readonly requestTimeoutSeconds: number;
-        readonly shutdownTimeoutSeconds: number;
-      };
-      readonly requestGuard: {
-        readonly upstreamPort: number;
       };
       readonly microBatchSize: number;
       readonly port: 8081;
@@ -491,6 +478,7 @@ export type LlamaCppDgxSparkQualificationReceipt = {
       readonly rejectedBytes: typeof LLAMA_CPP_DGX_SPARK_REJECTED_REQUEST_BODY_BYTES;
       readonly rejectedHttpStatus: 413;
     };
+
     readonly models: {
       readonly httpStatus: 200;
       readonly model: typeof LLAMA_CPP_DGX_SPARK_SERVED_MODEL_ID;
@@ -949,7 +937,6 @@ export function parseLlamaCppDgxSparkQualificationPlan(
       "probes",
       "profile",
       "recipeRef",
-      "requestGuard",
       "required",
       "runner",
     ],
@@ -968,7 +955,6 @@ export function parseLlamaCppDgxSparkQualificationPlan(
     plan.required !== true ||
     plan.profile !== LLAMA_CPP_DGX_SPARK_QUALIFICATION_PROFILE ||
     plan.recipeRef !== LLAMA_CPP_DGX_SPARK_QUALIFICATION_RECIPE ||
-    plan.requestGuard !== "required" ||
     plan.platform !== LLAMA_CPP_DGX_SPARK_QUALIFICATION_PLATFORM ||
     gpu.vendor !== "nvidia" ||
     gpu.fullOffload !== true ||
@@ -993,7 +979,6 @@ export function parseLlamaCppDgxSparkQualificationPlan(
     probes: LLAMA_CPP_DGX_SPARK_QUALIFICATION_PROBES,
     profile: LLAMA_CPP_DGX_SPARK_QUALIFICATION_PROFILE,
     recipeRef: LLAMA_CPP_DGX_SPARK_QUALIFICATION_RECIPE,
-    requestGuard: "required",
     required: true,
     runner: infrastructure.runner,
   };
@@ -1016,7 +1001,7 @@ export function parseLlamaCppDgxSparkExecutionPlan(
   const qualification = record(plan.qualification, "compiled protocol qualification");
   requireExactKeys(
     qualification,
-    ["agentQualification", "probeBounds", "probes", "requestGuard"],
+    ["agentQualification", "probeBounds", "probes"],
     "compiled protocol qualification",
   );
   if (
@@ -1025,25 +1010,13 @@ export function parseLlamaCppDgxSparkExecutionPlan(
   ) {
     throw new Error("compiled llama.cpp DGX Spark protocol probes are invalid");
   }
-  if (qualification.requestGuard !== "required") {
-    throw new Error("compiled llama.cpp DGX Spark request-guard activation is invalid");
-  }
   const protocolProbeBounds = parseProtocolProbeBounds(qualification.probeBounds);
   const agentQualification = parseAgentQualification(qualification.agentQualification);
 
   const imageBuild = record(plan.imageBuild, "compiled qualification image build");
   requireExactKeys(
     imageBuild,
-    [
-      "backendDirectory",
-      "compiler",
-      "cuda",
-      "platform",
-      "repository",
-      "requestGuardToolchain",
-      "runtime",
-      "source",
-    ],
+    ["backendDirectory", "compiler", "cuda", "platform", "repository", "runtime", "source"],
     "compiled qualification image build",
   );
   const compiler = record(imageBuild.compiler, "compiled qualification compiler");
@@ -1061,15 +1034,6 @@ export function parseLlamaCppDgxSparkExecutionPlan(
     "compiled qualification image platform",
   );
   const imageRuntime = record(imageBuild.runtime, "compiled qualification image runtime");
-  const requestGuardToolchain = record(
-    imageBuild.requestGuardToolchain,
-    "compiled qualification request guard toolchain",
-  );
-  requireExactKeys(
-    requestGuardToolchain,
-    ["archiveSha256", "version"],
-    "compiled qualification request guard toolchain",
-  );
   requireExactKeys(imageRuntime, ["gid", "port", "uid"], "compiled qualification image runtime");
   const imageSource = record(imageBuild.source, "compiled qualification image source");
   requireExactKeys(
@@ -1089,8 +1053,6 @@ export function parseLlamaCppDgxSparkExecutionPlan(
     imageCuda.runtimeBase !== LLAMA_CPP_DGX_SPARK_CUDA_RUNTIME_BASE ||
     platform.platform !== LLAMA_CPP_DGX_SPARK_QUALIFICATION_PLATFORM ||
     platform.cudaArchitectures !== LLAMA_CPP_DGX_SPARK_CUDA_ARCHITECTURES ||
-    requestGuardToolchain.archiveSha256 !== LLAMA_CPP_DGX_SPARK_REQUEST_GUARD_GO_ARCHIVE_SHA256 ||
-    requestGuardToolchain.version !== LLAMA_CPP_DGX_SPARK_REQUEST_GUARD_GO_VERSION ||
     imageRuntime.port !== 8081 ||
     imageSource.repository !== LLAMA_CPP_DGX_SPARK_SOURCE_REPOSITORY ||
     imageSource.revision !== LLAMA_CPP_DGX_SPARK_SOURCE_REVISION ||
@@ -1305,7 +1267,6 @@ export function parseLlamaCppDgxSparkExecutionPlan(
       "microBatchSize",
       "port",
       "protocol",
-      "requestGuard",
       "slots",
       "speculativeDecoding",
     ],
@@ -1328,55 +1289,15 @@ export function parseLlamaCppDgxSparkExecutionPlan(
   requireExactKeys(kvCache, ["key", "value"], "compiled qualification KV cache");
   const allowedKvTypes = new Set(["f16", "q8_0", "q4_0"]);
   const limits = record(serve.limits, "compiled qualification request limits");
-  requireExactKeys(
-    limits,
-    [
-      "maxOutputTokens",
-      "maxRequestBodyBytes",
-      "maxRequestHeaderBytes",
-      "requestTimeoutSeconds",
-      "shutdownTimeoutSeconds",
-    ],
-    "compiled qualification request limits",
-  );
-  const maxRequestBodyBytes = boundedInteger(
-    limits.maxRequestBodyBytes,
-    "compiled qualification maximum request body bytes",
-    1,
-    64 * 1024 * 1024,
-  );
-  const maxRequestHeaderBytes = boundedInteger(
-    limits.maxRequestHeaderBytes,
-    "compiled qualification maximum request header bytes",
-    1,
-    1024 * 1024,
-  );
-  const maxOutputTokens = boundedInteger(
-    limits.maxOutputTokens,
-    "compiled qualification maximum output tokens",
-    1,
-    contextSize,
-  );
+  requireExactKeys(limits, ["requestTimeoutSeconds"], "compiled qualification request limits");
+
   const requestTimeoutSeconds = boundedInteger(
     limits.requestTimeoutSeconds,
     "compiled qualification request timeout",
     1,
     3600,
   );
-  const shutdownTimeoutSeconds = boundedInteger(
-    limits.shutdownTimeoutSeconds,
-    "compiled qualification shutdown timeout",
-    1,
-    3600,
-  );
-  const requestGuard = record(serve.requestGuard, "compiled qualification request guard");
-  requireExactKeys(requestGuard, ["upstreamPort"], "compiled qualification request guard");
-  const upstreamPort = boundedInteger(
-    requestGuard.upstreamPort,
-    "compiled qualification request-guard upstream port",
-    1,
-    65535,
-  );
+
   if (
     serve.protocol !== "openai-completions" ||
     serve.authentication !== "bearer" ||
@@ -1386,8 +1307,6 @@ export function parseLlamaCppDgxSparkExecutionPlan(
     serve.idleSleepSeconds !== -1 ||
     serve.flashAttention !== "enabled" ||
     serve.speculativeDecoding !== "disabled" ||
-    maxRequestBodyBytes !== 1_048_576 ||
-    upstreamPort === serve.port ||
     typeof kvCache.key !== "string" ||
     !allowedKvTypes.has(kvCache.key) ||
     typeof kvCache.value !== "string" ||
@@ -1441,10 +1360,6 @@ export function parseLlamaCppDgxSparkExecutionPlan(
         platform: LLAMA_CPP_DGX_SPARK_QUALIFICATION_PLATFORM,
       },
       repository: LLAMA_CPP_DGX_SPARK_OWNED_IMAGE_REPOSITORY,
-      requestGuardToolchain: {
-        archiveSha256: LLAMA_CPP_DGX_SPARK_REQUEST_GUARD_GO_ARCHIVE_SHA256,
-        version: LLAMA_CPP_DGX_SPARK_REQUEST_GUARD_GO_VERSION,
-      },
       runtime: { gid, port: 8081, uid },
       source: {
         archiveSha256: LLAMA_CPP_DGX_SPARK_SOURCE_ARCHIVE_SHA256,
@@ -1456,7 +1371,6 @@ export function parseLlamaCppDgxSparkExecutionPlan(
       agentQualification,
       probeBounds: protocolProbeBounds,
       probes: LLAMA_CPP_DGX_SPARK_QUALIFICATION_PROBES,
-      requestGuard: "required",
     },
     recipe: {
       capabilities: {
@@ -1529,13 +1443,8 @@ export function parseLlamaCppDgxSparkExecutionPlan(
         },
         speculativeDecoding: "disabled",
         limits: {
-          maxRequestBodyBytes,
-          maxRequestHeaderBytes,
-          maxOutputTokens,
           requestTimeoutSeconds,
-          shutdownTimeoutSeconds,
         },
-        requestGuard: { upstreamPort },
       },
       server: {
         technology: "llama.cpp",
@@ -2065,6 +1974,7 @@ export function parseLlamaCppDgxSparkQualificationReceipt(
     ],
     "request-body limit probe",
   );
+
   const cancellation = record(probes.cancellation, "cancellation probe");
   requireExactKeys(cancellation, ["aborted", "ok", "recovered"], "cancellation probe");
   const clientTimeout = record(probes.clientTimeout, "client-timeout probe");
@@ -2130,7 +2040,7 @@ export function parseLlamaCppDgxSparkQualificationReceipt(
     malformedRequest.ok !== true ||
     malformedRequest.httpStatus !== 400 ||
     requestBodyLimit.ok !== true ||
-    requestBodyLimit.acceptedBytes !== expectedPlan.recipe.serve.limits.maxRequestBodyBytes ||
+    requestBodyLimit.acceptedBytes !== LLAMA_CPP_DGX_SPARK_ACCEPTED_REQUEST_BODY_BYTES ||
     requestBodyLimit.acceptedHttpStatus !== 200 ||
     requestBodyLimit.rejectedBytes !== LLAMA_CPP_DGX_SPARK_REJECTED_REQUEST_BODY_BYTES ||
     requestBodyLimit.rejectedHttpStatus !== 413 ||
@@ -2215,7 +2125,7 @@ export function parseLlamaCppDgxSparkQualificationReceipt(
       logRedaction: { ok: true },
       malformedRequest: { httpStatus: 400, ok: true },
       requestBodyLimit: {
-        acceptedBytes: expectedPlan.recipe.serve.limits.maxRequestBodyBytes,
+        acceptedBytes: LLAMA_CPP_DGX_SPARK_ACCEPTED_REQUEST_BODY_BYTES,
         acceptedHttpStatus: 200,
         continuationHealthHttpStatus: 200,
         continuationHttpStatus: 200,
@@ -2225,6 +2135,7 @@ export function parseLlamaCppDgxSparkQualificationReceipt(
         rejectedBytes: LLAMA_CPP_DGX_SPARK_REJECTED_REQUEST_BODY_BYTES,
         rejectedHttpStatus: 413,
       },
+
       metrics: {
         httpStatus: 200,
         ok: true,

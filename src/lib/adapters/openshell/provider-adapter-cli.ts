@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { SUPPORTED_OPENSHELL_FALLBACK_VERSION } from "../../onboard/openshell-version";
+
 import fs from "node:fs";
+import { isDeepStrictEqual } from "node:util";
 import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../../name-validation";
 import { redactFullWithUrls } from "../../security/redact";
 import {
@@ -481,9 +484,19 @@ export function createCliOpenShellProviderAdapter(
 ): CliOpenShellProviderAdapter {
   const run = deps.run ?? runOpenshellProviderCommand;
   const environment = deps.environment ?? process.env;
-  const verifiedProfiles = new Map<string, Map<string, CheckedInProviderProfileContract>>();
+  const verifiedProfiles = new Map<string, Map<string, (exported: string) => boolean>>();
   const targetKey = (target: OpenShellGatewayTarget) =>
     target.kind === "named" ? `named:${target.gatewayName}` : "selected";
+  const rememberVerifiedProfile = (
+    target: OpenShellGatewayTarget,
+    profileId: string,
+    matches: (exported: string) => boolean,
+  ) => {
+    const key = targetKey(target);
+    const profiles = verifiedProfiles.get(key) ?? new Map();
+    profiles.set(profileId, matches);
+    verifiedProfiles.set(key, profiles);
+  };
   const warn = (message: string) => {
     try {
       (deps.warn ?? console.warn)(message);
@@ -522,8 +535,8 @@ export function createCliOpenShellProviderAdapter(
   };
 
   const warnIfVerifiedProfileChanged = (request: OpenShellProviderRequest, profileId: string) => {
-    const contract = verifiedProfiles.get(targetKey(request.target))?.get(profileId);
-    if (!contract) return;
+    const matches = verifiedProfiles.get(targetKey(request.target))?.get(profileId);
+    if (!matches) return;
     const exported = invoke(
       ["provider", "profile", "export", profileId, "--output", "json"],
       { ...request, timeoutMs: Math.min(timeoutFor(request), OPENSHELL_OPERATION_TIMEOUT_MS) },
@@ -542,7 +555,7 @@ export function createCliOpenShellProviderAdapter(
       warn(warning);
       return;
     }
-    if (!exportedProviderProfileMatchesContract(commandStdout(exported), contract)) {
+    if (!matches(commandStdout(exported))) {
       warn(
         `Warning: OpenShell provider profile '${profileId}' changed after verification. NemoClaw cannot confirm which definition was used at bind time. Ask the gateway operator to inspect this profile.`,
       );
@@ -735,6 +748,9 @@ export function createCliOpenShellProviderAdapter(
     }
     if (!request.includeCredentialExpirations) return success(metadata);
 
+    let pageToken = "";
+    const seenPageTokens = new Set<string>();
+    const projectedRuntime = String(SUPPORTED_OPENSHELL_FALLBACK_VERSION) === "0.1.3";
     for (
       let offset = 0;
       offset < 10 * PROVIDER_INVENTORY_LIMIT;
@@ -744,10 +760,9 @@ export function createCliOpenShellProviderAdapter(
         [
           "provider",
           "list",
-          "--limit",
-          String(PROVIDER_INVENTORY_LIMIT),
-          "--offset",
-          String(offset),
+          ...(projectedRuntime
+            ? ["--page-size", String(PROVIDER_INVENTORY_LIMIT), "--page-token", pageToken]
+            : ["--limit", String(PROVIDER_INVENTORY_LIMIT), "--offset", String(offset)]),
           "--output",
           "json",
         ],
@@ -763,7 +778,18 @@ export function createCliOpenShellProviderAdapter(
         commandStdout(inventory),
         request.providerName,
       );
-      if (credentialState === undefined) continue;
+      if (credentialState && "nextPageToken" in credentialState) {
+        if (!projectedRuntime || seenPageTokens.has(credentialState.nextPageToken)) {
+          return failure({
+            kind: "schema",
+            message: "OpenShell returned invalid provider inventory pagination.",
+          });
+        }
+        pageToken = credentialState.nextPageToken;
+        seenPageTokens.add(pageToken);
+        continue;
+      }
+      if (credentialState === undefined && !projectedRuntime) continue;
       return credentialState
         ? success({
             ...metadata,
@@ -811,10 +837,9 @@ export function createCliOpenShellProviderAdapter(
       request,
       { ...deps, environment, run },
       (target, contract) => {
-        const key = targetKey(target);
-        const profiles = verifiedProfiles.get(key) ?? new Map();
-        profiles.set(contract.profileId, contract);
-        verifiedProfiles.set(key, profiles);
+        rememberVerifiedProfile(target, contract.profileId, (exported) =>
+          exportedProviderProfileMatchesContract(exported, contract),
+        );
       },
     );
   };
@@ -827,16 +852,55 @@ export function createCliOpenShellProviderAdapter(
     const result = invoke(
       ["provider", "profile", "export", request.profileType, "--output", "json"],
       request,
+      undefined,
+      2,
+      true,
     );
     const error = commandError(result);
     if (error) return failure(error);
+    if (
+      request.expectedProfile &&
+      (request.expectedProfile.profileId !== request.profileType ||
+        !exportedProviderProfileMatchesContract(commandStdout(result), request.expectedProfile))
+    ) {
+      return failure({
+        kind: "command",
+        reason: "profile_incompatible",
+        message: "The OpenShell provider profile does not match the expected security boundary.",
+      });
+    }
     const credentialKeys = parseProfileCredentialKeys(commandStdout(result), request.profileType);
-    return credentialKeys
-      ? success({ credentialKeys })
-      : failure({
-          kind: "schema",
-          message: "OpenShell returned an invalid provider profile.",
-        });
+    if (!credentialKeys) {
+      return failure({
+        kind: "schema",
+        message: "OpenShell returned an invalid provider profile.",
+      });
+    }
+    const supplied = request.registrationCredentials;
+    if (
+      supplied !== undefined &&
+      supplied !== "from-existing" &&
+      supplied.some((key) => !credentialKeys.includes(key))
+    ) {
+      return failure({
+        kind: "command",
+        reason: "profile_incompatible",
+        message:
+          "The supplied credential names are not declared by the OpenShell provider profile.",
+      });
+    }
+    const expectedProfile = request.expectedProfile;
+    if (expectedProfile) {
+      rememberVerifiedProfile(request.target, request.profileType, (exported) =>
+        exportedProviderProfileMatchesContract(exported, expectedProfile),
+      );
+    } else if (supplied !== undefined) {
+      const snapshot: unknown = JSON.parse(commandStdout(result));
+      rememberVerifiedProfile(request.target, request.profileType, (exported) =>
+        isDeepStrictEqual(JSON.parse(exported) as unknown, snapshot),
+      );
+    }
+    return success({ credentialKeys });
   };
 
   const deleteProvider: OpenShellProviderAdapter["deleteProvider"] = async (

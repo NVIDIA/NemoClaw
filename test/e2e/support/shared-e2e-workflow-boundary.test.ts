@@ -15,6 +15,7 @@ import {
 import {
   validateE2eWorkflowBoundary,
   validateNativePodmanStagingAction,
+  validatePortableCrunWorkflow,
 } from "../../../tools/e2e/workflow-boundary.mts";
 import { validateE2eOperationsWorkflowBoundary } from "../../../tools/e2e/operations-workflow-boundary.mts";
 import { readWorkflow } from "../../helpers/e2e-workflow-contract";
@@ -65,6 +66,12 @@ function validateMutatedWorkflow(
   } finally {
     fs.rmSync(directory, { force: true, recursive: true });
   }
+}
+
+function validatePortableMutation(mutator: (workflow: Workflow) => void): string[] {
+  const workflow = readWorkflow() as Workflow;
+  mutator(workflow);
+  return validatePortableCrunWorkflow(workflow);
 }
 
 type WorkflowSteps = NonNullable<Workflow["jobs"][string]["steps"]>;
@@ -403,6 +410,69 @@ describe("shared E2E workflow boundary", () => {
     );
   });
 
+  it.each([
+    ["Select pinned compatible Portable crun", "--proto-redir '=https'", "HTTPS, digest"],
+    ["Select pinned compatible Portable crun", "sha256sum --check --strict", "HTTPS, digest"],
+    ["Select pinned compatible Portable crun", "sudo install --owner=root", "HTTPS, digest"],
+    [
+      "Select pinned compatible Portable crun",
+      'podman --url "unix://$socket" info',
+      "restarted API",
+    ],
+    [
+      "Prove Portable Podman OCI execution before Hermes",
+      "run --rm --pull=always",
+      "pinned OCI probe",
+    ],
+    ["Run Portable Hermes finalization live Vitest test", "--runtime", "pinned OCI probe"],
+    [
+      "Retain Portable Podman process headroom",
+      "portable-podman-crun-authority",
+      "selection and headroom",
+    ],
+    ["Remove pinned Portable crun", 'user_systemctl stop "$service.socket"', "teardown"],
+    ["Remove pinned Portable crun", 'user_systemctl is-active "$service.service"', "teardown"],
+    ["Remove pinned Portable crun", "sudo stat -c '%u:%g'", "teardown"],
+    ["Remove pinned Portable crun", 'sudo rm -f -- "$runtime"', "teardown"],
+    ["Remove pinned Portable crun after restoration", 'sudo rm -f -- "$runtime"', "fallback"],
+  ])("rejects weakened Portable crun control in %s", (name, control, diagnostic) => {
+    const errors = validatePortableMutation((workflow) => {
+      const target = workflow.jobs["portable-hermes-finalization"].steps!.find(
+        (candidate) => candidate.name === name,
+      )!;
+      target.run = target.run!.replace(control, "");
+    });
+    expect(errors.some((error) => error.includes(diagnostic))).toBe(true);
+  });
+
+  it("rejects Portable crun removal after Docker restoration", () => {
+    const errors = validatePortableMutation((workflow) => {
+      const jobSteps = workflow.jobs["portable-hermes-finalization"].steps!;
+      const index = jobSteps.findIndex((step) => step.name === "Remove pinned Portable crun");
+      const [removal] = jobSteps.splice(index, 1);
+      const restore = jobSteps.findIndex(
+        (step) => step.name === "Restore Docker and retire Portable Podman runtime",
+      );
+      jobSteps.splice(restore + 1, 0, removal!);
+    });
+    expect(errors).toContain(
+      "Portable crun trust, evidence, and teardown steps must retain their reviewed order",
+    );
+  });
+
+  it("requires the fallback when pre-restore removal cannot prove service state", () => {
+    const errors = validatePortableMutation((workflow) => {
+      const steps = workflow.jobs["portable-hermes-finalization"].steps!;
+      const removal = steps.find((step) => step.name === "Remove pinned Portable crun")!;
+      removal.run = removal.run!.replace('user_systemctl is-active "$service.service"', "");
+      steps.splice(
+        steps.findIndex((step) => step.name === "Remove pinned Portable crun after restoration"),
+        1,
+      );
+    });
+    expect(errors).toContain("Portable crun must retain a safe post-restoration removal fallback");
+  });
+
   it("keeps action paths case-sensitive when classifying staging references", () => {
     const errors = validateMutatedWorkflow((workflow) => {
       workflow.jobs["generate-matrix"].steps!.push({
@@ -567,6 +637,7 @@ describe("pre-candidate execution environment identity", () => {
     "Install trusted E2E planner dependencies",
     "Generate E2E target matrix",
     "Stage immutable native Podman E2E toolchains",
+    "Resolve reviewed candidate OpenShell version",
   ];
   const owners = [
     { name: "workflow", select: (workflow: Workflow) => workflow },
@@ -622,6 +693,8 @@ describe("pre-candidate execution environment identity", () => {
     { owner: owners[6]!, bindingName: "GITHUB_TOKEN" },
     { owner: owners[11]!, bindingName: "NEMOCLAW_E2E_CREDENTIALS_ALLOWED" },
     { owner: owners[11]!, bindingName: "NEMOCLAW_E2E_INCLUDE_STAGING_BREV_LAUNCHABLE" },
+    { owner: owners[13]!, bindingName: "UPGRADE_PR_NUMBER" },
+    { owner: owners[13]!, bindingName: "UPGRADE_BASE_SHA" },
   ];
   const bindingChanges = [
     {

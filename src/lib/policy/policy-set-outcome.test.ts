@@ -91,6 +91,24 @@ describe("CLI policy set outcome classification", () => {
     });
   });
 
+  it("recognizes the observed decorated OpenShell endpoint ambiguity refusal", () => {
+    const stderr =
+      "Error: × code: 'The system is not in a state required for the operation's execution', " +
+      "message: 'network endpoint ambiguity validation failed for openrouter.ai:443'\n" +
+      "  policy update rejected";
+    expect(classify({ status: 1, stderr })).toEqual({
+      kind: "rejected",
+      status: 1,
+      message: "network endpoint ambiguity validation failed for openrouter.ai:443",
+    });
+    expect(
+      classify({
+        status: 1,
+        stderr: stderr.replace("network endpoint ambiguity validation failed", "unrelated failure"),
+      }).kind,
+    ).toBe("ambiguous");
+  });
+
   it("treats an HTTP/2 stream reset as ambiguous rather than a refusal (#9206)", () => {
     const outcome = classify({ status: 1, stderr: HTTP2_RESET_STDERR });
 

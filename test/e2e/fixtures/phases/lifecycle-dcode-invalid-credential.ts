@@ -3,6 +3,10 @@
 
 import { randomUUID } from "node:crypto";
 
+import { DCODE_MANAGED_EXEC_LAUNCHER } from "../../../../src/lib/actions/sandbox/connect-inference-route-probe.ts";
+import { nativeHostedAuthHeaderScript } from "../../../../src/lib/inference/native-provider/contract.ts";
+import { hostedNativeProviderForAttachment } from "../../../../src/lib/inference/native-provider/hosted-attachment.ts";
+import { recordedNativeProviderAttachment } from "../../../../src/lib/inference/native-provider/recorded-selection.ts";
 import { buildAvailabilityProbeEnv } from "../availability-env.ts";
 import { assertExitZero, outputContainsReadySandbox, resultText } from "../clients/command.ts";
 import type { HostCliClient } from "../clients/host.ts";
@@ -40,6 +44,7 @@ export interface DcodeInvalidCredentialRebuildOptions {
   gatewayName: string;
   providerName: string;
   credentialEnv: string;
+  endpoint: string;
   model: string;
   validCredential: string;
 }
@@ -74,10 +79,10 @@ export function dcodeInvalidCredentialRebuildOptionsFromRegistryEntry(
   if (!validCredential) {
     throw new Error("DCode invalid-credential lifecycle requires the original provider credential");
   }
-  const providerName = requiredString(entry, "provider");
-  if (providerName !== HOSTED_INFERENCE_PROVIDER_NAME) {
+  const logicalProvider = requiredString(entry, "provider");
+  if (logicalProvider !== HOSTED_INFERENCE_PROVIDER_NAME) {
     throw new Error(
-      `DCode invalid-credential lifecycle requires provider '${HOSTED_INFERENCE_PROVIDER_NAME}', got '${providerName}'`,
+      `DCode invalid-credential lifecycle requires provider '${HOSTED_INFERENCE_PROVIDER_NAME}', got '${logicalProvider}'`,
     );
   }
   const credentialEnv =
@@ -89,10 +94,29 @@ export function dcodeInvalidCredentialRebuildOptionsFromRegistryEntry(
       `DCode invalid-credential lifecycle requires credential env '${HOSTED_INFERENCE_CREDENTIAL_ENV}'`,
     );
   }
+  const attachment = recordedNativeProviderAttachment({
+    provider: logicalProvider,
+    endpointUrl: typeof entry.endpointUrl === "string" ? entry.endpointUrl : undefined,
+    credentialEnv,
+    preferredInferenceApi:
+      typeof entry.preferredInferenceApi === "string" ? entry.preferredInferenceApi : undefined,
+    nativeHostedProviderAttachment: entry.nativeHostedProviderAttachment,
+  });
+  const nativeProvider = attachment && hostedNativeProviderForAttachment(attachment);
+  if (
+    !nativeProvider?.custom ||
+    nativeProvider.api !== "openai-completions" ||
+    nativeProvider.credentialEnv !== credentialEnv
+  ) {
+    throw new Error(
+      "DCode invalid-credential lifecycle requires an attached native completion provider",
+    );
+  }
   return {
     gatewayName: requiredString(entry, "gatewayName"),
-    providerName,
+    providerName: nativeProvider.providerName,
     credentialEnv,
+    endpoint: `${nativeProvider.endpoint.replace(/\/+$/u, "")}/chat/completions`,
     model: requiredString(entry, "model"),
     validCredential,
   };
@@ -105,6 +129,7 @@ export function isDcodeInvalidCredentialRebuildOptions(
     "gatewayName" in options &&
     "providerName" in options &&
     "credentialEnv" in options &&
+    "endpoint" in options &&
     "model" in options &&
     "validCredential" in options
   );
@@ -205,21 +230,19 @@ async function probeRoute(
   return await deps.sandbox.exec(
     sandboxName,
     [
-      "curl",
-      "-sS",
-      "-o",
-      "/dev/null",
-      "-w",
-      "%{http_code}",
-      "--connect-timeout",
-      "5",
-      "--max-time",
-      "15",
-      "-H",
-      "Content-Type: application/json",
-      "--data-binary",
+      DCODE_MANAGED_EXEC_LAUNCHER,
+      "/bin/sh",
+      "-c",
+      [
+        nativeHostedAuthHeaderScript({
+          credentialEnv: options.credentialEnv,
+          api: "openai-completions",
+        }),
+        'exec curl -q -sS -o /dev/null -w "%{http_code}" --connect-timeout 5 --max-time 15 -H "Content-Type: application/json" -H "$AUTH_HEADER" --data-binary "$1" "$2"',
+      ].join("; "),
+      "dcode-native-inference-probe",
       payload,
-      "https://inference.local/v1/chat/completions",
+      options.endpoint,
     ],
     {
       artifactName: `lifecycle-dcode-route-${phase}-${attempt}`,

@@ -77,6 +77,7 @@ import {
 import {
   inspectRebuildGatewayProviderRegistration,
   validateRebuildHostInferenceCredential,
+  verifyRebuildNativeLocalProviderBeforeDelete,
   shouldVerifyRebuildGatewayProvider,
 } from "./rebuild-provider-preflight";
 import {
@@ -845,14 +846,23 @@ async function rebuildSandboxUnlocked(
           const hostCredential = resumeConfig.credentialEnv
             ? hydrateCredentialEnv(resumeConfig.credentialEnv)
             : null;
-          if (
-            hostCredential &&
-            !(await validateRebuildHostInferenceCredential(resumeConfig, hostCredential))
-          ) {
+          let indeterminate = false;
+          const valid =
+            !hostCredential ||
+            (await validateRebuildHostInferenceCredential(
+              resumeConfig,
+              hostCredential,
+              undefined,
+              () => {
+                indeterminate = true;
+              },
+            ));
+          if (!valid) {
             return {
               ok: false,
-              message:
-                "Host inference credential could not be validated before sandbox deletion. Check the credential and recorded endpoint, then retry rebuild.",
+              message: indeterminate
+                ? "NVIDIA upstream inference was temporarily unavailable before sandbox deletion. The sandbox is untouched; retry rebuild when inference recovers."
+                : "Host inference credential could not be validated before sandbox deletion. Check the credential and recorded endpoint, then retry rebuild.",
             };
           }
           const nativeAttachment =
@@ -860,6 +870,7 @@ async function rebuildSandboxUnlocked(
             resumeConfig.nativeHostedProviderAttachment;
           if (
             !recreateOptions.rebuildProviderReconfigure &&
+            resumeConfig.nativeLocalProviderAttachment === undefined &&
             resumeConfig.provider &&
             (nativeAttachment || shouldVerifyRebuildGatewayProvider(resumeConfig.provider))
           ) {
@@ -888,40 +899,64 @@ async function rebuildSandboxUnlocked(
               recreateOptions.managedWorkloadRebuild,
             ) ?? revalidateRebuildRouteBeforeDelete(routePreflightReceipt);
           if (!validation.ok) return validation;
-          // Live MCP teardown temporarily removes credential-bound rules from
-          // the source sandbox. Its preparation returned the complete
-          // pre-teardown OpenShell document above and independently revalidates
-          // the stripped source policy. Do not overwrite that handoff with the
-          // temporary teardown state at the delete edge.
-          if (preservedMcpPolicyHandoff) return validation;
-          // A stale-recovery sandbox is already absent. Preflight admitted this
-          // path only after digest-verifying the policy handoff bound to the
-          // prepared recovery manifest, so there is no live policy to recapture.
-          if (staleRecovery) return validation;
-          // Prepared legacy recovery freezes source policy before the gateway upgrade.
-          // Revalidate that handoff instead of recapturing unreadable live state.
-          if (preparedBackupRecovery) {
-            return backup.backupManifest && readRebuildPolicyHandoff(backup.backupManifest)
-              ? validation
-              : {
-                  ok: false,
-                  message: "The prepared recovery policy handoff changed before sandbox deletion.",
-                };
-          }
-          try {
-            return (await capturePolicyHandoff(runtimeSelection))
-              ? validation
-              : {
-                  ok: false,
-                  message:
-                    "The current OpenShell policy became unavailable before sandbox deletion.",
-                };
-          } catch (error) {
+          const policyValidation = await (async () => {
+            // Live MCP teardown temporarily removes credential-bound rules from
+            // the source sandbox. Its preparation returned the complete
+            // pre-teardown OpenShell document above and independently revalidates
+            // the stripped source policy. Do not overwrite that handoff with the
+            // temporary teardown state at the delete edge.
+            if (preservedMcpPolicyHandoff) return validation;
+            // A stale-recovery sandbox is already absent. Preflight admitted this
+            // path only after digest-verifying the policy handoff bound to the
+            // prepared recovery manifest, so there is no live policy to recapture.
+            if (staleRecovery) return validation;
+            // Prepared legacy recovery freezes source policy before the gateway upgrade.
+            // Revalidate that handoff instead of recapturing unreadable live state.
+            if (preparedBackupRecovery) {
+              return backup.backupManifest && readRebuildPolicyHandoff(backup.backupManifest)
+                ? validation
+                : {
+                    ok: false,
+                    message:
+                      "The prepared recovery policy handoff changed before sandbox deletion.",
+                  };
+            }
+            try {
+              return (await capturePolicyHandoff(runtimeSelection))
+                ? validation
+                : {
+                    ok: false,
+                    message:
+                      "The current OpenShell policy became unavailable before sandbox deletion.",
+                  };
+            } catch (error) {
+              return {
+                ok: false,
+                message: error instanceof Error ? error.message : String(error),
+              };
+            }
+          })();
+          if (!policyValidation.ok || resumeConfig.nativeLocalProviderAttachment === undefined)
+            return policyValidation;
+          if (
+            !(await verifyRebuildNativeLocalProviderBeforeDelete(
+              sandboxName,
+              recreateOptions.targetGatewayName,
+              resumeConfig,
+              runtimeSelection,
+            ))
+          ) {
             return {
               ok: false,
-              message: error instanceof Error ? error.message : String(error),
+              message: "Native local provider authority changed before sandbox deletion.",
             };
           }
+          return (
+            revalidateManagedWorkloadRebuildBeforeDelete(
+              sandboxName,
+              recreateOptions.managedWorkloadRebuild,
+            ) ?? revalidateRebuildRouteBeforeDelete(routePreflightReceipt)
+          );
         },
         prepareSourceForDelete: sourceWindowForDelete
           ? async () => {

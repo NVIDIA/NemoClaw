@@ -6,7 +6,7 @@
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   SHIPPED_MANAGED_IMAGE_AGENTS,
@@ -295,6 +295,38 @@ export function runManagedImageDirectE2e(input: ManagedImageDirectE2eInputs): vo
     ]).stdout;
     if (!config.includes("nvidia/nemotron-3-ultra-550b-a55b")) {
       throw new Error("managed agent configuration does not contain the requested model");
+    }
+    if (input.agent === "openclaw") {
+      // Use the image's generated policy and patched distribution. The same
+      // proof owns package-level coverage; this call verifies the shipped image.
+      const proof = "/tmp/openclaw-real-agent-reload-proof.ts";
+      docker([
+        "cp",
+        fileURLToPath(
+          new URL("../../test/helpers/openclaw-real-agent-reload-proof.ts", import.meta.url),
+        ),
+        `${containerId}:${proof}`,
+      ]);
+      docker(
+        [
+          "exec",
+          "--user",
+          "sandbox",
+          containerId,
+          "/usr/local/bin/node",
+          "--input-type=module",
+          "-e",
+          `import fs from 'node:fs';
+import { runRealOpenClawAgentReloadProof } from '${proof}';
+await runRealOpenClawAgentReloadProof({
+  dist: '/usr/local/lib/node_modules/openclaw/dist',
+  nodeExecutable: process.execPath,
+  gatewayConfig: JSON.parse(fs.readFileSync('/sandbox/.openclaw/openclaw.json', 'utf8')).gateway,
+});`,
+        ],
+        false,
+        240_000,
+      );
     }
     process.stdout.write(
       `Direct exact-image authenticated startup hold passed for ${input.agent} on ${input.platform}.\n`,

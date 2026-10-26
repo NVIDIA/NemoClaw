@@ -9,6 +9,10 @@
 // env or global session. Extracted from rebuild.ts so the trust-boundary logic
 // is auditable on its own (PRA-5).
 
+import {
+  normalizeNativeLocalProviderAttachment,
+  type NativeLocalProviderAttachment,
+} from "../../inference/native-local/contract";
 import { CLI_NAME } from "../../cli/branding";
 import { RD as _RD, D, R } from "../../cli/terminal-style";
 import {
@@ -67,6 +71,7 @@ export interface RebuildResumeConfig {
    */
   readonly pinEndpoint: boolean;
   readonly endpointUrl: string | null;
+  readonly nativeLocalProviderAttachment?: NativeLocalProviderAttachment;
   /** Durable pre-delete route used only for credential-safe provider recovery. */
   readonly registryInferenceRoute: RegistryInferenceRoute | null;
   readonly ambient: AmbientRecreateEnvAssessment;
@@ -257,11 +262,13 @@ export function prepareRebuildResumeConfig(
     return null;
   }
   if (hostedDefinition) {
-    const expectedEndpoint = hostedDefinition.endpoint;
+    const expectedEndpoint = hostedDefinition.custom?.endpointUrl ?? hostedDefinition.endpoint;
     if (
       (sb.endpointUrl &&
         sb.endpointUrl.replace(/\/+$/, "") !== expectedEndpoint.replace(/\/+$/, "")) ||
-      (sb.credentialEnv && sb.credentialEnv !== hostedDefinition.credentialEnv)
+      (sb.credentialEnv &&
+        sb.credentialEnv !==
+          (hostedDefinition.custom?.credentialEnv ?? hostedDefinition.credentialEnv))
     ) {
       bail(
         "Native provider selection does not match recorded credential or endpoint; sandbox is untouched",
@@ -270,7 +277,15 @@ export function prepareRebuildResumeConfig(
     }
     endpointUrl = expectedEndpoint;
   }
+  const nativeLocalProviderAttachment = normalizeNativeLocalProviderAttachment(
+    sb.nativeLocalProviderAttachment,
+  );
+  if (sb.nativeLocalProviderAttachment !== undefined && !nativeLocalProviderAttachment) {
+    bail("Malformed native local provider attachment; sandbox is untouched");
+    return null;
+  }
   const credentialEnv =
+    hostedDefinition?.custom?.credentialEnv ??
     hostedDefinition?.credentialEnv ??
     getRebuildCredentialEnvFromRegistry(
       trustedSelection.provider,
@@ -295,6 +310,7 @@ export function prepareRebuildResumeConfig(
     pinEndpoint: rebuildEndpoint.known || explicitTargetEndpoint !== null,
     endpointUrl,
     registryInferenceRoute,
+    ...(nativeLocalProviderAttachment ? { nativeLocalProviderAttachment } : {}),
     ambient,
   };
 }

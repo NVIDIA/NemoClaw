@@ -1037,9 +1037,11 @@ describe("sandbox provisioning: base runtime tools", () => {
     ["Deep Agents Code", DEEPAGENTS_DOCKERFILE_BASE],
   ])("installs pinned nftables for OpenShell bypass enforcement in %s", (_agent, file) => {
     const dockerfile = completedDockerStage(fs.readFileSync(file, "utf-8"));
-    const aptInstall = dockerfile.match(
-      /^RUN apt-get update && apt-get install -y --no-install-recommends \\\n(?:.*\\\n)*.*$/m,
-    )?.[0];
+    const aptInstall = dockerfile
+      .replace(/\\\r?\n[ \t]*/g, " ")
+      .match(
+        /^RUN (?:--mount=\S+[ \t]+)*apt-get update && apt-get install -y --no-install-recommends [^;&\n]*/m,
+      )?.[0];
     expect(aptInstall).toBeDefined();
     expect(aptInstall).toContain("nftables=1.1.3-1");
   });

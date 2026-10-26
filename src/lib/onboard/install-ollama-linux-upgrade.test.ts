@@ -8,6 +8,7 @@ import {
   decideInstallOllamaLinuxMode,
   type InstallOllamaLinuxOptions,
   installOllamaOnLinux,
+  OFFICIAL_OLLAMA_INSTALLER_SHA256,
 } from "./install-ollama-linux";
 
 function makeOpts(overrides: Partial<InstallOllamaLinuxOptions>): InstallOllamaLinuxOptions {
@@ -21,6 +22,7 @@ function makeOpts(overrides: Partial<InstallOllamaLinuxOptions>): InstallOllamaL
     runCaptureImpl: vi.fn().mockReturnValue(""),
     runCaptureExImpl: vi.fn().mockReturnValue({ stdout: "", exitCode: 0, timedOut: false }),
     runShellImpl: vi.fn().mockReturnValue({ status: 0, stdout: "", stderr: "", error: null }),
+    sha256FileImpl: vi.fn().mockReturnValue(OFFICIAL_OLLAMA_INSTALLER_SHA256),
     waitForHttpImpl: vi.fn().mockReturnValue(true),
     sleepSecondsImpl: vi.fn(),
     ensureManagedOllamaLoopbackSystemdOverrideImpl: vi.fn().mockReturnValue("ready"),

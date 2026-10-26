@@ -3,7 +3,8 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { getSandboxStatusReport } from "../../../actions/sandbox/status";
+// This suite checks profile projection; lifecycle locking belongs to the status action tests.
+import { getSandboxStatusReport } from "../../../actions/sandbox/status-snapshot";
 import type { VllmProfile } from "../../../inference/vllm";
 import { loadServingCatalog } from "../../../inference/serving/catalog-loader";
 import { servingProfileModel } from "../../../inference/serving/requested-profile-model";
@@ -17,6 +18,12 @@ import { buildCreatedSandboxRegistryEntry } from "../../sandbox-registration";
 import { createSetupNim, type SetupNimFlowDeps } from "../../setup-nim-flow";
 import { handleProviderInferenceState } from "./provider-inference";
 import { baseOptions, baseSelection, createDeps } from "./provider-inference.test-support";
+
+// Resume reservation must not read the operator's registry or wait on host state.
+vi.mock("../../../state/registry", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../state/registry")>()),
+  getSandbox: vi.fn(() => null),
+}));
 
 const llamaCppProfile: ServingProfileProvenance = {
   schemaVersion: 1,

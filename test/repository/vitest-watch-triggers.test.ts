@@ -257,6 +257,8 @@ describe("Vitest opaque-input watch triggers", () => {
     ]);
     expect(triggeredBy("agents/hermes/runtime-config-guard.py")).toEqual([
       "src/lib/actions/sandbox/gateway-restart-hermes-drift.test.ts",
+      "test/agents/hermes/hermes-restart-config-seal-write-lock.test.ts",
+      "test/agents/hermes/hermes-nvidia-restore-validation.test.ts",
     ]);
     expect(triggeredBy("agents/hermes/mcp-config-transaction.py")).toEqual([
       "src/lib/actions/sandbox/gateway-restart-hermes-drift.test.ts",
@@ -279,6 +281,7 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/agents/deepagents/dcode-base-image-workflow.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/managed-images.yaml")).toEqual([
+      "test/e2e/support/managed-podman-docker-guard.test.ts",
       "test/inference/managed/managed-image-mcp-bridge-publication.test.ts",
       "test/inference/managed/managed-image-publication-workflow.test.ts",
       "test/e2e-runtime/pull-public-exact-digest.test.ts",

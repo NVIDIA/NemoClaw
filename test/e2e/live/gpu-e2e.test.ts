@@ -7,14 +7,17 @@ import path from "node:path";
 import { EXPORTED_VLLM_PROFILE_ID } from "../../../src/lib/config/model.ts";
 import type { V1Alpha1OllamaProxyService } from "../../../src/lib/config/v1alpha1-export.ts";
 import { cleanupLocalModelRuntimes } from "../../../src/lib/inference/local-model-profile/cleanup.ts";
+import { normalizeNativeLocalProviderAttachment } from "../../../src/lib/inference/native-local/contract.ts";
 import { HOST_LOCAL_VLLM_CONTAINER_NAME } from "../../../src/lib/inference/serving/vllm-host-local-lifecycle.ts";
 import { loadManagedVllmApiKey } from "../../../src/lib/inference/vllm-api-key.ts";
+import { getSandbox } from "../../../src/lib/state/registry.ts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { parseConfigExport } from "../fixtures/phases/config-export-validation.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { nativeLocalChatCommand } from "../fixtures/native-local-chat.ts";
 import {
   assertAgentExecutionSucceeded,
   assertGpuInstallProofs,
@@ -84,7 +87,7 @@ test(
         "install Ollama and GPU sandbox",
         "validate GPU runtime status",
         "validate Ollama proxy credential boundary",
-        "run sandbox inference.local chat",
+        "run sandbox native Ollama chat",
         "restart Ollama and recover agent inference",
       ],
     },
@@ -93,7 +96,7 @@ test(
     await artifacts.target.declare({
       id: "gpu-e2e",
       boundary:
-        "GPU host + install.sh Ollama provider + OpenShell sandbox + auth proxy + inference.local",
+        "GPU host + install.sh Ollama provider + OpenShell sandbox + auth proxy + sandbox-owned native provider",
       credentialBoundary:
         "The proxy token remains host/OpenShell-owned and is absent from sandbox env.",
       remoteInstallerBoundary:
@@ -191,12 +194,12 @@ test(
     expect(retainedSandboxContainer.State).toBe("running");
     expect(retainedSandboxContainer.Status).toMatch(/\(healthy\)/i);
 
-    const route = await sandbox.openshell(["inference", "get"], {
-      artifactName: "openshell-inference-route",
-      env: env(),
-      timeoutMs: 30_000,
-    });
-    expect(resultText(route)).toMatch(/ollama/i);
+    // OpenClaw local inference uses a sandbox-owned provider behind the auth proxy, not the
+    // shared gateway route (#13293).
+    const nativeEndpoint = normalizeNativeLocalProviderAttachment(
+      getSandbox(SANDBOX_NAME)?.nativeLocalProviderAttachment,
+    )?.endpointUrl;
+    expect(nativeEndpoint).toBe(`http://host.openshell.internal:${PROXY_PORT}/v1`);
 
     progress.phase("validate Ollama proxy credential boundary");
     const tokenRecord = readTokenFileChecked(ollamaProxyTokenFile());
@@ -238,13 +241,14 @@ test(
       "OpenShell owns proxy authentication; the host proxy token must not enter sandbox env",
     ).toBe("");
 
-    progress.phase("run sandbox inference.local chat");
+    progress.phase("run sandbox native Ollama chat");
     const model = await detectOllamaModel(host);
     const chat = await sandbox.execShell(
       SANDBOX_NAME,
       trustedSandboxShellScript(
-        `curl -sS --max-time 120 https://inference.local/v1/chat/completions -H 'Content-Type: application/json' --data '${JSON.stringify(
-          {
+        nativeLocalChatCommand(
+          nativeEndpoint ?? "http://missing-native-local-attachment.invalid/v1",
+          JSON.stringify({
             model,
             messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
             // Keep this assertion about routed inference, not the model's reasoning-token budget.
@@ -252,10 +256,11 @@ test(
             seed: 0,
             temperature: 0,
             max_tokens: 32,
-          },
-        )}'`,
+          }),
+          "-sS",
+        ),
       ),
-      { artifactName: "sandbox-inference-local-chat", env: env(), timeoutMs: 150_000 },
+      { artifactName: "sandbox-native-ollama-chat", env: env(), timeoutMs: 150_000 },
     );
     expect(chatContent(chat.stdout)).toMatch(/pong/i);
 

@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 import type { OpenShellProviderAdapter } from "../adapters/openshell/provider-adapter";
+import { customNativeProvider } from "../inference/native-provider/custom";
 import { HOSTED_NATIVE_PROVIDERS, hostedNativeProvider } from "../inference/native-provider/hosted";
 import type { NativeProviderAttachment } from "../inference/native-provider/contract";
 import { fixedNativeProvider } from "../inference/native-provider/fixed";
@@ -92,7 +93,7 @@ function fixture(extraDefinitions: ReturnType<typeof hostedNativeProvider>[] = [
   deps.getNativeHostedProviderAuthority = (gateway, provider) =>
     authorities.get(`${gateway}/${provider}`);
   deps.setNativeHostedProviderAuthority = (gateway, provider, receipt) => {
-    authorities.set(`${gateway}/${provider}`, receipt);
+    authorities.set(`${gateway}/${receipt.custom ? receipt.providerName : provider}`, receipt);
   };
   return { deps, calls, attached, authorities, entry };
 }
@@ -173,6 +174,22 @@ describe.each(HOSTED_NATIVE_PROVIDERS)("inference set native $label", (definitio
     await runInferenceSet({ provider: definition.logicalProvider, model: "second-model" }, deps);
     expect(calls.updateProvider).not.toHaveBeenCalled();
     expect(deps.resolveCredentialValue).not.toHaveBeenCalled();
+  });
+
+  it("points a registry-only receipt with a missing provider at destroy", async () => {
+    const { deps, calls, authorities } = fixture();
+    await runInferenceSet({ provider: definition.logicalProvider, model: "first-model" }, deps);
+    authorities.clear();
+    calls.getProvider.mockResolvedValue({
+      ok: false,
+      error: { kind: "command", reason: "not_found", message: "not found" },
+    });
+    await expect(
+      runInferenceSet({ provider: definition.logicalProvider, model: "second-model" }, deps),
+    ).rejects.toThrow(
+      /only the NemoClaw registry record for sandbox 'alpha'.*'nemoclaw alpha destroy'/su,
+    );
+    expect(calls.createProvider).toHaveBeenCalledTimes(1);
   });
 
   it("migrates a legacy selection without changing the gateway route or deleting its provider", async () => {
@@ -513,4 +530,103 @@ describe("Hermes native gateway credential refresh", () => {
       expect(JSON.stringify(deps.calls.log.mock.calls)).not.toContain("synthetic-secret");
     },
   );
+});
+
+describe("custom native inference selection", () => {
+  const custom = customNativeProvider({
+    provider: "compatible-endpoint",
+    api: "openai-completions",
+    endpointUrl: "https://8.8.8.8/team/v1",
+    credentialEnv: "COMPATIBLE_API_KEY",
+    allowedIps: ["8.8.8.8"],
+  });
+  const replacement = customNativeProvider({
+    ...custom.custom,
+    endpointUrl: "https://1.1.1.1/team/v1",
+    allowedIps: ["1.1.1.1"],
+  });
+  it("switches a native sandbox, reuses its key for model changes and preserves rebuild authority", async () => {
+    const { deps, calls, entry, attached } = fixture([custom, replacement]);
+    await runInferenceSet({ provider: "openai-api", model: "first-model" }, deps);
+    await runInferenceSet(
+      {
+        provider: "compatible-endpoint",
+        model: "custom-model",
+        endpointUrl: custom.endpoint,
+        inferenceApi: custom.api,
+      },
+      deps,
+    );
+    expect(entry.endpointUrl).toBe(custom.endpoint);
+    expect(entry.nativeHostedProviderAttachment?.custom).toEqual(custom.custom);
+    expect([...attached.get("alpha")!]).toEqual([custom.providerName]);
+    expect([...attached.get("beta")!]).toEqual(["unrelated-provider"]);
+    deps.resolveCredentialValue = () => "";
+    await runInferenceSet({ provider: "compatible-endpoint", model: "second-model" }, deps);
+    expect(calls.updateProvider).not.toHaveBeenCalled();
+    expect(entry.model).toBe("second-model");
+    expect(JSON.stringify(deps.calls.setOpenClawConfigValues.mock.calls)).toContain(
+      custom.endpoint,
+    );
+    const previous = structuredClone(entry);
+    await expect(
+      runInferenceSet(
+        {
+          provider: "compatible-endpoint",
+          model: "third-model",
+          endpointUrl: replacement.endpoint,
+          inferenceApi: replacement.api,
+        },
+        deps,
+      ),
+    ).rejects.toThrow("A new credential is required");
+    expect(entry).toEqual(previous);
+    expect([...attached.get("alpha")!]).toEqual([custom.providerName]);
+    expect(deps.inferenceRouteObserver.observeInferenceRoute).not.toHaveBeenCalled();
+  });
+  it("restores the prior attachment if a changed custom endpoint fails sandbox verification", async () => {
+    const { deps, calls, entry, attached, authorities } = fixture([custom, replacement]);
+    await runInferenceSet({ provider: "openai-api", model: "first-model" }, deps);
+    await runInferenceSet(
+      {
+        provider: "compatible-endpoint",
+        model: "custom-model",
+        endpointUrl: custom.endpoint,
+        inferenceApi: custom.api,
+      },
+      deps,
+    );
+    const previous = structuredClone(entry);
+    const attach = calls.attachProvider.getMockImplementation()!;
+    calls.attachProvider.mockImplementation(async (request) => {
+      const conflicting =
+        request.providerName === custom.providerName
+          ? replacement.providerName
+          : custom.providerName;
+      expect(attached.get(request.sandboxName)).not.toContain(conflicting);
+      return attach(request);
+    });
+    deps.calls.probeSandboxRoute.mockResolvedValue({
+      ok: false,
+      detail: "endpoint refused",
+      httpStatus: 401,
+    });
+    await expect(
+      runInferenceSet(
+        {
+          provider: "compatible-endpoint",
+          model: "third-model",
+          endpointUrl: replacement.endpoint,
+          inferenceApi: replacement.api,
+        },
+        deps,
+      ),
+    ).rejects.toThrow();
+    expect(entry).toEqual(previous);
+    expect([...attached.get("alpha")!]).toEqual([custom.providerName]);
+    expect([...attached.get("beta")!]).toEqual(["unrelated-provider"]);
+    expect(authorities.get(`nemoclaw/${replacement.providerName}`)?.providerId).toBe(
+      `id-${replacement.providerName}`,
+    );
+  });
 });

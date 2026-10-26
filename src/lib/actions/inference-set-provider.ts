@@ -25,7 +25,12 @@ import {
   NATIVE_NVIDIA_SCOPED_HANDLE_PATTERN,
   NATIVE_NVIDIA_SCOPED_HANDLE_READ_SCRIPT,
 } from "../inference-credential";
+import { verifyNativeLocalProviderAttachment } from "../inference/native-local/profile";
 import { NVIDIA_HOSTED_LOGICAL_PROVIDER } from "../inference/native-nvidia/contract";
+import {
+  NATIVE_LOCAL_RUNTIME_REFERENCE_PATTERN,
+  NATIVE_LOCAL_SCOPED_HANDLE_READ_SCRIPT,
+} from "../inference/native-local/agent-config";
 import { matchesGatewayProviderBinding } from "../onboard/gateway-provider-metadata";
 import { assertHermesPortableCommandUnavailable } from "../onboard/experimental/portable-agent-lifecycle";
 import {
@@ -59,9 +64,66 @@ export async function readNativeNvidiaCredentialHandle(
     sleep: sleepInferenceSetRouteConvergence,
   },
 ): Promise<string> {
+  return readNativeCredentialHandle(sandboxName, gatewayName, {
+    script: NATIVE_NVIDIA_SCOPED_HANDLE_READ_SCRIPT,
+    pattern: NATIVE_NVIDIA_SCOPED_HANDLE_PATTERN,
+    providerLabel: "NVIDIA",
+    sleep: deps.sleep,
+  });
+}
+
+export async function readNativeLocalCredentialHandle(
+  sandboxName: string,
+  gatewayName: string,
+  deps: { sleep: (milliseconds: number) => Promise<void> } = {
+    sleep: sleepInferenceSetRouteConvergence,
+  },
+): Promise<string> {
+  return readNativeCredentialHandle(sandboxName, gatewayName, {
+    script: NATIVE_LOCAL_SCOPED_HANDLE_READ_SCRIPT,
+    pattern: new RegExp(NATIVE_LOCAL_RUNTIME_REFERENCE_PATTERN),
+    providerLabel: "local inference",
+    sleep: deps.sleep,
+  });
+}
+
+/** Read a fresh Hermes reference and validate its attachment before publication. */
+export async function readHermesNativeLocalCredentialHandleIfNeeded(
+  options: Parameters<typeof verifyNativeLocalProviderAttachment>[0] & {
+    agentName: string;
+    gatewayName: string;
+    read?: typeof readNativeLocalCredentialHandle;
+    verify?: typeof verifyNativeLocalProviderAttachment;
+  },
+): Promise<string | undefined> {
+  if (options.agentName !== "hermes") return undefined;
+  const handle = await (options.read ?? readNativeLocalCredentialHandle)(
+    options.sandboxName,
+    options.gatewayName,
+  );
+  // Re-observe ownership after the fresh exec; a concurrent attachment change
+  // must fail through the caller's compensation before registry/config writes.
+  await (options.verify ?? verifyNativeLocalProviderAttachment)({
+    adapter: options.adapter,
+    sandboxName: options.sandboxName,
+    expected: options.expected,
+  });
+  return handle;
+}
+
+async function readNativeCredentialHandle(
+  sandboxName: string,
+  gatewayName: string,
+  deps: {
+    script: string;
+    pattern: RegExp;
+    providerLabel: string;
+    sleep: (milliseconds: number) => Promise<void>;
+  },
+): Promise<string> {
   const failure = () =>
     new InferenceSetError(
-      `OpenShell did not expose a provider-bound NVIDIA credential handle to sandbox '${sandboxName}'. The inference route was not changed.`,
+      `OpenShell did not expose a provider-bound ${deps.providerLabel} credential handle to sandbox '${sandboxName}'. The inference route was not changed.`,
     );
   try {
     // OpenShell can confirm an attachment before a fresh exec receives its
@@ -81,7 +143,7 @@ export async function readNativeNvidiaCredentialHandle(
             "--",
             "sh",
             "-c",
-            buildSandboxExecMarkedCommand(NATIVE_NVIDIA_SCOPED_HANDLE_READ_SCRIPT, marker),
+            buildSandboxExecMarkedCommand(deps.script, marker),
           ],
           {
             ignoreError: true,
@@ -106,8 +168,10 @@ export async function readNativeNvidiaCredentialHandle(
     const handle = extractSandboxExecCommandStdoutFromStreams(result.capture, result.marker);
     if (
       result.capture.status !== 0 ||
+      result.capture.error !== undefined ||
+      Boolean(result.capture.signal) ||
       handle === null ||
-      !NATIVE_NVIDIA_SCOPED_HANDLE_PATTERN.test(handle)
+      deps.pattern.exec(handle)?.[0] !== handle
     ) {
       throw failure();
     }
@@ -682,4 +746,51 @@ export function recordInferenceSetFailure(
     committed ? "partial" : uncertain ? "unavailable" : "unchanged",
     gatewayName,
   );
+}
+
+export { retireUnselectedNativeLocalProviders } from "../inference/native-local/selection";
+
+// Provider selection owns attachment preparation and compensation for both paths.
+export {
+  prepareNativeLocalSwitch,
+  rollbackNativeLocalSelection,
+  prepareNativeLocalSelectionBoundary,
+  detachPreviousNativeLocalBeforePublish,
+  nativeLocalSelectionRegistryFields,
+} from "./inference/native-local";
+export { requireNativeProviderPolicy } from "../adapters/openshell/provider-policy";
+export {
+  detachNativeLocalProvider,
+  ensureNativeLocalProviderAttached,
+  verifyNativeLocalProviderAttachment,
+} from "../inference/native-local/profile";
+
+/** Restore only a distinct observed shared route; native providers own their compensation. */
+export async function restoreSharedInferenceSelection(input: {
+  nativeSelection: boolean;
+  rollbackRoute: { provider: string; model: string } | null;
+  provider: string;
+  model: string;
+  gatewayName: string;
+  mutator: import("../adapters/openshell/inference-route").OpenShellInferenceRouteMutator;
+}): Promise<string | null> {
+  if (input.nativeSelection) return null;
+  const rollbackRoute = input.rollbackRoute;
+  if (!rollbackRoute) return "the pre-mutation gateway route was not configured";
+  if (rollbackRoute.provider === input.provider && rollbackRoute.model === input.model) {
+    return (
+      `the route observed immediately before this attempt already selected '${input.provider}' / '${input.model}', ` +
+      "so there is no distinct prior inference selection to restore"
+    );
+  }
+  const result = await input.mutator.setInferenceRoute({
+    target: { kind: "named", gatewayName: input.gatewayName },
+    route: rollbackRoute,
+    verification: "skip",
+  });
+  if (result.ok) return null;
+  if (!result.ambiguous && result.error.kind === "command" && result.error.exitCode !== null) {
+    return `the restore command exited with status ${String(result.error.exitCode)}`;
+  }
+  return result.error.message;
 }

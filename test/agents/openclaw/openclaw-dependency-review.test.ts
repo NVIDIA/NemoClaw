@@ -140,7 +140,7 @@ messaging_build_applier=${JSON.stringify(MESSAGING_BUILD_APPLIER)}
 reviewed_archive_helper=scripts/lib/reviewed-npm-archive.mts
 remediation_helper=scripts/lib/openclaw-npm-remediation.mts
 
-boundary_marker_count="$(grep -hF 'Reviewed-archive invariants (#5896):' Dockerfile Dockerfile.base | wc -l | tr -d ' ')"
+boundary_marker_count="$(grep -hF -e 'Reviewed-archive invariants (#5896):' -e 'Install checksum-pinned ACP archives offline' -e 'Install optional plugins from verified offline archives' Dockerfile Dockerfile.base | wc -l | tr -d ' ')"
 test "$boundary_marker_count" -eq 4
 
 check_contains() {
@@ -221,7 +221,7 @@ check_contains "$wechat_cache_block" '--registry-origin https://registry.npmjs.o
 check_contains "$wechat_cache_block" 'NPM_CONFIG_OFFLINE=true' "WeChat cache offline verification"
 check_contains "$wechat_cache_block" 'RUN --network=none' "WeChat cache offline materialization"
 
-optional_plugin_block="$(sed -n '/# Install non-messaging OpenClaw plugins that need to match the runtime./,/^RUN OPENCLAW_VERSION=/p' Dockerfile)"
+optional_plugin_block="$(sed -n '/# Install optional plugins from verified offline archives; npm-pack preserves/,/^RUN OPENCLAW_VERSION=/p' Dockerfile)"
 check_contains "$optional_plugin_block" '/scripts/lib/reviewed-npm-archive.mts' "optional plugin shared helper"
 check_contains "$optional_plugin_block" '--package-spec "$plugin_spec" --integrity "$expected_integrity"' "optional plugin reviewed identity"
 check_contains "$optional_plugin_block" '--tarball-url "$expected_tarball"' "optional plugin reviewed tarball"
