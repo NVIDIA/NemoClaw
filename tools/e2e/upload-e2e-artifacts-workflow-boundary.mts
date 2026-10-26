@@ -9,6 +9,7 @@ import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 import {
   CLI_ARTIFACT_PUBLISH_STEP,
+  CLI_ARTIFACT_RESTORE_STEP,
   CLI_ARTIFACT_UPLOAD_ACTION,
 } from "./cli-artifact-workflow-boundary.mts";
 import { SHARED_E2E_JOB_ID } from "./credential-free-tests.mts";
@@ -177,6 +178,13 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
     },
   ],
   [
+    "llama-cpp-dgx-spark-qualification",
+    {
+      name: "e2e-llama-cpp-dgx-spark-qualification",
+      path: "e2e-artifacts/live/llama-cpp-dgx-spark-qualification/published/",
+    },
+  ],
+  [
     "jetson-nvmap-gpu",
     {
       name: "e2e-jetson-nvmap-gpu",
@@ -341,6 +349,7 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
 ]);
 
 const EXPLICIT_CALLER_CONDITIONS = new Map<string, string>([
+  ["llama-cpp-dgx-spark-qualification", "${{ always() && steps.evidence.outcome == 'success' }}"],
   ["generate-matrix", "${{ github.event_name == 'workflow_dispatch' }}"],
   ["native-runtime-qualification-podman-toolchain", "success()"],
   ["native-runtime-qualification-producer", "success()"],
@@ -409,6 +418,13 @@ function validateUploadPlacement(
     ["Restore Docker and retire Portable Podman runtime", "Clean up Docker auth"],
     [
       "Restore Docker and retire Portable Podman runtime",
+      "Remove immutable native Podman cleanup fixture",
+      "Clean up Docker auth",
+    ],
+    [
+      "Remove pinned Portable crun",
+      "Restore Docker and retire Portable Podman runtime",
+      "Remove pinned Portable crun after restoration",
       "Remove immutable native Podman cleanup fixture",
       "Clean up Docker auth",
     ],
@@ -599,6 +615,13 @@ export function validateUploadE2eArtifactsInvocations(workflow: WorkflowRecord):
     const upload = uploadSteps[0];
     const explicitContract = EXPLICIT_UPLOAD_CONTRACTS.get(jobName);
     const allowedKeys = explicitContract ? ["if", "name", "uses", "with"] : ["if", "name", "uses"];
+    if (jobName === "managed-image-protected-runtime") {
+      allowedKeys.push("timeout-minutes");
+      allowedKeys.sort();
+      if (upload["timeout-minutes"] !== 4) {
+        errors.push(`${jobName} artifact upload must retain its four-minute finalization budget`);
+      }
+    }
     if (!isDeepStrictEqual(sortedKeys(upload), allowedKeys)) {
       errors.push(`${jobName} upload-e2e-artifacts invocation must not override its contract`);
     }
@@ -655,4 +678,37 @@ export function validateUploadE2eArtifactsWorkflowBoundary(
     ...validateUploadE2eArtifactsAction(actionPath),
     ...validateUploadE2eArtifactsInvocations(workflow),
   ];
+}
+
+export function validatePortableHermesCliArtifactRestoreAction(workflow: WorkflowRecord): string[] {
+  const jobs = record(workflow.jobs);
+  const portableHermesRestores = steps(record(jobs["portable-hermes-finalization"]).steps).filter(
+    (step) => step.name === CLI_ARTIFACT_RESTORE_STEP,
+  );
+  if (
+    portableHermesRestores.length !== 1 ||
+    portableHermesRestores[0]?.uses !== E2E_ACTION_PROVENANCE.restoreCliArtifact.reference
+  ) {
+    return [
+      "portable-hermes-finalization must restore the exact-commit CLI artifact with the reviewed action reference",
+    ];
+  }
+  if (
+    Object.hasOwn(portableHermesRestores[0], "if") ||
+    Object.hasOwn(portableHermesRestores[0], "continue-on-error")
+  ) {
+    return [
+      "portable-hermes-finalization exact-commit CLI artifact restore must run unconditionally and propagate failures",
+    ];
+  }
+  if (
+    !isDeepStrictEqual(record(portableHermesRestores[0].with), {
+      "provenance-json": "${{ needs.generate-matrix.outputs.cli_artifact_provenance }}",
+    })
+  ) {
+    return [
+      "portable-hermes-finalization must bind the exact-commit CLI artifact restore to the planned provenance output",
+    ];
+  }
+  return [];
 }

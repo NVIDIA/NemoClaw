@@ -52,6 +52,11 @@ on:
         required: false
         default: false
         type: boolean
+      allow_dgx_spark_runner_queue:
+        description: "Allow an explicit llama-cpp-dgx-spark-qualification dispatch to queue the protected DGX Spark runner and approval environment."
+        required: false
+        default: false
+        type: boolean
       pr_number:
         description: Optional current PR number for manual exact-revision E2E.
         required: false
@@ -99,8 +104,8 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: e2e-${{ github.ref }}-${{ (inputs.jobs == 'staging-brev-launchable' || inputs.jobs == 'staging-brev-launchable-identity' || inputs.include_staging_brev_launchable) && format('launchable-{0}', github.run_id) || inputs.checkout_sha != '' && format('pr-{0}', inputs.pr_number) || inputs.targets || 'supported' }}-${{ inputs.checkout_sha != '' && 'manual-pr' || inputs.jobs || 'all-jobs' }}
-  cancel-in-progress: ${{ inputs.checkout_sha != '' && !inputs.allow_jetson_dispatch && !contains(format(',{0},{1},', inputs.jobs, inputs.targets), ',dgx-station-express,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable-identity,') && !inputs.include_staging_brev_launchable }}
+  group: e2e-${{ github.ref }}-${{ inputs.jobs == 'llama-cpp-dgx-spark-qualification' && format('spark-{0}', github.run_id) || (inputs.jobs == 'staging-brev-launchable' || inputs.jobs == 'staging-brev-launchable-identity' || inputs.include_staging_brev_launchable) && format('launchable-{0}', github.run_id) || inputs.checkout_sha != '' && format('pr-{0}', inputs.pr_number) || inputs.targets || 'supported' }}-${{ inputs.checkout_sha != '' && 'manual-pr' || inputs.jobs || 'all-jobs' }}
+  cancel-in-progress: ${{ inputs.checkout_sha != '' && inputs.jobs != 'llama-cpp-dgx-spark-qualification' && !inputs.allow_jetson_dispatch && !contains(format(',{0},{1},', inputs.jobs, inputs.targets), ',dgx-station-express,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable-identity,') && !inputs.include_staging_brev_launchable }}
 
 env:
   NEMOCLAW_E2E_EXPECTED_SHA: ${{ inputs.checkout_sha }}
@@ -139,7 +144,7 @@ jobs:
       - name: Set up Node for reviewed package download
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "24.18.1"
+          node-version: "24.22.1"
           registry-url: https://npm.pkg.github.com
           scope: "@nvidia"
 
@@ -244,7 +249,7 @@ jobs:
       - name: Set up Node for publication verification
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.1
+          node-version: 24.22.1
 
       - name: Install reviewed npm
         uses: ./.github/actions/setup-reviewed-npm
@@ -377,6 +382,8 @@ jobs:
       selected_workflow_jobs: ${{ steps.matrix.outputs.selected_workflow_jobs }}
       managed_image_required: ${{ steps.matrix.outputs.managed_image_required }}
       openshell_version: ${{ steps.openshell_version.outputs.version }}
+      openshell_supervisor_image: ${{ steps.openshell_version.outputs.supervisor_image }}
+      openshell_runtime_provenance: ${{ steps.openshell_version.outputs.runtime_provenance }}
       catalogue_standard_matrix: ${{ steps.matrix.outputs.catalogue_standard_matrix }}
       catalogue_nvidia_api_matrix: ${{ steps.matrix.outputs.catalogue_nvidia_api_matrix }}
       catalogue_nvidia_inference_matrix: ${{ steps.matrix.outputs.catalogue_nvidia_inference_matrix }}
@@ -483,6 +490,7 @@ jobs:
         env:
           ACTOR: ${{ github.actor }}
           ALLOW_JETSON_DISPATCH: ${{ inputs.allow_jetson_dispatch && 'true' || 'false' }}
+          ALLOW_DGX_SPARK_RUNNER_QUEUE: ${{ inputs.allow_dgx_spark_runner_queue && 'true' || 'false' }}
           ALLOW_JETSON_RUNNER_QUEUE: "false"
           BASE_SHA: ${{ inputs.checkout_sha != '' && inputs.base_sha || github.sha }}
           CANDIDATE_REPOSITORY: ${{ inputs.checkout_repository || github.repository }}
@@ -516,6 +524,7 @@ jobs:
             --arg workflowRunId "$RUN_ID" \
             --arg workflowSha "$WORKFLOW_SHA" \
             --argjson allowJetsonDispatch "$ALLOW_JETSON_DISPATCH" \
+            --argjson allowDgxSparkRunnerQueue "$ALLOW_DGX_SPARK_RUNNER_QUEUE" \
             --argjson allowJetsonRunnerQueue "$ALLOW_JETSON_RUNNER_QUEUE" \
             --argjson includeStagingBrevLaunchable "$INCLUDE_STAGING_BREV_LAUNCHABLE" \
             --argjson workflowRunAttempt "$RUN_ATTEMPT" \
@@ -533,7 +542,7 @@ jobs:
               eventName: $eventName,
               jobs: $jobs,
               targets: $targets,
-              allowDgxSparkRunnerQueue: false,
+              allowDgxSparkRunnerQueue: $allowDgxSparkRunnerQueue,
               allowJetsonDispatch: $allowJetsonDispatch,
               allowJetsonRunnerQueue: $allowJetsonRunnerQueue,
               includeStagingBrevLaunchable: $includeStagingBrevLaunchable,
@@ -652,7 +661,7 @@ jobs:
       - name: Set up Node for trusted E2E planning
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.1
+          node-version: 24.22.1
 
       - name: Install reviewed npm for trusted E2E planning
         uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
@@ -674,6 +683,26 @@ jobs:
           NEMOCLAW_E2E_CREDENTIALS_ALLOWED: ${{ (inputs.checkout_sha == '' || steps.candidate_authorization.outputs.nvidia_owned == 'true') && 'true' || 'false' }}
         run: |
           set -euo pipefail
+          if [[ "${JOBS:-}" == "llama-cpp-dgx-spark-qualification" && -z "${TARGETS:-}" ]]; then
+            {
+              echo 'matrix=[]'
+              echo 'test_matrix=[]'
+              echo 'catalogue_standard_matrix=[]'
+              echo 'catalogue_nvidia_api_matrix=[]'
+              echo 'catalogue_nvidia_inference_matrix=[]'
+              echo 'catalogue_hosted_inference_matrix=[]'
+              echo 'catalogue_github_read_matrix=[]'
+              echo 'gateway_runtimes=["docker"]'
+              echo 'runtime_providers_by_job={"llama-cpp-dgx-spark-qualification":["docker"]}'
+              echo 'selected_jobs=["llama-cpp-dgx-spark-qualification"]'
+              echo 'selected_workflow_jobs=["llama-cpp-dgx-spark-qualification"]'
+              echo 'hermes_selected=false'
+              echo 'explicit_only_jobs=llama-cpp-dgx-spark-qualification'
+              echo 'release_required_jobs=[]'
+              echo 'managed_image_required=false'
+            } >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
           if [[ "${JOBS:-}" == "native-runtime-qualification-producer" && -z "${TARGETS:-}" ]]; then
             {
               echo 'matrix=[]'
@@ -706,24 +735,27 @@ jobs:
 
       - id: openshell_version
         name: Resolve reviewed candidate OpenShell version
-        if: ${{ contains(fromJSON(steps.matrix.outputs.selected_jobs), 'openshell-gateway-auth-contract') || contains(fromJSON(steps.matrix.outputs.selected_jobs), 'external-gateway-health') }}
+        if: ${{ contains(fromJSON(steps.matrix.outputs.selected_jobs), 'openshell-gateway-auth-contract') || contains(fromJSON(steps.matrix.outputs.selected_jobs), 'external-gateway-health') || contains(fromJSON(steps.matrix.outputs.selected_jobs), 'mcp-bridge') || contains(fromJSON(steps.matrix.outputs.selected_jobs), 'openshell-credential-generation-window') }}
         env:
+          MCP_RUNTIME_REQUIRED: ${{ contains(fromJSON(steps.matrix.outputs.selected_jobs), 'mcp-bridge') || contains(fromJSON(steps.matrix.outputs.selected_jobs), 'openshell-credential-generation-window') }}
           CANDIDATE_REPOSITORY: ${{ inputs.checkout_repository || github.repository }}
           CANDIDATE_SHA: ${{ inputs.checkout_sha || github.sha }}
+          UPGRADE_PR_NUMBER: ${{ inputs.pr_number }}
+          UPGRADE_BASE_SHA: ${{ inputs.base_sha }}
           GITHUB_TOKEN: ${{ github.token }}
         run: node --no-warnings tools/e2e/candidate-openshell-version.mts
 
-      # Publish immutable source-run toolchains before candidate checkout or
+      # Stage the reviewed toolchains before candidate checkout or
       # candidate-controlled workspace preparation can execute on this runner.
       - name: Stage immutable native Podman E2E toolchains
-        uses: NVIDIA/NemoClaw/.github/actions/stage-native-podman-e2e-toolchains@5ec38cfc369b3dac4df5207d8dda20805a72cbda
+        uses: NVIDIA/NemoClaw/.github/actions/stage-native-podman-e2e-toolchains@19eb13446b3eb5e41cca2e65b44c9b33c963a595
         with:
           enabled: ${{ (contains(format(',{0},', inputs.gateway_runtimes || inputs.gateway_runtime || 'docker'), ',podman,') || contains(fromJSON(steps.matrix.outputs.selected_jobs), 'portable-hermes-finalization')) && 'true' || 'false' }}
           github-token: ${{ github.token }}
 
       - name: Check out E2E candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        if: ${{ inputs.checkout_sha == '' || inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '' }}
+        if: ${{ inputs.checkout_sha == '' || (inputs.jobs != 'native-runtime-qualification-producer' && inputs.jobs != 'llama-cpp-dgx-spark-qualification') || inputs.targets != '' }}
         with:
           repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
@@ -731,7 +763,7 @@ jobs:
           persist-credentials: false
 
       - name: Validate manual PR checkout
-        if: ${{ inputs.checkout_sha != '' && (inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '') }}
+        if: ${{ inputs.checkout_sha != '' && ((inputs.jobs != 'native-runtime-qualification-producer' && inputs.jobs != 'llama-cpp-dgx-spark-qualification') || inputs.targets != '') }}
         env:
           BASE_SHA: ${{ inputs.base_sha }}
           CHECKOUT_REPOSITORY: ${{ inputs.checkout_repository }}
@@ -774,7 +806,7 @@ jobs:
 
       - id: e2e_credentials
         name: Authorize E2E credentials
-        if: ${{ inputs.checkout_sha != '' && (inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '') }}
+        if: ${{ inputs.checkout_sha != '' && ((inputs.jobs != 'native-runtime-qualification-producer' && inputs.jobs != 'llama-cpp-dgx-spark-qualification') || inputs.targets != '') }}
         env:
           CHECKOUT_REPOSITORY: ${{ inputs.checkout_repository }}
           CHECKOUT_SHA: ${{ inputs.checkout_sha }}
@@ -802,7 +834,7 @@ jobs:
           printf 'allowed=%s\n' "$credentials_allowed" >> "$GITHUB_OUTPUT"
 
       - name: Check out trusted compiled artifact action
-        if: ${{ inputs.checkout_sha == '' || inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '' }}
+        if: ${{ inputs.checkout_sha == '' || (inputs.jobs != 'native-runtime-qualification-producer' && inputs.jobs != 'llama-cpp-dgx-spark-qualification') || inputs.targets != '' }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ github.repository }}
@@ -816,6 +848,7 @@ jobs:
             scripts/check-dist-sourcemaps.mts
             scripts/audit-reviewed-npm-graph.mts
             scripts/checks/prepare-ci-npm-install.mts
+            scripts/lib/reviewed-ci-npm-install.mts
             scripts/lib/openclaw-npm-remediation.mts
             scripts/lib/reviewed-npm-archive.mts
             scripts/lib/reviewed-npm-cache.mts
@@ -825,12 +858,12 @@ jobs:
           sparse-checkout-cone-mode: false
 
       - name: Prepare E2E workspace
-        if: ${{ inputs.checkout_sha == '' || inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '' }}
+        if: ${{ inputs.checkout_sha == '' || (inputs.jobs != 'native-runtime-qualification-producer' && inputs.jobs != 'llama-cpp-dgx-spark-qualification') || inputs.targets != '' }}
         uses: ./.trusted-ci-actions/.github/actions/ci-compile-artifacts
 
       - id: package_cli_artifact
         name: Package exact-commit CLI
-        if: ${{ inputs.checkout_sha == '' || inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '' }}
+        if: ${{ inputs.checkout_sha == '' || (inputs.jobs != 'native-runtime-qualification-producer' && inputs.jobs != 'llama-cpp-dgx-spark-qualification') || inputs.targets != '' }}
         env:
           CANDIDATE_REPOSITORY: ${{ inputs.checkout_repository || github.repository }}
           CANDIDATE_SHA: ${{ inputs.checkout_sha || github.sha }}
@@ -842,7 +875,7 @@ jobs:
 
       - id: upload_cli_artifact
         name: Publish content-addressed CLI artifact
-        if: ${{ inputs.checkout_sha == '' || inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '' }}
+        if: ${{ inputs.checkout_sha == '' || (inputs.jobs != 'native-runtime-qualification-producer' && inputs.jobs != 'llama-cpp-dgx-spark-qualification') || inputs.targets != '' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ steps.package_cli_artifact.outputs.artifact_name }}
@@ -853,7 +886,7 @@ jobs:
 
       - id: record_cli_artifact
         name: Record CLI artifact provenance
-        if: ${{ inputs.checkout_sha == '' || inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '' }}
+        if: ${{ inputs.checkout_sha == '' || (inputs.jobs != 'native-runtime-qualification-producer' && inputs.jobs != 'llama-cpp-dgx-spark-qualification') || inputs.targets != '' }}
         env:
           ARTIFACT_DIGEST: ${{ steps.upload_cli_artifact.outputs.artifact-digest }}
           ARTIFACT_ID: ${{ steps.upload_cli_artifact.outputs.artifact-id }}
@@ -903,6 +936,169 @@ jobs:
             echo "- Payload digest: \`${PAYLOAD_SHA256}\`"
           } >>"$GITHUB_STEP_SUMMARY"
 
+  llama-cpp-dgx-spark-plan:
+    name: Authenticate and compile the DGX Spark qualification plan
+    needs: generate-matrix
+    if: ${{ github.event_name == 'workflow_dispatch' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.jobs == 'llama-cpp-dgx-spark-qualification' && inputs.targets == '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      runner: ${{ steps.plan.outputs.runner }}
+      environment: ${{ steps.plan.outputs.environment }}
+      plan: ${{ steps.plan.outputs.plan }}
+      plan_sha256: ${{ steps.plan.outputs.plan_sha256 }}
+      model_host_path: ${{ steps.plan.outputs.model_host_path }}
+    steps:
+      - name: Check out trusted Spark plan compiler
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NVIDIA/NemoClaw
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - name: Check out inert Spark candidate data
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NVIDIA/NemoClaw
+          ref: ${{ inputs.checkout_sha }}
+          path: .candidate-source
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Authenticate Spark qualification dispatch
+        env:
+          ALLOW_QUEUE: ${{ inputs.allow_dgx_spark_runner_queue && 'true' || 'false' }}
+          BASE_SHA: ${{ inputs.base_sha }}
+          CHECKOUT_REPOSITORY: ${{ inputs.checkout_repository }}
+          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+          EXPECTED_WORKFLOW_SHA: ${{ inputs.workflow_sha }}
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$ALLOW_QUEUE" == true && "$CHECKOUT_REPOSITORY" == NVIDIA/NemoClaw ]]
+          [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]
+          [[ "$BASE_SHA" =~ ^[a-f0-9]{40}$ && "$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$EXPECTED_WORKFLOW_SHA" == "$WORKFLOW_SHA" && "$CHECKOUT_SHA" != "$BASE_SHA" ]]
+          [[ "$(git -C .candidate-source rev-parse HEAD)" == "$CHECKOUT_SHA" ]]
+          git -C .candidate-source merge-base --is-ancestor "$BASE_SHA" "$CHECKOUT_SHA"
+          pull="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
+          jq -e --arg head "$CHECKOUT_SHA" --arg base "$BASE_SHA" '
+            .state == "open" and .head.repo.full_name == "NVIDIA/NemoClaw" and
+            .head.sha == $head and .base.repo.full_name == "NVIDIA/NemoClaw" and
+            .base.ref == "main" and .base.sha == $base
+          ' <<< "$pull" >/dev/null
+          # Candidate executable build inputs must match the trusted image source.
+          git -C .candidate-source diff --exit-code "$WORKFLOW_SHA" "$CHECKOUT_SHA" -- \
+            managed-inference/images/llama-cpp ':!managed-inference/images/llama-cpp/image.yaml'
+      - name: Set up Node for Spark plan compilation
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.22.1"
+      - name: Install trusted Spark compiler dependencies
+        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
+      - name: Install trusted Spark plan dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - id: plan
+        name: Export the digest-bound Spark plan
+        run: node --no-warnings scripts/checks/export-llama-cpp-dgx-spark-qualification-plan.mts --source-root "$GITHUB_WORKSPACE/.candidate-source"
+
+  llama-cpp-dgx-spark-qualification:
+    name: Protected llama.cpp DGX Spark qualification
+    needs: llama-cpp-dgx-spark-plan
+    if: ${{ needs.llama-cpp-dgx-spark-plan.result == 'success' }}
+    runs-on: ${{ needs.llama-cpp-dgx-spark-plan.outputs.runner }}
+    environment: ${{ needs.llama-cpp-dgx-spark-plan.outputs.environment }}
+    timeout-minutes: 180
+    concurrency:
+      group: llama-cpp-dgx-spark-protected-runner
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    env:
+      BASE_SHA: ${{ inputs.base_sha }}
+      CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+      WORKFLOW_SHA: ${{ github.workflow_sha }}
+      QUALIFICATION_PLAN: ${{ needs.llama-cpp-dgx-spark-plan.outputs.plan }}
+      PLAN_SHA256: ${{ needs.llama-cpp-dgx-spark-plan.outputs.plan_sha256 }}
+      MODEL_HOST_PATH: ${{ needs.llama-cpp-dgx-spark-plan.outputs.model_host_path }}
+      E2E_TARGET_ID: llama-cpp-dgx-spark-qualification
+      E2E_JOB: "1"
+      E2E_DEFAULT_ENABLED: "0"
+      E2E_GATEWAY_RUNTIMES: docker
+      E2E_AGENT_RUNTIME: openclaw
+      E2E_OBSERVABLE_OUTCOME: "Exact candidate plan produces GPU protocol agent and cleanup evidence"
+      E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Protected physical DGX Spark GB10; verified local GGUF"
+    steps:
+      - name: Check out trusted Spark qualification harness
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NVIDIA/NemoClaw
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - name: Check out inert Spark candidate data
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NVIDIA/NemoClaw
+          ref: ${{ inputs.checkout_sha }}
+          path: .candidate-source
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@7fcbf13ecd7bc0ea835a949417cf9eb68067adf9
+      - name: Set up the isolated Spark registry builder
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+        with:
+          driver-opts: network=host
+          buildkitd-config-inline: |
+            [registry."localhost:5000"]
+              http = true
+      - id: qualification
+        name: Run the trusted Spark qualification
+        shell: bash
+        run: |
+          set -euo pipefail
+          artifact_dir="$GITHUB_WORKSPACE/e2e-artifacts/live/llama-cpp-dgx-spark-qualification"
+          install -d -m 0700 "$artifact_dir"
+          printf '%s' "$QUALIFICATION_PLAN" > "$artifact_dir/plan.json"
+          printf '%s\n' "$PLAN_SHA256" > "$artifact_dir/plan-sha256"
+          node --no-warnings --import tsx scripts/checks/run-llama-cpp-dgx-spark-qualification.cts \
+            --base-sha "$BASE_SHA" --head-sha "$CHECKOUT_SHA" --workflow-sha "$WORKFLOW_SHA" \
+            --candidate-root "$GITHUB_WORKSPACE/.candidate-source" \
+            --model-host-path "$MODEL_HOST_PATH" \
+            --plan "$artifact_dir/plan.json" --plan-sha256 "$PLAN_SHA256" \
+            --output "$artifact_dir/receipt.json" \
+            --registry-name "nemoclaw-llama-cpp-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
+            --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT"
+      - id: cleanup
+        name: Remove owned Spark qualification resources
+        if: ${{ always() && steps.qualification.outcome != 'skipped' }}
+        shell: bash
+        run: |
+          node --no-warnings --import tsx scripts/checks/run-llama-cpp-dgx-spark-qualification.cts \
+            --cleanup-only --registry-name "nemoclaw-llama-cpp-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
+            --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT"
+      - id: evidence
+        name: Validate the revision-bound Spark receipt
+        if: ${{ always() && steps.qualification.outcome != 'skipped' }}
+        env:
+          EXECUTION_OUTCOME: ${{ steps.qualification.outcome }}
+          CLEANUP_OUTCOME: ${{ steps.cleanup.outcome }}
+        shell: bash
+        run: |
+          artifact_dir="$GITHUB_WORKSPACE/e2e-artifacts/live/llama-cpp-dgx-spark-qualification"
+          node --no-warnings scripts/checks/validate-llama-cpp-dgx-spark-receipt.mts \
+            --publish "$artifact_dir" "$EXECUTION_OUTCOME" "$CLEANUP_OUTCOME" "$PLAN_SHA256"
+      - name: Upload validated Spark qualification evidence
+        if: ${{ always() && steps.evidence.outcome == 'success' }}
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        with:
+          name: e2e-llama-cpp-dgx-spark-qualification
+          path: e2e-artifacts/live/llama-cpp-dgx-spark-qualification/published/
+
   native-runtime-qualification-producer-plan:
     needs: generate-matrix
     if: ${{ github.event_name == 'workflow_dispatch' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha != '' && inputs.jobs == 'native-runtime-qualification-producer' && inputs.targets == '' }}
@@ -942,7 +1138,7 @@ jobs:
       - name: Set up Node for trusted qualification planning
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.1
+          node-version: 24.22.1
 
       - name: Install reviewed npm
         uses: ./.github/actions/setup-reviewed-npm
@@ -1477,7 +1673,7 @@ jobs:
       - name: Set up Node for candidate execution
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.1
+          node-version: 24.22.1
 
       - name: Install reviewed npm
         uses: ./.qualification-workflow/.github/actions/setup-reviewed-npm
@@ -2736,7 +2932,7 @@ jobs:
       - name: Set up Node for qualification aggregation
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.1
+          node-version: 24.22.1
 
       - name: Install reviewed npm
         uses: ./.qualification-aggregate/.github/actions/setup-reviewed-npm
@@ -2984,14 +3180,14 @@ jobs:
       # expect or the acceptance check no longer requires a PTY.
       - name: Install Deep Agents Code TUI host dependencies
         if: ${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' }}
-        uses: NVIDIA/NemoClaw/.github/actions/host-dependency-setup@d511d704980d651909b52b18ee42fad41a017b7d
+        uses: NVIDIA/NemoClaw/.github/actions/host-dependency-setup@e85857e2a7bfb2af01241ecbce5947ee774c1280
         with:
           packages: expect
 
       # Configure NEMOCLAW_TRACE_DIR before workspace prep so every child
       # command writes raw traces under runner temp, never under upload roots.
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@7fcbf13ecd7bc0ea835a949417cf9eb68067adf9
         with:
           build-cli: "false"
 
@@ -3002,7 +3198,7 @@ jobs:
           path: ${{ runner.temp }}/openshell-sdk
 
       - name: Install reviewed OpenShell SDK archive without package credentials
-        uses: NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@697af6ed24d88e7a8cbb0409acde3398e12f8eae
+        uses: NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@2584abf0a4f739fa5f2e3fd92821ff78175b4115
 
       - name: Record immutable Deep Agents Code base evidence
         if: ${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' && needs.generate-matrix.outputs.workload_source == 'managed-image' && needs.base-image-publication.outputs.managed_image_catalog == '' }}
@@ -3039,12 +3235,12 @@ jobs:
             "${test_evidence_dir}/dcode-base-image.json"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@b1494a0828a80a8d5dc862effc9e85ac987f8b4a
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@3c6d991640414a2d78f95f629d67194d44829554
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Prepare native Podman E2E runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@22789bcaf835db7cf6390781c8d0f454f1e73dec
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@e85857e2a7bfb2af01241ecbce5947ee774c1280
         with:
           enabled: ${{ matrix.runtime_provider == 'podman' && 'true' || 'false' }}
 
@@ -3242,17 +3438,17 @@ jobs:
           persist-credentials: false
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@7fcbf13ecd7bc0ea835a949417cf9eb68067adf9
         with:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@b1494a0828a80a8d5dc862effc9e85ac987f8b4a
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@3c6d991640414a2d78f95f629d67194d44829554
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Prepare native Podman E2E runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@22789bcaf835db7cf6390781c8d0f454f1e73dec
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@e85857e2a7bfb2af01241ecbce5947ee774c1280
         with:
           enabled: ${{ matrix.runtime_provider == 'podman' && 'true' || 'false' }}
 
@@ -3326,7 +3522,7 @@ jobs:
     secrets:
       DOCKERHUB_USERNAME: ${{ github.ref == 'refs/heads/main' && github.workflow_ref == 'NVIDIA/NemoClaw/.github/workflows/e2e.yaml@refs/heads/main' && github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.DOCKERHUB_USERNAME || '' }}
       DOCKERHUB_TOKEN: ${{ github.ref == 'refs/heads/main' && github.workflow_ref == 'NVIDIA/NemoClaw/.github/workflows/e2e.yaml@refs/heads/main' && github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.DOCKERHUB_TOKEN || '' }}
-      HOSTED_INFERENCE_API_KEY: ${{ github.ref == 'refs/heads/main' && github.workflow_ref == 'NVIDIA/NemoClaw/.github/workflows/e2e.yaml@refs/heads/main' && github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && (matrix.id == 'hosted-inference-openai' && secrets.OPENAI_API_KEY || matrix.id == 'hosted-inference-anthropic' && secrets.ANTHROPIC_API_KEY || matrix.id == 'hosted-inference-gemini' && secrets.GEMINI_API_KEY || matrix.id == 'hosted-inference-openrouter' && secrets.OPENROUTER_API_KEY || matrix.id == 'hosted-inference-hermes' && secrets.NOUS_API_KEY) || '' }}
+      HOSTED_INFERENCE_API_KEY: ${{ github.ref == 'refs/heads/main' && github.workflow_ref == 'NVIDIA/NemoClaw/.github/workflows/e2e.yaml@refs/heads/main' && github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && matrix.id == 'hosted-inference-openrouter' && secrets.OPENROUTER_API_KEY || '' }}
 
   catalogue-standard:
     name: ${{ matrix.display_name }} (${{ matrix.runtime_provider }})
@@ -3535,7 +3731,7 @@ jobs:
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_CANDIDATE_VERSION: ${{ needs.generate-matrix.outputs.openshell_version }}
       NEMOCLAW_OPENSHELL_PIN_VERSION: ${{ needs.generate-matrix.outputs.openshell_version }}
-      DOCKER_GRPC_PROBE_IMAGE: "node:24.18.1-trixie-slim@sha256:ac39e4b5fcb2b1b34b20364fd58b2e898f3bb80731ee6f62a7536f9df3d6aadc"
+      DOCKER_GRPC_PROBE_IMAGE: "node:24.22.1-trixie-slim@sha256:43b9ba1142b8dcf33fa8f922ca1be85714adc444e0586c7cf7726daaeabc1bea"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -3547,12 +3743,12 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@7fcbf13ecd7bc0ea835a949417cf9eb68067adf9
         with:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@b1494a0828a80a8d5dc862effc9e85ac987f8b4a
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@3c6d991640414a2d78f95f629d67194d44829554
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -3623,12 +3819,12 @@ jobs:
           persist-credentials: false
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@7fcbf13ecd7bc0ea835a949417cf9eb68067adf9
         with:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@b1494a0828a80a8d5dc862effc9e85ac987f8b4a
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@3c6d991640414a2d78f95f629d67194d44829554
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -3639,7 +3835,7 @@ jobs:
           path: ${{ runner.temp }}/openshell-sdk
 
       - name: Install reviewed OpenShell SDK archive without package credentials
-        uses: NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@697af6ed24d88e7a8cbb0409acde3398e12f8eae
+        uses: NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@2584abf0a4f739fa5f2e3fd92821ff78175b4115
 
       - name: Install OpenShell CLI
         run: env -u NODE_AUTH_TOKEN -u GITHUB_TOKEN bash scripts/install-openshell.sh
@@ -3701,7 +3897,7 @@ jobs:
       NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF: ${{ matrix.runtime_provider == 'docker' && '1' || '0' }}
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_GATEWAY_RUNTIME: ${{ matrix.runtime_provider }}
-      OPENSHELL_DOCKER_SUPERVISOR_IMAGE: ghcr.io/nvidia/openshell/supervisor@sha256:c8c42aef16c200063e32cbf72e553e4ead027085427b555efafd95063ecead42
+      OPENSHELL_DOCKER_SUPERVISOR_IMAGE: ${{ needs.generate-matrix.outputs.openshell_supervisor_image }}
     steps:
       - id: trusted_hermes_swap
         name: Provision trusted Hermes E2E swap
@@ -3909,7 +4105,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@7fcbf13ecd7bc0ea835a949417cf9eb68067adf9
         with:
           build-cli: "false"
 
@@ -3920,10 +4116,10 @@ jobs:
           path: ${{ runner.temp }}/openshell-sdk
 
       - name: Install reviewed OpenShell SDK archive without package credentials
-        uses: NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@697af6ed24d88e7a8cbb0409acde3398e12f8eae
+        uses: NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@2584abf0a4f739fa5f2e3fd92821ff78175b4115
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@b1494a0828a80a8d5dc862effc9e85ac987f8b4a
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@3c6d991640414a2d78f95f629d67194d44829554
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -3934,7 +4130,7 @@ jobs:
         run: npx tsx tools/e2e/runner-comparison.mts initialize
 
       - name: Prepare native Podman E2E runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@22789bcaf835db7cf6390781c8d0f454f1e73dec
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@e85857e2a7bfb2af01241ecbce5947ee774c1280
         with:
           enabled: ${{ matrix.runtime_provider == 'podman' && 'true' || 'false' }}
 
@@ -3967,22 +4163,32 @@ jobs:
       - name: Install OpenShell CLI
         env:
           NEMOCLAW_OPENSHELL_FORCE_INSTALL: "1"
+          OPENSHELL_RUNTIME_PROVENANCE: ${{ needs.generate-matrix.outputs.openshell_runtime_provenance }}
         run: |
           set -euo pipefail
           bash scripts/install-openshell.sh
+          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
+          node --input-type=module - "$(command -v openshell)" <<'NODE'
+          import { createHash } from 'node:crypto';
+          import { readFileSync } from 'node:fs';
+          import { dirname, join } from 'node:path';
+          const directory = dirname(process.argv[2]);
+          const expected = JSON.parse(process.env.OPENSHELL_RUNTIME_PROVENANCE);
+          for (const [role, binary] of [
+            ['cli', 'openshell'],
+            ['gateway', 'openshell-gateway'],
+            ['standaloneSandbox', 'openshell-sandbox'],
+          ]) {
+            const bytes = readFileSync(join(directory, binary));
+            const actual = createHash('sha256').update(bytes).digest('hex');
+            if (actual !== expected.artifacts?.[role]?.binarySha256) {
+              throw new Error(`Installed OpenShell ${role} differs from reviewed provenance`);
+            }
+          }
+          NODE
           if [[ "$NEMOCLAW_MCP_BRIDGE_AGENT" == "deepagents" ]]; then
             mkdir -p "$E2E_ARTIFACT_DIR/mcp-bridge-deepagents"
-            jq -n '{
-              schemaVersion: 1,
-              sourceRepository: "NVIDIA/OpenShell",
-              releaseTag: "v0.0.116",
-              sourceSha: "d1155aa70042d3e2ee49dbfa15346b108b7c1d92",
-              artifacts: {
-                cli: {binarySha256: "24e85062073d512d1951c76cd3890b7bce1ab01cc36a08f88b3b43c067a402da"},
-                gateway: {binarySha256: "780fc7ad871e2163f3fb866a2d0254ee682fc0d83e6261a84b350c8dcdd9f47b"},
-                standaloneSandbox: {binarySha256: "326ee26df8f8575ba761470757a12fe5c1cdc904ba064b81946692dd0328dd40"}
-              }
-            }' > "$E2E_ARTIFACT_DIR/mcp-bridge-deepagents/openshell-exact-main-provenance.json"
+            printf '%s\n' "$OPENSHELL_RUNTIME_PROVENANCE" > "$E2E_ARTIFACT_DIR/mcp-bridge-deepagents/openshell-exact-main-provenance.json"
           fi
 
       - name: Run MCP OpenShell provider live test
@@ -4063,7 +4269,7 @@ jobs:
       NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF: "1"
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_GATEWAY_RUNTIME: ${{ matrix.runtime_provider }}
-      OPENSHELL_DOCKER_SUPERVISOR_IMAGE: ghcr.io/nvidia/openshell/supervisor@sha256:c8c42aef16c200063e32cbf72e553e4ead027085427b555efafd95063ecead42
+      OPENSHELL_DOCKER_SUPERVISOR_IMAGE: ${{ needs.generate-matrix.outputs.openshell_supervisor_image }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -4075,17 +4281,17 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@7fcbf13ecd7bc0ea835a949417cf9eb68067adf9
         with:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@b1494a0828a80a8d5dc862effc9e85ac987f8b4a
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@3c6d991640414a2d78f95f629d67194d44829554
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Prepare native Podman E2E runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@22789bcaf835db7cf6390781c8d0f454f1e73dec
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@e85857e2a7bfb2af01241ecbce5947ee774c1280
         with:
           enabled: ${{ matrix.runtime_provider == 'podman' && 'true' || 'false' }}
 
@@ -4114,21 +4320,31 @@ jobs:
       - name: Install OpenShell CLI
         env:
           NEMOCLAW_OPENSHELL_FORCE_INSTALL: "1"
+          OPENSHELL_RUNTIME_PROVENANCE: ${{ needs.generate-matrix.outputs.openshell_runtime_provenance }}
         run: |
           set -euo pipefail
           bash scripts/install-openshell.sh
-          mkdir -p "$E2E_ARTIFACT_DIR/openshell-credential-generation-window"
-          jq -n '{
-            schemaVersion: 1,
-            sourceRepository: "NVIDIA/OpenShell",
-            releaseTag: "v0.0.116",
-            sourceSha: "d1155aa70042d3e2ee49dbfa15346b108b7c1d92",
-            artifacts: {
-              cli: {binarySha256: "24e85062073d512d1951c76cd3890b7bce1ab01cc36a08f88b3b43c067a402da"},
-              gateway: {binarySha256: "780fc7ad871e2163f3fb866a2d0254ee682fc0d83e6261a84b350c8dcdd9f47b"},
-              standaloneSandbox: {binarySha256: "326ee26df8f8575ba761470757a12fe5c1cdc904ba064b81946692dd0328dd40"}
+          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
+          node --input-type=module - "$(command -v openshell)" <<'NODE'
+          import { createHash } from 'node:crypto';
+          import { readFileSync } from 'node:fs';
+          import { dirname, join } from 'node:path';
+          const directory = dirname(process.argv[2]);
+          const expected = JSON.parse(process.env.OPENSHELL_RUNTIME_PROVENANCE);
+          for (const [role, binary] of [
+            ['cli', 'openshell'],
+            ['gateway', 'openshell-gateway'],
+            ['standaloneSandbox', 'openshell-sandbox'],
+          ]) {
+            const bytes = readFileSync(join(directory, binary));
+            const actual = createHash('sha256').update(bytes).digest('hex');
+            if (actual !== expected.artifacts?.[role]?.binarySha256) {
+              throw new Error(`Installed OpenShell ${role} differs from reviewed provenance`);
             }
-          }' > "$E2E_ARTIFACT_DIR/openshell-credential-generation-window/openshell-exact-main-provenance.json"
+          }
+          NODE
+          mkdir -p "$E2E_ARTIFACT_DIR/openshell-credential-generation-window"
+          printf '%s\n' "$OPENSHELL_RUNTIME_PROVENANCE" > "$E2E_ARTIFACT_DIR/openshell-credential-generation-window/openshell-exact-main-provenance.json"
 
       - name: Run OpenShell credential generation-window live test
         run: |
@@ -4204,7 +4420,7 @@ jobs:
       - name: Set up Node for OpenShell dev artifact resolution
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.1
+          node-version: 24.22.1
 
       - name: Install reviewed npm
         uses: ./.trusted-openshell-dev-artifact/.github/actions/setup-reviewed-npm
@@ -4268,7 +4484,7 @@ jobs:
       - name: Set up Node.js for trusted OpenShell verification
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.1
+          node-version: 24.22.1
           package-manager-cache: false
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -4357,19 +4573,19 @@ jobs:
       # it after the trusted installer has consumed the verified OpenShell
       # assets and Docker credentials have been revoked.
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@7fcbf13ecd7bc0ea835a949417cf9eb68067adf9
         with:
           build-cli: "false"
 
       # The restore action executes the candidate CLI for its final identity
       # check. Candidate-controlled state starts with dependency preparation.
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@b1494a0828a80a8d5dc862effc9e85ac987f8b4a
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@3c6d991640414a2d78f95f629d67194d44829554
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Prepare native Podman E2E runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@22789bcaf835db7cf6390781c8d0f454f1e73dec
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@e85857e2a7bfb2af01241ecbce5947ee774c1280
         with:
           enabled: ${{ matrix.runtime_provider == 'podman' && 'true' || 'false' }}
 
@@ -4594,7 +4810,7 @@ jobs:
               http = true
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@7fcbf13ecd7bc0ea835a949417cf9eb68067adf9
         with:
           build-cli: "false"
 
@@ -4997,6 +5213,7 @@ jobs:
     timeout-minutes: 75
     permissions:
       contents: read
+      pull-requests: read
     env:
       CHECKOUT_SHA: ${{ inputs.checkout_sha || github.sha }}
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/managed-image-protected-runtime
@@ -5036,6 +5253,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          printf 'NEMOCLAW_PROTECTED_RUNTIME_STARTED_AT_MS=%s000\n' "$(date +%s)" >> "$GITHUB_ENV"
           [[ "$REPOSITORY" == "NVIDIA/NemoClaw" && ( ( "$EVENT_NAME" == "push" && "$REF" == "refs/heads/main" ) || ( "$EVENT_NAME" == "workflow_dispatch" && "$REF" == refs/heads/* ) ) ]] || {
             echo "::error::Protected managed-image runtime must run from NVIDIA/NemoClaw" >&2
             exit 1
@@ -5094,7 +5312,7 @@ jobs:
               http = true
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@7fcbf13ecd7bc0ea835a949417cf9eb68067adf9
         with:
           build-cli: "false"
 
@@ -5145,9 +5363,21 @@ jobs:
       - id: openshell-projection
         name: Bind reviewed candidate OpenShell runtime
         shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          UPGRADE_PR_NUMBER: ${{ inputs.pr_number }}
         run: |
           set -euo pipefail
           node tools/e2e/protected-openshell-workspace.mts prepare > "$E2E_ARTIFACT_DIR/openshell-projection.json"
+
+      - name: Verify reviewed candidate OpenShell runtime before consumption
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          UPGRADE_PR_NUMBER: ${{ inputs.pr_number }}
+        run: |
+          set -euo pipefail
+          node tools/e2e/protected-openshell-workspace.mts verify > "$E2E_ARTIFACT_DIR/openshell-projection-initially-verified.json"
 
       - name: Download reviewed OpenShell SDK archive
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -5205,7 +5435,7 @@ jobs:
             [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]] || exit 1
             if [[ "$reference" == "${candidate_prefix}${digest}" ]]; then
               local verified
-              verified="$(node scripts/checks/protected-dcode-base-receipt.mts verify \
+              verified="$(node scripts/checks/protected-dcode-base-receipt.mts verify-reusable \
                 "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE/${name}-base" \
                 "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE/${name}-base-receipt.json" "$agent")"
               [[ "$verified" == "$reference" ]] || {
@@ -5284,6 +5514,15 @@ jobs:
         shell: bash
         run: env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
 
+      - name: Verify reviewed candidate OpenShell runtime
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          UPGRADE_PR_NUMBER: ${{ inputs.pr_number }}
+        run: |
+          set -euo pipefail
+          node tools/e2e/protected-openshell-workspace.mts verify > "$E2E_ARTIFACT_DIR/openshell-projection-verified.json"
+
       - name: Run all-agent GPU, local inference, rollback, and cleanup qualification
         env:
           NVIDIA_API_KEY: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.NVIDIA_API_KEY || '' }}
@@ -5294,7 +5533,6 @@ jobs:
             echo "::error::Protected NIM qualification must execute trusted workflow code" >&2
             exit 1
           }
-          node tools/e2e/protected-openshell-workspace.mts verify > "$E2E_ARTIFACT_DIR/openshell-projection-verified.json"
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
           OPENSHELL_BIN="$(command -v openshell)"
           export OPENSHELL_BIN
@@ -5302,6 +5540,7 @@ jobs:
           npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/managed-image-protected-runtime.test.ts
 
       - name: Remove isolated protected runtime registry
+        timeout-minutes: 2
         if: always()
         shell: bash
         run: |
@@ -5328,13 +5567,18 @@ jobs:
           fi
 
       - name: Restore trusted OpenShell sources
+        timeout-minutes: 1
         if: ${{ always() && steps.openshell-projection.outcome == 'success' }}
         shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          UPGRADE_PR_NUMBER: ${{ inputs.pr_number }}
         run: |
           set -euo pipefail
           node tools/e2e/protected-openshell-workspace.mts restore > "$E2E_ARTIFACT_DIR/openshell-projection-restored.json"
 
       - name: Upload protected managed-image runtime artifacts
+        timeout-minutes: 4
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
         with:
@@ -5342,6 +5586,7 @@ jobs:
           path: e2e-artifacts/live/managed-image-protected-runtime/
 
       - name: Clean up Docker auth
+        timeout-minutes: 1
         if: always()
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh
@@ -5423,7 +5668,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@7fcbf13ecd7bc0ea835a949417cf9eb68067adf9
         with:
           build-cli: "false"
 
@@ -5434,10 +5679,10 @@ jobs:
           path: ${{ runner.temp }}/openshell-sdk
 
       - name: Install reviewed OpenShell SDK archive without package credentials
-        uses: NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@697af6ed24d88e7a8cbb0409acde3398e12f8eae
+        uses: NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@2584abf0a4f739fa5f2e3fd92821ff78175b4115
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@b1494a0828a80a8d5dc862effc9e85ac987f8b4a
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@3c6d991640414a2d78f95f629d67194d44829554
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -5448,7 +5693,7 @@ jobs:
         run: npx tsx tools/e2e/runner-comparison.mts initialize
 
       - name: Prepare native Podman E2E runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@22789bcaf835db7cf6390781c8d0f454f1e73dec
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@e85857e2a7bfb2af01241ecbce5947ee774c1280
         with:
           enabled: ${{ matrix.runtime_provider == 'podman' && 'true' || 'false' }}
 
@@ -5501,6 +5746,7 @@ jobs:
       E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "x86-64 NVIDIA GPU runner; rootless Podman 5.7; local Ollama"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/portable-hermes-finalization
       E2E_SOURCE_REVISION: ${{ inputs.checkout_sha || github.sha }}
+      NEMOCLAW_NATIVE_PODMAN_SERVICE_TASKS_MAX: "1024"
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_GATEWAY_RUNTIME: podman
@@ -5508,9 +5754,9 @@ jobs:
       NEMOCLAW_NON_INTERACTIVE: "1"
     steps:
       - name: Install Portable Podman host dependencies
-        uses: NVIDIA/NemoClaw/.github/actions/host-dependency-setup@d511d704980d651909b52b18ee42fad41a017b7d
+        uses: NVIDIA/NemoClaw/.github/actions/host-dependency-setup@e85857e2a7bfb2af01241ecbce5947ee774c1280
         with:
-          packages: conmon fuse-overlayfs golang-github-containers-common iptables nftables slirp4netns uidmap
+          packages: conmon crun fuse-overlayfs golang-github-containers-common iptables nftables slirp4netns uidmap
 
       - name: Check out trusted workflow cleanup authority
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -5542,6 +5788,210 @@ jobs:
           [[ "$(sudo stat -c '%u:%g:%a' "$CLEANUP_FIXTURE")" == "0:0:555" ]]
           sudo cmp -s "$extracted_fixture" "$CLEANUP_FIXTURE"
 
+      - name: Install pinned OpenShell
+        env:
+          XDG_BIN_HOME: ${{ runner.temp }}/nemoclaw-portable-hermes-openshell-bin.${{ github.run_id }}.${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          install_root="${XDG_BIN_HOME:?}"
+          [[ "$install_root" == "$RUNNER_TEMP"/nemoclaw-portable-hermes-openshell-bin.* ]]
+          rm -rf -- "$install_root"
+          install -d -m 0700 "$install_root"
+          installer_sentinel="nemoclaw-openshell-install-sentinel:${install_root}"
+          cat >"$install_root/openshell" <<'EOF'
+          #!/bin/sh
+          printf '%s\n' 'openshell 0.0.0-dev'
+          EOF
+          printf '# %s\n' "$installer_sentinel" >>"$install_root/openshell"
+          chmod 0700 "$install_root/openshell"
+          env -u GH_TOKEN -u GITHUB_TOKEN \
+            PATH="$install_root:$PATH" \
+            NEMOCLAW_NON_INTERACTIVE=1 \
+            bash scripts/install-openshell.sh
+          openshell_install_root_is_complete() {
+            local root="$1" component
+            for component in openshell openshell-gateway openshell-sandbox; do
+              [[ -f "$root/$component" && ! -L "$root/$component" && -x "$root/$component" ]] \
+                || return 1
+            done
+          }
+          if ! openshell_install_root_is_complete "$install_root"; then
+            echo "::error::The pinned OpenShell installer did not populate the isolated install root." >&2
+            exit 1
+          fi
+          if grep -Fq "$installer_sentinel" "$install_root/openshell"; then
+            echo "::error::The pinned OpenShell installer did not replace its trusted reinstall sentinel." >&2
+            exit 1
+          fi
+          for component in openshell openshell-gateway openshell-sandbox; do
+            source="$install_root/$component"
+            [[ -f "$source" && ! -L "$source" && -x "$source" ]]
+            destination="/usr/bin/$component"
+            if [[ "$source" -ef "$destination" ]]; then
+              [[ -f "$destination" && ! -L "$destination" ]]
+              sudo chown root:root "$destination"
+              sudo chmod 0755 "$destination"
+            else
+              sudo install -o root -g root -m 0755 "$source" "$destination"
+            fi
+          done
+          echo /usr/bin >>"$GITHUB_PATH"
+
+      - name: Recover stale Docker isolation before Portable Podman E2E
+        uses: NVIDIA/NemoClaw/.github/actions/restore-native-podman-e2e@9650336899bf836db5844381a97cbc2b0fe4a2b8
+        with:
+          enabled: "true"
+
+      - name: Prepare Portable Podman 5.7 runtime
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@e85857e2a7bfb2af01241ecbce5947ee774c1280
+        with:
+          cleanup-fixture: /usr/local/libexec/nemoclaw/native-podman-e2e-restore.${{ github.run_id }}.${{ github.run_attempt }}
+          disable-container-cgroups: "true"
+          enabled: "true"
+          toolchain: portable-5.7
+          isolate-docker-cli: "false"
+          service-tasks-max: ${{ env.NEMOCLAW_NATIVE_PODMAN_SERVICE_TASKS_MAX }}
+
+      - name: Select pinned compatible Portable crun
+        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+        run: |
+          set -euo pipefail
+          # Ubuntu Noble's crun 1.14.1 rejects the OCI spec emitted by Podman 5.7.
+          # Keep the replacement beside the immutable cleanup fixture, outside
+          # the shared Podman toolchain root whose restore contract is closed.
+          runtime=/usr/local/libexec/nemoclaw/portable-crun.${{ github.run_id }}.${{ github.run_attempt }}
+          config="$RUNNER_TEMP/native-podman-e2e-containers.conf"
+          socket="${OPENSHELL_PODMAN_SOCKET:?}"
+          service=nemoclaw-native-podman-e2e.service
+          expected_sha=2aa6b7024a9c9f153895c0d11ae233d3758f54844011c3a039e3e89048d01d42
+          [[ "$(uname -m)" == x86_64 ]]
+          [[ "${CONTAINERS_CONF:?}" == "$config" && -f "$config" && ! -L "$config" ]]
+          [[ ! -e "$runtime" && ! -L "$runtime" ]]
+          ! grep -Fq '[engine.runtimes]' "$config"
+          download="$(mktemp "$RUNNER_TEMP/portable-crun.XXXXXXXX")"
+          trap 'rm -f -- "$download"' EXIT
+          curl --fail --location --silent --show-error --proto '=https' \
+            --proto-redir '=https' --tlsv1.2 \
+            --max-time 120 \
+            https://github.com/containers/crun/releases/download/1.28/crun-1.28-linux-amd64 \
+            --output "$download"
+          printf '%s  %s\n' "$expected_sha" "$download" | sha256sum --check --strict
+          sudo install --owner=root --group=root --mode=0755 "$download" "$runtime"
+          [[ "$(sudo stat -c '%u:%g:%a' "$runtime")" == 0:0:755 ]]
+          [[ "$(sudo sha256sum "$runtime" | cut -d ' ' -f1)" == "$expected_sha" ]]
+          [[ "$("$runtime" --version | head -n 1)" == 'crun version 1.28' ]]
+          printf '\n[engine.runtimes]\ncrun = ["%s"]\n' "$runtime" >>"$config"
+          /usr/bin/systemctl --user restart "$service"
+          /usr/bin/systemctl --user is-active --quiet "$service"
+          podman --url "unix://$socket" info --format json | jq -e --arg runtime "$runtime" '
+            (.host.ociRuntime.name // .Host.OCIRuntime.Name) == "crun" and
+            (.host.ociRuntime.path // .Host.OCIRuntime.Path) == $runtime
+          ' >/dev/null
+          podman info --format json | jq -e --arg runtime "$runtime" '
+            (.host.ociRuntime.path // .Host.OCIRuntime.Path) == $runtime
+          ' >/dev/null
+          jq -n --arg path "$runtime" --arg sha256 "$expected_sha" \
+            '{schemaVersion: 1, runtime: "crun", version: "1.28", path: $path,
+              sha256: $sha256, remoteServiceSelected: true, localCliSelected: true}' \
+            >"$RUNNER_TEMP/portable-podman-crun-authority.json"
+
+      - name: Set Portable Podman registry process headroom
+        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+        run: |
+          set -euo pipefail
+          # The shared setup action is pinned and runs before candidate checkout.
+          # The job selects the limit; the action owns service-unit rendering and startup.
+          minimum=128
+          service_tasks_max="${NEMOCLAW_NATIVE_PODMAN_SERVICE_TASKS_MAX:?}"
+          config="$RUNNER_TEMP/native-podman-e2e-containers.conf"
+          [[ "${CONTAINERS_CONF:?}" == "$config" && -f "$config" && ! -L "$config" ]]
+          [[ "$(grep -Fxc '[containers]' "$config")" == 1 ]]
+          [[ "$(grep -Fxc '[engine]' "$config")" == 1 ]]
+          if grep -Eq '^[[:space:]]*(pids_limit|cgroup_manager)[[:space:]]*=' "$config"; then
+            echo "::error::Portable Podman containers.conf already sets process or cgroup policy" >&2
+            exit 1
+          fi
+          [[ "$(grep -Fxc 'cgroups = "disabled"' "$config")" == 1 ]]
+          # Podman can place a rootless registry in a sibling scope even with
+          # container cgroups disabled. The live probe verifies its actual
+          # cgroup and every limiting ancestor after registry HTTP readiness.
+          service=nemoclaw-native-podman-e2e.service
+          service_pid="$(/usr/bin/systemctl --user show "$service" --property=MainPID --value)"
+          [[ "$service_pid" =~ ^[1-9][0-9]*$ ]]
+          # Portable host preparation changes the client configuration and podman.service.
+          # The registry socket belongs to this separate service and must retain this configuration.
+          service_config="$(tr '\0' '\n' <"/proc/$service_pid/environ" | sed -n 's/^CONTAINERS_CONF=//p')"
+          [[ "$service_config" == "$config" ]] || {
+            echo "::error::Portable registry Podman service is using a different containers.conf" >&2
+            exit 1
+          }
+          printf 'NEMOCLAW_NATIVE_PODMAN_SERVICE_PID=%s\n' "$service_pid" >>"$GITHUB_ENV"
+          nproc_soft="$(awk '$1 == "Max" && $2 == "processes" { print $3; exit }' "/proc/$service_pid/limits" || true)"
+          user_tasks="$(ps -u "$(id -u)" -L --no-headers | wc -l | tr -d ' ')" || user_tasks=unavailable
+          host_max="$(cat /proc/sys/kernel/threads-max 2>/dev/null || true)"
+          host_tasks="$(awk '{ split($4, tasks, "/"); print tasks[2] }' /proc/loadavg 2>/dev/null || true)"
+          tasks_max="$(/usr/bin/systemctl --user show "$service" --property=TasksMax --value || true)"
+          tasks_current="$(/usr/bin/systemctl --user show "$service" --property=TasksCurrent --value || true)"
+          limit_nproc="$(/usr/bin/systemctl --user show "$service" --property=LimitNPROC --value || true)"
+          failure=none
+          if [[ "$tasks_max" != "$service_tasks_max" ]]; then
+            failure=service_tasks_configuration
+          fi
+          if [[ ! "$user_tasks" =~ ^[0-9]+$ || -z "$tasks_max" || -z "$tasks_current" || -z "$limit_nproc" ]] || \
+            { [[ "$nproc_soft" != unlimited ]] && \
+              { [[ ! "$nproc_soft" =~ ^[0-9]+$ ]] || (( nproc_soft - user_tasks < minimum )); }; }; then
+            failure=rlimit_nproc
+          fi
+          if [[ ! "$tasks_max" =~ ^[0-9]+$ || ! "$tasks_current" =~ ^[0-9]+$ ]] || \
+            (( tasks_max - tasks_current < minimum )); then
+            failure=service_tasks
+          fi
+          if [[ ! "$host_max" =~ ^[0-9]+$ || ! "$host_tasks" =~ ^[0-9]+$ ]] || \
+            (( host_max - host_tasks < minimum )); then
+            failure=host_threads
+          fi
+          group="$(awk -F: '$1 == "0" { print $3; exit }' "/proc/$service_pid/cgroup")"
+          cgroups='[]'
+          if [[ "$group" != /* || "$group" == *'..'* ]]; then
+            failure=service_cgroup
+            group=/
+          fi
+          depth=0
+          while (( depth < 24 )); do
+            [[ "$group" != / ]] || break
+            current="$(cat "/sys/fs/cgroup$group/pids.current" 2>/dev/null || true)"
+            maximum="$(cat "/sys/fs/cgroup$group/pids.max" 2>/dev/null || true)"
+            cgroups="$(jq -cn --argjson rows "$cgroups" \
+              --arg path "$group" --arg current "$current" --arg maximum "$maximum" \
+              '$rows + [{path: $path, current: $current, maximum: $maximum}]')"
+            if [[ ! "$current" =~ ^[0-9]+$ ]] || \
+              { [[ "$maximum" != max ]] && \
+                { [[ ! "$maximum" =~ ^[0-9]+$ ]] || (( maximum - current < minimum )); }; }; then
+              failure=cgroup_pids
+            fi
+            group="${group%/*}"
+            [[ -n "$group" ]] || group=/
+            depth=$((depth + 1))
+          done
+          if [[ "$group" != / ]]; then failure=cgroup_depth; fi
+          jq -n --arg failure "$failure" --argjson minimum "$minimum" \
+            --arg containerCgroups observed-after-registry-launch \
+            --arg tasksMax "$tasks_max" --arg tasksCurrent "$tasks_current" \
+            --arg limitNproc "$limit_nproc" \
+            --arg nprocSoft "$nproc_soft" --arg userTasks "$user_tasks" \
+            --arg hostMax "$host_max" --arg hostTasks "$host_tasks" --argjson cgroups "$cgroups" \
+            '{schemaVersion: 1, failure: $failure, minimumHeadroom: $minimum,
+              containerCgroups: $containerCgroups,
+              service: {tasksMax: $tasksMax, tasksCurrent: $tasksCurrent, limitNproc: $limitNproc,
+                nprocSoft: $nprocSoft, userTasks: $userTasks},
+              host: {threadsMax: $hostMax, tasks: $hostTasks}, cgroups: $cgroups}' \
+            >"$RUNNER_TEMP/portable-podman-process-headroom.json"
+          if [[ "$failure" != none ]]; then
+            echo "::error::Portable Podman infrastructure has insufficient process headroom ($failure)" >&2
+            exit 1
+          fi
+          printf 'PORTABLE_REGISTRY_MINIMUM_PROCESS_HEADROOM=%s\n' "$minimum" >>"$GITHUB_ENV"
+
       - name: Check out the exact candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -5552,13 +6002,23 @@ jobs:
 
       - *dockerhub-auth
 
+      - name: Prove Portable Podman OCI execution before Hermes
+        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+        run: |
+          set -euo pipefail
+          # Exercise the API service used by the managed registry before candidate behavior.
+          podman --url "unix://${OPENSHELL_PODMAN_SOCKET:?}" run --rm --pull=always \
+            --entrypoint /bin/sh \
+            docker.io/library/registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373 \
+            -c ':'
+
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@7fcbf13ecd7bc0ea835a949417cf9eb68067adf9
         with:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4e9f579183477b984c009cce0f47a1361e5eddef
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@3c6d991640414a2d78f95f629d67194d44829554
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -5567,29 +6027,6 @@ jobs:
           set -euo pipefail
           npm run catalog:compile
           npm run build:policy-boundary
-
-      - name: Install pinned OpenShell
-        run: |
-          set -euo pipefail
-          env -u GH_TOKEN -u GITHUB_TOKEN NEMOCLAW_NON_INTERACTIVE=1 bash scripts/install-openshell.sh
-          for component in openshell openshell-gateway openshell-sandbox; do
-            resolved="$(command -v "$component")"
-            sudo install -o root -g root -m 0755 "$resolved" "/usr/bin/$component"
-          done
-          echo /usr/bin >>"$GITHUB_PATH"
-
-      - name: Recover stale Docker isolation before Portable Podman E2E
-        uses: NVIDIA/NemoClaw/.github/actions/restore-native-podman-e2e@9650336899bf836db5844381a97cbc2b0fe4a2b8
-        with:
-          enabled: "true"
-
-      - name: Prepare Portable Podman 5.7 runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@22789bcaf835db7cf6390781c8d0f454f1e73dec
-        with:
-          cleanup-fixture: /usr/local/libexec/nemoclaw/native-podman-e2e-restore.${{ github.run_id }}.${{ github.run_attempt }}
-          enabled: "true"
-          toolchain: portable-5.7
-          isolate-docker-cli: "false"
 
       - name: Run Portable Hermes finalization live Vitest test
         shell: /bin/bash --noprofile --norc -e -o pipefail {0}
@@ -5635,11 +6072,25 @@ jobs:
             >"$E2E_ARTIFACT_DIR/host-authority.json"
 
           podman build \
+            --runtime "/usr/local/libexec/nemoclaw/portable-crun.${{ github.run_id }}.${{ github.run_attempt }}" \
             --file agents/hermes/Dockerfile.base \
             --tag localhost/nemoclaw-hermes-base:portable-e2e \
             .
           npx tsx tools/e2e/live-vitest-invocation.mts run \
             --test-path test/e2e/live/portable-profile-rootless-linux.test.ts
+
+      - name: Retain Portable Podman process headroom
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in portable-podman-process-headroom portable-podman-crun-authority; do
+            source="$RUNNER_TEMP/$name.json"
+            if [[ ! -f "$source" || -L "$source" ]]; then continue; fi
+            [[ ! -L "$E2E_ARTIFACT_DIR" ]]
+            install -d -m 0700 "$E2E_ARTIFACT_DIR"
+            install -m 0600 "$source" "$E2E_ARTIFACT_DIR/$name.json"
+          done
 
       - name: Upload Portable Hermes finalization artifacts
         if: always()
@@ -5648,11 +6099,78 @@ jobs:
           name: e2e-portable-hermes-finalization
           path: e2e-artifacts/live/portable-hermes-finalization/
 
+      - name: Remove pinned Portable crun
+        if: always()
+        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+        run: |
+          set -euo pipefail
+          runtime=/usr/local/libexec/nemoclaw/portable-crun.${{ github.run_id }}.${{ github.run_attempt }}
+          if ! sudo test -e "$runtime" && ! sudo test -L "$runtime"; then exit 0; fi
+          uid="$(id -u)"
+          manager_state="$(/usr/bin/systemctl is-active "user@${uid}.service" 2>/dev/null || true)"
+          if [[ "$manager_state" == active ]]; then
+            service=nemoclaw-native-podman-e2e
+            runtime_dir="/run/user/$uid"
+            user_systemctl() {
+              env DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime_dir/bus" \
+                XDG_RUNTIME_DIR="$runtime_dir" /usr/bin/systemctl --user "$@"
+            }
+            user_systemctl stop "$service.socket" "$service.service" 2>/dev/null || true
+            socket_state="$(user_systemctl is-active "$service.socket" 2>/dev/null || true)"
+            service_state="$(user_systemctl is-active "$service.service" 2>/dev/null || true)"
+            if [[ "$socket_state" != inactive && "$socket_state" != unknown ]] ||
+              [[ "$service_state" != inactive && "$service_state" != unknown ]]; then
+              echo "::error::Portable crun cleanup could not prove Podman socket and service inactive" >&2
+              exit 1
+            fi
+          elif [[ "$manager_state" != inactive ]]; then
+            echo "::error::Portable crun cleanup could not prove user manager inactive" >&2
+            exit 1
+          fi
+          sudo test -f "$runtime"
+          sudo test ! -L "$runtime"
+          # A failed install can leave a partial root-owned file before chmod.
+          [[ "$(sudo stat -c '%u:%g' "$runtime")" == 0:0 ]]
+          sudo rm -f -- "$runtime"
+          sudo test ! -e "$runtime"
+
       - name: Restore Docker and retire Portable Podman runtime
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/restore-native-podman-e2e@9650336899bf836db5844381a97cbc2b0fe4a2b8
         with:
           enabled: "true"
+
+      - name: Remove pinned Portable crun after restoration
+        if: always()
+        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+        run: |
+          set -euo pipefail
+          runtime=/usr/local/libexec/nemoclaw/portable-crun.${{ github.run_id }}.${{ github.run_attempt }}
+          if ! sudo test -e "$runtime" && ! sudo test -L "$runtime"; then exit 0; fi
+          uid="$(id -u)"
+          manager_state="$(/usr/bin/systemctl is-active "user@${uid}.service" 2>/dev/null || true)"
+          if [[ "$manager_state" == active ]]; then
+            runtime_dir="/run/user/$uid"
+            user_systemctl() {
+              env DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime_dir/bus" \
+                XDG_RUNTIME_DIR="$runtime_dir" /usr/bin/systemctl --user "$@"
+            }
+            socket_state="$(user_systemctl is-active nemoclaw-native-podman-e2e.socket 2>/dev/null || true)"
+            service_state="$(user_systemctl is-active nemoclaw-native-podman-e2e.service 2>/dev/null || true)"
+            if [[ "$socket_state" != inactive && "$socket_state" != unknown ]] ||
+              [[ "$service_state" != inactive && "$service_state" != unknown ]]; then
+              echo "::error::Portable crun cleanup after restoration could not prove Podman inactive" >&2
+              exit 1
+            fi
+          elif [[ "$manager_state" != inactive ]]; then
+            echo "::error::Portable crun cleanup after restoration could not prove user manager inactive" >&2
+            exit 1
+          fi
+          sudo test -f "$runtime"
+          sudo test ! -L "$runtime"
+          [[ "$(sudo stat -c '%u:%g' "$runtime")" == 0:0 ]]
+          sudo rm -f -- "$runtime"
+          sudo test ! -e "$runtime"
 
       - name: Remove immutable native Podman cleanup fixture
         if: always()
@@ -5710,7 +6228,7 @@ jobs:
     steps:
       - name: Install native Podman host dependencies
         if: ${{ matrix.runtime_provider == 'podman' }}
-        uses: NVIDIA/NemoClaw/.github/actions/host-dependency-setup@d511d704980d651909b52b18ee42fad41a017b7d
+        uses: NVIDIA/NemoClaw/.github/actions/host-dependency-setup@e85857e2a7bfb2af01241ecbce5947ee774c1280
         with:
           packages: conmon fuse-overlayfs golang-github-containers-common iptables nftables slirp4netns uidmap
 
@@ -5794,12 +6312,12 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@7fcbf13ecd7bc0ea835a949417cf9eb68067adf9
         with:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@b1494a0828a80a8d5dc862effc9e85ac987f8b4a
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@3c6d991640414a2d78f95f629d67194d44829554
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -5811,7 +6329,7 @@ jobs:
           ENV: /dev/null
           NODE_OPTIONS: ""
         with:
-          node-version: "24.18.1"
+          node-version: "24.22.1"
 
       - name: Reinstall reviewed npm after Node reassertion
         uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
@@ -5823,7 +6341,7 @@ jobs:
           enabled: "true"
 
       - name: Prepare native Podman E2E runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@22789bcaf835db7cf6390781c8d0f454f1e73dec
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@e85857e2a7bfb2af01241ecbce5947ee774c1280
         with:
           enabled: ${{ matrix.runtime_provider == 'podman' && 'true' || 'false' }}
 
@@ -5998,7 +6516,7 @@ jobs:
       - name: Set up Node for Jetson controller
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.1
+          node-version: 24.22.1
 
       - name: Install reviewed npm
         uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
@@ -6036,8 +6554,8 @@ jobs:
       E2E_DEFAULT_ENABLED: "0"
       E2E_GATEWAY_RUNTIMES: agnostic
       E2E_AGENT_RUNTIME: openclaw
-      E2E_OBSERVABLE_OUTCOME: Station Express installs managed Ultra vLLM and NemoClaw, serves sandbox inference, and removes job runtime
-      E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: Dedicated DGX Station GB300 with cached Nemotron 3 Ultra 550B
+      E2E_OBSERVABLE_OUTCOME: Station Express installs managed Super VL vLLM and NemoClaw, serves sandbox inference, and removes job runtime
+      E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: Dedicated DGX Station GB300 with cached Nemotron 3.5 Super VL 120B
     steps:
       - name: Check out trusted Station controller
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -6049,7 +6567,7 @@ jobs:
       - name: Set up Node for Station controller
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.1
+          node-version: 24.22.1
 
       - name: Install reviewed npm
         uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
@@ -6128,22 +6646,22 @@ jobs:
       # removalCondition: remove when the hosted runner supplies expect or the
       # cloud-onboard acceptance check no longer requires a PTY.
       - name: Install cloud-onboard DCode TUI host dependencies
-        uses: NVIDIA/NemoClaw/.github/actions/host-dependency-setup@d511d704980d651909b52b18ee42fad41a017b7d
+        uses: NVIDIA/NemoClaw/.github/actions/host-dependency-setup@e85857e2a7bfb2af01241ecbce5947ee774c1280
         with:
           packages: expect
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@7fcbf13ecd7bc0ea835a949417cf9eb68067adf9
         with:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@b1494a0828a80a8d5dc862effc9e85ac987f8b4a
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@3c6d991640414a2d78f95f629d67194d44829554
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Prepare native Podman E2E runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@22789bcaf835db7cf6390781c8d0f454f1e73dec
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@e85857e2a7bfb2af01241ecbce5947ee774c1280
         with:
           enabled: ${{ matrix.runtime_provider == 'podman' && 'true' || 'false' }}
 
@@ -6276,17 +6794,17 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@7fcbf13ecd7bc0ea835a949417cf9eb68067adf9
         with:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@b1494a0828a80a8d5dc862effc9e85ac987f8b4a
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@3c6d991640414a2d78f95f629d67194d44829554
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Prepare native Podman E2E runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@22789bcaf835db7cf6390781c8d0f454f1e73dec
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@e85857e2a7bfb2af01241ecbce5947ee774c1280
         with:
           enabled: ${{ matrix.runtime_provider == 'podman' && 'true' || 'false' }}
 
@@ -6338,6 +6856,8 @@ jobs:
       &e2e-result-jobs [
         base-image-publication,
         generate-matrix,
+        llama-cpp-dgx-spark-plan,
+        llama-cpp-dgx-spark-qualification,
         staging-brev-launchable,
         staging-brev-launchable-identity,
         live,
@@ -6365,7 +6885,7 @@ jobs:
         native-runtime-qualification-producer,
         native-runtime-qualification-producer-aggregate,
       ]
-    if: ${{ always() && github.event_name == 'workflow_dispatch' && (inputs.checkout_sha == '' || (github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && needs.generate-matrix.result == 'success' && contains(fromJSON(needs.generate-matrix.outputs.selected_workflow_jobs || '[]'), 'catalogue-hosted-inference'))) }}
+    if: ${{ always() && github.event_name == 'workflow_dispatch' && (inputs.checkout_sha == '' || (github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && needs.generate-matrix.result == 'success' && (contains(fromJSON(needs.generate-matrix.outputs.selected_workflow_jobs || '[]'), 'catalogue-hosted-inference') || contains(fromJSON(needs.generate-matrix.outputs.selected_workflow_jobs || '[]'), 'llama-cpp-dgx-spark-qualification')))) }}
     permissions:
       actions: read
       contents: read

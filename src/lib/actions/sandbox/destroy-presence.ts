@@ -74,8 +74,9 @@ export type DestroyContainerIdentityProof = {
 /** Read the host observation consumed by the pure identity classifier. */
 export function observeDestroyContainerIdentity(
   sandboxName: string,
+  inspect?: Parameters<typeof inspectDockerSandboxNameLabeledContainers>[1],
 ): DockerSandboxIdentityObservation {
-  return inspectDockerSandboxNameLabeledContainers(sandboxName);
+  return inspectDockerSandboxNameLabeledContainers(sandboxName, inspect);
 }
 
 /**

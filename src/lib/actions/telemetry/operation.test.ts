@@ -30,7 +30,7 @@ beforeEach(() => {
   telemetryRuntime.config = null;
   for (const key of ["CI", "GITHUB_ACTIONS", "VITEST", "NODE_ENV", "NEMOCLAW_DISABLE_TELEMETRY"])
     vi.stubEnv(key, undefined);
-  vi.stubEnv("NEMOCLAW_TELEMETRY_TEST_LABEL", "qa-telemetry:client:attempt-1");
+  vi.stubEnv("NEMOCLAW_TELEMETRY_TEST_LABEL", undefined);
 });
 
 afterEach(() => {

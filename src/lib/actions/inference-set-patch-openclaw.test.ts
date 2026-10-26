@@ -13,6 +13,56 @@ function providerModels(config: ConfigObject, providerKey: string): ConfigObject
 }
 
 describe("patchOpenClawInferenceConfig", () => {
+  it("uses a local provider handle and clears it on departure", () => {
+    const config: ConfigObject = {
+      models: { providers: { inference: { apiKey: "unused", models: [] } } },
+    };
+    patchOpenClawInferenceConfig(
+      config,
+      "ollama-local",
+      "local-model",
+      "openai-completions",
+      undefined,
+      undefined,
+      undefined,
+      true,
+      "http://host.openshell.internal:11435/v1",
+      true,
+    );
+    expect(config).toMatchObject({
+      models: {
+        providers: {
+          inference: {
+            baseUrl: "http://host.openshell.internal:11435/v1",
+            apiKey: "openshell:resolve:env:NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+          },
+        },
+      },
+    });
+    patchOpenClawInferenceConfig(
+      config,
+      "nvidia-nim",
+      "nim-model",
+      "openai-completions",
+      undefined,
+      undefined,
+      undefined,
+      true,
+      undefined,
+      false,
+    );
+    expect(config).toMatchObject({
+      models: {
+        providers: {
+          inference: {
+            baseUrl: "https://inference.local/v1",
+            apiKey: "unused",
+          },
+        },
+      },
+    });
+  });
+
   it("replaces the vLLM credential when switching to native NVIDIA inference", () => {
     const config: ConfigObject = {
       models: { providers: { inference: { apiKey: "unused", models: [] } } },

@@ -37,3 +37,29 @@ describe("managed llama.cpp OpenClaw compatibility", () => {
     expect(model.compat?.toolSchemaProfile).toBeUndefined();
   });
 });
+
+describe("native local OpenClaw generation", () => {
+  it("writes a scoped local credential reference for an attached endpoint", () => {
+    const config = buildConfig({
+      ...baseOpenClawGenerationEnv(),
+      NEMOCLAW_MODEL: "local-model",
+      NEMOCLAW_PROVIDER_KEY: "inference",
+      NEMOCLAW_UPSTREAM_PROVIDER: "ollama-local",
+      NEMOCLAW_PRIMARY_MODEL_REF: "inference/local-model",
+      NEMOCLAW_INFERENCE_BASE_URL: "http://host.openshell.internal:11435/v1",
+      NEMOCLAW_INFERENCE_API: "openai-completions",
+    });
+    expect(config.models.providers.inference).toMatchObject({
+      baseUrl: "http://host.openshell.internal:11435/v1",
+      apiKey: "openshell:resolve:env:NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+    });
+  });
+
+  it("keeps a shared local selection on inference.local", () => {
+    const config = buildLlamaCppConfig("vllm-local");
+    expect(config.models.providers.inference).toMatchObject({
+      baseUrl: "https://inference.local/v1",
+      apiKey: "unused",
+    });
+  });
+});

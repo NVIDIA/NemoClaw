@@ -1,10 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import assert from "node:assert/strict";
+
 import { describe, expect, it } from "vitest";
 
 import { computeCapabilityPreflight, detectVllmProfile, resolveVllmModelRuntime } from "./vllm";
-import { buildVllmServeCommand, VLLM_MODELS } from "./vllm-models";
+import { buildVllmServeCommand, VLLM_EXTRA_ARGS_ENV, VLLM_MODELS } from "./vllm-models";
 import { vllmInstallTestReadiness } from "./vllm-install.test-support";
 import { resolveHostLocalVllmSelection } from "./serving/host-local-vllm-selection";
 
@@ -51,6 +53,105 @@ function sparkReadiness(memoryBytes: number | undefined) {
 }
 
 describe("vLLM catalog runtime selection", () => {
+  it.each([
+    ["", "nemotron-3.5-super-vl-120b"],
+    ["nemotron-3-ultra-550b-a55b", "nemotron-3-ultra-550b-a55b"],
+    ["deepseek-v4-flash", "deepseek-v4-flash"],
+  ])("selects the Station default or explicit model '%s'", (requested, expected) => {
+    const profile = detectVllmProfile({ platform: "station" })!;
+    expect(profile.defaultModel.envValue).toBe("nemotron-3.5-super-vl-120b");
+    expect(
+      resolveHostLocalVllmSelection(
+        profile,
+        { NEMOCLAW_VLLM_MODEL: requested },
+        {
+          automatic: true,
+          readinessReports: vllmInstallTestReadiness(profile, expected),
+        },
+      ),
+    ).toMatchObject({ kind: "selected", model: { envValue: expected } });
+  });
+
+  it("selects the explicit Super VL MTP recipe on 128 GB Spark", () => {
+    const profile = detectVllmProfile({ platform: "spark" })!;
+    expect(profile.defaultModel.envValue).toBe("qwen3.6-35b-a3b-nvfp4");
+    const selection = resolveHostLocalVllmSelection(
+      profile,
+      { NEMOCLAW_VLLM_MODEL: "nemotron-3.5-super-vl-120b" },
+      { automatic: true, readinessReports: sparkReadiness(128_000_000_000) },
+    );
+    expect(selection).toMatchObject({
+      kind: "selected",
+      recipeId: "vllm.nemotron-3.5-super-vl-120b-a12b-nvfp4.spark-single.v1",
+      model: {
+        maxModelLen: 114688,
+        managedBearerAuth: true,
+        fixedServeCommand: true,
+        revision: "82d93699acd3be9e4617c53360fe5b3f5dbeb1b3",
+        reviewedCode: { revision: "82d93699acd3be9e4617c53360fe5b3f5dbeb1b3" },
+        runtime: {
+          image:
+            "vllm/vllm-openai@sha256:fd33bec1578f312a01547cc6b9691a5154c3e8bcfb76d2b35acb657bfc4eee8f",
+          minComputeCapability: 121,
+          minGpuMemoryBytes: 120_000_000_000,
+          gpuMemoryUtilization: 0.7,
+        },
+      },
+    });
+    assert.equal(selection.kind, "selected");
+    const command = buildVllmServeCommand(selection.model, {
+      [VLLM_EXTRA_ARGS_ENV]: '["--max-model-len","999999"]',
+    });
+    expect(command).toContain("--max-model-len 114688");
+    expect(command).toContain("--max-num-seqs 2");
+    expect(command).toContain("--gpu-memory-utilization 0.7");
+    expect(command).toContain("--spec-method mtp");
+    expect(command).toContain("--spec-tokens 5");
+    expect(command).toContain("--mamba-backend flashinfer");
+    expect(command).toContain("--mamba-ssm-cache-dtype float16");
+    expect(command).toContain("--enable-mamba-cache-stochastic-rounding");
+    expect(command).toContain("--mamba-cache-philox-rounds 5");
+    expect(command).toContain("--enable-mamba-shared-prefix-checkpoint");
+    expect(command).toContain("--prefix-match-unit 16");
+    expect(command).toContain("--tool-call-parser qwen3_coder");
+    expect(command).toContain("--reasoning-parser nemotron_v3");
+    expect(command).toContain('--limit-mm-per-prompt \'{"image":8,"video":0}\'');
+    expect(command).toContain("--allowed-media-domains super-vl.invalid");
+    expect(command).not.toContain("999999");
+    expect(command).not.toContain("--chat-template");
+    expect(selection.model.runtime?.dockerRunArgs).toContain("17179869184b");
+  });
+
+  it.each([64_000_000_000, 119_999_999_999, undefined])(
+    "rejects Super VL with insufficient or unknown Spark capacity: %s",
+    (memoryBytes) => {
+      expect(
+        resolveHostLocalVllmSelection(
+          detectVllmProfile({ platform: "spark" })!,
+          { NEMOCLAW_VLLM_MODEL: "nemotron-3.5-super-vl-120b" },
+          { automatic: true, readinessReports: sparkReadiness(memoryBytes) },
+        ),
+      ).toMatchObject({ kind: "rejected" });
+    },
+  );
+
+  it("resolves the Super VL profile by ID on Spark", () => {
+    expect(
+      resolveHostLocalVllmSelection(
+        detectVllmProfile({ platform: "spark" })!,
+        {
+          NEMOCLAW_SERVING_PRESET:
+            "vllm.dgx-spark-gb10.single.nemotron-3.5-super-vl-120b-a12b-nvfp4",
+        },
+        {
+          readinessReports: sparkReadiness(128_000_000_000),
+        },
+      ),
+    ).toMatchObject({
+      kind: "selected",
+      recipeId: "vllm.nemotron-3.5-super-vl-120b-a12b-nvfp4.spark-single.v1",
+    });
+  });
   it.each([
     [60_000_000_000, "", "spark-single-64gb.v1", 32768, 1, 0.5],
     [61_614_325_760, "", "spark-single-64gb.v1", 32768, 1, 0.5],

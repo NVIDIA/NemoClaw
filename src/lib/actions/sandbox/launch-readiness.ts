@@ -89,6 +89,7 @@ export { createProbeTimingRecorder, type ProbeTimingRecorder } from "./probe/tim
 export { createBoundLaunchReadinessDeps };
 export {
   getNativeProviderAttachment,
+  hasRecordedNativeNvidiaAttachment,
   requireNativeInferenceHealth,
 } from "./launch-readiness/health";
 
@@ -828,7 +829,9 @@ async function captureLaunchIdentity(
   }
   const inferenceSelection = normalizeInferenceSelection(entry);
   const inference = registry.getSandboxEntryInference(entry);
-  const nativeProvider = Boolean(getNativeProviderAttachment(entry));
+  const nativeProvider =
+    Boolean(getNativeProviderAttachment(entry)) ||
+    entry.nativeLocalProviderAttachment !== undefined;
   let liveInference: { provider: string; model: string } | null = null;
   if (!nativeProvider) {
     const inferenceGetStartedAt = performance.now();

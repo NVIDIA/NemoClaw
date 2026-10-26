@@ -6,7 +6,10 @@ import { createHash } from "node:crypto";
 
 import { describe, expect, it } from "vitest";
 
+import { buildConfig as buildOpenClawConfig } from "../../../scripts/generate-openclaw-config.mts";
 import { PEM } from "./__test-helpers__/corporate-ca-fixtures";
+import { maybePromptForInferenceInputCapability } from "./inference-input-capability";
+import { mapManagedStartupProfileToAgentEnvironment } from "./managed-startup/agent-environment";
 import { decodeManagedStartupProfile } from "./managed-startup/profile";
 import {
   assertManagedStartupProfileBuilderInventoryCoverage,
@@ -375,6 +378,48 @@ describe("buildManagedStartupProfile", () => {
       /valid openclaw SandboxMessagingPlan/,
     );
   });
+
+  it.each([undefined, "text"])(
+    "carries hosted Super VL inputs through startup with override %s",
+    async (override) => {
+      const model = "nvidia/nemotron-3.5-super-vl-120b-a12b";
+      const environment: NodeJS.ProcessEnv = { NEMOCLAW_INFERENCE_INPUTS: override };
+      await maybePromptForInferenceInputCapability(model, {
+        env: environment,
+        isNonInteractive: () => true,
+        prompt: async () => {
+          throw new Error("Unattended onboarding must not prompt");
+        },
+      });
+      const transport = buildManagedStartupProfile(
+        openClawInput({
+          environment,
+          inference: {
+            routeProvider: "inference",
+            upstreamProvider: "nvidia-prod",
+            model,
+            routedBaseUrl: "https://inference.local/v1",
+            upstreamEndpointUrl: null,
+            api: "openai-completions",
+            primaryModelRef: `inference/${model}`,
+            compatibility: {},
+          },
+        }),
+      );
+      const mapped = mapManagedStartupProfileToAgentEnvironment(transport.profile);
+      const config = buildOpenClawConfig({
+        ...mapped.configurationEnvironment,
+        ...mapped.runtimeEnvironment,
+      });
+      expect(config).toMatchObject({
+        models: {
+          providers: {
+            inference: { models: [{ id: model, input: override ? ["text"] : ["image", "text"] }] },
+          },
+        },
+      });
+    },
+  );
 
   it("builds OpenClaw with every stock behavior knob and canonical transport", () => {
     const plan = messagingPlan("openclaw");

@@ -1,12 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isDeepStrictEqual } from "node:util";
+
 import {
   assertEndpointResolvesPublic,
   isTrustedPrivateEndpointCapability,
   type TrustedPrivateEndpointCapability,
 } from "../inference/endpoint-ssrf-preflight";
 import type { RequestedServingProfileModel } from "../inference/serving/requested-profile-model";
+import type { ManagedVllmProviderBinding } from "../inference/local";
 import { resolveVllmModelAlias } from "../inference/vllm-models";
 import { isLoopbackHostname } from "../private-networks";
 import { cliName } from "./branding";
@@ -40,11 +43,7 @@ export interface SetupNimVllmDeps {
   runCapture(args: string[], options: { ignoreError: boolean }): string;
   getLocalProviderBaseUrl(provider: string): string | null;
   getLocalProviderValidationBaseUrl(provider: string): string | null;
-  getManagedVllmProviderBinding(): {
-    baseUrl: string;
-    validationBaseUrl?: string;
-    apiKey: string;
-  } | null;
+  getManagedVllmProviderBinding(): ManagedVllmProviderBinding | null;
   queryVllmModels(baseUrl: string, apiKey: string): string;
   isSafeModelId(model: string): boolean;
   requireValue<T>(value: T | null | undefined, message: string): T;
@@ -170,16 +169,30 @@ function reportedModelMatchesServingProfile(
   return root !== null && root.toLowerCase() === profile.modelId.toLowerCase();
 }
 
-/** Preserve the checkpoint identity proven by the vLLM model response. */
+/** Prefer the owned recipe identity when its reviewed launcher serves a local snapshot. */
 function validatedVllmModelIdentity(
   models: VllmModels,
   detectedModel: string,
   requestedModel: string | null,
+  managedBinding: ManagedVllmProviderBinding | null | undefined,
 ): string | null {
   const root = reportedModelRoot(findVllmModelEntry(models, detectedModel));
+  const registeredModel = resolveVllmModelAlias(requestedModel ?? detectedModel);
+  if (
+    root?.startsWith("/") &&
+    (requestedModel === null || requestedModel === detectedModel) &&
+    managedBinding?.serving &&
+    registeredModel?.runtimeVariants?.some(
+      (variant) =>
+        variant.reviewedCode &&
+        variant.servedModelId === detectedModel &&
+        isDeepStrictEqual(variant.servingCatalog, managedBinding.serving),
+    )
+  ) {
+    return registeredModel.id;
+  }
   if (root) return root;
   if (!requestedModel || detectedModel !== requestedModel) return null;
-  const registeredModel = resolveVllmModelAlias(requestedModel);
   return registeredModel?.id ?? requestedModel;
 }
 
@@ -379,7 +392,12 @@ export function createSetupNimVllmHandler(
       console.error("  Then select Local vLLM when prompted.");
       deps.exitProcess(1);
     }
-    const modelIdentity = validatedVllmModelIdentity(models, detectedModel, requiredModel);
+    const modelIdentity = validatedVllmModelIdentity(
+      models,
+      detectedModel,
+      requiredModel,
+      managedBinding,
+    );
     state.model = detectedModel;
     state.assertRouteCompatible?.();
     console.log(`  Detected model: ${state.model}`);

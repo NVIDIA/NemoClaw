@@ -1,13 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import fs from "node:fs";
-import { execFileSync } from "node:child_process";
-import {
-  resolveRequestGuardAddress,
-  startQualificationLoopbackRelay,
-} from "../../../scripts/checks/run-llama-cpp-dgx-spark-qualification.mts";
 import path from "node:path";
 
 import {
@@ -19,15 +14,11 @@ import {
   parseProtectedManagedImageContracts,
 } from "../../../scripts/checks/managed-image-protected-runtime-contract.ts";
 import { PROTECTED_MANAGED_IMAGE_COHORT_PATTERN } from "../../../scripts/checks/protected-managed-image-contract.ts";
-import {
-  adoptServedModelId,
-  dockerLoginNgc,
-  pullNimImage,
-} from "../../../src/lib/inference/nim.ts";
+import { adoptServedModelId, getImageForModel } from "../../../src/lib/inference/nim.ts";
 import {
   getOllamaProxyToken,
   killStaleProxy,
-  persistAndProbeOllamaProxy,
+  persistProxyToken,
   startOllamaAuthProxy,
 } from "../../../src/lib/inference/ollama/proxy.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
@@ -42,6 +33,11 @@ import {
   env as gpuEnv,
   REPO_ROOT,
 } from "./gpu-e2e-helpers.ts";
+
+import {
+  protectedRuntimeDeadlineHost,
+  protectedRuntimeDeadlines,
+} from "./managed-image-protected-runtime-budget.ts";
 
 const OLLAMA_MODEL = "qwen3.5:9b";
 const VLLM_MODEL = "Qwen/Qwen2.5-0.5B-Instruct";
@@ -238,6 +234,12 @@ export function protectedProviderContainerCleanupCommand(
   };
 }
 
+export function protectedProviderImagePulledByStart(image: string, stderr: string): boolean {
+  return stderr
+    .split("\n")
+    .some((line) => line.trim() === `Unable to find image '${image}' locally`);
+}
+
 function imageContracts(): ProtectedManagedImageContract[] {
   const contractPath = process.env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_CONTRACT;
   if (!contractPath || !path.isAbsolute(contractPath)) {
@@ -429,7 +431,9 @@ export async function startProtectedOllama(host: HostCliClient): Promise<string>
   expect(startOllamaAuthProxy(), "Ollama auth proxy must start").toBe(true);
   const proxyToken = getOllamaProxyToken();
   expect(proxyToken).toMatch(/^[a-f0-9]{48}$/u);
-  await persistAndProbeOllamaProxy(proxyToken!);
+  // Each child proves inference through its own native provider and private gateway.
+  // The legacy default-bridge probe cannot validate that route.
+  persistProxyToken(proxyToken!);
   return proxyToken!;
 }
 
@@ -573,7 +577,7 @@ async function removeProtectedProviderContainer(
 async function startProtectedVllm(
   host: HostCliClient,
   state: ProtectedProviderContainerState,
-): Promise<void> {
+): Promise<boolean> {
   const start = await host.command(
     "docker",
     [
@@ -594,8 +598,11 @@ async function startProtectedVllm(
       VLLM_MODEL,
       "--served-model-name",
       VLLM_MODEL,
+      "--enable-auto-tool-choice",
+      "--tool-call-parser",
+      "hermes",
       "--max-model-len",
-      "2048",
+      "32768",
       "--gpu-memory-utilization",
       "0.45",
     ],
@@ -637,6 +644,7 @@ async function startProtectedVllm(
     },
   );
   expect(cuda.exitCode, resultText(cuda)).toBe(0);
+  return protectedProviderImagePulledByStart(VLLM_IMAGE, start.stderr);
 }
 
 export function protectedVllmReadinessCommand(
@@ -718,10 +726,33 @@ async function startProtectedNim(
   state: ProtectedProviderContainerState,
   apiKey: string,
 ): Promise<string> {
-  expect(dockerLoginNgc(apiKey), "NGC login must succeed for protected NIM qualification").toBe(
-    true,
+  const image = getImageForModel(NIM_CATALOG_MODEL);
+  if (!image) throw new Error("protected NIM catalog model has no image");
+  // NIM's production login and platform-aware pull are synchronous. Run them
+  // in the supervised child so a slow registry cannot block the suite deadline.
+  const prepare = await host.command(
+    "node",
+    [
+      "--import",
+      "tsx",
+      "--input-type=module",
+      "--eval",
+      `
+    import * as importedNim from './src/lib/inference/nim.ts';
+    const { dockerLoginNgc, pullNimImage } = importedNim.default ?? importedNim;
+    if (!dockerLoginNgc(process.env.NGC_API_KEY)) throw new Error('NGC login failed');
+    pullNimImage(${JSON.stringify(NIM_CATALOG_MODEL)});
+  `,
+    ],
+    {
+      artifactName: "prepare-protected-nim-image",
+      cwd: REPO_ROOT,
+      env: { ...buildAvailabilityProbeEnv(), NGC_API_KEY: apiKey },
+      redactionValues: [apiKey],
+      timeoutMs: 20 * 60_000,
+    },
   );
-  const image = pullNimImage(NIM_CATALOG_MODEL);
+  expect(prepare.exitCode, resultText(prepare)).toBe(0);
   const start = await host.command(
     "docker",
     [
@@ -743,6 +774,8 @@ async function startProtectedNim(
       "NGC_API_KEY",
       "--env",
       "NIM_NGC_API_KEY",
+      "--env",
+      "NIM_PASSTHROUGH_ARGS=--enable-auto-tool-choice --tool-call-parser qwen3_coder --reasoning-parser nemotron_v3",
       image,
     ],
     {
@@ -914,8 +947,11 @@ async function proveOwnedRuntimeInventoryClean(
 export async function qualifyProtectedManagedImageRuntime(
   fixtures: RuntimeFixtures,
   ngcApiKeyInput: string,
+  deadlines = protectedRuntimeDeadlines(process.env.NEMOCLAW_PROTECTED_RUNTIME_STARTED_AT_MS),
 ): Promise<void> {
-  const { artifacts, cleanup, host, progress } = fixtures;
+  const { artifacts, cleanup, progress } = fixtures;
+  const host = protectedRuntimeDeadlineHost(fixtures.host, deadlines.providers);
+  const rollbackHost = protectedRuntimeDeadlineHost(fixtures.host, deadlines.rollback);
   const contracts = imageContracts();
   const ngcApiKey = requiredNgcApiKey(ngcApiKeyInput);
   const cohort = process.env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT ?? "";
@@ -924,14 +960,14 @@ export async function qualifyProtectedManagedImageRuntime(
   const providerStates = [vllmState, nimState] as const;
 
   cleanup.trackDisposable("remove protected vLLM container", async () => {
-    await removeProtectedProviderContainer(host, vllmState, "cleanup-vllm-container");
+    await removeProtectedProviderContainer(fixtures.host, vllmState, "cleanup-vllm-container");
   });
   cleanup.trackDisposable("remove protected NIM container", async () => {
-    await removeProtectedProviderContainer(host, nimState, "cleanup-nim-container");
+    await removeProtectedProviderContainer(fixtures.host, nimState, "cleanup-nim-container");
   });
   cleanup.trackDisposable("stop protected Ollama runtime", async () => {
     killStaleProxy();
-    const result = await cleanupOllama(host, "cleanup-managed-image-ollama");
+    const result = await cleanupOllama(fixtures.host, "cleanup-managed-image-ollama");
     expect(result.exitCode, resultText(result)).toBe(0);
   });
 
@@ -967,11 +1003,21 @@ export async function qualifyProtectedManagedImageRuntime(
 
     activePhase = "qualify all managed agents with GPU-backed vLLM";
     progress.phase("qualify all managed agents with GPU-backed vLLM");
-    await startProtectedVllm(host, vllmState);
+    const vllmImagePulledByRun = await startProtectedVllm(host, vllmState);
     await qualifyEveryAgent(host, contracts, "vllm", VLLM_MODEL, {
       NEMOCLAW_VLLM_LOCAL_TOKEN: randomBytes(24).toString("hex"),
     });
     await removeProtectedProviderContainer(host, vllmState, "stop-vllm-before-nim");
+    if (vllmImagePulledByRun) {
+      // Free the vLLM image this run pulled before NIM downloads its model. This
+      // frees space when the image store and NIM cache share a filesystem (#13135).
+      // The artifact records the result; NIM readiness gates.
+      await host.command("docker", ["image", "rm", VLLM_IMAGE], {
+        artifactName: "remove-run-pulled-vllm-image",
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 120_000,
+      });
+    }
 
     activePhase = "qualify all managed agents with GPU-backed NVIDIA NIM";
     progress.phase("qualify all managed agents with GPU-backed NVIDIA NIM");
@@ -983,8 +1029,8 @@ export async function qualifyProtectedManagedImageRuntime(
 
     activePhase = "prove all-agent managed bootstrap rollback and exact cleanup";
     progress.phase("prove all-agent managed bootstrap rollback and exact cleanup");
-    await qualifyEveryRollback(host, contracts);
-    await proveOwnedRuntimeInventoryClean(host, cohort, providerStates);
+    await qualifyEveryRollback(rollbackHost, contracts);
+    await proveOwnedRuntimeInventoryClean(rollbackHost, cohort, providerStates);
     const providerContainers = providerStates.map(({ authority }) => {
       if (!authority) throw new Error("protected provider authority is missing from the receipt");
       return authority;
@@ -1001,76 +1047,4 @@ export async function qualifyProtectedManagedImageRuntime(
       cause: error,
     });
   }
-}
-
-// The runner tests own TCP forwarding, input rejection, and listener closure.
-// This case owns Docker address inspection and host access to an internal network.
-export async function qualifyQualificationRelay({
-  cleanup,
-  progress,
-}: Pick<E2ETargetFixtures, "cleanup" | "progress">): Promise<void> {
-  const owner = randomUUID();
-  const names = {
-    containerName: `nc-relay-${owner}`,
-    networkName: `nc-relay-${owner}`,
-    registryOwner: owner,
-  };
-  const label = `io.nvidia.nemoclaw.llama-cpp-qualification-owner=${owner}`;
-  const docker = (...args: string[]) =>
-    execFileSync("docker", args, {
-      encoding: "utf8",
-      timeout: 120_000,
-      killSignal: "SIGKILL",
-      stdio: ["ignore", "pipe", "pipe"],
-    }).trim();
-  const image =
-    "node:24.18.1-trixie-slim@sha256:ac39e4b5fcb2b1b34b20364fd58b2e898f3bb80731ee6f62a7536f9df3d6aadc";
-  progress.phase("create internal Docker fixture");
-  docker("pull", image);
-  const networkId = docker("network", "create", "--internal", "--label", label, names.networkName);
-  cleanup.trackDisposable("remove qualification fixture network", () => {
-    docker("network", "rm", networkId);
-  });
-  const containerId = docker(
-    "run",
-    "--detach",
-    "--name",
-    names.containerName,
-    "--label",
-    label,
-    "--network",
-    names.networkName,
-    "--read-only",
-    "--user",
-    "1000:1000",
-    "--cap-drop",
-    "ALL",
-    "--security-opt",
-    "no-new-privileges",
-    "--memory",
-    "128m",
-    "--pids-limit",
-    "32",
-    image,
-    "node",
-    "-e",
-    'require("node:http").createServer((req,res)=>res.end("internal-relay-ok")).listen(8081,"0.0.0.0")',
-  );
-  cleanup.trackDisposable("remove qualification fixture container", () => {
-    docker("rm", "--force", containerId);
-  });
-  // Wait for the fixture itself before testing the host-to-bridge handoff.
-  docker(
-    "exec",
-    containerId,
-    "node",
-    "-e",
-    'const end=Date.now()+10000; (async()=>{while(true){try{await fetch("http://127.0.0.1:8081");break}catch(e){if(Date.now()>end)throw e;await new Promise(r=>setTimeout(r,50))}}})()',
-  );
-  progress.phase("probe qualification relay");
-  const relay = await startQualificationLoopbackRelay(resolveRequestGuardAddress(names), 8081, 5);
-  cleanup.trackDisposable("close qualification fixture relay", () => relay.close());
-  const url = `http://127.0.0.1:${relay.port}`;
-  const response = await fetch(url, { signal: AbortSignal.timeout(5000) });
-  expect(await response.text()).toBe("internal-relay-ok");
 }

@@ -32,6 +32,7 @@ export const PRE_CANDIDATE_STEP_ENV: Readonly<Record<string, Readonly<Record<str
   },
   "Record trusted E2E dispatch receipt": {
     ACTOR: "${{ github.actor }}",
+    ALLOW_DGX_SPARK_RUNNER_QUEUE: "${{ inputs.allow_dgx_spark_runner_queue && 'true' || 'false' }}",
     ALLOW_JETSON_DISPATCH: "${{ inputs.allow_jetson_dispatch && 'true' || 'false' }}",
     ALLOW_JETSON_RUNNER_QUEUE: "false",
     BASE_SHA: "${{ inputs.checkout_sha != '' && inputs.base_sha || github.sha }}",
@@ -76,15 +77,19 @@ export const PRE_CANDIDATE_STEP_ENV: Readonly<Record<string, Readonly<Record<str
   },
   "Stage immutable native Podman E2E toolchains": {},
   "Resolve reviewed candidate OpenShell version": {
+    MCP_RUNTIME_REQUIRED:
+      "${{ contains(fromJSON(steps.matrix.outputs.selected_jobs), 'mcp-bridge') || contains(fromJSON(steps.matrix.outputs.selected_jobs), 'openshell-credential-generation-window') }}",
     CANDIDATE_REPOSITORY: "${{ inputs.checkout_repository || github.repository }}",
     CANDIDATE_SHA: "${{ inputs.checkout_sha || github.sha }}",
+    UPGRADE_PR_NUMBER: "${{ inputs.pr_number }}",
+    UPGRADE_BASE_SHA: "${{ inputs.base_sha }}",
     GITHUB_TOKEN: "${{ github.token }}",
   },
 };
 
 export const PRE_CANDIDATE_STEP_CONDITIONS: Readonly<Record<string, string | undefined>> = {
   "Resolve reviewed candidate OpenShell version":
-    "${{ contains(fromJSON(steps.matrix.outputs.selected_jobs), 'openshell-gateway-auth-contract') || contains(fromJSON(steps.matrix.outputs.selected_jobs), 'external-gateway-health') }}",
+    "${{ contains(fromJSON(steps.matrix.outputs.selected_jobs), 'openshell-gateway-auth-contract') || contains(fromJSON(steps.matrix.outputs.selected_jobs), 'external-gateway-health') || contains(fromJSON(steps.matrix.outputs.selected_jobs), 'mcp-bridge') || contains(fromJSON(steps.matrix.outputs.selected_jobs), 'openshell-credential-generation-window') }}",
   "Authenticate manual PR dispatch":
     "${{ inputs.pr_number != '' || inputs.checkout_sha != '' || inputs.checkout_repository != '' || inputs.base_sha != '' || inputs.workflow_sha != '' }}",
   "Record trusted E2E dispatch receipt": "${{ github.event_name == 'workflow_dispatch' }}",

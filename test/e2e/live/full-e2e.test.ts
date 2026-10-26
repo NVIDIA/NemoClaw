@@ -3,6 +3,7 @@
 
 import { approveOpenClawAdminScope } from "./openclaw-admin-scope.ts";
 import fs from "node:fs";
+import { buildSandboxInferenceChatCommand } from "../fixtures/inference-adapter.ts";
 import os from "node:os";
 import path from "node:path";
 import { shellQuote } from "../../../src/lib/core/shell-quote.ts";
@@ -47,6 +48,7 @@ import {
 } from "../fixtures/openclaw-agent-output.ts";
 import { buildOpenClawFirstTurnLatencyEvidence } from "./agent-turn-latency-helpers.ts";
 import {
+  readFullE2eInferenceRoute,
   FULL_E2E_INFERENCE_CAPTURE_LIMIT_BYTES,
   fullE2eInferenceProbeEvidence,
   runFullE2eInferenceProbe,
@@ -296,11 +298,7 @@ async function invokeNativeWeatherPlugin(
     ),
     { artifactName, env: env(), timeoutMs: 60_000 },
   );
-  await captureNativePluginFailureReadiness(sandbox, result, {
-    sandboxName: SANDBOX_NAME,
-    artifactName,
-    env: env(),
-  });
+  await captureNativePluginFailureReadiness(sandbox, result, SANDBOX_NAME, artifactName, env());
   const document = parseOpenClawJsonDocuments(result.stdout)[0] as
     | {
         ok?: boolean;
@@ -331,13 +329,15 @@ async function exerciseNativeOpenClawPluginVersion(
     },
   );
   expect(install.exitCode, resultText(install)).toBe(0);
+  const restartArtifact = `phase-4-native-plugin-gateway-restart-${version}`;
   const restart = await repoNemoclaw(
     host,
     [SANDBOX_NAME, "gateway", "restart"],
-    `phase-4-native-plugin-gateway-restart-${version}`,
+    restartArtifact,
     {},
     180_000,
   );
+  await captureNativePluginFailureReadiness(sandbox, restart, SANDBOX_NAME, restartArtifact, env());
   expect(restart.exitCode, resultText(restart)).toBe(0);
   await invokeNativeWeatherPlugin(sandbox, version, `phase-4-native-plugin-invoke-${version}`);
 }
@@ -435,6 +435,8 @@ console.log(JSON.stringify({
 async function runOpenClawLaunchTurns(input: {
   host: HostCliClient;
   model: string;
+  logicalProvider: string;
+  endpointUrl?: string;
   redactionValues: string[];
   sandbox: SandboxClient;
 }): Promise<void> {
@@ -475,7 +477,11 @@ sha256sum /sandbox/.bashrc /sandbox/.profile > /tmp/nemoclaw-e2e-profiles.sha256
       timeoutMs: 30_000,
     },
   );
-  const nativeModel = buildNativeModelRestartFixture(input.model);
+  const nativeModel = buildNativeModelRestartFixture(
+    input.model,
+    input.logicalProvider,
+    input.endpointUrl,
+  );
   const editNativeModel = await input.sandbox.exec(
     SANDBOX_NAME,
     ["/usr/bin/env", "HOME=/sandbox", "/usr/local/bin/openclaw", "config", "patch", "--stdin"],
@@ -670,6 +676,7 @@ sha256sum /sandbox/.bashrc /sandbox/.profile > /tmp/nemoclaw-e2e-profiles.sha256
   ).toBe(true);
 
   await runOpenClawLaunchReadinessLeaseTurns({
+    qualifyGroupWritableHome: process.env.GITHUB_ACTIONS === "true" && !USE_PREINSTALLED_LAUNCHABLE,
     artifactName: "phase-4-openclaw-launch-turn",
     cliCommand: USE_PREINSTALLED_LAUNCHABLE ? "nemoclaw" : process.execPath,
     ...(!USE_PREINSTALLED_LAUNCHABLE ? { cliEntrypoint: CLI_ENTRYPOINT } : {}),
@@ -1006,7 +1013,7 @@ test(
         "sandbox appears in list/status and has policy/inference configuration",
         "native OpenClaw install, invoke, update, self-update, restart, discovery, and removal are not intercepted",
         "an unregistered native-home file survives the exercised native lifecycle",
-        "direct hosted inference and sandbox inference.local both respond",
+        "direct hosted inference and the sandbox's configured inference route both respond",
         ...(USE_PREINSTALLED_LAUNCHABLE
           ? [
               "fresh same-agent onboarding reuses the exact retained external gateway registration and restores inference",
@@ -1205,15 +1212,17 @@ test(
       },
     );
 
-    const inference = await sandbox.openshell(["inference", "get"], {
-      artifactName: "phase-3-openshell-inference-get",
+    const nativeEndpointUrl = getSandbox(SANDBOX_NAME)?.nativeHostedProviderAttachment?.endpointUrl;
+    const inferenceRoute = await readFullE2eInferenceRoute({
+      sandbox,
+      sandboxName: SANDBOX_NAME,
+      entry: getSandbox(SANDBOX_NAME),
+      logicalProvider: hosted.providerName,
+      model: hosted.model,
       env: env(),
-      timeoutMs: 60_000,
+      redactionValues,
     });
-    expect(
-      inference.exitCode === 0 && resultText(inference).includes(hosted.model),
-      resultText(inference),
-    ).toBe(true);
+    expect(inferenceRoute.ok, inferenceRoute.detail).toBe(true);
 
     const policy = await sandbox.openshell(["policy", "get", "--full", SANDBOX_NAME], {
       artifactName: "phase-3-openshell-policy-get",
@@ -1246,17 +1255,11 @@ test(
         run: (availabilityAttempt) =>
           sandbox.exec(
             SANDBOX_NAME,
-            [
-              "curl",
-              "-fsS",
-              "--max-time",
-              "90",
-              "https://inference.local/v1/chat/completions",
-              "-H",
-              "Content-Type: application/json",
-              "--data-raw",
+            buildSandboxInferenceChatCommand(
               attempt.requestBody,
-            ],
+              hosted.providerName,
+              nativeEndpointUrl,
+            ),
             {
               artifactName: `${attempt.artifactName}-availability-${availabilityAttempt}`,
               captureLimitBytes: FULL_E2E_INFERENCE_CAPTURE_LIMIT_BYTES,
@@ -1302,7 +1305,14 @@ test(
 
     progress.phase("verify native configuration across restart and launch");
     await (process.platform === "linux"
-      ? runOpenClawLaunchTurns({ host, model: hosted.model, redactionValues, sandbox })
+      ? runOpenClawLaunchTurns({
+          host,
+          model: hosted.model,
+          logicalProvider: hosted.providerName,
+          endpointUrl: nativeEndpointUrl,
+          redactionValues,
+          sandbox,
+        })
       : Promise.resolve());
 
     progress.phase("exercise native plugin package and update lifecycle");
@@ -1387,17 +1397,11 @@ test(
               run: (availabilityAttempt) =>
                 sandbox.exec(
                   SANDBOX_NAME,
-                  [
-                    "curl",
-                    "-fsS",
-                    "--max-time",
-                    "90",
-                    "https://inference.local/v1/chat/completions",
-                    "-H",
-                    "Content-Type: application/json",
-                    "--data-raw",
+                  buildSandboxInferenceChatCommand(
                     attempt.requestBody,
-                  ],
+                    hosted.providerName,
+                    nativeEndpointUrl,
+                  ),
                   {
                     artifactName: `retained-${attempt.artifactName}-availability-${availabilityAttempt}`,
                     captureLimitBytes: FULL_E2E_INFERENCE_CAPTURE_LIMIT_BYTES,

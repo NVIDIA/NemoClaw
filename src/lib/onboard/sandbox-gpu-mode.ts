@@ -3,6 +3,7 @@
 
 import type { GpuDetection } from "../inference/nim";
 import type { SandboxGpuProofResult } from "../state/registry";
+import type { Session } from "../state/onboard-session";
 import { normalizeSandboxGpuDeviceForCdi } from "./sandbox-gpu-create";
 
 export type SandboxGpuMode = "auto" | "1" | "0";
@@ -108,10 +109,13 @@ export function getResumeSandboxGpuOverrides(
     | null
     | undefined,
   sessionGpuPassthrough: boolean | undefined,
+  sessionSelection?: Session["sandboxGpuSelection"],
 ): ResumeSandboxGpuOverrides {
-  const recordedMode = normalizeSandboxGpuMode(entry?.sandboxGpuMode);
+  const registryMode = normalizeSandboxGpuMode(entry?.sandboxGpuMode);
+  const recordedMode = registryMode ?? sessionSelection?.mode;
+  const recordedDevice = registryMode ? entry?.sandboxGpuDevice : sessionSelection?.device;
   if (recordedMode === "1") {
-    return { flag: "enable", device: entry?.sandboxGpuDevice || null };
+    return { flag: "enable", device: recordedDevice || null };
   }
   if (recordedMode === "0") {
     return { flag: "disable", device: null };

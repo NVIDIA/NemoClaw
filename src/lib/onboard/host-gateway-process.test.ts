@@ -244,6 +244,90 @@ describe("host gateway cleanup boundaries", () => {
 });
 
 describe("stopHostGatewayProcesses", () => {
+  it.runIf(process.platform === "linux")(
+    "waits for a live thread after its gateway leader exits",
+    () => {
+      const pid = 9999885;
+      const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-thread-exit-"));
+      const snapshots = ["S\n", "Z\nS\n", "Z\n"];
+      const status = vi.fn(() => ok(snapshots.shift() ?? "Z\n"));
+      const responses = new Map(psResponses(pid, { exited: new Set() }));
+      responses.set(`ps -p ${pid} -o stat=`, () => ok(status().stdout.split("\n")[0]));
+      responses.set(`ps -p ${pid} -o stat= -L`, status);
+      const { run } = makeRun(responses);
+      const kill = vi.fn<HostGatewayProcessDeps["kill"]>(() => true);
+      try {
+        fs.writeFileSync(path.join(stateDir, "openshell-gateway.pid"), String(pid));
+        const result = stopHostGatewayProcesses(
+          { run, kill, env: { USER: "tester" }, log: vi.fn() },
+          { stateDir, usePgrepFallback: false, pollIntervalMs: 0 },
+        );
+        expect(result.stopped).toEqual([pid]);
+        expect(snapshots).toEqual([]);
+        expect(kill.mock.calls).toEqual([[pid, "SIGTERM"]]);
+      } finally {
+        fs.rmSync(stateDir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.runIf(process.platform === "linux").each([
+    ["live thread", ok("Z\nS\n")],
+    ["unknown thread", ok("Z\n?\n")],
+    ["empty status", ok("")],
+    ["failed scan", { status: 1, stdout: "", stderr: "permission denied" }],
+    ["interrupted scan", { status: null, stdout: "", stderr: "" }],
+  ] as const)("retains gateway PID evidence for %s", (_label, status) => {
+    const pid = 9999884;
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-thread-status-"));
+    const pidFile = path.join(stateDir, "openshell-gateway.pid");
+    const { run } = makeRun(new Map([[`ps -p ${pid} -o stat= -L`, status]]));
+    const kill = vi.fn<HostGatewayProcessDeps["kill"]>(() => true);
+    try {
+      fs.writeFileSync(pidFile, String(pid));
+      const result = stopHostGatewayProcesses(
+        { run, kill, env: {} },
+        { stateDir, usePgrepFallback: false, preserveRuntimeFilesOnNonMatching: true },
+      );
+      expect(result.skippedDeadPids).toEqual([]);
+      expect(kill).not.toHaveBeenCalled();
+      expect(fs.readFileSync(pidFile, "utf8")).toBe(String(pid));
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it.runIf(process.platform === "linux")(
+    "keeps the shutdown deadline for a lingering gateway thread",
+    () => {
+      const pid = 9999883;
+      const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-thread-deadline-"));
+      const pidFile = path.join(stateDir, "openshell-gateway.pid");
+      const responses = new Map(psResponses(pid, { exited: new Set() }));
+      responses.set(
+        `ps -p ${pid} -o stat= -L`,
+        vi.fn(() => ok("Z\nS\n")).mockReturnValueOnce(ok("S\n")),
+      );
+      const { run } = makeRun(responses);
+      const kill = vi.fn<HostGatewayProcessDeps["kill"]>(() => true);
+      try {
+        fs.writeFileSync(pidFile, String(pid));
+        const result = stopHostGatewayProcesses(
+          { run, kill, env: { USER: "tester" }, warn: vi.fn() },
+          { stateDir, usePgrepFallback: false, termWaitMs: 0, killWaitMs: 0, pollIntervalMs: 0 },
+        );
+        expect(result.failed).toEqual([pid]);
+        expect(kill.mock.calls).toEqual([
+          [pid, "SIGTERM"],
+          [pid, "SIGKILL"],
+        ]);
+        expect(fs.readFileSync(pidFile, "utf8")).toBe(String(pid));
+      } finally {
+        fs.rmSync(stateDir, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("treats a zombie gateway as stopped without signaling its PID (#7744)", () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-host-gateway-zombie-"));
     const pidFile = path.join(stateDir, "openshell-gateway.pid");

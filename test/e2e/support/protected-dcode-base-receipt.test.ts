@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   inspectProtectedDcodeBase,
   verifyProtectedDcodeBaseReceipt,
+  verifyReusableProtectedDcodeBaseReceipt,
   type ProtectedDcodeBaseIdentity,
 } from "../../../scripts/checks/protected-dcode-base-receipt.mts";
 
@@ -23,6 +24,7 @@ afterEach(() => {
 function fixture(
   platform: ProtectedDcodeBaseIdentity["platform"] = "linux/amd64",
   agent: "openclaw" | "hermes" | "langchain-deepagents-code" = "langchain-deepagents-code",
+  cohort = "protected-37164014229-1",
 ) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "protected-dcode-base-"));
   directories.push(root);
@@ -31,7 +33,7 @@ function fixture(
   const expected: ProtectedDcodeBaseIdentity = {
     sourceRevision: "a".repeat(40),
     workflowSha: "b".repeat(40),
-    cohort: "protected-37164014229-1",
+    cohort,
     platform,
   };
   function blob(body: Buffer, mediaType: string) {
@@ -199,6 +201,43 @@ describe("protected DCode base artifact handoff", () => {
     expect(() =>
       verifyProtectedDcodeBaseReceipt(f.layout, f.receiptPath, { ...f.expected, ...change }),
     ).toThrow();
+  });
+
+  it.each([
+    ["the producer attempt", "protected-37164014229-1"],
+    ["a later consumer attempt", "protected-37164014229-2"],
+  ])("accepts reusable OCI evidence for %s", (_case, cohort) => {
+    const f = fixture();
+    expect(
+      verifyReusableProtectedDcodeBaseReceipt(f.layout, f.receiptPath, {
+        ...f.expected,
+        cohort,
+      }),
+    ).toEqual(f.receipt);
+  });
+
+  it.each([
+    ["another workflow run", "protected-37164014230-2", "protected-37164014229-1"],
+    ["a future producer attempt", "protected-37164014229-1", "protected-37164014229-2"],
+  ])("rejects reusable OCI evidence from %s", (_case, consumerCohort, producerCohort) => {
+    const f = fixture("linux/amd64", "langchain-deepagents-code", producerCohort);
+    expect(() =>
+      verifyReusableProtectedDcodeBaseReceipt(f.layout, f.receiptPath, {
+        ...f.expected,
+        cohort: consumerCohort,
+      }),
+    ).toThrow(/cohort/);
+  });
+
+  it("rejects reusable OCI evidence with a malformed producer cohort", () => {
+    const f = fixture();
+    fs.writeFileSync(f.receiptPath, JSON.stringify({ ...f.receipt, cohort: "invalid" }));
+    expect(() =>
+      verifyReusableProtectedDcodeBaseReceipt(f.layout, f.receiptPath, {
+        ...f.expected,
+        cohort: "protected-37164014229-2",
+      }),
+    ).toThrow(/cohort/);
   });
 
   it.each(["digest", "imageId", "reference", "unexpected"])(

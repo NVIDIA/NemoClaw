@@ -118,7 +118,7 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
       const messagingPermissionCommand = dockerRunCommandBetween(
         dockerfile,
         "COPY src/lib/messaging/ /src/lib/messaging/",
-        "# Bake reduced messaging runtime metadata for the entrypoint",
+        "# Persist the reduced messaging plan for runtime startup.",
       );
       const runtimePermissionCommand = dockerRunCommandBetween(
         dockerfile,

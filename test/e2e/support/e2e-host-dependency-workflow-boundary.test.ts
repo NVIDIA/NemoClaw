@@ -26,7 +26,7 @@ const ACTION_PATH = path.join(
 );
 const SCRIPT_PATH = path.join(REPO_ROOT, ".github", "scripts", "host-dependency-setup.sh");
 const ACTION_USES =
-  "NVIDIA/NemoClaw/.github/actions/host-dependency-setup@d511d704980d651909b52b18ee42fad41a017b7d";
+  "NVIDIA/NemoClaw/.github/actions/host-dependency-setup@e85857e2a7bfb2af01241ecbce5947ee774c1280";
 
 interface WorkflowStep {
   if?: string;
@@ -207,7 +207,7 @@ exit 64
         expect(fs.existsSync(callsPath)).toBe(false);
 
         const retried = runSetup(
-          "expect iptables conmon fuse-overlayfs golang-github-containers-common nftables slirp4netns uidmap",
+          "expect iptables conmon crun fuse-overlayfs golang-github-containers-common nftables slirp4netns uidmap",
           3,
         );
         expect(retried.status, retried.stderr).toBe(0);
@@ -215,7 +215,7 @@ exit 64
           "apt-get update",
           "apt-get update",
           "apt-get update",
-          "apt-get install -y --no-remove --no-install-recommends expect iptables conmon fuse-overlayfs golang-github-containers-common nftables slirp4netns uidmap",
+          "apt-get install -y --no-remove --no-install-recommends expect iptables conmon crun fuse-overlayfs golang-github-containers-common nftables slirp4netns uidmap",
         ]);
 
         const exhausted = runSetup("expect", 4);

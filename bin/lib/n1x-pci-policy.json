@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "documentedDeviceIds": ["0x2e03", "0x2e06", "0x2e13"],
+  "prototypeDeviceIds": ["0x2e02", "0x2e2a"],
+  "documentedSource": "https://docs.nvidia.com/rtx-spark/rtx-spark-porting-guide/latest/gpu-identification.html",
+  "prototypeSources": [
+    "https://github.com/NVIDIA/NemoClaw/issues/8574",
+    "https://github.com/NVIDIA/NemoClaw/issues/10076"
+  ]
+}

@@ -60,9 +60,11 @@ import {
 import {
   executeSandboxDestroy,
   recordDestroyCompletion,
+  retireDestroyedSandboxNativeLocalProvider,
   preparePortableDemoSandboxDestroyAuthority,
   redactDestroyError,
   retirePortableLifecycleAuthority,
+  stopSandboxInferenceResources,
 } from "./destroy-execution";
 import {
   cleanupGatewayAfterLastSandbox,
@@ -83,6 +85,7 @@ import {
 import { withSandboxLifecycleLock } from "./lifecycle/lock";
 import {
   prepareSandboxDestroy,
+  reconcileIdentityFreeRecovery,
   recordManagedVllmRetirementPending,
   reportManagedVllmDestroyOutcome,
   resolveSandboxDestroyRegistryAuthority,
@@ -92,7 +95,6 @@ import {
   listInferenceRouteOwnersAcrossGatewayRoots,
   stopModelRouterForDestroyedSandbox,
   stopDestroyedSandboxProxy,
-  stopSandboxInferenceResources,
   teardownSandboxDashboardForward,
 } from "./destroy-preflight";
 
@@ -753,6 +755,35 @@ async function destroySandboxUnlocked(
   }
   const destroySession = onboardSession.loadSession();
   const retainedRecoveryRecords = onboardSession.listRetainedSandboxRecoveryRecords();
+  try {
+    if (
+      reconcileIdentityFreeRecovery(
+        sandboxName,
+        retainedRecoveryRecords,
+        registryAuthority.gatewayPort,
+        {
+          session: onboardSession,
+          registry,
+          forceLocal: normalized.force === true,
+          ...(retireRemovedImmutabilityState
+            ? {
+                retireRemovedImmutabilityState: () => {
+                  retireRemovedImmutabilityStateRecord(sandboxName, "sandbox-destroyed");
+                },
+              }
+            : {}),
+        },
+      )
+    ) {
+      console.log(
+        `  Cleared retained recovery for '${sandboxName}'. No sandbox resources were removed.`,
+      );
+      return;
+    }
+  } catch (error) {
+    console.error(`  ${redactDestroyError(error)}`);
+    requestSandboxDestroyExit(1);
+  }
   const retainedRecoveryAuthority = selectRetainedSandboxRecoveryAuthority(
     sandboxName,
     registeredSandbox,
@@ -1117,6 +1148,17 @@ async function destroySandboxUnlocked(
   const deleteSucceededOrAlreadyGone = deleteResult.kind !== "failed" || alreadyGone;
   if (!deleteSucceededOrAlreadyGone) {
     preparedManagedLlamaCppCleanup?.abort();
+  }
+  if (deleteSucceededOrAlreadyGone && sandbox) {
+    await retireDestroyedSandboxNativeLocalProvider(
+      sandbox,
+      cleanupGatewayName,
+      runOpenshell,
+      destroyRuntimeSelection,
+    ).catch((error) => {
+      preparedManagedLlamaCppCleanup?.abort();
+      throw error;
+    });
   }
   if (deleteSucceededOrAlreadyGone && sandbox) {
     abortPreparedCleanupOnError(() =>

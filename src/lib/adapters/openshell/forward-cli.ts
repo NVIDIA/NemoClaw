@@ -7,6 +7,7 @@ import net from "node:net";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 
+import { MAX_TIMER_DELAY_MS } from "../../core/timer";
 import { isValidName } from "../../name-validation";
 import {
   captureOpenshellCommandAsyncResult,
@@ -40,7 +41,6 @@ const DEFAULT_RELEASE_TIMEOUT_MS = 5_000;
 const DEFAULT_POLL_INTERVAL_MS = 100;
 const DEFAULT_OUTPUT_LIMIT_BYTES = 64 * 1024;
 const DEFAULT_PROC_WORK_LIMIT = 50_000;
-const MAX_TIMER_TIMEOUT_MS = 2_147_483_647;
 const SAFE_FORWARD_SIGNALS = new Set([
   "SIGABRT",
   "SIGHUP",
@@ -423,7 +423,7 @@ function validRuntimeSelection(runtimeSelection: OpenShellRuntimeSelection): boo
 function validTimeout(timeoutMs: number | undefined): boolean {
   return (
     timeoutMs === undefined ||
-    (Number.isSafeInteger(timeoutMs) && timeoutMs >= 1 && timeoutMs <= MAX_TIMER_TIMEOUT_MS)
+    (Number.isSafeInteger(timeoutMs) && timeoutMs >= 1 && timeoutMs <= MAX_TIMER_DELAY_MS)
   );
 }
 
@@ -616,6 +616,20 @@ function parseDarwinHostingExecutable(output: string): string | null {
     : null;
 }
 
+const LSOF_MOUNT_WARNING = /^lsof: WARNING: can't stat\(\) \S+ file system \S.*$/u;
+// lsof appends this continuation line to its mount warnings.
+const LSOF_INCOMPLETE_NOTE = "Output information may be incomplete.";
+
+function onlyBenignLsofMountWarnings(stderr: string): boolean {
+  let afterWarning = false;
+  for (const line of stderr.split(/\r?\n/u).map((l) => l.trim())) {
+    if (!line) continue;
+    if (LSOF_MOUNT_WARNING.test(line)) afterWarning = true;
+    else if (!(afterWarning && line === LSOF_INCOMPLETE_NOTE)) return false;
+  }
+  return true;
+}
+
 async function lsofListenerPids(
   port: number,
   platform: NodeJS.Platform,
@@ -631,12 +645,18 @@ async function lsofListenerPids(
     run,
   );
   if ((result.error as NodeJS.ErrnoException | undefined)?.code === "ENOENT") return "unavailable";
+  // lsof exits 1 with empty stdout when nothing listens. On Linux it may still
+  // warn about unstattable fuse mounts (e.g. gvfs on Docker hosts); that known
+  // benign noise must not make a free port unprovable (#11979). Any other
+  // stderr diagnostic stays indeterminate: the reachability probe only covers
+  // loopback, so a real lsof error could hide a listener on another interface.
   if (
     result.status === 1 &&
     !result.timedOut &&
     !result.error &&
+    !result.signal &&
     !result.stdout.trim() &&
-    !result.stderr.trim()
+    (platform === "linux" ? onlyBenignLsofMountWarnings(result.stderr) : !result.stderr.trim())
   ) {
     return { ok: true, pids: [] };
   }
@@ -1185,7 +1205,7 @@ export function createCliOpenShellForwardAdapter(
     deps.pollIntervalMs !== undefined &&
     Number.isSafeInteger(deps.pollIntervalMs) &&
     deps.pollIntervalMs > 0 &&
-    deps.pollIntervalMs <= MAX_TIMER_TIMEOUT_MS
+    deps.pollIntervalMs <= MAX_TIMER_DELAY_MS
       ? deps.pollIntervalMs
       : DEFAULT_POLL_INTERVAL_MS;
   const run = deps.run ?? defaultRun;

@@ -8,8 +8,12 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { directDockerfileCopySources } from "../../../scripts/lib/dockerfile-copy-sources.mts";
-import { catalogueTargetsForChangedFiles } from "../../../tools/e2e/target-catalogue.mts";
+import { directDockerfileContextSources } from "../../../scripts/lib/dockerfile-copy-sources.mts";
+import { DEFAULT_CLOUD_MODEL } from "../../../src/lib/inference/config.ts";
+import {
+  catalogueTarget,
+  catalogueTargetsForChangedFiles,
+} from "../../../tools/e2e/target-catalogue.mts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
@@ -72,7 +76,7 @@ describe("Pi qualification task construction", () => {
   it.each(["before-rebuild", "after-rebuild", "after-recovery"])(
     "constructs a context-free headless read for %s",
     (phase) => {
-      const taskName = `pi-read-v2-${phase}`;
+      const taskName = `pi-read-v3-${phase}`;
       const task = buildPiReadTask("pi-qual", "/sandbox/task root/workspace", taskName, TOKEN);
 
       expect(task.remotePath).toBe("/sandbox/task root/workspace/task.txt");
@@ -95,7 +99,7 @@ describe("Pi qualification task construction", () => {
         "read",
         "--name",
         taskName,
-        "Use the read tool exactly once to read /sandbox/task root/workspace/task.txt. Reply with exactly the file contents and no other text.",
+        "Use the read tool exactly once to read /sandbox/task root/workspace/task.txt. Reply with exactly the file contents as plain text. Do not add Markdown, code fences, backticks, explanations, or any other text.",
       ]);
     },
   );
@@ -106,7 +110,7 @@ describe("Pi qualification task construction", () => {
     const token = "literal 'quotes' and $HOME";
 
     try {
-      const task = buildPiReadTask("pi-qual", workdir, "pi-read-v2-before-rebuild", token);
+      const task = buildPiReadTask("pi-qual", workdir, "pi-read-v3-before-rebuild", token);
       const result = runReadTaskSeed(root, task.seedScript);
 
       expect(result.error).toBeUndefined();
@@ -131,7 +135,7 @@ describe("Pi qualification task construction", () => {
 
     try {
       fs.writeFileSync(workdir, "occupied");
-      const task = buildPiReadTask("pi-qual", workdir, "pi-read-v2-before-rebuild", TOKEN);
+      const task = buildPiReadTask("pi-qual", workdir, "pi-read-v3-before-rebuild", TOKEN);
       const result = runReadTaskSeed(root, task.seedScript);
 
       expect(result.error).toBeUndefined();
@@ -160,7 +164,7 @@ describe("Pi qualification event oracle", () => {
     const imageSources = new Set<string>([
       ".dockerignore",
       ...["agents/pi/Dockerfile", "agents/pi/Dockerfile.base"].flatMap((dockerfile) =>
-        directDockerfileCopySources(path.join(REPO_ROOT, dockerfile), dockerfile).map(
+        directDockerfileContextSources(path.join(REPO_ROOT, dockerfile), dockerfile).map(
           ({ source }) => source,
         ),
       ),
@@ -184,6 +188,30 @@ describe("Pi qualification event oracle", () => {
     expect(targetIds).not.toContain("pi-agent-qualification-arm64");
   });
 
+  it("qualifies the AMD64 target against public Super VL", () => {
+    expect(DEFAULT_CLOUD_MODEL).toBe("nvidia/nemotron-3.5-super-vl-120b-a12b");
+    expect(catalogueTarget("pi-agent-qualification-amd64").environment).toMatchObject({
+      NEMOCLAW_E2E_INFERENCE_MODE: "public-nvidia",
+      NEMOCLAW_MODEL: DEFAULT_CLOUD_MODEL,
+    });
+    const config = (model: string) =>
+      JSON.stringify({
+        providers: {
+          openshell: {
+            api: "openai-completions",
+            baseUrl: "https://integrate.api.nvidia.com/v1",
+            models: [{ id: model }],
+          },
+        },
+      });
+    expect(parsePiInferenceEvidence(config(DEFAULT_CLOUD_MODEL), DEFAULT_CLOUD_MODEL).model).toBe(
+      DEFAULT_CLOUD_MODEL,
+    );
+    expect(() =>
+      parsePiInferenceEvidence(config("nvidia/nemotron-3-super-120b-a12b"), DEFAULT_CLOUD_MODEL),
+    ).toThrow("does not match the qualified route");
+  });
+
   it("accepts one successful read and an exact final response", () => {
     const events = parsePiJsonEvents(eventStream());
 
@@ -192,6 +220,34 @@ describe("Pi qualification event oracle", () => {
       eventCount: 5,
       toolCallId: "call-read",
     });
+  });
+
+  it("rejects the observed trailing Markdown fence without retrying (#13364)", () => {
+    const recordedReply = `${TOKEN}\n\`\`\``;
+    const stream = parsePiJsonEvents(eventStream());
+    stream[3] = {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        stopReason: "stop",
+        content: [{ type: "text", text: recordedReply }],
+      },
+    };
+    let failure: unknown;
+    try {
+      qualifyPiReadTask(stream, PATH, TOKEN);
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toContain("instead of exact file contents");
+    expect(
+      classifyPiReadTaskAttempt(
+        { failure, proof: undefined, result: { ...failedProbe(), exitCode: 0 } },
+        undefined,
+      ),
+    ).toEqual({ outcome: "failed", failureClass: "deterministic" });
   });
 
   it("rejects malformed JSON, another tool, a failed read, and altered output", () => {

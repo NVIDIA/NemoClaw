@@ -406,19 +406,22 @@ export async function cleanupTurnSandbox(
   }
 }
 
+// Hosted custom endpoints attach a native provider to the sandbox, so the
+// gateway-global route stays unconfigured. Sandbox status reports the recorded
+// provider and model and exits nonzero when its live inference probe fails.
 export async function route(
-  sandbox: SandboxClient,
+  host: HostCliClient,
   sandboxName: string,
   agent: "openclaw" | "hermes",
   inference: AgentTurnInference,
   artifactName: string,
   progress?: Pick<TestProgress, "onOutput">,
 ): Promise<ShellProbeResult> {
-  return await sandbox.openshell(["inference", "get", "-g", "nemoclaw"], {
+  return await host.nemoclaw([sandboxName, "status"], {
     artifactName,
     env: env(sandboxName, agent, inference),
     onOutput: progress?.onOutput,
-    timeoutMs: 30_000,
+    timeoutMs: 120_000,
   });
 }
 
