@@ -44,6 +44,89 @@ describe("createResumeProviderShim", () => {
     );
   });
 
+  it.each([null, "NVIDIA_INFERENCE_API_KEY", "TEAM_NVIDIA_KEY"])(
+    "revalidates a recorded native NVIDIA provider without requiring a host key (%s)",
+    async (credentialEnv) => {
+      vi.stubEnv("NVIDIA_INFERENCE_API_KEY", "");
+      vi.stubEnv("TEAM_NVIDIA_KEY", "");
+      vi.spyOn(process, "exit").mockImplementation(() => {
+        throw new Error("unexpected credential prompt during native resume");
+      });
+      const providerExistsInGateway = vi.fn((name: string) => name === "nemoclaw-nvidia-prod-v1");
+      const replaceNamedCredential = vi.fn(async () => "unexpected");
+      const getSandbox = vi.fn(() => ({
+        pendingRouteReservation: false,
+        nativeNvidiaProviderAttachment: {
+          schemaVersion: 1 as const,
+          profileId: "nemoclaw-nvidia-inference-v1" as const,
+          providerName: "nemoclaw-nvidia-prod-v1" as const,
+          providerId: "owned-provider-id",
+        },
+      }));
+      const shim = createResumeProviderShim({
+        getSandbox,
+        isNonInteractive: () => true,
+        providerExistsInGateway,
+        isRoutedInferenceProvider: () => true,
+        replaceNamedCredential,
+      });
+
+      await expect(
+        shim.ensureResumeProviderReady("gateway-west", "nvidia-prod", credentialEnv, undefined, {
+          sandboxName: "alpha",
+          endpointUrl: null,
+        }),
+      ).resolves.toEqual({
+        forceInferenceSetup: true,
+        credentialEnv: credentialEnv ?? "NVIDIA_INFERENCE_API_KEY",
+      });
+      expect(getSandbox).toHaveBeenCalledWith("alpha");
+      expect(providerExistsInGateway).not.toHaveBeenCalled();
+      expect(replaceNamedCredential).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([null, {}, { schemaVersion: 1, profileId: "wrong-profile" }])(
+    "rejects a malformed native NVIDIA receipt before recovering credentials (%j)",
+    async (attachment) => {
+      const providerExistsInGateway = vi.fn(() => true);
+      const replaceNamedCredential = vi.fn(async () => "unexpected");
+      const shim = createResumeProviderShim({
+        getSandbox: () => ({ nativeNvidiaProviderAttachment: attachment as never }),
+        isNonInteractive: () => true,
+        providerExistsInGateway,
+        isRoutedInferenceProvider: () => true,
+        replaceNamedCredential,
+      });
+      await expect(
+        shim.ensureResumeProviderReady("gateway-west", "nvidia-prod", null, undefined, {
+          sandboxName: "alpha",
+          endpointUrl: null,
+        }),
+      ).rejects.toThrow("Invalid native NVIDIA provider attachment during resume");
+      expect(providerExistsInGateway).not.toHaveBeenCalled();
+      expect(replaceNamedCredential).not.toHaveBeenCalled();
+    },
+  );
+
+  it("preserves legacy NVIDIA recovery without a native attachment", async () => {
+    const providerExistsInGateway = vi.fn(() => true);
+    const shim = createResumeProviderShim({
+      getSandbox: () => ({}),
+      isNonInteractive: () => true,
+      providerExistsInGateway,
+      isRoutedInferenceProvider: () => true,
+      replaceNamedCredential: vi.fn(async () => "unexpected"),
+    });
+    await expect(
+      shim.ensureResumeProviderReady("gateway-west", "nvidia-prod", null, undefined, {
+        sandboxName: "alpha",
+        endpointUrl: null,
+      }),
+    ).resolves.toEqual({ forceInferenceSetup: false, credentialEnv: null });
+    expect(providerExistsInGateway).toHaveBeenCalledWith("nvidia-prod", "gateway-west");
+  });
+
   it("delegates only an exact managed llama.cpp sandbox to lifecycle recovery (#8144)", async () => {
     const resumeManagedLlamaCppRuntime = vi
       .fn(async (sandboxName: string) => sandboxName === "spark-agent")
