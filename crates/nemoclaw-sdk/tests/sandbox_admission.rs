@@ -19,12 +19,8 @@ use std::fs;
 
 fn document() -> Document {
     let mut value = crate::support::fixture("local.yaml");
-    let mut reviewer = value["spec"]["sandboxes"][0].clone();
-    reviewer["name"] = json!("reviewer");
-    value["spec"]["sandboxes"]
-        .as_array_mut()
-        .unwrap()
-        .push(reviewer);
+    let reviewer = value["spec"]["sandboxes"]["assistant"].clone();
+    value["spec"]["sandboxes"]["reviewer"] = reviewer;
     Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap()
 }
 
@@ -62,14 +58,17 @@ async fn removing_or_replacing_a_bound_sandbox_reaches_planning() {
         let mut value = serde_json::to_value(&original).unwrap();
         match change {
             "remove" => {
-                value["spec"]["sandboxes"].as_array_mut().unwrap().pop();
+                value["spec"]["sandboxes"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("reviewer");
             }
             "image" => {
-                value["spec"]["sandboxes"][1]["image"]["ref"] =
+                value["spec"]["sandboxes"]["reviewer"]["image"]["ref"] =
                     json!(format!("sandbox@sha256:{}", "c".repeat(64)));
             }
             "policy" => {
-                value["spec"]["sandboxes"][1]["network"] =
+                value["spec"]["sandboxes"]["reviewer"]["network"] =
                     json!({"policy": {"explicit": {"version": 1, "network_policies": {}}}});
             }
             _ => unreachable!(),

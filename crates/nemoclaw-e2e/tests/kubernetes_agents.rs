@@ -17,7 +17,13 @@ const SERVICE: &str = "http://qwen.models.svc.cluster.local:8000/v1";
 async fn three_agents_apply_export_reapply_and_destroy(example: &str) {
     let mut document = Document::parse(example.as_bytes()).unwrap();
     assert_eq!(document.spec.sandboxes.len(), 3);
-    let provider = &mut document.spec.inference_providers[0];
+    assert_eq!(document.spec.inference_providers.len(), 1);
+    let provider = document
+        .spec
+        .inference_providers
+        .values_mut()
+        .next()
+        .unwrap();
     provider.endpoint = SERVICE.into();
     provider.credential = None;
     let lifecycle = Lifecycle::start_on_cluster(&document.yaml().unwrap()).await;
@@ -26,7 +32,7 @@ async fn three_agents_apply_export_reapply_and_destroy(example: &str) {
     let applied = fs::read(&state).unwrap();
     {
         let gateway = lifecycle.fixture.state.lock().unwrap();
-        for sandbox in &lifecycle.document.spec.sandboxes {
+        for sandbox in lifecycle.document.sandboxes() {
             let key = format!("{}/{}", lifecycle.document.workspace(), sandbox.name);
             let observed = &gateway.sandboxes[&key];
             let id = &observed.metadata.as_ref().unwrap().id;

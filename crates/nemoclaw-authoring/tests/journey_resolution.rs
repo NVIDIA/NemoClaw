@@ -11,7 +11,7 @@ use serde_json::json;
 
 fn minimum() -> PartialDocument {
     PartialDocument::from_yaml(
-        b"apiVersion: nemoclaw.nvidia.com/v1alpha1\nkind: NemoClawConfig\nspec:\n  sandboxes:\n    - {}\n",
+        b"apiVersion: nemoclaw.nvidia.com/v1alpha1\nkind: NemoClawConfig\nspec:\n  sandboxes:\n    assistant: {}\n",
     )
     .unwrap()
 }
@@ -22,24 +22,28 @@ fn empty_sandbox_asks_for_harness_form_before_inline_harness_kind() {
     let mut inline = JourneyDefinition::new("inline-form", minimum())
         .start(&capabilities)
         .unwrap();
-    let form = "form:/spec/sandboxes/0";
+    let form = "form:/spec/sandboxes/assistant";
     let initial = inline.resolve(&capabilities).unwrap();
     let question = initial.question(form).expect("sandbox form question");
     assert_eq!(question.choices(), &[json!("harness"), json!("harnessRef")]);
-    assert!(initial.question("/spec/sandboxes/0/harness/kind").is_none());
+    assert!(
+        initial
+            .question("/spec/sandboxes/assistant/harness/kind")
+            .is_none()
+    );
     inline
         .answer(&capabilities, form, Some(json!("harness")))
         .unwrap();
     let inline_questions = inline.resolve(&capabilities).unwrap();
     let harness = inline_questions
-        .question("/spec/sandboxes/0/harness/kind")
+        .question("/spec/sandboxes/assistant/harness/kind")
         .expect("inline harness kind");
     assert!(!harness.choices().is_empty());
     assert_eq!(
         inline_questions
             .questions()
             .iter()
-            .filter(|question| question.id() == "/spec/sandboxes/0/harness/kind")
+            .filter(|question| question.id() == "/spec/sandboxes/assistant/harness/kind")
             .count(),
         1
     );
@@ -51,10 +55,14 @@ fn empty_sandbox_asks_for_harness_form_before_inline_harness_kind() {
         .answer(&capabilities, form, Some(json!("harnessRef")))
         .unwrap();
     let reference = referenced.resolve(&capabilities).unwrap();
-    assert!(reference.question("/spec/sandboxes/0/harnessRef").is_some());
     assert!(
         reference
-            .question("/spec/sandboxes/0/harness/kind")
+            .question("/spec/sandboxes/assistant/harnessRef")
+            .is_some()
+    );
+    assert!(
+        reference
+            .question("/spec/sandboxes/assistant/harness/kind")
             .is_none()
     );
 }
@@ -65,12 +73,12 @@ fn omitted_optional_sdk_field_stays_absent_even_when_its_scope_is_asked() {
     let mut supplied: serde_json::Value =
         serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
-    supplied["spec"]["inferenceProviders"][0]
+    supplied["spec"]["inferenceProviders"]["nvidia-prod"]
         .as_object_mut()
         .unwrap()
         .remove("api");
     let base = PartialDocument::from_yaml(supplied.to_string().as_bytes()).unwrap();
-    let path = "/spec/inferenceProviders/0/api";
+    let path = "/spec/inferenceProviders/nvidia-prod/api";
     let state = JourneyDefinition::new("omit-sdk-api", base)
         .ask([JourneyScope::InferenceApi])
         .omit([
@@ -106,7 +114,7 @@ fn exact_and_scope_guidance_share_one_inference_api_question() {
     let base =
         PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
-    let path = "/spec/inferenceProviders/0/api";
+    let path = "/spec/inferenceProviders/nvidia-prod/api";
     let mut state = JourneyDefinition::new("same-api-decision", base)
         .ask([path])
         .ask([JourneyScope::InferenceApi])
@@ -141,7 +149,7 @@ fn exact_and_scope_guidance_keep_route_model_question_kind() {
     let base =
         PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
-    let path = "/spec/sandboxes/0/agent/inference/routes/0/overrides/model";
+    let path = "/spec/sandboxes/assistant/agent/inference/routes/0/overrides/model";
     let state = JourneyDefinition::new("same-model-decision", base)
         .ask([path])
         .ask([JourneyScope::RouteModels])
@@ -169,8 +177,8 @@ fn asked_inference_api_precedes_route_model_in_question_order() {
         .ask([JourneyScope::InferenceApi, JourneyScope::RouteModels])
         .start(&capabilities)
         .unwrap();
-    let api_path = "/spec/inferenceProviders/0/api";
-    let model_path = "/spec/sandboxes/0/agent/inference/routes/0/overrides/model";
+    let api_path = "/spec/inferenceProviders/nvidia-prod/api";
+    let model_path = "/spec/sandboxes/assistant/agent/inference/routes/0/overrides/model";
 
     let first = state.resolve(&capabilities).unwrap();
     let api = first.question(api_path).expect("asked API");
@@ -204,7 +212,7 @@ fn omit_guidance_rejects_required_or_supplied_sdk_fields() {
     );
     assert!(
         JourneyDefinition::new("supplied", base)
-            .omit(["/spec/inferenceProviders/0/api"])
+            .omit(["/spec/inferenceProviders/nvidia-prod/api"])
             .start(&capabilities)
             .is_err()
     );
@@ -234,7 +242,7 @@ fn adapter_settings_scope_omit_leaves_absent_optional_settings_unset_for_any_har
     );
 
     let mut hermes = base.supplied().clone();
-    hermes["spec"]["sandboxes"][0]["harness"]["kind"] = json!("nvidia.fabric.hermes");
+    hermes["spec"]["sandboxes"]["assistant"]["harness"]["kind"] = json!("nvidia.fabric.hermes");
     let hermes = PartialDocument::from_yaml(hermes.to_string().as_bytes()).unwrap();
     let resolution = JourneyDefinition::new("express-hermes", hermes)
         .omit([JourneyScope::ActiveAdapterSettings])
@@ -289,19 +297,15 @@ fn missing_required_sdk_leaf_values_become_questions_without_guidance() {
         serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
     values["metadata"].as_object_mut().unwrap().remove("name");
-    values["spec"]["sandboxes"][0]
+    values["spec"]["sandboxes"]["assistant"]["agent"]
         .as_object_mut()
         .unwrap()
         .remove("name");
-    values["spec"]["sandboxes"][0]["agent"]
+    values["spec"]["sandboxes"]["assistant"]["agent"]["inference"]["routes"][0]
         .as_object_mut()
         .unwrap()
         .remove("name");
-    values["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]
-        .as_object_mut()
-        .unwrap()
-        .remove("name");
-    values["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"]
+    values["spec"]["sandboxes"]["assistant"]["agent"]["inference"]["routes"][0]["overrides"]
         .as_object_mut()
         .unwrap()
         .remove("model");
@@ -311,11 +315,13 @@ fn missing_required_sdk_leaf_values_become_questions_without_guidance() {
         .unwrap();
     for (path, value) in [
         ("/metadata/name", "deployment"),
-        ("/spec/sandboxes/0/name", "sandbox"),
-        ("/spec/sandboxes/0/agent/name", "agent"),
-        ("/spec/sandboxes/0/agent/inference/routes/0/name", "primary"),
+        ("/spec/sandboxes/assistant/agent/name", "agent"),
         (
-            "/spec/sandboxes/0/agent/inference/routes/0/overrides/model",
+            "/spec/sandboxes/assistant/agent/inference/routes/0/name",
+            "primary",
+        ),
+        (
+            "/spec/sandboxes/assistant/agent/inference/routes/0/overrides/model",
             "nvidia/selected-model",
         ),
     ] {
@@ -344,7 +350,7 @@ fn exclusive_sdk_forms_become_choices_then_ask_for_the_selected_field() {
     let mut agent_values: serde_json::Value =
         serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
-    agent_values["spec"]["sandboxes"][0]["agent"]
+    agent_values["spec"]["sandboxes"]["assistant"]["agent"]
         .as_object_mut()
         .unwrap()
         .remove("inference");
@@ -352,7 +358,7 @@ fn exclusive_sdk_forms_become_choices_then_ask_for_the_selected_field() {
     let mut agent = JourneyDefinition::new("agent-form", agent_base)
         .start(&capabilities)
         .unwrap();
-    let agent_form = "form:/spec/sandboxes/0/agent";
+    let agent_form = "form:/spec/sandboxes/assistant/agent";
     let question = agent
         .resolve(&capabilities)
         .unwrap()
@@ -372,19 +378,19 @@ fn exclusive_sdk_forms_become_choices_then_ask_for_the_selected_field() {
     assert!(selected.question(agent_form).is_none());
     assert!(
         selected
-            .question("/spec/sandboxes/0/agent/inferenceRef")
+            .question("/spec/sandboxes/assistant/agent/inferenceRef")
             .is_some()
     );
     assert!(
         agent
             .values()
-            .pointer("/spec/sandboxes/0/agent/inferenceRef")
+            .pointer("/spec/sandboxes/assistant/agent/inferenceRef")
             .is_none()
     );
     agent
         .answer(
             &capabilities,
-            "/spec/sandboxes/0/agent/inferenceRef",
+            "/spec/sandboxes/assistant/agent/inferenceRef",
             Some(json!("shared")),
         )
         .unwrap();
@@ -394,7 +400,7 @@ fn exclusive_sdk_forms_become_choices_then_ask_for_the_selected_field() {
     assert!(
         agent
             .values()
-            .pointer("/spec/sandboxes/0/agent/inferenceRef")
+            .pointer("/spec/sandboxes/assistant/agent/inferenceRef")
             .is_none(),
         "switching forms must remove the incompatible supplied branch"
     );
@@ -402,7 +408,7 @@ fn exclusive_sdk_forms_become_choices_then_ask_for_the_selected_field() {
     let mut route_values: serde_json::Value =
         serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
-    route_values["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]
+    route_values["spec"]["sandboxes"]["assistant"]["agent"]["inference"]["routes"][0]
         .as_object_mut()
         .unwrap()
         .remove("providerRef");
@@ -410,7 +416,7 @@ fn exclusive_sdk_forms_become_choices_then_ask_for_the_selected_field() {
     let mut route = JourneyDefinition::new("route-form", route_base)
         .start(&capabilities)
         .unwrap();
-    let route_form = "form:/spec/sandboxes/0/agent/inference/routes/0";
+    let route_form = "form:/spec/sandboxes/assistant/agent/inference/routes/0";
     let question = route
         .resolve(&capabilities)
         .unwrap()
@@ -428,7 +434,7 @@ fn exclusive_sdk_forms_become_choices_then_ask_for_the_selected_field() {
         route
             .resolve(&capabilities)
             .unwrap()
-            .question("/spec/sandboxes/0/agent/inference/routes/0/providerRef")
+            .question("/spec/sandboxes/assistant/agent/inference/routes/0/providerRef")
             .is_some()
     );
 }
@@ -439,7 +445,7 @@ fn missing_object_parent_exposes_its_unconditional_required_fields() {
     let mut values: serde_json::Value =
         serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
-    values["spec"]["sandboxes"][0]
+    values["spec"]["sandboxes"]["assistant"]
         .as_object_mut()
         .unwrap()
         .remove("agent");
@@ -447,7 +453,7 @@ fn missing_object_parent_exposes_its_unconditional_required_fields() {
     let mut state = JourneyDefinition::new("missing-agent", base)
         .start(&capabilities)
         .unwrap();
-    let name = "/spec/sandboxes/0/agent/name";
+    let name = "/spec/sandboxes/assistant/agent/name";
     assert_eq!(
         state
             .resolve(&capabilities)
@@ -477,12 +483,12 @@ fn invalid_supplied_sdk_leaf_is_an_editable_question_without_guidance() {
     let mut values: serde_json::Value =
         serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
-    values["spec"]["sandboxes"][0]["name"] = json!("Bad Name");
+    values["spec"]["sandboxes"]["assistant"]["agent"]["name"] = json!("Bad Name");
     let base = PartialDocument::from_yaml(values.to_string().as_bytes()).unwrap();
     let mut state = JourneyDefinition::new("repair", base)
         .start(&capabilities)
         .unwrap();
-    let path = "/spec/sandboxes/0/name";
+    let path = "/spec/sandboxes/assistant/agent/name";
     assert_eq!(
         state
             .resolve(&capabilities)
@@ -551,7 +557,7 @@ fn sparse_journey_follows_nested_fabric_conditionals() {
     let mut base: serde_json::Value =
         serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
-    base["spec"]["sandboxes"][0]["harness"]["kind"] = json!("fixture-schema-agent");
+    base["spec"]["sandboxes"]["assistant"]["harness"]["kind"] = json!("fixture-schema-agent");
     let mut state = JourneyDefinition::new(
         "conditional",
         PartialDocument::from_yaml(base.to_string().as_bytes()).unwrap(),
@@ -625,7 +631,7 @@ fn nested_adapter_guidance_asks_omits_and_warns_from_the_active_schema() {
     let mut base: serde_json::Value =
         serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
-    base["spec"]["sandboxes"][0]["harness"] = json!({
+    base["spec"]["sandboxes"]["assistant"]["harness"] = json!({
         "kind":"fixture.nested-guidance",
         "settings":{"native":{"region":"west"}}
     });
@@ -658,7 +664,7 @@ fn nested_adapter_guidance_asks_omits_and_warns_from_the_active_schema() {
             .any(|warning| warning.contains("adapter:fixture.nested-guidance:/native/typo"))
     );
 
-    base["spec"]["sandboxes"][0]["harness"]["settings"]["native"] = json!({});
+    base["spec"]["sandboxes"]["assistant"]["harness"]["settings"]["native"] = json!({});
     let required_omit = JourneyDefinition::new(
         "required-nested-omit",
         PartialDocument::from_yaml(base.to_string().as_bytes()).unwrap(),
@@ -691,8 +697,8 @@ fn root_fabric_alternatives_are_answered_through_the_journey() {
     let mut base: serde_json::Value =
         serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
-    base["spec"]["sandboxes"][0]["harness"]["kind"] = json!("fixture-root-agent");
-    base["spec"]["sandboxes"][0]["harness"]
+    base["spec"]["sandboxes"]["assistant"]["harness"]["kind"] = json!("fixture-root-agent");
+    base["spec"]["sandboxes"]["assistant"]["harness"]
         .as_object_mut()
         .unwrap()
         .remove("settings");
@@ -718,7 +724,9 @@ fn root_fabric_alternatives_are_answered_through_the_journey() {
         .answer(&capabilities, root, Some(json!({"port":443})))
         .unwrap();
     assert_eq!(
-        state.values().pointer("/spec/sandboxes/0/harness/settings"),
+        state
+            .values()
+            .pointer("/spec/sandboxes/assistant/harness/settings"),
         Some(&json!({"port":443}))
     );
     assert!(
@@ -756,7 +764,7 @@ fn changed_adapter_schema_reopens_an_invalid_answer_without_rewriting_it() {
     let mut value: serde_json::Value =
         serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
-    value["spec"]["sandboxes"][0]["harness"]["kind"] = json!("fixture-schema-agent");
+    value["spec"]["sandboxes"]["assistant"]["harness"]["kind"] = json!("fixture-schema-agent");
     let base = PartialDocument::from_yaml(value.to_string().as_bytes()).unwrap();
     let mut state = JourneyDefinition::new("changed-descriptor", base)
         .start(&capabilities)
@@ -786,7 +794,7 @@ fn changed_adapter_schema_reopens_an_invalid_answer_without_rewriting_it() {
     assert_eq!(
         state
             .values()
-            .pointer("/spec/sandboxes/0/harness/settings/mode"),
+            .pointer("/spec/sandboxes/assistant/harness/settings/mode"),
         Some(&json!("revised"))
     );
 }
@@ -806,7 +814,7 @@ fn conflicting_adapter_descriptors_do_not_select_a_schema_by_catalog_order() {
     let mut value: serde_json::Value =
         serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
-    value["spec"]["sandboxes"][0]["harness"]["kind"] = json!("fixture-schema-agent");
+    value["spec"]["sandboxes"]["assistant"]["harness"]["kind"] = json!("fixture-schema-agent");
     let base = PartialDocument::from_yaml(value.to_string().as_bytes()).unwrap();
     let state = JourneyDefinition::new("conflicting-descriptors", base)
         .start(&capabilities)
@@ -830,7 +838,7 @@ fn omitting_a_nested_optional_setting_does_not_create_its_parent_object() {
     let mut value: serde_json::Value =
         serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
-    value["spec"]["sandboxes"][0]["harness"]["kind"] = json!("test.optional-settings");
+    value["spec"]["sandboxes"]["assistant"]["harness"]["kind"] = json!("test.optional-settings");
     let base = PartialDocument::from_yaml(value.to_string().as_bytes()).unwrap();
     let mut state = JourneyDefinition::new("nested-optional", base)
         .start(&capabilities)
@@ -847,7 +855,7 @@ fn omitting_a_nested_optional_setting_does_not_create_its_parent_object() {
     assert!(
         state
             .values()
-            .pointer("/spec/sandboxes/0/harness/settings/native")
+            .pointer("/spec/sandboxes/assistant/harness/settings/native")
             .is_none()
     );
 }
@@ -871,7 +879,7 @@ fn conditional_native_model_settings_survive_a_model_change_and_sdk_roundtrip() 
     let mut value: serde_json::Value =
         serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
-    value["spec"]["sandboxes"][0]["harness"]["kind"] = json!("fixture.model-owner");
+    value["spec"]["sandboxes"]["assistant"]["harness"]["kind"] = json!("fixture.model-owner");
     let base = PartialDocument::from_yaml(value.to_string().as_bytes()).unwrap();
     let mut state = JourneyDefinition::new("conditional-native", base)
         .ask([JourneyScope::NativeSettings])
@@ -899,14 +907,14 @@ fn conditional_native_model_settings_survive_a_model_change_and_sdk_roundtrip() 
     );
     assert!(state.answer(&capabilities, budget, Some(json!(0))).is_err());
     state.answer(&capabilities, budget, Some(json!(3))).unwrap();
-    let model = "/spec/sandboxes/0/agent/inference/routes/0/overrides/model";
+    let model = "/spec/sandboxes/assistant/agent/inference/routes/0/overrides/model";
     state
         .answer(&capabilities, model, Some(json!("different-model")))
         .unwrap();
     assert_eq!(
         state
             .values()
-            .pointer("/spec/sandboxes/0/agent/inference/routes/0/overrides/settings"),
+            .pointer("/spec/sandboxes/assistant/agent/inference/routes/0/overrides/settings"),
         Some(&json!({"variant":"thorough","budget":3}))
     );
     let document = state
@@ -966,7 +974,7 @@ fn sparse_journey_uses_workflow_and_model_owner_schemas() {
     let capabilities = Capabilities::from_catalog(&catalog);
     let mut partial: serde_json::Value =
         serde_saphyr::from_slice(include_bytes!("fixtures/minimum-inline.yaml")).unwrap();
-    partial["spec"]["sandboxes"][0]["harness"]["kind"] = json!("fixture.native-owner");
+    partial["spec"]["sandboxes"]["assistant"]["harness"]["kind"] = json!("fixture.native-owner");
     let mut sparse = JourneyDefinition::new(
         "sparse-native",
         PartialDocument::from_yaml(partial.to_string().as_bytes()).unwrap(),
@@ -1001,13 +1009,13 @@ fn sparse_journey_uses_workflow_and_model_owner_schemas() {
     assert_eq!(
         sparse
             .values()
-            .pointer("/spec/sandboxes/0/harness/config/workflow/settings/region"),
+            .pointer("/spec/sandboxes/assistant/harness/config/workflow/settings/region"),
         Some(&json!("west"))
     );
     let mut base: serde_json::Value =
         serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
-    base["spec"]["sandboxes"][0]["harness"]["kind"] = json!("fixture.native-owner");
+    base["spec"]["sandboxes"]["assistant"]["harness"]["kind"] = json!("fixture.native-owner");
     let mut state = JourneyDefinition::new(
         "native",
         PartialDocument::from_yaml(base.to_string().as_bytes()).unwrap(),
@@ -1084,7 +1092,7 @@ fn exact_native_guidance_uses_active_fabric_fields_without_asking_the_whole_scop
     let mut supplied: serde_json::Value =
         serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
-    supplied["spec"]["sandboxes"][0]["harness"]["kind"] = json!("fixture.exact-native");
+    supplied["spec"]["sandboxes"]["assistant"]["harness"]["kind"] = json!("fixture.exact-native");
     let base = PartialDocument::from_yaml(supplied.to_string().as_bytes()).unwrap();
     let mut state = JourneyDefinition::new("exact-native", base.clone())
         .ask(["workflow:/target_id", "model:/variant"])
@@ -1118,8 +1126,8 @@ fn exact_native_guidance_uses_active_fabric_fields_without_asking_the_whole_scop
     );
 
     let mut with_supplied = supplied;
-    with_supplied["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"]["settings"] =
-        json!({"variant":"quick"});
+    with_supplied["spec"]["sandboxes"]["assistant"]["agent"]["inference"]["routes"][0]["overrides"]
+        ["settings"] = json!({"variant":"quick"});
     let supplied_model = PartialDocument::from_yaml(with_supplied.to_string().as_bytes()).unwrap();
     let invalid_omission = JourneyDefinition::new("supplied-model", supplied_model)
         .omit(["model:/variant"])
@@ -1178,7 +1186,8 @@ fn exact_native_guidance_uses_active_fabric_fields_without_asking_the_whole_scop
 fn invalid_openclaw_settings() -> PartialDocument {
     let mut value: serde_json::Value =
         serde_saphyr::from_str(include_str!("../../../examples/onboarding/openclaw.yaml")).unwrap();
-    value["spec"]["sandboxes"][0]["harness"]["settings"]["startup_timeout_seconds"] = json!(0);
+    value["spec"]["sandboxes"]["assistant"]["harness"]["settings"]["startup_timeout_seconds"] =
+        json!(0);
     PartialDocument::from_yaml(value.to_string().as_bytes()).unwrap()
 }
 
@@ -1279,7 +1288,7 @@ fn discovered_models_extend_the_current_route_question_without_restricting_custo
         DiscoveryQuery::Inference(request.clone()),
         catalog(ObservationStatus::Available),
     );
-    let model = "/spec/sandboxes/0/agent/inference/routes/0/overrides/model";
+    let model = "/spec/sandboxes/assistant/agent/inference/routes/0/overrides/model";
     let discovered = state
         .resolve_with_observations(&capabilities, &observations)
         .unwrap();
@@ -1640,7 +1649,7 @@ fn delegation_facts(capabilities: &Capabilities) -> DelegationFacts {
             .unwrap();
     let mut state = JourneyDefinition::new("delegate", base)
         .ask([
-            "/spec/sandboxes/0/harness/kind",
+            "/spec/sandboxes/assistant/harness/kind",
             "/metadata/name",
             "inference:preset",
         ])
@@ -1654,7 +1663,7 @@ fn delegation_facts(capabilities: &Capabilities) -> DelegationFacts {
     state
         .answer(
             capabilities,
-            "/spec/sandboxes/0/harness/kind",
+            "/spec/sandboxes/assistant/harness/kind",
             Some(json!("nvidia.fabric.openclaw")),
         )
         .unwrap();
@@ -1665,7 +1674,7 @@ fn delegation_facts(capabilities: &Capabilities) -> DelegationFacts {
         .document()
         .unwrap()
         .clone();
-    let model = document.spec.sandboxes[0]
+    let model = document.spec.sandboxes["assistant"]
         .agent
         .inference
         .as_ref()
@@ -1708,13 +1717,13 @@ fn sparse_journey_delegation_requires_current_target_observations() {
         PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
     let mut state = JourneyDefinition::new("delegate", base)
-        .ask(["/spec/sandboxes/0/harness/kind", "/metadata/name"])
+        .ask(["/spec/sandboxes/assistant/harness/kind", "/metadata/name"])
         .start(&capabilities)
         .unwrap();
     state
         .answer(
             &capabilities,
-            "/spec/sandboxes/0/harness/kind",
+            "/spec/sandboxes/assistant/harness/kind",
             Some(json!("nvidia.fabric.openclaw")),
         )
         .unwrap();
@@ -1915,13 +1924,13 @@ fn delegation_is_refused_for_a_route_backed_by_a_managed_service() {
     let base = PartialDocument::from_yaml(include_bytes!("../../../examples/managed-ollama.yaml"))
         .unwrap();
     let mut state = JourneyDefinition::new("delegate", base)
-        .ask(["/spec/sandboxes/0/harness/kind"])
+        .ask(["/spec/sandboxes/assistant/harness/kind"])
         .start(&capabilities)
         .unwrap();
     state
         .answer(
             &capabilities,
-            "/spec/sandboxes/0/harness/kind",
+            "/spec/sandboxes/assistant/harness/kind",
             Some(json!("nvidia.fabric.openclaw")),
         )
         .unwrap();
@@ -1954,7 +1963,7 @@ fn delegation_is_refused_before_a_harness_is_accepted() {
         PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
     let state = JourneyDefinition::new("delegate", base)
-        .ask(["/spec/sandboxes/0/harness/kind"])
+        .ask(["/spec/sandboxes/assistant/harness/kind"])
         .start(&capabilities)
         .unwrap();
     let refusal = state
@@ -1988,8 +1997,8 @@ fn sparse_journey_visits_each_route_and_keeps_its_model_answers_separate() {
         .start(&capabilities)
         .unwrap();
     let route = "route:selection";
-    let hosted_model = "/spec/sandboxes/0/agent/inference/routes/1/overrides/model";
-    let local_model = "/spec/sandboxes/0/agent/inference/routes/0/overrides/model";
+    let hosted_model = "/spec/sandboxes/assistant/agent/inference/routes/1/overrides/model";
+    let local_model = "/spec/sandboxes/assistant/agent/inference/routes/0/overrides/model";
     let first = state.resolve(&capabilities).unwrap();
     assert_eq!(
         first.question(route).unwrap().choices(),
@@ -2053,7 +2062,10 @@ fn referenced_inference_routes_are_selected_and_edited_through_the_same_journey(
         &include_bytes!("../../../examples/multiple-providers.yaml")[..],
     )
     .unwrap();
-    document.spec.sandboxes.truncate(1);
+    document
+        .spec
+        .sandboxes
+        .retain(|name, _| name == "researcher");
     let base =
         PartialDocument::from_yaml(serde_json::to_vec(&document).unwrap().as_slice()).unwrap();
     let mut state = JourneyDefinition::new("referenced-routes", base)
@@ -2128,7 +2140,10 @@ fn referenced_harness_settings_are_owned_by_the_referenced_definition() {
         &include_bytes!("../../../examples/multiple-models.yaml")[..],
     )
     .unwrap();
-    document.spec.sandboxes.truncate(1);
+    document
+        .spec
+        .sandboxes
+        .retain(|name, _| name == "researcher");
     let base =
         PartialDocument::from_yaml(serde_json::to_vec(&document).unwrap().as_slice()).unwrap();
     let mut state = JourneyDefinition::new("referenced-harness", base)
@@ -2155,7 +2170,7 @@ fn referenced_harness_settings_are_owned_by_the_referenced_definition() {
     assert!(
         state
             .values()
-            .pointer("/spec/sandboxes/0/harness")
+            .pointer("/spec/sandboxes/researcher/harness")
             .is_none()
     );
 }
@@ -2167,14 +2182,17 @@ fn revisiting_a_referenced_harness_choice_does_not_create_an_inline_harness() {
         &include_bytes!("../../../examples/multiple-models.yaml")[..],
     )
     .unwrap();
-    document.spec.sandboxes.truncate(1);
+    document
+        .spec
+        .sandboxes
+        .retain(|name, _| name == "researcher");
     let base =
         PartialDocument::from_yaml(serde_json::to_vec(&document).unwrap().as_slice()).unwrap();
     let mut state = JourneyDefinition::new("referenced-harness-choice", base)
-        .ask(["/spec/sandboxes/0/harness/kind"])
+        .ask(["/spec/sandboxes/researcher/harness/kind"])
         .start(&capabilities)
         .unwrap();
-    let field = "/spec/sandboxes/0/harness/kind";
+    let field = "/spec/sandboxes/researcher/harness/kind";
     state
         .answer(&capabilities, field, Some(json!("nvidia.fabric.openclaw")))
         .unwrap();
@@ -2188,7 +2206,7 @@ fn revisiting_a_referenced_harness_choice_does_not_create_an_inline_harness() {
     assert!(
         state
             .values()
-            .pointer("/spec/sandboxes/0/harness")
+            .pointer("/spec/sandboxes/researcher/harness")
             .is_none()
     );
 }
@@ -2200,7 +2218,10 @@ fn referenced_model_settings_are_written_to_the_selected_route() {
         &include_bytes!("../../../examples/multiple-models.yaml")[..],
     )
     .unwrap();
-    document.spec.sandboxes.truncate(1);
+    document
+        .spec
+        .sandboxes
+        .retain(|name, _| name == "researcher");
     // nooa is a bundled adapter whose models take native settings.
     let mut document = serde_json::to_value(&document).unwrap();
     document["spec"]["harnesses"]["assistant"]["kind"] = json!("nvidia.fabric.nooa");
@@ -2233,7 +2254,7 @@ fn referenced_model_settings_are_written_to_the_selected_route() {
     assert!(
         state
             .values()
-            .pointer("/spec/sandboxes/0/agent/inference")
+            .pointer("/spec/sandboxes/researcher/agent/inference")
             .is_none()
     );
 }
@@ -2255,7 +2276,10 @@ fn referenced_workflow_answers_keep_the_named_harness_as_the_owner() {
         &include_bytes!("../../../examples/multiple-models.yaml")[..],
     )
     .unwrap();
-    document.spec.sandboxes.truncate(1);
+    document
+        .spec
+        .sandboxes
+        .retain(|name, _| name == "researcher");
     let mut value = serde_json::to_value(&document).unwrap();
     value["spec"]["harnesses"]["assistant"]["kind"] = json!("fixture.workflow-owner");
     let base = PartialDocument::from_yaml(value.to_string().as_bytes()).unwrap();
@@ -2283,7 +2307,7 @@ fn referenced_workflow_answers_keep_the_named_harness_as_the_owner() {
     assert!(
         state
             .values()
-            .pointer("/spec/sandboxes/0/harness")
+            .pointer("/spec/sandboxes/researcher/harness")
             .is_none()
     );
 }
@@ -2298,7 +2322,7 @@ fn omitting_an_implicit_api_keeps_the_sdk_default_without_writing_an_override() 
         .ask([JourneyScope::InferenceApi])
         .start(&capabilities)
         .unwrap();
-    let path = "/spec/inferenceProviders/0/api";
+    let path = "/spec/inferenceProviders/local/api";
     let question = state
         .resolve(&capabilities)
         .unwrap()
@@ -2342,7 +2366,7 @@ fn absent_optional_adapter_settings_remain_unsupplied_until_answered() {
     assert!(
         state
             .values()
-            .pointer("/spec/sandboxes/0/harness/settings/cli")
+            .pointer("/spec/sandboxes/assistant/harness/settings/cli")
             .is_none()
     );
 }
@@ -2357,7 +2381,7 @@ fn editing_a_route_model_preserves_explicit_credential_references() {
         .ask([JourneyScope::RouteModels])
         .start(&capabilities)
         .unwrap();
-    let model = "/spec/sandboxes/0/agent/inference/routes/0/overrides/model";
+    let model = "/spec/sandboxes/assistant/agent/inference/routes/0/overrides/model";
     state
         .answer(
             &capabilities,
@@ -2407,7 +2431,7 @@ fn route_preset_changes_only_the_selected_external_provider() {
     state
         .answer(
             &capabilities,
-            "/spec/sandboxes/0/agent/inference/routes/0/overrides/model",
+            "/spec/sandboxes/assistant/agent/inference/routes/0/overrides/model",
             Some(json!("nvidia/Qwen3.8-27B-NVFP4")),
         )
         .unwrap();
@@ -2425,24 +2449,28 @@ fn route_preset_changes_only_the_selected_external_provider() {
         .answer(&capabilities, "inference:preset", Some(json!("openai")))
         .unwrap();
     assert_eq!(
-        state.values().pointer("/spec/inferenceProviders/0"),
-        before.pointer("/spec/inferenceProviders/0")
+        state.values().pointer("/spec/inferenceProviders/local"),
+        before.pointer("/spec/inferenceProviders/local")
     );
     assert_eq!(
-        state.values().pointer("/spec/inferenceProviders/1/name"),
+        state.values()["spec"]["inferenceProviders"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .collect::<Vec<_>>(),
+        ["hosted", "local"]
+    );
+    assert_eq!(
+        state
+            .values()
+            .pointer("/spec/sandboxes/assistant/agent/inference/routes/1/providerRef"),
         Some(&json!("hosted"))
     );
     assert_eq!(
         state
             .values()
-            .pointer("/spec/sandboxes/0/agent/inference/routes/1/providerRef"),
-        Some(&json!("hosted"))
-    );
-    assert_eq!(
-        state
-            .values()
-            .pointer("/spec/sandboxes/0/agent/inference/routes/0/overrides/model"),
-        before.pointer("/spec/sandboxes/0/agent/inference/routes/0/overrides/model")
+            .pointer("/spec/sandboxes/assistant/agent/inference/routes/0/overrides/model"),
+        before.pointer("/spec/sandboxes/assistant/agent/inference/routes/0/overrides/model")
     );
 }
 
@@ -2453,10 +2481,14 @@ fn partial_journey_recomputes_questions_after_answers_and_omissions() {
     let mut state = definition.start(&capabilities).unwrap();
     let questions = state.resolve(&capabilities).unwrap();
     assert!(questions.question("/metadata/name").is_some());
-    assert!(questions.question("form:/spec/sandboxes/0").is_some());
     assert!(
         questions
-            .question("/spec/sandboxes/0/harness/kind")
+            .question("form:/spec/sandboxes/assistant")
+            .is_some()
+    );
+    assert!(
+        questions
+            .question("/spec/sandboxes/assistant/harness/kind")
             .is_none()
     );
     assert!(
@@ -2475,14 +2507,14 @@ fn partial_journey_recomputes_questions_after_answers_and_omissions() {
     state
         .answer(
             &capabilities,
-            "form:/spec/sandboxes/0",
+            "form:/spec/sandboxes/assistant",
             Some(json!("harness")),
         )
         .unwrap();
     state
         .answer(
             &capabilities,
-            "/spec/sandboxes/0/harness/kind",
+            "/spec/sandboxes/assistant/harness/kind",
             Some(json!("nvidia.fabric.openclaw")),
         )
         .unwrap();
@@ -2551,7 +2583,7 @@ fn existing_onboarding_fields_resolve_and_materialize_without_a_draft() {
         serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
     sparse
-        .pointer_mut("/spec/sandboxes/0/agent/inference/routes/0/overrides")
+        .pointer_mut("/spec/sandboxes/assistant/agent/inference/routes/0/overrides")
         .unwrap()
         .as_object_mut()
         .unwrap()
@@ -2559,11 +2591,11 @@ fn existing_onboarding_fields_resolve_and_materialize_without_a_draft() {
     let base = PartialDocument::from_yaml(sparse.to_string().as_bytes()).unwrap();
     let fields = [
         "/metadata/name",
-        "/spec/sandboxes/0/harness/kind",
+        "/spec/sandboxes/assistant/harness/kind",
         "/spec/gateway/runtime/provider",
-        "/spec/inferenceProviders/0/provider",
-        "/spec/inferenceProviders/0/api",
-        "/spec/sandboxes/0/agent/inference/routes/0/overrides/model",
+        "/spec/inferenceProviders/nvidia-prod/provider",
+        "/spec/inferenceProviders/nvidia-prod/api",
+        "/spec/sandboxes/assistant/agent/inference/routes/0/overrides/model",
     ];
     let definition = JourneyDefinition::new("guided", base).ask(fields).omit([
         "adapter:nvidia.fabric.openclaw:/agent_id",
@@ -2613,7 +2645,7 @@ fn existing_onboarding_fields_resolve_and_materialize_without_a_draft() {
         seen.push(field.to_owned());
         let value = match field {
             "/metadata/name" => json!("new-deployment"),
-            "/spec/sandboxes/0/agent/inference/routes/0/overrides/model" => {
+            "/spec/sandboxes/assistant/agent/inference/routes/0/overrides/model" => {
                 let before = state.values().clone();
                 assert!(
                     state
@@ -2644,7 +2676,7 @@ fn existing_onboarding_fields_resolve_and_materialize_without_a_draft() {
     assert_eq!(
         state
             .values()
-            .pointer("/spec/sandboxes/0/agent/inference/routes/0/overrides/model"),
+            .pointer("/spec/sandboxes/assistant/agent/inference/routes/0/overrides/model"),
         Some(&json!("nvidia/another-model"))
     );
 }
@@ -2656,12 +2688,11 @@ fn inference_preset_updates_sparse_values_and_reopens_dependent_answers() {
         PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
     let preset = "inference:preset";
-    let api = "/spec/inferenceProviders/0/api";
-    let provider_name = "/spec/inferenceProviders/0/name";
-    let model = "/spec/sandboxes/0/agent/inference/routes/0/overrides/model";
+    let api = "/spec/inferenceProviders/nvidia-prod/api";
+    let model = "/spec/sandboxes/assistant/agent/inference/routes/0/overrides/model";
     let name = "/metadata/name";
     let mut state = JourneyDefinition::new("preset", base)
-        .ask([name, preset, api, model, provider_name])
+        .ask([name, preset, api, model])
         .omit([
             "adapter:nvidia.fabric.openclaw:/agent_id",
             "adapter:nvidia.fabric.openclaw:/channel_config",
@@ -2696,9 +2727,6 @@ fn inference_preset_updates_sparse_values_and_reopens_dependent_answers() {
     state
         .answer(&capabilities, model, Some(json!("nvidia/my-model")))
         .unwrap();
-    state
-        .answer(&capabilities, provider_name, Some(json!("nvidia-prod")))
-        .unwrap();
     assert!(
         state
             .resolve(&capabilities)
@@ -2729,33 +2757,39 @@ fn inference_preset_updates_sparse_values_and_reopens_dependent_answers() {
     assert_eq!(
         state
             .values()
-            .pointer("/spec/inferenceProviders/0/provider"),
+            .pointer("/spec/inferenceProviders/nvidia-prod/provider"),
         Some(&json!("anthropic"))
     );
     assert_eq!(
-        state.values().pointer("/spec/inferenceProviders/0/name"),
-        Some(&json!("nvidia-prod"))
+        state.values()["spec"]["inferenceProviders"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .collect::<Vec<_>>(),
+        ["nvidia-prod"]
     );
     assert_eq!(
-        state.values().pointer("/spec/inferenceProviders/0/api"),
+        state
+            .values()
+            .pointer("/spec/inferenceProviders/nvidia-prod/api"),
         Some(&json!("anthropic-messages"))
     );
     assert_eq!(
         state
             .values()
-            .pointer("/spec/inferenceProviders/0/endpoint"),
+            .pointer("/spec/inferenceProviders/nvidia-prod/endpoint"),
         Some(&json!("https://api.anthropic.com"))
     );
     assert_eq!(
         state
             .values()
-            .pointer("/spec/inferenceProviders/0/credential/env"),
+            .pointer("/spec/inferenceProviders/nvidia-prod/credential/env"),
         Some(&json!("ANTHROPIC_API_KEY"))
     );
     assert_eq!(
         state
             .values()
-            .pointer("/spec/sandboxes/0/agent/inference/routes/0/providerRef"),
+            .pointer("/spec/sandboxes/assistant/agent/inference/routes/0/providerRef"),
         Some(&json!("nvidia-prod"))
     );
     assert_eq!(
@@ -2765,7 +2799,6 @@ fn inference_preset_updates_sparse_values_and_reopens_dependent_answers() {
     let resolved = state.resolve(&capabilities).unwrap();
     assert!(resolved.question(name).is_none());
     assert!(resolved.question(api).is_some());
-    assert!(resolved.question(provider_name).is_none());
     assert!(resolved.question(model).is_some());
     assert!(resolved.materialized_document().is_none());
     assert!(
@@ -2797,7 +2830,7 @@ fn compatible_inference_preset_requires_an_endpoint_answer() {
     let mut state = JourneyDefinition::new("custom", base)
         .ask([
             "inference:preset",
-            "/spec/sandboxes/0/agent/inference/routes/0/overrides/model",
+            "/spec/sandboxes/assistant/agent/inference/routes/0/overrides/model",
         ])
         .start(&capabilities)
         .unwrap();
@@ -2811,22 +2844,22 @@ fn compatible_inference_preset_requires_an_endpoint_answer() {
     let resolved = state.resolve(&capabilities).unwrap();
     assert!(
         resolved
-            .question("/spec/inferenceProviders/0/endpoint")
+            .question("/spec/inferenceProviders/nvidia-prod/endpoint")
             .is_some()
     );
     assert!(
         resolved
-            .question("/spec/sandboxes/0/agent/inference/routes/0/overrides/model")
+            .question("/spec/sandboxes/assistant/agent/inference/routes/0/overrides/model")
             .is_none()
     );
     assert!(
         state
             .values()
-            .pointer("/spec/sandboxes/0/agent/inference/routes/0/overrides/model")
+            .pointer("/spec/sandboxes/assistant/agent/inference/routes/0/overrides/model")
             .is_none()
     );
     assert!(resolved.materialized_document().is_none());
-    let endpoint = "/spec/inferenceProviders/0/endpoint";
+    let endpoint = "/spec/inferenceProviders/nvidia-prod/endpoint";
     let before = state.values().clone();
     assert!(
         state
@@ -2845,13 +2878,13 @@ fn compatible_inference_preset_requires_an_endpoint_answer() {
         state
             .resolve(&capabilities)
             .unwrap()
-            .question("/spec/sandboxes/0/agent/inference/routes/0/overrides/model")
+            .question("/spec/sandboxes/assistant/agent/inference/routes/0/overrides/model")
             .is_some()
     );
     state
         .answer(
             &capabilities,
-            "/spec/sandboxes/0/agent/inference/routes/0/overrides/model",
+            "/spec/sandboxes/assistant/agent/inference/routes/0/overrides/model",
             Some(json!("org/model")),
         )
         .unwrap();
@@ -2870,9 +2903,9 @@ fn inference_dependencies_wait_for_preset_and_custom_endpoint() {
     let base =
         PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
-    let api = "/spec/inferenceProviders/0/api";
-    let model = "/spec/sandboxes/0/agent/inference/routes/0/overrides/model";
-    let endpoint = "/spec/inferenceProviders/0/endpoint";
+    let api = "/spec/inferenceProviders/nvidia-prod/api";
+    let model = "/spec/sandboxes/assistant/agent/inference/routes/0/overrides/model";
+    let endpoint = "/spec/inferenceProviders/nvidia-prod/endpoint";
     let preset = "inference:preset";
     let mut state = JourneyDefinition::new("order", base)
         .ask([api, model, preset])
@@ -2913,14 +2946,17 @@ fn changing_inference_api_reopens_the_accepted_model_but_keeps_identity() {
         PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
     let mut state = JourneyDefinition::new("api-dependency", base)
-        .ask(["/metadata/name", "/spec/inferenceProviders/0/endpoint"])
+        .ask([
+            "/metadata/name",
+            "/spec/inferenceProviders/nvidia-prod/endpoint",
+        ])
         .ask([JourneyScope::InferenceApi, JourneyScope::RouteModels])
         .start(&capabilities)
         .unwrap();
     let name = "/metadata/name";
-    let api = "/spec/inferenceProviders/0/api";
-    let model = "/spec/sandboxes/0/agent/inference/routes/0/overrides/model";
-    let endpoint = "/spec/inferenceProviders/0/endpoint";
+    let api = "/spec/inferenceProviders/nvidia-prod/api";
+    let model = "/spec/sandboxes/assistant/agent/inference/routes/0/overrides/model";
+    let endpoint = "/spec/inferenceProviders/nvidia-prod/endpoint";
     state
         .answer(&capabilities, name, Some(json!("my-project")))
         .unwrap();
@@ -2984,11 +3020,11 @@ fn changing_the_second_provider_api_reopens_its_route_model() {
     .unwrap();
     let mut state = JourneyDefinition::new("second-provider-api", base)
         .ask([JourneyScope::RouteModels])
-        .ask(["/spec/inferenceProviders/1/api"])
+        .ask(["/spec/inferenceProviders/hosted/api"])
         .start(&capabilities)
         .unwrap();
-    let api = "/spec/inferenceProviders/1/api";
-    let model = "/spec/sandboxes/0/agent/inference/routes/1/overrides/model";
+    let api = "/spec/inferenceProviders/hosted/api";
+    let model = "/spec/sandboxes/assistant/agent/inference/routes/1/overrides/model";
     state
         .answer(&capabilities, "route:selection", Some(json!("hosted")))
         .unwrap();
@@ -3016,7 +3052,7 @@ fn optional_sdk_question_can_be_deliberately_omitted() {
         PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
     let mut state = JourneyDefinition::new("optional-api", base)
-        .ask(["/spec/inferenceProviders/0/api"])
+        .ask(["/spec/inferenceProviders/nvidia-prod/api"])
         .omit([
             "adapter:nvidia.fabric.openclaw:/agent_id",
             "adapter:nvidia.fabric.openclaw:/channel_config",
@@ -3068,12 +3104,13 @@ fn switching_harness_reopens_the_active_adapter_without_losing_its_values() {
     let base =
         PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
-    let definition = JourneyDefinition::new("switch", base).ask(["/spec/sandboxes/0/harness/kind"]);
+    let definition =
+        JourneyDefinition::new("switch", base).ask(["/spec/sandboxes/assistant/harness/kind"]);
     let mut state = definition.start(&capabilities).unwrap();
     state
         .answer(
             &capabilities,
-            "/spec/sandboxes/0/harness/kind",
+            "/spec/sandboxes/assistant/harness/kind",
             Some(json!("nvidia.fabric.openclaw")),
         )
         .unwrap();
@@ -3087,7 +3124,7 @@ fn switching_harness_reopens_the_active_adapter_without_losing_its_values() {
     state
         .answer(
             &capabilities,
-            "/spec/sandboxes/0/harness/kind",
+            "/spec/sandboxes/assistant/harness/kind",
             Some(json!("nvidia.fabric.hermes")),
         )
         .unwrap();
@@ -3101,14 +3138,14 @@ fn switching_harness_reopens_the_active_adapter_without_losing_its_values() {
     state
         .answer(
             &capabilities,
-            "/spec/sandboxes/0/harness/kind",
+            "/spec/sandboxes/assistant/harness/kind",
             Some(json!("nvidia.fabric.openclaw")),
         )
         .unwrap();
     assert_eq!(
         state
             .values()
-            .pointer("/spec/sandboxes/0/harness/settings/agent_id"),
+            .pointer("/spec/sandboxes/assistant/harness/settings/agent_id"),
         Some(&json!("kept-agent"))
     );
 }
@@ -3128,14 +3165,14 @@ fn accepted_answers_can_be_revisited_without_losing_other_values() {
     state
         .answer(
             &capabilities,
-            "form:/spec/sandboxes/0",
+            "form:/spec/sandboxes/assistant",
             Some(json!("harness")),
         )
         .unwrap();
     state
         .answer(
             &capabilities,
-            "/spec/sandboxes/0/harness/kind",
+            "/spec/sandboxes/assistant/harness/kind",
             Some(json!("nvidia.fabric.openclaw")),
         )
         .unwrap();
@@ -3161,7 +3198,7 @@ fn accepted_answers_can_be_revisited_without_losing_other_values() {
     assert_eq!(
         state
             .values()
-            .pointer("/spec/sandboxes/0/harness/settings/agent_id"),
+            .pointer("/spec/sandboxes/assistant/harness/settings/agent_id"),
         Some(&json!("beta"))
     );
 }
@@ -3172,7 +3209,7 @@ fn fabric_invalid_value_reopens_a_question_even_when_sdk_document_is_valid() {
     let mut base: serde_json::Value =
         serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
-    base["spec"]["sandboxes"][0]["harness"]["settings"] = json!({"openclaw_command": 42});
+    base["spec"]["sandboxes"]["assistant"]["harness"]["settings"] = json!({"openclaw_command": 42});
     let base = PartialDocument::from_yaml(base.to_string().as_bytes()).unwrap();
     let mut state = JourneyDefinition::new("fabric-invalid", base)
         .start(&capabilities)
@@ -3260,7 +3297,7 @@ fn supplied_template_can_finish_a_guided_journey_through_one_resolver() {
         PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
     let definition = JourneyDefinition::new("guided-complete", base)
-        .ask(["/metadata/name", "/spec/sandboxes/0/harness/kind"])
+        .ask(["/metadata/name", "/spec/sandboxes/assistant/harness/kind"])
         .omit([
             "adapter:nvidia.fabric.openclaw:/agent_id",
             "adapter:nvidia.fabric.openclaw:/channel_config",
@@ -3299,7 +3336,7 @@ fn supplied_template_can_finish_a_guided_journey_through_one_resolver() {
     state
         .answer(
             &capabilities,
-            "/spec/sandboxes/0/harness/kind",
+            "/spec/sandboxes/assistant/harness/kind",
             Some(json!("nvidia.fabric.openclaw")),
         )
         .unwrap();
@@ -3321,18 +3358,22 @@ fn absent_harness_catalog_cannot_silently_accept_an_unadvertised_choice() {
         .start(&capabilities)
         .unwrap();
     let resolved = state.resolve(&capabilities).unwrap();
-    assert!(resolved.question("form:/spec/sandboxes/0").is_some());
+    assert!(
+        resolved
+            .question("form:/spec/sandboxes/assistant")
+            .is_some()
+    );
     state
         .answer(
             &capabilities,
-            "form:/spec/sandboxes/0",
+            "form:/spec/sandboxes/assistant",
             Some(json!("harness")),
         )
         .unwrap();
     let resolved = state.resolve(&capabilities).unwrap();
     assert!(
         resolved
-            .question("/spec/sandboxes/0/harness/kind")
+            .question("/spec/sandboxes/assistant/harness/kind")
             .is_some()
     );
     assert!(!resolved.unverified().is_empty());
@@ -3340,7 +3381,7 @@ fn absent_harness_catalog_cannot_silently_accept_an_unadvertised_choice() {
         state
             .answer(
                 &capabilities,
-                "/spec/sandboxes/0/harness/kind",
+                "/spec/sandboxes/assistant/harness/kind",
                 Some(json!("nvidia.fabric.openclaw"))
             )
             .is_err()
@@ -3350,7 +3391,7 @@ fn absent_harness_catalog_cannot_silently_accept_an_unadvertised_choice() {
 #[test]
 fn missing_gateway_asks_for_the_schema_discriminator() {
     let base = PartialDocument::from_yaml(
-        b"apiVersion: nemoclaw.nvidia.com/v1alpha1\nkind: NemoClawConfig\nspec:\n  sandboxes:\n    - {}\n",
+        b"apiVersion: nemoclaw.nvidia.com/v1alpha1\nkind: NemoClawConfig\nspec:\n  sandboxes:\n    assistant: {}\n",
     )
     .unwrap();
     let capabilities = Capabilities::available();
@@ -3689,7 +3730,7 @@ fn adapter_setting_questions_carry_fabric_descriptions() {
     let mut values: serde_json::Value =
         serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
-    values["spec"]["sandboxes"][0]["harness"] = json!({"kind": "nvidia.fabric.hermes"});
+    values["spec"]["sandboxes"]["assistant"]["harness"] = json!({"kind": "nvidia.fabric.hermes"});
     let base = PartialDocument::from_yaml(values.to_string().as_bytes()).unwrap();
     let capabilities = Capabilities::available();
     let resolution = JourneyDefinition::new("described-settings", base)
@@ -3706,7 +3747,7 @@ fn adapter_setting_questions_carry_fabric_descriptions() {
         Some("Maximum number of seconds for a Hermes terminal operation.")
     );
     // Fabric does not describe Pi's `extensions`; no generic text stands in for it.
-    values["spec"]["sandboxes"][0]["harness"] = json!({"kind": "nvidia.fabric.pi"});
+    values["spec"]["sandboxes"]["assistant"]["harness"] = json!({"kind": "nvidia.fabric.pi"});
     let base = PartialDocument::from_yaml(values.to_string().as_bytes()).unwrap();
     let resolution = JourneyDefinition::new("undescribed-settings", base)
         .ask(["adapter:nvidia.fabric.pi:/extensions"])
@@ -3777,19 +3818,21 @@ fn minimally_supplied_inline_envelope_materializes_through_one_resolver() {
     let answers = [
         ("/metadata/name", json!("minimum-inline")),
         ("/spec/gateway/management", json!("managed")),
-        ("/spec/inferenceProviders/0/provider", json!("openai")),
-        ("/spec/sandboxes/0/name", json!("assistant")),
         (
-            "/spec/sandboxes/0/harness/kind",
+            "/spec/inferenceProviders/nvidia-prod/provider",
+            json!("openai"),
+        ),
+        (
+            "/spec/sandboxes/assistant/harness/kind",
             json!("nvidia.fabric.openclaw"),
         ),
-        ("/spec/sandboxes/0/agent/name", json!("primary")),
+        ("/spec/sandboxes/assistant/agent/name", json!("primary")),
         (
-            "/spec/sandboxes/0/agent/inference/routes/0/name",
+            "/spec/sandboxes/assistant/agent/inference/routes/0/name",
             json!("primary"),
         ),
         (
-            "/spec/sandboxes/0/agent/inference/routes/0/overrides/model",
+            "/spec/sandboxes/assistant/agent/inference/routes/0/overrides/model",
             json!("nvidia/nemotron-3.5-super-vl-120b-a12b"),
         ),
     ];

@@ -8,13 +8,14 @@ metadata: {}
 spec:
   gateway: {}
   inferenceProviders:
-    - name: nvidia-prod
+    nvidia-prod:
       api: openai-completions
       endpoint: https://integrate.api.nvidia.com/v1
       credential:
         env: NVIDIA_API_KEY
   sandboxes:
-    - harness: {}
+    assistant:
+      harness: {}
       agent:
         inference:
           routes:

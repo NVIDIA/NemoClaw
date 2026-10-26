@@ -33,44 +33,45 @@ fn declaration_scope_combinations_preserve_runtime_and_authored_intent() {
         for inference_scope in 0..3 {
             for harness_scope in 0..3 {
                 let mut value = input.clone();
-                let provider = value["spec"]
+                let mut provider = value["spec"]
                     .as_object_mut()
                     .unwrap()
                     .remove("inferenceProviders")
-                    .unwrap()[0]
-                    .clone();
+                    .unwrap()["local"]
+                    .take();
                 if provider_scope == 2 {
-                    let route =
-                        &mut value["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0];
+                    provider["name"] = json!("local");
+                    let route = &mut value["spec"]["sandboxes"]["assistant"]["agent"]["inference"]
+                        ["routes"][0];
                     route.as_object_mut().unwrap().remove("providerRef");
                     route["provider"] = provider;
                 } else {
                     let scope = if provider_scope == 0 {
                         &mut value["spec"]
                     } else {
-                        &mut value["spec"]["sandboxes"][0]
+                        &mut value["spec"]["sandboxes"]["assistant"]
                     };
-                    scope["inferenceProviders"] = json!([provider]);
+                    scope["inferenceProviders"] = json!({"local": provider});
                 }
                 if inference_scope != 0 {
-                    let agent = &mut value["spec"]["sandboxes"][0]["agent"];
+                    let agent = &mut value["spec"]["sandboxes"]["assistant"]["agent"];
                     let inference = agent.as_object_mut().unwrap().remove("inference").unwrap();
                     agent["inferenceRef"] = json!("chat");
                     let scope = if inference_scope == 1 {
                         &mut value["spec"]
                     } else {
-                        &mut value["spec"]["sandboxes"][0]
+                        &mut value["spec"]["sandboxes"]["assistant"]
                     };
                     scope["inferences"] = json!({"chat": inference});
                 }
                 if harness_scope != 0 {
-                    let sandbox = &mut value["spec"]["sandboxes"][0];
+                    let sandbox = &mut value["spec"]["sandboxes"]["assistant"];
                     let harness = sandbox.as_object_mut().unwrap().remove("harness").unwrap();
                     sandbox["harnessRef"] = json!("shared");
                     let scope = if harness_scope == 1 {
                         &mut value["spec"]
                     } else {
-                        &mut value["spec"]["sandboxes"][0]
+                        &mut value["spec"]["sandboxes"]["assistant"]
                     };
                     scope["harnesses"] = json!({"shared": harness});
                 }
@@ -121,7 +122,7 @@ fn example_configurations_are_valid_fabric_configurations() {
     for path in examples::yaml_files(&root.join("examples")) {
         let document = Document::parse(std::fs::File::open(&path).unwrap()).unwrap();
         let _rows = targets(&document, &generations).unwrap();
-        for definition in &document.spec.sandboxes {
+        for definition in document.sandboxes() {
             let configuration =
                 nemoclaw_sdk::fabric_config::for_sandbox(&document, definition).unwrap();
             if let Err(error) =

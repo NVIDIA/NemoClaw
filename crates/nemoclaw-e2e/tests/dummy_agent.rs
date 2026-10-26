@@ -113,7 +113,7 @@ async fn the_dummy_agent_completes_a_managed_docker_lifecycle() {
         document.spec.gateway.runtime().provider,
         ComputeDriver::Docker
     );
-    let sandbox = &document.spec.sandboxes[0];
+    let sandbox = document.sandboxes().next().unwrap();
     let harness = document.sandbox_harness(sandbox).unwrap();
     assert_eq!(harness.kind, "org.nemoclaw.dummy".parse().unwrap());
     // The dummy replies with this setting, so the reply shows that apply

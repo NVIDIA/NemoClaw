@@ -31,7 +31,7 @@ pub fn text(assessment: &Assessment) -> String {
     };
     output.push_str("Publication is not authorized by this assessment.\n");
     output.push_str(match assessment.status {
-        Status::Passed => "Next action: Handle release approvals separately.\n",
+        Status::Passed => "Next action: The release workflow publishes a passing final release.\n",
         Status::Blocked => {
             "Next action: Update the affected dependency or base-image pin and reassess its new image digest.\n"
         }
@@ -188,7 +188,7 @@ mod tests {
             (
                 Status::Passed,
                 "Assessment passed",
-                "Handle release approvals",
+                "The release workflow publishes a passing final release",
             ),
             (
                 Status::Blocked,

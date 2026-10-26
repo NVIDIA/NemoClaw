@@ -194,7 +194,7 @@ Name the Service by its cluster DNS name and port:
 ```yaml
 spec:
   inferenceProviders:
-    - name: qwen
+    qwen:
       provider: openai
       api: openai-completions
       endpoint: http://qwen.models.svc.cluster.local:8000/v1

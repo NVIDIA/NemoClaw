@@ -17,7 +17,8 @@ pub(super) fn kubernetes_context() -> (Document, crate::compile::Generations) {
             "authentication":{"profile":"development"}
         }
     });
-    value["spec"]["sandboxes"][0]["image"]["metadata"] = json!({"env":"TEST_IMAGE_METADATA"});
+    value["spec"]["sandboxes"]["assistant"]["image"]["metadata"] =
+        json!({"env":"TEST_IMAGE_METADATA"});
     let document = Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap();
     let generations = Record::new(document.clone()).unwrap().generations;
     (document, generations)
@@ -163,7 +164,12 @@ fn kubernetes_environment_is_operation_scoped_and_stable_across_export_directori
         }
     }
     let (mut document, _) = kubernetes_context();
-    document.spec.inference_providers[0].credential = Some(SecretRef {
+    document
+        .spec
+        .inference_providers
+        .get_mut("local")
+        .unwrap()
+        .credential = Some(SecretRef {
         env: "UNREAD_INFERENCE_KEY".into(),
     });
     let temporary = tempfile::tempdir().unwrap();
@@ -475,8 +481,9 @@ fn credential_references_cannot_override_opentofu_control_variables() {
     }
     let mut document =
         Document::parse(include_str!("../../tests/fixtures/config/local.yaml").as_bytes()).unwrap();
-    document.spec.inference_providers[0].endpoint = "https://example.com/v1".into();
-    document.spec.inference_providers[0].credential = Some(SecretRef {
+    let provider = document.spec.inference_providers.get_mut("local").unwrap();
+    provider.endpoint = "https://example.com/v1".into();
+    provider.credential = Some(SecretRef {
         env: "TF_CLI_CONFIG_FILE".into(),
     });
     assert!(command_environment(&document, &Values, Path::new("state")).is_err());
@@ -546,7 +553,12 @@ async fn schema_commands_do_not_require_inference_credentials() {
         Deployment::new(&state_path, bundle_directory.path()).with_secrets(secrets.clone());
     let mut document =
         Document::parse(include_str!("../../tests/fixtures/config/local.yaml").as_bytes()).unwrap();
-    document.spec.inference_providers[0].credential = Some(SecretRef {
+    document
+        .spec
+        .inference_providers
+        .get_mut("local")
+        .unwrap()
+        .credential = Some(SecretRef {
         env: "TEST_INFERENCE_CREDENTIAL".into(),
     });
     let cancel = CancellationToken::new();
@@ -666,14 +678,20 @@ fn gateway_observation_resolves_only_gateway_credentials() {
         }
     }))
     .unwrap();
-    document.spec.inference_providers[0].credential = Some(SecretRef {
+    document
+        .spec
+        .inference_providers
+        .get_mut("local")
+        .unwrap()
+        .credential = Some(SecretRef {
         env: "INFERENCE_TOKEN".into(),
     });
-    document.spec.sandboxes[0].integrations = serde_json::from_value(json!({
+    let sandbox = document.spec.sandboxes.get_mut("assistant").unwrap();
+    sandbox.integrations = serde_json::from_value(json!({
         "search": {"kind": "webSearch", "provider": "brave", "credential": {"env": "SEARCH_KEY"}}
     }))
     .unwrap();
-    document.spec.sandboxes[0].agent.integration_refs = vec!["search".into()];
+    sandbox.agent.integration_refs = vec!["search".into()];
     let environment = gateway_environment(&document, &GatewayValues, Path::new("state")).unwrap();
     for name in ["GATEWAY_TOKEN", "GATEWAY_CA", "GATEWAY_CERT", "GATEWAY_KEY"] {
         assert_eq!(environment[name], format!("test-{name}"));

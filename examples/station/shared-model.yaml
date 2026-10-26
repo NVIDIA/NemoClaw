@@ -44,11 +44,11 @@ spec:
         freeGateGiB: 12
         consecutiveSamples: 5
   inferenceProviders:
-    - name: shared
+    shared:
       provider: openai
       serviceRef: shared
   sandboxes:
-    - name: openclaw
+    openclaw:
       image:
         ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
       network:
@@ -66,7 +66,7 @@ spec:
               overrides:
                 model: Qwen/Qwen3-4B
                 maxTokens: 2048
-    - name: pi
+    pi:
       image:
         ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
       network:

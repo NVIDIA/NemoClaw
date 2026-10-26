@@ -34,7 +34,7 @@ async fn sandbox_with_runtime(
         .collect::<BTreeMap<_, _>>();
     let mut targets = nemoclaw_e2e::image_runtime::targets(&doc, &generations).unwrap();
     if let Some(runtime) = runtime {
-        let agent = doc.spec.sandboxes[0].agent.name.clone();
+        let agent = doc.spec.sandboxes["assistant"].agent.name.clone();
         targets
             .iter_mut()
             .find(|target| target.kind == "sandbox")

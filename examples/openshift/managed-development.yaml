@@ -26,7 +26,7 @@ spec:
       authentication:
         profile: development
   inferenceProviders:
-    - name: hosted-nvidia
+    hosted-nvidia:
       provider: openai
       api: openai-completions
       endpoint: https://integrate.api.nvidia.com/v1
@@ -34,7 +34,7 @@ spec:
         env: NVIDIA_INFERENCE_API_KEY
   # Each sandbox runs one independent agent using the shared inference profile.
   sandboxes:
-    - name: assistant
+    assistant:
       harness:
         kind: nvidia.fabric.openclaw
       image:
@@ -64,7 +64,7 @@ spec:
       agent:
         name: primary
         inferenceRef: chat
-    - name: researcher
+    researcher:
       harness:
         kind: nvidia.fabric.openclaw
       image:
@@ -94,7 +94,7 @@ spec:
       agent:
         name: researcher
         inferenceRef: chat
-    - name: reviewer
+    reviewer:
       harness:
         kind: nvidia.fabric.openclaw
       image:

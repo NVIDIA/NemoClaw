@@ -55,7 +55,7 @@ fn declared_services_install_once_and_service_ref_selects_the_inference_connecti
 #[test]
 fn service_references_reject_missing_names() {
     let mut missing = managed_ollama_service();
-    missing["spec"]["inferenceProviders"][0]["serviceRef"] = json!("missing");
+    missing["spec"]["inferenceProviders"]["local"]["serviceRef"] = json!("missing");
     assert!(Document::parse(missing.to_string().as_bytes()).is_err());
 }
 
@@ -207,6 +207,6 @@ fn container_service_rejects_invalid_launch_and_unreachable_inference_publicatio
     }
     let mut value = managed_ollama_service();
     value["spec"]["services"]["voice"] = container_service();
-    value["spec"]["inferenceProviders"][0]["serviceRef"] = json!("voice");
+    value["spec"]["inferenceProviders"]["local"]["serviceRef"] = json!("voice");
     assert!(Document::parse(value.to_string().as_bytes()).is_err());
 }
