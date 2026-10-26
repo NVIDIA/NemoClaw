@@ -27,21 +27,25 @@ export function sandboxDeleteFailureMessage(sandboxName: string): string {
 
 const CLEANUP_REASON_LIMIT = 200;
 
-/** Warn with why OpenShell refused a cleanup, as one bounded line (#13443). */
-export function warnSandboxCleanupReason(
-  warn: (message: string) => void,
-  failure: { diagnostic: string; error: { message: string } },
-): void {
-  const reason = (failure.diagnostic || failure.error.message)
+function oneLine(text: string): string {
+  return text
     .replace(/\p{Cc}\[[0-9;?]*[A-Za-z]/gu, "")
     .replace(/\p{Cc}+|\s+/gu, " ")
     .trim();
-  if (!reason) return;
+}
+
+/** Say why OpenShell refused a cleanup, as one bounded line (#13443). */
+export function sandboxCleanupReasonMessage(failure: {
+  diagnostic: string;
+  error: { message: string };
+}): string {
+  const reason =
+    oneLine(failure.diagnostic) || oneLine(failure.error.message) || "OpenShell gave no details.";
   const bounded =
     reason.length > CLEANUP_REASON_LIMIT
       ? `${reason.slice(0, CLEANUP_REASON_LIMIT - 3)}...`
       : reason;
-  warn(`Reason: ${bounded}`);
+  return `Reason: ${bounded}`;
 }
 
 /**
