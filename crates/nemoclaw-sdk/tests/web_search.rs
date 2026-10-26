@@ -64,7 +64,7 @@ fn search_uses_owned_profile_and_provider_without_exporting_secrets() {
         &graph["resource"]["openshell_web_search"][search.address.split_once('.').unwrap().1];
     assert_eq!(
         resource["binaries"],
-        json!("${jsondecode(data.fabric_harnesses.sandbox_0.binaries_json)}")
+        json!("${jsondecode(data.fabric_harnesses.sandbox_assistant.binaries_json)}")
     );
     assert!(resource.get("owner").is_none());
     assert_eq!(

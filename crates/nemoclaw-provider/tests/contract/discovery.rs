@@ -297,7 +297,7 @@ async fn compiled_discovery_requires_the_image_runtime_metadata() {
             assert!(output.status.success());
             let plan: Value = serde_json::from_slice(&output.stdout).unwrap();
             let observation: Value = serde_json::from_str(
-                plan["planned_values"]["outputs"]["discovery"]["value"]["sandbox_0"]
+                plan["planned_values"]["outputs"]["discovery"]["value"]["sandbox_assistant"]
                     .as_str()
                     .unwrap(),
             )
@@ -314,7 +314,7 @@ async fn compiled_discovery_requires_the_image_runtime_metadata() {
             assert!(output.status.success());
             let plan: Value = serde_json::from_slice(&output.stdout).unwrap();
             let observation: Value = serde_json::from_str(
-                plan["planned_values"]["outputs"]["discovery"]["value"]["sandbox_0"]
+                plan["planned_values"]["outputs"]["discovery"]["value"]["sandbox_assistant"]
                     .as_str()
                     .unwrap(),
             )

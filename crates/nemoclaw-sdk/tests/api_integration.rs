@@ -53,7 +53,7 @@ fn an_attached_api_registers_its_credential_for_the_sandbox() {
     // Its executables come from the sandbox's harness.
     assert_eq!(
         resource["binaries"],
-        json!("${jsondecode(data.fabric_harnesses.sandbox_0.binaries_json)}")
+        json!("${jsondecode(data.fabric_harnesses.sandbox_assistant.binaries_json)}")
     );
     // The sandbox attaches its registration and waits for it.
     let sandbox = &graph["resource"]["openshell_sandbox"]["assistant"];

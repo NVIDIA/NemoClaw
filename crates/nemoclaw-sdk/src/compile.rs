@@ -694,19 +694,20 @@ fn compile_with_plans(
     let mut runtime_sources = BTreeMap::new();
     let mut profile_sources = BTreeMap::new();
     let pulls = sandbox_image_pulls(document);
-    for (index, sandbox) in document.sandboxes().enumerate() {
-        let mut source = format!("data.fabric_harnesses.sandbox_{index}");
+    for sandbox in document.sandboxes() {
+        let read = crate::discovery_graph::harness_read(sandbox.name);
+        let mut source = format!("data.fabric_harnesses.{read}");
         if let Some(pull) = pulls.get(sandbox.name) {
             // The sandbox and its agent use reads that wait for the pull: an
             // unknown image ID defers them to apply. The plan-time discovery
             // read stays, and accepts an image the engine doesn't hold yet.
             let image_id = json!(format!("${{{}.image_id}}", pull.address));
-            let discovered = graph["data"]["fabric_harnesses"][format!("sandbox_{index}")].clone();
+            let discovered = graph["data"]["fabric_harnesses"][read.as_str()].clone();
             let mut acquired = discovered.clone();
             acquired["image_id"] = image_id.clone();
             acquired["lifecycle"]["postcondition"][1]["condition"] =
                 json!("${self.runtime_json != \"\"}");
-            graph["data"]["fabric_harnesses"][format!("sandbox_{index}_acquired")] = acquired;
+            graph["data"]["fabric_harnesses"][format!("{read}_acquired")] = acquired;
             let literal = |value: &str| value.replace("${", "$${").replace("%{", "%%{");
             let requirements =
                 crate::fabric_capabilities::requirements_for_sandbox(document, sandbox)?;
@@ -721,7 +722,7 @@ fn compile_with_plans(
                 ),
                 "agent_name": literal(&sandbox.agent.name),
             });
-            source = format!("data.fabric_harnesses.sandbox_{index}_acquired");
+            source = format!("data.fabric_harnesses.{read}_acquired");
         }
         runtime_sources.insert(sandbox.name.to_owned(), source.clone());
         for provider in document.sandbox_inference_providers(sandbox)? {

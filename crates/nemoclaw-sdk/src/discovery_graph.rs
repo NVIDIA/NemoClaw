@@ -89,10 +89,18 @@ fn read(
     Ok(())
 }
 
+/// Name of a sandbox's Fabric harness read. It follows the sandbox's name, not
+/// its position, so adding or removing a sandbox leaves other sandboxes' reads
+/// and the resources that use them unchanged. Sandbox names have no
+/// underscores, so the prefix keeps it apart from the other reads' names.
+pub(crate) fn harness_read(sandbox: &str) -> String {
+    format!("sandbox_{sandbox}")
+}
+
 pub(crate) fn populate(graph: &mut Value, document: &Document) -> Result<(), ConfigError> {
     let mut observations = Map::new();
     let mut sandboxes = document.sandboxes();
-    let (mut targets, mut images) = (0, 0);
+    let mut targets = 0;
     for query in plan_queries(document)? {
         match &query {
             DiscoveryQuery::Gateway(_) => {
@@ -142,8 +150,7 @@ pub(crate) fn populate(graph: &mut Value, document: &Document) -> Result<(), Con
                 ..
             }) => {
                 let sandbox = sandboxes.next().expect("one image read per sandbox");
-                let name = format!("sandbox_{images}");
-                images += 1;
+                let name = harness_read(sandbox.name);
                 let adapter = requirements.configuration["harness"]["adapter_id"]
                     .as_str()
                     .expect("resolved adapter");

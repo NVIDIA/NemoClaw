@@ -1,7 +1,7 @@
 {
   "data": {
     "fabric_harnesses": {
-      "sandbox_0": {
+      "sandbox_assistant": {
         "architecture": "${jsondecode(data.host_engine.current.engine_json).architecture}",
         "config_json": "{\"environment\":{\"provider\":\"local\",\"workspace\":\"/sandbox/workspace\"},\"harness\":{\"adapter_id\":\"nvidia.fabric.openclaw\",\"settings\":{}},\"metadata\":{\"name\":\"assistant\"},\"models\":{\"default\":{\"api_key_env\":\"NEMOCLAW_ANONYMOUS_API_KEY\",\"base_url\":\"http://172.30.110.1:18888/v1\",\"model\":\"fixture-model\",\"provider\":\"openai\",\"settings\":{}},\"primary\":{\"api_key_env\":\"NEMOCLAW_ANONYMOUS_API_KEY\",\"base_url\":\"http://172.30.110.1:18888/v1\",\"model\":\"fixture-model\",\"provider\":\"openai\",\"settings\":{}}},\"runtime\":{\"artifacts\":\"/sandbox/artifacts\"},\"schema_version\":\"fabric.agent/v1alpha1\"}",
         "engine": "unix:///var/run/docker.sock",
@@ -49,7 +49,7 @@
       "engine": "${data.host_engine.current.engine_json}",
       "gateway": "${data.openshell_gateway.current.observation_json}",
       "gateway_prerequisites": "${data.openshell_gateway_prerequisites.current.observation_json}",
-      "sandbox_0": "${data.fabric_harnesses.sandbox_0.observation_json}",
+      "sandbox_assistant": "${data.fabric_harnesses.sandbox_assistant.observation_json}",
       "target_0": "${data.host_engine.target_0.hardware_json}"
     }
   }
