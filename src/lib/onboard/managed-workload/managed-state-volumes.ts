@@ -4,7 +4,10 @@
 import { randomUUID } from "node:crypto";
 
 import { OPENSHELL_DEFAULT_WORKSPACE } from "../../adapters/openshell/sandbox-ssh-host";
-import { SUPPORTED_OPENSHELL_FALLBACK_VERSION } from "../openshell-version";
+import {
+  SUPPORTED_OPENSHELL_FALLBACK_VERSION,
+  usesOpenShellNativeProjection,
+} from "../openshell-version";
 import type { ManagedStartupStateRoot } from "../managed-startup/state-roots";
 import type { RuntimeProviderBundle } from "../runtime-provider/contract";
 
@@ -206,7 +209,7 @@ function supportsManagedStateVolumes(provider?: RuntimeProviderBundle): boolean 
 }
 
 function managedStateVolumeApproval(deps: ManagedStateVolumeDeps): Record<string, string> {
-  if (!["0.1.3", "0.1.5"].includes(String(SUPPORTED_OPENSHELL_FALLBACK_VERSION))) return {};
+  if (!usesOpenShellNativeProjection(SUPPORTED_OPENSHELL_FALLBACK_VERSION)) return {};
   const workspace =
     deps.workspace ?? (process.env.OPENSHELL_WORKSPACE || OPENSHELL_DEFAULT_WORKSPACE);
   if (!workspace || workspace.trim() !== workspace || /[\0\r\n]/u.test(workspace)) {

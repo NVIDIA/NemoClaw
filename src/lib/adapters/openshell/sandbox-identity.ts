@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { SUPPORTED_OPENSHELL_FALLBACK_VERSION } from "../../onboard/openshell-version";
+import {
+  SUPPORTED_OPENSHELL_FALLBACK_VERSION,
+  usesOpenShellNativeProjection,
+} from "../../onboard/openshell-version";
 
 import { performance } from "node:perf_hooks";
 import {
@@ -242,7 +245,7 @@ export function observeCreatedOpenShellSandboxId(
         `${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${input.createAttemptNonce}`,
         "--output",
         "json",
-        ["0.1.3", "0.1.5"].includes(String(SUPPORTED_OPENSHELL_FALLBACK_VERSION))
+        usesOpenShellNativeProjection(SUPPORTED_OPENSHELL_FALLBACK_VERSION)
           ? "--page-size"
           : "--limit",
         "2",

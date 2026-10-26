@@ -199,6 +199,30 @@ function prepareRuntimeFixture(
 }
 
 describe("reviewed candidate MCP runtime evidence", () => {
+  it("binds OpenShell 0.1.5 to the verified upstream release artifacts", () => {
+    expect(reviewedOpenShellMcpRuntime("0.1.5")).toEqual({
+      supervisorImage:
+        "ghcr.io/nvidia/openshell/supervisor@sha256:fabcd01f656e9d23df4386f82e80b4f48b90f3452d7d5c58889007643a069161",
+      provenance: {
+        schemaVersion: 1,
+        sourceRepository: "NVIDIA/OpenShell",
+        releaseTag: "v0.1.5",
+        sourceSha: "bdb956f2cd65a635f1294fccf1d138d263bf650f",
+        artifacts: {
+          cli: {
+            binarySha256: "446f766842d2bf03abc37b56a3f5a3e46b96140b5b6c305d3f168d67921fd271",
+          },
+          gateway: {
+            binarySha256: "c8fa78fd49f245978f64d038207ce0205d98fcdd48bf115bae8a0b9f4f4d5003",
+          },
+          standaloneSandbox: {
+            binarySha256: "65aa2a2afb96e7d1351c1d197ded7a966e20bcad68e18a58a94621a8f23769bc",
+          },
+        },
+      },
+    });
+  });
+
   it.each(
     [
       ["0.0.116", "mcp-bridge", "mcp-bridge-deepagents"],

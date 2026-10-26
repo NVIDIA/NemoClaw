@@ -49,7 +49,10 @@ import type {
   RuntimeProviderGatewayHostRuntime,
   RuntimeProviderGatewaySurface,
 } from "./runtime-provider/contract";
-import { SUPPORTED_OPENSHELL_FALLBACK_VERSION } from "./openshell-version";
+import {
+  SUPPORTED_OPENSHELL_FALLBACK_VERSION,
+  usesOpenShellNativeProjection,
+} from "./openshell-version";
 import { resolveConfiguredRuntimeProvider } from "./runtime-provider/selection";
 
 export { getGatewayHttpsEndpoint, startPackageManagedDockerDriverGateway };
@@ -401,7 +404,7 @@ export function assertDockerDriverGatewayAuthConfigSafe(
   const toml = fs.readFileSync(configPath, "utf-8");
   const values = parseTomlScalarValues(toml);
   assertTomlBoolean(values, "openshell.gateway.disable_tls", false);
-  const nativeSchema = ["0.1.3", "0.1.5"].includes(String(SUPPORTED_OPENSHELL_FALLBACK_VERSION));
+  const nativeSchema = usesOpenShellNativeProjection(SUPPORTED_OPENSHELL_FALLBACK_VERSION);
   if (nativeSchema) {
     assertTomlInteger(values, "openshell.version", 2);
     for (const key of ["cert_path", "key_path", "client_ca_path"] as const) {
