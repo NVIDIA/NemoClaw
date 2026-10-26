@@ -23,6 +23,7 @@ import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
+import { bootstrapInstallSudoArgs } from "../fixtures/bootstrap-install-command.ts";
 
 // This is intentionally a single live test instead of a new fixture
 // family: the contract is the real Ubuntu bootstrap path, so the test invokes
@@ -252,29 +253,24 @@ test(
 
     progress.phase("run the Brev bootstrap script");
     const installLog = artifacts.pathFor("bootstrap.log");
-    // sudo-rs on Ubuntu 26.04 ignores -E, so pass the bootstrap's non-secret
-    // inputs explicitly through env(1) instead of relying on sudo to keep them.
-    const bootstrapEnv: Record<string, string> = {
-      LAUNCH_LOG: installLog,
-      NEMOCLAW_CLONE_DIR: cloneDir,
-      NEMOCLAW_REF: "main",
-      SKIP_DOCKER_PULL: process.env.SKIP_DOCKER_PULL ?? "1",
-      NEMOCLAW_OPENSHELL_CHANNEL: process.env.NEMOCLAW_OPENSHELL_CHANNEL ?? "stable",
-      NEMOCLAW_NON_INTERACTIVE: "1",
-      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
-    };
+    // sudo implementations may ignore -E. Pass only the bootstrap's non-secret
+    // inputs explicitly so it builds the preseeded candidate checkout.
     const install = await host.command(
       "sudo",
-      [
-        "-n",
-        "env",
-        ...Object.entries(bootstrapEnv).map(([name, value]) => `${name}=${value}`),
-        "bash",
-        BOOTSTRAP_SCRIPT,
-      ],
+      bootstrapInstallSudoArgs({
+        script: BOOTSTRAP_SCRIPT,
+        cloneDir,
+        installLog,
+        env: process.env,
+      }),
       {
         artifactName: "phase-2-brev-bootstrap-script",
-        env: runEnv(bootstrapEnv),
+        env: runEnv({
+          LAUNCH_LOG: installLog,
+          NEMOCLAW_CLONE_DIR: cloneDir,
+          NEMOCLAW_REF: "main",
+          SKIP_DOCKER_PULL: process.env.SKIP_DOCKER_PULL ?? "1",
+        }),
         timeoutMs: INSTALL_TIMEOUT_MS,
       },
     );
