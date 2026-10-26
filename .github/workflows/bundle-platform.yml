@@ -155,7 +155,8 @@ jobs:
 
   lifecycle:
     name: Lifecycle / ${{ matrix.shard }}
-    if: inputs.lifecycle
+    # The bundle job runs whenever lifecycle tests do.
+    if: inputs.lifecycle && needs.bundle.result == 'success'
     needs: [build, bundle]
     strategy:
       fail-fast: false

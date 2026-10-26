@@ -131,6 +131,8 @@ jobs:
   load-image:
     name: Load image
     needs: [image, prepare]
+    # Runs only when the jobs it needs ran, as on v1 dispatch or a run-brev branch.
+    if: needs.image.result == 'success' && needs.prepare.result == 'success'
     runs-on: ubuntu-22.04
     timeout-minutes: 20
     steps:
@@ -153,6 +155,8 @@ jobs:
   qualify:
     name: Lifecycle
     needs: [build, prepare, load-image]
+    # Runs only when the jobs it needs ran, as on v1 dispatch or a run-brev branch.
+    if: needs.build.result == 'success' && needs.prepare.result == 'success' && needs.load-image.result == 'success'
     runs-on: ubuntu-22.04
     timeout-minutes: 30
     steps:

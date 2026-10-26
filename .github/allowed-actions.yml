@@ -1,0 +1,13 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Actions the NVIDIA organization allows, for those this repository uses.
+# The organization allows GitHub's and NVIDIA's actions and verified creators'
+# at any version, and other actions only at the commits it lists; a workflow
+# that names any other action fails to start. List a commit here only after an
+# organization admin allows it.
+verified-creators:
+  - anchore
+  - Swatinem
+commits:
+  - taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853

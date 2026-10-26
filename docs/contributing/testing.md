@@ -297,6 +297,13 @@ Bundle push and manual runs select all checks; PRs use impact analysis.
 Image pushes retain impact analysis, and manual image runs select all checks.
 A failed analysis selects all expensive checks; a failed planning job prevents the required checks from passing.
 
+### Workflow Rules
+
+Two tests in `nemoclaw-build`'s `workflows` module check what a workflow run would only reveal when it is skipped or refused:
+
+- A job that needs a job with an `if:` must check that job's `needs.JOB.result` or use a status function such as `!cancelled()` in its own `if:`. GitHub otherwise skips it whenever the needed job is skipped, and counts the skipped job as passing.
+- Every action from outside GitHub and NVIDIA must come from a verified creator or be a commit listed in [`.github/allowed-actions.yml`](../../.github/allowed-actions.yml). The organization allows other actions only at the commits it lists, and a workflow that names any other action fails to start. List a commit only after an organization admin allows it.
+
 ### Jobs of One Platform
 
 Each platform in [CI / Bundle](../../.github/workflows/rust.yml) runs [one workflow](../../.github/workflows/bundle-platform.yml) on its own runners:
