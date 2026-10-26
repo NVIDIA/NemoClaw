@@ -55,6 +55,15 @@ export function engineHarness(options: EngineHarnessOptions = {}): {
   let networkPresent = options.networkPresent ?? true;
   const capture = vi.fn((args: readonly string[]) => {
     if (args[0] === "info") return commandResult(0);
+    if (
+      args[0] === "ps" &&
+      args.includes(
+        `label=io.nvidia.nemoclaw.host-local-inference.request-transaction-sha256=${TRANSACTION_ID}`,
+      )
+    ) {
+      if (options.daemonInspectFailure) return commandResult(1, "", "daemon unavailable");
+      return commandResult(0);
+    }
     if (args[0] === "container" && args[1] === "inspect") {
       if (options.daemonInspectFailure) return commandResult(1, "", "daemon unavailable");
       if (!containerPresent) return commandResult(1, "", "No such container");

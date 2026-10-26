@@ -12,7 +12,9 @@ import {
   formatGatewayRouteConflict,
   type GatewayInferenceRoute,
   isAdvisoryGatewayRouteConflict,
+  preflightGatewayRouteDiscovery,
 } from "../../inference/gateway-route-compatibility";
+import { normalizeNativeLocalProviderAttachment } from "../../inference/native-local/contract";
 import { normalizeInferenceSelection } from "../../inference/selection";
 import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import { requireRuntimeProviderBundleForSandbox } from "../../onboard/runtime-provider/access";
@@ -31,6 +33,7 @@ import type { RebuildBail } from "./rebuild-credential-preflight";
 import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
 import type { RebuildVersionCheck } from "./rebuild-preflight-confirmation";
 import { printRebuildPreflightFailure } from "./rebuild-preflight-error";
+import { reconcileJournaledRebuildRecovery } from "./destroy-preflight";
 import { getRebuildCredentialEnvFromRegistry } from "./rebuild-resume-preflight";
 
 export interface RebuildRoutePreflightReceipt {
@@ -94,6 +97,32 @@ function hardRouteConflict(
   if (!route.provider || !route.model) {
     return "Prepared rebuild inference route is missing its provider or model.";
   }
+  const target = sandboxes.find((entry) => entry.name === sandboxName);
+  if (target?.nativeLocalProviderAttachment !== undefined) {
+    const local = normalizeNativeLocalProviderAttachment(target.nativeLocalProviderAttachment);
+    if (
+      !local ||
+      !(target.agent === "langchain-deepagents-code"
+        ? local.agent === undefined
+        : target.agent === "hermes"
+          ? local.agent === "hermes"
+          : (target.agent === "openclaw" || target.agent === "pi") &&
+            local.agent === target.agent &&
+            !target.nimContainer) ||
+      local.sandboxName !== sandboxName ||
+      local.gatewayName !== gatewayName ||
+      local.provider !== route.provider
+    )
+      return "Native local provider authority does not match the rebuild target.";
+    const discovery = preflightGatewayRouteDiscovery({
+      gatewayName,
+      sandboxName,
+      route: { ...route, model: route.model },
+      sandboxes,
+      nativeLocalSelection: true,
+    });
+    return discovery.ok ? null : formatGatewayRouteConflict(discovery.result);
+  }
   const compatibility = checkGatewayRouteCompatibility({
     gatewayName,
     sandboxName,
@@ -148,6 +177,8 @@ export function commitRebuildRoutePreflight(
     const migratedSandboxNames: string[] = [];
     for (const peer of Object.values(sandboxRegistry.sandboxes)) {
       if (
+        target.nativeLocalProviderAttachment !== undefined ||
+        peer.nativeLocalProviderAttachment !== undefined ||
         peer.name === input.sandboxName ||
         peer.provider !== targetRoute.provider ||
         !missingCredentialIdentity(peer.credentialEnv)
@@ -338,6 +369,26 @@ export function blockRebuildOnRetainedSandboxRecovery(
     .listRetainedSandboxRecoveryRecords()
     .find((record) => record.sandboxName === sandboxName);
   if (!retainedRecovery) return false;
+
+  if (retainedRecovery.sandboxIdentityFingerprint === null) {
+    try {
+      const reconciled = reconcileJournaledRebuildRecovery(
+        sandbox,
+        onboardSession.listRetainedSandboxRecoveryRecords(),
+        { session: onboardSession, registry },
+      );
+      if (reconciled) {
+        console.log(
+          `  Cleared absent replacement recovery for '${sandboxName}'; resuming its saved rebuild.`,
+        );
+        return false;
+      }
+    } catch (error) {
+      console.error(error instanceof Error ? error.message : String(error));
+      bail(`Retained sandbox recovery blocks rebuild for '${sandboxName}'.`, 1);
+      return true;
+    }
+  }
 
   console.error(
     `  Rebuild cannot use retained sandbox '${sandboxName}' while recovery record '${retainedRecovery.recordId}' is unresolved. No sandbox or Docker resources were removed.`,

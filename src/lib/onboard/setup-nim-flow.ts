@@ -8,6 +8,7 @@ import type { ManagedInferenceReadinessSource } from "../inference/serving/types
 import type { AgentDefinition } from "../agent/defs";
 import {
   OPENROUTER_CLOUD_MODEL_OPTIONS,
+  OPENROUTER_FEATURED_MODEL_ID_ALIASES,
   resolveAgentDefaultCloudModel,
   resolveAgentProviderInferenceApi,
 } from "../inference/config";
@@ -576,7 +577,11 @@ function prepareManagedLlamaCppMenu(input: {
     ? discoverManagedLlamaCppSafely(
         deps,
         !deps.isNonInteractive() && !requestedProvider
-          ? { ...process.env, [LLAMA_CPP_RECIPE_ENV]: "", [NEMOCLAW_SERVING_PRESET_ENV]: "" }
+          ? {
+              ...process.env,
+              [LLAMA_CPP_RECIPE_ENV]: "",
+              [NEMOCLAW_SERVING_PRESET_ENV]: "",
+            }
           : undefined,
         gpu,
         runtimeProviderId,
@@ -595,7 +600,11 @@ function prepareManagedLlamaCppMenu(input: {
   }
   return {
     resolution,
-    options: buildManagedLlamaCppOptions({ candidate, requestedProvider, discovery }),
+    options: buildManagedLlamaCppOptions({
+      candidate,
+      requestedProvider,
+      discovery,
+    }),
   };
 }
 
@@ -846,7 +855,9 @@ async function resolveFreshHermesPortableOllamaSelection(input: {
   const nonInteractive = input.deps.isNonInteractive();
   let portableModel =
     input.requestedModel ??
-    input.deps.getNonInteractiveModel("ollama", { allowProviderModelFallback: false });
+    input.deps.getNonInteractiveModel("ollama", {
+      allowProviderModelFallback: false,
+    });
   if (!portableModel && !nonInteractive) {
     const promptedModel = await promptManualModelId("  Ollama model id: ", "Ollama", null, {
       promptFn: input.deps.prompt,
@@ -1007,6 +1018,7 @@ export function createSetupNim(
     let selectedServingProfileProvenance: ServingProfileProvenance | null = null;
     let selectedModelOrigin: SelectedModelOrigin | undefined;
     const inferenceCapabilityCache = new OnboardInferenceCapabilityCache();
+    const agentDefaultModel = resolveAgentDefaultCloudModel(agent);
     const nvidiaFeaturedModels = deps.createNvidiaFeaturedModelSession({
       onModelSelected: (model, source) => {
         selectedModelOrigin = {
@@ -1015,7 +1027,7 @@ export function createSetupNim(
           provider: deps.remoteProviderConfig.build.providerName,
         };
       },
-      defaultModel: resolveAgentDefaultCloudModel(agent),
+      defaultModel: agentDefaultModel,
       writeLine: deps.log,
     });
     const openRouterFeaturedModels = deps.createNvidiaFeaturedModelSession({
@@ -1026,8 +1038,10 @@ export function createSetupNim(
           provider: deps.remoteProviderConfig.openrouter.providerName,
         };
       },
-      defaultModel: resolveAgentDefaultCloudModel(agent),
+      defaultModel:
+        OPENROUTER_FEATURED_MODEL_ID_ALIASES.get(agentDefaultModel) ?? agentDefaultModel,
       fallbackModelOptions: OPENROUTER_CLOUD_MODEL_OPTIONS,
+      modelIdAliases: OPENROUTER_FEATURED_MODEL_ID_ALIASES,
       retiredModelIds: [],
       writeLine: deps.log,
     });
@@ -1062,6 +1076,7 @@ export function createSetupNim(
         );
       const route = (): ProviderInferenceProbeRoute => ({
         provider: state.provider,
+        ...(state.localNimSelected ? { localNimSelected: true } : {}),
         model: typeof state.model === "string" && state.model.trim() ? state.model.trim() : null,
         endpointUrl: state.endpointUrl,
         preferredInferenceApi: effectiveInferenceApi(),
@@ -1385,6 +1400,7 @@ export function createSetupNim(
           break;
         } else if (selected.key === "nim-local") {
           const state = createSelectionState();
+          state.localNimSelected = true;
           const result = await deps.handleNimLocalSelection(
             gpu,
             { requestedModel, recoveredFromSandbox, recoveredModel },

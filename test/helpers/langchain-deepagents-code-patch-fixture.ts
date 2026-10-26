@@ -1,6 +1,32 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+/*
+ * The copied deepagents-code 0.1.71 fixture code below uses the following license.
+ *
+ * MIT License
+ *
+ * Copyright (c) LangChain, Inc.
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
+
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -53,6 +79,97 @@ export function writeFixtureFile(root: string, relativePath: string, content: st
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.writeFileSync(target, `${content.trim()}\n`, "utf8");
 }
+
+export const approvalPackageSources: Readonly<Record<string, string>> = {
+  "tui/widgets/tool_renderers.py": `
+class ToolApprovalWidget:
+    def __init__(self, data):
+        self.data = data
+
+
+class ToolRenderer:
+    @staticmethod
+    def get_approval_widget(tool_args, assistant_id=None):
+        return ToolApprovalWidget, dict(tool_args)
+
+
+def get_renderer(tool_name):
+    return ToolRenderer()
+`,
+  "tui/widgets/approval.py": `
+from __future__ import annotations
+
+from types import SimpleNamespace
+from deepagents_code.tui.widgets.tool_renderers import get_renderer
+
+
+class ApprovalMenu:
+    def __init__(self):
+        self._is_auto_fallback = False
+        self._show_auto_option = True
+        self._options = self._build_options()
+        self.decisions = []
+        self.notifications = []
+        self.app = SimpleNamespace(
+            notify=lambda *args, **kwargs: self.notifications.append((args, kwargs))
+        )
+
+    async def _update_tool_info(self) -> None:
+        """Mount the tool-specific approval widgets for all tools."""
+        if not self._tool_info_container:
+            return
+
+        # Clear existing content
+        await self._tool_info_container.remove_children()
+
+        # Mount info for each tool
+        for i, action_request in enumerate(self._action_requests):
+            tool_name = action_request.get("name", "unknown")
+            tool_args = action_request.get("args", {})
+
+            # Add tool header if multiple tools
+            if len(self._action_requests) > 1:
+                header = Static(
+                    Content.from_markup(
+                        "[bold]$num. $name[/bold]",
+                        num=i + 1,
+                        name=tool_name,
+                    )
+                )
+                await self._tool_info_container.mount(header)
+
+            # Show description if present
+            description = action_request.get("description")
+            if description:
+                await self._tool_info_container.mount(_description_widget(description))
+
+            # Get the appropriate renderer for this tool
+            renderer = get_renderer(tool_name)
+            widget_class, data = renderer.get_approval_widget(
+                tool_args, assistant_id=self._assistant_id
+            )
+            if "show_numbers" in data:
+                data["show_numbers"] = (
+                    bool(data["show_numbers"]) and self._show_diff_line_numbers
+                )
+            approval_widget = widget_class(data)
+            await self._tool_info_container.mount(approval_widget)
+
+    def _build_options(self):
+        return [
+            ("Approve (y)", "approve"),
+            ("Enable Auto for this thread (a)", "auto_approve_all"),
+            ("Reject (n)", "reject"),
+        ]
+
+    def _handle_selection(self, option, *, reject_message=None):
+        decision_map = {0: "approve", 1: "auto_approve_all", 2: "reject"}
+        self.decisions.append((decision_map[option], reject_message))
+
+    def action_select_auto(self):
+        self._handle_selection(1)
+`,
+};
 
 export function createPackageFixture(version = "0.1.71"): string {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-patch-"));
@@ -977,41 +1094,9 @@ class ModelSelectorScreen:
         self.original_selection = (model_spec, provider)
 `,
   );
-  writeFixtureFile(
-    packageDir,
-    "tui/widgets/approval.py",
-    `
-from __future__ import annotations
-
-from types import SimpleNamespace
-
-
-class ApprovalMenu:
-    def __init__(self):
-        self._is_auto_fallback = False
-        self._show_auto_option = True
-        self._options = self._build_options()
-        self.decisions = []
-        self.notifications = []
-        self.app = SimpleNamespace(
-            notify=lambda *args, **kwargs: self.notifications.append((args, kwargs))
-        )
-
-    def _build_options(self):
-        return [
-            ("Approve (y)", "approve"),
-            ("Enable Auto for this thread (a)", "auto_approve_all"),
-            ("Reject (n)", "reject"),
-        ]
-
-    def _handle_selection(self, option, *, reject_message=None):
-        decision_map = {0: "approve", 1: "auto_approve_all", 2: "reject"}
-        self.decisions.append((decision_map[option], reject_message))
-
-    def action_select_auto(self):
-        self._handle_selection(1)
-`,
-  );
+  for (const [relativePath, source] of Object.entries(approvalPackageSources)) {
+    writeFixtureFile(packageDir, relativePath, source);
+  }
   writeFixtureFile(
     packageDir,
     "tui/widgets/status.py",

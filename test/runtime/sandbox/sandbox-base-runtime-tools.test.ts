@@ -85,6 +85,7 @@ function runBaseAptLayer(prefix: string) {
   fs.mkdirSync(nativeSecurityDebs);
   fs.mkdirSync(path.dirname(fakePythonLink), { recursive: true });
   fs.writeFileSync(path.join(nativeSecurityDebs, "libssh2-1t64.deb"), "fixed libssh2");
+  fs.writeFileSync(path.join(nativeSecurityDebs, "zlib1g.deb"), "fixed zlib");
   fs.writeFileSync(
     path.join(nativeSecurityDebs, "nemoclaw-python3.13-htmlparser-fix.deb"),
     "fixed parser package",
@@ -132,7 +133,7 @@ describe("sandbox base runtime tools", () => {
         runtimeToolsEndMarker(dockerfile),
       );
 
-      expect(source).toContain("util-linux=2.41-5");
+      expect(source).toContain("util-linux=2.41.5-0+deb13u1");
       expect(runtimeContract).toContain("test -x /usr/bin/setpriv");
       expect(runtimeContract).toContain("/usr/bin/setpriv --version");
       expect(runtimeContract).toContain("! command -v gosu");
@@ -175,7 +176,7 @@ describe("sandbox base runtime tools", () => {
       stderr: "",
     });
     expect(calls).toContain("procps=2:4.0.4-9");
-    expect(calls).toContain("util-linux=2.41-5");
+    expect(calls).toContain("util-linux=2.41.5-0+deb13u1");
     expect(calls).toContain("e2fsprogs=1.47.2-3+b12");
     expect(calls).toContain("lsof=4.99.4+dfsg-2");
     expect(calls).toContain("openssh-sftp-server=1:10.0p1-7+deb13u4");

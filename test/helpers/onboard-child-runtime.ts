@@ -2,8 +2,30 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { MIN_OLLAMA_VERSION } from "../../src/lib/inference/ollama-version.js";
+import { OFFICIAL_OLLAMA_INSTALLER_SHA256 } from "../../src/lib/onboard/install-ollama-linux.js";
 
 export const onboardChildRuntimeSource = String.raw`
+const childCrypto = require("node:crypto");
+const childFs = require("node:fs");
+const verifiedOllamaInstallerFixture = Buffer.from("verified Ollama installer fixture");
+const originalChildCreateHash = childCrypto.createHash;
+childCrypto.createHash = (algorithm, options) => {
+  const hash = originalChildCreateHash(algorithm, options);
+  const originalUpdate = hash.update.bind(hash);
+  const originalDigest = hash.digest.bind(hash);
+  let hashesVerifiedInstallerFixture = false;
+  hash.update = (data, inputEncoding) => {
+    hashesVerifiedInstallerFixture =
+      Buffer.isBuffer(data) && data.equals(verifiedOllamaInstallerFixture);
+    return hashesVerifiedInstallerFixture ? hash : originalUpdate(data, inputEncoding);
+  };
+  hash.digest = (encoding) =>
+    hashesVerifiedInstallerFixture
+      ? ${JSON.stringify(OFFICIAL_OLLAMA_INSTALLER_SHA256)}
+      : originalDigest(encoding);
+  return hash;
+};
+
 function supportedOllamaHostMetadataOutput(command) {
   if (command.includes("ollama --version")) {
     return ${JSON.stringify(`ollama version is ${MIN_OLLAMA_VERSION}`)};
@@ -45,7 +67,14 @@ function createSuccessfulOllamaServiceExecutionProofRunner(fallback, systemdProo
   const runFallback =
     typeof fallback === "function"
       ? fallback
-      : () => ({ stdout: "", stderr: "", exitCode: 0, timedOut: false });
+      : (command) => {
+          const argv = Array.isArray(command) ? command : [];
+          const outputIndex = argv.indexOf("--output");
+          if (outputIndex >= 0 && typeof argv[outputIndex + 1] === "string") {
+            childFs.writeFileSync(argv[outputIndex + 1], verifiedOllamaInstallerFixture);
+          }
+          return { stdout: "", stderr: "", exitCode: 0, timedOut: false };
+        };
 
   return (command, options) => {
     const argv = Array.isArray(command) ? command : [];

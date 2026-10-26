@@ -9,6 +9,10 @@ import { describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 
 import { REPOSITORY_ROOT } from "./core/repository-root";
+import {
+  importHermesToolGatewayProfile,
+  matchHermesToolGatewayProviderType,
+} from "./hermes-tool-gateway-provider-profile";
 
 const PROFILE_ID = "nemoclaw-hermes-tool-gateway-v1";
 const PROFILE_PATH = path.join(REPOSITORY_ROOT, "agents", "hermes", "host", `${PROFILE_ID}.yaml`);
@@ -287,5 +291,38 @@ describe("Hermes tool gateway provider profile", () => {
       expect(g.calls.filter(({ args }) => args[1] === "create")).toHaveLength(1);
       expect(JSON.stringify(g.calls.map(({ args }) => args))).not.toContain("refresh-secret");
     });
+  });
+});
+
+describe("Hermes tool gateway provider contract", () => {
+  const exact = {
+    name: "alpha-hermes-tool-gateway",
+    type: PROFILE_ID,
+    credentialKeys: [CREDENTIAL_ENV],
+    configKeys: [],
+  };
+
+  it.each([
+    ["the owned profile", exact, PROFILE_ID],
+    ["an exact legacy generic provider", { ...exact, type: "generic" }, "generic"],
+    ["an unrelated type", { ...exact, type: "unrelated" }, null],
+    ["another provider name", { ...exact, name: "other" }, null],
+    ["an extra credential key", { ...exact, credentialKeys: [CREDENTIAL_ENV, "OTHER_KEY"] }, null],
+    ["another credential key", { ...exact, credentialKeys: ["OTHER_KEY"] }, null],
+    ["a config key", { ...exact, configKeys: ["OTHER_KEY"] }, null],
+  ])("matches %s", (_case, observed, expected) => {
+    expect(matchHermesToolGatewayProviderType(observed, "alpha-hermes-tool-gateway")).toBe(
+      expected,
+    );
+  });
+
+  it("imports the checked-in profile on the requested gateway", () => {
+    const importProviderProfile = vi.fn(() => ({ ok: true as const }));
+    const target = { kind: "named", gatewayName: "nemoclaw" } as const;
+
+    expect(
+      importHermesToolGatewayProfile({ importProviderProfile }, target, REPOSITORY_ROOT),
+    ).toEqual({ ok: true });
+    expect(importProviderProfile).toHaveBeenCalledWith({ target, profilePath: PROFILE_PATH });
   });
 });

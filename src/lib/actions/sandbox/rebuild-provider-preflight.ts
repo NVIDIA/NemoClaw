@@ -8,6 +8,7 @@ import {
   parseTrustedPrivateInferenceHostsFromEnv,
 } from "../../inference/endpoint-ssrf-preflight";
 import { usesNvidiaEndpointProbePayload } from "../../inference/openai-probe-models";
+import { RETRIABLE_HTTP_PROBE_STATUSES } from "../../inference/probe/transient-http-policy";
 import { getRemoteProviderConfigForName } from "../../onboard/inference-providers/provider-selection-keys";
 import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
 
@@ -37,6 +38,10 @@ import {
 import * as registry from "../../state/registry";
 import type { RebuildResumeConfig } from "./rebuild-resume-config";
 import { isLocalInferenceProvider } from "./rebuild-resume-config";
+import {
+  normalizeNativeLocalProviderAttachment,
+  verifyRecordedNativeLocalProviderAttachment,
+} from "../../inference/native-local/profile";
 
 const hermesProviderAuth = require("../../hermes-provider-auth") as {
   HERMES_PROVIDER_NAME: string;
@@ -53,7 +58,25 @@ const { REMOTE_PROVIDER_CONFIG } = require("../../onboard/providers") as {
   >;
 };
 
-type ProbeResult = { ok: boolean; validated?: boolean };
+type ProbeResult = { ok: boolean; validated?: boolean; failures?: unknown[] };
+
+function transientNvidiaValidationFailure(result: ProbeResult): boolean {
+  return (
+    Array.isArray(result.failures) &&
+    result.failures.length > 0 &&
+    result.failures.every((failure) => {
+      if (typeof failure !== "object" || failure === null) return false;
+      const { httpStatus, curlStatus } = failure as Record<string, unknown>;
+      return (
+        (curlStatus === 0 &&
+          typeof httpStatus === "number" &&
+          RETRIABLE_HTTP_PROBE_STATUSES.has(httpStatus)) ||
+        ((curlStatus === 28 || curlStatus === -110) &&
+          (httpStatus === 0 || httpStatus === null || httpStatus === undefined))
+      );
+    })
+  );
+}
 type Probe = (
   endpointUrl: string,
   model: string,
@@ -81,6 +104,7 @@ export async function validateRebuildHostInferenceCredential(
     probeAnthropicEndpoint: probes.probeAnthropicEndpoint,
     probeOpenAiLikeEndpointOptimized: probes.probeOpenAiLikeEndpointOptimized,
   },
+  onIndeterminate?: () => void,
 ): Promise<boolean> {
   const config = getRemoteProviderConfigForName(target.provider, REMOTE_PROVIDER_CONFIG);
   // Local, routed, and Hermes authentication retain their existing preflights.
@@ -124,6 +148,13 @@ export async function validateRebuildHostInferenceCredential(
           }
         : {}),
     });
+    if (
+      !result.ok &&
+      usesNvidiaEndpointProbePayload(target.provider ?? "") &&
+      transientNvidiaValidationFailure(result)
+    ) {
+      onIndeterminate?.();
+    }
     return result.ok && result.validated !== false;
   } catch {
     // Probe errors and response bodies can contain credentials.
@@ -150,6 +181,48 @@ function rebuildProviderAdapter(
           })) as RunProviderCommand)
       : undefined,
   );
+}
+
+/** Revalidate the frozen scoped authority immediately before destructive rebuild work. */
+export async function verifyRebuildNativeLocalProviderBeforeDelete(
+  sandboxName: string,
+  gatewayName: string,
+  config: RebuildResumeConfig,
+  runtimeSelection?: OpenShellRuntimeSelection,
+  getSandbox: (name: string) => RebuildSandboxEntry | null = registry.getSandbox,
+): Promise<boolean> {
+  try {
+    const expected = normalizeNativeLocalProviderAttachment(config.nativeLocalProviderAttachment);
+    const currentAuthorityMatches = () => {
+      const current = getSandbox(sandboxName);
+      return (
+        current?.name === sandboxName &&
+        current.agent === config.agent &&
+        current.provider === config.provider &&
+        JSON.stringify(
+          normalizeNativeLocalProviderAttachment(current.nativeLocalProviderAttachment),
+        ) === JSON.stringify(expected)
+      );
+    };
+    if (
+      !expected ||
+      (runtimeSelection && runtimeSelection.gatewayName !== gatewayName) ||
+      !currentAuthorityMatches()
+    )
+      return false;
+    await verifyRecordedNativeLocalProviderAttachment({
+      adapter: rebuildProviderAdapter(runtimeSelection),
+      expected,
+      sandboxName,
+      gatewayName,
+      agent: config.agent,
+      provider: config.provider,
+    });
+    return currentAuthorityMatches();
+  } catch {
+    // Provider diagnostics can include credential material; the caller emits a fixed error.
+    return false;
+  }
 }
 
 export async function inspectRebuildGatewayProviderRegistration(
@@ -425,6 +498,21 @@ export async function checkRebuildGatewayCredentialReuseOrBail(
   bail: (msg: string, code?: number) => never,
   deps: GatewayCredentialReusePreflightDeps = defaultGatewayCredentialReusePreflightDeps(),
 ): Promise<boolean> {
+  if (config.nativeLocalProviderAttachment !== undefined) {
+    try {
+      await verifyRecordedNativeLocalProviderAttachment({
+        adapter: rebuildProviderAdapter(),
+        expected: config.nativeLocalProviderAttachment,
+        sandboxName,
+        agent: config.agent,
+        provider: config.provider,
+      });
+      return true;
+    } catch {
+      bail("Could not verify native local provider credential reuse; sandbox is untouched");
+      return false;
+    }
+  }
   const nativeAttachment = recordedNativeProviderAttachment(config);
   if (nativeAttachment) {
     return checkRebuildGatewayProviderOrBail(config.provider, config.credentialEnv, log, bail, {
@@ -498,7 +586,11 @@ export async function checkRebuildGatewayCredentialReuseOrBail(
   console.error(
     `  ${_RD}Rebuild preflight failed:${R} cannot safely reuse the recorded gateway credential.`,
   );
-  console.error(`  ${rebuildCredentialReuseCondition(decision.condition)}`);
+  console.error(
+    `  ${rebuildCredentialReuseCondition(
+      decision.kind === "reject" ? decision.condition : "gateway-provider-identity",
+    )}`,
+  );
   console.error("  Export the provider credential to use normal validation and upsert.");
   console.error("  Sandbox is untouched — no data was lost.");
   bail("Unsafe gateway credential reuse");

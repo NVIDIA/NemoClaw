@@ -217,16 +217,15 @@ Resolve the reported error before repeating this section.
 Restart the gateway only after the update succeeds.
 On success, OpenClaw serializes the complete config as standard JSON, so JSON5 comments and formatting in the original file are removed.
 
-After the patch succeeds, restart the managed gateway.
-The restart verifies gateway health before it exits successfully.
-Then confirm that OpenClaw loaded the `agents.list` change:
+After the patch succeeds, confirm that the live gateway loaded the `agents.list` change:
 
 ```bash
-nemoclaw "$SANDBOX" gateway restart
 nemoclaw "$SANDBOX" agents list --json
 ```
 
 The `agents list` output should include `vision-operator`.
+If Google Chat is configured, NemoClaw disables live reload to preserve its webhook route, so restart the gateway and run the list command again.
+For other configurations, restart only if the live roster does not include `vision-operator` after the successful patch.
 If the restart fails, correct the reported gateway error and rerun `nemoclaw "$SANDBOX" gateway restart` before you use the sub-agent.
 
 ## Add Sub-Agent Credentials

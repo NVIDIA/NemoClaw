@@ -133,8 +133,15 @@ async function executeSelector(
   copiedSha = CANDIDATE_SHA,
   baseSha = BASE_SHA,
   filesRequestStatus = 0,
-  reportedChangedFileCount = changedFiles.length,
-  expectedStatus = filesRequestStatus,
+  reportedChangedFileCount: unknown = changedFiles.length,
+  expectedStatus: number | readonly number[] = filesRequestStatus,
+  filesResponse = JSON.stringify([changedFiles.map((filename) => ({ filename }))]),
+  prResponse = JSON.stringify({
+    number: 8748,
+    base: { sha: baseSha },
+    changed_files: reportedChangedFileCount,
+    head: { sha: CANDIDATE_SHA },
+  }),
 ) {
   const directory = mkdtempSync(join(tmpdir(), `nemoclaw-${fixtureName}-selector-`));
   const binDirectory = join(directory, "bin");
@@ -168,20 +175,16 @@ fi
         GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
         GITHUB_SHA: copiedSha,
         PATH: `${binDirectory}:${process.env.PATH ?? ""}`,
-        PR_FILES_JSON: JSON.stringify([changedFiles.map((filename) => ({ filename }))]),
+        PR_FILES_JSON: filesResponse,
         PR_FILES_EXIT: String(filesRequestStatus),
-        PR_JSON: JSON.stringify({
-          number: 8748,
-          base: { sha: baseSha },
-          changed_files: reportedChangedFileCount,
-          head: { sha: CANDIDATE_SHA },
-        }),
+        PR_JSON: prResponse,
       },
     );
-    assert.equal(result.status, expectedStatus, result.stderr);
-    return expectedStatus === 0
-      ? readFileSync(outputPath, "utf8").trim()
-      : `status=${result.status}`;
+    assert.equal(result.signal, null, result.stderr);
+    assert([expectedStatus].flat().includes(result.status ?? -1), result.stderr);
+    const output = readFileSync(outputPath, "utf8");
+    assert(result.status === 0 || output === "", "failed discovery wrote job outputs");
+    return result.status === 0 ? output.trim() : `status=${result.status}`;
   } finally {
     rmSync(directory, { force: true, recursive: true });
   }
@@ -354,6 +357,17 @@ describe.concurrent("generic NVIDIA GPU PR selection", () => {
     },
   );
 
+  it("selects the generic GPU E2E when only its llama.cpp diagnostics owner changes", async ({
+    expect,
+  }) => {
+    const result = await selectGenericGpuLane([
+      "test/e2e/fixtures/llama-cpp-runtime-diagnostics.ts",
+    ]);
+    expect(result).toBe(
+      `base_sha=${BASE_SHA}\nhead_sha=${CANDIDATE_SHA}\npr_number=8748\nselected=true`,
+    );
+  });
+
   it.for(ARM64_PROOF_AUTHORITY_PATHS)(
     "does not select the Docker-qualified AMD64 GPU job for ARM64 proof owner %s",
     async (changedFile, { expect }) => {
@@ -391,6 +405,155 @@ describe.concurrent("generic NVIDIA GPU PR selection", () => {
     );
   });
 
+  it.for([
+    {
+      name: "API failure with matching files",
+      response: '[[{"filename":"scripts/install.sh"}]]',
+      count: 1,
+      status: 17,
+      expectedExit: 17,
+    },
+    {
+      name: "API failure with nonmatching files",
+      response: '[[{"filename":"docs/readme.md"}]]',
+      count: 1,
+      status: 17,
+      expectedExit: 17,
+    },
+    { name: "malformed JSON", response: "{", count: 1, status: 0, expectedExit: [4, 5] },
+    { name: "non-array pages", response: "null", count: 0, status: 0, expectedExit: 1 },
+    {
+      name: "flat file list",
+      response: '[{"filename":"scripts/install.sh"}]',
+      count: 1,
+      status: 0,
+      expectedExit: 1,
+    },
+    { name: "non-array page", response: "[[], {}]", count: 0, status: 0, expectedExit: 1 },
+    {
+      name: "non-object file",
+      response: '[["scripts/install.sh"]]',
+      count: 1,
+      status: 0,
+      expectedExit: 1,
+    },
+    { name: "missing filename", response: "[[{}]]", count: 1, status: 0, expectedExit: 1 },
+    {
+      name: "non-string filename",
+      response: '[[{"filename":null}]]',
+      count: 1,
+      status: 0,
+      expectedExit: 1,
+    },
+    {
+      name: "incomplete nonmatching files",
+      response: '[[{"filename":"docs/readme.md"}]]',
+      count: 2,
+      status: 0,
+      expectedExit: 1,
+    },
+    {
+      name: "incomplete matching files",
+      response: '[[{"filename":"scripts/install.sh"}]]',
+      count: 2,
+      status: 0,
+      expectedExit: 1,
+    },
+    {
+      name: "excess files",
+      response: '[[{"filename":"scripts/install.sh"}]]',
+      count: 0,
+      status: 0,
+      expectedExit: 1,
+    },
+    {
+      name: "empty pages with nonzero count",
+      response: "[]",
+      count: 1,
+      status: 0,
+      expectedExit: 1,
+    },
+    {
+      name: "empty page with nonzero count",
+      response: "[[]]",
+      count: 1,
+      status: 0,
+      expectedExit: 1,
+    },
+    { name: "negative count", response: "[[]]", count: -1, status: 0, expectedExit: 4 },
+    { name: "fractional count", response: "[[]]", count: 0.5, status: 0, expectedExit: 4 },
+    { name: "string count", response: "[[]]", count: "0", status: 0, expectedExit: 4 },
+    { name: "null count", response: "[[]]", count: null, status: 0, expectedExit: 4 },
+  ])("fails GPU discovery without outputs for $name", async (fixture) => {
+    await executeSelector(
+      selectorScript(),
+      "generic-gpu",
+      [],
+      CANDIDATE_SHA,
+      BASE_SHA,
+      fixture.status,
+      fixture.count,
+      fixture.expectedExit,
+      fixture.response,
+    );
+  });
+
+  it("fails GPU discovery without outputs for missing changed_files", async () => {
+    await executeSelector(
+      selectorScript(),
+      "generic-gpu",
+      [],
+      CANDIDATE_SHA,
+      BASE_SHA,
+      0,
+      0,
+      4,
+      "[[]]",
+      JSON.stringify({
+        number: 8748,
+        base: { sha: BASE_SHA },
+        head: { sha: CANDIDATE_SHA },
+      }),
+    );
+  });
+
+  it.for(["[]", "[[]]"])(
+    "skips GPU qualification for complete empty pages %s",
+    async (response, { expect }) => {
+      const result = await executeSelector(
+        selectorScript(),
+        "generic-gpu",
+        [],
+        CANDIDATE_SHA,
+        BASE_SHA,
+        0,
+        0,
+        0,
+        response,
+      );
+      expect(result).toBe(
+        `base_sha=${BASE_SHA}\nhead_sha=${CANDIDATE_SHA}\npr_number=8748\nselected=false`,
+      );
+    },
+  );
+
+  it("selects GPU qualification when a later complete page matches", async ({ expect }) => {
+    const result = await executeSelector(
+      selectorScript(),
+      "generic-gpu",
+      [],
+      CANDIDATE_SHA,
+      BASE_SHA,
+      0,
+      2,
+      0,
+      '[[{"filename":"docs/readme.md"}],[{"filename":"scripts/install.sh"}]]',
+    );
+    expect(result).toBe(
+      `base_sha=${BASE_SHA}\nhead_sha=${CANDIDATE_SHA}\npr_number=8748\nselected=true`,
+    );
+  });
+
   it("rejects a copied branch whose commit does not match the current PR head", async ({
     expect,
   }) => {
@@ -410,7 +573,7 @@ describe.concurrent("generic NVIDIA GPU PR selection", () => {
   }) => {
     assert.match(
       readFileSync(LLAMA_LIVE_TEST_PATH, "utf8"),
-      /const agent = await host\.nemoclaw\([\s\S]*await captureManagedRuntimeLogs\([^)]*\);[\s\S]*expect\(agent\.exitCode/u,
+      /const agent = await host\.nemoclaw\([\s\S]*await captureManagedLlamaCppRuntimeLogs\([^)]*\);[\s\S]*expect\(agent\.exitCode/u,
       "llama.cpp runtime logs must be captured after the agent request and before its exit assertion",
     );
     expect(workflow().jobs["llama-cpp-generic-gpu"]?.env?.NEMOCLAW_GATEWAY_RUNTIME).toBe("docker");

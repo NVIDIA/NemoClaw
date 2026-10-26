@@ -8,7 +8,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
 import * as dockerLlamaCppOperation from "../../onboard/runtime-provider/docker-llama-cpp-operation";
-import { privateBridgeFixture } from "../../onboard/runtime-provider/docker-llama-cpp-private-bridge.test-support";
+import { privateBridgeFixture } from "../../onboard/runtime-provider/docker-llama-cpp-managed-lifecycle.test-support";
 import {
   createHostLocalCreateJournalStore,
   HOST_LOCAL_CREATE_JOURNAL_DIRECTORY,
@@ -909,8 +909,8 @@ describe("host-local model cleanup", () => {
       ok: false,
       reason: expect.stringContaining("endpoint"),
     });
-    expect(privateBridge.stopTransaction).toHaveBeenCalledExactlyOnceWith(TRANSACTION_ID);
-    expect(privateBridge.assertStopped).toHaveBeenCalledExactlyOnceWith(TRANSACTION_ID);
+    expect(privateBridge.stopTransaction).not.toHaveBeenCalled();
+    expect(privateBridge.assertStopped).not.toHaveBeenCalled();
     expect(changed.capture).not.toHaveBeenCalled();
     expect(fs.existsSync(managedLlamaCppStatePaths(homeDir).stateDir)).toBe(true);
   });
@@ -1442,28 +1442,6 @@ describe("host-local model cleanup", () => {
     );
     expect(fs.existsSync(path.join(paths.stateDir, PERSISTED_ENGINE_AUTHORITY_DIRECTORY))).toBe(
       false,
-    );
-  });
-
-  it("stops the managed llama.cpp bridge before removing the container it forwards to (#9598)", () => {
-    const homeDir = temporaryHome();
-    const harness = engineHarness();
-    createManagedState(homeDir, harness.engine);
-    const privateBridge = privateBridgeFixture();
-
-    const result = cleanupManagedLlamaCppRuntimeForSandbox("spark-agent", {
-      homeDir,
-      engine: harness.engine,
-      privateBridge,
-    });
-
-    expect(result).toMatchObject({ ok: true });
-    expect(privateBridge.stopTransaction).toHaveBeenCalledWith(TRANSACTION_ID);
-    expect(privateBridge.assertStopped).toHaveBeenCalledWith(TRANSACTION_ID);
-    const removalCall = harness.capture.mock.calls.findIndex((call) => call[0]?.[0] === "rm");
-    expect(removalCall).toBeGreaterThanOrEqual(0);
-    expect(privateBridge.stopTransaction.mock.invocationCallOrder[0]).toBeLessThan(
-      harness.capture.mock.invocationCallOrder[removalCall]!,
     );
   });
 

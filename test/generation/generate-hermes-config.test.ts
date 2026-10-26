@@ -282,6 +282,18 @@ function copyConfigGeneratorFixture(fixtureRoot: string): string {
     path.join(import.meta.dirname, "../..", nativeConfigDir, "contract.ts"),
     path.join(fixtureRoot, nativeConfigDir, "contract.ts"),
   );
+  const localConfigDir = "src/lib/inference/native-local";
+  fs.mkdirSync(path.join(fixtureRoot, localConfigDir), { recursive: true });
+  fs.copyFileSync(
+    path.join(import.meta.dirname, "../..", localConfigDir, "agent-config.ts"),
+    path.join(fixtureRoot, localConfigDir, "agent-config.ts"),
+  );
+  const coreDir = "src/lib/core";
+  fs.mkdirSync(path.join(fixtureRoot, coreDir), { recursive: true });
+  fs.copyFileSync(
+    path.join(import.meta.dirname, "../..", coreDir, "endpoint-url-safety.ts"),
+    path.join(fixtureRoot, coreDir, "endpoint-url-safety.ts"),
+  );
   return fixtureScriptPath;
 }
 
@@ -524,7 +536,7 @@ describe("agents/hermes/generate-config.ts", () => {
       NEMOCLAW_WEB_SEARCH_PROVIDER: "tavily",
     });
 
-    expect(config.web).toBeUndefined();
+    expect(config.web).toEqual({ keyless_fallback: false });
     expect(envFile).not.toContain("TAVILY_API_KEY=");
   });
 

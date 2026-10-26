@@ -446,19 +446,37 @@ function commandResult(result: SpawnSyncLikeResult, command = "command"): Comman
   return { ...rawResult, ok: true, stdout: rawStdout };
 }
 
+/**
+ * Environment for `systemctl --user`: the caller's runtime directory, or the
+ * current user's `/run/user/<uid>` when the caller (for example `sudo -u`) did
+ * not set one. A caller's bus address is kept only when its normalized path is
+ * the caller's own `<runtime dir>/bus`; otherwise that directory's bus is used,
+ * so an inherited, stale, or foreign address cannot select another manager.
+ * Diagnostics use the C locale.
+ */
+export function systemctlUserEnv(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...base, LC_ALL: "C" };
+  if (typeof process.getuid === "function") {
+    const configuredRuntimeDir = env.XDG_RUNTIME_DIR?.trim();
+    const runtimeDir = configuredRuntimeDir || `/run/user/${String(process.getuid())}`;
+    const busPath = /^unix:path=([^,]+)(?:,|$)/.exec(env.DBUS_SESSION_BUS_ADDRESS ?? "")?.[1];
+    const coherentBus =
+      configuredRuntimeDir &&
+      busPath !== undefined &&
+      path.normalize(busPath) === path.join(configuredRuntimeDir, "bus");
+    env.XDG_RUNTIME_DIR = runtimeDir;
+    if (!coherentBus) env.DBUS_SESSION_BUS_ADDRESS = `unix:path=${runtimeDir}/bus`;
+  }
+  return env;
+}
+
 function runSystemctlUser(
   args: string[],
   opts: Required<Pick<OpenShellGatewayUserServiceOptions, "env" | "spawnSyncImpl">>,
 ) {
-  const env: NodeJS.ProcessEnv = { ...opts.env, LC_ALL: "C" };
-  if (typeof process.getuid === "function") {
-    const runtimeDir = env.XDG_RUNTIME_DIR?.trim() || `/run/user/${String(process.getuid())}`;
-    env.XDG_RUNTIME_DIR = runtimeDir;
-    env.DBUS_SESSION_BUS_ADDRESS ||= `unix:path=${runtimeDir}/bus`;
-  }
   return runCommand("systemctl", ["--user", ...args], {
     ...opts,
-    env,
+    env: systemctlUserEnv(opts.env),
   });
 }
 
@@ -792,7 +810,7 @@ function getOpenShellGatewayServiceStopCommandForTarget(
   return `${prefix} ${service.serviceName}`;
 }
 
-function userManagerLooksUnavailable(reason: string): boolean {
+export function userManagerLooksUnavailable(reason: string): boolean {
   const diagnostics = reason
     .split(/\r?\n/)
     .map((line) => line.trim())
@@ -822,6 +840,43 @@ function findSystemdUserServiceActivationPath(
   readdirSync: typeof fs.readdirSync,
 ): string | null {
   if (service.manager !== "systemd") return null;
+  return findSystemdUserActivationPath(
+    [OPENSHELL_GATEWAY_USER_SERVICE, NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE],
+    home,
+    env,
+    existsSync,
+    lstatSync,
+    readdirSync,
+  );
+}
+
+/**
+ * First systemd user activation path (`*.wants`, `*.requires`, `*.upholds`)
+ * that still names the NemoClaw-managed gateway unit, or null. Throws
+ * OpenShellGatewayServiceTrustError when a unit root cannot be inspected.
+ */
+export function findNemoclawGatewayUserServiceActivationPath(
+  home: string,
+  env: NodeJS.ProcessEnv,
+): string | null {
+  return findSystemdUserActivationPath(
+    [NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE],
+    home,
+    env,
+    fs.existsSync,
+    fs.lstatSync,
+    fs.readdirSync,
+  );
+}
+
+function findSystemdUserActivationPath(
+  serviceNames: readonly string[],
+  home: string,
+  env: NodeJS.ProcessEnv,
+  existsSync: (filePath: string) => boolean,
+  lstatSync: typeof fs.lstatSync,
+  readdirSync: typeof fs.readdirSync,
+): string | null {
   if (env.SYSTEMD_UNIT_PATH?.trim()) {
     throw new OpenShellGatewayServiceTrustError(
       "SYSTEMD_UNIT_PATH overrides the systemd user unit search path, so NemoClaw cannot prove that no gateway service can activate.",
@@ -877,7 +932,6 @@ function findSystemdUserServiceActivationPath(
       path.join(effectiveRuntimeDir, "systemd", "generator.late"),
     );
   }
-  const serviceNames = [OPENSHELL_GATEWAY_USER_SERVICE, NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE];
   for (const root of new Set(roots)) {
     let targetDirectories: string[];
     try {

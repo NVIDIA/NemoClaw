@@ -23,6 +23,9 @@ const MAX_TRANSACTION_FILE_BYTES = 8 * 1024 * 1024;
 const MAX_TRANSACTION_TOTAL_BYTES = 32 * 1024 * 1024;
 const MAX_MANIFEST_BYTES = 256 * 1024;
 const MAX_COMMIT_RECEIPT_BYTES = 4096;
+// Base64 of the existing backup budget, canonical manifest and JSON framing.
+export const MANAGED_STARTUP_SHARED_CAPTURE_MAX_BYTES =
+  4 * Math.ceil(MAX_TRANSACTION_TOTAL_BYTES / 3) + MAX_MANIFEST_BYTES * 2;
 const TRANSACTION_PARENT_DIRECTORY_MODE = 0o755;
 const TRANSACTION_DIRECTORY_MODE = 0o700;
 const TRANSACTION_FILE_MODE = 0o400;
@@ -448,6 +451,7 @@ function managedOutputTargets(
     case "pi":
       directories.add(path.join(root, "agent"));
       files.add(path.join(root, "agent", "models.json"));
+      files.add(path.join(root, "agent", "settings.json"));
       break;
   }
 

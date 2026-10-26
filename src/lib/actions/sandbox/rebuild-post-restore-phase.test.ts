@@ -108,6 +108,9 @@ describe("rebuild post-restore phase", () => {
       order.push("mcp");
       return true;
     });
+    vi.spyOn(rebuildHermesPostRestore, "refreshRestoredHermesInferenceRoute").mockResolvedValue(
+      undefined,
+    );
     vi.spyOn(rebuildHermesPostRestore, "restartHermesGatewayAfterStateRestore").mockImplementation(
       async (_sandboxName, targetAgentName) =>
         targetAgentName === "hermes" ? "restarted" : "not-applicable",
@@ -223,10 +226,8 @@ describe("rebuild post-restore phase", () => {
       };
       const fileRunner = messagingSandboxFiles(files);
       const runtimeSelection = { gatewayName: "nemoclaw-19080", workspace: "default" };
-      vi.mocked(registry.getSandbox).mockReturnValue({
-        agent: "hermes",
-        gatewayName: runtimeSelection.gatewayName,
-      } as never);
+      const entry = { agent: "hermes", gatewayName: runtimeSelection.gatewayName };
+      vi.mocked(registry.getSandbox).mockReturnValue(entry as never);
       vi.stubEnv("OPENSHELL_GATEWAY", "unrelated-gateway");
       const run = vi.spyOn(openshellRuntime, "runOpenshell").mockImplementation((args, options) => {
         expect(args.slice(0, 5)).toEqual(["sandbox", "exec", "--name", "alpha", "--"]);
@@ -332,6 +333,8 @@ describe("rebuild post-restore phase", () => {
 
   it("completes offline restoration before one native final start (#7102, #9946, #11764)", async () => {
     await runRebuildPostRestorePhase(input());
+
+    expect(rebuildHermesPostRestore.refreshRestoredHermesInferenceRoute).not.toHaveBeenCalled();
 
     expect(order).toEqual([
       "maintenance-begin",
@@ -616,6 +619,7 @@ describe("rebuild post-restore phase", () => {
     expect(args.bail).toHaveBeenCalledWith(
       "Recreated sandbox agent identity did not match the authoritative rebuild target.",
     );
+    expect(rebuildHermesPostRestore.refreshRestoredHermesInferenceRoute).not.toHaveBeenCalled();
     expect(rebuildHermesPostRestore.restartHermesGatewayAfterStateRestore).not.toHaveBeenCalled();
   });
 
@@ -648,45 +652,71 @@ describe("rebuild post-restore phase", () => {
   });
 
   it.each([
-    ["openclaw", false],
-    ["hermes", false],
-    ["hermes", true],
+    ["openclaw", false, false, "messaging"],
+    ["hermes", false, false, "messaging"],
+    ["hermes", true, false, "messaging"],
+    ["hermes", false, false, "inference"],
+    ["hermes", false, true, "inference"],
+    ["hermes", true, false, "inference"],
   ] as const)(
-    "stops %s rebuild when messaging reapply fails (cron gate=%s)",
-    async (agent, gated) => {
+    "stops %s before restart with cron gate=%s, prepared recovery=%s, and failed %s",
+    async (agent, gated, preparedBackupRecovery, stage) => {
       agentName = agent;
-      vi.mocked(rebuildMessaging.reapplyMessagingManifestBeforeAgentStart).mockRejectedValue(
-        new Error("config write failed"),
-      );
+      const sensitiveDetail = "synthetic-restored-provider-handle-do-not-log";
+      const stages = {
+        messaging: {
+          operation: rebuildMessaging.reapplyMessagingManifestBeforeAgentStart,
+          message: "Messaging manifest config reapply failed during rebuild.",
+          diagnostic: "Messaging manifest config reapply failed before gateway start",
+          logs: [["Messaging manifest reapply failed; configuration details omitted."]],
+        },
+        inference: {
+          operation: rebuildHermesPostRestore.refreshRestoredHermesInferenceRoute,
+          message: "Hermes inference configuration could not be rebound after state restore.",
+          diagnostic: "Backup is preserved at: /retained/hermes-backup",
+          logs: [],
+        },
+      };
+      vi.mocked(stages[stage].operation).mockRejectedValue(new Error(sensitiveDetail));
       const args = {
         ...input(),
+        preparedBackupRecovery,
+        backupManifest: { backupPath: "/retained/hermes-backup" } as never,
         ...(gated
           ? {
               hermesCronRestoreIdentity: { pid: 41, start_time: 902, drain_token: "restore-token" },
             }
           : {}),
       };
-
-      await runRebuildPostRestorePhase(args);
-
+      expect(await runRebuildPostRestorePhase(args)).toBeUndefined();
+      expect(args.bail).toHaveBeenCalledWith(stages[stage].message);
+      expect(args.log.mock.calls).toEqual(expect.arrayContaining(stages[stage].logs));
       expect(rebuildMcp.restoreMcpAfterRebuild).not.toHaveBeenCalled();
       expect(messagingHostForward.ensureMessagingHostForwardAfterRebuild).not.toHaveBeenCalled();
-      expect(args.bail).toHaveBeenCalledWith(
-        "Messaging manifest config reapply failed during rebuild.",
-      );
-      expect(args.log).toHaveBeenCalledWith(
-        "Messaging manifest reapply failed; configuration details omitted.",
-      );
       expect(rebuildHermesPostRestore.restartHermesGatewayAfterStateRestore).not.toHaveBeenCalled();
+      expect(rebuildHermesPostRestore.verifyHermesGatewayAfterStateRestore).not.toHaveBeenCalled();
+      expect(
+        rebuildHermesPostRestore.verifyHermesGatewayAfterStateRestoreForCronGate,
+      ).not.toHaveBeenCalled();
       expect(
         rebuildHermesPostRestore.completeHermesCronRestoreAfterGatewayReplacement,
       ).not.toHaveBeenCalled();
       expect(
         vi.mocked(processRecovery.abortUnregisteredOpenClawPostRestoreDoctor).mock.calls,
       ).toEqual(agent === "openclaw" ? [[{ sandboxName: "alpha", kind: "backup" }]] : []);
-      const output = vi.mocked(console.error).mock.calls.flat().join("\n");
-      expect(output).toContain("Messaging manifest config reapply failed before gateway start");
-      expect(output.includes("Hermes cron dispatch remains drained")).toBe(gated);
+      const output = [
+        ...vi.mocked(console.error).mock.calls,
+        ...vi.mocked(console.log).mock.calls,
+        ...args.log.mock.calls,
+      ]
+        .flat()
+        .join("\n");
+      expect(output).toContain(stages[stage].diagnostic);
+      expect(output).not.toContain(sensitiveDetail);
+      expect(output).not.toMatch(/rebuild completed|Hermes API bearer token changed/);
+      expect(output.includes("cron dispatch remains drained")).toBe(gated);
+      expect(output.includes("/retained/hermes-backup")).toBe(gated || stage === "inference");
+      expect(output.includes("nemoclaw alpha recover")).toBe(gated);
     },
   );
 
@@ -740,46 +770,52 @@ describe("rebuild post-restore phase", () => {
     );
   });
 
-  it("does not enter an OpenClaw maintenance window for another agent", async () => {
-    agentName = "hermes";
-    const args = input();
+  it.each([false, true])(
+    "rebinds restored Hermes inference before restart with prepared recovery=%s",
+    async (preparedBackupRecovery) => {
+      agentName = "hermes";
+      const runtimeSelection = { gatewayName: "nemoclaw-19080", workspace: "default" };
+      const entry = { agent: "hermes", gatewayName: runtimeSelection.gatewayName };
+      vi.mocked(registry.getSandbox).mockReturnValue(entry as never);
+      const args = { ...input(), preparedBackupRecovery, mcpRuntimeSelection: runtimeSelection };
+      const verification = await runRebuildPostRestorePhase(args);
 
-    const verification = await runRebuildPostRestorePhase(args);
-
-    expect(args.bail).not.toHaveBeenCalled();
-    expect(processRecovery.beginUnregisteredOpenClawBackupQuiesce).not.toHaveBeenCalled();
-    expect(processRecovery.finishUnregisteredOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
-    expect(mutableConfigPerms.inspectMutableHermesConfigPerms).toHaveBeenCalledWith("alpha");
-    expect(verification).toEqual({ complete: true, mutableConfigPermissionsVerified: true });
-  });
-
-  it("rebinds ordinary Hermes to restored state before MCP restoration", async () => {
-    agentName = "hermes";
-    vi.mocked(rebuildHermesPostRestore.restartHermesGatewayAfterStateRestore).mockImplementation(
-      async () => {
-        order.push("restart");
-        return "restarted";
-      },
-    );
-    vi.mocked(rebuildHermesPostRestore.verifyHermesGatewayAfterStateRestore).mockImplementation(
-      async () => {
-        order.push("verify");
-        return "healthy";
-      },
-    );
-
-    const args = input();
-    await runRebuildPostRestorePhase(args);
-
-    expect(order).toEqual(["messaging", "restart", "mcp", "verify", "host-forward"]);
-    expect(
-      rebuildHermesPostRestore.verifyHermesGatewayAfterStateRestoreForCronGate,
-    ).not.toHaveBeenCalled();
-    expect(
-      rebuildHermesPostRestore.completeHermesCronRestoreAfterGatewayReplacement,
-    ).not.toHaveBeenCalled();
-    expect(args.bail).not.toHaveBeenCalled();
-  });
+      const calls = [
+        rebuildMessaging.reapplyMessagingManifestBeforeAgentStart,
+        rebuildHermesPostRestore.refreshRestoredHermesInferenceRoute,
+        rebuildHermesPostRestore.restartHermesGatewayAfterStateRestore,
+        rebuildMcp.restoreMcpAfterRebuild,
+        rebuildHermesPostRestore.verifyHermesGatewayAfterStateRestore,
+        messagingHostForward.ensureMessagingHostForwardAfterRebuild,
+      ].map((operation) => vi.mocked(operation).mock.invocationCallOrder);
+      expect(calls.map((invocations) => invocations.length)).toEqual([1, 1, 1, 1, 1, 1]);
+      expect(calls.flat()).toEqual([...calls.flat()].sort((a, b) => a - b));
+      expect(processRecovery.beginUnregisteredOpenClawBackupQuiesce).not.toHaveBeenCalled();
+      expect(processRecovery.finishUnregisteredOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
+      expect(mutableConfigPerms.inspectMutableHermesConfigPerms).toHaveBeenCalledWith("alpha");
+      expect(verification).toEqual({ complete: true, mutableConfigPermissionsVerified: true });
+      expect(
+        rebuildHermesPostRestore.verifyHermesGatewayAfterStateRestoreForCronGate,
+      ).not.toHaveBeenCalled();
+      expect(
+        rebuildHermesPostRestore.completeHermesCronRestoreAfterGatewayReplacement,
+      ).not.toHaveBeenCalled();
+      expect(
+        rebuildHermesPostRestore.refreshRestoredHermesInferenceRoute,
+      ).toHaveBeenCalledExactlyOnceWith(
+        "alpha",
+        runtimeSelection,
+        registry.getSandbox,
+        sandboxTransport.buildSandboxCommandEnvironment(runtimeSelection),
+      );
+      expect(rebuildHermesPostRestore.restartHermesGatewayAfterStateRestore).toHaveBeenCalledWith(
+        "alpha",
+        "hermes",
+        { runtimeSelection },
+      );
+      expect(args.bail).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([false, true])("rejects a version mismatch during recovery=%s", async (recovery) => {
     agentName = "hermes";
@@ -1085,6 +1121,7 @@ describe("rebuild post-restore phase", () => {
 
       expect(verification).toEqual({ complete: true, mutableConfigPermissionsVerified: true });
       expect(mutableConfigPerms.inspectMutableHermesConfigPerms).not.toHaveBeenCalled();
+      expect(rebuildHermesPostRestore.refreshRestoredHermesInferenceRoute).not.toHaveBeenCalled();
     },
   );
 
@@ -1093,6 +1130,12 @@ describe("rebuild post-restore phase", () => {
     const events: string[] = [];
     let dispatchHeld = true;
     const attemptDispatch = () => events.push(dispatchHeld ? "dispatch-blocked" : "dispatch-ran");
+    vi.mocked(rebuildHermesPostRestore.refreshRestoredHermesInferenceRoute).mockImplementation(
+      async () => {
+        events.push("inference-rebind");
+        attemptDispatch();
+      },
+    );
     vi.mocked(rebuildHermesPostRestore.restartHermesGatewayAfterStateRestore).mockImplementation(
       async () => {
         events.push("restart");
@@ -1140,6 +1183,8 @@ describe("rebuild post-restore phase", () => {
     await runRebuildPostRestorePhase(args);
 
     expect(events).toEqual([
+      "inference-rebind",
+      "dispatch-blocked",
       "restart",
       "dispatch-blocked",
       "mcp",

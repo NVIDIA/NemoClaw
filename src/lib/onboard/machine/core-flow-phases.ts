@@ -42,11 +42,9 @@ export interface EndpointProvenanceOptions {
   endpointSource?: InferenceEndpointSource | null;
   endpointSourceProvider?: string | null;
   endpointSourceEndpointUrl?: string | null;
-  getSandboxRegistryEntry: (name: string) => {
-    provider?: unknown;
-    endpointUrl?: unknown;
-    endpointSource?: unknown;
-  } | null;
+  getSandboxRegistryEntry: (
+    name: string,
+  ) => Partial<import("../../state/registry").SandboxEntry> | null;
 }
 
 export interface ProviderInferenceOnboardFlowPhaseOptions<
@@ -55,6 +53,7 @@ export interface ProviderInferenceOnboardFlowPhaseOptions<
 > {
   gatewayName: string;
   forceProviderSelection: boolean;
+  recreateSandbox?: (requested?: boolean) => boolean;
   forceInferenceSetup?: boolean;
   apfInterceptorRequested?: boolean;
   authoritativeResumeConfig?: boolean;
@@ -251,6 +250,7 @@ export function createProviderInferenceOnboardFlowPhase<
       gatewayName: options.gatewayName,
       resume: context.resume,
       fresh: context.fresh,
+      recreateSandbox: options.recreateSandbox?.(false) ?? false,
       session: context.session,
       gpu: context.gpu,
       gpuPassthrough: context.gpuPassthrough,
@@ -281,7 +281,10 @@ export function createProviderInferenceOnboardFlowPhase<
       selectedMessagingChannels: context.selectedMessagingChannels,
       env: options.env,
       constants: options.constants,
-      deps: options.deps,
+      deps: {
+        ...options.deps,
+        getSandboxRegistryEntry: options.endpointProvenance.getSandboxRegistryEntry,
+      },
     });
 
     return {
@@ -307,6 +310,7 @@ export function createProviderInferenceOnboardFlowPhase<
         hostLocalInferenceSandboxProofAuthority:
           providerInferenceResult.hostLocalInferenceSandboxProofAuthority,
         deferredInferenceRoute: providerInferenceResult.deferredInferenceRoute,
+        stagedNativeLocalRecreation: providerInferenceResult.stagedNativeLocalRecreation,
       }),
       result: providerInferenceResult.stateResults,
     };
@@ -356,6 +360,7 @@ export function createSandboxOnboardFlowPhase<
       provider: context.provider ?? "",
       endpointUrl: context.endpointUrl,
       compatibleEndpointReasoning: context.compatibleEndpointReasoning,
+      compatibleEndpointReasoningEffort: context.compatibleEndpointReasoningEffort,
       credentialEnv: context.credentialEnv,
       nimContainer: context.nimContainer,
       webSearchConfig: context.webSearchConfig,
@@ -369,6 +374,7 @@ export function createSandboxOnboardFlowPhase<
       hermesAuthMethod: context.hermesAuthMethod,
       hostLocalInferenceRouteOnly: context.hostLocalInferenceRouteOnly === true,
       deferredInferenceRoute: context.deferredInferenceRoute,
+      stagedNativeLocalRecreation: context.stagedNativeLocalRecreation,
       controlUiPort: options.controlUiPort,
       rootDir: options.rootDir,
       env: options.env,

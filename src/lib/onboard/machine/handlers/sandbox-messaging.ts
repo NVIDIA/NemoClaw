@@ -290,14 +290,14 @@ async function channelCredentialLivesAtGateway<Agent>(
     ({ inspection }) => inspection.kind === "collision" || inspection.kind === "indeterminate",
   );
   if (unresolved) {
-    const { name } = unresolved.binding;
+    const { name, credentialEnv } = unresolved.binding;
     if (unresolved.inspection.kind === "indeterminate") {
       throw new Error(
         `Could not inspect messaging provider '${name}' for sandbox '${plan.sandboxName}'. No messaging state was changed. Run onboarding again after the OpenShell gateway is available.`,
       );
     }
     throw new Error(
-      `Messaging provider '${name}' for sandbox '${plan.sandboxName}' does not match the recorded credential binding. No messaging state was changed.`,
+      `Messaging provider '${name}' for sandbox '${plan.sandboxName}' does not match the recorded credential binding. No messaging state was changed. Provide ${credentialEnv} again to replace a legacy provider with the supported profile, or resolve the conflicting provider identity, then rerun onboarding.`,
     );
   }
   return inspections.every(({ inspection }) => inspection.kind === "exact");

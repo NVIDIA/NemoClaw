@@ -23,6 +23,7 @@ CREDENTIAL_BOUNDARY_CHECK="${REPO}/test/e2e/e2e-cloud-experimental/checks/08-dee
 SHELL_ROUND_ONE="/sandbox/.nemoclaw-e2e-autorun-shell-1"
 WRITE_ROUND="/sandbox/.nemoclaw-e2e-autorun-write"
 SHELL_ROUND_THREE="/sandbox/.nemoclaw-e2e-autorun-shell-3"
+AUTORUN_DEBUG_DIR="/sandbox/.nemoclaw-e2e-autorun-debug"
 EXPORT_BASELINE_RECOVERY_ARMED=0
 
 fail() {
@@ -223,7 +224,7 @@ proc abort_tui {markers marker code} {
 }
 
 # Exercise direct tool approvals; interpreter-mediated calls bypass these gates.
-set remote_script {cd /sandbox && /usr/local/bin/dcode --no-interpreter -m "$1"; status=$?; printf "\nNEMOCLAW_AUTORUN_TUI_EXIT:%s\n" "$status"}
+set remote_script {cd /sandbox && DEEPAGENTS_CODE_DEBUG=1 DEEPAGENTS_CODE_DEBUG_DIRECTORY=/sandbox/.nemoclaw-e2e-autorun-debug /usr/local/bin/dcode --no-interpreter -m "$1"; status=$?; printf "\nNEMOCLAW_AUTORUN_TUI_EXIT:%s\n" "$status"}
 set cmd [list openshell sandbox exec --name $sandbox --tty -- env HOME=/sandbox TERM=xterm-256color bash -lc $remote_script nemoclaw-e2e $first_prompt]
 spawn {*}$cmd
 
@@ -295,6 +296,14 @@ assert_autorun_evidence() {
     || fail "autorun file verification marker is missing"
 }
 
+capture_autorun_diagnostics() {
+  # The pinned DCode runtime writes per-thread streaming/tool events. Capture a
+  # bounded redacted tail before failure recovery rebuilds the sandbox.
+  timeout 20 openshell sandbox exec --name "$SANDBOX_NAME" -- bash -c \
+    "tail -c 12000 -- ${AUTORUN_DEBUG_DIR@Q}/*.log 2>/dev/null" 2>&1 \
+    | node --no-warnings "${REPO}/test/e2e/fixtures/redaction.ts" || true
+}
+
 run_boundary_check() {
   local label="$1"
   local script_path="$2"
@@ -309,7 +318,7 @@ run_boundary_check() {
 
 cleanup_probe_files() {
   sandbox_exec \
-    "rm -f ${SHELL_ROUND_ONE@Q} ${WRITE_ROUND@Q} ${SHELL_ROUND_THREE@Q}" \
+    "rm -f ${SHELL_ROUND_ONE@Q} ${WRITE_ROUND@Q} ${SHELL_ROUND_THREE@Q}; rm -rf -- ${AUTORUN_DEBUG_DIR@Q}" \
     >/dev/null 2>&1 || true
 }
 
@@ -379,8 +388,10 @@ main() {
   # Failure captures pass through the canonical redactor before reaching logs.
   if ! run_autorun_tui "$marker_file" \
     | node --no-warnings "${REPO}/test/e2e/fixtures/redaction.ts"; then
+    capture_autorun_diagnostics
     fail "finite DCode autorun TUI harness failed: $(tr '\n' ' ' <"$marker_file")"
   fi
+  capture_autorun_diagnostics
   assert_autorun_evidence "$marker_file"
   rm -rf "$capture_dir"
   pass "native Auto opt-in runs sequential shell and non-shell rounds"
