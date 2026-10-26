@@ -61,13 +61,13 @@ Scanner problems identify the operation and exit status when available.
 
 Keep reports from private candidates in a location approved for that inventory.
 Package names and advisory details can disclose unreleased contents even when no credentials appear.
-Do not send that output to public workflow logs or artifacts without disclosure approval.
+Do not send that output to public workflow logs or artifacts; the release workflow reports a final release's findings itself.
 
 ## Interpret the Result
 
 | Result | Exit code | Action |
 |---|---|---|
-| Assessment passed | `0` | No blocking finding was identified in complete, valid inputs; handle release approvals separately. |
+| Assessment passed | `0` | No blocking finding was identified in complete, valid inputs; for a final release, the release workflow publishes the draft. |
 | Assessment blocked | `2` | Update the affected dependency or base-image pin and assess the new image digest. |
 | Assessment incomplete | `3` | Repair invalid or missing evidence, refresh the database, or review an unsupported finding severity, then rerun. |
 
@@ -104,8 +104,7 @@ The test generates metadata-only OCI images locally and runs both tools without 
 It checks AMD64 and ARM64 inventories, vulnerable/fixed advisory pairs for Debian, npm, Python, and Rust, and a passing fixture.
 It reads the prepared database without updating it.
 
-The [release procedure](releases.md) still owns publication.
-Its protected controller must approve the policy and disclosure, protect private candidates, and verify the approved digests before publication.
+The [release procedure](releases.md) owns publication: its workflow assesses a final release with the `v1` controller, verifies the staged digests, and publishes the draft only when the assessment passes.
 
 ## Bind a Release Assessment
 
@@ -139,32 +138,34 @@ These local checks cannot prevent a repository writer or package administrator f
 
 The default policy at `.github/security/v1-vulnerability-exceptions.json` is empty.
 It has `schema_version: 1` and an `exceptions` array.
-An exception must identify one exact image reference, platform, advisory, package, version, and PURL, together with the upstream base digest, rationale, current validity window, and a project issue tracking the pin update.
+An exception must identify one exact image reference, platform, advisory, package, version, and PURL, together with its upstream, rationale, current validity window, and a project issue tracking the pin update.
 Its origin evidence names an immutable GitHub blob and its SHA-256.
+
+`upstream` names exactly one source of the finding:
+
+- `base_image`: the digest of an upstream image the assessed image is built from, such as `{"base_image": "docker.io/vllm/vllm-openai@sha256:..."}`.
+- `lock_file`: a lock file at an exact commit of an upstream project that pins the package, with its SHA-256, such as `{"lock_file": {"reference": "https://github.com/NVIDIA/NeMo-Fabric/blob/COMMIT/uv.lock", "sha256": "..."}}`.
+  A lock file in the NemoClaw repository can't support an exception, because NemoClaw controls what it pins.
+
 Reviewers must check that evidence establishes an inherited upstream finding; the evaluator does not fetch it or infer ownership from a package manager or file path.
 NemoClaw-controlled findings remain blocking.
 
 This candidate limits an exception to 30 days from `valid_from` and rejects future, expired, duplicate, unmatched, or ambiguous entries.
 Entries apply only to the exact assessed image digest and platform, so another release's exceptions do not invalidate this assessment.
 That lifetime is a proposed policy choice for maintainer review, not a previously established release policy.
-The protected controller binds the reviewed policy bytes before approval.
-An editable reviewer name or approval boolean cannot authorize an exception.
+The release workflow binds the policy bytes from the `v1` controller before assessing, so only an entry in that file can authorize an exception.
 Incomplete scan evidence remains incomplete even when an exception matches.
 The JSON report retains every finding.
 
-## Configure Hosted Enforcement
+## Hosted Enforcement
 
-Before activating this workflow, protect the `v1` controller branch and release tags and limit who can change publishing workflows or bypass their checks.
-Configure `v1-release-security` and `v1-release-publication` with required independent reviewers, prevention of self-review, and exactly the `v0.1.*` tag deployment policy.
-Missing protections or API failures deny the controlled path.
-Review publisher credentials and repository/package administrator privileges separately: job dependencies do not revoke those powers.
-
-Security approval authorizes public disclosure of the exact candidate inventories and findings to code scanning and workflow artifacts.
-The controller is frozen before approval and used again by the publisher; candidate source is not executed by those jobs.
-The publisher prepares a fresh advisory database, reassesses the saved inputs, verifies current registry digests, and only then publishes the draft.
-`V1_SECURITY_PUBLICATION_ENABLED` must be explicitly set to `true` after the existing product and QA sign-offs; it defaults off.
+Anyone who may push a final tag may release; no approval step gates publication.
+The workflow freezes the `v1` controller that contains the tagged commit, and the jobs that assess and publish run that controller, not the candidate's source.
+A final release must ship what a release candidate staged: the publish job requires a release candidate of the same version whose draft lists the same platform manifests for every image.
+It then prepares a fresh advisory database, assesses the saved inputs, reports High and Critical findings to code scanning, keeps the reports as a workflow artifact, verifies the registry digests, and publishes the draft only when the assessment passes.
 The workflow does not change package visibility.
-Release candidates run the same assessment report-only, without approval: the job attaches `assessment.json`, `assessment.sarif`, and `gate.json` to the private draft and warns, instead of failing, when the policy would block publication.
+Repository writers and package administrators can still publish a draft or change a package by hand, outside the workflow.
+Release candidates run the same assessment report-only: the job attaches `assessment.json`, `assessment.sarif`, and `gate.json` to the private draft and warns, instead of failing, when the policy would block publication.
 The tag's Bake catalog supplies the production agent image names; staging validates them and appends the proxy and runtime images.
 New harnesses join vulnerability coverage through that catalog, without a separate scanner allowlist or changes to Fabric's adapter contract.
 

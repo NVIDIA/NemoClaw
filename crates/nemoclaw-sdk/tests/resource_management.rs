@@ -16,13 +16,13 @@ fn ownership_follows_configuration_instead_of_optional_annotations() {
     for (source, parent, field, declaration) in [
         (
             include_str!("../../../examples/fabric-openclaw.yaml"),
-            "/spec/inferenceProviders/0",
+            "/spec/inferenceProviders/local",
             "management",
             json!("external"),
         ),
         (
             include_str!("../../../examples/managed-ollama-gpu.yaml"),
-            "/spec/inferenceProviders/0",
+            "/spec/inferenceProviders/qwen",
             "management",
             json!("managed"),
         ),
@@ -107,7 +107,7 @@ fn provider_selects_exactly_one_connection_form() {
         json!({"serviceRef":"qwen", "credential":{"env":"UNUSED"}}),
     ] {
         let mut value = original.clone();
-        let provider = value["spec"]["inferenceProviders"][0]
+        let provider = value["spec"]["inferenceProviders"]["qwen"]
             .as_object_mut()
             .unwrap();
         provider.remove("serviceRef");

@@ -16,7 +16,12 @@ fn explicit_path(name: &str) -> PathBuf {
 }
 
 fn vllm(document: &Document) -> &Service {
-    let name = document.spec.inference_providers[0]
+    let name = document
+        .spec
+        .inference_providers
+        .values()
+        .next()
+        .unwrap()
         .service_ref
         .as_ref()
         .unwrap();
@@ -27,7 +32,12 @@ fn vllm(document: &Document) -> &Service {
 }
 
 fn vllm_mut(document: &mut Document) -> &mut Service {
-    let name = document.spec.inference_providers[0]
+    let name = document
+        .spec
+        .inference_providers
+        .values()
+        .next()
+        .unwrap()
         .service_ref
         .clone()
         .unwrap();
@@ -88,15 +98,15 @@ async fn spark_yaml_plans_and_applies_expected_resources() {
             document
                 .spec
                 .inference_providers
-                .iter()
-                .map(|provider| format!("openshell_inference.inference_{}", provider.name)),
+                .keys()
+                .map(|name| format!("openshell_inference.inference_{name}")),
         )
         .chain(
             document
                 .spec
                 .sandboxes
-                .iter()
-                .map(|sandbox| format!("openshell_sandbox.{}", sandbox.name)),
+                .keys()
+                .map(|name| format!("openshell_sandbox.{name}")),
         )
         .chain(["openshell_workspace.deployment".to_owned()])
         .collect();
@@ -142,7 +152,12 @@ async fn spark_image_change_plans_and_applies_replacement() {
         "only the inference image pin may change"
     );
 
-    let service = previous.spec.inference_providers[0]
+    let service = previous
+        .spec
+        .inference_providers
+        .values()
+        .next()
+        .unwrap()
         .service_ref
         .clone()
         .unwrap();

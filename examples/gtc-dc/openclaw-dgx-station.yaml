@@ -50,11 +50,11 @@ spec:
         freeGateGiB: 12
         consecutiveSamples: 5
   inferenceProviders:
-    - name: super
+    super:
       provider: openai
       serviceRef: super
   sandboxes:
-    - name: assistant
+    assistant:
       image:
         ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
       network:

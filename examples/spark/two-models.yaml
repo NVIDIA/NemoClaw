@@ -67,14 +67,14 @@ spec:
         freeGateGiB: 12
         consecutiveSamples: 5
   inferenceProviders:
-    - name: fast
+    fast:
       provider: openai
       serviceRef: fast
-    - name: smart
+    smart:
       provider: openai
       serviceRef: smart
   sandboxes:
-    - name: assistant
+    assistant:
       image:
         ref: nc-fabric@sha256:ac526ed31206c90557c7ac313400586e5347bee2c142efa4708256b122a81284
       network:

@@ -49,11 +49,11 @@ spec:
       memory:
         gpuMemoryUtilization: 0.75
   inferenceProviders:
-    - name: nemotron
+    nemotron:
       provider: openai
       serviceRef: nemotron
   sandboxes:
-    - name: assistant
+    assistant:
       image:
         # Build the Fabric OpenClaw image and replace this placeholder.
         ref: nc-prototype-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000

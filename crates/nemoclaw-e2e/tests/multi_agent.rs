@@ -12,15 +12,14 @@ use std::{collections::BTreeMap, fs, process::Command};
 fn three_agents() -> Document {
     let mut document =
         Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes()).unwrap();
-    let primary = document.spec.sandboxes[0].clone();
+    let primary = document.spec.sandboxes["assistant"].clone();
     for (name, model) in [("researcher", "qwen3:8b"), ("reviewer", "qwen3:14b")] {
         let mut sandbox = primary.clone();
-        sandbox.name = name.into();
         sandbox.agent.name = name.into();
         sandbox.agent.inference.as_mut().unwrap().routes[0]
             .overrides
             .model = model.into();
-        document.spec.sandboxes.push(sandbox);
+        document.spec.sandboxes.insert(name.into(), sandbox);
     }
     document
 }
@@ -74,8 +73,8 @@ async fn one_failed_agent_is_reported_alone_and_its_retry_replaces_only_it() {
     // Narrowing the researcher's and reviewer's tools replaces both sandboxes.
     // Fabric then starts the researcher's agent and rejects the reviewer's.
     let mut changed = lifecycle.document.clone();
-    for sandbox in &mut changed.spec.sandboxes[1..] {
-        sandbox.agent.tools = Some(AgentTools {
+    for name in ["researcher", "reviewer"] {
+        changed.spec.sandboxes.get_mut(name).unwrap().agent.tools = Some(AgentTools {
             allow: vec!["read".into()],
         });
     }
@@ -232,8 +231,8 @@ async fn removing_one_agent_stops_only_its_runtime_and_keeps_shared_registration
         assert_eq!(registrations.len(), 1, "{registrations:?}");
         // Each sandbox runs its own agent with its own model, and attaches the
         // shared registration.
-        for sandbox in &lifecycle.document.spec.sandboxes {
-            let configuration = &state.fabric_configurations[&applied[&sandbox.name]];
+        for sandbox in lifecycle.document.sandboxes() {
+            let configuration = &state.fabric_configurations[&applied[sandbox.name]];
             assert_eq!(configuration["metadata"]["name"], sandbox.agent.name);
             let model = &sandbox.agent.inference.as_ref().unwrap().routes[0]
                 .overrides
@@ -258,7 +257,7 @@ async fn removing_one_agent_stops_only_its_runtime_and_keeps_shared_registration
     reduced
         .spec
         .sandboxes
-        .retain(|sandbox| sandbox.name != "researcher");
+        .retain(|name, _| name != "researcher");
     let plan = lifecycle
         .deployment
         .plan(&reduced, &lifecycle.cancel)

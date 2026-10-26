@@ -21,7 +21,7 @@ pub struct Target {
 
 /// Read a one-sandbox document's target directly, independently of the code under test.
 pub fn target(document: &Document) -> Target {
-    let sandbox = &document.spec.sandboxes[0];
+    let sandbox = &document.spec.sandboxes["assistant"];
     Target {
         engine: match &document.spec.gateway {
             Gateway::Managed(gateway) => gateway.engine.clone(),

@@ -16,12 +16,12 @@ spec:
       provider: docker
     endpoint: http://127.0.0.1:17671
   inferenceProviders:
-    - name: local
+    local:
       provider: openai
       api: openai-responses
       endpoint: https://inference.example.com/v1
   sandboxes:
-    - name: assistant
+    assistant:
       image:
         # Replace with the digest from a fresh OpenClaw image build; see docs/inference.md.
         ref: local-fabric-openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000

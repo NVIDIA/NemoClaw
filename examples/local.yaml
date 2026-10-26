@@ -14,11 +14,11 @@ spec:
       provider: docker
     endpoint: http://127.0.0.1:17671
   inferenceProviders:
-    - name: local
+    local:
       provider: openai
       endpoint: http://172.20.0.1:11436/v1
   sandboxes:
-    - name: assistant
+    assistant:
       network:
         tier: isolated
       harness:

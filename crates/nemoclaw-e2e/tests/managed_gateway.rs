@@ -54,7 +54,13 @@ async fn managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu(
     let mut document =
         Document::parse(fs::File::open(path("NEMOCLAW_TEST_GATEWAY_DOCUMENT")).unwrap()).unwrap();
     assert!(matches!(document.spec.gateway, Gateway::Managed(_)));
-    assert!(document.spec.inference_providers[0].service_ref.is_none());
+    assert!(
+        document
+            .spec
+            .inference_providers
+            .values()
+            .all(|provider| provider.service_ref.is_none())
+    );
     assert!(document.spec.services.is_empty());
     let directory = path("NEMOCLAW_TEST_GATEWAY_STATE");
     let deployment = Deployment::new(&directory, &path("NEMOCLAW_TEST_BUNDLE"));

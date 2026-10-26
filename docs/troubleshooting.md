@@ -65,7 +65,7 @@ Retain the original binding while investigating the selected gateway and engine.
 ## Correct a Document Validation Error
 
 Schema errors identify the document field, the violated constraint, and the source line and column.
-For example, `spec.services.qwen.memory.kvCacheGiB` identifies the `qwen` service; `spec.sandboxes[1]` identifies the second sandbox.
+For example, `spec.services.qwen.memory.kvCacheGiB` identifies the `qwen` service; `spec.sandboxes.assistant.agent.inference.routes[1]` identifies the second route of the `assistant` sandbox's agent.
 Array indices start at zero; source lines and columns start at one, and columns count characters.
 Valid declaration names appear in paths, while arbitrary map keys appear as `[entry]` and rejected values remain omitted.
 YAML syntax and duplicate-key errors also include source positions without copying source snippets.

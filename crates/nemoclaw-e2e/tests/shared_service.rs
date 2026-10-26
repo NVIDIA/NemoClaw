@@ -33,7 +33,7 @@ async fn shared_service_preserves_consumers_and_export_reapply() {
     assert_eq!(scenario.agent_identity("assistant-1"), survivor);
 
     let original = document.clone();
-    document.spec.sandboxes.remove(0);
+    document.spec.sandboxes.remove("assistant-0");
     // Removing a consumer deletes only its sandbox; the shared service and the
     // other consumer are untouched.
     deployment.apply(&document, &cancel).await.unwrap();

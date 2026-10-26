@@ -1,0 +1,32 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# Built-in defaults for `nemoclaw onboard` without a template. The journey
+# assigns a new deployment UID and leaves omitted settings at their defaults.
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: openclaw
+spec:
+  gateway:
+    management: managed
+    runtime:
+      provider: docker
+  inferenceProviders:
+    nvidia-prod:
+      provider: openai
+      api: openai-completions
+      endpoint: https://integrate.api.nvidia.com/v1
+      credential:
+        env: NVIDIA_API_KEY
+  sandboxes:
+    assistant:
+      harness:
+        kind: nvidia.fabric.openclaw
+      agent:
+        name: primary
+        inference:
+          routes:
+            - name: primary
+              providerRef: nvidia-prod
+              overrides:
+                model: nvidia/nemotron-3.5-super-vl-120b-a12b

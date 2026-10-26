@@ -10,6 +10,7 @@ use crate::{
     settings::SettingQuestion,
 };
 use serde_json::Value;
+use std::borrow::Cow;
 
 pub(crate) fn deployment_questions_for_values(
     values: &Value,
@@ -19,10 +20,11 @@ pub(crate) fn deployment_questions_for_values(
     let mut questions = Vec::new();
     collect(values, values, "", &mut questions, 0)?;
     questions.retain(|question| {
-        (!question.path.contains("/execution/")
+        let shape = shape(&question.path);
+        (!shape.contains("/execution/")
             || active_harness
                 .is_some_and(|base| question.path.starts_with(&format!("{base}/execution/"))))
-            && (!question.path.contains("/routes/")
+            && (!shape.contains("/routes/")
                 || active_routes.is_some_and(|base| question.path.starts_with(&format!("{base}/"))))
     });
     Ok(questions)
@@ -32,15 +34,27 @@ fn escaped(part: &str) -> String {
     part.replace('~', "~0").replace('/', "~1")
 }
 
+/// The path with the sandbox's name, its key, replaced by `*`, so a name such
+/// as `routes` or `settings` cannot match the field names checked below.
+fn shape(path: &str) -> Cow<'_, str> {
+    match path.strip_prefix("/spec/sandboxes/") {
+        Some(rest) => Cow::Owned(format!(
+            "/spec/sandboxes/*{}",
+            rest.find('/').map_or("", |slash| &rest[slash..])
+        )),
+        None => Cow::Borrowed(path),
+    }
+}
+
 // These are deployment-owned editing regions, not a second description of their fields
 // or constraints. Native settings and model/provider choices have separate owner views.
 fn region(path: &str) -> bool {
     path.starts_with("/spec/gateway/")
         || path.starts_with("/spec/services/")
-        || path.starts_with("/spec/sandboxes/0/image/")
-        || path.starts_with("/spec/sandboxes/0/network/")
-        || path.starts_with("/spec/sandboxes/0/agent/auth/")
-        || path.starts_with("/spec/sandboxes/0/harness/execution/")
+        || path.starts_with("/spec/sandboxes/*/image/")
+        || path.starts_with("/spec/sandboxes/*/network/")
+        || path.starts_with("/spec/sandboxes/*/agent/auth/")
+        || path.starts_with("/spec/sandboxes/*/harness/execution/")
         || (path.contains("/routes/") && path.ends_with("/overrides/maxTokens"))
         || (path.contains("/harnesses/") && path.contains("/execution/"))
 }
@@ -50,7 +64,7 @@ fn excluded(path: &str) -> bool {
 }
 fn complex(path: &str) -> bool {
     (path.starts_with("/spec/services/") && path.ends_with("/recipe"))
-        || path == "/spec/sandboxes/0/network/policy"
+        || path == "/spec/sandboxes/*/network/policy"
 }
 fn collect(
     root: &Value,
@@ -65,12 +79,13 @@ fn collect(
             "Deployment question depth exceeded.",
         ));
     }
-    if value.is_null() || !interested(path) {
+    let shape = shape(path);
+    if value.is_null() || !interested(&shape) {
         return Ok(());
     }
-    if region(path)
-        && !excluded(path)
-        && (!value.is_object() && !value.is_array() || complex(path) || value.is_array())
+    if region(&shape)
+        && !excluded(&shape)
+        && (!value.is_object() && !value.is_array() || complex(&shape) || value.is_array())
     {
         let Some((schema, required)) = sdk_field_schema_for(root, path) else {
             // A `false` schema accepts no value, so the only answer is to omit
@@ -162,15 +177,15 @@ fn interested(path: &str) -> bool {
     [
         "/spec/gateway",
         "/spec/services",
-        "/spec/sandboxes/0/image",
-        "/spec/sandboxes/0/network",
-        "/spec/sandboxes/0/agent/auth",
-        "/spec/sandboxes/0/harness/execution",
-        "/spec/sandboxes/0/agent/inference",
+        "/spec/sandboxes/*/image",
+        "/spec/sandboxes/*/network",
+        "/spec/sandboxes/*/agent/auth",
+        "/spec/sandboxes/*/harness/execution",
+        "/spec/sandboxes/*/agent/inference",
         "/spec/inferences",
-        "/spec/sandboxes/0/inferences",
+        "/spec/sandboxes/*/inferences",
         "/spec/harnesses",
-        "/spec/sandboxes/0/harnesses",
+        "/spec/sandboxes/*/harnesses",
     ]
     .iter()
     .any(|root| {

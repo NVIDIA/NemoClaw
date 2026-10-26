@@ -63,16 +63,13 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
         );
     }
     for name in ["Spec", "Sandbox"] {
-        property(
-            &mut defs[name],
-            "inferences",
-            json!({"propertyNames": {"pattern": c::SLUG}}),
-        );
-        property(
-            &mut defs[name],
-            "harnesses",
-            json!({"propertyNames": {"pattern": c::SLUG}}),
-        );
+        for collection in ["inferences", "harnesses", "inferenceProviders"] {
+            property(
+                &mut defs[name],
+                collection,
+                json!({"propertyNames": {"pattern": c::SLUG}}),
+            );
+        }
     }
     property(
         &mut defs["Spec"],
@@ -93,7 +90,7 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
         "integrationRefs",
         json!({"uniqueItems": true, "items": {"type": "string", "pattern": c::SLUG}}),
     );
-    for name in ["Metadata", "InferenceProvider", "Sandbox", "Agent"] {
+    for name in ["Metadata", "InlineInferenceProvider", "Agent"] {
         property(
             defs.get_mut(name).unwrap(),
             "name",
@@ -220,7 +217,7 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
     property(
         &mut defs["Spec"],
         "sandboxes",
-        json!({"minItems":1,"maxItems":32}),
+        json!({"minProperties":1,"maxProperties":32,"propertyNames": {"pattern": c::SLUG}}),
     );
     defs["Sandbox"]["allOf"] = json!([]);
     optional_string(
@@ -384,19 +381,21 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
         }
     }
 
-    let provider = &mut defs["InferenceProvider"];
-    property(provider, "serviceRef", json!({"pattern": c::SLUG}));
-    provider["if"] = json!({"required": ["serviceRef"]});
-    provider["then"] = json!({"properties": {"provider":{"const":"openai"},"endpoint": {"const": ""}}, "allOf": [forbid(&["credential"])]});
-    provider["else"] =
-        json!({"required": ["endpoint"], "properties": {"endpoint": {"pattern": "^https?://"}}});
-    provider["allOf"] = json!([
-        {"if": {"required":["api"]}, "then": {
-            "if": at("api", json!({"const":"anthropic-messages"}), true),
-            "then": at("provider", json!({"const":"anthropic"}), false),
-            "else": at("provider", json!({"const":"openai"}), false)
-        }}
-    ]);
+    // An inline definition flattens the same connection fields beside its name.
+    for name in ["InferenceProvider", "InlineInferenceProvider"] {
+        let provider = &mut defs[name];
+        property(provider, "serviceRef", json!({"pattern": c::SLUG}));
+        provider["if"] = json!({"required": ["serviceRef"]});
+        provider["then"] = json!({"properties": {"provider":{"const":"openai"},"endpoint": {"const": ""}}, "allOf": [forbid(&["credential"])]});
+        provider["else"] = json!({"required": ["endpoint"], "properties": {"endpoint": {"pattern": "^https?://"}}});
+        provider["allOf"] = json!([
+            {"if": {"required":["api"]}, "then": {
+                "if": at("api", json!({"const":"anthropic-messages"}), true),
+                "then": at("provider", json!({"const":"anthropic"}), false),
+                "else": at("provider", json!({"const":"openai"}), false)
+            }}
+        ]);
+    }
     defs["AgentExecution"]["minProperties"] = json!(1);
     crate::services::constrain_schema(defs, normalized);
 
@@ -416,8 +415,8 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
     // a default; image metadata stands in for engine inspection only there.
     root["allOf"].as_array_mut().unwrap().push(json!({
         "if": at("spec/gateway/runtime/provider", json!({"enum":["kubernetes", "openshift"]}), true),
-        "then": at("spec/sandboxes/[]/image", json!({"required": ["ref", "metadata"], "properties": {"ref": {"pattern": c::IMAGE}}}), true),
-        "else": at("spec/sandboxes/[]/image", forbid(&["metadata"]), false)
+        "then": at("spec/sandboxes/*/image", json!({"required": ["ref", "metadata"], "properties": {"ref": {"pattern": c::IMAGE}}}), true),
+        "else": at("spec/sandboxes/*/image", forbid(&["metadata"]), false)
     }));
     root["allOf"].as_array_mut().unwrap().push(json!({
         "if": at("spec/gateway/runtime/provider", json!({"enum":["kubernetes", "openshift"]}), true),

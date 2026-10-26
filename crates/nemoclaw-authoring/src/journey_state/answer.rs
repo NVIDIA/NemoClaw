@@ -147,16 +147,14 @@ impl JourneyState {
             }
             QuestionTarget::SdkField { path, role } => {
                 let previous = candidate.authored.values.pointer(path).cloned();
+                // The provider's key names it; its routes refer to that name.
                 let provider_for_dependency = if matches!(
                     role,
                     SdkFieldRole::ProviderApi | SdkFieldRole::ProviderEndpoint
                 ) {
-                    path.rsplit_once('/')
-                        .and_then(|(base, _)| {
-                            candidate.authored.values.pointer(&format!("{base}/name"))
-                        })
-                        .and_then(Value::as_str)
-                        .map(str::to_owned)
+                    path.rsplit('/')
+                        .nth(1)
+                        .map(|key| key.replace("~1", "/").replace("~0", "~"))
                 } else {
                     None
                 };

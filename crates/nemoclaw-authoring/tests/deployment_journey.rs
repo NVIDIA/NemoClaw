@@ -297,7 +297,7 @@ fn single_sandbox_examples_offer_existing_sdk_values_without_changing_them() {
 fn reference_scoped_execution_questions_follow_the_selected_harness_only() {
     let capabilities = Capabilities::available();
     let mut value = example("fabric-openclaw.yaml").supplied().clone();
-    let mut harness = value["spec"]["sandboxes"][0]["harness"].clone();
+    let mut harness = value["spec"]["sandboxes"]["assistant"]["harness"].clone();
     harness["execution"] = json!({"timeoutSeconds":120});
     value["spec"]["harnesses"] = json!({"unused":harness});
     let path = "/spec/harnesses/unused/execution/timeoutSeconds";
@@ -318,11 +318,11 @@ fn reference_scoped_execution_questions_follow_the_selected_harness_only() {
     let mut state = state;
     assert!(state.answer(&capabilities, path, Some(json!(240))).is_err());
 
-    value["spec"]["sandboxes"][0]
+    value["spec"]["sandboxes"]["assistant"]
         .as_object_mut()
         .unwrap()
         .remove("harness");
-    value["spec"]["sandboxes"][0]["harnessRef"] = json!("unused");
+    value["spec"]["sandboxes"]["assistant"]["harnessRef"] = json!("unused");
     let mut state = JourneyDefinition::new(
         "reference",
         PartialDocument::from_yaml(value.to_string().as_bytes()).unwrap(),

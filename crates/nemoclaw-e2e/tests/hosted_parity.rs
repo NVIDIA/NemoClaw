@@ -6,6 +6,20 @@
 use nemoclaw_sdk::config::{ComputeDriver, Document, Gateway, HarnessKind, InferenceProviderKind};
 use serde_json::json;
 
+/// A v0 list of named entries as a v1 map keyed by name.
+fn keyed_by_name(list: serde_json::Value, collection: &str) -> serde_json::Value {
+    list.as_array()
+        .unwrap_or_else(|| panic!("raw v0 export requires its historical {collection} list"))
+        .iter()
+        .map(|entry| {
+            let mut entry = entry.clone();
+            let name = entry.as_object_mut().unwrap().remove("name").unwrap();
+            (name.as_str().unwrap().to_owned(), entry)
+        })
+        .collect::<serde_json::Map<_, _>>()
+        .into()
+}
+
 // This scenario compares separately authored current intent with a test-only
 // projection. The raw export remains unchanged and never reaches deployment.
 fn authored_document(raw: &[u8], current: &[u8]) -> Document {
@@ -13,9 +27,19 @@ fn authored_document(raw: &[u8], current: &[u8]) -> Document {
         Document::parse(current).expect("authored v1 input must use current agent syntax");
     let mut projected: serde_json::Value =
         serde_saphyr::from_str(std::str::from_utf8(raw).unwrap()).unwrap();
-    let sandboxes = projected["spec"]["sandboxes"].as_array_mut().unwrap();
+    // v0 listed providers and sandboxes with their names; v1 keys them by name.
+    for collection in ["inferenceProviders", "sandboxes"] {
+        projected["spec"][collection] =
+            keyed_by_name(projected["spec"][collection].take(), collection);
+    }
+    let sandboxes = projected["spec"]["sandboxes"].as_object_mut().unwrap();
     assert_eq!(sandboxes.len(), 1, "hosted parity requires one sandbox");
-    let sandbox = sandboxes[0].as_object_mut().unwrap();
+    let sandbox = sandboxes
+        .values_mut()
+        .next()
+        .unwrap()
+        .as_object_mut()
+        .unwrap();
     let agents = sandbox
         .remove("agents")
         .expect("raw v0 export requires its historical agents list");
@@ -84,7 +108,13 @@ fn live_inputs_preserve_raw_export_and_require_matching_authored_intent() {
         let document = authored_document(raw, current);
         assert_eq!(document, Document::parse(current).unwrap());
         let mut changed = document.clone();
-        changed.spec.sandboxes[0].agent.name = "different-agent".into();
+        changed
+            .spec
+            .sandboxes
+            .get_mut("assistant")
+            .unwrap()
+            .agent
+            .name = "different-agent".into();
         assert!(
             std::panic::catch_unwind(|| authored_document(raw, changed.yaml().unwrap().as_bytes()))
                 .is_err()
@@ -98,8 +128,7 @@ fn assert_hosted_document(document: &Document, harness: HarnessKind, runtime_roo
     let gateway = gateway.as_managed().unwrap();
     assert_eq!(gateway.engine, "unix:///var/run/docker.sock");
 
-    let provider = &document.spec.inference_providers[0];
-    assert_eq!(provider.name, "hosted-nvidia-prod");
+    let provider = &document.spec.inference_providers["hosted-nvidia-prod"];
     assert_eq!(provider.provider, InferenceProviderKind::Openai);
     assert_eq!(provider.endpoint, "https://integrate.api.nvidia.com/v1");
     assert_eq!(
@@ -108,7 +137,7 @@ fn assert_hosted_document(document: &Document, harness: HarnessKind, runtime_roo
     );
     assert!(provider.service_ref.is_none());
 
-    let sandbox = &document.spec.sandboxes[0];
+    let sandbox = document.sandbox("assistant").unwrap();
     assert!(sandbox.image.ref_.contains("@sha256:"));
     assert_eq!(sandbox.image.ref_.rsplit(':').next().unwrap().len(), 64);
     assert_eq!(
@@ -138,7 +167,7 @@ fn assert_hosted_document(document: &Document, harness: HarnessKind, runtime_roo
     let inference = document.sandbox_inference(sandbox).unwrap();
     assert_eq!(
         inference.routes[0].provider_ref.as_deref(),
-        Some(provider.name.as_str())
+        Some("hosted-nvidia-prod")
     );
     assert_eq!(
         inference.routes[0].overrides.model,
@@ -164,7 +193,9 @@ fn hosted_hermes_scenario_preserves_authored_intent() {
         include_bytes!("../fixtures/hermes-nvidia-hosted/v1.yaml"),
     );
     assert_hosted_document(&v1, "nvidia.fabric.hermes".parse().unwrap(), "/opt/hermes");
-    let harness = v1.sandbox_harness(&v1.spec.sandboxes[0]).unwrap();
+    let harness = v1
+        .sandbox_harness(v1.sandbox("assistant").unwrap())
+        .unwrap();
     assert!(harness.settings.is_none(), "{:?}", harness.settings);
 }
 
