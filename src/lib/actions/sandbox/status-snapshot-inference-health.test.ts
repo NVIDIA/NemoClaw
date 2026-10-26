@@ -857,7 +857,7 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
   // Every transient status must repeat the whole probe pair, not just the
   // inference request: a retry that skipped the route probe could report a
   // served request against a route it never rechecked.
-  it.each([429, 502, 503, 504])(
+  it.each([429, 500, 502, 503, 504])(
     "serves a Ready managed sandbox after one transient HTTP %i inference request (#10709)",
     async (httpStatus) => {
       const healthy: SandboxInferenceRouteHealth = {
@@ -1054,15 +1054,6 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
         ok: false as const,
         detail: "sandbox inference invocation probe returned HTTP 404",
         httpStatus: 404,
-      },
-      failureLabel: "unhealthy",
-    },
-    {
-      label: "internal error",
-      invocation: {
-        ok: false as const,
-        detail: "sandbox inference invocation probe returned HTTP 500",
-        httpStatus: 500,
       },
       failureLabel: "unhealthy",
     },

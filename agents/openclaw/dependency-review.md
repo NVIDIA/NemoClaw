@@ -45,22 +45,22 @@ The reviewed audit wrapper reports lower-severity production findings and blocks
 
 The reviewed archive audit and image build use the package identities in `ci/reviewed-npm-audit.json`. They verify registry integrity before replacing bundled packages. Official plugin installs also require OpenClaw's trusted install record. A changed source package, replacement identity, dependency layout, or patched tree stops remediation.
 
-- Discord, Slack, and Google Chat: the reviewed 2026.9.2 and 2026.9.5 archives listed in `scripts/lib/openclaw-npm-remediation.mts` replace affected bundled Zod copies with `zod@4.6.6`. The Discord SDK wrapper also receives a digest-checked compatibility update. Remove each rewrite only when a reviewed upstream archive ships patched Zod and `scripts/audit-reviewed-npm-graph.mts` confirms its graph. `test/agents/openclaw/openclaw-zod-runtime.test.ts` supplies Discord runtime evidence. Require plugin-specific runtime evidence for Slack and Google Chat before removing their rewrites.
+- Discord, Slack, and Google Chat: the reviewed 2026.9.2 and 2026.9.5 archives listed in `scripts/lib/openclaw-npm-remediation.mts` replace affected bundled Zod copies with `zod@4.6.6`. Discord SDK runtime modules and declarations receive a digest-checked Zod 4 migration through atomic directory replacement. Native installation permits only npm's exact relative UUID launcher link after verifying the complete reviewed UUID 14.0.2 tree. Other SDK symlinks and hard links are rejected. Remove each rewrite only when a reviewed upstream archive ships patched Zod and `scripts/audit-reviewed-npm-graph.mts` confirms its graph. `test/agents/openclaw/openclaw-zod-runtime.test.ts` supplies Discord runtime and link-boundary evidence. Require plugin-specific runtime evidence for Slack and Google Chat before removing their rewrites.
 - Discord and Slack: the reviewed 2026.9.2 and 2026.9.5 archives replace bundled Undici with `8.12.2` for Discord and `7.30.1` for Slack. The replacement checks the plugin manifest, bundled package, and reviewed registry package. Remove each rewrite when the reviewed upstream archive ships a patched Undici and passes the real patched distribution and plugin runtime probes.
 - Slack: the official 2026.9.2 install and reviewed 2026.9.5 archive replace bundled `body-parser@2.3.0` with `2.4.0` and affected `qs` copies with `6.16.1`. The replacement checks the Slack, Bolt, Express, parser, and `qs` identities. A retry verifies completed replacements before resuming. Remove this rewrite when the reviewed Slack archives ship patched parser and `qs` versions. The failure-and-retry test is in `test/runtime/messaging/messaging-build-applier-integrity.test.ts`; the process probe is in `test/agents/openclaw/openclaw-body-parser-runtime.test.ts`.
-- Microsoft Teams: the official 2026.9.2 install updates its npm project to `@azure/msal-node@7.1.0`, `@azure/msal-common@16.14.2`, and `zod@4.6.6` after source and install-path checks. Remove this update when a reviewed upstream plugin install resolves those patched versions without it. `test/agents/openclaw/openclaw-msal-runtime.test.ts` probes the token manager and Azure identity constructors.
+- Microsoft Teams: official 2026.9.2 and 2026.9.5 installs atomically replace the verified native project's MSAL Node/Common tree with `7.1.0`/`16.14.2` and its shared Zod with `4.6.6`. Both SDK consumers must resolve the project-owned MSAL path. The original project manifest and lock remain installation provenance. Remove this update when a reviewed upstream plugin install resolves those patched versions without it. `test/agents/openclaw/openclaw-msal-runtime.test.ts` probes the token manager and Azure identity constructors.
 
 The PR and main `real-openclaw-dist-harness` jobs run those three runtime probes with scripts disabled during package installation. The audit still verifies the final production graph separately.
 
 ## WeChat plugin runtime graph
 
-- Package: `@tencent-weixin/openclaw-weixin@2.4.9`. This version uses the supported channel SDK and binds inbound replies to the OpenClaw 2026.9.x model runtime. The locked production dependencies remain `qrcode-terminal@0.12.0` and `zod@4.6.6`.
+- Package: `@tencent-weixin/openclaw-weixin@2.4.9`. This version uses the supported channel SDK and binds inbound replies to the OpenClaw 2026.9.x model runtime. The locked production dependencies are `qrcode-terminal@0.12.0` and `zod@4.6.6`.
 - Locked graph: `agents/openclaw/wechat-runtime/package-lock.json` (npm lockfile version 3).
 - Lock regeneration: `npm install --package-lock-only --legacy-peer-deps --ignore-scripts --omit=dev --prefix agents/openclaw/wechat-runtime`.
 - Installation boundary: the image materializes the reviewed lock into a root-owned dedicated npm cache and adds the exact package metadata needed by npm's offline resolver. Before that cache becomes immutable, the shared `scripts/lib/reviewed-npm-archive.mts` implementation re-packs every locked archive offline from the final cache and rejects registry-origin drift, metadata or packed-byte SRI drift, unsafe filenames, missing archives, and symlinks. The sandbox user copies that verified immutable source into a writable cache used for registry metadata lookup, archive packing, and the OpenClaw plugin install; no retrieval step falls back to `HOME/.npm`. The copy is deleted in the same image layer, and the trusted cache is never writable. The installer runs in offline, legacy-peer mode, then `verify-wechat-runtime-lock.mts` rejects integrity, version, dependency-set, or peer-range drift and refuses an image OpenClaw version below the plugin's locked peer minimum.
 - Default CI gate: `reviewed-npm-audit` in `.github/workflows/pr.yaml` and `.github/workflows/main.yaml` audits the WeChat locked graph with the shared reviewed npm implementation.
   The pull request workflow loads the audit implementation, policy, manifest, and lockfile from the candidate checkout.
-  The shared gate uses Node.js `24.18.1` and verified `npm@12.0.2`.
+  The shared gate uses Node.js `24.22.1` and verified `npm@12.0.2`.
   It installs the exact lock with lifecycle scripts disabled and legacy peer resolution, rejects any low-or-higher production advisory, and verifies registry signatures.
   It also exercises the reviewed archive through a copied writable cache while the trusted source remains read-only.
   Signature verification makes at most three attempts and retries only `npm error Failed to download`; all other failures stop immediately.
@@ -144,3 +144,57 @@ dispatched and is not an automatically enforced PR check. The runtime CI also ex
 actual-package patch harness.
 Prekshi Vyas owns completion of these two PRs. Retain the old archive records only while production
 still selects them; remove this transition section when the runtime cutover is complete.
+
+## Bundled schema and request-body repairs
+
+The reviewed runtime graphs pin Zod 4.6.6 and body-parser 2.4.0. The existing
+archive remediation also updates the Discord and Slack 2026.9.2/2026.9.5 bundles,
+and Google Chat 2026.9.2/2026.9.5, to Zod 4.6.6. Discord's embedded SDK 2.5.0 uses migrated
+CJS/ESM schemas and declarations instead of its vendored Zod 3 implementation.
+The migration checks the original SDK output digest before changing files.
+
+Both Slack bundles receive body-parser 2.4.0 with nested qs 6.16.1,
+iconv-lite 0.7.3, and content-type 2.1.0. Express retains its separate
+content-type 1.0.5 copy. Publisher SRI pins and final package-tree digests remain
+in `scripts/lib/openclaw-npm-remediation.mts`. The verified native-install path
+applies the same replacements after checking the managed plugin location.
+
+The managed messaging cache retains the original bundled dependency records
+and supplies the replacement archives offline. Its direct Zod 4.6.6 pin and
+body-parser 2.4.0 override are included in the committed lock and checksum-pinned
+Docker archive inputs. The WeChat cache separately supplies its locked Zod
+4.6.6 archive. These repairs add no advisory exceptions.
+
+The affected Undici 8.x graphs and bundles use 8.12.2; Slack's bundled 7.x
+copy uses 7.30.1. Both versions reject excessive response content encodings
+without changing the existing major-version boundary. The CLI and OpenClaw
+locks, generated runtime bundles, archive-tree pins, and offline cache inputs
+record those versions. The cache carries the 7.x replacement through the
+existing npm-alias pattern. Original bundled records remain available for
+source-archive verification before remediation.
+
+Teams 2026.9.2 and 2026.9.5 use MSAL Node 7.1.0 with Common 16.14.2 to
+address GHSA-xcx6-jx8p-x3h5. Their SDKs are nonbundled dependencies in the
+verified native npm project. After provenance and project-path checks, the
+existing remediation replaces their shared MSAL tree and its nested Common
+atomically. Azure Identity 4.13.2 and Teams Apps 2.0.15/2.0.16 retain their
+code and declared 5.x ranges; the explicit security migration overrides those
+ranges at runtime. The original installation lock remains source provenance.
+The archive audit resolves MSAL 7.1.0, and the cache supplies both the original
+installation and replacement archives. Other Common consumers retain their
+versions. Compatibility checks cover existing Teams and Azure token flows
+with simulated responses, plus the advisory's routing and state denials.
+
+The same verified Teams projects replace their shared nonbundled Zod 4.4.3/4.5.4
+with 4.6.6 after checking the plugin dependency and actual module resolution.
+The existing direct Zod cache pin supplies the replacement. Schema comparisons
+retain existing accepted/rejected configuration behavior; an oversized bounded
+collection is rejected before visiting its elements. Original installation
+metadata remains source provenance, as with the MSAL migration.
+
+Managed image and CI tooling use Node.js 24.22.1. The base-image security probe
+checks that exact runtime as well as the Debian package inventory, because
+Node bundles native libraries that npm audit and dpkg do not cover. Older
+cached bases fail admission and follow the existing rebuild path. The reviewed
+npm target remains 12.0.2; Node’s initial npm 11.19.1 tree is replaced before
+package installation, then the existing private-package repairs are applied.

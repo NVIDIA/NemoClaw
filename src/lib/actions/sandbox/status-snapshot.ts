@@ -145,7 +145,11 @@ export function maybeGetSandboxStatusInferenceHealth(
 
 /** True when the authoritative inference route must make status exit nonzero. */
 export function isInferenceHealthFailing(inferenceHealth: ProviderHealthStatus | null): boolean {
-  return Boolean(inferenceHealth && (!inferenceHealth.probed || !inferenceHealth.ok));
+  return Boolean(
+    inferenceHealth &&
+    !(inferenceHealth.ok && inferenceHealth.degraded === true) &&
+    (!inferenceHealth.probed || !inferenceHealth.ok),
+  );
 }
 
 /** Validate user-editable mount state before it reaches JSON or terminal output. */

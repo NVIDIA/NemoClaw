@@ -9,6 +9,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, it } from "vitest";
 import {
+  hashPackageTree,
   remediateInstalledOfficialOpenClawPlugin,
   remediateReviewedOpenClawPluginArchive,
 } from "../../../scripts/lib/openclaw-npm-remediation.mts";
@@ -37,6 +38,73 @@ for (const sdk of modules) {
   assert.deepEqual(sdk.Responses.OpenExternalLinkResponse.parse({ opened: true }), { opened: true });
 }
 `;
+
+function verifyNativeLauncherBoundary(
+  request: Parameters<typeof remediateInstalledOfficialOpenClawPlugin>[0],
+  pluginRoot: string,
+  workspace: string,
+): void {
+  const sdk = path.join(pluginRoot, "node_modules/@discord/embedded-app-sdk");
+  const launcher = path.join(sdk, "node_modules/.bin/uuid");
+  const target = "../uuid/dist-node/bin/uuid";
+  const uuid = path.join(sdk, "node_modules/uuid");
+  const program = path.join(uuid, "dist-node/bin/uuid");
+  const metadata = path.join(uuid, "package.json");
+  const programBytes = fs.readFileSync(program);
+  const metadataBytes = fs.readFileSync(metadata);
+  const extraLink = path.join(sdk, "extra-link.cjs");
+  const hardLink = path.join(workspace, "sdk-output-hardlink");
+  const snapshot = () => ({
+    output: hashPackageTree(path.join(sdk, "output")),
+    zod: hashPackageTree(path.join(pluginRoot, "node_modules/zod")),
+    manifest: fs.readFileSync(path.join(pluginRoot, "package.json"), "utf8"),
+  });
+  const replaceLink = (destination: string) => {
+    fs.unlinkSync(launcher);
+    fs.symlinkSync(destination, launcher);
+  };
+  const reject = (alter: () => void, restore: () => void) => {
+    const before = snapshot();
+    alter();
+    try {
+      assert.throws(() => remediateInstalledOfficialOpenClawPlugin(request));
+      assert.deepEqual(snapshot(), before);
+    } finally {
+      restore();
+    }
+  };
+
+  assert.equal(fs.readlinkSync(launcher), target);
+  reject(
+    () => replaceLink("../uuid/dist-node/bin/../bin/uuid"),
+    () => replaceLink(target),
+  );
+  reject(
+    () => replaceLink(program),
+    () => replaceLink(target),
+  );
+  reject(
+    () => fs.symlinkSync("output/index.cjs", extraLink),
+    () => fs.unlinkSync(extraLink),
+  );
+  reject(
+    () => fs.linkSync(path.join(sdk, "output/index.cjs"), hardLink),
+    () => fs.unlinkSync(hardLink),
+  );
+  reject(
+    () => fs.appendFileSync(program, "\n// unreviewed launcher\n"),
+    () => fs.writeFileSync(program, programBytes),
+  );
+  reject(
+    () =>
+      fs.writeFileSync(
+        metadata,
+        JSON.stringify({ ...JSON.parse(metadataBytes.toString()), version: "14.0.3" }),
+      ),
+    () => fs.writeFileSync(metadata, metadataBytes),
+  );
+  assert.equal(fs.readlinkSync(launcher), target);
+}
 
 describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_ZOD_HARNESS !== "1")(
   "OpenClaw Discord reviewed Zod runtime",
@@ -107,17 +175,18 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_ZOD_HARNESS !== "1")(
           );
           assert.equal(installed.status, 0, installed.stderr || installed.stdout);
           const pluginRoot = path.join(runtime, "node_modules/@openclaw/discord");
+          const remediationRequest = {
+            archivePath: archive.archivePath,
+            env,
+            packageSpec: PACKAGE_SPEC,
+            packageDirectory: pluginRoot,
+            trustedStateRoot: stateRoot,
+            workingDirectory: archive.rootDirectory,
+          };
           const afterInstall =
             source === "official install"
               ? () => {
-                  remediateInstalledOfficialOpenClawPlugin({
-                    archivePath: archive.archivePath,
-                    env,
-                    packageSpec: PACKAGE_SPEC,
-                    packageDirectory: pluginRoot,
-                    trustedStateRoot: stateRoot,
-                    workingDirectory: archive.rootDirectory,
-                  });
+                  remediateInstalledOfficialOpenClawPlugin(remediationRequest);
                   assert.equal(
                     JSON.parse(
                       fs.readFileSync(
@@ -127,6 +196,7 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_ZOD_HARNESS !== "1")(
                     ).version,
                     "8.12.2",
                   );
+                  verifyNativeLauncherBoundary(remediationRequest, pluginRoot, workspace);
                 }
               : () => undefined;
           afterInstall();

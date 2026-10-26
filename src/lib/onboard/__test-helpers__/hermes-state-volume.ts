@@ -20,6 +20,7 @@ export function createHermesStateVolumeDockerHarness(initial: VolumeState = null
             }
           : { status: 1, stderr: `Error response from daemon: get ${argv.at(-1)}: no such volume` };
       case "create": {
+        if (volume) return { status: 0, stdout: `${volume.name}\n` };
         const labels: Record<string, string> = {};
         for (let index = 1; index < argv.length - 1; index += 1) {
           switch (argv[index]) {

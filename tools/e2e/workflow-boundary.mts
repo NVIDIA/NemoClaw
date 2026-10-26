@@ -1632,10 +1632,18 @@ function requireCanonicalDockerHubCleanupRun(
 ): void {
   if (!cleanupStep) return;
 
+  const expectedKeys = [...DOCKER_HUB_CLEANUP_KEYS];
+  if (jobName === "managed-image-protected-runtime") {
+    expectedKeys.push("timeout-minutes");
+    expectedKeys.sort();
+    if (cleanupStep["timeout-minutes"] !== 1) {
+      errors.push(`${jobName} Docker Hub cleanup must retain its one-minute finalization budget`);
+    }
+  }
   const cleanupKeys = Object.keys(cleanupStep).sort();
   if (
-    cleanupKeys.length !== DOCKER_HUB_CLEANUP_KEYS.length ||
-    cleanupKeys.some((key, index) => key !== DOCKER_HUB_CLEANUP_KEYS[index])
+    cleanupKeys.length !== expectedKeys.length ||
+    cleanupKeys.some((key, index) => key !== expectedKeys[index])
   ) {
     errors.push(`${jobName} Docker Hub cleanup step must contain exactly name, if, shell, and run`);
   }

@@ -2,7 +2,7 @@
   "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0",
   "name": "nemoclaw",
   "version": "0.1.0",
-  "description": "NemoClaw — run OpenClaw inside OpenShell with NVIDIA inference",
+  "description": "NemoClaw \u2014 run OpenClaw inside OpenShell with NVIDIA inference",
   "license": "Apache-2.0",
   "exports": {
     "./lifecycle": {
@@ -187,6 +187,7 @@
     "vitest": "^4.1.9"
   },
   "overrides": {
-    "fast-uri": "3.1.7"
+    "fast-uri": "3.1.7",
+    "undici@>=8.0.0 <8.12.2": "8.12.2"
   }
 }
