@@ -31,11 +31,11 @@ Both presentations use the same structured report.
 The JSON report includes its `schemaVersion`, `status`, `exitCode`, `observations`, `capabilities`, `qualifications`, `findings`, `evidence`, and `provenance`.
 It also includes `mutated: false`.
 
-When NemoClaw detects individual NVIDIA GPUs, the text report lists each GPU's index, name, and memory.
+When NemoClaw detects individual NVIDIA GPUs, the text report lists the index, name, and memory for those that fit in the public evidence limit.
 The JSON `evidence` entries use IDs such as `host.gpu.device.0`.
 Their `details` include the GPU index and name, with memory in bytes as `memoryBytes`.
-The report lists at most 256 GPU entries.
-When it omits entries, JSON includes `gpuInventory` with the collected, listed, and omitted counts.
+The public evidence list holds at most 256 entries across GPUs and other evidence.
+When it omits GPU entries, JSON includes `gpuInventory` with the collected, listed, and omitted counts.
 Treat that summary as a completeness indicator, not a device inventory.
 
 ## Interpret exit codes
