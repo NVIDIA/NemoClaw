@@ -63,7 +63,7 @@ jobs:
         if: ${{ steps.identity.outputs.head_sha != '' }}
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
-          node-version: 24.18.1
+          node-version: 24.22.1
       - name: Recheck candidate upgrade admission
         id: admission
         if: ${{ steps.identity.outputs.head_sha != '' }}
@@ -113,7 +113,7 @@ jobs:
       - name: Set up trusted package runtime
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
-          node-version: 24.18.1
+          node-version: 24.22.1
           registry-url: https://npm.pkg.github.com
           scope: "@nvidia"
       - name: Install reviewed npm

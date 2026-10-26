@@ -93,7 +93,9 @@ export function sandboxGpuProofStatusSuffix(
 function printInferenceProbeLine(probe: ProviderHealthStatus): void {
   const label = probe.probeLabel ? `Inference (${probe.probeLabel})` : "Inference";
   if (!probe.probed) {
-    console.log(`    ${label}: ${D}not probed${R} (${probe.detail})`);
+    console.log(
+      `    ${label}: ${D}${probe.degraded ? "degraded" : "not probed"}${R} (${probe.detail})`,
+    );
     return;
   }
   if (probe.ok) {

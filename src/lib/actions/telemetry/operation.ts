@@ -239,7 +239,8 @@ export async function withTelemetryEvidence<T>(
   const started = performance.now();
   let remainingMs: number;
   try {
-    remainingMs = TELEMETRY_DEADLINE_MS - usedEvidenceMs(current);
+    // Leave time for sender startup, terminal collection, delivery, and cleanup.
+    remainingMs = TELEMETRY_DEADLINE_MS - usedEvidenceMs(current) - 2_000;
   } catch {
     return null;
   }

@@ -157,8 +157,26 @@ export async function preflightRebuildHostCredential(
   credentialValue: string | null,
   bail: RebuildBail,
 ): Promise<boolean> {
-  if (!credentialValue || (await validateRebuildHostInferenceCredential(target, credentialValue)))
-    return true;
+  if (!credentialValue) return true;
+  let indeterminate = false;
+  const valid = await validateRebuildHostInferenceCredential(
+    target,
+    credentialValue,
+    undefined,
+    () => {
+      indeterminate = true;
+    },
+  );
+  if (valid) return true;
+  if (indeterminate) {
+    console.error(
+      "  Rebuild preflight stopped: NVIDIA upstream is temporarily unavailable; credential validation is indeterminate.",
+    );
+    console.error(
+      "  Sandbox is untouched — no data was lost. Retry rebuild when inference recovers.",
+    );
+    bail("NVIDIA upstream inference was unavailable before sandbox deletion");
+  }
   console.error("");
   console.error(
     `  ${RD}Rebuild preflight failed:${R} the host inference credential could not be validated.`,

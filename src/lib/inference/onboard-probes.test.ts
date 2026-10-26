@@ -884,7 +884,8 @@ exit 0
       expect(RETRIABLE_HTTP_PROBE_STATUSES.has(429)).toBe(true);
     });
 
-    it("retries 502/503/504 (upstream gateway flakes)", () => {
+    it("retries 500/502/503/504 (upstream gateway flakes)", () => {
+      expect(RETRIABLE_HTTP_PROBE_STATUSES.has(500)).toBe(true);
       expect(RETRIABLE_HTTP_PROBE_STATUSES.has(502)).toBe(true);
       expect(RETRIABLE_HTTP_PROBE_STATUSES.has(503)).toBe(true);
       expect(RETRIABLE_HTTP_PROBE_STATUSES.has(504)).toBe(true);
@@ -895,19 +896,18 @@ exit 0
       expect(RETRIABLE_HTTP_PROBE_STATUSES.has(401)).toBe(false);
       expect(RETRIABLE_HTTP_PROBE_STATUSES.has(403)).toBe(false);
       expect(RETRIABLE_HTTP_PROBE_STATUSES.has(404)).toBe(false);
-      expect(RETRIABLE_HTTP_PROBE_STATUSES.has(500)).toBe(false);
       expect(RETRIABLE_HTTP_PROBE_STATUSES.has(200)).toBe(false);
     });
 
-    it("recovers when an upstream 502 clears on retry (#2980)", () => {
+    it.each([500, 502])("recovers when an upstream HTTP %i clears on retry (#13616)", (status) => {
       const body = `n=$(cat "${HARNESS_COUNTER}")
 n=$((n + 1))
 echo "$n" > "${HARNESS_COUNTER}"
 if [ "$n" -lt 2 ]; then
   if [ -n "$outfile" ]; then
-    printf '<html>502 Bad Gateway</html>' > "$outfile"
+    printf '<html>${status} upstream unavailable</html>' > "$outfile"
   fi
-  printf '502'
+  printf '${status}'
   exit 0
 fi
 if [ -n "$outfile" ]; then
@@ -921,7 +921,7 @@ exit 0
       withFakeCurlProbe(
         {
           script: makeFakeCurlScript(body),
-          dirPrefix: "nemoclaw-502-probe-",
+          dirPrefix: `nemoclaw-${status}-probe-`,
         },
         ({ lines, counter }) => {
           const result = probeOpenAiLikeEndpoint(
@@ -932,7 +932,7 @@ exit 0
           );
 
           expect(result).toMatchObject({ ok: true, api: "openai-completions" });
-          expect(lines.join("\n")).toContain("HTTP 502");
+          expect(lines.join("\n")).toContain(`HTTP ${status}`);
           expect(fs.readFileSync(counter, "utf8").trim()).toBe("2");
         },
       );
