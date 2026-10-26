@@ -843,6 +843,22 @@ function resolveDockerDriverGatewayIdentity(
   };
 }
 
+/**
+ * Prove from `openshell/gateway.env` text, the packaged unit's EnvironmentFile,
+ * that the unit runs the gateway config of this state directory.
+ */
+export function gatewayEnvSelectsStateConfig(envText: string, stateDir: string): boolean {
+  const assignments = envText
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("OPENSHELL_GATEWAY_CONFIG="));
+  // systemd applies the last assignment of a variable in an EnvironmentFile.
+  return (
+    assignments.at(-1) ===
+    `OPENSHELL_GATEWAY_CONFIG=${path.join(stateDir, DOCKER_DRIVER_GATEWAY_CONFIG_NAME)}`
+  );
+}
+
 /** Prove that a NemoClaw-owned Docker gateway config uses its state-scoped namespace. */
 export function hasStateScopedSandboxNamespace(stateDir: string): boolean {
   let identity: DockerDriverGatewayIdentity | null = null;

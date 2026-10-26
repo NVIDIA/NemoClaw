@@ -50,6 +50,9 @@ DEFAULT_CONFIG = {
         "pre_update_backup": "quick",
         "refresh_cua_driver": True,
     },
+    "web": {
+        "keyless_fallback": True,
+    },
 }
 `;
 
@@ -153,6 +156,7 @@ function patchSource(
     | "agent"
     | "main",
   source: string,
+  policy: unknown = MANAGED_POLICY,
 ) {
   const harness = `\
 import importlib.util
@@ -175,7 +179,7 @@ sys.stdout.write(patched)
 `;
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "hermes-profile-policy-"));
   const policyPath = path.join(tmp, "managed-policy.json");
-  fs.writeFileSync(policyPath, `${JSON.stringify(MANAGED_POLICY)}\n`);
+  fs.writeFileSync(policyPath, `${JSON.stringify(policy)}\n`);
   try {
     return spawnSync("python3", ["-I", "-c", harness, patcher, kind, policyPath], {
       encoding: "utf8",
@@ -223,7 +227,25 @@ describe("Hermes profile policy defaults", () => {
       },
       display: { show_commentary: false, show_reasoning: false },
       updates: { pre_update_backup: false, refresh_cua_driver: false },
+      web: { keyless_fallback: false },
     });
+  });
+
+  it("keeps the keyless web search default when the image has a web backend (#13584)", () => {
+    const policy = buildHermesManagedPolicy(
+      { ...POLICY_SETTINGS, webSearchProvider: "tavily" },
+      {},
+    );
+    const result = patchSource("config", configFixture, policy);
+
+    expect(result.status, result.stderr).toBe(0);
+    const probe = runPatchedPython(
+      result.stdout,
+      'print(namespace["DEFAULT_CONFIG"]["web"]["keyless_fallback"])',
+    );
+    expect(probe.status, probe.stderr).toBe(0);
+    expect(probe.stdout.trim()).toBe("True");
+    expect(policy.managed_paths).not.toContain("web.keyless_fallback");
   });
 
   it("keeps the browser runtime npx fallback offline", () => {
