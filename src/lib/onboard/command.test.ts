@@ -796,9 +796,7 @@ describe("onboard command options", () => {
         recordedCustomImage: false,
       },
     }));
-    const runOnboard = vi.fn(async () => {
-      throw new OnboardResumeIntentRaceError();
-    });
+    const runOnboard = vi.fn().mockRejectedValue(new OnboardResumeIntentRaceError());
     const errors: string[] = [];
 
     await expect(
