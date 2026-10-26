@@ -964,7 +964,13 @@ async function addMcpBridgeUnlocked(
   // Normalize and validate the requested allowlist at the action boundary, so
   // direct callers and retry definitions stay stable and deduplicated.
   let normalizedAllowTools: string[] | undefined;
-  if (options.allowTools && options.allowTools.length > 0) {
+  if (options.allowTools !== undefined) {
+    if (options.allowTools.length === 0) {
+      throw new McpBridgeError(
+        "Empty allowTools array is not allowed. Use clearMcpBridgeAllowTools to remove an allowlist.",
+        2,
+      );
+    }
     const deduplicated = [...new Set(options.allowTools)].sort();
     for (const tool of deduplicated) {
       if (!VALID_ALLOW_TOOL_RE.test(tool)) {

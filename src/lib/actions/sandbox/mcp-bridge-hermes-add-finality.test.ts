@@ -355,6 +355,18 @@ describe("Hermes MCP add reload finality", () => {
     });
   });
 
+  it("rejects an explicitly empty allowlist before writing MCP state", async () => {
+    await expect(
+      addMcpBridge("alpha", {
+        allowTools: [],
+        env: [{ name: "GITHUB_TOKEN" }],
+        server: "github",
+        url: "https://8.8.8.8/mcp",
+      }),
+    ).rejects.toThrow(/Empty allowTools array is not allowed/);
+    expect(mocks.upsertMcpProvider).not.toHaveBeenCalled();
+  });
+
   it("leaves all MCP state unchanged when a legacy Hermes helper lacks finality capability", async () => {
     mocks.assertAgentMcpMutationRuntimeCapability.mockRejectedValue(
       new Error(

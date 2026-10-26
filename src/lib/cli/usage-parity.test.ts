@@ -13,8 +13,9 @@ const publicHelp = String(helpOutput.mock.calls[0]?.[0] ?? "");
 helpOutput.mockRestore();
 
 const publicHelpEntries = visibleEntries()
-  .filter(({ usage }) => visibleCommands().some((command) => command.usage === usage))
-  .map(({ usage, flags }) => ({ usage, flags }));
+  .filter(({ commandId }) =>
+    visibleCommands().some((command) => command.commandId === commandId),
+  );
 
 describe("public display usage parity", () => {
   /** Fail loudly if hint parsing ever yields nothing instead of silently passing. */
@@ -25,9 +26,16 @@ describe("public display usage parity", () => {
 
   test.each(publicHelpEntries)(
     "shows documented flags for $usage in public CLI help",
-    ({ usage, flags }) => {
-      expect(publicHelp, usage).toContain(usage);
-      expect(publicHelp, usage).toContain(flags ?? "");
+    ({ commandId, usage, flags }) => {
+      const command = visibleCommands().find(
+        (candidate) => candidate.commandId === commandId && candidate.usage === usage,
+      );
+      expect(usage).toBe(command?.usage);
+      const helpLine = publicHelp
+        .split("\n")
+        .find((line) => line.trimStart().startsWith(usage));
+      expect(helpLine).toBeDefined();
+      expect(helpLine ?? "").toContain(flags ?? "");
     },
   );
 
