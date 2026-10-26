@@ -77,7 +77,7 @@ const OPENCLAW_TARGET = {
 };
 
 describe("composeSandboxConfigBody", () => {
-  it("directs Hermes compat hash failures to rebuild before another config write", () => {
+  it("directs Hermes compat hash failures to trusted recovery before another write", () => {
     expect(
       isHermesCompatHashRecoveryError(
         new Error("compat hash does not match frozen Hermes inputs during non-root reconciliation"),
@@ -88,8 +88,10 @@ describe("composeSandboxConfigBody", () => {
         new Error("compat hash verification failed for Hermes restart seal"),
       ),
     ).toBe(true);
-    expect(hermesCompatHashRecoveryError("alpha").message).toContain("nemoclaw 'alpha' rebuild");
-    expect(hermesCompatHashRecoveryError("alpha").message).not.toContain(" recover");
+    const guidance = hermesCompatHashRecoveryError("alpha").message;
+    expect(guidance).toContain("Back up needed data from 'alpha'");
+    expect(guidance).toContain("Rebuild preserves the native home");
+    expect(guidance).toContain("trusted backup or create a fresh Hermes sandbox");
   });
 
   it("prepends the upstream header and keeps the YAML body parseable for Hermes targets", () => {

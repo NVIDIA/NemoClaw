@@ -529,7 +529,9 @@ function isHermesCompatHashRecoveryError(error: unknown): boolean {
 function hermesCompatHashRecoveryError(sandboxName: string): SandboxConfigError {
   return new SandboxConfigError([
     "  Hermes integrity metadata is not ready for a configuration write.",
-    `  Run: nemoclaw ${shellQuote(sandboxName)} rebuild`,
+    `  Back up needed data from ${shellQuote(sandboxName)} before recovery.`,
+    "  Rebuild preserves the native home and may retain this mismatch.",
+    "  Repair the integrity state from a trusted backup or create a fresh Hermes sandbox.",
     "  The configuration write was not applied.",
   ]);
 }

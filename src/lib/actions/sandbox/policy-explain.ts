@@ -161,6 +161,19 @@ export async function writePolicyContextToSandbox(
 ): Promise<WritePolicyContextResult> {
   const build = deps.build ?? buildPolicyContext;
   const render = deps.render ?? renderPolicyContextMarkdown;
+  // POLICY.md is an OpenClaw workspace file. Other agents never read it, and
+  // creating /sandbox/.openclaw in a Hermes sandbox makes the Hermes CLI treat
+  // it as migration residue and rewrite its integrity-sealed config.yaml on
+  // first launch, which blocks later NemoClaw config writes (#13618).
+  // Unregistered and legacy rows default to OpenClaw, as elsewhere.
+  const agent = (deps.getAgent ?? getSandboxAgentName)(sandboxName) || "openclaw";
+  if (agent !== "openclaw") {
+    return {
+      written: false,
+      reason: `${POLICY_CONTEXT_SANDBOX_PATH} is an OpenClaw workspace file and is not written for ${agent} sandboxes`,
+      failure: "unsupported-agent",
+    };
+  }
   let exec: SandboxExec | undefined = deps.exec;
   if (!exec) {
     const load = loadExecutor();
@@ -179,19 +192,6 @@ export async function writePolicyContextToSandbox(
       };
     }
     exec = load.exec;
-  }
-  // POLICY.md is an OpenClaw workspace file. Other agents never read it, and
-  // creating /sandbox/.openclaw in a Hermes sandbox makes the Hermes CLI treat
-  // it as migration residue and rewrite its integrity-sealed config.yaml on
-  // first launch, which blocks later NemoClaw config writes (#13618).
-  // Unregistered and legacy rows default to OpenClaw, as elsewhere.
-  const agent = (deps.getAgent ?? getSandboxAgentName)(sandboxName) || "openclaw";
-  if (agent !== "openclaw") {
-    return {
-      written: false,
-      reason: `${POLICY_CONTEXT_SANDBOX_PATH} is an OpenClaw workspace file and is not written for ${agent} sandboxes`,
-      failure: "unsupported-agent",
-    };
   }
   const ctx = await build(sandboxName);
   const markdown = render(ctx);

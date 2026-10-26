@@ -45,7 +45,12 @@ NemoClaw does not write `/sandbox/.openclaw/workspace/POLICY.md` in Hermes sandb
 The `--write` target is the OpenClaw workspace and is not a Hermes agent-context integration.
 Older NemoClaw versions could leave `/sandbox/.openclaw/workspace/POLICY.md` in an existing Hermes sandbox.
 Upgrading NemoClaw does not remove that file.
-If `inference set` reports `Hermes integrity metadata is not ready` after a Hermes CLI session, run `$$nemoclaw <name> rebuild` once with the updated version, then retry `inference set`.
+A rebuild preserves the native sandbox home, including this file, so it does not remove the migration trigger.
+If `inference set` reports `Hermes integrity metadata is not ready` after a Hermes CLI session, back up needed Hermes data before recovery.
+An operator can inspect the sandbox and remove only the obsolete OpenClaw `POLICY.md` file.
+If Hermes already rewrote its configuration, restore matching Hermes configuration and integrity files from a trusted backup or create a fresh Hermes sandbox.
+Do not copy the obsolete OpenClaw file or mismatched Hermes configuration and integrity files into the fresh sandbox.
+Retry `inference set` only after Hermes starts with valid integrity metadata.
 </AgentOnly>
 
 ## Understand Redaction

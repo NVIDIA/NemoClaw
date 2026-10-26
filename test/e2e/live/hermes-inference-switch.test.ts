@@ -8,10 +8,8 @@ import { trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { DEFAULT_HOSTED_INFERENCE_BASE_URL } from "../fixtures/hosted-inference.ts";
-import { inferenceResponseModel } from "../fixtures/inference-switch-retry.ts";
 import {
   apiKeyShape,
-  chatContent,
   cleanupHermesSwitch,
   CLI,
   compatibleAnthropicMetadataArgs,
@@ -50,7 +48,6 @@ import {
   useLocalHermesInferenceBaseline,
 } from "./hermes-inference-switch-helpers.ts";
 import {
-  acceptedSwitchResponseModels,
   PUBLIC_NVIDIA_SWITCH_ATTACHMENT_EVIDENCE,
   PUBLIC_NVIDIA_SWITCH_PROVIDER,
   readPublicNvidiaSwitchAttachmentEvidence,
@@ -414,12 +411,29 @@ test(
       messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
       max_tokens: inferenceLocalMaxTokens(),
     });
+    await runHermesPongWithRetry({
+      expectedModel: SWITCH_MODEL,
+      onEvidence: async (evidence) => {
+        await artifacts.writeJson("retry/hermes-sandbox-inference-after-switch.json", evidence);
+      },
+      run: (attempt) =>
+        sandbox.execShell(
+          SANDBOX_NAME,
+          trustedSandboxShellScript(sandboxInferenceCommand(inferenceLocalPayload)),
+          {
+            artifactName: `hermes-sandbox-inference-chat-after-switch-${attempt}`,
+            env: env(),
+            redactionValues,
+            timeoutMs: 120_000,
+          },
+        ),
+    });
     const hermesApiPayload = JSON.stringify({
       model: SWITCH_MODEL,
       messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
       max_tokens: 100,
     });
-    const chat = await runHermesPongWithRetry({
+    await runHermesPongWithRetry({
       expectedModel: SWITCH_MODEL,
       onEvidence: async (evidence) => {
         await artifacts.writeJson("retry/hermes-api-after-switch.json", evidence);
@@ -436,12 +450,6 @@ test(
           },
         ),
     });
-    expect(chat.exitCode, resultText(chat)).toBe(0);
-    expect(chatContent(chat.stdout)).toMatch(/PONG/i);
-    expect(acceptedSwitchResponseModels(SWITCH_MODEL)).toContain(
-      inferenceResponseModel(chat.stdout),
-    );
-
     progress.phase("run Hermes CLI adapter forms against switched provider");
     const hermesCli = await runHermesCliPongWithRetry({
       onEvidence: async (evidence) => {
@@ -508,7 +516,7 @@ test(
       "compat-after-cli",
     );
     expect(compatHashAfterCli.exitCode, resultText(compatHashAfterCli)).toBe(0);
-    const inferenceAfterCli = await runHermesPongWithRetry({
+    await runHermesPongWithRetry({
       expectedModel: SWITCH_MODEL,
       onEvidence: async (evidence) => {
         await artifacts.writeJson("retry/hermes-inference-after-cli.json", evidence);
@@ -525,12 +533,6 @@ test(
           },
         ),
     });
-    expect(inferenceAfterCli.exitCode, resultText(inferenceAfterCli)).toBe(0);
-    expect(chatContent(inferenceAfterCli.stdout)).toMatch(/PONG/i);
-    expect(acceptedSwitchResponseModels(SWITCH_MODEL)).toContain(
-      inferenceResponseModel(inferenceAfterCli.stdout),
-    );
-
     await runHermesNvidiaDiscordRebuild({
       host,
       sandbox,

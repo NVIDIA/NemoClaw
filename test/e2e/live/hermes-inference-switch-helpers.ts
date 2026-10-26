@@ -424,6 +424,11 @@ export async function runHermesPongWithRetry(
       return { outcome: "failed", failureClass: hermesProbeFailureClass(value.result) };
     },
   });
+  if (execution.outcome === "failed") {
+    throw new Error(
+      "Hermes PONG probe did not return a successful response from the selected model.",
+    );
+  }
   if (execution.value) return execution.value.result;
   throw new Error("Hermes live probe completed without an attempt result.");
 }

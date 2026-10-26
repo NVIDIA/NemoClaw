@@ -296,6 +296,21 @@ describe("policy context agent scope (#13618)", () => {
   const okExec = () =>
     vi.fn((_sandbox: string, _command: string) => ({ status: 0, stdout: "", stderr: "" }));
 
+  it("skips Hermes before loading the sandbox executor", async () => {
+    const build = vi.fn(fakeContext);
+    const render = vi.fn(() => "policy");
+
+    const result = await writePolicyContextToSandbox("alpha", {
+      build,
+      render,
+      getAgent: () => "hermes",
+    });
+
+    expect(result.failure).toBe("unsupported-agent");
+    expect(build).not.toHaveBeenCalled();
+    expect(render).not.toHaveBeenCalled();
+  });
+
   it.each(["hermes", "pi", "langchain-deepagents-code", "nemocua"])(
     "does not create the OpenClaw workspace in a %s sandbox",
     async (agent) => {

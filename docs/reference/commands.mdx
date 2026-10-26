@@ -3828,7 +3828,10 @@ A rebuild restores the previous native `openclaw.json`, so it does not repair th
 
 <AgentOnly variant="hermes">
 
-If the in-sandbox config write or integrity hash update fails, the selected inference path and NemoClaw registry remain committed, but the command exits with status `1` and points you to `$$nemoclaw <name> rebuild`.
+If the in-sandbox config write or integrity hash update fails, the selected inference path and NemoClaw registry remain committed, but the command exits with status `1`.
+For a compatibility-hash refusal, follow the printed backup and trusted recovery guidance.
+A rebuild preserves the native sandbox home and may retain the mismatch.
+For an older Hermes sandbox with an OpenClaw `POLICY.md` file, follow [Explain Network Policy to Agents](../network-policy/explain-network-policy-to-agents).
 
 </AgentOnly>
 
