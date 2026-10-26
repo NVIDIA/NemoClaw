@@ -5,7 +5,7 @@
 
 ## v0.0.139
 
-NemoClaw v0.0.139 fixes rootless Podman cleanup for Hermes sandboxes, improves native inference recovery, reports host GPUs and native backup contents, and publishes compatible llama.cpp image signatures.
+NemoClaw v0.0.139 fixes sandbox cleanup and native inference recovery, improves WhatsApp removal, reports host GPUs and native backup contents, qualifies a 64 GB DGX Spark vLLM profile, and publishes compatible llama.cpp image signatures.
 
 - Destroying a Hermes sandbox on rootless Podman now retries native-home cleanup as the image's pinned sandbox user when privileged cleanup cannot remove agent-owned files.
   If that cleanup fails, NemoClaw preserves the sandbox registry entry for a retry.
@@ -22,3 +22,12 @@ NemoClaw v0.0.139 fixes rootless Podman cleanup for Hermes sandboxes, improves n
 - New llama.cpp image publications include Sigstore bundle signatures and a legacy image signature.
   The publication workflow verifies the legacy signature with Cosign 2 before it emits a receipt.
   Related change: [PR #13667](https://github.com/NVIDIA/NemoClaw/pull/13667).
+- `nemoclaw <name> channels remove whatsapp` now succeeds without changes when the messaging plan and current policy show that WhatsApp is not configured.
+  It does not clear session files or queue a rebuild.
+  Related change: [PR #13221](https://github.com/NVIDIA/NemoClaw/pull/13221).
+- Rebuilding a Hermes sandbox with native NVIDIA inference refreshes its managed credential references while preserving its model, provider, and Discord settings.
+  `nemohermes <name> status` verifies that credential reference and directs you to rebuild when it is stale.
+  Related change: [PR #13651](https://github.com/NVIDIA/NemoClaw/pull/13651).
+- The Qwen vLLM profile for a 64 GB DGX Spark is now supported.
+  Automatic selection accepts hosts with at least 60 GB of detected unified memory.
+  Related change: [PR #12780](https://github.com/NVIDIA/NemoClaw/pull/12780).
