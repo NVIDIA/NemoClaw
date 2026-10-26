@@ -13,7 +13,7 @@ ARG CODEX_ACP_LINUX_ARM64_0_11_1_INTEGRITY=sha512-I1f6WoSLbLlsWq4zH+vtwdoc4Y41mq
 
 FROM scratch AS reviewed-npm-archive
 ADD --chmod=0444 --checksum=sha256:5dbb86c71d07a1957f2e90734092dd6a58bdcd9ebc2d8d41ca1c6e6a21d364e1 https://registry.npmjs.org/npm/-/npm-12.0.2.tgz /npm-12.0.2.tgz
-FROM node:24.18.1-trixie-slim@sha256:ac39e4b5fcb2b1b34b20364fd58b2e898f3bb80731ee6f62a7536f9df3d6aadc AS npm12
+FROM node:24.22.1-trixie-slim@sha256:43b9ba1142b8dcf33fa8f922ca1be85714adc444e0586c7cf7726daaeabc1bea AS npm12
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates=20250419 curl=8.14.1-2+deb13u7 && rm -rf /var/lib/apt/lists/*
 COPY scripts/lib/reviewed-npm-archive.mts scripts/lib/bundled-npm-package.mts scripts/lib/reviewed-npm-audit.mts scripts/lib/patch-bundled-npm-ip-address.mts scripts/lib/reviewed-npm-identity.mts /scripts/lib/
 COPY scripts/patch-bundled-npm-brace-expansion.mts scripts/patch-bundled-npm-tar.mts scripts/upgrade-bundled-npm.mts /scripts/
@@ -420,11 +420,11 @@ ADD --chmod=0444 --checksum=sha256:467e8047f7114e45944961fcd3eda9421843c9c65db61
 ADD --chmod=0444 --checksum=sha256:384b452409cfeb5c6fa82dc68ebfa498b24717b74fb8d3fe6eb2bb89908db295 https://registry.npmjs.org/p-limit/-/p-limit-2.3.0.tgz /p-limit-2.3.0.tgz
 ADD --chmod=0444 --checksum=sha256:284dcc4cc5b485b5793be28d0716f0a1270fb0eeb9f1f4c7cff7f320cfe8e21e https://registry.npmjs.org/p-limit/-/p-limit-7.3.1.tgz /p-limit-7.3.1.tgz
 ADD --chmod=0444 --checksum=sha256:d95a6ae462e3d967deb0c250bda1c3bbebfe86a58832d27b204c7b74a76fa5f0 https://registry.npmjs.org/p-locate/-/p-locate-4.1.0.tgz /p-locate-4.1.0.tgz
-ADD --chmod=0444 --checksum=sha256:b52ce5684950a7e5792d67c2bec28125695c55c1d689a778ee6c64efdb15b5f0 https://registry.npmjs.org/p-map/-/p-map-7.0.6.tgz /p-map-7.0.6.tgz
-ADD --chmod=0444 --checksum=sha256:21112bb484de3120e9e85f1ebe6a66125ecfda48072ae48b0d202693337fb558 https://registry.npmjs.org/p-retry/-/p-retry-4.6.2.tgz /p-retry-4.6.2.tgz
 
 FROM scratch AS openclaw-managed-messaging-npm-common-archives-4
 
+ADD --chmod=0444 --checksum=sha256:b52ce5684950a7e5792d67c2bec28125695c55c1d689a778ee6c64efdb15b5f0 https://registry.npmjs.org/p-map/-/p-map-7.0.6.tgz /p-map-7.0.6.tgz
+ADD --chmod=0444 --checksum=sha256:21112bb484de3120e9e85f1ebe6a66125ecfda48072ae48b0d202693337fb558 https://registry.npmjs.org/p-retry/-/p-retry-4.6.2.tgz /p-retry-4.6.2.tgz
 ADD --chmod=0444 --checksum=sha256:a390b2b89899df950afc0304eaba7cd1f5e3746b2e370758a9b50f177e713790 https://registry.npmjs.org/p-try/-/p-try-2.2.0.tgz /p-try-2.2.0.tgz
 ADD --chmod=0444 --checksum=sha256:0d4028dc0352a740c30cbfd772917f2744986d42bfa0b06ec7642bffe7ad3941 https://registry.npmjs.org/pako/-/pako-1.0.11.tgz /pako-1.0.11.tgz
 ADD --chmod=0444 --checksum=sha256:abbc7e193f7bcd9d26f9fe994f846ee3fb442b0ec215e7f61fa1080a29b7fb68 https://registry.npmjs.org/parse-ms/-/parse-ms-4.0.0.tgz /parse-ms-4.0.0.tgz
@@ -453,6 +453,7 @@ ADD --chmod=0444 --checksum=sha256:0c7274f0c299f39c2fddf54a2e0039b785977b0173c02
 ADD --chmod=0444 --checksum=sha256:3a6260c4e0d80bd527a3f930e90ea2348c03646621f25aa0bd960ee205a0a706 https://registry.npmjs.org/qrcode-terminal/-/qrcode-terminal-0.12.0.tgz /qrcode-terminal-0.12.0.tgz
 ADD --chmod=0444 --checksum=sha256:eaa6226f03b9046e4825f2627be3bd857e91dce9f105d953f94c5795322f1e4c https://registry.npmjs.org/@types/qs/-/qs-6.15.1.tgz /qs-6.15.1.tgz
 ADD --chmod=0444 --checksum=sha256:c0278b636e7a016d6e835cd8f194a63c276dff430620e4a04344a4ba8892c0f9 https://registry.npmjs.org/qs/-/qs-6.15.3.tgz /qs-6.15.3.tgz
+ADD --chmod=0444 --checksum=sha256:f7a1bfc96c3a0c1172f1f3ef3c280f5ce8054841922e715f0d686da62d7beba4 https://registry.npmjs.org/qs/-/qs-6.16.0.tgz /qs-6.16.0.tgz
 ADD --chmod=0444 --checksum=sha256:bdb0e06e5cde7b4d7e0117faa678416bbc2c9287b0672c35c04da2b9de1d3cbf https://registry.npmjs.org/qs/-/qs-6.16.1.tgz /qs-6.16.1.tgz
 ADD --chmod=0444 --checksum=sha256:67f300077af91aa29497cfffbcf7f83d8cda7de39c4010b94372da2ab1ea796f https://registry.npmjs.org/quickjs-wasi/-/quickjs-wasi-3.5.0.tgz /quickjs-wasi-3.5.0.tgz
 ADD --chmod=0444 --checksum=sha256:c2fc511ff7741008fed196c91d9b95254dcd27c12eedf4c29c160f90118b72fb https://registry.npmjs.org/@types/range-parser/-/range-parser-1.2.7.tgz /range-parser-1.2.7.tgz
@@ -512,12 +513,12 @@ ADD --chmod=0444 --checksum=sha256:8c5f3b72177e4f2cd78aa93354a025d70ab3fad996431
 ADD --chmod=0444 --checksum=sha256:7bbc9e36bf1a8db09b69914b27796562d01d930345e29e5ee3b6014c0fbccbe9 https://registry.npmjs.org/@microsoft/teams.apps/-/teams.apps-2.0.15.tgz /teams.apps-2.0.15.tgz
 ADD --chmod=0444 --checksum=sha256:065c908085f43f0de4d144c4bf504c6d4bbe410a8ad118ee6c0fb1ba7c79a194 https://registry.npmjs.org/@microsoft/teams.cards/-/teams.cards-2.0.15.tgz /teams.cards-2.0.15.tgz
 ADD --chmod=0444 --checksum=sha256:0fa46b9f499211334d093015322901649c53d94908a0ff68b280a7a8e08fd78c https://registry.npmjs.org/@microsoft/teams.common/-/teams.common-2.0.15.tgz /teams.common-2.0.15.tgz
-ADD --chmod=0444 --checksum=sha256:452f2544ddfaf8db6034a108066009f588d6e8db9d8cde52aceb3fa5e9fef782 https://registry.npmjs.org/@microsoft/teams.graph/-/teams.graph-2.0.15.tgz /teams.graph-2.0.15.tgz
-ADD --chmod=0444 --checksum=sha256:991d87763add805a12d5b3e67b201476681a5b738d8dcb9229bed1df755acba0 https://registry.npmjs.org/@borewit/text-codec/-/text-codec-0.2.2.tgz /text-codec-0.2.2.tgz
-ADD --chmod=0444 --checksum=sha256:186fcc77488de327daf911d362d4e773bab9909f1df2a5f0c20b875205b92e08 https://registry.npmjs.org/toidentifier/-/toidentifier-1.0.1.tgz /toidentifier-1.0.1.tgz
 
 FROM scratch AS openclaw-managed-messaging-npm-common-archives-5
 
+ADD --chmod=0444 --checksum=sha256:452f2544ddfaf8db6034a108066009f588d6e8db9d8cde52aceb3fa5e9fef782 https://registry.npmjs.org/@microsoft/teams.graph/-/teams.graph-2.0.15.tgz /teams.graph-2.0.15.tgz
+ADD --chmod=0444 --checksum=sha256:991d87763add805a12d5b3e67b201476681a5b738d8dcb9229bed1df755acba0 https://registry.npmjs.org/@borewit/text-codec/-/text-codec-0.2.2.tgz /text-codec-0.2.2.tgz
+ADD --chmod=0444 --checksum=sha256:186fcc77488de327daf911d362d4e773bab9909f1df2a5f0c20b875205b92e08 https://registry.npmjs.org/toidentifier/-/toidentifier-1.0.1.tgz /toidentifier-1.0.1.tgz
 ADD --chmod=0444 --checksum=sha256:911758ceca239c8e5372700eedfbbd514f16d3c117b5af0a648f6e720487c209 https://registry.npmjs.org/@tokenizer/token/-/token-0.3.0.tgz /token-0.3.0.tgz
 ADD --chmod=0444 --checksum=sha256:eb4820714d28f6dad949d392e7b74ec919ae3b120421240a032027bf2bd25f41 https://registry.npmjs.org/token-types/-/token-types-6.1.2.tgz /token-types-6.1.2.tgz
 ADD --chmod=0444 --checksum=sha256:164ae1eb32cea353551bbc7f9358dcaae4ffabbe65ec37a92ca464a9570a2a0a https://registry.npmjs.org/tr46/-/tr46-0.0.3.tgz /tr46-0.0.3.tgz
@@ -881,11 +882,8 @@ COPY --from=openclaw-plugin-payload / /
 # Copy built plugin and blueprint into the sandbox
 RUN chmod -R a+rX /opt/nemoclaw /opt/nemoclaw-blueprint/
 
-# The builder-stage verify-openshell-policy-boundary-dependencies.mts check is
-# the primary security gate: it enforces the generated boundary's strict module
-# dependency allowlist before this stage copies it. The node check below is
-# defense in depth only and proves the copied runtime still exports the complete
-# audited interface; function availability does not replace dependency lockdown.
+# The builder-stage verify-openshell-policy-boundary-dependencies.mts check
+# enforces the allowlist; verify the copied exports here.
 RUN test -f /usr/local/bin/node \
     && test -d /opt/nemoclaw/node_modules/json5 \
     && node -e 'const boundary = require("/opt/nemoclaw/dist/shared/openshell-policy-boundary.cjs"); for (const name of ["parseOpenShellPolicy", "stripProviderComposedPolicies", "withoutProviderComposedPolicies"]) { if (typeof boundary[name] !== "function") throw new Error("OpenShell policy boundary export is unavailable: " + name); }' \
@@ -952,7 +950,7 @@ RUN --mount=type=secret,id=nemoclaw-mcporter-audit-receipt,required=false \
     OPENCLAW_LOCK_SHA256=none-legacy-fixture; \
     OPENCLAW_RECIPE='ignore-scripts+reviewed-lifecycle-v1'; \
     if [ "$OPENCLAW_VERSION" = "2026.9.2" ]; then \
-        OPENCLAW_LOCK_SHA256=4fe0de9e31190d30afbd811dae7aaddb98960dd81794443629d2a32f028a7f11; \
+        OPENCLAW_LOCK_SHA256=0b1253c6570f55881623961c856b430a17d4271f5efe8c5beffa7ac0fc8d0199; \
         ACTUAL_OPENCLAW_LOCK_SHA256="$(sha256sum /usr/local/lib/nemoclaw/openclaw-runtime/package-lock.json | awk '{print $1}')"; \
         [ "$ACTUAL_OPENCLAW_LOCK_SHA256" = "$OPENCLAW_LOCK_SHA256" ] \
             || { echo "ERROR: OpenClaw lock SHA-256 mismatch (expected $OPENCLAW_LOCK_SHA256, found $ACTUAL_OPENCLAW_LOCK_SHA256)" >&2; exit 1; }; \
@@ -1839,7 +1837,7 @@ RUN chmod 755 /src/lib/messaging/applier/build/messaging-build-applier.mts \
 RUN OPENCLAW_VERSION="${OPENCLAW_VERSION}" node /src/lib/messaging/applier/build/messaging-build-applier.mts --agent openclaw --phase runtime-setup
 USER sandbox
 
-# Use a writable copy of the reviewed cache for one messaging install phase.
+# Install from a writable copy of the immutable cache, then delete the copy.
 # hadolint ignore=DL3059,DL4006
 RUN --mount=from=openclaw-managed-messaging-npm-cache,source=/out/npm-cache,target=/opt/nemoclaw-managed-messaging-npm-cache,ro set -eu; \
     trusted_cache=/opt/nemoclaw-managed-messaging-npm-cache; \
@@ -2232,16 +2230,10 @@ RUN set -eu; \
         chmod 660 /sandbox/.openclaw/openclaw.json; \
     fi
 
-# System-wide shell hooks for shells where ~/.bashrc / ~/.profile aren't
-# sourced (e.g. `bash -ic` / `bash -lc` invoked under a different user or
-# without HOME=/sandbox). Dockerfile.base is the source of truth. This final
-# image replay only repairs stale published bases that predate the v0.0.69
-# base layer and therefore lack /etc/profile.d/nemoclaw-rlimits.sh, the
-# /etc/bash.bashrc hook, or the root-owned helper mode. Remove this block after
-# the minimum supported OpenClaw sandbox base tag is v0.0.69 or newer and those
-# three artifacts are guaranteed by the base image and covered by
-# test/runtime/sandbox/sandbox-provisioning.test.ts.
-# Ref: https://github.com/NVIDIA/NemoClaw/issues/2704
+# System-wide shell hooks cover login/interactive shells with other users or HOME values.
+# Replay Dockerfile.base's hooks and helper modes for pre-v0.0.69 bases.
+# Remove after v0.0.69 is required and test/runtime/sandbox/sandbox-provisioning.test.ts
+# covers these files (#2704).
 # hadolint ignore=SC2028,DL4006
 RUN chmod 444 /usr/local/lib/nemoclaw/sandbox-rlimits.sh \
     && if ! grep -q "sandbox-rlimits.sh" /etc/profile.d/nemoclaw-rlimits.sh 2>/dev/null; then \

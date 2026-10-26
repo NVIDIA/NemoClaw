@@ -173,7 +173,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "24.18.1"
+          node-version: "24.22.1"
           cache: npm
 
       - name: Install reviewed npm
@@ -322,7 +322,7 @@ jobs:
           persist-credentials: false
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@7fcbf13ecd7bc0ea835a949417cf9eb68067adf9
 
       - name: Provision restricted rootless Linux runtime
         shell: bash
