@@ -12,7 +12,12 @@ import {
   CANDIDATE_QUALIFICATION_RECEIPT_ENV,
 } from "../../../src/lib/agent/candidate.ts";
 import { DEFAULT_CLOUD_MODEL } from "../../../src/lib/inference/config.ts";
-import { PI_QUALIFICATION_TEST_TIMEOUT_MS } from "../../../tools/e2e/onboard-timeout-contract.mts";
+import {
+  PI_COMMAND_TIMEOUT_MS,
+  PI_PROVIDER_MAX_ATTEMPTS,
+  PI_PROVIDER_RETRY_DELAY_MS,
+  PI_QUALIFICATION_TEST_TIMEOUT_MS,
+} from "../../../tools/e2e/onboard-timeout-contract.mts";
 import { runBoundedRetry } from "../../../tools/e2e/retry-evidence.mts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
@@ -46,9 +51,6 @@ const MODEL = DEFAULT_CLOUD_MODEL;
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-pi-qual";
 const TASK_VERSION = "pi-read-v3";
 const LIVE_TIMEOUT_MS = PI_QUALIFICATION_TEST_TIMEOUT_MS;
-const PI_COMMAND_TIMEOUT_MS = 5 * 60_000;
-const PI_PROVIDER_MAX_ATTEMPTS = 2;
-const PI_PROVIDER_RETRY_DELAY_MS = 10_000;
 const PI_TRUST_PRESERVATION_MARKER = "NEMOCLAW_PI_TRUST_MUST_SURVIVE";
 const SECURITY_PROBE = String.raw`
 const fs = require("node:fs");

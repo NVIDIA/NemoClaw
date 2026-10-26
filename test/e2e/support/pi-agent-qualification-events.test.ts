@@ -221,6 +221,55 @@ describe("Pi qualification event oracle", () => {
     ).toEqual({ outcome: "failed", failureClass: "deterministic" });
   });
 
+  it.each([
+    ["disallowed tool", { toolName: "bash" }],
+    ["wrong read path", { args: { path: "/sandbox/other" } }],
+  ])("does not retry a timed-out partial stream with a %s (#13755)", async (_label, override) => {
+    const partialEvents = parsePiJsonEvents(
+      events(
+        { type: "agent_start" },
+        {
+          type: "tool_execution_start",
+          toolCallId: "call-read",
+          toolName: "read",
+          args: { path: PATH },
+          ...override,
+        },
+      ),
+    );
+    let failure: unknown;
+    try {
+      qualifyPiReadTask(partialEvents, PATH, TOKEN);
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(Error);
+    expect(hasCompletedPiTurn(partialEvents)).toBe(false);
+
+    const attempts: number[] = [];
+    const execution = await runBoundedRetry({
+      operation: "pi-agent-qualification.read-after-recovery",
+      owner: "inference-provider",
+      idempotence: "read-only",
+      maxAttempts: 2,
+      run: async (attempt) => {
+        attempts.push(attempt);
+        return {
+          failure,
+          proof: undefined,
+          result: { ...failedProbe(), exitCode: 143, timedOut: true },
+          turnCompleted: false,
+        };
+      },
+      classify: classifyPiReadTaskAttempt,
+    });
+    expect(attempts).toEqual([1]);
+    expect(execution.evidence).toMatchObject({
+      outcome: "failed-no-retry",
+      attempts: [{ failureClass: "deterministic", retryScheduled: false }],
+    });
+  });
+
   it("does not retry a completed Pi response without a read call (#13755)", async () => {
     const completedEvents = parsePiJsonEvents(
       events(

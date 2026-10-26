@@ -24,6 +24,7 @@ const TRANSIENT_PI_INFERENCE_ERROR_RE =
   /\b(?:HTTP\s*)?(?:408|429|500|502|503|504)\b|service temporarily overloaded|temporarily unavailable|too many requests|rate[- ]?limit|timed? out|timeout|ETIMEDOUT|ECONNRESET|EAI_AGAIN|failed to connect/iu;
 
 export class PiInferenceFailure extends Error {}
+export class PiReadTaskPendingFailure extends Error {}
 
 export interface PiReadTaskProof {
   readonly assistantText: string;
@@ -155,9 +156,11 @@ export function classifyPiReadTaskAttempt(
     return {
       outcome: "failed",
       failureClass:
-        attempt.proof || (attempt.turnCompleted && !isTransientPiInferenceFailure(attempt.failure))
-          ? "deterministic"
-          : "transient-external",
+        !attempt.proof &&
+        (isTransientPiInferenceFailure(attempt.failure) ||
+          (attempt.failure instanceof PiReadTaskPendingFailure && !attempt.turnCompleted))
+          ? "transient-external"
+          : "deterministic",
     };
   }
   if (attempt.result.exitCode === 0 && attempt.proof) return { outcome: "passed" };
@@ -224,51 +227,69 @@ export function qualifyPiReadTask(
     const error = assistantError(event.message);
     return error === null ? [] : [{ error, index }];
   });
-  const latestReply = replies.at(-1);
-  const latestAssistantError = assistantErrors.at(-1);
-  if (latestAssistantError && (!latestReply || latestAssistantError.index >= latestReply.index)) {
-    throw new PiInferenceFailure(`Pi inference failed: ${latestAssistantError.error}`);
-  }
   const starts = events.flatMap((event, index) =>
     event.type === "tool_execution_start" ? [{ event, index }] : [],
   );
-  if (starts.length !== 1) {
-    throw new Error(`Pi task must start exactly one tool, observed ${String(starts.length)}`);
-  }
-  const { event: start, index: startIndex } = starts[0]!;
-  const args = record(start.args, "Pi read arguments");
-  if (
-    start.toolName !== "read" ||
-    typeof start.toolCallId !== "string" ||
-    args.path !== expectedPath
-  ) {
-    throw new Error("Pi task did not issue the exact read tool call");
-  }
+  const start = starts[0];
+  const startInvalid =
+    start !== undefined &&
+    (start.event.toolName !== "read" ||
+      typeof start.event.toolCallId !== "string" ||
+      record(start.event.args, "Pi read arguments").path !== expectedPath);
   const completions = events.flatMap((event, index) =>
     event.type === "tool_execution_end" ? [{ event, index }] : [],
   );
   const completion = completions[0];
-  if (
-    completions.length !== 1 ||
-    completion!.index <= startIndex ||
-    completion!.event.toolCallId !== start.toolCallId ||
-    completion!.event.toolName !== "read" ||
-    completion!.event.isError !== false
-  ) {
-    throw new Error("Pi read tool call did not complete successfully");
-  }
+  const completionInvalid =
+    completion !== undefined &&
+    (!start ||
+      completion.index <= start.index ||
+      completion.event.toolCallId !== start.event.toolCallId ||
+      completion.event.toolName !== "read" ||
+      completion.event.isError !== false);
   const reply = replies[0];
-  if (replies.length !== 1 || !reply || reply.index <= completion!.index) {
-    throw new Error("Pi task must return exactly one assistant response after the read completed");
+  const replyOutOfOrder = reply !== undefined && (!completion || reply.index <= completion.index);
+  const replyInvalid = reply !== undefined && reply.text !== expectedText;
+  const contractViolated =
+    starts.length > 1 ||
+    startInvalid ||
+    completions.length > 1 ||
+    completionInvalid ||
+    replyOutOfOrder ||
+    replies.length > 1 ||
+    replyInvalid;
+  const latestReply = replies.at(-1);
+  const latestAssistantError = assistantErrors.at(-1);
+  if (
+    !contractViolated &&
+    latestAssistantError &&
+    (!latestReply || latestAssistantError.index >= latestReply.index)
+  ) {
+    throw new PiInferenceFailure(`Pi inference failed: ${latestAssistantError.error}`);
   }
-  if (reply.text !== expectedText) {
-    throw new Error(
-      `Pi task returned ${JSON.stringify(reply.text)} instead of exact file contents`,
+  if (starts.length !== 1 || startInvalid) {
+    const Failure = !start && !completion && !reply ? PiReadTaskPendingFailure : Error;
+    throw new Failure(
+      startInvalid
+        ? "Pi task did not issue the exact read tool call"
+        : `Pi task must start exactly one tool, observed ${String(starts.length)}`,
+    );
+  }
+  if (completions.length !== 1 || completionInvalid || (reply && !completion)) {
+    const Failure = !completion && !reply ? PiReadTaskPendingFailure : Error;
+    throw new Failure("Pi read tool call did not complete successfully");
+  }
+  if (replies.length !== 1 || replyOutOfOrder || replyInvalid) {
+    const Failure = !reply ? PiReadTaskPendingFailure : Error;
+    throw new Failure(
+      replyInvalid
+        ? `Pi task returned ${JSON.stringify(reply!.text)} instead of exact file contents`
+        : "Pi task must return exactly one assistant response after the read completed",
     );
   }
   return {
-    assistantText: reply.text,
+    assistantText: reply!.text,
     eventCount: events.length,
-    toolCallId: start.toolCallId,
+    toolCallId: start!.event.toolCallId as string,
   };
 }
