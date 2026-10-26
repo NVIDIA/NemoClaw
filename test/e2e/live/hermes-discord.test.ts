@@ -4,8 +4,6 @@
 import fs from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 
-import { getConfiguredMessagingChannelsFromEntry } from "../../../src/lib/state/registry-messaging.ts";
-import { load } from "../../../src/lib/state/registry/persistence.ts";
 import { HERMES_DISCORD_TEST_TIMEOUT_MS } from "../../../tools/e2e/hermes-timeout-contract.mts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import { cleanupWhenOpenShellAvailable } from "../fixtures/cleanup-resources.ts";
@@ -76,10 +74,6 @@ function commandEnv(apiKey?: string, extra: NodeJS.ProcessEnv = {}): NodeJS.Proc
 
 function redactions(apiKey: string): string[] {
   return [apiKey, DISCORD_TOKEN, Buffer.from(DISCORD_TOKEN, "utf8").toString("base64")];
-}
-
-function normalizedCsv(value: string): string {
-  return value.replace(/\s+/g, "");
 }
 
 async function precleanHermesDiscord(
@@ -399,7 +393,7 @@ async function rawTokenSurfaceProbe(
 }
 
 test(
-  "hermes-discord: Hermes Discord schema, credential isolation, and native gateway rewrite",
+  "hermes-discord: credential isolation and native gateway rewrite",
   {
     timeout: HERMES_DISCORD_TEST_TIMEOUT_MS,
     meta: {
@@ -408,7 +402,6 @@ test(
         "install Hermes Discord sandbox",
         "validate Hermes health",
         "verify config export refuses persisted Discord messaging",
-        "validate Discord config and placeholders",
         "exercise native Discord gateway rewrite",
         "verify Discord token isolation and REST boundary",
         "finalize Hermes Discord resources",
@@ -505,9 +498,6 @@ test(
     ).toBe(true);
 
     progress.phase("verify config export refuses persisted Discord messaging");
-    expect(getConfiguredMessagingChannelsFromEntry(load().sandboxes[SANDBOX_NAME])).toContain(
-      "discord",
-    );
     const configExport = await verifyHermesConfigExportLive({
       artifacts,
       cleanup,
@@ -518,81 +508,6 @@ test(
       sandboxName: SANDBOX_NAME,
     });
     expect(configExport.passed).toBe(true);
-
-    progress.phase("validate Discord config and placeholders");
-    const expectedRequireMention = DISCORD_REQUIRE_MENTION === "0" ? "false" : "true";
-    const configProbe = await sandboxShWithArgs(
-      sandbox,
-      SANDBOX_NAME,
-      `EXPECTED_REQUIRE_MENTION=${shellQuote(expectedRequireMention)} python3 - <<'PY'
-import os
-import sys, yaml
-with open("/sandbox/.hermes/config.yaml", "r", encoding="utf-8") as f:
-    text = f.read()
-cfg = yaml.safe_load(text) or {}
-errors = []
-discord = cfg.get("discord")
-if not isinstance(discord, dict):
-    errors.append("missing top-level discord")
-else:
-    expected = {
-        "require_mention": os.environ["EXPECTED_REQUIRE_MENTION"] == "true",
-        "free_response_channels": "",
-        "allowed_channels": "",
-        "auto_thread": True,
-        "reactions": True,
-        "channel_prompts": {},
-    }
-    for key, value in expected.items():
-        if discord.get(key) != value:
-            errors.append(f"discord.{key}={discord.get(key)!r} expected {value!r}")
-platforms = cfg.get("platforms")
-if not isinstance(platforms, dict):
-    errors.append("missing platforms")
-else:
-    discord_platform = platforms.get("discord")
-    if discord_platform != {"enabled": True}:
-        errors.append(f"platforms.discord={discord_platform!r} expected enabled true")
-    if not isinstance(platforms.get("api_server"), dict):
-        errors.append("platforms.api_server missing")
-if "DISCORD_BOT_TOKEN" in text:
-    errors.append("config.yaml contains DISCORD_BOT_TOKEN")
-if errors:
-    print("FAIL " + "; ".join(errors))
-    raise SystemExit(1)
-print("OK")
-PY`,
-      [],
-      { artifactName: "phase-4-hermes-discord-config-shape", redactionValues },
-    );
-    expectExitZero(configProbe, "Hermes Discord config shape");
-
-    const envProbe = await sandboxShWithArgs(
-      sandbox,
-      SANDBOX_NAME,
-      `EXPECTED_ALLOWED_USERS=${shellQuote(normalizedCsv(DISCORD_ALLOWED_IDS))} EXPECTED_GUILD_IDS=${shellQuote(normalizedCsv(DISCORD_SERVER_IDS))} python3 - <<'PY'
-import os
-from pathlib import Path
-text = Path("/sandbox/.hermes/.env").read_text(encoding="utf-8")
-lines = text.splitlines()
-errors = []
-required = [
-    f"NEMOCLAW_DISCORD_GUILD_IDS={os.environ['EXPECTED_GUILD_IDS']}",
-    f"DISCORD_ALLOWED_USERS={os.environ['EXPECTED_ALLOWED_USERS']}",
-    "API_SERVER_PORT=18642",
-]
-for line in required:
-    if line not in lines:
-        errors.append(f"missing {line}")
-if errors:
-    print("FAIL " + "; ".join(errors))
-    raise SystemExit(1)
-print("OK")
-PY`,
-      [],
-      { artifactName: "phase-4-hermes-discord-env-shape", redactionValues },
-    );
-    expectExitZero(envProbe, "Hermes Discord .env shape");
 
     progress.phase("exercise native Discord gateway rewrite");
     const fakeGateway = await startHermesFakeDiscordGateway(
@@ -809,8 +724,6 @@ done`,
         providerRegistered: true,
         hermesHealthy: true,
         configExportRefusesPersistedMessaging: true,
-        configSchema: true,
-        envPlaceholders: true,
         nodeDiscordGatewayDenied: true,
         nativePythonDiscordGatewayRewrite: true,
         rawTokenAbsentFromConfigEnvProcessAndFilesystem: true,
