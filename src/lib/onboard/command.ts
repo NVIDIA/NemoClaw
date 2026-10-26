@@ -284,9 +284,13 @@ function validateDcodeAutoApprovalInput(
   deps: ResolveOnboardOptionsDeps,
 ): void {
   if (flags["dcode-auto-approval"] !== "thread-opt-in") return;
-  const selectedAgent = agent ?? deps.env.NEMOCLAW_AGENT?.trim();
-  const customImage = flags.from !== undefined || flags["from-image"] !== undefined;
-  // Resume and interactive selection can resolve an unspecified agent later.
+  const recorded = deps.resumeIntent?.snapshot;
+  const selectedAgent =
+    agent ??
+    (deps.env.NEMOCLAW_AGENT?.trim() || (recorded ? (recorded.recordedAgent ?? "openclaw") : null));
+  const customImage =
+    flags.from !== undefined || flags["from-image"] !== undefined || recorded?.recordedCustomImage;
+  // Fresh interactive selection can resolve an unspecified agent later.
   if (!selectedAgent && !customImage) return;
   const resolvedAgent = resolveAgentNameAlias(selectedAgent, [DCODE_AGENT_NAME]) ?? selectedAgent;
   if (customImage || !isDcodeAgent(resolvedAgent)) {

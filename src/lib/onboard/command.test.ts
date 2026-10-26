@@ -505,6 +505,8 @@ describe("onboard command options", () => {
               checkpointUpdatedAt: "2026-08-13T00:00:00.000Z",
               machineRevision: 1,
               profile: "portable",
+              recordedAgent: null,
+              recordedCustomImage: false,
             },
           },
         },
