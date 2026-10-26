@@ -17,9 +17,9 @@ import {
 } from "../managed-startup/state-roots";
 import { managedImageRuntimeIdentity } from "../managed-image/agents";
 import { prepareManagedStateVolumes } from "./managed-state-volumes";
+import { removeManagedAgentStateVolumes } from "./agent-state-volumes";
 import {
   managedHermesStateVolumeName,
-  removeManagedAgentStateVolumes,
   prepareManagedHermesStateVolume,
   removeManagedHermesStateVolume,
 } from "./hermes-state-volume";
