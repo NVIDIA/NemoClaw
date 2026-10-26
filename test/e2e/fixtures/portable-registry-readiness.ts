@@ -88,20 +88,34 @@ service_group=unavailable
 registry_group=unavailable
 tasks_max=unavailable
 tasks_current=unavailable
-cgroup_max=unavailable
-cgroup_current=unavailable
+service_cgroup_max=unavailable
+service_cgroup_current=unavailable
+registry_cgroups='[]'
+effective_headroom=unavailable
+limiting_cgroup=unavailable
+registry_nproc_soft=unavailable
+user_tasks=unavailable
+host_threads_max=unavailable
+host_tasks=unavailable
 
 fail_boundary() {
   jq -cn --arg failureReason "$1" --argjson minimum "$minimum" \
     --arg servicePid "$service_pid" --arg registryPid "$registry_pid" \
     --arg serviceGroup "$service_group" --arg registryGroup "$registry_group" \
     --arg tasksMax "$tasks_max" --arg tasksCurrent "$tasks_current" \
-    --arg cgroupMax "$cgroup_max" --arg cgroupCurrent "$cgroup_current" \
-    '{schemaVersion: 1, failureReason: $failureReason, minimumHeadroom: $minimum,
+    --arg cgroupMax "$service_cgroup_max" --arg cgroupCurrent "$service_cgroup_current" \
+    --argjson registryCgroups "$registry_cgroups" \
+    --arg effectiveHeadroom "$effective_headroom" --arg limitingCgroup "$limiting_cgroup" \
+    --arg registryNprocSoft "$registry_nproc_soft" --arg userTasks "$user_tasks" \
+    --arg hostThreadsMax "$host_threads_max" --arg hostTasks "$host_tasks" \
+    '{schemaVersion: 2, failureReason: $failureReason, minimumHeadroom: $minimum,
       service: {pid: $servicePid, cgroup: $serviceGroup, tasksMax: $tasksMax,
-        tasksCurrent: $tasksCurrent},
+        tasksCurrent: $tasksCurrent, cgroupPidsMax: $cgroupMax,
+        cgroupPidsCurrent: $cgroupCurrent},
       registry: {pid: $registryPid, cgroup: $registryGroup},
-      cgroup: {pidsMax: $cgroupMax, pidsCurrent: $cgroupCurrent}}'
+      registryCgroups: $registryCgroups, effectiveHeadroom: $effectiveHeadroom,
+      limitingCgroup: $limitingCgroup, registryNprocSoft: $registryNprocSoft,
+      userTasks: $userTasks, hostThreadsMax: $hostThreadsMax, hostTasks: $hostTasks}'
   exit 1
 }
 
@@ -111,42 +125,116 @@ registry_pid=$(podman container inspect --format '{{.State.Pid}}' nemoclaw-porta
   fail_boundary process-identities-unavailable
 service_group=$(awk -F: '$1 == "0" { print $3; exit }' "/proc/$service_pid/cgroup" 2>/dev/null || true)
 registry_group=$(awk -F: '$1 == "0" { print $3; exit }' "/proc/$registry_pid/cgroup" 2>/dev/null || true)
-[[ $service_group == /* && $service_group != / && $service_group != *'..'* ]] || \
+manager_root="/user.slice/user-$(id -u).slice/user@$(id -u).service"
+[[ $service_group == "$manager_root/"* && $service_group != *'..'* ]] || \
   fail_boundary service-cgroup-invalid
-[[ $registry_group == "$service_group" ]] || fail_boundary registry-cgroup-mismatch
+[[ $registry_group == "$manager_root/"* && $registry_group != *'..'* ]] || \
+  fail_boundary registry-cgroup-invalid
 tasks_max=$(/usr/bin/systemctl --user show "$service" --property=TasksMax --value 2>/dev/null || true)
 tasks_current=$(/usr/bin/systemctl --user show "$service" --property=TasksCurrent --value 2>/dev/null || true)
-cgroup_max=$(cat "/sys/fs/cgroup$service_group/pids.max" 2>/dev/null || true)
-cgroup_current=$(cat "/sys/fs/cgroup$service_group/pids.current" 2>/dev/null || true)
+service_cgroup_max=$(cat "/sys/fs/cgroup$service_group/pids.max" 2>/dev/null || true)
+service_cgroup_current=$(cat "/sys/fs/cgroup$service_group/pids.current" 2>/dev/null || true)
 [[ $tasks_max =~ ^[0-9]+$ && $tasks_current =~ ^[0-9]+$ ]] || \
   fail_boundary service-task-limit-unavailable
-[[ $cgroup_max =~ ^[0-9]+$ && $cgroup_current =~ ^[0-9]+$ ]] || \
-  fail_boundary cgroup-task-limit-unavailable
-[[ $cgroup_max == "$tasks_max" ]] || fail_boundary service-cgroup-limit-mismatch
+[[ $service_cgroup_max =~ ^[0-9]+$ && $service_cgroup_current =~ ^[0-9]+$ ]] || \
+  fail_boundary service-cgroup-limit-unavailable
+[[ $service_cgroup_max == "$tasks_max" ]] || fail_boundary service-cgroup-limit-mismatch
 (( tasks_max - tasks_current >= minimum )) || fail_boundary service-headroom-insufficient
-(( cgroup_max - cgroup_current >= minimum )) || fail_boundary cgroup-headroom-insufficient
+(( service_cgroup_max - service_cgroup_current >= minimum )) || \
+  fail_boundary service-cgroup-headroom-insufficient
+
+# Podman can move a rootless container into a sibling scope. Every ancestor of
+# the observed registry PID can constrain it, including limits outside the user
+# manager. Cgroup v2 exposes pids.max/current only on non-root cgroups, so the
+# root cannot impose a pids-controller limit. Record every non-root ancestor and
+# require a finite effective limit with headroom.
+group="$registry_group"
+depth=0
+while (( depth < 24 )); do
+  [[ $group != / ]] || break
+  cgroup_max=$(cat "/sys/fs/cgroup$group/pids.max" 2>/dev/null || true)
+  cgroup_current=$(cat "/sys/fs/cgroup$group/pids.current" 2>/dev/null || true)
+  [[ $cgroup_current =~ ^[0-9]+$ && ( $cgroup_max == max || $cgroup_max =~ ^[0-9]+$ ) ]] || \
+    fail_boundary registry-cgroup-limit-unavailable
+  registry_cgroups=$(jq -cn --argjson rows "$registry_cgroups" --arg path "$group" \
+    --arg pidsMax "$cgroup_max" --argjson pidsCurrent "$cgroup_current" \
+    '$rows + [{path: $path, pidsMax: $pidsMax, pidsCurrent: $pidsCurrent}]')
+  if [[ $cgroup_max != max ]]; then
+    (( cgroup_max >= cgroup_current )) || fail_boundary registry-cgroup-exhausted
+    headroom=$((cgroup_max - cgroup_current))
+    if [[ $effective_headroom == unavailable ]] || (( headroom < effective_headroom )); then
+      effective_headroom=$headroom
+      limiting_cgroup=$group
+    fi
+    (( headroom >= minimum )) || fail_boundary registry-cgroup-headroom-insufficient
+  fi
+  group="\${group%/*}"
+  [[ -n $group ]] || group=/
+  ((depth += 1))
+done
+[[ $group == / ]] || fail_boundary registry-cgroup-depth-exceeded
+[[ $effective_headroom != unavailable ]] || fail_boundary registry-finite-limit-unavailable
+registry_nproc_soft=$(awk '$1 == "Max" && $2 == "processes" { print $3; exit }' "/proc/$registry_pid/limits" 2>/dev/null || true)
+user_tasks=$(ps -u "$(id -u)" -L --no-headers 2>/dev/null | wc -l | tr -d ' ') || \
+  fail_boundary registry-user-tasks-unavailable
+host_threads_max=$(cat /proc/sys/kernel/threads-max 2>/dev/null || true)
+host_tasks=$(awk '{ split($4, tasks, "/"); print tasks[2] }' /proc/loadavg 2>/dev/null || true)
+[[ $user_tasks =~ ^[0-9]+$ &&
+   ( $registry_nproc_soft == unlimited || $registry_nproc_soft =~ ^[0-9]+$ ) ]] || \
+  fail_boundary registry-nproc-limit-unavailable
+if [[ $registry_nproc_soft != unlimited ]]; then
+  (( registry_nproc_soft - user_tasks >= minimum )) || \
+    fail_boundary registry-nproc-headroom-insufficient
+fi
+[[ $host_threads_max =~ ^[0-9]+$ && $host_tasks =~ ^[0-9]+$ ]] || \
+  fail_boundary host-thread-limit-unavailable
+(( host_threads_max - host_tasks >= minimum )) || fail_boundary host-thread-headroom-insufficient
+registry_pid_after=$(podman container inspect --format '{{.State.Pid}}' nemoclaw-portable-registry 2>/dev/null || true)
+registry_group_after=$(awk -F: '$1 == "0" { print $3; exit }' "/proc/$registry_pid/cgroup" 2>/dev/null || true)
+service_pid_after=$(/usr/bin/systemctl --user show "$service" --property=MainPID --value 2>/dev/null || true)
+[[ $registry_pid_after == "$registry_pid" && $registry_group_after == "$registry_group" &&
+   $service_pid_after == "$service_pid" ]] || fail_boundary process-identity-changed
 jq -cn --argjson minimum "$minimum" \
+  --arg servicePid "$service_pid" --arg registryPid "$registry_pid" \
   --arg serviceGroup "$service_group" --arg registryGroup "$registry_group" \
   --argjson tasksMax "$tasks_max" --argjson tasksCurrent "$tasks_current" \
-  --argjson cgroupMax "$cgroup_max" --argjson cgroupCurrent "$cgroup_current" \
-  '{schemaVersion: 1, minimumHeadroom: $minimum,
-    inheritedServiceBoundary: ($serviceGroup == $registryGroup),
-    service: {cgroup: $serviceGroup, tasksMax: $tasksMax, tasksCurrent: $tasksCurrent},
-    registry: {cgroup: $registryGroup},
-    cgroup: {pidsMax: $cgroupMax, pidsCurrent: $cgroupCurrent}}'
+  --argjson cgroupMax "$service_cgroup_max" --argjson cgroupCurrent "$service_cgroup_current" \
+  --argjson registryCgroups "$registry_cgroups" --argjson effectiveHeadroom "$effective_headroom" \
+  --arg limitingCgroup "$limiting_cgroup" --arg registryNprocSoft "$registry_nproc_soft" \
+  --argjson userTasks "$user_tasks" --argjson hostThreadsMax "$host_threads_max" \
+  --argjson hostTasks "$host_tasks" \
+  '{schemaVersion: 2, minimumHeadroom: $minimum,
+    service: {pid: $servicePid, cgroup: $serviceGroup, tasksMax: $tasksMax, tasksCurrent: $tasksCurrent,
+      cgroupPidsMax: $cgroupMax, cgroupPidsCurrent: $cgroupCurrent},
+    registry: {pid: $registryPid, cgroup: $registryGroup},
+    registryCgroups: $registryCgroups, effectiveHeadroom: $effectiveHeadroom,
+    limitingCgroup: $limitingCgroup, registryNprocSoft: $registryNprocSoft,
+    userTasks: $userTasks, hostThreadsMax: $hostThreadsMax, hostTasks: $hostTasks}'
 `;
 
 export interface PortableRegistryProcessBoundaryEvidence {
-  readonly schemaVersion: 1;
+  readonly schemaVersion: 2;
   readonly minimumHeadroom: number;
-  readonly inheritedServiceBoundary: boolean;
   readonly service: {
+    readonly pid: string;
     readonly cgroup: string;
     readonly tasksMax: number;
     readonly tasksCurrent: number;
+    readonly cgroupPidsMax: number;
+    readonly cgroupPidsCurrent: number;
   };
-  readonly registry: { readonly cgroup: string };
-  readonly cgroup: { readonly pidsMax: number; readonly pidsCurrent: number };
+  readonly registry: { readonly pid: string; readonly cgroup: string };
+  readonly registryCgroups: readonly {
+    readonly path: string;
+    readonly pidsMax: string;
+    readonly pidsCurrent: number;
+  }[];
+  readonly effectiveHeadroom: number;
+  readonly limitingCgroup: string;
+  readonly registryNprocSoft: string;
+  readonly userTasks: number;
+  readonly hostThreadsMax: number;
+  readonly hostTasks: number;
 }
 
 export async function capturePortableRegistryProcessBoundary(options: {
@@ -169,7 +257,7 @@ export async function capturePortableRegistryProcessBoundary(options: {
     trustedShellCommand({
       command: "bash",
       args: ["-e", "-u", "-o", "pipefail", "-c", PROCESS_BOUNDARY_PROBE],
-      reason: "verify the registry inherited the finite Podman API-service process boundary",
+      reason: "verify finite process headroom in the registry's actual cgroup hierarchy",
     }),
     {
       artifactName: "portable-registry-process-boundary-probe",

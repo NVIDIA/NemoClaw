@@ -450,9 +450,7 @@ esac
 
       expect(archivedMarker.status, archivedMarker.stderr.toString()).toBe(0);
       expect(createHash("sha256").update(archivedMarker.stdout).digest("hex")).toBe(expectedDigest);
-      expect(output).toContain(
-        `${sandboxName}: native state archived in ${archive} (files are inside the archive)`,
-      );
+      expect(output).toContain(`${sandboxName}: 5 dirs, 2 files → ${archive}`);
       expect(output).not.toContain("1 dirs, 0 files");
       expect(output).toContain("Pre-uninstall backup: 1 backed up, 0 failed, 0 skipped");
       expect(events).toEqual(["backup-complete", "delete"]);
