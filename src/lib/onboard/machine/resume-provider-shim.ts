@@ -2,6 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 import { runOpenshell } from "../../adapters/openshell/runtime";
 import {
+  normalizeNativeNvidiaProviderAttachment,
+  NVIDIA_HOSTED_CREDENTIAL_ENV,
+  NVIDIA_HOSTED_LOGICAL_PROVIDER,
+  type NativeNvidiaProviderAttachment,
+} from "../../inference/native-nvidia/contract";
+import {
   recordedCustomCredentialEnv,
   usesCustomNativeOnboarding,
 } from "../../inference/native-provider/custom-setup";
@@ -27,7 +33,12 @@ const onboardProviders = require("../providers") as {
 };
 
 export type ResumeProviderShimDeps = {
-  getSandbox?: (name: string) => Parameters<typeof usesCustomNativeOnboarding>[3];
+  getSandbox?: (name: string) =>
+    | (NonNullable<Parameters<typeof usesCustomNativeOnboarding>[3]> & {
+        nativeNvidiaProviderAttachment?: NativeNvidiaProviderAttachment;
+      })
+    | null
+    | undefined;
   isNonInteractive: ResumeProviderRecoveryDeps["isNonInteractive"];
   providerExistsInGateway(name: string, gatewayName: string): boolean | Promise<boolean>;
   isRoutedInferenceProvider: ResumeProviderRecoveryDeps["isRoutedInferenceProvider"];
@@ -60,6 +71,20 @@ export function createResumeProviderShim(deps: ResumeProviderShimDeps) {
     ): Promise<ResumeProviderRecoveryResult> {
       const recorded =
         provider && selection?.sandboxName ? deps.getSandbox?.(selection.sandboxName) : undefined;
+      if (
+        provider === NVIDIA_HOSTED_LOGICAL_PROVIDER &&
+        recorded?.nativeNvidiaProviderAttachment !== undefined
+      ) {
+        if (!normalizeNativeNvidiaProviderAttachment(recorded.nativeNvidiaProviderAttachment)) {
+          throw new Error("Invalid native NVIDIA provider attachment during resume.");
+        }
+        // Native setup verifies the live provider identity against its receipt.
+        // The logical name is not the credential-bearing gateway provider.
+        return {
+          forceInferenceSetup: true,
+          credentialEnv: credentialEnv || NVIDIA_HOSTED_CREDENTIAL_ENV,
+        };
+      }
       if (
         provider &&
         selection?.sandboxName &&

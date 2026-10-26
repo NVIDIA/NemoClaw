@@ -39,7 +39,7 @@ it.each([
     const dockerfile = fs.readFileSync(path.join(ROOT, "Dockerfile"), "utf-8");
     const command = dockerRunCommandBetween(
       dockerfile,
-      "# Install non-messaging OpenClaw plugins",
+      "# Install optional plugins from verified offline archives",
       "USER root\nCOPY src/lib/messaging/ /src/lib/messaging/",
     );
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-search-plugin-install-"));
@@ -161,7 +161,7 @@ it.each([
   ({ provider, union, content, version, status, installed, doctor, diagnostic }) => {
     const command = dockerRunCommandBetween(
       fs.readFileSync(path.join(ROOT, "Dockerfile"), "utf-8"),
-      "# Install non-messaging OpenClaw plugins",
+      "# Install optional plugins from verified offline archives",
       "USER root\nCOPY src/lib/messaging/ /src/lib/messaging/",
     );
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-offline-search-plugin-"));

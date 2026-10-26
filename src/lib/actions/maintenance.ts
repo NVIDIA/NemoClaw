@@ -439,9 +439,13 @@ export async function backupAllUnderPortableHostFence(
       const nativeArchive = result.manifest?.nativeState
         ? path.join(result.manifest.backupPath, result.manifest.nativeState.archive)
         : null;
-      const backupDescription = nativeArchive
-        ? `native state archived in ${nativeArchive} (files are inside the archive)`
-        : `${result.backedUpDirs.length} dirs, ${result.backedUpFiles.length} files → ${result.manifest?.backupPath || "unknown"}`;
+      const archiveCounts = result.nativeArchiveCounts;
+      const backupDescription =
+        nativeArchive && archiveCounts
+          ? `${archiveCounts.directories} dirs, ${archiveCounts.files} files → ${nativeArchive}`
+          : nativeArchive
+            ? `native state archived in ${nativeArchive} (entry counts unavailable)`
+            : `${result.backedUpDirs.length} dirs, ${result.backedUpFiles.length} files → ${result.manifest?.backupPath || "unknown"}`;
       console.log(`  ${G}✓${R} ${sb.name}: ${backupDescription}`);
       backed++;
     } else {

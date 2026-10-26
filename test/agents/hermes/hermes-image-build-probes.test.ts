@@ -88,6 +88,7 @@ const commands = [
   "session-state-create",
   "session-state-reopen",
   "secure-directory-modes",
+  "web-search-availability",
 ] as const;
 
 function writeExecutable(target: string, source: string): void {
@@ -263,6 +264,36 @@ module.verify_session_delete()
   }
 }
 
+function runWebSearchAvailabilityProbe(web: unknown, tools: string[]) {
+  const source = `
+import importlib.util
+import json
+import sys
+import types
+
+web, tools = json.loads(sys.argv[2]), json.loads(sys.argv[3])
+modules = {
+    "hermes_cli": types.ModuleType("hermes_cli"),
+    "hermes_cli.config": types.SimpleNamespace(load_config=lambda: {}),
+    "hermes_cli.tools_config": types.SimpleNamespace(_get_platform_tools=lambda _c, _p: {"web"}),
+    "managed_policy": types.SimpleNamespace(load_managed_policy=lambda: {"config": {"web": web}}),
+    "model_tools": types.SimpleNamespace(
+        get_tool_definitions=lambda **_k: [{"function": {"name": name}} for name in tools]
+    ),
+}
+sys.modules.update(modules)
+spec = importlib.util.spec_from_file_location("image_build_probes", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+module.verify_web_search_availability()
+`;
+  return spawnSync(
+    "python3",
+    ["-I", "-c", source, probes, JSON.stringify(web), JSON.stringify(tools)],
+    { encoding: "utf8", timeout: 5000 },
+  );
+}
+
 function runGoogleChatOverrideSeamsProbe() {
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-googlechat-seams-"));
   const adapter = path.join(temporaryRoot, "adapter.py");
@@ -405,6 +436,24 @@ describe("Hermes image build probes", () => {
     );
   });
 
+  it.each([
+    ["no web backend without web tools", { keyless_fallback: false }, ["terminal"], 0, ""],
+    [
+      "no web backend with web tools",
+      { keyless_fallback: false },
+      ["terminal", "web_search", "web_extract"],
+      1,
+      "offers web_search",
+    ],
+    ["a web backend with web tools", { backend: "tavily" }, ["web_search", "web_extract"], 0, ""],
+    ["a web backend without web tools", { backend: "tavily" }, ["terminal"], 1, "omits web_search"],
+  ])("checks Hermes web tool exposure for %s (#13584)", (_name, web, tools, status, message) => {
+    const result = runWebSearchAvailabilityProbe(web, tools);
+
+    expect(result.status, result.stderr).toBe(status);
+    expect(result.stderr).toContain(message);
+  });
+
   it("accepts the Hermes 0.21.3 Google Chat override seams", () => {
     const result = runGoogleChatOverrideSeamsProbe();
 
@@ -455,10 +504,17 @@ describe("Hermes image build probes", () => {
       path.join(import.meta.dirname, "../../../agents/hermes/cron-restore-control.py"),
     );
     const cronRestoreDigest = createHash("sha256").update(cronRestoreControl).digest("hex");
+    const profilePolicyPatcher = fs.readFileSync(
+      path.join(import.meta.dirname, "../../../agents/hermes/patch-profile-policy-defaults.py"),
+    );
+    const patcherDigest = createHash("sha256").update(profilePolicyPatcher).digest("hex");
 
     expect(imageDockerfile).toContain(digestBinding);
     expect(imageDockerfile).toContain(
       `ARG NEMOCLAW_HERMES_CRON_RESTORE_CONTROLLER_SHA256=${cronRestoreDigest}`,
+    );
+    expect(imageDockerfile).toContain(
+      `ARG NEMOCLAW_HERMES_PROFILE_POLICY_PATCHER_SHA256=${patcherDigest}`,
     );
     expect(
       Array.from(

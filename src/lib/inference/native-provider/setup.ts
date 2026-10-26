@@ -79,6 +79,7 @@ export async function prepareHostedNativeProvider(input: {
     credentialValue: input.credentialValue,
     reuseExistingCredential: input.reuseExistingCredential,
     ...(expected ? { expected } : {}),
+    ...(expected && !gatewayAuthority && recorded ? { recordedSandboxName: recorded.name } : {}),
   });
   await lifecycle.persistNativeProviderAuthority({
     adapter: input.adapter,

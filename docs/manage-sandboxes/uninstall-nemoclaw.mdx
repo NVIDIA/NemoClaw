@@ -59,6 +59,16 @@ NemoClaw removes only a volume with exact ownership labels; inspection or remova
 </Warning>
 </AgentOnly>
 
+<AgentOnly variant="openclaw">
+<Warning>
+For a Docker OpenClaw sandbox that uses the NemoClaw-managed image, uninstall removes its managed `/sandbox/.openclaw` state volume even without `--destroy-user-data`, as `$$nemoclaw <name> destroy` does.
+When the gateway is externally supervised, uninstall does not delete the sandbox and keeps its state volume; restore a NemoClaw-managed lifecycle authority and retry before onboarding the same sandbox name again.
+Default uninstall backs up eligible sandbox state first.
+When using `--destroy-user-data`, back up required state separately before uninstall.
+NemoClaw removes only a volume with exact ownership labels; inspection or removal failure exits nonzero and preserves registry state for retry.
+</Warning>
+</AgentOnly>
+
 On macOS, Homebrew owns its OpenShell formula and executable links.
 Full uninstall preserves OpenShell executable paths instead of assuming NemoClaw owns them.
 When Homebrew confirms the `nvidia/openshell/openshell` formula, NemoClaw reports this separate removal command:
@@ -239,6 +249,10 @@ Gateway-scoped cleanup removes that gateway's OpenShell resources first, then th
 The OpenShell gateway service therefore keeps running while uninstall deletes the selected gateway's sandboxes.
 If OpenShell resource cleanup fails, uninstall exits nonzero and preserves the marked Linux unit and gateway process.
 If marked Linux unit cleanup fails, uninstall exits nonzero before it scans for or stops a remaining gateway process or continues with later Docker and gateway-state cleanup.
+One case is not a failure: on a headless account with no running systemd user manager, `systemctl --user` still reports `Failed to connect to bus` when NemoClaw uses the user's runtime directory (`/run/user/<uid>`), and the marked unit cannot run.
+Uninstall then removes only the marked NemoClaw unit file and its `default.target.wants` link, without disabling the unit or reloading systemd, and continues with the remaining cleanup.
+If another systemd activation link still names the unit, uninstall keeps the unit, names that link, and exits nonzero.
+When other gateway ports remain, uninstall removes the unit this way only if the last `OPENSHELL_GATEWAY_CONFIG` entry in `openshell/gateway.env` names the selected gateway's configuration; otherwise it keeps the unit and exits nonzero.
 OpenShell resource and Linux unit cleanup can partially complete before either failure.
 After selected sandbox cleanup succeeds, uninstall removes those entries from `sandboxes.json` before gateway registration and Linux unit cleanup.
 If a later step fails, the retry skips the completed sandbox deletions and resumes the remaining cleanup.
