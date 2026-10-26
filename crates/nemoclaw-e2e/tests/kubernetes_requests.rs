@@ -17,8 +17,8 @@ use nemoclaw_sdk::{backend::Row, kubernetes::Connection};
 /// The stub's Service name and port.
 const SERVICE: &str = "model";
 const PORT: u16 = 8000;
-/// The agents' endpoint path on the stub. Pi posts each request to
-/// `<endpoint>/chat/completions`.
+/// The agents' endpoint path on the stub. OpenClaw and Pi post each request
+/// to `<endpoint>/chat/completions`.
 const BASE_PATH: &str = "/v1";
 /// How long a request round may take; a working round takes a few seconds.
 /// Fabric's bridge waits up to 330 s for one request, and nextest stops a
@@ -27,7 +27,7 @@ const BASE_PATH: &str = "/v1";
 /// next command, including destroy's stop, only after it ends; the test cannot
 /// bound that wait.
 const ROUND: Duration = Duration::from_secs(30);
-/// What each agent is asked. Pi accepts only text input, and the stub
+/// What each agent is asked: plain text, which Pi requires, and the stub
 /// ignores the request.
 const PROMPT: &str = "Reply to this NemoClaw live test.";
 
