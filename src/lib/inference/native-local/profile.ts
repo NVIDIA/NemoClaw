@@ -80,7 +80,7 @@ export function prepareNativeLocalProfile(input: NativeLocalBinding) {
         // The provider-neutral onboarding smoke probe uses Python urllib.
         "/usr/bin/python3",
         // The projected runtime matches the pinned images' resolved interpreter.
-        ...(String(SUPPORTED_OPENSHELL_FALLBACK_VERSION) === "0.1.3" &&
+        ...(["0.1.3", "0.1.5"].includes(String(SUPPORTED_OPENSHELL_FALLBACK_VERSION)) &&
         (binding.agent === "hermes" || binding.agent === "openclaw" || binding.agent === "pi")
           ? ["/usr/bin/python3.13"]
           : []),

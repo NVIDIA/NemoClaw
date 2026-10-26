@@ -57,7 +57,7 @@ function document(result: PolicyCommandResult): Record<string, unknown> {
 }
 
 async function requireSandboxPolicyAuthority(run: PolicyCommand): Promise<void> {
-  if (String(SUPPORTED_OPENSHELL_FALLBACK_VERSION) === "0.1.3") {
+  if (["0.1.3", "0.1.5"].includes(String(SUPPORTED_OPENSHELL_FALLBACK_VERSION))) {
     const history = document(
       await run(["policy", "list", "--global", "--page-size", "1", "--output", "json"]),
     );
@@ -99,7 +99,7 @@ export async function requireNativeProviderPolicy(
   const run = commandForGateway(gatewayName, command);
   // The trusted controller projects this pin with the reviewed runtime.
   // A mismatched server must still pass the strict policy response checks.
-  if (String(SUPPORTED_OPENSHELL_FALLBACK_VERSION) === "0.1.3") {
+  if (["0.1.3", "0.1.5"].includes(String(SUPPORTED_OPENSHELL_FALLBACK_VERSION))) {
     await requireSandboxPolicyAuthority(run);
     return;
   }
@@ -133,7 +133,7 @@ export async function initializeNativeProviderPolicy(
   const run = commandForGateway(gatewayName, command);
   // The trusted controller projects this pin with the reviewed runtime.
   // A mismatched server must still pass the strict policy response checks.
-  if (String(SUPPORTED_OPENSHELL_FALLBACK_VERSION) === "0.1.3") {
+  if (["0.1.3", "0.1.5"].includes(String(SUPPORTED_OPENSHELL_FALLBACK_VERSION))) {
     await requireSandboxPolicyAuthority(run);
     return;
   }

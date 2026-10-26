@@ -750,7 +750,9 @@ export function createCliOpenShellProviderAdapter(
 
     let pageToken = "";
     const seenPageTokens = new Set<string>();
-    const projectedRuntime = String(SUPPORTED_OPENSHELL_FALLBACK_VERSION) === "0.1.3";
+    const projectedRuntime = ["0.1.3", "0.1.5"].includes(
+      String(SUPPORTED_OPENSHELL_FALLBACK_VERSION),
+    );
     for (
       let offset = 0;
       offset < 10 * PROVIDER_INVENTORY_LIMIT;

@@ -5,6 +5,7 @@ import { expect, it } from "vitest";
 import {
   isManagedImageHarnessWorkload,
   requireManagedImageHarnessOpenShellVersion,
+  managedImageSandboxListLimitFlag,
 } from "../../../scripts/checks/managed-image-protected-runtime-contract.ts";
 import { gatewayIdForStateDir } from "../../../src/lib/onboard/gateway/process-environment.ts";
 import { managedImageHarnessContainerListArgs } from "../../../scripts/checks/run-managed-image-openshell-e2e.ts";
@@ -58,45 +59,50 @@ it("rejects a runtime without a reviewed container identity contract", () => {
   );
 });
 
-it("requires the native isolation identity for a 0.1.3 workload", () => {
-  const expected = {
-    sandbox: "nmc-mi-oc-ol",
-    stateDir: "/tmp/private/gateway-state",
-    imageContentId: `sha256:${"a".repeat(64)}`,
-    runtimeVersion: "0.1.3" as const,
-  };
-  const record = {
-    Config: {
-      Labels: {
-        "openshell.ai/managed-by": "openshell",
-        "openshell.ai/sandbox-name": expected.sandbox,
-        "openshell.ai/isolation-role": "sandbox",
-        "openshell.ai/sandbox-namespace": gatewayIdForStateDir(expected.stateDir),
+it.each(["0.1.3", "0.1.5"] as const)(
+  "requires the native isolation identity for a %s workload",
+  (runtimeVersion) => {
+    expect(requireManagedImageHarnessOpenShellVersion(runtimeVersion)).toBe(runtimeVersion);
+    expect(managedImageSandboxListLimitFlag(runtimeVersion)).toBe("--page-size");
+    const expected = {
+      sandbox: "nmc-mi-oc-ol",
+      stateDir: "/tmp/private/gateway-state",
+      imageContentId: `sha256:${"a".repeat(64)}`,
+      runtimeVersion,
+    };
+    const record = {
+      Config: {
+        Labels: {
+          "openshell.ai/managed-by": "openshell",
+          "openshell.ai/sandbox-name": expected.sandbox,
+          "openshell.ai/isolation-role": "sandbox",
+          "openshell.ai/sandbox-namespace": gatewayIdForStateDir(expected.stateDir),
+        },
       },
-    },
-    Image: expected.imageContentId,
-    HostConfig: { NetworkMode: "none" },
-    NetworkSettings: { Networks: { "legacy-network": {} } },
-  };
-  expect(isManagedImageHarnessWorkload(record, expected)).toBe(true);
-  expect(
-    isManagedImageHarnessWorkload(
-      { ...record, HostConfig: { NetworkMode: "legacy-network" } },
-      expected,
-    ),
-  ).toBe(false);
-  expect(
-    managedImageHarnessContainerListArgs(expected.sandbox, false, expected.runtimeVersion),
-  ).toEqual([
-    "docker",
-    "ps",
-    "-q",
-    "--no-trunc",
-    "--filter",
-    "label=openshell.ai/managed-by=openshell",
-    "--filter",
-    `label=openshell.ai/sandbox-name=${expected.sandbox}`,
-    "--filter",
-    "label=openshell.ai/isolation-role=sandbox",
-  ]);
-});
+      Image: expected.imageContentId,
+      HostConfig: { NetworkMode: "none" },
+      NetworkSettings: { Networks: { "legacy-network": {} } },
+    };
+    expect(isManagedImageHarnessWorkload(record, expected)).toBe(true);
+    expect(
+      isManagedImageHarnessWorkload(
+        { ...record, HostConfig: { NetworkMode: "legacy-network" } },
+        expected,
+      ),
+    ).toBe(false);
+    expect(
+      managedImageHarnessContainerListArgs(expected.sandbox, false, expected.runtimeVersion),
+    ).toEqual([
+      "docker",
+      "ps",
+      "-q",
+      "--no-trunc",
+      "--filter",
+      "label=openshell.ai/managed-by=openshell",
+      "--filter",
+      `label=openshell.ai/sandbox-name=${expected.sandbox}`,
+      "--filter",
+      "label=openshell.ai/isolation-role=sandbox",
+    ]);
+  },
+);

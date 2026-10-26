@@ -504,7 +504,7 @@ function resolveInitialSandboxCreatePolicy(
     }
   };
   try {
-    if (String(SUPPORTED_OPENSHELL_FALLBACK_VERSION) === "0.1.3") {
+    if (["0.1.3", "0.1.5"].includes(String(SUPPORTED_OPENSHELL_FALLBACK_VERSION))) {
       const policy = YAML.parse(basePolicy);
       if (
         isObjectRecord(policy) &&

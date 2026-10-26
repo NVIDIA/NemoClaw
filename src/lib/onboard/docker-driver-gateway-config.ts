@@ -875,7 +875,9 @@ function buildDockerDriverGatewayConfigTomlForIdentity(
   gatewayJwtTtlSecs = DOCKER_DRIVER_GATEWAY_JWT_TTL_SECS,
   projectedRuntime?: RuntimeProviderGatewayHostRuntime,
   externalComponent?: ExternalComponentGatewayConfiguration | null,
-  schemaVersion: 1 | 2 = String(SUPPORTED_OPENSHELL_FALLBACK_VERSION) === "0.1.3" ? 2 : 1,
+  schemaVersion: 1 | 2 = ["0.1.3", "0.1.5"].includes(String(SUPPORTED_OPENSHELL_FALLBACK_VERSION))
+    ? 2
+    : 1,
   legacyGuestCredentials = schemaVersion === 1,
 ): string {
   const runtime = resolveGatewayRuntimeProjection(gatewayEnv, projectedRuntime);

@@ -242,7 +242,9 @@ export function observeCreatedOpenShellSandboxId(
         `${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${input.createAttemptNonce}`,
         "--output",
         "json",
-        String(SUPPORTED_OPENSHELL_FALLBACK_VERSION) === "0.1.3" ? "--page-size" : "--limit",
+        ["0.1.3", "0.1.5"].includes(String(SUPPORTED_OPENSHELL_FALLBACK_VERSION))
+          ? "--page-size"
+          : "--limit",
         "2",
       ],
       {
