@@ -56,7 +56,7 @@ fn a_docker_sandbox_image_is_pulled_before_the_reads_that_need_it() {
     for value in local_gateways() {
         let (document, graph) = graph(&value);
         let example = document.metadata.name.clone();
-        let sandbox = &document.spec.sandboxes[0];
+        let sandbox = document.sandbox("assistant").unwrap();
         let reference = &sandbox.image.ref_;
         let pulls: Vec<(&String, &Value)> = graph["resource"]["docker_image"]
             .as_object()
@@ -90,7 +90,7 @@ fn a_docker_sandbox_image_is_pulled_before_the_reads_that_need_it() {
         let harness = &harnesses[format!("{}_acquired", sandbox.name)];
         assert_eq!(harness["image_id"], image_id.as_str());
         assert_eq!(harness["image"], reads["sandbox_0"]["image"]);
-        assert!(harnesses.get(&sandbox.name).is_none());
+        assert!(harnesses.get(sandbox.name).is_none());
         let resources = graph["resource"].to_string();
         assert!(
             resources.contains("data.fabric_harnesses.sandbox_0_acquired."),

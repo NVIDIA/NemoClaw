@@ -32,7 +32,7 @@ spec:
       provider: openai
       serviceRef: ollama-server
   sandboxes:
-    - name: assistant
+    assistant:
       network:
         tier: isolated
       harness:

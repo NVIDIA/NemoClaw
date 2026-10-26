@@ -45,7 +45,7 @@ spec:
       provider: openai
       serviceRef: qwen
   sandboxes:
-    - name: assistant
+    assistant:
       network:
         tier: isolated
       harness:

@@ -105,8 +105,8 @@ async fn spark_yaml_plans_and_applies_expected_resources() {
             document
                 .spec
                 .sandboxes
-                .iter()
-                .map(|sandbox| format!("openshell_sandbox.{}", sandbox.name)),
+                .keys()
+                .map(|name| format!("openshell_sandbox.{name}")),
         )
         .chain(["openshell_workspace.deployment".to_owned()])
         .collect();

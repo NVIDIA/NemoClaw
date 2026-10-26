@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 fn input() -> Value {
     let mut value: Value =
         serde_saphyr::from_str(include_str!("../../../examples/local.yaml")).unwrap();
-    value["spec"]["sandboxes"][0]["network"] = json!({
+    value["spec"]["sandboxes"]["assistant"]["network"] = json!({
         "policy": {"explicit": {
             "version": 1,
             "filesystem_policy": {"include_workdir": false, "read_only": ["/usr", "/opt", "/app"], "read_write": ["/sandbox", "/tmp"]},
@@ -26,7 +26,8 @@ fn parse(value: &Value) -> Result<Document, nemoclaw_sdk::config::ConfigError> {
 #[test]
 fn sandbox_proxy_override_is_rejected_before_deployment() {
     let mut value = input();
-    value["spec"]["sandboxes"][0]["network"]["proxy"] = json!({"host": "10.200.0.1", "port": 3129});
+    value["spec"]["sandboxes"]["assistant"]["network"]["proxy"] =
+        json!({"host": "10.200.0.1", "port": 3129});
     assert!(
         parse(&value).is_err(),
         "sandbox proxy overrides must not replace OpenShell's policy proxy"
@@ -68,13 +69,13 @@ fn explicit_policy_survives_yaml_and_compilation() {
 #[test]
 fn conflicting_unknown_and_invalid_network_settings_are_rejected() {
     for (path, replacement) in [
-        ("/spec/sandboxes/0/network/tier", json!("isolated")),
+        ("/spec/sandboxes/assistant/network/tier", json!("isolated")),
         (
-            "/spec/sandboxes/0/network/policy/explicit/version",
+            "/spec/sandboxes/assistant/network/policy/explicit/version",
             json!(0),
         ),
         (
-            "/spec/sandboxes/0/network/policy/explicit/network_policies/docs/endpoints/0/port",
+            "/spec/sandboxes/assistant/network/policy/explicit/network_policies/docs/endpoints/0/port",
             json!(0),
         ),
     ] {
@@ -84,8 +85,8 @@ fn conflicting_unknown_and_invalid_network_settings_are_rejected() {
         assert!(parse(&value).is_err(), "{path}");
     }
     let mut value = input();
-    value["spec"]["sandboxes"][0]["network"]["policy"]["explicit"]["network_policies"]["docs"]["endpoints"]
-        [0]["credentials"] = json!("secret");
+    value["spec"]["sandboxes"]["assistant"]["network"]["policy"]["explicit"]["network_policies"]
+        ["docs"]["endpoints"][0]["credentials"] = json!("secret");
     let error = parse(&value).unwrap_err();
     assert!(!error.to_string().contains("secret"));
 }
@@ -100,8 +101,8 @@ fn policy_rejects_silently_ignored_or_ambiguous_endpoint_options() {
         ("mcp", json!({"max_body_bytes": 0})),
     ] {
         let mut document = input();
-        document["spec"]["sandboxes"][0]["network"]["policy"]["explicit"]["network_policies"]["docs"]
-            ["endpoints"][0][field] = value;
+        document["spec"]["sandboxes"]["assistant"]["network"]["policy"]["explicit"]["network_policies"]
+            ["docs"]["endpoints"][0][field] = value;
         assert!(parse(&document).is_err(), "must reject {field}");
     }
 }
@@ -119,22 +120,29 @@ fn explicit_policy_supports_tcp_rest_websocket_rpc_mcp_and_deny_all() {
     let validator = jsonschema::validator_for(&input_schema()).unwrap();
     for endpoint in endpoints {
         let mut value = input();
-        value["spec"]["sandboxes"][0]["network"]["policy"]["explicit"]["network_policies"]["docs"]
-            ["endpoints"][0] = endpoint.clone();
+        value["spec"]["sandboxes"]["assistant"]["network"]["policy"]["explicit"]["network_policies"]
+            ["docs"]["endpoints"][0] = endpoint.clone();
         assert!(validator.is_valid(&value), "schema: {endpoint}");
         let document = parse(&value).unwrap_or_else(|e| panic!("{endpoint}: {e}"));
-        let proto = document.spec.sandboxes[0].network.policy_proto().unwrap();
+        let proto = document.spec.sandboxes["assistant"]
+            .network
+            .policy_proto()
+            .unwrap();
         assert!(
             nemoclaw_sdk::config::policy_json(&proto).is_ok(),
             "observation must retain {endpoint}"
         );
     }
     let mut value = input();
-    value["spec"]["sandboxes"][0]["network"]["policy"]["explicit"]["network_policies"] = json!({});
+    value["spec"]["sandboxes"]["assistant"]["network"]["policy"]["explicit"]["network_policies"] =
+        json!({});
     let document = parse(&value).unwrap();
     assert!(
         nemoclaw_sdk::config::policy_json(
-            &document.spec.sandboxes[0].network.policy_proto().unwrap()
+            &document.spec.sandboxes["assistant"]
+                .network
+                .policy_proto()
+                .unwrap()
         )
         .is_ok()
     );
@@ -143,8 +151,8 @@ fn explicit_policy_supports_tcp_rest_websocket_rpc_mcp_and_deny_all() {
 #[test]
 fn policy_template_markers_remain_literal_in_opentofu_configuration() {
     let mut value = input();
-    value["spec"]["sandboxes"][0]["network"]["policy"]["explicit"]["network_policies"]["docs"]["endpoints"]
-        [0]["rules"][0]["allow"]["path"] = json!("/docs/${file}/%{literal}");
+    value["spec"]["sandboxes"]["assistant"]["network"]["policy"]["explicit"]["network_policies"]
+        ["docs"]["endpoints"][0]["rules"][0]["allow"]["path"] = json!("/docs/${file}/%{literal}");
     let document = parse(&value).unwrap();
     let generations: Generations = ["workspace", "provider", "sandbox"]
         .map(|k| (k.into(), format!("{k}-generation")))
@@ -174,12 +182,12 @@ fn document_validation_preserves_filesystem_intent_until_image_discovery() {
         json!(["/opt", "/app"]),
     ] {
         let mut value = input();
-        value["spec"]["sandboxes"][0]["network"]["policy"]["explicit"]["filesystem_policy"]["read_only"] =
-            grants;
+        value["spec"]["sandboxes"]["assistant"]["network"]["policy"]["explicit"]["filesystem_policy"]
+            ["read_only"] = grants;
         let document = parse(&value).unwrap();
         assert_eq!(
-            serde_json::to_value(&document.spec.sandboxes[0].network).unwrap()["policy"],
-            value["spec"]["sandboxes"][0]["network"]["policy"]
+            serde_json::to_value(&document.spec.sandboxes["assistant"].network).unwrap()["policy"],
+            value["spec"]["sandboxes"]["assistant"]["network"]["policy"]
         );
     }
 }
@@ -189,7 +197,7 @@ fn landlock_uses_runtime_spellings_without_main_branch_aliases() {
     let validator = jsonschema::validator_for(&input_schema()).unwrap();
     for spelling in ["best_effort", "hard_requirement", "strict"] {
         let mut value = input();
-        value["spec"]["sandboxes"][0]["network"]["policy"]["explicit"]["landlock"]["compatibility"] =
+        value["spec"]["sandboxes"]["assistant"]["network"]["policy"]["explicit"]["landlock"]["compatibility"] =
             json!(spelling);
         if spelling == "strict" {
             assert!(
@@ -201,7 +209,7 @@ fn landlock_uses_runtime_spellings_without_main_branch_aliases() {
             assert!(validator.is_valid(&value));
             let document = parse(&value).unwrap();
             assert_eq!(
-                document.spec.sandboxes[0]
+                document.spec.sandboxes["assistant"]
                     .network
                     .policy_proto()
                     .unwrap()
@@ -216,7 +224,7 @@ fn landlock_uses_runtime_spellings_without_main_branch_aliases() {
 
 #[test]
 fn network_deserialization_rejects_conflicting_policy_choices() {
-    let explicit = input()["spec"]["sandboxes"][0]["network"]["policy"].clone();
+    let explicit = input()["spec"]["sandboxes"]["assistant"]["network"]["policy"].clone();
     for value in [
         json!({"tier": "isolated", "policy": explicit}),
         json!({"tier": "unrestricted"}),
@@ -244,7 +252,7 @@ fn default_network_is_a_valid_isolated_policy() {
 
 #[test]
 fn policy_choice_preserves_the_export_shape() {
-    let explicit_input = input()["spec"]["sandboxes"][0]["network"]["policy"].clone();
+    let explicit_input = input()["spec"]["sandboxes"]["assistant"]["network"]["policy"].clone();
     let explicit = serde_json::from_value(explicit_input["explicit"].clone()).unwrap();
     for (policy, expected) in [
         (NetworkPolicy::Isolated, json!({"tier": "isolated"})),
@@ -269,7 +277,8 @@ fn policy_choice_preserves_the_export_shape() {
 #[test]
 fn removed_tls_modes_are_rejected_and_automatic_tls_round_trips() {
     let mut value = input();
-    let endpoint = "/spec/sandboxes/0/network/policy/explicit/network_policies/docs/endpoints/0";
+    let endpoint =
+        "/spec/sandboxes/assistant/network/policy/explicit/network_policies/docs/endpoints/0";
     value
         .pointer_mut(endpoint)
         .unwrap()

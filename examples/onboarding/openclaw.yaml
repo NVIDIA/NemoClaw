@@ -20,7 +20,7 @@ spec:
       credential:
         env: NVIDIA_API_KEY
   sandboxes:
-    - name: assistant
+    assistant:
       harness:
         kind: nvidia.fabric.openclaw
       agent:

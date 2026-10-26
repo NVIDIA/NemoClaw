@@ -20,8 +20,8 @@ use crate::{
     diagnostics::diagnostic,
     identity::new_deployment_uid,
     journey_definition::{
-        HARNESS, INFERENCE_PRESET, JourneyDefinition, JourneyScope, NAME, adapter_field,
-        adapter_schema, native_field,
+        INFERENCE_PRESET, JourneyDefinition, JourneyScope, NAME, adapter_field, adapter_schema,
+        harness_question, is_harness_question, native_field, sandbox_path,
     },
     sdk_schema::{
         finite_choices, sdk_discriminator, sdk_exclusive_required_fields, sdk_field_possible,
@@ -31,7 +31,6 @@ use crate::{
 };
 
 const ROUTE_SELECTION: &str = "route:selection";
-const ROUTES: &str = "/spec/sandboxes/0/agent/inference/routes";
 const RUNTIME_PROVIDER: &str = "/spec/gateway/runtime/provider";
 const GATEWAY_ENGINE_PATH: &str = "/spec/gateway/engine";
 
@@ -88,7 +87,7 @@ impl QuestionTarget {
         if path == NAME {
             return Self::DeploymentName;
         }
-        if path == HARNESS {
+        if is_harness_question(&path) {
             return Self::Harness;
         }
         let segments = path.split('/').collect::<Vec<_>>();

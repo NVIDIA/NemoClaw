@@ -68,7 +68,7 @@ spec:
       api: openai-completions
       serviceRef: nemotron
   sandboxes:
-    - name: researcher
+    researcher:
       image:
         # Build a current Fabric OpenClaw image; the default image lacks these features.
         ref:
@@ -112,7 +112,7 @@ spec:
               overrides:
                 model: nvidia-nemotron-3.5-lightning-30b-a3b-nvfp4
                 maxTokens: 8192
-    - name: writer
+    writer:
       image:
         # Build a current Fabric OpenClaw image; the default image lacks these features.
         ref:
@@ -156,7 +156,7 @@ spec:
               overrides:
                 model: nvidia-nemotron-3.5-lightning-30b-a3b-nvfp4
                 maxTokens: 8192
-    - name: reader
+    reader:
       image:
         # Build a current Fabric OpenClaw image; the default image lacks these features.
         ref:

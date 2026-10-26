@@ -69,8 +69,8 @@ pub struct Spec {
     /// Named inference definitions available to sandbox routes through providerRef. Unselected definitions create no resources or credential requirements.
     pub inference_providers: std::collections::BTreeMap<String, InferenceProvider>,
     #[serde(rename = "sandboxes")]
-    /// One to 32 uniquely named sandboxes. Each runs one agent through its selected Fabric adapter. Declaration order does not select a default sandbox or agent.
-    pub sandboxes: Vec<Sandbox>,
+    /// One to 32 named sandboxes. Each runs one agent through its selected Fabric adapter. Declaration order does not select a default sandbox or agent.
+    pub sandboxes: std::collections::BTreeMap<String, Sandbox>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[schemars(default, length(max = 32))]
     /// Registries whose images NemoClaw pulls through Docker with the logins of the machine running OpenTofu, from its Docker configuration file. Lists addresses only; credentials stay in that file or its credential store.
@@ -288,9 +288,6 @@ pub struct Sandbox {
     #[schemars(default)]
     /// Named integration definitions selected by this sandbox's agent through integrationRefs. Names must not collide with deployment definitions.
     pub integrations: std::collections::BTreeMap<String, super::Integration>,
-    #[serde(rename = "name")]
-    /// Lowercase sandbox name.
-    pub name: String,
     #[serde(rename = "image")]
     #[schemars(default)]
     #[schemars(extend("x-nemoclaw-required" = "For Kubernetes sandboxes"))]

@@ -3,6 +3,7 @@
 
 //! Sparse values and deliberate question guidance for one onboarding journey.
 
+use nemoclaw_sdk::config::{Document, NamedSandbox};
 use serde_json::Value;
 use std::collections::BTreeSet;
 
@@ -13,9 +14,38 @@ use crate::{
 };
 
 pub(crate) const NAME: &str = "/metadata/name";
-pub(crate) const HARNESS: &str = "/spec/sandboxes/0/harness/kind";
-pub(crate) const SETTINGS: &str = "/spec/sandboxes/0/harness/settings";
 pub(crate) const INFERENCE_PRESET: &str = "inference:preset";
+
+/// The pointer to the only sandbox, `/spec/sandboxes/<name>`. Sandboxes are
+/// keyed by name, and a journey keeps its one sandbox's name, whatever it is.
+pub(crate) fn sandbox_path(values: &Value) -> Option<String> {
+    let mut names = values.pointer("/spec/sandboxes")?.as_object()?.keys();
+    let name = names.next().filter(|_| names.next().is_none())?;
+    Some(format!(
+        "/spec/sandboxes/{}",
+        name.replace('~', "~0").replace('/', "~1")
+    ))
+}
+
+/// The harness question's ID: the only sandbox's inline harness kind, also
+/// when the sandbox selects a shared harness definition.
+pub(crate) fn harness_question(values: &Value) -> Option<String> {
+    sandbox_path(values).map(|path| format!("{path}/harness/kind"))
+}
+
+/// Whether `id` is the harness question's ID; it holds the sandbox's name.
+pub(crate) fn is_harness_question(id: &str) -> bool {
+    matches!(
+        id.split('/').collect::<Vec<_>>().as_slice(),
+        ["", "spec", "sandboxes", _, "harness", "kind"]
+    )
+}
+
+/// A valid document's only sandbox.
+pub(crate) fn only_sandbox(document: &Document) -> Option<NamedSandbox<'_>> {
+    let mut sandboxes = document.sandboxes();
+    sandboxes.next().filter(|_| sandboxes.next().is_none())
+}
 
 /// A schema-discovered family of applicable questions. The schema determines
 /// which fields exist and whether they are required; this only asks to review
@@ -132,15 +162,19 @@ impl JourneyDefinition {
         self
     }
 
+    /// The ID of the question that chooses the harness, which holds the name of
+    /// the base's one sandbox. None unless the base has exactly one sandbox.
+    pub fn harness_question(&self) -> Option<String> {
+        harness_question(self.base.supplied())
+    }
+
     /// Start mutable resolution over the sparse v1 single-sandbox envelope.
     pub fn start(&self, capabilities: &Capabilities) -> Result<crate::JourneyState, Diagnostics> {
         self.validate_guidance(capabilities)?;
-        if !self
-            .base
-            .supplied()
-            .pointer("/spec/sandboxes")
-            .and_then(Value::as_array)
-            .is_some_and(|sandboxes| sandboxes.len() == 1 && sandboxes[0].is_object())
+        let supplied = self.base.supplied();
+        if !sandbox_path(supplied)
+            .and_then(|path| supplied.pointer(&path))
+            .is_some_and(Value::is_object)
         {
             return Err(diagnostic(
                 "journey",
@@ -173,8 +207,21 @@ impl JourneyDefinition {
                 &format!("scope {scope:?} cannot be omitted in this preview"),
             ));
         }
+        // A journey edits its one sandbox; an answer must not create another.
+        let sandbox = sandbox_path(self.base.supplied());
+        if let Some(field) = self.ask.iter().chain(&self.omit).find(|field| {
+            field.starts_with("/spec/sandboxes/")
+                && sandbox
+                    .as_ref()
+                    .is_none_or(|path| *field != path && !field.starts_with(&format!("{path}/")))
+        }) {
+            return Err(diagnostic(
+                "journey",
+                &format!("'{field}' is outside the journey's sandbox"),
+            ));
+        }
         for field in &self.ask {
-            if field == NAME || field == HARNESS || field == INFERENCE_PRESET {
+            if field == NAME || is_harness_question(field) || field == INFERENCE_PRESET {
                 continue;
             }
             if sdk_field_schema_for(self.base.supplied(), field).is_some()
@@ -231,16 +278,14 @@ impl JourneyDefinition {
                     "required adapter settings alternatives cannot be omitted",
                 ));
             }
-            if self
-                .base
-                .supplied()
-                .pointer(HARNESS)
-                .and_then(Value::as_str)
-                == Some(adapter)
-                && self
-                    .base
-                    .supplied()
-                    .pointer(&format!("{SETTINGS}{pointer}"))
+            let supplied = self.base.supplied();
+            if let Some(harness) = sandbox.as_ref().map(|path| format!("{path}/harness"))
+                && supplied
+                    .pointer(&format!("{harness}/kind"))
+                    .and_then(Value::as_str)
+                    == Some(adapter)
+                && supplied
+                    .pointer(&format!("{harness}/settings{pointer}"))
                     .is_some()
             {
                 return Err(diagnostic(

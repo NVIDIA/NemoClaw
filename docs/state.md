@@ -87,7 +87,7 @@ gateway:
     openshell.drivers.docker:
       allow_driver_config: true
 sandboxes:
-  - name: assistant
+  assistant:
     driverConfig:
       docker:
         mounts:

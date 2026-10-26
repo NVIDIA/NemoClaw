@@ -21,7 +21,7 @@ spec:
         env: NOUS_API_KEY
       endpoint: https://inference-api.nousresearch.com/v1
   sandboxes:
-    - name: assistant
+    assistant:
       image:
         # Replace with the digest from a fresh Hermes image build; see docs/inference.md.
         ref: local-fabric-hermes@sha256:0000000000000000000000000000000000000000000000000000000000000000

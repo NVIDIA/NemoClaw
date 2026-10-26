@@ -74,7 +74,7 @@ async fn the_dummy_agent_completes_a_managed_docker_lifecycle() {
         document.spec.gateway.runtime().provider,
         ComputeDriver::Docker
     );
-    let sandbox = &document.spec.sandboxes[0];
+    let sandbox = document.sandboxes().next().unwrap();
     let harness = document.sandbox_harness(sandbox).unwrap();
     assert_eq!(harness.kind, "org.nemoclaw.dummy".parse().unwrap());
     // The dummy replies with this setting, so the reply shows that apply
@@ -147,8 +147,8 @@ async fn the_dummy_agent_completes_a_managed_docker_lifecycle() {
     )
     .unwrap();
     let binding =
-        fabric_provider::fabric_binding(sandbox_binding(&state_path, &sandbox.name)).unwrap();
-    let runtime = runtime_id(&state_path, &sandbox.name);
+        fabric_provider::fabric_binding(sandbox_binding(&state_path, sandbox.name)).unwrap();
+    let runtime = runtime_id(&state_path, sandbox.name);
     let reply = invoke(&client, &binding, &runtime, "dummy-lifecycle").await;
     assert_eq!(reply["status"], "succeeded", "{reply}");
     assert_eq!(reply["output"]["message"], configured_reply, "{reply}");
@@ -192,7 +192,7 @@ async fn the_dummy_agent_completes_a_managed_docker_lifecycle() {
     assert_eq!(reapplied.outcome, Outcome::Succeeded);
     assert!(reapplied.changes.is_empty(), "{:?}", reapplied.changes);
     assert_eq!(
-        runtime_id(&state_path, &sandbox.name),
+        runtime_id(&state_path, sandbox.name),
         runtime,
         "unchanged applies must keep the running agent"
     );

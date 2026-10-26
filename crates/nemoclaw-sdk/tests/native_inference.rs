@@ -36,8 +36,15 @@ fn anthropic_providers_register_messages_without_a_per_model_api() {
     use nemoclaw_sdk::config::{InferenceApi, InferenceProviderKind};
     let mut document =
         Document::parse(include_str!("fixtures/config/local.yaml").as_bytes()).unwrap();
-    document.spec.sandboxes[0].harness.as_mut().unwrap().kind =
-        "nvidia.fabric.codex".parse().unwrap();
+    document
+        .spec
+        .sandboxes
+        .get_mut("assistant")
+        .unwrap()
+        .harness
+        .as_mut()
+        .unwrap()
+        .kind = "nvidia.fabric.codex".parse().unwrap();
     let provider = document.spec.inference_providers.get_mut("local").unwrap();
     provider.api = Some(InferenceApi::AnthropicMessages);
     provider.provider = InferenceProviderKind::Anthropic;

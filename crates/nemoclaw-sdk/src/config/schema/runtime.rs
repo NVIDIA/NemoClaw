@@ -212,27 +212,27 @@ fn instance_path(pointer: &str, root: &Value) -> String {
         } else {
             // Only names in declared application collections can be shown. Invalid
             // names and opaque map keys remain hidden even if they resemble values.
-            let named = match parts[..offset]
-                .iter()
-                .map(String::as_str)
-                .collect::<Vec<_>>()
-                .as_slice()
-            {
+            let named = matches!(
+                parts[..offset]
+                    .iter()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>()
+                    .as_slice(),
                 [
                     "spec",
-                    "services" | "harnesses" | "inferences" | "inferenceProviders" | "integrations",
-                ] => true,
-                [
+                    "services"
+                        | "sandboxes"
+                        | "harnesses"
+                        | "inferences"
+                        | "inferenceProviders"
+                        | "integrations",
+                ] | [
                     "spec",
                     "sandboxes",
-                    index,
+                    _,
                     "harnesses" | "inferences" | "inferenceProviders" | "integrations",
-                ]
-                | ["spec", "sandboxes", index, "agent", "integrations"] => {
-                    index.parse::<usize>().is_ok()
-                }
-                _ => false,
-            };
+                ] | ["spec", "sandboxes", _, "agent", "integrations"]
+            );
             let visible = if named {
                 NAME.is_valid(&Value::String(key.clone()))
             } else {

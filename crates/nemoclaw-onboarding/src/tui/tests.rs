@@ -122,8 +122,9 @@ fn root_adapter_alternatives_accept_json_object_input() {
         "../../../../examples/onboarding/openclaw.yaml"
     ))
     .unwrap();
-    values["spec"]["sandboxes"][0]["harness"]["kind"] = serde_json::json!("fixture-root-agent");
-    values["spec"]["sandboxes"][0]["harness"]
+    values["spec"]["sandboxes"]["assistant"]["harness"]["kind"] =
+        serde_json::json!("fixture-root-agent");
+    values["spec"]["sandboxes"]["assistant"]["harness"]
         .as_object_mut()
         .unwrap()
         .remove("settings");
@@ -160,7 +161,8 @@ fn resolver_failure_is_not_reported_as_a_finished_questionnaire() {
         "../../../../examples/onboarding/openclaw.yaml"
     ))
     .unwrap();
-    values["spec"]["sandboxes"][0]["harness"]["kind"] = serde_json::json!("fixture-schema-agent");
+    values["spec"]["sandboxes"]["assistant"]["harness"]["kind"] =
+        serde_json::json!("fixture-schema-agent");
     let base = PartialDocument::from_yaml(values.to_string().as_bytes()).unwrap();
     let state = JourneyDefinition::new("conflicting-descriptors", base)
         .start(&capabilities)
@@ -230,7 +232,7 @@ fn wizard_uses_the_shared_resolver_for_an_sdk_form_choice() {
         "../../../../examples/onboarding/openclaw.yaml"
     ))
     .unwrap();
-    values["spec"]["sandboxes"][0]["agent"]
+    values["spec"]["sandboxes"]["assistant"]["agent"]
         .as_object_mut()
         .unwrap()
         .remove("inference");
@@ -240,14 +242,14 @@ fn wizard_uses_the_shared_resolver_for_an_sdk_form_choice() {
         .unwrap();
     let mut wizard = JourneyWizard::new(capabilities, state);
     let question = wizard.question().unwrap().unwrap();
-    assert_eq!(question.id(), "form:/spec/sandboxes/0/agent");
+    assert_eq!(question.id(), "form:/spec/sandboxes/assistant/agent");
     assert_eq!(label(&question), "Choose agent form");
     wizard
         .submit(Some(serde_json::json!("inferenceRef")))
         .unwrap();
     assert_eq!(
         wizard.question().unwrap().unwrap().id(),
-        "/spec/sandboxes/0/agent/inferenceRef"
+        "/spec/sandboxes/assistant/agent/inferenceRef"
     );
 }
 
@@ -260,14 +262,14 @@ fn enter_uses_the_supplied_choice_suggestion() {
     wizard.advance();
     assert_eq!(
         wizard.question().unwrap().unwrap().id(),
-        "/spec/sandboxes/0/harness/kind"
+        "/spec/sandboxes/assistant/harness/kind"
     );
     wizard.advance();
     assert_eq!(
         wizard
             .state()
             .values()
-            .pointer("/spec/sandboxes/0/harness/kind"),
+            .pointer("/spec/sandboxes/assistant/harness/kind"),
         Some(&serde_json::json!("nvidia.fabric.openclaw"))
     );
 }
@@ -283,13 +285,49 @@ fn back_restores_the_previous_answer_without_rewriting_the_template() {
         .unwrap();
     assert_eq!(
         wizard.question().unwrap().unwrap().id(),
-        "/spec/sandboxes/0/harness/kind"
+        "/spec/sandboxes/assistant/harness/kind"
     );
     wizard.back();
     assert_eq!(wizard.question().unwrap().unwrap().id(), "/metadata/name");
     assert_eq!(
         wizard.state().values().pointer("/metadata/name"),
         original_name.as_ref()
+    );
+}
+
+/// A template's sandbox keeps its name. The harness question holds that name
+/// and keeps its friendly text.
+#[test]
+fn a_template_sandbox_keeps_its_name_in_questions_and_text() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("template.yaml");
+    let mut values: Value = serde_saphyr::from_slice(include_bytes!(
+        "../../../../examples/onboarding/openclaw.yaml"
+    ))
+    .unwrap();
+    let sandboxes = values["spec"]["sandboxes"].as_object_mut().unwrap();
+    let sandbox = sandboxes.remove("assistant").unwrap();
+    sandboxes.insert("reviewer".into(), sandbox);
+    std::fs::write(&path, serde_json::to_vec(&values).unwrap()).unwrap();
+    let capabilities = Capabilities::available();
+    let state = load_journey(Source::Template(&path), &capabilities).unwrap();
+    let mut wizard = JourneyWizard::new(capabilities, state);
+    wizard
+        .submit(Some(serde_json::json!("reviewed-deployment")))
+        .unwrap();
+    let question = wizard.question().unwrap().unwrap();
+    assert_eq!(question.id(), "/spec/sandboxes/reviewer/harness/kind");
+    assert_eq!(super::labels::title(&question), "Choose your agent harness");
+    wizard
+        .submit(Some(serde_json::json!("nvidia.fabric.hermes")))
+        .unwrap();
+    let sandboxes = wizard.state().values()["spec"]["sandboxes"]
+        .as_object()
+        .unwrap();
+    assert_eq!(sandboxes.keys().collect::<Vec<_>>(), ["reviewer"]);
+    assert_eq!(
+        sandboxes["reviewer"]["harness"]["kind"],
+        "nvidia.fabric.hermes"
     );
 }
 
@@ -385,7 +423,7 @@ fn mixed_local_and_hosted_template_reaches_review_without_losing_routes() {
     );
     let document = wizard.document().unwrap();
     assert_eq!(
-        document.spec.sandboxes[0]
+        document.spec.sandboxes["assistant"]
             .agent
             .inference
             .as_ref()
@@ -893,13 +931,13 @@ fn missing_catalog_key_does_not_occupy_the_error_slot_or_hide_engine_failures() 
     ))
     .unwrap();
     let mut state = JourneyDefinition::new("catalog-note", base)
-        .ask(["/spec/sandboxes/0/harness/kind", "/metadata/name"])
+        .ask(["/spec/sandboxes/assistant/harness/kind", "/metadata/name"])
         .start(&capabilities)
         .unwrap();
     state
         .answer(
             &capabilities,
-            "/spec/sandboxes/0/harness/kind",
+            "/spec/sandboxes/assistant/harness/kind",
             Some(serde_json::json!("nvidia.fabric.openclaw")),
         )
         .unwrap();
@@ -947,7 +985,7 @@ fn missing_catalog_key_does_not_occupy_the_error_slot_or_hide_engine_failures() 
             image: ImageMetadata {
                 architecture: Some("arm64".into()),
                 operating_system: Some("linux".into()),
-                repo_digests: vec![document.spec.sandboxes[0].image.ref_.clone()],
+                repo_digests: vec![document.spec.sandboxes["assistant"].image.ref_.clone()],
                 ..Default::default()
             },
             compatibility: Some(CompatibilityReport {

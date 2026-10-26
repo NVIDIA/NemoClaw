@@ -192,7 +192,8 @@ pub fn kubernetes_document(name: &str, namespace: &str) -> Document {
             "namespace": namespace, "authentication": {"profile": "development"}
         }
     });
-    value["spec"]["sandboxes"][0]["image"]["metadata"] = json!({"env": "TEST_IMAGE_METADATA"});
+    value["spec"]["sandboxes"]["assistant"]["image"]["metadata"] =
+        json!({"env": "TEST_IMAGE_METADATA"});
     Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap()
 }
 

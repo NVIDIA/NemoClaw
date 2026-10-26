@@ -183,7 +183,7 @@ fn gateway_documents_are_fresh_and_avoid_ports_and_subnets_in_use() {
     });
     let value: serde_json::Value = serde_saphyr::from_str(&document).unwrap();
     assert!(
-        value["spec"]["sandboxes"][0]["harness"]
+        value["spec"]["sandboxes"]["assistant"]["harness"]
             .get("settings")
             .is_none()
     );
@@ -198,7 +198,7 @@ fn gateway_documents_are_fresh_and_avoid_ports_and_subnets_in_use() {
     });
     let with_settings: serde_json::Value = serde_saphyr::from_str(&with_settings).unwrap();
     assert_eq!(
-        with_settings["spec"]["sandboxes"][0]["harness"]["settings"],
+        with_settings["spec"]["sandboxes"]["assistant"]["harness"]["settings"],
         serde_json::json!({"reply": "dummy-reply"})
     );
     assert_eq!(value["metadata"]["uid"], first.as_str());
@@ -209,11 +209,11 @@ fn gateway_documents_are_fresh_and_avoid_ports_and_subnets_in_use() {
     );
     assert_eq!(value["spec"]["gateway"]["networkCIDR"], chosen.as_str());
     assert_eq!(
-        value["spec"]["sandboxes"][0]["image"]["ref"],
+        value["spec"]["sandboxes"]["assistant"]["image"]["ref"],
         "nc-live@sha256:abc"
     );
     assert_eq!(
-        value["spec"]["sandboxes"][0]["harness"]["kind"],
+        value["spec"]["sandboxes"]["assistant"]["harness"]["kind"],
         "nvidia.fabric.pi"
     );
     assert!(value["spec"].get("services").is_none());

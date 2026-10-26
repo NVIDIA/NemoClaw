@@ -422,7 +422,7 @@ mod tests {
             .as_object_mut()
             .unwrap()
             .remove("inferenceProviders");
-        let sandbox = &mut input["spec"]["sandboxes"][0];
+        let sandbox = &mut input["spec"]["sandboxes"]["assistant"];
         sandbox["inferenceProviders"] = json!({"responses": provider});
         let route = &mut sandbox["agent"]["inference"]["routes"][0];
         route["providerRef"] = "responses".into();
@@ -437,7 +437,7 @@ mod tests {
                 .all(|source| source.name == "responses"
                     && source.path == "spec.sandboxes[assistant].inferenceProviders[responses]")
         );
-        let sandbox = &mut input["spec"]["sandboxes"][0];
+        let sandbox = &mut input["spec"]["sandboxes"]["assistant"];
         let mut provider = sandbox["inferenceProviders"]["responses"].take();
         sandbox
             .as_object_mut()

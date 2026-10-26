@@ -20,7 +20,7 @@ fn journey(values: Value, capabilities: &Capabilities) -> nemoclaw_authoring::Jo
     )
     .ask([
         "/metadata/name",
-        "/spec/sandboxes/0/harness/kind",
+        "/spec/sandboxes/assistant/harness/kind",
         "inference:preset",
     ])
     .ask([JourneyScope::InferenceApi, JourneyScope::RouteModels])
@@ -37,7 +37,9 @@ fn supplied_values_are_suggestions_for_finite_and_free_text_questions() {
     assert_eq!(name.reason(), JourneyQuestionReason::ExplicitAsk);
     assert_eq!(name.suggestion(), Some(&json!("openclaw-nvidia-hosted")));
     assert!(name.choices().is_empty());
-    let harness = resolved.question("/spec/sandboxes/0/harness/kind").unwrap();
+    let harness = resolved
+        .question("/spec/sandboxes/assistant/harness/kind")
+        .unwrap();
     assert_eq!(harness.suggestion(), Some(&json!("nvidia.fabric.openclaw")));
     assert_eq!(harness.choices().len(), capabilities.harnesses().len());
 }
@@ -87,10 +89,10 @@ fn generated_yaml_reopens_as_the_same_supplied_intent() {
     assert_eq!(
         again
             .values()
-            .pointer("/spec/sandboxes/0/agent/inference/routes/0/overrides/model"),
+            .pointer("/spec/sandboxes/assistant/agent/inference/routes/0/overrides/model"),
         state
             .values()
-            .pointer("/spec/sandboxes/0/agent/inference/routes/0/overrides/model")
+            .pointer("/spec/sandboxes/assistant/agent/inference/routes/0/overrides/model")
     );
 }
 
@@ -103,7 +105,7 @@ fn every_advertised_harness_keeps_provider_protocol_choices() {
             state
                 .answer(
                     &capabilities,
-                    "/spec/sandboxes/0/harness/kind",
+                    "/spec/sandboxes/assistant/harness/kind",
                     Some(json!(harness.as_str())),
                 )
                 .unwrap();
@@ -144,7 +146,7 @@ fn changing_a_model_preserves_an_explicit_target_engine() {
             Some(json!("nvidia-endpoints")),
         )
         .unwrap();
-    let model = "/spec/sandboxes/0/agent/inference/routes/0/overrides/model";
+    let model = "/spec/sandboxes/assistant/agent/inference/routes/0/overrides/model";
     state
         .answer(&capabilities, model, Some(json!("updated-model")))
         .unwrap();
@@ -164,7 +166,7 @@ fn an_anonymous_local_provider_is_lossless_without_a_credential_reference() {
         .as_object_mut()
         .unwrap()
         .remove("credential");
-    values["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"]["model"] =
+    values["spec"]["sandboxes"]["assistant"]["agent"]["inference"]["routes"][0]["overrides"]["model"] =
         json!("local-model");
     let mut state = journey(values, &capabilities);
     state
@@ -181,7 +183,7 @@ fn an_anonymous_local_provider_is_lossless_without_a_credential_reference() {
             Some(json!("http://127.0.0.1:11434/v1")),
         )
         .unwrap();
-    let model = "/spec/sandboxes/0/agent/inference/routes/0/overrides/model";
+    let model = "/spec/sandboxes/assistant/agent/inference/routes/0/overrides/model";
     state
         .answer(&capabilities, model, Some(json!("local-model")))
         .unwrap();
@@ -219,7 +221,7 @@ fn newly_advertised_fabric_harness_is_a_choice_without_code_registration() {
     catalog.adapters.push(adapter);
     let capabilities = Capabilities::from_catalog(&catalog);
     let mut state = journey(supplied(), &capabilities);
-    let harness = "/spec/sandboxes/0/harness/kind";
+    let harness = "/spec/sandboxes/assistant/harness/kind";
     assert!(
         state
             .resolve(&capabilities)
@@ -248,7 +250,7 @@ fn newly_advertised_fabric_harness_is_a_choice_without_code_registration() {
         .unwrap()
         .clone();
     assert_eq!(
-        document.spec.sandboxes[0]
+        document.spec.sandboxes["assistant"]
             .harness
             .as_ref()
             .unwrap()

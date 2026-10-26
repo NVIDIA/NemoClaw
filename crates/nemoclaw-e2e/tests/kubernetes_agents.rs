@@ -32,7 +32,7 @@ async fn three_agents_apply_export_reapply_and_destroy(example: &str) {
     let applied = fs::read(&state).unwrap();
     {
         let gateway = lifecycle.fixture.state.lock().unwrap();
-        for sandbox in &lifecycle.document.spec.sandboxes {
+        for sandbox in lifecycle.document.sandboxes() {
             let key = format!("{}/{}", lifecycle.document.workspace(), sandbox.name);
             let observed = &gateway.sandboxes[&key];
             let id = &observed.metadata.as_ref().unwrap().id;

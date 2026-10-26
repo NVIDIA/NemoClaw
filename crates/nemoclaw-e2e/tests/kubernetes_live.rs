@@ -453,7 +453,8 @@ async fn the_gateway_installs_authenticates_and_is_removed_keeping_storage() {
             "authentication": {"profile": "development"}
         }
     });
-    value["spec"]["sandboxes"][0]["image"]["metadata"] = json!({"env": "TEST_IMAGE_METADATA"});
+    value["spec"]["sandboxes"]["assistant"]["image"]["metadata"] =
+        json!({"env": "TEST_IMAGE_METADATA"});
     let document = Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap();
     let generations: Generations = [
         "workspace",
@@ -732,16 +733,14 @@ fn identities(
 ) -> std::thread::Result<BTreeMap<String, Identity>> {
     std::panic::catch_unwind(|| {
         document
-            .spec
-            .sandboxes
-            .iter()
+            .sandboxes()
             .map(|sandbox| {
                 let identity = Identity {
-                    sandbox: sandbox_binding(directory, &sandbox.name)["id"].clone(),
-                    agent_sandbox: agent_sandbox_id(directory, &sandbox.name),
-                    runtime: runtime_id(directory, &sandbox.name),
+                    sandbox: sandbox_binding(directory, sandbox.name)["id"].clone(),
+                    agent_sandbox: agent_sandbox_id(directory, sandbox.name),
+                    runtime: runtime_id(directory, sandbox.name),
                 };
-                (sandbox.name.clone(), identity)
+                (sandbox.name.to_owned(), identity)
             })
             .collect()
     })
@@ -808,7 +807,7 @@ fn agent_document(
         .map(|(sandbox, agent)| {
             format!(
                 "
-    - name: {sandbox}
+    {sandbox}:
       image:
         ref: {image}
         metadata: {{env: NEMOCLAW_TEST_AGENT_METADATA}}

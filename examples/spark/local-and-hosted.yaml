@@ -51,7 +51,7 @@ spec:
       credential:
         env: HOSTED_API_KEY
   sandboxes:
-    - name: assistant
+    assistant:
       image:
         ref: nc-fabric@sha256:a4402fa5dc8b020551f1e3bde409c8079767e53fcba7bd98b32197f82a9355a8
       network:
