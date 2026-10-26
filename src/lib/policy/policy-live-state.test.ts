@@ -52,6 +52,7 @@ import {
   getGatewayPresets,
   getPersonalSubsumedCustomPresetNames,
   getPresetContentGatewayState,
+  getSandboxAgentName,
   removePreset,
   restoreBaselineEntry,
   setPolicyDocument,
@@ -727,5 +728,19 @@ describe("live OpenShell policy mutations", () => {
     expect(console.error).toHaveBeenCalledWith(
       expect.stringContaining("Cannot load preset: no-such-preset"),
     );
+  });
+});
+
+describe("getSandboxAgentName (#13618)", () => {
+  it.each([
+    [{ agent: "hermes" }, "hermes"],
+    [{ agent: "openclaw" }, "openclaw"],
+    [{ agent: null }, "openclaw"],
+    [null, "openclaw"],
+  ])("maps registry row %j to %s", (row, expected) => {
+    mocks.getSandbox.mockReturnValueOnce(row);
+
+    expect(getSandboxAgentName("agent-row")).toBe(expected);
+    expect(mocks.getSandbox).toHaveBeenLastCalledWith("agent-row");
   });
 });

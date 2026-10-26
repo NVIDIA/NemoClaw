@@ -21,6 +21,7 @@ import {
   buildPolicyContext,
   type PolicyContext,
   renderPolicyContextMarkdown,
+  resolvePolicyContextAgent,
 } from "../../policy/context";
 
 export const POLICY_CONTEXT_SANDBOX_PATH = "/sandbox/.openclaw/workspace/POLICY.md";
@@ -44,6 +45,7 @@ export interface ExplainPolicyDeps {
   logJson?: (value: unknown) => void;
   exec?: SandboxExec;
   warn?: (line: string) => void;
+  getAgent?: (sandboxName: string) => string | null | undefined;
 }
 
 export interface WritePolicyContextResult {
@@ -60,7 +62,8 @@ export interface WritePolicyContextResult {
     | "no-runtime"
     | "unexpected-loader"
     | "sandbox-unreachable"
-    | "exec-failed";
+    | "exec-failed"
+    | "unsupported-agent";
   /** Error captured by the loader, if any. */
   errorMessage?: string;
 }
@@ -176,6 +179,19 @@ export async function writePolicyContextToSandbox(
       };
     }
     exec = load.exec;
+  }
+  // POLICY.md is an OpenClaw workspace file. Other agents never read it, and
+  // creating /sandbox/.openclaw in a Hermes sandbox makes the Hermes CLI treat
+  // it as migration residue and rewrite its integrity-sealed config.yaml on
+  // first launch, which blocks later NemoClaw config writes (#13618).
+  // Unregistered and legacy rows default to OpenClaw, as elsewhere.
+  const agent = (deps.getAgent ?? resolvePolicyContextAgent)(sandboxName) || "openclaw";
+  if (agent !== "openclaw") {
+    return {
+      written: false,
+      reason: `${POLICY_CONTEXT_SANDBOX_PATH} is an OpenClaw workspace file and is not written for ${agent} sandboxes`,
+      failure: "unsupported-agent",
+    };
   }
   const ctx = await build(sandboxName);
   const markdown = render(ctx);

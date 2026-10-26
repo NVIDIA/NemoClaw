@@ -41,6 +41,7 @@ $$nemoclaw my-assistant policy explain --write
 </AgentOnly>
 <AgentOnly variant="hermes">
 For Hermes, use the printed Markdown or JSON through an operator-controlled prompt or file workflow.
+NemoClaw does not write `/sandbox/.openclaw/workspace/POLICY.md` in Hermes sandboxes during onboarding, after `policy add` or `policy remove`, or for `--write`.
 The `--write` target is the OpenClaw workspace and is not a Hermes agent-context integration.
 </AgentOnly>
 
