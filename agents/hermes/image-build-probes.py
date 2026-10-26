@@ -789,6 +789,26 @@ def verify_managed_runtime_capability() -> None:
         raise RuntimeError("Hermes MCP Streamable HTTP runtime is unavailable")
 
 
+def verify_web_search_availability() -> None:
+    """Offer Hermes web tools only when the managed policy keeps a web route."""
+    from hermes_cli.config import load_config
+    from hermes_cli.tools_config import _get_platform_tools
+    from managed_policy import load_managed_policy
+    from model_tools import get_tool_definitions
+
+    web = load_managed_policy()["config"].get("web") or {}
+    expected = web.get("keyless_fallback", True) is not False
+    toolsets = sorted(_get_platform_tools(load_config(), "cli"))
+    names = {
+        item["function"]["name"]
+        for item in get_tool_definitions(enabled_toolsets=toolsets, quiet_mode=True)
+    }
+    for tool in ("web_search", "web_extract"):
+        if (tool in names) != expected:
+            state = "omits" if expected else "offers"
+            raise RuntimeError(f"Hermes {state} {tool} against the managed web policy")
+
+
 COMMANDS: dict[str, Callable[[], None]] = {
     "agent-home": verify_agent_home,
     "auxiliary-token-limit": verify_auxiliary_token_limit,
@@ -814,6 +834,7 @@ COMMANDS: dict[str, Callable[[], None]] = {
     "session-state-create": verify_session_state_create,
     "session-state-reopen": verify_session_state_reopen,
     "secure-directory-modes": verify_secure_directory_modes,
+    "web-search-availability": verify_web_search_availability,
 }
 
 

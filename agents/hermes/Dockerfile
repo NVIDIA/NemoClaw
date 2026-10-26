@@ -374,7 +374,7 @@ COPY --from=hermes-agent-payload / /
 # published base can carry the expected Hermes version while omitting either
 # optional dependency group. This is a build-time package/import guard; live
 # protocol behavior remains a separate E2E concern.
-ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=fbbc01d0fd6f0289700a3e94bf8f0e6bdef63fc8946a8a54f393306c282d543c
+ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=ceae2679bbf37895c00f6878e7fec4ec41324af05621152c25a342fcd4c64441
 # hadolint ignore=DL3059,DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256" /opt/nemoclaw-hermes-config/image-build-probes.py \
@@ -400,7 +400,7 @@ RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
         /ci/reviewed-npm-audit.json \
     && chmod -R a+rX /src/lib/messaging
 
-ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=fbbc01d0fd6f0289700a3e94bf8f0e6bdef63fc8946a8a54f393306c282d543c
+ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=ceae2679bbf37895c00f6878e7fec4ec41324af05621152c25a342fcd4c64441
 
 # hadolint ignore=DL3067
 COPY --from=hermes-runtime-payload / /
@@ -987,7 +987,7 @@ RUN install -o root -g root -m 0444 \
 
 # Fresh named profiles do not receive config.yaml. Patch the pinned Hermes
 # fallback readers from the generated manifest, then validate a real profile.
-ARG NEMOCLAW_HERMES_PROFILE_POLICY_PATCHER_SHA256=954e982162b8c79ca2e08897907f561b307235eefc33fa882b5c22faa22f152a
+ARG NEMOCLAW_HERMES_PROFILE_POLICY_PATCHER_SHA256=f275cbd5d766ac970a3f00b267d5ffa981070254c5826e716296be6d6ce6d8a2
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_PROFILE_POLICY_PATCHER_SHA256" /opt/nemoclaw-hermes-config/patch-profile-policy-defaults.py \
@@ -1030,7 +1030,16 @@ RUN set -eu; \
     test ! -e "$profile_probe_home/config.yaml"; \
     HOME="$profile_probe_root" HERMES_HOME="$profile_probe_home" \
         /opt/hermes/.venv/bin/python -I \
-        /opt/nemoclaw-hermes-config/image-build-probes.py profile-policy
+        /opt/nemoclaw-hermes-config/image-build-probes.py profile-policy; \
+    HOME="$profile_probe_root" HERMES_HOME="$profile_probe_home" \
+        /opt/hermes/.venv/bin/python -I \
+        /opt/nemoclaw-hermes-config/image-build-probes.py web-search-availability; \
+    web_probe_home="$profile_probe_root/default-config"; \
+    mkdir "$web_probe_home"; \
+    cp /sandbox/.hermes/config.yaml "$web_probe_home/config.yaml"; \
+    HOME="$profile_probe_root" HERMES_HOME="$web_probe_home" \
+        /opt/hermes/.venv/bin/python -I \
+        /opt/nemoclaw-hermes-config/image-build-probes.py web-search-availability
 
 # hadolint ignore=DL3066
 USER sandbox
