@@ -44,6 +44,8 @@ describe("public display usage parity", () => {
     ({ commandId, usage: _usage, flags }) => {
       const missing = missingUsageFlags(commandId, flags);
       expect(missing).toEqual([]);
+      const extra = extraUsageFlags(commandId, flags);
+      expect(extra).toEqual([]);
     },
   );
 

@@ -11,7 +11,7 @@ export default class CredentialsResetCommand extends NemoClawCommand {
   static strict = true;
   static summary = "Remove a provider credential";
   static description = "Remove a provider credential so onboard re-prompts for it.";
-  static usage = ["credentials reset <PROVIDER> [--yes]"];
+  static usage = ["credentials reset <PROVIDER> [--yes|-y]"];
   static examples = [
     "<%= config.bin %> credentials reset nvidia-prod",
     "<%= config.bin %> credentials reset nvidia-prod --yes",

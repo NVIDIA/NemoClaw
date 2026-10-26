@@ -6,6 +6,6 @@ describe("probe", () => {
     const p = path.join(process.cwd(), "src", "commands", "sandbox", "policy", "exclude.ts");
     const loaded = require(p) as { default: { flags?: Record<string, unknown> } };
     console.log("require ok, flags:", Object.keys(loaded.default.flags ?? {}));
-    expect(typeof loaded.default).toBe("object");
+    expect(typeof loaded.default).toBe("function");
   });
 });
