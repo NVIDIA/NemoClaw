@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /** Recognize only complete, structured absence from an owner-scoped sandbox operation. */
-export function isStructuredUnqualifiedSandboxNotFoundOutput(output: string): boolean {
+export function isStructuredUnqualifiedSandboxNotFoundOutput(
+  output: string,
+  options: { allowCompactStatus?: boolean } = {},
+): boolean {
   const diagnostic = output
     .replace(/\x1B\[[0-?]*[ -/]*[@-~]/gu, "")
     .replace(/\r/gu, "")
@@ -14,7 +17,11 @@ export function isStructuredUnqualifiedSandboxNotFoundOutput(output: string): bo
     );
   if (!match || match[6] !== "sandbox not found") return false;
   const value = (match[3] ?? match[4] ?? "").replace(/\s/gu, "").toLowerCase();
-  return match[1]?.toLowerCase() === "code"
-    ? value === "notfound" || value === "somerequestedentitywasnotfound"
-    : value === "notfound";
+  if (match[1]?.toLowerCase() === "code") {
+    return value === "notfound" || value === "somerequestedentitywasnotfound";
+  }
+  return (
+    value === "notfound" &&
+    (options.allowCompactStatus !== false || /not\s+found/iu.test(match[3] ?? match[4] ?? ""))
+  );
 }

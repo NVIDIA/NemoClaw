@@ -277,7 +277,11 @@ export function isExplicitMissingOpenShellSandboxOutput(
 ): boolean {
   const clean = stripOpenShellCliAnsi(String(output)).replace(/\r/g, "").trim();
   const structured = clean.replace(/\n\s*│\s*/g, " ");
-  if (isStructuredUnqualifiedSandboxNotFoundOutput(structured)) return true;
+  // A compact status: NotFound diagnostic is not enough to retire local
+  // ownership after a failed delete; preserve the observer's stricter contract.
+  if (isStructuredUnqualifiedSandboxNotFoundOutput(structured, { allowCompactStatus: false })) {
+    return true;
+  }
 
   const escapedName = sandboxName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const namedSandbox = `(?:['"]${escapedName}['"]|${escapedName})`;
