@@ -96,10 +96,12 @@ package(nemoclaw-e2e) & binary(=integration) & (test(/^kubernetes_live::/) | tes
 # The cluster tests use separate namespaces, releases and ports, so they run
 # side by side while each waits on its pods. The registry test seeds its
 # registry by tagging and untagging the node's shared agent image, which other
-# sandboxes pull from at the same moment, so it runs alone.
+# sandboxes pull from at the same moment, so it runs alone. It runs last, so
+# the tests that sort after it start with the others instead of waiting.
 [[profile.live-kind.overrides]]
 filter = 'test(/^kubernetes_live::registry::/)'
 threads-required = "num-test-threads"
+priority = -100
 
 # The live reports are a run's shareable result: outcomes and times only.
 # Failing tests' output stays in the job log.
