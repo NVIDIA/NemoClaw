@@ -792,6 +792,8 @@ describe("onboard command options", () => {
         checkpointUpdatedAt: "2026-08-13T20:00:00.000Z",
         machineRevision: 2,
         profile: "default" as const,
+        recordedAgent: "openclaw",
+        recordedCustomImage: false,
       },
     }));
     const runOnboard = vi.fn(async () => {

@@ -157,7 +157,11 @@ describe("onboard DCode auto-approval input", () => {
     async (saved) => {
       const session = createSession({
         agent: saved.agent,
-        metadata: { fromDockerfile: saved.fromDockerfile, fromImage: saved.fromImage },
+        metadata: {
+          gatewayName: "nemoclaw",
+          fromDockerfile: saved.fromDockerfile,
+          fromImage: saved.fromImage,
+        },
       });
       session.checkpoint = deriveCheckpointFromSession(session);
       const sessionFile = path.join(stateDir, "resume-session.json");
