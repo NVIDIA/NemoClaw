@@ -34,7 +34,8 @@ impl Drop for Owned {
         for image in &self.images {
             quiet(&["image", "rm", "--force", image]);
         }
-        quiet(&["rm", "--force", &self.container]);
+        // The registry image declares an anonymous volume for its storage.
+        quiet(&["rm", "--force", "--volumes", &self.container]);
     }
 }
 
