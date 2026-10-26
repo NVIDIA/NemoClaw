@@ -24,6 +24,7 @@ Its stored authentication must grant access to the deployment workspace.
 The endpoint override takes precedence over the profile, which is why this example clears it.
 NemoClaw's YAML credential and TLS environment references do not configure the OpenShell CLI's stored profile or credentials.
 To create a profile for an authenticated gateway, including its issuer or mTLS client certificates, follow [OpenShell's authentication guide](https://github.com/NVIDIA/OpenShell/blob/5a7728c304b5528e954e9ae900cf21f84e1a12b1/docs/how-it-works/gateways/authentication.mdx).
+For a managed Kubernetes or OpenShift gateway, [Reach the Agents of a Managed Gateway](kubernetes.md#reach-the-agents-of-a-managed-gateway) gives the port forward, the client certificate and the authentication each profile allows.
 
 For an existing plaintext loopback gateway instead, select its actual endpoint directly:
 

@@ -5,7 +5,8 @@
 //!
 //! The pinned kind executable is downloaded by checksum. The cluster gets
 //! the pinned Agent Sandbox release, as a platform would provide it; the
-//! SDK under test installs nothing cluster-wide. The tests verify the native
+//! SDK under test installs nothing cluster-wide apart from the gateway
+//! chart's ClusterRole and ClusterRoleBinding. The tests verify the native
 //! bundle and run its OpenTofu and providers without a Helm executable.
 
 use super::*;

@@ -601,3 +601,27 @@ Run the volume list again; once the volumes are gone, it prints only its header.
 When the namespace and the volumes are gone, remove the state directory, which holds the cluster receipt and any development issuer keys.
 
 The [live Kubernetes gateway test](contributing/live-tests.md#kubernetes-gateway-without-the-helm-cli) deletes its namespace this way, after switching any volume whose reclaim policy is not `Delete` to `Delete`, and checks that the namespace and its volumes are gone.
+
+#### Remove a Deployment Whose Destroy Refuses
+
+On Kubernetes or OpenShift, plan, apply and destroy refuse when an object that NemoClaw recorded was deleted or replaced, such as a key Secret recreated under the same name, or lost its `nemoclaw.nvidia.com/uid` label.
+NemoClaw does not adopt a replacement, so destroy keeps refusing.
+If only the label changed, restore it and run destroy again.
+A changed OpenShift UID range stops plan and apply but not destroy; restore the namespace's annotations to resume them.
+
+Otherwise remove the deployment yourself, without finishing destroy first.
+**This deletes every sandbox's files and conversation history, and the gateway's database and keys.**
+Follow [On Kubernetes or OpenShift](#on-kubernetes-or-openshift) above, with two differences:
+
+- The gateway and sandbox pods still run; deleting the namespace removes them.
+  Still continue only if nothing other than this deployment uses the namespace.
+- Destroy never removed the gateway release, so its ClusterRole and ClusterRoleBinding remain.
+  After deleting the namespace, delete them; the `name` field of `kubernetes/receipt.json` in the state directory holds the gateway's release name:
+
+  ```sh
+  deployment_gateway="$(jq -r .name .local/deployment/kubernetes/receipt.json)"
+  kubectl --context "$deployment_context" delete clusterrole,clusterrolebinding \
+    "$deployment_gateway-node-reader-$deployment_namespace" --ignore-not-found
+  ```
+
+Remove the state directory only after the namespace, the volumes and both cluster objects are gone.

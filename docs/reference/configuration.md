@@ -629,7 +629,7 @@ Paths:
 
 ## ManagedKubernetes
 
-Explicit existing-cluster target for a managed development gateway. The SDK does not create a cluster or select an ambient context, and installs nothing cluster-wide: Agent Sandbox and a default StorageClass must already exist. `runtime.provider: openshift` selects the OpenShift profile.
+Explicit existing-cluster target for a managed development gateway. The SDK does not create a cluster or select an ambient context, and installs nothing cluster-wide apart from the gateway chart's ClusterRole and ClusterRoleBinding: Agent Sandbox and a default StorageClass must already exist. `runtime.provider: openshift` selects the OpenShift profile.
 
 Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
 
