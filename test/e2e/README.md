@@ -550,7 +550,17 @@ cohort.
 
 The gateway restart fixture restarts the user service it stopped. If no service was selected, the candidate CLI startup code starts the registered gateway.
 
-Pi qualification preserves its hosted onboarding, rebuild, recovery, policy, and credential checks. After destroying that sandbox, the same target onboards a fresh Pi sandbox against an authenticated local compatible endpoint. A fresh Pi process must send the selected model to that endpoint. The target then rebuilds Pi and requires another authenticated request for the recorded model. The upstream credential must stay outside the sandbox, and public destroy must leave the sandbox absent. The hosted lifecycle retains its 90-minute allowance; the native phase adds 60 minutes for onboarding, two requests, a rebuild, isolation, and cleanup. The job adds 10 minutes of headroom. Operation deadlines and the target selector stay unchanged.
+Pi qualification keeps the hosted onboarding, rebuild, recovery, policy, and credential checks.
+After public destroy, the target onboards a fresh Pi sandbox against an authenticated local
+compatible endpoint. A fresh Pi process must send the selected model to that endpoint. The target
+rebuilds Pi and requires another authenticated request for the recorded model. The upstream
+credential must stay outside the sandbox, and public destroy must leave the sandbox absent.
+
+The hosted lifecycle retains its 90-minute allowance. The native phase adds 60 minutes for
+onboarding, two requests, a rebuild, isolation, and cleanup. Each of the three hosted Pi read tasks
+may retry once after a qualifying transient failure. Each attempt has a five-minute timeout, and a
+retry waits 10 seconds. The test allows 166 minutes, including 16 minutes for retries. The target
+allows 176 minutes, including 10 minutes of job headroom. The target selector stays unchanged.
 A selected service that cannot restart remains selected for cleanup; recovery does not switch to another startup path.
 Restart inputs are checked before stopping the gateway. A failed start ends the test before health polling. Sandbox readiness, retained state, and agent turns remain separate assertions.
 
