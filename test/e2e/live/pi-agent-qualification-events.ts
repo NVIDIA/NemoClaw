@@ -150,6 +150,12 @@ export function classifyPiReadTaskAttempt(
   if (error !== undefined || !attempt) {
     return { outcome: "failed", failureClass: "deterministic" };
   }
+  if (attempt.result.timedOut) {
+    return {
+      outcome: "failed",
+      failureClass: attempt.proof ? "deterministic" : "transient-external",
+    };
+  }
   if (attempt.result.exitCode === 0 && attempt.proof) return { outcome: "passed" };
   return {
     outcome: "failed",

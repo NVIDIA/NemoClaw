@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 
 import { directDockerfileContextSources } from "../../../scripts/lib/dockerfile-copy-sources.mts";
 import { DEFAULT_CLOUD_MODEL } from "../../../src/lib/inference/config.ts";
+import { runBoundedRetry } from "../../../tools/e2e/retry-evidence.mts";
 import {
   catalogueTarget,
   catalogueTargetsForChangedFiles,
@@ -160,6 +161,84 @@ function failedProbe(): ShellProbeResult {
   };
 }
 describe("Pi qualification event oracle", () => {
+  it("retries a timed-out pending Pi turn once and records both attempts (#13755)", async () => {
+    const pendingEvents = parsePiJsonEvents(
+      events({ type: "agent_start" }, { type: "message_start", message: { role: "assistant" } }),
+    );
+    let failure: unknown;
+    try {
+      qualifyPiReadTask(pendingEvents, PATH, TOKEN);
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(Error);
+    const proof = qualifyPiReadTask(parsePiJsonEvents(eventStream()), PATH, TOKEN);
+    const attempts: number[] = [];
+    const execution = await runBoundedRetry({
+      operation: "pi-agent-qualification.read-after-recovery",
+      owner: "inference-provider",
+      idempotence: "read-only",
+      maxAttempts: 2,
+      run: async (attempt) => {
+        attempts.push(attempt);
+        return attempt === 1
+          ? {
+              failure,
+              proof: undefined,
+              result: { ...failedProbe(), exitCode: 143, timedOut: true },
+            }
+          : { failure: undefined, proof, result: { ...failedProbe(), exitCode: 0 } };
+      },
+      classify: classifyPiReadTaskAttempt,
+    });
+
+    expect(attempts).toEqual([1, 2]);
+    expect(execution.evidence).toMatchObject({
+      outcome: "passed-after-retry",
+      attempts: [
+        { failureClass: "transient-external", retryScheduled: true },
+        { outcome: "passed", retryScheduled: false },
+      ],
+    });
+    expect(
+      classifyPiReadTaskAttempt(
+        {
+          failure: undefined,
+          proof,
+          result: { ...failedProbe(), exitCode: 0, timedOut: true },
+        },
+        undefined,
+      ),
+    ).toEqual({ outcome: "failed", failureClass: "deterministic" });
+  });
+
+  it("does not retry a completed Pi response without a read call (#13755)", () => {
+    const completedEvents = parsePiJsonEvents(
+      events(
+        { type: "agent_start" },
+        {
+          type: "message_end",
+          message: { role: "assistant", content: [{ type: "text", text: TOKEN }] },
+        },
+        { type: "agent_end", messages: [], willRetry: false },
+      ),
+    );
+    let failure: unknown;
+    try {
+      qualifyPiReadTask(completedEvents, PATH, TOKEN);
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(Error);
+
+    expect(
+      classifyPiReadTaskAttempt(
+        { failure, proof: undefined, result: { ...failedProbe(), exitCode: 0 } },
+        undefined,
+      ),
+    ).toEqual({ outcome: "failed", failureClass: "deterministic" });
+  });
+
   it("keeps every Pi image source in the AMD64 lifecycle target ownership boundary (#7926)", () => {
     const imageSources = new Set<string>([
       ".dockerignore",
