@@ -28,3 +28,7 @@ updates:
       prefix: "chore(deps)"
     labels:
       - "v1"
+    ignore:
+      # The organization allows this action only at listed commits, so a
+      # bump can't run until an organization admin allows the new commit.
+      - dependency-name: "taiki-e/install-action"
