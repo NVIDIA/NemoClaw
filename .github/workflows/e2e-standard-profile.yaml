@@ -421,7 +421,7 @@ jobs:
           packages: ${{ inputs.host_packages }}
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@7fcbf13ecd7bc0ea835a949417cf9eb68067adf9
         with:
           build-cli: "false"
 
@@ -449,7 +449,7 @@ jobs:
         if: ${{ inputs.target_id == 'channels-stop-start' && (inputs.runtime_provider == 'docker' || inputs.runtime_provider == 'podman') }}
         shell: /bin/bash --noprofile --norc -e -o pipefail {0}
         env:
-          CLEANUP_IMAGE: node:24.18.1-trixie-slim@sha256:ac39e4b5fcb2b1b34b20364fd58b2e898f3bb80731ee6f62a7536f9df3d6aadc
+          CLEANUP_IMAGE: node:24.22.1-trixie-slim@sha256:43b9ba1142b8dcf33fa8f922ca1be85714adc444e0586c7cf7726daaeabc1bea
           RUNTIME_PROVIDER: ${{ inputs.runtime_provider }}
         run: |
           set -euo pipefail

@@ -3,7 +3,7 @@
 #
 # NemoClaw sandbox base image — expensive, rarely-changing layers.
 #
-# Contains: node:24.18.1-trixie-slim, apt packages, setpriv, user/group setup,
+# Contains: node:24.22.1-trixie-slim, apt packages, setpriv, user/group setup,
 # .openclaw directory structure, OpenClaw CLI, and PyYAML.
 #
 # Built on main merges and pushed to GHCR. The production Dockerfile
@@ -15,7 +15,7 @@
 # structural (users, directories, symlinks) that doesn't depend on
 # NemoClaw application code. Specifically:
 #
-#   node:24.18.1-trixie-slim — pinned by sha256 digest, checked weekly by
+#   node:24.22.1-trixie-slim — pinned by sha256 digest, checked weekly by
 #                          docker-pin-check.yaml
 #   apt packages        — pinned to Debian trixie versions
 #   util-linux          — pinned Debian package providing setpriv
@@ -40,7 +40,7 @@
 #   1. OpenClaw CLI version bump    — update OPENCLAW_VERSION default below, or override via --build-arg / workflow_dispatch
 #   2. New apt package needed       — add it to the apt-get install list
 #   3. util-linux upgrade           — update the pinned apt package version
-#   4. node:24.18.1-trixie-slim digest rotated — run:
+#   4. node:24.22.1-trixie-slim digest rotated — run:
 #        DOCKERFILE=Dockerfile.base scripts/update-docker-pin.sh
 #      Then repeat with DOCKERFILE=<path> for each remaining Dockerfile containing the pin.
 #   5. npm upgrade                  — update upgrade-bundled-npm.mts
@@ -60,7 +60,7 @@ ARG PERL_PACKAGE_REVISION=1nemoclaw1
 # Preserve NemoClaw libssh2 hardening on the Debian security fixes and build
 # the reviewed Python backport. Build native packages once and install the same
 # artifacts into the managed OpenClaw image.
-FROM node:24.18.1-trixie-slim@sha256:ac39e4b5fcb2b1b34b20364fd58b2e898f3bb80731ee6f62a7536f9df3d6aadc AS native-security-builder
+FROM node:24.22.1-trixie-slim@sha256:43b9ba1142b8dcf33fa8f922ca1be85714adc444e0586c7cf7726daaeabc1bea AS native-security-builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential=12.12 \
@@ -102,7 +102,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN bash /scripts/security/build-perl-security-packages.sh \
     /out "${PERL_VERSION}" "${PERL_SHA256}" "${PERL_PACKAGE_REVISION}"
 
-FROM node:24.18.1-trixie-slim@sha256:ac39e4b5fcb2b1b34b20364fd58b2e898f3bb80731ee6f62a7536f9df3d6aadc
+FROM node:24.22.1-trixie-slim@sha256:43b9ba1142b8dcf33fa8f922ca1be85714adc444e0586c7cf7726daaeabc1bea
 
 COPY --from=perl-builder /out /tmp/nemoclaw-native-security
 
@@ -437,7 +437,7 @@ COPY scripts/lib/reviewed-npm-identity.mts /scripts/lib/reviewed-npm-identity.mt
 COPY scripts/upgrade-bundled-npm.mts /scripts/upgrade-bundled-npm.mts
 COPY ci/reviewed-npm-audit.json /ci/reviewed-npm-audit.json
 
-# npm 11.16.0 in the pinned Node 24.18.1 image bundles affected tar 7.5.15.
+# The pinned Node image ships npm 11.19.1; verify its bundled tar before use.
 # Replace it before npm processes the reviewed npm archive.
 RUN node /scripts/patch-bundled-npm-tar.mts \
     --npm-root /usr/local/lib/node_modules/npm
@@ -511,7 +511,7 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
     OPENCLAW_LOCK_SHA256=none-legacy-fixture; \
     OPENCLAW_RECIPE='ignore-scripts+reviewed-lifecycle-v1'; \
     if [ "$OPENCLAW_VERSION" = "2026.9.2" ]; then \
-        OPENCLAW_LOCK_SHA256=4fe0de9e31190d30afbd811dae7aaddb98960dd81794443629d2a32f028a7f11; \
+        OPENCLAW_LOCK_SHA256=0b1253c6570f55881623961c856b430a17d4271f5efe8c5beffa7ac0fc8d0199; \
         ACTUAL_OPENCLAW_LOCK_SHA256="$(sha256sum /usr/local/lib/nemoclaw/openclaw-runtime/package-lock.json | awk '{print $1}')"; \
         [ "$ACTUAL_OPENCLAW_LOCK_SHA256" = "$OPENCLAW_LOCK_SHA256" ] \
             || { echo "Error: OpenClaw lock SHA-256 mismatch (expected $OPENCLAW_LOCK_SHA256, found $ACTUAL_OPENCLAW_LOCK_SHA256)"; exit 1; }; \
