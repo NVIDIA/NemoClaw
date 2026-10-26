@@ -32,6 +32,43 @@ function requireNormalizedSession(legacy: LegacySession) {
 }
 
 describe("onboard session normalization", () => {
+  it("retains only secret-free pending policy names across a session round trip", () => {
+    const pendingPolicySelection = {
+      sandboxName: "alpha",
+      sandboxIdentity: "sha256:" + "a".repeat(64),
+      tierName: "balanced",
+      presetNames: ["npm", "openclaw-pricing"],
+    };
+    const saved = JSON.parse(
+      JSON.stringify(
+        createSession({
+          sandboxName: "alpha",
+          pendingPolicySelection,
+        }),
+      ),
+    ) as ReturnType<typeof createSession>;
+    expect(normalizeSession(saved)?.pendingPolicySelection).toEqual(pendingPolicySelection);
+    const longPresetName = `custom-${"a".repeat(65)}`;
+    expect(
+      normalizeSession({
+        ...saved,
+        pendingPolicySelection: {
+          ...pendingPolicySelection,
+          presetNames: [longPresetName],
+        },
+      } as Parameters<typeof normalizeSession>[0])?.pendingPolicySelection?.presetNames,
+    ).toEqual([longPresetName]);
+    expect(() =>
+      normalizeSession({
+        ...saved,
+        pendingPolicySelection: {
+          ...pendingPolicySelection,
+          presetNames: ["npm=credential"],
+        },
+      } as Parameters<typeof normalizeSession>[0]),
+    ).toThrow("saved policy selection is invalid");
+  });
+
   it("preserves valid recovery-only cancellation state (#9833)", () => {
     const cancellationRecovery = {
       reason: "cancelled_after_sandbox_creation" as const,

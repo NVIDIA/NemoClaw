@@ -88,7 +88,13 @@ export async function requireNativeProviderPolicy(
     (settings as Record<string, unknown>).providers_v2_enabled !== "true"
   ) {
     throw new Error(
-      `Native local inference requires providers_v2_enabled=true on gateway '${gatewayName}'. Ask its administrator to review attached providers and enable composition with 'openshell settings set -g ${gatewayName} --global --key providers_v2_enabled --value true --yes', then retry. NemoClaw does not activate it on existing gateways.`,
+      // Keep each line short: onboard bounds every displayed diagnostic line.
+      [
+        `Native local inference requires providers_v2_enabled=true on gateway '${gatewayName}'.`,
+        "NemoClaw does not activate it on existing gateways. Ask its administrator to review attached providers and enable composition with:",
+        `  openshell settings set -g ${gatewayName} --global --key providers_v2_enabled --value true --yes`,
+        "Then retry.",
+      ].join("\n"),
     );
   }
   await requireSandboxPolicyAuthority(run);

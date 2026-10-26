@@ -144,7 +144,7 @@ jobs:
       - name: Set up Node for reviewed package download
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "24.18.1"
+          node-version: "24.22.1"
           registry-url: https://npm.pkg.github.com
           scope: "@nvidia"
 
@@ -249,7 +249,7 @@ jobs:
       - name: Set up Node for publication verification
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.1
+          node-version: 24.22.1
 
       - name: Install reviewed npm
         uses: ./.github/actions/setup-reviewed-npm
@@ -661,7 +661,7 @@ jobs:
       - name: Set up Node for trusted E2E planning
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.1
+          node-version: 24.22.1
 
       - name: Install reviewed npm for trusted E2E planning
         uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
@@ -997,7 +997,7 @@ jobs:
       - name: Set up Node for Spark plan compilation
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "24.18.1"
+          node-version: "24.22.1"
       - name: Install trusted Spark compiler dependencies
         uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
       - name: Install trusted Spark plan dependencies
@@ -1048,7 +1048,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@7fcbf13ecd7bc0ea835a949417cf9eb68067adf9
       - name: Set up the isolated Spark registry builder
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
         with:
@@ -1138,7 +1138,7 @@ jobs:
       - name: Set up Node for trusted qualification planning
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.1
+          node-version: 24.22.1
 
       - name: Install reviewed npm
         uses: ./.github/actions/setup-reviewed-npm
@@ -1673,7 +1673,7 @@ jobs:
       - name: Set up Node for candidate execution
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.1
+          node-version: 24.22.1
 
       - name: Install reviewed npm
         uses: ./.qualification-workflow/.github/actions/setup-reviewed-npm
@@ -2932,7 +2932,7 @@ jobs:
       - name: Set up Node for qualification aggregation
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.1
+          node-version: 24.22.1
 
       - name: Install reviewed npm
         uses: ./.qualification-aggregate/.github/actions/setup-reviewed-npm
@@ -3180,14 +3180,14 @@ jobs:
       # expect or the acceptance check no longer requires a PTY.
       - name: Install Deep Agents Code TUI host dependencies
         if: ${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' }}
-        uses: NVIDIA/NemoClaw/.github/actions/host-dependency-setup@d511d704980d651909b52b18ee42fad41a017b7d
+        uses: NVIDIA/NemoClaw/.github/actions/host-dependency-setup@e85857e2a7bfb2af01241ecbce5947ee774c1280
         with:
           packages: expect
 
       # Configure NEMOCLAW_TRACE_DIR before workspace prep so every child
       # command writes raw traces under runner temp, never under upload roots.
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@7fcbf13ecd7bc0ea835a949417cf9eb68067adf9
         with:
           build-cli: "false"
 
@@ -3235,12 +3235,12 @@ jobs:
             "${test_evidence_dir}/dcode-base-image.json"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@b1494a0828a80a8d5dc862effc9e85ac987f8b4a
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@3c6d991640414a2d78f95f629d67194d44829554
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Prepare native Podman E2E runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@22789bcaf835db7cf6390781c8d0f454f1e73dec
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@e85857e2a7bfb2af01241ecbce5947ee774c1280
         with:
           enabled: ${{ matrix.runtime_provider == 'podman' && 'true' || 'false' }}
 
@@ -3438,17 +3438,17 @@ jobs:
           persist-credentials: false
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@7fcbf13ecd7bc0ea835a949417cf9eb68067adf9
         with:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@b1494a0828a80a8d5dc862effc9e85ac987f8b4a
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@3c6d991640414a2d78f95f629d67194d44829554
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Prepare native Podman E2E runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@22789bcaf835db7cf6390781c8d0f454f1e73dec
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@e85857e2a7bfb2af01241ecbce5947ee774c1280
         with:
           enabled: ${{ matrix.runtime_provider == 'podman' && 'true' || 'false' }}
 
@@ -3731,7 +3731,7 @@ jobs:
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_CANDIDATE_VERSION: ${{ needs.generate-matrix.outputs.openshell_version }}
       NEMOCLAW_OPENSHELL_PIN_VERSION: ${{ needs.generate-matrix.outputs.openshell_version }}
-      DOCKER_GRPC_PROBE_IMAGE: "node:24.18.1-trixie-slim@sha256:ac39e4b5fcb2b1b34b20364fd58b2e898f3bb80731ee6f62a7536f9df3d6aadc"
+      DOCKER_GRPC_PROBE_IMAGE: "node:24.22.1-trixie-slim@sha256:43b9ba1142b8dcf33fa8f922ca1be85714adc444e0586c7cf7726daaeabc1bea"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -3743,12 +3743,12 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@7fcbf13ecd7bc0ea835a949417cf9eb68067adf9
         with:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@b1494a0828a80a8d5dc862effc9e85ac987f8b4a
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@3c6d991640414a2d78f95f629d67194d44829554
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -3819,12 +3819,12 @@ jobs:
           persist-credentials: false
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@7fcbf13ecd7bc0ea835a949417cf9eb68067adf9
         with:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@b1494a0828a80a8d5dc862effc9e85ac987f8b4a
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@3c6d991640414a2d78f95f629d67194d44829554
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -4105,7 +4105,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@7fcbf13ecd7bc0ea835a949417cf9eb68067adf9
         with:
           build-cli: "false"
 
@@ -4119,7 +4119,7 @@ jobs:
         uses: NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@2584abf0a4f739fa5f2e3fd92821ff78175b4115
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@b1494a0828a80a8d5dc862effc9e85ac987f8b4a
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@3c6d991640414a2d78f95f629d67194d44829554
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -4130,7 +4130,7 @@ jobs:
         run: npx tsx tools/e2e/runner-comparison.mts initialize
 
       - name: Prepare native Podman E2E runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@22789bcaf835db7cf6390781c8d0f454f1e73dec
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@e85857e2a7bfb2af01241ecbce5947ee774c1280
         with:
           enabled: ${{ matrix.runtime_provider == 'podman' && 'true' || 'false' }}
 
@@ -4281,17 +4281,17 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@7fcbf13ecd7bc0ea835a949417cf9eb68067adf9
         with:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@b1494a0828a80a8d5dc862effc9e85ac987f8b4a
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@3c6d991640414a2d78f95f629d67194d44829554
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Prepare native Podman E2E runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@22789bcaf835db7cf6390781c8d0f454f1e73dec
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@e85857e2a7bfb2af01241ecbce5947ee774c1280
         with:
           enabled: ${{ matrix.runtime_provider == 'podman' && 'true' || 'false' }}
 
@@ -4420,7 +4420,7 @@ jobs:
       - name: Set up Node for OpenShell dev artifact resolution
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.1
+          node-version: 24.22.1
 
       - name: Install reviewed npm
         uses: ./.trusted-openshell-dev-artifact/.github/actions/setup-reviewed-npm
@@ -4484,7 +4484,7 @@ jobs:
       - name: Set up Node.js for trusted OpenShell verification
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.1
+          node-version: 24.22.1
           package-manager-cache: false
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -4573,19 +4573,19 @@ jobs:
       # it after the trusted installer has consumed the verified OpenShell
       # assets and Docker credentials have been revoked.
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@7fcbf13ecd7bc0ea835a949417cf9eb68067adf9
         with:
           build-cli: "false"
 
       # The restore action executes the candidate CLI for its final identity
       # check. Candidate-controlled state starts with dependency preparation.
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@b1494a0828a80a8d5dc862effc9e85ac987f8b4a
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@3c6d991640414a2d78f95f629d67194d44829554
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Prepare native Podman E2E runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@22789bcaf835db7cf6390781c8d0f454f1e73dec
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@e85857e2a7bfb2af01241ecbce5947ee774c1280
         with:
           enabled: ${{ matrix.runtime_provider == 'podman' && 'true' || 'false' }}
 
@@ -4810,7 +4810,7 @@ jobs:
               http = true
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@7fcbf13ecd7bc0ea835a949417cf9eb68067adf9
         with:
           build-cli: "false"
 
@@ -5311,7 +5311,7 @@ jobs:
               http = true
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@7fcbf13ecd7bc0ea835a949417cf9eb68067adf9
         with:
           build-cli: "false"
 
@@ -5663,7 +5663,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@7fcbf13ecd7bc0ea835a949417cf9eb68067adf9
         with:
           build-cli: "false"
 
@@ -5677,7 +5677,7 @@ jobs:
         uses: NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@2584abf0a4f739fa5f2e3fd92821ff78175b4115
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@b1494a0828a80a8d5dc862effc9e85ac987f8b4a
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@3c6d991640414a2d78f95f629d67194d44829554
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -5688,7 +5688,7 @@ jobs:
         run: npx tsx tools/e2e/runner-comparison.mts initialize
 
       - name: Prepare native Podman E2E runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@22789bcaf835db7cf6390781c8d0f454f1e73dec
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@e85857e2a7bfb2af01241ecbce5947ee774c1280
         with:
           enabled: ${{ matrix.runtime_provider == 'podman' && 'true' || 'false' }}
 
@@ -5741,6 +5741,7 @@ jobs:
       E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "x86-64 NVIDIA GPU runner; rootless Podman 5.7; local Ollama"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/portable-hermes-finalization
       E2E_SOURCE_REVISION: ${{ inputs.checkout_sha || github.sha }}
+      NEMOCLAW_NATIVE_PODMAN_SERVICE_TASKS_MAX: "1024"
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_GATEWAY_RUNTIME: podman
@@ -5748,9 +5749,9 @@ jobs:
       NEMOCLAW_NON_INTERACTIVE: "1"
     steps:
       - name: Install Portable Podman host dependencies
-        uses: NVIDIA/NemoClaw/.github/actions/host-dependency-setup@d511d704980d651909b52b18ee42fad41a017b7d
+        uses: NVIDIA/NemoClaw/.github/actions/host-dependency-setup@e85857e2a7bfb2af01241ecbce5947ee774c1280
         with:
-          packages: conmon fuse-overlayfs golang-github-containers-common iptables nftables slirp4netns uidmap
+          packages: conmon crun fuse-overlayfs golang-github-containers-common iptables nftables slirp4netns uidmap
 
       - name: Check out trusted workflow cleanup authority
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -5831,6 +5832,161 @@ jobs:
           done
           echo /usr/bin >>"$GITHUB_PATH"
 
+      - name: Recover stale Docker isolation before Portable Podman E2E
+        uses: NVIDIA/NemoClaw/.github/actions/restore-native-podman-e2e@9650336899bf836db5844381a97cbc2b0fe4a2b8
+        with:
+          enabled: "true"
+
+      - name: Prepare Portable Podman 5.7 runtime
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@e85857e2a7bfb2af01241ecbce5947ee774c1280
+        with:
+          cleanup-fixture: /usr/local/libexec/nemoclaw/native-podman-e2e-restore.${{ github.run_id }}.${{ github.run_attempt }}
+          disable-container-cgroups: "true"
+          enabled: "true"
+          toolchain: portable-5.7
+          isolate-docker-cli: "false"
+          service-tasks-max: ${{ env.NEMOCLAW_NATIVE_PODMAN_SERVICE_TASKS_MAX }}
+
+      - name: Select pinned compatible Portable crun
+        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+        run: |
+          set -euo pipefail
+          # Ubuntu Noble's crun 1.14.1 rejects the OCI spec emitted by Podman 5.7.
+          # Keep the replacement beside the immutable cleanup fixture, outside
+          # the shared Podman toolchain root whose restore contract is closed.
+          runtime=/usr/local/libexec/nemoclaw/portable-crun.${{ github.run_id }}.${{ github.run_attempt }}
+          config="$RUNNER_TEMP/native-podman-e2e-containers.conf"
+          socket="${OPENSHELL_PODMAN_SOCKET:?}"
+          service=nemoclaw-native-podman-e2e.service
+          expected_sha=2aa6b7024a9c9f153895c0d11ae233d3758f54844011c3a039e3e89048d01d42
+          [[ "$(uname -m)" == x86_64 ]]
+          [[ "${CONTAINERS_CONF:?}" == "$config" && -f "$config" && ! -L "$config" ]]
+          [[ ! -e "$runtime" && ! -L "$runtime" ]]
+          ! grep -Fq '[engine.runtimes]' "$config"
+          download="$(mktemp "$RUNNER_TEMP/portable-crun.XXXXXXXX")"
+          trap 'rm -f -- "$download"' EXIT
+          curl --fail --location --silent --show-error --proto '=https' \
+            --proto-redir '=https' --tlsv1.2 \
+            --max-time 120 \
+            https://github.com/containers/crun/releases/download/1.28/crun-1.28-linux-amd64 \
+            --output "$download"
+          printf '%s  %s\n' "$expected_sha" "$download" | sha256sum --check --strict
+          sudo install --owner=root --group=root --mode=0755 "$download" "$runtime"
+          [[ "$(sudo stat -c '%u:%g:%a' "$runtime")" == 0:0:755 ]]
+          [[ "$(sudo sha256sum "$runtime" | cut -d ' ' -f1)" == "$expected_sha" ]]
+          [[ "$("$runtime" --version | head -n 1)" == 'crun version 1.28' ]]
+          printf '\n[engine.runtimes]\ncrun = ["%s"]\n' "$runtime" >>"$config"
+          /usr/bin/systemctl --user restart "$service"
+          /usr/bin/systemctl --user is-active --quiet "$service"
+          podman --url "unix://$socket" info --format json | jq -e --arg runtime "$runtime" '
+            (.host.ociRuntime.name // .Host.OCIRuntime.Name) == "crun" and
+            (.host.ociRuntime.path // .Host.OCIRuntime.Path) == $runtime
+          ' >/dev/null
+          podman info --format json | jq -e --arg runtime "$runtime" '
+            (.host.ociRuntime.path // .Host.OCIRuntime.Path) == $runtime
+          ' >/dev/null
+          jq -n --arg path "$runtime" --arg sha256 "$expected_sha" \
+            '{schemaVersion: 1, runtime: "crun", version: "1.28", path: $path,
+              sha256: $sha256, remoteServiceSelected: true, localCliSelected: true}' \
+            >"$RUNNER_TEMP/portable-podman-crun-authority.json"
+
+      - name: Set Portable Podman registry process headroom
+        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+        run: |
+          set -euo pipefail
+          # The shared setup action is pinned and runs before candidate checkout.
+          # The job selects the limit; the action owns service-unit rendering and startup.
+          minimum=128
+          service_tasks_max="${NEMOCLAW_NATIVE_PODMAN_SERVICE_TASKS_MAX:?}"
+          config="$RUNNER_TEMP/native-podman-e2e-containers.conf"
+          [[ "${CONTAINERS_CONF:?}" == "$config" && -f "$config" && ! -L "$config" ]]
+          [[ "$(grep -Fxc '[containers]' "$config")" == 1 ]]
+          [[ "$(grep -Fxc '[engine]' "$config")" == 1 ]]
+          if grep -Eq '^[[:space:]]*(pids_limit|cgroup_manager)[[:space:]]*=' "$config"; then
+            echo "::error::Portable Podman containers.conf already sets process or cgroup policy" >&2
+            exit 1
+          fi
+          [[ "$(grep -Fxc 'cgroups = "disabled"' "$config")" == 1 ]]
+          # Podman can place a rootless registry in a sibling scope even with
+          # container cgroups disabled. The live probe verifies its actual
+          # cgroup and every limiting ancestor after registry HTTP readiness.
+          service=nemoclaw-native-podman-e2e.service
+          service_pid="$(/usr/bin/systemctl --user show "$service" --property=MainPID --value)"
+          [[ "$service_pid" =~ ^[1-9][0-9]*$ ]]
+          # Portable host preparation changes the client configuration and podman.service.
+          # The registry socket belongs to this separate service and must retain this configuration.
+          service_config="$(tr '\0' '\n' <"/proc/$service_pid/environ" | sed -n 's/^CONTAINERS_CONF=//p')"
+          [[ "$service_config" == "$config" ]] || {
+            echo "::error::Portable registry Podman service is using a different containers.conf" >&2
+            exit 1
+          }
+          printf 'NEMOCLAW_NATIVE_PODMAN_SERVICE_PID=%s\n' "$service_pid" >>"$GITHUB_ENV"
+          nproc_soft="$(awk '$1 == "Max" && $2 == "processes" { print $3; exit }' "/proc/$service_pid/limits" || true)"
+          user_tasks="$(ps -u "$(id -u)" -L --no-headers | wc -l | tr -d ' ')" || user_tasks=unavailable
+          host_max="$(cat /proc/sys/kernel/threads-max 2>/dev/null || true)"
+          host_tasks="$(awk '{ split($4, tasks, "/"); print tasks[2] }' /proc/loadavg 2>/dev/null || true)"
+          tasks_max="$(/usr/bin/systemctl --user show "$service" --property=TasksMax --value || true)"
+          tasks_current="$(/usr/bin/systemctl --user show "$service" --property=TasksCurrent --value || true)"
+          limit_nproc="$(/usr/bin/systemctl --user show "$service" --property=LimitNPROC --value || true)"
+          failure=none
+          if [[ "$tasks_max" != "$service_tasks_max" ]]; then
+            failure=service_tasks_configuration
+          fi
+          if [[ ! "$user_tasks" =~ ^[0-9]+$ || -z "$tasks_max" || -z "$tasks_current" || -z "$limit_nproc" ]] || \
+            { [[ "$nproc_soft" != unlimited ]] && \
+              { [[ ! "$nproc_soft" =~ ^[0-9]+$ ]] || (( nproc_soft - user_tasks < minimum )); }; }; then
+            failure=rlimit_nproc
+          fi
+          if [[ ! "$tasks_max" =~ ^[0-9]+$ || ! "$tasks_current" =~ ^[0-9]+$ ]] || \
+            (( tasks_max - tasks_current < minimum )); then
+            failure=service_tasks
+          fi
+          if [[ ! "$host_max" =~ ^[0-9]+$ || ! "$host_tasks" =~ ^[0-9]+$ ]] || \
+            (( host_max - host_tasks < minimum )); then
+            failure=host_threads
+          fi
+          group="$(awk -F: '$1 == "0" { print $3; exit }' "/proc/$service_pid/cgroup")"
+          cgroups='[]'
+          if [[ "$group" != /* || "$group" == *'..'* ]]; then
+            failure=service_cgroup
+            group=/
+          fi
+          depth=0
+          while (( depth < 24 )); do
+            [[ "$group" != / ]] || break
+            current="$(cat "/sys/fs/cgroup$group/pids.current" 2>/dev/null || true)"
+            maximum="$(cat "/sys/fs/cgroup$group/pids.max" 2>/dev/null || true)"
+            cgroups="$(jq -cn --argjson rows "$cgroups" \
+              --arg path "$group" --arg current "$current" --arg maximum "$maximum" \
+              '$rows + [{path: $path, current: $current, maximum: $maximum}]')"
+            if [[ ! "$current" =~ ^[0-9]+$ ]] || \
+              { [[ "$maximum" != max ]] && \
+                { [[ ! "$maximum" =~ ^[0-9]+$ ]] || (( maximum - current < minimum )); }; }; then
+              failure=cgroup_pids
+            fi
+            group="${group%/*}"
+            [[ -n "$group" ]] || group=/
+            depth=$((depth + 1))
+          done
+          if [[ "$group" != / ]]; then failure=cgroup_depth; fi
+          jq -n --arg failure "$failure" --argjson minimum "$minimum" \
+            --arg containerCgroups observed-after-registry-launch \
+            --arg tasksMax "$tasks_max" --arg tasksCurrent "$tasks_current" \
+            --arg limitNproc "$limit_nproc" \
+            --arg nprocSoft "$nproc_soft" --arg userTasks "$user_tasks" \
+            --arg hostMax "$host_max" --arg hostTasks "$host_tasks" --argjson cgroups "$cgroups" \
+            '{schemaVersion: 1, failure: $failure, minimumHeadroom: $minimum,
+              containerCgroups: $containerCgroups,
+              service: {tasksMax: $tasksMax, tasksCurrent: $tasksCurrent, limitNproc: $limitNproc,
+                nprocSoft: $nprocSoft, userTasks: $userTasks},
+              host: {threadsMax: $hostMax, tasks: $hostTasks}, cgroups: $cgroups}' \
+            >"$RUNNER_TEMP/portable-podman-process-headroom.json"
+          if [[ "$failure" != none ]]; then
+            echo "::error::Portable Podman infrastructure has insufficient process headroom ($failure)" >&2
+            exit 1
+          fi
+          printf 'PORTABLE_REGISTRY_MINIMUM_PROCESS_HEADROOM=%s\n' "$minimum" >>"$GITHUB_ENV"
+
       - name: Check out the exact candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -5841,13 +5997,23 @@ jobs:
 
       - *dockerhub-auth
 
+      - name: Prove Portable Podman OCI execution before Hermes
+        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+        run: |
+          set -euo pipefail
+          # Exercise the API service used by the managed registry before candidate behavior.
+          podman --url "unix://${OPENSHELL_PODMAN_SOCKET:?}" run --rm --pull=always \
+            --entrypoint /bin/sh \
+            docker.io/library/registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373 \
+            -c ':'
+
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@7fcbf13ecd7bc0ea835a949417cf9eb68067adf9
         with:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@b1494a0828a80a8d5dc862effc9e85ac987f8b4a
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@3c6d991640414a2d78f95f629d67194d44829554
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -5856,19 +6022,6 @@ jobs:
           set -euo pipefail
           npm run catalog:compile
           npm run build:policy-boundary
-
-      - name: Recover stale Docker isolation before Portable Podman E2E
-        uses: NVIDIA/NemoClaw/.github/actions/restore-native-podman-e2e@9650336899bf836db5844381a97cbc2b0fe4a2b8
-        with:
-          enabled: "true"
-
-      - name: Prepare Portable Podman 5.7 runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@22789bcaf835db7cf6390781c8d0f454f1e73dec
-        with:
-          cleanup-fixture: /usr/local/libexec/nemoclaw/native-podman-e2e-restore.${{ github.run_id }}.${{ github.run_attempt }}
-          enabled: "true"
-          toolchain: portable-5.7
-          isolate-docker-cli: "false"
 
       - name: Run Portable Hermes finalization live Vitest test
         shell: /bin/bash --noprofile --norc -e -o pipefail {0}
@@ -5914,11 +6067,25 @@ jobs:
             >"$E2E_ARTIFACT_DIR/host-authority.json"
 
           podman build \
+            --runtime "/usr/local/libexec/nemoclaw/portable-crun.${{ github.run_id }}.${{ github.run_attempt }}" \
             --file agents/hermes/Dockerfile.base \
             --tag localhost/nemoclaw-hermes-base:portable-e2e \
             .
           npx tsx tools/e2e/live-vitest-invocation.mts run \
             --test-path test/e2e/live/portable-profile-rootless-linux.test.ts
+
+      - name: Retain Portable Podman process headroom
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in portable-podman-process-headroom portable-podman-crun-authority; do
+            source="$RUNNER_TEMP/$name.json"
+            if [[ ! -f "$source" || -L "$source" ]]; then continue; fi
+            [[ ! -L "$E2E_ARTIFACT_DIR" ]]
+            install -d -m 0700 "$E2E_ARTIFACT_DIR"
+            install -m 0600 "$source" "$E2E_ARTIFACT_DIR/$name.json"
+          done
 
       - name: Upload Portable Hermes finalization artifacts
         if: always()
@@ -5927,11 +6094,78 @@ jobs:
           name: e2e-portable-hermes-finalization
           path: e2e-artifacts/live/portable-hermes-finalization/
 
+      - name: Remove pinned Portable crun
+        if: always()
+        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+        run: |
+          set -euo pipefail
+          runtime=/usr/local/libexec/nemoclaw/portable-crun.${{ github.run_id }}.${{ github.run_attempt }}
+          if ! sudo test -e "$runtime" && ! sudo test -L "$runtime"; then exit 0; fi
+          uid="$(id -u)"
+          manager_state="$(/usr/bin/systemctl is-active "user@${uid}.service" 2>/dev/null || true)"
+          if [[ "$manager_state" == active ]]; then
+            service=nemoclaw-native-podman-e2e
+            runtime_dir="/run/user/$uid"
+            user_systemctl() {
+              env DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime_dir/bus" \
+                XDG_RUNTIME_DIR="$runtime_dir" /usr/bin/systemctl --user "$@"
+            }
+            user_systemctl stop "$service.socket" "$service.service" 2>/dev/null || true
+            socket_state="$(user_systemctl is-active "$service.socket" 2>/dev/null || true)"
+            service_state="$(user_systemctl is-active "$service.service" 2>/dev/null || true)"
+            if [[ "$socket_state" != inactive && "$socket_state" != unknown ]] ||
+              [[ "$service_state" != inactive && "$service_state" != unknown ]]; then
+              echo "::error::Portable crun cleanup could not prove Podman socket and service inactive" >&2
+              exit 1
+            fi
+          elif [[ "$manager_state" != inactive ]]; then
+            echo "::error::Portable crun cleanup could not prove user manager inactive" >&2
+            exit 1
+          fi
+          sudo test -f "$runtime"
+          sudo test ! -L "$runtime"
+          # A failed install can leave a partial root-owned file before chmod.
+          [[ "$(sudo stat -c '%u:%g' "$runtime")" == 0:0 ]]
+          sudo rm -f -- "$runtime"
+          sudo test ! -e "$runtime"
+
       - name: Restore Docker and retire Portable Podman runtime
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/restore-native-podman-e2e@9650336899bf836db5844381a97cbc2b0fe4a2b8
         with:
           enabled: "true"
+
+      - name: Remove pinned Portable crun after restoration
+        if: always()
+        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+        run: |
+          set -euo pipefail
+          runtime=/usr/local/libexec/nemoclaw/portable-crun.${{ github.run_id }}.${{ github.run_attempt }}
+          if ! sudo test -e "$runtime" && ! sudo test -L "$runtime"; then exit 0; fi
+          uid="$(id -u)"
+          manager_state="$(/usr/bin/systemctl is-active "user@${uid}.service" 2>/dev/null || true)"
+          if [[ "$manager_state" == active ]]; then
+            runtime_dir="/run/user/$uid"
+            user_systemctl() {
+              env DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime_dir/bus" \
+                XDG_RUNTIME_DIR="$runtime_dir" /usr/bin/systemctl --user "$@"
+            }
+            socket_state="$(user_systemctl is-active nemoclaw-native-podman-e2e.socket 2>/dev/null || true)"
+            service_state="$(user_systemctl is-active nemoclaw-native-podman-e2e.service 2>/dev/null || true)"
+            if [[ "$socket_state" != inactive && "$socket_state" != unknown ]] ||
+              [[ "$service_state" != inactive && "$service_state" != unknown ]]; then
+              echo "::error::Portable crun cleanup after restoration could not prove Podman inactive" >&2
+              exit 1
+            fi
+          elif [[ "$manager_state" != inactive ]]; then
+            echo "::error::Portable crun cleanup after restoration could not prove user manager inactive" >&2
+            exit 1
+          fi
+          sudo test -f "$runtime"
+          sudo test ! -L "$runtime"
+          [[ "$(sudo stat -c '%u:%g' "$runtime")" == 0:0 ]]
+          sudo rm -f -- "$runtime"
+          sudo test ! -e "$runtime"
 
       - name: Remove immutable native Podman cleanup fixture
         if: always()
@@ -5989,7 +6223,7 @@ jobs:
     steps:
       - name: Install native Podman host dependencies
         if: ${{ matrix.runtime_provider == 'podman' }}
-        uses: NVIDIA/NemoClaw/.github/actions/host-dependency-setup@d511d704980d651909b52b18ee42fad41a017b7d
+        uses: NVIDIA/NemoClaw/.github/actions/host-dependency-setup@e85857e2a7bfb2af01241ecbce5947ee774c1280
         with:
           packages: conmon fuse-overlayfs golang-github-containers-common iptables nftables slirp4netns uidmap
 
@@ -6073,12 +6307,12 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@7fcbf13ecd7bc0ea835a949417cf9eb68067adf9
         with:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@b1494a0828a80a8d5dc862effc9e85ac987f8b4a
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@3c6d991640414a2d78f95f629d67194d44829554
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -6090,7 +6324,7 @@ jobs:
           ENV: /dev/null
           NODE_OPTIONS: ""
         with:
-          node-version: "24.18.1"
+          node-version: "24.22.1"
 
       - name: Reinstall reviewed npm after Node reassertion
         uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
@@ -6102,7 +6336,7 @@ jobs:
           enabled: "true"
 
       - name: Prepare native Podman E2E runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@22789bcaf835db7cf6390781c8d0f454f1e73dec
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@e85857e2a7bfb2af01241ecbce5947ee774c1280
         with:
           enabled: ${{ matrix.runtime_provider == 'podman' && 'true' || 'false' }}
 
@@ -6277,7 +6511,7 @@ jobs:
       - name: Set up Node for Jetson controller
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.1
+          node-version: 24.22.1
 
       - name: Install reviewed npm
         uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
@@ -6328,7 +6562,7 @@ jobs:
       - name: Set up Node for Station controller
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.1
+          node-version: 24.22.1
 
       - name: Install reviewed npm
         uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
@@ -6407,22 +6641,22 @@ jobs:
       # removalCondition: remove when the hosted runner supplies expect or the
       # cloud-onboard acceptance check no longer requires a PTY.
       - name: Install cloud-onboard DCode TUI host dependencies
-        uses: NVIDIA/NemoClaw/.github/actions/host-dependency-setup@d511d704980d651909b52b18ee42fad41a017b7d
+        uses: NVIDIA/NemoClaw/.github/actions/host-dependency-setup@e85857e2a7bfb2af01241ecbce5947ee774c1280
         with:
           packages: expect
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@7fcbf13ecd7bc0ea835a949417cf9eb68067adf9
         with:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@b1494a0828a80a8d5dc862effc9e85ac987f8b4a
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@3c6d991640414a2d78f95f629d67194d44829554
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Prepare native Podman E2E runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@22789bcaf835db7cf6390781c8d0f454f1e73dec
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@e85857e2a7bfb2af01241ecbce5947ee774c1280
         with:
           enabled: ${{ matrix.runtime_provider == 'podman' && 'true' || 'false' }}
 
@@ -6555,17 +6789,17 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@7fcbf13ecd7bc0ea835a949417cf9eb68067adf9
         with:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@b1494a0828a80a8d5dc862effc9e85ac987f8b4a
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@3c6d991640414a2d78f95f629d67194d44829554
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Prepare native Podman E2E runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@22789bcaf835db7cf6390781c8d0f454f1e73dec
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@e85857e2a7bfb2af01241ecbce5947ee774c1280
         with:
           enabled: ${{ matrix.runtime_provider == 'podman' && 'true' || 'false' }}
 

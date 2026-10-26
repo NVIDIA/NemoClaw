@@ -306,7 +306,7 @@ describe("sandbox inference route reservation", () => {
         await fs.rm(home, { recursive: true, force: true });
       }
     },
-    testTimeout(15_000),
+    testTimeout(30_000), // cold re-import under shard coverage overruns 5 s (#12818)
   );
   it("rejects creation registration from a foreign reservation session and preserves the pending row (#10214)", async () => {
     const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-route-reservation-"));

@@ -159,6 +159,20 @@ function stageReviewedNpmAuditPolicy(rootDir: string, buildCtx: string): void {
   normalizeReadModesForDockerCopy(stagedCiDir);
 }
 
+function stageSecurityInventorySources(rootDir: string, buildCtx: string): void {
+  for (const relativePath of [
+    "scripts/security/security-package-inventory.mts",
+    "scripts/security/standalone-security-package-inventory.mts",
+    "src/lib/sandbox-base-image/security-package-specs.ts",
+  ]) {
+    const target = path.join(buildCtx, relativePath);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.copyFileSync(path.join(rootDir, relativePath), target);
+    fs.chmodSync(target, 0o644);
+  }
+  normalizeReadModesForDockerCopy(path.join(buildCtx, "scripts", "security"));
+}
+
 function stageNativeInferenceConfig(rootDir: string, buildCtx: string): void {
   const relativeDir = path.join("src", "lib", "inference", "native-provider");
   fs.mkdirSync(path.join(buildCtx, relativeDir), { recursive: true });
@@ -209,6 +223,7 @@ function stageLegacySandboxBuildContext(
   );
   stageNativeInferenceConfig(rootDir, buildCtx);
   stageManagedStartupRuntimeSources(rootDir, buildCtx);
+  stageSecurityInventorySources(rootDir, buildCtx);
   normalizeReadModesForDockerCopy(path.join(buildCtx, "src"));
   fs.rmSync(path.join(buildCtx, "nemoclaw", "node_modules"), {
     recursive: true,
@@ -381,6 +396,7 @@ function stageOptimizedSandboxBuildContext(
   );
   stageNativeInferenceConfig(rootDir, buildCtx);
   stageManagedStartupRuntimeSources(rootDir, buildCtx);
+  stageSecurityInventorySources(rootDir, buildCtx);
   normalizeReadModesForDockerCopy(path.join(buildCtx, "src"));
   fs.copyFileSync(
     path.join(rootDir, "scripts", "patch-openclaw-tool-catalog.mts"),

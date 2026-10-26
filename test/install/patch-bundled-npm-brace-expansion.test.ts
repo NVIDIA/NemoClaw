@@ -56,6 +56,7 @@ function fixture(braceExpansionVersion: string) {
   });
   fs.mkdirSync(path.join(replacementRoot, "dist"));
   fs.writeFileSync(path.join(replacementRoot, "dist", "fixed.js"), "fixed\n");
+  fs.chmodSync(replacementRoot, 0o700);
   return { npmRoot, replacementRoot };
 }
 
@@ -75,10 +76,18 @@ describe("npm bundled brace-expansion remediation", () => {
   it("replaces the complete affected private package tree", () => {
     const target = fixture(AFFECTED_BRACE_EXPANSION_VERSION);
 
+    const installed = path.join(target.npmRoot, "node_modules", "brace-expansion");
+    const originalMetadata = fs.statSync(path.join(target.replacementRoot, "package.json"));
     expect(patchBundledNpmBraceExpansion(target)).toMatchObject({
       braceExpansionVersion: FIXED_BRACE_EXPANSION_VERSION,
       npmVersion: "12.0.2",
       state: "fixed",
+    });
+    expect(fs.statSync(installed).mode & 0o777).toBe(0o755);
+    expect(fs.statSync(path.join(installed, "package.json"))).toMatchObject({
+      uid: originalMetadata.uid,
+      gid: originalMetadata.gid,
+      mode: originalMetadata.mode,
     });
     expect(
       fs.existsSync(path.join(target.npmRoot, "node_modules", "brace-expansion", "old.js")),
@@ -132,7 +141,13 @@ describe("npm bundled brace-expansion remediation", () => {
 
   it("is idempotent when npm already bundles the fixed release", () => {
     const target = fixture(FIXED_BRACE_EXPANSION_VERSION);
+    const installed = path.join(target.npmRoot, "node_modules", "brace-expansion");
+    fs.chmodSync(installed, 0o700);
     expect(patchBundledNpmBraceExpansion(target)).toMatchObject({ state: "fixed" });
+    expect(fs.statSync(installed).mode & 0o777).toBe(0o755);
+    fs.chmodSync(installed, 0o700);
+    patchBundledNpmBraceExpansionFromRegistry(target.npmRoot, { commandRunner: vi.fn() });
+    expect(fs.statSync(installed).mode & 0o777).toBe(0o755);
     expect(
       fs.existsSync(path.join(target.npmRoot, "node_modules", "brace-expansion", "old.js")),
     ).toBe(true);

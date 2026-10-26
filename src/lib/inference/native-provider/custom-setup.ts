@@ -19,8 +19,18 @@ import {
   hasBedrockRuntimeAwsAuthEnv,
 } from "../bedrock-runtime";
 import { ensureBedrockRuntimeAdapter } from "../bedrock-runtime-adapter";
+import { PERSONAL_POLICY_TIER_NAME } from "../../policy/tiers";
 
-/** Existing shared-route sandboxes retain their route until recreated. */
+export { isHostedCustomEndpoint };
+
+/**
+ * Existing shared-route sandboxes retain their route until recreated.
+ *
+ * A Personal sandbox keeps a new custom endpoint on the shared inference.local
+ * route. OpenShell rejects Personal's hostless port-443 rule beside an attached
+ * provider endpoint on the same port (NVIDIA/OpenShell#4662), so a native
+ * provider would make the Personal policy unappliable.
+ */
 export function usesCustomNativeOnboarding(
   provider: string,
   endpointUrl: string | null,
@@ -32,13 +42,14 @@ export function usesCustomNativeOnboarding(
       }
     | null
     | undefined,
+  policyTier: string | undefined = process.env.NEMOCLAW_POLICY_TIER,
 ): boolean {
+  const personal = policyTier?.trim().toLowerCase() === PERSONAL_POLICY_TIER_NAME;
   return Boolean(
     sandboxName &&
     isHostedCustomEndpoint(provider, endpointUrl) &&
-    (!recorded ||
-      recorded.pendingRouteReservation ||
-      recorded.nativeHostedProviderAttachment?.custom),
+    (recorded?.nativeHostedProviderAttachment?.custom ||
+      (!personal && (!recorded || recorded.pendingRouteReservation))),
   );
 }
 
@@ -67,6 +78,8 @@ export async function prepareCustomNativeProvider(input: {
   credentialValue: string | null;
   adapter: OpenShellProviderAdapter;
   recordedAttachment?: NativeProviderAttachment;
+  /** Registry sandbox that owns `recordedAttachment`. */
+  recordedSandboxName?: string | null;
   lookup?: EndpointDnsLookupFn;
   trustedPrivateHosts?: readonly string[];
   ensureBedrockAdapter?: typeof ensureBedrockRuntimeAdapter;
@@ -118,9 +131,10 @@ export async function prepareCustomNativeProvider(input: {
     ...(bedrock ? { adapterEndpointUrl: BEDROCK_RUNTIME_ADAPTER_OPENAI_BASE_URL } : {}),
   } satisfies Omit<CustomNativeBinding, "provider" | "api"> & { provider: string; api: string });
   const lifecycle = nativeProviderLifecycle(definition);
+  const gatewayAuthority = input.readAuthority(input.gatewayName, definition.providerName);
   const expected = lifecycle.resolveGatewayNativeProviderAuthority({
     gatewayName: input.gatewayName,
-    gatewayAuthority: input.readAuthority(input.gatewayName, definition.providerName),
+    gatewayAuthority,
     recordedAttachment: sameBinding ? previous : undefined,
   });
   // A credential key name alone cannot authorize reuse at a different endpoint or API.
@@ -147,6 +161,9 @@ export async function prepareCustomNativeProvider(input: {
     // Model changes and rebuilds reuse verified ownership without rotating credentials.
     credentialValue,
     ...(expected ? { expected } : {}),
+    ...(expected && !gatewayAuthority && input.recordedSandboxName
+      ? { recordedSandboxName: input.recordedSandboxName }
+      : {}),
   });
   await lifecycle.persistNativeProviderAuthority({
     adapter: input.adapter,

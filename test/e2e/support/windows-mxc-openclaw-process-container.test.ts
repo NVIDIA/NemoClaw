@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
+import { boundedTestTempRoot } from "../../helpers/bounded-temp-root";
 import { sha256WindowsOpenClawArtifactTree } from "../../../tools/e2e/windows-mxc-openclaw-artifact-tree.mts";
 import {
   allowlistedWindowsProcessEnvironment,
@@ -1112,7 +1113,9 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
   it.runIf(process.platform !== "win32")(
     "rejects unsupported entries in the OpenClaw artifact tree (#8178)",
     async () => {
-      const artifact = fs.mkdtempSync(path.join("/tmp", "nemoclaw-mxc-socket-"));
+      const artifact = fs.mkdtempSync(
+        path.join(boundedTestTempRoot("nc-XXXXXX/runtime.sock", 104), "nc-"),
+      );
       roots.push(artifact);
       const socketPath = path.join(artifact, "runtime.sock");
       const server = net.createServer();

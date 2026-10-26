@@ -295,6 +295,53 @@ describe("CLI OpenShell sandbox policy writer", () => {
     ]);
   });
 
+  it("reports an allowlisted reason for an unconfirmed policy submission", async () => {
+    const stderr =
+      "Error:   × code: 'The system is not in a state required for the operation's execution', " +
+      'message: "network endpoint ambiguity validation failed: Authorization: Bearer nvapi-secret-value"';
+    const writer = createCliOpenShellSandboxPolicyWriter({
+      capture: vi.fn((_args: string[]) => captured({ status: 1, output: "", stderr })),
+    });
+
+    const { outcome } = await writer.setSandboxPolicy({
+      target: selectedOpenShellGateway(),
+      sandboxName: "alpha",
+      document: POLICY,
+    });
+    expect(outcome.kind).toBe("ambiguous");
+    const detail = outcome.kind === "ambiguous" ? outcome.detail : "";
+    expect(detail).toBe(
+      "OpenShell did not confirm the policy submission: network endpoint ambiguity validation failed.",
+    );
+    expect(detail).not.toContain("nvapi-secret-value");
+  });
+
+  it("replaces an unknown ambiguous diagnostic with a fixed message", async () => {
+    const opaqueValue = "sk-live-opaque-unlabeled-value";
+    const writer = createCliOpenShellSandboxPolicyWriter({
+      capture: vi.fn((_args: string[]) =>
+        captured({
+          status: 1,
+          output: "",
+          stderr: `\u001b[31mfailed ${opaqueValue}\u0007\u001b[0m`,
+        }),
+      ),
+    });
+
+    const { outcome } = await writer.setSandboxPolicy({
+      target: selectedOpenShellGateway(),
+      sandboxName: "alpha",
+      document: POLICY,
+    });
+
+    expect(outcome).toEqual({
+      kind: "ambiguous",
+      detail: "OpenShell did not confirm the policy submission.",
+    });
+    expect(JSON.stringify(outcome)).not.toContain(opaqueValue);
+    expect(JSON.stringify(outcome)).not.toMatch(/[\u0000-\u001f\u007f]/u);
+  });
+
   it("rejects an invalid sandbox name before invoking OpenShell", async () => {
     const capture = vi.fn(() => captured({ output: "" }));
     const writer = createCliOpenShellSandboxPolicyWriter({ capture });

@@ -222,15 +222,15 @@ describe("MCP tool discovery image contract", () => {
       relativePath: "managed-startup-image-runtime.bundle",
     },
     {
-      expectedHash: "6c66bda4ed6f5844dd7a3e8108b9c2747caf132ed244bb2129cc92844ad6cc9b",
+      expectedHash: "e639c9b532e145ffad3486d39f899a63fabcc845fbbd4a19294b2e5c2853e495",
       relativePath: "mcp-tool-discovery/BUNDLED_PACKAGES.json",
     },
     {
-      expectedHash: "89587c2216914dd4c98933bb43d26b445086938f2dce7fe56d60ddf5d61a513a",
+      expectedHash: "3ac4c12b0946565b6f5e2066c77758b7e95f2a3e24c37e56bc82aca6e12feb4a",
       relativePath: "mcp-tool-discovery/THIRD_PARTY_LICENSES.txt",
     },
     {
-      expectedHash: "40452d737095fd4b9d2f69d483ae9da4b2074fbef5018a3a88df4095c2dec5d4",
+      expectedHash: "c5e79087da4479b2937cc17b78d9bb6f0844e6ef14e356c7b32523ce0530fde0",
       relativePath: "mcp-tool-discovery/mcp-tool-discovery.bundle",
     },
   ])("pins the reviewed image runtime artifacts exactly", ({ expectedHash, relativePath }) => {
@@ -560,7 +560,7 @@ case "$invocation" in
     ;;
   3)
     echo 'npm error code ENOTCACHED' >&2
-    echo 'npm error request to https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.31.0.tgz failed: cache mode is only-if-cached but no cached response is available.' >&2
+    echo 'npm error request to https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.32.0.tgz failed: cache mode is only-if-cached but no cached response is available.' >&2
     exit 1
     ;;
   4|5)
@@ -599,9 +599,9 @@ exit 0
           "ci --ignore-scripts --no-audit --no-fund --no-progress",
           "ls --all --json --ignore-scripts --no-audit --no-fund --no-progress",
           "ci --ignore-scripts --no-audit --no-fund --no-progress --offline",
-          "cache add https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.31.0.tgz",
-          "cache add https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.31.0.tgz",
-          "cache add https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.31.0.tgz",
+          "cache add https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.32.0.tgz",
+          "cache add https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.32.0.tgz",
+          "cache add https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.32.0.tgz",
           "ci --ignore-scripts --no-audit --no-fund --no-progress --offline",
         ]);
       } finally {
