@@ -510,6 +510,7 @@ export function createCliOpenShellSandboxSessionExecutor(
       const stdinIsTty = (deps.stdinIsTty ?? (() => Boolean(process.stdin.isTTY)))();
       let cancelled = false;
       let finished = false;
+      let stdinError: Error | undefined;
       let child: CliOpenShellSessionChild | undefined;
       const spawnSession = (executable: string, argv: readonly string[], stdio: StdioOptions) => {
         const spawnChild: CliOpenShellSessionSpawner =
@@ -537,7 +538,10 @@ export function createCliOpenShellSandboxSessionExecutor(
                   "inherit",
                   "inherit",
                 ]);
-                if (Buffer.isBuffer(input)) feedCapturedProcessStdin(session, input);
+                if (Buffer.isBuffer(input))
+                  feedCapturedProcessStdin(session, input, (error) => {
+                    stdinError ??= error;
+                  });
                 return session;
               },
               deps.signalSource,
@@ -553,7 +557,10 @@ export function createCliOpenShellSandboxSessionExecutor(
           }
         }
         return {
-          outcome: sessionOutcome(result, cancelled),
+          outcome: sessionOutcome(
+            stdinError ? { ...result, error: result.error ?? stdinError } : result,
+            cancelled,
+          ),
           stdout: result.stdout ?? "",
           stderr: result.stderr ?? "",
           release: result.releaseSignals ?? (() => {}),

@@ -146,6 +146,23 @@ describe("runCapturedProcess", () => {
     expect(spawnChild.mock.calls[0]?.[2]).toEqual(["pipe", "pipe", "pipe"]);
     expect(end).toHaveBeenCalledWith(Buffer.from("ping\n"));
   });
+
+  it("reports a buffered stdin write failure even when the child exits successfully (#13621)", async () => {
+    const harness = dispatchHarness();
+    const stdin = new EventEmitter();
+    harness.child.stdin = { on: stdin.on.bind(stdin), end: vi.fn() };
+    const pending = runCapturedProcess(
+      "openshell",
+      ["sandbox", "exec"],
+      { stdinIsTty: false, stdin: Buffer.from("ping\n") },
+      { signalSource: harness.signalSource, spawnChild: () => harness.child },
+    );
+
+    stdin.emit("error", Object.assign(new Error("stdin closed early"), { code: "EPIPE" }));
+    harness.childEvents.emit("close", 0, null);
+
+    expect(await pending).toMatchObject({ status: 0, error: { code: "EPIPE" } });
+  });
 });
 describe("capturedProcessStdio", () => {
   it("closes an idle input pipe when stdin is disabled (#11371)", () => {

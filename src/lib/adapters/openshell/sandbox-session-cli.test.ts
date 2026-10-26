@@ -152,6 +152,23 @@ describe("OpenShell sessions", () => {
     },
   );
 
+  it.each(["capture", "inherit"] as const)(
+    "fails a %s session when buffered stdin cannot be delivered (#13621)",
+    async (output) => {
+      const f = sessionHarness(false);
+      const stdin = new EventEmitter();
+      f.child.stdin = { on: stdin.on.bind(stdin), end: vi.fn() };
+      const session = f.executor.start({ ...command, output, stdin: Buffer.from("ping\n") });
+
+      stdin.emit("error", Object.assign(new Error("stdin closed early"), { code: "EPIPE" }));
+      f.events.emit("close", 0, null);
+
+      const completed = await session.completion;
+      expect(completed.outcome).toMatchObject({ kind: "failed", reason: "invocation" });
+      completed.release();
+    },
+  );
+
   it("captures a gateway-scoped command and withholds terminal stdin", async () => {
     const f = sessionHarness();
     const session = f.executor.start(command);

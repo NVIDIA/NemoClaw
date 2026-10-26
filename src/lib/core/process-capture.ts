@@ -43,10 +43,15 @@ export type CapturedProcessChild = ProcessSessionChild & {
 
 /**
  * Write caller-supplied input to a child spawned with a piped fd 0, then close it.
- * The child can exit before it reads everything, so a write error is not a result.
+ * Report write failures so a child that exits successfully without reading
+ * its input cannot make the caller report a successful agent turn.
  */
-export function feedCapturedProcessStdin(child: CapturedProcessChild, input: Buffer): void {
-  child.stdin?.on("error", () => {});
+export function feedCapturedProcessStdin(
+  child: CapturedProcessChild,
+  input: Buffer,
+  onError: (error: Error) => void,
+): void {
+  child.stdin?.on("error", onError);
   child.stdin?.end(input);
 }
 
@@ -112,13 +117,17 @@ export async function runCapturedProcess(
   const stdoutChunks: Buffer[] = [];
   const captureBudget: CaptureBudget = { bytes: 0, overflowed: false };
   let overflowError: Error | undefined;
+  let stdinError: Error | undefined;
   const maxBufferBytes = options.maxBufferBytes ?? DEFAULT_CAPTURE_LIMIT_BYTES;
   const spawnChild = deps.spawnChild ?? defaultCapturedProcessSpawner;
   const stdinIsTty = options.stdinIsTty ?? isStdinTty();
   const result = await superviseProcessSession(
     () => {
       const child = spawnChild(binary, args, capturedProcessStdio(stdinIsTty, options.stdin));
-      if (Buffer.isBuffer(options.stdin)) feedCapturedProcessStdin(child, options.stdin);
+      if (Buffer.isBuffer(options.stdin))
+        feedCapturedProcessStdin(child, options.stdin, (error) => {
+          stdinError ??= error;
+        });
       const setOverflowError = (error: Error) => {
         overflowError ??= error;
       };
@@ -147,7 +156,9 @@ export async function runCapturedProcess(
     return {
       status: result.status,
       signal: result.signal,
-      ...(result.error || overflowError ? { error: result.error ?? overflowError } : {}),
+      ...(result.error || overflowError || stdinError
+        ? { error: result.error ?? overflowError ?? stdinError }
+        : {}),
       stderr: Buffer.concat(stderrChunks).toString("utf-8"),
       stdout: Buffer.concat(stdoutChunks).toString("utf-8"),
     };
