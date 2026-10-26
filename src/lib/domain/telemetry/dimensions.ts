@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isManagedInferenceBaseUrl } from "../../onboard/workload/authority";
+import { matchesRecordedNativeProviderEndpoint } from "../../inference/native-provider/recorded-selection";
 import type {
   TelemetryAgent,
   TelemetryConfiguration,
@@ -92,6 +93,8 @@ export interface RuntimeRouteAuthority {
   provider?: string | null;
   modelSelectionProvenance?: unknown;
   nativeModelSelectionProvenance?: unknown;
+  nativeNvidiaProviderAttachment?: unknown;
+  nativeHostedProviderAttachment?: unknown;
   modelAssignmentSelections?: unknown;
   metadataErrors?: readonly TelemetryMetadataError[];
   /** Sandbox-facing route recorded in the managed startup profile; hosted native routes are upstream URLs. */
@@ -241,9 +244,18 @@ function projectModel(
     gatewayReceipt.provider === authority.provider
       ? gatewayReceipt.providerProfile
       : undefined;
+  const nativeProvider =
+    bound &&
+    bound.provider === authority.provider &&
+    matchesRecordedNativeProviderEndpoint(
+      authority,
+      dataRecord(dataRecord(reference.nativeConfiguration)?.model)?.base_url,
+    )
+      ? bound.providerProfile
+      : undefined;
   const provider = reference.managed
     ? (bound?.providerProfile ?? gatewayProvider ?? classifyTelemetryProvider(authority.provider))
-    : (bound?.providerProfile ??
+    : (nativeProvider ??
       (reference.providerKey ? (NATIVE_PROVIDERS[reference.providerKey] ?? "custom") : "unknown"));
   const api = observedString(reference.api, "unavailable");
   return {
