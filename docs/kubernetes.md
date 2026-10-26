@@ -214,7 +214,7 @@ Start from [the in-cluster vLLM example](../examples/kubernetes/in-cluster-vllm.
 
 ## Destroy a Deployment
 
-**Destroy deletes every sandbox's files and conversation history.**
+**Destroy deletes every sandbox, its in-memory conversation history, and its workspace claim.**
 Preview it, then run it with the same bundle and state directory:
 
 ```sh
@@ -223,6 +223,11 @@ nemoclaw destroy --state-dir .local/kubernetes
 ```
 
 Destroy removes the sandboxes, the gateway release and the development issuer.
-It keeps the namespace, the credential key Secret and the gateway's persistent volumes, as described in [deletion and retention](state.md#deletion-and-retention).
-Removing them is not covered yet ([#12640](https://github.com/NVIDIA/NemoClaw/issues/12640)).
+Each sandbox's workspace claim goes with it, and the claim's StorageClass decides whether the workspace files go too.
+With the `Delete` reclaim policy, the cluster removes the volume and its data.
+With `Retain`, such as OpenShift Local's default StorageClass, the volume stays `Released` with the workspace files on it until you remove it.
+OpenShell creates workspace claims in the cluster's default StorageClass; to choose another, set `workspace_storage_class` in the `openshell.drivers.kubernetes` table of [`spec.gateway.config`](usage.md#configure-a-managed-gateway).
+
+Destroy keeps the namespace, the credential key Secret and the gateway's persistent volumes, as described in [deletion and retention](state.md#deletion-and-retention).
+To remove them and any released workspace volumes, follow [Remove Retained Resources](usage.md#remove-retained-resources).
 If destroy fails or is interrupted while removing the gateway release, follow [Recover an Interrupted Helm Removal](usage.md#recover-an-interrupted-helm-removal).

@@ -560,7 +560,8 @@ It has been run against a managed rootless Podman 5.8.8 gateway.
 #### On Kubernetes or OpenShift
 
 Destroy keeps the deployment's namespace, the gateway's key Secret and its persistent volume claims ([retained Kubernetes objects](state.md#find-retained-kubernetes-objects)).
-Deleting the namespace removes them all.
+It deletes each sandbox's workspace claim, but under the `Retain` reclaim policy the claim's volume stays `Released` with the workspace files on it.
+Deleting the namespace removes the objects in it; volumes are cluster-wide, so you check them separately.
 Use the kubeconfig and context the deployment uses, and set `deployment_namespace` to its `gateway.kubernetes.namespace`:
 
 ```sh
@@ -568,20 +569,35 @@ deployment_context=my-cluster
 deployment_namespace=nemoclaw-development
 kubectl --context "$deployment_context" --namespace "$deployment_namespace" \
   get pods,secrets,persistentvolumeclaims
-kubectl --context "$deployment_context" --namespace "$deployment_namespace" \
-  get persistentvolumeclaims -o jsonpath='{range .items[*]}{.spec.volumeName}{"\n"}{end}'
+kubectl --context "$deployment_context" get persistentvolumes \
+  -o custom-columns=NAME:.metadata.name,NAMESPACE:.spec.claimRef.namespace,STATUS:.status.phase,RECLAIM:.spec.persistentVolumeReclaimPolicy \
+  | awk -v ns="$deployment_namespace" 'NR == 1 || $2 == ns'
 ```
 
 Continue only if no pods remain, and nothing other than this deployment uses the namespace.
-Note the volume names the second command prints, then delete the namespace and wait for it to go:
+The second command lists the volumes whose claims are or were in the namespace: the gateway's, `Bound`, and any `Released` workspace volumes of destroyed sandboxes.
+Listing volumes needs read access to PersistentVolumes across the cluster; without it, ask the cluster operator to run that command.
+An earlier deployment that used the same namespace name can have left `Released` volumes that match too; remove only the ones you mean to.
+
+A volume with the `Delete` reclaim policy goes with its claim, and the cluster deletes its data.
+For each listed volume with `Retain` that a provisioner created, set its reclaim policy to `Delete`, so the provisioner deletes the volume and its storage:
+
+```sh
+deployment_volume=REPLACE_WITH_VOLUME_NAME
+kubectl --context "$deployment_context" patch persistentvolume "$deployment_volume" \
+  --patch '{"spec":{"persistentVolumeReclaimPolicy":"Delete"}}'
+```
+
+Remove a volume that no provisioner manages, and its storage, with your platform's tools.
+Then delete the namespace and wait for it to go:
 
 ```sh
 kubectl --context "$deployment_context" delete namespace "$deployment_namespace" --wait=true
 ```
 
-If `kubectl get namespace "$deployment_namespace"` reports it not found, the namespace and its objects are gone.
-Whether the noted volumes go too depends on their StorageClass: with the `Delete` reclaim policy, the cluster removes them and their data; with `Retain`, they remain `Released`, and you delete them and their storage with your platform's tools.
 On OpenShift, `oc delete project` does the same as deleting the namespace.
+If `kubectl get namespace "$deployment_namespace"` reports it not found, the namespace and its objects are gone.
+Run the volume list again; once the volumes are gone, it prints only its header.
 When the namespace and the volumes are gone, remove the state directory, which holds the cluster receipt and any development issuer keys.
 
 The [live Kubernetes gateway test](contributing/live-tests.md#kubernetes-gateway-without-the-helm-cli) deletes its namespace this way, after switching any volume whose reclaim policy is not `Delete` to `Delete`, and checks that the namespace and its volumes are gone.

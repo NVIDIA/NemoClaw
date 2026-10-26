@@ -196,13 +196,14 @@ Destroy also deletes the OpenShell workspace; re-applying the same configuration
 Credentials can also remain in retained runtime storage.
 See [managed vLLM authentication](inference.md#authenticate-a-managed-vllm-service), [Ollama proxy credentials](inference.md#use-external-ollama-through-a-managed-proxy), and [security](security.md) before retiring storage.
 
-To retire a deployment whose retained resources are on Docker engines, follow [Remove Retained Resources](usage.md#remove-retained-resources).
+To retire a deployment, follow [Remove Retained Resources](usage.md#remove-retained-resources).
 
 ### Understand the Retained Resources
 
 | Resource or data | Result of a completed destroy |
 |---|---|
 | Sandbox writable layer and in-memory conversation history | Deleted; caller-supplied mounted volumes remain under platform control |
+| Kubernetes sandbox workspace claim | Deleted; under the `Retain` reclaim policy, its volume remains `Released` with the workspace files |
 | Deployment provider profiles and registrations, including declared Brave integration resources | Removed; upstream keys are not revoked |
 | External gateway, inference service, external Ollama daemon/model, and externally owned engine/network | Remain under their operators' control |
 | OpenShell workspace | Deleted; re-applying the configuration recreates it |
@@ -241,6 +242,9 @@ On a managed Kubernetes or OpenShift gateway, destroy keeps these objects, all i
 | The namespace itself | Everything below; NemoClaw creates it and never adopts an existing one |
 | Secret `GATEWAY-kek`, where `GATEWAY` is the gateway's release name | The gateway's key-encryption key |
 | The gateway's PersistentVolumeClaims, and the volumes bound to them | The gateway's database |
+
+Volumes are cluster-wide, outside the namespace.
+Under the `Retain` reclaim policy, each destroyed sandbox's workspace volume also remains, `Released`, with a claim reference that names the namespace.
 
 The state directory keeps the cluster ownership receipt and, for the `development` authentication profile, the development issuer's keys.
 
