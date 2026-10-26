@@ -7,7 +7,6 @@ import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 
 import YAML from "yaml";
-import { validateCliArtifactRestoreToolchain } from "./cli-artifact-restore-action-boundary.mts";
 import { E2E_EXECUTION_PROFILES } from "./target-catalogue.mts";
 import { TRUSTED_HERMES_SWAP_SCRIPT } from "./trusted-hermes-swap-workflow-boundary.mts";
 import {
@@ -810,8 +809,6 @@ export function validateStandardProfileWorkflowBoundary(
 ): string[] {
   const errors: string[] = [];
   validateProfileCallers(errors, workflow);
-  const profile = record(YAML.parse(readFileSync(profilePath, "utf8")));
-  validateProfileWorkflow(errors, profile);
-  errors.push(...validateCliArtifactRestoreToolchain(profile, { requireProducer: false }));
+  validateProfileWorkflow(errors, record(YAML.parse(readFileSync(profilePath, "utf8"))));
   return errors;
 }

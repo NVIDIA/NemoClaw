@@ -16,10 +16,6 @@ import { SHARED_E2E_JOB_ID } from "./credential-free-tests.mts";
 import { E2E_ACTION_PROVENANCE } from "./workflow-boundary-policy.mts";
 
 export { E2E_ACTION_PROVENANCE };
-export {
-  validateCliArtifactRestoreAction,
-  validateCliArtifactRestoreToolchain,
-} from "./cli-artifact-restore-action-boundary.mts";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_ACTION_PATH = join(

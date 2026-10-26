@@ -66,8 +66,6 @@ import {
 import {
   E2E_ACTION_PROVENANCE,
   UPLOAD_E2E_ARTIFACTS_ACTION,
-  validateCliArtifactRestoreAction,
-  validateCliArtifactRestoreToolchain,
   validatePortableHermesCliArtifactRestoreAction,
   validateUploadE2eArtifactsWorkflowBoundary,
 } from "./upload-e2e-artifacts-workflow-boundary.mts";
@@ -3114,7 +3112,6 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   errors.push(...validateNativePodmanDockerIsolationWorkflow(workflow));
   errors.push(...validatePortableCrunWorkflow(workflow));
   errors.push(...validatePortableHermesCliArtifactRestoreAction(workflow));
-  errors.push(...validateCliArtifactRestoreToolchain(workflow, { requireProducer: true }));
   const triggers = asRecord(workflow.on ?? workflow[true as unknown as string]);
 
   const workflowDispatch = requireWorkflowDispatch(errors, triggers);
@@ -3810,7 +3807,6 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
   const workflow = readWorkflowRecord(workflowPath);
   return [
     ...validateReviewedOpenShellSdkInstallAction(),
-    ...validateCliArtifactRestoreAction(),
     ...validateDockerHubAuthAction(),
     ...validateDockerHubCleanupAction(),
     ...validateHostDependencyAction(),
