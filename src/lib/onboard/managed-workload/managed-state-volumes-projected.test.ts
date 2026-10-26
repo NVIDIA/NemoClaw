@@ -21,6 +21,24 @@ const roots = managedStartupStateRoots({
 
 afterEach(() => vi.unstubAllEnvs());
 
+it.each([undefined, ""])("uses the default workspace when the environment is %j", (workspace) => {
+  vi.stubEnv("OPENSHELL_WORKSPACE", workspace);
+  const docker = createHermesStateVolumeDockerHarness();
+  prepareManagedStateVolumes(
+    { roots },
+    { runContainerEngine: docker.runDocker, registerExitCleanup: () => () => undefined },
+  );
+  expect(docker.volume?.labels["openshell.ai/sandbox-attachable-workspace"]).toBe("default");
+});
+
+it("rejects an explicitly empty workspace before accessing volumes", () => {
+  const docker = createHermesStateVolumeDockerHarness();
+  expect(() =>
+    prepareManagedStateVolumes({ roots }, { workspace: "", runContainerEngine: docker.runDocker }),
+  ).toThrow("requires an exact OpenShell workspace");
+  expect(docker.runDocker).not.toHaveBeenCalled();
+});
+
 it("creates workspace-approved volumes and retains incomplete creation for explicit cleanup", () => {
   const docker = createHermesStateVolumeDockerHarness();
   const scope = prepareManagedStateVolumes(

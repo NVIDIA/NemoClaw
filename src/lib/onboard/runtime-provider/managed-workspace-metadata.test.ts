@@ -1,11 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { runInNewContext } from "node:vm";
 import { describe, expect, it, vi } from "vitest";
 import { prepareManagedWorkspaceMetadata } from "./managed-workspace-metadata";
 
 const wanted = { uid: 0, gid: 999, mode: 0o1775 };
-const before = { uid: 999, gid: 999, mode: 0o700, dev: 100, ino: 200, mtime: 1791870000 };
+const before = { uid: 999, gid: 999, mode: 0o700, dev: "100", ino: "200", mtime: 1791870000 };
 const result = (value: unknown, status = 0) => ({
   status,
   signal: null,
@@ -21,6 +22,57 @@ function fixture(after = { ...before, ...wanted }) {
 }
 
 describe("managed workspace directory metadata", () => {
+  it("reads large filesystem identities without rounding or rejecting them", () => {
+    const lstatSync = vi
+      .fn()
+      .mockReturnValueOnce({ uid: 0, mode: 0o755, isDirectory: () => true })
+      .mockReturnValueOnce({
+        uid: 0n,
+        gid: 999n,
+        mode: 0o1775n,
+        dev: 9007199254740993n,
+        ino: 18446744073709551615n,
+        mtimeMs: 1791870000123n,
+        isDirectory: () => true,
+        isSymbolicLink: () => false,
+      });
+    let output = "";
+    const operations = fixture();
+    operations.execute.mockReset().mockImplementation((command: readonly string[]) => {
+      runInNewContext(command[2]!, {
+        require: () => ({ lstatSync }),
+        process: {
+          stdout: {
+            write: (value: string) => {
+              output += value;
+            },
+          },
+        },
+      });
+      return { ...result(null), stdout: Buffer.from(output) };
+    });
+    prepareManagedWorkspaceMetadata(wanted, operations);
+    expect(lstatSync).toHaveBeenNthCalledWith(2, "/sandbox", { bigint: true });
+    expect(JSON.parse(output)).toEqual({
+      ...wanted,
+      dev: "9007199254740993",
+      ino: "18446744073709551615",
+      mtime: before.mtime,
+    });
+    expect(operations.copyDirectory).not.toHaveBeenCalled();
+  });
+
+  it("rejects distinct large inodes that round to the same JavaScript number", () => {
+    const operations = fixture();
+    operations.execute
+      .mockReset()
+      .mockReturnValueOnce(result({ ...before, ino: "9007199254740992" }))
+      .mockReturnValueOnce(result({ ...before, ...wanted, ino: "9007199254740993" }));
+    expect(() => prepareManagedWorkspaceMetadata(wanted, operations)).toThrow(
+      /retain its identity and declared metadata/u,
+    );
+  });
+
   it("copies only the declared directory header, then verifies the same inode and metadata", () => {
     const operations = fixture();
     prepareManagedWorkspaceMetadata(wanted, operations);
@@ -55,8 +107,8 @@ describe("managed workspace directory metadata", () => {
   });
 
   it.each([
-    ["inode", { ino: 201 }],
-    ["device", { dev: 101 }],
+    ["inode", { ino: "201" }],
+    ["device", { dev: "101" }],
     ["UID", { uid: 999 }],
     ["GID", { gid: 998 }],
     ["mode", { mode: 0o700 }],
@@ -74,14 +126,17 @@ describe("managed workspace directory metadata", () => {
     expect(operations.copyDirectory).not.toHaveBeenCalled();
   });
 
-  it.each([null, {}, { ...before, ino: -1 }])("rejects invalid observed metadata %j", (value) => {
-    const operations = fixture();
-    operations.execute.mockReset().mockReturnValue(result(value));
-    expect(() => prepareManagedWorkspaceMetadata(wanted, operations)).toThrow(
-      /metadata was invalid/u,
-    );
-    expect(operations.copyDirectory).not.toHaveBeenCalled();
-  });
+  it.each([null, {}, { ...before, ino: -1 }, { ...before, ino: "01" }, { ...before, dev: "1e3" }])(
+    "rejects invalid observed metadata %j",
+    (value) => {
+      const operations = fixture();
+      operations.execute.mockReset().mockReturnValue(result(value));
+      expect(() => prepareManagedWorkspaceMetadata(wanted, operations)).toThrow(
+        /metadata was invalid/u,
+      );
+      expect(operations.copyDirectory).not.toHaveBeenCalled();
+    },
+  );
 
   it("reports failed engine copies without advancing to root application", () => {
     const operations = fixture();

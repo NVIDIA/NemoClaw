@@ -208,7 +208,7 @@ function supportsManagedStateVolumes(provider?: RuntimeProviderBundle): boolean 
 function managedStateVolumeApproval(deps: ManagedStateVolumeDeps): Record<string, string> {
   if (String(SUPPORTED_OPENSHELL_FALLBACK_VERSION) !== "0.1.3") return {};
   const workspace =
-    deps.workspace ?? process.env.OPENSHELL_WORKSPACE ?? OPENSHELL_DEFAULT_WORKSPACE;
+    deps.workspace ?? (process.env.OPENSHELL_WORKSPACE || OPENSHELL_DEFAULT_WORKSPACE);
   if (!workspace || workspace.trim() !== workspace || /[\0\r\n]/u.test(workspace)) {
     throw new Error("Managed state volume requires an exact OpenShell workspace.");
   }

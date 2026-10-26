@@ -42,7 +42,7 @@ describe("Docker privileged exact target", () => {
 
   it("restores workspace metadata through exact-ID archive copy without adding capabilities", () => {
     mocks.dockerCapture.mockReturnValue(exactInspect());
-    const observed = { uid: 999, gid: 999, mode: 0o700, dev: 1, ino: 2, mtime: 3 };
+    const observed = { uid: 999, gid: 999, mode: 0o700, dev: "1", ino: "2", mtime: 3 };
     mocks.dockerSpawnSync
       .mockReturnValueOnce({
         status: 0,
@@ -85,7 +85,7 @@ describe("Docker privileged exact target", () => {
       status: 0,
       signal: null,
       stdout: Buffer.from(
-        JSON.stringify({ uid: 999, gid: 999, mode: 0o700, dev: 1, ino: 2, mtime: 3 }),
+        JSON.stringify({ uid: 999, gid: 999, mode: 0o700, dev: "1", ino: "2", mtime: 3 }),
       ),
       stderr: Buffer.alloc(0),
     });
@@ -103,7 +103,7 @@ describe("Docker privileged exact target", () => {
   });
 
   function portableWorkspaceFixture() {
-    const observed = { uid: 999, gid: 999, mode: 0o700, dev: 1, ino: 2, mtime: 3 };
+    const observed = { uid: 999, gid: 999, mode: 0o700, dev: "1", ino: "2", mtime: 3 };
     mocks.dockerSpawnSync
       .mockReturnValueOnce({
         status: 0,

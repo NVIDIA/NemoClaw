@@ -5,8 +5,8 @@ import type { RuntimeProviderPrivilegedSandboxCommandResult } from "./contract";
 
 type Workspace = { readonly uid: number; readonly gid: number; readonly mode: number };
 type Observation = Workspace & {
-  readonly dev: number;
-  readonly ino: number;
+  readonly dev: string;
+  readonly ino: string;
   readonly mtime: number;
 };
 
@@ -15,11 +15,11 @@ type Observation = Workspace & {
 const INSPECT_WORKSPACE = `
 const fs = require('node:fs');
 const parent = fs.lstatSync('/');
-const s = fs.lstatSync('/sandbox');
+const s = fs.lstatSync('/sandbox', { bigint: true });
 if (!parent.isDirectory() || parent.uid !== 0 || (parent.mode & 0o022) !== 0 ||
     !s.isDirectory() || s.isSymbolicLink()) process.exit(20);
-process.stdout.write(JSON.stringify({uid:s.uid,gid:s.gid,mode:s.mode & 0o7777,
-  dev:s.dev,ino:s.ino,mtime:Math.floor(s.mtimeMs / 1000)}));
+process.stdout.write(JSON.stringify({uid:Number(s.uid),gid:Number(s.gid),mode:Number(s.mode & 0o7777n),
+  dev:String(s.dev),ino:String(s.ino),mtime:Math.floor(Number(s.mtimeMs) / 1000)}));
 `;
 
 function observe(
@@ -37,8 +37,11 @@ function observe(
   }
   if (
     !value ||
-    [value.uid, value.gid, value.mode, value.dev, value.ino, value.mtime].some(
+    [value.uid, value.gid, value.mode, value.mtime].some(
       (field) => !Number.isSafeInteger(field) || field < 0,
+    ) ||
+    [value.dev, value.ino].some(
+      (field) => typeof field !== "string" || !/^(0|[1-9][0-9]*)$/u.test(field),
     )
   ) {
     throw new Error("Managed workspace metadata was invalid.");

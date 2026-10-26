@@ -27,8 +27,8 @@
       "generatedProbeConditions": 206
     },
     "unique": {
-      "expectCalls": 1694,
-      "matcherAssertions": 1669,
+      "expectCalls": 1698,
+      "matcherAssertions": 1673,
       "nodeAssertions": 131,
       "namedAssertionHelpers": 668,
       "failCalls": 1,

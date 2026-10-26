@@ -454,7 +454,7 @@ describe("provider-owned managed startup root application", () => {
     const calls: Array<{ args: readonly string[]; input?: Buffer }> = [];
     let committed = false;
     let releaseAttempts = 0;
-    let workspace = { uid: 0, gid: 0, mode: 0o700, dev: 1, ino: 2, mtime: 100 };
+    let workspace = { uid: 0, gid: 0, mode: 0o700, dev: "1", ino: "2", mtime: 100 };
     const inspect = JSON.stringify([
       {
         Id: CONTAINER_ID,
@@ -559,7 +559,7 @@ describe("provider-owned managed startup root application", () => {
     expect(copyIndex).toBeLessThan(
       calls.findIndex(({ args }) => args.includes("--apply-root-stdin")),
     );
-    expect(workspace).toEqual({ uid: 998, gid: 998, mode: 0o755, dev: 1, ino: 2, mtime: 100 });
+    expect(workspace).toEqual({ uid: 998, gid: 998, mode: 0o755, dev: "1", ino: "2", mtime: 100 });
     expect(transaction).toMatchObject({
       containerId: CONTAINER_ID,
       image: IMAGE_ID,
