@@ -1605,6 +1605,7 @@ async function runInferenceSetWithoutHostLock(
       selectingNative: selectingNative && !selectingNativeLocal,
       provider,
       expectedAttachment: nativeProviderAuthority,
+      previousAttachment: previousNativeAttachment,
       gatewayName: preparedRoute.gatewayName,
       sandboxName,
       endpointUrl: registryMetadata.endpointUrl,
