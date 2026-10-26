@@ -13,6 +13,12 @@ import {
   runSupervisedProcess,
   type SupervisedProcessOwner,
 } from "../../helpers/supervised-process.ts";
+import YAML from "yaml";
+
+import {
+  cliArtifactRestoreNodeVersions,
+  validateCliArtifactRestoreAction,
+} from "../../../tools/e2e/cli-artifact-restore-action-boundary.mts";
 
 const CANDIDATE_SHA = execFileSync("git", ["rev-parse", "HEAD"], {
   encoding: "utf8",
@@ -21,6 +27,20 @@ const PAYLOAD_SHA256 = "b".repeat(64);
 const PROCESS_OUTPUT_LIMIT = 1024 * 1024;
 const IDENTITY_SCRIPT = path.resolve("scripts/e2e/validate-cli-artifact-identity.sh");
 const RESTORE_SCRIPT = path.resolve("scripts/e2e/restore-cli-artifact.sh");
+const E2E_RESTORE_NODE_VERSIONS = cliArtifactRestoreNodeVersions(
+  YAML.parse(fs.readFileSync(".github/workflows/e2e.yaml", "utf8")),
+);
+const STANDARD_PROFILE_RESTORE_NODE_VERSIONS = cliArtifactRestoreNodeVersions(
+  YAML.parse(fs.readFileSync(".github/workflows/e2e-standard-profile.yaml", "utf8")),
+);
+const PREPARED_RESTORE_NODE_VERSIONS = [
+  ...new Set(
+    [
+      ...E2E_RESTORE_NODE_VERSIONS.consumers,
+      ...STANDARD_PROFILE_RESTORE_NODE_VERSIONS.consumers,
+    ].map((consumer) => consumer.node),
+  ),
+];
 
 type ProcessOwner = SupervisedProcessOwner;
 
@@ -758,6 +778,33 @@ describe.concurrent("exact-commit CLI artifact restore", () => {
       "consumer must restore the CLI under the pinned Node 24.22.1 toolchain",
     );
   });
+
+  // The pinned restore action runs its own helper copy. Binding that copy to RESTORE_SCRIPT
+  // makes the following runtime test execute the helper CI runs.
+  it("binds the pinned restore action to the helpers executed by these tests", (context) => {
+    const { expect } = context;
+    expect(validateCliArtifactRestoreAction()).toEqual([]);
+    expect(PREPARED_RESTORE_NODE_VERSIONS.length).toBeGreaterThan(0);
+    expect(E2E_RESTORE_NODE_VERSIONS.producer).toMatch(/^v\d+\.\d+\.\d+$/);
+  });
+
+  it.for(PREPARED_RESTORE_NODE_VERSIONS)(
+    "restores under prepared Node %s with the pinned action helper",
+    async (consumerNodeVersion, context) => {
+      const { expect } = context;
+      expect(consumerNodeVersion).toMatch(/^v\d+\.\d+\.\d+$/);
+      const fixture = await runRestoreValidation(context, {
+        consumerNodeVersion,
+        manifestNodeVersion: E2E_RESTORE_NODE_VERSIONS.producer,
+      });
+      try {
+        expect(fixture.result.status, fixture.output).toBe(0);
+        expect(fs.existsSync(path.join(fixture.workspace, "dist", "nemoclaw.js"))).toBe(true);
+      } finally {
+        fixture.cleanup();
+      }
+    },
+  );
 
   it("rejects a payload digest mismatch before artifact extraction (#7915)", async (context) => {
     await expectRestoreFailure(
