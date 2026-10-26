@@ -41,3 +41,9 @@ NemoClaw v0.0.139 improves sandbox recovery and native inference checks, fixes W
 - An interrupted upgrade rebuild can resume when the failed replacement has no recorded identity and the recorded gateway and Docker daemon confirm it is absent.
   NemoClaw keeps the original registry entry, rebuild journal, and backup for the resumed rebuild.
   Related change: [PR #13680](https://github.com/NVIDIA/NemoClaw/pull/13680).
+- On a reused gateway that lacks native provider composition, local inference onboarding now prints the complete administrator recovery command.
+  `nemoclaw onboard --resume` reruns native local inference setup before it creates a sandbox when the selected sandbox has no recorded provider attachment.
+  Related change: [PR #13650](https://github.com/NVIDIA/NemoClaw/pull/13650).
+- `nemoclaw uninstall` now removes owned OpenClaw state volumes after its required backup, even without `--destroy-user-data`.
+  If you use `--destroy-user-data`, back up any state you need separately before uninstall.
+  Related change: [PR #13596](https://github.com/NVIDIA/NemoClaw/pull/13596).
