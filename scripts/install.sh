@@ -233,13 +233,13 @@ clone_nemoclaw_ref() {
         && elapsed_detail=" Git reported ${BASH_REMATCH[1]} ms elapsed before the lookup failed."
       case "$(classify_install_ref_fetch_failure "$fetch_error")" in
         connect-timeout)
-          error "Timed out looking up install ref '$ref' at https://github.com/NVIDIA/NemoClaw.git. The installed CLI was not changed. Check network access to github.com and try again."
+          error "Timed out looking up install ref '$ref' at https://github.com/NVIDIA/NemoClaw.git. Check network access to github.com and try again."
           ;;
         missing-ref)
-          error "Requested install ref '$ref' is not available from https://github.com/NVIDIA/NemoClaw.git. The installed CLI was not changed. Check NEMOCLAW_INSTALL_TAG/NEMOCLAW_INSTALL_REF and try again."
+          error "Requested install ref '$ref' is not available from https://github.com/NVIDIA/NemoClaw.git. Check NEMOCLAW_INSTALL_TAG/NEMOCLAW_INSTALL_REF and try again."
           ;;
         *)
-          error "Could not verify install ref '$ref' from https://github.com/NVIDIA/NemoClaw.git.$elapsed_detail The installed CLI was not changed. Check repository access and the Git diagnostic, then try again."
+          error "Could not verify install ref '$ref' from https://github.com/NVIDIA/NemoClaw.git.$elapsed_detail Check repository access and the Git diagnostic, then try again."
           ;;
       esac
     fi
@@ -3433,48 +3433,9 @@ install_nemoclaw() {
     if is_reusable_managed_nemoclaw_install "$nemoclaw_src"; then
       info "Reusing the installed ${_CLI_DISPLAY} CLI at the selected revision."
     else
-      # Keep the previous source until the replacement checkout is in place.
-      # Subshell traps leave the caller's cleanup handlers unchanged.
-      (
-        local staging cleanup_pid_count cleanup_file_count
-        cleanup_pid_count=${#_cleanup_pids[@]}
-        cleanup_file_count=${#_cleanup_files[@]}
-        staging="$(mktemp -d "${nemoclaw_src}.staging.XXXXXX")"
-        # Invoked by the EXIT trap, including command failures and cancellation.
-        # shellcheck disable=SC2329
-        cleanup_source_swap() {
-          local status="$1" pid file
-          trap - EXIT
-          trap '' INT TERM
-          for pid in "${_cleanup_pids[@]:cleanup_pid_count}"; do
-            kill "$pid" 2>/dev/null || true
-          done
-          for file in "${_cleanup_files[@]:cleanup_file_count}"; do
-            rm -f "$file" 2>/dev/null || true
-          done
-          # Inspect the paths: a signal can arrive before a shell flag is set.
-          if [[ -e "$staging/previous" || -L "$staging/previous" ]] \
-            && [[ ! -e "$nemoclaw_src" && ! -L "$nemoclaw_src" ]]; then
-            if ! mv "$staging/previous" "$nemoclaw_src"; then
-              warn "Previous source retained at '$staging/previous'. Restore it to '$nemoclaw_src' before retrying." >&2
-              exit 1
-            fi
-          fi
-          rm -rf "$staging" || exit 1
-          exit "$status"
-        }
-        trap 'cleanup_source_swap "$?"' EXIT
-        trap 'exit 130' INT
-        trap 'exit 143' TERM
-        spin "Cloning ${_CLI_DISPLAY} source" clone_nemoclaw_ref "$release_ref" "$staging/source"
-        # The interactive spinner resets signal handlers after its child exits.
-        trap 'exit 130' INT
-        trap 'exit 143' TERM
-        if [[ -e "$nemoclaw_src" || -L "$nemoclaw_src" ]]; then
-          mv "$nemoclaw_src" "$staging/previous"
-        fi
-        mv "$staging/source" "$nemoclaw_src"
-      )
+      rm -rf "$nemoclaw_src"
+      mkdir -p "$(dirname "$nemoclaw_src")"
+      spin "Cloning ${_CLI_DISPLAY} source" clone_nemoclaw_ref "$release_ref" "$nemoclaw_src"
       # Fetch version tags into the shallow clone so `git describe --tags
       # --match "v*"` works at runtime (the shallow clone only has the
       # single ref we asked for).

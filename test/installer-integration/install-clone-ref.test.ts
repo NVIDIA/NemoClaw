@@ -255,7 +255,7 @@ describe("installer git checkout failures", testTimeoutOptions(15_000), () => {
     });
 
   it.each([INSTALLER_PAYLOAD, CURL_PIPE_INSTALLER])(
-    "reports a missing ref and states that the installed CLI was not changed [case %#] (#11515)",
+    "reports a missing ref [case %#] (#11515)",
     (installer) => {
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-clone-missing-ref-"));
       const origin = path.join(tmp, "origin");
@@ -280,7 +280,9 @@ describe("installer git checkout failures", testTimeoutOptions(15_000), () => {
         expect(result.stderr).toContain(
           `Requested install ref 'refs/heads/does-not-exist' is not available from ${REPO_URL}.`,
         );
-        expect(result.stderr).toContain("The installed CLI was not changed.");
+        expect(result.stderr.includes("The installed CLI was not changed.")).toBe(
+          installer === CURL_PIPE_INSTALLER,
+        );
         expect(result.stderr).not.toContain("Could not connect");
       } finally {
         fs.rmSync(tmp, { recursive: true, force: true });
@@ -301,7 +303,9 @@ describe("installer git checkout failures", testTimeoutOptions(15_000), () => {
         });
         expect(result.status).toBe(1);
         expect(result.stderr).toContain(`Could not verify install ref 'lkg' from ${REPO_URL}.`);
-        expect(result.stderr).toContain("The installed CLI was not changed.");
+        expect(result.stderr.includes("The installed CLI was not changed.")).toBe(
+          installer === CURL_PIPE_INSTALLER,
+        );
         expect(result.stderr).not.toContain("is not available");
       } finally {
         fs.rmSync(tmp, { recursive: true, force: true });
@@ -405,9 +409,14 @@ describe("installer git checkout failures", testTimeoutOptions(15_000), () => {
 
   const installedCliFixture = (root: string) => {
     const bin = path.join(root, "bin");
+    const sourceCli = path.join(root, ".nemoclaw", "source", "bin", "nemoclaw");
     fs.mkdirSync(bin);
+    fs.mkdirSync(path.dirname(sourceCli), { recursive: true });
     const cli = path.join(bin, "nemoclaw");
-    fs.writeFileSync(cli, "#!/usr/bin/env bash\nprintf 'nemoclaw v0.0.118\\n'\n", { mode: 0o755 });
+    fs.writeFileSync(sourceCli, "#!/usr/bin/env bash\nprintf 'nemoclaw v0.0.118\\n'\n", {
+      mode: 0o755,
+    });
+    fs.symlinkSync(sourceCli, cli);
     return { bin, cli, digest: sha256(cli) };
   };
 
@@ -442,47 +451,10 @@ describe("installer git checkout failures", testTimeoutOptions(15_000), () => {
       );
       expect(result.stderr).toContain("The installed CLI was not changed.");
       expect(sha256(installed.cli)).toBe(installed.digest);
-      expect(fs.readdirSync(root)).toEqual(["bin"]);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("leaves the installed CLI and managed source untouched when the payload cannot reach GitHub (#11515)", async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-payload-unreachable-"));
-    const closedPort = await closedLoopbackPort();
-
-    try {
-      const installed = installedCliFixture(root);
-      const managedSource = path.join(root, ".nemoclaw", "source");
-      fs.mkdirSync(managedSource, { recursive: true });
-      const managedMarker = path.join(managedSource, "installed-marker.txt");
-      fs.writeFileSync(managedMarker, "previous managed install\n");
-      const result = spawnSync(
-        "bash",
-        [
-          "-c",
-          'source "$INSTALLER_PAYLOAD" >/dev/null\nresolve_repo_root() { printf "%s" "$NON_SOURCE_ROOT"; }\ninstall_nemoclaw',
-        ],
-        {
-          cwd: root,
-          encoding: "utf8",
-          env: {
-            HOME: root,
-            PATH: `${installed.bin}:/usr/bin:/bin`,
-            TMPDIR: root,
-            INSTALLER_PAYLOAD,
-            NON_SOURCE_ROOT: path.join(root, "not-a-checkout"),
-            ...unreachableGitHubEnv(closedPort),
-          },
-        },
-      );
-      expect(result.status, `${result.stdout}${result.stderr}`).toBe(1);
-      expect(result.stderr).toContain(`Could not verify install ref 'lkg' from ${REPO_URL}.`);
-      expect(result.stderr).toContain("The installed CLI was not changed.");
-      expect(sha256(installed.cli)).toBe(installed.digest);
-      expect(fs.readFileSync(managedMarker, "utf8")).toBe("previous managed install\n");
-      expect(fs.readdirSync(path.dirname(managedSource))).toEqual(["source"]);
+      const version = spawnSync(installed.cli, ["--version"], { encoding: "utf8" });
+      expect(version.status, version.stderr).toBe(0);
+      expect(version.stdout.trim()).toBe("nemoclaw v0.0.118");
+      expect(fs.readdirSync(root)).toEqual([".nemoclaw", "bin"]);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -500,7 +472,7 @@ describe("installer git checkout failures", testTimeoutOptions(15_000), () => {
     { caller: "bootstrap", failure: "HTTP 500" },
     { caller: "payload", failure: "HTTP 500" },
   ] as const)(
-    "reports $failure through the $caller caller without replacing the installed CLI (#11515)",
+    "reports $failure through the $caller fetch boundary (#11515)",
     async ({ caller, failure }) => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fetch-caller-"));
       const installed = installedCliFixture(root);
@@ -538,7 +510,7 @@ describe("installer git checkout failures", testTimeoutOptions(15_000), () => {
         const script =
           caller === "bootstrap"
             ? 'exec bash < "$BOOTSTRAP"'
-            : 'source "$INSTALLER_PAYLOAD" >/dev/null\nresolve_repo_root() { printf "%s" "$NON_SOURCE_ROOT"; }\ninstall_nemoclaw';
+            : 'source "$INSTALLER_PAYLOAD" >/dev/null\nclone_nemoclaw_ref lkg "$PAYLOAD_CHECKOUT"';
         const result = await runSupervisedProcess("bash", ["-c", script], {
           cwd: root,
           env: {
@@ -547,7 +519,7 @@ describe("installer git checkout failures", testTimeoutOptions(15_000), () => {
             TMPDIR: root,
             BOOTSTRAP: CURL_PIPE_INSTALLER,
             INSTALLER_PAYLOAD,
-            NON_SOURCE_ROOT: path.join(root, "not-a-checkout"),
+            PAYLOAD_CHECKOUT: path.join(root, "payload-checkout"),
             GIT_ERROR_FIXTURE:
               failure === "TLS timeout" ? tlsConnectionTimeout : delayedConnectionFailure,
             GIT_CONFIG_NOSYSTEM: "1",
@@ -585,9 +557,14 @@ describe("installer git checkout failures", testTimeoutOptions(15_000), () => {
         expect(result.stderr).toContain(details[failure]);
         expect(result.stderr.includes("Timed out")).toBe(timeoutExpected);
         expect(result.stderr).not.toContain("Could not connect");
-        expect(result.stderr).toContain("The installed CLI was not changed.");
+        expect(result.stderr.includes("The installed CLI was not changed.")).toBe(
+          caller === "bootstrap",
+        );
         expect(result.stderr).not.toContain("is not available");
         expect(sha256(installed.cli)).toBe(installed.digest);
+        const version = spawnSync(installed.cli, ["--version"], { encoding: "utf8" });
+        expect(version.status, version.stderr).toBe(0);
+        expect(version.stdout.trim()).toBe("nemoclaw v0.0.118");
         expect(fs.readFileSync(marker, "utf8")).toBe("previous managed source\n");
         expect(fs.readdirSync(path.dirname(managedSource))).toEqual(["source"]);
       } finally {
@@ -601,136 +578,6 @@ describe("installer git checkout failures", testTimeoutOptions(15_000), () => {
         } finally {
           fs.rmSync(root, { recursive: true, force: true });
         }
-      }
-    },
-  );
-
-  it.each([
-    ["before-retire", "failure", "previous", 42],
-    ["before-publish", "failure", "previous", 42],
-    ["before-publish", "rollback-failure", "previous", 1],
-    ["after-retire", "INT", "previous", 130],
-    ["after-retire", "TERM", "previous", 143],
-    ["before-publish", "INT", "previous", 130],
-    ["before-publish", "TERM", "previous", 143],
-    ["after-publish", "INT", "replacement", 130],
-    ["after-publish", "TERM", "replacement", 143],
-    ["none", "none", "replacement", 0],
-  ] as const)(
-    "preserves installed source when %s gets %s [case %#] (#11515)",
-    (boundary, failure, expectedVersion, expectedExit) => {
-      const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-source-swap-"));
-      const managedSource = path.join(root, ".nemoclaw", "source");
-      const bin = path.join(root, "bin");
-      const sourceCli = path.join(managedSource, "bin", "nemoclaw");
-      const cli = path.join(bin, "nemoclaw");
-      const marker = path.join(root, "injected");
-      const cleanupPid = path.join(root, "cleanup-pid");
-      fs.mkdirSync(path.dirname(sourceCli), { recursive: true });
-      fs.mkdirSync(bin);
-      fs.writeFileSync(sourceCli, "#!/usr/bin/env bash\necho previous\n", { mode: 0o755 });
-      fs.symlinkSync(sourceCli, cli);
-      const originalSource = sha256(sourceCli);
-      const shim = `#!/usr/bin/env bash
-set -euo pipefail
-operation="\${0##*/}"
-last=""
-for arg in "$@"; do last="$arg"; done
-event=""
-case "$operation" in
-  mv)
-    [[ "$1" != "$MANAGED_SOURCE" ]] || event=retire
-    [[ "$last" != "$MANAGED_SOURCE" ]] || event=publish
-    ;;
-  rm) [[ "$last" != "$MANAGED_SOURCE" ]] || event=retire ;;
-esac
-case "$SWAP_FAILURE:$event" in
-  rollback-failure:publish) [[ ! -e "$INJECTION_MARKER" ]] || exit 43 ;;
-esac
-inject() {
-  [[ "$SWAP_BOUNDARY" == "$1-$event" && ! -e "$INJECTION_MARKER" ]] || return 0
-  touch "$INJECTION_MARKER"
-  case "$SWAP_FAILURE" in
-    failure|rollback-failure) exit 42 ;;
-    INT|TERM) kill -s "$SWAP_FAILURE" "$PPID"; exit 0 ;;
-  esac
-}
-inject before
-"/bin/$operation" "$@"
-inject after
-`;
-      ["mv", "rm"].forEach((command) =>
-        fs.writeFileSync(path.join(bin, command), shim, { mode: 0o755 }),
-      );
-      ["node", "npm"].forEach((command) =>
-        fs.writeFileSync(path.join(bin, command), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 }),
-      );
-      try {
-        const result = spawnSync(
-          "bash",
-          [
-            "-c",
-            `source "$INSTALLER_PAYLOAD" >/dev/null
-touch "$HOME/cleanup-marker"
-_cleanup_files+=("$HOME/cleanup-marker")
-sleep 30 >/dev/null 2>&1 &
-parent_cleanup_pid=$!
-printf '%s' "$parent_cleanup_pid" > "$HOME/cleanup-pid"
-_cleanup_pids+=("$parent_cleanup_pid")
-resolve_repo_root() { printf '%s' "$HOME/not-a-checkout"; }
-preflight_nemoclaw_acp_shim() { :; }
-is_reusable_managed_nemoclaw_install() { return 1; }
-clone_nemoclaw_ref() {
-  mkdir -p "$2/bin" "$2/nemoclaw"
-  printf '#!/usr/bin/env bash\\necho replacement\\n' > "$2/bin/nemoclaw"
-  chmod 755 "$2/bin/nemoclaw"
-}
-git() { return 0; }
-restore_managed_source_lockfile() { :; }
-finish_nemoclaw_install() { :; }
-install_nemoclaw
-test -f "$HOME/cleanup-marker"
-kill -0 "$parent_cleanup_pid"
-`,
-          ],
-          {
-            cwd: root,
-            encoding: "utf8",
-            env: {
-              HOME: root,
-              PATH: `${bin}:/usr/bin:/bin`,
-              TMPDIR: root,
-              INSTALLER_PAYLOAD,
-              MANAGED_SOURCE: managedSource,
-              INJECTION_MARKER: marker,
-              SWAP_BOUNDARY: boundary,
-              SWAP_FAILURE: failure,
-              NEMOCLAW_AGENT: "hermes",
-            },
-          },
-        );
-        expect(fs.existsSync(marker)).toBe(boundary !== "none");
-        expect(fs.existsSync(path.join(root, "cleanup-marker"))).toBe(false);
-        const retainedSource = result.stderr.match(/Previous source retained at '([^']+)'/)?.[1];
-        expect(retainedSource !== undefined).toBe(failure === "rollback-failure");
-        const retainedCli = retainedSource ? path.join(retainedSource, "bin", "nemoclaw") : cli;
-        const installed = spawnSync(retainedCli, [], { encoding: "utf8" });
-        expect(installed.status, installed.stderr).toBe(0);
-        expect(installed.stdout.trim()).toBe(expectedVersion);
-        expect(sha256(retainedCli) === originalSource).toBe(expectedVersion === "previous");
-        expect(fs.readdirSync(path.dirname(managedSource))).toEqual(
-          retainedSource ? [path.basename(path.dirname(retainedSource))] : ["source"],
-        );
-        const signalExitCodes: Partial<Record<NodeJS.Signals, number>> = {
-          SIGINT: 130,
-          SIGTERM: 143,
-        };
-        const exitCode = result.status ?? signalExitCodes[result.signal!];
-        expect(exitCode, `${result.stdout}${result.stderr}`).toBe(expectedExit);
-      } finally {
-        fs.existsSync(cleanupPid) &&
-          spawnSync("kill", ["-TERM", fs.readFileSync(cleanupPid, "utf8")]);
-        fs.rmSync(root, { recursive: true, force: true });
       }
     },
   );
