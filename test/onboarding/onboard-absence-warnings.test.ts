@@ -43,6 +43,14 @@ describe("fresh onboarding absence warnings (#12740)", () => {
       label: "NotFound status",
       diagnostic: 'Error: × status: NotFound, message: "sandbox not found"',
     },
+    {
+      label: "quoted Not Found status",
+      diagnostic: 'Error: × status: "Not Found", message: "sandbox not found"',
+    },
+    {
+      label: "unquoted Not Found status",
+      diagnostic: 'Error: × status: Not Found, message: "sandbox not found"',
+    },
   ])("classifies exact structured missing-sandbox response: $label", async ({ diagnostic }) => {
     const adapter = createCliOpenShellProviderAdapter({
       run: () => captured(1, "", diagnostic),

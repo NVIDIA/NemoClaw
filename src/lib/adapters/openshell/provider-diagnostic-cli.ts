@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isStructuredUnqualifiedSandboxNotFoundOutput } from "./sandbox-absence-diagnostic";
+
 const DIAGNOSTIC_PREFIXES = ["error:", "rpc error:", "status:"];
 const NOT_FOUND_SUFFIXES = new Set([
   "not found",
@@ -158,20 +160,6 @@ function readMessageValue(line: string): string | null {
   return text.slice(markerIndex + "message:".length).trim();
 }
 
-/** Require a complete structured NotFound message with the literal text "sandbox not found". */
-function isExactUnqualifiedSandboxNotFoundMessage(line: string): boolean {
-  const text = stripDiagnosticPrefixes(line);
-  const codeMatch =
-    /^code\s*[:=]\s*(?:NotFound|(["'`])(?:NotFound|Some requested entity was not found)\1)\s*,\s*message:\s*(["'`])([^"'`]+)\2$/iu.exec(
-      text,
-    );
-  if (codeMatch) return codeMatch[3] === "sandbox not found";
-  const statusMatch = /^(?:NotFound|(["'`])NotFound\1)\s*,\s*message:\s*(["'`])([^"'`]+)\2$/iu.exec(
-    text,
-  );
-  return statusMatch?.[3] === "sandbox not found";
-}
-
 function lineReportsTargetedProviderGetNotFound(line: string): boolean {
   const text = stripDiagnosticPrefixes(line);
   if (normalizedNotFoundSuffix(text) === "provider not found") return true;
@@ -267,12 +255,10 @@ export function reportsUnqualifiedSandboxNotFound(
   if (output.length > diagnosticLimit) return false;
   const lines = output.split(/\r?\n/).map(stripIssueDecoration).filter(Boolean);
   const line = lines[0] ?? "";
-  const status = structuredStatusValue(line);
   return (
     lines.length === 1 &&
     !lineReportsMissingGateway(line) &&
-    normalizeStatus(status ?? "") === "notfound" &&
-    isExactUnqualifiedSandboxNotFoundMessage(line)
+    isStructuredUnqualifiedSandboxNotFoundOutput(line)
   );
 }
 

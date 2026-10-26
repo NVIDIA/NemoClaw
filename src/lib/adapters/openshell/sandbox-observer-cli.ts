@@ -14,6 +14,7 @@ import {
   type OpenShellSandboxResult,
 } from "./sandbox-observer";
 import { observeOpenShellSandboxIdentity } from "./sandbox-presence";
+import { isStructuredUnqualifiedSandboxNotFoundOutput } from "./sandbox-absence-diagnostic";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "./command-execution";
 import { captureOpenshellCommand } from "./client";
 import { resolveOpenshell } from "./resolve";
@@ -276,11 +277,7 @@ export function isExplicitMissingOpenShellSandboxOutput(
 ): boolean {
   const clean = stripOpenShellCliAnsi(String(output)).replace(/\r/g, "").trim();
   const structured = clean.replace(/\n\s*│\s*/g, " ");
-  const exactStructuredNotFound =
-    /^(?:error:\s*)?(?:×\s*)?code:\s*["']Some requested entity was not found["']\s*,\s*message:\s*["']sandbox not found["']$/iu;
-  const exactStatusNotFound =
-    /^(?:error:\s*)?(?:×\s*)?status:\s*["']?Not\s+Found["']?\s*,\s*message:\s*["']sandbox not found["']$/iu;
-  if (exactStructuredNotFound.test(structured) || exactStatusNotFound.test(structured)) return true;
+  if (isStructuredUnqualifiedSandboxNotFoundOutput(structured)) return true;
 
   const escapedName = sandboxName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const namedSandbox = `(?:['"]${escapedName}['"]|${escapedName})`;
