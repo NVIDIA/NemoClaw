@@ -8,6 +8,8 @@ import {
   DCODE_MANAGED_EXEC_MISSING_DETAIL,
 } from "./connect-inference-route-probe";
 import {
+  HermesNvidiaCredentialRejectedError,
+  verifyHermesNvidiaCredential,
   buildSandboxInferenceRouteHealth,
   isTransientInferenceInvocationFailure,
   probeSandboxInferenceGatewayHealth,
@@ -17,12 +19,71 @@ import {
 } from "./inference-route-health";
 
 describe("sandbox inference route health", () => {
-  const makeExecutor = (stdout: string, status = 0): OpenShellSandboxBufferedCommandExecutor => ({
+  const makeExecutor = (
+    stdout: string,
+    status = 0,
+    stderr = "",
+  ): OpenShellSandboxBufferedCommandExecutor => ({
     runBuffered: vi.fn(async () => ({
       outcome: { kind: "completed" as const, exitCode: status },
       stdout,
-      stderr: "",
+      stderr,
     })),
+  });
+
+  it("verifies the Hermes credential through the selected sandbox guard", async () => {
+    const executor = makeExecutor("verified=1\n");
+    await verifyHermesNvidiaCredential(
+      { name: "alpha", gatewayName: "gateway-a", model: "m" },
+      executor,
+    );
+    expect(executor.runBuffered).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sandboxName: "alpha",
+        target: { kind: "named", gatewayName: "gateway-a" },
+        command: [
+          "/opt/hermes/.venv/bin/python3",
+          "-I",
+          "/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py",
+          "verify-nvidia-credential",
+          "--hermes-dir",
+          "/sandbox/.hermes",
+          "--expected-model",
+          "m",
+        ],
+      }),
+    );
+  });
+  it("distinguishes confirmed credential rejection from unavailable verification", async () => {
+    await expect(
+      verifyHermesNvidiaCredential(
+        { name: "alpha", gatewayName: "gateway-a", model: "m" },
+        makeExecutor("rejected=1", 1),
+      ),
+    ).rejects.toBeInstanceOf(HermesNvidiaCredentialRejectedError);
+  });
+  it.each([
+    makeExecutor("private diagnostic", 1),
+    makeExecutor("unexpected"),
+    makeExecutor("", 2, "argument --hermes-dir: invalid value"),
+    makeExecutor("", 1, "argument action: invalid choice: 'verify-nvidia-credential'"),
+    {
+      runBuffered: vi.fn(async () => ({
+        outcome: {
+          kind: "failed" as const,
+          error: { kind: "timeout" as const, message: "private diagnostic" },
+        },
+        stdout: "",
+        stderr: "private diagnostic",
+      })),
+    },
+  ])("rejects failed or unrecognized Hermes credential verification [%#]", async (executor) => {
+    await expect(
+      verifyHermesNvidiaCredential(
+        { name: "alpha", gatewayName: "gateway-a", model: "m" },
+        executor,
+      ),
+    ).rejects.toThrow("Hermes NVIDIA credential verification is unavailable.");
   });
 
   it.each([200, 401, 403])(

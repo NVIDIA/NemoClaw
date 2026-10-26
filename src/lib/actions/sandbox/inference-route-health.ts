@@ -645,3 +645,62 @@ export function readNativeStatusSelection(entry: SandboxEntry | null | undefined
       : (definition?.endpoint ?? NVIDIA_HOSTED_NATIVE_ENDPOINT),
   };
 }
+
+export class HermesNvidiaCredentialRejectedError extends Error {
+  constructor() {
+    super("Hermes NVIDIA credential is invalid or stale.");
+  }
+}
+
+export class HermesNvidiaCredentialVerifierMissingError extends Error {
+  constructor() {
+    super("The installed Hermes image lacks the NVIDIA credential verifier.");
+  }
+}
+
+/** Check the agent's persisted slots against the fresh supervisor generation. */
+export async function verifyHermesNvidiaCredential(
+  entry: SandboxEntry,
+  commandExecutor: OpenShellSandboxBufferedCommandExecutor = createCliOpenShellSandboxCommandExecutor(
+    { hostCwd: REPOSITORY_ROOT },
+  ),
+): Promise<void> {
+  if (!entry.gatewayName || !entry.model) throw new Error("Hermes route identity is missing.");
+  const result = await commandExecutor.runBuffered({
+    sandboxName: entry.name,
+    target: { kind: "named", gatewayName: entry.gatewayName },
+    command: [
+      "/opt/hermes/.venv/bin/python3",
+      "-I",
+      "/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py",
+      "verify-nvidia-credential",
+      "--hermes-dir",
+      "/sandbox/.hermes",
+      "--expected-model",
+      entry.model,
+    ],
+    environment: buildSandboxCommandEnvironment(),
+    timeoutMilliseconds: OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS,
+  });
+  if (
+    result.outcome.kind === "completed" &&
+    result.outcome.exitCode === 1 &&
+    result.stdout.trim() === "rejected=1"
+  ) {
+    throw new HermesNvidiaCredentialRejectedError();
+  }
+  if (
+    result.outcome.kind === "completed" &&
+    result.outcome.exitCode === 2 &&
+    /argument action: invalid choice: 'verify-nvidia-credential'/u.test(result.stderr)
+  ) {
+    throw new HermesNvidiaCredentialVerifierMissingError();
+  }
+  if (
+    result.outcome.kind !== "completed" ||
+    result.outcome.exitCode !== 0 ||
+    result.stdout.trim() !== "verified=1"
+  ) {
+    throw new Error("Hermes NVIDIA credential verification is unavailable.");
+  }
+}

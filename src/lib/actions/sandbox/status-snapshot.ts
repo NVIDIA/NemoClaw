@@ -54,6 +54,9 @@ import {
   getSandboxGatewayStateForStatus,
 } from "./gateway-state";
 import {
+  HermesNvidiaCredentialRejectedError,
+  HermesNvidiaCredentialVerifierMissingError,
+  verifyHermesNvidiaCredential,
   readNativeStatusSelection,
   buildSandboxInferenceRouteHealth,
   isTransientInferenceInvocationFailure,
@@ -323,6 +326,7 @@ function loadRecoverSandboxProcesses(): RecoverSandboxProcesses {
 }
 
 interface CollectSandboxStatusSnapshotDeps {
+  verifyHermesNvidiaCredentialImpl?: typeof import("./inference-route-health").verifyHermesNvidiaCredential;
   findSandboxAcrossGatewayRoots?: typeof findSandboxAcrossGatewayRoots;
   listPublishedSandboxNamesAcrossGatewayRoots?: typeof listPublishedSandboxNamesAcrossGatewayRoots;
   listPublishedSandboxesAcrossGatewayRoots?: typeof listPublishedSandboxesAcrossGatewayRoots;
@@ -851,6 +855,55 @@ export async function collectSandboxStatusSnapshot(
           model: invocationRoute.model ?? null,
           preferredInferenceApi: sb?.preferredInferenceApi ?? null,
         });
+  }
+  if (
+    !suppressInferenceProbe &&
+    lookup.state === "present" &&
+    sb?.agent === "hermes" &&
+    sb.provider === "nvidia-prod" &&
+    sb.nativeNvidiaProviderAttachment !== undefined
+  ) {
+    try {
+      const verify = opts.deps?.verifyHermesNvidiaCredentialImpl ?? verifyHermesNvidiaCredential;
+      await verify(sb);
+    } catch (error) {
+      const rejected = error instanceof HermesNvidiaCredentialRejectedError;
+      let detail =
+        "Hermes credential verification is unavailable. Retry status; if it remains unavailable, check sandbox health and recover access before retrying.";
+      if (rejected) {
+        detail =
+          "Hermes inference credentials are invalid or stale. Rebuild the sandbox to refresh its managed credential.";
+      } else if (error instanceof HermesNvidiaCredentialVerifierMissingError) {
+        detail =
+          "The installed Hermes image lacks the credential verifier. Rebuild the sandbox to install the credential verifier, then rerun status.";
+      }
+      const credentialHealth: ProviderHealthStatus = {
+        ok: false,
+        probed: false,
+        providerLabel: "Hermes NVIDIA inference",
+        endpoint: "https://integrate.api.nvidia.com/v1",
+        probeLabel: "agent credential",
+        failureLabel: rejected ? "unauthorized" : "unreachable",
+        detail,
+      };
+      if (!rejected && inferenceHealth && isInferenceHealthFailing(inferenceHealth)) {
+        // An unavailable verifier cannot replace an observed provider-path failure.
+        inferenceHealth = {
+          ...inferenceHealth,
+          subprobes: [...(inferenceHealth.subprobes ?? []), credentialHealth],
+        };
+      } else {
+        const subprobes: ProviderHealthStatus[] = [];
+        if (inferenceHealth) {
+          const { subprobes: diagnostics = [], ...providerPath } = inferenceHealth;
+          subprobes.push(
+            { ...providerPath, probeLabel: providerPath.probeLabel ?? "provider path" },
+            ...diagnostics,
+          );
+        }
+        inferenceHealth = { ...credentialHealth, subprobes };
+      }
+    }
   }
   // Classify once per snapshot so every renderer observes the same receipt state.
   // A complete matching live route is required because the shared gateway route
