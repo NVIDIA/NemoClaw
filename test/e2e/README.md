@@ -88,19 +88,14 @@ The install refuses package removals, preserving the runner's Docker and contain
   on its finite API-service boundary before registry creation. The job selects a
   1024-task limit, disabled per-container cgroups, and the `crun` OCI runtime
   because `runc` cannot launch containers without separate cgroups. The pinned
-  setup action creates the initial service configuration. The trusted E2E workflow
-  selects SHA-256-verified crun 1.28, writes its runtime mapping, and restarts
-  the service before candidate checkout. Rootless Podman may place the registry
-  in a sibling scope even with container cgroups disabled. After registry HTTP
-  readiness, the live scenario verifies a finite effective limit and at least
-  128 tasks of headroom across the registry's actual cgroup and every non-root
-  ancestor. Cgroup v2 has no `pids.max` limit on its root.
-  Setup records service, user, host, and cgroup headroom in
-  `portable-podman-process-headroom.json`; the workflow retains its
-  runtime selection in `portable-podman-crun-authority.json`.
+  setup action owns rendering these settings before service startup. Focused
+  containers inherit that boundary, and the live scenario verifies that the registry shares
+  its service cgroup with sufficient remaining headroom. Setup records service,
+  user, host, and cgroup headroom in `portable-podman-process-headroom.json`.
   It fails when RLIMIT_NPROC, service TasksMax, host-thread, or cgroup pids
   headroom is less than 128 tasks. The live scenario requires registry HTTP 200
-  and retains bounded container-cgroup diagnostics if readiness fails. Unavailable
+  and retains
+  bounded container-cgroup diagnostics if readiness fails. Unavailable
   diagnostics do not suppress the readiness failure.
 - `.github/workflows/podman-cpu-proof.yaml` publishes PR-only experimental runtime evidence.
 - `.github/workflows/sandbox-images.yaml` provides reusable sandbox-image build and test evidence.
@@ -207,7 +202,7 @@ and are preserved rather than interpreted as a new transaction with no submitted
 The candidate CLI comes from the source commit that an E2E run tests.
 The `generate-matrix` job prepares it once through the shared `ci-compile-artifacts` action.
 Main CI and PR CI use that action too. It always produces the CLI and full plugin,
-with Node.js 24.22.1, and verifies the embedded source revision and source maps.
+with Node.js 24.18.1, and verifies the embedded source revision and source maps.
 E2E loads the action from a separate checkout of the trusted workflow revision.
 The existing E2E artifact handoff retains the CLI and shared-module payload during this migration.
 The job publishes root `dist/` and `nemoclaw/dist/shared/` in one content-addressed artifact.
@@ -288,7 +283,7 @@ Before the action restores root `dist/` and `nemoclaw/dist/shared/` into the wor
 - The upload digest is present and well formed.
 - The candidate SHA matches the expected commit.
 - The manifest matches the source, workflow run, toolchain contract, and payload.
-- The restore action uses the pinned Node.js 24.22.1 process to stream each file as binary data when it verifies SHA-256 digests.
+- The restore action uses the pinned Node.js 24.18.1 process to stream each file as binary data when it verifies SHA-256 digests.
 - The archive contains no path traversal, links, special files, or files outside root `dist/` and `nemoclaw/dist/shared/`.
 - Neither root `dist/` nor `nemoclaw/dist/` already exists, including as a dangling symbolic link.
 - The candidate checkout's `nemoclaw/` path is a directory and is not a symbolic link.
@@ -917,10 +912,8 @@ retains one sandbox identity check and proves dashboard and API forward ownershi
 after reuse. `onboard-resume-hermes` retains its before-and-after resume evidence.
 The original entries retain OpenClaw coverage. `double-onboard` also repeats
 onboarding with a changed model and verifies replacement identity, the OpenClaw
-primary model, and the recorded selection. It then runs `nemoclaw uninstall --yes --destroy-user-data`,
-verifies that the managed OpenClaw state volume is gone, and onboards the same
-sandbox name again. Unit and integration tests own the drift decision and
-interactive confirmation cases.
+primary model, and the recorded selection. Unit and integration tests own the
+drift decision and interactive confirmation cases.
 
 Give each entry one `displayName` in the form `<area>: <observable outcome>`.
 Do not include this implementation metadata or workflow text in the display name:
@@ -1126,18 +1119,15 @@ The probe requires a successful response containing the expected answer.
 The stateless request has no tools or conversation persistence, so repeating it
 has no application mutation. It may consume another inference request.
 
-The probe retries once after five seconds when curl exits 22 with empty
-stdout and exactly reports HTTP 429, 500, 502, 503, or 504. It also retries
-when curl exits 28 with empty stdout and reports a timeout with zero response
-bytes. Neither result identifies whether the gateway or upstream caused the
-failure. Every request has its own command artifact and a 90-second curl limit.
-Each reply-budget attempt logs bounded availability evidence, including recovery
-or exhaustion,
+The probe retries once after five seconds only when curl exits 22 with empty
+stdout and exactly reports HTTP 503. This reports service unavailability but
+does not identify whether the gateway or upstream produced it. Every request
+has its own command artifact and a 90-second curl limit. Each reply-budget
+attempt logs bounded availability evidence, including recovery or exhaustion,
 before writing its artifact. The aggregate log survives an artifact-write failure
 and is retained after Brev cleanup; the artifact exists only when its write succeeds.
 The existing two reply budgets permit at most four requests in total.
-Persistent retriable HTTP responses, zero-response timeouts, other HTTP errors,
-ambiguous transport failures, and unknown errors fail.
+Persistent 503, other HTTP errors, transport failures, and unknown errors fail.
 The existing response validation and answer assertion remain unchanged.
 
 ## Launch-readiness locked-image acceptance
@@ -1409,6 +1399,14 @@ OpenClaw and Hermes discovery before and after gateway restart. Deterministic
 state-restore tests prove complete native directories are archived without
 image-plugin exclusions.
 
+Before rebuilding the stopped OpenClaw source, the same target stops Docker and confirms that
+`docker info` fails. It then requires `nemoclaw uninstall --yes` to fail with the Docker-unavailable
+container-cleanup diagnostic while the sandbox remains registered. Cleanup restores Docker before
+deleting the sandbox. The existing stopped-source proof supplies the registered `Error` state;
+the target does not kill and observe a second source. The removed rebuild completion-text check
+repeated the exit and restored-state checks. The removed fixture-write and restored-marker exit
+checks are covered by the retained exact restored marker, configuration, and loaded-plugin proof.
+
 On Docker and rootless Podman, managed-image activation also adopts the
 published OpenClaw and Hermes digests through `--from-image`. It confirms
 OpenShell readiness, the durable external-image receipt, identity-drift
@@ -1466,7 +1464,7 @@ dispatches test the candidate's reviewed stable OpenShell release and do not
 select the development runtime.
 
 The OpenClaw, Hermes, and LangChain Deep Agents Code shards restore and verify that same artifact with the trusted workflow revision.
-The `actions/setup-node` step selects Node.js 24.22.1 and disables automatic package manager caching before candidate checkout.
+The `actions/setup-node` step selects Node.js 24.18.1 and disables automatic package manager caching before candidate checkout.
 The trusted workflow installs the exact reviewed npm 12 archive before it installs planner dependencies.
 An argument- and asset-allowlisted `gh` shim presents only the retained files to the unchanged trusted `scripts/install-openshell.sh` path.
 A separate `curl` shim blocks network fallback.
@@ -2329,13 +2327,6 @@ or automatically replay the base.
 For the default same-repository PR revision selection, leave `jobs` and `targets` empty and keep `include_staging_brev_launchable=false`.
 Keep `allow_jetson_dispatch=false` for the default PR revision selection.
 To select the protected managed-image runtime qualification, set `jobs=managed-image-protected-runtime`.
-The 75-minute job records its start before checkout. Setup and provider qualification share the first
-45 minutes; rollback and final inventory share the next 15 minutes. Commands retain their individual
-limits and are capped by the remaining phase budget. The fixture reserves five minutes for cleanup,
-and the workflow reserves eight minutes for registry removal, source restoration, artifact upload,
-and Docker credential cleanup, with two minutes of runner headroom. A late setup or exhausted phase
-fails qualification; it cannot publish a passing receipt by skipping agent or cleanup assertions.
-NIM login and image preparation run in a supervised child so registry waits obey the same deadline.
 Leave `targets` empty.
 Keep `include_staging_brev_launchable=false`.
 The candidate must contain `ci/protected-managed-image-multiarch-activation-v1.json` and `ci/protected-managed-image-runtime-activation-v1.json`.
@@ -2595,22 +2586,3 @@ The sandbox isolation check does not attest isolation from those host processes.
 Job cleanup and artifact redaction do not revoke the key or erase a copy made by candidate code.
 Rotate or revoke the key in its issuing provider to remove later access.
 Hermes interactive OAuth evidence is also deferred for Slice 2 (#12589).
-
-The native NVIDIA `hermes-inference-switch` target enrolls Discord, rebuilds
-the sandbox without host credential overrides, verifies the retained Discord
-settings, requires healthy `status --json` output from `nvidia-prod`, and runs a Hermes turn.
-The status call checks the installed guard through the CLI without a host key override.
-This checks the live OpenShell credential
-generation and archived-state restore boundary for #13633. The target uses its
-public `NVIDIA_API_KEY` credential profile. The `hermes-discord` target retains
-its internal hosted inference credential and Discord security checks.
-Source tests own reference validation and settings preservation.
-`support/hermes-discord-rebuild-contract.test.ts` checks the credential-profile
-boundary and calls the same typed rebuild helper as the live test, including failure propagation. Each target
-retains its existing cleanup and credential redaction.
-Discord schema defaults and nonsecret generated environment lines are covered
-by `test/generation/generate-hermes-config.test.ts`. Registry persistence is
-covered by `test/state/registry.test.ts` and onboarding messaging tests. The
-live target retains runtime credential isolation, policy denial, native
-Discord transport, config-export refusal, and cleanup. The native switch
-target owns post-rebuild inference and retained Discord settings.
