@@ -529,7 +529,7 @@ export async function cleanupInterruptedManagedImageOpenShellE2e(
       onboard,
       runtimeProvider: provider,
       roots,
-      prepared: true,
+      preparationAttempted: true,
     });
     if (failures.length) throw new Error("managed recovery volume cleanup is unproven");
     commandResult(["docker", "network", "rm", scope.networkName], process.env, 15000);
@@ -735,14 +735,14 @@ export function cleanupProtectedManagedStateVolumes(input: {
   readonly onboard: OnboardModule | null;
   readonly runtimeProvider: RuntimeProviderBundle | null;
   readonly roots: readonly ProtectedManagedStateRoot[];
-  readonly prepared: boolean;
+  readonly preparationAttempted: boolean;
 }): string[] {
   try {
     let results: readonly ProtectedManagedStateVolumeCleanupResult[] = [];
     // This is the fixture owner's explicit teardown after sandbox/container
     // cleanup, including injected bootstrap failures. Automatic create rollback
     // preserves named volumes and cannot establish an empty fixture inventory.
-    if (input.prepared && input.onboard && input.runtimeProvider) {
+    if (input.preparationAttempted && input.onboard && input.runtimeProvider) {
       results = input.onboard.managedWorkloadOnboard.removeManagedStateVolumes(
         { roots: input.roots },
         { runtimeProvider: input.runtimeProvider },
@@ -1524,6 +1524,7 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
   let runtimeProvider: RuntimeProviderBundle | null = null;
   let managedStateRoots: readonly ProtectedManagedStateRoot[] = [];
   let managedStateVolumeScope: ProtectedManagedStateVolumeScope | null = null;
+  let managedStateVolumePreparationAttempted = false;
   let failureInjectionQualified = false;
   let probeEvidence: T | undefined;
   let primaryError: unknown;
@@ -1591,8 +1592,11 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
         sandboxName: input.sandbox,
         agentIdentity,
       }),
-      recoveryScope?.owner,
+      // Ordinary runs also own a unique fixture scope; never adopt an older volume.
+      recoveryScope?.owner ?? path.basename(stateDir),
     );
+    // Preparation can retain a created volume even when it throws before returning a scope.
+    managedStateVolumePreparationAttempted = true;
     managedStateVolumeScope = onboard.managedWorkloadOnboard.prepareManagedStateVolumes(
       { roots: managedStateRoots },
       { runtimeProvider: selectedRuntimeProvider },
@@ -1947,7 +1951,7 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
           onboard,
           runtimeProvider,
           roots: managedStateRoots,
-          prepared: managedStateVolumeScope !== null,
+          preparationAttempted: managedStateVolumePreparationAttempted,
         }),
       );
       const removeNetwork = commandResult(
