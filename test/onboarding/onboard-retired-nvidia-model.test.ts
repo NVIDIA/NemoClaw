@@ -36,7 +36,7 @@ describe("recovered NVIDIA model onboarding", () => {
       const retiredModel = "minimaxai/minimax-m3";
       const replacement = constrained
         ? "meta/llama-3.3-70b-instruct"
-        : "nvidia/nemotron-3-super-120b-a12b";
+        : "nvidia/nemotron-3.5-super-vl-120b-a12b";
       const workspace = createOnboardProcessWorkspace("nemoclaw-retired-model-", {
         separateHome: true,
       });

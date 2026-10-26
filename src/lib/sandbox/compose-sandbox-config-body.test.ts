@@ -84,6 +84,7 @@ describe("composeSandboxConfigBody", () => {
         provider: "custom",
         base_url: "https://inference.local/v1",
       },
+      tools: { tool_search: { enabled: "on" } },
     };
 
     const written = composeSandboxConfigBody(config, HERMES_TARGET);
@@ -102,6 +103,8 @@ describe("composeSandboxConfigBody", () => {
       provider: "custom",
       base_url: "https://inference.local/v1",
     });
+    // Hermes/PyYAML uses YAML 1.1; unquoted "on" becomes true there.
+    expect(YAML.parse(written, { version: "1.1" })).toEqual(config);
   });
 
   it("does not prepend the header for non-Hermes targets", () => {

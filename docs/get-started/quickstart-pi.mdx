@@ -35,6 +35,10 @@ Native Podman, macOS, Windows, WSL, messaging channels, dashboards, host mounts,
 ## Install and Onboard
 
 After Pi activation is available in the selected NemoClaw release, install NemoClaw and select Pi explicitly.
+The installer and supported CLI operations attempt anonymous completion telemetry to NVIDIA's fixed TEST receiver by default.
+Run `export NEMOCLAW_DISABLE_TELEMETRY=1` in this shell before installation to suppress collection and delivery.
+Repeat it in any new shell used for NemoClaw CLI commands.
+Refer to [Operation Telemetry](/user-guide/openclaw/security/best-practices#operation-telemetry) for details.
 
 ```bash
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | \
@@ -49,7 +53,14 @@ For an existing installation, run the canonical onboarding command.
 nemoclaw onboard --agent pi --name my-pi
 ```
 
-Choose a provider and model that use the OpenAI Chat Completions API. NemoClaw keeps the upstream provider credential in OpenShell. NVIDIA Endpoints and supported fixed hosted providers use native endpoints through sandbox-attached OpenShell providers. Custom and local providers retain the shared `inference.local` route. The credential remains in OpenShell provider state across rebuild and sandbox destruction. When no sandbox needs that provider, remove it explicitly with `nemoclaw credentials reset <provider> --yes`.
+Choose a provider and model that use the OpenAI Chat Completions API.
+NemoClaw keeps upstream credentials on the host.
+NVIDIA Endpoints, supported fixed hosted providers, new hosted custom endpoints outside the Personal policy tier, and new qualified local selections use sandbox-attached OpenShell providers.
+OpenShell supplies the provider credential or adapter token at egress; Pi's configuration contains only a non-secret placeholder or environment reference.
+New Personal-tier hosted custom selections, Local NVIDIA NIM, and unchanged published Pi shared-route selections use `inference.local`.
+A failed native selection stops without falling back to the shared route.
+For direct providers, OpenShell retains the credential across rebuild and sandbox destruction.
+When no sandbox needs that provider, remove it explicitly with `nemoclaw credentials reset <provider> --yes`.
 
 Stock onboarding selects a Pi managed-image digest. It does not build the Pi Dockerfile on the host. The reviewed Dockerfile is a trusted CI image-build source, not a user onboarding mechanism. A missing, incomplete, mutable, or inconsistent image contract fails before sandbox creation.
 

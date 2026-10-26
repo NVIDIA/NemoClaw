@@ -14,6 +14,7 @@ import {
   isOpenShellSandboxId,
   NEMOCLAW_CREATE_ATTEMPT_LABEL,
   parseOpenShellSandboxId,
+  parseStrictOpenShellSandboxListJson,
   resolveCreatedOpenShellSandboxId,
 } from "../../src/lib/adapters/openshell/sandbox-identity.ts";
 import { createCliOpenShellSandboxCommandExecutor } from "../../src/lib/adapters/openshell/sandbox-command-cli.ts";
@@ -54,7 +55,18 @@ import {
   managedStartupE2eProfile,
 } from "./generate-managed-startup-profile-fixture.mts";
 import {
+  managedImageHarnessContainerListArgs,
+  managedImageSandboxListLimitFlag,
+  requireManagedImageHarnessOpenShellVersionFromOutput,
+  configureLocalInferenceRoute,
+  assertLocalInferenceAgentResponse,
+  waitForLocalInferenceAgentPairing,
+  localInferenceAgentCommand,
+  localInferenceProbe,
+  verifyManagedImageLocalInferenceRoute,
+  type ManagedImageOpenShellE2eInputs,
   createManagedImageSandboxWithDiagnostics,
+  isManagedImageHarnessWorkload,
   isManagedImageLocalInferenceKind,
   managedImageFailureDetail,
   type ManagedImageLocalInferenceKind,
@@ -64,8 +76,8 @@ import {
 
 // This executable owns one protected qualification transaction from sandbox
 // creation through exact cleanup. Keep its stateful orchestration and cleanup
-// together so no cross-module return path can bypass rollback. Stateless policy
-// and diagnostics remain in managed-image-protected-runtime-contract.ts.
+// together so no cross-module return path can bypass rollback. Native inference
+// preparation and diagnostics use managed-image-protected-runtime-contract.ts.
 
 const MANAGED_AGENTS = new Set<ShippedManagedImageAgent>(SHIPPED_MANAGED_IMAGE_AGENTS);
 const REPOSITORY_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -95,15 +107,7 @@ function compactText(value = ""): string {
   return String(value).replace(/\s+/gu, " ").trim();
 }
 
-export type ManagedImageOpenShellE2eInputs = {
-  agent: ShippedManagedImageAgent;
-  image: string;
-  sandbox: string;
-  gpu?: true;
-  localProvider?: ManagedImageLocalInferenceKind;
-  model?: string;
-  failureInjection?: "bootstrap-completion";
-};
+export type { ManagedImageOpenShellE2eInputs } from "./managed-image-protected-runtime-contract.ts";
 
 export type ManagedImageOpenShellRecoveryScope = {
   readonly owner: string;
@@ -236,6 +240,12 @@ function confirmManagedSandboxAbsent(
   onboard: Pick<OnboardModule, "runCaptureOpenshell">,
   nonce: string,
 ): void {
+  const versionOutput = onboard.runCaptureOpenshell(["--version"], {
+    ignoreError: false,
+    timeout: 30_000,
+    maxBuffer: 1024 * 1024,
+  });
+  const runtimeVersion = requireManagedImageHarnessOpenShellVersionFromOutput(versionOutput);
   const output = onboard.runCaptureOpenshell(
     [
       "sandbox",
@@ -246,14 +256,13 @@ function confirmManagedSandboxAbsent(
       `${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${nonce}`,
       "--output",
       "json",
-      "--limit",
+      managedImageSandboxListLimitFlag(runtimeVersion),
       "2",
     ],
     { ignoreError: false, timeout: 30000, maxBuffer: 1024 * 1024 },
   );
-  const rows: unknown = JSON.parse(output);
-  if (!Array.isArray(rows) || rows.length !== 0)
-    throw new Error("managed recovery sandbox absence is unproven");
+  const rows = parseStrictOpenShellSandboxListJson(output);
+  if (!rows || rows.length !== 0) throw new Error("managed recovery sandbox absence is unproven");
 }
 
 export function createManagedImageSandboxWithRecovery(
@@ -498,12 +507,13 @@ export async function cleanupInterruptedManagedImageOpenShellE2e(
         ));
     if (removeGateway.status !== 0 && !gatewayAlreadyAbsent)
       throw new Error("managed recovery gateway removal failed");
-    const containers = exactHarnessContainerIds(input, scope.networkName, process.env);
+    const gatewayStateDir = path.join(scope.stateDir, "gateway-state");
+    const containers = exactHarnessContainerIds(input, gatewayStateDir, process.env);
     if (containers.exactIds.length > 1)
       throw new Error("managed recovery container identity is ambiguous");
     if (containers.exactIds.length === 1) {
       commandResult(["docker", "rm", "--force", containers.exactIds[0]!], process.env, 15000);
-      if (exactHarnessContainerIds(input, scope.networkName, process.env).exactIds.length !== 0)
+      if (exactHarnessContainerIds(input, gatewayStateDir, process.env).exactIds.length !== 0)
         throw new Error("managed recovery container cleanup is unproven");
     }
     const provider = createDockerRuntimeProviderBundle();
@@ -519,8 +529,7 @@ export async function cleanupInterruptedManagedImageOpenShellE2e(
       onboard,
       runtimeProvider: provider,
       roots,
-      scope: null,
-      committed: true,
+      preparationAttempted: true,
     });
     if (failures.length) throw new Error("managed recovery volume cleanup is unproven");
     commandResult(["docker", "network", "rm", scope.networkName], process.env, 15000);
@@ -623,7 +632,7 @@ type ProtectedManagedStateVolumeMount = {
 type ProtectedManagedStateVolumeCleanupResult =
   | { readonly status: "not-applicable" | "absent" | "removed" }
   | {
-      readonly status: "not-owned" | "failed";
+      readonly status: "not-owned" | "failed" | "retained";
       readonly detail: string;
       readonly volumeName: string;
     };
@@ -722,25 +731,25 @@ export function resolveManagedImageOnboardModule(onboardImport: unknown): Onboar
   return candidate as OnboardModule;
 }
 
-function cleanupProtectedManagedStateVolumes(input: {
+export function cleanupProtectedManagedStateVolumes(input: {
   readonly onboard: OnboardModule | null;
   readonly runtimeProvider: RuntimeProviderBundle | null;
   readonly roots: readonly ProtectedManagedStateRoot[];
-  readonly scope: ProtectedManagedStateVolumeScope | null;
-  readonly committed: boolean;
+  readonly preparationAttempted: boolean;
 }): string[] {
   try {
     let results: readonly ProtectedManagedStateVolumeCleanupResult[] = [];
-    if (input.committed && input.onboard && input.runtimeProvider) {
+    // This is the fixture owner's explicit teardown after sandbox/container
+    // cleanup, including injected bootstrap failures. Automatic create rollback
+    // preserves named volumes and cannot establish an empty fixture inventory.
+    if (input.preparationAttempted && input.onboard && input.runtimeProvider) {
       results = input.onboard.managedWorkloadOnboard.removeManagedStateVolumes(
         { roots: input.roots },
         { runtimeProvider: input.runtimeProvider },
       );
-    } else if (!input.committed) {
-      results = input.scope?.cleanupIncompleteCreate() ?? [];
     }
     return results.flatMap((result) =>
-      result.status === "not-owned" || result.status === "failed"
+      result.status === "not-owned" || result.status === "failed" || result.status === "retained"
         ? [`managed state volume ${result.volumeName} cleanup ${result.status}: ${result.detail}`]
         : [],
     );
@@ -857,9 +866,13 @@ function commandDetail(result: ManagedImageCommandResult): string {
     .slice(-8_000);
 }
 
-function printExactContainerFailureState(containerId: string | null, env: NodeJS.ProcessEnv): void {
+export function printExactContainerFailureState(
+  containerId: string | null,
+  env: NodeJS.ProcessEnv,
+  runCommand: ManagedImageCommandRunner = commandResult,
+): void {
   if (!containerId || !/^[a-f0-9]{64}$/u.test(containerId)) return;
-  const state = commandResult(
+  const state = runCommand(
     [
       "docker",
       "container",
@@ -874,7 +887,7 @@ function printExactContainerFailureState(containerId: string | null, env: NodeJS
   console.error(
     `Managed-image exact container state: ${managedImageFailureDetail(commandDetail(state))}`,
   );
-  const processState = commandResult(
+  const processState = runCommand(
     [
       "docker",
       "exec",
@@ -890,6 +903,38 @@ function printExactContainerFailureState(containerId: string | null, env: NodeJS
   );
   console.error(
     `Managed-image exact container processes: ${managedImageFailureDetail(commandDetail(processState))}`,
+  );
+  // The canonical process can exit while OpenShell PID 1 stays alive. Read only
+  // its fixed diagnostic logs as the sandbox owner before fixture cleanup.
+  const startupLogs = runCommand(
+    [
+      "docker",
+      "exec",
+      "--user",
+      "sandbox",
+      containerId,
+      "/usr/local/bin/node",
+      "-e",
+      `const fs = require("node:fs");
+for (const file of ["/tmp/nemoclaw-start.log", "/tmp/gateway.log", "/tmp/dashboard.log"]) {
+  let fd;
+  process.stdout.write(file + "\\n");
+  try {
+    fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stat.size > 262144) throw new Error("unsafe or oversized log");
+    const bytes = Buffer.alloc(Math.min(stat.size, 262144));
+    const count = fs.readSync(fd, bytes, 0, bytes.length, 0);
+    process.stdout.write(bytes.subarray(0, count));
+  } catch { process.stdout.write("diagnostic log unavailable\\n"); }
+  finally { if (fd !== undefined) fs.closeSync(fd); }
+}`,
+    ],
+    env,
+    5_000,
+  );
+  console.error(
+    `Managed-image startup logs (bounded): ${managedImageFailureDetail(`${startupLogs.error?.message ?? ""}\n${startupLogs.stdout ?? ""}\n${startupLogs.stderr ?? ""}`, env)}`,
   );
 }
 
@@ -1235,118 +1280,11 @@ async function waitForCommittedSandboxProbe(
   );
 }
 
-export function managedImageLocalInferenceBaseUrl(
-  localProvider: ManagedImageLocalInferenceKind,
-  configuredValue = process.env.NEMOCLAW_E2E_LOCAL_INFERENCE_BASE_URL,
-): string {
-  const route = resolveManagedImageLocalInferenceRoute(localProvider);
-  const configured = String(configuredValue ?? "").trim();
-  const value = configured || route.defaultBaseUrl;
-  let parsed: URL;
-  try {
-    parsed = new URL(value);
-  } catch {
-    throw new Error("protected local inference base URL is invalid");
-  }
-  if (
-    parsed.protocol !== "http:" ||
-    parsed.hostname !== "host.openshell.internal" ||
-    !/^[1-9][0-9]{0,4}$/u.test(parsed.port) ||
-    parsed.pathname.replace(/\/+$/u, "") !== "/v1" ||
-    parsed.username ||
-    parsed.password ||
-    parsed.search ||
-    parsed.hash
-  ) {
-    throw new Error("protected local inference must use http://host.openshell.internal:<port>/v1");
-  }
-  return value.replace(/\/+$/u, "");
-}
-
-function localInferenceBaseUrl(input: Inputs): string {
-  if (!input.localProvider) throw new Error("local provider is required");
-  return managedImageLocalInferenceBaseUrl(input.localProvider);
-}
-
-function configureLocalInferenceRoute(
+async function assertProtectedLocalInference(
   onboard: OnboardModule,
   input: Inputs,
   env: NodeJS.ProcessEnv,
-): void {
-  if (!input.localProvider || !input.model) return;
-  const route = resolveManagedImageLocalInferenceRoute(input.localProvider);
-  const credential = String(env[route.credentialEnv] ?? "").trim();
-  if (!credential || /[\0\r\n]/u.test(credential)) {
-    throw new Error(`${route.credentialEnv} is required for protected local inference`);
-  }
-  const commandEnv = { ...env, [route.credentialEnv]: credential };
-  const create = onboard.runOpenshell(
-    [
-      "provider",
-      "create",
-      "--name",
-      route.providerName,
-      "--type",
-      "openai",
-      "--credential",
-      route.credentialEnv,
-      "--config",
-      `OPENAI_BASE_URL=${localInferenceBaseUrl(input)}`,
-    ],
-    { ignoreError: true, env: commandEnv, stdio: ["ignore", "pipe", "pipe"] },
-  );
-  if (create.status !== 0) {
-    throw new Error(`protected local inference provider creation failed: ${commandDetail(create)}`);
-  }
-  const setRoute = onboard.runOpenshell(
-    [
-      "inference",
-      "set",
-      "--no-verify",
-      "--provider",
-      route.providerName,
-      "--model",
-      input.model,
-      "--timeout",
-      "120",
-    ],
-    { ignoreError: true, env: commandEnv, stdio: ["ignore", "pipe", "pipe"] },
-  );
-  if (setRoute.status !== 0) {
-    throw new Error(`protected local inference route failed: ${commandDetail(setRoute)}`);
-  }
-}
-
-function localInferenceProbe(input: Inputs): string {
-  if (!input.model) throw new Error("local inference model is required");
-  const payload = JSON.stringify({
-    model: input.model,
-    messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
-    reasoning_effort: "none",
-    max_tokens: 32,
-  });
-  return [
-    "set -eu",
-    "response=/tmp/nemoclaw-managed-image-inference.json",
-    `curl -fsS --max-time 180 https://inference.local/v1/chat/completions -H 'Content-Type: application/json' --data ${JSON.stringify(payload)} > "$response"`,
-    "node - \"$response\" <<'NODE'",
-    'const fs = require("node:fs");',
-    'const body = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));',
-    "const choice = Array.isArray(body.choices) ? body.choices[0] : null;",
-    'const text = choice && choice.message && typeof choice.message.content === "string"',
-    "  ? choice.message.content",
-    '  : choice && typeof choice.text === "string" ? choice.text : "";',
-    'if (!/pong/i.test(text)) throw new Error("local inference did not return PONG");',
-    "NODE",
-    'rm -f "$response"',
-  ].join("\n");
-}
-
-function assertProtectedLocalInference(
-  onboard: OnboardModule,
-  input: Inputs,
-  env: NodeJS.ProcessEnv,
-): void {
+): Promise<void> {
   const result = commandResult(
     onboard.openshellArgv([
       "sandbox",
@@ -1354,44 +1292,57 @@ function assertProtectedLocalInference(
       "--name",
       input.sandbox,
       "--",
-      "/bin/sh",
-      "-eu",
-      "-c",
-      localInferenceProbe(input),
+      ...localInferenceProbe(input),
     ]),
     env,
     210_000,
   );
   if (result.status !== 0) {
-    throw new Error(`sandbox inference.local completion failed: ${commandDetail(result)}`);
+    throw new Error(`sandbox native local completion failed: ${commandDetail(result)}`);
   }
+  // The fresh sandbox has one verified provider attachment. Use the generated
+  // agent configuration without endpoint, credential, or model overrides.
+  const agentResult = await waitForLocalInferenceAgentPairing(input.agent, () =>
+    commandResult(
+      onboard.openshellArgv([
+        "sandbox",
+        "exec",
+        "--name",
+        input.sandbox,
+        "--",
+        ...localInferenceAgentCommand(input),
+      ]),
+      env,
+      210_000,
+    ),
+  );
+  if (agentResult.status !== 0) {
+    throw new Error(`sandbox native agent completion failed: ${commandDetail(agentResult)}`);
+  }
+  assertLocalInferenceAgentResponse(input, String(agentResult.stdout ?? ""), env);
 }
 
-export function managedImageHarnessContainerListArgs(
-  sandbox: string,
-  includeStopped: boolean,
-): string[] {
-  return [
-    "docker",
-    "ps",
-    includeStopped ? "-aq" : "-q",
-    "--no-trunc",
-    "--filter",
-    "label=openshell.ai/managed-by=openshell",
-    "--filter",
-    `label=openshell.ai/sandbox-name=${sandbox}`,
-  ];
-}
+export { managedImageHarnessContainerListArgs } from "./managed-image-protected-runtime-contract.ts";
 
 function exactHarnessContainerIds(
   input: Inputs,
-  networkName: string,
+  stateDir: string,
   env: NodeJS.ProcessEnv,
   includeStopped = true,
   runCommand: ManagedImageCommandRunner = commandResult,
 ): { candidateCount: number; exactIds: string[] } {
   const expectedContentId = resolveLocalImageContentId(input.image, env, runCommand);
-  const list = runCommand(managedImageHarnessContainerListArgs(input.sandbox, includeStopped), env);
+  const version = runCommand(["openshell", "--version"], env);
+  if (version.status !== 0) {
+    throw new Error(`could not resolve the protected OpenShell version: ${commandDetail(version)}`);
+  }
+  const runtimeVersion = requireManagedImageHarnessOpenShellVersionFromOutput(
+    String(version.stdout ?? ""),
+  );
+  const list = runCommand(
+    managedImageHarnessContainerListArgs(input.sandbox, includeStopped, runtimeVersion),
+    env,
+  );
   if (list.status !== 0) {
     throw new Error(`could not resolve the OpenShell sandbox container: ${commandDetail(list)}`);
   }
@@ -1407,14 +1358,17 @@ function exactHarnessContainerIds(
       const records = JSON.parse(String(inspect.stdout ?? "")) as Array<{
         Config?: { Labels?: Record<string, string> };
         Image?: string;
-        NetworkSettings?: { Networks?: Record<string, unknown> };
+        HostConfig?: { NetworkMode?: string };
       }>;
       const record = records.length === 1 ? records[0] : undefined;
       if (
-        record?.Config?.Labels?.["openshell.ai/managed-by"] === "openshell" &&
-        record.Config.Labels["openshell.ai/sandbox-name"] === input.sandbox &&
-        record.Image === expectedContentId &&
-        Object.hasOwn(record.NetworkSettings?.Networks ?? {}, networkName)
+        isManagedImageHarnessWorkload(record, {
+          sandbox: input.sandbox,
+          stateDir,
+          imageContentId: expectedContentId,
+          runtimeVersion,
+          networkName: env.OPENSHELL_DOCKER_NETWORK_NAME,
+        })
       ) {
         exactIds.push(candidate);
       }
@@ -1427,14 +1381,16 @@ function exactHarnessContainerIds(
 
 export function assertExactSandboxImage(
   input: Inputs,
-  networkName: string,
+  stateDir: string,
   env: NodeJS.ProcessEnv,
   runCommand: ManagedImageCommandRunner = commandResult,
 ): string {
   // A managed-bootstrap transaction keeps its stopped rollback backup until
   // commit. Qualify the one running replacement here; rollback cleanup below
   // continues to inspect every stopped and running container.
-  const resolved = exactHarnessContainerIds(input, networkName, env, false, runCommand);
+  // OpenShell 0.1.2 separates supervisor and workload containers and puts the
+  // workload on network=none. Bind ownership to our private gateway namespace.
+  const resolved = exactHarnessContainerIds(input, stateDir, env, false, runCommand);
   if (resolved.candidateCount !== 1 || resolved.exactIds.length !== 1) {
     throw new Error(
       `OpenShell did not launch exactly one running harness-owned PR image container: found ${resolved.candidateCount} running labeled and ${resolved.exactIds.length} running exact`,
@@ -1568,7 +1524,7 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
   let runtimeProvider: RuntimeProviderBundle | null = null;
   let managedStateRoots: readonly ProtectedManagedStateRoot[] = [];
   let managedStateVolumeScope: ProtectedManagedStateVolumeScope | null = null;
-  let managedStateVolumesCommitted = false;
+  let managedStateVolumePreparationAttempted = false;
   let failureInjectionQualified = false;
   let probeEvidence: T | undefined;
   let primaryError: unknown;
@@ -1589,7 +1545,7 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
       gatewayName: GATEWAY_NAME,
       gatewayPort: GATEWAY_PORT,
     });
-    configureLocalInferenceRoute(onboard, input, process.env);
+    const localAttachment = await configureLocalInferenceRoute(onboard, input, process.env);
     if (input.agent === "hermes") {
       // Reserve the fixed API port used by this fixture's in-sandbox health probe.
       hermesApiPort = await reserveCreateSandboxHermesApiPort({
@@ -1604,7 +1560,10 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
       input.localProvider && input.model
         ? withManagedImageLocalInferenceProfile(
             baseProfile,
-            resolveManagedImageLocalInferenceRoute(input.localProvider),
+            {
+              ...resolveManagedImageLocalInferenceRoute(input.localProvider),
+              defaultBaseUrl: localAttachment!.endpointUrl,
+            },
             input.model,
             maximumOutputTokens,
           )
@@ -1622,7 +1581,6 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
         agentName: input.agent,
         directGpu: input.gpu === true,
         hostGpuAvailable: input.gpu === true,
-        additionalPresets: input.localProvider ? ["local-inference"] : [],
       },
     );
     const selectedRuntimeProvider = createDockerRuntimeProviderBundle();
@@ -1634,8 +1592,11 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
         sandboxName: input.sandbox,
         agentIdentity,
       }),
-      recoveryScope?.owner,
+      // Ordinary runs also own a unique fixture scope; never adopt an older volume.
+      recoveryScope?.owner ?? path.basename(stateDir),
     );
+    // Preparation can retain a created volume even when it throws before returning a scope.
+    managedStateVolumePreparationAttempted = true;
     managedStateVolumeScope = onboard.managedWorkloadOnboard.prepareManagedStateVolumes(
       { roots: managedStateRoots },
       { runtimeProvider: selectedRuntimeProvider },
@@ -1752,6 +1713,7 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
             sandboxName: input.sandbox,
             target: { kind: "named", gatewayName: GATEWAY_NAME },
             source: { reference: input.image },
+            ...(localAttachment ? { providers: [localAttachment.providerName] } : {}),
             policyPath: initialSandboxPolicy.policyPath,
             ...(managedStateDriverConfig ? { driverConfigJson: managedStateDriverConfig } : {}),
             ...(input.gpu ? { gpu: {} } : {}),
@@ -1804,7 +1766,14 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
         );
       }
 
-      ownedContainerId = assertExactSandboxImage(input, networkName, launch.sandboxEnv);
+      ownedContainerId = assertExactSandboxImage(input, gatewayStateDir, launch.sandboxEnv);
+      if (localAttachment) {
+        await verifyManagedImageLocalInferenceRoute(
+          onboard.runOpenshell,
+          input.sandbox,
+          localAttachment,
+        );
+      }
       const sandbox = onboard.runOpenshell(["sandbox", "get", input.sandbox], {
         ignoreError: true,
         env: launch.sandboxEnv,
@@ -1839,14 +1808,13 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
         );
       }
       if (input.localProvider && !afterLocalInference) {
-        assertProtectedLocalInference(onboard, input, launch.sandboxEnv);
+        await assertProtectedLocalInference(onboard, input, launch.sandboxEnv);
       }
       if (gpuEnabled) {
         await flow.runtimePatch.commitAfterReady();
         await waitForCommittedSandboxProbe(onboard, input, launch.sandboxEnv);
       }
       managedStateVolumeScope?.commit();
-      managedStateVolumesCommitted = managedStateVolumeScope !== null;
       if (afterLocalInference) {
         if (!input.localProvider) {
           throw new Error("managed-image post-route probe requires protected local inference");
@@ -1873,7 +1841,7 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
         }
       }
       process.stdout.write(
-        `OpenShell launched exact ${input.agent} PR image ${input.image} through the production managed-bootstrap sequence${input.localProvider ? ` with ${gpuEnabled ? "real NVIDIA GPU access and " : ""}${input.localProvider} inference.local completion` : ""}.\n`,
+        `OpenShell launched exact ${input.agent} PR image ${input.image} through the production managed-bootstrap sequence${input.localProvider ? ` with ${gpuEnabled ? "real NVIDIA GPU access and " : ""}${input.localProvider} native local completion` : ""}.\n`,
       );
     }
   } catch (error) {
@@ -1940,7 +1908,7 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
         }
       }
       try {
-        const resolved = exactHarnessContainerIds(input, networkName, process.env);
+        const resolved = exactHarnessContainerIds(input, gatewayStateDir, process.env);
         const cleanupContainerId =
           resolved.exactIds.length === 1 ? (resolved.exactIds[0] ?? null) : null;
         if (cleanupContainerId) {
@@ -1983,8 +1951,7 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
           onboard,
           runtimeProvider,
           roots: managedStateRoots,
-          scope: managedStateVolumeScope,
-          committed: managedStateVolumesCommitted,
+          preparationAttempted: managedStateVolumePreparationAttempted,
         }),
       );
       const removeNetwork = commandResult(

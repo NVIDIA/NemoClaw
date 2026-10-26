@@ -57,6 +57,7 @@ on:
       - "src/lib/messaging/**"
       - "src/lib/onboard/**"
       - "src/lib/security/credential-hash.ts"
+      - "src/lib/sandbox-base-image/security-package-specs.ts"
       - "src/lib/state/paths.ts"
       - "src/lib/state/state-root.ts"
       - "test/helpers/openclaw-real-agent-reload-proof.ts"
@@ -146,7 +147,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.1
+          node-version: 24.22.1
 
       - name: Install reviewed npm
         uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
@@ -180,6 +181,7 @@ jobs:
           for relative in \
             agents/langchain-deepagents-code/Dockerfile.base \
             scripts/security/build-native-security-packages.sh \
+            scripts/security/build-perl-security-packages.sh \
             agents/langchain-deepagents-code/requirements.lock
           do
             source_file="$candidate_root/$relative"
@@ -202,7 +204,13 @@ jobs:
             scripts/patch-bundled-npm-brace-expansion.mts \
             scripts/patch-bundled-npm-tar.mts \
             scripts/upgrade-bundled-npm.mts \
-            scripts/security/patches/perl-5.44.0-net-ping-capability-tests.patch
+            scripts/security/patches/perl-5.44.0-net-ping-capability-tests.patch \
+            scripts/security/patches/libssh2-1.11.1-cve-2026.patch \
+            scripts/security/patches/zlib-1.3.1-write-error.patch \
+            scripts/security/zlib-write-error.c \
+            scripts/security/libssh2-sftp-response-regression.c \
+            scripts/security/security-package-inventory.mts \
+            src/lib/sandbox-base-image/security-package-specs.ts
           do
             support_source="$candidate_root/$support_relative"
             support_parent="$staging_root/$(dirname "$support_relative")"
@@ -531,7 +539,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.1
+          node-version: 24.22.1
 
       - name: Install reviewed npm
         uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
@@ -1081,7 +1089,7 @@ jobs:
           path: ${{ runner.temp }}/managed-pr-contract/contract.json
           if-no-files-found: error
           overwrite: true
-          retention-days: 1
+          retention-days: 7
 
   pr-managed-activation:
     name: PR exact all-agent managed runtime activation (${{ matrix.arch }})
@@ -1119,7 +1127,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.1
+          node-version: 24.22.1
 
       - name: Install reviewed npm
         uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
@@ -1251,7 +1259,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.1
+          node-version: 24.22.1
 
       - name: Install reviewed npm
         uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
@@ -1397,9 +1405,10 @@ jobs:
           : >"$guard_log"
           cat >"$guard_dir/bin/docker" <<'DOCKER_GUARD'
           #!/usr/bin/env bash
+          guard_bin_dir="${BASH_SOURCE[0]%/*}"
           subcommand="${1:-missing}"
           [[ "$subcommand" =~ ^[a-z][a-z0-9-]{0,31}$ ]] || subcommand=invalid
-          printf '%s\n' "$subcommand" >>"${E2E_DOCKER_GUARD_LOG:?}"
+          printf '%s\n' "$subcommand" >>"$guard_bin_dir/../invocations.log"
           printf 'Docker CLI use is forbidden in managed Podman activation.\n' >&2
           exit 97
           DOCKER_GUARD
@@ -1596,7 +1605,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.1
+          node-version: 24.22.1
       # Pi has no published base alias yet, so the candidate lane builds its own
       # base on the target architecture. The activation change adds the shared
       # published-base contract with the rest of the release cohort.
@@ -2134,7 +2143,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.1
+          node-version: 24.22.1
 
       - name: Install reviewed npm
         uses: ./.github/actions/setup-reviewed-npm

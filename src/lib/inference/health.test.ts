@@ -149,16 +149,24 @@ describe("inference health", () => {
 
     it("invokes the Gemini OpenAI-compatible chat-completions shim, not the native v1/models surface", () => {
       let capturedArgv: string[] = [];
+      let authConfigContent = "";
+      const credentialNames: string[] = [];
       const result = probeRemoteProviderHealth("gemini-api", {
         model: "gemini-2.5-flash",
-        getCredentialImpl: (envName) => (envName === "GEMINI_API_KEY" ? "gm-test-secret" : null),
+        getCredentialImpl: (envName) => {
+          credentialNames.push(envName);
+          return envName === "GEMINI_API_KEY" ? "gm-test-secret" : null;
+        },
         runCurlProbeImpl: (argv) => {
           capturedArgv = argv;
+          authConfigContent = fs.readFileSync(curlArgValue(argv, "--config")!, "utf8");
           return httpOk();
         },
       });
 
       expect(result?.ok).toBe(true);
+      expect(result?.probed).toBe(true);
+      expect(credentialNames).toEqual(["GEMINI_API_KEY"]);
       expect(result?.endpoint).toBe(
         "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
       );
@@ -166,9 +174,11 @@ describe("inference health", () => {
         "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
       );
       expect(capturedArgv.join(" ")).not.toContain("gm-test-secret");
+      expect(authConfigContent).toContain("Authorization: Bearer gm-test-secret");
       const payload = JSON.parse(capturedArgv[capturedArgv.indexOf("-d") + 1]);
-      expect(payload).toMatchObject({
+      expect(payload).toEqual({
         model: "gemini-2.5-flash",
+        messages: [{ role: "user", content: "Reply with exactly: OK" }],
         max_tokens: 256,
       });
     });
@@ -449,17 +459,16 @@ describe("inference health", () => {
       expect(result?.detail).toContain("carried no choices");
     });
 
-    it("keeps the connection and credential advice when the route returns HTTP 500 (#9108)", () => {
+    it("reports NVIDIA HTTP 500 as degraded without blaming the credential (#13616)", () => {
       const result = probeRemoteProviderHealth("nvidia-prod", {
         model: "meta/llama-3.3-70b-instruct",
         getCredentialImpl: () => "nvapi-test",
         runCurlProbeImpl: () => httpServerError(),
       });
 
-      expect(result?.ok).toBe(false);
-      expect(result?.detail).toContain("Check your network connection");
-      expect(result?.detail).toContain("NVIDIA_INFERENCE_API_KEY");
-      expect(result?.detail).not.toContain("was answered");
+      expect(result).toMatchObject({ ok: true, probed: false, degraded: true });
+      expect(result?.detail).toContain("HTTP 500");
+      expect(result?.detail).not.toContain("NVIDIA_INFERENCE_API_KEY");
     });
 
     it("reports a provider error envelope returned with HTTP 200 as unhealthy", () => {

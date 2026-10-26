@@ -181,6 +181,23 @@ Use `nemo-deepagents <sandbox-name> status`, `logs`, `connect`, and `rebuild` fo
 If the terminal runtime reports degraded health, rebuild the sandbox instead of using `recover` or `gateway restart`.
 </AgentOnly>
 
+<AgentOnly variant="hermes">
+
+### Recover Portable Published Ollama
+
+If a Hermes Portable Ollama runner stops after onboarding, run `$$nemoclaw <sandbox-name> recover` or `$$nemoclaw <sandbox-name> connect --probe-only`.
+For Hermes Portable, `recover` performs the same probe-only inference recovery as `connect --probe-only`.
+Ordinary `connect` also attempts recovery when the recorded inference route is unavailable.
+The command checks the sandbox's recorded lifecycle and inference authority, resumes only its exact receipt-owned runner, and verifies the inference route before accepting it.
+If the recorded provider, runner, network, socket, or private state identity has changed, recovery exits nonzero without replacing that state.
+Preserve the private inference state and exact redacted error after an authority-drift failure.
+Run `$$nemoclaw <sandbox-name> doctor` to inspect the recorded lifecycle state.
+Do not edit or delete the private inference state or retry recovery.
+[File a NemoClaw issue](https://github.com/NVIDIA/NemoClaw/issues/new) with the redacted doctor report and recovery error for maintainer review.
+If an unrelated host service holds a required published address, stop that service and rerun the same recovery command.
+
+</AgentOnly>
+
 ### Understand Launch Readiness Leases
 
 A successful complete preflight for `$$nemoclaw launch <sandbox-name>` can publish a credential-free launch-readiness lease on Linux. Linux infrastructure can publish the same evidence with `$$nemoclaw <sandbox-name> connect --probe-only`. The lease has a fixed 24-hour lifetime that repeated launches do not extend. Leaving the agent with `/exit` does not revoke it, and users do not refresh it manually.
@@ -191,7 +208,9 @@ During the lease, `launch` still verifies the owning OpenShell gateway, exact li
 Every configured route must serve a valid response to a bounded request for the recorded model before NemoClaw accepts or publishes launch readiness.
 Shared-route providers use `inference.local`.
 Their models probe must return HTTP 2xx, except that a retained legacy `openrouter-api` shared route can return HTTP 404 for `GET /v1/models` when the bounded model request succeeds.
-NVIDIA Endpoints and supported fixed hosted selections verify their recorded sandbox-attached provider and run the bounded model request at its native endpoint without the shared-route models probe.
+NVIDIA Endpoints, supported fixed hosted selections, and new OpenClaw Ollama, standalone vLLM, and llama.cpp selections verify their recorded sandbox-attached provider and run the bounded model request at its native endpoint without the shared-route models probe.
+For Hermes, new Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible selections use the same native attachment check. Owned Local NVIDIA NIM and retained legacy shared routes continue to use `inference.local`.
+Retained OpenClaw local selections with a valid shared route continue to use `inference.local` for supported model switches. An older OpenClaw Ollama, standalone vLLM, or llama.cpp sandbox without a native attachment cannot resume or rebuild. Back it up and re-onboard it with `--fresh --name <sandbox-name> --recreate-sandbox`. Owned Local NVIDIA NIM sandboxes retain the shared route and can resume or rebuild without a native attachment.
 A failed required probe or model request rejects launch readiness.
 This check is stricter than the HTTP 200–499 reachability diagnostic used by ordinary `connect`.
 </AgentOnly>
@@ -269,6 +288,7 @@ If a pull or validation fails, rebuild keeps the existing sandbox and stops befo
 
 If replacement onboarding returns a nonzero status, rebuild stops before post-create state restoration and preserves the backup and registry recovery state.
 It does not report a successful rebuild.
+If the source backup fails before replacement, NemoClaw keeps the source sandbox and its published inference route unchanged.
 
 When NemoClaw can identify the exact stopped Docker container and prove its immutable runtime authority, rebuild captures the complete native root through the Docker provider without starting or executing inside the source. This recovery path supports stopped OpenClaw and Deep Agents Code sandboxes.
 
@@ -393,7 +413,11 @@ nemohermes <sandbox-name> gateway-token --quiet
 ```
 
 Before post-restore repairs, NemoClaw verifies that the recreated sandbox still identifies as Hermes and exits nonzero if its identity does not match the rebuild target.
-After state restore, NemoClaw restarts the Hermes gateway so it reads the restored durable state, then restores managed MCP configuration through the normal lifecycle.
+For a native local or native NVIDIA selection, NemoClaw refreshes only the managed credential references after restore and before restart, preserving restored model and provider settings.
+The refresh validates the replacement sandbox identity and recorded route. An unsafe or changed configuration stops activation and preserves the backup and any acquired cron gate.
+A legacy local sandbox without a valid Hermes attachment must be backed up and recreated before native local resume or rebuild. Use `nemohermes onboard --fresh --name <sandbox-name> --recreate-sandbox` after preserving required data.
+Live qualification of the Hermes native local lifecycle is pending.
+After state restore and credential refresh, NemoClaw restarts the Hermes gateway so it reads the restored durable state, then restores managed MCP configuration through the normal lifecycle.
 MCP restoration performs an acknowledged gateway reload, so NemoClaw finishes by verifying the final running gateway and its managed MCP state without replacing that verified process again.
 The gateway starts during recreation and reads its durable state before the restore replaces it, which is why the first post-restore restart must happen before managed MCP restoration.
 `rebuild` exits nonzero instead of reporting success when it cannot verify final gateway health or managed MCP state.
@@ -465,7 +489,16 @@ If `rebuild` stops after recording the journal, rerun the command with the same 
 - It continues deletion when the live sandbox still has the journaled source identity.
 - It continues creation when the recorded OpenShell gateway explicitly reports the source sandbox as absent.
 - It accepts an existing replacement only after its live identity and sandbox registry generation match the journal and it completes or verifies the recorded final handoff.
-- It starts a new replacement when the journaled replacement provably never took effect.
+- It starts a new replacement when recovery proves that the recorded replacement is absent.
+
+On Linux, an interrupted create can leave a retained recovery record without a replacement identity.
+When that record matches the saved rebuild journal and source registry row, rerun `$$nemoclaw <sandbox-name> rebuild` with the same settings.
+NemoClaw checks that the recorded gateway and the default Docker daemon report the replacement absent, then clears the retained blocker and resumes the saved rebuild.
+It keeps the source registry row, journal, and backup.
+A successful reconciliation reports `Cleared absent replacement recovery for '<name>'; resuming its saved rebuild.`
+
+If the gateway or Docker daemon cannot confirm absence, the runtime binding changed, or the recovery records disagree, the command exits nonzero and keeps the recovery state.
+Correct the reported condition and rerun the same rebuild command; keep the recovery files and backup in place.
 
 An older recovery marker can lack an MCP handoff, as can an interruption before NemoClaw records the handoff.
 NemoClaw reads MCP state again only when the source still exists and the matching journal remains in the `planned` or `deleting` phase.

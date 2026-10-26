@@ -10,15 +10,19 @@ content:
   type: "how_to"
 ---
 
-These rules apply to providers that still use the shared route, including owned Local NVIDIA NIM, retained legacy and other custom shared routes, and local routes for agents other than Deep Agents Code.
-NVIDIA Endpoints, OpenAI, Anthropic, Gemini, OpenRouter, Hermes Provider, and new Deep Agents Code Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible selections use sandbox-attached native providers instead. Their selected provider path does not re-point the shared route.
+These rules apply to providers that still use the shared route, including compatible endpoints without an attachment, Local NVIDIA NIM, and retained shared local selections.
+NVIDIA Endpoints, fixed hosted providers, new hosted compatible selections outside the Personal tier, new Deep Agents Code, Hermes, and Pi qualified local selections, and new OpenClaw Ollama, standalone vLLM, and llama.cpp selections use sandbox-attached providers.
+Their selected model or provider does not re-point the shared route.
+
+Unchanged published Pi local selections retain their recorded shared route during resume and rebuild.
+Fresh Pi local selections require a native provider attachment.
 
 OpenShell exposes one shared inference route per gateway.
 NemoClaw records each sandbox's intended provider and model so compatible sandboxes can take turns using that route.
 
 ## Change the Live Route During Onboarding
 
-Onboarding a sandbox with another valid provider or model warns immediately before it re-points the shared route.
+Onboarding a sandbox with another valid shared-route provider or model warns immediately before it re-points the shared route.
 The warning names every affected registered sandbox and its recorded provider and model.
 Those sandboxes use the new live route until another onboarding run or connection re-points it again.
 
@@ -39,7 +43,8 @@ Use `$$nemoclaw <name> inference set` to change a registered sandbox's provider 
 $$nemoclaw <name> inference set --provider <provider> --model <model>
 ```
 
-When only the provider or model differs, the command warns immediately before it re-points the shared route.
+For a shared-route selection, when only the provider or model differs, the command warns immediately before it re-points the shared route.
+An OpenClaw model switch on its recorded native local attachment keeps the shared route unchanged.
 The warning names every affected registered sandbox and its recorded provider and model.
 Those sandboxes use the new live route until `connect`, onboarding, or another `inference set` command re-points it.
 

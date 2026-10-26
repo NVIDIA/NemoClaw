@@ -11,6 +11,7 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
+import { nativeLocalChatCommand } from "../fixtures/native-local-chat.ts";
 import { HostCliClient } from "../fixtures/clients/host.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import { CleanupRegistry } from "../fixtures/cleanup.ts";
@@ -852,5 +853,71 @@ describe("GPU E2E helpers", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe("GPU native local chat command", () => {
+  const endpointUrl = "http://host.openshell.internal:11435/v1";
+  const body = JSON.stringify({ model: GPU_MODEL, messages: [{ role: "user", content: "hi" }] });
+
+  function runWithRecordingCurl(token: string, curlFlags: "-fsS" | "-sS", requestBody = body) {
+    const root = mkdtempSync(path.join(tmpdir(), "gpu-native-chat-"));
+    try {
+      const bin = path.join(root, "bin");
+      mkdirSync(bin);
+      writeShellCommands(bin, [["curl", 'for arg in "$@"; do printf "%s\\n" "$arg"; done\n']]);
+      try {
+        const stdout = execFileSync(
+          "sh",
+          ["-c", nativeLocalChatCommand(endpointUrl, requestBody, curlFlags)],
+          {
+            ...SYNC_E2E_CHILD_OPTIONS,
+            encoding: "utf8",
+            env: {
+              PATH: `${bin}:${process.env.PATH ?? ""}`,
+              NEMOCLAW_LOCAL_INFERENCE_TOKEN: token,
+            },
+          },
+        );
+        return { status: 0, args: stdout.split("\n").filter(Boolean) };
+      } catch (error) {
+        return { status: (error as { status?: number }).status, args: [] as string[] };
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+
+  it("sends the OpenShell-issued handle to the recorded endpoint", () => {
+    const handle = "openshell:resolve:env:v7_NEMOCLAW_LOCAL_INFERENCE_TOKEN";
+    expect(runWithRecordingCurl(handle, "-fsS")).toEqual({
+      status: 0,
+      args: [
+        "-fsS",
+        "--max-time",
+        "120",
+        `${endpointUrl}/chat/completions`,
+        "-H",
+        `Authorization: Bearer ${handle}`,
+        "-H",
+        "Content-Type: application/json",
+        "--data",
+        body,
+      ],
+    });
+    expect(runWithRecordingCurl(handle, "-sS").args[0]).toBe("-sS");
+  });
+
+  it("refuses a raw or missing credential before calling curl", () => {
+    expect(runWithRecordingCurl("raw-proxy-token-value", "-fsS")).toEqual({ status: 2, args: [] });
+    expect(runWithRecordingCurl("", "-fsS")).toEqual({ status: 2, args: [] });
+  });
+
+  it("keeps request data with shell syntax as one curl argument", () => {
+    const handle = "openshell:resolve:env:v7_NEMOCLAW_LOCAL_INFERENCE_TOKEN";
+    const hostileBody = JSON.stringify({ model: "x'; echo injected; '$(echo also)", messages: [] });
+    const result = runWithRecordingCurl(handle, "-fsS", hostileBody);
+    expect(result.status).toBe(0);
+    expect(result.args.slice(-2)).toEqual(["--data", hostileBody]);
   });
 });

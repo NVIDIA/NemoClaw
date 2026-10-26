@@ -230,6 +230,7 @@ export interface SandboxStateOptions<
   deferredInferenceRoute?: (reserve: () => void) => Promise<void>;
   endpointUrl: string | null;
   compatibleEndpointReasoning: string | null;
+  compatibleEndpointReasoningEffort: string | null;
   credentialEnv: string | null;
   nimContainer: string | null;
   webSearchConfig: WebSearchConfig | null;
@@ -1316,11 +1317,17 @@ class SandboxStateFlow<
   ): SandboxEntry | null {
     const staged = this.options.stagedNativeLocalRecreation;
     if (!staged) return entry;
+    const agentName = (this.options.agent as { name?: string } | null)?.name ?? "openclaw";
     if (
       this.options.resume ||
       !this.options.recreateSandbox(false) ||
       !this.options.session?.sessionId ||
-      (this.options.agent as { name?: string } | null)?.name !== "langchain-deepagents-code" ||
+      (agentName !== "langchain-deepagents-code" &&
+        agentName !== "openclaw" &&
+        agentName !== "pi" &&
+        agentName !== "hermes") ||
+      staged.attachment.agent !==
+        (agentName === "langchain-deepagents-code" ? undefined : agentName) ||
       staged.attachment.sandboxName !== sandboxName ||
       staged.attachment.gatewayName !== this.options.gatewayName ||
       staged.attachment.provider !== this.options.provider ||
@@ -1665,7 +1672,22 @@ class SandboxStateFlow<
     state: SandboxStepState<WebSearchConfig>,
     sandboxName: string,
   ): SandboxStepState<WebSearchConfig> {
-    if (!this.resumesSandboxPrompts) return { ...state, sandboxName };
+    if (!this.resumesSandboxPrompts) {
+      const pendingSelection = state.session?.pendingPolicySelection;
+      if (pendingSelection && pendingSelection.sandboxName !== sandboxName) {
+        const session = this.deps.updateSession((current) => {
+          if (
+            current.pendingPolicySelection &&
+            current.pendingPolicySelection.sandboxName !== sandboxName
+          ) {
+            current.pendingPolicySelection = null;
+          }
+          return current;
+        });
+        return { ...state, session, sandboxName };
+      }
+      return { ...state, sandboxName };
+    }
     let messagingInvalidated = false;
     const session = this.deps.updateSession((current) => {
       const recordedNameChanged =
@@ -1676,6 +1698,12 @@ class SandboxStateFlow<
         current.messagingPlan = null;
         current.sandboxPromptProgress.messaging = false;
         messagingInvalidated = true;
+      }
+      if (
+        current.pendingPolicySelection &&
+        current.pendingPolicySelection.sandboxName !== sandboxName
+      ) {
+        current.pendingPolicySelection = null;
       }
       current.sandboxName = sandboxName;
       current.sandboxPromptProgress.sandboxName = true;
@@ -2380,7 +2408,18 @@ class SandboxStateFlow<
     sandboxName: string,
     createIntent: CompleteSandboxCreateIntent,
   ): Session {
+    const created = this.deps.getSandboxRegistryEntry(sandboxName);
+    const createdIdentity =
+      created?.lifecycleLiveIdentityFingerprint ??
+      (created?.createdAt ? `created:${created.createdAt}` : null);
     const recordedSession = this.deps.updateSession((current) => {
+      if (
+        current.pendingPolicySelection?.sandboxName === sandboxName &&
+        createdIdentity &&
+        current.pendingPolicySelection.sandboxIdentity !== createdIdentity
+      ) {
+        current.pendingPolicySelection = null;
+      }
       recordCheckpointEffectGroup(
         current,
         "sandbox_create",
@@ -2521,7 +2560,8 @@ class SandboxStateFlow<
                       credentialEnv: this.options.credentialEnv,
                       preferredInferenceApi: this.options.preferredInferenceApi,
                       compatibleEndpointReasoning: this.options.compatibleEndpointReasoning,
-                      compatibleEndpointReasoningEffort: null,
+                      compatibleEndpointReasoningEffort:
+                        this.options.compatibleEndpointReasoningEffort,
                       nimContainer: this.options.nimContainer,
                     }),
                   }

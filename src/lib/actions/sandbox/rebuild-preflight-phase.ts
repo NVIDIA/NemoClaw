@@ -4,7 +4,10 @@
 import path from "node:path";
 
 import type { RebuildSandboxOptions } from "../../domain/lifecycle/options";
-import { hasLegacySharedLocalInferenceRoute } from "../../inference/selection";
+import {
+  hasLegacySharedLocalInferenceRoute,
+  isPersistedPiSharedLocalInferenceRoute,
+} from "../../inference/selection";
 import type { SandboxMessagingPlan } from "../../messaging";
 import { hydrateCredentialEnv } from "../../onboard/credential-env";
 import { DCODE_AUTO_APPROVAL_FEATURE } from "../../onboard/dcode-auto-approval";
@@ -139,7 +142,11 @@ export function blockRebuildOnLegacySharedLocalRoute(
   sandboxEntry: RebuildSandboxEntry,
   bail: RebuildBail,
 ): boolean {
-  if (!hasLegacySharedLocalInferenceRoute(sandboxEntry)) return false;
+  if (
+    !hasLegacySharedLocalInferenceRoute(sandboxEntry) ||
+    isPersistedPiSharedLocalInferenceRoute(sandboxEntry)
+  )
+    return false;
   printRebuildPreflightFailure(
     `sandbox '${sandboxName}' uses a legacy shared local inference route without a native provider attachment.`,
     "Back up the sandbox, then re-onboard it with --fresh --name <name> --recreate-sandbox before upgrading OpenShell.",
@@ -172,8 +179,8 @@ export async function runRebuildPreflightPhase(
   const sandboxEntry = getRebuildSandboxEntryOrBail(sandboxName, bail);
   if (!sandboxEntry) return null;
   if (blockRebuildOnLegacySharedLocalRoute(sandboxName, sandboxEntry, bail)) return null;
-  if (blockRebuildOnRetainedSandboxRecovery(sandboxEntry, bail)) return null;
   restoreRecordedRebuildGatewayStateDir(sandboxEntry);
+  if (blockRebuildOnRetainedSandboxRecovery(sandboxEntry, bail)) return null;
   const confirmedEntrySnapshot = JSON.stringify(sandboxEntry);
   const allowLegacyManagedImageRecovery =
     opts.recoveryManifest !== undefined && opts.allowLegacyManagedImageRecovery === true;

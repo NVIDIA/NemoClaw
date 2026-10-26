@@ -10,7 +10,10 @@ import {
   webSearchLabelFor,
   webSearchProviderForConfig,
 } from "../../inference/web-search";
-import { shouldManageDashboardForAgent } from "../../onboard/dashboard-runtime";
+import {
+  rebuildDashboardChatUiUrl,
+  shouldManageDashboardForAgent,
+} from "../../onboard/dashboard-runtime";
 import { isLinuxDockerDriverGatewayEnabled } from "../../onboard/docker-driver-platform";
 import { enforceDockerGpuPatchPreserveNetwork } from "../../onboard/docker-gpu-local-inference";
 import { verifySandboxBridgeGatewayReachableOrExit } from "../../onboard/gateway-sandbox-reachability";
@@ -226,7 +229,11 @@ export async function preflightRebuildTargetRuntime(
       preResolvedBaseImageMetadata: recreateOptions.preResolvedBaseImageMetadata ?? null,
       gatewayPort: recreateOptions.targetGatewayPort,
       chatUiUrl: managesDashboard
-        ? `http://127.0.0.1:${String(recreateOptions.controlUiPort)}`
+        ? rebuildDashboardChatUiUrl({
+            agentName: target.agentDefinition?.name,
+            recordedExternalUrl: sb.dashboardExternalUrl,
+            port: recreateOptions.controlUiPort ?? 0,
+          })
         : "",
     });
     if (!customImage.ok) {

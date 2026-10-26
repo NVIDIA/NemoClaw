@@ -33,13 +33,16 @@ Do not expose the port to your LAN or the internet.
 An authenticated fixed profile publishes the configured host port on exactly two host addresses: `127.0.0.1` and the private IPv4 gateway of the `openshell-docker` bridge. The container continues to listen on its recipe-owned internal port `8000`.
 It never publishes that host port on `0.0.0.0` or `::`.
 OpenShell reaches the server through the private bridge binding.
-<AgentOnly variant="openclaw,hermes">
+<AgentOnly variant="openclaw">
 The provider route remains `https://inference.local` inside the sandbox.
 </AgentOnly>
-<AgentOnly variant="deepagents">
-New Deep Agents Code vLLM selections use the recorded local endpoint through a sandbox-attached OpenShell provider.
+<AgentOnly variant="hermes,deepagents">
+New Deep Agents Code and Hermes standalone vLLM selections use the recorded local endpoint through a sandbox-attached OpenShell provider.
 OpenShell supplies the credential at egress; the sandbox receives only a credential reference.
 Refer to [How Inference Routing Works](../about-inference-routing) for qualification and existing-sandbox boundaries.
+</AgentOnly>
+<AgentOnly variant="hermes">
+Live qualification of the Hermes native local lifecycle is pending.
 </AgentOnly>
 The managed Muse Glimmer profile uses the same bearer-protected listener and two-address publication boundary.
 
@@ -250,6 +253,7 @@ Managed profiles and model-specific recipes use immutable image digests:
   It pins Hugging Face revision `0dcd680e5585c791728c83342b311d0a0026dbeb` for the approximately `21.56 GB` model download.
 - The DGX Station Nemotron 3.5 Super VL recipe uses the published `linux/arm64` vLLM nightly digest `sha256:fd33bec1578f312a01547cc6b9691a5154c3e8bcfb76d2b35acb657bfc4eee8f` with approximately `10.69 GB` of compressed image layers.
   It pins Hugging Face revision `82d93699acd3be9e4617c53360fe5b3f5dbeb1b3` for the approximately `75.06 GB` model download.
+  The explicit DGX Spark Super VL profile uses the same image and model revision with a separate Spark recipe.
 - The optional single-Station Nemotron 3 Ultra recipe uses the multi-platform index digest `sha256:0fec7ec5f3e6bc168e54899935fb0557da908a4832a1dbc88e2debcf2f889416` under `vllm/vllm-openai:v0.22.0`; on DGX Station, that index selects a `linux/arm64` manifest with a compressed layer size of `10.67 GB`.
   It also pins Hugging Face revision `183968f87ae4cedce3039313cac1fd43d112c578` for the approximately `352.38 GB` model download.
 - Generic Linux `arm64` hosts use `sha256:447995cbb57e6c7cf792cab95e9852e5f62b5fb6d2f39e030fa4eda9a54eadb4` with a compressed layer size of `9.28 GB` under `nvcr.io/nvidia/vllm:26.03.post1-py3`.
@@ -391,10 +395,15 @@ DGX Spark automatically selects its Qwen recipe from the detected unified-memory
 | At least 64 GB | 262,144 | 4 | 8,192 | 0.4 |
 
 The smaller recipe admits a nominal 64 GB DGX Spark that reports about 61.6 GB of usable unified memory.
+The admission floor uses detected total unified-memory capacity, not currently available memory.
+The separate GPU-memory preflight still checks available memory when `nvidia-smi` reports numeric values.
 It loads weights with vLLM's lazy `safetensors` strategy instead of `fastsafetensors`.
-It remains Experimental with software validation; physical 64 GB Spark qualification is pending.
 Unknown capacity or less than 60 GB does not qualify for either Qwen recipe.
 Before installation, NemoClaw displays the selected hardware profile and context limit.
+
+For Express installation on a nominal 64 GB DGX Spark, keep automatic serving-profile selection (option 1).
+The fixed profile (option 2) retains its 64 GB detected-capacity floor.
+
 The Deferred N1x profile uses `--gpu-memory-utilization 0.6`, a `32768`-token context window, `2` concurrent sequences, and a `4096`-token batch limit.
 The two-sequence limit permits vLLM to schedule a compaction summary while an agent response uses the other sequence.
 Both profiles retain chunked prefill, prefix caching, and their registered parsers and acceleration backends.
@@ -433,6 +442,23 @@ Two behaviors surprise direct callers of the managed vLLM endpoint; the OpenClaw
   With a modest budget the model can spend the entire budget on reasoning before it reaches the answer, returning an empty `content` with `finish_reason=length`.
   A larger budget lets the answer follow the reasoning.
 </Note>
+
+NVIDIA Nemotron 3.5 Super VL is an Experimental, explicit-only choice for one 128 GB DGX Spark.
+Check that `$$nemoclaw profiles list` reports the profile as compatible, then select it:
+
+```bash
+$$nemoclaw onboard --profile vllm.dgx-spark-gb10.single.nemotron-3.5-super-vl-120b-a12b-nvfp4
+```
+
+The profile requires Linux ARM64 DGX Spark hardware, driver `580.65.06` or newer, compute capability `12.1` or newer, and at least `120,000,000,000` bytes of reported GPU memory.
+It rejects 64 GB Sparks and unknown memory capacity before installation.
+The Spark recipe uses a 114,688-token context window, two concurrent sequences, 0.70 GPU-memory utilization, and native five-token MTP.
+It retains bearer authentication, permits up to eight inline images, and disables video and arbitrary remote media URLs.
+The DGX Spark Qwen default does not change.
+
+The Spark Super VL profile passed software validation and physical smoke tests through managed installation and endpoint recovery.
+Complete agent onboarding, sustained concurrency, full-context load, and agent runtime qualification remain pending.
+Do not infer those results from the DGX Station Super VL profile.
 
 Muse Glimmer is an additional single-DGX Spark choice and does not change the Qwen default.
 Select its stable catalog ID after confirming that `$$nemoclaw profiles list` reports it as compatible.
@@ -613,6 +639,10 @@ If onboarding stops after you select option 2, `$$nemoclaw onboard --resume` reu
 Refer to [Choose a Local Inference Server](choose-local-inference-server#install-a-fixed-vllm-profile) for fixed-profile installation and verification.
 Refer to [Set Up vLLM on Two DGX Sparks](set-up-vllm-on-two-dgx-sparks) for automatic and explicit distributed-profile selection, profile requirements, and cleanup behavior.
 
+The installer and supported CLI operations attempt anonymous completion telemetry to NVIDIA's fixed TEST receiver by default.
+Run `export NEMOCLAW_DISABLE_TELEMETRY=1` in this shell before installation to suppress collection and delivery.
+Repeat it in any new shell used for NemoClaw CLI commands.
+Refer to [Operation Telemetry](/user-guide/openclaw/security/best-practices#operation-telemetry) for details.
 To select the existing `deepseek-v4-flash` recipe while retaining the same one-confirmation express flow, run:
 
 ```bash
@@ -713,7 +743,7 @@ NemoClaw applies the registered `vllm serve` arguments, including the reasoning 
 | `muse-glimmer-30b` | `Inferact/Muse-Glimmer-30B-NVFP4-W4A4` | DGX Spark, Linux x86_64 with an NVIDIA GPU | `12.0` on Linux; `12.1` on DGX Spark | Experimental choice for text, reasoning, and structured tool calls. NemoClaw does not enable or support DFlash for this profile. |
 | `nemotron-3.5-lightning-30b` | `nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4` | DGX Spark, Linux x86_64 with an NVIDIA GPU | `9.0` on Linux; `12.1` on DGX Spark | Experimental reasoning and tool-calling choice. |
 | `nemotron-3-nano-4b` | `nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8` | DGX Spark, DGX Station, Linux with an NVIDIA GPU | `8.9` | Generic Linux NVIDIA GPU default. |
-| `nemotron-3.5-super-vl-120b` | `nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4` | DGX Station | `10.0` | Experimental single-Station default for Express and managed onboarding. |
+| `nemotron-3.5-super-vl-120b` | `nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4` | DGX Station, 128 GB DGX Spark | `10.0` on Station; `12.1` on Spark | Experimental single-Station default; explicit-only on DGX Spark. |
 | `deepseek-v4-flash` | `deepseek-ai/DeepSeek-V4-Flash` | DGX Station | `10.0` | Explicit alternative. |
 | `nemotron-3-ultra-550b-a55b` | `nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4` | DGX Station | `10.0` | Explicit single-Station alternative; automatic selection for a qualified two-Station pair. |
 | `deepseek-r1-distill-70b` | `deepseek-ai/DeepSeek-R1-Distill-Llama-70B` | DGX Spark, DGX Station, Linux with an NVIDIA GPU | None | Gated and requires license acceptance. |

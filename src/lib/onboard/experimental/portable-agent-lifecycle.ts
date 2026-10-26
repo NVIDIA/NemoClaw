@@ -12,6 +12,7 @@ import {
   assertHermesPortableSandboxLifecycleAuthority,
   buildHermesPortableOpenShellCommandAuthority,
   buildHermesPortableOpenShellEnv,
+  HermesPortableLifecycleAuthorityError,
   recoverHermesPortableSandboxLifecycle,
   requalifyHermesPortableSandboxAuthority,
   retainRequalifiedOperatingAuthority,
@@ -40,6 +41,10 @@ import { resolveHermesPortableLifecycleLockOptions } from "./portable-lifecycle-
 import { defaultPortableDemoStateDir } from "./portable-runtime-receipt-readiness";
 
 export { defaultPortableDemoStateDir };
+export {
+  HermesPortableLifecycleAuthorityError,
+  type HermesPortableLifecycleAuthorityFailure,
+} from "./hermes-portable-lifecycle";
 
 /** Resolve the shared lifecycle-lock root for a retained Hermes portable sandbox. */
 export function hermesPortableLifecycleLockOptions(
@@ -299,12 +304,18 @@ export function qualifyPortableAgentLifecycleAuthority(
   if (disposition.kind !== "hermes") return disposition;
 
   if (!deps.readRegistry) {
-    throw new Error("Hermes portable registry authority reader is required.");
+    throw new HermesPortableLifecycleAuthorityError(
+      "registry-reader-unavailable",
+      "Hermes portable registry authority reader is required.",
+    );
   }
   const entry = deps.readRegistry(sandboxName);
   if (!entry) {
     if (disposition.phase !== "active") return { ...disposition, entry: null };
-    throw new Error("Hermes portable active receipt is missing its registry authority.");
+    throw new HermesPortableLifecycleAuthorityError(
+      "active-registry-missing",
+      "Hermes portable active receipt is missing its registry authority.",
+    );
   }
   if (
     entry.name !== sandboxName ||
@@ -315,10 +326,16 @@ export function qualifyPortableAgentLifecycleAuthority(
     (disposition.phase !== "pending" &&
       entry.lifecycleLiveIdentityFingerprint !== disposition.liveIdentityFingerprint)
   ) {
-    throw new Error("Hermes portable receipt and registry authority disagree.");
+    throw new HermesPortableLifecycleAuthorityError(
+      "receipt-registry-disagreement",
+      "Hermes portable receipt and registry authority disagree.",
+    );
   }
   if (disposition.phase === "pending") {
-    throw new Error("Hermes portable pending receipt conflicts with an existing registry entry.");
+    throw new HermesPortableLifecycleAuthorityError(
+      "pending-registry-conflict",
+      "Hermes portable pending receipt conflicts with an existing registry entry.",
+    );
   }
   return { ...disposition, entry };
 }

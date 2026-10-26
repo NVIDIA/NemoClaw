@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { managedDcodeRequiresNonemptyContent } from "../../inference/managed-dcode/identity";
 import { nativeHostedAuthHeaderScript } from "../../inference/native-provider/contract";
 import { NATIVE_LOCAL_AUTH_HEADER_SCRIPT } from "../../inference/native-local/agent-config";
 import { NATIVE_NVIDIA_AUTH_HEADER_SCRIPT } from "../../inference/native-nvidia/contract";
@@ -67,7 +68,7 @@ export type SandboxInferenceInvocationInput = {
 
 export type SandboxInferenceInvocationResult =
   | { ok: true }
-  | { ok: false; detail: string; httpStatus: number | null; endpoint?: string };
+  | { ok: false; detail: string; httpStatus: number | null; endpoint?: string; timedOut?: true };
 
 export type SandboxInferenceInvocationDeps = {
   commandExecutor?: OpenShellSandboxBufferedCommandExecutor;
@@ -145,7 +146,8 @@ function buildProbeRequest(input: SandboxInferenceInvocationInput): {
         ? nativeHosted.endpoint
         : isNativeNvidiaProvider(input.provider) || hosted
           ? "https://inference.local/v1"
-          : config.inferenceBaseUrl
+          : // A native local attachment is the route, whichever agent the caller names.
+            (local?.endpointUrl ?? config.inferenceBaseUrl)
   ).replace(/\/+$/u, "");
   // Gemini's existing OpenAI-compatible API ends in /v1beta/openai, not /v1.
   const apiBaseUrl =
@@ -188,6 +190,12 @@ function buildProbeRequest(input: SandboxInferenceInvocationInput): {
       model: input.model,
       [resolveMaxTokensField(input.model)]: resolveProbeReplyTokens(input.provider, input.model),
       messages: [{ role: "user", content: "Reply with OK" }],
+      // Match DCode's pinned Ultra profile: the hosted alias can otherwise
+      // exhaust a short probe on reasoning and return no visible content.
+      ...(input.agentName === DCODE_AGENT_NAME &&
+      managedDcodeRequiresNonemptyContent(input.model, baseUrl)
+        ? { chat_template_kwargs: { force_nonempty_content: true } }
+        : {}),
       stream: false,
     },
   };
@@ -352,14 +360,20 @@ export async function probeSandboxInferenceInvocation(
     };
   }
   const httpStatus = result.stdout.match(/(?:^|\n)([1-5]\d\d)(?:\n|$)/)?.[1];
+  const timedOut =
+    result.status === 28 &&
+    result.stdout.split("\n").some((line) => line.trim() === "curl-error:28") &&
+    !httpStatus;
   // Only the fixed marker is read back, never the line that carried it, so an
   // upstream body can still not reach diagnostics (#6195).
   const nvcfFunctionNotFound = result.stdout
     .split("\n")
     .some((line) => line.trim() === NVCF_FUNCTION_NOT_FOUND_MARKER);
-  const detail = httpStatus
-    ? `sandbox inference invocation probe returned HTTP ${httpStatus}`
-    : `sandbox inference invocation probe exited with status ${result.status}`;
+  const detail = timedOut
+    ? "sandbox inference invocation timed out before the upstream answered"
+    : httpStatus
+      ? `sandbox inference invocation probe returned HTTP ${httpStatus}`
+      : `sandbox inference invocation probe exited with status ${result.status}`;
   const legacyDnsFailure =
     input.nativeProvider !== true &&
     result.stdout.split("\n").some((line) => line.trim() === "curl-error:6") &&
@@ -373,6 +387,7 @@ export async function probeSandboxInferenceInvocation(
           ? `${detail}. The legacy inference route could not be resolved. If that route is no longer available, recreate this sandbox to use native inference.`
           : detail,
     httpStatus: httpStatus ? Number.parseInt(httpStatus, 10) : null,
+    ...(timedOut ? { timedOut: true as const } : {}),
     endpoint: resolveSandboxInferenceInvocationEndpoint(input),
   };
 }

@@ -91,7 +91,7 @@ it("warns about arm64 NIM image compatibility when Local NIM is offered on DGX S
     });
 
     assert.equal(result.provider, "nvidia-prod");
-    assert.equal(result.model, "nvidia/nemotron-3-super-120b-a12b");
+    assert.equal(result.model, "nvidia/nemotron-3.5-super-vl-120b-a12b");
     assert.ok(
       lines.some((line) =>
         line.includes("Local NVIDIA NIM is experimental on Linux arm64 DGX Spark hosts"),

@@ -16,6 +16,8 @@ on:
       - "src/lib/actions/sandbox/exec.ts"
       - "src/lib/actions/sandbox/launch*.ts"
       - "src/lib/actions/sandbox/launch-readiness/**"
+      - "src/lib/actions/sandbox/doctor-system-checks.ts"
+      - "src/lib/actions/sandbox/doctor.ts"
       - "src/lib/actions/sandbox/gateway-state.ts"
       - "src/lib/onboard/portable-retirement-authority.ts"
       - "src/lib/onboard/session-bootstrap.ts"
@@ -37,6 +39,9 @@ on:
       - "src/lib/onboard/experimental/hermes-portable-policy-state.ts"
       - "src/lib/onboard/experimental/portable-agent-lifecycle.ts"
       - "src/lib/onboard/experimental/portable-lifecycle-lock.ts"
+      - "src/lib/onboard/machine/final-flow-composition.ts"
+      - "src/lib/onboard/machine/finalization-deps.ts"
+      - "src/lib/onboard/machine/handlers/finalization.ts"
       - "src/lib/state/portable-*.ts"
       - "src/lib/state/mcp-lifecycle-lock*.ts"
       - "src/lib/state/mcp-lifecycle-lock/**"
@@ -85,8 +90,11 @@ on:
       - "src/lib/adapters/openshell/timeouts.ts"
       - "src/lib/agent/defs.ts"
       - "src/lib/core/retry.ts"
+      - "test/e2e/fixtures/portable-profile-rootless-finalization-helpers.ts"
       - "test/e2e/live/portable-profile-rootless-linux.test.ts"
       - "test/e2e/fixtures/portable-hermes-transaction-live.ts"
+      - "test/e2e/fixtures/portable-registry-readiness.ts"
+      - "test/e2e/support/portable-registry-readiness.test.ts"
       - "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts"
   push:
     branches:
@@ -131,9 +139,12 @@ on:
       - "test/e2e/fixtures/portable-profile-systemctl-shim.sh"
       - "test/e2e/fixtures/portable-profile-systemctl.ts"
       - "test/e2e/fixtures/portable-hermes-transaction-live.ts"
+      - "test/e2e/fixtures/portable-registry-readiness.ts"
+      - "test/e2e/support/portable-registry-readiness.test.ts"
       - "test/e2e/live/full-e2e.test.ts"
       - "test/e2e/live/launch-agent-turn.ts"
       - "test/e2e/live/portable-profile-gateway-proof.ts"
+      - "test/e2e/fixtures/portable-profile-rootless-finalization-helpers.ts"
       - "test/e2e/live/portable-profile-rootless-linux.test.ts"
       - "tools/e2e/check-semantic-phases.mts"
       - "tools/e2e/full-e2e-timeout-contract.mts"
@@ -162,7 +173,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "24.18.1"
+          node-version: "24.22.1"
           cache: npm
 
       - name: Install reviewed npm
@@ -181,6 +192,9 @@ jobs:
 
       - name: Build shared policy boundary
         run: npm run build:policy-boundary
+
+      - name: Build exact CLI
+        run: npm run build:cli
 
       - name: Install pinned OpenShell
         run: |
@@ -308,7 +322,7 @@ jobs:
           persist-credentials: false
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@7fcbf13ecd7bc0ea835a949417cf9eb68067adf9
 
       - name: Provision restricted rootless Linux runtime
         shell: bash

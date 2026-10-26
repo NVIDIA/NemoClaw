@@ -169,6 +169,47 @@ describe("reviewed model code", () => {
         symlinkSync(path.join(root, "outside.py"), path.join(snapshot, "model.py"));
       },
     },
+    {
+      kind: "changed shared metadata",
+      change: (snapshot: string, root: string) => {
+        const blobs = path.join(root, "hub/blobs");
+        mkdirSync(blobs);
+        const blob = path.join(blobs, "reviewed-code");
+        writeFileSync(blob, "different code");
+        rmSync(path.join(snapshot, "model.py"));
+        symlinkSync(blob, path.join(snapshot, "model.py"));
+      },
+    },
+    {
+      kind: "redirected shared blob directory",
+      change: (snapshot: string, root: string) => {
+        const outside = path.join(root, "outside-blobs");
+        mkdirSync(outside);
+        renameSync(path.join(snapshot, "model.py"), path.join(outside, "reviewed-code"));
+        const blobs = path.join(root, "hub/blobs");
+        symlinkSync(outside, blobs);
+        symlinkSync(path.join(blobs, "reviewed-code"), path.join(snapshot, "model.py"));
+      },
+    },
+    {
+      kind: "another model's cache",
+      change: (snapshot: string, root: string) => {
+        const sibling = path.join(root, "hub/models--other--model");
+        mkdirSync(sibling);
+        const blob = path.join(sibling, "model.py");
+        renameSync(path.join(snapshot, "model.py"), blob);
+        symlinkSync(blob, path.join(snapshot, "model.py"));
+      },
+    },
+    {
+      kind: "nonregular shared weight blob",
+      change: (snapshot: string, root: string) => {
+        const blob = path.join(root, "hub/blobs/weight-directory");
+        mkdirSync(blob, { recursive: true });
+        rmSync(path.join(snapshot, "weights.safetensors"));
+        symlinkSync(blob, path.join(snapshot, "weights.safetensors"));
+      },
+    },
     { kind: "directory", change: (snapshot: string) => mkdirSync(path.join(snapshot, "package")) },
   ])("rejects $kind before starting the server", ({ change }) => {
     fixture((root, snapshot) => {
@@ -205,10 +246,38 @@ describe("reviewed model code", () => {
     });
   });
 
-  it("rejects a snapshot directory replaced by a symlink", () => {
+  it.each(["config.json", "model.py", "weights.safetensors"])(
+    "accepts %s through the shared Hugging Face blob cache",
+    (name) => {
+      fixture((root, snapshot) => {
+        const modelBlobs = path.join(snapshot, "../../blobs");
+        const sharedBlobs = path.join(root, "hub/blobs/ab");
+        mkdirSync(modelBlobs);
+        mkdirSync(sharedBlobs, { recursive: true });
+        const source = path.join(snapshot, name);
+        const sharedBlob = path.join(sharedBlobs, name);
+        const modelBlob = path.join(modelBlobs, name);
+        renameSync(source, sharedBlob);
+        symlinkSync(path.relative(modelBlobs, sharedBlob), modelBlob);
+        symlinkSync(path.relative(snapshot, modelBlob), source);
+        const result = probe(root);
+        expect(result.status, result.stderr).toBe(0);
+        expect(JSON.parse(result.stdout)).toMatchObject({
+          config: "{}",
+          weight: "fixture weights",
+        });
+      });
+    },
+  );
+
+  it.each([
+    ["snapshot", "."],
+    ["model cache", "../.."],
+  ] as const)("rejects a redirected %s directory", (_name, relative) => {
     fixture((root, snapshot) => {
-      renameSync(snapshot, snapshot + "-moved");
-      symlinkSync(snapshot + "-moved", snapshot);
+      const source = path.resolve(snapshot, relative);
+      renameSync(source, source + "-moved");
+      symlinkSync(source + "-moved", source);
       const result = probe(root);
       expect(result.status).not.toBe(0);
       expect(result.stderr).toContain("not a canonical directory");

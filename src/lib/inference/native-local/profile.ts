@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { SUPPORTED_OPENSHELL_FALLBACK_VERSION } from "../../onboard/openshell-version";
+
 import { requireNativeProviderPolicy } from "../../adapters/openshell/provider-policy";
 import fs from "node:fs";
 import os from "node:os";
@@ -24,15 +26,21 @@ import {
   type NativeLocalProviderAttachment,
 } from "./contract";
 
-export { normalizeNativeLocalProviderAttachment };
+export { normalizeNativeLocalProviderAttachment, nativeLocalIdentity };
+export type { NativeLocalProviderAttachment };
 
 export function prepareNativeLocalProfile(input: NativeLocalBinding) {
   const binding = normalizeNativeLocalBinding(input);
   if (!binding) throw new Error("Invalid native host-local inference boundary.");
-  const identity = nativeLocalIdentity(binding);
+  // A recorded attachment keeps its original immutable permissions. Reselection
+  // creates the dual-stack profile through the existing ownership transaction.
+  const recorded = normalizeNativeLocalProviderAttachment(input);
+  const identity = recorded ?? nativeLocalIdentity(binding);
+  const dualStack = identity.profileId === nativeLocalIdentity(binding).profileId;
   const endpoint = new URL(binding.endpointUrl);
   return {
-    ...identity,
+    profileId: identity.profileId,
+    providerName: identity.providerName,
     credentialEnv: binding.credentialEnv,
     document: {
       id: identity.profileId,
@@ -61,7 +69,7 @@ export function prepareNativeLocalProfile(input: NativeLocalBinding) {
           // admit its private resolution, never another hostname or port.
           allowed_ips: isIP(endpoint.hostname)
             ? [`${endpoint.hostname}/32`]
-            : ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"],
+            : ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", ...(dualStack ? ["fc00::/7"] : [])],
           rules: [
             { allow: { method: "GET", path: `${endpoint.pathname}/models` } },
             { allow: { method: "POST", path: `${endpoint.pathname}/chat/completions` } },
@@ -69,8 +77,19 @@ export function prepareNativeLocalProfile(input: NativeLocalBinding) {
         },
       ],
       binaries: [
+        // The provider-neutral onboarding smoke probe uses Python urllib.
         "/usr/bin/python3",
-        "/opt/venv/bin/python3",
+        // The projected runtime matches the pinned images' resolved interpreter.
+        ...(String(SUPPORTED_OPENSHELL_FALLBACK_VERSION) === "0.1.3" &&
+        (binding.agent === "hermes" || binding.agent === "openclaw" || binding.agent === "pi")
+          ? ["/usr/bin/python3.13"]
+          : []),
+        ...(binding.agent === "hermes"
+          ? ["/opt/hermes/.venv/bin/python", "/opt/hermes/.venv/bin/python3"]
+          : []),
+        ...(binding.agent === "openclaw" || binding.agent === "pi"
+          ? ["/usr/local/bin/node", "/usr/bin/node"]
+          : ["/opt/venv/bin/python3"]),
         "/usr/local/bin/curl",
         "/usr/bin/curl",
       ],
@@ -145,7 +164,9 @@ async function checkedAttachment(input: AttachmentInput, requirePolicy = true) {
   return { expected, target, profile: { ...prepared, profilePath: "", label: "host-local" } };
 }
 
-export async function verifyNativeLocalProviderAttachment(input: AttachmentInput) {
+export async function verifyNativeLocalProviderAttachment(
+  input: AttachmentInput & { requireUnexpiredCredential?: boolean },
+) {
   const checked = await checkedAttachment(input);
   await verifyNativeProviderAttachment({ ...input, ...checked });
   return checked.expected;
@@ -163,7 +184,7 @@ export async function verifyRecordedNativeLocalProviderAttachment(input: {
   const expected = normalizeNativeLocalProviderAttachment(input.expected);
   if (
     !expected ||
-    input.agent !== "langchain-deepagents-code" ||
+    input.agent !== (expected.agent ?? "langchain-deepagents-code") ||
     expected.provider !== input.provider ||
     expected.sandboxName !== input.sandboxName ||
     (input.gatewayName !== undefined && expected.gatewayName !== input.gatewayName)

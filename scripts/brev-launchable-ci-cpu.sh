@@ -317,19 +317,19 @@ sudo usermod -aG docker "$TARGET_USER" 2>/dev/null || true
 # New Docker group membership takes effect in a new login session.
 info "Docker enabled ($(docker --version 2>/dev/null | head -c 40))"
 
-# 3. Node.js 24.18.1
-NODE_VERSION="24.18.1"
+# 3. Node.js 24.22.1
+NODE_VERSION="24.22.1"
 if command -v node >/dev/null 2>&1 && [[ "$(node --version)" == "v${NODE_VERSION}" ]]; then
   info "Node.js already installed: $(node --version)"
 else
   case "$(uname -m)" in
     x86_64)
       node_arch="x64"
-      node_sha256="9f5eb6ac21845a66c493c91a253b1da32fd684e89e9b7202d4936982336be4ca"
+      node_sha256="eb6728e77c576a35162c122c45ccadf224d89ff00abc8dae46cc2897c6002d7c"
       ;;
     aarch64 | arm64)
       node_arch="arm64"
-      node_sha256="df224555a083b918e46260cc969838501b9f9a87140c1195e5b9597b56d5dae2"
+      node_sha256="33c37be234ba8bee041961047b19160f4d7d0f164e8e246f78bdd10feff148b3"
       ;;
     *) fail "Unsupported Node.js architecture: $(uname -m)" ;;
   esac

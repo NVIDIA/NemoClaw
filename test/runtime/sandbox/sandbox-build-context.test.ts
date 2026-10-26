@@ -117,6 +117,9 @@ describe("sandbox build context staging", () => {
     }
 
     writeFixture("Dockerfile");
+    writeFixture("scripts/security/security-package-inventory.mts");
+    writeFixture("scripts/security/standalone-security-package-inventory.mts");
+    writeFixture("src/lib/sandbox-base-image/security-package-specs.ts");
     writeFixture("tsconfig.runtime-preloads.json", "{}\n");
     writeFixture(
       path.join("ci", "npm-audit-exceptions.json"),
@@ -283,6 +286,11 @@ describe("sandbox build context staging", () => {
     writeFixture(path.join("scripts", "patch-openclaw-tool-catalog.mts"));
     writeFixture(path.join("scripts", "lib", "patch-openclaw-npm12-pack-json.mts"));
     writeFixture(path.join("scripts", "lib", "patch-openclaw-container-restart.mts"));
+    writeFixture(
+      path.join("scripts", "lib", "patch-openclaw-agent-message-input.mts"),
+      "// agent message input patch fixture\n",
+      0o700,
+    );
     writeFixture(path.join("scripts", "patch-openclaw-mcp-npx.mts"));
     writeFixture(path.join("scripts", "patch-openclaw-mcp-reliability.mts"));
     writeFixture(path.join("scripts", "patch-openclaw-mcp-tools-list-timeout.mts"));
@@ -518,6 +526,9 @@ describe("sandbox build context staging", () => {
 
   function expectStagedManagedStartupRuntimeSources(buildCtx: string, sourceRoot: string) {
     for (const relativePath of [
+      "scripts/security/security-package-inventory.mts",
+      "scripts/security/standalone-security-package-inventory.mts",
+      "src/lib/sandbox-base-image/security-package-specs.ts",
       path.join("src", "lib", "extra-agents-validation.ts"),
       path.join("src", "lib", "inference-credential.ts"),
       path.join("src", "lib", "core", "json-types.ts"),
@@ -544,6 +555,16 @@ describe("sandbox build context staging", () => {
     const stagedIdentity = path.join(stagedLib, "reviewed-npm-identity.mts");
     const stagedPackageHelper = path.join(stagedLib, "bundled-npm-package.mts");
     const stagedSeed = path.join(stagedLib, "seed-reviewed-npm-cache.mts");
+    const stagedMessageInputPatch = path.join(stagedLib, "patch-openclaw-agent-message-input.mts");
+
+    expect(fs.existsSync(stagedMessageInputPatch)).toBe(true);
+    expect(fs.readFileSync(stagedMessageInputPatch, "utf8")).toBe(
+      fs.readFileSync(
+        path.join(sourceRoot, "scripts", "lib", "patch-openclaw-agent-message-input.mts"),
+        "utf8",
+      ),
+    );
+    expect((fs.statSync(stagedMessageInputPatch).mode & 0o777).toString(8)).toBe("755");
 
     expect((fs.statSync(stagedScripts).mode & 0o777).toString(8)).toBe("755");
     expect((fs.statSync(stagedLib).mode & 0o777).toString(8)).toBe("755");

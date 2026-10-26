@@ -25,6 +25,7 @@ import {
   type BuiltManagedStartupOnboardProfile,
   buildManagedStartupOnboardProfile,
   resolveManagedStartupInferenceEndpoint,
+  resolveManagedStartupNativeLocalAttachment,
   type ManagedStartupOnboardProfileInput,
 } from "../managed-startup/onboard-profile";
 export {
@@ -147,6 +148,7 @@ export function createManagedStateVolumeOnboardLifecycle(
   input: {
     readonly roots: readonly import("../managed-startup/state-roots").ManagedStartupStateRoot[];
     readonly runtimeProvider: RuntimeProviderBundle | null;
+    readonly workspace: string;
   },
   deps: ManagedStateVolumeDeps = {},
 ): ManagedStateVolumeOnboardLifecycle {
@@ -154,6 +156,7 @@ export function createManagedStateVolumeOnboardLifecycle(
     { roots: input.roots },
     {
       ...deps,
+      workspace: input.workspace,
       ...(input.runtimeProvider ? { runtimeProvider: input.runtimeProvider } : {}),
     },
   );
@@ -398,10 +401,7 @@ export function createManagedWorkloadOnboardRuntime(
       return input.managedWorkloadRebuild.replacementProfile;
     }
     if (preparedProfile) return preparedProfile;
-    const nativeLocalProviderAttachment =
-      input.agentName === "langchain-deepagents-code"
-        ? input.nativeLocalProviderAttachment
-        : undefined;
+    const nativeLocalProviderAttachment = resolveManagedStartupNativeLocalAttachment(input);
     const selectedModel = input.model?.trim() || "";
     const selectedProvider = input.provider?.trim() || null;
     const endpointUrl = resolveManagedStartupInferenceEndpoint({

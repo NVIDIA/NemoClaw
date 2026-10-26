@@ -766,6 +766,148 @@ describe("startSandbox native lifecycle", () => {
     expect(probeInferenceInvocation).toHaveBeenCalledOnce();
     expect(delayInferenceInvocationProbe).not.toHaveBeenCalled();
   });
+
+  it("starts Ready OpenClaw with a trusted native NVIDIA route when inference times out (#13616)", async () => {
+    const probeInferenceInvocation = vi.fn(async () => ({
+      ok: false as const,
+      detail: "sandbox inference invocation timed out before the upstream answered",
+      httpStatus: null,
+      timedOut: true as const,
+    }));
+    const h = harness({ probeInferenceInvocation });
+    h.getSandbox.mockReturnValue(
+      sandbox({
+        stopped: true,
+        agent: "openclaw",
+        provider: "nvidia-prod",
+        model: "fixture-model",
+        nativeNvidiaProviderAttachment: {
+          schemaVersion: 1,
+          profileId: "nemoclaw-nvidia-inference-v1",
+          providerName: "nemoclaw-nvidia-prod-v1",
+          providerId: "owned-provider-id",
+        },
+      }),
+    );
+
+    await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 0 });
+    expect(h.verifyGateway).toHaveBeenCalledOnce();
+    expect(h.log.mock.calls.map(([line]) => line).join("\n")).toContain("inference is degraded");
+    expect(h.updateSandbox).toHaveBeenCalledWith("my-sandbox", { stopped: false });
+  });
+
+  it.each([429, 500])(
+    "starts Ready native NVIDIA OpenClaw with degraded HTTP %i inference (#13616)",
+    async (httpStatus) => {
+      const probeInferenceInvocation = vi.fn(async () => ({
+        ok: false as const,
+        detail: `sandbox inference invocation probe returned HTTP ${httpStatus}`,
+        httpStatus,
+      }));
+      const h = harness({ probeInferenceInvocation });
+      h.getSandbox.mockReturnValue(
+        sandbox({
+          stopped: true,
+          agent: "openclaw",
+          provider: "nvidia-prod",
+          model: "fixture-model",
+          nativeNvidiaProviderAttachment: {
+            schemaVersion: 1,
+            profileId: "nemoclaw-nvidia-inference-v1",
+            providerName: "nemoclaw-nvidia-prod-v1",
+            providerId: "owned-provider-id",
+          },
+        }),
+      );
+
+      await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 0 });
+      expect(h.verifyGateway).toHaveBeenCalledOnce();
+      expect(probeInferenceInvocation).toHaveBeenCalledOnce();
+      expect(h.log.mock.calls.map(([line]) => line).join("\n")).toContain("inference is degraded");
+      expect(h.updateSandbox).toHaveBeenCalledWith("my-sandbox", { stopped: false });
+    },
+  );
+
+  it("starts default OpenClaw with degraded native NVIDIA HTTP 500 inference (#13616)", async () => {
+    const probeInferenceInvocation = vi.fn(async () => ({
+      ok: false as const,
+      detail: "sandbox inference invocation probe returned HTTP 500",
+      httpStatus: 500,
+    }));
+    const h = harness({ probeInferenceInvocation });
+    h.getSandbox.mockReturnValue(
+      sandbox({
+        stopped: true,
+        provider: "nvidia-prod",
+        model: "fixture-model",
+        nativeNvidiaProviderAttachment: {
+          schemaVersion: 1,
+          profileId: "nemoclaw-nvidia-inference-v1",
+          providerName: "nemoclaw-nvidia-prod-v1",
+          providerId: "owned-provider-id",
+        },
+      }),
+    );
+
+    await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 0 });
+    expect(probeInferenceInvocation).toHaveBeenCalledOnce();
+    expect(h.log.mock.calls.map(([line]) => line).join("\n")).toContain("inference is degraded");
+    expect(h.updateSandbox).toHaveBeenCalledWith("my-sandbox", { stopped: false });
+  });
+
+  it("keeps native NVIDIA HTTP 401 terminal after OpenClaw becomes Ready (#13616)", async () => {
+    const probeInferenceInvocation = vi.fn(async () => ({
+      ok: false as const,
+      detail: "sandbox inference invocation probe returned HTTP 401",
+      httpStatus: 401,
+    }));
+    const h = harness({ probeInferenceInvocation });
+    h.getSandbox.mockReturnValue(
+      sandbox({
+        stopped: true,
+        agent: "openclaw",
+        provider: "nvidia-prod",
+        model: "fixture-model",
+        nativeNvidiaProviderAttachment: {
+          schemaVersion: 1,
+          profileId: "nemoclaw-nvidia-inference-v1",
+          providerName: "nemoclaw-nvidia-prod-v1",
+          providerId: "owned-provider-id",
+        },
+      }),
+    );
+
+    await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 1 });
+    expect(h.verifyGateway).toHaveBeenCalledOnce();
+    expect(probeInferenceInvocation).toHaveBeenCalledOnce();
+    expect(h.updateSandbox).not.toHaveBeenCalled();
+  });
+
+  it("does not downgrade a generic command timeout without curl evidence (#13616)", async () => {
+    const h = harness({
+      probeInferenceInvocation: async () => ({
+        ok: false,
+        detail: "sandbox inference invocation probe exited with status 28",
+        httpStatus: null,
+      }),
+    });
+    h.getSandbox.mockReturnValue(
+      sandbox({
+        stopped: true,
+        agent: "openclaw",
+        provider: "nvidia-prod",
+        model: "fixture-model",
+        nativeNvidiaProviderAttachment: {
+          schemaVersion: 1,
+          profileId: "nemoclaw-nvidia-inference-v1",
+          providerName: "nemoclaw-nvidia-prod-v1",
+          providerId: "owned-provider-id",
+        },
+      }),
+    );
+    await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 1 });
+    expect(h.updateSandbox).not.toHaveBeenCalled();
+  });
 });
 
 const restartProviders = [
@@ -787,63 +929,66 @@ const restartCases = restartProviders.flatMap((provider) =>
 );
 
 describe("startSandbox persisted native inference selection", () => {
-  it.each(["authenticated", "sentinel"] as const)(
-    "restarts DCode through its recorded %s local provider",
-    async (authMode) => {
-      const binding = {
-        provider: "compatible-endpoint" as const,
-        endpointUrl: "http://host.openshell.internal:8000/v1",
-        credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
-        authMode,
-        gatewayName: "nemoclaw-19080",
-        sandboxName: "my-sandbox",
-      };
-      const attachment = {
-        ...binding,
-        ...nativeLocalIdentity(binding),
-        schemaVersion: 1 as const,
-        providerId: "owned-local-provider-id",
-      };
-      const endpoints: string[] = [];
-      const probeInferenceInvocation = vi.fn<
-        NonNullable<SandboxStartDeps["probeInferenceInvocation"]>
-      >(async (input) => {
-        endpoints.push(resolveSandboxInferenceInvocationEndpoint(input));
-        return { ok: true };
-      });
-      const h = harness({ probeInferenceInvocation });
-      h.getSandbox.mockReturnValue(
-        sandbox({
-          stopped: true,
-          agent: "langchain-deepagents-code",
-          provider: binding.provider,
-          model: "local-model",
-          gatewayName: binding.gatewayName,
-          preferredInferenceApi: "openai-completions",
-          nativeLocalProviderAttachment: attachment,
-        }),
-      );
+  it.each([
+    ["langchain-deepagents-code", "authenticated"],
+    ["langchain-deepagents-code", "sentinel"],
+    ["openclaw", "authenticated"],
+    ["openclaw", "sentinel"],
+  ] as const)("restarts %s through its recorded %s local provider", async (agent, authMode) => {
+    const binding = {
+      provider: agent === "openclaw" ? ("vllm-local" as const) : ("compatible-endpoint" as const),
+      ...(agent === "openclaw" ? { agent } : {}),
+      endpointUrl: "http://host.openshell.internal:8000/v1",
+      credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+      authMode,
+      gatewayName: "nemoclaw-19080",
+      sandboxName: "my-sandbox",
+    };
+    const attachment = {
+      ...binding,
+      ...nativeLocalIdentity(binding),
+      schemaVersion: 1 as const,
+      providerId: "owned-local-provider-id",
+    };
+    const endpoints: string[] = [];
+    const probeInferenceInvocation = vi.fn<
+      NonNullable<SandboxStartDeps["probeInferenceInvocation"]>
+    >(async (input) => {
+      endpoints.push(resolveSandboxInferenceInvocationEndpoint(input));
+      return { ok: true };
+    });
+    const h = harness({ probeInferenceInvocation });
+    h.getSandbox.mockReturnValue(
+      sandbox({
+        stopped: true,
+        agent,
+        provider: binding.provider,
+        model: "local-model",
+        gatewayName: binding.gatewayName,
+        preferredInferenceApi: "openai-completions",
+        nativeLocalProviderAttachment: attachment,
+      }),
+    );
 
-      await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 0 });
-      expect(probeInferenceInvocation).toHaveBeenCalledExactlyOnceWith(
-        expect.objectContaining({
-          sandboxName: binding.sandboxName,
-          gatewayName: binding.gatewayName,
-          agentName: "langchain-deepagents-code",
-          provider: binding.provider,
-          model: "local-model",
-          nativeLocalProviderAttachment: attachment,
-        }),
-        {},
-        expect.any(Number),
-      );
-      expect(endpoints).toEqual([`${binding.endpointUrl}/chat/completions`]);
-      expect(h.updateSandbox).toHaveBeenCalledWith(
-        "my-sandbox",
-        expect.objectContaining({ stopped: false }),
-      );
-    },
-  );
+    await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 0 });
+    expect(endpoints).toEqual([`${binding.endpointUrl}/chat/completions`]);
+    expect(probeInferenceInvocation).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        sandboxName: binding.sandboxName,
+        gatewayName: binding.gatewayName,
+        agentName: agent,
+        provider: binding.provider,
+        model: "local-model",
+        nativeLocalProviderAttachment: attachment,
+      }),
+      {},
+      expect.any(Number),
+    );
+    expect(h.updateSandbox).toHaveBeenCalledWith(
+      "my-sandbox",
+      expect.objectContaining({ stopped: false }),
+    );
+  });
 
   const hermesEndpoint = "https://authenticated.nous.example/api/v1";
   const hermesDefinition = hostedNativeProvider("hermes-provider", hermesEndpoint)!;

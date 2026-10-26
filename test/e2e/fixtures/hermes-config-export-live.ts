@@ -98,6 +98,14 @@ const CREDENTIAL_HTTP_REFUSAL =
 const PODMAN_REFUSAL =
   "V1alpha1 export currently supports the Docker runtime; Podman compatibility is deferred.";
 const MESSAGING_REFUSAL = "V1 export does not support messaging.";
+const POLICY_REFUSAL =
+  "Verified effective policy is malformed, unknown, or cannot be represented losslessly.";
+// The exporter reports these v1 compatibility limits alongside excluded messaging.
+const MESSAGING_ADDITIONAL_REFUSALS = [
+  "The sandbox provider attachments do not match its supported configuration.",
+  "The managed startup profile is not the canonical profile supported by v1 export.",
+  POLICY_REFUSAL,
+];
 
 function normalizeCommandDiagnostics(stdout: string, stderr: string): string {
   return [stdout, stderr]
@@ -355,13 +363,23 @@ export async function verifyHermesConfigExportLive(
       const refusalDiagnosticMatches = [nemoclawDiagnostics, nemohermesDiagnostics].every(
         (diagnostic) => {
           if (!expectsMessagingRefusal) return diagnostic === expectedDiagnostic;
-          const lines = diagnostic.split("\n");
-          const categories = /^Config export failed \(([^)]+)\)\.$/
-            .exec(lines[0] ?? "")?.[1]
+          const [header, ...findings] = diagnostic.split("\n");
+          const categories = /^Config export failed \(([^)]+)\)\.$/u
+            .exec(header ?? "")?.[1]
             ?.split(", ");
+          const expectedCategories = [
+            "unsupported",
+            ...(findings.includes(POLICY_REFUSAL) ? ["policy-not-representable"] : []),
+          ];
           return (
-            categories?.includes("unsupported") === true &&
-            expectedRefusals.every((refusal) => lines.includes(refusal))
+            categories?.length === expectedCategories.length &&
+            expectedCategories.every((category) => categories.includes(category)) &&
+            expectedRefusals.every((refusal) => findings.includes(refusal)) &&
+            findings.every(
+              (finding) =>
+                expectedRefusals.includes(finding) ||
+                MESSAGING_ADDITIONAL_REFUSALS.includes(finding),
+            )
           );
         },
       );

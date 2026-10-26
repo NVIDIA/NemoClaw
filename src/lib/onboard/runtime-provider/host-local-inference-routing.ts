@@ -112,6 +112,8 @@ export type HostLocalInferenceStartupRequest =
 
 /** Operation-scoped selection injected by the qualification caller. */
 export interface HostLocalInferenceStartupSelection {
+  /** Preserve an existing runtime owner's shared gateway route and transaction. */
+  readonly sharedInferenceRoute?: true;
   /** Exact runtime-provider identity expected from the sandbox-bound resolver. */
   readonly runtimeProviderId: string;
   readonly request: HostLocalInferenceStartupRequest;

@@ -40,6 +40,15 @@ function cappedHistoryResponses(): Map<string, unknown> {
   );
 }
 
+function unstableGlobalPage(path: string): Record<string, unknown> {
+  return path.endsWith("page=1")
+    ? {
+        total_count: 101,
+        workflow_runs: Array.from({ length: 100 }, (_, id) => ({ id: id + 1 })),
+      }
+    : { total_count: 102, workflow_runs: [] };
+}
+
 function exactHeadPath(headSha: string): string {
   return `${BASE_PATH}&head_sha=${headSha}&page=1`;
 }
@@ -93,6 +102,48 @@ describe("base-image publication pagination", () => {
     await expect(
       collectPublicationRuns(
         async (path) => requiredResponse(responses, path),
+        BASE_PATH,
+        history(),
+      ),
+    ).rejects.toThrow(/queried head SHA must be a{40}/u);
+  });
+
+  it("queries eligible commits when the global run count keeps changing", async () => {
+    const selectedRun = { id: 2_001, head_sha: RELEVANT_SHA };
+    const requests: string[] = [];
+    const responses = new Map<string, unknown>([
+      [exactHeadPath(EXPECTED_SHA), { total_count: 0, workflow_runs: [] }],
+      [exactHeadPath(DESCENDANT_SHA), { total_count: 0, workflow_runs: [] }],
+      [exactHeadPath(RELEVANT_SHA), { total_count: 1, workflow_runs: [selectedRun] }],
+    ]);
+
+    await expect(
+      collectPublicationRuns(
+        async (path) => {
+          requests.push(path);
+          return path.includes("&head_sha=")
+            ? requiredResponse(responses, path)
+            : unstableGlobalPage(path);
+        },
+        BASE_PATH,
+        history(),
+      ),
+    ).resolves.toEqual({ total_count: 1, workflow_runs: [selectedRun] });
+    expect(requests).toEqual([
+      ...Array.from({ length: 3 }, () => [`${BASE_PATH}&page=1`, `${BASE_PATH}&page=2`]).flat(),
+      exactHeadPath(EXPECTED_SHA),
+      exactHeadPath(DESCENDANT_SHA),
+      exactHeadPath(RELEVANT_SHA),
+    ]);
+  });
+
+  it("rejects a mismatched SHA after unstable global pagination", async () => {
+    await expect(
+      collectPublicationRuns(
+        async (path) =>
+          path.includes("&head_sha=")
+            ? { total_count: 1, workflow_runs: [{ id: 2_001, head_sha: RELEVANT_SHA }] }
+            : unstableGlobalPage(path),
         BASE_PATH,
         history(),
       ),

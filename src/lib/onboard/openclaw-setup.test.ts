@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  isSandboxGatewayHttpReachableForStatus,
+  waitForStartedNativeGatewayProcess,
+} from "../actions/sandbox/process-recovery";
 
 const configMocks = vi.hoisted(() => ({
   readSandboxConfig: vi.fn(),
@@ -143,10 +147,19 @@ describe("OpenClaw sandbox setup", () => {
       configureOpenclawSandbox,
       initializeOpenclawInferenceRoute: vi.fn(async () => undefined),
       restartNativeGateway,
+      waitForGatewayStartup: vi.fn(async () => true),
       shouldRestartNativeGateway: (provider) => provider === "nvidia-router",
     });
 
-    await setup("spark-box", "model", "nvidia-router", revalidateSandboxIdentity);
+    await setup(
+      "spark-box",
+      "model",
+      "nvidia-router",
+      revalidateSandboxIdentity,
+      null,
+      false,
+      "nemoclaw-19090",
+    );
 
     expect(configureOpenclawSandbox).toHaveBeenCalledExactlyOnceWith(
       "spark-box",
@@ -154,8 +167,144 @@ describe("OpenClaw sandbox setup", () => {
       "nvidia-router",
       revalidateSandboxIdentity,
     );
-    expect(restartNativeGateway).toHaveBeenCalledExactlyOnceWith("spark-box");
+    expect(restartNativeGateway).toHaveBeenCalledExactlyOnceWith("spark-box", "nemoclaw-19090");
     expect(configureOpenclawSandbox).toHaveBeenCalledBefore(restartNativeGateway);
+  });
+
+  it("waits through connection refusal before restarting the routed gateway (#13465)", async () => {
+    let now = 0;
+    const runBuffered = vi
+      .fn()
+      .mockResolvedValueOnce({
+        outcome: { kind: "completed", exitCode: 0 },
+        stdout: "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nSTOPPED",
+        stderr: "",
+      })
+      .mockResolvedValueOnce({
+        outcome: { kind: "completed", exitCode: 0 },
+        stdout: "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nRUNNING",
+        stderr: "",
+      });
+    const probe = vi.fn((name, gateway, options) =>
+      isSandboxGatewayHttpReachableForStatus(name, gateway, {
+        ...options,
+        commandExecutor: { runBuffered } as never,
+        getHealthProbeUrl: () => "http://127.0.0.1:18790/health",
+      }),
+    );
+    const waitForStartedOpenclawGatewayProcess = vi.fn((name: string, gateway: string) =>
+      waitForStartedNativeGatewayProcess(name, "openclaw", gateway, {
+        probe,
+        now: () => now,
+        delay: async (ms) => {
+          now += ms;
+        },
+        environment: {},
+      }),
+    );
+    const restartNativeGateway = vi.fn(async () => ({ ok: true as const }));
+    const configureOpenclawSandbox = vi.fn(async () => undefined);
+    const setup = createOpenclawSetup({
+      step: vi.fn(),
+      agentProductName: () => "OpenClaw",
+      configureOpenclawSandbox,
+      restartNativeGateway,
+      shouldRestartNativeGateway: () => true,
+      waitForGatewayStartup: waitForStartedOpenclawGatewayProcess,
+    });
+
+    await setup("spark-box", "model", "nvidia-router", vi.fn(), null, false, "nemoclaw-19090");
+
+    expect(probe).toHaveBeenCalledTimes(2);
+    expect(runBuffered).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        target: { kind: "named", gatewayName: "nemoclaw-19090" },
+        command: expect.arrayContaining([expect.stringContaining("http://127.0.0.1:18790/health")]),
+      }),
+    );
+    expect(probe).toHaveBeenLastCalledWith("spark-box", "nemoclaw-19090", {
+      startup: { timeoutMs: expect.any(Number) },
+    });
+    expect(configureOpenclawSandbox).toHaveBeenCalledBefore(waitForStartedOpenclawGatewayProcess);
+    expect(waitForStartedOpenclawGatewayProcess).toHaveBeenCalledBefore(restartNativeGateway);
+    expect(restartNativeGateway).toHaveBeenCalledExactlyOnceWith("spark-box", "nemoclaw-19090");
+  });
+
+  it.each([
+    { name: "deadline exhaustion", observation: false, elapsed: 0 },
+    { name: "inconclusive transport", observation: null, elapsed: 0 },
+    { name: "readiness after the deadline", observation: true, elapsed: 30_000 },
+  ])("withholds routed restart and success on $name (#13465)", async ({ observation, elapsed }) => {
+    let now = 0;
+    const probe = vi.fn(async () => {
+      now += elapsed;
+      return observation;
+    });
+    const restartNativeGateway = vi.fn(async () => ({ ok: true as const }));
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    try {
+      const setup = createOpenclawSetup({
+        step: vi.fn(),
+        agentProductName: () => "OpenClaw",
+        configureOpenclawSandbox: vi.fn(async () => undefined),
+        shouldRestartNativeGateway: () => true,
+        restartNativeGateway,
+        waitForGatewayStartup: (name, gateway) =>
+          waitForStartedNativeGatewayProcess(name, "openclaw", gateway, {
+            probe,
+            now: () => now,
+            delay: async (ms) => {
+              now += ms;
+            },
+            environment: {},
+          }),
+      });
+      await expect(
+        setup("spark-box", "model", "nvidia-router", vi.fn(), null, false, "nemoclaw-19090"),
+      ).rejects.toThrow("startup did not settle before routed gateway restart");
+      expect(now).toBeLessThanOrEqual(30_000);
+      expect(probe).toHaveBeenCalled();
+      expect(restartNativeGateway).not.toHaveBeenCalled();
+      expect(log.mock.calls.flat().join("\n")).not.toContain("gateway launched");
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("refuses routed restart when identity changes during startup settlement (#13465)", async () => {
+    const revalidateSandboxIdentity = vi
+      .fn()
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => {
+        throw new Error("sandbox identity changed");
+      });
+    const restartNativeGateway = vi.fn();
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    try {
+      const setup = createOpenclawSetup({
+        step: vi.fn(),
+        agentProductName: () => "OpenClaw",
+        configureOpenclawSandbox: vi.fn(async () => undefined),
+        shouldRestartNativeGateway: () => true,
+        restartNativeGateway,
+        waitForGatewayStartup: vi.fn(async () => true),
+      });
+      await expect(
+        setup(
+          "spark-box",
+          "model",
+          "nvidia-router",
+          revalidateSandboxIdentity,
+          null,
+          false,
+          "nemoclaw-19090",
+        ),
+      ).rejects.toThrow("sandbox identity changed");
+      expect(restartNativeGateway).not.toHaveBeenCalled();
+      expect(log.mock.calls.flat().join("\n")).not.toContain("gateway launched");
+    } finally {
+      log.mockRestore();
+    }
   });
 
   it("leaves ordinary providers on their initial native gateway", async () => {
@@ -166,6 +315,7 @@ describe("OpenClaw sandbox setup", () => {
       configureOpenclawSandbox: vi.fn(async () => undefined),
       initializeOpenclawInferenceRoute: vi.fn(async () => undefined),
       restartNativeGateway,
+      waitForGatewayStartup: vi.fn(async () => true),
       shouldRestartNativeGateway: (provider) => provider === "nvidia-router",
     });
 
@@ -191,6 +341,7 @@ describe("OpenClaw sandbox setup", () => {
       }),
       initializeOpenclawInferenceRoute,
       restartNativeGateway: vi.fn(async () => ({ ok: true as const })),
+      waitForGatewayStartup: vi.fn(async () => true),
       shouldRestartNativeGateway: () => false,
     });
 
@@ -224,6 +375,7 @@ describe("OpenClaw sandbox setup", () => {
       configureOpenclawSandbox: vi.fn(async () => undefined),
       initializeOpenclawInferenceRoute,
       restartNativeGateway: vi.fn(async () => ({ ok: true as const })),
+      waitForGatewayStartup: vi.fn(async () => true),
       shouldRestartNativeGateway: () => false,
     });
 
@@ -254,6 +406,7 @@ describe("OpenClaw sandbox setup", () => {
         },
         initializeOpenclawInferenceRoute: vi.fn(async () => undefined),
         restartNativeGateway: vi.fn(),
+        waitForGatewayStartup: vi.fn(async () => true),
         shouldRestartNativeGateway: () => false,
       });
 
@@ -280,12 +433,13 @@ describe("OpenClaw sandbox setup", () => {
           failureLayer: "native agent command",
           detail: "restart rejected",
         })),
+        waitForGatewayStartup: vi.fn(async () => true),
         shouldRestartNativeGateway: () => true,
       });
 
-      await expect(setup("spark-box", "model", "nvidia-router")).rejects.toThrow(
-        /native gateway restart failed.*restart rejected/,
-      );
+      await expect(
+        setup("spark-box", "model", "nvidia-router", undefined, null, false, "nemoclaw-19090"),
+      ).rejects.toThrow(/native gateway restart failed.*restart rejected/);
       expect(log.mock.calls.flat().join("\n")).not.toContain("gateway launched");
     } finally {
       log.mockRestore();
