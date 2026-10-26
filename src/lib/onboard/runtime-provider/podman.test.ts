@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { beforeAll, describe, expect, it, vi } from "vitest";
+import { DEEP_AGENTS_CODE_SANDBOX_USER } from "../../agent/deep-agents-code-runtime-identity";
 import { createPodmanHostLocalInferenceTestHarness } from "../../../../test/helpers/podman-host-local-inference-test-harness";
 import type { OpenShellSandboxObserver } from "../../adapters/openshell/sandbox-observer";
 import { fingerprintOpenShellSandboxId } from "../../adapters/openshell/sandbox-identity";
@@ -449,6 +450,57 @@ describe("managed Podman runtime provider", () => {
     ).not.toContain("docker");
   });
 
+  it("pins Deep Agents sandbox-user cleanup to the owned Podman resource", () => {
+    const runtime = providerHarness("langchain-deepagents-code");
+    const lifecycle = runtime.providers.podman?.lifecycle;
+    expect(lifecycle).toMatchObject({ supported: true });
+    const control = (
+      lifecycle as Extract<NonNullable<typeof lifecycle>, { readonly supported: true }>
+    ).privilegedSandboxControl;
+    runtime.lifecycle.capture(["start", CONTAINER_ID]);
+    const input = {
+      registeredSandboxNames: [runtime.sandboxName],
+      sandbox: runtime.entry,
+      sandboxName: runtime.sandboxName,
+      sandboxUser: DEEP_AGENTS_CODE_SANDBOX_USER,
+      command: ["/usr/bin/id", "-u"],
+      expectedResourceHandle: CONTAINER_ID,
+      sanitizeEnvironment: true,
+      timeoutMs: 9000,
+    };
+
+    expect(control.executeAsSandboxUser?.(input).status).toBe(0);
+    expect(runtime.lifecycle.capture).toHaveBeenLastCalledWith(
+      expect.arrayContaining([
+        "--user",
+        DEEP_AGENTS_CODE_SANDBOX_USER,
+        CONTAINER_ID,
+        "/usr/bin/id",
+        "-u",
+      ]),
+      9000,
+      undefined,
+    );
+    expect(control.executeAsSandboxUser?.({ ...input, sandboxUser: "1234:1234" }).status).toBe(0);
+    expect(runtime.lifecycle.capture).toHaveBeenLastCalledWith(
+      expect.arrayContaining(["--user", "1234:1234", CONTAINER_ID]),
+      9000,
+      undefined,
+    );
+    expect(() =>
+      control.executeAsSandboxUser?.({
+        ...input,
+        expectedResourceHandle: "b".repeat(64),
+      }),
+    ).toThrow();
+    expect(() => control.executeAsSandboxUser?.({ ...input, sandboxUser: "0:0" })).toThrow(
+      "non-root numeric UID and GID",
+    );
+    expect(() => control.executeAsSandboxUser?.({ ...input, sandboxUser: "--privileged" })).toThrow(
+      "non-root numeric UID and GID",
+    );
+  });
+
   it("keeps a stopped Podman container terminal for privileged control (#11107)", () => {
     const runtime = providerHarness("hermes");
     const lifecycle = runtime.providers.podman?.lifecycle;
@@ -547,13 +599,13 @@ describe("managed Podman runtime provider", () => {
         "inspect",
         "--format",
         "{{.Id}}",
-        expect.stringContaining("node:24.18.1-trixie-slim"),
+        expect.stringContaining("node:24.22.1-trixie-slim"),
       ],
       30_000,
     );
     expect(cleanupCapture).toHaveBeenNthCalledWith(
       2,
-      ["pull", "--quiet", expect.stringContaining("node:24.18.1-trixie-slim")],
+      ["pull", "--quiet", expect.stringContaining("node:24.22.1-trixie-slim")],
       120_000,
     );
   });
@@ -602,7 +654,7 @@ describe("managed Podman runtime provider", () => {
         "inspect",
         "--format",
         "{{.Id}}",
-        expect.stringContaining("node:24.18.1-trixie-slim"),
+        expect.stringContaining("node:24.22.1-trixie-slim"),
       ]);
     },
   );
@@ -951,6 +1003,43 @@ describe("managed Podman runtime provider", () => {
       },
     });
     expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.podman?.identity.id).toBe("podman");
+  });
+
+  it("uses the selected Podman socket and executable for generated image commands", () => {
+    let socketCurrent = true;
+    const capture = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
+    const externalImagePreparation = createPodmanContainerEngine({
+      operation: "external-image-preparation",
+      socketAuthority: REAL_SOCKET_AUTHORITY,
+      executable: "/usr/bin/podman",
+      executableAuthorityDeps: podmanExecutableAuthorityDeps(),
+      assertAuthority: () => {
+        expect(socketCurrent, "selected Podman socket changed").toBe(true);
+      },
+      capture,
+    });
+    const bundle = createPodmanRuntimeProviderBundle({
+      engines: {
+        hostDoctor: realOperationEngines().hostDoctor,
+        sandboxLifecycle: realOperationEngines().sandboxLifecycle,
+        externalImagePreparation,
+      },
+    });
+    const surface = supportedContainerEngine(bundle);
+
+    expect(
+      surface.capture("external-image-preparation", ["build", "--quiet", "context"], 20_000).status,
+    ).toBe(0);
+    expect(capture).toHaveBeenCalledWith(
+      "/usr/bin/podman",
+      ["--url", `unix://${REAL_SOCKET_AUTHORITY.socketPath}`, "build", "--quiet", "context"],
+      20_000,
+    );
+    socketCurrent = false;
+    expect(() =>
+      surface.capture("external-image-preparation", ["image", "inspect", "candidate"], 5_000),
+    ).toThrow("selected Podman socket changed");
+    expect(capture).toHaveBeenCalledTimes(1);
   });
 
   it("maps one provider-neutral NVIDIA run to Podman CDI arguments", () => {

@@ -6,9 +6,53 @@ import { describe, expect, it } from "vitest";
 import {
   AMBIENT_RECREATE_ENV_VARS,
   assessAmbientRecreateEnv,
+  describeIgnoredDashboardOriginEnv,
   isolateAmbientRecreateEnv,
   sanitizeEnvValueForDisplay,
 } from "./rebuild-env-isolation.js";
+
+describe("describeIgnoredDashboardOriginEnv (#13177)", () => {
+  const recorded = "https://launchpad.example.test:18790";
+
+  it("warns when an exported CHAT_UI_URL differs from the replayed origin", () => {
+    expect(
+      describeIgnoredDashboardOriginEnv({
+        sandboxName: "alpha",
+        cliName: "nemoclaw",
+        replayedChatUiUrl: recorded,
+        env: { CHAT_UI_URL: "https://other.example.test" },
+      }),
+    ).toEqual([
+      "Ignoring CHAT_UI_URL='https://other.example.test' — rebuilding 'alpha' with its recorded dashboard URL 'https://launchpad.example.test:18790'.",
+      "To change the dashboard origin, run: CHAT_UI_URL=<url> nemoclaw onboard --name alpha, then nemoclaw alpha rebuild.",
+    ]);
+  });
+
+  it.each([
+    { case: "unset", env: {} },
+    { case: "empty", env: { CHAT_UI_URL: "" } },
+    { case: "the replayed origin", env: { CHAT_UI_URL: "https://launchpad.example.test:18790/" } },
+  ])("stays quiet when CHAT_UI_URL is $case", ({ env }) => {
+    expect(
+      describeIgnoredDashboardOriginEnv({
+        sandboxName: "alpha",
+        cliName: "nemoclaw",
+        replayedChatUiUrl: recorded,
+        env,
+      }),
+    ).toEqual([]);
+  });
+
+  it("renders an untrusted CHAT_UI_URL on one safe line", () => {
+    const [first] = describeIgnoredDashboardOriginEnv({
+      sandboxName: "alpha",
+      cliName: "nemoclaw",
+      replayedChatUiUrl: recorded,
+      env: { CHAT_UI_URL: "https://x.test\n\u001b[2KDone" },
+    });
+    expect(first).not.toMatch(/[\n\u001b]/);
+  });
+});
 
 describe("sanitizeEnvValueForDisplay PRA-7 (#5735)", () => {
   it("collapses a multi-line / ANSI value into a single safe line", () => {

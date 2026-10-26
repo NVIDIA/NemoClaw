@@ -86,6 +86,64 @@ function readPreparedPolicy(prepared: {
 }
 
 describe("initial sandbox policy real preset merge", () => {
+  it.each(["openai", null, "nvidia-prod"])(
+    "does not add native NVIDIA access without its selected attachment [%#] (#12822)",
+    (inferenceProvider) => {
+      const policy = readPreparedPolicy(
+        prepareInitialSandboxCreatePolicy(
+          repoPath("nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
+          [],
+          { agentName: "openclaw", inferenceProvider },
+        ),
+      );
+      expect(policy.network_policies).not.toHaveProperty("native_nvidia_inference");
+    },
+  );
+  it.each([
+    { agent: "openclaw", path: ["nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"] },
+    { agent: "hermes", path: ["agents", "hermes", "policy-additions.yaml"] },
+    {
+      agent: "langchain-deepagents-code",
+      path: ["agents", "langchain-deepagents-code", "policy-additions.yaml"],
+    },
+    { agent: "pi", path: ["agents", "pi", "policy-additions.yaml"] },
+    { agent: "nemocua", path: ["agents", "nemocua", "policy-additions.yaml"] },
+  ])(
+    "permits scoped native NVIDIA verification without optional presets for $agent (#12822)",
+    ({ agent, path: policyPath }) => {
+      const policy = readPreparedPolicy(
+        prepareInitialSandboxCreatePolicy(repoPath(...policyPath), [], {
+          agentName: agent,
+          inferenceProvider: "nemoclaw-nvidia-prod-v1",
+        }),
+      );
+      const curlRules = Object.values(policy.network_policies ?? {})
+        .filter((entry) => entry.binaries?.some(({ path }) => path === "/usr/bin/curl"))
+        .flatMap((entry) => entry.endpoints ?? [])
+        .filter(({ host }) => host === "integrate.api.nvidia.com");
+      expect(curlRules).toEqual([
+        {
+          host: "integrate.api.nvidia.com",
+          port: 443,
+          protocol: "rest",
+          enforcement: "enforce",
+          rules: [
+            { allow: { method: "GET", path: "/v1/models" } },
+            { allow: { method: "POST", path: "/v1/chat/completions" } },
+          ],
+        },
+      ]);
+      expect(policy.network_policies?.native_nvidia_inference?.binaries).toEqual([
+        { path: "/usr/local/bin/node" },
+        { path: "/usr/bin/node" },
+        { path: "/opt/hermes/.venv/bin/python" },
+        { path: "/opt/hermes/.venv/bin/python3" },
+        { path: "/opt/venv/bin/python3" },
+        { path: "/usr/local/bin/curl" },
+        { path: "/usr/bin/curl" },
+      ]);
+    },
+  );
   const managedImagePolicyPathsByAgent = {
     openclaw: [["nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"]],
     hermes: [["agents", "hermes", "policy-additions.yaml"]],

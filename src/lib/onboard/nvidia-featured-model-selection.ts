@@ -25,9 +25,15 @@ export type NvidiaFeaturedModelSessionOptions = {
   writeLine?: (message: string) => void;
   defaultModel?: string;
   loadingMessage?: string;
+  onModelSelected?: ModelPromptOptions["onModelSelected"];
 } & Pick<
   NvidiaFeaturedModelOptions,
-  "catalogLabel" | "catalogUrl" | "fallbackModelOptions" | "retiredModelIds" | "warn"
+  | "catalogLabel"
+  | "catalogUrl"
+  | "fallbackModelOptions"
+  | "modelIdAliases"
+  | "retiredModelIds"
+  | "warn"
 >;
 
 /** Create one catalog-backed model selector for an onboarding session. */
@@ -42,6 +48,7 @@ export function createNvidiaFeaturedModelSession(
     catalogLabel: options.catalogLabel,
     catalogUrl: options.catalogUrl,
     fallbackModelOptions: options.fallbackModelOptions,
+    modelIdAliases: options.modelIdAliases,
     retiredModelIds: options.retiredModelIds,
     warn: options.warn,
   });
@@ -66,7 +73,13 @@ export function createNvidiaFeaturedModelSession(
             ? `  Warning: configured NVIDIA model "${requestedModel}" is retired; ignoring it and using "${replacementModel}" instead.`
             : `  Warning: configured NVIDIA model "${requestedModel}" is retired; choose a replacement model.`,
         );
-        if (nonInteractive) return replacementModel;
+        if (nonInteractive) {
+          options.onModelSelected?.(
+            replacementModel,
+            configuredModel && !configuredModelIsRetired ? "custom" : "product_catalog",
+          );
+          return replacementModel;
+        }
       }
       if (recoveredModel && !requestedModelIsRetired) {
         if (!isRetiredNvidiaFeaturedModelId(recoveredModel, options.retiredModelIds)) {
@@ -79,13 +92,19 @@ export function createNvidiaFeaturedModelSession(
         );
       }
       if (nonInteractive) {
-        return configuredModel && !configuredModelIsRetired ? configuredModel : defaultModel;
+        const model = configuredModel && !configuredModelIsRetired ? configuredModel : defaultModel;
+        options.onModelSelected?.(
+          model,
+          configuredModel && !configuredModelIsRetired ? "custom" : "product_catalog",
+        );
+        return model;
       }
       if (!announcedLoad) {
         writeLine(loadingMessage);
         announcedLoad = true;
       }
       return promptCloudModel({
+        onModelSelected: options.onModelSelected,
         ...loadPromptOptions(
           configuredModel && !configuredModelIsRetired ? configuredModel : defaultModel,
         ),

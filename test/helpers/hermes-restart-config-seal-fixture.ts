@@ -149,7 +149,12 @@ export function allowRestartFixturePeerTraversal(fixture: RestartFixture): () =>
   return () => fs.chmodSync(testTempRoot, testTempRootMode);
 }
 
-export function runWriteConfig(fixture: RestartFixture, expectedDigest: string, content: string) {
+export function runWriteConfig(
+  fixture: RestartFixture,
+  expectedDigest: string,
+  content: string,
+  options: { env?: NodeJS.ProcessEnv } = {},
+) {
   const wrapper = String.raw`
 import sys
 
@@ -180,6 +185,7 @@ with open(source_path, "rb") as source:
       encoding: "utf-8",
       input: content,
       timeout: HERMES_GUARD_TIMEOUT_MS,
+      env: options.env,
     },
   );
 }

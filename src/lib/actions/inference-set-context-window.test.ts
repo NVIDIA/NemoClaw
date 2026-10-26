@@ -10,9 +10,14 @@ import {
   baseSession,
   createCompatibleProviderCapture,
   createDeps,
-} from "./inference-set.test-support";
+} from "../../../test/helpers/inference-set";
 
 describe("runInferenceSet context window", () => {
+  const legacyLocalEntry: SandboxEntry = {
+    name: "alpha",
+    agent: "openclaw",
+    provider: "ollama-local",
+  };
   const ollamaConfig = (): ConfigObject => ({
     agents: { defaults: { model: { primary: "inference/llama3.2:3b" } } },
     models: {
@@ -32,7 +37,12 @@ describe("runInferenceSet context window", () => {
 
   it("writes the recomputed context window into the in-sandbox config", async () => {
     const config = ollamaConfig();
-    const deps = createDeps({ config, session: baseSession(), contextWindow: 16384 });
+    const deps = createDeps({
+      config,
+      entry: legacyLocalEntry,
+      session: baseSession(),
+      contextWindow: 16384,
+    });
 
     await runInferenceSet({ provider: "ollama-local", model: "qwen2.5:7b", noVerify: true }, deps);
 
@@ -47,7 +57,12 @@ describe("runInferenceSet context window", () => {
 
   it("drops another model's window and warns when the selected window is unknown (#12033)", async () => {
     const config = ollamaConfig();
-    const deps = createDeps({ config, session: baseSession(), contextWindow: null });
+    const deps = createDeps({
+      config,
+      entry: legacyLocalEntry,
+      session: baseSession(),
+      contextWindow: null,
+    });
 
     await runInferenceSet({ provider: "ollama-local", model: "qwen2.5:7b", noVerify: true }, deps);
 

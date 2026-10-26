@@ -61,6 +61,7 @@ import {
   dockerInspectGateway,
   gatewayDoctorStartHint,
   inspectSandboxDoctorPortableAuthority,
+  observeSandboxDoctorHermesReadiness,
   ollamaDoctorCheck,
   oneLine,
   shouldInspectLegacyGatewayContainer,
@@ -106,15 +107,47 @@ const sandboxCommandExecutor = createCliOpenShellSandboxCommandExecutor({ hostCw
 function hermesPortableDoctorReport(
   sandboxName: string,
   phase: "pending" | "configuring" | "active",
+  readiness: "ready" | "unavailable" | "authority-unavailable" | null,
 ): DoctorReport {
+  if (readiness === "authority-unavailable")
+    return hermesPortableAuthorityFailureReport(sandboxName);
   const active = phase === "active";
-  return buildDoctorReport(sandboxName, [
+  const checks: DoctorCheck[] = [
     {
       group: "Sandbox",
       label: "Portable lifecycle",
       status: active ? "ok" : "warn",
       detail: `agent=Hermes; phase=${phase}`,
       ...(active ? {} : { hint: "resume the existing Hermes portable onboarding transaction" }),
+    },
+  ];
+  if (active) {
+    checks.push({
+      group: "Sandbox",
+      label: "Hermes gateway",
+      status: readiness === "ready" ? "ok" : "fail",
+      detail:
+        readiness === "ready"
+          ? "receipt-qualified gateway readiness is confirmed"
+          : "receipt-qualified gateway readiness could not be confirmed",
+      ...(readiness === "ready"
+        ? {}
+        : {
+            hint: `run ${CLI_NAME} ${sandboxName} recover, then retry this command`,
+          }),
+    });
+  }
+  return buildDoctorReport(sandboxName, checks);
+}
+
+function hermesPortableAuthorityFailureReport(sandboxName: string): DoctorReport {
+  return buildDoctorReport(sandboxName, [
+    {
+      group: "Sandbox",
+      label: "Portable lifecycle authority",
+      status: "fail",
+      detail: "Hermes portable receipt and registry authority could not be qualified",
+      hint: "preserve the registry and lifecycle receipt files unchanged and stop; do not edit or recreate either file",
     },
   ]);
 }
@@ -389,8 +422,16 @@ async function resolveInferenceRoute(
   gatewayName: string | null,
 ): Promise<DoctorInferenceRoute> {
   const recordedNativeNvidia = isNativeNvidiaProvider(sb?.provider);
+  const recordedNativeLocal = sb?.nativeLocalProviderAttachment !== undefined;
   let live: { provider: string; model: string } | null = null;
-  if (!recordedNativeNvidia && openshellBin && openshellConnected && gatewayName) {
+  if (
+    !recordedNativeNvidia &&
+    !recordedNativeLocal &&
+    sb?.nativeHostedProviderAttachment === undefined &&
+    openshellBin &&
+    openshellConnected &&
+    gatewayName
+  ) {
     const result = await createSynchronousCliOpenShellInferenceRouteObserver(
       captureOpenshell,
     ).observeInferenceRoute({
@@ -405,6 +446,13 @@ async function resolveInferenceRoute(
     effectiveReasoningEffort: resolveDoctorReasoningEffort(sb),
     recordedEndpointUrl: sb?.endpointUrl,
     agentName: sb?.agent,
+    ...(recordedNativeLocal
+      ? { nativeLocalProviderAttachment: sb?.nativeLocalProviderAttachment }
+      : {}),
+    preferredInferenceApi: sb?.preferredInferenceApi,
+    ...(sb?.nativeHostedProviderAttachment !== undefined
+      ? { nativeHostedProviderAttachment: sb.nativeHostedProviderAttachment }
+      : {}),
     ...(recordedNativeNvidia
       ? {
           nativeNvidiaProviderAttachment: normalizeNativeNvidiaProviderAttachment(
@@ -650,8 +698,19 @@ export async function runSandboxDoctor(
 
   const outcome = await withSandboxDoctorLifecycleLock(sandboxName, async () => {
     const portable = inspectSandboxDoctorPortableAuthority(sandboxName, registry.getSandbox);
+    if (portable.kind === "hermes-authority-unavailable") {
+      const report = hermesPortableAuthorityFailureReport(sandboxName);
+      if (intent.asJson && options.quietJson) return { report };
+      const exitCode = renderDoctorReport(report, intent.asJson);
+      return { exitCode };
+    }
     if (portable.kind === "hermes") {
-      const report = hermesPortableDoctorReport(sandboxName, portable.phase);
+      const readiness = await observeSandboxDoctorHermesReadiness(
+        sandboxName,
+        portable,
+        registry.getSandbox,
+      );
+      const report = hermesPortableDoctorReport(sandboxName, portable.phase, readiness);
       if (intent.asJson && options.quietJson) return { report };
       const exitCode = renderDoctorReport(report, intent.asJson);
       return { exitCode };

@@ -1,0 +1,48 @@
+{/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */}
+
+## v0.0.133
+
+NemoClaw v0.0.133 extends sandbox-attached OpenShell inference to supported hosted providers and improves recovery when sandbox or gateway state is incomplete.
+It also makes policy removal, provider verification, and configuration export more predictable.
+
+- New OpenAI, Anthropic, Google Gemini, OpenRouter, and Hermes Provider selections use sandbox-attached OpenShell providers.
+  Provider credentials stay on the host, and each sandbox records its own attachment.
+  Existing sandboxes without a native attachment retain their recorded shared route.
+  Related change: [PR #12886](https://github.com/NVIDIA/NemoClaw/pull/12886).
+  Refer to [How Inference Routing Works](/user-guide/openclaw/inference/about-inference-routing).
+- A fresh managed OpenClaw sandbox using local Ollama or vLLM defaults to direct tool disclosure when no mode is selected.
+  An explicit selection or existing sandbox state takes precedence.
+  Related change: [PR #12968](https://github.com/NVIDIA/NemoClaw/pull/12968).
+  Refer to [Progressive Tool Disclosure](/user-guide/openclaw/configure-agents/progressive-tool-disclosure).
+- Provider creation and attachment warn when a previously verified profile changes or its follow-up check cannot complete.
+  The successful operation remains successful; ask the gateway operator to inspect the profile before relying on its credential boundary.
+  The advisory lookup follows the caller's timeout, capped at 30 seconds.
+  Related changes: [PR #12985](https://github.com/NVIDIA/NemoClaw/pull/12985) and [PR #13033](https://github.com/NVIDIA/NemoClaw/pull/13033).
+- Policy preset removal accepts OpenShell's provider-composed `_provider_*` readback entries but still rejects missing or changed operator-owned rules.
+  Related change: [PR #12983](https://github.com/NVIDIA/NemoClaw/pull/12983).
+  Refer to [Apply Policy Presets](/user-guide/openclaw/network-policy/configure-policies/apply-policy-presets).
+- Native-home backup removes a new backup directory when capture throws.
+  If cleanup also fails, the error identifies the retained incomplete path for inspection.
+  Related change: [PR #13010](https://github.com/NVIDIA/NemoClaw/pull/13010).
+  Refer to [Back Up and Restore Sandboxes](/user-guide/openclaw/manage-sandboxes/state-and-backups/create-and-restore-snapshots).
+- After failed onboarding leaves an identity-free recovery reservation, `nemoclaw <name> destroy --yes` can release the name when the selected gateway and Docker confirm that the sandbox is absent.
+  Ownership conflicts and uncertain absence still block removal.
+  Related change: [PR #12839](https://github.com/NVIDIA/NemoClaw/pull/12839).
+- Gateway recovery retains the last successful state-directory and Docker-network binding for each port.
+  Process identity checks also handle a live sibling of a zombie leader and large inherited environments without dropping ownership checks.
+  Related changes: [PR #12800](https://github.com/NVIDIA/NemoClaw/pull/12800) and [PR #12928](https://github.com/NVIDIA/NemoClaw/pull/12928).
+- `nemoclaw config export` accepts sandboxes with an empty messaging plan.
+  Deep Agents Code `sessions` and `sessions list` instead report that listing is unsupported and exit with code 1.
+  Related changes: [PR #13021](https://github.com/NVIDIA/NemoClaw/pull/13021) and [PR #12918](https://github.com/NVIDIA/NemoClaw/pull/12918).
+- Native Linux ARM64 can recognize a qualified N1x PCI identity without the FastOS marker.
+  Physical qualification remains pending.
+  Related change: [PR #12768](https://github.com/NVIDIA/NemoClaw/pull/12768).
+- QA runs can select the fixed TEST receiver with `NEMOCLAW_TELEMETRY_TEST_LABEL`.
+  NemoClaw attempts one completion record for each covered installer or CLI operation.
+  Collection and delivery share a five-second total limit, and `NEMOCLAW_DISABLE_TELEMETRY=1` suppresses both.
+  Production delivery is not enabled.
+  Related change: [PR #12859](https://github.com/NVIDIA/NemoClaw/pull/12859).
+  Refer to [Operation Telemetry](/user-guide/openclaw/security/best-practices#operation-telemetry).

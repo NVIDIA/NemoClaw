@@ -1,6 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  finishTelemetryOperation,
+  isTelemetryOperationActive,
+  recordTelemetryTarget,
+} from "../actions/telemetry/operation";
 import path from "node:path";
 
 import { normalizeProcessExitCode } from "../core/process-exit";
@@ -27,6 +32,7 @@ import type {
   CheckpointPortableRuntimeAuthority,
 } from "../state/onboard-checkpoint-types";
 import type { Session } from "../state/onboard-session";
+import type { SandboxEntry } from "../state/registry/types";
 import {
   DEFAULT_TOOL_DISCLOSURE,
   TOOL_DISCLOSURE_ENV,
@@ -38,6 +44,7 @@ import { EXPERIMENTAL_PROFILE_ENV } from "./docker-driver-platform";
 import { assertNoIncompleteExternalComponentActivation } from "./external-component/onboarding";
 import type { PortableInferenceActivation } from "./experimental/portable-inference-descriptor";
 import { requireReadOnlyHostMountRuntimeSupport } from "./host-mount";
+import { type DcodeAutoApprovalMode, isDcodeAutoApprovalMode } from "./dcode-auto-approval";
 import type { ResumeConfigConflict } from "./resume-config";
 import type { StationExpressResumeIntent } from "./station-express-resume";
 import { ensureRequiredTierPolicyPresets } from "./policy-tier-suppression";
@@ -205,6 +212,128 @@ export function shouldPreserveIncompleteOnboardSession(error: unknown): boolean 
   return isOnboardDeferredExitError(error) && error.preserveIncompleteSession;
 }
 
+/** Preserve completed archive restoration metadata before a later onboarding phase can fail. */
+export async function preserveRestoredModelSelections(
+  sandboxName: string,
+  gatewayName: string,
+  previous: SandboxEntry,
+): Promise<void> {
+  if (!isTelemetryOperationActive()) return;
+  let metadataErrors: NonNullable<Parameters<typeof recordTelemetryTarget>[0]["metadataErrors"]> = [
+    { category: "model_source" },
+  ];
+  try {
+    const { verifySelectedAgentsManifest } =
+      await import("../actions/sandbox/agents/telemetry-verification");
+    const selection = await verifySelectedAgentsManifest(
+      sandboxName,
+      { kind: "named", gatewayName },
+      previous,
+      true,
+    );
+    if (selection.status === "reported") return;
+    metadataErrors = selection.metadataErrors ?? metadataErrors;
+  } catch {
+    // A metadata failure never changes successful native archive restoration.
+  }
+  recordTelemetryTarget({
+    scope: "sandbox",
+    sandboxName,
+    gatewayName,
+    outcome: "completed",
+    state: "applied",
+    verificationStatus: "collection_error",
+    metadataErrors,
+  });
+}
+
+/** Record onboarding only after its native finalization and outer cleanup complete. */
+export function createOnboardOperationCompletion(options: {
+  sandboxName?: string;
+  pending: boolean;
+  getSandbox(name: string): { configurationApplyPending?: true } | null;
+  updateSandbox(name: string, update: { configurationApplyPending?: undefined }): boolean;
+}) {
+  let metadataComplete = true;
+  let modelSelectionVerified = true;
+  let previousEntries: Record<string, SandboxEntry> = {};
+  const metadataErrors: NonNullable<Parameters<typeof recordTelemetryTarget>[0]["metadataErrors"]> =
+    [];
+  let cancelled = false;
+  let failed = false;
+  return {
+    sandboxName: options.sandboxName,
+    captureExisting(readEntries: () => Record<string, SandboxEntry>): void {
+      if (!isTelemetryOperationActive()) return;
+      try {
+        previousEntries = structuredClone(readEntries());
+      } catch {
+        metadataComplete = false;
+      }
+    },
+    async accept(completed: boolean): Promise<void> {
+      if (!completed || options.pending || !this.sandboxName) return;
+      try {
+        if (isTelemetryOperationActive()) {
+          const { verifySelectedAgentsManifest } =
+            await import("../actions/sandbox/agents/telemetry-verification");
+          const selection = await verifySelectedAgentsManifest(
+            this.sandboxName,
+            undefined,
+            previousEntries[this.sandboxName],
+          );
+          metadataErrors.push(...(selection.metadataErrors ?? []));
+          modelSelectionVerified = selection.verified;
+          metadataComplete &&= selection.status !== "collection_error";
+        }
+        if (
+          modelSelectionVerified &&
+          options.getSandbox(this.sandboxName)?.configurationApplyPending === true
+        ) {
+          let cleared = false;
+          try {
+            cleared = options.updateSandbox(this.sandboxName, {
+              configurationApplyPending: undefined,
+            });
+          } catch {
+            /* Native completion remains valid when optional metadata cannot be saved. */
+          }
+          if (!cleared) {
+            metadataComplete = false;
+            metadataErrors.push({ category: "configuration_apply_state" });
+          }
+        }
+      } catch {
+        metadataComplete = false;
+      }
+    },
+    reject(error: unknown): void {
+      cancelled = isOnboardDeferredExitError(error) && error.code === 0;
+      failed = !cancelled;
+    },
+    record(completed: boolean, gatewayName: string): void {
+      const completedNative = completed && !failed;
+      const accepted = completedNative && modelSelectionVerified;
+      let outcome: Parameters<typeof recordTelemetryTarget>[0]["outcome"] = "failed";
+      if (accepted) outcome = "completed";
+      else if (completedNative) outcome = "unverified";
+      else if (cancelled) outcome = "cancelled";
+      let state: Parameters<typeof recordTelemetryTarget>[0]["state"] = "partial";
+      if (accepted) state = options.pending ? "pending" : "applied";
+      else if (cancelled) state = "unchanged";
+      recordTelemetryTarget({
+        scope: "sandbox",
+        sandboxName: this.sandboxName,
+        gatewayName,
+        outcome,
+        state,
+        verificationStatus: metadataComplete ? "reported" : "collection_error",
+        ...(metadataErrors.length ? { metadataErrors } : {}),
+      });
+    },
+  };
+}
+
 interface DeferredExitOptions {
   readonly deferProcessExit?: boolean;
 }
@@ -229,6 +358,7 @@ export function wrapOnboardDeferredExit<TOptions extends DeferredExitOptions>(
     }
     if (!deferredExit) return;
     if (resolvedOptions.deferProcessExit === true) throw deferredExit;
+    await finishTelemetryOperation(deferredExit.code);
     originalProcessExit(deferredExit.code);
   };
 }
@@ -357,6 +487,7 @@ export interface OnboardSessionBootstrapInput {
   envAgent?: string | null;
   requestedToolDisclosure?: ToolDisclosure | null;
   requestedObservabilityEnabled?: boolean | null;
+  requestedDcodeAutoApprovalMode?: DcodeAutoApprovalMode | null;
   apfInterceptorRequested?: boolean | null;
   stationExpressIntent?: StationExpressResumeIntent | null;
   requestedHostMounts?: readonly import("../state/registry/types").SandboxHostMount[];
@@ -652,6 +783,10 @@ async function prepareResumeSession(
       current.observabilityEnabled = input.requestedObservabilityEnabled;
       current.observabilityRequestedExplicitly = true;
     }
+    if (isDcodeAutoApprovalMode(input.requestedDcodeAutoApprovalMode)) {
+      current.dcodeAutoApprovalMode = input.requestedDcodeAutoApprovalMode;
+      current.dcodeAutoApprovalRequestedExplicitly = true;
+    }
     current.mode = mode(input.nonInteractive);
     current.failure = null;
     current.status = "in_progress";
@@ -686,6 +821,10 @@ function prepareFreshSession(
     toolDisclosure: input.requestedToolDisclosure ?? DEFAULT_TOOL_DISCLOSURE,
     observabilityEnabled: input.requestedObservabilityEnabled === true,
     observabilityRequestedExplicitly: typeof input.requestedObservabilityEnabled === "boolean",
+    dcodeAutoApprovalMode: input.requestedDcodeAutoApprovalMode ?? null,
+    dcodeAutoApprovalRequestedExplicitly: isDcodeAutoApprovalMode(
+      input.requestedDcodeAutoApprovalMode,
+    ),
     apfInterceptorRequested: input.apfInterceptorRequested === true,
     stationExpressIntent: input.stationExpressIntent ?? null,
     servingProfileProvenance: input.servingProfileProvenance ?? null,

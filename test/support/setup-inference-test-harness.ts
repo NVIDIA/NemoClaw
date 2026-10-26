@@ -6,11 +6,18 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { vi } from "vitest";
+import YAML from "yaml";
+import { HOSTED_NATIVE_PROVIDERS } from "../../src/lib/inference/native-provider/hosted";
 import {
   createGatewayScopedOpenshellRunner,
   type SetupInference,
   type SetupInferenceDeps,
 } from "../../src/lib/onboard/setup-inference.js";
+import { usesNativeLocalInference } from "../../src/lib/inference/native-local/contract";
+import {
+  createNativeLocalSetupHarness,
+  withNativePolicyFixture,
+} from "./native-local-setup-harness";
 import { redact } from "../../src/lib/security/redact.js";
 
 const onboardProviderHelpers = require("../../src/lib/onboard/providers") as {
@@ -45,6 +52,8 @@ export type DirectRunStubResult = {
 };
 
 export type DirectSetupHarnessOptions = {
+  /** Exercise an existing custom sandbox's shared inference route. */
+  legacyCustomRoute?: boolean;
   runOpenshell?: (
     args: string[],
     options: DirectRunOptions,
@@ -134,6 +143,7 @@ export function runProductionSetupInferenceCredentialBoundary(options: {
   model: string;
   provider: string;
   timeoutMs?: number;
+  gatewayName?: string;
 }): ProductionSetupInferenceBoundaryResult {
   const parentCredentialBefore = process.env[options.credentialEnv];
   const repoRoot = path.join(import.meta.dirname, "..", "..");
@@ -145,6 +155,33 @@ export function runProductionSetupInferenceCredentialBoundary(options: {
   const childScriptPath = path.join(tmpDir, "setup-inference-boundary.js");
   const onboardPath = path.join(repoRoot, "src", "lib", "onboard.ts");
   const sourceHookPath = path.join(repoRoot, "test", "helpers", "onboard-script-mocks.cjs");
+  const nativeDefinition = HOSTED_NATIVE_PROVIDERS.find(
+    (entry) => entry.logicalProvider === options.provider,
+  );
+  const nativeProfile = nativeDefinition
+    ? YAML.parse(
+        fs.readFileSync(
+          path.join(
+            repoRoot,
+            "managed-inference",
+            "provider-profiles",
+            nativeDefinition.profileId + ".yaml",
+          ),
+          "utf8",
+        ),
+      )
+    : null;
+  const nativeMetadata = nativeDefinition
+    ? [
+        "Id: native-fixture",
+        "Name: " + nativeDefinition.providerName,
+        "Type: " + nativeDefinition.profileId,
+        "Resource version: 1",
+        "Credential keys: " + nativeDefinition.credentialEnv,
+        "Config keys: <none>",
+        "",
+      ].join("\n")
+    : "";
 
   try {
     fs.mkdirSync(fakeBin, { recursive: true });
@@ -153,7 +190,26 @@ export function runProductionSetupInferenceCredentialBoundary(options: {
       `#!${process.execPath}
 const fs = require("node:fs");
 const argv = process.argv.slice(2);
+const nativeProfile = ${JSON.stringify(nativeProfile)};
+const created = ${JSON.stringify(path.join(tmpDir, "native-created"))};
 fs.appendFileSync(${JSON.stringify(commandLogPath)}, JSON.stringify({ argv, env: process.env }) + "\\n");
+if (nativeProfile) {
+  if (argv[0] === "provider" && argv[1] === "profile" && argv.includes("export")) {
+    process.stdout.write(JSON.stringify(nativeProfile)); process.exit(0);
+  }
+  if (argv[0] === "settings" && argv[1] === "get") {
+    process.stdout.write(JSON.stringify({ scope: "global", settings: { providers_v2_enabled: "true" } })); process.exit(0);
+  }
+  if (argv[0] === "provider" && argv[1] === "create") {
+    fs.writeFileSync(created, "created"); process.exit(0);
+  }
+  if (argv[0] === "provider" && argv[1] === "get") {
+    if (!fs.existsSync(created)) {
+      process.stderr.write(${JSON.stringify("provider '" + nativeDefinition?.providerName + "' not found")}); process.exit(1);
+    }
+    process.stdout.write(${JSON.stringify(nativeMetadata)}); process.exit(0);
+  }
+}
 if (argv[0] === "inference" && argv[1] === "get") {
   process.stdout.write(${JSON.stringify(
     `Gateway inference:\n  Provider: ${options.provider}\n  Model: ${options.model}\n`,
@@ -187,6 +243,9 @@ const setupCredentialBefore = process.env[credentialEnv] || null;
     ${JSON.stringify(options.provider)},
     ${JSON.stringify(options.endpointUrl ?? null)},
     credentialEnv,
+    null,
+    [],
+    ${JSON.stringify(options.gatewayName ? { gatewayName: options.gatewayName } : {})},
   );
   fs.writeFileSync(
     ${JSON.stringify(setupResultPath)},
@@ -326,6 +385,7 @@ export function createDirectSetupInferenceHarnessFactory(
   createSetupInference: CreateSetupInference,
 ) {
   return function createDirectSetupInferenceHarness(options: DirectSetupHarnessOptions = {}) {
+    let legacySandbox: ReturnType<NonNullable<SetupInferenceDeps["getSandbox"]>> = null;
     const commands: DirectCommandEntry[] = [];
     const errors: string[] = [];
     const logs: string[] = [];
@@ -369,7 +429,7 @@ export function createDirectSetupInferenceHarnessFactory(
       }
       return directRunResult();
     };
-    const setupInferenceWithoutPolicyAuthority = createSetupInference({
+    const harnessDeps: Partial<SetupInferenceDeps> = {
       checkGatewayRouteCompatibility: () => ({ ok: true }),
       withGatewayRouteMutationLock: async <T>(
         _gatewayName: string,
@@ -487,10 +547,20 @@ export function createDirectSetupInferenceHarnessFactory(
       // #9110: neutralize the GPU-release seams so harness consumers backed by
       // the production defaults never read the developer's real registry or
       // curl a live Ollama daemon.
-      getSandbox: () => null,
+      getSandbox: () => legacySandbox,
       listSandboxes: () => ({ sandboxes: [], defaultSandbox: null }),
       unloadOllamaModels,
       withOllamaModelOwnershipLock: (operation) => operation(),
+      ...options.overrides,
+    };
+    const setupInferenceWithoutPolicyAuthority = createSetupInference(harnessDeps);
+    const native = createNativeLocalSetupHarness();
+    const setupNativeInference = createSetupInference({
+      ...harnessDeps,
+      providerAdapter: native.adapter,
+      getNativeLocalProviderAuthority: native.getNativeLocalProviderAuthority,
+      setNativeLocalProviderAuthority: native.setNativeLocalProviderAuthority,
+      clearNativeLocalProviderAuthority: native.clearNativeLocalProviderAuthority,
       ...options.overrides,
     });
     const revalidateSandboxIdentity = vi.fn();
@@ -503,22 +573,30 @@ export function createDirectSetupInferenceHarnessFactory(
       hermesAuthMethod,
       hermesToolGateways,
       inferenceOptions = {},
-    ) =>
-      setupInferenceWithoutPolicyAuthority(
-        sandboxName,
-        model,
-        provider,
-        endpointUrl,
-        credentialEnv,
-        hermesAuthMethod,
-        hermesToolGateways,
-        {
-          ...inferenceOptions,
-          revalidateSandboxIdentity:
-            inferenceOptions.revalidateSandboxIdentity ?? revalidateSandboxIdentity,
-        },
-      );
+    ) => {
+      if (options.legacyCustomRoute && sandboxName) {
+        legacySandbox = { name: sandboxName, provider, model, endpointUrl, credentialEnv };
+      }
+      const nativeLocal = usesNativeLocalInference(provider, endpointUrl);
+      const operation = () =>
+        (nativeLocal ? setupNativeInference : setupInferenceWithoutPolicyAuthority)(
+          sandboxName,
+          model,
+          provider,
+          endpointUrl,
+          credentialEnv,
+          hermesAuthMethod,
+          hermesToolGateways,
+          {
+            ...inferenceOptions,
+            revalidateSandboxIdentity:
+              inferenceOptions.revalidateSandboxIdentity ?? revalidateSandboxIdentity,
+          },
+        );
+      return nativeLocal ? withNativePolicyFixture(operation) : operation();
+    };
     return {
+      native,
       commands,
       errors,
       logs,

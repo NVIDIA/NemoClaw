@@ -8,6 +8,7 @@ import {
   createDirectCommandRouter,
   createDirectSetupInferenceHarnessFactory,
   withProcessEnv,
+  runProductionSetupInferenceCredentialBoundary,
 } from "../support/setup-inference-test-harness.js";
 
 const testHome = await vi.hoisted(async () => {
@@ -38,34 +39,82 @@ function expectCommandsTargetOnly(commands: Array<{ command: string }>): void {
 }
 
 describe("onboarding inference gateway scope", () => {
-  it("targets a non-default gateway for provider creation, route apply, and verification", async () => {
-    await withProcessEnv({ OPENAI_API_KEY: "sk-TEST-NOT-A-REAL-VALUE" }, async () => {
+  it.each([
+    { hostname: "localhost", deferred: false },
+    { hostname: "host.openshell.internal", deferred: false },
+    { hostname: "localhost", deferred: true },
+  ])(
+    "records native DCode at $hostname with deferred shared-route mode=$deferred (#13197)",
+    async ({ hostname, deferred }) => {
+      const resolveEndpointHost = vi.fn(async () => [{ address: "127.0.0.1", family: 4 }]);
       const harness = createHarness({
-        runOpenshell: (args) =>
-          args.slice(0, 2).join(" ") === "provider get" ? { status: 1 } : undefined,
+        overrides: {
+          resolveEndpointHost,
+          ...(deferred
+            ? {
+                getSandbox: () => ({
+                  name: "alpha",
+                  agent: "langchain-deepagents-code",
+                  provider: "openai-api",
+                  model: "old-model",
+                  gatewayName: GATEWAY,
+                  createdAt: "2026-10-01T00:00:00Z",
+                }),
+              }
+            : {}),
+        },
       });
-
-      await expect(
-        harness.setupInference(
-          "test-box",
-          "gpt-test",
-          "openai-api",
-          "https://api.openai.com/v1",
-          "OPENAI_API_KEY",
+      await withProcessEnv({ COMPATIBLE_API_KEY: "sk-local-TEST-NOT-A-REAL-VALUE" }, async () => {
+        const result = await harness.setupInference(
+          "alpha",
+          "local-model",
+          "compatible-endpoint",
+          `http://${hostname}:8000/v1`,
+          "COMPATIBLE_API_KEY",
           null,
           [],
-          { gatewayName: GATEWAY },
-        ),
-      ).resolves.toEqual({ ok: true });
+          {
+            agentName: "langchain-deepagents-code",
+            gatewayName: GATEWAY,
+            deferPublishedRouteReservation: deferred,
+          },
+        );
+        expect(result).toEqual({ ok: true });
+        expect(harness.updateSandbox).toHaveBeenCalledWith(
+          "alpha",
+          expect.objectContaining({
+            nativeLocalProviderAttachment: expect.objectContaining({
+              provider: "compatible-endpoint",
+              sandboxName: "alpha",
+              gatewayName: GATEWAY,
+              endpointUrl: "http://host.openshell.internal:8000/v1",
+            }),
+          }),
+        );
+      });
+      expect(resolveEndpointHost).not.toHaveBeenCalled();
+      expect(harness.native.adapter.createProvider).toHaveBeenCalledOnce();
+      expect(harness.commands.some(({ command }) => command.startsWith("inference set"))).toBe(
+        false,
+      );
+    },
+  );
 
-      expect(harness.commands.map(({ command }) => command)).toEqual([
-        `provider get -g ${GATEWAY} openai-api`,
-        `provider create -g ${GATEWAY} --name openai-api --type openai --credential OPENAI_API_KEY --config OPENAI_BASE_URL=https://api.openai.com/v1`,
-        `inference set -g ${GATEWAY} --no-verify --provider openai-api --model gpt-test`,
-      ]);
-      expect(harness.verifyInferenceRoute).toHaveBeenCalledWith(GATEWAY, "openai-api", "gpt-test");
-      expectCommandsTargetOnly(harness.commands);
+  it("creates native hosted access only on the selected non-default gateway (#12589)", () => {
+    const { commands, credentialEvidence } = runProductionSetupInferenceCredentialBoundary({
+      credentialEnv: "OPENAI_API_KEY",
+      credentialValue: "sk-TEST-NOT-A-REAL-VALUE",
+      endpointUrl: "https://api.openai.com/v1",
+      model: "gpt-test",
+      provider: "openai-api",
+      gatewayName: GATEWAY,
     });
+    expect(credentialEvidence.providerCommand.argv.join(" ")).toContain(
+      "provider create -g " + GATEWAY,
+    );
+    expect(credentialEvidence.argvContainingSecret).toEqual([]);
+    expect(commands.some(({ argv }) => argv[0] === "inference" && argv[1] === "set")).toBe(false);
+    expectCommandsTargetOnly(commands.map(({ argv }) => ({ command: argv.join(" ") })));
   });
 
   it("registers loopback compatible endpoints through the gateway alias but keeps host smoke local (#5744)", async () => {
@@ -209,6 +258,7 @@ describe("onboarding inference gateway scope", () => {
           },
         ]);
         const harness = createHarness({
+          legacyCustomRoute: true,
           runOpenshell: commandRouter.runOpenshell,
           overrides: {
             probeOpenAiLikeEndpoint: vi.fn(() => ({ ok: true })),

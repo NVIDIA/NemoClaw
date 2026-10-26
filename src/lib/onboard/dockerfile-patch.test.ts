@@ -1049,7 +1049,7 @@ describe("dockerfile patch helpers", () => {
       assert.match(patched, /^ARG NEMOCLAW_MODEL=claude-sonnet-4-5$/m);
       assert.match(patched, /^ARG NEMOCLAW_PROVIDER_KEY=anthropic$/m);
       assert.match(patched, /^ARG NEMOCLAW_PRIMARY_MODEL_REF=anthropic\/claude-sonnet-4-5$/m);
-      assert.match(patched, /^ARG NEMOCLAW_INFERENCE_BASE_URL=https:\/\/inference\.local$/m);
+      assert.match(patched, /^ARG NEMOCLAW_INFERENCE_BASE_URL=https:\/\/api\.anthropic\.com$/m);
       assert.match(patched, /^ARG NEMOCLAW_INFERENCE_API=anthropic-messages$/m);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });

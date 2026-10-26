@@ -3,17 +3,27 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+// This suite checks profile projection; lifecycle locking belongs to the status action tests.
+import { getSandboxStatusReport } from "../../../actions/sandbox/status-snapshot";
 import type { VllmProfile } from "../../../inference/vllm";
 import { loadServingCatalog } from "../../../inference/serving/catalog-loader";
+import { servingProfileModel } from "../../../inference/serving/requested-profile-model";
 import * as onboardSession from "../../../state/onboard-session";
 import { createSession, type SessionUpdates } from "../../../state/onboard-session";
 import type { ServingProfileProvenance } from "../../../inference/serving/types";
 import { makeDeps, makeHostState } from "../../__test-helpers__/setup-nim-flow";
+import { resolveOnboardOptions } from "../../command";
 import { resolveLocalModelProfilePlan } from "../../local-model-profile/plan";
 import { buildCreatedSandboxRegistryEntry } from "../../sandbox-registration";
 import { createSetupNim, type SetupNimFlowDeps } from "../../setup-nim-flow";
 import { handleProviderInferenceState } from "./provider-inference";
 import { baseOptions, baseSelection, createDeps } from "./provider-inference.test-support";
+
+// Resume reservation must not read the operator's registry or wait on host state.
+vi.mock("../../../state/registry", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../state/registry")>()),
+  getSandbox: vi.fn(() => null),
+}));
 
 const llamaCppProfile: ServingProfileProvenance = {
   schemaVersion: 1,
@@ -49,6 +59,45 @@ const vllmProfile: ServingProfileProvenance = {
   },
   runtimeImage: "example.invalid/vllm@sha256:fixture",
 };
+
+function registryEntryFor(session: ReturnType<typeof createSession>) {
+  const loadSession = vi.spyOn(onboardSession, "loadSession").mockReturnValue(session);
+  try {
+    return buildCreatedSandboxRegistryEntry({
+      sandboxName: "spark-agent",
+      inferenceSelection: {
+        model: session.model!,
+        provider: session.provider!,
+        endpointUrl: session.endpointUrl ?? null,
+        credentialEnv: session.credentialEnv ?? null,
+        preferredInferenceApi: session.preferredInferenceApi ?? null,
+        compatibleEndpointReasoning: null,
+        compatibleEndpointReasoningEffort: null,
+        nimContainer: session.nimContainer ?? null,
+      },
+      runtimeFields: {
+        gpuEnabled: true,
+        hostGpuDetected: true,
+        sandboxGpuEnabled: true,
+        sandboxGpuMode: "auto",
+        sandboxGpuDevice: null,
+        openshellDriver: "docker",
+        openshellVersion: "0.1.2",
+      },
+      agent: null,
+      agentVersionKnown: true,
+      imageTag: null,
+      plannedMessagingState: undefined,
+      hermesToolGateways: [],
+      hermesDashboardState: { enabled: false, config: null },
+      dashboardPort: 18789,
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+    });
+  } finally {
+    loadSession.mockRestore();
+  }
+}
 
 describe("handleProviderInferenceState managed llama.cpp resume", () => {
   it.each([
@@ -308,46 +357,105 @@ describe("handleProviderInferenceState managed llama.cpp resume", () => {
       servingProfileProvenance: plan.servingProfileProvenance,
     });
 
-    const loadSession = vi.spyOn(onboardSession, "loadSession").mockReturnValue(session);
-    const entry = (() => {
-      try {
-        return buildCreatedSandboxRegistryEntry({
-          sandboxName: "spark-agent",
-          inferenceSelection: {
-            model: session.model!,
-            provider: session.provider!,
-            endpointUrl: session.endpointUrl ?? null,
-            credentialEnv: session.credentialEnv ?? null,
-            preferredInferenceApi: session.preferredInferenceApi ?? null,
-            compatibleEndpointReasoning: null,
-            compatibleEndpointReasoningEffort: null,
-            nimContainer: session.nimContainer ?? null,
-          },
-          runtimeFields: {
-            gpuEnabled: true,
-            hostGpuDetected: true,
-            sandboxGpuEnabled: true,
-            sandboxGpuMode: "auto",
-            sandboxGpuDevice: null,
-            openshellDriver: "docker",
-            openshellVersion: "0.1.2",
-          },
-          agent: null,
-          agentVersionKnown: true,
-          imageTag: null,
-          plannedMessagingState: undefined,
-          hermesToolGateways: [],
-          hermesDashboardState: { enabled: false, config: null },
-          dashboardPort: 18789,
-          gatewayName: "nemoclaw",
-          gatewayPort: 8080,
-        });
-      } finally {
-        loadSession.mockRestore();
-      }
-    })();
+    const entry = registryEntryFor(session);
 
     expect(entry.servingProfileProvenance).toEqual(plan.servingProfileProvenance);
+  });
+
+  it("persists an explicit managed vLLM profile through selection and registration (#12289)", async () => {
+    const catalog = loadServingCatalog();
+    const presetId = "vllm.dgx-spark-gb10.single.nemotron-3-nano-4b-fp8";
+    const requestedProfile = servingProfileModel(catalog, presetId)!;
+    const commandOptions = resolveOnboardOptions(
+      { profile: presetId },
+      {
+        env: {},
+        error: () => {},
+        exit: (code) => {
+          throw new Error(`exit:${code}`);
+        },
+        loadServingCatalog: () => catalog,
+        listServingProfiles: () => [
+          {
+            id: presetId,
+            displayName: "NVIDIA Nemotron-3 Nano 4B FP8 on one DGX Spark",
+            backend: "vllm",
+            model: requestedProfile.modelId,
+            topology: "single-host",
+            selectionMode: "explicit-only",
+            supportState: "supported",
+            estimatedImageDownloadBytes: 1,
+            estimatedModelDownloadBytes: 1,
+            compatible: true,
+            incompatibilityReason: null,
+          },
+        ],
+      },
+    );
+    const profile = { name: "DGX Spark", platform: "spark" } as VllmProfile;
+    const productionSetupNim = createSetupNim(
+      makeDeps({
+        isNonInteractive: () => true,
+        getNonInteractiveProvider: () => "install-vllm",
+        detectInferenceProviderHostState: () =>
+          makeHostState({
+            vllmProfile: profile,
+            hasVllmImage: true,
+            gpuNimCapable: true,
+            vllmEntries: [{ key: "install-vllm", label: "Start vLLM (DGX Spark)" }],
+          }),
+        installVllm: vi.fn(async (_profile, options) => {
+          options.beforeInstall?.(requestedProfile.servedName);
+          return { ok: true };
+        }),
+        handleVllmSelection: vi.fn<SetupNimFlowDeps["handleVllmSelection"]>(async (state) => {
+          state.provider = "vllm-local";
+          state.model = requestedProfile.servedName;
+          state.endpointUrl = "http://host.openshell.internal:8000/v1";
+          state.credentialEnv = null;
+          state.preferredInferenceApi = "openai-completions";
+          return "selected";
+        }),
+        resolveRequestedServingProfileModel: () => requestedProfile,
+      }),
+    );
+    const session = createSession({
+      sandboxName: "spark-agent",
+      servingProfileProvenance: commandOptions.servingProfileProvenance,
+    });
+    const recordStepComplete = vi.fn(async (_stepName: string, updates: SessionUpdates) => {
+      Object.assign(session, onboardSession.filterSafeUpdates(updates));
+      return session;
+    });
+    const { deps } = createDeps({
+      setupNim: (gpu, sandboxName, agent, recover, gatewayName, ...rest) =>
+        productionSetupNim(
+          gpu as Parameters<typeof productionSetupNim>[0],
+          sandboxName,
+          agent as Parameters<typeof productionSetupNim>[2],
+          recover,
+          null,
+          gatewayName,
+          ...rest,
+        ),
+      recordStepComplete,
+    });
+
+    await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      gpu: { type: "nvidia", platform: "spark" } as never,
+      sandboxName: "spark-agent",
+    });
+
+    const entry = registryEntryFor(session);
+    const status = await getSandboxStatusReport("spark-agent", {
+      getSandbox: () => entry,
+      reconcile: async () => ({ state: "missing", output: "not found" }),
+    });
+
+    expect(session.servingProfileProvenance).toEqual(commandOptions.servingProfileProvenance);
+    expect(entry.servingProfileProvenance).toEqual(commandOptions.servingProfileProvenance);
+    expect(status.servingProfileProvenance).toEqual(commandOptions.servingProfileProvenance);
   });
 
   it("does not authorize vLLM profile provenance from session-only state (#11896)", async () => {

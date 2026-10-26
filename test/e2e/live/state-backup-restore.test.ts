@@ -80,6 +80,7 @@ test(
       redactionValues: redactions,
       timeoutMs: execTimeout(20 * 60_000),
     });
+    await host.recordSandboxContainerDiscoveryOnFailure(SANDBOX_NAME, install.exitCode, redactions);
     assertExitZero(install, "complete native-home compatibility install");
 
     progress.phase("write state across the native home");

@@ -93,7 +93,7 @@ const pinnedBaseDockerfiles = [
   "agents/pi/Dockerfile.base",
 ] as const;
 const REVIEWED_NODE_BASE =
-  "node:24.18.1-trixie-slim@sha256:ac39e4b5fcb2b1b34b20364fd58b2e898f3bb80731ee6f62a7536f9df3d6aadc";
+  "node:24.22.1-trixie-slim@sha256:43b9ba1142b8dcf33fa8f922ca1be85714adc444e0586c7cf7726daaeabc1bea";
 const reviewedNodeBases = new Set<string>([REVIEWED_NODE_BASE]);
 const directNodeDockerfiles = [
   "Dockerfile",
@@ -120,7 +120,7 @@ interface DirectNodeStage {
 function directNodeStages(file: string, source: string): DirectNodeStage[] {
   const starts = [...source.matchAll(/^FROM(?:\s+--\S+)*\s+([^\s]+)(?:\s+AS\s+(\S+))?$/gmu)];
   return starts.flatMap((match, index) =>
-    match[1]!.startsWith("node:24.18.1-") || match[1] === "npm12"
+    match[1]!.startsWith("node:24.22.1-") || match[1] === "npm12"
       ? [
           {
             file,
@@ -324,6 +324,21 @@ function namedStage(source: string, name: string): string {
 }
 
 describe("node-tar image remediation contract", () => {
+  it.each([
+    ...pinnedBaseDockerfiles.map((file) => ({ file, count: 2 })),
+    { file: "Dockerfile", count: 1 },
+  ])("pins reviewed curl in every install stage of $file", ({ file, count }) => {
+    const source = fs.readFileSync(path.join(repoRoot, file), "utf8");
+    const versions = dockerfileInstructions(source)
+      .filter((instruction) => instruction.keyword === "RUN")
+      .flatMap((instruction) =>
+        Array.from(instruction.body.matchAll(/\bcurl=([^\s\\]+)/gu), (match) => match[1]),
+      );
+
+    expect(versions, file).toHaveLength(count);
+    expect([...new Set(versions)], file).toEqual(["8.14.1-2+deb13u7"]);
+  });
+
   it("checks inherited runtime instructions without including unrelated stages", () => {
     expect(
       completedStage(
@@ -347,7 +362,7 @@ describe("node-tar image remediation contract", () => {
     const file = "agents/langchain-deepagents-code/Dockerfile.base";
     const source = fs.readFileSync(path.join(repoRoot, file), "utf8");
     const reviewedBase = REVIEWED_NODE_BASE;
-    const unreviewedBase = `node:24.18.1-trixie-slim@sha256:${"0".repeat(64)}`;
+    const unreviewedBase = `node:24.22.1-trixie-slim@sha256:${"0".repeat(64)}`;
     const changedSource = source.replaceAll(reviewedBase, unreviewedBase);
 
     expect(() => assertReviewedNodeBases(file, changedSource)).toThrow(
@@ -437,11 +452,11 @@ describe("node-tar image remediation contract", () => {
       expect(helperCopy, file).toBeGreaterThan(reviewedCopy);
       expect(patchCopy, file).toBeGreaterThan(helperCopy);
       expect(firstPatchRun, file).toBeGreaterThan(patchInputReady);
-      const aptInstall = source.indexOf(
-        "RUN apt-get update && apt-get install -y --no-install-recommends",
-        patchInputReady,
-      );
-      const curlPackage = source.indexOf("curl=8.14.1-2+deb13u5", aptInstall);
+      const aptInstall =
+        dockerfileRunCommandPositions(source, "apt-get install -y --no-install-recommends").find(
+          (index) => index > patchInputReady,
+        ) ?? -1;
+      const curlPackage = source.indexOf("curl=8.14.1-2+deb13u7", aptInstall);
       const aptInstallCleanup = source.indexOf("&& rm -rf /var/lib/apt/lists/*", curlPackage);
       expect(
         aptInstall > patchCopy &&
@@ -583,7 +598,7 @@ describe("reviewed npm image remediation contract", () => {
     expect(
       directNodeStages(
         "platform-fixture",
-        "FROM --platform=$BUILDPLATFORM node:24.18.1-trixie AS builder\nRUN npm ci\n",
+        "FROM --platform=$BUILDPLATFORM node:24.22.1-trixie AS builder\nRUN npm ci\n",
       ).map(({ file, name }) => `${file}:${name}`),
     ).toEqual(["platform-fixture:builder"]);
     const rootDockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");

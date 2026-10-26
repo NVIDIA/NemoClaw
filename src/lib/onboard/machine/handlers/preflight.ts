@@ -5,6 +5,7 @@ import type { Session } from "../../../state/onboard-session";
 import { isN1xManagedVllmProviderModel } from "../../../domain/sandbox/n1x-managed-vllm-rebuild";
 import { hasExplicitDeferredN1xOnboardingIntent } from "../../../readiness/onboard-admission";
 import { isN1xOnboardingProviderKey } from "../../inference-providers/provider-selection-keys";
+import { normalizeSandboxGpuMode } from "../../sandbox-gpu-mode";
 import { withPreflightTrace } from "../../tracing";
 import { advanceTo, type OnboardStateTransitionResult } from "../result";
 
@@ -45,6 +46,7 @@ export interface PreflightStateOptions<
     getResumeSandboxGpuOverrides(
       sandbox: SandboxEntry | null,
       sessionGpuPassthrough: boolean | null | undefined,
+      sessionSelection?: Session["sandboxGpuSelection"],
     ): PreflightSandboxGpuOverrides;
     /** Observe GPU state without running a container-backed proof. */
     detectGpuForReadiness(): Gpu;
@@ -163,6 +165,7 @@ export async function handlePreflightState<
     ? deps.getResumeSandboxGpuOverrides(
         resumeSandboxNameForGpu ? deps.getSandbox(resumeSandboxNameForGpu) : null,
         session?.gpuPassthrough,
+        session?.sandboxGpuSelection,
       )
     : { flag: null, device: null };
   const effectiveSandboxGpuFlag = explicitSandboxGpuFlag ?? resumedSandboxGpuOverrides.flag;
@@ -262,9 +265,18 @@ export async function handlePreflightState<
     env,
   });
   const gpuPassthrough = sandboxGpuConfig.sandboxGpuEnabled;
-  if (session && session.gpuPassthrough !== gpuPassthrough) {
+  const mode = normalizeSandboxGpuMode(sandboxGpuConfig.mode);
+  const device = sandboxGpuConfig.sandboxGpuDevice ?? null;
+  if (
+    session &&
+    (session.gpuPassthrough !== gpuPassthrough ||
+      (mode &&
+        (session.sandboxGpuSelection?.mode !== mode ||
+          session.sandboxGpuSelection?.device !== device)))
+  ) {
     session = deps.updateSession((current) => {
       current.gpuPassthrough = gpuPassthrough;
+      if (mode) current.sandboxGpuSelection = { mode, device };
       return current;
     });
   }

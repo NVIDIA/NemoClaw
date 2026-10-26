@@ -55,6 +55,11 @@ conventions, test lanes, and hook behavior. For messaging changes, also use
 Follow the user's requested outcome and existing authorization. Repository skills supply task
 knowledge and operational constraints; they must not add unrequested work or require the user to
 repeat an authorization. A specific confirmation bound to an irreversible action still applies.
+Carry authorization through in-scope repairs, qualification receipt updates, and the shared bounded
+retry policy. Distinguish task authorization from test evidence and independent merge approval.
+A new commit invalidates affected evidence; it does not alone require renewed task authorization.
+Honor an explicit one-run or one-commit limit, expiry, or revocation. Do not invent such limits when
+asking for permission. Ask again when scope, cost, credential exposure, or resource ownership changes.
 When an instruction requires a pause, name the file, quote the requirement, and explain the missing
 decision. Continue independent authorized work while that decision is pending.
 

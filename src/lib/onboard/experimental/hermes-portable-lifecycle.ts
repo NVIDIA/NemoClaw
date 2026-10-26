@@ -77,6 +77,23 @@ import type {
 } from "./portable-demo-lifecycle";
 import { defaultPortableDemoStateDir } from "./portable-runtime-receipt-readiness";
 
+export type HermesPortableLifecycleAuthorityFailure =
+  | "registry-reader-unavailable"
+  | "active-registry-missing"
+  | "receipt-registry-disagreement"
+  | "pending-registry-conflict";
+
+/** Classify a receipt-qualified Hermes authority failure without exposing state details. */
+export class HermesPortableLifecycleAuthorityError extends Error {
+  constructor(
+    readonly reason: HermesPortableLifecycleAuthorityFailure,
+    message: string,
+  ) {
+    super(message);
+    this.name = "HermesPortableLifecycleAuthorityError";
+  }
+}
+
 const UTF8 = new TextDecoder("utf-8", { fatal: true });
 const COMMAND_TIMEOUT_MS = 5_000;
 const OPENSHELL_LIFECYCLE_MUTATION_TIMEOUT_MS = 60_000;
@@ -938,7 +955,10 @@ function requireRegistry(
     entry.lifecycleLiveIdentityFingerprint !== liveIdentityFingerprint ||
     entry.openshellVersion !== HERMES_PORTABLE_OPENSHELL_VERSION
   ) {
-    fail("registry authority disagrees with the active receipt");
+    throw new HermesPortableLifecycleAuthorityError(
+      "receipt-registry-disagreement",
+      "Hermes portable lifecycle registry authority disagrees with the active receipt",
+    );
   }
   return entry;
 }

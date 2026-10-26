@@ -1,0 +1,39 @@
+{/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */}
+
+## v0.0.137
+
+NemoClaw v0.0.137 changes the default hosted model for new OpenClaw and Hermes NVIDIA Endpoints and OpenRouter onboarding to Nemotron 3.5 Super VL.
+It also improves uninstall recovery, managed image security, policy recovery, agent input, and startup behavior.
+
+- New NVIDIA Endpoints onboarding defaults to `nvidia/nemotron-3.5-super-vl-120b-a12b`.
+  OpenRouter uses its catalog ID, `nvidia/nemotron-3.5-super-vl`.
+  Explicit model selections and the Deep Agents Code Ultra default remain unchanged.
+  Related change: [PR #13542](https://github.com/NVIDIA/NemoClaw/pull/13542).
+- Onboarding preserves OpenRouter pricing-route IP pins when it applies the built-in pricing policy.
+  If OpenShell refuses a policy write, `onboard --resume` reuses the saved preset selection for the same sandbox and confirms the live policy before clearing it.
+  An unavailable saved preset stops recovery with a `--fresh` hint.
+  Related change: [PR #13499](https://github.com/NVIDIA/NemoClaw/pull/13499).
+- `nemoclaw <sandbox> agent` accepts piped messages without an inline `--message` and applies the input deadline to stalled pipes.
+  Deep Agents Code readiness and its Auto classifier now use the selected managed Ultra route and required request parameters.
+  Related change: [PR #13444](https://github.com/NVIDIA/NemoClaw/pull/13444).
+- Pi restores its previous model catalog if settings synchronization fails and updates settings atomically.
+  When applying a Pi configuration, managed startup still rejects symbolic links at the catalog and settings paths before the update.
+  Related change: [PR #13370](https://github.com/NVIDIA/NemoClaw/pull/13370).
+- New skill installations reject names longer than 64 characters with a specific validation error.
+  Removal still accepts previously installed longer names.
+  Related change: [PR #13488](https://github.com/NVIDIA/NemoClaw/pull/13488).
+- Successful `nemoclaw uninstall` retires the selected managed gateway's native-provider authority after gateway state removal, so onboarding on the same port can recreate the provider.
+  Failed cleanup, `--keep-openshell`, and concurrent registry changes retain authority for recovery.
+  On rootless Podman, OpenClaw native-home cleanup retries as the sandbox user when root cannot remove the files.
+  Related change: [PR #13504](https://github.com/NVIDIA/NemoClaw/pull/13504).
+- Managed sandbox image builds include patched system libraries and updated Hermes HTTP and image libraries.
+  Reviewed MCP SDK graphs use version 1.32.0, and image validation rejects stale package inventories.
+  Existing sandboxes retain their prior images until rebuilt; after updating NemoClaw, run `nemoclaw upgrade-sandboxes` to inspect or rebuild them.
+  A selected Podman runtime no longer triggers Docker host setup, Docker preflight checks, or Docker-only NIM cleanup.
+  Related change: [PR #13513](https://github.com/NVIDIA/NemoClaw/pull/13513).
+- Native local provider attachment now retains the expected OpenShell profile verified during inspection so NemoClaw can check it again after attachment.
+  A changed profile, failed export, or timeout warns the gateway operator without rolling back a successful attachment.
+  Related change: [PR #13564](https://github.com/NVIDIA/NemoClaw/pull/13564).

@@ -621,6 +621,9 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     .spyOn(openShellSdk, "connectManagedOpenShellSdk")
     .mockImplementation(async (...args: unknown[]) => {
       const target = args[0] as { kind: string; gatewayName?: string };
+      let sandboxPhase = String(
+        options.sandboxGetPhase ?? (options.registryEntry?.stopped === true ? "Stopped" : "Ready"),
+      ).toLowerCase();
       return {
         raw: {
           startSandbox: async ({ name }: { name: string }) => {
@@ -639,6 +642,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
                 code: String(completion.status ?? "unknown"),
               });
             }
+            sandboxPhase = "ready";
             return { sandbox: { metadata: { id: "alpha-sandbox-id" } } };
           },
           stopSandbox: async () => ({ sandbox: { metadata: { id: "alpha-sandbox-id" } } }),
@@ -646,10 +650,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
         sandbox: {
           get: async () => ({
             id: "alpha-sandbox-id",
-            phase: String(
-              options.sandboxGetPhase ??
-                (options.registryEntry?.stopped === true ? "Stopped" : "Ready"),
-            ).toLowerCase(),
+            phase: sandboxPhase,
           }),
           waitReady: async () => ({ id: "alpha-sandbox-id", phase: "ready" }),
         },

@@ -63,47 +63,70 @@ describe("codebase growth guardrails workflow trust boundary", () => {
     ],
     ["permissions", (workflow: Value) => (workflow.permissions.contents = "write")],
     [
+      "approval deletion trigger",
+      (workflow: Value) => (workflow.on.issue_comment.types = ["created"]),
+    ],
+    [
+      "approval refresh permission",
+      (workflow: Value) => delete workflow.jobs["codebase-growth-guardrails"].permissions.statuses,
+    ],
+    [
+      "approval refresh cancellation",
+      (workflow: Value) =>
+        (workflow.jobs["codebase-growth-guardrails"].concurrency["cancel-in-progress"] = true),
+    ],
+    [
+      "approval refresh checkout",
+      (workflow: Value) =>
+        (workflow.jobs["codebase-growth-guardrails"].steps[1].with.ref =
+          "${{ steps.approval.outputs.head_sha }}"),
+    ],
+    [
+      "approval refresh failure reporting",
+      (workflow: Value) => delete workflow.jobs["codebase-growth-guardrails"].steps.at(-1).if,
+    ],
+    [
       "default branch scope",
       (workflow: Value) => delete workflow.jobs["codebase-growth-guardrails"].if,
     ],
     [
       "base checkout",
-      (workflow: Value) => (workflow.jobs["codebase-growth-guardrails"].steps[0].with.ref = "main"),
+      (workflow: Value) => (workflow.jobs["codebase-growth-guardrails"].steps[1].with.ref = "main"),
     ],
     [
       "checkout pin",
       (workflow: Value) =>
-        (workflow.jobs["codebase-growth-guardrails"].steps[0].uses =
+        (workflow.jobs["codebase-growth-guardrails"].steps[1].uses =
           "actions/checkout@0000000000000000000000000000000000000000"),
     ],
     [
       "checkout credentials",
       (workflow: Value) =>
-        (workflow.jobs["codebase-growth-guardrails"].steps[0].with["persist-credentials"] = true),
+        (workflow.jobs["codebase-growth-guardrails"].steps[1].with["persist-credentials"] = true),
     ],
     [
       "Node pin",
       (workflow: Value) =>
-        (workflow.jobs["codebase-growth-guardrails"].steps[1].with["node-version"] = "22"),
+        (workflow.jobs["codebase-growth-guardrails"].steps[2].with["node-version"] = "22"),
     ],
     [
       "reviewed npm",
       (workflow: Value) =>
-        (workflow.jobs["codebase-growth-guardrails"].steps[2].uses = "./unreviewed-action"),
+        (workflow.jobs["codebase-growth-guardrails"].steps[3].uses = "./unreviewed-action"),
     ],
     [
       "dependency install",
       (workflow: Value) =>
-        (workflow.jobs["codebase-growth-guardrails"].steps[3].run = "npm install"),
+        (workflow.jobs["codebase-growth-guardrails"].steps[4].run = "npm install"),
     ],
     [
       "test invocation",
-      (workflow: Value) => (workflow.jobs["codebase-growth-guardrails"].steps[4].run = "npm test"),
+      (workflow: Value) => (workflow.jobs["codebase-growth-guardrails"].steps[5].run = "npm test"),
     ],
     [
       "pull request metadata",
       (workflow: Value) =>
-        (workflow.jobs["codebase-growth-guardrails"].steps[4].env.HEAD_SHA = "untrusted"),
+        (workflow.jobs["codebase-growth-guardrails"].steps[5].env.HEAD_SHA = "untrusted"),
     ],
     [
       "job permission override",
@@ -113,7 +136,7 @@ describe("codebase growth guardrails workflow trust boundary", () => {
     [
       "failure tolerance",
       (workflow: Value) =>
-        (workflow.jobs["codebase-growth-guardrails"].steps[4]["continue-on-error"] = true),
+        (workflow.jobs["codebase-growth-guardrails"].steps[5]["continue-on-error"] = true),
     ],
   ])("rejects a mutation to %s", (_boundary, mutate) => {
     expect(mutatedWorkflow(mutate)).toContain(

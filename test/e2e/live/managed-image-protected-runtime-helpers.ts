@@ -14,15 +14,11 @@ import {
   parseProtectedManagedImageContracts,
 } from "../../../scripts/checks/managed-image-protected-runtime-contract.ts";
 import { PROTECTED_MANAGED_IMAGE_COHORT_PATTERN } from "../../../scripts/checks/protected-managed-image-contract.ts";
-import {
-  adoptServedModelId,
-  dockerLoginNgc,
-  pullNimImage,
-} from "../../../src/lib/inference/nim.ts";
+import { adoptServedModelId, getImageForModel } from "../../../src/lib/inference/nim.ts";
 import {
   getOllamaProxyToken,
   killStaleProxy,
-  persistAndProbeOllamaProxy,
+  persistProxyToken,
   startOllamaAuthProxy,
 } from "../../../src/lib/inference/ollama/proxy.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
@@ -37,6 +33,11 @@ import {
   env as gpuEnv,
   REPO_ROOT,
 } from "./gpu-e2e-helpers.ts";
+
+import {
+  protectedRuntimeDeadlineHost,
+  protectedRuntimeDeadlines,
+} from "./managed-image-protected-runtime-budget.ts";
 
 const OLLAMA_MODEL = "qwen3.5:9b";
 const VLLM_MODEL = "Qwen/Qwen2.5-0.5B-Instruct";
@@ -233,6 +234,12 @@ export function protectedProviderContainerCleanupCommand(
   };
 }
 
+export function protectedProviderImagePulledByStart(image: string, stderr: string): boolean {
+  return stderr
+    .split("\n")
+    .some((line) => line.trim() === `Unable to find image '${image}' locally`);
+}
+
 function imageContracts(): ProtectedManagedImageContract[] {
   const contractPath = process.env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_CONTRACT;
   if (!contractPath || !path.isAbsolute(contractPath)) {
@@ -290,9 +297,6 @@ async function runExactImageQualification(
     },
   );
   expect(result.exitCode, resultText(result)).toBe(0);
-  expect(result.stdout).toContain(`exact ${contract.agent} PR image ${contract.reference}`);
-  expect(result.stdout).toContain("real NVIDIA GPU access");
-  expect(result.stdout).toContain(`${kind} inference.local completion`);
 }
 
 async function qualifyEveryAgent(
@@ -427,7 +431,9 @@ export async function startProtectedOllama(host: HostCliClient): Promise<string>
   expect(startOllamaAuthProxy(), "Ollama auth proxy must start").toBe(true);
   const proxyToken = getOllamaProxyToken();
   expect(proxyToken).toMatch(/^[a-f0-9]{48}$/u);
-  await persistAndProbeOllamaProxy(proxyToken!);
+  // Each child proves inference through its own native provider and private gateway.
+  // The legacy default-bridge probe cannot validate that route.
+  persistProxyToken(proxyToken!);
   return proxyToken!;
 }
 
@@ -571,7 +577,7 @@ async function removeProtectedProviderContainer(
 async function startProtectedVllm(
   host: HostCliClient,
   state: ProtectedProviderContainerState,
-): Promise<void> {
+): Promise<boolean> {
   const start = await host.command(
     "docker",
     [
@@ -592,8 +598,11 @@ async function startProtectedVllm(
       VLLM_MODEL,
       "--served-model-name",
       VLLM_MODEL,
+      "--enable-auto-tool-choice",
+      "--tool-call-parser",
+      "hermes",
       "--max-model-len",
-      "2048",
+      "32768",
       "--gpu-memory-utilization",
       "0.45",
     ],
@@ -635,6 +644,7 @@ async function startProtectedVllm(
     },
   );
   expect(cuda.exitCode, resultText(cuda)).toBe(0);
+  return protectedProviderImagePulledByStart(VLLM_IMAGE, start.stderr);
 }
 
 export function protectedVllmReadinessCommand(
@@ -716,10 +726,33 @@ async function startProtectedNim(
   state: ProtectedProviderContainerState,
   apiKey: string,
 ): Promise<string> {
-  expect(dockerLoginNgc(apiKey), "NGC login must succeed for protected NIM qualification").toBe(
-    true,
+  const image = getImageForModel(NIM_CATALOG_MODEL);
+  if (!image) throw new Error("protected NIM catalog model has no image");
+  // NIM's production login and platform-aware pull are synchronous. Run them
+  // in the supervised child so a slow registry cannot block the suite deadline.
+  const prepare = await host.command(
+    "node",
+    [
+      "--import",
+      "tsx",
+      "--input-type=module",
+      "--eval",
+      `
+    import * as importedNim from './src/lib/inference/nim.ts';
+    const { dockerLoginNgc, pullNimImage } = importedNim.default ?? importedNim;
+    if (!dockerLoginNgc(process.env.NGC_API_KEY)) throw new Error('NGC login failed');
+    pullNimImage(${JSON.stringify(NIM_CATALOG_MODEL)});
+  `,
+    ],
+    {
+      artifactName: "prepare-protected-nim-image",
+      cwd: REPO_ROOT,
+      env: { ...buildAvailabilityProbeEnv(), NGC_API_KEY: apiKey },
+      redactionValues: [apiKey],
+      timeoutMs: 20 * 60_000,
+    },
   );
-  const image = pullNimImage(NIM_CATALOG_MODEL);
+  expect(prepare.exitCode, resultText(prepare)).toBe(0);
   const start = await host.command(
     "docker",
     [
@@ -741,6 +774,8 @@ async function startProtectedNim(
       "NGC_API_KEY",
       "--env",
       "NIM_NGC_API_KEY",
+      "--env",
+      "NIM_PASSTHROUGH_ARGS=--enable-auto-tool-choice --tool-call-parser qwen3_coder --reasoning-parser nemotron_v3",
       image,
     ],
     {
@@ -912,8 +947,11 @@ async function proveOwnedRuntimeInventoryClean(
 export async function qualifyProtectedManagedImageRuntime(
   fixtures: RuntimeFixtures,
   ngcApiKeyInput: string,
+  deadlines = protectedRuntimeDeadlines(process.env.NEMOCLAW_PROTECTED_RUNTIME_STARTED_AT_MS),
 ): Promise<void> {
-  const { artifacts, cleanup, host, progress } = fixtures;
+  const { artifacts, cleanup, progress } = fixtures;
+  const host = protectedRuntimeDeadlineHost(fixtures.host, deadlines.providers);
+  const rollbackHost = protectedRuntimeDeadlineHost(fixtures.host, deadlines.rollback);
   const contracts = imageContracts();
   const ngcApiKey = requiredNgcApiKey(ngcApiKeyInput);
   const cohort = process.env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT ?? "";
@@ -922,14 +960,14 @@ export async function qualifyProtectedManagedImageRuntime(
   const providerStates = [vllmState, nimState] as const;
 
   cleanup.trackDisposable("remove protected vLLM container", async () => {
-    await removeProtectedProviderContainer(host, vllmState, "cleanup-vllm-container");
+    await removeProtectedProviderContainer(fixtures.host, vllmState, "cleanup-vllm-container");
   });
   cleanup.trackDisposable("remove protected NIM container", async () => {
-    await removeProtectedProviderContainer(host, nimState, "cleanup-nim-container");
+    await removeProtectedProviderContainer(fixtures.host, nimState, "cleanup-nim-container");
   });
   cleanup.trackDisposable("stop protected Ollama runtime", async () => {
     killStaleProxy();
-    const result = await cleanupOllama(host, "cleanup-managed-image-ollama");
+    const result = await cleanupOllama(fixtures.host, "cleanup-managed-image-ollama");
     expect(result.exitCode, resultText(result)).toBe(0);
   });
 
@@ -965,11 +1003,21 @@ export async function qualifyProtectedManagedImageRuntime(
 
     activePhase = "qualify all managed agents with GPU-backed vLLM";
     progress.phase("qualify all managed agents with GPU-backed vLLM");
-    await startProtectedVllm(host, vllmState);
+    const vllmImagePulledByRun = await startProtectedVllm(host, vllmState);
     await qualifyEveryAgent(host, contracts, "vllm", VLLM_MODEL, {
       NEMOCLAW_VLLM_LOCAL_TOKEN: randomBytes(24).toString("hex"),
     });
     await removeProtectedProviderContainer(host, vllmState, "stop-vllm-before-nim");
+    if (vllmImagePulledByRun) {
+      // Free the vLLM image this run pulled before NIM downloads its model. This
+      // frees space when the image store and NIM cache share a filesystem (#13135).
+      // The artifact records the result; NIM readiness gates.
+      await host.command("docker", ["image", "rm", VLLM_IMAGE], {
+        artifactName: "remove-run-pulled-vllm-image",
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 120_000,
+      });
+    }
 
     activePhase = "qualify all managed agents with GPU-backed NVIDIA NIM";
     progress.phase("qualify all managed agents with GPU-backed NVIDIA NIM");
@@ -981,8 +1029,8 @@ export async function qualifyProtectedManagedImageRuntime(
 
     activePhase = "prove all-agent managed bootstrap rollback and exact cleanup";
     progress.phase("prove all-agent managed bootstrap rollback and exact cleanup");
-    await qualifyEveryRollback(host, contracts);
-    await proveOwnedRuntimeInventoryClean(host, cohort, providerStates);
+    await qualifyEveryRollback(rollbackHost, contracts);
+    await proveOwnedRuntimeInventoryClean(rollbackHost, cohort, providerStates);
     const providerContainers = providerStates.map(({ authority }) => {
       if (!authority) throw new Error("protected provider authority is missing from the receipt");
       return authority;

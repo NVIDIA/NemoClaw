@@ -1,0 +1,55 @@
+// Native OpenClaw 2026.9.2 agent message parser, from the integrity-pinned npm archive.
+function missingAgentMessageError() {
+	return /* @__PURE__ */ new Error(`Missing message. Use ${formatCliCommand("openclaw agent --message \"...\" --agent <id>")} or ${formatCliCommand("openclaw agent --message-file <path> --agent <id>")}.`);
+}
+function formatMessageFileReadFailure(messageFile, err) {
+	const code = typeof err?.code === "string" ? err.code : "";
+	if (code === "ENOENT") return `Message file not found: ${messageFile}`;
+	if (code === "EISDIR") return `Message file is a directory: ${messageFile}`;
+	return `Unable to read message file ${messageFile}: ${err instanceof Error ? err.message : String(err)}`;
+}
+const AGENT_MESSAGE_FILE_MAX_BYTES = 4194304;
+async function readAgentMessageFile(messageFile) {
+	let handle;
+	try {
+		handle = await fs.open(messageFile, "r");
+	} catch (err) {
+		throw new Error(formatMessageFileReadFailure(messageFile, err), { cause: err });
+	}
+	let buffer;
+	try {
+		const stat = await handle.stat();
+		if (stat.isDirectory()) throw Object.assign(/* @__PURE__ */ new Error("Message file is a directory"), { code: "EISDIR" });
+		if (stat.isFile() && stat.size > AGENT_MESSAGE_FILE_MAX_BYTES) throw new Error(`File exceeds ${AGENT_MESSAGE_FILE_MAX_BYTES} bytes: ${messageFile}`);
+		buffer = await readFileDescriptorBounded(handle.fd, AGENT_MESSAGE_FILE_MAX_BYTES);
+	} catch (err) {
+		throw new Error(formatMessageFileReadFailure(messageFile, err), { cause: err });
+	} finally {
+		await handle.close().catch(() => void 0);
+	}
+	try {
+		return MESSAGE_FILE_DECODER.decode(buffer).replace(/^\uFEFF/, "");
+	} catch {
+		throw new Error(`Message file must be valid UTF-8: ${messageFile}`);
+	}
+}
+async function resolveAgentMessageOpts(opts) {
+	const { messageFile: rawMessageFile, ...rest } = opts;
+	const messageFile = rawMessageFile?.trim();
+	if (opts.message !== void 0 && messageFile) throw new Error("Use either --message or --message-file, not both.");
+	if (rawMessageFile !== void 0 && !messageFile) throw new Error("--message-file must not be empty.");
+	if (messageFile) {
+		const message = await readAgentMessageFile(messageFile);
+		if (!message.trim()) throw new Error(`Message file is empty: ${messageFile}`);
+		return {
+			...rest,
+			message
+		};
+	}
+	const message = opts.message ?? "";
+	if (!message.trim()) throw missingAgentMessageError();
+	return {
+		...rest,
+		message
+	};
+}

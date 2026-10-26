@@ -356,11 +356,16 @@ describe("E2E fixture clients", () => {
     await host.expectListed("assistant");
     await host.expectStatus("assistant");
     await host.cleanupSandbox("assistant");
+    await host.cleanupSandbox("retained", { preserveGatewayRegistration: true });
 
     expect(runner.calls.map((call) => ({ command: call.command, args: call.args }))).toEqual([
       { command: "nemoclaw", args: ["list"] },
       { command: "nemoclaw", args: ["assistant", "status"] },
       { command: "nemoclaw", args: ["assistant", "destroy", "--yes"] },
+      {
+        command: "nemoclaw",
+        args: ["retained", "destroy", "--yes", "--no-cleanup-gateway"],
+      },
     ]);
   });
 

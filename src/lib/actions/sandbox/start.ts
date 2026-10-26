@@ -17,6 +17,7 @@ import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
   type RuntimeProviderBundleRegistry,
 } from "../../onboard/runtime-provider/access";
+import { recordedNativeProviderAttachment } from "../../inference/native-provider/recorded-selection";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import {
@@ -30,6 +31,7 @@ import {
   type SandboxInferenceInvocationResult,
 } from "./inference-invocation-probe";
 import { isTransientInferenceInvocationFailure } from "./inference-route-health";
+import { hasRecordedNativeNvidiaAttachment } from "./launch-readiness/health";
 import { hermesPortableLifecycleLockOptions, withSandboxLifecycleLock } from "./gateway-state";
 import { getPersistedSandboxTargetGatewayName } from "./gateway-target";
 import {
@@ -48,7 +50,10 @@ import {
 
 function verifyGateway(
   sandboxName: string,
-  options: { managedHermesGatewayProcessObserved?: true } = {},
+  options: {
+    managedHermesGatewayProcessObserved?: true;
+    allowTransientNvidiaInvocationOnStart?: true;
+  } = {},
 ): Promise<void> {
   const { connectSandbox } = require("./connect") as typeof import("./connect");
   return connectSandbox(sandboxName, {
@@ -155,15 +160,35 @@ async function checkStartedSandboxInference(
   const model = (sandbox.model ?? "").trim();
   const provider = (sandbox.provider ?? "").trim();
   if (!model || !provider) return null;
+  let nativeProvider: boolean;
+  let nativeEndpointUrl: string | undefined;
+  try {
+    const receipt = recordedNativeProviderAttachment(sandbox);
+    nativeProvider = Boolean(receipt);
+    nativeEndpointUrl = receipt?.endpointUrl;
+  } catch {
+    return {
+      ok: false,
+      httpStatus: null,
+      detail: "recorded native inference ownership is invalid; no inference request was sent",
+    };
+  }
   const gatewayName = getPersistedSandboxTargetGatewayName(sandbox);
   log("  Checking that the sandbox serves an agent request…");
   const input = {
     sandboxName,
     gatewayName,
-    ...(sandbox.agent === "langchain-deepagents-code" ? { agentName: sandbox.agent } : {}),
+    ...(sandbox.agent === "langchain-deepagents-code" || sandbox.agent === "openclaw"
+      ? { agentName: sandbox.agent }
+      : {}),
     provider,
     model,
     preferredInferenceApi: sandbox.preferredInferenceApi ?? null,
+    ...(sandbox.nativeLocalProviderAttachment
+      ? { nativeLocalProviderAttachment: sandbox.nativeLocalProviderAttachment }
+      : {}),
+    ...(nativeProvider ? { nativeProvider: true } : {}),
+    ...(nativeEndpointUrl ? { nativeEndpointUrl } : {}),
   };
   const probe = () =>
     (deps.probeInferenceInvocation ?? probeSandboxInferenceInvocation)(
@@ -321,7 +346,13 @@ async function startSandboxWithinLifecycleFence(
     } else if (resolved.sandbox.agent === "hermes" && readiness.gatewayProcess === true) {
       await verifyGateway(sandboxName, { managedHermesGatewayProcessObserved: true });
     } else {
-      await verifyGateway(sandboxName);
+      await verifyGateway(
+        sandboxName,
+        (resolved.sandbox.agent ?? "openclaw") === "openclaw" &&
+          hasRecordedNativeNvidiaAttachment(resolved.sandbox)
+          ? { allowTransientNvidiaInvocationOnStart: true }
+          : {},
+      );
     }
     readiness.inference = await checkStartedSandboxInference(
       sandboxName,
@@ -337,6 +368,17 @@ async function startSandboxWithinLifecycleFence(
     return { exitCode: 1 };
   }
   if (readiness.inference && !readiness.inference.ok) {
+    if (
+      (resolved.sandbox.agent ?? "openclaw") === "openclaw" &&
+      isTransientInferenceInvocationFailure(readiness.inference) &&
+      hasRecordedNativeNvidiaAttachment(resolved.sandbox)
+    ) {
+      log(
+        "  NVIDIA inference is degraded: the model request failed temporarily after the sandbox and gateway became Ready.",
+      );
+      clearIntentionalStop();
+      return { exitCode: 0 };
+    }
     log(`  The sandbox started but inference is not usable: ${readiness.inference.detail}.`);
     log(`  Run the sandbox doctor command for '${sandboxName}' to identify the failing hop.`);
     return { exitCode: 1 };

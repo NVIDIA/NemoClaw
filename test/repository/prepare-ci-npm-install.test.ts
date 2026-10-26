@@ -94,7 +94,7 @@ function reviewedConfigSource(
     artifactDirectory: "artifacts/reviewed-npm-audit",
     exceptionFile: "ci/npm-audit-exceptions.json",
     lockedGraphs: [],
-    nodeVersion: "24.18.1",
+    nodeVersion: "24.22.1",
     npmArchiveSha256: "5dbb86c71d07a1957f2e90734092dd6a58bdcd9ebc2d8d41ca1c6e6a21d364e1",
     npmIntegrity:
       "sha512-uIXokLlBj6FpNUTQX1PmT5pz7BlIN9QlixX+zdaSNHsd0qUXsbDLr50xzY6Sw7cJVr0uzHKDOle0swmPW/p5Qw==",
@@ -206,6 +206,29 @@ afterEach(() => {
 });
 
 describe("trusted OpenShell SDK archive preparation", () => {
+  it("does not pass API or package credentials to the offline cache process", async () => {
+    const source = fixture();
+    const bin = join(source.root, "bin");
+    mkdirSync(bin);
+    const trace = join(source.root, "environment.json");
+    writeFileSync(
+      join(bin, "npm"),
+      `#!/usr/bin/env node\nrequire('node:fs').writeFileSync(${JSON.stringify(trace)}, JSON.stringify(process.env));\n`,
+    );
+    chmodSync(join(bin, "npm"), 0o700);
+    vi.stubEnv("PATH", `${bin}:${process.env.PATH ?? ""}`);
+    vi.stubEnv("GITHUB_TOKEN", "fixture-credential-sentinel");
+    vi.stubEnv("GH_TOKEN", "fixture-credential-sentinel");
+    vi.stubEnv("NODE_AUTH_TOKEN", "fixture-credential-sentinel");
+    vi.stubEnv("NPM_TOKEN", "fixture-credential-sentinel");
+    vi.stubEnv("NPM_CONFIG__AUTH_TOKEN", "fixture-credential-sentinel");
+    await seedReviewedSourceRegistryArtifact(request(source));
+    const environment = JSON.parse(readFileSync(trace, "utf8"));
+    expect(environment.PATH).toBe(process.env.PATH);
+    expect(environment.NPM_CONFIG_UPDATE_NOTIFIER).toBe("false");
+    expect(readFileSync(trace, "utf8")).not.toContain("fixture-credential-sentinel");
+  });
+
   it("reports a bounded redacted npm cache-stage failure", async () => {
     const source = fixture();
     const executableDirectory = join(source.root, "bin");

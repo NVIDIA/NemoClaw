@@ -2,6 +2,11 @@
   "maxSourceShapeCases": 0,
   "sourceShapeContractExceptions": [
     {
+      "file": "test/repository/dockerignore-security-contract.test.ts",
+      "test": "excludes secret-bearing names at every directory depth",
+      "category": "security"
+    },
+    {
       "file": "src/lib/readiness/host.test.ts",
       "test": "bounds and redacts successful probe text before schema validation",
       "category": "compatibility"
@@ -233,6 +238,11 @@
     },
     {
       "file": "test/agents/openclaw/openclaw-npm-remediation.test.ts",
+      "test": "replaces only the reviewed Slack bundled proxy-addr package",
+      "category": "security"
+    },
+    {
+      "file": "test/agents/openclaw/openclaw-npm-remediation.test.ts",
       "test": "replaces the reviewed Jaeger propagator with its aligned patched core",
       "category": "security"
     },
@@ -348,7 +358,7 @@
     },
     {
       "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
-      "test": "passes only the base-packaged SDK archive to pull request dependency jobs",
+      "test": "passes only an SDK archive admitted by the base-controlled verifier to dependency jobs",
       "category": "security"
     },
     {

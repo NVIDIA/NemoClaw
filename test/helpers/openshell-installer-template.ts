@@ -5,6 +5,35 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { v00116Pins, v012Pins } from "./openshell-release-fixtures";
+import { selectHistoricalGatewayProcessReader } from "./prepared-gateway-runtime";
+
+/** Stage the verifier and its inert registry for both candidate and separate trusted checkouts. */
+export function copyTrustedInstallerVerifier(repoRoot: string, targetRoot: string): void {
+  [
+    "scripts/check-installer-hash.sh",
+    "scripts/checks/extract-installer-pins.mts",
+    "scripts/checks/openshell-trust-data.mts",
+    "ci/openshell-upgrade-trust.json",
+    "tools/e2e/candidate-openshell-trust.mts",
+    "tools/e2e/candidate-openshell-version.mts",
+    "tools/e2e/candidate-upgrade-admission.mts",
+    "tools/e2e/base-image-publication.mts",
+  ].forEach((file) => {
+    const target = path.join(targetRoot, file);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.copyFileSync(path.join(repoRoot, file), target);
+  });
+}
+
+export function prepareTrustedFormulaMismatchFixture(root: string, mode: FixtureMode): void {
+  if (mode !== "trusted-formula-mismatch") return;
+  const registryPath = path.join(root, "ci/openshell-upgrade-trust.json");
+  const registry = JSON.parse(fs.readFileSync(registryPath, "utf8"));
+  registry.releases.find(
+    (release: { version: string }) => release.version === "0.0.116",
+  ).formula.sha256 = "0".repeat(64);
+  fs.writeFileSync(registryPath, JSON.stringify(registry));
+}
 
 export function brevMutationFixtures(
   ASSET_DIGESTS: ReadonlyMap<string, string>,
@@ -175,10 +204,23 @@ export function removeV00106OperationalTrust(source: string): string {
   return `${withoutIdentity.slice(0, capabilityStart)}${withoutIdentity.slice(fallbackStart)}`;
 }
 
-export function prepareReleaseFixtureRuntime(repoRoot: string, root: string): void {
+export function prepareReleaseFixtureRuntime(
+  repoRoot: string,
+  root: string,
+  options: { currentProcessReader?: boolean } = {},
+): void {
   const runtimePath = "src/lib/onboard/docker-driver-gateway-runtime.ts";
   const candidatePins = fs.readFileSync(path.join(root, runtimePath), "utf8");
-  const source = fs.readFileSync(path.join(repoRoot, runtimePath), "utf8");
+  const checkoutSource = fs.readFileSync(path.join(repoRoot, runtimePath), "utf8");
+  // By default the 0.1.2 release fixture predates the shared process reader, so keep
+  // its operational runtime bytes on the independently trusted historical template.
+  // currentProcessReader selects the checkout's thread-group reader for 0.1.2 instead.
+  const source = options.currentProcessReader
+    ? checkoutSource.replace(
+        'const QUALIFIED_STABLE_OPENSHELL_VERSION = "0.0.116";',
+        'const QUALIFIED_STABLE_OPENSHELL_VERSION = "0.1.2";',
+      )
+    : selectHistoricalGatewayProcessReader(checkoutSource);
   const prepared = source.replace(
     /const OPENSHELL_SUPERVISOR_MANIFEST_DIGESTS: Readonly<Record<string, string>> = \{[\s\S]*?\n\};/,
     candidatePins.trim(),

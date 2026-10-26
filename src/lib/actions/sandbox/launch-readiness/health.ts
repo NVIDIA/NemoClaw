@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { normalizeNativeLocalProviderAttachment } from "../../../inference/native-local/contract";
+import { verifyNativeLocalStatusAttachment } from "../inference-route-health";
+
 import { captureOpenshell } from "../../../adapters/openshell/runtime";
 import { createCliOpenShellProviderAdapter } from "../../../adapters/openshell/provider-adapter-cli";
 import type { OpenShellSandboxBufferedCommandExecutor } from "../../../adapters/openshell/sandbox-command";
@@ -23,6 +26,10 @@ import {
   verifyNativeNvidiaProviderAttachment,
   type NativeNvidiaProviderAttachment,
 } from "../../../inference/native-nvidia";
+import type { NativeProviderAttachment } from "../../../inference/native-provider/contract";
+import { recordedNativeProviderAttachment } from "../../../inference/native-provider/recorded-selection";
+import { fixedNativeProviderForAttachment } from "../../../inference/native-provider/fixed";
+import { nativeProviderLifecycle } from "../../../inference/native-provider";
 import { createSynchronousCliOpenShellInferenceRouteObserver } from "../../../adapters/openshell/inference-route-cli";
 import type { OpenShellInferenceRouteObserver } from "../../../adapters/openshell/inference-route";
 import {
@@ -31,7 +38,10 @@ import {
   parseSandboxInferenceRouteProbeResult,
 } from "../connect-inference-route-probe";
 import { areSandboxLaunchForwardsHealthy } from "../forward-recovery";
-import { runSandboxInferenceInvocationProbe } from "../inference-route-health";
+import {
+  isTransientInferenceInvocationFailure,
+  runSandboxInferenceInvocationProbe,
+} from "../inference-route-health";
 import {
   isSandboxGatewayHttpReachableForStatus,
   isSandboxGatewayRunningForStatus,
@@ -77,10 +87,16 @@ export interface LaunchReadinessHealthDeps {
     gatewayName: string,
   ) => Promise<ReturnType<typeof parseSandboxInferenceRouteProbeResult>>;
   inferenceInvocationProbe?: typeof runSandboxInferenceInvocationProbe;
+  verifyNativeLocalAttachment?: typeof verifyNativeLocalStatusAttachment;
   verifyNativeNvidiaAttachment?: (input: {
     sandboxName: string;
     gatewayName: string;
     expected: NativeNvidiaProviderAttachment;
+  }) => Promise<void>;
+  verifyNativeHostedAttachment?: (input: {
+    sandboxName: string;
+    gatewayName: string;
+    expected: NativeProviderAttachment;
   }) => Promise<void>;
   recordObservationTiming?: (stage: LaunchReadinessObservationStage, elapsedMs: number) => void;
   recordObservationFailure?: (stage: LaunchReadinessObservationStage) => void;
@@ -205,32 +221,83 @@ export function resolveTrustedLaunchAgent(
   return agent;
 }
 
-export function getNativeNvidiaProviderAttachment(
-  entry: SandboxEntry,
-): NativeNvidiaProviderAttachment | null {
-  return normalizeNativeNvidiaProviderAttachment(entry.nativeNvidiaProviderAttachment) ?? null;
+export function getNativeProviderAttachment(entry: SandboxEntry): NativeProviderAttachment | null {
+  return recordedNativeProviderAttachment(entry) ?? null;
 }
 
-export async function requireNativeNvidiaInferenceHealth(input: {
+export function hasRecordedNativeNvidiaAttachment(entry: SandboxEntry): boolean {
+  return (
+    normalizeNativeNvidiaProviderAttachment(entry.nativeNvidiaProviderAttachment) !== undefined
+  );
+}
+
+export async function requireNativeInferenceHealth(input: {
   sandboxName: string;
   gatewayName: string;
   agentName?: string;
   entry: SandboxEntry;
   deps: LaunchReadinessHealthDeps;
+  allowTransientNvidiaInvocation?: boolean;
 }): Promise<boolean> {
-  const expected = getNativeNvidiaProviderAttachment(input.entry);
+  if (input.entry.nativeLocalProviderAttachment !== undefined) {
+    const expected = normalizeNativeLocalProviderAttachment(
+      input.entry.nativeLocalProviderAttachment,
+    );
+    if (
+      !expected ||
+      !input.entry.model ||
+      ((input.agentName ?? input.entry.agent) === "hermes" &&
+        (expected.agent !== "hermes" || input.entry.provider !== expected.provider))
+    )
+      throw new LaunchReadinessEvidenceError();
+    await (input.deps.verifyNativeLocalAttachment ?? verifyNativeLocalStatusAttachment)({
+      sandboxName: input.sandboxName,
+      gatewayName: input.gatewayName,
+      expected,
+    });
+    const result = await (
+      input.deps.inferenceInvocationProbe ?? runSandboxInferenceInvocationProbe
+    )({
+      sandboxName: input.sandboxName,
+      gatewayName: input.gatewayName,
+      agentName: input.agentName,
+      provider: expected.provider,
+      model: input.entry.model,
+      preferredInferenceApi: "openai-completions",
+      nativeLocalProviderAttachment: expected,
+    });
+    if (!result.ok) throw new LaunchReadinessObservationError("health", "inference request");
+    return true;
+  }
+  const expected = getNativeProviderAttachment(input.entry);
   if (!expected) return false;
   const provider = normalizedString(input.entry.provider);
   const model = normalizedString(input.entry.model);
   if (!provider || !model) throw new LaunchReadinessEvidenceError();
-  if (input.deps.verifyNativeNvidiaAttachment) {
+  const nvidia = normalizeNativeNvidiaProviderAttachment(expected);
+  if (nvidia && input.deps.verifyNativeNvidiaAttachment) {
     await input.deps.verifyNativeNvidiaAttachment({
+      sandboxName: input.sandboxName,
+      gatewayName: input.gatewayName,
+      expected: nvidia,
+    });
+  } else if (nvidia) {
+    await verifyNativeNvidiaProviderAttachment({
+      adapter: createCliOpenShellProviderAdapter(),
+      target: { kind: "named", gatewayName: input.gatewayName },
+      sandboxName: input.sandboxName,
+      expected: nvidia,
+    });
+  } else if (input.deps.verifyNativeHostedAttachment) {
+    await input.deps.verifyNativeHostedAttachment({
       sandboxName: input.sandboxName,
       gatewayName: input.gatewayName,
       expected,
     });
   } else {
-    await verifyNativeNvidiaProviderAttachment({
+    await nativeProviderLifecycle(
+      fixedNativeProviderForAttachment(expected),
+    ).verifyNativeProviderAttachment({
       adapter: createCliOpenShellProviderAdapter(),
       target: { kind: "named", gatewayName: input.gatewayName },
       sandboxName: input.sandboxName,
@@ -247,8 +314,17 @@ export async function requireNativeNvidiaInferenceHealth(input: {
     model,
     preferredInferenceApi: normalizedString(input.entry.preferredInferenceApi),
     nativeProvider: true,
+    ...(expected.endpointUrl ? { nativeEndpointUrl: expected.endpointUrl } : {}),
   });
   if (!invocation.ok) {
+    if (
+      nvidia &&
+      input.allowTransientNvidiaInvocation === true &&
+      isTransientInferenceInvocationFailure(invocation)
+    ) {
+      console.error(`  Warning: NVIDIA inference is degraded (${invocation.detail}).`);
+      return true;
+    }
     throw new LaunchReadinessObservationError("health", "inference request");
   }
   return true;
@@ -349,9 +425,9 @@ export async function requireLaunchSemanticHealth(
   }
   if (inferenceConfigured) {
     const inferenceStartedAt = performance.now();
-    if (getNativeNvidiaProviderAttachment(entry)) {
+    if (getNativeProviderAttachment(entry) || entry.nativeLocalProviderAttachment !== undefined) {
       try {
-        await requireNativeNvidiaInferenceHealth({
+        await requireNativeInferenceHealth({
           sandboxName,
           gatewayName,
           agentName,
@@ -414,6 +490,10 @@ export async function requireLaunchSemanticHealth(
     }
     if (inference.broken || (inference.httpStatus >= 100 && inference.httpStatus < 600)) {
       recordLaunchReadinessObservationFailure(deps, "inference-route");
+      const curlExit = /^BROKEN 000 curl_exit=([0-9]{1,3})$/.exec(inference.detail)?.[1];
+      console.error(
+        `  Inference route readiness failed: HTTP ${String(inference.httpStatus)}; probe_broken=${String(inference.broken)}${curlExit ? `; curl_exit=${curlExit}` : ""}.`,
+      );
       throw new LaunchReadinessObservationError("health");
     }
     recordLaunchReadinessObservationFailure(deps, "inference-route");

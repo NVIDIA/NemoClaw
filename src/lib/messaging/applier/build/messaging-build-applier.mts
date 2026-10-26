@@ -20,6 +20,9 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
+  describeOpenClawNpmRemediationTimeout,
+  OpenClawNpmRemediationCommandError,
+  OpenClawNpmPackageRecoveryError,
   remediateInstalledOfficialOpenClawPlugin,
   remediateReviewedOpenClawPluginArchive,
 } from "../../../../../scripts/lib/openclaw-npm-remediation.mts";
@@ -186,6 +189,23 @@ class OfficialPluginProvenanceError extends MessagingBuildApplierError {
 
 class MessagingBuildCommandError extends MessagingBuildApplierError {}
 class MessagingBuildCommandTimeoutError extends MessagingBuildCommandError {}
+
+export class OfficialPluginRemediationError extends MessagingBuildApplierError {
+  readonly pluginId: string;
+  readonly couldNotStart: boolean;
+  readonly operation: OpenClawNpmRemediationCommandError["operation"];
+  readonly timedOut: boolean;
+  readonly timeoutMs: number;
+
+  constructor(pluginId: string, error: OpenClawNpmRemediationCommandError) {
+    super("Official OpenClaw plugin remediation command failed.");
+    this.pluginId = pluginId;
+    this.couldNotStart = error.couldNotStart;
+    this.operation = error.operation;
+    this.timedOut = error.timedOut;
+    this.timeoutMs = error.timeoutMs;
+  }
+}
 
 export const DEFAULT_MESSAGING_RUNTIME_PLAN_PATH =
   "/usr/local/share/nemoclaw/messaging-runtime-plan.json";
@@ -778,7 +798,7 @@ function installOpenClawPluginPackages(installs: readonly OpenClawPluginInstall[
     const installCache = install.runtimeLock
       ? requireWritableRuntimeInstallCache(install.runtimeLock, env)
       : undefined;
-    const installEnv = {
+    const installEnv: Env = {
       ...env,
       NPM_CONFIG_IGNORE_SCRIPTS: "true",
       npm_config_ignore_scripts: "true",
@@ -800,7 +820,7 @@ function installOpenClawPluginPackages(installs: readonly OpenClawPluginInstall[
       // The verified archive warms the cache before the exact npm install.
       // Third-party plugins retain their reviewed local archive installation.
       const installTarget = officialPluginId ? install.spec : `npm-pack:${packed.archivePath}`;
-      const commandEnv = officialPluginId
+      const commandEnv: Env = officialPluginId
         ? { ...installEnv, NPM_CONFIG_OFFLINE: "true", npm_config_offline: "true" }
         : installEnv;
       runCommand(
@@ -828,18 +848,34 @@ function installOpenClawPluginPackages(installs: readonly OpenClawPluginInstall[
           officialPluginId,
           inspection,
         );
-        const home = sanitizeOptionalString(env.HOME) || homedir();
-        const stateRoot = (
-          sanitizeOptionalString(env.OPENCLAW_STATE_DIR) || join(home, ".openclaw")
-        ).replace(/^~(?=$|[/\\])/, () => home);
-        remediateInstalledOfficialOpenClawPlugin({
-          archivePath: packed.archivePath,
-          env: installEnv as NodeJS.ProcessEnv,
-          packageSpec: install.npmPackageSpec!,
-          packageDirectory,
-          trustedStateRoot: resolve(stateRoot),
-          workingDirectory: packed.rootDir,
-        });
+        const homeValue = (value: string | undefined) =>
+          value?.trim() && value.trim() !== "undefined" && value.trim() !== "null"
+            ? value.trim()
+            : undefined;
+        const osHome = homeValue(env.HOME) ?? homeValue(env.USERPROFILE) ?? homedir();
+        const expand = (value: string, home: string) =>
+          resolve(value.trim().replace(/^~(?=$|[\\/])/, () => home));
+        const home = expand(homeValue(env.OPENCLAW_HOME) ?? osHome, osHome);
+        const stateRoot = env.OPENCLAW_STATE_DIR?.trim()
+          ? expand(env.OPENCLAW_STATE_DIR, home)
+          : env.OPENCLAW_CONFIG_PATH?.trim()
+            ? dirname(expand(env.OPENCLAW_CONFIG_PATH, home))
+            : join(home, ".openclaw");
+        try {
+          remediateInstalledOfficialOpenClawPlugin({
+            archivePath: packed.archivePath,
+            env: installEnv as NodeJS.ProcessEnv,
+            packageSpec: install.npmPackageSpec!,
+            packageDirectory,
+            trustedStateRoot: resolve(stateRoot),
+            workingDirectory: packed.rootDir,
+          });
+        } catch (error) {
+          if (error instanceof OpenClawNpmRemediationCommandError) {
+            throw new OfficialPluginRemediationError(officialPluginId, error);
+          }
+          throw error;
+        }
       }
       if (install.runtimeLock) {
         const openClawVersion = sanitizeOptionalString(env.OPENCLAW_VERSION);
@@ -2225,7 +2261,21 @@ function isMainModule(): boolean {
   return process.argv[1] ? import.meta.url === pathToFileURL(resolve(process.argv[1])).href : false;
 }
 
-function fatalMessagingBuildDiagnostic(error: unknown): string {
+export function fatalMessagingBuildDiagnostic(error: unknown): string {
+  if (error instanceof OpenClawNpmPackageRecoveryError) {
+    return error.replacementActive
+      ? `OpenClaw dependency '${error.packageName}' was replaced, but recovery-directory cleanup failed at '${error.recoveryPath}'. Rerun the original onboarding or rebuild command so the managed plugin-install phase can reconcile recovery state.`
+      : `OpenClaw dependency '${error.packageName}' could not be replaced. The previous package is preserved at '${error.recoveryPath}'. Rerun the original onboarding or rebuild command; its managed plugin-install phase restores the previous package before retrying the replacement.`;
+  }
+  if (error instanceof OfficialPluginRemediationError) {
+    if (error.couldNotStart) {
+      return `Official OpenClaw plugin '${error.pluginId}' remediation operation '${error.operation}' could not start a required command.`;
+    }
+    if (error.timedOut) {
+      return `Official OpenClaw plugin '${error.pluginId}' remediation operation '${error.operation}' timed out after ${describeOpenClawNpmRemediationTimeout(error.timeoutMs)}.`;
+    }
+    return `Official OpenClaw plugin '${error.pluginId}' remediation operation '${error.operation}' failed.`;
+  }
   if (error instanceof OfficialPluginProvenanceError) {
     return `Official OpenClaw plugin '${error.pluginId}' ${error.condition}. NemoClaw manages the package pins and build cache. Report this failure, the plugin name and your NemoClaw version to a maintainer.`;
   }

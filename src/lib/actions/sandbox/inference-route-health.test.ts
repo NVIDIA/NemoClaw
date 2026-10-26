@@ -8,6 +8,8 @@ import {
   DCODE_MANAGED_EXEC_MISSING_DETAIL,
 } from "./connect-inference-route-probe";
 import {
+  HermesNvidiaCredentialRejectedError,
+  verifyHermesNvidiaCredential,
   buildSandboxInferenceRouteHealth,
   isTransientInferenceInvocationFailure,
   probeSandboxInferenceGatewayHealth,
@@ -17,12 +19,71 @@ import {
 } from "./inference-route-health";
 
 describe("sandbox inference route health", () => {
-  const makeExecutor = (stdout: string, status = 0): OpenShellSandboxBufferedCommandExecutor => ({
+  const makeExecutor = (
+    stdout: string,
+    status = 0,
+    stderr = "",
+  ): OpenShellSandboxBufferedCommandExecutor => ({
     runBuffered: vi.fn(async () => ({
       outcome: { kind: "completed" as const, exitCode: status },
       stdout,
-      stderr: "",
+      stderr,
     })),
+  });
+
+  it("verifies the Hermes credential through the selected sandbox guard", async () => {
+    const executor = makeExecutor("verified=1\n");
+    await verifyHermesNvidiaCredential(
+      { name: "alpha", gatewayName: "gateway-a", model: "m" },
+      executor,
+    );
+    expect(executor.runBuffered).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sandboxName: "alpha",
+        target: { kind: "named", gatewayName: "gateway-a" },
+        command: [
+          "/opt/hermes/.venv/bin/python3",
+          "-I",
+          "/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py",
+          "verify-nvidia-credential",
+          "--hermes-dir",
+          "/sandbox/.hermes",
+          "--expected-model",
+          "m",
+        ],
+      }),
+    );
+  });
+  it("distinguishes confirmed credential rejection from unavailable verification", async () => {
+    await expect(
+      verifyHermesNvidiaCredential(
+        { name: "alpha", gatewayName: "gateway-a", model: "m" },
+        makeExecutor("rejected=1", 1),
+      ),
+    ).rejects.toBeInstanceOf(HermesNvidiaCredentialRejectedError);
+  });
+  it.each([
+    makeExecutor("private diagnostic", 1),
+    makeExecutor("unexpected"),
+    makeExecutor("", 2, "argument --hermes-dir: invalid value"),
+    makeExecutor("", 1, "argument action: invalid choice: 'verify-nvidia-credential'"),
+    {
+      runBuffered: vi.fn(async () => ({
+        outcome: {
+          kind: "failed" as const,
+          error: { kind: "timeout" as const, message: "private diagnostic" },
+        },
+        stdout: "",
+        stderr: "private diagnostic",
+      })),
+    },
+  ])("rejects failed or unrecognized Hermes credential verification [%#]", async (executor) => {
+    await expect(
+      verifyHermesNvidiaCredential(
+        { name: "alpha", gatewayName: "gateway-a", model: "m" },
+        executor,
+      ),
+    ).rejects.toThrow("Hermes NVIDIA credential verification is unavailable.");
   });
 
   it.each([200, 401, 403])(
@@ -136,7 +197,7 @@ describe("sandbox inference route health", () => {
       expect.objectContaining({
         sandboxName: "alpha",
         target: { kind: "named", gatewayName: "nemoclaw-19080" },
-        command: ["sh", "-c", expect.stringContaining("nemoclaw-openshell-provider")],
+        command: ["sh", "-c", expect.stringContaining("NVIDIA_INFERENCE_API_KEY")],
       }),
     );
   });
@@ -392,7 +453,56 @@ describe("buildSandboxInferenceRouteHealth (#10080)", () => {
 });
 
 describe("transient inference invocation failures", () => {
-  it.each([429, 502, 503, 504])(
+  it.each([429, 500, 503])(
+    "reports NVIDIA HTTP %i as degraded after route verification (#13616)",
+    (httpStatus) => {
+      const result = buildSandboxInferenceRouteHealth(
+        null,
+        null,
+        {
+          ok: false,
+          detail: `sandbox inference invocation probe returned HTTP ${httpStatus}`,
+          httpStatus,
+        },
+        { provider: "nvidia-prod", nativeProvider: true, model: "fixture-model" },
+      );
+      expect(result).toMatchObject({ ok: true, probed: false, degraded: true });
+      expect(result.detail).toContain("NVIDIA upstream is temporarily unavailable");
+    },
+  );
+
+  it.each([401, 403, 404])("keeps NVIDIA HTTP %i unhealthy (#13616)", (httpStatus) => {
+    const result = buildSandboxInferenceRouteHealth(
+      null,
+      null,
+      { ok: false, detail: `HTTP ${httpStatus}`, httpStatus },
+      { provider: "nvidia-prod", nativeProvider: true, model: "fixture-model" },
+    );
+    expect(result.ok).toBe(false);
+    expect(result.degraded).toBeUndefined();
+  });
+
+  it("does not hide a denied host credential behind a transient NVIDIA reply (#13616)", () => {
+    const result = buildSandboxInferenceRouteHealth(
+      null,
+      {
+        ok: false,
+        probed: true,
+        providerLabel: "NVIDIA Endpoints",
+        endpoint: "https://integrate.api.nvidia.com/v1/chat/completions",
+        detail: "host credential rejected",
+        failureLabel: "unauthorized",
+      },
+      { ok: false, detail: "HTTP 500", httpStatus: 500 },
+      { provider: "nvidia-prod", nativeProvider: true, model: "fixture-model" },
+    );
+    expect(result.ok).toBe(false);
+    expect(result.degraded).toBeUndefined();
+    expect(result.subprobes).toContainEqual(
+      expect.objectContaining({ failureLabel: "unauthorized" }),
+    );
+  });
+  it.each([429, 500, 502, 503, 504])(
     "treats HTTP %i as a transient inference request failure (#10709)",
     (httpStatus) => {
       expect(
@@ -405,7 +515,7 @@ describe("transient inference invocation failures", () => {
     },
   );
 
-  it.each([400, 401, 403, 404, 405, 500, 501])(
+  it.each([400, 401, 403, 404, 405, 501])(
     "treats HTTP %i as a settled inference request failure (#10709)",
     (httpStatus) => {
       expect(
@@ -432,6 +542,17 @@ describe("transient inference invocation failures", () => {
     ).toBe(false);
   });
 
+  it("retries only a curl-confirmed timeout without an HTTP response (#13616)", () => {
+    expect(
+      isTransientInferenceInvocationFailure({
+        ok: false,
+        detail: "timed out",
+        httpStatus: null,
+        timedOut: true,
+      }),
+    ).toBe(true);
+  });
+
   it("treats a request that reached no HTTP status as a settled failure (#10709)", () => {
     expect(
       isTransientInferenceInvocationFailure({
@@ -445,4 +566,20 @@ describe("transient inference invocation failures", () => {
   it("reports no failure when no inference request was sent (#10709)", () => {
     expect(isTransientInferenceInvocationFailure(null)).toBe(false);
   });
+});
+
+it("offers conditional recreation guidance when the legacy route cannot be reached", () => {
+  const health = buildSandboxInferenceRouteHealth(
+    {
+      ok: false,
+      endpoint: "https://inference.local/v1/models",
+      httpStatus: 0,
+      detail: "Inference gateway is unreachable.",
+    },
+    null,
+    null,
+    { provider: "compatible-endpoint", model: "selected" },
+  );
+  expect(health.ok).toBe(false);
+  expect(health.detail).toContain("If this legacy route is no longer available");
 });

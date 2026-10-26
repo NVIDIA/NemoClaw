@@ -1,6 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { HOSTED_NATIVE_PROVIDERS, hostedNativeProvider } from "../inference/native-provider/hosted";
+import { isNativeHostedProviderName } from "../inference/native-provider/hosted-attachment";
+import { prepareHostedNativeProvider } from "../inference/native-provider/setup";
+import {
+  getNativeHostedProviderAuthority,
+  setNativeHostedProviderAuthority,
+} from "../state/registry/native-provider-authority";
+import { withGatewayRouteMutationLock } from "../inference/gateway-route-mutation-lock";
 import fs from "node:fs";
 import { isIP } from "node:net";
 import path from "node:path";
@@ -34,6 +42,7 @@ import {
   recoverCredentialGatewayTargetOrExit,
 } from "../credentials/command-support";
 import { gatewayStartGuidance } from "../gateway-start-guidance";
+import { redactCredentialText } from "../security/credential-filter";
 import { SECRET_PATTERNS } from "../security/secret-patterns";
 import { assertEndpointResolvesPublic } from "../security/trusted-private-endpoint";
 import { withMcpCredentialOwnershipLock } from "../state/mcp-lifecycle-lock/credential-ownership";
@@ -41,7 +50,7 @@ import { ROOT } from "../state/paths";
 import {
   getNativeNvidiaProviderAuthority,
   setNativeNvidiaProviderAuthority,
-} from "../state/registry/native-nvidia-provider-authority";
+} from "../state/registry/native-provider-authority";
 import { forgetExtraProvider, recordExtraProvider } from "./global";
 
 export type CredentialsAddInput = {
@@ -61,6 +70,8 @@ export type CredentialsAddResult = {
 
 export type CredentialsAddDeps = Readonly<{
   providerAdapter?: OpenShellProviderAdapter;
+  getNativeHostedProviderAuthority?: typeof getNativeHostedProviderAuthority;
+  setNativeHostedProviderAuthority?: typeof setNativeHostedProviderAuthority;
   getNativeNvidiaProviderAuthority?: typeof getNativeNvidiaProviderAuthority;
   setNativeNvidiaProviderAuthority?: typeof setNativeNvidiaProviderAuthority;
 }>;
@@ -155,7 +166,23 @@ function bundledProviderProfile(type: string): { profileType: string; profilePat
   return fs.existsSync(profilePath) ? { profileType, profilePath } : null;
 }
 
-function bundledProviderProfileRecoveryLines(error: OpenShellProviderError): string[] {
+function providerProfileRecoveryLines(
+  error: OpenShellProviderError,
+  operation: "import" | "inspect" = "import",
+): string[] {
+  if (operation === "inspect") {
+    // Inspection emits validation only for the local endpoint override guard.
+    if (error.kind === "validation") {
+      return [
+        "  OPENSHELL_GATEWAY_ENDPOINT is set. Unset OPENSHELL_GATEWAY_ENDPOINT and retry with the recorded gateway.",
+      ];
+    }
+    if (error.kind === "schema" || error.kind === "command") {
+      return [
+        "  Ask the gateway operator to inspect or import this profile and confirm its credential names, then retry.",
+      ];
+    }
+  }
   switch (error.kind) {
     case "authentication":
       return ["  Restore OpenShell authentication for the selected gateway, then retry."];
@@ -173,6 +200,8 @@ function bundledProviderProfileRecoveryLines(error: OpenShellProviderError): str
           return [
             "  Re-select the intended OpenShell gateway and restore its recorded identity, then retry.",
           ];
+        case "connection_loss":
+          return ["  Restore the connection to the selected OpenShell gateway, then retry."];
         case "process_start":
           return ["  Repair OpenShell with scripts/install-openshell.sh, then retry."];
       }
@@ -203,7 +232,7 @@ async function ensureBundledProviderProfile(
   }
   return fail([
     `  Could not import bundled provider profile '${profile.profileType}'.`,
-    ...bundledProviderProfileRecoveryLines(result.error),
+    ...providerProfileRecoveryLines(result.error),
     `  ${result.error.message}`,
   ]);
 }
@@ -407,6 +436,66 @@ export async function runCredentialsAddAction(
     ]);
   }
 
+  const hosted =
+    hostedNativeProvider(provider) ??
+    HOSTED_NATIVE_PROVIDERS.find((definition) => definition.providerName === provider);
+  if (hosted) {
+    const credentialName =
+      hosted.logicalProvider === "hermes-provider" && credentials[0] === "NOUS_API_KEY"
+        ? "NOUS_API_KEY"
+        : hosted.credentialEnv;
+    if (
+      config.length ||
+      (normalizedType !== hosted.profileId &&
+        normalizedType !== (hosted.api === "anthropic-messages" ? "anthropic" : "openai")) ||
+      (!fromExisting && (credentials.length !== 1 || credentials[0] !== credentialName))
+    ) {
+      return fail([
+        `Native ${hosted.label} requires its supported profile, credential ${hosted.credentialEnv}, and no endpoint overrides.`,
+      ]);
+    }
+    return withGatewayRouteMutationLock(target.gatewayName, async () => {
+      const credentialValue = process.env[credentialName] ?? null;
+      try {
+        const readAuthority =
+          deps.getNativeHostedProviderAuthority ?? getNativeHostedProviderAuthority;
+        const existing = readAuthority(
+          target.gatewayName,
+          hosted.logicalProvider,
+          provider === hosted.logicalProvider ? undefined : hosted.endpoint,
+        );
+        await prepareHostedNativeProvider({
+          provider: hosted.logicalProvider,
+          gatewayName: target.gatewayName,
+          adapter: providerAdapter,
+          endpointUrl: existing?.endpointUrl,
+          credentialValue: fromExisting ? null : credentialValue,
+          reuseExistingCredential: fromExisting,
+          readAuthority,
+          writeAuthority: deps.setNativeHostedProviderAuthority ?? setNativeHostedProviderAuthority,
+        });
+        return ok([
+          `Registered native provider for '${hosted.logicalProvider}'.`,
+          `Select it with '${CLI_NAME} inference set --provider ${hosted.logicalProvider} --model <model>'.`,
+        ]);
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        const safeDetail = redactCredentialText(
+          credentialValue ? detail.replaceAll(credentialValue, "[REDACTED]") : detail,
+        );
+        return fail([
+          `Could not register native provider '${hosted.logicalProvider}'. Verify its ownership and gateway state before retrying.`,
+          safeDetail,
+        ]);
+      }
+    });
+  }
+  if (isNativeHostedProviderName(provider)) {
+    return fail([
+      "This native provider has an endpoint-specific ownership record. Rotate it through the recorded sandbox's onboarding flow.",
+    ]);
+  }
+
   if (nativeNvidiaCredentialAlias) {
     return withMcpCredentialOwnershipLock(async () => {
       try {
@@ -458,17 +547,19 @@ export async function runCredentialsAddAction(
   );
   if (providerProfileFailure) return providerProfileFailure;
 
-  if (fromExisting) {
+  if (!profile || fromExisting) {
     const inspection = await providerAdapter.inspectProviderProfile({
       target,
       profileType: providerType,
       timeoutMs: OPENSHELL_OPERATION_TIMEOUT_MS,
+      ...(!profile
+        ? { registrationCredentials: fromExisting ? ("from-existing" as const) : credentials }
+        : {}),
     });
     if (!inspection.ok) {
       return fail([
-        `  Could not inspect credential keys for provider profile '${type}'.`,
-        "  Refusing --from-existing because the provider profile credential keys could not be compared with managed MCP reservations.",
-        ...(inspection.error.message ? [`  ${inspection.error.message}`] : []),
+        `  Could not verify provider profile '${providerType}' for credential registration.`,
+        ...providerProfileRecoveryLines(inspection.error, "inspect"),
       ]);
     }
   }

@@ -1,13 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isDeepStrictEqual } from "node:util";
+
 import {
   type CurrentGatewayRouteCompatibilityCheck,
   formatGatewayRouteConflict,
   type GatewayRouteCompatibilityResult,
   isAdvisoryGatewayRouteConflict,
-  nativeInferenceProviderForSandbox,
-  normalizeNativeNvidiaProviderAttachment,
 } from "../../../inference/gateway-route-compatibility";
 import type { InferenceEndpointSource } from "../../../inference/selection";
 import {
@@ -21,6 +21,7 @@ import {
 } from "../../../inference/web-search";
 import type { SandboxMessagingPlan } from "../../../messaging/manifest";
 import {
+  decisionUnset,
   decisionValue,
   isDecisionSelected,
   isDecisionUnset,
@@ -98,7 +99,12 @@ import {
   selectSandboxRecreateTargetIntentFingerprint,
   selectedGatewayForSandboxRecreate,
 } from "../../sandbox-recreate-transaction";
-import { sandboxCreateInferenceSelection } from "../../sandbox-registration";
+import {
+  nativeInferenceCreateIntentFields,
+  nativeLocalReservationStatus,
+  sandboxCreateInferenceSelection,
+  withSandboxImageRegistrationFence,
+} from "../../sandbox-registration";
 
 import { withSandboxPhaseTrace } from "../../tracing";
 import type { InferenceRouteReservationAuthority, SandboxCreateIntent } from "../../types";
@@ -118,6 +124,7 @@ import {
   hasHermesCompatibleAnthropicInferenceRouteDrift,
   hasHostMountConfigDrift,
   hasMessagingChannelConfigDrift,
+  initialOpenClawToolDisclosure,
   replacesSameNameSandbox,
   requiresSandboxRecreation,
   resolveToolDisclosureResumeSignals,
@@ -129,22 +136,6 @@ type SandboxRecreateWorkloadSkipReason = Extract<
   ReplacedSandboxWorkloadCleanupResult,
   { readonly status: "skipped" }
 >["reason"];
-
-function nativeNvidiaCreateIntentFields(
-  provider: string | null | undefined,
-  entry: SandboxEntry | null,
-): {
-  inferenceProvider: string | null;
-  nativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
-} {
-  const nativeNvidiaProviderAttachment = normalizeNativeNvidiaProviderAttachment(
-    entry?.nativeNvidiaProviderAttachment,
-  );
-  return {
-    inferenceProvider: nativeInferenceProviderForSandbox(provider),
-    ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),
-  };
-}
 
 const SANDBOX_RECREATE_WORKLOAD_SKIP_DIAGNOSTIC = {
   "replacement-unproven": "  Obsolete sandbox image retirement skipped: replacement-unproven",
@@ -233,8 +224,11 @@ export interface SandboxStateOptions<
   model: string;
   provider: string;
   hostLocalInferenceRouteOnly?: boolean;
+  stagedNativeLocalRecreation?: import("../../inference-providers/types").StagedNativeLocalRecreation;
+  deferredInferenceRoute?: (reserve: () => void) => Promise<void>;
   endpointUrl: string | null;
   compatibleEndpointReasoning: string | null;
+  compatibleEndpointReasoningEffort: string | null;
   credentialEnv: string | null;
   nimContainer: string | null;
   webSearchConfig: WebSearchConfig | null;
@@ -368,7 +362,9 @@ export interface SandboxStateOptions<
     resolveSandboxCreateIntent(input: {
       sandboxName: string;
       inferenceProvider?: string | null;
+      nativeLocalProviderAttachment?: SandboxEntry["nativeLocalProviderAttachment"];
       nativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
+      nativeHostedProviderAttachment?: SandboxEntry["nativeHostedProviderAttachment"];
       hostLocalInferenceRouteOnly?: boolean;
       enabledChannels: readonly string[];
       webSearchConfig: WebSearchConfig | null;
@@ -522,6 +518,13 @@ function compatibleEndpointReasoningForCreateIntent(
   value: string | null,
 ): Pick<SandboxCreateIntent, "compatibleEndpointReasoning"> {
   return value === "true" || value === "false" ? { compatibleEndpointReasoning: value } : {};
+}
+
+function ownedLocalNimCreateIntentFields(
+  provider: string,
+  nimContainer: string | null,
+): Pick<SandboxCreateIntent, "localNimSelected"> {
+  return provider === "vllm-local" && nimContainer ? { localNimSelected: true } : {};
 }
 
 function deferredSandboxEffectsIntent(enabled: boolean): {
@@ -907,7 +910,8 @@ class SandboxStateFlow<
     state: SandboxStepState<WebSearchConfig>,
     sandboxReuseState: string,
   ): Promise<SandboxResumeDecision> {
-    if (this.options.recreateSandbox(false)) return decision;
+    // A fresh run records the requested name before checking the existing sandbox's selection.
+    if (!this.options.resume || this.options.recreateSandbox(false)) return decision;
     return this.applyCheckpointCrashRecovery(decision, state, sandboxReuseState);
   }
 
@@ -1196,7 +1200,10 @@ class SandboxStateFlow<
     return { ...state, session };
   }
 
-  private assertGatewayRouteCompatible(sandboxName: string | null): asserts sandboxName is string {
+  private assertGatewayRouteCompatible(
+    sandboxName: string | null,
+    excludePublishedRecreateSource = false,
+  ): asserts sandboxName is string {
     const targetEntry = sandboxName ? this.deps.getSandboxRegistryEntry(sandboxName) : null;
     if (!sandboxName || !targetEntry) {
       this.failGatewayRouteCheck(
@@ -1235,9 +1242,16 @@ class SandboxStateFlow<
         `  Error: sandbox '${sandboxName}' changed OpenShell gateways while onboarding was in progress. Retry onboarding.`,
       );
     }
+    if (this.acceptsNativeLocalReservation(targetEntry, sandboxName)) return;
     const compatibility = this.deps.checkGatewayRouteCompatibility({
       gatewayName: this.options.gatewayName,
-      sandboxName: null,
+      // A deferred route still belongs to the published source until backup
+      // succeeds. Exclude only that source while checking the replacement.
+      sandboxName: this.publishedRecreateSourceForRouteCheck(
+        sandboxName,
+        targetEntry,
+        excludePublishedRecreateSource,
+      ),
       route: {
         provider: this.options.provider,
         model: this.options.model,
@@ -1252,10 +1266,76 @@ class SandboxStateFlow<
     this.failGatewayRouteCheck(`  Error: ${formatGatewayRouteConflict(compatibility)}`);
   }
 
+  private acceptsNativeLocalReservation(targetEntry: SandboxEntry, sandboxName: string): boolean {
+    if (this.options.stagedNativeLocalRecreation) {
+      this.validatedNativeLocalCreateEntry(sandboxName, targetEntry);
+      return true;
+    }
+    if (!targetEntry.nativeLocalProviderAttachment) return false;
+    const agentName = (this.options.agent as { name?: string } | null)?.name ?? "openclaw";
+    const nativeLocalReservation = nativeLocalReservationStatus({
+      entry: targetEntry,
+      agentName,
+      sandboxName,
+      gatewayName: this.options.gatewayName,
+      provider: this.options.provider,
+      model: this.options.model,
+      endpointUrl: this.options.endpointUrl,
+      endpointSource: this.options.endpointSource ?? null,
+      credentialEnv: this.options.credentialEnv ?? null,
+      preferredInferenceApi: this.options.preferredInferenceApi ?? null,
+    });
+    if (nativeLocalReservation === "changed") {
+      this.failGatewayRouteCheck(
+        `  Error: native local inference reservation for sandbox '${sandboxName}' changed while onboarding was in progress. Retry onboarding.`,
+      );
+    }
+    return nativeLocalReservation === "exact";
+  }
+
+  private publishedRecreateSourceForRouteCheck(
+    sandboxName: string,
+    targetEntry: SandboxEntry,
+    excludePublishedRecreateSource: boolean,
+  ): string | null {
+    return excludePublishedRecreateSource && targetEntry.pendingRouteReservation !== true
+      ? sandboxName
+      : null;
+  }
+
   private failGatewayRouteCheck(message: string): never {
     this.deps.error(message);
     this.deps.exitProcess(1);
     throw new Error("exitProcess returned while aborting an incompatible gateway route");
+  }
+
+  private validatedNativeLocalCreateEntry(
+    sandboxName: string,
+    entry: SandboxEntry | null,
+  ): SandboxEntry | null {
+    const staged = this.options.stagedNativeLocalRecreation;
+    if (!staged) return entry;
+    const agentName = (this.options.agent as { name?: string } | null)?.name ?? "openclaw";
+    if (
+      this.options.resume ||
+      !this.options.recreateSandbox(false) ||
+      !this.options.session?.sessionId ||
+      (agentName !== "langchain-deepagents-code" &&
+        agentName !== "openclaw" &&
+        agentName !== "pi" &&
+        agentName !== "hermes") ||
+      staged.attachment.agent !==
+        (agentName === "langchain-deepagents-code" ? undefined : agentName) ||
+      staged.attachment.sandboxName !== sandboxName ||
+      staged.attachment.gatewayName !== this.options.gatewayName ||
+      staged.attachment.provider !== this.options.provider ||
+      !isDeepStrictEqual(entry, staged.source)
+    ) {
+      throw new Error(
+        `Sandbox '${sandboxName}' legacy route ownership changed before recreation. Retry onboarding.`,
+      );
+    }
+    return { ...staged.source, nativeLocalProviderAttachment: staged.attachment };
   }
 
   private reserveCreateRouteForSession(sandboxName: string): void {
@@ -1271,10 +1351,49 @@ class SandboxStateFlow<
         preferredInferenceApi: this.options.preferredInferenceApi,
         gatewayName: this.options.gatewayName,
         reservationSessionId: this.options.session?.sessionId,
+        ...(this.options.stagedNativeLocalRecreation
+          ? { nativeLocalProviderAttachment: this.options.stagedNativeLocalRecreation.attachment }
+          : {}),
       },
       this.deps.reserveSandboxInferenceRoute,
       this.deps.cliName(),
     );
+  }
+
+  private prepareCreateRouteReservation(
+    sandboxName: string,
+    createIntent: CompleteSandboxCreateIntent,
+  ): CompleteSandboxCreateIntent {
+    const currentEntry = this.deps.getSandboxRegistryEntry(sandboxName);
+    this.validatedNativeLocalCreateEntry(sandboxName, currentEntry);
+    if (
+      this.options.deferredInferenceRoute &&
+      (currentEntry === null || currentEntry.pendingRouteReservation === true)
+    ) {
+      throw new Error(
+        `Sandbox '${sandboxName}' route ownership changed before its backed-up inference route could be applied. Retry onboarding.`,
+      );
+    }
+    if (currentEntry === null || currentEntry.pendingRouteReservation === true) {
+      this.reserveCreateRouteForSession(sandboxName);
+      return createIntent;
+    }
+    return {
+      ...createIntent,
+      reservePublishedRouteAfterBackup: async () => {
+        this.validatedNativeLocalCreateEntry(
+          sandboxName,
+          this.deps.getSandboxRegistryEntry(sandboxName),
+        );
+        if (this.options.deferredInferenceRoute) {
+          await this.options.deferredInferenceRoute(() =>
+            this.reserveCreateRouteForSession(sandboxName),
+          );
+        } else {
+          this.reserveCreateRouteForSession(sandboxName);
+        }
+      },
+    };
   }
 
   private finalizeInferenceRouteReservation(
@@ -1551,7 +1670,22 @@ class SandboxStateFlow<
     state: SandboxStepState<WebSearchConfig>,
     sandboxName: string,
   ): SandboxStepState<WebSearchConfig> {
-    if (!this.resumesSandboxPrompts) return { ...state, sandboxName };
+    if (!this.resumesSandboxPrompts) {
+      const pendingSelection = state.session?.pendingPolicySelection;
+      if (pendingSelection && pendingSelection.sandboxName !== sandboxName) {
+        const session = this.deps.updateSession((current) => {
+          if (
+            current.pendingPolicySelection &&
+            current.pendingPolicySelection.sandboxName !== sandboxName
+          ) {
+            current.pendingPolicySelection = null;
+          }
+          return current;
+        });
+        return { ...state, session, sandboxName };
+      }
+      return { ...state, sandboxName };
+    }
     let messagingInvalidated = false;
     const session = this.deps.updateSession((current) => {
       const recordedNameChanged =
@@ -1562,6 +1696,12 @@ class SandboxStateFlow<
         current.messagingPlan = null;
         current.sandboxPromptProgress.messaging = false;
         messagingInvalidated = true;
+      }
+      if (
+        current.pendingPolicySelection &&
+        current.pendingPolicySelection.sandboxName !== sandboxName
+      ) {
+        current.pendingPolicySelection = null;
       }
       current.sandboxName = sandboxName;
       current.sandboxPromptProgress.sandboxName = true;
@@ -1875,11 +2015,14 @@ class SandboxStateFlow<
     deferSandboxEffectsUntilIdentityVerification: boolean,
   ): Promise<CompleteSandboxCreateIntent> {
     const reuseRegisteredCredentials = this.resumesSandboxPrompts && this.options.resume;
+    const registeredEntry = this.deps.getSandboxRegistryEntry(sandboxName);
+    const nativeEntry = this.validatedNativeLocalCreateEntry(sandboxName, registeredEntry);
     const resolved = await this.deps.resolveSandboxCreateIntent({
       sandboxName,
-      ...nativeNvidiaCreateIntentFields(
+      ...nativeInferenceCreateIntentFields(
         this.options.provider,
-        this.deps.getSandboxRegistryEntry(sandboxName),
+        nativeEntry,
+        Boolean(this.options.nimContainer),
       ),
       hostLocalInferenceRouteOnly: this.options.hostLocalInferenceRouteOnly === true,
       enabledChannels: state.selectedMessagingChannels,
@@ -1893,14 +2036,32 @@ class SandboxStateFlow<
       hostMounts: this.options.hostMounts,
       ...(reuseRegisteredCredentials ? { reuseRegisteredCredentials: true } : {}),
     });
+    const endpointUrl =
+      resolved.nativeLocalProviderAttachment?.endpointUrl ?? this.options.endpointUrl;
+    const recreate = requiresSandboxRecreation(decision, this.options.recreateSandbox(false));
     return {
       resolved,
-      recreate: requiresSandboxRecreation(decision, this.options.recreateSandbox(false)),
+      recreate,
       ...apfCreateIntentFields(this.options.apfInterceptorRequested === true),
-      toolDisclosure: toolDisclosureOrDefault(state.session?.toolDisclosure),
+      toolDisclosure:
+        initialOpenClawToolDisclosure({
+          fresh:
+            decision.kind === "create" &&
+            !this.options.resume &&
+            !recreate &&
+            !this.options.fromDockerfile,
+          agentName: (this.options.agent as { name?: string } | null)?.name ?? "openclaw",
+          provider: this.options.provider,
+          model: this.options.model,
+          deferredN1xManagedVllmPreviewIntent: this.options.deferredN1xManagedVllmPreviewIntent,
+          entry: registeredEntry,
+          sessionId: state.session?.sessionId,
+          env: this.options.env,
+        }) ?? toolDisclosureOrDefault(state.session?.toolDisclosure),
       observabilityEnabled: state.session?.observabilityEnabled === true,
       ...(reuseRegisteredCredentials ? { reuseRegisteredCredentials: true as const } : {}),
-      ...(this.options.endpointUrl ? { endpointUrl: this.options.endpointUrl } : {}),
+      ...(endpointUrl ? { endpointUrl } : {}),
+      ...ownedLocalNimCreateIntentFields(this.options.provider, this.options.nimContainer),
       ...compatibleEndpointReasoningForCreateIntent(this.options.compatibleEndpointReasoning),
       endpointSource: this.options.endpointSource ?? null,
       ...(this.options.deferredN1xManagedVllmPreviewIntent === true
@@ -1985,13 +2146,21 @@ class SandboxStateFlow<
     sandboxName: string,
     createIntent: CompleteSandboxCreateIntent,
     sourceEntry: SandboxEntry | null,
-  ): CheckpointSandboxRecreateTransaction | null {
+  ): ReturnType<typeof ownSandboxRecreateTransaction> | null {
     const existing = state.session?.checkpoint?.sandboxRecreate ?? null;
     const ownsPendingCreateReservation =
       sourceEntry?.pendingRouteReservation === true &&
       sourceEntry.reservationSessionId === state.session?.sessionId;
-    if (!this.options.resume && !existing && sourceEntry && !ownsPendingCreateReservation) {
-      return null;
+    if (!this.options.resume && !existing && sourceEntry) {
+      // A route reservation on a Ready sandbox does not decide whether it needs replacement.
+      // Let createSandbox check selection drift before opening its recreation journal.
+      if (
+        !ownsPendingCreateReservation ||
+        (!createIntent.recreate &&
+          this.deps.getSandboxRecreateObservation(sandboxName).state === "ready")
+      ) {
+        return null;
+      }
     }
     const gateway = selectedGatewayForSandboxRecreate(
       state.session?.checkpoint,
@@ -2041,7 +2210,7 @@ class SandboxStateFlow<
         }
         return checkpoint;
       },
-    }).transaction;
+    });
   }
 
   private sandboxRecreateTargetIntentFingerprint(
@@ -2072,6 +2241,16 @@ class SandboxStateFlow<
     });
   }
 
+  private freshSelectionReconciliationFields(
+    owned: ReturnType<typeof ownSandboxRecreateTransaction> | null,
+  ): { readonly freshNonForced?: true } {
+    return owned?.openedWithoutPriorTransaction &&
+      !this.options.resume &&
+      !this.options.recreateSandbox(false)
+      ? { freshNonForced: true }
+      : {};
+  }
+
   private async prepareSandboxRecreate(
     state: SandboxStepState<WebSearchConfig>,
     requestedSandboxName: string,
@@ -2081,9 +2260,10 @@ class SandboxStateFlow<
     const sourceEntry = this.deps.getSandboxRegistryEntry(requestedSandboxName);
     const continueHermesPortableLifecycle =
       decision.kind === "create" && decision.continueHermesPortableLifecycle === true;
-    const transaction = continueHermesPortableLifecycle
+    const owned = continueHermesPortableLifecycle
       ? null
       : this.beginSandboxRecreateJournal(state, requestedSandboxName, createIntent, sourceEntry);
+    const transaction = owned?.transaction ?? null;
     const repairMetadata: SandboxRecreateRepairMetadata | null =
       decision.kind === "repair-and-recreate"
         ? { repair: "recorded-sandbox-cleanup", sandboxName: state.sandboxName }
@@ -2106,6 +2286,7 @@ class SandboxStateFlow<
       ...createIntent,
       recreate: true,
       recreateTransaction: {
+        ...this.freshSelectionReconciliationFields(owned),
         id: transaction.id,
         targetGeneration: transaction.targetGeneration,
         targetIntentFingerprint: transaction.targetIntentFingerprint,
@@ -2203,7 +2384,18 @@ class SandboxStateFlow<
     sandboxName: string,
     createIntent: CompleteSandboxCreateIntent,
   ): Session {
+    const created = this.deps.getSandboxRegistryEntry(sandboxName);
+    const createdIdentity =
+      created?.lifecycleLiveIdentityFingerprint ??
+      (created?.createdAt ? `created:${created.createdAt}` : null);
     const recordedSession = this.deps.updateSession((current) => {
+      if (
+        current.pendingPolicySelection?.sandboxName === sandboxName &&
+        createdIdentity &&
+        current.pendingPolicySelection.sandboxIdentity !== createdIdentity
+      ) {
+        current.pendingPolicySelection = null;
+      }
       recordCheckpointEffectGroup(
         current,
         "sandbox_create",
@@ -2274,7 +2466,12 @@ class SandboxStateFlow<
         this.options.apfInterceptorRequested === true &&
         this.options.provider.trim().length === 0 &&
         this.options.model.trim().length === 0;
-      this.assertGatewayRouteCompatible(requestedSandboxName);
+      // Fresh, non-forced selection drift resolves recreation inside createSandbox.
+      // The staged route already proves this source must remain published until backup.
+      this.assertGatewayRouteCompatible(
+        requestedSandboxName,
+        Boolean(this.options.deferredInferenceRoute),
+      );
       await this.assertCheckpointBindingsStillLive(state);
       this.assertCheckpointCreateInputsStillMatch(
         state,
@@ -2287,6 +2484,14 @@ class SandboxStateFlow<
       });
       this.deps.updateSession((current) => {
         current.messagingPlan = messagingPlan;
+        const agentName = (this.options.agent as { name?: string } | null)?.name ?? "openclaw";
+        if (messagingPlan === null && (agentName === "openclaw" || agentName === "hermes")) {
+          if (state.selectedMessagingChannels.length === 0)
+            recordCheckpointMessaging(current, null);
+          else if (current.checkpoint) {
+            current.checkpoint = { ...current.checkpoint, messaging: decisionUnset() };
+          }
+        }
         return current;
       });
       const { transaction, sourceEntry, effectiveCreateIntent, repairMetadata } =
@@ -2294,7 +2499,10 @@ class SandboxStateFlow<
 
       let sandboxName: string;
       try {
-        this.reserveCreateRouteForSession(requestedSandboxName);
+        const createIntentWithReservation = this.prepareCreateRouteReservation(
+          requestedSandboxName,
+          effectiveCreateIntent,
+        );
         sandboxName = await withSandboxPhaseTrace(
           requestedSandboxName,
           this.options.provider,
@@ -2322,17 +2530,19 @@ class SandboxStateFlow<
                     selection: sandboxCreateInferenceSelection({
                       provider: this.options.provider,
                       model: this.options.model,
+                      modelSelectionProvenance: this.options.session.modelSelectionProvenance,
                       endpointUrl: this.options.endpointUrl,
                       endpointSource: this.options.endpointSource,
                       credentialEnv: this.options.credentialEnv,
                       preferredInferenceApi: this.options.preferredInferenceApi,
                       compatibleEndpointReasoning: this.options.compatibleEndpointReasoning,
-                      compatibleEndpointReasoningEffort: null,
+                      compatibleEndpointReasoningEffort:
+                        this.options.compatibleEndpointReasoningEffort,
                       nimContainer: this.options.nimContainer,
                     }),
                   }
                 : null,
-              effectiveCreateIntent,
+              createIntentWithReservation,
               activateVerifiedCredentialProviders
                 ? async (
                     verifiedContext: import("../../types").VerifiedSandboxCreateEffectsContext,
@@ -2401,19 +2611,22 @@ class SandboxStateFlow<
         sandboxName,
         createIntent,
       );
+      this.finalizeInferenceRouteReservation(state, sandboxName);
       return { ...state, sandboxName, session: recordedSession };
     };
-    const withGatewayLock = () =>
-      this.deps.withGatewayRouteMutationLock(this.options.gatewayName, createAndRecord);
-    const withDashboardPortLock =
-      this.deps.withDashboardPortReservationLock ?? withHostDashboardPortReservationLock;
-    const withDashboardAndGatewayLocks = () =>
-      shouldManageDashboardForAgent(this.options.agent as DashboardRuntimeAgent)
-        ? withDashboardPortLock(withGatewayLock)
-        : withGatewayLock();
-    return this.deps.withSandboxMutationLock
-      ? this.deps.withSandboxMutationLock(requestedSandboxName, withDashboardAndGatewayLocks)
-      : withDashboardAndGatewayLocks();
+    return withSandboxImageRegistrationFence(async () => {
+      const withGatewayLock = () =>
+        this.deps.withGatewayRouteMutationLock(this.options.gatewayName, createAndRecord);
+      const withDashboardPortLock =
+        this.deps.withDashboardPortReservationLock ?? withHostDashboardPortReservationLock;
+      const withDashboardAndGatewayLocks = () =>
+        shouldManageDashboardForAgent(this.options.agent as DashboardRuntimeAgent)
+          ? withDashboardPortLock(withGatewayLock)
+          : withGatewayLock();
+      return this.deps.withSandboxMutationLock
+        ? this.deps.withSandboxMutationLock(requestedSandboxName, withDashboardAndGatewayLocks)
+        : withDashboardAndGatewayLocks();
+    });
   }
 
   private resolveSandboxMessagingAuthority(

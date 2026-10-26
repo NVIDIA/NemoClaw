@@ -231,6 +231,10 @@ def _contains_other_platform_secret(value: str, platform: str) -> bool:
 
 
 def _is_openshell_placeholder_for_name(name: str, value: str) -> bool:
+    if name == "NEMOCLAW_ATTACHED_PROVIDER_API_KEY":
+        if value != os.environ.get("NVIDIA_INFERENCE_API_KEY"):
+            return False
+        name = "NVIDIA_INFERENCE_API_KEY"
     if name == "OPENSHELL_TLS_KEY" or not _MCP_ENV_NAME.fullmatch(name):
         return False
     canonical = f"{_OPENSHELL_ENV_PLACEHOLDER_PREFIX}{name}"
@@ -1074,6 +1078,55 @@ def managed_inference_base_url() -> str:
     return value
 
 
+def managed_inference_api_key(base_url: str) -> str:
+    """Select the non-secret credential for the validated image-owned route."""
+    parsed = urlparse(base_url)
+    host = parsed.hostname or ""
+    local_host = host in {"host.openshell.internal", "host.docker.internal"}
+    try:
+        address = ipaddress.IPv4Address(host)
+        local_host = any(address in ipaddress.IPv4Network(network) for network in (
+            "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"
+        ))
+    except ipaddress.AddressValueError:
+        # Keep the host-alias result above; every other non-IPv4 name remains untrusted.
+        pass
+    upstream_provider = _managed_upstream_provider()
+    if parsed.scheme == "http" and local_host and upstream_provider in {
+        "ollama-local", "vllm-local", "llama-cpp-local", "compatible-endpoint"
+    }:
+        value = os.environ.get("NEMOCLAW_LOCAL_INFERENCE_TOKEN", "")
+        if re.fullmatch(
+            r"openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+            value,
+        ) is None:
+            raise RuntimeError("native local inference requires an issued OpenShell credential reference")
+        return value
+    if base_url == "https://integrate.api.nvidia.com/v1" and upstream_provider != "compatible-endpoint":
+        name = "NVIDIA_INFERENCE_API_KEY"
+        provider = "NVIDIA"
+    elif base_url == "https://openrouter.ai/api/v1" and upstream_provider in (
+        _OPENROUTER_DISPLAY_PROVIDER_ALIASES | {"compatible-endpoint"}
+    ):
+        name = (
+            "COMPATIBLE_API_KEY"
+            if upstream_provider == "compatible-endpoint"
+            else "OPENROUTER_API_KEY"
+        )
+        provider = "OpenRouter"
+    elif upstream_provider == "compatible-endpoint" and host not in {
+        "inference.local", "localhost", "127.0.0.1", "::1"
+    }:
+        name = "COMPATIBLE_API_KEY"
+        provider = "compatible endpoint"
+    else:
+        return "nemoclaw-managed-inference"
+    value = os.environ.get(name, "")
+    if not _is_openshell_placeholder_for_name(name, value):
+        raise RuntimeError(f"native {provider} inference requires an OpenShell credential placeholder")
+    return value
+
+
 def managed_fetch_proxy_url() -> str | None:
     """Return the explicit OpenShell proxy delegated to managed ``fetch_url``.
 
@@ -1490,6 +1543,13 @@ def assert_safe_runtime() -> None:
     """Reject unmanaged runtime credentials before dcode bootstraps settings."""
     _assert_safe_environment()
     _assert_safe_auth_state()
+    # Whole-home rebuild restores can retain the old native api_key_env field.
+    # Remove this alias when supported stored configs have retired that field.
+    native_placeholder = os.environ.get("NVIDIA_INFERENCE_API_KEY", "")
+    if _is_openshell_placeholder_for_name("NVIDIA_INFERENCE_API_KEY", native_placeholder):
+        os.environ["NEMOCLAW_ATTACHED_PROVIDER_API_KEY"] = native_placeholder
+    else:
+        os.environ.pop("NEMOCLAW_ATTACHED_PROVIDER_API_KEY", None)
     os.environ[_UPSTREAM_PROVIDER_ENV] = _managed_upstream_provider()
     managed_fetch_proxy_url()
     base_url = managed_inference_base_url()

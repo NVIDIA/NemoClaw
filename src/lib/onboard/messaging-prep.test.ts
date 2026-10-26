@@ -111,6 +111,14 @@ describe("prepareCreateSandboxMessaging", () => {
 
     expect(result.reusableMessagingProviders).toContain("demo-discord-bridge");
     expect(result.reusableMessagingChannels).toContain("discord");
+    expect(result.messagingTokenDefs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "demo-discord-bridge",
+          providerType: "nemoclaw-mcp-v1",
+        }),
+      ]),
+    );
     expect(providerMatchesGatewayCredential).toHaveBeenCalledWith(
       "demo-discord-bridge",
       "nemoclaw-mcp-v1",

@@ -10,6 +10,7 @@ import {
   renderHermesPortableDockerfileBuildSettings,
   type HermesPortableDockerfileBuildSettings,
 } from "../dockerfile-patch";
+import { prebuildSandboxImageIfEligible } from "../sandbox-prebuild";
 import { HERMES_PORTABLE_BUILD_CONTEXT_FILES } from "./hermes-portable-build-context-files";
 
 const CONTEXT_SCHEMA_VERSION = 1 as const;
@@ -34,9 +35,11 @@ const CONTEXT_DOCKERFILE_RELATIVE_PATH = "Dockerfile" as const;
 // must carry that hold and its identity-bound completion/release protocol.
 const LOCAL_COPY_SOURCES = [
   "agents/hermes/a2a-neutral.patch",
+  "agents/hermes/check-native-credentials.ts",
   "agents/hermes/config/",
   "agents/hermes/cron-restore-control.py",
   "agents/hermes/dashboard-external-host.patch",
+  "agents/hermes/dependency-security-probes.py",
   "agents/hermes/finalize-image-layout.sh",
   "agents/hermes/finalize-tirith-marker.py",
   "agents/hermes/generate-config.ts",
@@ -65,6 +68,7 @@ const LOCAL_COPY_SOURCES = [
   "agents/hermes/plugin/__init__.py",
   "agents/hermes/plugin/plugin.yaml",
   "agents/hermes/runtime-config-guard.py",
+  "agents/hermes/sharp-security-probes.mts",
   "agents/hermes/start.sh",
   "agents/hermes/validate-cli-adapter.py",
   "agents/hermes/validate-env-secret-boundary.py",
@@ -83,10 +87,17 @@ const LOCAL_COPY_SOURCES = [
   "scripts/managed-startup-hold.sh",
   "scripts/patch-bundled-npm-brace-expansion.mts",
   "scripts/patch-bundled-npm-tar.mts",
+  "scripts/security/standalone-security-package-inventory.mts",
   "scripts/upgrade-bundled-npm.mts",
   "ci/reviewed-npm-audit.json",
   "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.116.json",
   "src/lib/hermes-managed-route.ts",
+  "src/lib/inference/native-local/agent-config.ts",
+  "src/lib/core/endpoint-url-safety.ts",
+  "src/lib/inference/native-provider/agent-config.ts",
+  "src/lib/inference/native-provider/contract.ts",
+  "src/lib/inference/native-provider/hosted.ts",
+  "src/lib/inference-credential.ts",
   "src/lib/messaging/",
   "src/lib/messaging/channels/googlechat/runtime/hermes-adapter.py",
   "src/lib/tool-disclosure.ts",
@@ -169,6 +180,33 @@ export interface HermesPortableStagedBuildContext {
   readonly buildContextPath: string;
   readonly dockerfilePath: string;
   assertCurrent(): void;
+}
+
+/** Adapt the receipt-owned context to the shared generated-image handoff. */
+export async function buildHermesPortableSandboxImage(
+  context: HermesPortableStagedBuildContext,
+  transactionId: string,
+  sandboxName: string,
+  podman: NonNullable<
+    Parameters<typeof prebuildSandboxImageIfEligible>[0]["portableReceipt"]
+  >["podman"],
+  imageAvailable: (reference: string) => Promise<boolean>,
+): Promise<string> {
+  const image = await prebuildSandboxImageIfEligible({
+    buildCtx: context.buildContextPath,
+    buildId: transactionId,
+    dockerDriverGateway: true,
+    gatewayDriver: "podman",
+    origin: "generated",
+    sourceReference: context.dockerfilePath,
+    sandboxName,
+    env: { ...process.env, NEMOCLAW_SANDBOX_PREBUILD: "1" },
+    portableReceipt: { transactionId, context, podman, imageAvailable },
+  });
+  if (!image.sourceReference || !image.imageId) {
+    throw new Error("Portable image build did not produce an image reference.");
+  }
+  return image.sourceReference;
 }
 
 type StagedEntry = Omit<

@@ -468,6 +468,20 @@ describe("managed llama.cpp profile onboarding", () => {
       perGpuMB: 24_467,
       nimCapable: true,
       containerGpuProof: { providerId: "docker", passed: true },
+      provedGpuDevices: [
+        {
+          uuid: "GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeee0",
+          name: "NVIDIA RTX PRO 4000 Blackwell",
+          totalMemoryMB: 24_467,
+          availableMemoryMB: 24_000,
+        },
+        {
+          uuid: "GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeee1",
+          name: "NVIDIA GB300",
+          totalMemoryMB: 256_703,
+          availableMemoryMB: 250_000,
+        },
+      ],
       stationGb300WslProduct: true,
     } as never;
 
@@ -499,6 +513,20 @@ describe("managed llama.cpp profile onboarding", () => {
       perGpuMB: 24_467,
       nimCapable: true,
       containerGpuProof: { providerId: "docker", passed: true },
+      provedGpuDevices: [
+        {
+          uuid: "GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeee0",
+          name: "NVIDIA RTX PRO 4000 Blackwell",
+          totalMemoryMB: 24_467,
+          availableMemoryMB: 24_000,
+        },
+        {
+          uuid: "GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeee1",
+          name: "NVIDIA GB300",
+          totalMemoryMB: 256_703,
+          availableMemoryMB: 250_000,
+        },
+      ],
       stationGb300WslProduct: true,
     } as never;
     const discoverManagedLlamaCppSelections = vi.fn(
@@ -554,6 +582,7 @@ describe("managed llama.cpp profile onboarding", () => {
       produced?.resolution.kind === "selected" ? produced.resolution.selection : null;
     expect(producedSelection).not.toBeNull();
     expect(installManagedLlamaCpp.mock.calls[0]?.[0]).toBe(producedSelection);
+    expect(installManagedLlamaCpp.mock.calls[0]?.[1]).toMatchObject({ gpu });
     expect(handleLlamaCppSelection).toHaveBeenCalledWith(
       expect.any(Object),
       "qwen3.6-35b-a3b",

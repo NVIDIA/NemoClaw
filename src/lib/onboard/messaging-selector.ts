@@ -1,9 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import readline from "node:readline";
-
+import {
+  cancelPromptWithPendingEof,
+  pendingStdinEofError,
+  takePendingStdinEof,
+} from "../core/pending-stdin-eof";
 import { markPromptActive } from "../core/prompt-activity";
+import {
+  createStdinPromptInterface,
+  type PromptInterruptSignal,
+  raisePromptInterrupt,
+} from "../core/prompt-terminal";
 
 export interface MessagingChannelSelectorEntry {
   readonly id: string;
@@ -20,7 +28,7 @@ export type MessagingSelectorOutput = typeof process.stderr & {
   readonly isTTY?: boolean;
 };
 
-export type MessagingSelectorKeyAction = "continue" | "redraw" | "finish" | "interrupt";
+export type MessagingSelectorKeyAction = "continue" | "redraw" | "finish" | "interrupt" | "eof";
 
 export interface MessagingSelectorNormalizerState {
   carry: string;
@@ -68,6 +76,9 @@ export function applyMessagingSelectorKey(
   availableChannels: readonly MessagingChannelSelectorEntry[],
 ): MessagingSelectorKeyAction {
   if (key === "\u0003") return "interrupt";
+  // Raw mode delivers Ctrl-D as an ordinary byte instead of an end-of-file.
+  // The menu has no typed answer to protect, so it always closes stdin.
+  if (key === "\u0004") return "eof";
   if (key === "\r" || key === "\n") return "finish";
 
   const num = Number.parseInt(key, 10);
@@ -152,6 +163,21 @@ export function readMessagingChannelSelection<T extends MessagingChannelSelector
   enabled: Set<string>,
   showList: () => void,
 ): Promise<void> {
+  // This menu switches the TTY to raw mode too, so a Ctrl-D typed before it
+  // opened would be dropped and the menu would never settle (#12169).
+  const pending = takePendingStdinEof();
+  if (pending === false) return readChannelKeys(availableChannels, enabled, showList);
+  return pending.then((ended) => {
+    if (ended) throw pendingStdinEofError();
+    return readChannelKeys(availableChannels, enabled, showList);
+  });
+}
+
+function readChannelKeys<T extends MessagingChannelSelectorEntry>(
+  availableChannels: readonly T[],
+  enabled: Set<string>,
+  showList: () => void,
+): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     const input = process.stdin as MessagingSelectorInput;
     const output = process.stderr;
@@ -188,12 +214,12 @@ export function readMessagingChannelSelection<T extends MessagingChannelSelector
       resolve();
     }
 
-    function interrupt(signal: NodeJS.Signals): void {
+    function interrupt(signal: PromptInterruptSignal): void {
       if (finished) return;
       finished = true;
       cleanup();
       reject(Object.assign(new Error("Prompt interrupted"), { code: signal }));
-      process.kill(process.pid, signal);
+      raisePromptInterrupt(signal);
     }
 
     function fail(error: unknown): void {
@@ -212,7 +238,7 @@ export function readMessagingChannelSelection<T extends MessagingChannelSelector
     }
 
     function inputClosedHandler(): void {
-      fail(Object.assign(new Error("Prompt closed before input"), { code: "EOF" }));
+      fail(pendingStdinEofError());
     }
 
     function onData(chunk: Buffer | string): void {
@@ -221,6 +247,10 @@ export function readMessagingChannelSelection<T extends MessagingChannelSelector
         const action = applyMessagingSelectorKey(text[index], enabled, availableChannels);
         if (action === "interrupt") {
           interrupt("SIGINT");
+          return;
+        }
+        if (action === "eof") {
+          fail(pendingStdinEofError());
           return;
         }
         if (action === "finish") {
@@ -274,14 +304,24 @@ function splitIncompleteMessagingSelectorInput(text: string): {
 }
 
 function promptMessagingSelectorLine(question: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    if (typeof process.stdin.ref === "function") {
-      process.stdin.ref();
-    }
+  if (typeof process.stdin.ref === "function") {
+    process.stdin.ref();
+  }
+  // Cancellation typed between questions would be lost to readline's
+  // raw-mode switch and the prompt would never settle (#12169).
+  const pending = takePendingStdinEof();
+  if (pending === false) return readMessagingSelectorLine(question);
+  return pending.then((ended) => {
+    if (ended) cancelPromptWithPendingEof(question);
+    return readMessagingSelectorLine(question);
+  });
+}
 
+function readMessagingSelectorLine(question: string): Promise<string> {
+  return new Promise((resolve, reject) => {
     // Hold background heartbeat output while this prompt owns the terminal;
     // released in cleanup() on every settle path. (#6651)
-    const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
+    const rl = createStdinPromptInterface();
     const releasePromptActivity = markPromptActive();
     let finished = false;
 
@@ -313,11 +353,11 @@ function promptMessagingSelectorLine(question: string): Promise<string> {
     try {
       rl.on("SIGINT", () => {
         rejectPrompt(Object.assign(new Error("Prompt interrupted"), { code: "SIGINT" }));
-        process.kill(process.pid, "SIGINT");
+        raisePromptInterrupt();
       });
       rl.on("close", () => {
         if (finished) return;
-        rejectPrompt(Object.assign(new Error("Prompt closed before input"), { code: "EOF" }));
+        rejectPrompt(pendingStdinEofError());
       });
       rl.question(question, resolvePrompt);
     } catch (error) {

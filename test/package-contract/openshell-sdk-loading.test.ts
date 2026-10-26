@@ -20,6 +20,8 @@ function packageFixture(): string {
       "dist/lib/adapters/openshell",
       "dist/lib/adapters/fs",
       "dist/lib/onboard/gateway/state-dir.js",
+      "dist/lib/state/config-io.js",
+      "dist/lib/state/state-root.js",
       "dist/lib/onboard/gateway-management.js",
       "dist/lib/onboard/gateway-binding",
       "dist/lib/core",

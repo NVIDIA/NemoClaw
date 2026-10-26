@@ -63,6 +63,11 @@ Then rerun the installer.
 If you manually retired the gateway, restore the previously installed OpenShell version and its gateway before you transfer the sandbox state.
 </Warning>
 
+Installer reruns and supported CLI operations attempt anonymous completion telemetry to NVIDIA's fixed TEST receiver by default.
+Run `export NEMOCLAW_DISABLE_TELEMETRY=1` in this shell before the installer command to suppress collection and delivery.
+Repeat it in any new shell used for NemoClaw CLI commands.
+Refer to [Operation Telemetry](/user-guide/openclaw/security/best-practices#operation-telemetry) for details.
+
 ```bash
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 $$nemoclaw upgrade-sandboxes --check
@@ -149,7 +154,7 @@ Outside these forced paths, an in-range source checkout preserves an existing Op
 
 After the host CLI and OpenShell update, the installer runs `$$nemoclaw upgrade-sandboxes --auto` to reconcile the existing sandboxes.
 
-During installer-driven recovery, each stale or non-Ready sandbox requires a validated latest backup.
+During installer-driven recovery, every sandbox selected for recovery requires a validated latest backup.
 The backup's sandbox and agent identities must match the registry.
 <AgentOnly variant="deepagents">
 The registry must also contain positive evidence that NemoClaw managed the sandbox image.
@@ -159,6 +164,12 @@ The registry must contain positive evidence that NemoClaw managed the sandbox im
 </AgentOnly>
 If the replacement gateway reports a stale sandbox as Ready or Running, the installer reuses the validated pre-upgrade backup.
 It does not attempt another backup from the replaced legacy runtime.
+
+<AgentOnly variant="openclaw">
+The installer also selects a Ready legacy OpenClaw sandbox when its agent-version probe fails and its registry has no managed-image fingerprint.
+This recovery requires the installer's explicit managed-image confirmation for that sandbox name and the validated latest backup.
+The sandbox must belong to the selected gateway and have no recorded custom-image evidence.
+</AgentOnly>
 
 <AgentOnly variant="openclaw,hermes">
 For a listed pre-fingerprint OpenClaw or Hermes registry entry, the installer's explicit managed-image confirmation is the only exception to the registry evidence requirement.
