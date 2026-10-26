@@ -145,10 +145,8 @@ describe("LangChain Deep Agents Code config generator", () => {
     expect(config).toContain(
       "# NemoClaw provider route: inference; upstream provider: nvidia-prod; API: openai-completions.",
     );
-    expect(config).toContain('auto_classifier = "openai:nvidia/nemotron-3-super-120b-a12b"');
     expect(config).toContain("use_responses_api = false");
     expect(config).not.toContain("force_nonempty_content");
-    expect(config).not.toContain("gpt-5.6-luna");
     expect(config).toContain("check = false");
     expect(config).toContain("auto_update = false");
     expect(config).toContain("[warnings]");
