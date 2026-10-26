@@ -96,8 +96,9 @@ fn document(uid: &str, namespace: &str, issuer: &str, audience: &str) -> Documen
         .unwrap()
         .port();
     let harness = required("NEMOCLAW_TEST_AGENT_HARNESS");
+    // Pi needs a context window, input types and cost for a model it does not ship.
     let extensions = if harness == "nvidia.fabric.pi" {
-        "\n                extensions:\n                  context_window: 8192"
+        "\n                extensions:\n                  context_window: 8192\n                  input: [text]\n                  cost: {input: 0, output: 0, cacheRead: 0, cacheWrite: 0}"
     } else {
         ""
     };
@@ -131,11 +132,11 @@ spec:
         user_role: {USER_ROLE}
         scopes_claim: scope
   inferenceProviders:
-    - name: hosted
+    hosted:
       provider: openai
       endpoint: https://inference.example.test/v1
   sandboxes:
-    - name: assistant
+    assistant:
       image:
         ref: {image}
         metadata: {{env: NEMOCLAW_TEST_AGENT_METADATA}}

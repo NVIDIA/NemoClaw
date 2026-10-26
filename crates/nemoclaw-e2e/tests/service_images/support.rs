@@ -235,20 +235,17 @@ impl Scenario {
         .unwrap();
         value["metadata"]["uid"] = json!(self.uid);
         value["spec"]["gateway"] = json!({"management":"external","endpoint":self.gateway.endpoint,"engine":self._metadata.endpoint});
-        value["spec"]["inferenceProviders"] = json!([{"name":"local","provider":"openai","api":"openai-completions","serviceRef":"shared"}]);
+        value["spec"]["inferenceProviders"] =
+            json!({"local":{"provider":"openai","api":"openai-completions","serviceRef":"shared"}});
         value["spec"]["services"] = json!({"shared":{"kind":"ollamaProxy","engine":"unix:///var/run/docker.sock","image":self.proxy_image,"imagePullPolicy":"Never","endpoint":self.endpoint,"upstream":{"endpoint":self.upstream,"model":{"name":"llama3:fixture","digest":"a".repeat(64)}}}});
-        let mut sandbox = value["spec"]["sandboxes"][0].clone();
+        let mut sandbox = value["spec"]["sandboxes"]["assistant"].clone();
         sandbox["image"]["ref"] = json!(self.agents.image);
         sandbox["harness"] = self.agents.profile["harness"].clone();
         sandbox["agent"]["inference"]["routes"][0]["overrides"]["model"] = json!("llama3:fixture");
-        value["spec"]["sandboxes"] = json!(
+        value["spec"]["sandboxes"] = Value::Object(
             (0..count)
-                .map(|index| {
-                    let mut item = sandbox.clone();
-                    item["name"] = json!(format!("assistant-{index}"));
-                    item
-                })
-                .collect::<Vec<_>>()
+                .map(|index| (format!("assistant-{index}"), sandbox.clone()))
+                .collect(),
         );
         Document::parse(value.to_string().as_bytes()).unwrap()
     }

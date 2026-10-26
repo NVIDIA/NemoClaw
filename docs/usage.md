@@ -44,11 +44,11 @@ See [CLI options and output](reference/cli.md) for bundle selection, formats, an
 
 ## Configure Sandboxes and Inference
 
-A document contains one to 32 named sandboxes, each with one harness and one agent.
+A document contains one to 32 sandboxes keyed by name, each with one harness and one agent.
 Use the [multiple-sandbox example](../examples/multiple-sandboxes.yaml) to share inference across different harnesses.
 [OpenClaw and Pi](agents.md) can select multiple models; each Deep Agents instance selects one.
 
-Declare managed services under `spec.services` and select their connections with `inferenceProviders[].serviceRef`.
+Declare managed services under `spec.services` and select their connections with `inferenceProviders.<name>.serviceRef`.
 Every declared service is installed and checked, even without an inference consumer.
 Services run on the gateway's Docker engine by default, or on another host through [SSH placement](remote-service.md).
 See [service constraints](inference.md#combine-local-and-hosted-providers) for multiple Ollama/vLLM services and [models](models.md) for hardware contracts and optional [recipes](recipes.md).
@@ -289,7 +289,7 @@ Apply recomputes its plan; a successful earlier plan does not reserve resources 
 
 ### Multiple Sandboxes
 
-Sandbox names must be unique within a deployment; each sandbox declares one named agent.
+Sandbox names, the keys of `spec.sandboxes`, are unique within a deployment; each sandbox declares one named agent.
 Agent names may repeat across sandboxes.
 Adding a named sandbox preserves existing sandbox and provider identities.
 Reordering declarations is not an update.
@@ -364,7 +364,7 @@ For records with per-resource recovery evidence, plan, apply, and destroy compar
 A saved ID with matching name, workspace, owner, and generation removes that resource from the pending-creation guard; live provider observations and plan checks still verify its identity before mutation.
 A failed agent start keeps its sandbox binding.
 Start failures report a fixed stage, failure code, and agent runtime state without forwarding native error text.
-A sandbox runs one agent runtime, and a failed start may have used it, so the next apply creates the agent in a new sandbox and deletes the old sandbox's files.
+A failed start may have left a runtime running, so the next apply creates the agent in a new sandbox and deletes the old sandbox's files.
 When Fabric rejected the configuration, correct the settings before reapplying.
 An invocation failure can also leave a runtime unusable; NemoClaw cannot detect that, and an unchanged apply leaves it alone.
 To recover from that, or from a sandbox that exited, see [workload replacement](#replace-workloads-after-an-unusable-runtime).

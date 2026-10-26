@@ -346,7 +346,7 @@ async fn bare_brev_hosted_openclaw_lifecycle() {
     );
     assert_eq!(
         document
-            .sandbox_harness(&document.spec.sandboxes[0])
+            .sandbox_harness(document.sandboxes().next().unwrap())
             .unwrap()
             .kind,
         "nvidia.fabric.openclaw".parse().unwrap()
@@ -432,7 +432,7 @@ async fn bare_brev_hosted_openclaw_lifecycle() {
     let response = openclaw_reply(
         &client,
         &binding,
-        &document.spec.sandboxes[0].agent.name,
+        &document.spec.sandboxes.values().next().unwrap().agent.name,
         &format!("{}-brev", document.metadata.uid),
     )
     .await;

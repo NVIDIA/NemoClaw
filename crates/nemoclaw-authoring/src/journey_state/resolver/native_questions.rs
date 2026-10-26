@@ -203,8 +203,9 @@ pub(super) fn native_questions_for_values(
             }
         }
     }
-    if let (Some(schema), Some(document)) = (capabilities.model_schemas.get(harness_id), document) {
-        let sandbox = &document.spec.sandboxes[0];
+    if let (Some(schema), Some(document)) = (capabilities.model_schemas.get(harness_id), document)
+        && let Some(sandbox) = crate::journey_definition::only_sandbox(document)
+    {
         let inference = document
             .sandbox_inference(sandbox)
             .map_err(|error| diagnostic("journey", &error.to_string()))?;

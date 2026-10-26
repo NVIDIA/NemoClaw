@@ -394,7 +394,8 @@ async fn the_gateway_installs_authenticates_and_is_removed_keeping_storage() {
             "authentication": {"profile": "development"}
         }
     });
-    value["spec"]["sandboxes"][0]["image"]["metadata"] = json!({"env": "TEST_IMAGE_METADATA"});
+    value["spec"]["sandboxes"]["assistant"]["image"]["metadata"] =
+        json!({"env": "TEST_IMAGE_METADATA"});
     let document = Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap();
     let generations: Generations = [
         "workspace",
@@ -631,11 +632,11 @@ spec:
       authentication: {{profile: development}}
       imagePullSecrets: {pull_secrets}
   inferenceProviders:
-    - name: hosted
+    hosted:
       provider: openai
       endpoint: https://inference.example.test/v1
   sandboxes:
-    - name: assistant
+    assistant:
       image:
         ref: {image}
         metadata: {{env: NEMOCLAW_TEST_AGENT_METADATA}}
@@ -657,10 +658,10 @@ spec:
         image = image,
         pull_secrets = serde_json::to_string(pull_secrets).unwrap(),
         harness = harness,
-        // Pi needs a context window for a model it does not ship; OpenClaw
-        // declares no model extensions.
+        // Pi needs a context window, input types and cost for a model it does
+        // not ship; OpenClaw declares no model extensions.
         extensions = if harness == "nvidia.fabric.pi" {
-            "\n                extensions:\n                  context_window: 8192"
+            "\n                extensions:\n                  context_window: 8192\n                  input: [text]\n                  cost: {input: 0, output: 0, cacheRead: 0, cacheWrite: 0}"
         } else {
             ""
         },

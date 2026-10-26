@@ -165,9 +165,8 @@ async fn independent_sandboxes_reconcile_concurrently_and_retain_shared_dependen
     .unwrap();
     *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
     let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
-    let mut second = document.spec.sandboxes[0].clone();
-    second.name = "independent".into();
-    document.spec.sandboxes.push(second);
+    let second = document.spec.sandboxes["assistant"].clone();
+    document.spec.sandboxes.insert("independent".into(), second);
     fixture.state.lock().unwrap().sandbox_create_delay = std::time::Duration::from_secs(2);
     let deployment = Deployment::new(directory.path(), &bundle);
     let cancel = CancellationToken::new();
@@ -312,7 +311,12 @@ async fn interrupted_create_preserves_pending_targets_allows_unrelated_intent_an
     assert_apply_unfinished(&deployment, &cancel).await;
     // The lost reply was the inference registration's: its target cannot change.
     let mut changed = document.clone();
-    changed.spec.inference_providers[0].endpoint = "http://172.20.0.1:11437/v1".into();
+    changed
+        .spec
+        .inference_providers
+        .get_mut("local")
+        .unwrap()
+        .endpoint = "http://172.20.0.1:11437/v1".into();
     let error = deployment.apply(&changed, &cancel).await.unwrap_err();
     assert!(
         error
@@ -385,15 +389,14 @@ async fn sdk_apply_cli_export_sdk_reapply_and_cli_destroy_share_state() {
 async fn separate_agent_sandboxes_cli_export_reapply_and_policy_drift() {
     let mut document =
         Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes()).unwrap();
-    let primary = document.spec.sandboxes[0].clone();
+    let primary = document.spec.sandboxes["assistant"].clone();
     for name in ["reader", "reviewer", "auditor"] {
         let mut sandbox = primary.clone();
-        sandbox.name = name.into();
         sandbox.agent.name = name.into();
         sandbox.agent.tools = Some(nemoclaw_sdk::config::AgentTools {
             allow: vec!["read".into()],
         });
-        document.spec.sandboxes.push(sandbox);
+        document.spec.sandboxes.insert(name.into(), sandbox);
     }
     let lifecycle = Lifecycle::start(&document.yaml().unwrap()).await;
     let effects = lifecycle.apply().await;
@@ -410,7 +413,11 @@ async fn tool_disclosure_cli_export_reapply_and_configuration_on_stdin() {
     // both modes, so one deployment covers their drift detection.
     let mut document =
         Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes()).unwrap();
-    document.spec.sandboxes[0]
+    document
+        .spec
+        .sandboxes
+        .get_mut("assistant")
+        .unwrap()
         .harness
         .as_mut()
         .unwrap()
@@ -420,8 +427,12 @@ async fn tool_disclosure_cli_export_reapply_and_configuration_on_stdin() {
         .unwrap(),
     );
     // Export and reapply also cover an authored inference API.
-    document.spec.inference_providers[0].api =
-        Some(nemoclaw_sdk::config::InferenceApi::OpenaiCompletions);
+    document
+        .spec
+        .inference_providers
+        .get_mut("local")
+        .unwrap()
+        .api = Some(nemoclaw_sdk::config::InferenceApi::OpenaiCompletions);
     let lifecycle = Lifecycle::start(&document.yaml().unwrap()).await;
     let effects = lifecycle.apply().await;
     assert_eq!(effects, lifecycle.document.spec.sandboxes.len() + 3);
@@ -441,7 +452,13 @@ async fn web_search_cli_export_reapply_and_registration_drift() {
         "search":{"kind":"webSearch","provider":"tavily","credential":{"env":"SEARCH_KEY"}}
     }))
     .unwrap();
-    document.spec.sandboxes[0].agent.integration_refs = vec!["search".into()];
+    document
+        .spec
+        .sandboxes
+        .get_mut("assistant")
+        .unwrap()
+        .agent
+        .integration_refs = vec!["search".into()];
     let lifecycle = Lifecycle::start(&document.yaml().unwrap()).await;
     let effects = lifecycle.apply().await;
     assert_eq!(effects, lifecycle.document.spec.sandboxes.len() + 5);
@@ -462,7 +479,13 @@ async fn api_integration_applies_exports_and_reapplies_unchanged() {
             "credential":{"env":"BOOKINGS_API_KEY"}}
     }))
     .unwrap();
-    document.spec.sandboxes[0].agent.integration_refs = vec!["bookings".into()];
+    document
+        .spec
+        .sandboxes
+        .get_mut("assistant")
+        .unwrap()
+        .agent
+        .integration_refs = vec!["bookings".into()];
     let lifecycle = Lifecycle::start(&document.yaml().unwrap()).await;
     let effects = lifecycle.apply().await;
     assert_eq!(effects, lifecycle.document.spec.sandboxes.len() + 5);
@@ -477,7 +500,12 @@ async fn network_grants_apply_export_and_reapply_unchanged() {
     // and survive export and re-apply.
     let mut document =
         Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes()).unwrap();
-    document.spec.sandboxes[0].network = serde_json::from_value(serde_json::json!({
+    document
+        .spec
+        .sandboxes
+        .get_mut("assistant")
+        .unwrap()
+        .network = serde_json::from_value(serde_json::json!({
         "tier": "isolated",
         "grants": {"docs": {"endpoints": [{
             "host": "docs.example.com", "port": 443, "protocol": "rest", "enforcement": "enforce",
@@ -564,7 +592,7 @@ impl Lifecycle {
         let mut secrets = FixtureSecrets {
             image_metadata: BTreeMap::new(),
         };
-        for sandbox in &mut document.spec.sandboxes {
+        for sandbox in document.spec.sandboxes.values_mut() {
             sandbox.image.ref_ = image.clone();
             secrets.image_metadata.insert(
                 sandbox.image.metadata.as_ref().unwrap().env.clone(),
@@ -696,7 +724,10 @@ impl Lifecycle {
     /// A search profile without endpoints, or a sandbox without its provider
     /// attachments, stops plan and export until the gateway is restored.
     async fn assert_search_registration_drift(&self) {
-        let search_provider = self.document.spec.sandboxes[0]
+        let search_provider = self
+            .document
+            .sandbox("assistant")
+            .unwrap()
             .integration_bindings(&self.document.spec.integrations)
             .unwrap()
             .iter()
@@ -746,11 +777,7 @@ impl Lifecycle {
             .unwrap()
             .profiles
             .insert(key, profile);
-        let sandbox_key = format!(
-            "{}/{}",
-            self.document.workspace(),
-            self.document.spec.sandboxes[0].name
-        );
+        let sandbox_key = format!("{}/assistant", self.document.workspace());
         let attached = self.fixture.state.lock().unwrap().sandboxes[&sandbox_key]
             .spec
             .as_ref()
@@ -799,7 +826,13 @@ impl Lifecycle {
     async fn assert_tool_policy_drift(&self, effects: usize) {
         let state = fs::read(self.directory.path().join("terraform.tfstate")).unwrap();
         let mut broadened = self.document.clone();
-        broadened.spec.sandboxes[1].agent.tools = None;
+        broadened
+            .spec
+            .sandboxes
+            .get_mut("reader")
+            .unwrap()
+            .agent
+            .tools = None;
         let plan = self
             .deployment
             .plan(&broadened, &self.cancel)
@@ -844,11 +877,7 @@ impl Lifecycle {
     /// credential. A configuration changed inside the sandbox outside OpenTofu
     /// is not reported: Fabric reports no applied configuration.
     async fn assert_configuration_on_stdin(&self) {
-        let key = format!(
-            "{}/{}",
-            self.document.workspace(),
-            self.document.spec.sandboxes[0].name
-        );
+        let key = format!("{}/assistant", self.document.workspace());
         let sandbox_id = self.fixture.state.lock().unwrap().sandboxes[&key]
             .metadata
             .as_ref()
@@ -861,7 +890,7 @@ impl Lifecycle {
             original,
             nemoclaw_sdk::fabric_config::for_sandbox(
                 &self.document,
-                &self.document.spec.sandboxes[0]
+                self.document.sandbox("assistant").unwrap()
             )
             .unwrap()
         );
@@ -963,8 +992,8 @@ async fn startup_and_observation_failures_retain_bindings_and_recover() {
         sandbox.status.as_mut().unwrap().phase = openshell_core::proto::SandboxPhase::Ready as i32;
     }
     let recovery = deployment.apply(&document, &cancel).await.unwrap();
-    // The failed start may have used the sandbox's one runtime, so the retry
-    // creates the agent in a new sandbox.
+    // The failed start may have left a runtime running, so the retry creates
+    // the agent in a new sandbox.
     let action = |prefix: &str| {
         recovery
             .changes
@@ -1038,7 +1067,7 @@ async fn destroy_waits_for_graceful_sandbox_stop_without_retrying() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
-async fn mixed_sandboxes_reorder_add_recover_export_and_destroy_independently() {
+async fn mixed_sandboxes_add_recover_export_and_destroy_independently() {
     let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
     let directory = tempfile::tempdir().unwrap();
     let fixture = Fixture::start().await;
@@ -1048,10 +1077,12 @@ async fn mixed_sandboxes_reorder_add_recover_export_and_destroy_independently() 
     .unwrap();
     *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
     let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
-    let mut other = document.spec.sandboxes[0].clone();
-    other.name = "research".into();
+    let mut other = document.spec.sandboxes["assistant"].clone();
     other.harness.as_mut().unwrap().kind = "nvidia.fabric.langchain.deepagents".parse().unwrap();
-    document.spec.sandboxes.push(other.clone());
+    document
+        .spec
+        .sandboxes
+        .insert("research".into(), other.clone());
     let deployment = Deployment::new(directory.path(), &bundle);
     let cancel = CancellationToken::new();
     let preview = deployment.plan(&document, &cancel).await.unwrap();
@@ -1064,7 +1095,6 @@ async fn mixed_sandboxes_reorder_add_recover_export_and_destroy_independently() 
     let before: serde_json::Value =
         serde_json::from_slice(&fs::read(directory.path().join("terraform.tfstate")).unwrap())
             .unwrap();
-    document.spec.sandboxes.reverse();
     assert!(
         deployment
             .plan(&document, &cancel)
@@ -1081,8 +1111,7 @@ async fn mixed_sandboxes_reorder_add_recover_export_and_destroy_independently() 
             .changes
             .is_empty()
     );
-    other.name = "third".into();
-    document.spec.sandboxes.push(other);
+    document.spec.sandboxes.insert("third".into(), other);
     let added = deployment.plan(&document, &cancel).await.unwrap();
     // The sandbox, its agent, and the agent's configuration.
     assert_eq!(added.changes.len(), 3);
@@ -1230,7 +1259,11 @@ async fn failed_first_configuration_accepts_corrected_intent_by_replacing_the_sa
     fixture.state.lock().unwrap().exec_exit = 1;
     assert!(deployment.apply(&document, &cancel).await.is_err());
     let sandboxes = fixture.state.lock().unwrap().sandboxes.clone();
-    document.spec.sandboxes[0]
+    document
+        .spec
+        .sandboxes
+        .get_mut("assistant")
+        .unwrap()
         .agent
         .inference
         .as_mut()
@@ -1271,8 +1304,9 @@ async fn cli_redaction_preserves_failures_and_recovery_with_short_and_colliding_
     .unwrap();
     *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
     let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
-    document.spec.inference_providers[0].endpoint = "https://127.0.0.1:9/v1".into();
-    document.spec.inference_providers[0].credential = Some(nemoclaw_sdk::config::SecretRef {
+    let provider = document.spec.inference_providers.get_mut("local").unwrap();
+    provider.endpoint = "https://127.0.0.1:9/v1".into();
+    provider.credential = Some(nemoclaw_sdk::config::SecretRef {
         env: "NEMOCLAW_TEST_REDACTION_KEY".into(),
     });
     let input = directory.path().join("deployment.yaml");
@@ -1311,7 +1345,11 @@ async fn cli_redaction_preserves_failures_and_recovery_with_short_and_colliding_
         String::from_utf8_lossy(&applied.stdout)
     );
     let original = fixture.state.lock().unwrap().sandboxes.clone();
-    document.spec.sandboxes[0]
+    document
+        .spec
+        .sandboxes
+        .get_mut("assistant")
+        .unwrap()
         .agent
         .inference
         .as_mut()
@@ -1393,7 +1431,7 @@ async fn rejected_policy_fails_promptly_with_context_and_allows_recovery_or_dest
                 .unwrap();
         *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
         let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
-        let name = document.spec.sandboxes[0].name.clone();
+        let name = "assistant";
         {
             let mut state = fixture.state.lock().unwrap();
             state.sandbox_phase = Some(SandboxPhase::Starting);
@@ -1510,8 +1548,10 @@ async fn pi_start_failure_names_the_sandbox_in_json_and_allows_destroy() {
     ))
     .unwrap();
     input["spec"]["gateway"]["endpoint"] = fixture.endpoint.clone().into();
-    input["spec"]["sandboxes"][0]["name"] = "coder".into();
-    input["spec"]["sandboxes"][0]["harness"]["kind"] = "nvidia.fabric.pi".into();
+    let sandboxes = input["spec"]["sandboxes"].as_object_mut().unwrap();
+    let mut sandbox = sandboxes.remove("assistant").unwrap();
+    sandbox["harness"]["kind"] = "nvidia.fabric.pi".into();
+    sandboxes.insert("coder".into(), sandbox);
     let mut document = Document::parse(input.to_string().as_bytes()).unwrap();
     let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
     let input = directory.path().join("input.yaml");
@@ -1598,7 +1638,9 @@ async fn sandbox_startup_failure_names_reason_and_guidance_and_allows_destroy() 
         ))
         .unwrap();
         input["spec"]["gateway"]["endpoint"] = fixture.endpoint.clone().into();
-        input["spec"]["sandboxes"][0]["name"] = "coder".into();
+        let sandboxes = input["spec"]["sandboxes"].as_object_mut().unwrap();
+        let sandbox = sandboxes.remove("assistant").unwrap();
+        sandboxes.insert("coder".into(), sandbox);
         let mut document = Document::parse(input.to_string().as_bytes()).unwrap();
         let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
         let input = directory.path().join("input.yaml");
@@ -1693,14 +1735,14 @@ async fn scoped_provider_labels_preserve_authored_identity() {
     ))
     .unwrap();
     input["spec"]["gateway"]["endpoint"] = fixture.endpoint.clone().into();
-    let mut provider = input["spec"]["inferenceProviders"][0].take();
-    provider["name"] = "responses".into();
+    let provider = input["spec"]["inferenceProviders"]["local"].take();
     input["spec"]
         .as_object_mut()
         .unwrap()
         .remove("inferenceProviders");
-    input["spec"]["sandboxes"][0]["inferenceProviders"] = serde_json::json!([provider]);
-    input["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["providerRef"] =
+    input["spec"]["sandboxes"]["assistant"]["inferenceProviders"] =
+        serde_json::json!({"responses": provider});
+    input["spec"]["sandboxes"]["assistant"]["agent"]["inference"]["routes"][0]["providerRef"] =
         "responses".into();
     let mut document = Document::parse(input.to_string().as_bytes()).unwrap();
     let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;

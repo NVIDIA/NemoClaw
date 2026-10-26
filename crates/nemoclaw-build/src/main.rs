@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+mod assessment_cli;
 #[cfg(feature = "sdk")]
 mod platform;
 mod run_ci;
@@ -25,6 +26,49 @@ struct Cli {
 }
 #[derive(Subcommand)]
 enum Action {
+    /// Assess saved release SBOMs without authorizing or publishing a release.
+    ReleaseAssess {
+        #[command(flatten)]
+        inputs: assessment_cli::Inputs,
+        #[arg(long, value_enum, default_value = "text")]
+        format: AssessmentFormat,
+    },
+    /// Freshly assess and bind private release evidence; never publish anything.
+    ReleaseGate(assessment_cli::GateArgs),
+    /// Verify index and platform digests against the expected release inventory.
+    ReleaseVerifyPromotion {
+        #[arg(long)]
+        expected: PathBuf,
+        #[arg(long)]
+        actual: PathBuf,
+    },
+    /// Select explicitly supported release tags for a monitoring matrix.
+    ReleaseMonitorPlan {
+        #[arg(long)]
+        supported: PathBuf,
+    },
+    /// Validate the candidate's inert image catalog with the trusted controller.
+    ReleaseCatalog {
+        #[arg(long)]
+        catalog: PathBuf,
+        #[arg(long)]
+        candidate_revision: String,
+        #[arg(long)]
+        source_revision: String,
+    },
+    /// Check public release metadata and immutable monitoring inputs.
+    ReleaseMonitorVerify {
+        #[arg(long)]
+        supported: PathBuf,
+        #[arg(long)]
+        tag: String,
+        #[arg(long)]
+        release_metadata: PathBuf,
+        #[arg(long)]
+        inventory: PathBuf,
+        #[arg(long)]
+        sboms: PathBuf,
+    },
     /// Render repository Markdown into Fern pages and check local links.
     #[cfg(feature = "sdk")]
     Docs {
@@ -112,6 +156,12 @@ enum Action {
         #[arg(long)]
         shards: String,
     },
+}
+#[derive(Clone, clap::ValueEnum)]
+enum AssessmentFormat {
+    Text,
+    Json,
+    Sarif,
 }
 #[derive(Clone, clap::ValueEnum)]
 enum ChangedWorkflow {
@@ -500,6 +550,84 @@ async fn bundle(pins: &Pins, platform: &str) -> Result<()> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    if let Action::ReleaseCatalog {
+        catalog,
+        candidate_revision,
+        source_revision,
+    } = &cli.command
+    {
+        let catalog = assessment_cli::catalog(catalog, candidate_revision, source_revision)?;
+        println!("{}", serde_json::to_string(&catalog)?);
+        return Ok(());
+    }
+    if let Action::ReleaseMonitorPlan { supported } = &cli.command {
+        match assessment_cli::monitor_plan(supported) {
+            Ok(releases) => println!("{}", serde_json::json!({"include":releases})),
+            Err(error) => {
+                eprintln!("{error}");
+                std::process::exit(3);
+            }
+        }
+        return Ok(());
+    }
+    if let Action::ReleaseMonitorVerify {
+        supported,
+        tag,
+        release_metadata,
+        inventory,
+        sboms,
+    } = &cli.command
+    {
+        let verified =
+            assessment_cli::monitor_verify(supported, tag, release_metadata, inventory, sboms)
+                .is_ok();
+        println!(
+            "{}",
+            serde_json::json!({"verified":verified,"publication_authorized":false})
+        );
+        std::process::exit(if verified { 0 } else { 3 });
+    }
+    if let Action::ReleaseGate(args) = &cli.command {
+        let status = assessment_cli::gate(args).unwrap_or_else(|error| {
+            eprintln!("{error}");
+            nemoclaw_build::release_assessment::Status::Incomplete
+        });
+        println!(
+            "{}",
+            serde_json::json!({"status": status, "publication_authorized":false})
+        );
+        std::process::exit(assessment_cli::exit_code(status));
+    }
+    if let Action::ReleaseVerifyPromotion { expected, actual } = &cli.command {
+        let valid = assessment_cli::verify_promotion(expected, actual).is_ok();
+        println!(
+            "{}",
+            serde_json::json!({"verified":valid, "publication_authorized":false})
+        );
+        std::process::exit(if valid { 0 } else { 3 });
+    }
+    if let Action::ReleaseAssess { inputs, format } = cli.command {
+        use nemoclaw_build::release_assessment::{self, Assessment};
+        let result = inputs.assess().map(|(_, assessment)| assessment);
+        let assessment = result.unwrap_or_else(Assessment::incomplete);
+        match format {
+            AssessmentFormat::Text => {
+                print!("{}", release_assessment::report::text(&assessment));
+            }
+            AssessmentFormat::Json => {
+                serde_json::to_writer_pretty(std::io::stdout().lock(), &assessment)?;
+                println!();
+            }
+            AssessmentFormat::Sarif => {
+                serde_json::to_writer_pretty(
+                    std::io::stdout().lock(),
+                    &release_assessment::sarif::document(&assessment),
+                )?;
+                println!();
+            }
+        }
+        std::process::exit(assessment_cli::exit_code(assessment.status));
+    }
     #[cfg(feature = "sdk")]
     if let Action::Docs { check, revision } = cli.command {
         return nemoclaw_build::docs::generate(Path::new("."), check, revision.as_deref());
@@ -679,6 +807,12 @@ async fn main() -> Result<()> {
             unreachable!("documentation generation returned before build tool checks")
         }
         Action::Ci { .. }
+        | Action::ReleaseGate(..)
+        | Action::ReleaseVerifyPromotion { .. }
+        | Action::ReleaseMonitorPlan { .. }
+        | Action::ReleaseCatalog { .. }
+        | Action::ReleaseMonitorVerify { .. }
+        | Action::ReleaseAssess { .. }
         | Action::Images { .. }
         | Action::Changes { .. }
         | Action::LifecycleTiming { .. } => {

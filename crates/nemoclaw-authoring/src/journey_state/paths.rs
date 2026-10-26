@@ -22,9 +22,10 @@ pub(super) fn native_value<'a>(
 }
 
 pub(super) fn routes_path(values: &Value) -> Option<String> {
-    let agent = values.pointer("/spec/sandboxes/0/agent")?;
+    let sandbox = sandbox_path(values)?;
+    let agent = values.pointer(&format!("{sandbox}/agent"))?;
     if agent.get("inference").is_some() {
-        return Some(ROUTES.into());
+        return Some(format!("{sandbox}/agent/inference/routes"));
     }
     let reference = agent.get("inferenceRef")?.as_str()?;
     let escaped = reference.replace('~', "~0").replace('/', "~1");
@@ -33,7 +34,8 @@ pub(super) fn routes_path(values: &Value) -> Option<String> {
 }
 
 pub(super) fn harness_path(values: &Value) -> Option<String> {
-    let sandbox = values.pointer("/spec/sandboxes/0")?;
+    let path = sandbox_path(values)?;
+    let sandbox = values.pointer(&path)?;
     if let Some(reference) = sandbox.get("harnessRef").and_then(Value::as_str) {
         let escaped = reference.replace('~', "~0").replace('/', "~1");
         let path = format!("/spec/harnesses/{escaped}");
@@ -42,7 +44,7 @@ pub(super) fn harness_path(values: &Value) -> Option<String> {
     sandbox
         .get("harness")
         .is_some()
-        .then(|| "/spec/sandboxes/0/harness".into())
+        .then(|| format!("{path}/harness"))
 }
 
 pub(super) fn harness_kind(values: &Value) -> Option<&str> {

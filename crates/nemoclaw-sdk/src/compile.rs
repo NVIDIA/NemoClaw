@@ -24,7 +24,7 @@ pub const NEMOCLAW_PROVIDERS: [&str; 4] = ["openshell", "fabric", "vllm", "ollam
 
 /// The kind of the `terraform_data` that holds an agent's configuration. A
 /// changed configuration replaces the agent's sandbox through
-/// `replace_triggered_by`, because Fabric starts one agent runtime per sandbox.
+/// `replace_triggered_by`, rather than starting another runtime beside the first.
 pub const AGENT_CONFIGURATION: &str = "agent_configuration";
 
 /// The address of the `terraform_data` holding a sandbox's agent configuration.
@@ -116,9 +116,7 @@ fn targets_with_plans(
             generations,
         )?);
     }
-    let mut sandboxes: Vec<_> = document.spec.sandboxes.iter().collect();
-    sandboxes.sort_by_key(|sandbox| &sandbox.name);
-    for sandbox in sandboxes {
+    for sandbox in document.sandboxes() {
         document.sandbox_harness(sandbox)?;
         let web_search = document.web_search(sandbox)?;
         let image_scope = document.image_scope(sandbox)?;
@@ -143,7 +141,7 @@ fn targets_with_plans(
         }
 
         let mut values: Row = [
-            ("name".into(), sandbox.name.clone()),
+            ("name".into(), sandbox.name.to_owned()),
             ("workspace".into(), workspace.clone()),
             ("owner".into(), document.metadata.uid.clone()),
             (
@@ -178,7 +176,10 @@ fn targets_with_plans(
             let mut values = nemoclaw_fabric::agent::decompose(&configuration);
             values.extend([
                 ("workspace".into(), workspace.clone()),
-                (nemoclaw_fabric::agent::SANDBOX.into(), sandbox.name.clone()),
+                (
+                    nemoclaw_fabric::agent::SANDBOX.into(),
+                    sandbox.name.to_owned(),
+                ),
                 ("owner".into(), document.metadata.uid.clone()),
                 (
                     "generation".into(),
@@ -196,7 +197,7 @@ fn targets_with_plans(
             });
             result.push(Target {
                 kind: AGENT_CONFIGURATION.into(),
-                address: agent_configuration_address(&sandbox.name),
+                address: agent_configuration_address(sandbox.name),
                 values: [("input".into(), configuration.to_string())].into(),
             });
         }
@@ -651,14 +652,12 @@ pub(crate) fn sandbox_image_pulls(document: &Document) -> BTreeMap<String, Targe
         crate::config::Gateway::External(gateway) => gateway.engine.clone(),
     };
     document
-        .spec
-        .sandboxes
-        .iter()
+        .sandboxes()
         .filter(|sandbox| sandbox.image.metadata.is_none() && !engine.is_empty())
         .map(|sandbox| {
             let name = sandbox.image.ref_.clone();
             (
-                sandbox.name.clone(),
+                sandbox.name.to_owned(),
                 Target {
                     kind: "docker_image".into(),
                     address: format!(
@@ -694,12 +693,10 @@ fn compile_with_plans(
         .collect();
     let mut runtime_sources = BTreeMap::new();
     let mut profile_sources = BTreeMap::new();
-    let mut ordered: Vec<_> = document.spec.sandboxes.iter().collect();
-    ordered.sort_by_key(|sandbox| &sandbox.name);
     let pulls = sandbox_image_pulls(document);
-    for (index, sandbox) in ordered.iter().enumerate() {
+    for (index, sandbox) in document.sandboxes().enumerate() {
         let mut source = format!("data.fabric_harnesses.sandbox_{index}");
-        if let Some(pull) = pulls.get(&sandbox.name) {
+        if let Some(pull) = pulls.get(sandbox.name) {
             // The sandbox and its agent use reads that wait for the pull: an
             // unknown image ID defers them to apply. The plan-time discovery
             // read stays, and accepts an image the engine doesn't hold yet.
@@ -726,7 +723,7 @@ fn compile_with_plans(
             });
             source = format!("data.fabric_harnesses.sandbox_{index}_acquired");
         }
-        runtime_sources.insert(sandbox.name.clone(), source.clone());
+        runtime_sources.insert(sandbox.name.to_owned(), source.clone());
         for provider in document.sandbox_inference_providers(sandbox)? {
             profile_sources
                 .entry(format!("nemoclaw-inference-{}", provider.key))

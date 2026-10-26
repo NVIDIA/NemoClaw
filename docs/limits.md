@@ -53,7 +53,6 @@ Other pages state a limit where it affects a procedure and link the same issue.
 | Managed MCP servers | [#12137](https://github.com/NVIDIA/NemoClaw/issues/12137) |
 | Hermes OAuth and managed tools | [#12042](https://github.com/NVIDIA/NemoClaw/issues/12042) |
 | Hermes's native API server, dashboard and browser TUI | [#13321](https://github.com/NVIDIA/NemoClaw/issues/13321) |
-| OpenClaw agents don't start in OpenShell sandboxes with the pinned Fabric | [#13372](https://github.com/NVIDIA/NemoClaw/issues/13372) |
 | OpenClaw's dashboard | [#13360](https://github.com/NVIDIA/NemoClaw/issues/13360) |
 | OpenClaw's Brave and Tavily web search plugins | [#13361](https://github.com/NVIDIA/NemoClaw/issues/13361) |
 | Collector provisioning, production collector troubleshooting and Deep Agents trace export | [#12144](https://github.com/NVIDIA/NemoClaw/issues/12144) |
