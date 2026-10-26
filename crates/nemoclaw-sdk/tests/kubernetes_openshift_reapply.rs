@@ -87,10 +87,15 @@ async fn reapplying_authentication_refuses_a_changed_or_missing_range_and_create
             .await;
 
         let seen = server.requests()[requests..].to_vec();
-        // A changed range is a binding mismatch; a missing one is a backend
-        // error whose hint names the UID range.
+        // A changed range is a binding mismatch that names the namespace and
+        // its ranges; a missing one is a backend error whose hint names the UID range.
         let refused = match &result {
-            Err(ObservationError::BindingMismatch) => !missing,
+            Err(ObservationError::BindingChanged(detail)) => {
+                !missing
+                    && detail.starts_with(
+                        "Namespace agents has a different OpenShift UID or group range",
+                    )
+            }
             Err(ObservationError::Backend(hint)) => missing && hint.contains("UID range"),
             _ => false,
         };

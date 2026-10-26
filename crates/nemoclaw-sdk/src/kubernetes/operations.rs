@@ -266,11 +266,12 @@ impl Operations {
             && !receipt.issuer.is_empty()
             && let Some(recorded) = receipt.namespace_identity
         {
-            let namespace = cluster.verify(self.namespace(spec, &receipt)?).await?;
+            let owned = self.namespace(spec, &receipt)?;
+            let namespace = cluster.verify(owned).await?;
             let identity =
                 Identity::from_annotations(&namespace.metadata.annotations.unwrap_or_default());
             if identity != Some(recorded) {
-                return Err(ObservationError::BindingMismatch);
+                return Err(range_changed(owned, recorded, identity));
             }
         }
         // Ensure records the namespace identity before it writes an OpenShift
@@ -392,6 +393,35 @@ impl Operations {
         })
     }
 
+    /// Check before any change that applying `spec` would not be refused:
+    /// storage creates the target namespace, so a namespace this deployment
+    /// has not recorded must not exist yet.
+    pub async fn plan(&self, spec: &Spec) -> Result<(), ObservationError> {
+        if spec.kind != STORAGE_KIND {
+            return Ok(());
+        }
+        let recorded = self.receipt(spec)?.is_some_and(|receipt| {
+            receipt
+                .objects
+                .iter()
+                .any(|owned| owned.kind == "Namespace")
+        });
+        if recorded {
+            return Ok(());
+        }
+        let namespace = Owned {
+            api_version: "v1".into(),
+            kind: "Namespace".into(),
+            namespace: String::new(),
+            name: self.target(spec)?.namespace.clone(),
+            uid: String::new(),
+        };
+        match self.cluster(spec).get(&namespace).await? {
+            Some(_) => Err(namespace.changed(super::cluster::NOT_ADOPTED)),
+            None => Ok(()),
+        }
+    }
+
     /// Create or repair the resource, then observe it.
     pub async fn ensure(
         &self,
@@ -410,17 +440,13 @@ impl Operations {
                 self.read(spec, prior).await?;
                 let cluster = self.cluster(spec);
                 if spec.settings.runtime.provider == crate::config::ComputeDriver::OpenShift {
-                    let identity = namespace_identity(
-                        &cluster,
-                        self.namespace(spec, &receipt)?,
-                        self.openshift_wait,
-                    )
-                    .await?;
-                    if receipt
-                        .namespace_identity
-                        .is_some_and(|recorded| recorded != identity)
+                    let namespace = self.namespace(spec, &receipt)?;
+                    let identity =
+                        namespace_identity(&cluster, namespace, self.openshift_wait).await?;
+                    if let Some(recorded) = receipt.namespace_identity
+                        && recorded != identity
                     {
-                        return Err(ObservationError::BindingMismatch);
+                        return Err(range_changed(namespace, recorded, Some(identity)));
                     }
                     receipt.namespace_identity = Some(identity);
                     receipt.save(&self.state)?;
@@ -641,6 +667,23 @@ impl Operations {
         }
         Ok(())
     }
+}
+
+/// A refusal naming the namespace whose OpenShift ranges no longer match the
+/// recorded user and group.
+fn range_changed(
+    namespace: &Owned,
+    recorded: Identity,
+    found: Option<Identity>,
+) -> ObservationError {
+    let found = found.map_or_else(
+        || "no valid range".to_owned(),
+        |found| format!("UID {} and group {}", found.user, found.group),
+    );
+    namespace.changed(&format!(
+        "has a different OpenShift UID or group range: recorded UID {} and group {}, found {found}",
+        recorded.user, recorded.group
+    ))
 }
 
 /// OpenShift assigns ranges shortly after creating a namespace. Only the

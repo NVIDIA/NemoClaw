@@ -99,6 +99,11 @@ impl Backend for KubernetesBackend {
                 "managed Kubernetes target or identity changed; resources retained",
             ));
         }
+        // A new deployment must not meet an object it would refuse at apply;
+        // checking now stops the plan before any change is made.
+        if prior.is_none() {
+            operations(&want).await?.plan(&want).await?;
+        }
         Ok(())
     }
 
