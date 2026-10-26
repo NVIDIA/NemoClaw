@@ -56,6 +56,20 @@ describe("protected managed-image runtime workflow", () => {
     expect(validateManagedImageProtectedRuntimeWorkflow(workflow())).toEqual([]);
   });
 
+  it("accepts the protected finalization limits through the shared workflow boundary", () => {
+    expect(validateE2eWorkflow(workflow())).toEqual([]);
+  });
+
+  it.each([
+    ["Upload protected managed-image runtime artifacts", 3],
+    ["Upload protected managed-image runtime artifacts", 5],
+    ["Clean up Docker auth", 2],
+  ])("rejects changed finalization timeout for %s", (name, minutes) => {
+    const value = workflow();
+    namedStep(value, String(name))["timeout-minutes"] = minutes;
+    expect(validateE2eWorkflow(value)).not.toEqual([]);
+  });
+
   it.each([
     ["Bind reviewed candidate OpenShell runtime", "if", "false"],
     ["Bind reviewed candidate OpenShell runtime", "continue-on-error", true],
