@@ -199,23 +199,198 @@ fn asked_inference_api_precedes_route_model_in_question_order() {
 }
 
 #[test]
-fn omit_guidance_rejects_required_or_supplied_sdk_fields() {
+fn omit_guidance_keeps_supplied_sdk_values_without_asking() {
     let capabilities = Capabilities::available();
-    let base =
-        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+    let mut values: serde_json::Value =
+        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
+    values["spec"]["gateway"]["endpoint"] = json!("http://127.0.0.1:17699");
+    let base = PartialDocument::from_yaml(values.to_string().as_bytes()).unwrap();
+    let state = JourneyDefinition::new("supplied", base)
+        .ask([JourneyScope::DeploymentFields])
+        .omit([
+            "/metadata/name",
+            "/spec/inferenceProviders/nvidia-prod/api",
+            "/spec/gateway/endpoint",
+        ])
+        .start(&capabilities)
+        .unwrap();
+    let resolution = state.resolve(&capabilities).unwrap();
+    for path in [
+        "/metadata/name",
+        "/spec/inferenceProviders/nvidia-prod/api",
+        "/spec/gateway/endpoint",
+    ] {
+        assert!(resolution.question(path).is_none(), "{path} was asked");
+        assert!(!resolution.omitted().contains(&path.to_owned()), "{path}");
+    }
+    assert_eq!(
+        state.values().pointer("/spec/gateway/endpoint"),
+        Some(&json!("http://127.0.0.1:17699"))
+    );
+    assert_eq!(
+        state.values().pointer("/metadata/name"),
+        Some(&json!("openclaw-nvidia-hosted"))
+    );
+}
+
+#[test]
+fn omit_guidance_still_asks_absent_required_sdk_fields() {
+    let capabilities = Capabilities::available();
+    let mut values: serde_json::Value =
+        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    values["metadata"].as_object_mut().unwrap().remove("name");
+    values["spec"]["gateway"] = json!({"management": "external"});
+    let base = PartialDocument::from_yaml(values.to_string().as_bytes()).unwrap();
+    let resolution = JourneyDefinition::new("required", base)
+        .omit(["/metadata/name", "/spec/gateway/endpoint"])
+        .start(&capabilities)
+        .unwrap()
+        .resolve(&capabilities)
+        .unwrap();
+    for path in ["/metadata/name", "/spec/gateway/endpoint"] {
+        let question = resolution
+            .question(path)
+            .unwrap_or_else(|| panic!("{path} was not asked"));
+        assert!(question.required(), "{path}");
+        assert_eq!(question.reason(), JourneyQuestionReason::Missing, "{path}");
+    }
+}
+
+#[test]
+fn omit_guidance_keeps_valid_supplied_adapter_settings_and_asks_the_rest() {
+    let capabilities = Capabilities::available();
+    let mut values: serde_json::Value =
+        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    values["spec"]["sandboxes"]["assistant"]["harness"]["settings"] =
+        json!({"startup_timeout_seconds": 45, "read_timeout_seconds": "slow"});
+    let base = PartialDocument::from_yaml(values.to_string().as_bytes()).unwrap();
+    let state = JourneyDefinition::new("supplied-settings", base)
+        .omit([
+            "adapter:nvidia.fabric.openclaw:/startup_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/read_timeout_seconds",
+        ])
+        .omit([JourneyScope::ActiveAdapterSettings])
+        .start(&capabilities)
+        .unwrap();
+    let resolution = state.resolve(&capabilities).unwrap();
     assert!(
-        JourneyDefinition::new("required", base.clone())
-            .omit(["/metadata/name"])
-            .start(&capabilities)
-            .is_err()
+        resolution
+            .question("adapter:nvidia.fabric.openclaw:/startup_timeout_seconds")
+            .is_none()
+    );
+    assert_eq!(
+        state
+            .values()
+            .pointer("/spec/sandboxes/assistant/harness/settings/startup_timeout_seconds"),
+        Some(&json!(45))
+    );
+    assert_eq!(
+        resolution
+            .question("adapter:nvidia.fabric.openclaw:/read_timeout_seconds")
+            .expect("invalid supplied setting")
+            .reason(),
+        JourneyQuestionReason::InvalidSupplied
+    );
+
+    let mut remote = values.clone();
+    remote["spec"]["sandboxes"]["assistant"]["harness"] =
+        json!({"kind": "nvidia.fabric.remote-agent"});
+    let base = PartialDocument::from_yaml(remote.to_string().as_bytes()).unwrap();
+    let resolution = JourneyDefinition::new("required-setting", base)
+        .omit(["adapter:nvidia.fabric.remote-agent:/base_url"])
+        .omit([JourneyScope::ActiveAdapterSettings])
+        .start(&capabilities)
+        .unwrap()
+        .resolve(&capabilities)
+        .unwrap();
+    assert!(
+        resolution
+            .question("adapter:nvidia.fabric.remote-agent:/base_url")
+            .expect("required setting")
+            .required()
+    );
+}
+
+#[test]
+fn omit_guidance_reports_the_supplied_values_it_kept_without_asking() {
+    let capabilities = Capabilities::available();
+    let mut values: serde_json::Value =
+        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    values["spec"]["sandboxes"]["assistant"]["harness"]["settings"] =
+        json!({"startup_timeout_seconds": 45});
+    values["spec"]["gateway"]["networkCIDR"] = json!("172.30.77.0/24");
+    let base = PartialDocument::from_yaml(values.to_string().as_bytes()).unwrap();
+    let resolution = JourneyDefinition::new("kept", base)
+        .ask([JourneyScope::DeploymentFields])
+        .omit([JourneyScope::ActiveAdapterSettings])
+        .omit(["/spec/gateway/endpoint", "/spec/gateway/networkCIDR"])
+        .start(&capabilities)
+        .unwrap()
+        .resolve(&capabilities)
+        .unwrap();
+    // Supplied values that guidance never omitted, such as the provider
+    // endpoint, are not reported: only omission hides a value from the journey.
+    assert_eq!(
+        resolution.kept(),
+        [
+            (
+                "/spec/gateway/networkCIDR".to_owned(),
+                json!("172.30.77.0/24")
+            ),
+            (
+                "adapter:nvidia.fabric.openclaw:/startup_timeout_seconds".to_owned(),
+                json!(45)
+            ),
+        ]
     );
     assert!(
-        JourneyDefinition::new("supplied", base)
-            .omit(["/spec/inferenceProviders/nvidia-prod/api"])
-            .start(&capabilities)
-            .is_err()
+        resolution
+            .omitted()
+            .contains(&"/spec/gateway/endpoint".to_owned())
     );
+}
+
+#[test]
+fn answers_to_omitted_required_fields_are_not_reported_as_kept() {
+    let capabilities = Capabilities::available();
+    let mut values: serde_json::Value =
+        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    values["spec"]["gateway"] = json!({"management": "external"});
+    values["spec"]["sandboxes"]["assistant"]["harness"] =
+        json!({"kind": "nvidia.fabric.remote-agent"});
+    let base = PartialDocument::from_yaml(values.to_string().as_bytes()).unwrap();
+    let mut state = JourneyDefinition::new("answered", base)
+        .omit([JourneyScope::ActiveAdapterSettings])
+        .omit(["/spec/gateway/endpoint"])
+        .start(&capabilities)
+        .unwrap();
+    state
+        .answer(
+            &capabilities,
+            "/spec/gateway/endpoint",
+            Some(json!("https://gateway.example.com")),
+        )
+        .unwrap();
+    state
+        .answer(
+            &capabilities,
+            "adapter:nvidia.fabric.remote-agent:/base_url",
+            Some(json!("https://agent.example.com")),
+        )
+        .unwrap();
+    let resolution = state.resolve(&capabilities).unwrap();
+    assert!(resolution.question("/spec/gateway/endpoint").is_none());
+    assert!(
+        resolution
+            .question("adapter:nvidia.fabric.remote-agent:/base_url")
+            .is_none()
+    );
+    assert_eq!(resolution.kept(), []);
 }
 
 #[test]
@@ -675,9 +850,10 @@ fn nested_adapter_guidance_asks_omits_and_warns_from_the_active_schema() {
     assert!(
         required_omit
             .resolve(&capabilities)
-            .unwrap_err()
-            .to_string()
-            .contains("required setting")
+            .unwrap()
+            .question("adapter:fixture.nested-guidance:/native/region")
+            .expect("omitted required setting is still asked")
+            .required()
     );
 }
 
@@ -1129,17 +1305,14 @@ fn exact_native_guidance_uses_active_fabric_fields_without_asking_the_whole_scop
     with_supplied["spec"]["sandboxes"]["assistant"]["agent"]["inference"]["routes"][0]["overrides"]
         ["settings"] = json!({"variant":"quick"});
     let supplied_model = PartialDocument::from_yaml(with_supplied.to_string().as_bytes()).unwrap();
-    let invalid_omission = JourneyDefinition::new("supplied-model", supplied_model)
+    let kept = JourneyDefinition::new("supplied-model", supplied_model)
         .omit(["model:/variant"])
         .start(&capabilities)
+        .unwrap()
+        .resolve(&capabilities)
         .unwrap();
-    assert!(
-        invalid_omission
-            .resolve(&capabilities)
-            .unwrap_err()
-            .to_string()
-            .contains("supplied native setting")
-    );
+    assert!(kept.question("model:/variant").is_none());
+    assert_eq!(kept.kept(), [("model:/variant".to_owned(), json!("quick"))]);
 
     let mut required_catalog = catalog;
     required_catalog.targets[0]["descriptor"]["spec"]["settings_schema"]["required"] =
@@ -1150,20 +1323,21 @@ fn exact_native_guidance_uses_active_fabric_fields_without_asking_the_whole_scop
         .omit(["workflow:/settings/region"])
         .start(&required_capabilities)
         .unwrap();
-    let before = required_omission.values().clone();
+    required_omission
+        .answer(
+            &required_capabilities,
+            "workflow:/target_id",
+            Some(json!("fixture.target")),
+        )
+        .unwrap();
     assert!(
         required_omission
-            .answer(
-                &required_capabilities,
-                "workflow:/target_id",
-                Some(json!("fixture.target")),
-            )
-            .unwrap_err()
-            .to_string()
-            .contains("required native setting")
+            .resolve(&required_capabilities)
+            .unwrap()
+            .question("workflow:/settings/region")
+            .expect("omitted required native setting is still asked")
+            .required()
     );
-    assert_eq!(required_omission.values(), &before);
-    assert!(required_omission.resolve(&required_capabilities).is_ok());
     let unreachable = JourneyDefinition::new("future-native-field", base)
         .ask(["model:/future_setting"])
         .start(&capabilities)
@@ -3702,13 +3876,21 @@ fn switching_gateway_management_drops_fields_from_the_previous_branch() {
 
 #[test]
 fn answer_that_leaves_the_journey_unresolvable_is_rejected() {
+    let mut catalog = FabricCatalog::bundled();
+    let mut first = catalog.adapters[0].clone();
+    first.descriptor["adapter_id"] = json!("fixture-schema-agent");
+    first.descriptor["settings_schema"] =
+        json!({"type":"object","properties":{"a":{"type":"string"}}});
+    let mut second = first.clone();
+    second.descriptor["settings_schema"] =
+        json!({"type":"object","properties":{"b":{"type":"boolean"}}});
+    catalog.adapters.extend([first, second]);
+    let capabilities = Capabilities::from_catalog(&catalog);
     let base =
         PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
-    let capabilities = Capabilities::available();
     let mut journey = JourneyDefinition::new("unresolvable-answer", base)
-        .ask(["/spec/gateway/management"])
-        .omit(["/spec/gateway/endpoint"])
+        .ask(["/spec/sandboxes/assistant/harness/kind"])
         .start(&capabilities)
         .unwrap();
     let before = journey.values().clone();
@@ -3716,13 +3898,45 @@ fn answer_that_leaves_the_journey_unresolvable_is_rejected() {
         journey
             .answer(
                 &capabilities,
-                "/spec/gateway/management",
-                Some(json!("external")),
+                "/spec/sandboxes/assistant/harness/kind",
+                Some(json!("fixture-schema-agent")),
             )
             .is_err()
     );
     assert_eq!(journey.values(), &before);
     assert!(journey.resolve(&capabilities).is_ok());
+}
+
+#[test]
+fn omitted_endpoint_is_asked_after_switching_to_an_external_gateway() {
+    let base =
+        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    let capabilities = Capabilities::available();
+    let mut journey = JourneyDefinition::new("omitted-endpoint", base)
+        .ask(["/spec/gateway/management"])
+        .omit(["/spec/gateway/endpoint"])
+        .start(&capabilities)
+        .unwrap();
+    assert!(
+        journey
+            .resolve(&capabilities)
+            .unwrap()
+            .question("/spec/gateway/endpoint")
+            .is_none()
+    );
+    journey
+        .answer(
+            &capabilities,
+            "/spec/gateway/management",
+            Some(json!("external")),
+        )
+        .unwrap();
+    let resolution = journey.resolve(&capabilities).unwrap();
+    let endpoint = resolution
+        .question("/spec/gateway/endpoint")
+        .expect("required endpoint");
+    assert!(endpoint.required());
 }
 
 #[test]

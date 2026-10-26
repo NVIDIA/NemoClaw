@@ -53,7 +53,7 @@ fn load_journey(
     capabilities: &Capabilities,
 ) -> Result<JourneyState, Box<dyn std::error::Error>> {
     let bytes = match source {
-        Source::Defaults => include_bytes!("../../../examples/onboarding/openclaw.yaml").to_vec(),
+        Source::Defaults => include_bytes!("defaults.yaml").to_vec(),
         Source::Template(path) => read_template(path)?,
     };
     let partial = PartialDocument::from_yaml(&bytes)?;
@@ -78,9 +78,13 @@ fn load_journey(
         .ask(["/spec/gateway/runtime/provider", "inference:preset"])
         .ask([JourneyScope::InferenceApi])
         .ask([JourneyScope::RouteModels])
-        .ask([JourneyScope::ActiveAdapterSettings])
+        // Tuning settings keep their adapter defaults; messaging channels are
+        // still asked until onboarding has a channel journey.
+        .omit([JourneyScope::ActiveAdapterSettings])
+        .ask(["adapter:nvidia.fabric.openclaw:/channel_config"])
         .ask([JourneyScope::NativeSettings])
         .ask([JourneyScope::DeploymentFields])
+        .omit(["/spec/gateway/endpoint", "/spec/gateway/networkCIDR"])
         .start(capabilities)
         .map_err(Into::into)
 }

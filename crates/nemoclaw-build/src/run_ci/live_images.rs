@@ -17,10 +17,10 @@ fn docker() -> Command {
     command
 }
 
-/// The agent image the live tests run, and its Fabric harness: Pi, the
-/// smallest agent image.
+/// The agent image the live tests run, and its Fabric harness: OpenClaw, the
+/// default agent image, which getting started deploys.
 pub(super) fn agent() -> (&'static str, &'static str) {
-    ("pi", "nvidia.fabric.pi")
+    ("openclaw", "nvidia.fabric.openclaw")
 }
 
 /// The platform's agent image, the reference dummy, then the two proxy images.

@@ -55,12 +55,12 @@ Journey position is authoring progress; selecting a route chooses which existing
 
 ## Configuration and Rules
 
-The definition controls deliberate review: ask for a deployment name even if the template supplies one, review a schema-discovered family, or leave an absent optional value omitted.
+The definition controls deliberate review: ask for a deployment name even if the template supplies one, review a schema-discovered family, or omit a field without a prompt.
 `JourneySelector::Field` identifies an exact question; `JourneySelector::Scope` selects a supported family through `JourneyScope`.
 A scope discovers its applicable fields from the current document and schemas.
 The SDK and Fabric determine applicability, valid values, and requiredness.
 Guidance can retain a selector for another reachable branch; the resolver warns while it is inactive.
-A required or supplied value cannot be omitted through definition guidance.
+Omission guidance keeps a valid supplied value and leaves an absent optional value unset; an absent required value and an invalid supplied value are still asked.
 An optional supplied value can be removed through an interactive omit answer.
 
 [Capabilities](../../crates/nemoclaw-authoring/src/capabilities.rs) represents a Fabric descriptor catalog: advertised harnesses, settings and model schemas, and workflow targets.
@@ -92,6 +92,7 @@ A valid supplied value outside deliberate review can satisfy the journey without
 
 Missing and invalid values are assessment results, not additional `DecisionStatus` variants.
 `DecisionStatus` reports unreviewed, accepted, omitted, or reopened for the current run and route.
+`JourneyResolution::kept` lists supplied values that omission guidance kept without asking.
 
 ## A Question Can Represent an Operation
 
