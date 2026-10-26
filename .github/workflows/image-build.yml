@@ -111,6 +111,9 @@ jobs:
         run: |
           printf '%s\n' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           printf 'ollama-proxy\tnc-fabric:ollama-proxy\n' >> .build-image-list
+          # The live suites pull the reference image with the agent and proxy
+          # when a pull request changes no image input; releases don't ship it.
+          printf 'dummy\tnc-fabric:dummy\n' >> .build-image-list
           tag="$GITHUB_SHA-${PLATFORM#linux_}"
           {
             echo "### Images for $tag"
@@ -126,7 +129,7 @@ jobs:
             docker push --quiet "$target" > /dev/null
             digest=$(docker buildx imagetools inspect "$target" --format '{{.Manifest.Digest}}')
             # Record the pushed image's SBOM; staging copies it.
-            sh .github/scripts/image-sbom.sh "$target" "linux/${PLATFORM#linux_}"
+            [ "$name" = dummy ] || sh .github/scripts/image-sbom.sh "$target" "linux/${PLATFORM#linux_}"
             echo "| \`$name\` | \`$digest\` | $(( $(date +%s) - start )) s |" >> "$GITHUB_STEP_SUMMARY"
           done < .build-image-list
           echo >> "$GITHUB_STEP_SUMMARY"

@@ -1024,3 +1024,105 @@ fn explicit_base_bypasses_pr_discovery() {
     no_fallback(&preview["plan"]);
     assert_eq!(preview["plan"]["bundle"]["run"], false, "{preview}");
 }
+
+/// The references `v1` pushes for `commit` that the live suites pull: the
+/// agent, the reference image, and the proxy, on both Linux architectures.
+fn pushed(commit: &str) -> Vec<String> {
+    ["openclaw", "dummy", "ollama-proxy"]
+        .iter()
+        .flat_map(|name| {
+            ["arm64", "amd64"]
+                .map(|arch| format!("ghcr.io/nvidia/nemoclaw/v1-ci:{name}-{commit}-{arch}"))
+        })
+        .collect()
+}
+
+impl Repo {
+    /// Commit the edits and return the new commit.
+    fn commit(&self, edits: &[(&str, Option<&str>)]) -> String {
+        for (path, contents) in edits {
+            match contents {
+                Some(contents) => write(self.0.path(), path, contents),
+                None => fs::remove_file(self.0.path().join(path)).unwrap(),
+            }
+        }
+        succeed(self.0.path(), "git", &["add", "-A"]);
+        succeed(self.0.path(), "git", &["commit", "-q", "-m", "change"]);
+        self.base()
+    }
+
+    /// Ask which `v1` commit's images the live suites can pull, with a fake
+    /// `docker` that finds only the `pushed` references.
+    fn live_images(&self, base: &str, pushed: &[String]) -> (String, String) {
+        use std::os::unix::fs::PermissionsExt;
+        let tools = tempfile::tempdir().unwrap();
+        let list = tools.path().join("pushed");
+        fs::write(&list, pushed.join("\n") + "\n").unwrap();
+        let docker = tools.path().join("docker");
+        fs::write(
+            &docker,
+            "#!/bin/sh\n[ \"$1 $2 $3\" = 'buildx imagetools inspect' ] || exit 2\ngrep -qxF \"$4\" \"$PUSHED\" && exit 0\necho \"ERROR: $4: not found\" >&2\nexit 1\n",
+        )
+        .unwrap();
+        fs::set_permissions(&docker, fs::Permissions::from_mode(0o755)).unwrap();
+        let path = format!(
+            "{}:{}",
+            tools.path().display(),
+            std::env::var("PATH").unwrap_or_default()
+        );
+        let output = Command::new(env!("CARGO_BIN_EXE_nemoclaw-build"))
+            .args(["changes", "live-images", "--base", base])
+            .current_dir(self.0.path())
+            .env("CARGO", cargo())
+            .env("CARGO_NET_OFFLINE", "true")
+            .env("HOME", self.0.path())
+            .env("PATH", path)
+            .env("PUSHED", &list)
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+        assert!(output.status.success(), "{stderr}");
+        (
+            String::from_utf8(output.stdout).unwrap().trim().to_owned(),
+            stderr,
+        )
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn live_suites_pull_a_v1_commits_images_when_no_image_input_changed_since() {
+    let repo = Repo::new();
+    let pushed_commit = repo.base();
+    // v1 moves on without pushing images, as after a documentation change.
+    let base = repo.commit(&[("docs/guide.md", Some("# v1\n"))]);
+    repo.commit(&[("docs/other.md", Some("# change\n"))]);
+    let (decision, stderr) = repo.live_images(&base, &pushed(&pushed_commit));
+    assert_eq!(decision, format!("live-images={pushed_commit}"), "{stderr}");
+}
+
+#[cfg(unix)]
+#[test]
+fn live_suites_build_their_images_when_an_image_input_changed_since_the_pushed_commit() {
+    let repo = Repo::new();
+    let pushed_commit = repo.base();
+    // Also the case where v1 changed an image input but a later push
+    // cancelled that commit's image run.
+    let base = repo.commit(&[("image/fabric/Dockerfile", Some("# changed\n"))]);
+    repo.commit(&[("docs/other.md", Some("# change\n"))]);
+    let (decision, stderr) = repo.live_images(&base, &pushed(&pushed_commit));
+    assert_eq!(decision, "live-images=", "{stderr}");
+}
+
+#[cfg(unix)]
+#[test]
+fn live_suites_build_their_images_when_no_recent_commit_pushed_all_of_them() {
+    let repo = Repo::new();
+    let pushed_commit = repo.base();
+    repo.commit(&[("docs/other.md", Some("# change\n"))]);
+    let missing = format!("ghcr.io/nvidia/nemoclaw/v1-ci:dummy-{pushed_commit}-amd64");
+    let mut references = pushed(&pushed_commit);
+    references.retain(|reference| *reference != missing);
+    let (decision, stderr) = repo.live_images(&pushed_commit, &references);
+    assert_eq!(decision, "live-images=", "{stderr}");
+}

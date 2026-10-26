@@ -320,3 +320,20 @@ pub fn planned_steps(plan: Option<&crate::changes::Plan>) -> Vec<Step> {
         })
         .collect()
 }
+
+/// The package `v1` pushes each commit's checked images to, tagged
+/// `<image>-<commit>-<arch>`; releases promote from it.
+pub const COMMIT_IMAGES: &str = "ghcr.io/nvidia/nemoclaw/v1-ci";
+
+/// The live suites' agent image and its Fabric harness: OpenClaw, the default
+/// agent image, which getting started deploys.
+pub const LIVE_AGENT: (&str, &str) = ("openclaw", "nvidia.fabric.openclaw");
+
+/// The pushed images the live suites can pull instead of building: the agent,
+/// the reference image, and the proxy.
+pub const LIVE_PULLED: [&str; 3] = [LIVE_AGENT.0, "dummy", "ollama-proxy"];
+
+/// The reference `v1` pushed for `name` at `commit` on one Linux architecture.
+pub fn commit_image(name: &str, commit: &str, arch: &str) -> String {
+    format!("{COMMIT_IMAGES}:{name}-{commit}-{arch}")
+}

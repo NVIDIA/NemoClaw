@@ -26,6 +26,10 @@ on:
         description: Also run the Docker and Kubernetes live suites, which need a Linux runner.
         type: boolean
         default: false
+      live-images-commit:
+        description: A v1 commit whose pushed images the live suites pull instead of building, or empty to build them.
+        type: string
+        default: ""
 permissions:
   contents: read
 defaults:
@@ -234,10 +238,12 @@ jobs:
           "$tool" lifecycle-timing .build/ci/timings --platform "$TEST_PLATFORM" --shards "$SHARDS"
 
   # The live suites' images, built once per platform alongside the build and
-  # bundle jobs; both live jobs load them instead of building their own.
+  # bundle jobs; both live jobs load them instead of building their own. When
+  # no image input changed since a v1 commit that pushed them, the live jobs
+  # pull that commit's images instead.
   live-images:
     name: Build live images
-    if: inputs.live
+    if: inputs.live && inputs.live-images-commit == ''
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 60
     outputs:
@@ -273,9 +279,19 @@ jobs:
   live-docker:
     name: Live / Docker
     needs: [build, bundle, live-images]
-    if: inputs.live
+    # Runs after Build live images, or in its place when the plan names a v1
+    # commit's images. Its result decides the platform's Test check, so it
+    # must not be skipped when its images are pulled.
+    if: >-
+      ${{ !cancelled() && inputs.live &&
+      needs.build.result == 'success' && needs.bundle.result == 'success' &&
+      (needs.live-images.result == 'success' ||
+      (needs.live-images.result == 'skipped' && inputs.live-images-commit != '')) }}
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -287,13 +303,24 @@ jobs:
           tests: ${{ needs.build.outputs.artifact }}
           bundle: ${{ needs.bundle.outputs.artifact }}
           images: ${{ needs.live-images.outputs.artifact }}
+          images-commit: ${{ inputs.live-images-commit }}
 
   live-kind:
     name: Live / Kind
     needs: [build, bundle, live-images]
-    if: inputs.live
+    # Runs after Build live images, or in its place when the plan names a v1
+    # commit's images. Its result decides the platform's Test check, so it
+    # must not be skipped when its images are pulled.
+    if: >-
+      ${{ !cancelled() && inputs.live &&
+      needs.build.result == 'success' && needs.bundle.result == 'success' &&
+      (needs.live-images.result == 'success' ||
+      (needs.live-images.result == 'skipped' && inputs.live-images-commit != '')) }}
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -305,3 +332,4 @@ jobs:
           tests: ${{ needs.build.outputs.artifact }}
           bundle: ${{ needs.bundle.outputs.artifact }}
           images: ${{ needs.live-images.outputs.artifact }}
+          images-commit: ${{ inputs.live-images-commit }}

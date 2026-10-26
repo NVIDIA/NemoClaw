@@ -16,8 +16,13 @@ inputs:
     description: Name of the bundle job's artifact.
     required: true
   images:
-    description: Name of the live images job's artifact.
-    required: true
+    description: Name of the live images job's artifact, when it built them.
+    required: false
+    default: ""
+  images-commit:
+    description: The v1 commit whose pushed images to pull instead, when the plan found one.
+    required: false
+    default: ""
 runs:
   using: composite
   steps:
@@ -37,6 +42,7 @@ runs:
         name: ${{ inputs.bundle }}
         path: .build/ci
     - name: Download the live images
+      if: inputs.images-commit == ''
       uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
       with:
         name: ${{ inputs.images }}
@@ -48,14 +54,32 @@ runs:
         tar -xf .build/ci/lifecycle-inputs.tar
         tar -xf .build/ci/bundle.tar
     - uses: ./.github/actions/containerd-store
+    - name: Sign in to pull the reused live images
+      if: inputs.images-commit != ''
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: printf '%s\n' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
     - name: Run live tests without compiling
       shell: bash
       env:
         LIVE_STEP: ${{ inputs.suite }}
-      run: >-
-        .build/ci/nemoclaw-build ci "$LIVE_STEP"
-        --archive-file .build/ci/lifecycle.tar.zst
-        --images .build/ci/live-images.tar.zst
+        IMAGES_COMMIT: ${{ inputs.images-commit }}
+        PULL_TOKEN: ${{ github.token }}
+      run: |
+        if [ -n "$IMAGES_COMMIT" ]; then
+          # The Kubernetes suite pulls into its node and reads the image's
+          # metadata from the registry with these.
+          export NEMOCLAW_REGISTRY_USERNAME="$GITHUB_ACTOR" NEMOCLAW_REGISTRY_PASSWORD="$PULL_TOKEN"
+          images=(--images-commit "$IMAGES_COMMIT")
+        else
+          images=(--images .build/ci/live-images.tar.zst)
+        fi
+        .build/ci/nemoclaw-build ci "$LIVE_STEP" --archive-file .build/ci/lifecycle.tar.zst "${images[@]}"
+    - name: Sign out of the image registry
+      if: always() && inputs.images-commit != ''
+      shell: bash
+      run: docker logout ghcr.io || true
     - name: Upload live test results
       if: always()
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

@@ -8,7 +8,7 @@ Staging assembles a release privately, so publishing it later is a final switch.
 
 ## Per-Commit Images
 
-On each `v1` push that builds images, the [image workflow](testing.md#image-source-checks) pushes the agent and proxy images it checked to one package, as `ghcr.io/nvidia/nemoclaw/v1-ci:<image>-<commit>-<arch>`.
+On each `v1` push that builds images, the [image workflow](testing.md#image-source-checks) pushes the agent and proxy images it checked, and the reference image the live suites use, to one package, as `ghcr.io/nvidia/nemoclaw/v1-ci:<image>-<commit>-<arch>`.
 The package is internal: only members of NVIDIA's enterprise can pull it.
 
 ## Provision the Packages

@@ -744,3 +744,87 @@ fn lifecycle_preserves_ci_profiles_and_explicit_worker_overrides() {
         assert_eq!(inherited.trim(), override_value.unwrap_or("unset"));
     }
 }
+
+#[test]
+fn live_docker_pulls_a_v1_commits_images_and_derives_the_proxy_pair_instead_of_building() {
+    let fixture = Fixture::new();
+    fixture.fake_container_tools();
+    fixture.seed_live_inputs();
+    let commit = "0123456789abcdef0123456789abcdef01234567";
+    let output = fixture.run(&["live-docker", "--images-commit", commit]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let log = fixture.docker_log();
+    let package = "ghcr.io/nvidia/nemoclaw/v1-ci";
+    for image in ["openclaw", "dummy", "ollama-proxy"] {
+        let pulled = format!("pull --quiet {package}:{image}-{commit}-");
+        assert!(
+            log.lines().any(|line| line.starts_with(&pulled)),
+            "{image} not pulled: {log}"
+        );
+    }
+    for image in ["openclaw", "dummy"] {
+        assert!(
+            log.lines().any(
+                |line| line.starts_with(&format!("tag {package}:{image}-{commit}-"))
+                    && line.ends_with(&format!(":{image}"))
+                    && line.contains(" nc-live-")
+            ),
+            "{image} not named for this run: {log}"
+        );
+    }
+    // No agent or proxy builds and no archive: only one-layer images on the
+    // pulled ones, the proxy pair and the derived reference image.
+    assert!(
+        !log.contains("buildx bake") && !log.lines().any(|line| line.starts_with("load")),
+        "{log}"
+    );
+    let builds: Vec<_> = log
+        .lines()
+        .filter(|line| line.contains("buildx build"))
+        .collect();
+    assert_eq!(builds.len(), 3, "{log}");
+    for image in ["proxy-a", "proxy-b", "dummy-derived"] {
+        assert!(
+            builds
+                .iter()
+                .any(|line| line.starts_with("buildx build --builder default")
+                    && line.contains(&format!(":{image} "))),
+            "{image} not derived: {log}"
+        );
+    }
+}
+
+#[test]
+fn live_images_commit_is_a_full_commit_for_the_live_steps_only() {
+    let fixture = Fixture::new();
+    let commit = "0123456789abcdef0123456789abcdef01234567";
+    for (args, message) in [
+        (
+            vec!["lifecycle", "--images-commit", commit],
+            "--images-commit requires ci live-docker or live-kind",
+        ),
+        (
+            vec!["live-kind", "--images-commit", "main"],
+            "--images-commit must be a full lowercase commit hash",
+        ),
+        (
+            vec![
+                "live-docker",
+                "--images-commit",
+                commit,
+                "--images",
+                "images.tar.zst",
+            ],
+            "--images and --images-commit are alternatives",
+        ),
+    ] {
+        let output = fixture.run(&args);
+        assert!(!output.status.success(), "{args:?}");
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(error.contains(message), "{args:?}: {error}");
+    }
+}

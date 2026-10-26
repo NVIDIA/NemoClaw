@@ -169,7 +169,7 @@ fn prepare(
     platform: &str,
     bundle: &Path,
     inputs: &Path,
-    images: Option<&Path>,
+    images: live_images::Source<'_>,
     owned: &mut Owned,
 ) -> Result<Vec<(String, String)>> {
     if !platform.starts_with("linux_") {
@@ -198,8 +198,13 @@ fn prepare(
     let (target, harness) = live_images::agent();
     let names = live_images::names();
     match images {
-        Some(archive) => live_images::load(archive, &prefix, &names, &mut owned.images)?,
-        None => {
+        live_images::Source::Archive(archive) => {
+            live_images::load(archive, &prefix, &names, &mut owned.images)?
+        }
+        live_images::Source::Commit(commit) => {
+            live_images::pull(commit, platform, &prefix, &mut owned.images)?
+        }
+        live_images::Source::Build => {
             owned
                 .images
                 .extend(names.map(|name| format!("{prefix}:{name}")));
@@ -324,7 +329,7 @@ pub(super) fn run_live_docker(
     platform: &str,
     configure: &dyn Fn(&mut Command),
     archive: Option<&Path>,
-    images: Option<&Path>,
+    images: live_images::Source<'_>,
 ) -> Result<()> {
     let bundle = std::path::absolute(Path::new("dist").join(platform))?;
     if !bundle.join("manifest.json").is_file() {

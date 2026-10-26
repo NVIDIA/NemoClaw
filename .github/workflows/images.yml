@@ -14,6 +14,10 @@ concurrency:
   cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
 jobs:
   plan:
+    # The shared planner also reads the per-commit image package.
+    permissions:
+      contents: read
+      packages: read
     uses: ./.github/workflows/validation-plan.yml
     with:
       full: ${{ github.event_name == 'workflow_dispatch' }}

@@ -460,3 +460,67 @@ pub fn default_base(root: &Path) -> Result<(String, String)> {
         .map_err(|_| format!("default base {} is unavailable ({}); fetch origin v1, pass --base REVISION, or use --full", selected.0, selected.1))?;
     Ok(selected)
 }
+
+/// How far back on the base's first-parent history to look for pushed live
+/// images; `v1` keeps the images of its latest image-changing commits.
+pub const LIVE_IMAGE_DEPTH: usize = 30;
+
+/// The commit whose pushed images the live suites can pull instead of
+/// building: the newest on `base`'s first-parent history that pushed every
+/// image in [`crate::ci::LIVE_PULLED`] for both Linux architectures, if the
+/// image rules find no change between it and `HEAD`. `exists` reports whether
+/// a reference is in the registry. `None` means the live suites build their
+/// images. The reason explains the decision.
+pub fn live_images(
+    root: &Path,
+    base: &str,
+    exists: impl Fn(&str) -> bool,
+) -> (Option<String>, String) {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["rev-list", "--first-parent"])
+        .arg(format!("--max-count={LIVE_IMAGE_DEPTH}"))
+        .arg(base)
+        .output();
+    let commits = match output {
+        Ok(output) if output.status.success() => {
+            String::from_utf8_lossy(&output.stdout).into_owned()
+        }
+        _ => {
+            return (
+                None,
+                format!("cannot read the history of {base}; build the live images"),
+            );
+        }
+    };
+    for commit in commits.lines() {
+        let pushed = crate::ci::LIVE_PULLED.iter().all(|name| {
+            ["arm64", "amd64"]
+                .iter()
+                .all(|arch| exists(&crate::ci::commit_image(name, commit, arch)))
+        });
+        if !pushed {
+            continue;
+        }
+        let decision = images(root, commit);
+        return if decision.run {
+            (
+                None,
+                format!(
+                    "image inputs changed since {commit}, the newest commit with pushed live images: {}",
+                    decision.reason
+                ),
+            )
+        } else {
+            (
+                Some(commit.to_owned()),
+                format!("no image input changed since {commit}, which pushed every live image"),
+            )
+        };
+    }
+    (
+        None,
+        format!("none of the latest {LIVE_IMAGE_DEPTH} commits on {base} pushed every live image"),
+    )
+}

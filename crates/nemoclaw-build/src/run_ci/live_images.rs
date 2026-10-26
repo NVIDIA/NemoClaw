@@ -17,10 +17,21 @@ fn docker() -> Command {
     command
 }
 
-/// The agent image the live tests run, and its Fabric harness: OpenClaw, the
-/// default agent image, which getting started deploys.
+/// Where a live step gets its images.
+#[derive(Clone, Copy)]
+pub(super) enum Source<'a> {
+    /// Build them from the checkout.
+    Build,
+    /// Load a `ci live-images` archive.
+    Archive(&'a Path),
+    /// Pull the images a `v1` commit pushed to the per-commit package, which
+    /// `changes live-images` finds when no image input changed since.
+    Commit(&'a str),
+}
+
+/// The agent image the live tests run, and its Fabric harness.
 pub(super) fn agent() -> (&'static str, &'static str) {
-    ("openclaw", "nvidia.fabric.openclaw")
+    nemoclaw_build::ci::LIVE_AGENT
 }
 
 /// The platform's agent image, the reference dummy, then the two proxy images.
@@ -271,23 +282,72 @@ pub(super) fn load(
     Ok(())
 }
 
+fn pull_one(commit: &str, platform: &str, prefix: &str, name: &str) -> Result<()> {
+    let arch = platform.trim_start_matches("linux_");
+    let pushed = nemoclaw_build::ci::commit_image(name, commit, arch);
+    run(docker().args(["pull", "--quiet", &pushed]))?;
+    run(docker().args(["tag", &pushed, &format!("{prefix}:{name}")]))?;
+    // Removing the pushed name keeps the image, which the new name holds.
+    let _ = docker()
+        .args(["image", "rm", &pushed])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    Ok(())
+}
+
+/// Pull the images `commit` pushed for this platform instead of building
+/// them, and name each `PREFIX:NAME`, recording each name in `owned` before
+/// the next. The proxy pair is the pushed proxy, a label apart, as
+/// [`build_proxies`] makes it.
+pub(super) fn pull(
+    commit: &str,
+    platform: &str,
+    prefix: &str,
+    owned: &mut Vec<String>,
+) -> Result<()> {
+    for name in nemoclaw_build::ci::LIVE_PULLED {
+        owned.push(format!("{prefix}:{name}"));
+        pull_one(commit, platform, prefix, name)?;
+    }
+    for variant in ["a", "b"] {
+        let tag = format!("{prefix}:proxy-{variant}");
+        owned.push(tag.clone());
+        build_layer(
+            &tag,
+            &format!("FROM {prefix}:ollama-proxy\nLABEL org.nemoclaw.test=proxy-{variant}\n"),
+            &[],
+        )
+        .map_err(|_| format!("cannot derive {tag} from the pushed proxy"))?;
+    }
+    Ok(())
+}
+
 /// An image derived from the reference image, as a downstream build would
-/// make one: the base plus one executable. Docker's default builder sees
-/// local images, which a container builder doesn't.
+/// make one: the base plus one executable.
 pub(super) const DERIVED: &str = "dummy-derived";
 pub(super) fn build_derived(prefix: &str) -> Result<()> {
-    let context = std::env::temp_dir().join(format!("nemoclaw-derived-{}", std::process::id()));
-    std::fs::create_dir_all(&context)?;
-    std::fs::write(
-        context.join("Dockerfile"),
-        format!(
+    build_layer(
+        &format!("{prefix}:{DERIVED}"),
+        &format!(
             "FROM {prefix}:{DUMMY}\nCOPY --chmod=755 nemoclaw-derived-check /usr/local/bin/nemoclaw-derived-check\n"
         ),
-    )?;
-    std::fs::write(
-        context.join("nemoclaw-derived-check"),
-        "#!/bin/sh\necho derived-image-ok\n",
-    )?;
+        &[("nemoclaw-derived-check", "#!/bin/sh\necho derived-image-ok\n")],
+    )
+    .map_err(|_| "cannot build the derived reference image".into())
+}
+
+/// Build `tag` from `dockerfile` on a local image, with `files` in its
+/// context. Docker's default builder sees local images, which a container
+/// builder doesn't.
+fn build_layer(tag: &str, dockerfile: &str, files: &[(&str, &str)]) -> Result<()> {
+    let context = tempfile::Builder::new()
+        .prefix("nemoclaw-layer-")
+        .tempdir()?;
+    std::fs::write(context.path().join("Dockerfile"), dockerfile)?;
+    for (name, contents) in files {
+        std::fs::write(context.path().join(name), contents)?;
+    }
     let status = Command::new("docker")
         .args([
             "buildx",
@@ -298,14 +358,13 @@ pub(super) fn build_derived(prefix: &str) -> Result<()> {
             "--quiet",
             "--tag",
         ])
-        .arg(format!("{prefix}:{DERIVED}"))
-        .arg(&context)
+        .arg(tag)
+        .arg(context.path())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .status();
-    let _ = std::fs::remove_dir_all(&context);
-    if !status?.success() {
-        return Err("cannot build the derived reference image".into());
+        .status()?;
+    if !status.success() {
+        return Err(format!("cannot build {tag}").into());
     }
     Ok(())
 }

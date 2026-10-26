@@ -163,7 +163,7 @@ fn run_step(
     step: Step,
     partition: Option<&str>,
     archive_file: Option<&Path>,
-    images: Option<&Path>,
+    images: live_images::Source<'_>,
 ) -> Result<()> {
     let protoc = protoc_command(tools.protobuf);
     let path = tool_path(tools)?;
@@ -447,8 +447,14 @@ pub(super) async fn run_steps(
     partition: Option<&str>,
     archive_file: Option<&Path>,
     images: Option<&Path>,
+    images_commit: Option<&str>,
     plan: Option<&nemoclaw_build::changes::Plan>,
 ) -> Result<()> {
+    let images = match (images, images_commit) {
+        (Some(archive), _) => live_images::Source::Archive(archive),
+        (None, Some(commit)) => live_images::Source::Commit(commit),
+        (None, None) => live_images::Source::Build,
+    };
     let tools = Tools {
         pins,
         protobuf: &pins.protobuf,

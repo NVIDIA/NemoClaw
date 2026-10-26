@@ -18,11 +18,19 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   plan:
+    # The planner reads the per-commit image package for live images to reuse.
+    permissions:
+      contents: read
+      packages: read
     uses: ./.github/workflows/validation-plan.yml
     with:
       full: ${{ github.event_name != 'pull_request' }}
   linux_arm64:
     needs: plan
+    # The live suites pull reused images from the per-commit package.
+    permissions:
+      contents: read
+      packages: read
     uses: ./.github/workflows/bundle-platform.yml
     with:
       runner: ubuntu-24.04-arm
@@ -30,8 +38,12 @@ jobs:
       bundle: ${{ needs.plan.outputs.bundle == 'true' }}
       lifecycle: ${{ needs.plan.outputs.lifecycle == 'true' }}
       live: ${{ needs.plan.outputs.live == 'true' }}
+      live-images-commit: ${{ needs.plan.outputs.live_images }}
   linux_amd64:
     needs: plan
+    permissions:
+      contents: read
+      packages: read
     uses: ./.github/workflows/bundle-platform.yml
     with:
       runner: ubuntu-24.04
@@ -39,6 +51,7 @@ jobs:
       bundle: ${{ needs.plan.outputs.bundle == 'true' }}
       lifecycle: ${{ needs.plan.outputs.lifecycle == 'true' }}
       live: ${{ needs.plan.outputs.live == 'true' }}
+      live-images-commit: ${{ needs.plan.outputs.live_images }}
   darwin_arm64:
     needs: plan
     uses: ./.github/workflows/bundle-platform.yml

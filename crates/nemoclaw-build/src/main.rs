@@ -105,13 +105,13 @@ enum Action {
         /// archive, live-docker, and live-kind run only when named.
         step: Option<String>,
         /// Override the detected PR base (fallback: origin/v1), including local edits.
-        #[arg(long, conflicts_with_all = ["step", "partition", "archive_file", "images"])]
+        #[arg(long, conflicts_with_all = ["step", "partition", "archive_file", "images", "images_commit"])]
         base: Option<String>,
         /// Run every local check without impact analysis or PR discovery.
-        #[arg(long, conflicts_with_all = ["base", "step", "partition", "archive_file", "images"])]
+        #[arg(long, conflicts_with_all = ["base", "step", "partition", "archive_file", "images", "images_commit"])]
         full: bool,
         /// Print the selected steps and their plan as JSON without running checks.
-        #[arg(long, conflicts_with_all = ["step", "partition", "archive_file", "images"])]
+        #[arg(long, conflicts_with_all = ["step", "partition", "archive_file", "images", "images_commit"])]
         dry_run: bool,
         /// Nextest partition for an explicitly selected lifecycle run (for example slice:1/2).
         #[arg(long)]
@@ -123,6 +123,10 @@ enum Action {
         /// instead of building them.
         #[arg(long)]
         images: Option<PathBuf>,
+        /// Pull the live suites' images that this `v1` commit pushed to the
+        /// per-commit package instead of building them.
+        #[arg(long)]
+        images_commit: Option<String>,
     },
     /// Build agent images with their installed Fabric metadata, or qualify them.
     Images {
@@ -171,6 +175,8 @@ enum ChangedWorkflow {
     Images,
     /// `Live / Docker` and `Live / Kind`.
     Live,
+    /// The `v1` commit whose pushed images the live suites can pull, or none.
+    LiveImages,
 }
 #[cfg(feature = "sdk")]
 #[derive(Subcommand)]
@@ -716,8 +722,22 @@ async fn main() -> Result<()> {
         if *worktree {
             return Err("--worktree requires changes plan".into());
         }
+        if matches!(workflow, ChangedWorkflow::LiveImages) {
+            let (commit, reason) =
+                nemoclaw_build::changes::live_images(Path::new("."), base, |reference| {
+                    Command::new("docker")
+                        .args(["buildx", "imagetools", "inspect", reference])
+                        .stdout(Stdio::null())
+                        .stderr(Stdio::null())
+                        .status()
+                        .is_ok_and(|status| status.success())
+                });
+            eprintln!("{reason}");
+            println!("live-images={}", commit.unwrap_or_default());
+            return Ok(());
+        }
         let (workflow, name) = match workflow {
-            ChangedWorkflow::Plan => unreachable!(),
+            ChangedWorkflow::Plan | ChangedWorkflow::LiveImages => unreachable!(),
             ChangedWorkflow::Images => (nemoclaw_build::changes::Workflow::Images, "images"),
             ChangedWorkflow::Live => (nemoclaw_build::changes::Workflow::Live, "live"),
         };
@@ -731,6 +751,7 @@ async fn main() -> Result<()> {
         partition,
         archive_file,
         images,
+        images_commit,
         base,
         full,
         dry_run,
@@ -749,6 +770,21 @@ async fn main() -> Result<()> {
         }
         if images.is_some() && !matches!(step.as_deref(), Some("live-docker" | "live-kind")) {
             return Err("--images requires ci live-docker or live-kind".into());
+        }
+        if let Some(commit) = images_commit {
+            if !matches!(step.as_deref(), Some("live-docker" | "live-kind")) {
+                return Err("--images-commit requires ci live-docker or live-kind".into());
+            }
+            if images.is_some() {
+                return Err("--images and --images-commit are alternatives".into());
+            }
+            if commit.len() != 40
+                || !commit
+                    .bytes()
+                    .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+            {
+                return Err("--images-commit must be a full lowercase commit hash".into());
+            }
         }
         let plan = if *full {
             Some(nemoclaw_build::changes::Plan::full("explicit --full"))
@@ -789,6 +825,7 @@ async fn main() -> Result<()> {
             partition.as_deref(),
             archive_file.as_deref(),
             images.as_deref(),
+            images_commit.as_deref(),
             plan.as_ref(),
         )
         .await;

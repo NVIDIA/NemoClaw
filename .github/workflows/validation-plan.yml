@@ -17,6 +17,9 @@ on:
         value: ${{ jobs.plan.outputs.images }}
       live:
         value: ${{ jobs.plan.outputs.live }}
+      live_images:
+        description: The v1 commit whose pushed images the live suites pull instead of building, or empty.
+        value: ${{ jobs.plan.outputs.live_images }}
 permissions:
   contents: read
 jobs:
@@ -24,11 +27,16 @@ jobs:
     name: Select checks
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    # Reads the per-commit image package to find live images to reuse.
+    permissions:
+      contents: read
+      packages: read
     outputs:
       bundle: ${{ steps.plan.outputs.bundle }}
       lifecycle: ${{ steps.plan.outputs.lifecycle }}
       images: ${{ steps.plan.outputs.images }}
       live: ${{ steps.plan.outputs.live }}
+      live_images: ${{ steps.live-images.outputs['live-images'] }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -68,3 +76,19 @@ jobs:
           jq -er 'to_entries[] | "\(.key)=\(.value.run)"' "$RUNNER_TEMP/validation-plan.json" >> "$GITHUB_OUTPUT"
           jq -r 'to_entries[] | "- \(.key): \(if .value.run then "run" else "skip" end) — \(.value.reason)"' \
             "$RUNNER_TEMP/validation-plan.json" >> "$GITHUB_STEP_SUMMARY"
+      # The live suites pull a v1 commit's pushed images when no image input
+      # changed since that commit, instead of building and shipping their own.
+      # Any failure here only leaves them to build.
+      - name: Find live images to reuse
+        id: live-images
+        if: steps.plan.outputs.live == 'true' && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          base=$(git rev-parse HEAD^1)
+          git fetch --no-tags --quiet --depth=40 origin "$base" || true
+          printf '%s\n' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin > /dev/null 2>&1 || true
+          cargo run --locked --quiet -p nemoclaw-build --no-default-features --target-dir target/ci-runner -- \
+            changes live-images --base "$base" 2> "$RUNNER_TEMP/live-images.txt" >> "$GITHUB_OUTPUT" || echo "live-images=" >> "$GITHUB_OUTPUT"
+          docker logout ghcr.io > /dev/null 2>&1 || true
+          echo "- live images: $(cat "$RUNNER_TEMP/live-images.txt")" >> "$GITHUB_STEP_SUMMARY"

@@ -66,7 +66,7 @@ pub(super) async fn run_live_kind(
     platform: &str,
     configure: &dyn Fn(&mut Command),
     archive: Option<&Path>,
-    images: Option<&Path>,
+    images: live_images::Source<'_>,
 ) -> Result<()> {
     if !platform.starts_with("linux_") {
         return Err("the Kubernetes live tests run on Linux only".into());
@@ -150,13 +150,16 @@ pub(super) async fn run_live_kind(
     let prefix = format!("{name}-agent");
     let tag = format!("{prefix}:{target}");
     let metadata = inputs.path().join("agent.metadata.json");
-    let cleanup = images.is_none().then(|| ImagesCleanup(tag.clone()));
+    let cleanup = matches!(images, live_images::Source::Build).then(|| ImagesCleanup(tag.clone()));
     let (id, node_image) = match images {
-        Some(archive) => (
+        live_images::Source::Archive(archive) => (
             load_archived_agent(&kind, &name, archive, inputs.path())?,
             format!("docker.io/library/{}:{target}", live_images::SHARED),
         ),
-        None => {
+        live_images::Source::Commit(commit) => {
+            pull_pushed_agent(commit, platform, &node_container, &metadata).await?
+        }
+        live_images::Source::Build => {
             live_images::build_agent(platform, &prefix)?;
             let id = String::from_utf8(
                 Command::new("docker")
@@ -204,11 +207,87 @@ pub(super) async fn run_live_kind(
         .env("NEMOCLAW_TEST_BUNDLE", &bundle)
         .env("NEMOCLAW_TEST_AGENT_IMAGE", &image)
         .env("NEMOCLAW_TEST_AGENT_HARNESS", harness)
-        .env("NEMOCLAW_TEST_AGENT_METADATA", &metadata);
+        .env("NEMOCLAW_TEST_AGENT_METADATA", &metadata)
+        // Only the image pull above needs the registry.
+        .env_remove(REGISTRY_USERNAME)
+        .env_remove(REGISTRY_PASSWORD);
     let result = run(&mut command);
     drop(cluster);
     drop(cleanup);
     result
+}
+
+/// The registry credentials a pull of pushed images uses, as for
+/// `images export-metadata --registry`.
+const REGISTRY_USERNAME: &str = "NEMOCLAW_REGISTRY_USERNAME";
+const REGISTRY_PASSWORD: &str = "NEMOCLAW_REGISTRY_PASSWORD";
+
+/// Pull the agent image `commit` pushed for this platform straight into the
+/// node, and write its metadata bundle from the registry. A Docker save of a
+/// pulled image lacks its config, so neither goes through the host engine.
+/// Returns the image's digest and its name on the node.
+async fn pull_pushed_agent(
+    commit: &str,
+    platform: &str,
+    node: &str,
+    metadata: &Path,
+) -> Result<(String, String)> {
+    let arch = platform.trim_start_matches("linux_");
+    let reference = nemoclaw_build::ci::commit_image(live_images::agent().0, commit, arch);
+    let digest = String::from_utf8(
+        Command::new("docker")
+            .args([
+                "buildx",
+                "imagetools",
+                "inspect",
+                &reference,
+                "--format",
+                "{{.Manifest.Digest}}",
+            ])
+            .stdin(Stdio::null())
+            .output()?
+            .stdout,
+    )?
+    .trim()
+    .to_owned();
+    if !digest.starts_with("sha256:") {
+        return Err(format!("cannot resolve {reference}; sign in to ghcr.io first").into());
+    }
+    let credentials = std::env::var(REGISTRY_USERNAME)
+        .ok()
+        .zip(std::env::var(REGISTRY_PASSWORD).ok());
+    let bundle = nemoclaw_build::images::registry_metadata(
+        &format!("{}@{digest}", nemoclaw_build::ci::COMMIT_IMAGES),
+        credentials.clone(),
+    )
+    .await?;
+    nemoclaw_build::images::write_bundle(&bundle, metadata)?;
+    // The credentials reach ctr through the environment, not its arguments.
+    let mut pull = Command::new("docker");
+    pull.arg("exec");
+    let script = match &credentials {
+        Some((username, password)) => {
+            pull.env(
+                "NEMOCLAW_PULL_CREDENTIALS",
+                format!("{username}:{password}"),
+            )
+            .args(["-e", "NEMOCLAW_PULL_CREDENTIALS"]);
+            r#"exec ctr -n k8s.io images pull --platform "$1" --user "$NEMOCLAW_PULL_CREDENTIALS" "$2" > /dev/null"#
+        }
+        None => r#"exec ctr -n k8s.io images pull --platform "$1" "$2" > /dev/null"#,
+    };
+    pull.args([
+        node,
+        "sh",
+        "-c",
+        script,
+        "sh",
+        &format!("linux/{arch}"),
+        &reference,
+    ])
+    .stdin(Stdio::null());
+    run(&mut pull)?;
+    Ok((digest, reference))
 }
 
 /// Import the saved images into the node without a host Docker load or re-export.

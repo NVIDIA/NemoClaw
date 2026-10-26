@@ -175,6 +175,9 @@ This requires Docker to report its containerd address and namespace, `sudo -n ct
 The archive retains the image contents, names, digests, and attestations; the job logs archive size and export, compression, and cleanup timings.
 Then pass `--images .build/ci/live-images.tar.zst` to `cargo ci live-docker` or `cargo ci live-kind`: each loads the archive and names the images it needs under its own fresh prefix instead of building them, so its cleanup still removes only what it created.
 
+Instead of either, `--images-commit COMMIT` pulls the agent, reference, and proxy images that a `v1` commit pushed to `ghcr.io/nvidia/nemoclaw/v1-ci`, after `docker login ghcr.io`, and derives the two proxy images from the pushed proxy with one label each.
+`cargo run -p nemoclaw-build -- changes live-images --base REV` names such a commit: the newest of the latest 30 on `REV`'s first-parent history that pushed all three images for both architectures, provided the image rules find no change between it and `HEAD`.
+
 ## Budgets and Per-Test Limits
 
 [`.config/test-budgets.yaml`](../../.config/test-budgets.yaml) gives each test step a wall-clock budget and a limit for any one test, in seconds:
@@ -266,7 +269,7 @@ cargo run -q --locked -p nemoclaw-build --no-default-features -- lifecycle-timin
 
 CI keeps each step's JUnit report, with per-test durations, for 14 days in the `test-PLATFORM-ATTEMPT`, `lifecycle-PLATFORM-SHARD-ATTEMPT`, `live-docker-PLATFORM-ATTEMPT`, and `live-kind-PLATFORM-ATTEMPT` artifacts; the `live-docker` report joins its four nextest commands.
 The live reports hold outcomes and times only, so they can be shared as a run's result; failing tests' output stays in the job log.
-The rest of what a live run used is on its GitHub run: the commit and runner, and the `bundle-PLATFORM-COMMIT-ATTEMPT` and `live-images-PLATFORM-COMMIT-ATTEMPT` artifacts it downloaded, each with its digest.
+The rest of what a live run used is on its GitHub run: the commit and runner, and the `bundle-PLATFORM-COMMIT-ATTEMPT` and `live-images-PLATFORM-COMMIT-ATTEMPT` artifacts it downloaded, each with its digest, or the `v1` commit whose images it pulled, which the plan's summary names.
 Versions it pinned are in the repository at that commit, and known gaps are in [current limits](../limits.md).
 
 ## How CI Runs the Tests
@@ -301,7 +304,8 @@ Each platform in [CI / Bundle](../../.github/workflows/rust.yml) runs [one workf
 1. `Build and test` runs `cargo ci fmt`, `clippy`, `build`, `test`, and `schema`; it runs `archive` only when lifecycle or live jobs need the executables.
 2. When the plan selects a bundle, `Build bundle` runs `cargo ci bundle` on a separate runner at the same time.
 3. When the plan selects live checks, Linux runs `Build live images` with `cargo ci live-images`, alongside the first two jobs.
-4. When selected and the build and bundle jobs finish, the `Lifecycle` jobs run the contract and system layers in partitions; on Linux, when the live images are also built, `Live / Docker` and `Live / Kind` start.
+   On a pull request that changes no image input since a `v1` commit that pushed the live images, the plan names that commit instead, and the live jobs pull its images; a fork's pull request, which cannot read the package, builds them.
+4. When selected and the build and bundle jobs finish, the `Lifecycle` jobs run the contract and system layers in partitions; on Linux, when the live images are also built or named, `Live / Docker` and `Live / Kind` start.
 5. When the partitions finish, `Lifecycle timing` reports the whole lifecycle suite and checks the binary budgets.
 
 Each platform starts its jobs after its own build; it does not wait for the other platforms.
@@ -344,7 +348,7 @@ tar -xf .build/ci/lifecycle-inputs.tar
 ```
 
 The worker compiles nothing and writes JUnit timings under `target/nextest/lifecycle`; repeating the command overwrites the extracted files.
-`--partition` requires the `lifecycle` step, `--archive-file` requires `lifecycle`, `live-docker`, or `live-kind`, and `--images` requires `live-docker` or `live-kind`, so none of them narrows plain `cargo ci`.
+`--partition` requires the `lifecycle` step, `--archive-file` requires `lifecycle`, `live-docker`, or `live-kind`, and `--images` and `--images-commit` require `live-docker` or `live-kind`, so none of them narrows plain `cargo ci`.
 
 ### Windows
 
@@ -428,7 +432,7 @@ NemoClaw doesn't run Fabric's native adapters; their behavior is Fabric's to tes
 Use the [reference image procedure](../build.md#reference-contract-image) to run these locally.
 
 The image workflow obtains its image decision from the shared validation plan and skips image steps when their inputs are unaffected; the `Build` checks still report.
-On `v1` pushes that build images, it then pushes the checked agent and proxy images by digest to `ghcr.io/nvidia/nemoclaw/v1-ci:<image>-<commit>-<arch>`, an internal package that releases promote from ([#13516](https://github.com/NVIDIA/NemoClaw/issues/13516)).
+On `v1` pushes that build images, it then pushes the checked agent and proxy images, and the reference image the live suites pull, by digest to `ghcr.io/nvidia/nemoclaw/v1-ci:<image>-<commit>-<arch>`, an internal package that releases promote from ([#13516](https://github.com/NVIDIA/NemoClaw/issues/13516)).
 It pushes only to packages that already exist and aren't public, and otherwise skips with a warning; see [provisioning the packages](releases.md#provision-the-packages).
 The job summary lists each digest and how long its push took.
 A following job keeps the images of the latest ten commits and deletes older ones; releases keep their own copies of the images they promote.
