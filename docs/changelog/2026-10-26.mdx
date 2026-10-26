@@ -38,3 +38,6 @@ NemoClaw v0.0.139 improves sandbox recovery and native inference checks, fixes W
   The model response remains unverified. Run `nemoclaw <name> connect --probe-only` to require a successful response.
   Rebuild stops before sandbox deletion when a temporary upstream failure prevents credential verification.
   Related change: [PR #13642](https://github.com/NVIDIA/NemoClaw/pull/13642).
+- An interrupted upgrade rebuild can resume when the recorded gateway and Docker daemon confirm that a failed replacement never existed.
+  NemoClaw keeps the original registry entry, rebuild journal, and backup for the resumed rebuild.
+  Related change: [PR #13680](https://github.com/NVIDIA/NemoClaw/pull/13680).
