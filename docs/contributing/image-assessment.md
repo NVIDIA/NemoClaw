@@ -138,8 +138,15 @@ These local checks cannot prevent a repository writer or package administrator f
 
 The default policy at `.github/security/v1-vulnerability-exceptions.json` is empty.
 It has `schema_version: 1` and an `exceptions` array.
-An exception must identify one exact image reference, platform, advisory, package, version, and PURL, together with the upstream base digest, rationale, current validity window, and a project issue tracking the pin update.
+An exception must identify one exact image reference, platform, advisory, package, version, and PURL, together with its upstream, rationale, current validity window, and a project issue tracking the pin update.
 Its origin evidence names an immutable GitHub blob and its SHA-256.
+
+`upstream` names exactly one source of the finding:
+
+- `base_image`: the digest of an upstream image the assessed image is built from, such as `{"base_image": "docker.io/vllm/vllm-openai@sha256:..."}`.
+- `lock_file`: a lock file at an exact commit of an upstream project that pins the package, with its SHA-256, such as `{"lock_file": {"reference": "https://github.com/NVIDIA/NeMo-Fabric/blob/COMMIT/uv.lock", "sha256": "..."}}`.
+  A lock file in the NemoClaw repository can't support an exception, because NemoClaw controls what it pins.
+
 Reviewers must check that evidence establishes an inherited upstream finding; the evaluator does not fetch it or infer ownership from a package manager or file path.
 NemoClaw-controlled findings remain blocking.
 
