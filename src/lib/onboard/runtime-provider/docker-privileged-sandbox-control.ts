@@ -353,15 +353,25 @@ export function createDockerPrivilegedSandboxControl(): RuntimeProviderPrivilege
             maxOutputBytes: 4096,
           }),
         copyDirectory: (archive) => {
-          const target = resolvePinnedDockerTarget(input, input.expectedResourceHandle);
+          const portable = portableTarget(input.sandboxName, input.sandbox);
+          if (portable) portable.assertRuntimeAuthority();
+          const target = portable
+            ? portable.containerId
+            : resolvePinnedDockerTarget(input, input.expectedResourceHandle);
+          if (target !== input.expectedResourceHandle) {
+            throw new PinnedSandboxResourceIdentityChangedError(input.sandboxName);
+          }
           // Do not pass -a: Docker then substitutes Config.User for archive ownership.
-          const result = dockerSpawnSync(["cp", "-", `${target}:/`], {
-            encoding: null,
-            input: archive,
-            maxBuffer: 4096,
-            stdio: ["pipe", "pipe", "pipe"],
-            timeout: input.timeoutMs,
-          });
+          const result = dockerSpawnSync(
+            [...(portable ? ["--host", portable.dockerHost] : []), "cp", "-", `${target}:/`],
+            {
+              encoding: null,
+              input: archive,
+              maxBuffer: 4096,
+              stdio: ["pipe", "pipe", "pipe"],
+              timeout: input.timeoutMs,
+            },
+          );
           return {
             ...result,
             stdout: Buffer.from(result.stdout ?? ""),

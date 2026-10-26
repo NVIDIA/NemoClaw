@@ -6,10 +6,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   dockerCapture: vi.fn(),
   dockerSpawnSync: vi.fn(),
+  portableTarget: vi.fn(),
 }));
 
 vi.mock("../../adapters/docker/run", () => ({ dockerCapture: mocks.dockerCapture }));
 vi.mock("../../adapters/docker/exec", () => ({ dockerSpawnSync: mocks.dockerSpawnSync }));
+
+vi.mock("../experimental/portable-demo-lifecycle", async (original) => ({
+  ...(await original<typeof import("../experimental/portable-demo-lifecycle")>()),
+  resolvePortableDemoPrivilegedExecTarget: mocks.portableTarget,
+}));
 
 import { createDockerPrivilegedSandboxControl } from "./docker-privileged-sandbox-control";
 
@@ -29,7 +35,10 @@ function exactInspect(running = true, sandboxName = "alpha", role?: string): str
 }
 
 describe("Docker privileged exact target", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.resetAllMocks();
+    mocks.portableTarget.mockReturnValue(null);
+  });
 
   it("restores workspace metadata through exact-ID archive copy without adding capabilities", () => {
     mocks.dockerCapture.mockReturnValue(exactInspect());
@@ -91,6 +100,95 @@ describe("Docker privileged exact target", () => {
       }),
     ).toThrow(/identity changed/u);
     expect(mocks.dockerSpawnSync).toHaveBeenCalledOnce();
+  });
+
+  function portableWorkspaceFixture() {
+    const observed = { uid: 999, gid: 999, mode: 0o700, dev: 1, ino: 2, mtime: 3 };
+    mocks.dockerSpawnSync
+      .mockReturnValueOnce({
+        status: 0,
+        signal: null,
+        stdout: Buffer.from(JSON.stringify(observed)),
+        stderr: Buffer.alloc(0),
+      })
+      .mockReturnValueOnce({
+        status: 0,
+        signal: null,
+        stdout: Buffer.alloc(0),
+        stderr: Buffer.alloc(0),
+      })
+      .mockReturnValueOnce({
+        status: 0,
+        signal: null,
+        stdout: Buffer.from(JSON.stringify({ ...observed, uid: 0, mode: 0o1775 })),
+        stderr: Buffer.alloc(0),
+      });
+    mocks.dockerCapture.mockImplementation(() => {
+      throw new Error("default Docker daemon must not be accessed");
+    });
+    const portable = {
+      containerId: CONTAINER_ID,
+      dockerHost: "unix:///run/user/1000/podman/podman.sock",
+      assertRuntimeAuthority: vi.fn(),
+    };
+    mocks.portableTarget.mockReturnValue(portable);
+    const input = {
+      sandbox: { name: "alpha", openshellDriver: "docker" },
+      sandboxName: "alpha",
+      registeredSandboxNames: ["alpha"],
+      expectedResourceHandle: CONTAINER_ID,
+      timeoutMs: 1234,
+      workspace: { uid: 0, gid: 999, mode: 0o1775 as const },
+    };
+    return { input, portable };
+  }
+
+  it("copies workspace metadata through the same receipt-owned endpoint as both reads", () => {
+    const { input, portable } = portableWorkspaceFixture();
+    createDockerPrivilegedSandboxControl().prepareManagedStartupWorkspace!(input);
+    expect(mocks.dockerCapture).not.toHaveBeenCalled();
+    expect(portable.assertRuntimeAuthority).toHaveBeenCalledTimes(3);
+    expect(mocks.dockerSpawnSync.mock.calls.map(([args]) => args.slice(0, 2))).toEqual([
+      ["--host", portable.dockerHost],
+      ["--host", portable.dockerHost],
+      ["--host", portable.dockerHost],
+    ]);
+    const [copyArgs, copyOptions] = mocks.dockerSpawnSync.mock.calls[1]!;
+    expect(copyArgs).toEqual(["--host", portable.dockerHost, "cp", "-", `${CONTAINER_ID}:/`]);
+    expect(copyOptions).toEqual({
+      encoding: null,
+      input: expect.any(Buffer),
+      maxBuffer: 4096,
+      stdio: ["pipe", "pipe", "pipe"],
+      timeout: 1234,
+    });
+    expect(copyOptions.input.byteLength).toBe(1536);
+  });
+
+  it("refuses a portable workspace copy if the receipt resolves a replacement container", () => {
+    const { input, portable } = portableWorkspaceFixture();
+    mocks.portableTarget
+      .mockReturnValueOnce(portable)
+      .mockReturnValue({ ...portable, containerId: "b".repeat(64) });
+    expect(() =>
+      createDockerPrivilegedSandboxControl().prepareManagedStartupWorkspace!(input),
+    ).toThrow(/identity changed/u);
+    expect(mocks.dockerSpawnSync).toHaveBeenCalledOnce();
+    expect(mocks.dockerCapture).not.toHaveBeenCalled();
+  });
+
+  it("refuses a portable workspace copy if receipt authority changes after the first read", () => {
+    const { input, portable } = portableWorkspaceFixture();
+    portable.assertRuntimeAuthority
+      .mockImplementationOnce(() => undefined)
+      .mockImplementation(() => {
+        throw new Error("receipt authority changed");
+      });
+    expect(() =>
+      createDockerPrivilegedSandboxControl().prepareManagedStartupWorkspace!(input),
+    ).toThrow("receipt authority changed");
+    expect(mocks.dockerSpawnSync).toHaveBeenCalledOnce();
+    expect(mocks.dockerCapture).not.toHaveBeenCalled();
   });
 
   it("bounds direct target discovery by the caller's remaining deadline", () => {
