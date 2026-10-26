@@ -1119,6 +1119,9 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     installMode: "none",
     restoreCli: true,
     exposeCliBin: true,
+    // ubuntu-latest (26.04) ships only Python 3.14, which Model Router does not
+    // yet support (src/lib/onboard/model-router-python.ts). Pin until 3.14 is qualified.
+    runner: "ubuntu-24.04",
     owningPaths: [
       "nemoclaw-blueprint/router/pool-config.yaml",
       "src/lib/actions/sandbox/destroy-preflight.ts",
