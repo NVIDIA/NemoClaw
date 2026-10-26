@@ -568,6 +568,25 @@ If the error names an invalid gateway binding, restore the affected row's known-
 
 ## Onboarding
 
+### Enable Native Local Inference on a Reused Gateway
+
+If onboarding reports that native local inference requires `providers_v2_enabled=true`, ask the gateway administrator to review attached providers and run the command printed in the error.
+For a gateway named `nemoclaw`, that command is:
+
+```bash
+openshell settings set -g nemoclaw --global --key providers_v2_enabled --value true --yes
+```
+
+NemoClaw does not change this setting on an existing gateway.
+After the administrator enables it, resume the failed onboarding session:
+
+```bash
+$$nemoclaw onboard --resume
+```
+
+Resume reruns native local inference setup when NemoClaw has no recorded native local provider for this sandbox, even if another sandbox already has the same shared gateway route.
+If the setting is still missing, onboarding stops before creating the sandbox and retains the session for another attempt.
+
 ### Cgroup v2 errors during onboard
 
 Older NemoClaw releases relied on a Docker cgroup workaround on Ubuntu 24.04, DGX Spark, and WSL2. Current OpenShell releases handle that behavior themselves, so NemoClaw no longer requires a Spark-specific setup step.
@@ -2085,7 +2104,7 @@ Verify that the inference provider endpoint is reachable from the host. Check th
 $$nemoclaw <name> status
 ```
 
-The main `Inference` line checks the provider path from inside the sandbox and sends an inference request over the path the agent uses. For shared-route providers, including owned Local NVIDIA NIM, `status` probes `https://inference.local/v1/models` before it sends the request through `https://inference.local`. For NVIDIA Endpoints, fixed hosted selections, new hosted compatible selections outside the Personal tier, and qualified new local selections with a recorded native attachment, it verifies that attachment and sends the request to the selected native endpoint; it does not probe `inference.local`. When an inference request returns a transient gateway status, `status` makes up to three request attempts before it reports a failure. Shared-route retries repeat the route probe and request, while native providers retry only the native request. It prints the next attempt and two-second delay to stderr before each retry. Each inference request attempt has a 90-second request timeout. If the main line shows `unauthorized`, `unhealthy`, `unreachable`, or `not probed`, inspect the labeled diagnostic lines to identify the failing hop. For provider-path rejections, `unauthorized` means the route answered but rejected the request. Refresh the provider credential.
+The main `Inference` line checks the provider path from inside the sandbox and sends an inference request over the path the agent uses. For shared-route providers, including owned Local NVIDIA NIM, `status` probes `https://inference.local/v1/models` before it sends the request through `https://inference.local`. For NVIDIA Endpoints, fixed hosted selections, new hosted compatible selections outside the Personal tier, and qualified new local selections with a recorded native attachment, it verifies that attachment and sends the request to the selected native endpoint; it does not probe `inference.local`. When an inference request returns a transient gateway status, `status` makes up to three request attempts before it reports a failure. Shared-route retries repeat the route probe and request, while native providers retry only the native request. It prints the next attempt and two-second delay to stderr before each retry. Each inference request attempt has a 90-second request timeout. If a verified native NVIDIA attachment returns HTTP `429`, `500`, `502`, `503`, or `504`, or a confirmed timeout after bounded retries, `status` reports `degraded` and exits `0`. The model response remains unverified. Run `$$nemoclaw <name> connect --probe-only` to require a successful inference request before accepting readiness. If the main line shows `unauthorized`, `unhealthy`, `unreachable`, or `not probed`, inspect the labeled diagnostic lines to identify the failing hop. An `unauthorized` line means the route answered but rejected the request, so refresh the provider credential rather than the route.
 
 For Hermes native NVIDIA routes, status also checks the managed credential reference in the Hermes configuration. If this check reports an invalid or stale credential, run `$$nemoclaw <name> rebuild --yes` to refresh it. Then rerun `$$nemoclaw <name> status` and confirm inference is healthy. If status reports that the installed image lacks the credential verifier, rebuild to install it, then rerun status. For other unavailable-verification results, follow the printed sandbox health and access recovery guidance.
 

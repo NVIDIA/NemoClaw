@@ -76,6 +76,8 @@ import {
 import {
   assertProviderInferenceRouteCompatible,
   guardProviderInferenceRouteSelection,
+  hasNativeLocalProviderAuthority,
+  type NativeLocalResumeSelection,
   type ProviderInferenceProbeRoute,
 } from "./provider-inference-route-containment";
 
@@ -331,6 +333,11 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
     getOpenshellBinary(): string;
     needsBedrockRuntimeAdapter(provider: string, endpointUrl: string | null): boolean;
     isInferenceRouteReady(gatewayName: string, provider: string, model: string): boolean;
+    hasNativeLocalProviderAuthority?(
+      sandboxName: string,
+      gatewayName: string,
+      selection: NativeLocalResumeSelection,
+    ): boolean;
     getSandboxRegistryEntry?(sandboxName: string): Partial<SandboxEntry> | null;
     isRoutedInferenceProvider(provider: string): boolean;
     reconcileModelRouter(): Promise<void>;
@@ -588,8 +595,12 @@ function canResumeInferenceRoute(input: {
   forceProviderSelection: boolean;
   forceInferenceSetup: boolean;
   effectiveResume: boolean;
+  selectsNativeLocal: boolean;
+  nativeLocalAttached(): boolean;
   routeReady(): boolean;
 }): boolean {
+  // A ready shared route does not prove a native local provider attachment:
+  // another sandbox on a reused gateway can own the same shared route.
   return (
     !input.needsBedrockRuntimeAdapter &&
     input.provider !== OPENROUTER_PROVIDER_NAME &&
@@ -597,7 +608,8 @@ function canResumeInferenceRoute(input: {
     !input.forceProviderSelection &&
     !input.forceInferenceSetup &&
     input.effectiveResume &&
-    input.routeReady()
+    input.routeReady() &&
+    (!input.selectsNativeLocal || input.nativeLocalAttached())
   );
 }
 
@@ -1989,6 +2001,23 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       forceProviderSelection,
       forceInferenceSetup,
       effectiveResume,
+      selectsNativeLocal: usesNativeLocalSelection(
+        agentName(agent),
+        { provider: selectedProvider, endpointUrl },
+        Boolean(nimContainer),
+        preservesLegacyPiRoute(sandboxName, {
+          provider: selectedProvider,
+          model: selectedModel,
+          endpointUrl,
+        }),
+      ),
+      nativeLocalAttached: () =>
+        Boolean(sandboxName) &&
+        (deps.hasNativeLocalProviderAuthority ?? hasNativeLocalProviderAuthority)(
+          sandboxName as string,
+          gatewayName,
+          { provider: selectedProvider, endpointUrl, agent: agentName(agent) },
+        ),
       routeReady: () => deps.isInferenceRouteReady(gatewayName, selectedProvider, selectedModel),
     });
     if (resumeInference) {
