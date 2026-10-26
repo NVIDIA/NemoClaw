@@ -846,7 +846,7 @@ spec:
       authentication: {{profile: development}}
       imagePullSecrets: {pull_secrets}
   inferenceProviders:
-    - name: stub
+    stub:
       provider: openai
       endpoint: {endpoint}
   inferences:

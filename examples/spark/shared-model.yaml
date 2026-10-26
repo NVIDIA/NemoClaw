@@ -42,7 +42,7 @@ spec:
         freeGateGiB: 12
         consecutiveSamples: 5
   inferenceProviders:
-    - name: shared
+    shared:
       provider: openai
       serviceRef: shared
   sandboxes:

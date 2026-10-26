@@ -63,17 +63,13 @@ fn different_adapters_separate_provider_grants_and_ignore_declaration_order() {
     assert_eq!(before, graph(&value));
 }
 #[test]
-fn sandbox_and_provider_order_do_not_change_compiled_identity_or_settings() {
+fn sandbox_order_does_not_change_compiled_identity_or_settings() {
     let mut value = example();
     let mut other = value["spec"]["sandboxes"][0].clone();
     other["name"] = json!("bob");
-    let mut provider = value["spec"]["inferenceProviders"][0].clone();
-    provider["name"] = json!("other-models");
+    let mut provider = value["spec"]["inferenceProviders"]["local"].clone();
     provider["endpoint"] = json!("http://172.20.0.1:11447/v1");
-    value["spec"]["inferenceProviders"]
-        .as_array_mut()
-        .unwrap()
-        .push(provider);
+    value["spec"]["inferenceProviders"]["other-models"] = provider;
     other["agent"]["inference"]["routes"][0]["providerRef"] = json!("other-models");
     value["spec"]["sandboxes"]
         .as_array_mut()
@@ -81,24 +77,21 @@ fn sandbox_and_provider_order_do_not_change_compiled_identity_or_settings() {
         .push(other);
     let before = graph(&value);
     value["spec"]["sandboxes"].as_array_mut().unwrap().reverse();
-    value["spec"]["inferenceProviders"]
-        .as_array_mut()
-        .unwrap()
-        .reverse();
     assert_eq!(before, graph(&value));
 }
 
 #[test]
 fn sandbox_local_provider_and_inference_names_do_not_escape_their_scope() {
     let mut value = example();
-    let provider = value["spec"]["inferenceProviders"]
-        .as_array_mut()
+    let providers = value["spec"]
+        .as_object_mut()
         .unwrap()
-        .remove(0);
-    value["spec"]["sandboxes"][0]["inferenceProviders"] = json!([provider]);
+        .remove("inferenceProviders")
+        .unwrap();
+    value["spec"]["sandboxes"][0]["inferenceProviders"] = providers;
     let mut other = value["spec"]["sandboxes"][0].clone();
     other["name"] = json!("other");
-    other["inferenceProviders"][0]["endpoint"] = json!("http://172.20.0.1:11447/v1");
+    other["inferenceProviders"]["local"]["endpoint"] = json!("http://172.20.0.1:11447/v1");
     value["spec"]["sandboxes"]
         .as_array_mut()
         .unwrap()

@@ -88,7 +88,7 @@ spec:
         user_role: {USER_ROLE}
         scopes_claim: scope
   inferenceProviders:
-    - name: hosted
+    hosted:
       provider: openai
       endpoint: https://inference.example.test/v1
   sandboxes:

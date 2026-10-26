@@ -35,7 +35,7 @@ async fn provider_union_export_reapply_drift_and_destroy_remain_scoped_to_each_s
     *first.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
     // A closed loopback port fails the same way on every runner, so repeated
     // observations stay identical instead of timing out on the example hosts.
-    for provider in &mut first.spec.inference_providers {
+    for provider in first.spec.inference_providers.values_mut() {
         provider.endpoint = match provider.endpoint.split_once("://") {
             Some(("https", _)) => "https://127.0.0.1:9/v1",
             _ => "http://127.0.0.1:9/v1",

@@ -13,9 +13,9 @@ spec:
       provider: docker
     endpoint: http://127.0.0.1:17681
   inferenceProviders:
-  - name: local
-    provider: openai
-    endpoint: http://172.20.0.1:11446/v1
+    local:
+      provider: openai
+      endpoint: http://172.20.0.1:11446/v1
   sandboxes:
   - name: assistant
     image:

@@ -232,6 +232,7 @@ fn guide(name: &str) -> &'static str {
             "[Managed models](../models.md)"
         }
         "InferenceProvider"
+        | "InlineInferenceProvider"
         | "Inference"
         | "Route"
         | "Overrides"

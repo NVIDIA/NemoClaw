@@ -427,7 +427,7 @@ fn proxy_configuration(
     .unwrap();
     value["metadata"]["uid"] = json!(uid);
     value["spec"]["gateway"] = json!({"management":"external", "endpoint":gateway_endpoint});
-    let provider = &mut value["spec"]["inferenceProviders"][0];
+    let provider = &mut value["spec"]["inferenceProviders"]["local"];
     provider["serviceRef"] = json!("ollama-auth");
     value["spec"]["services"] = json!({"ollama-auth": {
         "kind":"ollamaProxy",

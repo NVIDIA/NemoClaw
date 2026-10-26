@@ -499,10 +499,10 @@ Guide: [Inference configuration](../inference.md).
 
 Paths:
 
-- `spec.inferenceProviders[].api`
+- `spec.inferenceProviders.{key}.api`
 - `spec.inferences.{key}.routes[].provider.api`
 - `spec.sandboxes[].agent.inference.routes[].provider.api`
-- `spec.sandboxes[].inferenceProviders[].api`
+- `spec.sandboxes[].inferenceProviders.{key}.api`
 - `spec.sandboxes[].inferences.{key}.routes[].provider.api`
 
 Accepted input: string.
@@ -517,10 +517,27 @@ Guide: [Inference configuration](../inference.md).
 
 Paths:
 
-- `spec.inferenceProviders[]`
+- `spec.inferenceProviders.{key}`
+- `spec.sandboxes[].inferenceProviders.{key}`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `api` | [InferenceApi](#inferenceapi) | No | — | Request API. Omission selects anthropic-messages for Anthropic providers and openai-completions for OpenAI providers. NemoClaw uses it to read the endpoint's model catalog; agents use the protocol their adapter selects for the provider. |
+| `credential` | [SecretRef](#secretref) | No | — | Optional API credential reference for an external HTTPS endpoint. Excluded by serviceRef. |
+| `endpoint` | string | Without serviceRef | — | Inference HTTP(S) URL owned outside the deployment. Required without serviceRef and excluded with serviceRef. |
+| `provider` | string | Yes | — | OpenShell provider implementation. Must match the selected API family. Constraints: `"openai"` or `"anthropic"`. |
+| `serviceRef` | string | No | — | Name of a managed service in spec.services. Excludes endpoint and credential. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
+
+## InlineInferenceProvider
+
+Inference definition owned by one route, with the fields of an inferenceProviders entry and its own name.
+
+Guide: [Inference configuration](../inference.md).
+
+Paths:
+
 - `spec.inferences.{key}.routes[].provider`
 - `spec.sandboxes[].agent.inference.routes[].provider`
-- `spec.sandboxes[].inferenceProviders[]`
 - `spec.sandboxes[].inferences.{key}.routes[].provider`
 
 | Field | Input type | Required | Default | Description and constraints |
@@ -528,7 +545,7 @@ Paths:
 | `api` | [InferenceApi](#inferenceapi) | No | — | Request API. Omission selects anthropic-messages for Anthropic providers and openai-completions for OpenAI providers. NemoClaw uses it to read the endpoint's model catalog; agents use the protocol their adapter selects for the provider. |
 | `credential` | [SecretRef](#secretref) | No | — | Optional API credential reference for an external HTTPS endpoint. Excluded by serviceRef. |
 | `endpoint` | string | Without serviceRef | — | Inference HTTP(S) URL owned outside the deployment. Required without serviceRef and excluded with serviceRef. |
-| `name` | string | Yes | — | Provider name referenced by model choices. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
+| `name` | string | Yes | — | Provider name. Must not shadow an enclosing definition. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `provider` | string | Yes | — | OpenShell provider implementation. Must match the selected API family. Constraints: `"openai"` or `"anthropic"`. |
 | `serviceRef` | string | No | — | Name of a managed service in spec.services. Excludes endpoint and credential. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 
@@ -1065,7 +1082,7 @@ Paths:
 |---|---|---|---|---|
 | `name` | string | Yes | — | Unique lowercase name for this model choice. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `overrides` | [Overrides](#overrides) | Yes | — | Model selection, shared limits, and optional native settings. |
-| `provider` | [InferenceProvider](#inferenceprovider) | No | — | Inline inference definition owned by this route. Excludes providerRef and must not shadow an enclosing definition. |
+| `provider` | [InlineInferenceProvider](#inlineinferenceprovider) | No | — | Inline inference definition owned by this route. Excludes providerRef and must not shadow an enclosing definition. |
 | `providerRef` | string | No | — | Name of an enclosing inference provider. Exactly one of providerRef or provider is required. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 
 ## Runtime
@@ -1100,7 +1117,7 @@ Paths:
 | `harnessRef` | string | No | — | Name of a visible harness configuration. Excludes inline harness. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `harnesses` | map of [Harness](#harness) | No | — | Named harness configurations available through harnessRef. Selecting a definition reuses configuration; runtime processes belong to each sandbox. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `image` | [Image](#image) | For Kubernetes sandboxes | — | Kubernetes requires an explicit immutable agent image compatible with the gateway's runtime user and group IDs. For other drivers, omission selects the generic SDK agent image pin; verify that it contains the selected Fabric adapter. |
-| `inferenceProviders` | array of [InferenceProvider](#inferenceprovider) | No | — | Named inference definitions visible to this sandbox's routes. Names must not shadow deployment definitions. |
+| `inferenceProviders` | map of [InferenceProvider](#inferenceprovider) | No | — | Named inference definitions visible to this sandbox's routes through providerRef. Names must not shadow deployment definitions. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `inferences` | map of [Inference](#inference) | No | — | Named inference configurations available through inferenceRef. Definitions resolve providers in their own scope and create no resources until selected. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `integrations` | map of [Integration](#integration) | No | — | Named integration definitions selected by this sandbox's agent through integrationRefs. Names must not collide with deployment definitions. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `name` | string | Yes | — | Lowercase sandbox name. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
@@ -1132,12 +1149,12 @@ Paths:
 
 - `spec.gateway.credential`
 - `spec.gateway.kubernetes.authentication.token`
-- `spec.inferenceProviders[].credential`
+- `spec.inferenceProviders.{key}.credential`
 - `spec.inferences.{key}.routes[].provider.credential`
 - `spec.integrations.{key}.credential`
 - `spec.sandboxes[].agent.inference.routes[].provider.credential`
 - `spec.sandboxes[].agent.integrations.{key}.credential`
-- `spec.sandboxes[].inferenceProviders[].credential`
+- `spec.sandboxes[].inferenceProviders.{key}.credential`
 - `spec.sandboxes[].inferences.{key}.routes[].provider.credential`
 - `spec.sandboxes[].integrations.{key}.credential`
 
@@ -1403,7 +1420,7 @@ Paths:
 |---|---|---|---|---|
 | `gateway` | [Gateway](#gateway) | Yes | — | OpenShell gateway connection or managed gateway settings. |
 | `harnesses` | map of [Harness](#harness) | No | — | Named harness configurations available through harnessRef. Selecting a definition reuses configuration; runtime processes belong to each sandbox. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
-| `inferenceProviders` | array of [InferenceProvider](#inferenceprovider) | No | — | Named inference definitions available to sandbox routes. Unselected definitions create no resources or credential requirements. |
+| `inferenceProviders` | map of [InferenceProvider](#inferenceprovider) | No | — | Named inference definitions available to sandbox routes through providerRef. Unselected definitions create no resources or credential requirements. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `inferences` | map of [Inference](#inference) | No | — | Named inference configurations available through inferenceRef. Definitions resolve providers in their own scope and create no resources until selected. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `integrations` | map of [Integration](#integration) | No | — | Named integration definitions shared by agents through integrationRefs. Definitions alone grant no access. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `registries` | array of [Registry](#registry) | No | — | Registries whose images NemoClaw pulls through Docker with the logins of the machine running OpenTofu, from its Docker configuration file. Lists addresses only; credentials stay in that file or its credential store. Constraints: maximum items 32. |

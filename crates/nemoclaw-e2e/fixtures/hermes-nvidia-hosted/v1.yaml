@@ -17,7 +17,7 @@ spec:
     engine: unix:///var/run/docker.sock
     networkCIDR: 172.30.187.0/24
   inferenceProviders:
-    - name: hosted-nvidia-prod
+    hosted-nvidia-prod:
       provider: openai
       api: openai-completions
       endpoint: https://integrate.api.nvidia.com/v1

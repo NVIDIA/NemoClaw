@@ -160,7 +160,12 @@ fn managed_defaults_and_safety_bounds_match_the_qualified_recipe() {
         assert!(changed.validate().is_err());
     }
     let mut changed = original.clone();
-    changed.spec.inference_providers[0].endpoint = "http://127.0.0.1:18888/v1".into();
+    changed
+        .spec
+        .inference_providers
+        .get_mut("qwen")
+        .unwrap()
+        .endpoint = "http://127.0.0.1:18888/v1".into();
     assert!(changed.validate().is_err());
     let mut changed = original;
     let ServiceDefinition::Vllm(service) = changed.spec.services.get_mut("qwen").unwrap() else {
@@ -188,7 +193,12 @@ fn fabric_protocol_and_managed_ollama_constraints_survive_the_port() {
     ] {
         let mut document = original.clone();
         document.spec.sandboxes[0].harness.as_mut().unwrap().kind = harness.parse().unwrap();
-        document.spec.inference_providers[0].provider = if harness == "claude" {
+        document
+            .spec
+            .inference_providers
+            .get_mut("local")
+            .unwrap()
+            .provider = if harness == "claude" {
             nemoclaw_sdk::config::InferenceProviderKind::Anthropic
         } else {
             nemoclaw_sdk::config::InferenceProviderKind::Openai
@@ -422,7 +432,12 @@ fn harness_selection_does_not_determine_service_ownership() {
         claude.validate().is_ok(),
         "harness identity does not change the provider's protocol default"
     );
-    claude.spec.inference_providers[0].provider = InferenceProviderKind::Anthropic;
+    claude
+        .spec
+        .inference_providers
+        .get_mut("qwen")
+        .unwrap()
+        .provider = InferenceProviderKind::Anthropic;
     assert!(
         claude.validate().is_err(),
         "managed vLLM exposes the OpenAI API regardless of harness ownership"
@@ -476,13 +491,13 @@ fn fabric_harness_identifiers_are_extensible_and_validated() {
         nemoclaw_sdk::config::InferenceApi::OpenaiResponses,
         nemoclaw_sdk::config::InferenceApi::AnthropicMessages,
     ] {
-        document.spec.inference_providers[0].api = Some(api);
-        document.spec.inference_providers[0].provider =
-            if api == nemoclaw_sdk::config::InferenceApi::AnthropicMessages {
-                InferenceProviderKind::Anthropic
-            } else {
-                InferenceProviderKind::Openai
-            };
+        let provider = document.spec.inference_providers.get_mut("local").unwrap();
+        provider.api = Some(api);
+        provider.provider = if api == nemoclaw_sdk::config::InferenceApi::AnthropicMessages {
+            InferenceProviderKind::Anthropic
+        } else {
+            InferenceProviderKind::Openai
+        };
         document.validate().unwrap();
     }
     assert_eq!(

@@ -67,10 +67,10 @@ spec:
         freeGateGiB: 12
         consecutiveSamples: 5
   inferenceProviders:
-    - name: fast
+    fast:
       provider: openai
       serviceRef: fast
-    - name: smart
+    smart:
       provider: openai
       serviceRef: smart
   sandboxes:

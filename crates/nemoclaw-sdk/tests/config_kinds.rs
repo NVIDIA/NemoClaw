@@ -7,16 +7,16 @@ use serde_json::json;
 fn closed_selectors_reject_unknown_values_and_harnesses_reject_malformed_identifiers() {
     assert!(serde_json::from_value::<Harness>(json!({"kind":" \t"})).is_err());
     assert!(serde_json::from_value::<Runtime>(json!({"provider":"unknown"})).is_err());
-    assert!(
-        serde_json::from_value::<InferenceProvider>(json!({"name":"model", "provider":"unknown"}))
-            .is_err()
-    );
+    assert!(serde_json::from_value::<InferenceProvider>(json!({"provider":"unknown"})).is_err());
 }
 
 #[test]
 fn required_selectors_are_not_silently_defaulted() {
     assert!(serde_json::from_value::<Harness>(json!({})).is_err());
-    assert!(serde_json::from_value::<InferenceProvider>(json!({"name":"model"})).is_err());
+    assert!(
+        serde_json::from_value::<InferenceProvider>(json!({"endpoint":"https://example.com/v1"}))
+            .is_err()
+    );
 }
 
 #[test]

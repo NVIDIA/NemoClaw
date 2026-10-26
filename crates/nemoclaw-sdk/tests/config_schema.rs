@@ -107,7 +107,7 @@ fn input_schema_rejects_missing_required_fields_and_structural_nulls() {
         "/spec",
         "/spec/gateway",
         "/spec/gateway/management",
-        "/spec/inferenceProviders/0/name",
+        "/spec/inferenceProviders/local/provider",
         "/spec/sandboxes",
         "/spec/sandboxes/0/name",
         "/spec/sandboxes/0/agent",
@@ -128,7 +128,7 @@ fn input_schema_rejects_missing_required_fields_and_structural_nulls() {
     for (parent, key) in [
         ("/spec/gateway", "credential"),
         ("/spec/gateway", "tls"),
-        ("/spec/inferenceProviders/0", "serviceRef"),
+        ("/spec/inferenceProviders/local", "serviceRef"),
         ("/spec", "services"),
     ] {
         let mut value = original.clone();
@@ -235,13 +235,13 @@ fn schema_and_parser_enforce_choices_bounds_and_conditional_forms() {
         ),
         (
             "spark/vllm.yaml",
-            "/spec/inferenceProviders/0/endpoint",
+            "/spec/inferenceProviders/qwen/endpoint",
             json!("https://api.example.com/v1"),
             false,
         ),
         (
             "spark/vllm.yaml",
-            "/spec/inferenceProviders/0/credential",
+            "/spec/inferenceProviders/qwen/credential",
             json!({"env": "TOKEN"}),
             false,
         ),
@@ -378,7 +378,7 @@ fn documented_parser_checks_remain_required_after_schema_validation() {
     assert!(schema["x-nemoclaw-parser-checks"].as_array().unwrap().len() >= 4);
     let validator = jsonschema::validator_for(&schema).unwrap();
     for (file, path, replacement) in [
-        ("local.yaml", "/spec/inferenceProviders", json!([])),
+        ("local.yaml", "/spec/inferenceProviders", json!({})),
         (
             "local.yaml",
             "/spec/sandboxes/0/agent/inference/routes/0/providerRef",
@@ -445,6 +445,110 @@ fn example_discovery_includes_nested_yaml_and_yml_and_excludes_other_files() {
             .collect::<std::collections::BTreeSet<_>>(),
         expected
     );
+}
+
+/// Deployment and sandbox inference providers are maps keyed by name, like
+/// the other definition collections; only a route's inline provider names
+/// itself.
+#[test]
+fn inference_providers_are_keyed_by_name_in_both_scopes() {
+    let validator = jsonschema::validator_for(&input_schema()).unwrap();
+    let mut keyed = input("local.yaml");
+    keyed["spec"]["inferenceProviders"] =
+        json!({"local": {"provider": "openai", "endpoint": "http://172.20.0.1:11436/v1"}});
+    let sandbox = &mut keyed["spec"]["sandboxes"][0];
+    sandbox["inferenceProviders"] = json!({"hosted": {
+        "provider": "openai",
+        "endpoint": "https://inference.example/v1",
+        "credential": {"env": "HOSTED_API_KEY"}
+    }});
+    let inference = &mut sandbox["agent"]["inference"];
+    inference["default"] = json!("primary");
+    inference["routes"].as_array_mut().unwrap().push(json!({
+        "name": "hosted", "providerRef": "hosted", "overrides": {"model": "hosted-model"}
+    }));
+    let document = Document::parse(keyed.to_string().as_bytes())
+        .unwrap_or_else(|error| panic!("name-keyed providers: {error}"));
+    agrees(&validator, &keyed, true);
+    let exported: Value = serde_saphyr::from_str(&document.yaml().unwrap()).unwrap();
+    for (scope, path, name) in [
+        ("/spec", "spec", "local"),
+        ("/spec/sandboxes/0", "spec.sandboxes[0]", "hosted"),
+    ] {
+        let pointer = format!("{scope}/inferenceProviders");
+        assert_eq!(
+            exported.pointer(&pointer),
+            keyed.pointer(&pointer),
+            "{pointer}"
+        );
+
+        let mut listed = keyed.clone();
+        let mut provider = keyed.pointer(&format!("{pointer}/{name}")).unwrap().clone();
+        provider["name"] = json!(name);
+        *listed.pointer_mut(&pointer).unwrap() = json!([provider]);
+        agrees(&validator, &listed, false);
+
+        let mut named = keyed.clone();
+        named.pointer_mut(&format!("{pointer}/{name}")).unwrap()["name"] = json!(name);
+        agrees(&validator, &named, false);
+
+        for key in ["PRIVATE-KEY", "9local", "local_model", &"a".repeat(41)] {
+            let mut renamed = keyed.clone();
+            let providers = renamed
+                .pointer_mut(&pointer)
+                .unwrap()
+                .as_object_mut()
+                .unwrap();
+            let provider = providers.remove(name).unwrap();
+            providers.insert(key.into(), provider);
+            agrees(&validator, &renamed, false);
+            let error = Document::parse(renamed.to_string().as_bytes())
+                .unwrap_err()
+                .to_string();
+            assert!(!error.contains("PRIVATE-KEY"), "{error}");
+        }
+
+        let mut endpoint = keyed.clone();
+        endpoint.pointer_mut(&format!("{pointer}/{name}")).unwrap()["endpoint"] =
+            json!("ftp://inference.example");
+        let error = Document::parse(endpoint.to_string().as_bytes())
+            .unwrap_err()
+            .to_string();
+        let field = format!("{path}.inferenceProviders.{name}.endpoint");
+        assert!(error.contains(&field), "{field}: {error}");
+    }
+
+    // The schema cannot compare scopes; the parser rejects a sandbox name
+    // that shadows a deployment name.
+    let mut shadow = keyed.clone();
+    shadow["spec"]["sandboxes"][0]["inferenceProviders"]["local"] =
+        keyed["spec"]["inferenceProviders"]["local"].clone();
+    assert!(validator.is_valid(&shadow));
+    let error = Document::parse(shadow.to_string().as_bytes())
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("spec.sandboxes[assistant].inferenceProviders[local]")
+            && error.contains("shadow"),
+        "{error}"
+    );
+
+    // A route's inline provider still carries the name its registration uses.
+    let mut inline = keyed.clone();
+    let route = &mut inline["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][1];
+    route.as_object_mut().unwrap().remove("providerRef");
+    route["provider"] = keyed["spec"]["sandboxes"][0]["inferenceProviders"]["hosted"].clone();
+    route["provider"]["name"] = json!("inline");
+    inline["spec"]["sandboxes"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("inferenceProviders");
+    agrees(&validator, &inline, true);
+    inline["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][1]["provider"]
+        .as_object_mut()
+        .unwrap()
+        .remove("name");
+    agrees(&validator, &inline, false);
 }
 
 #[test]

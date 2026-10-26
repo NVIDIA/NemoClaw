@@ -23,7 +23,7 @@ spec:
       certificate: {env: GATEWAY_CERT}
       key: {env: GATEWAY_KEY}
   inferenceProviders:
-    - name: inference
+    inference:
       provider: openai
       endpoint: https://inference.example.com/v1
       credential: {env: INFERENCE_API_KEY}

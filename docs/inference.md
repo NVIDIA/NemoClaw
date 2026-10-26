@@ -145,7 +145,7 @@ The pinned Fabric has no per-model API setting, so an endpoint that accepts only
 Fabric validates the rest of its configuration when the agent is configured.
 
 Use `provider: anthropic` with `anthropic-messages` and `provider: openai` with either OpenAI API.
-The provider name is the local reference used by routes; it does not select a vendor.
+The provider's key under `inferenceProviders` is the local name routes reference; it does not select a vendor.
 For example, a Nous endpoint using the OpenAI protocol still uses `provider: openai`.
 
 ### Prepare an External Endpoint
@@ -228,7 +228,7 @@ services:
     memory:
       gpuMemoryGiB: 16
 inferenceProviders:
-  - name: qwen
+  qwen:
     provider: openai
     api: openai-completions
     serviceRef: qwen
@@ -279,7 +279,7 @@ Set `authentication: bearer` under `spec.services.<name>` to generate a private 
 Omission preserves the existing unauthenticated serving behavior.
 Build the [runtime image](build.md#build-a-runtime-image) from this revision and use its immutable digest.
 Authenticated services require both `org.nemoclaw.inference.authentication=bearer-v1` and `org.nemoclaw.inference.routes=openai-v2`; image validation rejects other images before creating the runtime, including `openai-v1` images from earlier revisions, whose middleware passed every `/v1` path.
-Do not supply `inferenceProviders[].credential` for a managed service.
+Do not supply `inferenceProviders.<name>.credential` for a managed service.
 
 The supervisor creates a mode-0600 key in `/credentials/inference-key` on a separate credential volume under its own writer lock and reuses it after restart.
 It passes the key only to the vLLM child process through `VLLM_API_KEY`, then verifies `/v1/models` through the route filter below, using bearer authentication, before reporting readiness.
@@ -381,7 +381,7 @@ services:
         name: qwen3:4b
         digest: REPLACE_WITH_MODEL_DIGEST
 inferenceProviders:
-  - name: local
+  local:
     provider: openai
     serviceRef: local
 ```
@@ -457,7 +457,7 @@ Declare an external HTTPS provider with a credential reference, then select it f
 
 ```yaml
 # Under spec.inferenceProviders:
-- name: nous
+nous:
   provider: openai
   api: openai-completions
   endpoint: https://inference-api.nousresearch.com/v1

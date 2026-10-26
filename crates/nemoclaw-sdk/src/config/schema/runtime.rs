@@ -220,13 +220,13 @@ fn instance_path(pointer: &str, root: &Value) -> String {
             {
                 [
                     "spec",
-                    "services" | "harnesses" | "inferences" | "integrations",
+                    "services" | "harnesses" | "inferences" | "inferenceProviders" | "integrations",
                 ] => true,
                 [
                     "spec",
                     "sandboxes",
                     index,
-                    "harnesses" | "inferences" | "integrations",
+                    "harnesses" | "inferences" | "inferenceProviders" | "integrations",
                 ]
                 | ["spec", "sandboxes", index, "agent", "integrations"] => {
                     index.parse::<usize>().is_ok()

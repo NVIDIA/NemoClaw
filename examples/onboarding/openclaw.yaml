@@ -13,7 +13,7 @@ spec:
     runtime:
       provider: docker
   inferenceProviders:
-    - name: nvidia-prod
+    nvidia-prod:
       provider: openai
       api: openai-completions
       endpoint: https://integrate.api.nvidia.com/v1

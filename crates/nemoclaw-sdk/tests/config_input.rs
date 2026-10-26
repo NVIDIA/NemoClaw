@@ -143,8 +143,7 @@ fn required_fields_and_mutually_exclusive_provider_forms_are_rejected() {
         "/metadata/uid",
         "/spec/gateway/management",
         "/spec/gateway/endpoint",
-        "/spec/inferenceProviders/0/name",
-        "/spec/inferenceProviders/0/provider",
+        "/spec/inferenceProviders/local/provider",
         "/spec/sandboxes/0/harness",
     ] {
         let mut invalid = baseline.clone();
@@ -159,7 +158,7 @@ fn required_fields_and_mutually_exclusive_provider_forms_are_rejected() {
     }
     for field in ["endpoint", "credential", "ollama"] {
         let mut invalid = input("../crates/nemoclaw-sdk/tests/fixtures/config/inline-recipe.yaml");
-        invalid["spec"]["inferenceProviders"][0][field] = match field {
+        invalid["spec"]["inferenceProviders"]["qwen"][field] = match field {
             "endpoint" => json!("https://inference.example.com/v1"),
             "credential" => json!({"env": "MODEL_TOKEN"}),
             _ => json!({}),

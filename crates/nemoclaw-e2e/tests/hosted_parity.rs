@@ -13,6 +13,19 @@ fn authored_document(raw: &[u8], current: &[u8]) -> Document {
         Document::parse(current).expect("authored v1 input must use current agent syntax");
     let mut projected: serde_json::Value =
         serde_saphyr::from_str(std::str::from_utf8(raw).unwrap()).unwrap();
+    // v0 listed each provider with its name; v1 keys providers by name.
+    let providers = projected["spec"]["inferenceProviders"]
+        .take()
+        .as_array()
+        .expect("raw v0 export requires its historical provider list")
+        .iter()
+        .map(|provider| {
+            let mut provider = provider.clone();
+            let name = provider.as_object_mut().unwrap().remove("name").unwrap();
+            (name.as_str().unwrap().to_owned(), provider)
+        })
+        .collect::<serde_json::Map<_, _>>();
+    projected["spec"]["inferenceProviders"] = providers.into();
     let sandboxes = projected["spec"]["sandboxes"].as_array_mut().unwrap();
     assert_eq!(sandboxes.len(), 1, "hosted parity requires one sandbox");
     let sandbox = sandboxes[0].as_object_mut().unwrap();
@@ -98,8 +111,7 @@ fn assert_hosted_document(document: &Document, harness: HarnessKind, runtime_roo
     let gateway = gateway.as_managed().unwrap();
     assert_eq!(gateway.engine, "unix:///var/run/docker.sock");
 
-    let provider = &document.spec.inference_providers[0];
-    assert_eq!(provider.name, "hosted-nvidia-prod");
+    let provider = &document.spec.inference_providers["hosted-nvidia-prod"];
     assert_eq!(provider.provider, InferenceProviderKind::Openai);
     assert_eq!(provider.endpoint, "https://integrate.api.nvidia.com/v1");
     assert_eq!(
@@ -138,7 +150,7 @@ fn assert_hosted_document(document: &Document, harness: HarnessKind, runtime_roo
     let inference = document.sandbox_inference(sandbox).unwrap();
     assert_eq!(
         inference.routes[0].provider_ref.as_deref(),
-        Some(provider.name.as_str())
+        Some("hosted-nvidia-prod")
     );
     assert_eq!(
         inference.routes[0].overrides.model,

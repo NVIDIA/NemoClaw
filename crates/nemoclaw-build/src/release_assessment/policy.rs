@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Match proposed upstream-base exceptions without granting release approval.
+//! Match exceptions for inherited upstream findings without granting release
+//! approval. A finding is inherited from an upstream base image or from a lock
+//! file in an upstream project.
 //!
 //! The 30-day maximum is this candidate policy's explicit choice. Origin evidence
 //! and the tracking issue are review inputs; this module does not fetch or
@@ -21,6 +23,17 @@ pub struct EvidenceReference {
     pub sha256: String,
 }
 
+/// Where an excepted finding comes from. Exactly one applies.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "snake_case")]
+pub enum Upstream {
+    /// An upstream image the assessed image is built from, by digest.
+    BaseImage(String),
+    /// A lock file at an exact commit of an upstream project, outside
+    /// NemoClaw, that pins the package.
+    LockFile(EvidenceReference),
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Exception {
@@ -30,7 +43,7 @@ pub struct Exception {
     pub package: String,
     pub version: String,
     pub purl: Option<String>,
-    pub upstream_base: String,
+    pub upstream: Upstream,
     pub origin_evidence: EvidenceReference,
     pub tracking_issue: String,
     pub rationale: String,
@@ -134,6 +147,16 @@ fn immutable_evidence(reference: &EvidenceReference) -> bool {
             .all(|part| !part.is_empty() && !matches!(*part, "." | ".."))
 }
 
+/// A NemoClaw lock file pins what NemoClaw controls, so it can't support an
+/// exception.
+fn upstream_lock_file(reference: &EvidenceReference) -> bool {
+    immutable_evidence(reference)
+        && !reference
+            .reference
+            .to_ascii_lowercase()
+            .starts_with("https://github.com/nvidia/nemoclaw/")
+}
+
 fn tracking_issue(value: &str) -> bool {
     value
         .strip_prefix("https://github.com/NVIDIA/NemoClaw/issues/")
@@ -198,13 +221,16 @@ pub fn evaluate(
                 "subject, package, advisory, and rationale must have exact usable identities",
             ));
         }
-        if !immutable_image(&entry.upstream_base)
-            || entry.upstream_base == entry.reference
+        let upstream = match &entry.upstream {
+            Upstream::BaseImage(image) => immutable_image(image) && image != &entry.reference,
+            Upstream::LockFile(lock_file) => upstream_lock_file(lock_file),
+        };
+        if !upstream
             || !immutable_evidence(&entry.origin_evidence)
             || !tracking_issue(&entry.tracking_issue)
         {
             return Err(invalid(
-                "requires an upstream-base digest, immutable origin evidence and checksum, and a tracking issue",
+                "requires an upstream base-image digest or upstream lock file, immutable origin evidence and checksum, and a tracking issue",
             ));
         }
         let start = OffsetDateTime::parse(&entry.valid_from, &Rfc3339)
@@ -360,7 +386,7 @@ mod tests {
             "reference": subject.reference, "platform": subject.platform,
             "advisory": finding.advisory, "package": finding.package,
             "version": finding.version, "purl": finding.purl,
-            "upstream_base": format!("docker.io/library/debian@sha256:{}", "f".repeat(64)),
+            "upstream": {"base_image": format!("docker.io/library/debian@sha256:{}", "f".repeat(64))},
             "origin_evidence": {
                 "reference": format!("https://github.com/NVIDIA/NemoClaw/blob/{}/image/base-evidence.json", "1".repeat(40)),
                 "sha256": "2".repeat(64)
@@ -407,6 +433,21 @@ mod tests {
         assert!(!evaluated.publication_authorized);
         assert_eq!(assessment.status, Status::Blocked);
         assert_eq!(assessment.subjects[0].findings.len(), 1);
+    }
+
+    #[test]
+    fn an_upstream_projects_lock_file_can_support_an_exception() {
+        let assessment = assessment();
+        let mut policy = policy(&assessment);
+        // A package an upstream project pins, such as one in Fabric's uv.lock.
+        policy["exceptions"][0]["upstream"] = json!({"lock_file": {
+            "reference": format!("https://github.com/NVIDIA/NeMo-Fabric/blob/{}/uv.lock", "3".repeat(40)),
+            "sha256": "4".repeat(64)
+        }});
+        let evaluated = run(&assessment, &policy).unwrap();
+        assert_eq!(evaluated.status, Status::Passed);
+        assert_eq!(evaluated.matched_exceptions.len(), 1);
+        assert!(!evaluated.publication_authorized);
     }
 
     #[test]
@@ -591,18 +632,26 @@ mod tests {
     fn mutable_or_missing_upstream_evidence_cannot_support_an_exception() {
         let assessment = assessment();
         let mut accepted = Vec::new();
-        for case in 0..9 {
+        for case in 0..15 {
             let mut policy = policy(&assessment);
             let entry = &mut policy["exceptions"][0];
             match case {
-                0 => entry["upstream_base"] = "docker.io/library/debian:bookworm".into(),
-                1 => entry["upstream_base"] = assessment.subjects[0].reference.clone().into(),
+                0 => entry["upstream"]["base_image"] = "docker.io/library/debian:bookworm".into(),
+                1 => entry["upstream"]["base_image"] = assessment.subjects[0].reference.clone().into(),
                 2 => entry["origin_evidence"]["reference"] = "https://github.com/NVIDIA/NemoClaw/blob/v1/image/base-evidence.json".into(),
                 3 => entry["origin_evidence"]["reference"] = "http://github.com/NVIDIA/NemoClaw/blob/1111111111111111111111111111111111111111/evidence.json".into(),
                 4 => entry["origin_evidence"]["sha256"] = "not-a-checksum".into(),
                 5 => entry["tracking_issue"] = "https://github.com/NVIDIA/NemoClaw/issues/0".into(),
                 6 => entry["rationale"] = " ".into(),
                 7 => entry["rationale"] = "upstream\n::notice::forged".into(),
+                // A lock file must be an upstream project's, at an exact commit.
+                9 => entry["upstream"] = json!({"lock_file": {"reference": "https://github.com/NVIDIA/NeMo-Fabric/blob/main/uv.lock", "sha256": "4".repeat(64)}}),
+                10 => entry["upstream"] = json!({"lock_file": {"reference": format!("https://github.com/NVIDIA/NemoClaw/blob/{}/Cargo.lock", "3".repeat(40)), "sha256": "4".repeat(64)}}),
+                11 => entry["upstream"] = json!({"lock_file": {"reference": format!("https://github.com/nvidia/nemoclaw/blob/{}/Cargo.lock", "3".repeat(40)), "sha256": "4".repeat(64)}}),
+                12 => entry["upstream"] = json!({"lock_file": {"reference": format!("https://github.com/NVIDIA/NeMo-Fabric/blob/{}/uv.lock", "3".repeat(40)), "sha256": "not-a-checksum"}}),
+                // Exactly one upstream.
+                13 => entry["upstream"]["lock_file"] = json!({"reference": format!("https://github.com/NVIDIA/NeMo-Fabric/blob/{}/uv.lock", "3".repeat(40)), "sha256": "4".repeat(64)}),
+                14 => entry["upstream"] = json!({}),
                 _ => entry["tracking_issue"] = "https://github.com/NVIDIA/NemoClaw/pull/13523".into(),
             }
             if run(&assessment, &policy).is_ok() {

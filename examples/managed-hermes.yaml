@@ -28,7 +28,7 @@ spec:
       memory:
         gpuMemoryGiB: 16
   inferenceProviders:
-    - name: local
+    local:
       provider: openai
       serviceRef: ollama-server
   sandboxes:

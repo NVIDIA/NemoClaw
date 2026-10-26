@@ -53,14 +53,12 @@ Docker deployments pull private images through `spec.registries`; Kubernetes dep
 
 ## Publish
 
-Keep the draft and packages private until installer, onboarding, QA, and product sign-off are complete.
-Configure the [protected security controller](image-assessment.md#configure-hosted-enforcement) before enabling `V1_SECURITY_PUBLICATION_ENABLED`.
-The controlled publisher requires security approval, a fresh passing assessment, and unchanged registry digests before publishing the draft.
-Security disclosure and controlled publication run only for final release tags.
+Push a final tag only from a commit whose release candidate has completed installer, onboarding, QA, and product sign-off; until then, the draft and packages stay private.
+The workflow publishes a final release's draft without an approval step, once a release candidate of the same version staged the same images, the [security assessment](image-assessment.md#hosted-enforcement) passes, and the registry digests are unchanged.
 Release candidates run the same assessment report-only and attach it to the private draft, so blocking findings surface before the final tag.
-Restrict direct manual publication and package-administrator privileges separately; those powers can bypass the workflow.
-An administrator handles approved package visibility changes; making a package public cannot be undone.
-Before publishing, complete the provenance, SBOM, scanning, and license work ([#13521](https://github.com/NVIDIA/NemoClaw/issues/13521), [#13522](https://github.com/NVIDIA/NemoClaw/issues/13522), [#13523](https://github.com/NVIDIA/NemoClaw/issues/13523), [#13524](https://github.com/NVIDIA/NemoClaw/issues/13524)).
+Publishing a draft by hand and package-administrator privileges bypass the workflow.
+An administrator handles package visibility changes; making a package public cannot be undone.
+Before pushing a final tag, complete the provenance, SBOM, scanning, and license work ([#13521](https://github.com/NVIDIA/NemoClaw/issues/13521), [#13522](https://github.com/NVIDIA/NemoClaw/issues/13522), [#13523](https://github.com/NVIDIA/NemoClaw/issues/13523), [#13524](https://github.com/NVIDIA/NemoClaw/issues/13524)).
 
 ## SBOM Assets
 

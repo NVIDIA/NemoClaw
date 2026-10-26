@@ -14,7 +14,7 @@ spec:
       provider: docker
     endpoint: http://127.0.0.1:17671
   inferenceProviders:
-    - name: local
+    local:
       provider: openai
       api: openai-responses
       endpoint: https://inference.example.com/v1

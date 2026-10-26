@@ -63,11 +63,11 @@ pub struct Spec {
     #[serde(
         rename = "inferenceProviders",
         default,
-        skip_serializing_if = "Vec::is_empty"
+        skip_serializing_if = "std::collections::BTreeMap::is_empty"
     )]
     #[schemars(default)]
-    /// Named inference definitions available to sandbox routes. Unselected definitions create no resources or credential requirements.
-    pub inference_providers: Vec<InferenceProvider>,
+    /// Named inference definitions available to sandbox routes through providerRef. Unselected definitions create no resources or credential requirements.
+    pub inference_providers: std::collections::BTreeMap<String, InferenceProvider>,
     #[serde(rename = "sandboxes")]
     /// One to 32 uniquely named sandboxes. Each runs one agent through its selected Fabric adapter. Declaration order does not select a default sandbox or agent.
     pub sandboxes: Vec<Sandbox>,
@@ -213,9 +213,6 @@ pub struct ExternalGateway {
 #[serde(deny_unknown_fields)]
 /// Choose an endpoint for external inference or serviceRef for a managed service.
 pub struct InferenceProvider {
-    #[serde(rename = "name")]
-    /// Provider name referenced by model choices.
-    pub name: String,
     #[serde(rename = "provider")]
     /// OpenShell provider implementation. Must match the selected API family.
     pub provider: super::InferenceProviderKind,
@@ -240,6 +237,18 @@ pub struct InferenceProvider {
     #[schemars(default, with = "String")]
     /// Name of a managed service in spec.services. Excludes endpoint and credential.
     pub service_ref: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+/// Inference definition owned by one route, with the fields of an inferenceProviders entry and its own name.
+pub struct InlineInferenceProvider {
+    #[serde(rename = "name")]
+    /// Provider name. Must not shadow an enclosing definition.
+    pub name: String,
+    #[serde(flatten)]
+    /// Connection settings, as in a named inference definition.
+    pub definition: InferenceProvider,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -270,11 +279,11 @@ pub struct Sandbox {
     #[serde(
         rename = "inferenceProviders",
         default,
-        skip_serializing_if = "Vec::is_empty"
+        skip_serializing_if = "std::collections::BTreeMap::is_empty"
     )]
     #[schemars(default)]
-    /// Named inference definitions visible to this sandbox's routes. Names must not shadow deployment definitions.
-    pub inference_providers: Vec<InferenceProvider>,
+    /// Named inference definitions visible to this sandbox's routes through providerRef. Names must not shadow deployment definitions.
+    pub inference_providers: std::collections::BTreeMap<String, InferenceProvider>,
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     #[schemars(default)]
     /// Named integration definitions selected by this sandbox's agent through integrationRefs. Names must not collide with deployment definitions.
@@ -404,9 +413,9 @@ pub struct Route {
     /// Name of an enclosing inference provider. Exactly one of providerRef or provider is required.
     pub provider_ref: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(default, with = "InferenceProvider")]
+    #[schemars(default, with = "InlineInferenceProvider")]
     /// Inline inference definition owned by this route. Excludes providerRef and must not shadow an enclosing definition.
-    pub provider: Option<InferenceProvider>,
+    pub provider: Option<InlineInferenceProvider>,
     #[serde(rename = "overrides")]
     /// Model selection, shared limits, and optional native settings.
     pub overrides: Overrides,

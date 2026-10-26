@@ -17,7 +17,7 @@ spec:
     engine: unix:///run/user/1000/podman/podman.sock
     endpoint: http://127.0.0.1:17681
   inferenceProviders:
-    - name: local
+    local:
       provider: openai
       endpoint: http://172.20.0.1:11446/v1
   sandboxes:

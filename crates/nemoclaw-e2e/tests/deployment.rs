@@ -312,7 +312,12 @@ async fn interrupted_create_preserves_pending_targets_allows_unrelated_intent_an
     assert_apply_unfinished(&deployment, &cancel).await;
     // The lost reply was the inference registration's: its target cannot change.
     let mut changed = document.clone();
-    changed.spec.inference_providers[0].endpoint = "http://172.20.0.1:11437/v1".into();
+    changed
+        .spec
+        .inference_providers
+        .get_mut("local")
+        .unwrap()
+        .endpoint = "http://172.20.0.1:11437/v1".into();
     let error = deployment.apply(&changed, &cancel).await.unwrap_err();
     assert!(
         error
@@ -420,8 +425,12 @@ async fn tool_disclosure_cli_export_reapply_and_configuration_on_stdin() {
         .unwrap(),
     );
     // Export and reapply also cover an authored inference API.
-    document.spec.inference_providers[0].api =
-        Some(nemoclaw_sdk::config::InferenceApi::OpenaiCompletions);
+    document
+        .spec
+        .inference_providers
+        .get_mut("local")
+        .unwrap()
+        .api = Some(nemoclaw_sdk::config::InferenceApi::OpenaiCompletions);
     let lifecycle = Lifecycle::start(&document.yaml().unwrap()).await;
     let effects = lifecycle.apply().await;
     assert_eq!(effects, lifecycle.document.spec.sandboxes.len() + 3);
@@ -1271,8 +1280,9 @@ async fn cli_redaction_preserves_failures_and_recovery_with_short_and_colliding_
     .unwrap();
     *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
     let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
-    document.spec.inference_providers[0].endpoint = "https://127.0.0.1:9/v1".into();
-    document.spec.inference_providers[0].credential = Some(nemoclaw_sdk::config::SecretRef {
+    let provider = document.spec.inference_providers.get_mut("local").unwrap();
+    provider.endpoint = "https://127.0.0.1:9/v1".into();
+    provider.credential = Some(nemoclaw_sdk::config::SecretRef {
         env: "NEMOCLAW_TEST_REDACTION_KEY".into(),
     });
     let input = directory.path().join("deployment.yaml");
@@ -1693,13 +1703,13 @@ async fn scoped_provider_labels_preserve_authored_identity() {
     ))
     .unwrap();
     input["spec"]["gateway"]["endpoint"] = fixture.endpoint.clone().into();
-    let mut provider = input["spec"]["inferenceProviders"][0].take();
-    provider["name"] = "responses".into();
+    let provider = input["spec"]["inferenceProviders"]["local"].take();
     input["spec"]
         .as_object_mut()
         .unwrap()
         .remove("inferenceProviders");
-    input["spec"]["sandboxes"][0]["inferenceProviders"] = serde_json::json!([provider]);
+    input["spec"]["sandboxes"][0]["inferenceProviders"] =
+        serde_json::json!({"responses": provider});
     input["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["providerRef"] =
         "responses".into();
     let mut document = Document::parse(input.to_string().as_bytes()).unwrap();
