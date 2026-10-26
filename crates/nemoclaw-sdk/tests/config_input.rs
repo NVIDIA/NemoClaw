@@ -15,34 +15,40 @@ fn parse(value: &Value) -> Result<Document, nemoclaw_sdk::config::ConfigError> {
 #[test]
 fn omitted_image_uses_the_pin_for_the_selected_harness() {
     let mut openclaw = input("fabric-openclaw.yaml");
-    openclaw["spec"]["sandboxes"][0]
+    openclaw["spec"]["sandboxes"]["assistant"]
         .as_object_mut()
         .unwrap()
         .remove("image");
     assert_eq!(
-        parse(&openclaw).unwrap().spec.sandboxes[0].image.ref_,
+        parse(&openclaw).unwrap().spec.sandboxes["assistant"]
+            .image
+            .ref_,
         DEFAULT_AGENT_IMAGE
     );
 
     let mut hermes = input("managed-hermes.yaml");
-    hermes["spec"]["sandboxes"][0]
+    hermes["spec"]["sandboxes"]["assistant"]
         .as_object_mut()
         .unwrap()
         .remove("image");
     assert_eq!(
-        parse(&hermes).unwrap().spec.sandboxes[0].image.ref_,
+        parse(&hermes).unwrap().spec.sandboxes["assistant"]
+            .image
+            .ref_,
         DEFAULT_AGENT_IMAGE
     );
 
-    let harness = hermes["spec"]["sandboxes"][0]
+    let harness = hermes["spec"]["sandboxes"]["assistant"]
         .as_object_mut()
         .unwrap()
         .remove("harness")
         .unwrap();
     hermes["spec"]["harnesses"]["assistant"] = harness;
-    hermes["spec"]["sandboxes"][0]["harnessRef"] = json!("assistant");
+    hermes["spec"]["sandboxes"]["assistant"]["harnessRef"] = json!("assistant");
     assert_eq!(
-        parse(&hermes).unwrap().spec.sandboxes[0].image.ref_,
+        parse(&hermes).unwrap().spec.sandboxes["assistant"]
+            .image
+            .ref_,
         DEFAULT_AGENT_IMAGE
     );
 }
@@ -91,7 +97,7 @@ fn omitted_empty_and_zero_values_produce_the_same_defaults() {
             .remove(key);
     }
     for key in ["image", "runtime", "network"] {
-        omitted["spec"]["sandboxes"][0]
+        omitted["spec"]["sandboxes"]["assistant"]
             .as_object_mut()
             .unwrap()
             .remove(key);
@@ -107,9 +113,9 @@ fn omitted_empty_and_zero_values_produce_the_same_defaults() {
     for key in ["endpoint", "engine", "networkCIDR"] {
         explicit["spec"]["gateway"][key] = json!("");
     }
-    explicit["spec"]["sandboxes"][0]["image"] = json!({"ref": ""});
+    explicit["spec"]["sandboxes"]["assistant"]["image"] = json!({"ref": ""});
     explicit["spec"]["gateway"]["runtime"] = json!({"provider": "docker"});
-    explicit["spec"]["sandboxes"][0]["network"] = json!({"tier": ""});
+    explicit["spec"]["sandboxes"]["assistant"]["network"] = json!({"tier": ""});
     explicit["spec"]["services"]["qwen"]["serving"] = json!({
         "port": 0, "contextTokens": 0, "maxSequences": 0, "batchTokens": 0,
         "startupTimeoutSeconds": 0, "speculativeTokens": 0,
@@ -124,7 +130,7 @@ fn omitted_empty_and_zero_values_produce_the_same_defaults() {
     assert_eq!(parse(&explicit).unwrap().digest(), expected.digest());
     for path in [
         "/spec/gateway/endpoint",
-        "/spec/sandboxes/0/image",
+        "/spec/sandboxes/assistant/image",
         "/spec/services/qwen/serving/port",
     ] {
         let mut invalid = explicit.clone();
@@ -144,7 +150,7 @@ fn required_fields_and_mutually_exclusive_provider_forms_are_rejected() {
         "/spec/gateway/management",
         "/spec/gateway/endpoint",
         "/spec/inferenceProviders/local/provider",
-        "/spec/sandboxes/0/harness",
+        "/spec/sandboxes/assistant/harness",
     ] {
         let mut invalid = baseline.clone();
         let (parent, key) = path.rsplit_once('/').unwrap();
@@ -170,9 +176,9 @@ fn required_fields_and_mutually_exclusive_provider_forms_are_rejected() {
 #[test]
 fn only_route_settings_permit_nested_null_values() {
     let mut value = input("fabric-pi.yaml");
-    let overrides = "/spec/sandboxes/0/agent/inference/routes/0/overrides";
+    let overrides = "/spec/sandboxes/assistant/agent/inference/routes/0/overrides";
     value.pointer_mut(overrides).unwrap()["settings"] = json!({});
-    let pointer = "/spec/sandboxes/0/agent/inference/routes/0/overrides/settings";
+    let pointer = "/spec/sandboxes/assistant/agent/inference/routes/0/overrides/settings";
     *value.pointer_mut(pointer).unwrap() = json!({"future": [null, {"nested": null}]});
     parse(&value).unwrap();
     *value.pointer_mut(pointer).unwrap() = Value::Null;

@@ -32,12 +32,12 @@ spec:
           overrides:
             model: qwen3:4b
   sandboxes:
-    - name: researcher
+    researcher:
       harnessRef: assistant
       agent:
         name: researcher
         inferenceRef: smart-and-fast
-    - name: writer
+    writer:
       harnessRef: assistant
       agent:
         name: writer

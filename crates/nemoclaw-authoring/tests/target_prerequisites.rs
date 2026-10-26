@@ -124,7 +124,7 @@ fn one_resolution_combines_model_suggestions_and_target_compatibility() {
     let resolved = state
         .resolve_with_observations(&capabilities, &observations)
         .unwrap();
-    let model = "/spec/sandboxes/0/agent/inference/routes/0/overrides/model";
+    let model = "/spec/sandboxes/assistant/agent/inference/routes/0/overrides/model";
     assert!(
         resolved
             .question(model)

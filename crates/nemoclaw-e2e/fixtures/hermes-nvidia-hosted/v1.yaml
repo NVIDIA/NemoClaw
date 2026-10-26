@@ -24,7 +24,7 @@ spec:
       credential:
         env: NVIDIA_INFERENCE_API_KEY
   sandboxes:
-    - name: assistant
+    assistant:
       harness:
         kind: nvidia.fabric.hermes
       image:

@@ -75,18 +75,21 @@ impl AuthoredValues {
         {
             self.inactive_settings.insert(old.clone(), settings.clone());
         }
+        let sandbox = sandbox_path(&self.values)
+            .ok_or_else(|| diagnostic("journey", "The v1 journey requires one sandbox object."))?;
+        let inline = format!("{sandbox}/harness");
         let owner_path = harness_path(&self.values)
             .or_else(|| {
                 position
                     .selected_forms
-                    .get("/spec/sandboxes/0")
+                    .get(&sandbox)
                     .filter(|form| *form == "harness")
-                    .map(|_| "/spec/sandboxes/0/harness".into())
+                    .map(|_| inline.clone())
             })
             .ok_or_else(|| diagnostic("journey", "Harness is unavailable."))?;
-        let harness = if owner_path == "/spec/sandboxes/0/harness" {
+        let harness = if owner_path == inline {
             self.values
-                .pointer_mut("/spec/sandboxes/0")
+                .pointer_mut(&sandbox)
                 .and_then(Value::as_object_mut)
                 .ok_or_else(|| {
                     diagnostic("journey", "The v1 journey requires one sandbox object.")

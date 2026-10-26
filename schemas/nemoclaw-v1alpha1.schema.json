@@ -2714,18 +2714,12 @@
           },
           "type": "object"
         },
-        "name": {
-          "description": "Lowercase sandbox name.",
-          "pattern": "^[a-z][a-z0-9-]{0,39}$",
-          "type": "string"
-        },
         "network": {
           "$ref": "#/$defs/Network",
           "description": "Sandbox network policy; omission selects isolated egress with grants for declared inference."
         }
       },
       "required": [
-        "name",
         "agent"
       ],
       "type": "object"
@@ -3824,13 +3818,16 @@
           "type": "array"
         },
         "sandboxes": {
-          "description": "One to 32 uniquely named sandboxes. Each runs one agent through its selected Fabric adapter. Declaration order does not select a default sandbox or agent.",
-          "items": {
+          "additionalProperties": {
             "$ref": "#/$defs/Sandbox"
           },
-          "maxItems": 32,
-          "minItems": 1,
-          "type": "array"
+          "description": "One to 32 named sandboxes. Each runs one agent through its selected Fabric adapter. Declaration order does not select a default sandbox or agent.",
+          "maxProperties": 32,
+          "minProperties": 1,
+          "propertyNames": {
+            "pattern": "^[a-z][a-z0-9-]{0,39}$"
+          },
+          "type": "object"
         },
         "services": {
           "additionalProperties": {
@@ -4062,7 +4059,7 @@
           "spec": {
             "properties": {
               "sandboxes": {
-                "items": {
+                "additionalProperties": {
                   "properties": {
                     "image": {
                       "not": {
@@ -4121,7 +4118,7 @@
           "spec": {
             "properties": {
               "sandboxes": {
-                "items": {
+                "additionalProperties": {
                   "properties": {
                     "image": {
                       "properties": {

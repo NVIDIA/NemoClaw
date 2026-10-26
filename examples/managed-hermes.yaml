@@ -32,7 +32,7 @@ spec:
       provider: openai
       serviceRef: ollama-server
   sandboxes:
-    - name: assistant
+    assistant:
       image:
         ref: nc-prototype-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
       network:

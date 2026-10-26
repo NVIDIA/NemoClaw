@@ -153,7 +153,7 @@ In YAML, set the sandbox's `driverConfig` and list the mount in the harness conf
 
 ```yaml
 sandboxes:
-  - name: assistant
+  assistant:
     driverConfig:
       docker:
         mounts:

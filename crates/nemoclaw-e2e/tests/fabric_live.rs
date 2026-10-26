@@ -127,7 +127,7 @@ async fn fabric_native_access_and_reconciliation_preserve_the_hosted_runtime() {
     let input = invocation_input("NEMOCLAW_LIVE_FABRIC_INPUT");
     assert!(uses_independent_inference(&document));
     let provider = document.inference_provider().unwrap();
-    let sandbox = &document.spec.sandboxes[0];
+    let sandbox = document.sandboxes().next().unwrap();
     let agent = &sandbox.agent;
     assert!(matches!(document.spec.gateway, Gateway::External(_)));
     // Managed-service installation is qualified separately; this live target
@@ -145,7 +145,16 @@ async fn fabric_native_access_and_reconciliation_preserve_the_hosted_runtime() {
         Arc::new(EnvironmentSecrets),
     )
     .unwrap();
-    if document.spec.sandboxes[0].network.policy == nemoclaw_sdk::config::NetworkPolicy::Isolated {
+    if document
+        .spec
+        .sandboxes
+        .values()
+        .next()
+        .unwrap()
+        .network
+        .policy
+        == nemoclaw_sdk::config::NetworkPolicy::Isolated
+    {
         let denial = exec(
             &client,
             &binding,
@@ -157,7 +166,7 @@ async fn fabric_native_access_and_reconciliation_preserve_the_hosted_runtime() {
             "policy-denied-403"
         );
     }
-    let hosted = runtime_id(&directory, &sandbox.name);
+    let hosted = runtime_id(&directory, sandbox.name);
     let unchanged = deployment.apply(&document, &cancel).await.unwrap();
     assert!(unchanged.changes.is_empty());
     let exported = deployment.export(&cancel).await.unwrap();
@@ -172,13 +181,13 @@ async fn fabric_native_access_and_reconciliation_preserve_the_hosted_runtime() {
     );
     assert_eq!(bindings(&directory).0, before);
     assert_eq!(managed_bindings(&directory), managed_before);
-    assert_eq!(runtime_id(&directory, &sandbox.name), hosted);
+    assert_eq!(runtime_id(&directory, sandbox.name), hosted);
     let response = invoke(&client, &binding, &agent.name, &hosted, &input).await;
     assert!(
         successful_invocation(&response),
         "Fabric invocation did not succeed"
     );
-    assert_eq!(runtime_id(&directory, &sandbox.name), hosted);
+    assert_eq!(runtime_id(&directory, sandbox.name), hosted);
     let destroyed = deployment.destroy(&cancel).await.unwrap();
     assert_eq!(destroyed.outcome, Outcome::Destroyed);
 }
@@ -230,7 +239,7 @@ async fn dependency_upgrade_survives_apply_process_exit() {
         uses_independent_inference(&document),
         "use one agent and one independent inference provider"
     );
-    let sandbox = &document.spec.sandboxes[0];
+    let sandbox = document.sandboxes().next().unwrap();
     let input = invocation_input("NEMOCLAW_UPGRADE_INPUT");
     fs::create_dir(&directory).expect("test requires a fresh owned state directory");
     let executable = bundle
@@ -263,11 +272,11 @@ async fn dependency_upgrade_survives_apply_process_exit() {
         .await
         .unwrap();
     let (before, binding) = bindings(&directory);
-    let hosted = runtime_id(&directory, &sandbox.name);
+    let hosted = runtime_id(&directory, sandbox.name);
     let reply = invoke(
         &client,
         &binding,
-        &document.spec.sandboxes[0].agent.name,
+        &document.spec.sandboxes.values().next().unwrap().agent.name,
         &hosted,
         &input,
     )
@@ -287,7 +296,7 @@ async fn dependency_upgrade_survives_apply_process_exit() {
             .is_empty()
     );
     assert_eq!(bindings(&directory).0, before);
-    assert_eq!(runtime_id(&directory, &sandbox.name), hosted);
+    assert_eq!(runtime_id(&directory, sandbox.name), hosted);
     let destroyed = deployment.destroy(&cancel).await.unwrap();
     assert_eq!(destroyed.outcome, Outcome::Destroyed);
 }

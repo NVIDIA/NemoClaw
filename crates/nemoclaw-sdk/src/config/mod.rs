@@ -15,6 +15,7 @@ pub use nemoclaw_openshell::search::search_policy;
 mod inference;
 mod providers;
 pub(crate) mod references;
+pub use references::NamedSandbox;
 mod source;
 mod yaml_source;
 pub use crate::services::ServiceDefinition;
@@ -107,11 +108,10 @@ impl Document {
     pub fn digest(&self) -> String {
         // Named declaration order is not deployment intent; retain authored order on export.
         let mut canonical = self.clone();
-        canonical.spec.sandboxes.sort_by(|a, b| a.name.cmp(&b.name));
         for inference in canonical.spec.inferences.values_mut() {
             inference.routes.sort_by(|a, b| a.name.cmp(&b.name));
         }
-        for sandbox in &mut canonical.spec.sandboxes {
+        for sandbox in canonical.spec.sandboxes.values_mut() {
             for inference in sandbox
                 .inferences
                 .values_mut()
@@ -173,8 +173,8 @@ impl Document {
                 }
             }
         }
-        for sandbox in &self.spec.sandboxes {
-            if let Some(metadata) = &sandbox.image.metadata {
+        for sandbox in self.sandboxes() {
+            if let Some(metadata) = &sandbox.definition.image.metadata {
                 names.push(metadata.env.as_str());
             }
             for binding in sandbox
@@ -213,7 +213,7 @@ impl Document {
         }
         // Cluster sandboxes have no engine-supplied default image.
         if !self.spec.gateway.runtime().provider.is_kubernetes() {
-            for sandbox in &mut self.spec.sandboxes {
+            for sandbox in self.spec.sandboxes.values_mut() {
                 default_string(&mut sandbox.image.ref_, DEFAULT_AGENT_IMAGE);
             }
         }

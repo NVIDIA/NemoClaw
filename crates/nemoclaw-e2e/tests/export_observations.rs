@@ -230,7 +230,15 @@ async fn export_ignores_a_pi_model_changed_inside_the_sandbox() {
     .unwrap();
     *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
     let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
-    document.spec.sandboxes[0].harness.as_mut().unwrap().kind = "nvidia.fabric.pi".parse().unwrap();
+    document
+        .spec
+        .sandboxes
+        .get_mut("assistant")
+        .unwrap()
+        .harness
+        .as_mut()
+        .unwrap()
+        .kind = "nvidia.fabric.pi".parse().unwrap();
     let deployment = Deployment::new(directory.path(), &bundle);
     let cancel = CancellationToken::new();
     deployment.apply(&document, &cancel).await.unwrap();
@@ -301,20 +309,27 @@ async fn mixed_search_export_preserves_scopes_shared_registrations_and_state_on_
         "shared-search":{"kind":"webSearch", "provider":"tavily", "credential":{"env":"EXPORT_TAVILY_KEY"}},
         "unused-search":{"kind":"webSearch", "provider":"brave", "credential":{"env":"UNUSED_EXPORT_KEY"}}
     })).unwrap();
-    document.spec.sandboxes[0].agent.integration_refs = vec!["shared-search".into()];
-    let mut hermes = document.spec.sandboxes[0].clone();
-    hermes.name = "hermes".into();
+    document
+        .spec
+        .sandboxes
+        .get_mut("assistant")
+        .unwrap()
+        .agent
+        .integration_refs = vec!["shared-search".into()];
+    let mut hermes = document.spec.sandboxes["assistant"].clone();
     hermes.harness.as_mut().unwrap().kind = "nvidia.fabric.hermes".parse().unwrap();
     hermes.integrations = serde_json::from_value(serde_json::json!({
         "sandbox-search":{"kind":"webSearch", "provider":"brave", "credential":{"env":"EXPORT_BRAVE_KEY"}}
     })).unwrap();
     hermes.agent.integration_refs = vec!["sandbox-search".into()];
     let mut pi = hermes.clone();
-    pi.name = "pi".into();
     pi.harness.as_mut().unwrap().kind = "nvidia.fabric.pi".parse().unwrap();
     pi.agent.integration_refs.clear();
     pi.agent.integrations = std::mem::take(&mut pi.integrations);
-    document.spec.sandboxes.extend([hermes, pi]);
+    document
+        .spec
+        .sandboxes
+        .extend([("hermes".into(), hermes), ("pi".into(), pi)]);
     let deployment = Deployment::new(directory.path(), &bundle).with_secrets(Arc::new(Values));
     let cancel = CancellationToken::new();
     deployment.apply(&document, &cancel).await.unwrap();

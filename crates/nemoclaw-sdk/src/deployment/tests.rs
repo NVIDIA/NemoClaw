@@ -17,7 +17,8 @@ pub(super) fn kubernetes_context() -> (Document, crate::compile::Generations) {
             "authentication":{"profile":"development"}
         }
     });
-    value["spec"]["sandboxes"][0]["image"]["metadata"] = json!({"env":"TEST_IMAGE_METADATA"});
+    value["spec"]["sandboxes"]["assistant"]["image"]["metadata"] =
+        json!({"env":"TEST_IMAGE_METADATA"});
     let document = Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap();
     let generations = Record::new(document.clone()).unwrap().generations;
     (document, generations)
@@ -685,11 +686,12 @@ fn gateway_observation_resolves_only_gateway_credentials() {
         .credential = Some(SecretRef {
         env: "INFERENCE_TOKEN".into(),
     });
-    document.spec.sandboxes[0].integrations = serde_json::from_value(json!({
+    let sandbox = document.spec.sandboxes.get_mut("assistant").unwrap();
+    sandbox.integrations = serde_json::from_value(json!({
         "search": {"kind": "webSearch", "provider": "brave", "credential": {"env": "SEARCH_KEY"}}
     }))
     .unwrap();
-    document.spec.sandboxes[0].agent.integration_refs = vec!["search".into()];
+    sandbox.agent.integration_refs = vec!["search".into()];
     let environment = gateway_environment(&document, &GatewayValues, Path::new("state")).unwrap();
     for name in ["GATEWAY_TOKEN", "GATEWAY_CA", "GATEWAY_CERT", "GATEWAY_KEY"] {
         assert_eq!(environment[name], format!("test-{name}"));

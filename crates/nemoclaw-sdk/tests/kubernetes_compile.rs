@@ -13,7 +13,8 @@ fn kubernetes_compiles_only_openshell_resources_and_checks_the_driver_before_mut
         Document::parse(include_bytes!("fixtures/config/local.yaml").as_slice()).unwrap();
     let mut input = serde_json::to_value(original).unwrap();
     input["spec"]["gateway"]["runtime"] = json!({"provider": "kubernetes"});
-    input["spec"]["sandboxes"][0]["image"]["metadata"] = json!({"env":"TEST_IMAGE_METADATA"});
+    input["spec"]["sandboxes"]["assistant"]["image"]["metadata"] =
+        json!({"env":"TEST_IMAGE_METADATA"});
     let document = Document::parse(input.to_string().as_bytes()).unwrap();
     let generations = ["workspace", "provider", "sandbox"]
         .map(|kind| (kind.into(), "a".repeat(32)))

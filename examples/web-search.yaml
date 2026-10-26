@@ -27,7 +27,7 @@ spec:
       credential:
         env: BRAVE_API_KEY
   sandboxes:
-    - name: researcher
+    researcher:
       image:
         # Replace with the digest from a current Hermes image build.
         ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
@@ -42,7 +42,7 @@ spec:
               providerRef: local
               overrides:
                 model: qwen3:4b
-    - name: writer
+    writer:
       image:
         # Replace with the digest from a current Hermes image build.
         ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000

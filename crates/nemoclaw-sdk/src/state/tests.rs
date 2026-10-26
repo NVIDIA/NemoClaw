@@ -273,14 +273,20 @@ fn pending_creation_guards_only_unresolved_targets() {
         .inference_providers
         .insert("unrelated".into(), unrelated);
     assert!(record.validate_pending_intent(&revised).is_ok());
-    revised.spec.sandboxes[0].image.ref_ =
-        format!("example.invalid/changed@sha256:{}", "b".repeat(64));
+    revised
+        .spec
+        .sandboxes
+        .get_mut("assistant")
+        .unwrap()
+        .image
+        .ref_ = format!("example.invalid/changed@sha256:{}", "b".repeat(64));
     revised.validate().unwrap();
     assert!(matches!(
         record.validate_pending_intent(&revised),
         Err(Error::Conflict(_))
     ));
-    revised.spec.sandboxes[0].name = "replacement".into();
+    let sandbox = revised.spec.sandboxes.remove("assistant").unwrap();
+    revised.spec.sandboxes.insert("replacement".into(), sandbox);
     revised.validate().unwrap();
     assert!(matches!(
         record.validate_pending_intent(&revised),
@@ -416,7 +422,7 @@ fn a_kubernetes_records_generations_reload_and_stay_stable() {
             "namespace": "test-agents", "authentication": {"profile": "development"}
         }
     });
-    value["spec"]["sandboxes"][0]["image"]["metadata"] =
+    value["spec"]["sandboxes"]["assistant"]["image"]["metadata"] =
         serde_json::json!({"env": "TEST_IMAGE_METADATA"});
     let document = Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap();
     let mut record = Record::new(document.clone()).unwrap();

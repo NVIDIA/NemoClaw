@@ -21,7 +21,7 @@ fn generations() -> Generations {
 }
 fn hosted(mut value: Value) -> Value {
     value["spec"]["inferenceProviders"]["hosted"] = json!({"provider":"anthropic","api":"anthropic-messages","endpoint":"https://hosted.example/v1","credential":{"env":"HOSTED_KEY"}});
-    let inference = &mut value["spec"]["sandboxes"][0]["agent"]["inference"];
+    let inference = &mut value["spec"]["sandboxes"]["assistant"]["agent"]["inference"];
     inference["default"] = json!("smart");
     inference["routes"]
         .as_array_mut()
@@ -34,8 +34,7 @@ fn a_sandbox_attaches_the_union_of_selected_providers_with_bound_credentials() {
     let input: Value =
         serde_saphyr::from_str(include_str!("../../../examples/fabric-openclaw.yaml")).unwrap();
     let mut value = hosted(input);
-    let mut other = value["spec"]["sandboxes"][0].clone();
-    other["name"] = json!("other");
+    let mut other = value["spec"]["sandboxes"]["assistant"].clone();
     other["agent"]["inference"]["routes"]
         .as_array_mut()
         .unwrap()
@@ -44,10 +43,7 @@ fn a_sandbox_attaches_the_union_of_selected_providers_with_bound_credentials() {
         .as_object_mut()
         .unwrap()
         .remove("default");
-    value["spec"]["sandboxes"]
-        .as_array_mut()
-        .unwrap()
-        .push(other);
+    value["spec"]["sandboxes"]["other"] = other;
     let doc = Document::parse(value.to_string().as_bytes()).expect("local and hosted providers");
     assert!(
         jsonschema::validator_for(&input_schema())
@@ -201,7 +197,7 @@ fn multiple_selected_ollama_installers_have_independent_resources_and_dependenci
     other_service["serving"]["port"] = json!(18999);
     value["spec"]["services"]["other"] = other_service;
     value["spec"]["inferenceProviders"]["other"] = other;
-    let inference = &mut value["spec"]["sandboxes"][0]["agent"]["inference"];
+    let inference = &mut value["spec"]["sandboxes"]["assistant"]["agent"]["inference"];
     inference["default"] = json!("primary");
     let mut route = inference["routes"][0].clone();
     route["name"] = json!("other");
@@ -237,7 +233,7 @@ fn managed_services_have_independent_storage_credentials_and_dependencies() {
     other_service["serving"]["port"] = json!(18999);
     value["spec"]["services"]["other"] = other_service;
     value["spec"]["inferenceProviders"]["other"] = other;
-    let inference = &mut value["spec"]["sandboxes"][0]["agent"]["inference"];
+    let inference = &mut value["spec"]["sandboxes"]["assistant"]["agent"]["inference"];
     inference["default"] = json!("primary");
     let mut route = inference["routes"][0].clone();
     route["name"] = json!("other");

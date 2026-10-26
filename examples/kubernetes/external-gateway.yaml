@@ -29,7 +29,7 @@ spec:
       credential: {env: INFERENCE_API_KEY}
   # Each sandbox runs one independent agent using the shared inference profile.
   sandboxes:
-    - name: assistant
+    assistant:
       # Replace this example digest with an image adapted for the gateway's UID/GID 10001.
       image:
         metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
@@ -41,7 +41,7 @@ spec:
       agent:
         name: main
         inferenceRef: chat
-    - name: researcher
+    researcher:
       image:
         metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
         ref: registry.example.com/nemoclaw/openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000
@@ -52,7 +52,7 @@ spec:
       agent:
         name: researcher
         inferenceRef: chat
-    - name: reviewer
+    reviewer:
       image:
         metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
         ref: registry.example.com/nemoclaw/openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000

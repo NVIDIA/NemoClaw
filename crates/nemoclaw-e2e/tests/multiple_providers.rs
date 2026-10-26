@@ -45,7 +45,7 @@ async fn provider_union_export_reapply_drift_and_destroy_remain_scoped_to_each_s
     let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut first).await;
     let mut second = first.clone();
     second.metadata.uid = "7db61f79-1965-45ac-824a-1c3f3b26aa5d".into();
-    second.spec.sandboxes.remove(0);
+    second.spec.sandboxes.remove("researcher");
     assert_eq!(second.credential_names(), Vec::<&str>::new());
     let first_state = tempfile::tempdir().unwrap();
     let second_state = tempfile::tempdir().unwrap();
@@ -86,8 +86,8 @@ async fn provider_union_export_reapply_drift_and_destroy_remain_scoped_to_each_s
         &fs::read(first_state.path().join("terraform.tfstate")).unwrap(),
         &state,
     );
-    let first_key = format!("{}/{}", first.workspace(), first.spec.sandboxes[0].name);
-    let second_key = format!("{}/{}", second.workspace(), second.spec.sandboxes[0].name);
+    let first_key = format!("{}/researcher", first.workspace());
+    let second_key = format!("{}/writer", second.workspace());
     let hosted = {
         let mut live = fixture.state.lock().unwrap();
         let second_spec = live.sandboxes[&second_key].spec.as_ref().unwrap();

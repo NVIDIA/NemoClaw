@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::references::{ScopedInference, diagnostic_name, missing_reference};
 use super::source::DefinitionSource;
-use super::{ConfigError, Document, Inference, InferenceProvider, Route, Sandbox};
+use super::{ConfigError, Document, Inference, InferenceProvider, NamedSandbox, Route};
 use std::collections::{BTreeMap, BTreeSet};
 
 // The resource key identifies the registration; the authored path distinguishes
@@ -18,7 +18,7 @@ impl<'a> SelectedProvider<'a> {
     fn new(
         name: &'a str,
         definition: &'a InferenceProvider,
-        sandbox: Option<&Sandbox>,
+        sandbox: Option<NamedSandbox<'_>>,
         path: String,
     ) -> Self {
         use sha2::{Digest, Sha256};
@@ -50,12 +50,12 @@ impl<'a> SelectedProvider<'a> {
 fn provider_path(base: &str, name: &str) -> String {
     format!("{base}.inferenceProviders[{}]", diagnostic_name(name))
 }
-fn sandbox_path(sandbox: &Sandbox) -> String {
-    format!("spec.sandboxes[{}]", diagnostic_name(&sandbox.name))
+fn sandbox_path(name: &str) -> String {
+    format!("spec.sandboxes[{}]", diagnostic_name(name))
 }
 
 impl Document {
-    pub(crate) fn image_scope(&self, sandbox: &Sandbox) -> Result<String, ConfigError> {
+    pub(crate) fn image_scope(&self, sandbox: NamedSandbox<'_>) -> Result<String, ConfigError> {
         use sha2::{Digest, Sha256};
         Ok(super::hex(&Sha256::digest(format!(
             "{}\0{}",
@@ -66,7 +66,7 @@ impl Document {
     }
     pub(crate) fn sandbox_route_registration<'a>(
         &'a self,
-        sandbox: &'a Sandbox,
+        sandbox: NamedSandbox<'a>,
         route: &'a Route,
     ) -> Result<SelectedProvider<'a>, ConfigError> {
         let inference = self.scoped_inference(sandbox)?;
@@ -84,7 +84,7 @@ impl Document {
                 inference
                     .sandbox
                     .into_iter()
-                    .flat_map(|s| s.inference_providers.keys()),
+                    .flat_map(|s| s.definition.inference_providers.keys()),
             )
         };
         match DefinitionSource::from_parts(
@@ -115,13 +115,13 @@ impl Document {
                     ));
                 }
                 if let Some(sandbox) = inference.sandbox
-                    && let Some(provider) = sandbox.inference_providers.get(name)
+                    && let Some(provider) = sandbox.definition.inference_providers.get(name)
                 {
                     return Ok(SelectedProvider::new(
                         name,
                         provider,
                         Some(sandbox),
-                        provider_path(&sandbox_path(sandbox), name),
+                        provider_path(&sandbox_path(sandbox.name), name),
                     ));
                 }
                 Err(missing_reference(
@@ -137,7 +137,7 @@ impl Document {
     /// Resolve a route using the declaration scope of the sandbox's selected inference.
     pub fn sandbox_route_provider<'a>(
         &'a self,
-        sandbox: &'a Sandbox,
+        sandbox: NamedSandbox<'a>,
         route: &'a Route,
     ) -> Result<&'a InferenceProvider, ConfigError> {
         let inference = self.scoped_inference(sandbox)?;
@@ -192,7 +192,7 @@ impl Document {
 
     pub(crate) fn selected_providers(&self) -> Result<Vec<SelectedProvider<'_>>, ConfigError> {
         let mut selected = BTreeMap::new();
-        for sandbox in &self.spec.sandboxes {
+        for sandbox in self.sandboxes() {
             if !self
                 .spec
                 .inference_providers
@@ -209,7 +209,7 @@ impl Document {
             {
                 return Err(ConfigError(format!(
                     "{}: sandbox provider names must not shadow deployment definitions",
-                    provider_path(&sandbox_path(sandbox), name)
+                    provider_path(&sandbox_path(sandbox.name), name)
                 )));
             }
             let inference = self.scoped_inference(sandbox)?;
@@ -242,7 +242,7 @@ impl Document {
 
     pub(crate) fn sandbox_inference_providers<'a>(
         &'a self,
-        sandbox: &'a Sandbox,
+        sandbox: NamedSandbox<'a>,
     ) -> Result<Vec<SelectedProvider<'a>>, ConfigError> {
         let mut selected = BTreeMap::new();
         let inference = self.scoped_inference(sandbox)?;
@@ -316,8 +316,8 @@ impl Document {
                         )
                     }),
             )
-            .chain(self.spec.sandboxes.iter_mut().flat_map(|sandbox| {
-                let base = sandbox_path(sandbox);
+            .chain(self.spec.sandboxes.iter_mut().flat_map(|(name, sandbox)| {
+                let base = sandbox_path(name);
                 let definitions = base.clone();
                 let inferences = base.clone();
                 sandbox
@@ -354,7 +354,7 @@ impl Document {
             .chain(
                 self.spec
                     .sandboxes
-                    .iter()
+                    .values()
                     .flat_map(|sandbox| sandbox.inference_providers.values()),
             )
             .chain(self.inference_definitions().flat_map(|selection| {

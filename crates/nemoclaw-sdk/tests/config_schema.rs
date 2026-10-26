@@ -89,7 +89,7 @@ fn image_pull_policy_accepts_only_supported_values_on_managed_containers() {
     external["spec"]["gateway"]["imagePullPolicy"] = json!("Never");
     agrees(&validator, &external, false);
     let mut sandbox = input("local.yaml");
-    sandbox["spec"]["sandboxes"][0]["imagePullPolicy"] = json!("Never");
+    sandbox["spec"]["sandboxes"]["assistant"]["imagePullPolicy"] = json!("Never");
     agrees(&validator, &sandbox, false);
 }
 
@@ -109,11 +109,11 @@ fn input_schema_rejects_missing_required_fields_and_structural_nulls() {
         "/spec/gateway/management",
         "/spec/inferenceProviders/local/provider",
         "/spec/sandboxes",
-        "/spec/sandboxes/0/name",
-        "/spec/sandboxes/0/agent",
-        "/spec/sandboxes/0/harness",
-        "/spec/sandboxes/0/agent/inference",
-        "/spec/sandboxes/0/agent/inference/routes/0/overrides/model",
+        "/spec/sandboxes/assistant",
+        "/spec/sandboxes/assistant/agent",
+        "/spec/sandboxes/assistant/harness",
+        "/spec/sandboxes/assistant/agent/inference",
+        "/spec/sandboxes/assistant/agent/inference/routes/0/overrides/model",
     ] {
         let mut value = original.clone();
         let (parent, key) = path.rsplit_once('/').unwrap();
@@ -148,7 +148,7 @@ fn input_schema_preserves_defaults_strict_objects_and_opaque_route_settings() {
             .remove(key);
     }
     for key in ["image", "network", "runtime"] {
-        value["spec"]["sandboxes"][0]
+        value["spec"]["sandboxes"]["assistant"]
             .as_object_mut()
             .unwrap()
             .remove(key);
@@ -164,9 +164,9 @@ fn input_schema_preserves_defaults_strict_objects_and_opaque_route_settings() {
     agrees(&validator, &value, false);
     let mut value = input("fabric-pi.yaml");
     value
-        .pointer_mut("/spec/sandboxes/0/agent/inference/routes/0/overrides")
+        .pointer_mut("/spec/sandboxes/assistant/agent/inference/routes/0/overrides")
         .unwrap()["settings"] = json!({});
-    let path = "/spec/sandboxes/0/agent/inference/routes/0/overrides/settings";
+    let path = "/spec/sandboxes/assistant/agent/inference/routes/0/overrides/settings";
     *value.pointer_mut(path).unwrap() = json!({"future": [null, {"value": null}]});
     agrees(&validator, &value, true);
     *value.pointer_mut(path).unwrap() = Value::Null;
@@ -301,7 +301,7 @@ fn schema_and_parser_enforce_choices_bounds_and_conditional_forms() {
         ),
         (
             "spark/vllm.yaml",
-            "/spec/sandboxes/0/harness/kind",
+            "/spec/sandboxes/assistant/harness/kind",
             json!("deepagents"),
             true,
         ),
@@ -381,7 +381,7 @@ fn documented_parser_checks_remain_required_after_schema_validation() {
         ("local.yaml", "/spec/inferenceProviders", json!({})),
         (
             "local.yaml",
-            "/spec/sandboxes/0/agent/inference/routes/0/providerRef",
+            "/spec/sandboxes/assistant/agent/inference/routes/0/providerRef",
             json!("foreign"),
         ),
         (
@@ -401,7 +401,7 @@ fn documented_parser_checks_remain_required_after_schema_validation() {
         ),
         (
             "managed-ollama.yaml",
-            "/spec/sandboxes/0/agent/inference/routes/0/overrides/model",
+            "/spec/sandboxes/assistant/agent/inference/routes/0/overrides/model",
             json!("untagged"),
         ),
         (
@@ -456,7 +456,7 @@ fn inference_providers_are_keyed_by_name_in_both_scopes() {
     let mut keyed = input("local.yaml");
     keyed["spec"]["inferenceProviders"] =
         json!({"local": {"provider": "openai", "endpoint": "http://172.20.0.1:11436/v1"}});
-    let sandbox = &mut keyed["spec"]["sandboxes"][0];
+    let sandbox = &mut keyed["spec"]["sandboxes"]["assistant"];
     sandbox["inferenceProviders"] = json!({"hosted": {
         "provider": "openai",
         "endpoint": "https://inference.example/v1",
@@ -473,7 +473,11 @@ fn inference_providers_are_keyed_by_name_in_both_scopes() {
     let exported: Value = serde_saphyr::from_str(&document.yaml().unwrap()).unwrap();
     for (scope, path, name) in [
         ("/spec", "spec", "local"),
-        ("/spec/sandboxes/0", "spec.sandboxes[0]", "hosted"),
+        (
+            "/spec/sandboxes/assistant",
+            "spec.sandboxes.assistant",
+            "hosted",
+        ),
     ] {
         let pointer = format!("{scope}/inferenceProviders");
         assert_eq!(
@@ -521,7 +525,7 @@ fn inference_providers_are_keyed_by_name_in_both_scopes() {
     // The schema cannot compare scopes; the parser rejects a sandbox name
     // that shadows a deployment name.
     let mut shadow = keyed.clone();
-    shadow["spec"]["sandboxes"][0]["inferenceProviders"]["local"] =
+    shadow["spec"]["sandboxes"]["assistant"]["inferenceProviders"]["local"] =
         keyed["spec"]["inferenceProviders"]["local"].clone();
     assert!(validator.is_valid(&shadow));
     let error = Document::parse(shadow.to_string().as_bytes())
@@ -535,20 +539,87 @@ fn inference_providers_are_keyed_by_name_in_both_scopes() {
 
     // A route's inline provider still carries the name its registration uses.
     let mut inline = keyed.clone();
-    let route = &mut inline["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][1];
+    let route = &mut inline["spec"]["sandboxes"]["assistant"]["agent"]["inference"]["routes"][1];
     route.as_object_mut().unwrap().remove("providerRef");
-    route["provider"] = keyed["spec"]["sandboxes"][0]["inferenceProviders"]["hosted"].clone();
+    route["provider"] =
+        keyed["spec"]["sandboxes"]["assistant"]["inferenceProviders"]["hosted"].clone();
     route["provider"]["name"] = json!("inline");
-    inline["spec"]["sandboxes"][0]
+    inline["spec"]["sandboxes"]["assistant"]
         .as_object_mut()
         .unwrap()
         .remove("inferenceProviders");
     agrees(&validator, &inline, true);
-    inline["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][1]["provider"]
+    inline["spec"]["sandboxes"]["assistant"]["agent"]["inference"]["routes"][1]["provider"]
         .as_object_mut()
         .unwrap()
         .remove("name");
     agrees(&validator, &inline, false);
+}
+
+/// Sandboxes are a map keyed by name, like the other definition collections;
+/// the key is the sandbox's only name.
+#[test]
+fn sandboxes_are_keyed_by_name() {
+    let validator = jsonschema::validator_for(&input_schema()).unwrap();
+    let sandbox = json!({
+        "network": {"tier": "isolated"},
+        "harness": {"kind": "nvidia.fabric.openclaw"},
+        "agent": {"name": "main", "inference": {"routes": [
+            {"name": "primary", "providerRef": "local", "overrides": {"model": "qwen3.5:0.8b"}}
+        ]}}
+    });
+    let with = |sandboxes: Value| {
+        let mut value = input("local.yaml");
+        value["spec"]["sandboxes"] = sandboxes;
+        value
+    };
+    let keyed = with(json!({"reviewer": sandbox, "assistant": sandbox}));
+    let document = Document::parse(keyed.to_string().as_bytes())
+        .unwrap_or_else(|error| panic!("name-keyed sandboxes: {error}"));
+    agrees(&validator, &keyed, true);
+    let exported: Value = serde_saphyr::from_str(&document.yaml().unwrap()).unwrap();
+    assert_eq!(
+        exported["spec"]["sandboxes"]
+            .as_object()
+            .map(|sandboxes| sandboxes.keys().map(String::as_str).collect::<Vec<_>>()),
+        Some(vec!["assistant", "reviewer"])
+    );
+
+    let mut named = sandbox.clone();
+    named["name"] = json!("assistant");
+    agrees(&validator, &with(json!([named])), false);
+    agrees(&validator, &with(json!({"assistant": named})), false);
+
+    for key in ["PRIVATE-KEY", "9assistant", "my_assistant", &"a".repeat(41)] {
+        let renamed = with(json!({key: sandbox}));
+        agrees(&validator, &renamed, false);
+        let error = Document::parse(renamed.to_string().as_bytes())
+            .unwrap_err()
+            .to_string();
+        assert!(!error.contains("PRIVATE-KEY"), "{error}");
+    }
+
+    let count = |count: usize| {
+        with(Value::Object(
+            (0..count)
+                .map(|index| (format!("sandbox-{index}"), sandbox.clone()))
+                .collect(),
+        ))
+    };
+    agrees(&validator, &count(0), false);
+    agrees(&validator, &count(32), true);
+    agrees(&validator, &count(33), false);
+
+    // Schema errors name a valid sandbox key.
+    let mut invalid = keyed.clone();
+    invalid["spec"]["sandboxes"]["reviewer"]["agent"]["name"] = json!("Main");
+    let error = Document::parse(invalid.to_string().as_bytes())
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("spec.sandboxes.reviewer.agent.name"),
+        "{error}"
+    );
 }
 
 #[test]
@@ -557,7 +628,7 @@ fn every_sandbox_requires_one_agent() {
     let value = input("local.yaml");
     agrees(&validator, &value, true);
     let mut missing = value.clone();
-    missing["spec"]["sandboxes"][0]
+    missing["spec"]["sandboxes"]["assistant"]
         .as_object_mut()
         .unwrap()
         .remove("agent");
@@ -624,7 +695,7 @@ fn a_gateway_image_is_rejected_as_an_unknown_field() {
 fn a_sandbox_cannot_choose_a_runtime_apart_from_its_gateway() {
     let validator = jsonschema::validator_for(&input_schema()).unwrap();
     let mut value = input("managed-podman.yaml");
-    value["spec"]["sandboxes"][0]["runtime"] = json!({"provider": "docker"});
+    value["spec"]["sandboxes"]["assistant"]["runtime"] = json!({"provider": "docker"});
     agrees(&validator, &value, false);
 }
 
@@ -687,10 +758,10 @@ fn schema_patterns_reject_trailing_newlines_in_identifiers_and_pins() {
     for (file, path) in [
         ("local.yaml", "/metadata/name"),
         ("local.yaml", "/metadata/uid"),
-        ("local.yaml", "/spec/sandboxes/0/agent/name"),
+        ("local.yaml", "/spec/sandboxes/assistant/agent/name"),
         (
             "local.yaml",
-            "/spec/sandboxes/0/agent/inference/routes/0/overrides/model",
+            "/spec/sandboxes/assistant/agent/inference/routes/0/overrides/model",
         ),
         ("spark/vllm.yaml", "/spec/services/qwen/image"),
         (

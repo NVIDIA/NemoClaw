@@ -179,7 +179,7 @@ If the machine running NemoClaw does not trust the certificate, onboarding repor
 
 ## Use an Image Built from This Revision
 
-Explicit API selection, tuning, and authentication require an agent image built from this revision; [build it](build.md#build-agent-images) and use its immutable digest in `sandboxes[].image.ref`.
+Explicit API selection, tuning, and authentication require an agent image built from this revision; [build it](build.md#build-agent-images) and use its immutable digest in `sandboxes.<name>.image.ref`.
 The [tuning example](../examples/inference-tuning.yaml) and [Hermes authentication example](../examples/hermes-auth.yaml) contain zero-digest placeholders that must be replaced before deployment.
 Set their gateway and inference endpoints and model IDs for your services, and assign a fresh deployment UID.
 Model and native settings changes restart the runtime inside the existing sandbox; changing its image requires a separate deployment, as described in [the change path](usage.md#choose-the-change-path).

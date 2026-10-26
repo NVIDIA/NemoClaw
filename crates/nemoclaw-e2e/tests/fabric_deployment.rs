@@ -56,19 +56,31 @@ async fn harness_reconciles_configuration_and_protects_sandbox_identity(harness:
         .get_mut("local")
         .unwrap()
         .endpoint = format!("{}/v1", catalog.endpoint);
-    document.spec.sandboxes[0].harness.as_mut().unwrap().kind = harness.parse().unwrap();
+    document
+        .spec
+        .sandboxes
+        .get_mut("assistant")
+        .unwrap()
+        .harness
+        .as_mut()
+        .unwrap()
+        .kind = harness.parse().unwrap();
     if harness == "nvidia.fabric.pi" {
         let pi = Document::parse(
             include_str!("../../nemoclaw-sdk/tests/fixtures/config/fabric-pi.yaml").as_bytes(),
         )
         .unwrap();
-        document.spec.sandboxes[0]
+        document
+            .spec
+            .sandboxes
+            .get_mut("assistant")
+            .unwrap()
             .agent
             .inference
             .as_mut()
             .unwrap()
             .routes[0]
-            .overrides = pi.spec.sandboxes[0]
+            .overrides = pi.spec.sandboxes["assistant"]
             .agent
             .inference
             .as_ref()
@@ -149,7 +161,11 @@ async fn harness_reconciles_configuration_and_protects_sandbox_identity(harness:
     );
     if harness != "nvidia.fabric.pi" {
         let mut changed_model = document.clone();
-        changed_model.spec.sandboxes[0]
+        changed_model
+            .spec
+            .sandboxes
+            .get_mut("assistant")
+            .unwrap()
             .agent
             .inference
             .as_mut()
@@ -190,7 +206,11 @@ async fn harness_reconciles_configuration_and_protects_sandbox_identity(harness:
     let initial_writes = writes();
     if harness == "nvidia.fabric.pi" {
         let mut changed_model = document.clone();
-        changed_model.spec.sandboxes[0]
+        changed_model
+            .spec
+            .sandboxes
+            .get_mut("assistant")
+            .unwrap()
             .agent
             .inference
             .as_mut()
@@ -198,7 +218,11 @@ async fn harness_reconciles_configuration_and_protects_sandbox_identity(harness:
             .routes[0]
             .overrides
             .model = "another-custom-model".into();
-        changed_model.spec.sandboxes[0]
+        changed_model
+            .spec
+            .sandboxes
+            .get_mut("assistant")
+            .unwrap()
             .agent
             .inference
             .as_mut()
@@ -217,8 +241,10 @@ async fn harness_reconciles_configuration_and_protects_sandbox_identity(harness:
             );
         let planned = deployment.plan(&changed_model, &cancel).await.unwrap();
         assert!(
-            planned.changes.iter().any(|change| change.resource
-                == format!("fabric_agent.{}", document.spec.sandboxes[0].name))
+            planned
+                .changes
+                .iter()
+                .any(|change| change.resource == "fabric_agent.assistant")
         );
         assert_eq!(writes(), initial_writes, "plan must not configure Pi");
         let before = fs::read(directory.path().join("terraform.tfstate")).unwrap();
@@ -297,20 +323,39 @@ async fn harness_reconciles_configuration_and_protects_sandbox_identity(harness:
     let sandboxes = fixture.state.lock().unwrap().sandboxes.clone();
     let before_writes = writes();
     let mut changed = document.clone();
-    changed.spec.sandboxes[0].harness.as_mut().unwrap().kind =
-        if harness == "nvidia.fabric.langchain.deepagents" {
-            "nvidia.fabric.hermes".parse().unwrap()
-        } else {
-            "nvidia.fabric.langchain.deepagents".parse().unwrap()
-        };
-    changed.spec.sandboxes[0].harness.as_mut().unwrap().config = None;
+    changed
+        .spec
+        .sandboxes
+        .get_mut("assistant")
+        .unwrap()
+        .harness
+        .as_mut()
+        .unwrap()
+        .kind = if harness == "nvidia.fabric.langchain.deepagents" {
+        "nvidia.fabric.hermes".parse().unwrap()
+    } else {
+        "nvidia.fabric.langchain.deepagents".parse().unwrap()
+    };
+    changed
+        .spec
+        .sandboxes
+        .get_mut("assistant")
+        .unwrap()
+        .harness
+        .as_mut()
+        .unwrap()
+        .config = None;
     changed
         .spec
         .inference_providers
         .get_mut("local")
         .unwrap()
         .api = None;
-    changed.spec.sandboxes[0]
+    changed
+        .spec
+        .sandboxes
+        .get_mut("assistant")
+        .unwrap()
         .agent
         .inference
         .as_mut()
@@ -469,7 +514,11 @@ async fn failed_configuration_reports_safe_runtime_state_and_recovers_on_the_nex
         .id
         .clone();
     let effects = fixture.state.lock().unwrap().effects;
-    document.spec.sandboxes[0]
+    document
+        .spec
+        .sandboxes
+        .get_mut("assistant")
+        .unwrap()
         .agent
         .inference
         .as_mut()
