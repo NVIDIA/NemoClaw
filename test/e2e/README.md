@@ -917,8 +917,10 @@ retains one sandbox identity check and proves dashboard and API forward ownershi
 after reuse. `onboard-resume-hermes` retains its before-and-after resume evidence.
 The original entries retain OpenClaw coverage. `double-onboard` also repeats
 onboarding with a changed model and verifies replacement identity, the OpenClaw
-primary model, and the recorded selection. Unit and integration tests own the
-drift decision and interactive confirmation cases.
+primary model, and the recorded selection. It then runs `nemoclaw uninstall --yes --destroy-user-data`,
+verifies that the managed OpenClaw state volume is gone, and onboards the same
+sandbox name again. Unit and integration tests own the drift decision and
+interactive confirmation cases.
 
 Give each entry one `displayName` in the form `<area>: <observable outcome>`.
 Do not include this implementation metadata or workflow text in the display name:
@@ -1124,15 +1126,18 @@ The probe requires a successful response containing the expected answer.
 The stateless request has no tools or conversation persistence, so repeating it
 has no application mutation. It may consume another inference request.
 
-The probe retries once after five seconds only when curl exits 22 with empty
-stdout and exactly reports HTTP 503. This reports service unavailability but
-does not identify whether the gateway or upstream produced it. Every request
-has its own command artifact and a 90-second curl limit. Each reply-budget
-attempt logs bounded availability evidence, including recovery or exhaustion,
+The probe retries once after five seconds when curl exits 22 with empty
+stdout and exactly reports HTTP 429, 500, 502, 503, or 504. It also retries
+when curl exits 28 with empty stdout and reports a timeout with zero response
+bytes. Neither result identifies whether the gateway or upstream caused the
+failure. Every request has its own command artifact and a 90-second curl limit.
+Each reply-budget attempt logs bounded availability evidence, including recovery
+or exhaustion,
 before writing its artifact. The aggregate log survives an artifact-write failure
 and is retained after Brev cleanup; the artifact exists only when its write succeeds.
 The existing two reply budgets permit at most four requests in total.
-Persistent 503, other HTTP errors, transport failures, and unknown errors fail.
+Persistent retriable HTTP responses, zero-response timeouts, other HTTP errors,
+ambiguous transport failures, and unknown errors fail.
 The existing response validation and answer assertion remain unchanged.
 
 ## Launch-readiness locked-image acceptance
