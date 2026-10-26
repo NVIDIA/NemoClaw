@@ -205,7 +205,9 @@ async function runReadTask(
       let proof: ReturnType<typeof qualifyPiReadTask> | undefined;
       let turnCompleted = false;
       try {
-        const events = parsePiJsonEvents(result.stdout);
+        const events = parsePiJsonEvents(result.stdout, {
+          allowTruncatedFinalLine: result.timedOut,
+        });
         turnCompleted = hasCompletedPiTurn(events);
         proof = qualifyPiReadTask(events, remotePath, token);
       } catch (error) {

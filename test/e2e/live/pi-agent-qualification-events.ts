@@ -172,11 +172,45 @@ export function classifyPiReadTaskAttempt(
   };
 }
 
-export function parsePiJsonEvents(stdout: string): JsonRecord[] {
-  return stdout
-    .split(/\r?\n/u)
-    .filter((line) => line.trim() !== "")
-    .map((line) => record(JSON.parse(line) as unknown, "Pi JSON event"));
+function hasUnclosedJsonStructure(line: string): boolean {
+  let depth = 0;
+  let quoted = false;
+  let escaped = false;
+  for (const character of line) {
+    if (quoted) {
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === '"') quoted = false;
+    } else if (character === '"') {
+      quoted = true;
+    } else if (character === "{" || character === "[") {
+      depth += 1;
+    } else if (character === "}" || character === "]") {
+      depth -= 1;
+      if (depth < 0) return false;
+    }
+  }
+  return quoted || depth > 0;
+}
+
+export function parsePiJsonEvents(
+  stdout: string,
+  options: { allowTruncatedFinalLine?: boolean } = {},
+): JsonRecord[] {
+  const lines = stdout.split(/\r?\n/u);
+  return lines.flatMap((line, index) => {
+    if (line.trim() === "") return [];
+    if (
+      options.allowTruncatedFinalLine &&
+      index === lines.length - 1 &&
+      !stdout.endsWith("\n") &&
+      line.trimStart().startsWith("{") &&
+      hasUnclosedJsonStructure(line)
+    ) {
+      return [];
+    }
+    return [record(JSON.parse(line) as unknown, "Pi JSON event")];
+  });
 }
 
 export function hasCompletedPiTurn(events: readonly JsonRecord[]): boolean {

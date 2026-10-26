@@ -162,9 +162,14 @@ function failedProbe(): ShellProbeResult {
   };
 }
 describe("Pi qualification event oracle", () => {
-  it("retries a timed-out pending Pi turn once and records both attempts (#13755)", async () => {
+  it.each([
+    ["pending Pi turn", ""],
+    ["truncated final event", '\n{"type":"message_update","message":{"role":"assistant"}'],
+  ])("retries a timed-out %s once and records both attempts (#13755)", async (_label, suffix) => {
     const pendingEvents = parsePiJsonEvents(
-      events({ type: "agent_start" }, { type: "message_start", message: { role: "assistant" } }),
+      events({ type: "agent_start" }, { type: "message_start", message: { role: "assistant" } }) +
+        suffix,
+      { allowTruncatedFinalLine: true },
     );
     let failure: unknown;
     try {
@@ -221,6 +226,21 @@ describe("Pi qualification event oracle", () => {
     ).toEqual({ outcome: "failed", failureClass: "deterministic" });
   });
 
+  it("keeps completed and malformed final Pi events strict on timeout (#13755)", () => {
+    const completeEvents = eventStream();
+    const truncated = `${completeEvents}\n{"type":"message_update","message":{"role":"assistant"}`;
+    const parsed = parsePiJsonEvents(truncated, { allowTruncatedFinalLine: true });
+    expect(hasCompletedPiTurn(parsed)).toBe(true);
+    expect(qualifyPiReadTask(parsed, PATH, TOKEN)).toBeDefined();
+    expect(() => parsePiJsonEvents(truncated)).toThrow();
+    expect(() => parsePiJsonEvents(`${truncated}\n`, { allowTruncatedFinalLine: true })).toThrow();
+    expect(() =>
+      parsePiJsonEvents(`${completeEvents}\n{"type":bogus}`, {
+        allowTruncatedFinalLine: true,
+      }),
+    ).toThrow();
+  });
+
   it.each([
     ["disallowed tool", { toolName: "bash" }],
     ["wrong read path", { args: { path: "/sandbox/other" } }],
@@ -235,7 +255,8 @@ describe("Pi qualification event oracle", () => {
           args: { path: PATH },
           ...override,
         },
-      ),
+      ) + '\n{"type":"message_update","message":{"role":"assistant"}',
+      { allowTruncatedFinalLine: true },
     );
     let failure: unknown;
     try {
