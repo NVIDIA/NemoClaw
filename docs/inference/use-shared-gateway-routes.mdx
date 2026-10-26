@@ -89,6 +89,7 @@ Text output shows the provider and model recorded for the sandbox and adds a war
 JSON output exposes the two sources as `recordedRoute` and `liveRoute` and adds `routeDrift` when they differ.
 The schema-version `1` `provider` and `model` fields remain live-first when the gateway route is readable and fall back to the recorded route otherwise.
 When `routeDrift.canConnect` is `false`, `connect` cannot safely restore the recorded route because provider-global identity differs or required route or gateway metadata is incomplete.
+Sandboxes that use a native NVIDIA, fixed hosted, or native local provider attachment do not use the shared route, so `liveRoute` and `routeDrift` are always `null` for them, and `https://inference.local` inside those sandboxes can answer `cluster inference is not configured` when no shared route is set.
 
 ## Handle a Hard Route Conflict
 
