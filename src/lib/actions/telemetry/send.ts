@@ -165,7 +165,7 @@ export async function collectOperationEvent(
   return event;
 }
 
-/** A single complete record, one attempt, and one collection/delivery deadline. */
+/** One terminal record and one delivery attempt within the remaining operation budget. */
 export async function sendOperationTelemetry(
   context: TelemetryOperationContext,
   budgetMs: number,
@@ -186,7 +186,11 @@ export async function sendOperationTelemetry(
       controller.signal.addEventListener("abort", () => resolve(null), { once: true });
     });
     const event = await Promise.race([
-      collectOperationEvent(context, { signal: controller.signal, deadlineAt }),
+      // Reserve transport time even when an inventory observation stalls.
+      collectOperationEvent(context, {
+        signal: controller.signal,
+        deadlineAt: deadlineAt - Math.min(1_000, budgetMs / 2),
+      }),
       deadline,
     ]);
     if (event === null || controller.signal.aborted) return "failed";

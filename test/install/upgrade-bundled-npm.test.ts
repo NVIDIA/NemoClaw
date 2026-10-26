@@ -40,7 +40,7 @@ function writePackage(root: string, location: string, name: string, version: str
   writeJson(path.join(root, "node_modules", location, "package.json"), { name, version });
 }
 
-function affectedNpm(version: "10.9.8" | "11.13.0" | "11.16.0" | "11.18.0"): string {
+function affectedNpm(version: "10.9.8" | "11.13.0" | "11.16.0" | "11.18.0" | "11.19.1"): string {
   const root = path.join(temporaryDirectory(), "npm");
   writeJson(path.join(root, "package.json"), { name: "npm", version });
   writePackage(root, "brace-expansion", "brace-expansion", "2.0.2");
@@ -133,7 +133,7 @@ describe("reviewed bundled npm upgrade", () => {
     expect(verifyBundledNpmTar(npmRoot).tarVersion).toBe("7.5.21");
   });
 
-  it.each(["10.9.8", "11.13.0", "11.16.0", "11.18.0"] as const)(
+  it.each(["10.9.8", "11.13.0", "11.16.0", "11.18.0", "11.19.1"] as const)(
     "replaces npm %s before running npm or npx",
     (version) => {
       const npmRoot = affectedNpm(version);
