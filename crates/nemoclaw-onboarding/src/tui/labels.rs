@@ -21,7 +21,8 @@ struct QuestionText {
 }
 
 /// Friendly text for questions and choices from `text.json`, keyed by
-/// question ID with `*` standing for array indices and adapter IDs. Entries
+/// question ID with `*` standing for array indices, service and inference
+/// provider names, and adapter IDs. Entries
 /// override the titles and descriptions advertised by the SDK and Fabric
 /// schemas. Describe Fabric adapter and model settings in the Fabric adapter
 /// descriptors instead, so every client receives the same text.
@@ -33,15 +34,16 @@ fn text() -> &'static Text {
 }
 
 /// Map keys for a question ID, most specific first: the ID itself, then with
-/// array indices and service names replaced by `*`, then also the adapter ID.
+/// array indices and service and inference provider names replaced by `*`,
+/// then also the adapter ID.
 fn keys(id: &str) -> [String; 3] {
     let parts = id.split('/').collect::<Vec<_>>();
     let indices = parts
         .iter()
         .enumerate()
         .map(|(index, part)| {
-            let service = index > 0 && parts[index - 1] == "services";
-            if service || (!part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit())) {
+            let named = index > 0 && matches!(parts[index - 1], "services" | "inferenceProviders");
+            if named || (!part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit())) {
                 "*"
             } else {
                 part
@@ -235,7 +237,7 @@ mod tests {
     use super::{keys, readable};
 
     #[test]
-    fn map_keys_generalize_indices_service_names_and_adapters() {
+    fn map_keys_generalize_indices_service_and_provider_names_and_adapters() {
         assert_eq!(
             keys("/spec/sandboxes/0/agent/inference/routes/1/name")[1],
             "/spec/sandboxes/*/agent/inference/routes/*/name"
@@ -243,6 +245,10 @@ mod tests {
         assert_eq!(
             keys("/spec/services/qwen/serving/port")[1],
             "/spec/services/*/serving/port"
+        );
+        assert_eq!(
+            keys("/spec/inferenceProviders/nvidia-prod/api")[1],
+            "/spec/inferenceProviders/*/api"
         );
         assert_eq!(
             keys("adapter:nvidia.fabric.openclaw:/native_config/cron")[2],

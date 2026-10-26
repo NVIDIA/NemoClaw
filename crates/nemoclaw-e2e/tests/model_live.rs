@@ -81,7 +81,12 @@ async fn exercise(fresh: bool) {
     let directory = explicit("NEMOCLAW_LIVE_MODEL_STATE");
     let deployment = Deployment::new(&directory, &explicit("NEMOCLAW_TEST_BUNDLE"));
     let cancel = CancellationToken::new();
-    let service_name = document.spec.inference_providers[0]
+    let service_name = document
+        .spec
+        .inference_providers
+        .values()
+        .next()
+        .unwrap()
         .service_ref
         .as_ref()
         .unwrap();

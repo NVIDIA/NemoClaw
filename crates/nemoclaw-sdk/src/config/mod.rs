@@ -108,17 +108,10 @@ impl Document {
         // Named declaration order is not deployment intent; retain authored order on export.
         let mut canonical = self.clone();
         canonical.spec.sandboxes.sort_by(|a, b| a.name.cmp(&b.name));
-        canonical
-            .spec
-            .inference_providers
-            .sort_by(|a, b| a.name.cmp(&b.name));
         for inference in canonical.spec.inferences.values_mut() {
             inference.routes.sort_by(|a, b| a.name.cmp(&b.name));
         }
         for sandbox in &mut canonical.spec.sandboxes {
-            sandbox
-                .inference_providers
-                .sort_by(|a, b| a.name.cmp(&b.name));
             for inference in sandbox
                 .inferences
                 .values_mut()

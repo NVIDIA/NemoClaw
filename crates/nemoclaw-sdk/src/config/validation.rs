@@ -45,7 +45,7 @@ impl Document {
         }
         validate_endpoint(gateway.endpoint(), true)?;
         self.validate_harness_references()?;
-        let selected_providers = self.selected_inference_providers()?;
+        let selected_providers = self.selected_providers()?;
         crate::services::validate(self)?;
         self.validate_inference_references()?;
         for definition in self.provider_definitions() {

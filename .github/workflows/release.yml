@@ -295,8 +295,8 @@ jobs:
       revision: ${{ steps.controller.outputs.revision }}
       policy_sha256: ${{ steps.controller.outputs.policy_sha256 }}
     steps:
-      # Freeze before the protected review starts. Candidate files are data;
-      # only the protected v1 controller runs with reporting/publishing access.
+      # Candidate files are data; only the v1 controller runs with reporting
+      # and publishing access.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: v1
@@ -359,109 +359,25 @@ jobs:
             2) echo "::warning::The release security policy would block publishing; the draft holds the assessment." ;;
             *) echo "::error::The security assessment is incomplete; the draft holds what it recorded."; exit 1 ;;
           esac
-  security:
-    name: Review security and approve finding disclosure
+  publish:
+    name: Assess and publish the release
     needs: [stage, security-controller]
-    # Without !cancelled(), a skipped Build would skip this review too.
+    # Anyone who may push a final tag may release: the release publishes once
+    # a release candidate staged its images and they pass the release policy.
+    # Without !cancelled(), a skipped Build would skip this job too.
     if: >-
       !cancelled() && !contains(github.ref_name, '-') &&
       needs.stage.result == 'success' && needs.security-controller.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
-    environment: v1-release-security
-    permissions:
-      contents: read
-      packages: read
-      security-events: write
-    outputs:
-      controller_revision: ${{ needs.security-controller.outputs.revision }}
-      policy_sha256: ${{ needs.security-controller.outputs.policy_sha256 }}
-    steps:
-      - name: Require independent review and release-tag restrictions
-        env:
-          GH_TOKEN: ${{ github.token }}
-          SECURITY_ENVIRONMENT: v1-release-security
-        run: |
-          protection=$(gh api "repos/$GITHUB_REPOSITORY/environments/$SECURITY_ENVIRONMENT")
-          jq -e '.protection_rules | any(.type == "required_reviewers" and .prevent_self_review == true and (.reviewers | length > 0))' <<< "$protection" > /dev/null
-          jq -e '.deployment_branch_policy.custom_branch_policies == true and .deployment_branch_policy.protected_branches == false' <<< "$protection" > /dev/null
-          policies=$(gh api "repos/$GITHUB_REPOSITORY/environments/$SECURITY_ENVIRONMENT/deployment-branch-policies")
-          jq -e '.total_count == 1 and (.branch_policies | length == 1 and all(.type == "tag" and .name == "v0.1.*"))' <<< "$policies" > /dev/null
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ needs.security-controller.outputs.revision }}
-          fetch-depth: 0
-          persist-credentials: false
-      - name: Assess the staged release
-        id: gate
-        uses: ./.github/actions/release-assessment
-        with:
-          tag: ${{ github.ref_name }}
-          inventory-sha256: ${{ needs.stage.outputs.inventory_sha256 }}
-          sboms-sha256: ${{ needs.stage.outputs.sboms_sha256 }}
-          policy-sha256: ${{ needs.security-controller.outputs.policy_sha256 }}
-          controller-revision: ${{ needs.security-controller.outputs.revision }}
-          token: ${{ github.token }}
-      - name: Report approved findings to code scanning
-        env:
-          GH_TOKEN: ${{ github.token }}
-          CANDIDATE_REVISION: ${{ github.sha }}
-          TAG: ${{ github.ref_name }}
-        run: |
-          # GitHub may retain only the first 5,000 results in a run.
-          # Refuse truncation while retaining the complete approved report.
-          jq -e 'all(.runs[]; (.results | length) <= 5000)' "$RUNNER_TEMP/security-report/assessment.sarif" > /dev/null
-          gzip -nc "$RUNNER_TEMP/security-report/assessment.sarif" | base64 | tr -d '\n' > "$RUNNER_TEMP/encoded-sarif"
-          jq -n --arg commit "$CANDIDATE_REVISION" --arg ref "refs/tags/$TAG" --rawfile sarif "$RUNNER_TEMP/encoded-sarif" \
-            '{commit_sha:$commit,ref:$ref,sarif:$sarif}' > "$RUNNER_TEMP/sarif-upload.json"
-          upload=$(gh api --method POST "repos/$GITHUB_REPOSITORY/code-scanning/sarifs" --input "$RUNNER_TEMP/sarif-upload.json" --jq .id)
-          for attempt in $(seq 1 30); do
-            state=$(gh api "repos/$GITHUB_REPOSITORY/code-scanning/sarifs/$upload" --jq .processing_status)
-            case "$state" in complete) exit 0 ;; failed) exit 1 ;; pending) sleep 2 ;; *) exit 1 ;; esac
-          done
-          echo '::error::Code scanning did not confirm the SARIF upload'
-          exit 1
-      - name: Retain approved assessment evidence
-        if: always() && steps.gate.outputs.report == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: reviewed-release-security
-          path: ${{ runner.temp }}/security-report
-          if-no-files-found: error
-          retention-days: 7
-      - name: Require a passing release policy
-        env:
-          RESULT: ${{ steps.gate.outputs.result }}
-        run: test "$RESULT" = 0
-  publish-security-reviewed:
-    name: Publish the security-reviewed draft
-    needs: [stage, security]
-    # Existing v1 private-release signoff remains separate. Missing or false
-    # configuration never turns a tag push into an automatic publication.
-    if: >-
-      !cancelled() && !contains(github.ref_name, '-') &&
-      vars.V1_SECURITY_PUBLICATION_ENABLED == 'true' &&
-      needs.stage.result == 'success' && needs.security.result == 'success'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    environment: v1-release-publication
     permissions:
       contents: write
       packages: read
+      security-events: write
     steps:
-      - name: Require independent review and release-tag restrictions
-        env:
-          GH_TOKEN: ${{ github.token }}
-          SECURITY_ENVIRONMENT: v1-release-publication
-        run: |
-          protection=$(gh api "repos/$GITHUB_REPOSITORY/environments/$SECURITY_ENVIRONMENT")
-          jq -e '.protection_rules | any(.type == "required_reviewers" and .prevent_self_review == true and (.reviewers | length > 0))' <<< "$protection" > /dev/null
-          jq -e '.deployment_branch_policy.custom_branch_policies == true and .deployment_branch_policy.protected_branches == false' <<< "$protection" > /dev/null
-          policies=$(gh api "repos/$GITHUB_REPOSITORY/environments/$SECURITY_ENVIRONMENT/deployment-branch-policies")
-          jq -e '.total_count == 1 and (.branch_policies | length == 1 and all(.type == "tag" and .name == "v0.1.*"))' <<< "$policies" > /dev/null
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.security.outputs.controller_revision }}
+          ref: ${{ needs.security-controller.outputs.revision }}
           fetch-depth: 0
           persist-credentials: false
       - name: Recheck the tag and draft
@@ -473,16 +389,73 @@ jobs:
           test "$(git rev-parse "$TAG^{commit}")" = "$CANDIDATE_REVISION"
           git merge-base --is-ancestor "$CANDIDATE_REVISION" HEAD
           test "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" = true
-      - name: Reassess immediately before publishing
-        id: publication-gate
+      - name: Require a tested release candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          INVENTORY_SHA256: ${{ needs.stage.outputs.inventory_sha256 }}
+        run: |
+          # Ship only images a release candidate of this version staged, so the
+          # release is what was tested. Compare platform manifests by image.
+          dir="$RUNNER_TEMP/candidates"
+          mkdir -p "$dir"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern inventory.json --output "$dir/final.json"
+          test "$(sha256sum "$dir/final.json" | cut -d ' ' -f1)" = "$INVENTORY_SHA256"
+          images() { jq -S '[.[] | {name, platforms: ([.manifests.manifests[].digest] | sort)}] | sort_by(.name)' "$1"; }
+          images "$dir/final.json" > "$dir/final.images"
+          gh release list --repo "$GITHUB_REPOSITORY" --limit 1000 --json tagName --jq '.[].tagName' > "$dir/tags"
+          while read -r candidate; do
+            case "$candidate" in "$TAG"-*) ;; *) continue ;; esac
+            gh release download "$candidate" --repo "$GITHUB_REPOSITORY" --pattern inventory.json \
+              --output "$dir/candidate.json" --clobber || continue
+            if images "$dir/candidate.json" | cmp -s - "$dir/final.images"; then
+              echo "Release candidate $candidate staged these images." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+          done < "$dir/tags"
+          echo "::error::No release candidate of $TAG staged these images. Tag one from this commit and test it first."
+          exit 1
+      - name: Assess the staged release
+        id: gate
         uses: ./.github/actions/release-assessment
         with:
           tag: ${{ github.ref_name }}
           inventory-sha256: ${{ needs.stage.outputs.inventory_sha256 }}
           sboms-sha256: ${{ needs.stage.outputs.sboms_sha256 }}
-          policy-sha256: ${{ needs.security.outputs.policy_sha256 }}
-          controller-revision: ${{ needs.security.outputs.controller_revision }}
+          policy-sha256: ${{ needs.security-controller.outputs.policy_sha256 }}
+          controller-revision: ${{ needs.security-controller.outputs.revision }}
           token: ${{ github.token }}
+      - name: Report findings to code scanning
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_REVISION: ${{ github.sha }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          # GitHub may retain only the first 5,000 results in a run.
+          # Refuse truncation while retaining the complete report.
+          jq -e 'all(.runs[]; (.results | length) <= 5000)' "$RUNNER_TEMP/security-report/assessment.sarif" > /dev/null
+          gzip -nc "$RUNNER_TEMP/security-report/assessment.sarif" | base64 | tr -d '\n' > "$RUNNER_TEMP/encoded-sarif"
+          jq -n --arg commit "$CANDIDATE_REVISION" --arg ref "refs/tags/$TAG" --rawfile sarif "$RUNNER_TEMP/encoded-sarif" \
+            '{commit_sha:$commit,ref:$ref,sarif:$sarif}' > "$RUNNER_TEMP/sarif-upload.json"
+          upload=$(gh api --method POST "repos/$GITHUB_REPOSITORY/code-scanning/sarifs" --input "$RUNNER_TEMP/sarif-upload.json" --jq .id)
+          for attempt in $(seq 1 30); do
+            state=$(gh api "repos/$GITHUB_REPOSITORY/code-scanning/sarifs/$upload" --jq .processing_status)
+            case "$state" in complete) exit 0 ;; failed) exit 1 ;; pending) sleep 2 ;; *) exit 1 ;; esac
+          done
+          echo '::error::Code scanning did not confirm the SARIF upload'
+          exit 1
+      - name: Retain the assessment evidence
+        if: always() && steps.gate.outputs.report == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-security
+          path: ${{ runner.temp }}/security-report
+          if-no-files-found: error
+          retention-days: 7
+      - name: Require a passing release policy
+        env:
+          RESULT: ${{ steps.gate.outputs.result }}
+        run: test "$RESULT" = 0
       - name: Recheck the registry digests
         env:
           GH_TOKEN: ${{ github.token }}
@@ -503,19 +476,7 @@ jobs:
           docker logout ghcr.io
           cargo run --locked -q -p nemoclaw-build --no-default-features -- release-verify-promotion \
             --expected "$inputs/inventory.json" --actual "$RUNNER_TEMP/observed-inventory.json"
-      - name: Retain the final approved assessment evidence
-        if: always() && steps.publication-gate.outputs.report == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: publication-release-security
-          path: ${{ runner.temp }}/security-report
-          if-no-files-found: error
-          retention-days: 7
-      - name: Require a passing final release policy
-        env:
-          RESULT: ${{ steps.publication-gate.outputs.result }}
-        run: test "$RESULT" = 0
-      - name: Publish the approved draft and exact assessment evidence
+      - name: Publish the draft and its assessment evidence
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}

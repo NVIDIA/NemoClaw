@@ -65,12 +65,12 @@ fn omitted_optional_sdk_field_stays_absent_even_when_its_scope_is_asked() {
     let mut supplied: serde_json::Value =
         serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
-    supplied["spec"]["inferenceProviders"][0]
+    supplied["spec"]["inferenceProviders"]["nvidia-prod"]
         .as_object_mut()
         .unwrap()
         .remove("api");
     let base = PartialDocument::from_yaml(supplied.to_string().as_bytes()).unwrap();
-    let path = "/spec/inferenceProviders/0/api";
+    let path = "/spec/inferenceProviders/nvidia-prod/api";
     let state = JourneyDefinition::new("omit-sdk-api", base)
         .ask([JourneyScope::InferenceApi])
         .omit([
@@ -106,7 +106,7 @@ fn exact_and_scope_guidance_share_one_inference_api_question() {
     let base =
         PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
-    let path = "/spec/inferenceProviders/0/api";
+    let path = "/spec/inferenceProviders/nvidia-prod/api";
     let mut state = JourneyDefinition::new("same-api-decision", base)
         .ask([path])
         .ask([JourneyScope::InferenceApi])
@@ -169,7 +169,7 @@ fn asked_inference_api_precedes_route_model_in_question_order() {
         .ask([JourneyScope::InferenceApi, JourneyScope::RouteModels])
         .start(&capabilities)
         .unwrap();
-    let api_path = "/spec/inferenceProviders/0/api";
+    let api_path = "/spec/inferenceProviders/nvidia-prod/api";
     let model_path = "/spec/sandboxes/0/agent/inference/routes/0/overrides/model";
 
     let first = state.resolve(&capabilities).unwrap();
@@ -204,7 +204,7 @@ fn omit_guidance_rejects_required_or_supplied_sdk_fields() {
     );
     assert!(
         JourneyDefinition::new("supplied", base)
-            .omit(["/spec/inferenceProviders/0/api"])
+            .omit(["/spec/inferenceProviders/nvidia-prod/api"])
             .start(&capabilities)
             .is_err()
     );
@@ -2298,7 +2298,7 @@ fn omitting_an_implicit_api_keeps_the_sdk_default_without_writing_an_override() 
         .ask([JourneyScope::InferenceApi])
         .start(&capabilities)
         .unwrap();
-    let path = "/spec/inferenceProviders/0/api";
+    let path = "/spec/inferenceProviders/local/api";
     let question = state
         .resolve(&capabilities)
         .unwrap()
@@ -2425,12 +2425,16 @@ fn route_preset_changes_only_the_selected_external_provider() {
         .answer(&capabilities, "inference:preset", Some(json!("openai")))
         .unwrap();
     assert_eq!(
-        state.values().pointer("/spec/inferenceProviders/0"),
-        before.pointer("/spec/inferenceProviders/0")
+        state.values().pointer("/spec/inferenceProviders/local"),
+        before.pointer("/spec/inferenceProviders/local")
     );
     assert_eq!(
-        state.values().pointer("/spec/inferenceProviders/1/name"),
-        Some(&json!("hosted"))
+        state.values()["spec"]["inferenceProviders"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .collect::<Vec<_>>(),
+        ["hosted", "local"]
     );
     assert_eq!(
         state
@@ -2561,8 +2565,8 @@ fn existing_onboarding_fields_resolve_and_materialize_without_a_draft() {
         "/metadata/name",
         "/spec/sandboxes/0/harness/kind",
         "/spec/gateway/runtime/provider",
-        "/spec/inferenceProviders/0/provider",
-        "/spec/inferenceProviders/0/api",
+        "/spec/inferenceProviders/nvidia-prod/provider",
+        "/spec/inferenceProviders/nvidia-prod/api",
         "/spec/sandboxes/0/agent/inference/routes/0/overrides/model",
     ];
     let definition = JourneyDefinition::new("guided", base).ask(fields).omit([
@@ -2656,12 +2660,11 @@ fn inference_preset_updates_sparse_values_and_reopens_dependent_answers() {
         PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
     let preset = "inference:preset";
-    let api = "/spec/inferenceProviders/0/api";
-    let provider_name = "/spec/inferenceProviders/0/name";
+    let api = "/spec/inferenceProviders/nvidia-prod/api";
     let model = "/spec/sandboxes/0/agent/inference/routes/0/overrides/model";
     let name = "/metadata/name";
     let mut state = JourneyDefinition::new("preset", base)
-        .ask([name, preset, api, model, provider_name])
+        .ask([name, preset, api, model])
         .omit([
             "adapter:nvidia.fabric.openclaw:/agent_id",
             "adapter:nvidia.fabric.openclaw:/channel_config",
@@ -2696,9 +2699,6 @@ fn inference_preset_updates_sparse_values_and_reopens_dependent_answers() {
     state
         .answer(&capabilities, model, Some(json!("nvidia/my-model")))
         .unwrap();
-    state
-        .answer(&capabilities, provider_name, Some(json!("nvidia-prod")))
-        .unwrap();
     assert!(
         state
             .resolve(&capabilities)
@@ -2729,27 +2729,33 @@ fn inference_preset_updates_sparse_values_and_reopens_dependent_answers() {
     assert_eq!(
         state
             .values()
-            .pointer("/spec/inferenceProviders/0/provider"),
+            .pointer("/spec/inferenceProviders/nvidia-prod/provider"),
         Some(&json!("anthropic"))
     );
     assert_eq!(
-        state.values().pointer("/spec/inferenceProviders/0/name"),
-        Some(&json!("nvidia-prod"))
+        state.values()["spec"]["inferenceProviders"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .collect::<Vec<_>>(),
+        ["nvidia-prod"]
     );
     assert_eq!(
-        state.values().pointer("/spec/inferenceProviders/0/api"),
+        state
+            .values()
+            .pointer("/spec/inferenceProviders/nvidia-prod/api"),
         Some(&json!("anthropic-messages"))
     );
     assert_eq!(
         state
             .values()
-            .pointer("/spec/inferenceProviders/0/endpoint"),
+            .pointer("/spec/inferenceProviders/nvidia-prod/endpoint"),
         Some(&json!("https://api.anthropic.com"))
     );
     assert_eq!(
         state
             .values()
-            .pointer("/spec/inferenceProviders/0/credential/env"),
+            .pointer("/spec/inferenceProviders/nvidia-prod/credential/env"),
         Some(&json!("ANTHROPIC_API_KEY"))
     );
     assert_eq!(
@@ -2765,7 +2771,6 @@ fn inference_preset_updates_sparse_values_and_reopens_dependent_answers() {
     let resolved = state.resolve(&capabilities).unwrap();
     assert!(resolved.question(name).is_none());
     assert!(resolved.question(api).is_some());
-    assert!(resolved.question(provider_name).is_none());
     assert!(resolved.question(model).is_some());
     assert!(resolved.materialized_document().is_none());
     assert!(
@@ -2811,7 +2816,7 @@ fn compatible_inference_preset_requires_an_endpoint_answer() {
     let resolved = state.resolve(&capabilities).unwrap();
     assert!(
         resolved
-            .question("/spec/inferenceProviders/0/endpoint")
+            .question("/spec/inferenceProviders/nvidia-prod/endpoint")
             .is_some()
     );
     assert!(
@@ -2826,7 +2831,7 @@ fn compatible_inference_preset_requires_an_endpoint_answer() {
             .is_none()
     );
     assert!(resolved.materialized_document().is_none());
-    let endpoint = "/spec/inferenceProviders/0/endpoint";
+    let endpoint = "/spec/inferenceProviders/nvidia-prod/endpoint";
     let before = state.values().clone();
     assert!(
         state
@@ -2870,9 +2875,9 @@ fn inference_dependencies_wait_for_preset_and_custom_endpoint() {
     let base =
         PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
-    let api = "/spec/inferenceProviders/0/api";
+    let api = "/spec/inferenceProviders/nvidia-prod/api";
     let model = "/spec/sandboxes/0/agent/inference/routes/0/overrides/model";
-    let endpoint = "/spec/inferenceProviders/0/endpoint";
+    let endpoint = "/spec/inferenceProviders/nvidia-prod/endpoint";
     let preset = "inference:preset";
     let mut state = JourneyDefinition::new("order", base)
         .ask([api, model, preset])
@@ -2913,14 +2918,17 @@ fn changing_inference_api_reopens_the_accepted_model_but_keeps_identity() {
         PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
     let mut state = JourneyDefinition::new("api-dependency", base)
-        .ask(["/metadata/name", "/spec/inferenceProviders/0/endpoint"])
+        .ask([
+            "/metadata/name",
+            "/spec/inferenceProviders/nvidia-prod/endpoint",
+        ])
         .ask([JourneyScope::InferenceApi, JourneyScope::RouteModels])
         .start(&capabilities)
         .unwrap();
     let name = "/metadata/name";
-    let api = "/spec/inferenceProviders/0/api";
+    let api = "/spec/inferenceProviders/nvidia-prod/api";
     let model = "/spec/sandboxes/0/agent/inference/routes/0/overrides/model";
-    let endpoint = "/spec/inferenceProviders/0/endpoint";
+    let endpoint = "/spec/inferenceProviders/nvidia-prod/endpoint";
     state
         .answer(&capabilities, name, Some(json!("my-project")))
         .unwrap();
@@ -2984,10 +2992,10 @@ fn changing_the_second_provider_api_reopens_its_route_model() {
     .unwrap();
     let mut state = JourneyDefinition::new("second-provider-api", base)
         .ask([JourneyScope::RouteModels])
-        .ask(["/spec/inferenceProviders/1/api"])
+        .ask(["/spec/inferenceProviders/hosted/api"])
         .start(&capabilities)
         .unwrap();
-    let api = "/spec/inferenceProviders/1/api";
+    let api = "/spec/inferenceProviders/hosted/api";
     let model = "/spec/sandboxes/0/agent/inference/routes/1/overrides/model";
     state
         .answer(&capabilities, "route:selection", Some(json!("hosted")))
@@ -3016,7 +3024,7 @@ fn optional_sdk_question_can_be_deliberately_omitted() {
         PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
     let mut state = JourneyDefinition::new("optional-api", base)
-        .ask(["/spec/inferenceProviders/0/api"])
+        .ask(["/spec/inferenceProviders/nvidia-prod/api"])
         .omit([
             "adapter:nvidia.fabric.openclaw:/agent_id",
             "adapter:nvidia.fabric.openclaw:/channel_config",
@@ -3777,7 +3785,10 @@ fn minimally_supplied_inline_envelope_materializes_through_one_resolver() {
     let answers = [
         ("/metadata/name", json!("minimum-inline")),
         ("/spec/gateway/management", json!("managed")),
-        ("/spec/inferenceProviders/0/provider", json!("openai")),
+        (
+            "/spec/inferenceProviders/nvidia-prod/provider",
+            json!("openai"),
+        ),
         ("/spec/sandboxes/0/name", json!("assistant")),
         (
             "/spec/sandboxes/0/harness/kind",

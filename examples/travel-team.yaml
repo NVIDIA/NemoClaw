@@ -41,11 +41,11 @@ spec:
         gpuMemoryGiB: 48
 
   inferenceProviders:
-    - name: local
+    local:
       provider: openai
       api: openai-completions
       serviceRef: nemotron
-    - name: frontier
+    frontier:
       provider: openai
       endpoint: https://integrate.api.nvidia.com/v1
       credential:

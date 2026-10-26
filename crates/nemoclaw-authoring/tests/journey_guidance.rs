@@ -56,7 +56,7 @@ fn generated_yaml_reopens_as_the_same_supplied_intent() {
     state
         .answer(
             &capabilities,
-            "/spec/inferenceProviders/0/api",
+            "/spec/inferenceProviders/nvidia-prod/api",
             Some(json!("openai-responses")),
         )
         .unwrap();
@@ -79,7 +79,9 @@ fn generated_yaml_reopens_as_the_same_supplied_intent() {
         state.values().pointer("/metadata/uid")
     );
     assert_eq!(
-        again.values().pointer("/spec/inferenceProviders/0/api"),
+        again
+            .values()
+            .pointer("/spec/inferenceProviders/nvidia-prod/api"),
         Some(&json!("openai-responses"))
     );
     assert_eq!(
@@ -111,7 +113,7 @@ fn every_advertised_harness_keeps_provider_protocol_choices() {
             let api = state
                 .resolve(&capabilities)
                 .unwrap()
-                .question("/spec/inferenceProviders/0/api")
+                .question("/spec/inferenceProviders/nvidia-prod/api")
                 .cloned()
                 .unwrap();
             assert_eq!(
@@ -156,8 +158,9 @@ fn changing_a_model_preserves_an_explicit_target_engine() {
 fn an_anonymous_local_provider_is_lossless_without_a_credential_reference() {
     let capabilities = Capabilities::available();
     let mut values = supplied();
-    values["spec"]["inferenceProviders"][0]["endpoint"] = json!("http://127.0.0.1:11434/v1");
-    values["spec"]["inferenceProviders"][0]
+    values["spec"]["inferenceProviders"]["nvidia-prod"]["endpoint"] =
+        json!("http://127.0.0.1:11434/v1");
+    values["spec"]["inferenceProviders"]["nvidia-prod"]
         .as_object_mut()
         .unwrap()
         .remove("credential");
@@ -174,7 +177,7 @@ fn an_anonymous_local_provider_is_lossless_without_a_credential_reference() {
     state
         .answer(
             &capabilities,
-            "/spec/inferenceProviders/0/endpoint",
+            "/spec/inferenceProviders/nvidia-prod/endpoint",
             Some(json!("http://127.0.0.1:11434/v1")),
         )
         .unwrap();

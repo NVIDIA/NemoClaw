@@ -12,11 +12,11 @@ fn anthropic_with_claude_should_work() {
     let document = Document::parse(desired.yaml().as_bytes()).unwrap();
     let desired = normalized(&document);
     assert_eq!(
-        desired["spec"]["inferenceProviders"][0]["provider"],
+        desired["spec"]["inferenceProviders"]["local"]["provider"],
         "anthropic"
     );
     assert_eq!(
-        desired["spec"]["inferenceProviders"][0]["endpoint"],
+        desired["spec"]["inferenceProviders"]["local"]["endpoint"],
         "https://api.anthropic.com/v1"
     );
     assert_eq!(
@@ -34,11 +34,11 @@ fn anthropic_compatible_endpoint_should_work() {
     let document = Document::parse(desired.yaml().as_bytes()).unwrap();
     let desired = normalized(&document);
     assert_eq!(
-        desired["spec"]["inferenceProviders"][0]["provider"],
+        desired["spec"]["inferenceProviders"]["local"]["provider"],
         "anthropic"
     );
     assert_eq!(
-        desired["spec"]["inferenceProviders"][0]["endpoint"],
+        desired["spec"]["inferenceProviders"]["local"]["endpoint"],
         "https://anthropic.example.com/v1"
     );
     assert_eq!(
@@ -57,11 +57,11 @@ fn openai_compatible_endpoint_with_tuning_should_work() {
     let overrides =
         &desired["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"];
     assert_eq!(
-        desired["spec"]["inferenceProviders"][0]["api"],
+        desired["spec"]["inferenceProviders"]["local"]["api"],
         "openai-responses"
     );
     assert_eq!(
-        desired["spec"]["inferenceProviders"][0]["endpoint"],
+        desired["spec"]["inferenceProviders"]["local"]["endpoint"],
         "https://inference.example.com/v1"
     );
     assert_eq!(document.credential_names(), ["COMPATIBLE_API_KEY"]);
@@ -77,7 +77,7 @@ fn openai_endpoint_should_work() {
     let document = Document::parse(desired.yaml().as_bytes()).unwrap();
     let desired = normalized(&document);
     assert_eq!(
-        desired["spec"]["inferenceProviders"][0]["endpoint"],
+        desired["spec"]["inferenceProviders"]["local"]["endpoint"],
         "https://api.openai.com/v1"
     );
     assert_eq!(document.credential_names(), ["OPENAI_API_KEY"]);
@@ -92,7 +92,7 @@ fn openrouter_endpoint_should_work() {
     let document = Document::parse(desired.yaml().as_bytes()).unwrap();
     let desired = normalized(&document);
     assert_eq!(
-        desired["spec"]["inferenceProviders"][0]["endpoint"],
+        desired["spec"]["inferenceProviders"]["local"]["endpoint"],
         "https://openrouter.ai/api/v1"
     );
     assert_eq!(document.credential_names(), ["OPENROUTER_API_KEY"]);
@@ -142,7 +142,7 @@ fn managed_ollama_should_work() {
     let yaml = include_bytes!("../../../examples/managed-ollama.yaml");
     let document = Document::parse(yaml.as_slice()).unwrap();
     let desired = normalized(&document);
-    let service = desired["spec"]["inferenceProviders"][0]["serviceRef"]
+    let service = desired["spec"]["inferenceProviders"]["local"]["serviceRef"]
         .as_str()
         .unwrap();
     assert_eq!(desired["spec"]["services"][service]["kind"], "ollama");
@@ -153,7 +153,7 @@ fn managed_vllm_should_work() {
     let yaml = include_bytes!("../../../examples/nemotron-amd64.yaml");
     let document = Document::parse(yaml.as_slice()).unwrap();
     let desired = normalized(&document);
-    let service = desired["spec"]["inferenceProviders"][0]["serviceRef"]
+    let service = desired["spec"]["inferenceProviders"]["nemotron"]["serviceRef"]
         .as_str()
         .unwrap();
     assert_eq!(desired["spec"]["services"][service]["kind"], "vllm");
@@ -169,7 +169,7 @@ fn external_ollama_proxy_should_work() {
         .external_ollama_proxy();
     let document = Document::parse(desired.yaml().as_bytes()).unwrap();
     let desired = normalized(&document);
-    let service = desired["spec"]["inferenceProviders"][0]["serviceRef"]
+    let service = desired["spec"]["inferenceProviders"]["local"]["serviceRef"]
         .as_str()
         .unwrap();
     assert_eq!(
@@ -384,20 +384,28 @@ impl DesiredState {
         }
     }
 
+    /// The document's sole deployment-level provider definition.
+    fn provider(&mut self) -> &mut Value {
+        let providers = self.value["spec"]["inferenceProviders"]
+            .as_object_mut()
+            .unwrap();
+        assert_eq!(providers.len(), 1);
+        providers.values_mut().next().unwrap()
+    }
+
     fn provider_endpoint(mut self, endpoint: &str) -> Self {
-        self.value["spec"]["inferenceProviders"][0]["endpoint"] = json!(endpoint);
+        self.provider()["endpoint"] = json!(endpoint);
         self
     }
 
     fn provider_credential(mut self, environment_variable: &str) -> Self {
-        self.value["spec"]["inferenceProviders"][0]["credential"] =
-            json!({"env": environment_variable});
+        self.provider()["credential"] = json!({"env": environment_variable});
         self
     }
 
     fn provider_kind(mut self, provider: &str, api: &str) -> Self {
-        self.value["spec"]["inferenceProviders"][0]["provider"] = json!(provider);
-        self.value["spec"]["inferenceProviders"][0]["api"] = json!(api);
+        self.provider()["provider"] = json!(provider);
+        self.provider()["api"] = json!(api);
         self
     }
 
@@ -413,10 +421,7 @@ impl DesiredState {
     }
 
     fn service_backend(mut self, backend: &str) -> Self {
-        let service = self.value["spec"]["inferenceProviders"][0]["serviceRef"]
-            .as_str()
-            .unwrap()
-            .to_owned();
+        let service = self.provider()["serviceRef"].as_str().unwrap().to_owned();
         self.value["spec"]["services"][service]["kind"] = json!(backend);
         self
     }

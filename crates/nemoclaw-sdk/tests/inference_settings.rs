@@ -17,7 +17,7 @@ fn parse(v: &Value) -> Result<Document, nemoclaw_sdk::config::ConfigError> {
 #[test]
 fn api_and_tuning_survive_compilation_and_yaml() {
     let mut v = input("openclaw");
-    v["spec"]["inferenceProviders"][0]["api"] = json!("openai-responses");
+    v["spec"]["inferenceProviders"]["local"]["api"] = json!("openai-responses");
     let route = &mut v["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"];
     route["settings"]["contextWindow"] = json!(65536);
     route["maxTokens"] = json!(8192);
@@ -53,9 +53,9 @@ fn api_and_tuning_survive_compilation_and_yaml() {
 #[test]
 fn hermes_auth_requires_the_routed_credential_provider() {
     let mut v = input("hermes");
-    v["spec"]["inferenceProviders"][0]["endpoint"] =
+    v["spec"]["inferenceProviders"]["local"]["endpoint"] =
         json!("https://inference-api.nousresearch.com/v1");
-    v["spec"]["inferenceProviders"][0]["credential"] = json!({"env":"NOUS_API_KEY"});
+    v["spec"]["inferenceProviders"]["local"]["credential"] = json!({"env":"NOUS_API_KEY"});
     v["spec"]["sandboxes"][0]["agent"]["auth"] = json!({"method":"api-key"});
     assert!(parse(&v).is_ok());
     v["spec"]["sandboxes"][0]["agent"]["auth"]["providerRef"] = json!("foreign");
@@ -79,7 +79,7 @@ fn unsupported_or_out_of_range_options_fail_before_deployment() {
         );
     }
     let mut v = input("deepagents");
-    v["spec"]["inferenceProviders"][0]["api"] = json!("unrecognized-protocol");
+    v["spec"]["inferenceProviders"]["local"]["api"] = json!("unrecognized-protocol");
     assert!(parse(&v).is_err());
 }
 
@@ -93,8 +93,8 @@ fn explicit_apis_validate_transport_families_and_native_wire_requirements() {
             "anthropic-messages",
         ] {
             let mut v = input(harness);
-            v["spec"]["inferenceProviders"][0]["api"] = json!(api);
-            v["spec"]["inferenceProviders"][0]["provider"] =
+            v["spec"]["inferenceProviders"]["local"]["api"] = json!(api);
+            v["spec"]["inferenceProviders"]["local"]["provider"] =
                 json!(if api == "anthropic-messages" {
                     "anthropic"
                 } else {
@@ -103,7 +103,7 @@ fn explicit_apis_validate_transport_families_and_native_wire_requirements() {
             let accepted = true;
             assert_eq!(parse(&v).is_ok(), accepted, "{harness}/{api}");
             assert!(validator.is_valid(&v), "structural schema {harness}/{api}");
-            v["spec"]["inferenceProviders"][0]["provider"] =
+            v["spec"]["inferenceProviders"]["local"]["provider"] =
                 json!(if api == "anthropic-messages" {
                     "openai"
                 } else {

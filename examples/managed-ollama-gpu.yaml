@@ -30,7 +30,7 @@ spec:
       memory:
         gpuMemoryGiB: 16
   inferenceProviders:
-    - name: qwen
+    qwen:
       provider: openai
       api: openai-completions
       serviceRef: qwen

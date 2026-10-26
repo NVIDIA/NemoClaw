@@ -50,7 +50,12 @@ async fn harness_reconciles_configuration_and_protects_sandbox_identity(harness:
         }
     })
     .await;
-    document.spec.inference_providers[0].endpoint = format!("{}/v1", catalog.endpoint);
+    document
+        .spec
+        .inference_providers
+        .get_mut("local")
+        .unwrap()
+        .endpoint = format!("{}/v1", catalog.endpoint);
     document.spec.sandboxes[0].harness.as_mut().unwrap().kind = harness.parse().unwrap();
     if harness == "nvidia.fabric.pi" {
         let pi = Document::parse(
@@ -299,7 +304,12 @@ async fn harness_reconciles_configuration_and_protects_sandbox_identity(harness:
             "nvidia.fabric.langchain.deepagents".parse().unwrap()
         };
     changed.spec.sandboxes[0].harness.as_mut().unwrap().config = None;
-    changed.spec.inference_providers[0].api = None;
+    changed
+        .spec
+        .inference_providers
+        .get_mut("local")
+        .unwrap()
+        .api = None;
     changed.spec.sandboxes[0]
         .agent
         .inference

@@ -326,12 +326,13 @@ fn authored_credentials_cannot_shadow_managed_kubernetes_runtime_controls() {
     ] {
         for path in [
             "/spec/gateway/kubernetes/kubeconfig",
-            "/spec/inferenceProviders/0/credential",
+            "/spec/inferenceProviders/local/credential",
         ] {
             let mut input = managed_document();
-            input["spec"]["inferenceProviders"][0]["endpoint"] =
+            input["spec"]["inferenceProviders"]["local"]["endpoint"] =
                 json!("https://inference.example/v1");
-            input["spec"]["inferenceProviders"][0]["credential"] = json!({"env":"HOSTED_API_KEY"});
+            input["spec"]["inferenceProviders"]["local"]["credential"] =
+                json!({"env":"HOSTED_API_KEY"});
             *input.pointer_mut(path).unwrap() = json!({"env":name});
             assert!(!validator.is_valid(&input));
             assert!(Document::parse(input.to_string().as_bytes()).is_err());
@@ -433,8 +434,9 @@ fn managed_kubeconfig_controls_do_not_restrict_other_credential_references() {
             .as_object_mut()
             .unwrap()
             .remove("metadata");
-        input["spec"]["inferenceProviders"][0]["endpoint"] = json!("https://inference.example/v1");
-        input["spec"]["inferenceProviders"][0]["credential"] = json!({"env": name});
+        input["spec"]["inferenceProviders"]["local"]["endpoint"] =
+            json!("https://inference.example/v1");
+        input["spec"]["inferenceProviders"]["local"]["credential"] = json!({"env": name});
         Document::parse(input.to_string().as_bytes()).unwrap();
     }
 }
@@ -565,8 +567,10 @@ fn a_reserved_reference_name_states_whether_the_reference_holds_a_secret_or_a_fi
         "certificate": {"env": "GATEWAY_CERT"},
         "key": {"env": "GATEWAY_KEY"}
     });
-    external["spec"]["inferenceProviders"][0]["endpoint"] = json!("https://inference.example/v1");
-    external["spec"]["inferenceProviders"][0]["credential"] = json!({"env": "HOSTED_API_KEY"});
+    external["spec"]["inferenceProviders"]["local"]["endpoint"] =
+        json!("https://inference.example/v1");
+    external["spec"]["inferenceProviders"]["local"]["credential"] =
+        json!({"env": "HOSTED_API_KEY"});
     external["spec"]["sandboxes"][0]["integrations"] = json!({
         "search": {"kind": "webSearch", "provider": "brave", "credential": {"env": "SEARCH_KEY"}},
         "bookings": {
@@ -596,8 +600,8 @@ fn a_reserved_reference_name_states_whether_the_reference_holds_a_secret_or_a_fi
         ),
         (
             external.clone(),
-            "/spec/inferenceProviders/0/credential",
-            "spec.inferenceProviders[0].credential.env",
+            "/spec/inferenceProviders/local/credential",
+            "spec.inferenceProviders.local.credential.env",
             secret,
         ),
         (

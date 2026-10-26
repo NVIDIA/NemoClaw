@@ -162,12 +162,15 @@ fn compiled_resources_preserve_ownership_connections_and_dependency_order() {
             env: "GATEWAY_KEY".into(),
         },
     });
-    let provider = &mut document.spec.inference_providers[0];
-    provider.name = "remote".into();
+    let mut provider = document.spec.inference_providers.remove("local").unwrap();
     provider.endpoint = "https://models.example.test/v1".into();
     provider.credential = Some(SecretRef {
         env: "MODEL_TOKEN".into(),
     });
+    document
+        .spec
+        .inference_providers
+        .insert("remote".into(), provider);
     let sandbox = &mut document.spec.sandboxes[0];
     sandbox.name = "worker".into();
     sandbox.agent.inference.as_mut().unwrap().routes[0].provider_ref = Some("remote".into());
@@ -399,7 +402,7 @@ fn arbitrary_fabric_harness_identifier_survives_runtime_compilation() {
     value["spec"]["sandboxes"][0]["harness"]["kind"] = "org.fixture.custom-adapter".into();
     value["spec"]["sandboxes"][0]["harness"]["settings"] =
         serde_json::json!({"custom_option":"fixture-value"});
-    value["spec"]["inferenceProviders"][0]["api"] = "openai-responses".into();
+    value["spec"]["inferenceProviders"]["local"]["api"] = "openai-responses".into();
     let document = Document::parse(value.to_string().as_bytes()).unwrap();
     let targets = nemoclaw_sdk::compile::targets(&document, &ownership_generations()).unwrap();
     let sandbox = targets
@@ -466,7 +469,12 @@ fn adding_an_image_keeps_existing_registration_and_separates_executable_scopes()
         1,
         "authored provider selection is independent of registration count"
     );
-    assert_eq!(changed.inference_provider_mut().unwrap().name, "local");
+    let mut edited = changed.clone();
+    edited.inference_provider_mut().unwrap().endpoint = "https://edited.example/v1".into();
+    assert_eq!(
+        edited.spec.inference_providers["local"].endpoint,
+        "https://edited.example/v1"
+    );
     let graph = compile(&changed, &generations, "0.1.0").unwrap();
     for name in ["assistant", "second"] {
         assert!(

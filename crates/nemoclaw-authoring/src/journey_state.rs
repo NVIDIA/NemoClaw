@@ -92,10 +92,9 @@ impl QuestionTarget {
             return Self::Harness;
         }
         let segments = path.split('/').collect::<Vec<_>>();
-        let provider_field = segments.len() == 5
-            && segments[1] == "spec"
-            && segments[2] == "inferenceProviders"
-            && segments[3].parse::<usize>().is_ok();
+        // A field of a deployment provider, keyed by the provider's name.
+        let provider_field =
+            segments.len() == 5 && segments[1] == "spec" && segments[2] == "inferenceProviders";
         let role = if path == RUNTIME_PROVIDER {
             SdkFieldRole::RuntimeProvider
         } else if path == "/spec/gateway/management" {

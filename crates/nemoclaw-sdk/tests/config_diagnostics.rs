@@ -127,7 +127,7 @@ fn explicit_core_tags_are_rejected_without_rejecting_tag_text_inside_strings() {
 #[test]
 fn flow_document_columns_count_characters_and_do_not_include_values() {
     let mut input = source("fabric-openclaw.yaml");
-    input["spec"]["inferenceProviders"][0]["endpoint"] = json!("http://é.example.com/v1");
+    input["spec"]["inferenceProviders"]["local"]["endpoint"] = json!("http://é.example.com/v1");
     input["spec"]["sandboxes"][0]["agent"]["inference"]["routes"] = json!("PRIVATE_SENTINEL");
     let text = input.to_string();
     let offset = text.find("\"routes\":\"PRIVATE_SENTINEL\"").unwrap() + "\"routes\":".len();

@@ -42,10 +42,10 @@ spec:
         freeGateGiB: 12
         consecutiveSamples: 5
   inferenceProviders:
-    - name: local
+    local:
       provider: openai
       serviceRef: local
-    - name: hosted
+    hosted:
       provider: openai
       endpoint: https://hosted.example/v1
       credential:
