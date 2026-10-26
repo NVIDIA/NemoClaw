@@ -1,0 +1,30 @@
+{/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */}
+
+## v0.0.138
+
+NemoClaw v0.0.138 tightens installation and image-build security and fixes onboarding, local inference, and timeout recovery.
+The inference guides also clarify when hosted custom endpoints use native providers or the shared route.
+
+- Linux system-mode Ollama installation verifies a pinned official installer before running it and stops if the downloaded content cannot be verified.
+  The repository `.dockerignore` now excludes credential, key, and certificate names at every directory depth, including nested files in Docker build contexts.
+  Related change: [PR #13614](https://github.com/NVIDIA/NemoClaw/pull/13614).
+- New hosted custom endpoint selections outside the Personal tier can use sandbox-attached providers when supported.
+  Fresh Personal-tier hosted selections stay on `inference.local` without a native attachment, and retained shared selections remain on their recorded route.
+  The provider guides now describe these paths for OpenClaw, Hermes, Deep Agents Code, and Pi.
+  Related changes: [PR #13528](https://github.com/NVIDIA/NemoClaw/pull/13528), [PR #13609](https://github.com/NVIDIA/NemoClaw/pull/13609).
+- New local-inference profiles for `host.openshell.internal` and `host.docker.internal` admit IPv6 unique-local addresses as well as private IPv4 addresses.
+  Existing sandboxes keep their recorded permissions until the local provider is reselected.
+  Public, link-local, and loopback IPv6 addresses remain excluded.
+  Related change: [PR #13582](https://github.com/NVIDIA/NemoClaw/pull/13582).
+- `NEMOCLAW_STATUS_PROBE_TIMEOUT_MS` and `NEMOCLAW_SANDBOX_EXEC_TIMEOUT_MS` values above `2147483647` milliseconds now fall back to their defaults instead of timing out immediately.
+  Related change: [PR #13550](https://github.com/NVIDIA/NemoClaw/pull/13550).
+- Onboarding records the requested compatible-endpoint reasoning effort with the new sandbox so resume and rebuild use that selection.
+  Related change: [PR #12814](https://github.com/NVIDIA/NemoClaw/pull/12814).
+- Interactive onboarding keeps `Ctrl-C` working when prompt output is captured.
+  Closing stdin during a prompt or between questions cancels with a nonzero exit and preserves the session for `nemoclaw onboard --resume`.
+  Related changes: [PR #12210](https://github.com/NVIDIA/NemoClaw/pull/12210), [PR #12216](https://github.com/NVIDIA/NemoClaw/pull/12216).
+- The Hermes managed Dockerfile pins a base image that satisfies the current security inventory.
+  Related change: [PR #13581](https://github.com/NVIDIA/NemoClaw/pull/13581).

@@ -32,6 +32,7 @@ import { createInferenceSelectionValidationHelpers } from "../../src/lib/onboard
 import {
   type InstallOllamaLinuxOptions,
   installOllamaOnLinux,
+  OFFICIAL_OLLAMA_INSTALLER_SHA256,
 } from "../../src/lib/onboard/install-ollama-linux.js";
 import { getWindowsHostOllamaDockerRequirement } from "../../src/lib/onboard/local-inference-topology.js";
 import {
@@ -235,6 +236,7 @@ function makeInstallOllamaLinuxOptions(
       .fn()
       .mockReturnValue({ stdout: "", stderr: "", exitCode: 0, timedOut: false }),
     runShellImpl: vi.fn().mockReturnValue({ status: 0, stdout: "", stderr: "", error: null }),
+    sha256FileImpl: vi.fn().mockReturnValue(OFFICIAL_OLLAMA_INSTALLER_SHA256),
     waitForHttpImpl: vi.fn().mockReturnValue(true),
     sleepSecondsImpl: vi.fn(),
     ensureManagedOllamaLoopbackSystemdOverrideImpl: vi.fn().mockReturnValue("ready"),
@@ -473,7 +475,6 @@ function makeSetupNimOllamaDeps(overrides: Partial<SetupNimOllamaDeps> = {}): Se
     ensureOllamaLoopbackSystemdOverride: () => "not-applicable",
     runOllamaStartupOrGate: () => ({ kind: "ready" }),
     shouldFrontOllamaWithProxy: () => false,
-    // Proxy startup is deferred until configuration review acceptance.
     getLocalProviderBaseUrl: () => "http://host.docker.internal:11434/v1",
     selectAndValidateOllamaModel: async () => ({
       outcome: "selected",
@@ -2047,7 +2048,6 @@ wait.sleepSeconds = () => {};
 // installOllamaSystem probes loopback at tries=1 before launching, then
 // waits at tries=10 after launch. The fake curl in these tests answers 200
 // to any URL, so real waitForHttp would short-circuit the manual launch.
-// Differentiate by tries count.
 wait.waitForHttp = (_url, tries) => (tries ?? 0) > 1;
 
 const { setupNim } = require(${onboardPath});

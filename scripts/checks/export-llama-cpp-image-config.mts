@@ -606,7 +606,7 @@ export function loadLlamaCppImageConfig(
   };
   const expectedBuildPackages = {
     "build-essential": "12.10ubuntu1",
-    "ca-certificates": "20260601~24.04.1",
+    "ca-certificates": "20260816ubuntu0.24.04.1",
     cmake: "3.28.3-1build7",
     curl: "8.5.0-2ubuntu10.16",
     "g++-14": "14.2.0-4ubuntu2~24.04.1",
@@ -620,7 +620,7 @@ export function loadLlamaCppImageConfig(
     cxx: "g++-14",
   };
   const expectedRuntimePackages = {
-    "ca-certificates": "20260601~24.04.1",
+    "ca-certificates": "20260816ubuntu0.24.04.1",
     curl: "8.5.0-2ubuntu10.16",
     libcurl4t64: "8.5.0-2ubuntu10.16",
     libgomp1: "14.2.0-4ubuntu2~24.04.1",

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { once } from "node:events";
 import fs from "node:fs";
 import http from "node:http";
@@ -12,6 +13,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ArtifactSink } from "../fixtures/artifacts.ts";
 import {
+  capturePortableRegistryProcessBoundary,
   collectPortableRegistryReadinessFailure,
   probePortableRegistry,
   runPortableRegistryReadinessPolicy,
@@ -29,6 +31,194 @@ afterEach(() => {
 });
 
 describe("portable registry readiness policy", () => {
+  it("records the registry's finite effective boundary in a sibling Podman scope", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "portable-registry-boundary-"));
+    const evidence = {
+      schemaVersion: 2 as const,
+      minimumHeadroom: 257,
+      service: {
+        pid: "3985",
+        cgroup: "/user.slice/user-1000.slice/user@1000.service/app.slice/service",
+        tasksMax: 1024,
+        tasksCurrent: 21,
+        cgroupPidsMax: 1024,
+        cgroupPidsCurrent: 21,
+      },
+      registry: {
+        pid: "91453",
+        cgroup: "/user.slice/user-1000.slice/user@1000.service/user.slice/podman-42.scope",
+      },
+      registryCgroups: [
+        {
+          path: "/user.slice/user-1000.slice/user@1000.service/user.slice/podman-42.scope",
+          pidsMax: "max",
+          pidsCurrent: 22,
+        },
+        { path: "/user.slice/user-1000.slice", pidsMax: "157755", pidsCurrent: 50 },
+      ],
+      effectiveHeadroom: 157705,
+      limitingCgroup: "/user.slice/user-1000.slice",
+      registryNprocSoft: "239023",
+      userTasks: 87,
+      hostThreadsMax: 478047,
+      hostTasks: 450,
+    };
+    const run = vi.fn(
+      async (
+        _command: TrustedShellCommand,
+        _options: ShellProbeRunOptions,
+      ): Promise<ShellProbeResult> => ({
+        command: [],
+        exitCode: 0,
+        signal: null,
+        timedOut: false,
+        stdout: JSON.stringify(evidence),
+        stderr: "",
+        artifacts: { stdout: "", stderr: "", result: "" },
+      }),
+    );
+    try {
+      vi.stubEnv("DOCKER_HOST", "unix:///run/user/1000/podman/podman.sock");
+      vi.stubEnv("PORTABLE_REGISTRY_MINIMUM_PROCESS_HEADROOM", "257");
+      const result = await capturePortableRegistryProcessBoundary({
+        artifacts: new ArtifactSink(root),
+        shellProbe: { run } as unknown as ShellProbe,
+      });
+
+      expect(result).toEqual(evidence);
+      expect(
+        JSON.parse(
+          fs.readFileSync(path.join(root, "portable-registry-process-boundary.json"), "utf8"),
+        ),
+      ).toEqual(evidence);
+      const [command, options] = run.mock.calls[0]!;
+      expect(command.args[5]).toContain('[[ $registry_group == "$manager_root/"*');
+      expect(command.args[5]).toContain('[[ $service_cgroup_max == "$tasks_max" ]]');
+      expect(command.args[5]).toContain("(( headroom >= minimum ))");
+      expect(command.args[5]).toContain("registry-finite-limit-unavailable");
+      expect(command.args[5]).toContain("registry-cgroup-depth-exceeded");
+      expect(command.args[5]).toContain("process-identity-changed");
+      expect(command.args[5]).toContain("registry-nproc-headroom-insufficient");
+      expect(command.args[5]).toContain("host-thread-headroom-insufficient");
+      expect(command.args[5]).toContain("fail_boundary service-headroom-insufficient");
+      expect(options.env).toHaveProperty("PORTABLE_REGISTRY_MINIMUM_PROCESS_HEADROOM", "257");
+      expect(options.env).not.toHaveProperty("UNRELATED_API_KEY");
+
+      // Exercise the actual ancestor walk with fixture cgroups. The root has no
+      // pids files, as on cgroup v2; attempting to read it fails this test.
+      const script = command.args[5]!;
+      const start = script.indexOf("# Podman can move a rootless container");
+      const end = script.indexOf("registry_nproc_soft=$(awk", start);
+      assert.ok(start >= 0 && end > start);
+      const walk = script.slice(start, end);
+      const fixtureRoot = path.join(root, "fixture");
+      const cgroupRoot = path.join(fixtureRoot, "sys/fs/cgroup");
+      const writeHierarchy = (registryGroup: string): void => {
+        let group = registryGroup;
+        while (group !== "/") {
+          const dir = path.join(cgroupRoot, group.slice(1));
+          fs.mkdirSync(dir, { recursive: true });
+          fs.writeFileSync(path.join(dir, "pids.max"), "max\n");
+          fs.writeFileSync(path.join(dir, "pids.current"), "20\n");
+          group = group.slice(0, group.lastIndexOf("/")) || "/";
+        }
+      };
+      const runWalk = (registryGroup: string) =>
+        spawnSync(
+          "bash",
+          [
+            "-c",
+            `fixture_root=$1
+registry_group=$2
+minimum=128
+registry_cgroups='[]'
+effective_headroom=unavailable
+limiting_cgroup=unavailable
+cat() { command cat "$fixture_root$1"; }
+fail_boundary() { printf 'failure=%s\\n' "$1"; exit 1; }
+${walk}
+printf 'headroom=%s limiting=%s\\n' "$effective_headroom" "$limiting_cgroup"`,
+            "probe",
+            fixtureRoot,
+            registryGroup,
+          ],
+          { encoding: "utf8" },
+        );
+
+      const registryGroup = evidence.registry.cgroup;
+      writeHierarchy(registryGroup);
+      expect(fs.existsSync(path.join(cgroupRoot, "pids.max"))).toBe(false);
+      const finiteAncestor = path.join(cgroupRoot, "user.slice/user-1000.slice");
+      fs.writeFileSync(path.join(finiteAncestor, "pids.max"), "1024\n");
+      fs.writeFileSync(path.join(finiteAncestor, "pids.current"), "100\n");
+      const passed = runWalk(registryGroup);
+      expect(passed.status).toBe(0);
+      expect(passed.stdout).toContain("headroom=924 limiting=/user.slice/user-1000.slice");
+
+      fs.writeFileSync(path.join(finiteAncestor, "pids.max"), "200\n");
+      const exhausted = runWalk(registryGroup);
+      expect(exhausted.status).toBe(1);
+      expect(exhausted.stdout).toContain("failure=registry-cgroup-headroom-insufficient");
+
+      const deepGroup = `/${Array.from({ length: 25 }, (_, index) => `level-${index}`).join("/")}`;
+      writeHierarchy(deepGroup);
+      const tooDeep = runWalk(deepGroup);
+      expect(tooDeep.status).toBe(1);
+      expect(tooDeep.stdout).toContain("failure=registry-cgroup-depth-exceeded");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an unavailable effective process boundary", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "portable-registry-boundary-"));
+    const run = vi.fn(
+      async (
+        _command: TrustedShellCommand,
+        _options: ShellProbeRunOptions,
+      ): Promise<ShellProbeResult> => ({
+        command: [],
+        exitCode: 1,
+        signal: null,
+        timedOut: false,
+        stdout: JSON.stringify({ failureReason: "registry-cgroup-headroom-insufficient" }),
+        stderr: "registry cgroup limit exhausted",
+        artifacts: { stdout: "", stderr: "", result: "" },
+      }),
+    );
+    try {
+      vi.stubEnv("PORTABLE_REGISTRY_MINIMUM_PROCESS_HEADROOM", "128");
+      await expect(
+        capturePortableRegistryProcessBoundary({
+          artifacts: new ArtifactSink(root),
+          shellProbe: { run } as unknown as ShellProbe,
+        }),
+      ).rejects.toThrow(
+        "Portable registry process-boundary verification failed: registry-cgroup-headroom-insufficient.",
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([undefined, "0", "not-a-number"])(
+    "rejects an invalid supplied process headroom threshold: %s",
+    async (minimumHeadroom) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "portable-registry-boundary-"));
+      try {
+        vi.stubEnv("PORTABLE_REGISTRY_MINIMUM_PROCESS_HEADROOM", minimumHeadroom ?? "");
+        await expect(
+          capturePortableRegistryProcessBoundary({
+            artifacts: new ArtifactSink(root),
+            shellProbe: { run: vi.fn() } as unknown as ShellProbe,
+          }),
+        ).rejects.toThrow("Portable registry minimum process headroom must be a positive integer.");
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("records first-attempt readiness without sleeping", async () => {
     const sleep = vi.fn(async () => {});
     const onEvidence = vi.fn();

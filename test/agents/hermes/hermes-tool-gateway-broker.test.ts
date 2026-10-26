@@ -25,6 +25,7 @@ import {
   type OwnedTestResources,
   test as it,
 } from "../../helpers/owned-test-resources";
+import { boundedTestTempRoot } from "../../helpers/bounded-temp-root";
 import { testTimeout } from "../../helpers/timeouts";
 
 const SCRIPT = path.join(
@@ -51,6 +52,17 @@ const CONTROL_CONTRACT = path.join(
   "host",
   "tool-gateway-control-contract.ts",
 );
+
+function temporaryBrokerHome(resources: OwnedTestResources): string {
+  return resources.ownDirectory(
+    fs.mkdtempSync(
+      path.join(
+        boundedTestTempRoot("nc-XXXXXX/.cache/nemoclaw/hermes-tool-gateway/control.sock", 104),
+        "nc-",
+      ),
+    ),
+  );
+}
 
 const BROKER_READINESS_TIMEOUT_MS = 15_000;
 const BROKER_TEST_TIMEOUT_MS = testTimeout(45_000);
@@ -329,7 +341,7 @@ describe("Hermes managed-tool gateway broker", () => {
   it("refuses a listener whose ownership changes during health verification", async ({
     resources,
   }) => {
-    const home = resources.ownDirectory(fs.mkdtempSync("/tmp/nc-broker-ownership-race-"));
+    const home = temporaryBrokerHome(resources);
     vi.stubEnv("HOME", home);
     delete require.cache[require.resolve(BROKER_WRAPPER)];
     const broker = require(BROKER_WRAPPER);
@@ -402,7 +414,7 @@ describe("Hermes managed-tool gateway broker", () => {
   it(
     "reuses its listener and rechecks ownership after the process exits",
     async ({ resources, skip }) => {
-      const home = resources.ownDirectory(fs.mkdtempSync("/tmp/nc-broker-ownership-"));
+      const home = temporaryBrokerHome(resources);
       vi.stubEnv("HOME", home);
       delete require.cache[require.resolve(BROKER_WRAPPER)];
       const broker = require(BROKER_WRAPPER);
@@ -460,7 +472,7 @@ describe("Hermes managed-tool gateway broker", () => {
   it(
     "refuses a live recorded process that does not own the managed-tool port",
     async ({ resources, skip }) => {
-      const home = resources.ownDirectory(fs.mkdtempSync("/tmp/nc-broker-port-owner-"));
+      const home = temporaryBrokerHome(resources);
       vi.stubEnv("HOME", home);
       delete require.cache[require.resolve(BROKER_WRAPPER)];
       const broker = require(BROKER_WRAPPER);
@@ -547,7 +559,7 @@ describe("Hermes managed-tool gateway broker", () => {
   it(
     "keeps a stale broker-like non-listener alive while replacement startup clears its records",
     async ({ resources, skip }) => {
-      const home = resources.ownDirectory(fs.mkdtempSync("/tmp/nc-broker-stale-non-listener-"));
+      const home = temporaryBrokerHome(resources);
       vi.stubEnv("HOME", home);
       delete require.cache[require.resolve(BROKER_WRAPPER)];
       const broker = require(BROKER_WRAPPER);
@@ -684,7 +696,7 @@ describe("Hermes managed-tool gateway broker", () => {
     async ({ resources }) => {
       const previousHome = process.env.HOME;
       const previousPath = process.env.PATH;
-      const home = resources.ownDirectory(fs.mkdtempSync("/tmp/nc-hermes-node-control-"));
+      const home = temporaryBrokerHome(resources);
       try {
         process.env.HOME = home;
         delete require.cache[require.resolve(BROKER_WRAPPER)];
@@ -1181,7 +1193,9 @@ describe("Hermes managed-tool gateway broker", () => {
       const binDir = path.join(tmp, "bin");
       // AF_UNIX paths are short on macOS; the Vitest-owned TMPDIR itself can
       // exceed that limit before the socket name is appended.
-      const socketDir = resources.ownDirectory(fs.mkdtempSync("/tmp/nc-hermes-broker-"));
+      const socketDir = resources.ownDirectory(
+        fs.mkdtempSync(path.join(boundedTestTempRoot("nc-XXXXXX/control.sock", 104), "nc-")),
+      );
       const controlSocket = path.join(socketDir, "control.sock");
       // The broad starting mode proves that broker startup narrows the directory to 0o700.
       fs.chmodSync(socketDir, 0o777);

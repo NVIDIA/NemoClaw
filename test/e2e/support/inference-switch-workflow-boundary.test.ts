@@ -14,6 +14,20 @@ import { DEFAULT_CLOUD_MODEL } from "../../../src/lib/inference/config.ts";
 import { PUBLIC_NVIDIA_SWITCH_MODEL } from "../live/public-nvidia-switch-provider.ts";
 
 describe("inference-switch catalogue boundary", () => {
+  it("selects native-local enforcement coverage when IPv6 evidence changes (#13544)", () => {
+    expect(
+      catalogueTargetsForChangedFiles(["test/e2e/fixtures/native-local-ipv6-evidence.ts"]).map(
+        (target) => target.id,
+      ),
+    ).toContain("inference-routing-openclaw-native");
+    expect(
+      catalogueTarget("inference-routing-openclaw-native").environmentOrInferenceEndpoint,
+    ).toContain("Ubuntu");
+    expect(
+      catalogueTarget("inference-routing-openclaw-native").environmentOrInferenceEndpoint,
+    ).toContain("skips WSL-only TC-INF-19");
+  });
+
   it.each([
     "src/lib/inference/native-provider/contract.ts",
     "src/lib/inference/native-provider/custom-setup.ts",
@@ -95,6 +109,18 @@ describe("inference-switch catalogue boundary", () => {
       expect(target.environment).not.toHaveProperty("NEMOCLAW_E2E_USE_HOSTED_INFERENCE");
     },
   );
+
+  it("assigns Discord rebuild evidence to the native NVIDIA switch target (#13633)", () => {
+    const discord = catalogueTarget("hermes-discord");
+    const rebuild = catalogueTarget("hermes-inference-switch");
+    expect(discord.displayName).toBe(
+      "Messaging: Hermes isolates Discord credentials and verifies transport",
+    );
+    expect(rebuild.displayName).toBe(
+      "Inference: Hermes switches to NVIDIA and preserves Discord across rebuild",
+    );
+    expect(rebuild.testFile).toBe("test/e2e/live/hermes-inference-switch.test.ts");
+  });
 
   it("selects the public Super VL model for both native NVIDIA switch targets", () => {
     const superVl = "nvidia/nemotron-3.5-super-vl-120b-a12b";

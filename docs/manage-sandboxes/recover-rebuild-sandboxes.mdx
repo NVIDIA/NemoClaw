@@ -181,6 +181,23 @@ Use `nemo-deepagents <sandbox-name> status`, `logs`, `connect`, and `rebuild` fo
 If the terminal runtime reports degraded health, rebuild the sandbox instead of using `recover` or `gateway restart`.
 </AgentOnly>
 
+<AgentOnly variant="hermes">
+
+### Recover Portable Published Ollama
+
+If a Hermes Portable Ollama runner stops after onboarding, run `$$nemoclaw <sandbox-name> recover` or `$$nemoclaw <sandbox-name> connect --probe-only`.
+For Hermes Portable, `recover` performs the same probe-only inference recovery as `connect --probe-only`.
+Ordinary `connect` also attempts recovery when the recorded inference route is unavailable.
+The command checks the sandbox's recorded lifecycle and inference authority, resumes only its exact receipt-owned runner, and verifies the inference route before accepting it.
+If the recorded provider, runner, network, socket, or private state identity has changed, recovery exits nonzero without replacing that state.
+Preserve the private inference state and exact redacted error after an authority-drift failure.
+Run `$$nemoclaw <sandbox-name> doctor` to inspect the recorded lifecycle state.
+Do not edit or delete the private inference state or retry recovery.
+[File a NemoClaw issue](https://github.com/NVIDIA/NemoClaw/issues/new) with the redacted doctor report and recovery error for maintainer review.
+If an unrelated host service holds a required published address, stop that service and rerun the same recovery command.
+
+</AgentOnly>
+
 ### Understand Launch Readiness Leases
 
 A successful complete preflight for `$$nemoclaw launch <sandbox-name>` can publish a credential-free launch-readiness lease on Linux. Linux infrastructure can publish the same evidence with `$$nemoclaw <sandbox-name> connect --probe-only`. The lease has a fixed 24-hour lifetime that repeated launches do not extend. Leaving the agent with `/exit` does not revoke it, and users do not refresh it manually.
@@ -396,7 +413,7 @@ nemohermes <sandbox-name> gateway-token --quiet
 ```
 
 Before post-restore repairs, NemoClaw verifies that the recreated sandbox still identifies as Hermes and exits nonzero if its identity does not match the rebuild target.
-For a native local selection, NemoClaw refreshes only the managed credential references after restore and before restart, preserving restored model and provider settings.
+For a native local or native NVIDIA selection, NemoClaw refreshes only the managed credential references after restore and before restart, preserving restored model and provider settings.
 The refresh validates the replacement sandbox identity and recorded route. An unsafe or changed configuration stops activation and preserves the backup and any acquired cron gate.
 A legacy local sandbox without a valid Hermes attachment must be backed up and recreated before native local resume or rebuild. Use `nemohermes onboard --fresh --name <sandbox-name> --recreate-sandbox` after preserving required data.
 Live qualification of the Hermes native local lifecycle is pending.

@@ -29,7 +29,10 @@ import type {
 import { resolveRegisteredAgentDefinition } from "../../agent/runtime";
 import { readAppliedPolicySelection } from "../../domain/telemetry/provenance";
 import { DCODE_OBSERVABILITY_FEATURE } from "../../onboard/observability-policy-presets";
-import { readManagedWorkloadAuthority } from "../../onboard/workload/authority";
+import {
+  readManagedRoutedBaseUrl,
+  readManagedWorkloadAuthority,
+} from "../../onboard/workload/authority";
 import { resolveSandboxGatewayName } from "../../onboard/gateway-binding/identity";
 import { resolveAgentConfig } from "../../sandbox/agent-config";
 import { parseConfig } from "../../sandbox/config-format";
@@ -319,13 +322,15 @@ async function collectRuntime(
       managedAgentVersion: row.managedAgentVersion,
       managedAgentVersionStatus: row.managedAgentVersionStatus,
     };
+    // projectConfiguration already reports an invalid managed workload receipt.
+    const managedRoutedBaseUrl = readManagedRoutedBaseUrl(entry);
     Object.assign(
       row,
       projectRuntimeAgents(
         runtime,
         raw.status === "fulfilled" ? raw.value : null,
         roster.status === "fulfilled" ? roster.value : undefined,
-        { ...entry, metadataErrors: options.metadataErrors },
+        { ...entry, metadataErrors: options.metadataErrors, managedRoutedBaseUrl },
       ),
     );
     if (raw.status === "rejected" || roster.status === "rejected") row.status = "collection_error";
