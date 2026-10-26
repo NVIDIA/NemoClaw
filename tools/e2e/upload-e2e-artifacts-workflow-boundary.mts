@@ -421,6 +421,13 @@ function validateUploadPlacement(
       "Remove immutable native Podman cleanup fixture",
       "Clean up Docker auth",
     ],
+    [
+      "Remove pinned Portable crun",
+      "Restore Docker and retire Portable Podman runtime",
+      "Remove pinned Portable crun after restoration",
+      "Remove immutable native Podman cleanup fixture",
+      "Clean up Docker auth",
+    ],
   ].some((candidate) => isDeepStrictEqual(tailNames, candidate));
   if (!validTail) {
     errors.push(

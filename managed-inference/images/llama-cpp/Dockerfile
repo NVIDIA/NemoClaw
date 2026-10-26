@@ -29,7 +29,7 @@ RUN test -n "${LLAMA_CPP_REVISION}" \
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       build-essential=12.10ubuntu1 \
-      ca-certificates=20260601~24.04.1 \
+      ca-certificates=20260816ubuntu0.24.04.1 \
       cmake=3.28.3-1build7 \
       curl=8.5.0-2ubuntu10.16 \
       g++-14=14.2.0-4ubuntu2~24.04.1 \
@@ -105,7 +105,7 @@ RUN test -n "${CUDA_DEV_IMAGE}" \
 
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      ca-certificates=20260601~24.04.1 \
+      ca-certificates=20260816ubuntu0.24.04.1 \
       curl=8.5.0-2ubuntu10.16 \
       libcurl4t64=8.5.0-2ubuntu10.16 \
       libgomp1=14.2.0-4ubuntu2~24.04.1 \

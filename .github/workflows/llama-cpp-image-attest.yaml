@@ -273,3 +273,10 @@ jobs:
         run: |
           set -euo pipefail
           timeout --foreground 120s cosign sign --yes "$IMAGE@$DIGEST"
+          # Also publish a legacy .sig signature for Cosign 2's default verifier.
+          # Legacy signing uses the built-in services and still requires a transparency log.
+          timeout --foreground 120s cosign sign --yes \
+            --new-bundle-format=false \
+            --use-signing-config=false \
+            --tlog-upload=true \
+            "$IMAGE@$DIGEST"
