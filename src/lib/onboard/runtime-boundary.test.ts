@@ -200,18 +200,25 @@ describe("OnboardRuntimeBoundary", () => {
 
     await boundary.startRecordedStep("provider_selection", {
       sandboxName: "review-interrupted",
-      provider: "ollama-local",
-      model: "qwen3.5:9b",
+      provider: "compatible-endpoint",
+      model: "nvidia/nemotron-3.5-super-vl-120b-a12b",
+      endpointUrl: "https://integrate.api.nvidia.com/v1",
+      credentialEnv: "COMPATIBLE_API_KEY",
+      preferredInferenceApi: "openai-completions",
     });
     await boundary.recordStepFailed(
       "provider_selection",
       "Onboarding exited before the step completed.",
     );
 
+    // #13654: resume needs the custom route identity, not only provider/model.
     expect(harness.getSession()).toMatchObject({
       sandboxName: "review-interrupted",
-      provider: "ollama-local",
-      model: "qwen3.5:9b",
+      provider: "compatible-endpoint",
+      model: "nvidia/nemotron-3.5-super-vl-120b-a12b",
+      endpointUrl: "https://integrate.api.nvidia.com/v1",
+      credentialEnv: "COMPATIBLE_API_KEY",
+      preferredInferenceApi: "openai-completions",
       steps: { provider_selection: { status: "failed" } },
     });
   });

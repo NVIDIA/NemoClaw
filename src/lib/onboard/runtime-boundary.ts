@@ -73,6 +73,9 @@ export class OnboardRuntimeBoundary {
       sandboxName?: string | null;
       provider?: string | null;
       model?: string | null;
+      endpointUrl?: string | null;
+      credentialEnv?: string | null;
+      preferredInferenceApi?: string | null;
     } = {},
   ): Promise<void> {
     const runtime = this.getRuntime();

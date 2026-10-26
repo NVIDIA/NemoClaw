@@ -273,7 +273,13 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
     ) => Promise<boolean>;
     startRecordedStep(
       stepName: string,
-      updates?: { provider?: string | null; model?: string | null },
+      updates?: {
+        provider?: string | null;
+        model?: string | null;
+        endpointUrl?: string | null;
+        credentialEnv?: string | null;
+        preferredInferenceApi?: string | null;
+      },
     ): Promise<void>;
     recordStepComplete(stepName: string, updates: SessionUpdates): Promise<Session>;
     recordStepRejected(stepName: string): Promise<Session>;
@@ -1230,7 +1236,9 @@ interface ConfigurationReviewInput<Agent> {
   agent: Agent;
   provider: string;
   model: string;
+  endpointUrl: string | null;
   credentialEnv: string | null;
+  preferredInferenceApi: string | null;
   hermesAuthMethod: HermesAuthMethod | null;
   webSearchConfig: WebSearchConfig | null;
   hermesToolGateways: string[];
@@ -1269,9 +1277,14 @@ async function reviewProviderConfiguration<Agent>(
     // claiming that provider registration or inference setup completed.
     await deps.checkpointSandboxIdentity(sandboxName, input.agent);
     if (needsSelectionRecovery && !selectionRecoveryStarted) {
+      // Resume checks this route against the shared gateway route before it
+      // shows the review again, so keep the same secret-free route identity.
       await deps.startRecordedStep("provider_selection", {
         provider: input.provider,
         model: input.model,
+        endpointUrl: input.endpointUrl,
+        credentialEnv: input.credentialEnv,
+        preferredInferenceApi: input.preferredInferenceApi,
       });
       selectionRecoveryStarted = true;
     }
@@ -2255,7 +2268,9 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           agent,
           provider,
           model,
+          endpointUrl,
           credentialEnv,
+          preferredInferenceApi,
           hermesAuthMethod,
           webSearchConfig,
           hermesToolGateways,
