@@ -17,11 +17,11 @@
  */
 
 import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
+import { getSandboxAgentName } from "../../policy";
 import {
   buildPolicyContext,
   type PolicyContext,
   renderPolicyContextMarkdown,
-  resolvePolicyContextAgent,
 } from "../../policy/context";
 
 export const POLICY_CONTEXT_SANDBOX_PATH = "/sandbox/.openclaw/workspace/POLICY.md";
@@ -185,7 +185,7 @@ export async function writePolicyContextToSandbox(
   // it as migration residue and rewrite its integrity-sealed config.yaml on
   // first launch, which blocks later NemoClaw config writes (#13618).
   // Unregistered and legacy rows default to OpenClaw, as elsewhere.
-  const agent = (deps.getAgent ?? resolvePolicyContextAgent)(sandboxName) || "openclaw";
+  const agent = (deps.getAgent ?? getSandboxAgentName)(sandboxName) || "openclaw";
   if (agent !== "openclaw") {
     return {
       written: false,

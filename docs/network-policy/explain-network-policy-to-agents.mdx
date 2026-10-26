@@ -43,6 +43,9 @@ $$nemoclaw my-assistant policy explain --write
 For Hermes, use the printed Markdown or JSON through an operator-controlled prompt or file workflow.
 NemoClaw does not write `/sandbox/.openclaw/workspace/POLICY.md` in Hermes sandboxes during onboarding, after `policy add` or `policy remove`, or for `--write`.
 The `--write` target is the OpenClaw workspace and is not a Hermes agent-context integration.
+Older NemoClaw versions could leave `/sandbox/.openclaw/workspace/POLICY.md` in an existing Hermes sandbox.
+Upgrading NemoClaw does not remove that file.
+If `inference set` reports `Hermes integrity metadata is not ready` after a Hermes CLI session, run `$$nemoclaw <name> rebuild` once with the updated version, then retry `inference set`.
 </AgentOnly>
 
 ## Understand Redaction

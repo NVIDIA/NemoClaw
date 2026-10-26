@@ -4,7 +4,6 @@
 import {
   getGatewayPresets,
   getPresetEndpoints,
-  getSandboxAgentName,
   listCustomPresets,
   listPresets,
   loadPresetForSandbox,
@@ -211,11 +210,6 @@ async function probeGatewayPresets(
   } catch {
     return null;
   }
-}
-
-/** Agent that would read the in-sandbox policy context file. */
-export function resolvePolicyContextAgent(sandboxName: string): string {
-  return getSandboxAgentName(sandboxName);
 }
 
 /**

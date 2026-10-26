@@ -6,18 +6,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock(".", () => ({
   getGatewayPresets: vi.fn(),
   getPresetEndpoints: vi.fn(),
-  getSandboxAgentName: vi.fn(),
   listCustomPresets: vi.fn(),
   listPresets: vi.fn(),
   loadPresetForSandbox: vi.fn(),
 }));
 
 import * as policies from ".";
-import {
-  buildPolicyContext,
-  renderPolicyContextMarkdown,
-  resolvePolicyContextAgent,
-} from "./context";
+import { buildPolicyContext, renderPolicyContextMarkdown } from "./context";
 
 beforeEach(() => {
   vi.mocked(policies.listPresets).mockReturnValue([
@@ -110,14 +105,5 @@ describe("policy context", () => {
     expect(markdown).toContain("nemoclaw alpha policy add <preset>");
     expect(markdown).toContain("nemoclaw alpha policy remove <preset>");
     expect(markdown).not.toContain("network_policies:");
-  });
-});
-
-describe("resolvePolicyContextAgent (#13618)", () => {
-  it("returns the registered sandbox agent", () => {
-    vi.mocked(policies.getSandboxAgentName).mockReturnValueOnce("hermes");
-
-    expect(resolvePolicyContextAgent("alpha")).toBe("hermes");
-    expect(policies.getSandboxAgentName).toHaveBeenLastCalledWith("alpha");
   });
 });

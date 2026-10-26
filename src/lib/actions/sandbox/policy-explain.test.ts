@@ -7,9 +7,12 @@ import { describe, expect, it, vi } from "vitest";
 const contextMock = vi.hoisted(() => ({
   buildPolicyContext: vi.fn(),
   renderPolicyContextMarkdown: vi.fn(),
-  resolvePolicyContextAgent: vi.fn((_name: string) => "openclaw"),
 }));
 vi.mock("../../policy/context", () => contextMock);
+const policyMock = vi.hoisted(() => ({
+  getSandboxAgentName: vi.fn((_name: string) => "openclaw"),
+}));
+vi.mock("../../policy", () => policyMock);
 
 import type { PolicyContext } from "../../policy/context";
 import {
@@ -338,7 +341,7 @@ describe("policy context agent scope (#13618)", () => {
 
   it("resolves the registered sandbox agent by default", async () => {
     const exec = okExec();
-    contextMock.resolvePolicyContextAgent.mockReturnValueOnce("hermes");
+    policyMock.getSandboxAgentName.mockReturnValueOnce("hermes");
 
     const skipped = await writePolicyContextToSandbox("beta", {
       build: fakeContext,
@@ -346,18 +349,18 @@ describe("policy context agent scope (#13618)", () => {
       exec,
     });
 
-    expect(contextMock.resolvePolicyContextAgent).toHaveBeenLastCalledWith("beta");
+    expect(policyMock.getSandboxAgentName).toHaveBeenLastCalledWith("beta");
     expect(skipped.failure).toBe("unsupported-agent");
     expect(exec).not.toHaveBeenCalled();
 
-    contextMock.resolvePolicyContextAgent.mockReturnValueOnce("openclaw");
+    policyMock.getSandboxAgentName.mockReturnValueOnce("openclaw");
     const written = await writePolicyContextToSandbox("gamma", {
       build: fakeContext,
       render: () => "policy",
       exec,
     });
 
-    expect(contextMock.resolvePolicyContextAgent).toHaveBeenLastCalledWith("gamma");
+    expect(policyMock.getSandboxAgentName).toHaveBeenLastCalledWith("gamma");
     expect(written).toEqual({ written: true });
     expect(exec).toHaveBeenCalledOnce();
   });

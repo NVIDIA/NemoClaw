@@ -8,6 +8,7 @@ import type {
   OpenShellSandboxPolicySetSubmission,
   SetOpenShellSandboxPolicyRequest,
 } from "../adapters/openshell/sandbox-policy";
+import { writePolicyContextToSandbox } from "../actions/sandbox/policy-explain";
 import { digestBaselineEntry } from "./baseline-exclusion";
 
 const mocks = vi.hoisted(() => ({
@@ -742,5 +743,25 @@ describe("getSandboxAgentName (#13618)", () => {
 
     expect(getSandboxAgentName("agent-row")).toBe(expected);
     expect(mocks.getSandbox).toHaveBeenLastCalledWith("agent-row");
+  });
+});
+
+describe("registered agent policy-context handoff (#13618)", () => {
+  it("skips the OpenClaw workspace write for a registered Hermes sandbox", async () => {
+    mocks.getSandbox.mockReset();
+    mocks.getSandbox.mockReturnValueOnce({ agent: "hermes" });
+    const build = vi.fn(() => {
+      throw new Error("context must not be built");
+    });
+    const render = vi.fn(() => "policy");
+    const exec = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
+
+    const result = await writePolicyContextToSandbox("hermes-sandbox", { build, render, exec });
+
+    expect(mocks.getSandbox).toHaveBeenCalledExactlyOnceWith("hermes-sandbox");
+    expect(result.failure).toBe("unsupported-agent");
+    expect(build).not.toHaveBeenCalled();
+    expect(render).not.toHaveBeenCalled();
+    expect(exec).not.toHaveBeenCalled();
   });
 });
