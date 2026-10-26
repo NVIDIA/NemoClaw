@@ -56,23 +56,23 @@ async fn removed_authentication(objects: &Objects, state: &Path) -> (FaultServer
 
 #[tokio::test]
 async fn reapplying_authentication_refuses_a_changed_or_missing_range_and_creates_nothing() {
-    for (change, annotations, missing) in [
+    for (change, annotations, observed) in [
         (
             "the UID range changed",
             json!({UID_RANGE: "1000700000/10000", GROUP_RANGE: "1000690000/10000"}),
-            false,
+            Some("UID 1000700000 and group 1000690000"),
         ),
         (
             "the group range changed",
             json!({UID_RANGE: "1000680000/10000", GROUP_RANGE: "1000700000/10000"}),
-            false,
+            Some("UID 1000680000 and group 1000700000"),
         ),
         (
             "the group-range annotation was removed, so the group follows the UID",
             json!({UID_RANGE: "1000680000/10000"}),
-            false,
+            Some("UID 1000680000 and group 1000680000"),
         ),
-        ("the range annotations were removed", json!({}), true),
+        ("the range annotations were removed", json!({}), None),
     ] {
         let objects = platform::cluster();
         let directory = tempfile::tempdir().unwrap();
@@ -87,11 +87,16 @@ async fn reapplying_authentication_refuses_a_changed_or_missing_range_and_create
             .await;
 
         let seen = server.requests()[requests..].to_vec();
-        // A changed range is a binding mismatch; a missing one is a backend
-        // error whose hint names the UID range.
-        let refused = match &result {
-            Err(ObservationError::BindingMismatch) => !missing,
-            Err(ObservationError::Backend(hint)) => missing && hint.contains("UID range"),
+        // A changed range names the recorded and observed identities; a
+        // missing one is a backend error whose hint names the UID range.
+        let refused = match (&result, observed) {
+            (Err(error @ ObservationError::BindingConflict { .. }), Some(observed)) => {
+                error.to_string()
+                    == format!(
+                        "Namespace agents changed: recorded OpenShift UID 1000680000 and group 1000690000, observed {observed}"
+                    )
+            }
+            (Err(ObservationError::Backend(hint)), None) => hint.contains("UID range"),
             _ => false,
         };
         assert!(

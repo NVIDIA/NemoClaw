@@ -55,7 +55,7 @@ Start from [the Kubernetes example](../examples/kubernetes/managed-development.y
 
 - `metadata.uid` to a new UUID.
 - `gateway.kubernetes.kubeconfig` to the environment variable holding the kubeconfig path, and `context` to the exact context.
-- `gateway.kubernetes.namespace` to a namespace that does not exist yet; NemoClaw does not take over an existing one.
+- `gateway.kubernetes.namespace` to a namespace that does not exist yet; NemoClaw does not take over an existing one, and plan refuses it with its UID.
 - `gateway.endpoint` to `https://127.0.0.1:` and an explicit port. Providers forward on free ports of their own, so this port is not bound.
 - Each sandbox's `image.ref` and `image.metadata`.
 

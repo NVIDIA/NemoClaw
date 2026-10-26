@@ -72,6 +72,17 @@ fn ready_gateway(objects: &Objects) {
         "status": {"readyReplicas": 1, "observedGeneration": 1}}));
 }
 
+/// The message of an expected refusal, which names the object and compares
+/// its recorded and observed identities.
+fn refusal<T: std::fmt::Debug>(result: Result<T, ObservationError>) -> String {
+    let error = result.expect_err("the operation must be refused");
+    assert!(
+        matches!(error, ObservationError::BindingConflict { .. }),
+        "{error:?}"
+    );
+    error.to_string()
+}
+
 async fn operations(
     objects: &Objects,
     directory: &Path,
@@ -95,6 +106,33 @@ async fn nothing_exists_before_the_first_apply() {
         let response = operations.read(&spec(kind), None).await.unwrap();
         assert_eq!(response, Response::default(), "{kind}");
     }
+}
+
+#[tokio::test]
+async fn planning_refuses_a_namespace_that_exists_before_the_first_apply() {
+    let objects = cluster();
+    objects.insert(json!({"apiVersion": "v1", "kind": "Namespace",
+        "metadata": {"name": "agents", "uid": "namespace-foreign"}}));
+    let directory = tempfile::tempdir().unwrap();
+    let (_fixture, operations) = operations(&objects, directory.path()).await;
+    let before = objects.0.lock().unwrap().clone();
+    assert_eq!(
+        refusal(operations.plan(&spec(STORAGE_KIND)).await),
+        "Namespace agents already exists with UID namespace-foreign, and this deployment has no record of creating it"
+    );
+    assert_eq!(*objects.0.lock().unwrap(), before);
+    assert!(!operations.state.exists(), "planning wrote local state");
+}
+
+#[tokio::test]
+async fn planning_accepts_an_absent_namespace_and_one_this_deployment_created() {
+    let objects = cluster();
+    let directory = tempfile::tempdir().unwrap();
+    let (_fixture, operations) = operations(&objects, directory.path()).await;
+    operations.plan(&spec(STORAGE_KIND)).await.unwrap();
+    // A first apply interrupted after creating the namespace resumes.
+    operations.ensure(&spec(STORAGE_KIND), None).await.unwrap();
+    operations.plan(&spec(STORAGE_KIND)).await.unwrap();
 }
 
 #[tokio::test]
@@ -592,13 +630,18 @@ async fn openshift_identity_never_comes_from_a_replacement_namespace() {
         .unwrap();
     assign_openshift_range(&objects);
     let mut namespace = objects.get("v1", "Namespace", "", "agents").unwrap();
+    let recorded = namespace["metadata"]["uid"].as_str().unwrap().to_owned();
     namespace["metadata"]["uid"] = json!("replacement-namespace");
     objects.insert(namespace);
     assert_eq!(
-        operations
-            .ensure(&spec_on(AUTH_KIND, "openshift"), None)
-            .await,
-        Err(ObservationError::BindingMismatch)
+        refusal(
+            operations
+                .ensure(&spec_on(AUTH_KIND, "openshift"), None)
+                .await
+        ),
+        format!(
+            "Namespace agents changed: recorded UID {recorded}, observed UID replacement-namespace"
+        )
     );
     assert!(
         Receipt::load(&operations.state, OWNER, NAME)
@@ -658,7 +701,7 @@ async fn authentication_and_gateway_observation_require_their_prerequisites() {
 }
 
 #[tokio::test]
-async fn a_replaced_gateway_is_a_binding_mismatch() {
+async fn a_replaced_gateway_is_refused_with_both_uids() {
     let objects = cluster();
     let directory = tempfile::tempdir().unwrap();
     let (_fixture, operations) = operations(&objects, directory.path()).await;
@@ -669,29 +712,38 @@ async fn a_replaced_gateway_is_a_binding_mismatch() {
     objects.insert(json!({"apiVersion": "apps/v1", "kind": "StatefulSet",
         "metadata": {"name": NAME, "namespace": "agents", "uid": "someone-else"},
         "status": {"readyReplicas": 1}}));
-    assert!(matches!(
-        operations
-            .read(&spec(GATEWAY_KIND), Some("gateway-uid"))
-            .await,
-        Err(ObservationError::BindingMismatch)
-    ));
+    let replaced = format!(
+        "StatefulSet agents/{NAME} changed: recorded UID gateway-uid, observed UID someone-else"
+    );
     assert_eq!(
-        operations.read(&spec(AUTH_KIND), auth.id.as_deref()).await,
-        Err(ObservationError::BindingMismatch),
+        refusal(
+            operations
+                .read(&spec(GATEWAY_KIND), Some("gateway-uid"))
+                .await
+        ),
+        replaced
+    );
+    assert_eq!(
+        refusal(operations.read(&spec(AUTH_KIND), auth.id.as_deref()).await),
+        replaced,
         "authentication refresh must gate native Helm changes"
     );
     assert_eq!(
-        operations
-            .read_for_removal(&spec(AUTH_KIND), auth.id.as_deref())
-            .await,
-        Err(ObservationError::BindingMismatch),
+        refusal(
+            operations
+                .read_for_removal(&spec(AUTH_KIND), auth.id.as_deref())
+                .await
+        ),
+        replaced,
         "teardown also refuses a substituted gateway"
     );
     assert_eq!(
-        operations
-            .remove(&spec(GATEWAY_KIND), Some("gateway-uid"))
-            .await,
-        Err(ObservationError::BindingMismatch)
+        refusal(
+            operations
+                .remove(&spec(GATEWAY_KIND), Some("gateway-uid"))
+                .await
+        ),
+        replaced
     );
 }
 
@@ -709,15 +761,19 @@ async fn a_missing_bound_gateway_blocks_authentication_refresh_before_helm() {
         .lock()
         .unwrap()
         .retain(|path, _| !path.contains("/statefulsets/"));
+    let missing =
+        format!("StatefulSet agents/{NAME} with recorded UID gateway-uid no longer exists");
     assert_eq!(
-        operations.read(&spec(AUTH_KIND), auth.id.as_deref()).await,
-        Err(ObservationError::BindingMismatch)
+        refusal(operations.read(&spec(AUTH_KIND), auth.id.as_deref()).await),
+        missing
     );
     assert_eq!(
-        operations
-            .ensure(&spec(AUTH_KIND), auth.id.as_deref())
-            .await,
-        Err(ObservationError::BindingMismatch)
+        refusal(
+            operations
+                .ensure(&spec(AUTH_KIND), auth.id.as_deref())
+                .await
+        ),
+        missing
     );
     assert_eq!(
         operations
@@ -835,21 +891,29 @@ async fn authentication_refuses_replaced_storage_and_issuer_before_changes() {
         operations.ensure(&spec(STORAGE_KIND), None).await.unwrap();
         let auth = operations.ensure(&spec(AUTH_KIND), None).await.unwrap();
         let mut substituted = objects.get(api, kind, namespace, &name).unwrap();
+        let recorded = substituted["metadata"]["uid"].as_str().unwrap().to_owned();
         substituted["metadata"]["uid"] = json!("replacement-uid");
         objects.insert(substituted);
         let before = objects.0.lock().unwrap().clone();
         let receipt = std::fs::read(operations.state.join("receipt.json")).unwrap();
+        let object = if namespace.is_empty() {
+            format!("{kind} {name}")
+        } else {
+            format!("{kind} {namespace}/{name}")
+        };
+        let replaced =
+            format!("{object} changed: recorded UID {recorded}, observed UID replacement-uid");
         assert_eq!(
-            operations.read(&spec(AUTH_KIND), auth.id.as_deref()).await,
-            Err(ObservationError::BindingMismatch),
-            "{kind}"
+            refusal(operations.read(&spec(AUTH_KIND), auth.id.as_deref()).await),
+            replaced
         );
         assert_eq!(
-            operations
-                .ensure(&spec(AUTH_KIND), auth.id.as_deref())
-                .await,
-            Err(ObservationError::BindingMismatch),
-            "{kind}"
+            refusal(
+                operations
+                    .ensure(&spec(AUTH_KIND), auth.id.as_deref())
+                    .await
+            ),
+            replaced
         );
         assert_eq!(*objects.0.lock().unwrap(), before);
         assert_eq!(
@@ -877,15 +941,21 @@ async fn a_missing_recorded_issuer_object_is_not_recreated_or_forgotten() {
     );
     objects.0.lock().unwrap().remove(&path);
     let before = objects.0.lock().unwrap().clone();
-    assert_eq!(
-        operations.read(&spec(AUTH_KIND), auth.id.as_deref()).await,
-        Err(ObservationError::BindingMismatch)
+    let gone = format!(
+        "{} {}/{} with recorded UID {} no longer exists",
+        missing.kind, missing.namespace, missing.name, missing.uid
     );
     assert_eq!(
-        operations
-            .ensure(&spec(AUTH_KIND), auth.id.as_deref())
-            .await,
-        Err(ObservationError::BindingMismatch)
+        refusal(operations.read(&spec(AUTH_KIND), auth.id.as_deref()).await),
+        gone
+    );
+    assert_eq!(
+        refusal(
+            operations
+                .ensure(&spec(AUTH_KIND), auth.id.as_deref())
+                .await
+        ),
+        gone
     );
     assert_eq!(*objects.0.lock().unwrap(), before);
     assert_eq!(
@@ -914,8 +984,8 @@ async fn gateway_observation_refuses_an_object_outside_the_helm_release() {
         *unrelated.pointer_mut(pointer).unwrap() = json!("another-release");
         objects.insert(unrelated);
         assert_eq!(
-            operations.ensure(&spec(GATEWAY_KIND), None).await,
-            Err(ObservationError::BindingMismatch),
+            refusal(operations.ensure(&spec(GATEWAY_KIND), None).await),
+            format!("StatefulSet agents/{NAME} does not belong to the Helm release {NAME}"),
             "{pointer}"
         );
         assert!(
@@ -1049,14 +1119,19 @@ async fn issuer_cleanup_never_deletes_a_replacement_after_interruption() {
     let mut replaced = objects
         .get("apps/v1", "Deployment", "agents", &format!("{NAME}-oidc"))
         .unwrap();
+    let recorded = replaced["metadata"]["uid"].as_str().unwrap().to_owned();
     replaced["metadata"]["uid"] = json!("replacement-issuer");
     objects.insert(replaced);
     let before = objects.0.lock().unwrap().clone();
     assert_eq!(
-        operations
-            .remove(&spec(AUTH_KIND), auth.id.as_deref())
-            .await,
-        Err(ObservationError::BindingMismatch)
+        refusal(
+            operations
+                .remove(&spec(AUTH_KIND), auth.id.as_deref())
+                .await
+        ),
+        format!(
+            "Deployment agents/{NAME}-oidc changed: recorded UID {recorded}, observed UID replacement-issuer"
+        )
     );
     assert_eq!(*objects.0.lock().unwrap(), before);
     assert_eq!(

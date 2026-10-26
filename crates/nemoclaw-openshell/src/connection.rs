@@ -135,15 +135,45 @@ pub fn remote_error(status: &tonic::Status) -> ObservationError {
         tonic::Code::Unauthenticated => ObservationError::Authentication,
         tonic::Code::PermissionDenied => ObservationError::Permission,
         tonic::Code::Unavailable | tonic::Code::DeadlineExceeded | tonic::Code::Cancelled => {
-            ObservationError::Transport
+            transport(status)
         }
         // A lazy tonic Channel reports connector failures as Unknown with this
         // fixed message before an RPC reaches the server.
-        tonic::Code::Unknown if status.message() == "transport error" => {
-            ObservationError::Transport
-        }
+        tonic::Code::Unknown if status.message() == "transport error" => transport(status),
         _ => ObservationError::Query,
     }
+}
+
+/// A transport failure, with the TLS library's reason when a handshake
+/// failed: a server the client does not trust reads differently from a
+/// client certificate the server refused.
+fn transport(status: &tonic::Status) -> ObservationError {
+    let mut cause: Option<&(dyn std::error::Error + 'static)> = Some(status);
+    while let Some(error) = cause {
+        if let Some(reason) = tls_reason(error) {
+            return ObservationError::TransportTls {
+                detail: ObservationError::sanitized_detail(&reason),
+            };
+        }
+        cause = error.source();
+    }
+    ObservationError::Transport
+}
+
+/// rustls's reason, if `error` is a TLS failure. `io::Error` reports its
+/// inner error's source rather than the inner error, so look inside it. A
+/// server's alert arrives after the client's side of a TLS 1.3 handshake has
+/// finished, as an I/O error that carries only rustls's text.
+fn tls_reason(error: &(dyn std::error::Error + 'static)) -> Option<String> {
+    if let Some(tls) = error.downcast_ref::<rustls::Error>() {
+        return Some(tls.to_string());
+    }
+    let inner = error.downcast_ref::<std::io::Error>()?.get_ref()?;
+    if let Some(tls) = inner.downcast_ref::<rustls::Error>() {
+        return Some(tls.to_string());
+    }
+    let text = inner.to_string();
+    text.starts_with("received fatal alert: ").then_some(text)
 }
 
 /// Gateway operations whose requests contain no credentials, so a definitive

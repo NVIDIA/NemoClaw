@@ -88,15 +88,22 @@ async fn storage_creates_the_namespace_and_key_and_records_them() {
 #[tokio::test]
 async fn an_existing_namespace_is_not_taken_over() {
     let objects = cluster(true);
-    objects
-        .insert(json!({"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": "agents"}}));
+    objects.insert(json!({"apiVersion": "v1", "kind": "Namespace",
+        "metadata": {"name": "agents", "uid": "namespace-foreign"}}));
     let fixture = objects.serve().await;
     let directory = tempfile::tempdir().unwrap();
     let cluster = Cluster::new(client(&fixture), OWNER, "generation-1");
-    assert!(matches!(
-        ensure_storage(&cluster, &storage(directory.path())).await,
-        Err(ObservationError::BindingMismatch)
-    ));
+    let error = ensure_storage(&cluster, &storage(directory.path()))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error, ObservationError::BindingConflict { .. }),
+        "{error:?}"
+    );
+    assert_eq!(
+        error.to_string(),
+        "Namespace agents already exists with UID namespace-foreign, and this deployment has no record of creating it"
+    );
 }
 
 #[tokio::test]

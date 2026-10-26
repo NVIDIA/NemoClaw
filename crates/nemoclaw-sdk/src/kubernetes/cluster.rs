@@ -51,6 +51,41 @@ impl Owned {
             uid: uid.into(),
         }
     }
+
+    /// A refusal that names this object, such as `Secret agents/key`, before
+    /// `detail`, which compares recorded and observed identities.
+    pub fn conflict(&self, detail: impl Into<Box<str>>) -> ObservationError {
+        let object = if self.namespace.is_empty() {
+            format!("{} {}", self.kind, self.name)
+        } else {
+            format!("{} {}/{}", self.kind, self.namespace, self.name)
+        };
+        ObservationError::BindingConflict {
+            object: object.into(),
+            detail: detail.into(),
+        }
+    }
+
+    /// The refusal for `observed`, found where this recorded object should be.
+    pub fn changed(&self, observed: Option<&str>) -> ObservationError {
+        self.conflict(format!(
+            "changed: recorded UID {}, observed {}",
+            self.uid,
+            observed.map_or_else(|| "another object".into(), |uid| format!("UID {uid}"))
+        ))
+    }
+
+    /// The refusal for an object at this address that the receipt does not
+    /// record; it is never adopted, even if this deployment created it.
+    pub fn already_exists(&self, existing: Option<&DynamicObject>) -> ObservationError {
+        let uid = existing.and_then(|object| object.metadata.uid.as_deref());
+        self.conflict(match uid {
+            Some(uid) => {
+                format!("already exists with UID {uid}, and this deployment has no record of creating it")
+            }
+            None => "already exists, and this deployment has no record of creating it".into(),
+        })
+    }
 }
 
 /// Cluster access for one deployment's owner and generation.
@@ -108,7 +143,7 @@ impl Cluster {
     }
 
     /// Create `object` with the owner and generation labels. Fails with
-    /// `BindingMismatch` if an object already exists at that address.
+    /// `BindingConflict` if an object already exists at that address.
     pub async fn create(&self, mut object: Value) -> Result<Owned, ObservationError> {
         let labels = object
             .pointer_mut("/metadata")
@@ -122,36 +157,53 @@ impl Cluster {
         let address = Owned::new(&object, "");
         let object: DynamicObject =
             serde_json::from_value(object).map_err(|_| ObservationError::Query)?;
-        let created = self
+        let created = match self
             .api(&address.api_version, &address.kind, &address.namespace)
             .create(&PostParams::default(), &object)
             .await
-            .map_err(failure)?;
+        {
+            Ok(created) => created,
+            Err(kube::Error::Api(status)) if status.code == 409 => {
+                // Name the object that holds the address; a failed read
+                // still refuses it.
+                let existing = self.get(&address).await.ok().flatten();
+                return Err(address.already_exists(existing.as_ref()));
+            }
+            Err(error) => return Err(failure(error)),
+        };
         let uid = created.metadata.uid.ok_or(ObservationError::Incomplete)?;
         Ok(Owned { uid, ..address })
     }
 
     /// The object, if it is still the one recorded in `owned`.
     pub async fn verify(&self, owned: &Owned) -> Result<DynamicObject, ObservationError> {
-        let object = self
-            .get(owned)
-            .await?
-            .ok_or(ObservationError::BindingMismatch)?;
-        let ours = object.metadata.uid.as_deref() == Some(owned.uid.as_str())
-            && object
-                .metadata
-                .labels
-                .as_ref()
-                .and_then(|labels| labels.get(OWNER_LABEL))
-                == Some(&self.owner);
-        if !ours {
-            return Err(ObservationError::BindingMismatch);
+        let object = self.get(owned).await?.ok_or_else(|| {
+            owned.conflict(format!("with recorded UID {} no longer exists", owned.uid))
+        })?;
+        let uid = object.metadata.uid.as_deref();
+        if uid != Some(owned.uid.as_str()) {
+            return Err(owned.changed(uid));
+        }
+        let label = object
+            .metadata
+            .labels
+            .as_ref()
+            .and_then(|labels| labels.get(OWNER_LABEL));
+        if label != Some(&self.owner) {
+            return Err(owned.conflict(format!(
+                "changed: recorded label {OWNER_LABEL}={}, observed {}",
+                self.owner,
+                label.map_or_else(
+                    || "no such label".into(),
+                    |value| format!("{OWNER_LABEL}={value}")
+                )
+            )));
         }
         Ok(object)
     }
 
     /// Delete the recorded object. Succeeds if it is already gone; fails with
-    /// `BindingMismatch` if another object has taken its address.
+    /// `BindingConflict` if another object has taken its address.
     pub async fn delete(&self, owned: &Owned) -> Result<(), ObservationError> {
         let parameters = DeleteParams {
             preconditions: Some(Preconditions {
@@ -167,6 +219,15 @@ impl Cluster {
         {
             Ok(_) => Ok(()),
             Err(kube::Error::Api(status)) if status.code == 404 => Ok(()),
+            Err(kube::Error::Api(status)) if status.code == 409 => {
+                // The UID precondition failed: another object holds the address.
+                let observed = self.get(owned).await.ok().flatten();
+                Err(owned.changed(
+                    observed
+                        .as_ref()
+                        .and_then(|object| object.metadata.uid.as_deref()),
+                ))
+            }
             Err(error) => Err(failure(error)),
         }
     }

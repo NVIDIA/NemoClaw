@@ -93,15 +93,25 @@ async fn an_absent_object_is_created_with_owner_labels_and_its_uid_recorded() {
     );
 }
 
+/// The error's message, which names the object and both identities.
+fn refusal<T: std::fmt::Debug>(result: Result<T, ObservationError>) -> String {
+    let error = result.expect_err("the cluster object must be refused");
+    assert!(
+        matches!(error, ObservationError::BindingConflict { .. }),
+        "{error:?}"
+    );
+    error.to_string()
+}
+
 #[tokio::test]
 async fn an_existing_object_is_never_adopted() {
     let foreign = json!({"apiVersion": "v1", "kind": "ConfigMap",
                          "metadata": {"name": "settings", "namespace": "agents", "uid": "uid-foreign"}});
     let (fixture, _) = server(Some(foreign)).await;
-    assert!(matches!(
-        cluster(&fixture).create(settings()).await,
-        Err(ObservationError::BindingMismatch)
-    ));
+    assert_eq!(
+        refusal(cluster(&fixture).create(settings()).await),
+        "ConfigMap agents/settings already exists with UID uid-foreign, and this deployment has no record of creating it"
+    );
 }
 
 #[tokio::test]
@@ -113,11 +123,24 @@ async fn a_recorded_object_is_verified_by_uid_and_owner() {
     let cluster = cluster(&fixture);
     let owned = Owned::new(&settings(), "uid-1");
     cluster.verify(&owned).await.unwrap();
-    // A replacement with another UID, or a missing object, is not ours.
-    assert!(matches!(
-        cluster.verify(&Owned::new(&settings(), "uid-other")).await,
-        Err(ObservationError::BindingMismatch)
-    ));
+    // A replacement with another UID is not ours.
+    assert_eq!(
+        refusal(cluster.verify(&Owned::new(&settings(), "uid-other")).await),
+        "ConfigMap agents/settings changed: recorded UID uid-other, observed UID uid-1"
+    );
+}
+
+#[tokio::test]
+async fn a_missing_recorded_object_is_reported_by_its_recorded_uid() {
+    let (fixture, _) = server(None).await;
+    assert_eq!(
+        refusal(
+            cluster(&fixture)
+                .verify(&Owned::new(&settings(), "uid-1"))
+                .await
+        ),
+        "ConfigMap agents/settings with recorded UID uid-1 no longer exists"
+    );
 }
 
 #[tokio::test]
@@ -125,12 +148,14 @@ async fn an_object_without_our_owner_label_is_not_ours() {
     let mut object = settings();
     object["metadata"]["uid"] = json!("uid-1");
     let (fixture, _) = server(Some(object)).await;
-    assert!(matches!(
-        cluster(&fixture)
-            .verify(&Owned::new(&settings(), "uid-1"))
-            .await,
-        Err(ObservationError::BindingMismatch)
-    ));
+    assert_eq!(
+        refusal(
+            cluster(&fixture)
+                .verify(&Owned::new(&settings(), "uid-1"))
+                .await
+        ),
+        "ConfigMap agents/settings changed: recorded label nemoclaw.nvidia.com/uid=owner-1, observed no such label"
+    );
 }
 
 #[tokio::test]
@@ -139,10 +164,10 @@ async fn deletion_requires_the_recorded_uid() {
     object["metadata"]["uid"] = json!("uid-replacement");
     let (fixture, log) = server(Some(object)).await;
     let cluster = cluster(&fixture);
-    assert!(matches!(
-        cluster.delete(&Owned::new(&settings(), "uid-1")).await,
-        Err(ObservationError::BindingMismatch)
-    ));
+    assert_eq!(
+        refusal(cluster.delete(&Owned::new(&settings(), "uid-1")).await),
+        "ConfigMap agents/settings changed: recorded UID uid-1, observed UID uid-replacement"
+    );
     let (_, _, sent) = log
         .lock()
         .unwrap()

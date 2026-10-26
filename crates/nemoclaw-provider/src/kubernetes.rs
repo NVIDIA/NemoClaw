@@ -99,6 +99,11 @@ impl Backend for KubernetesBackend {
                 "managed Kubernetes target or identity changed; resources retained",
             ));
         }
+        // Storage without a binding is about to be created: refuse here what
+        // its creation would refuse, so apply stops before any change.
+        if kind == STORAGE_KIND && prior.and_then(bound_id).is_none() {
+            operations(&want).await?.plan(&want).await?;
+        }
         Ok(())
     }
 

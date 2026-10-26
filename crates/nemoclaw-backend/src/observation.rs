@@ -62,6 +62,21 @@ pub enum ObservationError {
     Extension,
     Incomplete,
     BindingMismatch,
+    /// A recorded object no longer matches the one the backend holds, or an
+    /// object to create already exists. `object` names it, such as
+    /// `Secret agents/nc-1-gateway-kek`, and `detail` compares the recorded
+    /// and observed identities. Both hold only kinds, names, UIDs, labels and
+    /// OpenShift ranges, never secret values.
+    BindingConflict {
+        object: Box<str>,
+        detail: Box<str>,
+    },
+    /// A TLS handshake failed. `detail` is the TLS library's own reason,
+    /// sanitized, so a distrusted server reads differently from a refused
+    /// client certificate.
+    TransportTls {
+        detail: Box<str>,
+    },
     /// A fixed, non-secret diagnostic from an owning backend.
     Backend(&'static str),
     Rejected {
@@ -134,6 +149,13 @@ impl fmt::Display for ObservationError {
             Self::Incomplete => f.write_str("observation is incomplete"),
             Self::BindingMismatch => {
                 f.write_str("observed ownership, generation, or durable identity changed")
+            }
+            Self::BindingConflict { object, detail } => write!(f, "{object} {detail}"),
+            Self::TransportTls { detail } => {
+                write!(
+                    f,
+                    "observation transport failed in the TLS handshake: {detail}"
+                )
             }
         }
     }

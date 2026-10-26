@@ -84,6 +84,7 @@ async fn mutual_tls_and_bearer_references_fail_closed_without_disclosing_credent
     let established = valid.ensure("workspace", &desired).await;
     assert!(established.error().is_none(), "{:?}", established.error());
     let binding = established.into_parts().0.unwrap();
+    let mut handshakes = BTreeMap::new();
     for failure in ["bearer", "server trust", "client trust", "missing key"] {
         let mut altered = values.clone();
         match failure {
@@ -117,7 +118,23 @@ async fn mutual_tls_and_bearer_references_fail_closed_without_disclosing_credent
         };
         let error = result.expect_err(failure);
         assert!(!error.to_string().contains("sentinel"));
+        if failure.ends_with("trust") {
+            assert!(
+                matches!(error, ObservationError::TransportTls { .. }),
+                "{failure}: {error:?}"
+            );
+            handshakes.insert(failure, error.to_string());
+        }
     }
+    // The TLS library's reason tells a distrusted server from a refused client.
+    assert!(
+        handshakes["server trust"].contains("invalid peer certificate"),
+        "{handshakes:?}"
+    );
+    assert!(
+        handshakes["client trust"].contains("alert"),
+        "{handshakes:?}"
+    );
     assert_eq!(fixture.state.lock().unwrap().effects, 1);
     assert_eq!(
         valid.read("workspace", &binding, false).await.unwrap(),

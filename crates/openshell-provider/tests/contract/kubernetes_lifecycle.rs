@@ -24,7 +24,11 @@ const NAMESPACE: &str = "agents";
 const STORAGE: &str = "openshell_kubernetes_storage.platform";
 const AUTH: &str = "openshell_kubernetes_auth.platform";
 const GATEWAY: &str = "openshell_kubernetes_gateway.platform";
-const CHANGED: &str = "observed ownership, generation, or durable identity changed";
+
+/// OpenTofu wraps diagnostics; compare messages with whitespace collapsed.
+fn flat(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
 
 /// The issuer objects the authentication resource creates, as
 /// (apiVersion, kind, name).
@@ -466,6 +470,55 @@ async fn kubernetes_resources_apply_observe_the_release_and_tear_down_keeping_st
     );
 }
 
+/// A first plan refuses a namespace that already exists, so apply stops before
+/// it writes to the cluster or the state directory.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; in-memory Kubernetes API"]
+async fn kubernetes_planning_refuses_a_namespace_that_already_exists() {
+    let platform = Platform::start().await;
+    platform
+        .objects
+        .insert(json!({"apiVersion": "v1", "kind": "Namespace",
+        "metadata": {"name": NAMESPACE, "uid": "namespace-foreign"}}));
+    platform.configure(Stage::Prepared);
+    // Planning observes only a known identity, so set it as the SDK does
+    // instead of leaving the provider to generate it during apply.
+    let main = platform.workspace.path().join("main.tf");
+    let configured = fs::read_to_string(&main).unwrap().replacen(
+        "resource \"openshell_kubernetes_storage\" \"platform\" {\n",
+        "resource \"openshell_kubernetes_storage\" \"platform\" {\n  owner                  = \"00000000-0000-4000-8000-000000000001\"\n  generation             = \"0123456789abcdef0123456789abcdef\"\n",
+        1,
+    );
+    assert_ne!(fs::read_to_string(&main).unwrap(), configured);
+    fs::write(&main, configured).unwrap();
+    let objects = platform.snapshot();
+    for output in [
+        platform.tofu(&["plan", "-input=false", "-no-color"], false),
+        platform.apply(false),
+    ] {
+        assert!(
+            flat(&output).contains(
+                "Namespace agents already exists with UID namespace-foreign, and this deployment has no record of creating it"
+            ),
+            "{output}"
+        );
+    }
+    assert_eq!(platform.snapshot(), objects, "planning changed objects");
+    assert_eq!(
+        platform.writes.load(Ordering::SeqCst),
+        0,
+        "planning sent a write"
+    );
+    assert!(
+        !platform
+            .workspace
+            .path()
+            .join("kubernetes/receipt.json")
+            .exists(),
+        "planning wrote a receipt"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires NEMOCLAW_TEST_BUNDLE; in-memory Kubernetes API"]
 async fn kubernetes_resources_refuse_replaced_or_missing_objects_without_recreating_them() {
@@ -490,6 +543,17 @@ async fn kubernetes_resources_refuse_replaced_or_missing_objects_without_recreat
     ];
     for (drift, removed, api_version, kind, name) in drifts {
         let namespace = if kind == "Namespace" { "" } else { NAMESPACE };
+        let recorded = platform.uid(api_version, kind, name).unwrap();
+        let object = if namespace.is_empty() {
+            format!("{kind} {name}")
+        } else {
+            format!("{kind} {namespace}/{name}")
+        };
+        let refusal = if removed {
+            format!("{object} with recorded UID {recorded} no longer exists")
+        } else {
+            format!("{object} changed: recorded UID {recorded}, observed UID replacement-uid")
+        };
         if removed {
             let path = format!(
                 "{}/{name}",
@@ -512,7 +576,7 @@ async fn kubernetes_resources_refuse_replaced_or_missing_objects_without_recreat
             platform.tofu(&["plan", "-input=false", "-no-color"], false),
             platform.apply(false),
         ] {
-            assert!(output.contains(CHANGED), "{drift}: {output}");
+            assert!(flat(&output).contains(&refusal), "{drift}: {output}");
         }
         assert_eq!(
             platform.snapshot(),

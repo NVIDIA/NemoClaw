@@ -147,6 +147,33 @@ impl Operations {
         })
     }
 
+    /// Refuse at plan what the first apply would refuse: storage creates its
+    /// namespace, so a namespace this deployment did not record must not
+    /// exist yet. Reads only; a recorded namespace resumes in `ensure`.
+    pub async fn plan(&self, spec: &Spec) -> Result<(), ObservationError> {
+        if spec.kind != STORAGE_KIND {
+            return Ok(());
+        }
+        let target = self.target(spec)?;
+        let namespace = Owned {
+            api_version: "v1".into(),
+            kind: "Namespace".into(),
+            namespace: String::new(),
+            name: target.namespace.clone(),
+            uid: String::new(),
+        };
+        if self
+            .receipt(spec)?
+            .is_some_and(|receipt| receipt.owned(&namespace).is_some())
+        {
+            return Ok(());
+        }
+        match self.cluster(spec).get(&namespace).await? {
+            Some(existing) => Err(namespace.already_exists(Some(&existing))),
+            None => Ok(()),
+        }
+    }
+
     /// Observe the resource. `prior` is the identity from state, if any.
     pub async fn read(
         &self,
@@ -266,11 +293,12 @@ impl Operations {
             && !receipt.issuer.is_empty()
             && let Some(recorded) = receipt.namespace_identity
         {
-            let namespace = cluster.verify(self.namespace(spec, &receipt)?).await?;
+            let owned = self.namespace(spec, &receipt)?;
+            let namespace = cluster.verify(owned).await?;
             let identity =
                 Identity::from_annotations(&namespace.metadata.annotations.unwrap_or_default());
             if identity != Some(recorded) {
-                return Err(ObservationError::BindingMismatch);
+                return Err(identity_changed(owned, recorded, identity));
             }
         }
         // Ensure records the namespace identity before it writes an OpenShift
@@ -362,10 +390,16 @@ impl Operations {
         let Some(recorded) = &receipt.gateway else {
             return Ok(Response::default());
         };
-        let statefulset = self.cluster(spec).get(&self.statefulset(spec)?).await?;
+        let address = Owned {
+            uid: recorded.clone(),
+            ..self.statefulset(spec)?
+        };
+        let statefulset = self.cluster(spec).get(&address).await?;
         let Some(statefulset) = statefulset else {
             if !allow_absent {
-                return Err(ObservationError::BindingMismatch);
+                return Err(
+                    address.conflict(format!("with recorded UID {recorded} no longer exists"))
+                );
             }
             // A recorded release whose StatefulSet is gone is not running.
             return Ok(Response {
@@ -375,7 +409,7 @@ impl Operations {
             });
         };
         if statefulset.metadata.uid.as_deref() != Some(recorded.as_str()) {
-            return Err(ObservationError::BindingMismatch);
+            return Err(address.changed(statefulset.metadata.uid.as_deref()));
         }
         let number = |pointer: &str| {
             statefulset
@@ -410,17 +444,13 @@ impl Operations {
                 self.read(spec, prior).await?;
                 let cluster = self.cluster(spec);
                 if spec.settings.runtime.provider == crate::config::ComputeDriver::OpenShift {
-                    let identity = namespace_identity(
-                        &cluster,
-                        self.namespace(spec, &receipt)?,
-                        self.openshift_wait,
-                    )
-                    .await?;
-                    if receipt
-                        .namespace_identity
-                        .is_some_and(|recorded| recorded != identity)
+                    let namespace = self.namespace(spec, &receipt)?;
+                    let identity =
+                        namespace_identity(&cluster, namespace, self.openshift_wait).await?;
+                    if let Some(recorded) = receipt.namespace_identity
+                        && recorded != identity
                     {
-                        return Err(ObservationError::BindingMismatch);
+                        return Err(identity_changed(namespace, recorded, Some(identity)));
                     }
                     receipt.namespace_identity = Some(identity);
                     receipt.save(&self.state)?;
@@ -466,9 +496,10 @@ impl Operations {
                     return Err(ObservationError::Incomplete);
                 }
                 self.read(spec, prior).await?;
+                let address = self.statefulset(spec)?;
                 let statefulset = self
                     .cluster(spec)
-                    .get(&self.statefulset(spec)?)
+                    .get(&address)
                     .await?
                     .ok_or(ObservationError::Incomplete)?;
                 let annotations = statefulset.metadata.annotations.as_ref();
@@ -483,18 +514,21 @@ impl Operations {
                         .and_then(|labels| labels.get("app.kubernetes.io/instance"))
                         != Some(&spec.name)
                 {
-                    return Err(ObservationError::BindingMismatch);
+                    return Err(address
+                        .conflict(format!("does not belong to the Helm release {}", spec.name)));
                 }
                 let uid = statefulset
                     .metadata
                     .uid
                     .ok_or(ObservationError::Incomplete)?;
-                if receipt
-                    .gateway
-                    .as_ref()
-                    .is_some_and(|recorded| *recorded != uid)
+                if let Some(recorded) = &receipt.gateway
+                    && *recorded != uid
                 {
-                    return Err(ObservationError::BindingMismatch);
+                    let recorded = Owned {
+                        uid: recorded.clone(),
+                        ..address
+                    };
+                    return Err(recorded.changed(Some(&uid)));
                 }
                 receipt.gateway = Some(uid);
                 receipt.save(&self.state)?;
@@ -641,6 +675,23 @@ impl Operations {
         }
         Ok(())
     }
+}
+
+/// The refusal for a namespace whose OpenShift identity differs from the one
+/// recorded; `observed` is `None` once its range annotations are gone.
+fn identity_changed(
+    namespace: &Owned,
+    recorded: Identity,
+    observed: Option<Identity>,
+) -> ObservationError {
+    let observed = observed.map_or_else(
+        || "no UID range".into(),
+        |identity| format!("UID {} and group {}", identity.user, identity.group),
+    );
+    namespace.conflict(format!(
+        "changed: recorded OpenShift UID {} and group {}, observed {observed}",
+        recorded.user, recorded.group
+    ))
 }
 
 /// OpenShift assigns ranges shortly after creating a namespace. Only the

@@ -107,9 +107,24 @@ async fn assert_unrecorded_object_is_refused(
     let rerun = platform::operations(healthy.client(), lossy.endpoint(), &state);
     let result = rerun.ensure(&platform::spec(stage), None).await;
 
+    let uid = objects.get(api_version, kind, namespace, name).unwrap()["metadata"]["uid"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let object = if namespace.is_empty() {
+        format!("{kind} {name}")
+    } else {
+        format!("{kind} {namespace}/{name}")
+    };
+    assert!(
+        matches!(result, Err(ObservationError::BindingConflict { .. })),
+        "re-run over an unrecorded {label}: {result:?}"
+    );
     assert_eq!(
-        result,
-        Err(ObservationError::BindingMismatch),
+        result.map_err(|error| error.to_string()),
+        Err(format!(
+            "{object} already exists with UID {uid}, and this deployment has no record of creating it"
+        )),
         "re-run over an unrecorded {label}, requests: {:?}",
         healthy.requests()
     );
