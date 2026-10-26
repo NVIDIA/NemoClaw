@@ -211,6 +211,8 @@ describe("reviewed candidate MCP runtime evidence", () => {
       ["0.1.2", "openshell-credential-generation-window", "openshell-credential-generation-window"],
       ["0.1.3", "mcp-bridge", "mcp-bridge-deepagents"],
       ["0.1.3", "openshell-credential-generation-window", "openshell-credential-generation-window"],
+      ["0.1.5", "mcp-bridge", "mcp-bridge-deepagents"],
+      ["0.1.5", "openshell-credential-generation-window", "openshell-credential-generation-window"],
     ].flatMap(([version, job, artifact]) => [
       [version, job, artifact, "local"],
       [version, job, artifact, "path"],
@@ -261,7 +263,7 @@ describe("reviewed candidate MCP runtime evidence", () => {
     (job, artifact, role, binary) => {
       const directory = mkdtempSync(join(tmpdir(), "nemoclaw-mcp-provenance-"));
       try {
-        const fixture = prepareRuntimeFixture(directory, "0.1.3", job);
+        const fixture = prepareRuntimeFixture(directory, "0.1.5", job);
         writeFileSync(join(fixture.bin, binary), "altered binary");
         const result = fixture.run();
         expect(result.status).not.toBe(0);
