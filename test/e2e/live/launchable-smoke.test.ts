@@ -252,16 +252,32 @@ test(
 
     progress.phase("run the Brev bootstrap script");
     const installLog = artifacts.pathFor("bootstrap.log");
-    const install = await host.command("sudo", ["-E", "bash", BOOTSTRAP_SCRIPT], {
-      artifactName: "phase-2-brev-bootstrap-script",
-      env: runEnv({
-        LAUNCH_LOG: installLog,
-        NEMOCLAW_CLONE_DIR: cloneDir,
-        NEMOCLAW_REF: "main",
-        SKIP_DOCKER_PULL: process.env.SKIP_DOCKER_PULL ?? "1",
-      }),
-      timeoutMs: INSTALL_TIMEOUT_MS,
-    });
+    // sudo-rs on Ubuntu 26.04 ignores -E, so pass the bootstrap's non-secret
+    // inputs explicitly through env(1) instead of relying on sudo to keep them.
+    const bootstrapEnv: Record<string, string> = {
+      LAUNCH_LOG: installLog,
+      NEMOCLAW_CLONE_DIR: cloneDir,
+      NEMOCLAW_REF: "main",
+      SKIP_DOCKER_PULL: process.env.SKIP_DOCKER_PULL ?? "1",
+      NEMOCLAW_OPENSHELL_CHANNEL: process.env.NEMOCLAW_OPENSHELL_CHANNEL ?? "stable",
+      NEMOCLAW_NON_INTERACTIVE: "1",
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+    };
+    const install = await host.command(
+      "sudo",
+      [
+        "-n",
+        "env",
+        ...Object.entries(bootstrapEnv).map(([name, value]) => `${name}=${value}`),
+        "bash",
+        BOOTSTRAP_SCRIPT,
+      ],
+      {
+        artifactName: "phase-2-brev-bootstrap-script",
+        env: runEnv(bootstrapEnv),
+        timeoutMs: INSTALL_TIMEOUT_MS,
+      },
+    );
     expectExitZero(install, "Brev bootstrap script completed");
 
     progress.phase("inspect installed CLI and runtime artifacts");
