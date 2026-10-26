@@ -35,6 +35,7 @@ export interface PiReadTaskAttempt {
   readonly failure: unknown;
   readonly proof: PiReadTaskProof | undefined;
   readonly result: ShellProbeResult;
+  readonly turnCompleted: boolean;
 }
 
 export interface PiQualificationReceipt {
@@ -153,7 +154,10 @@ export function classifyPiReadTaskAttempt(
   if (attempt.result.timedOut) {
     return {
       outcome: "failed",
-      failureClass: attempt.proof ? "deterministic" : "transient-external",
+      failureClass:
+        attempt.proof || (attempt.turnCompleted && !isTransientPiInferenceFailure(attempt.failure))
+          ? "deterministic"
+          : "transient-external",
     };
   }
   if (attempt.result.exitCode === 0 && attempt.proof) return { outcome: "passed" };
@@ -170,6 +174,10 @@ export function parsePiJsonEvents(stdout: string): JsonRecord[] {
     .split(/\r?\n/u)
     .filter((line) => line.trim() !== "")
     .map((line) => record(JSON.parse(line) as unknown, "Pi JSON event"));
+}
+
+export function hasCompletedPiTurn(events: readonly JsonRecord[]): boolean {
+  return events.some((event) => event.type === "agent_end" && event.willRetry === false);
 }
 
 export function qualificationPlatform(

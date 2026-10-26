@@ -33,6 +33,7 @@ import { driveInteractiveCommand } from "./onboard-interactive-pty.ts";
 import {
   buildPiReadTask,
   classifyPiReadTaskAttempt,
+  hasCompletedPiTurn,
   parsePiJsonEvents,
   parsePiInferenceEvidence,
   qualificationPlatform,
@@ -200,12 +201,15 @@ async function runReadTask(
       });
       let failure: unknown;
       let proof: ReturnType<typeof qualifyPiReadTask> | undefined;
+      let turnCompleted = false;
       try {
-        proof = qualifyPiReadTask(parsePiJsonEvents(result.stdout), remotePath, token);
+        const events = parsePiJsonEvents(result.stdout);
+        turnCompleted = hasCompletedPiTurn(events);
+        proof = qualifyPiReadTask(events, remotePath, token);
       } catch (error) {
         failure = error;
       }
-      return { failure, proof, result };
+      return { failure, proof, result, turnCompleted };
     },
     classify: classifyPiReadTaskAttempt,
     onEvidence: async (evidence) => {
