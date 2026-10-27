@@ -33,6 +33,7 @@ const INFERENCE_REQUEST_PATHS = new Set([
 ]);
 
 interface HermesSkillLifecycleOptions {
+  apiPort: string;
   env: NodeJS.ProcessEnv;
   host: HostCliClient;
   inference: Pick<E2EInferenceAdapter, "model" | "requestSummaries">;
@@ -46,6 +47,7 @@ interface HermesSkillLifecycleOptions {
  * non-secret canary crossed the inference boundary.
  */
 export async function assertHermesSkillLifecycle({
+  apiPort,
   env,
   host,
   inference,
@@ -122,7 +124,7 @@ export async function assertHermesSkillLifecycle({
       [
         "bash",
         "-lc",
-        `set -eu; set -a; . /sandbox/.hermes/.env; set +a; curl -fsS --max-time 120 -o /dev/null -H 'Content-Type: application/json' -H "Authorization: Bearer \${API_SERVER_KEY:-}" -H ${shellQuote(`X-Hermes-Session-Id: ${sessionId}`)} --data-raw ${shellQuote(payload)} http://127.0.0.1:8642/v1/chat/completions; echo GATEWAY_REQUEST_OK`,
+        `set -eu; set -a; . /sandbox/.hermes/.env; set +a; curl -fsS --max-time 120 -o /dev/null -H 'Content-Type: application/json' -H "Authorization: Bearer \${API_SERVER_KEY:-}" -H ${shellQuote(`X-Hermes-Session-Id: ${sessionId}`)} --data-raw ${shellQuote(payload)} ${shellQuote(`http://127.0.0.1:${apiPort}/v1/chat/completions`)}; echo GATEWAY_REQUEST_OK`,
       ],
       "phase-4-hermes-default-profile-gateway-chat",
       180,
