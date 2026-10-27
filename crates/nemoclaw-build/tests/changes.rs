@@ -740,7 +740,7 @@ fn local_execution_skips_bundle_and_lifecycle_but_keeps_ordinary_checks() {
             "cargo",
             r#"#!/bin/sh
 if [ "$1" = metadata ]; then exec "$REAL_CARGO" "$@"; fi
-if [ "$1 $2" = 'nextest --version' ]; then echo 'cargo-nextest 0.9.148'; exit 0; fi
+if [ "$1 $2" = 'nextest --version' ]; then echo 'cargo-nextest 0.9.150'; exit 0; fi
 printf '%s\n' "$*" >> "$CHECK_LOG"
 if [ "$1" = build ]; then
   mkdir -p target/debug

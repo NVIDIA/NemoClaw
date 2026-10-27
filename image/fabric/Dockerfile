@@ -5,11 +5,13 @@ ARG BUN_IMAGE=oven/bun:1.4.4-slim@sha256:1846adf22496bd711036aae8be147e57bdebbae
 ARG NODE_IMAGE=node:24.22.1-trixie-slim@sha256:43b9ba1142b8dcf33fa8f922ca1be85714adc444e0586c7cf7726daaeabc1bea
 ARG PYTHON_IMAGE=python:3.13.17-slim-trixie@sha256:fe14fd57a4c0361110eaa0c284112b189750bcb43fb04bb5d1ee7b7744027ccf
 ARG RUST_IMAGE=rust:1.99.1-slim-trixie@sha256:aab42391a986424e22d6a3ec14f37bc6dd3dacff4d457ca7cccd781e02297cc6
-ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.13.5@sha256:32a7bb39b496babbd997b0a39a4d66c126bdaf5661b302bf6f06abda8deca6ff
+ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.13.6@sha256:af22a52f5eafef3d78e551599d405c02df61919d18028f0cea8eda93bc9986d0
 # The Fabric source every harness installs; the reference dummy's descriptor
 # follows the adapter contract at the same revision.
 ARG FABRIC_REVISION=67acf1cff0d598fc3e6a32370cd63fc088e86958
 ARG FABRIC_SHA256=ca88f31e3bfbc3d3e408410d538a8d4a79e4f65adc6fe987aca929216e6b6d32
+# OpenClaw release 2026.9.4, the version the pinned Fabric's OpenClaw adapter
+# documents; move it with the Fabric revision, not on its own.
 ARG OPENCLAW_IMAGE=ghcr.io/openclaw/openclaw@sha256:cc596b846506a5f4cfcee111394a2725f375f01cca2ebb492a161fd1b747f101
 # The harness stage the catalog and labeled stages build on.
 ARG STAGE=generic
