@@ -2131,7 +2131,7 @@ $$nemoclaw onboard
 
 For local Ollama and vLLM, onboarding retries the container reachability check and can fall back to the host-side health check when the local backend is healthy. If Ollama times out during a cold model load, NemoClaw retries once with a 300-second probe budget before failing. If all attempts fail, the error includes container reachability diagnostics such as HTTP status and host gateway resolution.
 
-`NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` only covers the inference-server validation probe. The post-create readiness wait has its own budget (`NEMOCLAW_SANDBOX_READY_TIMEOUT`); refer to [Sandbox onboard times out with "did not become ready within Ns"](#sandbox-onboard-times-out-with-did-not-become-ready-within-ns) for the readiness path.
+`NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` covers the inference-server validation probe and each request of the native local or provider-neutral inference check that onboarding and rebuild run inside the sandbox, with a 60-second minimum for that check. The post-create readiness wait has its own budget (`NEMOCLAW_SANDBOX_READY_TIMEOUT`); refer to [Sandbox onboard times out with "did not become ready within Ns"](#sandbox-onboard-times-out-with-did-not-become-ready-within-ns) for the readiness path.
 
 ### Sandbox onboard times out with "did not become ready within Ns"
 
@@ -3180,7 +3180,11 @@ Other unexpected gateway exit statuses fail immediately and do not consume this 
 
 An unsafe startup layout also stops automatic relaunch. If layout repair reports the maximum log-entry count or repair depth, archive or remove old retained logs from a trusted host-side recovery environment, then stop and start the sandbox. For symbolic links, hard links, unsafe entry types, or paths that changed during repair, do not repair the path in place. Restore a trusted host copy into a recreated sandbox or recreate from host-side onboarding configuration.
 
-If an integrity mismatch is reported or the sandbox still cannot start, rebuild it from registered configuration:
+If a Hermes configuration write reports `Hermes integrity metadata is not ready for a configuration write`, back up needed data before recovery.
+A rebuild preserves the native sandbox home and may retain this compatibility-hash mismatch.
+For an older Hermes sandbox with an OpenClaw `POLICY.md` file, follow [Explain Network Policy to Agents](../network-policy/explain-network-policy-to-agents).
+
+For other startup failures, rebuild from registered configuration:
 
 ```bash
 nemohermes <name> rebuild --yes

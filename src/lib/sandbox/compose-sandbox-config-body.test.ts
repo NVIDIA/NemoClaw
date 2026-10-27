@@ -18,6 +18,8 @@ const {
   buildOpenClawNativeConfigSetInvocation,
   composeSandboxConfigBody,
   hermesConfigAllowsPrivateUrls,
+  hermesCompatHashRecoveryError,
+  isHermesCompatHashRecoveryError,
   runOpenClawNativeConfigBatchUntilHandleReady,
   writeSandboxConfig,
 } = require("./config") as {
@@ -43,6 +45,8 @@ const {
     },
   ) => string;
   hermesConfigAllowsPrivateUrls: (config: Record<string, unknown>) => boolean;
+  hermesCompatHashRecoveryError: (sandboxName: string) => Error;
+  isHermesCompatHashRecoveryError: (error: unknown) => boolean;
   runOpenClawNativeConfigBatchUntilHandleReady: (
     nativeHandleUpdate: boolean,
     run: () => { status: number; stderr: string; error?: Error; signal?: string },
@@ -73,6 +77,23 @@ const OPENCLAW_TARGET = {
 };
 
 describe("composeSandboxConfigBody", () => {
+  it("directs Hermes compat hash failures to trusted recovery before another write", () => {
+    expect(
+      isHermesCompatHashRecoveryError(
+        new Error("compat hash does not match frozen Hermes inputs during non-root reconciliation"),
+      ),
+    ).toBe(true);
+    expect(
+      isHermesCompatHashRecoveryError(
+        new Error("compat hash verification failed for Hermes restart seal"),
+      ),
+    ).toBe(true);
+    const guidance = hermesCompatHashRecoveryError("alpha").message;
+    expect(guidance).toContain("Back up needed data from 'alpha'");
+    expect(guidance).toContain("Rebuild preserves the native home");
+    expect(guidance).toContain("trusted backup or create a fresh Hermes sandbox");
+  });
+
   it("prepends the upstream header and keeps the YAML body parseable for Hermes targets", () => {
     const config = {
       _nemoclaw_upstream: {
