@@ -240,6 +240,7 @@ function isIncompletePiJsonEvent(line: string): boolean {
       const keyStart = offset;
       const key = string();
       if (key !== "complete") return key;
+      const keyEnd = offset;
       whitespace();
       if (offset === line.length) return "incomplete";
       if (line[offset++] !== ":") return "invalid";
@@ -247,7 +248,7 @@ function isIncompletePiJsonEvent(line: string): boolean {
       if (offset === line.length) return "incomplete";
       if (
         depth === 0 &&
-        JSON.parse(line.slice(keyStart, offset - 1).trimEnd()) === "type" &&
+        JSON.parse(line.slice(keyStart, keyEnd)) === "type" &&
         line[offset] !== '"'
       )
         return "invalid";

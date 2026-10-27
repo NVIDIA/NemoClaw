@@ -241,6 +241,15 @@ describe("Pi qualification event oracle", () => {
     ).toThrow();
   });
 
+  it("accepts a truncated final event with whitespace after its type key (#13755)", () => {
+    const prefix = events({ type: "agent_start" });
+    expect(
+      parsePiJsonEvents(`${prefix}\n{"type": "message_update", "message":`, {
+        allowTruncatedFinalLine: true,
+      }),
+    ).toEqual([{ type: "agent_start" }]);
+  });
+
   it("retries a timed-out valid read and reply awaiting agent_end (#13755)", async () => {
     const partialEvents = parsePiJsonEvents(eventStream().split("\n").slice(0, -1).join("\n"));
     const proof = qualifyPiReadTask(partialEvents, PATH, TOKEN);
