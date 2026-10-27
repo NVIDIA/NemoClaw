@@ -2016,9 +2016,6 @@ async function runInferenceSetWithoutHostLock(
           `in-sandbox config failed: ${detail}`,
       );
       failOpenClawInferenceConfigSync(agentName, sandboxName, detail, deps);
-      deps.log(
-        `  Run '${CLI_NAME} ${sandboxName} rebuild' to finish applying the model inside the sandbox.`,
-      );
     }
     const sessionUpdated =
       agentName === "openclaw"

@@ -362,6 +362,11 @@ describe("runInferenceSet Hermes routing", () => {
         model: "openai/gpt-5.4-mini",
       }),
     );
+    expect(
+      deps.calls.log.mock.calls.some((call) =>
+        String(call[0]).includes("Run 'nemoclaw hermes rebuild'"),
+      ),
+    ).toBe(false);
   });
 
   it("fails after commit when the config hash refresh fails (#7083)", async () => {
@@ -410,7 +415,7 @@ describe("runInferenceSet Hermes routing", () => {
     );
     const logs = deps.calls.log.mock.calls.map((call) => String(call[0]));
     expect(logs.some((line) => line.includes("failed to refresh its integrity hash"))).toBe(true);
-    expect(logs.some((line) => line.includes("rebuild"))).toBe(true);
+    expect(logs.some((line) => line.includes("Run 'nemoclaw hermes rebuild'"))).toBe(false);
     expect(logs.some((line) => line.includes("Inference route synced"))).toBe(false);
   });
 
