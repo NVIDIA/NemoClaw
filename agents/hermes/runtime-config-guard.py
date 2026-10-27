@@ -2948,6 +2948,21 @@ def _validate_restored_native_credential(source_text: str, candidate_bytes: byte
         raise UnsafePathError("restored Hermes write may change only its three native local credential slots") from exc
 
 
+def _with_issued_nvidia_slots(text: str, template: str, reference: str) -> bytes:
+    """Return the config with only template-valued credential slots issued."""
+    try:
+        config = yaml.safe_load(text)
+        provider = config["_nemoclaw_upstream"]["provider"]
+        slots = [config["model"], config["providers"][provider]]
+        slots += [entry for entry in config["custom_providers"] if isinstance(entry, dict) and entry.get("name") == provider]
+        for slot in slots:
+            if slot.get("api_key") == template:
+                slot["api_key"] = reference
+        return yaml.safe_dump(config, sort_keys=False).encode("utf-8")
+    except (AttributeError, KeyError, TypeError, yaml.YAMLError) as exc:
+        raise UnsafePathError("Hermes NVIDIA credential slots are malformed") from exc
+
+
 def verify_nvidia_credential(hermes_dir: str, expected_model: str) -> None:
     """Check agent slots against the fresh supervisor without changing any file."""
     reference = os.environ.get("NVIDIA_INFERENCE_API_KEY", "")
@@ -2958,7 +2973,7 @@ def verify_nvidia_credential(hermes_dir: str, expected_model: str) -> None:
     # slots, and Hermes resolves it from the current supervisor reference (#13784).
     template = NVIDIA_INFERENCE_PLACEHOLDER
     try:
-        _validate_restored_native_credential(text, text.replace(template, reference).encode("utf-8"))
+        _validate_restored_native_credential(text, _with_issued_nvidia_slots(text, template, reference))
         config = yaml.safe_load(text)
         if (
             config["_nemoclaw_upstream"]["provider"] != "nvidia-prod"

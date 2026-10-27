@@ -55,6 +55,14 @@ with tempfile.TemporaryDirectory() as root:
   try:g.verify_nvidia_credential(str(h),'m');results['health-'+label]=True
   except g.NvidiaCredentialRejectedError:results['health-'+label]=False
   assert cfg.read_bytes()==before
+ # A template value outside the three credential slots stays unchanged.
+ config=copy.deepcopy(base);template='$'+'{NVIDIA_INFERENCE_API_KEY}'
+ config['model']['api_key']=config['providers']['nvidia-prod']['api_key']=config['custom_providers'][0]['api_key']=template
+ config['discord']['note']=template
+ cfg.write_text(g.yaml.safe_dump(config));before=cfg.read_bytes();os.environ['NVIDIA_INFERENCE_API_KEY']=fresh
+ try:g.verify_nvidia_credential(str(h),'m');results['health-template-elsewhere']=True
+ except g.NvidiaCredentialRejectedError:results['health-template-elsewhere']=False
+ assert cfg.read_bytes()==before
  # Every slot must agree; a template mixed with issued references is rejected.
  import itertools
  template='$'+'{NVIDIA_INFERENCE_API_KEY}'
@@ -95,6 +103,7 @@ with tempfile.TemporaryDirectory() as root:
       "cli-malformed-supervisor": { exit: 1, stdout: "" },
       "health-fresh": true,
       "health-template": true,
+      "health-template-elsewhere": true,
       "shared-contract": true,
       "health-mixed": [false, false, false, false, false, false],
       "health-stale": false,
