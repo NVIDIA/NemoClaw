@@ -41,6 +41,25 @@ export type DestroyRunOpenshell = (
   opts?: Record<string, unknown>,
 ) => { error?: Error; status: number | null; stdout?: string; stderr?: string };
 
+/** Keep preflight and execution on the same recorded gateway and runtime authority. */
+export function createGatewayScopedDestroyRunner(
+  runOpenshell: DestroyRunOpenshell,
+  gatewayName: string,
+  selectedEnvironment?: () => Record<string, string>,
+): DestroyRunOpenshell {
+  return (args, options = {}) =>
+    runOpenshell(
+      scopeSandboxDestroyOpenShellArgs(args, gatewayName),
+      selectedEnvironment
+        ? {
+            ...options,
+            env: selectedEnvironment(),
+            replaceEnv: true,
+          }
+        : options,
+    );
+}
+
 export function scopeSandboxDestroyOpenShellArgs(args: string[], gatewayName: string): string[] {
   const command = args[0] ?? "";
   const subcommand = args[1] ?? "";

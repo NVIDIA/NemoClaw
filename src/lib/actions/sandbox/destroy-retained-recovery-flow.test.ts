@@ -271,6 +271,7 @@ describe("destroySandbox retained recovery flow", () => {
     { timeout: 30_000 },
     async () => {
       vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://foreign.invalid");
+      vi.spyOn(process, "platform", "get").mockReturnValue("linux");
       const recovery = retainedRecoveryRecordWithoutIdentity();
       const harness = createDestroyHarness({
         sandboxPresent: false,

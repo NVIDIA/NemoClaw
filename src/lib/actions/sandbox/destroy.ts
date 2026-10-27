@@ -84,6 +84,7 @@ import {
 } from "./destroy-presence";
 import { withSandboxLifecycleLock } from "./lifecycle/lock";
 import {
+  assertSandboxDestroyEndpointAuthority,
   prepareSandboxDestroy,
   reconcileIdentityFreeRecovery,
   recordManagedVllmRetirementPending,
@@ -717,6 +718,7 @@ export async function destroySandbox(
       );
       assertSandboxDestroyCommandAvailable(sandboxName);
       const sandbox = resolveSandboxDestroyRegistryAuthority(sandboxName).entry;
+      assertSandboxDestroyEndpointAuthority(resolveSandboxDestroyRuntimeSelection(sandbox));
       const session = onboardSession.loadSession();
       const retainedRecoveryRecords = onboardSession.listRetainedSandboxRecoveryRecords();
       const identityFreeRecovery = hasOnlyIdentityFreeRecovery(

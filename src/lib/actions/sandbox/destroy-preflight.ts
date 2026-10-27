@@ -49,7 +49,11 @@ import {
 } from "../../state/registry/cross-port";
 
 export { listInferenceRouteOwnersAcrossGatewayRoots };
-import { type DestroyRunOpenshell, scopeSandboxDestroyOpenShellArgs } from "./destroy-gateway";
+import {
+  type DestroyRunOpenshell,
+  createGatewayScopedDestroyRunner,
+  scopeSandboxDestroyOpenShellArgs,
+} from "./destroy-gateway";
 import { classifyDestroySandboxPresence, type DestroySandboxPresence } from "./destroy-presence";
 import {
   getPersistedSandboxTargetGatewayName,
@@ -226,6 +230,17 @@ export function resolveSandboxDestroyRuntimeSelection(
   // MCP source inspection freezes its gateway target during preparation. The
   // non-MCP registry is only a routing hint and cannot assert MCP ownership.
   return undefined;
+}
+
+/** Refuse an ambient endpoint before confirmation or retained recovery can probe it. */
+export function assertSandboxDestroyEndpointAuthority(
+  runtimeSelection?: OpenShellRuntimeSelection,
+): void {
+  if (!runtimeSelection && process.env.OPENSHELL_GATEWAY_ENDPOINT?.trim()) {
+    throw new Error(
+      "OPENSHELL_GATEWAY_ENDPOINT is set, so OpenShell may bypass the gateway recorded for this sandbox. Unset OPENSHELL_GATEWAY_ENDPOINT and retry.",
+    );
+  }
 }
 
 function sandboxGatewayPort(entry: SandboxEntry): number {
@@ -673,11 +688,7 @@ export async function prepareSandboxDestroy(
   );
   const runtimeSelection =
     operationRuntimeSelection ?? resolveSandboxDestroyRuntimeSelection(sandbox);
-  if (!runtimeSelection && process.env.OPENSHELL_GATEWAY_ENDPOINT?.trim()) {
-    throw new Error(
-      "OPENSHELL_GATEWAY_ENDPOINT is set, so OpenShell may bypass the gateway recorded for this sandbox. Unset OPENSHELL_GATEWAY_ENDPOINT and retry.",
-    );
-  }
+  assertSandboxDestroyEndpointAuthority(runtimeSelection);
   if (runtimeSelection && runtimeSelection.gatewayName !== cleanupGatewayName) {
     throw new Error(
       `Refusing to destroy sandbox '${sandboxName}': recorded MCP gateway '${runtimeSelection.gatewayName}' does not match destroy gateway '${cleanupGatewayName}'.`,
@@ -685,14 +696,11 @@ export async function prepareSandboxDestroy(
   }
   const scopeDestroyCommand = (args: string[]): string[] =>
     scopeSandboxDestroyOpenShellArgs(args, cleanupGatewayName);
-  const selectedRunOpenshell: DestroyRunOpenshell = runtimeSelection
-    ? (args, options = {}) =>
-        runOpenshell(scopeDestroyCommand(args), {
-          ...options,
-          env: buildSelectedOpenShellSubprocessEnv(runtimeSelection),
-          replaceEnv: true,
-        })
-    : (args, options = {}) => runOpenshell(scopeDestroyCommand(args), options);
+  const selectedRunOpenshell = createGatewayScopedDestroyRunner(
+    runOpenshell,
+    cleanupGatewayName,
+    runtimeSelection ? () => buildSelectedOpenShellSubprocessEnv(runtimeSelection) : undefined,
+  );
   const selectedCaptureOpenshell = runtimeSelection
     ? (args: string[], options: Record<string, unknown> = {}) =>
         captureOpenshell(scopeDestroyCommand(args), {

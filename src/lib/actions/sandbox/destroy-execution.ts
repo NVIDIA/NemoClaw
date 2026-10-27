@@ -65,7 +65,7 @@ import { removeExactOpenShellDockerSandboxContainers } from "../../onboard/opens
 import {
   type DestroyRunOpenshell,
   SANDBOX_DESTROY_TIMEOUT_MS,
-  scopeSandboxDestroyOpenShellArgs,
+  createGatewayScopedDestroyRunner,
 } from "./destroy-gateway";
 import {
   finalizeMcpBridgesAfterSandboxDelete,
@@ -498,24 +498,6 @@ async function finalizeMcpDestroy(
   });
 }
 
-function createGatewayScopedDestroyRunner(
-  runOpenshell: DestroyRunOpenshell,
-  gatewayName: string,
-  runtimeSelection?: OpenShellRuntimeSelection,
-): DestroyRunOpenshell {
-  const scopeCommand = (args: string[]): string[] =>
-    scopeSandboxDestroyOpenShellArgs(args, gatewayName);
-  if (runtimeSelection) {
-    return (args, options = {}) =>
-      runOpenshell(scopeCommand(args), {
-        ...options,
-        env: buildSelectedOpenShellSubprocessEnv(runtimeSelection),
-        replaceEnv: true,
-      });
-  }
-  return (args, options = {}) => runOpenshell(scopeCommand(args), options);
-}
-
 export async function executeSandboxDestroy({
   force,
   getSandbox,
@@ -801,7 +783,9 @@ export async function executeSandboxDestroy({
     const selectedRunOpenshell = createGatewayScopedDestroyRunner(
       runOpenshell,
       effectiveDeleteGatewayName,
-      destroyRuntimeSelection,
+      destroyRuntimeSelection
+        ? () => buildSelectedOpenShellSubprocessEnv(destroyRuntimeSelection)
+        : undefined,
     );
     // Prepared-only/incomplete adds have no external resources and are safely
     // discarded during preparation. Remaining entries are the durable exact
