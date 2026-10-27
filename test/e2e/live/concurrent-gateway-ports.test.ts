@@ -7,7 +7,9 @@
  * host, per-port OpenShell Docker-driver gateways, dashboard forward
  * allocation, port-scoped `nemoclaw list`, OpenShell sandbox discovery, host
  * socket probes, selected-instance uninstall/health cleanup, and whole-host
- * uninstall when only a non-default gateway remains.
+ * uninstall when only a non-default gateway remains. This case also verifies
+ * cross-gateway destroy survival under both cleanup policies: gateway A stays
+ * selected and its sandbox restarts through unscoped OpenShell commands.
  */
 
 import fs from "node:fs";
@@ -94,6 +96,23 @@ async function command(
     env: options.env ?? commandEnv(),
     timeoutMs: options.timeoutMs,
   });
+}
+
+function gatewayRegistryContains(result: ShellProbeResult, gatewayName: string): boolean {
+  try {
+    const gateways: unknown = JSON.parse(result.stdout);
+    return (
+      Array.isArray(gateways) &&
+      gateways.some(
+        (gateway) =>
+          gateway &&
+          typeof gateway === "object" &&
+          (gateway as { name?: unknown }).name === gatewayName,
+      )
+    );
+  } catch {
+    return false;
+  }
 }
 
 function gatewayProcessEvidence(evidence: string, gateway: string): string | undefined {
@@ -248,6 +267,123 @@ async function expectPortNotListening(
   return result;
 }
 
+interface SurvivorDashboardProbe {
+  readonly gatewayPort: ShellProbeResult;
+  readonly scopedList: ShellProbeResult;
+  readonly dashboard: readonly ShellProbeResult[];
+}
+
+async function probeSurvivorDashboard(
+  host: HostCliClient,
+  sandbox: SandboxClient,
+  gatewayName: string,
+  gatewayPort: string,
+  dashboardPort: string,
+  artifactPrefix: string,
+  dashboardProbes = 1,
+): Promise<SurvivorDashboardProbe> {
+  const gatewayPortProbe = await host.command(
+    "bash",
+    ["-lc", `ss -ltn | grep -Eq '[:.]${gatewayPort}\\b'`],
+    {
+      artifactName: `${artifactPrefix}-gateway-port`,
+      env: commandEnv(),
+      timeoutMs: 30_000,
+    },
+  );
+  const scopedList = await sandbox.openshell(["sandbox", "list", "-g", gatewayName], {
+    artifactName: `${artifactPrefix}-registry`,
+    env: commandEnv(),
+    timeoutMs: 30_000,
+  });
+  const dashboard: ShellProbeResult[] = [];
+  for (let probe = 1; probe <= dashboardProbes; probe += 1) {
+    dashboard.push(
+      await host.command(
+        "curl",
+        [
+          "-sS",
+          "-L",
+          "--max-time",
+          "10",
+          "-o",
+          "/dev/null",
+          "-w",
+          "%{http_code}",
+          `http://127.0.0.1:${dashboardPort}/`,
+        ],
+        {
+          artifactName: `${artifactPrefix}-dashboard-${String(probe)}`,
+          env: commandEnv(),
+          timeoutMs: 30_000,
+        },
+      ),
+    );
+    await (probe < dashboardProbes ? sleep(PROBE_DELAY_MS) : Promise.resolve());
+  }
+  return { gatewayPort: gatewayPortProbe, scopedList, dashboard };
+}
+
+async function selectAndVerifyActiveGateway(
+  sandbox: SandboxClient,
+  gatewayName: string,
+  sandboxName: string,
+  siblingSandboxName: string,
+  artifactPrefix: string,
+): Promise<{
+  readonly select: ShellProbeResult;
+  readonly list: ShellProbeResult;
+  readonly containsOnlyTargetSandbox: boolean;
+}> {
+  const select = await sandbox.openshell(["gateway", "select", gatewayName], {
+    artifactName: `${artifactPrefix}-select`,
+    env: commandEnv(),
+    timeoutMs: 30_000,
+  });
+  const list = await sandbox.openshell(["sandbox", "list"], {
+    artifactName: `${artifactPrefix}-active-sandbox-list`,
+    env: commandEnv(),
+    timeoutMs: 30_000,
+  });
+  return {
+    select,
+    list,
+    containsOnlyTargetSandbox:
+      list.exitCode === 0 &&
+      outputIncludesSandbox(list.stdout, sandboxName) &&
+      !outputIncludesSandbox(list.stdout, siblingSandboxName),
+  };
+}
+
+async function stopStartSurvivor(
+  sandbox: SandboxClient,
+  sandboxName: string,
+  gatewayName: string,
+  artifactPrefix: string,
+): Promise<{
+  readonly stop: ShellProbeResult;
+  readonly start: ShellProbeResult;
+  readonly phase: string;
+}> {
+  const stop = await sandbox.openshell(["sandbox", "stop", sandboxName], {
+    artifactName: `${artifactPrefix}-stop`,
+    env: commandEnv(),
+    timeoutMs: 120_000,
+  });
+  const start = await sandbox.openshell(["sandbox", "start", sandboxName], {
+    artifactName: `${artifactPrefix}-start`,
+    env: commandEnv(),
+    timeoutMs: 120_000,
+  });
+  const phase = await waitForSandboxReady(
+    sandbox,
+    sandboxName,
+    gatewayName,
+    `${artifactPrefix}-ready`,
+  );
+  return { stop, start, phase };
+}
+
 async function prerequisiteOrSkip(
   host: HostCliClient,
   skip: (message: string) => never,
@@ -364,6 +500,9 @@ test(
         "onboard sandbox on alternate gateway",
         "verify isolated gateways and dashboard forwards",
         "garbage-collect an orphan without deleting the sibling gateway image",
+        "destroy alternate sandbox with gateway cleanup while restarting the survivor",
+        "destroy alternate sandbox without gateway cleanup while restarting the survivor",
+        "restore the alternate sandbox before uninstall",
         "uninstall one gateway without disrupting its sibling",
         "whole-host uninstall omits the absent default gateway",
       ],
@@ -409,6 +548,8 @@ test(
         "both sandboxes, gateways, and dashboard forwards coexist without port collision",
         "each port-scoped registry lists only the sandbox owned by that gateway",
         "gc on gateway A preserves gateway B's registered image while removing a true orphan tag",
+        "destroy with gateway cleanup removes gateway B, preserves selected gateway A, and keeps A restartable and dashboard-reachable",
+        "destroy without gateway cleanup removes only B's sandbox, preserves gateway B and selected gateway A, and keeps A restartable and dashboard-reachable",
         "uninstalling gateway B removes only its scoped state and leaves gateway A plus the shared CLI healthy",
         "whole-host uninstall removes the remaining non-default gateway without enumerating port 8080",
       ],
@@ -622,6 +763,283 @@ test(
       `registered image=${resultText(registeredImage)}, ref=${registeredImageTag}; sibling before=${resultText(siblingImageBeforeGc)}; orphan tag=${resultText(taggedOrphan)}; gc=${resultText(garbageCollect)}; sibling after=${resultText(retainedSiblingImage)}; orphan tags=${resultText(orphanTagsAfterGc)}`,
     ).toBe(true);
 
+    progress.phase("destroy alternate sandbox with gateway cleanup while restarting the survivor");
+    const gatewayAProcessBeforeCleanupDestroy = gatewayProcessEvidence(
+      await captureGatewayEvidence(
+        host,
+        sandbox,
+        [[gatewayA, GATEWAY_PORT_A]],
+        "phase-3-before-cleanup-destroy",
+      ),
+      gatewayA,
+    );
+    const gatewayASelectionBeforeCleanupDestroy = await selectAndVerifyActiveGateway(
+      sandbox,
+      gatewayA,
+      SANDBOX_A,
+      SANDBOX_B,
+      "phase-3-select-gateway-a-before-cleanup-destroy",
+    );
+    const gatewayASelectedBeforeCleanupDestroy =
+      gatewayASelectionBeforeCleanupDestroy.select.exitCode === 0 &&
+      gatewayASelectionBeforeCleanupDestroy.containsOnlyTargetSandbox;
+    expect(
+      gatewayASelectedBeforeCleanupDestroy,
+      `select=${resultText(gatewayASelectionBeforeCleanupDestroy.select)}; list=${resultText(gatewayASelectionBeforeCleanupDestroy.list)}`,
+    ).toBe(true);
+    const destroyBWithGatewayCleanup = await command(
+      host,
+      [SANDBOX_B, "destroy", "--yes", "--cleanup-gateway"],
+      {
+        artifactName: "phase-3-destroy-b-with-gateway-cleanup",
+        env: commandEnv({ NEMOCLAW_GATEWAY_PORT: GATEWAY_PORT_B }),
+        timeoutMs: 5 * 60_000,
+      },
+    );
+    const gatewayRegistryAfterCleanupDestroy = await sandbox.openshell(
+      ["gateway", "list", "-o", "json"],
+      {
+        artifactName: "phase-3-gateway-registry-after-cleanup-destroy",
+        env: commandEnv(),
+        timeoutMs: 30_000,
+      },
+    );
+    const gatewayBStoppedAfterCleanupDestroy = await host.command(
+      "bash",
+      ["-lc", `! ss -ltn | grep -Eq '[:.]${GATEWAY_PORT_B}\\b'`],
+      {
+        artifactName: "phase-3-gateway-b-stopped-after-destroy",
+        env: commandEnv(),
+        timeoutMs: 30_000,
+      },
+    );
+    const gatewayAProcessAfterCleanupDestroy = gatewayProcessEvidence(
+      await captureGatewayEvidence(
+        host,
+        sandbox,
+        [[gatewayA, GATEWAY_PORT_A]],
+        "phase-3-after-cleanup-destroy",
+      ),
+      gatewayA,
+    );
+    const liveSurvivorAfterCleanupDestroy = await probeSurvivorDashboard(
+      host,
+      sandbox,
+      gatewayA,
+      GATEWAY_PORT_A,
+      DASHBOARD_PORT_A,
+      "phase-3-live-survivor-after-cleanup-destroy",
+    );
+    const gatewayBDestroyedWithCleanup =
+      destroyBWithGatewayCleanup.exitCode === 0 &&
+      gatewayRegistryAfterCleanupDestroy.exitCode === 0 &&
+      !gatewayRegistryContains(gatewayRegistryAfterCleanupDestroy, gatewayB) &&
+      gatewayBStoppedAfterCleanupDestroy.exitCode === 0;
+    const gatewayAProcessPreservedWithCleanup =
+      Boolean(gatewayAProcessBeforeCleanupDestroy) &&
+      gatewayAProcessAfterCleanupDestroy === gatewayAProcessBeforeCleanupDestroy;
+    const gatewayAHealthyBeforeCleanupRestart =
+      liveSurvivorAfterCleanupDestroy.gatewayPort.exitCode === 0 &&
+      liveSurvivorAfterCleanupDestroy.scopedList.exitCode === 0 &&
+      outputIncludesSandbox(liveSurvivorAfterCleanupDestroy.scopedList.stdout, SANDBOX_A) &&
+      liveSurvivorAfterCleanupDestroy.dashboard.every(
+        (probe) => probe.exitCode === 0 && /^[23][0-9]{2}$/.test(probe.stdout.trim()),
+      );
+    expect(
+      gatewayASelectedBeforeCleanupDestroy &&
+        gatewayBDestroyedWithCleanup &&
+        gatewayAProcessPreservedWithCleanup &&
+        gatewayAHealthyBeforeCleanupRestart,
+      `selected A=${resultText(gatewayASelectionBeforeCleanupDestroy.select)}; active list=${resultText(gatewayASelectionBeforeCleanupDestroy.list)}; destroy=${resultText(destroyBWithGatewayCleanup)}; gateway B=${resultText(gatewayBStoppedAfterCleanupDestroy)}; gateway registry=${resultText(gatewayRegistryAfterCleanupDestroy)}; gateway A before=${gatewayAProcessBeforeCleanupDestroy}; gateway A after=${gatewayAProcessAfterCleanupDestroy}; survivor port=${resultText(liveSurvivorAfterCleanupDestroy.gatewayPort)}; list=${resultText(liveSurvivorAfterCleanupDestroy.scopedList)}; dashboard=${liveSurvivorAfterCleanupDestroy.dashboard.map(resultText).join("\\n")}`,
+    ).toBe(true);
+    const survivorRestartAfterCleanupDestroy = await stopStartSurvivor(
+      sandbox,
+      SANDBOX_A,
+      gatewayA,
+      "phase-3-survivor-after-cleanup-destroy",
+    );
+    const survivorDashboardAfterCleanupDestroy = await probeSurvivorDashboard(
+      host,
+      sandbox,
+      gatewayA,
+      GATEWAY_PORT_A,
+      DASHBOARD_PORT_A,
+      "phase-3-survivor-after-cleanup-destroy",
+      POST_UNINSTALL_HEALTH_PROBES,
+    );
+    const sandboxARestartedWithCleanup =
+      survivorRestartAfterCleanupDestroy.stop.exitCode === 0 &&
+      survivorRestartAfterCleanupDestroy.start.exitCode === 0 &&
+      ["Ready", "Running"].includes(survivorRestartAfterCleanupDestroy.phase);
+    const gatewayADashboardAvailableAfterCleanupRestart =
+      survivorDashboardAfterCleanupDestroy.gatewayPort.exitCode === 0 &&
+      survivorDashboardAfterCleanupDestroy.scopedList.exitCode === 0 &&
+      outputIncludesSandbox(survivorDashboardAfterCleanupDestroy.scopedList.stdout, SANDBOX_A) &&
+      survivorDashboardAfterCleanupDestroy.dashboard.every(
+        (probe) => probe.exitCode === 0 && /^[23][0-9]{2}$/.test(probe.stdout.trim()),
+      );
+    expect(
+      sandboxARestartedWithCleanup && gatewayADashboardAvailableAfterCleanupRestart,
+      `stop=${resultText(survivorRestartAfterCleanupDestroy.stop)}; start=${resultText(survivorRestartAfterCleanupDestroy.start)}; phase=${survivorRestartAfterCleanupDestroy.phase}; port=${resultText(survivorDashboardAfterCleanupDestroy.gatewayPort)}; list=${resultText(survivorDashboardAfterCleanupDestroy.scopedList)}; dashboard=${survivorDashboardAfterCleanupDestroy.dashboard.map(resultText).join("\\n")}`,
+    ).toBe(true);
+
+    await runOnboard(
+      host,
+      SANDBOX_B,
+      GATEWAY_PORT_B,
+      fake.baseUrl,
+      "phase-3-reonboard-b-after-cleanup-destroy",
+    );
+    await waitForSandboxReady(
+      sandbox,
+      SANDBOX_B,
+      gatewayB,
+      "phase-3-sandbox-b-ready-after-cleanup-destroy",
+    );
+    progress.phase(
+      "destroy alternate sandbox without gateway cleanup while restarting the survivor",
+    );
+    const gatewayASelectionBeforeRetainedDestroy = await selectAndVerifyActiveGateway(
+      sandbox,
+      gatewayA,
+      SANDBOX_A,
+      SANDBOX_B,
+      "phase-3-select-gateway-a-before-retained-destroy",
+    );
+    const gatewayASelectedBeforeRetainedDestroy =
+      gatewayASelectionBeforeRetainedDestroy.select.exitCode === 0 &&
+      gatewayASelectionBeforeRetainedDestroy.containsOnlyTargetSandbox;
+    expect(
+      gatewayASelectedBeforeRetainedDestroy,
+      `select=${resultText(gatewayASelectionBeforeRetainedDestroy.select)}; list=${resultText(gatewayASelectionBeforeRetainedDestroy.list)}`,
+    ).toBe(true);
+    const destroyBWithoutGatewayCleanup = await command(
+      host,
+      [SANDBOX_B, "destroy", "--yes", "--no-cleanup-gateway"],
+      {
+        artifactName: "phase-3-destroy-b-without-gateway-cleanup",
+        env: commandEnv({ NEMOCLAW_GATEWAY_PORT: GATEWAY_PORT_B }),
+        timeoutMs: 5 * 60_000,
+      },
+    );
+    const gatewayRegistryAfterRetainedDestroy = await sandbox.openshell(
+      ["gateway", "list", "-o", "json"],
+      {
+        artifactName: "phase-3-gateway-registry-after-retained-destroy",
+        env: commandEnv(),
+        timeoutMs: 30_000,
+      },
+    );
+    const gatewayBRetainedAfterDestroy = await host.command(
+      "bash",
+      ["-lc", `ss -ltn | grep -Eq '[:.]${GATEWAY_PORT_B}\\b'`],
+      {
+        artifactName: "phase-3-gateway-b-retained-after-destroy",
+        env: commandEnv(),
+        timeoutMs: 30_000,
+      },
+    );
+    const sandboxBAfterRetainedDestroy = await sandbox.openshell(
+      ["sandbox", "list", "-g", gatewayB],
+      {
+        artifactName: "phase-3-sandbox-b-absent-after-retained-destroy",
+        env: openshellEnvForGateway(gatewayB),
+        timeoutMs: 30_000,
+      },
+    );
+    const gatewayAProcessAfterRetainedDestroy = gatewayProcessEvidence(
+      await captureGatewayEvidence(
+        host,
+        sandbox,
+        [[gatewayA, GATEWAY_PORT_A]],
+        "phase-3-after-retained-destroy",
+      ),
+      gatewayA,
+    );
+    const liveSurvivorAfterRetainedDestroy = await probeSurvivorDashboard(
+      host,
+      sandbox,
+      gatewayA,
+      GATEWAY_PORT_A,
+      DASHBOARD_PORT_A,
+      "phase-3-live-survivor-after-retained-destroy",
+    );
+    const sandboxBDestroyedWithoutGatewayCleanup =
+      destroyBWithoutGatewayCleanup.exitCode === 0 &&
+      sandboxBAfterRetainedDestroy.exitCode === 0 &&
+      !outputIncludesSandbox(resultText(sandboxBAfterRetainedDestroy), SANDBOX_B);
+    const gatewayBRetainedWithoutCleanup =
+      gatewayBRetainedAfterDestroy.exitCode === 0 &&
+      gatewayRegistryAfterRetainedDestroy.exitCode === 0 &&
+      gatewayRegistryContains(gatewayRegistryAfterRetainedDestroy, gatewayB);
+    const gatewayAProcessPreservedWithoutCleanup =
+      gatewayAProcessAfterRetainedDestroy === gatewayAProcessBeforeCleanupDestroy;
+    const gatewayAHealthyBeforeRetainedRestart =
+      liveSurvivorAfterRetainedDestroy.gatewayPort.exitCode === 0 &&
+      liveSurvivorAfterRetainedDestroy.scopedList.exitCode === 0 &&
+      outputIncludesSandbox(liveSurvivorAfterRetainedDestroy.scopedList.stdout, SANDBOX_A) &&
+      liveSurvivorAfterRetainedDestroy.dashboard.every(
+        (probe) => probe.exitCode === 0 && /^[23][0-9]{2}$/.test(probe.stdout.trim()),
+      );
+    expect(
+      gatewayASelectedBeforeRetainedDestroy &&
+        sandboxBDestroyedWithoutGatewayCleanup &&
+        gatewayBRetainedWithoutCleanup &&
+        gatewayAProcessPreservedWithoutCleanup &&
+        gatewayAHealthyBeforeRetainedRestart,
+      `selected A=${resultText(gatewayASelectionBeforeRetainedDestroy.select)}; active list=${resultText(gatewayASelectionBeforeRetainedDestroy.list)}; destroy=${resultText(destroyBWithoutGatewayCleanup)}; gateway B=${resultText(gatewayBRetainedAfterDestroy)}; gateway registry=${resultText(gatewayRegistryAfterRetainedDestroy)}; sandbox B=${resultText(sandboxBAfterRetainedDestroy)}; gateway A=${gatewayAProcessAfterRetainedDestroy}; survivor port=${resultText(liveSurvivorAfterRetainedDestroy.gatewayPort)}; list=${resultText(liveSurvivorAfterRetainedDestroy.scopedList)}; dashboard=${liveSurvivorAfterRetainedDestroy.dashboard.map(resultText).join("\\n")}`,
+    ).toBe(true);
+    const survivorRestartAfterRetainedDestroy = await stopStartSurvivor(
+      sandbox,
+      SANDBOX_A,
+      gatewayA,
+      "phase-3-survivor-after-retained-destroy",
+    );
+    const survivorDashboardAfterRetainedDestroy = await probeSurvivorDashboard(
+      host,
+      sandbox,
+      gatewayA,
+      GATEWAY_PORT_A,
+      DASHBOARD_PORT_A,
+      "phase-3-survivor-after-retained-destroy",
+      POST_UNINSTALL_HEALTH_PROBES,
+    );
+    const sandboxARestartedWithoutCleanup =
+      survivorRestartAfterRetainedDestroy.stop.exitCode === 0 &&
+      survivorRestartAfterRetainedDestroy.start.exitCode === 0 &&
+      ["Ready", "Running"].includes(survivorRestartAfterRetainedDestroy.phase);
+    const gatewayADashboardAvailableAfterRetainedRestart =
+      survivorDashboardAfterRetainedDestroy.gatewayPort.exitCode === 0 &&
+      survivorDashboardAfterRetainedDestroy.scopedList.exitCode === 0 &&
+      outputIncludesSandbox(survivorDashboardAfterRetainedDestroy.scopedList.stdout, SANDBOX_A) &&
+      survivorDashboardAfterRetainedDestroy.dashboard.every(
+        (probe) => probe.exitCode === 0 && /^[23][0-9]{2}$/.test(probe.stdout.trim()),
+      );
+    expect(
+      sandboxARestartedWithoutCleanup && gatewayADashboardAvailableAfterRetainedRestart,
+      `stop=${resultText(survivorRestartAfterRetainedDestroy.stop)}; start=${resultText(survivorRestartAfterRetainedDestroy.start)}; phase=${survivorRestartAfterRetainedDestroy.phase}; port=${resultText(survivorDashboardAfterRetainedDestroy.gatewayPort)}; list=${resultText(survivorDashboardAfterRetainedDestroy.scopedList)}; dashboard=${survivorDashboardAfterRetainedDestroy.dashboard.map(resultText).join("\\n")}`,
+    ).toBe(true);
+
+    progress.phase("restore the alternate sandbox before uninstall");
+    const onboardBAfterRetainedDestroy = await runOnboard(
+      host,
+      SANDBOX_B,
+      GATEWAY_PORT_B,
+      fake.baseUrl,
+      "phase-3-reonboard-b-before-uninstall",
+    );
+    const phaseBAfterRetainedDestroy = await waitForSandboxReady(
+      sandbox,
+      SANDBOX_B,
+      gatewayB,
+      "phase-3-sandbox-b-ready-before-uninstall",
+    );
+    expect(
+      onboardBAfterRetainedDestroy.exitCode === 0 &&
+        ["Ready", "Running"].includes(phaseBAfterRetainedDestroy),
+      `onboard=${resultText(onboardBAfterRetainedDestroy)}; phase=${phaseBAfterRetainedDestroy}`,
+    ).toBe(true);
+
     progress.phase("uninstall one gateway without disrupting its sibling");
     const gatewayPair = [
       [gatewayA, GATEWAY_PORT_A],
@@ -635,9 +1053,10 @@ test(
     );
     const processA = gatewayProcessEvidence(beforeEvidence, gatewayA);
     const processB = gatewayProcessEvidence(beforeEvidence, gatewayB);
-    expect(processA).toBeDefined();
-    expect(processB).toBeDefined();
-    expect(processA).not.toBe(processB);
+    expect(
+      Boolean(processA && processB && processA !== processB),
+      `gateway A=${processA}; gateway B=${processB}`,
+    ).toBe(true);
 
     const uninstallB = await command(host, ["uninstall", "--yes", "--destroy-user-data"], {
       artifactName: "phase-4-uninstall-gateway-b",
@@ -652,10 +1071,15 @@ test(
       gatewayPair,
       "phase-4-after-uninstall",
     );
-    expect(gatewayProcessEvidence(afterEvidence, gatewayA)).toBe(processA);
-    expect(gatewayProcessEvidence(afterEvidence, gatewayB)).toBeUndefined();
+    const processAAfterUninstall = gatewayProcessEvidence(afterEvidence, gatewayA);
+    const processBAfterUninstall = gatewayProcessEvidence(afterEvidence, gatewayB);
+    expect(
+      processAAfterUninstall === processA && processBAfterUninstall === undefined,
+      `gateway A before=${processA}; after=${processAAfterUninstall}; gateway B after=${processBAfterUninstall}`,
+    ).toBe(true);
 
     const survivorPhases: string[] = [];
+    let listAAfterUninstallB: ShellProbeResult | undefined;
     for (let probe = 1; probe <= POST_UNINSTALL_HEALTH_PROBES; probe += 1) {
       survivorPhases.push(
         await waitForSandboxReady(
@@ -665,14 +1089,20 @@ test(
           `phase-4-survivor-probe-${String(probe)}`,
         ),
       );
-      await expectPortListening(host, GATEWAY_PORT_A, `phase-4-survivor-port-${String(probe)}`);
+      const gatewayPortProbe = await host.command(
+        "bash",
+        ["-lc", `ss -ltn | grep -Eq '[:.]${GATEWAY_PORT_A}\\b'`],
+        {
+          artifactName: `phase-4-survivor-port-${String(probe)}`,
+          env: commandEnv(),
+          timeoutMs: 30_000,
+        },
+      );
       const scopedList = await command(host, ["list"], {
         artifactName: `phase-4-survivor-list-${String(probe)}`,
         env: commandEnv({ NEMOCLAW_GATEWAY_PORT: GATEWAY_PORT_A }),
         timeoutMs: 60_000,
       });
-      expect(scopedList.exitCode, resultText(scopedList)).toBe(0);
-      expect(outputIncludesSandbox(scopedList.stdout, SANDBOX_A), scopedList.stdout).toBe(true);
       const dashboardProbe = await host.command(
         "curl",
         [
@@ -692,22 +1122,18 @@ test(
           timeoutMs: 30_000,
         },
       );
-      expect(dashboardProbe.exitCode, resultText(dashboardProbe)).toBe(0);
-      expect(dashboardProbe.stdout.trim()).toMatch(/^[23][0-9]{2}$/);
+      listAAfterUninstallB = scopedList;
+      expect(
+        gatewayPortProbe.exitCode === 0 &&
+          scopedList.exitCode === 0 &&
+          outputIncludesSandbox(scopedList.stdout, SANDBOX_A) &&
+          dashboardProbe.exitCode === 0 &&
+          /^[23][0-9]{2}$/.test(dashboardProbe.stdout.trim()),
+        `port=${resultText(gatewayPortProbe)}; list=${resultText(scopedList)}; dashboard=${resultText(dashboardProbe)}`,
+      ).toBe(true);
       await (probe < POST_UNINSTALL_HEALTH_PROBES ? sleep(PROBE_DELAY_MS) : Promise.resolve());
     }
     await expectPortNotListening(host, GATEWAY_PORT_B, "phase-4-gateway-port-b-stopped");
-
-    const listAAfterUninstallB = await command(host, ["list"], {
-      artifactName: "phase-4-nemoclaw-list-a-after-b-uninstall",
-      env: commandEnv({ NEMOCLAW_GATEWAY_PORT: GATEWAY_PORT_A }),
-      timeoutMs: 60_000,
-    });
-    expect(
-      listAAfterUninstallB.exitCode === 0 &&
-        outputIncludesSandbox(listAAfterUninstallB.stdout, SANDBOX_A),
-      resultText(listAAfterUninstallB),
-    ).toBe(true);
 
     const scopedStateRemoved = await host.command(
       "bash",
@@ -762,11 +1188,26 @@ test(
         siblingGatewayImagePreservedByGc: siblingImagePreserved,
         gcRemovedOnlyOrphanTag: orphanTagAbsent,
         dashboardPortsDistinct: Boolean(dashboardA && dashboardB && dashboardA !== dashboardB),
+        gatewayASelectedBeforeCleanupDestroy: gatewayASelectedBeforeCleanupDestroy,
+        gatewayBDestroyedWithCleanup: gatewayBDestroyedWithCleanup,
+        gatewayAProcessPreservedWithCleanup: gatewayAProcessPreservedWithCleanup,
+        gatewayAHealthyBeforeCleanupRestart: gatewayAHealthyBeforeCleanupRestart,
+        sandboxARestartedWithCleanup: sandboxARestartedWithCleanup,
+        gatewayADashboardAvailableAfterCleanupRestart:
+          gatewayADashboardAvailableAfterCleanupRestart,
+        gatewayASelectedBeforeRetainedDestroy: gatewayASelectedBeforeRetainedDestroy,
+        sandboxBDestroyedWithoutGatewayCleanup: sandboxBDestroyedWithoutGatewayCleanup,
+        gatewayBRetainedWithoutCleanup: gatewayBRetainedWithoutCleanup,
+        gatewayAProcessPreservedWithoutCleanup: gatewayAProcessPreservedWithoutCleanup,
+        gatewayAHealthyBeforeRetainedRestart: gatewayAHealthyBeforeRetainedRestart,
+        sandboxARestartedWithoutCleanup: sandboxARestartedWithoutCleanup,
+        gatewayADashboardAvailableAfterRetainedRestart:
+          gatewayADashboardAvailableAfterRetainedRestart,
         gatewayBUninstalled: uninstallB.exitCode === 0 && scopedStateRemoved.exitCode === 0,
         sandboxAPreservedAfterUninstallB:
           survivorPhases.length === POST_UNINSTALL_HEALTH_PROBES &&
           survivorPhases.every((phase) => phase === "Ready" || phase === "Running"),
-        sharedCliPreserved: listAAfterUninstallB.exitCode === 0,
+        sharedCliPreserved: listAAfterUninstallB?.exitCode === 0,
         wholeHostUninstallPassed: uninstallAll.exitCode === 0,
         absentDefaultGatewayOmitted: !/gateway 'nemoclaw' on port 8080/u.test(uninstallAllOutput),
         remainingGatewayStateRemoved: remainingStateRemoved.exitCode === 0,
