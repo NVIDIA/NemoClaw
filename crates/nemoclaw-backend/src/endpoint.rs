@@ -19,8 +19,14 @@ fn private(ip: IpAddr) -> bool {
         IpAddr::V6(ip) => ip.is_unique_local(),
     }
 }
+/// The address the client connects to; an IPv4-mapped IPv6 address is the
+/// IPv4 address it carries.
 fn host_ip(url: &Url) -> Option<IpAddr> {
-    url.host_str()?.trim_matches(['[', ']']).parse().ok()
+    url.host_str()?
+        .trim_matches(['[', ']'])
+        .parse()
+        .ok()
+        .map(|ip: IpAddr| ip.to_canonical())
 }
 
 /// Accept a well-formed HTTP or HTTPS endpoint: a host, no credentials, query,
@@ -71,7 +77,9 @@ pub fn validate_endpoint(raw: &str, gateway: bool) -> Result<(), ConfigError> {
         )?;
     }
     // url normalizes shorthand IPv4 (127.1, integers, octal). Require the literal
-    // address spelling from the input so normalization cannot weaken policy.
+    // address spelling from the input so normalization cannot weaken policy, and
+    // require it to be the address url connects to: url also accepts a special
+    // scheme without `//`, which puts a later `://` in the path.
     let authority = raw
         .split_once("://")
         .map(|(_, rest)| rest.split('/').next().unwrap_or(""))
@@ -86,15 +94,22 @@ pub fn validate_endpoint(raw: &str, gateway: bool) -> Result<(), ConfigError> {
         authority.split(':').next().unwrap_or("")
     };
     if url.scheme() == "http" {
-        let literal: Option<IpAddr> = literal_host.parse().ok();
+        let literal = literal_host
+            .parse()
+            .ok()
+            .map(|ip: IpAddr| ip.to_canonical())
+            .filter(|literal| Some(*literal) == ip);
         require(
             literal.is_some_and(|ip| ip.is_loopback() || (!gateway && private(ip))),
             "HTTP requires a literal loopback address or private inference address",
         )?;
     }
     require(
-        url.host_str()
-            .is_none_or(|host| !host.eq_ignore_ascii_case("metadata.google.internal")),
+        url.host_str().is_none_or(|host| {
+            !host
+                .trim_end_matches('.')
+                .eq_ignore_ascii_case("metadata.google.internal")
+        }),
         "metadata endpoints are forbidden",
     )
 }
