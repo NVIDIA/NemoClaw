@@ -91,7 +91,11 @@ export function selectPreUpgradeBackupForCreate(input: PreUpgradeBackupSelectInp
     // Inference setup reserves a route before the create flow reaches this
     // selection. That route-only placeholder is not a prior sandbox registry
     // entry and should not trigger a backup/recreate diagnostic.
-    if (input.registryEntry && !isRouteOnlySandboxReservation(input.registryEntry)) {
+    if (
+      input.registryEntry &&
+      (!isRouteOnlySandboxReservation(input.registryEntry) ||
+        input.registryEntry.pendingCreateIdentity !== undefined)
+    ) {
       console.warn(
         `  Registry entry exists for '${input.sandboxName}' but installer restore flag not set — skipping pre-upgrade backup select.`,
       );
