@@ -82,6 +82,11 @@ if (command.includes("printf '%s\\\\0%s\\\\0'")) {
   process.exit(0);
 }
 if (command.includes("tar -C")) {
+  const churnMarker = process.env.NEMOCLAW_TEST_NATIVE_CHURN_MARKER;
+  if (churnMarker && !fs.existsSync(churnMarker)) {
+    fs.writeFileSync(churnMarker, "churned");
+    process.exit(21);
+  }
   const procRoot = process.env.NEMOCLAW_TEST_NATIVE_PROC;
   if (procRoot) {
     const prelude = 'kill() { printf "%s\\\\n" "$*" >> "$NEMOCLAW_TEST_SIGNAL_LOG"; }; sleep() { :; }; tar() { command tar -C "$NEMOCLAW_TEST_NATIVE_ROOT" -cf - .; }; ';
