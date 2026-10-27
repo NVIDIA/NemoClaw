@@ -74,6 +74,7 @@ export type DestroyHarness = {
     stdout?: string;
     stderr?: string;
   }) => void;
+  setCrossRootGatewayCleanupOwners: (entries: SandboxEntry[]) => void;
   setRegisteredSandboxCount: (count: number) => void;
   setRegistryEntryPresent: (present: boolean) => void;
   setRetainedRecoveryRecords: (records: RetainedSandboxRecoveryRecord[]) => void;
@@ -305,6 +306,8 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   vi.spyOn(forwardRecovery, "teardownSandboxDashboardForward").mockResolvedValue(true);
   const destroyCommand = requireSource("../../../commands/sandbox/destroy.js").default;
   const destroyPreflight = requireSource("./destroy-preflight.js");
+  const crossPortRegistry = requireSource("../../state/registry/cross-port.js");
+  let listCrossRootGatewayCleanupOwnersSpy: MockInstance | null = null;
   const sandboxSession = requireSource("../../state/sandbox-session.js");
   const mcpBridge = requireSource("./mcp-bridge.js");
   const mcpBridgeProvider = requireSource("./mcp-bridge-provider.js");
@@ -830,6 +833,13 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     sessionState,
     setDockerIdentityResult: (result) => {
       dockerIdentityResult = result;
+    },
+    setCrossRootGatewayCleanupOwners: (entries) => {
+      listCrossRootGatewayCleanupOwnersSpy ??= vi.spyOn(
+        crossPortRegistry,
+        "listInferenceRouteOwnersAcrossGatewayRoots",
+      );
+      listCrossRootGatewayCleanupOwnersSpy.mockReturnValue(entries);
     },
     setRegisteredSandboxCount: (count: number) => {
       registeredSandboxCount = count;
