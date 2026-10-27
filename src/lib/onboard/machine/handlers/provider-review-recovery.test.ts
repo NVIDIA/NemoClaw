@@ -7,6 +7,10 @@ import {
   checkGatewayRouteCompatibility,
   type CurrentGatewayRouteCompatibilityCheck,
 } from "../../../inference/gateway-route-compatibility";
+import {
+  LLAMA_CPP_CREDENTIAL_ENV,
+  LLAMA_CPP_HOST_OPENAI_BASE_URL,
+} from "../../../inference/llama-cpp/contract";
 import { createSession, type SessionUpdates } from "../../../state/onboard-session";
 import { createProviderReviewDeps } from "../../setup-inference";
 import { handleProviderInferenceState } from "./provider-inference";
@@ -569,5 +573,138 @@ describe("provider inference review recovery", () => {
       expect(prompt).not.toHaveBeenCalled();
       expect(calls.setupInference).not.toHaveBeenCalled();
     });
+  });
+
+  describe("compatible-anthropic-endpoint route metadata (#13654)", () => {
+    const anthropicRoute = {
+      provider: "compatible-anthropic-endpoint",
+      model: "claude-sonnet-proxy",
+      endpointUrl: "https://anthropic-proxy.example.test",
+      credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+      preferredInferenceApi: "anthropic-messages",
+    };
+    const checkRouteOnEmptyGateway = vi.fn<CurrentGatewayRouteCompatibilityCheck>((request) =>
+      checkGatewayRouteCompatibility({ ...request, sandboxes: [] }),
+    );
+
+    it("checkpoints the endpoint, API family, and credential name before review", async () => {
+      const prompt = vi.fn(async (): Promise<string> => {
+        throw new Error("interrupted at review");
+      });
+      const { deps, calls } = createDeps({
+        isNonInteractive: () => false,
+        setupNim: vi.fn(async () => ({ ...baseSelection, ...anthropicRoute })),
+        prompt,
+      });
+
+      await expect(
+        handleProviderInferenceState({ ...baseOptions(deps), sandboxName: "anthropic-resume" }),
+      ).rejects.toThrow("interrupted at review");
+
+      expect(calls.startStep).toHaveBeenCalledWith("provider_selection", anthropicRoute);
+      expect(calls.setupInference).not.toHaveBeenCalled();
+    });
+
+    it("shows the review again on interactive resume of the interrupted selection", async () => {
+      const prompt = vi.fn(async () => "1");
+      const { deps, calls } = createDeps({
+        isNonInteractive: () => false,
+        prompt,
+        checkGatewayRouteCompatibility: checkRouteOnEmptyGateway,
+        isInferenceRouteReady: vi.fn(() => false),
+      });
+      const session = createSession({
+        sandboxName: "anthropic-resume",
+        ...anthropicRoute,
+        sandboxPromptProgress: {
+          sandboxName: true,
+          webSearch: false,
+          messaging: false,
+          resourceProfile: false,
+        },
+      });
+      session.steps.provider_selection.status = "failed";
+
+      await handleProviderInferenceState({
+        ...baseOptions(deps, session),
+        resume: true,
+        sandboxName: "anthropic-resume",
+      });
+
+      expect(checkRouteOnEmptyGateway).toHaveBeenCalledWith(
+        expect.objectContaining({ route: expect.objectContaining(anthropicRoute) }),
+      );
+      expect(calls.exit).not.toHaveBeenCalled();
+      expect(prompt).toHaveBeenCalledOnce();
+      expect(calls.setupInference).toHaveBeenCalledWith(
+        "anthropic-resume",
+        anthropicRoute.model,
+        anthropicRoute.provider,
+        anthropicRoute.endpointUrl,
+        anthropicRoute.credentialEnv,
+        null,
+        [],
+        expect.any(Object),
+      );
+    });
+  });
+
+  // llama-cpp-local is native local inference for OpenClaw, so resume uses
+  // the native discovery preflight, not the shared custom-route check.
+  it("checkpoints llama-cpp-local route metadata and resumes through the native preflight (#13654)", async () => {
+    const llamaRoute = {
+      provider: "llama-cpp-local",
+      model: "local-gguf",
+      endpointUrl: LLAMA_CPP_HOST_OPENAI_BASE_URL,
+      credentialEnv: LLAMA_CPP_CREDENTIAL_ENV,
+      preferredInferenceApi: "openai-completions",
+    };
+    const interrupted = createDeps({
+      isNonInteractive: () => false,
+      setupNim: vi.fn(async () => ({ ...baseSelection, ...llamaRoute })),
+      prompt: vi.fn(async (): Promise<string> => {
+        throw new Error("interrupted at review");
+      }),
+    });
+    await expect(
+      handleProviderInferenceState({
+        ...baseOptions(interrupted.deps),
+        sandboxName: "llama-resume",
+      }),
+    ).rejects.toThrow("interrupted at review");
+    expect(interrupted.calls.startStep).toHaveBeenCalledWith("provider_selection", llamaRoute);
+
+    const prompt = vi.fn(async () => "1");
+    const { deps, calls } = createDeps({
+      isNonInteractive: () => false,
+      prompt,
+      isInferenceRouteReady: vi.fn(() => false),
+    });
+    const session = createSession({
+      sandboxName: "llama-resume",
+      ...llamaRoute,
+      sandboxPromptProgress: {
+        sandboxName: true,
+        webSearch: false,
+        messaging: false,
+        resourceProfile: false,
+      },
+    });
+    session.steps.provider_selection.status = "failed";
+
+    await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "llama-resume",
+    });
+
+    expect(calls.preflightGatewayRouteDiscovery).toHaveBeenCalledWith(
+      expect.objectContaining({
+        route: expect.objectContaining(llamaRoute),
+        nativeLocalSelection: true,
+      }),
+    );
+    expect(calls.exit).not.toHaveBeenCalled();
+    expect(prompt).toHaveBeenCalledOnce();
   });
 });
