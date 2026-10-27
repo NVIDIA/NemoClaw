@@ -551,10 +551,54 @@ describe("provider inference review recovery", () => {
       );
     });
 
-    it("still refuses a session saved without that metadata", async () => {
+    it("asks for the provider again when an earlier release saved no route metadata", async () => {
       const prompt = vi.fn(async () => "1");
+      const setupNim = vi.fn(async () => ({ ...compatibleSelection }));
       const { deps, calls } = createDeps({
         isNonInteractive: () => false,
+        prompt,
+        setupNim,
+        checkGatewayRouteCompatibility: checkRouteOnEmptyGateway,
+        isInferenceRouteReady: vi.fn(() => false),
+      });
+
+      await handleProviderInferenceState({
+        ...baseOptions(
+          deps,
+          interruptedCompatibleSession({ endpointUrl: null, preferredInferenceApi: null }),
+        ),
+        resume: true,
+        sandboxName: "dcode-resume",
+      });
+
+      expect(calls.exit).not.toHaveBeenCalled();
+      expect(setupNim).toHaveBeenCalledOnce();
+      expect(calls.startStep).toHaveBeenCalledWith("provider_selection", {
+        provider: "compatible-endpoint",
+        model: "nvidia/nemotron-3.5-super-vl-120b-a12b",
+        endpointUrl: "https://integrate.api.nvidia.com/v1",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        preferredInferenceApi: "openai-completions",
+      });
+      expect(calls.startStep.mock.invocationCallOrder.at(-1)).toBeLessThan(
+        calls.setupInference.mock.invocationCallOrder[0],
+      );
+      expect(calls.setupInference).toHaveBeenCalledWith(
+        "dcode-resume",
+        "nvidia/nemotron-3.5-super-vl-120b-a12b",
+        "compatible-endpoint",
+        "https://integrate.api.nvidia.com/v1",
+        "COMPATIBLE_API_KEY",
+        null,
+        [],
+        expect.any(Object),
+      );
+    });
+
+    it("still refuses a non-interactive resume of a session saved without that metadata", async () => {
+      const prompt = vi.fn(async () => "1");
+      const { deps, calls } = createDeps({
+        isNonInteractive: () => true,
         prompt,
         checkGatewayRouteCompatibility: checkRouteOnEmptyGateway,
       });

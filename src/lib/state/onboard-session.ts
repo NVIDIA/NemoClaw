@@ -2319,10 +2319,14 @@ export function compareAndSwapSession(
   }
 }
 
-export function markStepStarted(stepName: string): Session {
+export function markStepStarted(stepName: string, updates: SessionUpdates = {}): Session {
+  const safeUpdates = filterSafeUpdates(updates);
   const updatedSession = updateSession((session) => {
     const step = session.steps[stepName];
     if (!step) return session;
+    // Record the step and its context in one write so an interruption cannot
+    // keep the started step without the context it was started with.
+    Object.assign(session, safeUpdates);
     const now = new Date().toISOString();
     step.status = "in_progress";
     step.startedAt = now;
