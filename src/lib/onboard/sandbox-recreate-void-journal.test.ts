@@ -463,6 +463,7 @@ describe("sandbox recreate recovery from a void journal", () => {
         sandboxRecreate: legacyTransaction,
       };
       const owned = ownSandboxRecreateTransaction({
+        freshOnboard: true,
         sessionStore: deleteStoreFor(owningSession),
         sandboxName: "alpha",
         gatewayName: "nemoclaw",
@@ -474,7 +475,7 @@ describe("sandbox recreate recovery from a void journal", () => {
       });
       expect(owned.recovery).toEqual({ action: "continue_create" });
       expect(owned.replacedTransactionId).toBeNull();
-      expect(owned.openedWithoutPriorTransaction).toBe(false);
+      expect(owned.transaction.freshOnboard).toBeUndefined();
       expect(owned.transaction).toEqual(legacyTransaction);
       expect(owningSession.checkpoint.sandboxRecreate).toEqual(legacyTransaction);
 
@@ -564,9 +565,10 @@ describe("sandbox recreate recovery from a void journal", () => {
 });
 
 describe("atomic recreate journal ownership", () => {
-  function sessionWithTransaction() {
+  function sessionWithTransaction(freshOnboard?: true) {
     const session = createSession({ sandboxName: "alpha", agent: "openclaw" });
     beginSandboxRecreateTransaction(session, {
+      freshOnboard,
       sandboxName: "alpha",
       gatewayName: JOURNAL_GATEWAY.gatewayName,
       gatewayPort: JOURNAL_GATEWAY.gatewayPort,
@@ -612,7 +614,7 @@ describe("atomic recreate journal ownership", () => {
           id: TX_ID,
           targetGeneration: TARGET_GENERATION,
           targetIntentFingerprint: TARGET_INTENT,
-          ...(fresh ? { freshNonForced: true as const } : {}),
+          ...(fresh ? { freshOnboard: true as const } : {}),
         },
         "alpha",
         "nemoclaw-31818",
@@ -632,38 +634,66 @@ describe("atomic recreate journal ownership", () => {
     },
   );
 
-  it("replaces a void journal without exposing an empty journal (#10473)", () => {
-    const session = sessionWithTransaction();
-    session.checkpoint = {
-      ...session.checkpoint!,
-      sandboxRecreate: { ...session.checkpoint!.sandboxRecreate!, phase: "deleted" },
-    };
-    const seen: Array<string | null> = [];
-    const baseStore = storeFor(session);
-    const owned = ownSandboxRecreateTransaction({
-      sessionStore: {
-        ...baseStore,
-        compareAndSwapSession: (matches, mutator) => {
-          return matches(session)
-            ? (seen.push(session.checkpoint?.sandboxRecreate?.id ?? null),
-              mutator(session),
-              seen.push(session.checkpoint?.sandboxRecreate?.id ?? null),
-              "updated")
-            : "mismatch";
+  it.each([false, true])(
+    "retains fresh=%s authority when replacing a void journal (#10473)",
+    (fresh) => {
+      const session = sessionWithTransaction(fresh ? true : undefined);
+      const seen: Array<string | null> = [];
+      const baseStore = storeFor(session);
+      let observation = LIVE_SOURCE;
+      const original = createSandboxRecreateRuntime(
+        baseStore,
+        session.checkpoint!.sandboxRecreate!,
+        "alpha",
+        JOURNAL_GATEWAY.gatewayName,
+        REGISTERED_SOURCE_ENTRY,
+        () => observation,
+        () => undefined,
+      );
+      original.beginDelete(fresh ? true : undefined);
+      observation = ABSENT_SOURCE;
+      original.confirmDeleted();
+      observation = LIVE_SOURCE;
+      const owned = ownSandboxRecreateTransaction({
+        freshOnboard: fresh ? undefined : true,
+        sessionStore: {
+          ...baseStore,
+          compareAndSwapSession: (matches, mutator) => {
+            return matches(session)
+              ? (seen.push(session.checkpoint?.sandboxRecreate?.id ?? null),
+                mutator(session),
+                seen.push(session.checkpoint?.sandboxRecreate?.id ?? null),
+                "updated")
+              : "mismatch";
+          },
         },
-      },
-      sandboxName: "alpha",
-      ...JOURNAL_GATEWAY,
-      targetIntentFingerprint: TARGET_INTENT,
-      readRegistryEntry: () => REGISTERED_SOURCE_ENTRY,
-      observe: () => LIVE_SOURCE,
-      decorateCheckpoint: (_current, checkpoint) => checkpoint,
-    });
+        sandboxName: "alpha",
+        ...JOURNAL_GATEWAY,
+        targetIntentFingerprint: TARGET_INTENT,
+        readRegistryEntry: () => REGISTERED_SOURCE_ENTRY,
+        observe: () => observation,
+        decorateCheckpoint: (_current, checkpoint) => checkpoint,
+      });
 
-    expect(owned.transaction.id).not.toBe(TX_ID);
-    expect(seen).toEqual([TX_ID, owned.transaction.id]);
-    expect(seen).not.toContain(null);
-  });
+      expect(owned.recovery).toEqual({ action: "restart_from_source" });
+      expect(owned.transaction.id).not.toBe(TX_ID);
+      expect(owned.transaction.freshOnboard === true).toBe(fresh);
+      expect(owned.transaction.reconcileOpenClawInference).toBeUndefined();
+      expect(seen).toEqual([TX_ID, owned.transaction.id]);
+      expect(seen).not.toContain(null);
+      const replacement = createSandboxRecreateRuntime(
+        baseStore,
+        owned.transaction,
+        "alpha",
+        JOURNAL_GATEWAY.gatewayName,
+        REGISTERED_SOURCE_ENTRY,
+        () => observation,
+        () => undefined,
+      );
+      replacement.beginDelete(true);
+      expect(session.checkpoint?.sandboxRecreate?.reconcileOpenClawInference === true).toBe(fresh);
+    },
+  );
 
   it("fails closed when the opening session changes before journal ownership (#10473)", () => {
     const session = sessionWithTransaction();

@@ -18,6 +18,8 @@ import { resolveDashboardForwardBind, type DashboardForwardBind } from "./dashbo
 import { resolveGatewayName } from "./gateway-binding";
 import type { InferenceRouteState } from "./inference-route";
 import { assertDashboardPortNotReserved } from "./preflight-ports";
+import type { NativeProviderAttachment } from "../inference/native-provider/contract";
+import { recordedNativeProviderAttachment } from "../inference/native-provider/recorded-selection";
 import {
   createProviderRecoveryReceiptLedger,
   type ProviderRecoveryReceipt,
@@ -27,6 +29,8 @@ import type { OnboardOptions } from "./types";
 import type { NativeLocalProviderAttachment } from "../inference/native-local/contract";
 import { verifyRecordedNativeLocalProviderAttachment } from "../inference/native-local/profile";
 import { createManagedProviderAdapter } from "../adapters/openshell/managed-provider-adapter";
+import { observeSandboxPresenceOnGateway } from "./sandbox-recreate-probe";
+import { verifyNativeHostedStatusAttachment } from "../actions/sandbox/inference-route-health";
 
 export type AuthoritativeOnboardGatewayBinding = { name: string; port: number };
 
@@ -278,6 +282,13 @@ export type AuthoritativeRebuildTargetDeps = {
   runFatalRuntimePreflight(): unknown | Promise<unknown>;
   ensureOpenshell(): unknown;
   assertGatewayReadiness(): unknown | Promise<unknown>;
+  getSandbox(sandboxName: string): Parameters<typeof recordedNativeProviderAttachment>[0] | null;
+  observeSandboxPresence: typeof observeSandboxPresenceOnGateway;
+  verifyNativeProviderAttachment(input: {
+    gatewayName: string;
+    sandboxName: string;
+    expected: NativeProviderAttachment;
+  }): Promise<void>;
   inferenceRouteState(provider: string, model: string): InferenceRouteState;
   observeForwardPorts: OpenShellForwardPortObserver;
   env?: NodeJS.ProcessEnv;
@@ -299,32 +310,41 @@ export function resolveAuthoritativeRebuildDashboardBind(
   });
 }
 
-/** Bind authoritative rebuild port observations to one exact gateway runtime. */
-export function forwardObserver(
+/** Bind rebuild observations and native verification to the recorded runtime. */
+export function runtimePreflightDependencies(
   target: Pick<
     AuthoritativeRebuildPreflightOptions,
     "runtimeSelection" | "sandboxName" | "targetGatewayName"
   >,
   inputAuthority: { gatewayEndpoint: string; localTlsDir?: string },
-  context: AuthoritativeRebuildForwardObserverContext,
+  context: { getSandbox: typeof import("../state/registry").getSandbox; wsl?: boolean },
   env: NodeJS.ProcessEnv = process.env,
-): OpenShellForwardPortObserver {
+): Pick<
+  AuthoritativeRebuildTargetDeps,
+  "getSandbox" | "observeSandboxPresence" | "verifyNativeProviderAttachment" | "observeForwardPorts"
+> {
   const authority = {
     gatewayEndpoint: inputAuthority.gatewayEndpoint,
     gatewayName: target.targetGatewayName,
     workspace: target.runtimeSelection?.workspace ?? "default",
     ...(inputAuthority.localTlsDir ? { localTlsDir: inputAuthority.localTlsDir } : {}),
   };
-  return createOpenShellForwardPortObserver({
-    adapter: createOpenShellForwardAdapterForAuthority(authority),
-    forwardForPort: (port) =>
-      openShellForwardIdentity(
-        authority,
-        target.sandboxName,
-        resolveAuthoritativeRebuildDashboardBind(env, context),
-        port,
-      ),
-  });
+  const forwardContext = { sandbox: context.getSandbox(target.sandboxName), wsl: context.wsl };
+  return {
+    getSandbox: context.getSandbox,
+    observeSandboxPresence: observeSandboxPresenceOnGateway,
+    verifyNativeProviderAttachment: verifyNativeHostedStatusAttachment,
+    observeForwardPorts: createOpenShellForwardPortObserver({
+      adapter: createOpenShellForwardAdapterForAuthority(authority),
+      forwardForPort: (port) =>
+        openShellForwardIdentity(
+          authority,
+          target.sandboxName,
+          resolveAuthoritativeRebuildDashboardBind(env, forwardContext),
+          port,
+        ),
+    }),
+  };
 }
 
 /** Run target-bound readiness and installer checks under an exact process-local gateway scope. */
@@ -357,12 +377,8 @@ export async function preflightAuthoritativeRebuildTarget<
     await deps.runFatalRuntimePreflight();
     deps.ensureOpenshell();
     await deps.assertGatewayReadiness();
-    // Prepared-backup recovery can run after the installer has replaced a
-    // legacy gateway. That fresh gateway has no inference route to validate
-    // yet; authoritative onboarding configures and verifies the pinned route
-    // before recreating the sandbox. A gateway that cannot answer at all leaves
-    // the route unknown, which onboarding resolves the same way. Only a gateway
-    // that answers with a different route contradicts the rebuild target.
+    // Native-local authority retains its own recovery checks. Hosted attachment
+    // inspection can be deferred only when prepared recovery proves source absence.
     if (target.nativeLocalProviderAttachment !== undefined) {
       await verifyRecordedNativeLocalProviderAttachment({
         adapter: createManagedProviderAdapter(),
@@ -372,13 +388,34 @@ export async function preflightAuthoritativeRebuildTarget<
         agent: target.agent,
         provider: target.provider,
       });
-    } else if (
-      target.deferInferenceRouteUntilOnboard !== true &&
-      deps.inferenceRouteState(target.provider, target.model) === "mismatched"
-    ) {
-      fail(
-        `OpenShell inference route does not match provider '${target.provider}' and model '${target.model}'.`,
-      );
+    } else {
+      const selection = deps.getSandbox(target.sandboxName);
+      const attachment = recordedNativeProviderAttachment(selection ?? {});
+      if (attachment) {
+        if (selection?.provider?.trim() !== target.provider) {
+          fail("Recorded native provider does not match the authoritative rebuild target.");
+        }
+        const sourcePresent =
+          target.deferInferenceRouteUntilOnboard !== true ||
+          deps.observeSandboxPresence({
+            gatewayName: target.targetGatewayName,
+            sandboxName: target.sandboxName,
+          }) === "present";
+        if (sourcePresent) {
+          await deps.verifyNativeProviderAttachment({
+            gatewayName: target.targetGatewayName,
+            sandboxName: target.sandboxName,
+            expected: attachment,
+          });
+        }
+      } else if (
+        target.deferInferenceRouteUntilOnboard !== true &&
+        deps.inferenceRouteState(target.provider, target.model) === "mismatched"
+      ) {
+        fail(
+          `OpenShell inference route does not match provider '${target.provider}' and model '${target.model}'.`,
+        );
+      }
     }
     if (target.controlUiPort === null) return;
     assertDashboardPortNotReserved(target.controlUiPort, fail);

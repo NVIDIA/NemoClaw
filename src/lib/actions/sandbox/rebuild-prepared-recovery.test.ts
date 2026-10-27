@@ -2,15 +2,57 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
+import { registry } from "../../../../test/helpers/rebuild-flow-harness";
 import { expectNoSandboxDelete } from "../../../../test/helpers/rebuild-delete-assertions";
 import {
   createRebuildFlowHarness,
   installRebuildFlowTestHooks,
   makePreparedRecoveryManifest,
 } from "../../../../test/helpers/rebuild-flow-generic-harness";
+import {
+  nativeProviderRebuildReadiness,
+  nativeProviderRebuildScenario,
+} from "./rebuild-flow-test-fixtures";
 
 describe("prepared rebuild recovery", () => {
   installRebuildFlowTestHooks({ acceptThirdPartySoftware: true });
+
+  it.each([
+    {
+      source: "present" as const,
+      attached: false,
+      error: "does not have its native NVIDIA inference provider attached",
+    },
+    { source: "unknown" as const, attached: true, error: "neither presence nor explicit absence" },
+  ])(
+    "stops prepared recovery before gateway recovery when source=$source and attached=$attached",
+    async ({ source, attached, error }) => {
+      const native = nativeProviderRebuildScenario(false);
+      const readiness = nativeProviderRebuildReadiness(
+        source,
+        (name) => registry.getSandbox(name),
+        attached,
+      );
+      const harness = createRebuildFlowHarness({
+        ...native.overrides,
+        preflightAuthoritativeRebuildTarget: readiness.preflightAuthoritativeRebuildTarget,
+      });
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], {
+          throwOnError: true,
+          recoveryManifest: makePreparedRecoveryManifest(),
+        }),
+      ).rejects.toThrow("preflight failed");
+
+      expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(error);
+      expect(harness.ensureTargetGatewaySpy).not.toHaveBeenCalled();
+      expect(harness.prepareMcpBridgesForRebuildSpy).not.toHaveBeenCalled();
+      expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+      expectNoSandboxDelete(harness.runOpenshellSpy);
+      expect(harness.onboardSpy).not.toHaveBeenCalled();
+    },
+  );
 
   it("restores the validated pre-upgrade manifest without taking a second backup (#6114)", async () => {
     const harness = createRebuildFlowHarness({

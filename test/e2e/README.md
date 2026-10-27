@@ -472,8 +472,12 @@ The `onboard-repair` target also changes the model of a ready OpenClaw sandbox a
 synthetic credential marker in its workspace. The pre-delete state backup must reject the marker.
 The target compares the sandbox identity and published registry route before and after the failure.
 It sends an in-sandbox request to `inference.local` to confirm the source route still handles inference.
-After removing the marker, the same target completes the model-change recreate, checks that the
-replacement has a new sandbox identity, and sends inference through the selected replacement route.
+After removing the marker, the same target forces recreation with a changed model and checks the replacement identity.
+It verifies restored workspace data and a home marker outside the retained `.openclaw` volume.
+It checks OpenClaw's primary model, then calls `openclaw infer model run --gateway` without a model override.
+The gateway result and a new request at the local compatible endpoint must identify the selected model.
+This target owns forced recreation of a managed image; `double-onboard` retains unforced model-change coverage, and
+`openclaw-inference-switch` retains custom-image and hosted-provider switching coverage.
 
 Full MCP bridge E2E also owns the supervisor's corporate-CA TLS consumer check:
 onboarding receives the fixture CA through `NEMOCLAW_CORPORATE_CA_BUNDLE`, and the

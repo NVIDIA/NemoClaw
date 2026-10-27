@@ -297,6 +297,13 @@ const { createSandbox } = require(${onboardPath});
     },
   );
   it.for([
+    {
+      scenario: "fresh forced recreation",
+      force: true,
+      fresh: true,
+      marked: false,
+      primary: "inference/gpt-5.4",
+    },
     { scenario: "forced recreation", force: true, marked: false, primary: "openai/gpt-4o" },
     {
       scenario: "marked recreation resume",
@@ -315,7 +322,7 @@ const { createSandbox } = require(${onboardPath});
     {
       timeout: 60_000,
     },
-    async ({ force, marked, primary }, context) => {
+    async ({ force, marked, primary, fresh = false }, context) => {
       const repoRoot = path.join(import.meta.dirname, "../..");
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-recreate-backup-"));
       const fakeBin = path.join(tmpDir, "bin");
@@ -371,6 +378,12 @@ runner.run = (command) => {
   const cmd = _n(command);
   const profileResult = fixtureMocks.mockProviderPreparationRun(command, "nemoclaw", "nemoclaw-mcp-v1", false);
   if (profileResult !== null) return profileResult;
+  if (cmd.includes("sandbox download") && cmd.includes("/sandbox/.nemoclaw/config.json")) {
+    require("node:fs").writeFileSync(
+      require("node:path").join(command.at(-1), "config.json"),
+      JSON.stringify({ provider: "openai-prod", model: "gpt-4o" }),
+    );
+  }
   if (cmd.includes("sandbox delete") && createdSandbox.state.lifecycleState === "created") createdSandbox.delete();
   events.push({ kind: "run", cmd });
   return createdSandbox.run(command) ?? { status: 0 };
@@ -457,10 +470,13 @@ const { createSandbox } = require(${onboardPath});
     [null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null, null, null, null, null, null, []],
     createFixture,
   );
-  // Seed the durable checkpoint left by the interrupted invocation. The resumed
-  // request carries only its existing transaction identity, never fresh authority.
+  // A fresh request must produce its own journal; resumes retain the saved authority.
   const sessions = require(${JSON.stringify(path.join(repoRoot, "src/lib/state/onboard-session.ts"))});
   const interrupted = sessions.loadSession();
+  if (${fresh}) {
+    delete createArgs[15].recreateTransaction;
+    delete interrupted.checkpoint.sandboxRecreate;
+  }
   if (${JSON.stringify(marked)}) interrupted.checkpoint.sandboxRecreate.reconcileOpenClawInference = true;
   sessions.saveSession(interrupted);
   const sandboxName = await createSandbox(...createArgs);
@@ -523,6 +539,7 @@ const { createSandbox } = require(${onboardPath});
       );
       assert.equal(restoreEvent?.options?.targetAgentType, "openclaw");
       assert.equal(payload.nativeConfig.agents.defaults.model.primary, primary);
+      assert.ok(events.findIndex((event) => event.kind === "restart") > restoreIndex);
       assert.equal(events.find((event) => event.kind === "restart")?.primary, primary);
       assert.deepEqual(payload.nativeConfig.custom, { retained: true });
       assert.equal(payload.registered.model, "gpt-5.4");
@@ -1074,7 +1091,7 @@ const { createSandbox } = require(${onboardPath});
       preopened: true,
       fresh: true,
       forced: true,
-      reconciliation: false,
+      reconciliation: true,
     },
     {
       mode: "forced recreation",
@@ -1082,7 +1099,7 @@ const { createSandbox } = require(${onboardPath});
       recreate: true,
       journalOnly: true,
       forced: true,
-      reconciliation: false,
+      reconciliation: true,
     },
   ])(
     "$mode drift recreation with answer '$answer' preserves confirmation and reconciliation authority (#12667)",
@@ -1230,7 +1247,7 @@ const { createSandbox } = require(${onboardPath});
 	    createFixture,
 	  );
   if (${preopened}) {
-    createArgs[15].recreateTransaction = { ...createArgs[15].recreateTransaction, ...(${fresh} ? { freshNonForced: true } : {}) };
+    createArgs[15].recreateTransaction = { ...createArgs[15].recreateTransaction, ...(${fresh} ? { freshOnboard: true } : {}) };
   }
   if (${journalOnly} && !${preopened}) {
     // Exercise a new lower-layer journal, with recreation planned but not necessarily forced.

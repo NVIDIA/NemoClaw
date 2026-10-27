@@ -22,6 +22,7 @@ import {
   type SandboxRecreateRuntime,
   sandboxRecreatePhaseReached,
 } from "./sandbox-recreate-transaction";
+import type { SandboxCreateIntent } from "./types";
 
 export interface OnboardRecreateTargetIntent {
   readonly agent: string | null;
@@ -184,16 +185,21 @@ export function openOnboardRecreateJournal(
 export function shouldReconcileRestoredOpenClawSelection(
   agentName: string,
   customImage: boolean,
-  forcedRecreation: boolean,
+  recreateTransaction:
+    | Pick<NonNullable<SandboxCreateIntent["recreateTransaction"]>, "freshOnboard">
+    | undefined,
   drift: Pick<
     import("./selection-drift").SelectionDrift,
     "unknown" | "providerChanged" | "modelChanged"
   >,
 ): boolean {
+  const preserveRestoredSelection = Boolean(
+    recreateTransaction && !recreateTransaction.freshOnboard,
+  );
   return (
     agentName === "openclaw" &&
     !customImage &&
-    !forcedRecreation &&
+    !preserveRestoredSelection &&
     !drift.unknown &&
     (drift.providerChanged || drift.modelChanged)
   );

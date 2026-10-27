@@ -126,6 +126,8 @@ export interface CheckpointSandboxRecreateTransaction {
   readonly sourceRegistryFingerprint: string;
   readonly sourceLiveIdentityFingerprint: string | null;
   readonly sourceWorkload: CheckpointSandboxRecreateSourceWorkload | null;
+  /** Preserve fresh onboarding selection checks when resuming before source deletion. */
+  readonly freshOnboard?: true;
   /** Apply an explicitly changed OpenClaw selection after native snapshot restore. */
   readonly reconcileOpenClawInference?: true;
   readonly targetIntentFingerprint: string;

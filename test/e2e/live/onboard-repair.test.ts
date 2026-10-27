@@ -52,6 +52,7 @@ const BACKUP_REJECTION_FILE = "/sandbox/.openclaw/workspace/.nemoclaw-backup-rej
 const RESTORED_WORKSPACE_MARKER_FILE =
   "/sandbox/.openclaw/workspace/.nemoclaw-model-change-recreate-marker";
 const RESTORED_WORKSPACE_MARKER = "nemoclaw-model-change-recreate-workspace";
+const RESTORED_HOME_MARKER_FILE = "/sandbox/.nemoclaw-model-change-recreate-marker";
 const SYNTHETIC_BACKUP_TOKEN = `ghp_${"abcdef0123456789"}`;
 const STALE_EXTRA_PROVIDER = "e2e-stale-extra-provider";
 const LIVE_EXTRA_PROVIDER = "e2e-live-extra-provider";
@@ -124,7 +125,7 @@ test(
         "remove the recorded sandbox and resume repair",
         "validate repaired attachments and corporate trust",
         "reject a same-name model-change backup without changing the published route",
-        "recreate the same name with a changed model after backup succeeds",
+        "force recreation and verify restored state and native model selection",
         "reseed interrupted onboarding state",
         "reject conflicting resume inputs",
         "clear the repaired onboarding state",
@@ -148,7 +149,7 @@ test(
         "resume repair proves recreated sandbox provider attachments are selectively reconciled",
         "REQUESTS_CA_BUNDLE fallback corporate CA source is baked and merged after repair",
         "a rejected pre-delete backup preserves the live sandbox and published route",
-        "a successful model-change recreate preserves workspace data and serves the selected route",
+        "forced recreation restores home and workspace data and OpenClaw uses the selected model",
         "resume rejects a different requested sandbox name",
         "resume rejects provider/model overrides that conflict with recorded state",
       ],
@@ -434,15 +435,15 @@ test(
     );
     fs.rmSync(SESSION_FILE, { force: true });
 
-    progress.phase("recreate the same name with a changed model after backup succeeds");
+    progress.phase("force recreation and verify restored state and native model selection");
     await sandbox.execShell(
       SANDBOX_NAME,
       trustedSandboxShellScript(
-        `set -eu\nprintf '%s' '${RESTORED_WORKSPACE_MARKER}' > '${RESTORED_WORKSPACE_MARKER_FILE}'\nsync`,
+        `set -eu\nprintf '%s' '${RESTORED_WORKSPACE_MARKER}' > '${RESTORED_WORKSPACE_MARKER_FILE}'\nprintf '%s' '${RESTORED_WORKSPACE_MARKER}' > '${RESTORED_HOME_MARKER_FILE}'\nsync`,
       ),
       { artifactName: "phase-3-write-workspace-marker", env: env(), timeoutMs: 60_000 },
     );
-    // Let the changed selection trigger recreation so restored native routing is reconciled.
+    // A fresh forced run must reconcile the old primary restored from the source sandbox.
     const recreated = await nemoclaw(
       host,
       ["onboard", "--non-interactive"],
@@ -450,6 +451,7 @@ test(
       onboardEnv(SANDBOX_NAME, fake.baseUrl, {
         NEMOCLAW_MODEL: "changed-test-model",
         NEMOCLAW_POLICY_MODE: "skip",
+        NEMOCLAW_RECREATE_SANDBOX: "1",
         ...corporateCa.env,
       }),
       execTimeout(ONBOARD_REPAIR_COMMAND_TIMEOUT_MS),
@@ -473,31 +475,50 @@ test(
     expect(restoredMarker.stdout.trim(), resultText(restoredMarker)).toBe(
       RESTORED_WORKSPACE_MARKER,
     );
+    // This marker is outside the retained .openclaw volume; only state restore can recover it.
+    const restoredHomeMarker = await sandbox.exec(
+      SANDBOX_NAME,
+      ["cat", RESTORED_HOME_MARKER_FILE],
+      { artifactName: "phase-3-read-restored-home-marker", env: env(), timeoutMs: 60_000 },
+    );
+    expect(restoredHomeMarker.stdout.trim(), resultText(restoredHomeMarker)).toBe(
+      RESTORED_WORKSPACE_MARKER,
+    );
+    const restoredPrimary = await sandbox.exec(
+      SANDBOX_NAME,
+      ["openclaw", "config", "get", "agents.defaults.model.primary", "--json"],
+      { artifactName: "phase-3-restored-native-primary", env: env(), timeoutMs: 60_000 },
+    );
+    expect(restoredPrimary.exitCode, resultText(restoredPrimary)).toBe(0);
+    expect(JSON.parse(restoredPrimary.stdout)).toBe("inference/changed-test-model");
     const replacementRequestOffset = fake.requests().length;
     const replacementChat = await sandbox.exec(
       SANDBOX_NAME,
       [
-        "curl",
-        "-fsS",
-        "--max-time",
-        "60",
-        "https://inference.local/v1/chat/completions",
-        "-H",
-        "Content-Type: application/json",
-        "--data-raw",
-        JSON.stringify({
-          model: "changed-test-model",
-          messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
-          max_tokens: 50,
-        }),
+        "openclaw",
+        "infer",
+        "model",
+        "run",
+        "--gateway",
+        "--json",
+        "--prompt",
+        "Reply with exactly one word: OK",
       ],
       {
         artifactName: "phase-3-replacement-inference-after-successful-recreate",
         env: env(),
-        timeoutMs: 90_000,
+        timeoutMs: 150_000,
       },
     );
+    await artifacts.writeJson(
+      "phase-3-replacement-gateway-requests.json",
+      fake.requests().slice(replacementRequestOffset),
+    );
     expect(replacementChat.exitCode, resultText(replacementChat)).toBe(0);
+    const gatewayReply = JSON.parse(replacementChat.stdout);
+    expect(gatewayReply.transport).toBe("gateway");
+    expect(gatewayReply.model).toBe("changed-test-model");
+    expect(gatewayReply.outputs?.[0]?.text).toBe("ok");
     expect(
       fake
         .requests()
