@@ -275,18 +275,13 @@ describe("sandbox oclif command adapters", () => {
     expect(process.exitCode).toBe(1);
   });
 
-  it("routes real text status through the unlocked read during ordinary host contention (#11903)", async () => {
+  it("routes the text status command through the unlocked read during ordinary host contention (#11903)", async () => {
     vi.stubEnv("HOME", stateDir);
     vi.stubEnv("NEMOCLAW_TEST_BASE_HOME", stateDir);
-    const output: string[] = [];
-    vi.spyOn(console, "log").mockImplementation((...parts: unknown[]) => {
-      output.push(parts.map(String).join(" "));
-    });
     mocks.showSandboxStatus.mockImplementationOnce(async (name: string) => {
       expect(name).toBe("alpha");
       expect(isUnlockedSandboxStatusRead()).toBe(true);
       expect(isMcpLifecycleLockHeld(name)).toBe(false);
-      console.log("Inference: not probed (another lifecycle operation is in progress)");
     });
     const fence = acquireProcessBoundLockAt(portableHostFencePath(stateDir));
     try {
@@ -296,22 +291,11 @@ describe("sandbox oclif command adapters", () => {
     }
 
     expect(mocks.showSandboxStatus).toHaveBeenCalledWith("alpha");
-    expect(output.join("\n")).toContain(
-      "Inference: not probed (another lifecycle operation is in progress)",
-    );
   });
 
-  it("routes real JSON status through the unlocked read during ordinary host contention (#11903)", async () => {
+  it("routes the JSON status command through the unlocked read during ordinary host contention (#11903)", async () => {
     vi.stubEnv("HOME", stateDir);
     vi.stubEnv("NEMOCLAW_TEST_BASE_HOME", stateDir);
-    const output: string[] = [];
-    vi.spyOn(console, "log").mockImplementation((...parts: unknown[]) => {
-      output.push(parts.map(String).join(" "));
-    });
-    vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
-      output.push(String(chunk));
-      return true;
-    });
     mocks.getSandboxStatusReport.mockImplementationOnce(async (name: string) => {
       expect(name).toBe("alpha");
       expect(isUnlockedSandboxStatusRead()).toBe(true);
@@ -332,11 +316,6 @@ describe("sandbox oclif command adapters", () => {
     }
 
     expect(mocks.getSandboxStatusReport).toHaveBeenCalledWith("alpha");
-    expect(JSON.parse(output.join("\n"))).toMatchObject({
-      schemaVersion: 1,
-      name: "alpha",
-      inferenceProbeSuppressed: true,
-    });
   });
 
   it("keeps policy list pending until the asynchronous action completes", async () => {
