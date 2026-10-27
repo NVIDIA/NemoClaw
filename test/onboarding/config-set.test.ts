@@ -117,6 +117,7 @@ describe("config set helpers", () => {
       expect(refusal.message).toContain("Back up needed data from 'triage-8614'");
       expect(refusal.message).toContain("Rebuild preserves the native home");
       expect(refusal.message).toContain("trusted backup or create a fresh Hermes sandbox");
+      expect(refusal.message).not.toContain("nemoclaw 'triage-8614' recover");
       expect(refusal.message).toContain("not applied");
     });
   });

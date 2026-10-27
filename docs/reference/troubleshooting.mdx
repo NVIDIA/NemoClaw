@@ -3180,8 +3180,8 @@ Other unexpected gateway exit statuses fail immediately and do not consume this 
 
 An unsafe startup layout also stops automatic relaunch. If layout repair reports the maximum log-entry count or repair depth, archive or remove old retained logs from a trusted host-side recovery environment, then stop and start the sandbox. For symbolic links, hard links, unsafe entry types, or paths that changed during repair, do not repair the path in place. Restore a trusted host copy into a recreated sandbox or recreate from host-side onboarding configuration.
 
-If Hermes reports an integrity mismatch, inspect its configuration and hash state before rebuilding.
-A rebuild preserves the native sandbox home and may retain the mismatch.
+If a Hermes configuration write reports `compat hash does not match frozen Hermes inputs` or `compat hash verification failed`, back up needed data before recovery.
+A rebuild preserves the native sandbox home and may retain this compatibility-hash mismatch.
 For an older Hermes sandbox with an OpenClaw `POLICY.md` file, follow [Explain Network Policy to Agents](../network-policy/explain-network-policy-to-agents).
 
 For other startup failures, rebuild from registered configuration:
