@@ -2947,13 +2947,16 @@ def verify_nvidia_credential(hermes_dir: str, expected_model: str) -> None:
     if not re.fullmatch(r"openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_NVIDIA_INFERENCE_API_KEY", reference):
         raise UnsafePathError("Hermes NVIDIA supervisor credential is unavailable")
     text, _snapshot = _read_text(os.path.join(hermes_dir, "config.yaml"), MAX_CONFIG_INPUT_BYTES)
+    # A freshly onboarded sandbox keeps the env template in its three slots, and
+    # Hermes resolves it from the current supervisor reference (#13784).
+    template = "${NVIDIA_INFERENCE_API_KEY}"
     try:
-        _validate_restored_native_credential(text, text.encode("utf-8"))
+        _validate_restored_native_credential(text, text.replace(template, reference).encode("utf-8"))
         config = yaml.safe_load(text)
         if (
             config["_nemoclaw_upstream"]["provider"] != "nvidia-prod"
             or config["model"]["default"] != expected_model
-            or config["model"]["api_key"] != reference
+            or config["model"]["api_key"] not in {reference, template}
         ):
             raise UnsafePathError("Hermes NVIDIA credential does not match its route or generation")
     except UnsafePathError as exc:

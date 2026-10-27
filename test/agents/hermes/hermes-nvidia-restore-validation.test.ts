@@ -48,7 +48,7 @@ with tempfile.TemporaryDirectory() as root:
    assert old not in str(exc) and fresh not in str(exc)
    results[case]=False
   assert cfg.read_bytes()==before
- for label,reference in [('fresh',fresh),('stale',old),('missing',None),('malformed','not-a-handle'),('wrong-provider','openshell:resolve:env:v8_OPENAI_API_KEY')]:
+ for label,reference in [('fresh',fresh),('template','$'+'{NVIDIA_INFERENCE_API_KEY}'),('stale',old),('missing',None),('malformed','not-a-handle'),('wrong-provider','openshell:resolve:env:v8_OPENAI_API_KEY')]:
   config=copy.deepcopy(base)
   config['model']['api_key']=reference;config['providers']['nvidia-prod']['api_key']=reference;config['custom_providers'][0]['api_key']=reference
   cfg.write_text(g.yaml.safe_dump(config));before=cfg.read_bytes();os.environ['NVIDIA_INFERENCE_API_KEY']=fresh
@@ -57,7 +57,7 @@ with tempfile.TemporaryDirectory() as root:
   assert cfg.read_bytes()==before
  # Exercise the real CLI result protocol; do not expose guard diagnostics to status.
  import subprocess
- for label,reference,supervisor in [('valid',fresh,fresh),('stale',old,fresh),('missing-supervisor',fresh,''),('malformed-supervisor',fresh,'bad')]:
+ for label,reference,supervisor in [('valid',fresh,fresh),('template','$'+'{NVIDIA_INFERENCE_API_KEY}',fresh),('stale',old,fresh),('missing-supervisor',fresh,''),('malformed-supervisor',fresh,'bad')]:
   config=copy.deepcopy(base)
   config['model']['api_key']=reference;config['providers']['nvidia-prod']['api_key']=reference;config['custom_providers'][0]['api_key']=reference
   cfg.write_text(g.yaml.safe_dump(config));before=cfg.read_bytes()
@@ -74,10 +74,12 @@ with tempfile.TemporaryDirectory() as root:
     expect(result.status, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual({
       "cli-valid": { exit: 0, stdout: "verified=1" },
+      "cli-template": { exit: 0, stdout: "verified=1" },
       "cli-stale": { exit: 1, stdout: "rejected=1" },
       "cli-missing-supervisor": { exit: 1, stdout: "" },
       "cli-malformed-supervisor": { exit: 1, stdout: "" },
       "health-fresh": true,
+      "health-template": true,
       "health-stale": false,
       "health-missing": false,
       "health-malformed": false,
