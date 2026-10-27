@@ -26,6 +26,13 @@ from dataclasses import dataclass, field
 
 import yaml
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from managed_policy import (  # noqa: E402
+    NVIDIA_INFERENCE_PLACEHOLDER,
+    NVIDIA_SCOPED_CREDENTIAL_HANDLE,
+)
+
 
 API_SERVER_KEY_RE = re.compile(r"^[0-9a-f]{64}$")
 ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -2944,12 +2951,12 @@ def _validate_restored_native_credential(source_text: str, candidate_bytes: byte
 def verify_nvidia_credential(hermes_dir: str, expected_model: str) -> None:
     """Check agent slots against the fresh supervisor without changing any file."""
     reference = os.environ.get("NVIDIA_INFERENCE_API_KEY", "")
-    if not re.fullmatch(r"openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_NVIDIA_INFERENCE_API_KEY", reference):
+    if NVIDIA_SCOPED_CREDENTIAL_HANDLE.fullmatch(reference) is None:
         raise UnsafePathError("Hermes NVIDIA supervisor credential is unavailable")
     text, _snapshot = _read_text(os.path.join(hermes_dir, "config.yaml"), MAX_CONFIG_INPUT_BYTES)
-    # A freshly onboarded sandbox keeps the env template in its three slots, and
-    # Hermes resolves it from the current supervisor reference (#13784).
-    template = "${NVIDIA_INFERENCE_API_KEY}"
+    # A freshly onboarded sandbox keeps the managed-policy template in its three
+    # slots, and Hermes resolves it from the current supervisor reference (#13784).
+    template = NVIDIA_INFERENCE_PLACEHOLDER
     try:
         _validate_restored_native_credential(text, text.replace(template, reference).encode("utf-8"))
         config = yaml.safe_load(text)

@@ -76,6 +76,9 @@ with tempfile.TemporaryDirectory() as root:
   results['cli-'+label]={'exit':run.returncode,'stdout':run.stdout.strip()}
   assert fresh not in run.stdout+run.stderr and old not in run.stdout+run.stderr
   assert cfg.read_bytes()==before
+ # The verifier uses the managed-policy template and handle contract.
+ policy=sys.modules['managed_policy']
+ results['shared-contract']=g.NVIDIA_INFERENCE_PLACEHOLDER is policy.NVIDIA_INFERENCE_PLACEHOLDER and g.NVIDIA_SCOPED_CREDENTIAL_HANDLE is policy.NVIDIA_SCOPED_CREDENTIAL_HANDLE
  print(json.dumps(results))
 `,
         RUNTIME_CONFIG_GUARD,
@@ -92,6 +95,7 @@ with tempfile.TemporaryDirectory() as root:
       "cli-malformed-supervisor": { exit: 1, stdout: "" },
       "health-fresh": true,
       "health-template": true,
+      "shared-contract": true,
       "health-mixed": [false, false, false, false, false, false],
       "health-stale": false,
       "health-missing": false,
