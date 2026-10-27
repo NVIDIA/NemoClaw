@@ -36,14 +36,13 @@ Recipe memory requirements are checked against measurements from the execution h
 The runtime rechecks preparation and startup headroom.
 The shared resident watchdog continues enforcing the service's memory protection policy after the CLI exits.
 
-Declaring a new hardware combination does not constitute live qualification; the current inline Qwen example targets the DGX Spark.
+Declaring a new hardware combination does not constitute live qualification.
 
 An optional `snapshot` carries the exact model file manifest, including sizes and hashes.
 Otherwise the shared downloader resolves the pinned repository and revision.
 An optional `reuse` names an existing snapshot directory relative to `/data` and a previous preparation key.
 
 The runtime verifies imported files again before recording the new preparation as complete.
-The inline Qwen example uses these fields to reuse its earlier snapshot and packed bytes.
 
 ## Execution Protocol
 
@@ -97,9 +96,7 @@ Plan validates declarations and observes hardware, state, and retained files.
 It never runs preparation or verification executables.
 Apply checks the pinned image capabilities and packaged files, downloads or reuses the snapshot, prepares and verifies data, then starts vLLM through the shared supervisor.
 
-The Qwen adapter can hard-link earlier packed data into staging for verification before the runtime saves a new output manifest.
-This avoids repacking while preserving the old published files.
-The model-specific orphan-recovery rule remains in that adapter, not the shared preparation lifecycle.
+Model-specific recovery, such as reusing earlier prepared files, belongs to the recipe's own tools, not the shared preparation lifecycle.
 
 Changing to a recipe-capable image can replace the inference container.
 Existing ownership, generation and storage checks still apply; this does not authorize adopting another deployment's volume.

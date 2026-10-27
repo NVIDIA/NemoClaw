@@ -75,7 +75,7 @@ Podman's changing compatibility `/info.ID` is not a durable identity.
 Gateway bindings use the retained owned network UUID, volume creation identity, container ID, and persisted signing keys.
 A missing or replaced bound network is a conflict, not permission to recreate it.
 Destroy retains that network and gateway storage.
-Removing them from Podman is not covered yet ([#12640](https://github.com/NVIDIA/NemoClaw/issues/12640)).
+To remove them, follow [Remove Retained Resources](#remove-retained-resources) for Podman.
 
 ## Agent Runtimes During Apply
 
@@ -164,7 +164,7 @@ The SDK and provider child process need access to referenced credentials during 
 Remove caller-owned environment values and TLS files when no longer needed.
 Destroy removes the owned provider registration, but retained gateway storage remains; revoke upstream credentials separately when retiring them.
 
-Caller-supplied inference credentials require HTTPS.
+Prefer HTTPS for a caller-supplied inference credential: over plain HTTP, the key crosses the network unencrypted.
 The managed Ollama proxy uses its private HTTP endpoint and a deployment-generated bearer key.
 OpenShell decides which inference destinations a sandbox can reach; plaintext gateway addresses must be loopback.
 The isolated policy permits inference routing without general egress and uses `best_effort` Landlock; unavailable kernel restrictions are not enforced.

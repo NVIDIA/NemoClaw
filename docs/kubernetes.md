@@ -16,7 +16,7 @@ No automated run covers OpenShift, and other clusters are untested; [current lim
 
 - **A NemoClaw bundle:** [build one](build.md#build-a-native-bundle) from this revision.
   The bundle includes the Helm provider that installs the gateway; no Helm CLI is needed.
-- **Cluster access:** a kubeconfig file and an exact context that can create a namespace and, inside it, Secrets, ConfigMaps, Services, Deployments, StatefulSets and NetworkPolicies.
+- **Cluster access:** a kubeconfig file and an exact context that can create a namespace and, inside it, Secrets, ConfigMaps, ServiceAccounts, Roles, RoleBindings, Services, Deployments, StatefulSets and NetworkPolicies, and can port-forward to its pods (`pods/portforward`).
   The SDK reads the cluster's CustomResourceDefinitions, StorageClasses and namespaces.
   The pinned OpenShell chart also creates [two cluster-wide objects](#cluster-wide-objects), so the context must be able to create a ClusterRole and a ClusterRoleBinding.
   If the kubeconfig runs an exec plugin that needs your environment, such as `aws` for EKS, list those variables in `gateway.kubernetes.environment`, for example `[AWS_PROFILE, AWS_REGION]`.
@@ -224,7 +224,7 @@ nemoclaw apply --state-dir .local/kubernetes deployment.yaml
 Use the deployment's context and namespace, and keep that credential file out of source control and shared diagnostics.
 Check the pod events if a pull still fails; a configured reference does not establish registry access.
 Retire upstream registry credentials separately; destroy retains the namespace and caller-managed Secrets.
-Docker/Podman credential delivery and private-registry qualification across all runtimes remain tracked in [#12709](https://github.com/NVIDIA/NemoClaw/issues/12709).
+Docker and Podman gateways pull private images with Docker logins instead; see [Pull from Private Registries](usage.md#pull-from-private-registries).
 
 ## Deploy to OpenShift
 
