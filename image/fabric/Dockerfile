@@ -10,6 +10,8 @@ ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.13.6@sha256:af22a52f5eafef3d78e551599d405c02
 # follows the adapter contract at the same revision.
 ARG FABRIC_REVISION=67acf1cff0d598fc3e6a32370cd63fc088e86958
 ARG FABRIC_SHA256=ca88f31e3bfbc3d3e408410d538a8d4a79e4f65adc6fe987aca929216e6b6d32
+# OpenClaw release 2026.9.4, the version the pinned Fabric's OpenClaw adapter
+# documents; move it with the Fabric revision, not on its own.
 ARG OPENCLAW_IMAGE=ghcr.io/openclaw/openclaw@sha256:cc596b846506a5f4cfcee111394a2725f375f01cca2ebb492a161fd1b747f101
 # The harness stage the catalog and labeled stages build on.
 ARG STAGE=generic
