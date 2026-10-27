@@ -54,6 +54,7 @@ const OPAQUE_INPUTS = [
   ".github/actions/resolve-reviewed-hermes-platform/action.yaml",
   "Dockerfile",
   "agents/hermes/Dockerfile.base",
+  "agents/hermes/patch-agent-home.py",
   "agents/hermes/patch-external-supervisor-recovery.py",
   "agents/hermes/patch-external-supervisor-restart.py",
   "agents/hermes/patch-mcp-http-proxy.py",
@@ -143,6 +144,15 @@ describe("Vitest opaque-input watch triggers", () => {
     },
   );
 
+  it.each([".github/pr-limits.json", ".github/workflows/pr-limit.yaml"])(
+    "maps each PR-limit input to its enforcement test [%s]",
+    (inputPath) => {
+      expect(triggeredBy(inputPath)).toEqual([
+        "test/automation/pull-requests/pr-limit-workflow.test.ts",
+      ]);
+    },
+  );
+
   it.each([
     ".github/workflows/release-daily-brev-image.yaml",
     "scripts/release-daily-brev-image.sh",
@@ -215,6 +225,9 @@ describe("Vitest opaque-input watch triggers", () => {
     expect(triggeredBy("agents/hermes/patch-session-list-preview.py")).toEqual([
       "test/agents/hermes/hermes-session-list-preview-patch.test.ts",
     ]);
+    expect(triggeredBy("agents/hermes/patch-agent-home.py")).toEqual([
+      "test/agents/hermes/hermes-agent-home-patch.test.ts",
+    ]);
     expect(triggeredBy("agents/hermes/patch-external-supervisor-recovery.py")).toEqual([
       "test/agents/hermes/hermes-external-supervisor-recovery-patch.test.ts",
     ]);
@@ -229,6 +242,7 @@ describe("Vitest opaque-input watch triggers", () => {
     ]);
     expect(triggeredBy("agents/hermes/Dockerfile")).toEqual([
       "test/generation/providerless-agent-config.test.ts",
+      "test/agents/hermes/hermes-image-build-probes.test.ts",
       "src/lib/onboard/experimental/hermes-portable-build-context.test.ts",
       "src/lib/onboard/managed-startup-profile.test.ts",
       "test/agents/hermes/hermes-mcp-runtime-capability.test.ts",

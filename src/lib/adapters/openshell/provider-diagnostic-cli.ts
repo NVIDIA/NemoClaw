@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isStructuredUnqualifiedSandboxNotFoundOutput } from "./sandbox-absence-diagnostic";
+
 const DIAGNOSTIC_PREFIXES = ["error:", "rpc error:", "status:"];
 const NOT_FOUND_SUFFIXES = new Set([
   "not found",
@@ -240,6 +242,24 @@ export function reportsExactProviderNotFound(
   }
 
   return diagnosticLines.every((line) => providerNameFromNotFoundLine(line) === providerName);
+}
+
+/**
+ * Accept only a single structured NotFound diagnostic whose exact message omits
+ * the sandbox name. The caller must bind it to the sandbox operand it issued.
+ */
+export function reportsUnqualifiedSandboxNotFound(
+  output: string,
+  diagnosticLimit: number,
+): boolean {
+  if (output.length > diagnosticLimit) return false;
+  const lines = output.split(/\r?\n/).map(stripIssueDecoration).filter(Boolean);
+  const line = lines[0] ?? "";
+  return (
+    lines.length === 1 &&
+    !lineReportsMissingGateway(line) &&
+    isStructuredUnqualifiedSandboxNotFoundOutput(line)
+  );
 }
 
 /** A missing sandbox permits cleanup only when every diagnostic names the requested sandbox. */

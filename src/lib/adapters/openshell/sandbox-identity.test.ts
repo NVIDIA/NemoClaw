@@ -3,7 +3,18 @@
 
 import { createHash } from "node:crypto";
 
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const runtime = vi.hoisted(() => ({ version: "0.0.116" }));
+vi.mock("../../onboard/openshell-version", async (original) => ({
+  ...(await original<typeof import("../../onboard/openshell-version")>()),
+  get SUPPORTED_OPENSHELL_FALLBACK_VERSION() {
+    return runtime.version;
+  },
+}));
+beforeEach(() => {
+  runtime.version = "0.0.116";
+});
 
 import {
   createOpenshellSandboxIdReader,
@@ -109,39 +120,43 @@ describe("OpenShell sandbox identity parsing", () => {
 });
 
 describe("OpenShell sandbox identity reading", () => {
-  it("binds the first ID to an exact create-attempt label (#9833)", () => {
-    const runCaptureOpenshell = vi.fn(() => sandboxListJson());
+  it.each(["0.0.116", "0.1.3", "0.1.5"])(
+    "binds the first ID to an exact create-attempt label on %s (#9833)",
+    (version) => {
+      runtime.version = version;
+      const runCaptureOpenshell = vi.fn(() => sandboxListJson());
 
-    expect(
-      resolveCreatedOpenShellSandboxId({
-        sandboxName: "alpha",
-        gatewayName: "nemoclaw",
-        createAttemptNonce: CREATE_ATTEMPT_NONCE,
-        runCaptureOpenshell,
-      }),
-    ).toBe("sandbox-alpha");
-    expect(runCaptureOpenshell).toHaveBeenCalledExactlyOnceWith(
-      [
-        "sandbox",
-        "list",
-        "-g",
-        "nemoclaw",
-        "--selector",
-        `${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${CREATE_ATTEMPT_NONCE}`,
-        "--output",
-        "json",
-        "--limit",
-        "2",
-      ],
-      {
-        ignoreError: false,
-        timeout: 30_000,
-        maxBuffer: 1024 * 1024,
-        killSignal: "SIGKILL",
-        killProcessTreeOnTimeout: true,
-      },
-    );
-  });
+      expect(
+        resolveCreatedOpenShellSandboxId({
+          sandboxName: "alpha",
+          gatewayName: "nemoclaw",
+          createAttemptNonce: CREATE_ATTEMPT_NONCE,
+          runCaptureOpenshell,
+        }),
+      ).toBe("sandbox-alpha");
+      expect(runCaptureOpenshell).toHaveBeenCalledExactlyOnceWith(
+        [
+          "sandbox",
+          "list",
+          "-g",
+          "nemoclaw",
+          "--selector",
+          `${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${CREATE_ATTEMPT_NONCE}`,
+          "--output",
+          "json",
+          version === "0.0.116" ? "--limit" : "--page-size",
+          "2",
+        ],
+        {
+          ignoreError: false,
+          timeout: 30_000,
+          maxBuffer: 1024 * 1024,
+          killSignal: "SIGKILL",
+          killProcessTreeOnTimeout: true,
+        },
+      );
+    },
+  );
 
   it.each(["a".repeat(61), "a".repeat(63), "a".repeat(64), "g".repeat(62)])(
     "refuses a create-attempt nonce outside the label-compatible contract (#9833)",

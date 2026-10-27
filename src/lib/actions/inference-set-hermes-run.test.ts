@@ -348,7 +348,9 @@ describe("runInferenceSet Hermes routing", () => {
     ).rejects.toMatchObject({
       name: "InferenceSetError",
       exitCode: 1,
-      message: expect.stringMatching(/Hermes inference route synchronization did not complete/),
+      message: expect.stringMatching(
+        /Hermes inference route synchronization did not complete[\s\S]*preceding configuration warning[\s\S]*trusted backup[\s\S]*fresh Hermes sandbox[\s\S]*Rebuild preserves the native home and may retain the mismatch/u,
+      ),
     });
 
     // The host route remains committed, but the command must fail so automation
@@ -360,6 +362,11 @@ describe("runInferenceSet Hermes routing", () => {
         model: "openai/gpt-5.4-mini",
       }),
     );
+    expect(
+      deps.calls.log.mock.calls.some((call) =>
+        String(call[0]).includes("Run 'nemoclaw hermes rebuild'"),
+      ),
+    ).toBe(false);
   });
 
   it("fails after commit when the config hash refresh fails (#7083)", async () => {
@@ -408,7 +415,7 @@ describe("runInferenceSet Hermes routing", () => {
     );
     const logs = deps.calls.log.mock.calls.map((call) => String(call[0]));
     expect(logs.some((line) => line.includes("failed to refresh its integrity hash"))).toBe(true);
-    expect(logs.some((line) => line.includes("rebuild"))).toBe(true);
+    expect(logs.some((line) => line.includes("Run 'nemoclaw hermes rebuild'"))).toBe(false);
     expect(logs.some((line) => line.includes("Inference route synced"))).toBe(false);
   });
 
