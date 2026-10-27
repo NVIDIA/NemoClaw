@@ -241,6 +241,74 @@ describe("Pi qualification event oracle", () => {
     ).toThrow();
   });
 
+  it("retries a timed-out valid read and reply awaiting agent_end (#13755)", async () => {
+    const partialEvents = parsePiJsonEvents(eventStream().split("\n").slice(0, -1).join("\n"));
+    const proof = qualifyPiReadTask(partialEvents, PATH, TOKEN);
+    expect(hasCompletedPiTurn(partialEvents)).toBe(false);
+
+    const attempts: number[] = [];
+    const execution = await runBoundedRetry({
+      operation: "pi-agent-qualification.read-after-recovery",
+      owner: "inference-provider",
+      idempotence: "read-only",
+      maxAttempts: 2,
+      run: async (attempt) => {
+        attempts.push(attempt);
+        return {
+          failure: undefined,
+          proof,
+          result: { ...failedProbe(), exitCode: attempt === 1 ? 143 : 0, timedOut: attempt === 1 },
+          turnCompleted: attempt === 2,
+        };
+      },
+      classify: classifyPiReadTaskAttempt,
+    });
+
+    expect(attempts).toEqual([1, 2]);
+    expect(execution.evidence).toMatchObject({
+      outcome: "passed-after-retry",
+      attempts: [
+        { failureClass: "transient-external", retryScheduled: true },
+        { outcome: "passed", retryScheduled: false },
+      ],
+    });
+  });
+
+  it.each(['{"type":bogus', '{"type":true,"message":', '{"type":"message_update","message":bogus'])(
+    "does not retry a malformed timed-out final event %s (#13755)",
+    async (malformedFinalLine) => {
+      const stdout = `${events({ type: "agent_start" })}\n${malformedFinalLine}`;
+      const attempts: number[] = [];
+      const execution = await runBoundedRetry({
+        operation: "pi-agent-qualification.read-after-recovery",
+        owner: "inference-provider",
+        idempotence: "read-only",
+        maxAttempts: 2,
+        run: async (attempt) => {
+          attempts.push(attempt);
+          let failure: unknown;
+          try {
+            parsePiJsonEvents(stdout, { allowTruncatedFinalLine: true });
+          } catch (error) {
+            failure = error;
+          }
+          return {
+            failure,
+            proof: undefined,
+            result: { ...failedProbe(), exitCode: 143, timedOut: true },
+            turnCompleted: false,
+          };
+        },
+        classify: classifyPiReadTaskAttempt,
+      });
+      expect(attempts).toEqual([1]);
+      expect(execution.evidence).toMatchObject({
+        outcome: "failed-no-retry",
+        attempts: [{ failureClass: "deterministic", retryScheduled: false }],
+      });
+    },
+  );
+
   it.each([
     ["disallowed tool", { toolName: "bash" }],
     ["wrong read path", { args: { path: "/sandbox/other" } }],

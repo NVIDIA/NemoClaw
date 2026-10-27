@@ -156,9 +156,9 @@ export function classifyPiReadTaskAttempt(
     return {
       outcome: "failed",
       failureClass:
-        !attempt.proof &&
-        (isTransientPiInferenceFailure(attempt.failure) ||
-          (attempt.failure instanceof PiReadTaskPendingFailure && !attempt.turnCompleted))
+        isTransientPiInferenceFailure(attempt.failure) ||
+        (!attempt.turnCompleted &&
+          (attempt.proof !== undefined || attempt.failure instanceof PiReadTaskPendingFailure))
           ? "transient-external"
           : "deterministic",
     };
@@ -172,25 +172,120 @@ export function classifyPiReadTaskAttempt(
   };
 }
 
-function hasUnclosedJsonStructure(line: string): boolean {
-  let depth = 0;
-  let quoted = false;
-  let escaped = false;
-  for (const character of line) {
-    if (quoted) {
-      if (escaped) escaped = false;
-      else if (character === "\\") escaped = true;
-      else if (character === '"') quoted = false;
-    } else if (character === '"') {
-      quoted = true;
-    } else if (character === "{" || character === "[") {
-      depth += 1;
-    } else if (character === "}" || character === "]") {
-      depth -= 1;
-      if (depth < 0) return false;
+function isIncompletePiJsonEvent(line: string): boolean {
+  type ParseResult = "complete" | "incomplete" | "invalid";
+  let offset = 0;
+  const whitespace = () => {
+    while (/[\x20\t\r\n]/u.test(line[offset] ?? "!")) offset += 1;
+  };
+  const string = (): ParseResult => {
+    offset += 1;
+    while (offset < line.length) {
+      const character = line[offset++];
+      if (character === '"') return "complete";
+      if (character === "\\") {
+        if (offset === line.length) return "incomplete";
+        const escape = line[offset++];
+        if (escape === "u") {
+          for (let digit = 0; digit < 4; digit += 1) {
+            if (offset === line.length) return "incomplete";
+            if (!/[0-9a-f]/iu.test(line[offset++])) return "invalid";
+          }
+        } else if (!/["\\/bfnrt]/u.test(escape)) return "invalid";
+      } else if (character !== undefined && character.charCodeAt(0) < 0x20) return "invalid";
     }
+    return "incomplete";
+  };
+  const atom = (): ParseResult => {
+    const remaining = line.slice(offset);
+    if (/[tfn]/u.test(line[offset] ?? "!")) {
+      const literal = remaining[0] === "t" ? "true" : remaining[0] === "f" ? "false" : "null";
+      if (remaining.startsWith(literal)) {
+        offset += literal.length;
+        return "complete";
+      }
+      if (literal.startsWith(remaining)) {
+        offset = line.length;
+        return "incomplete";
+      }
+      return "invalid";
+    }
+    const token = /^[0-9eE+.-]+/u.exec(remaining)?.[0];
+    if (!token) return "invalid";
+    offset += token.length;
+    if (/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/u.test(token)) return "complete";
+    return offset === line.length && /^-?(?:0|[1-9]\d*)(?:\.\d*)?(?:[eE][+-]?\d*)?$/u.test(token)
+      ? "incomplete"
+      : "invalid";
+  };
+  function value(depth: number): ParseResult {
+    if (depth > 64) return "invalid";
+    whitespace();
+    if (offset === line.length) return "incomplete";
+    if (line[offset] === '"') return string();
+    if (line[offset] === "{") return object(depth + 1);
+    if (line[offset] === "[") return array(depth + 1);
+    return atom();
   }
-  return quoted || depth > 0;
+  function object(depth: number): ParseResult {
+    offset += 1;
+    whitespace();
+    if (offset === line.length) return "incomplete";
+    if (line[offset] === "}") {
+      offset += 1;
+      return "complete";
+    }
+    while (offset < line.length) {
+      if (line[offset] !== '"') return "invalid";
+      const keyStart = offset;
+      const key = string();
+      if (key !== "complete") return key;
+      whitespace();
+      if (offset === line.length) return "incomplete";
+      if (line[offset++] !== ":") return "invalid";
+      whitespace();
+      if (offset === line.length) return "incomplete";
+      if (
+        depth === 0 &&
+        JSON.parse(line.slice(keyStart, offset - 1).trimEnd()) === "type" &&
+        line[offset] !== '"'
+      )
+        return "invalid";
+      const parsed = value(depth);
+      if (parsed !== "complete") return parsed;
+      whitespace();
+      if (offset === line.length) return "incomplete";
+      const separator = line[offset++];
+      if (separator === "}") return "complete";
+      if (separator !== ",") return "invalid";
+      whitespace();
+      if (offset === line.length) return "incomplete";
+    }
+    return "incomplete";
+  }
+  function array(depth: number): ParseResult {
+    offset += 1;
+    whitespace();
+    if (offset === line.length) return "incomplete";
+    if (line[offset] === "]") {
+      offset += 1;
+      return "complete";
+    }
+    while (offset < line.length) {
+      const parsed = value(depth);
+      if (parsed !== "complete") return parsed;
+      whitespace();
+      if (offset === line.length) return "incomplete";
+      const separator = line[offset++];
+      if (separator === "]") return "complete";
+      if (separator !== ",") return "invalid";
+      whitespace();
+      if (offset === line.length) return "incomplete";
+    }
+    return "incomplete";
+  }
+  whitespace();
+  return line[offset] === "{" && object(0) === "incomplete";
 }
 
 export function parsePiJsonEvents(
@@ -205,7 +300,7 @@ export function parsePiJsonEvents(
       index === lines.length - 1 &&
       !stdout.endsWith("\n") &&
       line.trimStart().startsWith("{") &&
-      hasUnclosedJsonStructure(line)
+      isIncompletePiJsonEvent(line)
     ) {
       return [];
     }
