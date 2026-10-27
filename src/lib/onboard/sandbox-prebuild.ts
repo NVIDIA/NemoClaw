@@ -63,10 +63,13 @@ export function classifyImageBuildFailure(output: string): string {
   return "Check the Dockerfile instructions and selected engine before retrying.";
 }
 
-const NPM_AUDIT_BLOCK =
-  /([a-z0-9][a-z0-9-]{0,63}): unaccepted npm audit findings at or above (?:info|low|moderate|high|critical): (GHSA(?:-[0-9a-z]{4}){3}(?:, GHSA(?:-[0-9a-z]{4}){3})*)/;
+// Same ID forms as the audit's ADVISORY_ID in scripts/lib/reviewed-npm-audit.mts.
+const NPM_AUDIT_ID = String.raw`(?:GHSA(?:-[0-9a-z]{4}){3}|CVE-\d{4}-\d+|NPM-\d+)`;
+const NPM_AUDIT_BLOCK = new RegExp(
+  `([a-z0-9][a-z0-9-]{0,63}): unaccepted npm audit findings at or above (?:info|low|moderate|high|critical): (${NPM_AUDIT_ID}(?:, ${NPM_AUDIT_ID})*)`,
+);
 
-/** Name only the blocked graph and validated GHSA IDs; the rest of the line is untrusted. */
+/** Name only the blocked graph and validated advisory IDs; the rest of the line is untrusted. */
 function npmAuditBlockGuidance(line: string): string | null {
   const match = NPM_AUDIT_BLOCK.exec(line);
   return match

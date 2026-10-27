@@ -1278,58 +1278,36 @@ describe("sandbox BuildKit prebuild", () => {
     expect(inspectImageId).not.toHaveBeenCalled();
   });
 
-  async function failBuildWithStderr(chunks: readonly string[]): Promise<unknown> {
+  it("reports every blocking npm audit ID after BuildKit echoes the long RUN command (#13846)", async () => {
     const { buildCtx, createArgs } = createBuildContext();
+    // BuildKit repeats the multi-KiB mcporter RUN instruction after the audit line.
+    const echoedRun = `process "/bin/bash -o pipefail -c ${"x".repeat(7_000)}" did not complete\n`;
+    const head = "mcporter-runtime: unaccepted npm audit findings at or above high: GHSA-27r3-";
+    const rest = `jxmh-p828, CVE-2026-12345, NPM-1112030 secret-token GHSA-dddd-eeee-ffff\n${echoedRun}`;
+    const stderr = new EventEmitter();
     mocks.dockerSpawn.mockImplementation(() => {
-      const stderr = new EventEmitter();
-      const child = new EventEmitter();
-      Object.assign(child, { stderr });
+      const child = Object.assign(new EventEmitter(), { stderr });
       process.nextTick(() => {
-        for (const chunk of chunks) stderr.emit("data", Buffer.from(chunk));
+        stderr.emit("data", Buffer.from(head));
+        stderr.emit("data", Buffer.from(rest + echoedRun));
         child.emit("close", 1);
       });
       return child;
     });
-    return prebuildSandboxImageIfEligible({
-      buildCtx,
-      buildId: BUILD_ID,
-      origin: "generated",
-      createArgs,
-      sandboxName: "alpha",
-      dockerDriverGateway: true,
-      env: {},
-      inspectImageId: vi.fn(() => IMAGE_ID),
-      log: () => {},
-    }).catch((error: unknown) => error);
-  }
-
-  it("reports blocking npm audit advisories after BuildKit echoes the long RUN command (#13846)", async () => {
-    // BuildKit repeats the failing RUN instruction after the audit line; the
-    // mcporter instruction alone is several KiB, so the line leaves any short tail.
-    const echoedRun = `process "/bin/bash -o pipefail -c set -eu; ${"x".repeat(7_000)}" did not complete successfully: exit code: 1\n`;
-    const failure = await failBuildWithStderr([
-      "#970 18.71 mcporter-runtime: info=0 low=0 moderate=4 high=2 critical=0 status=blocked\n",
-      "#970 18.71 mcporter-runtime: unaccepted npm audit findings at or above high: GHSA-27r3-",
-      "jxmh-p828, GHSA-mrhx-c7xc-m3w5\n",
-      `#970 ERROR: ${echoedRun}`,
-      `ERROR: failed to build: failed to solve: ${echoedRun}`,
-    ]);
-
-    expect(failure).toBeInstanceOf(Error);
-    expect(String(failure)).toContain(
-      "Local BuildKit build failed (exit 1); The mcporter-runtime npm audit blocked GHSA-27r3-jxmh-p828, GHSA-mrhx-c7xc-m3w5;",
+    await expect(
+      prebuildSandboxImageIfEligible({
+        buildCtx,
+        buildId: BUILD_ID,
+        origin: "generated",
+        createArgs,
+        sandboxName: "alpha",
+        dockerDriverGateway: true,
+        env: {},
+        log: () => {},
+      }),
+    ).rejects.toThrow(
+      /^Local BuildKit build failed \(exit 1\); The mcporter-runtime npm audit blocked GHSA-27r3-jxmh-p828, CVE-2026-12345, NPM-1112030; update the affected dependencies before retrying\.$/,
     );
-    expect(String(failure)).not.toContain("pipefail");
-  });
-
-  it("echoes only validated advisory IDs from npm audit build output (#13846)", async () => {
-    const failure = await failBuildWithStderr([
-      "graph-name: unaccepted npm audit findings at or above critical: GHSA-aaaa-bbbb-cccc, secret-token-123 GHSA-dddd-eeee-ffff\n",
-    ]);
-
-    expect(String(failure)).toContain("The graph-name npm audit blocked GHSA-aaaa-bbbb-cccc;");
-    expect(String(failure)).not.toContain("secret-token-123");
-    expect(String(failure)).not.toContain("GHSA-dddd-eeee-ffff");
   });
 
   it("stops a stalled local build before inspecting or handing off an image", async () => {
