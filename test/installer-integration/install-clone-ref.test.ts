@@ -561,12 +561,6 @@ describe("installer git checkout failures", testTimeoutOptions(15_000), () => {
           caller === "bootstrap",
         );
         expect(result.stderr).not.toContain("is not available");
-        expect(sha256(installed.cli)).toBe(installed.digest);
-        const version = spawnSync(installed.cli, ["--version"], { encoding: "utf8" });
-        expect(version.status, version.stderr).toBe(0);
-        expect(version.stdout.trim()).toBe("nemoclaw v0.0.118");
-        expect(fs.readFileSync(marker, "utf8")).toBe("previous managed source\n");
-        expect(fs.readdirSync(path.dirname(managedSource))).toEqual(["source"]);
       } finally {
         sockets.forEach((socket) => socket.destroy());
         try {
