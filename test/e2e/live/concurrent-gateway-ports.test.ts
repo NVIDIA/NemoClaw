@@ -302,7 +302,10 @@ async function probeSurvivorDashboard(
     timeoutMs: 30_000,
   });
   const dashboard: ShellProbeResult[] = [];
+  const dashboardDeadline = Date.now() + 60_000;
   for (let probe = 1; probe <= dashboardProbes; probe += 1) {
+    const remainingMs = dashboardDeadline - Date.now();
+    if (remainingMs <= 0) break;
     dashboard.push(
       await host.command(
         "curl",
@@ -310,7 +313,7 @@ async function probeSurvivorDashboard(
           "-sS",
           "-L",
           "--max-time",
-          "10",
+          String(Math.max(1, Math.min(10, Math.floor(remainingMs / 1_000)))),
           "-o",
           "/dev/null",
           "-w",
@@ -320,11 +323,14 @@ async function probeSurvivorDashboard(
         {
           artifactName: `${artifactPrefix}-dashboard-${String(probe)}`,
           env: commandEnv(),
-          timeoutMs: 30_000,
+          timeoutMs: Math.min(30_000, remainingMs),
         },
       ),
     );
-    await (probe < dashboardProbes ? sleep(PROBE_DELAY_MS) : Promise.resolve());
+    if (finalDashboardProbeHealthy(dashboard)) break;
+    if (probe < dashboardProbes) {
+      await sleep(Math.min(PROBE_DELAY_MS, Math.max(0, dashboardDeadline - Date.now())));
+    }
   }
   return { gatewayPort: gatewayPortProbe, scopedList, dashboard };
 }
@@ -870,7 +876,7 @@ test(
       GATEWAY_PORT_A,
       DASHBOARD_PORT_A,
       "phase-3-survivor-after-cleanup-destroy",
-      POST_UNINSTALL_HEALTH_PROBES,
+      PROBE_ATTEMPTS,
     );
     const sandboxARestartedWithCleanup =
       survivorRestartAfterCleanupDestroy.stop.exitCode === 0 &&
@@ -1008,7 +1014,7 @@ test(
       GATEWAY_PORT_A,
       DASHBOARD_PORT_A,
       "phase-3-survivor-after-retained-destroy",
-      POST_UNINSTALL_HEALTH_PROBES,
+      PROBE_ATTEMPTS,
     );
     const sandboxARestartedWithoutCleanup =
       survivorRestartAfterRetainedDestroy.stop.exitCode === 0 &&
