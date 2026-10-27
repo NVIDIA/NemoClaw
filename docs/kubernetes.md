@@ -8,7 +8,7 @@ NemoClaw either installs a development OpenShell gateway in a namespace it creat
 The same agent images serve Docker, Podman, Kubernetes and OpenShift.
 
 The managed gateway authenticates users through a development issuer it runs, or through [an existing OIDC issuer](#authenticate-through-an-existing-oidc-issuer).
-CI runs the managed lifecycle on kind (Kubernetes 1.37, Agent Sandbox 0.5.0).
+CI runs the managed lifecycle on kind (Kubernetes 1.37, Agent Sandbox 1.0.3, the version the pinned OpenShell's Kubernetes tests use).
 OpenShift was qualified by hand on one OpenShift Local 4.22.14 node (linux/arm64) at revision `62f994bf88` ([#12733](https://github.com/NVIDIA/NemoClaw/issues/12733)): the gateway and issuer ran under `restricted-v2`, and agents replied through a managed gateway, one authenticating through OIDC, and an existing gateway.
 No automated run covers OpenShift, and other clusters are untested; [current limits](limits.md#platforms-models-and-placement) lists what else is untested.
 
@@ -22,7 +22,7 @@ No automated run covers OpenShift, and other clusters are untested; [current lim
   If the kubeconfig runs an exec plugin that needs your environment, such as `aws` for EKS, list those variables in `gateway.kubernetes.environment`, for example `[AWS_PROFILE, AWS_REGION]`.
   OpenTofu and its providers receive only platform variables such as `PATH` and `HOME`, plus the ones you list.
 - **Cluster setup, done by the platform operator:**
-  - [Agent Sandbox](https://github.com/kubernetes-sigs/agent-sandbox), with its controller running in `agent-sandbox-system`; CI tests version 0.5.0.
+  - [Agent Sandbox](https://github.com/kubernetes-sigs/agent-sandbox), with its controller running in `agent-sandbox-system`; CI tests version 1.0.3.
   - Exactly one default StorageClass.
 - **Agent images:** pushed to a registry the cluster can pull from, and referenced by digest.
 - **Inference:** an endpoint reachable from inside the sandboxes, such as a [model server you run in the cluster](#use-a-model-server-in-the-cluster).

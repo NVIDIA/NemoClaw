@@ -65,7 +65,6 @@ Other pages state a limit where it affects a procedure and link the same issue.
 | The OpenClaw request walkthrough, rehearsed once OpenClaw starts in a sandbox | [#13372](https://github.com/NVIDIA/NemoClaw/issues/13372) |
 | A live rehearsal against an external gateway that requires an issuer or mTLS client certificates | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
 | A managed Kubernetes gateway with the `development` profile gives you no `openshell` access of your own; the `oidc` profile [reaches it from the OpenShell CLI](kubernetes.md#reach-the-gateway-from-the-openshell-cli), and those steps have not been run on a cluster | By design: the development issuer serves only NemoClaw |
-| Agent Sandbox 0.5.0, the version CI tests, reports a running sandbox as `Suspended=True` with reason `PodTerminated` beside `Ready=True`; read `Ready`, which Agent Sandbox [documents as authoritative](https://github.com/kubernetes-sigs/agent-sandbox/blob/v1.0.8/site/content/docs/sandbox/conditions/_index.md) | Agent Sandbox v1.0.8 reports `NotSuspended` for a running sandbox; NemoClaw still tests 0.5.0 |
 
 ## Data and Cleanup
 
