@@ -35,6 +35,7 @@ import { requiredOpenclawOtelPolicyPresets } from "./openclaw-otel-policy-preset
 import { filterSuppressedAgentRequiredPresets } from "./policy-tier-suppression";
 import { cleanupTempDir, createExactTempFileCleanup, secureTempFile } from "./temp-files";
 import { isPortableExperimentalProfile } from "./experimental/portable-profile";
+import { SUPPORTED_OPENSHELL_FALLBACK_VERSION } from "./openshell-version";
 
 export type InitialSandboxPolicy = {
   policyPath: string;
@@ -503,6 +504,18 @@ function resolveInitialSandboxCreatePolicy(
     }
   };
   try {
+    if (String(SUPPORTED_OPENSHELL_FALLBACK_VERSION) === "0.1.3") {
+      const policy = YAML.parse(basePolicy);
+      if (
+        isObjectRecord(policy) &&
+        isObjectRecord(policy.landlock) &&
+        policy.landlock.compatibility === "strict"
+      ) {
+        // OpenShell 0.1.3 renamed the fail-closed Landlock mode.
+        policy.landlock.compatibility = "hard_requirement";
+        adoptPolicy(YAML.stringify(policy), "nemoclaw-landlock-policy");
+      }
+    }
     if (options.inferenceProvider === NVIDIA_HOSTED_NATIVE_PROVIDER) {
       adoptPolicy(buildNativeNvidiaSandboxPolicy(basePolicy), "nemoclaw-native-inference-policy");
     }

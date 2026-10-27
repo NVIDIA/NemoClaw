@@ -545,7 +545,7 @@ function runOptionalOpenClawPluginBlock(
   } = options;
   const command = extractRunBlock(
     DOCKERFILE,
-    "# Install non-messaging OpenClaw plugins that need to match the runtime.",
+    "# Install optional plugins from verified offline archives; npm-pack preserves",
     "USER root\nCOPY src/lib/messaging/ /src/lib/messaging/",
   );
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-plugin-integrity-"));
@@ -1766,12 +1766,12 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         );
         const installBlock = extractRunBlock(
           DOCKERFILE,
-          "# Install non-messaging OpenClaw plugins that need to match the runtime.",
+          "# Install optional plugins from verified offline archives; npm-pack preserves",
           "USER root\nCOPY src/lib/messaging/ /src/lib/messaging/",
         );
         const installSource = dockerfile.slice(
           dockerfile.indexOf(
-            "# Install non-messaging OpenClaw plugins that need to match the runtime.",
+            "# Install optional plugins from verified offline archives; npm-pack preserves",
           ),
           dockerfile.indexOf("USER root\nCOPY src/lib/messaging/ /src/lib/messaging/"),
         );

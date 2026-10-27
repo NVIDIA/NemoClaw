@@ -74,6 +74,100 @@
         "cd2c1e6d74756d1a6d166bbfdb31a31f75b7bc6a50fc9d6b9e218f2a9eb97402"
       ],
       "version": "0.1.3"
+    },
+    {
+      "brevTemplateSha256": [
+        "c0a4ddf25a02a9fe02b2df53a60942ea887610f04d4ce16a121b6e79a5aeff1a",
+        "56fc6482d1508b73604099e6fd6c16daea16275cf36cc25c1c5366c82a4394e3",
+        "aa4afa0397780c26e0539625945052082731c441b7157cfe5917211418083756",
+        "9b906cc4d61c469cbd416169c678a7b4f3d5d3c3dee23fa902e735a6c3d94f27",
+        "98c46cfee5bc38cd378a991a7c60573836a6c774008caf5c5dd7bc6a1910e1ce",
+        "336065ba8f55f686e3dedec9109b2dfeff16e9256e7a1be135bd32b1db0c4bee",
+        "60aa3d473597638b50bc9ba637a86dee08aed5727c1d0297f72476c0c6690f2f",
+        "67bc3071e844cbe4cbc8c94084523804fab3d59b0c705077cdda822ce66fd1db",
+        "9bb436b8a08b085c5f7ca8a98bf1bc0cddc3cd51a792f897c6593499ab0b2da0",
+        "f37877d31f786fe39c16ef35efd8e1effd2494eaced09e28c04e7df37247f0f5",
+        "cfd709a9e481145a4e8ade4054d77ea487011f49458af0f995ec89733d762cb2",
+        "00869358ea440c38fc81d8f921f5eaf9380368fa036b2fc5db07bd84c933c968",
+        "7be38b490c3f83e1062ec0b7a110b41bc178a67471b786a39e6f0524caffe03a"
+      ],
+      "formula": {
+        "asset": "openshell.rb",
+        "sha256": "cf00a9441589702ffe006720fd6a9dffc0f0745b337036aad26dc53eb94c1558",
+        "url": "https://github.com/NVIDIA/OpenShell/releases/download/v0.0.116/openshell.rb"
+      },
+      "installerTemplateSha256": [
+        "2b6ad3e0730d3220da05d13b88fdba4458de46840bad57942ecad26a5d606017",
+        "24cb9e67b855e8a69df32aae992f4756ef2b29bcdc7846ef57bcfeacb3c1a9a3",
+        "6808b7c667aef5c9ebdfe269ae1f9b4c181b5de6a6e62bdb526fac4338f5ee4f"
+      ],
+      "manifests": [
+        {
+          "asset": "openshell-checksums-sha256.txt",
+          "sha256": "f8b6ec65366f9d256737b884ba4d9f184b4dbbbb9540711ed9e4934d772eba7e"
+        },
+        {
+          "asset": "openshell-gateway-checksums-sha256.txt",
+          "sha256": "572d80ded99fab0c2cf75f8108c62ab3e8455356b3c3b38de1be98806a2440e9"
+        },
+        {
+          "asset": "openshell-sandbox-checksums-sha256.txt",
+          "sha256": "0cb63b3b4436214224872c1ba245bda0d92d904822aa4f28015081269f398f93"
+        }
+      ],
+      "sandboxBuilds": [
+        {
+          "required": false,
+          "sha256": "326ee26df8f8575ba761470757a12fe5c1cdc904ba064b81946692dd0328dd40"
+        },
+        {
+          "required": false,
+          "sha256": "7052a87d2b46ef52ecc0f7c64b9bac008dd3010c467881b0648045334eb0ed1d"
+        }
+      ],
+      "supervisor": {
+        "image": "ghcr.io/nvidia/openshell/supervisor",
+        "manifestDigest": "sha256:c8c42aef16c200063e32cbf72e553e4ead027085427b555efafd95063ecead42",
+        "required": false,
+        "runtimeTemplateSha256": [
+          "6093aa5b0f20988cfc59e0613cdf1fb21f814b43cc3ec95bb17da14dc0620b60",
+          "593ced09573f8cea5d2323b6d388ebb5d30f6da241d4f511e5364a3057887911",
+          "56c0cdf06734b45b235b7426de260245b03a6806a3d09a328d9bbd9161733d3e",
+          "3d0f00a56ecb90e4077b6a1c455df8a659818cf8949b58e41ccc4f410ff9c13d",
+          "2fb91b00c15aad1e5780a9e4199ca8ad944e849e3a32ad2b9bbb54c0255c0318"
+        ]
+      },
+      "pinLayout": {
+        "brev": {
+          "assets": [
+            "openshell-x86_64-unknown-linux-musl.tar.gz",
+            "openshell-aarch64-unknown-linux-musl.tar.gz"
+          ],
+          "manifests": ["openshell-checksums-sha256.txt"]
+        },
+        "installer": {
+          "assets": [
+            "openshell-x86_64-unknown-linux-musl.tar.gz",
+            "openshell-aarch64-unknown-linux-musl.tar.gz",
+            "openshell-aarch64-apple-darwin.tar.gz",
+            "openshell-gateway-x86_64-unknown-linux-gnu.tar.gz",
+            "openshell-gateway-aarch64-unknown-linux-gnu.tar.gz",
+            "openshell-gateway-aarch64-apple-darwin.tar.gz",
+            "openshell-sandbox-x86_64-unknown-linux-musl.tar.gz",
+            "openshell-sandbox-aarch64-unknown-linux-musl.tar.gz",
+            "openshell.rb"
+          ],
+          "manifests": [
+            "openshell-checksums-sha256.txt",
+            "openshell-gateway-checksums-sha256.txt",
+            "openshell-sandbox-checksums-sha256.txt"
+          ]
+        }
+      },
+      "featureGateTemplateSha256": [
+        "3404b35030ce0adef3998dcdedf27245610534ddefaa741e125539b3d2e1a735"
+      ],
+      "version": "0.0.116"
     }
   ],
   "revokedTemplateSha256": []

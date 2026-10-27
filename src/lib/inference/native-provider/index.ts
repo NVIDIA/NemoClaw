@@ -12,6 +12,7 @@ import type {
   OpenShellProviderMetadata,
 } from "../../adapters/openshell/sandbox-observer";
 import { REPOSITORY_ROOT } from "../../core/repository-root";
+import { isValidName } from "../../sandbox-name-contract";
 import {
   normalizeNativeProviderAttachment,
   type NativeProviderAttachment,
@@ -259,6 +260,8 @@ export class NativeProviderLifecycle<ProfileId extends string, ProviderName exte
     credentialValue: string | null;
     reuseExistingCredential?: boolean;
     expected?: NativeProviderAttachment<ProfileId, ProviderName>;
+    /** Registry sandbox whose receipt is the only ownership evidence for `expected`. */
+    recordedSandboxName?: string;
     profilePath?: string;
   }): Promise<NativeProviderAttachment<ProfileId, ProviderName>> {
     if (input.expected) this.requireExpectedReceipt(input.expected);
@@ -324,6 +327,13 @@ export class NativeProviderLifecycle<ProfileId extends string, ProviderName exte
       return observedReceipt;
     }
 
+    // The registry name is untrusted input; print it as a command only when it is a valid sandbox name.
+    const sandbox = input.recordedSandboxName;
+    if (input.expected && sandbox && isValidName(sandbox)) {
+      throw new NativeProviderError(
+        `OpenShell provider '${this.definition.providerName}' is missing, and only the NemoClaw registry record for sandbox '${sandbox}' shows that NemoClaw owned it. If that sandbox no longer exists on this gateway, run 'nemoclaw ${sandbox} destroy' to clear the stale record, then onboard again. Otherwise, recreate the sandbox before using native ${this.definition.label} inference. No provider was changed.`,
+      );
+    }
     if (input.expected) {
       throw new NativeProviderError(
         `OpenShell provider '${this.definition.providerName}' is missing. If this gateway has no sandboxes after a reinstall, complete uninstall without --keep-openshell, then onboard again. Otherwise, recreate the sandbox before using native ${this.definition.label} inference. No provider was changed.`,

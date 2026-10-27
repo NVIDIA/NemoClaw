@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { prepareManagedWorkspaceMetadata } from "./managed-workspace-metadata";
 import { SANITIZED_PRIVILEGED_ENV } from "./privileged-sandbox-environment";
 import type { PodmanContainerEngine } from "../../adapters/podman";
 import type {
@@ -79,6 +80,14 @@ function execute(
     ],
     input.timeoutMs,
     input.input,
+    ...(input.maxOutputBytes !== undefined || (input.input?.length ?? 0) > 1024 * 1024
+      ? [
+          {
+            maxInputBytes: Math.max(1, input.input?.length ?? 0),
+            maxOutputBytes: input.maxOutputBytes ?? 1024 * 1024,
+          },
+        ]
+      : []),
   );
   return Object.freeze({
     status: result.status,
@@ -139,6 +148,33 @@ export function createPodmanPrivilegedSandboxControl(
     throw new Error("Podman stopped-state cleanup requires its workload-cleanup engine.");
   }
   return Object.freeze({
+    prepareManagedStartupWorkspace: (
+      input: Parameters<
+        NonNullable<RuntimeProviderPrivilegedSandboxControl["prepareManagedStartupWorkspace"]>
+      >[0],
+    ) =>
+      prepareManagedWorkspaceMetadata(input.workspace, {
+        execute: (command) =>
+          execute(engine, { ...input, command, sanitizeEnvironment: true, maxOutputBytes: 4096 }),
+        copyDirectory: (archive) => {
+          const target = resolveTarget(engine, input);
+          if (target.resourceHandle !== input.expectedResourceHandle) {
+            throw new PinnedSandboxResourceIdentityChangedError(input.sandboxName);
+          }
+          // Preserve the declared UID/GID instead of substituting the container user.
+          const result = engine.capture(
+            ["container", "cp", "--archive=false", "-", `${target.resourceHandle}:/`],
+            input.timeoutMs,
+            archive,
+          );
+          return {
+            ...result,
+            signal: null,
+            stdout: Buffer.from(result.stdout, "utf8"),
+            stderr: Buffer.from(result.stderr, "utf8"),
+          };
+        },
+      }),
     resolveTarget: (
       input: Pick<
         RuntimeProviderPrivilegedSandboxCommandInput,

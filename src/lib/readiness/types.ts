@@ -65,6 +65,8 @@ interface SystemReadinessReportFields {
   qualifications: readonly ReadinessQualification[];
   findings: readonly ReadinessFinding[];
   evidence: readonly ReadinessEvidence[];
+  /** Counts when the public evidence limit omits GPU devices. */
+  gpuInventory?: { collected: number; listed: number; omitted: number };
   [key: string]: unknown;
 }
 

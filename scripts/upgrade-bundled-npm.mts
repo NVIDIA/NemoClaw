@@ -48,7 +48,7 @@ export const REVIEWED_NPM_PACKAGES = {
   tar: "7.5.19",
 } as const;
 
-const REPLACEABLE_NPM_VERSIONS = new Set(["10.9.8", "11.13.0", "11.16.0", "11.18.0"]);
+const REPLACEABLE_NPM_VERSIONS = new Set(["10.9.8", "11.13.0", "11.16.0", "11.18.0", "11.19.1"]);
 
 function npmVersion(npmRoot: string): string {
   const manifest = readJson(join(npmRoot, "package.json"), "npm package manifest");

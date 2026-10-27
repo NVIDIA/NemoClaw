@@ -62,7 +62,7 @@ const REVIEWED_EXECUTION_STEP_NAMES = [
   "Run every exact managed-image contract directly",
 ] as const;
 const REVIEWED_EXECUTION_SURFACE_SHA256 =
-  "10a73edea771fdd015b543a8dec7ed55be5d6c28dc1a43bed8dccd07be497ba7";
+  "713af9ea03855738f10a200067b1636461de7c5e875cc9c7f15680fb06176fd2";
 const SHARED_POLICY_BOUNDARY_RUN = [
   "set -euo pipefail",
   "[[ ! -e nemoclaw/dist && ! -L nemoclaw/dist ]] || {",

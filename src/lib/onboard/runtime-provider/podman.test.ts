@@ -599,13 +599,13 @@ describe("managed Podman runtime provider", () => {
         "inspect",
         "--format",
         "{{.Id}}",
-        expect.stringContaining("node:24.18.1-trixie-slim"),
+        expect.stringContaining("node:24.22.1-trixie-slim"),
       ],
       30_000,
     );
     expect(cleanupCapture).toHaveBeenNthCalledWith(
       2,
-      ["pull", "--quiet", expect.stringContaining("node:24.18.1-trixie-slim")],
+      ["pull", "--quiet", expect.stringContaining("node:24.22.1-trixie-slim")],
       120_000,
     );
   });
@@ -654,7 +654,7 @@ describe("managed Podman runtime provider", () => {
         "inspect",
         "--format",
         "{{.Id}}",
-        expect.stringContaining("node:24.18.1-trixie-slim"),
+        expect.stringContaining("node:24.22.1-trixie-slim"),
       ]);
     },
   );

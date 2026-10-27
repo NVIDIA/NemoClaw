@@ -110,6 +110,18 @@ describe("inference-switch catalogue boundary", () => {
     },
   );
 
+  it("assigns Discord rebuild evidence to the native NVIDIA switch target (#13633)", () => {
+    const discord = catalogueTarget("hermes-discord");
+    const rebuild = catalogueTarget("hermes-inference-switch");
+    expect(discord.displayName).toBe(
+      "Messaging: Hermes isolates Discord credentials and verifies transport",
+    );
+    expect(rebuild.displayName).toBe(
+      "Inference: Hermes switches to NVIDIA and preserves Discord across rebuild",
+    );
+    expect(rebuild.testFile).toBe("test/e2e/live/hermes-inference-switch.test.ts");
+  });
+
   it("selects the public Super VL model for both native NVIDIA switch targets", () => {
     const superVl = "nvidia/nemotron-3.5-super-vl-120b-a12b";
     expect([DEFAULT_CLOUD_MODEL, PUBLIC_NVIDIA_SWITCH_MODEL]).toEqual([superVl, superVl]);

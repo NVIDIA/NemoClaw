@@ -94,7 +94,7 @@ function reviewedConfigSource(
     artifactDirectory: "artifacts/reviewed-npm-audit",
     exceptionFile: "ci/npm-audit-exceptions.json",
     lockedGraphs: [],
-    nodeVersion: "24.18.1",
+    nodeVersion: "24.22.1",
     npmArchiveSha256: "5dbb86c71d07a1957f2e90734092dd6a58bdcd9ebc2d8d41ca1c6e6a21d364e1",
     npmIntegrity:
       "sha512-uIXokLlBj6FpNUTQX1PmT5pz7BlIN9QlixX+zdaSNHsd0qUXsbDLr50xzY6Sw7cJVr0uzHKDOle0swmPW/p5Qw==",

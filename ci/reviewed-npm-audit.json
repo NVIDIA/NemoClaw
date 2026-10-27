@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "nodeVersion": "24.18.1",
+  "nodeVersion": "24.22.1",
   "npmVersion": "12.0.2",
   "npmIntegrity": "sha512-uIXokLlBj6FpNUTQX1PmT5pz7BlIN9QlixX+zdaSNHsd0qUXsbDLr50xzY6Sw7cJVr0uzHKDOle0swmPW/p5Qw==",
   "npmArchiveSha256": "5dbb86c71d07a1957f2e90734092dd6a58bdcd9ebc2d8d41ca1c6e6a21d364e1",
@@ -159,7 +159,7 @@
       "integrity": "sha512-M6C7UsnX815nv26qBJFYGe6aGzv+ftZLRzV6S9oRXUtXg2Yn67eVntpssT94kgkquKVSeUxerUg0j1ONp4WYQg==",
       "tarballUrl": "https://registry.npmjs.org/openclaw/-/openclaw-2026.9.2.tgz",
       "directory": "agents/openclaw/openclaw-runtime",
-      "lockSha256": "4c14e6f08cafbe3309c4f2790812c7675c2b3836614463f1ee82a4d16d19fcc4",
+      "lockSha256": "0b1253c6570f55881623961c856b430a17d4271f5efe8c5beffa7ac0fc8d0199",
       "replacement": {
         "label": "OpenClaw 2026.9.5 locked runtime graph",
         "packageSpec": "openclaw@2026.9.5",
@@ -175,7 +175,7 @@
       "integrity": "sha512-egoPVYqTnWb3NjRIxo+xc8OrAI0dlPrJm9pAiZx0pImuNIV5rKhGtTnIfH/Y1ldGPVu74ibj3KR5c9U/QSdQFA==",
       "tarballUrl": "https://registry.npmjs.org/mcporter/-/mcporter-0.7.3.tgz",
       "directory": "agents/openclaw/mcporter-runtime",
-      "lockSha256": "fb489a01077a2c93cd82bb141f4c491f7a39143a67997fbcce9865e7351a45f7"
+      "lockSha256": "04e9a7801758c8ac40709572f2d8e73725839ea62caef7e07c6f0fe419ed13af"
     },
     {
       "id": "wechat-runtime",
@@ -184,7 +184,7 @@
       "integrity": "sha512-SfaYehR1Cwq2VV5HxJBp9sVilMms420VfZlMbF4YjRbWomr5+GxfXp9HkeU6y5TbnOc4Ysq0qPw1yBvJwbenBA==",
       "tarballUrl": "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.9.tgz",
       "directory": "agents/openclaw/wechat-runtime",
-      "lockSha256": "84f2b731e9ffe731d29c28ebbe795116217771971c729b577df1a8816296f9b8",
+      "lockSha256": "74856e20d229528ee7e2d107e6238e2204beea36c0deb733a7102082bcd4e5ea",
       "severityThreshold": "low",
       "installMode": "legacy-peer-deps",
       "inputValidation": "wechat-runtime",
@@ -197,7 +197,7 @@
       "integrity": "sha512-8BviX/hK4Gd2eL1KdTwm0gfl4d3wdoErW0Jd00h6nomUAtk6IJk5vwQJc6kfWtJTzN5OEV/lgIiJKI8fiDGAlA==",
       "tarballUrl": "https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.32.0.tgz",
       "directory": "tools/mcp-tool-discovery-runtime",
-      "lockSha256": "6631147d175dae27a3d99a06eb8e6d4b7071b4304453a25cb74f0ddd0c892983"
+      "lockSha256": "a055cc6630c19809d3b359dc464ca5684fe86e0155fde2be3cd89e3f436ae679"
     }
   ],
   "sourceRegistryPackageReplacement": {

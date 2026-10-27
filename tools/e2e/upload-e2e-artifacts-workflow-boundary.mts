@@ -421,6 +421,13 @@ function validateUploadPlacement(
       "Remove immutable native Podman cleanup fixture",
       "Clean up Docker auth",
     ],
+    [
+      "Remove pinned Portable crun",
+      "Restore Docker and retire Portable Podman runtime",
+      "Remove pinned Portable crun after restoration",
+      "Remove immutable native Podman cleanup fixture",
+      "Clean up Docker auth",
+    ],
   ].some((candidate) => isDeepStrictEqual(tailNames, candidate));
   if (!validTail) {
     errors.push(
@@ -608,6 +615,13 @@ export function validateUploadE2eArtifactsInvocations(workflow: WorkflowRecord):
     const upload = uploadSteps[0];
     const explicitContract = EXPLICIT_UPLOAD_CONTRACTS.get(jobName);
     const allowedKeys = explicitContract ? ["if", "name", "uses", "with"] : ["if", "name", "uses"];
+    if (jobName === "managed-image-protected-runtime") {
+      allowedKeys.push("timeout-minutes");
+      allowedKeys.sort();
+      if (upload["timeout-minutes"] !== 4) {
+        errors.push(`${jobName} artifact upload must retain its four-minute finalization budget`);
+      }
+    }
     if (!isDeepStrictEqual(sortedKeys(upload), allowedKeys)) {
       errors.push(`${jobName} upload-e2e-artifacts invocation must not override its contract`);
     }

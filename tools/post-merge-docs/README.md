@@ -7,8 +7,9 @@ This directory owns the trusted authoring and publishing boundary for `Docs / Au
 
 Each refresh merges the selected draft commit with the triggering `main` commit before authoring.
 The author extends those staged documentation changes. The reviewer checks the combined patch and
-compares revisions or removals with the previous draft. A merge conflict stops the run for maintainer
-resolution. Publication stops if the managed draft changed after selection.
+compares revisions or removals with the previous draft. A merge conflict stops the run before authoring
+and reports the conflicting files. Follow
+[Resolve a Draft Merge Conflict](../../docs/AUTOMATION.md#resolve-a-draft-merge-conflict). Publication stops if the managed draft changed after selection.
 
 Successful draft creation, refresh, recovery, and no-change runs exit successfully.
 When a managed draft remains open, the publisher emits a notice linking to it for maintainer review and merge.

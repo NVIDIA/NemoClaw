@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
+import { bootstrapInstallSudoArgs } from "../../e2e/fixtures/bootstrap-install-command.ts";
 
 const SCRIPT = path.join(import.meta.dirname, "../../..", "scripts", "brev-launchable-ci-cpu.sh");
 const NPM_DIAGNOSTICS_HELPER = path.join(
@@ -328,7 +329,7 @@ if [ "\${1:-}" = "-c" ]; then
   exit 0
 fi
 if [ ${JSON.stringify(options.nodeArchiveChecksum !== undefined)} = true ]; then
-  printf '%s  %s\\n' '${options.nodeArchiveChecksum === "mismatch" ? "0".repeat(64) : "9f5eb6ac21845a66c493c91a253b1da32fd684e89e9b7202d4936982336be4ca"}' "$1"
+  printf '%s  %s\\n' '${options.nodeArchiveChecksum === "mismatch" ? "0".repeat(64) : "eb6728e77c576a35162c122c45ccadf224d89ff00abc8dae46cc2897c6002d7c"}' "$1"
   exit 0
 fi
 exec /usr/bin/sha256sum "$@"
@@ -385,6 +386,61 @@ function combinedLaunchableOutput(result: ReturnType<typeof spawnSync>, launchLo
 }
 
 describe("brev-launchable-ci-cpu.sh OpenShell checksum gate", { timeout: 30_000 }, () => {
+  it.each([
+    { label: "defaults", env: {}, expectedPull: "1", expectedChannel: "stable" },
+    {
+      label: "selected options",
+      env: { SKIP_DOCKER_PULL: "0", NEMOCLAW_OPENSHELL_CHANNEL: "staging" },
+      expectedPull: "0",
+      expectedChannel: "staging",
+    },
+  ])("preserves bootstrap $label across a cleared sudo environment", (fixture) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-bootstrap-env-"));
+    try {
+      const script = path.join(root, "bootstrap probe.sh");
+      const cloneDir = path.join(root, "candidate $(printf wrong) ' checkout");
+      const installLog = path.join(root, "bootstrap log.txt");
+      fs.writeFileSync(
+        script,
+        [
+          "set -eu",
+          'printf "%s\\n" "$LAUNCH_LOG" "$NEMOCLAW_CLONE_DIR" "$NEMOCLAW_REF"',
+          'printf "%s\\n" "$SKIP_DOCKER_PULL" "$NEMOCLAW_OPENSHELL_CHANNEL"',
+          'printf "%s\\n" "${NVIDIA_INFERENCE_API_KEY-unset}" "${GH_TOKEN-unset}"',
+        ].join("\n"),
+      );
+      const args = bootstrapInstallSudoArgs({
+        script,
+        cloneDir,
+        installLog,
+        env: {
+          ...fixture.env,
+          NVIDIA_INFERENCE_API_KEY: "fixture-inference-secret",
+          GH_TOKEN: "fixture-github-secret",
+        },
+      });
+      expect(args.slice(0, 2)).toEqual(["-n", "env"]);
+      expect(args.join("\0")).not.toMatch(/fixture-(inference|github)-secret/u);
+      // Emulate sudo's cleared environment without elevating the test process.
+      const result = spawnSync("env", ["-i", "PATH=/usr/bin:/bin", ...args.slice(2)], {
+        encoding: "utf8",
+        timeout: 5_000,
+      });
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout.trimEnd().split("\n")).toEqual([
+        installLog,
+        cloneDir,
+        "main",
+        fixture.expectedPull,
+        fixture.expectedChannel,
+        "unset",
+        "unset",
+      ]);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("fits within Brev's lifecycle setup-script limit", () => {
     expect(fs.statSync(SCRIPT).size).toBeLessThanOrEqual(BREV_LIFECYCLE_SCRIPT_MAX_BYTES);
   });
@@ -433,10 +489,10 @@ describe("brev-launchable-ci-cpu.sh OpenShell checksum gate", { timeout: 30_000 
     expect(source).not.toContain('source "$NEMOCLAW_CLONE_DIR/scripts/lib/npm-diagnostics.sh"');
     expect(source).toContain(`NODE_VERSION="${REVIEWED_NODE_VERSION}"`);
     expect(source).toContain(
-      'node_sha256="9f5eb6ac21845a66c493c91a253b1da32fd684e89e9b7202d4936982336be4ca"',
+      'node_sha256="eb6728e77c576a35162c122c45ccadf224d89ff00abc8dae46cc2897c6002d7c"',
     );
     expect(source).toContain(
-      'node_sha256="df224555a083b918e46260cc969838501b9f9a87140c1195e5b9597b56d5dae2"',
+      'node_sha256="33c37be234ba8bee041961047b19160f4d7d0f164e8e246f78bdd10feff148b3"',
     );
     expect(source).toContain(
       "bash .github/actions/setup-reviewed-npm/verify-and-install-npm.sh ci/reviewed-npm-audit.json",

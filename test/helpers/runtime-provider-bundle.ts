@@ -94,6 +94,7 @@ export function createInMemoryRuntimeProviderBundle({
       sandboxNamespace: "scoped" as const,
       hostGatewayIp: null,
       includeSupervisorBin: true,
+      driverConfigLayout: "split-supervisor" as const,
       processOwnership: "scoped-namespace" as const,
     },
     network: {

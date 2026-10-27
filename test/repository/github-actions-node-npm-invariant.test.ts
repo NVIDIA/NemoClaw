@@ -20,7 +20,7 @@ const SETUP_NODE = "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020"
 const IMMUTABLE_REVIEWED_NPM_ACTION =
   "NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2";
 const IMMUTABLE_PREPARE_E2E_ACTION =
-  "NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c";
+  "NVIDIA/NemoClaw/.github/actions/prepare-e2e@7fcbf13ecd7bc0ea835a949417cf9eb68067adf9";
 const LOCAL_REVIEWED_NPM_ACTION = /^\.\/(?:[^/\s]+\/)*\.github\/actions\/setup-reviewed-npm$/u;
 
 type Step = {
@@ -198,7 +198,7 @@ describe("controlled setup-node environments", () => {
       String(step.with?.["node-version"]),
     ]);
 
-    expect(identity).toMatchObject({ nodeVersion: "24.18.1", npmVersion: "12.0.2" });
+    expect(identity).toMatchObject({ nodeVersion: "24.22.1", npmVersion: "12.0.2" });
     expect(npmSetupNodeSteps.length).toBeGreaterThan(0);
     expect(
       setupIdentities.every(

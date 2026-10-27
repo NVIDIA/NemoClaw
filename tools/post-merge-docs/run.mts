@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -71,6 +71,28 @@ function git(repository: string, args: readonly string[]): string {
     env: GIT_ENV,
     stdio: ["ignore", "pipe", "inherit"],
   }).trim();
+}
+
+function mergeDraftTree(repository: string, main: string, previous: string): string {
+  const result = spawnSync(
+    "git",
+    ["-C", repository, "merge-tree", "--write-tree", "--name-only", main, previous],
+    { encoding: "utf8", env: GIT_ENV, stdio: ["ignore", "pipe", "pipe"] },
+  );
+  if (result.error) throw result.error;
+  const [tree = "", ...rest] = result.stdout.trim().split("\n");
+  if (result.status === 0) return exactSha(tree, "merged draft tree");
+  if (result.status !== 1) fail(`git merge-tree failed: ${result.stderr.trim()}`);
+  const separator = rest.indexOf("");
+  const files = separator < 0 ? rest : rest.slice(0, separator);
+  const messages = separator < 0 ? [] : rest.slice(separator + 1);
+  return fail(
+    [
+      `The managed documentation draft ${previous} conflicts with main ${main} in: ${files.join(", ")}`,
+      ...messages,
+      "Follow the recovery procedure: https://github.com/NVIDIA/NemoClaw/blob/main/docs/AUTOMATION.md#resolve-a-draft-merge-conflict",
+    ].join("\n"),
+  );
 }
 
 function reset(directory: string): void {
@@ -176,8 +198,7 @@ function prepare(env: NodeJS.ProcessEnv): void {
   const main = exactSha(env.GITHUB_SHA, "GITHUB_SHA");
   const previous = previousSha(env);
   if (previous) {
-    const merged = git(repository, ["merge-tree", "--write-tree", main, previous]);
-    git(repository, ["read-tree", "--reset", "-u", exactSha(merged, "merged draft tree")]);
+    git(repository, ["read-tree", "--reset", "-u", mergeDraftTree(repository, main, previous)]);
     validateCandidate(repository);
   }
   if (current === "review") {

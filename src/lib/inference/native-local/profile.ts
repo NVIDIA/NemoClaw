@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { SUPPORTED_OPENSHELL_FALLBACK_VERSION } from "../../onboard/openshell-version";
+
 import { requireNativeProviderPolicy } from "../../adapters/openshell/provider-policy";
 import fs from "node:fs";
 import os from "node:os";
@@ -77,6 +79,11 @@ export function prepareNativeLocalProfile(input: NativeLocalBinding) {
       binaries: [
         // The provider-neutral onboarding smoke probe uses Python urllib.
         "/usr/bin/python3",
+        // The projected runtime matches the pinned images' resolved interpreter.
+        ...(String(SUPPORTED_OPENSHELL_FALLBACK_VERSION) === "0.1.3" &&
+        (binding.agent === "hermes" || binding.agent === "openclaw" || binding.agent === "pi")
+          ? ["/usr/bin/python3.13"]
+          : []),
         ...(binding.agent === "hermes"
           ? ["/opt/hermes/.venv/bin/python", "/opt/hermes/.venv/bin/python3"]
           : []),
@@ -157,7 +164,9 @@ async function checkedAttachment(input: AttachmentInput, requirePolicy = true) {
   return { expected, target, profile: { ...prepared, profilePath: "", label: "host-local" } };
 }
 
-export async function verifyNativeLocalProviderAttachment(input: AttachmentInput) {
+export async function verifyNativeLocalProviderAttachment(
+  input: AttachmentInput & { requireUnexpiredCredential?: boolean },
+) {
   const checked = await checkedAttachment(input);
   await verifyNativeProviderAttachment({ ...input, ...checked });
   return checked.expected;

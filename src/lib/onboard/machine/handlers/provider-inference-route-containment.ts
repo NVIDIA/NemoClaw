@@ -9,6 +9,8 @@ import {
   type GatewayRouteDiscoveryConstraints,
   isAdvisoryGatewayRouteConflict,
 } from "../../../inference/gateway-route-compatibility";
+import { gatewayReachableCompatibleEndpointUrl } from "../../../inference/native-local/eligibility";
+import { listNativeLocalProviderAuthorities } from "../../../state/registry/native-local-provider-authority";
 
 export interface ProviderInferenceRouteContainmentDeps {
   checkGatewayRouteCompatibility: CurrentGatewayRouteCompatibilityCheck;
@@ -99,4 +101,36 @@ export function guardProviderInferenceRouteSelection(
     });
   }
   return unconstrainedGatewayRouteDiscovery();
+}
+
+export type NativeLocalResumeSelection = Readonly<{
+  provider: string;
+  endpointUrl: string | null;
+  agent: string | null | undefined;
+}>;
+
+/**
+ * A ready shared route is not evidence that this sandbox owns a native local attachment.
+ * Accept only a receipt for the same selection; any mismatch reruns inference setup.
+ */
+export function hasNativeLocalProviderAuthority(
+  sandboxName: string,
+  gatewayName: string,
+  selection: NativeLocalResumeSelection,
+): boolean {
+  // Same host-reachable endpoint mapping that onboarding uses for the attachment binding.
+  const endpointUrl = gatewayReachableCompatibleEndpointUrl(
+    selection.provider,
+    selection.endpointUrl,
+  );
+  const agent =
+    selection.agent === "openclaw" || selection.agent === "pi" || selection.agent === "hermes"
+      ? selection.agent
+      : null;
+  return listNativeLocalProviderAuthorities(sandboxName, gatewayName).some(
+    (receipt) =>
+      receipt.provider === selection.provider &&
+      receipt.endpointUrl === endpointUrl &&
+      (receipt.agent ?? null) === agent,
+  );
 }

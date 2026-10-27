@@ -199,7 +199,12 @@ realDockerTest(
     const requiredAvailableBytes = imageStorageRequirementBytes(profile.imageDownloadSizeBytes);
 
     progress.phase("exercise the managed vLLM storage gate");
-    const fakeBinDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-vllm-storage-"));
+    // Ubuntu 26.04 hosted runners mount /tmp as a RAM-backed tmpfs smaller than the
+    // model-cache requirement. Keep the fake home on the runner disk so the
+    // production storage gate passes and the intended cache-directory error is reached.
+    const fakeBinDir = fs.mkdtempSync(
+      path.join(process.env.RUNNER_TEMP || os.tmpdir(), "nemoclaw-vllm-storage-"),
+    );
     const blockedHome = path.join(fakeBinDir, "blocked-home");
     const commandLogPath = path.join(fakeBinDir, "docker-commands.jsonl");
     const statfsLogPath = path.join(fakeBinDir, "statfs-samples.jsonl");

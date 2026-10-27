@@ -21,7 +21,7 @@ function runPluginInstallBlock(
   const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
   const command = dockerRunCommandBetween(
     dockerfile,
-    "# Install non-messaging OpenClaw plugins",
+    "# Install optional plugins from verified offline archives",
     "USER root\nCOPY src/lib/messaging/ /src/lib/messaging/",
   );
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-tavily-plugin-"));

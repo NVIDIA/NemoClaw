@@ -63,6 +63,7 @@ function fixture(ipAddressVersion: string) {
   writeJson(path.join(replacementRoot, "package.json"), packageManifest(FIXED_IP_ADDRESS_VERSION));
   fs.mkdirSync(path.join(replacementRoot, "dist"));
   fs.writeFileSync(path.join(replacementRoot, "dist", "ip-address.js"), "fixed\n");
+  fs.chmodSync(replacementRoot, 0o700);
   return { npmRoot, replacementRoot };
 }
 
@@ -82,10 +83,18 @@ describe("npm bundled ip-address remediation", () => {
   it("replaces the complete affected private package tree", () => {
     const target = fixture(AFFECTED_IP_ADDRESS_VERSION);
 
+    const installed = path.join(target.npmRoot, "node_modules", "ip-address");
+    const originalMetadata = fs.statSync(path.join(target.replacementRoot, "package.json"));
     expect(patchBundledNpmIpAddress(target)).toMatchObject({
       ipAddressVersion: FIXED_IP_ADDRESS_VERSION,
       npmVersion: REVIEWED_NPM_VERSION,
       state: "fixed",
+    });
+    expect(fs.statSync(installed).mode & 0o777).toBe(0o755);
+    expect(fs.statSync(path.join(installed, "package.json"))).toMatchObject({
+      uid: originalMetadata.uid,
+      gid: originalMetadata.gid,
+      mode: originalMetadata.mode,
     });
     expect(fs.existsSync(path.join(target.npmRoot, "node_modules", "ip-address", "old.js"))).toBe(
       false,
@@ -127,6 +136,11 @@ describe("npm bundled ip-address remediation", () => {
 
   it("does not download when npm already contains the fixed release", () => {
     const target = fixture(FIXED_IP_ADDRESS_VERSION);
+    const installed = path.join(target.npmRoot, "node_modules", "ip-address");
+    fs.chmodSync(installed, 0o700);
+    expect(patchBundledNpmIpAddress(target)).toMatchObject({ state: "fixed" });
+    expect(fs.statSync(installed).mode & 0o777).toBe(0o755);
+    fs.chmodSync(installed, 0o700);
     const commands: string[] = [];
 
     expect(
@@ -138,6 +152,7 @@ describe("npm bundled ip-address remediation", () => {
       }),
     ).toMatchObject({ state: "fixed" });
     expect(commands).toEqual(["npm", "npx"]);
+    expect(fs.statSync(installed).mode & 0o777).toBe(0o755);
     expectAffectedTreeUnchanged(target);
   });
 

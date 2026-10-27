@@ -536,33 +536,93 @@ describe("full E2E inference service availability", () => {
     }
   });
 
-  it("retains both attempts when HTTP 503 recovers", async () => {
+  it.each([429, 500, 502, 503, 504])(
+    "retains both attempts when transient HTTP %i recovers (#13616)",
+    async (httpStatus) => {
+      const attempts: number[] = [];
+      const delays: number[] = [];
+      const evidence: unknown[] = [];
+      const transient = commandResult(
+        "",
+        22,
+        `curl: (22) The requested URL returned error: ${httpStatus}\n`,
+      );
+      const result = await runFullE2eInferenceCommand({
+        run: async (attempt) => {
+          attempts.push(attempt);
+          return attempt === 1 ? transient : commandResult(completion("42"));
+        },
+        sleep: async (ms) => {
+          delays.push(ms);
+        },
+        onEvidence: (value) => {
+          evidence.push(value);
+        },
+      });
+      expect(result.exitCode).toBe(0);
+      expect(attempts).toEqual([1, 2]);
+      expect(delays).toEqual([5_000]);
+      expect(evidence.at(-1)).toMatchObject({
+        outcome: "passed-after-retry",
+        maxAttempts: 2,
+        attempts: [
+          { attempt: 1, failureClass: "transient-external", retryScheduled: true },
+          { attempt: 2, outcome: "passed", retryScheduled: false },
+        ],
+      });
+    },
+  );
+
+  it("retries one no-response curl timeout and retains recovery evidence", async () => {
     const attempts: number[] = [];
-    const delays: number[] = [];
     const evidence: unknown[] = [];
+    const timeout = commandResult(
+      "",
+      28,
+      "curl: (28) Operation timed out after 90002 milliseconds with 0 bytes received\n",
+    );
     const result = await runFullE2eInferenceCommand({
       run: async (attempt) => {
         attempts.push(attempt);
-        return attempt === 1 ? unavailable : commandResult(completion("42"));
+        return attempt === 1 ? timeout : commandResult(completion("42"));
       },
-      sleep: async (ms) => {
-        delays.push(ms);
-      },
+      sleep: async () => {},
       onEvidence: (value) => {
         evidence.push(value);
       },
     });
     expect(result.exitCode).toBe(0);
     expect(attempts).toEqual([1, 2]);
-    expect(delays).toEqual([5_000]);
     expect(evidence.at(-1)).toMatchObject({
       outcome: "passed-after-retry",
-      maxAttempts: 2,
       attempts: [
         { attempt: 1, failureClass: "transient-external", retryScheduled: true },
         { attempt: 2, outcome: "passed", retryScheduled: false },
       ],
     });
+  });
+
+  it("stops after two no-response curl timeouts", async () => {
+    const timeout = commandResult(
+      "",
+      28,
+      "curl: (28) Operation timed out after 90002 milliseconds with 0 bytes received",
+    );
+    let calls = 0;
+    const evidence: unknown[] = [];
+    const result = await runFullE2eInferenceCommand({
+      run: async () => {
+        calls += 1;
+        return timeout;
+      },
+      sleep: async () => {},
+      onEvidence: (value) => {
+        evidence.push(value);
+      },
+    });
+    expect(result).toEqual(timeout);
+    expect(calls).toBe(2);
+    expect(evidence.at(-1)).toMatchObject({ outcome: "exhausted" });
   });
 
   it("fails an execution exception without retrying or exposing its text", async () => {
@@ -608,8 +668,18 @@ describe("full E2E inference service availability", () => {
   it.each([
     commandResult("", 22, "curl: (22) The requested URL returned error: 401"),
     commandResult("", 22, "curl: (22) The requested URL returned error: 403"),
-    commandResult("", 22, "curl: (22) The requested URL returned error: 500"),
+    commandResult("", 22, "curl: (22) The requested URL returned error: 404"),
     commandResult("", 28, "curl: (28) Operation timed out"),
+    commandResult(
+      "partial response",
+      28,
+      "curl: (28) Operation timed out after 90002 milliseconds with 0 bytes received",
+    ),
+    commandResult(
+      "",
+      28,
+      "curl: (28) Operation timed out after 90002 milliseconds with 10 bytes received",
+    ),
     commandResult("", 1, "curl: (22) The requested URL returned error: 503"),
     commandResult("policy denied", 22, unavailable.stderr),
     commandResult("", 22, `${unavailable.stderr}authentication failed`),

@@ -7,6 +7,7 @@ import Ajv2020, { type AnySchema } from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
 import systemReadinessSchema from "../../../schemas/system-readiness.schema.json" with { type: "json" };
 import { checkSystemReadinessSchemaVersion } from "./compatibility.js";
+import { createPublicReadinessReport } from "./presentation.js";
 import { getSystemReadinessReferenceErrors } from "./references.js";
 import type { SystemReadinessReport } from "./types.js";
 
@@ -261,6 +262,25 @@ describe("system readiness contract", () => {
         getSystemReadinessReferenceErrors(report).includes(error),
       ),
     ).toBe(true);
+  });
+
+  it("validates the GPU summary when the public report omits device rows", async () => {
+    const validate = await createValidator();
+    const fixture = (await readJson(`${fixtureRoot}/supported.json`)) as SystemReadinessReport;
+    const report = createPublicReadinessReport({
+      ...fixture,
+      observations: [],
+      capabilities: [],
+      qualifications: [],
+      findings: [],
+      evidence: Array.from({ length: 257 }, (_, index) => ({
+        id: `host.gpu.device.${index}`,
+        summary: `GPU ${index}`,
+      })),
+    });
+
+    expect(report.gpuInventory).toEqual({ collected: 257, listed: 256, omitted: 1 });
+    expect(validate(report), JSON.stringify(validate.errors)).toBe(true);
   });
 
   it("rejects mutation and unbounded evidence (#7409)", async () => {

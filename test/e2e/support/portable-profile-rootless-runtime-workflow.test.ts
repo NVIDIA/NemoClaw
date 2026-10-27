@@ -113,6 +113,7 @@ describe("portable profile rootless runtime workflow", () => {
       expect.arrayContaining([
         "agents/hermes/Dockerfile",
         "agents/hermes/Dockerfile.base",
+        "scripts/checks/download-hermes-source-archive.sh",
         "agents/hermes/dashboard-external-host.patch",
         "agents/hermes/start.sh",
         "src/lib/actions/sandbox/forward-recovery.ts",
@@ -130,6 +131,7 @@ describe("portable profile rootless runtime workflow", () => {
     );
     expect(workflow.on.pull_request.paths).toContain(finalizationHelper);
     expect(workflow.on.push.paths).toContain(finalizationHelper);
+    expect(workflow.on.push.paths).toContain("scripts/checks/download-hermes-source-archive.sh");
     expect(workflow.on.pull_request.paths).toEqual(expect.arrayContaining(finalizationSources));
     expect(workflow.on.pull_request.paths).toEqual(expect.arrayContaining(doctorSources));
     expect(Array.isArray(actionlintLabels)).toBe(true);

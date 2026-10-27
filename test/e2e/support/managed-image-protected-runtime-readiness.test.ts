@@ -37,7 +37,7 @@ vi.mock("../../../src/lib/inference/ollama/proxy.ts", () => ({
   getOllamaProxyToken: () => undefined,
   isProxyHealthy: () => false,
   killStaleProxy: () => undefined,
-  persistAndProbeOllamaProxy: async () => undefined,
+  persistProxyToken: () => undefined,
   startOllamaAuthProxy: () => false,
 }));
 vi.mock("../fixtures/e2e-test.ts", () => ({

@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { SUPPORTED_OPENSHELL_FALLBACK_VERSION } from "../../onboard/openshell-version";
+
 import fs from "node:fs";
 import { isDeepStrictEqual } from "node:util";
 import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../../name-validation";
@@ -746,6 +748,9 @@ export function createCliOpenShellProviderAdapter(
     }
     if (!request.includeCredentialExpirations) return success(metadata);
 
+    let pageToken = "";
+    const seenPageTokens = new Set<string>();
+    const projectedRuntime = String(SUPPORTED_OPENSHELL_FALLBACK_VERSION) === "0.1.3";
     for (
       let offset = 0;
       offset < 10 * PROVIDER_INVENTORY_LIMIT;
@@ -755,10 +760,9 @@ export function createCliOpenShellProviderAdapter(
         [
           "provider",
           "list",
-          "--limit",
-          String(PROVIDER_INVENTORY_LIMIT),
-          "--offset",
-          String(offset),
+          ...(projectedRuntime
+            ? ["--page-size", String(PROVIDER_INVENTORY_LIMIT), "--page-token", pageToken]
+            : ["--limit", String(PROVIDER_INVENTORY_LIMIT), "--offset", String(offset)]),
           "--output",
           "json",
         ],
@@ -774,7 +778,18 @@ export function createCliOpenShellProviderAdapter(
         commandStdout(inventory),
         request.providerName,
       );
-      if (credentialState === undefined) continue;
+      if (credentialState && "nextPageToken" in credentialState) {
+        if (!projectedRuntime || seenPageTokens.has(credentialState.nextPageToken)) {
+          return failure({
+            kind: "schema",
+            message: "OpenShell returned invalid provider inventory pagination.",
+          });
+        }
+        pageToken = credentialState.nextPageToken;
+        seenPageTokens.add(pageToken);
+        continue;
+      }
+      if (credentialState === undefined && !projectedRuntime) continue;
       return credentialState
         ? success({
             ...metadata,

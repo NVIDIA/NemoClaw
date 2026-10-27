@@ -79,7 +79,7 @@ export function validatePrepareE2eAction(actionPath = DEFAULT_ACTION_PATH): stri
     {
       name: "Set up Node",
       uses: "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
-      with: { "node-version": "24.18.1", cache: "npm" },
+      with: { "node-version": "24.22.1", cache: "npm" },
     },
     {
       name: "Install reviewed npm",

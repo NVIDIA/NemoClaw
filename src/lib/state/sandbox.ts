@@ -275,6 +275,8 @@ export interface BackupOptions {
 
 export interface BackupResult {
   success: boolean;
+  /** Directory and non-directory member counts; symbolic links count as files. */
+  nativeArchiveCounts?: { directories: number; files: number };
   // Only set once the backup has been written to disk — absent on
   // precondition failures like an invalid --name.
   manifest?: RebuildManifest;
@@ -641,12 +643,17 @@ export function validateTarEntries(
 export function rejectSymlinkExtractionTraversal(
   tarArchive: TarListingSource,
   entries: readonly string[],
+  counts?: BackupResult["nativeArchiveCounts"],
 ): string[] {
   const symlinks: Array<{ entry: string; index: number }> = [];
   let index = 0;
   const listingFailure = runTarListing(tarArchive, ["-tvf", "-"], "tar symlink listing", (line) => {
     const entry = entries[index];
     if (entry === undefined) return;
+    if (counts) {
+      const kind = line.startsWith("d") ? "directories" : "files";
+      counts[kind] += 1;
+    }
     if (line.startsWith("l")) symlinks.push({ entry, index });
     index += 1;
   });
@@ -2479,9 +2486,11 @@ function backupNativeSandboxState(
         `Native state archive validation failed: ${validation.violations.join("; ")}`,
       );
     }
+    const nativeArchiveCounts = { directories: 0, files: 0 };
     const symlinkTraversalViolations = rejectSymlinkExtractionTraversal(
       { filePath: archivePath },
       validation.entries,
+      nativeArchiveCounts,
     );
     if (symlinkTraversalViolations.length > 0) {
       rmSync(backupPath, { recursive: true, force: true });
@@ -2596,6 +2605,7 @@ function backupNativeSandboxState(
     return {
       success: true,
       manifest,
+      nativeArchiveCounts,
       backedUpDirs: ["."],
       failedDirs: [],
       backedUpFiles: [],

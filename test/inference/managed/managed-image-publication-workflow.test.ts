@@ -355,7 +355,7 @@ describe("complete managed-image publication workflow", () => {
     const setupNode = step(builder, "Set up Node.js", "base-image platform workflow");
     expect(setupNode).toMatchObject({
       uses: "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
-      with: { "node-version": "24.18.1" },
+      with: { "node-version": "24.22.1" },
     });
     const platformBuild = step(
       builder,

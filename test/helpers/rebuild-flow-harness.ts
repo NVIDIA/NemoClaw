@@ -30,6 +30,12 @@ export const buildContextFingerprint = requireDist(
   "../../adapters/fs/build-context-fingerprint.js",
 );
 export const destroy = requireDist("./destroy.js");
+export const destroyPresence = requireDist(
+  "./destroy-presence.js",
+) as typeof import("../../src/lib/actions/sandbox/destroy-presence");
+export const dockerRuntime = requireDist(
+  "../../adapters/docker/run.js",
+) as typeof import("../../src/lib/adapters/docker/run");
 export const dockerImage = requireDist("../../adapters/docker/image.js");
 export const dockerInspect = requireDist("../../adapters/docker/inspect.js");
 export const gatewayDrift = requireDist("../../adapters/openshell/gateway-drift.js");

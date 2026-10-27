@@ -70,6 +70,7 @@ export interface HostObservations {
   nvidiaGpuMemoryTotalBytes?: number;
   nvidiaGpuMemoryAvailableBytes?: number;
   nvidiaGpuMemoryPerDeviceBytes?: number;
+  nvidiaGpus?: Readonly<GpuDetection["gpus"]>;
   nvidiaGpuUnifiedMemory?: boolean;
   nvidiaGpuComputeConstrained?: boolean;
   hostGpuPlatform?: NvidiaPlatform;
@@ -203,6 +204,10 @@ function adaptHostAssessment(
       : gpu?.perGpuMB === undefined
         ? undefined
         : gpu.perGpuMB * 1024 * 1024,
+    nvidiaGpus: gpu?.gpus?.map(({ name, memoryMB }) => ({
+      name: sanitizeReadinessText(name, 512),
+      memoryMB,
+    })),
     nvidiaGpuUnifiedMemory: gpu?.unifiedMemory,
     nvidiaGpuComputeConstrained: gpu?.computeConstrained,
     hostGpuPlatform,
@@ -578,6 +583,15 @@ export function projectHostReadiness(
       observation("host.gpu.cdi", cdiApplies ? cdiHealthy : false),
       observation("host.gpu.cdi_stale", cdiApplies ? host.cdiNvidiaGpuSpecStale : false),
     ];
+    if (host.hasNvidiaGpu) {
+      evidence.push(
+        ...(host.nvidiaGpus ?? []).map(({ name, memoryMB }, index) => ({
+          id: `host.gpu.device.${index}`,
+          summary: `GPU ${index}: ${name} (${memoryMB} MiB)`,
+          details: { index, name, memoryBytes: memoryMB * 1024 * 1024 },
+        })),
+      );
+    }
     const platform = projectPlatformQualification({
       platform: host.platform,
       architecture: host.architecture,

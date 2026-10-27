@@ -21,7 +21,12 @@ function dependencies() {
         addresses: ["93.184.216.34"],
       }),
     probeAnthropicEndpoint: vi.fn(async () => ({ ok: true, validated: true })),
-    probeOpenAiLikeEndpointOptimized: vi.fn(async () => ({ ok: true, validated: true })),
+    probeOpenAiLikeEndpointOptimized: vi.fn(
+      async (): Promise<{ ok: boolean; validated?: boolean; failures?: unknown[] }> => ({
+        ok: true,
+        validated: true,
+      }),
+    ),
   };
 }
 
@@ -68,6 +73,48 @@ describe("rebuild host inference credential preflight", () => {
 
     expect(output).not.toHaveBeenCalled();
   });
+
+  it.each([429, 500, 28])(
+    "marks NVIDIA upstream failure %i indeterminate without validating the key (#13616)",
+    async (code) => {
+      const deps = dependencies();
+      const onIndeterminate = vi.fn();
+      deps.probeOpenAiLikeEndpointOptimized.mockResolvedValue({
+        ok: false,
+        failures: [{ httpStatus: code === 28 ? 0 : code, curlStatus: code === 28 ? 28 : 0 }],
+      });
+      await expect(
+        validateRebuildHostInferenceCredential(
+          { ...target, provider: "nvidia-prod", credentialEnv: "NVIDIA_INFERENCE_API_KEY" },
+          "nvapi-host-test-key",
+          deps,
+          onIndeterminate,
+        ),
+      ).resolves.toBe(false);
+      expect(onIndeterminate).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.each([401, 403, 404])(
+    "keeps NVIDIA HTTP %i terminal before rebuild (#13616)",
+    async (httpStatus) => {
+      const deps = dependencies();
+      const onIndeterminate = vi.fn();
+      deps.probeOpenAiLikeEndpointOptimized.mockResolvedValue({
+        ok: false,
+        failures: [{ httpStatus, curlStatus: 0 }],
+      });
+      await expect(
+        validateRebuildHostInferenceCredential(
+          { ...target, provider: "nvidia-prod", credentialEnv: "NVIDIA_INFERENCE_API_KEY" },
+          "nvapi-host-test-key",
+          deps,
+          onIndeterminate,
+        ),
+      ).resolves.toBe(false);
+      expect(onIndeterminate).not.toHaveBeenCalled();
+    },
+  );
 
   it("rejects unsafe custom endpoints before sending the host key (#12742)", async () => {
     const deps = dependencies();

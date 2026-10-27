@@ -130,6 +130,7 @@ beforeEach(async () => {
       stdout: `sha256:${"b".repeat(64)}`,
       stderr: "",
     } as any)
+    .mockReturnValueOnce({ status: 0, stdout: "openshell 0.0.116", stderr: "" } as any)
     .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" } as any)
     .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" } as any)
     .mockReturnValueOnce({
@@ -137,13 +138,15 @@ beforeEach(async () => {
       stdout: "",
       stderr: `Error: No such network: ${scope.networkName}`,
     } as any);
-  mocks.capture.mockImplementation(() =>
-    commands.mock.calls.some(
-      ([command, args]: [string, readonly string[]]) =>
-        command === "openshell" && args[0] === "sandbox" && args[1] === "delete",
-    )
-      ? "[]"
-      : sandboxObservation(),
+  mocks.capture.mockImplementation((args: readonly string[]) =>
+    args[0] === "--version"
+      ? "openshell 0.0.116"
+      : commands.mock.calls.some(
+            ([command, args]: [string, readonly string[]]) =>
+              command === "openshell" && args[0] === "sandbox" && args[1] === "delete",
+          )
+        ? "[]"
+        : sandboxObservation(),
   );
 });
 afterEach(() => {
@@ -166,6 +169,7 @@ it("recovers only the marked isolated sandbox, gateway, volumes and network", as
     ["openshell", "sandbox", "delete", "-g", "nemoclaw", input.sandbox],
     ["openshell", "gateway", "remove", "nemoclaw"],
     ["docker", "image", "inspect", "--format", "{{.Id}}", input.image],
+    ["openshell", "--version"],
     [
       "docker",
       "ps",
@@ -205,8 +209,79 @@ it("recovers only the marked isolated sandbox, gateway, volumes and network", as
   expect(fs.existsSync(foreign)).toBe(true);
   expect(process.env).toEqual(previous);
   await cleanupInterruptedManagedImageOpenShellE2e(input, scope);
-  expect(commands).toHaveBeenCalledTimes(6);
+  expect(commands).toHaveBeenCalledTimes(7);
 });
+
+it.each([
+  ["0.0.116", "--limit"],
+  ["0.1.3", "--page-size"],
+])("confirms strict absence with OpenShell %s before continuing cleanup", async (version, flag) => {
+  mocks.capture
+    .mockReset()
+    .mockReturnValueOnce(sandboxObservation())
+    .mockImplementationOnce((args) => {
+      expect(commands).toHaveBeenCalledTimes(1);
+      expect(args).toEqual(["--version"]);
+      return `openshell ${version}`;
+    })
+    .mockReturnValueOnce("[]");
+  await cleanupInterruptedManagedImageOpenShellE2e(input, scope);
+  expect(mocks.capture.mock.calls.slice(1)).toEqual([
+    [["--version"], { ignoreError: false, timeout: 30000, maxBuffer: 1024 * 1024 }],
+    [
+      [
+        "sandbox",
+        "list",
+        "-g",
+        "nemoclaw",
+        "--selector",
+        `${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${createAttemptNonce}`,
+        "--output",
+        "json",
+        flag,
+        "2",
+      ],
+      { ignoreError: false, timeout: 30000, maxBuffer: 1024 * 1024 },
+    ],
+  ]);
+  expect(commands).toHaveBeenCalledTimes(7);
+  expect(mocks.stopGateway).toHaveBeenCalledOnce();
+  expect(mocks.removeVolumes).toHaveBeenCalledOnce();
+  expect(fs.existsSync(scope.stateDir)).toBe(false);
+});
+
+it.each(["not-json", "{}", "null", sandboxObservation(), "[]\n[]"])(
+  "preserves recovery evidence for rejected 0.1.3 absence response %s",
+  async (response) => {
+    mocks.capture
+      .mockReset()
+      .mockReturnValueOnce(sandboxObservation())
+      .mockReturnValueOnce("openshell 0.1.3")
+      .mockReturnValueOnce(response);
+    await expect(cleanupInterruptedManagedImageOpenShellE2e(input, scope)).rejects.toThrow(
+      "sandbox identity or deletion is unproven",
+    );
+    expect(mocks.capture.mock.calls.at(-1)?.[0]).toEqual([
+      "sandbox",
+      "list",
+      "-g",
+      "nemoclaw",
+      "--selector",
+      `${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${createAttemptNonce}`,
+      "--output",
+      "json",
+      "--page-size",
+      "2",
+    ]);
+    expect(commands).toHaveBeenCalledTimes(1);
+    expect(mocks.stopGateway).not.toHaveBeenCalled();
+    expect(mocks.removeVolumes).not.toHaveBeenCalled();
+    expect(fs.existsSync(path.join(scope.stateDir, "qualification-sandbox-deleted.json"))).toBe(
+      false,
+    );
+    expect(fs.existsSync(scope.stateDir)).toBe(true);
+  },
+);
 
 it.each(["foreign marker", "oversized marker"])(
   "rejects %s before any external mutation",
@@ -292,6 +367,7 @@ it("rejects ambiguous network inspection instead of deleting recovery state", as
       stdout: `sha256:${"b".repeat(64)}`,
       stderr: "",
     } as any)
+    .mockReturnValueOnce({ status: 0, stdout: "openshell 0.0.116", stderr: "" } as any)
     .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" } as any)
     .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" } as any);
   await expect(cleanupInterruptedManagedImageOpenShellE2e(input, scope)).rejects.toThrow(
@@ -320,7 +396,7 @@ it("preserves state when the existing volume verifier rejects a foreign volume",
     ["inspect", "--format", "{{json .}}", "owned-volume"],
     expect.anything(),
   );
-  expect(commands).toHaveBeenCalledTimes(4);
+  expect(commands).toHaveBeenCalledTimes(5);
   expect(fs.existsSync(path.join(scope.stateDir, "qualification-owner.json"))).toBe(true);
 });
 
@@ -372,6 +448,7 @@ it("continues cleanup after a post-deletion failure without deleting the sandbox
       stdout: `sha256:${"b".repeat(64)}`,
       stderr: "",
     } as any)
+    .mockReturnValueOnce({ status: 0, stdout: "openshell 0.0.116", stderr: "" } as any)
     .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" } as any)
     .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" } as any)
     .mockReturnValueOnce({
@@ -387,6 +464,7 @@ it("continues cleanup after a post-deletion failure without deleting the sandbox
   ).toEqual([
     ["openshell", "gateway", "remove", "nemoclaw"],
     ["docker", "image", "inspect", "--format", "{{.Id}}", input.image],
+    ["openshell", "--version"],
     [
       "docker",
       "ps",
@@ -567,6 +645,7 @@ it("cleans setup before any create submission without issuing sandbox deletion",
       stdout: `sha256:${"b".repeat(64)}`,
       stderr: "",
     } as any)
+    .mockReturnValueOnce({ status: 0, stdout: "openshell 0.0.116", stderr: "" } as any)
     .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" } as any)
     .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" } as any)
     .mockReturnValueOnce({
@@ -642,6 +721,7 @@ it("cleans partial setup when no exact sandbox container was created", async () 
       stdout: `sha256:${"b".repeat(64)}`,
       stderr: "",
     } as any)
+    .mockReturnValueOnce({ status: 0, stdout: "openshell 0.0.116", stderr: "" } as any)
     .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" } as any)
     .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" } as any)
     .mockReturnValueOnce({
@@ -651,7 +731,7 @@ it("cleans partial setup when no exact sandbox container was created", async () 
     } as any);
   await cleanupInterruptedManagedImageOpenShellE2e(input, scope);
   expect(fs.existsSync(scope.stateDir)).toBe(false);
-  expect(commands).toHaveBeenCalledTimes(6);
+  expect(commands).toHaveBeenCalledTimes(7);
 });
 
 it("removes the exact leftover container without removing a foreign container", async () => {
@@ -685,6 +765,7 @@ it("removes the exact leftover container without removing a foreign container", 
     .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" } as any)
     .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" } as any)
     .mockReturnValueOnce({ status: 0, stdout: content, stderr: "" } as any)
+    .mockReturnValueOnce({ status: 0, stdout: "openshell 0.0.116", stderr: "" } as any)
     .mockReturnValueOnce({
       status: 0,
       stdout: "owned-container foreign-container",
@@ -694,6 +775,7 @@ it("removes the exact leftover container without removing a foreign container", 
     .mockReturnValueOnce({ status: 0, stdout: foreign, stderr: "" } as any)
     .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" } as any)
     .mockReturnValueOnce({ status: 0, stdout: content, stderr: "" } as any)
+    .mockReturnValueOnce({ status: 0, stdout: "openshell 0.0.116", stderr: "" } as any)
     .mockReturnValueOnce({
       status: 0,
       stdout: "foreign-container",

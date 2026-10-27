@@ -13,6 +13,8 @@ import { DEFAULT_GATEWAY_PORT } from "../core/ports";
 import { isValidDashboardExternalUrl } from "../dashboard/url";
 import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../name-validation";
 import { registryEntryGatewayPort, resolveGatewayName } from "../onboard/gateway-binding/identity";
+import { resolveGatewayStateDirForPort } from "../onboard/gateway/state-dir";
+import { DOCKER_DRIVER_GATEWAY_CONFIG_NAME } from "../onboard/gateway/config-name";
 export { registryEntryGatewayPort } from "../onboard/gateway-binding/identity";
 import { GATEWAYS_SUBDIR, nemoclawStateRoot } from "./state-root";
 import { normalizePendingSandboxCreateIdentity } from "./registry/pending-create-identity";
@@ -191,6 +193,27 @@ export function readGatewayRegistryFile(
   } finally {
     fs.closeSync(fd);
   }
+}
+
+/** Evidence that the shared state root actually owns a default-port gateway. */
+export function hasDefaultGatewayEvidence(home: string): boolean {
+  const registry = readGatewayRegistryFile(home, path.join(home, ".nemoclaw", "sandboxes.json"));
+  if (
+    registry &&
+    Object.values(registry.sandboxes).some(
+      (entry) => registryEntryGatewayPort(entry) === DEFAULT_GATEWAY_PORT,
+    )
+  ) {
+    return true;
+  }
+  const stateDir = resolveGatewayStateDirForPort({ home, port: DEFAULT_GATEWAY_PORT });
+  return (
+    fs
+      .lstatSync(path.join(stateDir, DOCKER_DRIVER_GATEWAY_CONFIG_NAME), {
+        throwIfNoEntry: false,
+      })
+      ?.isFile() === true
+  );
 }
 
 /** Recover one unambiguous onboard-time custom OpenShell state directory for a gateway port. */

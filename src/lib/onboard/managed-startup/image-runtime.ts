@@ -78,6 +78,8 @@ const HERMES_MANAGED_CONFIG_FILES = [
 const HERMES_GENERATED_MANAGED_POLICY_FILE = "/sandbox/.hermes/managed-policy.json";
 const HERMES_INSTALLED_MANAGED_POLICY_FILE = "/usr/local/share/nemoclaw/hermes-managed-policy.json";
 const MAX_HERMES_MANAGED_POLICY_BYTES = 4 * 1024 * 1024;
+export const MANAGED_STARTUP_OWNER_RESULT_MAX_BYTES =
+  4 * Math.ceil(MAX_HERMES_MANAGED_POLICY_BYTES / 3) + 4096;
 const FIXED_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 const SHA256_RE = /^[a-f0-9]{64}$/u;
 export const MANAGED_STARTUP_COMPLETION_SCHEMA_VERSION = 1;

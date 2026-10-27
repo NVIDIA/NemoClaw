@@ -2034,9 +2034,35 @@ async function removeSandboxChannelUnlocked(
     channelUsesInSandboxQrPairing(channel) || canonical === "wechat";
 
   const registryEntry = registry.getSandbox(sandboxName);
-  const hasChannelResidue =
-    registry.getConfiguredMessagingChannelsFromEntry(registryEntry).includes(canonical) ||
-    (await policies.getAppliedPresets(sandboxName)).includes(canonical);
+  let hasChannelResidue = registry
+    .getConfiguredMessagingChannelsFromEntry(registryEntry)
+    .includes(canonical);
+  const existingPlan = registryEntry?.messaging?.plan;
+  if (
+    registryEntry &&
+    channelUsesInSandboxQrPairing(channel) &&
+    !hasChannelResidue &&
+    !existingPlan?.channels.some((candidate) => candidate.channelId === canonical)
+  ) {
+    const gatewayPresets = await policies.getGatewayPresets(sandboxName);
+    if (gatewayPresets === null) {
+      console.error(`  Could not inspect the applied policy for '${sandboxName}'.`);
+      console.error(
+        `  Restore gateway access, then retry: ${CLI_NAME} ${sandboxName} channels remove ${canonical}`,
+      );
+      return await exitConfigurationFailure(sandboxName);
+    }
+    hasChannelResidue = gatewayPresets.includes(canonical);
+    if (!hasChannelResidue) {
+      console.log(
+        `  Channel '${canonical}' is not configured for '${sandboxName}'. Nothing to do.`,
+      );
+      recordConfigurationResult(sandboxName, "no_change", "unchanged");
+      return;
+    }
+  } else {
+    hasChannelResidue ||= (await policies.getAppliedPresets(sandboxName)).includes(canonical);
+  }
   const recoverPhysicalWechatResidue =
     canonical === "wechat" && resolveAgentForSandbox(sandboxName).name === "openclaw";
 
@@ -2084,7 +2110,6 @@ async function removeSandboxChannelUnlocked(
   const configuredChannels = registry.getConfiguredMessagingChannelsFromEntry(registryEntry);
   let disabledAgentConfigPlan: SandboxMessagingPlan | null = null;
   let removalPlanPersisted = false;
-  const existingPlan = registryEntry?.messaging?.plan;
   const existingRemoval = existingPlan?.channels.some(
     (candidate) => candidate.channelId === canonical && candidate.pendingRemoval === true,
   );

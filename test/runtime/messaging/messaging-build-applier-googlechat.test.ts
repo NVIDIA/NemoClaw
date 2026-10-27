@@ -26,6 +26,7 @@ import {
 
 import { BUILT_IN_CHANNEL_MANIFESTS } from "../../../src/lib/messaging/channels/built-ins";
 import type { ChannelManifest } from "../../../src/lib/messaging/manifest/types";
+import { writeSlackBundledParserFixture } from "../../support/slack-remediation-fixture";
 const TEST_PATH = process.env.PATH || "/usr/bin:/bin";
 
 function officialPluginFixture(channelId: string, version = "2026.9.1") {
@@ -245,11 +246,12 @@ it("patches the installed official Slack bundle only after registry provenance i
     JSON.stringify({
       name: "express",
       version: "5.2.1",
-      dependencies: { "proxy-addr": "^2.0.7" },
+      dependencies: { "body-parser": "^2.2.1", "proxy-addr": "^2.0.7" },
       license: "MIT",
       engines: { node: ">= 18" },
     }),
   );
+  writeSlackBundledParserFixture(installed);
   const metadata = {
     name: "proxy-addr",
     dependencies: { forwarded: "0.2.0", "ipaddr.js": "1.9.1" },

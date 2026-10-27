@@ -5,11 +5,23 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { runInNewContext } from "node:vm";
 
 import { describe, expect, it, vi } from "vitest";
 
+// This suite exercises the controller after reviewed 0.1.3 projection.
+vi.mock("../../../src/lib/onboard/openshell-version.ts", async (original) => ({
+  ...(await original<typeof import("../../../src/lib/onboard/openshell-version.ts")>()),
+  SUPPORTED_OPENSHELL_FALLBACK_VERSION: "0.1.3",
+}));
+
 import { managedStartupE2eProfile } from "../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
 import {
+  configureLocalInferenceRoute,
+  assertLocalInferenceAgentResponse,
+  localInferenceAgentCommand,
+  localInferenceProbe,
+  managedImageLocalInferenceBaseUrl,
   createManagedImageSandboxWithDiagnostics,
   MANAGED_IMAGE_LOCAL_INFERENCE_KINDS,
   MANAGED_IMAGE_PROTECTED_SANDBOX_PREFIX,
@@ -20,17 +32,18 @@ import {
   withManagedImageLocalInferenceProfile,
 } from "../../../scripts/checks/managed-image-protected-runtime-contract.ts";
 import {
+  assertExactSandboxImage,
   assertOpenClawHeartbeatStart,
   createBootstrapCompletionFailureInjection,
   managedOpenClawHeartbeatLogProbe,
   assertFailedSandboxOwnerCleanupRetention,
   type ManagedImageCommandRunner,
-  managedImageLocalInferenceBaseUrl,
   managedImageOpenShellBasePolicyPath,
   managedImageOpenShellCommittedProbe,
   managedImageOpenShellProbe,
   managedOpenClawHeartbeatProbe,
   parseManagedImageOpenShellE2eInputs,
+  printExactContainerFailureState,
   protectedManagedStateRootDriverConfig,
   removeManagedImageGatewayStateIfSafe,
   resolveManagedImageOnboardModule,
@@ -41,9 +54,442 @@ import {
 } from "../../../src/lib/onboard/managed-startup/profile.ts";
 import { createManagedStartupRootApplyRequest } from "../../../src/lib/onboard/managed-startup/root-apply.ts";
 import type { RuntimeProviderBundle } from "../../../src/lib/onboard/runtime-provider/contract.ts";
+import { gatewayIdForStateDir } from "../../../src/lib/onboard/gateway/process-environment.ts";
+import { prepareNativeLocalProfile } from "../../../src/lib/inference/native-local/profile.ts";
+import type { OpenShellProviderAdapter } from "../../../src/lib/adapters/openshell/provider-adapter.ts";
 
 const IMAGE = `localhost:5000/nemoclaw-managed-protected/openclaw@sha256:${"a".repeat(64)}`;
 const VALID_SANDBOX = "managed-openclaw";
+
+function nativeQualificationFixture(
+  agent: "openclaw" | "hermes" | "langchain-deepagents-code",
+  kind: "ollama" | "nim" | "vllm" | "llama-cpp",
+) {
+  const route = resolveManagedImageLocalInferenceRoute(kind);
+  const binding = {
+    provider: route.providerName,
+    ...(agent === "langchain-deepagents-code" ? {} : { agent }),
+    endpointUrl: route.defaultBaseUrl,
+    credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+    authMode:
+      kind === "nim" || kind === "vllm" ? ("sentinel" as const) : ("authenticated" as const),
+    gatewayName: "nemoclaw",
+    sandboxName: VALID_SANDBOX,
+  };
+  const prepared = prepareNativeLocalProfile(binding);
+  const metadata = {
+    name: prepared.providerName,
+    type: prepared.profileId,
+    credentialKeys: [binding.credentialEnv],
+    configKeys: [],
+    revision: { id: "fixture-owned-id", resourceVersion: 1 },
+  };
+  const imported: unknown[] = [];
+  const adapter = {
+    importProviderProfile: vi.fn(async ({ profilePath }) => {
+      imported.push(JSON.parse(fs.readFileSync(profilePath, "utf8")));
+      return { ok: true as const };
+    }),
+    getProvider: vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        error: { kind: "command", reason: "not_found", message: "absent" },
+      })
+      .mockResolvedValue({ ok: true, value: metadata }),
+    createProvider: vi.fn(async () => ({ ok: true as const })),
+    updateProvider: vi.fn(),
+    deleteProvider: vi.fn(),
+    inspectProviderProfile: vi.fn(),
+    listProviderAttachments: vi.fn(),
+    attachProvider: vi.fn(),
+    detachProvider: vi.fn(),
+    listProviders: vi.fn(),
+    ensureProviderPolicyComposition: vi.fn(),
+    configureProviderRefresh: vi.fn(),
+    getProviderRefreshStatus: vi.fn(),
+  } satisfies OpenShellProviderAdapter;
+  const runOpenshell = vi.fn((_args: string[]) => ({
+    status: 0,
+    stdout: JSON.stringify({ revisions: [], next_page_token: "" }),
+    stderr: "",
+  }));
+  const input = {
+    agent,
+    image: IMAGE,
+    sandbox: VALID_SANDBOX,
+    localProvider: kind,
+    model: "fixture-model",
+  };
+  return { adapter, binding, imported, input, metadata, prepared, route, runOpenshell };
+}
+
+it.each([
+  ["openclaw", "ollama"],
+  ["hermes", "ollama"],
+  ["langchain-deepagents-code", "ollama"],
+  ["openclaw", "nim"],
+  ["hermes", "nim"],
+  ["langchain-deepagents-code", "nim"],
+  ["openclaw", "vllm"],
+  ["hermes", "vllm"],
+  ["langchain-deepagents-code", "vllm"],
+  ["openclaw", "llama-cpp"],
+] as const)(
+  "registers the exact %s %s native boundary without a global inference route",
+  async (agent, kind) => {
+    const f = nativeQualificationFixture(agent, kind);
+    expect(f.prepared.document.binaries).toContain(
+      agent === "langchain-deepagents-code" ? "/opt/venv/bin/python3" : "/usr/bin/python3.13",
+    );
+    const receipt = await configureLocalInferenceRoute(
+      f,
+      f.input,
+      { [f.route.credentialEnv]: "fixture-local-token" },
+      f.adapter,
+    );
+    expect(receipt).toEqual({
+      ...f.binding,
+      profileId: f.prepared.profileId,
+      providerName: f.prepared.providerName,
+      schemaVersion: 1,
+      providerId: "fixture-owned-id",
+    });
+    expect(f.imported).toEqual([f.prepared.document]);
+    expect(f.adapter.createProvider).toHaveBeenCalledWith({
+      target: { kind: "named", gatewayName: "nemoclaw" },
+      name: f.prepared.providerName,
+      type: f.prepared.profileId,
+      credentials: [{ name: f.binding.credentialEnv, value: "fixture-local-token" }],
+      config: [],
+      fromExisting: false,
+    });
+    expect(f.runOpenshell.mock.calls[0][0]).toEqual([
+      "policy",
+      "list",
+      "-g",
+      "nemoclaw",
+      "--global",
+      "--page-size",
+      "1",
+      "--output",
+      "json",
+    ]);
+    expect(f.runOpenshell).toHaveBeenCalledTimes(1);
+  },
+);
+
+it("refuses an existing qualification provider without adopting or rotating it", async () => {
+  const f = nativeQualificationFixture("openclaw", "ollama");
+  f.adapter.getProvider.mockReset().mockResolvedValue({ ok: true, value: f.metadata });
+  await expect(
+    configureLocalInferenceRoute(
+      f,
+      f.input,
+      { [f.route.credentialEnv]: "fixture-token" },
+      f.adapter,
+    ),
+  ).rejects.toThrow("without a matching NemoClaw ownership receipt");
+  expect(f.adapter.createProvider).not.toHaveBeenCalled();
+  expect(f.adapter.updateProvider).not.toHaveBeenCalled();
+});
+
+it.each(["", "raw\ncredential"])(
+  "rejects invalid qualification credential %j before importing a profile",
+  async (credential) => {
+    const f = nativeQualificationFixture("hermes", "ollama");
+    await expect(
+      configureLocalInferenceRoute(f, f.input, { [f.route.credentialEnv]: credential }, f.adapter),
+    ).rejects.toThrow("required for protected local inference");
+    expect(f.adapter.importProviderProfile).not.toHaveBeenCalled();
+    expect(f.adapter.createProvider).not.toHaveBeenCalled();
+  },
+);
+
+function runNativeQualificationProbe(handle: string, model = "fixture-model") {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "native-qualification-"));
+  try {
+    fs.writeFileSync(
+      path.join(directory, "curl"),
+      '#!/bin/sh\nprintf "%s\\n" "$@" > "$PROBE_ARGS"\nprintf \'{"choices":[{"message":{"content":"PONG"}}]}\'\n',
+      { mode: 0o700 },
+    );
+    const argsPath = path.join(directory, "args");
+    const [command, ...commandArgs] = localInferenceProbe({
+      agent: "openclaw",
+      image: IMAGE,
+      sandbox: VALID_SANDBOX,
+      localProvider: "ollama",
+      model,
+    });
+    const result = spawnSync(command, commandArgs, {
+      encoding: "utf8",
+      env: {
+        PATH: `${directory}:${process.env.PATH}`,
+        TMPDIR: directory,
+        PROBE_ARGS: argsPath,
+        NEMOCLAW_LOCAL_INFERENCE_TOKEN: handle,
+      },
+    });
+    return {
+      result,
+      args: fs.existsSync(argsPath) ? fs.readFileSync(argsPath, "utf8") : null,
+      remaining: fs
+        .readdirSync(directory)
+        .filter((name) => name.startsWith("nemoclaw-managed-image-inference.")),
+    };
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+}
+
+describe("protected local inference agent response", () => {
+  it.each([
+    { response: "", expected: 'response=""' },
+    { response: "unexpected answer", expected: 'response="unexpected answer"' },
+    { response: "fixture-private-value", expected: 'response="<REDACTED>"' },
+    { response: "x".repeat(600), expected: `response="${"x".repeat(512)}"` },
+  ])("reports bounded, redacted rejected output [%#]", ({ response, expected }) => {
+    expect(() =>
+      assertLocalInferenceAgentResponse(
+        {
+          agent: "hermes",
+          image: IMAGE,
+          sandbox: VALID_SANDBOX,
+          localProvider: "ollama",
+          model: "fixture-model",
+        },
+        response,
+        { NVIDIA_API_KEY: "fixture-private-value" },
+      ),
+    ).toThrow(expected);
+  });
+  const openclaw = {
+    status: "ok",
+    result: {
+      meta: { aborted: false, agentMeta: { provider: "inference", model: "fixture-model" } },
+      payloads: [{ text: "PONG" }],
+    },
+  };
+  const dcode = { data: { status: "success", exit_code: 0, response: "PONG" } };
+  const input = (agent: "openclaw" | "hermes" | "langchain-deepagents-code") => ({
+    agent,
+    image: IMAGE,
+    sandbox: VALID_SANDBOX,
+    localProvider: "ollama" as const,
+    model: "fixture-model",
+  });
+
+  it.each([
+    ["openclaw", JSON.stringify(openclaw), "openclaw"],
+    ["hermes", "PONG\n", "hermes"],
+    ["langchain-deepagents-code", JSON.stringify(dcode), "dcode"],
+  ] as const)(
+    "uses %s's configured route and accepts its assistant response",
+    (agent, stdout, binary) => {
+      const command = localInferenceAgentCommand(input(agent));
+      expect(command[0]).toBe(binary);
+      expect(command).not.toContain("--model");
+      expect(command).not.toContain("--provider");
+      expect(() => assertLocalInferenceAgentResponse(input(agent), stdout)).not.toThrow();
+    },
+  );
+
+  it.each([
+    [
+      "openclaw",
+      JSON.stringify({ ...openclaw, result: { ...openclaw.result, payloads: [], prompt: "PONG" } }),
+    ],
+    ["hermes", "request failed; prompt was PONG"],
+    [
+      "langchain-deepagents-code",
+      JSON.stringify({ data: { ...dcode.data, response: "", prompt: "PONG" } }),
+    ],
+    [
+      "langchain-deepagents-code",
+      JSON.stringify({ data: { ...dcode.data, status: "turn_limit" } }),
+    ],
+    ["langchain-deepagents-code", JSON.stringify({ data: { ...dcode.data, exit_code: 1 } })],
+    ["openclaw", "not JSON"],
+    ["langchain-deepagents-code", "null"],
+  ] as const)("rejects %s diagnostics or an incomplete turn", (agent, stdout) => {
+    expect(() => assertLocalInferenceAgentResponse(input(agent), stdout)).toThrow();
+  });
+
+  it.each([
+    ["aborted", { ...openclaw.result.meta, aborted: true }],
+    [
+      "wrong provider",
+      { ...openclaw.result.meta, agentMeta: { provider: "nvidia", model: "fixture-model" } },
+    ],
+    [
+      "wrong model",
+      { ...openclaw.result.meta, agentMeta: { provider: "inference", model: "other-model" } },
+    ],
+  ])("rejects an OpenClaw %s result even when its text is PONG", (_reason, meta) => {
+    expect(() =>
+      assertLocalInferenceAgentResponse(
+        input("openclaw"),
+        JSON.stringify({
+          ...openclaw,
+          result: { ...openclaw.result, meta },
+        }),
+      ),
+    ).toThrow("configured local model");
+  });
+});
+
+it.each([
+  "openshell:resolve:env:v7_NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+  `openshell:resolve:env:s${"a".repeat(64)}_NEMOCLAW_LOCAL_INFERENCE_TOKEN`,
+])("uses the runtime-scoped local handle %s for the actual endpoint", (handle) => {
+  const { result, args, remaining } = runNativeQualificationProbe(handle);
+  expect(result.status, result.stderr).toBe(0);
+  expect(args).toContain("http://host.openshell.internal:11435/v1/chat/completions\n");
+  expect(args).toContain(`Authorization: Bearer ${handle}\n`);
+  expect(remaining).toEqual([]);
+});
+
+it("passes shell syntax in the local model unchanged to curl", () => {
+  const model = "model'$(printf substituted)`printf expanded`$HOME";
+  const { result, args, remaining } = runNativeQualificationProbe(
+    "openshell:resolve:env:v7_NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+    model,
+  );
+  expect(result.status, result.stderr).toBe(0);
+  const argv = args!.split("\n");
+  expect(JSON.parse(argv[argv.indexOf("--data") + 1]).model).toBe(model);
+  expect(remaining).toEqual([]);
+});
+
+it.each([
+  "raw-token",
+  "openshell:resolve:env:NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+  "openshell:resolve:env:v7_NEMOCLAW_OTHER_TOKEN",
+  "openshell:resolve:env:v7_NEMOCLAW_LOCAL_INFERENCE_TOKEN\nraw",
+])("rejects unscoped or invalid native probe credential %j before curl", (handle) => {
+  const { result, args, remaining } = runNativeQualificationProbe(handle);
+  expect(result.status).toBe(2);
+  expect(args).toBeNull();
+  expect(remaining).toEqual([]);
+});
+
+it("captures bounded owner startup logs and redacts secrets before cleanup", () => {
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  const runner = vi.fn<ManagedImageCommandRunner>(() => ({
+    status: 0,
+    stdout: "fixture-api-secret",
+    stderr: "",
+  }));
+  try {
+    printExactContainerFailureState("c".repeat(64), { API_KEY: "fixture-api-secret" }, runner);
+    const [argv, env, timeout] = runner.mock.calls[2];
+    expect(argv.slice(0, 7)).toEqual([
+      "docker",
+      "exec",
+      "--user",
+      "sandbox",
+      "c".repeat(64),
+      "/usr/local/bin/node",
+      "-e",
+    ]);
+    expect(env.API_KEY).toBe("fixture-api-secret");
+    expect(timeout).toBe(5000);
+    expect(String(error.mock.calls.at(-1))).not.toContain("fixture-api-secret");
+    const writes: unknown[] = [];
+    const close = vi.fn();
+    const read = vi.fn((_fd, bytes) => {
+      bytes.write("safe");
+      return 4;
+    });
+    const open = vi
+      .fn()
+      .mockReturnValueOnce(1)
+      .mockImplementationOnce(() => {
+        throw new Error("symlink");
+      })
+      .mockReturnValueOnce(3);
+    runInNewContext(argv[7], {
+      Buffer,
+      process: { stdout: { write: (value: unknown) => writes.push(value) } },
+      require: () => ({
+        constants: { O_RDONLY: 0, O_NOFOLLOW: 2, O_NONBLOCK: 4 },
+        openSync: open,
+        fstatSync: (fd: number) => ({ isFile: () => true, size: fd === 1 ? 4 : 262145 }),
+        readSync: read,
+        closeSync: close,
+      }),
+    });
+    expect(open.mock.calls).toEqual(
+      ["/tmp/nemoclaw-start.log", "/tmp/gateway.log", "/tmp/dashboard.log"].map((file) => [
+        file,
+        6,
+      ]),
+    );
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(close.mock.calls).toEqual([[1], [3]]);
+    expect(writes.map(String).join("")).toContain("safe");
+    expect(writes.filter((value) => value === "diagnostic log unavailable\n")).toHaveLength(2);
+    runner.mockClear();
+    printExactContainerFailureState("short-id", {}, runner);
+    expect(runner).not.toHaveBeenCalled();
+  } finally {
+    error.mockRestore();
+  }
+});
+
+function observeWorkload(scenario: string): string {
+  const stateDir = path.join(os.tmpdir(), "managed-workload-owner");
+  const containerId = "c".repeat(64);
+  const contentId = `sha256:${"d".repeat(64)}`;
+  const runCommand: ManagedImageCommandRunner = (argv) => {
+    const stdout =
+      argv[1] === "--version"
+        ? "openshell 0.1.3\n"
+        : argv[1] === "image"
+          ? contentId
+          : argv[1] === "ps"
+            ? argv.includes("label=openshell.ai/isolation-role=sandbox") && scenario !== "duplicate"
+              ? containerId
+              : `${containerId}\n${"e".repeat(64)}`
+            : JSON.stringify([
+                {
+                  Image: scenario === "image" ? "sha256:wrong" : contentId,
+                  Config: {
+                    Labels: {
+                      "openshell.ai/managed-by": "openshell",
+                      "openshell.ai/sandbox-name": VALID_SANDBOX,
+                      "openshell.ai/sandbox-namespace":
+                        scenario === "namespace" ? "other" : gatewayIdForStateDir(stateDir),
+                      "openshell.ai/isolation-role": scenario === "role" ? "supervisor" : "sandbox",
+                    },
+                  },
+                  HostConfig: { NetworkMode: scenario === "network" ? "bridge" : "none" },
+                },
+              ]);
+    return { status: 0, stdout, stderr: "" };
+  };
+  return assertExactSandboxImage(
+    { agent: "openclaw", image: IMAGE, sandbox: VALID_SANDBOX },
+    stateDir,
+    {},
+    runCommand,
+  );
+}
+
+it("accepts one exact isolated workload", () => {
+  expect(observeWorkload("valid")).toBe("c".repeat(64));
+});
+
+it.each(["namespace", "role", "image", "network", "duplicate"])(
+  "rejects a workload with mismatched %s evidence",
+  (scenario) => {
+    expect(() => observeWorkload(scenario)).toThrow(
+      "exactly one running harness-owned PR image container",
+    );
+  },
+);
+
 const MANAGED_IMAGE_ONBOARD = resolveManagedImageOnboardModule(
   await import("../../../src/lib/onboard.ts"),
 );
@@ -757,6 +1203,7 @@ describe("protected managed-image runtime contract", () => {
     ["openclaw", true],
     ["hermes", false],
     ["hermes", true],
+    ["langchain-deepagents-code", false],
   ] as const)("supplies a valid local route for %s with providerless=%s", (agent, providerless) => {
     const original = managedStartupE2eProfile(agent, false, true, true);
     const profile = providerless
@@ -775,9 +1222,9 @@ describe("protected managed-image runtime contract", () => {
       inference: {
         api: "openai-completions",
         model: "nvidia/nemotron-3-nano",
-        routedBaseUrl: "https://inference.local/v1",
+        routedBaseUrl: "http://host.openshell.internal:8000/v1",
         routeProvider: "inference",
-        upstreamEndpointUrl: null,
+        upstreamEndpointUrl: agent === "langchain-deepagents-code" ? route.defaultBaseUrl : null,
         upstreamProvider: "vllm-local",
         primaryModelRef: agent === "openclaw" ? "inference/nvidia/nemotron-3-nano" : null,
         compatibility: profile.inference?.compatibility ?? (agent === "openclaw" ? {} : null),

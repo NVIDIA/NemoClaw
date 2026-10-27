@@ -396,7 +396,7 @@ async function runRestoreValidation(owner: ProcessOwner, options: RestoreFixture
         runAttempt: options.manifestRunAttempt ?? options.producerRunAttempt ?? "1",
       },
       toolchain: {
-        node: options.manifestNodeVersion ?? "v24.18.1",
+        node: options.manifestNodeVersion ?? "v24.22.1",
         npm: options.manifestNpmVersion ?? "12.0.2",
         runnerOs: "Linux",
         runnerArch: "X64",
@@ -409,7 +409,7 @@ async function runRestoreValidation(owner: ProcessOwner, options: RestoreFixture
   const nodeWrapper = path.join(toolDirectory, "node");
   fs.writeFileSync(
     nodeWrapper,
-    `#!/usr/bin/env bash\nset -euo pipefail\nif [[ "$#" -eq 1 && "$1" == "--version" ]]; then\n  echo ${options.consumerNodeVersion ?? "v24.18.1"}\n  exit 0\nfi\nexec ${JSON.stringify(process.execPath)} "$@"\n`,
+    `#!/usr/bin/env bash\nset -euo pipefail\nif [[ "$#" -eq 1 && "$1" == "--version" ]]; then\n  echo ${options.consumerNodeVersion ?? "v24.22.1"}\n  exit 0\nfi\nexec ${JSON.stringify(process.execPath)} "$@"\n`,
     { mode: 0o755 },
   );
   const lockfileSha256 = sha256File(path.join(workspace, "package-lock.json"));
@@ -755,7 +755,7 @@ describe.concurrent("exact-commit CLI artifact restore", () => {
     await expectRestoreFailure(
       context,
       { consumerNodeVersion: "v24.18.0" },
-      "consumer must restore the CLI under the pinned Node 24.18.1 toolchain",
+      "consumer must restore the CLI under the pinned Node 24.22.1 toolchain",
     );
   });
 

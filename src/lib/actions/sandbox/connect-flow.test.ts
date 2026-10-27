@@ -80,6 +80,16 @@ describe("connectSandbox flow", () => {
     process.stdin as typeof process.stdin & { setRawMode?: (mode: boolean) => unknown }
   ).setRawMode;
   const originalStdoutIsTty = process.stdout.isTTY;
+  const nativeNvidiaEntry = {
+    provider: "nvidia-prod",
+    model: "nvidia/nemotron-3-super-120b-a12b",
+    nativeNvidiaProviderAttachment: {
+      schemaVersion: 1 as const,
+      profileId: "nemoclaw-nvidia-inference-v1" as const,
+      providerName: "nemoclaw-nvidia-prod-v1" as const,
+      providerId: "provider-123",
+    },
+  };
 
   beforeEach(() => {
     process.env.NEMOCLAW_TEST_NO_SLEEP = "1";
@@ -136,6 +146,49 @@ describe("connectSandbox flow", () => {
     expect(output).toContain("existing SSH sessions");
     expect(output).toContain("Connecting to sandbox 'alpha'");
     expect(exitSpy).toHaveBeenCalledWith(0);
+  });
+
+  it.each([
+    { label: "HTTP 429", httpStatus: 429, timedOut: false },
+    { label: "HTTP 500", httpStatus: 500, timedOut: false },
+    { label: "confirmed timeout", httpStatus: null, timedOut: true },
+  ])("opens an interactive diagnostic shell after a native NVIDIA $label", async (failure) => {
+    const harness = createConnectHarness({ registryEntry: nativeNvidiaEntry });
+    harness.nativeInferenceInvocationSpy.mockResolvedValue({
+      ok: false,
+      detail: `NVIDIA inference ${failure.label}`,
+      httpStatus: failure.httpStatus,
+      timedOut: failure.timedOut,
+    });
+    await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(0)");
+    expect(harness.verifyNativeNvidiaProviderAttachmentSpy).toHaveBeenCalledOnce();
+    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain("inference is degraded");
+    expect(harness.startSandboxSessionSpy).toHaveBeenCalled();
+  });
+
+  it("rejects a native NVIDIA transient in probe-only mode without publishing readiness", async () => {
+    const harness = createConnectHarness({ registryEntry: nativeNvidiaEntry });
+    harness.nativeInferenceInvocationSpy.mockResolvedValue({
+      ok: false,
+      detail: "NVIDIA inference HTTP 500",
+      httpStatus: 500,
+    });
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+    expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
+    expect(harness.startSandboxSessionSpy).not.toHaveBeenCalled();
+  });
+
+  it("keeps native NVIDIA HTTP 401 terminal for interactive connect", async () => {
+    const harness = createConnectHarness({ registryEntry: nativeNvidiaEntry });
+    harness.nativeInferenceInvocationSpy.mockResolvedValue({
+      ok: false,
+      detail: "NVIDIA inference HTTP 401",
+      httpStatus: 401,
+    });
+    await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(1)");
+    expect(harness.startSandboxSessionSpy).not.toHaveBeenCalled();
   });
 
   it("uses the owning OpenShell gateway for auto-pair when an ambient gateway has the same sandbox name (#8942)", async () => {

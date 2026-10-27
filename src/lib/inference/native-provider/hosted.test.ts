@@ -6,7 +6,12 @@ import { describe, expect, it, vi } from "vitest";
 import type { OpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter";
 import { parseCheckedInProviderProfileContract } from "../../adapters/openshell/provider-profile";
 import { nativeProviderLifecycle } from "./index";
-import { HOSTED_NATIVE_PROVIDERS, type HostedProviderDefinition } from "./hosted";
+import {
+  HOSTED_NATIVE_PROVIDERS,
+  hostedNativeProvider,
+  type HostedProviderDefinition,
+} from "./hosted";
+import { prepareHostedNativeProvider } from "./setup";
 
 const target = { kind: "named", gatewayName: "test-gateway" } as const;
 const notFound = {
@@ -117,6 +122,41 @@ describe.each(HOSTED_NATIVE_PROVIDERS)("native $label lifecycle", (definition) =
     expect(methods.createProvider).not.toHaveBeenCalled();
   });
 
+  it.each([
+    [
+      "a stale registry record",
+      "alpha",
+      /only the NemoClaw registry record for sandbox 'alpha'.*'nemoclaw alpha destroy'/su,
+      /uninstall/u,
+    ],
+    ["gateway ownership", undefined, /complete uninstall without --keep-openshell/u, /destroy/u],
+    [
+      "a registry record with an invalid sandbox name",
+      "alpha; touch /tmp/owned",
+      /complete uninstall without --keep-openshell/u,
+      /touch/u,
+    ],
+  ])(
+    "explains a missing provider owned by %s",
+    async (_case, recordedSandboxName, message, absent) => {
+      const { lifecycle, adapter, methods, receipt } = fixture(definition);
+      methods.getProvider.mockResolvedValue(notFound);
+      const error = await lifecycle
+        .ensureNativeProvider({
+          adapter,
+          target,
+          credentialValue: "test-secret",
+          expected: receipt,
+          ...(recordedSandboxName ? { recordedSandboxName } : {}),
+        })
+        .catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toMatch(message);
+      expect((error as Error).message).not.toMatch(absent);
+      expect(methods.createProvider).not.toHaveBeenCalled();
+    },
+  );
+
   it("rejects another profile's receipt even when its provider ID matches (#12589)", async () => {
     const { lifecycle, adapter, methods, receipt } = fixture(definition);
     await expect(
@@ -201,5 +241,35 @@ describe.each(HOSTED_NATIVE_PROVIDERS)("native $label lifecycle", (definition) =
       ),
     ).toBe(true);
     expect(methods.detachProvider).not.toHaveBeenCalled();
+  });
+});
+
+describe("hosted native provider setup", () => {
+  it.each([
+    [
+      "only the registry records ownership",
+      false,
+      /only the NemoClaw registry record for sandbox 'alpha'.*'nemoclaw alpha destroy'/su,
+    ],
+    ["the gateway records ownership", true, /complete uninstall without --keep-openshell/u],
+  ])("explains a missing provider when %s", async (_case, gatewayOwned, message) => {
+    const { adapter, methods, receipt } = fixture(hostedNativeProvider("openai-api")!);
+    methods.getProvider.mockResolvedValue(notFound);
+    await expect(
+      prepareHostedNativeProvider({
+        provider: "openai-api",
+        adapter,
+        gatewayName: target.gatewayName,
+        credentialValue: "test-secret",
+        recordedSandbox: {
+          name: "alpha",
+          provider: "openai-api",
+          nativeHostedProviderAttachment: receipt,
+        },
+        readAuthority: () => (gatewayOwned ? receipt : undefined),
+        writeAuthority: vi.fn(),
+      }),
+    ).rejects.toThrow(message);
+    expect(methods.createProvider).not.toHaveBeenCalled();
   });
 });

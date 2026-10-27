@@ -6,7 +6,8 @@
  * Preserves the real-system boundaries: two NemoClaw onboards on one
  * host, per-port OpenShell Docker-driver gateways, dashboard forward
  * allocation, port-scoped `nemoclaw list`, OpenShell sandbox discovery, host
- * socket probes, and selected-instance uninstall/health cleanup.
+ * socket probes, selected-instance uninstall/health cleanup, and whole-host
+ * uninstall when only a non-default gateway remains.
  */
 
 import fs from "node:fs";
@@ -25,7 +26,7 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 const SANDBOX_A = process.env.NEMOCLAW_CGP_SANDBOX_A ?? "e2e-cgp-a";
 const SANDBOX_B = process.env.NEMOCLAW_CGP_SANDBOX_B ?? "e2e-cgp-b";
-const GATEWAY_PORT_A = process.env.NEMOCLAW_E2E_GATEWAY_PORT_A ?? "8080";
+const GATEWAY_PORT_A = process.env.NEMOCLAW_E2E_GATEWAY_PORT_A ?? "18079";
 const GATEWAY_PORT_B = process.env.NEMOCLAW_E2E_GATEWAY_PORT_B ?? "18080";
 const DASHBOARD_PORT_A = process.env.NEMOCLAW_E2E_DASHBOARD_PORT_A ?? "18789";
 const PHASE_TIMEOUT_MS = execTimeout(
@@ -359,11 +360,12 @@ test(
     meta: {
       e2ePhases: [
         "validate multi-gateway prerequisites",
-        "onboard sandbox on default gateway",
+        "onboard sandbox on first non-default gateway",
         "onboard sandbox on alternate gateway",
         "verify isolated gateways and dashboard forwards",
         "garbage-collect an orphan without deleting the sibling gateway image",
-        "uninstall alternate gateway without disrupting default",
+        "uninstall one gateway without disrupting its sibling",
+        "whole-host uninstall omits the absent default gateway",
       ],
     },
   },
@@ -403,12 +405,12 @@ test(
       id: "concurrent-gateway-ports",
       boundary: "direct-cli-docker-openshell-multiple-gateways-dashboard-forwards",
       contract: [
-        "sandbox A onboards on the default NemoClaw gateway and dashboard port",
-        "sandbox B onboards with NEMOCLAW_GATEWAY_PORT on a non-default gateway",
+        "sandboxes A and B onboard on distinct non-default NemoClaw gateway ports",
         "both sandboxes, gateways, and dashboard forwards coexist without port collision",
         "each port-scoped registry lists only the sandbox owned by that gateway",
         "gc on gateway A preserves gateway B's registered image while removing a true orphan tag",
         "uninstalling gateway B removes only its scoped state and leaves gateway A plus the shared CLI healthy",
+        "whole-host uninstall removes the remaining non-default gateway without enumerating port 8080",
       ],
       gatewayA,
       gatewayB,
@@ -441,7 +443,7 @@ test(
       ] as const
     ).forEach(([name, gateway, port]) => {
       cleanup.trackDisposable(`delete concurrent gateway OpenShell sandbox ${name}`, () =>
-        sandbox.cleanupSandbox(name, {
+        sandbox.cleanupSandboxBeforeOnboard(name, {
           artifactName: `cleanup-openshell-delete-${name}`,
           env: openshellEnvForGateway(gateway),
           timeoutMs: 60_000,
@@ -454,7 +456,7 @@ test(
 
     await bestEffortPreclean(host, sandbox, gatewayA, gatewayB);
 
-    progress.phase("onboard sandbox on default gateway");
+    progress.phase("onboard sandbox on first non-default gateway");
     const onboardA = await runOnboard(
       host,
       SANDBOX_A,
@@ -620,7 +622,7 @@ test(
       `registered image=${resultText(registeredImage)}, ref=${registeredImageTag}; sibling before=${resultText(siblingImageBeforeGc)}; orphan tag=${resultText(taggedOrphan)}; gc=${resultText(garbageCollect)}; sibling after=${resultText(retainedSiblingImage)}; orphan tags=${resultText(orphanTagsAfterGc)}`,
     ).toBe(true);
 
-    progress.phase("uninstall alternate gateway without disrupting default");
+    progress.phase("uninstall one gateway without disrupting its sibling");
     const gatewayPair = [
       [gatewayA, GATEWAY_PORT_A],
       [gatewayB, GATEWAY_PORT_B],
@@ -701,8 +703,11 @@ test(
       env: commandEnv({ NEMOCLAW_GATEWAY_PORT: GATEWAY_PORT_A }),
       timeoutMs: 60_000,
     });
-    expect(listAAfterUninstallB.exitCode, resultText(listAAfterUninstallB)).toBe(0);
-    expect(outputIncludesSandbox(listAAfterUninstallB.stdout, SANDBOX_A)).toBe(true);
+    expect(
+      listAAfterUninstallB.exitCode === 0 &&
+        outputIncludesSandbox(listAAfterUninstallB.stdout, SANDBOX_A),
+      resultText(listAAfterUninstallB),
+    ).toBe(true);
 
     const scopedStateRemoved = await host.command(
       "bash",
@@ -714,6 +719,33 @@ test(
       },
     );
     expect(scopedStateRemoved.exitCode, resultText(scopedStateRemoved)).toBe(0);
+
+    progress.phase("whole-host uninstall omits the absent default gateway");
+    const uninstallAll = await command(
+      host,
+      ["uninstall", "--all-gateway-ports", "--yes", "--destroy-user-data"],
+      {
+        artifactName: "phase-5-whole-host-uninstall",
+        env: commandEnv(),
+        timeoutMs: 5 * 60_000,
+      },
+    );
+    const uninstallAllOutput = resultText(uninstallAll);
+    const remainingStateRemoved = await host.command(
+      "bash",
+      ["-lc", `test ! -e "$HOME/.nemoclaw/gateways/${GATEWAY_PORT_A}"`],
+      {
+        artifactName: "phase-5-gateway-a-state-removed",
+        env: commandEnv(),
+        timeoutMs: 30_000,
+      },
+    );
+    expect(
+      uninstallAll.exitCode === 0 &&
+        !/gateway 'nemoclaw' on port 8080/u.test(uninstallAllOutput) &&
+        remainingStateRemoved.exitCode === 0,
+      `uninstall=${uninstallAllOutput}; remaining state=${resultText(remainingStateRemoved)}`,
+    ).toBe(true);
 
     await artifacts.target.complete({
       id: "concurrent-gateway-ports",
@@ -735,6 +767,9 @@ test(
           survivorPhases.length === POST_UNINSTALL_HEALTH_PROBES &&
           survivorPhases.every((phase) => phase === "Ready" || phase === "Running"),
         sharedCliPreserved: listAAfterUninstallB.exitCode === 0,
+        wholeHostUninstallPassed: uninstallAll.exitCode === 0,
+        absentDefaultGatewayOmitted: !/gateway 'nemoclaw' on port 8080/u.test(uninstallAllOutput),
+        remainingGatewayStateRemoved: remainingStateRemoved.exitCode === 0,
       },
     });
   },

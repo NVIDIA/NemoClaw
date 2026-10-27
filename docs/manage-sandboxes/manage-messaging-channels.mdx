@@ -66,7 +66,10 @@ If endpoint teardown fails, the command exits nonzero without changing the chann
   project, subscription, sender allowlist, and runtime adapter configuration.
 </AgentOnly>
 
-For in-sandbox QR-paired channels such as WhatsApp, `channels remove` destructively clears the session directory before rebuild so stale auth files do not reconnect the channel.
+For in-sandbox QR-paired channels such as WhatsApp, session cleanup requires a configured entry in the messaging plan or an applied channel policy preset.
+When that condition holds, `channels remove` clears the session directory before rebuild so stale credentials do not reconnect the channel.
+If removal reports that WhatsApp is not configured, it does not clear session files or queue a rebuild.
+Refer to the [channel removal reference](../../reference/commands) for the no-op conditions and policy-inspection failure guidance.
 
 <AgentOnly variant="openclaw">
 The cleanup targets `/sandbox/.openclaw/<channel>/`.
@@ -88,10 +91,12 @@ If the registry entry is missing, the provider does not support stopped-state cl
 Removal proceeds only when that command exits successfully and returns its completion sentinel.
 </AgentOnly>
 
-If the messaging plan or current OpenShell policy still records the channel and NemoClaw cannot confirm cleanup, the command exits nonzero with recovery guidance.
+If a configured entry in the messaging plan or current OpenShell policy still records the channel and NemoClaw cannot confirm cleanup, the command exits nonzero with recovery guidance.
 It leaves the bridge provider, credentials, registry, and current OpenShell policy unchanged so you can fix the reported condition and retry removal.
 
-`channels remove whatsapp` clears the client-side Baileys session but cannot deregister the linked device with WhatsApp's servers after the local connection is gone. The phone continues to list the sandbox as a Linked Device until you remove it manually or WhatsApp's 14-day inactivity timeout expires.
+This cleanup clears the client-side Baileys session.
+It cannot deregister the linked device with WhatsApp's servers after the local connection is gone.
+The phone continues to list the sandbox as a Linked Device until you remove it manually or WhatsApp's 14-day inactivity timeout expires.
 
 Remove the phone entry before pairing the same account with another sandbox.
 

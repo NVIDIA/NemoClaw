@@ -78,6 +78,8 @@ export async function prepareCustomNativeProvider(input: {
   credentialValue: string | null;
   adapter: OpenShellProviderAdapter;
   recordedAttachment?: NativeProviderAttachment;
+  /** Registry sandbox that owns `recordedAttachment`. */
+  recordedSandboxName?: string | null;
   lookup?: EndpointDnsLookupFn;
   trustedPrivateHosts?: readonly string[];
   ensureBedrockAdapter?: typeof ensureBedrockRuntimeAdapter;
@@ -129,9 +131,10 @@ export async function prepareCustomNativeProvider(input: {
     ...(bedrock ? { adapterEndpointUrl: BEDROCK_RUNTIME_ADAPTER_OPENAI_BASE_URL } : {}),
   } satisfies Omit<CustomNativeBinding, "provider" | "api"> & { provider: string; api: string });
   const lifecycle = nativeProviderLifecycle(definition);
+  const gatewayAuthority = input.readAuthority(input.gatewayName, definition.providerName);
   const expected = lifecycle.resolveGatewayNativeProviderAuthority({
     gatewayName: input.gatewayName,
-    gatewayAuthority: input.readAuthority(input.gatewayName, definition.providerName),
+    gatewayAuthority,
     recordedAttachment: sameBinding ? previous : undefined,
   });
   // A credential key name alone cannot authorize reuse at a different endpoint or API.
@@ -158,6 +161,9 @@ export async function prepareCustomNativeProvider(input: {
     // Model changes and rebuilds reuse verified ownership without rotating credentials.
     credentialValue,
     ...(expected ? { expected } : {}),
+    ...(expected && !gatewayAuthority && input.recordedSandboxName
+      ? { recordedSandboxName: input.recordedSandboxName }
+      : {}),
   });
   await lifecycle.persistNativeProviderAuthority({
     adapter: input.adapter,

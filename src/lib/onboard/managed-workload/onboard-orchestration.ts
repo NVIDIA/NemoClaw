@@ -148,6 +148,7 @@ export function createManagedStateVolumeOnboardLifecycle(
   input: {
     readonly roots: readonly import("../managed-startup/state-roots").ManagedStartupStateRoot[];
     readonly runtimeProvider: RuntimeProviderBundle | null;
+    readonly workspace: string;
   },
   deps: ManagedStateVolumeDeps = {},
 ): ManagedStateVolumeOnboardLifecycle {
@@ -155,6 +156,7 @@ export function createManagedStateVolumeOnboardLifecycle(
     { roots: input.roots },
     {
       ...deps,
+      workspace: input.workspace,
       ...(input.runtimeProvider ? { runtimeProvider: input.runtimeProvider } : {}),
     },
   );

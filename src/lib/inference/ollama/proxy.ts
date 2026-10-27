@@ -53,6 +53,7 @@ const {
   anyRegistryModelFits,
   describeOllamaModelCapacity,
   effectiveGpuMemoryMB,
+  hasAvailableGpuMemory,
   modelFitsAvailableMemory,
 } = require("../ollama-model-registry");
 const { formatBytes } = require("./model-size");
@@ -967,8 +968,7 @@ function formatOllamaMemoryMB(memoryMB: number): string {
 
 function annotateOllamaModelOption(tag: string, gpu: GpuInfo | null): string {
   const facts = describeOllamaModelCapacity(tag, gpu);
-  const hasAvailableMemory =
-    typeof gpu?.availableMemoryMB === "number" && gpu.availableMemoryMB > 0;
+  const hasAvailableMemory = hasAvailableGpuMemory(gpu);
   const parts: string[] = [];
   if (typeof facts.downloadSizeBytes === "number") {
     parts.push(`${formatBytes(facts.downloadSizeBytes)} download`);
@@ -1026,8 +1026,7 @@ async function promptOllamaModel(
   console.log("");
   console.log(usingInstalled ? "  Ollama models:" : "  Ollama starter models:");
   const effectiveMemoryMB = effectiveGpuMemoryMB(gpu);
-  const hasAvailableMemory =
-    typeof gpu?.availableMemoryMB === "number" && gpu.availableMemoryMB > 0;
+  const hasAvailableMemory = hasAvailableGpuMemory(gpu);
   const capacityLabel = hasAvailableMemory ? "currently available GPU memory" : "total GPU memory";
   if (typeof effectiveMemoryMB === "number") {
     const memoryKind = hasAvailableMemory ? "Available" : "Total";

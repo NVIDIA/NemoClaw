@@ -8,6 +8,7 @@ import {
   effectiveGpuMemoryMB,
   findOllamaModelEntry,
   fittableOllamaModelTags,
+  hasAvailableGpuMemory,
   largestFittableOllamaModelTag,
   modelFitsAvailableMemory,
   OLLAMA_DOWNLOAD_SIZE_FALLBACK_BYTES,
@@ -110,10 +111,61 @@ describe("effectiveGpuMemoryMB", () => {
     expect(effectiveGpuMemoryMB({ type: "nvidia", totalMemoryMB: 32_768 })).toBe(32_768);
   });
 
-  it("ignores zero or negative availableMemoryMB so the caller's totalMemoryMB still wins", () => {
+  it("reports a real zero availableMemoryMB instead of falling back to total", () => {
     expect(
       effectiveGpuMemoryMB({ type: "nvidia", totalMemoryMB: 32_768, availableMemoryMB: 0 }),
+    ).toBe(0);
+  });
+
+  it("ignores a negative availableMemoryMB so totalMemoryMB still wins", () => {
+    expect(
+      effectiveGpuMemoryMB({ type: "nvidia", totalMemoryMB: 32_768, availableMemoryMB: -1 }),
     ).toBe(32_768);
+  });
+});
+
+describe("hasAvailableGpuMemory", () => {
+  it.each([
+    { reason: "there is no gpu", gpu: null, expected: false },
+    {
+      reason: "the reading is absent",
+      gpu: { type: "nvidia", totalMemoryMB: 8_000 },
+      expected: false,
+    },
+    {
+      reason: "the reading is negative",
+      gpu: { type: "nvidia", totalMemoryMB: 8_000, availableMemoryMB: -1 },
+      expected: false,
+    },
+    {
+      reason: "the reading is NaN",
+      gpu: { type: "nvidia", totalMemoryMB: 8_000, availableMemoryMB: Number.NaN },
+      expected: false,
+    },
+    {
+      reason: "the reading is a real zero",
+      gpu: { type: "nvidia", totalMemoryMB: 8_000, availableMemoryMB: 0 },
+      expected: true,
+    },
+    {
+      reason: "the reading is positive",
+      gpu: { type: "nvidia", totalMemoryMB: 8_000, availableMemoryMB: 4_000 },
+      expected: true,
+    },
+  ])("returns $expected when $reason", ({ gpu, expected }) => {
+    expect(hasAvailableGpuMemory(gpu)).toBe(expected);
+  });
+});
+
+describe("a fully occupied GPU", () => {
+  const occupied = { type: "nvidia", totalMemoryMB: 81_920, availableMemoryMB: 0 };
+
+  it.each(OLLAMA_MODEL_REGISTRY.map((entry) => entry.tag))("does not fit %s", (tag) => {
+    expect(modelFitsAvailableMemory(tag, occupied)).toBe(false);
+  });
+
+  it("falls back to the smallest tag", () => {
+    expect(fittableOllamaModelTags(occupied)).toEqual([SMALLEST_OLLAMA_MODEL_TAG]);
   });
 });
 

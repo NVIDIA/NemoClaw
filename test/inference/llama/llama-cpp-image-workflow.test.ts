@@ -559,7 +559,7 @@ describe("llama.cpp image PR workflow", () => {
       "src/lib/onboard/runtime-provider/docker-operation-authority.ts",
     );
     expect(workflow.on?.workflow_dispatch?.inputs?.publish).toEqual({
-      description: "Publish a run-unique candidate from main or the approved PR 12664 branch",
+      description: "Publish a run-unique candidate from main",
       required: true,
       default: false,
       type: "boolean",
@@ -864,6 +864,18 @@ describe("llama.cpp image PR workflow", () => {
       "publication-gate",
       "assemble-candidate",
       "scan-candidate",
+      "attest-candidate",
+      "verify-legacy-candidate",
+    ]);
+    const legacy = required(
+      workflow.jobs?.["verify-legacy-candidate"],
+      "legacy verifier is missing",
+    );
+    expect(legacy.permissions).toEqual({});
+    expect(legacy.needs).toEqual([
+      "config",
+      "publication-gate",
+      "assemble-candidate",
       "attest-candidate",
     ]);
     expect(crypto.run).toContain("cosign verify \\");

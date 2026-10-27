@@ -30,7 +30,7 @@ const COMPILER_FLAGS = [
 ] as const;
 
 const MANAGED_BOOTSTRAP_BUILDER_IMAGE =
-  "node:24.18.1-trixie@sha256:dfa43abae25030f5456007944f725379d1f5be4bb723bd501ac39ac72ffa5474";
+  "node:24.22.1-trixie@sha256:dfa43abae25030f5456007944f725379d1f5be4bb723bd501ac39ac72ffa5474";
 const DISCOVERY_RUNTIME_ROOT = "/usr/local/lib/nemoclaw/mcp-tool-discovery-runtime";
 const DISCOVERY_RUNTIME_PATH = `${DISCOVERY_RUNTIME_ROOT}/mcp-tool-discovery.mjs`;
 const DISCOVERY_EXPECTED_CONTRACT =

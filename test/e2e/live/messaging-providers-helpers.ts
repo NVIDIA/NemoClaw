@@ -44,7 +44,7 @@ export const PROBE_TIMEOUT_MS = 120_000;
 export const LIVE_TIMEOUT_MS = 90 * 60_000;
 export const OPENSHELL_EXEC_ARGUMENT_LIMIT_BYTES = 32_768;
 export const FAKE_API_IMAGE =
-  "node:24.18.1-trixie-slim@sha256:ac39e4b5fcb2b1b34b20364fd58b2e898f3bb80731ee6f62a7536f9df3d6aadc";
+  "node:24.22.1-trixie-slim@sha256:43b9ba1142b8dcf33fa8f922ca1be85714adc444e0586c7cf7726daaeabc1bea";
 const DEFAULT_OPENSHELL_DOCKER_NETWORK = "openshell-docker";
 export const FAKE_API_PROXY_READINESS_PORT = 8079;
 export const FAKE_API_PROXY_SOURCE = String.raw`
