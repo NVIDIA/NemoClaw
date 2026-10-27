@@ -348,7 +348,9 @@ describe("runInferenceSet Hermes routing", () => {
     ).rejects.toMatchObject({
       name: "InferenceSetError",
       exitCode: 1,
-      message: expect.stringMatching(/Hermes inference route synchronization did not complete/),
+      message: expect.stringMatching(
+        /Hermes inference route synchronization did not complete[\s\S]*preceding configuration warning[\s\S]*trusted backup[\s\S]*fresh Hermes sandbox[\s\S]*Rebuild preserves the native home and may retain the mismatch/u,
+      ),
     });
 
     // The host route remains committed, but the command must fail so automation

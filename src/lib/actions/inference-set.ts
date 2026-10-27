@@ -2071,7 +2071,10 @@ async function runInferenceSetWithoutHostLock(
       throw new InferenceSetError(
         `Hermes inference route synchronization did not complete for '${sandboxName}'. ` +
           `The OpenShell route and NemoClaw registry remain committed, but the in-sandbox ` +
-          `Hermes configuration did not fully converge. Run '${CLI_NAME} ${sandboxName} rebuild' to converge it.`,
+          `Hermes configuration did not fully converge. Review the preceding configuration warning. ` +
+          `If integrity metadata is invalid, back up needed data and restore matching configuration ` +
+          `and integrity files from a trusted backup or create a fresh Hermes sandbox. ` +
+          `Rebuild preserves the native home and may retain the mismatch.`,
       );
     }
     await retirePreviousOpenClawLocal({
