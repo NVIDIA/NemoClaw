@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { SUPPORTED_OPENSHELL_FALLBACK_VERSION } from "../../onboard/openshell-version";
+import {
+  SUPPORTED_OPENSHELL_FALLBACK_VERSION,
+  usesOpenShellNativeProjection,
+} from "../../onboard/openshell-version";
 
 import fs from "node:fs";
 import { isDeepStrictEqual } from "node:util";
@@ -750,7 +753,7 @@ export function createCliOpenShellProviderAdapter(
 
     let pageToken = "";
     const seenPageTokens = new Set<string>();
-    const projectedRuntime = String(SUPPORTED_OPENSHELL_FALLBACK_VERSION) === "0.1.3";
+    const projectedRuntime = usesOpenShellNativeProjection(SUPPORTED_OPENSHELL_FALLBACK_VERSION);
     for (
       let offset = 0;
       offset < 10 * PROVIDER_INVENTORY_LIMIT;

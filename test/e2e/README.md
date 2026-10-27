@@ -1409,6 +1409,15 @@ OpenClaw and Hermes discovery before and after gateway restart. Deterministic
 state-restore tests prove complete native directories are archived without
 image-plugin exclusions.
 
+Before rebuilding the stopped OpenClaw source, the same target stops Docker and confirms that
+`docker info` fails. It then requires `nemoclaw uninstall --yes` to fail with the Docker-unavailable
+container-cleanup diagnostic while the sandbox remains registered. The target restores Docker and
+verifies `docker info` before rebuilding; cleanup repeats restoration before deleting the sandbox
+if the proof fails. The existing stopped-source proof supplies the registered `Error` state;
+the target does not kill and observe a second source. The removed rebuild completion-text check
+repeated the exit and restored-state checks. The removed fixture-write and restored-marker exit
+checks are covered by the retained exact restored marker, configuration, and loaded-plugin proof.
+
 On Docker and rootless Podman, managed-image activation also adopts the
 published OpenClaw and Hermes digests through `--from-image`. It confirms
 OpenShell readiness, the durable external-image receipt, identity-drift

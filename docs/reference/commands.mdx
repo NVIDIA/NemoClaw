@@ -357,7 +357,11 @@ The sandbox must reach it as `host.openshell.internal:4318`.
 The export does not install or configure that collector. Verify trace delivery after applying the configuration.
 It omits settings only when the v1 target has the same effective behavior without them.
 Hermes export fails when Hermes tool gateways are enabled.
-It preserves Hermes dashboard and browser terminal UI behavior, including explicit disabled values when omission would enable them, plus nondefault interface ports.
+It preserves Hermes dashboard and in-browser TUI behavior, including explicit disabled values when omission would enable them, plus nondefault API and enabled-dashboard ports.
+For a disabled Hermes dashboard, export writes `interfaces.dashboard.enabled: false` and omits the recorded dashboard port because v1 rejects a port on a disabled dashboard.
+The retained dashboard URL must be `http://127.0.0.1:<port>` with a port from `1024` through `65535`; a retained `browserUrl` must match it.
+The registry `dashboardPort` must match the URL port, except that it may be absent for port `18789`.
+Export rejects other URL forms, invalid ports, and mismatches.
 The default API port is omitted.
 It exports Hermes API-key authentication only when the retained authentication proof matches the managed Hermes provider, OpenAI-compatible API, endpoint, and `NOUS_API_KEY` credential reference.
 The exporter validates that source binding, then emits API-key authentication without a provider reference because v1 derives the association from the provider configuration.
@@ -1497,9 +1501,11 @@ Nonempty `--message-file` arguments and calls without a recognized inline messag
 The sandbox resolves message-file paths, including symlinks to stdin.
 For example, the wrapper preserves redirected input for `printf 'ping' | $$nemoclaw my-assistant agent --agent main`.
 The producer must close standard input after writing the message.
-The managed OpenClaw parser waits up to 30 seconds for piped input, including `--message-file /dev/stdin` and symlinks to stdin.
-A positive `--timeout <seconds>` sets this input wait as well as the agent turn timeout.
-If the input deadline expires, the command exits nonzero with guidance to close the producer or provide an inline message.
+OpenShell starts the sandbox command only after standard input ends, so without an inline message NemoClaw reads piped input on the host first.
+It waits up to 30 seconds for the input to end, including for `--message-file /dev/stdin` and symlinks to stdin.
+A `--timeout <seconds>` that bounds the OpenShell wait above also sets this input wait.
+Each case in the preceding list instead keeps the 30-second input wait, including a `--timeout` after an unrecognized option or after `--`.
+If the input deadline expires, the input exceeds 4 MiB, or standard input cannot be read, the command exits nonzero without starting the turn and prints guidance to close the producer or provide an inline message.
 
 When the top-level OpenClaw `--json` output flag is present, the wrapper uses a captured no-TTY path with a `64 MiB` buffer so `stdout` stays parseable JSON. Raw `stderr`, including structured JSON diagnostics, is forwarded unchanged. NemoClaw appends failed-tool or untrusted-child provenance only from the `stdout` JSON. The wrapper reads completion markers only from the final matching OpenClaw response envelope: a local `{ payloads, meta }` response or a gateway `{ status, result: { payloads, meta } }` response. It ignores earlier JSON progress or log records. It exits with status `1` when that metadata contains `error.kind: "incomplete_turn"`, `livenessState: "abandoned"`, or a `timeoutPhase` value, even when the envelope reports success. `replayInvalid: true` means replaying the turn may repeat side effects. The wrapper accepts it only with evidence of a completed run, a successful tool summary, and final assistant text matching the reply payload. Otherwise it exits with status `1` and the existing inspect-before-retry guidance. Marker-shaped values inside tool results, tool-call arguments, or other descendants do not change the exit status. A turn can run every tool successfully and still become abandoned before it produces a reply. The wrapper writes the unchanged JSON trace to `stdout` before it reports the incomplete turn, so the partial tool trace remains available. The wrapper writes the verdict, the detected markers, and verify-before-retry guidance to `stderr`. A `timeoutPhase` value names the phase the deadline fired in, so the wrapper writes deadline guidance in place of the generic incomplete-turn text. Tool calls in a partial trace may have already applied side effects, so verify what the turn changed before you retry it. The wrapper passes through an upstream non-zero exit status unchanged. Literal `--json` values consumed by flags such as `-m` or `--reply-channel`, or arguments after `--`, stay on the normal passthrough path. Documented value flags written as `--flag=value`, such as `--session-id=s1`, are recognized the same way as separated value flags. If an unrecognized OpenClaw option appears before `--json`, NemoClaw also keeps the command on the normal passthrough path so OpenClaw remains the argv source of truth.
 
@@ -3534,7 +3540,7 @@ A readiness, backup, or return failure marks that sandbox as failed, and `backup
 $$nemoclaw backup-all
 ```
 
-Before an OpenShell upgrade, the installer prepares the current release CLI and uses it to run `backup-all` in strict mode. Strict mode requires every registered sandbox that still has a runtime to produce a fresh backup and aborts before gateway changes if an ordinary sandbox is skipped or fails. When strict mode reports an ordinary skipped sandbox, start that sandbox or its container and rerun the installer or `$$nemoclaw backup-all`. A registry record that the selected gateway and container provider both prove has no remaining runtime is reported as confirmed stranded, produces no backup, and does not fail strict mode. Follow the reported cleanup or recreation action in [Resume a Manually Prepared Upgrade](../manage-sandboxes/operate-sandboxes/update-sandboxes#resume-a-manually-prepared-upgrade) before recovery.
+Before an OpenShell upgrade, the installer prepares the current release CLI and uses it to run `backup-all` in strict mode. Strict mode requires every registered sandbox that still has a runtime to produce a fresh backup and aborts before gateway changes if an ordinary sandbox is skipped or fails. When strict mode reports an ordinary skipped sandbox, start that sandbox or its container and rerun the installer or `$$nemoclaw backup-all`. When the output says that Docker or Podman did not respond, start that container engine first and then rerun the printed command, because the sandbox cannot start while its engine is down. A registry record that the selected gateway and container provider both prove has no remaining runtime is reported as confirmed stranded, produces no backup, and does not fail strict mode. Follow the reported cleanup or recreation action in [Resume a Manually Prepared Upgrade](../manage-sandboxes/operate-sandboxes/update-sandboxes#resume-a-manually-prepared-upgrade) before recovery.
 
 A running sandbox whose in-sandbox SSH endpoint does not answer fails its backup and aborts the run. For a standalone `$$nemoclaw backup-all` run, set `NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP=1` exactly to skip such sandboxes instead of failing. Other values such as `true`, `yes`, or `0` are not accepted. This variable does not weaken the installer's strict pre-upgrade requirement. A skipped sandbox's uncommitted state is not included in its last successful backup.
 
@@ -4224,16 +4230,18 @@ When uninstall detects other gateway-port environments, it names each one, gives
 A gateway environment whose port cannot be read is reported as an unidentified environment rather than omitted.
 
 `--all-gateway-ports`, or `NEMOCLAW_UNINSTALL_ALL_GATEWAY_PORTS=1`, uninstalls all of them in one run.
-The sweep enumerates the default state root and the non-default roots under `~/.nemoclaw/gateways/`.
-When the sweep finds more than one port, it confirms once against the resulting port list, then uninstalls each other port before the port `NEMOCLAW_GATEWAY_PORT` selects.
-When it finds only the selected port, it uses the standard uninstall confirmation without a port list and runs that port once.
+The sweep enumerates the non-default roots under `~/.nemoclaw/gateways/`.
+It includes the default port `8080` only when the shared registry records that port or a regular `openshell-gateway.toml` file exists in the resolved default gateway state directory.
+When the sweep finds any port other than the selected port, it confirms once against the resulting port list.
+It runs the port that `NEMOCLAW_GATEWAY_PORT` selects last when that port is in the list; otherwise, it runs the last listed port last.
+When it finds no other port, it uses the standard uninstall confirmation without a port list and runs the selected port once.
 Each port runs as its own uninstall so that every port-scoped value, including the state root, registry file, gateway name, and Docker resource names, resolves from that port rather than from the calling environment.
-An ambient `NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR` applies only to the currently selected port, which runs last.
+In a multi-port sweep, an ambient `NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR` applies only when the currently selected port is discovered and runs.
 The sweep restores each port's custom state directory from its sandbox registry or verified incomplete-create checkpoint.
 Invalid or conflicting recorded directories stop the sweep before any port cleanup.
-Ports without recorded directories use their per-port defaults, except when the selected port has an explicit override.
+Ports without recorded directories use their per-port defaults, except when a discovered selected port has an explicit override.
 For an older custom gateway whose directory was not recorded, rerun `NEMOCLAW_GATEWAY_PORT=<failed-port> NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR="<original-absolute-path>" $$nemoclaw uninstall`.
-The selected port runs last so its pass can remove the shared host resources once no other environment remains.
+The final pass can remove the shared host resources after no other environment remains.
 `--delete-models`, `--destroy-user-data`, and `--keep-openshell` apply to every port; `--gateway` remains a check against the selected port only.
 A failure to enumerate the gateway state roots safely stops the sweep before any port uninstall begins.
 The sweep cannot select an unidentified environment until its gateway port can be determined.

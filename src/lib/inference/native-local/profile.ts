@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { SUPPORTED_OPENSHELL_FALLBACK_VERSION } from "../../onboard/openshell-version";
+import {
+  SUPPORTED_OPENSHELL_FALLBACK_VERSION,
+  usesOpenShellNativeProjection,
+} from "../../onboard/openshell-version";
 
 import { requireNativeProviderPolicy } from "../../adapters/openshell/provider-policy";
 import fs from "node:fs";
@@ -80,7 +83,7 @@ export function prepareNativeLocalProfile(input: NativeLocalBinding) {
         // The provider-neutral onboarding smoke probe uses Python urllib.
         "/usr/bin/python3",
         // The projected runtime matches the pinned images' resolved interpreter.
-        ...(String(SUPPORTED_OPENSHELL_FALLBACK_VERSION) === "0.1.3" &&
+        ...(usesOpenShellNativeProjection(SUPPORTED_OPENSHELL_FALLBACK_VERSION) &&
         (binding.agent === "hermes" || binding.agent === "openclaw" || binding.agent === "pi")
           ? ["/usr/bin/python3.13"]
           : []),
