@@ -190,61 +190,65 @@ test(
           OPENSHELL_GATEWAY: env.OPENSHELL_GATEWAY,
         };
         progress.phase("diagnose unavailable Docker before uninstall cleanup");
-        cleanup.trackDisposable(
-          "restore Docker after unavailable-engine uninstall proof",
-          async () => {
-            const restore = await host.command(
-              "bash",
-              [
-                "-ceu",
-                "sudo -n systemctl start docker.socket docker.service; docker info >/dev/null",
-              ],
-              {
-                artifactName: "rebuild-openclaw-uninstall-restore-docker",
-                env: uninstallEnv,
-                redactionValues: redactions,
-                timeoutMs: 90_000,
-              },
-            );
-            assertExitZero(restore, "restore Docker before sandbox cleanup");
-          },
+        const restoreDocker = async (artifactName: string) => {
+          const restore = await host.command(
+            "bash",
+            [
+              "-ceu",
+              "sudo -n systemctl start docker.socket docker.service; docker info >/dev/null",
+            ],
+            {
+              artifactName,
+              env: uninstallEnv,
+              redactionValues: redactions,
+              timeoutMs: 90_000,
+            },
+          );
+          assertExitZero(restore, "restore Docker before rebuilding or sandbox cleanup");
+        };
+        cleanup.trackDisposable("restore Docker after unavailable-engine uninstall proof", () =>
+          restoreDocker("rebuild-openclaw-uninstall-restore-docker-cleanup"),
         );
-        const engineStop = await host.command(
-          "bash",
-          [
-            "-ceu",
-            "sudo -n systemctl stop docker.socket docker.service; ! docker info >/dev/null 2>&1",
-          ],
-          {
-            artifactName: "rebuild-openclaw-uninstall-stop-docker",
+        try {
+          const engineStop = await host.command(
+            "bash",
+            [
+              "-ceu",
+              "sudo -n systemctl stop docker.socket docker.service; ! docker info >/dev/null 2>&1",
+            ],
+            {
+              artifactName: "rebuild-openclaw-uninstall-stop-docker",
+              env: uninstallEnv,
+              redactionValues: redactions,
+              timeoutMs: 60_000,
+            },
+          );
+          assertExitZero(engineStop, "stop Docker service and socket");
+          const uninstall = await host.nemoclaw(["uninstall", "--yes"], {
+            artifactName: "rebuild-openclaw-uninstall-docker-unavailable",
             env: uninstallEnv,
             redactionValues: redactions,
-            timeoutMs: 60_000,
-          },
-        );
-        assertExitZero(engineStop, "stop Docker service and socket");
-        const uninstall = await host.nemoclaw(["uninstall", "--yes"], {
-          artifactName: "rebuild-openclaw-uninstall-docker-unavailable",
-          env: uninstallEnv,
-          redactionValues: redactions,
-          timeoutMs: 120_000,
-        });
-        const diagnostic = resultText(uninstall);
-        expect(uninstall.exitCode, diagnostic).not.toBe(0);
-        expect(diagnostic).toMatch(
-          /Docker did not respond and their containers cannot be cleaned up/u,
-        );
-        const registryFile = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
-        const registered = JSON.parse(fs.readFileSync(registryFile, "utf8")) as {
-          sandboxes?: Record<string, unknown>;
-        };
-        expect(registered.sandboxes).toHaveProperty(SANDBOX_NAME);
-        await artifacts.writeJson("rebuild-openclaw-uninstall-docker-unavailable.json", {
-          sandboxName: SANDBOX_NAME,
-          dockerInfoUnavailable: true,
-          uninstallRejected: true,
-          registeredSandboxPreserved: true,
-        });
+            timeoutMs: 120_000,
+          });
+          const diagnostic = resultText(uninstall);
+          expect(uninstall.exitCode, diagnostic).not.toBe(0);
+          expect(diagnostic).toMatch(
+            /Docker did not respond and their containers cannot be cleaned up/u,
+          );
+          const registryFile = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
+          const registered = JSON.parse(fs.readFileSync(registryFile, "utf8")) as {
+            sandboxes?: Record<string, unknown>;
+          };
+          expect(registered.sandboxes).toHaveProperty(SANDBOX_NAME);
+          await artifacts.writeJson("rebuild-openclaw-uninstall-docker-unavailable.json", {
+            sandboxName: SANDBOX_NAME,
+            dockerInfoUnavailable: true,
+            uninstallRejected: true,
+            registeredSandboxPreserved: true,
+          });
+        } finally {
+          await restoreDocker("rebuild-openclaw-uninstall-restore-docker-before-rebuild");
+        }
       },
     );
     await artifacts.target.complete({
