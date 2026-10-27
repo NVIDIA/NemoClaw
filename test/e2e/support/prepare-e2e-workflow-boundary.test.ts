@@ -33,6 +33,28 @@ describe("prepare-e2e workflow boundary", () => {
     expect(validatePrepareE2eInvocations(readWorkflow())).toEqual([]);
   });
 
+  it.each([
+    ["true", "true", 0],
+    ["false", "true", 0],
+    ["false", "false", 0],
+    ["true", "false", 1],
+    ["false", "unexpected", 1],
+    ["unexpected", "true", 1],
+  ])(
+    "validates build=%s and install=%s before preparing dependencies",
+    (build, install, status) => {
+      const action = YAML.parse(fs.readFileSync(".github/actions/prepare-e2e/action.yaml", "utf8"));
+      const validation = action.runs.steps.find(
+        (step: WorkflowStep) => step.name === "Validate preparation inputs",
+      );
+      const result = spawnSync("bash", ["-c", validation.run], {
+        encoding: "utf8",
+        env: { ...process.env, BUILD_CLI: build, INSTALL_DEPENDENCIES: install },
+      });
+      expect(result.status, result.stderr).toBe(status);
+    },
+  );
+
   it("loads the dependency installer from the sparse trusted checkout", () => {
     const workflow = readWorkflow() as Workflow;
     const checkout = workflow.jobs["generate-matrix"].steps!.find(

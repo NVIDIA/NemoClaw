@@ -69,13 +69,36 @@ export function validatePrepareE2eAction(actionPath = DEFAULT_ACTION_PATH): stri
   if (!isDeepStrictEqual(record(record(action.inputs)["build-cli"]), expectedInput)) {
     errors.push("prepare-e2e build-cli input must default to true");
   }
-  if (Object.keys(record(action.inputs)).length !== 1) {
-    errors.push("prepare-e2e must expose only the build-cli input");
+  if (
+    !isDeepStrictEqual(record(action.inputs)["install-dependencies"], {
+      description: "Install root dependencies before an optional CLI build.",
+      required: false,
+      default: "true",
+    }) ||
+    Object.keys(record(action.inputs)).length !== 2
+  ) {
+    errors.push(
+      "prepare-e2e must expose build-cli and install-dependencies with installation enabled by default",
+    );
   }
 
   const runs = record(action.runs);
   if (runs.using !== "composite") errors.push("prepare-e2e must be a composite action");
   const expectedSteps = [
+    {
+      name: "Validate preparation inputs",
+      shell: "bash",
+      env: {
+        BUILD_CLI: "${{ inputs.build-cli }}",
+        INSTALL_DEPENDENCIES: "${{ inputs.install-dependencies }}",
+      },
+      run: `set -euo pipefail
+case "$BUILD_CLI:$INSTALL_DEPENDENCIES" in
+  true:true|false:true|false:false) ;;
+  *) echo "Invalid preparation inputs: building requires dependency installation." >&2; exit 1 ;;
+esac
+`,
+    },
     {
       name: "Set up Node",
       uses: "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
@@ -87,6 +110,7 @@ export function validatePrepareE2eAction(actionPath = DEFAULT_ACTION_PATH): stri
     },
     {
       name: "Install root dependencies",
+      if: "${{ inputs.install-dependencies == 'true' }}",
       shell: "bash",
       run: "npm ci --ignore-scripts",
     },
