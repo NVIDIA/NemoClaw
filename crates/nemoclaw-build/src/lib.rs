@@ -28,7 +28,13 @@ pub fn extract_tofu_license(bytes: &[u8]) -> Result<Vec<u8>, String> {
 fn extract_entry(bytes: &[u8], name: &str, limit: u64) -> Result<Vec<u8>, String> {
     let mut archive =
         zip::ZipArchive::new(Cursor::new(bytes)).map_err(|_| "invalid release archive")?;
-    if archive.file_names().filter(|n| *n == name).count() != 1 {
+    // Names are decoded on read; an undecodable name matches nothing.
+    if archive
+        .file_names()
+        .filter(|n| matches!(n, Ok(n) if n == name))
+        .count()
+        != 1
+    {
         return Err("archive lacks one exact requested entry".into());
     }
     let mut file = archive
