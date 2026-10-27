@@ -25,6 +25,10 @@ import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compati
 import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 import { PollingError, pollUntil } from "../fixtures/polling.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import {
+  openshellListIncludesSandbox,
+  sandboxPhaseFromList,
+} from "../fixtures/openshell-sandbox-list.ts";
 
 const SANDBOX_A = process.env.NEMOCLAW_CGP_SANDBOX_A ?? "e2e-cgp-a";
 const SANDBOX_B = process.env.NEMOCLAW_CGP_SANDBOX_B ?? "e2e-cgp-b";
@@ -194,14 +198,6 @@ function outputIncludesSandbox(output: string, sandboxName: string): boolean {
   return new RegExp(`^\\s+${sandboxName}(?: \\*)?\\s*$`, "m").test(output);
 }
 
-function sandboxPhaseFromList(output: string, sandboxName: string): string | undefined {
-  for (const line of output.replace(/\x1B\[[0-9;]*m/g, "").split("\n")) {
-    const parts = line.trim().split(/\s+/).filter(Boolean);
-    if (parts[0] === sandboxName) return parts.at(-1);
-  }
-  return undefined;
-}
-
 async function waitForSandboxReady(
   sandbox: SandboxClient,
   sandboxName: string,
@@ -350,8 +346,8 @@ async function selectAndVerifyActiveGateway(
     list,
     containsOnlyTargetSandbox:
       list.exitCode === 0 &&
-      outputIncludesSandbox(list.stdout, sandboxName) &&
-      !outputIncludesSandbox(list.stdout, siblingSandboxName),
+      openshellListIncludesSandbox(list.stdout, sandboxName) &&
+      !openshellListIncludesSandbox(list.stdout, siblingSandboxName),
   };
 }
 
@@ -841,7 +837,7 @@ test(
     const gatewayAHealthyBeforeCleanupRestart =
       liveSurvivorAfterCleanupDestroy.gatewayPort.exitCode === 0 &&
       liveSurvivorAfterCleanupDestroy.scopedList.exitCode === 0 &&
-      outputIncludesSandbox(liveSurvivorAfterCleanupDestroy.scopedList.stdout, SANDBOX_A) &&
+      openshellListIncludesSandbox(liveSurvivorAfterCleanupDestroy.scopedList.stdout, SANDBOX_A) &&
       liveSurvivorAfterCleanupDestroy.dashboard.every(
         (probe) => probe.exitCode === 0 && /^[23][0-9]{2}$/.test(probe.stdout.trim()),
       );
@@ -874,7 +870,10 @@ test(
     const gatewayADashboardAvailableAfterCleanupRestart =
       survivorDashboardAfterCleanupDestroy.gatewayPort.exitCode === 0 &&
       survivorDashboardAfterCleanupDestroy.scopedList.exitCode === 0 &&
-      outputIncludesSandbox(survivorDashboardAfterCleanupDestroy.scopedList.stdout, SANDBOX_A) &&
+      openshellListIncludesSandbox(
+        survivorDashboardAfterCleanupDestroy.scopedList.stdout,
+        SANDBOX_A,
+      ) &&
       survivorDashboardAfterCleanupDestroy.dashboard.every(
         (probe) => probe.exitCode === 0 && /^[23][0-9]{2}$/.test(probe.stdout.trim()),
       );
@@ -967,7 +966,7 @@ test(
     const sandboxBDestroyedWithoutGatewayCleanup =
       destroyBWithoutGatewayCleanup.exitCode === 0 &&
       sandboxBAfterRetainedDestroy.exitCode === 0 &&
-      !outputIncludesSandbox(resultText(sandboxBAfterRetainedDestroy), SANDBOX_B);
+      !openshellListIncludesSandbox(sandboxBAfterRetainedDestroy.stdout, SANDBOX_B);
     const gatewayBRetainedWithoutCleanup =
       gatewayBRetainedAfterDestroy.exitCode === 0 &&
       gatewayRegistryAfterRetainedDestroy.exitCode === 0 &&
@@ -977,7 +976,7 @@ test(
     const gatewayAHealthyBeforeRetainedRestart =
       liveSurvivorAfterRetainedDestroy.gatewayPort.exitCode === 0 &&
       liveSurvivorAfterRetainedDestroy.scopedList.exitCode === 0 &&
-      outputIncludesSandbox(liveSurvivorAfterRetainedDestroy.scopedList.stdout, SANDBOX_A) &&
+      openshellListIncludesSandbox(liveSurvivorAfterRetainedDestroy.scopedList.stdout, SANDBOX_A) &&
       liveSurvivorAfterRetainedDestroy.dashboard.every(
         (probe) => probe.exitCode === 0 && /^[23][0-9]{2}$/.test(probe.stdout.trim()),
       );
@@ -1011,7 +1010,10 @@ test(
     const gatewayADashboardAvailableAfterRetainedRestart =
       survivorDashboardAfterRetainedDestroy.gatewayPort.exitCode === 0 &&
       survivorDashboardAfterRetainedDestroy.scopedList.exitCode === 0 &&
-      outputIncludesSandbox(survivorDashboardAfterRetainedDestroy.scopedList.stdout, SANDBOX_A) &&
+      openshellListIncludesSandbox(
+        survivorDashboardAfterRetainedDestroy.scopedList.stdout,
+        SANDBOX_A,
+      ) &&
       survivorDashboardAfterRetainedDestroy.dashboard.every(
         (probe) => probe.exitCode === 0 && /^[23][0-9]{2}$/.test(probe.stdout.trim()),
       );
