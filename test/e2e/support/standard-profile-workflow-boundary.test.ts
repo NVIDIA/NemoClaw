@@ -26,6 +26,50 @@ describe("standard E2E execution profile", () => {
     expect(validateStandardProfileWorkflowBoundary(readWorkflow())).toEqual([]);
   });
 
+  it.each<
+    [string, (steps: Array<{ name: string; with?: Record<string, string>; if?: string }>) => void]
+  >([
+    [
+      "early install",
+      (steps) => {
+        steps.find((step) => step.name === "Prepare E2E workspace")!.with!["install-dependencies"] =
+          "true";
+      },
+    ],
+    [
+      "late archive",
+      (steps) => {
+        const index = steps.findIndex(
+          (step) => step.name === "Download reviewed OpenShell SDK archive",
+        );
+        const [archive] = steps.splice(index, 1);
+        steps.push(archive);
+      },
+    ],
+    [
+      "conditional install",
+      (steps) => {
+        steps.find(
+          (step) =>
+            step.name === "Install reviewed OpenShell SDK archive without package credentials",
+        )!.if = "${{ false }}";
+      },
+    ],
+  ])("rejects %s in the reviewed SDK handoff", (_scenario, mutate) => {
+    const profile = YAML.parse(
+      fs.readFileSync(path.join(REPO_ROOT, ".github/workflows/e2e-standard-profile.yaml"), "utf8"),
+    );
+    mutate(profile.jobs.run.steps);
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "sdk-profile-order-"));
+    try {
+      const profilePath = path.join(directory, "profile.yaml");
+      fs.writeFileSync(profilePath, YAML.stringify(profile));
+      expect(validateStandardProfileWorkflowBoundary(readWorkflow(), profilePath)).not.toEqual([]);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it("reserves the standard full-E2E setup, test, and artifact envelope", () => {
     // The original 70-minute path now includes native configuration and plugin lifecycle work.
     expect(FULL_E2E_TEST_TIMEOUT_MINUTES).toBeGreaterThanOrEqual(100);
@@ -134,7 +178,7 @@ describe("standard E2E execution profile", () => {
     const workflow = readWorkflow() as { jobs: Record<string, { if?: string }> };
     workflow.jobs["package-openshell-sdk"]!.if = "${{ inputs.jobs == 'external-gateway-health' }}";
     expect(validateStandardProfileWorkflowBoundary(workflow)).toContain(
-      "catalogue profiles require SDK packaging for every E2E run with package-read permission",
+      "catalogue profiles require SDK packaging with package-read permission whenever candidate compilation is selected",
     );
   });
 

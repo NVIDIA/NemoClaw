@@ -7,6 +7,10 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
+import {
+  isReviewedOpenShellSdkInstallStep,
+  REVIEWED_OPEN_SHELL_SDK_INSTALL_STEP,
+} from "./reviewed-openshell-sdk-install-workflow-boundary.mts";
 import { SHARED_E2E_JOB_ID } from "./credential-free-tests.mts";
 import { E2E_ACTION_PROVENANCE, E2E_JOB_POLICY } from "./workflow-boundary-policy.mts";
 
@@ -135,8 +139,11 @@ function validateCompilerSdkPreparation(job: WorkflowRecord): string[] {
   const compileIndex = jobSteps.findIndex((step) => step.uses === PREPARE_COMPILED_ARTIFACT_ACTION);
   if (
     job.needs !== "package-openshell-sdk" ||
+    job.if !==
+      "${{ !cancelled() && (needs.package-openshell-sdk.result == 'success' || (needs.package-openshell-sdk.result == 'skipped' && inputs.checkout_sha != '' && (inputs.jobs == 'native-runtime-qualification-producer' || inputs.jobs == 'llama-cpp-dgx-spark-qualification') && inputs.targets == '')) }}" ||
     !isDeepStrictEqual(download, {
       name: "Download reviewed OpenShell SDK archive",
+      if: NATIVE_RUNTIME_QUALIFICATION_PRODUCER_PREPARE_CONDITION,
       uses: "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
       with: {
         name: "${{ needs.package-openshell-sdk.outputs.artifact_name }}",
@@ -150,9 +157,46 @@ function validateCompilerSdkPreparation(job: WorkflowRecord): string[] {
   return [];
 }
 
+function validateCandidateSdkPreparation(jobName: string, job: WorkflowRecord): string[] {
+  const jobSteps = steps(job.steps);
+  const downloads = jobSteps.filter(
+    (step) => step.name === "Download reviewed OpenShell SDK archive",
+  );
+  const installs = jobSteps.filter((step) => step.name === REVIEWED_OPEN_SHELL_SDK_INSTALL_STEP);
+  const prepareIndex = jobSteps.findIndex((step) => step.uses === PREPARE_E2E_ACTION);
+  const dependencies = Array.isArray(job.needs) ? job.needs : [job.needs];
+  if (
+    !dependencies.includes("package-openshell-sdk") ||
+    downloads.length !== 1 ||
+    installs.length !== 1 ||
+    !isDeepStrictEqual(downloads[0], {
+      name: "Download reviewed OpenShell SDK archive",
+      uses: "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
+      with: {
+        name: "${{ needs.package-openshell-sdk.outputs.artifact_name }}",
+        path: "${{ runner.temp }}/openshell-sdk",
+      },
+    }) ||
+    !isReviewedOpenShellSdkInstallStep(installs[0]) ||
+    jobSteps.indexOf(downloads[0]) !== prepareIndex - 1 ||
+    jobSteps.indexOf(installs[0]) !== prepareIndex + 1
+  ) {
+    return [
+      `${jobName} must download its reviewed SDK before preparation and install it immediately afterward`,
+    ];
+  }
+  return [];
+}
+
 export function validatePrepareE2eInvocations(workflow: WorkflowRecord): string[] {
   const errors: string[] = [];
   const jobs = record(workflow.jobs);
+  if (
+    record(jobs["package-openshell-sdk"]).if !==
+    NATIVE_RUNTIME_QUALIFICATION_PRODUCER_PREPARE_CONDITION
+  ) {
+    errors.push("SDK packaging must follow candidate compilation selection");
+  }
   const expectedJobs = new Set(
     Object.entries(jobs)
       .filter(([jobName, value]) => {
@@ -239,8 +283,20 @@ export function validatePrepareE2eInvocations(workflow: WorkflowRecord): string[
           : `${jobName} prepare-e2e must use its default trusted CLI build`,
       );
     }
-    if (!shouldBuild && !isDeepStrictEqual(withInputs, { "build-cli": "false" })) {
+    const trustedController = jobName === "managed-image-protected-runtime";
+    if (
+      !shouldBuild &&
+      !isDeepStrictEqual(
+        withInputs,
+        trustedController
+          ? { "build-cli": "false" }
+          : { "build-cli": "false", "install-dependencies": "false" },
+      )
+    ) {
       errors.push(`${jobName} prepare-e2e must set build-cli to false`);
+    }
+    if (!shouldBuild && !trustedController) {
+      errors.push(...validateCandidateSdkPreparation(jobName, record(value)));
     }
     if (
       jobName === "generate-matrix" &&

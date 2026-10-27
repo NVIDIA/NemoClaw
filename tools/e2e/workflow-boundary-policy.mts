@@ -8,7 +8,7 @@ export const E2E_ACTION_PROVENANCE = {
   },
   prepareWorkspace: {
     reference:
-      "NVIDIA/NemoClaw/.github/actions/prepare-e2e@7fcbf13ecd7bc0ea835a949417cf9eb68067adf9",
+      "NVIDIA/NemoClaw/.github/actions/prepare-e2e@e7e587da7c6c2c48aa112533c7eaeb549e40a351",
     contentSha256: "9356afd1acf2038ade28c693a52194445d002115ea676f08f413f1a1530a92e6",
   },
   nativePodmanRuntime: {

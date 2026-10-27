@@ -130,6 +130,100 @@ describe("prepare-e2e workflow boundary", () => {
     );
   });
 
+  it.each<[string, (workflow: Workflow) => void, string]>([
+    [
+      "producer",
+      (workflow) => {
+        (workflow.jobs["package-openshell-sdk"] as Record<string, unknown>).if =
+          "${{ inputs.jobs == 'live' }}";
+      },
+      "SDK packaging must follow candidate compilation selection",
+    ],
+    [
+      "planner",
+      (workflow) => {
+        (workflow.jobs["generate-matrix"] as Record<string, unknown>).if = "${{ !cancelled() }}";
+      },
+      "generate-matrix must download this run's reviewed SDK archives before compilation",
+    ],
+    [
+      "download",
+      (workflow) => {
+        delete workflow.jobs["generate-matrix"].steps!.find(
+          (step) => step.name === "Download reviewed OpenShell SDK archive",
+        )!.if;
+      },
+      "generate-matrix must download this run's reviewed SDK archives before compilation",
+    ],
+  ])("rejects drift in the SDK %s selection", (_part, mutate, error) => {
+    const workflow = readWorkflow() as Workflow;
+    mutate(workflow);
+    expect(validatePrepareE2eInvocations(workflow)).toContain(error);
+  });
+
+  describe.each([
+    "live",
+    "shared-e2e",
+    "openshell-gateway-auth-contract",
+    "external-gateway-health",
+    "mcp-bridge",
+    "openshell-credential-generation-window",
+    "mcp-bridge-dev",
+    "managed-image-multiarch-startup",
+    "hermes-e2e",
+    "portable-hermes-finalization",
+    "hermes-gpu-startup",
+    "cloud-onboard",
+    "messaging-providers",
+  ])("reviewed dependency handoff in %s", (jobName) => {
+    it.each<[string, (job: Workflow["jobs"][string]) => void]>([
+      [
+        "missing producer",
+        (job) => {
+          job.needs = "generate-matrix";
+        },
+      ],
+      [
+        "early install",
+        (job) => {
+          job.steps!.find((step) => step.uses === PREPARE_E2E_ACTION)!.with![
+            "install-dependencies"
+          ] = "true";
+        },
+      ],
+      [
+        "conditional download",
+        (job) => {
+          job.steps!.find((step) => step.name === "Download reviewed OpenShell SDK archive")!.if =
+            "${{ false }}";
+        },
+      ],
+      [
+        "late archive",
+        (job) => {
+          const index = job.steps!.findIndex(
+            (step) => step.name === "Download reviewed OpenShell SDK archive",
+          );
+          const [download] = job.steps!.splice(index, 1);
+          job.steps!.push(download);
+        },
+      ],
+      [
+        "candidate installer",
+        (job) => {
+          job.steps!.find(
+            (step) =>
+              step.name === "Install reviewed OpenShell SDK archive without package credentials",
+          )!.uses = "./.github/actions/install-reviewed-openshell-sdk";
+        },
+      ],
+    ])("rejects %s", (_name, mutate) => {
+      const workflow = readWorkflow() as Workflow;
+      mutate(workflow.jobs[jobName]);
+      expect(validatePrepareE2eInvocations(workflow), jobName).not.toEqual([]);
+    });
+  });
+
   it("rejects a compiler action loaded from the candidate revision", () => {
     const workflow = readWorkflow() as Workflow;
     const checkout = workflow.jobs["generate-matrix"].steps!.find(
