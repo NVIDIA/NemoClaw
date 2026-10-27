@@ -1982,10 +1982,9 @@ class SandboxStateFlow<
     const resourceProfile = (
       checkpoint ? decisionValue(checkpoint.resourceProfile) : (session?.resourceProfile ?? null)
     ) as ResourceProfile | null;
-    const valid =
-      isValidSavedResourceProfile(
-        resourceProfile as SessionResourceProfile | CheckpointResourceProfile | null,
-      ) && isValidSavedResourceProfile(session?.resourceProfile ?? null);
+    const valid = isValidSavedResourceProfile(
+      resourceProfile as SessionResourceProfile | CheckpointResourceProfile | null,
+    );
     return { completed, valid, resourceProfile };
   }
 
