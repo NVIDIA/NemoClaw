@@ -35,7 +35,10 @@ import { requiredOpenclawOtelPolicyPresets } from "./openclaw-otel-policy-preset
 import { filterSuppressedAgentRequiredPresets } from "./policy-tier-suppression";
 import { cleanupTempDir, createExactTempFileCleanup, secureTempFile } from "./temp-files";
 import { isPortableExperimentalProfile } from "./experimental/portable-profile";
-import { SUPPORTED_OPENSHELL_FALLBACK_VERSION } from "./openshell-version";
+import {
+  SUPPORTED_OPENSHELL_FALLBACK_VERSION,
+  usesOpenShellNativeProjection,
+} from "./openshell-version";
 
 export type InitialSandboxPolicy = {
   policyPath: string;
@@ -504,7 +507,7 @@ function resolveInitialSandboxCreatePolicy(
     }
   };
   try {
-    if (String(SUPPORTED_OPENSHELL_FALLBACK_VERSION) === "0.1.3") {
+    if (usesOpenShellNativeProjection(SUPPORTED_OPENSHELL_FALLBACK_VERSION)) {
       const policy = YAML.parse(basePolicy);
       if (
         isObjectRecord(policy) &&

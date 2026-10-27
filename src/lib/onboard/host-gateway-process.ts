@@ -28,7 +28,10 @@ import {
   hostGatewayCmdlineMatches as sharedHostGatewayCmdlineMatches,
 } from "./gateway-process-identity";
 
-export { hasStateScopedSandboxNamespace } from "./docker-driver-gateway-config";
+export {
+  gatewayEnvSelectsStateConfig,
+  hasStateScopedSandboxNamespace,
+} from "./docker-driver-gateway-config";
 export {
   resolveDockerDriverGatewayPidFile,
   resolveDockerDriverGatewayStateDir,

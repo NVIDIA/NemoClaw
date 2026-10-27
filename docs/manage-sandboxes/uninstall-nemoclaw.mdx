@@ -208,9 +208,9 @@ NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR="<original-absolute-path>" \
 Onboarding records port-bound state-root ownership; uninstall validates that ownership plus generated configuration, sandbox namespace, PID file, runtime marker, and live process identity before cleanup.
 Valid gateways created before the state-root marker existed retain the same recovery path through their owner-private generated configuration and live process proof; stopped-gateway recovery requires the port-bound marker.
 The whole-host sweep restores each port's custom state directory from its sandbox registry or verified incomplete-create checkpoint.
-An explicit `NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR` overrides the recorded directory only for the port selected by `NEMOCLAW_GATEWAY_PORT`.
+In a multi-port sweep, an explicit `NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR` overrides the recorded directory only when the port selected by `NEMOCLAW_GATEWAY_PORT` is discovered and runs.
 If recorded directories are invalid or conflict, the sweep exits before any port cleanup.
-Ports without recorded directories use their per-port defaults, except when the selected port has an explicit override.
+Ports without recorded directories use their per-port defaults, except when a discovered selected port has an explicit override.
 For an older custom gateway whose directory was not recorded, rerun its failed pass with the original directory:
 
 ```bash
@@ -221,8 +221,8 @@ NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR="<original-absolute-path>" \
 
 <Warning>
 The sweep applies the uninstall plan to every discovered gateway port.
-When it finds more than one port, review the port list before you confirm because `--yes` skips this confirmation.
-When it finds only the selected port, it uses the standard uninstall confirmation without a port list.
+When it finds any port other than the selected port, review the discovered port list before you confirm because `--yes` skips this confirmation.
+When it finds no other port, it uses the standard uninstall confirmation without a port list.
 If you also pass `--destroy-user-data`, the sweep can remove the preserved registry and backups for any port that reaches that cleanup step.
 </Warning>
 
@@ -232,9 +232,11 @@ Pass `--all-gateway-ports`, or set `NEMOCLAW_UNINSTALL_ALL_GATEWAY_PORTS=1`, to 
 $$nemoclaw uninstall --all-gateway-ports
 ```
 
-When the sweep finds more than one port, it lists the ports, confirms once, then uninstalls each port in turn and the currently selected port last.
-When it finds only the selected port, it uses the standard uninstall confirmation and runs that port once.
-Running the selected port last lets that final pass remove the shared CLI, services, images, providers, configuration, models, and swap once no other environment needs them.
+The sweep includes the default port `8080` only when the shared registry records that port or a regular `openshell-gateway.toml` file exists in the resolved default gateway state directory.
+When the sweep finds any port other than the selected port, it lists the discovered ports and confirms once.
+It runs the currently selected port last when that port is in the list; otherwise, it runs the last listed port last.
+When it finds no other port, it uses the standard uninstall confirmation and runs the selected port once.
+The final pass can remove the shared CLI, services, images, providers, configuration, models, and swap after no other environment needs them.
 `--delete-models`, `--destroy-user-data`, and `--keep-openshell` apply to every port in the sweep.
 If the sweep cannot enumerate the gateway state roots safely, it exits before uninstalling any port.
 The sweep cannot select an unidentified environment until its gateway port can be determined.
@@ -249,6 +251,10 @@ Gateway-scoped cleanup removes that gateway's OpenShell resources first, then th
 The OpenShell gateway service therefore keeps running while uninstall deletes the selected gateway's sandboxes.
 If OpenShell resource cleanup fails, uninstall exits nonzero and preserves the marked Linux unit and gateway process.
 If marked Linux unit cleanup fails, uninstall exits nonzero before it scans for or stops a remaining gateway process or continues with later Docker and gateway-state cleanup.
+One case is not a failure: on a headless account with no running systemd user manager, `systemctl --user` still reports `Failed to connect to bus` when NemoClaw uses the user's runtime directory (`/run/user/<uid>`), and the marked unit cannot run.
+Uninstall then removes only the marked NemoClaw unit file and its `default.target.wants` link, without disabling the unit or reloading systemd, and continues with the remaining cleanup.
+If another systemd activation link still names the unit, uninstall keeps the unit, names that link, and exits nonzero.
+When other gateway ports remain, uninstall removes the unit this way only if the last `OPENSHELL_GATEWAY_CONFIG` entry in `openshell/gateway.env` names the selected gateway's configuration; otherwise it keeps the unit and exits nonzero.
 OpenShell resource and Linux unit cleanup can partially complete before either failure.
 After selected sandbox cleanup succeeds, uninstall removes those entries from `sandboxes.json` before gateway registration and Linux unit cleanup.
 If a later step fails, the retry skips the completed sandbox deletions and resumes the remaining cleanup.
@@ -317,6 +323,8 @@ When the backup contains native agent state, successful uninstall prints the pat
 Deep Agents Code files are inside that archive, not separate loose files.
 The whole-host sweep applies this gate separately to each selected gateway port.
 If a backup fails or any registered sandbox is skipped, uninstall stops that gateway pass before OpenShell resource cleanup.
+If Docker or Podman does not respond, uninstall reports that engine, skips its stopped sandboxes, and states that their containers cannot be cleaned up.
+Start that container engine, then rerun the same uninstall command.
 A registry entry confirmed absent from both the selected gateway and Docker is exempt because no sandbox state remains to capture.
 When uninstall confirms that no sibling gateways remain, it also removes the shared CLI, services, images, providers, configuration, models, and swap.
 During full uninstall, NemoClaw requires complete selected-gateway authority before it removes provider registrations, the gateway registration, `sandboxes.json`, or later local state.

@@ -1405,7 +1405,6 @@ async function runInferenceSetWithoutHostLock(
   // on a valid route. Validate the host stack ourselves, then skip the gateway-side
   // verify. Only a genuinely-unreachable host stack hard-fails here, before the
   // route is touched.
-  let effectiveNoVerify = options.noVerify === true;
   // A loopback endpoint onboarded without authentication is published to the
   // gateway through the local no-auth proxy on NemoClaw's sandbox bridge, so
   // the provider's base URL is a `host.openshell.internal` address even though
@@ -1413,21 +1412,21 @@ async function runInferenceSetWithoutHostLock(
   // verifier cannot resolve that address; verify from inside the sandbox
   // instead, exactly like an explicit bridge route.
   const loopbackNoAuthProxyRoute = usesLoopbackNoAuthProxyRoute(entry, provider);
-  // OpenRouter onboarding registers a sandbox-facing adapter without a custom
-  // provider binding. Verify its model switches through the sandbox route too.
+  // OpenRouter and reused HTTPS-pin routes have no new provider binding.
+  // Verify their model changes from inside the sandbox.
   const probeSandboxRoute =
     selectingNative ||
     provider === "openrouter-api" ||
     isSandboxBridgeProviderBinding(directProviderBinding) ||
+    (!httpsPinProviderBinding && parseHttpsPinRouteId(registryMetadata.endpointUrl) !== null) ||
     loopbackNoAuthProxyRoute;
   // Adapter routes and explicit custom routes on NemoClaw's sandbox bridge
   // resolve only from inside the sandbox network. The host-side OpenShell
   // verifier cannot resolve host.openshell.internal, so its result would be a
   // guaranteed false negative. HTTPS-pin adapters retain their local-health
   // verification; direct bridge routes are probed from the sandbox below.
-  if (httpsPinProviderBinding || probeSandboxRoute) {
-    effectiveNoVerify = true;
-  }
+  let effectiveNoVerify =
+    options.noVerify === true || Boolean(httpsPinProviderBinding) || probeSandboxRoute;
   if (deps.isLocalInferenceProvider(provider)) {
     const localValidation = deps.validateLocalProvider(provider);
     if (localValidation.ok) {

@@ -11,6 +11,7 @@ import {
 } from "node:crypto";
 import fs from "node:fs";
 import { prepareNativeGatewayCreation } from "./gateway/native-creation";
+import { DOCKER_DRIVER_GATEWAY_CONFIG_NAME } from "./gateway/config-name";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { parse as parseToml } from "smol-toml";
@@ -34,7 +35,10 @@ import {
 import type { ExternalComponentGatewayPreparation } from "./external-component/activation";
 import { externalComponentDockerSocket } from "./external-component/network";
 import type { RuntimeProviderGatewayHostRuntime } from "./runtime-provider/contract";
-import { SUPPORTED_OPENSHELL_FALLBACK_VERSION } from "./openshell-version";
+import {
+  SUPPORTED_OPENSHELL_FALLBACK_VERSION,
+  usesOpenShellNativeProjection,
+} from "./openshell-version";
 import {
   resolveConfiguredRuntimeProvider,
   resolveRegisteredRuntimeProvider,
@@ -52,8 +56,7 @@ export {
 export type { DockerDriverGatewayJwtBundle } from "./docker-driver-gateway-jwt-bundle";
 export { ensureDockerDriverGatewayJwtBundle } from "./docker-driver-gateway-jwt-bundle";
 
-// See docs/security/gateway-authentication-controls.mdx for the public compatibility boundary.
-export const DOCKER_DRIVER_GATEWAY_CONFIG_NAME = "openshell-gateway.toml";
+export { DOCKER_DRIVER_GATEWAY_CONFIG_NAME } from "./gateway/config-name";
 export const DOCKER_DRIVER_GATEWAY_JWT_TTL_SECS = 0;
 const LEGACY_DOCKER_DRIVER_GATEWAY_JWT_TTL_SECS = 3600;
 const PRE_AUTH_DOCKER_DRIVER_GATEWAY_VERSION = "0.0.44";
@@ -843,6 +846,22 @@ function resolveDockerDriverGatewayIdentity(
   };
 }
 
+/**
+ * Prove from `openshell/gateway.env` text, the packaged unit's EnvironmentFile,
+ * that the unit runs the gateway config of this state directory.
+ */
+export function gatewayEnvSelectsStateConfig(envText: string, stateDir: string): boolean {
+  const assignments = envText
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("OPENSHELL_GATEWAY_CONFIG="));
+  // systemd applies the last assignment of a variable in an EnvironmentFile.
+  return (
+    assignments.at(-1) ===
+    `OPENSHELL_GATEWAY_CONFIG=${path.join(stateDir, DOCKER_DRIVER_GATEWAY_CONFIG_NAME)}`
+  );
+}
+
 /** Prove that a NemoClaw-owned Docker gateway config uses its state-scoped namespace. */
 export function hasStateScopedSandboxNamespace(stateDir: string): boolean {
   let identity: DockerDriverGatewayIdentity | null = null;
@@ -875,7 +894,9 @@ function buildDockerDriverGatewayConfigTomlForIdentity(
   gatewayJwtTtlSecs = DOCKER_DRIVER_GATEWAY_JWT_TTL_SECS,
   projectedRuntime?: RuntimeProviderGatewayHostRuntime,
   externalComponent?: ExternalComponentGatewayConfiguration | null,
-  schemaVersion: 1 | 2 = String(SUPPORTED_OPENSHELL_FALLBACK_VERSION) === "0.1.3" ? 2 : 1,
+  schemaVersion: 1 | 2 = usesOpenShellNativeProjection(SUPPORTED_OPENSHELL_FALLBACK_VERSION)
+    ? 2
+    : 1,
   legacyGuestCredentials = schemaVersion === 1,
 ): string {
   const runtime = resolveGatewayRuntimeProjection(gatewayEnv, projectedRuntime);
