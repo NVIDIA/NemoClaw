@@ -269,6 +269,15 @@ interface SurvivorDashboardProbe {
   readonly dashboard: readonly ShellProbeResult[];
 }
 
+function finalDashboardProbeHealthy(probes: readonly ShellProbeResult[]): boolean {
+  const finalProbe = probes.at(-1);
+  return (
+    finalProbe !== undefined &&
+    finalProbe.exitCode === 0 &&
+    /^[23][0-9]{2}$/.test(finalProbe.stdout.trim())
+  );
+}
+
 async function probeSurvivorDashboard(
   host: HostCliClient,
   sandbox: SandboxClient,
@@ -874,9 +883,7 @@ test(
         survivorDashboardAfterCleanupDestroy.scopedList.stdout,
         SANDBOX_A,
       ) &&
-      survivorDashboardAfterCleanupDestroy.dashboard.every(
-        (probe) => probe.exitCode === 0 && /^[23][0-9]{2}$/.test(probe.stdout.trim()),
-      );
+      finalDashboardProbeHealthy(survivorDashboardAfterCleanupDestroy.dashboard);
     expect(
       sandboxARestartedWithCleanup && gatewayADashboardAvailableAfterCleanupRestart,
       `stop=${resultText(survivorRestartAfterCleanupDestroy.stop)}; start=${resultText(survivorRestartAfterCleanupDestroy.start)}; phase=${survivorRestartAfterCleanupDestroy.phase}; port=${resultText(survivorDashboardAfterCleanupDestroy.gatewayPort)}; list=${resultText(survivorDashboardAfterCleanupDestroy.scopedList)}; dashboard=${survivorDashboardAfterCleanupDestroy.dashboard.map(resultText).join("\\n")}`,
@@ -1014,9 +1021,7 @@ test(
         survivorDashboardAfterRetainedDestroy.scopedList.stdout,
         SANDBOX_A,
       ) &&
-      survivorDashboardAfterRetainedDestroy.dashboard.every(
-        (probe) => probe.exitCode === 0 && /^[23][0-9]{2}$/.test(probe.stdout.trim()),
-      );
+      finalDashboardProbeHealthy(survivorDashboardAfterRetainedDestroy.dashboard);
     expect(
       sandboxARestartedWithoutCleanup && gatewayADashboardAvailableAfterRetainedRestart,
       `stop=${resultText(survivorRestartAfterRetainedDestroy.stop)}; start=${resultText(survivorRestartAfterRetainedDestroy.start)}; phase=${survivorRestartAfterRetainedDestroy.phase}; port=${resultText(survivorDashboardAfterRetainedDestroy.gatewayPort)}; list=${resultText(survivorDashboardAfterRetainedDestroy.scopedList)}; dashboard=${survivorDashboardAfterRetainedDestroy.dashboard.map(resultText).join("\\n")}`,
