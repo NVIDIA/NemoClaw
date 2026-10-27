@@ -14,7 +14,7 @@ mod kube_api;
 use http_fixture as transport;
 /// Fabric catalog fixtures shared with the end-to-end tests.
 #[path = "../../../nemoclaw-e2e/src/image_runtime.rs"]
-#[allow(
+#[expect(
     dead_code,
     reason = "the contract tests use only some of the end-to-end catalog fixtures"
 )]
