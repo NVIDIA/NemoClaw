@@ -786,6 +786,7 @@ async function destroySandboxUnlocked(
   const registryAuthority = resolveSandboxDestroyRegistryAuthority(sandboxName);
   const getRegisteredSandbox = registryAuthority.getSandbox;
   const listRegisteredSandboxes = registryAuthority.listSandboxes;
+  const listGatewayCleanupOwners = registryAuthority.listGatewayCleanupOwners;
   const registeredSandbox = registryAuthority.entry;
   if (registeredSandbox) {
     try {
@@ -1359,7 +1360,7 @@ async function destroySandboxUnlocked(
     removalOutcome.status === "complete" ||
     (removalOutcome.status === "not-found" && !getRegisteredSandbox(sandboxName));
   const listCleanupGatewaySandboxes = () =>
-    listSandboxDestroyGatewayRegistrations(listRegisteredSandboxes, cleanupGatewayName);
+    listSandboxDestroyGatewayRegistrations(listGatewayCleanupOwners, cleanupGatewayName);
   if (removalOutcome.status === "blocked") {
     const providerId = normalizeRuntimeProviderIdentity(
       (getRegisteredSandbox(sandboxName) ?? sandbox)?.openshellDriver,

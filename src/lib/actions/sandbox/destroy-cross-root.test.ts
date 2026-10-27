@@ -114,6 +114,44 @@ describe("destroySandbox cross-root registry authority", () => {
     ).toMatchObject({ sandboxes: {} });
   });
 
+  it("preserves the destroyed gateway when onboarding reserves its route before final cleanup", async () => {
+    writeGatewayRegistry(home, 8244, "alpha");
+    writeGatewayRegistry(home, 8245, "beta");
+    const betaRegistryFile = path.join(home, ".nemoclaw", "gateways", "8245", "sandboxes.json");
+    const harness = createDestroyHarness();
+    harness.withGatewayRouteMutationLockSpy
+      .mockImplementationOnce(async (_gatewayName: unknown, operation: unknown) =>
+        (operation as () => Promise<unknown>)(),
+      )
+      .mockImplementationOnce(async (_gatewayName: unknown, operation: unknown) => {
+        const betaRegistry = JSON.parse(fs.readFileSync(betaRegistryFile, "utf8")) as {
+          sandboxes: Record<string, unknown>;
+        };
+        betaRegistry.sandboxes.gamma = {
+          name: "gamma",
+          agent: "openclaw",
+          provider: "ollama-local",
+          model: "nvidia/nemotron",
+          gatewayName: "nemoclaw-8245",
+          gatewayPort: 8245,
+          pendingRouteReservation: true,
+          reservationSessionId: "session-gamma",
+        };
+        fs.writeFileSync(betaRegistryFile, JSON.stringify(betaRegistry));
+        return (operation as () => Promise<unknown>)();
+      });
+
+    await expect(
+      harness.destroySandbox("beta", { yes: true, cleanupGateway: true }),
+    ).rejects.toThrow("process.exit(1)");
+
+    expect(harness.cleanupGatewaySpy).not.toHaveBeenCalled();
+    expect(harness.withGatewayRouteMutationLockSpy).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(fs.readFileSync(betaRegistryFile, "utf8"))).toMatchObject({
+      sandboxes: { gamma: { name: "gamma", pendingRouteReservation: true } },
+    });
+  });
+
   it("preserves the gateway when another sibling-root sandbox remains", async () => {
     const registryDir = path.join(home, ".nemoclaw", "gateways", "8245");
     const registryFile = path.join(registryDir, "sandboxes.json");

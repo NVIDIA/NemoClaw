@@ -156,6 +156,7 @@ export type SandboxDestroyRegistryAuthority = {
   gatewayPort: number;
   getSandbox: typeof registry.getSandbox;
   listSandboxes: typeof registry.listSandboxes;
+  listGatewayCleanupOwners: typeof registry.listSandboxes;
   removeSandbox: typeof registry.removeSandbox;
 };
 
@@ -170,6 +171,7 @@ export function resolveSandboxDestroyRegistryAuthority(
       gatewayPort: resolveNemoclawStateGatewayPort(),
       getSandbox: registry.getSandbox,
       listSandboxes: registry.listSandboxes,
+      listGatewayCleanupOwners: registry.listSandboxes,
       removeSandbox: registry.removeSandbox,
     };
   }
@@ -181,12 +183,16 @@ export function resolveSandboxDestroyRegistryAuthority(
       sandboxes: listPublishedSandboxesAcrossGatewayRoots(),
       defaultSandbox: null,
     }),
+    listGatewayCleanupOwners: () => ({
+      sandboxes: listInferenceRouteOwnersAcrossGatewayRoots(),
+      defaultSandbox: null,
+    }),
     removeSandbox: (name) =>
       name === hit.entry.name ? removeSandboxFromOwningGatewayRegistry(hit) : false,
   };
 }
 
-/** Keep final gateway cleanup local to its owner; shared host cleanup still uses all roots. */
+/** Keep final gateway cleanup local to its owner, including pending route reservations. */
 export function listSandboxDestroyGatewayRegistrations(
   listSandboxes: typeof registry.listSandboxes,
   gatewayName: string,
