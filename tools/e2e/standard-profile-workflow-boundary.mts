@@ -361,6 +361,7 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     "Validate catalogue execution plan",
     "Provision trusted Hermes E2E swap",
     undefined,
+    "Set up supported Model Router Python",
     "Authenticate to Docker Hub",
     "Install target host dependencies",
     "Download reviewed OpenShell SDK archive",
@@ -477,6 +478,22 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     workflowSteps.indexOf(checkout ?? {}) !== 2
   ) {
     errors.push("standard E2E profile must check out checkout_sha without credentials");
+  }
+
+  const modelRouterPython = requireStep(
+    errors,
+    workflowSteps,
+    "Set up supported Model Router Python",
+  );
+  if (
+    !isDeepStrictEqual(modelRouterPython, {
+      name: "Set up supported Model Router Python",
+      if: "${{ inputs.target_id == 'model-router-provider-routed-inference' }}",
+      uses: "actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97",
+      with: { "python-version": "3.13" },
+    })
+  ) {
+    errors.push("standard E2E profile must provision reviewed Python only for Model Router");
   }
 
   const auth = requireStep(errors, workflowSteps, "Authenticate to Docker Hub");
