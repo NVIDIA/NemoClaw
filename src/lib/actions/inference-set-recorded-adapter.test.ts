@@ -129,9 +129,11 @@ describe("recorded compatible adapter model changes", () => {
     expect(deps.calls.probeSandboxRoute).toHaveBeenCalledExactlyOnceWith({
       sandboxName: "alpha",
       gatewayName: GATEWAY_NAME,
+      agentName: "hermes",
       provider: route.provider,
       model: TARGET_MODEL,
       preferredInferenceApi: route.inferenceApi,
+      nativeLocalProviderAttachment: undefined,
       nativeEndpointUrl: undefined,
     });
     expect(deps.calls.probeSandboxRoute.mock.invocationCallOrder[0]).toBeLessThan(
@@ -187,10 +189,10 @@ describe("recorded compatible adapter model changes", () => {
       expect(deps.calls.probeSandboxRoute).toHaveBeenCalledExactlyOnceWith({
         sandboxName: "alpha",
         gatewayName: GATEWAY_NAME,
+        agentName: "openclaw",
         provider: route.provider,
         model: TARGET_MODEL,
         preferredInferenceApi: route.inferenceApi,
-        nativeEndpointUrl: undefined,
       });
       expect(deps.calls.probeSandboxRoute.mock.invocationCallOrder[0]).toBeLessThan(
         deps.calls.updateSandbox.mock.invocationCallOrder[0],
