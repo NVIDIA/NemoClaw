@@ -10,7 +10,7 @@ description: Create or update a NemoClaw v1 pull request, report authoring-sessi
 
 Publish the requested change using V1's repository policies and validation. Preserve the user's scope and draft decision. A successful push alone does not complete required checks.
 
-Adapted from the same skill and its validation/publication references on NVIDIA/NemoClaw main at `8c72b552cc92fe7082908f3a13db7dc94f2f6685`: retain validation, template-based publication, draft handling, and follow-up; replace main's npm and governance machinery with V1 guidance and add session evidence reporting.
+Adapted from the same skill and its validation/publication references on NVIDIA/NemoClaw main at `8c72b552cc92fe7082908f3a13db7dc94f2f6685`: retain validation, template-based publication, and follow-up; open drafts only on request instead of by default; replace main's npm and governance machinery with V1 guidance and add session evidence reporting.
 
 1. Read [validation and publication](references/publication.md). For an open PR, inspect its current state and feedback before preparing a repair.
 2. Read the [session report contract](references/session-report.md). Inspect the authoring session's evidence, using only the applicable [Codex](references/codex.md) or [Pi](references/pi.md) reference. Other harnesses use the same contract with unavailable fields where evidence cannot be established.
