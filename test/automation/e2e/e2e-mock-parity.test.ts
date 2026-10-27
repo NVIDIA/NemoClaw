@@ -209,6 +209,29 @@ describe("changed live E2E mock parity", () => {
     ).toEqual([]);
   });
 
+  it("requires fast evidence for the concurrent-gateway sandbox-list fixture", () => {
+    const shared = "test/e2e/fixtures/openshell-sandbox-list.ts";
+    const fastTest = "test/e2e/support/openshell-sandbox-list.test.ts";
+    const owner = "test/e2e/live/concurrent-gateway-ports.test.ts";
+    const checkedIn = JSON.parse(
+      fs.readFileSync(new URL("../../e2e/mock-parity.json", import.meta.url), "utf8"),
+    ) as MockParityManifest;
+    expect(
+      validateMockParity({
+        manifest: checkedIn,
+        changedFiles: [shared],
+        fileExists: fs.existsSync,
+      }),
+    ).toEqual([`${shared}: change at least one fast PR test mapped from ${owner}`]);
+    expect(
+      validateMockParity({
+        manifest: checkedIn,
+        changedFiles: [shared, fastTest],
+        fileExists: fs.existsSync,
+      }),
+    ).toEqual([]);
+  });
+
   it.each([{ changedTests: [] }, { changedTests: [fast] }])(
     "retains base fixture coverage when ownership is removed with changed tests %j",
     ({ changedTests }) => {

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -11,6 +12,7 @@ import {
   createDestroyHarness,
   resetDestroyModuleCache,
 } from "../../../../test/helpers/destroy-flow-test-harness";
+import type { RetainedSandboxRecoveryRecord } from "../../state/onboard-session/retained-sandbox-recovery";
 
 function writeGatewayRegistry(home: string, port: number, name: string): void {
   const registryDir = path.join(home, ".nemoclaw", "gateways", String(port));
@@ -151,6 +153,55 @@ describe("destroySandbox cross-root registry authority", () => {
       sandboxes: { gamma: { name: "gamma", pendingRouteReservation: true } },
     });
   });
+
+  it(
+    "preserves a pending sibling-root owner during a registry-absent retained destroy retry",
+    { timeout: 30_000 },
+    async () => {
+      writeGatewayRegistry(home, 8245, "gamma");
+      const registryFile = path.join(home, ".nemoclaw", "gateways", "8245", "sandboxes.json");
+      const gatewayRegistry = JSON.parse(fs.readFileSync(registryFile, "utf8")) as {
+        sandboxes: Record<string, Record<string, unknown>>;
+      };
+      gatewayRegistry.sandboxes.gamma!.pendingRouteReservation = true;
+      gatewayRegistry.sandboxes.gamma!.reservationSessionId = "session-gamma";
+      fs.writeFileSync(registryFile, JSON.stringify(gatewayRegistry));
+      const recovery: RetainedSandboxRecoveryRecord = {
+        schemaVersion: 1,
+        recordId: "f".repeat(64),
+        sandboxName: "alpha",
+        sandboxIdentityFingerprint: createHash("sha256").update("sb-alpha").digest("hex"),
+        identityWasUnavailable: false,
+        gatewayName: "nemoclaw-8245",
+        gatewayPort: 8245,
+        lifecycleGeneration: "generation-alpha",
+        createAttemptNonce: "c".repeat(62),
+        resources: {
+          sharedInferenceProviders: [],
+          sandboxScopedProviders: [],
+          credentialEnvironmentVariables: [],
+        },
+        reason: "retained_after_sandbox_creation_failure",
+        recordedAt: "2026-08-28T00:00:00.000Z",
+      };
+      const harness = createDestroyHarness({
+        registryEntryPresent: false,
+        sandboxPresent: false,
+        dockerRunResult: { status: 0, stdout: "" },
+        retainedRecoveryRecords: [recovery],
+      });
+
+      await expect(
+        harness.destroySandbox("alpha", { yes: true, cleanupGateway: true }),
+      ).resolves.toBeUndefined();
+
+      expect(harness.cleanupGatewaySpy).not.toHaveBeenCalled();
+      expect(harness.resolveRetainedSandboxRecoverySpy).toHaveBeenCalledWith(recovery);
+      expect(JSON.parse(fs.readFileSync(registryFile, "utf8"))).toMatchObject({
+        sandboxes: { gamma: { pendingRouteReservation: true } },
+      });
+    },
+  );
 
   it("preserves the gateway when another sibling-root sandbox remains", async () => {
     const registryDir = path.join(home, ".nemoclaw", "gateways", "8245");

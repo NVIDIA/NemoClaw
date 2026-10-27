@@ -590,8 +590,10 @@
         "test/cli/destroy-detach-order.test.ts",
         "src/lib/actions/uninstall/all-gateway-ports.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
-      ]
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/openshell-sandbox-list.test.ts"
+      ],
+      "liveSources": ["test/e2e/fixtures/openshell-sandbox-list.ts"]
     },
     {
       "live": "test/e2e/live/cron-preflight-inference-local.test.ts",

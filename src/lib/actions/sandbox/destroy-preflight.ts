@@ -160,6 +160,13 @@ export type SandboxDestroyRegistryAuthority = {
   removeSandbox: typeof registry.removeSandbox;
 };
 
+function listGatewayCleanupOwners(): ReturnType<typeof registry.listSandboxes> {
+  return {
+    sandboxes: listInferenceRouteOwnersAcrossGatewayRoots(),
+    defaultSandbox: null,
+  };
+}
+
 /** Pin destroy reads and mutation to the registry file that owns the named sandbox. */
 export function resolveSandboxDestroyRegistryAuthority(
   sandboxName: string,
@@ -171,7 +178,7 @@ export function resolveSandboxDestroyRegistryAuthority(
       gatewayPort: resolveNemoclawStateGatewayPort(),
       getSandbox: registry.getSandbox,
       listSandboxes: registry.listSandboxes,
-      listGatewayCleanupOwners: registry.listSandboxes,
+      listGatewayCleanupOwners,
       removeSandbox: registry.removeSandbox,
     };
   }
@@ -183,10 +190,7 @@ export function resolveSandboxDestroyRegistryAuthority(
       sandboxes: listPublishedSandboxesAcrossGatewayRoots(),
       defaultSandbox: null,
     }),
-    listGatewayCleanupOwners: () => ({
-      sandboxes: listInferenceRouteOwnersAcrossGatewayRoots(),
-      defaultSandbox: null,
-    }),
+    listGatewayCleanupOwners,
     removeSandbox: (name) =>
       name === hit.entry.name ? removeSandboxFromOwningGatewayRegistry(hit) : false,
   };
