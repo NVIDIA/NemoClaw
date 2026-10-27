@@ -384,8 +384,8 @@ fn gateway_client(
         }),
         tls: Some(TLS {
             ca: file(CA_ENV),
-            certificate: file(CERT_ENV),
-            key: file(KEY_ENV),
+            certificate: Some(file(CERT_ENV)),
+            key: Some(file(KEY_ENV)),
         }),
         ..Default::default()
     });

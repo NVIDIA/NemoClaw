@@ -68,8 +68,8 @@ async fn mutual_tls_and_bearer_references_fail_closed_without_disclosing_credent
         }),
         tls: Some(TLS {
             ca: file("CA"),
-            certificate: file("CERT"),
-            key: file("KEY"),
+            certificate: Some(file("CERT")),
+            key: Some(file("KEY")),
         }),
         ..Default::default()
     });
@@ -123,4 +123,60 @@ async fn mutual_tls_and_bearer_references_fail_closed_without_disclosing_credent
         valid.read("workspace", &binding, false).await.unwrap(),
         Some(binding)
     );
+}
+
+/// With only a CA, the client verifies the gateway's certificate and
+/// presents none of its own, for a gateway that authenticates clients by
+/// token alone.
+#[tokio::test]
+async fn a_ca_alone_verifies_the_gateway_without_a_client_certificate() {
+    let (ca, issuer) = authority();
+    let (server, key) = leaf(&issuer, ExtendedKeyUsagePurpose::ServerAuth);
+    let fixture = Fixture::start_with_tls(Some(
+        ServerTlsConfig::new().identity(Identity::from_pem(server, key)),
+    ))
+    .await;
+    fixture.state.lock().unwrap().expected_bearer = Some("Bearer secret-sentinel".into());
+    let directory = tempfile::tempdir().unwrap();
+    let [trusted, unrelated] = [("ca", ca), ("other-ca", authority().0)].map(|(name, pem)| {
+        let path = directory.path().join(name);
+        std::fs::write(&path, pem).unwrap();
+        path.to_str().unwrap().to_owned()
+    });
+    let gateway = Gateway::External(nemoclaw_sdk::config::ExternalGateway {
+        endpoint: fixture.endpoint.clone(),
+        credential: Some(SecretRef {
+            env: "TOKEN".into(),
+        }),
+        tls: Some(TLS {
+            ca: FileRef { env: "CA".into() },
+            certificate: None,
+            key: None,
+        }),
+        ..Default::default()
+    });
+    let desired = [
+        ("name".into(), "workspace".into()),
+        ("owner".into(), "owner".into()),
+        ("generation".into(), "generation".into()),
+    ]
+    .into();
+    let client = |ca: &str| {
+        let values = [("CA", ca), ("TOKEN", "secret-sentinel")]
+            .map(|(name, value)| (name.to_owned(), value.to_owned()));
+        OpenShell::connect(&gateway.connection(), Arc::new(Values(values.into()))).unwrap()
+    };
+    let established = client(&trusted).ensure("workspace", &desired).await;
+    assert!(established.error().is_none(), "{:?}", established.error());
+    let refused = client(&unrelated)
+        .ensure("workspace", &desired)
+        .await
+        .error();
+    assert_eq!(
+        refused.map(|error| error.to_string()).as_deref(),
+        Some(
+            "the gateway's TLS server certificate is not signed by the configured certificate authority"
+        )
+    );
+    assert_eq!(fixture.state.lock().unwrap().effects, 1);
 }

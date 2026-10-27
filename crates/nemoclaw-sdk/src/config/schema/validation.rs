@@ -381,6 +381,9 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
         }
     }
 
+    // A client certificate is presented with its key.
+    defs["TLS"]["dependentRequired"] = json!({"certificate": ["key"], "key": ["certificate"]});
+
     // An inline definition flattens the same connection fields beside its name.
     for name in ["InferenceProvider", "InlineInferenceProvider"] {
         let provider = &mut defs[name];

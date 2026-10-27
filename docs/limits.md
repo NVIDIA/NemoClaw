@@ -80,6 +80,7 @@ Other pages state a limit where it affects a procedure and link the same issue.
 | Limit | Issue |
 |---|---|
 | Host-specific security qualification | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
+| An inference endpoint whose certificate comes from a CA that OpenShell's supervisor image doesn't trust; OpenShell's provider registrations take no CA ([custom CA trust](inference.md#trust-a-custom-certificate-authority)) | [#13834](https://github.com/NVIDIA/NemoClaw/issues/13834), [NVIDIA/OpenShell#3295](https://github.com/NVIDIA/OpenShell/issues/3295) |
 | A corporate CA for OpenShell's gateway and sandbox egress, managed model downloads, and image builds | [Corporate CA](security.md#trust-a-corporate-certificate-authority) |
 | OAuth-refresh credentials have no NemoClaw YAML wrapper; use [operator-managed OpenShell providers](oauth-refresh.md), with separate sandbox attachments | [#12652](https://github.com/NVIDIA/NemoClaw/issues/12652) |
 | Interactive network-request approval, named policy presets, and explaining policy to an agent | [#12651](https://github.com/NVIDIA/NemoClaw/issues/12651) |

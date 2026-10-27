@@ -160,11 +160,9 @@ impl Document {
             names.push(c.env.as_str());
         }
         if let Some(tls) = g.tls() {
-            names.extend([
-                tls.ca.env.as_str(),
-                tls.certificate.env.as_str(),
-                tls.key.env.as_str(),
-            ]);
+            names.push(tls.ca.env.as_str());
+            names.extend(tls.certificate.iter().map(|file| file.env.as_str()));
+            names.extend(tls.key.iter().map(|file| file.env.as_str()));
         }
         if let Ok(providers) = self.selected_inference_providers() {
             for provider in providers {
@@ -359,8 +357,12 @@ impl Gateway {
             credential_env: self.credential().map(|credential| credential.env.clone()),
             tls: self.tls().map(|tls| nemoclaw_openshell::TlsFiles {
                 ca_env: tls.ca.env.clone(),
-                certificate_env: tls.certificate.env.clone(),
-                key_env: tls.key.env.clone(),
+                identity: tls.certificate.as_ref().zip(tls.key.as_ref()).map(
+                    |(certificate, key)| nemoclaw_openshell::IdentityFiles {
+                        certificate_env: certificate.env.clone(),
+                        key_env: key.env.clone(),
+                    },
+                ),
             }),
         }
     }

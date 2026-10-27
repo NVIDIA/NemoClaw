@@ -172,8 +172,8 @@ An endpoint whose certificate comes from an internal certificate authority, such
 
 - **The machine running NemoClaw** reads the endpoint's model catalog during onboarding, using its system trust store.
   Add the CA there, or set `SSL_CERT_FILE` to a PEM bundle that includes it in the environment that runs `nemoclaw`.
-- **The OpenShell gateway and sandboxes** carry the inference traffic, so their images must trust the CA too.
-  NemoClaw does not configure that trust; OpenShell uses its images' own trust stores.
+- **OpenShell's sandbox supervisor** makes the TLS connection to the endpoint, so the supervisor image must trust the CA; a CA added to an agent image isn't used.
+  NemoClaw can't add the CA: OpenShell's provider registrations take none, and NemoClaw pins the supervisor image on managed gateways; see [current limits](limits.md#security).
 
 If the machine running NemoClaw does not trust the certificate, onboarding reports that the server's certificate is not trusted rather than that the endpoint is unreachable.
 

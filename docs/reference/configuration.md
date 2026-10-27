@@ -394,7 +394,7 @@ An existing gateway managed outside this deployment.
 | `engine` | string | No | — | Engine containing Docker or Podman sandbox images, used only for image metadata inspection. Required for their deployment planning; omission permits retained-state teardown. Kubernetes and OpenShift use image.metadata instead. |
 | `management` | string | Yes | — | Whether this deployment manages the gateway. Constraints: `"external"`. |
 | `runtime` | [Runtime](#runtime) | No | — | Compute driver the existing gateway runs; omission selects Docker. Planning checks it against the driver the gateway reports. |
-| `tls` | [TLS](#tls) | No | — | Optional mutual TLS references for an external HTTPS gateway. |
+| `tls` | [TLS](#tls) | No | — | Optional TLS references for an external HTTPS gateway: a CA alone, or with a client certificate and key for mutual TLS. |
 
 ## Grant
 
@@ -1428,7 +1428,7 @@ Paths:
 
 ## TLS
 
-Gateway mutual TLS file references. All three references are required when TLS is declared.
+Gateway TLS file references: the CA certificate that verifies the gateway, and a client certificate and key, which must appear together, when the gateway requires one.
 
 Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
 
@@ -1439,8 +1439,8 @@ Paths:
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `ca` | [FileRef](#fileref) | Yes | — | Environment variable whose value names the local CA certificate file. |
-| `certificate` | [FileRef](#fileref) | Yes | — | Environment variable whose value names the local client certificate file. |
-| `key` | [FileRef](#fileref) | Yes | — | Environment variable whose value names the local client private-key file. |
+| `certificate` | [FileRef](#fileref) | No | — | Environment variable whose value names the local client certificate file. Requires key. |
+| `key` | [FileRef](#fileref) | No | — | Environment variable whose value names the local client private-key file. Requires certificate. |
 
 ## Tool
 
