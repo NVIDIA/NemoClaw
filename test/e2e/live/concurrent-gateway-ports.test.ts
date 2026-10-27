@@ -303,9 +303,14 @@ async function probeSurvivorDashboard(
   });
   const dashboard: ShellProbeResult[] = [];
   const dashboardDeadline = Date.now() + 60_000;
-  for (let probe = 1; probe <= dashboardProbes; probe += 1) {
-    const remainingMs = dashboardDeadline - Date.now();
-    if (remainingMs <= 0) break;
+  for (
+    let probe = 1;
+    probe <= dashboardProbes &&
+    Date.now() < dashboardDeadline &&
+    !finalDashboardProbeHealthy(dashboard);
+    probe += 1
+  ) {
+    const remainingMs = Math.max(1, dashboardDeadline - Date.now());
     dashboard.push(
       await host.command(
         "curl",
@@ -327,10 +332,9 @@ async function probeSurvivorDashboard(
         },
       ),
     );
-    if (finalDashboardProbeHealthy(dashboard)) break;
-    if (probe < dashboardProbes) {
-      await sleep(Math.min(PROBE_DELAY_MS, Math.max(0, dashboardDeadline - Date.now())));
-    }
+    await (probe < dashboardProbes && !finalDashboardProbeHealthy(dashboard)
+      ? sleep(Math.min(PROBE_DELAY_MS, Math.max(0, dashboardDeadline - Date.now())))
+      : Promise.resolve());
   }
   return { gatewayPort: gatewayPortProbe, scopedList, dashboard };
 }
