@@ -299,6 +299,15 @@ describe("compatible endpoint sandbox smoke helpers", () => {
       "Credential keys: COMPATIBLE_API_KEY",
       "Config keys: OPENAI_BASE_URL",
     ].join("\n");
+  // OpenShell answers the provider metadata query, then returns one smoke result.
+  const smokeRunner = (result: { status: number; stdout?: string; stderr?: string }) =>
+    vi
+      .fn()
+      .mockImplementationOnce((args: string[]) => ({
+        status: 0,
+        stdout: providerMetadata(args.at(-1) ?? ""),
+      }))
+      .mockReturnValueOnce(result);
 
   it("keeps the gateway-scoped runner for ordinary onboarding smoke", async () => {
     const defaultRun = vi.fn();
@@ -459,13 +468,7 @@ describe("compatible endpoint sandbox smoke helpers", () => {
   });
 
   it("withholds sandbox-route success output when sandbox identity changes during proof (#9833)", async () => {
-    const runOpenshell = vi
-      .fn()
-      .mockImplementationOnce((args: string[]) => ({
-        status: 0,
-        stdout: providerMetadata(args.at(-1) ?? ""),
-      }))
-      .mockReturnValueOnce({ status: 0, stdout: "INFERENCE_SMOKE_OK PONG" });
+    const runOpenshell = smokeRunner({ status: 0, stdout: "INFERENCE_SMOKE_OK PONG" });
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
 
     await expect(
@@ -490,79 +493,49 @@ describe("compatible endpoint sandbox smoke helpers", () => {
     log.mockRestore();
   });
 
-  it("budgets the canonical outer timeout for reasoning retry, tool proof, and direct denial", async () => {
-    const runOpenshell = vi
-      .fn()
-      .mockImplementationOnce((args: string[]) => ({
-        status: 0,
-        stdout: providerMetadata(args.at(-1) ?? ""),
-      }))
-      .mockReturnValueOnce({ status: 0, stdout: "INFERENCE_SMOKE_OK PONG" });
-
-    await verifyCompatibleEndpointSandboxSmoke({
-      sandboxName: "managed-inference-sandbox",
-      provider: "vllm-local",
-      model: "qwen3.5-9b",
-      runOpenshell,
-      sandboxCommandExecutor: bufferedExecutorThrough(runOpenshell),
-      redact: (value) => value,
-      forceCanonicalRoute: true,
-      hostLocalInferenceProofAuthority: {
-        service: "vllm",
-        directHostPort: 8000,
-        directHealthPath: "/health",
-        toolCallingRequired: true,
-      },
-    });
-
-    expect(runOpenshell).toHaveBeenNthCalledWith(
-      2,
-      expect.any(Array),
-      expect.objectContaining({ timeout: 1_705_000 }),
-    );
-    expect(String(runOpenshell.mock.calls[1]?.[0]?.at(-1))).toContain(
-      "request_timeout_seconds = 180",
-    );
-  });
-
-  it("passes the local timeout override through the sandbox request and outer deadline (#13663)", async () => {
-    vi.stubEnv("NEMOCLAW_LOCAL_INFERENCE_TIMEOUT", "300");
-    vi.resetModules();
-    try {
-      const { verifyCompatibleEndpointSandboxSmoke: verifyWithOverride } =
-        await import("./compatible-endpoint-smoke");
-      const runOpenshell = vi
-        .fn()
-        .mockImplementationOnce((args: string[]) => ({
-          status: 0,
-          stdout: providerMetadata(args.at(-1) ?? ""),
-        }))
-        .mockReturnValueOnce({ status: 0, stdout: "INFERENCE_SMOKE_OK PONG" });
-
-      await verifyWithOverride({
-        sandboxName: "managed-inference-sandbox",
-        provider: "vllm-local",
-        model: "qwen3.5-9b",
-        runOpenshell,
-        sandboxCommandExecutor: bufferedExecutorThrough(runOpenshell),
-        redact: (value) => value,
-        forceCanonicalRoute: true,
-        hostLocalInferenceProofAuthority: allAgentProofAuthorities[0].authority,
-      });
-
-      expect(runOpenshell).toHaveBeenNthCalledWith(
-        2,
-        expect.any(Array),
-        expect.objectContaining({ timeout: 2_785_000 }),
-      );
-      expect(String(runOpenshell.mock.calls[1]?.[0]?.at(-1))).toContain(
-        "request_timeout_seconds = 300",
-      );
-    } finally {
-      vi.unstubAllEnvs();
+  it.each([
+    { override: undefined, requestSeconds: 180, outerMs: 1_705_000 },
+    { override: "300", requestSeconds: 300, outerMs: 2_785_000 },
+  ])(
+    "budgets the canonical outer timeout for reasoning retry, tool proof, and direct denial with timeout override $override (#13663)",
+    async ({ override, requestSeconds, outerMs }) => {
+      vi.stubEnv("NEMOCLAW_LOCAL_INFERENCE_TIMEOUT", override);
       vi.resetModules();
-    }
-  });
+      try {
+        const { verifyCompatibleEndpointSandboxSmoke: verify } =
+          await import("./compatible-endpoint-smoke");
+        const runOpenshell = smokeRunner({ status: 0, stdout: "INFERENCE_SMOKE_OK PONG" });
+
+        await verify({
+          sandboxName: "managed-inference-sandbox",
+          provider: "vllm-local",
+          model: "qwen3.5-9b",
+          runOpenshell,
+          sandboxCommandExecutor: bufferedExecutorThrough(runOpenshell),
+          redact: (value) => value,
+          forceCanonicalRoute: true,
+          hostLocalInferenceProofAuthority: {
+            service: "vllm",
+            directHostPort: 8000,
+            directHealthPath: "/health",
+            toolCallingRequired: true,
+          },
+        });
+
+        expect(runOpenshell).toHaveBeenNthCalledWith(
+          2,
+          expect.any(Array),
+          expect.objectContaining({ timeout: outerMs }),
+        );
+        expect(String(runOpenshell.mock.calls[1]?.[0]?.at(-1))).toContain(
+          `request_timeout_seconds = ${String(requestSeconds)}`,
+        );
+      } finally {
+        vi.unstubAllEnvs();
+        vi.resetModules();
+      }
+    },
+  );
 
   it.each(["__timeout__", "__wrapped_timeout__"])(
     "reports a %s inference timeout once, without a traceback (#13663)",
@@ -674,13 +647,7 @@ describe("compatible endpoint sandbox smoke helpers", () => {
       const exit = vi.spyOn(process, "exit").mockImplementation((code) => {
         throw new Error(`process.exit(${code})`);
       });
-      const runOpenshell = vi
-        .fn()
-        .mockImplementationOnce((args: string[]) => ({
-          status: 0,
-          stdout: providerMetadata(args.at(-1) ?? ""),
-        }))
-        .mockReturnValueOnce({ status: 1, stderr });
+      const runOpenshell = smokeRunner({ status: 1, stderr });
 
       try {
         await expect(
@@ -713,13 +680,7 @@ describe("compatible endpoint sandbox smoke helpers", () => {
   it.each(providerNeutralCases)(
     "runs a real provider-neutral $service request inside the $agentName sandbox",
     async ({ agentName, service, provider, port, directHealthPath }) => {
-      const runOpenshell = vi
-        .fn()
-        .mockImplementationOnce((args: string[]) => ({
-          status: 0,
-          stdout: providerMetadata(args.at(-1) ?? ""),
-        }))
-        .mockReturnValueOnce({ status: 0, stdout: "INFERENCE_SMOKE_OK PONG" });
+      const runOpenshell = smokeRunner({ status: 0, stdout: "INFERENCE_SMOKE_OK PONG" });
 
       await verifyCompatibleEndpointSandboxSmoke({
         sandboxName: `${agentName}-sandbox`,
@@ -776,13 +737,10 @@ describe("compatible endpoint sandbox smoke helpers", () => {
     const exit = vi.spyOn(process, "exit").mockImplementation((code) => {
       throw new Error(`process.exit(${code})`);
     });
-    const runOpenshell = vi
-      .fn()
-      .mockImplementationOnce((args: string[]) => ({
-        status: 0,
-        stdout: providerMetadata(args.at(-1) ?? ""),
-      }))
-      .mockReturnValueOnce({ status: 1, stderr: "direct host inference deny could not be proven" });
+    const runOpenshell = smokeRunner({
+      status: 1,
+      stderr: "direct host inference deny could not be proven",
+    });
 
     await expect(
       verifyCompatibleEndpointSandboxSmoke({
