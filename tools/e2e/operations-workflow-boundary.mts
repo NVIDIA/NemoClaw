@@ -917,8 +917,8 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
     );
   }
   const matrix = workflow.jobs["generate-matrix"] ?? {};
-  if (needs(matrix).length !== 0) {
-    errors.push("generate-matrix must not wait for managed-image publication");
+  if (!isDeepStrictEqual(needs(matrix), ["package-openshell-sdk"])) {
+    errors.push("generate-matrix must wait only for reviewed SDK packaging");
   }
   const matrixOutputs = matrix.outputs ?? {};
   if (

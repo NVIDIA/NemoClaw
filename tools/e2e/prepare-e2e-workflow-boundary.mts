@@ -105,6 +105,27 @@ export function validatePrepareE2eAction(actionPath = DEFAULT_ACTION_PATH): stri
   return errors;
 }
 
+function validateCompilerSdkPreparation(job: WorkflowRecord): string[] {
+  const jobSteps = steps(job.steps);
+  const download = jobSteps.find((step) => step.name === "Download reviewed OpenShell SDK archive");
+  const compileIndex = jobSteps.findIndex((step) => step.uses === PREPARE_COMPILED_ARTIFACT_ACTION);
+  if (
+    job.needs !== "package-openshell-sdk" ||
+    !isDeepStrictEqual(download, {
+      name: "Download reviewed OpenShell SDK archive",
+      uses: "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
+      with: {
+        name: "${{ needs.package-openshell-sdk.outputs.artifact_name }}",
+        path: "${{ runner.temp }}/openshell-sdk",
+      },
+    }) ||
+    jobSteps.indexOf(download!) >= compileIndex
+  ) {
+    return ["generate-matrix must download this run's reviewed SDK archives before compilation"];
+  }
+  return [];
+}
+
 export function validatePrepareE2eInvocations(workflow: WorkflowRecord): string[] {
   const errors: string[] = [];
   const jobs = record(workflow.jobs);
@@ -142,6 +163,7 @@ export function validatePrepareE2eInvocations(workflow: WorkflowRecord): string[
       jobName === CLI_ARTIFACT_PRODUCER_JOB ? PREPARE_COMPILED_ARTIFACT_ACTION : PREPARE_E2E_ACTION;
     const prepareSteps = jobSteps.filter((step) => step.uses === expectedAction);
     if (jobName === CLI_ARTIFACT_PRODUCER_JOB) {
+      errors.push(...validateCompilerSdkPreparation(record(value)));
       const trustedCheckoutIndex = jobSteps.findIndex(
         (step) => step.name === "Check out trusted compiled artifact action",
       );
@@ -182,10 +204,14 @@ export function validatePrepareE2eInvocations(workflow: WorkflowRecord): string[
     const withInputs = record(prepare.with);
     const shouldBuild =
       jobName === CLI_ARTIFACT_PRODUCER_JOB || PREPARE_E2E_TRUSTED_BUILD_JOBS.has(jobName);
-    if (shouldBuild && Object.keys(withInputs).length !== 0) {
+    if (
+      jobName === CLI_ARTIFACT_PRODUCER_JOB
+        ? !isDeepStrictEqual(withInputs, { "package-mode": "artifact" })
+        : shouldBuild && Object.keys(withInputs).length !== 0
+    ) {
       errors.push(
         jobName === CLI_ARTIFACT_PRODUCER_JOB
-          ? `${jobName} prepare-e2e must own the only default CLI build`
+          ? `${jobName} prepare-e2e must build with reviewed SDK artifacts`
           : `${jobName} prepare-e2e must use its default trusted CLI build`,
       );
     }
@@ -202,7 +228,7 @@ export function validatePrepareE2eInvocations(workflow: WorkflowRecord): string[
     }
     const allowedKeys = shouldBuild
       ? jobName === "generate-matrix"
-        ? ["if", "name", "uses"]
+        ? ["if", "name", "uses", "with"]
         : ["name", "uses"]
       : ["name", "uses", "with"];
     if (!isDeepStrictEqual(Object.keys(prepare).sort(), allowedKeys.sort())) {

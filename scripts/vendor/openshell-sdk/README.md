@@ -31,3 +31,11 @@ When upgrading the SDK, obtain the reviewed registry archive and replace `nvidia
 Do not substitute a locally repacked archive: its compressed bytes can differ from the reviewed checksum.
 Run the SDK installation package contract after each update.
 Remove this archive and cache preparation when the pinned SDK is available through the public npm registry.
+
+## Trusted E2E Setup
+
+The production SDK remains `0.0.116`; `ci/reviewed-npm-audit.json` also admits `0.1.5` as the reviewed replacement for the OpenShell upgrade.
+The E2E planner waits for `package-openshell-sdk`, downloads that run's archive bundle, and uses explicit artifact mode when compiling the candidate CLI and plugin.
+Dependency preparation selects the archive from the candidate lockfile and verifies its registry identity and SHA-512 integrity against the trusted policy before installation.
+Downstream SDK installation actions must use an immutable commit pin whose trusted policy includes the same reviewed replacement.
+Package credentials remain confined to the producer's download step, and dependency installation keeps npm lifecycle scripts disabled.

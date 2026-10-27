@@ -24,7 +24,7 @@ type WorkflowStep = Record<string, unknown> & {
 };
 
 type Workflow = {
-  jobs: Record<string, { env?: Record<string, unknown>; steps?: WorkflowStep[] }>;
+  jobs: Record<string, { env?: Record<string, unknown>; steps?: WorkflowStep[]; needs?: unknown }>;
 };
 
 describe("prepare-e2e workflow boundary", () => {
@@ -74,6 +74,38 @@ describe("prepare-e2e workflow boundary", () => {
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  it.each<[string, (job: Workflow["jobs"][string], download: WorkflowStep) => void]>([
+    [
+      "dependency",
+      (job) => {
+        delete job.needs;
+      },
+    ],
+    [
+      "archive",
+      (_job, download) => {
+        download.with!.name = "unrelated-archive";
+      },
+    ],
+    [
+      "order",
+      (job, download) => {
+        job.steps!.splice(job.steps!.indexOf(download), 1);
+        job.steps!.push(download);
+      },
+    ],
+  ])("rejects invalid SDK %s before compilation", (_name, mutate) => {
+    const workflow = readWorkflow() as Workflow;
+    const job = workflow.jobs["generate-matrix"];
+    const download = job.steps!.find(
+      (step) => step.name === "Download reviewed OpenShell SDK archive",
+    )!;
+    mutate(job, download);
+    expect(validatePrepareE2eInvocations(workflow)).toContain(
+      "generate-matrix must download this run's reviewed SDK archives before compilation",
+    );
   });
 
   it("rejects a compiler action loaded from the candidate revision", () => {
@@ -157,6 +189,7 @@ describe("prepare-e2e workflow boundary", () => {
       (step) => step.uses === PREPARE_COMPILED_ARTIFACT_ACTION,
     )!;
     producerPrepare.with = { "build-cli": "false" };
+    producerPrepare.env = { NODE_AUTH_TOKEN: "unexpected-token" };
 
     const consumerJob = workflow.jobs["messaging-providers"];
     const consumerPrepare = consumerJob.steps!.find((step) => step.uses === PREPARE_E2E_ACTION)!;
@@ -178,7 +211,7 @@ describe("prepare-e2e workflow boundary", () => {
 
     expect(validatePrepareE2eInvocations(workflow)).toEqual(
       expect.arrayContaining([
-        "generate-matrix prepare-e2e must own the only default CLI build",
+        "generate-matrix prepare-e2e must build with reviewed SDK artifacts",
         "generate-matrix prepare-e2e invocation must not override its canonical contract",
         "messaging-providers prepare-e2e must set build-cli to false",
         "messaging-providers prepare-e2e invocation must not override its canonical contract",

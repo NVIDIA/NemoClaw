@@ -39,6 +39,7 @@ export function runCompiledArtifactPreparation(
   cacheHit: boolean,
   event = "pull_request",
   corrupt = false,
+  packageMode = "auto",
 ) {
   const root = createCompiledArtifactFixture();
   const template = createCompiledArtifactFixture();
@@ -49,7 +50,7 @@ export function runCompiledArtifactPreparation(
   if (corrupt) writeFileSync(join(root, "dist/build-identity.json"), '{"sourceRevision":"wrong"}');
   for (const [name, body] of Object.entries({
     git: 'printf "%s\\n" "$TEST_SOURCE_SHA"',
-    bash: 'printf "install\\n" >> "$TEST_COMMAND_LOG"',
+    bash: 'printf "install %s %s\\n" "$2" "$3" >> "$TEST_COMMAND_LOG"',
     npm: 'printf "%s\\n" "$*" >> "$TEST_COMMAND_LOG"\nif [ "$*" = "run build:cli" ]; then cp -R "$TEST_TEMPLATE/dist" "$TEST_TEMPLATE/nemoclaw" "$GITHUB_WORKSPACE/"; fi',
   }))
     writeFileSync(join(bin, name), `#!/bin/sh\n${body}\n`, { mode: 0o755 });
@@ -105,7 +106,8 @@ export function runCompiledArtifactPreparation(
           .replace(/\$\{\{ (steps\.[\w-]+\.outputs\.[\w-]+) \}\}/g, (_, reference: string) =>
             value(reference),
           )
-          .replace("${{ job.status }}", failure ? "failure" : "success"),
+          .replace("${{ job.status }}", failure ? "failure" : "success")
+          .replace("${{ inputs.package-mode }}", packageMode),
       ]),
     );
     const result = spawnSync("/bin/bash", ["-e", "-c", step.run], {
