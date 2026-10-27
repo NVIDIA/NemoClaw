@@ -39,7 +39,7 @@ Other pages state a limit where it affects a procedure and link the same issue.
 | Limit | Issue |
 |---|---|
 | Fabric reports no runtime status, so a stopped agent runtime is found only at its [next invocation](usage.md#agent-runtimes-during-apply) | [NVIDIA/NeMo-Fabric#420](https://github.com/NVIDIA/NeMo-Fabric/issues/420) |
-| Fabric agents don't start again in a restarted sandbox, so after a gateway restart, including a host reboot or a [gateway configuration](usage.md#configure-a-managed-gateway) change, the next plan [replaces the sandboxes](usage.md#replace-workloads-after-an-unusable-runtime), deleting their files and conversation history | [NVIDIA/NeMo-Fabric#437](https://github.com/NVIDIA/NeMo-Fabric/issues/437) |
+| After a gateway restart, including a host reboot or a [gateway configuration](usage.md#configure-a-managed-gateway) change, sandboxes keep running but their Fabric agents don't: invoking one fails with `runtime_unavailable`, plan and apply report no changes, and only a [new sandbox](usage.md#replace-workloads-after-an-unusable-runtime) recovers it, deleting its files and conversation history | [#13870](https://github.com/NVIDIA/NemoClaw/issues/13870) |
 | Hermes doesn't reject a managed Ollama window below its 64,000-token minimum, because Ollama reports the model's native window; see [sizing the context for Hermes](inference.md#size-the-context-for-hermes) | [NousResearch/hermes-agent#141641](https://github.com/NousResearch/hermes-agent/issues/141641) |
 | Managed llama.cpp, Model Router and Gemini | [#12035](https://github.com/NVIDIA/NemoClaw/issues/12035) |
 | Guides for named hosted providers such as NVIDIA, OpenAI, Anthropic, OpenRouter and Nous | [#12038](https://github.com/NVIDIA/NemoClaw/issues/12038) |
