@@ -46,6 +46,15 @@ NON_INTERACTIVE_TIMEOUT_MARKER = '''                        timeout=timeout,
 NON_INTERACTIVE_TIMEOUT_PATCH = '''                        timeout=(None if output_format == "json" else timeout),
 '''
 ENTRYPOINT_MARKER = "from deepagents_code import cli_main\n"
+APPROVAL_WIDGET_MARKER = '''            widget_class, data = renderer.get_approval_widget(
+                tool_args, assistant_id=self._assistant_id
+            )
+'''
+APPROVAL_WIDGET_PATCH = APPROVAL_WIDGET_MARKER + '''            if tool_name == "edit_file":
+                file_path = tool_args.get("file_path")
+                if isinstance(file_path, str) and file_path:
+                    data["file_path"] = file_path
+'''
 ENTRYPOINT_PATCH = '''# NemoClaw-managed Deep Agents Code hardening v2.
 import os
 
@@ -1862,6 +1871,7 @@ def main() -> None:
             ("tools", TOOLS_PATCH),
             ("app", APP_PATCH),
             ("approval", APPROVAL_PATCH),
+            ("approval", APPROVAL_WIDGET_PATCH),
             ("agent", AGENT_PATCH),
             ("hooks_manager", HOOK_MANAGER_PATCH),
             ("status", STATUS_PATCH),
@@ -2023,7 +2033,7 @@ def main() -> None:
         paths["approval"],
         texts["approval"],
         "ApprovalMenu",
-        {"_build_options", "_handle_selection"},
+        {"_build_options", "_handle_selection", "_update_tool_info"},
     )
     _require_methods(
         paths["status"],
@@ -2053,6 +2063,10 @@ def main() -> None:
         {"run_non_interactive", "_run_startup_command", "_resolve_shell_allow_list"},
     )
 
+    if texts["approval"].count(APPROVAL_WIDGET_MARKER) != 1:
+        raise RuntimeError(
+            f"Expected one Deep Agents Code approval widget marker in {paths['approval']}"
+        )
     if texts["main"].count(MAIN_MARKER) != 1:
         raise RuntimeError(
             f"Expected one Deep Agents Code parser marker in {paths['main']}"
@@ -2132,7 +2146,9 @@ def main() -> None:
         paths["model_selector"], texts["model_selector"], MODEL_SELECTOR_PATCH
     )
     transformed["approval"] = _append_patch(
-        paths["approval"], texts["approval"], APPROVAL_PATCH
+        paths["approval"],
+        texts["approval"].replace(APPROVAL_WIDGET_MARKER, APPROVAL_WIDGET_PATCH, 1),
+        APPROVAL_PATCH,
     )
     transformed["status"] = _append_patch(
         paths["status"], texts["status"], STATUS_PATCH

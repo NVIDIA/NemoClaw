@@ -358,6 +358,24 @@ describe("Hermes managed policy", () => {
     expect(result.stderr).not.toContain(apiKey);
   });
 
+  it.each([
+    ["Tavily", { webSearchProvider: "tavily" as const }, { backend: "tavily" }],
+    ["no provider", { webSearchProvider: null }, { keyless_fallback: false }],
+    [
+      "no provider with the managed web gateway",
+      {
+        webSearchProvider: null,
+        managedToolGateways: { brokerEnabled: true, presets: ["nous-web"] },
+      },
+      { backend: "firecrawl", use_gateway: true },
+    ],
+  ])("writes the Hermes web section for %s (#13584)", (_name, overrides, web) => {
+    const policy = buildHermesManagedPolicy({ ...SETTINGS, ...overrides }, {});
+    expect(policy.config.web).toEqual(web);
+    const result = loadWithPython(policy, true);
+    expect(result.status, result.stderr).toBe(0);
+  });
+
   it("accepts absent inference while retaining managed restrictions", () => {
     const policy = buildHermesManagedPolicy({ ...SETTINGS, model: null }, {});
     const result = loadWithPython(policy);
