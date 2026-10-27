@@ -1716,7 +1716,8 @@ function assertCreateLifecycleJournal(input: {
   }
 }
 
-function shouldInspectExistingSandbox(input: {
+/** Inspect provider attachments only for a live sandbox outside portable or verified resume flows. */
+export function shouldInspectExistingSandbox(input: {
   readonly liveExists: boolean;
   readonly portableLifecycle: boolean;
   readonly resumingVerifiedCreate: boolean;
@@ -2187,6 +2188,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       return managedWorkloadOnboard.createManagedStateVolumeOnboardLifecycle({
         roots: managedStateRoots,
         runtimeProvider: requireManagedWorkloadRuntime().runtimeProvider,
+        workspace: process.env.OPENSHELL_WORKSPACE || "default",
       });
     };
     const finalizeRecreatedSourceHermesVolume = (

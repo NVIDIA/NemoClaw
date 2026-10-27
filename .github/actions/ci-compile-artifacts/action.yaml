@@ -4,6 +4,12 @@
 name: ci-compile-artifacts
 description: Restore or build the complete CLI and plugin outputs for the checked-out commit.
 
+inputs:
+  package-mode:
+    description: Source of reviewed dependency packages.
+    required: false
+    default: auto
+
 runs:
   using: composite
   steps:
@@ -42,9 +48,10 @@ runs:
       if: steps.cache.outputs.cache-hit != 'true'
       shell: bash
       env:
-        NODE_AUTH_TOKEN: ${{ github.event_name == 'push' && github.token || '' }}
+        PACKAGE_MODE: ${{ inputs.package-mode }}
+        NODE_AUTH_TOKEN: ${{ github.event_name == 'push' && inputs.package-mode != 'artifact' && github.token || '' }}
         GITHUB_TOKEN: ${{ github.event_name == 'pull_request' && github.token || '' }}
-      run: bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh"
+      run: bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh" full "$PACKAGE_MODE"
 
     - name: Compile CLI and plugin
       if: steps.cache.outputs.cache-hit != 'true'

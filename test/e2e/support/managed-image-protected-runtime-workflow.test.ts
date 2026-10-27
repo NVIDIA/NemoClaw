@@ -56,6 +56,20 @@ describe("protected managed-image runtime workflow", () => {
     expect(validateManagedImageProtectedRuntimeWorkflow(workflow())).toEqual([]);
   });
 
+  it("accepts the protected finalization limits through the shared workflow boundary", () => {
+    expect(validateE2eWorkflow(workflow())).toEqual([]);
+  });
+
+  it.each([
+    ["Upload protected managed-image runtime artifacts", 3],
+    ["Upload protected managed-image runtime artifacts", 5],
+    ["Clean up Docker auth", 2],
+  ])("rejects changed finalization timeout for %s", (name, minutes) => {
+    const value = workflow();
+    namedStep(value, String(name))["timeout-minutes"] = minutes;
+    expect(validateE2eWorkflow(value)).not.toEqual([]);
+  });
+
   it.each([
     ["Bind reviewed candidate OpenShell runtime", "if", "false"],
     ["Bind reviewed candidate OpenShell runtime", "continue-on-error", true],
@@ -170,6 +184,27 @@ describe("protected managed-image runtime workflow", () => {
     );
   });
 
+  it("rejects omission of the job start used by the shared runtime budget", () => {
+    const value = workflow();
+    const guard = namedStep(value, "Validate protected runtime exact-head dispatch");
+    guard.run = String(guard.run)
+      .split("\n")
+      .filter((line) => !line.includes("NEMOCLAW_PROTECTED_RUNTIME_STARTED_AT_MS"))
+      .join("\n");
+    expect(validateManagedImageProtectedRuntimeWorkflow(value)).not.toEqual([]);
+  });
+
+  it.each([
+    "Remove isolated protected runtime registry",
+    "Restore trusted OpenShell sources",
+    "Upload protected managed-image runtime artifacts",
+    "Clean up Docker auth",
+  ])("rejects unbounded finalization step %s", (name) => {
+    const value = workflow();
+    delete namedStep(value, name)["timeout-minutes"];
+    expect(validateManagedImageProtectedRuntimeWorkflow(value)).not.toEqual([]);
+  });
+
   // source-shape-contract: security -- The isolated registry must be gone before reporter-backed validations can publish passing risk evidence
   test("cleans the protected registry before passing risk evidence", () => {
     const steps = multiarchJob(workflow()).steps as Array<Record<string, unknown>>;
@@ -249,7 +284,7 @@ describe("protected managed-image runtime workflow", () => {
     const auth = namedMultiarchStep(value, "Authenticate to Docker Hub");
     const direct = namedMultiarchStep(value, "Run every exact managed-image contract directly");
 
-    expect(prepare.with).toEqual({ "build-cli": "false" });
+    expect(prepare.with).toEqual({ "build-cli": "false", "install-dependencies": "false" });
     expect(boundary.run).toEqual(expect.stringContaining("npm run build:policy-boundary"));
     expect(steps.indexOf(auth)).toBe(steps.indexOf(boundary) + 1);
     expect(steps.indexOf(boundary)).toBeLessThan(steps.indexOf(direct));

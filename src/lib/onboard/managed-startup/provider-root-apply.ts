@@ -15,7 +15,13 @@ import type {
 import type { SandboxEntry } from "../../state/registry/types";
 import { DirectSandboxContainerNotFoundError } from "../runtime-provider/privileged-sandbox-control-errors";
 import { waitUntil } from "../readiness-wait";
-import { MANAGED_STARTUP_RUNTIME_EXECUTABLE } from "./image-runtime";
+import {
+  MANAGED_STARTUP_RUNTIME_EXECUTABLE,
+  MANAGED_STARTUP_OWNER_RESULT_MAX_BYTES,
+} from "./image-runtime";
+import { MANAGED_STARTUP_SHARED_CAPTURE_MAX_BYTES } from "./shared-state-transaction";
+import { managedImageRuntimeIdentity } from "../managed-image/agents";
+import { managedStartupWorkspaceRoot } from "./state-roots";
 import {
   type ManagedStartupRootApplyRequest,
   selectManagedStartupApplicationRuntimeEnvironment,
@@ -48,6 +54,8 @@ export interface ProviderManagedStartupTransaction {
   readonly containerId: string;
   readonly image: string;
   readonly protocol: "identity-bound" | "legacy-unbound";
+  /** In-memory recovery input; private captured files never enter the transaction. */
+  readonly delegatedProfile?: string;
   readonly providerId: "docker" | "podman";
 }
 
@@ -230,7 +238,11 @@ function inspectExactCreatedRuntime(
 function executeExact(
   runtime: ProviderManagedStartupRuntime,
   command: readonly string[],
-  options: { readonly input?: Buffer; readonly timeoutMs: number },
+  options: {
+    readonly input?: Buffer;
+    readonly timeoutMs: number;
+    readonly maxOutputBytes?: number;
+  },
 ) {
   return runtime.control.execute({
     registeredSandboxNames: [runtime.sandbox.name],
@@ -241,7 +253,230 @@ function executeExact(
     expectedResourceHandle: runtime.transaction.containerId,
     sanitizeEnvironment: false,
     timeoutMs: options.timeoutMs,
+    ...(options.maxOutputBytes ? { maxOutputBytes: options.maxOutputBytes } : {}),
   });
+}
+
+function delegatedCommand(
+  runtime: ProviderManagedStartupRuntime,
+  action: string,
+  environment: readonly string[] = [],
+  replay = false,
+): readonly string[] {
+  return [
+    "/usr/bin/env",
+    "-i",
+    ...FIXED_ROOT_ENV,
+    ...environment,
+    "/usr/local/bin/node",
+    MANAGED_STARTUP_RUNTIME_EXECUTABLE,
+    action,
+    "--agent",
+    runtime.transaction.agent,
+    "--bootstrap-identity",
+    runtime.transaction.bootstrapIdentity,
+    ...(replay ? ["--replay"] : []),
+  ];
+}
+
+function executeOwner(
+  runtime: ProviderManagedStartupRuntime,
+  command: readonly string[],
+  input: Buffer,
+  maxOutputBytes: number,
+) {
+  if (!runtime.control.executeAsSandboxUser)
+    throw new Error("Managed startup provider cannot execute as the native state owner.");
+  const identity = managedImageRuntimeIdentity(runtime.transaction.agent);
+  return runtime.control.executeAsSandboxUser({
+    registeredSandboxNames: [runtime.sandbox.name],
+    sandbox: runtime.sandbox,
+    sandboxName: runtime.sandbox.name,
+    command,
+    input,
+    sandboxUser: `${identity.uid}:${identity.gid}`,
+    expectedResourceHandle: runtime.transaction.containerId,
+    sanitizeEnvironment: false,
+    timeoutMs: ROOT_APPLY_TIMEOUT_MS,
+    maxOutputBytes,
+  });
+}
+
+function requirePrivateResult(
+  result: ReturnType<typeof executeExact>,
+  maxOutputBytes: number,
+): string {
+  // These outputs can contain private configuration. Never include command details in errors.
+  if (result.status !== 0 || result.error || result.signal || result.stdout.length > maxOutputBytes)
+    throw new Error("Private managed-startup operation did not complete.");
+  return String(result.stdout);
+}
+
+function usesDelegatedStartup(runtime: ProviderManagedStartupRuntime): boolean {
+  const probe = executeExact(
+    runtime,
+    [
+      "/usr/bin/env",
+      "-i",
+      ...FIXED_ROOT_ENV,
+      "/usr/local/bin/node",
+      MANAGED_STARTUP_RUNTIME_EXECUTABLE,
+      "--startup-protocol",
+    ],
+    { timeoutMs: 30_000 },
+  );
+  if (probe.error || probe.signal) throw new Error("Managed startup protocol inspection failed.");
+  if (probe.status === 0 && String(probe.stdout).trim() === "delegated-owner-v1") return true;
+  if (probe.status !== 0 && String(probe.stderr).includes("usage: managed-startup-image-runtime"))
+    return false;
+  throw new Error("Managed startup image returned an unknown protocol.");
+}
+
+function applyDelegatedStartup(
+  runtime: ProviderManagedStartupRuntime,
+  request: ManagedStartupRootApplyRequest,
+  environment: readonly string[],
+): ProviderManagedStartupTransaction {
+  const transaction = { ...runtime.transaction, delegatedProfile: request.encodedProfile };
+  runtime = { ...runtime, transaction };
+  let phase = "transaction preparation";
+  try {
+    if (!runtime.control.executeAsSandboxUser) throw new Error("Native execution unavailable.");
+    const serialized = serializeManagedStartupRootApplyRequest(request);
+    const input = Buffer.from(serialized, "utf8");
+    const status = requirePrivateResult(
+      executeExact(runtime, delegatedCommand(runtime, "--prepare-delegated-transaction-stdin"), {
+        input,
+        timeoutMs: 30_000,
+      }),
+      1024,
+    ).trim();
+    if (status === "none") {
+      phase = "native state capture";
+      const capturedState = requirePrivateResult(
+        executeOwner(
+          runtime,
+          delegatedCommand(runtime, "--capture-shared-state-stdin"),
+          input,
+          MANAGED_STARTUP_SHARED_CAPTURE_MAX_BYTES,
+        ),
+        MANAGED_STARTUP_SHARED_CAPTURE_MAX_BYTES,
+      );
+      phase = "protected snapshot admission";
+      const admitted = requirePrivateResult(
+        executeExact(
+          runtime,
+          delegatedCommand(runtime, "--begin-shared-state-from-capture-stdin"),
+          {
+            input: Buffer.from(
+              JSON.stringify({ encodedProfile: request.encodedProfile, capturedState }),
+            ),
+            timeoutMs: 30_000,
+          },
+        ),
+        1024,
+      ).trim();
+      if (admitted !== "created" && admitted !== "pending")
+        throw new Error("Invalid snapshot status.");
+    } else if (status !== "pending" && status !== "committed")
+      throw new Error("Invalid transaction status.");
+    phase = "root preparation";
+    const prepared = requirePrivateResult(
+      executeExact(
+        runtime,
+        delegatedCommand(runtime, "--prepare-delegated-startup-stdin", environment),
+        {
+          input,
+          timeoutMs: ROOT_APPLY_TIMEOUT_MS,
+        },
+      ),
+      1024,
+    ).trim();
+    if (prepared !== "prepared" && prepared !== "already-committed")
+      throw new Error("Invalid preparation status.");
+    phase = "native generation and validation";
+    const ownerResult = requirePrivateResult(
+      executeOwner(
+        runtime,
+        delegatedCommand(
+          runtime,
+          "--apply-owner-startup-stdin",
+          environment,
+          prepared === "already-committed",
+        ),
+        input,
+        MANAGED_STARTUP_OWNER_RESULT_MAX_BYTES,
+      ),
+      MANAGED_STARTUP_OWNER_RESULT_MAX_BYTES,
+    );
+    phase = "root completion";
+    requirePrivateResult(
+      executeExact(
+        runtime,
+        delegatedCommand(runtime, "--finish-delegated-startup-stdin", environment),
+        {
+          input: Buffer.from(JSON.stringify({ request: serialized, ownerResult })),
+          timeoutMs: ROOT_APPLY_TIMEOUT_MS,
+        },
+      ),
+      1024 * 1024,
+    );
+    return transaction;
+  } catch {
+    const error = new Error(
+      `Managed startup ${phase} failed; the exact sandbox is retained for recovery.`,
+    );
+    (
+      error as Error & { managedStartupTransaction: ProviderManagedStartupTransaction }
+    ).managedStartupTransaction = transaction;
+    throw error;
+  }
+}
+
+function rollbackSharedState(runtime: ProviderManagedStartupRuntime) {
+  const encodedProfile = runtime.transaction.delegatedProfile;
+  if (encodedProfile === undefined)
+    return executeExact(runtime, sharedStateTransactionCommand("rollback", runtime.transaction), {
+      timeoutMs: 30_000,
+    });
+  try {
+    const capturedState = requirePrivateResult(
+      executeExact(
+        runtime,
+        delegatedCommand(runtime, "--export-shared-restoration-profile-stdin"),
+        {
+          input: Buffer.from(encodedProfile),
+          timeoutMs: 30_000,
+          maxOutputBytes: MANAGED_STARTUP_SHARED_CAPTURE_MAX_BYTES,
+        },
+      ),
+      MANAGED_STARTUP_SHARED_CAPTURE_MAX_BYTES,
+    );
+    if (capturedState.trim() !== "absent") {
+      const observed = requirePrivateResult(
+        executeOwner(
+          runtime,
+          delegatedCommand(runtime, "--restore-shared-state-stdin"),
+          Buffer.from(JSON.stringify({ encodedProfile, capturedState })),
+          MANAGED_STARTUP_SHARED_CAPTURE_MAX_BYTES,
+        ),
+        MANAGED_STARTUP_SHARED_CAPTURE_MAX_BYTES,
+      );
+      const finished = requirePrivateResult(
+        executeExact(runtime, delegatedCommand(runtime, "--finish-shared-restoration-stdin"), {
+          input: Buffer.from(JSON.stringify({ encodedProfile, capturedState: observed })),
+          timeoutMs: 30_000,
+        }),
+        1024,
+      ).trim();
+      if (finished !== "restored") throw new Error("Restoration was not verified.");
+    }
+    return { status: 0, stdout: "", stderr: "", error: undefined };
+  } catch {
+    throw new Error(
+      "Private managed-startup restoration failed; the exact sandbox and recovery receipt are retained.",
+    );
+  }
 }
 
 function inspectExactTransactionRuntime(input: {
@@ -367,6 +602,23 @@ export function applyProviderManagedStartupRootRequest(
   const applicationRuntimeEnvironment = Object.entries(
     selectManagedStartupApplicationRuntimeEnvironment(input.environment ?? process.env),
   ).map(([name, value]) => `${name}=${value}`);
+  const delegated = usesDelegatedStartup(runtime);
+  if (!runtime.control.prepareManagedStartupWorkspace) {
+    throw new Error("Runtime provider cannot prepare the managed startup workspace.");
+  }
+  runtime.control.prepareManagedStartupWorkspace({
+    sandbox: runtime.sandbox,
+    sandboxName: input.sandboxName,
+    registeredSandboxNames: [input.sandboxName],
+    expectedResourceHandle: runtime.transaction.containerId,
+    timeoutMs: 30_000,
+    workspace: managedStartupWorkspaceRoot({
+      agent: input.request.agent,
+      agentIdentity: managedImageRuntimeIdentity(input.request.agent),
+    }),
+  });
+  if (delegated)
+    return applyDelegatedStartup(runtime, input.request, applicationRuntimeEnvironment);
   const command = rootApplyCommand(
     input.request.agent,
     applicationRuntimeEnvironment,
@@ -455,11 +707,7 @@ export function finalizeProviderManagedStartupSharedState(input: {
         `${failure.message}. Commit completion is ambiguous; the exact sandbox is retained for recovery.`,
       );
     }
-    const rollback = executeExact(
-      runtime,
-      sharedStateTransactionCommand("rollback", input.transaction),
-      { timeoutMs: 30_000 },
-    );
+    const rollback = rollbackSharedState(runtime);
     if (rollback.status !== 0 || rollback.error) {
       throw new Error(
         `Managed-startup shared-state commit failed and exact in-sandbox rollback did not complete: ${commandDetail(rollback)}`,
@@ -467,11 +715,7 @@ export function finalizeProviderManagedStartupSharedState(input: {
     }
     return { supervisorReady: false, failure };
   }
-  const rollback = executeExact(
-    runtime,
-    sharedStateTransactionCommand("rollback", input.transaction),
-    { timeoutMs: 30_000 },
-  );
+  const rollback = rollbackSharedState(runtime);
   if (rollback.status !== 0 || rollback.error) {
     throw new Error(`Exact in-sandbox managed-startup rollback failed: ${commandDetail(rollback)}`);
   }

@@ -17,6 +17,8 @@ export interface OnboardResumeIntentSnapshot {
   readonly checkpointUpdatedAt: string;
   readonly machineRevision: number;
   readonly profile: CheckpointOnboardProfile;
+  readonly recordedAgent: string | null;
+  readonly recordedCustomImage: boolean;
 }
 
 export class OnboardResumeIntentError extends Error {
@@ -142,6 +144,10 @@ export function resolveOnboardResumeIntent(options: {
       checkpointUpdatedAt: inspected.checkpoint.updatedAt,
       machineRevision: Number(machineRevision),
       profile,
+      recordedAgent: typeof stored.value.agent === "string" ? stored.value.agent : null,
+      recordedCustomImage:
+        isObjectRecord(stored.value.metadata) &&
+        Boolean(stored.value.metadata.fromDockerfile || stored.value.metadata.fromImage),
     },
   };
 }

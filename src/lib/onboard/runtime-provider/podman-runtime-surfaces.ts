@@ -343,6 +343,7 @@ export function prepareNativePodmanGatewayHostRuntime(
       sandboxNamespace: "omitted" as const,
       hostGatewayIp: NATIVE_PODMAN_SANDBOX_HOST_ADDRESS,
       includeSupervisorBin: false,
+      driverConfigLayout: "inline-supervisor" as const,
       processOwnership: "runtime-marker" as const,
     }),
     network: Object.freeze({
@@ -417,7 +418,8 @@ export function createCurrentPodmanOperationEngine(
       args: Parameters<PodmanBoundContainerEngine["capture"]>[0],
       timeout?: number,
       input?: Buffer,
-    ) => resolve().capture(args, timeout, input),
+      privateTransport?: Parameters<PodmanBoundContainerEngine["capture"]>[3],
+    ) => resolve().capture(args, timeout, input, privateTransport),
     captureHost: (
       args: Parameters<PodmanBoundContainerEngine["captureHost"]>[0],
       timeout?: number,

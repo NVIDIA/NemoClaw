@@ -1,10 +1,77 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createManagedProviderAdapter } from "../../src/lib/adapters/openshell/managed-provider-adapter.ts";
+import { parseOpenShellVersionFromText } from "../../src/lib/adapters/openshell/version-text.ts";
+import {
+  ensureNativeLocalProvider,
+  verifyNativeLocalProviderAttachment,
+  type NativeLocalProviderAttachment,
+} from "../../src/lib/inference/native-local/profile.ts";
+import {
+  NATIVE_LOCAL_AUTH_HEADER_SCRIPT,
+  NATIVE_LOCAL_CREDENTIAL_ENV,
+} from "../../src/lib/inference/native-local/agent-config.ts";
 import { createCliOpenShellSandboxLifecycleFromRunner } from "../../src/lib/adapters/openshell/sandbox-lifecycle-cli.ts";
 import { createDockerGpuDiagnosticRedactor } from "../../src/lib/onboard/docker-gpu-diagnostic-redaction.ts";
 import type { ShippedManagedImageAgent } from "../../src/lib/onboard/managed-image/contract.ts";
 import type { ManagedStartupProfile } from "../../src/lib/onboard/managed-startup/profile.ts";
+import { gatewayIdForStateDir } from "../../src/lib/onboard/gateway/process-environment.ts";
+
+const MANAGED_IMAGE_HARNESS_OPENSHELL_VERSIONS = ["0.0.116", "0.1.3", "0.1.5"] as const;
+export type ManagedImageHarnessOpenShellVersion =
+  (typeof MANAGED_IMAGE_HARNESS_OPENSHELL_VERSIONS)[number];
+
+export function requireManagedImageHarnessOpenShellVersion(
+  version: string | null | undefined,
+): ManagedImageHarnessOpenShellVersion {
+  if (
+    MANAGED_IMAGE_HARNESS_OPENSHELL_VERSIONS.includes(
+      version as ManagedImageHarnessOpenShellVersion,
+    )
+  ) {
+    return version as ManagedImageHarnessOpenShellVersion;
+  }
+  throw new Error(`Unsupported protected OpenShell runtime version: ${version ?? "unavailable"}`);
+}
+
+export function requireManagedImageHarnessOpenShellVersionFromOutput(
+  versionOutput: string,
+): ManagedImageHarnessOpenShellVersion {
+  return requireManagedImageHarnessOpenShellVersion(parseOpenShellVersionFromText(versionOutput));
+}
+
+export function isManagedImageHarnessWorkload(
+  record:
+    | {
+        Config?: { Labels?: Record<string, string> };
+        Image?: string;
+        HostConfig?: { NetworkMode?: string };
+        NetworkSettings?: { Networks?: Record<string, unknown> };
+      }
+    | undefined,
+  expected: {
+    sandbox: string;
+    stateDir: string;
+    imageContentId: string;
+    runtimeVersion: ManagedImageHarnessOpenShellVersion;
+    networkName?: string;
+  },
+): boolean {
+  const labels = record?.Config?.Labels;
+  return (
+    labels?.["openshell.ai/managed-by"] === "openshell" &&
+    labels["openshell.ai/sandbox-name"] === expected.sandbox &&
+    record?.Image === expected.imageContentId &&
+    (expected.runtimeVersion === "0.1.3" || expected.runtimeVersion === "0.1.5"
+      ? labels["openshell.ai/isolation-role"] === "sandbox" &&
+        labels["openshell.ai/sandbox-namespace"] === gatewayIdForStateDir(expected.stateDir) &&
+        record.HostConfig?.NetworkMode === "none"
+      : typeof expected.networkName === "string" &&
+        expected.networkName.length > 0 &&
+        Object.hasOwn(record.NetworkSettings?.Networks ?? {}, expected.networkName))
+  );
+}
 
 export {
   PROTECTED_MANAGED_IMAGE_AGENTS,
@@ -123,8 +190,9 @@ export function withManagedImageLocalInferenceProfile(
       upstreamProvider: route.providerName,
       model,
       primaryModelRef,
-      routedBaseUrl: "https://inference.local/v1",
-      upstreamEndpointUrl: null,
+      routedBaseUrl: route.defaultBaseUrl,
+      upstreamEndpointUrl:
+        profile.agent === "langchain-deepagents-code" ? route.defaultBaseUrl : null,
       api: "openai-completions",
     },
   } as ManagedStartupProfile;
@@ -163,4 +231,247 @@ export function createManagedImageSandboxWithDiagnostics(
     }
     return result;
   };
+}
+
+export type ManagedImageOpenShellE2eInputs = {
+  agent: ShippedManagedImageAgent;
+  image: string;
+  sandbox: string;
+  gpu?: true;
+  localProvider?: ManagedImageLocalInferenceKind;
+  model?: string;
+  failureInjection?: "bootstrap-completion";
+};
+
+export function managedImageLocalInferenceBaseUrl(
+  localProvider: ManagedImageLocalInferenceKind,
+  configuredValue = process.env.NEMOCLAW_E2E_LOCAL_INFERENCE_BASE_URL,
+): string {
+  const route = resolveManagedImageLocalInferenceRoute(localProvider);
+  const configured = String(configuredValue ?? "").trim();
+  const value = configured || route.defaultBaseUrl;
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error("protected local inference base URL is invalid");
+  }
+  if (
+    parsed.protocol !== "http:" ||
+    parsed.hostname !== "host.openshell.internal" ||
+    !/^[1-9][0-9]{0,4}$/u.test(parsed.port) ||
+    parsed.pathname.replace(/\/+$/u, "") !== "/v1" ||
+    parsed.username ||
+    parsed.password ||
+    parsed.search ||
+    parsed.hash
+  ) {
+    throw new Error("protected local inference must use http://host.openshell.internal:<port>/v1");
+  }
+  return value.replace(/\/+$/u, "");
+}
+
+function localInferenceBaseUrl(input: ManagedImageOpenShellE2eInputs): string {
+  if (!input.localProvider) throw new Error("local provider is required");
+  return managedImageLocalInferenceBaseUrl(input.localProvider);
+}
+
+export async function configureLocalInferenceRoute(
+  onboard: {
+    runOpenshell(
+      args: string[],
+      options?: Record<string, unknown>,
+    ): ReturnType<NonNullable<Parameters<typeof createManagedProviderAdapter>[0]>>;
+  },
+  input: ManagedImageOpenShellE2eInputs,
+  env: NodeJS.ProcessEnv,
+  adapter: Parameters<
+    typeof ensureNativeLocalProvider
+  >[0]["adapter"] = createManagedProviderAdapter(onboard.runOpenshell),
+): Promise<NativeLocalProviderAttachment | undefined> {
+  if (!input.localProvider || !input.model) return;
+  const route = resolveManagedImageLocalInferenceRoute(input.localProvider);
+  const credential = String(env[route.credentialEnv] ?? "").trim();
+  if (!credential || /[\0\r\n]/u.test(credential)) {
+    throw new Error(`${route.credentialEnv} is required for protected local inference`);
+  }
+  let authority: NativeLocalProviderAttachment | undefined;
+  return ensureNativeLocalProvider({
+    binding: {
+      provider: route.providerName,
+      ...(input.agent === "langchain-deepagents-code" ? {} : { agent: input.agent }),
+      endpointUrl: localInferenceBaseUrl(input),
+      credentialEnv: NATIVE_LOCAL_CREDENTIAL_ENV,
+      authMode:
+        input.localProvider === "nim" || input.localProvider === "vllm"
+          ? "sentinel"
+          : "authenticated",
+      gatewayName: "nemoclaw",
+      sandboxName: input.sandbox,
+    },
+    adapter,
+    credentialValue: credential,
+    policyCommand: async (args) => onboard.runOpenshell(args, { ignoreError: true, env }),
+    // This invocation owns a fresh private gateway. Never adopt an existing provider.
+    readAuthority: () => authority,
+    writeAuthority: (receipt) => {
+      authority = receipt;
+    },
+  });
+}
+
+export function localInferenceProbe(input: ManagedImageOpenShellE2eInputs): [string, ...string[]] {
+  if (!input.model) throw new Error("local inference model is required");
+  const payload = JSON.stringify({
+    model: input.model,
+    messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
+    reasoning_effort: "none",
+    max_tokens: 32,
+  });
+  const script = [
+    "set -eu",
+    NATIVE_LOCAL_AUTH_HEADER_SCRIPT,
+    'response="$(mktemp "${TMPDIR:-/tmp}/nemoclaw-managed-image-inference.XXXXXX")"',
+    "trap 'rm -f \"$response\"' EXIT",
+    'curl -fsS --max-time 180 "$1" -H "$AUTH_HEADER" -H \'Content-Type: application/json\' --data "$2" > "$response"',
+    "node - \"$response\" <<'NODE'",
+    'const fs = require("node:fs");',
+    'const body = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));',
+    "const choice = Array.isArray(body.choices) ? body.choices[0] : null;",
+    'const text = choice && choice.message && typeof choice.message.content === "string"',
+    "  ? choice.message.content",
+    '  : choice && typeof choice.text === "string" ? choice.text : "";',
+    'if (!/pong/i.test(text)) throw new Error("local inference did not return PONG");',
+    "NODE",
+  ].join("\n");
+  return [
+    "/bin/sh",
+    "-eu",
+    "-c",
+    script,
+    "native-local-inference",
+    `${localInferenceBaseUrl(input)}/chat/completions`,
+    payload,
+  ];
+}
+
+export function localInferenceAgentCommand(input: ManagedImageOpenShellE2eInputs): string[] {
+  const prompt = "Reply with exactly one word: PONG";
+  switch (input.agent) {
+    case "openclaw":
+      return [
+        "openclaw",
+        "agent",
+        "--agent",
+        "main",
+        "--json",
+        "--thinking",
+        "off",
+        "--session-id",
+        `protected-${input.sandbox}`,
+        "-m",
+        prompt,
+      ];
+    case "hermes":
+      return ["hermes", "-z", prompt];
+    case "langchain-deepagents-code":
+      return ["dcode", "-n", prompt, "--json"];
+  }
+}
+
+export async function waitForLocalInferenceAgentPairing<
+  T extends {
+    readonly status: number | null;
+    readonly stderr: string | null;
+    readonly error?: Error;
+  },
+>(
+  agent: ShippedManagedImageAgent,
+  run: () => T,
+  sleep: (milliseconds: number) => Promise<void> = (milliseconds) =>
+    new Promise((resolve) => setTimeout(resolve, milliseconds)),
+): Promise<T> {
+  for (let attempt = 0; ; attempt += 1) {
+    const result = run();
+    if (
+      agent !== "openclaw" ||
+      result.error ||
+      result.status !== 1 ||
+      attempt === 3 ||
+      !/scope upgrade pending approval/iu.test(result.stderr ?? "")
+    )
+      return result;
+    // The normal watcher approves allowlisted scopes asynchronously.
+    await sleep(5_000);
+  }
+}
+
+export function assertLocalInferenceAgentResponse(
+  input: ManagedImageOpenShellE2eInputs,
+  stdout: string,
+  env: NodeJS.ProcessEnv = process.env,
+): void {
+  let response: unknown = stdout;
+  if (input.agent === "openclaw") {
+    const envelope = JSON.parse(stdout);
+    const result = envelope?.result;
+    if (
+      envelope?.status !== "ok" ||
+      result?.meta?.aborted !== false ||
+      result?.meta?.agentMeta?.provider !== "inference" ||
+      result?.meta?.agentMeta?.model !== input.model
+    )
+      throw new Error("OpenClaw did not complete through its configured local model");
+    response = result.payloads?.map((payload: { text?: string }) => payload.text ?? "").join("\n");
+  } else if (input.agent === "langchain-deepagents-code") {
+    const envelope = JSON.parse(stdout);
+    if (envelope?.data?.status !== "success" || envelope?.data?.exit_code !== 0)
+      throw new Error("LangChain Deep Agents Code did not complete its local inference turn");
+    response = envelope.data.response;
+  }
+  // Hermes oneshot stdout contains only its final response. JSON agents expose
+  // assistant output separately; a prompt echoed in metadata cannot pass.
+  if (typeof response !== "string" || !/^PONG[.!]?$/iu.test(response.trim()))
+    throw new Error(
+      `${input.agent} local inference did not return PONG; response=${JSON.stringify(managedImageFailureDetail(response, env).slice(0, 512))}`,
+    );
+}
+
+export async function verifyManagedImageLocalInferenceRoute(
+  run: NonNullable<Parameters<typeof createManagedProviderAdapter>[0]>,
+  sandboxName: string,
+  expected: NativeLocalProviderAttachment,
+): Promise<void> {
+  await verifyNativeLocalProviderAttachment({
+    adapter: createManagedProviderAdapter(run),
+    sandboxName,
+    expected,
+    requireUnexpiredCredential: true,
+  });
+}
+
+export function managedImageHarnessContainerListArgs(
+  sandbox: string,
+  includeStopped: boolean,
+  runtimeVersion: ManagedImageHarnessOpenShellVersion,
+): string[] {
+  return [
+    "docker",
+    "ps",
+    includeStopped ? "-aq" : "-q",
+    "--no-trunc",
+    "--filter",
+    "label=openshell.ai/managed-by=openshell",
+    "--filter",
+    `label=openshell.ai/sandbox-name=${sandbox}`,
+    ...(runtimeVersion === "0.1.3" || runtimeVersion === "0.1.5"
+      ? ["--filter", "label=openshell.ai/isolation-role=sandbox"]
+      : []),
+  ];
+}
+
+export function managedImageSandboxListLimitFlag(
+  runtimeVersion: ManagedImageHarnessOpenShellVersion,
+): string {
+  return runtimeVersion === "0.1.3" || runtimeVersion === "0.1.5" ? "--page-size" : "--limit";
 }

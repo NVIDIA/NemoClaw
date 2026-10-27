@@ -151,6 +151,10 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests("test/agents/hermes/hermes-image-build-probes.test.ts"),
   },
   {
+    pattern: /(?:^|\/)agents\/hermes\/patch-agent-home\.py$/,
+    testsToRun: runTests("test/agents/hermes/hermes-agent-home-patch.test.ts"),
+  },
+  {
     pattern: /(?:^|\/)agents\/hermes\/patch-cron-restore-drain\.py$/,
     testsToRun: runTests("test/agents/hermes/hermes-cron-restore-drain-patch.test.ts"),
   },
@@ -176,6 +180,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
       if (match[1] === "agents/hermes/") {
         return [
           "test/generation/providerless-agent-config.test.ts",
+          "test/agents/hermes/hermes-image-build-probes.test.ts",
           "src/lib/onboard/experimental/hermes-portable-build-context.test.ts",
           "src/lib/onboard/managed-startup-profile.test.ts",
           "test/agents/hermes/hermes-mcp-runtime-capability.test.ts",
@@ -392,6 +397,10 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
     pattern: /(?:^|\/)\.github\/workflows\/code-scanning\.yaml$/,
     testsToRun: runTests("test/repository/code-scanning-workflow.test.ts"),
+  },
+  {
+    pattern: /(?:^|\/)\.github\/(?:pr-limits\.json|workflows\/pr-limit\.yaml)$/,
+    testsToRun: runTests("test/automation/pull-requests/pr-limit-workflow.test.ts"),
   },
   {
     pattern: /(?:^|\/)\.github\/workflows\/pr-merge-conflict-fixer\.yaml$/,

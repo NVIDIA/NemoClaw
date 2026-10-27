@@ -16,7 +16,8 @@ export type OpenShellSandboxSessionRequest = Readonly<{
         tty?: boolean | null;
         timeoutSeconds?: number;
         output: "inherit" | "capture";
-        stdin?: boolean;
+        /** `false` closes fd 0; bytes are written to a pipe and then closed. */
+        stdin?: boolean | Buffer;
         outputLimitBytes?: number;
       }>
   );

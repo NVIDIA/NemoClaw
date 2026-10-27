@@ -489,7 +489,16 @@ If `rebuild` stops after recording the journal, rerun the command with the same 
 - It continues deletion when the live sandbox still has the journaled source identity.
 - It continues creation when the recorded OpenShell gateway explicitly reports the source sandbox as absent.
 - It accepts an existing replacement only after its live identity and sandbox registry generation match the journal and it completes or verifies the recorded final handoff.
-- It starts a new replacement when the journaled replacement provably never took effect.
+- It starts a new replacement when recovery proves that the recorded replacement is absent.
+
+On Linux, an interrupted create can leave a retained recovery record without a replacement identity.
+When that record matches the saved rebuild journal and source registry row, rerun `$$nemoclaw <sandbox-name> rebuild` with the same settings.
+NemoClaw checks that the recorded gateway and the default Docker daemon report the replacement absent, then clears the retained blocker and resumes the saved rebuild.
+It keeps the source registry row, journal, and backup.
+A successful reconciliation reports `Cleared absent replacement recovery for '<name>'; resuming its saved rebuild.`
+
+If the gateway or Docker daemon cannot confirm absence, the runtime binding changed, or the recovery records disagree, the command exits nonzero and keeps the recovery state.
+Correct the reported condition and rerun the same rebuild command; keep the recovery files and backup in place.
 
 An older recovery marker can lack an MCP handoff, as can an interruption before NemoClaw records the handoff.
 NemoClaw reads MCP state again only when the source still exists and the matching journal remains in the `planned` or `deleting` phase.
