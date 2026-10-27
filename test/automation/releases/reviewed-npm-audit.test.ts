@@ -1,10 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   reviewedArchiveGraphManifest,
   stageReviewedArchiveForInstall,
@@ -589,6 +590,118 @@ describe("npm audit gate", () => {
   it("rejects a missing exception registry instead of treating it as empty", () => {
     expect(() => readAuditExceptionRegistry(path.join(REPO_ROOT, "ci", "missing.json"))).toThrow(
       /ENOENT/,
+    );
+  });
+});
+
+describe("npm audit gate for a release-reviewed lockfile (#13846)", () => {
+  const LOCKFILE = '{"name":"fixture","lockfileVersion":3}\n';
+  const LOCK_SHA256 = createHash("sha256").update(LOCKFILE).digest("hex");
+
+  function withBlockedAudit(run: (directory: string, exceptionFile: string) => void): void {
+    withInstalledGraph({ parent: "1.0.0", "vulnerable-package": "1.0.0" }, (directory) => {
+      const originalPath = process.env.PATH;
+      const fakeBin = path.join(directory, "bin");
+      const exceptionFile = path.join(directory, "exceptions.json");
+      fs.mkdirSync(fakeBin);
+      fs.writeFileSync(path.join(directory, "package-lock.json"), LOCKFILE);
+      fs.writeFileSync(exceptionFile, '{"schemaVersion":1,"exceptions":[]}\n');
+      fs.writeFileSync(
+        path.join(fakeBin, "npm"),
+        `#!/bin/sh\ncat <<'EOF'\n${JSON.stringify(highFindingReport("GHSA-27r3-jxmh-p828"))}\nEOF\nexit 1\n`,
+        { mode: 0o755 },
+      );
+      process.env.PATH = `${fakeBin}${path.delimiter}${originalPath}`;
+      try {
+        run(directory, exceptionFile);
+      } finally {
+        process.env.PATH = originalPath;
+      }
+    });
+  }
+
+  it("warns instead of blocking when the installed lockfile is the reviewed release lockfile", () => {
+    withBlockedAudit((directory, exceptionFile) => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const log = vi.spyOn(console, "log").mockImplementation(() => {});
+      try {
+        const result = runReviewedNpmAudit({
+          directory,
+          exceptionFile,
+          graph: "mcporter-runtime",
+          reviewedLockSha256: LOCK_SHA256,
+          threshold: "high",
+        });
+        expect(result.status).toBe("blocked");
+        expect(warn).toHaveBeenCalledWith(
+          expect.stringMatching(
+            /^WARNING: mcporter-runtime: npm audit findings at or above high published after the reviewed lockfile: GHSA-27r3-jxmh-p828;/,
+          ),
+        );
+      } finally {
+        warn.mockRestore();
+        log.mockRestore();
+      }
+    });
+  });
+
+  it("still blocks when the installed lockfile differs from the reviewed release lockfile", () => {
+    withBlockedAudit((directory, exceptionFile) => {
+      const log = vi.spyOn(console, "log").mockImplementation(() => {});
+      try {
+        expect(() =>
+          runReviewedNpmAudit({
+            directory,
+            exceptionFile,
+            graph: "mcporter-runtime",
+            reviewedLockSha256: "0".repeat(64),
+            threshold: "high",
+          }),
+        ).toThrow(
+          "mcporter-runtime: unaccepted npm audit findings at or above high: GHSA-27r3-jxmh-p828",
+        );
+      } finally {
+        log.mockRestore();
+      }
+    });
+  });
+
+  it("reads the reviewed lockfile SHA-256 for the audited graph from the CLI config", () => {
+    const args = [
+      "--directory",
+      "/usr/local/lib/nemoclaw/mcporter-runtime",
+      "--exceptions",
+      "exceptions.json",
+      "--graph",
+      "mcporter-runtime",
+      "--threshold",
+      "high",
+      "--reviewed-lock-config",
+      path.join(REPO_ROOT, "ci", "reviewed-npm-audit.json"),
+    ];
+    const lockfile = fs.readFileSync(
+      path.join(REPO_ROOT, "agents", "openclaw", "mcporter-runtime", "package-lock.json"),
+    );
+    expect(parseReviewedNpmAuditCliArgs(args, {}).reviewedLockSha256).toBe(
+      createHash("sha256").update(lockfile).digest("hex"),
+    );
+  });
+
+  it("fails closed when the reviewed lockfile config does not list the audited graph", () => {
+    const args = [
+      "--directory",
+      ".",
+      "--exceptions",
+      "exceptions.json",
+      "--graph",
+      "unreviewed-graph",
+      "--threshold",
+      "high",
+      "--reviewed-lock-config",
+      path.join(REPO_ROOT, "ci", "reviewed-npm-audit.json"),
+    ];
+    expect(() => parseReviewedNpmAuditCliArgs(args, {})).toThrow(
+      "reviewed lockfile config has no SHA-256 for graph unreviewed-graph",
     );
   });
 });
