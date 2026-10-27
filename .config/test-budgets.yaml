@@ -43,16 +43,20 @@ live-kind:
 
 # Each provider's contract tests, measured on linux_amd64 and linux_arm64 in
 # two runs after providers and the fake OpenShell gateway set TCP_NODELAY.
+# Since OpenShell v0.1.5, its crypto crate makes rustls and rcgen use aws-lc,
+# which seeds its random generator from CPU jitter on first use: about 20-35 ms
+# in each provider process. The nemoclaw-provider and openshell-provider
+# figures are from the first linux_amd64 and linux_arm64 run with v0.1.5.
 binaries:
   # 5 tests: at most 17.4 s summed; slowest test 6.2 s.
   fabric-provider::contract:
     summed_seconds: 25
     test_seconds: 10
-  # 26 tests: at most 32.5 s summed; slowest test 4.7 s.
+  # 26 tests: at most 54.0 s summed; slowest test 6.7 s.
   nemoclaw-provider::contract:
-    summed_seconds: 45
+    summed_seconds: 75
     test_seconds: 8
-  # 62 tests: at most 74.6 s summed; slowest test 3.7 s.
+  # 65 tests: at most 119.7 s summed; slowest test 4.8 s.
   openshell-provider::contract:
-    summed_seconds: 105
+    summed_seconds: 160
     test_seconds: 6
