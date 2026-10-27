@@ -137,8 +137,7 @@ Before provisioning, NemoClaw checks only that the selected image provides the a
 Fabric validates the configuration inside the sandbox when the agent is configured.
 Generic field validation helps the interview; Fabric's planner owns validation of the complete native configuration.
 
-The Fabric revision remains pinned until the [descriptor catalog change](https://github.com/NVIDIA/NeMo-Fabric/pull/318) and its adapter follow-ups are available together.
-That change removes `config.schema` without a replacement; NemoClaw must stop using it to infer required workflows when adopting that revision.
+The pinned descriptors carry no `config.schema`, and NemoClaw does not use one to infer required workflows.
 Settings, model, and target schemas remain owner contracts.
 A pin update must preserve the currently qualified native configuration, model roles, web integrations, and retained adapter state before regenerating discovery metadata.
 
