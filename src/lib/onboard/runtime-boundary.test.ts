@@ -28,9 +28,11 @@ function createRuntimeHarness(overrides: Partial<Session> = {}) {
   let session: Session | null = createSession(overrides);
   const events: OnboardMachineEvent[] = [];
   const stepCalls: string[] = [];
+  const writes: Session[] = [];
   const updateSession = (mutator: (value: Session) => Session | void): Session => {
     const current = session ? cloneSession(session) : createSession();
     session = cloneSession(mutator(current) ?? current);
+    writes.push(cloneSession(session));
     return cloneSession(session);
   };
   const deps: OnboardRuntimeDeps = {
@@ -41,11 +43,12 @@ function createRuntimeHarness(overrides: Partial<Session> = {}) {
       return cloneSession(session);
     },
     updateSession,
-    markStepStarted: (stepName) => {
+    markStepStarted: (stepName, updates: SessionUpdates = {}) => {
       stepCalls.push("markStepStarted");
       return updateSession((current) => {
         const step = current.steps[stepName];
         if (!step) return current;
+        Object.assign(current, filterSafeUpdates(updates));
         step.status = "in_progress";
         step.startedAt = "2026-05-27T00:00:00.000Z";
         step.completedAt = null;
@@ -97,6 +100,7 @@ function createRuntimeHarness(overrides: Partial<Session> = {}) {
     createRuntime: () => new OnboardRuntime(deps),
     events,
     stepCalls,
+    writes,
     getSession: () => cloneSession(session ?? createSession()),
   };
 }
@@ -200,20 +204,55 @@ describe("OnboardRuntimeBoundary", () => {
 
     await boundary.startRecordedStep("provider_selection", {
       sandboxName: "review-interrupted",
-      provider: "ollama-local",
-      model: "qwen3.5:9b",
+      provider: "compatible-endpoint",
+      model: "nvidia/nemotron-3.5-super-vl-120b-a12b",
+      endpointUrl: "https://integrate.api.nvidia.com/v1",
+      credentialEnv: "COMPATIBLE_API_KEY",
+      preferredInferenceApi: "openai-completions",
     });
     await boundary.recordStepFailed(
       "provider_selection",
       "Onboarding exited before the step completed.",
     );
 
+    // #13654: resume needs the custom route identity, not only provider/model.
     expect(harness.getSession()).toMatchObject({
       sandboxName: "review-interrupted",
-      provider: "ollama-local",
-      model: "qwen3.5:9b",
+      provider: "compatible-endpoint",
+      model: "nvidia/nemotron-3.5-super-vl-120b-a12b",
+      endpointUrl: "https://integrate.api.nvidia.com/v1",
+      credentialEnv: "COMPATIBLE_API_KEY",
+      preferredInferenceApi: "openai-completions",
       steps: { provider_selection: { status: "failed" } },
     });
+  });
+
+  it("writes the started review step and its route context in one session write (#13654)", async () => {
+    const harness = createRuntimeHarness();
+    const boundary = new OnboardRuntimeBoundary({
+      toSessionUpdates: (updates) => filterSafeUpdates(updates as SessionUpdates) as SessionUpdates,
+      maybeForceE2eStepFailure: () => undefined,
+      createRuntime: harness.createRuntime,
+    });
+
+    await boundary.startRecordedStep("provider_selection", {
+      provider: "compatible-endpoint",
+      model: "nvidia/nemotron-3.5-super-vl-120b-a12b",
+      endpointUrl: "https://integrate.api.nvidia.com/v1",
+      credentialEnv: "COMPATIBLE_API_KEY",
+      preferredInferenceApi: "openai-completions",
+    });
+
+    // An interruption after any write must never leave the started step
+    // without its route context, so the start is exactly one write.
+    expect(harness.writes).toHaveLength(1);
+    expect(harness.writes[0]).toMatchObject({
+      endpointUrl: "https://integrate.api.nvidia.com/v1",
+      credentialEnv: "COMPATIBLE_API_KEY",
+      preferredInferenceApi: "openai-completions",
+      steps: { provider_selection: { status: "in_progress" } },
+    });
+    expect(harness.events.filter((event) => event.type === "context.updated")).toHaveLength(1);
   });
 
   it("applies each explicit transition exactly once", async () => {

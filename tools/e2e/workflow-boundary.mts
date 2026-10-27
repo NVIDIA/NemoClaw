@@ -776,6 +776,7 @@ const LIVE_E2E_OWNING_FILE_JOBS = new Map<string, readonly string[]>([
   ["test/e2e/live/hermes-gpu-startup-proof.ts", ["hermes-gpu-startup"]],
   ["test/helpers/openshell-gateway-start-output.ts", ["hermes-gpu-startup"]],
   ["test/helpers/openshell-components.ts", ["mcp-bridge"]],
+  ["test/e2e/live/mcp-bridge-servers.ts", ["mcp-bridge"]],
   ["test/e2e/live/openclaw-stopped-recovery.ts", ["mcp-bridge"]],
   ["test/e2e/live/openshell-driver-config-test-wrapper.ts", ["mcp-bridge"]],
 ]);
@@ -1307,15 +1308,22 @@ function validateFreeStandingJobSelector(
       : jobName === "mcp-bridge"
         ? ["base-image-publication", "generate-matrix", "package-openshell-sdk"]
         : jobName === "mcp-bridge-dev"
-          ? ["base-image-publication", "generate-matrix", "openshell-dev-artifact"]
+          ? [
+              "base-image-publication",
+              "generate-matrix",
+              "openshell-dev-artifact",
+              "package-openshell-sdk",
+            ]
           : [
                 "mcp-bridge",
                 "openshell-credential-generation-window",
                 "cloud-onboard",
                 "messaging-providers",
               ].includes(jobName)
-            ? ["base-image-publication", "generate-matrix"]
-            : "generate-matrix";
+            ? ["base-image-publication", "generate-matrix", "package-openshell-sdk"]
+            : jobName === "openshell-gateway-auth-contract"
+              ? ["generate-matrix", "package-openshell-sdk"]
+              : "generate-matrix";
   if (!isDeepStrictEqual(job.needs, expectedNeeds)) {
     errors.push(`${jobName} job must depend on generate-matrix`);
   }
@@ -1463,7 +1471,7 @@ function validateFreeStandingInventoryCoverage(
       jobIf === selectedJobsCondition(jobId) ||
       specialSelector ||
       (jobId === "llama-cpp-dgx-spark-qualification" &&
-        jobIf === "${{ needs.llama-cpp-dgx-spark-plan.result == 'success' }}") ||
+        jobIf === "${{ !cancelled() && needs.llama-cpp-dgx-spark-plan.result == 'success' }}") ||
       (jobId === "hermes-e2e" && jobIf.includes("needs.generate-matrix.outputs.hermes_selected"));
     if (!mappingIsRepresented) {
       errors.push(
@@ -1483,7 +1491,7 @@ function validateSharedE2eJob(errors: string[], jobs: WorkflowRecord): void {
   if (job.name !== "Shared E2E (${{ matrix.execution_id }})") {
     errors.push("shared E2E job name must expose the test ID");
   }
-  if (job.needs !== "generate-matrix") {
+  if (!isDeepStrictEqual(job.needs, ["generate-matrix", "package-openshell-sdk"])) {
     errors.push("shared E2E job must depend on generate-matrix");
   }
   if (job.if !== "${{ needs.generate-matrix.outputs.test_matrix != '[]' }}") {
@@ -3233,7 +3241,8 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     errors.push("native Podman staging must use exactly one reviewed action reference");
   }
   if (
-    generateMatrix.if !== undefined ||
+    generateMatrix.if !==
+      "${{ !cancelled() && (needs.package-openshell-sdk.result == 'success' || (needs.package-openshell-sdk.result == 'skipped' && inputs.checkout_sha != '' && (inputs.jobs == 'native-runtime-qualification-producer' || inputs.jobs == 'llama-cpp-dgx-spark-qualification') && inputs.targets == '')) }}" ||
     generateMatrix["continue-on-error"] !== undefined ||
     staging?.if !== undefined ||
     staging?.["continue-on-error"] !== undefined ||

@@ -74,6 +74,21 @@ function applicationWithPendingSelection(
 }
 
 describe("onboarding policy application", () => {
+  it("does not seed OpenClaw policy context during fresh Hermes policy selection", async () => {
+    seedInitialPolicyContext.mockClear();
+    const application = applicationWithPendingSelection(undefined);
+
+    await expect(
+      application.setupPoliciesWithSelection("alpha", {
+        selectedPresets: ["npm"],
+        agent: "hermes",
+      }),
+    ).resolves.toEqual(["npm"]);
+
+    expect(syncPresetSelection).toHaveBeenCalledWith("alpha", [], ["npm"]);
+    expect(seedInitialPolicyContext).not.toHaveBeenCalled();
+  });
+
   it("shares a pending tier until policy setup completes", async () => {
     const loadTier = vi.fn(() => "balanced");
     const application = applicationWithPendingSelection({

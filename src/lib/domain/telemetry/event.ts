@@ -79,8 +79,6 @@ export interface TelemetryModel {
   assignment: TelemetryModelAssignment;
   modelId: string;
   modelStatus: ValueStatus;
-  knownModelKey: string;
-  knownModelKeyStatus: ValueStatus;
   modelSource: string;
   modelSourceStatus: ValueStatus;
   providerProfile: string;
@@ -166,7 +164,7 @@ export interface TelemetryOperationContext {
   scope: TelemetryScope;
   previousVersion?: string;
   targetVersion?: string;
-  installedVersion?: string;
+  installedVersion?: string | null;
   targets: TelemetryTargetReceipt[];
 }
 
@@ -195,6 +193,8 @@ export interface OperationEventParameters extends Omit<TelemetrySnapshot, "targe
     hostArchStatus: ValueStatus;
     hostContext: string;
     hostContextStatus: ValueStatus;
+    hostHardwarePlatform: string;
+    hostHardwarePlatformStatus: ValueStatus;
   };
   location: TelemetryLocation;
   targetResultsStatus: ValueStatus;

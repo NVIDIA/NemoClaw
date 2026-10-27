@@ -127,6 +127,8 @@ $$nemoclaw onboard
 ```
 
 Local Ollama setup treats host-side curl timeouts as retryable probe failures and retries with a larger timeout before reporting validation failure.
+The same value sets how long each request of the native local or provider-neutral inference check waits inside the sandbox during onboarding and rebuild, with a 60-second minimum.
+When that check times out, it reports the number of seconds it waited and names this variable.
 This variable does not extend the later sandbox-readiness wait.
 
 ## Increase the Sandbox Readiness Timeout

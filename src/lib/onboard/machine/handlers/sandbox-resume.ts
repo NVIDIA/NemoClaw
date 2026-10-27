@@ -16,6 +16,22 @@ import {
   toolDisclosureOrDefault,
   type ToolDisclosure,
 } from "../../../tool-disclosure";
+import { validateResourceValue } from "../../../resources-cmd";
+
+/** Return true when a saved resource profile is null or has valid CPU and memory values. */
+export function isValidSavedResourceProfile(
+  profile: { readonly cpu: string; readonly memory: string } | null | undefined,
+): boolean {
+  if (profile === null) return true;
+  if (!profile) return false;
+  try {
+    validateResourceValue(profile.cpu);
+    validateResourceValue(profile.memory);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /** Choose the initial local OpenClaw default only for this session's new reservation. */
 export function initialOpenClawToolDisclosure(input: {

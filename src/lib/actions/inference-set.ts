@@ -1070,6 +1070,20 @@ function observeInferenceRouteForSelection(input: {
   return observeInferenceRouteBeforeMutation(input.deps, input.gatewayName);
 }
 
+function sharedInferenceRouteChanged(
+  nativeProvider: boolean,
+  previous: OpenShellInferenceRouteObservation,
+  provider: string,
+  model: string,
+): boolean {
+  if (nativeProvider) return false;
+  return (
+    previous.state === "unconfigured" ||
+    previous.route.provider !== provider ||
+    previous.route.model !== model
+  );
+}
+
 function providerBackedRouteLacksRollbackTarget(input: {
   nativeProvider: boolean;
   directProviderBinding: boolean;
@@ -1590,6 +1604,7 @@ async function runInferenceSetWithoutHostLock(
       selectingNative: selectingNative && !selectingNativeLocal,
       provider,
       expectedAttachment: nativeProviderAuthority,
+      previousAttachment: previousNativeAttachment,
       gatewayName: preparedRoute.gatewayName,
       sandboxName,
       endpointUrl: registryMetadata.endpointUrl,
@@ -2016,9 +2031,6 @@ async function runInferenceSetWithoutHostLock(
           `in-sandbox config failed: ${detail}`,
       );
       failOpenClawInferenceConfigSync(agentName, sandboxName, detail, deps);
-      deps.log(
-        `  Run '${CLI_NAME} ${sandboxName} rebuild' to finish applying the model inside the sandbox.`,
-      );
     }
     const sessionUpdated =
       agentName === "openclaw"
@@ -2071,7 +2083,10 @@ async function runInferenceSetWithoutHostLock(
       throw new InferenceSetError(
         `Hermes inference route synchronization did not complete for '${sandboxName}'. ` +
           `The OpenShell route and NemoClaw registry remain committed, but the in-sandbox ` +
-          `Hermes configuration did not fully converge. Run '${CLI_NAME} ${sandboxName} rebuild' to converge it.`,
+          `Hermes configuration did not fully converge. Review the preceding configuration warning. ` +
+          `If integrity metadata is invalid, back up needed data and restore matching configuration ` +
+          `and integrity files from a trusted backup or create a fresh Hermes sandbox. ` +
+          `Rebuild preserves the native home and may retain the mismatch.`,
       );
     }
     await retirePreviousOpenClawLocal({
@@ -2087,12 +2102,15 @@ async function runInferenceSetWithoutHostLock(
         patched.changed,
         retryingOpenClawConfigSync,
         appliedProvider,
-        rollbackRoute?.provider !== provider,
-        rollbackRoute?.model !== model,
+        Boolean(nativeSelection.providerChanged),
+        nativeAttachmentChanged,
+        nativeLocalAttachmentChanged,
+        sharedInferenceRouteChanged(selectingNative, preMutationRoute, provider, model),
         previousProvider !== provider,
         previousModel !== model,
         previousInferenceApi !== preferredInferenceApi,
         (entry.endpointUrl ?? null) !== (registryMetadata.endpointUrl ?? null),
+        (entry.credentialEnv ?? null) !== (registryMetadata.credentialEnv ?? null),
       ],
       expectedGatewayName,
     );

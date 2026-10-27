@@ -283,6 +283,63 @@ describe("selectPreUpgradeBackupForCreate", () => {
     expect(warnSpy).toHaveBeenCalledWith(expect.stringMatching(/installer restore flag not set/));
   });
 
+  it("does not describe a route-only create reservation as an existing sandbox", () => {
+    expect(
+      select({
+        registryEntry: {
+          name: "my-assistant",
+          pendingRouteReservation: true,
+          reservationSessionId: "session-create",
+          provider: "nvidia-prod",
+          model: "model",
+        },
+      }),
+    ).toBeNull();
+    expect(warnSpy).not.toHaveBeenCalled();
+    expect(getLatestBackupSpy).not.toHaveBeenCalled();
+  });
+
+  it("retains the warning for an existing sandbox during a route reservation", () => {
+    expect(
+      select({
+        registryEntry: {
+          name: "my-assistant",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          pendingRouteReservation: true,
+        },
+      }),
+    ).toBeNull();
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringMatching(/installer restore flag not set/));
+  });
+
+  it("retains the warning for a verified create checkpoint on a pending route", () => {
+    expect(
+      select({
+        registryEntry: {
+          name: "my-assistant",
+          gatewayName: GATEWAY_NAME,
+          gatewayPort: GATEWAY_PORT,
+          pendingRouteReservation: true,
+          reservationSessionId: "session-create",
+          lifecycleGeneration: "generation-1",
+          lifecycleLiveIdentityFingerprint: "a".repeat(64),
+          pendingCreateIdentity: {
+            schemaVersion: 1,
+            state: "verified-create",
+            gatewayName: GATEWAY_NAME,
+            gatewayPort: GATEWAY_PORT,
+            sandboxName: "my-assistant",
+            lifecycleGeneration: "generation-1",
+            sandboxIdentityFingerprint: "a".repeat(64),
+            route: "none",
+          },
+        },
+      }),
+    ).toBeNull();
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringMatching(/installer restore flag not set/));
+    expect(getLatestBackupSpy).not.toHaveBeenCalled();
+  });
+
   it("does not ask for a source proof when installer restore intent is unset (#7736)", () => {
     const onProofRequested = vi.fn();
 
