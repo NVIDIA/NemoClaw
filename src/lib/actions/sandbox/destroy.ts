@@ -93,6 +93,7 @@ import {
   resolveSandboxDestroyRuntimeSelection,
   retireManagedVllmForDestroyedSandbox,
   listInferenceRouteOwnersAcrossGatewayRoots,
+  listSandboxDestroyGatewayRegistrations,
   stopModelRouterForDestroyedSandbox,
   stopDestroyedSandboxProxy,
   teardownSandboxDashboardForward,
@@ -1355,6 +1356,8 @@ async function destroySandboxUnlocked(
   const registryEntryAbsent =
     removalOutcome.status === "complete" ||
     (removalOutcome.status === "not-found" && !getRegisteredSandbox(sandboxName));
+  const listCleanupGatewaySandboxes = () =>
+    listSandboxDestroyGatewayRegistrations(listRegisteredSandboxes, cleanupGatewayName);
   if (removalOutcome.status === "blocked") {
     const providerId = normalizeRuntimeProviderIdentity(
       (getRegisteredSandbox(sandboxName) ?? sandbox)?.openshellDriver,
@@ -1500,7 +1503,7 @@ async function destroySandboxUnlocked(
   const cleanupDecision =
     deleteSucceededOrAlreadyGone &&
     registryEntryAbsent &&
-    listRegisteredSandboxes().sandboxes.length === 0
+    listCleanupGatewaySandboxes().sandboxes.length === 0
       ? resolveDestroyGatewayCleanupDecision(normalized, {
           nonInteractive: isDestroyNonInteractiveEnv(),
           platform: process.platform,
@@ -1519,7 +1522,7 @@ async function destroySandboxUnlocked(
         },
         {
           ...deps.finalGatewayCleanup,
-          listSandboxes: listRegisteredSandboxes,
+          listSandboxes: listCleanupGatewaySandboxes,
           ...(cleanupCaptureOpenshell ? { captureOpenshell: cleanupCaptureOpenshell } : {}),
         },
       );

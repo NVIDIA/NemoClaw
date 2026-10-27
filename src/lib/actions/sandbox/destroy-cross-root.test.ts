@@ -69,6 +69,51 @@ describe("destroySandbox cross-root registry authority", () => {
     expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
   });
 
+  it("cleans up the destroyed gateway while preserving a sandbox on another gateway", async () => {
+    for (const [port, name] of [
+      [8244, "alpha"],
+      [8245, "beta"],
+    ] as const) {
+      const registryDir = path.join(home, ".nemoclaw", "gateways", String(port));
+      fs.mkdirSync(registryDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(registryDir, "sandboxes.json"),
+        JSON.stringify({
+          defaultSandbox: name,
+          defaultSelectionRevision: 1,
+          sandboxes: {
+            [name]: {
+              name,
+              agent: "openclaw",
+              provider: "ollama-local",
+              model: "nvidia/nemotron",
+              gatewayName: `nemoclaw-${String(port)}`,
+              gatewayPort: port,
+            },
+          },
+        }),
+      );
+    }
+    const harness = createDestroyHarness();
+
+    await expect(
+      harness.destroySandbox("beta", { yes: true, cleanupGateway: true }),
+    ).resolves.toBeUndefined();
+
+    expect(harness.cleanupGatewaySpy).toHaveBeenCalledWith("nemoclaw-8245", expect.any(Function));
+    expect(harness.cleanupGatewaySpy).toHaveBeenCalledOnce();
+    expect(
+      JSON.parse(
+        fs.readFileSync(path.join(home, ".nemoclaw", "gateways", "8244", "sandboxes.json"), "utf8"),
+      ),
+    ).toMatchObject({ sandboxes: { alpha: { name: "alpha" } } });
+    expect(
+      JSON.parse(
+        fs.readFileSync(path.join(home, ".nemoclaw", "gateways", "8245", "sandboxes.json"), "utf8"),
+      ),
+    ).toMatchObject({ sandboxes: {} });
+  });
+
   it("preserves the gateway when another sibling-root sandbox remains", async () => {
     const registryDir = path.join(home, ".nemoclaw", "gateways", "8245");
     const registryFile = path.join(registryDir, "sandboxes.json");

@@ -181,6 +181,9 @@ describe("destroySandbox final gateway decision", testTimeoutOptions(30_000), ()
       )
       .mockImplementationOnce(async (_gatewayName: unknown, operation: unknown) => {
         harness.setRegisteredSandboxCount(1);
+        vi.mocked(harness.registry.listSandboxes).mockReturnValue({
+          sandboxes: [{ name: "beta", gatewayName: "nemoclaw-19080", gatewayPort: 19080 }],
+        } as ReturnType<typeof harness.registry.listSandboxes>);
         return (operation as () => Promise<unknown>)();
       });
 

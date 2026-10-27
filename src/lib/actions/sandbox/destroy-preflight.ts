@@ -182,6 +182,20 @@ export function resolveSandboxDestroyRegistryAuthority(
   };
 }
 
+/** Keep final gateway cleanup local to its owner; shared host cleanup still uses all roots. */
+export function listSandboxDestroyGatewayRegistrations(
+  listSandboxes: typeof registry.listSandboxes,
+  gatewayName: string,
+): ReturnType<typeof registry.listSandboxes> {
+  const registered = listSandboxes();
+  return {
+    ...registered,
+    sandboxes: registered.sandboxes.filter(
+      (entry) => getPersistedSandboxTargetGatewayName(entry) === gatewayName,
+    ),
+  };
+}
+
 export function resolveSandboxDestroyGatewayName(
   sandboxName: string,
   sandbox: SandboxEntry | null,
