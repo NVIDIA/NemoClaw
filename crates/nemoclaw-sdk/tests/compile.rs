@@ -365,7 +365,7 @@ fn managed_plans_query_selected_engine_and_image_without_probe_resources() {
             graph["output"]["discovery"]["value"]["gateway_prerequisites"],
             "${data.openshell_gateway_prerequisites.current.observation_json}"
         );
-        let image = &graph["data"]["fabric_harnesses"]["sandbox_0"];
+        let image = &graph["data"]["fabric_harnesses"]["sandbox_assistant"];
         assert_eq!(
             image["image"],
             document.spec.sandboxes["assistant"].image.ref_
@@ -432,7 +432,7 @@ fn arbitrary_fabric_harness_identifier_survives_runtime_compilation() {
     // The sandbox launches what Fabric computed; it holds no agent runtime of its own.
     assert_eq!(
         graph["resource"]["openshell_sandbox"]["assistant"]["launch_json"],
-        "${data.fabric_harnesses.sandbox_0.launch_json}"
+        "${data.fabric_harnesses.sandbox_assistant.launch_json}"
     );
     assert!(
         graph["resource"]["openshell_sandbox"]["assistant"]
@@ -495,6 +495,33 @@ fn adding_an_image_keeps_existing_registration_and_separates_executable_scopes()
         let binaries = profile["binaries"].as_str().unwrap();
         assert!(binaries.starts_with("${jsondecode(data.fabric_harnesses."));
         assert!(binaries.ends_with(".binaries_json)}"));
+    }
+}
+
+#[test]
+fn adding_a_sandbox_that_sorts_first_leaves_existing_sandboxes_unchanged() {
+    let document =
+        Document::parse(include_bytes!("fixtures/config/local.yaml").as_slice()).unwrap();
+    let generations = ["workspace", "provider", "sandbox"]
+        .map(|kind| (kind.into(), "a".repeat(32)))
+        .into();
+    let before = compile(&document, &generations, "0.1.0").unwrap();
+    // `aaa` sorts before `assistant`. Its own image gives it its own
+    // registrations, so nothing the existing sandbox uses is shared.
+    let mut changed = document.clone();
+    let mut first = changed.spec.sandboxes["assistant"].clone();
+    first.image.ref_ = format!("fixture/other@sha256:{}", "b".repeat(64));
+    changed.spec.sandboxes.insert("aaa".into(), first);
+    let after = compile(&changed, &generations, "0.1.0").unwrap();
+    for kind in ["resource", "data"] {
+        for (block_type, blocks) in before[kind].as_object().unwrap() {
+            for (name, block) in blocks.as_object().unwrap() {
+                assert_eq!(
+                    &after[kind][block_type][name], block,
+                    "{kind}.{block_type}.{name} changed"
+                );
+            }
+        }
     }
 }
 

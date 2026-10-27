@@ -3,10 +3,10 @@
 
 # Managed Ollama Runtime Sources
 
-This artifact extends the upstream Ollama 0.40.10 image, pinned by the multi-platform manifest digest in its Dockerfile.
+This artifact extends the upstream Ollama 0.40.11 image, pinned by the multi-platform manifest digest in its Dockerfile.
 The overlay retains the unmodified Ollama MIT license at `/opt/nemoclaw/source/ollama-LICENSE`, downloaded with the pinned SHA-256 in its Dockerfile.
 It preserves the base image filesystem and does not replace existing upstream notices.
-[Ollama 0.40.10](https://github.com/ollama/ollama/tree/v0.40.10) is distributed under its [MIT license](https://github.com/ollama/ollama/blob/v0.40.10/LICENSE).
+[Ollama 0.40.11](https://github.com/ollama/ollama/tree/v0.40.11) is distributed under its [MIT license](https://github.com/ollama/ollama/blob/v0.40.11/LICENSE).
 
 The NemoClaw integration added on 2026-09-18 supplies the shared supervisor and selects it as the entrypoint.
 It does not patch Ollama source.

@@ -80,7 +80,7 @@ impl Provider for OpenShellProvider {
         _: &mut Diagnostics,
     ) -> Option<HashMap<String, Box<dyn DynamicResource>>> {
         let backend = Arc::new(OpenShellBackend(self.client.clone()));
-        #[allow(unused_mut)]
+        #[allow(unused_mut, reason = "only the installation feature extends this map")]
         let mut resources: HashMap<String, Box<dyn DynamicResource>> = crate::definitions()
             .into_iter()
             .map(|definition| {
@@ -106,7 +106,7 @@ impl Provider for OpenShellProvider {
         &self,
         _: &mut Diagnostics,
     ) -> Option<HashMap<String, Box<dyn DynamicDataSource>>> {
-        #[allow(unused_mut)]
+        #[allow(unused_mut, reason = "only the installation feature extends this map")]
         let mut sources = HashMap::from([(
             "gateway".into(),
             Box::new(GatewayDataSource(self.client.clone())) as Box<dyn DynamicDataSource>,

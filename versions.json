@@ -1,7 +1,7 @@
 {
-  "opentofu": "1.12.8",
-  "openshell": "0.1.4",
-  "ollama": "0.40.10",
+  "opentofu": "1.12.9",
+  "openshell": "0.1.5",
+  "ollama": "0.40.11",
   "platforms": {
     "linux_arm64": {
       "kind": {
@@ -9,16 +9,16 @@
         "sha256": "20022bee6cfcd5086cb7234d218e3454e6090022f2a8f55d1fa7fcf42c3867a2"
       },
       "tofu": {
-        "url": "https://github.com/opentofu/opentofu/releases/download/v1.12.8/tofu_1.12.8_linux_arm64.zip",
-        "sha256": "255c39923b2e1ad969fbdb6460e43cbbb90156b58d586fa6f361c2acd6403afb"
+        "url": "https://github.com/opentofu/opentofu/releases/download/v1.12.9/tofu_1.12.9_linux_arm64.zip",
+        "sha256": "454b25e0675f13da0b794dfcc562a16f64cb997b2491d5102170102aec701d4f"
       },
       "protoc": {
         "url": "https://github.com/protocolbuffers/protobuf/releases/download/v36.2/protoc-36.2-linux-aarch_64.zip",
         "sha256": "8b8f18bd2b30346efbc698dd5a73dd7c805f3ef8380f6dfc95c768f3f1852f6a"
       },
       "nextest": {
-        "url": "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.148/cargo-nextest-0.9.148-aarch64-unknown-linux-gnu.tar.gz",
-        "sha256": "81469eb963ef883fd590e60189e77d6aba3d91b418591d3391f50fe3e9480d2b"
+        "url": "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.150/cargo-nextest-0.9.150-aarch64-unknown-linux-gnu.tar.gz",
+        "sha256": "9164568e9840c6509177086828ac7d3178c2d8feb0658b4d2bff62fa620e98c8"
       },
       "dockerProvider": {
         "url": "https://github.com/kreuzwerker/terraform-provider-docker/releases/download/v4.6.0/terraform-provider-docker_4.6.0_linux_arm64.zip",
@@ -35,16 +35,16 @@
         "sha256": "aee6151561422756b764a4ae28e7f44cda5af5a9eead3cc9985112b1de8d8e0d"
       },
       "tofu": {
-        "url": "https://github.com/opentofu/opentofu/releases/download/v1.12.8/tofu_1.12.8_linux_amd64.zip",
-        "sha256": "e280accc5e074c69d6b731cca939d4d030fdffc616b146e35227cd0c9208ba82"
+        "url": "https://github.com/opentofu/opentofu/releases/download/v1.12.9/tofu_1.12.9_linux_amd64.zip",
+        "sha256": "da7902a32837c2c8a0a5f999c4fbdc622ef2faedbc1755d6841bf2353a5079c0"
       },
       "protoc": {
         "url": "https://github.com/protocolbuffers/protobuf/releases/download/v36.2/protoc-36.2-linux-x86_64.zip",
         "sha256": "121f6c7afe1d4d0e3ea6aab9432038599250134cbf4474cb1167d2c7decd4278"
       },
       "nextest": {
-        "url": "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.148/cargo-nextest-0.9.148-x86_64-unknown-linux-gnu.tar.gz",
-        "sha256": "223ba936714cc861a9cdedad5a8eb664dfdd69d6fbdf6cea6aa8184f523290dc"
+        "url": "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.150/cargo-nextest-0.9.150-x86_64-unknown-linux-gnu.tar.gz",
+        "sha256": "b0959bc64232974224cf9fb22c915845398c0e8668fa7831eb5b43fb1eef781f"
       },
       "dockerProvider": {
         "url": "https://github.com/kreuzwerker/terraform-provider-docker/releases/download/v4.6.0/terraform-provider-docker_4.6.0_linux_amd64.zip",
@@ -57,16 +57,16 @@
     },
     "darwin_arm64": {
       "tofu": {
-        "url": "https://github.com/opentofu/opentofu/releases/download/v1.12.8/tofu_1.12.8_darwin_arm64.zip",
-        "sha256": "b3974ac6b17b2e283a7c3e5dace22d9b70b0d96b4f0d3714b6ed04153694e53b"
+        "url": "https://github.com/opentofu/opentofu/releases/download/v1.12.9/tofu_1.12.9_darwin_arm64.zip",
+        "sha256": "5029ca95f76fe1f9bebee9be8082698ec63651a1b8a5d4a2f17bf100e30610b0"
       },
       "protoc": {
         "url": "https://github.com/protocolbuffers/protobuf/releases/download/v36.2/protoc-36.2-osx-aarch_64.zip",
         "sha256": "9cd98a532c5c5e0c4161314de0225de27e4c8a323917b6ea7b1b714d3ae23466"
       },
       "nextest": {
-        "url": "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.148/cargo-nextest-0.9.148-universal-apple-darwin.tar.gz",
-        "sha256": "6c23b7fb4ca82c571fc8dfedbab45bfa773d45918f933170c85d21cd7f4b852b"
+        "url": "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.150/cargo-nextest-0.9.150-universal-apple-darwin.tar.gz",
+        "sha256": "82a759b4d218d38359424196ab244c470e8f7c7d149c814fbbeef4d67c3c301a"
       },
       "dockerProvider": {
         "url": "https://github.com/kreuzwerker/terraform-provider-docker/releases/download/v4.6.0/terraform-provider-docker_4.6.0_darwin_arm64.zip",
@@ -79,16 +79,16 @@
     },
     "darwin_amd64": {
       "tofu": {
-        "url": "https://github.com/opentofu/opentofu/releases/download/v1.12.8/tofu_1.12.8_darwin_amd64.zip",
-        "sha256": "fe3a4fda983bc6919ba80a31ca4ea123cbaae18283c28515e36d512f66b59458"
+        "url": "https://github.com/opentofu/opentofu/releases/download/v1.12.9/tofu_1.12.9_darwin_amd64.zip",
+        "sha256": "2fb316a38f75edb78e282b9a83d2010afedb1f5bd5c29666ab8806ea9ffee353"
       },
       "protoc": {
         "url": "https://github.com/protocolbuffers/protobuf/releases/download/v36.2/protoc-36.2-osx-x86_64.zip",
         "sha256": "228cc7add4616cc14ca5e80dee83209d44449a7aee95a914ae748fa374efb078"
       },
       "nextest": {
-        "url": "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.148/cargo-nextest-0.9.148-universal-apple-darwin.tar.gz",
-        "sha256": "6c23b7fb4ca82c571fc8dfedbab45bfa773d45918f933170c85d21cd7f4b852b"
+        "url": "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.150/cargo-nextest-0.9.150-universal-apple-darwin.tar.gz",
+        "sha256": "82a759b4d218d38359424196ab244c470e8f7c7d149c814fbbeef4d67c3c301a"
       },
       "dockerProvider": {
         "url": "https://github.com/kreuzwerker/terraform-provider-docker/releases/download/v4.6.0/terraform-provider-docker_4.6.0_darwin_amd64.zip",
@@ -101,16 +101,16 @@
     },
     "windows_amd64": {
       "tofu": {
-        "url": "https://github.com/opentofu/opentofu/releases/download/v1.12.8/tofu_1.12.8_windows_amd64.zip",
-        "sha256": "10bbdf1856184dc18e05090692e0a67c788e532cc6ee593bcf12902fc873b7cd"
+        "url": "https://github.com/opentofu/opentofu/releases/download/v1.12.9/tofu_1.12.9_windows_amd64.zip",
+        "sha256": "c05bdcfef00c91e38f92b27530fb146016679835193c8171fc48758a4a2e322d"
       },
       "protoc": {
         "url": "https://github.com/protocolbuffers/protobuf/releases/download/v36.2/protoc-36.2-win64.zip",
         "sha256": "f0c128dc0d8492eceece83bb459a4c0e316764b929ffbf1aa416357fd644edd3"
       },
       "nextest": {
-        "url": "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.148/cargo-nextest-0.9.148-x86_64-pc-windows-msvc.tar.gz",
-        "sha256": "bef17504bed9d4994cf860c122e84a90d613b92e6d89584fa9e28bd53ad42e15"
+        "url": "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.150/cargo-nextest-0.9.150-x86_64-pc-windows-msvc.tar.gz",
+        "sha256": "b7a8bf567140b8b366716f2dea27b32e088dc12f53597315f976d0dbf7c6ade8"
       },
       "dockerProvider": {
         "url": "https://github.com/kreuzwerker/terraform-provider-docker/releases/download/v4.6.0/terraform-provider-docker_4.6.0_windows_amd64.zip",
@@ -124,14 +124,14 @@
   },
   "rust": "1.99.1",
   "protobuf": "36.2",
-  "nextest": "0.9.148",
-  "openshellRevision": "5a7728c304b5528e954e9ae900cf21f84e1a12b1",
+  "nextest": "0.9.150",
+  "openshellRevision": "bdb956f2cd65a635f1294fccf1d138d263bf650f",
   "images": {
     "agent": "nc-fabric-owner-20260924@sha256:c4c0d3add3869e49d0ce8d03bd7e41bbe2682d0df285ef6fde5f181b123cf83e",
-    "gateway": "ghcr.io/nvidia/openshell/gateway@sha256:bdb4fe248070032c88be78f029dad9325cb698480e90486e1413a674a5d8edc8",
-    "supervisor": "ghcr.io/nvidia/openshell/supervisor@sha256:aa681d8264af6ee860e38349ed3c76609a51778eb6d0f02743df03787b80a290",
-    "sandboxRuntime": "ghcr.io/nvidia/openshell/sandbox@sha256:ca00c094aeaa60681b8196cda18ab3c5dd5f7d782d4c36798256427b67599070",
-    "gatewayChart": "oci://ghcr.io/nvidia/openshell/helm-chart@sha256:46c21e50abbe88c742ef46e77728e5201398706061b19871eaf3303adac274d6",
+    "gateway": "ghcr.io/nvidia/openshell/gateway@sha256:ca0bc15a045017ee20bfab682f1a561eca6e6c6ed7d021d20641da24aaa6dfb6",
+    "supervisor": "ghcr.io/nvidia/openshell/supervisor@sha256:fabcd01f656e9d23df4386f82e80b4f48b90f3452d7d5c58889007643a069161",
+    "sandboxRuntime": "ghcr.io/nvidia/openshell/sandbox@sha256:e9adf9ecde328122414ad2ee8c6fc5d5b389e4cf168daf4357c46f5a77d55851",
+    "gatewayChart": "oci://ghcr.io/nvidia/openshell/helm-chart@sha256:e88977ce447fd31c6278697af22f8437b59eae42c9fae9c0e480498bf59d3129",
     "developmentIssuer": "docker.io/nginxinc/nginx-unprivileged@sha256:5aea7cc516b419e3526f47dd1531be31a56a046cfe44754d94f9383e13e2ee99",
     "kindNode": "kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5"
   },

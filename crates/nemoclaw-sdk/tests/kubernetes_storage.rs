@@ -86,17 +86,45 @@ async fn storage_creates_the_namespace_and_key_and_records_them() {
 }
 
 #[tokio::test]
-async fn an_existing_namespace_is_not_taken_over() {
+async fn an_existing_namespace_is_not_taken_over_and_the_refusal_names_it() {
     let objects = cluster(true);
     objects
         .insert(json!({"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": "agents"}}));
     let fixture = objects.serve().await;
     let directory = tempfile::tempdir().unwrap();
     let cluster = Cluster::new(client(&fixture), OWNER, "generation-1");
-    assert!(matches!(
-        ensure_storage(&cluster, &storage(directory.path())).await,
-        Err(ObservationError::BindingMismatch)
-    ));
+    let error = ensure_storage(&cluster, &storage(directory.path()))
+        .await
+        .unwrap_err();
+    let message = error.to_string();
+    assert!(
+        message.contains("Namespace agents already exists"),
+        "{message}"
+    );
+}
+
+#[tokio::test]
+async fn a_replaced_key_secret_is_refused_by_name() {
+    let objects = cluster(true);
+    let fixture = objects.serve().await;
+    let directory = tempfile::tempdir().unwrap();
+    let cluster = Cluster::new(client(&fixture), OWNER, "generation-1");
+    ensure_storage(&cluster, &storage(directory.path()))
+        .await
+        .unwrap();
+    let mut key = objects
+        .get("v1", "Secret", "agents", "nc-0123456789abcdef-gateway-kek")
+        .unwrap();
+    key["metadata"]["uid"] = json!("replacement");
+    objects.insert(key);
+    let error = ensure_storage(&cluster, &storage(directory.path()))
+        .await
+        .unwrap_err();
+    let message = error.to_string();
+    assert!(
+        message.contains("Secret agents/nc-0123456789abcdef-gateway-kek was replaced"),
+        "{message}"
+    );
 }
 
 #[tokio::test]

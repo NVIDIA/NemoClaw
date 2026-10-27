@@ -237,7 +237,11 @@ pub fn install_protoc(
     let compiler = PathBuf::from("bin").join(if windows { "protoc.exe" } else { "protoc" });
     let mut zip =
         zip::ZipArchive::new(Cursor::new(archive)).map_err(|_| "invalid protoc archive")?;
-    if !zip.file_names().any(|name| Path::new(name) == compiler) {
+    // Names are decoded on read; an undecodable name is not the compiler.
+    if !zip
+        .file_names()
+        .any(|name| matches!(name, Ok(name) if Path::new(&*name) == compiler))
+    {
         return Err("protoc archive lacks its compiler".into());
     }
     replace_directory(destination, |root| {
@@ -245,7 +249,11 @@ pub fn install_protoc(
             let mut entry = zip
                 .by_index(index)
                 .map_err(|_| "unreadable protoc archive entry")?;
-            let path = contained(root, Path::new(entry.name()))?;
+            let name = entry
+                .name()
+                .map_err(|_| "unreadable protoc archive entry")?;
+            let path = contained(root, Path::new(&*name))?;
+            drop(name);
             if entry.is_dir() {
                 fs::create_dir_all(&path).map_err(|_| "cannot create protoc directory")?;
                 continue;

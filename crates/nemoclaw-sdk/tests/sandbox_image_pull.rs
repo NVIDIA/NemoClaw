@@ -76,28 +76,28 @@ fn a_docker_sandbox_image_is_pulled_before_the_reads_that_need_it() {
         let reads = &graph["data"]["fabric_harnesses"];
         let accepts = |read: &Value| read["lifecycle"]["postcondition"][1]["condition"].clone();
         assert_eq!(
-            accepts(&reads["sandbox_0"]),
+            accepts(&reads["sandbox_assistant"]),
             "${self.runtime_json != \"\" || self.status == \"unavailable\"}"
         );
-        assert!(reads["sandbox_0"].get("image_id").is_none());
+        assert!(reads["sandbox_assistant"].get("image_id").is_none());
         // The reads the sandbox and its agent use wait for the pull, and
         // require the runtime the pulled image declares.
-        let acquired = &reads["sandbox_0_acquired"];
+        let acquired = &reads["sandbox_assistant_acquired"];
         assert_eq!(acquired["image_id"], image_id.as_str());
-        assert_eq!(acquired["image"], reads["sandbox_0"]["image"]);
+        assert_eq!(acquired["image"], reads["sandbox_assistant"]["image"]);
         assert_eq!(accepts(acquired), "${self.runtime_json != \"\"}");
         let harnesses = &graph["data"]["fabric_harness"];
         let harness = &harnesses[format!("{}_acquired", sandbox.name)];
         assert_eq!(harness["image_id"], image_id.as_str());
-        assert_eq!(harness["image"], reads["sandbox_0"]["image"]);
+        assert_eq!(harness["image"], reads["sandbox_assistant"]["image"]);
         assert!(harnesses.get(sandbox.name).is_none());
         let resources = graph["resource"].to_string();
         assert!(
-            resources.contains("data.fabric_harnesses.sandbox_0_acquired."),
+            resources.contains("data.fabric_harnesses.sandbox_assistant_acquired."),
             "{example}"
         );
         assert!(
-            !resources.contains("data.fabric_harnesses.sandbox_0."),
+            !resources.contains("data.fabric_harnesses.sandbox_assistant."),
             "{example}"
         );
     }
@@ -111,8 +111,8 @@ fn a_kubernetes_sandbox_reads_its_metadata_bundle_without_a_pull() {
     assert!(graph["resource"].get("docker_image").is_none());
     let reads = &graph["data"]["fabric_harnesses"];
     assert_eq!(
-        reads["sandbox_0"]["lifecycle"]["postcondition"][1]["condition"],
+        reads["sandbox_assistant"]["lifecycle"]["postcondition"][1]["condition"],
         "${self.runtime_json != \"\"}"
     );
-    assert!(reads.get("sandbox_0_acquired").is_none());
+    assert!(reads.get("sandbox_assistant_acquired").is_none());
 }

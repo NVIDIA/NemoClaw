@@ -33,7 +33,7 @@ fn fixture(mut document: Document) -> Option<String> {
     if encoded.contains("managedService") {
         return None;
     }
-    for (index, sandbox) in document.spec.sandboxes.values().enumerate() {
+    for (name, sandbox) in &document.spec.sandboxes {
         let kind = sandbox.harness.as_ref().map_or_else(
             || "nvidia.fabric.openclaw".to_owned(),
             |harness| harness.kind.to_string(),
@@ -45,8 +45,8 @@ fn fixture(mut document: Document) -> Option<String> {
         .unwrap();
         // On Docker the sandbox takes them from the read after its image pull.
         for read in [
-            format!("sandbox_{index}"),
-            format!("sandbox_{index}_acquired"),
+            format!("sandbox_{name}"),
+            format!("sandbox_{name}_acquired"),
         ] {
             encoded = encoded
                 .replace(

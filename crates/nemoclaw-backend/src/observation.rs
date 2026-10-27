@@ -62,6 +62,9 @@ pub enum ObservationError {
     Extension,
     Incomplete,
     BindingMismatch,
+    /// A binding mismatch whose detail names the object and what changed.
+    /// The detail holds only names and UIDs, never secret values.
+    BindingChanged(Box<str>),
     /// A fixed, non-secret diagnostic from an owning backend.
     Backend(&'static str),
     Rejected {
@@ -135,6 +138,10 @@ impl fmt::Display for ObservationError {
             Self::BindingMismatch => {
                 f.write_str("observed ownership, generation, or durable identity changed")
             }
+            Self::BindingChanged(detail) => write!(
+                f,
+                "observed ownership, generation, or durable identity changed: {detail}"
+            ),
         }
     }
 }

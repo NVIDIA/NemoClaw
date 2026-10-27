@@ -21,9 +21,10 @@ struct Registry {
 }
 impl Drop for Registry {
     fn drop(&mut self) {
-        // Only the exact container created by this fixture is removed.
+        // Only the exact container created by this fixture is removed, with
+        // the anonymous volume the registry image declares for its storage.
         let _ = std::process::Command::new("docker")
-            .args(["rm", "--force", &self.id])
+            .args(["rm", "--force", "--volumes", &self.id])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())

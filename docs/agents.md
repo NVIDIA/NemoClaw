@@ -160,11 +160,11 @@ sandboxes:
           - type: volume
             source: assistant-skills
             target: /sandbox/skills
-    agent:
-      harness:
-        config:
-          skills:
-            paths: [/sandbox/skills]
+    harness:
+      kind: nvidia.fabric.openclaw
+      config:
+        skills:
+          paths: [/sandbox/skills]
 ```
 
 In HCL, use `openshell_sandbox`'s [`driver_config`](provider.md#openshell-resources-and-data-sources) and `fabric_agent`'s `skills` block:

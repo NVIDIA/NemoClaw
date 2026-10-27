@@ -309,7 +309,7 @@ fn managed_kubernetes_discovery_never_uses_a_local_container_engine() {
             .get("nemoclaw_inference_capabilities")
             .is_none()
     );
-    let image = &agents["data"]["fabric_harnesses"]["sandbox_0"];
+    let image = &agents["data"]["fabric_harnesses"]["sandbox_assistant"];
     assert_eq!(image["engine"], "");
     assert_eq!(image["metadata_env"], "TEST_IMAGE_METADATA");
     assert!(image.get("architecture").is_none());

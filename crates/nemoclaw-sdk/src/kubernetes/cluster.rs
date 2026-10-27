@@ -16,6 +16,9 @@ use kube::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+/// Why an object at an address this deployment wants is refused.
+pub const NOT_ADOPTED: &str = "already exists, and this deployment does not adopt it";
+
 /// Label holding the deployment's `metadata.uid`.
 pub const OWNER_LABEL: &str = "nemoclaw.nvidia.com/uid";
 /// Label holding the generation that created the object.
@@ -50,6 +53,20 @@ impl Owned {
             name: text("/metadata/name"),
             uid: uid.into(),
         }
+    }
+
+    /// The object's kind and address, such as `Secret agents/key`.
+    pub fn address(&self) -> String {
+        if self.namespace.is_empty() {
+            format!("{} {}", self.kind, self.name)
+        } else {
+            format!("{} {}/{}", self.kind, self.namespace, self.name)
+        }
+    }
+
+    /// A binding mismatch that names this object.
+    pub fn changed(&self, what: &str) -> ObservationError {
+        ObservationError::BindingChanged(format!("{} {what}", self.address()).into())
     }
 }
 
@@ -107,8 +124,8 @@ impl Cluster {
             .map_err(failure)
     }
 
-    /// Create `object` with the owner and generation labels. Fails with
-    /// `BindingMismatch` if an object already exists at that address.
+    /// Create `object` with the owner and generation labels. Fails with a
+    /// binding mismatch naming the object if one already exists at that address.
     pub async fn create(&self, mut object: Value) -> Result<Owned, ObservationError> {
         let labels = object
             .pointer_mut("/metadata")
@@ -126,7 +143,10 @@ impl Cluster {
             .api(&address.api_version, &address.kind, &address.namespace)
             .create(&PostParams::default(), &object)
             .await
-            .map_err(failure)?;
+            .map_err(|error| match error {
+                kube::Error::Api(status) if status.code == 409 => address.changed(NOT_ADOPTED),
+                error => failure(error),
+            })?;
         let uid = created.metadata.uid.ok_or(ObservationError::Incomplete)?;
         Ok(Owned { uid, ..address })
     }
@@ -136,22 +156,28 @@ impl Cluster {
         let object = self
             .get(owned)
             .await?
-            .ok_or(ObservationError::BindingMismatch)?;
-        let ours = object.metadata.uid.as_deref() == Some(owned.uid.as_str())
-            && object
-                .metadata
-                .labels
-                .as_ref()
-                .and_then(|labels| labels.get(OWNER_LABEL))
-                == Some(&self.owner);
-        if !ours {
-            return Err(ObservationError::BindingMismatch);
+            .ok_or_else(|| owned.changed("is missing"))?;
+        let uid = object.metadata.uid.as_deref().unwrap_or("");
+        if uid != owned.uid {
+            return Err(owned.changed(&format!(
+                "was replaced: recorded UID {}, found {uid}",
+                owned.uid
+            )));
+        }
+        let labelled = object
+            .metadata
+            .labels
+            .as_ref()
+            .and_then(|labels| labels.get(OWNER_LABEL))
+            == Some(&self.owner);
+        if !labelled {
+            return Err(owned.changed("no longer carries this deployment's owner label"));
         }
         Ok(object)
     }
 
-    /// Delete the recorded object. Succeeds if it is already gone; fails with
-    /// `BindingMismatch` if another object has taken its address.
+    /// Delete the recorded object. Succeeds if it is already gone; fails with a
+    /// binding mismatch naming the object if another object has taken its address.
     pub async fn delete(&self, owned: &Owned) -> Result<(), ObservationError> {
         let parameters = DeleteParams {
             preconditions: Some(Preconditions {
@@ -167,6 +193,9 @@ impl Cluster {
         {
             Ok(_) => Ok(()),
             Err(kube::Error::Api(status)) if status.code == 404 => Ok(()),
+            Err(kube::Error::Api(status)) if status.code == 409 => {
+                Err(owned.changed("was replaced, so it is kept"))
+            }
             Err(error) => Err(failure(error)),
         }
     }

@@ -45,6 +45,88 @@ async fn cluster_client() -> kube::Client {
     .unwrap()
 }
 
+/// A namespace the test created, deleted without waiting for its contents
+/// when dropped, including when the test panics.
+struct OwnedNamespace(String);
+impl Drop for OwnedNamespace {
+    fn drop(&mut self) {
+        // A panic may be unwinding the runtime that drives the test's client,
+        // so the deletion gets its own thread, runtime and client. The client
+        // has no read timeout, so the request gets one: an unresponsive
+        // cluster must not turn a failure into a time-limit kill.
+        let name = self.0.clone();
+        let _ = std::thread::spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(async {
+                    let _ = tokio::time::timeout(Duration::from_secs(15), async {
+                        Api::<Namespace>::all(cluster_client().await)
+                            .delete(&name, &Default::default())
+                            .await
+                    })
+                    .await;
+                });
+        })
+        .join();
+    }
+}
+
+/// The regular files under `directory`, without following symbolic links:
+/// OpenTofu links its provider directories to the bundle.
+fn regular_files(directory: &Path) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    let mut pending = vec![directory.to_path_buf()];
+    while let Some(directory) = pending.pop() {
+        for entry in fs::read_dir(&directory).unwrap() {
+            let entry = entry.unwrap();
+            let kind = entry.file_type().unwrap();
+            if kind.is_dir() {
+                pending.push(entry.path());
+            } else if kind.is_file() {
+                files.push(entry.path());
+            }
+        }
+    }
+    files
+}
+
+/// The deployment's state, by path: its intent record, its OpenTofu state
+/// and backup, and the Kubernetes receipt and gateway client material.
+/// Generated configuration, plans, caches and diagnostics are left out.
+fn deployment_state(directory: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
+    let mut files: Vec<PathBuf> = [
+        "intent.json",
+        "terraform.tfstate",
+        "terraform.tfstate.backup",
+    ]
+    .into_iter()
+    .map(|name| directory.join(name))
+    .filter(|path| path.exists())
+    .collect();
+    files.extend(regular_files(&directory.join("kubernetes")));
+    files
+        .into_iter()
+        .map(|path| (path.clone(), fs::read(path).unwrap()))
+        .collect()
+}
+
+/// The files under `directory` whose bytes contain any of `values`.
+fn files_holding(directory: &Path, values: &[&str]) -> BTreeSet<PathBuf> {
+    regular_files(directory)
+        .into_iter()
+        .filter(|path| {
+            let bytes = fs::read(path).unwrap();
+            values.iter().any(|value| {
+                bytes
+                    .windows(value.len())
+                    .any(|window| window == value.as_bytes())
+            })
+        })
+        .collect()
+}
+
 fn document(uid: &str, namespace: &str, issuer: &str, audience: &str) -> Document {
     let port = std::net::TcpListener::bind("127.0.0.1:0")
         .unwrap()
@@ -122,8 +204,9 @@ async fn a_managed_gateway_accepts_an_existing_issuers_tokens_and_refuses_anothe
     use nemoclaw_sdk::{CancellationToken, Deployment};
     let client = cluster_client().await;
 
-    // The existing issuer, in its own namespace.
-    let issuer_namespace = format!("nc-issuer-{}", random_hex(6));
+    // The existing issuer, in its own namespace, which goes on every path.
+    let owned = OwnedNamespace(format!("nc-issuer-{}", random_hex(6)));
+    let issuer_namespace = owned.0.as_str();
     Api::<Namespace>::all(client.clone())
         .create(
             &PostParams::default(),
@@ -133,17 +216,17 @@ async fn a_managed_gateway_accepts_an_existing_issuers_tokens_and_refuses_anothe
         .unwrap();
     let keys = tempfile::tempdir().unwrap();
     let audience = uuid();
-    let material = Development::new(keys.path().into(), "existing", &issuer_namespace, &audience)
+    let material = Development::new(keys.path().into(), "existing", issuer_namespace, &audience)
         .ensure()
         .unwrap();
     // The issuer's NetworkPolicy admits only a gateway in its own namespace,
     // so an existing issuer omits it.
-    for object in issuer::objects(&material, "existing", &issuer_namespace) {
+    for object in issuer::objects(&material, "existing", issuer_namespace) {
         if object["kind"] != "NetworkPolicy" {
             create(&client, object).await;
         }
     }
-    let deployments = Api::<KubeDeployment>::namespaced(client.clone(), &issuer_namespace);
+    let deployments = Api::<KubeDeployment>::namespaced(client.clone(), issuer_namespace);
     let deadline = std::time::Instant::now() + Duration::from_secs(180);
     loop {
         let ready = deployments
@@ -166,7 +249,7 @@ async fn a_managed_gateway_accepts_an_existing_issuers_tokens_and_refuses_anothe
     let now = time::OffsetDateTime::now_utc().unix_timestamp();
     let token = material.token(now);
     // The same signing key, for another audience.
-    let foreign = Development::new(keys.path().into(), "existing", &issuer_namespace, &uuid())
+    let foreign = Development::new(keys.path().into(), "existing", issuer_namespace, &uuid())
         .ensure()
         .unwrap()
         .token(now);
@@ -192,7 +275,6 @@ async fn a_managed_gateway_accepts_an_existing_issuers_tokens_and_refuses_anothe
         ])))
     };
     let bundle = PathBuf::from(required("NEMOCLAW_TEST_BUNDLE"));
-    let deployment = Deployment::new(state.path(), &bundle).with_secrets(credentials(&token));
     let cancel = CancellationToken::new();
 
     // The issuer's CA goes into the namespace NemoClaw creates, as soon as it
@@ -221,12 +303,16 @@ async fn a_managed_gateway_accepts_an_existing_issuers_tokens_and_refuses_anothe
             .unwrap();
         eprintln!("issuer CA provisioned in {namespace}");
     };
-    // Stop waiting for the namespace if apply ends first, so its error shows.
-    let apply = deployment.apply(&document, &cancel);
-    tokio::pin!(apply);
-    let applied = tokio::select! {
-        result = &mut apply => result,
-        () = provision => apply.await,
+    // Only this Deployment holds the first token. Stop waiting for the
+    // namespace if apply ends first, so its error shows.
+    let applied = {
+        let deployment = Deployment::new(state.path(), &bundle).with_secrets(credentials(&token));
+        let apply = deployment.apply(&document, &cancel);
+        tokio::pin!(apply);
+        tokio::select! {
+            result = &mut apply => result,
+            () = provision => apply.await,
+        }
     };
     if let Err(error) = &applied {
         eprintln!("{}", namespace_diagnostics(&client, &namespace).await);
@@ -234,32 +320,80 @@ async fn a_managed_gateway_accepts_an_existing_issuers_tokens_and_refuses_anothe
     }
     eprintln!("applied with the issuer's token");
 
-    // No development issuer runs in the deployment's namespace.
+    // Every assertion below waits until destroy has run, so a failed one
+    // still removes the deployment.
     let issuers = Api::<KubeDeployment>::namespaced(client.clone(), &namespace)
         .list(&ListParams::default().labels("app.kubernetes.io/name=nemoclaw-development-issuer"))
         .await
         .unwrap();
-    assert!(
-        issuers.items.is_empty(),
-        "the oidc profile runs no development issuer"
-    );
 
-    // A token for another audience is refused, and not echoed.
+    // A token for another audience, signed with the same key.
+    let before = deployment_state(state.path());
     let refused = Deployment::new(state.path(), &bundle)
         .with_secrets(credentials(&foreign))
         .plan(&document, &cancel)
         .await;
+    let after = deployment_state(state.path());
+
+    // The documented renewal: a new token from the issuer, for the next
+    // commands. One second later, its iat and exp differ from the first.
+    let renewed = material.token(now + 1);
+    let deployment = Deployment::new(state.path(), &bundle).with_secrets(credentials(&renewed));
+    let planned = deployment.plan(&document, &cancel).await;
+    let exported = deployment.export(&cancel).await;
+    let tokens = [token.as_str(), renewed.as_str(), foreign.as_str()];
+    let mut holding = files_holding(state.path(), &tokens);
+    let destroyed = match deployment.destroy(&cancel).await {
+        Ok(destroyed) => destroyed,
+        // A refused renewed token is the failure this test looks for, so a
+        // separate Deployment destroys with the first token before reporting it.
+        Err(error) => {
+            let cleanup = Deployment::new(state.path(), &bundle)
+                .with_secrets(credentials(&token))
+                .destroy(&cancel)
+                .await
+                .map(|_| ());
+            panic!(
+                "destroy with the renewed token: {error:?}; destroy with the first token: {cleanup:?}"
+            );
+        }
+    };
+    holding.extend(files_holding(state.path(), &tokens));
+
+    assert!(
+        issuers.items.is_empty(),
+        "the oidc profile runs no development issuer"
+    );
     let error = refused.expect_err("a token for another audience must be refused");
     eprintln!("refused the other audience");
-    assert!(!format!("{error:?}").contains(&foreign));
-
-    // The deployment exports its authored configuration, and destroy keeps
-    // the gateway's storage.
-    let exported = deployment.export(&cancel).await;
-    let destroyed = deployment
-        .destroy(&cancel)
-        .await
-        .expect("destroy with the issuer's token");
+    // The refusal is an OpenTofu execution error; its wording is not checked.
+    let text = format!("{error} {error:?}");
+    assert!(
+        tokens.iter().all(|token| !text.contains(token)),
+        "the refusal echoes no token"
+    );
+    let changed: Vec<_> = before
+        .keys()
+        .chain(after.keys())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .filter(|path| before.get(*path) != after.get(*path))
+        .collect();
+    assert!(
+        changed.is_empty(),
+        "a refused plan leaves the deployment's state unchanged: {changed:?}"
+    );
+    assert!(renewed != token, "the renewed token differs from the first");
+    let planned = planned.expect("a plan with the renewed token must succeed");
+    assert!(
+        planned.changes.is_empty(),
+        "a plan with the renewed token changes nothing: {:?}",
+        planned.changes
+    );
+    assert_eq!(
+        exported.expect("export with the renewed token must succeed"),
+        document
+    );
     for change in &destroyed.changes {
         assert!(
             !change.resource.contains("kubernetes_storage"),
@@ -267,11 +401,8 @@ async fn a_managed_gateway_accepts_an_existing_issuers_tokens_and_refuses_anothe
             change.resource
         );
     }
-    assert_eq!(
-        exported.expect("export of the applied deployment must succeed"),
-        document
+    assert!(
+        holding.is_empty(),
+        "no file in the state directory holds a token: {holding:?}"
     );
-    let _ = Api::<Namespace>::all(client.clone())
-        .delete(&issuer_namespace, &Default::default())
-        .await;
 }

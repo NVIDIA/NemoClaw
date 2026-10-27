@@ -27,9 +27,9 @@ Other pages state a limit where it affects a procedure and link the same issue.
 | A model service on a separate physical SSH host | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
 | Distributed inference across several Sparks or Stations | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
 | Podman beyond a local rootless Linux gateway: managed inference, rootful operation and remote engines | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
-| OpenShift admitting the gateway and sandbox pods; kind runs the OpenShift profile but does not enforce its security constraints | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
+| OpenShift beyond [one OpenShift Local node qualified by hand](kubernetes.md); no automated run enforces OpenShift's security constraints, since kind runs the OpenShift profile without them | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
 | Model services that NemoClaw places with a Kubernetes or OpenShift gateway; sandboxes can use [a server you run in the cluster](kubernetes.md#use-a-model-server-in-the-cluster) | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
-| [A model server you run in the cluster](kubernetes.md#use-a-model-server-in-the-cluster) has been tried only with NemoClaw's vLLM and Ollama runtimes on one kind cluster; OpenShift and other network plugins are untested | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
+| [A model server you run in the cluster](kubernetes.md#use-a-model-server-in-the-cluster) has been tried with NemoClaw's vLLM and Ollama runtimes on one kind cluster, and with Ollama on one OpenShift Local node; other network plugins are untested | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
 | Live GPU inference, tools and replies through managed Ollama | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
 | Gated repositories, custom remote-code models, GGUF in vLLM, and nested Hugging Face checkpoints | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
 | A tested matrix of harness, model, provider and platform combinations | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
@@ -64,6 +64,7 @@ Other pages state a limit where it affects a procedure and link the same issue.
 |---|---|
 | The OpenClaw request walkthrough, rehearsed once OpenClaw starts in a sandbox | [#13372](https://github.com/NVIDIA/NemoClaw/issues/13372) |
 | A live rehearsal against an external gateway that requires an issuer or mTLS client certificates | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
+| A managed Kubernetes gateway with the `development` profile gives you no `openshell` access of your own; the `oidc` profile [reaches it from the OpenShell CLI](kubernetes.md#reach-the-gateway-from-the-openshell-cli), and those steps have not been run on a cluster | By design: the development issuer serves only NemoClaw |
 
 ## Data and Cleanup
 

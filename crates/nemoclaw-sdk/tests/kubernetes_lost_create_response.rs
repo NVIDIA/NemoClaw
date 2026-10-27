@@ -107,10 +107,13 @@ async fn assert_unrecorded_object_is_refused(
     let rerun = platform::operations(healthy.client(), lossy.endpoint(), &state);
     let result = rerun.ensure(&platform::spec(stage), None).await;
 
-    assert_eq!(
-        result,
-        Err(ObservationError::BindingMismatch),
-        "re-run over an unrecorded {label}, requests: {:?}",
+    assert!(
+        matches!(
+            &result,
+            Err(ObservationError::BindingChanged(detail))
+                if detail.ends_with("already exists, and this deployment does not adopt it")
+        ),
+        "re-run over an unrecorded {label}: {result:?}, requests: {:?}",
         healthy.requests()
     );
     assert_eq!(

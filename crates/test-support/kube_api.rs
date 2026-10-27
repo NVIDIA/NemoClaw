@@ -8,7 +8,10 @@
 //! and delete with a UID precondition. That is enough for the SDK's cluster
 //! code; anything else answers 500.
 
-#![allow(dead_code)]
+#![allow(
+    dead_code,
+    reason = "each test binary that includes this module uses a different subset of it"
+)]
 use super::transport::Fixture;
 use serde_json::{Value, json};
 use std::{

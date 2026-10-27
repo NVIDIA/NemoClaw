@@ -4,8 +4,8 @@
 # An agent on a managed Kubernetes gateway uses an Ollama server that you run
 # in the same cluster: the Service ollama in the namespace models.
 # Ollama takes no key, so a NetworkPolicy is its only access control.
-# NemoClaw creates nothing for the server. Deploy it and wait until it has
-# loaded the model; see "Run Ollama Instead" in docs/kubernetes.md.
+# NemoClaw creates nothing for the server. Deploy it and pull the model before
+# the first request; see "Use a Model Server in the Cluster" in docs/kubernetes.md.
 # Replace the deployment UID, the context, and the image digest before applying.
 # Write the image's metadata bundle with `cargo images export-metadata` and set
 # NEMOCLAW_AGENT_IMAGE_METADATA to its path; see docs/build.md.

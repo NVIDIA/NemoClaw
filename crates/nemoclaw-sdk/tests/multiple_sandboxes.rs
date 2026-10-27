@@ -91,8 +91,10 @@ fn adding_a_sandbox_preserves_existing_resource_addresses_and_values() {
         for (name, instance) in instances.as_object().unwrap() {
             let mut prior = instance.clone();
             let mut next = after["resource"][kind][name].clone();
-            // Adding an earlier sandbox changes the discovery expression; its resolved image metadata is identical.
-            for field in ["launch_json", "binaries_json"] {
+            // Each sandbox keeps its own read. A registration the new sandbox
+            // shares takes its binaries from the first sharing sandbox in name
+            // order; both reads have the same image and harness.
+            for field in ["binaries", "binaries_json"] {
                 prior.as_object_mut().unwrap().remove(field);
                 next.as_object_mut().unwrap().remove(field);
             }

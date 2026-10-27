@@ -10,11 +10,13 @@
 
 use super::*;
 
-/// Agent Sandbox release the tests run against, as a platform would.
+/// Agent Sandbox release the tests run against, as a platform would: the one
+/// the pinned OpenShell's own Kubernetes tests use. Its core manifest has been
+/// `sandbox.yaml` since v0.5.1.
 const AGENT_SANDBOX_URL: &str =
-    "https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v0.5.0/manifest.yaml";
+    "https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v1.0.3/sandbox.yaml";
 const AGENT_SANDBOX_SHA256: &str =
-    "ccfe3649de8b33f0ee0ec635e2c7b40e1c468ad9fde6aac7c7379501327d9c4c";
+    "725fafdabe6aac202a89dc57f1cfe0e2e92f3164c8c2bd343fffca52f7039d96";
 
 fn tool_directory(name: &str) -> PathBuf {
     Path::new(".tools").join(name)

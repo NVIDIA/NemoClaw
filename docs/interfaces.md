@@ -12,6 +12,8 @@ Use the pinned OpenShell development CLI at the revision in [versions.json](../v
 These selectors choose an existing OpenShell gateway and deployment; they do not create services or provision credentials.
 Run them in every terminal used for forwarding or sandbox commands, from any directory.
 
+For a managed Kubernetes or OpenShift gateway, first create its profile as [Reach the Gateway from the OpenShell CLI](kubernetes.md#reach-the-gateway-from-the-openshell-cli) shows, then select it as below.
+
 For an existing authenticated gateway profile supplied by its operator:
 
 ```sh
@@ -23,7 +25,7 @@ The profile's endpoint must match `spec.gateway.endpoint` in the deployment YAML
 Its stored authentication must grant access to the deployment workspace.
 The endpoint override takes precedence over the profile, which is why this example clears it.
 NemoClaw's YAML credential and TLS environment references do not configure the OpenShell CLI's stored profile or credentials.
-To create a profile for an authenticated gateway, including its issuer or mTLS client certificates, follow [OpenShell's authentication guide](https://github.com/NVIDIA/OpenShell/blob/5a7728c304b5528e954e9ae900cf21f84e1a12b1/docs/how-it-works/gateways/authentication.mdx).
+To create a profile for an authenticated gateway, including its issuer or mTLS client certificates, follow [OpenShell's authentication guide](https://github.com/NVIDIA/OpenShell/blob/bdb956f2cd65a635f1294fccf1d138d263bf650f/docs/how-it-works/gateways/authentication.mdx).
 
 For an existing plaintext loopback gateway instead, select its actual endpoint directly:
 
@@ -51,7 +53,7 @@ export OPENSHELL_WORKSPACE=REPLACE_WITH_REPORTED_WORKSPACE
 
 JSON results expose the same values as `connection.gatewayEndpoint` and `connection.workspace`.
 These selectors describe the configured target, including when a plan is incomplete; they do not establish access or create an authenticated OpenShell CLI profile.
-The gateway selectors follow the [pinned OpenShell CLI parser and resolver](https://github.com/NVIDIA/OpenShell/blob/5a7728c304b5528e954e9ae900cf21f84e1a12b1/crates/openshell-cli/src/main.rs).
+The gateway selectors follow the [pinned OpenShell CLI parser and resolver](https://github.com/NVIDIA/OpenShell/blob/bdb956f2cd65a635f1294fccf1d138d263bf650f/crates/openshell-cli/src/main.rs).
 The forward or sandbox command below verifies access to the selected workspace; setting an environment variable alone does not.
 On an authentication or missing-sandbox error, check the endpoint, workspace, sandbox name, and operator-provided credentials before changing deployment state.
 
