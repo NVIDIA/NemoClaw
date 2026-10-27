@@ -99,12 +99,20 @@ export async function assertHermesSkillLifecycle({
     [
       "bash",
       "-lc",
-      `set -eu; if test -f ${shellQuote(soulPath)}; then cp ${shellQuote(soulPath)} ${shellQuote(soulBackup)}; echo SOUL_EXISTED; else echo SOUL_ABSENT; fi; printf '\\n%s\\n' ${shellQuote(soulMarker)} >> ${shellQuote(soulPath)}`,
+      `set -eu; if test -f ${shellQuote(soulPath)}; then cp ${shellQuote(soulPath)} ${shellQuote(soulBackup)}; echo SOUL_EXISTED; else echo SOUL_ABSENT; fi`,
     ],
-    "phase-4-hermes-default-profile-soul-setup",
+    "phase-4-hermes-default-profile-soul-backup",
   );
   const soulExisted = prepareSoul.stdout.includes("SOUL_EXISTED");
   try {
+    await exec(
+      [
+        "bash",
+        "-lc",
+        `set -eu; printf '\\n%s\\n' ${shellQuote(soulMarker)} >> ${shellQuote(soulPath)}`,
+      ],
+      "phase-4-hermes-default-profile-soul-setup",
+    );
     const payload = JSON.stringify({
       model: inference.model,
       messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
