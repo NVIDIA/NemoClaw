@@ -99,6 +99,10 @@ pub async fn serve(
 
 impl FaultServer {
     /// The `http://127.0.0.1:PORT` address to pass as `Operations::server`.
+    #[cfg_attr(
+        not(unix),
+        expect(dead_code, reason = "only the Unix-only recovery tests call it")
+    )]
     pub fn endpoint(&self) -> &str {
         &self.fixture.endpoint
     }
