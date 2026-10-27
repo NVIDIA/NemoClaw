@@ -103,7 +103,7 @@ sandboxes:
 
 The platform must create both named volumes on the gateway's Docker engine, grant the deployment's OpenShell workspace access through the required approval labels, and make their contents writable by the sandbox's identity.
 Default admission requires `openshell.ai/sandbox-attachable=true` and `openshell.ai/sandbox-attachable-workspace=<OpenShell-workspace-name>` on each volume; an operator-configured label map replaces these defaults.
-Use the authorized OpenShell workspace name, not the sandbox name or Kubernetes namespace; see [external resource admission](https://github.com/NVIDIA/OpenShell/blob/5a7728c304b5528e954e9ae900cf21f84e1a12b1/docs/how-it-works/gateways/configuration.mdx#external-resource-admission).
+Use the authorized OpenShell workspace name, not the sandbox name or Kubernetes namespace; see [external resource admission](https://github.com/NVIDIA/OpenShell/blob/bdb956f2cd65a635f1294fccf1d138d263bf650f/docs/how-it-works/gateways/configuration.mdx#external-resource-admission).
 The bundled images use UID/GID `10001:10001`; check the identity for a custom image or OpenShift namespace.
 The gateway must allow driver configuration, and the sandbox's filesystem policy must allow writes to both target paths.
 For a managed gateway, set `allow_driver_config: true` in the compute driver's table of [`spec.gateway.config`](usage.md#configure-a-managed-gateway), as above; Podman and Kubernetes gateways use `openshell.drivers.podman` and `openshell.drivers.kubernetes`. Changing it later replaces a Docker or Podman gateway's container, keeping its data, and upgrades a Kubernetes gateway's chart release.
@@ -111,7 +111,7 @@ OpenShell's admission settings use the same format, such as a replacement label 
 For an external gateway, its administrator enables OpenShell's `allow_driver_config` for the compute driver.
 Mounts default to read-only, so `read_only: false` is required for agent writes.
 Do not mount over `/sandbox` or the image's working directory: OpenShell protects its workspace root and control paths.
-For driver-specific settings and admission labels, follow the pinned OpenShell [Docker](https://github.com/NVIDIA/OpenShell/blob/5a7728c304b5528e954e9ae900cf21f84e1a12b1/crates/openshell-driver-docker/README.md), [Podman](https://github.com/NVIDIA/OpenShell/blob/5a7728c304b5528e954e9ae900cf21f84e1a12b1/crates/openshell-driver-podman/README.md), or [Kubernetes](https://github.com/NVIDIA/OpenShell/blob/5a7728c304b5528e954e9ae900cf21f84e1a12b1/crates/openshell-driver-kubernetes/README.md) instructions; Kubernetes uses PVCs rather than Docker named volumes.
+For driver-specific settings and admission labels, follow the pinned OpenShell [Docker](https://github.com/NVIDIA/OpenShell/blob/bdb956f2cd65a635f1294fccf1d138d263bf650f/crates/openshell-driver-docker/README.md), [Podman](https://github.com/NVIDIA/OpenShell/blob/bdb956f2cd65a635f1294fccf1d138d263bf650f/crates/openshell-driver-podman/README.md), or [Kubernetes](https://github.com/NVIDIA/OpenShell/blob/bdb956f2cd65a635f1294fccf1d138d263bf650f/crates/openshell-driver-kubernetes/README.md) instructions; Kubernetes uses PVCs rather than Docker named volumes.
 
 ### Choose What to Retain for Each Harness
 

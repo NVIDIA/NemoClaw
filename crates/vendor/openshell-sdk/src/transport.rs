@@ -183,7 +183,7 @@ impl ServerCertVerifier for InsecureServerCertVerifier {
     }
 
     fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-        rustls::crypto::aws_lc_rs::default_provider()
+        openshell_crypto::tls::configuration_provider()
             .signature_verification_algorithms
             .supported_schemes()
     }
@@ -195,7 +195,7 @@ impl ServerCertVerifier for InsecureServerCertVerifier {
 /// verification (development, debug). Returns `Result` for symmetry with
 /// future verifying variants; the current implementation cannot fail.
 pub fn build_insecure_rustls_config() -> Result<rustls::ClientConfig> {
-    Ok(rustls::ClientConfig::builder()
+    Ok(openshell_crypto::tls::client_builder()
         .dangerous()
         .with_custom_certificate_verifier(std::sync::Arc::new(InsecureServerCertVerifier))
         .with_no_client_auth())

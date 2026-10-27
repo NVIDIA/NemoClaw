@@ -139,7 +139,7 @@ pub async fn discover(issuer: &str, insecure: bool) -> Result<OidcDiscovery> {
 /// followed; OIDC providers should not redirect on the token endpoint.
 /// When `insecure` is true, TLS certificate verification is disabled.
 pub fn http_client(insecure: bool) -> reqwest::Client {
-    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    openshell_crypto::tls::ensure_default_provider();
     let mut builder = reqwest::ClientBuilder::new().redirect(reqwest::redirect::Policy::none());
     if insecure {
         builder = builder.danger_accept_invalid_certs(true);
