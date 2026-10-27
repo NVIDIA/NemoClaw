@@ -12,6 +12,28 @@ import {
   resetDestroyModuleCache,
 } from "../../../../test/helpers/destroy-flow-test-harness";
 
+function writeGatewayRegistry(home: string, port: number, name: string): void {
+  const registryDir = path.join(home, ".nemoclaw", "gateways", String(port));
+  fs.mkdirSync(registryDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(registryDir, "sandboxes.json"),
+    JSON.stringify({
+      defaultSandbox: name,
+      defaultSelectionRevision: 1,
+      sandboxes: {
+        [name]: {
+          name,
+          agent: "openclaw",
+          provider: "ollama-local",
+          model: "nvidia/nemotron",
+          gatewayName: `nemoclaw-${String(port)}`,
+          gatewayPort: port,
+        },
+      },
+    }),
+  );
+}
+
 describe("destroySandbox cross-root registry authority", () => {
   let home: string;
 
@@ -70,30 +92,8 @@ describe("destroySandbox cross-root registry authority", () => {
   });
 
   it("cleans up the destroyed gateway while preserving a sandbox on another gateway", async () => {
-    for (const [port, name] of [
-      [8244, "alpha"],
-      [8245, "beta"],
-    ] as const) {
-      const registryDir = path.join(home, ".nemoclaw", "gateways", String(port));
-      fs.mkdirSync(registryDir, { recursive: true });
-      fs.writeFileSync(
-        path.join(registryDir, "sandboxes.json"),
-        JSON.stringify({
-          defaultSandbox: name,
-          defaultSelectionRevision: 1,
-          sandboxes: {
-            [name]: {
-              name,
-              agent: "openclaw",
-              provider: "ollama-local",
-              model: "nvidia/nemotron",
-              gatewayName: `nemoclaw-${String(port)}`,
-              gatewayPort: port,
-            },
-          },
-        }),
-      );
-    }
+    writeGatewayRegistry(home, 8244, "alpha");
+    writeGatewayRegistry(home, 8245, "beta");
     const harness = createDestroyHarness();
 
     await expect(
