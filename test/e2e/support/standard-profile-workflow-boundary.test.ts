@@ -26,6 +26,32 @@ describe("standard E2E execution profile", () => {
     expect(validateStandardProfileWorkflowBoundary(readWorkflow())).toEqual([]);
   });
 
+  it.each([
+    { field: "uses", value: "actions/setup-python@v7" },
+    { field: "if", value: "true" },
+    { field: "with", value: { "python-version": "3.14" } },
+    { field: "env", value: { UNREVIEWED_INPUT: "present" } },
+    { field: "run", value: "python3 --version" },
+  ])("rejects unreviewed Model Router Python $field", ({ field, value }) => {
+    const profile = YAML.parse(
+      fs.readFileSync(path.join(REPO_ROOT, ".github/workflows/e2e-standard-profile.yaml"), "utf8"),
+    ) as { jobs: { run: { steps: Array<Record<string, unknown>> } } };
+    const python = profile.jobs.run.steps.find(
+      (step) => step.name === "Set up supported Model Router Python",
+    )!;
+    python[field] = value;
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-router-python-"));
+    const profilePath = path.join(directory, "profile.yaml");
+    try {
+      fs.writeFileSync(profilePath, YAML.stringify(profile));
+      expect(validateStandardProfileWorkflowBoundary(readWorkflow(), profilePath)).toContain(
+        "standard E2E profile must provision reviewed Python only for Model Router",
+      );
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it("reserves the standard full-E2E setup, test, and artifact envelope", () => {
     // The original 70-minute path now includes native configuration and plugin lifecycle work.
     expect(FULL_E2E_TEST_TIMEOUT_MINUTES).toBeGreaterThanOrEqual(100);
