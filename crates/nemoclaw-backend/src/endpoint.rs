@@ -19,14 +19,8 @@ fn private(ip: IpAddr) -> bool {
         IpAddr::V6(ip) => ip.is_unique_local(),
     }
 }
-/// The address the client connects to; an IPv4-mapped IPv6 address is the
-/// IPv4 address it carries.
 fn host_ip(url: &Url) -> Option<IpAddr> {
-    url.host_str()?
-        .trim_matches(['[', ']'])
-        .parse()
-        .ok()
-        .map(|ip: IpAddr| ip.to_canonical())
+    url.host_str()?.trim_matches(['[', ']']).parse().ok()
 }
 
 /// Accept a well-formed HTTP or HTTPS endpoint: a host, no credentials, query,
@@ -67,23 +61,27 @@ pub fn validate_endpoint(raw: &str, gateway: bool) -> Result<(), ConfigError> {
     )?;
     let ip = host_ip(&url);
     if let Some(ip) = ip {
-        let link_local = match ip {
+        // An IPv4-mapped address would need every IPv4 rule checked twice.
+        let link_local_or_mapped = match ip {
             IpAddr::V4(ip) => ip.is_link_local(),
-            IpAddr::V6(ip) => ip.is_unicast_link_local(),
+            IpAddr::V6(ip) => ip.is_unicast_link_local() || ip.to_ipv4_mapped().is_some(),
         };
         require(
-            !ip.is_unspecified() && !ip.is_multicast() && !link_local,
-            "unspecified, multicast, and link-local endpoints are forbidden",
+            !ip.is_unspecified() && !ip.is_multicast() && !link_local_or_mapped,
+            "unspecified, multicast, link-local, and IPv4-mapped endpoints are forbidden",
         )?;
     }
+    // url also parses a special scheme without `//`, which would move the
+    // authority read below into the path.
+    let prefix = format!("{}://", url.scheme());
+    require(
+        raw.get(..prefix.len())
+            .is_some_and(|start| start.eq_ignore_ascii_case(&prefix)),
+        "expected an HTTP or HTTPS endpoint",
+    )?;
     // url normalizes shorthand IPv4 (127.1, integers, octal). Require the literal
-    // address spelling from the input so normalization cannot weaken policy, and
-    // require it to be the address url connects to: url also accepts a special
-    // scheme without `//`, which puts a later `://` in the path.
-    let authority = raw
-        .split_once("://")
-        .map(|(_, rest)| rest.split('/').next().unwrap_or(""))
-        .unwrap_or("");
+    // address spelling from the input so normalization cannot weaken policy.
+    let authority = raw[prefix.len()..].split('/').next().unwrap_or("");
     let literal_host = if authority.starts_with('[') {
         authority
             .split(']')
@@ -94,13 +92,9 @@ pub fn validate_endpoint(raw: &str, gateway: bool) -> Result<(), ConfigError> {
         authority.split(':').next().unwrap_or("")
     };
     if url.scheme() == "http" {
-        let literal = literal_host
-            .parse()
-            .ok()
-            .map(|ip: IpAddr| ip.to_canonical())
-            .filter(|literal| Some(*literal) == ip);
         require(
-            literal.is_some_and(|ip| ip.is_loopback() || (!gateway && private(ip))),
+            literal_host.parse().ok() == ip
+                && ip.is_some_and(|ip| ip.is_loopback() || (!gateway && private(ip))),
             "HTTP requires a literal loopback address or private inference address",
         )?;
     }
