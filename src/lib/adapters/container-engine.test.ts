@@ -16,6 +16,122 @@ beforeEach(() => {
 });
 
 describe("operation-scoped container engine command", () => {
+  it("forwards bounded private lifecycle pipes without changing default command limits", () => {
+    const capture = vi.fn(() => ({ status: 0, stdout: "ok", stderr: "" }));
+    const guard = vi.fn();
+    const engine = createContainerEngineCommand({
+      operation: "sandbox-lifecycle",
+      engineId: "podman",
+      displayName: "Podman",
+      authorityId: "test:podman-socket",
+      executable: "podman",
+      capture,
+      guard,
+    });
+    const input = Buffer.alloc(1024 * 1024 + 1);
+    const bounds = { maxInputBytes: input.length, maxOutputBytes: 2048 };
+    engine.capture(["container", "exec", "owned-id", "runtime"], 1234, input, bounds);
+    expect(capture).toHaveBeenCalledExactlyOnceWith(
+      "podman",
+      ["container", "exec", "owned-id", "runtime"],
+      1234,
+      input,
+      undefined,
+      2048,
+    );
+    expect(guard.mock.calls).toEqual([["before"], ["after"]]);
+    expect(() => engine.capture(["container", "exec", "owned-id", "runtime"], 1234, input)).toThrow(
+      /byte bound/u,
+    );
+    expect(() => engine.capture(["info"], 1234, input, bounds)).toThrow(
+      /bounded sandbox lifecycle/u,
+    );
+    expect(() =>
+      engine.capture(["container", "exec"], 1234, input, {
+        ...bounds,
+        maxInputBytes: input.length - 1,
+      }),
+    ).toThrow(/byte bound/u);
+    capture.mockReturnValue({ status: 0, stdout: "private".repeat(1000), stderr: "" });
+    expect(() => engine.capture(["container", "exec"], 1234, input, bounds)).toThrow(
+      "Private container output exceeds its byte bound.",
+    );
+  });
+
+  it.each([0, -1, 1.5, NaN, Infinity, 48 * 1024 * 1024 + 1])(
+    "rejects the invalid private output bound %s before engine access",
+    (maxOutputBytes) => {
+      const capture = vi.fn();
+      const engine = createContainerEngineCommand({
+        operation: "sandbox-lifecycle",
+        engineId: "podman",
+        displayName: "Podman",
+        authorityId: "test:podman-socket",
+        executable: "podman",
+        capture,
+      });
+      const input = Buffer.alloc(1024 * 1024 + 1);
+      expect(() =>
+        engine.capture(["container", "exec"], 1234, input, {
+          maxInputBytes: input.length,
+          maxOutputBytes,
+        }),
+      ).toThrow(/bounded sandbox lifecycle/u);
+      expect(capture).not.toHaveBeenCalled();
+    },
+  );
+
+  it("applies the selected private output bound to the actual child process", () => {
+    const spawn = vi.mocked(spawnSync).mockReturnValueOnce({
+      pid: 1,
+      output: [null, "ok", ""],
+      stdout: "ok",
+      stderr: "",
+      status: 0,
+      signal: null,
+    });
+    const engine = createContainerEngineCommand({
+      operation: "sandbox-lifecycle",
+      engineId: "podman",
+      displayName: "Podman",
+      authorityId: "test:podman-socket",
+      executable: "podman",
+    });
+    engine.capture(["container", "exec", "owned-id", "runtime"], 1234, undefined, {
+      maxInputBytes: 1,
+      maxOutputBytes: 2048,
+    });
+    expect(spawn).toHaveBeenLastCalledWith(
+      "podman",
+      ["container", "exec", "owned-id", "runtime"],
+      expect.objectContaining({ maxBuffer: 2048, timeout: 1234, shell: false }),
+    );
+  });
+
+  it.each([
+    "host-doctor",
+    "host-local-inference",
+    "workload-cleanup",
+    "gateway-inspection",
+    "external-image-preparation",
+  ] as const)("does not enable private lifecycle transport for %s", (operation) => {
+    const capture = vi.fn();
+    const engine = createContainerEngineCommand({
+      operation,
+      engineId: "podman",
+      displayName: "Podman",
+      authorityId: "test:podman-socket",
+      executable: "podman",
+      capture,
+    });
+    expect(() =>
+      engine.capture(["container", "exec"], 1000, undefined, {
+        maxInputBytes: 1,
+        maxOutputBytes: 2048,
+      }),
+    ).toThrow(/bounded sandbox lifecycle/u);
+    expect(capture).not.toHaveBeenCalled();
+  });
   it("hard-kills provider commands that exceed their deadline", () => {
     const engine = createContainerEngineCommand({
       operation: "sandbox-lifecycle",

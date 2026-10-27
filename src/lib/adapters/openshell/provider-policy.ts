@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  SUPPORTED_OPENSHELL_FALLBACK_VERSION,
+  usesOpenShellNativeProjection,
+} from "../../onboard/openshell-version";
 import { isValidName } from "../../../../nemoclaw/dist/shared/sandbox-name.cjs";
 import {
   assertNoOpenShellGatewayEndpointOverride,
@@ -56,15 +60,33 @@ function document(result: PolicyCommandResult): Record<string, unknown> {
 }
 
 async function requireSandboxPolicyAuthority(run: PolicyCommand): Promise<void> {
-  const result = await run(["policy", "list", "--global", "--limit", "1"]);
-  requireSuccessfulCommand(result);
-  // The pinned server returns NotFound for get when no revision exists.
-  // Only a successful history read proves absence without treating errors as permission.
-  if (
-    !String(result.stdout ?? "").trim() &&
-    String(result.stderr ?? "").trim() === "No global policy history found"
-  )
-    return;
+  if (usesOpenShellNativeProjection(SUPPORTED_OPENSHELL_FALLBACK_VERSION)) {
+    const history = document(
+      await run(["policy", "list", "--global", "--page-size", "1", "--output", "json"]),
+    );
+    if (
+      !Array.isArray(history.revisions) ||
+      history.revisions.length > 1 ||
+      typeof history.next_page_token !== "string"
+    ) {
+      throw new Error("OpenShell returned invalid global policy history.");
+    }
+    if (history.revisions.length === 0) {
+      if (history.next_page_token !== "")
+        throw new Error("OpenShell returned incomplete global policy history.");
+      return;
+    }
+  } else {
+    const result = await run(["policy", "list", "--global", "--limit", "1"]);
+    requireSuccessfulCommand(result);
+    // The pinned server returns NotFound for get when no revision exists.
+    // Only a successful history read proves absence without treating errors as permission.
+    if (
+      !String(result.stdout ?? "").trim() &&
+      String(result.stderr ?? "").trim() === "No global policy history found"
+    )
+      return;
+  }
   const policy = document(await run(["policy", "get", "--global", "--output", "json"]));
   if (policy.scope === "global" && policy.status === "superseded") return;
   throw new Error(
@@ -78,6 +100,12 @@ export async function requireNativeProviderPolicy(
   command?: PolicyCommand,
 ): Promise<void> {
   const run = commandForGateway(gatewayName, command);
+  // The trusted controller projects this pin with the reviewed runtime.
+  // A mismatched server must still pass the strict policy response checks.
+  if (usesOpenShellNativeProjection(SUPPORTED_OPENSHELL_FALLBACK_VERSION)) {
+    await requireSandboxPolicyAuthority(run);
+    return;
+  }
   const state = document(await run(["settings", "get", "--global", "--json"]));
   const settings = state.settings;
   if (
@@ -88,7 +116,13 @@ export async function requireNativeProviderPolicy(
     (settings as Record<string, unknown>).providers_v2_enabled !== "true"
   ) {
     throw new Error(
-      `Native local inference requires providers_v2_enabled=true on gateway '${gatewayName}'. Ask its administrator to review attached providers and enable composition with 'openshell settings set -g ${gatewayName} --global --key providers_v2_enabled --value true --yes', then retry. NemoClaw does not activate it on existing gateways.`,
+      // Keep each line short: onboard bounds every displayed diagnostic line.
+      [
+        `Native local inference requires providers_v2_enabled=true on gateway '${gatewayName}'.`,
+        "NemoClaw does not activate it on existing gateways. Ask its administrator to review attached providers and enable composition with:",
+        `  openshell settings set -g ${gatewayName} --global --key providers_v2_enabled --value true --yes`,
+        "Then retry.",
+      ].join("\n"),
     );
   }
   await requireSandboxPolicyAuthority(run);
@@ -100,6 +134,12 @@ export async function initializeNativeProviderPolicy(
   command?: PolicyCommand,
 ): Promise<"disabled" | void> {
   const run = commandForGateway(gatewayName, command);
+  // The trusted controller projects this pin with the reviewed runtime.
+  // A mismatched server must still pass the strict policy response checks.
+  if (usesOpenShellNativeProjection(SUPPORTED_OPENSHELL_FALLBACK_VERSION)) {
+    await requireSandboxPolicyAuthority(run);
+    return;
+  }
   await requireSandboxPolicyAuthority(run);
   await run([
     "settings",
