@@ -6,7 +6,7 @@
 # Layers PR-specific code (plugin, config, startup script) on top of the
 # pre-built Hermes base image. Mirrors the OpenClaw Dockerfile structure.
 
-ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:77ca16dded73b3797d63b7de57ccfc58152b7e4525d7dc4774d540e7ca84939e
+ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:4574777698fa65e270f53ee4c6fca90640cc89867e7dcc726c2ca03429d4ed8b
 ARG NEMOCLAW_CORPORATE_CA_B64=
 ARG NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=0
 # BuildKit supplies this automatic platform argument. The Portable staged
@@ -373,7 +373,7 @@ COPY --from=hermes-agent-payload / /
 # published base can carry the expected Hermes version while omitting either
 # optional dependency group. This is a build-time package/import guard; live
 # protocol behavior remains a separate E2E concern.
-ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=8fb5b35e0e175c71f49bbc4846daffc66164257d69eeb0bba3c283afcc6e50b6
+ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=ffac0fe42ff405b2334241e97df44bf641e55792516290f23ee8726a52173166
 # hadolint ignore=DL3059,DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256" /opt/nemoclaw-hermes-config/image-build-probes.py \
@@ -399,7 +399,7 @@ RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
         /ci/reviewed-npm-audit.json \
     && chmod -R a+rX /src/lib/messaging
 
-ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=8fb5b35e0e175c71f49bbc4846daffc66164257d69eeb0bba3c283afcc6e50b6
+ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=ffac0fe42ff405b2334241e97df44bf641e55792516290f23ee8726a52173166
 
 # hadolint ignore=DL3067
 COPY --from=hermes-runtime-payload / /
@@ -973,7 +973,7 @@ RUN install -o root -g root -m 0444 \
 
 # Fresh named profiles do not receive config.yaml. Patch the pinned Hermes
 # fallback readers from the generated manifest, then validate a real profile.
-ARG NEMOCLAW_HERMES_PROFILE_POLICY_PATCHER_SHA256=954e982162b8c79ca2e08897907f561b307235eefc33fa882b5c22faa22f152a
+ARG NEMOCLAW_HERMES_PROFILE_POLICY_PATCHER_SHA256=f275cbd5d766ac970a3f00b267d5ffa981070254c5826e716296be6d6ce6d8a2
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_PROFILE_POLICY_PATCHER_SHA256" /opt/nemoclaw-hermes-config/patch-profile-policy-defaults.py \
@@ -1016,7 +1016,16 @@ RUN set -eu; \
     test ! -e "$profile_probe_home/config.yaml"; \
     HOME="$profile_probe_root" HERMES_HOME="$profile_probe_home" \
         /opt/hermes/.venv/bin/python -I \
-        /opt/nemoclaw-hermes-config/image-build-probes.py profile-policy
+        /opt/nemoclaw-hermes-config/image-build-probes.py profile-policy; \
+    HOME="$profile_probe_root" HERMES_HOME="$profile_probe_home" \
+        /opt/hermes/.venv/bin/python -I \
+        /opt/nemoclaw-hermes-config/image-build-probes.py web-search-availability; \
+    web_probe_home="$profile_probe_root/default-config"; \
+    mkdir "$web_probe_home"; \
+    cp /sandbox/.hermes/config.yaml "$web_probe_home/config.yaml"; \
+    HOME="$profile_probe_root" HERMES_HOME="$web_probe_home" \
+        /opt/hermes/.venv/bin/python -I \
+        /opt/nemoclaw-hermes-config/image-build-probes.py web-search-availability
 
 # hadolint ignore=DL3066
 USER sandbox

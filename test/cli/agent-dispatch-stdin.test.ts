@@ -9,6 +9,7 @@ import { EventEmitter } from "node:events";
 import { describe, expect, it } from "vitest";
 
 import {
+  readAgentStdinWithinDeadline,
   runAgentDispatch,
   runOpenClawAgentDispatch,
   type AgentDispatchRunner,
@@ -25,6 +26,19 @@ const messageParser = patchAgentMessageInput(
     "utf8",
   ),
 ).replace(/^import .*;\n/u, "");
+
+// A real child that resolves its message with the patched OpenClaw parser.
+function parserChildScript(options: Record<string, unknown>): string {
+  return `const fs = require('node:fs/promises');
+const nemoclawStdinStat = () => require('node:fs').fstatSync(0);
+const readFileDescriptorBounded = async (fd) => require('node:fs').readFileSync(fd);
+const MESSAGE_FILE_DECODER = new TextDecoder('utf-8', {fatal: true});
+const formatCliCommand = (command) => command;
+${messageParser}
+resolveAgentMessageOpts(${JSON.stringify(options)}).then(({message: input}) => {
+console.log(JSON.stringify({payloads: [{text: JSON.stringify({input, args: process.argv.slice(2)})}]}));
+}).catch((error) => { console.error(error.message); process.exitCode = 1; });`;
+}
 
 function openPipe(inputPath: string): number {
   expect(spawnSync("mkfifo", [inputPath]).status).toBe(0);
@@ -120,19 +134,11 @@ describe.skipIf(process.platform === "win32")("agent dispatch stdin", () => {
           getGatewayName: () => "nemoclaw-8081",
           runDispatch: childDispatch(
             inputFd,
-            `const fs = require('node:fs/promises');
-const nemoclawStdinStat = () => require('node:fs').fstatSync(0);
-const readFileDescriptorBounded = async (fd) => require('node:fs').readFileSync(fd);
-const MESSAGE_FILE_DECODER = new TextDecoder('utf-8', {fatal: true});
-const formatCliCommand = (command) => command;
-${messageParser}
-resolveAgentMessageOpts(${JSON.stringify({
+            parserChildScript({
               ...(input === "inline" ? { message: "ARG_MESSAGE" } : {}),
               ...(messageFile ? { messageFile } : {}),
               json,
-            })}).then(({message: input}) => {
-console.log(JSON.stringify({payloads: [{text: JSON.stringify({input, args: process.argv.slice(2)})}]}));
-}).catch((error) => { console.error(error.message); process.exitCode = 1; });`,
+            }),
             { messageFile },
           ),
         }),
@@ -152,6 +158,55 @@ console.log(JSON.stringify({payloads: [{text: JSON.stringify({input, args: proce
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it.each([false, true])(
+    "hands closed piped input from the default dispatch to a real child (JSON: %s) (#13621)",
+    async (json) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-agent-buffered-"));
+      const inputPath = path.join(root, "input");
+      fs.writeFileSync(inputPath, "PIPED_INPUT");
+      const stdout: string[] = [];
+      const stderr: string[] = [];
+      const fdZero: unknown[] = [];
+      const command = ["openclaw", "agent", "--agent", "main", ...(json ? ["--json"] : [])];
+      try {
+        const invoke = json ? runAgentJsonPassthrough : runAgentNonJsonPassthrough;
+        await expect(
+          invoke(
+            "alpha",
+            command,
+            {
+              exit(code: number): never {
+                throw new Error(`exit:${code}`);
+              },
+              stdout: { write: (value: string) => stdout.push(value) },
+              stderr: { write: (value: string) => stderr.push(value) },
+            },
+            {
+              getGatewayName: () => "nemoclaw-8081",
+              getOpenshellBinary: () => process.execPath,
+              stdinIsTty: () => false,
+              readStdin: (deadlineMs) =>
+                readAgentStdinWithinDeadline(fs.createReadStream(inputPath), deadlineMs),
+              spawnChild: (_binary, args, { stdio }) => {
+                fdZero.push(Array.isArray(stdio) ? stdio[0] : stdio);
+                return spawn(
+                  process.execPath,
+                  ["-e", parserChildScript({ json }), "--", "/dev/stdin", ...args],
+                  { stdio },
+                );
+              },
+            },
+          ),
+        ).rejects.toThrow("exit:0");
+        expect(fdZero).toEqual(["pipe"]);
+        expect(JSON.parse(JSON.parse(stdout.join("")).payloads[0].text).input).toBe("PIPED_INPUT");
+        expect(stderr.join("")).toBe("");
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
 
   it.each([
     { signal: "SIGTERM" as const, code: 143 },

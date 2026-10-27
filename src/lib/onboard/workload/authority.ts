@@ -126,6 +126,31 @@ function corporateCaFromReceipt(
       };
 }
 
+/** Return the sandbox-facing inference URL recorded in a valid managed startup profile. */
+export function readManagedRoutedBaseUrl(
+  entry: Pick<SandboxEntry, "agent" | "fromDockerfile" | "imageTag" | "workload">,
+): string | null {
+  try {
+    return readManagedWorkloadAuthority(entry)?.profile.inference?.routedBaseUrl ?? null;
+  } catch {
+    return null;
+  }
+}
+
+const INFERENCE_ROUTE_BASE_URL = /^https:\/\/inference\.local(?:\/v1)?\/?$/;
+
+/** A native base URL is managed when it is the gateway route or the exact route NemoClaw recorded. */
+export function isManagedInferenceBaseUrl(
+  value: unknown,
+  recordedRoutedBaseUrl?: string | null,
+): boolean {
+  return (
+    typeof value === "string" &&
+    (INFERENCE_ROUTE_BASE_URL.test(value) ||
+      (typeof recordedRoutedBaseUrl === "string" && value === recordedRoutedBaseUrl))
+  );
+}
+
 /**
  * Read a durable managed workload without consulting a mutable release
  * pointer. The returned receipt is cloned and the contract, profile, and CA

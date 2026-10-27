@@ -166,6 +166,7 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
       if (hermesPortable) {
         console.log(`  Sandbox: ${sandboxName}`);
         console.log("  Agent: Hermes");
+        console.log(`  Recorded gateway: ${hermesPortable.gatewayName}`);
         console.log(`  Saved Portable lifecycle phase: ${hermesPortable.phase}`);
         console.log("  Runtime and agent health: not probed");
         return;
@@ -222,6 +223,7 @@ async function showLegacySandboxStatus(sandboxName: string): Promise<void> {
   if (effectivePreflight.exitCode !== 0) {
     process.exitCode = effectivePreflight.exitCode;
   }
+  console.log(`  Recorded gateway: ${sb?.gatewayName ?? sb?.gatewayPort ?? "not recorded"}`);
   maybeEnsureHermesToolGatewayBroker(sb);
   if (rpcIssue) {
     printOpenShellStateRpcIssue(rpcIssue, {

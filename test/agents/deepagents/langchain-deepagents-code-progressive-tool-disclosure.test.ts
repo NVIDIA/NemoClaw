@@ -7,6 +7,8 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { approvalPackageSources } from "../../helpers/langchain-deepagents-code-patch-fixture";
+
 const repoRoot = path.resolve(import.meta.dirname, "../../..");
 const agentDir = path.join(repoRoot, "agents", "langchain-deepagents-code");
 const middlewarePath = path.join(agentDir, "progressive_tool_disclosure.py");
@@ -259,12 +261,7 @@ class ModelSelectorScreen:
 
 def should_run_onboarding(state_dir=None): return True
 `,
-  "tui/widgets/approval.py": `from __future__ import annotations
-
-class ApprovalMenu:
-    def _build_options(self): return []
-    def _handle_selection(self, option, *, reject_message=None): pass
-`,
+  ...approvalPackageSources,
   "tui/widgets/status.py": `from __future__ import annotations
 
 class StatusBar:
@@ -773,6 +770,8 @@ describe("Deep Agents progressive tool disclosure", () => {
 describe("Deep Agents 0.1.71 progressive-disclosure build patch", () => {
   it("patches the complete package and isolated main/subagent wiring idempotently", () => {
     const fixture = makePatchFixture();
+    const rendererPath = path.join(fixture.packageDir, "tui/widgets/tool_renderers.py");
+    const rendererSource = fs.readFileSync(rendererPath, "utf8");
     const first = runPatcher(fixture);
     expect(first.status, first.stderr).toBe(0);
 
@@ -786,6 +785,7 @@ describe("Deep Agents 0.1.71 progressive-disclosure build patch", () => {
     const second = runPatcher(fixture);
     expect(second.status, second.stderr).toBe(0);
     expect(snapshot(managedPaths)).toEqual(firstBytes);
+    expect(firstBytes[rendererPath]).toBe(rendererSource);
 
     expect(
       fixture.sourcePaths
@@ -793,7 +793,8 @@ describe("Deep Agents 0.1.71 progressive-disclosure build patch", () => {
           (sourcePath) =>
             !sourcePath.endsWith("/__init__.py") &&
             !sourcePath.endsWith("/onboarding.py") &&
-            !sourcePath.endsWith("/hooks/legacy.py"),
+            !sourcePath.endsWith("/hooks/legacy.py") &&
+            !sourcePath.endsWith("/tool_renderers.py"),
         )
         .every(
           (file) =>

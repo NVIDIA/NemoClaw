@@ -221,6 +221,7 @@ export async function prepareNativeSelection(input: {
       credentialValue: input.deps.resolveCredentialValue(credentialEnv) || null,
       adapter: input.deps.providerAdapter,
       recordedAttachment: input.expectedAttachment,
+      recordedSandboxName: input.sandboxName,
       readAuthority: input.deps.getNativeHostedProviderAuthority,
       writeAuthority: input.deps.setNativeHostedProviderAuthority,
     });
@@ -262,6 +263,9 @@ export async function prepareNativeSelection(input: {
             input.provider === "hermes-provider" ? "NOUS_API_KEY" : definition.credentialEnv,
           ) || null,
     ...(input.expectedAttachment ? { expected: input.expectedAttachment } : {}),
+    ...(input.expectedAttachment && !authority.read(input.gatewayName)
+      ? { recordedSandboxName: input.sandboxName }
+      : {}),
   });
   await lifecycle.persistNativeProviderAuthority({
     adapter: input.deps.providerAdapter,

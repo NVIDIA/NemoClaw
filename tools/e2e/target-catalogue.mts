@@ -889,7 +889,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
   managedRuntimeTarget("hermes-discord", {
-    displayName: "Messaging: Hermes preserves Discord configuration across rebuild",
+    displayName: "Messaging: Hermes isolates Discord credentials and verifies transport",
     agentRuntime: "hermes",
     environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference and Discord",
     profile: "nvidia-inference",
@@ -915,7 +915,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
   managedRuntimeTarget("hermes-inference-switch", {
-    displayName: "Inference: Hermes switches to native NVIDIA and remains responsive",
+    displayName: "Inference: Hermes switches to NVIDIA and preserves Discord across rebuild",
     agentRuntime: "hermes",
     environmentOrInferenceEndpoint: "Ubuntu; native NVIDIA Endpoints provider",
     profile: "nvidia-api",
@@ -1119,6 +1119,9 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     installMode: "none",
     restoreCli: true,
     exposeCliBin: true,
+    // ubuntu-latest (26.04) ships only Python 3.14, which Model Router does not
+    // yet support (src/lib/onboard/model-router-python.ts). Pin until 3.14 is qualified.
+    runner: "ubuntu-24.04",
     owningPaths: [
       "nemoclaw-blueprint/router/pool-config.yaml",
       "src/lib/actions/sandbox/destroy-preflight.ts",
