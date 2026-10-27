@@ -12,6 +12,8 @@ Use the pinned OpenShell development CLI at the revision in [versions.json](../v
 These selectors choose an existing OpenShell gateway and deployment; they do not create services or provision credentials.
 Run them in every terminal used for forwarding or sandbox commands, from any directory.
 
+For a managed Kubernetes or OpenShift gateway, first create its profile as [Reach the Gateway from the OpenShell CLI](kubernetes.md#reach-the-gateway-from-the-openshell-cli) shows, then select it as below.
+
 For an existing authenticated gateway profile supplied by its operator:
 
 ```sh

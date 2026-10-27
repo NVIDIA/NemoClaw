@@ -100,6 +100,7 @@ Keep the state directory: it holds the cluster ownership receipt and the develop
 ### Authenticate Through an Existing OIDC Issuer
 
 The `development` profile runs a token issuer for this deployment, which is not an identity service.
+Only NemoClaw can get its tokens, so it gives you no access of your own: to invoke agents or run `openshell` commands against the gateway, use the `oidc` profile and [reach the gateway from the OpenShell CLI](#reach-the-gateway-from-the-openshell-cli).
 To have the gateway authenticate users through your identity provider instead, use the `oidc` profile:
 
 ```yaml
@@ -136,6 +137,56 @@ When the token expires, get a new one and rerun.
 OpenShell accepts a token for up to 60 seconds after its `exp`, the default leeway of the JWT library it uses, so a revoked token can keep working for that long.
 The gateway still requires its client certificate; the token adds user identity on top.
 With this profile, the namespace holds no development issuer, and the state directory holds no issuer keys.
+
+### Reach the Gateway from the OpenShell CLI
+
+With the `oidc` profile, the OpenShell CLI can reach the gateway with your own token, to [invoke agents](interfaces.md#invoke-an-agent) and run other `openshell` commands.
+It needs three things: a port forward to the gateway pod, the gateway's client certificate, and an OpenShell gateway entry that signs in through your identity provider.
+These steps have not been run on a cluster.
+
+In one terminal, forward the port in `gateway.endpoint` to the gateway, which listens on port 8080 in the pod named after its release with `-0` appended; find the release among the namespace's StatefulSets.
+Leave the forward running:
+
+```sh
+deployment_context=my-cluster
+deployment_namespace=nemoclaw-development
+kubectl --context "$deployment_context" --namespace "$deployment_namespace" get statefulsets
+deployment_release=REPLACE_WITH_STATEFULSET_NAME
+kubectl --context "$deployment_context" --namespace "$deployment_namespace" \
+  port-forward "pod/$deployment_release-0" 17671:8080
+```
+
+In another terminal, with the same variables set, copy the client certificate from the Secret `<release>-client-tls` to where the OpenShell CLI looks for a gateway's certificates.
+The gateway's certificate names `127.0.0.1`, so keep that address:
+
+```sh
+gateway_name=nemoclaw-development
+mtls="${XDG_CONFIG_HOME:-$HOME/.config}/openshell/gateways/$gateway_name/mtls"
+(umask 077 && mkdir -p "$mtls")
+for file in ca.crt tls.crt tls.key; do
+  kubectl --context "$deployment_context" --namespace "$deployment_namespace" \
+    get secret "$deployment_release-client-tls" -o "go-template={{index .data \"$file\"}}" \
+    | base64 -d > "$mtls/$file"
+done
+chmod 600 "$mtls/tls.key"
+```
+
+Then add the gateway with the issuer and audience from `openshell.gateway.oidc`, and the client ID your identity provider registered for the OpenShell CLI with a localhost redirect.
+The CLI opens a browser to sign in, and presents the client certificate together with your token:
+
+```sh
+openshell gateway add https://127.0.0.1:17671 \
+  --name "$gateway_name" \
+  --oidc-issuer https://login.example.com/realms/openshell \
+  --oidc-client-id REPLACE_WITH_CLI_CLIENT_ID \
+  --oidc-audience openshell
+openshell status
+```
+
+`openshell status` reports the gateway as connected and authenticated.
+Then [select the gateway and workspace](interfaces.md#select-the-gateway-and-workspace) with `OPENSHELL_GATEWAY=$gateway_name`.
+The client certificate's key grants transport access to the gateway; keep it private and delete the `mtls` directory when you no longer need access.
+See [OpenShell's authentication guide](https://github.com/NVIDIA/OpenShell/blob/5a7728c304b5528e954e9ae900cf21f84e1a12b1/docs/how-it-works/gateways/authentication.mdx#oidc) for token refresh and sign-out.
 
 ### Reference Registry Credentials
 
