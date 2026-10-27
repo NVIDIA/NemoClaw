@@ -425,8 +425,9 @@ export async function runHermesPongWithRetry(
     },
   });
   if (execution.outcome === "failed") {
+    const diagnostic = execution.value && resultText(execution.value.result).trim();
     throw new Error(
-      "Hermes PONG probe did not return a successful response from the selected model.",
+      `Hermes PONG probe did not return a successful response from the selected model.${diagnostic ? `\n${diagnostic}` : ""}`,
     );
   }
   if (execution.value) return execution.value.result;

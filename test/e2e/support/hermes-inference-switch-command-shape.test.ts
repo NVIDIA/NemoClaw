@@ -529,6 +529,33 @@ describe("Hermes inference switch command shape", () => {
     );
   });
 
+  it("reports the final Hermes probe diagnostic after bounded retry exhaustion", async () => {
+    const first = {
+      exitCode: 1,
+      stdout: "",
+      stderr: "request failed: ECONNRESET",
+    } as ShellProbeResult;
+    const final = {
+      exitCode: 1,
+      stdout: "",
+      stderr: "request failed: rawError=503 final gateway unavailable",
+    } as ShellProbeResult;
+    const run = vi.fn().mockResolvedValueOnce(first).mockResolvedValueOnce(final);
+    const onEvidence = vi.fn();
+
+    await expect(
+      runHermesPongWithRetry({
+        attempts: 2,
+        delay: async () => {},
+        expectedModel: "target-model",
+        onEvidence,
+        run,
+      }),
+    ).rejects.toThrow("rawError=503 final gateway unavailable");
+    expect(run.mock.calls).toEqual([[1], [2]]);
+    expect(onEvidence).toHaveBeenCalledWith(expect.objectContaining({ outcome: "exhausted" }));
+  });
+
   it("does not retry mixed Hermes authentication and transport evidence", async () => {
     const terminal = {
       exitCode: 1,
