@@ -34,7 +34,7 @@ Run the named sandbox status command.
 $$nemoclaw <name> status
 ```
 
-The checks below apply to a normal status read. If status reports `Inference: not probed (another lifecycle operation is in progress)`, it did not verify the route or send an inference request. JSON output sets `inferenceProbeSuppressed: true`. Repeat status after the lifecycle operation completes before treating its result as inference evidence.
+The checks below apply to a normal status read when gateway and sandbox state are verified. If either state is not verified, status reports `Inference: not verified (gateway/sandbox state not verified)` and sends no inference request. If status reports `Inference: not probed (another lifecycle operation is in progress)`, it did not verify the route or send an inference request. JSON output sets `inferenceProbeSuppressed: true` for that unlocked read. Repeat status after the lifecycle operation completes before treating its result as inference evidence.
 
 For NVIDIA Endpoints, the `Inference` row verifies the recorded sandbox attachment.
 It then sends a native Chat Completions request to `https://integrate.api.nvidia.com/v1`.
