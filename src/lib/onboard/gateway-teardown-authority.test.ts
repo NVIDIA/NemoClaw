@@ -439,7 +439,11 @@ describe("gateway registration cleanup authority", () => {
       registerGateway: vi.fn(async () => ({ ok: true as const, state: "completed" as const })),
       removeGateway: vi.fn(async () => result),
       destroyGateway: vi.fn(async () => ({ ok: true as const, state: "completed" as const })),
-      listGateways: vi.fn(async () => ({ ok: true as const, names: [] })),
+      listGateways: vi.fn(async () => ({
+        ok: true as const,
+        names: [],
+        activeGateway: null,
+      })),
     };
     return {
       gatewayName: target.gatewayName,

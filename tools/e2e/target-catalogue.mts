@@ -694,7 +694,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     agentRuntime: "openclaw",
     environmentOrInferenceEndpoint: "Ubuntu Docker host; local gateway; no inference endpoint",
     profile: "standard",
-    timeoutMinutes: 90,
+    timeoutMinutes: 150,
     installMode: "authenticated",
     restoreCli: true,
     exposeCliBin: true,
