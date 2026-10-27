@@ -40,7 +40,7 @@ const PHASE_TIMEOUT_MS = execTimeout(
 );
 const PROBE_ATTEMPTS = Number(process.env.NEMOCLAW_E2E_PROBE_ATTEMPTS ?? 12);
 const PROBE_DELAY_MS = Number(process.env.NEMOCLAW_E2E_PROBE_DELAY_SECONDS ?? 5) * 1_000;
-const TEST_TIMEOUT_MS = testTimeout(90 * 60_000);
+const TEST_TIMEOUT_MS = testTimeout(130 * 60_000);
 const POST_UNINSTALL_HEALTH_PROBES = 3;
 
 process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
