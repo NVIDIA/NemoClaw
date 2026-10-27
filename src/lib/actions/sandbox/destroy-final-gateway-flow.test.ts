@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createRequire } from "node:module";
+
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
 import {
@@ -22,6 +24,7 @@ const SUCCESSFUL_DESTROY_RESULT: SandboxDestroyExecutionResult = {
   detachOutcome: { detached: [], failures: [] },
   forcedLocalCleanup: false,
 };
+const requireSource = createRequire(import.meta.url);
 
 function warnOutput(harness: ReturnType<typeof createDestroyHarness>): string {
   return harness.warnSpy.mock.calls.map((call) => String(call[0])).join("\n");
@@ -175,6 +178,12 @@ describe("destroySandbox final gateway decision", testTimeoutOptions(30_000), ()
     const harness = createDestroyHarness({
       executeSandboxDestroyResult: SUCCESSFUL_DESTROY_RESULT,
     });
+    const crossPortRegistry = requireSource(
+      "../../state/registry/cross-port.js",
+    ) as typeof import("../../state/registry/cross-port");
+    const listOwnersSpy = vi
+      .spyOn(crossPortRegistry, "listInferenceRouteOwnersAcrossGatewayRoots")
+      .mockReturnValue([]);
     harness.withGatewayRouteMutationLockSpy
       .mockImplementationOnce(async (_gatewayName: unknown, operation: unknown) =>
         (operation as () => Promise<unknown>)(),
@@ -184,6 +193,7 @@ describe("destroySandbox final gateway decision", testTimeoutOptions(30_000), ()
         vi.mocked(harness.registry.listSandboxes).mockReturnValue({
           sandboxes: [{ name: "beta", gatewayName: "nemoclaw-19080", gatewayPort: 19080 }],
         } as ReturnType<typeof harness.registry.listSandboxes>);
+        listOwnersSpy.mockReturnValue(harness.registry.listSandboxes().sandboxes);
         return (operation as () => Promise<unknown>)();
       });
 
