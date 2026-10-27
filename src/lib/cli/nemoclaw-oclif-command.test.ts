@@ -366,7 +366,7 @@ describe("NemoClawCommand", () => {
     expect(portableHostAuthority.withCurrentPortableHostFenceTry).toHaveBeenCalledOnce();
   });
 
-  it("fails closed on registry-only Hermes Portable authority for another sandbox (#11903)", async () => {
+  it("permits unlocked status with an ordinary Docker Hermes lifecycle generation (#11903)", async () => {
     vi.spyOn(portableHostAuthority, "withCurrentPortableHostFenceTry").mockRejectedValue(
       new Error(portableHostAuthority.PORTABLE_HOST_FENCE_BUSY_MESSAGE),
     );
@@ -378,16 +378,18 @@ describe("NemoClawCommand", () => {
         lifecycleGeneration: "generation-1",
       } as never,
     ]);
-    const operation = vi.fn(async () => undefined);
+    const operation = vi.fn(async () => {
+      expect(isUnlockedSandboxStatusRead()).toBe(true);
+    });
     ParsedSupportedSandboxCommand.operation = operation;
 
-    await expect(ParsedSupportedSandboxCommand.run(["alpha"], process.cwd())).rejects.toThrow(
-      "Another NemoClaw lifecycle operation is in progress on this host.",
-    );
-    expect(operation).not.toHaveBeenCalled();
+    await expect(
+      ParsedSupportedSandboxCommand.run(["alpha"], process.cwd()),
+    ).resolves.toBeUndefined();
+    expect(operation).toHaveBeenCalledOnce();
   });
 
-  it("rejects an unlocked status read when Hermes Portable registry authority appears during it (#11903)", async () => {
+  it("rejects an unlocked status read when Hermes Portable profile appears during it (#11903)", async () => {
     const fence = acquireProcessBoundLockAt(portableHostAuthority.portableHostFencePath(stateDir));
     let registryReads = 0;
     vi.spyOn(registryCrossPort, "listInferenceRouteOwnersAcrossGatewayRoots").mockImplementation(
@@ -401,6 +403,7 @@ describe("NemoClawCommand", () => {
                 agent: "hermes",
                 openshellDriver: "docker",
                 lifecycleGeneration: "generation-1",
+                portableLifecycleProfile: "hermes",
               } as never,
             ];
       },

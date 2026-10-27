@@ -94,11 +94,7 @@ const REMOVED_IMMUTABILITY_REMEDIATION_COMMANDS = new Set([
 
 function hasPortableRegistryAuthorityOnHost(): boolean {
   return listInferenceRouteOwnersAcrossGatewayRoots(process.env.HOME || os.homedir()).some(
-    (entry) =>
-      entry.portableLifecycleProfile !== undefined ||
-      (entry.agent === "hermes" &&
-        entry.openshellDriver === "docker" &&
-        typeof entry.lifecycleGeneration === "string"),
+    (entry) => entry.portableLifecycleProfile !== undefined,
   );
 }
 
