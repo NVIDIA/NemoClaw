@@ -28,7 +28,7 @@ The output defaults to `deployment.yaml`; onboarding never overwrites an existin
 It requires a terminal and does not create deployment state or apply resources.
 A verified bundle enables read-only provider discovery; without one, authoring remains available with the target marked unverified.
 Known engine incompatibility or conflicting image platform, manifest digest, or Fabric adapter requirements blocks onboarding review and saving.
-The [onboarding guide](../../crates/nemoclaw-onboarding/README.md) describes adaptive questions, supported inputs, and target checks.
+The [onboarding guide](../../crates/nemoclaw-onboarding/README.md) describes how to run it, what it reads from the target, and what to do with the saved file.
 
 Plan and apply derive credential requirements from the parsed document.
 They use a matching nonempty environment variable first and prompt only for unresolved references.
