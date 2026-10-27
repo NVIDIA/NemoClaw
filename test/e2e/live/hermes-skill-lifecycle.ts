@@ -137,7 +137,7 @@ export async function assertHermesSkillLifecycle({
         "from hermes_state import SessionDB; import sys; row = SessionDB().get_session(sys.argv[1]); assert row is not None, 'gateway session missing'; prompt = row.get('system_prompt') or ''; assert sys.argv[2] in prompt, 'default-profile SOUL.md missing from stored prompt'; assert sys.argv[3] in prompt, 'installed skill missing from stored prompt'; print('DEFAULT_PROFILE_PROMPT_OK')",
         sessionId,
         soulMarker,
-        "nemoclaw-hermes-skill-e2e",
+        HERMES_SKILL_ID,
       ],
       "phase-4-hermes-default-profile-stored-prompt",
     );
