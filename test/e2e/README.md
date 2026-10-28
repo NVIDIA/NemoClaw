@@ -2393,6 +2393,7 @@ The SDK version must match the candidate runtime version.
 Changed SDK dependency metadata or transitive dependencies require a trust/bootstrap review; unrelated candidate npm changes never enter the controller.
 Live qualification must still pass for the selected candidate; source projection and archive-install tests do not establish that result.
 When a parsed OpenClaw result fails the provider, model, completion, or assistant-answer checks, the job reports a bounded diagnostic.
+The workflow revision must contain this helper; a premerge run using an older trusted workflow cannot report it.
 It contains only allowlisted status fields, flags, counts, and text lengths.
 The diagnostic excludes raw responses, payload text, prompts, transcripts, and credentials.
 Use it with the failed assertion and retained cleanup evidence; it does not establish a cause or a passing result.

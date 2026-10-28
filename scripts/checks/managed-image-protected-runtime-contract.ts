@@ -442,8 +442,12 @@ function openClawAnswerDiagnostic(envelope: unknown): string {
       "aborted",
       "superseded",
     ]),
-    livenessState: category(meta.livenessState, ["blocked", "working", "abandoned"]),
+    terminalReplyKind: category(meta.terminalReplyKind, ["silent-empty"]),
+    livenessState: category(meta.livenessState, ["blocked", "working", "paused", "abandoned"]),
     aborted: flag(meta.aborted),
+    yielded: flag(meta.yielded),
+    continuationPending: flag(meta.continuationPending),
+    refusal: flag(completion.refusal),
     pendingToolCallCount: Array.isArray(meta.pendingToolCalls)
       ? meta.pendingToolCalls.length
       : null,

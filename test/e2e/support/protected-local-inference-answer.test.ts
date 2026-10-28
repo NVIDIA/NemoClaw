@@ -50,20 +50,28 @@ it.each([
   expect(message).not.toContain("private reasoning");
 });
 
-it("reports known completion and pending tools without retaining agent content", () => {
+it("reports known silent completion and pending tools without retaining agent content", () => {
   const { diagnostic } = rejectedDiagnostic({
     payloads: [],
     meta: {
       ...meta,
+      terminalReplyKind: "silent-empty",
       stopReason: "stop",
       livenessState: "blocked",
+      yielded: true,
+      continuationPending: true,
+      completion: { refusal: true },
       pendingToolCalls: [{ arguments: "private arguments" }],
     },
   });
   expect(diagnostic).toMatchObject({
+    terminalReplyKind: "silent-empty",
     stopReason: "stop",
     livenessState: "blocked",
     aborted: false,
+    yielded: true,
+    continuationPending: true,
+    refusal: true,
     pendingToolCallCount: 1,
   });
   expect(JSON.stringify(diagnostic)).not.toContain("private arguments");
@@ -98,20 +106,26 @@ it("bounds OpenClaw diagnostics and excludes unknown metadata and echoed secrets
     payloadCount: 100,
     sampledPayloadCount: 32,
     stopReason: "other",
+    terminalReplyKind: "other",
     livenessState: "other",
+    yielded: null,
+    refusal: null,
   });
   expect(diagnostic.payloadTextLengths).toEqual(Array(32).fill(echo.length));
 });
 
-it.each(["tool_calls", "end_turn"])(
-  "retains nested OpenClaw %s completion and abandoned liveness without accepting an empty answer",
-  (stopReason) => {
+it.each([
+  ["tool_calls", "abandoned"],
+  ["end_turn", "paused"],
+])(
+  "retains nested OpenClaw %s completion and %s liveness without accepting an empty answer",
+  (stopReason, livenessState) => {
     const { message, diagnostic } = rejectedDiagnostic({
       payloads: [],
-      meta: { ...meta, completion: { stopReason }, livenessState: "abandoned" },
+      meta: { ...meta, completion: { stopReason }, livenessState },
     });
     expect(message).toContain("no assistant answer");
-    expect(diagnostic).toMatchObject({ stopReason, livenessState: "abandoned" });
+    expect(diagnostic).toMatchObject({ stopReason, livenessState });
   },
 );
 
