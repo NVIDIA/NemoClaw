@@ -24,7 +24,7 @@ describe("protected local inference agent response", () => {
     },
     {
       response: `Reply with exactly one word: PONG ${"x".repeat(600)}`,
-      expected: `response="Reply with exactly one word: PONG ${"x".repeat(478)}`,
+      expected: `response="Reply with exactly one word: PONG ${"x".repeat(478)}"`,
     },
   ])("reports bounded, redacted rejected output [%#]", ({ response, expected }) => {
     expect(() =>
