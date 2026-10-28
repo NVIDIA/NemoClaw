@@ -182,11 +182,12 @@ impl DataSource for GatewayPrerequisitesDataSource {
                         ObservationStatus::Unavailable,
                         Some(GATEWAY_PORT_TAKEN.into()),
                     ),
-                    Ok(Err(error)) => (ObservationStatus::Unknown, Some(error.to_string())),
-                    Err(_) => (
-                        ObservationStatus::Unknown,
-                        Some("gateway port observation timed out".into()),
-                    ),
+                    Ok(Err(_)) | Err(_) => {
+                        // An incomplete inventory cannot establish that the
+                        // endpoint is free before plan binds it in state.
+                        diags.root_error_short("Gateway endpoint port could not be checked");
+                        return None;
+                    }
                 };
             observation.status = status;
             observation.reason = reason;
@@ -294,6 +295,41 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[tokio::test]
+    async fn failed_port_inventory_stops_the_prerequisite_read() {
+        use crate::docker::{Connections, fixture::Fixture};
+        use serde_json::json;
+        const ENGINE: &str = "unix:///var/run/docker.sock";
+        let fixture = Fixture::engine(|request| {
+            let response = match request.path.split('?').next().unwrap() {
+                "/info" => (200, json!({"ID": "selected-engine"})),
+                "/containers/json" => (403, json!({"message": "inventory denied"})),
+                path => panic!("unexpected observation {path}"),
+            };
+            Some((response.0, serde_json::to_vec(&response.1).unwrap()))
+        })
+        .await;
+        let backend =
+            ConfiguredBackend::fixed(Connections::fixed([fixture.engine_for(ENGINE)]).unwrap());
+        let mut diagnostics = Diagnostics::default();
+        let result = GatewayPrerequisitesDataSource(Arc::new(backend))
+            .read(
+                &mut diagnostics,
+                GatewayPrerequisitesState {
+                    engine: Value::Value(ENGINE.into()),
+                    compute_driver: Value::Value("docker".into()),
+                    endpoint: Value::Value("http://127.0.0.1:17695".into()),
+                    name: Value::Value("nc-0123456789abcdef-gateway".into()),
+                    owner: Value::Value("own-uid".into()),
+                    ..Default::default()
+                },
+                ValueEmpty::default(),
+            )
+            .await;
+        assert!(result.is_none());
+        assert!(!diagnostics.errors.is_empty());
     }
 
     #[tokio::test]

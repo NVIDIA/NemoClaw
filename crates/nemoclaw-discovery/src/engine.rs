@@ -98,12 +98,14 @@ pub async fn check_gateway_port(
             return Err(Error::Conflict(GATEWAY_PORT_TAKEN));
         }
     }
-    if driver == ComputeDriver::Podman
-        && !own_running
-        && std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port))
-            .is_err_and(|error| error.kind() == std::io::ErrorKind::AddrInUse)
-    {
-        return Err(Error::Conflict(GATEWAY_PORT_TAKEN));
+    if driver == ComputeDriver::Podman && !own_running {
+        match std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port)) {
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => {
+                return Err(Error::Conflict(GATEWAY_PORT_TAKEN));
+            }
+            Err(_) => return Err(Error::State("gateway port bind probe failed")),
+        }
     }
     Ok(())
 }
