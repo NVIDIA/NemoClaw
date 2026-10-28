@@ -24,6 +24,7 @@ See [PR Review Priorities](PR-REVIEW-PRIORITIES.md). Require all conditions:
 - The PR body has the contributor's `Signed-off-by:` declaration.
 - GitHub marks every commit as `Verified`.
 - Required CI passes for the recorded PR commit and base commit.
+- For a PR targeting `main`, [Check PR E2E Evidence](../nemoclaw-maintainer-check-pr-e2e/SKILL.md) returns `PASS`. PRs targeting `v1` are excluded from this requirement.
 - The PR remains open, not draft, `MERGEABLE`, and in a permitted merge state.
 - No unresolved correctness or security finding remains.
 - Risky code has applicable tests from [Risky Areas](RISKY-AREAS.md).
@@ -66,7 +67,10 @@ A first-time fork contributor can require an **Approve and run** decision before
 
 ### Live E2E
 
-Live E2E is not a default PR merge gate. When a maintainer requires it, follow [Run Maintainer E2E](../nemoclaw-maintainer-e2e/SKILL.md), then evaluate its result for this PR.
+Before approving any PR targeting `main`, apply
+[Check PR E2E Evidence](../nemoclaw-maintainer-check-pr-e2e/SKILL.md).
+The trusted checker's `allPass` does not include this evidence check and cannot replace it.
+PRs targeting `v1` are excluded from this requirement.
 
 ### Contributor and approver overlap
 
@@ -82,6 +86,7 @@ The contributor set includes the PR opener, commit authors, and co-authors. Use 
 | Contributor declaration or verification fails | Ask the contributor to correct the body or commit history. Do not amend, sign, or force-push for them. |
 | PR revision or base branch tip changed during evaluation | Do not approve. Restart the gate for the new state. |
 | CI or review is pending | Wait. |
+| Required PR E2E evidence is missing, stale, pending, or unsuccessful | Do not approve. Report the missing passing evidence. |
 | A narrow repair or mechanical conflict is required | Follow [Salvage a Pull Request](SALVAGE-PR.md) after collection completes for the same commit. |
 | An active rule requires the current base | Integrate the base once, then restart PR follow-up for the new candidate. |
 | A required test is missing | Follow [Test Gaps](TEST-GAPS.md). |
@@ -92,5 +97,6 @@ Do not approve a conflicted PR. A branch refresh invalidates the prior approval 
 ## Recheck and report
 
 After approval, run the trusted checker and read the effective rules again. Confirm that no rule, PR commit, base commit, required check, review decision, or merge state changed.
+For a PR targeting `main`, also recheck the E2E evidence identity and run attempts.
 
 Report the gate result, required action, advisory output, and PR URL. Report that the PR can proceed to a separate merge decision. Never merge in this workflow.

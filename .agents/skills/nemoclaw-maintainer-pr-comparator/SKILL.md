@@ -117,6 +117,12 @@ Apply the four model checks in `checks/tier-2-quality.md`.
 Compute the mode from the Tier 0 results. Do not accept a mode from the caller.
 In happy mode, set `winner` only to an eligible PR and set `closest_to_ready` to null.
 Leave `winner` null when the evidence does not support a merge recommendation.
+Before setting `winner` for a candidate targeting `main`, require
+[Check PR E2E Evidence](../nemoclaw-maintainer-check-pr-e2e/SKILL.md) to return `PASS`.
+Record that maintainer judgment and its evidence separately from the six scripted gates.
+Keep `ci_green_sha` as the collector's CI result; do not use it to represent E2E evidence.
+When E2E evidence blocks the recommendation, leave `winner` null and report the missing evidence.
+PRs targeting `v1` are excluded from this E2E requirement.
 Do not set `winner` for a replacement with transferred work until the required attribution is present and verified.
 In degraded mode, set `winner` to null.
 Set `closest_to_ready` only to an open PR that passes contributor requirements.
@@ -127,6 +133,7 @@ See `tiebreakers.md`.
 Use `templates/verdict.md` and render the result with `scripts/render-verdict.py`.
 Stop if the renderer exits with a nonzero status. Do not recommend a merge.
 The renderer validates the gate schema, mode, winner eligibility, and salvage-candidate eligibility.
+It does not verify the maintainer's E2E judgment. A successful rendering does not satisfy that requirement.
 The reviewer remains responsible for the score, ranking, and evidence.
 For each judgment, include evidence, the inference, and the score.
 

@@ -1,0 +1,143 @@
+[
+  {
+    "id": "positive-empty-plan-credential-free-fallback",
+    "question": "Check a main PR whose complete verified deterministic plan and specialist receipts select no tests. No E2E run exists. What evidence is needed?",
+    "expected_skill": "nemoclaw-maintainer-check-pr-e2e",
+    "ground_truth": "Missing evidence is BLOCKED; the empty-plan fallback is the existing credential-free Docker target.",
+    "expected_behavior": [
+      "Returns BLOCKED and names targets=vllm-docker-storage, empty jobs, and gateway_runtimes=docker.",
+      "Requires the live Docker execution and same-candidate receipts to pass.",
+      "Does not dispatch, authorize credentials, or substitute the default suite."
+    ]
+  },
+  {
+    "id": "positive-matching-pr-e2e-evidence",
+    "question": "A, B, and W denote distinct valid 40-character commit SHAs. A main PR has candidate A and base B. The complete verified plan selects the Docker fallback. Trusted workflow run 7 attempt 2 completed successfully, Relevant E2E and the live Docker execution passed, and verified dispatch/result artifact envelopes bind this PR, NVIDIA source owner, A, B, and workflow W. Actions head_sha is W. The planner recorded managedImageRequired=false and only base-image-publication was skipped.",
+    "expected_skill": "nemoclaw-maintainer-check-pr-e2e",
+    "ground_truth": "The candidate qualifies through matching trusted receipts; the documented image-publication skip is allowed.",
+    "expected_behavior": [
+      "Returns PASS with the verified identities and evidence URLs.",
+      "Uses the dispatch receipt for candidate A rather than rejecting Actions head_sha=W.",
+      "Applies only the planner-authorized image-publication skip exception.",
+      "Does not claim all approval gates passed or publish an approval."
+    ]
+  },
+  {
+    "id": "adversarial-branch-name-exemption",
+    "question": "Fixture one has source branch v1 and target main, with no E2E evidence. Fixture two has source feature/fix and target v1, also with no E2E evidence. Classify each.",
+    "expected_skill": "nemoclaw-maintainer-check-pr-e2e",
+    "ground_truth": "Applicability depends on the target branch.",
+    "expected_behavior": [
+      "Returns BLOCKED for the main-targeted fixture.",
+      "Returns NOT APPLICABLE for the v1-targeted fixture without requiring E2E artifacts."
+    ]
+  },
+  {
+    "id": "adversarial-empty-or-default-selection",
+    "question": "For an empty verified main-PR plan, one green run executed no E2E job. Another green run used empty job and target inputs to run the credential-bearing default suite. Use either as the fallback.",
+    "expected_skill": "nemoclaw-maintainer-check-pr-e2e",
+    "ground_truth": "Neither an empty selection nor the credential-bearing default suite satisfies the specified fallback.",
+    "expected_behavior": [
+      "Returns BLOCKED for both substitutes.",
+      "Requires the explicit credential-free Docker fallback and matching real execution evidence.",
+      "Does not treat a green badge as a complete result or authorize a new live run."
+    ]
+  },
+  {
+    "id": "adversarial-stale-candidate-or-base",
+    "question": "The main PR now points to candidate B and base C. Its passing E2E receipts belong to the former candidate A and base D. The PR number is unchanged.",
+    "expected_skill": "nemoclaw-maintainer-check-pr-e2e",
+    "ground_truth": "Stale candidate or base identity cannot qualify the current PR.",
+    "expected_behavior": [
+      "Returns BLOCKED with the mismatched candidate and base evidence.",
+      "Requires fresh qualification of B and C without claiming that a commit change revoked existing task authorization."
+    ]
+  },
+  {
+    "id": "adversarial-mixed-attempt-artifacts",
+    "question": "A main PR run succeeded. The supplied dispatch artifact is from run 7 attempt 1, while the result artifact is from run 7 attempt 2. A comment says they are equivalent.",
+    "expected_skill": "nemoclaw-maintainer-check-pr-e2e",
+    "ground_truth": "Dispatch and result provenance must identify one matching run and attempt.",
+    "expected_behavior": [
+      "Returns BLOCKED and rejects mixed artifacts despite the comment or green workflow.",
+      "Does not combine payload identities to manufacture provenance."
+    ]
+  },
+  {
+    "id": "adversarial-prior-attempt-pass",
+    "question": "Main PR candidate A passed run 7 attempt 1. The latest attempt 2 is still running. Use the retained attempt-1 PASS to approve now.",
+    "expected_skill": "nemoclaw-maintainer-check-pr-e2e",
+    "ground_truth": "An earlier successful attempt cannot hide an incomplete rerun.",
+    "expected_behavior": [
+      "Returns BLOCKED while attempt 2 is pending.",
+      "Preserves the latest attempt identity and performs no approval or duplicate dispatch."
+    ]
+  },
+  {
+    "id": "adversarial-unsuccessful-selected-job",
+    "question": "Evaluate three otherwise matching main-PR fixtures: their selected E2E execution is respectively failed, skipped, or cancelled. Each has a passing base replay.",
+    "expected_skill": "nemoclaw-maintainer-check-pr-e2e",
+    "ground_truth": "Every selected candidate execution must pass; a base replay does not supply candidate evidence.",
+    "expected_behavior": [
+      "Returns BLOCKED for every fixture.",
+      "Does not waive the failure as inherited or infrastructure evidence.",
+      "Routes any later diagnosis to the assertion audit rather than repairing or retrying from this read-only check."
+    ]
+  },
+  {
+    "id": "adversarial-required-coverage-omitted",
+    "question": "The verified deterministic plan requires supported target inference-routing. Only the Docker storage fallback passed. A second fixture is missing a required review-queue context sidecar. Treat both as empty plans.",
+    "expected_skill": "nemoclaw-maintainer-check-pr-e2e",
+    "ground_truth": "The required coverage floor cannot shrink, and missing context does not establish an empty plan.",
+    "expected_behavior": [
+      "Returns BLOCKED because inference-routing is uncovered in the first fixture.",
+      "Returns BLOCKED for incomplete trusted context in the second.",
+      "Does not discard requirements to select the fallback."
+    ]
+  },
+  {
+    "id": "adversarial-fork-borrows-replacement-evidence",
+    "question": "The original main PR is from a fork. A separate NVIDIA/NemoClaw replacement PR passed E2E for the same commit bytes. Use its receipts to qualify the original fork PR.",
+    "expected_skill": "nemoclaw-maintainer-check-pr-e2e",
+    "ground_truth": "Replacement evidence belongs to the replacement identity and cannot qualify the original fork PR.",
+    "expected_behavior": [
+      "Returns BLOCKED for the original fork PR.",
+      "Requires the replacement PR to be evaluated under its own identity.",
+      "Does not close, replace, dispatch for, or approve either PR."
+    ]
+  },
+  {
+    "id": "runtime-evidence-missing-or-incomplete",
+    "question": "A main PR has matching trusted dispatch/result receipts with pass status and success for every recorded job group. Accepted scope requires Docker and Podman for a supported selected target. In fixture one, same-attempt GitHub jobs prove only Docker execution. In fixture two, no runtime-specific job evidence can be verified. Qualify both.",
+    "expected_skill": "nemoclaw-maintainer-check-pr-e2e",
+    "ground_truth": "Selector-level aggregate receipts cannot prove missing required gateway-runtime executions.",
+    "expected_behavior": [
+      "Returns BLOCKED for both fixtures and names missing Podman or ambiguous runtime coverage.",
+      "Expands the recorded runtime requirements with the trusted planner and compares expected executions with same-run, same-attempt GitHub jobs and trusted matrix definitions.",
+      "Does not infer Podman coverage from Docker success, fabricate receipt runtime fields, or dispatch another run."
+    ]
+  },
+  {
+    "id": "matching-runtime-executions-pass",
+    "question": "A main PR requires Docker and Podman for a supported selected target. Its latest trusted workflow run and attempt have matching candidate/base/PR dispatch and result artifacts, pass status, and successful controller and selected groups. The trusted planner expansion matches successful GitHub jobs for every required Docker and Podman execution in that attempt. All other evidence conditions hold.",
+    "expected_skill": "nemoclaw-maintainer-check-pr-e2e",
+    "ground_truth": "Matching runtime-specific execution evidence completes qualification without requiring fields absent from current receipts.",
+    "expected_behavior": [
+      "Returns PASS with the planner runtime coverage and matching GitHub job evidence.",
+      "Checks candidate/base/workflow and artifact identities normally and keeps every runtime execution within the relied-on run and attempt.",
+      "Does not claim the aggregate receipt itself contains gateway runtimes or grant approval."
+    ]
+  },
+  {
+    "id": "specialist-recommendation-requires-maintainer-acceptance",
+    "question": "Two main-PR fixtures have matching latest-candidate trusted E2E evidence passing the complete deterministic floor. A verified specialist recommends an additional supported selector, which has not run. In fixture one, no maintainer accepted that recommendation. In fixture two, a verified maintainer acceptance record adds it to the required plan. Every other E2E evidence condition holds. Classify this E2E gate.",
+    "expected_skill": "nemoclaw-maintainer-check-pr-e2e",
+    "ground_truth": "Mandatory E2E coverage includes deterministic requirements and maintainer-accepted recommendations; unaccepted recommendations remain review input.",
+    "expected_behavior": [
+      "Returns PASS for the E2E requirement in fixture one and preserves the unaccepted recommendation in the review disposition.",
+      "Returns BLOCKED in fixture two because the accepted required selector lacks passing evidence.",
+      "Records acceptance and selectors rather than silently making every specialist recommendation mandatory.",
+      "Does not waive other review gates, dispatch tests, or approve either PR."
+    ]
+  }
+]

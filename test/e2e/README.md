@@ -2214,8 +2214,10 @@ The `totalRunnerMinutes` field contains the cumulative runner time for those sum
 A later successful attempt sets `action` to `passed-after-retry` and `flaky` to `true`.
 The observer ignores manual PR runs and a run superseded by a newer `main` push.
 
-GitHub's workflow-dispatch permission is the actor authorization for a PR revision run.
+GitHub's workflow-dispatch permission establishes repository access for a PR revision run.
 The workflow does not add a second `maintain` or `admin` role gate.
+The caller must have task authorization for the selected credentials, hardware, staging deployment, and resource owner.
+Existing authorization remains valid within unchanged boundaries; dispatch access does not expand it.
 Before checkout, it verifies the open PR, target repository and `main` branch, current source repository and commit, base commit, and trusted workflow commit from the GitHub PR API.
 
 The API must report `NVIDIA/NemoClaw` as the PR source repository. Empty `jobs` and `targets` select:
@@ -2613,7 +2615,7 @@ For an authorized hosted-provider candidate run, the trusted reporter comments o
 It rechecks the open PR's head, base, and repository before posting the candidate commit, workflow commit, selected results, and artifact link.
 The artifacts retain scenario evidence and per-sandbox `cleanup.json` when produced. Inspect cleanup outcomes separately; missing evidence is not a pass.
 A changed PR head or base rejects the comment. Other candidate dispatches retain their existing artifact-only reporting path.
-For a manual same-repository PR run, GitHub workflow-dispatch permission authorizes the operator.
+For a manual same-repository PR run, GitHub workflow-dispatch permission establishes repository dispatch access.
 The controller verifies the open PR, repository, candidate commit, base commit, and workflow revision before credential forwarding.
 Review the complete candidate diff and approve the selected credential source before dispatch.
 Candidate-controlled host processes can read or copy the selected provider key while the test runs.

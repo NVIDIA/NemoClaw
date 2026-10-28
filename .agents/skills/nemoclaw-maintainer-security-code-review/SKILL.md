@@ -107,6 +107,11 @@ For each of the nine categories, assign a verdict:
 
 ## Step 6: Produce the Report
 
+For a NemoClaw PR targeting `main`, apply
+[Check PR E2E Evidence](../nemoclaw-maintainer-check-pr-e2e/SKILL.md) before declaring it approval-ready or safe to merge.
+Report an E2E blocker separately from the security category verdicts. Complete every security category even when E2E evidence is missing.
+PRs targeting `v1` are excluded from this E2E requirement.
+
 Structure the output as follows:
 
 ### Verdict

@@ -3,7 +3,7 @@
 
 # Manual PR E2E
 
-Use this mode when a maintainer requests E2E for a pull request. The trusted workflow stays on
+Use this mode for authorized PR E2E, including the PR creator workflow. The trusted workflow stays on
 `main` and first checks out the latest commit of an open PR. It rejects an arbitrary or historical
 commit SHA. Replay the same selector against the exact PR base only after a candidate failure remains
 unresolved. The result is advisory and does not create a required PR check.
@@ -16,6 +16,8 @@ Repository writers are trusted to populate the compiled cache before their chang
 
 Before dispatch, read [Push and Manual PR E2E](../../../../test/e2e/README.md#push-and-manual-pr-e2e)
 for the selected jobs' credential locations, access, lifetimes, and removal or cleanup boundaries.
+Require authorization for the selected credentials, hardware, staging deployment, and resource owner.
+Technical permission to dispatch does not grant that authority. Preserve existing authorization within unchanged boundaries.
 
 An empty-selector same-repository PR run can expose these values to candidate-controlled jobs:
 
@@ -62,8 +64,9 @@ HEAD_OWNER_TYPE="$(jq -r .head.repo.owner.type <<<"$PR_JSON")"
 [[ "$WORKFLOW_SHA" =~ ^[0-9a-f]{40}$ ]]
 ```
 
-A same-repository PR can use the full candidate plan and credential profiles.
-Empty selectors run every default-enabled E2E. Any supported job or target selector is allowed.
+A same-repository PR is eligible for the full candidate plan and credential profiles.
+Empty selectors run every default-enabled E2E. The workflow accepts any supported job or target selector.
+Select only execution covered by the existing authorization.
 
 Jetson and Launchable runs require a branch in `NVIDIA/NemoClaw`. Jetson also requires
 `allow_jetson_dispatch=true` and the reviewed service configuration in
@@ -75,6 +78,7 @@ cannot silently change the selected behavior:
 ```bash
 E2E_JOBS="${E2E_JOBS:-}"
 E2E_TARGETS="${E2E_TARGETS:-}"
+E2E_GATEWAY_RUNTIMES="${E2E_GATEWAY_RUNTIMES:-docker}"
 ALLOW_JETSON_DISPATCH="${ALLOW_JETSON_DISPATCH:-false}"
 INCLUDE_STAGING_BREV_LAUNCHABLE="${INCLUDE_STAGING_BREV_LAUNCHABLE:-false}"
 HEAD_CORRELATION_ID="$(python3 -c 'import uuid; print(uuid.uuid4())')"
@@ -83,6 +87,7 @@ gh workflow run .github/workflows/e2e.yaml \
   --ref main \
   -f "targets=${E2E_TARGETS}" \
   -f "jobs=${E2E_JOBS}" \
+  -f "gateway_runtimes=${E2E_GATEWAY_RUNTIMES}" \
   -f inference_mode=mock \
   -f "include_staging_brev_launchable=${INCLUDE_STAGING_BREV_LAUNCHABLE}" \
   -f "allow_jetson_dispatch=${ALLOW_JETSON_DISPATCH}" \
@@ -94,8 +99,8 @@ gh workflow run .github/workflows/e2e.yaml \
   -f "correlation_id=${HEAD_CORRELATION_ID}"
 ```
 
-GitHub's permission to dispatch the workflow authorizes the actor. The workflow does not repeat that
-repository-role check. The trusted pre-checkout step validates:
+GitHub checks the actor's technical permission to dispatch. The workflow does not repeat that
+repository-role check or grant execution authority. The trusted pre-checkout step validates:
 
 - the open PR;
 - the target repository and branch;
@@ -127,7 +132,22 @@ for POLL_INDEX in $(seq 1 30); do
 done
 test "$(jq 'length' <<<"$MATCHES")" -eq 1
 RUN_ID="$(jq -r '.[0].databaseId' <<<"$MATCHES")"
-gh run watch "$RUN_ID" --repo NVIDIA/NemoClaw --exit-status || true
+HEAD_RUN_ID="$RUN_ID"
+HEAD_RUN_URL="$(jq -r '.[0].url' <<<"$MATCHES")"
+```
+
+Poll this run's status every 30 seconds for at most 10 minutes:
+
+```bash
+gh run view "$RUN_ID" --repo NVIDIA/NemoClaw --json status,conclusion,url,attempt
+```
+
+Run the completion checks below only after the workflow completes.
+At the monitoring deadline, report `pending` with the run ID, URL, correlation ID, and latest observed attempt.
+Keep the PR draft and stop this invocation. A later invocation resumes the same run without another dispatch.
+Preserve the candidate, base, selectors, and runtime coverage with that record.
+
+```bash
 RUN_JSON="$(gh api "repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}")"
 jq -e --arg sha "$WORKFLOW_SHA" '
   .run_attempt >= 1 and .head_sha == $sha and
@@ -158,7 +178,7 @@ unresolved and may proceed to the exact-base replay below.
 ## Replay an Unresolved Failure Against the Exact Base
 
 Before dispatch, prove that the PR still has the head and base captured for the failed head run.
-Use the same trusted workflow SHA, eligible jobs and targets, and inference mode. The selected source
+Use the same trusted workflow SHA, eligible jobs and targets, gateway runtimes, and inference mode. The selected source
 changes from the PR head repository and SHA to the PR base repository and SHA.
 
 Do not use an exact-base replay for Jetson or DGX Spark. Those selectors need dedicated hardware and
@@ -180,6 +200,7 @@ gh workflow run .github/workflows/e2e.yaml \
   --ref main \
   -f "targets=${E2E_TARGETS}" \
   -f "jobs=${E2E_JOBS}" \
+  -f "gateway_runtimes=${E2E_GATEWAY_RUNTIMES}" \
   -f inference_mode=mock \
   -f "include_staging_brev_launchable=${INCLUDE_STAGING_BREV_LAUNCHABLE}" \
   -f allow_jetson_dispatch=false \
@@ -191,7 +212,7 @@ gh workflow run .github/workflows/e2e.yaml \
   -f "correlation_id=${BASE_CORRELATION_ID}"
 ```
 
-Find the base run with the same bounded lookup used above and this exact title:
+Find and monitor the base run with the same lookup and monitoring limits and this exact title:
 
 ```bash
 RUN_TITLE="E2E PR #${PR_NUMBER} (${BASE_CORRELATION_ID})"
@@ -225,6 +246,7 @@ Return:
 - the workflow SHA;
 - the head and, when replayed, base correlation IDs;
 - the selectors;
+- the gateway runtimes;
 - the head and, when replayed, base workflow URLs; and
 - the result or comparison outcome.
 

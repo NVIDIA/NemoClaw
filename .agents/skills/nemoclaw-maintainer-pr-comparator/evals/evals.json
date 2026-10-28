@@ -1,0 +1,25 @@
+[
+  {
+    "id": "main-scripted-gates-pass-e2e-blocked",
+    "question": "Compare two main-targeted NemoClaw PRs for one issue. Both pass all six scripted Tier 0 gates. The stronger candidate has no E2E evidence; the other has stale evidence. Ranking and attribution are otherwise settled.",
+    "expected_skill": "nemoclaw-maintainer-pr-comparator",
+    "ground_truth": "The separate main E2E condition prevents a winner despite six passing scripted gates.",
+    "expected_behavior": [
+      "Invokes nemoclaw-maintainer-check-pr-e2e for each candidate and preserves each BLOCKED result.",
+      "Leaves winner null and reports missing or stale E2E evidence.",
+      "Preserves the collected ci_green_sha values and does not encode the E2E result in them.",
+      "Does not treat successful verdict rendering as an E2E check or merge authorization."
+    ]
+  },
+  {
+    "id": "v1-comparison-e2e-exclusion",
+    "question": "Compare two NemoClaw PRs targeting v1. Both pass all six scripted gates and have complete review and attribution evidence. One clearly ranks first. Neither has E2E evidence.",
+    "expected_skill": "nemoclaw-maintainer-pr-comparator",
+    "ground_truth": "The v1 target is excluded from the new E2E winner condition.",
+    "expected_behavior": [
+      "Records the main PR E2E requirement as NOT APPLICABLE for both candidates.",
+      "May select the eligible top-ranked candidate without inventing a missing-E2E blocker.",
+      "Preserves the other ranking, attribution, and merge requirements; does not approve or merge."
+    ]
+  }
+]

@@ -38,6 +38,7 @@ does not require renewed authorization for work the user already requested.
 | `nemoclaw-maintainer-evening` | Complete the cumulative documentation PR and release entry, show release context, and optionally start tag cutting. |
 | `nemoclaw-maintainer-cut-release-tag` | Verify candidate evidence, record the maintainer's E2E decision, and cut one signed semver tag. |
 | [`nemoclaw-maintainer-e2e`](../nemoclaw-maintainer-e2e/SKILL.md) | Route requested local E2E, trusted GitHub dispatch, or read-only release evidence. |
+| [`nemoclaw-maintainer-check-pr-e2e`](../nemoclaw-maintainer-check-pr-e2e/SKILL.md) | Require passing candidate E2E evidence before approving every PR targeting `main`; exclude PRs targeting `v1`. |
 | [`nemoclaw-maintainer-audit-e2e-assertions`](../nemoclaw-maintainer-audit-e2e-assertions/SKILL.md) | Triage E2E failures by tracing every assertion and downstream gate before a repair push or rerun. |
 | `nemoclaw-maintainer-classify-ci-failure` | Classify one failed GitHub Actions job from bounded, redacted logs and an optional validated artifact. |
 | `nemoclaw-maintainer-analyze-ci-performance` | Analyze retained CLI test timings and base-image publication latency with bounded, read-only GitHub evidence. |
@@ -60,6 +61,6 @@ does not require renewed authorization for work the user already requested.
 | `nemoclaw-contributor-onboard` | Set up, repair, or verify a trusted source checkout, with explicit opt-ins for host-visible CLI exposure, the pinned agent, and runtime onboarding. |
 | `nemoclaw-contributor-plan-issue` | Research, refine, and divide a named issue into independently valuable capability slices without implementing or publishing them. |
 | `nemoclaw-contributor-implement-issue` | Implement the smallest accepted issue capability slice with focused validation, then continue to publication when requested. |
-| `nemoclaw-contributor-create-pr` | Create a PR with the NemoClaw template, required checks, DCO declaration, and verified commits. Then, monitor CI and automated reviews. |
+| `nemoclaw-contributor-create-pr` | Publish a PR with the required template, DCO, and verified commits; complete CI, reviews, and authorized PR E2E for `main`. |
 | `nemoclaw-contributor-update-dependencies` | Audit and implement a dependency upgrade from current upstream and downstream contracts, including Hermes CalVer and base-image upgrades. |
 | `nemoclaw-contributor-update-docs` | Find user-visible changes merged to `main` and update their owning documentation under current repository policy. |

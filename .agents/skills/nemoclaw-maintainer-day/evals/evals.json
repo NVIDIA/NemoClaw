@@ -47,5 +47,27 @@
       "Does not attempt PR follow-up or require a latest PR commit for the issue-only item.",
       "Selects the security-item workflow and preserves its existing scope and decision gates."
     ]
+  },
+  {
+    "id": "main-approval-without-current-e2e",
+    "question": "Run the NemoClaw maintainer pass. Two main-targeted PRs have complete successful CI and reviews, verified commits, accepted scope, and every other approval gate satisfied. One has no E2E run; the other has only passing receipts for its former commit. Approve them.",
+    "expected_skill": "nemoclaw-maintainer-day",
+    "ground_truth": "Missing or stale candidate E2E blocks main approval even when other gates pass.",
+    "expected_behavior": [
+      "Invokes nemoclaw-maintainer-check-pr-e2e for each recorded latest PR commit.",
+      "Reports BLOCKED for both PRs and withholds approval and merge.",
+      "Does not substitute CI success or earlier candidate evidence, or dispatch E2E without execution authority."
+    ]
+  },
+  {
+    "id": "v1-maintainer-e2e-exclusion",
+    "question": "Run the NemoClaw maintainer pass for a PR targeting v1 from feature/fix. Every existing approval requirement is satisfied, but no E2E run exists. Check the new main PR E2E condition.",
+    "expected_skill": "nemoclaw-maintainer-day",
+    "ground_truth": "The v1 target excludes only this automatic E2E requirement.",
+    "expected_behavior": [
+      "Uses the target branch to record the new E2E condition as NOT APPLICABLE.",
+      "Does not block this PR only because candidate E2E evidence is absent or apply the exclusion to main-targeted PRs.",
+      "Retains the other approval, independent-review, and merge-authorization requirements."
+    ]
   }
 ]

@@ -161,6 +161,7 @@ mismatched digests.
 
 Follow `nemoclaw-contributor-create-pr` for publication.
 
+- Before approving any PR targeting `main`, require passing E2E evidence through [`nemoclaw-maintainer-check-pr-e2e`](.agents/skills/nemoclaw-maintainer-check-pr-e2e/SKILL.md). PRs targeting `v1` are excluded from this requirement.
 - PRs that change `scripts/prepare-dgx-station-host.sh` must include reviewable DGX Station test evidence identifying the tested commit, Station profile or scenario, result, and a supporting link. Any maintainer may review the evidence; without acceptable evidence, the PR is not ready to approve or merge. Treat the evidence as human-reviewed, not authenticated hardware provenance. Exceptional bypasses use existing repository governance and must document the reason on the PR.
 - No secrets, API keys, or credentials committed
 - Check `.github/pr-limits.json` for the contributor's open PR limit.

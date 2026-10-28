@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-contributor-create-pr
-description: "Publish or update a NemoClaw pull request and follow its CI and automated reviews to completion."
+description: "Publish or update a NemoClaw PR and complete its CI, automated reviews, and required PR E2E evidence."
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
@@ -8,8 +8,8 @@ description: "Publish or update a NemoClaw pull request and follow its CI and au
 
 # Create or Update a Pull Request
 
-Publish the requested NemoClaw change and follow required CI and scheduled automated reviews until
-one unchanged latest PR commit has a complete disposition. A successful push alone is not completion.
+Publish the requested NemoClaw change and follow required CI, scheduled automated reviews, and PR E2E
+until one unchanged latest PR commit has a complete disposition and the required passing evidence.
 Preserve the user's scope and any explicit instruction to stop at a draft or withhold approval.
 
 ## Select the stage
@@ -21,8 +21,21 @@ Preserve the user's scope and any explicit instruction to stop at a draft or wit
   validation and publication references. These are stages of the same authorized task.
 - **Inspect CI or review feedback:** use the shared follow-up contract. Load publication procedures
   only if an authorized branch or PR write is needed.
+- **Run PR E2E:** after the PR exists and its commit completes follow-up, use
+  [PR E2E](references/pr-e2e.md) to select coverage, reuse or dispatch authorized runs, and verify their results.
 - **Mark a draft ready:** use the ready-state requirements in
-  [Publication](references/publication.md#assignment) after the latest commit completes follow-up.
+  [Publication](references/publication.md#assignment) after follow-up and required PR E2E pass for the latest commit.
+
+## Required PR E2E stage
+
+For every PR targeting `main`, this workflow owns the E2E stage after initial publication and each candidate update.
+Continue from CI and review collection into [PR E2E](references/pr-e2e.md); do not stop at reporting that evidence is missing.
+Use the existing trusted GitHub runner through `nemoclaw-maintainer-e2e`.
+Then require `nemoclaw-maintainer-check-pr-e2e` to return `PASS` before declaring the PR ready or fully validated.
+PRs targeting `v1` are excluded from this automatic stage. Preserve any separately requested testing for those PRs.
+
+Keep the PR draft while E2E execution, authorization, or evidence is pending.
+An explicit instruction to stop at draft publication still applies; report the remaining E2E stage without dispatching it.
 
 ## Publication requirements
 
@@ -58,6 +71,10 @@ Carry the original objective, accepted scope, deferred scope, tested commit, and
 through repairs and publication. Continue authorized work without asking the user to restate the PR
 request. Ask only for a decision outside that scope or a required authorization that is still missing.
 
-Report the PR URL, current commit, CI and automated-review results, and any remaining human decision
-or external blocker. Distinguish pending evidence from completed evaluation. This skill does not
-grant merge authority.
+For `main`, require passing PR E2E for the latest commit to complete the full publication lifecycle.
+If an execution boundary lacks authorization, finish independent work and report the prepared plan and missing decision.
+An authorized draft-only stop does not establish completed E2E validation.
+
+Report the PR URL, current commit, CI and automated-review results, E2E selectors, runtime coverage,
+result, run and artifact identities, workflow and job URLs, and any remaining human decision or external blocker.
+Distinguish pending evidence from completed evaluation. This skill does not grant approval or merge authority.

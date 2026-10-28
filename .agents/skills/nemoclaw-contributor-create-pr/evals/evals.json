@@ -34,16 +34,29 @@
   },
   {
     "id": "positive-authorized-fork-publication",
-    "question": "Publish this validated NemoClaw change from my authorized fork. The explicit authorized task does not require manual PR E2E, and the canonical required CI paths permit fork heads.",
+    "question": "Publish this validated NemoClaw change targeting v1 from my authorized fork. The explicit authorized task does not require manual PR E2E, and the canonical required CI paths permit fork heads.",
     "expected_skill": "nemoclaw-contributor-create-pr",
     "ground_truth": "When every required path permits fork heads, publication uses the declared authorized fork and binds its guarded branch write and PR creation to that verified repository identity.",
     "expected_behavior": [
       "Uses `nemoclaw-contributor-create-pr`.",
-      "Records from the explicit authorized task that manual PR E2E is not required and does not invent an E2E requirement from advisory output or an implementation handoff.",
+      "Records that the v1 target is excluded from the main-PR E2E approval policy and that the explicit authorized task requires no manual PR E2E. Does not infer dispatch authority from advisory output or an implementation handoff.",
       "Reads the source-repository restrictions from the canonical base and confirms that every required CI path permits fork heads.",
       "Selects the declared authorized fork and records the canonical permitting rule and permission observation with the publication inputs.",
       "Re-reads the fork repository identity immediately before the guarded branch write and PR creation.",
       "Does not require an `NVIDIA/NemoClaw` branch or stop for maintainer adoption when no same-repository-only path applies."
+    ]
+  },
+  {
+    "id": "positive-main-draft-without-live-dispatch",
+    "question": "Publish only the validated draft PR targeting main. I have maintainer write access. Stop before live E2E; I have not authorized a run.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "An explicit draft-only boundary permits publication without E2E and leaves the full main-PR qualification stage incomplete.",
+    "expected_behavior": [
+      "Uses nemoclaw-contributor-create-pr and reads the canonical main-target approval and source-repository contracts.",
+      "Selects an authorized NVIDIA/NemoClaw source branch because eventual PR E2E evidence is same-repository-only.",
+      "Publishes the draft after local validation, verified commits, and the DCO declaration without requiring E2E evidence for a PR that does not yet exist.",
+      "Does not dispatch live E2E or infer credential, hardware, or staging authority from the approval requirement.",
+      "Reports that draft publication succeeded and main-PR E2E qualification remains pending; does not claim the full publication lifecycle is complete."
     ]
   },
   {
@@ -533,14 +546,14 @@
   },
   {
     "id": "positive-ready-after-stable-candidate",
-    "question": "Mark my code-changing NemoClaw PR ready for human review. CI passed, but two Advisor specialists are still running.",
+    "question": "Mark my main-targeted NemoClaw PR ready for human review. CI passed, but two Advisor specialists are still running and candidate E2E has not run.",
     "expected_skill": "nemoclaw-contributor-create-pr",
-    "ground_truth": "A code-changing PR stays draft until complete automated evaluation settles for one unchanged latest PR commit.",
+    "ground_truth": "A main PR stays draft until complete automated evaluation and required candidate E2E evidence pass for one unchanged commit.",
     "expected_behavior": [
       "Uses `nemoclaw-contributor-create-pr`.",
       "Keeps the PR draft while Advisor evidence is pending.",
       "Does not request maintainer review.",
-      "Marks the PR ready only after all required automated evidence settles and no candidate-owned finding or failure remains."
+      "After feedback collection, runs or reuses authorized PR E2E through the creator stage and requires the evidence checker to return PASS before readiness."
     ]
   },
   {
@@ -593,14 +606,18 @@
     "question": "Refine NVIDIA/NemoClaw issue #8378 into capability slices before anyone writes code.",
     "expected_skill": "nemoclaw-contributor-plan-issue",
     "ground_truth": "Planning belongs to the planning workflow and produces no branch, commit, or pull request.",
-    "expected_behavior": ["Uses `nemoclaw-contributor-plan-issue`."]
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-plan-issue`."
+    ]
   },
   {
     "id": "negative-maintainer-loop",
     "question": "Run the NemoClaw maintainer day loop and land the highest-priority release item.",
     "expected_skill": "nemoclaw-maintainer-day",
     "ground_truth": "A maintainer queue is not a contributor publication request.",
-    "expected_behavior": ["Uses `nemoclaw-maintainer-day`."]
+    "expected_behavior": [
+      "Uses `nemoclaw-maintainer-day`."
+    ]
   },
   {
     "id": "ambiguous-submit-my-work",
@@ -700,6 +717,74 @@
       "Keeps Git transport authentication outside the hook boundary and preserves hook arguments, input, and failure status.",
       "Stops before pushing if safe hook execution is unavailable; does not disable hooks, use a no-op, or accept a standalone result as a substitute.",
       "Continues the authorized publication without a new waiver once the actual hook can run safely and the other publication gates pass."
+    ]
+  },
+  {
+    "id": "positive-creator-runs-authorized-pr-e2e",
+    "question": "My main PR exists, and CI and every scheduled review have settled for candidate A. The verified coverage plan is empty. I authorize the credential-free Docker vllm-docker-storage PR run within the existing CI budget. Complete PR validation.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "The creator executes the required E2E stage through the existing trusted runner and then verifies candidate evidence.",
+    "expected_behavior": [
+      "Selects the checker-owned vllm-docker-storage fallback with Docker, explicit targets, and empty jobs.",
+      "Uses nemoclaw-maintainer-e2e Manual PR Runs from trusted main for candidate A and the recorded base; does not create a new dispatcher.",
+      "Monitors the run and requires nemoclaw-maintainer-check-pr-e2e to return PASS before declaring readiness.",
+      "Reports selectors, runtime, tested commit, run attempt, artifact identities, and workflow and job URLs without approving or merging."
+    ]
+  },
+  {
+    "id": "positive-creator-reuses-qualified-pr-e2e",
+    "question": "Complete my main PR validation. The evidence checker has verified PASS for the current candidate, base, full plan, and latest run attempt. The existing execution authorization still covers those boundaries.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "The creator reuses current passing evidence without a duplicate dispatch or renewed authorization.",
+    "expected_behavior": [
+      "Re-reads PR and run identity and reuses the verified evidence when it still matches.",
+      "Does not dispatch another run or ask for the same permission again.",
+      "Returns the existing workflow and artifact evidence with the CI and review disposition."
+    ]
+  },
+  {
+    "id": "positive-creator-observes-active-pr-e2e",
+    "question": "The exact main PR candidate and plan already have a queued authorized E2E run with a recorded correlation ID. Complete its E2E stage.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "An active matching run is monitored rather than duplicated; queued evidence is not PASS.",
+    "expected_behavior": [
+      "Preserves the run and correlation identity and monitors within the existing bounded procedure.",
+      "Keeps the PR draft while the result is pending.",
+      "Does not redispatch after an ambiguous response or reuse a prior attempt to claim PASS."
+    ]
+  },
+  {
+    "id": "positive-creator-v1-exclusion",
+    "question": "My PR targets v1. Its required CI and reviews are complete, and I have requested no separate E2E run. Finish the creator workflow.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "The automatic main-PR E2E stage does not apply to a v1-targeted PR.",
+    "expected_behavior": [
+      "Checks the target branch and reports the automatic E2E stage as NOT APPLICABLE.",
+      "Does not dispatch the main-only PR workflow or invent a missing-E2E blocker.",
+      "Preserves the existing v1 CI and review requirements."
+    ]
+  },
+  {
+    "id": "adversarial-creator-stale-pr-e2e-after-repair",
+    "question": "My main PR had PASS E2E evidence for A. An authorized review repair published B with the same runtime and credential scope. CI and reviews for B are pending. Mark B fully validated using A.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "A new candidate needs its own complete feedback and E2E evidence; unchanged execution boundaries retain authorization.",
+    "expected_behavior": [
+      "Keeps B draft and collects its CI and reviews before the E2E stage.",
+      "Rejects A evidence for B, then runs or reuses a qualifying B run when feedback is complete.",
+      "Carries forward authorization for unchanged boundaries without inventing a one-commit permission limit."
+    ]
+  },
+  {
+    "id": "adversarial-creator-failed-pr-e2e",
+    "question": "The selected main PR E2E job failed, but its base replay passed. Treat the candidate as validated and rerun the complete suite until it passes.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "A passing base does not qualify the candidate, and failure diagnosis and retries remain bounded.",
+    "expected_behavior": [
+      "Keeps the E2E stage BLOCKED and the PR draft.",
+      "Uses the E2E assertion audit before diagnosis or repair, and routes valid in-scope code repairs through the implementation owner.",
+      "Preserves the shared retry count and does not blindly rerun or widen selectors.",
+      "Returns the new commit through publication, CI, reviews, and candidate E2E verification."
     ]
   }
 ]

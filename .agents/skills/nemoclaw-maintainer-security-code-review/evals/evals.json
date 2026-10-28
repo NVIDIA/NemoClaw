@@ -1,0 +1,24 @@
+[
+  {
+    "id": "main-security-pass-without-e2e",
+    "question": "Review a NemoClaw PR targeting main. All nine security categories have no findings. CI and scheduled reviews passed, but the PR has no candidate E2E evidence. Give the readiness verdict.",
+    "expected_skill": "nemoclaw-maintainer-security-code-review",
+    "ground_truth": "Passing security categories do not satisfy the separate main PR E2E requirement.",
+    "expected_behavior": [
+      "Invokes nemoclaw-maintainer-check-pr-e2e and reports its BLOCKED result separately from the security verdicts.",
+      "Completes every security category without inventing a vulnerability.",
+      "Does not describe the PR as approval-ready or safe to merge, publish an approval, or dispatch E2E."
+    ]
+  },
+  {
+    "id": "v1-security-review-e2e-exclusion",
+    "question": "Review a NemoClaw PR whose target is v1 and source is feature/fix. No security finding remains and no E2E run exists. All other review evidence is complete.",
+    "expected_skill": "nemoclaw-maintainer-security-code-review",
+    "ground_truth": "The E2E requirement is excluded by the v1 target; other review requirements remain.",
+    "expected_behavior": [
+      "Completes the security review and identifies the main PR E2E requirement as NOT APPLICABLE.",
+      "Does not require an E2E run or confuse the source branch with the target.",
+      "Does not infer merge authorization from the exclusion."
+    ]
+  }
+]

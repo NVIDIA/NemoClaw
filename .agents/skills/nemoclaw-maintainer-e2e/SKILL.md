@@ -15,6 +15,7 @@ description: "Run or inspect NemoClaw live E2E evidence. Routes requested local 
 | Run working-tree source or a selected local commit | [Local Runs](references/local-runs.md) |
 | Run the latest PR commit on GitHub, including failure-triggered comparison with its exact base | [Manual PR Runs](references/manual-pr.md) |
 | Run the current `main` commit on GitHub | [Main Runs](references/main-runs.md) and the Launchable boundary below |
+| Inspect E2E evidence before PR approval | [Check PR E2E Evidence](../nemoclaw-maintainer-check-pr-e2e/SKILL.md) |
 | Inspect existing evidence for a release decision | [Report the Release Context](#report-the-release-context) |
 | Triage, diagnose, debug, or repair an E2E failure | Load [Audit E2E Assertions](../nemoclaw-maintainer-audit-e2e-assertions/SKILL.md); this skill still owns dispatch and run-level reporting. |
 | Classify one failed GitHub Actions job | For E2E failures, use the assertion-audit route above. For other jobs, load `nemoclaw-maintainer-classify-ci-failure`. |
