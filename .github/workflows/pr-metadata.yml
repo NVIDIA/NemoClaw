@@ -7,7 +7,6 @@ on:
     types: [opened, synchronize, reopened, edited]
 permissions:
   contents: read
-  pull-requests: read
 concurrency:
   group: pr-metadata-${{ github.event.pull_request.number }}
   cancel-in-progress: true
@@ -26,13 +25,8 @@ jobs:
           rustc --edition=2024 -D warnings --test tools/ci/pr-session-report.rs -o "$RUNNER_TEMP/report-tests"
           "$RUNNER_TEMP/report-tests"
           rustc --edition=2024 -D warnings tools/ci/pr-session-report.rs -o "$RUNNER_TEMP/report-check"
-      - name: Validate the opening report comment
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-        # Fetch every page; comment text is data, never shell source or log output.
+      - name: Validate the event's PR description
+        # Treat body text as data: never interpolate it into shell source or logs.
         run: |
-          gh api --paginate --slurp "repos/$GH_REPO/issues/$PR_NUMBER/comments" > "$RUNNER_TEMP/comments.json"
-          jq -er '[.[][] | select(.body | test("^\\s*<!-- agent-session-report:opening -->"))] | if length == 1 then .[0].body else error("expected exactly one opening report comment") end' "$RUNNER_TEMP/comments.json" > "$RUNNER_TEMP/report-comment.md"
-          "$RUNNER_TEMP/report-check" "$RUNNER_TEMP/report-comment.md"
+          jq -er '.pull_request | if has("body") then (.body // "") else error("missing PR body") end' "$GITHUB_EVENT_PATH" > "$RUNNER_TEMP/pr-body.md"
+          "$RUNNER_TEMP/report-check" "$RUNNER_TEMP/pr-body.md"

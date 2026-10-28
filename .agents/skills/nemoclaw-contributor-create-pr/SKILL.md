@@ -9,24 +9,20 @@ description: Create or update a NemoClaw v1 pull request with its authoring-sess
 # Create or Update a Pull Request
 
 Adapted from main's PR creation skill at `8c72b552cc92fe7082908f3a13db7dc94f2f6685`, without its npm, governance, and draft steps, and with a session report added.
-The collapsed report comment follows main PR #13876 at `b245d56471d0aa4ce4378eb33f58e63a799df199`.
 
-1. Write the description from `.github/PULL_REQUEST_TEMPLATE.md`.
-2. Write the [session report](#session-report) from [the comment template](references/session-report-template.md), and check it:
+1. Write the body from `.github/PULL_REQUEST_TEMPLATE.md`, including the [session report](#session-report).
+2. Check it:
 
    ```sh
    rustc --edition=2024 tools/ci/pr-session-report.rs -o /tmp/pr-session-report
-   /tmp/pr-session-report report.md
+   /tmp/pr-session-report pr-body.md
    ```
 
-3. Publish the description with `gh pr create --body-file` or `gh pr edit --body-file`, then post the report once with `gh pr comment --body-file`.
-   Comment events don't rerun `PR metadata / Session report` yet, so rerun it after posting or editing the report.
-4. Follow the checks and automated reviews on the latest commit.
+3. Publish with `gh pr create --body-file` or `gh pr edit --body-file`, then follow the checks and automated reviews on the latest commit.
 
 ## Session Report
 
 Report the session that wrote the change, up to a cutoff you state; if this session only publishes the PR, mark every row unavailable.
-Each PR has one opening report; don't rewrite it to cover later work.
 Give each row one status:
 
 - `recorded`: the session record covers the whole session.
@@ -35,7 +31,7 @@ Give each row one status:
 
 A missing record never means zero.
 Count a skill or instruction file only when its full contents appear in the record, injected or completely read; instruction files are guidance outside skills, such as `AGENTS.md`, not source files read for the change.
-Don't publish session file paths or IDs; PR comments are public.
+Don't publish session file paths or IDs; PR descriptions are public.
 
 For example:
 
@@ -49,8 +45,6 @@ For example:
 | Compactions | recorded | 0 | Complete record to cutoff |
 | Models | recorded | gpt-6-astra | Turn context; no changes |
 | Reasoning levels | recorded | medium; high | Effort changes, in order |
-
-To report later work, post a separate report with the `commit` marker and the summary `Authoring session report: Commit update`, or `merge` and `Authoring session report: PR merge`.
 
 Where to find the record:
 
