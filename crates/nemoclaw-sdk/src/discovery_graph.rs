@@ -142,9 +142,11 @@ pub(crate) fn populate(graph: &mut Value, document: &Document) -> Result<(), Con
                     "endpoint": literal(&gateway.endpoint),
                     "name": literal(&format!("{}-gateway", document.workspace())),
                     "owner": literal(&document.metadata.uid),
+                    // OpenTofu evaluates the message even when the condition
+                    // holds, and an available engine reports no reason.
                     "lifecycle": { "postcondition": [{
                         "condition": "${self.status != \"unavailable\"}",
-                        "error_message": "The selected engine does not meet gateway prerequisites: ${jsondecode(self.observation_json).reason}. Correct the runtime or target configuration."
+                        "error_message": "The selected engine does not meet gateway prerequisites: ${coalesce(jsondecode(self.observation_json).reason, \"no reason was reported\")}. Correct the runtime or target configuration."
                     }] },
                 });
                 observations.insert(

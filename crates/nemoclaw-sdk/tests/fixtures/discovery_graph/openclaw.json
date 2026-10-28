@@ -30,7 +30,7 @@
           "postcondition": [
             {
               "condition": "${self.status != \"unavailable\"}",
-              "error_message": "The selected engine does not meet gateway prerequisites: ${jsondecode(self.observation_json).reason}. Correct the runtime or target configuration."
+              "error_message": "The selected engine does not meet gateway prerequisites: ${coalesce(jsondecode(self.observation_json).reason, \"no reason was reported\")}. Correct the runtime or target configuration."
             }
           ]
         },
