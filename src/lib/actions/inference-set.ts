@@ -1312,7 +1312,16 @@ async function runInferenceSetWithoutHostLock(
   // upstream of this switch path does that, so a fresh CLI invocation would
   // otherwise probe localhost even when Ollama only answers on another
   // candidate (e.g. host.docker.internal), wrongly rejecting a valid switch.
-  if (agentName === "hermes" && provider === "ollama-local") findReachableOllamaHost();
+  // A null result is not "nothing found" -- on mirrored WSL it can mean
+  // discovery deliberately rejected an unprotected Windows Ollama route. In
+  // that case getResolvedOllamaHost()'s localhost fallback could still reach
+  // that same rejected daemon, bypassing the route-protection check entirely.
+  if (agentName === "hermes" && provider === "ollama-local" && findReachableOllamaHost() === null) {
+    throw new Error(
+      "Ollama is not reachable (or its route could not be verified as safe), so Hermes's " +
+        "required context-window floor cannot be checked. Ensure Ollama is reachable and retry.",
+    );
+  }
   const hermesContextWindow =
     agentName === "hermes"
       ? resolveHermesContextWindowForSwitch(provider, model, gatewayPort, deps)
