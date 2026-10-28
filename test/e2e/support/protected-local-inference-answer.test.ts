@@ -50,28 +50,20 @@ it.each([
   expect(message).not.toContain("private reasoning");
 });
 
-it("reports silent completion flags without retaining agent content", () => {
+it("reports known completion and pending tools without retaining agent content", () => {
   const { diagnostic } = rejectedDiagnostic({
     payloads: [],
     meta: {
       ...meta,
-      terminalReplyKind: "silent-empty",
       stopReason: "stop",
       livenessState: "blocked",
-      yielded: true,
-      continuationPending: false,
-      completion: { refusal: true },
       pendingToolCalls: [{ arguments: "private arguments" }],
     },
   });
   expect(diagnostic).toMatchObject({
-    terminalReplyKind: "silent-empty",
     stopReason: "stop",
     livenessState: "blocked",
     aborted: false,
-    yielded: true,
-    continuationPending: false,
-    refusal: true,
     pendingToolCallCount: 1,
   });
   expect(JSON.stringify(diagnostic)).not.toContain("private arguments");
@@ -106,23 +98,20 @@ it("bounds OpenClaw diagnostics and excludes unknown metadata and echoed secrets
     payloadCount: 100,
     sampledPayloadCount: 32,
     stopReason: "other",
-    terminalReplyKind: "other",
     livenessState: "other",
-    yielded: null,
-    refusal: null,
   });
   expect(diagnostic.payloadTextLengths).toEqual(Array(32).fill(echo.length));
 });
 
 it.each(["tool_calls", "end_turn"])(
-  "retains the pinned OpenClaw %s completion category without accepting an empty answer",
+  "retains nested OpenClaw %s completion and abandoned liveness without accepting an empty answer",
   (stopReason) => {
     const { message, diagnostic } = rejectedDiagnostic({
       payloads: [],
-      meta: { ...meta, stopReason, livenessState: "paused" },
+      meta: { ...meta, completion: { stopReason }, livenessState: "abandoned" },
     });
     expect(message).toContain("no assistant answer");
-    expect(diagnostic).toMatchObject({ stopReason, livenessState: "paused" });
+    expect(diagnostic).toMatchObject({ stopReason, livenessState: "abandoned" });
   },
 );
 

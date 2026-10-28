@@ -432,7 +432,7 @@ function openClawAnswerDiagnostic(envelope: unknown): string {
     payloadTextLengths: textLengths,
     finalVisibleTextLength: length(meta.finalAssistantVisibleText),
     finalRawTextLength: length(meta.finalAssistantRawText),
-    stopReason: category(meta.stopReason, [
+    stopReason: category(meta.stopReason ?? completion.stopReason, [
       "stop",
       "length",
       "toolUse",
@@ -442,12 +442,8 @@ function openClawAnswerDiagnostic(envelope: unknown): string {
       "aborted",
       "superseded",
     ]),
-    terminalReplyKind: category(meta.terminalReplyKind, ["silent-empty"]),
-    livenessState: category(meta.livenessState, ["blocked", "completed", "paused"]),
+    livenessState: category(meta.livenessState, ["blocked", "working", "abandoned"]),
     aborted: flag(meta.aborted),
-    yielded: flag(meta.yielded),
-    continuationPending: flag(meta.continuationPending),
-    refusal: flag(completion.refusal),
     pendingToolCallCount: Array.isArray(meta.pendingToolCalls)
       ? meta.pendingToolCalls.length
       : null,
