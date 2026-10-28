@@ -10,15 +10,23 @@ description: Create or update a NemoClaw v1 pull request with its authoring-sess
 
 Adapted from main's PR creation skill at `8c72b552cc92fe7082908f3a13db7dc94f2f6685`, without its npm, governance, and draft steps, and with a session report added.
 
-1. Write the body from `.github/PULL_REQUEST_TEMPLATE.md`, including the [session report](#session-report).
-2. Check it:
+1. Write the description from `.github/PULL_REQUEST_TEMPLATE.md`; keep the report out of it. Prepare a separate comment from `.github/SESSION_REPORT_TEMPLATE.md` using the [evidence rules](#session-report). Keep `<details>` without `open`.
+2. Validate the comment:
 
    ```sh
    rustc --edition=2024 tools/ci/pr-session-report.rs -o /tmp/pr-session-report
-   /tmp/pr-session-report pr-body.md
+   /tmp/pr-session-report report-comment.md
    ```
 
-3. Publish with `gh pr create --body-file` or `gh pr edit --body-file`, then follow the checks and automated reviews on the latest commit.
+3. Publish with `gh pr create --body-file` or `gh pr edit --body-file`. Read all pages of PR comments before posting, including after an uncertain retry; reuse an existing opening report by the PR author instead of duplicating it. If absent, post once as the PR author with `gh pr comment NUMBER --body-file report-comment.md`.
+4. Read back the description and comments. Verify the description has no report, exactly one opening report by the PR author exists, and its contents match the intended report. Keep the exact summary `Authoring session — opening`. Validate the retrieved files with `/tmp/pr-session-report --pr description.md author-comment-1.md author-comment-2.md`; pass every PR-author comment, including later reports and unrelated comments. Comments by others are ignored; a maintainer's comment cannot substitute for an automated PR author's report.
+5. Follow checks and automated reviews on the latest commit. If the metadata job fetched comments before the opening report was posted, wait for that run to finish, then use `gh run rerun --job JOB_ID` for its failed `Session report format` job. Select the job from this PR's latest-revision run; a rerun retains the original revision but fetches current comments. Reruns require repository write permission, so external contributors may need a maintainer. Confirm the rerun passes.
+
+CI fetches the description and all comment pages on PR opening, updates, reopening, and description/title edits. It checks the presence and format of the PR author's opening report, not the truth or completeness of its evidence. Fetch failures fail the check. Comment posting, editing, or deletion alone does not trigger a refresh; rerun the metadata job after such changes. A `v1`-only `issue_comment` workflow would not run: GitHub requires it on the default branch.
+
+The check uses the candidate checkout's validator and workflow. It does not protect against a PR changing its own validation; trusted-base enforcement is outside this check's scope.
+
+Preserve historical reports and their cutoffs. Optional later commit or merge reports may use the same collapsed format with a distinct summary and revision; they do not replace the opening report or create a publication requirement.
 
 ## Session Report
 
@@ -31,7 +39,7 @@ Give each row one status:
 
 A missing record never means zero.
 Count a skill or instruction file only when its full contents appear in the record, injected or completely read; instruction files are guidance outside skills, such as `AGENTS.md`, not source files read for the change.
-Don't publish session file paths or IDs; PR descriptions are public.
+Don't publish session file paths or IDs; comments are public.
 
 For example:
 
