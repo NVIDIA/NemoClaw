@@ -35,6 +35,7 @@ import {
   ensureHttpsPinRuntimeAdapter,
   revokeHttpsPinRuntimeAdapterRoute,
 } from "../inference/https-pin-runtime-adapter";
+import { findReachableOllamaHost } from "../inference/local";
 import { MIN_HERMES_OLLAMA_CONTEXT_WINDOW } from "../inference/ollama-runtime-context";
 import {
   inferenceSelectionRegistryFields,
@@ -1306,6 +1307,12 @@ async function runInferenceSetWithoutHostLock(
   // Resolve (and enforce) Hermes's context-window floor before any registry
   // mutation, so a rejected switch leaves the registry and Hermes config
   // untouched instead of split across two different routes (#context-window-on-switch).
+  // getResolvedOllamaHost() (used deep inside the probe below) only returns a
+  // discovered host if something already populated it this process; nothing
+  // upstream of this switch path does that, so a fresh CLI invocation would
+  // otherwise probe localhost even when Ollama only answers on another
+  // candidate (e.g. host.docker.internal), wrongly rejecting a valid switch.
+  if (agentName === "hermes" && provider === "ollama-local") findReachableOllamaHost();
   const hermesContextWindow =
     agentName === "hermes"
       ? resolveHermesContextWindowForSwitch(provider, model, gatewayPort, deps)
