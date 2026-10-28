@@ -29,7 +29,12 @@ fn definitions(root: &Path) -> Vec<(String, Value)> {
                     .extension()
                     .is_some_and(|extension| extension == "yml" || extension == "yaml")
                 {
-                    let name = path.strip_prefix(root).unwrap().display().to_string();
+                    let name = path
+                        .strip_prefix(root)
+                        .unwrap()
+                        .display()
+                        .to_string()
+                        .replace(std::path::MAIN_SEPARATOR, "/");
                     let definition = serde_saphyr::from_str(&fs::read_to_string(&path).unwrap())
                         .unwrap_or_else(|error| panic!("{name}: {error}"));
                     found.push((name, definition));
