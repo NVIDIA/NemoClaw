@@ -939,6 +939,15 @@ function resolveHermesContextWindowForSwitch(
     deps.log(`  Context window for '${model}': ${contextWindow} tokens`);
     return contextWindow;
   }
+  if (provider === "ollama-local") {
+    // Onboarding requires a verified runtime context_length for Hermes; a probe
+    // that returns nothing is exactly the unverifiable state onboarding rejects.
+    throw new Error(
+      `Ollama did not report a usable context window for '${model}', so NemoClaw cannot verify ` +
+        `Hermes's required ${MIN_HERMES_OLLAMA_CONTEXT_WINDOW}-token floor. Ensure the model is ` +
+        `loaded and Ollama is reachable, then retry.`,
+    );
+  }
   deps.log(
     `  Warning: could not determine the context window for '${model}'; omitting ` +
       `context_length so Hermes can discover it from the selected model.`,
@@ -1294,6 +1303,13 @@ async function runInferenceSetWithoutHostLock(
   // Reject conflicting persisted gateway identity before committing a route.
   // The later context-window lookup must use this same validated port.
   const gatewayPort = registryEntryGatewayPort(entry);
+  // Resolve (and enforce) Hermes's context-window floor before any registry
+  // mutation, so a rejected switch leaves the registry and Hermes config
+  // untouched instead of split across two different routes (#context-window-on-switch).
+  const hermesContextWindow =
+    agentName === "hermes"
+      ? resolveHermesContextWindowForSwitch(provider, model, gatewayPort, deps)
+      : undefined;
   const session = deps.loadSession();
   const explicitInferenceApi =
     typeof options.inferenceApi === "string" && options.inferenceApi.trim()
@@ -1974,7 +1990,7 @@ async function runInferenceSetWithoutHostLock(
 
     let patched: { changed: boolean; route: SandboxInferenceConfig };
     if (agentName === "hermes") {
-      const contextWindow = resolveHermesContextWindowForSwitch(provider, model, gatewayPort, deps);
+      const contextWindow = hermesContextWindow;
       patched = patchHermesInferenceConfig(
         config,
         provider,
