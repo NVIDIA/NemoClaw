@@ -129,21 +129,48 @@ mod tests {
 
     #[test]
     fn posted_report_acceptance_cases() {
-        let fixtures = std::path::Path::new(file!())
-            .parent()
-            .unwrap()
-            .join("fixtures/pr-session-report");
-        for case in include_str!("fixtures/pr-session-report/cases.txt")
-            .lines()
-            .filter(|line| !line.starts_with('#') && !line.trim().is_empty())
-        {
-            let mut words = case.split_whitespace();
-            let expected = words.next().unwrap();
-            assert!(matches!(expected, "pass" | "fail"));
-            let args = std::iter::once("--pr".to_string())
-                .chain(words.map(|name| fixtures.join(name).to_str().unwrap().to_string()))
-                .collect::<Vec<_>>();
-            assert_eq!(check(&args).is_ok(), expected == "pass", "{case}");
+        let directory = env::temp_dir().join(format!("report-cases-{}", std::process::id()));
+        fs::create_dir(&directory).unwrap();
+        for (name, body) in [
+            ("description", "Description".to_string()),
+            ("opening", report()),
+            (
+                "later",
+                report().replace(OPENING, "<summary>Later report</summary>"),
+            ),
+            ("expanded", report().replace("<details>", "<details open>")),
+            ("malformed", report().replace("| Models |", "| Skills |")),
+        ] {
+            fs::write(directory.join(name), body).unwrap();
+        }
+        let cases = [
+            (true, "description opening"),
+            (true, "description opening later description"),
+            (false, "description"),
+            (false, "description later"),
+            (false, "description opening opening"),
+            (false, "opening"),
+            (false, "opening opening"),
+            (false, "description expanded"),
+            (false, "description malformed"),
+            (false, "description missing-file"),
+        ];
+        let results: Vec<_> = cases
+            .iter()
+            .map(|(_, files)| {
+                let args = std::iter::once("--pr".to_string())
+                    .chain(
+                        files
+                            .split_whitespace()
+                            .map(|name| directory.join(name).to_str().unwrap().to_string()),
+                    )
+                    .collect::<Vec<_>>();
+                check(&args).is_ok()
+            })
+            .collect();
+        fs::remove_dir_all(directory).unwrap();
+        for ((expected, files), actual) in cases.iter().zip(results) {
+            assert_eq!(actual, *expected, "{files}");
         }
     }
 

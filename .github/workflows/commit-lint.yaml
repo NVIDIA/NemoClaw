@@ -50,7 +50,7 @@ jobs:
           rustc --edition=2024 -D warnings tools/ci/pr-session-report.rs -o "$RUNNER_TEMP/report-check"
           "$RUNNER_TEMP/report-check" .github/SESSION_REPORT_TEMPLATE.md
           rustc --edition=2024 -D warnings --test tools/ci/pr-session-report-workflow.rs -o "$RUNNER_TEMP/adapter-tests"
-          "$RUNNER_TEMP/adapter-tests"
+          REPORT_WORKFLOW=.github/workflows/commit-lint.yaml "$RUNNER_TEMP/adapter-tests"
       - name: Check the posted opening report
         env:
           GH_TOKEN: ${{ github.token }}
