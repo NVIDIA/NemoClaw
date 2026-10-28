@@ -122,7 +122,7 @@ if (command.includes("tar -C")) {
     const tarArgs = hardDereferenceSupported
       ? ["-C", copyRoot, "--hard-dereference", "-cf", "-", "--", "."]
       : ["-C", copyRoot, "-cf", "-", "--", "."];
-    process.exit(spawnSync("tar", tarArgs, { stdio: ["ignore", "inherit", "inherit"] }).status ?? 91);
+    process.exit(spawnSync("tar", tarArgs, { env: { ...process.env, COPYFILE_DISABLE: "1" }, stdio: ["ignore", "inherit", "inherit"] }).status ?? 91);
   } finally {
     fs.rmSync(copyRoot, { recursive: true, force: true });
   }
