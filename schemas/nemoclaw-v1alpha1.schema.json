@@ -2221,7 +2221,7 @@
           "type": "array"
         },
         "enforcement": {
-          "description": "enforce or audit; omission follows OpenShell defaults.",
+          "description": "enforce or audit; omission selects OpenShell's default, audit, which logs and forwards requests that break the endpoint's rules.",
           "enum": [
             "enforce",
             "audit"
@@ -2914,11 +2914,13 @@
             },
             "placement": {
               "$ref": "#/$defs/ServicePlacement",
-              "description": "Optional remote Docker placement. Requires publication."
+              "description": "SSH Docker placement. Required with an external gateway or Podman sandbox; requires publication.",
+              "x-nemoclaw-required": "With external gateway or Podman; paired with publication"
             },
             "publication": {
               "$ref": "#/$defs/ServicePublication",
-              "description": "Private inference address for an explicitly placed service."
+              "description": "Private inference address reachable by OpenShell. Required with placement.",
+              "x-nemoclaw-required": "With placement"
             },
             "serving": {
               "$ref": "#/$defs/OllamaServing",

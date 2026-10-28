@@ -119,6 +119,7 @@ impl QuestionResolver<'_> {
                     fields.clear();
                     fields.push(SettingQuestion {
                         path: String::new(),
+                        prerequisites: Vec::new(),
                         title: Some("Adapter settings".into()),
                         description: Some("Review the adapter settings object.".into()),
                         required: true,
@@ -134,18 +135,18 @@ impl QuestionResolver<'_> {
                     .collect::<BTreeSet<_>>();
                 for field in fields {
                     let id = format!("adapter:{harness}:{}", field.path);
+                    work.setting_dependencies.extend(
+                        field
+                            .prerequisites
+                            .iter()
+                            .map(|path| (format!("adapter:{harness}:{path}"), id.clone())),
+                    );
                     let value = if field.path.is_empty() && supplied_settings.is_none() {
                         None
                     } else {
                         settings.pointer(&field.path)
                     };
-                    if self.decisions.omitted.contains(&id) {
-                        if field.required {
-                            return Err(diagnostic(
-                                "journey",
-                                &format!("required setting '{id}' cannot be omitted"),
-                            ));
-                        }
+                    if self.decisions.omitted.contains(&id) && !field.required {
                         if value.is_some() {
                             return Err(diagnostic(
                                 "journey",

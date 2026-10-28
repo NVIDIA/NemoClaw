@@ -16,6 +16,7 @@ pub(super) struct DecisionRecord {
     pub(super) accepted_presets: BTreeSet<usize>,
     pub(super) accepted_model_settings: BTreeSet<(usize, String)>,
     pub(super) omitted_model_settings: BTreeSet<(usize, String)>,
+    pub(super) reopened_model_settings: BTreeMap<(usize, String), String>,
 }
 
 impl DecisionRecord {
@@ -28,7 +29,11 @@ impl DecisionRecord {
         ) {
             return selected_route.map_or(DecisionStatus::Unreviewed, |route| {
                 let key = (route, id.to_owned());
-                if self.omitted_model_settings.contains(&key) {
+                if let Some(because) = self.reopened_model_settings.get(&key) {
+                    DecisionStatus::Reopened {
+                        because: because.clone(),
+                    }
+                } else if self.omitted_model_settings.contains(&key) {
                     DecisionStatus::Omitted
                 } else if self.accepted_model_settings.contains(&key) {
                     DecisionStatus::Accepted
@@ -67,6 +72,7 @@ impl DecisionRecord {
         if let QuestionTarget::ModelSetting { route, .. } = target {
             let key = (*route, id.to_owned());
             self.accepted_model_settings.insert(key.clone());
+            self.reopened_model_settings.remove(&key);
             if omitted {
                 self.omitted_model_settings.insert(key);
             } else {
@@ -87,17 +93,67 @@ impl DecisionRecord {
         }
     }
 
+    pub(super) fn reopen_omission(&mut self, id: &str, target: &QuestionTarget, cause: &str) {
+        match target {
+            QuestionTarget::ModelSetting { route, .. } => {
+                let key = (*route, id.to_owned());
+                if self.omitted_model_settings.remove(&key) {
+                    self.accepted_model_settings.remove(&key);
+                    self.reopened_model_settings.insert(key, cause.into());
+                }
+            }
+            QuestionTarget::AdapterSetting { .. } | QuestionTarget::WorkflowSetting { .. }
+                if self.omitted.remove(id) =>
+            {
+                self.reopen(id, cause);
+            }
+            _ => {}
+        }
+    }
+
     pub(super) fn forget_model_settings(&mut self, route: usize) {
         self.accepted_model_settings
             .retain(|(index, _)| *index != route);
         self.omitted_model_settings
             .retain(|(index, _)| *index != route);
+        self.reopened_model_settings
+            .retain(|(index, _), _| *index != route);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reopening_a_model_omission_leaves_other_routes_omitted() {
+        let mut record = DecisionRecord::default();
+        let id = "model:/api_key";
+        let target = |route| QuestionTarget::ModelSetting {
+            route,
+            pointer: "/api_key".into(),
+        };
+        record.record_answer(id, &target(0), true);
+        record.record_answer(id, &target(1), true);
+        record.reopen_omission(id, &target(0), "model:/mode");
+        assert_eq!(
+            record.status(id, Some(0)),
+            DecisionStatus::Reopened {
+                because: "model:/mode".into(),
+            }
+        );
+        assert_eq!(record.status(id, Some(1)), DecisionStatus::Omitted);
+        record.record_answer(id, &target(1), false);
+        assert_eq!(record.status(id, Some(1)), DecisionStatus::Accepted);
+        assert_eq!(
+            record.status(id, Some(0)),
+            DecisionStatus::Reopened {
+                because: "model:/mode".into(),
+            }
+        );
+        record.record_answer(id, &target(0), false);
+        assert_eq!(record.status(id, Some(0)), DecisionStatus::Accepted);
+    }
 
     #[test]
     fn model_and_preset_decisions_follow_the_selected_route() {

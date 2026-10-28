@@ -2,17 +2,17 @@
 # SPDX-License-Identifier: Apache-2.0
 name: PR metadata
 on:
-  # Include stacked PRs. Body edits must not rerun the platform builds.
   pull_request:
     types: [opened, synchronize, reopened, edited]
 permissions:
   contents: read
+  pull-requests: read
 concurrency:
   group: pr-metadata-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 jobs:
   session-report:
-    name: Session report
+    name: Session report format
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -21,12 +21,29 @@ jobs:
           persist-credentials: false
       - name: Check and test the validator
         run: |
-          rustfmt --edition 2024 --check tools/ci/pr-session-report.rs
+          rustfmt --edition 2024 --check tools/ci/pr-session-report*.rs
           rustc --edition=2024 -D warnings --test tools/ci/pr-session-report.rs -o "$RUNNER_TEMP/report-tests"
           "$RUNNER_TEMP/report-tests"
           rustc --edition=2024 -D warnings tools/ci/pr-session-report.rs -o "$RUNNER_TEMP/report-check"
-      - name: Validate the event's PR description
-        # Treat body text as data: never interpolate it into shell source or logs.
+          "$RUNNER_TEMP/report-check" .github/SESSION_REPORT_TEMPLATE.md
+          rustc --edition=2024 -D warnings --test tools/ci/pr-session-report-workflow.rs -o "$RUNNER_TEMP/adapter-tests"
+          "$RUNNER_TEMP/adapter-tests"
+      - name: Check the posted opening report
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_AUTHOR_ID: ${{ github.event.pull_request.user.id }}
+        shell: bash
         run: |
-          jq -er '.pull_request | if has("body") then (.body // "") else error("missing PR body") end' "$GITHUB_EVENT_PATH" > "$RUNNER_TEMP/pr-body.md"
-          "$RUNNER_TEMP/report-check" "$RUNNER_TEMP/pr-body.md"
+          input="$RUNNER_TEMP/session-report"
+          mkdir -p "$input"
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq '.body // ""' > "$input/description.md"
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments?per_page=100" > "$input/comments.json"
+          jq -r --argjson author "$PR_AUTHOR_ID" '.[][] | select(.user.id == $author) | .body | @base64' "$input/comments.json" > "$input/author-comments.b64"
+          comments=()
+          while IFS= read -r encoded; do
+            path="$input/comment-${#comments[@]}.md"
+            printf '%s' "$encoded" | base64 --decode > "$path"
+            comments+=("$path")
+          done < "$input/author-comments.b64"
+          "$RUNNER_TEMP/report-check" --pr "$input/description.md" "${comments[@]}"

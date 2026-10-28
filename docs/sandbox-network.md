@@ -108,9 +108,46 @@ Follow [policy change constraints](#verify-and-change-the-configuration) before 
 ## Use an Upstream Proxy
 
 OpenShell owns the workload's proxy environment and routes traffic through its policy proxy.
-Configure an upstream corporate proxy through the external gateway's OpenShell compute-driver settings, following the [pinned upstream proxy contract](https://github.com/NVIDIA/OpenShell/blob/bdb956f2cd65a635f1294fccf1d138d263bf650f/crates/openshell-supervisor-network/src/upstream_proxy.rs).
+To chain policy-approved egress through a corporate proxy, set the proxy in the gateway's OpenShell compute-driver settings, following the [pinned upstream proxy contract](https://github.com/NVIDIA/OpenShell/blob/bdb956f2cd65a635f1294fccf1d138d263bf650f/crates/openshell-supervisor-network/src/upstream_proxy.rs).
 At this revision, chaining applies to TLS CONNECT traffic; plain HTTP still connects directly.
-NemoClaw does not expose this driver setting for managed gateways.
+An external gateway's operator sets the proxy.
+
+For a managed gateway, put the settings in the selected driver's table in [`spec.gateway.config`](usage.md#configure-a-managed-gateway):
+
+```yaml
+spec:
+  gateway:
+    management: managed
+    runtime:
+      provider: docker
+    config:
+      openshell.drivers.docker:
+        https_proxy: http://proxy.example.com:3128
+        no_proxy: .example.internal,10.0.0.0/8
+```
+
+Use `openshell.drivers.podman` for a Podman gateway, and `openshell.drivers.kubernetes` for a Kubernetes or OpenShift gateway.
+OpenShell's configuration reference describes each setting for [Docker](https://github.com/NVIDIA/OpenShell/blob/bdb956f2cd65a635f1294fccf1d138d263bf650f/docs/how-it-works/gateways/configuration.mdx#L1101-L1114), [Podman](https://github.com/NVIDIA/OpenShell/blob/bdb956f2cd65a635f1294fccf1d138d263bf650f/docs/how-it-works/gateways/configuration.mdx#L1222-L1299) and [Kubernetes](https://github.com/NVIDIA/OpenShell/blob/bdb956f2cd65a635f1294fccf1d138d263bf650f/docs/how-it-works/gateways/configuration.mdx#L903-L940).
+NemoClaw passes them through unchecked; OpenShell validates them when the gateway starts.
+
+A Kubernetes or OpenShift gateway reads proxy credentials from a Secret in the deployment's namespace, whose key holds `user:pass`.
+Create the Secret there after NemoClaw creates the namespace, as for [registry Secrets](kubernetes.md#reference-registry-credentials), and name it:
+
+```yaml
+spec:
+  gateway:
+    config:
+      openshell.drivers.kubernetes:
+        https_proxy: https://proxy.example.com:3128
+        proxy_auth_secret_name: corporate-proxy-auth
+        proxy_auth_secret_key: credentials
+```
+
+With an `http://` proxy, credentials also require `proxy_auth_allow_insecure: true`, because Basic authentication then crosses the network unencrypted.
+Docker and Podman gateways read credentials and a proxy CA only from files on the gateway (`proxy_auth_file` and `proxy_ca_bundle`), and no managed gateway can receive a proxy CA; see [current limits](limits.md#security).
+
+Adding or changing these settings on an applied deployment restarts the gateway, and the next plan replaces its Fabric sandboxes; see [Configure a Managed Gateway](usage.md#configure-a-managed-gateway).
+An offline render of the pinned chart places the Kubernetes settings in the gateway's configuration file; no managed gateway has run behind a proxy.
 
 ## Verify and Change the Configuration
 

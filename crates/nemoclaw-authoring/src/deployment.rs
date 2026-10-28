@@ -92,6 +92,7 @@ fn collect(
             // (remove) the supplied field.
             out.push(SettingQuestion {
                 path: path.into(),
+                prerequisites: Vec::new(),
                 title: Some(title(path)),
                 description: Some(
                     "The SDK schema does not define this field. Omit it to remove the value."
@@ -110,6 +111,7 @@ fn collect(
         }
         out.push(SettingQuestion {
             path: path.into(),
+            prerequisites: Vec::new(),
             title: Some(title(path)),
             description: schema["description"].as_str().map(Into::into),
             required,

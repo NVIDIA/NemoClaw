@@ -143,3 +143,54 @@ fn recording_refuses_a_missing_or_resized_file() {
     assert!(record(directory.path(), &manifest(data)).is_err());
     assert!(ModelManifest::read(directory.path()).unwrap().is_none());
 }
+
+#[test]
+fn model_manifest_requires_version_one_the_pinned_files_and_verified_times() {
+    let mut pinned = manifest(b"right");
+    let mut second = pinned.files[0].clone();
+    second.name = "second.bin".into();
+    pinned.files.push(second);
+    let mut local = ModelManifest::new(&pinned);
+    assert!(local.verified_files().is_err());
+    for entry in &mut local.files {
+        entry.modified = Some(1);
+    }
+    local.validate_for(&pinned).unwrap();
+    assert_eq!(local.verified_files().unwrap().len(), 2);
+    let original = local.clone();
+    ModelManifest::decode(&serde_json::to_vec(&original).unwrap()).unwrap();
+    local.version = 2;
+    assert!(ModelManifest::decode(&serde_json::to_vec(&local).unwrap()).is_err());
+    local = original.clone();
+    local.files.swap(0, 1);
+    assert!(local.validate_for(&pinned).is_err());
+    local = original.clone();
+    local.files.pop();
+    assert!(local.validate_for(&pinned).is_err());
+    local = original;
+    local.revision = "b".repeat(40);
+    assert!(local.validate_for(&pinned).is_err());
+}
+
+#[test]
+fn observation_refuses_a_verified_file_whose_modification_time_changed() {
+    let data = b"weights";
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("weights.bin");
+    fs::write(&path, data).unwrap();
+    let recorded = record(directory.path(), &manifest(data)).unwrap();
+    let verified = Duration::from_nanos(recorded.files[0].modified.unwrap());
+    fs::File::options()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_modified(UNIX_EPOCH + verified + Duration::from_secs(1))
+        .unwrap();
+    assert!(matches!(
+        observe(directory.path(), &manifest(data)),
+        Err(Error::State(
+            "verified model file changed; retained for inspection"
+        ))
+    ));
+    assert_eq!(fs::read(&path).unwrap(), data);
+}

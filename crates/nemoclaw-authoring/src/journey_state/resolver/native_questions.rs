@@ -24,6 +24,12 @@ impl QuestionResolver<'_> {
                 capabilities,
                 self.position.selected_route,
             )? {
+                work.setting_dependencies.extend(
+                    field
+                        .prerequisites
+                        .iter()
+                        .map(|path| (path.clone(), field.path.clone())),
+                );
                 if field.path == "model:" {
                     unverified.push(
                         "selected native model configuration does not satisfy its Fabric schema"
@@ -75,7 +81,9 @@ impl QuestionResolver<'_> {
                 let omitted_route = route_key
                     .as_ref()
                     .is_some_and(|key| self.decisions.omitted_model_settings.contains(key));
-                if self.decisions.omitted.contains(&field.path) || omitted_route {
+                if (self.decisions.omitted.contains(&field.path) || omitted_route)
+                    && !field.required
+                {
                     omitted.push(field.path);
                 } else if (value.is_some() && !valid)
                     || (value.is_none() && field.required)
@@ -180,6 +188,7 @@ pub(super) fn native_questions_for_values(
         }
         fields.push(SettingQuestion {
             path: "workflow:/target_id".into(),
+            prerequisites: Vec::new(),
             title: Some("Workflow target".into()),
             description: Some("Select a workflow target advertised by this Fabric adapter.".into()),
             required: workflow_required,
@@ -200,6 +209,11 @@ pub(super) fn native_questions_for_values(
             crate::settings::collect(schema, schema, &settings, "", false, &mut native, 0)?;
             for mut field in native {
                 field.path = format!("workflow:/settings{}", field.path);
+                field.prerequisites = field
+                    .prerequisites
+                    .into_iter()
+                    .map(|path| format!("workflow:/settings{path}"))
+                    .collect();
                 fields.push(field);
             }
         }
@@ -236,6 +250,14 @@ pub(super) fn native_questions_for_values(
                 }
                 if field.path == "/settings" || field.path.starts_with("/settings/") {
                     field.path = format!("model:{}", &field.path["/settings".len()..]);
+                    field.prerequisites = field
+                        .prerequisites
+                        .into_iter()
+                        .filter_map(|path| {
+                            path.strip_prefix("/settings/")
+                                .map(|pointer| format!("model:/{pointer}"))
+                        })
+                        .collect();
                     fields.push(field);
                 }
             }
