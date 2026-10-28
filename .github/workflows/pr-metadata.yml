@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 name: PR metadata
 on:
-  # Include stacked PRs. Body edits must not rerun the platform builds.
+  # Test the report format; publication verifies the posted comment.
   pull_request:
     types: [opened, synchronize, reopened, edited]
 permissions:
@@ -12,7 +12,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   session-report:
-    name: Session report
+    name: Session report format
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -25,8 +25,4 @@ jobs:
           rustc --edition=2024 -D warnings --test tools/ci/pr-session-report.rs -o "$RUNNER_TEMP/report-tests"
           "$RUNNER_TEMP/report-tests"
           rustc --edition=2024 -D warnings tools/ci/pr-session-report.rs -o "$RUNNER_TEMP/report-check"
-      - name: Validate the event's PR description
-        # Treat body text as data: never interpolate it into shell source or logs.
-        run: |
-          jq -er '.pull_request | if has("body") then (.body // "") else error("missing PR body") end' "$GITHUB_EVENT_PATH" > "$RUNNER_TEMP/pr-body.md"
-          "$RUNNER_TEMP/report-check" "$RUNNER_TEMP/pr-body.md"
+          "$RUNNER_TEMP/report-check" .github/SESSION_REPORT_TEMPLATE.md

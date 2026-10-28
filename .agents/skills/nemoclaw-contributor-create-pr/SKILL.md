@@ -10,15 +10,20 @@ description: Create or update a NemoClaw v1 pull request with its authoring-sess
 
 Adapted from main's PR creation skill at `8c72b552cc92fe7082908f3a13db7dc94f2f6685`, without its npm, governance, and draft steps, and with a session report added.
 
-1. Write the body from `.github/PULL_REQUEST_TEMPLATE.md`, including the [session report](#session-report).
-2. Check it:
+1. Write the description from `.github/PULL_REQUEST_TEMPLATE.md`; keep the report out of it. Prepare a separate comment from `.github/SESSION_REPORT_TEMPLATE.md` using the [evidence rules](#session-report). Keep `<details>` without `open`.
+2. Validate the comment:
 
    ```sh
    rustc --edition=2024 tools/ci/pr-session-report.rs -o /tmp/pr-session-report
-   /tmp/pr-session-report pr-body.md
+   /tmp/pr-session-report report-comment.md
    ```
 
-3. Publish with `gh pr create --body-file` or `gh pr edit --body-file`, then follow the checks and automated reviews on the latest commit.
+3. Publish with `gh pr create --body-file` or `gh pr edit --body-file`. Read all PR comments before posting, including after an uncertain retry; reuse an existing opening report instead of duplicating it. If absent, post once with `gh pr comment NUMBER --body-file report-comment.md`.
+4. Read back the description and comment. Verify the description has no report, exactly one opening report exists, and its author and contents match the intended report; validate the retrieved comment. Follow checks and automated reviews on the latest commit.
+
+CI tests the format and template, not live comments. Publication-time verification avoids comment fetching and refresh workflows, but cannot detect later edits, deletion, or duplicates. A V1-only `issue_comment` workflow would not run: GitHub requires it on the default branch.
+
+Preserve historical reports and their cutoffs. Optional later commit or merge reports may use the same collapsed format with a distinct summary and revision; they do not replace the opening report or create a publication requirement.
 
 ## Session Report
 
@@ -31,7 +36,7 @@ Give each row one status:
 
 A missing record never means zero.
 Count a skill or instruction file only when its full contents appear in the record, injected or completely read; instruction files are guidance outside skills, such as `AGENTS.md`, not source files read for the change.
-Don't publish session file paths or IDs; PR descriptions are public.
+Don't publish session file paths or IDs; comments are public.
 
 For example:
 

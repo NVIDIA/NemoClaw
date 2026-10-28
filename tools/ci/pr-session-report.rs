@@ -7,8 +7,16 @@ const START: &str = "<!-- agent-session-report:v1 -->";
 const END: &str = "<!-- /agent-session-report -->";
 
 fn validate(body: &str) -> Result<(), &'static str> {
+    let body = body.trim();
+    if !body.starts_with("<details>\n")
+        || !body.ends_with("\n</details>")
+        || body.matches("<details").count() != 1
+        || body.matches("</details>").count() != 1
+    {
+        return Err("wrap the comment in <details> without an open attribute");
+    }
     if body.matches(START).count() != 1 || body.matches(END).count() != 1 {
-        return Err("include exactly one v1 report; see the PR template");
+        return Err("include exactly one v1 report; see .github/SESSION_REPORT_TEMPLATE.md");
     }
     let report = body
         .split_once(START)
@@ -24,7 +32,7 @@ fn validate(body: &str) -> Result<(), &'static str> {
     if lines.next() != Some("| Field | Status | Value | Evidence or limit |")
         || lines.next() != Some("| --- | --- | --- | --- |")
     {
-        return Err("use the report table header from the PR template");
+        return Err("use the report table header from .github/SESSION_REPORT_TEMPLATE.md");
     }
     let fields = [
         "Harness",
@@ -65,9 +73,9 @@ fn validate(body: &str) -> Result<(), &'static str> {
 fn main() -> ExitCode {
     let result = env::args()
         .nth(1)
-        .ok_or("expected a PR body file")
+        .ok_or("expected a report comment file")
         .and_then(|path| {
-            let body = fs::read_to_string(path).map_err(|_| "cannot read PR body file")?;
+            let body = fs::read_to_string(path).map_err(|_| "cannot read report comment file")?;
             validate(&body)
         });
     match result {
@@ -90,7 +98,7 @@ mod tests {
 
     fn report() -> String {
         format!(
-            "{START}\n| Field | Status | Value | Evidence or limit |\n| --- | --- | --- | --- |\n\
+            "<details>\n<summary>Authoring session — opening</summary>\n\n{START}\n| Field | Status | Value | Evidence or limit |\n| --- | --- | --- | --- |\n\
 | Harness | recorded | Codex | Authoring session header |\n\
 | Skills | partial | test-driven-development (complete read) | Earlier context unavailable |\n\
 | Instruction files | partial | AGENTS.md (complete read); WRITING.md (injected) | Full contents retained; earlier injection coverage unavailable |\n\
@@ -98,7 +106,7 @@ mod tests {
 | Session window | recorded | 2026-10-27T12:00Z to 2026-10-27T12:10Z; 10 min | First event through report cutoff |\n\
 | Compactions | recorded | 0 | Complete session record through cutoff |\n\
 | Models | unavailable | - | Model metadata absent |\n\
-| Reasoning levels | unavailable | - | Level metadata absent |\n{END}"
+| Reasoning levels | unavailable | - | Level metadata absent |\n{END}\n\n</details>"
         )
     }
 
@@ -131,6 +139,23 @@ mod tests {
     }
 
     #[test]
+    fn report_comments_must_be_collapsed() {
+        let collapsed = report();
+        assert!(validate(&collapsed).is_ok());
+        for invalid in [
+            collapsed.replace("<details>", ""),
+            collapsed.replace("<details>", "<details open>"),
+            collapsed.replace("<details>", "<details open=\"false\">"),
+            collapsed.replace("</details>", ""),
+        ] {
+            assert!(
+                validate(&invalid).is_err(),
+                "accepted an uncollapsed report"
+            );
+        }
+    }
+
+    #[test]
     fn skills_do_not_replace_the_instruction_files_field() {
         let body = report()
             .lines()
@@ -142,17 +167,14 @@ mod tests {
 
     #[test]
     fn template_with_all_fields_unavailable_is_valid() {
-        assert!(validate(include_str!("../../.github/PULL_REQUEST_TEMPLATE.md")).is_ok());
+        assert!(validate(include_str!("../../.github/SESSION_REPORT_TEMPLATE.md")).is_ok());
     }
 
     #[test]
     fn prose_and_shell_syntax_in_values_are_inert_data() {
-        let body = format!(
-            "## Outcome\nExample prose\n{}\n## Validation\nTests passed.",
-            report().replace(
-                "test-driven-development (complete read)",
-                "$(exit 42); `false`; <script>"
-            )
+        let body = report().replace(
+            "test-driven-development (complete read)",
+            "$(exit 42); `false`; <script>",
         );
         assert!(validate(&body).is_ok());
     }
