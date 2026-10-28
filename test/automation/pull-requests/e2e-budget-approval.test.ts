@@ -27,7 +27,8 @@ const PR = 123;
 const HASH = "a".repeat(64);
 
 const processReads = vi.hoisted(() => ({
-  execFileSync: vi.fn<(command: string, args: string[]) => string>(),
+  execFileSync:
+    vi.fn<(command: string, args: string[], options?: { timeout?: number }) => string>(),
   spawnSync: vi.fn(),
 }));
 vi.mock("node:child_process", () => processReads);
@@ -154,10 +155,13 @@ describe("Maintainer approval through the production diff loader", () => {
     const digest = e2eBudgetChangeDigest(source, head)!;
     const comments = [record("approve", digest)];
     const api = "gh api --hostname github.com --method GET repos/NVIDIA/NemoClaw";
+    const merged = "c".repeat(40);
     const responses = new Map<string, () => string>([
-      [`git fetch --no-tags --depth=1 origin refs/pull/${PR}/head`, () => ""],
+      ["git rev-parse --is-shallow-repository", () => "false"],
+      [`git fetch --no-tags --depth=1024 origin refs/pull/${PR}/head`, () => ""],
       ["git rev-parse FETCH_HEAD", () => HEAD],
-      [`git diff --name-status -z -M ${BASE} ${HEAD} --`, () => `M\0${BUDGET}\0`],
+      [`git merge-tree --write-tree --no-messages ${BASE} ${HEAD}`, () => merged],
+      [`git diff --name-status -z -M ${BASE} ${merged} --`, () => `M\0${BUDGET}\0`],
       [`${api}/issues/${PR}/comments?per_page=100&page=1`, () => JSON.stringify(comments)],
       [
         `${api}/collaborators/maintainer/permission`,
@@ -172,7 +176,7 @@ describe("Maintainer approval through the production diff loader", () => {
     });
     const contents = new Map([
       [`git show ${BASE}:${BUDGET}`, source],
-      [`git show ${HEAD}:${BUDGET}`, head],
+      [`git show ${merged}:${BUDGET}`, head],
     ]);
     processReads.spawnSync.mockImplementation((command, args) => {
       const content = contents.get(`${command} ${args.join(" ")}`);
@@ -180,6 +184,19 @@ describe("Maintainer approval through the production diff loader", () => {
     });
     return { diff: loadGrowthGuardrailDiff(), comments };
   }
+
+  it("identifies a Git fetch deadline with the PR and preparation phase", () => {
+    processReads.execFileSync
+      .mockImplementationOnce(() => "false")
+      .mockImplementationOnce(() => {
+        throw Object.assign(new Error("Git fetch timed out"), { code: "ETIMEDOUT" });
+      });
+
+    expect(() => load("pull_request_target")).toThrow(/PR #123.*PR commit fetch/);
+    const options = processReads.execFileSync.mock.calls.at(-1)?.[2];
+    expect(options?.timeout).toBeGreaterThan(0);
+    expect(options?.timeout).toBeLessThan(5 * 60 * 1000);
+  });
 
   it.each(["pull_request_target", "issue_comment"])(
     "accepts a current maintainer approval from %s and rejects its removal",
