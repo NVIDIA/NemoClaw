@@ -63,6 +63,7 @@ import {
   waitForLocalInferenceAgentPairing,
   localInferenceAgentCommand,
   localInferenceProbe,
+  readProtectedLocalInferenceCount,
   verifyManagedImageLocalInferenceRoute,
   type ManagedImageOpenShellE2eInputs,
   createManagedImageSandboxWithDiagnostics,
@@ -1280,12 +1281,13 @@ async function waitForCommittedSandboxProbe(
   );
 }
 
-async function assertProtectedLocalInference(
-  onboard: OnboardModule,
+export async function assertProtectedLocalInference(
+  onboard: Pick<OnboardModule, "openshellArgv">,
   input: Inputs,
   env: NodeJS.ProcessEnv,
+  runCommand: ManagedImageCommandRunner = commandResult,
 ): Promise<void> {
-  const result = commandResult(
+  const result = runCommand(
     onboard.openshellArgv([
       "sandbox",
       "exec",
@@ -1300,10 +1302,12 @@ async function assertProtectedLocalInference(
   if (result.status !== 0) {
     throw new Error(`sandbox native local completion failed: ${commandDetail(result)}`);
   }
+  // Receipt authority stays on the host; sandbox commands use the filtered environment.
+  const beforeAgent = await readProtectedLocalInferenceCount(input);
   // The fresh sandbox has one verified provider attachment. Use the generated
   // agent configuration without endpoint, credential, or model overrides.
   const agentResult = await waitForLocalInferenceAgentPairing(input.agent, () =>
-    commandResult(
+    runCommand(
       onboard.openshellArgv([
         "sandbox",
         "exec",
@@ -1319,7 +1323,13 @@ async function assertProtectedLocalInference(
   if (agentResult.status !== 0) {
     throw new Error(`sandbox native agent completion failed: ${commandDetail(agentResult)}`);
   }
-  assertLocalInferenceAgentResponse(input, String(agentResult.stdout ?? ""), env);
+  const afterAgent = await readProtectedLocalInferenceCount(input);
+  assertLocalInferenceAgentResponse(
+    input,
+    String(agentResult.stdout ?? ""),
+    afterAgent > beforeAgent,
+    env,
+  );
 }
 
 export { managedImageHarnessContainerListArgs } from "./managed-image-protected-runtime-contract.ts";

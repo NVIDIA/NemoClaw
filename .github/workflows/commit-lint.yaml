@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -40,3 +41,32 @@ jobs:
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: printf '%s\n' "$PR_TITLE" | npx commitlint --verbose
+
+      - name: Check and test the validator
+        run: |
+          rustfmt --edition 2024 --check tools/ci/pr-session-report*.rs
+          rustc --edition=2024 -D warnings --test tools/ci/pr-session-report.rs -o "$RUNNER_TEMP/report-tests"
+          "$RUNNER_TEMP/report-tests"
+          rustc --edition=2024 -D warnings tools/ci/pr-session-report.rs -o "$RUNNER_TEMP/report-check"
+          "$RUNNER_TEMP/report-check" .github/SESSION_REPORT_TEMPLATE.md
+          rustc --edition=2024 -D warnings --test tools/ci/pr-session-report-workflow.rs -o "$RUNNER_TEMP/adapter-tests"
+          REPORT_WORKFLOW=.github/workflows/commit-lint.yaml "$RUNNER_TEMP/adapter-tests"
+      - name: Check the posted opening report
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_AUTHOR_ID: ${{ github.event.pull_request.user.id }}
+        shell: bash
+        run: |
+          input="$RUNNER_TEMP/session-report"
+          mkdir -p "$input"
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq '.body // ""' > "$input/description.md"
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments?per_page=100" > "$input/comments.json"
+          jq -r --argjson author "$PR_AUTHOR_ID" '.[][] | select(.user.id == $author) | .body | @base64' "$input/comments.json" > "$input/author-comments.b64"
+          comments=()
+          while IFS= read -r encoded; do
+            path="$input/comment-${#comments[@]}.md"
+            printf '%s' "$encoded" | base64 --decode > "$path"
+            comments+=("$path")
+          done < "$input/author-comments.b64"
+          "$RUNNER_TEMP/report-check" --pr "$input/description.md" "${comments[@]}"

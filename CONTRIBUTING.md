@@ -59,6 +59,9 @@ host, Docker, GitHub authentication, contributor identity, and commit-signing pr
 changing them. Follow its remediation and rerun the doctor until it
 passes.
 
+`hadolint` is optional for contributor setup. The doctor warns when it is missing. Dockerfile lint
+checks require `hadolint` on your `PATH`. Install it before running those checks.
+
 Setup installs the required OpenShell SDK from the archive shipped with this checkout and verifies its lockfile checksum.
 SDK installation does not require GitHub credentials. The doctor also checks that the installed SDK can load.
 See the [SDK archive guidance](scripts/vendor/openshell-sdk/README.md) for direct dependency installation and SDK updates.
@@ -183,6 +186,10 @@ The [pull request template](.github/PULL_REQUEST_TEMPLATE.md) is the source of t
 content and conditional evidence. The [contributor PR skill](.agents/skills/nemoclaw-contributor-create-pr/SKILL.md)
 owns the automated publication and review-follow-up workflow. The root
 [PR requirements](AGENTS.md#pr-requirements) own repository-specific exceptions.
+
+Every PR includes a collapsed opening [authoring-session report](.agents/skills/nemoclaw-contributor-create-pr/SKILL.md#session-report) comment, including existing and automated PRs.
+Post the report when opening a PR, or on the next update to an existing PR.
+The metadata job checks the PR author's posted comment and the shared template. Use unavailable fields when historical evidence is missing; preserve existing evidence and cutoffs. After posting, rerun a failed metadata job for the current PR revision. Comment events alone do not refresh this check.
 
 After each revision, follow CI and review to completion. Address valid findings with a change, or
 explain why they do not apply. Keep the PR description and validation evidence current.

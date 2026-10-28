@@ -133,6 +133,10 @@ jobs:
             .github/actions/setup-reviewed-npm
             ci/reviewed-npm-audit.json
             scripts/audit-reviewed-npm-graph.mts
+            scripts/lib/bundled-npm-package.mts
+            scripts/lib/patch-bundled-npm-undici.mts
+            scripts/lib/remediate-openclaw-runtime-dependencies.mts
+            scripts/lib/reviewed-npm-identity.mts
             scripts/checks/package-openshell-sdk-for-pr.mts
             scripts/lib/npm-diagnostics.sh
             scripts/lib/openclaw-npm-remediation.mts
@@ -850,6 +854,10 @@ jobs:
             ci/reviewed-npm-audit.json
             scripts/check-dist-sourcemaps.mts
             scripts/audit-reviewed-npm-graph.mts
+            scripts/lib/bundled-npm-package.mts
+            scripts/lib/patch-bundled-npm-undici.mts
+            scripts/lib/remediate-openclaw-runtime-dependencies.mts
+            scripts/lib/reviewed-npm-identity.mts
             scripts/checks/prepare-ci-npm-install.mts
             scripts/lib/reviewed-ci-npm-install.mts
             scripts/lib/openclaw-npm-remediation.mts
@@ -4832,7 +4840,10 @@ jobs:
           repository: ${{ github.repository }}
           ref: ${{ inputs.workflow_sha || github.workflow_sha }}
           path: .trusted-hermes-resolver
-          sparse-checkout: .github/actions/resolve-reviewed-hermes-platform
+          sparse-checkout: |
+            .github/actions/resolve-reviewed-hermes-platform
+            scripts/checks/resolve-managed-pr-base.sh
+            scripts/lib/dockerfile-copy-sources.mts
           fetch-depth: 1
           persist-credentials: false
 
@@ -4861,6 +4872,23 @@ jobs:
           buildkitd-config-inline: |
             [registry."localhost:5000"]
               http = true
+
+      - id: openclaw-base
+        name: Reuse only an input-equivalent published OpenClaw base
+        if: ${{ inputs.checkout_sha != '' }}
+        env:
+          AGENT: openclaw
+          BASE_ALIAS: ghcr.io/nvidia/nemoclaw/sandbox-base:latest
+          BASE_DOCKERFILE: Dockerfile.base
+          BASE_REPOSITORY: ghcr.io/nvidia/nemoclaw/sandbox-base
+          BASE_SHA: ${{ inputs.base_sha }}
+          CANDIDATE_SHA: ${{ inputs.checkout_sha }}
+          DISPLAY_NAME: OpenClaw
+          LOCAL_BASE_REFERENCE: nemoclaw-managed-pr/openclaw-base:${{ inputs.checkout_sha }}
+          PLATFORM: ${{ matrix.platform }}
+          RESOLUTION_MODE: reference-or-candidate
+        shell: bash
+        run: .trusted-hermes-resolver/scripts/checks/resolve-managed-pr-base.sh
 
       - name: Download reviewed OpenShell SDK archive
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -4961,13 +4989,19 @@ jobs:
           CANDIDATE_BASES: ${{ inputs.checkout_sha != '' }}
           DCODE_BASE_CONTRACT: ${{ needs.base-image-publication.outputs.dcode_base_contract }}
           HERMES_BASE_REF: ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@${{ steps.hermes-base.outputs.digest }}
+          OPENCLAW_BASE_REF: ${{ steps.openclaw-base.outputs.ref }}
           PLATFORM: ${{ matrix.platform }}
         shell: bash
         run: |
           set -euo pipefail
           case "$CANDIDATE_BASES" in
             true)
-              printf 'openclaw=candidate\nhermes=candidate\ndcode=candidate\n' >> "$GITHUB_OUTPUT"
+              [[ "$OPENCLAW_BASE_REF" == candidate ||
+                "$OPENCLAW_BASE_REF" =~ ^ghcr[.]io/nvidia/nemoclaw/sandbox-base@sha256:[a-f0-9]{64}$ ]] || {
+                echo "::error::Trusted OpenClaw base resolver returned an invalid reference" >&2
+                exit 1
+              }
+              printf 'openclaw=%s\nhermes=candidate\ndcode=candidate\n' "$OPENCLAW_BASE_REF" >> "$GITHUB_OUTPUT"
               exit 0
               ;;
             false) ;;
@@ -5506,7 +5540,8 @@ jobs:
                 exit 1
               }
             else
-              [[ "$CANDIDATE_BASES" == false && "$reference" == "${repository}@${digest}" &&
+              [[ ( "$CANDIDATE_BASES" == false || "$agent" == openclaw ) &&
+                 "$reference" == "${repository}@${digest}" &&
                  ( -z "$expected_published" || "$reference" == "$expected_published" ) ]] || {
                 echo "::error::prepared ${agent} base does not match the selected source" >&2
                 exit 1

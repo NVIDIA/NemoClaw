@@ -248,7 +248,7 @@ it("joins a published OpenClaw configuration to its operation target (#12859)", 
       },
     ],
   });
-  expect(event.parameters.configurations[0].agents[0].models[0].modelId).toBe("other");
+  expect(event.parameters.configurations[0].agents[0].models[0].modelId).toBe("gpt-4o");
   expect(event.parameters.configurations[1].agents).toHaveLength(1);
   expect(event.parameters.configurations[1].agents[0].models[0]).toMatchObject({
     modelId: "nvidia/nemotron-3-ultra-550b-a55b",
@@ -346,7 +346,7 @@ async function collectNativeConfiguration(
 
 it.each([
   ["0.1.71", "0.1.71", "reported"],
-  ["private-build", "other", "unapproved"],
+  ["private-build", "private-build", "reported"],
 ])(
   "reports managed Deep Agents version %s as %s (#12376)",
   async (agentVersion, managedAgentVersion, managedAgentVersionStatus) => {

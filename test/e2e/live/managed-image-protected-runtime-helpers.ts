@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -27,6 +26,10 @@ import { resultText } from "../fixtures/clients/index.ts";
 import type { E2ETargetFixtures } from "../fixtures/e2e-test.ts";
 import { expect } from "../fixtures/e2e-test.ts";
 import {
+  startProtectedInferenceRecorder,
+  type ProtectedInferenceRecorder,
+} from "../lib/protected-inference-recorder.ts";
+import {
   assertNvidiaAvailable,
   cleanupOllama,
   ensureOllama,
@@ -48,6 +51,8 @@ const AGENT_QUALIFICATION_TIMEOUT_MS = 10 * 60_000;
 const ROLLBACK_QUALIFICATION_TIMEOUT_MS = 10 * 60_000;
 const PROTECTED_READINESS_CAPTURE_LIMIT_BYTES = 4 * 1024 * 1024;
 const PROTECTED_PROVIDER_CONTAINER_MAX_LENGTH = 63;
+const PROTECTED_PROVIDER_BACKEND_PORT = 8001;
+const PROTECTED_PROVIDER_ROUTE_PORT = 8000;
 
 export const PROTECTED_PROVIDER_OWNER_LABEL = "io.nvidia.nemoclaw.e2e-owner";
 export const PROTECTED_PROVIDER_KIND_LABEL = "io.nvidia.nemoclaw.e2e-provider";
@@ -293,6 +298,9 @@ async function runExactImageQualification(
         NEMOCLAW_NON_INTERACTIVE: "1",
         ...extraEnv,
       },
+      redactionValues: extraEnv.NEMOCLAW_PROTECTED_INFERENCE_RECEIPT_TOKEN
+        ? [extraEnv.NEMOCLAW_PROTECTED_INFERENCE_RECEIPT_TOKEN]
+        : [],
       timeoutMs: AGENT_QUALIFICATION_TIMEOUT_MS,
     },
   );
@@ -592,7 +600,7 @@ async function startProtectedVllm(
       "--gpus",
       "all",
       "--publish",
-      "8000:8000",
+      `127.0.0.1:${PROTECTED_PROVIDER_BACKEND_PORT}:8000`,
       VLLM_IMAGE,
       "--model",
       VLLM_MODEL,
@@ -668,7 +676,7 @@ attempt=0
 deadline=$((SECONDS + 600))
 while [ "$SECONDS" -lt "$deadline" ]; do
   attempt=$((attempt + 1))
-  if curl -fsS --connect-timeout 2 --max-time 5 http://127.0.0.1:8000/v1/models >/dev/null 2>&1; then
+  if curl -fsS --connect-timeout 2 --max-time 5 http://127.0.0.1:${PROTECTED_PROVIDER_BACKEND_PORT}/v1/models >/dev/null 2>&1; then
     printf 'managed-image-vllm-ready attempts=%s\n' "$attempt"
     exit 0
   fi
@@ -705,7 +713,7 @@ attempt=0
 deadline=$((SECONDS + 1200))
 while [ "$SECONDS" -lt "$deadline" ]; do
   attempt=$((attempt + 1))
-  if curl -fsS --connect-timeout 5 --max-time 5 http://127.0.0.1:8000/v1/models >/dev/null 2>&1; then
+  if curl -fsS --connect-timeout 5 --max-time 5 http://127.0.0.1:${PROTECTED_PROVIDER_BACKEND_PORT}/v1/models >/dev/null 2>&1; then
     printf 'managed-image-nim-ready attempts=%s\n' "$attempt"
     exit 0
   fi
@@ -767,7 +775,7 @@ async function startProtectedNim(
       "--gpus",
       "all",
       "--publish",
-      "8000:8000",
+      `127.0.0.1:${PROTECTED_PROVIDER_BACKEND_PORT}:8000`,
       "--shm-size",
       "16g",
       "--env",
@@ -806,7 +814,7 @@ async function startProtectedNim(
     timeoutMs: 21 * 60_000,
   });
   expect(ready.exitCode, resultText(ready)).toBe(0);
-  const servedModel = adoptServedModelId(NIM_CATALOG_MODEL, 8000);
+  const servedModel = adoptServedModelId(NIM_CATALOG_MODEL, PROTECTED_PROVIDER_BACKEND_PORT);
   expect(servedModel, "NIM must report one safe served model").toBeTruthy();
   const cuda = await host.command("docker", ["exec", state.name, "nvidia-smi", "-L"], {
     artifactName: "nim-cuda-initialization",
@@ -958,6 +966,12 @@ export async function qualifyProtectedManagedImageRuntime(
   const vllmState = protectedProviderContainerState("vllm", cohort);
   const nimState = protectedProviderContainerState("nim", cohort);
   const providerStates = [vllmState, nimState] as const;
+  let activeRecorder: ProtectedInferenceRecorder | null = null;
+
+  cleanup.trackDisposable("stop protected inference recorder", async () => {
+    if (activeRecorder) await activeRecorder.close();
+    activeRecorder = null;
+  });
 
   cleanup.trackDisposable("remove protected vLLM container", async () => {
     await removeProtectedProviderContainer(fixtures.host, vllmState, "cleanup-vllm-container");
@@ -1004,9 +1018,19 @@ export async function qualifyProtectedManagedImageRuntime(
     activePhase = "qualify all managed agents with GPU-backed vLLM";
     progress.phase("qualify all managed agents with GPU-backed vLLM");
     const vllmImagePulledByRun = await startProtectedVllm(host, vllmState);
-    await qualifyEveryAgent(host, contracts, "vllm", VLLM_MODEL, {
-      NEMOCLAW_VLLM_LOCAL_TOKEN: randomBytes(24).toString("hex"),
+    activeRecorder = await startProtectedInferenceRecorder({
+      bindHost: "0.0.0.0",
+      port: PROTECTED_PROVIDER_ROUTE_PORT,
+      backendPort: PROTECTED_PROVIDER_BACKEND_PORT,
+      model: VLLM_MODEL,
     });
+    await qualifyEveryAgent(host, contracts, "vllm", VLLM_MODEL, {
+      NEMOCLAW_VLLM_LOCAL_TOKEN: activeRecorder.token,
+      NEMOCLAW_PROTECTED_INFERENCE_RECEIPT_PORT: String(activeRecorder.port),
+      NEMOCLAW_PROTECTED_INFERENCE_RECEIPT_TOKEN: activeRecorder.token,
+    });
+    await activeRecorder.close();
+    activeRecorder = null;
     await removeProtectedProviderContainer(host, vllmState, "stop-vllm-before-nim");
     if (vllmImagePulledByRun) {
       // Free the vLLM image this run pulled before NIM downloads its model. This
@@ -1022,9 +1046,19 @@ export async function qualifyProtectedManagedImageRuntime(
     activePhase = "qualify all managed agents with GPU-backed NVIDIA NIM";
     progress.phase("qualify all managed agents with GPU-backed NVIDIA NIM");
     const nimModel = await startProtectedNim(host, nimState, ngcApiKey);
-    await qualifyEveryAgent(host, contracts, "nim", nimModel, {
-      NEMOCLAW_VLLM_LOCAL_TOKEN: randomBytes(24).toString("hex"),
+    activeRecorder = await startProtectedInferenceRecorder({
+      bindHost: "0.0.0.0",
+      port: PROTECTED_PROVIDER_ROUTE_PORT,
+      backendPort: PROTECTED_PROVIDER_BACKEND_PORT,
+      model: nimModel,
     });
+    await qualifyEveryAgent(host, contracts, "nim", nimModel, {
+      NEMOCLAW_VLLM_LOCAL_TOKEN: activeRecorder.token,
+      NEMOCLAW_PROTECTED_INFERENCE_RECEIPT_PORT: String(activeRecorder.port),
+      NEMOCLAW_PROTECTED_INFERENCE_RECEIPT_TOKEN: activeRecorder.token,
+    });
+    await activeRecorder.close();
+    activeRecorder = null;
     await removeProtectedProviderContainer(host, nimState, "stop-nim-before-rollback");
 
     activePhase = "prove all-agent managed bootstrap rollback and exact cleanup";

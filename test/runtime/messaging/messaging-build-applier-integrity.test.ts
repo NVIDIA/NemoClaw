@@ -783,7 +783,7 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
     try {
       [
         ...dockerfile.matchAll(
-          /^COPY (src\/lib\/messaging\/|scripts\/lib\/(?:openclaw-npm-remediation|reviewed-npm-archive)\.mts) (\/\S+)$/gm,
+          /^COPY (src\/lib\/messaging\/|scripts\/lib\/(?:bundled-npm-package|openclaw-npm-remediation|reviewed-npm-archive)\.mts) (\/\S+)$/gm,
         ),
       ].forEach((copy) => {
         const source = copy[1] ?? "";
@@ -1379,6 +1379,7 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
             OPENCLAW_SLACK_INTEGRITY: OPENCLAW_SLACK_2026_9_1_INTEGRITY,
             OPENCLAW_PACK_INTEGRITY_OVERRIDE: OPENCLAW_SLACK_2026_9_1_INTEGRITY,
             OPENCLAW_PACK_FILENAME_OVERRIDE: "../slack-2026.9.1.tgz",
+            TMPDIR: tmp,
             OPENCLAW_VERSION: "2026.9.1",
             NEMOCLAW_MESSAGING_CHANNELS_B64: channelsB64(["slack"]),
           },

@@ -219,12 +219,16 @@ The `managed-image-multiarch-startup` no-build job keeps that setting and compil
 It rejects preexisting output, verifies the required shared modules, and then starts the direct managed-image contracts.
 Its amd64 shard also exports digest-addressed npm and agent system inputs for the protected offline rebuild.
 The trusted controller accepts both v1 multiarch activation and v2 Deep Agents
-base activation. PR runs build all three managed-agent bases from the selected
-checkout's Dockerfiles, pins and lockfiles on native CPU runners. Each base has
-a separate OCI layout and receipt bound to its agent, source SHA, trusted
-workflow SHA, platform, run ID and attempt. The protected GPU controller verifies
-these identities and every config, manifest and layer digest before using the
-bases offline. PR runs reject published-base substitution and failed verification.
+base activation. PR image-publication runs build all three managed-agent bases
+from the selected checkout's Dockerfiles, pins and lockfiles on native CPU runners.
+Each candidate base has a separate OCI layout and receipt bound to its agent,
+source SHA, trusted workflow SHA, platform, run ID and attempt. The protected
+GPU controller verifies these identities and every config, manifest and layer
+digest before using candidate bases offline. In a protected startup PR run, the
+trusted resolver may select a published OpenClaw base only when its direct inputs
+match the candidate. The GPU controller rechecks that published base's digest.
+Hermes and Deep Agents Code use candidate bases in protected startup PR runs.
+Failed verification stops the run.
 Runs without a PR source retain published OpenClaw and Hermes bases; Deep Agents
 uses a published base with v1 activation and a candidate base with v2 activation.
 The receipt command retains its Deep Agents default for existing callers; an
@@ -816,6 +820,8 @@ or exactly one thread whose recorded cwd matches. Ambiguous results fail cleanup
 thread. Listing, deletion, and removal of the private directory each use a 30-second host timeout with
 a five-second kill grace. A failed command or timeout marks cleanup as failed, retains the private
 directory and recovery instructions, and allows policy and capture cleanup to continue.
+The same target writes an npm cache marker under the DCode native home before its existing rebuild.
+After rebuild, it verifies that the marker survived, the sandbox is Ready, and a DCode action succeeds.
 The TUI check then runs without changing that registry baseline. The installed
 CLI on Docker must emit a v1alpha1 document with the `deepagents` harness, hosted OpenAI-compatible route,
 credential reference, and independently observed effective policy.
@@ -2257,6 +2263,13 @@ Direct `main` runs use the same publication workflow and artifact contract.
 Protected managed-image build jobs apply a separate rule to their reusable base receipt.
 The producer must be from the same workflow run and no later than the consumer attempt.
 Receipt verification remains bound to the producer attempt.
+For a manual PR run, the protected startup job uses a trusted resolver to compare
+the candidate's OpenClaw base Dockerfile and its inputs with the published base's
+source revision. Matching inputs permit an immutable published base reference.
+Changed or unverified inputs use a base built from the exact candidate instead.
+The final managed image always builds from the selected candidate commit, and the
+GPU job verifies the same-run build-cache identity and any published OpenClaw
+base digest before its offline rebuild.
 
 The Deep Agents Code managed-image target uses the shared receipt check to verify its image digest, source revision, and cohort.
 Onboarding and fresh re-onboarding do not supply a base-image override.
@@ -2548,8 +2561,13 @@ Its separate environment, process, filesystem, and canary checks are replaced by
 support tests cover leak detection and control cleanup.
 
 OpenRouter onboards OpenClaw and starts a fresh agent process.
-The `hosted-inference-openrouter` target also onboards Deep Agents Code with the same
-OpenRouter key and model. Its six-assertion case checks onboarding, credential isolation,
+The `hosted-inference-openrouter` target also onboards Hermes and Deep Agents Code with the same
+OpenRouter key and model. The Hermes case requires a real turn before rebuild, a successful
+`connect --probe-only`, and an immediate real turn after rebuilding without a fresh host credential.
+If that turn fails, it records only bounded classifications of the sandbox credential environment,
+managed config slots, and OpenShell provider attachment. It checks the reply even when
+`hermes -z` exits zero.
+The Deep Agents Code six-assertion case checks onboarding, credential isolation,
 the native TOML route, and one fresh `dcode -n --json` response.
 The OpenClaw case checks the native endpoint, credential placeholder,
 selected adapter, response model, and nonempty answer.
@@ -2576,7 +2594,7 @@ sandbox isolation, restart, and failed-operation recovery.
 The smoke requires the approved `NEMOCLAW_OPENROUTER_MODEL`; it does not select a default model.
 Credentials remain in the test host environment and OpenShell provider store; artifacts redact them.
 The cleanup helper destroys each test sandbox. The Deep Agents Code case checks sandbox absence even if onboarding fails.
-The OpenClaw case checks absence after successful onboarding; failed onboarding uses best-effort cleanup.
+The OpenClaw and Hermes cases check absence after successful onboarding; failed onboarding uses best-effort cleanup.
 Neither path proves removal of credentials from the OpenShell provider store.
 Discard the approved disposable gateway after each run, including failed onboarding. Use a fresh gateway for a retry.
 

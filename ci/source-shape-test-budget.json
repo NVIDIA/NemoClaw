@@ -437,6 +437,11 @@
       "category": "security"
     },
     {
+      "file": "test/install/upgrade-bundled-npm.test.ts",
+      "test": "keeps the DCode image upgrade cache out of native home when the command exits %i (#13241)",
+      "category": "compatibility"
+    },
+    {
       "file": "test/mcp/mcp-tool-discovery-image-contract.test.ts",
       "test": "pins the reviewed image runtime artifacts exactly",
       "category": "security"
@@ -484,6 +489,16 @@
     {
       "file": "test/automation/e2e/platform-vitest-main-workflow.test.ts",
       "test": "installs container clients before Vitest but starts Docker only afterward",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/install/remediate-openclaw-runtime-dependencies.test.ts",
+      "test": "preserves %s metadata after a partial write failure and permits retry",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/agents/openclaw/openclaw-real-patched-dist-harness.test.ts",
+      "test": "runs npm and messaging consumers after retrying an interrupted %s manifest write",
       "category": "compatibility"
     }
   ]

@@ -42,8 +42,10 @@ describe("native agent destroy state cleanup", { timeout: 15_000 }, () => {
         Array.isArray(args) &&
         args[0] === "sandbox" &&
         args[1] === "exec" &&
-        args[2] === "--name" &&
-        args[3] === "alpha",
+        args[2] === "-g" &&
+        args[3] === "nemoclaw-19080" &&
+        args[4] === "--name" &&
+        args[5] === "alpha",
     );
     const deleteCall = harness.runOpenshellSpy.mock.calls.findIndex(
       ([args]) => Array.isArray(args) && args[0] === "sandbox" && args[1] === "delete",
@@ -51,6 +53,23 @@ describe("native agent destroy state cleanup", { timeout: 15_000 }, () => {
     expect(wipeCall).toBeGreaterThanOrEqual(0);
     expect(deleteCall).toBeGreaterThan(wipeCall);
     const wipeArgs = harness.runOpenshellSpy.mock.calls[wipeCall]![0] as string[];
+    expect(wipeArgs.slice(0, 6)).toEqual([
+      "sandbox",
+      "exec",
+      "-g",
+      "nemoclaw-19080",
+      "--name",
+      "alpha",
+    ]);
+    const providerCleanupOptions = harness.runSandboxProviderPreDeleteCleanupSpy.mock
+      .calls[0]![1] as {
+      runOpenshell: (args: string[]) => unknown;
+    };
+    providerCleanupOptions.runOpenshell(["sandbox", "provider", "detach", "alpha", "github"]);
+    expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
+      ["sandbox", "provider", "detach", "-g", "nemoclaw-19080", "alpha", "github"],
+      expect.any(Object),
+    );
     const wipeScript = wipeArgs[wipeArgs.indexOf("-c") + 1]!;
     expect(wipeScript).toContain("root='/sandbox'");
     expect(wipeScript).toContain('[ ! -d "$root" ] || [ -L "$root" ]');

@@ -3,27 +3,20 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
-import { createHash, randomBytes } from "node:crypto";
-import {
-  chmodSync,
-  closeSync,
-  constants,
-  cpSync,
-  fstatSync,
-  mkdirSync,
-  mkdtempSync,
-  openSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { chmodSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
   type JsonObject,
+  type BundledNpmCommandRunner,
+  type PreparedBundledReplacement,
+  replaceBundledPackage,
+  reconcileBundledPackageBackup,
+  restoreMissingBundledPackage,
+  prepareBundledPackageReplacement,
+  remediateBundledPackageFromRegistry,
+  runBundledNpmCommand,
   collectBundledPackageVersions,
   jsonObject as record,
   readJsonObject as readJson,
@@ -45,21 +38,6 @@ const REVIEWED_IP_ADDRESS_VERSIONS = new Set([
   AFFECTED_IP_ADDRESS_VERSION,
   FIXED_IP_ADDRESS_VERSION,
 ]);
-
-function removeBackup(backupPath: string): void {
-  try {
-    rmSync(backupPath, { force: true, recursive: true });
-  } catch (cleanupError) {
-    try {
-      rmSync(backupPath, { force: true, recursive: true });
-    } catch (retryError) {
-      throw new AggregateError(
-        [cleanupError, retryError],
-        `verified replacement retained but affected backup cleanup failed: ${backupPath}`,
-      );
-    }
-  }
-}
 
 function verifyIpAddressManifest(manifest: JsonObject): string {
   const version = manifest.version;
@@ -94,12 +72,18 @@ export type BundledNpmIpAddressState = Readonly<{
   state: "affected" | "fixed";
 }>;
 
-export function inspectBundledNpmIpAddress(npmRoot: string): BundledNpmIpAddressState {
-  const root = realDirectory(npmRoot, "npm package root");
+function inspectNpmVersion(root: string): string {
   const npmManifest = readJson(join(root, "package.json"), "npm package manifest");
   if (npmManifest.name !== "npm" || npmManifest.version !== REVIEWED_NPM_VERSION) {
     throw new Error(`npm package identity has drifted; expected npm@${REVIEWED_NPM_VERSION}`);
   }
+
+  return REVIEWED_NPM_VERSION;
+}
+
+export function inspectBundledNpmIpAddress(npmRoot: string): BundledNpmIpAddressState {
+  const root = realDirectory(npmRoot, "npm package root");
+  const npmVersion = inspectNpmVersion(root);
 
   const version = verifyIpAddressManifest(
     readJson(
@@ -119,7 +103,7 @@ export function inspectBundledNpmIpAddress(npmRoot: string): BundledNpmIpAddress
 
   return {
     ipAddressVersion: version,
-    npmVersion: REVIEWED_NPM_VERSION,
+    npmVersion,
     state: version === FIXED_IP_ADDRESS_VERSION ? "fixed" : "affected",
   };
 }
@@ -148,127 +132,61 @@ export function patchBundledNpmIpAddress(options: {
     throw new Error(`replacement package must be ip-address@${FIXED_IP_ADDRESS_VERSION}`);
   }
 
-  const current = inspectBundledNpmIpAddress(npmRoot);
-  const livePath = join(npmRoot, "node_modules", "ip-address");
-  if (current.state === "fixed") {
-    chmodSync(realDirectory(livePath, "npm bundled ip-address root"), 0o755);
-    return current;
-  }
-  const transactionId = `${process.pid}-${randomBytes(8).toString("hex")}`;
-  const stagingRoot = mkdtempSync(join(dirname(livePath), ".ip-address.nemoclaw-stage-"));
-  const stagedPath = join(stagingRoot, "replacement");
-  const backupPath = `${livePath}.nemoclaw-backup-${transactionId}`;
-  let rollbackRequired = false;
-  try {
-    cpSync(replacementRoot, stagedPath, { dereference: false, recursive: true });
-    // The transaction stays private; its installed package must be readable by the sandbox.
-    chmodSync(stagedPath, 0o755);
-    cpSync(livePath, backupPath, {
-      dereference: false,
-      errorOnExist: true,
-      force: false,
-      preserveTimestamps: true,
-      recursive: true,
-    });
-    rollbackRequired = true;
-    rmSync(livePath, { recursive: true });
-    renameSync(stagedPath, livePath);
-    const fixed = verifyBundledNpmIpAddress(npmRoot);
-    rollbackRequired = false;
-    removeBackup(backupPath);
-    return fixed;
-  } catch (error) {
-    if (rollbackRequired) {
-      try {
-        rmSync(livePath, { force: true, recursive: true });
-        renameSync(backupPath, livePath);
-      } catch (rollbackError) {
-        throw new AggregateError(
-          [error, rollbackError],
-          `npm bundled ip-address rollback failed; ${backupPath} retains the original tree`,
-        );
-      }
-    }
-    throw error;
-  } finally {
-    rmSync(stagingRoot, { force: true, recursive: true });
-  }
-}
+  const current = inspectForPatch(npmRoot);
+  if (current.state === "fixed") return current;
 
-export type BundledNpmIpAddressCommandRunner = (command: string, args: readonly string[]) => void;
-
-function run(command: string, args: readonly string[]): void {
-  const result = spawnSync(command, args, {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-    timeout: 60_000,
+  return replaceBundledPackage({
+    npmRoot,
+    packageName: "ip-address",
+    replacementRoot,
+    verify: verifyReadableBundledNpmIpAddress,
   });
-  if (result.error) throw result.error;
-  if (result.status !== 0) {
-    throw new Error(`${command} failed: ${`${result.stdout ?? ""}${result.stderr ?? ""}`.trim()}`);
-  }
 }
 
-type PreparedReplacement = Readonly<{
-  cleanup: () => void;
-  replacementRoot: string;
-}>;
+export type BundledNpmIpAddressCommandRunner = BundledNpmCommandRunner;
+
+type PreparedReplacement = PreparedBundledReplacement;
 
 function prepareFixedIpAddressReplacement(
   commandRunner: BundledNpmIpAddressCommandRunner,
 ): PreparedReplacement {
-  const rootDirectory = mkdtempSync(join(tmpdir(), "nemoclaw-npm-ip-address-"));
-  const archivePath = join(rootDirectory, `ip-address-${FIXED_IP_ADDRESS_VERSION}.tgz`);
-  const replacementRoot = join(rootDirectory, "replacement");
-  try {
-    commandRunner("curl", [
-      "--proto",
-      "=https",
-      "--tlsv1.2",
-      "--fail",
-      "--silent",
-      "--show-error",
-      "--output",
-      archivePath,
-      FIXED_IP_ADDRESS_TARBALL,
-    ]);
-    const descriptor = openSync(archivePath, constants.O_RDONLY | constants.O_NOFOLLOW);
-    let archiveBytes: Buffer;
-    try {
-      if (!fstatSync(descriptor).isFile()) {
-        throw new Error("ip-address replacement download must be a real file");
-      }
-      archiveBytes = readFileSync(descriptor);
-    } finally {
-      closeSync(descriptor);
-    }
-    const actualIntegrity = `sha512-${createHash("sha512").update(archiveBytes).digest("base64")}`;
-    if (actualIntegrity !== FIXED_IP_ADDRESS_INTEGRITY) {
-      throw new Error(
-        `ip-address replacement integrity mismatch\nExpected: ${FIXED_IP_ADDRESS_INTEGRITY}\nActual:   ${actualIntegrity}`,
-      );
-    }
+  return prepareBundledPackageReplacement({
+    packageName: "ip-address",
+    version: FIXED_IP_ADDRESS_VERSION,
+    integrity: FIXED_IP_ADDRESS_INTEGRITY,
+    tarball: FIXED_IP_ADDRESS_TARBALL,
+    offline: false,
+    commandRunner,
+  });
+}
 
-    mkdirSync(replacementRoot, { mode: 0o700 });
-    commandRunner("tar", [
-      "--extract",
-      "--gzip",
-      "--file",
-      archivePath,
-      "--directory",
-      replacementRoot,
-      "--strip-components=1",
-      "--no-same-owner",
-      "--no-same-permissions",
-    ]);
-    return {
-      cleanup: () => rmSync(rootDirectory, { force: true, recursive: true }),
-      replacementRoot,
-    };
-  } catch (error) {
-    rmSync(rootDirectory, { force: true, recursive: true });
-    throw error;
-  }
+function verifyReadableBundledNpmIpAddress(npmRoot: string): BundledNpmIpAddressState {
+  const fixed = verifyBundledNpmIpAddress(npmRoot);
+  // Keep the installed package readable while the replacement transaction stays private.
+  chmodSync(
+    realDirectory(join(npmRoot, "node_modules", "ip-address"), "npm bundled ip-address root"),
+    0o755,
+  );
+  return fixed;
+}
+
+function inspectForPatch(npmRoot: string): BundledNpmIpAddressState {
+  const root = realDirectory(npmRoot, "npm package root");
+  inspectNpmVersion(root);
+  const recovery = {
+    npmRoot: root,
+    packageName: "ip-address" as const,
+    verifyBackup(manifest: JsonObject) {
+      const affectedVersion = AFFECTED_IP_ADDRESS_VERSION;
+      if (verifyIpAddressManifest(manifest) !== affectedVersion)
+        throw new Error("retained backup identity has drifted");
+    },
+  };
+  restoreMissingBundledPackage(recovery);
+  const current = inspectBundledNpmIpAddress(root);
+  reconcileBundledPackageBackup({ ...recovery, fixed: current.state === "fixed" });
+  if (current.state === "fixed") return verifyReadableBundledNpmIpAddress(root);
+  return current;
 }
 
 export type BundledNpmIpAddressRegistryDependencies = Readonly<{
@@ -280,31 +198,17 @@ export function patchBundledNpmIpAddressFromRegistry(
   npmRoot: string,
   dependencies: BundledNpmIpAddressRegistryDependencies = {},
 ): BundledNpmIpAddressState {
-  const commandRunner = dependencies.commandRunner ?? run;
-  const current = inspectBundledNpmIpAddress(npmRoot);
-  if (current.state === "fixed") {
-    chmodSync(
-      realDirectory(join(npmRoot, "node_modules", "ip-address"), "npm bundled ip-address root"),
-      0o755,
-    );
-    commandRunner("npm", ["--version"]);
-    commandRunner("npx", ["--version"]);
-    return current;
-  }
-  const prepared = (dependencies.prepareReplacement ?? prepareFixedIpAddressReplacement)(
-    commandRunner,
-  );
-  try {
-    const result = patchBundledNpmIpAddress({
-      npmRoot,
-      replacementRoot: prepared.replacementRoot,
-    });
-    commandRunner("npm", ["--version"]);
-    commandRunner("npx", ["--version"]);
-    return result;
-  } finally {
-    prepared.cleanup();
-  }
+  const current = inspectForPatch(npmRoot);
+  return remediateBundledPackageFromRegistry({
+    current,
+    commandRunner: dependencies.commandRunner ?? runBundledNpmCommand,
+    prepareReplacement: dependencies.prepareReplacement ?? prepareFixedIpAddressReplacement,
+    patch: (replacementRoot) => patchBundledNpmIpAddress({ npmRoot, replacementRoot }),
+    verifyCommands(runner) {
+      runner("npm", ["--version"]);
+      runner("npx", ["--version"]);
+    },
+  });
 }
 
 function argument(name: string): string {

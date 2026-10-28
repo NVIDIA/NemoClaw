@@ -9,6 +9,10 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { parse as parseYaml } from "yaml";
+import {
+  applyHermesManagedRoute,
+  type HermesManagedRouting,
+} from "../../src/lib/hermes-managed-route.ts";
 import { useOrderedNativeCapture } from "../support/native-snapshot.ts";
 
 const ORIGINAL_HOME = process.env.HOME;
@@ -47,6 +51,92 @@ function writeSandboxRegistry(sandboxName: string, agent: "hermes" | null = null
 }
 
 describe("complete native-home machine authority", () => {
+  type ManagedHermesConfig = Record<string, unknown> & HermesManagedRouting;
+  it.each([
+    { name: "managed route", change: (_config: ManagedHermesConfig) => {}, retained: true },
+    {
+      name: "mismatched endpoint",
+      change: (config: ManagedHermesConfig) => {
+        config.model.base_url = "https://other.example/v1";
+      },
+      retained: false,
+    },
+    {
+      name: "mismatched provider",
+      change: (config: ManagedHermesConfig) => {
+        config._nemoclaw_upstream.provider = "openai-api";
+      },
+      retained: false,
+    },
+    {
+      name: "partial credential reference",
+      change: (config: ManagedHermesConfig) => {
+        config.providers["openrouter-api"]!.api_key = "${OPENROUTER_API_KEY}-extra";
+      },
+      retained: false,
+    },
+    {
+      name: "duplicate custom provider",
+      change: (config: ManagedHermesConfig) => {
+        config.custom_providers.push({ ...config.custom_providers[0]! });
+      },
+      retained: false,
+    },
+    {
+      name: "raw credential",
+      change: (config: ManagedHermesConfig) => {
+        config.model.api_key = "raw-openrouter-fixture-secret";
+      },
+      retained: false,
+    },
+  ])(
+    "preserves only the validated Hermes OpenRouter reference in a native archive: $name (#13759)",
+    ({ change, retained }) => {
+      const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-openrouter-archive-"));
+      try {
+        const nativeRoot = path.join(fixture, "native-home");
+        const configPath = ".hermes/config.yaml";
+        const archivedConfigPath = ".hermes/backups/config/config.yaml.saved";
+        fs.mkdirSync(path.join(nativeRoot, ".hermes"), { recursive: true });
+        const config: Record<string, unknown> = {
+          unrelated: { api_key: "raw-unrelated-fixture-secret" },
+        };
+        applyHermesManagedRoute(config, {
+          model: "nvidia/nemotron-3-ultra-550b-a55b",
+          upstreamProvider: "openrouter-api",
+          baseUrl: "https://openrouter.ai/api/v1",
+          inferenceApi: "openai-completions",
+        });
+        change(config);
+        const source = JSON.stringify(config);
+        fs.writeFileSync(path.join(nativeRoot, configPath), source);
+        fs.mkdirSync(path.dirname(path.join(nativeRoot, archivedConfigPath)), { recursive: true });
+        fs.writeFileSync(path.join(nativeRoot, archivedConfigPath), source);
+        writeSandboxRegistry("hermes-openrouter-archive", "hermes");
+
+        const backup = sandboxState.backupSandboxState("hermes-openrouter-archive", {
+          nativeStateSource: { root: "/sandbox", directory: nativeRoot, assertCurrent: vi.fn() },
+        });
+
+        expect(backup.success, backup.error).toBe(true);
+        sandboxState.inspectNativeSandboxState(backup.manifest!.backupPath, (root: string) => {
+          const restored = parseYaml(fs.readFileSync(path.join(root, configPath), "utf8"));
+          const expected = retained ? "${OPENROUTER_API_KEY}" : "[STRIPPED_BY_MIGRATION]";
+          expect(restored.model.api_key).toBe(expected);
+          expect(restored.providers["openrouter-api"].api_key).toBe(expected);
+          expect(restored.custom_providers[0].api_key).toBe(expected);
+          expect(restored.unrelated.api_key).toBe("[STRIPPED_BY_MIGRATION]");
+          const saved = parseYaml(fs.readFileSync(path.join(root, archivedConfigPath), "utf8"));
+          expect(saved.model.api_key).toBe("[STRIPPED_BY_MIGRATION]");
+        });
+        expect(fs.readFileSync(path.join(nativeRoot, configPath), "utf8")).toBe(source);
+        expect(fs.readFileSync(path.join(nativeRoot, archivedConfigPath), "utf8")).toBe(source);
+      } finally {
+        fs.rmSync(fixture, { recursive: true, force: true });
+      }
+    },
+  );
+
   it.each([16, 100, 2000])(
     "backs up growing Hermes configuration with %i settings without changing live state (#13044)",
     (count) => {
