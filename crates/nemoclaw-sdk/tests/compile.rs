@@ -349,11 +349,23 @@ fn managed_plans_query_selected_engine_and_image_without_probe_resources() {
         let prerequisites = &graph["data"]["openshell_gateway_prerequisites"]["current"];
         assert_eq!(prerequisites["engine"], *selected);
         assert_eq!(prerequisites["compute_driver"], "docker");
+        // The read checks that only this deployment's gateway holds the port.
+        assert_eq!(
+            prerequisites["endpoint"],
+            document.spec.gateway.as_managed().unwrap().endpoint
+        );
+        assert_eq!(
+            prerequisites["name"],
+            format!("{}-gateway", document.workspace())
+        );
+        assert_eq!(prerequisites["owner"], document.metadata.uid);
+        let message = prerequisites["lifecycle"]["postcondition"][0]["error_message"]
+            .as_str()
+            .unwrap();
         assert!(
-            prerequisites["lifecycle"]["postcondition"][0]["error_message"]
-                .as_str()
-                .unwrap()
-                .contains("does not meet gateway prerequisites")
+            message.contains("does not meet gateway prerequisites")
+                && message.contains("jsondecode(self.observation_json).reason"),
+            "{message}"
         );
         for read in [engine, prerequisites] {
             assert!(

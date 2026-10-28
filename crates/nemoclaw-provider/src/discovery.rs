@@ -5,7 +5,9 @@
 
 use crate::provider::ConfiguredBackend;
 use async_trait::async_trait;
-use nemoclaw_discovery::observe_gateway_prerequisites;
+use nemoclaw_discovery::{
+    Engines, GATEWAY_PORT_TAKEN, check_gateway_port, observe_gateway_prerequisites,
+};
 use nemoclaw_sdk::discovery::{DiscoveryRequest, ObservationStatus};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -23,6 +25,12 @@ pub(crate) struct GatewayPrerequisitesDataSource(pub Arc<ConfiguredBackend>);
 pub(crate) struct GatewayPrerequisitesState {
     engine: Value<String>,
     compute_driver: Value<String>,
+    #[serde(default)]
+    endpoint: Value<String>,
+    #[serde(default)]
+    name: Value<String>,
+    #[serde(default)]
+    owner: Value<String>,
     observation_json: Value<String>,
     available: Value<bool>,
     status: Value<String>,
@@ -44,9 +52,10 @@ fn driver_valid(driver: &Value<String>) -> bool {
     }
 }
 
-/// Required string `inputs`, then the observation every engine read reports.
+/// Required string `inputs`, the gateway's optional endpoint and identity for
+/// its port check, then the observation every engine read reports.
 fn schema(inputs: &[&str]) -> Schema {
-    use AttributeConstraint::{Computed, Required};
+    use AttributeConstraint::{Computed, Optional, Required};
     use AttributeType::{Bool, String};
     Schema {
         version: 0,
@@ -54,6 +63,11 @@ fn schema(inputs: &[&str]) -> Schema {
             attributes: inputs
                 .iter()
                 .map(|name| (*name, String, Required))
+                .chain([
+                    ("endpoint", String, Optional),
+                    ("name", String, Optional),
+                    ("owner", String, Optional),
+                ])
                 .chain([
                     ("observation_json", String, Computed),
                     ("available", Bool, Computed),
@@ -142,14 +156,41 @@ impl DataSource for GatewayPrerequisitesDataSource {
             config.status = Value::Unknown;
             return Some(config);
         };
-        let observation = observe_gateway_prerequisites(
+        let compute_driver = driver.parse().ok()?;
+        let mut observation = observe_gateway_prerequisites(
             self.0.connections(),
             &DiscoveryRequest {
                 engine: engine.clone(),
-                compute_driver: driver.parse().ok()?,
+                compute_driver,
             },
         )
         .await;
+        // Apply binds the deployment before the gateway takes its port, so a
+        // port held by anything else must fail plan.
+        if observation.status == ObservationStatus::Available
+            && let (Value::Value(endpoint), Value::Value(name), Value::Value(owner)) =
+                (&config.endpoint, &config.name, &config.owner)
+        {
+            let work = async {
+                let engine = self.0.connections().engine(engine)?;
+                check_gateway_port(&engine, compute_driver, endpoint, name, owner).await
+            };
+            let (status, reason) =
+                match tokio::time::timeout(std::time::Duration::from_secs(5), work).await {
+                    Ok(Ok(())) => (ObservationStatus::Available, None),
+                    Ok(Err(nemoclaw_sdk::Error::Conflict(GATEWAY_PORT_TAKEN))) => (
+                        ObservationStatus::Unavailable,
+                        Some(GATEWAY_PORT_TAKEN.into()),
+                    ),
+                    Ok(Err(error)) => (ObservationStatus::Unknown, Some(error.to_string())),
+                    Err(_) => (
+                        ObservationStatus::Unknown,
+                        Some("gateway port observation timed out".into()),
+                    ),
+                };
+            observation.status = status;
+            observation.reason = reason;
+        }
         (config.observation_json, config.available, config.status) =
             outputs(diags, &observation, observation.status)?;
         Some(config)
@@ -168,6 +209,124 @@ mod tests {
             compute_driver: Value::Value(driver.into()),
             ..Default::default()
         }
+    }
+
+    #[tokio::test]
+    async fn another_container_on_the_endpoint_port_makes_the_engine_unavailable() {
+        use crate::docker::{Connections, fixture::Fixture};
+        use serde_json::json;
+        const ENGINE: &str = "unix:///var/run/docker.sock";
+        const OWN: (&str, &str) = ("nc-0123456789abcdef-gateway", "own-uid");
+        let published = |name: &str, owner: &str, ip: &str, port: u16, kind: &str| {
+            json!([{
+                "Id": name, "Names": [format!("/{name}")],
+                "Labels": {crate::managed::OWNER_LABEL: owner},
+                "Ports": [{"IP": ip, "PrivatePort": 17670, "PublicPort": port, "Type": kind}],
+            }])
+        };
+        let taken = published("other-gateway", "other-uid", "127.0.0.1", 17695, "tcp");
+        for (containers, with_endpoint, expected) in [
+            (taken.clone(), true, "unavailable"),
+            (
+                published("other", "", "0.0.0.0", 17695, "tcp"),
+                true,
+                "unavailable",
+            ),
+            (
+                published("other", "", "127.0.0.1", 17696, "tcp"),
+                true,
+                "available",
+            ),
+            (
+                published("other", "", "127.0.0.1", 17695, "udp"),
+                true,
+                "available",
+            ),
+            (
+                published(OWN.0, OWN.1, "127.0.0.1", 17695, "tcp"),
+                true,
+                "available",
+            ),
+            (taken, false, "available"),
+        ] {
+            let fixture = Fixture::engine(move |request| {
+                let body = match request.path.split('?').next().unwrap() {
+                    "/info" => json!({"ID": "selected-engine"}),
+                    "/containers/json" => containers.clone(),
+                    path => panic!("unexpected observation {path}"),
+                };
+                Some((200, serde_json::to_vec(&body).unwrap()))
+            })
+            .await;
+            let backend =
+                ConfiguredBackend::fixed(Connections::fixed([fixture.engine_for(ENGINE)]).unwrap());
+            let mut config = GatewayPrerequisitesState {
+                engine: Value::Value(ENGINE.into()),
+                compute_driver: Value::Value("docker".into()),
+                ..Default::default()
+            };
+            if with_endpoint {
+                config.endpoint = Value::Value("http://127.0.0.1:17695".into());
+                config.name = Value::Value(OWN.0.into());
+                config.owner = Value::Value(OWN.1.into());
+            }
+            let mut diagnostics = Diagnostics::default();
+            let observed = GatewayPrerequisitesDataSource(Arc::new(backend))
+                .read(&mut diagnostics, config, ValueEmpty::default())
+                .await
+                .unwrap();
+            assert!(diagnostics.errors.is_empty(), "{diagnostics:?}");
+            let Value::Value(json) = &observed.observation_json else {
+                panic!("completed observation")
+            };
+            let observation: serde_json::Value = serde_json::from_str(json).unwrap();
+            assert_eq!(observation["status"], expected, "{observation}");
+            if expected == "unavailable" {
+                assert_eq!(
+                    observation["reason"],
+                    "the gateway endpoint's port is in use by another container or process; set spec.gateway.endpoint to a free port"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn a_process_on_the_port_takes_it_from_a_local_podman_gateway() {
+        use crate::docker::fixture::Fixture;
+        use nemoclaw_sdk::config::ComputeDriver::{Docker, Podman};
+        use serde_json::json;
+        const OWN: (&str, &str) = ("nc-0123456789abcdef-gateway", "own-uid");
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let endpoint = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
+        for (own_running, driver, taken) in [
+            (false, Podman, true),
+            (true, Podman, false),
+            (false, Docker, false),
+        ] {
+            let containers = if own_running {
+                json!([{"Id": "own", "Names": [format!("/{}", OWN.0)],
+                    "Labels": {crate::managed::OWNER_LABEL: OWN.1}, "Ports": []}])
+            } else {
+                json!([])
+            };
+            let fixture =
+                Fixture::engine(move |_| Some((200, serde_json::to_vec(&containers).unwrap())))
+                    .await;
+            let result = check_gateway_port(
+                &fixture.engine_for("unix:///run/user/1000/podman/podman.sock"),
+                driver,
+                &endpoint,
+                OWN.0,
+                OWN.1,
+            )
+            .await;
+            assert_eq!(
+                result.err().map(|error| error.to_string()).as_deref(),
+                taken.then_some(GATEWAY_PORT_TAKEN),
+                "{driver:?}, own gateway running: {own_running}"
+            );
+        }
+        drop(listener);
     }
 
     fn status(json: &Value<String>) -> serde_json::Value {

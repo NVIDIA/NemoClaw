@@ -123,6 +123,41 @@ async fn managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu(
     );
     assert_eq!(bindings(&directory), first);
     if docker {
+        // A second deployment on this engine with the same endpoint and subnet
+        // fails at plan, naming both fields, and creates nothing.
+        let mut second = document.clone();
+        second.metadata.uid = "00000000-0000-4000-8000-000000013827".into();
+        let second_state = tempfile::tempdir().unwrap();
+        let error = Deployment::new(second_state.path(), &path("NEMOCLAW_TEST_BUNDLE"))
+            .plan(&second, &cancel)
+            .await
+            .unwrap_err()
+            .to_string();
+        for field in ["spec.gateway.endpoint", "spec.gateway.networkCIDR"] {
+            assert!(error.contains(field), "{error}");
+        }
+        let gateway = format!("{}-gateway", second.workspace());
+        let digest = <sha2::Sha256 as sha2::Digest>::digest(second.metadata.uid.as_bytes());
+        let network = format!(
+            "nc-{}-network",
+            digest[..8]
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+        );
+        for container in [gateway.clone(), format!("{gateway}-initialize")] {
+            assert!(engine.container(&container).await.unwrap().is_none());
+        }
+        assert!(
+            engine
+                .volume(&format!("{gateway}-data"))
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(engine.network(&network).await.unwrap().is_none());
+    }
+    if docker {
         let api = bollard::Docker::connect_with_unix(
             engine.endpoint(),
             120,

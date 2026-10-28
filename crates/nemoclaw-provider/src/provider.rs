@@ -28,6 +28,10 @@ pub struct ProviderConfig {
 #[derive(Default)]
 pub(crate) struct ConfiguredBackend(Connections);
 impl ConfiguredBackend {
+    #[cfg(test)]
+    pub(crate) fn fixed(connections: Connections) -> Self {
+        Self(connections)
+    }
     pub(crate) fn connections(&self) -> &Connections {
         &self.0
     }
