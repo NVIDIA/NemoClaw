@@ -1,130 +1,73 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Exercise the workflow's shell adapter with paginated API responses, without credentials.
+//! Run the workflow adapter with fake API responses and the real validator, without credentials.
 
-#[cfg(test)]
-mod tests {
-    use std::{
-        fs,
-        process::Command,
-        sync::atomic::{AtomicUsize, Ordering},
-    };
-
-    fn comment(author: u64, body: &str) -> String {
-        let body = body
-            .replace('\\', "\\\\")
-            .replace('"', "\\\"")
-            .replace('\n', "\\n")
-            .replace('\r', "\\r");
-        format!("{{\"user\":{{\"id\":{author}}},\"body\":\"{body}\"}}")
-    }
-
-    fn opening(author: u64) -> String {
-        comment(
-            author,
-            include_str!("fixtures/pr-session-report/opening.txt"),
-        )
-    }
-
-    fn run(pages: &str, api_failure: bool) -> std::process::Output {
-        static NEXT: AtomicUsize = AtomicUsize::new(0);
-        let dir = std::env::temp_dir().join(format!(
-            "report-adapter-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir(&dir).unwrap();
-        fs::write(dir.join("pages.json"), pages).unwrap();
-        let built = Command::new("rustc")
-            .args([
-                "--edition=2024",
-                "-D",
-                "warnings",
-                "tools/ci/pr-session-report.rs",
-                "-o",
-            ])
-            .arg(dir.join("report-check"))
-            .output()
-            .unwrap();
-        assert!(
-            built.status.success(),
-            "{}",
-            String::from_utf8_lossy(&built.stderr)
-        );
-        let adapter = include_str!("../../.github/workflows/pr-metadata.yml")
-            .split("        run: |\n")
-            .last()
-            .unwrap()
-            .lines()
-            .map(|line| line.strip_prefix("          ").unwrap_or(line))
-            .collect::<Vec<_>>()
-            .join("\n");
-        let script = format!(
-            r#"
+#[test]
+fn posted_comment_checks_and_publication_recovery() {
+    use std::{env, fs, process::Command};
+    let directory = env::temp_dir().join(format!("report-adapter-{}", std::process::id()));
+    fs::create_dir(&directory).unwrap();
+    let workflow =
+        env::var("REPORT_WORKFLOW").unwrap_or(".github/workflows/pr-metadata.yml".into());
+    let workflow = fs::read_to_string(workflow).unwrap();
+    let adapter = workflow
+        .split("        run: |\n")
+        .last()
+        .unwrap()
+        .lines()
+        .map(|line| line.strip_prefix("          ").unwrap_or(line))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let script = format!(
+        r#"
 set -euo pipefail
+rustc --edition=2024 -D warnings tools/ci/pr-session-report.rs -o "$RUNNER_TEMP/report-check"
 gh() {{
-  if [ "$API_FAILURE" = true ]; then return 42; fi
+  if [ "$scenario" = api_failure ]; then return 42; fi
   case "$*" in
     'api repos/example/repo/pulls/1 --jq .body // ""') printf 'Description\n' ;;
-    'api --paginate --slurp repos/example/repo/issues/1/comments?per_page=100') cat "$RUNNER_TEMP/pages.json" ;;
-    *) printf 'Unexpected API request\n' >&2; return 43 ;;
+    'api --paginate --slurp repos/example/repo/issues/1/comments?per_page=100')
+      jq -n --rawfile report .github/SESSION_REPORT_TEMPLATE.md --arg scenario "$scenario" '
+        [[range(100) | {{user: {{id: 8}}, body: $report}}], [{{user: {{id: 7}}, body: $report}}]]
+        | if $scenario == "missing" then []
+          elif $scenario == "outsider" then .[:1]
+          elif $scenario == "duplicate" then .[1] += .[1]
+          elif $scenario == "malformed" then .[1][0].body |= gsub("Models"; "Skills")
+          else . end' ;;
+    *) return 43 ;;
   esac
 }}
+check() {{
 {adapter}
+}}
+# A fresh invocation after publication must recover from the initial missing report.
+for scenario in missing valid outsider duplicate malformed api_failure valid; do
+  set +e
+  (set -e; check) > "$RUNNER_TEMP/output" 2>&1
+  actual=$?
+  set -e
+  case "$scenario" in valid) expected=0 ;; api_failure) expected=42 ;; *) expected=1 ;; esac
+  if [ "$actual" -ne "$expected" ]; then
+    cat "$RUNNER_TEMP/output" >&2
+    printf '%s: expected %s, got %s\n' "$scenario" "$expected" "$actual" >&2
+    exit 1
+  fi
+done
 "#
-        );
-        let result = Command::new("bash")
-            .args(["-c", &script])
-            .env("RUNNER_TEMP", &dir)
-            .env("GITHUB_REPOSITORY", "example/repo")
-            .env("PR_NUMBER", "1")
-            .env("PR_AUTHOR_ID", "7")
-            .env("API_FAILURE", api_failure.to_string())
-            .output()
-            .unwrap();
-        fs::remove_dir_all(dir).unwrap();
-        result
-    }
-
-    #[test]
-    fn later_page_author_opening_passes_despite_outsider_lookalike() {
-        let mut first_page = vec![opening(8)];
-        first_page.extend((0..99).map(|_| comment(7, "Unrelated comment")));
-        let output = run(
-            &format!("[[{}],[{}]]", first_page.join(","), opening(7)),
-            false,
-        );
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-
-    #[test]
-    fn outsider_only_is_missing_and_two_author_openings_fail() {
-        for pages in [
-            format!("[[{}]]", opening(8)),
-            format!("[[{},{}]]", opening(7), opening(7)),
-        ] {
-            let output = run(&pages, false);
-            assert!(!output.status.success());
-            assert!(String::from_utf8_lossy(&output.stderr).contains("Session report:"));
-        }
-    }
-
-    #[test]
-    fn api_failure_stops_before_validation() {
-        let output = run("[]", true);
-        assert_eq!(output.status.code(), Some(42));
-    }
-
-    #[test]
-    fn missing_report_can_pass_on_rerun_after_publication() {
-        let before = run("[[]]", false);
-        assert!(!before.status.success());
-        assert!(String::from_utf8_lossy(&before.stderr).contains("must post an opening"));
-        assert!(run(&format!("[[{}]]", opening(7)), false).status.success());
-    }
+    );
+    let result = Command::new("bash")
+        .args(["-c", &script])
+        .env("RUNNER_TEMP", &directory)
+        .env("GITHUB_REPOSITORY", "example/repo")
+        .env("PR_NUMBER", "1")
+        .env("PR_AUTHOR_ID", "7")
+        .output()
+        .unwrap();
+    fs::remove_dir_all(directory).unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
 }
