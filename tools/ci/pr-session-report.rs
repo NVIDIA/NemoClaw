@@ -37,7 +37,7 @@ fn validate(body: &str) -> Result<(), &'static str> {
         return Err("use one collapsed section for the report");
     }
     if body.matches(START).count() != 1 || body.matches(END).count() != 1 {
-        return Err("include exactly one v1 report; see the PR template");
+        return Err("include exactly one v1 report; see the report comment template");
     }
     let report = body
         .split_once(START)
@@ -53,7 +53,7 @@ fn validate(body: &str) -> Result<(), &'static str> {
     if lines.next() != Some("| Field | Status | Value | Evidence or limit |")
         || lines.next() != Some("| --- | --- | --- | --- |")
     {
-        return Err("use the report table header from the PR template");
+        return Err("use the report table header from the report comment template");
     }
     let fields = [
         "Harness",
