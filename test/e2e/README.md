@@ -2392,6 +2392,10 @@ It projects the SDK identity into the trusted manifest and lockfile, then instal
 The SDK version must match the candidate runtime version.
 Changed SDK dependency metadata or transitive dependencies require a trust/bootstrap review; unrelated candidate npm changes never enter the controller.
 Live qualification must still pass for the selected candidate; source projection and archive-install tests do not establish that result.
+When a parsed OpenClaw result fails the provider, model, completion, or assistant-answer checks, the job reports a bounded diagnostic.
+It contains only allowlisted status fields, flags, counts, and text lengths.
+The diagnostic excludes raw responses, payload text, prompts, transcripts, and credentials.
+Use it with the failed assertion and retained cleanup evidence; it does not establish a cause or a passing result.
 To select native runtime qualification evidence production, set `jobs=native-runtime-qualification-producer`.
 Leave `targets` empty and keep `include_staging_brev_launchable=false`.
 For this producer run, the executing workflow SHA, `workflow_sha` input, and PR base SHA must match.
