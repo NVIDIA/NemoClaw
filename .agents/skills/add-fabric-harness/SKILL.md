@@ -12,8 +12,7 @@ Fabric owns each adapter: its descriptor, its behavior, and its tests.
 NemoClaw, for now, builds and publishes the agent images ([scope](../../../docs/design/scope.md#upstream-boundaries)), so adding a harness means installing Fabric's adapter in an image, labeling the image with its catalog, and showing how to deploy it.
 Don't add tests of the adapter's behavior; Fabric tests its own adapters.
 
-Deliver one pull request.
-Use a Conventional Commits title such as `feat: add the OpenCode agent image`, and explain the failure, decision, and validation in its body.
+Deliver one pull request, titled like `feat: add the OpenCode agent image`.
 
 ## 1. Gather the Inputs
 
