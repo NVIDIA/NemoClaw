@@ -18,10 +18,13 @@ Adapted from main's PR creation skill at `8c72b552cc92fe7082908f3a13db7dc94f2f66
    /tmp/pr-session-report report-comment.md
    ```
 
-3. Publish with `gh pr create --body-file` or `gh pr edit --body-file`. Read all PR comments before posting, including after an uncertain retry; reuse an existing opening report instead of duplicating it. If absent, post once with `gh pr comment NUMBER --body-file report-comment.md`.
-4. Read back the description and comment. Verify the description has no report, exactly one opening report exists, and its author and contents match the intended report; validate the retrieved comment. Follow checks and automated reviews on the latest commit.
+3. Publish with `gh pr create --body-file` or `gh pr edit --body-file`. Read all pages of PR comments before posting, including after an uncertain retry; reuse an existing opening report by the PR author instead of duplicating it. If absent, post once as the PR author with `gh pr comment NUMBER --body-file report-comment.md`.
+4. Read back the description and comments. Verify the description has no report, exactly one opening report by the PR author exists, and its contents match the intended report. Keep the exact summary `Authoring session — opening`. Validate the retrieved files with `/tmp/pr-session-report --pr description.md author-comment-1.md author-comment-2.md`; pass every PR-author comment, including later reports and unrelated comments. Comments by others are ignored; a maintainer's comment cannot substitute for an automated PR author's report.
+5. Follow checks and automated reviews on the latest commit. If the metadata job fetched comments before the opening report was posted, wait for that run to finish, then use `gh run rerun --job JOB_ID` for its failed `Session report format` job. Select the job from this PR's latest-revision run; a rerun retains the original revision but fetches current comments. Reruns require repository write permission, so external contributors may need a maintainer. Confirm the rerun passes.
 
-CI tests the format and template, not live comments. Publication-time verification avoids comment fetching and refresh workflows, but cannot detect later edits, deletion, or duplicates. A V1-only `issue_comment` workflow would not run: GitHub requires it on the default branch.
+CI fetches the description and all comment pages on PR opening, updates, reopening, and description/title edits. It checks the presence and format of the PR author's opening report, not the truth or completeness of its evidence. Fetch failures fail the check. Comment posting, editing, or deletion alone does not trigger a refresh; rerun the metadata job after such changes. A `v1`-only `issue_comment` workflow would not run: GitHub requires it on the default branch.
+
+The check uses the candidate checkout's validator and workflow. It does not protect against a PR changing its own validation; trusted-base enforcement is outside this check's scope.
 
 Preserve historical reports and their cutoffs. Optional later commit or merge reports may use the same collapsed format with a distinct summary and revision; they do not replace the opening report or create a publication requirement.
 
