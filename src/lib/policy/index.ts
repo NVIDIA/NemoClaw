@@ -1622,6 +1622,11 @@ function restoreOpenClawNpmCompatibility(
   return YAML.stringify(updated);
 }
 
+/** Registered agent for a sandbox; unregistered and legacy rows are OpenClaw. */
+export function getSandboxAgentName(sandboxName: string): string {
+  return registry.getSandbox(sandboxName)?.agent || "openclaw";
+}
+
 function resolveSandboxOpenClawNpmBaseline(sandboxName: string): string | null {
   const sandbox = registry.getSandbox(sandboxName);
   // Legacy and unregistered rows historically use OpenClaw preset content.

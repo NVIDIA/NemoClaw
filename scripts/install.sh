@@ -196,6 +196,28 @@ resolve_stamped_version() {
   printf "%s" "$version"
 }
 
+# Use explicit Git/libcurl timeout diagnostics. Elapsed time is not a timeout cause.
+classify_install_ref_fetch_failure() {
+  local line
+  while IFS= read -r line; do
+    case "$line" in
+      "fatal: couldn't find remote ref "* | "fatal: invalid refspec "*)
+        printf 'missing-ref'
+        return 0
+        ;;
+      "fatal: unable to access "* | "error: RPC failed; "*)
+        case "$line" in
+          *"timed out"* | *"Timeout was reached"* | *"Operation too slow."* | *"SSL connection timeout"*)
+            printf 'connect-timeout'
+            return 0
+            ;;
+        esac
+        ;;
+    esac
+  done <<<"$1"
+  printf 'lookup-failed'
+}
+
 clone_nemoclaw_ref() {
   local ref="$1" dest="$2"
 
@@ -204,8 +226,22 @@ clone_nemoclaw_ref() {
     umask 022
     git init --quiet "$dest"
     git -C "$dest" remote add origin https://github.com/NVIDIA/NemoClaw.git
-    if ! git -C "$dest" fetch --quiet --depth 1 origin "+${ref}:refs/nemoclaw-install/target"; then
-      error "Requested install ref '$ref' is not available from https://github.com/NVIDIA/NemoClaw.git. Check NEMOCLAW_INSTALL_TAG/NEMOCLAW_INSTALL_REF and try again."
+    local fetch_error="" elapsed_detail=""
+    if ! fetch_error="$(LC_ALL=C git -C "$dest" fetch --quiet --depth 1 origin "+${ref}:refs/nemoclaw-install/target" 2>&1)"; then
+      [[ -z "$fetch_error" ]] || printf '%s\n' "$fetch_error" >&2
+      [[ "$fetch_error" =~ after\ ([0-9]+)\ ms ]] \
+        && elapsed_detail=" Git reported ${BASH_REMATCH[1]} ms elapsed before the lookup failed."
+      case "$(classify_install_ref_fetch_failure "$fetch_error")" in
+        connect-timeout)
+          error "Timed out looking up install ref '$ref' at https://github.com/NVIDIA/NemoClaw.git. Check network access to github.com and try again."
+          ;;
+        missing-ref)
+          error "Requested install ref '$ref' is not available from https://github.com/NVIDIA/NemoClaw.git. Check NEMOCLAW_INSTALL_TAG/NEMOCLAW_INSTALL_REF and try again."
+          ;;
+        *)
+          error "Could not verify install ref '$ref' from https://github.com/NVIDIA/NemoClaw.git.$elapsed_detail Check repository access and the Git diagnostic, then try again."
+          ;;
+      esac
     fi
     git -C "$dest" -c advice.detachedHead=false checkout --quiet --detach refs/nemoclaw-install/target
   )

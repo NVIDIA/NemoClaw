@@ -81,7 +81,13 @@ if (command.includes("printf '%s\\\\0%s\\\\0'")) {
   process.stdout.write(Buffer.from(remoteRoot + "\\0" + remoteWorkspace + "\\0"));
   process.exit(0);
 }
+
 if (command.includes("tar -C")) {
+  const churnMarker = process.env.NEMOCLAW_TEST_NATIVE_CHURN_MARKER;
+  if (churnMarker && !fs.existsSync(churnMarker)) {
+    fs.writeFileSync(churnMarker, "churned");
+    process.exit(21);
+  }
   const procRoot = process.env.NEMOCLAW_TEST_NATIVE_PROC;
   if (procRoot) {
     const prelude = 'kill() { printf "%s\\\\n" "$*" >> "$NEMOCLAW_TEST_SIGNAL_LOG"; }; sleep() { :; }; tar() { command tar -C "$NEMOCLAW_TEST_NATIVE_ROOT" -cf - .; }; ';
@@ -156,6 +162,20 @@ if (command.includes("nemoclaw-native-restore")) {
 process.exit(93);
 `,
   );
+}
+
+/** Block temporary SSH-state cleanup so capture failure remains non-retryable. */
+export function blockNativeSshCleanup(): { restore: () => void; directories: string[] } {
+  const originalRemove = fs.rmSync;
+  const directories: string[] = [];
+  const remove = vi.spyOn(fs, "rmSync").mockImplementation((target, options) => {
+    if (typeof target === "string" && path.basename(target).startsWith("nemoclaw-native-state-")) {
+      directories.push(target);
+      throw new Error("cleanup blocked");
+    }
+    return originalRemove(target, options);
+  });
+  return { restore: () => remove.mockRestore(), directories };
 }
 
 export function writeNativeQuiescenceStates(

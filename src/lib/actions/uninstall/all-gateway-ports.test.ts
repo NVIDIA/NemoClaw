@@ -405,7 +405,7 @@ describe("uninstall across every gateway port (#7791)", () => {
           command === "openshell" && args.join(" ") === "gateway list -o json"
             ? {
                 status: 0,
-                stdout: JSON.stringify([{ name: "nemoclaw-9123" }]),
+                stdout: JSON.stringify([{ name: "nemoclaw-9123", active: false }]),
                 stderr: "",
               }
             : { status: 0, stdout: "", stderr: "" },

@@ -143,7 +143,7 @@ describe("MCP workflow artifact boundary", () => {
       expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toEqual(
         expect.arrayContaining([
           "mcp-bridge must not serialize the independent credential generation-window proof",
-          "openshell-credential-generation-window must depend on publication and matrix generation",
+          "openshell-credential-generation-window must depend on publication, matrix generation, and SDK packaging",
         ]),
       );
     } finally {
@@ -556,18 +556,23 @@ describe("MCP workflow artifact boundary", () => {
     }
   });
 
-  it("rejects skipping post-install dependency preparation (#9051)", () => {
+  it.each([
+    "Download reviewed OpenShell SDK archive",
+    "Prepare E2E workspace",
+    "Install reviewed OpenShell SDK archive without package credentials",
+    "Restore exact-commit CLI artifact",
+  ])("rejects skipping the reviewed SDK transition step %s (#9051)", (stepName) => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-workflow-"));
     const workflowPath = path.join(directory, "e2e.yaml");
     try {
       const workflow = YAML.parse(fs.readFileSync(".github/workflows/e2e.yaml", "utf8")) as {
         jobs: Record<string, { steps: Array<Record<string, unknown>> }>;
       };
-      const prepare = workflow.jobs["mcp-bridge-dev"].steps.find(
-        (step) => step.name === "Prepare E2E workspace",
+      const transition = workflow.jobs["mcp-bridge-dev"].steps.find(
+        (step) => step.name === stepName,
       );
-      requireFixture(prepare, "post-install dependency preparation fixture is missing");
-      prepare.if = "${{ false }}";
+      requireFixture(transition, "post-install SDK transition fixture is missing");
+      transition.if = "${{ false }}";
       fs.writeFileSync(workflowPath, YAML.stringify(workflow));
 
       expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toContain(

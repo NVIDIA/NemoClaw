@@ -53,7 +53,11 @@ import {
 import { managedSandboxFeatureIssue } from "./managed-sandbox-feature";
 import type { DcodeAutoApprovalMode } from "./dcode-auto-approval";
 import { parseReadOnlyHostMounts, requireReadOnlyHostMountRuntimeSupport } from "./host-mount";
-import { DCODE_OBSERVABILITY_FEATURE } from "./observability-policy-presets";
+import {
+  DCODE_AGENT_NAME,
+  DCODE_OBSERVABILITY_FEATURE,
+  isDcodeAgent,
+} from "./observability-policy-presets";
 import { isOpenclawAgent } from "./openclaw-otel-policy-presets";
 import { parseExactExternalImageReference } from "./workload/external-image";
 import { NOTICE_ACCEPT_ENV, NOTICE_ACCEPT_FLAG_NAME } from "./usage-notice";
@@ -271,6 +275,29 @@ function validateObservabilityAgent(
     }) === "unsupported-request"
   ) {
     fail(deps, "  --observability is supported only with --agent langchain-deepagents-code.");
+  }
+}
+
+function validateDcodeAutoApprovalInput(
+  flags: OnboardFlags,
+  agent: string | null,
+  deps: ResolveOnboardOptionsDeps,
+): void {
+  if (flags["dcode-auto-approval"] !== "thread-opt-in") return;
+  const recorded = deps.resumeIntent?.snapshot;
+  const selectedAgent =
+    agent ??
+    (deps.env.NEMOCLAW_AGENT?.trim() || (recorded ? (recorded.recordedAgent ?? "openclaw") : null));
+  const customImage =
+    flags.from !== undefined || flags["from-image"] !== undefined || recorded?.recordedCustomImage;
+  // Fresh interactive selection can resolve an unspecified agent later.
+  if (!selectedAgent && !customImage) return;
+  const resolvedAgent = resolveAgentNameAlias(selectedAgent, [DCODE_AGENT_NAME]) ?? selectedAgent;
+  if (customImage || !isDcodeAgent(resolvedAgent)) {
+    fail(
+      deps,
+      "  --dcode-auto-approval thread-opt-in is supported only with the managed --agent langchain-deepagents-code image.",
+    );
   }
 }
 
@@ -505,6 +532,7 @@ export function resolveOnboardOptions(
   if (experimentalProfile === PORTABLE_EXPERIMENTAL_PROFILE && fromImage) {
     fail(deps, "  --from-image cannot be used with the Portable profile.");
   }
+  validateDcodeAutoApprovalInput(flags, agent, deps);
   return {
     tempManagedRuntime: flags["temp-managed-runtime"] === true,
     tempManagedRuntimeCatalog: resolveFileOption(

@@ -69,7 +69,7 @@ describe("native runtime qualification producer workflow", () => {
     const compile = step(plan, "Compile the trusted qualification producer matrix");
 
     expect(plan.if).toBe(
-      "${{ github.event_name == 'workflow_dispatch' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha != '' && inputs.jobs == 'native-runtime-qualification-producer' && inputs.targets == '' }}",
+      "${{ !cancelled() && needs.generate-matrix.result == 'success' && github.event_name == 'workflow_dispatch' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha != '' && inputs.jobs == 'native-runtime-qualification-producer' && inputs.targets == '' }}",
     );
     expect(plan.permissions).toEqual({
       actions: "read",

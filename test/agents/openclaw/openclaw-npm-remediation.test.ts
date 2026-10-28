@@ -18,22 +18,19 @@ import {
 import { tmpdir } from "node:os";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
-import { runInNewContext } from "node:vm";
-import ts from "typescript";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   buildRemediatedOpenClawPluginArchive,
   fatalOpenClawNpmRemediationDiagnostic,
   hashPackageTree,
-  migrateDiscordZodDeclarations,
-  migrateDiscordZodSource,
   patchCurrentOpenClawCorePackageGraph,
+  patchDiscordEmbeddedZodPackage,
   patchLegacyOpenClawCorePackageGraph,
   patchOpenClawDiagnosticsOtelPackageGraph,
   patchOpenClawBundledZodPackageGraph,
   patchOpenClawDiscordPackageGraph,
   patchOpenClawPluginPackageGraph,
+  patchOpenClaw105PluginDependencies,
   patchOpenClawSlackProxyAddrPackageGraph,
   remediateInstalledOfficialOpenClawPlugin,
   OpenClawNpmRemediationCommandError,
@@ -41,123 +38,6 @@ import {
 } from "../../../scripts/lib/openclaw-npm-remediation.mts";
 
 const temporaryDirectories: string[] = [];
-
-describe("Discord SDK Zod 4 migration", () => {
-  let directory: string;
-  let zod: Record<string, unknown>;
-  beforeAll(async () => {
-    directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-discord-zod4-"));
-    const archive = path.resolve(import.meta.dirname, "../../fixtures/npm/zod-4.6.6/zod-4.6.6.tgz");
-    expect(`sha512-${createHash("sha512").update(readFileSync(archive)).digest("base64")}`).toBe(
-      "sha512-4UmzQUF5fxvfcYHlbjBmejU+w+hbDnWFx4aS8kBx7nPBHcO2SqPbpAG8snbdg+Xse4pRefR98hgjFgIMCI/UhA==",
-    );
-    const unpacked = spawnSync("tar", ["-xzf", archive, "-C", directory]);
-    expect(unpacked.status, unpacked.stderr.toString()).toBe(0);
-    mkdirSync(path.join(directory, "node_modules"));
-    symlinkSync(path.join(directory, "package"), path.join(directory, "node_modules", "zod"));
-    zod = await import(pathToFileURL(path.join(directory, "package", "index.js")).href);
-  });
-  afterAll(() => rmSync(directory, { recursive: true, force: true }));
-
-  it.each([
-    ["2026.9.2", "4.4.3"],
-    ["2026.9.5", "4.5.4"],
-  ])("replaces Google Chat %s bundled Zod with the verified patched tree", (version, original) => {
-    const plugin = path.join(directory, `googlechat-${version}`);
-    const target = path.join(plugin, "node_modules/zod");
-    mkdirSync(target, { recursive: true });
-    writeJson(path.join(plugin, "package.json"), {
-      name: "@openclaw/googlechat",
-      version,
-      dependencies: { zod: original },
-    });
-    writeJson(path.join(target, "package.json"), { name: "zod", version: original });
-    patchOpenClawBundledZodPackageGraph(
-      plugin,
-      path.join(directory, "package"),
-      `@openclaw/googlechat@${version}`,
-    );
-    expect(hashPackageTree(target)).toBe(hashPackageTree(path.join(directory, "package")));
-    expect(readJson(path.join(plugin, "package.json"))).toMatchObject({
-      dependencies: { zod: "4.6.6" },
-    });
-  });
-
-  it("preserves SDK defaults, unknown scopes and optional frame data with the patched runtime", () => {
-    const source = [
-      "const index = require('../lib/zod/lib/index.cjs');",
-      "function fallbackToDefault(schema) {",
-      "  const transform = index.custom().transform(data => {",
-      "    const res = schema.safeParse(data);",
-      "    if (res.success) return res.data;",
-      "    return schema._def.defaultValue();",
-      "  });",
-      "  transform.overlayType = schema; return transform;",
-      "}",
-      'const scopes = index.array(fallbackToDefault(index.enum(["identify"]).or(index.literal(-1)).default(-1)));',
-      "const values = { ...scopes.element.overlayType._def.innerType.options[0].Values, UNHANDLED: -1 };",
-      "module.exports = {",
-      "  fallback: fallbackToDefault(index.object({opened:index.boolean().or(index.null())}).default({opened:null})),",
-      "  frame: index.object({cmd:index.string(), data: index.unknown(), evt:index.null(), nonce:index.string()}),",
-      "  scopes: index.preprocess(arg => arg != null && !Object.values(values).includes(arg) ? -1 : arg, index.string().or(index.number())),",
-      "  bounded(values) { let visited=0; const schema=index.array(index.string().superRefine(()=>{visited++})).max(1); return {success:schema.safeParse(values).success,visited}; }",
-      "};",
-    ].join("\n");
-    const module = { exports: {} };
-    runInNewContext(migrateDiscordZodSource("output/utils/zodUtils.cjs", source), {
-      module,
-      require: (specifier: string) => {
-        expect(specifier).toBe("zod");
-        return zod;
-      },
-    });
-    const sdk = module.exports as {
-      fallback: { parse: (input: unknown) => unknown };
-      frame: { safeParse: (input: unknown) => { success: boolean } };
-      scopes: { parse: (input: unknown) => unknown };
-      bounded: (input: unknown) => { success: boolean; visited: number };
-    };
-    expect(sdk.fallback.parse({ opened: true })).toEqual({ opened: true });
-    expect(sdk.fallback.parse("invalid")).toEqual({ opened: null });
-    expect(sdk.scopes.parse("identify")).toBe("identify");
-    expect(sdk.scopes.parse("new-client-scope")).toBe(-1);
-    expect(sdk.frame.safeParse({ cmd: "x", evt: null, nonce: "n" }).success).toBe(true);
-    expect(sdk.frame.safeParse({ cmd: 42, evt: null, nonce: "n" }).success).toBe(false);
-    expect(sdk.bounded(["a", "b"])).toEqual({ success: false, visited: 0 });
-  });
-
-  it("keeps SDK declaration consumers valid against Zod 4 types", () => {
-    const source = [
-      'import * as z from "zod";',
-      'declare const response: z.ZodObject<{name:z.ZodString;tags:z.ZodArray<z.ZodString,"many">},"strip",z.ZodTypeAny,{name:string;tags:string[]},{name:string;tags:string[]}>;',
-      "declare const scope: z.ZodEffects<z.ZodType<string,z.ZodTypeDef,string>,string,unknown>;",
-      "interface Event<T extends z.AnyZodObject = z.AnyZodObject> { payload:T }",
-      'const value = response.parse({name:"n",tags:["t"]});',
-      "const name:string=value.name; const tag:string=value.tags[0]!;",
-      'const known:string=scope.parse("identify"); void [name,tag,known];',
-    ].join("\n");
-    const file = path.join(directory, "consumer.ts");
-    writeFileSync(file, migrateDiscordZodDeclarations(source));
-    const program = ts.createProgram([file], {
-      noEmit: true,
-      strict: true,
-      target: ts.ScriptTarget.ES2022,
-      module: ts.ModuleKind.CommonJS,
-      moduleResolution: ts.ModuleResolutionKind.Node10,
-      esModuleInterop: true,
-      ignoreDeprecations: "6.0",
-      types: [],
-    });
-    expect(
-      ts
-        .getPreEmitDiagnostics(program)
-        .map((d) => ts.flattenDiagnosticMessageText(d.messageText, "\n")),
-    ).toEqual([]);
-    expect(() => migrateDiscordZodDeclarations("z.ZodObject<{name:z.ZodString}")).toThrow(
-      "incomplete schema type",
-    );
-  });
-});
 
 function writeFixture(axiosVersion = "1.16.0"): string {
   const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-openclaw-npm-remediation-"));
@@ -1285,6 +1165,122 @@ describe("OpenClaw npm remediation", () => {
       ),
     ).toMatchObject({ name: "libsignal", version: "6.0.0" });
   }, 60_000);
+});
+
+describe("Discord embedded Zod remediation trust boundary", () => {
+  function fixture() {
+    const root = mkdtempSync(path.join(tmpdir(), "nemoclaw-discord-zod-"));
+    temporaryDirectories.push(root);
+    const sdk = path.join(root, "sdk");
+    const replacement = path.join(root, "replacement");
+    mkdirSync(sdk);
+    mkdirSync(replacement);
+    writeFileSync(
+      path.join(sdk, "package.json"),
+      JSON.stringify({
+        name: "@discord/embedded-app-sdk",
+        version: "2.5.0",
+        dependencies: { zod: "^3.9.8" },
+      }),
+    );
+    writeFileSync(
+      path.join(replacement, "package.json"),
+      JSON.stringify({ name: "zod", version: "4.6.6" }),
+    );
+    return { root, sdk, replacement };
+  }
+
+  it("rejects unreviewed replacement bytes even when the package name and version match", () => {
+    const { sdk, replacement } = fixture();
+    const before = hashPackageTree(sdk);
+    expect(() => patchDiscordEmbeddedZodPackage(sdk, replacement)).toThrow(
+      "replacement Zod tree integrity mismatch",
+    );
+    expect(hashPackageTree(sdk)).toBe(before);
+  });
+
+  it("rejects a package directory symlink before changing its target", () => {
+    const { root, sdk, replacement } = fixture();
+    const link = path.join(root, "sdk-link");
+    symlinkSync(sdk, link);
+    const before = hashPackageTree(sdk);
+    expect(() => patchDiscordEmbeddedZodPackage(link, replacement)).toThrow(
+      "requires real package directories",
+    );
+    expect(hashPackageTree(sdk)).toBe(before);
+  });
+
+  it("rejects linked source members before reading outside the package", () => {
+    const { root, sdk, replacement } = fixture();
+    const outside = path.join(root, "outside");
+    writeFileSync(outside, "preserved");
+    symlinkSync(outside, path.join(sdk, "linked-member"));
+    expect(() => patchDiscordEmbeddedZodPackage(sdk, replacement)).toThrow();
+    expect(readFileSync(outside, "utf8")).toBe("preserved");
+    expect(
+      readJson<{ dependencies: { zod: string } }>(path.join(sdk, "package.json")),
+    ).toMatchObject({ dependencies: { zod: "^3.9.8" } });
+  });
+});
+
+describe("OpenClaw 10.5 bundled dependency repair", () => {
+  function fixture() {
+    const root = mkdtempSync(path.join(tmpdir(), "nemoclaw-plugin-security-"));
+    temporaryDirectories.push(root);
+    const plugin = path.join(root, "plugin");
+    const zod = path.join(plugin, "node_modules/zod");
+    mkdirSync(zod, { recursive: true });
+    writeFileSync(
+      path.join(plugin, "package.json"),
+      JSON.stringify({
+        name: "@openclaw/googlechat",
+        version: "2026.10.5",
+        dependencies: { zod: "4.6.5" },
+      }),
+    );
+    writeFileSync(
+      path.join(zod, "package.json"),
+      JSON.stringify({ name: "zod", version: "4.6.5" }),
+    );
+    return { root, plugin, zod };
+  }
+
+  it("rejects changed bundled bytes before fetching or replacing packages", () => {
+    const { root, plugin } = fixture();
+    const before = hashPackageTree(plugin);
+    expect(() => patchOpenClaw105PluginDependencies(plugin, root)).toThrow(
+      "source integrity mismatch",
+    );
+    expect(hashPackageTree(plugin)).toBe(before);
+  });
+
+  it("rejects a linked dependency parent without modifying its target", () => {
+    const { root, plugin } = fixture();
+    const outside = path.join(root, "outside");
+    mkdirSync(outside);
+    writeFileSync(path.join(outside, "sentinel"), "preserved");
+    rmSync(path.join(plugin, "node_modules"), { recursive: true });
+    symlinkSync(outside, path.join(plugin, "node_modules"));
+    expect(() => patchOpenClaw105PluginDependencies(plugin, root)).toThrow(
+      "requires real package directories",
+    );
+    expect(readFileSync(path.join(outside, "sentinel"), "utf8")).toBe("preserved");
+  });
+
+  it("refuses an official plugin installed outside its named managed project", () => {
+    const { root, plugin } = fixture();
+    const before = hashPackageTree(plugin);
+    expect(() =>
+      remediateInstalledOfficialOpenClawPlugin({
+        archivePath: path.join(root, "unused.tgz"),
+        packageSpec: "@openclaw/googlechat@2026.10.5",
+        packageDirectory: plugin,
+        trustedStateRoot: root,
+        workingDirectory: root,
+      }),
+    ).toThrow("requires a valid managed npm package directory");
+    expect(hashPackageTree(plugin)).toBe(before);
+  });
 });
 
 describe("Teams native dependency remediation", () => {

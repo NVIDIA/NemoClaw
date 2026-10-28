@@ -475,14 +475,24 @@ describe("Hermes inference switch command shape", () => {
       );
     const delay = vi.fn().mockResolvedValue(undefined);
 
-    const result = await runHermesPongWithRetry({
-      delay,
-      expectedModel: "target-model",
-      run,
-    });
-    expect(result.stdout).toContain("baseline-model");
+    await expect(
+      runHermesPongWithRetry({ delay, expectedModel: "target-model", run }),
+    ).rejects.toThrow("Hermes PONG probe did not return a successful response");
     expect(run.mock.calls).toEqual([[1]]);
     expect(delay).not.toHaveBeenCalled();
+  });
+
+  it("rejects a successful transport response without PONG", async () => {
+    const run = vi.fn().mockResolvedValue({
+      exitCode: 0,
+      stdout: '{"model":"target-model","choices":[{"message":{"content":"OTHER"}}]}',
+      stderr: "",
+    } as ShellProbeResult);
+
+    await expect(runHermesPongWithRetry({ expectedModel: "target-model", run })).rejects.toThrow(
+      "Hermes PONG probe did not return a successful response",
+    );
+    expect(run).toHaveBeenCalledOnce();
   });
 
   it("retries an explicit Hermes transport failure and retains aggregate evidence", async () => {
@@ -519,6 +529,33 @@ describe("Hermes inference switch command shape", () => {
     );
   });
 
+  it("reports the final Hermes probe diagnostic after bounded retry exhaustion", async () => {
+    const first = {
+      exitCode: 1,
+      stdout: "",
+      stderr: "request failed: ECONNRESET",
+    } as ShellProbeResult;
+    const final = {
+      exitCode: 1,
+      stdout: "",
+      stderr: "request failed: rawError=503 final gateway unavailable",
+    } as ShellProbeResult;
+    const run = vi.fn().mockResolvedValueOnce(first).mockResolvedValueOnce(final);
+    const onEvidence = vi.fn();
+
+    await expect(
+      runHermesPongWithRetry({
+        attempts: 2,
+        delay: async () => {},
+        expectedModel: "target-model",
+        onEvidence,
+        run,
+      }),
+    ).rejects.toThrow("rawError=503 final gateway unavailable");
+    expect(run.mock.calls).toEqual([[1], [2]]);
+    expect(onEvidence).toHaveBeenCalledWith(expect.objectContaining({ outcome: "exhausted" }));
+  });
+
   it("does not retry mixed Hermes authentication and transport evidence", async () => {
     const terminal = {
       exitCode: 1,
@@ -530,7 +567,7 @@ describe("Hermes inference switch command shape", () => {
 
     await expect(
       runHermesPongWithRetry({ delay, expectedModel: "target-model", run }),
-    ).resolves.toBe(terminal);
+    ).rejects.toThrow("Hermes PONG probe did not return a successful response");
     expect(run).toHaveBeenCalledOnce();
     expect(delay).not.toHaveBeenCalled();
   });
@@ -546,7 +583,7 @@ describe("Hermes inference switch command shape", () => {
 
     await expect(
       runHermesPongWithRetry({ delay, expectedModel: "target-model", run }),
-    ).resolves.toBe(terminal);
+    ).rejects.toThrow("Hermes PONG probe did not return a successful response");
     expect(run).toHaveBeenCalledOnce();
     expect(delay).not.toHaveBeenCalled();
   });
@@ -796,6 +833,7 @@ describe("Hermes inference switch command shape", () => {
 
     await expect(
       runHermesInferenceSetWithRetry({ command } as unknown as HostCliClient, ["hosted-key"], [], {
+        artifactNamePrefix: "hermes-inference-set-after-cli",
         artifacts: { writeJson },
         attempts: 2,
         delay: async () => {},
@@ -803,6 +841,8 @@ describe("Hermes inference switch command shape", () => {
     ).resolves.toMatchObject({ exitCode: 0 });
 
     expect(command).toHaveBeenCalledTimes(2);
+    expect(command.mock.calls[0]?.[2]?.artifactName).toBe("hermes-inference-set-after-cli-1");
+    expect(command.mock.calls[1]?.[2]?.artifactName).toBe("hermes-inference-set-after-cli-2");
     expect(writeJson).toHaveBeenCalledWith(
       "inference-switch-retry-evidence.json",
       expect.objectContaining({ outcome: "passed-after-retry" }),

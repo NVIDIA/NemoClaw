@@ -744,6 +744,14 @@ describe("E2E workflow plan", () => {
     expect(selectedWorkflowJobs(plan)).toContain("mcp-bridge");
   });
 
+  it("selects MCP bridge when its compatible mock protocol changes", () => {
+    const plan = buildE2eWorkflowPlan(
+      {},
+      { changedFiles: ["test/e2e/live/mcp-bridge-servers.ts"] },
+    );
+    expect(selectedWorkflowJobs(plan)).toContain("mcp-bridge");
+  });
+
   it.each([
     "scripts/install.sh",
     "src/lib/actions/global.ts",

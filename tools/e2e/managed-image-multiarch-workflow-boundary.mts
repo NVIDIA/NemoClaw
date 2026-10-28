@@ -50,7 +50,9 @@ const REVIEWED_EXECUTION_STEP_NAMES = [
   "Checkout trusted Hermes resolver",
   "Bind protected managed-image Buildx configuration",
   "Set up protected managed-image Buildx",
+  "Download reviewed OpenShell SDK archive",
   "Prepare E2E workspace",
+  "Install reviewed OpenShell SDK archive without package credentials",
   "Build shared policy boundary",
   "Authenticate to Docker Hub",
   "Validate candidate activation contract",
@@ -62,7 +64,7 @@ const REVIEWED_EXECUTION_STEP_NAMES = [
   "Run every exact managed-image contract directly",
 ] as const;
 const REVIEWED_EXECUTION_SURFACE_SHA256 =
-  "713af9ea03855738f10a200067b1636461de7c5e875cc9c7f15680fb06176fd2";
+  "75e088845fc2948988d198d5a42e518837665b419c101cc1a63ed8e174de8a38";
 const SHARED_POLICY_BOUNDARY_RUN = [
   "set -euo pipefail",
   "[[ ! -e nemoclaw/dist && ! -L nemoclaw/dist ]] || {",
@@ -153,7 +155,13 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
     return [`workflow missing ${JOB_ID} job`];
   }
 
-  if (!isDeepStrictEqual(job.needs, ["base-image-publication", "generate-matrix"])) {
+  if (
+    !isDeepStrictEqual(job.needs, [
+      "base-image-publication",
+      "generate-matrix",
+      "package-openshell-sdk",
+    ])
+  ) {
     errors.push(`${JOB_ID} must depend on base-image-publication and generate-matrix`);
   }
   if (job.if !== SELECTOR) errors.push(`${JOB_ID} must use the trusted execution plan`);
@@ -572,7 +580,9 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
     "Checkout protected managed-image candidate source",
     "Validate trusted Hermes resolver checkout path",
     "Checkout trusted Hermes resolver",
+    "Download reviewed OpenShell SDK archive",
     "Prepare E2E workspace",
+    "Install reviewed OpenShell SDK archive without package credentials",
     "Build shared policy boundary",
     "Authenticate to Docker Hub",
     "Validate candidate activation contract",

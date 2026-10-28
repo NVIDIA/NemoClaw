@@ -38,6 +38,22 @@ describe("refreshSandboxPolicyContextFile", () => {
     expect(unexpected).not.toHaveBeenCalled();
   });
 
+  it("reports `skipped` without warning when the sandbox agent does not use the OpenClaw workspace", async () => {
+    const warn = vi.fn();
+    const unexpected = vi.fn();
+    const write = vi.fn(async () => ({
+      written: false,
+      reason: "not written for hermes sandboxes",
+      failure: "unsupported-agent" as const,
+    }));
+
+    const outcome = await refreshSandboxPolicyContextFile("alpha", { warn, unexpected, write });
+
+    expect(outcome.outcome).toBe("skipped");
+    expect(warn).not.toHaveBeenCalled();
+    expect(unexpected).not.toHaveBeenCalled();
+  });
+
   it("warns about explicit `failed` outcomes when the sandbox returns a non-zero exit", async () => {
     const warn = vi.fn();
     const unexpected = vi.fn();

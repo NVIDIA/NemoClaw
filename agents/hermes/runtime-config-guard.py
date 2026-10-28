@@ -26,6 +26,13 @@ from dataclasses import dataclass, field
 
 import yaml
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from managed_policy import (  # noqa: E402
+    NVIDIA_INFERENCE_PLACEHOLDER,
+    NVIDIA_SCOPED_CREDENTIAL_HANDLE,
+)
+
 
 API_SERVER_KEY_RE = re.compile(r"^[0-9a-f]{64}$")
 ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -2941,19 +2948,37 @@ def _validate_restored_native_credential(source_text: str, candidate_bytes: byte
         raise UnsafePathError("restored Hermes write may change only its three native local credential slots") from exc
 
 
+def _with_issued_nvidia_slots(text: str, template: str, reference: str) -> bytes:
+    """Return the config with only template-valued credential slots issued."""
+    try:
+        config = yaml.safe_load(text)
+        provider = config["_nemoclaw_upstream"]["provider"]
+        slots = [config["model"], config["providers"][provider]]
+        slots += [entry for entry in config["custom_providers"] if isinstance(entry, dict) and entry.get("name") == provider]
+        for slot in slots:
+            if slot.get("api_key") == template:
+                slot["api_key"] = reference
+        return yaml.safe_dump(config, sort_keys=False).encode("utf-8")
+    except (AttributeError, KeyError, TypeError, yaml.YAMLError) as exc:
+        raise UnsafePathError("Hermes NVIDIA credential slots are malformed") from exc
+
+
 def verify_nvidia_credential(hermes_dir: str, expected_model: str) -> None:
     """Check agent slots against the fresh supervisor without changing any file."""
     reference = os.environ.get("NVIDIA_INFERENCE_API_KEY", "")
-    if not re.fullmatch(r"openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_NVIDIA_INFERENCE_API_KEY", reference):
+    if NVIDIA_SCOPED_CREDENTIAL_HANDLE.fullmatch(reference) is None:
         raise UnsafePathError("Hermes NVIDIA supervisor credential is unavailable")
     text, _snapshot = _read_text(os.path.join(hermes_dir, "config.yaml"), MAX_CONFIG_INPUT_BYTES)
+    # A freshly onboarded sandbox keeps the managed-policy template in its three
+    # slots, and Hermes resolves it from the current supervisor reference (#13784).
+    template = NVIDIA_INFERENCE_PLACEHOLDER
     try:
-        _validate_restored_native_credential(text, text.encode("utf-8"))
+        _validate_restored_native_credential(text, _with_issued_nvidia_slots(text, template, reference))
         config = yaml.safe_load(text)
         if (
             config["_nemoclaw_upstream"]["provider"] != "nvidia-prod"
             or config["model"]["default"] != expected_model
-            or config["model"]["api_key"] != reference
+            or config["model"]["api_key"] not in {reference, template}
         ):
             raise UnsafePathError("Hermes NVIDIA credential does not match its route or generation")
     except UnsafePathError as exc:

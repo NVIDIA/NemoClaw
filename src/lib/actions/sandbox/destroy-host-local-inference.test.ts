@@ -203,6 +203,7 @@ async function runDestroy(
     deleteResult?: { status: number; stdout: string; stderr: string };
     listResult?: { status: number; stdout: string; stderr: string };
     lookupResults?: { status: number; stdout: string; stderr: string }[];
+    expectedContainerIdentityFingerprint?: string;
     sandboxConfirmedAbsent?: boolean;
     force?: boolean;
     includeRegistryReaders?: boolean;
@@ -270,6 +271,9 @@ async function runDestroy(
     stopInferenceResources,
     onMutationStarted,
     ...(options.mcpRuntimeSelection ? { mcpRuntimeSelection: options.mcpRuntimeSelection } : {}),
+    ...(options.expectedContainerIdentityFingerprint
+      ? { expectedContainerIdentityFingerprint: options.expectedContainerIdentityFingerprint }
+      : {}),
     runtimeProviders: { mxc: runtimeProvider.bundle },
     deps: {
       ...(options.lifecycleOptions
@@ -384,6 +388,71 @@ describe("sandbox destroy host-local inference transaction", () => {
     expect(getSandbox.mock.calls.length).toBeGreaterThanOrEqual(10);
     expect(runOpenshell).toHaveBeenCalledWith(
       ["sandbox", "delete", "-g", "nemoclaw", "alpha"],
+      expect.objectContaining({ ignoreError: true }),
+    );
+  });
+
+  it("scopes pending-create cleanup and convergence to its recorded gateway", async () => {
+    const runtimeProvider = provider();
+    const entry = sandbox("alpha", receipt(), {
+      pendingCreateIdentity: pendingCreateIdentity({ gatewayName: "gateway-other" }),
+    });
+    const { result, runOpenshell } = await runDestroy(runtimeProvider, {
+      entry,
+      inspectSandboxIdentityFingerprint: () => SANDBOX_FINGERPRINT,
+    });
+
+    expect(result).toMatchObject({ ok: true, alreadyGone: true });
+    expect(runOpenshell).toHaveBeenCalledWith(
+      expect.arrayContaining(["sandbox", "exec", "-g", "gateway-other", "--name", "alpha"]),
+      expect.any(Object),
+    );
+    expect(runOpenshell).toHaveBeenCalledWith(
+      ["sandbox", "delete", "-g", "gateway-other", "alpha"],
+      expect.objectContaining({ ignoreError: true }),
+    );
+    expect(runOpenshell).toHaveBeenCalledWith(
+      ["sandbox", "get", "-g", "gateway-other", "alpha"],
+      expect.any(Object),
+    );
+  });
+
+  it("uses the runtime-selected gateway for identity continuity and cleanup", async () => {
+    const runtimeProvider = provider();
+    const entry = sandbox();
+    const runtimeSelection = {
+      gatewayName: "gateway-other",
+      workspace: "default",
+      localTlsDir: "/authority/tls",
+    };
+    const inspect = vi.fn(
+      (_options: {
+        readonly sandboxName: string;
+        readonly gatewayName: string;
+        readonly runtimeSelection?: OpenShellRuntimeSelection;
+      }) => SANDBOX_FINGERPRINT,
+    );
+
+    const { result, runOpenshell } = await runDestroy(runtimeProvider, {
+      entry,
+      expectedContainerIdentityFingerprint: SANDBOX_FINGERPRINT,
+      inspectSandboxIdentityFingerprint: inspect,
+      mcpRuntimeSelection: runtimeSelection,
+    });
+
+    expect(result).toMatchObject({ ok: true, alreadyGone: true });
+    expect(inspect.mock.calls.length).toBeGreaterThanOrEqual(5);
+    expect(inspect.mock.calls.map(([options]) => options)).toEqual(
+      new Array(inspect.mock.calls.length).fill(
+        expect.objectContaining({
+          sandboxName: "alpha",
+          gatewayName: "gateway-other",
+          runtimeSelection,
+        }),
+      ),
+    );
+    expect(runOpenshell).toHaveBeenCalledWith(
+      ["sandbox", "delete", "-g", "gateway-other", "alpha"],
       expect.objectContaining({ ignoreError: true }),
     );
   });

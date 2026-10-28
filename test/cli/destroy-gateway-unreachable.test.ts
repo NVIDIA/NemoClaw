@@ -20,6 +20,7 @@ import { execTimeout, runWithEnv, testTimeoutOptions } from "./helpers";
 // other call succeeds so the destroy flow reaches the delete.
 const GATEWAY_DOWN_OPENSHELL = [
   "#!/bin/sh",
+  'if [ "$1" = "gateway" ] && [ "$2" = "list" ]; then printf \'[{"name":"nemoclaw","active":false}]\\n\'; exit 0; fi',
   'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then exit 0; fi',
   'if [ "$1" = "sandbox" ] && [ "$2" = "delete" ]; then',
   '  printf "tcp connect error: Connection refused (os error 61)\\n" >&2',

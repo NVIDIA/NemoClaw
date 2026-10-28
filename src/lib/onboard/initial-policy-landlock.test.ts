@@ -19,8 +19,10 @@ import { prepareInitialSandboxCreatePolicy } from "./initial-policy";
 it.each([
   { agent: "langchain-deepagents-code", version: "0.0.116", mode: "strict" },
   { agent: "langchain-deepagents-code", version: "0.1.3", mode: "hard_requirement" },
+  { agent: "langchain-deepagents-code", version: "0.1.5", mode: "hard_requirement" },
   { agent: "pi", version: "0.0.116", mode: "strict" },
   { agent: "pi", version: "0.1.3", mode: "hard_requirement" },
+  { agent: "pi", version: "0.1.5", mode: "hard_requirement" },
 ])("preserves required Landlock enforcement for $agent on $version", ({ agent, version, mode }) => {
   runtime.version = version;
   const source = path.resolve(

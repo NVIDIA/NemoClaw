@@ -4,8 +4,6 @@
 import {
   dataRecord,
   MODEL_SELECTION_SOURCES,
-  POLICY_TIER_CATEGORIES,
-  TELEMETRY_API_FAMILIES,
   TELEMETRY_PROVIDER_PROFILES,
   classifyTelemetryProvider,
 } from "./values";
@@ -14,7 +12,7 @@ import type { TelemetryModelAssignment } from "./event";
 export interface AppliedPolicySelection {
   readonly schemaVersion: 1;
   readonly source: "verified_selection";
-  readonly tier: (typeof POLICY_TIER_CATEGORIES)[number];
+  readonly tier: string;
 }
 export interface ModelSelectionProvenance {
   readonly schemaVersion: 1;
@@ -23,7 +21,7 @@ export interface ModelSelectionProvenance {
   readonly provider: string;
   readonly providerProfile: (typeof TELEMETRY_PROVIDER_PROFILES)[number];
   readonly modelSource: (typeof MODEL_SELECTION_SOURCES)[number];
-  readonly apiFamily: (typeof TELEMETRY_API_FAMILIES)[number];
+  readonly apiFamily: string;
 }
 
 /** Private native-slot binding; only the source category is projected into an event. */
@@ -57,7 +55,6 @@ export function readModelAssignmentSelection(value: unknown): ModelAssignmentSel
     record.agentId.length <= 128 &&
     typeof record.reference === "string" &&
     record.reference.length > 0 &&
-    record.reference.length <= 1024 &&
     typeof record.assignment === "string" &&
     ["primary", "override", "fallback", "subagent"].includes(record.assignment) &&
     MODEL_SELECTION_SOURCES.some((source) => source === record.modelSource)
@@ -66,9 +63,11 @@ export function readModelAssignmentSelection(value: unknown): ModelAssignmentSel
 }
 export function readAppliedPolicySelection(value: unknown): AppliedPolicySelection | null {
   const record = closed(value, ["schemaVersion", "source", "tier"]);
-  const tier = POLICY_TIER_CATEGORIES.find((item) => item === record?.tier);
-  return record?.schemaVersion === 1 && record.source === "verified_selection" && tier
-    ? { schemaVersion: 1, source: "verified_selection", tier }
+  return record?.schemaVersion === 1 &&
+    record.source === "verified_selection" &&
+    typeof record.tier === "string" &&
+    record.tier.length > 0
+    ? { schemaVersion: 1, source: "verified_selection", tier: record.tier }
     : null;
 }
 export function readModelSelectionProvenance(value: unknown): ModelSelectionProvenance | null {
@@ -84,24 +83,23 @@ export function readModelSelectionProvenance(value: unknown): ModelSelectionProv
     (item) => item === record?.providerProfile,
   );
   const modelSource = MODEL_SELECTION_SOURCES.find((item) => item === record?.modelSource);
-  const apiFamily = TELEMETRY_API_FAMILIES.find((item) => item === record?.apiFamily);
   return record?.schemaVersion === 1 &&
     typeof record.model === "string" &&
     record.model.length > 0 &&
-    record.model.length <= 1024 &&
     typeof record.provider === "string" &&
     record.provider.length > 0 &&
     record.provider.length <= 1024 &&
     providerProfile &&
     modelSource &&
-    apiFamily
+    typeof record.apiFamily === "string" &&
+    record.apiFamily.length > 0
     ? {
         schemaVersion: 1,
         model: record.model,
         provider: record.provider,
         providerProfile,
         modelSource,
-        apiFamily,
+        apiFamily: record.apiFamily,
       }
     : null;
 }
@@ -123,15 +121,14 @@ export function readHermesModelSelectionTuple(
         : mode === "codex_responses"
           ? "openai-responses"
           : mode;
-  const apiFamily = TELEMETRY_API_FAMILIES.find((item) => item !== "unknown" && item === api);
   return typeof model?.default === "string" &&
     model.default.length > 0 &&
-    model.default.length <= 1024 &&
     typeof provider === "string" &&
     provider.length > 0 &&
     provider.length <= 1024 &&
-    apiFamily
-    ? { model: model.default, provider, apiFamily }
+    typeof api === "string" &&
+    api.length > 0
+    ? { model: model.default, provider, apiFamily: api }
     : null;
 }
 
@@ -187,6 +184,8 @@ export function selectedModelProvenance(input: {
     providerProfile,
     modelSource: input.modelSource ?? "unknown",
     apiFamily:
-      TELEMETRY_API_FAMILIES.find((item) => item === input.preferredInferenceApi) ?? "unknown",
+      typeof input.preferredInferenceApi === "string" && input.preferredInferenceApi.length > 0
+        ? input.preferredInferenceApi
+        : "unknown",
   };
 }

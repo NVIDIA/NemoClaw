@@ -2616,6 +2616,7 @@ async function prepareConnectSandboxWithinLifecycleFence(
     }
   }
   if (probeOnly) {
+    console.log(`  Target gateway: ${getSandboxTargetGatewayName(sandboxName)}`);
     let portableAuthorityReady = false;
     let hermesMissingFastPathEligible = false;
     let hermesReadinessAuthority: {

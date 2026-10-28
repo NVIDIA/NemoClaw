@@ -126,9 +126,13 @@ function requirePinnedAction(errors: string[], step: WorkflowStep | undefined, n
 function validateProfileCallers(errors: string[], workflow: WorkflowRecord): void {
   const jobs = record(workflow.jobs);
   const sdkPackage = record(jobs["package-openshell-sdk"]);
-  if (sdkPackage.if !== undefined || record(sdkPackage.permissions).packages !== "read") {
+  if (
+    sdkPackage.if !==
+      "${{ inputs.checkout_sha == '' || (inputs.jobs != 'native-runtime-qualification-producer' && inputs.jobs != 'llama-cpp-dgx-spark-qualification') || inputs.targets != '' }}" ||
+    record(sdkPackage.permissions).packages !== "read"
+  ) {
     errors.push(
-      "catalogue profiles require SDK packaging for every E2E run with package-read permission",
+      "catalogue profiles require SDK packaging with package-read permission whenever candidate compilation is selected",
     );
   }
   const sdkPackageStep = namedStep(
@@ -357,10 +361,11 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     "Validate catalogue execution plan",
     "Provision trusted Hermes E2E swap",
     undefined,
+    "Set up supported Model Router Python",
     "Authenticate to Docker Hub",
     "Install target host dependencies",
-    "Prepare E2E workspace",
     "Download reviewed OpenShell SDK archive",
+    "Prepare E2E workspace",
     "Install reviewed OpenShell SDK archive without package credentials",
     "Restore exact-commit CLI artifact",
     "Prepare native Podman E2E runtime",
@@ -475,6 +480,22 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     errors.push("standard E2E profile must check out checkout_sha without credentials");
   }
 
+  const modelRouterPython = requireStep(
+    errors,
+    workflowSteps,
+    "Set up supported Model Router Python",
+  );
+  if (
+    !isDeepStrictEqual(modelRouterPython, {
+      name: "Set up supported Model Router Python",
+      if: "${{ inputs.target_id == 'model-router-provider-routed-inference' }}",
+      uses: "actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97",
+      with: { "python-version": "3.13" },
+    })
+  ) {
+    errors.push("standard E2E profile must provision reviewed Python only for Model Router");
+  }
+
   const auth = requireStep(errors, workflowSteps, "Authenticate to Docker Hub");
   if (auth?.uses !== E2E_ACTION_PROVENANCE.dockerAuth.reference) {
     errors.push("standard E2E profile must use the reviewed Docker Hub authentication action");
@@ -512,7 +533,11 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   }
   if (
     prepare?.uses !== E2E_ACTION_PROVENANCE.prepareWorkspace.reference ||
-    record(prepare?.with)["build-cli"] !== "false"
+    !isDeepStrictEqual(prepare, {
+      name: "Prepare E2E workspace",
+      uses: E2E_ACTION_PROVENANCE.prepareWorkspace.reference,
+      with: { "build-cli": "false", "install-dependencies": "false" },
+    })
   ) {
     errors.push("standard E2E profile must prepare once without rebuilding the CLI");
   }
@@ -530,7 +555,14 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     errors.push("standard E2E profile must download the run-scoped reviewed SDK archive");
   }
   const sdkInstall = requireStep(errors, workflowSteps, REVIEWED_OPEN_SHELL_SDK_INSTALL_STEP);
-  if (!isReviewedOpenShellSdkInstallStep(sdkInstall)) {
+  if (
+    !isReviewedOpenShellSdkInstallStep(sdkInstall) ||
+    !prepare ||
+    !sdkDownload ||
+    !sdkInstall ||
+    workflowSteps.indexOf(sdkDownload) !== workflowSteps.indexOf(prepare) - 1 ||
+    workflowSteps.indexOf(sdkInstall) !== workflowSteps.indexOf(prepare) + 1
+  ) {
     errors.push(
       "standard E2E profile must install one reviewed SDK archive without credentials or package scripts",
     );

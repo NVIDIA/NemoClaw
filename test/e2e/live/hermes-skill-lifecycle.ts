@@ -3,7 +3,7 @@
 
 import path from "node:path";
 
-import { resultText } from "../fixtures/clients/command.ts";
+import { resultText, shellQuote } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { expect } from "../fixtures/e2e-test.ts";
 import {
@@ -33,9 +33,10 @@ const INFERENCE_REQUEST_PATHS = new Set([
 ]);
 
 interface HermesSkillLifecycleOptions {
+  apiPort: string;
   env: NodeJS.ProcessEnv;
   host: HostCliClient;
-  inference: Pick<E2EInferenceAdapter, "requestSummaries">;
+  inference: Pick<E2EInferenceAdapter, "model" | "requestSummaries">;
   redactionValues: string[];
   sandboxName: string;
 }
@@ -46,6 +47,7 @@ interface HermesSkillLifecycleOptions {
  * non-secret canary crossed the inference boundary.
  */
 export async function assertHermesSkillLifecycle({
+  apiPort,
   env,
   host,
   inference,
@@ -88,6 +90,72 @@ export async function assertHermesSkillLifecycle({
   });
   expect(skillList.exitCode, resultText(skillList)).toBe(0);
   expect(stripAnsi(resultText(skillList))).toContain(HERMES_SKILL_ID);
+
+  // The CLI skill turn below does not exercise the default-profile gateway
+  // prompt. Prove that the real gateway stores both default-home inputs.
+  const sessionId = `nemoclaw-agent-home-${Date.now()}`;
+  const soulMarker = "NEMOCLAW_E2E_DEFAULT_SOUL_K9X2";
+  const soulBackup = `/tmp/nemoclaw-e2e-soul-${Date.now()}`;
+  const soulPath = "/sandbox/.hermes/SOUL.md";
+  const prepareSoul = await exec(
+    [
+      "bash",
+      "-lc",
+      `set -eu; if test -f ${shellQuote(soulPath)}; then cp ${shellQuote(soulPath)} ${shellQuote(soulBackup)}; echo SOUL_EXISTED; else echo SOUL_ABSENT; fi`,
+    ],
+    "phase-4-hermes-default-profile-soul-backup",
+  );
+  const soulExisted = prepareSoul.stdout.includes("SOUL_EXISTED");
+  try {
+    await exec(
+      [
+        "bash",
+        "-lc",
+        `set -eu; printf '\\n%s\\n' ${shellQuote(soulMarker)} >> ${shellQuote(soulPath)}`,
+      ],
+      "phase-4-hermes-default-profile-soul-setup",
+    );
+    const payload = JSON.stringify({
+      model: inference.model,
+      messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
+      max_tokens: 512,
+    });
+    const gatewayChat = await exec(
+      [
+        "bash",
+        "-lc",
+        `set -eu; set -a; . /sandbox/.hermes/.env; set +a; curl -fsS --max-time 120 -o /dev/null -H 'Content-Type: application/json' -H "Authorization: Bearer \${API_SERVER_KEY:-}" -H ${shellQuote(`X-Hermes-Session-Id: ${sessionId}`)} --data-raw ${shellQuote(payload)} ${shellQuote(`http://127.0.0.1:${apiPort}/v1/chat/completions`)}; echo GATEWAY_REQUEST_OK`,
+      ],
+      "phase-4-hermes-default-profile-gateway-chat",
+      180,
+      210_000,
+    );
+    expect(gatewayChat.stdout).toContain("GATEWAY_REQUEST_OK");
+
+    const promptEvidence = await exec(
+      [
+        "/opt/hermes/.venv/bin/python",
+        "-c",
+        "from hermes_state import SessionDB; import sys; row = SessionDB().get_session(sys.argv[1]); assert row is not None, 'gateway session missing'; prompt = row.get('system_prompt') or ''; assert sys.argv[2] in prompt, 'default-profile SOUL.md missing from stored prompt'; assert sys.argv[3] in prompt, 'installed skill missing from stored prompt'; print('DEFAULT_PROFILE_PROMPT_OK')",
+        sessionId,
+        soulMarker,
+        HERMES_SKILL_ID,
+      ],
+      "phase-4-hermes-default-profile-stored-prompt",
+    );
+    expect(promptEvidence.stdout).toContain("DEFAULT_PROFILE_PROMPT_OK");
+  } finally {
+    await exec(
+      [
+        "bash",
+        "-lc",
+        soulExisted
+          ? `set -eu; cat ${shellQuote(soulBackup)} > ${shellQuote(soulPath)}; rm -f ${shellQuote(soulBackup)}`
+          : `set -eu; rm -f ${shellQuote(soulPath)}`,
+      ],
+      "phase-4-hermes-default-profile-soul-restore",
+    );
+  }
 
   const sessionsBeforeSkill = await exec(
     ["hermes", "sessions", "list"],

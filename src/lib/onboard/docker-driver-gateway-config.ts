@@ -35,7 +35,10 @@ import {
 import type { ExternalComponentGatewayPreparation } from "./external-component/activation";
 import { externalComponentDockerSocket } from "./external-component/network";
 import type { RuntimeProviderGatewayHostRuntime } from "./runtime-provider/contract";
-import { SUPPORTED_OPENSHELL_FALLBACK_VERSION } from "./openshell-version";
+import {
+  SUPPORTED_OPENSHELL_FALLBACK_VERSION,
+  usesOpenShellNativeProjection,
+} from "./openshell-version";
 import {
   resolveConfiguredRuntimeProvider,
   resolveRegisteredRuntimeProvider,
@@ -891,7 +894,9 @@ function buildDockerDriverGatewayConfigTomlForIdentity(
   gatewayJwtTtlSecs = DOCKER_DRIVER_GATEWAY_JWT_TTL_SECS,
   projectedRuntime?: RuntimeProviderGatewayHostRuntime,
   externalComponent?: ExternalComponentGatewayConfiguration | null,
-  schemaVersion: 1 | 2 = String(SUPPORTED_OPENSHELL_FALLBACK_VERSION) === "0.1.3" ? 2 : 1,
+  schemaVersion: 1 | 2 = usesOpenShellNativeProjection(SUPPORTED_OPENSHELL_FALLBACK_VERSION)
+    ? 2
+    : 1,
   legacyGuestCredentials = schemaVersion === 1,
 ): string {
   const runtime = resolveGatewayRuntimeProjection(gatewayEnv, projectedRuntime);

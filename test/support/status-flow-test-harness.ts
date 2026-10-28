@@ -14,6 +14,7 @@ import type {
 import type { LlamaCppRouteDetails } from "../../src/lib/inference/config";
 import type { ProviderHealthStatus } from "../../src/lib/inference/health";
 import type { SandboxHostMount } from "../../src/lib/state/registry";
+import type { McpLifecycleLockOptions } from "../../src/lib/state/mcp-lifecycle-lock-acquisition";
 
 type ShowSandboxStatus =
   (typeof import("../../src/lib/actions/sandbox/status"))["showSandboxStatus"];
@@ -24,6 +25,8 @@ type PortableAgentReceiptDisposition = ReturnType<
 >;
 type WithMcpLifecycleLock =
   (typeof import("../../src/lib/state/mcp-lifecycle-lock-acquisition"))["withMcpLifecycleLock"];
+type WithUnlockedSandboxStatusRead =
+  (typeof import("../../src/lib/actions/sandbox/status-snapshot"))["withUnlockedSandboxStatusRead"];
 
 const requireDist = createRequire(import.meta.url);
 const statusModulePath = "../../src/lib/actions/sandbox/status.js";
@@ -39,12 +42,15 @@ export type StatusFlowHarness = {
   getActiveSandboxSessionsSpy: MockInstance;
   getSandboxDockerRuntimeSpy: MockInstance;
   getSandboxStatusReport: GetSandboxStatusReport;
+  inspectManagedLlamaCppStatusSpy: MockInstance;
   qualifyPortableAgentLifecycleAuthoritySpy: MockInstance;
   isSandboxGatewayRunningForStatusSpy: MockInstance;
   logSpy: MockInstance;
   removeSandboxSpy: MockInstance;
   showSandboxStatus: ShowSandboxStatus;
   withMcpLifecycleLockSpy: MockInstance;
+  withUnlockedSandboxStatusRead: WithUnlockedSandboxStatusRead;
+  ensureHermesToolGatewayBrokerSpy: MockInstance | null;
 };
 
 const baseSandboxEntry = {
@@ -85,6 +91,7 @@ export type StatusFlowHarnessOptions = {
   registryEntry?: "present" | "missing";
   publishedAcrossGatewayRoots?: boolean;
   withMcpLifecycleLock?: WithMcpLifecycleLock;
+  mockHermesToolGatewayBroker?: boolean;
   lookup?: SandboxGatewayState;
   lookupState?: "present" | "missing";
   gatewayRunning?: boolean;
@@ -116,6 +123,15 @@ export function resetStatusFlowModuleCache(): void {
   delete require.cache[requireDist.resolve(statusModulePath)];
 }
 
+export function createRealMcpLifecycleLock(
+  options: McpLifecycleLockOptions = {},
+): WithMcpLifecycleLock {
+  const lockModule = requireDist("../../src/lib/state/mcp-lifecycle-lock-acquisition.js");
+  const acquire = lockModule.withMcpLifecycleLock as WithMcpLifecycleLock;
+  return (sandboxName, operation, overrides = {}) =>
+    acquire(sandboxName, operation, { ...options, ...overrides });
+}
+
 export function createStatusFlowHarness(options: StatusFlowHarnessOptions = {}): StatusFlowHarness {
   resetStatusFlowModuleCache();
 
@@ -132,6 +148,7 @@ export function createStatusFlowHarness(options: StatusFlowHarnessOptions = {}):
     "../../src/lib/onboard/experimental/portable-agent-lifecycle.js",
   );
   const lifecycleLock = requireDist("../../src/lib/state/mcp-lifecycle-lock-acquisition.js");
+  const managedLlamaCppStatus = requireDist("../../src/lib/inference/llama-cpp/managed-status.js");
   const resolve = requireDist("../../src/lib/adapters/openshell/resolve.js");
   const agentRuntime = requireDist("../../src/lib/agent/runtime.js");
   const nim = requireDist("../../src/lib/inference/nim.js");
@@ -304,7 +321,18 @@ export function createStatusFlowHarness(options: StatusFlowHarnessOptions = {}):
 
   logSpy.mockClear();
 
+  const inspectManagedLlamaCppStatusSpy = vi
+    .spyOn(managedLlamaCppStatus, "inspectManagedLlamaCppStatus")
+    .mockReturnValue(null);
   const statusModule = requireDist(statusModulePath);
+  const ensureHermesToolGatewayBrokerSpy = options.mockHermesToolGatewayBroker
+    ? vi
+        .spyOn(
+          requireDist("../../src/lib/hermes-tool-gateway-broker.js"),
+          "ensureHermesToolGatewayBrokerForSandboxEntry",
+        )
+        .mockImplementation(() => undefined)
+    : null;
 
   return {
     checkAgentVersionSpy,
@@ -312,11 +340,14 @@ export function createStatusFlowHarness(options: StatusFlowHarnessOptions = {}):
     getActiveSandboxSessionsSpy,
     getSandboxDockerRuntimeSpy,
     getSandboxStatusReport: statusModule.getSandboxStatusReport,
+    inspectManagedLlamaCppStatusSpy,
     qualifyPortableAgentLifecycleAuthoritySpy,
     isSandboxGatewayRunningForStatusSpy,
     logSpy,
     removeSandboxSpy,
     showSandboxStatus: statusModule.showSandboxStatus,
     withMcpLifecycleLockSpy,
+    withUnlockedSandboxStatusRead: statusSnapshot.withUnlockedSandboxStatusRead,
+    ensureHermesToolGatewayBrokerSpy,
   } satisfies StatusFlowHarness;
 }

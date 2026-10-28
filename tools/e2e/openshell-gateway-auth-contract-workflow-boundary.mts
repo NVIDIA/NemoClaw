@@ -84,7 +84,7 @@ export function validateOpenShellGatewayAuthContractWorkflow(
   const job = workflow.jobs[JOB_NAME];
   if (!job) return [`workflow is missing ${JOB_NAME}`];
 
-  if (job.needs !== "generate-matrix") {
+  if (JSON.stringify(job.needs) !== JSON.stringify(["generate-matrix", "package-openshell-sdk"])) {
     errors.push(`${JOB_NAME} must depend on generate-matrix`);
   }
   if (job.if !== TRUSTED_PLAN_CONDITION) {

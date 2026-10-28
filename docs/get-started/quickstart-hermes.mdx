@@ -475,7 +475,9 @@ Use these details when your first-run path needs more control.
     ```
 
     If the in-sandbox config write or integrity hash update fails, `nemohermes inference set` exits with status `1` after committing the OpenShell selection and NemoClaw registry.
-    Run the printed `nemohermes <sandbox-name> rebuild` command to make the in-sandbox Hermes configuration match the committed selection.
+    Review the preceding configuration warning before recovery.
+    If integrity metadata is invalid, back up needed data and restore matching configuration and integrity files from a trusted backup, or create a fresh Hermes sandbox.
+    Rebuild preserves the native home and may retain the mismatch.
   </Accordion>
 </AccordionGroup>
 

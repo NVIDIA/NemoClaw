@@ -293,10 +293,14 @@ Broader binary access would let unrelated sandbox processes send data to Tavily 
 
 ## Operation Telemetry
 
-NemoClaw collects anonymous telemetry to help improve the project.
+NemoClaw collects operation telemetry to help improve the project.
 The data shows usage of installation, sandbox, and configuration workflows.
 
-Records include operation outcomes, timestamps, software versions, platform categories, environment and agent counts, and approved public model, provider, and configuration choices.
+Records include operation outcomes, timestamps, software versions, platforms, environment and agent counts, and observed model, provider, and configuration choices.
+Observed model IDs and configuration names can include private or custom values.
+Observed names and versions are limited to 64 characters; longer values become `unknown` with a `collection_error` status.
+An oversized value does not discard the rest of the record.
+Production delivery is not enabled.
 
 Telemetry payloads exclude user content, credentials, private endpoints, file paths, and persistent user, device, session, or sandbox identifiers.
 

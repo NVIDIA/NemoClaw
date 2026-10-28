@@ -10,7 +10,12 @@ import { describe, expect, it, vi } from "vitest";
 import type { SandboxEntry } from "../../state/registry";
 import type { SandboxInferenceRouteHealth } from "./inference-route-health";
 import type { SandboxStatusPreflightResult } from "./status-preflight";
-import { collectSandboxStatusSnapshot, getSandboxStatusReport } from "./status-snapshot";
+import * as gatewayState from "./gateway-state";
+import {
+  collectSandboxStatusSnapshot,
+  getSandboxStatusReport,
+  withUnlockedSandboxStatusRead,
+} from "./status-snapshot";
 
 const sandbox: SandboxEntry = {
   name: "alpha",
@@ -174,6 +179,49 @@ describe("collectSandboxStatusSnapshot Docker recovery", () => {
     } finally {
       vi.unstubAllEnvs();
       fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps unlocked status observations free of gateway and recovery mutations (#11903)", async () => {
+    const lookup = {
+      state: "present" as const,
+      phase: "Ready",
+      output: "Phase: Ready",
+      recoveredSandbox: true,
+    };
+    const reconcile = vi
+      .spyOn(gatewayState, "getReconciledSandboxGatewayState")
+      .mockResolvedValue(lookup as never);
+    const { reconcile: _defaultReconcile, ...baseDeps } = snapshotDeps({
+      checked: true,
+      wasRunning: false,
+      recovered: true,
+      forwardRecovered: true,
+    });
+    const recordSandboxStopIntent = vi.fn(() => false);
+    const deps = { ...baseDeps, recordSandboxStopIntent };
+
+    try {
+      await withUnlockedSandboxStatusRead(() =>
+        collectSandboxStatusSnapshot("alpha", {
+          sandboxEntry: { ...sandbox, stopped: true },
+          preflight: clearPreflight,
+          suppressInferenceProbe: true,
+          deps,
+        }),
+      );
+
+      expect(reconcile).toHaveBeenCalledWith(
+        "alpha",
+        expect.objectContaining({
+          gatewayRecovery: "observe",
+          selectOwningGateway: false,
+        }),
+      );
+      expect(recordSandboxStopIntent).not.toHaveBeenCalled();
+      expect(deps.recoverSandboxProcesses).not.toHaveBeenCalled();
+    } finally {
+      reconcile.mockRestore();
     }
   });
 

@@ -63,6 +63,7 @@ import {
   waitForLocalInferenceAgentPairing,
   localInferenceAgentCommand,
   localInferenceProbe,
+  readProtectedLocalInferenceCount,
   verifyManagedImageLocalInferenceRoute,
   type ManagedImageOpenShellE2eInputs,
   createManagedImageSandboxWithDiagnostics,
@@ -1300,6 +1301,7 @@ async function assertProtectedLocalInference(
   if (result.status !== 0) {
     throw new Error(`sandbox native local completion failed: ${commandDetail(result)}`);
   }
+  const beforeAgent = await readProtectedLocalInferenceCount(input, env);
   // The fresh sandbox has one verified provider attachment. Use the generated
   // agent configuration without endpoint, credential, or model overrides.
   const agentResult = await waitForLocalInferenceAgentPairing(input.agent, () =>
@@ -1319,7 +1321,13 @@ async function assertProtectedLocalInference(
   if (agentResult.status !== 0) {
     throw new Error(`sandbox native agent completion failed: ${commandDetail(agentResult)}`);
   }
-  assertLocalInferenceAgentResponse(input, String(agentResult.stdout ?? ""), env);
+  const afterAgent = await readProtectedLocalInferenceCount(input, env);
+  assertLocalInferenceAgentResponse(
+    input,
+    String(agentResult.stdout ?? ""),
+    afterAgent > beforeAgent,
+    env,
+  );
 }
 
 export { managedImageHarnessContainerListArgs } from "./managed-image-protected-runtime-contract.ts";

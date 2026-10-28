@@ -742,7 +742,7 @@ printf 'vllm-stalled-probe-diagnostic\\n'`,
       "2",
       "--max-time",
       "5",
-      "http://127.0.0.1:8000/v1/models",
+      "http://127.0.0.1:8001/v1/models",
     ]);
     expect(result.stderr).toContain("vllm-stalled-probe-diagnostic");
     expect(result.stderr).toContain("managed-image-vllm-not-ready attempts=1");
@@ -793,7 +793,7 @@ printf 'nim-stalled-probe-diagnostic key=%s\\n' "$FAKE_NIM_API_KEY"`,
       "5",
       "--max-time",
       "5",
-      "http://127.0.0.1:8000/v1/models",
+      "http://127.0.0.1:8001/v1/models",
     ]);
     expect(result.stderr).toContain("nim-stalled-probe-diagnostic key=[REDACTED]");
     expect(result.stderr).toContain("managed-image-nim-not-ready attempts=1");

@@ -1,23 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-export const AGENT_HARNESS_IDS = [
-  "openclaw",
-  "hermes",
-  "langchain-deepagents-code",
-  "other",
-  "unknown",
-] as const;
-export const TELEMETRY_MODEL_IDS = [
-  "Qwen/Qwen3.6-27B-FP8",
-  "nvidia/nemotron-3-ultra-550b-a55b",
-  "nvidia/nvidia/nemotron-3-ultra",
-  "deepseek-ai/DeepSeek-V4-Flash",
-  "nvidia/qwen/qwen3.6-27b",
-  "nvidia/deepseek-ai/deepseek-v4-flash",
-  "other",
-  "unknown",
-] as const;
 export const TELEMETRY_PROVIDER_PROFILES = [
   "nvidia",
   "openai",
@@ -32,12 +15,6 @@ export const TELEMETRY_PROVIDER_PROFILES = [
   "custom",
   "unknown",
 ] as const;
-export const TELEMETRY_API_FAMILIES = [
-  "openai-completions",
-  "openai-responses",
-  "anthropic-messages",
-  "unknown",
-] as const;
 export const MODEL_SELECTION_SOURCES = [
   "product_catalog",
   "provider_catalog",
@@ -45,7 +22,6 @@ export const MODEL_SELECTION_SOURCES = [
   "local",
   "unknown",
 ] as const;
-export const COMPUTE_DRIVERS = ["docker", "podman", "kubernetes", "other", "unknown"] as const;
 export const GPU_STATES = [
   "not_configured",
   "configured_unverified",
@@ -63,21 +39,6 @@ export const MESSAGING_CHANNELS = [
   "googlechat",
   "other",
 ] as const;
-export const POLICY_TIER_CATEGORIES = ["restricted", "balanced", "open", "personal"] as const;
-export const SANDBOX_OPERATING_SYSTEMS = ["linux", "windows", "other", "unknown"] as const;
-export const MANAGED_AGENT_VERSIONS: Readonly<Record<string, readonly string[]>> = {
-  openclaw: ["2026.9.2"],
-  hermes: ["0.21.3"],
-  "langchain-deepagents-code": ["0.1.71"],
-};
-export const TELEMETRY_MODEL_KEYS: Readonly<Record<string, string>> = {
-  "Qwen/Qwen3.6-27B-FP8": "qwen3_6_27b_fp8",
-  "nvidia/nemotron-3-ultra-550b-a55b": "nemotron3_ultra_550b_a55b",
-  "nvidia/nvidia/nemotron-3-ultra": "nemotron3_ultra",
-  "deepseek-ai/DeepSeek-V4-Flash": "deepseek_v4_flash",
-  "nvidia/qwen/qwen3.6-27b": "qwen3_6_27b",
-  "nvidia/deepseek-ai/deepseek-v4-flash": "deepseek_v4_flash",
-};
 const PROVIDERS: Readonly<Record<string, string>> = {
   "nvidia-prod": "nvidia",
   "nvidia-nim": "nvidia",

@@ -201,6 +201,7 @@ if (args[0] === "ci") {
   }
 }
 if (args[0] === "install" && !fs.existsSync("package-lock.json")) {
+  fs.mkdirSync("node_modules", { recursive: true });
   const manifest = JSON.parse(fs.readFileSync("package.json", "utf8"));
   fs.writeFileSync("package-lock.json", JSON.stringify({ ...manifest, lockfileVersion: 3, packages: { "": manifest } }));
 }
@@ -353,14 +354,13 @@ describe("trusted npm audit workflow (#5896)", () => {
   });
 
   it("records the selected replacement identity in locked-graph audit provenance", () => {
-    const graph = REVIEWED_AUDIT_CONFIG.lockedGraphs.find(({ id }) => id === "openclaw-runtime")!;
     const fixture = runConsolidatedAuditFixture(
       () => {},
       undefined,
       0,
       0,
       REVIEWED_AUDIT_CONFIG.npmVersion,
-      openClawReplacementGraphFixture(REPO_ROOT, graph),
+      openClawReplacementGraphFixture(REPO_ROOT),
     );
 
     expect(fixture.result.status, fixture.result.stderr.toString()).toBe(0);

@@ -39,6 +39,10 @@ jobs:
             .github/actions/setup-reviewed-npm
             ci/reviewed-npm-audit.json
             scripts/audit-reviewed-npm-graph.mts
+            scripts/lib/bundled-npm-package.mts
+            scripts/lib/patch-bundled-npm-undici.mts
+            scripts/lib/remediate-openclaw-runtime-dependencies.mts
+            scripts/lib/reviewed-npm-identity.mts
             scripts/checks/package-openshell-sdk-for-pr.mts
             scripts/lib/npm-diagnostics.sh
             scripts/lib/openclaw-npm-remediation.mts

@@ -153,4 +153,76 @@ process.stdout.write(JSON.stringify({ ...captured, privilegedExec: capturedPrivi
       );
     },
   );
+
+  it("rejects a guarded Hermes write after a compatibility-hash refusal", () => {
+    const script = String.raw`
+const Module = require("node:module");
+const path = require("node:path");
+const source = (...parts) => "./" + path.join("src", "lib", ...parts);
+function installMock(filename, exports) {
+  const resolved = require.resolve(filename);
+  const replacement = new Module(resolved);
+  replacement.filename = resolved;
+  replacement.loaded = true;
+  replacement.exports = exports;
+  require.cache[resolved] = replacement;
+}
+
+let writeAttempts = 0;
+installMock(source("runner.js"), { validateName: () => undefined, ROOT: process.cwd() });
+installMock(source("state", "registry.js"), {
+  getSandbox: () => ({ name: "alpha", agent: "hermes" }),
+});
+installMock(source("agent", "defs.js"), {
+  loadAgent: () => ({
+    configPaths: {
+      dir: "/sandbox/.hermes",
+      configFile: "config.yaml",
+      format: "yaml",
+      envFile: ".env",
+    },
+  }),
+});
+installMock(source("adapters", "openshell", "client.js"), {
+  captureOpenshellCommand: () => ({ status: 0, output: "model:\n  default: trusted-model\n" }),
+  runOpenshellCommand: () => ({ status: 0 }),
+});
+installMock(source("sandbox", "privileged-exec.js"), {
+  capturePrivilegedSandboxCommand: () => {
+    writeAttempts++;
+    throw new Error("compat hash does not match frozen Hermes inputs during non-root reconciliation");
+  },
+  withPrivilegedSandboxExecutionLease: (_sandboxName, _operation, callback) => callback(),
+});
+
+const config = require(source("sandbox", "config.js"));
+const target = config.resolveAgentConfig("alpha");
+const parsed = config.readSandboxConfig("alpha", target);
+parsed.model.default = "trusted-model-v2";
+try {
+  config.writeSandboxConfig("alpha", target, parsed);
+  process.stdout.write(JSON.stringify({ wrote: true, writeAttempts }));
+} catch (error) {
+  process.stdout.write(JSON.stringify({ name: error.name, message: error.message, writeAttempts }));
+}
+`;
+    const result = spawnSync(process.execPath, ["--require", SOURCE_REQUIRE_HOOK, "-e", script], {
+      cwd: path.join(import.meta.dirname, "../../.."),
+      encoding: "utf-8",
+      env: { ...process.env, NODE_OPTIONS: "" },
+      timeout: 5000,
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    const refusal = JSON.parse(result.stdout) as {
+      name?: string;
+      message?: string;
+      wrote?: boolean;
+      writeAttempts: number;
+    };
+    expect(refusal).toMatchObject({ name: "SandboxConfigError", writeAttempts: 1 });
+    expect(refusal.wrote).toBeUndefined();
+    expect(refusal.message).toContain("trusted backup or create a fresh Hermes sandbox");
+    expect(refusal.message).toContain("The configuration write was not applied");
+  });
 });

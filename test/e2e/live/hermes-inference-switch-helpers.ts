@@ -424,6 +424,12 @@ export async function runHermesPongWithRetry(
       return { outcome: "failed", failureClass: hermesProbeFailureClass(value.result) };
     },
   });
+  if (execution.outcome === "failed") {
+    const diagnostic = execution.value && resultText(execution.value.result).trim();
+    throw new Error(
+      `Hermes PONG probe did not return a successful response from the selected model.${diagnostic ? `\n${diagnostic}` : ""}`,
+    );
+  }
   if (execution.value) return execution.value.result;
   throw new Error("Hermes live probe completed without an attempt result.");
 }
@@ -730,6 +736,7 @@ export async function runHermesInferenceSetWithRetry(
   compatibleMetadataArgs: string[],
   options: {
     attempts?: number;
+    artifactNamePrefix?: string;
     artifacts?: InferenceSwitchRetryArtifactSink;
     compatibleBinding?: CompatibleAnthropicSwitchBinding | null;
     delay?: (milliseconds: number) => Promise<void>;
@@ -756,7 +763,7 @@ export async function runHermesInferenceSetWithRetry(
       : undefined,
     run: (attempt) =>
       host.command("node", args, {
-        artifactName: `hermes-inference-set-${attempt}`,
+        artifactName: `${options.artifactNamePrefix ?? "hermes-inference-set"}-${attempt}`,
         env: env(undefined, {
           ...compatibleAnthropicSwitchEnv(options.compatibleBinding ?? null),
           ...(options.publicNvidiaApiKey

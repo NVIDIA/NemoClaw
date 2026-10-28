@@ -284,7 +284,7 @@ describe("protected managed-image runtime workflow", () => {
     const auth = namedMultiarchStep(value, "Authenticate to Docker Hub");
     const direct = namedMultiarchStep(value, "Run every exact managed-image contract directly");
 
-    expect(prepare.with).toEqual({ "build-cli": "false" });
+    expect(prepare.with).toEqual({ "build-cli": "false", "install-dependencies": "false" });
     expect(boundary.run).toEqual(expect.stringContaining("npm run build:policy-boundary"));
     expect(steps.indexOf(auth)).toBe(steps.indexOf(boundary) + 1);
     expect(steps.indexOf(boundary)).toBeLessThan(steps.indexOf(direct));

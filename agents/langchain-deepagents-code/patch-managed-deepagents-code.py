@@ -568,6 +568,7 @@ AGENT_PATCH = r'''
 # NemoClaw-managed progressive tool disclosure.
 # NemoClaw-managed backend-neutral observability.
 from contextvars import ContextVar as _NemoClawContextVar
+import logging as _nemoclaw_logging
 
 _nemoclaw_original_create_cli_agent = create_cli_agent
 _nemoclaw_original_create_deep_agent = globals().get("create_deep_agent")
@@ -598,6 +599,9 @@ def _nemoclaw_create_deep_agent(*args, **kwargs):
             ProgressiveToolDisclosureMiddleware(
                 registered_tools=kwargs.get("tools")
             )
+        )
+        _nemoclaw_logging.getLogger(__name__).info(
+            "NemoClaw progressive tool disclosure middleware installed"
         )
     if observability_active:
         from deepagents_code.nemoclaw_observability import new_relay_middleware

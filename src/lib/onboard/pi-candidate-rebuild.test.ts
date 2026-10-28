@@ -274,6 +274,7 @@ describe("Pi candidate managed rebuild", () => {
       }))!;
       const rebuilt = prepareManagedRebuildProfileHandoff({
         catalogHandoff: catalog,
+        gatewayPort: 8080,
         targetConfig: {
           agentDefinition: { runtime: { kind: "terminal" }, forwardPort: 0 },
           resumeConfig: resume,
@@ -290,6 +291,7 @@ describe("Pi candidate managed rebuild", () => {
       });
       const recovered = rebindManagedStartupProfileForClone({
         sourceSandboxName: entry.name,
+        sourceGatewayPort: 8080,
         destinationSandboxName: "recovered-pi",
         expectedAgent: "pi",
         destinationDashboardPort: null,

@@ -112,7 +112,7 @@ jobs:
     needs: [changes, openshell-sdk-package]
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 22
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -137,6 +137,10 @@ jobs:
             .github/actions/ci-install-dependencies.sh
             ci/reviewed-npm-audit.json
             scripts/audit-reviewed-npm-graph.mts
+            scripts/lib/bundled-npm-package.mts
+            scripts/lib/patch-bundled-npm-undici.mts
+            scripts/lib/remediate-openclaw-runtime-dependencies.mts
+            scripts/lib/reviewed-npm-identity.mts
             scripts/checks/prepare-ci-npm-install.mts
             scripts/lib/reviewed-ci-npm-install.mts
             scripts/checks/candidate-openshell-sdk.mts
@@ -236,6 +240,10 @@ jobs:
             .github/actions/setup-reviewed-npm
             ci/reviewed-npm-audit.json
             scripts/audit-reviewed-npm-graph.mts
+            scripts/lib/bundled-npm-package.mts
+            scripts/lib/patch-bundled-npm-undici.mts
+            scripts/lib/remediate-openclaw-runtime-dependencies.mts
+            scripts/lib/reviewed-npm-identity.mts
             scripts/checks/prepare-ci-npm-install.mts
             scripts/lib/reviewed-ci-npm-install.mts
             scripts/checks/candidate-openshell-sdk.mts
@@ -378,6 +386,10 @@ jobs:
             .github/actions/ci-install-dependencies.sh
             ci/reviewed-npm-audit.json
             scripts/audit-reviewed-npm-graph.mts
+            scripts/lib/bundled-npm-package.mts
+            scripts/lib/patch-bundled-npm-undici.mts
+            scripts/lib/remediate-openclaw-runtime-dependencies.mts
+            scripts/lib/reviewed-npm-identity.mts
             scripts/check-dist-sourcemaps.mts
             scripts/checks/prepare-ci-npm-install.mts
             scripts/lib/reviewed-ci-npm-install.mts
@@ -454,6 +466,10 @@ jobs:
             .github/actions/ci-install-dependencies.sh
             ci/reviewed-npm-audit.json
             scripts/audit-reviewed-npm-graph.mts
+            scripts/lib/bundled-npm-package.mts
+            scripts/lib/patch-bundled-npm-undici.mts
+            scripts/lib/remediate-openclaw-runtime-dependencies.mts
+            scripts/lib/reviewed-npm-identity.mts
             scripts/checks/prepare-ci-npm-install.mts
             scripts/lib/reviewed-ci-npm-install.mts
             scripts/checks/candidate-openshell-sdk.mts
@@ -526,6 +542,10 @@ jobs:
             .github/actions/ci-install-dependencies.sh
             ci/reviewed-npm-audit.json
             scripts/audit-reviewed-npm-graph.mts
+            scripts/lib/bundled-npm-package.mts
+            scripts/lib/patch-bundled-npm-undici.mts
+            scripts/lib/remediate-openclaw-runtime-dependencies.mts
+            scripts/lib/reviewed-npm-identity.mts
             scripts/checks/prepare-ci-npm-install.mts
             scripts/lib/reviewed-ci-npm-install.mts
             scripts/checks/candidate-openshell-sdk.mts
@@ -659,6 +679,10 @@ jobs:
             .github/actions/ci-install-dependencies.sh
             ci/reviewed-npm-audit.json
             scripts/audit-reviewed-npm-graph.mts
+            scripts/lib/bundled-npm-package.mts
+            scripts/lib/patch-bundled-npm-undici.mts
+            scripts/lib/remediate-openclaw-runtime-dependencies.mts
+            scripts/lib/reviewed-npm-identity.mts
             scripts/checks/prepare-ci-npm-install.mts
             scripts/lib/reviewed-ci-npm-install.mts
             scripts/checks/candidate-openshell-sdk.mts
@@ -796,6 +820,10 @@ jobs:
             .github/actions/ci-install-dependencies.sh
             ci/reviewed-npm-audit.json
             scripts/audit-reviewed-npm-graph.mts
+            scripts/lib/bundled-npm-package.mts
+            scripts/lib/patch-bundled-npm-undici.mts
+            scripts/lib/remediate-openclaw-runtime-dependencies.mts
+            scripts/lib/reviewed-npm-identity.mts
             scripts/checks/prepare-ci-npm-install.mts
             scripts/lib/reviewed-ci-npm-install.mts
             scripts/checks/candidate-openshell-sdk.mts
@@ -853,6 +881,10 @@ jobs:
             .github/actions/ci-install-dependencies.sh
             ci/reviewed-npm-audit.json
             scripts/audit-reviewed-npm-graph.mts
+            scripts/lib/bundled-npm-package.mts
+            scripts/lib/patch-bundled-npm-undici.mts
+            scripts/lib/remediate-openclaw-runtime-dependencies.mts
+            scripts/lib/reviewed-npm-identity.mts
             scripts/checks/prepare-ci-npm-install.mts
             scripts/lib/reviewed-ci-npm-install.mts
             scripts/checks/candidate-openshell-sdk.mts

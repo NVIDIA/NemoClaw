@@ -290,6 +290,8 @@ The host-side proxy liveness check treats any HTTP response, including `401`, as
 The `status` and `doctor` route probe runs inside the sandbox and reports HTTP `200` through `499` as reachable, HTTP `500` through `599` as `unhealthy`, and transport failures or unavailable probes as `unreachable` or `not probed`.
 `status` then sends an inference request over the reachable route and reports `healthy` when the route served it, or `unauthorized` when the proxy token is no longer accepted.
 
+These checks apply to a normal status read when gateway and sandbox state are verified. If either state is not verified, status reports `Inference: not verified (gateway/sandbox state not verified)` and sends no inference request. If status reports `Inference: not probed (another lifecycle operation is in progress)`, it skips provider-health and inference-invocation probes but may still observe the shared route. JSON output sets `inferenceProbeSuppressed: true` for that unlocked read. Repeat status after the lifecycle operation completes before using it to verify the route or proxy token.
+
 If Ollama is already bound to a non-loopback address, onboarding restarts it on `127.0.0.1:11434` so the proxy becomes the only network path.
 
 ## Allow the Docker Bridge Through a Firewall
