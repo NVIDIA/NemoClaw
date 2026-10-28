@@ -414,7 +414,9 @@ describe("native NVIDIA provider resume", () => {
   it("does not select native recovery without sandbox recovery authority", async () => {
     const h = createHarness();
     h.options.deps.getSandboxRecoveryAuthority = () => "unauthorized";
-    await expect(handleProviderInferenceState(h.options)).rejects.toThrow("exit 1");
+    await expect(handleProviderInferenceState(h.options)).rejects.toThrow(
+      "Recorded native NVIDIA provider recovery is not authorized",
+    );
     expect(h.getProvider).not.toHaveBeenCalled();
     expect(h.updateSandbox).not.toHaveBeenCalled();
     expect(h.getSandboxRecreateObservation).not.toHaveBeenCalled();

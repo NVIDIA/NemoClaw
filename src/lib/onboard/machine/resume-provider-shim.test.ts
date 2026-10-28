@@ -110,6 +110,37 @@ describe("createResumeProviderShim", () => {
     },
   );
 
+  it("refuses an unauthorized recorded NVIDIA resume before checking the logical gateway provider", async () => {
+    const providerExistsInGateway = vi.fn(() => true);
+    const replaceNamedCredential = vi.fn(async () => "unexpected");
+    const shim = createResumeProviderShim({
+      getSandbox: () => ({
+        pendingRouteReservation: true,
+        reservationSessionId: "another-session",
+        nativeNvidiaProviderAttachment: {
+          schemaVersion: 1,
+          profileId: "nemoclaw-nvidia-inference-v1",
+          providerName: "nemoclaw-nvidia-prod-v1",
+          providerId: "owned-provider-id",
+        },
+      }),
+      isNonInteractive: () => true,
+      providerExistsInGateway,
+      isRoutedInferenceProvider: () => true,
+      replaceNamedCredential,
+    });
+
+    await expect(
+      shim.ensureResumeProviderReady("gateway-west", "nvidia-prod", null, undefined, {
+        sandboxName: "alpha",
+        endpointUrl: null,
+        recoverRecordedProvider: false,
+      }),
+    ).rejects.toThrow("Recorded native NVIDIA provider recovery is not authorized");
+    expect(providerExistsInGateway).not.toHaveBeenCalled();
+    expect(replaceNamedCredential).not.toHaveBeenCalled();
+  });
+
   it("preserves legacy NVIDIA recovery without a native attachment", async () => {
     const providerExistsInGateway = vi.fn(() => true);
     const shim = createResumeProviderShim({

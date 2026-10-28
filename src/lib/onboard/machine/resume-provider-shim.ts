@@ -116,11 +116,10 @@ export function createResumeProviderShim(deps: ResumeProviderShimDeps) {
         if (!normalizeNativeNvidiaProviderAttachment(recorded.nativeNvidiaProviderAttachment)) {
           throw new Error("Invalid native NVIDIA provider attachment during resume.");
         }
-        if (
-          selection?.recoverRecordedProvider === false &&
-          !hydrateCredentialEnv(NVIDIA_HOSTED_CREDENTIAL_ENV)
-        ) {
-          return recoverRegisteredProvider();
+        if (selection?.recoverRecordedProvider === false) {
+          // A logical gateway provider cannot authorize recovery of a recorded
+          // native attachment owned by another session's reservation.
+          throw new Error("Recorded native NVIDIA provider recovery is not authorized.");
         }
         // Native setup verifies the live provider identity against its receipt.
         // The logical name is not the credential-bearing gateway provider.
