@@ -184,9 +184,9 @@ content and conditional evidence. The [contributor PR skill](.agents/skills/nemo
 owns the automated publication and review-follow-up workflow. The root
 [PR requirements](AGENTS.md#pr-requirements) own repository-specific exceptions.
 
-Every PR includes a collapsed opening [authoring-session report](.agents/skills/nemoclaw-contributor-create-pr/references/session-report.md) comment, including existing and automated PRs.
+Every PR includes a collapsed opening [authoring-session report](.agents/skills/nemoclaw-contributor-create-pr/SKILL.md#session-report) comment, including existing and automated PRs.
 Post the report when opening a PR, or on the next update to an existing PR.
-The metadata job checks the comment template against the report validator. Follow the report's migration guidance when historical evidence is unavailable.
+The metadata job checks the PR author's posted comment and the shared template. Use unavailable fields when historical evidence is missing; preserve existing evidence and cutoffs. After posting, rerun a failed metadata job for the current PR revision. Comment events alone do not refresh this check.
 
 After each revision, follow CI and review to completion. Address valid findings with a change, or
 explain why they do not apply. Keep the PR description and validation evidence current.

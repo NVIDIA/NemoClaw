@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-contributor-create-pr
-description: "Publish or update a NemoClaw pull request and follow its CI and automated reviews to completion."
+description: Create or update a NemoClaw pull request with its authoring-session report, then follow its checks and automated reviews.
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
@@ -8,60 +8,61 @@ description: "Publish or update a NemoClaw pull request and follow its CI and au
 
 # Create or Update a Pull Request
 
-Publish the requested NemoClaw change and follow required CI and scheduled automated reviews until
-one unchanged latest PR commit has a complete disposition. A successful push alone is not completion.
-Preserve the user's scope and any explicit instruction to stop at a draft or withhold approval.
+Session reporting follows v1 PR #13918 at `7238cbdff9`, retaining its notices and report contract. Main retains its publication and validation requirements.
 
-## Select the stage
+Before publication, follow [Validation](references/validation.md) and [Publication](references/publication.md). For an open PR, first follow the [PR follow-up contract](../_shared/pr-follow-up.md); route valid code repairs to `nemoclaw-contributor-implement-issue`. These references own trusted-base validation, source-repository selection, guarded writes, verified commits, DCO, draft handling, and review follow-up. Follow [Writing and review](../_shared/documentation-writing-review.md) for PR text.
 
-- **Initial publication:** read [Validation](references/validation.md), then
-  [Publication](references/publication.md). Use the implementation evidence already collected.
-- **Update an open PR:** first complete the [PR follow-up contract](../_shared/pr-follow-up.md).
-  Repair valid in-scope findings through `nemoclaw-contributor-implement-issue`, then apply the
-  validation and publication references. These are stages of the same authorized task.
-- **Inspect CI or review feedback:** use the shared follow-up contract. Load publication procedures
-  only if an authorized branch or PR write is needed.
-- **Mark a draft ready:** use the ready-state requirements in
-  [Publication](references/publication.md#assignment) after the latest commit completes follow-up.
+When changing live E2E evidence, require the implementation handoff to apply [Define the Live Contract](../../references/e2e-authoring.md#define-the-live-contract), or [Move or Remove Evidence](../../references/e2e-authoring.md#move-or-remove-evidence) when pruning or relocating assertions. Route incomplete handoffs back to implementation.
 
-## Publication requirements
+1. Write the description from the canonical base’s `.github/PULL_REQUEST_TEMPLATE.md`; keep the report out of it. Prepare a separate comment from `.github/SESSION_REPORT_TEMPLATE.md` using the [evidence rules](#session-report). Keep `<details>` without `open`.
+2. Validate the comment:
 
-Every PR must have a collapsed opening [authoring-session report](references/session-report.md) comment,
-including unavailable fields. Inspect recorded authoring evidence; load only the applicable
-[Codex](references/codex.md) or [Pi](references/pi.md) reference. Preserve the report cutoff on updates.
+   ```sh
+   rustc --edition=2024 tools/ci/pr-session-report.rs -o /tmp/pr-session-report
+   /tmp/pr-session-report report-comment.md
+   ```
 
-Use the canonical NVIDIA/NemoClaw base, template, sensitive-path policy, and trusted validation
-surface described in the references. Publish from a clean feature branch. Every published commit
-must be GitHub `Verified`; the PR body must contain the configured identity's DCO declaration.
+3. Publish through the [publication procedure](references/publication.md), preserving main’s description sections, DCO, and draft requirements. Read all pages of PR comments before posting, including after an uncertain retry; reuse an existing opening report by the PR author instead of duplicating it. If absent, post once as the PR author with `gh pr comment NUMBER --body-file report-comment.md`.
+4. Read back the description and comments. Verify the description has no report, exactly one opening report by the PR author exists, and its contents match the intended report. Keep the exact summary `Authoring session — opening`. Validate the retrieved files with `/tmp/pr-session-report --pr description.md author-comment-1.md author-comment-2.md`; pass every PR-author comment, including later reports and unrelated comments. Comments by others are ignored; a maintainer's comment cannot substitute for an automated PR author's report.
+5. Follow checks and automated reviews on the latest commit. If the metadata job fetched comments before the opening report was posted, wait for that run to finish, then use `gh run rerun --job JOB_ID` for its failed `commit-lint` job. Select the job from this PR's latest-revision run; a rerun retains the original revision but fetches current comments. Reruns require repository write permission, so external contributors may need a maintainer. Confirm the rerun passes.
 
-Before declaring the source repository, apply the trusted-base source-repository eligibility gate in
-[Publication](references/publication.md#select-the-source-repository). Never open a fork PR when a
-required CI or E2E path for the candidate is restricted to same-repository pull requests.
+CI fetches the description and all comment pages on PR opening, updates, reopening, and description/title edits. It checks the presence and format of the PR author's opening report, not the truth or completeness of its evidence. Fetch failures fail the check. Comment posting, editing, or deletion alone does not trigger a refresh; rerun the metadata job after such changes.
 
-Bind branch writes to the declared repository, branch, local commit, and expected remote state.
-Preserve the atomic prior-state guard, fast-forward ancestry check, and readback requirements.
-Reconcile inconclusive writes before any permitted bounded retry. Never infer success from a write
-response alone or weaken the reference's concurrency and recovery rules.
+The check uses the candidate checkout's validator and workflow. It does not protect against a PR changing its own validation; trusted-base enforcement is outside this check's scope.
 
-Open code-changing or sensitive-path PRs as drafts. Record available review context without claiming
-unobserved approval. Do not select labels or request maintainer reviews in this workflow.
-A workflow or live E2E file change does not require separate approval. Manual live E2E dispatch
-still requires authority for the selected target. Missing dispatch authority does not block draft
-publication unless the accepted scope requires that live evidence before publication.
-When the diff adds, expands, or repairs live E2E evidence, require the implementation handoff to apply
-[Define the Live Contract](../../references/e2e-authoring.md#define-the-live-contract). When it
-prunes or relocates live assertions, require the handoff to apply
-[Move or Remove Evidence](../../references/e2e-authoring.md#move-or-remove-evidence). Route a handoff
-that omits any required field back to implementation before publication.
-Follow [GitHub access](../_shared/git-github-hard-stop.md) for access errors and
-[Writing and review](../_shared/documentation-writing-review.md) for PR text.
+Preserve historical reports and their cutoffs. Optional later commit or merge reports may use the same collapsed format with a distinct summary and revision; they do not replace the opening report or create a publication requirement.
+
+## Session Report
+
+Report the session that wrote the change, up to a cutoff you state; if this session only publishes the PR, mark every row unavailable.
+Give each row one status:
+
+- `recorded`: the session record covers the whole session.
+- `partial`: it covers part of the session; say what is missing. Counts are lower bounds.
+- `unavailable`: it can't establish the field; the value is `-`, and the last column says why.
+
+A missing record never means zero.
+Count a skill or instruction file only when its full contents appear in the record, injected or completely read; instruction files are guidance outside skills, such as `AGENTS.md`, not source files read for the change.
+Don't publish session file paths or IDs; comments are public.
+
+For example:
+
+| Field | Status | Value | Evidence or limit |
+| --- | --- | --- | --- |
+| Harness | recorded | Codex CLI 0.163.0 | Session metadata |
+| Skills | recorded | test-driven-development (injected); terminal-ux (complete read) | Skill injections and reads to cutoff |
+| Instruction files | partial | AGENTS.md (complete read); WRITING.md (complete read) | Startup injections not recorded |
+| Tool calls | partial | exec: 31; apply_patch: 4 | Includes failed calls; the exec wrapper hides nested calls |
+| Session window | recorded | 2026-10-27T19:56Z to 2026-10-27T20:04Z; 8 min | First event to cutoff, including idle time |
+| Compactions | recorded | 0 | Complete record to cutoff |
+| Models | recorded | gpt-6-astra | Turn context; no changes |
+| Reasoning levels | recorded | medium; high | Effort changes, in order |
+
+Where to find the record:
+
+- **Codex CLI:** `CODEX_HOME/sessions/YYYY/MM/DD/rollout-….jsonl`, which is not a stable interface. In a forked session, exclude the parent's activity.
+- **Pi:** `~/.pi/agent/sessions/--<path>--/<timestamp>_<session-id>.jsonl`. Read only the active branch; a branch summary is not a compaction.
 
 ## Completion
 
-Carry the original objective, accepted scope, deferred scope, tested commit, and validation evidence
-through repairs and publication. Continue authorized work without asking the user to restate the PR
-request. Ask only for a decision outside that scope or a required authorization that is still missing.
-
-Report the PR URL, current commit, CI and automated-review results, and any remaining human decision
-or external blocker. Distinguish pending evidence from completed evaluation. This skill does not
-grant merge authority.
+Report the PR URL, latest commit, CI and automated-review results, and remaining blockers. A successful push alone is not completion. This skill does not grant merge authority.

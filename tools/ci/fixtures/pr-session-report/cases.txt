@@ -1,0 +1,13 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# Expected result, description file, then zero or more PR-author comment files.
+pass description.txt opening.txt
+pass description.txt opening.txt later.txt description.txt
+fail description.txt
+fail description.txt later.txt
+fail description.txt opening.txt opening.txt
+fail opening.txt
+fail opening.txt opening.txt
+fail description.txt expanded.txt
+fail description.txt malformed.txt
+fail description.txt missing-file.txt

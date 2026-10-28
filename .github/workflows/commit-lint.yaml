@@ -42,39 +42,31 @@ jobs:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: printf '%s\n' "$PR_TITLE" | npx commitlint --verbose
 
-      - name: Test and verify session report contract
-        if: ${{ !cancelled() }}
+      - name: Check and test the validator
         run: |
-          npx vitest run --project integration test/automation/pull-requests/session-report.test.ts test/automation/pull-requests/session-report-workflow.test.ts
-          node --import tsx scripts/checks/pr-session-report.mts --body-file .agents/skills/nemoclaw-contributor-create-pr/references/session-report-template.md
-
-      - name: Read current PR comments
-        if: ${{ !cancelled() }}
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
-        with:
-          script: |
-            const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: context.payload.pull_request.number });
-            const comments = await github.paginate(github.rest.issues.listComments, {
-              ...context.repo, issue_number: context.payload.pull_request.number, per_page: 100,
-            });
-            const reports = [];
-            const allowed = new Map([[pr.user.login.toLowerCase(), true]]);
-            for (const comment of comments) {
-              if (!comment.user?.login || !comment.body?.trim().startsWith('<!-- agent-session-report:opening -->')) continue;
-              const login = comment.user.login.toLowerCase();
-              if (!allowed.has(login)) {
-                try {
-                  const { data: access } = await github.rest.repos.getCollaboratorPermissionLevel({ ...context.repo, username: login });
-                  allowed.set(login, ['admin', 'maintain'].includes(access.role_name || access.permission));
-                } catch (error) {
-                  if (error.status !== 404) throw error;
-                  allowed.set(login, false);
-                }
-              }
-              if (allowed.get(login)) reports.push(comment);
-            }
-            require('node:fs').writeFileSync(process.env.RUNNER_TEMP + '/session-report-comments.json', JSON.stringify(reports));
-
-      - name: Validate the opening report comment
-        if: ${{ !cancelled() }}
-        run: node --import tsx scripts/checks/pr-session-report.mts --comments-file "$RUNNER_TEMP/session-report-comments.json"
+          rustfmt --edition 2024 --check tools/ci/pr-session-report*.rs
+          rustc --edition=2024 -D warnings --test tools/ci/pr-session-report.rs -o "$RUNNER_TEMP/report-tests"
+          "$RUNNER_TEMP/report-tests"
+          rustc --edition=2024 -D warnings tools/ci/pr-session-report.rs -o "$RUNNER_TEMP/report-check"
+          "$RUNNER_TEMP/report-check" .github/SESSION_REPORT_TEMPLATE.md
+          rustc --edition=2024 -D warnings --test tools/ci/pr-session-report-workflow.rs -o "$RUNNER_TEMP/adapter-tests"
+          "$RUNNER_TEMP/adapter-tests"
+      - name: Check the posted opening report
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_AUTHOR_ID: ${{ github.event.pull_request.user.id }}
+        shell: bash
+        run: |
+          input="$RUNNER_TEMP/session-report"
+          mkdir -p "$input"
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq '.body // ""' > "$input/description.md"
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments?per_page=100" > "$input/comments.json"
+          jq -r --argjson author "$PR_AUTHOR_ID" '.[][] | select(.user.id == $author) | .body | @base64' "$input/comments.json" > "$input/author-comments.b64"
+          comments=()
+          while IFS= read -r encoded; do
+            path="$input/comment-${#comments[@]}.md"
+            printf '%s' "$encoded" | base64 --decode > "$path"
+            comments+=("$path")
+          done < "$input/author-comments.b64"
+          "$RUNNER_TEMP/report-check" --pr "$input/description.md" "${comments[@]}"

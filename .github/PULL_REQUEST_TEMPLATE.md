@@ -22,8 +22,8 @@ For an accepted non-success, skipped, or missing CI check, name the check, appro
 If scripts/prepare-dgx-station-host.sh changes, identify the tested commit, Station profile or scenario, result, and supporting link. Maintainers must review that evidence before merge. If repository governance permits an exception, document the reason. -->
 
 <!-- Post the opening authoring-session report as a collapsed PR comment.
-Use .agents/skills/nemoclaw-contributor-create-pr/references/session-report-template.md.
-See references/session-report.md in that skill for the evidence contract. -->
+Use .github/SESSION_REPORT_TEMPLATE.md.
+See .agents/skills/nemoclaw-contributor-create-pr/SKILL.md#session-report for the evidence contract. -->
 
 ---
 <!-- DCO sign-off is required in this PR description. Every commit must appear as Verified in GitHub. -->

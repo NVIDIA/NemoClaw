@@ -143,17 +143,6 @@ Follow [Documentation Writing and Review](../../_shared/documentation-writing-re
 | Review notes | Available review context for any sensitive path, approved CI waiver, or required hardware validation. Remove the section when none apply. |
 | DCO Sign-Off | Configured Git name and email. |
 
-Prepare a collapsed [authoring-session report](session-report.md) comment using the [comment template](session-report-template.md).
-Preserve all canonical PR description requirements, including DCO. Human authors and publication-only sessions must also prepare the comment;
-use unavailable when authoring evidence cannot be established. Keep validation results separate from session evidence.
-Validate the saved comment before posting or editing it:
-
-```bash
-node --import tsx scripts/checks/pr-session-report.mts --body-file /path/to/session-report-comment.md
-```
-
-Review the evidence limits yourself. The validator checks structure and statuses, not truth or compliance.
-
 ## Publish once
 
 Before creating the PR, decide its draft state and whether assignment is allowed. Assemble the
@@ -174,18 +163,7 @@ retry. Only when the response was inconclusive and no PR exists, repeat the remo
 checks immediately before one creation retry. Stop when either state changed or cannot be read. Do not
 make a second retry.
 
-### Post the opening report
-
-After verifying the created PR, post the prepared opening report once:
-
-```bash
-gh pr comment PR_NUMBER --repo NVIDIA/NemoClaw --body-file /path/to/session-report-comment.md
-```
-
-Read back the posted comment and verify its complete contents. Before retrying an inconclusive post, list all PR comments.
-Reuse the existing opening report when its body matches; stop on duplicates or conflicting reports.
-Do not replace historical evidence when updating the branch. Later reports use separate comments as defined in the shared contract.
-If posting fails, keep the draft and report publication as incomplete. The metadata check rejects a missing opening comment.
+Complete the [opening-report publication and readback](../SKILL.md) after creating the PR. Preserve the original evidence and cutoff when updating its format; later activity belongs in optional separate reports.
 
 ### Assignment
 
