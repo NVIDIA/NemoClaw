@@ -22,9 +22,10 @@ import {
 function defineCodebaseGrowthGuardrails(): void {
   let diff: GrowthGuardrailDiff;
 
+  // Two remote fetches and merge construction each have a 30-second command limit.
   beforeAll(async () => {
     diff = await loadGrowthGuardrailDiff();
-  });
+  }, 120_000);
 
   it("requires TypeScript for new Node.js files", () => {
     const violations = addedJavaScriptViolations(diff.files);
