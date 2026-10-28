@@ -227,11 +227,9 @@ pub(super) fn gateway_environment(
         names.insert(credential.env.as_str());
     }
     if let Some(tls) = gateway.tls() {
-        names.extend([
-            tls.ca.env.as_str(),
-            tls.certificate.env.as_str(),
-            tls.key.env.as_str(),
-        ]);
+        names.insert(tls.ca.env.as_str());
+        names.extend(tls.certificate.iter().map(|file| file.env.as_str()));
+        names.extend(tls.key.iter().map(|file| file.env.as_str()));
     }
     credential_environment(names, secrets, directory)
 }

@@ -740,6 +740,28 @@ fn managed_podman_requires_an_explicit_engine() {
 }
 
 #[test]
+fn external_gateway_tls_takes_a_ca_alone_or_with_a_client_certificate_and_key() {
+    let validator = jsonschema::validator_for(&input_schema()).unwrap();
+    let complete = input("kubernetes/external-gateway.yaml");
+    agrees(&validator, &complete, true);
+    let tls = complete["spec"]["gateway"]["tls"].clone();
+    for (fields, accepted) in [
+        (&["ca"][..], true),
+        (&["ca", "certificate"][..], false),
+        (&["ca", "key"][..], false),
+        (&["certificate", "key"][..], false),
+    ] {
+        let mut value = complete.clone();
+        value["spec"]["gateway"]["tls"] = fields
+            .iter()
+            .map(|field| (field.to_string(), tls[*field].clone()))
+            .collect::<serde_json::Map<_, _>>()
+            .into();
+        agrees(&validator, &value, accepted);
+    }
+}
+
+#[test]
 fn ollama_and_vllm_services_state_the_same_placement_requirement() {
     let schema = input_schema();
     let service = |kind: &str| {

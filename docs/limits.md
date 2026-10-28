@@ -81,6 +81,7 @@ Other pages state a limit where it affects a procedure and link the same issue.
 | Limit | Issue |
 |---|---|
 | Host-specific security qualification | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
+| An inference endpoint whose certificate comes from a CA that OpenShell's supervisor image doesn't trust; OpenShell's provider registrations take no CA ([custom CA trust](inference.md#trust-a-custom-certificate-authority)) | [#13834](https://github.com/NVIDIA/NemoClaw/issues/13834), [NVIDIA/OpenShell#3295](https://github.com/NVIDIA/OpenShell/issues/3295) |
 | A corporate CA for OpenShell's gateway and sandbox egress, managed model downloads, and image builds | [Corporate CA](security.md#trust-a-corporate-certificate-authority) |
 | [Proxy](sandbox-network.md#use-an-upstream-proxy) credentials for a managed Docker or Podman gateway: OpenShell reads them only from a file on the gateway (`proxy_auth_file`), which NemoClaw doesn't mount | [#13835](https://github.com/NVIDIA/NemoClaw/issues/13835) |
 | A proxy CA (`proxy_ca_bundle`) for any managed gateway: Docker and Podman read it from a file on the gateway, and the chart mounts it only from its `upstreamProxy.caBundle.configMapName` value, which NemoClaw doesn't set | [#13835](https://github.com/NVIDIA/NemoClaw/issues/13835) |

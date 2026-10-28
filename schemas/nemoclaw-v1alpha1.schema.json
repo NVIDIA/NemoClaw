@@ -748,7 +748,7 @@
             },
             "tls": {
               "$ref": "#/$defs/TLS",
-              "description": "Optional mutual TLS references for an external HTTPS gateway."
+              "description": "Optional TLS references for an external HTTPS gateway: a CA alone, or with a client certificate and key for mutual TLS."
             }
           },
           "required": [
@@ -3850,7 +3850,15 @@
     },
     "TLS": {
       "additionalProperties": false,
-      "description": "Gateway mutual TLS file references. All three references are required when TLS is declared.",
+      "dependentRequired": {
+        "certificate": [
+          "key"
+        ],
+        "key": [
+          "certificate"
+        ]
+      },
+      "description": "Gateway TLS file references: the CA certificate that verifies the gateway, and a client certificate and key, which must appear together, when the gateway requires one.",
       "properties": {
         "ca": {
           "$ref": "#/$defs/FileRef",
@@ -3858,17 +3866,15 @@
         },
         "certificate": {
           "$ref": "#/$defs/FileRef",
-          "description": "Environment variable whose value names the local client certificate file."
+          "description": "Environment variable whose value names the local client certificate file. Requires key."
         },
         "key": {
           "$ref": "#/$defs/FileRef",
-          "description": "Environment variable whose value names the local client private-key file."
+          "description": "Environment variable whose value names the local client private-key file. Requires certificate."
         }
       },
       "required": [
-        "ca",
-        "certificate",
-        "key"
+        "ca"
       ],
       "type": "object"
     },
