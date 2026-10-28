@@ -8,26 +8,17 @@ description: Find revision-matched NemoClaw user guidance for deployment, infere
 
 # NemoClaw User Guide
 
-## Select the Product Version
+## Select the Version
 
-Identify the user's intended deployment and bundle before choosing operational commands.
-Use their stated version, the checkout's README and source revision, and the selected executable's `--help`/`--version` when available.
-Branch names alone do not identify an installed executable.
-The v1 desired-state CLI exposes `plan`, `apply`, `export`, and `destroy`; npm onboarding, `launch`, `backup-all`, and `inference get` belong to earlier workflows.
+Establish which NemoClaw the user runs before suggesting commands: their stated version, the checkout's README and revision, and the executable's `--help` or `--version`.
+A branch name doesn't identify an installed executable.
+The v1 CLI has `plan`, `apply`, `export`, and `destroy`; npm onboarding, `launch`, `backup-all`, and `inference get` belong to earlier versions.
 
-Prefer the documentation in the checkout matching the bundle.
-Start with [the local index](../../../docs/README.md), then read the owning task guide.
-If a copied skill has no adjacent checkout, ask for the target version or use the user's identified source revision; do not treat missing local files as permission to guess.
-When the selected executable and requested docs disagree, explain the mismatch and establish which deployment the user intends to operate before proposing a mutation.
-
-For hosted v1 development guidance, use [the versioned Markdown index](https://nvidia-preview-nemoclaw-v1.docs.buildwithfern.com/nemoclaw/v1/llms.txt).
-Keep `/nemoclaw/v1/` in task-page URLs; append `.md` for Markdown.
-The staging content moves with successful pushes: its source links must match the revision being evaluated before claiming exact bundle compatibility.
-The unversioned index and **Latest** selector describe main.
-For an earlier deployment, follow its version's documentation and matching tooling; the presence of this v1 skill does not authorize migration.
-If the versioned page cannot be fetched, use matching local sources or report the missing source instead of substituting main commands.
-Each v1 Markdown page carries a generic header that links the unversioned index and advertises MCP.
-That header does not establish version-scoped search or a working docs MCP server; [#12644](https://github.com/NVIDIA/NemoClaw/issues/12644) tracks both.
+Use the documentation in the matching checkout, starting with [the index](../../../docs/README.md).
+Without a checkout, use [the hosted v1 index](https://nvidia-preview-nemoclaw-v1.docs.buildwithfern.com/nemoclaw/v1/llms.txt); keep `/nemoclaw/v1/` in page URLs and append `.md` for Markdown.
+That site follows the latest `v1` push, and its unversioned index and **Latest** selector describe main.
+If the matching documentation isn't available, say so instead of substituting another version's commands.
+If the executable and the documentation disagree, establish which deployment the user means before changing anything.
 
 ## Route the Task
 
@@ -40,10 +31,10 @@ That header does not establish version-scoped search or a working docs MCP serve
 | SDK, provider, accepted fields, or flags | [SDK](../../../docs/sdk.md), [provider](../../../docs/provider.md), [configuration](../../../docs/reference/configuration.md), [CLI](../../../docs/reference/cli.md) |
 | Earlier-product migration or security | [Migration](../../../docs/migration.md), [security](../../../docs/security.md), [sandbox policy](../../../docs/sandbox-network.md) |
 
-Read only the sources relevant to the user's task and follow their verification and recovery steps.
-Treat **TBD** as an implementation or procedure that still needs verification.
-Match each claim to the source that supports it: parser acceptance shows a field is accepted, fixture coverage shows behavior against substitutes, and a live result shows behavior on one host at its recorded revision.
+Read only the sources for the task, and follow their verification and recovery steps.
+**TBD** marks something not yet verified.
 Keep client, sandbox engine, and inference host requirements separate.
-Preserve credential references, immutable image pins, the original bundle, and deployment state.
-Configuration export does not back up native files or conversation history; destroy deletes sandbox data and has no confirmation prompt.
-Reading this skill grants no additional permission to deploy, send messages, revoke credentials, or delete resources.
+
+Export doesn't back up native files or conversation history, and `destroy` deletes sandbox data without a confirmation prompt.
+Preserve credential references, image pins, the original bundle, and deployment state.
+This skill grants no permission to deploy, migrate, send messages, revoke credentials, or delete resources.
