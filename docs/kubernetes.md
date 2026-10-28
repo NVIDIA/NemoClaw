@@ -250,7 +250,7 @@ Sandboxes still need `image.metadata`.
 
 Sandboxes can use a model server that you run in the gateway's cluster.
 NemoClaw creates nothing for it: you deploy the server with your platform's own tools, and the sandboxes reach it through its Service.
-This has been tried on one kind cluster; [current limits](limits.md#platforms-models-and-placement) lists what is untested.
+This has been tried on one kind cluster and one OpenShift Local node; [current limits](limits.md#platforms-models-and-placement) lists what is untested.
 Name the Service by its cluster DNS name and port:
 
 ```yaml

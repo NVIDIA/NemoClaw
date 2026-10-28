@@ -203,7 +203,13 @@ impl JourneyState {
             .decisions
             .record_answer(id, &question.target, omitted);
         // Later answers start by resolving, so never commit a state that cannot resolve.
-        candidate.resolve(capabilities)?;
+        for question in candidate.resolve(capabilities)?.questions() {
+            if question.required {
+                candidate
+                    .decisions
+                    .reopen_omission(question.id(), &question.target, id);
+            }
+        }
         *self = candidate;
         Ok(())
     }

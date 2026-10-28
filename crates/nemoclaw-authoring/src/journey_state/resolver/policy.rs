@@ -150,7 +150,14 @@ impl<'a> QuestionPolicy<'a> {
         work.omitted.sort();
         work.omitted.dedup();
         for question in &mut work.questions {
-            question.reopened_because = self.decisions.reopened_by.get(question.id()).cloned();
+            question.reopened_because = match &question.target {
+                QuestionTarget::ModelSetting { route, .. } => self
+                    .decisions
+                    .reopened_model_settings
+                    .get(&(*route, question.id().to_owned())),
+                _ => self.decisions.reopened_by.get(question.id()),
+            }
+            .cloned();
         }
         work.questions.sort_by_key(|question| {
             (
@@ -175,6 +182,21 @@ impl<'a> QuestionPolicy<'a> {
         {
             let question = work.questions.remove(api);
             work.questions.insert(model, question);
+        }
+        // Keep exact guidance order among independent questions, but a setting
+        // must follow its condition's inputs even when guidance names it first.
+        let mut pending = std::mem::take(&mut work.questions);
+        while !pending.is_empty() {
+            let next = pending
+                .iter()
+                .position(|question| {
+                    work.setting_dependencies.iter().all(|(before, after)| {
+                        after != question.id()
+                            || !pending.iter().any(|candidate| candidate.id() == before)
+                    })
+                })
+                .expect("schema traversal produces acyclic setting dependencies");
+            work.questions.push(pending.remove(next));
         }
     }
 }

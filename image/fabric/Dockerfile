@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 ARG BUN_IMAGE=oven/bun:1.4.4-slim@sha256:1846adf22496bd711036aae8be147e57bdebbaea2e5264e3e0b5af1db187d9a4
 ARG NODE_IMAGE=node:24.22.1-trixie-slim@sha256:43b9ba1142b8dcf33fa8f922ca1be85714adc444e0586c7cf7726daaeabc1bea
-ARG PYTHON_IMAGE=python:3.13.17-slim-trixie@sha256:fe14fd57a4c0361110eaa0c284112b189750bcb43fb04bb5d1ee7b7744027ccf
+ARG PYTHON_IMAGE=python:3.14.9-slim-trixie@sha256:b347e2dcbc7f0b6f9fb7182e9da6a187fb10ae715e0692518c1aed0eec94a700
 ARG RUST_IMAGE=rust:1.99.1-slim-trixie@sha256:aab42391a986424e22d6a3ec14f37bc6dd3dacff4d457ca7cccd781e02297cc6
 ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.13.6@sha256:af22a52f5eafef3d78e551599d405c02df61919d18028f0cea8eda93bc9986d0
 # The Fabric source every harness installs; the reference dummy's descriptor
@@ -112,17 +112,30 @@ RUN printf '%s\n' '{"nvidia.fabric.openclaw": {"files": ["/app"], "binaries": ["
 USER node
 
 FROM base AS hermes-assets
-# Hermes Agent release v2026.9.24, which Fabric documents for ordinary runs.
-ARG HERMES_REVISION=f97608f178d1ffeca59860195ab7da295f7c8e5f
-ARG HERMES_SHA256=babbdb9706ad1c96708d75914afb45d809cd4b73dec1ceae233a6814f5ed97e3
+# Hermes Agent release v0.22.4, which includes its native Relay integration.
+ARG HERMES_REVISION=4d04303818b61bf3aa09278af48356315515965b
+ARG HERMES_SHA256=147a567a05402c2832ca12d7e0a33f48fc0e7f627018687cbae1f333dafff0c2
 ADD --checksum=sha256:${HERMES_SHA256} https://codeload.github.com/NousResearch/hermes-agent/tar.gz/${HERMES_REVISION} /sources/hermes.tar.gz
 COPY image/fabric/HERMES-NOTICE.md /sources/HERMES-NOTICE.md
 RUN mkdir -p /opt/hermes && tar -xzf /sources/hermes.tar.gz -C /opt/hermes --strip-components=1 \
     && cp /sources/HERMES-NOTICE.md /opt/hermes/NEMOCLAW-NOTICE.md
 
+FROM base AS switchyard-assets
+ARG TARGETARCH
+ARG SWITCHYARD_PLUGIN_VERSION=0.3.1
+ARG SWITCHYARD_PLUGIN_AMD64_SHA256=c3f46807d96deb1c057357a676f92be0f751f92d67571d3aa85240e78cfbd36a
+ARG SWITCHYARD_PLUGIN_ARM64_SHA256=e55023684543d1cdbfe127af5328481c436f730cc0b5e4d3ca283f4226696b73
+ADD --checksum=sha256:${SWITCHYARD_PLUGIN_AMD64_SHA256} https://github.com/NVIDIA/NeMo-Relay-Plugins/releases/download/switchyard-plugin-${SWITCHYARD_PLUGIN_VERSION}/switchyard-plugin-${SWITCHYARD_PLUGIN_VERSION}-linux-x86_64.tar.gz /sources/switchyard-amd64.tar.gz
+ADD --checksum=sha256:${SWITCHYARD_PLUGIN_ARM64_SHA256} https://github.com/NVIDIA/NeMo-Relay-Plugins/releases/download/switchyard-plugin-${SWITCHYARD_PLUGIN_VERSION}/switchyard-plugin-${SWITCHYARD_PLUGIN_VERSION}-linux-arm64.tar.gz /sources/switchyard-arm64.tar.gz
+RUN case "$TARGETARCH" in amd64|arm64) ;; *) exit 1 ;; esac \
+    && mkdir -p /opt/nemo-relay/plugins/switchyard \
+    && tar -xzf "/sources/switchyard-${TARGETARCH}.tar.gz" \
+        -C /opt/nemo-relay/plugins/switchyard --strip-components=1
+
 FROM interactive AS hermes
 COPY --from=hermes-assets /opt/hermes /opt/hermes
 COPY --from=hermes-assets --chmod=0644 /sources/hermes.tar.gz /opt/nemoclaw/source/
+COPY --from=switchyard-assets /opt/nemo-relay /opt/nemo-relay
 # Hermes owns its dependencies: its own lock, with the mcp extra, settles the
 # packages it shares with Fabric, as Fabric installs into Hermes's environment.
 # Hermes resolves bundled assets relative to its source checkout.
@@ -132,7 +145,7 @@ RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv --mount=type=cache,targe
     && uv pip install --python /opt/fabric/bin/python --no-deps -e /opt/hermes --config-settings editable_mode=compat \
     && uv pip check --python /opt/fabric/bin/python
 ENV HERMES_DISABLE_LAZY_INSTALLS=1
-RUN printf '%s\n' '{"nvidia.fabric.hermes": {"files": ["/opt/hermes"], "binaries": []}}' > /opt/nemoclaw/adapters.json
+RUN printf '%s\n' '{"nvidia.fabric.hermes": {"files": ["/opt/hermes", "/opt/nemo-relay/plugins/switchyard"], "binaries": []}}' > /opt/nemoclaw/adapters.json
 USER node
 
 FROM common-wheels AS pi-build

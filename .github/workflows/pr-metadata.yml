@@ -1,0 +1,32 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+name: PR metadata
+on:
+  # Include stacked PRs. Body edits must not rerun the platform builds.
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+permissions:
+  contents: read
+concurrency:
+  group: pr-metadata-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  session-report:
+    name: Session report
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check and test the validator
+        run: |
+          rustfmt --edition 2024 --check tools/ci/pr-session-report.rs
+          rustc --edition=2024 -D warnings --test tools/ci/pr-session-report.rs -o "$RUNNER_TEMP/report-tests"
+          "$RUNNER_TEMP/report-tests"
+          rustc --edition=2024 -D warnings tools/ci/pr-session-report.rs -o "$RUNNER_TEMP/report-check"
+      - name: Validate the event's PR description
+        # Treat body text as data: never interpolate it into shell source or logs.
+        run: |
+          jq -er '.pull_request | if has("body") then (.body // "") else error("missing PR body") end' "$GITHUB_EVENT_PATH" > "$RUNNER_TEMP/pr-body.md"
+          "$RUNNER_TEMP/report-check" "$RUNNER_TEMP/pr-body.md"

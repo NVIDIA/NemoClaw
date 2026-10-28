@@ -107,6 +107,7 @@ Each layer that makes outbound TLS connections has its own trust store:
 | The engine pulling images | The Docker or Podman daemon's own registry trust, configured on the engine host |
 | The OIDC issuer of a managed Kubernetes gateway | `caConfigMap` in the [OIDC profile](kubernetes.md) |
 | OpenShell's gateway and sandbox egress | OpenShell's images' trust store. NemoClaw can't configure it; OpenShell support is in progress ([NVIDIA/OpenShell#3292](https://github.com/NVIDIA/OpenShell/pull/3292)) |
+| A corporate proxy that OpenShell chains egress through | OpenShell's `proxy_ca_bundle` driver setting, a file on the gateway; no managed gateway can receive it ([current limits](limits.md#security)) |
 | Model downloads inside managed vLLM and Ollama | The runtime image's trust store; not configurable |
 | Image builds (`docker buildx bake`) | Not supported behind TLS-intercepting proxies; build on a network that doesn't intercept TLS |
 

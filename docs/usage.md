@@ -136,7 +136,7 @@ Kubernetes and OpenShift gateways pass them to the chart's `gatewayConfig`, wher
 Plan rejects a setting that replaces a key NemoClaw manages, such as the gateway's authentication, signing paths, or the driver's images.
 OpenShell validates the rest when the gateway starts: an unknown or misplaced field in the selected driver's table stops the gateway, and tables for other drivers are ignored.
 A change replaces a Docker or Podman gateway's container, which receives the new file and keeps the gateway's data, and upgrades a Kubernetes gateway's chart release.
-The restarted gateway restarts its sandboxes, and Fabric agents don't start again in a restarted sandbox, so the next plan replaces them, deleting their files and conversation history; see [replacing workloads](#replace-workloads-after-an-unusable-runtime).
+The restarted gateway restarts its sandboxes but not their Fabric agents, and neither plan nor apply notices: invoking an agent fails with `runtime_unavailable` until you [replace its sandbox](#replace-workloads-after-an-unusable-runtime), which deletes its files and conversation history ([#13870](https://github.com/NVIDIA/NemoClaw/issues/13870)).
 Do not put secrets in it: plans and state show it.
 An external gateway takes no `config`; its operator configures it.
 
@@ -408,11 +408,11 @@ Destroy uses native provider compute/cache state and separately verified credent
 
 ### Replace Workloads After an Unusable Runtime
 
-When OpenShell reports that a sandbox exited, for example after its gateway restarted, `nemoclaw plan` replaces that sandbox and says why, such as `sandbox exited: SANDBOX_PHASE_ERROR, reason ContainerExited, exit code 1`.
+When OpenShell reports that a sandbox exited, `nemoclaw plan` replaces that sandbox and says why, such as `sandbox exited: SANDBOX_PHASE_ERROR, reason ContainerExited, exit code 1`.
 Read why it exited with `openshell logs SANDBOX --source sandbox` before applying; see [native logs](troubleshooting.md#read-native-service-logs).
 **The replacement deletes that sandbox's files and conversation history.**
 
-Use the rest of this path when an agent runtime is unusable after an invocation failure while its sandbox still runs, and you choose to replace it.
+Use the rest of this path when an agent runtime is unusable after an invocation failure while its sandbox still runs, as after a gateway restart, and you choose to replace it.
 The CLI has no targeted sandbox replacement or runtime-reset command.
 Its supported replacement path is whole-deployment destroy followed by reapplying the original configuration.
 

@@ -762,6 +762,50 @@ fn external_gateway_tls_takes_a_ca_alone_or_with_a_client_certificate_and_key() 
 }
 
 #[test]
+fn ollama_and_vllm_services_state_the_same_placement_requirement() {
+    let schema = input_schema();
+    let service = |kind: &str| {
+        schema["$defs"]["ServiceDefinition"]["oneOf"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|variant| variant["properties"]["kind"]["const"] == kind)
+            .unwrap()
+            .clone()
+    };
+    let (ollama, vllm) = (service("ollama"), service("vllm"));
+    for field in ["placement", "publication"] {
+        assert_eq!(
+            ollama["properties"][field], vllm["properties"][field],
+            "{field}"
+        );
+    }
+}
+
+#[test]
+fn an_ollama_service_without_placement_is_refused_beside_podman_or_an_external_gateway() {
+    let managed = input("managed-ollama.yaml");
+    let mut podman = managed.clone();
+    podman["spec"]["gateway"]["runtime"]["provider"] = json!("podman");
+    let mut external = managed;
+    external["spec"]["gateway"] = json!({
+        "management": "external",
+        "endpoint": "https://gateway.example.com",
+    });
+    for value in [podman, external] {
+        let error = Document::parse(value.to_string().as_bytes())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains(
+                "Ollama requires the managed gateway Docker engine or explicit placement"
+            ),
+            "{error}"
+        );
+    }
+}
+
+#[test]
 fn schema_errors_identify_the_contract_without_echoing_input_values_or_map_keys() {
     let mut value = input("fabric-openclaw.yaml");
     value["spec"]["harnesses"] = json!({"SECRET-MAP-KEY": {

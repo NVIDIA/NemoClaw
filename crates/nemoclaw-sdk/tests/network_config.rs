@@ -67,6 +67,25 @@ fn explicit_policy_survives_yaml_and_compilation() {
     );
 }
 #[test]
+fn an_endpoint_without_enforcement_leaves_the_mode_to_openshell() {
+    use openshell_core::proto::NetworkEnforcementMode;
+    let enforcement = |value: &Value| {
+        let proto = parse(value).unwrap().spec.sandboxes["assistant"]
+            .network
+            .policy_proto()
+            .unwrap();
+        proto.network_policies["docs"].endpoints[0].enforcement()
+    };
+    let mut value = input();
+    assert_eq!(enforcement(&value), NetworkEnforcementMode::Enforce);
+    value["spec"]["sandboxes"]["assistant"]["network"]["policy"]["explicit"]["network_policies"]
+        ["docs"]["endpoints"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("enforcement");
+    assert_eq!(enforcement(&value), NetworkEnforcementMode::Unspecified);
+}
+#[test]
 fn conflicting_unknown_and_invalid_network_settings_are_rejected() {
     for (path, replacement) in [
         ("/spec/sandboxes/assistant/network/tier", json!("isolated")),

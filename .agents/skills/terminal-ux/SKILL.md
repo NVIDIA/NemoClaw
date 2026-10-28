@@ -1,6 +1,6 @@
 ---
 name: terminal-ux
-description: Design or review CLI output, terminal progress, and error presentation across interactive terminals, CI logs, and JSON automation. Use when defining terminal UX or choosing rendering libraries.
+description: Design or review NemoClaw CLI output, including progress, errors, and final results, across terminals, CI logs, and JSON.
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
@@ -8,54 +8,24 @@ description: Design or review CLI output, terminal progress, and error presentat
 
 # Terminal UX
 
-Design output around three questions: what will change, what is happening, and what state remains?
-Treat presentation as a consumer of domain facts, never as a second orchestration engine.
+Output should answer three questions: what will change, what is happening, and what state remains?
+Rendering consumes facts from the SDK; it doesn't orchestrate, probe, or parse logs.
 
-## Establish the contract
+Start from the [CLI contract](../../../docs/reference/cli.md), the [responsibility boundaries](../../../docs/design/scope.md), and the current renderer in `crates/nemoclaw-cli`.
+Progress renders in a Ratatui inline viewport on terminals, as plain text when redirected, and as JSON for automation.
 
-Inspect current command help, output rendering, progress events, error types, and captured runs before proposing behavior.
-Distinguish existing behavior, proposed behavior, and observations that the application cannot yet supply.
-Preserve compatibility requirements and existing operation ownership.
-A request for a design or library comparison does not authorize implementation or live operations.
+## Rules
 
-For NemoClaw, start with the current [CLI contract](../../../docs/reference/cli.md) and [responsibility boundaries](../../../docs/design/scope.md).
-For Rust library selection, read [the research](references/rust-terminal-options.md) and recheck primary documentation before depending on current APIs.
-That reference contains project choices and dated research, not universal requirements.
+- Keep planned, observed, unknown, unsupported, failed, and completed states distinct; never infer success from an empty change list.
+- Don't invent stages, ETAs, health, or cleanup guarantees. Show percentages only with measured totals, and keep elapsed-time heartbeats separate from new observations.
+- Give interactive, redirected, and JSON output the same facts. Choose animation per stream; redirected output gets stage changes and bounded heartbeats without control sequences, and JSON results stay separate from progress.
+- Stop dynamic rendering before prompts, diagnostics, and final summaries, and restore terminal modes on every exit path.
+- Escape control sequences and redact secrets in resource labels and external diagnostics.
+- Don't rely on color alone.
 
-## Design and review
+## Failures
 
-| Dimension | Decision rule |
-|---|---|
-| Information density | Put consequential changes and active work first; group supporting details without losing actions or mixing counting units. |
-| Presentation | Preserve scrollback and copyable commands; use words independently of color; wrap safely on narrow terminals. |
-| Correctness | Keep planned, observed, unknown, unsupported, failed, and completed states distinct. Never derive success from an empty change list alone. |
-| Timeliness | Show start and stage changes promptly; separate elapsed-time heartbeats from new observations; use percentages only with measured totals. |
-| Usefulness | Name user resources, relevant endpoints, retention, and supported next actions. Internal identifiers belong in diagnostic detail unless necessary to disambiguate. |
-| Errors | Lead with failed operation/resource, actionable cause, known remaining state, and valid recovery. Expose useful underlying diagnostics without flooding the terminal. |
-
-Represent concurrency honestly.
-Show a dependency wait only if its reason is known.
-Do not invent runtime stages, ETAs, health, rollback, or cleanup guarantees.
-Qualify readiness separately from response tests and ongoing health.
-Unsupported and stale observations must remain identifiable when they affect the result.
-
-Specify interactive, redirected, and machine-readable behavior together.
-Select animation using the stream being rendered; stdout and stderr may have different terminal capabilities.
-Redirected output should preserve stage changes and bounded heartbeats without control sequences.
-Keep final machine results separate from progress and document failures, interruptions, exit codes, and incomplete results.
-Preserve the same domain facts across renderers.
-
-Stop or suspend dynamic rendering before prompts, diagnostics, or final summaries.
-Coordinate terminal writes and restore any changed terminal modes on recoverable exit paths.
-Support plain output for accessibility and limited terminals; disabling color alone need not disable animation.
-Treat resource labels and external diagnostics as untrusted terminal text: escape control sequences and redact secrets, including in snippets and files.
-
-Use one error structure for human and machine output.
-Show file/field and source location when available; do not fabricate spans or print credential-bearing source lines.
-Distinguish confirmed resource state from planned actions after partial failure.
-Only promise a diagnostic artifact when one was actually written.
-
-The current text renderer orders a failure as operation and outcome, state location, cause, remaining state, then recovery:
+Lead with the operation and outcome, then the state directory, the cause, what remains, and the recovery:
 
 ```text
 Apply failed · 3m 41s
@@ -68,17 +38,10 @@ Resources retained; sandbox startup failed.
 Inspect the sandbox with OpenShell using this deployment's gateway and workspace; collect gateway and supervisor logs before cleanup.
 ```
 
-## Choose implementation scope
+Text and JSON share one error structure.
+After a partial failure, separate confirmed state from planned actions.
 
-Start with the smallest rendering capability that meets the interaction requirements.
-Inline progress does not by itself justify raw mode, an alternate screen, keyboard navigation, or a new event framework.
-Keep typed outcomes and progress independent of rendering libraries.
-Use native orchestration/runtime observations rather than adding UI-owned probes or parsing prose logs.
-Measure dependency, build-time, and binary-size costs before claiming that one option is lighter.
+## Validate
 
-## Validate behavior
-
-Exercise unchanged success, long waits/downloads, concurrent work, incomplete observation, partial failure, interruption, destructive retention, and repeated teardown where applicable.
-Check TTY and redirected streams independently, narrow width, plain output, and machine-readable failures.
-Assert meaningful invariants: no lost actions, no false success, no secret/control-sequence leakage, durable error visibility, and usable recovery.
-Use representative transcripts and terminal tests rather than tests that merely duplicate formatting implementation.
+Cover long waits, concurrent work, partial failure, interruption, terminal and redirected streams, narrow widths, and JSON failures.
+Assert invariants, such as no lost actions, no false success, and no leaked secrets or control sequences, instead of repeating format strings.
