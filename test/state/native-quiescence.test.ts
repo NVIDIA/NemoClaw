@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeEach, expect, it, vi } from "vitest";
 import {
+  blockNativeSshCleanup,
   writeFakeOpenshell,
   writeFakeSsh,
   writeNativeQuiescenceStates,
@@ -89,15 +90,7 @@ it("classifies a churning live capture without retaining a failed backup (#12867
 
 it("keeps a failed SSH cleanup from becoming a retryable capture (#12867)", () => {
   vi.stubEnv("NEMOCLAW_TEST_NATIVE_CHURN_MARKER", churnMarker);
-  const originalRemove = fs.rmSync;
-  const retainedDirectories: string[] = [];
-  const remove = vi.spyOn(fs, "rmSync").mockImplementation((target, options) => {
-    if (typeof target === "string" && path.basename(target).startsWith("nemoclaw-native-state-")) {
-      retainedDirectories.push(target);
-      throw new Error("cleanup blocked");
-    }
-    return originalRemove(target, options);
-  });
+  const blockedCleanup = blockNativeSshCleanup();
   try {
     const backup = sandboxState.backupSandboxState("alpha");
     expect(backup).toMatchObject({
@@ -106,8 +99,8 @@ it("keeps a failed SSH cleanup from becoming a retryable capture (#12867)", () =
       error: expect.stringContaining("Remove that directory before retrying."),
     });
   } finally {
-    remove.mockRestore();
-    retainedDirectories.forEach((directory) =>
+    blockedCleanup.restore();
+    blockedCleanup.directories.forEach((directory) =>
       fs.rmSync(directory, { recursive: true, force: true }),
     );
   }
