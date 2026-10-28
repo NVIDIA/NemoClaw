@@ -242,6 +242,12 @@ mod tests {
                 true,
                 "available",
             ),
+            // Docker binds an IPv6 host port alone, leaving 127.0.0.1 free.
+            (
+                published("other", "", "::", 17695, "tcp"),
+                true,
+                "available",
+            ),
             (
                 published(OWN.0, OWN.1, "127.0.0.1", 17695, "tcp"),
                 true,
@@ -284,7 +290,7 @@ mod tests {
             if expected == "unavailable" {
                 assert_eq!(
                     observation["reason"],
-                    "the gateway endpoint's port is in use by another container or process; set spec.gateway.endpoint to a free port"
+                    "the gateway endpoint's port is in use by another container or process; free the port, or, before this deployment's first successful plan, set spec.gateway.endpoint to a free port"
                 );
             }
         }

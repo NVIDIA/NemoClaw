@@ -40,8 +40,9 @@ pub async fn gateway_engine_info(
     engine.info().await
 }
 
-/// Why a gateway can't take its endpoint's port.
-pub const GATEWAY_PORT_TAKEN: &str = "the gateway endpoint's port is in use by another container or process; set spec.gateway.endpoint to a free port";
+/// Why a gateway can't take its endpoint's port. The first successful plan
+/// binds the endpoint in state, so only a deployment before then can change it.
+pub const GATEWAY_PORT_TAKEN: &str = "the gateway endpoint's port is in use by another container or process; free the port, or, before this deployment's first successful plan, set spec.gateway.endpoint to a free port";
 
 /// Check that only the deployment's own gateway, `name` labeled with `owner`,
 /// holds the endpoint's port: no other running container publishes it, and,
@@ -83,12 +84,14 @@ pub async fn check_gateway_port(
             own_running = true;
             continue;
         }
+        // The gateway takes 127.0.0.1. Docker binds an IPv6 host port on its
+        // own, so a publish on `::` alone leaves the IPv4 port free.
         let publishes = container.ports.iter().flatten().any(|published| {
             published.public_port == Some(port)
                 && published.typ == Some(PortSummaryTypeEnum::TCP)
                 && matches!(
                     published.ip.as_deref(),
-                    None | Some("" | "0.0.0.0" | "::" | "127.0.0.1")
+                    None | Some("" | "0.0.0.0" | "127.0.0.1")
                 )
         });
         if publishes {

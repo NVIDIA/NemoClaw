@@ -357,7 +357,9 @@ Keep the original YAML until verification succeeds.
 ### Recover an Interrupted Operation
 
 Changing an established gateway endpoint is rejected.
-A plan that fails binds nothing, so when plan reports that `spec.gateway.endpoint`'s port or `spec.gateway.networkCIDR` is taken, change that field and plan again; two deployments on one engine need different endpoint ports and non-overlapping subnets.
+Two deployments on one engine need different endpoint ports and non-overlapping subnets.
+A plan that fails binds nothing, so when a deployment's first plan reports that `spec.gateway.endpoint`'s port or `spec.gateway.networkCIDR` is taken, change that field and plan again.
+Once a plan has succeeded, the endpoint is bound: free the port instead.
 There is no lost-state adoption, migration, pruning, or purge command.
 
 After an interrupted apply, keep the original YAML and entire state directory, including `runtime/`, and reapply.
