@@ -35,6 +35,7 @@ import {
   ensureHttpsPinRuntimeAdapter,
   revokeHttpsPinRuntimeAdapterRoute,
 } from "../inference/https-pin-runtime-adapter";
+import { MIN_HERMES_OLLAMA_CONTEXT_WINDOW } from "../inference/ollama-runtime-context";
 import {
   inferenceSelectionRegistryFields,
   type ReasoningEffortRequest,
@@ -924,6 +925,17 @@ function resolveHermesContextWindowForSwitch(
 ): number | undefined {
   const contextWindow = deps.resolveContextWindowForModel(provider, model, gatewayPort);
   if (contextWindow != null) {
+    // Onboarding enforces MIN_HERMES_OLLAMA_CONTEXT_WINDOW for ollama-local via
+    // applyOllamaRuntimeContextWindow; this switch path must reject the same
+    // condition instead of silently writing a sub-floor context_length (#context-window-on-switch).
+    if (provider === "ollama-local" && contextWindow < MIN_HERMES_OLLAMA_CONTEXT_WINDOW) {
+      throw new Error(
+        `Ollama reports a ${contextWindow}-token context window for '${model}', below Hermes's ` +
+          `required ${MIN_HERMES_OLLAMA_CONTEXT_WINDOW}-token floor. Select a model whose native ` +
+          `context is at least ${MIN_HERMES_OLLAMA_CONTEXT_WINDOW} tokens, or configure the host ` +
+          `Ollama daemon with OLLAMA_CONTEXT_LENGTH=${MIN_HERMES_OLLAMA_CONTEXT_WINDOW}.`,
+      );
+    }
     deps.log(`  Context window for '${model}': ${contextWindow} tokens`);
     return contextWindow;
   }
