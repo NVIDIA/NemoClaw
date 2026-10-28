@@ -1,12 +1,41 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+// Collapsed wrapper adapted from main PR #13876 at b245d56471d0aa4ce4378eb33f58e63a799df199.
+// Retain V1's standalone Rust validator and use workflow-owned comment selection.
+
 use std::{env, fs, process::ExitCode};
 
 const START: &str = "<!-- agent-session-report:v1 -->";
 const END: &str = "<!-- /agent-session-report -->";
 
 fn validate(body: &str) -> Result<(), &'static str> {
+    let normalized = body.replace("\r\n", "\n");
+    let body = normalized.trim();
+    let mut inner = None;
+    for (kind, label) in [
+        ("opening", "PR opening"),
+        ("commit", "Commit update"),
+        ("merge", "PR merge"),
+    ] {
+        let prefix = format!(
+            "<!-- agent-session-report:{kind} -->\n<details>\n<summary>Authoring session report: {label}</summary>\n\n"
+        );
+        if let Some(content) = body
+            .strip_prefix(&prefix)
+            .and_then(|s| s.strip_suffix("\n</details>"))
+        {
+            inner = Some(content);
+        }
+    }
+    let body = inner.ok_or("use the collapsed session report comment template")?;
+    let lower = body.to_ascii_lowercase();
+    if ["<details", "</details", "<summary", "</summary"]
+        .iter()
+        .any(|tag| lower.contains(tag))
+    {
+        return Err("use one collapsed section for the report");
+    }
     if body.matches(START).count() != 1 || body.matches(END).count() != 1 {
         return Err("include exactly one v1 report; see the PR template");
     }
@@ -65,9 +94,9 @@ fn validate(body: &str) -> Result<(), &'static str> {
 fn main() -> ExitCode {
     let result = env::args()
         .nth(1)
-        .ok_or("expected a PR body file")
+        .ok_or("expected a report comment file")
         .and_then(|path| {
-            let body = fs::read_to_string(path).map_err(|_| "cannot read PR body file")?;
+            let body = fs::read_to_string(path).map_err(|_| "cannot read report comment file")?;
             validate(&body)
         });
     match result {
@@ -84,13 +113,88 @@ mod tests {
     use super::*;
 
     #[test]
+    fn reports_must_be_collapsed_comments() {
+        assert!(validate(&report().replace("<details>", "<details open>")).is_err());
+        assert!(validate(&report().replace("<details>", "")).is_err());
+        assert!(validate(&format!("Prose outside the section\n{}", report())).is_err());
+        assert!(
+            validate(&report().replace("</details>", "</details>\n<details>extra</details>"))
+                .is_err()
+        );
+        assert!(validate(&report().replace("PR opening", "PR merge")).is_err());
+    }
+
+    #[test]
+    fn later_reports_use_distinct_labels_and_the_same_table() {
+        for (kind, label) in [("commit", "Commit update"), ("merge", "PR merge")] {
+            let later = report()
+                .replace("report:opening", &format!("report:{kind}"))
+                .replace("PR opening", label);
+            assert!(validate(&later).is_ok());
+        }
+    }
+
+    #[test]
+    fn workflow_selects_one_opening_across_all_comment_pages() {
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+        // Execute the workflow's actual selector so pagination and duplicate handling
+        // are covered at the boundary between GitHub JSON and the Rust validator.
+        let workflow = include_str!("../../.github/workflows/pr-metadata.yml");
+        let query = workflow
+            .lines()
+            .find_map(|line| {
+                line.trim()
+                    .strip_prefix("jq -er '")
+                    .and_then(|s| s.split_once('\'').map(|p| p.0))
+            })
+            .unwrap();
+        for (input, expected) in [
+            (
+                r#"[[{"body":"ordinary review"}],[{"body":"<!-- agent-session-report:commit -->"},{"body":"\n<!-- agent-session-report:opening -->\nreport"}]]"#,
+                true,
+            ),
+            (
+                r#"[[{"body":"<!-- agent-session-report:opening -->"}],[{"body":"<!-- agent-session-report:opening -->"}]]"#,
+                false,
+            ),
+            (
+                r#"[[{"body":"<!-- agent-session-report:merge -->"}],[]]"#,
+                false,
+            ),
+        ] {
+            let mut child = Command::new("jq")
+                .args(["-er", query])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .spawn()
+                .expect("jq is required by the metadata workflow");
+            child
+                .stdin
+                .take()
+                .unwrap()
+                .write_all(input.as_bytes())
+                .unwrap();
+            let output = child.wait_with_output().unwrap();
+            assert_eq!(output.status.success(), expected);
+            if expected {
+                assert_eq!(
+                    String::from_utf8(output.stdout).unwrap(),
+                    "\n<!-- agent-session-report:opening -->\nreport\n"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn missing_report_is_rejected_even_when_prose_mentions_skills() {
         assert!(validate("## Changes\nRead skills and ran tests.").is_err());
     }
 
     fn report() -> String {
         format!(
-            "{START}\n| Field | Status | Value | Evidence or limit |\n| --- | --- | --- | --- |\n\
+            "<!-- agent-session-report:opening -->\n<details>\n<summary>Authoring session report: PR opening</summary>\n\n{START}\n| Field | Status | Value | Evidence or limit |\n| --- | --- | --- | --- |\n\
 | Harness | recorded | Codex | Authoring session header |\n\
 | Skills | partial | test-driven-development (complete read) | Earlier context unavailable |\n\
 | Instruction files | partial | AGENTS.md (complete read); WRITING.md (injected) | Full contents retained; earlier injection coverage unavailable |\n\
@@ -98,7 +202,7 @@ mod tests {
 | Session window | recorded | 2026-10-27T12:00Z to 2026-10-27T12:10Z; 10 min | First event through report cutoff |\n\
 | Compactions | recorded | 0 | Complete session record through cutoff |\n\
 | Models | unavailable | - | Model metadata absent |\n\
-| Reasoning levels | unavailable | - | Level metadata absent |\n{END}"
+| Reasoning levels | unavailable | - | Level metadata absent |\n{END}\n</details>"
         )
     }
 
@@ -142,17 +246,14 @@ mod tests {
 
     #[test]
     fn template_with_all_fields_unavailable_is_valid() {
-        assert!(validate(include_str!("../../.github/PULL_REQUEST_TEMPLATE.md")).is_ok());
+        assert!(validate(include_str!("../../.agents/skills/nemoclaw-contributor-create-pr/references/session-report-template.md")).is_ok());
     }
 
     #[test]
     fn prose_and_shell_syntax_in_values_are_inert_data() {
-        let body = format!(
-            "## Outcome\nExample prose\n{}\n## Validation\nTests passed.",
-            report().replace(
-                "test-driven-development (complete read)",
-                "$(exit 42); `false`; <script>"
-            )
+        let body = report().replace(
+            "test-driven-development (complete read)",
+            "$(exit 42); `false`; <script>",
         );
         assert!(validate(&body).is_ok());
     }

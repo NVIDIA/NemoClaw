@@ -14,7 +14,7 @@ Adapted from the same skill and its validation/publication references on NVIDIA/
 
 1. Read [validation and publication](references/publication.md). For an open PR, inspect its current state and feedback before preparing a repair.
 2. Read the [session report contract](references/session-report.md). Inspect the authoring session's evidence, using only the applicable [Codex](references/codex.md) or [Pi](references/pi.md) reference. Other harnesses use the same contract with unavailable fields where evidence cannot be established.
-3. Prepare the complete PR body from the repository template, validate it locally, and publish within the user's authority.
+3. Prepare the PR description and separate collapsed opening report comment from their templates. Validate the comment locally and publish both within the user’s authority.
 4. Follow required checks and actionable automated review feedback for the latest pushed commit. Report the PR URL, validation, pending evidence, and remaining human decisions. This skill grants no merge authority.
 
 Repository policy stays in [AGENTS.md](../../../AGENTS.md); prose follows [WRITING.md](../../../WRITING.md). This skill does not require a local Advisor review unless the task requests one.

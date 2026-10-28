@@ -3,13 +3,21 @@
 
 # Authoring Session Report
 
+Adapted from PR #13876's collapsed-comment contract at commit `b245d56471d0aa4ce4378eb33f58e63a799df199`. V1 retains its Rust validator and metadata workflow.
+
 Report full instruction contents present in the recorded input or tool results, along with the requested session metadata. This is evidence-backed agent reporting, not independently authenticated provenance, compliance scoring, or a claim that instructions affected the code.
 
 Inspect evidence for the current authoring session through a stated report cutoff. Do not aggregate other chats, agents, or abandoned branches. If this session only opens the PR and cannot establish the authoring evidence, use unavailable. Do not substitute the publication session's metadata for the author's.
 
 ## Table contract
 
-Every PR body must contain exactly one block from [the template](../../../../.github/PULL_REQUEST_TEMPLATE.md), including all eight rows. Preserve the markers, header, field names, and four-column table. Row order is flexible. Use semicolons instead of literal pipes inside cells.
+Every PR must have exactly one opening report comment using [the comment template](session-report-template.md), including all eight rows. Keep the `opening` marker and the `<details>` wrapper without an `open` attribute. Preserve the summary, table markers, header, field names, and four-column table. Row order is flexible. Use semicolons instead of literal pipes inside cells.
+
+Keep the report out of the PR description. The description retains its outcome, decision, and validation.
+
+This reference owns the report's meaning. The validator enforces its versioned structure; the comment template supplies the default report.
+The metadata job validates the actual template through the same validator before checking current PR comments, so incompatible template changes fail CI.
+Synthetic test inputs exercise invalid reports independently of that template-to-validator check.
 
 | Status | Meaning | Value and evidence |
 | --- | --- | --- |
@@ -44,6 +52,39 @@ Publish only compact metadata and evidence descriptions. Exclude raw transcripts
 
 ## CI boundary
 
-`PR metadata / Session report` reads the PR body from the pull-request event and checks this table on opened, synchronize, reopened, and edited events. Description edits do not trigger the platform build workflows. The check validates structure and allowed statuses, not truth or skill compliance. It compiles a standalone standard-library Rust program to avoid building the workspace for a text check.
+`PR metadata / Session report` validates the opening comment on opened, synchronize, reopened, and edited events.
+The workflow fetches every page of current PR comments and selects exactly one opening report from the JSON, then passes its body to the Rust validator as data.
+Description edits still rerun metadata validation; V1's CI skips platform builds for description-only edits.
+The comment refresh workflow reruns only the latest metadata run for the current PR commit when an opening report is created, edited, or deleted.
+It reads the current comment body and the prior body on edits, so removing the marker also triggers validation.
+It waits for an active metadata run before rerunning it; a failed refresh needs a metadata rerun after the interruption is resolved.
+The check validates presence, collapsed structure, and allowed statuses, not truth, author identity, or skill compliance.
 
-Making the check merge-blocking requires a separate maintainer ruleset change. Until then, the workflow reports failures but does not itself guarantee enforcement. The first PR introducing this workflow exercises the candidate validator and still needs maintainer review.
+GitHub activates the comment refresh workflow only after it reaches the default branch. Merging this PR into `v1` alone does not activate it; the default-branch workflow must also route V1 reports to `pr-metadata.yml`. Until then, edit the description or rerun metadata after every report comment change.
+The introducing PR validates its fetched comments through its ordinary PR events. Before rollout, edit the description or rerun metadata after posting a report.
+An opening check can fail before its comment exists; posting the comment refreshes it after rollout.
+
+The `Session report` job contains this check. Requiring it for merge needs a separate maintainer ruleset decision.
+This change does not modify rulesets.
+The first PR introducing the validator exercises candidate code and still needs independent maintainer review.
+
+This job runs candidate code under `pull_request`. It is not a tamper-resistant policy boundary.
+Maintainers must review changes to the workflow and validator; passing candidate tests cannot approve those changes.
+Trusted-base enforcement would need a separately scoped rollout because the base of the original introducing PR has no validator.
+
+## Existing and automated PRs
+
+On the next update, post the template as a collapsed opening comment. Preserve the existing description.
+When moving an existing report, preserve its evidence and cutoff. Post and read back the comment before removing the report from the description.
+If historical authoring evidence is unavailable, keep each affected field unavailable and explain that limit. Do not reconstruct it from current files.
+A maintainer updating an automated PR, including Dependabot, follows the same process within their authority to comment on that PR.
+The requirement has no bot or creation-date exemption. Missing authoring evidence is handled by the all-unavailable report, not by omitting it.
+
+## Later reports
+
+This change requires only the opening report. Future commit-update and merge reports use the same eight-field contract and collapsed wrapper.
+For a later report, use `<!-- agent-session-report:commit -->` with summary `Authoring session report: Commit update`,
+or `<!-- agent-session-report:merge -->` with summary `Authoring session report: PR merge`.
+Publish each as a separate comment. Identify the relevant commit or merge in the prose inside the collapsed section.
+Preserve earlier reports and cutoffs. Do not rewrite an opening report to describe later activity.
+These later report formats are defined here; their publication and enforcement are not required by this change.
