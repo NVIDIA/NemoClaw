@@ -13,7 +13,7 @@ Inspect evidence for the current authoring session through a stated report cutof
 
 Every PR must have exactly one opening report comment using [the comment template](session-report-template.md), including all eight rows. Keep the `opening` marker and the `<details>` wrapper without an `open` attribute. Preserve the summary, table markers, header, field names, and four-column table. Row order is flexible. Use semicolons instead of literal pipes inside cells.
 
-Keep the report out of the PR description. The description retains its outcome, decision, and validation.
+Keep the report out of the PR description. The description retains its failure, decision, and validation.
 
 This reference owns the report's meaning. The validator enforces its versioned structure; the comment template supplies the default report.
 The metadata job validates the actual template through the same validator before checking current PR comments, so incompatible template changes fail CI.
