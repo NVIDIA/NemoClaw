@@ -57,6 +57,7 @@ nemoclaw onboard examples/openclaw.yaml --output .local/first-deployment/deploym
 ```
 
 Onboarding starts from the example's values, writes a fresh `metadata.uid`, and saves validated YAML without creating deployment state.
+The file holds only the example's values and your answers; fields left out take NemoClaw's defaults when you plan, so a NemoClaw upgrade can change them.
 Check the saved file against the table below before planning.
 
 Edit the copied YAML before executing it:

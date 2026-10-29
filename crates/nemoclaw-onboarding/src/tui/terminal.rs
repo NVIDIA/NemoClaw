@@ -53,7 +53,7 @@ pub(crate) async fn run(
     state: JourneyState,
     cancel: &CancellationToken,
     discover: bool,
-) -> Result<Option<Document>, Box<dyn std::error::Error>> {
+) -> Result<Option<String>, Box<dyn std::error::Error>> {
     let mut guard = TerminalGuard::enter()?;
     let area = crossterm::terminal::size().map(|(width, height)| Rect::new(0, 0, width, height))?;
     let brand =
@@ -101,7 +101,7 @@ pub(crate) async fn run(
             needs_render = false;
         }
         if wizard.accepted {
-            return Ok(Some(wizard.document()?));
+            return Ok(Some(wizard.saved_yaml()?));
         }
         let event = if let Some(event) = queued_events.pop_front() {
             event

@@ -266,15 +266,14 @@ impl JourneyWizard {
             )),
             Line::from(""),
         ];
-        let mut saveable = false;
         match self.resolution() {
             Ok(resolution) => {
-                saveable = resolution.ready_document().is_some();
                 if let Some(assessment) = resolution.target_assessment() {
                     // A target that blocks saving without a conflict is one the
                     // journey requires compatible evidence from.
                     let blocked = assessment.status == CompatibilityStatus::Conflict
-                        || (resolution.materialized_document().is_some() && !saveable);
+                        || (resolution.materialized_document().is_some()
+                            && resolution.ready_document().is_none());
                     lines.extend(target_lines(assessment, blocked));
                     lines.push(Line::from(""));
                 }
@@ -286,9 +285,13 @@ impl JourneyWizard {
                         lines.push(Line::from(""));
                     }
                 }
-                if let Some(document) = resolution.materialized_document() {
-                    if let Ok(yaml) = document.yaml() {
-                        lines.extend(yaml.lines().map(yaml_line));
+                if let Some(configuration) = self.configuration() {
+                    match configuration {
+                        Ok(yaml) => lines.extend(yaml.lines().map(yaml_line)),
+                        Err(reason) => lines.push(Line::from(Span::styled(
+                            terminal_text(&format!("Cannot save: {reason}")),
+                            Style::new().fg(ERROR),
+                        ))),
                     }
                 } else {
                     lines.extend(resolution.unverified().iter().map(|warning| {
@@ -318,7 +321,7 @@ impl JourneyWizard {
                 Style::new().fg(WARNING),
             ))),
         }
-        if saveable {
+        if self.saveable() {
             lines.push(Line::from(""));
             lines.push(Line::from(Span::styled(
                 "Press Enter to save.",

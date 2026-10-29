@@ -38,13 +38,13 @@ pub async fn author(
     if !std::io::stdin().is_terminal() || !std::io::stderr().is_terminal() {
         return Err("onboarding requires a terminal on stdin and stderr".into());
     }
-    let Some(document) = tui::run(capabilities, state, cancel, discover).await? else {
+    let Some(yaml) = tui::run(capabilities, state, cancel, discover).await? else {
         return Ok(false);
     };
     if cancel.is_cancelled() {
         return Err(Error::Cancelled.into());
     }
-    write_path(output, document.yaml()?.as_bytes())?;
+    write_path(output, yaml.as_bytes())?;
     Ok(true)
 }
 

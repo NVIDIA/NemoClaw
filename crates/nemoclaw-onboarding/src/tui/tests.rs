@@ -432,31 +432,129 @@ fn default_journey_asks_route_choices_and_leaves_tuning_settings_at_their_defaul
 }
 
 #[test]
-fn default_journey_saves_sdk_gateway_defaults_and_no_adapter_settings() {
+fn default_journey_saves_the_reviewed_deployment_without_unasked_sdk_defaults() {
     let capabilities = Capabilities::available();
     let state = load_journey(Source::Defaults, &capabilities).unwrap();
     let mut wizard = JourneyWizard::new(capabilities, state);
     questions_until_review(&mut wizard);
-    let document = wizard.document().unwrap();
-    let settings = document.spec.sandboxes["assistant"]
-        .harness
-        .as_ref()
-        .and_then(|harness| harness.settings.clone())
-        .unwrap_or_default();
-    assert!(settings.is_empty(), "{settings:?}");
-    let saved: Value = serde_saphyr::from_str(&document.yaml().unwrap()).unwrap();
-    let mut unsaved = saved.clone();
-    let gateway = unsaved["spec"]["gateway"].as_object_mut().unwrap();
-    gateway.remove("endpoint");
-    gateway.remove("networkCIDR");
-    let defaulted: Value = serde_saphyr::from_str(
-        &Document::parse(unsaved.to_string().as_bytes())
-            .unwrap()
-            .yaml()
-            .unwrap(),
-    )
+    let yaml = wizard.saved_yaml().unwrap();
+    let saved: Value = serde_saphyr::from_str(&yaml).unwrap();
+    let gateway = saved["spec"]["gateway"].as_object().unwrap();
+    assert!(!gateway.contains_key("endpoint"), "{yaml}");
+    assert!(!gateway.contains_key("networkCIDR"), "{yaml}");
+    assert!(
+        saved
+            .pointer("/spec/sandboxes/assistant/harness/settings")
+            .and_then(Value::as_object)
+            .is_none_or(serde_json::Map::is_empty),
+        "{yaml}"
+    );
+    assert_eq!(
+        Document::parse(yaml.as_bytes()).unwrap(),
+        wizard.document().unwrap()
+    );
+}
+
+#[test]
+fn saved_yaml_keeps_the_sdk_field_order_and_values() {
+    let capabilities = Capabilities::available();
+    let state = load_journey(Source::Defaults, &capabilities).unwrap();
+    let mut wizard = JourneyWizard::new(capabilities, state);
+    questions_until_review(&mut wizard);
+    let saved = wizard.saved_yaml().unwrap();
+    let full = wizard.document().unwrap().yaml().unwrap();
+    let mut remaining = super::saved::entries(&full).into_iter();
+    for entry in super::saved::entries(&saved) {
+        assert!(
+            remaining.any(|candidate| candidate == entry),
+            "{entry:?} is out of the SDK's order or differs:\n{saved}\n---\n{full}"
+        );
+    }
+}
+
+/// Building the saved configuration serializes, reads back, and validates the
+/// whole document, so redrawing or scrolling the review reuses it.
+#[test]
+fn review_builds_the_saved_configuration_once_until_the_journey_changes() {
+    let capabilities = Capabilities::available();
+    let state = load_journey(Source::Defaults, &capabilities).unwrap();
+    let mut wizard = JourneyWizard::new(capabilities, state);
+    questions_until_review(&mut wizard);
+    wizard.accepted = false;
+    screen(&wizard, 100, 24);
+    let built = wizard.configurations();
+    for _ in 0..3 {
+        screen(&wizard, 100, 24);
+        wizard.next();
+    }
+    wizard.saved_yaml().unwrap();
+    assert_eq!(wizard.configurations(), built);
+
+    wizard.back();
+    questions_until_review(&mut wizard);
+    wizard.accepted = false;
+    screen(&wizard, 100, 24);
+    let rebuilt = wizard.configurations();
+    assert!(rebuilt > built);
+    screen(&wizard, 100, 24);
+    assert_eq!(wizard.configurations(), rebuilt);
+}
+
+#[test]
+fn a_configuration_that_cannot_be_saved_says_why_and_keeps_the_review_open() {
+    let capabilities = Capabilities::available();
+    let state = load_journey(Source::Defaults, &capabilities).unwrap();
+    let mut wizard = JourneyWizard::new(capabilities, state);
+    questions_until_review(&mut wizard);
+    wizard.accepted = false;
+    wizard.fail_configuration("the saved configuration does not reproduce the reviewed document");
+    for (width, height) in [(80, 24), (140, 40)] {
+        let screen = screen(&wizard, width, height);
+        let text = flat(&screen);
+        assert!(
+            text.contains("Cannot save: the saved configuration does not reproduce"),
+            "{screen}"
+        );
+        assert!(!text.contains("Enter save"), "{screen}");
+    }
+    wizard.advance();
+    assert!(!wizard.accepted);
+    assert!(wizard.saved_yaml().is_err());
+}
+
+#[test]
+fn a_template_value_is_saved_even_when_it_matches_the_sdk_default() {
+    let directory = tempfile::tempdir().unwrap();
+    let template = directory.path().join("template.yaml");
+    let mut values: Value = serde_saphyr::from_slice(include_bytes!(
+        "../../../../examples/onboarding/openclaw.yaml"
+    ))
     .unwrap();
-    assert_eq!(saved["spec"]["gateway"], defaulted["spec"]["gateway"]);
+    values["spec"]["gateway"]["endpoint"] = "http://127.0.0.1:17681".into();
+    std::fs::write(&template, values.to_string()).unwrap();
+    let capabilities = Capabilities::available();
+    let state = load_journey(Source::Template(&template), &capabilities).unwrap();
+    let mut wizard = JourneyWizard::new(capabilities, state);
+    questions_until_review(&mut wizard);
+    let saved: Value = serde_saphyr::from_str(&wizard.saved_yaml().unwrap()).unwrap();
+    assert_eq!(
+        saved.pointer("/spec/gateway/endpoint"),
+        Some(&Value::from("http://127.0.0.1:17681"))
+    );
+}
+
+#[test]
+fn review_shows_the_configuration_that_will_be_saved() {
+    let capabilities = Capabilities::available();
+    let state = load_journey(Source::Defaults, &capabilities).unwrap();
+    let mut wizard = JourneyWizard::new(capabilities, state);
+    questions_until_review(&mut wizard);
+    wizard.accepted = false;
+    let screen = screen(&wizard, 160, 120);
+    for line in wizard.saved_yaml().unwrap().lines() {
+        assert!(screen.contains(line), "{line:?} is not on screen: {screen}");
+    }
+    assert!(!screen.contains("networkCIDR"), "{screen}");
 }
 
 #[test]
@@ -657,6 +755,14 @@ fn example_reaches_review(relative: &str) {
     );
     // Add friendly text in text.json for NemoClaw-owned questions.
     assert!(missing_text.is_empty(), "{relative}: {missing_text:#?}");
+    let saved = wizard
+        .saved_yaml()
+        .unwrap_or_else(|error| panic!("{relative}: {error}"));
+    assert_eq!(
+        Document::parse(saved.as_bytes()).unwrap(),
+        wizard.document().unwrap(),
+        "{relative}"
+    );
 }
 
 /// Rendering, the next question, and advancing share one resolution until an
@@ -1523,18 +1629,9 @@ fn an_unverified_target_still_saves() {
 #[test]
 fn review_scroll_stops_at_the_last_line_and_shows_a_scrollbar() {
     let mut wizard = reviewing_wizard(unverified_engine());
-    let last = wizard.document().map_or_else(
+    let last = wizard.saved_yaml().map_or_else(
         |_| String::new(),
-        |document| {
-            document
-                .yaml()
-                .unwrap()
-                .lines()
-                .last()
-                .unwrap()
-                .trim()
-                .to_owned()
-        },
+        |yaml| yaml.lines().last().unwrap().trim().to_owned(),
     );
     assert!(!last.is_empty());
     assert!(screen(&wizard, 80, 24).contains('┃'), "no scrollbar");
