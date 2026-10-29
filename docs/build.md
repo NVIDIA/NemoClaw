@@ -4,10 +4,10 @@
 # Build Local Artifacts
 
 Build from the repository root with Rust 1.99.1, pinned in [rust-toolchain.toml](../rust-toolchain.toml).
-Native bundles also require Protocol Buffers compiler 36.1.
+Native bundles also require Protocol Buffers compiler 36.2.
 Native builds also require a C toolchain for TLS dependencies.
-Run `cargo ci tools` to install the pinned compiler in `.tools/protoc-36.1`; the bundle builder and `cargo ci` find it there.
-Otherwise, set `PROTOC` to the compiler’s path if it is outside `PATH`.
+Run `cargo ci tools` to install the pinned compiler in `.tools/protoc-36.2`; `cargo ci` finds it there.
+Other Cargo commands, including the bundle builder's `cargo run`, find only a compiler on `PATH`; otherwise set `PROTOC` to `.tools/protoc-36.2/bin/protoc` or another protoc 36.2.
 [versions.json](../versions.json) records tool versions, download checksums, and the SDK's image pins: the default agent image, which `image.ref` replaces, and the gateway, sandbox runtime, and supervisor images, which documents do not name.
 The SDK generates its artifact constants from that manifest at build time.
 A Docker or Podman deployment keeps the gateway image pin of the bundle that created it; see [the change path](usage.md#choose-the-change-path) before operating it with a bundle built from a different pin.

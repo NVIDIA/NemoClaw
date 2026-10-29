@@ -31,9 +31,9 @@ cargo ci --full
 ```
 
 The command needs the pinned Rust toolchain and a C linker.
-It downloads Protocol Buffers compiler 36.1 and cargo-nextest 0.9.144 into the Git-ignored `.tools` directory, verifying each against its `versions.json` checksum; it installs no host packages.
+It downloads Protocol Buffers compiler 36.2 and cargo-nextest 0.9.150 into the Git-ignored `.tools` directory, verifying each against its `versions.json` checksum; it installs no host packages.
 It then runs formatting, Clippy, the unit tests and doctests, the schema check, a bundle build, and the contract and system tests, stopping at the first failure.
-To build the SDK outside `cargo ci`, set `PROTOC` to `.tools/protoc-36.1/bin/protoc` after `cargo ci tools`, or to another protoc 36.1.
+To build the SDK outside `cargo ci`, set `PROTOC` to `.tools/protoc-36.2/bin/protoc` after `cargo ci tools`, or to another protoc 36.2.
 
 ## Select Expensive Local Checks
 
