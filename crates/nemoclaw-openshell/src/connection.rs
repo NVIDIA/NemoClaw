@@ -22,10 +22,17 @@ pub struct Connection {
     pub tls: Option<TlsFiles>,
 }
 
-/// Variables whose values name the mutual TLS files.
+/// Variables whose values name the TLS files.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TlsFiles {
     pub ca_env: String,
+    /// The client certificate and key for mutual TLS.
+    pub identity: Option<IdentityFiles>,
+}
+
+/// Variables whose values name a client certificate and its key.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct IdentityFiles {
     pub certificate_env: String,
     pub key_env: String,
 }
@@ -53,12 +60,17 @@ pub fn client(
             let file = |name: &str| -> Result<Vec<u8>, ObservationError> {
                 std::fs::read(secrets.resolve(name)?).map_err(|_| ObservationError::Authentication)
             };
+            // A CA alone pins the gateway's certificate without a client
+            // identity, as OpenShell's own client connects to a gateway that
+            // authenticates clients by token.
             tls = ClientTlsConfig::new()
-                .ca_certificate(Certificate::from_pem(file(&references.ca_env)?))
-                .identity(Identity::from_pem(
-                    file(&references.certificate_env)?,
-                    file(&references.key_env)?,
+                .ca_certificate(Certificate::from_pem(file(&references.ca_env)?));
+            if let Some(identity) = &references.identity {
+                tls = tls.identity(Identity::from_pem(
+                    file(&identity.certificate_env)?,
+                    file(&identity.key_env)?,
                 ));
+            }
         }
         channel = channel
             .tls_config(tls)

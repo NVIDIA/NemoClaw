@@ -153,7 +153,8 @@ See [managed models](models.md), [Ollama](inference.md#run-managed-ollama), or [
 
 Use `credential: {env: INFERENCE_API_KEY}` for an inference provider or gateway.
 The caller supplies the referenced environment value.
-For gateway mTLS, `tls.ca.env`, `tls.certificate.env`, and `tls.key.env` reference environment variables whose values are local file paths.
+For an external HTTPS gateway, `tls.ca.env` references an environment variable whose value is the path of a local CA certificate file; NemoClaw then verifies the gateway with that CA instead of the system roots.
+When the gateway also requires a client certificate, add `tls.certificate.env` and `tls.key.env` together, referencing the certificate and key files the same way.
 
 Values resolved through credential references stay out of configuration, plans, state, and export.
 This guarantee does not apply to literal container environment settings.

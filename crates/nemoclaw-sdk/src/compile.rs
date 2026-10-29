@@ -590,8 +590,10 @@ pub(crate) fn gateway_connection(
     }
     if let Some(tls) = gateway.tls() {
         provider["tls_ca_env"] = json!(tls.ca.env);
-        provider["tls_certificate_env"] = json!(tls.certificate.env);
-        provider["tls_key_env"] = json!(tls.key.env);
+        if let (Some(certificate), Some(key)) = (&tls.certificate, &tls.key) {
+            provider["tls_certificate_env"] = json!(certificate.env);
+            provider["tls_key_env"] = json!(key.env);
+        }
     }
     Ok(provider)
 }

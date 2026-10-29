@@ -155,12 +155,12 @@ fn compiled_resources_preserve_ownership_connections_and_dependency_order() {
         ca: FileRef {
             env: "GATEWAY_CA".into(),
         },
-        certificate: FileRef {
+        certificate: Some(FileRef {
             env: "GATEWAY_CERT".into(),
-        },
-        key: FileRef {
+        }),
+        key: Some(FileRef {
             env: "GATEWAY_KEY".into(),
-        },
+        }),
     });
     let mut provider = document.spec.inference_providers.remove("local").unwrap();
     provider.endpoint = "https://models.example.test/v1".into();

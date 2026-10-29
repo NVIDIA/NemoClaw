@@ -154,7 +154,7 @@
           "type": "string"
         },
         "gpu": {
-          "description": "GPU name that must equal the observed device name.",
+          "description": "GPU name that must equal the observed device name. It must belong to a hardware profile's GPU family; that profile's memory architecture decides whether the GPU budget is checked against GPU or host memory.",
           "minLength": 1,
           "type": "string"
         },
@@ -748,7 +748,7 @@
             },
             "tls": {
               "$ref": "#/$defs/TLS",
-              "description": "Optional mutual TLS references for an external HTTPS gateway."
+              "description": "Optional TLS references for an external HTTPS gateway: a CA alone, or with a client certificate and key for mutual TLS."
             }
           },
           "required": [
@@ -2495,7 +2495,7 @@
       "description": "Resource declarations checked against host observations and produced data.",
       "properties": {
         "gpuMemoryBytes": {
-          "description": "Total serving GPU budget in bytes, including model, caches, and other allocations.",
+          "description": "Total serving GPU budget in bytes, including model, caches, and other allocations. Checked against GPU memory on a dedicated-memory GPU, and against host memory with the host reserve on unified memory.",
           "format": "uint64",
           "maximum": 4398046511104,
           "minimum": 4294967296,
@@ -2516,7 +2516,7 @@
           "type": "integer"
         },
         "startupHeadroomGiB": {
-          "description": "Additional available-memory headroom in GiB required at startup.",
+          "description": "Host available memory in GiB required at startup, beyond the GPU budget on unified memory or beyond the host reserve on a dedicated-memory GPU.",
           "format": "uint64",
           "maximum": 4096,
           "minimum": 0,
@@ -3850,7 +3850,15 @@
     },
     "TLS": {
       "additionalProperties": false,
-      "description": "Gateway mutual TLS file references. All three references are required when TLS is declared.",
+      "dependentRequired": {
+        "certificate": [
+          "key"
+        ],
+        "key": [
+          "certificate"
+        ]
+      },
+      "description": "Gateway TLS file references: the CA certificate that verifies the gateway, and a client certificate and key, which must appear together, when the gateway requires one.",
       "properties": {
         "ca": {
           "$ref": "#/$defs/FileRef",
@@ -3858,17 +3866,15 @@
         },
         "certificate": {
           "$ref": "#/$defs/FileRef",
-          "description": "Environment variable whose value names the local client certificate file."
+          "description": "Environment variable whose value names the local client certificate file. Requires key."
         },
         "key": {
           "$ref": "#/$defs/FileRef",
-          "description": "Environment variable whose value names the local client private-key file."
+          "description": "Environment variable whose value names the local client private-key file. Requires certificate."
         }
       },
       "required": [
-        "ca",
-        "certificate",
-        "key"
+        "ca"
       ],
       "type": "object"
     },
@@ -4297,7 +4303,7 @@
     "Native reasoning-effort identifiers are preserved for Fabric validation. Managed inference services may constrain routes to their declared served model.",
     "Rust resolves inferenceRef from enclosing inferences, preserves declaration scope for nested provider references, and rejects missing names and shadowing. The schema rejects inline/reference ambiguity.",
     "The parser resolves providerRef from enclosing inferenceProviders, rejects shadowing, conflicting selected names, more than 32 selected providers, incompatible managed-service combinations, and compares route models and authentication with the selected provider. Provider transport and reference consistency are checked after reference resolution for both inline and shared definitions. Unselected definitions create no resources. Snapshot identity must match the service model.",
-    "The parser checks memory threshold ordering and GPU/KV budget relationships; recipe path safety, byte-length limits, environment-map conflicts, snapshot file uniqueness, directory conflicts, and total-size overflow.",
+    "The parser checks memory threshold ordering and GPU/KV budget relationships; that a recipe's GPU belongs to a hardware profile's GPU family; recipe path safety, byte-length limits, environment-map conflicts, snapshot file uniqueness, directory conflicts, and total-size overflow.",
     "Schema validation does not observe hardware, image labels, model weights, credentials, ownership, connectivity, or inference readiness. Those checks run during the relevant SDK operation."
   ]
 }

@@ -94,7 +94,7 @@ data vllm_runtime (version 0)
       architecture: string, required
         > Execution host CPU architecture.
       gpu: string, required
-        > GPU name that must equal the observed device name.
+        > GPU name that must equal the observed device name. It must belong to a hardware profile's GPU family; that profile's memory architecture decides whether the GPU budget is checked against GPU or host memory.
       image_labels: map(string), required
         > Required org.nemoclaw.* labels. org.nemoclaw.recipe.protocol must equal v1.
       min_driver_major: number, required
@@ -110,13 +110,13 @@ data vllm_runtime (version 0)
     block resources: single
       > Preparation capacity, GPU budget, and startup headroom.
       gpu_memory_bytes: number, required
-        > Total serving GPU budget in bytes, including model, caches, and other allocations.
+        > Total serving GPU budget in bytes, including model, caches, and other allocations. Checked against GPU memory on a dedicated-memory GPU, and against host memory with the host reserve on unified memory.
       preparation_memory_gib: number, required
         > Preparation memory requirement in GiB, in addition to the service host reserve.
       prepared_bytes: number, required
         > Maximum total prepared-data bytes.
       startup_headroom_gib: number, required
-        > Additional available-memory headroom in GiB required at startup.
+        > Host available memory in GiB required at startup, beyond the GPU budget on unified memory or beyond the host reserve on a dedicated-memory GPU.
     block reuse: optional
       > Optional cache import. The new recipe must verify the imported data before accepting it.
       preparation_key: string, required

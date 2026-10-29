@@ -4,6 +4,15 @@
       "descriptor": {
         "adapter_id": "nvidia.fabric.claude",
         "adapter_kind": "python",
+        "capabilities": {
+          "metadata": {
+            "health_checks": [
+              "live",
+              "active",
+              "ready"
+            ]
+          }
+        },
         "config": {
           "accepts": [
             "models",
@@ -158,6 +167,17 @@
               ],
               "type": "string"
             },
+            "reasoning_effort": {
+              "description": "Claude reasoning effort. Omit to preserve the harness default.",
+              "enum": [
+                "low",
+                "medium",
+                "high",
+                "xhigh",
+                "max"
+              ],
+              "type": "string"
+            },
             "setting_sources": {
               "default": [],
               "description": "Claude settings scopes to load.",
@@ -201,6 +221,15 @@
       "descriptor": {
         "adapter_id": "nvidia.fabric.codex",
         "adapter_kind": "python",
+        "capabilities": {
+          "metadata": {
+            "health_checks": [
+              "live",
+              "active",
+              "ready"
+            ]
+          }
+        },
         "config": {
           "accepts": [
             "models",
@@ -339,7 +368,9 @@
                 "low",
                 "medium",
                 "high",
-                "xhigh"
+                "xhigh",
+                "max",
+                "ultra"
               ],
               "type": "string"
             },
@@ -393,6 +424,15 @@
       "descriptor": {
         "adapter_id": "nvidia.fabric.hermes",
         "adapter_kind": "python",
+        "capabilities": {
+          "metadata": {
+            "health_checks": [
+              "live",
+              "active",
+              "ready"
+            ]
+          }
+        },
         "config": {
           "accepts": [
             "models",
@@ -512,6 +552,15 @@
       "descriptor": {
         "adapter_id": "nvidia.fabric.langchain.deepagents",
         "adapter_kind": "python",
+        "capabilities": {
+          "metadata": {
+            "health_checks": [
+              "live",
+              "active",
+              "ready"
+            ]
+          }
+        },
         "config": {
           "accepts": [
             "models",
@@ -760,6 +809,18 @@
               },
               "required": [],
               "type": "object"
+            },
+            "reasoning_effort": {
+              "description": "Reasoning effort passed to ChatOpenAI. Requires an OpenAI-compatible provider; omit to preserve the model default.",
+              "enum": [
+                "none",
+                "minimal",
+                "low",
+                "medium",
+                "high",
+                "xhigh"
+              ],
+              "type": "string"
             }
           },
           "required": [],
@@ -1084,6 +1145,18 @@
         "adapter_kind": "python",
         "capabilities": {
           "cancellation": false,
+          "metadata": {
+            "health_checks": [
+              "live",
+              "active",
+              "ready"
+            ],
+            "service_health_checks": [
+              "live",
+              "active",
+              "ready"
+            ]
+          },
           "service": true,
           "streaming": false,
           "updates": false
@@ -1236,13 +1309,12 @@
               "type": "object"
             },
             "read_timeout_seconds": {
-              "default": 600,
-              "description": "Timeout between response bytes from the local OpenClaw Gateway.",
+              "description": "Timeout between response bytes from the local OpenClaw Gateway. When unset, the invocation timeout bounds the response.",
               "exclusiveMinimum": 0,
               "type": "number"
             },
             "shutdown_timeout_seconds": {
-              "default": 10,
+              "default": 5,
               "description": "Maximum graceful Gateway shutdown time before forced termination.",
               "exclusiveMinimum": 0,
               "type": "number"
@@ -1269,6 +1341,13 @@
         "adapter_kind": "process",
         "capabilities": {
           "cancellation": false,
+          "metadata": {
+            "health_checks": [
+              "live",
+              "active",
+              "ready"
+            ]
+          },
           "service": false,
           "streaming": false,
           "updates": false
@@ -1396,6 +1475,13 @@
         "adapter_kind": "process",
         "capabilities": {
           "cancellation": false,
+          "metadata": {
+            "health_checks": [
+              "live",
+              "active",
+              "ready"
+            ]
+          },
           "service": false,
           "streaming": false,
           "updates": false
@@ -1746,8 +1832,8 @@
       ]
     }
   ],
-  "fabric_revision": "67acf1cff0d598fc3e6a32370cd63fc088e86958",
+  "fabric_revision": "7aedb66be0d0b7fc5a0d466539d87f835f16b1c1",
   "schema_version": 2,
-  "source_sha256": "ca88f31e3bfbc3d3e408410d538a8d4a79e4f65adc6fe987aca929216e6b6d32",
+  "source_sha256": "30740262e6ec422bc16dcebdabaf76d67cc16726d42ddc547841de9ec19f9726",
   "targets": []
 }

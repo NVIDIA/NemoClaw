@@ -117,13 +117,16 @@ impl GatewaySettings<'_> {
             text(self.tls_key_env),
         );
         if !ca.is_empty() || !certificate.is_empty() || !key.is_empty() {
-            if ca.is_empty() || certificate.is_empty() || key.is_empty() {
+            // A CA alone, or with a client certificate and its key.
+            if ca.is_empty() || certificate.is_empty() != key.is_empty() {
                 return Err("Incomplete TLS credential references");
             }
             connection.tls = Some(nemoclaw_openshell::TlsFiles {
                 ca_env: ca,
-                certificate_env: certificate,
-                key_env: key,
+                identity: (!certificate.is_empty()).then_some(nemoclaw_openshell::IdentityFiles {
+                    certificate_env: certificate,
+                    key_env: key,
+                }),
             });
         }
         Ok(Some(GatewayConnection::Direct(connection)))
@@ -252,8 +255,10 @@ fn forwarded(opened: &KubernetesConnection) -> (nemoclaw_openshell::Connection, 
     if let Some([ca, certificate, key]) = &opened.tls {
         connection.tls = Some(nemoclaw_openshell::TlsFiles {
             ca_env: "ca".into(),
-            certificate_env: "certificate".into(),
-            key_env: "key".into(),
+            identity: Some(nemoclaw_openshell::IdentityFiles {
+                certificate_env: "certificate".into(),
+                key_env: "key".into(),
+            }),
         });
         secrets.insert("ca", ca.clone());
         secrets.insert("certificate", certificate.clone());
@@ -368,10 +373,13 @@ impl GatewayClient {
         let key = serde_json::to_string(&(
             &connection.endpoint,
             &connection.credential_env,
-            connection
-                .tls
-                .as_ref()
-                .map(|tls| (&tls.ca_env, &tls.certificate_env, &tls.key_env)),
+            connection.tls.as_ref().map(|tls| {
+                let identity = tls.identity.as_ref();
+                (
+                    &tls.ca_env,
+                    identity.map(|identity| (&identity.certificate_env, &identity.key_env)),
+                )
+            }),
         ))
         .map_err(|error| error.to_string())?;
         if let Some(client) = self
@@ -548,14 +556,61 @@ mod tests {
         let resolve = |name: &Option<String>| secrets.resolve(name.as_deref().unwrap()).unwrap();
         assert_eq!(resolve(&connection.credential_env), "signed token");
         let tls = connection.tls.unwrap();
+        let identity = tls.identity.unwrap();
         for (name, path) in [
             (tls.ca_env, "/state/ca.crt"),
-            (tls.certificate_env, "/state/tls.crt"),
-            (tls.key_env, "/state/tls.key"),
+            (identity.certificate_env, "/state/tls.crt"),
+            (identity.key_env, "/state/tls.key"),
         ] {
             assert_eq!(secrets.resolve(&name).unwrap(), path);
             // The names are local to this client, never inherited variables.
             assert!(std::env::var_os(&name).is_none(), "{name}");
+        }
+    }
+
+    #[test]
+    fn tls_references_name_a_ca_alone_or_with_a_certificate_and_key() {
+        let value = |text: &str| Value::Value(text.to_owned());
+        let (endpoint, empty) = (value("https://gateway.example.com"), value(""));
+        let (ca, certificate, key) = (value("CA"), value("CERT"), value("KEY"));
+        let connect = |[ca, certificate, key]: [&Value<String>; 3]| {
+            GatewaySettings {
+                endpoint: &endpoint,
+                credential_env: &empty,
+                tls_ca_env: ca,
+                tls_certificate_env: certificate,
+                tls_key_env: key,
+                kubernetes: &empty,
+            }
+            .connection()
+        };
+        let tls = |references| match connect(references) {
+            Ok(Some(GatewayConnection::Direct(connection))) => connection.tls,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(
+            tls([&ca, &empty, &empty]),
+            Some(nemoclaw_openshell::TlsFiles {
+                ca_env: "CA".into(),
+                identity: None,
+            })
+        );
+        assert_eq!(
+            tls([&ca, &certificate, &key]),
+            Some(nemoclaw_openshell::TlsFiles {
+                ca_env: "CA".into(),
+                identity: Some(nemoclaw_openshell::IdentityFiles {
+                    certificate_env: "CERT".into(),
+                    key_env: "KEY".into(),
+                }),
+            })
+        );
+        for partial in [
+            [&ca, &certificate, &empty],
+            [&ca, &empty, &key],
+            [&empty, &certificate, &key],
+        ] {
+            assert!(connect(partial).is_err());
         }
     }
 

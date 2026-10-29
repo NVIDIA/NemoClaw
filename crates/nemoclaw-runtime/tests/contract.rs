@@ -176,3 +176,15 @@ fn runtime_errors_identify_declared_fields_without_echoing_values_or_map_keys() 
         assert!(!error.contains("PRIVATE_SENTINEL"), "{error}");
     }
 }
+
+#[test]
+fn recipe_gpu_matching_covers_every_hardware_profile() {
+    use nemoclaw_runtime::vllm::HardwareProfile;
+    let schema = serde_json::to_value(schemars::schema_for!(HardwareProfile)).unwrap();
+    let mut declared: Vec<_> = schema["enum"].as_array().unwrap().iter().collect();
+    declared.sort_by_key(|name| name.as_str());
+    let listed = HardwareProfile::ALL.map(|profile| serde_json::to_value(profile).unwrap());
+    let mut listed: Vec<_> = listed.iter().collect();
+    listed.sort_by_key(|name| name.as_str());
+    assert_eq!(listed, declared);
+}
