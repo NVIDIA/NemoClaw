@@ -189,6 +189,51 @@ describe("messaging selector key handling", () => {
     expect(input.listenerCount("close")).toBe(0);
   });
 
+  it("treats a leading NUL byte as a lost Ctrl-D and cancels the raw menu (#13910)", async () => {
+    // A Ctrl-D queued while the terminal was cooked becomes a NUL byte when
+    // the raw-mode switch lands before it is read; the menu must still settle.
+    const input = createMockSelectorInput();
+    const output = { write: vi.fn() };
+    Object.defineProperty(process, "stdin", {
+      configurable: true,
+      value: input,
+    });
+    Object.defineProperty(process, "stderr", {
+      configurable: true,
+      value: output,
+    });
+
+    const selection = readMessagingChannelSelection(channels, new Set<string>(), () => {});
+    input.emit("data", "\u0000");
+
+    await expect(selection).rejects.toMatchObject({ code: "EOF" });
+    expect(isAnyPromptActive()).toBe(false);
+    expect(input.setRawMode).toHaveBeenLastCalledWith(false);
+    expect(input.listenerCount("data")).toBe(0);
+  });
+
+  it("does not treat a NUL byte after real input as a cancellation (#13910)", async () => {
+    const input = createMockSelectorInput();
+    const output = { write: vi.fn() };
+    Object.defineProperty(process, "stdin", {
+      configurable: true,
+      value: input,
+    });
+    Object.defineProperty(process, "stderr", {
+      configurable: true,
+      value: output,
+    });
+
+    const selection = readMessagingChannelSelection(channels, new Set<string>(), () => {});
+    input.emit("data", "1");
+    // After real input the NUL is an ordinary ignored byte, not a cancellation;
+    // the menu keeps waiting until stdin actually closes.
+    input.emit("data", "\u0000");
+    input.emit("close");
+
+    await expect(selection).rejects.toMatchObject({ code: "EOF" });
+  });
+
   it("cancels and restores the terminal when Ctrl-D is pressed in the raw menu (#12169)", async () => {
     const input = createMockSelectorInput();
     const output = { write: vi.fn() };

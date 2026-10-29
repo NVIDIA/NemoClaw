@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { expect, it, vi } from "vitest";
+import { pendingStdinEofError } from "../../core/pending-stdin-eof";
 import { handleOnboardCommandError } from "./error-reporting";
 
 it("reports nested onboarding causes without replacing the failure", () => {
@@ -64,4 +65,35 @@ it("keeps cancellation and ordinary failure output unchanged", () => {
   expect(error).not.toHaveBeenCalled();
   expect(handleOnboardCommandError(failure, { error }, "EOF")).toBe(1);
   expect(error).toHaveBeenCalledExactlyOnceWith("  Installation cancelled");
+});
+
+it("reports a wrapped prompt-EOF cancellation as Installation cancelled (#13910)", () => {
+  // The messaging-channel selector's Ctrl-D rejection traverses the whole
+  // onboard unwind. A layer that wraps the step failure must not degrade the
+  // deliberate cancellation into the generic unfinished-run failure path.
+  const wrapped = new Error("Messaging channel setup failed", {
+    cause: pendingStdinEofError(),
+  });
+  const error = vi.fn();
+  expect(handleOnboardCommandError(wrapped, { error }, null)).toBe(1);
+  expect(error).toHaveBeenCalledExactlyOnceWith("  Installation cancelled");
+});
+
+it("recovers a wrapped EOF cancellation nested inside aggregate failures (#13910)", () => {
+  const wrapped = new AggregateError(
+    [new Error("Channel manifest failed"), pendingStdinEofError()],
+    "Messaging channel setup failed",
+  );
+  const error = vi.fn();
+  expect(handleOnboardCommandError(wrapped, { error }, null)).toBe(1);
+  expect(error).toHaveBeenCalledExactlyOnceWith("  Installation cancelled");
+});
+
+it("keeps an ordinary wrapped failure out of the cancellation path (#13910)", () => {
+  const wrapped = new Error("Messaging channel setup failed", {
+    cause: new Error("docker build failed"),
+  });
+  const error = vi.fn();
+  expect(() => handleOnboardCommandError(wrapped, { error }, null)).toThrow(wrapped);
+  expect(error).toHaveBeenCalledExactlyOnceWith("  Onboarding cause: docker build failed");
 });

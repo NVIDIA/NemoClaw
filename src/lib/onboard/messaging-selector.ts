@@ -187,6 +187,7 @@ function readChannelKeys<T extends MessagingChannelSelectorEntry>(
     const releasePromptActivity = markPromptActive();
     let rawModeEnabled = false;
     let finished = false;
+    let sawInput = false;
 
     function cleanup() {
       releasePromptActivity();
@@ -243,6 +244,18 @@ function readChannelKeys<T extends MessagingChannelSelectorEntry>(
 
     function onData(chunk: Buffer | string): void {
       const text = normalizeMessagingSelectorInput(chunk.toString("utf8"), normalizerState);
+      // A NUL byte as the menu's very first input is a Ctrl-D that was queued
+      // while the terminal was cooked and then lost to the raw-mode switch:
+      // the kernel turns the queued end-of-file indication into a NUL byte
+      // when ICANON clears before it is read, so the pending-EOF window's
+      // expiry-to-raw-switch boundary can silently swallow the key (#13910).
+      // The menu has no typed answer to protect and no use for a bare NUL, so
+      // close stdin exactly as the raw \x04 byte path does.
+      if (!sawInput && text.startsWith("\u0000")) {
+        fail(pendingStdinEofError());
+        return;
+      }
+      sawInput = true;
       for (let index = 0; index < text.length; index += 1) {
         const action = applyMessagingSelectorKey(text[index], enabled, availableChannels);
         if (action === "interrupt") {

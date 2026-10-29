@@ -4,6 +4,19 @@
 /** How long to let a queued terminal read complete before a prompt starts. */
 export const PENDING_STDIN_WINDOW_MS = 10;
 
+/**
+ * Trusted marker for the stdin-EOF cancellation identity.
+ *
+ * A prompt's `code: "EOF"` rejection must survive the whole onboard unwind
+ * (selector → step setup → machine handler → runner → command) for the
+ * command to report `Installation cancelled` (#5976, #12169, #12216). The
+ * raw `code` own property is easy to lose when any layer re-wraps a step
+ * failure; the marker lets the command handler recover the cancellation
+ * from a wrapped error's nested causes the same way the deferred-exit error
+ * stays recognizable through unwinding (#13910).
+ */
+export const PENDING_STDIN_EOF_CANCELLATION = Symbol.for("nemoclaw.onboard.pending-stdin-eof");
+
 interface PendingStdinInput extends NodeJS.ReadableStream {
   isTTY?: boolean;
 }
@@ -92,7 +105,10 @@ export function takePendingStdinEof(
 
 /** The rejection every prompt uses for a stdin EOF that arrived before an answer. */
 export function pendingStdinEofError(): Error {
-  return Object.assign(new Error("Prompt closed before input"), { code: "EOF" });
+  return Object.assign(new Error("Prompt closed before input"), {
+    code: "EOF",
+    [PENDING_STDIN_EOF_CANCELLATION]: true,
+  });
 }
 
 /**

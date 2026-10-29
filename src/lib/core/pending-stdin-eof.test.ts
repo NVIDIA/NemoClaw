@@ -4,7 +4,11 @@
 import { PassThrough } from "node:stream";
 import { describe, expect, it } from "vitest";
 
-import { takePendingStdinEof } from "./pending-stdin-eof";
+import {
+  PENDING_STDIN_EOF_CANCELLATION,
+  pendingStdinEofError,
+  takePendingStdinEof,
+} from "./pending-stdin-eof";
 
 type PromptInput = PassThrough & { isTTY?: boolean };
 
@@ -71,5 +75,16 @@ describe("takePendingStdinEof", () => {
     expect(input.listenerCount("data")).toBe(0);
     expect(input.listenerCount("end")).toBe(0);
     expect(input.listenerCount("close")).toBe(0);
+  });
+});
+
+describe("pendingStdinEofError", () => {
+  it("stamps the trusted cancellation marker so wrapped rejections stay recognizable (#13910)", () => {
+    const error = pendingStdinEofError() as Error & { code?: unknown };
+    expect(error.code).toBe("EOF");
+    expect(error.message).toBe("Prompt closed before input");
+    expect((error as unknown as Record<symbol, unknown>)[PENDING_STDIN_EOF_CANCELLATION]).toBe(
+      true,
+    );
   });
 });

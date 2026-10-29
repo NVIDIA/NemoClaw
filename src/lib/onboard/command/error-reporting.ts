@@ -7,10 +7,18 @@ import { noteOnboardResumeHintShown } from "../resume-hint";
 import { GatewayAuthorityError, gatewayAuthorityFailureLines } from "../gateway-teardown-authority";
 import { PortableInferenceDescriptorError } from "../experimental/portable-inference-descriptor";
 import {
+  isTrustedOnboardError,
   OnboardRestoreSnapshotDriftError,
   redactOnboardErrorText,
   sanitizeOnboardFailure,
 } from "../session-bootstrap";
+
+/**
+ * Trusted marker shared with `pendingStdinEofError()` (registered globally,
+ * so the command handler recovers the identity without importing the prompt
+ * module — same convention as the deferred-exit marker).
+ */
+const PENDING_STDIN_EOF_CANCELLATION = Symbol.for("nemoclaw.onboard.pending-stdin-eof");
 
 interface OnboardErrorReporter {
   error?: (message?: string) => void;
@@ -59,8 +67,15 @@ export function handleOnboardCommandError(
   deps: OnboardErrorReporter,
   cancellationCode: string | null,
 ): number | null {
+  // A prompt-cancellation rejection traverses the entire onboard unwind —
+  // selector → step setup → machine handler → runner → command. A layer that
+  // wraps a step failure hides the raw `code: "EOF"` own property, and the
+  // run then degrades to the generic unfinished-run hint instead of
+  // `Installation cancelled` (#13910). Recover the shared stdin-EOF identity
+  // from the wrapped error's bounded nested causes before classifying.
+  const resolvedCancellation = cancellationCode ?? wrappedStdinEofCancellation(error);
   const sanitizedError = sanitizeOnboardFailure(error);
-  if (cancellationCode === "SIGINT") {
+  if (resolvedCancellation === "SIGINT") {
     // The prompt has already restored terminal state and re-raised SIGINT.
     // Preserve interruption if the event loop drains before signal delivery,
     // without sending the rejected prompt through Oclif's error renderer.
@@ -100,7 +115,7 @@ export function handleOnboardCommandError(
   // Stdin EOF at any onboarding prompt is a cancellation, not a failure:
   // print a clear message and exit non-zero instead of either crashing with
   // a stack trace or — as in the original bug — exiting 0 silently (#5976).
-  if (cancellationCode !== "EOF") {
+  if (resolvedCancellation !== "EOF") {
     try {
       reportNestedOnboardCauses(sanitizedError, deps);
     } catch {
@@ -109,4 +124,33 @@ export function handleOnboardCommandError(
     throw sanitizedError;
   }
   return reportOnboardCommandError(deps, "  Installation cancelled");
+}
+
+/** Recover a stdin-EOF cancellation that a wrapping layer hid in its causes. */
+function wrappedStdinEofCancellation(error: unknown): "EOF" | null {
+  if (!isTrustedOnboardError(error)) return null;
+  const pending: Error[] = [error];
+  for (let index = 0; index < pending.length && index < 9; index += 1) {
+    const current = pending[index]!;
+    if (ownErrorData(current, PENDING_STDIN_EOF_CANCELLATION) === true) return "EOF";
+    const members = Object.getOwnPropertyDescriptor(current, "errors")?.value;
+    const children: unknown[] = [ownErrorData(current, "cause")];
+    if (Array.isArray(members)) {
+      const count = Math.min(members.length, 8);
+      for (let member = 0; member < count; member += 1) {
+        children.push(Object.getOwnPropertyDescriptor(members, String(member))?.value);
+      }
+    }
+    for (const child of children) {
+      if (pending.length >= 9) break;
+      if (isTrustedOnboardError(child) && !pending.includes(child)) pending.push(child);
+    }
+  }
+  return null;
+}
+
+/** Read one trusted Error data property without consulting accessors or its prototype. */
+function ownErrorData(error: Error, key: PropertyKey): unknown {
+  const descriptor = Object.getOwnPropertyDescriptor(error, key);
+  return descriptor && "value" in descriptor ? descriptor.value : undefined;
 }

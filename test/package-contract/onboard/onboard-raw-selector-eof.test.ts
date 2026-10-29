@@ -34,6 +34,13 @@ const MENUS = {
     banner: "MESSAGING_MENU_OPEN",
     cancellation: "Installation cancelled",
   },
+  // The messaging menu as the onboarding step actually opens it: through
+  // `setupMessagingChannels`, the entry the machine handler calls, not the
+  // raw selector directly (#13910).
+  "messaging-setup": {
+    banner: "MESSAGING_MENU_OPEN",
+    cancellation: "Installation cancelled",
+  },
   hermes: {
     banner: "Hermes managed Nous tools",
     cancellation: "Installation cancelled",
@@ -41,7 +48,7 @@ const MENUS = {
 } as const;
 
 type MenuName = keyof typeof MENUS;
-type Moment = "between" | "inside";
+type Moment = "between" | "inside" | "nul-inside";
 
 const DRIVER = `
 const { runOnboardCommand } = require(${JSON.stringify(dist("onboard/command.js"))});
@@ -79,6 +86,17 @@ const menus = {
       new Set(),
       () => undefined,
     );
+  },
+  "messaging-setup": () => {
+    const { createSetupMessagingChannels } = require(${JSON.stringify(dist("onboard/messaging-channel-setup.js"))});
+    const { prompt } = require(${JSON.stringify(dist("credentials/store.js"))});
+    process.stderr.write("MESSAGING_MENU_OPEN\\n");
+    return createSetupMessagingChannels({
+      step: () => undefined,
+      note: () => undefined,
+      isNonInteractive: () => false,
+      prompt,
+    })(null, null, "contract-sandbox");
   },
   hermes: () => {
     const { setupHermesToolGateways } = require(${JSON.stringify(dist("onboard/hermes-managed-tools.js"))});
@@ -152,6 +170,13 @@ while time.time() < deadline:
             time.sleep(0.1)
             os.write(fd, b"\\x04")
             sent = True
+        # The kernel turns a Ctrl-D queued while the terminal was cooked into a
+        # NUL byte when the raw-mode switch lands before it is read (#13910).
+        # Deliver that NUL inside the menu and expect the same cancellation.
+        if moment == "nul-inside" and elapsed > 0.7 and raw_mode():
+            time.sleep(0.1)
+            os.write(fd, b"\\x00")
+            sent = True
     waited = os.waitpid(pid, os.WNOHANG)
     if waited[0] == pid:
         exit_code = os.waitstatus_to_exitcode(waited[1])
@@ -201,6 +226,9 @@ describe.skipIf(process.platform === "win32")("raw-mode menu Ctrl-D cancellation
   const cases = (Object.keys(MENUS) as MenuName[]).flatMap((menu) =>
     (["between", "inside"] as const).map((moment) => [menu, moment] as const),
   );
+  const nulCases = (["messaging", "messaging-setup"] as MenuName[]).map(
+    (menu) => [menu, "nul-inside"] as const,
+  );
 
   it.each(cases)("%s menu cancels on Ctrl-D typed %s", { timeout: 35000 }, (menu, moment) => {
     const { status, output } = runMenu(menu, moment);
@@ -212,4 +240,19 @@ describe.skipIf(process.platform === "win32")("raw-mode menu Ctrl-D cancellation
     expect(output).toContain("RAW_AT_EXIT=false");
     expect(output).not.toContain("Error: Prompt closed before input");
   });
+
+  it.each(nulCases)(
+    "%s menu cancels on a NUL byte delivered inside (a Ctrl-D lost to the raw-mode switch) (#13910)",
+    { timeout: 35000 },
+    (menu, moment) => {
+      const { status, output } = runMenu(menu, moment);
+
+      expect(output).toContain("PTY_CTRL_D_SENT=True");
+      expect(status, output).toBe(1);
+      expect(output).toContain(MENUS[menu].banner);
+      expect(output).toContain(MENUS[menu].cancellation);
+      expect(output).toContain("RAW_AT_EXIT=false");
+      expect(output).not.toContain("Error: Prompt closed before input");
+    },
+  );
 });
