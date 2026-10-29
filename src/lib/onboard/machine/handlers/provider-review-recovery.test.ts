@@ -341,6 +341,7 @@ describe("provider inference review recovery", () => {
       sandboxName: "review-interrupted",
       provider: "ollama-local",
       model: "qwen3.5:9b",
+      endpointUrl: "http://host.openshell.internal:11435/v1",
       sandboxPromptProgress: {
         sandboxName: true,
         webSearch: false,
@@ -373,7 +374,7 @@ describe("provider inference review recovery", () => {
       "review-interrupted",
       "qwen3.5:9b",
       "ollama-local",
-      null,
+      "http://host.openshell.internal:11435/v1",
       null,
       null,
       [],
@@ -402,7 +403,7 @@ describe("provider inference review recovery", () => {
       "review-interrupted",
       "qwen3.5:9b",
       "ollama-local",
-      null,
+      "http://host.openshell.internal:11435/v1",
       null,
       null,
       [],
@@ -412,6 +413,7 @@ describe("provider inference review recovery", () => {
       sandboxName: "review-interrupted",
       provider: "ollama-local",
       model: "qwen3.5:9b",
+      endpointUrl: "http://host.openshell.internal:11435/v1",
     });
   });
 
@@ -750,5 +752,98 @@ describe("provider inference review recovery", () => {
     );
     expect(calls.exit).not.toHaveBeenCalled();
     expect(prompt).toHaveBeenCalledOnce();
+  });
+
+  it("stops a non-interactive resume of an earlier-release checkpoint with no host-local endpoint", async () => {
+    const session = failedReviewSession();
+    session.endpointUrl = null;
+    const setupNim = vi.fn(async () => ({ ...baseSelection }));
+    const { deps, calls } = createDeps({
+      isNonInteractive: () => true,
+      setupNim,
+      isInferenceRouteReady: vi.fn(() => false),
+    });
+
+    await expect(
+      handleProviderInferenceState({
+        ...baseOptions(deps, session),
+        resume: true,
+        sandboxName: "review-interrupted",
+      }),
+    ).rejects.toThrow("exit 1");
+
+    expect(calls.error).toHaveBeenCalledWith(
+      expect.stringContaining("without the ollama-local endpoint"),
+    );
+    expect(calls.error).toHaveBeenCalledWith(expect.stringContaining("onboard --fresh"));
+    expect(setupNim).not.toHaveBeenCalled();
+    expect(calls.setupInference).not.toHaveBeenCalled();
+  });
+
+  it("selects again on an interactive resume of an earlier-release checkpoint with no host-local endpoint", async () => {
+    const session = failedReviewSession();
+    session.endpointUrl = null;
+    const setupNim = vi.fn(async () => ({
+      ...baseSelection,
+      provider: "ollama-local",
+      model: "qwen3.5:9b",
+      endpointUrl: "http://host.openshell.internal:11435/v1",
+      credentialEnv: null,
+    }));
+    const { deps, calls } = createDeps({
+      isNonInteractive: () => false,
+      prompt: vi.fn(async () => "1"),
+      setupNim,
+      isInferenceRouteReady: vi.fn(() => false),
+    });
+
+    await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "review-interrupted",
+    });
+
+    expect(calls.exit).not.toHaveBeenCalled();
+    expect(setupNim).toHaveBeenCalledOnce();
+    expect(calls.setupInference).toHaveBeenCalledWith(
+      "review-interrupted",
+      "qwen3.5:9b",
+      "ollama-local",
+      "http://host.openshell.internal:11435/v1",
+      null,
+      null,
+      [],
+      expect.any(Object),
+    );
+  });
+
+  it("runs inference setup after an endpointless review is reselected to an already ready cloud route", async () => {
+    const session = failedReviewSession();
+    session.endpointUrl = null;
+    const setupNim = vi.fn(async () => ({ ...baseSelection }));
+    const { deps, calls } = createDeps({
+      isNonInteractive: () => false,
+      prompt: vi.fn(async () => "1"),
+      setupNim,
+      isInferenceRouteReady: vi.fn(() => true),
+    });
+
+    await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "review-interrupted",
+    });
+
+    expect(setupNim).toHaveBeenCalledOnce();
+    expect(calls.setupInference).toHaveBeenCalledWith(
+      "review-interrupted",
+      baseSelection.model,
+      baseSelection.provider,
+      baseSelection.endpointUrl,
+      baseSelection.credentialEnv,
+      null,
+      [],
+      expect.any(Object),
+    );
   });
 });

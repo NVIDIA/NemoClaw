@@ -1088,11 +1088,59 @@ function provenResumeSandboxName(
     : null;
 }
 
-function reviewRecoveryState(session: Session | null, sandboxName: string | null) {
+function isReviewCheckpoint(session: Session | null, sandboxName: string | null) {
   return (
     session?.steps?.provider_selection?.status === "failed" &&
     session.sandboxPromptProgress.sandboxName === true &&
     session.sandboxName === sandboxName
+  );
+}
+
+// Review checkpoints from earlier releases omit the endpoint. A host-local
+// route cannot be verified without it, so the provider must be selected again.
+function isEndpointlessHostLocalReviewCheckpoint(
+  session: Session | null,
+  sandboxName: string | null,
+): boolean {
+  return (
+    isReviewCheckpoint(session, sandboxName) &&
+    !session?.endpointUrl &&
+    isHostLocalInferenceProvider(session?.provider ?? "")
+  );
+}
+
+// A non-interactive selection would fall back to environment input or the
+// default provider and silently replace the interrupted local selection.
+// Station Express selection is bound to its saved intent instead.
+function refuseNonInteractiveEndpointlessReviewResume(
+  deps: Pick<
+    ProviderInferenceStateOptions<unknown, unknown, unknown>["deps"],
+    "cliName" | "error" | "exitProcess" | "isNonInteractive"
+  >,
+  session: Session | null,
+  sandboxName: string | null,
+  effectiveResume: boolean,
+): void {
+  if (
+    !effectiveResume ||
+    !deps.isNonInteractive() ||
+    retriesStationExpressSelection(session) ||
+    !isEndpointlessHostLocalReviewCheckpoint(session, sandboxName)
+  )
+    return;
+  deps.error(
+    `  The interrupted onboarding review for '${sandboxName}' was saved by an earlier release without the ${session?.provider} endpoint, so it cannot be resumed non-interactively.`,
+  );
+  deps.error(
+    `  Run \`${deps.cliName()} onboard --resume\` interactively to select the provider again, or \`${deps.cliName()} onboard --fresh\` to start over.`,
+  );
+  deps.exitProcess(1);
+}
+
+function reviewRecoveryState(session: Session | null, sandboxName: string | null) {
+  return (
+    isReviewCheckpoint(session, sandboxName) &&
+    !isEndpointlessHostLocalReviewCheckpoint(session, sandboxName)
   );
 }
 
@@ -1108,6 +1156,16 @@ function hasIncompleteCustomRoute(session: Session | null): boolean {
   return gatewayRouteIdentityConflictReasons(route, route).includes("incomplete-custom-route");
 }
 
+// An interrupted Station review has a provider/model but no validated model
+// identity yet. Retry selection so its checkpoint can bind that identity.
+function retriesStationExpressSelection(session: Session | null): boolean {
+  return Boolean(
+    session?.stationExpressIntent &&
+    session.stationExpressIntent.kind !== "spark" &&
+    session.steps.provider_selection.status !== "complete",
+  );
+}
+
 function canResumeProviderSelection(
   forceProviderSelection: boolean,
   effectiveResume: boolean,
@@ -1118,15 +1176,7 @@ function canResumeProviderSelection(
   model: string | null,
   interactive: boolean,
 ): boolean {
-  // An interrupted Station review has a provider/model but no validated model
-  // identity yet. Retry selection so its checkpoint can bind that identity.
-  if (
-    session?.stationExpressIntent &&
-    session.stationExpressIntent.kind !== "spark" &&
-    session.steps.provider_selection.status !== "complete"
-  ) {
-    return false;
-  }
+  if (retriesStationExpressSelection(session)) return false;
   // Review checkpoints from earlier releases kept only provider and model, so
   // a custom route cannot pass the gateway check. Ask again interactively;
   // non-interactive resume keeps failing closed at that check.
@@ -1566,6 +1616,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       setupOptions,
     };
   };
+  refuseNonInteractiveEndpointlessReviewResume(deps, session, sandboxName, effectiveResume);
   const reusableResumeSandboxName = provenResumeSandboxName(
     session,
     sandboxName,
@@ -1610,7 +1661,13 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     // auto-detected, never a user override or a legitimately resumed window
     // (#6177; resume/repair coverage per PR #6293 PRA-3).
     clearAutoDetectedCompatibleContextWindow(process.env);
-    let forceInferenceSetup = initialForceInferenceSetup;
+    // Re-selecting an endpointless review does not complete its inference
+    // step, even if the newly selected provider has a ready shared route.
+    const reselectingEndpointlessReview = isEndpointlessHostLocalReviewCheckpoint(
+      session,
+      sandboxName,
+    );
+    let forceInferenceSetup = initialForceInferenceSetup || reselectingEndpointlessReview;
     let recoveredRecordedProvider = false;
     const providerRecovery = createRecovery(fresh, sandboxName, session, deps, {
       recoveryReceipt: providerRecoveryReceipt,
@@ -1621,7 +1678,8 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       session,
       sandboxName,
     );
-    let deferProviderSelectionUntilInference = completeRecoveredReviewSelectionAfterInference;
+    let deferProviderSelectionUntilInference =
+      completeRecoveredReviewSelectionAfterInference || reselectingEndpointlessReview;
     const reviewRecoveredInteractively =
       completeRecoveredReviewSelectionAfterInference && !deps.isNonInteractive();
     const resumeProviderSelection = canResumeProviderSelection(
@@ -1929,7 +1987,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     if (
       shouldRecordProviderSelection &&
       (authoritativeResumeConfig || effectiveResume) &&
-      !completeRecoveredReviewSelectionAfterInference
+      !deferProviderSelectionUntilInference
     ) {
       // Authoritative rebuild selections are already route-validated. Persist
       // them before inference setup so their reservation can retain the
@@ -2367,8 +2425,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       const freshManagedOllama =
         activeHostLocalInferenceSetupOptions.hostLocalInference?.request.service === "ollama" &&
         "managed" in activeHostLocalInferenceSetupOptions.hostLocalInference.request;
-      deferProviderSelectionUntilInference =
-        completeRecoveredReviewSelectionAfterInference || freshManagedOllama;
+      deferProviderSelectionUntilInference ||= freshManagedOllama;
       // Ordinary selections retain the accepted provider/model before setup.
       // Fresh managed Ollama stays in progress until its runtime, route,
       // receipt, and registry reservation have committed together.
