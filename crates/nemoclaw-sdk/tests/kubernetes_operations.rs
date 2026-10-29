@@ -906,11 +906,7 @@ async fn cleanup_waits_for_helm_and_keeps_storage() {
 #[tokio::test]
 async fn an_operators_namespace_and_pull_secret_survive_apply_and_destroy() {
     let objects = cluster();
-    objects.insert(json!({"apiVersion": "v1", "kind": "Namespace",
-        "metadata": {"name": "agents", "uid": "operator-ns", "labels": {"team": "agents"}}}));
-    objects.insert(json!({"apiVersion": "v1", "kind": "Secret", "type": "kubernetes.io/dockerconfigjson",
-        "metadata": {"name": "registry-credentials", "namespace": "agents", "uid": "operator-secret"},
-        "data": {".dockerconfigjson": "e30="}}));
+    crate::kubernetes_storage::operator_namespace(&objects, json!({"team": "agents"}));
     let operator = |objects: &Objects| {
         (
             objects.get("v1", "Namespace", "", "agents").unwrap(),

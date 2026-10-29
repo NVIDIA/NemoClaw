@@ -162,28 +162,16 @@ async fn apply_with_fault(
     result
 }
 
+/// A failed namespace read is reported by its class.
 #[tokio::test]
-async fn an_unauthorized_namespace_read_is_an_authentication_failure() {
-    assert_eq!(
-        apply_with_fault(NAMESPACE_PATH, Fault::Status(401)).await,
-        Err(ObservationError::Authentication)
-    );
-}
-
-#[tokio::test]
-async fn a_forbidden_namespace_read_is_a_permission_failure() {
-    assert_eq!(
-        apply_with_fault(NAMESPACE_PATH, Fault::Status(403)).await,
-        Err(ObservationError::Permission)
-    );
-}
-
-#[tokio::test]
-async fn a_dropped_connection_during_the_namespace_read_is_a_transport_failure() {
-    assert_eq!(
-        apply_with_fault(NAMESPACE_PATH, Fault::Dropped).await,
-        Err(ObservationError::Transport)
-    );
+async fn a_failed_namespace_read_is_reported_by_class() {
+    for (fault, error) in [
+        (Fault::Status(401), ObservationError::Authentication),
+        (Fault::Status(403), ObservationError::Permission),
+        (Fault::Dropped, ObservationError::Transport),
+    ] {
+        assert_eq!(apply_with_fault(NAMESPACE_PATH, fault).await, Err(error));
+    }
 }
 
 /// The in-memory API reports an absent object as missing, even one whose name
@@ -213,7 +201,7 @@ async fn the_in_memory_api_reports_absent_objects_as_missing() {
 }
 
 /// A namespace and pull Secret an operator created before the first apply.
-fn operator_namespace(objects: &Objects, labels: serde_json::Value) {
+pub(crate) fn operator_namespace(objects: &Objects, labels: serde_json::Value) {
     objects.insert(json!({"apiVersion": "v1", "kind": "Namespace",
         "metadata": {"name": "agents", "uid": "operator-ns", "labels": labels}}));
     objects.insert(json!({"apiVersion": "v1", "kind": "Secret", "type": "kubernetes.io/dockerconfigjson",
