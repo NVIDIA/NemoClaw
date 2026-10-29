@@ -41,6 +41,10 @@ You can also re-supply the same endpoint URL when the registry records that onbo
 NemoClaw requires a canonical match and does not extend that trust to a different URL or an endpoint recorded by `inference set`.
 If the route metadata is incomplete, NemoClaw stops and tells you to re-run onboarding.
 
+For a DNS-backed HTTPS route that NemoClaw already recorded through its HTTPS Pin Runtime adapter, a model-only change skips the host-side OpenShell verification that cannot reach the adapter.
+NemoClaw verifies the selected model from the target sandbox before it updates the agent configuration or registry.
+If that verification fails, NemoClaw restores the previously observed OpenShell model selection and reports whether restoration succeeded.
+
 </AgentOnly>
 
 <AgentOnly variant="hermes">
