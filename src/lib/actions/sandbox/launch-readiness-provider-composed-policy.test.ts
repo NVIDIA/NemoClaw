@@ -157,30 +157,28 @@ async function publishWithFinalPolicy(policy: string) {
     SANDBOX,
     await inspectLaunchReadiness(SANDBOX, deps(POLICY)),
   );
-  return publishLaunchReadiness(publication, deps(policy));
-}
-
-async function publishedIdentity(): Promise<LaunchReadinessIdentity> {
-  const publication = publicationFromDecision(
-    SANDBOX,
-    await inspectLaunchReadiness(SANDBOX, deps(POLICY)),
-  );
   let identity: LaunchReadinessIdentity | undefined;
-  const publish = deps(POLICY);
   const result = await publishLaunchReadiness(publication, {
-    ...publish,
+    ...deps(policy),
     publishLease: (_name, _gateway, _port, _epoch, published) => {
       identity = published;
       return lease(published);
     },
   });
+  return { result, identity };
+}
+
+async function publishedIdentity(): Promise<LaunchReadinessIdentity> {
+  const { result, identity } = await publishWithFinalPolicy(POLICY);
   expect(result).toEqual({ kind: "published" });
   return identity!;
 }
 
 describe("launch readiness provider-composed policy entries", () => {
   it("ignores a name-only MCP provider entry during final policy validation", async () => {
-    expect(await publishWithFinalPolicy(PROVIDER_COMPOSED_POLICY)).toEqual({ kind: "published" });
+    expect((await publishWithFinalPolicy(PROVIDER_COMPOSED_POLICY)).result).toEqual({
+      kind: "published",
+    });
   });
 
   it("rejects an incomplete policy entry that OpenShell did not compose", async () => {
@@ -188,7 +186,7 @@ describe("launch readiness provider-composed policy entries", () => {
     name: mcp_deepwiki
 `;
 
-    expect(await publishWithFinalPolicy(policy)).toEqual({
+    expect((await publishWithFinalPolicy(policy)).result).toEqual({
       kind: "policy-observation-failed",
       error: {
         kind: "schema",
