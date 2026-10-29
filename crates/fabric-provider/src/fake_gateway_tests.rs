@@ -153,6 +153,14 @@ async fn an_agent_starts_once_its_bridge_serves_and_stops_when_removed() {
     fabric.remove("agent", &agent, false).await.unwrap();
 }
 
+/// Answer the next bridge command with `envelope`, as a failed command does;
+/// none restores the fake bridge.
+fn reply(fixture: &Fixture, envelope: Option<String>) {
+    let mut state = fixture.state.lock().unwrap();
+    state.exec_exit = i32::from(envelope.is_some());
+    state.exec_response = envelope.map(|envelope| format!("{envelope}\n").into_bytes());
+}
+
 #[tokio::test]
 async fn reading_an_agent_finds_a_runtime_that_no_longer_runs() {
     let fixture = Fixture::start().await;
@@ -162,73 +170,49 @@ async fn reading_an_agent_finds_a_runtime_that_no_longer_runs() {
     let started = fabric.ensure("agent", &desired(&sandbox)).await;
     assert!(started.error().is_none(), "{:?}", started.error());
     let agent = started.into_parts().0.unwrap();
-    let set_reason = |reason: Option<&str>| {
-        fixture.state.lock().unwrap().fabric_check_reason = reason.map(str::to_owned);
-    };
-
-    // A runtime that passes its check, an adapter without health checks, and
-    // a probe that could not finish all count as running.
     assert_eq!(agent["running"], "true");
-    for reason in [None, Some("unsupported_adapter"), Some("probe_timeout")] {
-        set_reason(reason);
+
+    for (reason, running) in [
+        (None, true),
+        // An adapter without health checks, or a probe that could not
+        // finish, is no evidence that the runtime stopped.
+        (Some("unsupported_adapter"), true),
+        (Some("probe_timeout"), true),
+        // Fabric no longer has the runtime, or its adapter finds it unhealthy.
+        (Some("runtime_unavailable"), false),
+        (Some("harness_exited"), false),
+    ] {
+        fixture.state.lock().unwrap().fabric_check_reason = reason.map(str::to_owned);
         assert_eq!(
             fabric.read("agent", &agent, false).await.unwrap(),
-            Some(observed(&agent, true)),
+            Some(observed(&agent, running)),
             "{reason:?}"
         );
     }
+    fixture.state.lock().unwrap().fabric_check_reason = None;
     // Reading only checks: nothing starts, stops, or answers a request.
-    assert_eq!(operations(&fixture, "check"), 3);
+    assert_eq!(operations(&fixture, "check"), 5);
     assert_eq!(operations(&fixture, "start"), 1);
     assert_eq!(
         operations(&fixture, "stop") + operations(&fixture, "invoke"),
         0
     );
 
-    // A runtime whose adapter reports it unhealthy no longer runs.
-    set_reason(Some("harness_exited"));
-    let stopped = Some(observed(&agent, false));
-    assert_eq!(fabric.read("agent", &agent, false).await.unwrap(), stopped);
-    set_reason(None);
-
-    // Nor does a runtime Fabric no longer has.
-    let runtimes = std::mem::take(&mut fixture.state.lock().unwrap().fabric_runtimes);
-    assert_eq!(fabric.read("agent", &agent, false).await.unwrap(), stopped);
-    fixture.state.lock().unwrap().fabric_runtimes = runtimes;
-
-    // Nor one whose sandbox no longer serves its bridge.
-    {
-        let mut state = fixture.state.lock().unwrap();
-        state.exec_exit = 1;
-        state.exec_response = Some(
-            br#"{"operation":"check","status":"failed","changed":false,"result":null,"error":{"code":"host_unavailable","stage":"transport","message":"m","effects":"none"}}
-"#
-            .to_vec(),
-        );
-    }
-    assert_eq!(fabric.read("agent", &agent, false).await.unwrap(), stopped);
-    {
-        let mut state = fixture.state.lock().unwrap();
-        state.exec_exit = 0;
-        state.exec_response = None;
-    }
-
-    // A check Fabric refuses is an error, not a missing runtime.
-    {
-        let mut state = fixture.state.lock().unwrap();
-        state.exec_exit = 1;
-        state.exec_response = Some(
-            br#"{"operation":"check","status":"failed","changed":false,"result":null,"error":{"code":"wrong_agent","stage":"check","message":"m","effects":"none"}}
-"#
-            .to_vec(),
-        );
-    }
+    // A bridge that no longer answers has no runtime; a check Fabric refuses
+    // is an error.
+    let failed = |code: &str, stage: &str| {
+        Some(format!(
+            r#"{{"operation":"check","status":"failed","changed":false,"result":null,"error":{{"code":"{code}","stage":"{stage}","message":"m","effects":"none"}}}}"#
+        ))
+    };
+    reply(&fixture, failed("host_unavailable", "transport"));
+    assert_eq!(
+        fabric.read("agent", &agent, false).await.unwrap(),
+        Some(observed(&agent, false))
+    );
+    reply(&fixture, failed("wrong_agent", "check"));
     assert!(fabric.read("agent", &agent, false).await.is_err());
-    {
-        let mut state = fixture.state.lock().unwrap();
-        state.exec_exit = 0;
-        state.exec_response = None;
-    }
+    reply(&fixture, None);
 
     // Removing the agent reads only its sandbox.
     let checks = operations(&fixture, "check");
@@ -236,8 +220,6 @@ async fn reading_an_agent_finds_a_runtime_that_no_longer_runs() {
         fabric.read("agent", &agent, true).await.unwrap(),
         Some(agent.clone())
     );
-    assert_eq!(operations(&fixture, "check"), checks);
-
     // A sandbox that exited took its runtime with it.
     fixture
         .state
@@ -250,7 +232,10 @@ async fn reading_an_agent_finds_a_runtime_that_no_longer_runs() {
         .as_mut()
         .unwrap()
         .phase = proto::SandboxPhase::Error as i32;
-    assert_eq!(fabric.read("agent", &agent, false).await.unwrap(), stopped);
+    assert_eq!(
+        fabric.read("agent", &agent, false).await.unwrap(),
+        Some(observed(&agent, false))
+    );
     assert_eq!(operations(&fixture, "check"), checks);
 }
 
