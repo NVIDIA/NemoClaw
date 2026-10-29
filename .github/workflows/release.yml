@@ -112,7 +112,7 @@ jobs:
           token: ${{ github.token }}
       - name: Install the pinned SBOM generator
         id: syft
-        uses: anchore/sbom-action/download-syft@fffec3d851af758d56fee099cf3fbf8aa8779843 # v0.24.3
+        uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
         with:
           syft-version: v1.55.0
       - name: Build and push the vLLM and Ollama runtime images
@@ -161,7 +161,7 @@ jobs:
           persist-credentials: false
       - name: Install the pinned SBOM generator
         id: syft
-        uses: anchore/sbom-action/download-syft@fffec3d851af758d56fee099cf3fbf8aa8779843 # v0.24.3
+        uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
         with:
           syft-version: v1.55.0
       - name: List the release images
