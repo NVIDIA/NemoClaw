@@ -412,6 +412,9 @@ data openshell_gateway (version 0)
 data openshell_gateway_prerequisites (version 0)
   available: bool, computed
   compute_driver: string, required
+  endpoint: string, optional
   engine: string, required
+  name: string, optional
   observation_json: string, computed
+  owner: string, optional
   status: string, computed

@@ -112,7 +112,7 @@ async fn network_creation_rechecks_conflicts_that_appear_after_planning() {
     assert!(matches!(
         engine.ensure_network(&spec).await,
         Err(Error::Conflict(
-            "managed gateway subnet overlaps an existing Docker network"
+            "managed gateway subnet overlaps an existing Docker network; set spec.gateway.networkCIDR to a free private /24"
         ))
     ));
 }

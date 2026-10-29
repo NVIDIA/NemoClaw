@@ -3,9 +3,10 @@
 
 # GTC DC Examples
 
-These nine templates cover Hermes, OpenClaw, and LangChain Deep Agents on the three GTC DC target environments.
+The nine local-inference templates cover Hermes, OpenClaw, and LangChain Deep Agents on the three ARM64 GTC DC target environments.
 Each declares one agent, a local managed Docker gateway, and one managed vLLM service.
 On DGX Spark, the Hermes and Deep Agents templates are verified; the other combinations are untested.
+The directory also links an [AMD64 Kubernetes profile](#amd64-kubernetes-with-nvidia-cloud-inference) that uses NVIDIA cloud inference.
 
 | Template | DGX Spark result |
 |---|---|
@@ -25,7 +26,7 @@ DGX Station and Windows WSL2 RTX Spark remain untested.
 | OpenClaw | [Station](openclaw-dgx-station.yaml) | [Spark](openclaw-dgx-spark.yaml) | [WSL2 RTX Spark](openclaw-windows-wsl2-rtx-spark.yaml) |
 | LangChain Deep Agents | [Station](deepagents-dgx-station.yaml) | [Spark](deepagents-dgx-spark.yaml) | [WSL2 RTX Spark](deepagents-windows-wsl2-rtx-spark.yaml) |
 
-All files select [NVIDIA Nemotron 3 Super 120B-A12B NVFP4](https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4/tree/ff433f5493e25d631c9f12b5d55c674229923d02), pinned to commit `ff433f5493e25d631c9f12b5d55c674229923d02`.
+The local-inference files select [NVIDIA Nemotron 3 Super 120B-A12B NVFP4](https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4/tree/ff433f5493e25d631c9f12b5d55c674229923d02), pinned to commit `ff433f5493e25d631c9f12b5d55c674229923d02`.
 The serving configuration uses a 65,536-token context, one sequence, an 8 GiB KV cache, and an 88 GiB total GPU budget.
 That budget covers the approximately 74.8 GiB pinned weights and declared cache; actual runtime headroom and context capacity still require verification.
 KV and SSM cache dtypes use runtime defaults; model output accuracy and tool calls also require live checks.
@@ -88,6 +89,41 @@ For a Windows target, copy its corresponding `*-windows-wsl2-rtx-spark.yaml` fil
 
 Plan observes the selected environment without creating deployment resources or requesting inference.
 Follow [the deployment workflow](../../docs/usage.md) for apply, recovery, and retained teardown, and verify [model and agent responses](../../docs/inference.md#verify-the-result) separately.
+
+## AMD64 Kubernetes with NVIDIA Cloud Inference
+
+One profile targets Linux AMD64 Kubernetes workers, an existing OpenShell gateway, and NVIDIA's hosted Super VL API.
+It replaces the earlier three-OpenClaw Kubernetes example with two sandboxes: one OpenClaw agent and one Hermes agent.
+Inference runs on NVIDIA's cloud; the Kubernetes workers need no local GPU.
+Choose the [YAML](kubernetes-amd64.yaml) or equivalent [OpenTofu HCL](kubernetes-amd64.tf) configuration.
+Both links are symlinks to the owning files in `examples/kubernetes/`.
+The profile requires live validation.
+
+| Sandbox | Harness | Image metadata environment variable |
+|---|---|---|
+| `openclaw` | `nvidia.fabric.openclaw` | `NEMOCLAW_OPENCLAW_IMAGE_METADATA` |
+| `hermes` | `nvidia.fabric.hermes` | `NEMOCLAW_HERMES_IMAGE_METADATA` |
+
+Both agents select `nvidia/nemotron-3.5-super-vl-120b-a12b` at `https://integrate.api.nvidia.com/v1` through the OpenAI completions API.
+Set `NVIDIA_INFERENCE_API_KEY` on the applying host; [credential ownership](../../docs/security.md#credentials-and-authentication) describes its storage and removal.
+Model requests can incur cloud inference charges.
+Each harness gets a registration bound to its image's executables, using the shared endpoint and credential reference.
+Both sandboxes retain explicit process and filesystem policies, with writes limited to `/sandbox`.
+Hermes also reads its packaged source, Switchyard plugin, and the public CA bundle used for HTTPS.
+
+Follow the [Kubernetes prerequisites and image preparation](../../docs/kubernetes.md#prerequisites), then the [existing-gateway procedure](../../docs/kubernetes.md#use-an-existing-gateway).
+Select a Linux AMD64 image for each harness, push both to a registry the cluster can pull from, and supply their matching metadata bundles.
+Set `GATEWAY_TOKEN` and the `GATEWAY_CA`, `GATEWAY_CERT`, and `GATEWAY_KEY` TLS file references for the existing gateway.
+
+For YAML, assign a fresh deployment UID and replace the gateway endpoint and both image digests before planning.
+Follow the [deployment workflow](../../docs/usage.md) for apply and retained teardown.
+
+For HCL, copy `hosted-nvidia.tf` alone into a private working directory and set `gateway_endpoint`, a fresh `workspace`, and both `images` references.
+Pin the two NVIDIA providers to the matching native bundle's manifest version and install them from its `providers` directory, as in the [HCL setup](../hcl/travel-team/README.md#run-it).
+Run the bundle's `libexec/tofu` to initialize, validate, plan, and apply that directory.
+The HCL protects its workspace with `prevent_destroy`; full workspace deletion requires removing that protection and setting `destroy=true`.
+Choose one authoring path per deployment, with its own workspace and state; applying both configurations does not adopt the other path's resources.
+Verify an [agent response](../../docs/inference.md#verify-the-result) from each sandbox separately.
 
 ## Sources and Adaptation
 

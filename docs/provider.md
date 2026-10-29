@@ -287,6 +287,7 @@ These types name the engine or cluster they use instead of taking a gateway `ref
 `openshell_podman_gateway` also requires the gateway `endpoint`, an HTTP origin with an unprivileged loopback port.
 `openshell_gateway_storage` requires `endpoint` for Podman and rejects it for Docker, whose gateway data does not depend on the listen port; it returns the volume's `data_path`.
 The storage volume, bridge network, and initialization labels derive from `name`, `owner`, and the other settings, so changing any of them requires new storage.
+Planning new storage, or a new Podman gateway, fails when another network on the engine overlaps `network_cidr`; the deployment's own network, found by name and owner, doesn't count.
 
 ### Fabric Resource and Data Source
 
@@ -523,6 +524,7 @@ One read of the engine's `/info` answers both of `host_engine`'s observations; i
 The engine observation reports available server version, architecture, operating system, CPU count, and memory fields.
 The prerequisite observation is `unavailable`, with its reason, when the engine cannot host a managed gateway with that driver: the Podman driver needs a Podman engine socket, and rootless Podman needs pasta networking.
 The gateway installation types check the same prerequisites when they plan and apply.
+The prerequisite source also takes the gateway's optional `endpoint`, `name`, and `owner`. With them, it is also `unavailable` when anything other than that gateway holds the endpoint's port: another running container that publishes it, or, for Podman, whose gateway listens on the host's loopback, any listener on the CLI host. A host process that holds a Docker engine's port is reported when the gateway starts.
 Plans for a managed gateway read both and report them as one engine observation, whose status is the less available of the two.
 These describe the selected engine, which may differ from the CLI host.
 The image observation retains its configuration ID, repository manifest digests, platform, and size even when it lacks Fabric metadata.
