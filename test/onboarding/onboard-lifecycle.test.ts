@@ -435,4 +435,88 @@ describe("onboard entrypoint lifecycle events", () => {
     assert.match(payload.stderr, /Run: nemoclaw onboard/);
     assert.doesNotMatch(payload.stderr, /synthetic resume-conflict event failure/);
   });
+
+  it("forwards rebuild permission through the real onboarding entry (#11199)", () => {
+    const repoRoot = path.join(import.meta.dirname, "../..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-shields-handoff-"));
+    const scriptPath = path.join(tmpDir, "shields-handoff.cjs");
+    const modulePath = (relative: string) => JSON.stringify(path.join(repoRoot, relative));
+    fs.writeFileSync(
+      scriptPath,
+      `
+const initial = require(${modulePath("src/lib/onboard/machine/initial-flow-phases.ts")});
+const coreRaw = require(${modulePath("src/lib/onboard/machine/core-flow-phases.ts")});
+const core = require(${modulePath("src/lib/onboard/machine/core-flow-composition.ts")});
+const create = require(${modulePath("src/lib/onboard/sandbox-create/orchestration.ts")});
+const { resolveNemoclawStateDir } = require(${modulePath("src/lib/state/paths.ts")});
+const fs = require("node:fs");
+const path = require("node:path");
+require(${modulePath("src/lib/onboard/docker-driver-gateway-service.ts")}).hasOpenShellGatewayUserService = () => false;
+require(${modulePath("test/helpers/onboard-script-mocks.cjs")}).mockStandaloneGatewayTeardownAuthority();
+const stop = new Error("stop after onboarding handoff");
+const allowed = process.env.TEST_ALLOW_SHIELDS_RECORD === "1";
+const record = path.join(resolveNemoclawStateDir(), "shields-shields-handoff.json");
+fs.mkdirSync(path.dirname(record), { recursive: true, mode: 0o700 });
+fs.writeFileSync(record, ${JSON.stringify("{}\n")});
+let createSandbox;
+initial.runInitialOnboardFlowSlice = async ({ context, runtime }) => ({
+  context: { ...context, session: await runtime.session(), gpu: null,
+    sandboxGpuConfig: { mode: "disabled", hostGpuPlatform: null },
+    gpuPassthrough: false, requestedGpuPassthrough: false,
+    resumeHasResolvedGpuIntent: true },
+  session: await runtime.session(),
+});
+core.createCoreOnboardFlowPhases = (input) => {
+  createSandbox = input.sandbox.deps.createSandbox;
+  return {};
+};
+coreRaw.runCoreOnboardFlowSlice = async () => {
+  const args = Array(17).fill(null);
+  args[1] = "test-model";
+  args[2] = "nvidia-prod";
+  args[4] = "shields-handoff";
+  args[12] = [];
+  await createSandbox(...args);
+  throw stop;
+};
+const realCreate = create.createSandboxWithBaseImageResolution;
+create.createSandboxWithBaseImageResolution = (runtime) => realCreate(new Proxy(runtime, {
+  get(target, key) {
+    if (key === "preparedDcodeRebuild") {
+      return { ...target.preparedDcodeRebuild, assertPreparedDcodeTarget: () => { throw stop; } };
+    }
+    return Reflect.get(target, key);
+  },
+}));
+const { onboard } = require(${modulePath("src/lib/onboard.ts")});
+onboard({ nonInteractive: true, acceptThirdPartySoftware: true, noGpu: true,
+  sandboxName: "shields-handoff",
+  ...(allowed ? { allowRemovedImmutabilityStateRecord: true } : {}) })
+  .then(() => { throw new Error("onboard unexpectedly completed"); }, (error) => {
+    console.log(JSON.stringify({ guardPassed: error === stop || error?.message === stop.message,
+      error: error?.stack || error?.message, recordRetained: fs.existsSync(record) }));
+  });
+`,
+    );
+    try {
+      const run = (allowed: boolean) =>
+        runOnboardEntrypoint<{ guardPassed: boolean; error: string; recordRetained: boolean }>(
+          scriptPath,
+          repoRoot,
+          {
+            HOME: path.join(tmpDir, allowed ? "allowed" : "denied"),
+            TEST_ALLOW_SHIELDS_RECORD: allowed ? "1" : "0",
+          },
+        );
+      const denied = run(false);
+      assert.equal(denied.guardPassed, false);
+      assert.match(denied.error, /has a state record from the removed Shields feature/);
+      assert.equal(denied.recordRetained, true);
+      const permitted = run(true);
+      assert.equal(permitted.guardPassed, true, permitted.error);
+      assert.equal(permitted.recordRetained, true);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
 });

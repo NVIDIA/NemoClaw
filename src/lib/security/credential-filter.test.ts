@@ -14,6 +14,7 @@ import {
   isSafeCredentialPlaceholder,
   isSensitiveFile,
   npmConfigContainsCredentialDirective,
+  recoveryDownloadContentContainsCredential,
   sanitizeEnvFileContent,
   stripCredentials,
   textContainsCredential,
@@ -341,6 +342,23 @@ describe("textContainsCredential", () => {
     expect(textContainsCredential(publishedFixture.replace("Issue #2319", "Issue #2320"))).toBe(
       true,
     );
+  });
+
+  it("enforces strict recovery-download placeholder acceptance and environment-assignment rejection", () => {
+    expect(
+      recoveryDownloadContentContainsCredential(
+        [
+          "MODEL=moonshotai/kimi-k2",
+          "SAFE=openshell:resolve:env:SAFE",
+          '{"apiKey":"openshell:resolve:env:OPENAI_API_KEY","botToken":"xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN"}',
+        ].join("\n"),
+      ),
+    ).toBe(false);
+    expect(recoveryDownloadContentContainsCredential("export DB_PASS=super-secret\n")).toBe(true);
+    expect(
+      recoveryDownloadContentContainsCredential("ENDPOINT=Bearer opaque-migration-secret\n"),
+    ).toBe(true);
+    expect(recoveryDownloadContentContainsCredential("API_KEY=\n")).toBe(true);
   });
 });
 

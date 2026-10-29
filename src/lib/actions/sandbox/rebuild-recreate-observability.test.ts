@@ -175,7 +175,7 @@ function makeInput(overrides: Partial<RebuildRecreatePhaseInput> = {}): RebuildR
     credentialEnv: "NVIDIA_API_KEY",
     baseImagePreflight: { ok: true, imageRef: null, overrideEnvVar: null },
     recoveryRecreate: false,
-    preparedBackupRecovery: false,
+    allowRemovedImmutabilityStateRecord: false,
     registryRollback: { recordRemoval: vi.fn(), restoreForRetry: vi.fn() },
     backupManifest: null,
     mcpEntries: [],
@@ -227,13 +227,13 @@ describe("runRebuildRecreatePhase handoff", () => {
     expect(input.bail).not.toHaveBeenCalled();
   });
 
-  it("allows a removed Shields state record only for prepared-backup recovery", async () => {
+  it("passes the removed Shields record permission to inner onboarding when rebuild admitted the record", async () => {
     vi.spyOn(rebuildOnboardDependencies, "onboard").mockImplementation(async (options) => {
       expect(options.allowRemovedImmutabilityStateRecord).toBe(true);
     });
 
     await expect(
-      runRebuildRecreatePhase(makeInput({ preparedBackupRecovery: true })),
+      runRebuildRecreatePhase(makeInput({ allowRemovedImmutabilityStateRecord: true })),
     ).resolves.toBe(true);
   });
 
@@ -394,9 +394,7 @@ describe("runRebuildRecreatePhase handoff", () => {
         observedRestoreSentinel = process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE;
       });
 
-      await expect(
-        runRebuildRecreatePhase(makeInput({ preparedBackupRecovery: true })),
-      ).resolves.toBe(true);
+      await expect(runRebuildRecreatePhase(makeInput())).resolves.toBe(true);
 
       expect(observedRestoreSentinel).toBeUndefined();
       expect(process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE).toBe("1");

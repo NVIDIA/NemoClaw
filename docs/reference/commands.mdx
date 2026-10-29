@@ -3270,6 +3270,8 @@ Regular files are published through a private temporary entry and atomically rep
 Relative host destinations resolve against the caller's working directory.
 Absolute host destinations do not use caller-working-directory resolution.
 With no `host-dest` the destination defaults to the current directory.
+While a sandbox has a legacy Shields state record, `download` accepts only a restricted set of paths. Refer to [Upgrade from a Release That Used Shields](../manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes#upgrade-from-a-release-that-used-shields) for the accepted paths and checks.
+The examples below show ordinary downloads. With a legacy Shields record, check each source against the restricted list before using an example; some example paths are refused.
 
 For a relative sandbox path that begins with `-`, place the standard outer `--` before the path.
 NemoClaw anchors the source so OpenShell treats it as a path.

@@ -524,6 +524,7 @@ async function rebuildSandboxUnlocked(
         log,
         bail,
         ...(mcpRuntimeSelection ? { runtimeSelection: mcpRuntimeSelection } : {}),
+        ...(retireRemovedImmutabilityState ? { removedImmutabilityStateRecord: true } : {}),
       });
       if (!backup) return;
       sourceOpenClawDoctorWindow = backup.sourceOpenClawDoctorWindow ?? null;
@@ -739,9 +740,9 @@ async function rebuildSandboxUnlocked(
           }
         }
         if (retireRemovedImmutabilityState) {
-          if (!postRestoreVerification?.mutableConfigPermissionsVerified) {
+          if (postRestoreVerification?.complete !== true) {
             return bail(
-              "Removed Shields state was retained because the rebuilt sandbox's mutable config posture was not verified.",
+              "Removed Shields state was retained because post-restore verification did not complete.",
             );
           }
           retireRemovedImmutabilityStateRecord(sandboxName, "mutable-rebuild");
@@ -1009,7 +1010,7 @@ async function rebuildSandboxUnlocked(
           credentialEnv,
           baseImagePreflight,
           recoveryRecreate,
-          preparedBackupRecovery,
+          allowRemovedImmutabilityStateRecord: retireRemovedImmutabilityState,
           registryRollback,
           backupManifest: backup.backupManifest,
           mcpEntries: mcpPreparation.entries,
@@ -1081,9 +1082,9 @@ async function rebuildSandboxUnlocked(
         bail,
       });
       if (retireRemovedImmutabilityState) {
-        if (!postRestoreVerification?.mutableConfigPermissionsVerified) {
+        if (postRestoreVerification?.complete !== true) {
           return bail(
-            "Removed Shields state was retained because the rebuilt sandbox's mutable config posture was not verified.",
+            "Removed Shields state was retained because post-restore verification did not complete.",
           );
         }
         retireRemovedImmutabilityStateRecord(sandboxName, "mutable-rebuild");

@@ -370,7 +370,7 @@ describe("Hermes accepted replacement recovery", () => {
     ).resolves.toBeUndefined();
 
     expect(bail).toHaveBeenCalledWith(
-      "Removed Shields state was retained because the rebuilt sandbox's mutable config posture was not verified.",
+      "Removed Shields state was retained because post-restore verification did not complete.",
     );
     expect(phaseMocks.retireRemovedImmutabilityStateRecord).not.toHaveBeenCalled();
     expect(completeAcceptedTarget).not.toHaveBeenCalled();

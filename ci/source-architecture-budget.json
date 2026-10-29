@@ -29,6 +29,7 @@
       "src/lib/platform.ts": 20,
       "src/lib/runner.ts": 73,
       "src/lib/sandbox-name-contract.ts": 21,
+      "src/lib/security/credential-filter.ts": 21,
       "src/lib/security/redact.ts": 50,
       "src/lib/state/mcp-lifecycle-lock.ts": 17,
       "src/lib/state/onboard-session.ts": 36,

@@ -11,6 +11,8 @@ export type OpenShellSandboxTransferRequest = Readonly<{
   destination: string;
   /** Preserve inherited transfer output by default; credential reads can suppress it. */
   output?: "inherit" | "suppress";
+  /** Cancel a bounded caller-owned transfer before its staged artifact is published. */
+  signal?: AbortSignal;
 }>;
 
 export type OpenShellSandboxTransferOutcome =

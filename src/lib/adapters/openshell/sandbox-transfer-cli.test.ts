@@ -112,6 +112,21 @@ describe("CLI sandbox transfer", () => {
     }
   });
 
+  it("terminates a caller-cancelled staged transfer before returning", async () => {
+    const h = harness();
+    const controller = new AbortController();
+    const pending = h.executor.run({ ...request, signal: controller.signal });
+    controller.abort();
+    expect(h.child.kill).toHaveBeenCalledWith("SIGKILL");
+    h.events.emit("close", null, "SIGKILL");
+    const result = await pending;
+    try {
+      expect(result.outcome).toEqual({ kind: "failed", reason: "interrupted" });
+    } finally {
+      result.release();
+    }
+  });
+
   it.each([
     { sandboxName: "--other" },
     { target: { kind: "named", gatewayName: "../other" } },

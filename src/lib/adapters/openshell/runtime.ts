@@ -10,6 +10,7 @@ import {
   captureOpenshellCommand,
   captureOpenshellCommandAsync,
   captureSandboxSshConfigCommand,
+  OPENSHELL_DOWNLOAD_TIMEOUT_MS,
   OPENSHELL_OPERATION_TIMEOUT_MS,
   OPENSHELL_PROBE_TIMEOUT_MS,
   runOpenshellCommand,
@@ -31,7 +32,12 @@ export {
   withSelectedOpenShellCommandOptions,
 } from "./command-argv";
 
-export { buildOpenShellSubprocessEnv, OPENSHELL_OPERATION_TIMEOUT_MS, OPENSHELL_PROBE_TIMEOUT_MS };
+export {
+  buildOpenShellSubprocessEnv,
+  OPENSHELL_DOWNLOAD_TIMEOUT_MS,
+  OPENSHELL_OPERATION_TIMEOUT_MS,
+  OPENSHELL_PROBE_TIMEOUT_MS,
+};
 export { classifyManagedGatewayEndpointBinding } from "./command-execution";
 export { runCaptureEx } from "../../runner";
 

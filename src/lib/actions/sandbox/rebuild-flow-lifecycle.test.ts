@@ -17,7 +17,10 @@ import {
   tempFiles,
 } from "../../../../test/helpers/rebuild-flow-generic-harness";
 import { makePreparedRecoveryManifest } from "./rebuild-flow-test-fixtures";
+import type { SandboxCreateOrchestrationRuntime } from "../../onboard";
+import { createSandboxWithBaseImageResolution } from "../../onboard/sandbox-create/orchestration";
 import { enforceRemovedImmutabilityMigrationBoundary } from "../../state/migrations/removed-immutability";
+import { resolveNemoclawStateDir } from "../../state/paths";
 import type { SandboxRuntimeSnapshot } from "../../state/registry/runtime-snapshot";
 import { registry } from "../../../../test/helpers/rebuild-flow-harness";
 
@@ -495,6 +498,139 @@ describe("rebuildSandbox flow: lifecycle", () => {
       "alpha",
       "mutable-rebuild",
     );
+  });
+
+  it("keeps the Shields record when OpenClaw MCP restore remains incomplete", async () => {
+    const mcpEntry = { server: "github", providerName: "nemoclaw-mcp-alpha-github" };
+    const harness = createRebuildFlowHarness({
+      mcpPreparation: { entries: [mcpEntry], detachedProviderEntries: [mcpEntry] },
+      restoreMcpBridgesAfterRebuild: async () => {
+        throw new Error("MCP restore failed");
+      },
+    });
+    harness.enforceRemovedImmutabilityMigrationBoundarySpy.mockReturnValue({
+      stateRecord: "/tmp/shields-alpha.json",
+      recoveryArtifacts: [],
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow(
+      "Removed Shields state was retained because post-restore verification did not complete.",
+    );
+    expect(harness.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledOnce();
+    expect(harness.retireRemovedImmutabilityStateRecordSpy).not.toHaveBeenCalled();
+  });
+
+  it("rebuilds and removes a legacy Shields record when inner onboarding enforces the record check", async () => {
+    const recordPath = path.join(resolveNemoclawStateDir(), "shields-alpha.json");
+    fs.mkdirSync(path.dirname(recordPath), { recursive: true });
+    fs.writeFileSync(recordPath, "{}\n");
+    try {
+      const onboardingBoundaryPassed = new Error(
+        "onboarding accepted the rebuild record permission",
+      );
+      const createSandbox = createSandboxWithBaseImageResolution({
+        step: () => undefined,
+        promptValidatedSandboxName: () => {
+          throw new Error("rebuild must supply the sandbox name");
+        },
+        validateName: (name: string) => name,
+        sandboxAgent: { assertProviderlessSandboxAgent: () => undefined },
+        preparedDcodeRebuild: {
+          assertPreparedDcodeTarget: () => {
+            throw onboardingBoundaryPassed;
+          },
+        },
+      } as unknown as SandboxCreateOrchestrationRuntime);
+      const runRealOnboardingBoundary = (allowRemovedImmutabilityStateRecord: boolean) =>
+        createSandbox(
+          undefined as never,
+          null,
+          undefined as never,
+          null,
+          false,
+          null,
+          undefined as never,
+          undefined as never,
+          undefined as never,
+          "",
+          "",
+          null,
+          "alpha",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          [],
+          null,
+          null,
+          null,
+          null,
+          null,
+          allowRemovedImmutabilityStateRecord,
+          null,
+          null,
+        );
+      const harness = createRebuildFlowHarness({
+        sandboxEntry: {},
+        onboard: async (_session, options) => {
+          await expect(runRealOnboardingBoundary(false)).rejects.toThrow(
+            "has a state record from the removed Shields feature",
+          );
+          await expect(
+            runRealOnboardingBoundary(options.allowRemovedImmutabilityStateRecord === true),
+          ).rejects.toThrow(onboardingBoundaryPassed);
+        },
+      });
+      harness.enforceRemovedImmutabilityMigrationBoundarySpy.mockImplementation(
+        enforceRemovedImmutabilityMigrationBoundaryReal,
+      );
+      harness.retireRemovedImmutabilityStateRecordSpy.mockRestore();
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).resolves.toBeUndefined();
+
+      expect(fs.existsSync(recordPath)).toBe(false);
+    } finally {
+      fs.rmSync(recordPath, { force: true });
+    }
+  });
+
+  it("keeps a sandbox with a legacy Shields record and prints replacement steps when backup reads are denied", async () => {
+    const harness = createRebuildFlowHarness();
+    harness.enforceRemovedImmutabilityMigrationBoundarySpy.mockReturnValue({
+      stateRecord: "/tmp/shields-alpha.json",
+      recoveryArtifacts: [],
+    });
+    harness.backupSandboxStateSpy.mockReturnValue({
+      success: false,
+      backedUpDirs: [],
+      failedDirs: ["."],
+      failedDirReasons: { ".": "permission denied" },
+      backedUpFiles: [],
+      failedFiles: [],
+      error:
+        "Native home/workspace capture failed: tar: ./.openclaw/credentials: Cannot open: Permission denied",
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("Failed to back up sandbox state");
+
+    const errors = harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(errors).toContain("wrong ownership or permissions");
+    expect(errors).toContain(
+      "Sandbox 'alpha' also has a state record from the removed Shields feature.",
+    );
+    expect(errors).toContain("alpha download <sandbox-path> <host-dir>");
+    expect(harness.onboardSpy).not.toHaveBeenCalled();
+    expect(harness.retireRemovedImmutabilityStateRecordSpy).not.toHaveBeenCalled();
+    expectNoSandboxDelete(harness.runOpenshellSpy);
   });
 
   it("retains removed Shields state when a Pi terminal-agent restore fails", async () => {

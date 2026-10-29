@@ -29,7 +29,10 @@ vi.mock("./sessions/download-verify", async (importOriginal) => {
   };
 });
 
-import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
+import {
+  OPENSHELL_DOWNLOAD_TIMEOUT_MS,
+  OPENSHELL_PROBE_TIMEOUT_MS,
+} from "../../adapters/openshell/timeouts";
 import { deferSandboxLifecycleExit } from "../../core/process-exit";
 import { downloadFromSandbox, SandboxDownloadSourceMissingError } from "./download";
 import { ensureLiveSandboxOrExit } from "./gateway-state";
@@ -106,7 +109,7 @@ describe("downloadFromSandbox", () => {
     });
 
     // The probe runs before and after the download, and its script reads the
-    // source as "$1", which is the final argv entry, so assert that position
+    // source as "$2", which is the final argv entry, so assert that position
     // rather than mere presence in the argument list.
     expect(captureMock).toHaveBeenCalledTimes(2);
     expect((captureMock.mock.calls[0]?.[0].command as string[]).at(-1)).toBe("./-payload");
@@ -540,4 +543,308 @@ describe("downloadFromSandbox", () => {
     expect(publishMock).toHaveBeenCalledWith(stagedArtifact, "/tmp/p", "file");
     expect(fs.rmSync).toHaveBeenCalledWith(stagingDir, { recursive: true, force: true });
   });
+
+  it("publishes an allowlisted credential-free recovery artifact when a legacy Shields record exists", async () => {
+    vi.restoreAllMocks();
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-download-legacy-shields-"));
+    vi.stubEnv("NEMOCLAW_TEST_STATE_DIR", root);
+    let stagedDestination = "";
+    try {
+      fs.writeFileSync(path.join(root, "shields-alpha.json"), "{}\n");
+      runMock.mockImplementation(async ({ destination }: { destination: string }) => {
+        stagedDestination = destination;
+        fs.writeFileSync(destination, "# Agent Workspace\n\nSafe workspace instructions.\n");
+        return {
+          outcome: { kind: "completed", exitCode: 0 },
+          release: vi.fn(),
+          wasInterrupted: () => false,
+        };
+      });
+      const hostDest = path.join(root, "out");
+
+      const result = await downloadFromSandbox({
+        sandboxName: "alpha",
+        sandboxPath: "/sandbox/.openclaw/workspace/SOUL.md",
+        hostDest,
+      });
+
+      expect(runMock).toHaveBeenCalledWith({
+        direction: "download",
+        sandboxName: "alpha",
+        target: { kind: "selected" },
+        source: "/sandbox/.openclaw/workspace/SOUL.md",
+        destination: stagedDestination,
+        signal: expect.any(AbortSignal),
+      });
+      expect(publishMock).toHaveBeenCalledWith(stagedDestination, hostDest, "file");
+      expect(result).toEqual({
+        sandboxPath: "/sandbox/.openclaw/workspace/SOUL.md",
+        hostDest,
+      });
+    } finally {
+      vi.unstubAllEnvs();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects credential-bearing source paths and content when a legacy Shields record exists", async () => {
+    vi.restoreAllMocks();
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-download-legacy-shields-"));
+    vi.stubEnv("NEMOCLAW_TEST_STATE_DIR", root);
+    try {
+      fs.writeFileSync(path.join(root, "shields-alpha.json"), "{}\n");
+      runMock.mockImplementation(async ({ destination }: { destination: string }) => {
+        fs.writeFileSync(destination, `OPENAI_API_KEY=${"sk-" + "a".repeat(32)}\n`);
+        return {
+          outcome: { kind: "completed", exitCode: 0 },
+          release: vi.fn(),
+          wasInterrupted: () => false,
+        };
+      });
+
+      await expect(
+        downloadFromSandbox({
+          sandboxName: "alpha",
+          sandboxPath: "/sandbox/.openclaw/credentials/tokens.json",
+          hostDest: path.join(root, "out"),
+        }),
+      ).rejects.toThrow(/mutable posture cannot be proven/u);
+      expect(runMock).not.toHaveBeenCalled();
+
+      await expect(
+        downloadFromSandbox({
+          sandboxName: "alpha",
+          sandboxPath: "/sandbox/.openclaw/workspace/SOUL.md",
+          hostDest: path.join(root, "out"),
+        }),
+      ).rejects.toThrow(/credential-bearing or uninspectable material/u);
+      expect(publishMock).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllEnvs();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    {
+      name: "deadline",
+      elapsedMs: OPENSHELL_DOWNLOAD_TIMEOUT_MS,
+      expected: /recovery transfer timed out/u,
+      prepare: (_destination: string) => undefined,
+    },
+    {
+      name: "staged file growth",
+      elapsedMs: 250,
+      expected: /wrote a file larger than 16 MiB/u,
+      prepare: (destination: string) => {
+        fs.writeFileSync(destination, "");
+        fs.truncateSync(destination, 16 * 1024 * 1024 + 1);
+      },
+    },
+    {
+      name: "staged directory entry overflow",
+      elapsedMs: 250,
+      expected: /recovery transfer could not be inspected/u,
+      prepare: (destination: string) => {
+        fs.mkdirSync(destination, { recursive: true });
+        Array.from({ length: 4_097 }, (_, index) => {
+          fs.writeFileSync(path.join(destination, `note-${index}.md`), "ok\n");
+        });
+      },
+    },
+  ])(
+    "stops a legacy recovery transfer on $name and removes staging",
+    async ({ elapsedMs, expected, prepare }) => {
+      vi.restoreAllMocks();
+      vi.useFakeTimers();
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-download-legacy-abort-"));
+      vi.stubEnv("NEMOCLAW_TEST_STATE_DIR", root);
+      let started!: () => void;
+      const transferStarted = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      try {
+        fs.writeFileSync(path.join(root, "shields-alpha.json"), "{}\n");
+        runMock.mockImplementation(
+          ({ destination, signal }: { destination: string; signal: AbortSignal }) => {
+            prepare(destination);
+            started();
+            return new Promise((resolve) => {
+              signal.addEventListener(
+                "abort",
+                () =>
+                  resolve({
+                    outcome: { kind: "failed", reason: "interrupted" },
+                    release: vi.fn(),
+                    wasInterrupted: () => true,
+                  }),
+                { once: true },
+              );
+            });
+          },
+        );
+        const hostDest = path.join(root, "out");
+        const pending = downloadFromSandbox({
+          sandboxName: "alpha",
+          sandboxPath: "/sandbox/.openclaw/workspace/SOUL.md",
+          hostDest,
+        });
+        await transferStarted;
+        await vi.advanceTimersByTimeAsync(elapsedMs);
+        await expect(pending).rejects.toThrow(expected);
+        expect(fs.existsSync(hostDest)).toBe(false);
+        expect(publishMock).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+        vi.unstubAllEnvs();
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("accepts a legacy recovery directory with 4,096 entries and rejects 4,097 entries", async () => {
+    vi.restoreAllMocks();
+    vi.useFakeTimers();
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-download-legacy-entry-limit-"));
+    vi.stubEnv("NEMOCLAW_TEST_STATE_DIR", root);
+    try {
+      fs.writeFileSync(path.join(root, "shields-alpha.json"), "{}\n");
+      captureMock.mockReturnValue({
+        outcome: { kind: "completed", exitCode: 0 },
+        stdout: "dir",
+        stderr: "",
+      });
+      let entryCount = 4_096;
+      let stagedDestination = "";
+      let started!: () => void;
+      const transferStarted = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      runMock.mockImplementation(({ destination }: { destination: string }) => {
+        stagedDestination = destination;
+        fs.mkdirSync(destination, { recursive: true });
+        Array.from({ length: entryCount }, (_, index) => {
+          fs.writeFileSync(path.join(destination, `note-${index}.md`), "safe note\n");
+        });
+        started();
+        return new Promise((resolve) => {
+          setTimeout(
+            () =>
+              resolve({
+                outcome: { kind: "completed", exitCode: 0 },
+                release: vi.fn(),
+                wasInterrupted: () => false,
+              }),
+            250,
+          );
+        });
+      });
+
+      const allowedHostDest = path.join(root, "out-allowed");
+      const allowedDownload = downloadFromSandbox({
+        sandboxName: "alpha",
+        sandboxPath: "/sandbox/.openclaw/workspace/memory",
+        hostDest: allowedHostDest,
+      });
+      await transferStarted;
+      await vi.advanceTimersByTimeAsync(250);
+      await expect(allowedDownload).resolves.toEqual({
+        sandboxPath: "/sandbox/.openclaw/workspace/memory",
+        hostDest: allowedHostDest,
+      });
+      expect(publishMock).toHaveBeenCalledWith(stagedDestination, allowedHostDest, "dir");
+
+      publishMock.mockClear();
+      entryCount = 4_097;
+      runMock.mockImplementationOnce(async ({ destination }: { destination: string }) => {
+        fs.mkdirSync(destination, { recursive: true });
+        Array.from({ length: entryCount }, (_, index) => {
+          fs.writeFileSync(path.join(destination, `note-${index}.md`), "safe note\n");
+        });
+        return {
+          outcome: { kind: "completed", exitCode: 0 },
+          release: vi.fn(),
+          wasInterrupted: () => false,
+        };
+      });
+
+      await expect(
+        downloadFromSandbox({
+          sandboxName: "alpha",
+          sandboxPath: "/sandbox/.openclaw/workspace/memory",
+          hostDest: path.join(root, "out-rejected"),
+        }),
+      ).rejects.toThrow(
+        /Cannot download '\/sandbox\/\.openclaw\/workspace\/memory'.*directory depth or entry limit.*Do not destroy the sandbox/u,
+      );
+      expect(publishMock).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllEnvs();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it.runIf(process.platform !== "win32")(
+    "rejects an oversized allowlisted recovery file or directory before transfer when a legacy Shields record exists",
+    async () => {
+      vi.restoreAllMocks();
+      const root = fs.realpathSync(
+        fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-download-legacy-oversized-")),
+      );
+      vi.stubEnv("NEMOCLAW_TEST_STATE_DIR", root);
+      try {
+        fs.writeFileSync(path.join(root, "shields-alpha.json"), "{}\n");
+        const workspace = path.join(root, "sandbox/.openclaw/workspace");
+        const memory = path.join(workspace, "memory");
+        fs.mkdirSync(memory, { recursive: true });
+        const soul = path.join(workspace, "SOUL.md");
+        const noteA = path.join(memory, "a.md");
+        const noteB = path.join(memory, "b.md");
+        fs.writeFileSync(soul, "");
+        fs.truncateSync(soul, 16 * 1024 * 1024 + 1);
+        fs.writeFileSync(noteA, "");
+        fs.truncateSync(noteA, 16 * 1024 * 1024 + 1);
+        fs.writeFileSync(noteB, "");
+        fs.truncateSync(noteB, 9 * 1024 * 1024);
+
+        captureMock.mockImplementation(({ command }: { command: string[] }) => {
+          const mapped = [...command.slice(0, -1), path.join(root, command.at(-1)!.slice(1))];
+          const probe = childProcess.spawnSync(mapped[0]!, mapped.slice(1), {
+            cwd: root,
+            encoding: "utf8",
+          });
+          return {
+            outcome: { kind: "completed", exitCode: probe.status },
+            stdout: probe.stdout,
+            stderr: probe.stderr,
+          };
+        });
+
+        await expect(
+          downloadFromSandbox({
+            sandboxName: "alpha",
+            sandboxPath: "/sandbox/.openclaw/workspace/SOUL.md",
+            hostDest: path.join(root, "out-file"),
+          }),
+        ).rejects.toThrow(
+          /Cannot download '\/sandbox\/\.openclaw\/workspace\/SOUL\.md'.*file larger than 16 MiB.*Do not destroy the sandbox/u,
+        );
+        await expect(
+          downloadFromSandbox({
+            sandboxName: "alpha",
+            sandboxPath: "/sandbox/.openclaw/workspace/memory",
+            hostDest: path.join(root, "out-dir"),
+          }),
+        ).rejects.toThrow(
+          /Cannot download '\/sandbox\/\.openclaw\/workspace\/memory'.*file larger than 16 MiB.*Do not destroy the sandbox/u,
+        );
+        expect(runMock).not.toHaveBeenCalled();
+        expect(publishMock).not.toHaveBeenCalled();
+      } finally {
+        vi.unstubAllEnvs();
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
 });

@@ -80,6 +80,13 @@ export function createCliOpenShellSandboxTransferExecutor(
       ];
       const signals = deps.signalSource ?? hostSignals;
       let interrupted = false;
+      let child: ProcessSessionChild | undefined;
+      const cancel = () => {
+        interrupted = true;
+        if (child?.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+      };
+      if (request.signal?.aborted) return failure("interrupted");
+      request.signal?.addEventListener("abort", cancel, { once: true });
       const listeners = new Map<() => void, () => void>();
       const trackedSignals: ProcessSessionSignals = {
         add(signal, listener) {
@@ -98,19 +105,25 @@ export function createCliOpenShellSandboxTransferExecutor(
       };
       const spawnChild: TransferSpawner =
         deps.spawnChild ?? ((file, argv, options) => spawn(file, [...argv], options));
-      // Transfers keep inherited output and have no fixed timeout or capture budget.
-      const result = await superviseProcessSession(
-        () =>
-          spawnChild(binary, args, {
+      // Ordinary transfers keep inherited output and have no fixed timeout or capture budget.
+      // A caller may cancel a guarded transfer while its artifact is still staged.
+      let result: Awaited<ReturnType<typeof superviseProcessSession>>;
+      try {
+        result = await superviseProcessSession(() => {
+          child = spawnChild(binary, args, {
             cwd: REPOSITORY_ROOT,
             env: buildOpenShellCommandEnv(),
             stdio:
               request.output === "suppress"
                 ? "ignore"
                 : redirectInheritedChildStdoutToStderr("inherit"),
-          }),
-        trackedSignals,
-      );
+          });
+          if (request.signal?.aborted) cancel();
+          return child;
+        }, trackedSignals);
+      } finally {
+        request.signal?.removeEventListener("abort", cancel);
+      }
       let outcome: OpenShellSandboxTransferOutcome;
       if (interrupted || result.signal) {
         outcome = { kind: "failed", reason: "interrupted" };

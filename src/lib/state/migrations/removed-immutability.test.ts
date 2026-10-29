@@ -12,8 +12,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { withMcpLifecycleLock } from "../mcp-lifecycle-lock-acquisition";
 import { MCP_LIFECYCLE_LOCK_DIRNAME } from "../mcp-lifecycle-lock-storage";
 import {
+  assertRemovedImmutabilityRecoveryDownloadArtifactSafe,
   enforceRemovedImmutabilityMigrationBoundary,
   inspectRemovedImmutabilityMigration,
+  isRemovedImmutabilityRecoveryDownloadPath,
   reportRemovedImmutabilityUpgrade,
   retireRemovedImmutabilityStateRecord,
 } from "./removed-immutability";
@@ -59,7 +61,7 @@ describe("removed immutability migration boundary", () => {
     const warn = vi.fn();
 
     expect(() => enforceRemovedImmutabilityMigrationBoundary("alpha", { stateDir: root })).toThrow(
-      /mutable posture cannot be proven.*rebuild\/recreate/u,
+      /mutable posture cannot be proven.*Run `rebuild` for this sandbox.*Onboarding cannot recreate it/u,
     );
     expect(
       enforceRemovedImmutabilityMigrationBoundary("alpha", {
@@ -72,6 +74,9 @@ describe("removed immutability migration boundary", () => {
       hasUnattributedRecoveryState: false,
     });
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("has been retired"));
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("Affected sandbox records: alpha. Run `rebuild` for each affected"),
+    );
   });
 
   it.each([
@@ -97,22 +102,33 @@ describe("removed immutability migration boundary", () => {
         fs.linkSync(record, path.join(root, "state-alias.json"));
       },
     ],
-  ] as const)("blocks an unsafe legacy state record that is a %s", (_kind, arrange) => {
-    const root = stateDir();
-    const record = path.join(root, "shields-alpha.json");
-    arrange(root, record);
+  ] as const)(
+    "blocks an unsafe legacy state record that is a %s and the notice directs quarantine",
+    (_kind, arrange) => {
+      const root = stateDir();
+      const record = path.join(root, "shields-alpha.json");
+      arrange(root, record);
+      const warn = vi.fn();
 
-    expect(inspectRemovedImmutabilityMigration("alpha", root)).toEqual({
-      stateRecord: null,
-      recoveryArtifacts: [record],
-    });
-    expect(() =>
-      enforceRemovedImmutabilityMigrationBoundary("alpha", {
-        allowStateRecord: true,
-        stateDir: root,
-      }),
-    ).toThrow(/Blocking paths to quarantine/u);
-  });
+      expect(inspectRemovedImmutabilityMigration("alpha", root)).toEqual({
+        stateRecord: null,
+        recoveryArtifacts: [record],
+      });
+      expect(() =>
+        enforceRemovedImmutabilityMigrationBoundary("alpha", {
+          allowStateRecord: true,
+          stateDir: root,
+        }),
+      ).toThrow(/Blocking paths to quarantine/u);
+      expect(reportRemovedImmutabilityUpgrade({ stateDir: root, warn })).toEqual({
+        affectedSandboxes: ["alpha"],
+        hasUnattributedRecoveryState: false,
+      });
+      const warning = String(warn.mock.calls[0]?.[0]);
+      expect(warning).toContain("Quarantine the files that a blocked command lists");
+      expect(warning).not.toContain("Run `rebuild` for each affected sandbox");
+    },
+  );
 
   it("blocks a legacy state record when its no-follow inspection fails", () => {
     const root = stateDir();
@@ -193,6 +209,9 @@ describe("removed immutability migration boundary", () => {
       hasUnattributedRecoveryState: true,
     });
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("recovery state also remains"));
+    const warning = String(warn.mock.calls[0]?.[0]);
+    expect(warning).toContain("Quarantine the files that a blocked command lists");
+    expect(warning).not.toContain("Run `rebuild` for each affected sandbox");
   });
 
   it("reports provider ownership but globally blocks retained provider authority", () => {
@@ -214,6 +233,15 @@ describe("removed immutability migration boundary", () => {
     expect(inspectRemovedImmutabilityMigration("beta", root).recoveryArtifacts).toEqual([
       transactionDir,
     ]);
+    const warn = vi.fn();
+    expect(reportRemovedImmutabilityUpgrade({ stateDir: root, warn })).toEqual({
+      affectedSandboxes: ["alpha"],
+      hasUnattributedRecoveryState: false,
+    });
+    const warning = String(warn.mock.calls[0]?.[0]);
+    expect(warning).toContain("Affected sandbox records: alpha.");
+    expect(warning).toContain("Quarantine the files that a blocked command lists");
+    expect(warning).not.toContain("Run `rebuild` for each affected sandbox");
     expect(() => enforceRemovedImmutabilityMigrationBoundary("alpha", { stateDir: root })).toThrow(
       /older detached process/u,
     );
@@ -269,7 +297,7 @@ describe("removed immutability migration boundary", () => {
     expect(warning).toContain("did not establish mutation authority");
     expect(warning).toContain("do not block lifecycle operations");
     expect(warning).not.toContain("quarantine");
-    expect(warning).not.toContain("rebuild or recreate");
+    expect(warning).not.toContain("Run `rebuild`");
     expect(enforceRemovedImmutabilityMigrationBoundary("alpha", { stateDir: root })).toEqual({
       stateRecord: null,
       recoveryArtifacts: [],
@@ -309,5 +337,154 @@ describe("removed immutability migration boundary", () => {
     });
 
     expect(fs.existsSync(record)).toBe(false);
+  });
+
+  it("limits legacy-record recovery downloads to documented credential-free paths and content", () => {
+    const root = stateDir();
+    const safeFile = touch(root, "SOUL.md");
+    fs.writeFileSync(safeFile, "# Soul\nReference: https://example.com\n");
+    const secretFile = touch(root, "secret.md");
+    fs.writeFileSync(secretFile, `OPENAI_API_KEY=${"sk-" + "a".repeat(32)}\n`);
+    const oversizeFile = touch(root, "oversize.md");
+    fs.truncateSync(oversizeFile, 16 * 1024 * 1024 + 1);
+    const nestedSecretDir = path.join(root, "memory");
+    touch(nestedSecretDir, ".env");
+
+    expect(isRemovedImmutabilityRecoveryDownloadPath("/sandbox/.openclaw/workspace/SOUL.md")).toBe(
+      true,
+    );
+    expect(isRemovedImmutabilityRecoveryDownloadPath("/sandbox/.openclaw/workspace/memory/")).toBe(
+      true,
+    );
+    expect(
+      isRemovedImmutabilityRecoveryDownloadPath("/sandbox/.openclaw/credentials/tokens.json"),
+    ).toBe(false);
+    expect(isRemovedImmutabilityRecoveryDownloadPath("/sandbox/.hermes/.env")).toBe(false);
+    expect(isRemovedImmutabilityRecoveryDownloadPath("/sandbox/.hermes/state.db")).toBe(false);
+    expect(isRemovedImmutabilityRecoveryDownloadPath("/sandbox/.deepagents/.state/auth.json")).toBe(
+      false,
+    );
+    expect(() =>
+      assertRemovedImmutabilityRecoveryDownloadArtifactSafe(
+        safeFile,
+        "/sandbox/.openclaw/workspace/SOUL.md",
+        "alpha",
+      ),
+    ).not.toThrow();
+    expect(() =>
+      assertRemovedImmutabilityRecoveryDownloadArtifactSafe(
+        secretFile,
+        "/sandbox/.openclaw/workspace/SOUL.md",
+        "alpha",
+      ),
+    ).toThrow(/credential-bearing or uninspectable material/u);
+    expect(() =>
+      assertRemovedImmutabilityRecoveryDownloadArtifactSafe(
+        oversizeFile,
+        "/sandbox/.openclaw/workspace/SOUL.md",
+        "alpha",
+      ),
+    ).toThrow(/credential-bearing or uninspectable material/u);
+    expect(() =>
+      assertRemovedImmutabilityRecoveryDownloadArtifactSafe(
+        nestedSecretDir,
+        "/sandbox/.openclaw/workspace/memory/",
+        "alpha",
+      ),
+    ).toThrow(/credential-bearing or uninspectable material/u);
+  });
+
+  it("rejects a WhatsApp session credential file from legacy-record recovery downloads", () => {
+    expect(
+      isRemovedImmutabilityRecoveryDownloadPath("/sandbox/.hermes/platforms/whatsapp/session"),
+    ).toBe(false);
+    expect(
+      isRemovedImmutabilityRecoveryDownloadPath(
+        "/sandbox/.hermes/platforms/whatsapp/session/creds.json",
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects WhatsApp session credentials inside a staged platforms directory", () => {
+    const root = stateDir();
+    const platforms = path.join(root, "platforms");
+    const credentials = path.join(platforms, "whatsapp/session/creds.json");
+    fs.mkdirSync(path.dirname(credentials), { recursive: true });
+    fs.writeFileSync(
+      credentials,
+      JSON.stringify({
+        noiseKey: { private: [1, 2, 3] },
+        signedIdentityKey: { private: [4, 5, 6] },
+      }),
+    );
+
+    expect(() =>
+      assertRemovedImmutabilityRecoveryDownloadArtifactSafe(
+        platforms,
+        "/sandbox/.hermes/platforms/",
+        "alpha",
+      ),
+    ).toThrow(/credential-bearing or uninspectable material/u);
+  });
+
+  it("rejects non-text legacy recovery files without blocking ordinary text whitespace", () => {
+    const root = stateDir();
+    const file = touch(root, "SOUL.md");
+    const assertSafe = () =>
+      assertRemovedImmutabilityRecoveryDownloadArtifactSafe(
+        file,
+        "/sandbox/.openclaw/workspace/SOUL.md",
+        "alpha",
+      );
+
+    fs.writeFileSync(file, Buffer.from([0xff]));
+    expect(assertSafe).toThrow(/credential-bearing or uninspectable material/u);
+    fs.writeFileSync(file, "Text\u0000hidden key");
+    expect(assertSafe).toThrow(/credential-bearing or uninspectable material/u);
+    fs.writeFileSync(file, "Text\r\n\tcontinued\n");
+    expect(assertSafe).not.toThrow();
+
+    const memory = path.join(root, "memory");
+    const nested = touch(memory, "note.md");
+    fs.writeFileSync(nested, Buffer.from([0xc3, 0x28]));
+    expect(() =>
+      assertRemovedImmutabilityRecoveryDownloadArtifactSafe(
+        memory,
+        "/sandbox/.openclaw/workspace/memory",
+        "alpha",
+      ),
+    ).toThrow(/credential-bearing or uninspectable material/u);
+  });
+
+  it("rejects a recovery directory deeper than the inspection limit", () => {
+    const memory = path.join(stateDir(), "memory");
+    fs.mkdirSync(path.join(memory, "d/".repeat(33)), { recursive: true });
+
+    expect(() =>
+      assertRemovedImmutabilityRecoveryDownloadArtifactSafe(
+        memory,
+        "/sandbox/.openclaw/workspace/memory",
+        "alpha",
+      ),
+    ).toThrow(
+      /Cannot download '\/sandbox\/\.openclaw\/workspace\/memory'.*directory depth or entry limit.*Do not destroy the sandbox/u,
+    );
+  });
+
+  it("allows a recovery directory whose files each fit the per-file inspection limit", () => {
+    const memory = path.join(stateDir(), "memory");
+    fs.mkdirSync(memory);
+    const noteA = path.join(memory, "a.md");
+    const noteB = path.join(memory, "b.md");
+    fs.writeFileSync(noteA, "a".repeat(9 * 1024 * 1024));
+    fs.writeFileSync(noteB, "b".repeat(9 * 1024 * 1024));
+
+    expect(() =>
+      assertRemovedImmutabilityRecoveryDownloadArtifactSafe(
+        memory,
+        "/sandbox/.openclaw/workspace/memory",
+        "alpha",
+      ),
+    ).not.toThrow();
   });
 });

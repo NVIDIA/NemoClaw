@@ -43,6 +43,10 @@ import type { AgentMcpAdapter } from "../agent/defs.js";
 import { loadAgent } from "../agent/defs.js";
 import { isObjectRecord } from "../core/json-types.js";
 import { GATEWAY_PORT } from "../core/ports.js";
+import {
+  BACKUP_FAILURE_PERMISSION_DENIED,
+  classifyFailedDirsFromTarStderr,
+} from "../domain/backup-failure.js";
 import { shellQuote } from "../runner.js";
 import {
   createTempSshConfig,
@@ -121,6 +125,9 @@ const NATIVE_STATE_CAPTURE_TAR_EXCLUDES = [
   "--exclude='./.hermes/runtime/gateway.pid'",
   "--exclude='./.hermes/runtime/gateway.lock'",
 ].join(" ");
+const OPENCLAW_SQLITE_COPY_FAILURE = "OpenClaw database copy failed for";
+// The copy reports a failure as one stderr line. Both capture paths show
+// that line and classify a denied read like a denied tar read.
 const OPENCLAW_SQLITE_COPY_SCRIPT = String.raw`
 const fs = require("node:fs");
 const path = require("node:path");
@@ -128,6 +135,14 @@ const { DatabaseSync } = require("node:sqlite");
 const root = process.argv[1];
 const relative = process.argv[2];
 const output = process.argv[3];
+process.on("uncaughtException", (error) => {
+  const reason =
+    error && error.code === "EACCES"
+      ? "Permission denied"
+      : String((error && error.message) || error);
+  fs.writeSync(2, ${JSON.stringify(OPENCLAW_SQLITE_COPY_FAILURE)} + " ./" + relative + ": " + reason + "\n");
+  process.exit(1);
+});
 const parts = relative.split("/");
 let cursor = root;
 for (let index = 0; index < parts.length; index += 1) {
@@ -155,6 +170,8 @@ for (const suffix of ["-journal", "-shm", "-wal"]) {
     if (!error || error.code !== "ENOENT") throw error;
   }
 }
+// node:sqlite reports an unreadable file as a SQLite error without EACCES.
+fs.accessSync(cursor, fs.constants.R_OK);
 const database = new DatabaseSync(cursor, {
   allowExtension: false,
   readOnly: true,
@@ -172,6 +189,11 @@ const OPENCLAW_SQLITE_CAPTURE_TARGETS = [
   { archivePath: ".openclaw/state/openclaw.sqlite", stageName: "modern" },
   { archivePath: ".openclaw-data/state/openclaw.sqlite", stageName: "legacy" },
 ] as const;
+const OPENCLAW_SQLITE_COPY_DENIED_LINES = new Set<string>(
+  OPENCLAW_SQLITE_CAPTURE_TARGETS.map(
+    ({ archivePath }) => `${OPENCLAW_SQLITE_COPY_FAILURE} ./${archivePath}: Permission denied`,
+  ),
+);
 export const MANAGED_REBUILD_RESTORE_AUTHORITY_ERROR =
   "managed rebuild restore requires exact content and runtime authority";
 export const HOST_LOCAL_INFERENCE_REBUILD_RESTORE_AUTHORITY_ERROR =
@@ -1003,11 +1025,27 @@ function validateSnapshotPublication(
     }
   }
 }
-function nativeStateFailure(error: string, unreachable = false, nativeChurn = false): BackupResult {
+function nativeStateFailure(
+  error: string,
+  unreachable = false,
+  captureDiagnostics = "",
+  nativeChurn = false,
+): BackupResult {
+  const failedDirReasons = Object.fromEntries(
+    classifyFailedDirsFromTarStderr(captureDiagnostics, ["."]),
+  );
+  if (
+    captureDiagnostics
+      .split(/\r?\n/u)
+      .some((line) => OPENCLAW_SQLITE_COPY_DENIED_LINES.has(line.trim()))
+  ) {
+    failedDirReasons["."] = BACKUP_FAILURE_PERMISSION_DENIED;
+  }
   return {
     success: false,
     backedUpDirs: [],
     failedDirs: ["."],
+    ...(Object.keys(failedDirReasons).length > 0 ? { failedDirReasons } : {}),
     backedUpFiles: [],
     failedFiles: [],
     error,
@@ -2673,10 +2711,16 @@ function capturePreparedNativeState(
           target.archivePath,
           path.join(sqliteStage, target.stageName),
         ],
-        { stdio: "ignore", timeout: remainingMs },
+        { stdio: ["ignore", "ignore", "pipe"], timeout: remainingMs },
       );
       if (result.status !== 0 || result.error || result.signal) {
-        throw new Error("Could not materialize a consistent private OpenClaw database copy");
+        const diagnostic = result.stderr
+          ?.toString()
+          .split(/\r?\n/u)
+          .find((line) => line.startsWith(`${OPENCLAW_SQLITE_COPY_FAILURE} `));
+        throw new Error(
+          diagnostic ?? "Could not materialize a consistent private OpenClaw database copy",
+        );
       }
     }
     const remainingMs = timeoutMs - (Date.now() - materializationStartedAt);
@@ -2702,15 +2746,15 @@ function capturePreparedNativeState(
           "else",
           '  stage=$(mktemp -d "${TMPDIR:-/tmp}/nemoclaw-stopped-native-capture.XXXXXX")',
           "  trap 'rm -rf -- \"$stage\"' EXIT HUP INT TERM",
-          '  cp -RpP "$source/." "$stage/"',
+          '  cp -RpP "$source/." "$stage/" || exit 1',
           '  rm -f -- "$stage/.nemoclaw/config.json"',
           '  rm -rf -- "$stage/.nemoclaw/blueprints"',
           '  rm -f -- "$stage/.openclaw/.nemoclaw-post-upgrade-doctor"',
           '  rm -rf -- "$stage"/.openclaw/agents/main/sessions/nemoclaw-onboard-warmup-*',
           '  rm -f -- "$stage/.openclaw/state/openclaw.sqlite"*',
           '  rm -f -- "$stage/.openclaw-data/state/openclaw.sqlite"*',
-          '  if [ -f "$sqlite_stage/modern" ]; then mkdir -p "$stage/.openclaw/state"; cp -p "$sqlite_stage/modern" "$stage/.openclaw/state/openclaw.sqlite"; fi',
-          '  if [ -f "$sqlite_stage/legacy" ]; then mkdir -p "$stage/.openclaw-data/state"; cp -p "$sqlite_stage/legacy" "$stage/.openclaw-data/state/openclaw.sqlite"; fi',
+          '  if [ -f "$sqlite_stage/modern" ]; then mkdir -p "$stage/.openclaw/state" && cp -p "$sqlite_stage/modern" "$stage/.openclaw/state/openclaw.sqlite" || exit 1; fi',
+          '  if [ -f "$sqlite_stage/legacy" ]; then mkdir -p "$stage/.openclaw-data/state" && cp -p "$sqlite_stage/legacy" "$stage/.openclaw-data/state/openclaw.sqlite" || exit 1; fi',
           '  rm -f -- "$stage/.hermes/gateway.pid"',
           '  rm -f -- "$stage/.hermes/runtime/gateway.pid"',
           '  rm -f -- "$stage/.hermes/runtime/gateway.lock"',
@@ -2938,9 +2982,8 @@ function backupNativeSandboxState(
       }
     } catch (error) {
       rmSync(backupPath, { recursive: true, force: true });
-      return nativeStateFailure(
-        `Native home/workspace capture failed: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      const detail = error instanceof Error ? error.message : String(error);
+      return nativeStateFailure(`Native home/workspace capture failed: ${detail}`, false, detail);
     } finally {
       closeSync(archiveFd);
     }
@@ -2973,6 +3016,7 @@ function backupNativeSandboxState(
           ? "Native home/workspace capture changed while it was read after quiescing; no backup was published. Retry after stopping the sandbox."
           : `Native home/workspace capture failed: ${detail.substring(0, 240)}`,
         !options.nativeStateSource && isSshTransportFailure(result),
+        result.stderr?.toString() ?? "",
         nativeChurn,
       );
     }

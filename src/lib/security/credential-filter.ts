@@ -9,6 +9,7 @@ import {
   TOKEN_PREFIX_PATTERNS,
   isCredentialField,
   isSafeCredentialPlaceholder,
+  sanitizeEnvFileContent,
 } from "../../../nemoclaw/dist/shared/credential-filter-boundary.cjs";
 
 // Public jwt.io documentation vector, also shipped in Zod's parser tests.
@@ -69,23 +70,48 @@ export type {
   ConfigValue,
 } from "../../../nemoclaw/dist/shared/credential-filter-boundary.cjs";
 
-/** Detect standalone credential fingerprints without interpreting surrounding file structure. */
-export function textContainsHighConfidenceCredential(
+function rawTextContainsHighConfidenceCredential(
   value: string,
   options: { privateKeyHeader?: boolean } = {},
 ): boolean {
-  const withoutPlaceholders = textWithoutSafeCredentialFixtures(value);
   for (const pattern of [
     ...TOKEN_PREFIX_PATTERNS,
     ...STRUCTURED_TOKEN_PATTERNS,
     ...SECRET_BLOCK_PATTERNS,
   ]) {
     pattern.lastIndex = 0;
-    if (pattern.test(withoutPlaceholders)) return true;
+    if (pattern.test(value)) return true;
   }
   return (
-    options.privateKeyHeader !== false &&
-    /-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----/u.test(withoutPlaceholders)
+    options.privateKeyHeader !== false && /-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----/u.test(value)
+  );
+}
+
+/** Detect standalone credential fingerprints without interpreting surrounding file structure. */
+export function textContainsHighConfidenceCredential(
+  value: string,
+  options: { privateKeyHeader?: boolean } = {},
+): boolean {
+  return rawTextContainsHighConfidenceCredential(textWithoutSafeCredentialFixtures(value), options);
+}
+
+function textWithoutSafeCredentialPlaceholders(value: string): string {
+  return (
+    value
+      .replace(/(?:Bearer\s+)?openshell:resolve:env:[A-Za-z0-9_]+/giu, "unused")
+      .replace(/(?:xox[bx]|xapp)-OPENSHELL-RESOLVE-ENV-[A-Za-z0-9_-]+/gu, (candidate) =>
+        isSafeCredentialPlaceholder(candidate) ? "unused" : candidate,
+      )
+      .replace(/(?<![A-Za-z0-9_-])sk-OPENSHELL-PROXY-REWRITE(?![A-Za-z0-9_-])/gu, "unused")
+      .replace(
+        /(?<![A-Za-z0-9_-])(?:Bearer\s+)?sk-OPENSHELL-RESOLVE-ENV-NEMOCLAW_LOCAL_INFERENCE_TOKEN(?![A-Za-z0-9_-])/gu,
+        "unused",
+      )
+      // The shared provider signature intentionally has no leading boundary.
+      // Exclude embedded English fragments such as `task-concurrency-diagnosis`
+      // while continuing to reject standalone sk-* credential values.
+      .replace(/(?<=[A-Za-z0-9])sk-(?=[A-Za-z0-9_-]{20,})/gu, "sk_")
+      .replaceAll("[STRIPPED_BY_MIGRATION]", "unused")
   );
 }
 
@@ -98,25 +124,12 @@ function textWithoutSafeCredentialFixtures(value: string): string {
           value,
         )
       : value;
-  return (
+  return textWithoutSafeCredentialPlaceholders(
     normalizedPinoRedactFixture
-      .replace(/(?:Bearer\s+)?openshell:resolve:env:[A-Za-z0-9_]+/giu, "unused")
-      .replace(/(?:xox[bx]|xapp)-OPENSHELL-RESOLVE-ENV-[A-Za-z0-9_-]+/gu, (candidate) =>
-        isSafeCredentialPlaceholder(candidate) ? "unused" : candidate,
-      )
       // Generated bundles contain the accepted-placeholder matcher itself.
       // Normalize that exact source fragment without stripping the reserved
       // prefix from malformed placeholder-shaped credential values.
       .replace(/(?:xox[bx]|xapp)-OPENSHELL-RESOLVE-ENV-\[A-Za-z0-9_\]\+/gu, "unused")
-      .replace(/(?<![A-Za-z0-9_-])sk-OPENSHELL-PROXY-REWRITE(?![A-Za-z0-9_-])/gu, "unused")
-      .replace(
-        /(?<![A-Za-z0-9_-])(?:Bearer\s+)?sk-OPENSHELL-RESOLVE-ENV-NEMOCLAW_LOCAL_INFERENCE_TOKEN(?![A-Za-z0-9_-])/gu,
-        "unused",
-      )
-      // The shared provider signature intentionally has no leading boundary.
-      // Exclude embedded English fragments such as `task-concurrency-diagnosis`
-      // while continuing to reject standalone sk-* credential values.
-      .replace(/(?<=[A-Za-z0-9])sk-(?=[A-Za-z0-9_-]{20,})/gu, "sk_")
       // Upstream skill documentation uses visibly synthetic repeated-x tokens.
       // Preserve those examples without accepting placeholder-shaped values
       // that contain any other token material.
@@ -134,18 +147,24 @@ function textWithoutSafeCredentialFixtures(value: string): string {
       .replaceAll(BOTOCORE_DSA_PRIVATE_KEY_DOCUMENTATION_SHAPE, "unused")
       // OpenClaw's public Microsoft Teams QA bundle uses this fixed marker for
       // its private test transport. Exempt only the exact bearer value.
-      .replace(/\bBearer[ \t]+private-qa(?![A-Za-z0-9_-])/giu, "unused")
-      .replaceAll("[STRIPPED_BY_MIGRATION]", "unused")
+      .replace(/\bBearer[ \t]+private-qa(?![A-Za-z0-9_-])/giu, "unused"),
   );
 }
 
 /** Detect standalone and context-anchored credentials in opaque file content. */
 export function textContainsCredential(
   value: string,
-  options: { opaqueAssignments?: boolean; privateKeyHeader?: boolean } = {},
+  options: {
+    opaqueAssignments?: boolean;
+    privateKeyHeader?: boolean;
+    strictRecoveryDownload?: boolean;
+  } = {},
 ): boolean {
-  const withoutPlaceholders = textWithoutSafeCredentialFixtures(value);
-  if (textContainsHighConfidenceCredential(withoutPlaceholders, options)) return true;
+  if (options.strictRecoveryDownload && sanitizeEnvFileContent(value) !== value) return true;
+  const withoutPlaceholders = options.strictRecoveryDownload
+    ? textWithoutSafeCredentialPlaceholders(value)
+    : textWithoutSafeCredentialFixtures(value);
+  if (rawTextContainsHighConfidenceCredential(withoutPlaceholders, options)) return true;
   const authorization =
     /\b(?:Proxy-)?Authorization["']?[ \t]*[:=][ \t]*["']?Bearer[ \t]+([A-Za-z0-9_.+/=-]{10,})/gimu;
   if (authorization.test(withoutPlaceholders)) return true;
@@ -158,7 +177,7 @@ export function textContainsCredential(
     const field = match[1]!.replace(/^_+/u, "");
     const candidate = match[2] ?? match[3] ?? match[4] ?? "";
     if (
-      !/^(?:module\.)?exports\./u.test(field) &&
+      (options.strictRecoveryDownload || !/^(?:module\.)?exports\./u.test(field)) &&
       isCredentialField(field) &&
       !isSafeCredentialPlaceholder(candidate)
     ) {
@@ -169,6 +188,10 @@ export function textContainsCredential(
     assignment.lastIndex = match.index + 1;
   }
   return false;
+}
+
+export function recoveryDownloadContentContainsCredential(value: string): boolean {
+  return textContainsCredential(value, { strictRecoveryDownload: true });
 }
 
 /** Detect npm registry credential directives even when their values are opaque. */

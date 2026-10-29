@@ -115,6 +115,21 @@ class ParsedSupportedSandboxCommand extends NemoClawCommand {
   }
 }
 
+class ParsedDownloadSandboxCommand extends NemoClawCommand {
+  static id = "sandbox:download";
+  static args = {
+    sandboxName: Args.string({ required: true }),
+    sandboxPath: Args.string({ required: false }),
+  };
+  static flags = {};
+  static ran = false;
+
+  public async run(): Promise<void> {
+    await this.parse(ParsedDownloadSandboxCommand);
+    ParsedDownloadSandboxCommand.ran = true;
+  }
+}
+
 class GlobalUnsupportedMutationCommand extends NemoClawCommand {
   static id = "tunnel:start";
   static flags = { ...NemoClawCommand.baseFlags };
@@ -284,6 +299,7 @@ describe("NemoClawCommand", () => {
     RawSandboxDoctorCommand.ran = false;
     ParsedUnsupportedSandboxCommand.ran = false;
     ParsedSupportedSandboxCommand.operation = async () => undefined;
+    ParsedDownloadSandboxCommand.ran = false;
     GlobalStatusReadCommand.operation = async () => undefined;
     GlobalUnsupportedMutationCommand.ran = false;
     GlobalUseMutationCommand.ran = false;
@@ -589,6 +605,62 @@ describe("NemoClawCommand", () => {
     );
 
     expect(RawUnsupportedSandboxCommand.ran).toBe(false);
+  });
+
+  it.each([
+    "/sandbox/.openclaw/workspace/SOUL.md",
+    "/sandbox/.openclaw/workspace/memory/",
+    "/sandbox/.deepagents/agent/memories/",
+  ])(
+    "allows download of documented credential-free path %s when a sandbox's only legacy Shields state is an inert record",
+    async (sandboxPath) => {
+      fs.writeFileSync(path.join(stateDir, "shields-alpha.json"), "{}\n");
+      vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+      await expect(
+        ParsedDownloadSandboxCommand.run(["alpha", sandboxPath], process.cwd()),
+      ).resolves.toBeUndefined();
+
+      expect(ParsedDownloadSandboxCommand.ran).toBe(true);
+    },
+  );
+
+  it.each([
+    "/sandbox/.openclaw/credentials/tokens.json",
+    "/sandbox/.openclaw/openclaw.json",
+    "/sandbox/.hermes/.env",
+    "/sandbox/.hermes/state.db",
+    "/sandbox/.hermes/config.yaml",
+    "/sandbox/.deepagents/.state/auth.json",
+    "/sandbox/.deepagents/.mcp.json",
+    "/sandbox/.openclaw/workspace/memory/.env",
+    "/sandbox",
+  ])(
+    "rejects download of credential-bearing or unapproved path %s when a legacy Shields record exists",
+    async (sandboxPath) => {
+      fs.writeFileSync(path.join(stateDir, "shields-alpha.json"), "{}\n");
+      vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+      await expect(
+        ParsedDownloadSandboxCommand.run(["alpha", sandboxPath], process.cwd()),
+      ).rejects.toThrow(/mutable posture cannot be proven/u);
+
+      expect(ParsedDownloadSandboxCommand.ran).toBe(false);
+    },
+  );
+
+  it("refuses download while legacy Shields recovery artifacts remain", async () => {
+    fs.writeFileSync(path.join(stateDir, "shields-timer-alpha.json"), "{}\n");
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    await expect(
+      ParsedDownloadSandboxCommand.run(
+        ["alpha", "/sandbox/.openclaw/workspace/SOUL.md"],
+        process.cwd(),
+      ),
+    ).rejects.toThrow(/recovery artifacts from the removed Shields/u);
+
+    expect(ParsedDownloadSandboxCommand.ran).toBe(false);
   });
 
   it("rejects schema-5 unsupported parsed commands before the action body (#9203)", async () => {

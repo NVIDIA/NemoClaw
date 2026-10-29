@@ -5,7 +5,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/runtime";
+import {
+  OPENSHELL_DOWNLOAD_TIMEOUT_MS,
+  OPENSHELL_PROBE_TIMEOUT_MS,
+} from "../../adapters/openshell/runtime";
 import { createCliOpenShellSandboxCommandExecutor } from "../../adapters/openshell/sandbox-command-cli";
 import type { OpenShellSandboxBufferedCommandExecutor } from "../../adapters/openshell/sandbox-command";
 import { createCliOpenShellSandboxTransferExecutor } from "../../adapters/openshell/sandbox-transfer-cli";
@@ -16,6 +19,14 @@ import type {
 
 import { deferSandboxLifecycleExit } from "../../core/process-exit";
 import { CLI_NAME } from "../../cli/branding";
+import {
+  assertRemovedImmutabilityRecoveryDownloadArtifactSafe,
+  enforceRemovedImmutabilityMigrationBoundary,
+  isRemovedImmutabilityRecoveryDownloadPath,
+  MAX_REMOVED_IMMUTABILITY_RECOVERY_DOWNLOAD_DEPTH,
+  MAX_REMOVED_IMMUTABILITY_RECOVERY_DOWNLOAD_ENTRIES,
+  MAX_REMOVED_IMMUTABILITY_RECOVERY_DOWNLOAD_FILE_BYTES,
+} from "../../state/migrations/removed-immutability";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock-acquisition";
 import {
   assertHermesPortableCommandUnavailable,
@@ -35,7 +46,8 @@ import {
 // roots for `find`, and stop at the first unsupported entry. Probe failures
 // fail closed.
 const SANDBOX_SOURCE_PROBE_SCRIPT = [
-  "p=$1",
+  "max_file_bytes=$1",
+  "p=$2",
   "link_probe=$p",
   'while [ "$link_probe" != "/" ]; do',
   '  case "$link_probe" in',
@@ -71,16 +83,69 @@ const SANDBOX_SOURCE_PROBE_SCRIPT = [
   "    *) root=./$p ;;",
   "  esac",
   '  unsafe=$(find "$root" ! -type d ! -type f -print -quit) || exit 1',
-  '  [ -n "$unsafe" ] && printf unsafe-member || printf dir',
+  '  if [ -n "$unsafe" ]; then printf unsafe-member; exit 0; fi',
+  '  if [ -n "$max_file_bytes" ]; then',
+  '    oversized=$(find "$root" -type f -size +"${max_file_bytes}"c -print -quit) || exit 1',
+  '    if [ -n "$oversized" ]; then printf oversized; exit 0; fi',
+  "  fi",
+  "  printf dir",
   "  exit 0",
   "fi",
-  'if [ -f "$p" ]; then printf file; exit 0; fi',
+  'if [ -f "$p" ]; then',
+  '  if [ -n "$max_file_bytes" ]; then',
+  '    oversized=$(find "$p" -type f -size +"${max_file_bytes}"c -print -quit) || exit 1',
+  '    if [ -n "$oversized" ]; then printf oversized; exit 0; fi',
+  "  fi",
+  "  printf file",
+  "  exit 0",
+  "fi",
   'if [ -e "$p" ]; then printf unsupported; exit 0; fi',
   "printf missing",
 ].join("\n");
 
+function stagedRecoveryFileExceedsLimit(stagedArtifact: string, maxFileBytes: number): boolean {
+  const pending = [{ entry: stagedArtifact, depth: 0 }];
+  let inspectedEntries = 0;
+  while (pending.length > 0) {
+    const { entry, depth } = pending.pop()!;
+    inspectedEntries += Math.sign(depth);
+    if (
+      inspectedEntries > MAX_REMOVED_IMMUTABILITY_RECOVERY_DOWNLOAD_ENTRIES ||
+      depth > MAX_REMOVED_IMMUTABILITY_RECOVERY_DOWNLOAD_DEPTH
+    ) {
+      throw new Error("Recovery transfer inspection exceeded its entry or depth limit.");
+    }
+    let stat: fs.Stats;
+    try {
+      stat = fs.lstatSync(entry);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+      throw error;
+    }
+    if (stat.isDirectory()) {
+      const children = fs.opendirSync(entry);
+      try {
+        for (let child = children.readSync(); child !== null; child = children.readSync()) {
+          if (
+            depth + 1 > MAX_REMOVED_IMMUTABILITY_RECOVERY_DOWNLOAD_DEPTH ||
+            inspectedEntries + pending.length >= MAX_REMOVED_IMMUTABILITY_RECOVERY_DOWNLOAD_ENTRIES
+          ) {
+            throw new Error("Recovery transfer inspection exceeded its entry or depth limit.");
+          }
+          pending.push({ entry: path.join(entry, child.name), depth: depth + 1 });
+        }
+      } finally {
+        children.closeSync();
+      }
+    } else if (stat.isFile() && stat.size > maxFileBytes) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // Classify the source root and reject unsupported directory members.
-// The path is passed as a positional argument ($1), never interpolated into
+// The path is passed as a positional argument ($2), never interpolated into
 // the script, so a crafted path cannot inject shell. Returns `undefined` when
 // the probe cannot determine a kind.
 async function probeSandboxSourceKind(
@@ -88,13 +153,20 @@ async function probeSandboxSourceKind(
   target: OpenShellSandboxTransferRequest["target"],
   sandboxName: string,
   sandboxPath: string,
+  maxBytes?: number,
 ): Promise<
-  SandboxSourceKind | "missing" | "unsupported" | "unsafe-member" | "timeout" | undefined
+  | SandboxSourceKind
+  | "missing"
+  | "unsupported"
+  | "unsafe-member"
+  | "oversized"
+  | "timeout"
+  | undefined
 > {
   const probe = await executor.runBuffered({
     sandboxName,
     target,
-    command: ["sh", "-c", SANDBOX_SOURCE_PROBE_SCRIPT, "sh", sandboxPath],
+    command: ["sh", "-c", SANDBOX_SOURCE_PROBE_SCRIPT, "sh", String(maxBytes ?? ""), sandboxPath],
     timeoutMilliseconds: OPENSHELL_PROBE_TIMEOUT_MS,
   });
   if (probe.outcome.kind === "failed") {
@@ -106,7 +178,8 @@ async function probeSandboxSourceKind(
     kind === "dir" ||
     kind === "missing" ||
     kind === "unsupported" ||
-    kind === "unsafe-member"
+    kind === "unsafe-member" ||
+    kind === "oversized"
     ? kind
     : undefined;
 }
@@ -151,6 +224,9 @@ export async function downloadFromSandbox(
       // so a relative path that starts with a hyphen is parsed as a flag. Anchor
       // it with `./` so it stays positional. Absolute paths are already safe.
       const sandboxPath = requestedPath.startsWith("-") ? `./${requestedPath}` : requestedPath;
+      const removedImmutability = enforceRemovedImmutabilityMigrationBoundary(opts.sandboxName, {
+        allowStateRecord: isRemovedImmutabilityRecoveryDownloadPath(sandboxPath),
+      });
       const hostDest = resolveHostPathFromCwd((opts.hostDest ?? "").trim() || ".");
 
       await ensureLiveSandboxOrExit(opts.sandboxName, {
@@ -172,11 +248,15 @@ export async function downloadFromSandbox(
       // Keep this verification after OpenShell fixes that issue: NemoClaw's
       // wrapper independently requires a fresh artifact from this invocation
       // before it publishes anything to the requested host destination.
+      const maxRecoveryBytes = removedImmutability.stateRecord
+        ? MAX_REMOVED_IMMUTABILITY_RECOVERY_DOWNLOAD_FILE_BYTES
+        : undefined;
       const sourceKind = await probeSandboxSourceKind(
         executor,
         target,
         opts.sandboxName,
         sandboxPath,
+        maxRecoveryBytes,
       );
       if (sourceKind === "missing") {
         throw new SandboxDownloadSourceMissingError(sandboxPath, opts.sandboxName);
@@ -189,6 +269,11 @@ export async function downloadFromSandbox(
       if (sourceKind === "unsafe-member") {
         throw new Error(
           `Cannot download '${sandboxPath}' from sandbox '${opts.sandboxName}': the directory contains an entry that is not a regular file or directory. Symbolic links are not supported.`,
+        );
+      }
+      if (sourceKind === "oversized") {
+        throw new Error(
+          `Cannot download '${sandboxPath}' from sandbox '${opts.sandboxName}': recovery source contains a file larger than 16 MiB. Do not destroy the sandbox if you need this file.`,
         );
       }
       if (sourceKind === "timeout") {
@@ -207,13 +292,55 @@ export async function downloadFromSandbox(
       const stagedArtifact = path.join(stagingDir, "artifact");
 
       try {
-        completion = await createCliOpenShellSandboxTransferExecutor().run({
-          direction: "download",
-          sandboxName: opts.sandboxName,
-          target,
-          source: sandboxPath,
-          destination: stagedArtifact,
-        });
+        let recoveryAbortReason: "timeout" | "oversized" | "uninspectable" | null = null;
+        const recoveryAbort = removedImmutability.stateRecord ? new AbortController() : null;
+        const deadline = recoveryAbort
+          ? setTimeout(() => {
+              recoveryAbortReason = "timeout";
+              recoveryAbort.abort();
+            }, OPENSHELL_DOWNLOAD_TIMEOUT_MS)
+          : null;
+        const sizeMonitor = recoveryAbort
+          ? setInterval(() => {
+              try {
+                if (stagedRecoveryFileExceedsLimit(stagedArtifact, maxRecoveryBytes!)) {
+                  recoveryAbortReason = "oversized";
+                  recoveryAbort.abort();
+                }
+              } catch {
+                recoveryAbortReason = "uninspectable";
+                recoveryAbort.abort();
+              }
+            }, 250)
+          : null;
+        try {
+          completion = await createCliOpenShellSandboxTransferExecutor().run({
+            direction: "download",
+            sandboxName: opts.sandboxName,
+            target,
+            source: sandboxPath,
+            destination: stagedArtifact,
+            ...(recoveryAbort ? { signal: recoveryAbort.signal } : {}),
+          });
+        } finally {
+          if (deadline) clearTimeout(deadline);
+          if (sizeMonitor) clearInterval(sizeMonitor);
+        }
+        if (recoveryAbortReason === "timeout") {
+          throw new Error(
+            `Cannot download '${sandboxPath}' from sandbox '${opts.sandboxName}': recovery transfer timed out. Do not destroy the sandbox if you need this file.`,
+          );
+        }
+        if (recoveryAbortReason === "oversized") {
+          throw new Error(
+            `Cannot download '${sandboxPath}' from sandbox '${opts.sandboxName}': recovery transfer wrote a file larger than 16 MiB. Do not destroy the sandbox if you need this file.`,
+          );
+        }
+        if (recoveryAbortReason === "uninspectable") {
+          throw new Error(
+            `Cannot download '${sandboxPath}' from sandbox '${opts.sandboxName}': recovery transfer could not be inspected. Do not destroy the sandbox if you need this file.`,
+          );
+        }
         const exitCode =
           completion.outcome.kind === "completed" && !completion.wasInterrupted()
             ? completion.outcome.exitCode
@@ -229,6 +356,7 @@ export async function downloadFromSandbox(
           target,
           opts.sandboxName,
           sandboxPath,
+          maxRecoveryBytes,
         );
         if (sourceKindAfterDownload === "timeout") {
           throw new Error(
@@ -245,6 +373,13 @@ export async function downloadFromSandbox(
           remoteLabel: sandboxPath,
           sandboxName: opts.sandboxName,
         });
+        if (removedImmutability.stateRecord) {
+          assertRemovedImmutabilityRecoveryDownloadArtifactSafe(
+            stagedArtifact,
+            sandboxPath,
+            opts.sandboxName,
+          );
+        }
         publishDownloadArtifact(stagedArtifact, expectedArtifact, sourceKind);
       } finally {
         fs.rmSync(stagingDir, { recursive: true, force: true });
