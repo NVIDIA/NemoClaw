@@ -32,6 +32,15 @@ network_policies:
     binaries:
       - path: /usr/bin/curl
 `;
+// Base reads must not reach readiness validation; this document fails the schema.
+const BASE_POLICY = `version: 1
+network_policies:
+  base_only:
+    name: base_only
+`;
+const PROVIDER_COMPOSED_POLICY = `${POLICY}  _provider_alpha_mcp_deepwiki:
+    name: _provider_alpha_mcp_deepwiki
+`;
 
 function entry(): SandboxEntry {
   return {
@@ -103,9 +112,11 @@ function lease(identity: LaunchReadinessIdentity): LaunchReadinessLease {
   };
 }
 
-function deps(policy: string): LaunchReadinessDeps {
+function deps(
+  policy: string,
+  readLease: NonNullable<LaunchReadinessDeps["readLease"]> = () => ({ kind: "missing" }),
+): LaunchReadinessDeps {
   const outputs: Readonly<Record<string, string>> = Object.freeze({
-    policy,
     inference: "Gateway Inference:\n\n  Provider: compatible-endpoint\n  Model: model-a\n",
   });
   return {
@@ -114,7 +125,12 @@ function deps(policy: string): LaunchReadinessDeps {
     loadAgent,
     observeSandbox: () => ({ state: "ready", liveIdentityFingerprint: FINGERPRINT }),
     capture: (args) => {
-      const output = outputs[String(args[0])] ?? "";
+      const output =
+        args[0] === "policy"
+          ? args.includes("--full")
+            ? policy
+            : BASE_POLICY
+          : (outputs[String(args[0])] ?? "");
       return { status: 0, output, stdout: output, stderr: "" } as ReturnType<
         NonNullable<LaunchReadinessDeps["capture"]>
       >;
@@ -128,7 +144,7 @@ function deps(policy: string): LaunchReadinessDeps {
       detail: "OK 200",
     }),
     classifyPortableLifecycleReceipt: () => ({ kind: "absent" }),
-    readLease: () => ({ kind: "missing" }),
+    readLease,
     fenceLease: fence,
     publishLease: (_name, _gateway, _port, _epoch, identity) => lease(identity),
     withSandboxLock: async (_name, operation) => operation(),
@@ -144,13 +160,27 @@ async function publishWithFinalPolicy(policy: string) {
   return publishLaunchReadiness(publication, deps(policy));
 }
 
+async function publishedIdentity(): Promise<LaunchReadinessIdentity> {
+  const publication = publicationFromDecision(
+    SANDBOX,
+    await inspectLaunchReadiness(SANDBOX, deps(POLICY)),
+  );
+  let identity: LaunchReadinessIdentity | undefined;
+  const publish = deps(POLICY);
+  const result = await publishLaunchReadiness(publication, {
+    ...publish,
+    publishLease: (_name, _gateway, _port, _epoch, published) => {
+      identity = published;
+      return lease(published);
+    },
+  });
+  expect(result).toEqual({ kind: "published" });
+  return identity!;
+}
+
 describe("launch readiness provider-composed policy entries", () => {
   it("ignores a name-only MCP provider entry during final policy validation", async () => {
-    const policy = `${POLICY}  _provider_alpha_mcp_deepwiki:
-    name: _provider_alpha_mcp_deepwiki
-`;
-
-    expect(await publishWithFinalPolicy(policy)).toEqual({ kind: "published" });
+    expect(await publishWithFinalPolicy(PROVIDER_COMPOSED_POLICY)).toEqual({ kind: "published" });
   });
 
   it("rejects an incomplete policy entry that OpenShell did not compose", async () => {
@@ -165,5 +195,30 @@ describe("launch readiness provider-composed policy entries", () => {
         message: "OpenShell returned an invalid sandbox policy document.",
       },
     });
+  });
+
+  it("accepts a valid lease when the effective policy has a name-only MCP provider entry", async () => {
+    const identity = await publishedIdentity();
+
+    const decision = await inspectLaunchReadiness(
+      SANDBOX,
+      deps(PROVIDER_COMPOSED_POLICY, () => ({ kind: "valid", lease: lease(identity) })),
+    );
+
+    expect(decision.kind).toBe("accepted");
+  });
+
+  it("rejects a valid lease when the effective policy has an incomplete entry", async () => {
+    const identity = await publishedIdentity();
+    const policy = `${POLICY}  mcp_deepwiki:
+    name: mcp_deepwiki
+`;
+
+    const decision = await inspectLaunchReadiness(
+      SANDBOX,
+      deps(policy, () => ({ kind: "valid", lease: lease(identity) })),
+    );
+
+    expect(decision).toMatchObject({ kind: "fallback", category: "unsafe" });
   });
 });
