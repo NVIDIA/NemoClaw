@@ -1,6 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use nemoclaw_runtime::RuntimeSpec;
+use nemoclaw_runtime::{
+    Error, RuntimeSpec,
+    snapshot::{File, VerifiedFile},
+    vllm::recipes::{
+        huggingface,
+        preparation::{self, OutputManifest},
+    },
+};
 use serde_json::json;
 
 #[test]
@@ -80,6 +87,60 @@ fn direct_recipe_validation_rejects_structurally_invalid_preparation_limits() {
 }
 
 #[test]
+fn a_model_snapshot_must_match_the_recipe_snapshot() {
+    let input: serde_json::Value =
+        serde_saphyr::from_str(include_str!("fixtures/vllm.yaml")).unwrap();
+    let RuntimeSpec::Vllm(service) = RuntimeSpec::decode(&input.to_string()).unwrap() else {
+        panic!("vLLM fixture")
+    };
+    let mut snapshot = service.recipe.as_ref().unwrap().snapshot.clone().unwrap();
+    huggingface::validate_manifest(&service, &snapshot).unwrap();
+    snapshot.files[0].sha256 = "0".repeat(64);
+    assert!(matches!(
+        huggingface::validate_manifest(&service, &snapshot),
+        Err(Error::Conflict(
+            "snapshot manifest conflicts with recipe snapshot"
+        ))
+    ));
+}
+
+#[test]
+fn a_prepared_output_manifest_must_name_the_recipe_key_and_distinct_files() {
+    let input: serde_json::Value =
+        serde_saphyr::from_str(include_str!("fixtures/vllm.yaml")).unwrap();
+    let RuntimeSpec::Vllm(service) = RuntimeSpec::decode(&input.to_string()).unwrap() else {
+        panic!("vLLM fixture")
+    };
+    let recipe = service.recipe.as_ref().unwrap();
+    let key = recipe.key(&service);
+    let file = |name: &str| VerifiedFile {
+        file: File {
+            name: name.into(),
+            size: 100,
+            sha256: "a".repeat(64),
+        },
+        modified: 1,
+    };
+    let output = OutputManifest {
+        key: key.clone(),
+        files: vec![file("prepared.bin"), file("prepared.json")],
+    };
+    preparation::validate_manifest(recipe, &key, &output).unwrap();
+    for changed in [
+        OutputManifest {
+            key: "wrong".into(),
+            ..output.clone()
+        },
+        OutputManifest {
+            files: vec![file("prepared.bin"), file("prepared.bin")],
+            ..output
+        },
+    ] {
+        assert!(preparation::validate_manifest(recipe, &key, &changed).is_err());
+    }
+}
+
+#[test]
 fn runtime_errors_identify_declared_fields_without_echoing_values_or_map_keys() {
     let original: serde_json::Value =
         serde_saphyr::from_str(include_str!("fixtures/vllm.yaml")).unwrap();
@@ -114,4 +175,16 @@ fn runtime_errors_identify_declared_fields_without_echoing_values_or_map_keys() 
         assert!(error.contains("runtime specification"), "{error}");
         assert!(!error.contains("PRIVATE_SENTINEL"), "{error}");
     }
+}
+
+#[test]
+fn recipe_gpu_matching_covers_every_hardware_profile() {
+    use nemoclaw_runtime::vllm::HardwareProfile;
+    let schema = serde_json::to_value(schemars::schema_for!(HardwareProfile)).unwrap();
+    let mut declared: Vec<_> = schema["enum"].as_array().unwrap().iter().collect();
+    declared.sort_by_key(|name| name.as_str());
+    let listed = HardwareProfile::ALL.map(|profile| serde_json::to_value(profile).unwrap());
+    let mut listed: Vec<_> = listed.iter().collect();
+    listed.sort_by_key(|name| name.as_str());
+    assert_eq!(listed, declared);
 }

@@ -29,7 +29,7 @@ fn configuration_row(row: &Row) -> Result<Row, ObservationError> {
 /// observed document differs from the one they compose.
 fn agent_row(agent: &Row, configured: &Row, observed: &Row) -> Row {
     let mut row = agent.clone();
-    for field in ["id", "runtime_id"] {
+    for field in ["id", "runtime_id", "running"] {
         if let Some(value) = observed.get(field) {
             row.insert(field.into(), value.clone());
         }
@@ -114,9 +114,22 @@ fn sandbox_kept(
     }
 }
 
+/// The runtime's ID carries forward while it runs; a runtime that stopped is
+/// replaced by one with a new ID.
+fn runtime_id(
+    name: &str,
+    prior: &nemoclaw_tofu::State,
+) -> Option<tf_provider::value::Value<String>> {
+    use tf_provider::value::Value;
+    match prior.get("running") {
+        Some(Value::Value(running)) if running == "false" => Some(Value::Unknown),
+        _ => nemoclaw_tofu::carry_prior(name, prior),
+    }
+}
+
 /// The Fabric agent resource and its planning rules.
 pub fn definitions() -> [nemoclaw_tofu::Definition; 1] {
-    use nemoclaw_tofu::{Definition, carry_prior};
+    use nemoclaw_tofu::{Definition, rerun_when_stopped};
     let references = agent::references();
     let inputs = agent::structured_inputs();
     let carried: Vec<&'static str> = references
@@ -124,7 +137,7 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 1] {
         .flat_map(|reference| reference.fields.iter().map(|(_, field)| *field))
         .collect();
     let sections: Vec<&'static str> = inputs.iter().map(|input| input.field).collect();
-    let fields: Vec<&'static str> = [NAME, DESCRIPTION, "runtime_id"]
+    let fields: Vec<&'static str> = [NAME, DESCRIPTION, "runtime_id", "running"]
         .into_iter()
         .chain(carried.iter().copied())
         .chain(sections.iter().copied())
@@ -133,7 +146,7 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 1] {
     // A changed agent is a new agent in a new sandbox. Another endpoint is
     // another gateway; credentials rotate in place. A newer image catalog for
     // the same harness changes no agent.
-    let mutable: Vec<&'static str> = [HARNESS_CATALOG, "runtime_id"]
+    let mutable: Vec<&'static str> = [HARNESS_CATALOG, "runtime_id", "running"]
         .into_iter()
         .chain(gateway[1..].iter().copied())
         .collect();
@@ -145,7 +158,10 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 1] {
     let mut definition = Definition::new("agent", &fields, &mutable)
         .optional(&optional)
         // The ID Fabric gives the sandbox's one runtime, for invocations.
-        .computed("runtime_id", carry_prior)
+        .computed("runtime_id", runtime_id)
+        // Whether Fabric's check found that runtime running; a stopped one is
+        // planned to start again in its sandbox.
+        .computed("running", rerun_when_stopped)
         .validate_inputs(validate)
         .refuse_replacement_when(sandbox_kept)
         // Readiness compares the applied document with this digest.

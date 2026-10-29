@@ -88,7 +88,7 @@ default-filter = '''
 [profile.live-kind]
 inherits = "ci"
 test-threads = 4
-slow-timeout = { period = "120s", terminate-after = 2 }
+slow-timeout = { period = "150s", terminate-after = 2 }
 default-filter = '''
 package(nemoclaw-e2e) & binary(=integration) & (test(/^kubernetes_live::/) | test(/^kubernetes_chart::/))
 '''

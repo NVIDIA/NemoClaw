@@ -94,22 +94,9 @@ async fn running(
     directory: &Path,
     spec: impl Fn(&str, u16) -> Spec,
 ) -> (crate::transport::Fixture, Operations) {
-    for object in [
-        json!({"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": "kube-system", "uid": "system-1"}}),
-        json!({"apiVersion": "storage.k8s.io/v1", "kind": "StorageClass",
-               "metadata": {"name": "standard", "annotations": {"storageclass.kubernetes.io/is-default-class": "true"}}}),
-        json!({"apiVersion": "apiextensions.k8s.io/v1", "kind": "CustomResourceDefinition",
-               "metadata": {"name": "sandboxes.agents.x-k8s.io"}}),
-        json!({"apiVersion": "apps/v1", "kind": "Deployment",
-               "metadata": {"name": "agent-sandbox-controller", "namespace": "agent-sandbox-system"},
-               "status": {"availableReplicas": 1}}),
-    ] {
-        objects.insert(object);
-    }
     let fixture = objects.serve().await;
     let operations = Operations {
         client: client(&fixture),
-        server: fixture.endpoint.clone(),
         state: directory.join("state"),
         openshift_wait: nemoclaw_sdk::kubernetes::operations::OPENSHIFT_WAIT,
     };

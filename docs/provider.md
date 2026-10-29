@@ -87,7 +87,7 @@ None of them exposes ephemeral resources or provider functions.
 
 The `openshell` provider takes only `destroy`, which permits deleting sandboxes and workspaces during explicit teardown.
 Each object names the gateway that holds it with `gateway`, the `ref` of `data.openshell_gateway`.
-That data source takes the gateway `endpoint`, the `credential_env` variable holding its bearer credential, and the `tls_ca_env`, `tls_certificate_env`, and `tls_key_env` variables naming mutual TLS files; its `ref` carries those names, never their values.
+That data source takes the gateway `endpoint`, the `credential_env` variable holding its bearer credential, the `tls_ca_env` variable naming the CA file that verifies the gateway, and, set together, the `tls_certificate_env` and `tls_key_env` variables naming a client certificate and key for mutual TLS; its `ref` carries those names, never their values.
 For a managed Kubernetes gateway, it takes `kubernetes`, the gateway's specification, instead of the credential and TLS variables.
 Each provider that reaches such a gateway opens its own port forward on a free loopback port, with the kubeconfig the specification names and the development credentials in the SDK's state directory, and keeps it open while OpenTofu runs.
 A literal object of the same shape, with `type = "openshell_gateway"`, also works where no data source is read, such as an SDK teardown graph.
@@ -118,7 +118,7 @@ Other inputs are typed too:
   OpenShell merges that policy with the authored `policy` block and managed grants, and records the launch with the sandbox; it does not depend on the agent runtime that produced the launch.
   `fabric_harnesses` returns `launch_json` for its configured agent, and Fabric reads its agent name and runtime binding back from the launch metadata.
 - `openshell_sandbox`'s optional `driver_config` is OpenShell's per-driver sandbox configuration (`SandboxTemplate.driver_config`) as JSON text, usually from `jsonencode()`, keyed by driver, such as volume mounts.
-  It is passed through unchanged, so OpenShell's defaults apply; see OpenShell's [driver configuration and mounts](https://github.com/NVIDIA/OpenShell/blob/bdb956f2cd65a635f1294fccf1d138d263bf650f/docs/how-it-works/sandboxes/runtimes.mdx).
+  It is passed through unchanged, so OpenShell's defaults apply; see OpenShell's [driver configuration and mounts](https://github.com/NVIDIA/OpenShell/blob/ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47/docs/how-it-works/sandboxes/runtimes.mdx).
   The gateway accepts it only when its driver allows driver configuration, which OpenShell disables by default, NemoClaw-installed gateways included.
   It is part of the sandbox's immutable specification: changing it, or a different configuration observed on the gateway, replaces the sandbox, as for the image; see [change paths](usage.md#choose-the-change-path).
 - `openshell_sandbox`'s optional `service` blocks are OpenShell's sandbox service exposures: `name`, `target_port`, and optional `authorization_mode` (`STRIP` or `BEARER_PASSTHROUGH`).
@@ -287,6 +287,7 @@ These types name the engine or cluster they use instead of taking a gateway `ref
 `openshell_podman_gateway` also requires the gateway `endpoint`, an HTTP origin with an unprivileged loopback port.
 `openshell_gateway_storage` requires `endpoint` for Podman and rejects it for Docker, whose gateway data does not depend on the listen port; it returns the volume's `data_path`.
 The storage volume, bridge network, and initialization labels derive from `name`, `owner`, and the other settings, so changing any of them requires new storage.
+Planning new storage, or a new Podman gateway, fails when another network on the engine overlaps `network_cidr`; the deployment's own network, found by name and owner, doesn't count.
 
 ### Fabric Resource and Data Source
 
@@ -369,12 +370,16 @@ An explicit `Rejected` OpenShell configuration admission stops the wait even whi
 The diagnostic names the sandbox and includes only recognized gateway reasons; unknown backend text becomes a fixed repair message.
 See [runtime policy rejection recovery](sandbox-network.md#recover-from-runtime-policy-rejection).
 
-Fabric reports neither the configuration a runtime applied nor whether it is still running ([NVIDIA/NeMo-Fabric#420](https://github.com/NVIDIA/NeMo-Fabric/issues/420)).
-So refresh checks only the sandbox: a configuration changed inside the sandbox outside OpenTofu is not reported as drift, and a runtime that stops is found when it is next invoked.
+Refresh runs `fabric-agent-ctl check` for the recorded runtime and records the result in the computed `running`.
+A runtime Fabric no longer has, one that fails its check, and one whose sandbox isn't ready or doesn't serve its bridge count as stopped; an adapter without health checks, or a probe that can't finish, counts as running.
+A check whose reply is cut off fails refresh as an incomplete observation.
+A stopped runtime plans an update: apply stops it in Fabric and starts another in the same sandbox, with a new `runtime_id`.
+An update that keeps a running runtime, such as for a newer image catalog, leaves it alone.
+Fabric doesn't report the configuration a runtime applied, so a configuration changed inside the sandbox outside OpenTofu is not reported as drift.
 Removing the resource stops the agent through `fabric-agent-ctl stop`, as removing an attachment does, and the sandbox stays.
 A runtime that already stopped, or a sandbox already gone, counts as removed; if stopping fails, the binding is kept so the next apply or destroy retries.
 
-`fabric_agent` exports `runtime_id`, the ID Fabric gave the runtime, for invoking it with `fabric-agent-ctl invoke --runtime-id`.
+`fabric_agent` exports `runtime_id`, the ID Fabric gave the runtime, for invoking it with `fabric-agent-ctl invoke --runtime-id`, and `running`, whether refresh found it running.
 It also exports a `ref` with its sandbox's `workspace`, `sandbox` name, `sandbox_id`, `owner`, and `generation`, its own `name`, and `config_sha256`.
 `config_sha256` is `sha256:<hex>` over the composed document's JSON with object keys sorted; it is known while planning once the agent's inputs are.
 
@@ -519,6 +524,7 @@ One read of the engine's `/info` answers both of `host_engine`'s observations; i
 The engine observation reports available server version, architecture, operating system, CPU count, and memory fields.
 The prerequisite observation is `unavailable`, with its reason, when the engine cannot host a managed gateway with that driver: the Podman driver needs a Podman engine socket, and rootless Podman needs pasta networking.
 The gateway installation types check the same prerequisites when they plan and apply.
+The prerequisite source also takes the gateway's optional `endpoint`, `name`, and `owner`. With them, it is also `unavailable` when anything other than that gateway holds the endpoint's port: another running container that publishes it, or, for Podman, whose gateway listens on the host's loopback, any listener on the CLI host. A host process that holds a Docker engine's port is reported when the gateway starts.
 Plans for a managed gateway read both and report them as one engine observation, whose status is the less available of the two.
 These describe the selected engine, which may differ from the CLI host.
 The image observation retains its configuration ID, repository manifest digests, platform, and size even when it lacks Fabric metadata.
@@ -867,7 +873,7 @@ The deployment lock excludes other NemoClaw operations using the same state dire
 
 The runtime graph for a managed Kubernetes or OpenShift gateway declares four resources in this order:
 
-1. `openshell_kubernetes_storage.runtime` creates and retains the namespace and encryption key, with `prevent_destroy`.
+1. `openshell_kubernetes_storage.runtime` binds the namespace by UID, creating it if it doesn't exist, and creates the encryption key; it retains both, with `prevent_destroy`.
 2. `openshell_kubernetes_auth.runtime` prepares the development token issuer.
    For OpenShift, its computed `gateway_values` carries the namespace's UID and group ranges as chart overrides.
 3. `helm_release.gateway` installs the pinned OpenShell chart into the prepared namespace without creating the namespace or taking ownership of existing objects.

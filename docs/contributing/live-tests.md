@@ -36,7 +36,7 @@ Each sandbox must have its own ID, with its agent bound to it, and keep that ID,
 After the second apply, and again after the export's apply, the flow sends every agent one text prompt through Fabric's bridge, all at once, addressed to the runtime ID the first apply recorded.
 Each agent must answer from that runtime, as that agent, with a succeeded run whose output holds the stub's value.
 Each round ends after 30 seconds and abandons a request that has not answered; Fabric keeps running that request, so the export's round skips its agent, and destroy's stop of that agent waits for the request to end.
-Fabric reports no runtime status, so a runtime that stops is found at its next invocation ([NVIDIA/NeMo-Fabric#420](https://github.com/NVIDIA/NeMo-Fabric/issues/420)); the answer shows that the runtime the first apply started still runs and that the agent's request reached the stub.
+The answer shows that the runtime the first apply started still runs and that the agent's request reached the stub.
 Destroy must then remove every `Sandbox` object within 60 seconds and keep the namespace, encryption key, and gateway PVC with unchanged UIDs; afterward the flow deletes the stub's namespace without waiting.
 If an apply fails, the flow prints each pod's phase and container states, the last 40 lines of each container's log, and the namespace's 15 most recent events; if the stub is not ready or a request fails, it prints the same for the stub's namespace and the deployment's.
 CI keeps that output in the suite's JUnit report for 14 days.
@@ -44,9 +44,9 @@ The OpenShift-profile test also supplies namespace UID-range annotations on kind
 Before deploying, it refuses a cluster that serves the `security.openshift.io` API group, where its annotations would replace the range that cluster assigns; on such a cluster, run the gateway test below with `NEMOCLAW_TEST_KUBE_RUNTIME=openshift`, which checks the gateway's pods and deploys no sandbox.
 Its three agents share one gateway to keep the `live-kind` suite within its 270-second budget.
 The registry test starts a pinned, authenticated registry on the run's kind network and uploads only the run's agent fixture there.
-It checks anonymous and wrong-credential rejection, then deploys an agent with a caller-managed image pull Secret provisioned after namespace creation.
+It checks anonymous and wrong-credential rejection. Then, as an operator would, it creates the deployment's namespace and a caller-managed image pull Secret before the first apply, and deploys an agent into that namespace, which NemoClaw binds by UID without labelling it.
 A new image-index digest prevents cached image metadata from bypassing the pull; the agent's layers and configuration remain unchanged.
-Export must preserve the authored image and Secret references; OpenTofu state must hold no registry values, and destroy must retain the caller-managed Secret.
+Export must preserve the authored image and Secret references; OpenTofu state must hold no registry values, and destroy must keep the namespace with its UID and labels unchanged and retain the caller-managed Secret.
 The fixture removes its registry afterward; HTTP configuration is confined to that registry on the disposable node.
 
 The OIDC test, `kubernetes_live::oidc`, runs the SDK's development issuer image in a fresh `nc-issuer-*` namespace as a stand-in for an existing identity provider, and deletes that namespace when the test passes or panics, but not when nextest stops it at its time limit.
@@ -75,7 +75,7 @@ NEMOCLAW_TEST_BUNDLE=/absolute/path/to/immutable/bundle \
 
 The render test also rejects an unavailable chart digest.
 
-To run only the gateway test, use an owned disposable cluster with the Kubernetes guide's [cluster setup](../kubernetes.md#prerequisites): Agent Sandbox and exactly one default StorageClass.
+To run only the gateway test, use an owned disposable cluster with the Kubernetes guide's [cluster setup](../kubernetes.md#prerequisites): Agent Sandbox and a default StorageClass.
 The host pulls the pinned chart from ghcr.io, and the cluster pulls the gateway image from ghcr.io and the development issuer image from Docker Hub.
 Besides the [cluster access](../kubernetes.md#prerequisites) rights, the chart creates a ClusterRole and a ClusterRoleBinding, and the test deletes its namespace and can change the reclaim policy of the volumes bound to its PVCs, so use a cluster administrator's context.
 Use a kubeconfig that holds its credentials, such as a client certificate or a token: the test runs OpenTofu with an empty `PATH` and an isolated home, so an exec plugin that relies on either fails.
@@ -108,11 +108,11 @@ Raw OpenTofu output is suppressed from the test log because it can contain deplo
 After success, images the cluster pulled remain on its nodes; remove the printed state directory when finished.
 
 If the test fails, its namespace, the volumes bound to its PVCs, and the chart's ClusterRole and ClusterRoleBinding, both named `<release>-node-reader-<namespace>`, can remain.
-In the state directory, `kubernetes/receipt.json` gives the release as `name` and the namespace in the `Namespace` entry of `objects`; without the directory, find the namespace as `nc-live-` followed by 16 hexadecimal digits.
+In the state directory, `kubernetes/receipt.json` gives the release as `name` and the namespace as `namespace.name`; without the directory, find the namespace as `nc-live-` followed by 16 hexadecimal digits.
 Inspect those resources, then delete the ClusterRole and ClusterRoleBinding:
 
 ```sh
-jq -r '.name, (.objects[] | select(.kind == "Namespace") | .name)' /absolute/path/to/state/kubernetes/receipt.json
+jq -r '.name, .namespace.name' /absolute/path/to/state/kubernetes/receipt.json
 kubectl --kubeconfig /absolute/path/to/owned-kubeconfig --context kind-owned-test \
   delete --ignore-not-found \
   clusterrolebinding/RELEASE-node-reader-NAMESPACE clusterrole/RELEASE-node-reader-NAMESPACE
@@ -406,6 +406,7 @@ The container's Python process simulates model reconstruction and a credential; 
 nemoclaw-e2e's `dummy_agent::the_dummy_agent_completes_a_managed_docker_lifecycle` test deploys the [reference dummy image](../build.md#reference-contract-image) through a managed Docker gateway.
 The dummy runs Fabric's real `fabric-agent-ctl` with NemoClaw's test adapter, so it needs no model or credentials.
 The test checks plan, a successful bundled-CLI apply, an invocation that returns the configured `reply` setting, unchanged apply that keeps the same runtime, export/reapply, and destroy, after which Docker holds no sandbox containers or volumes but still holds the gateway's storage.
+Before destroy, it restarts the gateway's container: the next plan updates only the agent because its runtime is not running, apply starts a new runtime that answers, a file written in the sandbox before the restart is still there, and a further apply changes nothing.
 It requests no inference and does not qualify a production adapter.
 
 Supply a verified bundle and an owned document like the gateway tests', with a fresh UID, free gateway port and subnet, the local dummy image by digest, `harness.kind: org.nemoclaw.dummy`, and a `harness.settings.reply` string:

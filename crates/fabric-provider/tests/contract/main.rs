@@ -214,11 +214,13 @@ async fn a_changed_pi_configuration_replaces_the_sandbox() {
         true,
     );
     assert_eq!(writes(), 6, "the replaced sandbox starts the agent once");
-    // Reading an agent runs nothing in its sandbox, so a reply that would be
-    // cut off cannot fail a plan or change state.
+    // Reading an agent checks its runtime. A check whose reply is cut off
+    // leaves the agent unobserved, so the plan fails and changes nothing.
     let prior = tofu.state();
     fixture.state.lock().unwrap().exec_truncated = true;
-    tofu.run(&["plan", "-input=false", "-var=model=third-model"], true);
+    let unobserved = tofu.run(&["plan", "-input=false", "-var=model=third-model"], false);
+    let stderr = String::from_utf8_lossy(&unobserved.stderr);
+    assert!(stderr.contains("observation is incomplete"), "{stderr}");
     assert_eq!(tofu.state(), prior);
     assert_eq!(writes(), 6);
     fixture.state.lock().unwrap().exec_truncated = false;

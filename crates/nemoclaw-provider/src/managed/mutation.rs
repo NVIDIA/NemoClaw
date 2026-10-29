@@ -243,7 +243,7 @@ impl Engine {
                     && (desired.contains(&subnet.network()) || subnet.contains(&desired.network()))
                 {
                     return Err(Error::Conflict(
-                        "managed gateway subnet overlaps an existing Docker network",
+                        "managed gateway subnet overlaps an existing Docker network; set spec.gateway.networkCIDR to a free private /24",
                     ));
                 }
             }

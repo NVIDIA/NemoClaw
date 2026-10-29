@@ -24,15 +24,18 @@
     "openshell_gateway_prerequisites": {
       "current": {
         "compute_driver": "docker",
+        "endpoint": "http://127.0.0.1:17681",
         "engine": "unix:///var/run/docker.sock",
         "lifecycle": {
           "postcondition": [
             {
               "condition": "${self.status != \"unavailable\"}",
-              "error_message": "The selected engine does not meet gateway prerequisites. Correct the runtime or target configuration."
+              "error_message": "The selected engine does not meet gateway prerequisites: ${coalesce(jsondecode(self.observation_json).reason, \"no reason was reported\")}. Correct the runtime or target configuration."
             }
           ]
-        }
+        },
+        "name": "nc-449be4b09efa1b23-gateway",
+        "owner": "12345678-1234-4234-9234-123456789abc"
       }
     },
     "host_engine": {

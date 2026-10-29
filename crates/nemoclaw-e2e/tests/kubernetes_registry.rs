@@ -360,7 +360,7 @@ async fn a_private_agent_image_uses_cluster_secrets_without_credentials_in_state
     .await
     .unwrap();
     let secret = registry.secret();
-    let (created, observed_uid) = tokio::sync::oneshot::channel();
+    let (created, observed) = tokio::sync::oneshot::channel();
     let caller = client.clone();
     let state = deploy_image_and_export(
         "kubernetes",
@@ -368,25 +368,26 @@ async fn a_private_agent_image_uses_cluster_secrets_without_credentials_in_state
         metadata.to_str().unwrap(),
         &[SECRET],
         &ONE_AGENT,
-        async move |namespace| {
-            let namespaces: Api<Namespace> = Api::all(caller.clone());
-            let until = tokio::time::Instant::now() + Duration::from_secs(60);
-            while namespaces.get_opt(namespace).await.unwrap().is_none() {
-                assert!(
-                    tokio::time::Instant::now() < until,
-                    "managed namespace was not created"
-                );
-                tokio::time::sleep(Duration::from_millis(200)).await;
-            }
-            let secrets: Api<Secret> = Api::namespaced(caller, namespace);
-            let secret = secrets
+        // The operator creates the namespace and its pull Secret before the
+        // first apply; NemoClaw binds the namespace by UID.
+        async move |name| {
+            let namespace: Namespace = serde_json::from_value(
+                json!({"apiVersion":"v1", "kind":"Namespace", "metadata":{"name":name}}),
+            )
+            .unwrap();
+            let namespace = Api::<Namespace>::all(caller.clone())
+                .create(&PostParams::default(), &namespace)
+                .await
+                .unwrap();
+            let secret = Api::<Secret>::namespaced(caller, name)
                 .create(&PostParams::default(), &secret)
                 .await
                 .unwrap();
             created
-                .send((namespace.to_owned(), secret.metadata.uid.unwrap()))
+                .send((namespace, secret.metadata.uid.unwrap()))
                 .unwrap();
         },
+        async |_| {},
     )
     .await;
     for value in [
@@ -400,8 +401,21 @@ async fn a_private_agent_image_uses_cluster_secrets_without_credentials_in_state
             "registry values must stay out of OpenTofu state"
         );
     }
-    let (namespace, uid) = observed_uid.await.unwrap();
-    let retained = Api::<Secret>::namespaced(client, &namespace)
+    let (namespace, uid) = observed.await.unwrap();
+    let name = namespace.metadata.name.clone().unwrap();
+    let kept = Api::<Namespace>::all(client.clone())
+        .get(&name)
+        .await
+        .unwrap();
+    assert_eq!(
+        kept.metadata.uid, namespace.metadata.uid,
+        "destroy keeps the operator's namespace"
+    );
+    assert_eq!(
+        kept.metadata.labels, namespace.metadata.labels,
+        "NemoClaw neither labels nor changes the operator's namespace"
+    );
+    let retained = Api::<Secret>::namespaced(client, &name)
         .get(SECRET)
         .await
         .unwrap();

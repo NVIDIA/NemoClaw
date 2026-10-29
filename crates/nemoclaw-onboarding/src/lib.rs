@@ -78,10 +78,9 @@ fn load_journey(
         .ask(["/spec/gateway/runtime/provider", "inference:preset"])
         .ask([JourneyScope::InferenceApi])
         .ask([JourneyScope::RouteModels])
-        // Tuning settings keep their adapter defaults; messaging channels are
-        // still asked until onboarding has a channel journey.
+        // Adapter settings keep their defaults, including messaging channels
+        // until onboarding has a channel journey.
         .omit([JourneyScope::ActiveAdapterSettings])
-        .ask(["adapter:nvidia.fabric.openclaw:/channel_config"])
         .ask([JourneyScope::NativeSettings])
         .ask([JourneyScope::DeploymentFields])
         .omit(["/spec/gateway/endpoint", "/spec/gateway/networkCIDR"])

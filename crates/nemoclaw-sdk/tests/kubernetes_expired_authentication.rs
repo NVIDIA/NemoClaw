@@ -125,7 +125,7 @@ mod operations {
         let directory = tempfile::tempdir().unwrap();
         let state = directory.path().join("state");
         let server = serve(&objects, |_, _, _| None).await;
-        let operations = platform::operations(server.client(), server.endpoint(), &state);
+        let operations = platform::operations(server.client(), &state);
         operations
             .ensure(&platform::spec(STORAGE_KIND), None)
             .await

@@ -1,18 +1,17 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 # yaml-language-server: $schema=../../schemas/nemoclaw-v1alpha1.schema.json
-# The shared inference profile matches the Docker hosted-NVIDIA fixture at
-# crates/nemoclaw-e2e/fixtures/openclaw-nvidia-hosted/v1.yaml.
-# Replace the deployment UID and every image digest before applying.
-# Write each image's metadata bundle with `cargo images export-metadata` and set
-# NEMOCLAW_AGENT_IMAGE_METADATA to its path; see docs/build.md.
+# GTC DC target: Linux AMD64 Kubernetes, one OpenClaw and one Hermes sandbox.
+# Both agents use NVIDIA cloud inference; live qualification is pending.
+# Replace the deployment UID, gateway endpoint, and both image digests before applying.
+# Export each Linux AMD64 image's metadata with `cargo images export-metadata`.
+# Set the two image-metadata variables below to the matching bundle paths.
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
 metadata:
   name: kubernetes-hosted-nvidia
   uid: ab7d47cd-5466-4ae0-abfc-69155b4e07f2
 spec:
-  # Supply the existing Kubernetes cluster's OpenShell gateway.
   gateway:
     management: external
     runtime:
@@ -30,13 +29,12 @@ spec:
       endpoint: https://integrate.api.nvidia.com/v1
       credential:
         env: NVIDIA_INFERENCE_API_KEY
-  # Each sandbox runs one independent agent using the shared inference profile.
   sandboxes:
-    assistant:
+    openclaw:
       harness:
         kind: nvidia.fabric.openclaw
       image:
-        metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
+        metadata: {env: NEMOCLAW_OPENCLAW_IMAGE_METADATA}
         ref: registry.example.com/nemoclaw/openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000
       network:
         policy:
@@ -63,14 +61,14 @@ spec:
               read_write:
                 - /sandbox
       agent:
-        name: primary
+        name: openclaw
         inferenceRef: chat
-    researcher:
+    hermes:
       harness:
-        kind: nvidia.fabric.openclaw
+        kind: nvidia.fabric.hermes
       image:
-        metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
-        ref: registry.example.com/nemoclaw/openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000
+        metadata: {env: NEMOCLAW_HERMES_IMAGE_METADATA}
+        ref: registry.example.com/nemoclaw/hermes@sha256:0000000000000000000000000000000000000000000000000000000000000000
       network:
         policy:
           explicit:
@@ -85,7 +83,7 @@ spec:
                   - host: integrate.api.nvidia.com
                     port: 443
                 binaries:
-                  - path: /usr/bin/openclaw
+                  - path: /usr/local/bin/hermes
             filesystem_policy:
               include_workdir: true
               read_only:
@@ -93,43 +91,13 @@ spec:
                 - /opt/fabric
                 - /opt/nemoclaw
                 - /app
+                - /opt/hermes
+                - /opt/nemo-relay/plugins/switchyard
+                - /etc/ssl/certs/ca-certificates.crt
               read_write:
                 - /sandbox
       agent:
-        name: researcher
-        inferenceRef: chat
-    reviewer:
-      harness:
-        kind: nvidia.fabric.openclaw
-      image:
-        metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
-        ref: registry.example.com/nemoclaw/openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000
-      network:
-        policy:
-          explicit:
-            version: 1
-            process:
-              run_as_user: "10001"
-              run_as_group: "10001"
-            network_policies:
-              hosted-inference:
-                name: hosted-inference
-                endpoints:
-                  - host: integrate.api.nvidia.com
-                    port: 443
-                binaries:
-                  - path: /usr/bin/openclaw
-            filesystem_policy:
-              include_workdir: true
-              read_only:
-                - /usr
-                - /opt/fabric
-                - /opt/nemoclaw
-                - /app
-              read_write:
-                - /sandbox
-      agent:
-        name: reviewer
+        name: hermes
         inferenceRef: chat
   inferences:
     chat:

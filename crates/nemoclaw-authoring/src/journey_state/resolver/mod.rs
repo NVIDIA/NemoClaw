@@ -50,6 +50,7 @@ fn keep_supplied(
 #[derive(Default)]
 pub(super) struct ResolutionWork {
     pub(super) questions: Vec<JourneyQuestion>,
+    pub(super) setting_dependencies: Vec<(String, String)>,
     pub(super) omitted: Vec<String>,
     /// Supplied values that omission guidance kept without asking.
     pub(super) kept: Vec<(String, Value)>,

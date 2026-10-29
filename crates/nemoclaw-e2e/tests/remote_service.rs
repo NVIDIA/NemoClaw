@@ -1,12 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use nemoclaw_e2e::{assert_same_managed_resources, http_fixture, openshell::Fixture};
+use nemoclaw_e2e::{http_fixture, openshell::Fixture};
 use nemoclaw_sdk::config::{Document, ServiceDefinition};
 use serde_json::{Value, json};
 use std::{
     fs,
     path::{Path, PathBuf},
 };
+
+/// Where a bearer service's container keeps its generated key.
+const KEY: &str = "/credentials/inference-key";
 
 fn save(root: &Path, name: &str, value: &Value) {
     fs::write(root.join(name), serde_json::to_vec(value).unwrap()).unwrap();
@@ -138,8 +141,8 @@ impl Scenario {
         let mut stats = json!({});
         let bearer = "d".repeat(64);
         if authenticated {
-            files["/credentials/inference-key"] = json!({"raw":bearer});
-            stats["/credentials/inference-key"] = json!({"name":"inference-key","size":64,"mode":384,"mtime":"2026-09-15T00:00:00Z","linkTarget":""});
+            files[KEY] = json!({"raw":bearer});
+            stats[KEY] = json!({"name":"inference-key","size":64,"mode":384,"mtime":"2026-09-15T00:00:00Z","linkTarget":""});
         }
         files["/data/status.json"] =
             json!({"phase":"ready","detail":"","updated":"2026-09-15T00:00:00Z","pid":42});
@@ -291,24 +294,6 @@ async fn managed_bearer_credentials_survive_recovery_reapply_and_replacement_out
     assert_no_probes(&s);
     bearer_survives_compute_replacement(&s, &stable["volume"]).await;
     destroy_retains_storage(&s, &stable["volume"]).await;
-}
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated credential and SSH fixtures"]
-async fn managed_bearer_cleanup_recovers_damage_keeps_bindings_and_teardown_accepts_both_identities()
- {
-    let s = Scenario::new("nvidia.fabric.hermes", true, "vllm").await;
-    let volume = s.apply().await["volume"].clone();
-    replacement_cleanup(&s.root, &s.bundle).await;
-    // Cleanup ends with applies that settle the state; a failed apply that
-    // refreshes must be compared with that settled state.
-    let stable = read(&s.root, "engine.json");
-    let state = s.runtime_state();
-    plans_stop_on_observation_failure(&s, &stable, &state, json!({"daemon":"other-engine"})).await;
-    damaged_bearer_storage_stops_plan_and_apply(&s, &stable, &state).await;
-    insecure_bearer_key_stops_apply(&s, &stable, &state).await;
-    // Teardown must also accept both current and pending-delete identities.
-    interrupt_cleanup(&s.root, true);
-    incompatible_image_blocks_changes_but_not_teardown(&s, &volume).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -591,9 +576,19 @@ async fn recover_lost_process_and_cache(s: &Scenario, volume: &Value) -> Value {
     rebuilt
 }
 
+// Export does not resolve a bearer service's key (docs/inference.md), so it
+// succeeds while the key is readable by others, which apply refuses. The
+// provider's readiness tests cover that refusal.
 async fn export_and_reapply_are_unchanged(s: &Scenario, stable: &Value) {
     let root = s.root.as_path();
+    let fixture = read(root, "fixture.json");
+    if fixture["stats"].get(KEY).is_some() {
+        let mut insecure = fixture.clone();
+        insecure["stats"][KEY]["mode"] = json!(0o644);
+        save(root, "fixture.json", &insecure);
+    }
     let exported = s.run("export", "", true).await;
+    save(root, "fixture.json", &fixture);
     assert!(!String::from_utf8_lossy(&exported).contains(&s.bearer));
     if s.check_pulls {
         let document = Document::parse(exported.as_slice()).unwrap();
@@ -742,35 +737,6 @@ async fn plans_stop_on_observation_failure(
     save(root, "control.json", &json!({}));
 }
 
-// The provider's storage contract tests cover missing, foreign, and
-// substituted volumes; one substituted credential volume shows that the CLI
-// stops before changing bindings.
-async fn damaged_bearer_storage_stops_plan_and_apply(s: &Scenario, stable: &Value, state: &[u8]) {
-    let root = s.root.as_path();
-    let mut damaged = stable.clone();
-    damaged["auth_volume"]["CreatedAt"] = json!("2026-09-16T00:00:00Z");
-    save(root, "engine.json", &damaged);
-    s.run("plan", "config.yaml", false).await;
-    s.run("apply", "config.yaml", false).await;
-    assert_eq!(read(root, "engine.json"), damaged);
-    assert_eq!(s.runtime_state(), state);
-    save(root, "engine.json", stable);
-}
-
-async fn insecure_bearer_key_stops_apply(s: &Scenario, stable: &Value, state: &[u8]) {
-    let root = s.root.as_path();
-    let original = read(root, "fixture.json");
-    let mut corrupt = original.clone();
-    corrupt["stats"]["/credentials/inference-key"]["mode"] = json!(420);
-    save(root, "fixture.json", &corrupt);
-    // Export does not load the generated credential. Apply must reject an insecure key.
-    s.run("export", "", true).await;
-    s.run("apply", "config.yaml", false).await;
-    assert_same_managed_resources(&s.runtime_state(), state);
-    assert_eq!(&read(root, "engine.json"), stable);
-    save(root, "fixture.json", &original);
-}
-
 fn assert_no_probes(s: &Scenario) {
     assert!(
         !s.gateway
@@ -895,69 +861,9 @@ async fn destroy_retains_storage(s: &Scenario, volume: &Value) {
     s.run("destroy", "", true).await;
     let after = read(&s.root, "engine.json");
     assert!(after["container"].is_null());
-    assert!(after["deposed_container"].is_null());
     assert_eq!(&after["volume"], volume);
     assert!(after["network"].is_null());
     assert!(!s.root.join("capacity_reads").exists());
-}
-
-// Fault injection reproduces the state persisted after a replacement creates
-// its current object but fails to delete the old one. Only this owned fixture
-// writes the private state format; the SDK must consume OpenTofu's public JSON.
-fn interrupt_cleanup(root: &Path, old_present: bool) {
-    let mut state = read(root, "deployment/terraform.tfstate");
-    let container = state["resources"]
-        .as_array_mut()
-        .unwrap()
-        .iter_mut()
-        .find(|resource| resource["type"] == "docker_container")
-        .unwrap();
-    let mut old = container["instances"][0].clone();
-    old["deposed"] = json!("deadbeef");
-    old["attributes"]["id"] = json!("old-container");
-    old["attributes"]["name"] = json!("old-container");
-    container["instances"].as_array_mut().unwrap().push(old);
-    save(root, "deployment/terraform.tfstate", &state);
-    let mut engine = read(root, "engine.json");
-    let mut old = engine["container"].clone();
-    old["Id"] = json!("old-container");
-    old["Name"] = json!("/old-container");
-    old["State"]["Running"] = json!(true);
-    engine["deposed_container"] = if old_present { old } else { Value::Null };
-    save(root, "engine.json", &engine);
-}
-
-async fn replacement_cleanup(root: &Path, bundle: &Path) {
-    let before = read(root, "engine.json");
-    interrupt_cleanup(root, true);
-    save(root, "control.json", &json!({"cleanup_failure":true}));
-    run(root, bundle, "apply", "config.yaml", false).await;
-    assert!(read(root, "engine.json")["deposed_container"].is_object());
-    let state = read(root, "deployment/terraform.tfstate");
-    assert!(
-        state["resources"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|resource| resource["instances"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|instance| instance["deposed"] == "deadbeef"))
-    );
-    run(root, bundle, "export", "", false).await;
-    save(root, "control.json", &json!({}));
-    run(root, bundle, "apply", "config.yaml", true).await;
-    let recovered = read(root, "engine.json");
-    assert!(recovered["deposed_container"].is_null());
-    for key in ["container", "volume", "auth_volume", "creates"] {
-        assert_eq!(recovered[key], before[key], "cleanup changed {key}");
-    }
-    run(root, bundle, "export", "", true).await;
-    // A lost delete response leaves an already absent old object in state.
-    interrupt_cleanup(root, false);
-    run(root, bundle, "apply", "config.yaml", true).await;
-    assert_eq!(read(root, "engine.json")["container"], before["container"]);
 }
 
 async fn failed_sandbox_and_runtime_change_preserves_retained_intent(

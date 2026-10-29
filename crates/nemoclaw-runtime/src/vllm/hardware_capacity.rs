@@ -43,6 +43,11 @@ pub fn check_capacity(
 pub fn check_memory(service: &Service, c: &Capacity, starting: bool) -> Result<(), Error> {
     service.validate()?;
     check_compatibility(service, c)?;
+    let headroom = service
+        .recipe
+        .as_ref()
+        .map_or(20, |r| r.resources.startup_headroom_gi_b)
+        * GIB;
     if service.memory_architecture()? == MemoryArchitecture::Dedicated {
         let gpu = c
             .gpu_memory
@@ -65,7 +70,7 @@ pub fn check_memory(service: &Service, c: &Capacity, starting: bool) -> Result<(
         if starting {
             at_least(
                 "host available memory (bytes)",
-                reserve + 20 * GIB,
+                reserve + headroom,
                 c.available,
             )?;
         }
@@ -78,12 +83,7 @@ pub fn check_memory(service: &Service, c: &Capacity, starting: bool) -> Result<(
         if starting {
             at_least(
                 "host available memory (bytes)",
-                service.gpu_bytes()?
-                    + service
-                        .recipe
-                        .as_ref()
-                        .map_or(20, |r| r.resources.startup_headroom_gi_b)
-                        * GIB,
+                service.gpu_bytes()? + headroom,
                 c.available,
             )?;
         }

@@ -141,7 +141,7 @@ NemoClaw uses it to read the endpoint's model catalog.
 The harness name does not change these defaults.
 
 Agents use the protocol their harness's adapter selects for the provider transport.
-The pinned Fabric has no per-model API setting, so an endpoint that accepts only a protocol the adapter doesn't select can't serve that agent ([#13320](https://github.com/NVIDIA/NemoClaw/issues/13320)).
+An agent uses another protocol only when its adapter's Fabric descriptor declares a model `api`, as [Pi model selection](agents.md#pi-model-selection) shows; otherwise an endpoint that accepts only a protocol the adapter doesn't select can't serve that agent.
 Fabric validates the rest of its configuration when the agent is configured.
 
 Use `provider: anthropic` with `anthropic-messages` and `provider: openai` with either OpenAI API.
@@ -172,8 +172,8 @@ An endpoint whose certificate comes from an internal certificate authority, such
 
 - **The machine running NemoClaw** reads the endpoint's model catalog during onboarding, using its system trust store.
   Add the CA there, or set `SSL_CERT_FILE` to a PEM bundle that includes it in the environment that runs `nemoclaw`.
-- **The OpenShell gateway and sandboxes** carry the inference traffic, so their images must trust the CA too.
-  NemoClaw does not configure that trust; OpenShell uses its images' own trust stores.
+- **OpenShell's sandbox supervisor** makes the TLS connection to the endpoint, so the supervisor image must trust the CA; a CA added to an agent image isn't used.
+  NemoClaw can't add the CA: OpenShell's provider registrations take none, and NemoClaw pins the supervisor image on managed gateways; see [current limits](limits.md#security).
 
 If the machine running NemoClaw does not trust the certificate, onboarding reports that the server's certificate is not trusted rather than that the endpoint is unreachable.
 

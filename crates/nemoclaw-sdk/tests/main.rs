@@ -161,6 +161,8 @@ mod reference_combinations;
 mod reference_diagnostics;
 #[path = "refresh.rs"]
 mod refresh;
+#[path = "replacement_cleanup.rs"]
+mod replacement_cleanup;
 #[path = "resource_management.rs"]
 mod resource_management;
 #[path = "runtime_boundaries.rs"]

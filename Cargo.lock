@@ -1056,6 +1056,7 @@ checksum = "9ed9a281f7bc9b7576e61468ba615a66a5c8cfdff42420a70aa82701a3b1e292"
 dependencies = [
  "block-buffer 0.10.4",
  "crypto-common 0.1.7",
+ "subtle",
 ]
 
 [[package]]
@@ -1777,7 +1778,16 @@ version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4aaa26c720c68b866f2c96ef5c1264b3e6f473fe5d4ce61cd44bbe913e553018"
 dependencies = [
- "hmac",
+ "hmac 0.13.0",
+]
+
+[[package]]
+name = "hmac"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c49c37c09c17a53d937dfbb742eb3a961d65a994e6bcdcf37e7399d0cc8ab5e"
+dependencies = [
+ "digest 0.10.7",
 ]
 
 [[package]]
@@ -2978,13 +2988,17 @@ checksum = "743fb55ba31b18fb1ecef6bdc9aa2743314978ac084044301a7eee33fb99a20d"
 [[package]]
 name = "nemo-fabric-core"
 version = "0.6.0"
-source = "git+https://github.com/NVIDIA/NeMo-Fabric?rev=67acf1cff0d598fc3e6a32370cd63fc088e86958#67acf1cff0d598fc3e6a32370cd63fc088e86958"
+source = "git+https://github.com/NVIDIA/NeMo-Fabric?rev=7aedb66be0d0b7fc5a0d466539d87f835f16b1c1#7aedb66be0d0b7fc5a0d466539d87f835f16b1c1"
 dependencies = [
+ "chrono",
+ "getrandom 0.4.3",
+ "hmac 0.12.1",
  "jsonschema 0.49.9",
  "libc",
  "schemars 1.2.2",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "thiserror 2.0.20",
  "windows-sys 0.61.2",
 ]
@@ -3609,7 +3623,7 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 [[package]]
 name = "openshell-core"
 version = "0.0.0"
-source = "git+https://github.com/NVIDIA/OpenShell?rev=bdb956f2cd65a635f1294fccf1d138d263bf650f#bdb956f2cd65a635f1294fccf1d138d263bf650f"
+source = "git+https://github.com/NVIDIA/OpenShell?rev=ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47#ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -3644,7 +3658,7 @@ dependencies = [
 [[package]]
 name = "openshell-crypto"
 version = "0.0.0"
-source = "git+https://github.com/NVIDIA/OpenShell?rev=bdb956f2cd65a635f1294fccf1d138d263bf650f#bdb956f2cd65a635f1294fccf1d138d263bf650f"
+source = "git+https://github.com/NVIDIA/OpenShell?rev=ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47#ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47"
 dependencies = [
  "aws-lc-rs",
  "jsonwebtoken",
@@ -3662,7 +3676,7 @@ dependencies = [
 [[package]]
 name = "openshell-extension-core"
 version = "0.0.0"
-source = "git+https://github.com/NVIDIA/OpenShell?rev=bdb956f2cd65a635f1294fccf1d138d263bf650f#bdb956f2cd65a635f1294fccf1d138d263bf650f"
+source = "git+https://github.com/NVIDIA/OpenShell?rev=ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47#ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47"
 dependencies = [
  "hyper-util",
  "serde",
@@ -3675,7 +3689,7 @@ dependencies = [
 [[package]]
 name = "openshell-policy"
 version = "0.0.0"
-source = "git+https://github.com/NVIDIA/OpenShell?rev=bdb956f2cd65a635f1294fccf1d138d263bf650f#bdb956f2cd65a635f1294fccf1d138d263bf650f"
+source = "git+https://github.com/NVIDIA/OpenShell?rev=ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47#ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47"
 dependencies = [
  "hickory-proto",
  "miette",
@@ -3689,7 +3703,7 @@ dependencies = [
 [[package]]
 name = "openshell-policy-schema"
 version = "0.0.0"
-source = "git+https://github.com/NVIDIA/OpenShell?rev=bdb956f2cd65a635f1294fccf1d138d263bf650f#bdb956f2cd65a635f1294fccf1d138d263bf650f"
+source = "git+https://github.com/NVIDIA/OpenShell?rev=ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47#ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47"
 dependencies = [
  "miette",
  "noyalib",
@@ -4064,7 +4078,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "03da047801ff44bb6a4d407d4860c05fd70bb81714e6b2f3812603d5b145b042"
 dependencies = [
  "heck",
- "itertools 0.14.0",
+ "itertools 0.10.5",
  "log",
  "multimap",
  "petgraph 0.8.3",
@@ -4085,7 +4099,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b570b25f7617e43d59005d0990ccb79e950a423952cea19671b7a876da390adf"
 dependencies = [
  "anyhow",
- "itertools 0.14.0",
+ "itertools 0.10.5",
  "proc-macro2",
  "quote",
  "syn 2.0.119",
@@ -5418,7 +5432,7 @@ dependencies = [
  "futures-util",
  "hex",
  "hkdf",
- "hmac",
+ "hmac 0.13.0",
  "itoa",
  "log",
  "md-5",

@@ -71,15 +71,25 @@ fn endpoint_policy_rejects_credentials_metadata_and_remote_plaintext() {
         "http://0.0.0.0:1",
         "file:///etc/passwd",
         "https://metadata.google.internal/",
+        "https://metadata.google.internal./",
+        "http://8.8.8.8:11434/v1",
+        "http://[2001:db8::1]:11434/v1",
+        // The client connects to 8.8.8.8; the private address is in the path.
+        "http:8.8.8.8/://10.0.0.1/v1",
+        "https://[::ffff:169.254.169.254]/v1",
+        "https://[::ffff:224.0.0.1]/v1",
+        "https://[::ffff:0.0.0.0]/v1",
+        "http://[::ffff:10.0.0.1]:11434/v1",
     ] {
         assert!(validate_endpoint(endpoint, false).is_err(), "{endpoint}");
     }
     for endpoint in [
         "http://127.0.0.1:11434/v1",
         "http://172.20.0.1:11436/v1",
+        "http://[fd00::1]:11434/v1",
         "https://api.example.com/v1",
     ] {
-        assert!(validate_endpoint(endpoint, false).is_ok());
+        assert!(validate_endpoint(endpoint, false).is_ok(), "{endpoint}");
     }
     assert!(validate_endpoint("http://172.20.0.1:17671", true).is_err());
 }

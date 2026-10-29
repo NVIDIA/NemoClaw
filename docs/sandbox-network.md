@@ -91,7 +91,7 @@ For an explicit endpoint with a supported application protocol, choose TLS handl
 | `enforcement: enforce` | Enforce the configured application-level request rules on inspected traffic |
 | `enforcement: audit`, or omit `enforcement` | Audit application-level decisions rather than block requests based on those rules |
 
-`tls: terminate` and `tls: passthrough` are rejected by OpenShell v0.1.5.
+`tls: terminate` and `tls: passthrough` are rejected by OpenShell v0.1.6.
 Remove either field to keep automatic TLS handling.
 
 Destination and executable grants still determine which connections are allowed.
@@ -100,7 +100,7 @@ Do not choose `tls: skip` for an endpoint that relies on those controls, includi
 Use explicit `enforcement: enforce` when the policy must reject disallowed inspected requests.
 The checked-in example uses that enforcement setting with automatic TLS handling.
 
-The [pinned parser](https://github.com/NVIDIA/OpenShell/blob/bdb956f2cd65a635f1294fccf1d138d263bf650f/crates/openshell-supervisor-network/src/l7/mod.rs) and [proxy](https://github.com/NVIDIA/OpenShell/blob/bdb956f2cd65a635f1294fccf1d138d263bf650f/crates/openshell-supervisor-network/src/proxy.rs) define these behaviors.
+The [pinned parser](https://github.com/NVIDIA/OpenShell/blob/ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47/crates/openshell-supervisor-network/src/l7/mod.rs) and [proxy](https://github.com/NVIDIA/OpenShell/blob/ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47/crates/openshell-supervisor-network/src/proxy.rs) define these behaviors.
 The [SDK policy validator](../crates/nemoclaw-openshell/src/policy.rs) accepts only supported field combinations; a field's presence in the schema does not bypass protocol validation.
 Live enforcement and application trust on your host remain qualification requirements.
 Follow [policy change constraints](#verify-and-change-the-configuration) before changing a deployed policy.
@@ -108,9 +108,46 @@ Follow [policy change constraints](#verify-and-change-the-configuration) before 
 ## Use an Upstream Proxy
 
 OpenShell owns the workload's proxy environment and routes traffic through its policy proxy.
-Configure an upstream corporate proxy through the external gateway's OpenShell compute-driver settings, following the [pinned upstream proxy contract](https://github.com/NVIDIA/OpenShell/blob/bdb956f2cd65a635f1294fccf1d138d263bf650f/crates/openshell-supervisor-network/src/upstream_proxy.rs).
+To chain policy-approved egress through a corporate proxy, set the proxy in the gateway's OpenShell compute-driver settings, following the [pinned upstream proxy contract](https://github.com/NVIDIA/OpenShell/blob/ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47/crates/openshell-supervisor-network/src/upstream_proxy.rs).
 At this revision, chaining applies to TLS CONNECT traffic; plain HTTP still connects directly.
-NemoClaw does not expose this driver setting for managed gateways.
+An external gateway's operator sets the proxy.
+
+For a managed gateway, put the settings in the selected driver's table in [`spec.gateway.config`](usage.md#configure-a-managed-gateway):
+
+```yaml
+spec:
+  gateway:
+    management: managed
+    runtime:
+      provider: docker
+    config:
+      openshell.drivers.docker:
+        https_proxy: http://proxy.example.com:3128
+        no_proxy: .example.internal,10.0.0.0/8
+```
+
+Use `openshell.drivers.podman` for a Podman gateway, and `openshell.drivers.kubernetes` for a Kubernetes or OpenShift gateway.
+OpenShell's configuration reference describes each setting for [Docker](https://github.com/NVIDIA/OpenShell/blob/ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47/docs/how-it-works/gateways/configuration.mdx#L1133-L1146), [Podman](https://github.com/NVIDIA/OpenShell/blob/ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47/docs/how-it-works/gateways/configuration.mdx#L1254-L1331) and [Kubernetes](https://github.com/NVIDIA/OpenShell/blob/ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47/docs/how-it-works/gateways/configuration.mdx#L943-L980).
+NemoClaw passes them through unchecked; OpenShell validates them when the gateway starts.
+
+A Kubernetes or OpenShift gateway reads proxy credentials from a Secret in the deployment's namespace, whose key holds `user:pass`.
+Create the Secret there, before the first apply or after NemoClaw creates the namespace, as for [registry Secrets](kubernetes.md#reference-registry-credentials), and name it:
+
+```yaml
+spec:
+  gateway:
+    config:
+      openshell.drivers.kubernetes:
+        https_proxy: https://proxy.example.com:3128
+        proxy_auth_secret_name: corporate-proxy-auth
+        proxy_auth_secret_key: credentials
+```
+
+With an `http://` proxy, credentials also require `proxy_auth_allow_insecure: true`, because Basic authentication then crosses the network unencrypted.
+Docker and Podman gateways read credentials and a proxy CA only from files on the gateway (`proxy_auth_file` and `proxy_ca_bundle`), and no managed gateway can receive a proxy CA; see [current limits](limits.md#security).
+
+Adding or changing these settings on an applied deployment restarts the gateway, and the next plan replaces its Fabric sandboxes; see [Configure a Managed Gateway](usage.md#configure-a-managed-gateway).
+An offline render of the pinned chart places the Kubernetes settings in the gateway's configuration file; no managed gateway has run behind a proxy.
 
 ## Verify and Change the Configuration
 
@@ -128,7 +165,7 @@ Export compares the observed policy and launch settings with retained intent and
 OpenShell can add filesystem grants of its own to the loaded policy revision without recording their source.
 When a policy first loads, NemoClaw accepts those additions as long as every declared rule is intact, and records the loaded revision's hash; it keeps no list of OpenShell's additions.
 Afterwards the loaded policy must keep that hash: any change, including new additions, or an incomplete observation stops export and preserves state.
-OpenShell v0.1.5 applies GPU filesystem additions inside the workload without writing them back to the gateway policy.
+OpenShell v0.1.6 applies GPU filesystem additions inside the workload without writing them back to the gateway policy.
 This removes the upstream cause of suspected GPU false drift; live GPU export and reapply remain unverified.
 Missing policy observations or drift do not produce a partial configuration.
 

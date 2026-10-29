@@ -57,6 +57,8 @@ struct MockState {
     last_delete_workspace: Mutex<Option<String>>,
     last_stop: Mutex<Option<proto::StopSandboxRequest>>,
     last_start: Mutex<Option<proto::StartSandboxRequest>>,
+    last_suspend: Mutex<Option<proto::SuspendSandboxRequest>>,
+    last_resume: Mutex<Option<proto::ResumeSandboxRequest>>,
     last_list_request: Mutex<Option<proto::ListSandboxesRequest>>,
     list_requests: Mutex<Vec<proto::ListSandboxesRequest>>,
     last_exec_request: Mutex<Option<proto::ExecSandboxRequest>>,
@@ -446,6 +448,40 @@ impl OpenShell for TestOpenShell {
             selected_workspace(&request.workspace_scope).unwrap_or_default(),
         );
         *self.state.last_start.lock().await = Some(request);
+        Ok(Response::new(proto::SandboxResponse {
+            sandbox: Some(sandbox),
+            service_urls: HashMap::new(),
+        }))
+    }
+
+    async fn suspend_sandbox(
+        &self,
+        request: tonic::Request<proto::SuspendSandboxRequest>,
+    ) -> Result<Response<proto::SandboxResponse>, Status> {
+        let request = request.into_inner();
+        let sandbox = sandbox_with_phase_ws(
+            request.name.as_str(),
+            proto::SandboxPhase::Suspending,
+            selected_workspace(&request.workspace_scope).unwrap_or_default(),
+        );
+        *self.state.last_suspend.lock().await = Some(request);
+        Ok(Response::new(proto::SandboxResponse {
+            sandbox: Some(sandbox),
+            service_urls: HashMap::new(),
+        }))
+    }
+
+    async fn resume_sandbox(
+        &self,
+        request: tonic::Request<proto::ResumeSandboxRequest>,
+    ) -> Result<Response<proto::SandboxResponse>, Status> {
+        let request = request.into_inner();
+        let sandbox = sandbox_with_phase_ws(
+            request.name.as_str(),
+            proto::SandboxPhase::Starting,
+            selected_workspace(&request.workspace_scope).unwrap_or_default(),
+        );
+        *self.state.last_resume.lock().await = Some(request);
         Ok(Response::new(proto::SandboxResponse {
             sandbox: Some(sandbox),
             service_urls: HashMap::new(),
@@ -1459,6 +1495,63 @@ async fn stop_and_start_map_requests_and_phases() {
     let start = state.last_start.lock().await.clone().unwrap();
     assert_eq!(Some(start.name.as_str()), Some("sleepy"));
     assert_eq!(selected_workspace(&start.workspace_scope), Some("team-a"));
+}
+
+#[tokio::test]
+async fn suspend_and_resume_map_requests_and_phases() {
+    let state = Arc::new(MockState::default());
+    let endpoint = start_mock(state.clone()).await;
+    let client = connect(&endpoint).await;
+
+    let suspended = client.suspend_sandbox("frozen").await.unwrap();
+    assert_eq!(suspended.phase, SandboxPhase::Suspending);
+    let suspend = state.last_suspend.lock().await.clone().unwrap();
+    assert_eq!(suspend.name, "frozen");
+    assert_eq!(
+        selected_workspace(&suspend.workspace_scope),
+        Some("default")
+    );
+
+    let resumed = client
+        .workspace("team-a")
+        .resume_sandbox(
+            "frozen",
+            openshell_sdk::ResumeOptions {
+                restart_if_restore_fails: true,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(resumed.phase, SandboxPhase::Starting);
+    let resume = state.last_resume.lock().await.clone().unwrap();
+    assert_eq!(resume.name, "frozen");
+    assert!(resume.restart_if_restore_fails);
+    assert_eq!(selected_workspace(&resume.workspace_scope), Some("team-a"));
+
+    client
+        .resume_sandbox("frozen", openshell_sdk::ResumeOptions::default())
+        .await
+        .unwrap();
+    let resume = state.last_resume.lock().await.clone().unwrap();
+    assert!(!resume.restart_if_restore_fails);
+    assert_eq!(selected_workspace(&resume.workspace_scope), Some("default"));
+}
+
+#[tokio::test]
+async fn wait_ready_fails_fast_on_suspended_phase() {
+    let state = Arc::new(MockState {
+        phase_sequence: vec![proto::SandboxPhase::Suspended],
+        ..Default::default()
+    });
+    let endpoint = start_mock(state).await;
+    let client = connect(&endpoint).await;
+
+    let err = client
+        .wait_ready("frozen", Duration::from_secs(5))
+        .await
+        .unwrap_err();
+    assert_eq!(err.code(), "connect");
+    assert!(err.to_string().contains("suspended"), "{err}");
 }
 
 #[tokio::test]

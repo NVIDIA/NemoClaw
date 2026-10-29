@@ -154,7 +154,7 @@
           "type": "string"
         },
         "gpu": {
-          "description": "GPU name that must equal the observed device name.",
+          "description": "GPU name that must equal the observed device name. It must belong to a hardware profile's GPU family; that profile's memory architecture decides whether the GPU budget is checked against GPU or host memory.",
           "minLength": 1,
           "type": "string"
         },
@@ -748,7 +748,7 @@
             },
             "tls": {
               "$ref": "#/$defs/TLS",
-              "description": "Optional mutual TLS references for an external HTTPS gateway."
+              "description": "Optional TLS references for an external HTTPS gateway: a CA alone, or with a client certificate and key for mutual TLS."
             }
           },
           "required": [
@@ -1428,7 +1428,7 @@
     },
     "ManagedKubernetes": {
       "additionalProperties": false,
-      "description": "Explicit existing-cluster target for a managed development gateway. The SDK does not create a cluster or select an ambient context, and installs nothing cluster-wide: Agent Sandbox and a default StorageClass must already exist. `runtime.provider: openshift` selects the OpenShift profile.",
+      "description": "Explicit existing-cluster target for a managed development gateway. The SDK does not create a cluster or select an ambient context. Agent Sandbox and a default StorageClass are platform prerequisites that the SDK does not check. `runtime.provider: openshift` selects the OpenShift profile.",
       "properties": {
         "authentication": {
           "$ref": "#/$defs/KubernetesAuthentication",
@@ -1501,7 +1501,7 @@
           "x-nemoclaw-error": "Kubernetes environment names must be unique variable names that do not shadow process, trust, proxy, or cluster controls"
         },
         "imagePullSecrets": {
-          "description": "Names of caller-managed registry Secrets in this deployment's namespace, used by gateway/helper and sandbox pods. Values stay in Kubernetes; NemoClaw does not create, read, rotate, or remove these Secrets. Provision them after the SDK creates the namespace, before its pods need to pull images.",
+          "description": "Names of caller-managed registry Secrets in this deployment's namespace, used by gateway/helper and sandbox pods. Values stay in Kubernetes; NemoClaw does not create, read, rotate, or remove these Secrets. Provision them in the namespace before the first apply, or after the SDK creates it, before its pods need to pull images.",
           "items": {
             "maxLength": 253,
             "minLength": 1,
@@ -1561,7 +1561,7 @@
           }
         },
         "namespace": {
-          "description": "Namespace for this deployment's gateway and generated development authentication resources.",
+          "description": "Namespace for this deployment's gateway and generated development authentication resources. An existing namespace is bound by UID and never changed; a missing one is created. A namespace another NemoClaw deployment created is refused.",
           "maxLength": 63,
           "minLength": 1,
           "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$",
@@ -2221,7 +2221,7 @@
           "type": "array"
         },
         "enforcement": {
-          "description": "enforce or audit; omission follows OpenShell defaults.",
+          "description": "enforce or audit; omission selects OpenShell's default, audit, which logs and forwards requests that break the endpoint's rules.",
           "enum": [
             "enforce",
             "audit"
@@ -2495,7 +2495,7 @@
       "description": "Resource declarations checked against host observations and produced data.",
       "properties": {
         "gpuMemoryBytes": {
-          "description": "Total serving GPU budget in bytes, including model, caches, and other allocations.",
+          "description": "Total serving GPU budget in bytes, including model, caches, and other allocations. Checked against GPU memory on a dedicated-memory GPU, and against host memory with the host reserve on unified memory.",
           "format": "uint64",
           "maximum": 4398046511104,
           "minimum": 4294967296,
@@ -2516,7 +2516,7 @@
           "type": "integer"
         },
         "startupHeadroomGiB": {
-          "description": "Additional available-memory headroom in GiB required at startup.",
+          "description": "Host available memory in GiB required at startup, beyond the GPU budget on unified memory or beyond the host reserve on a dedicated-memory GPU.",
           "format": "uint64",
           "maximum": 4096,
           "minimum": 0,
@@ -2914,11 +2914,13 @@
             },
             "placement": {
               "$ref": "#/$defs/ServicePlacement",
-              "description": "Optional remote Docker placement. Requires publication."
+              "description": "SSH Docker placement. Required with an external gateway or Podman sandbox; requires publication.",
+              "x-nemoclaw-required": "With external gateway or Podman; paired with publication"
             },
             "publication": {
               "$ref": "#/$defs/ServicePublication",
-              "description": "Private inference address for an explicitly placed service."
+              "description": "Private inference address reachable by OpenShell. Required with placement.",
+              "x-nemoclaw-required": "With placement"
             },
             "serving": {
               "$ref": "#/$defs/OllamaServing",
@@ -3848,7 +3850,15 @@
     },
     "TLS": {
       "additionalProperties": false,
-      "description": "Gateway mutual TLS file references. All three references are required when TLS is declared.",
+      "dependentRequired": {
+        "certificate": [
+          "key"
+        ],
+        "key": [
+          "certificate"
+        ]
+      },
+      "description": "Gateway TLS file references: the CA certificate that verifies the gateway, and a client certificate and key, which must appear together, when the gateway requires one.",
       "properties": {
         "ca": {
           "$ref": "#/$defs/FileRef",
@@ -3856,17 +3866,15 @@
         },
         "certificate": {
           "$ref": "#/$defs/FileRef",
-          "description": "Environment variable whose value names the local client certificate file."
+          "description": "Environment variable whose value names the local client certificate file. Requires key."
         },
         "key": {
           "$ref": "#/$defs/FileRef",
-          "description": "Environment variable whose value names the local client private-key file."
+          "description": "Environment variable whose value names the local client private-key file. Requires certificate."
         }
       },
       "required": [
-        "ca",
-        "certificate",
-        "key"
+        "ca"
       ],
       "type": "object"
     },
@@ -4286,7 +4294,7 @@
   "x-nemoclaw-parser-checks": [
     "Document::parse rejects YAML aliases, anchors, merge keys, all explicit tags (including core tags such as !!binary), duplicate keys, multiple documents, and input larger than 1 MiB. It applies the compiled input schema before defaulting; Document::validate applies the normalized schema and semantic checks, including for directly constructed Rust values.",
     "The parser checks the shape of every endpoint URL and the gateway endpoint's transport and address policy; OpenShell checks inference destinations when sandboxes connect. It also checks managed gateway port bounds, canonical private IPv4 /24 networks, local engine socket syntax, and publication address/port/network agreement.",
-    "Managed Kubernetes requires explicit kubeconfig environment, context, namespace, and authentication profile; Agent Sandbox and one default StorageClass must already be installed. Its HTTPS endpoint is exactly 127.0.0.1 with an explicit port from 1 through 65535 and no path. Local engine fields and managed inference services are excluded; gateway.runtime.provider is kubernetes or openshift. OpenShift uses the upstream Kubernetes driver and requires platform-owned OpenShift security prerequisites. Cluster identity, ownership, prerequisite compatibility, and credential files are checked during operations.",
+    "Managed Kubernetes requires explicit kubeconfig environment, context, namespace, and authentication profile; Agent Sandbox and a default StorageClass are platform prerequisites that are not checked. Its HTTPS endpoint is exactly 127.0.0.1 with an explicit port from 1 through 65535 and no path. Local engine fields and managed inference services are excluded; gateway.runtime.provider is kubernetes or openshift. OpenShift uses the upstream Kubernetes driver and requires platform-owned OpenShift security prerequisites. Namespace identity, ownership, and credential files are checked during operations.",
     "Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.",
     "Explicit filesystem grants must permit reads of the paths the selected image's runtime requires, such as Fabric's /opt/fabric; parent and read-write grants count. Planning checks them against the image's metadata; it does not resolve symlinks or establish runtime permissions.",
     "The schema requires an explicit default for multiple model choices. Rust checks unique route names, that the default names a route, and that native model and tool fields have valid structural shapes. Fabric validates adapter-specific combinations.",
@@ -4295,7 +4303,7 @@
     "Native reasoning-effort identifiers are preserved for Fabric validation. Managed inference services may constrain routes to their declared served model.",
     "Rust resolves inferenceRef from enclosing inferences, preserves declaration scope for nested provider references, and rejects missing names and shadowing. The schema rejects inline/reference ambiguity.",
     "The parser resolves providerRef from enclosing inferenceProviders, rejects shadowing, conflicting selected names, more than 32 selected providers, incompatible managed-service combinations, and compares route models and authentication with the selected provider. Provider transport and reference consistency are checked after reference resolution for both inline and shared definitions. Unselected definitions create no resources. Snapshot identity must match the service model.",
-    "The parser checks memory threshold ordering and GPU/KV budget relationships; recipe path safety, byte-length limits, environment-map conflicts, snapshot file uniqueness, directory conflicts, and total-size overflow.",
+    "The parser checks memory threshold ordering and GPU/KV budget relationships; that a recipe's GPU belongs to a hardware profile's GPU family; recipe path safety, byte-length limits, environment-map conflicts, snapshot file uniqueness, directory conflicts, and total-size overflow.",
     "Schema validation does not observe hardware, image labels, model weights, credentials, ownership, connectivity, or inference readiness. Those checks run during the relevant SDK operation."
   ]
 }

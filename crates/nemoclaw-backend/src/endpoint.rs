@@ -61,21 +61,27 @@ pub fn validate_endpoint(raw: &str, gateway: bool) -> Result<(), ConfigError> {
     )?;
     let ip = host_ip(&url);
     if let Some(ip) = ip {
-        let link_local = match ip {
+        // An IPv4-mapped address would need every IPv4 rule checked twice.
+        let link_local_or_mapped = match ip {
             IpAddr::V4(ip) => ip.is_link_local(),
-            IpAddr::V6(ip) => ip.is_unicast_link_local(),
+            IpAddr::V6(ip) => ip.is_unicast_link_local() || ip.to_ipv4_mapped().is_some(),
         };
         require(
-            !ip.is_unspecified() && !ip.is_multicast() && !link_local,
-            "unspecified, multicast, and link-local endpoints are forbidden",
+            !ip.is_unspecified() && !ip.is_multicast() && !link_local_or_mapped,
+            "unspecified, multicast, link-local, and IPv4-mapped endpoints are forbidden",
         )?;
     }
+    // url also parses a special scheme without `//`, which would move the
+    // authority read below into the path.
+    let prefix = format!("{}://", url.scheme());
+    require(
+        raw.get(..prefix.len())
+            .is_some_and(|start| start.eq_ignore_ascii_case(&prefix)),
+        "expected an HTTP or HTTPS endpoint",
+    )?;
     // url normalizes shorthand IPv4 (127.1, integers, octal). Require the literal
     // address spelling from the input so normalization cannot weaken policy.
-    let authority = raw
-        .split_once("://")
-        .map(|(_, rest)| rest.split('/').next().unwrap_or(""))
-        .unwrap_or("");
+    let authority = raw[prefix.len()..].split('/').next().unwrap_or("");
     let literal_host = if authority.starts_with('[') {
         authority
             .split(']')
@@ -86,15 +92,18 @@ pub fn validate_endpoint(raw: &str, gateway: bool) -> Result<(), ConfigError> {
         authority.split(':').next().unwrap_or("")
     };
     if url.scheme() == "http" {
-        let literal: Option<IpAddr> = literal_host.parse().ok();
         require(
-            literal.is_some_and(|ip| ip.is_loopback() || (!gateway && private(ip))),
+            literal_host.parse().ok() == ip
+                && ip.is_some_and(|ip| ip.is_loopback() || (!gateway && private(ip))),
             "HTTP requires a literal loopback address or private inference address",
         )?;
     }
     require(
-        url.host_str()
-            .is_none_or(|host| !host.eq_ignore_ascii_case("metadata.google.internal")),
+        url.host_str().is_none_or(|host| {
+            !host
+                .trim_end_matches('.')
+                .eq_ignore_ascii_case("metadata.google.internal")
+        }),
         "metadata endpoints are forbidden",
     )
 }

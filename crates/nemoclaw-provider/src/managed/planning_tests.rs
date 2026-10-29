@@ -54,7 +54,9 @@ async fn planning_fixture(network: (u16, Value), inventory: Value, image: (u16, 
             "/networks" => (200, inventory.clone()),
             path if path.starts_with("/networks/") => network.clone(),
             path if path.starts_with("/images/") => image.clone(),
-            path if path.starts_with("/containers/") => (404, json!({"message":"absent"})),
+            path if path.starts_with("/containers/") || path.starts_with("/volumes/") => {
+                (404, json!({"message":"absent"}))
+            }
             _ => panic!("unexpected planning observation {}", request.path),
         };
         Some((response.0, serde_json::to_vec(&response.1).unwrap()))
@@ -144,7 +146,7 @@ async fn planning_checks_subnet_conflicts_and_defers_absent_shared_networks() {
                     matches!(
                         result,
                         Err(Error::Conflict(
-                            "managed gateway subnet overlaps an existing Docker network"
+                            "managed gateway subnet overlaps an existing Docker network; set spec.gateway.networkCIDR to a free private /24"
                         ))
                     ),
                     "{result:?}"
@@ -161,6 +163,40 @@ async fn planning_checks_subnet_conflicts_and_defers_absent_shared_networks() {
                     Err(Error::Conflict("managed gateway network is absent"))
                 ));
             }
+        }
+    }
+}
+
+#[tokio::test]
+async fn planning_new_gateway_storage_refuses_a_subnet_another_network_holds() {
+    for spec in runtime_specs() {
+        let storage = spec.storage();
+        let desired = storage.gateway_row(super::GATEWAY_STORAGE_KIND).unwrap();
+        let taken = json!([{"IPAM":{"Config":[{"Subnet":spec.network_cidr()}]}}]);
+        for (own, inventory, expected) in [
+            (
+                (404, json!({})),
+                taken.clone(),
+                Some(
+                    "managed gateway subnet overlaps an existing Docker network; set spec.gateway.networkCIDR to a free private /24",
+                ),
+            ),
+            ((404, json!({})), json!([]), None),
+            // The deployment's own network holds the subnet.
+            ((200, network(&storage)), taken, None),
+        ] {
+            let fixture = planning_fixture(own, inventory, (200, image(&spec))).await;
+            let connections = Connections::fixed([fixture.engine_for(spec.engine())]).unwrap();
+            let result = BackendRegistry::new(&connections)
+                .resolve(super::GATEWAY_STORAGE_KIND, &desired)
+                .unwrap()
+                .unwrap()
+                .plan(super::GATEWAY_STORAGE_KIND, &desired, None)
+                .await;
+            assert_eq!(
+                result.err().map(|error| error.to_string()).as_deref(),
+                expected
+            );
         }
     }
 }

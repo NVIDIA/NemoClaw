@@ -3,9 +3,10 @@
 //! Objects a deployment creates, recognised by the UID recorded at creation.
 //!
 //! An object is ours only if its UID matches the recorded one and it carries
-//! the deployment's owner label. Nothing that already exists is adopted, and
-//! deletes send the recorded UID as a precondition, so a replacement made by
-//! someone else is never removed.
+//! the deployment's owner label. Apart from the target namespace, which is
+//! bound by UID alone, nothing that already exists is adopted, and deletes
+//! send the recorded UID as a precondition, so a replacement made by someone
+//! else is never removed.
 
 use crate::ObservationError;
 use kube::{
@@ -151,8 +152,9 @@ impl Cluster {
         Ok(Owned { uid, ..address })
     }
 
-    /// The object, if it is still the one recorded in `owned`.
-    pub async fn verify(&self, owned: &Owned) -> Result<DynamicObject, ObservationError> {
+    /// The object, if it still has the UID recorded in `owned`, whoever
+    /// labelled it. The bound namespace is checked this way.
+    pub async fn verify_uid(&self, owned: &Owned) -> Result<DynamicObject, ObservationError> {
         let object = self
             .get(owned)
             .await?
@@ -164,6 +166,12 @@ impl Cluster {
                 owned.uid
             )));
         }
+        Ok(object)
+    }
+
+    /// The object, if it is still the one recorded in `owned`.
+    pub async fn verify(&self, owned: &Owned) -> Result<DynamicObject, ObservationError> {
+        let object = self.verify_uid(owned).await?;
         let labelled = object
             .metadata
             .labels

@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! A lost response to a create leaves an object that a re-run refuses and never adopts.
+//! A lost response to a create leaves an object that a re-run refuses and never
+//! adopts, except the target namespace, which a re-run binds.
 //!
-//! For each object that `Operations::ensure` creates for storage and
+//! For each other object that `Operations::ensure` creates for storage and
 //! authentication, the fake API server commits the create and drops the
 //! connection before answering. The cluster then holds an object the receipt
 //! does not record. A re-run with a healthy client must refuse it: the object,
@@ -61,7 +62,7 @@ async fn assert_unrecorded_object_is_refused(
     let label = format!("{kind} {name}");
 
     let lossy = serve(&objects, lose_response_to(&collection, name)).await;
-    let first = platform::operations(lossy.client(), lossy.endpoint(), &state);
+    let first = platform::operations(lossy.client(), &state);
     if stage == AUTH_KIND {
         first
             .ensure(&platform::spec(STORAGE_KIND), None)
@@ -101,10 +102,8 @@ async fn assert_unrecorded_object_is_refused(
     );
 
     let before = Snapshot::capture(&objects, &state);
-    // The receipt binds the cluster by its server address, so the re-run keeps
-    // the first run's address and sends its requests to a healthy server.
     let healthy = serve(&objects, |_, _, _| None).await;
-    let rerun = platform::operations(healthy.client(), lossy.endpoint(), &state);
+    let rerun = platform::operations(healthy.client(), &state);
     let result = rerun.ensure(&platform::spec(stage), None).await;
 
     assert!(
@@ -142,9 +141,43 @@ async fn assert_unrecorded_object_is_refused(
     );
 }
 
+/// Storage binds the target namespace whether or not it created it, so a
+/// re-run binds the namespace that the lost create made and changes nothing in it.
 #[tokio::test]
-async fn a_rerun_refuses_a_namespace_whose_create_response_was_lost() {
-    assert_unrecorded_object_is_refused(STORAGE_KIND, "v1", "Namespace", "", "agents").await;
+async fn a_rerun_binds_a_namespace_whose_create_response_was_lost() {
+    let objects = platform::cluster();
+    let directory = tempfile::tempdir().unwrap();
+    let state = directory.path().join("state");
+    let lossy = serve(&objects, lose_response_to("/api/v1/namespaces", "agents")).await;
+    let lost = platform::operations(lossy.client(), &state)
+        .ensure(&platform::spec(STORAGE_KIND), None)
+        .await;
+    assert_eq!(lost, Err(ObservationError::Transport));
+    assert_eq!(Receipt::load(&state, OWNER, NAME).unwrap(), None);
+    let namespace = objects.get("v1", "Namespace", "", "agents").unwrap();
+
+    let healthy = serve(&objects, |_, _, _| None).await;
+    platform::operations(healthy.client(), &state)
+        .ensure(&platform::spec(STORAGE_KIND), None)
+        .await
+        .unwrap();
+    let receipt = Receipt::load(&state, OWNER, NAME).unwrap().unwrap();
+    assert_eq!(
+        receipt.namespace.unwrap().uid,
+        namespace["metadata"]["uid"].as_str().unwrap()
+    );
+    assert_eq!(
+        healthy.mutations(),
+        [(
+            "POST".to_owned(),
+            "/api/v1/namespaces/agents/secrets".to_owned()
+        )],
+        "the re-run creates only the key"
+    );
+    assert_eq!(
+        objects.get("v1", "Namespace", "", "agents").unwrap(),
+        namespace
+    );
 }
 
 #[tokio::test]

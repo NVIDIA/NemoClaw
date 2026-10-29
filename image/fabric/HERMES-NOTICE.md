@@ -3,7 +3,7 @@
 
 # Hermes Image Source
 
-Hermes Agent source is pinned to release [v2026.9.24](https://github.com/NousResearch/hermes-agent/releases/tag/v2026.9.24) (`f97608f178d1ffeca59860195ab7da295f7c8e5f`) from [NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent).
+Hermes Agent source is pinned to release [v0.22.4](https://github.com/NousResearch/hermes-agent/releases/tag/v0.22.4) (`4d04303818b61bf3aa09278af48356315515965b`) from [NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent).
 Its dependencies come from that release's own `uv.lock`.
 Its upstream license and notices remain in `/opt/hermes` and the retained source archive.
 NemoClaw installs the source unmodified.

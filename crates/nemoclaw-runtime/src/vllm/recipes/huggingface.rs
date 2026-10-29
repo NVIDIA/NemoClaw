@@ -2,11 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Pinned model identity and snapshot resolution.
 use super::super::Service;
-pub use crate::snapshot::MANIFEST_FILE;
-use crate::{
-    Error,
-    snapshot::{Manifest, ModelManifest},
-};
+use crate::{Error, snapshot::Manifest};
 use sha2::{Digest, Sha256};
 pub fn directory(service: &Service) -> String {
     if let Some(reuse) = service.recipe.as_ref().and_then(|r| r.reuse.as_ref()) {
@@ -42,11 +38,6 @@ pub fn validate_manifest(service: &Service, manifest: &Manifest) -> Result<(), E
         ));
     }
     crate::vllm::validation::validate_weights(service, manifest)
-}
-pub fn decode_manifest(service: &Service, bytes: &[u8]) -> Result<ModelManifest, Error> {
-    let manifest = ModelManifest::decode(bytes)?;
-    validate_manifest(service, &manifest.snapshot())?;
-    Ok(manifest)
 }
 pub async fn resolve_manifest(service: &Service) -> Result<Manifest, Error> {
     if let Some(manifest) = service.recipe.as_ref().and_then(|r| r.snapshot.as_ref()) {

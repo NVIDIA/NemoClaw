@@ -14,7 +14,7 @@ mod kube_api;
 use http_fixture as transport;
 /// Fabric catalog fixtures shared with the end-to-end tests.
 #[path = "../../../nemoclaw-e2e/src/image_runtime.rs"]
-#[allow(
+#[expect(
     dead_code,
     reason = "the contract tests use only some of the end-to-end catalog fixtures"
 )]
@@ -27,6 +27,9 @@ mod host_image;
 mod provider_protocol;
 mod readiness_refs;
 mod references;
+// Unix only for the same reason as vllm_runtime, whose workspace it uses.
+#[cfg(unix)]
+mod replacement_cleanup;
 mod service_capacity;
 mod service_readiness;
 mod service_storage;

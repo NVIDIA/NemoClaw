@@ -4,7 +4,7 @@
 # Deploy to Kubernetes or OpenShift
 
 Run agent sandboxes on an existing Kubernetes or OpenShift cluster.
-NemoClaw either installs a development OpenShell gateway in a namespace it creates, or uses a gateway you already run.
+NemoClaw either installs a development OpenShell gateway in a namespace it binds or creates, or uses a gateway you already run.
 The same agent images serve Docker, Podman, Kubernetes and OpenShift.
 
 The managed gateway authenticates users through a development issuer it runs, or through [an existing OIDC issuer](#authenticate-through-an-existing-oidc-issuer).
@@ -16,14 +16,16 @@ No automated run covers OpenShift, and other clusters are untested; [current lim
 
 - **A NemoClaw bundle:** [build one](build.md#build-a-native-bundle) from this revision.
   The bundle includes the Helm provider that installs the gateway; no Helm CLI is needed.
-- **Cluster access:** a kubeconfig file and an exact context that can create a namespace and, inside it, Secrets, ConfigMaps, ServiceAccounts, Roles, RoleBindings, Services, Deployments, StatefulSets and NetworkPolicies, and can port-forward to its pods (`pods/portforward`).
-  The SDK reads the cluster's CustomResourceDefinitions, StorageClasses and namespaces.
+- **Cluster access:** a kubeconfig file and an exact context that can read the deployment's namespace, or create it if it doesn't exist, and, inside it, create Secrets, ConfigMaps, ServiceAccounts, Roles, RoleBindings, Services, Deployments, StatefulSets and NetworkPolicies, and port-forward to its pods (`pods/portforward`).
+  The SDK reads nothing else outside the namespace.
   The pinned OpenShell chart also creates [two cluster-wide objects](#cluster-wide-objects), so the context must be able to create a ClusterRole and a ClusterRoleBinding.
   If the kubeconfig runs an exec plugin that needs your environment, such as `aws` for EKS, list those variables in `gateway.kubernetes.environment`, for example `[AWS_PROFILE, AWS_REGION]`.
   OpenTofu and its providers receive only platform variables such as `PATH` and `HOME`, plus the ones you list.
 - **Cluster setup, done by the platform operator:**
-  - [Agent Sandbox](https://github.com/kubernetes-sigs/agent-sandbox), with its controller running in `agent-sandbox-system`; CI tests version 1.0.3.
-  - Exactly one default StorageClass.
+  - [Agent Sandbox](https://github.com/kubernetes-sigs/agent-sandbox), with its controller running in `agent-sandbox-system`; CI tests version 1.0.3. Without its API, the chart's preflight stops the install.
+  - A default StorageClass for the gateway's volume. Without one, the volume's claim stays pending and apply fails when Helm's wait times out.
+
+  NemoClaw doesn't check either; the chart and the cluster report what is missing.
 - **Agent images:** pushed to a registry the cluster can pull from, and referenced by digest.
 - **Inference:** an endpoint reachable from inside the sandboxes, such as a [model server you run in the cluster](#use-a-model-server-in-the-cluster).
   Managed model services under `spec.services` are not supported on Kubernetes ([#12641](https://github.com/NVIDIA/NemoClaw/issues/12641)).
@@ -59,13 +61,13 @@ See [Build agent images](build.md#build-agent-images) for the harnesses each pla
 
 ## Deploy with a Managed Gateway
 
-The SDK creates the namespace and a credential key, starts a development token issuer, and installs the pinned OpenShell chart.
+The SDK binds the namespace, creating it if it doesn't exist, adds a credential key, starts a development token issuer, and installs the pinned OpenShell chart.
 The `openshell` and `fabric` providers reach the gateway through port forwards they open on free loopback ports while OpenTofu runs.
 Start from [the Kubernetes example](../examples/kubernetes/managed-development.yaml) and set:
 
 - `metadata.uid` to a new UUID.
 - `gateway.kubernetes.kubeconfig` to the environment variable holding the kubeconfig path, and `context` to the exact context.
-- `gateway.kubernetes.namespace` to a namespace that does not exist yet; NemoClaw does not take over an existing one.
+- `gateway.kubernetes.namespace` to a namespace for this deployment alone. If it exists, NemoClaw records its UID and never labels, changes or deletes it; otherwise NemoClaw creates it. A namespace that another NemoClaw deployment created is refused.
 - `gateway.endpoint` to `https://127.0.0.1:` and an explicit port. Providers forward on free ports of their own, so this port is not bound.
 - Each sandbox's `image.ref` and `image.metadata`.
 
@@ -121,8 +123,8 @@ spec:
         user_role: openshell-users
 ```
 
-- `openshell.gateway.oidc` in [`spec.gateway.config`](usage.md#configure-a-managed-gateway) holds OpenShell's OIDC settings in OpenShell's names, as its [gateway authentication guide](https://github.com/NVIDIA/OpenShell/blob/bdb956f2cd65a635f1294fccf1d138d263bf650f/docs/how-it-works/gateways/authentication.mdx#oidc) describes for Helm deployments. OpenShell validates every request's bearer token against the issuer and audience, and maps the token's roles to administrator and user access; omitted settings take OpenShell's defaults. The `oidc` profile requires the table; under `development`, NemoClaw writes it for its own issuer.
-- `caConfigMap` names a ConfigMap in the deployment's namespace whose `ca.crt` verifies the issuer's certificate. Omit it for a publicly trusted issuer. Like registry Secrets, create it after NemoClaw creates the namespace, then rerun apply with the same state directory.
+- `openshell.gateway.oidc` in [`spec.gateway.config`](usage.md#configure-a-managed-gateway) holds OpenShell's OIDC settings in OpenShell's names, as its [gateway authentication guide](https://github.com/NVIDIA/OpenShell/blob/ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47/docs/how-it-works/gateways/authentication.mdx#oidc) describes for Helm deployments. OpenShell validates every request's bearer token against the issuer and audience, and maps the token's roles to administrator and user access; omitted settings take OpenShell's defaults. The `oidc` profile requires the table; under `development`, NemoClaw writes it for its own issuer.
+- `caConfigMap` names a ConfigMap in the deployment's namespace whose `ca.crt` verifies the issuer's certificate. Omit it for a publicly trusted issuer. Like registry Secrets, create it in the namespace before the first apply, or after NemoClaw creates the namespace and then rerun apply with the same state directory.
 - `token.env` names the variable holding the bearer token NemoClaw sends to the gateway.
 
 NemoClaw runs no sign-in flow and stores no token.
@@ -186,7 +188,7 @@ openshell status
 `openshell status` reports the gateway as connected and authenticated.
 Then [select the gateway and workspace](interfaces.md#select-the-gateway-and-workspace) with `OPENSHELL_GATEWAY=$gateway_name`.
 The client certificate's key grants transport access to the gateway; keep it private and delete the `mtls` directory when you no longer need access.
-See [OpenShell's authentication guide](https://github.com/NVIDIA/OpenShell/blob/bdb956f2cd65a635f1294fccf1d138d263bf650f/docs/how-it-works/gateways/authentication.mdx#oidc) for token refresh and sign-out.
+See [OpenShell's authentication guide](https://github.com/NVIDIA/OpenShell/blob/ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47/docs/how-it-works/gateways/authentication.mdx#oidc) for token refresh and sign-out.
 
 ### Reference Registry Credentials
 
@@ -204,10 +206,9 @@ spec:
         - registry-credentials
 ```
 
-The namespace must be created by NemoClaw, so arrange for your platform to provision the Secrets after namespace creation.
+Create the namespace and its Secrets before the first apply, or let NemoClaw create the namespace and provision the Secrets afterwards.
 If a Secret is missing or its credentials are wrong, image acquisition can fail and apply stops; keep the deployment state and UID.
-After the namespace exists, provision or repair the Secret there, then rerun apply with the same configuration and state directory.
-Do not create the namespace yourself or substitute another namespace to bypass ownership checks.
+Provision or repair the Secret in the namespace, then rerun apply with the same configuration and state directory.
 
 For the following example, install `kubectl` and prepare a protected Docker configuration file containing registry `auths` entries, as described in [Kubernetes registry authentication](https://kubernetes.io/docs/tasks/configure-pod-container/pull-image-private-registry/).
 Entries that only name a `credsStore` or `credHelpers` helper cannot supply credentials to the kubelet; it cannot run your client machine's helper.
@@ -250,7 +251,7 @@ Sandboxes still need `image.metadata`.
 
 Sandboxes can use a model server that you run in the gateway's cluster.
 NemoClaw creates nothing for it: you deploy the server with your platform's own tools, and the sandboxes reach it through its Service.
-This has been tried on one kind cluster; [current limits](limits.md#platforms-models-and-placement) lists what is untested.
+This has been tried on one kind cluster and one OpenShift Local node; [current limits](limits.md#platforms-models-and-placement) lists what is untested.
 Name the Service by its cluster DNS name and port:
 
 ```yaml
@@ -315,5 +316,7 @@ kubectl --context "$deployment_context" delete clusterrolebinding,clusterrole \
 
 Then follow [Remove Retained Resources](usage.md#remove-retained-resources) on Kubernetes without its destroy check.
 Its pod list still shows this deployment's gateway, issuer and sandboxes; deleting the namespace stops them, so continue if nothing else uses the namespace.
-Keep the state directory until the namespace, the volumes and both cluster-wide objects are gone.
+That procedure keeps a namespace that existed before the first apply, so delete the deployment's workloads in it first: the gateway's objects, labelled `app.kubernetes.io/instance` with the release name; its Helm release records, labelled `owner=helm` and `name` with the release name; the issuer's objects, labelled `nemoclaw.nvidia.com/uid` with the deployment's UID; and its Sandboxes.
+Wait until the pod list shows none of them.
+Keep the state directory until the namespace, or the deployment's objects in a kept namespace, the volumes and both cluster-wide objects are gone.
 This procedure has not been run on a cluster.

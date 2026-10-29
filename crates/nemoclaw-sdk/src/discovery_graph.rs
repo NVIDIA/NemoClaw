@@ -128,14 +128,25 @@ pub(crate) fn populate(graph: &mut Value, document: &Document) -> Result<(), Con
                 )?;
                 // The openshell provider judges whether the engine can host
                 // the managed gateway; its installation types enforce the
-                // same check.
+                // same engine check. It also checks that only this
+                // deployment's gateway holds the endpoint's port.
                 let source = crate::compile::data_source_type(GATEWAY_PREREQUISITES);
+                let gateway = document
+                    .spec
+                    .gateway
+                    .as_local_managed()
+                    .expect("engine reads are planned for local managed gateways");
                 graph["data"][&source]["current"] = json!({
                     "engine": literal(&request.engine),
                     "compute_driver": request.compute_driver,
+                    "endpoint": literal(&gateway.endpoint),
+                    "name": literal(&format!("{}-gateway", document.workspace())),
+                    "owner": literal(&document.metadata.uid),
+                    // OpenTofu evaluates the message even when the condition
+                    // holds, and an available engine reports no reason.
                     "lifecycle": { "postcondition": [{
                         "condition": "${self.status != \"unavailable\"}",
-                        "error_message": "The selected engine does not meet gateway prerequisites. Correct the runtime or target configuration."
+                        "error_message": "The selected engine does not meet gateway prerequisites: ${coalesce(jsondecode(self.observation_json).reason, \"no reason was reported\")}. Correct the runtime or target configuration."
                     }] },
                 });
                 observations.insert(

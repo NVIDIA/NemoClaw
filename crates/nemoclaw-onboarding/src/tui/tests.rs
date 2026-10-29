@@ -410,7 +410,7 @@ fn questions_until_review(wizard: &mut JourneyWizard) -> Vec<String> {
 }
 
 #[test]
-fn default_journey_asks_route_choices_and_leaves_tuning_settings_at_their_defaults() {
+fn default_journey_asks_route_choices_and_leaves_adapter_settings_at_their_defaults() {
     let capabilities = Capabilities::available();
     let state = load_journey(Source::Defaults, &capabilities).unwrap();
     let mut wizard = JourneyWizard::new(capabilities, state);
@@ -421,7 +421,6 @@ fn default_journey_asks_route_choices_and_leaves_tuning_settings_at_their_defaul
             "/spec/sandboxes/assistant/harness/kind",
             "/spec/gateway/runtime/provider",
             "inference:preset",
-            "adapter:nvidia.fabric.openclaw:/channel_config",
             "/spec/inferenceProviders/nvidia-prod/api",
             "/spec/sandboxes/assistant/agent/inference/routes/0/overrides/model",
             "/spec/gateway/engine",

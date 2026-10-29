@@ -31,7 +31,7 @@ async fn assert_every_operation_refuses(receipt: &str) {
     std::fs::write(state.join("receipt.json"), receipt).unwrap();
     let before = Snapshot::capture(&objects, &state);
     let server = serve(&objects, |_, _, _| None).await;
-    let operations = platform::operations(server.client(), server.endpoint(), &state);
+    let operations = platform::operations(server.client(), &state);
 
     let calls = [STORAGE_KIND, AUTH_KIND, GATEWAY_KIND]
         .into_iter()

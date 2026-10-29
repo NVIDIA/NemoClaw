@@ -4,10 +4,10 @@
 # Build Local Artifacts
 
 Build from the repository root with Rust 1.99.1, pinned in [rust-toolchain.toml](../rust-toolchain.toml).
-Native bundles also require Protocol Buffers compiler 36.1.
+Native bundles also require Protocol Buffers compiler 36.2.
 Native builds also require a C toolchain for TLS dependencies.
-Run `cargo ci tools` to install the pinned compiler in `.tools/protoc-36.1`; the bundle builder and `cargo ci` find it there.
-Otherwise, set `PROTOC` to the compiler’s path if it is outside `PATH`.
+Run `cargo ci tools` to install the pinned compiler in `.tools/protoc-36.2`; `cargo ci` finds it there.
+Other Cargo commands, including the bundle builder's `cargo run`, find only a compiler on `PATH`; otherwise set `PROTOC` to `.tools/protoc-36.2/bin/protoc` or another protoc 36.2.
 [versions.json](../versions.json) records tool versions, download checksums, and the SDK's image pins: the default agent image, which `image.ref` replaces, and the gateway, sandbox runtime, and supervisor images, which documents do not name.
 The SDK generates its artifact constants from that manifest at build time.
 A Docker or Podman deployment keeps the gateway image pin of the bundle that created it; see [the change path](usage.md#choose-the-change-path) before operating it with a bundle built from a different pin.
@@ -74,7 +74,7 @@ Use Docker with Buildx on a native host that matches the selected image target.
 Pass `--platform linux/arm64` or `--platform linux/amd64` to the agent image builder.
 Direct Bake builds and checks use the host's platform unless the `AGENT_PLATFORM` environment variable selects the other one.
 Both platforms build every harness in the Bake file's `HARNESSES` map.
-Agent images share a Python 3.13.17 base without pip.
+Agent images share a Python 3.14.9 base without pip.
 Only OpenClaw, Hermes, and Pi add Node.js 24.22.1 LTS: OpenClaw's CLI and Pi's adapter run on it, and Hermes's browser tool and `npx`-launched MCP servers require it.
 Image qualification checks that interpreter against every Python adapter’s declared version range in the pinned Fabric source.
 Build stages use pinned Rust, Node, Python, and uv images, so the host needs no language toolchains for image assembly.
@@ -190,7 +190,7 @@ Use `linux/amd64` on a native AMD64 host.
 The build adds the `io.nemoclaw.fabric.catalog` label to every image.
 NemoClaw checks how each image is assembled, not whether Fabric's adapters work: `cargo images qualify IMAGE...` checks every image offline, and runs one runtime's lifecycle only in the reference image, with NemoClaw's test adapter.
 Fabric's runtime and adapters are Fabric's to test.
-A passing reference lifecycle does not establish that a runtime stays healthy: Fabric reports no runtime status.
+A passing reference lifecycle does not establish that a runtime stays healthy.
 See [upstream ownership](design/fabric-management.md#upstream-ownership) for the remaining Fabric and OpenShell work.
 
 To extend an agent image with your own skills and tools, see [derived agent images](derived-images.md).

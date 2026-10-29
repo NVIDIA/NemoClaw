@@ -4,7 +4,7 @@
 use super::{FileRef, SecretRef};
 use serde::{Deserialize, Serialize};
 
-/// Explicit existing-cluster target for a managed development gateway. The SDK does not create a cluster or select an ambient context, and installs nothing cluster-wide: Agent Sandbox and a default StorageClass must already exist. `runtime.provider: openshift` selects the OpenShift profile.
+/// Explicit existing-cluster target for a managed development gateway. The SDK does not create a cluster or select an ambient context. Agent Sandbox and a default StorageClass are platform prerequisites that the SDK does not check. `runtime.provider: openshift` selects the OpenShift profile.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ManagedKubernetes {
@@ -13,7 +13,7 @@ pub struct ManagedKubernetes {
     /// Exact kubeconfig context used for every cluster operation.
     #[schemars(length(min = 1, max = 253), regex(pattern = r"^[^\x00-\x20\x7f]+$"))]
     pub context: String,
-    /// Namespace for this deployment's gateway and generated development authentication resources.
+    /// Namespace for this deployment's gateway and generated development authentication resources. An existing namespace is bound by UID and never changed; a missing one is created. A namespace another NemoClaw deployment created is refused.
     #[schemars(
         length(min = 1, max = 63),
         regex(pattern = r"^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$")
@@ -25,7 +25,7 @@ pub struct ManagedKubernetes {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[schemars(length(max = 32))]
     pub environment: Vec<String>,
-    /// Names of caller-managed registry Secrets in this deployment's namespace, used by gateway/helper and sandbox pods. Values stay in Kubernetes; NemoClaw does not create, read, rotate, or remove these Secrets. Provision them after the SDK creates the namespace, before its pods need to pull images.
+    /// Names of caller-managed registry Secrets in this deployment's namespace, used by gateway/helper and sandbox pods. Values stay in Kubernetes; NemoClaw does not create, read, rotate, or remove these Secrets. Provision them in the namespace before the first apply, or after the SDK creates it, before its pods need to pull images.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[schemars(length(max = 32))]
     pub image_pull_secrets: Vec<String>,

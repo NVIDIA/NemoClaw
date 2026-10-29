@@ -162,7 +162,7 @@ resource openshell_sandbox (version 2)
           allowed_ips: list(string), optional
             > Resolved IP addresses or CIDRs allowed by OpenShell destination validation.
           enforcement: string, optional
-            > enforce or audit; omission follows OpenShell defaults.
+            > enforce or audit; omission selects OpenShell's default, audit, which logs and forwards requests that break the endpoint's rules.
           host: string, optional
             > Destination hostname or DNS glob; may be omitted with allowed_ips.
           path: string, optional
@@ -254,7 +254,7 @@ resource openshell_sandbox (version 2)
         allowed_ips: list(string), optional
           > Resolved IP addresses or CIDRs allowed by OpenShell destination validation.
         enforcement: string, optional
-          > enforce or audit; omission follows OpenShell defaults.
+          > enforce or audit; omission selects OpenShell's default, audit, which logs and forwards requests that break the endpoint's rules.
         host: string, optional
           > Destination hostname or DNS glob; may be omitted with allowed_ips.
         path: string, optional
@@ -412,6 +412,9 @@ data openshell_gateway (version 0)
 data openshell_gateway_prerequisites (version 0)
   available: bool, computed
   compute_driver: string, required
+  endpoint: string, optional
   engine: string, required
+  name: string, optional
   observation_json: string, computed
+  owner: string, optional
   status: string, computed

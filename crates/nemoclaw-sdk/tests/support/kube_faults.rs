@@ -9,10 +9,6 @@
 //! Inject only 401, 403, 500 or a dropped connection: the kube client retries
 //! 429, 503 and 504 for minutes.
 
-#![allow(
-    dead_code,
-    reason = "each test binary that includes this module uses a different subset of it"
-)]
 use crate::kube_api::{Objects, status};
 use crate::kube_client::client;
 use crate::transport::Fixture;
@@ -102,11 +98,6 @@ pub async fn serve(
 }
 
 impl FaultServer {
-    /// The `http://127.0.0.1:PORT` address to pass as `Operations::server`.
-    pub fn endpoint(&self) -> &str {
-        &self.fixture.endpoint
-    }
-
     pub fn client(&self) -> kube::Client {
         client(&self.fixture)
     }
@@ -225,21 +216,10 @@ pub mod platform {
         .unwrap()
     }
 
-    /// A cluster ready to host a gateway: kube-system, the default StorageClass
-    /// and the Agent Sandbox CRD and controller.
+    /// A cluster with nothing in it yet: storage reads nothing outside the
+    /// target namespace, so a gateway needs no other objects.
     pub fn cluster() -> Objects {
-        let objects = Objects::default();
-        objects.insert(json!({"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": "kube-system", "uid": "system-1"}}));
-        objects.insert(json!({"apiVersion": "storage.k8s.io/v1", "kind": "StorageClass",
-            "metadata": {"name": "standard", "annotations": {"storageclass.kubernetes.io/is-default-class": "true"}}}));
-        objects.insert(
-            json!({"apiVersion": "apiextensions.k8s.io/v1", "kind": "CustomResourceDefinition",
-            "metadata": {"name": "sandboxes.agents.x-k8s.io"}}),
-        );
-        objects.insert(json!({"apiVersion": "apps/v1", "kind": "Deployment",
-            "metadata": {"name": "agent-sandbox-controller", "namespace": "agent-sandbox-system"},
-            "status": {"availableReplicas": 1}}));
-        objects
+        Objects::default()
     }
 
     /// Add the ready gateway StatefulSet that a Helm release would leave.
@@ -261,14 +241,10 @@ pub mod platform {
 
     /// Operations over `client`, with `state` as the state directory (the receipt
     /// is `state/receipt.json`) and a short OpenShift wait so a cluster without
-    /// ranges fails fast. The receipt binds the cluster by its server address, so
-    /// a later run over the same state directory must pass the first run's
-    /// `server`; with another address it fails with `BindingMismatch` before it
-    /// reaches anything under test.
-    pub fn operations(client: kube::Client, server: &str, state: &Path) -> Operations {
+    /// ranges fails fast.
+    pub fn operations(client: kube::Client, state: &Path) -> Operations {
         Operations {
             client,
-            server: server.to_owned(),
             state: state.to_owned(),
             openshift_wait: std::time::Duration::from_millis(50),
         }

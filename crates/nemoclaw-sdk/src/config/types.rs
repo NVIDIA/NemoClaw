@@ -113,17 +113,19 @@ pub struct FileRef {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[schemars(!default)]
 #[serde(default, deny_unknown_fields)]
-/// Gateway mutual TLS file references. All three references are required when TLS is declared.
+/// Gateway TLS file references: the CA certificate that verifies the gateway, and a client certificate and key, which must appear together, when the gateway requires one.
 pub struct TLS {
     #[serde(rename = "ca")]
     /// Environment variable whose value names the local CA certificate file.
     pub ca: FileRef,
-    #[serde(rename = "certificate")]
-    /// Environment variable whose value names the local client certificate file.
-    pub certificate: FileRef,
-    #[serde(rename = "key")]
-    /// Environment variable whose value names the local client private-key file.
-    pub key: FileRef,
+    #[serde(rename = "certificate", skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "FileRef")]
+    /// Environment variable whose value names the local client certificate file. Requires key.
+    pub certificate: Option<FileRef>,
+    #[serde(rename = "key", skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "FileRef")]
+    /// Environment variable whose value names the local client private-key file. Requires certificate.
+    pub key: Option<FileRef>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -205,7 +207,7 @@ pub struct ExternalGateway {
     pub credential: Option<SecretRef>,
     #[serde(rename = "tls", skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "TLS")]
-    /// Optional mutual TLS references for an external HTTPS gateway.
+    /// Optional TLS references for an external HTTPS gateway: a CA alone, or with a client certificate and key for mutual TLS.
     pub tls: Option<TLS>,
 }
 

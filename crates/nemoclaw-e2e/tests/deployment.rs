@@ -850,17 +850,17 @@ impl Lifecycle {
         assert_eq!(actions("terraform_data."), ["update"]);
         assert_eq!(actions("openshell_sandbox."), ["delete", "create"]);
         assert_eq!(actions("fabric_agent."), ["delete", "create"]);
-        // Reading an agent runs nothing in its sandbox, so a failing exec
-        // fails neither a plan nor an export, and changes nothing.
+        // Reading an agent checks its runtime in its sandbox, so a failing
+        // exec fails a plan and an export as an observation, and changes
+        // nothing.
         self.fixture.state.lock().unwrap().exec_exit = 2;
-        self.deployment
-            .plan(&self.document, &self.cancel)
-            .await
-            .unwrap();
-        assert_eq!(
-            self.deployment.export(&self.cancel).await.unwrap(),
-            self.document
+        assert!(
+            self.deployment
+                .plan(&self.document, &self.cancel)
+                .await
+                .is_err()
         );
+        assert!(self.deployment.export(&self.cancel).await.is_err());
         assert_eq!(self.fixture.state.lock().unwrap().effects, effects);
         assert_eq!(
             fs::read(self.directory.path().join("terraform.tfstate")).unwrap(),
@@ -1023,10 +1023,13 @@ async fn startup_and_observation_failures_retain_bindings_and_recover() {
     assert_eq!(fs::read(&state_path).unwrap(), recovered);
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
     fixture.state.lock().unwrap().fail_read = None;
-    // Exporting reads agents without running anything in their sandboxes.
+    // Exporting checks each agent's runtime; a check whose reply is cut off
+    // leaves it unobserved, so export fails and changes nothing.
     fixture.state.lock().unwrap().exec_truncated = true;
-    assert_eq!(deployment.export(&cancel).await.unwrap(), document);
+    assert!(deployment.export(&cancel).await.is_err());
+    assert_eq!(fs::read(&state_path).unwrap(), recovered);
     fixture.state.lock().unwrap().exec_truncated = false;
+    assert_eq!(deployment.export(&cancel).await.unwrap(), document);
     fixture.state.lock().unwrap().lose_delete = true;
     assert!(deployment.destroy(&cancel).await.is_err());
     assert!(deployment.apply(&document, &cancel).await.is_err());

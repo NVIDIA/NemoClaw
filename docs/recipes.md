@@ -33,6 +33,14 @@ It contains:
 - `licenses` and `sourceNotices`: paths to retained files inside the pinned image.
 
 Recipe memory requirements are checked against measurements from the execution host.
+`compatibility.gpu` must belong to the GPU family of a [hardware profile](models.md#choose-a-hardware-profile); other names are rejected.
+That profile's memory architecture decides how the serving GPU budget, `resources.gpuMemoryBytes`, is checked:
+
+| Memory architecture | GPU budget must fit | `--gpu-memory-utilization` | Host available memory at startup |
+|---|---|---|---|
+| Unified (GB10, RTX Spark N1X) | Host total memory, with `hostReserveGiB` | Budget over host total memory | Budget plus `startupHeadroomGiB` |
+| Dedicated (every other profile GPU) | GPU total memory, and GPU free memory at startup; host total memory must cover `hostReserveGiB` | Budget over GPU total memory | `hostReserveGiB` plus `startupHeadroomGiB` |
+
 The runtime rechecks preparation and startup headroom.
 The shared resident watchdog continues enforcing the service's memory protection policy after the CLI exits.
 

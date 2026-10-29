@@ -24,7 +24,7 @@ async fn engine() -> Fixture {
 }
 
 /// An OpenTofu workspace that installs the bundle's providers.
-struct Workspace {
+pub(crate) struct Workspace {
     directory: tempfile::TempDir,
     tofu: PathBuf,
 }
@@ -54,7 +54,7 @@ resource "docker_container" "qwen" {{
     }
 
     /// A workspace declaring `body` beside the NemoClaw and Docker providers.
-    fn with(engine: &str, body: &str) -> Self {
+    pub(crate) fn with(engine: &str, body: &str) -> Self {
         let bundle =
             PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").expect("explicit bundle path"));
         assert!(bundle.is_absolute());
@@ -105,18 +105,26 @@ provider "docker" {{
         workspace
     }
 
-    fn run(&self, args: &[&str]) -> std::process::Output {
-        std::process::Command::new(&self.tofu)
-            .args(args)
+    pub(crate) fn path(&self) -> &std::path::Path {
+        self.directory.path()
+    }
+
+    /// OpenTofu in this workspace, with its provider mirror.
+    pub(crate) fn command(&self) -> std::process::Command {
+        let mut command = std::process::Command::new(&self.tofu);
+        command
             .current_dir(self.directory.path())
             .env(
                 "TF_CLI_CONFIG_FILE",
                 self.directory.path().join("providers.tfrc"),
             )
             .env("TF_IN_AUTOMATION", "1")
-            .env("CHECKPOINT_DISABLE", "1")
-            .output()
-            .unwrap()
+            .env("CHECKPOINT_DISABLE", "1");
+        command
+    }
+
+    fn run(&self, args: &[&str]) -> std::process::Output {
+        self.command().args(args).output().unwrap()
     }
 
     fn plan(&self) -> std::process::Output {

@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Storage install: the namespace, prerequisite check and credential key.
+//! Storage install: binding the namespace and creating the credential key.
 
 use crate::{kube_api::Objects, kube_client::client};
 use nemoclaw_sdk::{
@@ -15,32 +15,11 @@ use serde_json::json;
 use std::sync::{Arc, Mutex};
 
 const OWNER: &str = "00000000-0000-4000-8000-000000000001";
-const IDENTITY_PATH: &str = "/api/v1/namespaces/kube-system";
-const STORAGE_CLASSES_PATH: &str = "/apis/storage.k8s.io/v1/storageclasses";
-
-/// A cluster with kube-system, one default StorageClass, and optionally the
-/// Agent Sandbox controller already installed.
-fn cluster(agent_sandbox: bool) -> Objects {
-    let objects = Objects::default();
-    objects.insert(json!({"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": "kube-system", "uid": "system-1"}}));
-    objects.insert(json!({"apiVersion": "storage.k8s.io/v1", "kind": "StorageClass",
-        "metadata": {"name": "standard", "annotations": {"storageclass.kubernetes.io/is-default-class": "true"}}}));
-    if agent_sandbox {
-        objects.insert(
-            json!({"apiVersion": "apiextensions.k8s.io/v1", "kind": "CustomResourceDefinition",
-            "metadata": {"name": "sandboxes.agents.x-k8s.io"}}),
-        );
-        objects.insert(json!({"apiVersion": "apps/v1", "kind": "Deployment",
-            "metadata": {"name": "agent-sandbox-controller", "namespace": "agent-sandbox-system"},
-            "status": {"availableReplicas": 1}}));
-    }
-    objects
-}
+const NAMESPACE_PATH: &str = "/api/v1/namespaces/agents";
 
 fn storage(directory: &std::path::Path) -> Storage {
     Storage {
         directory: directory.into(),
-        server: "https://cluster.example:6443".into(),
         namespace: "agents".into(),
         name: "nc-0123456789abcdef-gateway".into(),
         owner: OWNER.into(),
@@ -49,7 +28,7 @@ fn storage(directory: &std::path::Path) -> Storage {
 
 #[tokio::test]
 async fn storage_creates_the_namespace_and_key_and_records_them() {
-    let objects = cluster(true);
+    let objects = Objects::default();
     let fixture = objects.serve().await;
     let directory = tempfile::tempdir().unwrap();
     let cluster = Cluster::new(client(&fixture), OWNER, "generation-1");
@@ -57,13 +36,17 @@ async fn storage_creates_the_namespace_and_key_and_records_them() {
         .await
         .unwrap();
     assert!(receipt.storage_ready);
-    assert_eq!(receipt.cluster.as_ref().unwrap().system_uid, "system-1");
+    let namespace = objects.get("v1", "Namespace", "", "agents").unwrap();
+    assert_eq!(
+        receipt.namespace.as_ref().unwrap().uid,
+        namespace["metadata"]["uid"].as_str().unwrap()
+    );
     let kinds: Vec<_> = receipt
         .objects
         .iter()
         .map(|owned| owned.kind.as_str())
         .collect();
-    assert_eq!(kinds, ["Namespace", "Secret"]);
+    assert_eq!(kinds, ["Secret"]);
     let key = objects
         .get("v1", "Secret", "agents", "nc-0123456789abcdef-gateway-kek")
         .unwrap();
@@ -86,26 +69,8 @@ async fn storage_creates_the_namespace_and_key_and_records_them() {
 }
 
 #[tokio::test]
-async fn an_existing_namespace_is_not_taken_over_and_the_refusal_names_it() {
-    let objects = cluster(true);
-    objects
-        .insert(json!({"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": "agents"}}));
-    let fixture = objects.serve().await;
-    let directory = tempfile::tempdir().unwrap();
-    let cluster = Cluster::new(client(&fixture), OWNER, "generation-1");
-    let error = ensure_storage(&cluster, &storage(directory.path()))
-        .await
-        .unwrap_err();
-    let message = error.to_string();
-    assert!(
-        message.contains("Namespace agents already exists"),
-        "{message}"
-    );
-}
-
-#[tokio::test]
 async fn a_replaced_key_secret_is_refused_by_name() {
-    let objects = cluster(true);
+    let objects = Objects::default();
     let fixture = objects.serve().await;
     let directory = tempfile::tempdir().unwrap();
     let cluster = Cluster::new(client(&fixture), OWNER, "generation-1");
@@ -127,47 +92,6 @@ async fn a_replaced_key_secret_is_refused_by_name() {
     );
 }
 
-#[tokio::test]
-async fn storage_requires_agent_sandbox_to_be_installed() {
-    let fixture = cluster(false).serve().await;
-    let directory = tempfile::tempdir().unwrap();
-    let cluster = Cluster::new(client(&fixture), OWNER, "generation-1");
-    assert!(matches!(
-        ensure_storage(&cluster, &storage(directory.path())).await,
-        Err(ObservationError::Backend(_))
-    ));
-}
-
-#[tokio::test]
-async fn storage_needs_exactly_one_default_storage_class() {
-    let objects = cluster(true);
-    objects.insert(json!({"apiVersion": "storage.k8s.io/v1", "kind": "StorageClass",
-        "metadata": {"name": "fast", "annotations": {"storageclass.kubernetes.io/is-default-class": "true"}}}));
-    let fixture = objects.serve().await;
-    let directory = tempfile::tempdir().unwrap();
-    let cluster = Cluster::new(client(&fixture), OWNER, "generation-1");
-    assert!(matches!(
-        ensure_storage(&cluster, &storage(directory.path())).await,
-        Err(ObservationError::Backend(_))
-    ));
-}
-
-#[tokio::test]
-async fn a_rebuilt_cluster_at_the_same_address_is_refused() {
-    let objects = cluster(true);
-    let fixture = objects.serve().await;
-    let directory = tempfile::tempdir().unwrap();
-    let cluster = Cluster::new(client(&fixture), OWNER, "generation-1");
-    ensure_storage(&cluster, &storage(directory.path()))
-        .await
-        .unwrap();
-    objects.insert(json!({"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": "kube-system", "uid": "system-2"}}));
-    assert!(matches!(
-        ensure_storage(&cluster, &storage(directory.path())).await,
-        Err(ObservationError::BindingMismatch)
-    ));
-}
-
 /// How the API server fails the request under test: with an HTTP status, or
 /// by closing the connection without answering.
 #[derive(Clone, Copy)]
@@ -179,13 +103,13 @@ enum Fault {
 /// Apply storage against a cluster that fails every GET of `faulted` as
 /// `fault` and answers everything else normally. Returns what storage
 /// reports and checks what a failed read must leave behind: the cluster
-/// unchanged and no write sent. The identity read comes before storage binds
-/// the cluster, so a failure there must leave no receipt.
+/// unchanged and no write sent. The namespace read comes before storage binds
+/// the namespace, so a failure there must leave no receipt.
 async fn apply_with_fault(
     faulted: &'static str,
     fault: Fault,
 ) -> Result<Receipt, ObservationError> {
-    let objects = cluster(true);
+    let objects = Objects::default();
     let before = objects.0.lock().unwrap().clone();
     let requests = Arc::new(Mutex::new(Vec::<(String, String)>::new()));
     let (served, log) = (objects.clone(), requests.clone());
@@ -230,62 +154,24 @@ async fn apply_with_fault(
         "a failed read was followed by a write"
     );
     assert_eq!(*objects.0.lock().unwrap(), before, "the cluster changed");
-    if faulted == IDENTITY_PATH {
-        assert_eq!(
-            Receipt::load(directory.path(), OWNER, "nc-0123456789abcdef-gateway").unwrap(),
-            None,
-            "a failed identity read left a receipt"
-        );
-    }
+    assert_eq!(
+        Receipt::load(directory.path(), OWNER, "nc-0123456789abcdef-gateway").unwrap(),
+        None,
+        "a failed namespace read left a receipt"
+    );
     result
 }
 
+/// A failed namespace read is reported by its class.
 #[tokio::test]
-async fn an_unauthorized_cluster_identity_read_is_an_authentication_failure() {
-    assert_eq!(
-        apply_with_fault(IDENTITY_PATH, Fault::Status(401)).await,
-        Err(ObservationError::Authentication)
-    );
-}
-
-#[tokio::test]
-async fn a_forbidden_cluster_identity_read_is_a_permission_failure() {
-    assert_eq!(
-        apply_with_fault(IDENTITY_PATH, Fault::Status(403)).await,
-        Err(ObservationError::Permission)
-    );
-}
-
-#[tokio::test]
-async fn a_dropped_connection_during_the_cluster_identity_read_is_a_transport_failure() {
-    assert_eq!(
-        apply_with_fault(IDENTITY_PATH, Fault::Dropped).await,
-        Err(ObservationError::Transport)
-    );
-}
-
-#[tokio::test]
-async fn an_unauthorized_storage_class_list_is_an_authentication_failure() {
-    assert_eq!(
-        apply_with_fault(STORAGE_CLASSES_PATH, Fault::Status(401)).await,
-        Err(ObservationError::Authentication)
-    );
-}
-
-#[tokio::test]
-async fn a_forbidden_storage_class_list_is_a_permission_failure() {
-    assert_eq!(
-        apply_with_fault(STORAGE_CLASSES_PATH, Fault::Status(403)).await,
-        Err(ObservationError::Permission)
-    );
-}
-
-#[tokio::test]
-async fn a_dropped_connection_during_the_storage_class_list_is_a_transport_failure() {
-    assert_eq!(
-        apply_with_fault(STORAGE_CLASSES_PATH, Fault::Dropped).await,
-        Err(ObservationError::Transport)
-    );
+async fn a_failed_namespace_read_is_reported_by_class() {
+    for (fault, error) in [
+        (Fault::Status(401), ObservationError::Authentication),
+        (Fault::Status(403), ObservationError::Permission),
+        (Fault::Dropped, ObservationError::Transport),
+    ] {
+        assert_eq!(apply_with_fault(NAMESPACE_PATH, fault).await, Err(error));
+    }
 }
 
 /// The in-memory API reports an absent object as missing, even one whose name
@@ -293,7 +179,7 @@ async fn a_dropped_connection_during_the_storage_class_list_is_a_transport_failu
 #[tokio::test]
 async fn the_in_memory_api_reports_absent_objects_as_missing() {
     use nemoclaw_sdk::kubernetes::cluster::Owned;
-    let objects = cluster(true);
+    let objects = Objects::default();
     let fixture = objects.serve().await;
     let cluster = Cluster::new(client(&fixture), OWNER, "generation-1");
     for (kind, namespace, name) in [
@@ -312,4 +198,190 @@ async fn the_in_memory_api_reports_absent_objects_as_missing() {
             "{kind} {name}"
         );
     }
+}
+
+/// A namespace and pull Secret an operator created before the first apply.
+pub(crate) fn operator_namespace(objects: &Objects, labels: serde_json::Value) {
+    objects.insert(json!({"apiVersion": "v1", "kind": "Namespace",
+        "metadata": {"name": "agents", "uid": "operator-ns", "labels": labels}}));
+    objects.insert(json!({"apiVersion": "v1", "kind": "Secret", "type": "kubernetes.io/dockerconfigjson",
+        "metadata": {"name": "registry-credentials", "namespace": "agents", "uid": "operator-secret"},
+        "data": {".dockerconfigjson": "e30="}}));
+}
+
+#[tokio::test]
+async fn an_existing_namespace_is_bound_by_uid_and_left_unchanged() {
+    let objects = Objects::default();
+    operator_namespace(&objects, json!({"team": "agents"}));
+    let namespace = objects.get("v1", "Namespace", "", "agents").unwrap();
+    let secret = objects
+        .get("v1", "Secret", "agents", "registry-credentials")
+        .unwrap();
+    // No kube-system, Agent Sandbox or StorageClass objects: storage reads none of them.
+    let server = crate::kube_faults::serve(&objects, |_, path, _| {
+        [
+            "/api/v1/namespaces/kube-system",
+            "/apis/apiextensions.k8s.io/",
+            "/apis/storage.k8s.io/",
+            "/apis/apps/v1/namespaces/agent-sandbox-system",
+        ]
+        .iter()
+        .any(|prefix| path.starts_with(prefix))
+        .then_some(crate::kube_faults::Fault::Status(403))
+    })
+    .await;
+    let directory = tempfile::tempdir().unwrap();
+    let cluster = Cluster::new(server.client(), OWNER, "generation-1");
+    let receipt = ensure_storage(&cluster, &storage(directory.path()))
+        .await
+        .unwrap();
+    assert!(receipt.storage_ready);
+    assert_eq!(server.faults_fired(), 0, "{:?}", server.requests());
+    assert_eq!(
+        server.mutations(),
+        [(
+            "POST".to_owned(),
+            "/api/v1/namespaces/agents/secrets".to_owned()
+        )]
+    );
+    assert_eq!(
+        objects.get("v1", "Namespace", "", "agents").unwrap(),
+        namespace
+    );
+    assert_eq!(
+        objects
+            .get("v1", "Secret", "agents", "registry-credentials")
+            .unwrap(),
+        secret
+    );
+    // A second apply finds the same namespace and creates nothing new.
+    let count = objects.len();
+    ensure_storage(&cluster, &storage(directory.path()))
+        .await
+        .unwrap();
+    assert_eq!(objects.len(), count);
+}
+
+#[tokio::test]
+async fn a_bound_namespace_that_is_deleted_or_recreated_stops_storage() {
+    for created in [false, true] {
+        for recreated in [false, true] {
+            let objects = Objects::default();
+            if !created {
+                operator_namespace(&objects, json!({}));
+            }
+            let fixture = objects.serve().await;
+            let directory = tempfile::tempdir().unwrap();
+            let cluster = Cluster::new(client(&fixture), OWNER, "generation-1");
+            ensure_storage(&cluster, &storage(directory.path()))
+                .await
+                .unwrap();
+            let receipt = std::fs::read(directory.path().join("receipt.json")).unwrap();
+            let mut namespace = objects.get("v1", "Namespace", "", "agents").unwrap();
+            objects
+                .0
+                .lock()
+                .unwrap()
+                .retain(|_, object| object["kind"] != "Namespace");
+            if recreated {
+                namespace["metadata"]["uid"] = json!("recreated");
+                objects.insert(namespace);
+            }
+            let count = objects.len();
+            let message = ensure_storage(&cluster, &storage(directory.path()))
+                .await
+                .unwrap_err()
+                .to_string();
+            let expected = if recreated {
+                "was replaced"
+            } else {
+                "is missing"
+            };
+            assert!(
+                message.contains(&format!("Namespace agents {expected}")),
+                "created {created}, recreated {recreated}: {message}"
+            );
+            assert_eq!(objects.len(), count, "nothing was created");
+            assert_eq!(
+                std::fs::read(directory.path().join("receipt.json")).unwrap(),
+                receipt,
+                "the receipt is unchanged"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_namespace_another_deployment_owns_is_refused() {
+    let objects = Objects::default();
+    operator_namespace(
+        &objects,
+        json!({"nemoclaw.nvidia.com/uid": "00000000-0000-4000-8000-000000000002"}),
+    );
+    let fixture = objects.serve().await;
+    let directory = tempfile::tempdir().unwrap();
+    let cluster = Cluster::new(client(&fixture), OWNER, "generation-1");
+    let count = objects.len();
+    let message = ensure_storage(&cluster, &storage(directory.path()))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        message.contains("Namespace agents belongs to another NemoClaw deployment"),
+        "{message}"
+    );
+    assert_eq!(objects.len(), count);
+}
+
+#[tokio::test]
+async fn a_namespace_being_deleted_is_refused_and_nothing_is_recorded() {
+    let objects = Objects::default();
+    objects.insert(json!({"apiVersion": "v1", "kind": "Namespace",
+        "metadata": {"name": "agents", "uid": "operator-ns",
+            "deletionTimestamp": "2026-10-28T00:00:00Z", "finalizers": ["kubernetes"]}}));
+    let fixture = objects.serve().await;
+    let directory = tempfile::tempdir().unwrap();
+    let cluster = Cluster::new(client(&fixture), OWNER, "generation-1");
+    let count = objects.len();
+    let message = ensure_storage(&cluster, &storage(directory.path()))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        message.contains("Namespace agents is being deleted"),
+        "{message}"
+    );
+    assert_eq!(objects.len(), count);
+    assert_eq!(
+        Receipt::load(directory.path(), OWNER, "nc-0123456789abcdef-gateway").unwrap(),
+        None
+    );
+}
+
+#[tokio::test]
+async fn storage_refuses_a_namespace_other_than_the_one_it_bound() {
+    let objects = Objects::default();
+    let fixture = objects.serve().await;
+    let directory = tempfile::tempdir().unwrap();
+    let cluster = Cluster::new(client(&fixture), OWNER, "generation-1");
+    ensure_storage(&cluster, &storage(directory.path()))
+        .await
+        .unwrap();
+    // Another deployment's namespace, which this deployment must never write to.
+    objects.insert(json!({"apiVersion": "v1", "kind": "Namespace",
+        "metadata": {"name": "other-agents",
+            "labels": {"nemoclaw.nvidia.com/uid": "00000000-0000-4000-8000-000000000002"}}}));
+    let count = objects.len();
+    let mut other = storage(directory.path());
+    other.namespace = "other-agents".into();
+    let message = ensure_storage(&cluster, &other)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        message
+            .contains("Namespace agents is bound; gateway.kubernetes.namespace names other-agents"),
+        "{message}"
+    );
+    assert_eq!(objects.len(), count, "nothing was created in other-agents");
 }

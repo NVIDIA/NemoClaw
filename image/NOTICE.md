@@ -14,6 +14,8 @@ Image dependency installation exports Fabric's pinned root `uv.lock` with `uv ex
 These images install Fabric's locally built wheels alongside the export without independently resolving dependency versions.
 Fabric's Hermes extra doesn't install Hermes Agent, so the Hermes image then installs Hermes Agent's own `uv.lock` with its `mcp` extra, which MCP servers configured through Fabric need, and Hermes from its release source.
 Hermes's lock settles the packages it shares with Fabric; [the Hermes source notice](fabric/HERMES-NOTICE.md) records the release.
+The Hermes image also installs the official [Switchyard Relay plugin 0.3.1](https://github.com/NVIDIA/NeMo-Relay-Plugins/releases/tag/switchyard-plugin-0.3.1) bundle for its target architecture.
+The unmodified bundle retains its licenses, notices, attributions, schema, and manifest under `/opt/nemo-relay/plugins/switchyard/`.
 
 OpenClaw installs the pinned search plugin archives through its native installer; the image packages them in OpenClaw’s bundled-plugin directory.
 Examples select plugin IDs without filesystem paths.

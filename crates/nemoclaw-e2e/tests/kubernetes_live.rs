@@ -30,7 +30,7 @@ use nemoclaw_sdk::{
     config::{ComputeDriver, Document, ExternalGateway, FileRef, Gateway, SecretRef, TLS},
     kubernetes::{
         CA_ENV, CERT_ENV, ClusterTarget, GATEWAY_KIND, KEY_ENV, STATE_ENV, STORAGE_KIND, Spec,
-        TOKEN_ENV, connect, operations::Operations, server,
+        TOKEN_ENV, connect, operations::Operations,
     },
 };
 use openshell_provider::{OpenShell, Secrets};
@@ -384,8 +384,8 @@ fn gateway_client(
         }),
         tls: Some(TLS {
             ca: file(CA_ENV),
-            certificate: file(CERT_ENV),
-            key: file(KEY_ENV),
+            certificate: Some(file(CERT_ENV)),
+            key: Some(file(KEY_ENV)),
         }),
         ..Default::default()
     });
@@ -583,7 +583,6 @@ async fn the_gateway_installs_authenticates_and_is_removed_keeping_storage() {
     )
     .unwrap();
     let operations = Operations {
-        server: server(&tofu.target).unwrap(),
         client: connect(&tofu.target).await.unwrap(),
         state: tofu.directory.join("kubernetes"),
         openshift_wait: nemoclaw_sdk::kubernetes::operations::OPENSHIFT_WAIT,
@@ -1067,17 +1066,21 @@ async fn deploy_and_export(
         &required("NEMOCLAW_TEST_AGENT_METADATA"),
         &[],
         sandboxes,
+        async |_| {},
         while_applying,
     )
     .await;
 }
 
+/// `before_applying` runs with the namespace name before the first apply, as an
+/// operator who prepares the namespace would; `while_applying` runs alongside it.
 async fn deploy_image_and_export(
     provider: &str,
     image: &str,
     metadata: &str,
     pull_secrets: &[&str],
     sandboxes: &[(&str, &str)],
+    before_applying: impl AsyncFnOnce(&str),
     while_applying: impl AsyncFnOnce(&str),
 ) -> Vec<u8> {
     use nemoclaw_sdk::{CancellationToken, Deployment};
@@ -1123,7 +1126,6 @@ async fn deploy_image_and_export(
     // The requests reach the gateway as the SDK's providers do, from the
     // deployment's Kubernetes state.
     let operations = Operations {
-        server: server(&target).unwrap(),
         client: cluster.clone(),
         state: state.path().join("kubernetes"),
         openshift_wait: nemoclaw_sdk::kubernetes::operations::OPENSHIFT_WAIT,
@@ -1141,6 +1143,7 @@ async fn deploy_image_and_export(
     )
     .with_secrets(Arc::new(credentials));
     let cancel = CancellationToken::new();
+    before_applying(&namespace).await;
     // The stub's pod starts while the deployment applies.
     stub.place(&cluster).await;
 
@@ -1323,9 +1326,8 @@ async fn deploy_image_and_export(
         "namespace, encryption key and gateway PVC identities survive SDK destroy"
     );
     stub_ready.unwrap_or_else(|error| panic!("{error}"));
-    // Fabric reports no runtime status, so a stopped runtime is found when it
-    // is next invoked: an answer from the first apply's runtime shows that it
-    // still runs. The stub's reply shows that the agent's request reached it.
+    // An answer from the first apply's runtime shows that it still runs. The
+    // stub's reply shows that the agent's request reached it.
     assert!(
         unanswered.is_empty(),
         "each agent answers from its first runtime with the stub's reply:\n{}",
