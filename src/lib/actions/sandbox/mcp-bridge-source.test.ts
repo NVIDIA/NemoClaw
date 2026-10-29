@@ -439,6 +439,46 @@ network_policies:
     ).toContain("differs from live policy endpoint");
   });
 
+  it("reports invalid live allow selectors without emitting an empty allowlist", async () => {
+    mocks.capturePolicy.mockResolvedValue(`version: 1
+network_policies:
+  mcp_bridge_github:
+    name: mcp_bridge_github
+    endpoints:
+      - host: api.githubcopilot.com
+        port: 443
+        path: /mcp/
+        protocol: mcp
+        allowed_ips: ["8.8.8.8"]
+        credential_binding:
+          provider: alpha-mcp-github
+        rules:
+          - allow:
+              method: tools/call
+              params:
+                name: "bad tool!"
+`);
+    mocks.executeSandboxExecCommand.mockReturnValue({
+      status: 0,
+      stdout: JSON.stringify([
+        {
+          server: "github",
+          url: "https://api.githubcopilot.com/mcp/",
+          env: "GITHUB_TOKEN",
+          source: "native",
+        },
+      ]),
+      stderr: "",
+    });
+
+    // An empty allowTools array would read as "no allowlist" downstream and let
+    // computeToolPolicy fall through to unrestricted denylist mode. The entry
+    // must carry the conflict instead, and mutations refuse conflicted entries.
+    const observed = (await inspectSourceBridgeState(sandbox, runtimeSelection)).bridges.github;
+    expect(observed.policyConflict).toBe("Live policy contains invalid tool selectors.");
+    expect(observed).not.toHaveProperty("allowTools");
+  });
+
   it("redacts credentials and strips terminal controls from source-read failures", async () => {
     mocks.executeSandboxExecCommand.mockReturnValue({
       status: 2,

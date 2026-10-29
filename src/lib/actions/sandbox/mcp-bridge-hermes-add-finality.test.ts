@@ -221,6 +221,9 @@ vi.mock("./mcp-bridge-validation", async (importOriginal) => ({
 
 import { HermesMcpReloadRelayLossError } from "./mcp-bridge-adapters";
 import { addMcpBridge } from "./mcp-bridge-add-restart";
+import type { McpSourceEntry } from "./mcp-bridge-contracts";
+import { inspectSourceBridgeState } from "./mcp-bridge-source";
+import { normalizeMcpServerUrl } from "./mcp-bridge-url-validation";
 import {
   inspectMcpProvider,
   inspectMcpProviderAttachments,
@@ -350,6 +353,18 @@ describe("Hermes MCP add reload finality", () => {
       mocks.state.adapter = false;
       return "removed";
     });
+  });
+
+  it("rejects an explicitly empty allowlist before writing MCP state", async () => {
+    await expect(
+      addMcpBridge("alpha", {
+        allowTools: [],
+        env: [{ name: "GITHUB_TOKEN" }],
+        server: "github",
+        url: "https://8.8.8.8/mcp",
+      }),
+    ).rejects.toThrow(/Empty allowTools array is not allowed/);
+    expect(mocks.upsertMcpProvider).not.toHaveBeenCalled();
   });
 
   it("leaves all MCP state unchanged when a legacy Hermes helper lacks finality capability", async () => {
@@ -719,5 +734,70 @@ describe("Hermes MCP add reload finality", () => {
 
     expect(String(failure)).toContain("did not roll back or repeat the mutation");
     expect(String(failure)).not.toContain("host-only-secret");
+  });
+
+  it("accepts an exact retry when durable state cannot retain identity intent", async () => {
+    // Agent-native readers reconstruct only server/url/env: after a successful
+    // add with --server-identity, the observed entry carries no identity pin.
+    // The retry must adopt the requested intent, not report a definition
+    // mismatch or a missing recorded pin.
+    const url = normalizeMcpServerUrl("https://8.8.8.8/mcp");
+    const reconstructed: McpSourceEntry = {
+      server: "github",
+      agent: "hermes",
+      adapter: "hermes-config",
+      url,
+      env: ["GITHUB_TOKEN"],
+      allowedIps: ["8.8.8.8"],
+      providerName: "alpha-mcp-github",
+      policyName: "mcp-bridge-github",
+    };
+    vi.mocked(inspectSourceBridgeState).mockResolvedValueOnce({
+      bridges: { github: reconstructed },
+      sources: { native: { github: reconstructed }, legacy: {} },
+    });
+
+    await expect(
+      addMcpBridge("alpha", {
+        env: [{ name: "GITHUB_TOKEN" }],
+        server: "github",
+        url: "https://8.8.8.8/mcp",
+        serverIdentity: `sha256:${"a".repeat(64)}`,
+      }),
+    ).resolves.toBeDefined();
+    expect(mocks.registerAgentAdapterAtCurrentCredentialRevision).toHaveBeenCalled();
+  });
+
+  it("still rejects a retry when a stored identity pin differs", async () => {
+    const url = normalizeMcpServerUrl("https://8.8.8.8/mcp");
+    const stored: McpSourceEntry = {
+      server: "github",
+      agent: "hermes",
+      adapter: "hermes-config",
+      url,
+      env: ["GITHUB_TOKEN"],
+      allowedIps: ["8.8.8.8"],
+      providerName: "alpha-mcp-github",
+      policyName: "mcp-bridge-github",
+      serverIdentity: {
+        digest: `sha256:${"a".repeat(64)}`,
+        transport: "sse",
+        verifiedAt: 1,
+      },
+    };
+    vi.mocked(inspectSourceBridgeState).mockResolvedValueOnce({
+      bridges: { github: stored },
+      sources: { native: { github: stored }, legacy: {} },
+    });
+
+    await expect(
+      addMcpBridge("alpha", {
+        env: [{ name: "GITHUB_TOKEN" }],
+        server: "github",
+        url: "https://8.8.8.8/mcp",
+        serverIdentity: `sha256:${"b".repeat(64)}`,
+      }),
+    ).rejects.toThrow(/operator pin mismatch/);
+    expect(mocks.registerAgentAdapterAtCurrentCredentialRevision).not.toHaveBeenCalled();
   });
 });

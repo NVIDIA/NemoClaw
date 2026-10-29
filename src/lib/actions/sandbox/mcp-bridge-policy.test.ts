@@ -190,13 +190,27 @@ describe("generated MCP policy", () => {
     ) as {
       network_policies: Record<
         string,
-        { endpoints: Array<{ deny_rules?: Array<{ method: string; tool: string }> }> }
+        {
+          endpoints: Array<{
+            rules?: Array<{ deny?: { method: string; params: { name: string } } }>;
+            deny_rules?: Array<{ method: string; params: { name: string } }>;
+          }>;
+        }
       >;
     };
 
-    expect(parsed.network_policies.mcp_bridge_github.endpoints[0].deny_rules).toEqual([
-      { method: "tools/call", tool: "delete_*" },
-      { method: "tools/call", tool: "doordash_submit_order" },
+    const endpoint = parsed.network_policies.mcp_bridge_github.endpoints[0];
+    const rules = endpoint.rules ?? [];
+    const denyRules = rules.filter(
+      (r): r is { deny: { method: string; params: { name: string } } } => "deny" in r,
+    );
+    // In denylist mode, deny rules should NOT be in the rules array (not part of schema)
+    expect(denyRules).toEqual([]);
+    // Verify deny_rules at endpoint level
+    const endpointDenyRules = endpoint.deny_rules ?? [];
+    expect(endpointDenyRules).toEqual([
+      { method: "tools/call", params: { name: "delete_*" } },
+      { method: "tools/call", params: { name: "doordash_submit_order" } },
     ]);
   });
 
@@ -212,6 +226,79 @@ describe("generated MCP policy", () => {
     ) as { network_policies: Record<string, { endpoints: Array<Record<string, unknown>> }> };
 
     expect(parsed.network_policies.mcp_bridge_github.endpoints[0]).not.toHaveProperty("deny_rules");
+  });
+
+  it("renders allowed tool names as tools/call allow rules in allowlist mode", () => {
+    const parsed = YAML.parse(
+      buildMcpBridgePolicyYaml(
+        entry.server,
+        entry.url,
+        "openclaw-config",
+        { addresses: ["8.8.8.8"] },
+        "mcp-github",
+        [],
+        ["read_repo", "list_issues"],
+      ),
+    ) as {
+      network_policies: Record<
+        string,
+        {
+          endpoints: Array<{
+            rules?: Array<{ allow?: { method: string; params: { name: string } } }>;
+          }>;
+        }
+      >;
+    };
+
+    const rules = parsed.network_policies.mcp_bridge_github.endpoints[0].rules ?? [];
+    const allowRules = rules.filter(
+      (r): r is { allow: { method: string; params: { name: string } } } =>
+        "allow" in r && r.allow.params !== undefined,
+    );
+    expect(allowRules).toEqual([
+      { allow: { method: "tools/call", params: { name: "list_issues" } } },
+      { allow: { method: "tools/call", params: { name: "read_repo" } } },
+    ]);
+  });
+
+  it("excludes standard MCP methods from allowlist tool rules", () => {
+    const parsed = YAML.parse(
+      buildMcpBridgePolicyYaml(
+        entry.server,
+        entry.url,
+        "openclaw-config",
+        { addresses: ["8.8.8.8"] },
+        "mcp-github",
+        [],
+        ["read_repo"],
+      ),
+    ) as {
+      network_policies: Record<
+        string,
+        {
+          endpoints: Array<{
+            rules?: Array<{ allow?: { method: string; params?: { name: string } } }>;
+          }>;
+        }
+      >;
+    };
+
+    const rules = parsed.network_policies.mcp_bridge_github.endpoints[0].rules ?? [];
+    const standardMethods = rules.filter(
+      (r): r is { allow: { method: string } } => "allow" in r && r.allow.params === undefined,
+    );
+    expect(standardMethods.length).toBeGreaterThan(20);
+    // Standard MCP methods like initialize, ping, tools/list should be allowed
+    expect(standardMethods.some((r) => r.allow.method === "initialize")).toBe(true);
+    expect(standardMethods.some((r) => r.allow.method === "ping")).toBe(true);
+    expect(standardMethods.some((r) => r.allow.method === "tools/list")).toBe(true);
+
+    // Ensure no unparameterized tools/call rule is present in allowlist mode.
+    const unparameterizedToolCall = rules.find(
+      (r): r is { allow: { method: string; params: { name: string } } } =>
+        "allow" in r && r.allow.method === "tools/call" && r.allow.params === undefined,
+    );
+    expect(unparameterizedToolCall).toBeUndefined();
   });
 
   it("applies directly to live OpenShell policy without a custom-policy registry row", async () => {

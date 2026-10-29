@@ -294,6 +294,10 @@ export async function addSandboxPolicy(
   );
 }
 
+/**
+ * Apply a policy preset to a sandbox without holding the mutation lock
+ * (internal path; callers serialize through the locked wrapper).
+ */
 async function addSandboxPolicyUnlocked(
   sandboxName: string,
   options: PolicyAddOptions,
@@ -493,7 +497,7 @@ async function addSandboxPolicyUnlocked(
     }
     answer = preset.name;
   } else {
-    const usage = `${CLI_NAME} <sandbox> policy add <preset> [--yes] [--dry-run]`;
+    const usage = `${CLI_NAME} <sandbox> policy add <preset> [--yes|-y] [--dry-run] [--from-file <path>] [--from-dir <path>] [--trusted-private-host <host>]`;
     if (isNonInteractiveEnv()) {
       exitPresetNameRequired(usage);
     }
@@ -1476,6 +1480,10 @@ export async function addSandboxChannel(
   );
 }
 
+/**
+ * Enable a messaging channel on a sandbox without holding the mutation lock
+ * (internal path; callers serialize through the locked wrapper).
+ */
 async function addSandboxChannelUnlocked(
   sandboxName: string,
   options: ChannelMutationOptions,
@@ -1485,7 +1493,7 @@ async function addSandboxChannelUnlocked(
   const force = Boolean(options.force);
   const rawChannelArg = options.channel;
   if (!rawChannelArg) {
-    console.error(`  Usage: ${CLI_NAME} <sandbox> channels add <channel> [--dry-run]`);
+    console.error(`  Usage: ${CLI_NAME} <sandbox> channels add <channel> [--dry-run] [--force]`);
     console.error(`  Valid channels: ${knownManifestChannelNames().join(", ")}`);
     return await exitConfigurationFailure(sandboxName);
   }
@@ -2295,6 +2303,10 @@ export async function removeSandboxPolicy(
   );
 }
 
+/**
+ * Remove a policy preset from a sandbox without holding the mutation lock
+ * (internal path; callers serialize through the locked wrapper).
+ */
 async function removeSandboxPolicyUnlocked(
   sandboxName: string,
   options: PolicyRemoveOptions,
@@ -2332,7 +2344,7 @@ async function removeSandboxPolicyUnlocked(
     }
     answer = preset.name;
   } else {
-    const usage = `${CLI_NAME} <sandbox> policy remove <preset> [--yes] [--dry-run]`;
+    const usage = `${CLI_NAME} <sandbox> policy remove <preset> [--yes|-y] [--dry-run]`;
     if (isNonInteractiveEnv()) {
       exitPresetNameRequired(usage);
     }
@@ -2387,6 +2399,10 @@ function printBaselineEntryScope(prefix: string, key: string, entry: PolicyObjec
   }
 }
 
+/**
+ * Exclude a sandbox from the baseline policy, serializing through the
+ * mutation lock unless this is a dry-run preview.
+ */
 export async function excludeSandboxBaseline(
   sandboxName: string,
   options: PolicyBaselineOptions = {},
@@ -2396,6 +2412,10 @@ export async function excludeSandboxBaseline(
   );
 }
 
+/**
+ * Exclude a sandbox from the baseline policy without holding the mutation lock
+ * (internal path; callers serialize through the locked wrapper).
+ */
 async function excludeSandboxBaselineUnlocked(
   sandboxName: string,
   options: PolicyBaselineOptions,
@@ -2405,7 +2425,7 @@ async function excludeSandboxBaselineUnlocked(
   const key = options.key?.trim();
   if (!key) {
     console.error("  A baseline key is required.");
-    console.error(`  Usage: ${CLI_NAME} <sandbox> policy exclude <key> [--force] [--dry-run]`);
+    console.error(`  Usage: ${CLI_NAME} <sandbox> policy exclude <key> [--force] [--yes|-y] [--dry-run]`);
     return await exitConfigurationFailure(sandboxName);
   }
 
