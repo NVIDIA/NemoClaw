@@ -21,6 +21,7 @@ import type { TrustedPrivateEndpointCapability } from "../../inference/endpoint-
 import type { OpenShellInferenceRouteMutator } from "../../adapters/openshell/inference-route";
 import type { OpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter";
 import type { HermesAuthMethod } from "../hermes-auth";
+import type { OllamaModelCleanupOwner } from "../../inference/ollama/model-ownership";
 import type { OnboardInferenceCapabilityCache } from "../inference-capability-cache";
 
 /** Process-local replacement prepared while the published legacy source stays intact. */
@@ -296,9 +297,15 @@ export type OllamaDeps = CommonDeps & {
     ): { ok: boolean; message?: string };
     validateSandboxFacingOllamaModel(model: string): { ok: boolean; message?: string };
     runOllamaWarmup(model: string, runImpl: RunFn): void;
-    loadPendingOllamaModelCleanup?(sandboxName: string): readonly string[];
-    persistPendingOllamaModelCleanup?(sandboxName: string, models: readonly string[]): void;
-    clearPendingOllamaModelCleanup?(sandboxName: string, releasedModels?: readonly string[]): void;
+    loadPendingOllamaModelCleanup?(owner: OllamaModelCleanupOwner): readonly string[];
+    persistPendingOllamaModelCleanup?(
+      owner: OllamaModelCleanupOwner,
+      models: readonly string[],
+    ): void;
+    clearPendingOllamaModelCleanup?(
+      owner: OllamaModelCleanupOwner,
+      releasedModels?: readonly string[],
+    ): void;
     persistResolvedOllamaHost(): () => void;
     loadPersistedOllamaHost?(): "127.0.0.1" | "host.docker.internal" | null;
     clearPersistedOllamaHostIfUnused?(

@@ -234,4 +234,34 @@ describe("listSandboxNamesAcrossGatewayRoots", () => {
     expect(listSandboxNamesInGatewayRoot(8080)).toEqual([]);
     expect(listInferenceRouteOwnersAcrossGatewayRoots()).toEqual([]);
   });
+
+  it("allows an empty new gateway root but rejects a missing registry beside retained gateway state", async () => {
+    const siblingRoot = path.join(home, ".nemoclaw", "gateways", "8245");
+    fs.mkdirSync(siblingRoot, { recursive: true });
+    const { listInferenceRouteOwnersAcrossGatewayRoots } = await loadModule();
+
+    expect(listInferenceRouteOwnersAcrossGatewayRoots()).toEqual([]);
+
+    fs.writeFileSync(path.join(siblingRoot, "onboard-session.json"), "{}");
+    expect(() => listInferenceRouteOwnersAcrossGatewayRoots()).toThrow(
+      "sandboxes.json is missing for a recorded gateway",
+    );
+  });
+
+  it("rejects a missing default registry when a default gateway config remains", async () => {
+    const gatewayStateDir = path.join(
+      home,
+      ".local",
+      "state",
+      "nemoclaw",
+      "openshell-docker-gateway",
+    );
+    fs.mkdirSync(gatewayStateDir, { recursive: true });
+    fs.writeFileSync(path.join(gatewayStateDir, "openshell-gateway.toml"), "");
+    const { listInferenceRouteOwnersAcrossGatewayRoots } = await loadModule();
+
+    expect(() => listInferenceRouteOwnersAcrossGatewayRoots()).toThrow(
+      "sandboxes.json is missing for a recorded gateway",
+    );
+  });
 });

@@ -549,6 +549,12 @@ export function createDirectSetupInferenceHarnessFactory(
       // curl a live Ollama daemon.
       getSandbox: () => legacySandbox,
       listSandboxes: () => ({ sandboxes: [], defaultSandbox: null }),
+      listOllamaModelOwnershipPeers: () => [],
+      discoverActiveOllamaSandboxNames: (peers) => ({
+        ok: true,
+        activeSandboxNames: new Set(peers.map((peer) => peer.name)),
+        gatewayChecks: [],
+      }),
       unloadOllamaModels,
       withOllamaModelOwnershipLock: (operation) => operation(),
       ...options.overrides,

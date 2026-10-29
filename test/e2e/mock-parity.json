@@ -623,10 +623,16 @@
       "live": "test/e2e/live/gpu-double-onboard.test.ts",
       "liveSources": ["test/e2e/fixtures/native-local-chat.ts"],
       "fast": [
+        "src/lib/inference/ollama/model-ownership.test.ts",
+        "src/lib/onboard/setup-inference.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
         "test/e2e/support/gpu-e2e-helpers.test.ts",
-        "test/helpers/e2e-answer-assertions.test.ts"
+        "test/e2e/support/standard-profile-workflow-boundary.test.ts",
+        "test/e2e/support/workflow-plan.test.ts",
+        "test/helpers/e2e-answer-assertions.test.ts",
+        "test/onboarding/onboard-inference-reconciliation.test.ts",
+        "test/runtime/sandbox/destroy-cleanup-sandbox-services.test.ts"
       ]
     },
     {

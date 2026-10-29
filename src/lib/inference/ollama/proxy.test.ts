@@ -27,6 +27,13 @@ const CHILD_PROCESS_DIST = require.resolve("node:child_process");
 const RUNNER_DIST = require.resolve("../../runner");
 const SUBPROCESS_ENV_DIST = require.resolve("../../subprocess-env");
 const LIFECYCLE_DIST = require.resolve("../local-adapter-lifecycle");
+const LIFECYCLE_LOCK_DIST = require.resolve("../../state/mcp-lifecycle-lock");
+const LIFECYCLE_LOCK_ACQUISITION_DIST =
+  require.resolve("../../state/mcp-lifecycle-lock-acquisition");
+const LIFECYCLE_LOCK_STORAGE_DIST = require.resolve("../../state/mcp-lifecycle-lock-storage");
+const STATE_PATHS_DIST = require.resolve("../../state/paths");
+const STATE_ROOT_DIST = require.resolve("../../state/state-root");
+const CORE_PORTS_DIST = require.resolve("../../core/ports");
 
 interface MockSetup {
   installed: string[] | (() => string[]);
@@ -120,6 +127,77 @@ function loadProxyWithMocks(setup: MockSetup): {
     },
   };
 }
+
+describe("Ollama model ownership locks", () => {
+  it("shares one lock across non-default gateway state roots", async () => {
+    const isolatedHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-lock-"));
+    const homedir = vi.spyOn(require("node:os") as typeof import("node:os"), "homedir");
+    homedir.mockReturnValue(isolatedHome);
+    vi.stubEnv("NEMOCLAW_GATEWAY_PORT", "18080");
+    const originalProxy = require.cache[PROXY_DIST];
+    const originalLocal = require.cache[LOCAL_DIST];
+    const originalLifecycle = require.cache[LIFECYCLE_DIST];
+    const originalLifecycleLock = require.cache[LIFECYCLE_LOCK_DIST];
+    const originalLockAcquisition = require.cache[LIFECYCLE_LOCK_ACQUISITION_DIST];
+    const originalLockStorage = require.cache[LIFECYCLE_LOCK_STORAGE_DIST];
+    const originalStatePaths = require.cache[STATE_PATHS_DIST];
+    const originalStateRoot = require.cache[STATE_ROOT_DIST];
+    const originalCorePorts = require.cache[CORE_PORTS_DIST];
+    delete require.cache[PROXY_DIST];
+    delete require.cache[LOCAL_DIST];
+    delete require.cache[LIFECYCLE_DIST];
+    delete require.cache[LIFECYCLE_LOCK_DIST];
+    delete require.cache[LIFECYCLE_LOCK_ACQUISITION_DIST];
+    delete require.cache[LIFECYCLE_LOCK_STORAGE_DIST];
+    delete require.cache[STATE_PATHS_DIST];
+    delete require.cache[STATE_ROOT_DIST];
+    delete require.cache[CORE_PORTS_DIST];
+    let setup: ReturnType<typeof loadProxyWithMocks> | undefined;
+
+    try {
+      setup = loadProxyWithMocks({ installed: [], promptValues: [] });
+      const lifecycleLock = require(
+        LIFECYCLE_LOCK_DIST,
+      ) as typeof import("../../state/mcp-lifecycle-lock");
+      const sharedStateDir = path.join(
+        (require(LIFECYCLE_DIST) as { SHARED_LOCAL_ADAPTER_STATE_DIR: string })
+          .SHARED_LOCAL_ADAPTER_STATE_DIR,
+        "state",
+      );
+      let syncLockIsShared = false;
+      let asyncLockIsShared = false;
+
+      setup.proxy.withOllamaModelOwnershipLock(() => {
+        syncLockIsShared = lifecycleLock.isMcpLifecycleLockHeld(
+          "host-global-ollama-model-ownership",
+          sharedStateDir,
+        );
+      });
+      await setup.proxy.withOllamaModelOwnershipTransaction(async () => {
+        asyncLockIsShared = lifecycleLock.isMcpLifecycleLockHeld(
+          "host-global-ollama-model-ownership",
+          sharedStateDir,
+        );
+      });
+
+      expect(syncLockIsShared).toBe(true);
+      expect(asyncLockIsShared).toBe(true);
+    } finally {
+      setup?.restore();
+      require.cache[PROXY_DIST] = originalProxy;
+      require.cache[LOCAL_DIST] = originalLocal;
+      require.cache[LIFECYCLE_DIST] = originalLifecycle;
+      require.cache[LIFECYCLE_LOCK_DIST] = originalLifecycleLock;
+      require.cache[LIFECYCLE_LOCK_ACQUISITION_DIST] = originalLockAcquisition;
+      require.cache[LIFECYCLE_LOCK_STORAGE_DIST] = originalLockStorage;
+      require.cache[STATE_PATHS_DIST] = originalStatePaths;
+      require.cache[STATE_ROOT_DIST] = originalStateRoot;
+      require.cache[CORE_PORTS_DIST] = originalCorePorts;
+      homedir.mockRestore();
+      fs.rmSync(isolatedHome, { recursive: true, force: true });
+    }
+  }, 15_000);
+});
 
 describe("promptOllamaModel installed-model fit filter", () => {
   let active: { restore: () => void } | null = null;

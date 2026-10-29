@@ -196,6 +196,30 @@ export function configureFailedGatewayList(harness: Pick<DestroyHarness, "runOpe
   });
 }
 
+/** Keep other sandboxes visible while a destroy target becomes absent. */
+export function configureSiblingSandboxAfterDelete(
+  harness: Pick<DestroyHarness, "runOpenshellSpy">,
+  deletedName: string,
+  remainingNames: string[],
+): void {
+  const runOpenshell = harness.runOpenshellSpy.getMockImplementation();
+  let deleted = false;
+  harness.runOpenshellSpy.mockImplementation((args: unknown, options: unknown) => {
+    const argv = Array.isArray(args) ? args.map(String) : [];
+    if (deleted && argv[0] === "sandbox" && argv[1] === "list") {
+      return { status: 0, stdout: sandboxListJson(remainingNames), stderr: "" };
+    }
+    if (deleted && argv[0] === "sandbox" && argv[1] === "get" && argv.at(-1) === deletedName) {
+      return { status: 1, stdout: "", stderr: `Error: sandbox ${deletedName} not found` };
+    }
+    const result = runOpenshell?.(args, options) ?? { status: 0, stdout: "", stderr: "" };
+    if (argv[0] === "sandbox" && argv[1] === "delete" && argv.at(-1) === deletedName) {
+      deleted = true;
+    }
+    return result;
+  });
+}
+
 export function traceDestroyBoundaryCalls(
   harness: Pick<DestroyHarness, "runOpenshellSpy" | "setSandboxPresent">,
   trace: string[],
@@ -572,6 +596,17 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
       default:
         return { status: 0, stdout: "", stderr: "" };
     }
+  });
+  vi.spyOn(runtime, "captureSandboxPhasesForGateway").mockImplementation(() => {
+    const result = options.sandboxListResult ?? {
+      status: 0,
+      stdout: sandboxListJson(sandboxPresent ? ["alpha"] : []),
+      stderr: "",
+    };
+    return {
+      status: result.status,
+      output: `${result.stdout ?? ""}${result.stderr ?? ""}`.trim(),
+    };
   });
   const captureOpenshellSpy = vi.spyOn(runtime, "captureOpenshell").mockReturnValue({
     status: 0,

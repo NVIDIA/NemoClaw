@@ -9,6 +9,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  configureSiblingSandboxAfterDelete,
   createDestroyHarness,
   resetDestroyModuleCache,
 } from "../../../../test/helpers/destroy-flow-test-harness";
@@ -96,7 +97,14 @@ describe("destroySandbox cross-root registry authority", () => {
   it("cleans up the destroyed gateway while preserving a sandbox on another gateway", async () => {
     writeGatewayRegistry(home, 8244, "alpha");
     writeGatewayRegistry(home, 8245, "beta");
-    const harness = createDestroyHarness();
+    const harness = createDestroyHarness({
+      sandboxListResult: {
+        status: 0,
+        stdout: "NAME PHASE\nalpha Ready\nbeta Ready",
+        stderr: "",
+      },
+    });
+    configureSiblingSandboxAfterDelete(harness, "beta", ["alpha"]);
 
     await expect(
       harness.destroySandbox("beta", { yes: true, cleanupGateway: true }),
@@ -120,7 +128,14 @@ describe("destroySandbox cross-root registry authority", () => {
     writeGatewayRegistry(home, 8244, "alpha");
     writeGatewayRegistry(home, 8245, "beta");
     const betaRegistryFile = path.join(home, ".nemoclaw", "gateways", "8245", "sandboxes.json");
-    const harness = createDestroyHarness();
+    const harness = createDestroyHarness({
+      sandboxListResult: {
+        status: 0,
+        stdout: "NAME PHASE\nalpha Ready\nbeta Ready",
+        stderr: "",
+      },
+    });
+    configureSiblingSandboxAfterDelete(harness, "beta", ["alpha"]);
     harness.withGatewayRouteMutationLockSpy
       .mockImplementationOnce(async (_gatewayName: unknown, operation: unknown) =>
         (operation as () => Promise<unknown>)(),
@@ -232,7 +247,13 @@ describe("destroySandbox cross-root registry authority", () => {
         },
       }),
     );
-    const harness = createDestroyHarness();
+    const harness = createDestroyHarness({
+      sandboxListResult: {
+        status: 0,
+        stdout: "NAME PHASE\nalpha Ready\nbeta Ready",
+        stderr: "",
+      },
+    });
 
     await expect(
       harness.destroySandbox("alpha", { yes: true, cleanupGateway: true }),
@@ -243,6 +264,7 @@ describe("destroySandbox cross-root registry authority", () => {
       sandboxes: { beta: { name: "beta" } },
     });
     expect(harness.cleanupGatewaySpy).not.toHaveBeenCalled();
+    expect(harness.unloadOllamaModelsSpy).not.toHaveBeenCalled();
     expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
   });
 });

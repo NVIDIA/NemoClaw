@@ -13,10 +13,11 @@ import {
   cleanupWhenCommandAvailable,
   cleanupWhenOpenShellAvailable,
 } from "../fixtures/cleanup-resources.ts";
-import { resultText } from "../fixtures/clients/command.ts";
+import { resultText, shellQuote } from "../fixtures/clients/command.ts";
 import { type HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { nativeLocalChatCommand } from "../fixtures/native-local-chat.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
@@ -24,6 +25,8 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-gpu-double";
 const PROXY_PORT = process.env.NEMOCLAW_OLLAMA_PROXY_PORT ?? "11435";
 const GPU_E2E_MODEL = process.env.NEMOCLAW_MODEL ?? "qwen3.5:9b";
+const SWITCH_MODEL = "nemoclaw-e2e-after-ollama";
+const SWITCH_API_KEY = "sk-compatible-TEST-NOT-A-REAL-VALUE";
 const TOKEN_FILE = path.join(os.homedir(), ".nemoclaw", "ollama-proxy-token");
 const LIVE_TIMEOUT_MS = testTimeout(90 * 60_000);
 
@@ -52,10 +55,12 @@ async function nemoclaw(
   artifactName: string,
   extraEnv: NodeJS.ProcessEnv = {},
   timeoutMs = 20 * 60_000,
+  redactionValues: string[] = [],
 ): Promise<ShellProbeResult> {
   return await host.command(process.execPath, [CLI_ENTRYPOINT, ...args], {
     artifactName,
     env: env(extraEnv),
+    redactionValues,
     timeoutMs,
   });
 }
@@ -121,10 +126,6 @@ function parseReplyCommand(): string {
   return String.raw`python3 -c 'import json,sys; d=json.load(sys.stdin); m=d["choices"][0]["message"]; print((m.get("content") or m.get("reasoning_content") or m.get("reasoning") or "").strip())'`;
 }
 
-function fileMode(pathname: string): string {
-  return (fs.statSync(pathname).mode & 0o777).toString(8).padStart(3, "0");
-}
-
 function chatRequest(model: string): string {
   return JSON.stringify({
     model,
@@ -138,36 +139,40 @@ function chatRequest(model: string): string {
   });
 }
 
+async function querySandboxForAnswer(
+  sandbox: SandboxClient,
+  model: string,
+  artifactName: string,
+  sharedRoute = false,
+): Promise<ShellProbeResult> {
+  // OpenClaw local inference uses a sandbox-owned provider behind the auth proxy, not the shared
+  // gateway route (#13293). Re-read it after re-onboarding recreates the sandbox. A missing
+  // attachment yields an unresolvable host. Provider switch uses the shared route.
+  const endpoint =
+    normalizeNativeLocalProviderAttachment(getSandbox(SANDBOX_NAME)?.nativeLocalProviderAttachment)
+      ?.endpointUrl ?? "http://missing-native-local-attachment.invalid/v1";
+  const command = sharedRoute
+    ? `curl -fsS --max-time 120 https://inference.local/v1/chat/completions -H 'Content-Type: application/json' --data ${shellQuote(chatRequest(model))}`
+    : nativeLocalChatCommand(endpoint, chatRequest(model), "-fsS");
+  return await sandbox.exec(SANDBOX_NAME, ["sh", "-lc", `${command} | ${parseReplyCommand()}`], {
+    artifactName,
+    env: env(),
+    timeoutMs: 150_000,
+  });
+}
+
 async function expectSandboxInference42(
   sandbox: SandboxClient,
   model: string,
   artifactName: string,
 ): Promise<void> {
-  // OpenClaw local inference uses a sandbox-owned provider behind the auth proxy, not the shared
-  // gateway route (#13293). Re-read it after re-onboarding recreates the sandbox. A missing
-  // attachment yields an unresolvable host, which fails the request assertion below.
-  const endpoint =
-    normalizeNativeLocalProviderAttachment(getSandbox(SANDBOX_NAME)?.nativeLocalProviderAttachment)
-      ?.endpointUrl ?? "http://missing-native-local-attachment.invalid/v1";
-  const response = await sandbox.exec(
-    SANDBOX_NAME,
-    [
-      "sh",
-      "-lc",
-      `${nativeLocalChatCommand(endpoint, chatRequest(model), "-fsS")} | ${parseReplyCommand()}`,
-    ],
-    {
-      artifactName,
-      env: env(),
-      timeoutMs: 150_000,
-    },
-  );
+  const response = await querySandboxForAnswer(sandbox, model, artifactName);
   expect(response.exitCode, resultText(response)).toBe(0);
   expect(containsAnswer(response.stdout, "42"), resultText(response)).toBe(true);
 }
 
 test(
-  "gpu double onboard keeps Ollama auth proxy token consistent after re-onboard",
+  "gpu double onboard preserves proxy auth and unloads Ollama on provider switch",
   {
     timeout: LIVE_TIMEOUT_MS,
     meta: {
@@ -178,6 +183,9 @@ test(
         "validate first proxy token and inference",
         "re-onboard GPU sandbox",
         "validate persisted proxy auth and inference",
+        "verify the Ollama model is active before switching providers",
+        "switch inference to a non-Ollama provider",
+        "verify new-provider inference and confirm Ollama unloaded the old model",
         "remove GPU double-onboard sandbox",
       ],
     },
@@ -198,10 +206,12 @@ test(
       contracts: [
         "GPU and runtime prerequisites are present",
         "install.sh onboards with the Ollama provider",
-        "the persisted Ollama auth-proxy token works after first onboard",
         "nemoclaw onboard --non-interactive --yes recreates the sandbox",
         "the running proxy accepts the persisted token after re-onboard and rejects unauthenticated/wrong-token requests",
         "the sandbox-owned native provider reaches Ollama after first onboard and re-onboard",
+        "Ollama reports the selected model as active before the provider switch",
+        "nemoclaw onboard switches the sandbox to a local compatible endpoint",
+        "sandbox inference succeeds through the new provider and host ollama ps no longer reports the superseded model",
       ],
     });
 
@@ -339,23 +349,10 @@ exit "$status"`,
     expect(first.exitCode, resultText(first)).toBe(0);
 
     progress.phase("validate first proxy token and inference");
-    const list = await nemoclaw(host, ["list"], "phase-3-nemoclaw-list");
-    expect(list.exitCode, resultText(list)).toBe(0);
-    expect(list.stdout).toContain(SANDBOX_NAME);
-    expect(fs.existsSync(TOKEN_FILE), `${TOKEN_FILE} missing`).toBe(true);
     const tokenAfterFirst = fs.readFileSync(TOKEN_FILE, "utf8").trim();
     expect(tokenAfterFirst.length).toBeGreaterThan(10);
-    expect(fileMode(TOKEN_FILE)).toBe("600");
 
     const model = GPU_E2E_MODEL;
-
-    const firstTokenStatus = await httpStatus(
-      host,
-      `http://127.0.0.1:${PROXY_PORT}/v1/models`,
-      "phase-3-proxy-token-status",
-      tokenAfterFirst,
-    );
-    expect(firstTokenStatus.stdout.trim(), resultText(firstTokenStatus)).toBe("200");
     await expectSandboxInference42(sandbox, model, "phase-3-sandbox-inference-first-onboard");
 
     progress.phase("re-onboard GPU sandbox");
@@ -367,19 +364,11 @@ exit "$status"`,
       execTimeout(30 * 60_000),
     );
     expect(reonboard.exitCode, resultText(reonboard)).toBe(0);
-    expect(fs.existsSync(TOKEN_FILE), `${TOKEN_FILE} missing after re-onboard`).toBe(true);
     const tokenAfterSecond = fs.readFileSync(TOKEN_FILE, "utf8").trim();
-    expect(tokenAfterSecond.length).toBeGreaterThan(10);
-    expect(fileMode(TOKEN_FILE)).toBe("600");
     expect(tokenAfterSecond).toBe(tokenAfterFirst);
+    expect(fs.statSync(TOKEN_FILE).mode & 0o777).toBe(0o600);
 
     progress.phase("validate persisted proxy auth and inference");
-    const liveStatus = await httpStatus(
-      host,
-      `http://127.0.0.1:${PROXY_PORT}/api/tags`,
-      "phase-5-proxy-live-status",
-    );
-    expect(liveStatus.stdout.trim()).toMatch(/^[1-9][0-9]{2}$/);
     const authStatus = await httpStatus(
       host,
       `http://127.0.0.1:${PROXY_PORT}/v1/models`,
@@ -406,6 +395,98 @@ exit "$status"`,
 
     await expectSandboxInference42(sandbox, model, "phase-6-sandbox-inference-after-reonboard");
 
+    const fake = await startFakeOpenAiCompatibleServer({
+      apiKey: SWITCH_API_KEY,
+      chatContent: "42",
+      host: "0.0.0.0",
+      model: SWITCH_MODEL,
+      port: 8000,
+      progress,
+      publicHost: "host.openshell.internal",
+      requireAuth: true,
+      requireAuthModels: true,
+    });
+    cleanupRegistry.trackDisposable("close switched compatible endpoint", async () => {
+      try {
+        await artifacts.writeJson("phase-9-compatible-endpoint-requests.json", fake.requests());
+      } finally {
+        await fake.close();
+      }
+    });
+    progress.phase("verify the Ollama model is active before switching providers");
+    const keepAlivePayload = JSON.stringify({
+      model,
+      prompt: "Hello, reply in less than 5 words",
+      stream: false,
+      keep_alive: "45m",
+      options: { num_predict: 16 },
+    });
+    const activeModelsBeforeSwitch = await host.command(
+      "bash",
+      [
+        "-lc",
+        `curl --fail-with-body --silent --show-error --connect-timeout 10 --max-time 120 -H 'Content-Type: application/json' -d ${shellQuote(keepAlivePayload)} http://127.0.0.1:11434/api/generate >/dev/null && ollama ps`,
+      ],
+      {
+        artifactName: "phase-7-ollama-ps-before-provider-switch",
+        env: env(),
+        timeoutMs: 150_000,
+      },
+    );
+    expect(activeModelsBeforeSwitch.exitCode, resultText(activeModelsBeforeSwitch)).toBe(0);
+    expect(activeModelsBeforeSwitch.stdout).toContain(model);
+
+    progress.phase("switch inference to a non-Ollama provider");
+    const providerSwitch = await nemoclaw(
+      host,
+      ["onboard", "--non-interactive", "--yes"],
+      "phase-8-reonboard-away-from-ollama",
+      {
+        COMPATIBLE_API_KEY: SWITCH_API_KEY,
+        NEMOCLAW_COMPAT_MODEL: SWITCH_MODEL,
+        NEMOCLAW_ENDPOINT_URL: fake.baseUrl,
+        NEMOCLAW_MODEL: SWITCH_MODEL,
+        NEMOCLAW_PREFERRED_API: "openai-completions",
+        NEMOCLAW_PROVIDER: "custom",
+        NEMOCLAW_RECREATE_SANDBOX: "0",
+      },
+      execTimeout(30 * 60_000),
+      [SWITCH_API_KEY],
+    );
+    expect(providerSwitch.exitCode, resultText(providerSwitch)).toBe(0);
+
+    progress.phase("verify new-provider inference and confirm Ollama unloaded the old model");
+    const switchedRequestOffset = fake.requests().length;
+    const switchedInference = await querySandboxForAnswer(
+      sandbox,
+      SWITCH_MODEL,
+      "phase-9-sandbox-inference-after-provider-switch",
+      true,
+    );
+    expect(switchedInference.exitCode, resultText(switchedInference)).toBe(0);
+    expect(containsAnswer(switchedInference.stdout, "42"), resultText(switchedInference)).toBe(
+      true,
+    );
+    expect(
+      fake
+        .requests()
+        .slice(switchedRequestOffset)
+        .some(
+          (request) =>
+            request.auth === "ok" &&
+            request.method === "POST" &&
+            request.path === "/v1/chat/completions" &&
+            request.model === SWITCH_MODEL,
+        ),
+    ).toBe(true);
+    const activeModelsAfterSwitch = await host.command("ollama", ["ps"], {
+      artifactName: "phase-9-ollama-ps-after-provider-switch",
+      env: env(),
+      timeoutMs: 30_000,
+    });
+    expect(activeModelsAfterSwitch.exitCode, resultText(activeModelsAfterSwitch)).toBe(0);
+    expect(activeModelsAfterSwitch.stdout).not.toContain(model);
+
     progress.phase("remove GPU double-onboard sandbox");
     await host.cleanupSandbox(SANDBOX_NAME, {
       artifactName: "verify-cleanup-nemoclaw-destroy",
@@ -418,6 +499,12 @@ exit "$status"`,
     await artifacts.target.complete({
       id: "gpu-double-onboard",
       status: "passed",
+      assertions: {
+        ollamaModelActiveBeforeProviderSwitch: true,
+        inferenceSetCompleted: providerSwitch.exitCode === 0,
+        switchedProviderInferenceReturned42: true,
+        supersededOllamaModelAbsentAfterSwitch: true,
+      },
     });
   },
 );

@@ -811,9 +811,9 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     }),
   ),
   managedRuntimeTarget("gpu-double-onboard", {
-    displayName: "Onboarding: preserves Ollama authentication after GPU re-onboarding",
+    displayName: "Onboarding: preserves Ollama auth after GPU re-onboarding and provider switch",
     agentRuntime: "openclaw",
-    environmentOrInferenceEndpoint: "NVIDIA GPU runner; local Ollama",
+    environmentOrInferenceEndpoint: "NVIDIA GPU runner; local Ollama and compatible endpoint",
     profile: "standard",
     runner: "linux-amd64-gpu-rtxpro6000-latest-1",
     podmanHostPackages: NATIVE_PODMAN_HOST_PACKAGES,
@@ -821,7 +821,11 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     installMode: "authenticated",
     restoreCli: true,
     exposeCliBin: true,
-    owningPaths: ["test/e2e/fixtures/native-local-chat.ts"],
+    owningPaths: [
+      "src/lib/inference/ollama/model-ownership.ts",
+      "src/lib/onboard/setup-inference.ts",
+      "test/e2e/fixtures/native-local-chat.ts",
+    ],
     environment: {
       ...nonInteractive,
       NEMOCLAW_MODEL: "qwen3.5:9b",

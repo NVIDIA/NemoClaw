@@ -16,7 +16,11 @@ import {
   FULL_E2E_TEST_TIMEOUT_MINUTES,
 } from "../../../tools/e2e/full-e2e-timeout-contract.mts";
 import { validateStandardProfileWorkflowBoundary } from "../../../tools/e2e/standard-profile-workflow-boundary.mts";
-import { catalogueTarget } from "../../../tools/e2e/target-catalogue.mts";
+import {
+  catalogueTarget,
+  catalogueTargetsForChangedFiles,
+} from "../../../tools/e2e/target-catalogue.mts";
+import { buildE2eWorkflowPlan, selectedWorkflowJobs } from "../../../tools/e2e/workflow-plan.mts";
 import { readWorkflow } from "../../helpers/e2e-workflow-contract";
 
 const REPO_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
@@ -25,6 +29,34 @@ describe("standard E2E execution profile", () => {
   it("accepts the catalogue callers and reusable profile", () => {
     expect(validateStandardProfileWorkflowBoundary(readWorkflow())).toEqual([]);
   });
+
+  it(
+    "routes the credential-free GPU Ollama provider-switch target through the standard profile",
+    { timeout: 30_000 },
+    () => {
+      const targetId = "gpu-double-onboard";
+      const plan = buildE2eWorkflowPlan({ targets: targetId });
+
+      expect(catalogueTarget(targetId).profile).toBe("standard");
+      expect(plan.catalogueMatrices.standard.map((row) => row.id)).toEqual([targetId]);
+      expect(plan.catalogueMatrices["nvidia-api"]).toEqual([]);
+      expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-standard"]);
+    },
+  );
+
+  it.each(["src/lib/inference/ollama/model-ownership.ts", "src/lib/onboard/setup-inference.ts"])(
+    "selects the GPU provider-switch target for a source-only %s change",
+    (changedFile) => {
+      const targetId = "gpu-double-onboard";
+      const plan = buildE2eWorkflowPlan({}, { changedFiles: [changedFile] });
+
+      expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toContain(
+        targetId,
+      );
+      expect(plan.catalogueMatrices.standard.map((row) => row.id)).toContain(targetId);
+      expect(selectedWorkflowJobs(plan)).toContain("catalogue-standard");
+    },
+  );
 
   it.each<
     [string, (steps: Array<{ name: string; with?: Record<string, string>; if?: string }>) => void]

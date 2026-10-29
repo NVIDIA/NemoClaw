@@ -27,6 +27,7 @@ import {
   unloadOllamaModels as unloadDefaultOllamaModels,
   type OllamaUnloadResult,
 } from "../inference/ollama/proxy";
+import type { OllamaModelCleanupOwner } from "../inference/ollama/model-ownership";
 import type { RuntimeProviderChannelStopTransport } from "../onboard/runtime-provider/access";
 import { listGatewayStateRoots, resolveHome } from "../state/gateway-registry";
 import { resolveNemoclawStateDir } from "../state/paths";
@@ -77,8 +78,10 @@ export interface ServiceOptions {
   cleanupOllamaModels?: boolean;
   /** Provider-owned transport for stopping the sandbox's native gateway. */
   channelStopTransport?: RuntimeProviderChannelStopTransport;
+  /** Exact sandbox identity whose pending Ollama cleanup may be cleared. */
+  ollamaCleanupOwner?: OllamaModelCleanupOwner;
   /** Clears pending Ollama cleanup recovery after this sandbox's models unload. */
-  clearPendingOllamaModelCleanup?: (sandboxName: string) => void;
+  clearPendingOllamaModelCleanup?: (owner: OllamaModelCleanupOwner) => void;
   /** Cloudflare named tunnel token. Falls back to CLOUDFLARE_TUNNEL_TOKEN. */
   cloudflareTunnelToken?: string;
   /** Also release the managed host gateway port (legacy full-stop only). */
@@ -1380,7 +1383,13 @@ function stopAllLocked(opts: ServiceOptions = {}): OllamaUnloadResult | void {
           }, then retry this command.`,
         );
       } else if (sandboxName) {
-        (opts.clearPendingOllamaModelCleanup ?? clearDefaultPendingOllamaModelCleanup)(sandboxName);
+        const cleanupOwner =
+          opts.ollamaCleanupOwner ?? findSandboxAcrossGatewayRoots(sandboxName)?.entry;
+        if (cleanupOwner) {
+          (opts.clearPendingOllamaModelCleanup ?? clearDefaultPendingOllamaModelCleanup)(
+            cleanupOwner,
+          );
+        }
       }
     } catch (error) {
       ollamaCleanupIncomplete = true;

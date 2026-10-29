@@ -1,10 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
 import path from "node:path";
 
 import {
   DEFAULT_GATEWAY_PORT,
+  hasDefaultGatewayEvidence,
   listGatewayStateRoots,
   readGatewayRegistryFile,
   registryEntryGatewayPort,
@@ -44,12 +46,27 @@ function normalizeEntryForRoot(
   return entry;
 }
 
-function listSandboxHitsAcrossGatewayRoots(home: string): CrossPortSandboxHit[] {
+function listSandboxHitsAcrossGatewayRoots(
+  home: string,
+  requireCompleteOwnerInventory = false,
+): CrossPortSandboxHit[] {
   const hits: CrossPortSandboxHit[] = [];
   for (const state of listGatewayStateRoots(home)) {
     const registryFile = path.join(state.root, "sandboxes.json");
     const registry = readGatewayRegistryFile(home, registryFile);
-    if (!registry) continue;
+    if (!registry) {
+      // An unused root can have no registry. A root with gateway state cannot
+      // safely be treated as an empty ownership inventory before model unload.
+      if (
+        requireCompleteOwnerInventory &&
+        (state.gatewayPort === DEFAULT_GATEWAY_PORT
+          ? hasDefaultGatewayEvidence(home)
+          : fs.readdirSync(state.root).length > 0)
+      ) {
+        throw crossPortStateError(`${registryFile} is missing for a recorded gateway`);
+      }
+      continue;
+    }
 
     for (const rawEntry of Object.values(registry.sandboxes)) {
       const entry = normalizeEntryForRoot(rawEntry, state.gatewayPort);
@@ -223,7 +240,7 @@ export function listPublishedSandboxesAcrossGatewayRoots(
 export function listInferenceRouteOwnersAcrossGatewayRoots(
   home: string = resolveHome(),
 ): SandboxEntry[] {
-  return listSandboxHitsAcrossGatewayRoots(home).map(({ entry }) => entry);
+  return listSandboxHitsAcrossGatewayRoots(home, true).map(({ entry }) => entry);
 }
 
 /** Published sandbox names across every registry root, base root first, then ports ascending. */

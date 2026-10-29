@@ -672,7 +672,7 @@ describe("E2E workflow plan", () => {
     });
   });
 
-  it("routes homogeneous GPU targets through the standard workflow matrix", () => {
+  it("routes credential-free GPU targets through the standard workflow matrix", () => {
     const targetIds = ["gpu-double-onboard", "gpu-e2e", "llama-cpp-generic-gpu"];
     const expectedRunner = "linux-amd64-gpu-rtxpro6000-latest-1";
     const plan = buildE2eWorkflowPlan({ jobs: targetIds.join(",") });
@@ -680,6 +680,7 @@ describe("E2E workflow plan", () => {
     expect(plan.catalogueMatrices.standard).toEqual(
       targetIds.map((id) => expect.objectContaining({ id, runner: expectedRunner })),
     );
+    expect(plan.catalogueMatrices["nvidia-api"]).toEqual([]);
     expect(plan.catalogueMatrices.standard.find((row) => row.id === "gpu-e2e")).not.toHaveProperty(
       "selector",
     );

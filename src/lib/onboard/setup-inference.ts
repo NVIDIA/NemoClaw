@@ -60,11 +60,16 @@ import {
 } from "../inference/native-nvidia";
 import {
   clearPendingOllamaModelCleanup,
+  discoverOllamaModelOwnership,
   isLocalOllamaRouteOwner,
+  listOllamaModelOwnershipPeersAcrossGatewayRoots,
   loadPendingOllamaModelCleanup,
+  matchingOllamaModelPeers,
+  type OllamaActiveOwnershipDiscoveryFn,
   type OllamaModelHolder,
+  type OllamaOwnershipPhaseCapture,
   persistPendingOllamaModelCleanup,
-  supersededOllamaModel,
+  supersededOllamaModelWithActivePeers,
 } from "../inference/ollama/model-ownership";
 import {
   getOllamaProxyToken,
@@ -76,9 +81,10 @@ import {
 } from "../inference/ollama/proxy";
 import {
   assertNoOpenShellGatewayEndpointOverride,
+  captureSandboxPhasesForGateway,
   scopeGatewayOpenshellArgs,
   type OpenShellGatewayEndpointEnvironment,
-} from "../adapters/openshell/gateway-scope";
+} from "../adapters/openshell/runtime";
 import type { withSandboxMutationLock } from "../state/mcp-lifecycle-lock";
 import type { Session } from "../state/onboard-session";
 import type { SandboxEntry } from "../state/registry/types";
@@ -275,6 +281,11 @@ export type SetupInferenceDeps = ProviderBranchDeps & {
   // #9110 optional GPU-release seams; omitted by test literals that build deps
   // by hand, so every read below must stay optional-chained.
   getSandbox?: typeof import("../state/registry").getSandbox;
+  listOllamaModelOwnershipPeers?: () => readonly OllamaModelHolder[];
+  discoverActiveOllamaSandboxNames?: OllamaActiveOwnershipDiscoveryFn;
+  captureOllamaOwnershipPhases?: OllamaOwnershipPhaseCapture;
+  resolveOllamaOwnershipGateway?: (peer: OllamaModelHolder) => string;
+  environment?: NodeJS.ProcessEnv;
   listSandboxes?: typeof import("../state/registry").listSandboxes;
   getNativeLocalProviderAuthority?: typeof import("../state/registry/native-local-provider-authority").getNativeLocalProviderAuthority;
   setNativeLocalProviderAuthority?: typeof import("../state/registry/native-local-provider-authority").setNativeLocalProviderAuthority;
@@ -557,7 +568,7 @@ export type SetupInference = (
  * the route is committed by this point, so GPU cleanup must never change the
  * result or the exit code.
  */
-function releaseSupersededOllamaModel(
+export function releaseSupersededOllamaModel(
   previous: OllamaModelHolder | null,
   nextProvider: string,
   nextModel: string,
@@ -582,7 +593,7 @@ function releaseSupersededOllamaModel(
   const persistRetry = (): string | null => {
     if (attemptedModels.length === 0) return null;
     try {
-      persistPending(previous.name, attemptedModels);
+      persistPending(previous, attemptedModels);
       return null;
     } catch (error) {
       return (error instanceof Error ? error.message : String(error))
@@ -593,38 +604,95 @@ function releaseSupersededOllamaModel(
   try {
     const withOwnershipLock = deps.withOllamaModelOwnershipLock ?? withOllamaModelOwnershipLock;
     withOwnershipLock(() => {
-      const peers = deps.listSandboxes?.().sandboxes ?? [];
       const selectedHost = deps.localInference.loadPersistedOllamaHost?.() ?? null;
-      const nextRoute = {
-        provider: nextProvider,
-        model: nextModel,
-        endpointUrl: nextEndpointUrl,
-      };
-      const superseded = supersededOllamaModel(previous, nextRoute, peers, selectedHost);
-      const pending = loadPending(previous.name);
-      const retryablePending = pending.filter((model) =>
-        supersededOllamaModel(
-          {
-            name: previous.name,
-            provider: "ollama-local",
-            model,
-            endpointUrl: null,
-          },
+      const nextRoute = { provider: nextProvider, model: nextModel, endpointUrl: nextEndpointUrl };
+      const previousOwnsOllama = isLocalOllamaRouteOwner(previous, selectedHost);
+      // This is only a retry candidate. A successful live probe below is still
+      // required before the model can be unloaded.
+      const retryCandidate = previousOwnsOllama
+        ? supersededOllamaModelWithActivePeers(previous, nextRoute, [], new Set(), selectedHost)
+        : null;
+      attemptedModels = retryCandidate ? [retryCandidate] : [];
+      const pending = loadPending(previous);
+      attemptedModels = [...new Set([...attemptedModels, ...pending])];
+      if (!retryCandidate && pending.length === 0) return;
+
+      const peers = (
+        deps.listOllamaModelOwnershipPeers ?? listOllamaModelOwnershipPeersAcrossGatewayRoots
+      )();
+      const ollamaRouteCandidates = peers.filter((peer) =>
+        isLocalOllamaRouteOwner(peer, selectedHost),
+      );
+      const environment = deps.environment ?? process.env;
+      const captureOwnershipPhases: OllamaOwnershipPhaseCapture =
+        deps.captureOllamaOwnershipPhases ?? captureSandboxPhasesForGateway;
+      const discoverPeers = (owners: readonly OllamaModelHolder[]) =>
+        deps.discoverActiveOllamaSandboxNames
+          ? deps.discoverActiveOllamaSandboxNames(owners, environment)
+          : discoverOllamaModelOwnership(owners, environment, captureOwnershipPhases, {
+              resolvePersistedSandboxOwnershipGateway: deps.resolveOllamaOwnershipGateway,
+            });
+      // A different model cannot keep one of the models being released resident.
+      // Discover only matching owners before unloading so unrelated gateways do
+      // not delay cleanup; all-route discovery is reserved for receipt retirement.
+      const modelOwners = [
+        ...new Set(
+          attemptedModels.flatMap((model) =>
+            matchingOllamaModelPeers(
+              { ...previous, provider: "ollama-local", model, endpointUrl: null },
+              ollamaRouteCandidates,
+              selectedHost,
+            ),
+          ),
+        ),
+      ];
+      const discovery = discoverPeers(modelOwners);
+      if (!discovery.ok) {
+        pendingRecordFailure = persistRetry();
+        const retryMessage = pendingRecordFailure
+          ? `Cleanup retry state could not be recorded: ${pendingRecordFailure}. Manually verify that no active matching sandbox owns the model before releasing only ${attemptedModels.join(", ")} from the local Ollama host.`
+          : attemptedModels.length > 0
+            ? `Re-run onboarding to retry only: ${attemptedModels.join(", ")}.`
+            : "The Ollama host receipt was left unchanged.";
+        cleanupWarning =
+          `  Warning: NemoClaw could not verify Ollama model ownership for '${previous.name}': ` +
+          `${discovery.message}. No model was unloaded; the new inference route remains active. ${retryMessage}`;
+        return;
+      }
+      const superseded = previousOwnsOllama
+        ? supersededOllamaModelWithActivePeers(
+            previous,
+            nextRoute,
+            peers,
+            discovery.activeSandboxNames,
+            selectedHost,
+            discovery.activePeers,
+          )
+        : null;
+      const retryablePending = pending.filter((model) => {
+        return !!supersededOllamaModelWithActivePeers(
+          { ...previous, provider: "ollama-local", model, endpointUrl: null },
           nextRoute,
           peers,
+          discovery.activeSandboxNames,
           selectedHost,
-        ),
-      );
+          discovery.activePeers,
+        );
+      });
       attemptedModels = [...new Set([...(superseded ? [superseded] : []), ...retryablePending])];
-      const retireRoute =
-        isLocalOllamaRouteOwner(previous, selectedHost) &&
-        !isLocalOllamaRouteOwner(nextRoute, selectedHost) &&
-        !peers.some((peer) => isLocalOllamaRouteOwner(peer, selectedHost));
-      if (attemptedModels.length === 0 && !retireRoute) return;
+      const retireRouteCandidate =
+        previousOwnsOllama && !isLocalOllamaRouteOwner(nextRoute, selectedHost);
+      if (attemptedModels.length === 0 && !retireRouteCandidate) return;
       try {
         revalidateSandboxIdentity?.("release the superseded Ollama model");
       } catch (error) {
         authorityRefusal = error;
+        pendingRecordFailure = persistRetry();
+        if (pendingRecordFailure) {
+          cleanupWarning =
+            `  Warning: Cleanup retry state could not be recorded for '${previous.name}' after the new inference route became active: ${pendingRecordFailure}. ` +
+            `No model was unloaded. Manually verify ownership before releasing only ${attemptedModels.join(", ") || "the superseded model"} from the saved local Ollama endpoint.`;
+        }
         return;
       }
       if (attemptedModels.length > 0 && deps.unloadOllamaModels) {
@@ -652,7 +720,7 @@ function releaseSupersededOllamaModel(
                 ? `Cleanup retry state could not be recorded: ${pendingRecordFailure}. Manually release only ${attemptedModels.join(", ")} at ${cleanup.endpoint}.`
                 : `Re-run onboarding or destroy '${previous.name}' to retry only: ${attemptedModels.join(", ")}.`);
           } else {
-            clearPending(previous.name, attemptedModels);
+            clearPending(previous, attemptedModels);
           }
         } catch (error) {
           if (pendingRecordFailure) pendingRecordFailure = persistRetry();
@@ -667,9 +735,29 @@ function releaseSupersededOllamaModel(
               : `Re-run onboarding or destroy '${previous.name}' to retry only the recorded models: ${attemptedModels.join(", ")}.`);
         }
       }
-      const pendingAfterCleanup = loadPending(previous.name);
-      if (retireRoute && !cleanupWarning && pendingAfterCleanup.length === 0) {
-        deps.localInference.clearPersistedOllamaHostIfUnused?.(peers);
+      const pendingAfterCleanup = loadPending(previous);
+      if (retireRouteCandidate && !cleanupWarning && pendingAfterCleanup.length === 0) {
+        const routeOwnerDiscovery =
+          modelOwners.length === ollamaRouteCandidates.length
+            ? discovery
+            : discoverPeers(ollamaRouteCandidates);
+        if (!routeOwnerDiscovery.ok) {
+          cleanupWarning =
+            `  Warning: Ollama cleanup for '${previous.name}' was scoped to verified model owners, ` +
+            "but the host route receipt was retained because other Ollama gateway owners could not be verified.";
+        } else {
+          const activeOllamaPeerRoutes = peers.filter(
+            (peer) =>
+              (routeOwnerDiscovery.activePeers
+                ? routeOwnerDiscovery.activePeers.has(peer)
+                : routeOwnerDiscovery.activeSandboxNames.has(peer.name)) &&
+              isLocalOllamaRouteOwner(peer, selectedHost),
+          );
+          if (activeOllamaPeerRoutes.length === 0) {
+            // Stopped registry owners still need the shared host target if they restart.
+            deps.localInference.clearPersistedOllamaHostIfUnused?.(ollamaRouteCandidates);
+          }
+        }
       }
     });
   } catch (error) {
@@ -2071,24 +2159,37 @@ export function createSetupInference(
       selectingNativeLocal = selectingNativeLocal && !preservingLegacyPiRoute;
       if (selectingNativeLocal)
         await (deps.requireNativeProviderPolicy ?? requireNativeProviderPolicy)(gatewayName);
-      const result = await mutateGatewayRoute();
-      releaseSupersededOllamaModel(
-        previousSandbox,
-        provider,
-        model,
-        endpointUrl,
-        result,
-        deps,
-        revalidateSandboxIdentity,
-      );
-      if (shouldLogSuccessfulRoute && "ok" in result) {
-        deps.log(
-          isNativeNvidiaProvider(provider)
-            ? `  ✓ Native NVIDIA provider ready: ${provider} / ${model}`
-            : `  ✓ Inference route set: ${provider} / ${model}`,
+
+      // Compatible endpoints can own the same host Ollama daemon as direct Ollama routes.
+      // Serialize publication with release decisions across gateways to prevent a newly
+      // published peer route from being missed by concurrent cleanup (#12677).
+      const participatesInOllamaOwnership =
+        (previousSandbox !== null && isLocalOllamaRouteOwner(previousSandbox)) ||
+        isLocalOllamaRouteOwner({ provider, endpointUrl });
+      const runRouteAndRelease = async (): Promise<SetupInferenceResult> => {
+        const result = await mutateGatewayRoute();
+        releaseSupersededOllamaModel(
+          previousSandbox,
+          provider,
+          model,
+          endpointUrl,
+          result,
+          deps,
+          revalidateSandboxIdentity,
         );
-      }
-      return result;
+        if (shouldLogSuccessfulRoute && "ok" in result) {
+          deps.log(
+            isNativeNvidiaProvider(provider)
+              ? `  ✓ Native NVIDIA provider ready: ${provider} / ${model}`
+              : `  ✓ Inference route set: ${provider} / ${model}`,
+          );
+        }
+        return result;
+      };
+      if (!participatesInOllamaOwnership) return runRouteAndRelease();
+      const withOwnershipTransaction =
+        deps.withOllamaModelOwnershipTransaction ?? withOllamaModelOwnershipTransaction;
+      return withOwnershipTransaction(runRouteAndRelease);
     };
     return sandboxName
       ? deps.withSandboxMutationLock(sandboxName, mutateGatewayRouteAndReleaseSupersededModel)

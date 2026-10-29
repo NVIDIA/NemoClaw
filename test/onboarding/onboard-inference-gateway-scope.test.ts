@@ -3,6 +3,7 @@
 
 import fs from "node:fs";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import type { OllamaModelHolder } from "../../src/lib/inference/ollama/model-ownership.js";
 import type { SetupInference, SetupInferenceDeps } from "../../src/lib/onboard/setup-inference.js";
 import {
   createDirectCommandRouter,
@@ -288,4 +289,160 @@ describe("onboarding inference gateway scope", () => {
       },
     );
   });
+
+  it("serializes cross-gateway compatible Ollama peer publication before cleanup (#12677)", async () => {
+    await withProcessEnv({ COMPATIBLE_API_KEY: "test-compatible-api-key" }, async () => {
+      const events: string[] = [];
+      const registry = new Map<string, OllamaModelHolder>([
+        [
+          "alpha",
+          {
+            name: "alpha",
+            provider: "ollama-local",
+            model: "qwen2.5:1.5b",
+            endpointUrl: "http://127.0.0.1:11434/v1",
+            gatewayName: "gateway-alpha",
+          },
+        ],
+        [
+          "beta",
+          {
+            name: "beta",
+            provider: "compatible-endpoint",
+            model: "previous-model",
+            endpointUrl: "https://previous.example/v1",
+            gatewayName: "gateway-beta",
+          },
+        ],
+      ]);
+      let signalBetaRouteStarted!: () => void;
+      let releaseBetaRoute!: () => void;
+      let signalAlphaQueued!: () => void;
+      const betaRouteStarted = new Promise<void>((resolve) => {
+        signalBetaRouteStarted = resolve;
+      });
+      const allowBetaRouteToFinish = new Promise<void>((resolve) => {
+        releaseBetaRoute = resolve;
+      });
+      const alphaQueuedForTransaction = new Promise<void>((resolve) => {
+        signalAlphaQueued = resolve;
+      });
+      let transactionTail = Promise.resolve();
+      let transactionCalls = 0;
+      const withOwnershipTransaction: NonNullable<
+        SetupInferenceDeps["withOllamaModelOwnershipTransaction"]
+      > = async <T>(operation: () => Promise<T> | T): Promise<T> => {
+        transactionCalls += 1;
+        [() => undefined, signalAlphaQueued][transactionCalls - 1]?.();
+        const previous = transactionTail;
+        let release!: () => void;
+        transactionTail = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        await previous;
+        try {
+          return await operation();
+        } finally {
+          release();
+        }
+      };
+      const waitBeforeRouteMutation: Record<string, () => Promise<void>> = {
+        "gateway-beta": async () => {
+          signalBetaRouteStarted();
+          await allowBetaRouteToFinish;
+        },
+      };
+      const inferenceRouteMutator: SetupInferenceDeps["inferenceRouteMutator"] = {
+        setInferenceRoute: async (request) => {
+          const gateway = request.target.gatewayName;
+          events.push(`route-start:${gateway}`);
+          await (waitBeforeRouteMutation[gateway] ?? (() => Promise.resolve()))();
+          events.push(`route-finished:${gateway}`);
+          return { ok: true };
+        },
+      };
+      const updateSandbox: SetupInferenceDeps["updateSandbox"] = (name, route) => {
+        const previous = registry.get(name);
+        registry.set(name, { ...previous, ...route, name } as OllamaModelHolder);
+        events.push(`registry-published:${name}`);
+        return true;
+      };
+      const unloadOllamaModels = vi.fn(() => ({
+        ok: true as const,
+        outcome: "released" as const,
+        endpoint: "http://127.0.0.1:11434",
+        selectedModels: ["qwen2.5:1.5b"],
+        discoveries: [],
+        requests: [],
+      }));
+      const overrides: Partial<SetupInferenceDeps> = {
+        inferenceRouteMutator,
+        updateSandbox,
+        getSandbox: (name) => registry.get(name) ?? null,
+        listOllamaModelOwnershipPeers: () => [...registry.values()],
+        discoverActiveOllamaSandboxNames: (owners) => ({
+          ok: true,
+          activeSandboxNames: new Set(owners.map((owner) => owner.name)),
+          gatewayChecks: [],
+        }),
+        localInference: {
+          loadPersistedOllamaHost: () => "127.0.0.1",
+          loadPendingOllamaModelCleanup: () => [],
+          persistPendingOllamaModelCleanup: vi.fn(),
+          clearPendingOllamaModelCleanup: vi.fn(),
+          clearPersistedOllamaHostIfUnused: vi.fn(),
+        } as unknown as SetupInferenceDeps["localInference"],
+        unloadOllamaModels,
+        withOllamaModelOwnershipLock: (operation) => operation(),
+        withOllamaModelOwnershipTransaction: withOwnershipTransaction,
+      };
+      const makeHarness = () =>
+        createHarness({
+          runOpenshell: (args) =>
+            args.slice(0, 2).join(" ") === "provider get" ? { status: 1 } : undefined,
+          overrides,
+        });
+      const alpha = makeHarness();
+      const beta = makeHarness();
+      const betaSwitch = beta.setupInference(
+        "beta",
+        "qwen2.5:1.5b",
+        "compatible-endpoint",
+        "http://127.0.0.1:11434/v1",
+        "COMPATIBLE_API_KEY",
+        null,
+        [],
+        {
+          gatewayName: "gateway-beta",
+          endpointPinnedAddresses: ["127.0.0.1"],
+          skipHostInferenceSmoke: true,
+        },
+      );
+
+      await betaRouteStarted;
+      const alphaSwitch = alpha.setupInference(
+        "alpha",
+        "other-model",
+        "compatible-endpoint",
+        "https://api.example.test/v1",
+        "COMPATIBLE_API_KEY",
+        null,
+        [],
+        { gatewayName: "gateway-alpha", skipHostInferenceSmoke: true },
+      );
+      await alphaQueuedForTransaction;
+      expect(events).not.toContain("route-start:gateway-alpha");
+
+      releaseBetaRoute();
+      await expect(Promise.all([alphaSwitch, betaSwitch])).resolves.toEqual([
+        { ok: true },
+        { ok: true },
+      ]);
+
+      expect(events.indexOf("registry-published:beta")).toBeLessThan(
+        events.indexOf("route-start:gateway-alpha"),
+      );
+      expect(unloadOllamaModels).not.toHaveBeenCalled();
+    });
+  }, 20_000);
 });

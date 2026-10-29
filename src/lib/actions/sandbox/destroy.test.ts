@@ -1,12 +1,21 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
+import * as openshellRuntime from "../../adapters/openshell/runtime";
 import type { SandboxEntry } from "../../state/registry";
 import { SANDBOX_PROVIDER_SUFFIXES } from "../../onboard/sandbox-provider-cleanup";
 import { assertUnambiguousDestroyContainerIdentity, cleanupSandboxServices } from "./destroy";
+import {
+  createDestroyHarness,
+  resetDestroyModuleCache,
+} from "../../../../test/helpers/destroy-flow-test-harness";
+
+afterEach(() => vi.restoreAllMocks());
 
 const SANDBOX = "mybox";
 const mainPidDir = path.resolve("/tmp", `nemoclaw-services-${SANDBOX}`);
@@ -21,7 +30,6 @@ describe("cleanupSandboxServices Google Chat tunnel cleanup (#7317)", () => {
       { stopHostServices: false },
       {
         getSandbox: () => null,
-        listSandboxes: () => ({ sandboxes: [], defaultSandbox: null }),
         withOllamaModelOwnershipLock: (operation) => operation(),
         loadPersistedOllamaHost: () => "127.0.0.1",
         loadPendingOllamaModelCleanup: () => [],
@@ -122,6 +130,365 @@ describe("cleanupSandboxServices Google Chat tunnel cleanup (#7317)", () => {
 });
 
 describe("cleanupSandboxServices Ollama ownership", () => {
+  it("discovers two pending models in one gateway once and keeps cleanup fail-closed", async () => {
+    const own = {
+      name: SANDBOX,
+      gatewayName: "gateway-a",
+      gatewayPort: 18080,
+      provider: "nvidia-prod",
+      model: "replacement",
+    } as SandboxEntry;
+    const activePeer = {
+      name: "active-peer",
+      gatewayName: "gateway-b",
+      gatewayPort: 18081,
+      provider: "ollama-local",
+      model: "old-model",
+    } as SandboxEntry;
+    const stoppedPeer = {
+      ...activePeer,
+      name: "stopped-peer",
+      model: "other-model",
+    };
+    const captureSandboxOwnershipPhases = vi
+      .fn()
+      .mockReturnValueOnce({
+        status: 0,
+        output: "NAME CREATED PHASE\nactive-peer 2026-01-01 Running",
+      })
+      .mockReturnValue({
+        status: 0,
+        output:
+          "NAME CREATED PHASE\nactive-peer 2026-01-01 Running\nstopped-peer 2026-01-01 Stopped",
+      });
+    const unloadOllamaModels = vi.fn();
+    const clearPendingOllamaModelCleanup = vi.fn();
+    const cleanup = () =>
+      cleanupSandboxServices(
+        SANDBOX,
+        { stopHostServices: false, gatewayPort: 18080 },
+        {
+          getSandbox: () => own,
+          listOllamaModelOwnershipPeers: () => [own, activePeer, stoppedPeer],
+          loadPersistedOllamaHost: () => "127.0.0.1",
+          loadPendingOllamaModelCleanup: () => ["old-model", "other-model"],
+          clearPendingOllamaModelCleanup,
+          captureSandboxOwnershipPhases,
+          resolvePersistedSandboxOwnershipGateway: () => "gateway-b",
+          migrateLegacyCloudflaredState: vi.fn(() => false),
+          unloadOllamaModels,
+          withOllamaModelOwnershipLock: (operation) => operation(),
+          rmSync: vi.fn(),
+          runOpenshell: vi.fn(() => ({ status: 0 })),
+          stopGooglechatWebhookTunnel: vi.fn(() => googlechatPidDir),
+          googlechatWebhookTunnelPidDir: vi.fn(() => googlechatPidDir),
+        },
+      );
+
+    await expect(cleanup()).rejects.toThrow(/omitted sibling/);
+    expect(captureSandboxOwnershipPhases).toHaveBeenCalledTimes(1);
+    expect(unloadOllamaModels).not.toHaveBeenCalled();
+    expect(clearPendingOllamaModelCleanup).not.toHaveBeenCalled();
+
+    await cleanup();
+    expect(captureSandboxOwnershipPhases).toHaveBeenCalledTimes(2);
+    expect(unloadOllamaModels).toHaveBeenCalledExactlyOnceWith(["other-model"]);
+    expect(clearPendingOllamaModelCleanup).toHaveBeenCalledExactlyOnceWith(own, ["other-model"]);
+  });
+
+  it("retains a pending model owned by an active sandbox in another gateway root", async () => {
+    const own = {
+      name: SANDBOX,
+      gatewayName: "gateway-a",
+      gatewayPort: 18080,
+      provider: "ollama-local",
+      model: "old-model",
+    } as SandboxEntry;
+    const peer = {
+      name: "peer",
+      gatewayName: "gateway-b",
+      gatewayPort: 18081,
+      provider: "ollama-local",
+      model: "old-model",
+    } as SandboxEntry;
+    const unloadOllamaModels = vi.fn();
+    const clearPendingOllamaModelCleanup = vi.fn();
+    const captureSandboxOwnershipPhases = vi
+      .spyOn(openshellRuntime, "captureSandboxPhasesForGateway")
+      .mockReturnValue({ status: 0, output: "NAME CREATED PHASE\npeer 2026-01-01 Running" });
+    const runOpenshell = vi.fn(() => ({ status: 0 }));
+
+    await cleanupSandboxServices(
+      SANDBOX,
+      { stopHostServices: false, gatewayPort: 18080 },
+      {
+        getSandbox: () => own,
+        listOllamaModelOwnershipPeers: () => [own, peer],
+        loadPersistedOllamaHost: () => "127.0.0.1",
+        loadPendingOllamaModelCleanup: () => ["old-model"],
+        clearPendingOllamaModelCleanup,
+        resolvePersistedSandboxOwnershipGateway: (sandbox) =>
+          sandbox.gatewayName === "gateway-b" ? "gateway-b" : "gateway-a",
+        migrateLegacyCloudflaredState: vi.fn(() => false),
+        unloadOllamaModels,
+        withOllamaModelOwnershipLock: (operation) => operation(),
+        rmSync: vi.fn(),
+        runOpenshell,
+        stopGooglechatWebhookTunnel: vi.fn(() => googlechatPidDir),
+        googlechatWebhookTunnelPidDir: vi.fn(() => googlechatPidDir),
+      },
+    );
+
+    expect(captureSandboxOwnershipPhases).toHaveBeenCalledWith("gateway-b", process.env);
+    expect(unloadOllamaModels).not.toHaveBeenCalled();
+    expect(clearPendingOllamaModelCleanup).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when shared phase capture reports an unreachable gateway", async () => {
+    const own = {
+      name: SANDBOX,
+      gatewayName: "gateway-a",
+      gatewayPort: 18080,
+      provider: "ollama-local",
+      model: "old-model",
+    } as SandboxEntry;
+    const peer = {
+      name: "peer",
+      gatewayName: "gateway-b",
+      gatewayPort: 18081,
+      provider: "ollama-local",
+      model: "old-model",
+    } as SandboxEntry;
+    const unloadOllamaModels = vi.fn();
+    const clearPendingOllamaModelCleanup = vi.fn();
+    const captureSandboxOwnershipPhases = vi
+      .spyOn(openshellRuntime, "captureSandboxPhasesForGateway")
+      .mockReturnValue({ status: 1, output: "gateway unreachable" });
+    const runOpenshell = vi.fn(() => ({ status: 0 }));
+
+    await expect(
+      cleanupSandboxServices(
+        SANDBOX,
+        { stopHostServices: false, gatewayPort: 18080 },
+        {
+          getSandbox: () => own,
+          listOllamaModelOwnershipPeers: () => [own, peer],
+          loadPersistedOllamaHost: () => "127.0.0.1",
+          loadPendingOllamaModelCleanup: () => ["old-model"],
+          clearPendingOllamaModelCleanup,
+          resolvePersistedSandboxOwnershipGateway: (sandbox) =>
+            sandbox.gatewayName === "gateway-b" ? "gateway-b" : "gateway-a",
+          migrateLegacyCloudflaredState: vi.fn(() => false),
+          unloadOllamaModels,
+          withOllamaModelOwnershipLock: (operation) => operation(),
+          rmSync: vi.fn(),
+          runOpenshell,
+          stopGooglechatWebhookTunnel: vi.fn(() => googlechatPidDir),
+          googlechatWebhookTunnelPidDir: vi.fn(() => googlechatPidDir),
+        },
+      ),
+    ).rejects.toThrow(/gateway unreachable/);
+
+    expect(captureSandboxOwnershipPhases).toHaveBeenCalledWith("gateway-b", process.env);
+    expect(unloadOllamaModels).not.toHaveBeenCalled();
+    expect(clearPendingOllamaModelCleanup).not.toHaveBeenCalled();
+  });
+
+  it("preserves pending cleanup and fails closed when cross-gateway ownership is inconclusive", async () => {
+    const own = {
+      name: SANDBOX,
+      gatewayName: "gateway-a",
+      gatewayPort: 18080,
+      provider: "ollama-local",
+      model: "old-model",
+    } as SandboxEntry;
+    const peer = {
+      name: "peer",
+      gatewayName: "gateway-b",
+      gatewayPort: 18081,
+      provider: "ollama-local",
+      model: "old-model",
+    } as SandboxEntry;
+    const unloadOllamaModels = vi.fn();
+    const clearPendingOllamaModelCleanup = vi.fn();
+
+    await expect(
+      cleanupSandboxServices(
+        SANDBOX,
+        { stopHostServices: false, gatewayPort: 18080 },
+        {
+          getSandbox: () => own,
+          listOllamaModelOwnershipPeers: () => [own, peer],
+          loadPersistedOllamaHost: () => "127.0.0.1",
+          loadPendingOllamaModelCleanup: () => ["old-model"],
+          clearPendingOllamaModelCleanup,
+          captureSandboxOwnershipPhases: () => ({ status: 1, output: "gateway unavailable" }),
+          resolvePersistedSandboxOwnershipGateway: (sandbox) =>
+            sandbox.gatewayName === "gateway-b" ? "gateway-b" : "gateway-a",
+          migrateLegacyCloudflaredState: vi.fn(() => false),
+          unloadOllamaModels,
+          withOllamaModelOwnershipLock: (operation) => operation(),
+          rmSync: vi.fn(),
+          runOpenshell: vi.fn(() => ({ status: 0 })),
+          stopGooglechatWebhookTunnel: vi.fn(() => googlechatPidDir),
+          googlechatWebhookTunnelPidDir: vi.fn(() => googlechatPidDir),
+        },
+      ),
+    ).rejects.toThrow(/ownership could not be verified/);
+
+    expect(unloadOllamaModels).not.toHaveBeenCalled();
+    expect(clearPendingOllamaModelCleanup).not.toHaveBeenCalled();
+  });
+
+  it("scopes host-service model cleanup when another gateway owns a model", async () => {
+    const own = {
+      name: SANDBOX,
+      gatewayName: "gateway-a",
+      gatewayPort: 18080,
+      provider: "ollama-local",
+      model: "old-model",
+    } as SandboxEntry;
+    const peer = {
+      name: "peer",
+      gatewayName: "gateway-b",
+      gatewayPort: 18081,
+      provider: "ollama-local",
+      model: "old-model",
+    } as SandboxEntry;
+    const unloadOllamaModels = vi.fn();
+    const clearPendingOllamaModelCleanup = vi.fn();
+    const stopAll = vi.fn();
+
+    await cleanupSandboxServices(
+      SANDBOX,
+      { stopHostServices: true, gatewayPort: 18080 },
+      {
+        getSandbox: () => own,
+        listOllamaModelOwnershipPeers: () => [own, peer],
+        loadPersistedOllamaHost: () => "127.0.0.1",
+        loadPendingOllamaModelCleanup: () => [],
+        clearPendingOllamaModelCleanup,
+        captureSandboxOwnershipPhases: () => ({
+          status: 0,
+          output: "NAME CREATED PHASE\npeer 2026-01-01 Running",
+        }),
+        resolvePersistedSandboxOwnershipGateway: (sandbox) =>
+          sandbox.gatewayName === "gateway-b" ? "gateway-b" : "gateway-a",
+        migrateLegacyCloudflaredState: vi.fn(() => false),
+        stopAll,
+        unloadOllamaModels,
+        withOllamaModelOwnershipLock: (operation) => operation(),
+        rmSync: vi.fn(),
+        runOpenshell: vi.fn(() => ({ status: 0 })),
+        stopGooglechatWebhookTunnel: vi.fn(() => googlechatPidDir),
+        googlechatWebhookTunnelPidDir: vi.fn(() => googlechatPidDir),
+      },
+    );
+
+    expect(stopAll).toHaveBeenCalledWith(
+      expect.objectContaining({ cleanupOllamaModels: false, stopCloudflared: false }),
+    );
+    expect(unloadOllamaModels).not.toHaveBeenCalled();
+    expect(clearPendingOllamaModelCleanup).not.toHaveBeenCalled();
+  });
+
+  it("retains retry state when host-service cleanup cannot verify a peer", async () => {
+    const own = {
+      name: SANDBOX,
+      gatewayName: "gateway-a",
+      gatewayPort: 18080,
+      provider: "ollama-local",
+      model: "old-model",
+    } as SandboxEntry;
+    const peer = {
+      name: "peer",
+      gatewayName: "gateway-b",
+      gatewayPort: 18081,
+      provider: "ollama-local",
+      model: "old-model",
+    } as SandboxEntry;
+    const unloadOllamaModels = vi.fn();
+    const clearPendingOllamaModelCleanup = vi.fn();
+    const stopAll = vi.fn();
+
+    await expect(
+      cleanupSandboxServices(
+        SANDBOX,
+        { stopHostServices: true, gatewayPort: 18080 },
+        {
+          getSandbox: () => own,
+          listOllamaModelOwnershipPeers: () => [own, peer],
+          loadPersistedOllamaHost: () => "127.0.0.1",
+          loadPendingOllamaModelCleanup: () => ["old-model"],
+          clearPendingOllamaModelCleanup,
+          captureSandboxOwnershipPhases: () => ({
+            status: 1,
+            output: "gateway unavailable",
+          }),
+          resolvePersistedSandboxOwnershipGateway: (sandbox) =>
+            sandbox.gatewayName === "gateway-b" ? "gateway-b" : "gateway-a",
+          migrateLegacyCloudflaredState: vi.fn(() => false),
+          stopAll,
+          unloadOllamaModels,
+          withOllamaModelOwnershipLock: (operation) => operation(),
+          rmSync: vi.fn(),
+          runOpenshell: vi.fn(() => ({ status: 0 })),
+          stopGooglechatWebhookTunnel: vi.fn(() => googlechatPidDir),
+          googlechatWebhookTunnelPidDir: vi.fn(() => googlechatPidDir),
+        },
+      ),
+    ).rejects.toThrow(/Host-service cleanup failed.*ownership could not be verified/);
+
+    expect(stopAll).toHaveBeenCalledWith(
+      expect.objectContaining({ cleanupOllamaModels: false, stopCloudflared: false }),
+    );
+    expect(unloadOllamaModels).not.toHaveBeenCalled();
+    expect(clearPendingOllamaModelCleanup).not.toHaveBeenCalled();
+  });
+
+  it("retains pending cleanup when the unload request fails", async () => {
+    const own = {
+      name: SANDBOX,
+      gatewayName: "gateway-a",
+      gatewayPort: 18080,
+      provider: "ollama-local",
+      model: "old-model",
+    } as SandboxEntry;
+    const unloadOllamaModels = vi.fn(() => ({
+      ok: false,
+      outcome: "still-resident" as const,
+      endpoint: "http://127.0.0.1:11434",
+      selectedModels: ["old-model"],
+      discoveries: [],
+      requests: [],
+    }));
+    const clearPendingOllamaModelCleanup = vi.fn();
+
+    await expect(
+      cleanupSandboxServices(
+        SANDBOX,
+        { stopHostServices: false, gatewayPort: 18080 },
+        {
+          getSandbox: () => own,
+          listOllamaModelOwnershipPeers: () => [own],
+          loadPersistedOllamaHost: () => "127.0.0.1",
+          loadPendingOllamaModelCleanup: () => ["old-model"],
+          clearPendingOllamaModelCleanup,
+          migrateLegacyCloudflaredState: vi.fn(() => false),
+          unloadOllamaModels,
+          withOllamaModelOwnershipLock: (operation) => operation(),
+          rmSync: vi.fn(),
+          runOpenshell: vi.fn(() => ({ status: 0 })),
+          stopGooglechatWebhookTunnel: vi.fn(() => googlechatPidDir),
+          googlechatWebhookTunnelPidDir: vi.fn(() => googlechatPidDir),
+        },
+      ),
+    ).rejects.toThrow(/Ollama model cleanup failed/);
+
+    expect(unloadOllamaModels).toHaveBeenCalledExactlyOnceWith(["old-model"]);
+    expect(clearPendingOllamaModelCleanup).not.toHaveBeenCalled();
+  });
+
   it("keeps a model shared through a compatible endpoint at the same local daemon", async () => {
     const own = {
       name: SANDBOX,
@@ -141,7 +508,12 @@ describe("cleanupSandboxServices Ollama ownership", () => {
       { stopHostServices: false },
       {
         getSandbox: () => own,
-        listSandboxes: () => ({ sandboxes: [own, peer], defaultSandbox: null }),
+        listOllamaModelOwnershipPeers: () => [own, peer],
+        captureSandboxOwnershipPhases: () => ({
+          status: 0,
+          output: "NAME CREATED PHASE\npeer 2026-01-01 Running",
+        }),
+        resolvePersistedSandboxOwnershipGateway: () => "nemoclaw",
         loadPersistedOllamaHost: () => "127.0.0.1",
         migrateLegacyCloudflaredState: vi.fn(() => false),
         unloadOllamaModels,
@@ -307,4 +679,32 @@ describe("assertUnambiguousDestroyContainerIdentity (#8999)", () => {
     });
     expect(classify).toHaveBeenCalledWith("destroytest");
   });
+});
+
+describe("forced destroy host cleanup", () => {
+  it(
+    "preserves host resources when --force cannot confirm sandbox deletion",
+    { timeout: 30_000 },
+    async () => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-destroy-force-home-"));
+      vi.stubEnv("HOME", home);
+      try {
+        const harness = createDestroyHarness({
+          deleteStatus: 1,
+          deleteOutput: "connection refused",
+        });
+        await expect(harness.destroySandbox("alpha", { force: true })).resolves.toBeUndefined();
+        expect(harness.unloadOllamaModelsSpy).not.toHaveBeenCalled();
+        expect(harness.stopAllSpy).not.toHaveBeenCalled();
+        expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
+          expect.arrayContaining(["provider", "delete"]),
+          expect.anything(),
+        );
+      } finally {
+        vi.unstubAllEnvs();
+        resetDestroyModuleCache();
+        fs.rmSync(home, { force: true, recursive: true });
+      }
+    },
+  );
 });

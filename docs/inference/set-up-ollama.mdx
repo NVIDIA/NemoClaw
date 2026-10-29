@@ -404,14 +404,18 @@ Windows-host Ollama does not receive this Linux recovery guidance.
 
 ## Release GPU Memory
 
-When you destroy an Ollama-backed sandbox or stop host services, NemoClaw asks Ollama to unload each currently loaded model by sending `keep_alive: 0`.
+When you destroy a sandbox, NemoClaw asks Ollama to unload its current model and models recorded for lifecycle-scoped cleanup retry, but only after verifying that no other active sandbox uses each model. If ownership cannot be verified, no model is unloaded. Other models resident on the shared host daemon are left alone. Legacy pending cleanup receipts lack ownership identity and are left untouched.
+The host-service commands `$$nemoclaw stop` and `$$nemoclaw tunnel stop` run host-wide Ollama cleanup, which may unload unrelated resident models.
 When you stop a single Ollama-backed sandbox, NemoClaw unloads only that sandbox's own model.
-It leaves the model loaded only when OpenShell reports that another matching Ollama-backed sandbox is active.
+It keeps the model loaded when OpenShell reports that another active sandbox uses the same local Ollama daemon and model.
 Stopped or incomplete sibling registry rows do not retain the model.
 If NemoClaw cannot verify sibling state, it does not unload the model and `stop` exits nonzero.
-When you re-onboard an existing Ollama-backed sandbox onto a different model, NemoClaw unloads the model it replaced, with the same sibling protection.
-A re-onboard that keeps the same model leaves it loaded, because the new route can still be served by the same Ollama daemon.
-This cleanup runs on a best-effort basis and does not delete downloaded model files.
+When you re-onboard an Ollama-backed sandbox from the host Ollama route to a different model or provider, NemoClaw checks live ownership before releasing its previous model.
+If another active sandbox uses the same local Ollama model, NemoClaw keeps it loaded.
+If NemoClaw cannot verify whether another sandbox uses the model, it keeps the model loaded and attempts to record cleanup for retry while leaving the new route active. When NemoClaw reports that retry state could not be recorded, keep every listed model loaded until you manually verify that no active matching sandbox owns each one, then release only the listed models from the local Ollama host.
+If the new route uses the same model through the same local daemon, NemoClaw keeps the model loaded.
+If the unload cleanup fails, the new route remains active and NemoClaw attempts to record the model for cleanup retry. Rerun onboarding or run `$$nemoclaw <name> destroy` to retry it; if the warning says the retry state could not be recorded, use its reported manual-release guidance instead.
+This cleanup is best-effort and does not delete downloaded model files.
 
 ## Related Topics
 

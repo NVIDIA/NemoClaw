@@ -18,6 +18,7 @@ import {
 import {
   captureResolvedOpenshell,
   captureResolvedOpenshellAsync,
+  captureSandboxPhasesForGateway,
   getStatusProbeTimeoutMs,
   runOpenshell,
 } from "./runtime";
@@ -130,6 +131,90 @@ describe("captureResolvedOpenshell", () => {
 
     expect(result.status).toBe(0);
     expect(result.output).toBe("snapshot");
+  });
+});
+
+describe("captureSandboxPhasesForGateway", () => {
+  it("rejects an endpoint override before probing another gateway", () => {
+    const marker = path.join(os.tmpdir(), `nemoclaw-openshell-probe-${process.pid}.marker`);
+    const openshell = nodeExecutable(
+      "openshell",
+      `require("node:fs").writeFileSync(${JSON.stringify(marker)}, "ran");`,
+    );
+    vi.stubEnv("NEMOCLAW_OPENSHELL_BIN", openshell);
+    try {
+      expect(() =>
+        captureSandboxPhasesForGateway("recorded-gateway", {
+          ...process.env,
+          OPENSHELL_GATEWAY_ENDPOINT: "https://wrong-gateway.invalid",
+        }),
+      ).toThrow(/OPENSHELL_GATEWAY_ENDPOINT is set/);
+      expect(fs.existsSync(marker)).toBe(false);
+    } finally {
+      fs.rmSync(marker, { force: true });
+    }
+  });
+
+  it("rejects an ambient endpoint override omitted from the supplied environment", () => {
+    const marker = path.join(os.tmpdir(), `nemoclaw-openshell-ambient-${process.pid}.marker`);
+    const openshell = nodeExecutable(
+      "openshell",
+      `require("node:fs").writeFileSync(${JSON.stringify(marker)}, "ran");`,
+    );
+    vi.stubEnv("NEMOCLAW_OPENSHELL_BIN", openshell);
+    const environment = { ...process.env };
+    delete environment.OPENSHELL_GATEWAY_ENDPOINT;
+    vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://wrong-gateway.invalid");
+    try {
+      expect(() => captureSandboxPhasesForGateway("recorded-gateway", environment)).toThrow(
+        /OPENSHELL_GATEWAY_ENDPOINT is set/,
+      );
+      expect(fs.existsSync(marker)).toBe(false);
+    } finally {
+      fs.rmSync(marker, { force: true });
+    }
+  });
+
+  it("passes gateway config but excludes supplied and ambient credentials from the child", async () => {
+    const openshell = nodeExecutable(
+      "openshell",
+      `process.stdout.write(JSON.stringify({
+        args: process.argv.slice(2),
+        home: process.env.HOME,
+        config: process.env.XDG_CONFIG_HOME,
+        gateway: process.env.OPENSHELL_GATEWAY,
+        workspace: process.env.OPENSHELL_WORKSPACE,
+        tls: process.env.OPENSHELL_LOCAL_TLS_DIR,
+        suppliedSecret: process.env.NVIDIA_API_KEY ?? null,
+        ambientSecret: process.env.AWS_SECRET_ACCESS_KEY ?? null,
+      }));`,
+    );
+    vi.stubEnv("NEMOCLAW_OPENSHELL_BIN", openshell);
+    vi.stubEnv("AWS_SECRET_ACCESS_KEY", "ambient-canary");
+    vi.resetModules();
+    const { captureSandboxPhasesForGateway: captureFresh } = await import("./runtime");
+
+    const result = captureFresh("recorded-gateway", {
+      HOME: "/recorded/home",
+      PATH: process.env.PATH,
+      XDG_CONFIG_HOME: "/recorded/config",
+      OPENSHELL_GATEWAY: "recorded-gateway",
+      OPENSHELL_WORKSPACE: "recorded-workspace",
+      OPENSHELL_LOCAL_TLS_DIR: "/recorded/tls",
+      NVIDIA_API_KEY: "supplied-canary",
+    });
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.output)).toEqual({
+      args: ["sandbox", "list", "-g", "recorded-gateway"],
+      home: "/recorded/home",
+      config: "/recorded/config",
+      gateway: "recorded-gateway",
+      workspace: "recorded-workspace",
+      tls: "/recorded/tls",
+      suppliedSecret: null,
+      ambientSecret: null,
+    });
   });
 });
 

@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { OpenShellProviderAdapter } from "../adapters/openshell/provider-adapter";
 import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "../inference/native-nvidia/contract";
+import type { OllamaModelHolder } from "../inference/ollama/model-ownership";
 import { setupOllamaLocalInference } from "./inference-providers/ollama-local";
 import {
   createProviderReviewDeps,
@@ -17,6 +18,17 @@ vi.mock("./sandbox-lifecycle", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./sandbox-lifecycle")>()),
   releaseAbandonedRouteReservation: vi.fn(() => false),
 }));
+
+const previousLocalOllamaRoute: OllamaModelHolder = {
+  name: "alpha",
+  provider: "ollama-local",
+  model: "qwen2.5:1.5b",
+  endpointUrl: "http://127.0.0.1:11434",
+  gatewayName: "nemoclaw-32677",
+  gatewayPort: 32677,
+  lifecycleGeneration: "generation-alpha",
+  lifecycleLiveIdentityFingerprint: "a".repeat(64),
+};
 
 describe("recorded Pi local inference route", () => {
   it("rejects a changed selection before invoking a provider or gateway", async () => {
@@ -345,7 +357,22 @@ describe("native NVIDIA onboarding", () => {
       createProvider,
     } as unknown as OpenShellProviderAdapter;
     const runOpenshell = vi.fn((_args: string[]) => ({ status: 0, stdout: "", stderr: "" }));
-    const updateSandbox = vi.fn(() => true);
+    const events: string[] = [];
+    const updateSandbox = vi.fn(() => {
+      events.push("route-published");
+      return true;
+    });
+    const unloadOllamaModels = vi.fn(() => {
+      events.push("unload");
+      return {
+        ok: true as const,
+        outcome: "released" as const,
+        endpoint: "http://127.0.0.1:11434",
+        selectedModels: ["qwen2.5:1.5b"],
+        discoveries: [],
+        requests: [],
+      };
+    });
     const setNativeNvidiaProviderAuthority = vi.fn(() => true);
     const verifyInferenceRoute = vi.fn();
     const verifyOnboardInferenceSmoke = vi.fn(async () => undefined);
@@ -360,7 +387,28 @@ describe("native NVIDIA onboarding", () => {
       runOpenshell,
       updateSandbox,
       setNativeNvidiaProviderAuthority,
-      getSandbox: () => null,
+      getSandbox: () => previousLocalOllamaRoute,
+      localInference: {
+        loadPersistedOllamaHost: () => "127.0.0.1",
+        loadPendingOllamaModelCleanup: () => [],
+        persistPendingOllamaModelCleanup: vi.fn(),
+        clearPendingOllamaModelCleanup: vi.fn(),
+        clearPersistedOllamaHostIfUnused: vi.fn(),
+      },
+      listOllamaModelOwnershipPeers: () => [],
+      discoverActiveOllamaSandboxNames: () => ({
+        ok: true as const,
+        activeSandboxNames: new Set<string>(),
+        gatewayChecks: [],
+      }),
+      unloadOllamaModels,
+      withOllamaModelOwnershipLock: (operation: () => void) => operation(),
+      withOllamaModelOwnershipTransaction: async <T>(operation: () => Promise<T> | T) => {
+        events.push("ownership-transaction-start");
+        const result = await operation();
+        events.push("ownership-transaction-end");
+        return result;
+      },
       upsertProvider: vi.fn(async () => ({ ok: true })),
       verifyInferenceRoute,
       verifyOnboardInferenceSmoke,
@@ -432,6 +480,10 @@ describe("native NVIDIA onboarding", () => {
         },
       }),
     );
+    expect(events.indexOf("route-published")).toBeLessThan(events.indexOf("unload"));
+    expect(events[0]).toBe("ownership-transaction-start");
+    expect(events.at(-1)).toBe("ownership-transaction-end");
+    expect(unloadOllamaModels).toHaveBeenCalledExactlyOnceWith(["qwen2.5:1.5b"]);
     expect(setNativeNvidiaProviderAuthority).toHaveBeenCalledWith("onboarding-gateway", {
       schemaVersion: 1,
       profileId: "nemoclaw-nvidia-inference-v1",
@@ -736,4 +788,229 @@ describe("native NVIDIA onboarding", () => {
     expect(providerAdapter.importProviderProfile).not.toHaveBeenCalled();
     expect(updateSandbox).not.toHaveBeenCalled();
   });
+});
+
+describe("concurrent Ollama ownership transactions", () => {
+  it("serializes route publication before superseded-model release (#12677)", async () => {
+    const events: string[] = [];
+    const registry = new Map<string, OllamaModelHolder>([
+      [
+        "alpha",
+        {
+          name: "alpha",
+          provider: "ollama-local",
+          model: "qwen2.5:1.5b",
+          endpointUrl: "http://127.0.0.1:11434/v1",
+          gatewayName: "gateway-alpha",
+        },
+      ],
+      [
+        "beta",
+        {
+          name: "beta",
+          provider: "compatible-endpoint",
+          model: "previous-model",
+          endpointUrl: "https://previous.example/v1",
+          gatewayName: "gateway-beta",
+        },
+      ],
+    ]);
+    let signalBetaRouteStarted!: () => void;
+    let signalAlphaRouteStarted!: () => void;
+    let releaseBetaRoute!: () => void;
+    let signalAlphaQueued!: () => void;
+    const betaRouteStarted = new Promise<void>((resolve) => {
+      signalBetaRouteStarted = resolve;
+    });
+    const alphaRouteStarted = new Promise<void>((resolve) => {
+      signalAlphaRouteStarted = resolve;
+    });
+    const allowBetaRouteToFinish = new Promise<void>((resolve) => {
+      releaseBetaRoute = resolve;
+    });
+    const alphaQueuedForTransaction = new Promise<void>((resolve) => {
+      signalAlphaQueued = resolve;
+    });
+    const transactionLabels = ["gateway-beta", "gateway-alpha"];
+    let transactionTail = Promise.resolve();
+    let transactionCalls = 0;
+    const withOwnershipTransaction: NonNullable<
+      SetupInferenceDeps["withOllamaModelOwnershipTransaction"]
+    > = async <T>(operation: () => Promise<T> | T): Promise<T> => {
+      transactionCalls += 1;
+      const label = transactionLabels[transactionCalls - 1] ?? "unknown";
+      events.push(`transaction-request:${label}`);
+      [() => undefined, signalAlphaQueued][transactionCalls - 1]?.();
+      const previous = transactionTail;
+      let release!: () => void;
+      transactionTail = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      await previous;
+      events.push(`transaction-enter:${label}`);
+      try {
+        const result = await operation();
+        events.push(`transaction-exit:${label}`);
+        return result;
+      } finally {
+        release();
+      }
+    };
+    const signalRouteStarted: Record<string, () => void> = {
+      "gateway-alpha": signalAlphaRouteStarted,
+      "gateway-beta": signalBetaRouteStarted,
+    };
+    const inferenceRouteMutator: SetupInferenceDeps["inferenceRouteMutator"] = {
+      setInferenceRoute: async (request) => {
+        const gateway = request.target.gatewayName;
+        events.push(`route-start:${gateway}`);
+        signalRouteStarted[gateway]?.();
+        await (gateway === "gateway-beta" ? allowBetaRouteToFinish : Promise.resolve());
+        events.push(`route-finished:${gateway}`);
+        return { ok: true };
+      },
+    };
+    const updateSandbox: SetupInferenceDeps["updateSandbox"] = (name, route) => {
+      const previous = registry.get(name);
+      registry.set(name, { ...previous, ...route, name } as OllamaModelHolder);
+      events.push(`registry-published:${name}`);
+      return true;
+    };
+    const listOllamaModelOwnershipPeers = vi.fn(() => {
+      events.push("peer-discovery");
+      return [...registry.values()];
+    });
+    const unloadOllamaModels = vi.fn(() => {
+      events.push("unload");
+      return {
+        ok: true as const,
+        outcome: "released" as const,
+        endpoint: "http://127.0.0.1:11434",
+        selectedModels: ["qwen2.5:1.5b"],
+        discoveries: [],
+        requests: [],
+      };
+    });
+    const localInference = {
+      loadPersistedOllamaHost: () => "127.0.0.1",
+      loadPendingOllamaModelCleanup: () => [],
+      persistPendingOllamaModelCleanup: vi.fn(),
+      clearPendingOllamaModelCleanup: vi.fn(),
+      clearPersistedOllamaHostIfUnused: vi.fn(),
+    };
+    const deps = {
+      checkGatewayRouteCompatibility: vi.fn(() => ({ ok: true as const })),
+      withSandboxMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
+        await operation(),
+      withGatewayRouteMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
+        await operation(),
+      step: vi.fn(),
+      getGatewayName: () => "gateway-default",
+      runOpenshell: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
+      inferenceRouteMutator,
+      inferenceRouteObserver: {
+        observeInferenceRoute: vi.fn(async () => ({ ok: true as const })),
+      } as unknown as SetupInferenceDeps["inferenceRouteObserver"],
+      updateSandbox,
+      getSandbox: (name: string) => registry.get(name) ?? null,
+      listOllamaModelOwnershipPeers,
+      discoverActiveOllamaSandboxNames: (owners: readonly OllamaModelHolder[]) => ({
+        ok: true as const,
+        activeSandboxNames: new Set(owners.map((owner) => owner.name)),
+        gatewayChecks: [],
+      }),
+      localInference,
+      unloadOllamaModels,
+      withOllamaModelOwnershipLock: (operation: () => void) => operation(),
+      withOllamaModelOwnershipTransaction: withOwnershipTransaction,
+      upsertProvider: vi.fn(async () => ({ ok: true as const })),
+      bedrockRuntimeOnboard: {
+        setupBedrockRuntimeInference: vi.fn(async () => ({ handled: false as const })),
+      },
+      openrouterRuntimeOnboard: {
+        setupOpenRouterRuntimeInference: vi.fn(async () => ({ handled: false as const })),
+      },
+      verifyInferenceRoute: vi.fn(),
+      verifyOnboardInferenceSmoke: vi.fn(async () => undefined),
+      isNonInteractive: () => true,
+      hermesProviderAuth: { HERMES_PROVIDER_NAME: "hermes-provider" },
+      hydrateCredentialEnv: vi.fn(() => "test-compatible-api-key"),
+      redact: (value: string) => value,
+      compactText: (value: string) => value,
+      log: vi.fn(),
+      error: vi.fn(),
+      exitProcess: vi.fn((code: number): never => {
+        throw new Error(`exit ${code}`);
+      }),
+      localInferenceTimeoutSecs: 30,
+      vllmLocalCredentialEnv: "VLLM_API_KEY",
+      ollamaProxyCredentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+      isRoutedInferenceProvider: () => false,
+    } as unknown as SetupInferenceDeps;
+    const setupAlpha = createSetupInference(deps);
+    const setupBeta = createSetupInference(deps);
+    const betaSwitch = setupBeta(
+      "beta",
+      "qwen2.5:1.5b",
+      "compatible-endpoint",
+      "http://127.0.0.1:11434/v1",
+      "COMPATIBLE_API_KEY",
+      null,
+      [],
+      {
+        gatewayName: "gateway-beta",
+        endpointPinnedAddresses: ["127.0.0.1"],
+        skipHostInferenceSmoke: true,
+      },
+    );
+
+    await betaRouteStarted;
+    const alphaSwitch = setupAlpha(
+      "alpha",
+      "other-model",
+      "compatible-endpoint",
+      "https://api.example.test/v1",
+      "COMPATIBLE_API_KEY",
+      null,
+      [],
+      {
+        gatewayName: "gateway-alpha",
+        endpointPinnedAddresses: ["93.184.216.34"],
+        skipHostInferenceSmoke: true,
+      },
+    );
+    const alphaOrder = await Promise.race([
+      alphaQueuedForTransaction.then(() => "queued"),
+      alphaRouteStarted.then(() => "route-started"),
+    ]);
+    releaseBetaRoute();
+    await expect(Promise.all([alphaSwitch, betaSwitch])).resolves.toEqual([
+      { ok: true },
+      { ok: true },
+    ]);
+
+    expect(alphaOrder).toBe("queued");
+    expect(events).toContain("registry-published:beta");
+    expect(events).toContain("route-start:gateway-alpha");
+    expect(events).toContain("transaction-exit:gateway-beta");
+    expect(events).toContain("transaction-exit:gateway-alpha");
+    expect(events).toContain("peer-discovery");
+    expect(events.indexOf("transaction-exit:gateway-beta")).toBeLessThan(
+      events.indexOf("route-start:gateway-alpha"),
+    );
+    expect(events.indexOf("registry-published:beta")).toBeLessThan(
+      events.indexOf("route-start:gateway-alpha"),
+    );
+    expect(events.indexOf("transaction-exit:gateway-beta")).toBeLessThan(
+      events.indexOf("peer-discovery"),
+    );
+    expect(events.indexOf("registry-published:alpha")).toBeLessThan(
+      events.indexOf("peer-discovery"),
+    );
+    expect(events.indexOf("peer-discovery")).toBeLessThan(
+      events.indexOf("transaction-exit:gateway-alpha"),
+    );
+    expect(listOllamaModelOwnershipPeers).toHaveBeenCalledOnce();
+    expect(unloadOllamaModels).not.toHaveBeenCalled();
+  }, 20_000);
 });

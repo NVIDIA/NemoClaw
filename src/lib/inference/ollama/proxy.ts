@@ -32,8 +32,10 @@ const {
 const { ollamaModelRefsMatch }: typeof import("./model-discovery") = require("./model-discovery");
 const {
   clearPendingOllamaModelCleanup,
+  discoverOllamaModelOwnership,
   isLocalOllamaRouteOwner,
   loadPendingOllamaModelCleanup,
+  matchingOllamaModelPeers,
 }: typeof import("./model-ownership") = require("./model-ownership");
 const {
   getBootstrapOllamaModelOptions,
@@ -134,12 +136,16 @@ function withOllamaProxyLifecycleLock<T>(operation: () => T): T {
 
 /** Serialize model-holder checks and GPU release across sandbox commands. */
 function withOllamaModelOwnershipLock<T>(operation: () => T): T {
-  return withMcpLifecycleLockSync(OLLAMA_MODEL_OWNERSHIP_LOCK, operation);
+  return withMcpLifecycleLockSync(OLLAMA_MODEL_OWNERSHIP_LOCK, operation, {
+    stateDir: path.join(PROXY_STATE_DIR, "state"),
+  });
 }
 
-/** Serialize async host-route publication with final ownership retirement. */
+/** Serialize async host-route publication with final ownership retirement across gateway roots. */
 function withOllamaModelOwnershipTransaction<T>(operation: () => Promise<T> | T): Promise<T> {
-  return withMcpLifecycleLock(OLLAMA_MODEL_OWNERSHIP_LOCK, operation);
+  return withMcpLifecycleLock(OLLAMA_MODEL_OWNERSHIP_LOCK, operation, {
+    stateDir: path.join(PROXY_STATE_DIR, "state"),
+  });
 }
 
 function withOllamaProxyLifecycleTransaction<T>(operation: () => Promise<T> | T): Promise<T> {
@@ -1833,6 +1839,7 @@ export {
   buildOllamaAuthProxySpawnEnv,
   checkOllamaModelToolSupport,
   clearPendingOllamaModelCleanup,
+  discoverOllamaModelOwnership,
   ensureOllamaAuthProxy,
   getOllamaProxyToken,
   getOllamaPullTimeoutMs,
@@ -1842,6 +1849,7 @@ export {
   killStaleProxyIfUnused,
   loadPendingOllamaModelCleanup,
   loadPersistedOllamaHost,
+  matchingOllamaModelPeers,
   noAuthProxy,
   ollamaModelRefsMatch,
   persistAndProbeOllamaProxy,

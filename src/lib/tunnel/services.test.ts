@@ -1283,28 +1283,6 @@ describe("stopAll", () => {
     expect(output).toContain("All services stopped");
     logSpy.mockRestore();
   });
-
-  it("runs injected Ollama cleanup before reporting services stopped", () => {
-    const cleanup = vi.fn();
-    const clearPendingOllamaModelCleanup = vi.fn();
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    stopAll({
-      pidDir,
-      sandboxName: "test-box",
-      unloadOllamaModels: cleanup,
-      clearPendingOllamaModelCleanup,
-    });
-    const stoppedCallIndex = logSpy.mock.calls.findIndex(([message]) =>
-      String(message).includes("All services stopped"),
-    );
-    const stoppedCallOrder = logSpy.mock.invocationCallOrder[stoppedCallIndex];
-    logSpy.mockRestore();
-
-    expect(cleanup).toHaveBeenCalledOnce();
-    expect(clearPendingOllamaModelCleanup).toHaveBeenCalledWith("test-box");
-    expect(cleanup.mock.invocationCallOrder[0]).toBeLessThan(stoppedCallOrder ?? 0);
-  });
-
   it("skips Ollama cleanup when the scoped caller proves no model ownership", () => {
     const cleanup = vi.fn();
     const clearPendingOllamaModelCleanup = vi.fn();

@@ -4,10 +4,13 @@
 import { CLI_NAME } from "../../cli/branding";
 import {
   decideOllamaModelOwnership,
+  discoverOllamaModelOwnership,
   isLocalOllamaRouteOwner,
   matchingOllamaModelPeers,
+  type OllamaActiveOwnershipDiscovery,
   type OllamaHostRoute,
 } from "../../inference/ollama/model-ownership";
+export type { OllamaActiveOwnershipDiscovery } from "../../inference/ollama/model-ownership";
 import type { OllamaUnloadResult } from "../../inference/ollama/proxy";
 import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
@@ -70,17 +73,6 @@ function defaultUnloadOllamaModels(onlyModels: readonly string[]): OllamaUnloadR
   return unloadOllamaModels(onlyModels);
 }
 
-export type OllamaActiveOwnershipDiscovery =
-  | {
-      readonly ok: true;
-      readonly activeSandboxNames: ReadonlySet<string>;
-      readonly gatewayChecks: readonly {
-        readonly activeSandboxes: readonly string[];
-        readonly gateway: string;
-      }[];
-    }
-  | { readonly ok: false; readonly message: string };
-
 type OllamaStopReleaseResult =
   | { readonly ok: true }
   | { readonly ok: false; readonly message: string };
@@ -104,70 +96,12 @@ export function discoverActiveOllamaSandboxNames(
   deps: OllamaOwnershipDiscoveryDeps = {},
 ): OllamaActiveOwnershipDiscovery {
   const capturePhases = deps.captureSandboxOwnershipPhases ?? captureSandboxOwnershipPhases;
-  const parseEntries = deps.parseLiveSandboxEntries ?? parseLiveSandboxEntries;
   const resolveGateway =
     deps.resolvePersistedSandboxOwnershipGateway ?? resolvePersistedSandboxOwnershipGateway;
-  if (peers.length === 0) {
-    return { ok: true, activeSandboxNames: new Set(), gatewayChecks: [] };
-  }
-
-  const peersByGateway = new Map<string, Set<string>>();
-  try {
-    for (const peer of peers) {
-      const gateway = resolveGateway(peer);
-      const names = peersByGateway.get(gateway) ?? new Set<string>();
-      names.add(peer.name);
-      peersByGateway.set(gateway, names);
-    }
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    return { ok: false, message: `could not resolve a sibling gateway: ${detail}` };
-  }
-
-  const activeSandboxNames = new Set<string>();
-  const gatewayChecks: Array<{ activeSandboxes: string[]; gateway: string }> = [];
-  for (const [gateway, peerNames] of peersByGateway) {
-    let result;
-    try {
-      result = capturePhases(gateway, environment);
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      return { ok: false, message: `OpenShell could not list gateway '${gateway}': ${detail}` };
-    }
-    if (result.status !== 0) {
-      const detail = result.output.trim().replace(/\s+/g, " ").slice(0, 300);
-      return {
-        ok: false,
-        message: `OpenShell could not list sandbox phases on gateway '${gateway}'${
-          detail ? `: ${detail}` : ""
-        }`,
-      };
-    }
-    const phases = new Map(parseEntries(result.output).map((entry) => [entry.name, entry.phase]));
-    const activeSandboxes: string[] = [];
-    for (const peerName of peerNames) {
-      const phase = phases.get(peerName);
-      if (
-        phase === undefined ||
-        phase === "Stopped" ||
-        phase === "Error" ||
-        phase === "Failed" ||
-        phase === "Evicted"
-      ) {
-        continue;
-      }
-      if (phase === null || phase === "Unknown") {
-        return {
-          ok: false,
-          message: `OpenShell returned no usable phase for sibling '${peerName}' on gateway '${gateway}'`,
-        };
-      }
-      activeSandboxNames.add(peerName);
-      activeSandboxes.push(peerName);
-    }
-    gatewayChecks.push({ activeSandboxes, gateway });
-  }
-  return { ok: true, activeSandboxNames, gatewayChecks };
+  return discoverOllamaModelOwnership(peers, environment, capturePhases, {
+    parseLiveSandboxEntries: deps.parseLiveSandboxEntries,
+    resolvePersistedSandboxOwnershipGateway: resolveGateway,
+  });
 }
 
 function releaseStoppedSandboxOllamaModel(
@@ -207,6 +141,7 @@ function releaseStoppedSandboxOllamaModel(
         sandboxes,
         discovery.activeSandboxNames,
         selectedHost,
+        discovery.activePeers,
       );
       if (ownership.kind === "missing-model") {
         log("  Ollama model release skipped: the sandbox registry has no model.");

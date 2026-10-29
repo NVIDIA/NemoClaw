@@ -211,30 +211,15 @@ type SandboxGatewayStateLookup = (
   gatewayName?: string,
 ) => SandboxGatewayState | Promise<SandboxGatewayState>;
 
-function gatewayScopedArgs(args: string[], gatewayName?: string): string[] {
-  if (!gatewayName) return args;
-  return [...args.slice(0, 2), "-g", gatewayName, ...args.slice(2)];
-}
-
 /** Resolve the authoritative gateway for a persisted sibling ownership row. */
-export function resolvePersistedSandboxOwnershipGateway(sandbox: SandboxEntry): string {
+export function resolvePersistedSandboxOwnershipGateway(
+  sandbox: Pick<SandboxEntry, "gatewayName" | "gatewayPort">,
+): string {
   return getPersistedSandboxTargetGatewayName(sandbox);
 }
 
-/** Capture one gateway's live sandbox phases for host-global model ownership. */
-export function captureSandboxOwnershipPhases(
-  gatewayName: string,
-  environment: NodeJS.ProcessEnv,
-): { readonly output: string; readonly status: number | null } {
-  const result = captureOpenshell(gatewayScopedArgs(["sandbox", "list"], gatewayName), {
-    env: environment,
-    ignoreError: true,
-    includeStderr: true,
-    maxBuffer: 1024 * 1024,
-    timeout: 10_000,
-  });
-  return { output: result.output, status: result.status };
-}
+/** Capture sandbox phases from each owning gateway for host-global model ownership. */
+export { captureSandboxPhasesForGateway as captureSandboxOwnershipPhases } from "../../adapters/openshell/runtime";
 /** Recover a receipt-bound portable sandbox before the live lookup rejects a stopped container. */
 export async function recoverPortableDemoSandboxLifecycleForConnect(
   sandboxName: string,

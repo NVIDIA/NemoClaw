@@ -2272,6 +2272,7 @@ const getSetupInferenceDeps = (): SetupInferenceDeps => ({
   withSandboxMutationLock: sandboxMutationLock.withSandboxMutationLock,
   step,
   getGatewayName: () => GATEWAY_NAME,
+  resolveOllamaOwnershipGateway: gatewayBinding.resolveSandboxGatewayName,
   runOpenshell,
   inferenceRouteMutator,
   inferenceRouteObserver,
@@ -2368,7 +2369,6 @@ const sandboxCreateIntentResolver = sandboxCreateIntentResolution.createSandboxC
       promptOrDefault,
     }),
 });
-
 const stageSandboxCredentialProviders = (
   input: import("./onboard/credential-provider-registration").StageSandboxCredentialProvidersInput<AgentDefinition | null>,
 ) =>
