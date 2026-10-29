@@ -158,7 +158,7 @@ describe("Maintainer approval through the production diff loader", () => {
     const merged = "c".repeat(40);
     const responses = new Map<string, () => string>([
       ["git rev-parse --is-shallow-repository", () => "false"],
-      [`git fetch --no-tags --depth=1024 origin refs/pull/${PR}/head`, () => ""],
+      [`git fetch --no-tags --depth=32 origin refs/pull/${PR}/head`, () => ""],
       ["git rev-parse FETCH_HEAD", () => HEAD],
       [`git merge-tree --write-tree --no-messages ${BASE} ${HEAD}`, () => merged],
       [`git diff --name-status -z -M ${BASE} ${merged} --`, () => `M\0${BUDGET}\0`],
@@ -175,6 +175,7 @@ describe("Maintainer approval through the production diff loader", () => {
       return response!();
     });
     const contents = new Map([
+      [`git merge-base ${BASE} ${HEAD}`, BASE],
       [`git show ${BASE}:${BUDGET}`, source],
       [`git show ${merged}:${BUDGET}`, head],
     ]);
