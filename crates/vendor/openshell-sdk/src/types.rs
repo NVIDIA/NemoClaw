@@ -23,6 +23,14 @@ pub struct DeleteOptions {
     pub allow_missing: bool,
 }
 
+/// Options for resuming a suspended sandbox.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ResumeOptions {
+    /// Boot the workload cleanly when the retained memory state cannot be
+    /// restored. When false, resume fails instead.
+    pub restart_if_restore_fails: bool,
+}
+
 /// A deletion acknowledgement is not necessarily completion.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
@@ -215,6 +223,8 @@ pub enum SandboxPhase {
     Stopped,
     Starting,
     Completed,
+    Suspending,
+    Suspended,
 }
 
 impl From<proto::SandboxPhase> for SandboxPhase {
@@ -230,6 +240,8 @@ impl From<proto::SandboxPhase> for SandboxPhase {
             proto::SandboxPhase::Stopped => Self::Stopped,
             proto::SandboxPhase::Starting => Self::Starting,
             proto::SandboxPhase::Completed => Self::Completed,
+            proto::SandboxPhase::Suspending => Self::Suspending,
+            proto::SandboxPhase::Suspended => Self::Suspended,
         }
     }
 }

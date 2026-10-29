@@ -57,9 +57,9 @@ regex = "1"
 url = "2"
 ipnet = "2"
 nix = { version = "0.29", features = ["signal", "term"] }
-openshell-core = { git = "https://github.com/NVIDIA/OpenShell", rev = "bdb956f2cd65a635f1294fccf1d138d263bf650f", default-features = false }
-openshell-sdk = { git = "https://github.com/NVIDIA/OpenShell", rev = "bdb956f2cd65a635f1294fccf1d138d263bf650f", default-features = false }
-openshell-policy = { git = "https://github.com/NVIDIA/OpenShell", rev = "bdb956f2cd65a635f1294fccf1d138d263bf650f", default-features = false }
+openshell-core = { git = "https://github.com/NVIDIA/OpenShell", rev = "ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47", default-features = false }
+openshell-sdk = { git = "https://github.com/NVIDIA/OpenShell", rev = "ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47", default-features = false }
+openshell-policy = { git = "https://github.com/NVIDIA/OpenShell", rev = "ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47", default-features = false }
 tonic = { version = "0.14", features = ["tls-ring", "tls-native-roots"] }
 prost = "0.14"
 prost-types = "0.14"

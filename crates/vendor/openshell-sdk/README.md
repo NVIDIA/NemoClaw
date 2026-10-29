@@ -34,11 +34,10 @@ for the refreshed access token.
 
 - Plaintext (local development)
 - Server-authenticated TLS (system roots, or a pinned private CA via `ca_cert`)
+- Mutual TLS via an in-memory `ClientIdentity`
 - OIDC bearer over HTTPS (gateways behind an OAuth2/OIDC IdP)
 - Cloudflare Access tunnel (hosted gateways)
 - Insecure TLS (development/debug; certificate verification disabled)
-
-mTLS (client certificates) is not supported.
 
 ## Public surface
 
@@ -178,7 +177,7 @@ These helpers use the raw client's authentication slot. They do not perform OIDC
 | Module | Purpose |
 |---|---|
 | `client` | High-level `OpenShellClient` and the curated sandbox surface. |
-| `config` | `ClientConfig`, `AuthConfig`. |
+| `config` | `ClientConfig`, `AuthConfig`, `ClientIdentity`. |
 | `transport` | Channel construction, TLS resolution, request interceptors. |
 | `auth` | `EdgeAuthInterceptor` for bearer-token attachment. |
 | `oidc` | OIDC token handling at the transport layer. |

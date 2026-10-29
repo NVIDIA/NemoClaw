@@ -1202,7 +1202,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3623,7 +3623,7 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 [[package]]
 name = "openshell-core"
 version = "0.0.0"
-source = "git+https://github.com/NVIDIA/OpenShell?rev=bdb956f2cd65a635f1294fccf1d138d263bf650f#bdb956f2cd65a635f1294fccf1d138d263bf650f"
+source = "git+https://github.com/NVIDIA/OpenShell?rev=ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47#ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -3658,7 +3658,7 @@ dependencies = [
 [[package]]
 name = "openshell-crypto"
 version = "0.0.0"
-source = "git+https://github.com/NVIDIA/OpenShell?rev=bdb956f2cd65a635f1294fccf1d138d263bf650f#bdb956f2cd65a635f1294fccf1d138d263bf650f"
+source = "git+https://github.com/NVIDIA/OpenShell?rev=ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47#ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47"
 dependencies = [
  "aws-lc-rs",
  "jsonwebtoken",
@@ -3676,7 +3676,7 @@ dependencies = [
 [[package]]
 name = "openshell-extension-core"
 version = "0.0.0"
-source = "git+https://github.com/NVIDIA/OpenShell?rev=bdb956f2cd65a635f1294fccf1d138d263bf650f#bdb956f2cd65a635f1294fccf1d138d263bf650f"
+source = "git+https://github.com/NVIDIA/OpenShell?rev=ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47#ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47"
 dependencies = [
  "hyper-util",
  "serde",
@@ -3689,7 +3689,7 @@ dependencies = [
 [[package]]
 name = "openshell-policy"
 version = "0.0.0"
-source = "git+https://github.com/NVIDIA/OpenShell?rev=bdb956f2cd65a635f1294fccf1d138d263bf650f#bdb956f2cd65a635f1294fccf1d138d263bf650f"
+source = "git+https://github.com/NVIDIA/OpenShell?rev=ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47#ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47"
 dependencies = [
  "hickory-proto",
  "miette",
@@ -3703,7 +3703,7 @@ dependencies = [
 [[package]]
 name = "openshell-policy-schema"
 version = "0.0.0"
-source = "git+https://github.com/NVIDIA/OpenShell?rev=bdb956f2cd65a635f1294fccf1d138d263bf650f#bdb956f2cd65a635f1294fccf1d138d263bf650f"
+source = "git+https://github.com/NVIDIA/OpenShell?rev=ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47#ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47"
 dependencies = [
  "miette",
  "noyalib",
@@ -4078,7 +4078,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "03da047801ff44bb6a4d407d4860c05fd70bb81714e6b2f3812603d5b145b042"
 dependencies = [
  "heck",
- "itertools 0.14.0",
+ "itertools 0.10.5",
  "log",
  "multimap",
  "petgraph 0.8.3",
@@ -4099,7 +4099,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b570b25f7617e43d59005d0990ccb79e950a423952cea19671b7a876da390adf"
 dependencies = [
  "anyhow",
- "itertools 0.14.0",
+ "itertools 0.10.5",
  "proc-macro2",
  "quote",
  "syn 2.0.119",
@@ -4276,7 +4276,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4732,7 +4732,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4800,7 +4800,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5640,7 +5640,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6559,7 +6559,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

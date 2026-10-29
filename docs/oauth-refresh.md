@@ -8,7 +8,7 @@ OpenShell holds the refresh material and rotates the access token; NemoClaw does
 Gateway users authenticating through an OIDC issuer is separate; see [Authenticate Through an Existing OIDC Issuer](kubernetes.md#authenticate-through-an-existing-oidc-issuer).
 NemoClaw's [`api` integration](agents.md#key-authenticated-apis) declares a key-authenticated API, not an OAuth-refresh profile.
 
-This guide uses Microsoft Graph with Entra as the example supported by OpenShell's [provider-refresh tutorial](https://github.com/NVIDIA/OpenShell/blob/bdb956f2cd65a635f1294fccf1d138d263bf650f/docs/tutorials/microsoft-graph-provider-refresh.mdx).
+This guide uses Microsoft Graph with Entra as the example supported by OpenShell's [provider-refresh tutorial](https://github.com/NVIDIA/OpenShell/blob/ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47/docs/tutorials/microsoft-graph-provider-refresh.mdx).
 An Okta-backed API needs its own provider profile, token endpoint, scopes, and initial sign-in flow; the Graph profile is not an Okta configuration.
 This procedure is not yet qualified against a live Entra or Okta tenant with v1; native agent login and tool use need separate [platform and integration qualification](https://github.com/NVIDIA/NemoClaw/issues/12641).
 
@@ -38,7 +38,7 @@ OpenShell stores the provider and its refresh material at the gateway; the CLI a
 
 ## Register and Check Refresh
 
-Create `microsoft-graph-mail.yaml` from the profile in the pinned [upstream tutorial](https://github.com/NVIDIA/OpenShell/blob/bdb956f2cd65a635f1294fccf1d138d263bf650f/docs/tutorials/microsoft-graph-provider-refresh.mdx#create-a-microsoft-graph-provider-profile).
+Create `microsoft-graph-mail.yaml` from the profile in the pinned [upstream tutorial](https://github.com/NVIDIA/OpenShell/blob/ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47/docs/tutorials/microsoft-graph-provider-refresh.mdx#create-a-microsoft-graph-provider-profile).
 Review its Graph endpoint, delegated scopes, refresh strategy, and allowed executables before importing it.
 The example permits `curl`; it does not grant every native agent tool access.
 Use a provider name that does not collide with any registration owned by the deployment.

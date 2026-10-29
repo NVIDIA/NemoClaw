@@ -31,13 +31,13 @@ Prepare these inputs before running apply:
 - An authenticated OpenShell CLI for native access, configured for the same gateway and the deployment's workspace.
 - A fresh deployment UUID, a separate state directory, and resources you control.
 
-Use OpenShell **0.1.5** for the gateway and native CLI.
-The client, gateway, and supervisor are pinned to commit `bdb956f2cd65a635f1294fccf1d138d263bf650f`, the v0.1.5 release.
+Use OpenShell **0.1.6** for the gateway and native CLI.
+The client, gateway, and supervisor are pinned to commit `ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47`, the v0.1.6 release.
 The gateway check verifies version and compute driver.
 Select a compatible [inference API](inference.md) and verify an actual agent reply; endpoint reachability alone is insufficient.
 
-Install the OpenShell CLI release with [OpenShell's installer](https://github.com/NVIDIA/OpenShell/blob/bdb956f2cd65a635f1294fccf1d138d263bf650f/docs/about/installation.mdx), setting `OPENSHELL_VERSION=v0.1.5`.
-The guides assume an operator provides the external gateway and its credentials; register an authenticated gateway in the CLI as [OpenShell's authentication guide](https://github.com/NVIDIA/OpenShell/blob/bdb956f2cd65a635f1294fccf1d138d263bf650f/docs/how-it-works/gateways/authentication.mdx) describes, with `openshell gateway add` for mTLS or OIDC.
+Install the OpenShell CLI release with [OpenShell's installer](https://github.com/NVIDIA/OpenShell/blob/ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47/docs/about/installation.mdx), setting `OPENSHELL_VERSION=v0.1.5`.
+The guides assume an operator provides the external gateway and its credentials; register an authenticated gateway in the CLI as [OpenShell's authentication guide](https://github.com/NVIDIA/OpenShell/blob/ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47/docs/how-it-works/gateways/authentication.mdx) describes, with `openshell gateway add` for mTLS or OIDC.
 For an existing profile or plaintext loopback gateway, use [gateway/workspace selection](interfaces.md#select-the-gateway-and-workspace).
 See the [first-deployment guide](get-started.md) for its rehearsal status.
 

@@ -15,8 +15,8 @@ use crate::pagination::{Page, Pager};
 use crate::raw::AuthedGrpcClient;
 use crate::refresh::{RefreshedToken, TokenSource};
 use crate::types::{
-    DeleteOptions, DeletionResult, ExecOptions, ExecResult, Health, ListOptions, SandboxPhase,
-    SandboxRef, SandboxSpec, SandboxTemplateCreateSpec, SandboxTemplateListOptions,
+    DeleteOptions, DeletionResult, ExecOptions, ExecResult, Health, ListOptions, ResumeOptions,
+    SandboxPhase, SandboxRef, SandboxSpec, SandboxTemplateCreateSpec, SandboxTemplateListOptions,
     SandboxWorkloadTemplate, WorkspaceRef,
 };
 use crate::{WatchEvent, WatchOptions, transport};
@@ -400,6 +400,38 @@ impl OpenShellClient {
         sandbox_from_response(response.sandbox)
     }
 
+    /// Suspend a ready sandbox by name, retaining its memory state.
+    ///
+    /// Requires a compute driver and isolation backend that support suspend
+    /// and resume. The gateway returns `FAILED_PRECONDITION` otherwise.
+    pub async fn suspend_sandbox(&self, name: &str) -> Result<SandboxRef> {
+        let response = self
+            .unary(|mut grpc| {
+                let request = proto::SuspendSandboxRequest {
+                    name: name.to_string(),
+                    workspace_scope: Some(proto::workspace_selector("default")),
+                };
+                async move { grpc.suspend_sandbox(request).await }
+            })
+            .await?;
+        sandbox_from_response(response.sandbox)
+    }
+
+    /// Resume a suspended sandbox by name in a new runtime generation.
+    pub async fn resume_sandbox(&self, name: &str, opts: ResumeOptions) -> Result<SandboxRef> {
+        let response = self
+            .unary(|mut grpc| {
+                let request = proto::ResumeSandboxRequest {
+                    name: name.to_string(),
+                    workspace_scope: Some(proto::workspace_selector("default")),
+                    restart_if_restore_fails: opts.restart_if_restore_fails,
+                };
+                async move { grpc.resume_sandbox(request).await }
+            })
+            .await?;
+        sandbox_from_response(response.sandbox)
+    }
+
     /// Poll [`OpenShellClient::get_sandbox`] until the sandbox reaches
     /// [`SandboxPhase::Ready`] or successful [`SandboxPhase::Completed`], or
     /// until the `timeout` elapses.
@@ -407,7 +439,8 @@ impl OpenShellClient {
     /// Returns the terminal sandbox snapshot on success. Returns an
     /// [`SdkError::Connect`] when the timeout expires, or whatever error
     /// the gateway returns if the sandbox transitions into
-    /// [`SandboxPhase::Stopped`] or [`SandboxPhase::Error`].
+    /// [`SandboxPhase::Stopped`], [`SandboxPhase::Error`],
+    /// [`SandboxPhase::Suspending`], or [`SandboxPhase::Suspended`].
     pub async fn wait_ready(&self, name: &str, timeout: Duration) -> Result<SandboxRef> {
         self.wait_for(name, timeout, |phase| match phase {
             SandboxPhase::Ready | SandboxPhase::Completed => Some(Ok(())),
@@ -417,6 +450,9 @@ impl OpenShellClient {
             SandboxPhase::Error => Some(Err(SdkError::connect(format!(
                 "sandbox '{name}' entered error phase"
             )))),
+            SandboxPhase::Suspending | SandboxPhase::Suspended => Some(Err(SdkError::connect(
+                format!("sandbox '{name}' is suspended; resume it before waiting for ready"),
+            ))),
             _ => None,
         })
         .await
@@ -1118,6 +1154,40 @@ impl WorkspaceScopedClient {
         sandbox_from_response(response.sandbox)
     }
 
+    /// Suspend a ready sandbox by name in this workspace, retaining its memory state.
+    ///
+    /// Requires a compute driver and isolation backend that support suspend
+    /// and resume. The gateway returns `FAILED_PRECONDITION` otherwise.
+    pub async fn suspend_sandbox(&self, name: &str) -> Result<SandboxRef> {
+        let response = self
+            .client
+            .unary(|mut grpc| {
+                let request = proto::SuspendSandboxRequest {
+                    name: name.to_string(),
+                    workspace_scope: Some(proto::workspace_selector(&self.workspace)),
+                };
+                async move { grpc.suspend_sandbox(request).await }
+            })
+            .await?;
+        sandbox_from_response(response.sandbox)
+    }
+
+    /// Resume a suspended sandbox by name in this workspace in a new runtime generation.
+    pub async fn resume_sandbox(&self, name: &str, opts: ResumeOptions) -> Result<SandboxRef> {
+        let response = self
+            .client
+            .unary(|mut grpc| {
+                let request = proto::ResumeSandboxRequest {
+                    name: name.to_string(),
+                    workspace_scope: Some(proto::workspace_selector(&self.workspace)),
+                    restart_if_restore_fails: opts.restart_if_restore_fails,
+                };
+                async move { grpc.resume_sandbox(request).await }
+            })
+            .await?;
+        sandbox_from_response(response.sandbox)
+    }
+
     /// Poll until the sandbox reaches [`SandboxPhase::Ready`] or successful
     /// [`SandboxPhase::Completed`], or the timeout elapses.
     pub async fn wait_ready(&self, name: &str, timeout: Duration) -> Result<SandboxRef> {
@@ -1137,6 +1207,11 @@ impl WorkspaceScopedClient {
                 SandboxPhase::Error => {
                     return Err(SdkError::connect(format!(
                         "sandbox '{name}' entered error phase"
+                    )));
+                }
+                SandboxPhase::Suspending | SandboxPhase::Suspended => {
+                    return Err(SdkError::connect(format!(
+                        "sandbox '{name}' is suspended; resume it before waiting for ready"
                     )));
                 }
                 _ => {}

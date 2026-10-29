@@ -121,7 +121,7 @@ spec:
         user_role: openshell-users
 ```
 
-- `openshell.gateway.oidc` in [`spec.gateway.config`](usage.md#configure-a-managed-gateway) holds OpenShell's OIDC settings in OpenShell's names, as its [gateway authentication guide](https://github.com/NVIDIA/OpenShell/blob/bdb956f2cd65a635f1294fccf1d138d263bf650f/docs/how-it-works/gateways/authentication.mdx#oidc) describes for Helm deployments. OpenShell validates every request's bearer token against the issuer and audience, and maps the token's roles to administrator and user access; omitted settings take OpenShell's defaults. The `oidc` profile requires the table; under `development`, NemoClaw writes it for its own issuer.
+- `openshell.gateway.oidc` in [`spec.gateway.config`](usage.md#configure-a-managed-gateway) holds OpenShell's OIDC settings in OpenShell's names, as its [gateway authentication guide](https://github.com/NVIDIA/OpenShell/blob/ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47/docs/how-it-works/gateways/authentication.mdx#oidc) describes for Helm deployments. OpenShell validates every request's bearer token against the issuer and audience, and maps the token's roles to administrator and user access; omitted settings take OpenShell's defaults. The `oidc` profile requires the table; under `development`, NemoClaw writes it for its own issuer.
 - `caConfigMap` names a ConfigMap in the deployment's namespace whose `ca.crt` verifies the issuer's certificate. Omit it for a publicly trusted issuer. Like registry Secrets, create it after NemoClaw creates the namespace, then rerun apply with the same state directory.
 - `token.env` names the variable holding the bearer token NemoClaw sends to the gateway.
 
@@ -186,7 +186,7 @@ openshell status
 `openshell status` reports the gateway as connected and authenticated.
 Then [select the gateway and workspace](interfaces.md#select-the-gateway-and-workspace) with `OPENSHELL_GATEWAY=$gateway_name`.
 The client certificate's key grants transport access to the gateway; keep it private and delete the `mtls` directory when you no longer need access.
-See [OpenShell's authentication guide](https://github.com/NVIDIA/OpenShell/blob/bdb956f2cd65a635f1294fccf1d138d263bf650f/docs/how-it-works/gateways/authentication.mdx#oidc) for token refresh and sign-out.
+See [OpenShell's authentication guide](https://github.com/NVIDIA/OpenShell/blob/ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47/docs/how-it-works/gateways/authentication.mdx#oidc) for token refresh and sign-out.
 
 ### Reference Registry Credentials
 
