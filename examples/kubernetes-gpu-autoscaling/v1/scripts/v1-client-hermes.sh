@@ -43,7 +43,9 @@ export PATH="${HOME}/.local/bin:${PATH}"
 export E2E_USERS="${E2E_USERS:-10}"
 export V1_NAMESPACE="${V1_NAMESPACE:-nemoclaw-v1-gpu-autoscaling}"
 export NEMOCLAW_V1_STATE_DIR="${NEMOCLAW_V1_STATE_DIR:-${V1_DIR}/.local/gpu-autoscaling}"
-INFERENCE_RUNTIME="${INFERENCE_RUNTIME:-$(agent_common_default_inference_runtime hermes)}"
+# hermes (default) or deepagents. v1-client-deepagents.sh sets it.
+AGENT_KIND="${V1_AGENT_KIND:-hermes}"
+INFERENCE_RUNTIME="${INFERENCE_RUNTIME:-$(agent_common_default_inference_runtime "${AGENT_KIND}")}"
 export INFERENCE_RUNTIME
 agent_common_validate_inference_runtime "${INFERENCE_RUNTIME}"
 INFERENCE_MODEL="$(agent_common_resolve_inference_model "${INFERENCE_RUNTIME}")"
@@ -53,13 +55,13 @@ export HPA_NAME="${HPA_NAME:-nemoclaw-gpu-metrics-proxy}"
 export TARGET_PODS="${TARGET_PODS:-7}"
 export DURATION_SEC="${DURATION_SEC:-900}"
 export E2E_PROMPT_TIMEOUT_SEC="${E2E_PROMPT_TIMEOUT_SEC:-180}"
-agent_common_export_demo_workload hermes
-agent_common_export_client_tokens hermes
+agent_common_export_demo_workload "${AGENT_KIND}"
+agent_common_export_client_tokens "${AGENT_KIND}"
 agent_common_export_client_inflight
 # Stop new chats at the target GPU count. Do not hold replicas or pause scale-down.
 export MAX_REPLICAS_HOLD_SEC="${MAX_REPLICAS_HOLD_SEC:-0}"
 export SCALE_DOWN_WAIT_LOOPS="${SCALE_DOWN_WAIT_LOOPS:-40}"
-export E2E_OUTPUT_DIR="${E2E_OUTPUT_DIR:-${CHART_DIR}/e2e-results/hermes-v1}"
+export E2E_OUTPUT_DIR="${E2E_OUTPUT_DIR:-${CHART_DIR}/e2e-results/${AGENT_KIND}-v1}"
 
 command -v kubectl >/dev/null 2>&1 || fail "missing command: kubectl"
 command -v python3 >/dev/null 2>&1 || fail "missing command: python3"
@@ -77,9 +79,9 @@ export SANDBOX_PREFIX="${workspace}--user-"
 hpa_common_require_live_runtime "${NAMESPACE}" "${HPA_NAME}" "${INFERENCE_RUNTIME}" \
   || fail "the GPU chart is not serving ${INFERENCE_RUNTIME}"
 
-echo "Client: ${E2E_USERS} end users → ${E2E_USERS} NemoClaw v1 sandboxes (1:1 fabric-agent-ctl invoke)."
+echo "Client: ${E2E_USERS} end users → ${E2E_USERS} NemoClaw v1 sandboxes (1:1 ${AGENT_KIND}, fabric-agent-ctl invoke)."
 echo "HPA metric: ${HPA_METRIC:-unknown}  inflight/user: ${INFLIGHT}  max_tokens: ${MAX_TOKENS}  target GPUs: ${TARGET_PODS}"
-agent_common_print_load_banner "${DURATION_SEC}" "${MAX_REPLICAS_HOLD_SEC}" hermes
+agent_common_print_load_banner "${DURATION_SEC}" "${MAX_REPLICAS_HOLD_SEC}" "${AGENT_KIND}"
 
 unhealthy=0
 for ((i = 0; i < E2E_USERS; i += 1)); do

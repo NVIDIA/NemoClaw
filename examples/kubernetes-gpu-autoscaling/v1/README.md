@@ -195,5 +195,40 @@ The script reads `runtime_id` from that state and does not print the inference k
 NEMOCLAW_V1_STATE_DIR=.local/gpu-autoscaling ./scripts/v1-invoke.sh
 ```
 
+`v1-invoke.sh` goes through the OpenShell gateway.
+The `development` profile in these YAML files gives the operator no gateway token, so `openshell` cannot connect and this command fails.
+Use the `oidc` profile ([Reach the Gateway from the OpenShell CLI](../../../docs/kubernetes.md#reach-the-gateway-from-the-openshell-cli)), or use the load clients below, which go through `kubectl exec`.
+
 v0 step 6 still uses the chart and the 0.0.85 gateway.
 Run those clients with `~/.local/bin/openshell` first on `PATH`.
+
+## Load tests for 6b and 6c
+
+These clients are the v1 counterparts of `client_hermes.sh` and `client_deepagents.sh`.
+They send each prompt with `kubectl exec ... fabric-agent-ctl invoke`, read each Fabric runtime id from the state directory, and stop new chats at `TARGET_PODS` GPUs (default 7).
+Apply a YAML with enough sandboxes first, for example ten:
+
+```bash
+export PATH="/home/maggiez/NemoClaw-v1/dist/linux_amd64/bin:${HOME}/.local/openshell-0.1.4:${HOME}/.local/bin:${PATH}"
+E2E_USERS=10 ./scripts/v1-render-sandboxes.sh hermes-vllm > .local/hermes-vllm-10.yaml
+nemoclaw apply --non-interactive --state-dir .local/gpu-autoscaling .local/hermes-vllm-10.yaml
+```
+
+Put the real image digest and a new `metadata.uid` in the rendered file before apply.
+Deep Agents uses its own state directory and namespace, so both deployments can stay up.
+
+```bash
+# GPU utilization (the chart's default HPA metric). Run from this folder.
+INFLIGHT=2 MAX_TOKENS=1024 E2E_USERS=10 ./scripts/v1-client-hermes.sh        # 6b
+INFLIGHT=3 E2E_USERS=10 ./scripts/v1-client-deepagents.sh                    # 6c
+
+# LLM latency. Switch the HPA metric first, then run the client without INFLIGHT.
+./scripts/v1-set-hpa-metric.sh latency_avg
+E2E_USERS=10 ./scripts/v1-client-hermes.sh
+./scripts/v1-set-hpa-metric.sh gpu_utilization                               # switch back
+```
+
+Set `E2E_OUTPUT_DIR` to keep each run's logs apart.
+Results from a DGX with 7 free GPUs are in [`RESULTS-6b.md`](RESULTS-6b.md) and [`RESULTS-6c.md`](RESULTS-6c.md).
+Deep Agents at one chat in flight per user stayed at 5 GPUs, so 6c uses `INFLIGHT=3`.
+

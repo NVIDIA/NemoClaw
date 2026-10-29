@@ -162,7 +162,7 @@ def stop_sandbox_chats(prefix: str, users: int) -> None:
 
 
 def estimate_tokens(text: str) -> int:
-    """Reply-length estimate (~4 chars/token). hermes -z does not report usage."""
+    """Reply-length estimate (~4 chars/token). Not the runtime's own usage count."""
     if not text or not str(text).strip():
         return 0
     return max(1, len(str(text)) // 4)
@@ -188,7 +188,7 @@ def print_chat_table(
     print(
         f"After HPA scaled up and back to 1 ({inflight_start}→{inflight_per_user} inflight per user). {err_note}."
     )
-    print("est. tokens ≈ reply length / 4 (hermes -z does not report usage).")
+    print("est. tokens ≈ reply length / 4 (not the runtime usage count).")
     print("")
     print(f"{'User':<8} {'Sandbox':<12} {'Successful chats':>16} {'err':>6} {'est. tokens':>12}")
     print(f"{'-' * 8} {'-' * 12} {'-' * 16} {'-' * 6} {'-' * 12}")
@@ -205,8 +205,8 @@ def print_chat_table(
     print(f"{'total':<8} {'':<12} {total_ok:>16} {total_err:>6} {total_tok:>12}")
     print("")
     print(
-        "Path in use: user → OpenShell sandbox (hermes -z) → inference.local → "
-        "Envoy load balancer → vLLM."
+        "Path in use: user → kubectl exec → fabric-agent-ctl invoke (agent in a v1 sandbox) → "
+        "GPU chart (Envoy / metrics-proxy) → vLLM or NIM."
     )
 
 
@@ -255,6 +255,20 @@ def runtime_ids() -> dict[str, str]:
     return _RUNTIME_IDS
 
 
+def _reply_text(output: dict) -> str:
+    """Agent answer from a Fabric invoke result. Adapters name the field differently."""
+    for key in ("response", "final_response", "output_text", "text", "answer"):
+        value = output.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    for message in reversed(output.get("messages") or []):
+        if isinstance(message, dict) and message.get("role") == "assistant":
+            content = message.get("content")
+            if isinstance(content, str) and content.strip():
+                return content.strip()
+    return ""
+
+
 async def send_user_query(sandbox: str, prompt: str, timeout_sec: int) -> tuple[bool, str]:
     """One end-user turn: prompt goes to the sandbox Hermes agent through Fabric."""
     kubectl = shutil.which("kubectl")
@@ -295,9 +309,9 @@ async def send_user_query(sandbox: str, prompt: str, timeout_sec: int) -> tuple[
     if reply.get("status") != "succeeded" or result.get("status") != "succeeded":
         err = reply.get("error") or {}
         return False, f"fabric status={reply.get('status')} code={err.get('code')} stage={err.get('stage')}"
-    text = str(output.get("response") or "").strip()
-    if not output.get("completed") or not text:
-        return False, "empty or incomplete Hermes response"
+    text = _reply_text(output)
+    if output.get("completed") is False or not text:
+        return False, "empty or incomplete agent response"
     return True, text
 
 
