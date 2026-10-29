@@ -1186,3 +1186,45 @@ describe("startSandbox persisted native inference selection", () => {
     },
   );
 });
+
+// `start` must hand `requireLaunchReadinessPublication: false` to `connectSandbox`.
+// Without it, a receipt-store-only unsafe verdict stops before recovery and the
+// reported #10638 failure returns even though the runtime is healthy. The other
+// start cases inject `verifyGateway`, so they cannot catch a regression here.
+describe("startSandbox launch-readiness publication handoff", () => {
+  const connectModulePath = "../../actions/sandbox/connect.js";
+
+  afterEach(() => {
+    delete require.cache[require.resolve(connectModulePath)];
+    vi.restoreAllMocks();
+  });
+
+  it("asks connect for an optional-publication probe so recovery can still run (#10638)", async () => {
+    const connectSandbox = vi.fn(async () => undefined);
+    const connectModule = require(connectModulePath) as typeof import("./connect");
+    vi.spyOn(connectModule, "connectSandbox").mockImplementation(connectSandbox as never);
+
+    const h = harness();
+    h.getSandbox.mockReturnValue(
+      sandbox({
+        agent: "hermes",
+        gatewayName: "nemoclaw",
+        lifecycleGeneration: "generation-alpha",
+        lifecycleLiveIdentityFingerprint: "identity-alpha",
+        openshellDriver: "docker",
+      }),
+    );
+    h.qualifyLegacyPortableProfile.mockReturnValue(true);
+    h.recoverPortableSandbox.mockResolvedValue({ kind: "recovered" });
+    // Exercise the real wrapper instead of the injected double.
+    delete (h.deps as { verifyGateway?: unknown }).verifyGateway;
+
+    await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 0 });
+
+    expect(connectSandbox).toHaveBeenCalledOnce();
+    expect(connectSandbox).toHaveBeenCalledWith("my-sandbox", {
+      probeOnly: true,
+      requireLaunchReadinessPublication: false,
+    });
+  });
+});

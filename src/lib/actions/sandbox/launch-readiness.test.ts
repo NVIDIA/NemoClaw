@@ -559,7 +559,11 @@ describe("launch readiness validation", () => {
       errorCode: null,
       repair: "chmod" as const,
     };
-    currentDeps.checkMutationAuthority = vi.fn(() => ({ kind: "unsafe" as const, evidence }));
+    currentDeps.checkMutationAuthority = vi.fn(() => ({
+      kind: "unsafe" as const,
+      scope: "receipt-store" as const,
+      evidence,
+    }));
     const mutation = vi.fn();
 
     await expect(
@@ -573,7 +577,7 @@ describe("launch readiness validation", () => {
         mutation,
         currentDeps,
       ),
-    ).resolves.toEqual({ kind: "unsafe", evidence });
+    ).resolves.toEqual({ kind: "unsafe", scope: "receipt-store", evidence });
     expect(mutation).not.toHaveBeenCalled();
     expect(
       formatLaunchReadinessUnsafeAuthorityEvidence({

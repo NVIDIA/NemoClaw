@@ -114,10 +114,23 @@ export interface LaunchReadinessUnsafeAuthorityEvidence {
   repair: "chmod" | "manual";
 }
 
+/**
+ * Which store an unsafe verdict came from. The runtime authority is the fence's
+ * security guarantee: it proves the prior epoch was durably rotated. The
+ * persistent receipt is only the published evidence cache. Callers that do not
+ * require published evidence may continue past a receipt-store-only verdict,
+ * but never past a runtime-authority verdict.
+ */
+export type LaunchReadinessUnsafeStoreScope = "receipt-store" | "runtime-authority";
+
 export type LaunchReadinessMutationAuthorityCheck =
   | "current"
   | "changed"
-  | { kind: "unsafe"; evidence?: LaunchReadinessUnsafeAuthorityEvidence };
+  | {
+      kind: "unsafe";
+      scope: LaunchReadinessUnsafeStoreScope;
+      evidence?: LaunchReadinessUnsafeAuthorityEvidence;
+    };
 
 export interface LaunchReadinessStoreOptions {
   home?: string;
@@ -244,6 +257,12 @@ export class LaunchReadinessFenceError extends Error {
     readonly blocksRecovery: boolean,
     readonly priorEpochInvalidated: boolean,
     readonly authorityUnsupported = false,
+    /**
+     * The runtime epoch this failed fence durably rotated, when the failure came
+     * after rotation. A later mutation gate must match this exact epoch so a
+     * second producer's rotation is detected as `changed` instead of tolerated.
+     */
+    readonly rotatedEpochId: string | null = null,
   ) {
     super(
       blocksRecovery
@@ -1668,31 +1687,46 @@ export function checkLaunchReadinessMutationAuthority(
     gatewayPort > 65535 ||
     (expectedEpochId !== null && !isEpoch(expectedEpochId))
   ) {
-    return { kind: "unsafe" };
+    return { kind: "unsafe", scope: "runtime-authority" };
   }
   try {
     const base = buildBaseContext(options);
     const inspection = inspectAuthority(base, sandboxName);
     if (expectedEpochId === null) {
       if (inspection.kind === "unsupported") return "current";
+      if (inspection.kind === "unsafe")
+        return { kind: "unsafe", scope: "runtime-authority", evidence: inspection.evidence };
+      // A null epoch proves only that this producer observed no authority.
+      // Another producer may have rotated it before this locked recheck. Do
+      // not let an unsafe receipt mask that newer runtime authority.
+      if (inspection.kind === "present") return "changed";
       const persistent = inspectPersistentStore(base, sandboxName, gatewayPort, options);
-      if (inspection.kind === "unsafe") return { kind: "unsafe", evidence: inspection.evidence };
-      if (persistent.kind === "unsafe") return persistent;
-      return inspection.kind === "missing" && persistent.kind === "missing" ? "current" : "changed";
+      if (persistent.kind === "unsafe") return { ...persistent, scope: "receipt-store" };
+      return persistent.kind === "missing" ? "current" : "changed";
     }
     if (inspection.kind === "unsupported") return "changed";
-    if (inspection.kind === "unsafe") return { kind: "unsafe", evidence: inspection.evidence };
+    if (inspection.kind === "unsafe")
+      return { kind: "unsafe", scope: "runtime-authority", evidence: inspection.evidence };
     if (inspection.kind === "missing") return "changed";
     const { authority } = inspection;
-    return authority.phase === "fence" &&
-      authority.epochId === expectedEpochId &&
-      authority.sandboxName === sandboxName &&
-      authority.gatewayName === gatewayName &&
-      authority.gatewayPort === gatewayPort
-      ? "current"
-      : "changed";
+    if (
+      authority.phase !== "fence" ||
+      authority.epochId !== expectedEpochId ||
+      authority.sandboxName !== sandboxName ||
+      authority.gatewayName !== gatewayName ||
+      authority.gatewayPort !== gatewayPort
+    ) {
+      return "changed";
+    }
+    // The runtime epoch matches, but the receipt store is a separate owner of
+    // the same decision. A fence that rotated the authority and then failed to
+    // write its receipt leaves this store unsafe, so report it instead of
+    // returning `current` and letting the caller skip the receipt-store policy.
+    const persistent = inspectPersistentStore(base, sandboxName, gatewayPort, options);
+    if (persistent.kind === "unsafe") return { ...persistent, scope: "receipt-store" };
+    return "current";
   } catch {
-    return { kind: "unsafe" };
+    return { kind: "unsafe", scope: "runtime-authority" };
   }
 }
 
@@ -1793,7 +1827,9 @@ export function fenceLaunchReadinessLease(
     writeRecord(context, directory, fence);
     return fence;
   } catch {
-    throw new LaunchReadinessFenceError(false, true);
+    // The authority rotation above already succeeded, so the prior epoch is
+    // invalidated even though the fence record could not be stored.
+    throw new LaunchReadinessFenceError(false, true, false, epochId);
   } finally {
     closeDirectory(directory);
   }

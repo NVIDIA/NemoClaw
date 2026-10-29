@@ -725,9 +725,11 @@ function ordinaryLaunchReadinessDeps(
 function withConnectLaunchReadinessMutationGate<T>(
   publication: Parameters<typeof withLaunchReadinessMutationGate>[0],
   operation: () => Promise<T> | T,
+  tolerateReceiptStoreUnsafe = false,
 ) {
   return withLaunchReadinessMutationGate(publication, operation, {
     getSandbox: readConnectSandbox,
+    tolerateReceiptStoreUnsafe,
   });
 }
 
@@ -2878,7 +2880,7 @@ async function prepareConnectSandboxWithinLifecycleFence(
         process.exit(1);
       }
       const publicationRequest = publicationFromDecision(sandboxName, readiness);
-      const gated = await withConnectLaunchReadinessMutationGate(publicationRequest, async () => {
+      const runGatedPreflight = async () => {
         if (
           readiness.category === "missing" &&
           hermesMissingFastPathEligible &&
@@ -3078,7 +3080,12 @@ async function prepareConnectSandboxWithinLifecycleFence(
           probeTiming!.measure("authority", retainedCommand.assertCurrent);
         }
         return published;
-      });
+      };
+      const gated = await withConnectLaunchReadinessMutationGate(
+        publicationRequest,
+        runGatedPreflight,
+        !requireLaunchReadinessPublication,
+      );
       if (gated.kind === "changed") {
         if (hermesReadinessAuthority) {
           try {
@@ -3132,6 +3139,17 @@ async function prepareConnectSandboxWithinLifecycleFence(
           `  Probe failed: complete probe and recovery did not run because the current launch-readiness epoch could not be safely revalidated.${formatLaunchReadinessUnsafeAuthorityEvidence(gated.evidence)}`,
         );
         process.exit(1);
+      }
+      if (gated.toleratedReceiptStoreUnsafe) {
+        // The runtime authority epoch was durably rotated; only the persistent
+        // receipt store is unsafe, so fresh evidence cannot be republished.
+        // This caller does not require published evidence, so the complete
+        // preflight and recovery continue and the run still reports success
+        // (#10638). Always report it, and keep the bounded repair guidance
+        // when the store could produce one.
+        console.log(
+          `  Note: launch-readiness evidence cannot be republished because its stored receipt is unsafe.${formatLaunchReadinessUnsafeAuthorityEvidence(gated.toleratedReceiptStoreUnsafe.evidence)}`,
+        );
       }
       publication = gated.value;
       break;
