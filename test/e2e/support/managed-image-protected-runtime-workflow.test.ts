@@ -246,7 +246,8 @@ describe("protected managed-image runtime workflow", () => {
     '"$verified" == "$reference"',
     '"$NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE/${name}-base-receipt.json" "$agent"',
     '"$CANDIDATE_BASES" == false',
-    '[[ "$CANDIDATE_BASES" == false &&',
+    '[[ ( "$CANDIDATE_BASES" == false || "$agent" == openclaw ) &&',
+    '"$agent" == openclaw',
   ])("rejects a candidate OCI base handoff without %s", (fragment) => {
     const value = workflow();
     const step = namedStep(value, "Resolve digest-pinned amd64 runtime base images");
@@ -284,7 +285,7 @@ describe("protected managed-image runtime workflow", () => {
     const auth = namedMultiarchStep(value, "Authenticate to Docker Hub");
     const direct = namedMultiarchStep(value, "Run every exact managed-image contract directly");
 
-    expect(prepare.with).toEqual({ "build-cli": "false" });
+    expect(prepare.with).toEqual({ "build-cli": "false", "install-dependencies": "false" });
     expect(boundary.run).toEqual(expect.stringContaining("npm run build:policy-boundary"));
     expect(steps.indexOf(auth)).toBe(steps.indexOf(boundary) + 1);
     expect(steps.indexOf(boundary)).toBeLessThan(steps.indexOf(direct));
@@ -571,6 +572,58 @@ describe("protected managed-image runtime workflow", () => {
 
     expect(validateManagedImageMultiarchWorkflow(value)).toContain(
       "managed-image-multiarch-startup trusted Hermes resolver checkout must bind ref to ${{ inputs.workflow_sha || github.workflow_sha }}",
+    );
+  });
+
+  it("runs the OpenClaw base resolver from the single trusted checkout", () => {
+    const value = workflow();
+    const trustedCheckout = namedJobStep(
+      value,
+      "managed-image-multiarch-startup",
+      "Checkout trusted Hermes resolver",
+    );
+    (trustedCheckout.with as Record<string, unknown>)["sparse-checkout"] =
+      ".github/actions/resolve-reviewed-hermes-platform";
+    (trustedCheckout.with as Record<string, unknown>).ref =
+      "${{ inputs.checkout_sha || github.sha }}";
+    const resolver = namedJobStep(
+      value,
+      "managed-image-multiarch-startup",
+      "Reuse only an input-equivalent published OpenClaw base",
+    );
+    (resolver.env as Record<string, unknown>).RESOLUTION_MODE = "build-local";
+
+    expect(validateManagedImageMultiarchWorkflow(value)).toContain(
+      "managed-image-multiarch-startup trusted Hermes resolver checkout must bind ref to ${{ inputs.workflow_sha || github.workflow_sha }}",
+    );
+    expect(validateManagedImageMultiarchWorkflow(value)).toContain(
+      "managed-image-multiarch-startup trusted Hermes resolver checkout must bind sparse-checkout to .github/actions/resolve-reviewed-hermes-platform\nscripts/checks/resolve-managed-pr-base.sh\nscripts/lib/dockerfile-copy-sources.mts\n",
+    );
+    expect(validateManagedImageMultiarchWorkflow(value)).toContain(
+      "managed-image-multiarch-startup OpenClaw base resolver env must bind RESOLUTION_MODE to reference-or-candidate",
+    );
+
+    const candidateResolver = workflow();
+    namedJobStep(
+      candidateResolver,
+      "managed-image-multiarch-startup",
+      "Reuse only an input-equivalent published OpenClaw base",
+    ).run = "scripts/checks/resolve-managed-pr-base.sh";
+    expect(validateManagedImageMultiarchWorkflow(candidateResolver)).toContain(
+      "managed-image-multiarch-startup must execute the trusted OpenClaw base resolver",
+    );
+  });
+
+  it("requires cleanup of the shared trusted resolver checkout", () => {
+    const value = workflow();
+    const cleanup = namedJobStep(
+      value,
+      "managed-image-multiarch-startup",
+      "Remove trusted Hermes resolver checkout",
+    );
+    cleanup.if = "${{ success() }}";
+    expect(validateManagedImageMultiarchWorkflow(value)).toContain(
+      "managed-image-multiarch-startup trusted Hermes resolver cleanup must always run",
     );
   });
 

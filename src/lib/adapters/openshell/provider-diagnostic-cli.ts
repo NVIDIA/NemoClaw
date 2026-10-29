@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isStructuredUnqualifiedSandboxNotFoundOutput } from "./sandbox-absence-diagnostic";
+
 const DIAGNOSTIC_PREFIXES = ["error:", "rpc error:", "status:"];
 const NOT_FOUND_SUFFIXES = new Set([
   "not found",
@@ -242,6 +244,24 @@ export function reportsExactProviderNotFound(
   return diagnosticLines.every((line) => providerNameFromNotFoundLine(line) === providerName);
 }
 
+/**
+ * Accept only a single structured NotFound diagnostic whose exact message omits
+ * the sandbox name. The caller must bind it to the sandbox operand it issued.
+ */
+export function reportsUnqualifiedSandboxNotFound(
+  output: string,
+  diagnosticLimit: number,
+): boolean {
+  if (output.length > diagnosticLimit) return false;
+  const lines = output.split(/\r?\n/).map(stripIssueDecoration).filter(Boolean);
+  const line = lines[0] ?? "";
+  return (
+    lines.length === 1 &&
+    !lineReportsMissingGateway(line) &&
+    isStructuredUnqualifiedSandboxNotFoundOutput(line)
+  );
+}
+
 /** A missing sandbox permits cleanup only when every diagnostic names the requested sandbox. */
 export function reportsExactSandboxNotFound(
   output: string,
@@ -265,12 +285,27 @@ export function reportsExactSandboxNotFound(
   );
 }
 
+// OpenShell reports a provider referenced only by a credential binding as a
+// wrapped FailedPrecondition rather than NotAttached (#13644). Match only that
+// status so an authorization or other failure is never read as detached.
+const BINDING_ONLY_PROVIDER_PATTERN =
+  /^(?:[×x]\s+)?code:\s*'The system is not in a state required for the operation's execution',\s*message:\s*"credential_binding references provider '([^']+)', but that provider is not attached to the sandbox"$/iu;
+
+function bindingOnlyProviderName(output: string): string | null {
+  const lines = output
+    .split(/\r?\n/)
+    .map((line) => stripIssueDecoration(line).replace(/^\|\s?/u, ""));
+  const text = stripDiagnosticPrefixes(joinDiagnosticLines(lines));
+  return BINDING_ONLY_PROVIDER_PATTERN.exec(text)?.[1] ?? null;
+}
+
 /** Accept an absent attachment only when the complete diagnostic matches this operation. */
 export function reportsProviderNotAttached(
   output: string,
   providerName: string,
   sandboxName: string,
 ): boolean {
+  if (bindingOnlyProviderName(output) === providerName) return true;
   const text = stripDiagnosticPrefixes(output.trim());
   if (/^(?:NotAttached|provider not attached to sandbox)[.!]?$/iu.test(text)) return true;
   const absent = /^provider (.+) was not attached to sandbox (.+?)[.!]?$/iu.exec(text);

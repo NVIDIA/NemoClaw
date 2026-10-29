@@ -253,6 +253,19 @@ it.each([undefined, "", "linux/s390x", "windows/amd64"])(
   },
 );
 
+it("rejects an unsupported PR base resolution mode before reading a base", () => {
+  const result = spawnSync(resolver, [], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      PLATFORM: "linux/amd64",
+      RESOLUTION_MODE: "trust-candidate-provenance",
+    },
+  });
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain("resolution mode is invalid");
+});
+
 const publishedBaseCases = [
   {
     candidateContents: "export const version = 2;\n",
@@ -337,14 +350,12 @@ const publishedBaseCases = [
   },
 ] as const;
 
-it.each(
-  // One synthetic COPY contract exercises every agent routed through this resolver.
-  publishedBaseCases.flatMap((testCase) =>
-    ["openclaw", "hermes", "langchain-deepagents-code"].flatMap((agent) =>
-      ["amd64", "arm64"].map((architecture) => ({ ...testCase, agent, architecture })),
-    ),
-  ),
-)("$agent ($architecture): $title", (testCase) => {
+type BaseCase = (typeof publishedBaseCases)[number] & { agent: string; architecture: string };
+
+function assertBaseResolution(
+  testCase: BaseCase,
+  resolutionMode: "build-local" | "reference-or-candidate",
+): void {
   const { candidateContents, candidatePath, expectedLocal, failPublishedPull, rejectCopyParsing } =
     testCase;
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-pr-base-"));
@@ -485,6 +496,7 @@ exit 90
     PARSER_SIDE_EFFECT: parserSideEffect,
     PLATFORM: `linux/${testCase.architecture}`,
     PUBLISHED_SOURCE_SHA: publishedSourceSha,
+    RESOLUTION_MODE: resolutionMode,
     RUNNER_TEMP: temporaryRoot,
   };
 
@@ -496,10 +508,19 @@ exit 90
     });
     expect(result.status, result.stderr).toBe(0);
     const resolverOutput = fs.readFileSync(output, "utf8");
-    expect(resolverOutput).toContain(`local=${String(expectedLocal)}\n`);
+    expect(resolverOutput).toContain(
+      expectedLocal
+        ? `local=${resolutionMode === "build-local" ? "true" : "deferred"}\n`
+        : "local=false\n",
+    );
+    expect(resolverOutput).toContain(
+      expectedLocal && resolutionMode === "reference-or-candidate"
+        ? "ref=candidate\n"
+        : `ref=${expectedLocal ? environment.LOCAL_BASE_REFERENCE : `${baseRepository}@${digest}`}\n`,
+    );
     const dockerCommands = fs.readFileSync(dockerLog, "utf8");
     expect(dockerCommands.includes(`buildx build --platform ${environment.PLATFORM}`)).toBe(
-      expectedLocal,
+      expectedLocal && resolutionMode === "build-local",
     );
     expect(dockerCommands).not.toContain("validate-dcode-runtime-contract.py");
     expect(fs.existsSync(parserSideEffect)).toBe(false);
@@ -516,4 +537,23 @@ exit 90
   } finally {
     fs.rmSync(temporaryRoot, { recursive: true, force: true });
   }
+}
+
+it.each(
+  // One synthetic COPY contract exercises every agent routed through this resolver.
+  publishedBaseCases.flatMap((testCase) =>
+    ["openclaw", "hermes", "langchain-deepagents-code"].flatMap((agent) =>
+      ["amd64", "arm64"].map((architecture) => ({ ...testCase, agent, architecture })),
+    ),
+  ),
+)("$agent ($architecture): $title", (testCase) => {
+  assertBaseResolution(testCase, "build-local");
+});
+
+it.each(
+  publishedBaseCases.flatMap((testCase) =>
+    (["amd64", "arm64"] as const).map((architecture) => ({ ...testCase, architecture })),
+  ),
+)("protected OpenClaw ($architecture): $title", (testCase) => {
+  assertBaseResolution({ ...testCase, agent: "openclaw" }, "reference-or-candidate");
 });

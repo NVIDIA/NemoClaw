@@ -20,6 +20,7 @@ import { shellQuote } from "../core/shell-quote";
 import { compactText } from "../core/url-utils";
 import { INFERENCE_ROUTE_URL, MANAGED_PROVIDER_ID } from "../inference/config";
 import { resolveMaxTokensField } from "../inference/max-tokens-field";
+import { LOCAL_INFERENCE_TIMEOUT_SECS } from "./env";
 import type { HostLocalInferenceSandboxProofAuthority } from "./runtime-provider/host-local-inference-routing";
 import {
   buildCompatibleEndpointSmokeRequestScript,
@@ -70,11 +71,25 @@ const COMPATIBLE_ENDPOINT_SMOKE_COMMAND_TIMEOUT_MS =
   (COMPATIBLE_ENDPOINT_SMOKE_PROOF_TIMEOUT_SECONDS +
     COMPATIBLE_ENDPOINT_SMOKE_COMMAND_OVERHEAD_SECONDS) *
   1000;
-const PROVIDER_NEUTRAL_SMOKE_COMMAND_TIMEOUT_MS =
-  (PROVIDER_NEUTRAL_SMOKE_INFERENCE_PROOF_COUNT * COMPATIBLE_ENDPOINT_SMOKE_PROOF_TIMEOUT_SECONDS +
-    PROVIDER_NEUTRAL_SMOKE_DIRECT_DENY_TIMEOUT_SECONDS +
-    COMPATIBLE_ENDPOINT_SMOKE_COMMAND_OVERHEAD_SECONDS) *
-  1000;
+const PROVIDER_NEUTRAL_SMOKE_REQUEST_TIMEOUT_SECONDS = Math.max(
+  COMPATIBLE_ENDPOINT_SMOKE_REQUEST_TIMEOUT_SECONDS,
+  LOCAL_INFERENCE_TIMEOUT_SECS,
+);
+
+function providerNeutralSmokeCommandTimeoutMs(requestTimeoutSeconds: number): number {
+  const proofTimeoutSeconds =
+    COMPATIBLE_ENDPOINT_SMOKE_ATTEMPTS * requestTimeoutSeconds +
+    totalRetryBackoffSeconds(
+      COMPATIBLE_ENDPOINT_SMOKE_ATTEMPTS,
+      COMPATIBLE_ENDPOINT_SMOKE_RETRY_DELAY_SECONDS,
+    );
+  return (
+    (PROVIDER_NEUTRAL_SMOKE_INFERENCE_PROOF_COUNT * proofTimeoutSeconds +
+      PROVIDER_NEUTRAL_SMOKE_DIRECT_DENY_TIMEOUT_SECONDS +
+      COMPATIBLE_ENDPOINT_SMOKE_COMMAND_OVERHEAD_SECONDS) *
+    1000
+  );
+}
 const OPEN_SHELL_DIRECT_POLICY_DENIAL_CONTRACT = Object.freeze({
   version: 1,
   httpStatus: 403,
@@ -289,7 +304,7 @@ export async function verifyCompatibleEndpointSandboxSmoke(options: {
     target,
     command: forceCanonicalRoute ? ["python3", "-c", script] : ["sh", "-lc", script],
     timeoutMilliseconds: forceCanonicalRoute
-      ? PROVIDER_NEUTRAL_SMOKE_COMMAND_TIMEOUT_MS
+      ? providerNeutralSmokeCommandTimeoutMs(PROVIDER_NEUTRAL_SMOKE_REQUEST_TIMEOUT_SECONDS)
       : COMPATIBLE_ENDPOINT_SMOKE_COMMAND_TIMEOUT_MS,
   });
   const smokeOutput = [smokeResult.stdout, smokeResult.stderr].join("\n").trim();
@@ -306,7 +321,7 @@ export async function verifyCompatibleEndpointSandboxSmoke(options: {
         "  Messaging setup is not the root cause; the sandbox inference.local route failed.",
       );
     }
-    if (smokeOutput) console.error(`  ${compactText(options.redact(smokeOutput)).slice(0, 1200)}`);
+    if (smokeOutput) console.error(`  ${compactText(options.redact(smokeOutput)).slice(-1200)}`);
     fail(smokeStatus || 1);
   }
 
@@ -649,6 +664,7 @@ export function buildProviderNeutralInferenceSandboxSmokeScript(
   model: string,
   authority: HostLocalInferenceSandboxProofAuthority | undefined,
   local?: NativeLocalProviderAttachment,
+  requestTimeoutSeconds: number = PROVIDER_NEUTRAL_SMOKE_REQUEST_TIMEOUT_SECONDS,
 ): string {
   const expectedHealthPath =
     authority?.service === "ollama"
@@ -699,6 +715,7 @@ import errno
 import json
 import os
 import re
+import socket
 import sys
 import time
 import urllib.error
@@ -706,6 +723,7 @@ import urllib.request
 
 ${authSetup}
 inference_url = ${inferenceUrl}
+request_timeout_seconds = ${String(positiveInt(requestTimeoutSeconds, PROVIDER_NEUTRAL_SMOKE_REQUEST_TIMEOUT_SECONDS))}
 model = ${modelValue}
 max_tokens_field = ${maxTokensField}
 tool_calling_required = ${toolCallingRequired}
@@ -723,7 +741,7 @@ def post_inference(payload, label):
     response_data = None
     for attempt in range(3):
         try:
-            with inference_opener.open(request, timeout=60) as response:
+            with inference_opener.open(request, timeout=request_timeout_seconds) as response:
                 if response.status < 200 or response.status > 299:
                     raise RuntimeError("${endpointLabel} returned HTTP %s" % response.status)
                 response_bytes = response.read(max_response_bytes + 1)
@@ -742,7 +760,23 @@ def post_inference(payload, label):
                 continue
             print("${endpointLabel} %s proof returned terminal HTTP %s" % (label, error.code), file=sys.stderr)
             sys.exit(1)
-        except urllib.error.URLError:
+        except socket.timeout:
+            print(
+                "${endpointLabel} %s proof timed out after %s seconds without a response; "
+                "raise NEMOCLAW_LOCAL_INFERENCE_TIMEOUT for a slow model and retry the failed operation"
+                % (label, request_timeout_seconds),
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        except urllib.error.URLError as error:
+            if isinstance(error.reason, socket.timeout):
+                print(
+                    "${endpointLabel} %s proof timed out after %s seconds without a response; "
+                    "raise NEMOCLAW_LOCAL_INFERENCE_TIMEOUT for a slow model and retry the failed operation"
+                    % (label, request_timeout_seconds),
+                    file=sys.stderr,
+                )
+                sys.exit(1)
             if attempt < 2:
                 time.sleep(5 * (attempt + 1))
                 continue

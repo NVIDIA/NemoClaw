@@ -254,7 +254,7 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
   const prepare = requireStep(errors, workflowSteps, "Prepare E2E workspace");
   if (
     prepare?.uses !==
-    "NVIDIA/NemoClaw/.github/actions/prepare-e2e@7fcbf13ecd7bc0ea835a949417cf9eb68067adf9"
+    "NVIDIA/NemoClaw/.github/actions/prepare-e2e@e7e587da7c6c2c48aa112533c7eaeb549e40a351"
   ) {
     errors.push(`${JOB_ID} must pin the trusted E2E preparation action`);
   }
@@ -422,7 +422,8 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     'local candidate_prefix="localhost:5000/nemoclaw-managed-protected-base/${agent}@"',
     '[[ "$reference" == "${candidate_prefix}${digest}" ]]',
     '[[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]',
-    '[[ "$CANDIDATE_BASES" == false && "$reference" == "${repository}@${digest}" &&',
+    '[[ ( "$CANDIDATE_BASES" == false || "$agent" == openclaw ) &&',
+    '"$reference" == "${repository}@${digest}" &&',
     '( -z "$expected_published" || "$reference" == "$expected_published" ) ]]',
     '"$(cat "$prepared_inputs")" == "$cached_revision $cached_platform $cached_openclaw $cached_hermes $cached_dcode"',
     'docker buildx imagetools inspect "$reference" --raw > "$work_dir/${name}-exact.raw"',

@@ -586,10 +586,14 @@
       "live": "test/e2e/live/concurrent-gateway-ports.test.ts",
       "fast": [
         "src/lib/actions/maintenance.test.ts",
+        "src/lib/actions/sandbox/destroy-gateway-scoping.test.ts",
+        "test/cli/destroy-detach-order.test.ts",
         "src/lib/actions/uninstall/all-gateway-ports.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
-      ]
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/openshell-sandbox-list.test.ts"
+      ],
+      "liveSources": ["test/e2e/fixtures/openshell-sandbox-list.ts"]
     },
     {
       "live": "test/e2e/live/cron-preflight-inference-local.test.ts",
@@ -1125,7 +1129,9 @@
     },
     {
       "live": "test/e2e/live/hermes-root-entrypoint-smoke.test.ts",
+      "liveSources": ["test/e2e/fixtures/hermes-switchyard-package.ts"],
       "fast": [
+        "test/agents/hermes/hermes-switchyard-package.test.ts",
         "test/agents/hermes/hermes-runtime-api-key.test.ts",
         "test/agents/hermes/hermes-start.test.ts",
         "test/agents/hermes/hermes-start-config-integrity.test.ts",

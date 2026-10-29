@@ -17,6 +17,11 @@ import {
   verifyBundledNpmIpAddress,
 } from "../../scripts/lib/patch-bundled-npm-ip-address.mts";
 
+import {
+  failReplacementRename,
+  corruptAfterReplacementRename,
+} from "../support/bundled-npm-recovery-faults.js";
+
 const temporaryDirectories: string[] = [];
 
 function temporaryDirectory(): string {
@@ -80,6 +85,57 @@ afterEach(() => {
 });
 
 describe("npm bundled ip-address remediation", () => {
+  it("rejects an unreviewed npm identity before restoring its missing package", () => {
+    const target = fixture(AFFECTED_IP_ADDRESS_VERSION);
+    const live = path.join(target.npmRoot, "node_modules", "ip-address");
+    const backup = `${live}.nemoclaw-backup-123-0123456789abcdef`;
+    fs.renameSync(live, backup);
+    writeJson(path.join(target.npmRoot, "package.json"), {
+      name: "other",
+      version: REVIEWED_NPM_VERSION,
+    });
+    expect(() => patchBundledNpmIpAddress(target)).toThrow("npm package identity has drifted");
+    expect(fs.existsSync(live)).toBe(false);
+    expect(fs.readFileSync(path.join(backup, "old.js"), "utf8")).toBe("old\n");
+  });
+
+  it.each([
+    { entrypoint: "direct", run: (target) => patchBundledNpmIpAddress(target) },
+    {
+      entrypoint: "registry",
+      run: (target) =>
+        patchBundledNpmIpAddressFromRegistry(target.npmRoot, {
+          commandRunner: () => {},
+          prepareReplacement: () => ({
+            replacementRoot: target.replacementRoot,
+            cleanup: () => {},
+          }),
+        }),
+    },
+  ] satisfies Array<{
+    entrypoint: string;
+    run: (target: ReturnType<typeof fixture>) => { state: string };
+  }>)("recovers an interrupted missing live package through $entrypoint", ({ run }) => {
+    const target = fixture(AFFECTED_IP_ADDRESS_VERSION);
+    const live = path.join(target.npmRoot, "node_modules", "ip-address");
+    const backup = `${live}.nemoclaw-backup-123-0123456789abcdef`;
+    // State left after the backup copy and live removal, before replacement rename.
+    fs.cpSync(live, backup, { recursive: true });
+    fs.rmSync(live, { recursive: true });
+    const staging = path.join(
+      target.npmRoot,
+      "node_modules",
+      ".ip-address.nemoclaw-stage-interrupted",
+    );
+    fs.mkdirSync(staging);
+    fs.writeFileSync(path.join(staging, "unverified"), "preserve\n");
+
+    expect(run(target).state).toBe("fixed");
+    expect(verifyBundledNpmIpAddress(target.npmRoot).state).toBe("fixed");
+    expect(fs.existsSync(backup)).toBe(false);
+    expect(fs.readFileSync(path.join(staging, "unverified"), "utf8")).toBe("preserve\n");
+  });
+
   it("replaces the complete affected private package tree", () => {
     const target = fixture(AFFECTED_IP_ADDRESS_VERSION);
 
@@ -161,10 +217,7 @@ describe("npm bundled ip-address remediation", () => {
     const originalRenameSync = fs.renameSync.bind(fs);
     const renameSpy = vi
       .spyOn(fs, "renameSync")
-      .mockImplementationOnce(() => {
-        throw new Error("injected replacement rename failure");
-      })
-      .mockImplementation(originalRenameSync);
+      .mockImplementation(failReplacementRename(originalRenameSync));
     syncBuiltinESMExports();
 
     try {
@@ -184,16 +237,18 @@ describe("npm bundled ip-address remediation", () => {
     const target = fixture(AFFECTED_IP_ADDRESS_VERSION);
     const livePath = path.join(target.npmRoot, "node_modules", "ip-address");
     const originalRenameSync = fs.renameSync.bind(fs);
-    const renameSpy = vi
-      .spyOn(fs, "renameSync")
-      .mockImplementationOnce((oldPath, newPath) => {
-        originalRenameSync(oldPath, newPath);
-        writeJson(path.join(livePath, "package.json"), {
-          ...packageManifest(FIXED_IP_ADDRESS_VERSION),
-          main: "unexpected.js",
-        });
-      })
-      .mockImplementation(originalRenameSync);
+    const renameSpy = vi.spyOn(fs, "renameSync").mockImplementation(
+      corruptAfterReplacementRename(
+        originalRenameSync,
+        () => {
+          writeJson(path.join(livePath, "package.json"), {
+            ...packageManifest(FIXED_IP_ADDRESS_VERSION),
+            main: "unexpected.js",
+          });
+        },
+        false,
+      ),
+    );
     syncBuiltinESMExports();
 
     try {
@@ -278,25 +333,75 @@ describe("npm bundled ip-address remediation", () => {
         .readdirSync(path.join(target.npmRoot, "node_modules"))
         .some((entry) => entry.startsWith("ip-address.nemoclaw-backup-")),
     ).toBe(true);
+    expect(
+      patchBundledNpmIpAddressFromRegistry(target.npmRoot, {
+        commandRunner: () => {},
+        prepareReplacement: () => {
+          throw new Error("unexpected download");
+        },
+      }),
+    ).toMatchObject({ state: "fixed" });
+    expect(
+      fs
+        .readdirSync(path.join(target.npmRoot, "node_modules"))
+        .some((entry) => entry.startsWith("ip-address.nemoclaw-backup-")),
+    ).toBe(false);
+  });
+
+  it("refuses an unrecognized retained backup before commands or package mutation", () => {
+    const target = fixture(FIXED_IP_ADDRESS_VERSION);
+    const backup = path.join(
+      target.npmRoot,
+      "node_modules",
+      "ip-address.nemoclaw-backup-123-0123456789abcdef",
+    );
+    writeJson(path.join(backup, "package.json"), packageManifest(FIXED_IP_ADDRESS_VERSION));
+    const commandRunner = vi.fn();
+    expect(() => patchBundledNpmIpAddressFromRegistry(target.npmRoot, { commandRunner })).toThrow(
+      "retained backup cannot be verified",
+    );
+    expect(() => patchBundledNpmIpAddress(target)).toThrow("retained backup cannot be verified");
+    expect(commandRunner).not.toHaveBeenCalled();
+    expect(fs.existsSync(path.join(backup, "package.json"))).toBe(true);
+    expectAffectedTreeUnchanged(target);
+    writeJson(path.join(backup, "package.json"), packageManifest(AFFECTED_IP_ADDRESS_VERSION));
+    expect(patchBundledNpmIpAddress(target)).toMatchObject({ state: "fixed" });
+    expect(fs.existsSync(backup)).toBe(false);
+  });
+
+  it("retains HTTPS download for ip-address in offline environments", () => {
+    vi.stubEnv("NPM_CONFIG_OFFLINE", "true");
+    const target = fixture(AFFECTED_IP_ADDRESS_VERSION);
+    const commands: string[] = [];
+    expect(() =>
+      patchBundledNpmIpAddressFromRegistry(target.npmRoot, {
+        commandRunner(command, args) {
+          commands.push(command);
+          const archive = String(args[args.indexOf("--output") + 1]);
+          fs.writeFileSync(archive, "tampered archive");
+        },
+      }),
+    ).toThrow("ip-address replacement integrity mismatch");
+    expect(commands).toEqual(["curl"]);
+    expectAffectedTreeUnchanged(target);
   });
 
   it("reports the original patch failure when rollback also fails", () => {
     const target = fixture(AFFECTED_IP_ADDRESS_VERSION);
     const livePath = path.join(target.npmRoot, "node_modules", "ip-address");
     const originalRenameSync = fs.renameSync.bind(fs);
-    const renameSpy = vi
-      .spyOn(fs, "renameSync")
-      .mockImplementationOnce((oldPath, newPath) => {
-        originalRenameSync(oldPath, newPath);
-        writeJson(path.join(livePath, "package.json"), {
-          ...packageManifest(FIXED_IP_ADDRESS_VERSION),
-          main: "unexpected.js",
-        });
-      })
-      .mockImplementationOnce(() => {
-        throw new Error("injected rollback rename failure");
-      })
-      .mockImplementation(originalRenameSync);
+    const renameSpy = vi.spyOn(fs, "renameSync").mockImplementation(
+      corruptAfterReplacementRename(
+        originalRenameSync,
+        () => {
+          writeJson(path.join(livePath, "package.json"), {
+            ...packageManifest(FIXED_IP_ADDRESS_VERSION),
+            main: "unexpected.js",
+          });
+        },
+        true,
+      ),
+    );
     syncBuiltinESMExports();
 
     let failure: unknown;

@@ -53,6 +53,7 @@ export type LlamaCppAttachmentResult =
 export interface ProbeLlamaCppAttachmentOptions {
   requestedModel?: string | null;
   baseUrl?: string;
+  managedRuntime?: true;
   runCurlProbeImpl?: (argv: string[], options?: CurlProbeOptions) => CurlProbeResult;
 }
 
@@ -66,6 +67,39 @@ const LLAMA_CPP_META_NUMERIC_KEYS = [
 ] as const;
 
 const LLAMA_CPP_MAX_PROBE_RESPONSE_BYTES = 256 * 1024;
+// Owned Docker Desktop bridges can complete a request after the attachment probe's 5-second cap.
+const LLAMA_CPP_MANAGED_PROBE_TIMEOUT_SECONDS = 30;
+// Fingerprint requests can each cross the managed bridge. Allow the measured
+// slow bridge to complete while bounding the whole failed attachment decision.
+const LLAMA_CPP_MANAGED_FINGERPRINT_TIMEOUT_MS = 90_000;
+
+function managedFingerprintProbe(
+  probe: (argv: string[], options?: CurlProbeOptions) => CurlProbeResult,
+): (argv: string[], options?: CurlProbeOptions) => CurlProbeResult {
+  const deadline = performance.now() + LLAMA_CPP_MANAGED_FINGERPRINT_TIMEOUT_MS;
+  const timedOut: CurlProbeResult = {
+    ok: false,
+    httpStatus: 0,
+    curlStatus: 28,
+    body: "",
+    stderr: "",
+    message: "Managed llama.cpp fingerprint deadline exceeded.",
+  };
+  return (argv, options) => {
+    const remainingMs = deadline - performance.now();
+    if (remainingMs < 1) return timedOut;
+    const maxTimeIndex = argv.indexOf("--max-time") + 1;
+    const boundedArgs = [...argv];
+    boundedArgs[maxTimeIndex] = String(Math.min(Number(argv[maxTimeIndex]), remainingMs / 1000));
+    const result = probe(boundedArgs, {
+      ...options,
+      timeoutMs: Math.ceil(
+        Math.min(remainingMs, LLAMA_CPP_MANAGED_PROBE_TIMEOUT_SECONDS * 1000 + 5_000),
+      ),
+    });
+    return performance.now() >= deadline ? timedOut : result;
+  };
+}
 
 function failure(
   reason: LlamaCppAttachmentFailureReason,
@@ -149,13 +183,13 @@ function hasNativeMetricsResponse(result: CurlProbeResult): boolean {
   );
 }
 
-function probeArgs(authArgs: readonly string[], url: string): string[] {
+function probeArgs(authArgs: readonly string[], url: string, timeoutSeconds: number): string[] {
   return [
     "-sS",
     "--connect-timeout",
     "2",
     "--max-time",
-    "5",
+    String(timeoutSeconds),
     "--max-filesize",
     String(LLAMA_CPP_MAX_PROBE_RESPONSE_BYTES),
     ...authArgs,
@@ -171,9 +205,10 @@ function probeModelEndpoint(
   model: string,
   allowUnscopedFallback: boolean,
   options: CurlProbeOptions,
+  timeoutSeconds: number,
 ): CurlProbeResult {
   const scoped = probe(
-    probeArgs(authArgs, `${baseUrl}${path}?model=${encodeURIComponent(model)}`),
+    probeArgs(authArgs, `${baseUrl}${path}?model=${encodeURIComponent(model)}`, timeoutSeconds),
     options,
   );
   const body = parseJsonObject(scoped.body);
@@ -190,18 +225,21 @@ function probeModelEndpoint(
   ) {
     return scoped;
   }
-  return probe(probeArgs(authArgs, `${baseUrl}${path}`), options);
+  return probe(probeArgs(authArgs, `${baseUrl}${path}`, timeoutSeconds), options);
 }
 
-function boundedProbeFailure(result: CurlProbeResult): LlamaCppAttachmentResult | null {
+function boundedProbeFailure(
+  result: CurlProbeResult,
+  phase: string,
+): LlamaCppAttachmentResult | null {
   if (result.curlStatus === 63) {
     return failure(
       "oversized-response",
-      "A llama.cpp fingerprint response exceeded the 256 KiB probe limit.",
+      `The llama.cpp fingerprint ${phase} response exceeded the 256 KiB probe limit.`,
     );
   }
   if (result.curlStatus === 28) {
-    return failure("probe-timeout", "A llama.cpp fingerprint probe exceeded its time limit.");
+    return failure("probe-timeout", `The llama.cpp fingerprint ${phase} request timed out.`);
   }
   return null;
 }
@@ -251,13 +289,18 @@ export function probeLlamaCppAttachment(
       `llama.cpp attachment is restricted to loopback port ${LLAMA_CPP_PORT}.`,
     );
   }
-  const probe = options.runCurlProbeImpl ?? runCurlProbe;
+  const baseProbe = options.runCurlProbeImpl ?? runCurlProbe;
+  const probe = options.managedRuntime ? managedFingerprintProbe(baseProbe) : baseProbe;
+  const timeoutSeconds = options.managedRuntime ? LLAMA_CPP_MANAGED_PROBE_TIMEOUT_SECONDS : 5;
   const anonymousProbeOptions: CurlProbeOptions = {
     maxResponseBytes: LLAMA_CPP_MAX_PROBE_RESPONSE_BYTES,
     pinnedAddresses: [],
   };
-  const anonymousModels = probe(probeArgs([], `${baseUrl}/v1/models`), anonymousProbeOptions);
-  const anonymousBoundFailure = boundedProbeFailure(anonymousModels);
+  const anonymousModels = probe(
+    probeArgs([], `${baseUrl}/v1/models`, timeoutSeconds),
+    anonymousProbeOptions,
+  );
+  const anonymousBoundFailure = boundedProbeFailure(anonymousModels, "anonymous /v1/models");
   if (anonymousBoundFailure) return anonymousBoundFailure;
   if (anonymousModels.curlStatus !== 0 || anonymousModels.httpStatus === 0) {
     return failure("unreachable", `No llama.cpp server responded on fixed port ${LLAMA_CPP_PORT}.`);
@@ -273,8 +316,11 @@ export function probeLlamaCppAttachment(
     );
   }
   if (anonymousModels.httpStatus === 200) {
-    const anonymousProps = probe(probeArgs([], `${baseUrl}/props`), anonymousProbeOptions);
-    const anonymousPropsBoundFailure = boundedProbeFailure(anonymousProps);
+    const anonymousProps = probe(
+      probeArgs([], `${baseUrl}/props`, timeoutSeconds),
+      anonymousProbeOptions,
+    );
+    const anonymousPropsBoundFailure = boundedProbeFailure(anonymousProps, "anonymous /props");
     if (anonymousPropsBoundFailure) return anonymousPropsBoundFailure;
     if (anonymousProps.curlStatus !== 0 || anonymousProps.httpStatus === 0) {
       return failure(
@@ -311,8 +357,14 @@ export function probeLlamaCppAttachment(
       trustedConfigFiles: auth.trustedConfigFiles,
       pinnedAddresses: [],
     };
-    const authenticatedModels = probe(probeArgs(auth.args, `${baseUrl}/v1/models`), probeOptions);
-    const authenticatedBoundFailure = boundedProbeFailure(authenticatedModels);
+    const authenticatedModels = probe(
+      probeArgs(auth.args, `${baseUrl}/v1/models`, timeoutSeconds),
+      probeOptions,
+    );
+    const authenticatedBoundFailure = boundedProbeFailure(
+      authenticatedModels,
+      "authenticated /v1/models",
+    );
     if (authenticatedBoundFailure) return authenticatedBoundFailure;
     if (authenticatedModels.httpStatus === 401 || authenticatedModels.httpStatus === 403) {
       return failure("authentication-rejected", "The llama.cpp API key was rejected.");
@@ -367,7 +419,9 @@ export function probeLlamaCppAttachment(
         "llama.cpp must be started with a non-path served model alias.",
       );
     }
-    const health = probe(probeArgs(auth.args, `${baseUrl}/health`), probeOptions);
+    const health = probe(probeArgs(auth.args, `${baseUrl}/health`, timeoutSeconds), probeOptions);
+    const healthBoundFailure = boundedProbeFailure(health, "authenticated /health");
+    if (healthBoundFailure) return healthBoundFailure;
     const allowUnscopedFallback = modelEntries.length === 1;
     const props = probeModelEndpoint(
       probe,
@@ -377,7 +431,10 @@ export function probeLlamaCppAttachment(
       model,
       allowUnscopedFallback,
       probeOptions,
+      timeoutSeconds,
     );
+    const propsBoundFailure = boundedProbeFailure(props, "authenticated /props");
+    if (propsBoundFailure) return propsBoundFailure;
     const metrics = probeModelEndpoint(
       probe,
       auth.args,
@@ -386,11 +443,10 @@ export function probeLlamaCppAttachment(
       model,
       allowUnscopedFallback,
       probeOptions,
+      timeoutSeconds,
     );
-    for (const result of [health, props, metrics]) {
-      const boundFailure = boundedProbeFailure(result);
-      if (boundFailure) return boundFailure;
-    }
+    const metricsBoundFailure = boundedProbeFailure(metrics, "authenticated /metrics");
+    if (metricsBoundFailure) return metricsBoundFailure;
     if (!hasHealthyNativeResponse(health)) {
       return failure(
         "conflicting-fingerprint",

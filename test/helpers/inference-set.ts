@@ -400,8 +400,9 @@ export function createDeps(options: {
       (): LocalValidationResult => options.localValidation ?? { ok: true },
     ),
     ensureLocalProviderReachable: vi.fn(() => options.localReachable ?? true),
-    resolveContextWindowForModel: vi.fn((_provider: string, _model: string) =>
-      options.contextWindow === undefined ? null : options.contextWindow,
+    resolveContextWindowForModel: vi.fn(
+      (_provider: string, _model: string, _gatewayPort: number) =>
+        options.contextWindow === undefined ? null : options.contextWindow,
     ),
     prepareRunOpenshell: vi.fn(options.prepareRunOpenshell ?? (() => undefined)),
     rewriteConfigUrlsWithDnsPinning: vi.fn(

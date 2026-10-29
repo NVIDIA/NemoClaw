@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { OpenShellProviderAdapter } from "../adapters/openshell/provider-adapter";
+import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "../inference/native-nvidia/contract";
 import { setupOllamaLocalInference } from "./inference-providers/ollama-local";
 import {
   createProviderReviewDeps,
@@ -315,7 +316,8 @@ describe("Personal custom endpoint onboarding", () => {
 });
 
 describe("native NVIDIA onboarding", () => {
-  it("reserves the logical route with an attached-provider receipt and no shared route mutation", async () => {
+  const endpoints = ["https://integrate.api.nvidia.com/v1", "https://inference.local/v1", null];
+  it.each(endpoints)("probes NVIDIA from saved endpoint %s (#13526)", async (endpointUrl) => {
     const importProviderProfile = vi.fn(async () => ({ ok: true as const }));
     const getProvider = vi
       .fn<OpenShellProviderAdapter["getProvider"]>()
@@ -380,7 +382,7 @@ describe("native NVIDIA onboarding", () => {
         "alpha",
         "nvidia/nemotron-3-super-120b-a12b",
         "nvidia-prod",
-        "https://integrate.api.nvidia.com/v1",
+        endpointUrl,
         "NVIDIA_INFERENCE_API_KEY",
         null,
         [],
@@ -410,11 +412,18 @@ describe("native NVIDIA onboarding", () => {
     ).toEqual([]);
     expect(verifyInferenceRoute).not.toHaveBeenCalled();
     expect(verifyOnboardInferenceSmoke).toHaveBeenCalledOnce();
+    expect(verifyOnboardInferenceSmoke).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "nvidia-prod",
+        endpointUrl: "https://integrate.api.nvidia.com/v1",
+      }),
+    );
     expect(updateSandbox).toHaveBeenCalledWith(
       "alpha",
       expect.objectContaining({
         provider: "nvidia-prod",
         model: "nvidia/nemotron-3-super-120b-a12b",
+        endpointUrl: NVIDIA_HOSTED_NATIVE_ENDPOINT,
         nativeNvidiaProviderAttachment: {
           schemaVersion: 1,
           profileId: "nemoclaw-nvidia-inference-v1",

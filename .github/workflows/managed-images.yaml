@@ -62,6 +62,8 @@ on:
       - "src/lib/state/state-root.ts"
       - "test/helpers/openclaw-real-agent-reload-proof.ts"
       - "test/e2e/fixtures/docker-build-guard.ts"
+      - "test/e2e/fixtures/hermes-switchyard-package.ts"
+      - "test/e2e/live/hermes-root-entrypoint-smoke.test.ts"
       - "test/e2e/live/mcp-bridge*.ts"
       - "test/e2e/support/mcp-bridge-portable-lock-barrier.ts"
       - "test/e2e/fixtures/gateway-runtime-start.ts"
@@ -949,6 +951,27 @@ jobs:
             --agent "$AGENT" \
             --image "$IMAGE_REFERENCE" \
             --platform "$PLATFORM"
+
+      - name: Qualify Hermes root entrypoint and Switchyard package
+        if: matrix.agent == 'hermes'
+        timeout-minutes: 30
+        env:
+          E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/hermes-root-entrypoint-smoke
+          NEMOCLAW_HERMES_TEST_IMAGE: ${{ steps.contract.outputs.reference }}
+          NEMOCLAW_RUN_LIVE_E2E: "1"
+        run: |
+          npx --no-install vitest run --project e2e-live \
+            test/e2e/live/hermes-root-entrypoint-smoke.test.ts
+
+      - name: Upload Hermes package qualification artifacts
+        if: always() && matrix.agent == 'hermes'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: hermes-root-entrypoint-pr-${{ matrix.arch }}-${{ github.run_attempt }}
+          path: e2e-artifacts/live/hermes-root-entrypoint-smoke/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Log in to GHCR for exact same-repository PR digest
         if: github.event.pull_request.head.repo.full_name == github.repository
@@ -2617,6 +2640,27 @@ jobs:
               --platform "$PLATFORM"
           printf 'local_id=%s\n' "$image_id" >> "$GITHUB_OUTPUT"
           printf 'reference=%s\n' "$reference" >> "$GITHUB_OUTPUT"
+
+      - name: Qualify Hermes root entrypoint and Switchyard package
+        if: matrix.agent == 'hermes'
+        timeout-minutes: 30
+        env:
+          E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/hermes-root-entrypoint-smoke
+          NEMOCLAW_HERMES_TEST_IMAGE: ${{ steps.validate.outputs.local_id }}
+          NEMOCLAW_RUN_LIVE_E2E: "1"
+        run: |
+          npx --no-install vitest run --project e2e-live \
+            test/e2e/live/hermes-root-entrypoint-smoke.test.ts
+
+      - name: Upload Hermes package qualification artifacts
+        if: always() && matrix.agent == 'hermes'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: hermes-root-entrypoint-publication-${{ matrix.arch }}-${{ github.run_attempt }}
+          path: e2e-artifacts/live/hermes-root-entrypoint-smoke/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Capture exact managed image publication evidence
         id: evidence

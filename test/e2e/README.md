@@ -5,6 +5,18 @@
 
 Direct E2E coverage runs through Vitest.
 
+The clean Hermes root-entrypoint scenario also owns the Switchyard package's real-image
+contract. It checks the shipped files and root ownership, proves the healthy supervised
+gateway has not loaded the plugin, and uses a separate test-only Hermes process to prove
+native loading and cleanup on the image's architecture. It does not install routing
+configuration or qualify provider routing. `test/agents/hermes/hermes-switchyard-package.test.ts`
+owns deterministic archive, manifest, architecture, digest, and unsafe-member rejection.
+The Hermes jobs in `.github/workflows/managed-images.yaml` run this suite on native
+amd64 and arm64 runners against each job's built image. Both the PR build and publication
+jobs require it before exporting their validated image contracts. Their architecture-specific
+artifacts retain the probe results, including failures. Both architectures must pass for
+Switchyard release qualification; a startup-hold result alone does not qualify the package.
+
 OpenClaw inference switching explicitly approves the sandbox CLI's matching admin request before switching providers, because applying the new configuration restarts the gateway.
 Ordinary agent-turn targets run without that approval; they must succeed with the native method's write scope.
 Changes to the OpenClaw scope patch select the compatible-endpoint, latency, skill-lifecycle, inference-switch, and full OpenClaw targets on both runtimes, plus the Docker llama.cpp GPU target. The compatible-endpoint case owns the native in-sandbox CLI-to-gateway consumer proof before admin approval: it checks command success, the model reply, and newly observed mock-provider traffic separately.
@@ -219,12 +231,16 @@ The `managed-image-multiarch-startup` no-build job keeps that setting and compil
 It rejects preexisting output, verifies the required shared modules, and then starts the direct managed-image contracts.
 Its amd64 shard also exports digest-addressed npm and agent system inputs for the protected offline rebuild.
 The trusted controller accepts both v1 multiarch activation and v2 Deep Agents
-base activation. PR runs build all three managed-agent bases from the selected
-checkout's Dockerfiles, pins and lockfiles on native CPU runners. Each base has
-a separate OCI layout and receipt bound to its agent, source SHA, trusted
-workflow SHA, platform, run ID and attempt. The protected GPU controller verifies
-these identities and every config, manifest and layer digest before using the
-bases offline. PR runs reject published-base substitution and failed verification.
+base activation. PR image-publication runs build all three managed-agent bases
+from the selected checkout's Dockerfiles, pins and lockfiles on native CPU runners.
+Each candidate base has a separate OCI layout and receipt bound to its agent,
+source SHA, trusted workflow SHA, platform, run ID and attempt. The protected
+GPU controller verifies these identities and every config, manifest and layer
+digest before using candidate bases offline. In a protected startup PR run, the
+trusted resolver may select a published OpenClaw base only when its direct inputs
+match the candidate. The GPU controller rechecks that published base's digest.
+Hermes and Deep Agents Code use candidate bases in protected startup PR runs.
+Failed verification stops the run.
 Runs without a PR source retain published OpenClaw and Hermes bases; Deep Agents
 uses a published base with v1 activation and a candidate base with v2 activation.
 The receipt command retains its Deep Agents default for existing callers; an
@@ -550,7 +566,17 @@ cohort.
 
 The gateway restart fixture restarts the user service it stopped. If no service was selected, the candidate CLI startup code starts the registered gateway.
 
-Pi qualification preserves its hosted onboarding, rebuild, recovery, policy, and credential checks. After destroying that sandbox, the same target onboards a fresh Pi sandbox against an authenticated local compatible endpoint. A fresh Pi process must send the selected model to that endpoint. The target then rebuilds Pi and requires another authenticated request for the recorded model. The upstream credential must stay outside the sandbox, and public destroy must leave the sandbox absent. The hosted lifecycle retains its 90-minute allowance; the native phase adds 60 minutes for onboarding, two requests, a rebuild, isolation, and cleanup. The job adds 10 minutes of headroom. Operation deadlines and the target selector stay unchanged.
+Pi qualification keeps the hosted onboarding, rebuild, recovery, policy, and credential checks.
+After public destroy, the target onboards a fresh Pi sandbox against an authenticated local
+compatible endpoint. A fresh Pi process must send the selected model to that endpoint. The target
+rebuilds Pi and requires another authenticated request for the recorded model. The upstream
+credential must stay outside the sandbox, and public destroy must leave the sandbox absent.
+
+The hosted lifecycle retains its 90-minute allowance. The native phase adds 60 minutes for
+onboarding, two requests, a rebuild, isolation, and cleanup. Each of the three hosted Pi read tasks
+may retry once after a qualifying transient failure. Each attempt has a five-minute timeout, and a
+retry waits 10 seconds. The test allows 166 minutes, including 16 minutes for retries. The target
+allows 176 minutes, including 10 minutes of job headroom. The target selector stays unchanged.
 A selected service that cannot restart remains selected for cleanup; recovery does not switch to another startup path.
 Restart inputs are checked before stopping the gateway. A failed start ends the test before health polling. Sandbox readiness, retained state, and agent turns remain separate assertions.
 
@@ -806,6 +832,8 @@ or exactly one thread whose recorded cwd matches. Ambiguous results fail cleanup
 thread. Listing, deletion, and removal of the private directory each use a 30-second host timeout with
 a five-second kill grace. A failed command or timeout marks cleanup as failed, retains the private
 directory and recovery instructions, and allows policy and capture cleanup to continue.
+The same target writes an npm cache marker under the DCode native home before its existing rebuild.
+After rebuild, it verifies that the marker survived, the sandbox is Ready, and a DCode action succeeds.
 The TUI check then runs without changing that registry baseline. The installed
 CLI on Docker must emit a v1alpha1 document with the `deepagents` harness, hosted OpenAI-compatible route,
 credential reference, and independently observed effective policy.
@@ -1408,6 +1436,15 @@ lazy-package state survive rebuild. Managed-image activation exercises native
 OpenClaw and Hermes discovery before and after gateway restart. Deterministic
 state-restore tests prove complete native directories are archived without
 image-plugin exclusions.
+
+Before rebuilding the stopped OpenClaw source, the same target stops Docker and confirms that
+`docker info` fails. It then requires `nemoclaw uninstall --yes` to fail with the Docker-unavailable
+container-cleanup diagnostic while the sandbox remains registered. The target restores Docker and
+verifies `docker info` before rebuilding; cleanup repeats restoration before deleting the sandbox
+if the proof fails. The existing stopped-source proof supplies the registered `Error` state;
+the target does not kill and observe a second source. The removed rebuild completion-text check
+repeated the exit and restored-state checks. The removed fixture-write and restored-marker exit
+checks are covered by the retained exact restored marker, configuration, and loaded-plugin proof.
 
 On Docker and rootless Podman, managed-image activation also adopts the
 published OpenClaw and Hermes digests through `--from-image`. It confirms
@@ -2238,6 +2275,13 @@ Direct `main` runs use the same publication workflow and artifact contract.
 Protected managed-image build jobs apply a separate rule to their reusable base receipt.
 The producer must be from the same workflow run and no later than the consumer attempt.
 Receipt verification remains bound to the producer attempt.
+For a manual PR run, the protected startup job uses a trusted resolver to compare
+the candidate's OpenClaw base Dockerfile and its inputs with the published base's
+source revision. Matching inputs permit an immutable published base reference.
+Changed or unverified inputs use a base built from the exact candidate instead.
+The final managed image always builds from the selected candidate commit, and the
+GPU job verifies the same-run build-cache identity and any published OpenClaw
+base digest before its offline rebuild.
 
 The Deep Agents Code managed-image target uses the shared receipt check to verify its image digest, source revision, and cohort.
 Onboarding and fresh re-onboarding do not supply a base-image override.
@@ -2360,6 +2404,11 @@ It projects the SDK identity into the trusted manifest and lockfile, then instal
 The SDK version must match the candidate runtime version.
 Changed SDK dependency metadata or transitive dependencies require a trust/bootstrap review; unrelated candidate npm changes never enter the controller.
 Live qualification must still pass for the selected candidate; source projection and archive-install tests do not establish that result.
+When a parsed OpenClaw result fails the provider, model, completion, or assistant-answer checks, the job reports a bounded diagnostic.
+The workflow revision must contain this helper; a premerge run using an older trusted workflow cannot report it.
+It contains only allowlisted status fields, flags, counts, and text lengths.
+The diagnostic excludes raw responses, payload text, prompts, transcripts, and credentials.
+Use it with the failed assertion and retained cleanup evidence; it does not establish a cause or a passing result.
 To select native runtime qualification evidence production, set `jobs=native-runtime-qualification-producer`.
 Leave `targets` empty and keep `include_staging_brev_launchable=false`.
 For this producer run, the executing workflow SHA, `workflow_sha` input, and PR base SHA must match.
@@ -2529,8 +2578,13 @@ Its separate environment, process, filesystem, and canary checks are replaced by
 support tests cover leak detection and control cleanup.
 
 OpenRouter onboards OpenClaw and starts a fresh agent process.
-The `hosted-inference-openrouter` target also onboards Deep Agents Code with the same
-OpenRouter key and model. Its six-assertion case checks onboarding, credential isolation,
+The `hosted-inference-openrouter` target also onboards Hermes and Deep Agents Code with the same
+OpenRouter key and model. The Hermes case requires a real turn before rebuild, a successful
+`connect --probe-only`, and an immediate real turn after rebuilding without a fresh host credential.
+If that turn fails, it records only bounded classifications of the sandbox credential environment,
+managed config slots, and OpenShell provider attachment. It checks the reply even when
+`hermes -z` exits zero.
+The Deep Agents Code six-assertion case checks onboarding, credential isolation,
 the native TOML route, and one fresh `dcode -n --json` response.
 The OpenClaw case checks the native endpoint, credential placeholder,
 selected adapter, response model, and nonempty answer.
@@ -2557,7 +2611,7 @@ sandbox isolation, restart, and failed-operation recovery.
 The smoke requires the approved `NEMOCLAW_OPENROUTER_MODEL`; it does not select a default model.
 Credentials remain in the test host environment and OpenShell provider store; artifacts redact them.
 The cleanup helper destroys each test sandbox. The Deep Agents Code case checks sandbox absence even if onboarding fails.
-The OpenClaw case checks absence after successful onboarding; failed onboarding uses best-effort cleanup.
+The OpenClaw and Hermes cases check absence after successful onboarding; failed onboarding uses best-effort cleanup.
 Neither path proves removal of credentials from the OpenShell provider store.
 Discard the approved disposable gateway after each run, including failed onboarding. Use a fresh gateway for a retry.
 

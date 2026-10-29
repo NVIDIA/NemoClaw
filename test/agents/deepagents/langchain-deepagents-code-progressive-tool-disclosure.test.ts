@@ -399,7 +399,9 @@ function snapshot(paths: string[]): Record<string, string> {
 function runWiring(fixture: PatchFixture): Record<string, unknown> {
   const script = `import importlib
 import importlib.util
+import io
 import json
+import logging
 import os
 import sys
 import types
@@ -521,14 +523,25 @@ empty_mcp = counts(
         mcp_server_info=[Info(("metadata_only",))],
     )
 )
-active = counts(
-    agent.create_cli_agent(
-        None,
-        "assistant",
-        mcp_tools=[NamedTool("mcp_echo")],
-        mcp_server_info=[Info(())],
+activation_output = io.StringIO()
+activation_handler = logging.StreamHandler(activation_output)
+activation_logger = logging.getLogger("deepagents_code.agent")
+previous_level = activation_logger.level
+activation_logger.setLevel(logging.INFO)
+activation_logger.addHandler(activation_handler)
+try:
+    active = counts(
+        agent.create_cli_agent(
+            None,
+            "assistant",
+            mcp_tools=[NamedTool("mcp_echo")],
+            mcp_server_info=[Info(())],
+        )
     )
-)
+finally:
+    activation_logger.removeHandler(activation_handler)
+    activation_logger.setLevel(previous_level)
+activation_logs = activation_output.getvalue().splitlines()
 parent_only = harness.BaseTool("parent_only", "Parent graph tool")
 subagent_only = harness.BaseTool("subagent_only", "Subagent graph tool")
 subagent_result = agent.create_cli_agent(
@@ -668,6 +681,7 @@ print(json.dumps({
     "no_mcp": no_mcp,
     "empty_mcp": empty_mcp,
     "active": active,
+    "activation_logs": activation_logs,
     "subagent_catalogs": subagent_catalogs,
     "progressive_collisions": progressive_collisions,
     "direct_collisions": direct_collisions,
@@ -833,6 +847,9 @@ describe("Deep Agents 0.1.71 progressive-disclosure build patch", () => {
       reached_original: [],
       invalid: "NEMOCLAW_TOOL_DISCLOSURE must be 'progressive' or 'direct'",
     });
+    expect(wiring.activation_logs).toEqual([
+      "NemoClaw progressive tool disclosure middleware installed",
+    ]);
     expect(wiring.observability_noncanonical).toEqual({
       instances: 0,
       distinct: 0,

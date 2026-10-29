@@ -13,6 +13,28 @@ ARG NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=0
 # context pins its accepted x86_64 target because Podman does not supply it.
 ARG TARGETARCH
 
+FROM scratch AS switchyard-amd64
+ADD --checksum=sha256:d0306ee11bf44e1845f24f4fb56e4e11986ef6ac751f3abf303aef9fe1e798d2 https://github.com/NVIDIA/NeMo-Relay-Plugins/releases/download/switchyard-plugin-0.3.0/switchyard-plugin-0.3.0-linux-x86_64.tar.gz /switchyard.tar.gz
+
+FROM scratch AS switchyard-arm64
+ADD --checksum=sha256:267c4fa1b0ea07a9fdff019f4791e5042f4f68093ae27a7afb7541d323b2f720 https://github.com/NVIDIA/NeMo-Relay-Plugins/releases/download/switchyard-plugin-0.3.0/switchyard-plugin-0.3.0-linux-arm64.tar.gz /switchyard.tar.gz
+
+# hadolint ignore=DL3006
+FROM switchyard-${TARGETARCH} AS switchyard-assets
+
+# Verify the released bundle without loading it or adding a build toolchain.
+# Only the root-owned, disabled plugin payload enters the final image.
+# hadolint ignore=DL3006
+FROM ${BASE_IMAGE} AS switchyard-verified
+# This build-only stage must install a root-owned payload.
+# hadolint ignore=DL3002
+USER 0:0
+COPY --from=switchyard-assets /switchyard.tar.gz /switchyard.tar.gz
+COPY agents/hermes/install-switchyard.py /install-switchyard.py
+RUN mkdir -p /opt/nemo-relay/plugins \
+    && /opt/hermes/.venv/bin/python -I /install-switchyard.py \
+        /switchyard.tar.gz /opt/nemo-relay/plugins/switchyard
+
 FROM scratch AS reviewed-npm-archive
 ADD --checksum=sha256:5dbb86c71d07a1957f2e90734092dd6a58bdcd9ebc2d8d41ca1c6e6a21d364e1 https://registry.npmjs.org/npm/-/npm-12.0.2.tgz /npm-12.0.2.tgz
 
@@ -42,6 +64,8 @@ COPY agents/hermes/dashboard-external-host.patch /scripts/hermes-dashboard-exter
 
 FROM scratch AS hermes-agent-payload
 
+COPY --from=switchyard-verified /opt/nemo-relay/plugins/switchyard/ /opt/nemo-relay/plugins/switchyard/
+
 # Portable builds reject RUN mounts. Reuse the existing payload layer for
 # the shared inventory tooling instead of adding final-image COPY layers.
 # Copying a scratch /tmp would replace the runtime's sticky writable mode.
@@ -63,6 +87,7 @@ COPY agents/hermes/patch-cron-execution-runtime.py /opt/nemoclaw-hermes-config/p
 COPY agents/hermes/patch-cron-restore-drain.py /opt/nemoclaw-hermes-config/patch-cron-restore-drain.py
 COPY agents/hermes/patch-auxiliary-token-limit.py /opt/nemoclaw-hermes-config/patch-auxiliary-token-limit.py
 COPY agents/hermes/patch-session-list-preview.py /opt/nemoclaw-hermes-config/patch-session-list-preview.py
+COPY agents/hermes/patch-agent-home.py /opt/nemoclaw-hermes-config/patch-agent-home.py
 COPY agents/hermes/patch-profile-policy-defaults.py /opt/nemoclaw-hermes-config/patch-profile-policy-defaults.py
 COPY agents/hermes/managed_policy.py /opt/nemoclaw-hermes-config/managed_policy.py
 COPY agents/hermes/host/managed-tool-gateway-matrix.json /opt/nemoclaw-hermes-config/managed-tool-gateway-matrix.json
@@ -373,7 +398,7 @@ COPY --from=hermes-agent-payload / /
 # published base can carry the expected Hermes version while omitting either
 # optional dependency group. This is a build-time package/import guard; live
 # protocol behavior remains a separate E2E concern.
-ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=ffac0fe42ff405b2334241e97df44bf641e55792516290f23ee8726a52173166
+ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=ceae2679bbf37895c00f6878e7fec4ec41324af05621152c25a342fcd4c64441
 # hadolint ignore=DL3059,DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256" /opt/nemoclaw-hermes-config/image-build-probes.py \
@@ -399,7 +424,7 @@ RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
         /ci/reviewed-npm-audit.json \
     && chmod -R a+rX /src/lib/messaging
 
-ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=ffac0fe42ff405b2334241e97df44bf641e55792516290f23ee8726a52173166
+ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=ceae2679bbf37895c00f6878e7fec4ec41324af05621152c25a342fcd4c64441
 
 # hadolint ignore=DL3067
 COPY --from=hermes-runtime-payload / /
@@ -689,18 +714,31 @@ RUN set -eu; \
 # seed title. Patch both pinned source shapes and prove that an automatically
 # titled workspace row renders the latest resumed or continued one-shot turn
 # while a user-authored title remains authoritative.
+#
+# Hermes v0.21.3 also resolves the state.db link into runtime/ when its registry
+# opens the session ledger. The default profile's agent home then becomes
+# /sandbox/.hermes/runtime, and prompts lose SOUL.md and the skills index. Map
+# only that linked ledger back to /sandbox/.hermes. Apply the patch in this RUN
+# instruction so it adds no image layer.
 ARG NEMOCLAW_HERMES_SESSION_LIST_PREVIEW_PATCHER_SHA256=33356131b81d46e80c96d30d3af2af9a9b38769dcdd80042c7d898a5c6d7d027
+ARG NEMOCLAW_HERMES_AGENT_HOME_PATCHER_SHA256=a29e689ded82eacd3ce98c4898d2afeeb7baf3cbd3faae61674e335cdf66db9a
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_SESSION_LIST_PREVIEW_PATCHER_SHA256" /opt/nemoclaw-hermes-config/patch-session-list-preview.py \
     | sha256sum -c - \
     || { echo "ERROR: patch-session-list-preview.py hash mismatch (update NEMOCLAW_HERMES_SESSION_LIST_PREVIEW_PATCHER_SHA256)" >&2; exit 1; }; \
+    printf '%s  %s\n' \
+        "$NEMOCLAW_HERMES_AGENT_HOME_PATCHER_SHA256" /opt/nemoclaw-hermes-config/patch-agent-home.py \
+    | sha256sum -c - \
+    || { echo "ERROR: patch-agent-home.py hash mismatch (update NEMOCLAW_HERMES_AGENT_HOME_PATCHER_SHA256)" >&2; exit 1; }; \
     /usr/bin/python3 -I /opt/nemoclaw-hermes-config/patch-session-list-preview.py \
     && test "$(grep -Fhc 'ORDER BY m.timestamp DESC, m.id DESC LIMIT 1' /opt/hermes/hermes_state_common.py /opt/hermes/hermes_state_sessions.py /opt/hermes/hermes_state_telegram.py | awk '{ total += $1 } END { print total }')" -eq 4 \
     && grep -Fq 'if s.get("title_source") in ("derived", "llm")' /opt/hermes/hermes_cli/sessions_cmd.py \
     && HERMES_HOME="$(mktemp -d)" /opt/hermes/.venv/bin/python -I \
         /opt/nemoclaw-hermes-config/image-build-probes.py session-preview \
-    && rm /opt/nemoclaw-hermes-config/patch-session-list-preview.py
+    && /usr/bin/python3 -I /opt/nemoclaw-hermes-config/patch-agent-home.py \
+    && rm /opt/nemoclaw-hermes-config/patch-session-list-preview.py \
+        /opt/nemoclaw-hermes-config/patch-agent-home.py
 
 # Hermes v0.21.3 natively reads database.temp_store, which the generated managed
 # policy fixes to SQLite memory mode. Keep only NemoClaw's cross-identity state
@@ -1255,6 +1293,10 @@ RUN /opt/hermes/.venv/bin/python -I -m ensurepip --upgrade --default-pip \
 # layer cap.
 RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/runtime)" = "gateway:sandbox 2770" \
     && test "$(readlink /sandbox/.hermes/state.db)" = "runtime/state.db" \
+    && agent_home_probe_home="$(mktemp -d)" \
+    && HERMES_HOME="$agent_home_probe_home" /opt/hermes/.venv/bin/python -I \
+        /opt/nemoclaw-hermes-config/image-build-probes.py agent-home \
+    && rm -rf "$agent_home_probe_home" \
     && test ! -e /sandbox/.hermes/runtime/state.db \
     && umask 0007 \
     && HERMES_HOME=/sandbox/.hermes /usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- /opt/hermes/.venv/bin/python -I \
@@ -1421,6 +1463,7 @@ RUN check_metadata() { \
     && check_absent /opt/nemoclaw-hermes-config/patch-cron-restore-drain.py \
     && check_absent /opt/nemoclaw-hermes-config/patch-auxiliary-token-limit.py \
     && check_absent /opt/nemoclaw-hermes-config/patch-session-list-preview.py \
+    && check_absent /opt/nemoclaw-hermes-config/patch-agent-home.py \
     && check_absent /opt/nemoclaw-hermes-config/patch-profile-policy-defaults.py \
     && check_absent /opt/nemoclaw-hermes-config/managed_policy.py \
     && check_absent /usr/local/lib/nemoclaw/patch-hermes-session-list-preview.py \

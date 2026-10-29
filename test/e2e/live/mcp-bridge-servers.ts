@@ -872,7 +872,23 @@ export async function startCompatibleMock(options: {
         if (toolResultCount === 0 && visibleToolNames.has(toolName)) {
           protocolError = `progressive target ${toolName} was visible before search_tools`;
         } else if (toolResultCount === 0 && !visibleToolNames.has("search_tools")) {
-          protocolError = "search_tools was not visible before progressive discovery";
+          const knownNames = [
+            "ask_user",
+            "edit_file",
+            "execute",
+            "glob",
+            "grep",
+            "ls",
+            "read_file",
+            "write_file",
+            "write_todos",
+            toolName,
+          ];
+          const visibleKnownNames = knownNames.filter((name) => visibleToolNames.has(name));
+          protocolError =
+            "search_tools was not visible before progressive discovery; " +
+            `visible known tools: ${visibleKnownNames.join(", ") || "none"}; ` +
+            `other tool count: ${visibleToolNames.size - visibleKnownNames.length}`;
         } else if (toolResultCount === 0) {
           plannedToolCall = {
             id: "call_progressive_tool_search",

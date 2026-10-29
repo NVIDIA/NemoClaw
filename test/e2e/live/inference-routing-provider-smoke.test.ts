@@ -237,6 +237,255 @@ test(
 );
 
 test(
+  "TC-INF-07H Hermes authenticates immediately after OpenRouter rebuild",
+  {
+    timeout: 35 * 60_000,
+    meta: {
+      e2ePhases: [
+        "confirm hosted OpenRouter prerequisites",
+        "onboard Hermes with OpenRouter",
+        "verify a Hermes turn before rebuild",
+        "rebuild without a host credential",
+        "verify the rebuilt sandbox connect probe",
+        "verify the first Hermes turn after rebuild",
+      ],
+    },
+  },
+  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
+    progress.phase("confirm hosted OpenRouter prerequisites");
+    requireProviderSmokeSelected("openrouter", skip);
+    const environment = openRouterSmokeEnvironment({
+      OPENROUTER_API_KEY: secrets.optional("OPENROUTER_API_KEY"),
+      NEMOCLAW_OPENROUTER_MODEL: process.env.NEMOCLAW_OPENROUTER_MODEL,
+    });
+    const apiKey = environment.OPENROUTER_API_KEY!;
+    const model = environment.NEMOCLAW_OPENROUTER_MODEL!;
+    await requireLivePrerequisites(host, runtimeProvider);
+    const sandboxName = inferenceSandboxName("e2e-or-hermes");
+    cleanup.add(`best-effort Hermes OpenRouter cleanup for ${sandboxName}`, () =>
+      cleanupSandbox(host, sandbox, sandboxName),
+    );
+    await cleanupSandbox(host, sandbox, sandboxName);
+    await artifacts.target.declare({
+      id: "inference-routing-openrouter-hermes-rebuild",
+      model,
+      contract: [
+        "Hermes completes a native OpenRouter turn before rebuild",
+        "the first Hermes turn after rebuild authenticates without a fresh host credential",
+      ],
+    });
+
+    progress.phase("onboard Hermes with OpenRouter");
+    const onboard = await onboardSandbox(
+      artifacts,
+      sandboxName,
+      {
+        NEMOCLAW_AGENT: "hermes",
+        NEMOCLAW_MODEL: model,
+        NEMOCLAW_PROVIDER: "openrouter",
+        OPENROUTER_API_KEY: apiKey,
+      },
+      [apiKey],
+      "tc-inf-07h-onboard",
+      progress,
+    );
+    const onboardSucceeded = onboard.exitCode === 0 && !onboard.timedOut;
+    cleanup.add(`strict Hermes OpenRouter cleanup for ${sandboxName}`, () =>
+      onboardSucceeded
+        ? cleanupSandbox(host, sandbox, sandboxName, { strict: true })
+        : Promise.resolve(),
+    );
+    const execOptions = { env: buildAvailabilityProbeEnv(), redactionValues: [apiKey] };
+
+    progress.phase("verify a Hermes turn before rebuild");
+    const before = await host.nemoclaw(
+      [sandboxName, "exec", "--", "hermes", "-z", "Reply with exactly HM-BEFORE"],
+      { ...execOptions, artifactName: "tc-inf-07h-before-rebuild", timeoutMs: 180_000 },
+    );
+    expect(
+      onboardSucceeded &&
+        before.exitCode === 0 &&
+        /\bHM-BEFORE\b/u.test(resultText(before)) &&
+        !/HTTP 401|Missing Authentication header/iu.test(resultText(before)),
+      "Hermes OpenRouter onboarding or baseline turn failed; inspect the redacted artifacts",
+    ).toBe(true);
+
+    progress.phase("rebuild without a host credential");
+    const rebuilt = await host.command(
+      process.execPath,
+      [CLI_ENTRYPOINT, sandboxName, "rebuild", "--yes", "--verbose"],
+      {
+        artifactName: "tc-inf-07h-rebuild",
+        env: {
+          ...buildAvailabilityProbeEnv(),
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+          NEMOCLAW_NON_INTERACTIVE: "1",
+        },
+        redactionValues: [apiKey],
+        timeoutMs: 10 * 60_000,
+      },
+    );
+    expect(
+      rebuilt.exitCode,
+      "Hermes OpenRouter rebuild failed; inspect the redacted artifact",
+    ).toBe(0);
+
+    progress.phase("verify the rebuilt sandbox connect probe");
+    const connect = await host.nemoclaw([sandboxName, "connect", "--probe-only"], {
+      ...execOptions,
+      artifactName: "tc-inf-07h-connect-probe",
+      timeoutMs: 180_000,
+    });
+    expect(
+      connect.exitCode,
+      "Hermes OpenRouter connect probe failed after rebuild; inspect the redacted artifact",
+    ).toBe(0);
+
+    progress.phase("verify the first Hermes turn after rebuild");
+    const after = await host.nemoclaw(
+      [sandboxName, "exec", "--", "hermes", "-z", "Reply with exactly HM-AFTER"],
+      { ...execOptions, artifactName: "tc-inf-07h-after-rebuild", timeoutMs: 180_000 },
+    );
+    const afterText = resultText(after);
+    const turnSucceeded =
+      after.exitCode === 0 &&
+      /\bHM-AFTER\b/u.test(afterText) &&
+      !/HTTP 401|Missing Authentication header/iu.test(afterText);
+    const diagnostic = turnSucceeded
+      ? null
+      : await hermesOpenRouterRebuildDiagnostic(host, sandboxName, apiKey);
+    expect(
+      turnSucceeded,
+      `Hermes OpenRouter first post-rebuild turn failed: ${JSON.stringify(diagnostic)}`,
+    ).toBe(true);
+  },
+);
+
+async function hermesOpenRouterRebuildDiagnostic(
+  host: Parameters<typeof cleanupSandbox>[0],
+  sandboxName: string,
+  apiKey: string,
+): Promise<Record<string, unknown>> {
+  const classification: Record<string, unknown> = {
+    sandbox: "unavailable",
+    adapter: "unavailable",
+  };
+  try {
+    const result = await host.nemoclaw(
+      [
+        sandboxName,
+        "exec",
+        "--",
+        "/opt/hermes/.venv/bin/python3",
+        "-I",
+        "-c",
+        String.raw`
+import json, os, pathlib, re
+try:
+    import yaml
+    config = yaml.safe_load(pathlib.Path("/sandbox/.hermes/config.yaml").read_text()) or {}
+except Exception:
+    config = None
+key = os.environ.get("OPENROUTER_API_KEY")
+def shape(value):
+    if value == chr(36) + "{OPENROUTER_API_KEY}":
+        return "template"
+    if isinstance(value, str) and re.fullmatch(r"openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_OPENROUTER_API_KEY", value):
+        return "scoped_handle"
+    return "absent" if not value else "other"
+model = config.get("model") if isinstance(config, dict) else None
+providers = config.get("providers") if isinstance(config, dict) else None
+custom = config.get("custom_providers") if isinstance(config, dict) else None
+managed = providers.get("openrouter-api") if isinstance(providers, dict) else None
+legacy = next((item for item in custom if isinstance(item, dict) and item.get("name") == "openrouter-api"), None) if isinstance(custom, list) else None
+print(json.dumps({
+    "env": shape(key),
+    "configReadable": isinstance(config, dict),
+    "modelProviderCustom": isinstance(model, dict) and model.get("provider") == "custom",
+    "modelKey": shape(model.get("api_key")) if isinstance(model, dict) else "absent",
+    "providerKey": shape(managed.get("api_key")) if isinstance(managed, dict) else "absent",
+    "customProviderKey": shape(legacy.get("api_key")) if isinstance(legacy, dict) else "absent",
+}))
+`,
+      ],
+      {
+        artifactName: "tc-inf-07h-auth-classification",
+        env: buildAvailabilityProbeEnv(),
+        redactionValues: [apiKey],
+        timeoutMs: 30_000,
+      },
+    );
+    const parsed =
+      result.exitCode === 0 && result.stdout.length < 1024
+        ? (JSON.parse(result.stdout) as Record<string, unknown>)
+        : null;
+    const allowedShape = (value: unknown) =>
+      ["template", "scoped_handle", "absent", "other"].includes(String(value))
+        ? value
+        : "unavailable";
+    classification.sandbox = parsed
+      ? {
+          env: allowedShape(parsed.env),
+          configReadable: parsed.configReadable === true,
+          modelProviderCustom: parsed.modelProviderCustom === true,
+          modelKey: allowedShape(parsed.modelKey),
+          providerKey: allowedShape(parsed.providerKey),
+          customProviderKey: allowedShape(parsed.customProviderKey),
+        }
+      : "unavailable";
+  } catch {
+    // The original failed turn remains the assertion; diagnostics are best effort.
+  }
+  try {
+    const attachments = await host.command(
+      process.execPath,
+      [
+        "-e",
+        String.raw`
+const { spawnSync } = require("node:child_process");
+const result = spawnSync(process.argv[1], ["sandbox", "provider", "list", "-g", process.argv[2], process.argv[3]], {
+  encoding: "utf8", timeout: 30000, maxBuffer: 8192,
+});
+const lines = result.status === 0 ? result.stdout.split("\n").map(line => line.trim()).filter(Boolean) : [];
+const noProviders = lines.some(line => /^No providers attached to sandbox\b/u.test(line));
+const header = lines.findIndex(line => /^NAME\s+TYPE\s+CREDENTIAL_KEYS\s+CONFIG_KEYS$/u.test(line));
+const rows = header < 0 ? [] : lines.slice(header + 1).map(line => /^(\S+)\s+\S+\s+\d+\s+\d+$/u.exec(line));
+const validRows = rows.every(Boolean);
+console.log(JSON.stringify({
+  observed: noProviders || (header >= 0 && validRows),
+  openRouterAttached: header >= 0 && validRows && rows.some(row => row?.[1] === "nemoclaw-openrouter-api-v1"),
+}));
+`,
+        host.openshellCommandPath,
+        process.env.OPENSHELL_GATEWAY ?? "nemoclaw",
+        sandboxName,
+      ],
+      {
+        artifactName: "tc-inf-07h-provider-attachment",
+        env: buildAvailabilityProbeEnv(),
+        redactionValues: [apiKey],
+        captureLimitBytes: 1024,
+        timeoutMs: 30_000,
+      },
+    );
+    const parsed =
+      attachments.exitCode === 0 && attachments.stdout.length < 1024
+        ? (JSON.parse(attachments.stdout) as Record<string, unknown>)
+        : null;
+    classification.adapter = parsed
+      ? {
+          observed: parsed.observed === true,
+          openRouterAttached:
+            parsed.observed === true ? parsed.openRouterAttached === true : "unavailable",
+        }
+      : "unavailable";
+  } catch {
+    // The original failed turn remains the assertion; diagnostics are best effort.
+  }
+  return classification;
+}
+
+test(
   "TC-INF-07 OpenRouter answers through its native provider",
   {
     timeout: 35 * 60_000,

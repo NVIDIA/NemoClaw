@@ -74,10 +74,19 @@ describe("cleanup resources", () => {
     const cleanup = new CleanupRegistry();
     cleanup.trackGateway(host, "nemoclaw");
     cleanup.trackSandbox(host, "e2e-resource");
+    // A later engine restoration must run before cleanup deletes its sandbox.
+    cleanup.trackDisposable("restore Docker", () => {
+      calls.push("restore-docker");
+    });
     cleanup.trackForward(host, 18789);
 
     const result = await cleanup.runAll();
-    expect(calls).toEqual(["forward:18789", "sandbox:e2e-resource", "gateway:nemoclaw"]);
+    expect(calls).toEqual([
+      "forward:18789",
+      "restore-docker",
+      "sandbox:e2e-resource",
+      "gateway:nemoclaw",
+    ]);
     expect(result.failures).toEqual([]);
   });
 

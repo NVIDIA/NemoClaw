@@ -588,7 +588,24 @@ This fail-closed behavior also applies to `rebuild --force`; NemoClaw never publ
 NemoClaw removes failed native-state captures when cleanup succeeds instead of retaining them as incomplete recovery archives.
 If that cleanup also fails, NemoClaw reports and retains the incomplete backup path.
 Preserve that path while investigating the reported failure, or remove it only after the failure is resolved and you have confirmed that the original sandbox remains intact.
-Repair source access, free backup-disk space, or remove credential-bearing content identified by the error, then rerun the rebuild while the original sandbox remains intact.
+While the original sandbox remains intact, correct the reported failure:
+
+- If the error reports a source-access failure, repair source access.
+- If the error reports insufficient space, free backup-disk space.
+- If the error reports `archive entry contains a line break`, rename the affected file or directory.
+  For a symbolic link or contained hard link with a line break in its target path, recreate the link with a target path that has no line break.
+  Native backup turns contained source hard links into separate regular files before restore.
+  The message shows the JSON-encoded first 240 characters of the affected path or link target.
+- If the error reports `archive header inspection timed out` or `archive listing timed out`, reduce the native-home size, entry count, or host disk-read load.
+  A tar listing is limited to 60 seconds. During native-state backup, header inspection must also finish before the backup deadline.
+- If any tar listing error reports `exceeded 268435456 bytes`, reduce the native-home entry count or path lengths.
+  NemoClaw limits each archive listing to 256 MiB.
+- If the error reports `archive header cannot be inspected for line breaks`, the archive has a malformed or truncated tar header or an extended-header, long-name, or long-link block larger than 1 MiB.
+  Preserve the error output and ask a NemoClaw maintainer to review it.
+- If the error identifies credential-bearing content, remove it from the native home.
+  Store any credential you still need in supported OpenShell credential storage or bindings.
+
+Then rerun the original rebuild or onboarding command with the same settings.
 
 <Warning title="Forced Rebuild Scope">
   `rebuild --force` skips the confirmation prompt. When the sandbox has MCP

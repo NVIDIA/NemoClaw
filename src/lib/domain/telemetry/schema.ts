@@ -4,22 +4,14 @@
 import Ajv from "ajv";
 import { assertSafeConfigStructure } from "../../security/config-structure";
 import {
-  AGENT_HARNESS_IDS,
-  COMPUTE_DRIVERS,
   GPU_STATES,
-  MANAGED_AGENT_VERSIONS,
   MESSAGING_CHANNELS,
   MODEL_SELECTION_SOURCES,
-  POLICY_TIER_CATEGORIES,
-  SANDBOX_OPERATING_SYSTEMS,
-  TELEMETRY_API_FAMILIES,
-  TELEMETRY_MODEL_IDS,
-  TELEMETRY_MODEL_KEYS,
   TELEMETRY_PROVIDER_PROFILES,
 } from "./dimensions";
 import { TELEMETRY_OPERATIONS, type TelemetryOperationEvent } from "./event";
 
-export const TELEMETRY_SCHEMA_VERSION = "3.0";
+export const TELEMETRY_SCHEMA_VERSION = "4.0";
 export const TELEMETRY_CLIENT_ID = "2247027956751513";
 export const VALUE_STATUSES = [
   "reported",
@@ -42,12 +34,11 @@ export const OUTCOMES = [
 ];
 export const STATES = ["applied", "pending", "partial", "unchanged", "unavailable"];
 export const SCOPES = ["cli", "sandbox", "configuration"];
-export const PUBLIC_VERSION_PATTERN =
-  "^(?:unknown|[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?(?:\\+[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?)$";
-const string = (values?: readonly string[]) => ({
+const string = (values: readonly string[]) => ({
   type: "string",
-  ...(values ? { enum: [...values] } : {}),
+  enum: [...values],
 });
+const boundedString = (maxLength: number) => ({ type: "string", maxLength });
 const object = (properties: Record<string, unknown>) => ({
   type: "object",
   additionalProperties: false,
@@ -62,41 +53,35 @@ const timestamp = {
   type: "string",
   pattern: "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
 };
-const version = { type: "string", maxLength: 128, pattern: PUBLIC_VERSION_PATTERN };
+const version = boundedString(128);
 const model = object({
   assignment: string(["primary", "override", "fallback", "subagent"]),
-  modelId: string(TELEMETRY_MODEL_IDS),
+  modelId: boundedString(512),
   modelStatus: status,
-  knownModelKey: string([...new Set(Object.values(TELEMETRY_MODEL_KEYS)), "other", "unknown"]),
-  knownModelKeyStatus: status,
   modelSource: string(MODEL_SELECTION_SOURCES),
   modelSourceStatus: status,
   providerProfile: string(TELEMETRY_PROVIDER_PROFILES),
   providerStatus: status,
-  apiFamily: string(TELEMETRY_API_FAMILIES),
+  apiFamily: boundedString(64),
   apiStatus: status,
 });
 const harnessFields = {
-  agentHarnessId: string(AGENT_HARNESS_IDS),
+  agentHarnessId: boundedString(64),
   agentHarnessStatus: status,
-  managedAgentVersion: string([
-    ...new Set(Object.values(MANAGED_AGENT_VERSIONS).flat()),
-    "other",
-    "unknown",
-  ]),
+  managedAgentVersion: version,
   managedAgentVersionStatus: status,
 };
 const configuration = object({
   state: string(STATES),
   status,
   ...harnessFields,
-  sandboxOS: string(SANDBOX_OPERATING_SYSTEMS),
+  sandboxOS: boundedString(64),
   sandboxOSStatus: status,
   defaultAgentModel: object({ agentPosition: position, modelPosition: position, status }),
   currentInferenceRoute: model,
   currentInferenceRouteStatus: status,
   settings: object({
-    computeDriver: string(COMPUTE_DRIVERS),
+    computeDriver: boundedString(64),
     computeDriverStatus: status,
     gpuState: string(GPU_STATES),
     gpuStatus: status,
@@ -106,7 +91,7 @@ const configuration = object({
     observabilityStatus: status,
     imageOwnership: string(["managed", "custom", "unknown"]),
     imageOwnershipStatus: status,
-    policyTier: string([...POLICY_TIER_CATEGORIES, "unknown"]),
+    policyTier: boundedString(64),
     policyTierStatus: status,
   }),
   messaging: object({
@@ -139,12 +124,14 @@ export const operationParametersSchema = object({
     targetStatus: status,
   }),
   platform: object({
-    hostOS: string(["linux", "macos", "windows", "other", "unknown"]),
+    hostOS: boundedString(64),
     hostOSStatus: status,
-    hostArch: string(["x64", "arm64", "ia32", "arm", "other", "unknown"]),
+    hostArch: boundedString(64),
     hostArchStatus: status,
     hostContext: string(["native", "wsl", "unknown"]),
     hostContextStatus: status,
+    hostHardwarePlatform: boundedString(64),
+    hostHardwarePlatformStatus: status,
   }),
   location: object({
     countryCode: { type: "string", maxLength: 2, pattern: "^(?:|[A-Z]{2})$" },
@@ -235,7 +222,7 @@ export function proposedSmsSchema(): Record<string, unknown> {
       personalization: "anonymous",
     },
     description:
-      "One complete terminal NemoClaw operation record with approved categories and explicit collection status. Production disabled.",
+      "One terminal NemoClaw operation with observed values, reporting categories, and explicit collection status. Production disabled.",
     oneOf: [{ $ref: "#/definitions/events/nemoclaw_operation_finished" }],
     definitions: {
       types: {},
@@ -243,7 +230,7 @@ export function proposedSmsSchema(): Record<string, unknown> {
         nemoclaw_operation_finished: {
           ...operationParametersSchema,
           description:
-            "One complete terminal NemoClaw operation record containing all approved anonymous versions, platform, agent/model/provider associations, settings, messaging, coarse-location status and QA label.",
+            "One terminal NemoClaw operation containing versions, host hardware and OS, agent/model/provider associations, settings, messaging, location status, and QA label.",
           eventMeta: {
             service: "telemetry",
             gdpr: {

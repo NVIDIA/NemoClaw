@@ -179,17 +179,17 @@ describe("reviewed OpenShell SDK transition packaging", () => {
     expect(artifactDirectory).toBe(source.output);
     expect(fs.readdirSync(artifactDirectory).sort()).toEqual([
       "nvidia-openshell-sdk-0.0.116.tgz",
-      "nvidia-openshell-sdk-0.1.3.tgz",
+      "nvidia-openshell-sdk-0.1.5.tgz",
     ]);
     expect(source.requests.map(({ packageSpec }) => packageSpec)).toEqual([
       "@nvidia/openshell-sdk@0.0.116",
-      "@nvidia/openshell-sdk@0.1.3",
+      "@nvidia/openshell-sdk@0.1.5",
     ]);
     expect(source.requests[1]).toMatchObject({
       expectedIntegrity:
-        "sha512-JXWcEDIl/h8Pp6c2NrFMp0XLloDsLaDZvSVJzXvKUyGEulE64d/utiE1KtNh45JtiZXbVmB2PMJAWEmgZKW5kA==",
+        "sha512-pqeumlEkIoFko9kL8EmemULuEPGf7dbFz1DXac9mB5H5e0+vGs24T1S+jT/UOtjhYEdmBSR3WjMojBBAyh6lSQ==",
       tarballUrl:
-        "https://npm.pkg.github.com/download/@nvidia/openshell-sdk/0.1.3/32e1b675af5ad8b8a8fe078a1a11d515a9f45571",
+        "https://npm.pkg.github.com/download/@nvidia/openshell-sdk/0.1.5/141f111b92761575225e0ae977e1cf86d2c6515e",
     });
     expect(source.remove).toHaveBeenCalledTimes(2);
   });
@@ -201,7 +201,7 @@ describe("reviewed OpenShell SDK transition packaging", () => {
     expect(artifactDirectory).toBe(source.output);
     expect(source.requests.map(({ packageSpec }) => packageSpec)).toEqual([
       "@nvidia/openshell-sdk@0.0.116",
-      "@nvidia/openshell-sdk@0.1.3",
+      "@nvidia/openshell-sdk@0.1.5",
     ]);
   });
 

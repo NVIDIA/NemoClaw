@@ -7,7 +7,12 @@ import {
   getActiveChannelIdsFromPlan,
   getDisabledChannelIdsFromPlan,
 } from "../messaging/plan-validation";
-import { decisionDeclined, decisionSelected } from "../state/onboard-checkpoint-decision";
+import {
+  decisionDeclined,
+  decisionSelected,
+  decisionUnset,
+  isDecisionUnset,
+} from "../state/onboard-checkpoint-decision";
 import { deriveCheckpointFromSession } from "../state/onboard-checkpoint-migrate";
 import type {
   CheckpointEffectGroupName,
@@ -134,6 +139,19 @@ export function recordCheckpointResourceProfile(
     machineState: session.machine.state,
     updatedAt: new Date().toISOString(),
     resourceProfile: resourceProfile ? decisionSelected(resourceProfile) : decisionDeclined(),
+  };
+}
+
+/** Clear an invalid saved resource-profile decision from a session in place. */
+export function clearCheckpointResourceProfile(session: Session): void {
+  session.resourceProfile = null;
+  session.sandboxPromptProgress.resourceProfile = false;
+  if (!session.checkpoint || isDecisionUnset(session.checkpoint.resourceProfile)) return;
+  session.checkpoint = {
+    ...session.checkpoint,
+    machineState: session.machine.state,
+    updatedAt: new Date().toISOString(),
+    resourceProfile: decisionUnset(),
   };
 }
 
