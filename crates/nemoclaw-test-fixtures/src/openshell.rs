@@ -62,6 +62,10 @@ pub struct State {
     pub sandbox_files: HashMap<String, Vec<u8>>,
     /// Start requests answered as though `serve` were not yet listening.
     pub host_unavailable_starts: usize,
+    /// Why a running runtime's check does not pass, as Fabric's reason code,
+    /// such as `unsupported_adapter`, `probe_timeout`, or an adapter's own
+    /// failure; none passes.
+    pub fabric_check_reason: Option<String>,
     pub exec_response: Option<Vec<u8>>,
     pub configuration_error: Option<serde_json::Value>,
     /// Start rejections by sandbox name, which take precedence over
@@ -988,6 +992,31 @@ impl tonic::server::ServerStreamingService<p::ExecSandboxRequest> for Exec {
                         error = Some(failure("runtime_unavailable", "stop", "none"));
                     }
                 }
+                // Like fabric-agent-ctl: a server check passes once `serve`
+                // answers; a runtime check reports the runtime's health in its
+                // report, which a failed check keeps.
+                "check" => {
+                    changed = Some(false);
+                    let reason = match &requested_runtime {
+                        None => None,
+                        Some(_) if !running => Some("runtime_unavailable".to_owned()),
+                        Some(_) => state.fabric_check_reason.clone(),
+                    };
+                    let outcome = match reason.as_deref() {
+                        None => "passed",
+                        Some(reason) if reason.starts_with("unsupported_") => "unsupported",
+                        Some("runtime_unavailable" | "probe_timeout" | "probe_error") => "unknown",
+                        Some(_) => "failed",
+                    };
+                    result = serde_json::json!({
+                        "schema_version": "fabric.check/v1alpha1",
+                        "scope": if requested_runtime.is_some() { "runtime" } else { "server" },
+                        "runtime_id": requested_runtime,
+                        "outcome": outcome,
+                        "reason_code": reason,
+                    });
+                    error = reason.map(|reason| failure(&reason, "check", "none"));
+                }
                 _ => error = Some(failure("invalid_request", "request", "none")),
             }
             if state.exec_exit != 0 {
@@ -995,10 +1024,12 @@ impl tonic::server::ServerStreamingService<p::ExecSandboxRequest> for Exec {
             } else {
                 exit = i32::from(error.is_some());
             }
-            if error.is_some() {
+            if error.is_some() && operation != "check" {
                 result = serde_json::Value::Null;
             }
-            let status = if error.is_some() {
+            let status = if result["outcome"] == "unsupported" {
+                "unsupported"
+            } else if error.is_some() {
                 "failed"
             } else {
                 "succeeded"

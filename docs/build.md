@@ -190,7 +190,7 @@ Use `linux/amd64` on a native AMD64 host.
 The build adds the `io.nemoclaw.fabric.catalog` label to every image.
 NemoClaw checks how each image is assembled, not whether Fabric's adapters work: `cargo images qualify IMAGE...` checks every image offline, and runs one runtime's lifecycle only in the reference image, with NemoClaw's test adapter.
 Fabric's runtime and adapters are Fabric's to test.
-A passing reference lifecycle does not establish that a runtime stays healthy: Fabric reports no runtime status.
+A passing reference lifecycle does not establish that a runtime stays healthy.
 See [upstream ownership](design/fabric-management.md#upstream-ownership) for the remaining Fabric and OpenShell work.
 
 To extend an agent image with your own skills and tools, see [derived agent images](derived-images.md).

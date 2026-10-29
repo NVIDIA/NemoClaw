@@ -5,10 +5,9 @@
 //! The test places the stub in its own namespace, as a platform places a
 //! model server, and the agents reach it through its Service. It answers
 //! every chat completion request with one streamed reply, so no model runs.
-//! Fabric reports no runtime status (NVIDIA/NeMo-Fabric#420): a runtime that
-//! stops is found at its next invocation. An answer from the runtime ID the
-//! first apply recorded therefore shows that this runtime still runs. The
-//! reply does not establish inference or model compatibility.
+//! An answer from the runtime ID the first apply recorded shows that this
+//! runtime still runs. The reply does not establish inference or model
+//! compatibility.
 use super::*;
 use fabric_provider::AgentBridge as _;
 use nemoclaw_e2e::state::successful_invocation;

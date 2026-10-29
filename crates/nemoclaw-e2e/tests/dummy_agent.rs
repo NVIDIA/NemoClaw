@@ -200,6 +200,84 @@ async fn the_dummy_agent_completes_a_managed_docker_lifecycle() {
     let again = invoke(&client, &binding, &runtime, "dummy-lifecycle").await;
     assert_eq!(again["status"], "succeeded", "{again}");
 
+    // A gateway restart restarts the sandbox, which keeps its files, but not
+    // its agent runtime. Plan finds the runtime stopped, and apply starts
+    // another in the same sandbox.
+    let in_sandbox = |command: &str| {
+        let containers = docker_objects(&engine, "container", &format!("ancestor={image_id}"));
+        let output = Command::new("docker")
+            .args([
+                "--host",
+                &engine,
+                "exec",
+                &containers[0],
+                "sh",
+                "-c",
+                command,
+            ])
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&output.stdout).trim().to_owned()
+    };
+    in_sandbox("echo kept > /sandbox/restart-marker");
+    let names = Command::new("docker")
+        .args([
+            "--host",
+            &engine,
+            "container",
+            "ls",
+            "--all",
+            "--format",
+            "{{.Names}}",
+        ])
+        .args([
+            "--filter",
+            &format!("label=nemoclaw.nvidia.com/uid={}", document.metadata.uid),
+        ])
+        .output()
+        .unwrap();
+    let gateway = String::from_utf8_lossy(&names.stdout)
+        .lines()
+        .find(|name| name.ends_with("-gateway"))
+        .expect("the managed gateway container")
+        .to_owned();
+    let restarted = Command::new("docker")
+        .args(["--host", &engine, "restart", &gateway])
+        .status()
+        .unwrap();
+    assert!(restarted.success(), "docker restart {gateway} failed");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(180);
+    while !matches!(
+        client.sandbox_phase(&binding, false).await,
+        Ok(openshell_provider::SandboxPhase::Ready)
+    ) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the sandbox is not ready after the gateway restart"
+        );
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    }
+    let agent = format!("fabric_agent.{}", sandbox.name);
+    let plan = deployment.plan(&document, &cancel).await.unwrap();
+    assert_eq!(plan.changes.len(), 1, "{:?}", plan.changes);
+    assert_eq!(plan.changes[0].resource, agent);
+    assert_eq!(plan.changes[0].actions, ["update"]);
+    assert_eq!(
+        plan.changes[0].reason.as_deref(),
+        Some("agent runtime is not running")
+    );
+    let recovered = deployment.apply(&document, &cancel).await.unwrap();
+    assert_eq!(recovered.outcome, Outcome::Succeeded);
+    let started = runtime_id(&state_path, sandbox.name);
+    assert_ne!(started, runtime);
+    let binding =
+        fabric_provider::fabric_binding(sandbox_binding(&state_path, sandbox.name)).unwrap();
+    let answer = invoke(&client, &binding, &started, "dummy-lifecycle").await;
+    assert_eq!(answer["status"], "succeeded", "{answer}");
+    assert_eq!(in_sandbox("cat /sandbox/restart-marker"), "kept");
+    let settled = deployment.apply(&document, &cancel).await.unwrap();
+    assert!(settled.changes.is_empty(), "{:?}", settled.changes);
+
     let destroyed = deployment.destroy(&cancel).await.unwrap();
     assert_eq!(destroyed.outcome, Outcome::Destroyed);
     assert!(

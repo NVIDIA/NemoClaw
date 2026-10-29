@@ -1323,9 +1323,8 @@ async fn deploy_image_and_export(
         "namespace, encryption key and gateway PVC identities survive SDK destroy"
     );
     stub_ready.unwrap_or_else(|error| panic!("{error}"));
-    // Fabric reports no runtime status, so a stopped runtime is found when it
-    // is next invoked: an answer from the first apply's runtime shows that it
-    // still runs. The stub's reply shows that the agent's request reached it.
+    // An answer from the first apply's runtime shows that it still runs. The
+    // stub's reply shows that the agent's request reached it.
     assert!(
         unanswered.is_empty(),
         "each agent answers from its first runtime with the stub's reply:\n{}",

@@ -169,8 +169,8 @@ Native interface, tool-disclosure, and reasoning settings are authored through F
 Managed search credentials, endpoint protocols, and network grants remain SDK deployment behavior.
 The reconstructible `fabric_agent` resource starts the agent's Fabric runtime after provider routes are established.
 NemoClaw runs one runtime per sandbox, so a configuration change replaces the sandbox rather than starting another runtime inside it.
-Fabric's `fabric-agent-ctl` calls Fabric's public start, invoke, and stop APIs.
-Fabric reports no runtime status or health, and native model or agent probes with no Fabric contract remain unavailable.
+Fabric's `fabric-agent-ctl` calls Fabric's public start, invoke, stop, and check APIs.
+Native model or agent probes with no Fabric contract remain unavailable.
 
 Authoring question resolution and the OpenTofu execution graph have different jobs.
 The former chooses questions and reopens dependent answers; the latter schedules provider reads and resource operations for concrete desired state.
@@ -259,7 +259,7 @@ The [retention reference](../state.md#deletion-and-retention) lists what survive
 ## Readiness and Export
 
 Required service readiness runs through provider data sources in the graph, including on unchanged applies.
-Agent runtimes are started, not probed: Fabric reports no runtime status or health; see [observation limits](fabric-management.md#observation-limits).
+Agent runtimes are checked through Fabric, not probed with prompts; see [observation limits](fabric-management.md#observation-limits).
 The SDK reports the fresh OpenTofu observations; it does not repeat those probes.
 Only failures proven to be exclusively completion observations can clear the pending-mutation guard.
 Readiness failure retains resource state and persistent data.

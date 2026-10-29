@@ -33,7 +33,8 @@ It sends configuration and invocation input on stdin in the same execution as th
 |---|---|
 | `start --agent NAME --config -` | Create a `fabric_agent`: Fabric validates the configuration and starts the sandbox's one runtime, returning its `runtime_id`. |
 | `invoke --agent NAME --runtime-id ID --input -` | Send one explicit request; Fabric's run result is returned unchanged. |
-| `stop --agent NAME --runtime-id ID` | Remove a `fabric_agent`. |
+| `stop --agent NAME --runtime-id ID` | Remove a `fabric_agent`, or stop a runtime that stopped running before another starts. |
+| `check --agent NAME --runtime-id ID` | Refresh a `fabric_agent`: whether its runtime still runs. |
 
 Each command emits one JSON response with `operation`, `status`, `changed`, `result`, and `error`.
 Success exits 0; failure and unsupported operations exit 1.
@@ -98,14 +99,14 @@ The following boundaries need coordination; these notes do not claim upstream ac
 
 | Owner | Work or agreement |
 |---|---|
-| NeMo-Fabric | A read-only runtime status command, so refresh can find a stopped runtime ([NVIDIA/NeMo-Fabric#420](https://github.com/NVIDIA/NeMo-Fabric/issues/420)). |
+| NeMo-Fabric | Report a harness process that exited as failed rather than unknown, so refresh can start it again ([NVIDIA/NeMo-Fabric#298](https://github.com/NVIDIA/NeMo-Fabric/issues/298)). |
 | NeMo-Fabric | Configuring OpenClaw's dashboard and web search ([#13360](https://github.com/NVIDIA/NemoClaw/issues/13360), [#13361](https://github.com/NVIDIA/NemoClaw/issues/13361)). |
 | OpenShell | Qualify completed sandbox stop as the boundary that terminates all old workload processes before start, while retaining required data; request implementation changes only for demonstrated gaps. |
 
 ## Observation Limits
 
-Fabric reports neither the configuration a runtime applied nor whether it is still running.
-Refresh therefore checks only the sandbox: a runtime that stops is found at its next invocation, and NemoClaw reports no agent health.
+Refresh asks Fabric's `check` whether the recorded runtime still runs, and apply starts a stopped runtime again in its sandbox.
+Fabric doesn't report the configuration a runtime applied, and reports a harness process that exited as unknown, which counts as running; such a runtime is found at its next invocation.
 The SDK does not substitute adapter-specific filesystem checks or model prompts.
 Deployment ownership, missing bindings, route drift and observation failures continue to use the SDK's existing resource contracts.
 

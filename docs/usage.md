@@ -81,7 +81,9 @@ To remove them, follow [Remove Retained Resources](#remove-retained-resources) f
 
 Apply starts each new agent through Fabric's `fabric-agent-ctl` in its sandbox, and completes once the runtime has started.
 It does not invoke agents, send generation requests, or replay work.
-Fabric reports no runtime status or health, so neither a plan nor an unchanged apply checks that a started runtime is still running; a runtime that stops is found at its next invocation ([NVIDIA/NeMo-Fabric#420](https://github.com/NVIDIA/NeMo-Fabric/issues/420)).
+Plan and apply ask Fabric whether each agent's runtime still runs, with `fabric-agent-ctl check`, which sends no prompt and makes no model request.
+When Fabric reports the runtime stopped, the plan updates the agent and says `agent runtime is not running`; apply stops that runtime in Fabric and starts another in the same sandbox, which keeps its files and conversation history.
+Fabric reports a harness process that exited as unknown rather than stopped, and an unknown result counts as running, so such a runtime is found at its next invocation ([NVIDIA/NeMo-Fabric#298](https://github.com/NVIDIA/NeMo-Fabric/issues/298)).
 
 Use an [agent image built from this revision](build.md#build-agent-images).
 Image changes require the [separate-deployment path](#choose-the-change-path); keep existing deployments' original bundles and state.
@@ -136,7 +138,8 @@ Kubernetes and OpenShift gateways pass them to the chart's `gatewayConfig`, wher
 Plan rejects a setting that replaces a key NemoClaw manages, such as the gateway's authentication, signing paths, or the driver's images.
 OpenShell validates the rest when the gateway starts: an unknown or misplaced field in the selected driver's table stops the gateway, and tables for other drivers are ignored.
 A change replaces a Docker or Podman gateway's container, which receives the new file and keeps the gateway's data, and upgrades a Kubernetes gateway's chart release.
-The restarted gateway restarts its sandboxes but not their Fabric agents, and neither plan nor apply notices: invoking an agent fails with `runtime_unavailable` until you [replace its sandbox](#replace-workloads-after-an-unusable-runtime), which deletes its files and conversation history ([#13870](https://github.com/NVIDIA/NemoClaw/issues/13870)).
+The restarted gateway restarts its sandboxes but not their Fabric agents; the next plan finds each agent's runtime stopped, and apply starts it again in its sandbox, which keeps its files.
+A sandbox that exits instead of restarting is replaced, which deletes its files and conversation history.
 Do not put secrets in it: plans and state show it.
 An external gateway takes no `config`; its operator configures it.
 
@@ -316,7 +319,8 @@ Removing or replacing a sandbox deletes its writable layer and in-memory convers
 | Remove retained storage or a protected gateway binding | Apply refuses removal; assess a separate deployment and explicit retirement of the original |
 | Change a credential value behind the same environment reference | Unchanged apply does not detect rotation; see [credential lifecycle](security.md#credentials-and-authentication) |
 
-A runtime that stopped or became unusable recovers only in a new sandbox: changing the agent's configuration replaces it, or see [replacement after an unusable runtime](#replace-workloads-after-an-unusable-runtime).
+Apply starts a stopped runtime again in its sandbox; see [agent runtimes during apply](#agent-runtimes-during-apply).
+A runtime that Fabric reports running but that doesn't answer recovers only in a new sandbox: changing the agent's configuration replaces it, or see [replacement after an unusable runtime](#replace-workloads-after-an-unusable-runtime).
 
 For OpenClaw model and native-setting updates, use an [agent image built from this revision](build.md#build-agent-images).
 Rebuilding the CLI bundle alone does not update the adapter in an existing sandbox image; changing that image replaces the sandbox.
@@ -367,7 +371,7 @@ A failed agent start keeps its sandbox binding.
 Start failures report a fixed stage, failure code, and agent runtime state without forwarding native error text.
 A failed start may have left a runtime running, so the next apply creates the agent in a new sandbox and deletes the old sandbox's files.
 When Fabric rejected the configuration, correct the settings before reapplying.
-An invocation failure can also leave a runtime unusable; NemoClaw cannot detect that, and an unchanged apply leaves it alone.
+An invocation failure can also leave a runtime unusable; unless Fabric's check reports it stopped, an unchanged apply leaves it alone.
 To recover from that, or from a sandbox that exited, see [workload replacement](#replace-workloads-after-an-unusable-runtime).
 A sandbox in `Error` can still block apply, but its saved identity permits [teardown](#destroy) without a successful reapply.
 Changing a rejected sandbox policy or image does not authorize replacement; follow the [change constraints](#choose-the-change-path).

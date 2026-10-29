@@ -361,10 +361,13 @@ async fn a_foreign_owner_on_one_agent_stops_planning_without_touching_the_others
             state.sandboxes == relabeled,
             "{operation} changed a sandbox"
         );
-        assert_eq!(
-            state.exec_calls.len(),
-            calls,
-            "{operation} ran a command in a sandbox"
+        // Checking the other agents' runtimes reads them; nothing starts,
+        // stops, or invokes one.
+        assert!(
+            state.exec_calls[calls..]
+                .iter()
+                .all(|command| command.get(1).is_some_and(|operation| operation == "check")),
+            "{operation} changed an agent runtime"
         );
     };
     let (deployment, document, cancel) = (

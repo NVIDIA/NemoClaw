@@ -75,7 +75,7 @@ OpenShell owns sandbox creation and policy enforcement.
 | **7. Native configuration** | The selected Fabric adapter maps the public configuration into native settings and owns native validation. The NemoClaw host performs no adapter-specific translation. |
 | **8. Harness runtime** | The adapter starts its runtime and launches the harness or connects to an independently deployed remote service. The harness uses its installed components and configured settings. |
 | **Optional Relay** | Explicitly enabled Hermes Relay tracing runs in process and writes artifacts inside the sandbox. It is an experimental integration. |
-| **Agent start and result** | `fabric_agent` starts each new agent through Fabric's `fabric-agent-ctl` once its sandbox is ready. Fabric reports no runtime status or health, so a successful apply does not establish that agents answer. The SDK retains operation state, and the CLI reports the outcome. |
+| **Agent start and result** | `fabric_agent` starts each new agent through Fabric's `fabric-agent-ctl` once its sandbox is ready. Refresh asks Fabric whether each started runtime still runs, without a prompt, so a successful apply does not establish that agents answer. The SDK retains operation state, and the CLI reports the outcome. |
 | **T. Port forwarding** | An operator runs `openshell forward service` using a separately configured OpenShell CLI connection. Forwarding to an enabled listener lasts while that foreground command runs. |
 
 The Docker provider owns disposable Docker compute, images, model-cache volumes, and service networks.
@@ -90,7 +90,7 @@ The selected engine, any SSH execution setup, and the harness image are [operato
 - The deployment graph can also contain an [Ollama proxy](../inference.md#use-external-ollama-through-a-managed-proxy), its credential storage, model observation, and readiness dependencies.
 - Each adapter uses `fabric_agent` after sandbox creation and route setup.
   NemoClaw runs one agent runtime per sandbox, so a new agent always gets a new sandbox.
-- Fabric reports no runtime status ([NVIDIA/NeMo-Fabric#420](https://github.com/NVIDIA/NeMo-Fabric/issues/420)); a runtime that stops is found at its next invocation.
+- Refresh asks Fabric whether each agent's runtime still runs; apply starts a stopped runtime again in its sandbox.
   See [agent runtimes during apply](../usage.md#agent-runtimes-during-apply).
 
 For native configuration and optional tracing, see [agent runtimes](../agents.md).
