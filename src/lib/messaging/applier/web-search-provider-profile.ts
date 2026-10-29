@@ -2,11 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import path from "node:path";
-import type { WebSearchProviderProfileId } from "../../inference/web-search/provider-profile";
+import {
+  TAVILY_POLICY_BINDING_PROVIDER_PROFILE_ID,
+  type WebSearchProviderProfileId,
+} from "../../inference/web-search/provider-profile";
 
 export function webSearchProviderProfilePath(
   root: string,
   provider: WebSearchProviderProfileId,
 ): string {
-  return path.join(root, "nemoclaw-blueprint", "provider-profiles", `${provider}.yaml`);
+  const directory =
+    provider === TAVILY_POLICY_BINDING_PROVIDER_PROFILE_ID
+      ? path.join(root, "managed-inference", "provider-profiles")
+      : path.join(root, "nemoclaw-blueprint", "provider-profiles");
+  return path.join(directory, `${provider}.yaml`);
 }

@@ -235,7 +235,7 @@ describe("handleSandboxState provider effect replay", () => {
     };
     const tavilyBinding = {
       name: "my-assistant-tavily-search",
-      type: "tavily",
+      type: "tavily-policy-binding-v1",
       credentialEnv: "TAVILY_API_KEY",
     };
     const session = createSession({
@@ -386,7 +386,7 @@ describe("handleSandboxState provider effect replay", () => {
     };
     const currentBinding = {
       name: "my-assistant-tavily-search",
-      type: "tavily",
+      type: "tavily-policy-binding-v1",
       credentialEnv: "TAVILY_API_KEY",
     };
     const session = createSession({
@@ -460,7 +460,7 @@ describe("handleSandboxState provider effect replay", () => {
     };
     const currentBinding = {
       name: "my-assistant-tavily-search",
-      type: "tavily",
+      type: "tavily-policy-binding-v1",
       credentialEnv: "TAVILY_API_KEY",
     };
     const messagingBinding = {
@@ -636,7 +636,7 @@ describe("handleSandboxState provider effect replay", () => {
     };
     const currentBinding = {
       name: "my-assistant-tavily-search",
-      type: "tavily",
+      type: "tavily-policy-binding-v1",
       credentialEnv: "TAVILY_API_KEY",
     };
     const session = createSession({
@@ -706,7 +706,7 @@ describe("handleSandboxState provider effect replay", () => {
     };
     const currentBinding = {
       name: "my-assistant-tavily-search",
-      type: "tavily",
+      type: "tavily-policy-binding-v1",
       credentialEnv: "TAVILY_API_KEY",
     };
     const session = createSession({

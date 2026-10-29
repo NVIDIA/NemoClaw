@@ -14,8 +14,11 @@ import { digestBaselineEntry } from "./baseline-exclusion";
 const mocks = vi.hoisted(() => ({
   getSandbox: vi.fn(),
   inspectSandboxPolicy: vi.fn(),
+  listExtraProviders: vi.fn(),
   readSandboxPolicy: vi.fn(),
   readSandboxPolicyRevision: vi.fn(),
+  readSandboxProviderAttachments: vi.fn(),
+  readSandboxProviderProfileType: vi.fn(),
   resolveOpenshell: vi.fn(),
   setSandboxPolicy:
     vi.fn<(request: SetOpenShellSandboxPolicyRequest) => OpenShellSandboxPolicySetSubmission>(),
@@ -36,12 +39,19 @@ vi.mock("../adapters/openshell/resolve", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../adapters/openshell/resolve")>()),
   resolveOpenshell: mocks.resolveOpenshell,
 }));
+vi.mock("../onboard/gateway-binding", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../onboard/gateway-binding")>()),
+  readSandboxProviderAttachments: mocks.readSandboxProviderAttachments,
+  readSandboxProviderProfileType: mocks.readSandboxProviderProfileType,
+}));
 vi.mock("../state/registry", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../state/registry")>()),
   getSandbox: mocks.getSandbox,
+  listExtraProviders: mocks.listExtraProviders,
 }));
 
 import {
+  applyPreset,
   applyPresetContent,
   applyPresets,
   arePresetsCoveredByPersonalPolicy,
@@ -78,6 +88,9 @@ describe("live OpenShell policy mutations", () => {
       network_policies: { host_approval: hostEntry },
     });
     mocks.getSandbox.mockReturnValue({ name: sandboxName, gatewayName: "nemoclaw" });
+    mocks.listExtraProviders.mockReturnValue([]);
+    mocks.readSandboxProviderAttachments.mockResolvedValue(null);
+    mocks.readSandboxProviderProfileType.mockResolvedValue(null);
     mocks.inspectSandboxPolicy.mockImplementation(() =>
       policyInspection({
         policySource: "sandbox",
@@ -730,6 +743,47 @@ describe("live OpenShell policy mutations", () => {
       expect.stringContaining("Cannot load preset: no-such-preset"),
     );
   });
+
+  it.each(["single", "batch"] as const)(
+    "submits Tavily credential_binding through %s policy application only for the endpointless profile",
+    async (mode) => {
+      mocks.getSandbox.mockReturnValue({
+        name: sandboxName,
+        agent: "langchain-deepagents-code",
+        gatewayName: "nemoclaw",
+      });
+      mocks.listExtraProviders.mockReturnValue(["tavily-search"]);
+      mocks.readSandboxProviderAttachments.mockResolvedValue(["tavily-search"]);
+      mocks.readSandboxProviderProfileType.mockResolvedValue("tavily-policy-binding-v1");
+
+      await expect(
+        mode === "single"
+          ? applyPreset(sandboxName, "tavily", { nonFatal: true })
+          : applyPresets(sandboxName, ["tavily"]),
+      ).resolves.toBe(true);
+      expect(mocks.setSandboxPolicy).toHaveBeenCalledOnce();
+      expect(
+        YAML.parse(livePolicy).network_policies.tavily.endpoints[0].credential_binding,
+      ).toEqual({ provider: "tavily-search" });
+
+      livePolicy = YAML.stringify({
+        version: 1,
+        network_policies: { host_approval: hostEntry },
+      });
+      mocks.setSandboxPolicy.mockClear();
+      mocks.readSandboxProviderProfileType.mockResolvedValue("tavily");
+
+      await expect(
+        mode === "single"
+          ? applyPreset(sandboxName, "tavily", { nonFatal: true })
+          : applyPresets(sandboxName, ["tavily"]),
+      ).resolves.toBe(true);
+      expect(mocks.setSandboxPolicy).toHaveBeenCalledOnce();
+      expect(
+        YAML.parse(livePolicy).network_policies.tavily.endpoints[0].credential_binding,
+      ).toBeUndefined();
+    },
+  );
 });
 
 describe("getSandboxAgentName (#13618)", () => {

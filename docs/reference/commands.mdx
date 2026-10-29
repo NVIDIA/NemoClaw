@@ -4018,8 +4018,9 @@ Registered providers are gateway-wide and attach to every sandbox you build or r
 Tavily requires a provider profile that permits the intended agent runtime.
 Use `--type tavily --agent hermes` to select the versioned `tavily-hermes-v1` profile for Hermes Python.
 The explicit `--type tavily-hermes-v1` form remains supported without `--agent`.
-OpenClaw and Deep Agents use the existing `tavily` profile with `--agent openclaw` or `--agent dcode`.
-Without `--agent`, `--type tavily` retains that profile and prints a warning that it does not authorise Hermes Python.
+OpenClaw and Deep Agents use the endpointless `tavily-policy-binding-v1` profile with `--agent openclaw` or `--agent dcode`.
+Without `--agent`, `--type tavily` also selects `tavily-policy-binding-v1` and prints a warning that it does not authorise Hermes Python.
+A provider that you registered with the earlier `tavily` profile keeps that profile until you reset it and register it again.
 
 `--agent` accepts `hermes`, `openclaw`, `langchain-deepagents-code`, and their aliases only for Tavily profiles.
 An explicit Hermes profile combined with a non-Hermes agent is rejected before gateway operations.

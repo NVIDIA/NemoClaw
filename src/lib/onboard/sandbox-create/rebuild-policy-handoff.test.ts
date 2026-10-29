@@ -17,6 +17,8 @@ import {
   mergeReplacementPolicyAccess,
   readValidatedRebuildPolicySource,
 } from "./rebuild-policy-handoff";
+import { selectRebuildCreatePolicy } from "./orchestration";
+import { resolveRebuildWebSearchProviderTypes } from "./provider-publication";
 
 const roots: string[] = [];
 
@@ -473,6 +475,157 @@ network_policies:
     expect(handoff.policyPath).not.toBe(livePath);
     expect(fs.readFileSync(handoff.policyPath, "utf8")).toBe(source);
     expect(handoff.cleanup?.()).toBe(true);
+  });
+
+  it("binds an applied web-search policy to the attached provider", () => {
+    const livePath = tempPolicy(
+      "live-web-search.yaml",
+      `version: 1
+network_policies:
+  tavily:
+    name: tavily
+    endpoints:
+      - host: api.tavily.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        request_body_credential_rewrite: true
+        rules:
+          - allow: { method: POST, path: "/search" }
+          - allow: { method: POST, path: "/extract" }
+`,
+    );
+    const replacementPath = tempPolicy("replacement-web-search.yaml", "version: 1\n");
+
+    const handoff = materializeRebuildPolicyHandoff({
+      sandboxName: "alpha",
+      livePolicyPath: livePath,
+      replacementPolicy: { policyPath: replacementPath, appliedPresets: [] },
+      webSearchAgentName: "langchain-deepagents-code",
+      webSearchCredentialProviders: ["tavily-search"],
+    });
+
+    expect(handoff.credentialBindingProviders).toEqual(["tavily-search"]);
+    const endpoint = readPrivatePolicy(handoff.policyPath).policy as {
+      network_policies: { tavily: { endpoints: Array<Record<string, unknown>> } };
+    };
+    expect(endpoint.network_policies.tavily.endpoints[0]!.credential_binding).toEqual({
+      provider: "tavily-search",
+    });
+    expect(handoff.cleanup?.()).toBe(true);
+
+    const legacyHandoff = materializeRebuildPolicyHandoff({
+      sandboxName: "alpha",
+      livePolicyPath: livePath,
+      replacementPolicy: { policyPath: replacementPath, appliedPresets: [] },
+      webSearchAgentName: "langchain-deepagents-code",
+      webSearchCredentialProviders: ["tavily-search"],
+      webSearchProviderTypes: { "tavily-search": "tavily" },
+    });
+    expect(legacyHandoff.policyPath).toBe(livePath);
+    expect(legacyHandoff.credentialBindingProviders).toEqual([]);
+
+    const messagingProviderRequests = [
+      {
+        name: "alpha-tavily-search",
+        envKey: "TAVILY_API_KEY",
+        channel: null,
+        credentialConfigured: true,
+        providerType: "tavily-policy-binding-v1",
+      },
+    ] as const;
+    return resolveRebuildWebSearchProviderTypes({
+      rebuildPolicySourcePath: livePath,
+      sandboxName: "alpha",
+      agentName: "openclaw",
+      extraProviders: [],
+      messagingProviderRequests,
+      gatewayName: "nemoclaw",
+      runOpenshell: vi.fn(),
+    }).then((providerTypes) => {
+      const openClawHandoff = selectRebuildCreatePolicy(
+        livePath,
+        { policyPath: replacementPath, appliedPresets: [] },
+        [],
+        [],
+        [],
+        "openclaw",
+        null,
+        "alpha",
+        [],
+        undefined,
+        null,
+        [...messagingProviderRequests.map((request) => request.name)],
+        providerTypes,
+      );
+      expect(openClawHandoff.credentialBindingProviders).toEqual(["alpha-tavily-search"]);
+      const openClawEndpoint = readPrivatePolicy(openClawHandoff.policyPath).policy as {
+        network_policies: { tavily: { endpoints: Array<Record<string, unknown>> } };
+      };
+      expect(openClawEndpoint.network_policies.tavily.endpoints[0]!.credential_binding).toEqual({
+        provider: "alpha-tavily-search",
+      });
+      expect(openClawHandoff.cleanup?.()).toBe(true);
+    });
+  });
+
+  it("leaves a substituted web-search endpoint unbound", () => {
+    const livePath = tempPolicy(
+      "live-substituted.yaml",
+      `version: 1
+network_policies:
+  tavily:
+    endpoints:
+      - host: operator.example
+        port: 443
+        protocol: rest
+        rules:
+          - allow: { method: POST, path: "/search" }
+          - allow: { method: POST, path: "/extract" }
+`,
+    );
+    const replacementPath = tempPolicy("replacement-substituted.yaml", "version: 1\n");
+
+    const handoff = materializeRebuildPolicyHandoff({
+      sandboxName: "alpha",
+      livePolicyPath: livePath,
+      replacementPolicy: { policyPath: replacementPath, appliedPresets: [] },
+      webSearchAgentName: "langchain-deepagents-code",
+      webSearchCredentialProviders: ["tavily-search"],
+    });
+
+    const endpoint = readPrivatePolicy(handoff.policyPath).policy as {
+      network_policies: { tavily: { endpoints: Array<Record<string, unknown>> } };
+    };
+    expect(handoff.policyPath).toBe(livePath);
+    expect(endpoint.network_policies.tavily.endpoints[0]!.credential_binding).toBeUndefined();
+  });
+
+  it("leaves an applied web-search policy unbound without an attached provider", () => {
+    const source = `version: 1
+network_policies:
+  tavily:
+    name: tavily
+    endpoints:
+      - host: api.tavily.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+`;
+    const livePath = tempPolicy("live-unbound.yaml", source);
+    const replacementPath = tempPolicy("replacement-unbound.yaml", source);
+
+    const handoff = materializeRebuildPolicyHandoff({
+      sandboxName: "alpha",
+      livePolicyPath: livePath,
+      livePolicySource: source,
+      replacementPolicy: { policyPath: replacementPath, appliedPresets: [] },
+      webSearchAgentName: "langchain-deepagents-code",
+      webSearchCredentialProviders: [],
+    });
+
+    expect(handoff.credentialBindingProviders).toEqual([]);
+    expect(fs.readFileSync(handoff.policyPath, "utf8")).toBe(source);
   });
 
   it("rejects live credential bindings outside the verified replacement plan", () => {

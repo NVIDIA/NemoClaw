@@ -187,6 +187,25 @@ export const ManagedHermesTavilyProfileResponseSchema = tavilyProfile("tavily-he
   "/usr/local/bin/curl",
   "/usr/bin/curl",
 ]);
+// Endpointless carrier. The tavily policy preset owns the network contract and
+// names this profile's provider in credential_binding.
+export const EndpointlessTavilyProfileResponseSchema = Type.Object({
+  profile: Type.Object({
+    ...ManagedProfileIdentity,
+    id: Type.Literal("tavily-policy-binding-v1"),
+    inferenceCapable: Type.Literal(false),
+    endpoints: Type.Tuple([]),
+    credentials: Type.Tuple([
+      Type.Object({
+        ...ManagedSearchCredentialFields,
+        envVars: Type.Tuple([Type.Literal("TAVILY_API_KEY")]),
+        authStyle: Type.Literal("bearer"),
+        headerName: Type.Literal("authorization"),
+      }),
+    ]),
+    binaries: Type.Tuple([]),
+  }),
+});
 export const ManagedOpenAiProfileResponseSchema = Type.Object({
   profile: Type.Object({
     ...ManagedProfileIdentity,

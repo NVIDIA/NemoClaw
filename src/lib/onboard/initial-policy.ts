@@ -342,6 +342,8 @@ type InitialPolicyOptions = {
   sandboxName?: string;
   policyTier?: string | null;
   messagingConfig?: MessagingChannelConfig | null;
+  /** Providers the create plan attaches. A web-search preset binds only a provider named here. */
+  plannedProviders?: readonly string[];
 };
 
 type PolicyMaterializer = (content: string, prefix: string) => InitialSandboxPolicy;
@@ -598,6 +600,7 @@ function resolveInitialSandboxCreatePolicy(
       sandboxName: options.sandboxName,
       credentialBoundMessagingChannels: activeMessagingChannels,
       messagingConfig: options.messagingConfig,
+      plannedProviders: options.plannedProviders,
     });
     if (mergedPolicy.missingPresets.length > 0) {
       throw new Error(

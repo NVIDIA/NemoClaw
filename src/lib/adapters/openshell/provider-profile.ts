@@ -130,5 +130,9 @@ export function isMissingProviderProfile(output: string, profileId: string): boo
 }
 
 export function endpointlessProviderProfilePath(root: string, profileId: string): string {
-  return path.join(root, "nemoclaw-blueprint", "provider-profiles", `${profileId}.yaml`);
+  const directory =
+    profileId === "tavily-policy-binding-v1"
+      ? path.join(root, "managed-inference", "provider-profiles")
+      : path.join(root, "nemoclaw-blueprint", "provider-profiles");
+  return path.join(directory, `${profileId}.yaml`);
 }

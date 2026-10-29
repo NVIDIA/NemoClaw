@@ -225,6 +225,7 @@ export function prepareSandboxCreatePolicy(
   intent: SandboxCreateIntent,
   prepareInitialSandboxCreatePolicy: PrepareInitialSandboxCreatePolicy = getInitialSandboxCreatePolicy,
   messagingConfig?: MaterializeSandboxCreatePlanInput["messagingConfig"],
+  plannedMessagingProviders: readonly string[] = [],
 ): {
   readonly initialSandboxPolicy: InitialSandboxPolicy;
   readonly compatibilityPolicyPath: string | null;
@@ -248,6 +249,11 @@ export function prepareSandboxCreatePolicy(
       sandboxName: intent.sandboxName,
       policyTier: intent.policy.options.policyTier,
       messagingConfig,
+      plannedProviders: [
+        ...(intent.inferenceProvider ? [intent.inferenceProvider] : []),
+        ...intent.extraProviders,
+        ...plannedMessagingProviders,
+      ],
     },
     intent.gpuRoutePlan,
     prepareInitialSandboxCreatePolicy,
@@ -389,16 +395,26 @@ export async function materializeSandboxCreatePlan({
   discloseInitialSandboxPolicy,
   prepareInitialSandboxCreatePolicy = getInitialSandboxCreatePolicy,
 }: MaterializeSandboxCreatePlanInput): Promise<SandboxCreatePlan> {
-  const enabledMessagingTokenDefs = validateSandboxCreateIntentBindings(intent, messagingTokenDefs);
   const driverConfig = buildSandboxDriverConfig(
     intent,
     managedStateMounts,
     managedStateMountDriverId,
   );
+  const enabledMessagingTokenDefs = validateSandboxCreateIntentBindings(intent, messagingTokenDefs);
+  const plannedMessagingProviders = filterMessagingProvidersForSandboxCreate(
+    [
+      ...enabledMessagingTokenDefs.filter(hasConfiguredMessagingCredential).map(({ name }) => name),
+      ...intent.reusableMessagingProviders,
+    ],
+    intent.messagingProviderRequests,
+    intent.policy.activeMessagingChannels,
+    intent.disabledChannelNames,
+  );
   const { initialSandboxPolicy, compatibilityPolicyPath } = prepareSandboxCreatePolicy(
     intent,
     prepareInitialSandboxCreatePolicy,
     messagingConfig,
+    plannedMessagingProviders,
   );
   const createProviders: string[] = [];
 
@@ -411,15 +427,6 @@ export async function materializeSandboxCreatePlan({
         : null;
     return hermesToolGatewayProvider;
   };
-  const plannedMessagingProviders = filterMessagingProvidersForSandboxCreate(
-    [
-      ...enabledMessagingTokenDefs.filter(hasConfiguredMessagingCredential).map(({ name }) => name),
-      ...intent.reusableMessagingProviders,
-    ],
-    intent.messagingProviderRequests,
-    intent.policy.activeMessagingChannels,
-    intent.disabledChannelNames,
-  );
   if (deferSandboxEffectsUntilIdentityVerification) {
     assertDeferredProviderPlanSupported(intent, plannedMessagingProviders, initialSandboxPolicy);
   }

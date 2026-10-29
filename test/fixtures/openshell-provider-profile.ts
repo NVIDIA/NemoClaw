@@ -52,6 +52,24 @@ export function managedBraveProfile() {
   };
 }
 
+export function endpointlessTavilyProfile() {
+  const base = managedBraveProfile();
+  return {
+    ...base,
+    id: "tavily-policy-binding-v1",
+    credentials: [
+      {
+        ...base.credentials[0],
+        envVars: ["TAVILY_API_KEY"],
+        authStyle: "bearer",
+        headerName: "authorization",
+      },
+    ],
+    endpoints: [],
+    binaries: [],
+  };
+}
+
 export function managedTavilyProfile(agent: "openclaw" | "hermes" = "openclaw") {
   const base = managedBraveProfile();
   return {

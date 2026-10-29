@@ -60,7 +60,7 @@ type RuntimeBridge = {
 type OpenshellCall = { args: string[]; opts?: RuntimeBridgeRunOptions };
 
 const TAVILY_PROFILE_EXPORT = JSON.stringify({
-  id: "tavily",
+  id: "tavily-policy-binding-v1",
   credentials: [
     {
       name: "api_key",
@@ -71,26 +71,8 @@ const TAVILY_PROFILE_EXPORT = JSON.stringify({
       query_param: "",
     },
   ],
-  endpoints: [
-    {
-      host: "api.tavily.com",
-      port: 443,
-      protocol: "rest",
-      enforcement: "enforce",
-      request_body_credential_rewrite: true,
-      rules: [
-        { allow: { method: "POST", path: "/search" } },
-        { allow: { method: "POST", path: "/extract" } },
-      ],
-    },
-  ],
-  binaries: [
-    "/opt/venv/bin/python3*",
-    "/usr/local/bin/node",
-    "/usr/bin/node",
-    "/usr/local/bin/curl",
-    "/usr/bin/curl",
-  ],
+  endpoints: [],
+  binaries: [],
   inference_capable: false,
 });
 
@@ -445,7 +427,16 @@ describe("credentials oclif commands", () => {
 
       expect(calls).toEqual([
         {
-          args: ["provider", "profile", "-g", "nemoclaw", "export", "tavily", "--output", "json"],
+          args: [
+            "provider",
+            "profile",
+            "-g",
+            "nemoclaw",
+            "export",
+            "tavily-policy-binding-v1",
+            "--output",
+            "json",
+          ],
           opts: {
             env: expect.any(Object),
             ignoreError: true,
@@ -464,7 +455,7 @@ describe("credentials oclif commands", () => {
             "--name",
             "tavily-search",
             "--type",
-            "tavily",
+            "tavily-policy-binding-v1",
             "--credential",
             "TAVILY_API_KEY",
           ],
@@ -479,7 +470,16 @@ describe("credentials oclif commands", () => {
           },
         },
         {
-          args: ["provider", "profile", "-g", "nemoclaw", "export", "tavily", "--output", "json"],
+          args: [
+            "provider",
+            "profile",
+            "-g",
+            "nemoclaw",
+            "export",
+            "tavily-policy-binding-v1",
+            "--output",
+            "json",
+          ],
           opts: {
             env: expect.any(Object),
             ignoreError: true,
@@ -654,11 +654,13 @@ describe("credentials oclif commands", () => {
         "-g",
         "nemoclaw",
         "export",
-        "tavily",
+        "tavily-policy-binding-v1",
         "--output",
         "json",
       ]);
-      expect(output.stderr).toContain("Could not import bundled provider profile 'tavily'");
+      expect(output.stderr).toContain(
+        "Could not import bundled provider profile 'tavily-policy-binding-v1'",
+      );
       expect(output.stderr).not.toContain(leakedTavilyValue);
     } finally {
       delete process.env.TAVILY_API_KEY;

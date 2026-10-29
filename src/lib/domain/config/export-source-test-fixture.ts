@@ -330,7 +330,7 @@ export function hermesSnapshot(
 export function tavilySnapshot(agent: "openclaw" | "hermes" = "openclaw"): ObservedExportSnapshot {
   const value = agent === "hermes" ? hermesSnapshot() : snapshot();
   const input = agent === "hermes" ? hermesProfileInput() : profileInput();
-  const profileId = agent === "hermes" ? "tavily-hermes-v1" : "tavily";
+  const profileId = agent === "hermes" ? "tavily-hermes-v1" : "tavily-policy-binding-v1";
   return {
     ...value,
     registry: {

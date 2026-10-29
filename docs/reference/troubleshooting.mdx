@@ -836,6 +836,11 @@ $$nemoclaw <name> config get --key tools.web.search --format yaml
 
 The provider should be `brave` or `tavily` and `enabled` should be `true`. If the provider is wrong, rerun onboarding with `NEMOCLAW_WEB_SEARCH_PROVIDER=brave` or `tavily` and the matching `BRAVE_API_KEY` or `TAVILY_API_KEY`.
 
+If a rebuild reports that `TAVILY_API_KEY` is not available for a sandbox that was onboarded with the earlier `tavily` profile, export `TAVILY_API_KEY` and rerun the rebuild so NemoClaw registers `<name>-tavily-search` with the current profile.
+If `logs` shows a `credential_unavailable` denial for `api.tavily.com`, confirm that `<name>-tavily-search` is attached and uses the `tavily-policy-binding-v1` profile, and compare the configured `tavily` endpoint with the checked-in preset.
+A differing endpoint remains unbound even when the provider and profile are valid, and a rebuild preserves that edited policy.
+If the endpoint differs, review your custom policy changes, reapply the `tavily` preset when appropriate, and then rerun `$$nemoclaw <name> rebuild`.
+
 </AgentOnly>
 <AgentOnly variant="hermes">
 
@@ -1879,6 +1884,21 @@ If Tavily is still blocked after rebuild, inspect recent policy denials:
 
 ```bash
 nemo-deepagents <name> logs --tail 50
+```
+
+A `credential_unavailable` denial means the `tavily` endpoint has no usable credential binding.
+NemoClaw adds the binding only when `tavily-search` is attached to the sandbox, uses the `tavily-policy-binding-v1` profile, and the `tavily` endpoint matches the checked-in preset.
+Register the provider with `--agent dcode`, not `--agent hermes`.
+Confirm that `nemo-deepagents credentials list` shows `tavily-search` and check its profile with `openshell provider get tavily-search`.
+Resetting the gateway-wide `tavily-search` provider detaches every sandbox that uses it, so you must rebuild each detached sandbox after you register the replacement.
+If `tavily-search` uses the earlier `tavily` profile, replace it and rebuild each detached sandbox:
+
+```bash
+nemo-deepagents credentials reset tavily-search --yes
+export TAVILY_API_KEY=tvly-...
+nemo-deepagents credentials add tavily-search --type tavily --agent dcode --credential TAVILY_API_KEY
+unset TAVILY_API_KEY
+nemo-deepagents <name> rebuild
 ```
 
 The `tavily` preset is a managed-Python opt-in. It is process-wide for sandbox Python and is not a `dcode`-only boundary.

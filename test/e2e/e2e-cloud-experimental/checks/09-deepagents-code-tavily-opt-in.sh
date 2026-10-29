@@ -12,6 +12,10 @@ REPO="${REPO:-$(pwd)}"
 CLI="${NEMOCLAW_E2E_CLI:-${REPO}/bin/nemoclaw.js}"
 PROJECT_VENV="/sandbox/.nemoclaw-e2e-project-venv"
 PROJECT_PYTHON="${PROJECT_VENV}/bin/python3"
+TAVILY_PROVIDER_NAME="tavily-search"
+TAVILY_PROBE_CREDENTIAL="tvly-e2e-probe-$$"
+TAVILY_CREDENTIAL_REGISTERED=0
+TAVILY_POLICY_APPLIED=0
 
 ok() { printf '%s\n' "${PREFIX}: OK ($*)"; }
 info() { printf '%s\n' "${PREFIX}: $*"; }
@@ -92,7 +96,10 @@ url = sys.argv[1]
 request = urllib.request.Request(
     url,
     data=json.dumps({'query': 'nemoclaw reachability probe', 'max_results': 1}).encode('utf-8'),
-    headers={'Content-Type': 'application/json'},
+    headers={
+        'Authorization': 'Bearer openshell:resolve:env:TAVILY_API_KEY',
+        'Content-Type': 'application/json',
+    },
     method='POST',
 )
 try:
@@ -105,7 +112,9 @@ except urllib.error.HTTPError as exc:
     except Exception:
         body = ''
     details = f'{exc} {body}'.strip()
-    if is_policy_denial(details):
+    if 'credential_unavailable' in details.lower():
+        print(f'CREDENTIAL_UNAVAILABLE:HTTPError:{details}')
+    elif is_policy_denial(details):
         print(f'BLOCKED:HTTPError:{details}')
     else:
         print(f'REACHED:{exc.code}')
@@ -152,20 +161,60 @@ verify_observability_state() {
   pass "host registry and persistent marker preserve enabled observability $phase"
 }
 
-restore_tavily_denial() {
-  local cleanup_status=0 remove_output post_remove_probe_output
-  if ! remove_output="$(nemoclaw_cli "$SANDBOX_NAME" policy-remove tavily --yes 2>&1)"; then
-    fail_test "policy-remove tavily failed after the opt-in proof: $remove_output"
-    cleanup_status=1
-  else
-    sleep "${NEMOCLAW_E2E_POLICY_SETTLE_SECONDS:-5}"
-    post_remove_probe_output="$(python_probe "https://api.tavily.com/search" || true)"
-    if [[ "$post_remove_probe_output" == *"BLOCKED:"* &&
-      "$post_remove_probe_output" != *"REACHED:"* ]]; then
-      pass "managed Deep Agents Code python returns to the default Tavily denial"
+rebuild_named_sandbox() {
+  local attempt output status prior_timeout_output retry_delay_seconds
+  prior_timeout_output=""
+  retry_delay_seconds="${NEMOCLAW_E2E_DCODE_REBUILD_RETRY_DELAY_SECONDS:-3}"
+  for attempt in 1 2; do
+    if output="$(nemoclaw_cli "$SANDBOX_NAME" rebuild --yes 2>&1)"; then
+      printf '%s\n' "$output"
+      return 0
     else
-      fail_test "policy-remove did not restore the default Tavily denial: $post_remove_probe_output"
+      status=$?
+    fi
+    if [ "$attempt" -eq 1 ] \
+      && printf '%s\n' "$output" | grep -Fq "existing sandbox inference probe exited with status 28" \
+      && printf '%s\n' "$output" | grep -Fq "Sandbox is untouched"; then
+      prior_timeout_output="$output"
+      info "Retrying named sandbox rebuild once after a fail-closed inference timeout" >&2
+      sleep "$retry_delay_seconds"
+      continue
+    fi
+    if [ -n "$prior_timeout_output" ]; then
+      printf '%s\n%s\n' "$prior_timeout_output" "$output"
+    else
+      printf '%s\n' "$output"
+    fi
+    return "$status"
+  done
+}
+
+restore_tavily_denial() {
+  local cleanup_status=0 remove_output reset_output post_remove_probe_output
+  if [ "$TAVILY_POLICY_APPLIED" -eq 1 ]; then
+    if ! remove_output="$(nemoclaw_cli "$SANDBOX_NAME" policy-remove tavily --yes 2>&1)"; then
+      fail_test "policy-remove tavily failed after the opt-in proof: $remove_output"
       cleanup_status=1
+    else
+      TAVILY_POLICY_APPLIED=0
+      sleep "${NEMOCLAW_E2E_POLICY_SETTLE_SECONDS:-5}"
+      post_remove_probe_output="$(python_probe "https://api.tavily.com/search" || true)"
+      if [[ "$post_remove_probe_output" == *"BLOCKED:"* &&
+        "$post_remove_probe_output" != *"REACHED:"* ]]; then
+        pass "managed Deep Agents Code python returns to the default Tavily denial"
+      else
+        fail_test "policy-remove did not restore the default Tavily denial: $post_remove_probe_output"
+        cleanup_status=1
+      fi
+    fi
+  fi
+
+  if [ "$TAVILY_CREDENTIAL_REGISTERED" -eq 1 ]; then
+    if ! reset_output="$(nemoclaw_cli credentials reset "$TAVILY_PROVIDER_NAME" --yes 2>&1)"; then
+      fail_test "credentials reset $TAVILY_PROVIDER_NAME failed after the opt-in proof: $reset_output"
+      cleanup_status=1
+    else
+      TAVILY_CREDENTIAL_REGISTERED=0
     fi
   fi
 
@@ -196,6 +245,8 @@ if [ "${NEMOCLAW_E2E_TAVILY_SELF_TEST:-}" = "restore-denial" ]; then
   OBSERVABILITY_MARKER_FIXTURE="$(mktemp)"
   printf '%s\n' "1" >"$OBSERVABILITY_MARKER_FIXTURE"
   trap 'rm -f "$OBSERVABILITY_MARKER_FIXTURE"' EXIT
+  TAVILY_POLICY_APPLIED=1
+  TAVILY_CREDENTIAL_REGISTERED=1
   observability_marker_value() {
     cat "$OBSERVABILITY_MARKER_FIXTURE"
   }
@@ -203,6 +254,10 @@ if [ "${NEMOCLAW_E2E_TAVILY_SELF_TEST:-}" = "restore-denial" ]; then
     printf '%s' "${NEMOCLAW_E2E_OBSERVABILITY_REGISTRY_FIXTURE:-enabled}"
   }
   nemoclaw_cli() {
+    if [[ "$*" == "credentials reset $TAVILY_PROVIDER_NAME --yes" ]]; then
+      [[ "${NEMOCLAW_E2E_TAVILY_RESET_FIXTURE:-ok}" == "ok" ]]
+      return $?
+    fi
     [[ "$*" == "$SANDBOX_NAME policy-remove tavily --yes" ]] || return 1
     case "${NEMOCLAW_E2E_TAVILY_REMOVE_FIXTURE:-ok}" in
       ok) ;;
@@ -245,18 +300,49 @@ else
   fail_test "tavily dry-run did not show api.tavily.com: $DRY_RUN_OUTPUT"
 fi
 
+trap restore_tavily_denial EXIT
+
+CREDENTIAL_ADD_OUTPUT="$(
+  TAVILY_API_KEY="$TAVILY_PROBE_CREDENTIAL" \
+    nemoclaw_cli credentials add "$TAVILY_PROVIDER_NAME" --type tavily --agent dcode --credential TAVILY_API_KEY 2>&1
+)" || {
+  fail_test "credentials add $TAVILY_PROVIDER_NAME failed: $CREDENTIAL_ADD_OUTPUT"
+  printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"
+  exit 1
+}
+TAVILY_CREDENTIAL_REGISTERED=1
+pass "tavily-search credential registers for Deep Agents Code"
+
 APPLY_OUTPUT="$(nemoclaw_cli "$SANDBOX_NAME" policy-add tavily --yes 2>&1)" || {
   fail_test "policy-add tavily failed: $APPLY_OUTPUT"
   printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"
   exit 1
 }
-trap restore_tavily_denial EXIT
+TAVILY_POLICY_APPLIED=1
 pass "tavily policy preset applies"
+
+REBUILD_OUTPUT="$(rebuild_named_sandbox 2>&1)" || {
+  fail_test "rebuild after Tavily credential registration failed: $REBUILD_OUTPUT"
+  printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"
+  exit 1
+}
+pass "Deep Agents Code sandbox rebuilds with tavily-search attached"
 
 sleep "${NEMOCLAW_E2E_POLICY_SETTLE_SECONDS:-5}"
 
+SANDBOX_ENV_OUTPUT="$(sandbox_exec 'env' || true)"
+if printf '%s\n' "$SANDBOX_ENV_OUTPUT" | grep -Fq "$TAVILY_PROBE_CREDENTIAL"; then
+  fail_test "sandbox environment exposed the raw Tavily credential"
+else
+  pass "sandbox environment does not expose the raw Tavily credential"
+fi
+
 PROBE_OUTPUT="$(python_probe "https://api.tavily.com/search")"
-if echo "$PROBE_OUTPUT" | grep -q "REACHED:"; then
+if printf '%s\n' "$PROBE_OUTPUT" | grep -Fq "$TAVILY_PROBE_CREDENTIAL"; then
+  fail_test "Tavily probe output exposed the raw Tavily credential"
+elif echo "$PROBE_OUTPUT" | grep -q "CREDENTIAL_UNAVAILABLE:"; then
+  fail_test "managed Deep Agents Code python hit credential_unavailable after rebuild: $PROBE_OUTPUT"
+elif echo "$PROBE_OUTPUT" | grep -q "REACHED:"; then
   pass "managed Deep Agents Code python can reach Tavily after policy-add"
 elif echo "$PROBE_OUTPUT" | grep -q "BLOCKED:"; then
   fail_test "managed Deep Agents Code python is still policy-blocked after policy-add: $PROBE_OUTPUT"

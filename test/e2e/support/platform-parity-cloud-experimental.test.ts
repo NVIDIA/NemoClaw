@@ -439,27 +439,62 @@ describe("P0-E cloud-experimental parity guardrails", () => {
   });
 
   it.each([
-    [tavilyBlocked, "ok", observabilityEnabled, 0, denialRestored, observabilityPreserved],
-    ["REACHED:403", "ok", observabilityEnabled, 1, denialNotRestored, observabilityPreserved],
-    [tavilyBlocked, "fail", observabilityEnabled, 1, policyRemoveFailed, observabilityPreserved],
+    [tavilyBlocked, "ok", "ok", observabilityEnabled, 0, denialRestored, observabilityPreserved],
+    ["REACHED:403", "ok", "ok", observabilityEnabled, 1, denialNotRestored, observabilityPreserved],
+    [
+      tavilyBlocked,
+      "fail",
+      "ok",
+      observabilityEnabled,
+      1,
+      policyRemoveFailed,
+      observabilityPreserved,
+    ],
+    [
+      tavilyBlocked,
+      "ok",
+      "fail",
+      observabilityEnabled,
+      1,
+      /credentials reset tavily-search failed/,
+      observabilityPreserved,
+    ],
     [
       tavilyBlocked,
       "clear-marker",
+      "ok",
       observabilityEnabled,
       1,
       denialRestored,
       observabilityDriftedAfter,
     ],
-    [tavilyBlocked, "ok", "disabled", 1, observabilityDriftedBefore, /registry=disabled, marker=1/],
+    [
+      tavilyBlocked,
+      "ok",
+      "ok",
+      "disabled",
+      1,
+      observabilityDriftedBefore,
+      /registry=disabled, marker=1/,
+    ],
   ])(
-    "restores the default Tavily denial without observability drift (%s/%s/%s)",
-    (fixture, removeFixture, registryFixture, status, expected, observabilityExpected) => {
+    "restores the default Tavily denial without observability drift (%s/%s/%s/%s)",
+    (
+      fixture,
+      removeFixture,
+      resetFixture,
+      registryFixture,
+      status,
+      expected,
+      observabilityExpected,
+    ) => {
       const result = spawnSync("bash", [dcodeTavilyCheck], {
         encoding: "utf8",
         env: {
           NEMOCLAW_E2E_OBSERVABILITY_REGISTRY_FIXTURE: registryFixture,
           NEMOCLAW_E2E_TAVILY_PROBE_FIXTURE: fixture,
           NEMOCLAW_E2E_TAVILY_REMOVE_FIXTURE: removeFixture,
+          NEMOCLAW_E2E_TAVILY_RESET_FIXTURE: resetFixture,
           NEMOCLAW_E2E_TAVILY_SELF_TEST: "restore-denial",
           PATH: DEFAULT_TEST_PATH,
           SANDBOX_NAME: "deepagents-sandbox",

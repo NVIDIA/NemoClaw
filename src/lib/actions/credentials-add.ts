@@ -33,6 +33,7 @@ import {
 } from "../inference/native-nvidia";
 import {
   HERMES_TAVILY_PROVIDER_PROFILE_ID,
+  TAVILY_POLICY_BINDING_PROVIDER_PROFILE_ID,
   TAVILY_PROVIDER_PROFILE_AGENTS,
   TAVILY_PROVIDER_PROFILE_ID,
   webSearchProviderProfileId,
@@ -157,12 +158,10 @@ function bundledProviderProfile(type: string): { profileType: string; profilePat
   if (profileType === NVIDIA_HOSTED_NATIVE_PROFILE_ID) {
     return { profileType, profilePath: nativeNvidiaProviderProfilePath() };
   }
-  const profilePath = path.join(
-    ROOT,
-    "nemoclaw-blueprint",
-    "provider-profiles",
-    `${profileType}.yaml`,
-  );
+  const profilePath =
+    profileType === TAVILY_POLICY_BINDING_PROVIDER_PROFILE_ID
+      ? path.join(ROOT, "managed-inference", "provider-profiles", `${profileType}.yaml`)
+      : path.join(ROOT, "nemoclaw-blueprint", "provider-profiles", `${profileType}.yaml`);
   return fs.existsSync(profilePath) ? { profileType, profilePath } : null;
 }
 

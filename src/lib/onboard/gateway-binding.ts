@@ -61,6 +61,57 @@ export {
   UnsafeGatewayStateDirectoryError,
 } from "./gateway/state-dir";
 
+/**
+ * Providers the gateway reports as attached to one sandbox. A failed or
+ * unreadable observation returns null, so the caller adds no credential
+ * binding rather than submitting one the gateway would reject.
+ */
+export async function readSandboxProviderAttachments(
+  sandboxName: string,
+  sandbox: SandboxGatewayBinding | null,
+): Promise<readonly string[] | null> {
+  if (!sandbox) return null;
+  try {
+    const { createSandboxes } =
+      require("../adapters/openshell/sandboxes") as typeof import("../adapters/openshell/sandboxes");
+    const row = await createSandboxes().get({
+      target: { kind: "named", gatewayName: resolveSandboxGatewayName(sandbox) },
+      workspace: "default",
+      name: sandboxName,
+      signal: AbortSignal.timeout(5_000),
+    });
+    return row ? row.providers : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Profile type the gateway reports for one provider, or null when the provider
+ * cannot be inspected. Used at the live policy-binding boundary so an
+ * endpoint-bearing Tavily profile is never added to credential_binding.
+ */
+export async function readSandboxProviderProfileType(
+  providerName: string,
+  sandbox: SandboxGatewayBinding | null,
+  gatewayName?: string,
+): Promise<string | null> {
+  const resolvedGatewayName = gatewayName ?? (sandbox ? resolveSandboxGatewayName(sandbox) : null);
+  if (!resolvedGatewayName) return null;
+  try {
+    const { createSandboxes } =
+      require("../adapters/openshell/sandboxes") as typeof import("../adapters/openshell/sandboxes");
+    return await createSandboxes().getProviderType({
+      target: { kind: "named", gatewayName: resolvedGatewayName },
+      workspace: "default",
+      name: providerName,
+      signal: AbortSignal.timeout(5_000),
+    });
+  } catch {
+    return null;
+  }
+}
+
 /** Resolve one attempt-wide onboarding target without overriding an authoritative rebuild. */
 export function resolveCoreOnboardGatewayBinding(options: {
   authoritativeGateway?: { name: string; port: number } | null;

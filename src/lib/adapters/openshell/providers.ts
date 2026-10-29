@@ -20,6 +20,7 @@ import {
   ManagedBraveProfileResponseSchema,
   ManagedTavilyProfileResponseSchema,
   ManagedHermesTavilyProfileResponseSchema,
+  EndpointlessTavilyProfileResponseSchema,
   ManagedOpenAiProfileResponseSchema,
   BuiltinNvidiaProfileResponseSchema,
   ProviderResponseSchema,
@@ -46,6 +47,7 @@ const managedProfileSchemas = {
   openai: ManagedOpenAiProfileResponseSchema,
   tavily: ManagedTavilyProfileResponseSchema,
   "tavily-hermes-v1": ManagedHermesTavilyProfileResponseSchema,
+  "tavily-policy-binding-v1": EndpointlessTavilyProfileResponseSchema,
 };
 type ManagedProfileContract = keyof typeof managedProfileSchemas;
 type ProfileContract =

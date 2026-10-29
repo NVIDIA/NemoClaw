@@ -13,7 +13,7 @@ import {
   type ReadRequest,
 } from "./sdk-read";
 
-import { SandboxResponseSchema } from "./sdk-read-schema";
+import { ProviderResponseSchema, SandboxResponseSchema } from "./sdk-read-schema";
 
 export type Sandbox = Readonly<{
   id: string;
@@ -51,6 +51,22 @@ export function createSandboxes(connect: ConnectOpenShellReader = connectOpenShe
           image: spec.template.image,
           providers: [...spec.providers].sort(),
         });
+      }),
+    getProviderType: (request: ReadRequest & Readonly<{ name: string }>): Promise<string | null> =>
+      readOpenShell(request, async () => {
+        const name = text(request.name);
+        const client = await connect(request.target);
+        request.signal.throwIfAborted();
+        try {
+          const response = await client.raw.getProvider(
+            { name, workspace: request.workspace },
+            { signal: request.signal },
+          );
+          return readValue(ProviderResponseSchema, response).provider.type;
+        } catch (error) {
+          if (isNotFound(error)) return null;
+          throw error;
+        }
       }),
   };
 }

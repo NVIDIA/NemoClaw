@@ -382,7 +382,7 @@ describe("prepareCreateSandboxMessaging", () => {
       name: "demo-tavily-search",
       envKey: TAVILY_API_KEY_ENV,
       token: "tvly-store",
-      providerType: "tavily",
+      providerType: "tavily-policy-binding-v1",
     });
   });
 

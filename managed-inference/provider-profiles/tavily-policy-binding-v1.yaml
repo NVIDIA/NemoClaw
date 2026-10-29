@@ -1,0 +1,24 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Endpointless carrier for a Tavily credential bound by the tavily policy preset.
+# OpenShell withholds a static credential stored under a profile that declares
+# no endpoints until the sandbox policy names that profile's provider in an
+# endpoint credential_binding. A profile that already declares endpoints cannot
+# supply that binding. The network contract stays with the preset.
+id: tavily-policy-binding-v1
+display_name: Tavily credential for policy binding
+description: Endpointless profile for a Tavily credential bound by the tavily policy preset
+category: agent
+credentials:
+  - name: api_key
+    description: Tavily Search API key
+    env_vars:
+      - TAVILY_API_KEY
+    required: true
+    auth_style: bearer
+    header_name: authorization
+    query_param: ''
+endpoints: []
+binaries: []
+inference_capable: false

@@ -25,7 +25,7 @@ function verifiedSource(result: ReturnType<typeof verify>) {
 describe("Tavily export source verification", () => {
   it.each([
     ["openclaw", "brave", "brave", "BRAVE_API_KEY"],
-    ["openclaw", "tavily", "tavily", "TAVILY_API_KEY"],
+    ["openclaw", "tavily", "tavily-policy-binding-v1", "TAVILY_API_KEY"],
     ["hermes", "tavily", "tavily-hermes-v1", "TAVILY_API_KEY"],
   ] as const)(
     "preserves the onboard %s %s profile binding during export (#12138)",
@@ -55,7 +55,7 @@ describe("Tavily export source verification", () => {
       expect(exportWebSearchBinding(value.registry)).toEqual({
         provider: "tavily",
         name: "alpha-tavily-search",
-        profileId: agent === "hermes" ? "tavily-hermes-v1" : "tavily",
+        profileId: agent === "hermes" ? "tavily-hermes-v1" : "tavily-policy-binding-v1",
         credentialEnv: "TAVILY_API_KEY",
       });
       const source = verifiedSource(verify(value));

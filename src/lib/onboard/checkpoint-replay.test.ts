@@ -279,7 +279,9 @@ describe("observeProviderEffectFingerprint", () => {
 describe("requiredWebSearchProviderType", () => {
   it("uses the Hermes Tavily profile only for Hermes Tavily selection", () => {
     expect(requiredWebSearchProviderType("tavily", { name: "hermes" })).toBe("tavily-hermes-v1");
-    expect(requiredWebSearchProviderType("tavily", { name: "openclaw" })).toBe("tavily");
+    expect(requiredWebSearchProviderType("tavily", { name: "openclaw" })).toBe(
+      "tavily-policy-binding-v1",
+    );
     expect(requiredWebSearchProviderType("brave", { name: "hermes" })).toBe("brave");
   });
 });

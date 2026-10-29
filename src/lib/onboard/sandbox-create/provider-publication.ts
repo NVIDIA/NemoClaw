@@ -33,6 +33,8 @@ import {
   NVIDIA_HOSTED_NATIVE_PROVIDER,
   requireNativeNvidiaProviderProfileBoundary,
 } from "../../inference/native-nvidia";
+import { TAVILY_POLICY_BINDING_PROVIDER_PROFILE_ID } from "../../inference/web-search/provider-profile";
+import { webSearchCredentialProviderCandidates } from "../../policy/preset-parsing";
 import {
   messagingCredentialProviderProfilePath,
   MESSAGING_CREDENTIAL_PROVIDER_TYPE,
@@ -299,6 +301,47 @@ export async function verifyNativeLocalAttachmentAfterCreate(input: {
 
 export function usesNativeHostedProvider(inferenceProvider: string | null): boolean {
   return isNativeHostedProviderName(inferenceProvider);
+}
+
+/**
+ * Inspect the gateway profile types of rebuild web-search candidates so a
+ * legacy endpoint-bearing tavily-search provider is never bound into policy.
+ */
+export async function resolveRebuildWebSearchProviderTypes(input: {
+  readonly rebuildPolicySourcePath?: string | null;
+  readonly sandboxName: string;
+  readonly agentName: string | null | undefined;
+  readonly extraProviders: readonly string[];
+  readonly messagingProviderRequests: SandboxCreateIntent["messagingProviderRequests"];
+  readonly gatewayName: string;
+  readonly runOpenshell: SandboxCreateOrchestrationRuntime["runOpenshell"];
+}): Promise<Readonly<Record<string, string | null>> | undefined> {
+  if (!input.rebuildPolicySourcePath) return undefined;
+  const candidates = webSearchCredentialProviderCandidates(
+    "tavily",
+    input.sandboxName,
+    input.agentName,
+  );
+  const extraSet = new Set(input.extraProviders);
+  const requestTypes = new Map(
+    input.messagingProviderRequests.map((request) => [request.name, request.providerType ?? null]),
+  );
+  const providerTypes: Record<string, string | null> = {};
+  let adapter: OpenShellProviderAdapter | null = null;
+  const target = namedOpenShellGateway(input.gatewayName);
+  for (const candidate of candidates) {
+    if (requestTypes.get(candidate) === TAVILY_POLICY_BINDING_PROVIDER_PROFILE_ID) {
+      providerTypes[candidate] = TAVILY_POLICY_BINDING_PROVIDER_PROFILE_ID;
+      continue;
+    }
+    if (!extraSet.has(candidate)) continue;
+    adapter ??= createCliOpenShellProviderAdapter({
+      run: (args, options) => input.runOpenshell(args, options),
+    });
+    const observed = await adapter.getProvider({ target, providerName: candidate });
+    providerTypes[candidate] = observed.ok ? observed.value.type : null;
+  }
+  return providerTypes;
 }
 
 export async function verifyNativeHostedAttachmentAfterCreate(input: {

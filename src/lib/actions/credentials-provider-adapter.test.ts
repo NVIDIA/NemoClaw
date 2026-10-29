@@ -731,7 +731,7 @@ describe("credential actions use typed OpenShell provider results", () => {
 
     expect(result.exitCode).toBe(1);
     expect(result.failureLines).toContain(
-      "  OpenShell provider profile 'tavily' does not match NemoClaw's checked-in credential boundary.",
+      "  OpenShell provider profile 'tavily-policy-binding-v1' does not match NemoClaw's checked-in credential boundary.",
     );
     expect(adapter.createProvider).not.toHaveBeenCalled();
   });
