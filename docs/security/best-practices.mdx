@@ -300,11 +300,22 @@ Records include operation outcomes, timestamps, software versions, platforms, en
 Observed model IDs and configuration names can include private or custom values.
 Observed names and versions are limited to 64 characters; longer values become `unknown` with a `collection_error` status.
 An oversized value does not discard the rest of the record.
+Ordinary installer and supported CLI operations attempt to send telemetry about completed operations to NVIDIA's fixed TEST receiver by default.
 Production delivery is not enabled.
 
 Telemetry payloads exclude user content, credentials, private endpoints, file paths, and persistent user, device, session, or sandbox identifiers.
 
-To disable NemoClaw telemetry, run `export NEMOCLAW_DISABLE_TELEMETRY=1` before installation or CLI use.
+To disable NemoClaw telemetry, run `export NEMOCLAW_DISABLE_TELEMETRY=1` in each shell before installation or CLI use.
+
+### CI Operation Labels
+
+NemoClaw recognizes continuous integration (CI) from `CI=true`, `CI=1`, or `GITHUB_ACTIONS=true`.
+CI records use `qa-ci:gh-<run-id>:attempt-<run-attempt>` when the GitHub Actions identity is valid.
+Other CI runs and invalid GitHub run identities use `qa-ci:generic:attempt-1`.
+These labels replace valid explicit QA labels in CI.
+Malformed explicit labels, `VITEST=true`, and `NODE_ENV=test` suppress telemetry.
+CI labels describe source runs and do not authenticate GitHub identity.
+Outside CI, `testLabel` is empty unless `NEMOCLAW_TELEMETRY_TEST_LABEL` supplies a valid QA label.
 
 ## Filesystem Controls
 

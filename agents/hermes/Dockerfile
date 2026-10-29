@@ -13,6 +13,28 @@ ARG NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=0
 # context pins its accepted x86_64 target because Podman does not supply it.
 ARG TARGETARCH
 
+FROM scratch AS switchyard-amd64
+ADD --checksum=sha256:d0306ee11bf44e1845f24f4fb56e4e11986ef6ac751f3abf303aef9fe1e798d2 https://github.com/NVIDIA/NeMo-Relay-Plugins/releases/download/switchyard-plugin-0.3.0/switchyard-plugin-0.3.0-linux-x86_64.tar.gz /switchyard.tar.gz
+
+FROM scratch AS switchyard-arm64
+ADD --checksum=sha256:267c4fa1b0ea07a9fdff019f4791e5042f4f68093ae27a7afb7541d323b2f720 https://github.com/NVIDIA/NeMo-Relay-Plugins/releases/download/switchyard-plugin-0.3.0/switchyard-plugin-0.3.0-linux-arm64.tar.gz /switchyard.tar.gz
+
+# hadolint ignore=DL3006
+FROM switchyard-${TARGETARCH} AS switchyard-assets
+
+# Verify the released bundle without loading it or adding a build toolchain.
+# Only the root-owned, disabled plugin payload enters the final image.
+# hadolint ignore=DL3006
+FROM ${BASE_IMAGE} AS switchyard-verified
+# This build-only stage must install a root-owned payload.
+# hadolint ignore=DL3002
+USER 0:0
+COPY --from=switchyard-assets /switchyard.tar.gz /switchyard.tar.gz
+COPY agents/hermes/install-switchyard.py /install-switchyard.py
+RUN mkdir -p /opt/nemo-relay/plugins \
+    && /opt/hermes/.venv/bin/python -I /install-switchyard.py \
+        /switchyard.tar.gz /opt/nemo-relay/plugins/switchyard
+
 FROM scratch AS reviewed-npm-archive
 ADD --checksum=sha256:5dbb86c71d07a1957f2e90734092dd6a58bdcd9ebc2d8d41ca1c6e6a21d364e1 https://registry.npmjs.org/npm/-/npm-12.0.2.tgz /npm-12.0.2.tgz
 
@@ -41,6 +63,8 @@ COPY ci/reviewed-npm-audit.json /ci/reviewed-npm-audit.json
 COPY agents/hermes/dashboard-external-host.patch /scripts/hermes-dashboard-external-host.patch
 
 FROM scratch AS hermes-agent-payload
+
+COPY --from=switchyard-verified /opt/nemo-relay/plugins/switchyard/ /opt/nemo-relay/plugins/switchyard/
 
 # Portable builds reject RUN mounts. Reuse the existing payload layer for
 # the shared inventory tooling instead of adding final-image COPY layers.

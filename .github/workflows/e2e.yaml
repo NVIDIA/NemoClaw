@@ -2461,7 +2461,13 @@ jobs:
           set -euo pipefail
           install -d -m 0700 "$INSTALLER_RECEIPT_PARENT"
           sudo chown "$ACCOUNT_UID:$ACCOUNT_GID" "$INSTALLER_RECEIPT_PARENT"
-          sudo -u "$ACCOUNT" env -i \
+          telemetry_env=()
+          for telemetry_name in CI GITHUB_ACTIONS GITHUB_RUN_ID GITHUB_RUN_ATTEMPT NEMOCLAW_TELEMETRY_TEST_LABEL NEMOCLAW_DISABLE_TELEMETRY; do
+            if [[ ${!telemetry_name+x} ]]; then
+              telemetry_env+=("$telemetry_name=${!telemetry_name}")
+            fi
+          done
+          sudo -u "$ACCOUNT" env -i "${telemetry_env[@]}" \
             CONTAINERS_CONF="$CONTAINERS_CONFIG" \
             CONTAINERS_STORAGE_CONF="$STORAGE_CONFIG" \
             HOME="$QUALIFICATION_HOME" \

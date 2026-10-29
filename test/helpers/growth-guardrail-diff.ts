@@ -174,6 +174,7 @@ function preparePullRequestTree(
   baseSha: string,
   repoRoot: string,
 ): string {
+  const initialDepth = 32;
   const historyDepth = 1024;
   const timeout = 30_000;
   const git = (phase: string, args: string[]): string => {
@@ -193,26 +194,44 @@ function preparePullRequestTree(
     }
   };
   const shallow = git("history inspection", ["rev-parse", "--is-shallow-repository"]);
-  // Both sides need ancestry, but preparation must fit the guardrail job's deadline.
-  if (shallow === "true") {
-    git("trusted-base history fetch", [
+  const fetchHistory = (depth: number): void => {
+    if (shallow === "true") {
+      git("trusted-base history fetch", [
+        "fetch",
+        "--no-tags",
+        `--depth=${depth}`,
+        "origin",
+        baseSha,
+      ]);
+    }
+    git("PR commit fetch", [
       "fetch",
       "--no-tags",
-      `--depth=${historyDepth}`,
+      `--depth=${depth}`,
       "origin",
-      baseSha,
+      `refs/pull/${prNumber}/head`,
     ]);
+    const fetchedHead = git("PR commit verification", ["rev-parse", "FETCH_HEAD"]);
+    if (fetchedHead !== expectedHeadSha)
+      throw new Error(`PR #${prNumber}: Fetched PR head does not match HEAD_SHA`);
+  };
+  fetchHistory(initialDepth);
+  const mergeBase = spawnSync("git", ["merge-base", baseSha, expectedHeadSha], {
+    cwd: repoRoot,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+    timeout,
+  });
+  if (mergeBase.error || (mergeBase.status !== 0 && mergeBase.status !== 1)) {
+    throw new Error(
+      `PR #${prNumber}: growth comparison preparation failed during merge base inspection.`,
+      {
+        cause: mergeBase.error,
+      },
+    );
   }
-  git("PR commit fetch", [
-    "fetch",
-    "--no-tags",
-    `--depth=${historyDepth}`,
-    "origin",
-    `refs/pull/${prNumber}/head`,
-  ]);
-  const fetchedHead = git("PR commit verification", ["rev-parse", "FETCH_HEAD"]);
-  if (fetchedHead !== expectedHeadSha)
-    throw new Error(`PR #${prNumber}: Fetched PR head does not match HEAD_SHA`);
+  // Deepen once before rejecting a branch whose merge base is beyond the shallow fetch.
+  if (mergeBase.status === 1) fetchHistory(historyDepth);
   // Merge candidate objects without checking out or executing candidate code.
   const mergedTree = git("merge tree construction", [
     "merge-tree",
