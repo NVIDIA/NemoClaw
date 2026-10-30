@@ -117,6 +117,7 @@ import {
   createProbeTimingRecorder,
   createBoundLaunchReadinessDeps,
   formatLaunchReadinessUnsafeAuthorityEvidence,
+  formatUnknownLaunchAgent,
   inspectLaunchReadiness,
   portableOpenClawPairingIncompleteMessage,
   type ProbeTimingRecorder,
@@ -3139,10 +3140,13 @@ async function prepareConnectSandboxWithinLifecycleFence(
     if (publication === null) return null;
     if (publication.kind === "validation-failed") {
       probeTiming!.markFailureStage("publication");
-      const failedCheck = publication.failedCheck
-        ? ` because the ${publication.failedCheck} failed`
-        : ` due to ${publication.category}`;
-      console.error(`  Probe failed: final launch-readiness validation failed${failedCheck}.`);
+      const reason =
+        publication.unknownAgent !== undefined
+          ? ` because ${formatUnknownLaunchAgent(publication.unknownAgent)}`
+          : publication.failedCheck
+            ? ` because the ${publication.failedCheck} failed`
+            : ` due to ${publication.category}`;
+      console.error(`  Probe failed: final launch-readiness validation failed${reason}.`);
       process.exit(1);
     }
     if (publication.kind === "evidence-failed") {

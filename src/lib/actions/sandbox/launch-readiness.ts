@@ -31,6 +31,7 @@ import {
 } from "../../onboard/runtime-provider/access";
 import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gateway-endpoint-guard";
 import { parseAndValidateSandboxPolicy } from "../../policy/sandbox-policy-validation";
+import { sanitizeReadinessText } from "../../readiness/sanitize";
 import {
   checkLaunchReadinessMutationAuthority,
   classifyLaunchReadinessStoreFailure,
@@ -168,6 +169,7 @@ export type LaunchReadinessPublicationResult =
       kind: "validation-failed";
       category: "identity" | "config" | "health" | "session";
       failedCheck?: LaunchReadinessFailedCheck;
+      unknownAgent?: string;
     }
   | { kind: "policy-observation-failed"; error: OpenShellSandboxError }
   | {
@@ -190,6 +192,16 @@ export type LaunchReadinessMutationGateResult<T> =
   | { kind: "entered"; value: T }
   | { kind: "changed" }
   | { kind: "unsafe"; evidence?: LaunchReadinessUnsafeAuthorityEvidence };
+
+const UNKNOWN_LAUNCH_AGENT_NAME_MAX_LENGTH = 256;
+
+/** The recorded agent is registry data, so escape and quote it before printing. */
+export function formatUnknownLaunchAgent(agentName: string): string {
+  const name = JSON.stringify(
+    sanitizeReadinessText(agentName, UNKNOWN_LAUNCH_AGENT_NAME_MAX_LENGTH),
+  );
+  return `the recorded agent ${name} is unknown, so recreate the sandbox with a supported agent`;
+}
 
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
@@ -972,12 +984,14 @@ function debugDecision(category: LaunchReadinessDecisionCategory): void {
 function publicationValidationCategory(error: unknown): {
   category: LaunchReadinessPublicationValidationCategory;
   failedCheck?: LaunchReadinessFailedCheck;
+  unknownAgent?: string;
 } | null {
   if (!(error instanceof ObservationError)) return null;
   if (!["identity", "config", "health", "session"].includes(error.category)) return null;
   return {
     category: error.category as LaunchReadinessPublicationValidationCategory,
     ...(error.failedCheck ? { failedCheck: error.failedCheck } : {}),
+    ...(error.unknownAgent === undefined ? {} : { unknownAgent: error.unknownAgent }),
   };
 }
 
