@@ -20,6 +20,7 @@ vi.setConfig({ maxConcurrency: 4, testTimeout: probeTimeoutMs });
 
 type SliceName = "initial" | "core" | "final";
 type ProbeMode =
+  | "revoked-tavily-planner"
   | "fresh"
   | "endpoint-override"
   | "resume-initial"
@@ -322,6 +323,21 @@ const gatewayHandlers = require(${gatewayHandlerPath});
 const coreFlowPhases = require(${coreFlowPhasesPath});
 const registry = require(${registryPath});
 const called = [];
+let boundExtraProviderPlanner;
+if (scenario.mode === "revoked-tavily-planner") {
+  require(${gatewayServicePath}).hasOpenShellGatewayUserService = () => false;
+  const coreComposition = require(${JSON.stringify(path.join(repoRoot, "src/lib/onboard/machine/core-flow-composition.ts"))});
+  const extraProviders = require(${JSON.stringify(path.join(repoRoot, "src/lib/onboard/extra-provider-reconciliation.ts"))});
+  extraProviders.planRegisteredExtraProviders = (gatewayName, options) => {
+    called.push("extra-plan:" + gatewayName + ":" + String(options.webSearchProvider) + ":" + typeof options.runOpenshell);
+    return { extraProviders: [], staleExtraProviders: [] };
+  };
+  const createCore = coreComposition.createCoreOnboardFlowPhases;
+  coreComposition.createCoreOnboardFlowPhases = (options) => {
+    boundExtraProviderPlanner = options.sandbox.deps.planRegisteredExtraProviders;
+    return createCore(options);
+  };
+}
 const sentinel = new Error("slice-called");
 const staleAdmissionExit = new Error("stale recovery admission refused");
 
@@ -615,6 +631,10 @@ flowSlices.runInitialOnboardFlowSequence = async ({ context, runtime, phases }) 
 }
 
 flowSlices.runCoreOnboardFlowSequence = async ({ context, runtime, phases }) => {
+  if (scenario.mode === "revoked-tavily-planner") {
+    await boundExtraProviderPlanner("nemoclaw", { webSearchProvider: null });
+    throw sentinel;
+  }
   if (scenario.mode === "providerless-external-component") {
     called.push("sandbox-effect");
     throw sentinel;
@@ -1095,6 +1115,13 @@ describe.concurrent("live onboard FSM slice boundaries", () => {
       "initial:init",
       "provider-compat",
     ]);
+  });
+
+  it("forwards revoked Tavily intent through the production planner binding (#13082)", async (context) => {
+    assert.deepEqual(
+      await runSliceProbe({ slice: "core", mode: "revoked-tavily-planner" }, context),
+      ["initial:init", "extra-plan:nemoclaw:null:function"],
+    );
   });
 
   it("routes ordinary resume through the sandbox's recorded gateway", async (context) => {

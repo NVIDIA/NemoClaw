@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-
 import {
   createBuiltInChannelManifestRegistry,
   createBuiltInRenderTemplateResolver,
@@ -48,6 +47,9 @@ function compiler(): ManifestCompiler {
         prompt: async () => "",
         log: () => {},
       },
+      discord: {
+        authentication: { fetch: async () => Response.json({ id: "1", bot: true }), log: () => {} },
+      },
       slack: {
         validateCredentials: {
           log: () => {},
@@ -84,7 +86,6 @@ function compiler(): ManifestCompiler {
     createBuiltInRenderTemplateResolver(),
   );
 }
-
 function jsonRoundTrip<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }

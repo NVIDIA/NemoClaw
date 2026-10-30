@@ -973,15 +973,11 @@ OpenClaw onboarding supports Brave Search and Tavily Search. NemoClaw registers 
 </AgentOnly>
 <AgentOnly variant="deepagents">
 
-Deep Agents onboarding supports the maintained Tavily Search path. NemoClaw registers the Tavily credential with the OpenShell gateway, applies the `tavily` policy preset when you opt in, and rebuilds the sandbox so the provider attaches to the managed Python runtime. Do not place `TAVILY_API_KEY` in `/sandbox/.deepagents/.env`, `.state/auth.json`, or other Deep Agents Code state.
-
-For non-interactive onboarding, export the Tavily key only in the host shell that runs onboarding:
-
-```bash
-export TAVILY_API_KEY=tvly-...
-NEMOCLAW_AGENT=langchain-deepagents-code NEMOCLAW_WEB_SEARCH_PROVIDER=tavily $$nemoclaw onboard --non-interactive --yes-i-accept-third-party-software
-unset TAVILY_API_KEY
-```
+Deep Agents Code requires explicit Tavily provider attachment.
+Follow [Enable Tavily egress](/user-guide/deepagents/get-started/quickstart#optional-tavily-egress) to register the credential on the host, apply the policy preset, and attach the provider.
+The attachment changes live sandbox state only.
+Repeat it after a rebuild if the sandbox still needs Tavily.
+Do not place `TAVILY_API_KEY` in `/sandbox/.deepagents/.env`, `.state/auth.json`, or other Deep Agents Code state.
 
 </AgentOnly>
 For non-interactive onboarding, you must explicitly accept the third-party software notice:
@@ -2642,6 +2638,10 @@ Register a messaging channel with the sandbox and rebuild so the image picks up 
 
 Google Chat uses an experimental token-paste flow for the service-account JSON on both agents. OpenClaw also requires interactive public-webhook confirmation and prompts for optional app-principal configuration during enrollment. Hermes instead prompts for the Google Cloud project ID, complete Pub/Sub subscription name, and email sender allowlist. It pulls inbound events from Pub/Sub over REST and does not create a public webhook endpoint.
 
+Discord token verification must succeed before enrollment.
+Rejected, rate-limited, unreachable, or timed-out verification skips Discord without changing its provider, registry entry, or rebuild state.
+Correct the token or host access, then retry `$$nemoclaw <name> channels add discord`.
+
 After registering the channel, NemoClaw asks whether to rebuild immediately.
 Running `add` for an already-configured channel overwrites the stored credentials where applicable.
 Repeating a successful add with identical inputs is idempotent.
@@ -2795,6 +2795,22 @@ An unsupported path produces a warning, and the report uses the default gateway 
 If only the dashboard path has credentials, follow the Hermes recovery procedure in [Set Up WhatsApp](/user-guide/hermes/manage-sandboxes/messaging-channels/set-up-whatsapp#pair-the-sandbox).
 That procedure states the cleanup prerequisite and when to stop before adding the channel again.
 NemoClaw does not treat a Hermes session file as live inbound-health evidence.
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+For Hermes Discord, check native authentication status with the sandbox name:
+
+```bash
+$$nemoclaw <name> channels status --channel discord
+```
+
+`credential_rejected` reports rejection from Hermes' native runtime state.
+`healthy` confirms an adapter connection, not message delivery.
+Missing, stale, or unreadable native evidence produces `unknown` with a warning.
+Registration and policy coverage alone do not establish authentication.
+Use the reported recovery command to replace rejected credentials, then verify delivery with a real message.
+</AgentOnly>
+<AgentOnly variant="openclaw,hermes">
 
 For Telegram, `--channel telegram` probes the sandbox to report the gateway process, Bot API reachability, and inbound delivery alongside the config comparison. Detailed non-wait JSON keeps the schema-version-1 `{schemaVersion,sandbox,channel,report}` envelope. When a probe-capable channel is paused, the command skips the live probe, returns `report.verdict` as `info` with paused registration and runtime-health signals, and exits 0. It classifies the state as `healthy`, `idle`, `token_rejected`, `unreachable`, `not_started`, `policy_gap`, `config_gap`, `unknown`, or `probe_failed`. A network or egress failure, or a non-authentication Bot API startup HTTP error, produces `unreachable`; a 401 or 404 response produces `token_rejected`. A missing, malformed, mismatched, identityless, or non-OpenShell runtime credential also produces `token_rejected`. It reads the gateway's own startup and poll log breadcrumbs rather than issuing its own Bot API request, so the resolved bot token never leaves the gateway. The verdict reflects the most recent evidence in the log window, so a bridge that recovered after a blocked start reports `healthy` while one blocked again reports `unreachable`. Telegram health is probed only for OpenClaw sandboxes; a Hermes Telegram sandbox uses the basic config report.
 
@@ -3505,7 +3521,11 @@ After the rebuild succeeds, retrieve the replacement token with `nemohermes my-a
 
 After restore, the command starts Deep Agents with the complete source native home, including `config.toml`, hooks, skills, memories, histories, packages, and unrelated native entries. Before changing the sandbox, rebuild verifies that the recorded provider path is still reachable and that the target provider, model, reasoning settings, web search selection, base image, current agent MCP source, and current live OpenShell policy can be captured. NVIDIA Endpoints and supported fixed hosted providers use native endpoints through sandbox-attached OpenShell providers.
 Deep Agents also uses attached providers for hosted compatible endpoints outside the Personal tier and qualified local endpoints; a fresh Personal-tier hosted selection stays on the shared route.
-Local NVIDIA NIM, other agents' shared local selections, and custom endpoints without an attachment retain the shared `inference.local` route. If those checks fail after backup, NemoClaw keeps the existing sandbox intact. Use rebuild after a failed Deep Agents version check, after enabling Tavily Search, or as the apply step for legacy MCP migration.
+Local NVIDIA NIM, other agents' shared local selections, and custom endpoints without an attachment retain the shared `inference.local` route. If those checks fail after backup, NemoClaw keeps the existing sandbox intact. Use rebuild after a failed Deep Agents version check or as the apply step for legacy MCP migration.
+To enable Tavily egress, apply the `tavily` preset, register the credential on the host, and explicitly attach the provider.
+Follow [Optional Tavily Egress](/user-guide/deepagents/get-started/quickstart#optional-tavily-egress).
+Repeat the attachment after rebuilding if Tavily access is still needed; rebuild omits the provider unless a saved enabled selection exists.
+Deep Agents Code has no NemoClaw-managed web-search selection that makes this attachment durable.
 Legacy Deep Agents Code local sandboxes without an attachment stop before rebuild. Local NVIDIA NIM retains its shared rebuild path.
 Back up the sandbox data before running `nemo-deepagents onboard --fresh --name <sandbox-name> --recreate-sandbox`.
 
@@ -4033,11 +4053,16 @@ $$nemoclaw credentials list
 
 ### `$$nemoclaw credentials add <PROVIDER>`
 
-Register a provider credential with the OpenShell gateway by name and type. Each `--credential` takes the env variable name whose value the gateway should read; export the value first so it is not placed in argv. Pass either repeatable `--credential <ENV_NAME>` or `--from-existing`, but do not combine them. With `--from-existing`, NemoClaw inspects the provider profile and rejects registration when one of its credential keys is reserved by a managed MCP server. After the gateway accepts the provider, rebuild each sandbox that should use it.
+Register a provider credential with the OpenShell gateway by name and type. Each `--credential` takes the env variable name whose value the gateway should read; export the value first so it is not placed in argv. Pass either repeatable `--credential <ENV_NAME>` or `--from-existing`, but do not combine them. With `--from-existing`, NemoClaw inspects the provider profile and rejects registration when one of its credential keys is reserved by a managed MCP server. After the gateway accepts a provider other than Tavily, rebuild each sandbox that should use it. For Tavily, follow the selection and attachment requirements below.
 
 After a successful provider creation or attachment, NemoClaw compares a previously verified profile with its current gateway definition. If it warns that verification did not complete or the profile changed, the successful operation remains successful. Ask the gateway operator to inspect the profile before relying on its credential boundary.
 
-Registered providers are gateway-wide and attach to every sandbox you build or rebuild after the call. `nemoclaw credentials reset <PROVIDER>` removes the provider from the gateway and detaches it from every sandbox currently using it; it cannot limit the provider to selected sandboxes. To replace a credential, reset the provider, register the replacement, and rebuild each detached sandbox.
+Registered providers are gateway-wide and can attach during later sandbox builds or rebuilds.
+Tavily providers attach during builds or rebuilds only when the sandbox has an enabled Tavily selection.
+Removing the Tavily preset preserves that exclusion through rebuilds and keeps the gateway credential available to other sandboxes.
+`nemoclaw credentials reset <PROVIDER>` removes the provider from the gateway and detaches it from every sandbox currently using it; it cannot limit the provider to selected sandboxes.
+To replace a credential, reset the provider and register the replacement.
+Rebuild each detached sandbox, or explicitly reattach Tavily when no enabled Tavily selection is saved.
 
 Tavily requires a provider profile that permits the intended agent runtime.
 Use `--type tavily --agent hermes` to select the versioned `tavily-hermes-v1` profile for Hermes Python.
@@ -4080,7 +4105,11 @@ $$nemoclaw credentials add tavily-search --type tavily --agent dcode --credentia
 
 ### `$$nemoclaw credentials reset <PROVIDER>`
 
-Remove a provider credential from the OpenShell gateway by provider name. After removal, re-running `$$nemoclaw onboard` re-prompts for that provider's credential. Run `$$nemoclaw credentials list` first if you are not sure of the provider name.
+Remove a provider credential from the OpenShell gateway by provider name.
+For providers managed by onboarding, rerun `$$nemoclaw onboard` to supply a replacement credential.
+For a manually registered Tavily provider, register the replacement on the host and explicitly attach it to each affected sandbox.
+Follow [Optional Tavily Egress](/user-guide/deepagents/get-started/quickstart#optional-tavily-egress) for the Deep Agents registration and attachment procedure.
+Run `$$nemoclaw credentials list` first if you are not sure of the provider name.
 
 When a sandbox records an attachment to a native NVIDIA or supported fixed hosted provider, reset stops without detaching or deleting it.
 Rotate its credential in place by supplying the selected provider's credential through the host environment and rerunning `$$nemoclaw onboard --name <sandbox>`. Use `NVIDIA_INFERENCE_API_KEY` for NVIDIA Endpoints and the provider-specific variable documented under `onboard` for another selection.

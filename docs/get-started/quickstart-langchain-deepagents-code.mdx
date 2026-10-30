@@ -219,7 +219,21 @@ Deep Agents Code state lives in its native home under `/sandbox`. OpenShell keep
 
 Deep Agents Code does not currently have a NemoClaw-managed web-search feature. If your project code or a manually configured tool needs Tavily, opt the sandbox Python egress path into Tavily explicitly. Register the raw key only with the OpenShell gateway on the host, not inside the sandbox, in `.env`, or in Deep Agents config files. The gateway injects it at egress instead. The managed Deep Agents Code entry points reject credential-shaped process environment values, disable project `.env` and global `/sandbox/.deepagents/.env` loading, and block upstream `/auth`, `/connect`, startup/onboarding credential prompts, model-selector credential prompts, notification-service key prompts, and ChatGPT OAuth. These controls apply to Deep Agents Code and do not sanitize arbitrary Python programs in the sandbox. Use NemoClaw-managed credential paths when support is available instead of storing service keys inside Deep Agents Code state. NemoClaw does not enable Tavily or observability by default for this harness. The sandbox policy denies `api.tavily.com` until you opt into Tavily and continues to deny direct `api.smith.langchain.com` egress when you enable observability.
 
-To allow Tavily egress for the target sandbox, apply the maintained `tavily` policy preset, register the credential with the OpenShell gateway, then rebuild the sandbox so the new provider attaches. The policy preset is a per-sandbox managed-Python opt-in, but provider registration is gateway-wide: `tavily-search` attaches to every sandbox that you build or rebuild afterward.
+To allow Tavily egress for the current sandbox, apply the `tavily` preset, register the credential on the host, and attach the provider explicitly.
+Registration is gateway-wide, but a raw OpenShell attachment changes only live state.
+It does not change NemoClaw's saved web-search selection.
+A rebuild can omit this provider, including after Tavily removal recorded a disabled selection.
+Repeat the explicit attachment after rebuilding if the sandbox still needs Tavily.
+
+Identify the sandbox's recorded gateway before registering or attaching the provider.
+Find the entry keyed by your sandbox name in the `sandboxes` object of the host registry.
+The default registry is `~/.nemoclaw/sandboxes.json`; non-default gateway registries are `~/.nemoclaw/gateways/<port>/sandboxes.json`.
+Use its `gatewayName` and `gatewayPort` for `<gateway-name>` and `<gateway-port>` below.
+Gateway `nemoclaw` uses port `8080`; gateway `nemoclaw-<port>` uses the port in its name.
+Use this mapping if only one field is recorded.
+If an older entry has neither field, use the port from its gateway-specific registry directory, or `8080` for the top-level registry.
+Stop if the entry is missing, appears in multiple registries, or has conflicting gateway values.
+Do not use the active OpenShell gateway as a substitute for the recorded binding.
 
 ```bash
 # Preview the endpoints the preset opens:
@@ -229,14 +243,18 @@ nemo-deepagents <sandbox-name> policy add tavily --yes
 # Export the key on the host (NemoClaw reads it from the current shell):
 export TAVILY_API_KEY=tvly-...
 # Register the provider with the gateway:
-nemo-deepagents credentials add tavily-search --type tavily --agent dcode --credential TAVILY_API_KEY
+NEMOCLAW_GATEWAY_PORT=<gateway-port> nemo-deepagents credentials add tavily-search --type tavily --agent dcode --credential TAVILY_API_KEY
 # Remove the raw key from the host shell after the gateway stores it:
 unset TAVILY_API_KEY
-# Attach the new provider to the sandbox:
-nemo-deepagents <sandbox-name> rebuild
+# Attach the provider to the current sandbox:
+openshell sandbox provider attach -g <gateway-name> <sandbox-name> tavily-search
 ```
 
-The shared `tavily` preset only opens `POST /search` and `POST /extract` egress to `api.tavily.com:443`. Attaching the credential provider alone does not authorize the managed Python interpreter; the explicit policy preset is the interpreter-level opt-in. Export `TAVILY_API_KEY` only for registration, then remove it from the host shell; the gateway injects the stored value at egress, and the sandbox never sees the raw value. NemoClaw does not bake `TAVILY_API_KEY` into the managed config or image, and the managed wrapper rejects direct service-key injection into `dcode`. Because OpenShell attributes the harness's calls to the sandbox `python3` interpreter, this egress is process-wide for sandbox Python rather than a `dcode`-only boundary.
+The shared `tavily` preset only opens `POST /search` and `POST /extract` egress to `api.tavily.com:443`.
+The attached Tavily provider can independently grant managed-Python access to the same endpoint.
+Export `TAVILY_API_KEY` only for registration, then remove it from the host shell; the gateway injects the stored value at egress, and the sandbox never sees the raw value.
+NemoClaw does not bake `TAVILY_API_KEY` into the managed config or image, and the managed wrapper rejects direct service-key injection into `dcode`.
+Because OpenShell attributes the harness's calls to the sandbox `python3` interpreter, this egress is process-wide for sandbox Python rather than a `dcode`-only boundary.
 
 Remove the target sandbox's managed-Python opt-in when it is no longer needed.
 
@@ -244,7 +262,15 @@ Remove the target sandbox's managed-Python opt-in when it is no longer needed.
 nemo-deepagents <sandbox-name> policy remove tavily --yes
 ```
 
-This does not unregister the gateway-wide `tavily-search` provider; its credential and Node/curl routes remain available to sandboxes that attach it. When no sandbox needs the provider, remove it globally with `nemo-deepagents credentials reset tavily-search --yes`. The command detaches current sandbox attachments, removes the gateway provider, and reports every detached sandbox that you must rebuild after registering a replacement.
+Removal detaches every Tavily provider from this sandbox and verifies that effective policy no longer permits Tavily search or extraction requests.
+Rebuilds preserve that disabled selection.
+The gateway-wide `tavily-search` registration and its credential remain available to other sandboxes.
+To restore access to the current sandbox, add the preset and run `openshell sandbox provider attach -g <gateway-name> <sandbox-name> tavily-search`.
+This recovery is temporary: the saved selection remains disabled, and the next rebuild omits the Tavily provider again.
+Deep Agents Code has no NemoClaw-managed web-search configuration that makes this attachment durable.
+When no sandbox needs the provider, remove it globally with `NEMOCLAW_GATEWAY_PORT=<gateway-port> nemo-deepagents credentials reset tavily-search --yes`.
+The command detaches current sandbox attachments and removes the gateway provider.
+After registering a replacement, explicitly attach it to each sandbox that still needs Tavily, including after any required rebuild.
 
   </Accordion>
 
