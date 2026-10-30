@@ -417,6 +417,49 @@ describe("destroySandbox retained recovery flow", () => {
   );
 
   it(
+    "removes a retained recovery set created without workspace labels after OpenShell confirms the sandbox absent",
+    { timeout: 30_000 },
+    async () => {
+      const recovery = retainedRecoveryRecord();
+      const sandboxContainerId = "a".repeat(64);
+      const bootstrapContainerId = "b".repeat(64);
+      const identityRows = [sandboxContainerId, bootstrapContainerId]
+        .map((id) => `${id}\topenshell\t\tsb-alpha`)
+        .join("\n");
+      const harness = createDestroyHarness({
+        sandboxPresent: false,
+        dockerNameLabeledIds: [sandboxContainerId, bootstrapContainerId],
+        dockerOrphanIds: [bootstrapContainerId],
+        dockerRunResult: { status: 0, stdout: identityRows },
+        registryEntryOverrides: {
+          lifecycleGeneration: recovery.lifecycleGeneration!,
+          lifecycleLiveIdentityFingerprint: recovery.sandboxIdentityFingerprint!,
+        },
+        retainedRecoveryRecords: [recovery],
+      });
+
+      await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+
+      expect(
+        harness.runOpenshellSpy.mock.calls.some(
+          ([args]) => Array.isArray(args) && args[0] === "sandbox" && args[1] === "delete",
+        ),
+      ).toBe(false);
+      expect(harness.dockerRunSpy).toHaveBeenCalledWith(
+        ["rm", "-f", sandboxContainerId],
+        expect.objectContaining({ ignoreError: true }),
+      );
+      expect(harness.dockerRunSpy).toHaveBeenCalledWith(
+        ["rm", "-f", bootstrapContainerId],
+        expect.objectContaining({ ignoreError: true }),
+      );
+      expect(harness.resolveRetainedSandboxRecoverySpy).toHaveBeenCalledWith(recovery);
+      expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
+      expect(exitSpy).not.toHaveBeenCalled();
+    },
+  );
+
+  it(
     "preserves recovery when a foreign name-labeled container appears after continuity checks (#10547)",
     { timeout: 30_000 },
     async () => {
@@ -939,6 +982,31 @@ describe("destroySandbox retained recovery flow", () => {
         expect.anything(),
       );
       expect(harness.resolveRetainedSandboxRecoverySpy).not.toHaveBeenCalled();
+    },
+  );
+
+  it(
+    "refuses to destroy a same-name legacy container with a different registered identity",
+    { timeout: 30_000 },
+    async () => {
+      const harness = createDestroyHarness({
+        dockerRunResult: {
+          status: 0,
+          stdout: "aaaa000000000000\topenshell\t\tsb-other",
+        },
+        registryEntryOverrides: {
+          lifecycleLiveIdentityFingerprint: createHash("sha256").update("sb-alpha").digest("hex"),
+        },
+      });
+
+      await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow(
+        "process.exit(1)",
+      );
+      expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+      expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
+        expect.arrayContaining(["sandbox", "delete"]),
+        expect.anything(),
+      );
     },
   );
 });

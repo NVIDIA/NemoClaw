@@ -166,14 +166,92 @@ describe("classifyDestroyContainerIdentity", () => {
     expect(verdict.reason).toContain("retained sandbox identity");
   });
 
-  it.each([
-    ["workspace", { ...MANAGED, workspace: "" }],
-    ["sandbox ID", { ...MANAGED, sandboxId: "" }],
-  ])("refuses a managed container with no %s", (_label, row) => {
-    const verdict = expectAmbiguous(
-      classifyDestroyContainerIdentity("destroytest", observeRows([row])),
+  it("accepts one managed container matching the retained identity and refuses a mismatch", () => {
+    const sandboxIdentityFingerprint = fingerprintOpenShellSandboxId(MANAGED.sandboxId)!;
+
+    expect(
+      classifyDestroyContainerIdentity(
+        "destroytest",
+        observeRows([MANAGED]),
+        sandboxIdentityFingerprint,
+      ),
+    ).toEqual({ status: "clear", identity: MANAGED });
+
+    const mismatch = expectAmbiguous(
+      classifyDestroyContainerIdentity(
+        "destroytest",
+        observeRows([{ ...MANAGED, sandboxId: "sb-replacement" }]),
+        sandboxIdentityFingerprint,
+      ),
     );
-    expect(verdict.reason).toContain("missing");
+    expect(mismatch.reason).toContain("retained sandbox identity");
+  });
+
+  it("accepts a managed container created without a workspace label", () => {
+    const legacyManaged = { ...MANAGED, workspace: "" };
+
+    expect(classifyDestroyContainerIdentity("destroytest", observeRows([legacyManaged]))).toEqual({
+      status: "clear",
+      identity: legacyManaged,
+    });
+  });
+
+  it("rejects a same-name container when its ID conflicts with the registered sandbox", () => {
+    const registeredFingerprint = fingerprintOpenShellSandboxId(MANAGED.sandboxId)!;
+    const differentIdentity = { ...MANAGED, workspace: "", sandboxId: "sb-other" };
+
+    const verdict = expectAmbiguous(
+      classifyDestroyContainerIdentity(
+        "destroytest",
+        observeRows([differentIdentity]),
+        undefined,
+        registeredFingerprint,
+      ),
+    );
+    expect(verdict.reason).toContain("registered sandbox identity");
+    expect(
+      classifyDestroyContainerIdentity(
+        "destroytest",
+        observeRows([{ ...MANAGED, workspace: "" }]),
+        undefined,
+        registeredFingerprint,
+      ).status,
+    ).toBe("clear");
+  });
+
+  it("accepts a retained recovery set created without workspace labels and rejects mixed workspaces", () => {
+    const sandboxIdentityFingerprint = fingerprintOpenShellSandboxId(MANAGED.sandboxId)!;
+    const legacyIdentities = [
+      { ...MANAGED, workspace: "" },
+      { ...MANAGED, id: "dddd000000000000", workspace: "" },
+    ];
+
+    expect(
+      classifyDestroyContainerIdentity(
+        "destroytest",
+        observeRows(legacyIdentities),
+        sandboxIdentityFingerprint,
+      ),
+    ).toEqual({ status: "recovery", identities: legacyIdentities });
+
+    const mixedVerdict = expectAmbiguous(
+      classifyDestroyContainerIdentity(
+        "destroytest",
+        observeRows([
+          { ...MANAGED, workspace: "" },
+          { ...MANAGED, id: "dddd000000000000" },
+        ]),
+        sandboxIdentityFingerprint,
+      ),
+    );
+    expect(mixedVerdict.reason).toContain("retained sandbox identity");
+  });
+
+  it("refuses a managed container with no sandbox ID", () => {
+    const verdict = expectAmbiguous(
+      classifyDestroyContainerIdentity("destroytest", observeRows([{ ...MANAGED, sandboxId: "" }])),
+    );
+    expect(verdict.reason).toContain("missing openshell.ai/sandbox-id");
   });
 
   it("refuses malformed Docker identity output", () => {
