@@ -934,10 +934,23 @@ test(
       [SANDBOX_B, "destroy", "--yes", "--no-cleanup-gateway"],
       {
         artifactName: "phase-3-destroy-b-without-gateway-cleanup",
-        env: commandEnv({ NEMOCLAW_GATEWAY_PORT: GATEWAY_PORT_B }),
+        env: commandEnv({ NEMOCLAW_GATEWAY_PORT: GATEWAY_PORT_A }),
         timeoutMs: 5 * 60_000,
       },
     );
+    const sandboxBAfterRetainedDestroy = await sandbox.openshell(
+      ["sandbox", "list", "-g", gatewayB],
+      {
+        artifactName: "phase-3-sandbox-b-absent-after-retained-destroy",
+        env: openshellEnvForGateway(gatewayB),
+        timeoutMs: 30_000,
+      },
+    );
+    const listBAfterRetainedDestroy = await command(host, ["list"], {
+      artifactName: "phase-3-list-b-after-retained-destroy",
+      env: commandEnv({ NEMOCLAW_GATEWAY_PORT: GATEWAY_PORT_B }),
+      timeoutMs: 60_000,
+    });
     const gatewayRegistryAfterRetainedDestroy = await sandbox.openshell(
       ["gateway", "list", "-o", "json"],
       {
@@ -952,14 +965,6 @@ test(
       {
         artifactName: "phase-3-gateway-b-retained-after-destroy",
         env: commandEnv(),
-        timeoutMs: 30_000,
-      },
-    );
-    const sandboxBAfterRetainedDestroy = await sandbox.openshell(
-      ["sandbox", "list", "-g", gatewayB],
-      {
-        artifactName: "phase-3-sandbox-b-absent-after-retained-destroy",
-        env: openshellEnvForGateway(gatewayB),
         timeoutMs: 30_000,
       },
     );
@@ -983,7 +988,9 @@ test(
     const sandboxBDestroyedWithoutGatewayCleanup =
       destroyBWithoutGatewayCleanup.exitCode === 0 &&
       sandboxBAfterRetainedDestroy.exitCode === 0 &&
-      !openshellListIncludesSandbox(sandboxBAfterRetainedDestroy.stdout, SANDBOX_B);
+      !openshellListIncludesSandbox(sandboxBAfterRetainedDestroy.stdout, SANDBOX_B) &&
+      listBAfterRetainedDestroy.exitCode === 0 &&
+      !outputIncludesSandbox(listBAfterRetainedDestroy.stdout, SANDBOX_B);
     const gatewayBRetainedWithoutCleanup =
       gatewayBRetainedAfterDestroy.exitCode === 0 &&
       gatewayRegistryAfterRetainedDestroy.exitCode === 0 &&
@@ -1003,7 +1010,7 @@ test(
         gatewayBRetainedWithoutCleanup &&
         gatewayAProcessPreservedWithoutCleanup &&
         gatewayAHealthyBeforeRetainedRestart,
-      `selected A=${resultText(gatewayASelectionBeforeRetainedDestroy.select)}; active list=${resultText(gatewayASelectionBeforeRetainedDestroy.list)}; destroy=${resultText(destroyBWithoutGatewayCleanup)}; gateway B=${resultText(gatewayBRetainedAfterDestroy)}; gateway registry=${resultText(gatewayRegistryAfterRetainedDestroy)}; sandbox B=${resultText(sandboxBAfterRetainedDestroy)}; gateway A=${gatewayAProcessAfterRetainedDestroy}; survivor port=${resultText(liveSurvivorAfterRetainedDestroy.gatewayPort)}; list=${resultText(liveSurvivorAfterRetainedDestroy.scopedList)}; dashboard=${liveSurvivorAfterRetainedDestroy.dashboard.map(resultText).join("\\n")}`,
+      `selected A=${resultText(gatewayASelectionBeforeRetainedDestroy.select)}; active list=${resultText(gatewayASelectionBeforeRetainedDestroy.list)}; destroy=${resultText(destroyBWithoutGatewayCleanup)}; gateway B=${resultText(gatewayBRetainedAfterDestroy)}; gateway registry=${resultText(gatewayRegistryAfterRetainedDestroy)}; sandbox B=${resultText(sandboxBAfterRetainedDestroy)}; list B=${resultText(listBAfterRetainedDestroy)}; gateway A=${gatewayAProcessAfterRetainedDestroy}; survivor port=${resultText(liveSurvivorAfterRetainedDestroy.gatewayPort)}; list=${resultText(liveSurvivorAfterRetainedDestroy.scopedList)}; dashboard=${liveSurvivorAfterRetainedDestroy.dashboard.map(resultText).join("\\n")}`,
     ).toBe(true);
     const survivorRestartAfterRetainedDestroy = await stopStartSurvivor(
       sandbox,

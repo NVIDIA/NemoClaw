@@ -9,6 +9,7 @@ import {
 } from "../../adapters/openshell/command-argv";
 import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
+import type { DestroySandboxOptions } from "../../domain/lifecycle/options";
 import { withModelRouterPortLifecycleLock } from "../../inference/gateway-route-mutation-lock";
 import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../../inference/ollama/contract";
 import {
@@ -27,10 +28,10 @@ import {
   stopModelRouterProcess,
 } from "../../onboard/model-router-process";
 import {
+  GATEWAY_PORT,
   listHostGatewayRegistryEntries,
   registryEntryGatewayPort,
 } from "../../state/gateway-registry";
-import { resolveNemoclawStateGatewayPort } from "../../state/paths";
 import type {
   acquireOnboardLock,
   compareAndSwapSession,
@@ -59,6 +60,13 @@ import {
   getPersistedSandboxTargetGatewayName,
   getSandboxTargetGatewayName,
 } from "./gateway-target";
+import {
+  delegatedDestroyExitCode,
+  delegateDestroyToOwningRegistry,
+  isDelegatedDestroyWorkerFailure,
+} from "./rebuild/owning-registry";
+
+export { isDelegatedDestroyWorkerFailure };
 
 export { teardownSandboxDashboardForward } from "./forward-recovery";
 import {
@@ -175,7 +183,7 @@ export function resolveSandboxDestroyRegistryAuthority(
   if (!hit) {
     return {
       entry: registry.getSandbox(sandboxName),
-      gatewayPort: resolveNemoclawStateGatewayPort(),
+      gatewayPort: GATEWAY_PORT,
       getSandbox: registry.getSandbox,
       listSandboxes: registry.listSandboxes,
       listGatewayCleanupOwners,
@@ -194,6 +202,91 @@ export function resolveSandboxDestroyRegistryAuthority(
     removeSandbox: (name) =>
       name === hit.entry.name ? removeSandboxFromOwningGatewayRegistry(hit) : false,
   };
+}
+
+/** Only offer final gateway cleanup when the target is its sole published or pending owner. */
+export function isOnlyGatewayCleanupOwner(sandboxName: string): boolean {
+  const hit = findSandboxAcrossGatewayRoots(sandboxName, resolveDestroyHomeDir({}));
+  if (!hit) return false;
+  const gatewayName = resolveSandboxDestroyGatewayName(sandboxName, hit.entry);
+  const owners = listSandboxDestroyGatewayRegistrations(
+    listGatewayCleanupOwners,
+    gatewayName,
+  ).sandboxes;
+  return (
+    owners.length === 1 &&
+    owners[0]?.name === sandboxName &&
+    owners[0].pendingRouteReservation !== true
+  );
+}
+
+export type SandboxDestroyDelegation =
+  | Readonly<{ delegated: false }>
+  | Readonly<{
+      delegated: true;
+      cancelled: boolean;
+      exitCode: number | null;
+      gatewayName?: string;
+    }>;
+
+/** Resolve the owning gateway name for a sandbox registered in any gateway state root. */
+export function resolveDelegatedDestroyGatewayName(
+  sandboxName: string,
+  home = resolveDestroyHomeDir({}),
+): string | undefined {
+  try {
+    const hit = findSandboxAcrossGatewayRoots(sandboxName, home);
+    return hit ? resolveSandboxDestroyGatewayName(sandboxName, hit.entry) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Hand a sandbox that another gateway state root owns to a worker bound to
+ * that root. The detached worker cannot prompt, so `confirm` resolves every
+ * prompt first. A delegated result carries the exit status that the worker
+ * requested after printing its own diagnostics, or null.
+ */
+export async function delegateSandboxDestroyToOwningRoot(
+  sandboxName: string,
+  options: DestroySandboxOptions,
+  confirm: (options: DestroySandboxOptions) => Promise<DestroySandboxOptions | null>,
+  cliName: string,
+): Promise<SandboxDestroyDelegation> {
+  const home = resolveDestroyHomeDir({});
+  const gatewayName = resolveDelegatedDestroyGatewayName(sandboxName, home);
+  let cancelled = false;
+  try {
+    const delegated = await delegateDestroyToOwningRegistry(
+      { sandboxName, options },
+      home,
+      registry.REGISTRY_FILE,
+      async (requested) => {
+        const confirmed = await confirm(requested);
+        if (!confirmed) cancelled = true;
+        return confirmed;
+      },
+      cliName,
+    );
+    return delegated
+      ? {
+          delegated: true,
+          cancelled,
+          exitCode: null,
+          ...(gatewayName ? { gatewayName } : {}),
+        }
+      : { delegated: false };
+  } catch (error) {
+    const exitCode = delegatedDestroyExitCode(error);
+    if (exitCode === undefined) throw error;
+    return {
+      delegated: true,
+      cancelled: false,
+      exitCode,
+      ...(gatewayName ? { gatewayName } : {}),
+    };
+  }
 }
 
 /** Keep final gateway cleanup local to its owner, including pending route reservations. */

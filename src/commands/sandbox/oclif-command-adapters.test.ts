@@ -32,6 +32,7 @@ const mocks = vi.hoisted(() => {
     configSet: vi.fn().mockResolvedValue(undefined),
     connectSandbox: vi.fn().mockResolvedValue(undefined),
     destroySandbox: vi.fn().mockResolvedValue(undefined),
+    delegateSandboxDestroyBeforeLifecycleBoundary: vi.fn().mockResolvedValue(false),
     listSandboxChannels: vi.fn(),
     listSandboxPolicies: vi.fn(),
     rebuildSandbox: vi.fn().mockResolvedValue(undefined),
@@ -55,6 +56,8 @@ vi.mock("../../lib/actions/sandbox/connect", () => ({
 
 vi.mock("../../lib/actions/sandbox/destroy", () => ({
   destroySandbox: mocks.destroySandbox,
+  delegateSandboxDestroyBeforeLifecycleBoundary:
+    mocks.delegateSandboxDestroyBeforeLifecycleBoundary,
 }));
 
 vi.mock("../../lib/actions/sandbox/runtime/hermes-cron-restore-recovery", () => ({

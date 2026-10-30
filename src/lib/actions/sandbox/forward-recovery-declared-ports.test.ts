@@ -436,4 +436,69 @@ describe("declared and cleanup forward sets", () => {
     ).toEqual([18_790, 3_001, 8_643]);
     expect(mocks.verifyForwardRelease.mock.calls[0]?.[0].forwards[0]?.localHost).toBe("0.0.0.0");
   });
+
+  function verifiedReleasePorts(): number[] {
+    return mocks.verifyForwardRelease.mock.calls.flatMap((call) =>
+      (call[0] as VerifyOpenShellForwardReleaseRequest).forwards.map((forward) => forward.port),
+    );
+  }
+
+  it("skips a fallback dashboard port that another registered sandbox records", async () => {
+    mocks.getSandbox.mockReturnValue(
+      sandboxEntry({
+        agent: null,
+        dashboardPort: null,
+        gatewayName: "nemoclaw-8090",
+        gatewayPort: 8_090,
+      }),
+    );
+    const { teardownSandboxDashboardForward } = await import("./forward-recovery");
+
+    await expect(
+      teardownSandboxDashboardForward("box", {
+        listRegisteredSandboxes: () =>
+          [
+            sandboxEntry({ agent: null, dashboardPort: null }),
+            sandboxEntry({ name: "default-box", dashboardPort: 18_789 }),
+          ] as never,
+      }),
+    ).resolves.toBe(true);
+    expect(verifiedReleasePorts()).not.toContain(18_789);
+  });
+
+  it("verifies a fallback dashboard port that no other registered sandbox records", async () => {
+    mocks.getSandbox.mockReturnValue(
+      sandboxEntry({
+        agent: null,
+        dashboardPort: null,
+        gatewayName: "nemoclaw-8090",
+        gatewayPort: 8_090,
+      }),
+    );
+    mocks.verifyForwardRelease.mockImplementationOnce(
+      async (request: VerifyOpenShellForwardReleaseRequest) => ({
+        state: "bound",
+        forwards: request.forwards,
+      }),
+    );
+    const { teardownSandboxDashboardForward } = await import("./forward-recovery");
+
+    await expect(
+      teardownSandboxDashboardForward("box", { listRegisteredSandboxes: () => [] }),
+    ).resolves.toBe(false);
+    expect(verifiedReleasePorts()).toEqual([18_789]);
+  });
+
+  it("verifies a recorded dashboard port even when another registered sandbox records it", async () => {
+    mocks.getSandbox.mockReturnValue(sandboxEntry({ agent: null, dashboardPort: 18_789 }));
+    const { teardownSandboxDashboardForward } = await import("./forward-recovery");
+
+    await expect(
+      teardownSandboxDashboardForward("box", {
+        listRegisteredSandboxes: () =>
+          [sandboxEntry({ name: "default-box", dashboardPort: 18_789 })] as never,
+      }),
+    ).resolves.toBe(true);
+    expect(verifiedReleasePorts()).toEqual([18_789]);
+  });
 });

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { finishTelemetryOperation, recordTelemetryTarget } from "../telemetry/operation";
+export { finishTelemetryOperation };
 import { retireUnselectedNativeLocalProviders } from "../../inference/native-local/selection";
 import { createManagedProviderAdapter } from "../../adapters/openshell/managed-provider-adapter";
 import { listNativeLocalProviderAuthorities } from "../../state/registry/native-local-provider-authority";

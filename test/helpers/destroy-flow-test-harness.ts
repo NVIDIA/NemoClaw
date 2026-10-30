@@ -13,6 +13,11 @@ import type { RetainedSandboxRecoveryRecord } from "../../src/lib/state/onboard-
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../src/lib/state/registry";
 
 type DestroySandbox = (typeof import("../../src/lib/actions/sandbox/destroy"))["destroySandbox"];
+type DestroySandboxInSelectedRoot =
+  (typeof import("../../src/lib/actions/sandbox/destroy"))["destroySandboxInSelectedRoot"];
+type SandboxDestroyExitCode =
+  (typeof import("../../src/lib/actions/sandbox/destroy"))["sandboxDestroyExitCode"];
+type OwningRegistryModule = typeof import("../../src/lib/actions/sandbox/rebuild/owning-registry");
 
 const requireSource = createRequire(
   new URL("../../src/lib/actions/sandbox/destroy-flow.test.ts", import.meta.url),
@@ -27,13 +32,18 @@ export type DestroyHarness = {
   captureOpenshellSpy: MockInstance;
   compareAndSwapSessionSpy: MockInstance;
   destroySandbox: DestroySandbox;
+  destroySandboxInSelectedRoot: DestroySandboxInSelectedRoot;
+  sandboxDestroyExitCode: SandboxDestroyExitCode;
+  owningRegistryDependencies: OwningRegistryModule["rebuildOwningRegistryDependencies"];
+  runOwningRegistryWorkerSpy: MockInstance;
+  recordDestroyCompletionSpy: MockInstance;
+  recordTelemetryTargetSpy: MockInstance;
   prepareSandboxDestroy: typeof import("../../src/lib/actions/sandbox/destroy-preflight").prepareSandboxDestroy;
   dockerCaptureSpy: MockInstance;
   dockerRunSpy: MockInstance;
   errorSpy: MockInstance;
   events: string[];
   executeSandboxDestroySpy: MockInstance;
-  recordDestroyCompletionSpy: MockInstance;
   enforceRemovedImmutabilityMigrationBoundarySpy: MockInstance;
   finalGatewaySleepSpy: MockInstance;
   finalizeMcpBridgesAfterSandboxDeleteSpy: MockInstance;
@@ -88,6 +98,7 @@ export type DestroyHarness = {
   warnSpy: MockInstance;
   withGatewayRouteMutationLockSpy: MockInstance;
   withCurrentPortableHostFenceSpy: MockInstance;
+  withPortableHostFence: typeof import("../../src/lib/state/portable-uninstall-retirement").withPortableHostFence;
   withModelRouterPortLifecycleLockSpy: MockInstance;
 };
 
@@ -301,9 +312,15 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     return removeExactDockerContainers(...args);
   });
   const destroyExecution = requireSource("./destroy-execution.js");
+  const telemetryOperation = requireSource("../telemetry/operation.js");
   const recordDestroyCompletionSpy = vi.spyOn(destroyExecution, "recordDestroyCompletion");
+  const recordTelemetryTargetSpy = vi.spyOn(telemetryOperation, "recordTelemetryTarget");
   const forwardRecovery = requireSource("./forward-recovery.js");
   vi.spyOn(forwardRecovery, "teardownSandboxDashboardForward").mockResolvedValue(true);
+  const owningRegistry = requireSource("./rebuild/owning-registry.js") as OwningRegistryModule;
+  const runOwningRegistryWorkerSpy = vi
+    .spyOn(owningRegistry.rebuildOwningRegistryDependencies, "runWorker")
+    .mockResolvedValue(undefined);
   const destroyCommand = requireSource("../../../commands/sandbox/destroy.js").default;
   const destroyPreflight = requireSource("./destroy-preflight.js");
   const crossPortRegistry = requireSource("../../state/registry/cross-port.js");
@@ -792,11 +809,22 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
           sleep: finalGatewaySleepSpy,
         },
       }),
+    destroySandboxInSelectedRoot: (sandboxName, destroyOptions) =>
+      requireSource(destroyModulePath).destroySandboxInSelectedRoot(sandboxName, destroyOptions, {
+        finalGatewayCleanup: {
+          sleep: finalGatewaySleepSpy,
+        },
+      }),
+    sandboxDestroyExitCode: (error) =>
+      requireSource(destroyModulePath).sandboxDestroyExitCode(error),
+    owningRegistryDependencies: owningRegistry.rebuildOwningRegistryDependencies,
+    runOwningRegistryWorkerSpy,
+    recordDestroyCompletionSpy,
+    recordTelemetryTargetSpy,
     prepareSandboxDestroy: requireSource("./destroy-preflight.js").prepareSandboxDestroy,
     errorSpy,
     events,
     executeSandboxDestroySpy,
-    recordDestroyCompletionSpy,
     runSandboxProviderPreDeleteCleanupSpy,
     enforceRemovedImmutabilityMigrationBoundarySpy,
     finalGatewaySleepSpy,
@@ -862,6 +890,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     warnSpy,
     withGatewayRouteMutationLockSpy,
     withCurrentPortableHostFenceSpy,
+    withPortableHostFence: portableHostFence.withPortableHostFence,
     withModelRouterPortLifecycleLockSpy,
   };
 }

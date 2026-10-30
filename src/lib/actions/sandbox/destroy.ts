@@ -59,6 +59,7 @@ import {
 } from "./destroy-confirmation";
 import {
   executeSandboxDestroy,
+  finishTelemetryOperation,
   recordDestroyCompletion,
   retireDestroyedSandboxNativeLocalProvider,
   preparePortableDemoSandboxDestroyAuthority,
@@ -84,15 +85,20 @@ import {
 } from "./destroy-presence";
 import { withSandboxLifecycleLock } from "./lifecycle/lock";
 import {
+  delegateSandboxDestroyToOwningRoot,
+  isDelegatedDestroyWorkerFailure,
+  isOnlyGatewayCleanupOwner,
   assertSandboxDestroyEndpointAuthority,
   prepareSandboxDestroy,
   reconcileIdentityFreeRecovery,
   recordManagedVllmRetirementPending,
   reportManagedVllmDestroyOutcome,
+  resolveDelegatedDestroyGatewayName,
   resolveSandboxDestroyRegistryAuthority,
   resolveSandboxDestroyGatewayName,
   resolveSandboxDestroyRuntimeSelection,
   retireManagedVllmForDestroyedSandbox,
+  type SandboxDestroyDelegation,
   listInferenceRouteOwnersAcrossGatewayRoots,
   listSandboxDestroyGatewayRegistrations,
   stopModelRouterForDestroyedSandbox,
@@ -254,13 +260,8 @@ export type CleanupSandboxServicesDeps = {
   googlechatWebhookTunnelPidDir?: (servicePidDir: string) => string;
 };
 
-async function confirmCleanupGatewayDecision(
-  decision: DestroyGatewayCleanupDecision,
-): Promise<boolean> {
-  if (decision === "cleanup") return true;
-  if (decision === "preserve") return false;
-
-  console.log(`  ${YW}This was the last sandbox.${R}`);
+async function promptCleanupGateway(lastSandboxNotice: string): Promise<boolean> {
+  console.log(`  ${YW}${lastSandboxNotice}${R}`);
   console.log(
     "  Also destroy the shared NemoClaw gateway (port forward, gateway pod, cluster volumes)?",
   );
@@ -270,6 +271,14 @@ async function confirmCleanupGatewayDecision(
   );
   const trimmed = answer.trim().toLowerCase();
   return trimmed === "y" || trimmed === "yes";
+}
+
+async function confirmCleanupGatewayDecision(
+  decision: DestroyGatewayCleanupDecision,
+): Promise<boolean> {
+  if (decision === "cleanup") return true;
+  if (decision === "preserve") return false;
+  return promptCleanupGateway("This was the last sandbox.");
 }
 
 function reportGatewayPreserved(gatewayName: string): void {
@@ -698,6 +707,37 @@ function requestSandboxDestroyExit(exitCode: number): never {
   throw new SandboxDestroyExitRequest(exitCode);
 }
 
+/** Return the status that a destroy exit request carries, or undefined for other errors. */
+export function sandboxDestroyExitCode(error: unknown): number | undefined {
+  return error instanceof SandboxDestroyExitRequest ? error.exitCode : undefined;
+}
+
+/**
+ * Resolve the destroy confirmation and the final gateway question before a
+ * detached owning-root worker runs the destroy. Returns null when the user
+ * cancels the destroy.
+ */
+async function confirmDelegatedSandboxDestroy(
+  sandboxName: string,
+  options: DestroySandboxOptions,
+): Promise<DestroySandboxOptions | null> {
+  if (options.yes === true || options.force === true) return options;
+  if (!(await confirmSandboxDestroy(sandboxName, options))) return null;
+  const gatewayDecision = resolveDestroyGatewayCleanupDecision(options, {
+    nonInteractive: isDestroyNonInteractiveEnv(),
+    platform: process.platform,
+  });
+  if (gatewayDecision !== "prompt") return { ...options, yes: true };
+  if (!isOnlyGatewayCleanupOwner(sandboxName)) {
+    return { ...options, yes: true, cleanupGatewayPromptAnswer: false };
+  }
+  return {
+    ...options,
+    yes: true,
+    cleanupGatewayPromptAnswer: await promptCleanupGateway("This is the last sandbox."),
+  };
+}
+
 export async function destroySandbox(
   sandboxName: string,
   options: string[] | DestroySandboxOptions = {},
@@ -705,16 +745,82 @@ export async function destroySandbox(
     finalGatewayCleanup?: FinalDestroyGatewayCleanupDeps;
   } = {},
 ): Promise<void> {
-  const telemetryTarget: {
+  const normalized = normalizeDestroySandboxOptions(options);
+  if (await delegateSandboxDestroyBeforeLifecycleBoundary(sandboxName, normalized)) return;
+  try {
+    await destroySandboxInSelectedRoot(sandboxName, normalized, deps);
+  } catch (error) {
+    if (error instanceof SandboxDestroyExitRequest) {
+      process.exit(error.exitCode);
+    }
+    throw error;
+  }
+}
+
+/** Transfer sibling-root destroy before the command acquires its lifecycle fence. */
+export async function delegateSandboxDestroyBeforeLifecycleBoundary(
+  sandboxName: string,
+  options: string[] | DestroySandboxOptions = {},
+): Promise<boolean> {
+  const normalized = normalizeDestroySandboxOptions(options);
+  let delegation: SandboxDestroyDelegation;
+  try {
+    assertSandboxDestroyEndpointAuthority();
+    delegation = await delegateSandboxDestroyToOwningRoot(
+      sandboxName,
+      normalized,
+      (requested) => confirmDelegatedSandboxDestroy(sandboxName, requested),
+      CLI_NAME,
+    );
+  } catch (error) {
+    if (!isDelegatedDestroyWorkerFailure(error)) {
+      await recordDestroyCompletion(
+        sandboxName,
+        "failed",
+        undefined,
+        resolveDelegatedDestroyGatewayName(sandboxName),
+        false,
+      );
+    }
+    throw error;
+  }
+  if (delegation.delegated) {
+    if (delegation.cancelled) {
+      await recordDestroyCompletion(sandboxName, "cancelled", undefined, delegation.gatewayName);
+      return true;
+    }
+    if (delegation.exitCode !== null) {
+      await finishTelemetryOperation(delegation.exitCode);
+      process.exit(delegation.exitCode);
+    }
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Destroy a sandbox in the gateway state root that this process selects.
+ * An exit request stays thrown, so an owning-root worker can report its status.
+ */
+export async function destroySandboxInSelectedRoot(
+  sandboxName: string,
+  options: DestroySandboxOptions,
+  deps: {
+    finalGatewayCleanup?: FinalDestroyGatewayCleanupDeps;
+  } = {},
+  telemetryTarget: {
     gatewayName?: string;
     mutationStarted?: boolean;
     completionRecorded?: boolean;
-  } = {};
+  } = {},
+): Promise<void> {
   try {
     return await withSandboxLifecycleLock(sandboxName, async () => {
       const removedImmutabilityMigration = enforceRemovedImmutabilityMigrationBoundary(
         sandboxName,
-        { allowStateRecord: true },
+        {
+          allowStateRecord: true,
+        },
       );
       assertSandboxDestroyCommandAvailable(sandboxName);
       const sandbox = resolveSandboxDestroyRegistryAuthority(sandboxName).entry;
@@ -760,9 +866,6 @@ export async function destroySandbox(
         telemetryTarget.gatewayName,
         telemetryTarget.mutationStarted === true,
       );
-    }
-    if (error instanceof SandboxDestroyExitRequest) {
-      process.exit(error.exitCode);
     }
     throw error;
   }

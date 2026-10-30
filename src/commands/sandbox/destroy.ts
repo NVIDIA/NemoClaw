@@ -3,9 +3,29 @@
 
 import { Args, Flags } from "@oclif/core";
 
-import { destroySandbox } from "../../lib/actions/sandbox/destroy";
+import {
+  delegateSandboxDestroyBeforeLifecycleBoundary,
+  destroySandbox,
+} from "../../lib/actions/sandbox/destroy";
 import { forceFlag, yesFlag } from "../../lib/cli/common-flags";
 import { NemoClawCommand } from "../../lib/cli/nemoclaw-oclif-command";
+import type { DestroySandboxOptions } from "../../lib/domain/lifecycle/options";
+import { enforceRemovedImmutabilityMigrationBoundary } from "../../lib/state/migrations/removed-immutability";
+
+function destroyOptionsFromFlags(flags: {
+  "cleanup-gateway"?: boolean;
+  "keep-vllm"?: boolean;
+  force?: boolean;
+  yes?: boolean;
+}): DestroySandboxOptions {
+  const cleanupGatewayFlag = flags["cleanup-gateway"];
+  return {
+    force: flags.force === true,
+    yes: flags.yes === true,
+    ...(cleanupGatewayFlag === undefined ? {} : { cleanupGateway: cleanupGatewayFlag }),
+    ...(flags["keep-vllm"] === true ? { keepVllm: true } : {}),
+  };
+}
 
 export default class DestroyCliCommand extends NemoClawCommand {
   static id = "sandbox:destroy";
@@ -40,14 +60,20 @@ export default class DestroyCliCommand extends NemoClawCommand {
     }),
   };
 
+  protected override async runBeforeLifecycleBoundary(): Promise<boolean> {
+    const parsed = await this.parse(DestroyCliCommand);
+    this.retainLifecycleParserOutput(parsed);
+    enforceRemovedImmutabilityMigrationBoundary(parsed.args.sandboxName, {
+      allowStateRecord: true,
+    });
+    return await delegateSandboxDestroyBeforeLifecycleBoundary(
+      parsed.args.sandboxName,
+      destroyOptionsFromFlags(parsed.flags),
+    );
+  }
+
   public async run(): Promise<void> {
     const { args, flags } = await this.parse(DestroyCliCommand);
-    const cleanupGatewayFlag = flags["cleanup-gateway"];
-    await destroySandbox(args.sandboxName, {
-      force: flags.force === true,
-      yes: flags.yes === true,
-      ...(cleanupGatewayFlag === undefined ? {} : { cleanupGateway: cleanupGatewayFlag }),
-      ...(flags["keep-vllm"] === true ? { keepVllm: true } : {}),
-    });
+    await destroySandbox(args.sandboxName, destroyOptionsFromFlags(flags));
   }
 }
