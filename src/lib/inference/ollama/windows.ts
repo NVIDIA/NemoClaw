@@ -4,17 +4,18 @@
 // Windows-host Ollama actions invoked from WSL via PowerShell interop.
 // Detection lives in onboard.ts; this module owns the action side.
 
-const { spawn } = require("child_process");
-const { detectContainerRuntimeFromDockerInfo } = require("../../adapters/docker/runtime");
-const { isWsl } = require("../../platform");
-const { run, runCapture } = require("../../runner");
-const {
+import { spawn } from "node:child_process";
+import { detectContainerRuntimeFromDockerInfo } from "../../adapters/docker/runtime";
+import { isWsl } from "../../platform";
+import { run, runCapture, windowsInteropWorkingDirectory } from "../../runner";
+import {
   getWindowsHostOllamaDockerHostValidationArgs,
   getWindowsHostOllamaDockerReachabilityArgs,
   OLLAMA_HOST_DOCKER_INTERNAL,
   probeWindowsHostOllamaRouteProtection,
   setResolvedOllamaHost,
-} = require("../local");
+  type WindowsHostOllamaRouteProtectionOptions,
+} from "../local";
 // Avoid starting a subprocess for each fixed readiness delay.
 // The supported Windows-host Ollama path runs through WSL PowerShell interop.
 // Native Windows activation remains gated by #8178.
@@ -40,6 +41,12 @@ const WINDOWS_INSTALLER_PID_SENTINEL = "__NEMOCLAW_WINDOWS_INSTALLER_PID__:";
 // A Windows DWORD PID has at most 10 digits; allow CRLF after it.
 const WINDOWS_INSTALLER_PID_LINE_MAX_BYTES = Buffer.byteLength(WINDOWS_INSTALLER_PID_SENTINEL) + 12;
 const WINDOWS_INSTALLER_CANCELLATION_TIMEOUT_MS = 5_000;
+const WINDOWS_OLLAMA_STATE_RESTORE_TIMEOUT_MS = 5_000;
+let pendingWindowsOllamaInterruptCleanup: Promise<void> | undefined;
+
+function waitForWindowsOllamaInterruptCleanup(): Promise<void> | undefined {
+  return pendingWindowsOllamaInterruptCleanup;
+}
 
 function reportUnconfirmedWindowsInstallerCancellation(): void {
   console.error("  Could not confirm that the Windows Ollama installer stopped.");
@@ -74,6 +81,7 @@ function parseWindowsProcessId(value: string): number | null {
 function terminateWindowsProcessTree(pid: number): Promise<void> {
   return new Promise((resolve, reject) => {
     const taskkill = spawn("taskkill.exe", ["/PID", String(pid), "/T", "/F"], {
+      cwd: windowsInteropWorkingDirectory("taskkill.exe"),
       stdio: "ignore",
     });
     taskkill.once("error", (error: NodeJS.ErrnoException) => {
@@ -111,9 +119,17 @@ function buildWindowsOllamaInstallerCommand(): string {
 }
 
 function startWindowsOllamaInstaller(): WindowsOllamaInstallerProcess {
-  const child = spawn("powershell.exe", ["-Command", buildWindowsOllamaInstallerCommand()], {
-    stdio: ["ignore", "pipe", "pipe"],
-  });
+  // Keep profile output out of the owned PID handshake.
+  const child = spawn(
+    "powershell.exe",
+    ["-NoProfile", "-Command", buildWindowsOllamaInstallerCommand()],
+    {
+      cwd: windowsInteropWorkingDirectory("powershell.exe"),
+      // Keep terminal Ctrl+C from closing WSL interop before owned tree cleanup.
+      detached: isWsl(),
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
   let windowsPid: number | null = null;
   let stdoutPrefix = Buffer.alloc(0);
   let awaitingPidLine = true;
@@ -276,6 +292,8 @@ function runWindowsOllamaStateScript(script: string, env?: NodeJS.ProcessEnv): b
     env,
     ignoreError: true,
     suppressOutput: true,
+    timeout: WINDOWS_OLLAMA_STATE_RESTORE_TIMEOUT_MS,
+    killSignal: "SIGKILL",
   });
   return !result.error && result.status === 0;
 }
@@ -353,7 +371,10 @@ function killWindowsOllamaProcesses(): void {
 }
 
 function awaitWindowsOllamaReady(
-  opts: { prepareDockerEnvironment?: () => unknown; delay?: (seconds: number) => void } = {},
+  opts: {
+    prepareDockerEnvironment?: WindowsHostOllamaRouteProtectionOptions["prepareDockerEnvironment"];
+    delay?: (seconds: number) => void;
+  } = {},
 ): boolean {
   console.log("  Waiting for Ollama to respond on host.docker.internal...");
   const delay = opts.delay ?? sleep;
@@ -381,7 +402,7 @@ type WindowsOllamaLaunchAttempt = {
 type WindowsOllamaLaunchOperations = {
   runAttempt: (attempt: WindowsOllamaLaunchAttempt) => {
     status: number | null;
-    stderr?: string;
+    stderr?: string | Buffer;
     error?: Error;
   };
   awaitReady: () => boolean;
@@ -504,7 +525,13 @@ function registerWindowsOllamaInterruptHandler(
   };
   const runHandler = (signal: WindowsOllamaInterruptSignal) => {
     try {
-      Promise.resolve(handler(signal)).catch(reportFailure);
+      const cleanup = Promise.resolve(handler(signal));
+      pendingWindowsOllamaInterruptCleanup = cleanup;
+      void cleanup.catch(reportFailure).finally(() => {
+        if (pendingWindowsOllamaInterruptCleanup === cleanup) {
+          pendingWindowsOllamaInterruptCleanup = undefined;
+        }
+      });
     } catch (error) {
       reportFailure(error);
     }
@@ -753,7 +780,8 @@ function printWindowsOllamaSnapshotDiagnostics(): void {
   console.error("    nemoclaw onboard");
 }
 
-module.exports = {
+export {
+  waitForWindowsOllamaInterruptCleanup,
   installOllamaOnWindowsHost,
   awaitWindowsOllamaReady,
   buildWindowsOllamaInstallerCommand,
