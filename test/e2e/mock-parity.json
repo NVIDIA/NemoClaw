@@ -409,8 +409,14 @@
     },
     {
       "live": "test/e2e/live/sandbox-operations.test.ts",
-      "liveSources": ["test/e2e/fixtures/sandbox-failure-diagnostics.ts"],
-      "fast": ["test/e2e/support/mcp-bridge-hermes-http.test.ts"]
+      "liveSources": [
+        "test/e2e/fixtures/sandbox-failure-diagnostics.ts",
+        "test/e2e/fixtures/native-podman-stop-response-fault.ts"
+      ],
+      "fast": [
+        "test/e2e/support/mcp-bridge-hermes-http.test.ts",
+        "test/e2e/support/native-podman-stop-response-fault.test.ts"
+      ]
     },
     {
       "live": "test/e2e/live/onboard-repair.test.ts",

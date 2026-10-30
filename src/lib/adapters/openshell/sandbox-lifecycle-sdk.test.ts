@@ -177,8 +177,9 @@ describe("OpenShell SDK sandbox lifecycle", () => {
 
   it.each([
     ["rpc", "14", "transport"],
+    ["rpc", "13", "command"],
     ["auth", undefined, "authentication"],
-  ])("fails immediately on a readiness %s failure", async (code, connectCode, kind) => {
+  ])("fails immediately on a readiness %s/%s failure", async (code, connectCode, kind) => {
     const test = harness();
     test.get
       .mockResolvedValueOnce({ id: sandboxId, phase: "stopped" })
@@ -249,6 +250,62 @@ describe("OpenShell SDK sandbox lifecycle", () => {
         },
       });
       expect(test.get).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.each(
+    (["startSandbox", "stopSandbox"] as const).flatMap((operation) =>
+      [13, "13"].map((code) => ({ operation, code, codeType: typeof code })),
+    ),
+  )(
+    "reports an internal error from $operation with a $codeType status",
+    async ({ operation, code }) => {
+      const test = harness();
+      test[operation].mockRejectedValue(
+        Object.assign(new Error("private gateway detail"), { name: "ConnectError", code }),
+      );
+
+      await expect(test.lifecycle[operation](request)).resolves.toEqual({
+        kind: "failed",
+        error: {
+          kind: "command",
+          reason: "failed",
+          message: "OpenShell returned an internal error.",
+        },
+      });
+      expect(test[operation]).toHaveBeenCalledOnce();
+      expect(
+        operation === "startSandbox" ? test.stopSandbox : test.startSandbox,
+      ).not.toHaveBeenCalled();
+      expect(test.get).toHaveBeenCalledOnce();
+      expect(test.waitForStartPoll).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(
+    (["startSandbox", "stopSandbox"] as const).flatMap((operation) =>
+      [13, "13"].map((connectCode) => ({ operation, connectCode, codeType: typeof connectCode })),
+    ),
+  )(
+    "does not submit $operation when SDK lookup returns a $codeType internal status",
+    async ({ operation, connectCode }) => {
+      const test = harness();
+      test.get.mockRejectedValue(
+        Object.assign(new Error("private gateway detail"), { code: "rpc", connectCode }),
+      );
+
+      await expect(test.lifecycle[operation](request)).resolves.toEqual({
+        kind: "failed",
+        error: {
+          kind: "command",
+          reason: "failed",
+          message: "OpenShell returned an internal error.",
+        },
+      });
+      expect(test.get).toHaveBeenCalledOnce();
+      expect(test.startSandbox).not.toHaveBeenCalled();
+      expect(test.stopSandbox).not.toHaveBeenCalled();
+      expect(test.waitForStartPoll).not.toHaveBeenCalled();
     },
   );
 

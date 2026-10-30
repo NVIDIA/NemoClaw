@@ -911,6 +911,19 @@ The outer destroy command deadline is twice the CLI's heavy-operation deadline s
 finish its own timeout, absence, and gateway checks. The survivor onboarding budget stays separate.
 Deterministic destroy tests own the exact 30-second retry schedule and delayed-list sequence.
 
+On native Podman, the same target also checks a controlled error after a completed stop.
+A private Unix-socket proxy forwards the real stop request to the configured Podman backend.
+It writes one error response after the real backend returns 204.
+Independent inspection must first confirm that the owned container stopped.
+The target checks the native gateway's request ID and RPC status 13.
+It requires a recorded stopped state before that response.
+NemoClaw must return its fixed internal-error diagnostic and a failed exit status.
+An explicit start must restore readiness and preserve the workspace marker.
+Docker records this native-only phase as not applicable.
+Fixture tests own proxy isolation, response ordering, concurrency, disarming, and cleanup.
+Adapter source tests own error classification and private-detail redaction.
+This controlled response failure does not establish the cause of the original Podman 5.7 report.
+
 `deferred-onboarding-hermes` and `deferred-onboarding-langchain-deepagents-code` exercise the
 public installer and the installed `nemohermes` or `nemo-deepagents` command on Docker and Podman. The installer child receives
 none of the three accepted inference credential variables. The test verifies that installation does
