@@ -53,7 +53,7 @@ Check `result.status` as well as the outer `status`: the outer one only reports 
 ### Run One Headless OpenClaw Request
 
 Headless operation follows the same public Fabric invocation boundary.
-The [pinned OpenClaw adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/78e79bfc494d30c56d9af60b22daae66dad4e77c/adapters/python/openclaw/README.md) takes a text prompt and sends it to the native OpenClaw agent selected by `harness.settings.agent_id`, which defaults to `default`.
+The [pinned OpenClaw adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/6cad35045ea534e096c48f634f739d804baef5ee/adapters/python/openclaw/README.md) takes a text prompt and sends it to the native OpenClaw agent selected by `harness.settings.agent_id`, which defaults to `default`.
 A request can incur inference charges and affect retained conversation history.
 
 With a running agent whose YAML `agent.name` is `assistant`, read its runtime ID from the deployment's state directory with `jq`, then send the request from the client host:
