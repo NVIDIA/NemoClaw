@@ -861,6 +861,24 @@ describe("finalization handlers", () => {
       "  OpenClaw onboarding is incomplete; resume onboarding.",
     );
   });
+
+  it("passes the allowlisted pairing field to the onboarding diagnostic (#13709)", async () => {
+    const { deps, calls } = createDeps({
+      settleOrdinaryOpenClawPairing: vi.fn(async () => ({
+        kind: "incomplete" as const,
+        reason: "pairing-incompatible" as const,
+        pairingField: "paired.clientMode",
+      })),
+    });
+
+    await runFinalizationHandlers(baseOptions(deps));
+
+    expect(calls.ordinaryPairingIncompleteMessage).toHaveBeenCalledWith(
+      "my-assistant",
+      "pairing-incompatible",
+      "paired.clientMode",
+    );
+  });
 });
 
 describe("secret-boundary refusal during finalization", () => {
