@@ -15,6 +15,7 @@ import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "../../../src/lib/inference/native
 import { NATIVE_NVIDIA_AUTH_HEADER_SCRIPT } from "../../../src/lib/inference/native-nvidia/contract.ts";
 import { execTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { withDiscordEnrollmentFixture } from "../fixtures/discord-enrollment-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { assertExitZero as expectExitZero, resultText } from "../fixtures/clients/index.ts";
 import {
@@ -928,13 +929,15 @@ export async function runHermesNvidiaDiscordRebuild({
       break;
     default: {
       progress.phase("verify NVIDIA inference after Discord state rebuild");
-      const enrollmentEnv = env(undefined, {
-        NVIDIA_INFERENCE_API_KEY: publicApiKey,
-        DISCORD_BOT_TOKEN: "test-fake-discord-token-hermes-e2e",
-        DISCORD_SERVER_ID: "1491590992753590594",
-        DISCORD_USER_ID: "1005536447329222676",
-        DISCORD_REQUIRE_MENTION: "1",
-      });
+      const enrollmentEnv = withDiscordEnrollmentFixture(
+        env(undefined, {
+          NVIDIA_INFERENCE_API_KEY: publicApiKey,
+          DISCORD_BOT_TOKEN: "test-fake-discord-token-hermes-e2e",
+          DISCORD_SERVER_ID: "1491590992753590594",
+          DISCORD_USER_ID: "1005536447329222676",
+          DISCORD_REQUIRE_MENTION: "1",
+        }),
+      );
       const enrolled = await host.command(
         "node",
         [CLI, SANDBOX_NAME, "channels", "add", "discord"],
@@ -948,7 +951,7 @@ export async function runHermesNvidiaDiscordRebuild({
       expectExitZero(enrolled, "enroll Discord before native NVIDIA rebuild");
       const rebuilt = await host.command("node", [CLI, SANDBOX_NAME, "rebuild", "--yes"], {
         artifactName: "hermes-nvidia-discord-rebuild",
-        env: env(),
+        env: withDiscordEnrollmentFixture(env(), enrollmentEnv.DISCORD_BOT_TOKEN),
         redactionValues,
         timeoutMs: 15 * 60_000,
       });

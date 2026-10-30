@@ -5,6 +5,19 @@
 
 Direct E2E coverage runs through Vitest.
 
+Messaging providers, lifecycle, pairing, Hermes Discord, native Hermes inference
+switching, and token-rotation targets use a
+test-only Node preload for their synthetic Discord enrollment tokens. The
+fixture runs in installer and CLI children and returns a bot identity only for
+the matching synthetic token at Discord's identity endpoint. Other requests
+and real credentials retain normal authentication. This fixture establishes
+enrollment state for those targets; it does not prove live Discord authentication
+or message delivery. `support/discord-enrollment-child.test.ts` owns the child
+transport and production compiler contract. Existing live assertions still own
+provider attachment, persisted state, native configuration, stop/start, and cleanup.
+The native Hermes rebuild receives the synthetic transport separately from the
+stored bot token. The rebuild still reads that token from its credential store.
+
 The clean Hermes root-entrypoint scenario also owns the Switchyard package's real-image
 contract. It checks the shipped files and root ownership, proves the healthy supervised
 gateway has not loaded the plugin, and uses a separate test-only Hermes process to prove
@@ -31,6 +44,28 @@ pinned managed DCode profile for the canonical and hosted model IDs. The public
 NVIDIA endpoint keeps its existing request shape. The headless check verifies
 that malformed native inference evidence stops connect before session attach;
 native response bodies remain absent from diagnostics.
+
+The `ubuntu-repo-cloud-langchain-deepagents-code` target requires `NVIDIA_INFERENCE_API_KEY`.
+`TAVILY_API_KEY` is optional and remains subject to the workflow's credential trust rules.
+When the Tavily key is absent, the runner skips only the Tavily check and records the reason in
+`actions/cloud-experimental-09-deepagents-code-tavily-opt-in-skipped.json`. Onboarding, the other cloud checks,
+and required configuration-export validation still run.
+When the key is present, the Tavily check enables `NEMOCLAW_E2E_TAVILY_AUTHENTICATED=1`,
+registers a uniquely named disposable provider on the host, and attaches it to the test sandbox.
+The real key stays in the host/gateway credential path. Sandbox Python submits a placeholder
+that OpenShell rewrites at egress. The check requires HTTP 200 before removal and a new
+`DENIED` audit event for `api.tavily.com:443` afterward.
+The audit event must follow the captured log cursor and identify the fresh managed-Python probe process.
+Cleanup removes the disposable provider and restores the prior `ocsf_json_enabled` setting, including its unset state.
+Cleanup removes the Tavily preset only after this invocation successfully applied it.
+Earlier setup failures preserve existing policy while disposable-provider removal and audit-setting restoration still run.
+Removal preserves shared gateway credentials and unrelated sandbox attachments.
+Adding the preset alone restores its direct network rule; provider access requires an explicit attachment.
+A raw OpenShell attachment is temporary: it leaves the saved opt-out unchanged, so rebuild omits Tavily again.
+Linux x86_64 qualification uses the existing target. WSL ARM qualification remains manual;
+there is no supported WSL ARM selector for this scenario.
+The policy live-state tests own attachment discovery, identity checks, partial failures, and operator-rule preservation.
+The extra-provider planning and recreate tests own rebuild exclusion and explicit re-enable behavior.
 
 Interactive TUI targets require `expect`. The unified workflow installs it
 before those targets run; local runners must provide it themselves.
@@ -234,8 +269,12 @@ The boundary validator derives artifact consumers from jobs that use the pinned 
 It excludes `generate-matrix` and the no-build and trusted-build jobs in `E2E_JOB_POLICY`.
 Each selected consumer restores the artifact instead of running `npm run build:cli`.
 Each consumer runs the pinned preparation action with `build-cli: "false"` to install Node.js and project dependencies.
-The `managed-image-multiarch-startup` no-build job keeps that setting and compiles only the candidate shared policy boundary on the host.
-It rejects preexisting output, verifies the required shared modules, and then starts the direct managed-image contracts.
+The `managed-image-multiarch-startup` job builds the candidate CLI and its shared policy boundary before native Hermes qualification.
+It rejects preexisting output, verifies the required artifacts, and then starts the direct managed-image contracts.
+When an older trusted workflow exports startup evidence without a Hermes Discord result,
+the candidate consumer builds its CLI and runs the native contract against the same immutable Hermes image.
+Identity validation precedes that execution. A failed native contract rejects qualification,
+and the original evidence artifact remains unchanged.
 Its amd64 shard also exports digest-addressed npm and agent system inputs for the protected offline rebuild.
 The trusted controller accepts both v1 multiarch activation and v2 Deep Agents
 base activation. PR image-publication runs build all three managed-agent bases
