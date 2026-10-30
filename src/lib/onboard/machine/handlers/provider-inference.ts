@@ -405,7 +405,7 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
 
 export interface ProviderInferenceStateResult {
   stagedNativeLocalRecreation?: import("../../inference-providers/types").StagedNativeLocalRecreation;
-  deferredInferenceRoute?: (reserve: () => void) => Promise<void>;
+  deferredInferenceRoute?: import("../../inference-providers/types").DeferredInferenceRoute;
   sandboxName: string | null;
   model: string;
   provider: string;
@@ -1509,7 +1509,9 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   let stagedNativeLocalRecreation:
     | import("../../inference-providers/types").StagedNativeLocalRecreation
     | undefined;
-  let deferredInferenceRoute: ((reserve: () => void) => Promise<void>) | undefined;
+  let deferredInferenceRoute:
+    | import("../../inference-providers/types").DeferredInferenceRoute
+    | undefined;
   const hostLocalInferenceResolutionCache = new Map<
     string,
     HostLocalInferenceStartupSelection | null
