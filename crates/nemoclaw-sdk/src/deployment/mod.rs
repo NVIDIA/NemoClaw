@@ -140,6 +140,9 @@ pub struct Deployment {
     progress: Arc<dyn Fn(Progress) + Send + Sync>,
     /// Shared by clones, so a deployment hashes an unchanged bundle once.
     bundle: Arc<crate::bundle::VerifiedBundle>,
+    /// Reads the caller's variables that locate the API server from a pod;
+    /// the process environment outside unit tests.
+    pod_environment: fn(&str) -> Option<String>,
 }
 impl Deployment {
     pub fn new(state_directory: &Path, bundle_directory: &Path) -> Self {
@@ -149,6 +152,7 @@ impl Deployment {
             secrets: Arc::new(EnvironmentSecrets),
             progress: Arc::new(|_| {}),
             bundle: Arc::default(),
+            pod_environment: |name| std::env::var(name).ok(),
         }
     }
     pub fn with_secrets(mut self, secrets: Arc<dyn Secrets>) -> Self {

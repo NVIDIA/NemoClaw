@@ -3,9 +3,10 @@
 //! Kubernetes gateways on an explicitly selected cluster.
 //!
 //! Every operation connects with the kubeconfig file and context named in the
-//! deployment YAML. Ambient selection such as `KUBECONFIG` or in-cluster
-//! service variables is never consulted, so one deployment cannot reach
-//! another cluster by accident.
+//! deployment YAML, or, when it names neither, with the service account of the
+//! pod that runs NemoClaw. `KUBECONFIG` and `~/.kube/config` are never
+//! consulted, and a named kubeconfig ignores the pod's service variables, so
+//! one deployment cannot reach another cluster by accident.
 
 pub mod auth;
 pub mod cluster;
@@ -34,6 +35,9 @@ pub const CERT_ENV: &str = "NEMOCLAW_MANAGED_K8S_CERT";
 pub const KEY_ENV: &str = "NEMOCLAW_MANAGED_K8S_KEY";
 /// Directory holding the gateway's private receipt and generated material.
 pub const STATE_ENV: &str = "NEMOCLAW_KUBERNETES_STATE";
+/// The variables a pod's service account configuration reads to find the
+/// API server; its token and CA are fixed files in the pod.
+pub const POD_VARIABLES: [&str; 2] = ["KUBERNETES_SERVICE_HOST", "KUBERNETES_SERVICE_PORT"];
 
 /// The managed specification one Kubernetes resource is compiled from.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -87,7 +91,8 @@ impl Spec {
             .map_err(|_| Error::State("cannot encode Kubernetes specification"))
     }
     /// Resource attributes naming this specification's resource; the
-    /// `environment` list is carried as JSON in `environment_json`.
+    /// `environment` list is carried as JSON in `environment_json`, and
+    /// `kubeconfig_env` and `context` are empty without a kubeconfig.
     ///
     /// # Errors
     /// Returns an error if the specification is invalid.
@@ -114,8 +119,12 @@ impl Spec {
                 self.generation.clone(),
                 driver,
                 self.settings.endpoint.clone(),
-                target.kubeconfig.env.clone(),
-                target.context.clone(),
+                target
+                    .kubeconfig
+                    .as_ref()
+                    .map(|file| file.env.clone())
+                    .unwrap_or_default(),
+                target.context.clone().unwrap_or_default(),
                 target.namespace.clone(),
                 profile,
             ])
@@ -154,6 +163,13 @@ impl Spec {
                 .cloned()
                 .ok_or(ObservationError::Incomplete)
         };
+        // Empty when no kubeconfig is named; the specification's validation
+        // requires both or neither.
+        let optional = |attribute: &str| {
+            row.get(attribute)
+                .map(|value| (!value.is_empty()).then(|| value.clone()))
+                .ok_or(ObservationError::Incomplete)
+        };
         let invalid = || Error::Conflict("invalid managed Kubernetes attribute");
         let parse = |attribute: &str| -> Result<serde_json::Value, Error> {
             Ok(serde_json::Value::String(get(attribute)?))
@@ -189,10 +205,9 @@ impl Spec {
                 runtime: crate::config::Runtime { provider },
                 endpoint: get("endpoint")?,
                 kubernetes: Some(Box::new(crate::config::ManagedKubernetes {
-                    kubeconfig: crate::config::FileRef {
-                        env: get("kubeconfig_env")?,
-                    },
-                    context: get("context")?,
+                    kubeconfig: optional("kubeconfig_env")?
+                        .map(|env| crate::config::FileRef { env }),
+                    context: optional("context")?,
                     namespace: get("namespace")?,
                     authentication,
                     environment,
@@ -247,9 +262,10 @@ pub fn check_attribute(attribute: &str, value: &str) -> Result<(), &'static str>
             r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$",
             "must be a Kubernetes namespace name",
         ),
+        // Empty when the pod's service account replaces a kubeconfig.
         "kubeconfig_env" => (
-            r"^[A-Z_][A-Z0-9_]*$",
-            "must be an uppercase environment variable name",
+            r"^(?:[A-Z_][A-Z0-9_]*)?$",
+            "must be empty or an uppercase environment variable name",
         ),
         _ => return Ok(()),
     };
@@ -289,6 +305,15 @@ pub async fn connect(target: &ClusterTarget) -> Result<kube::Client, Observation
     let config = kube::Config::from_custom_kubeconfig(kubeconfig, &options)
         .await
         .map_err(|_| ObservationError::Authentication)?;
+    client(config)
+}
+
+/// Connect with the service account of the pod this process runs in:
+/// `KUBERNETES_SERVICE_HOST` and `KUBERNETES_SERVICE_PORT` locate the API
+/// server, and the pod's service account files hold the token and CA. Unlike
+/// `kube::Config::infer`, this never reads a kubeconfig.
+pub fn connect_in_cluster() -> Result<kube::Client, ObservationError> {
+    let config = kube::Config::incluster().map_err(|_| ObservationError::Authentication)?;
     client(config)
 }
 

@@ -152,20 +152,24 @@ pub(crate) fn configure(graph: &mut Value, spec: &Spec) -> Result<(), Error> {
     graph["terraform"]["required_providers"]["helm"] = json!({
         "source": PROVIDER_ADDRESS, "version": format!("= {PROVIDER_VERSION}")
     });
-    graph["variable"][KUBECONFIG_VARIABLE] = json!({
-        "type": "string", "nullable": false, "sensitive": true,
-    });
     graph["provider"]["helm"] = json!({
         "helm_driver": "secret",
         "registry_config_path": ".helm/registry.json",
         "repository_config_path": ".helm/repositories.yaml",
         "repository_cache": ".helm/cache",
         "plugins_path": ".helm/plugins",
-        "kubernetes": {
-            "config_path": format!("${{var.{KUBECONFIG_VARIABLE}}}"),
-            "config_context": literal(&target.context),
-        },
     });
+    // Without a kubeconfig, the provider's client loads the service account
+    // of the pod that runs NemoClaw.
+    if let Some(context) = &target.context {
+        graph["variable"][KUBECONFIG_VARIABLE] = json!({
+            "type": "string", "nullable": false, "sensitive": true,
+        });
+        graph["provider"]["helm"]["kubernetes"] = json!({
+            "config_path": format!("${{var.{KUBECONFIG_VARIABLE}}}"),
+            "config_context": literal(context),
+        });
+    }
     let mut release_values = vec![literal(&values(spec)?.to_string())];
     if spec.settings.runtime.provider == crate::config::ComputeDriver::OpenShift {
         // This expression stays unknown until namespace identity preparation

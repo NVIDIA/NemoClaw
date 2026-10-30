@@ -68,8 +68,8 @@ It preserves the latest state of other resources; a fresh checked plan must auth
 Confirmed authentication cleanup prevents restoration after successful release removal.
 The [Helm removal recovery procedure](../usage.md#recover-an-interrupted-helm-removal) describes the required retained evidence and retry command.
 Issuer private material stays outside Helm values and OpenTofu state.
-The provider receives the explicit kubeconfig and context; ambient Helm and Kubernetes provider settings are excluded.
-OpenTofu and its providers inherit only platform variables, so a kubeconfig exec plugin gets the caller variables listed in `gateway.kubernetes.environment` and nothing else.
+The provider receives the explicit kubeconfig and context, or, when the deployment names neither, uses the service account of the pod that runs NemoClaw; ambient Helm and Kubernetes provider settings are excluded.
+OpenTofu and its providers inherit only platform variables, so a kubeconfig exec plugin gets the caller variables listed in `gateway.kubernetes.environment` and nothing else; without a kubeconfig, they get `KUBERNETES_SERVICE_HOST` and `KUBERNETES_SERVICE_PORT` instead.
 
 ## OpenShell SDK Boundary
 

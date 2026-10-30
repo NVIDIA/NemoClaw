@@ -370,10 +370,12 @@ impl StateBinding {
                 let bound = self.typed_values();
                 // An omitted environment list is still part of a Kubernetes target.
                 let environment = crate::kubernetes::ENVIRONMENT_FIELD;
+                // A compiled empty value, such as the kubeconfig_env of a
+                // target without a kubeconfig, matches an unset bound one.
                 TYPED_ATTRIBUTES.into_iter().any(|attribute| {
                     values
                         .get(attribute)
-                        .is_some_and(|want| bound.get(attribute) != Some(want))
+                        .is_some_and(|want| bound.get(attribute).map_or("", String::as_str) != want)
                 }) || (values.contains_key("kubeconfig_env")
                     && values.get(environment) != bound.get(environment))
             }

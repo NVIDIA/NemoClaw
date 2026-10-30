@@ -89,7 +89,7 @@ The `openshell` provider takes only `destroy`, which permits deleting sandboxes 
 Each object names the gateway that holds it with `gateway`, the `ref` of `data.openshell_gateway`.
 That data source takes the gateway `endpoint`, the `credential_env` variable holding its bearer credential, the `tls_ca_env` variable naming the CA file that verifies the gateway, and, set together, the `tls_certificate_env` and `tls_key_env` variables naming a client certificate and key for mutual TLS; its `ref` carries those names, never their values.
 For a managed Kubernetes gateway, it takes `kubernetes`, the gateway's specification, instead of the credential and TLS variables.
-Each provider that reaches such a gateway opens its own port forward on a free loopback port, with the kubeconfig the specification names and the development credentials in the SDK's state directory, and keeps it open while OpenTofu runs.
+Each provider that reaches such a gateway opens its own port forward on a free loopback port, with the kubeconfig the specification names, or the service account of the pod it runs in when the specification names none, and the development credentials in the SDK's state directory, and keeps it open while OpenTofu runs.
 A literal object of the same shape, with `type = "openshell_gateway"`, also works where no data source is read, such as an SDK teardown graph.
 Objects keep their gateway connection in state, so refresh and removal reach the same gateway without provider configuration.
 Credential and TLS references update in place; a different endpoint is a different gateway, so it replaces reconstructible objects, sandboxes included, and the retained workspace refuses it.
@@ -884,10 +884,11 @@ The three NemoClaw resources take the same cluster target and identity:
 - `name`: `nc-`, 16 lowercase hexadecimal characters, and `-gateway`.
 - `compute_driver`: `kubernetes` or `openshift`.
 - `endpoint`: the gateway's `https://127.0.0.1:PORT` loopback endpoint.
-- `kubeconfig_env`: the environment variable whose value is the kubeconfig file path.
-- `context` and `namespace`: the exact kubeconfig context and the namespace for the gateway.
+- Optional `kubeconfig_env`: the environment variable whose value is the kubeconfig file path. Omit it to use the service account of the pod that runs OpenTofu; the provider then finds the API server through `KUBERNETES_SERVICE_HOST` and `KUBERNETES_SERVICE_PORT`.
+- Optional `context`: the exact kubeconfig context, set exactly when `kubeconfig_env` is.
+- `namespace`: the namespace for the gateway.
 - `authentication_profile`: `development`.
-- Optional `environment`: the names of the environment variables the kubeconfig's exec credential plugin needs.
+- Optional `environment`: the names of the environment variables the kubeconfig's exec credential plugin needs; it requires `kubeconfig_env`.
 - Optional `owner` and `generation`, generated on create when omitted.
 
 The three resources share one private receipt, keyed by `owner` and `name`, so give `openshell_kubernetes_auth` and `openshell_kubernetes_gateway` the storage's `owner`, for example `owner = openshell_kubernetes_storage.platform.owner`.
@@ -896,7 +897,8 @@ Changing any of these settings after creation fails planning and leaves the reso
 
 Each NemoClaw resource has a postcondition requiring `running`, so an incomplete step stops apply until a later apply with the same state completes it.
 The SDK requires each earlier binding before it accepts a later one.
-The Helm provider receives only the authored kubeconfig path and context; ambient Helm and Kubernetes settings are excluded.
+The Helm provider receives only the authored kubeconfig path and context; without them, it receives neither, and its client uses the pod's service account.
+Ambient Helm and Kubernetes settings are excluded.
 
 Teardown removes the release before the issuer.
 The authentication resource must confirm through `release_present` that the Helm release records are absent before it deletes the issuer.
