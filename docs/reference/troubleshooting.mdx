@@ -2074,12 +2074,10 @@ scopes, and matching request ID.
 
 Use this recovery when the preserved OpenShell detail for global policy inspection or sandbox creation identifies a gateway certificate-trust failure during onboarding.
 The OpenShell gateway certificate may have changed since the CLI last trusted it.
-Refresh trust for the registered gateway, then resume onboarding:
-
-```bash
-openshell gateway trust -g nemoclaw
-$$nemoclaw onboard --resume
-```
+Record the reported error and leave the gateway state, including `runtime.json` if present, intact.
+Remove credentials from the recorded error before you [file an issue on GitHub](https://github.com/NVIDIA/NemoClaw/issues/new).
+Keep the gateway state for local diagnosis.
+Its files may contain credentials, so do not share them.
 
 <AgentOnly variant="openclaw">
 
