@@ -123,6 +123,7 @@ The CLI preserves the [SDK result fields](../../crates/nemoclaw-sdk/src/deployme
 | `warnings` | Operator-action messages collected during the operation; also present on failures, omitted when empty; does not change `complete` |
 | `changes` | Resource addresses and planned/applied action lists; an empty list does not mean apply skipped readiness checks |
 | `connection` | Plan/apply gateway endpoint and UID-derived workspace selectors; does not establish access or configure OpenShell CLI credentials |
+| `serviceUrls` | Apply-only URLs the gateway reports for sandbox service exposures, by sandbox and service name, with `""` for the unnamed endpoint; the URLs carry no credential, so the service must authenticate its own clients; omitted when empty, and when apply can't read them, `warnings` says so |
 | `deferred` | Unresolved planning prerequisites; omitted when empty |
 | `resourceSources` | Authored provider `name` and definition `path`, keyed by opaque scoped resource address; intent metadata, not proof of an established resource; omitted when empty |
 | `unverified` | Apply-time service-readiness checks; does not change `complete`; omitted when empty |

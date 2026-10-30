@@ -101,8 +101,9 @@ In HCL, use `openshell_sandbox`'s [`service` blocks](provider.md#openshell-resou
 Requests to the URL skip OpenShell's gateway authentication: they use no OIDC or CLI login, and only the gateway listener's TLS, including any required client certificate, applies.
 The service must listen on loopback and authenticate its own clients.
 `BEARER_PASSTHROUGH` delivers the caller's bearer token to the service, so use it only for a service trusted with that credential.
-To list the URL the gateway reports, [select the gateway and workspace](#select-the-gateway-and-workspace) and run `openshell service list REPLACE_WITH_SANDBOX`.
-Apply output doesn't report it.
+A successful apply lists the URL the gateway reports for each exposure under **Service URLs**, as `sandbox/service: URL`; the unnamed endpoint is listed as `sandbox: URL`.
+JSON results key them by sandbox and service name under `serviceUrls`, with `""` for the unnamed endpoint.
+An unchanged apply lists them again.
 
 ## Diagnose Failures
 

@@ -326,6 +326,20 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
             terminal_text(&connection.workspace),
         ));
     }
+    if !result.service_urls.is_empty() {
+        output.push_str("\nService URLs:\n");
+        for (sandbox, services) in &result.service_urls {
+            for (service, url) in services {
+                // The unnamed endpoint is the sandbox's own.
+                let label = if service.is_empty() {
+                    terminal_text(sandbox)
+                } else {
+                    format!("{}/{}", terminal_text(sandbox), terminal_text(service))
+                };
+                output.push_str(&format!("  {label}: {}\n", terminal_text(url)));
+            }
+        }
+    }
     if !result.changes.is_empty() {
         output.push_str(if planned {
             "\nPlanned actions:\n"
@@ -719,6 +733,42 @@ mod tests {
             .unwrap();
             assert_eq!(machine["connection"], connection);
         }
+    }
+
+    #[test]
+    fn apply_lists_service_urls_after_the_connection_and_names_the_unnamed_endpoint() {
+        let urls = json!({
+            "assistant": {
+                "": "http://ws--assistant.services.example/",
+                "dashboard": "http://ws--assistant--dashboard.services.example/\u{1b}[2J"
+            },
+            "reviewer": {"api": "http://ws--reviewer--api.services.example/"}
+        });
+        let result = json!({"outcome": "succeeded", "changes": [], "connection": {
+            "gatewayEndpoint": "https://gateway.example:443", "workspace": "ws"
+        }, "serviceUrls": urls});
+        let text = render(&["nemoclaw", "apply", "deployment.yaml"], result.clone());
+        assert!(
+            text.contains(
+                "OpenShell workspace: ws\n\nService URLs:\n  \
+                 assistant: http://ws--assistant.services.example/\n  \
+                 assistant/dashboard: http://ws--assistant--dashboard.services.example/\\u{1b}[2J\n  \
+                 reviewer/api: http://ws--reviewer--api.services.example/\n"
+            ),
+            "{text}"
+        );
+        assert!(!text.contains('\u{1b}'));
+        let machine: Value = serde_json::from_str(&render(
+            &["nemoclaw", "apply", "deployment.yaml", "-o", "json"],
+            result,
+        ))
+        .unwrap();
+        assert_eq!(machine["serviceUrls"], urls);
+        let none = render(
+            &["nemoclaw", "apply", "deployment.yaml"],
+            json!({"outcome": "succeeded", "changes": []}),
+        );
+        assert!(!none.contains("Service URLs"), "{none}");
     }
 
     #[test]

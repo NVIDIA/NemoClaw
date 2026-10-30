@@ -275,6 +275,11 @@ fn nullable_list<'de, D: serde::Deserializer<'de>>(
 ) -> Result<Vec<String>, D::Error> {
     Ok(Option::<Vec<String>>::deserialize(deserializer)?.unwrap_or_default())
 }
+fn nullable_map<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<BTreeMap<String, String>, D::Error> {
+    Ok(Option::<BTreeMap<String, String>>::deserialize(deserializer)?.unwrap_or_default())
+}
 /// String attributes typed resources record in state.
 const TYPED_ATTRIBUTES: [&str; 12] = [
     "name",
@@ -325,6 +330,9 @@ pub(crate) struct StateBinding {
     pub authentication_profile: String,
     #[serde(default, deserialize_with = "nullable_list")]
     pub environment: Vec<String>,
+    /// A sandbox's URLs the gateway reported, by service name.
+    #[serde(default, deserialize_with = "nullable_map")]
+    pub service_urls: BTreeMap<String, String>,
     #[serde(skip)]
     pub deposed: BTreeMap<String, String>,
 }
@@ -579,6 +587,7 @@ fn parse_bindings(bytes: &[u8]) -> Result<BTreeMap<String, StateBinding>, Error>
                 binding.context = attributes.context;
                 binding.authentication_profile = attributes.authentication_profile;
                 binding.environment = attributes.environment;
+                binding.service_urls = attributes.service_urls;
             }
         }
     }

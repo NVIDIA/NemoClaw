@@ -175,6 +175,8 @@ mod runtime_compile;
 mod sandbox_admission;
 #[path = "service_references.rs"]
 mod service_references;
+#[path = "service_urls.rs"]
+mod service_urls;
 #[path = "spark_examples.rs"]
 mod spark_examples;
 #[path = "ssh_live.rs"]

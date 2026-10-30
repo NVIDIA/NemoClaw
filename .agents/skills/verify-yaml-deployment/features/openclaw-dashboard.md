@@ -15,7 +15,7 @@ With a Control UI-enabled image, a browser at that URL signs in with the gateway
 
 ## How to get to it (user POV)
 
-- The service URL from `openshell service list`, opened in a browser on the Spark; `*.openshell.localhost` resolves to loopback.
+- The service URL that apply lists under **Service URLs** as `assistant/dashboard`, opened in a browser on the Spark; `*.openshell.localhost` resolves to loopback.
 - From another machine, an SSH tunnel to the gateway port: `ssh -N -L PORT:127.0.0.1:PORT USER@SPARK`, then the same URL.
 - `openshell forward service` to a local port, which skips the exposure; this map doesn't drive it.
 

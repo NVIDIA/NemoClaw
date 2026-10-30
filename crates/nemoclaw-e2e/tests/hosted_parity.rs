@@ -290,6 +290,7 @@ mod live {
             unverified: vec![],
             retained: vec![],
             discovery: Default::default(),
+            service_urls: Default::default(),
         }
     }
 
@@ -378,6 +379,7 @@ mod live {
                 unverified: vec![],
                 retained: retained.clone(),
                 discovery: Default::default(),
+                service_urls: Default::default(),
             }
         );
         assert_eq!(
@@ -391,6 +393,7 @@ mod live {
                 unverified: vec![],
                 retained: retained.clone(),
                 discovery: Default::default(),
+                service_urls: Default::default(),
             }
         );
         retained

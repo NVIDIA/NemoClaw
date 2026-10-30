@@ -54,6 +54,25 @@ impl OperationResult {
     }
 }
 
+/// Warns that a successful apply reported no service URLs because reading them failed.
+pub(super) const SERVICE_URLS_UNREAD: &str =
+    "Apply succeeded, but the sandbox service URLs weren't read; run apply again to report them.";
+
+/// The URLs each bound sandbox's exposures report, by sandbox name; sandboxes
+/// without any are left out.
+pub(super) fn service_urls(
+    bindings: &BTreeMap<String, StateBinding>,
+) -> BTreeMap<String, BTreeMap<String, String>> {
+    bindings
+        .iter()
+        .filter_map(|(address, binding)| {
+            let sandbox = address.strip_prefix("openshell_sandbox.")?;
+            (!binding.service_urls.is_empty())
+                .then(|| (sandbox.to_owned(), binding.service_urls.clone()))
+        })
+        .collect()
+}
+
 pub use crate::discovery::DiscoveryObservation;
 
 /// A read only a plan can make: its inputs or its meaning depend on resources

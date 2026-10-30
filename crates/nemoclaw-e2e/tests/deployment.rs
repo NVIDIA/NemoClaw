@@ -516,7 +516,8 @@ async fn network_grants_and_service_exposures_apply_export_and_reapply_unchanged
     }))
     .unwrap();
     let lifecycle = Lifecycle::start(&document.yaml().unwrap()).await;
-    let effects = lifecycle.apply().await;
+    let created = lifecycle.apply_result().await;
+    let effects = lifecycle.fixture.state.lock().unwrap().effects;
     let sent = lifecycle
         .fixture
         .state
@@ -554,7 +555,21 @@ async fn network_grants_and_service_exposures_apply_export_and_reapply_unchanged
             ),
         ]
     );
-    lifecycle.export_and_reapply_unchanged(effects).await;
+    // The first apply and an unchanged one report the URLs the fixture gateway
+    // gave each exposure, read back from state.
+    let workspace = lifecycle.document.workspace();
+    let url =
+        |service: &str| format!("http://{workspace}--assistant--{service}.services.fixture.test/");
+    let expected: std::collections::BTreeMap<_, _> = [(
+        "assistant".to_owned(),
+        [("api", url("api")), ("dashboard", url("dashboard"))]
+            .map(|(service, url)| (service.to_owned(), url))
+            .into(),
+    )]
+    .into();
+    assert_eq!(created.service_urls, expected);
+    let unchanged = lifecycle.export_and_reapply_unchanged(effects).await;
+    assert_eq!(unchanged.service_urls, expected);
     lifecycle.destroy();
 }
 
@@ -691,6 +706,12 @@ impl Lifecycle {
     /// Plan without effects, then apply and check its events, health, and timings.
     /// Returns the gateway's effect count after the apply.
     pub(crate) async fn apply(&self) -> usize {
+        self.apply_result().await;
+        self.fixture.state.lock().unwrap().effects
+    }
+
+    /// As `apply`, returning the apply's result.
+    pub(crate) async fn apply_result(&self) -> nemoclaw_sdk::OperationResult {
         let planning = self
             .deployment
             .plan(&self.document, &self.cancel)
@@ -712,7 +733,7 @@ impl Lifecycle {
                 .unwrap()
                 .contains(&("sandbox", "create", "complete"))
         );
-        applied.unwrap();
+        let applied = applied.unwrap();
         for operation in [
             "bundle.verify",
             "tofu.init",
@@ -728,11 +749,15 @@ impl Lifecycle {
                 "missing timing for {operation}"
             );
         }
-        self.fixture.state.lock().unwrap().effects
+        applied
     }
 
-    /// The CLI exports the applied document, and reapplying the export changes nothing.
-    pub(crate) async fn export_and_reapply_unchanged(&self, effects: usize) {
+    /// The CLI exports the applied document, and reapplying the export changes
+    /// nothing. Returns the reapply's result.
+    pub(crate) async fn export_and_reapply_unchanged(
+        &self,
+        effects: usize,
+    ) -> nemoclaw_sdk::OperationResult {
         let exported = Command::new(
             self.bundle
                 .join("bin")
@@ -749,15 +774,14 @@ impl Lifecycle {
         );
         let exported = Document::parse(exported.stdout.as_slice()).unwrap();
         assert_eq!(exported, self.document);
-        assert!(
-            self.deployment
-                .apply(&exported, &self.cancel)
-                .await
-                .unwrap()
-                .changes
-                .is_empty()
-        );
+        let reapplied = self
+            .deployment
+            .apply(&exported, &self.cancel)
+            .await
+            .unwrap();
+        assert!(reapplied.changes.is_empty(), "{:?}", reapplied.changes);
         assert_eq!(self.fixture.state.lock().unwrap().effects, effects);
+        reapplied
     }
 
     /// A search profile without endpoints, or a sandbox without its provider
