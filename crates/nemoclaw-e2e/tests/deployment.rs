@@ -106,55 +106,6 @@ async fn cli_terminal_outputs_preserve_lifecycle_and_json_contract() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
-async fn missing_selected_provider_reconciles_without_sandbox_changes() {
-    let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
-    let directory = tempfile::tempdir().unwrap();
-    let fixture = Fixture::start().await;
-    let mut document = Document::parse(
-        include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
-    )
-    .unwrap();
-    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
-    let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
-    let deployment = Deployment::new(directory.path(), &bundle);
-    let cancel = CancellationToken::new();
-    let initial = deployment.apply(&document, &cancel).await.unwrap();
-    let sandbox = fixture.state.lock().unwrap().sandboxes.clone();
-    let profile = fixture.state.lock().unwrap().profiles.clone();
-    fixture.state.lock().unwrap().providers.clear();
-    let recreated = deployment.apply(&document, &cancel).await.unwrap();
-    assert_eq!(recreated.changes.len(), 1);
-    assert_eq!(
-        recreated.changes[0].resource,
-        initial
-            .changes
-            .iter()
-            .find(|change| change.resource.starts_with("openshell_inference."))
-            .unwrap()
-            .resource
-    );
-    // The profile survived without its registration, so the inference
-    // resource is replaced: removal deletes the profile and creation
-    // recreates both, identically because the graph sets the generation.
-    // The sandbox is unaffected.
-    assert_eq!(recreated.changes[0].actions, ["delete", "create"]);
-    assert_eq!(fixture.state.lock().unwrap().sandboxes, sandbox);
-    assert_eq!(fixture.state.lock().unwrap().profiles, profile);
-    assert_eq!(fixture.state.lock().unwrap().providers.len(), 1);
-    assert!(
-        deployment
-            .apply(&document, &cancel)
-            .await
-            .unwrap()
-            .changes
-            .is_empty()
-    );
-    assert_eq!(deployment.export(&cancel).await.unwrap(), document);
-    deployment.destroy(&cancel).await.unwrap();
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
 async fn independent_sandboxes_reconcile_concurrently_and_retain_shared_dependencies() {
     let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
     let directory = tempfile::tempdir().unwrap();
@@ -197,30 +148,6 @@ async fn independent_sandboxes_reconcile_concurrently_and_retain_shared_dependen
     assert!(state.sandboxes.is_empty());
     assert!(state.providers.is_empty());
     assert!(state.workspaces.is_empty());
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
-async fn incompatible_gateway_is_reported_by_opentofu_plan_without_sdk_preflight() {
-    let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
-    let directory = tempfile::tempdir().unwrap();
-    let fixture = Fixture::start().await;
-    let mut document = Document::parse(
-        include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
-    )
-    .unwrap();
-    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
-    let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
-    fixture.state.lock().unwrap().driver = Some("podman".into());
-    let error = Deployment::new(directory.path(), &bundle)
-        .plan(&document, &CancellationToken::new())
-        .await
-        .unwrap_err();
-    assert!(
-        matches!(&error, nemoclaw_sdk::Error::Execution { operation, .. } if operation == "plan"),
-        "{error}"
-    );
-    assert_eq!(fixture.state.lock().unwrap().effects, 0);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

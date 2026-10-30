@@ -37,7 +37,13 @@ printf '%s\n' "$operation" >> "$TRACE"
 while [ "$1" != --state-dir ]; do shift; done
 case "$operation" in
   plan) printf product-state > "$2/sentinel" ;;
-  apply) printf '{"resources":[]}' > "$2/terraform.tfstate" ;;
+  apply)
+    changes='[]'
+    if [ -f "$2/terraform.tfstate" ] && [ "${FAIL_PHASE:-}" = reapply ]; then
+      changes='[{"resource":"openshell_sandbox.assistant","actions":["update"]}]'
+    fi
+    printf '{"outcome":"succeeded","changes":%s}' "$changes"
+    printf '{"resources":[]}' > "$2/terraform.tfstate" ;;
   destroy)
     [ "${FAIL_CLEANUP:-}" != 1 ]
     printf '{"outcome":"destroyed","changes":[],"retained":["openshell_gateway_storage.runtime"]}' ;;
@@ -159,7 +165,8 @@ async fn shared_hcl_assertions_load_scenarios_from_disk_and_only_fail_on_outcome
     let output = fs::read_to_string(invalid.join("verifier/tofu-test.stdout")).unwrap();
     assert!(output.contains("outcome: researcher"), "{output}");
     let trace = fs::read_to_string(root.join("trace")).unwrap();
-    assert_eq!(trace, "plan\napply\ndestroy\n".repeat(3));
+    let reapplied = "plan\napply\napply\ndestroy\n".repeat(2);
+    assert_eq!(trace, format!("{reapplied}plan\napply\ndestroy\n"));
     for run in [&live, &followup, &invalid] {
         let sentinel = fs::read_to_string(run.join("deployment/sentinel")).unwrap();
         assert_eq!(sentinel, "product-state");
@@ -176,7 +183,13 @@ async fn shared_hcl_assertions_load_scenarios_from_disk_and_only_fail_on_outcome
 async fn deployment_or_verification_failure_still_cleans_up_and_preserves_the_original_failure() {
     let failed = |step: &str| format!("{step}: command failed; inspect private evidence");
     let tofu = "plan\napply\ntofu-get\ntofu-test\n";
-    for (phase, steps) in [("apply", "plan\napply\n"), ("tofu-test", tofu)] {
+    let reapply = format!("{tofu}apply\n");
+    let changed = "reapply: changed openshell_sandbox.assistant".to_owned();
+    for (phase, steps, failure) in [
+        ("apply", "plan\napply\n", failed("apply")),
+        ("tofu-test", tofu, failed("tofu-test")),
+        ("reapply", reapply.as_str(), changed),
+    ] {
         let root = tempfile::tempdir().unwrap();
         let root = root.path();
         suite(root);
@@ -189,7 +202,7 @@ async fn deployment_or_verification_failure_still_cleans_up_and_preserves_the_or
         assert_eq!(trace, format!("{steps}destroy\n"));
         let result = result(&run);
         assert_eq!(result["failed_phase"], phase);
-        assert_eq!(result["failure"], failed(phase));
+        assert_eq!(result["failure"], failure);
         assert_eq!(result["cleanup"]["succeeded"], false);
         assert_eq!(result["cleanup"]["failure"], failed("destroy"));
     }

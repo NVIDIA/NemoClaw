@@ -175,30 +175,31 @@ pub(super) async fn execute_with_tools(
         nemoclaw_backend::DIAGNOSTICS_ENV.into(),
         directory.join("diagnostics").into_os_string(),
     );
-    let cli = async |operation: &str, cancel: &CancellationToken, deadline: Instant| {
-        let mut args: Vec<OsString> = [operation, "--output", "json", "--progress", "off"]
-            .map(Into::into)
-            .into();
-        args.extend([
-            "--bundle".into(),
-            bundle.into(),
-            "--state-dir".into(),
-            state.clone().into(),
-        ]);
-        if operation != "destroy" {
-            args.extend(["--non-interactive".into(), config.clone().into()]);
-        }
-        process::execute(
-            &tools.cli,
-            &args,
-            &directory,
-            operation,
-            &environment,
-            cancel,
-            deadline,
-        )
-        .await
-    };
+    let cli =
+        async |operation: &str, label: &str, cancel: &CancellationToken, deadline: Instant| {
+            let mut args: Vec<OsString> = [operation, "--output", "json", "--progress", "off"]
+                .map(Into::into)
+                .into();
+            args.extend([
+                "--bundle".into(),
+                bundle.into(),
+                "--state-dir".into(),
+                state.clone().into(),
+            ]);
+            if operation != "destroy" {
+                args.extend(["--non-interactive".into(), config.clone().into()]);
+            }
+            process::execute(
+                &tools.cli,
+                &args,
+                &directory,
+                label,
+                &environment,
+                cancel,
+                deadline,
+            )
+            .await
+        };
     let mut verifier_environment = environment.clone();
     verifier_environment.extend([
         (
@@ -236,22 +237,47 @@ pub(super) async fn execute_with_tools(
     let mut apply_started = false;
     let mut phase = "plan";
     let primary = async {
-        cli("plan", cancel, deadline).await?;
+        cli("plan", "plan", cancel, deadline).await?;
         phase = "apply";
         apply_started = true;
-        cli("apply", cancel, deadline).await?;
+        cli("apply", "apply", cancel, deadline).await?;
         // Local modules need installation; the verifier uses only built-in resources.
         phase = "tofu-get";
         tofu(phase, &["get", "-no-color"]).await?;
         phase = "tofu-test";
-        tofu(phase, &["test", &filter_argument, "-json", "-no-color"]).await
+        tofu(phase, &["test", &filter_argument, "-json", "-no-color"]).await?;
+        // Applying the same document to the running deployment changes nothing.
+        phase = "reapply";
+        cli("apply", phase, cancel, deadline).await?;
+        let reapplied: OperationResult = serde_json::from_slice(
+            &fs::read(directory.join("reapply.stdout")).map_err(|_| "reapply: missing result")?,
+        )
+        .map_err(|_| "reapply: invalid result")?;
+        match reapplied.changes.as_slice() {
+            [] => Ok(()),
+            changes => Err(format!(
+                "reapply: changed {}",
+                changes
+                    .iter()
+                    .map(|change| change.resource.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )),
+        }
     }
     .await;
     let failed_phase = primary.as_ref().err().map(|_| phase);
     // Cleanup is independent of the cancelled operation and runs after partial apply.
     let cleanup = CancellationToken::new();
     let cleanup_result = if apply_started {
-        match cli("destroy", &cleanup, Instant::now() + DESTROY_DEADLINE).await {
+        match cli(
+            "destroy",
+            "destroy",
+            &cleanup,
+            Instant::now() + DESTROY_DEADLINE,
+        )
+        .await
+        {
             Ok(()) => destroy_result(&directory),
             Err(error) => Err(error),
         }

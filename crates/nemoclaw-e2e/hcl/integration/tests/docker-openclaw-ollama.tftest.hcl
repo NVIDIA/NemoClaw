@@ -103,8 +103,89 @@ run "verify" {
   }
 }
 
+# This plan reads what verify's apply left: it changed no gateway objects.
+run "unchanged" {
+  command = plan
+
+  module {
+    source = "./cases/docker-openclaw-ollama"
+  }
+
+  variables {
+    effects = run.verify.effects
+  }
+
+  assert {
+    condition     = module.observed.openshell.effects == var.effects
+    error_message = "The second apply changed gateway objects."
+  }
+}
+
+# The gateway loses the provider registration; its profile survives.
+run "lose_registration" {
+  command = plan
+
+  module {
+    source = "./cases/docker-openclaw-ollama"
+  }
+
+  variables {
+    fault = "delete_provider_registrations"
+  }
+
+  plan_options {
+    target = [data.fixture_state.setup]
+  }
+}
+
+# Apply registers the provider again.
+run "reregister" {
+  module {
+    source = "./cases/docker-openclaw-ollama"
+  }
+}
+
+# This apply reads what the recovery left: the same registration and profile,
+# and the sandbox neither replaced nor its agent restarted.
+run "reregistered" {
+  module {
+    source = "./cases/docker-openclaw-ollama"
+  }
+
+  assert {
+    condition = (
+      module.observed.openshell.providers == keys(module.observed.registrations)
+      && length(module.observed.openshell.created_providers) == 2
+      && length(module.observed.openshell.profiles) == 1
+      && module.observed.openshell.sandboxes == ["assistant"]
+      && length(module.observed.openshell.created_sandboxes) == 1
+      && module.observed.openshell.fabric_starts[module.observed.agents.assistant.id] == 1
+    )
+    error_message = "Recovering the registration changed the sandbox or agent, or did not restore one registration."
+  }
+}
+
+# Nothing was left to do after the recovery.
+run "reregistration_settled" {
+  command = plan
+
+  module {
+    source = "./cases/docker-openclaw-ollama"
+  }
+
+  variables {
+    effects = run.reregistered.effects
+  }
+
+  assert {
+    condition     = module.observed.openshell.effects == var.effects
+    error_message = "The apply after the recovery changed gateway objects."
+  }
+}
+
 # OpenTofu removes what the last applying run applied, with its variables:
-# this run permits deletion, as the SDK's teardown graph does.
+# this run permits deletion, as the SDK's teardown graph does. It refers to no
+# earlier run, which would stop OpenTofu's cleanup.
 run "teardown" {
   module {
     source = "./cases/docker-openclaw-ollama"

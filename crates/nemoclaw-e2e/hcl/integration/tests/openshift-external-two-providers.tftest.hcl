@@ -67,6 +67,16 @@ run "verify" {
     error_message = "A sandbox names another agent's binding or misses its own."
   }
 
+  # The fixtures serve both providers at one address, the only one either
+  # sandbox may reach.
+  assert {
+    condition = alltrue([
+      for agent in values(module.observed.agents) :
+      toset(agent.policy_endpoints) == toset(["${trimprefix(module.observed.http.endpoint, "http://")}/v1/**"])
+    ])
+    error_message = "A sandbox's network policy allows more than its providers' address."
+  }
+
   # OpenClaw starts with both routes, Anthropic by default; Hermes with one.
   assert {
     condition = (
@@ -80,8 +90,27 @@ run "verify" {
   }
 }
 
+# This plan reads what verify's apply left: it changed no gateway objects.
+run "unchanged" {
+  command = plan
+
+  module {
+    source = "./cases/openshift-external-two-providers"
+  }
+
+  variables {
+    effects = run.verify.effects
+  }
+
+  assert {
+    condition     = module.observed.openshell.effects == var.effects
+    error_message = "The second apply changed gateway objects."
+  }
+}
+
 # OpenTofu removes what the last applying run applied, with its variables:
-# this run permits deletion, as the SDK's teardown graph does.
+# this run permits deletion, as the SDK's teardown graph does. It refers to no
+# earlier run, which would stop OpenTofu's cleanup.
 run "teardown" {
   module {
     source = "./cases/openshift-external-two-providers"

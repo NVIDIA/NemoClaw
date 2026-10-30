@@ -145,8 +145,82 @@ run "verify" {
   }
 }
 
+# The agent's runtime exits inside its sandbox, which keeps running.
+run "stop_agent" {
+  command = plan
+
+  module {
+    source = "./cases/docker-openclaw-nvidia"
+  }
+
+  variables {
+    fault   = "stop_agent_runtimes"
+    effects = run.verify.effects
+  }
+
+  plan_options {
+    target = [data.fixture_state.setup]
+  }
+
+  # A targeted plan evaluates no module outputs, so read the data source.
+  assert {
+    condition     = jsondecode(data.fixture_state.setup.observations).openshell.effects == var.effects
+    error_message = "The second apply changed gateway objects."
+  }
+}
+
+# Apply starts the agent again.
+run "restart_agent" {
+  module {
+    source = "./cases/docker-openclaw-nvidia"
+  }
+}
+
+# This apply reads what the restart left: no changed gateway objects, and the
+# agent started again in its original sandbox.
+run "restarted" {
+  module {
+    source = "./cases/docker-openclaw-nvidia"
+  }
+
+  variables {
+    effects = run.restart_agent.effects
+  }
+
+  assert {
+    condition = (
+      module.observed.openshell.effects == var.effects
+      && length(module.observed.openshell.created_sandboxes) == 1
+      && module.observed.openshell.fabric_starts[module.observed.agents.assistant.id] == 2
+    )
+    error_message = "The restart changed gateway objects, or the agent did not start again in its sandbox."
+  }
+}
+
+# Nothing was left to do: the apply after the restart started nothing.
+run "settled" {
+  command = plan
+
+  module {
+    source = "./cases/docker-openclaw-nvidia"
+  }
+
+  variables {
+    effects = run.restarted.effects
+  }
+
+  assert {
+    condition = (
+      module.observed.openshell.effects == var.effects
+      && module.observed.openshell.fabric_starts[module.observed.agents.assistant.id] == 2
+    )
+    error_message = "The apply after the restart changed gateway objects or started the agent again."
+  }
+}
+
 # OpenTofu removes what the last applying run applied, with its variables:
-# this run permits deletion, as the SDK's teardown graph does.
+# this run permits deletion, as the SDK's teardown graph does. It refers to no
+# earlier run, which would stop OpenTofu's cleanup.
 run "teardown" {
   module {
     source = "./cases/docker-openclaw-nvidia"

@@ -110,8 +110,27 @@ run "verify" {
   }
 }
 
+# This plan reads what verify's apply left: it changed no gateway objects.
+run "unchanged" {
+  command = plan
+
+  module {
+    source = "./cases/docker-hosted-ollama-two-agents"
+  }
+
+  variables {
+    effects = run.verify.effects
+  }
+
+  assert {
+    condition     = module.observed.openshell.effects == var.effects
+    error_message = "The second apply changed gateway objects."
+  }
+}
+
 # OpenTofu removes what the last applying run applied, with its variables:
-# this run permits deletion, as the SDK's teardown graph does.
+# this run permits deletion, as the SDK's teardown graph does. It refers to no
+# earlier run, which would stop OpenTofu's cleanup.
 run "teardown" {
   module {
     source = "./cases/docker-hosted-ollama-two-agents"

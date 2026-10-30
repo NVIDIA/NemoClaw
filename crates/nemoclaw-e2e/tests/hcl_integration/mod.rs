@@ -6,6 +6,8 @@
 //! with the SDK against the fixtures into `cases/<scenario>` of a work copy of
 //! the integration root, beside a copy of `harness/main.tf`, then runs each test file with
 //! fixtures reset and checks what teardown leaves, which no run block sees.
+//! Documents in `hcl/cases/<scenario>/` are later steps of the scenario, which
+//! the runner merges into the same module; a run selects one with `step`.
 
 mod fixtures;
 
@@ -14,7 +16,7 @@ use nemoclaw_sdk::{compile, config::Document};
 use nemoclaw_test_fixtures::Bundle;
 use serde_json::{Value, json};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs,
     path::{Path, PathBuf},
     time::Duration,
@@ -128,14 +130,7 @@ async fn run_shard(shard: usize) {
             let source =
                 fs::read(&yaml).unwrap_or_else(|_| panic!("{} is missing", yaml.display()));
             let mut document = Document::parse(source.as_slice()).unwrap();
-            // A sandbox described by image metadata runs the fixture image.
-            let mut image_metadata = Vec::new();
-            for sandbox in document.spec.sandboxes.values_mut() {
-                if let Some(variable) = &sandbox.image.metadata {
-                    image_metadata.push(variable.env.clone());
-                    sandbox.image.ref_.clone_from(&fixture_image);
-                }
-            }
+            let image_metadata = run_fixture_image(&mut document, &fixture_image);
             let credentials: BTreeMap<String, String> = document
                 .credential_names()
                 .into_iter()
@@ -147,9 +142,31 @@ async fn run_shard(shard: usize) {
                     )
                 })
                 .collect();
-            fixtures.redirect(&mut document);
-            let mut graph = compile::compile(&document, &generations, version).unwrap();
-            for_tofu_test(&mut graph);
+            let graph = |mut document: Document| {
+                fixtures.redirect(&mut document);
+                let mut graph = compile::compile(&document, &generations, version).unwrap();
+                for_tofu_test(&mut graph);
+                graph
+            };
+            let mut steps = vec![(String::new(), graph(document))];
+            let directory = Path::new(HCL).join("cases").join(&name);
+            let mut paths: Vec<PathBuf> = fs::read_dir(&directory)
+                .into_iter()
+                .flatten()
+                .map(|entry| entry.unwrap().path())
+                .collect();
+            paths.sort();
+            for path in paths {
+                let step = path.file_stem().unwrap().to_string_lossy().into_owned();
+                let mut document = Document::parse(fs::read(&path).unwrap().as_slice()).unwrap();
+                run_fixture_image(&mut document, &fixture_image);
+                steps.push((step, graph(document)));
+            }
+            let graph = if steps.len() == 1 {
+                steps.remove(0).1
+            } else {
+                merge_steps(&steps)
+            };
             let case = work.join("cases").join(&name);
             fs::create_dir_all(&case).unwrap();
             fs::write(case.join("nemoclaw.tf.json"), graph.to_string()).unwrap();
@@ -361,6 +378,156 @@ fn for_tofu_test(graph: &mut Value) {
     }
     graph["terraform"]["required_providers"]["fixture"] =
         json!({"source": "registry.opentofu.org/nvidia/fixture", "version": "= 1.0.0"});
+}
+
+/// A sandbox described by image metadata runs the fixture image. Returns the
+/// variables that name image metadata.
+fn run_fixture_image(document: &mut Document, image: &str) -> Vec<String> {
+    let mut variables = Vec::new();
+    for sandbox in document.spec.sandboxes.values_mut() {
+        if let Some(variable) = &sandbox.image.metadata {
+            variables.push(variable.env.clone());
+            image.clone_into(&mut sandbox.image.ref_);
+        }
+    }
+    variables
+}
+
+/// One module for a scenario's steps, the first named `""`: `var.step` selects
+/// one, the first by default. A resource or data source the selected step
+/// lacks is disabled, and an attribute or output that differs takes the
+/// selected step's value.
+fn merge_steps(steps: &[(String, Value)]) -> Value {
+    let mut merged = steps[0].1.clone();
+    for (key, value) in steps[0].1.as_object().unwrap() {
+        if !["resource", "data", "output"].contains(&key.as_str()) {
+            for (step, graph) in &steps[1..] {
+                assert_eq!(&graph[key], value, "step {step} changes `{key}`");
+            }
+        }
+    }
+    let outputs = |graph: &Value| -> BTreeSet<String> {
+        graph["output"]
+            .as_object()
+            .into_iter()
+            .flatten()
+            .map(|(name, _)| name.clone())
+            .collect()
+    };
+    for (step, graph) in &steps[1..] {
+        assert_eq!(
+            outputs(graph),
+            outputs(&steps[0].1),
+            "step {step} changes which outputs exist"
+        );
+    }
+    for name in outputs(&steps[0].1) {
+        let bodies: Vec<(&str, &Value)> = steps
+            .iter()
+            .map(|(step, graph)| (step.as_str(), &graph["output"][&name]))
+            .collect();
+        merged["output"][&name] = merge_body(&bodies, &name);
+    }
+    for kind in ["resource", "data"] {
+        let addresses: BTreeSet<(&String, &String)> = steps
+            .iter()
+            .flat_map(|(_, graph)| graph[kind].as_object().into_iter().flatten())
+            .flat_map(|(kind, blocks)| {
+                blocks
+                    .as_object()
+                    .unwrap()
+                    .keys()
+                    .map(move |name| (kind, name))
+            })
+            .collect();
+        let mut blocks = json!({});
+        for (block, name) in addresses {
+            let present: Vec<(&str, &Value)> = steps
+                .iter()
+                .map(|(step, graph)| (step.as_str(), &graph[kind][block][name]))
+                .filter(|(_, body)| !body.is_null())
+                .collect();
+            let mut body = merge_body(&present, &format!("{kind} {block}.{name}"));
+            if present.len() < steps.len() {
+                let enabled: Vec<&str> = present.iter().map(|(step, _)| *step).collect();
+                body["lifecycle"]["enabled"] =
+                    json!(format!("${{contains({}, var.step)}}", hcl(&json!(enabled))));
+            }
+            blocks[block][name] = body;
+        }
+        merged[kind] = blocks;
+    }
+    merged["variable"]["step"] = json!({"type": "string", "default": ""});
+    merged
+}
+
+/// The first body, with each attribute that differs between the steps that
+/// have it replaced by an expression that selects the step's value. Only the
+/// selected value is evaluated, so it may refer to resources the other steps
+/// disable, and the JSON round trip lets the values differ in type.
+fn merge_body(present: &[(&str, &Value)], address: &str) -> Value {
+    let mut body = present[0].1.clone();
+    let attributes: BTreeSet<&String> = present
+        .iter()
+        .flat_map(|(_, body)| body.as_object().unwrap().keys())
+        .collect();
+    for attribute in attributes {
+        let values: Vec<(&str, &Value)> = present
+            .iter()
+            .map(|(step, body)| (*step, &body[attribute]))
+            .collect();
+        if values.iter().all(|(_, value)| *value == values[0].1) {
+            continue;
+        }
+        // A dependency on a disabled resource is satisfied, so depend on all.
+        if attribute == "depends_on" {
+            let mut all: Vec<&Value> = Vec::new();
+            for (_, value) in &values {
+                for dependency in value.as_array().into_iter().flatten() {
+                    if !all.contains(&dependency) {
+                        all.push(dependency);
+                    }
+                }
+            }
+            body[attribute] = json!(all);
+            continue;
+        }
+        assert!(
+            attribute != "lifecycle",
+            "steps change `lifecycle` of {address}"
+        );
+        let selected = values[1..].iter().fold(
+            format!("jsonencode({})", hcl(values[0].1)),
+            |other, (step, value)| {
+                format!(
+                    "var.step == {} ? jsonencode({}) : {other}",
+                    hcl(&json!(step)),
+                    hcl(value)
+                )
+            },
+        );
+        body[attribute] = json!(format!("${{jsondecode({selected})}}"));
+    }
+    body
+}
+
+/// A JSON value as an HCL expression. Strings stay templates, so references
+/// in them still resolve.
+fn hcl(value: &Value) -> String {
+    match value {
+        Value::Array(items) => {
+            format!("[{}]", items.iter().map(hcl).collect::<Vec<_>>().join(", "))
+        }
+        Value::Object(fields) => format!(
+            "{{{}}}",
+            fields
+                .iter()
+                .map(|(key, value)| format!("{} = {}", hcl(&json!(key)), hcl(value)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        other => other.to_string(),
+    }
 }
 
 fn copy(from: &Path, to: &Path) {

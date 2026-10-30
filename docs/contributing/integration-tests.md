@@ -122,9 +122,9 @@ The fixtures return protocol responses; they do not establish agent inference, n
 |---|---|
 | `deployment` | Configuration lifecycles through the SDK and CLI: shared state, interrupted creation, unchanged apply, startup failure recovered in a new sandbox, failed observation without state loss, export and reapply, policy and tool drift, web search, credential redaction, startup failure messages, and destroy |
 | `export_observations` | Export through provider refresh without applying, without inference or search credentials, rejection of observed drift without changes to saved state, and a Pi model changed inside the sandbox, which export ignores |
-| `fabric_deployment` | One harness test each for OpenClaw and Pi, where a changed configuration replaces the agent with its sandbox, and missing or failed runtime declarations |
+| `fabric_deployment` | One harness test each for OpenClaw and Pi, where a changed configuration replaces the agent with its sandbox, and missing or failed runtime declarations. `hcl_integration`'s `docker-openclaw-nvidia` covers an agent runtime that stops |
 | `kubernetes_agents` | The three-agent `external-gateway.yaml` examples for Kubernetes and OpenShift, one test each, against the fixture gateway reporting OpenShell's Kubernetes driver, with a metadata bundle describing the images and inference at a cluster Service URL without a key: a plan without effects; three sandboxes, each with a policy rule for the Service's name and no address grant; each agent's Fabric configuration with its own name and the Service URL; an unchanged apply without changes or gateway effects; export and reapply; and destroy. It does not check that a cluster resolves or reaches the Service |
-| `multi_agent` | Three OpenClaw agents in separate sandboxes, each with its own model, sharing one provider registration: one agent's rejected start, its removal, or another owner's label on its sandbox changes no agent that the document leaves unchanged |
+| `multi_agent` | Three OpenClaw agents in separate sandboxes, each with its own model, sharing one provider registration: one agent's rejected start, or another owner's label on its sandbox, changes no agent that the document leaves unchanged. `hcl_integration`'s `docker-openclaw-three-agents` covers removing one agent |
 | `multiple_providers` | Two deployments' provider attachments, export and reapply, drift, and destroy, each scoped to its sandbox |
 | `fabric_bridge` | The provider's `fabric-agent-ctl` client: the image's own command and environment, input on stdin, and uncertain invocations never replayed. These tests are not ignored and run with the unit tests |
 | `remote_service` | Services on simulated SSH hosts; see [SSH service fixtures](#ssh-service-fixtures) |
@@ -143,14 +143,11 @@ In `multi_agent`:
 - `one_failed_agent_is_reported_alone_and_its_retry_replaces_only_it` replaces two sandboxes in an update, and Fabric rejects one agent's start.
   The CLI names only the failed sandbox and leaves out Fabric's message, which `diagnostics/fabric-SANDBOX.json` keeps.
   The other replacement finishes, the unchanged agent is neither replaced, stopped, nor restarted, and the retry replaces only the failed agent's sandbox.
-- `removing_one_agent_stops_only_its_runtime_and_keeps_shared_registrations` removes one sandbox from the document.
-  The plan deletes only that sandbox, its agent, and its agent configuration, and apply stops only that agent.
-  The other agents, the provider registration and profile, and the workspace stay as they were.
 - `a_foreign_owner_on_one_agent_stops_planning_without_touching_the_others` gives one sandbox a different owner label on the gateway.
   Plan, `plan_destroy`, export, apply, and destroy each fail on the ownership change without changing `terraform.tfstate`, `intent.json`, the gateway, or any sandbox.
   After the label is restored, destroy finishes.
 
-The first two tests end with export, unchanged reapply, and destroy.
+The first test ends with export, unchanged reapply, and destroy.
 
 ### `tofu test` Cases
 
@@ -168,20 +165,29 @@ A scenario is a document in `hcl/cases`, shared with the live E2E suites that `n
 |---|---|
 | `hcl/cases/<scenario>.yaml` | The NemoClaw document. The runner compiles it with the SDK into `cases/<scenario>/nemoclaw.tf.json` in a work copy of the integration root, beside a copy of `integration/harness/main.tf`. It points the gateway, any engine the document names, and inference endpoints at the fixtures. An external gateway loses its credential and TLS, because the fixture gateway serves plaintext gRPC. A sandbox described by image metadata runs the fixture image, which the runner's metadata bundle describes. |
 | `hcl/integration/tests/<scenario>.tftest.hcl` | Provider mocks and run blocks whose `module` is `./cases/<scenario>`, with assertions. |
+| `hcl/cases/<scenario>/<step>.yaml` | Optional later steps: the same deployment, changed. The runner compiles each step and merges them into the scenario's one module, because runs share state only through one module. In the merged module, the variable `step` selects a step, the first by default. A resource or data source the selected step lacks is disabled with `lifecycle.enabled`, and a value that differs between steps takes the selected step's. |
 
 The harness declares the fixtures through the `fixture` provider's one data source, `fixture_state`, named `setup`, and reads what they recorded through the `observed` module:
 
 | Module | Purpose |
 |---|---|
 | `integration/modules/fixtures` | From the document, the gateway's compute driver and, with a managed Docker gateway, what a mocked Docker provider would leave on the engine: images, each service image with the architecture its document requires, the gateway container, and each service's ready container with its generated key. The harness variable `compute_driver` overrides the driver. Outputs the owner, the engine object prefix, and each service's container. |
-| `integration/modules/observed` | Outputs registrations by name and `agents` by sandbox, each with its Fabric `start` command and decoded configuration, plus OpenShell, engine, and upstream records. Credential values appear only by source: `env:NAME` or `file:CONTAINER:PATH`. |
+| `integration/modules/observed` | Outputs registrations by name and `agents` by sandbox, each with its last Fabric `start` command and decoded configuration, plus OpenShell, engine, and upstream records. The OpenShell record includes the names of the sandboxes and registrations the gateway holds, its profiles, and `effects`, how many objects the gateway has created, updated, or deleted. Credential values appear only by source: `env:NAME` or `file:CONTAINER:PATH`. |
 
-A test file runs four steps:
+A test file runs these steps:
 
 1. `fixtures` targets `data.fixture_state.setup`, so the fixtures exist before the deployment's first plan.
 2. `deploy` applies.
-3. `verify` applies again, without changes, and asserts against what deploy produced.
-4. `teardown` sets `permit_destroy = true`. The runner sets the `openshell` and `fabric` providers' `destroy` from that variable, as the SDK's teardown graph does, and OpenTofu's cleanup uses the last applying run's variables.
+3. `verify` applies again and asserts against what deploy produced.
+4. `unchanged` plans and asserts that `verify`'s apply changed no gateway objects: its `effects` equals the harness output `effects` of `verify`, which a run passes in through the harness variable `effects`.
+5. `teardown` sets `permit_destroy = true`. The runner sets the `openshell` and `fabric` providers' `destroy` from that variable, as the SDK's teardown graph does, and OpenTofu's cleanup uses the last applying run's variables.
+
+The observed module reads at plan time, so a run asserts what earlier runs did, and a run sees only the previous run's outputs, as `run.<name>.<output>` in its `variables`. The last run must not refer to an earlier run: OpenTofu then skips its cleanup.
+
+A scenario may add runs between `verify` and `teardown`:
+
+- A change step applies with `step` set, and the next run asserts what the change did.
+- A fault is a targeted plan of `data.fixture_state.setup` with the harness variable `fault`, which the fixtures apply once. `stop_agent_runtimes` stops every Fabric runtime, and its sandbox keeps running. `delete_provider_registrations` deletes every registration and keeps its profile. The next apply recovers, the apply after it asserts the recovery, and a final plan asserts that this apply changed nothing. A provider error ends `tofu test`, so a fault is only for recovery that apply completes.
 
 Docker scenarios mock the Docker provider by its generated alias and give mocked resources the IDs the `fixtures` module declares. One fixed engine socket, `/tmp/nemoclaw-integration/engine.sock`, gives every scenario the same alias and image addresses.
 A run that is expected to fail lists the checkable object in `expect_failures`. A targeted plan does not evaluate locals or module outputs.
@@ -197,13 +203,14 @@ Each scenario runs the real OpenShell, Fabric, and host providers, plus the vLLM
 
 | Scenario | Checks |
 |---|---|
-| `docker-openclaw-nvidia` | The live hosted document: two OpenClaw agents on NVIDIA hosted inference. Covers gateway storage on the fake engine, the mocked gateway container and sandbox image read by ID, and the shared registration with the fixture credential. Also checks each sandbox's binding and policy, and each agent started through `ExecSandbox` with its compiled configuration. |
+| `docker-openclaw-nvidia` | The live hosted document: an OpenClaw agent on NVIDIA hosted inference. Covers gateway storage on the fake engine, the mocked gateway container and sandbox image read by ID, and the registration with the fixture credential. Also checks the sandbox's binding and policy, and the agent started through `ExecSandbox` with its compiled configuration. After the agent's runtime stops, apply starts it again in the same sandbox without changing gateway objects, and the next apply starts nothing. |
 | `docker-openclaw-vllm` | The live local document: an unauthenticated vLLM service with an isolated OpenClaw sandbox. There is only a data volume and no credential storage, and readiness reads the status file and no key. The registration has no credential, and the agent has its model and address. |
 | `docker-openclaw-vllm-bearer` | A vLLM service with bearer authentication. The credential storage is created on the engine and mounted by the container, and readiness reads the status file and the generated key. The registration holds that key under the sandbox's name for it, and the agent gets its model, address, and key name. |
-| `docker-openclaw-ollama` | A managed Ollama service. The container's Docker inputs come from the Ollama runtime launch, the runtime image is found on the engine, and readiness comes from the container's status file. The registration is at the service address without a credential, the sandbox's policy allows that address, and the agent gets its model and address. |
+| `docker-openclaw-ollama` | A managed Ollama service. The container's Docker inputs come from the Ollama runtime launch, the runtime image is found on the engine, and readiness comes from the container's status file. The registration is at the service address without a credential, the sandbox's policy allows that address, and the agent gets its model and address. After the gateway loses the registration, apply registers it again with the same name and profile, without replacing the sandbox or restarting the agent, and the next apply changes nothing. |
 | `docker-hosted-ollama-two-agents` | An OpenClaw agent on hosted inference and a Hermes agent on Ollama. There are two registrations, and each sandbox is bound to and may reach only its own provider. Each agent starts once in its own sandbox with its own harness and configuration. |
 | `docker-vllm-shared-two-agents` | One authenticated vLLM service shared by OpenClaw and Hermes agents. Each harness has its own registration holding the generated key under its own sandbox name. Each sandbox names only its own registration, and each agent starts with that key name. |
-| `openshift-external-two-providers` | An OpenShift gateway with an Anthropic Messages provider and an NVIDIA provider. Each registration has its own API, base URL, and credential. The OpenClaw agent has both routes, the Hermes agent has one, and their sandboxes share no binding. |
+| `docker-openclaw-three-agents` | Three OpenClaw agents, each with its own model, attach one hosted registration. The `remove-researcher` step stops only the researcher's agent and deletes only its sandbox, the only gateway change. The other agents are neither replaced, stopped, nor started again, and the registration, profile, and workspace remain. |
+| `openshift-external-two-providers` | An OpenShift gateway with an Anthropic Messages provider and an NVIDIA provider. Each registration has its own API, base URL, and credential. The OpenClaw agent has both routes, the Hermes agent has one, and their sandboxes share no binding. Each sandbox's policy allows only the providers' address. |
 | `kubernetes-gateway-driver-mismatch` | A Kubernetes document against a gateway that reports Docker. The workspace precondition rejects the plan, and the gateway's incompatibility names the Kubernetes driver. Nothing reaches OpenShell, Fabric, or the upstream. |
 
 In every scenario, the inference upstream receives no request.

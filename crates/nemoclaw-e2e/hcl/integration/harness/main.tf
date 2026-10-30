@@ -16,6 +16,18 @@ variable "compute_driver" {
   default     = null
 }
 
+variable "fault" {
+  description = "A fault the fixtures apply when a targeted plan reads `setup`: `stop_agent_runtimes` or `delete_provider_registrations`."
+  type        = string
+  default     = null
+}
+
+variable "effects" {
+  description = "The `effects` output of an earlier run, for comparison."
+  type        = number
+  default     = null
+}
+
 module "fixtures" {
   source         = "../../modules/fixtures"
   document       = "${path.module}/nemoclaw.yaml"
@@ -25,10 +37,15 @@ module "fixtures" {
 # A first run targets this data source, so the fixtures are declared before
 # the deployment's first plan reads them.
 data "fixture_state" "setup" {
-  declare = module.fixtures.declare
+  declare = var.fault == null ? module.fixtures.declare : jsonencode(merge(jsondecode(module.fixtures.declare), { fault = var.fault }))
 }
 
 # Read at plan time: in a plan run after deploy, it reports what deploy did.
 module "observed" {
   source = "../../modules/observed"
+}
+
+output "effects" {
+  description = "How many objects the gateway has created, updated, or deleted, as this run's plan read it."
+  value       = module.observed.openshell.effects
 }

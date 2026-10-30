@@ -1,0 +1,53 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# The same deployment without the researcher agent.
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: three-agents
+  uid: 8ee26d05-e9f3-4cea-9879-e1f5d1e94e56
+spec:
+  gateway:
+    management: managed
+    runtime:
+      provider: docker
+    endpoint: http://127.0.0.1:17697
+    engine: unix:///var/run/docker.sock
+  inferenceProviders:
+    nvidia:
+      provider: openai
+      endpoint: https://integrate.api.nvidia.com/v1
+      credential:
+        env: NVIDIA_INFERENCE_API_KEY
+  sandboxes:
+    assistant:
+      image:
+        ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      network:
+        tier: isolated
+      harness:
+        kind: nvidia.fabric.openclaw
+      agent:
+        name: assistant
+        inference:
+          routes:
+            - name: primary
+              providerRef: nvidia
+              overrides:
+                model: qwen3:4b
+    reviewer:
+      image:
+        ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      network:
+        tier: isolated
+      harness:
+        kind: nvidia.fabric.openclaw
+      agent:
+        name: reviewer
+        inference:
+          routes:
+            - name: primary
+              providerRef: nvidia
+              overrides:
+                model: qwen3:14b
