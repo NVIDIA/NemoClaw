@@ -79,7 +79,7 @@ export function vllmHostCommandCapture(options: {
         }
         return options.gpuMemory[Math.min(gpuMemorySample++, options.gpuMemory.length - 1)] ?? "";
       case "curl":
-        return options.curl ?? '{"data":[]}';
+        return options.curl ?? '{"data":[]}\n200';
       default:
         return "";
     }
@@ -300,7 +300,7 @@ export function mockSuccessfulVllmInstall(
   ownershipResponses: readonly (() => string)[] = [() => "", () => ""],
 ): void {
   const runCaptureByCommand: Record<string, string> = {
-    curl: '{"data":[]}',
+    curl: '{"data":[]}\n200',
     sh: "/usr/bin/tool\n",
   };
   mocks.runCapture.mockImplementation((cmd: readonly string[]) => {
