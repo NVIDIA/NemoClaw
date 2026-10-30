@@ -72,8 +72,8 @@ fn overall(checks: &[CapabilityCheck]) -> Support {
 }
 
 /// Whether an image can run a configuration's harness: it provides the
-/// selected adapter, and an explicit filesystem policy lets that adapter read
-/// its files. Whether the image's Fabric runtime is compatible is Fabric's to
+/// selected adapter, that adapter declares the interfaces the configuration
+/// sets, and an explicit filesystem policy lets that adapter read its files. Whether the image's Fabric runtime is compatible is Fabric's to
 /// report when the agent starts. Whether the
 /// harness accepts the configuration is Fabric's to decide, inside the sandbox
 /// when the agent is configured.
@@ -101,6 +101,12 @@ pub fn assess_fabric(catalog: &FabricCatalog, request: &FabricRequirements) -> C
             reason: "harness.adapter_id: the image does not provide the selected adapter".into(),
         },
     });
+    if let Some(adapter) = adapter {
+        checks.extend(interface_checks(
+            &adapter.descriptor,
+            &request.configuration,
+        ));
+    }
     if let (Some(adapter), Some(grants)) = (adapter, &request.filesystem_read) {
         // Fabric declares the adapter's own files; the image build declares
         // where its layout installs the harness. The policy must allow both.
@@ -159,6 +165,71 @@ pub fn assess_fabric(catalog: &FabricCatalog, request: &FabricRequirements) -> C
         adapter_id: adapter_id.map(str::to_owned),
         checks,
     }
+}
+
+const INTERFACES: &str = "harness.settings.interfaces";
+
+/// Whether the adapter declares each interface and interface field the
+/// configuration sets. Fabric's adapters list their interfaces, and each one's
+/// fields, under `settings_schema.properties.interfaces`, closed at both
+/// levels; an adapter that declares none supports none. Fabric validates the
+/// values, required fields and combinations when it plans the agent, inside
+/// the sandbox; checking names here makes a plan fail before apply.
+fn interface_checks(descriptor: &Value, configuration: &Value) -> Vec<CapabilityCheck> {
+    let Some(requested) = configuration.pointer("/harness/settings/interfaces") else {
+        return Vec::new();
+    };
+    let unsupported = |path: String| CapabilityCheck {
+        requirement: "harness_interfaces".into(),
+        status: Support::Unsupported,
+        // A name that isn't safe to print is reported by its parent setting.
+        reason: format!(
+            "{}: the image's adapter does not support this interface setting",
+            if diagnostic_field(&path) == path {
+                path.as_str()
+            } else {
+                INTERFACES
+            }
+        ),
+    };
+    let declared = descriptor
+        .pointer("/settings_schema/properties/interfaces/properties")
+        .and_then(Value::as_object);
+    let Some(requested) = requested.as_object() else {
+        // The value's type is Fabric's to check, unless the adapter takes none.
+        return match declared {
+            Some(_) => Vec::new(),
+            None => vec![unsupported(INTERFACES.into())],
+        };
+    };
+    let mut checks = Vec::new();
+    for (name, settings) in requested {
+        let path = format!("{INTERFACES}.{name}");
+        let Some(schema) = declared.and_then(|declared| declared.get(name)) else {
+            checks.push(unsupported(path));
+            continue;
+        };
+        let fields = schema.get("properties").and_then(Value::as_object);
+        for field in settings
+            .as_object()
+            .into_iter()
+            .flat_map(|settings| settings.keys())
+        {
+            if !fields.is_some_and(|fields| fields.contains_key(field)) {
+                checks.push(unsupported(format!("{path}.{field}")));
+            }
+        }
+    }
+    checks.sort_by(|left, right| left.reason.cmp(&right.reason));
+    checks.dedup();
+    if checks.is_empty() {
+        checks.push(CapabilityCheck {
+            requirement: "harness_interfaces".into(),
+            status: Support::Supported,
+            reason: "the image's adapter declares each configured interface setting".into(),
+        });
+    }
+    checks
 }
 
 /// A field path or adapter name safe to show in a diagnostic, else `configuration`.

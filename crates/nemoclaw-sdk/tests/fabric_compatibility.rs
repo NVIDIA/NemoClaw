@@ -250,6 +250,179 @@ fn whether_a_harness_accepts_a_configuration_is_left_to_fabric() {
     );
 }
 
+/// The interface checks of a report: the rejected setting paths, in order.
+fn rejected_interfaces(
+    catalog: &FabricCatalog,
+    adapter_id: &str,
+    interfaces: serde_json::Value,
+) -> Vec<String> {
+    use nemoclaw_sdk::fabric_capabilities::{FabricRequirements, Support, assess_fabric};
+    let mut configuration = config();
+    configuration["harness"]["adapter_id"] = adapter_id.into();
+    configuration["harness"]["settings"] = json!({ "interfaces": interfaces });
+    let report = assess_fabric(
+        catalog,
+        &FabricRequirements {
+            configuration,
+            filesystem_read: None,
+        },
+    );
+    let rejected: Vec<String> = report
+        .checks
+        .iter()
+        .filter(|check| check.status == Support::Unsupported)
+        .map(|check| {
+            assert_eq!(check.requirement, "harness_interfaces", "{check:?}");
+            check
+                .reason
+                .split_once(':')
+                .map(|(path, _)| path.to_owned())
+                .unwrap_or_default()
+        })
+        .collect();
+    assert_eq!(
+        report.status == Support::Unsupported,
+        !rejected.is_empty(),
+        "{:?}",
+        report.checks
+    );
+    rejected
+}
+
+/// The fixture adapter with an interface declaration like a P0 adapter's:
+/// `dashboard`, taking `enabled` and `port`.
+fn catalog_with_interfaces() -> FabricCatalog {
+    let mut catalog = catalog();
+    catalog.adapters[0].descriptor["settings_schema"]["properties"]["interfaces"] = json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {"dashboard": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["port"],
+            "properties": {"enabled": {"type": "boolean"}, "port": {"type": "integer"}}
+        }}
+    });
+    catalog
+}
+
+/// Planning rejects an interface or interface field that the image's adapter
+/// doesn't declare, naming the setting, so the plan fails before apply.
+#[test]
+fn planning_rejects_interfaces_and_fields_the_adapter_does_not_declare() {
+    let catalog = catalog_with_interfaces();
+    let adapter = "org.fixture.new-adapter";
+    assert!(
+        rejected_interfaces(&catalog, adapter, json!({"dashboard": {"port": 9119}})).is_empty()
+    );
+    assert!(
+        rejected_interfaces(
+            &catalog,
+            adapter,
+            json!({"dashboard": {"enabled": false, "port": 9119}})
+        )
+        .is_empty()
+    );
+    assert_eq!(
+        rejected_interfaces(&catalog, adapter, json!({"terminal": {}})),
+        ["harness.settings.interfaces.terminal"]
+    );
+    assert_eq!(
+        rejected_interfaces(
+            &catalog,
+            adapter,
+            json!({"dashboard": {"port": 9119, "public_origins": ["https://a.example"]}, "api": {"port": 8642}})
+        ),
+        [
+            "harness.settings.interfaces.api",
+            "harness.settings.interfaces.dashboard.public_origins"
+        ]
+    );
+}
+
+/// An adapter whose descriptor declares no interfaces supports none.
+#[test]
+fn an_adapter_without_an_interface_declaration_supports_no_interfaces() {
+    let adapter = "org.fixture.new-adapter";
+    assert_eq!(
+        rejected_interfaces(&catalog(), adapter, json!({"dashboard": {"port": 9119}})),
+        ["harness.settings.interfaces.dashboard"]
+    );
+    assert_eq!(
+        rejected_interfaces(&catalog(), adapter, json!(true)),
+        ["harness.settings.interfaces"]
+    );
+}
+
+/// Values, required fields and combinations, such as a missing port or one out
+/// of range, are Fabric's to check when it plans the agent.
+#[test]
+fn interface_values_are_left_to_fabric() {
+    let catalog = catalog_with_interfaces();
+    let adapter = "org.fixture.new-adapter";
+    for interfaces in [
+        json!({"dashboard": {}}),
+        json!({"dashboard": {"port": 0}}),
+        json!({"dashboard": {"port": "9119", "enabled": "yes"}}),
+    ] {
+        assert!(rejected_interfaces(&catalog, adapter, interfaces).is_empty());
+    }
+}
+
+/// A name that isn't safe to print is reported without echoing it.
+#[test]
+fn an_unsupported_interface_name_is_never_echoed_unsafely() {
+    let rejected = rejected_interfaces(
+        &catalog_with_interfaces(),
+        "org.fixture.new-adapter",
+        json!({"\u{1b}[31mPRIVATE": {}}),
+    );
+    assert_eq!(rejected, ["harness.settings.interfaces"]);
+}
+
+/// The bundled OpenClaw and Hermes adapters declare their P0 interfaces.
+#[test]
+fn the_bundled_adapters_accept_their_p0_interfaces_only() {
+    let catalog = FabricCatalog::bundled();
+    let openclaw = "nvidia.fabric.openclaw";
+    let hermes = "nvidia.fabric.hermes";
+    assert!(
+        rejected_interfaces(
+            &catalog,
+            openclaw,
+            json!({"dashboard": {"enabled": true, "port": 18789, "public_origins": ["https://claw.example"]}})
+        )
+        .is_empty()
+    );
+    assert_eq!(
+        rejected_interfaces(&catalog, openclaw, json!({"api": {"port": 8642}})),
+        ["harness.settings.interfaces.api"]
+    );
+    assert!(
+        rejected_interfaces(
+            &catalog,
+            hermes,
+            json!({"api": {"port": 8642}, "dashboard": {"enabled": true, "port": 9119}})
+        )
+        .is_empty()
+    );
+    assert_eq!(
+        rejected_interfaces(
+            &catalog,
+            hermes,
+            json!({"dashboard": {"port": 9119, "public_origins": ["https://h.example"]}, "terminal": {}})
+        ),
+        [
+            "harness.settings.interfaces.dashboard.public_origins",
+            "harness.settings.interfaces.terminal"
+        ]
+    );
+    assert_eq!(
+        rejected_interfaces(&catalog, "nvidia.fabric.pi", json!({"terminal": {}})),
+        ["harness.settings.interfaces.terminal"]
+    );
+}
+
 #[test]
 fn generated_base_urls_go_only_to_adapters_that_accept_them() {
     // Fabric rejects a normalized field an adapter does not accept, so the SDK
