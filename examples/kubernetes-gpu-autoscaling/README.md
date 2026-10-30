@@ -155,6 +155,16 @@ Replace `metadata.uid` before apply. A placeholder digest is valid YAML and is n
 
 ### 6. Apply one pairing
 
+`nemoclaw apply` creates the OpenShell gateway and one Fabric sandbox per user. The plan prints `data.fabric_harness` and `data.fabric_harnesses`. It records `.local/gpu-autoscaling/terraform.tfstate`.
+
+The GPU HPA is a separate Helm release in `nemoclaw-gpu`. `install-hpa.sh` installs it. `set-hpa-metric.sh` changes its metric. `get-hpa.sh` prints it. Those commands leave the sandboxes unchanged.
+
+Run apply when the sandbox pods are missing. When they are already Running, skip apply and start the load test.
+
+```bash
+kubectl get pods -n nemoclaw-v1-gpu-autoscaling
+```
+
 | Step | File | Harness | Apply when |
 | --- | --- | --- | --- |
 | 6a OpenClaw + Ollama | [`openclaw-ollama.yaml`](openclaw-ollama.yaml) | `nvidia.fabric.openclaw` | The GPU chart serves Ollama. |
@@ -202,7 +212,7 @@ cd /home/maggiez/NemoClaw-v1/examples/kubernetes-gpu-autoscaling
 ./scripts/get-hpa.sh -n nemoclaw-gpu -w
 ```
 
-`INFLIGHT` is the concurrent chats per user. `MAX_TOKENS` is the maximum reply length. GPU utilization sets both flags on the client. Latency omits them. Hermes latency is `INFLIGHT=1` and `MAX_TOKENS=2048` in the code, and a leftover `MAX_TOKENS` from a GPU-utilization run does not apply. The HPA `maxReplicas` is the GPU ceiling. The client reads it and stops new chats there. Apply a file with at least `E2E_USERS` sandboxes first. Every sandbox pod must be Ready.
+`INFLIGHT` is the concurrent chats per user. `MAX_TOKENS` is the maximum reply length. GPU utilization sets both flags on the client. Latency omits them. Hermes latency is `INFLIGHT=1` and `MAX_TOKENS=2048` in the code, and a leftover `MAX_TOKENS` from a GPU-utilization run does not apply. The HPA `maxReplicas` is the GPU ceiling. The client reads it and stops new chats there. The sandbox pods from apply must be Ready before the client starts. One sandbox per user.
 
 Hermes GPU utilization:
 
