@@ -864,13 +864,20 @@ export function gatewayEnvSelectsStateConfig(envText: string, stateDir: string):
 
 /** Prove that a NemoClaw-owned Docker gateway config uses its state-scoped namespace. */
 export function hasStateScopedSandboxNamespace(stateDir: string): boolean {
+  return readStateScopedSandboxNamespace(stateDir) !== null;
+}
+
+/** Read the proven state-scoped sandbox namespace of a NemoClaw-owned Docker gateway config. */
+export function readStateScopedSandboxNamespace(stateDir: string): string | null {
   let identity: DockerDriverGatewayIdentity | null = null;
   try {
     const runtime = resolveGatewayRuntimeProjection({});
     identity = existingGatewayIdentityFromConfig(stateDir, runtime);
-    return runtime.gatewayConfig.sandboxNamespace === "scoped" && identity?.kind === "scoped";
+    return runtime.gatewayConfig.sandboxNamespace === "scoped" && identity?.kind === "scoped"
+      ? identity.sandboxNamespace
+      : null;
   } catch {
-    return false;
+    return null;
   } finally {
     if (identity?.kind === "legacy") closeLegacyJwtBundleProof(identity.jwtProof);
     if (identity?.configProof) closeRegularFileProof(identity.configProof);

@@ -397,6 +397,8 @@ export interface RuntimeProviderPrivilegedSandboxCommandInput {
   readonly expectedResourceHandle?: string;
   readonly timeoutMs: number;
   readonly maxOutputBytes?: number;
+  /** Proven scoped gateway namespace; limits name-based container discovery to it (#13895). */
+  readonly sandboxNamespace?: string;
 }
 
 export interface RuntimeProviderPrivilegedSandboxCommandResult {
@@ -439,6 +441,8 @@ export interface RuntimeProviderStoppedSandboxStateCleanupInput {
   readonly sandboxName: string;
   readonly registeredSandboxNames: readonly string[];
   readonly paths: readonly string[];
+  /** Proven scoped gateway namespace; limits name-based container discovery to it (#13895). */
+  readonly sandboxNamespace?: string;
 }
 
 export interface RuntimeProviderStoppedNativeHomeCleanupInput {
@@ -448,6 +452,8 @@ export interface RuntimeProviderStoppedNativeHomeCleanupInput {
   readonly expectedResourceHandle?: string;
   readonly root: string;
   readonly protectedPaths: readonly string[];
+  /** Proven scoped gateway namespace; limits name-based container discovery to it (#13895). */
+  readonly sandboxNamespace?: string;
 }
 
 export interface RuntimeProviderPrivilegedSandboxControl {
@@ -465,7 +471,7 @@ export interface RuntimeProviderPrivilegedSandboxControl {
   resolveTarget(
     input: Pick<
       RuntimeProviderPrivilegedSandboxCommandInput,
-      "registeredSandboxNames" | "sandbox" | "sandboxName"
+      "registeredSandboxNames" | "sandbox" | "sandboxName" | "sandboxNamespace"
     > & { readonly timeoutMs?: number },
   ): RuntimeProviderPrivilegedSandboxTarget;
   execute(

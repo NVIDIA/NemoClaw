@@ -295,6 +295,7 @@ export function inspectDockerSandboxNameLabeledContainers(
       managedBy: OPENSHELL_MANAGED_BY_LABEL,
       workspace: OPENSHELL_SANDBOX_WORKSPACE_LABEL,
       sandboxId: OPENSHELL_SANDBOX_ID_LABEL,
+      namespace: OPENSHELL_SANDBOX_NAMESPACE_LABEL,
     },
     inspect,
   );

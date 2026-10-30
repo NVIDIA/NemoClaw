@@ -1,6 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import os from "node:os";
+import path from "node:path";
+
+import { readStateScopedSandboxNamespace } from "../../onboard/docker-driver-gateway-config";
+import { resolveGatewayStateDirForPort } from "../../onboard/gateway/state-dir";
+import { findSandboxAcrossGatewayRoots } from "../../state/registry/cross-port";
 import {
   OPENSHELL_SANDBOX_ID_LABEL,
   OPENSHELL_SANDBOX_NAME_LABEL,
@@ -24,6 +30,7 @@ import {
 
 const IDENTITY_VALUE_MAX_LENGTH = 256;
 const IDENTITY_DIAGNOSTIC_MAX_LENGTH = 500;
+const SANDBOX_NAMESPACE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/u;
 
 /** One container carrying the destroy target's `sandbox-name` label. */
 export type SandboxNameLabeledContainer = {
@@ -71,12 +78,65 @@ export type DestroyContainerIdentityProof = {
   identities?: readonly SandboxNameLabeledContainer[];
   providerIdentity?: RuntimeProviderDestroyIdentityReceipt;
 };
-/** Read the host observation consumed by the pure identity classifier. */
+export type DestroyNamespaceScopeDeps = {
+  readGatewayNamespace?: () => string | null;
+};
+
+/**
+ * Read the proven scoped sandbox namespace of the gateway whose registry owns
+ * this sandbox. Returns null when no single registry owns it, or for legacy or
+ * unproven gateways, so callers keep name-only lookups and fail closed.
+ */
+export function readSandboxGatewaySandboxNamespace(sandboxName: string): string | null {
+  let hit: ReturnType<typeof findSandboxAcrossGatewayRoots>;
+  try {
+    hit = findSandboxAcrossGatewayRoots(sandboxName);
+  } catch {
+    return null;
+  }
+  if (!hit) return null;
+  // A sandbox created with a custom gateway state directory records it; the
+  // port-derived directory applies only when none is recorded.
+  const recordedStateDir = hit.entry.openshellGatewayStateDir;
+  if (typeof recordedStateDir === "string") {
+    return path.isAbsolute(recordedStateDir) && path.resolve(recordedStateDir) === recordedStateDir
+      ? readStateScopedSandboxNamespace(recordedStateDir)
+      : null;
+  }
+  const port = hit.registryGatewayPort ?? hit.entry.gatewayPort;
+  return typeof port === "number"
+    ? readStateScopedSandboxNamespace(resolveGatewayStateDirForPort({ home: os.homedir(), port }))
+    : null;
+}
+
+/**
+ * Read the host observation consumed by the pure identity classifier.
+ *
+ * Gateways on one Docker host may reuse a sandbox name in their own scoped
+ * namespaces (#13895). When the selected gateway proves its scoped namespace,
+ * drop only managed rows that prove a different namespace. Foreign rows, rows
+ * without a readable namespace, and legacy gateways stay visible so destroy
+ * still fails closed for them.
+ */
 export function observeDestroyContainerIdentity(
   sandboxName: string,
   inspect?: Parameters<typeof inspectDockerSandboxNameLabeledContainers>[1],
+  scopeDeps: DestroyNamespaceScopeDeps = {},
 ): DockerSandboxIdentityObservation {
-  return inspectDockerSandboxNameLabeledContainers(sandboxName, inspect);
+  const observation = inspectDockerSandboxNameLabeledContainers(sandboxName, inspect);
+  if (observation.status !== "observed" || observation.rows.length === 0) return observation;
+  const gatewayNamespace = (
+    scopeDeps.readGatewayNamespace ?? (() => readSandboxGatewaySandboxNamespace(sandboxName))
+  )();
+  if (gatewayNamespace === null) return observation;
+  const ownership = resolveOpenShellSandboxOwnershipLabel();
+  const rows = observation.rows.filter(
+    (row) =>
+      row.managedBy !== ownership.value ||
+      !SANDBOX_NAMESPACE_PATTERN.test(row.namespace ?? "") ||
+      row.namespace === gatewayNamespace,
+  );
+  return { ...observation, rows };
 }
 
 /**

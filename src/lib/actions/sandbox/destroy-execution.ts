@@ -58,6 +58,7 @@ import {
   classifyDestroyContainerIdentity,
   isSameDestroyContainerIdentityProof,
   observeDestroyContainerIdentity,
+  readSandboxGatewaySandboxNamespace,
   type DestroyContainerIdentityProof,
   type SandboxNameLabeledContainer,
 } from "./destroy-presence";
@@ -857,6 +858,8 @@ export async function executeSandboxDestroy({
           | undefined;
         if (runtimeProvider?.lifecycle.supported === true) {
           const control = runtimeProvider.lifecycle.privilegedSandboxControl;
+          const sandboxNamespace = readSandboxGatewaySandboxNamespace(sandboxName);
+          const namespaceScope = sandboxNamespace === null ? {} : { sandboxNamespace };
           runPrivileged = (command) =>
             control.execute({
               sandbox,
@@ -865,6 +868,7 @@ export async function executeSandboxDestroy({
               command,
               sanitizeEnvironment: true,
               timeoutMs: SANDBOX_DESTROY_TIMEOUT_MS,
+              ...namespaceScope,
               maxOutputBytes: 1024 * 1024,
               ...(expectedRuntimeProviderIdentity?.resourceHandle
                 ? { expectedResourceHandle: expectedRuntimeProviderIdentity.resourceHandle }
@@ -881,6 +885,7 @@ export async function executeSandboxDestroy({
                 command,
                 sanitizeEnvironment: true,
                 timeoutMs: SANDBOX_DESTROY_TIMEOUT_MS,
+                ...namespaceScope,
                 maxOutputBytes: 1024 * 1024,
                 ...(expectedRuntimeProviderIdentity?.resourceHandle
                   ? { expectedResourceHandle: expectedRuntimeProviderIdentity.resourceHandle }
@@ -898,6 +903,7 @@ export async function executeSandboxDestroy({
                   : {}),
                 root,
                 protectedPaths,
+                ...namespaceScope,
               });
           }
         }
@@ -1108,6 +1114,7 @@ export async function executeSandboxDestroy({
             sandboxName,
             expectedContainerIdentities.map(({ id }) => id),
             console.log,
+            { inspectContainers: (name) => observeDestroyContainerIdentity(name) },
           );
         }
       } catch (error) {

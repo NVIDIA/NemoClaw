@@ -37,16 +37,26 @@ import {
 const OPENSHELL_MANAGED_BY_LABEL = "openshell.ai/managed-by";
 const OPENSHELL_MANAGED_BY_VALUE = "openshell";
 const OPENSHELL_SANDBOX_NAME_LABEL = "openshell.ai/sandbox-name";
+const OPENSHELL_SANDBOX_NAMESPACE_LABEL = "openshell.ai/sandbox-namespace";
 const OPENSHELL_ISOLATION_ROLE_LABEL = "openshell.ai/isolation-role";
 const SANDBOX_CONTAINER_FORMAT = `{{.ID}}\t{{.Names}}\t{{.Label "${OPENSHELL_ISOLATION_ROLE_LABEL}"}}`;
 const DIRECT_SANDBOX_DISCOVERY_TIMEOUT_MS = 5000;
 
 type SandboxEntry = import("../../state/registry").SandboxEntry;
 
+// Gateways on one Docker host may reuse a sandbox name in their own scoped
+// namespaces (#13895). Callers pass a namespace only after proving it.
+function sandboxNamespaceFilter(sandboxNamespace: string | undefined): string[] {
+  return sandboxNamespace === undefined
+    ? []
+    : ["--filter", `label=${OPENSHELL_SANDBOX_NAMESPACE_LABEL}=${sandboxNamespace}`];
+}
+
 function findDirectSandboxContainer(
   sandboxName: string,
   registeredSandboxNames: readonly string[],
   timeoutMs = DIRECT_SANDBOX_DISCOVERY_TIMEOUT_MS,
+  sandboxNamespace?: string,
 ): string | null {
   let output: string;
   try {
@@ -59,6 +69,7 @@ function findDirectSandboxContainer(
         `label=${OPENSHELL_MANAGED_BY_LABEL}=${OPENSHELL_MANAGED_BY_VALUE}`,
         "--filter",
         `label=${OPENSHELL_SANDBOX_NAME_LABEL}=${sandboxName}`,
+        ...sandboxNamespaceFilter(sandboxNamespace),
         "--format",
         SANDBOX_CONTAINER_FORMAT,
       ],
@@ -156,7 +167,7 @@ function portableTarget(sandboxName: string, sandbox: SandboxEntry) {
 function resolveDockerTarget(
   input: Pick<
     RuntimeProviderPrivilegedSandboxCommandInput,
-    "registeredSandboxNames" | "sandbox" | "sandboxName"
+    "registeredSandboxNames" | "sandbox" | "sandboxName" | "sandboxNamespace"
   > & { readonly timeoutMs?: number },
 ): RuntimeProviderPrivilegedSandboxTarget {
   const portable = portableTarget(input.sandboxName, input.sandbox);
@@ -168,6 +179,7 @@ function resolveDockerTarget(
     input.sandboxName,
     input.registeredSandboxNames,
     input.timeoutMs,
+    input.sandboxNamespace,
   );
   if (!containerId) {
     throw new DirectSandboxContainerNotFoundError(
@@ -255,6 +267,7 @@ function observeStoppedDockerTarget(
         `label=${OPENSHELL_MANAGED_BY_LABEL}=${OPENSHELL_MANAGED_BY_VALUE}`,
         "--filter",
         `label=${OPENSHELL_SANDBOX_NAME_LABEL}=${input.sandboxName}`,
+        ...sandboxNamespaceFilter(input.sandboxNamespace),
         "--format",
         SANDBOX_CONTAINER_FORMAT,
       ],

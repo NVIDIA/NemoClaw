@@ -15,6 +15,7 @@ import type {
 import type { SandboxEntry } from "../../state/registry/types";
 import { DirectSandboxContainerNotFoundError } from "../runtime-provider/privileged-sandbox-control-errors";
 import { waitUntil } from "../readiness-wait";
+import { readStateScopedSandboxNamespace } from "../docker-driver-gateway-config";
 import {
   MANAGED_STARTUP_RUNTIME_EXECUTABLE,
   MANAGED_STARTUP_OWNER_RESULT_MAX_BYTES,
@@ -109,6 +110,7 @@ function resolveCreatedContainerTarget(
   input: {
     readonly sandbox: SandboxEntry;
     readonly sandboxName: string;
+    readonly sandboxNamespace?: string;
   },
   timing: ProviderManagedStartupRootApplyTiming,
 ) {
@@ -127,6 +129,7 @@ function resolveCreatedContainerTarget(
           sandbox: input.sandbox,
           sandboxName: input.sandboxName,
           timeoutMs: Math.max(1, Math.floor(deadlineMs - now())),
+          ...(input.sandboxNamespace ? { sandboxNamespace: input.sandboxNamespace } : {}),
         });
         return true;
       } catch (error) {
@@ -160,6 +163,7 @@ function inspectExactCreatedRuntime(
     readonly sandboxName: string;
     readonly sandboxId: string;
     readonly expectedContainerId?: string;
+    readonly sandboxNamespace?: string;
   },
   timing: ProviderManagedStartupRootApplyTiming = {},
 ): ProviderManagedStartupRuntime {
@@ -170,7 +174,15 @@ function inspectExactCreatedRuntime(
   };
   const target = input.expectedContainerId
     ? { resourceHandle: input.expectedContainerId }
-    : resolveCreatedContainerTarget(runtime, { sandbox, sandboxName: input.sandboxName }, timing);
+    : resolveCreatedContainerTarget(
+        runtime,
+        {
+          sandbox,
+          sandboxName: input.sandboxName,
+          ...(input.sandboxNamespace ? { sandboxNamespace: input.sandboxNamespace } : {}),
+        },
+        timing,
+      );
   const inspected = runtime.capture(
     ["inspect", "--type", "container", target.resourceHandle],
     30_000,
@@ -574,6 +586,11 @@ export function applyProviderManagedStartupRootRequest(
     readonly bootstrapIdentity: string;
     readonly request: ManagedStartupRootApplyRequest;
     readonly expectedContainerId?: string;
+    /**
+     * State directory of the selected gateway. Its proven scoped namespace
+     * narrows name-only container discovery on a shared Docker host (#13895).
+     */
+    readonly gatewayStateDir?: string;
     readonly environment?: NodeJS.ProcessEnv;
   },
   timing: ProviderManagedStartupRootApplyTiming = {},
@@ -581,12 +598,16 @@ export function applyProviderManagedStartupRootRequest(
   if (!/^[a-f0-9]{64}$/u.test(input.bootstrapIdentity)) {
     throw new Error("Managed startup requires one exact bootstrap identity.");
   }
+  const sandboxNamespace = input.gatewayStateDir
+    ? readStateScopedSandboxNamespace(input.gatewayStateDir)
+    : null;
   const pinned = inspectExactCreatedRuntime(
     {
       bundle: input.runtimeProvider,
       sandboxName: input.sandboxName,
       sandboxId: input.sandboxId,
       ...(input.expectedContainerId ? { expectedContainerId: input.expectedContainerId } : {}),
+      ...(sandboxNamespace ? { sandboxNamespace } : {}),
     },
     timing,
   );

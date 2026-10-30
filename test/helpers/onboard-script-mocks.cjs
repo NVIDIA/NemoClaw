@@ -1305,7 +1305,7 @@ function mockDockerSandboxLifecycleReleaseFromRunner() {
         state.finalCommitReleased || state.legacyRecoverySandboxId
           ? ONBOARD_SANDBOX_NEW_CONTAINER_ID
           : ONBOARD_SANDBOX_OLD_CONTAINER_ID;
-      return `${containerId}\topenshell\tdefault\t${state.sandboxId || ONBOARD_READY_SANDBOX_ID}\n`;
+      return `${containerId}\topenshell\tdefault\t${state.sandboxId || ONBOARD_READY_SANDBOX_ID}\t\n`;
     }
     if (
       (state.finalCommitReleased || state.legacyRecoverySandboxId) &&
