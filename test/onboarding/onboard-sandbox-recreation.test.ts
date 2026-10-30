@@ -310,12 +310,16 @@ const { createSandbox } = require(${onboardPath});
       marked: false,
       primary: "openai/gpt-4o",
     },
+    { scenario: "Deep Agents provider change", agent: "langchain-deepagents-code", drift: true },
+    { scenario: "unchanged Deep Agents selection", agent: "langchain-deepagents-code" },
   ])(
     "$scenario restores native state with its recorded selection authority (#12667)",
     {
       timeout: 60_000,
     },
-    async ({ force, marked, primary }, context) => {
+    async (row, context) => {
+      const { force = false, marked = false, primary = "openai/gpt-4o" } = row;
+      const { agent = "openclaw", drift = false } = row;
       const repoRoot = path.join(import.meta.dirname, "../..");
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-recreate-backup-"));
       const fakeBin = path.join(tmpDir, "bin");
@@ -345,6 +349,10 @@ const sandboxState = require(${sandboxStatePath});
 const processRecovery = require(${processRecoveryPath});
 const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
+const sessions = require(${JSON.stringify(path.join(repoRoot, "src/lib/state/onboard-session.ts"))});
+// The live dcode probe needs a running sandbox: report the drift for the source only (#13897).
+let sourceDeleted = false;
+require(${JSON.stringify(path.join(repoRoot, "src/lib/onboard/dcode-selection-drift.ts"))}).createDcodeSelectionDriftReader = () => async () => ({ changed: ${JSON.stringify(drift)} && !sourceDeleted, providerChanged: ${JSON.stringify(drift)} && !sourceDeleted, modelChanged: false, unknown: false });
 
 const events = [];
 let nativeConfig = { agents: { defaults: { model: { primary: "openai/gpt-4o" } } }, models: { providers: {} }, custom: { retained: true } };
@@ -371,7 +379,11 @@ runner.run = (command) => {
   const cmd = _n(command);
   const profileResult = fixtureMocks.mockProviderPreparationRun(command, "nemoclaw", "nemoclaw-mcp-v1", false);
   if (profileResult !== null) return profileResult;
-  if (cmd.includes("sandbox delete") && createdSandbox.state.lifecycleState === "created") createdSandbox.delete();
+  if (cmd.includes("sandbox delete") && createdSandbox.state.lifecycleState === "created") {
+    sourceDeleted = true;
+    events.push({ kind: "delete", reconcile: sessions.loadSession()?.checkpoint?.sandboxRecreate?.reconcileOpenClawInference ?? null });
+    createdSandbox.delete();
+  }
   events.push({ kind: "run", cmd });
   return createdSandbox.run(command) ?? { status: 0 };
 };
@@ -393,6 +405,7 @@ runner.run = (command) => {
 	const sourceSandbox = fixtureMocks.sandboxLifecycleFixture({
 	  name: "my-assistant",
 	  gpuEnabled: false,
+	  ...(${JSON.stringify(agent)} === "openclaw" ? {} : { agent: ${JSON.stringify(agent)} }),
 	}, { sandboxId: createdSandbox.state.sandboxId });
 	registry.getSandbox = () => sourceSandbox;
 	const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
@@ -454,12 +467,13 @@ const { createSandbox } = require(${onboardPath});
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   process.env.NEMOCLAW_RECREATE_SANDBOX = ${JSON.stringify(force ? "1" : "0")};
   const createArgs = fixtureMocks.sandboxCreateArgsWithVerifiedReservation(
-    [null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null, null, null, null, null, null, []],
+    [null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null, null, ${JSON.stringify(agent)} === "openclaw" ? null : require(${JSON.stringify(path.join(repoRoot, "src/lib/agent/defs.ts"))}).loadAgent(${JSON.stringify(agent)}), null, null, null, []],
     createFixture,
   );
+  // Deep Agents rows run as the fresh, non-resumed invocation that opened the journal.
+  if (${JSON.stringify(agent)} !== "openclaw") createArgs[15] = { ...createArgs[15], recreateTransaction: { ...createArgs[15].recreateTransaction, freshSelection: true } };
   // Seed the durable checkpoint left by the interrupted invocation. The resumed
   // request carries only its existing transaction identity, never fresh authority.
-  const sessions = require(${JSON.stringify(path.join(repoRoot, "src/lib/state/onboard-session.ts"))});
   const interrupted = sessions.loadSession();
   if (${JSON.stringify(marked)}) interrupted.checkpoint.sandboxRecreate.reconcileOpenClawInference = true;
   sessions.saveSession(interrupted);
@@ -501,8 +515,9 @@ const { createSandbox } = require(${onboardPath});
         cmd?: string;
         name?: string;
         backupPath?: string;
-        options?: { targetAgentType?: string };
+        options?: { targetAgentType?: string; keepReplacementDeepAgentsConfig?: boolean };
         primary?: string;
+        reconcile?: true | null;
       }>;
       const backupIndex = events.findIndex((e) => e.kind === "backup");
       const deleteIndex = events.findIndex(
@@ -521,9 +536,16 @@ const { createSandbox } = require(${onboardPath});
         "/tmp/fake-backup-path",
         "restore must use backup path",
       );
-      assert.equal(restoreEvent?.options?.targetAgentType, "openclaw");
+      assert.equal(restoreEvent?.options?.targetAgentType, agent);
+      // Deep Agents journals a provider change before deletion and keeps its new config.toml.
+      assert.equal(
+        events.find((event) => event.kind === "delete")?.reconcile,
+        drift || marked || null,
+      );
+      assert.equal(restoreEvent?.options?.keepReplacementDeepAgentsConfig, drift || undefined);
       assert.equal(payload.nativeConfig.agents.defaults.model.primary, primary);
-      assert.equal(events.find((event) => event.kind === "restart")?.primary, primary);
+      const restart = events.find((event) => event.kind === "restart")?.primary;
+      assert.equal(restart, agent === "openclaw" ? primary : undefined);
       assert.deepEqual(payload.nativeConfig.custom, { retained: true });
       assert.equal(payload.registered.model, "gpt-5.4");
       assert.equal(
@@ -1230,7 +1252,7 @@ const { createSandbox } = require(${onboardPath});
 	    createFixture,
 	  );
   if (${preopened}) {
-    createArgs[15].recreateTransaction = { ...createArgs[15].recreateTransaction, ...(${fresh} ? { freshNonForced: true } : {}) };
+    createArgs[15].recreateTransaction = { ...createArgs[15].recreateTransaction, ...(${fresh} ? { freshSelection: true } : {}) };
   }
   if (${journalOnly} && !${preopened}) {
     // Exercise a new lower-layer journal, with recreation planned but not necessarily forced.

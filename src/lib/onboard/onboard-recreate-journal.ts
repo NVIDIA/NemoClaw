@@ -180,8 +180,13 @@ export function openOnboardRecreateJournal(
   };
 }
 
-/** Only a known, explicitly changed managed OpenClaw selection overrides restored native routing. */
-export function shouldReconcileRestoredOpenClawSelection(
+/**
+ * Only a known, explicitly changed managed selection overrides restored native
+ * routing. OpenClaw keeps the fresh, non-forced boundary from #12769. Deep
+ * Agents also reconciles a forced recreation, because its documented provider
+ * switch is `onboard --fresh --recreate-sandbox` (#13897).
+ */
+export function shouldReconcileRestoredSelection(
   agentName: string,
   customImage: boolean,
   forcedRecreation: boolean,
@@ -191,9 +196,9 @@ export function shouldReconcileRestoredOpenClawSelection(
   >,
 ): boolean {
   return (
-    agentName === "openclaw" &&
+    ((agentName === "openclaw" && !forcedRecreation) ||
+      agentName === "langchain-deepagents-code") &&
     !customImage &&
-    !forcedRecreation &&
     !drift.unknown &&
     (drift.providerChanged || drift.modelChanged)
   );

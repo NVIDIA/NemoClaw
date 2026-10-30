@@ -57,7 +57,7 @@ import type {
 import { removeManagedHermesStateVolume } from "../managed-workload/hermes-state-volume";
 import {
   createOnboardRecreateGatewayAuthorityRevalidator,
-  shouldReconcileRestoredOpenClawSelection,
+  shouldReconcileRestoredSelection,
   type OwnedSandboxRecreateRuntime,
 } from "../onboard-recreate-journal";
 import { managedImageRuntimeIdentity } from "../managed-image/agents";
@@ -2688,9 +2688,9 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       // mutating a live sandbox.
       preparedSandboxWorkload = await ensurePreparedSandboxWorkload();
       await hermesApiPortReservationScope.selectAndReserve(hermesApiPortReservationInput);
-      reconcileOpenClawInference = shouldReconcileRestoredOpenClawSelection(
+      reconcileOpenClawInference = shouldReconcileRestoredSelection(
         getRequestedSandboxAgentName(agent),
-        customOpenClawImage,
+        Boolean(fromDockerfile || fromImage),
         isRecreateSandbox(false),
         selectionDrift,
       );

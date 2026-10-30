@@ -930,6 +930,12 @@ export async function finalizeCreatedSandbox(
     }
     const restoreOptions = {
       targetAgentType: options.targetAgentType,
+      // A recorded provider or model change owns the generated Deep Agents config.
+      ...(options.reconcileOpenClawInference &&
+      !options.customImage &&
+      options.targetAgentType === "langchain-deepagents-code"
+        ? { keepReplacementDeepAgentsConfig: true as const }
+        : {}),
     } satisfies RecreatedSandboxRestoreOptions;
     const resolveTarget = async () => {
       preparedRegistration = await deps.revalidatePreparedRegistration!(preparedRegistration!);

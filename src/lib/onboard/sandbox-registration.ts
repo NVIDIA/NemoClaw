@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { requireHostedProviderAttachment } from "../inference/native-provider/hosted-attachment";
+import {
+  hostedNativeProviderForAttachment,
+  requireHostedProviderAttachment,
+} from "../inference/native-provider/hosted-attachment";
 
 import { isDeepStrictEqual } from "node:util";
 import type { AgentDefinition } from "../agent/defs";
@@ -18,6 +21,7 @@ import {
   usesNativeLocalInferenceForAgent,
 } from "../inference/selection";
 import {
+  NVIDIA_HOSTED_LOGICAL_PROVIDER,
   normalizeNativeNvidiaProviderAttachment,
   nativeInferenceProviderForSandbox,
 } from "../inference/native-nvidia";
@@ -398,6 +402,17 @@ export function loadOnboardCommandResumeSession(): {
     : null;
 }
 
+// Drop only an attachment that provably belongs to another provider; any
+// other value still reaches registry validation and fails closed.
+function pendingHostedAttachmentFor(
+  pending: SandboxEntry | null | undefined,
+  provider: string | null | undefined,
+): SandboxEntry["nativeHostedProviderAttachment"] {
+  const attachment = pending?.nativeHostedProviderAttachment;
+  const owner = hostedNativeProviderForAttachment(attachment)?.logicalProvider;
+  return owner !== undefined && owner !== provider?.trim() ? undefined : attachment;
+}
+
 /** Build and validate the exact registry row without publishing it. */
 export function prepareCreatedSandboxRegistration(
   input: CreatedSandboxRegistrationInput,
@@ -425,12 +440,19 @@ export function prepareCreatedSandboxRegistration(
       endpointUrl: effectiveSelection.endpointUrl,
       gatewayName: input.gatewayName,
     });
+  // A pending row can still describe the replaced source, so its native
+  // NVIDIA attachment applies only to an NVIDIA replacement (#13897).
   const pendingNativeNvidiaProviderAttachment =
     input.nativeNvidiaProviderAttachment !== undefined
       ? input.nativeNvidiaProviderAttachment
-      : pending?.nativeNvidiaProviderAttachment;
+      : effectiveSelection.provider === NVIDIA_HOSTED_LOGICAL_PROVIDER
+        ? pending?.nativeNvidiaProviderAttachment
+        : undefined;
+  // The same applies to a pending hosted attachment: keep it only when it is
+  // valid for the replacement's provider.
   const pendingNativeHostedProviderAttachment =
-    input.nativeHostedProviderAttachment ?? pending?.nativeHostedProviderAttachment;
+    input.nativeHostedProviderAttachment ??
+    pendingHostedAttachmentFor(pending, effectiveSelection.provider);
   const entry = buildCreatedSandboxRegistryEntry({
     ...input,
     nativeHostedProviderAttachment: pendingNativeHostedProviderAttachment,
@@ -590,9 +612,12 @@ export function nativeInferenceCreateIntentFields(
     provider === "vllm-local" && (localNimSelected || entry?.nimContainer)
       ? undefined
       : normalizeNativeLocalProviderAttachment(entry?.nativeLocalProviderAttachment);
-  const nativeNvidiaProviderAttachment = normalizeNativeNvidiaProviderAttachment(
-    entry?.nativeNvidiaProviderAttachment,
-  );
+  // A provider switch keeps the source registry row until replacement, so its
+  // native NVIDIA attachment must not describe a different selection (#13897).
+  const nativeNvidiaProviderAttachment =
+    provider === NVIDIA_HOSTED_LOGICAL_PROVIDER
+      ? normalizeNativeNvidiaProviderAttachment(entry?.nativeNvidiaProviderAttachment)
+      : undefined;
   const hostedAttachment = requireHostedProviderAttachment(
     entry?.nativeHostedProviderAttachment,
     provider,

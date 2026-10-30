@@ -186,9 +186,14 @@ describe("onboard shared gateway route containment", () => {
     },
   );
 
-  it.each(["provider", "verification", "reservation"] as const)(
-    "preserves the published route when deferred %s fails",
-    async (failure) => {
+  it.each([
+    { failure: "provider", staleAttachment: false },
+    { failure: "verification", staleAttachment: false },
+    { failure: "reservation", staleAttachment: false },
+    { failure: "verification", staleAttachment: true },
+  ] as const)(
+    "preserves the published route when deferred $failure fails (stale native attachment: $staleAttachment)",
+    async ({ failure, staleAttachment }) => {
       const sourceProvider = failure === "provider" ? "old-provider" : "compatible-endpoint";
       let liveRoute = { provider: sourceProvider, model: "old-model" };
       const providerProfile = { endpointUrl: "https://api.example/v1", credential: "old-secret" };
@@ -225,6 +230,10 @@ describe("onboard shared gateway route containment", () => {
             endpointUrl: "https://api.example/v1",
             credentialEnv: "COMPATIBLE_API_KEY",
             pendingRouteReservation: false,
+            // An earlier switch may have left the source's NVIDIA attachment behind (#13897).
+            ...(staleAttachment
+              ? { nativeNvidiaProviderAttachment: { providerName: "nemoclaw-nvidia-prod-v1" } }
+              : {}),
           }) as unknown as SandboxEntry,
         localInference: {
           loadPendingOllamaModelCleanup: vi.fn(() => []),
@@ -316,6 +325,158 @@ describe("onboard shared gateway route containment", () => {
         failure === "provider" ? 0 : 2,
       );
       expect(reserve).toHaveBeenCalledTimes(failure === "reservation" ? 1 : 0);
+    },
+  );
+
+  it.each([
+    {
+      scenario: "native source applies",
+      nativeSource: true,
+      staleAttachment: false,
+      failVerification: false,
+      expectedError: null,
+    },
+    {
+      scenario: "native source fails verification",
+      nativeSource: true,
+      staleAttachment: false,
+      failVerification: true,
+      expectedError: "The replacement inference route was not verified.",
+    },
+    {
+      scenario: "routed source",
+      nativeSource: false,
+      staleAttachment: false,
+      failVerification: false,
+      expectedError:
+        "Cannot capture the published inference route on gateway 'nemoclaw' before replacement.",
+    },
+    {
+      scenario: "routed source keeps a stale native attachment",
+      nativeSource: false,
+      staleAttachment: true,
+      failVerification: false,
+      expectedError:
+        "Cannot capture the published inference route on gateway 'nemoclaw' before replacement.",
+    },
+  ])(
+    "handles an unconfigured gateway route when the $scenario (#13897)",
+    async ({ nativeSource, staleAttachment, failVerification, expectedError }) => {
+      let liveRoute: { provider: string; model: string } | null = null;
+      const inferenceRouteMutator = {
+        setInferenceRoute: vi.fn(
+          async (request: { route: { provider: string; model: string } }) => {
+            liveRoute = failVerification ? { provider: "other", model: "other" } : request.route;
+            return { ok: true as const };
+          },
+        ),
+      };
+      const inferenceRouteObserver = {
+        observeInferenceRoute: vi.fn(async () => ({
+          ok: true as const,
+          value: liveRoute
+            ? { state: "configured" as const, route: liveRoute }
+            : { state: "unconfigured" as const },
+        })),
+      };
+      const upsertProvider = vi.fn(async () => ({ ok: true }));
+      const setupInference = createSetupInference({
+        checkGatewayRouteCompatibility: vi.fn(() => ({ ok: true as const })),
+        withSandboxMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
+          await operation(),
+        withGatewayRouteMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
+          await operation(),
+        step: vi.fn(),
+        getGatewayName: () => "nemoclaw",
+        getSandbox: () =>
+          ({
+            provider: nativeSource ? "nvidia-prod" : "compatible-endpoint",
+            model: "old-model",
+            endpointUrl: nativeSource ? "https://old.example/v1" : "https://api.example/v1",
+            credentialEnv: nativeSource ? "NVIDIA_INFERENCE_API_KEY" : "COMPATIBLE_API_KEY",
+            pendingRouteReservation: false,
+            ...(nativeSource || staleAttachment
+              ? { nativeNvidiaProviderAttachment: { providerName: "nemoclaw-nvidia-prod-v1" } }
+              : {}),
+          }) as unknown as SandboxEntry,
+        localInference: {
+          loadPendingOllamaModelCleanup: vi.fn(() => []),
+          loadPersistedOllamaHost: vi.fn(() => null),
+        },
+        runOpenshell: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
+        inferenceRouteMutator,
+        inferenceRouteObserver,
+        updateSandbox: vi.fn(() => true),
+        upsertProvider,
+        verifyInferenceRoute: vi.fn(),
+        verifyOnboardInferenceSmoke: vi.fn(),
+        isNonInteractive: () => true,
+        hermesProviderAuth: { HERMES_PROVIDER_NAME: "hermes-provider" },
+        REMOTE_PROVIDER_CONFIG: {
+          custom: {
+            label: "Compatible endpoint",
+            providerName: "compatible-endpoint",
+            providerType: "openai",
+            credentialEnv: "COMPATIBLE_API_KEY",
+            endpointUrl: "https://api.example/v1",
+            helpUrl: null,
+            modelMode: "input",
+            defaultModel: "new-model",
+          },
+        },
+        hydrateCredentialEnv: vi.fn(() => "secret"),
+        promptValidationRecovery: vi.fn(),
+        classifyApplyFailure: vi.fn(),
+        localInferenceTimeoutSecs: 60,
+        bedrockRuntimeOnboard: {
+          setupBedrockRuntimeInference: vi.fn(async () => ({ handled: false as const })),
+        },
+        openrouterRuntimeOnboard: {
+          setupOpenRouterRuntimeInference: vi.fn(async () => ({ handled: false as const })),
+        },
+        redact: (value: string) => value,
+        compactText: (value: string) => value,
+        log: vi.fn(),
+        error: vi.fn(),
+        exitProcess: vi.fn((code: number): never => {
+          throw new Error(`exit ${code}`);
+        }),
+      } as unknown as SetupInferenceDeps);
+
+      const result = await setupInference(
+        "sandbox-a",
+        "new-model",
+        "compatible-endpoint",
+        "https://api.example/v1",
+        "COMPATIBLE_API_KEY",
+        null,
+        [],
+        { deferPublishedRouteReservation: true, onboardEndpointUrl: "https://api.example/v1" },
+      );
+      expect(result).toMatchObject({ ok: true });
+      expect(inferenceRouteMutator.setInferenceRoute).not.toHaveBeenCalled();
+      expect(upsertProvider).not.toHaveBeenCalled();
+      const deferredRoute = (
+        result as { deferredInferenceRoute?: (reserve: () => void) => Promise<void> }
+      ).deferredInferenceRoute;
+      const reserve = vi.fn();
+      await expect(
+        deferredRoute!(reserve).then(
+          () => null,
+          (error: Error) => error.message,
+        ),
+      ).resolves.toBe(expectedError);
+      expect(upsertProvider).toHaveBeenCalledTimes(nativeSource ? 1 : 0);
+      // An unconfigured source route has nothing to restore after a failure.
+      expect(inferenceRouteMutator.setInferenceRoute).toHaveBeenCalledTimes(nativeSource ? 1 : 0);
+      expect(reserve).toHaveBeenCalledTimes(nativeSource && !failVerification ? 1 : 0);
+      expect(liveRoute).toEqual(
+        !nativeSource
+          ? null
+          : failVerification
+            ? { provider: "other", model: "other" }
+            : { provider: "compatible-endpoint", model: "new-model" },
+      );
     },
   );
 

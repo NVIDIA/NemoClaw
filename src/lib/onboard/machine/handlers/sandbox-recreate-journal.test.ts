@@ -738,7 +738,7 @@ it.each([
   { live: false, resume: false, force: false, fresh: true },
   { live: true, resume: false, force: false, fresh: true },
   { live: true, resume: true, force: false, fresh: false },
-  { live: true, resume: false, force: true, fresh: false },
+  { live: true, resume: false, force: true, fresh: true },
 ])(
   "binds fresh journal authority to the current run (live=$live, resume=$resume, force=$force)",
   async ({ live, resume, force, fresh }) => {
@@ -783,8 +783,8 @@ it.each([
         },
       });
       expect(
-        (args.at(-2) as { recreateTransaction: { freshNonForced?: true } }).recreateTransaction
-          .freshNonForced === true,
+        (args.at(-2) as { recreateTransaction: { freshSelection?: true } }).recreateTransaction
+          .freshSelection === true,
       ).toBe(fresh);
       advanceSandboxRecreateTransaction(session, transaction!.id, "creating");
       observation = {
