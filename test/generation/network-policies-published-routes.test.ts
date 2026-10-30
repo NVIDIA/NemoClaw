@@ -308,3 +308,38 @@ describe("shared Network Policies published routes", () => {
     expect(readDoc(INTEGRATION_POLICY_SOURCE)).toContain("## Gmail With an App Password");
   });
 });
+
+describe("OpenShell policy documentation links (#13842)", () => {
+  it.each(["openclaw", "hermes", "deepagents"])(
+    "renders each Related Topics link as a separate item for %s (#13842)",
+    (variant) => {
+      const rendered = renderAgentVariantPage(readDoc(CUSTOMIZE_POLICY_SOURCE), variant);
+      const related = rendered.split("## Related Topics")[1] ?? "";
+      expect(related).not.toBe("");
+      const links = [...related.matchAll(/\]\(([^)]+)\)/g)].map((match) => match[1]);
+      const items = related.split("\n").filter((line) => /^\s*- \[/.test(line));
+
+      expect(items).toHaveLength(links.length);
+      expect(links).toContain(
+        "https://docs.nvidia.com/openshell/latest/how-it-works/policies/schema",
+      );
+      expect(links).toContain(
+        "https://docs.nvidia.com/openshell/latest/how-it-works/policies/manage-policies",
+      );
+      expect(related).not.toContain("/openshell/latest/reference/policy-schema.html");
+      expect(related).not.toContain("/openshell/latest/sandboxes/policies.html");
+    },
+  );
+
+  it.each([RAW_TLS_SOURCE, BASELINE_POLICY_SOURCE])(
+    "keeps the OpenShell schema link on its published route in %s (#13842)",
+    (source) => {
+      const page = readDoc(source);
+      expect(page).toContain(
+        "https://docs.nvidia.com/openshell/latest/how-it-works/policies/schema",
+      );
+      expect(page).not.toContain("/openshell/latest/reference/policy-schema.html");
+      expect(page).not.toContain("/openshell/how-it-works/policies/schema");
+    },
+  );
+});
