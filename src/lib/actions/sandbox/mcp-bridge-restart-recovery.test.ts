@@ -1,10 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { setProviderCommandRuntimeHooksForTest } from "../../adapters/openshell/provider-command";
 
 const mocks = vi.hoisted(() => ({
+  applyGeneratedPolicy: vi.fn(),
   assertMutationCapabilities: vi.fn(),
+  attachProvider: vi.fn(),
   register: vi.fn(),
   inspectAdapter: vi.fn(),
   reloadHermes: vi.fn(),
@@ -34,14 +37,15 @@ vi.mock("./mcp-bridge-adapters", () => ({
   reloadOpenClawGatewayAfterMcpMutation: mocks.reload,
 }));
 vi.mock("./mcp-bridge-policy", () => ({
-  applyGeneratedPolicy: vi.fn(),
+  applyGeneratedPolicy: mocks.applyGeneratedPolicy,
   assertGeneratedPolicyMutationSafe: vi.fn(),
 }));
-vi.mock("./mcp-bridge-provider", () => ({
+vi.mock("./mcp-bridge-provider", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./mcp-bridge-provider")>()),
   assertMcpProviderRecoverable: vi.fn(() => ({ exists: true })),
   assertNoAttachedProviderCredentialCollisions: vi.fn(),
   assertNoProviderCredentialCollisions: vi.fn(),
-  attachProvider: vi.fn(),
+  attachProvider: mocks.attachProvider,
   detachMissingProviderReference: vi.fn(),
   ensureMcpBridgeProviderProfile: vi.fn(),
   getMcpProviderInspectionRuntimeSelection: vi.fn(() => ({
@@ -80,6 +84,14 @@ vi.mock("./mcp-bridge-validation", () => ({
   validateSandboxName: vi.fn(),
 }));
 
+import {
+  assertNoAttachedProviderCredentialCollisions,
+  assertNoProviderCredentialCollisions,
+} from "./mcp-bridge-provider";
+import {
+  assertNoAttachedProviderCredentialCollisions as realAssertNoAttachedProviderCredentialCollisions,
+  assertNoProviderCredentialCollisions as realAssertNoProviderCredentialCollisions,
+} from "./mcp-bridge-provider-inspection";
 import { restartMcpBridge, restoreExistingMcpBridgeRuntime } from "./mcp-bridge-restart";
 
 const entries = ["first", "second"].map((server) => ({
@@ -96,9 +108,17 @@ const entries = ["first", "second"].map((server) => ({
 }));
 
 describe("OpenClaw MCP partial-mutation recovery", () => {
+  afterEach(() => {
+    setProviderCommandRuntimeHooksForTest({});
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.applyGeneratedPolicy.mockReset();
     mocks.assertMutationCapabilities.mockReset().mockResolvedValue(undefined);
+    mocks.attachProvider.mockReset();
+    vi.mocked(assertNoAttachedProviderCredentialCollisions).mockReset();
+    vi.mocked(assertNoProviderCredentialCollisions).mockReset();
     mocks.observe.mockReset().mockResolvedValue("v1");
     mocks.inspectAdapter.mockReset().mockResolvedValue({ state: "registered" });
     mocks.reloadHermes.mockReset();
@@ -303,5 +323,58 @@ describe("OpenClaw MCP partial-mutation recovery", () => {
     expect(mocks.register).not.toHaveBeenCalled();
     expect(mocks.refresh).not.toHaveBeenCalled();
     expect(mocks.reload).not.toHaveBeenCalled();
+  });
+
+  it("enforces the 32-provider attachment limit before restore mutations and allows an already attached provider", async () => {
+    const firstId = "11111111-2222-4333-8444-555555555555";
+    const firstEntry = { ...entries[0], providerId: firstId };
+    let targetAlreadyAttached = false;
+    setProviderCommandRuntimeHooksForTest({
+      runOpenshell: ((args: string[]) => {
+        const names = Array.from({ length: 32 }, (_, index) =>
+          index === 0 && targetAlreadyAttached
+            ? "alpha-mcp-first"
+            : `alpha-mcp-srv${String(index)}`,
+        );
+        const listStdout = [
+          "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS",
+          ...names.map((name) => `${name} nemoclaw-mcp-v1 1 0`),
+        ].join("\n");
+        const providerName = args[2] ?? "alpha-mcp-srv0";
+        const isFirst = providerName === "alpha-mcp-first";
+        const providerStdout = [
+          `Name: ${providerName}`,
+          `Id: ${isFirst ? firstId : "00000000-0000-4000-8000-000000000099"}`,
+          "Type: nemoclaw-mcp-v1",
+          "Resource version: 1",
+          `Credential keys: ${isFirst ? "FIRST_TOKEN" : `OTHER_${providerName.toUpperCase().replaceAll("-", "_")}`}`,
+          "Config keys: <none>",
+        ].join("\n");
+        return {
+          status: 0,
+          stdout: args[0] === "sandbox" ? listStdout : providerStdout,
+          stderr: "",
+        };
+      }) as never,
+    });
+    vi.mocked(assertNoProviderCredentialCollisions).mockImplementation(
+      realAssertNoProviderCredentialCollisions,
+    );
+    vi.mocked(assertNoAttachedProviderCredentialCollisions).mockImplementation(
+      realAssertNoAttachedProviderCredentialCollisions,
+    );
+    mocks.register.mockReset().mockResolvedValue(undefined);
+
+    await expect(restoreExistingMcpBridgeRuntime("alpha", [firstEntry])).rejects.toThrow(
+      "Sandbox 'alpha' already has 32 attached OpenShell providers",
+    );
+    expect(mocks.applyGeneratedPolicy).not.toHaveBeenCalled();
+    expect(mocks.attachProvider).not.toHaveBeenCalled();
+    expect(mocks.register).not.toHaveBeenCalled();
+
+    targetAlreadyAttached = true;
+    await expect(restoreExistingMcpBridgeRuntime("alpha", [firstEntry])).resolves.toBeUndefined();
+    expect(mocks.attachProvider).toHaveBeenCalledOnce();
+    expect(mocks.register).toHaveBeenCalledOnce();
   });
 });

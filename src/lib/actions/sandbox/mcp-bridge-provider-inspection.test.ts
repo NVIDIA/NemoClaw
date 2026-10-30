@@ -9,10 +9,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { setProviderCommandRuntimeHooksForTest } from "../../adapters/openshell/provider-command";
 import {
+  assertSandboxProviderAttachmentCapacity,
   getMcpProviderInspectionRuntimeSelection,
+  MAX_SANDBOX_PROVIDER_ATTACHMENTS,
   resolveSandboxConfigRuntimeSelection,
   inspectMcpProvider,
 } from "./mcp-bridge-provider-inspection";
+import { attachProvider } from "./mcp-bridge-provider-attachments";
+import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import * as gatewayTargets from "./gateway-target";
 
 const temporaryDirectories: string[] = [];
@@ -268,4 +272,88 @@ describe("MCP provider absence inspection", () => {
       });
     },
   );
+
+  it("refuses unattached MCP providers when the sandbox reaches the 32-provider cap", () => {
+    const attachments = Array.from({ length: MAX_SANDBOX_PROVIDER_ATTACHMENTS }, (_, index) => ({
+      name: index === 0 ? "nvidia-nim" : `alpha-mcp-srv${String(index)}`,
+      providerId: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+      credentialKeys: [index === 0 ? "NVIDIA_API_KEY" : `T_MCP_${String(index)}`],
+    }));
+    const newEntry: McpSourceEntry = {
+      server: "srv32",
+      agent: "langchain-deepagents-code",
+      adapter: "deepagents-config",
+      url: "https://8.8.8.8/mcp/path-32",
+      env: ["T_MCP_32"],
+      providerName: "alpha-mcp-srv32",
+      policyName: "mcp-bridge-srv32",
+    };
+    const alreadyAttachedEntry: McpSourceEntry = {
+      ...newEntry,
+      server: "srv31",
+      env: ["T_MCP_31"],
+      providerName: "alpha-mcp-srv31",
+      policyName: "mcp-bridge-srv31",
+    };
+
+    expect(() => assertSandboxProviderAttachmentCapacity("alpha", [newEntry], attachments)).toThrow(
+      "Sandbox 'alpha' already has 32 attached OpenShell providers (maximum 32 per sandbox across inference, messaging, web search, extra credential, and managed MCP providers).",
+    );
+    expect(() =>
+      assertSandboxProviderAttachmentCapacity("alpha", [alreadyAttachedEntry], attachments),
+    ).not.toThrow();
+    expect(() =>
+      assertSandboxProviderAttachmentCapacity(
+        "alpha",
+        [newEntry, { ...newEntry, server: "srv33", providerName: "alpha-mcp-srv33" }],
+        attachments.slice(0, MAX_SANDBOX_PROVIDER_ATTACHMENTS - 1),
+      ),
+    ).toThrow(
+      "Attaching 2 MCP providers to sandbox 'alpha' would reach 33 attached OpenShell providers",
+    );
+  });
+
+  it("translates a concurrent gateway provider-cap error during attachProvider", async () => {
+    const entry: McpSourceEntry = {
+      server: "srv32",
+      agent: "langchain-deepagents-code",
+      adapter: "deepagents-config",
+      url: "https://8.8.8.8/mcp/path-32",
+      env: ["T_MCP_32"],
+      providerName: "alpha-mcp-srv32",
+      providerId: "11111111-2222-4333-8444-555555555555",
+      policyName: "mcp-bridge-srv32",
+    };
+    const adapter = {
+      getProvider: vi.fn(async () => ({
+        ok: true as const,
+        value: {
+          name: "alpha-mcp-srv32",
+          type: "nemoclaw-mcp-v1",
+          credentialKeys: ["T_MCP_32"],
+          configKeys: [],
+          revision: { id: "11111111-2222-4333-8444-555555555555", resourceVersion: 1 },
+        },
+      })),
+      attachProvider: vi.fn(async () => ({
+        ok: false as const,
+        error: {
+          kind: "command" as const,
+          reason: "failed" as const,
+          message:
+            "Error: × code: 'Client specified an invalid argument', message: \"providers list exceeds maximum (32)\"",
+        },
+      })),
+      listProviderAttachments: vi.fn(async () => ({
+        ok: true as const,
+        value: { names: [] },
+      })),
+    };
+
+    await expect(
+      attachProvider("alpha", entry, runtimeSelection, adapter as never),
+    ).rejects.toThrow(
+      "Sandbox 'alpha' already has 32 attached OpenShell providers (maximum 32 per sandbox across inference, messaging, web search, extra credential, and managed MCP providers).",
+    );
+  });
 });

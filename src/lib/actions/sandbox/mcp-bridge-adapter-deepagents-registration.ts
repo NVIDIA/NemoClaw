@@ -11,6 +11,7 @@ import {
   DEEPAGENTS_MCP_MAX_SERVERS,
   DEEPAGENTS_STRICT_JSON_HELPERS,
 } from "./mcp-bridge-adapter-deepagents-native-config";
+export { DEEPAGENTS_MCP_MAX_SERVERS };
 import {
   MANAGED_HTTP_SERVER_MATCH_HELPERS,
   DEEPAGENTS_MCP_CONFIG_PATH,

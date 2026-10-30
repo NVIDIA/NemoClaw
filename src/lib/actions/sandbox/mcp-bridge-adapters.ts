@@ -43,6 +43,7 @@ const MAX_CREDENTIAL_REVISION_REGISTRATIONS = 2;
 export {
   buildDeepAgentsMcpRegisterCommand,
   buildDeepAgentsMcpRemoveCommand,
+  DEEPAGENTS_MCP_MAX_SERVERS,
 } from "./mcp-bridge-adapter-deepagents";
 export {
   buildHermesMcpExecArgs,

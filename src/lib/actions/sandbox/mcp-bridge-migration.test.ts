@@ -65,6 +65,7 @@ vi.mock("../../state/registry/lock", () => ({
   withLock: (operation: () => unknown) => operation(),
 }));
 vi.mock("./mcp-bridge-adapters", () => ({
+  DEEPAGENTS_MCP_MAX_SERVERS: 64,
   assertAgentMcpTeardownRuntimeCapability: mocks.assertTeardown,
   registerAgentAdapter: mocks.register,
   reloadOpenClawGatewayAfterMcpMutation: mocks.reloadOpenClaw,
@@ -270,6 +271,85 @@ describe("explicit MCP migration", () => {
       expect.any(Object),
     );
     expect(mocks.readConfig().sandboxes.alpha).toEqual({ name: "alpha" });
+  });
+
+  it("rejects Deep Agents migration before rebuild when 64 legacy entries and an unmanaged native entry exceed capacity", async () => {
+    const legacy = Object.fromEntries(
+      Array.from({ length: 64 }, (_, index) => {
+        const server = `srv${String(index)}`;
+        return [
+          server,
+          {
+            ...entry,
+            server,
+            agent: "langchain-deepagents-code",
+            adapter: "deepagents-config" as const,
+            url: `https://8.8.8.8/mcp/${String(index)}`,
+            env: [`T_MCP_${String(index)}`],
+            providerName: `alpha-mcp-${server}`,
+            providerId: `provider-${server}`,
+            policyName: `mcp-bridge-${server}`,
+          },
+        ];
+      }),
+    );
+    mocks.getSandbox.mockReturnValue({ name: "alpha", agent: "langchain-deepagents-code" });
+    mocks.getAgent.mockReturnValue({
+      name: "langchain-deepagents-code",
+      displayName: "Deep Agents Code",
+      mcpCapability: { support: "bridge", adapter: "deepagents-config" },
+    });
+    mocks.getAdapter.mockReturnValue("deepagents-config");
+    mocks.inspectLegacy.mockReturnValue({
+      bridges: legacy,
+      sources: { native: {}, legacy, nativeServerNames: ["local-stdio"] },
+    });
+    const rebuildSandbox = vi.fn().mockResolvedValue(undefined);
+
+    await expect(migrateMcpBridges("alpha", { apply: true, rebuildSandbox })).rejects.toThrow(
+      "Deep Agents managed MCP supports at most 64 servers; refusing to render a 65-server mutation.",
+    );
+    expect(rebuildSandbox).not.toHaveBeenCalled();
+    expect(mocks.preflightTargets).not.toHaveBeenCalled();
+    expect(mocks.assertProviderRecoverable).not.toHaveBeenCalled();
+    expect(mocks.getPolicyState).not.toHaveBeenCalled();
+    expect(mocks.register).not.toHaveBeenCalled();
+    expect(mocks.unregister).not.toHaveBeenCalled();
+    expect(mocks.removeLegacy).not.toHaveBeenCalled();
+    expect(mocks.updateSandbox).not.toHaveBeenCalled();
+  });
+
+  it("rejects Deep Agents migration when rebuild fills native capacity before registration or legacy cleanup", async () => {
+    const deepEntry = {
+      ...entry,
+      agent: "langchain-deepagents-code",
+      adapter: "deepagents-config" as const,
+    };
+    mocks.getSandbox.mockReturnValue({ name: "alpha", agent: deepEntry.agent });
+    mocks.getAgent.mockReturnValue({
+      name: deepEntry.agent,
+      displayName: "Deep Agents Code",
+      mcpCapability: { support: "bridge", adapter: deepEntry.adapter },
+    });
+    mocks.getAdapter.mockReturnValue(deepEntry.adapter);
+    mocks.inspectLegacy.mockReturnValue({
+      bridges: { github: deepEntry },
+      sources: { native: {}, legacy: { github: deepEntry } },
+    });
+    const rebuildSandbox = vi.fn().mockImplementation(async () => {
+      mocks.inspectSources.mockReturnValue({
+        native: {},
+        legacy: { github: deepEntry },
+        nativeServerNames: Array.from({ length: 64 }, (_, index) => `local-${String(index)}`),
+      });
+    });
+
+    await expect(migrateMcpBridges("alpha", { apply: true, rebuildSandbox })).rejects.toThrow(
+      "Deep Agents managed MCP supports at most 64 servers; refusing to render a 65-server mutation.",
+    );
+    expect(rebuildSandbox).toHaveBeenCalledWith("alpha");
+    expect(mocks.register).not.toHaveBeenCalled();
+    expect(mocks.removeLegacy).not.toHaveBeenCalled();
   });
 
   it("does not report Deep Agents migration success when legacy cleanup fails", async () => {
