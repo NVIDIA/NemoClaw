@@ -599,6 +599,43 @@ $$nemoclaw onboard --resume
 Resume reruns native local inference setup when NemoClaw has no recorded native local provider for this sandbox, even if another sandbox already has the same shared gateway route.
 If the setting is still missing, onboarding stops before creating the sandbox and retains the session for another attempt.
 
+### Ollama installer download fails
+
+The Linux system install first downloads the pinned Ollama installer from `raw.githubusercontent.com`.
+That installer then downloads the release tarball from `ollama.com`.
+The user-local install downloads the tarball from `ollama.com` directly.
+Both tarball paths follow redirects through `github.com` and `release-assets.githubusercontent.com`.
+
+If the pinned installer download fails, onboarding reports `Ollama installer download failed after bounded retries (exit N)` with the URL, host, curl error, and recovery steps.
+Other Ollama download failures use the download command's error output.
+
+Check the exact endpoints onboarding uses for this host, not just the host roots (substitute the architecture and JetPack add-on for your board):
+
+```bash
+curl -fsSI https://raw.githubusercontent.com/ollama/ollama/de25dd526f4c9ba367ee69022168c6c5f2dc3285/scripts/install.sh
+curl -fsSIL https://ollama.com/download/ollama-linux-amd64.tar.zst
+```
+
+For arm64, check `https://ollama.com/download/ollama-linux-arm64.tar.zst` instead.
+On NVIDIA JetPack hosts, also check the matching add-on, for example `https://ollama.com/download/ollama-linux-arm64-jetpack6.tar.zst` (JetPack 5 or 6, matching the host).
+If the `.tar.zst` asset is unavailable for a tag, onboarding falls back to the `.tgz` asset, so check that URL as well (for example `https://ollama.com/download/ollama-linux-amd64.tgz`).
+
+For an upgrade, append `?version=<version>` to each tarball URL, including the JetPack add-on and `.tgz` fallback.
+Use the version printed in `Requesting Ollama <version> from the installer.`
+For example, an upgrade requesting `0.32.9` uses this check:
+
+```bash
+curl -fsSIL 'https://ollama.com/download/ollama-linux-amd64.tar.zst?version=0.32.9'
+```
+
+Allow outbound HTTPS (port 443) to the failing host on your firewall or proxy.
+If the host requires a proxy, export `HTTPS_PROXY` before rerunning onboarding.
+Then rerun onboarding; resumable sessions continue from the failed step:
+
+```bash
+$$nemoclaw onboard --resume
+```
+
 ### Cgroup v2 errors during onboard
 
 Older NemoClaw releases relied on a Docker cgroup workaround on Ubuntu 24.04, DGX Spark, and WSL2. Current OpenShell releases handle that behavior themselves, so NemoClaw no longer requires a Spark-specific setup step.
