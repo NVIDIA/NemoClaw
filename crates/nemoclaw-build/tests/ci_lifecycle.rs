@@ -464,7 +464,7 @@ fn live_suites_accept_an_archive_of_their_tests() {
 }
 
 #[test]
-fn live_images_builds_the_agent_hermes_dummy_and_proxy_images_once_and_saves_them_compressed() {
+fn live_images_builds_the_agent_images_dummy_and_proxy_images_once_and_saves_them_compressed() {
     let fixture = Fixture::new();
     fixture.fake_container_tools();
     let output = fixture.run(&["live-images"]);
@@ -474,10 +474,10 @@ fn live_images_builds_the_agent_hermes_dummy_and_proxy_images_once_and_saves_the
         String::from_utf8_lossy(&output.stderr)
     );
     let log = fixture.docker_log();
-    // ARM64 builds OpenClaw, Hermes and the reference dummy, under the shared
-    // prefix the live steps load: each exports its catalog, then builds its
-    // labeled stage.
-    for name in ["openclaw", "hermes", "dummy"] {
+    // ARM64 builds OpenClaw, Hermes, Deep Agents Code and the reference
+    // dummy, under the shared prefix the live steps load: each exports its
+    // catalog, then builds its labeled stage.
+    for name in ["openclaw", "hermes", "deepagents-code", "dummy"] {
         assert!(
             log.contains(&format!("buildx bake {name} --set {name}.target=catalog")),
             "{log}"
@@ -507,7 +507,7 @@ fn live_images_builds_the_agent_hermes_dummy_and_proxy_images_once_and_saves_the
         fs::read_to_string(fixture.0.path().join(".build/ci/live-images.tar.zst")).unwrap();
     assert!(
         archive.trim()
-            == "exported docker.io/library/nc-live-images:openclaw docker.io/library/nc-live-images:hermes docker.io/library/nc-live-images:dummy docker.io/library/nc-live-images:proxy-a docker.io/library/nc-live-images:proxy-b",
+            == "exported docker.io/library/nc-live-images:openclaw docker.io/library/nc-live-images:hermes docker.io/library/nc-live-images:deepagents-code docker.io/library/nc-live-images:dummy docker.io/library/nc-live-images:proxy-a docker.io/library/nc-live-images:proxy-b",
         "{archive}"
     );
 }
@@ -519,7 +519,14 @@ fn live_images_report_each_build_duration() {
     let output = fixture.run(&["live-images"]);
     let report = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success(), "{report}");
-    for image in ["openclaw", "dummy", "proxy-a", "proxy-b"] {
+    for image in [
+        "openclaw",
+        "hermes",
+        "deepagents-code",
+        "dummy",
+        "proxy-a",
+        "proxy-b",
+    ] {
         let tag = format!("nc-live-images:{image}");
         let start = report
             .find(&format!("Building live image {tag}\n"))
@@ -543,7 +550,14 @@ fn live_images_report_each_build_duration() {
 
 #[test]
 fn live_images_report_failed_build_duration_and_stop() {
-    let images = ["openclaw", "dummy", "proxy-a", "proxy-b"];
+    let images = [
+        "openclaw",
+        "hermes",
+        "deepagents-code",
+        "dummy",
+        "proxy-a",
+        "proxy-b",
+    ];
     for (index, image) in images.iter().enumerate() {
         let fixture = Fixture::new();
         fixture.fake_container_tools();
@@ -617,7 +631,14 @@ fn live_docker_loads_prebuilt_images_under_its_own_names_instead_of_building() {
     );
     let loaded = fs::read_to_string(fixture.0.path().join("docker.stdin")).unwrap();
     assert_eq!(loaded, "prebuilt images\n");
-    for image in ["openclaw", "dummy", "proxy-a", "proxy-b"] {
+    for image in [
+        "openclaw",
+        "hermes",
+        "deepagents-code",
+        "dummy",
+        "proxy-a",
+        "proxy-b",
+    ] {
         assert!(
             log.lines().any(|line| line
                 .strip_prefix(&format!("tag nc-live-images:{image} nc-live-"))
@@ -779,14 +800,20 @@ fn live_docker_pulls_a_v1_commits_images_and_derives_the_proxy_pair_instead_of_b
     );
     let log = fixture.docker_log();
     let package = "ghcr.io/nvidia/nemoclaw/v1-ci";
-    for image in ["openclaw", "dummy", "ollama-proxy"] {
+    for image in [
+        "openclaw",
+        "hermes",
+        "deepagents-code",
+        "dummy",
+        "ollama-proxy",
+    ] {
         let pulled = format!("pull --quiet {package}:{image}-{commit}-");
         assert!(
             log.lines().any(|line| line.starts_with(&pulled)),
             "{image} not pulled: {log}"
         );
     }
-    for image in ["openclaw", "dummy"] {
+    for image in ["openclaw", "hermes", "deepagents-code", "dummy"] {
         assert!(
             log.lines().any(
                 |line| line.starts_with(&format!("tag {package}:{image}-{commit}-"))

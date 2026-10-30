@@ -219,6 +219,7 @@ fn fabric_protocol_and_managed_ollama_constraints_survive_the_port() {
         "remote-agent",
         "pi",
         "opencode",
+        "deepagents-code",
     ] {
         let mut document = original.clone();
         document
@@ -480,6 +481,7 @@ fn harness_selection_does_not_determine_service_ownership() {
         "remote-agent",
         "pi",
         "opencode",
+        "deepagents-code",
     ] {
         for fixture in [
             include_str!("../../../examples/spark/vllm.yaml"),

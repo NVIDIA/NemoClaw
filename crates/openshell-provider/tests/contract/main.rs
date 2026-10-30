@@ -287,6 +287,7 @@ fixtures! {
     fabric => "fabric",
     fabric_claude => "fabric-claude",
     fabric_codex => "fabric-codex",
+    fabric_deepagents_code => "fabric-deepagents-code",
     fabric_hermes => "fabric-hermes",
     fabric_mini_swe_agent => "fabric-mini-swe-agent",
     fabric_nooa => "fabric-nooa",

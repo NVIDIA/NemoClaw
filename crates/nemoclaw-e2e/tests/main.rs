@@ -7,6 +7,9 @@
 mod agent_compatibility;
 #[path = "cache_provider.rs"]
 mod cache_provider;
+#[cfg(unix)]
+#[path = "deepagents_code_terminal.rs"]
+mod deepagents_code_terminal;
 #[path = "deployment.rs"]
 mod deployment;
 #[cfg(unix)]

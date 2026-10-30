@@ -34,10 +34,28 @@ pub(super) fn agent() -> (&'static str, &'static str) {
     nemoclaw_build::ci::LIVE_AGENT
 }
 
-/// The platform's agent image, Hermes, the reference dummy, then the two proxy
-/// images.
-pub(super) fn names() -> [&'static str; 5] {
-    [agent().0, HERMES, DUMMY, "proxy-a", "proxy-b"]
+/// The platform's agent image, Hermes, Deep Agents Code, the reference dummy,
+/// then the two proxy images.
+pub(super) fn names() -> [&'static str; 6] {
+    [
+        agent().0,
+        HERMES,
+        terminal_agent().0,
+        DUMMY,
+        "proxy-a",
+        "proxy-b",
+    ]
+}
+
+/// The agent image whose terminal interface the Docker live suite opens, and
+/// its Fabric harness.
+pub(super) fn terminal_agent() -> (&'static str, &'static str) {
+    nemoclaw_build::ci::LIVE_TERMINAL_AGENT
+}
+
+/// Build the terminal agent image as `PREFIX:TARGET`.
+pub(super) fn build_terminal_agent(platform: &str, prefix: &str) -> Result<()> {
+    build_image(platform, prefix, terminal_agent().0)
 }
 
 /// The Hermes agent image, which the Docker live suite's interface test runs.
@@ -132,6 +150,7 @@ pub(super) fn build(platform: &str) -> Result<()> {
     }
     build_agent(platform, SHARED)?;
     build_hermes(platform, SHARED)?;
+    build_terminal_agent(platform, SHARED)?;
     build_dummy(platform, SHARED)?;
     build_proxies(platform, SHARED)?;
     let tags = names().map(|name| format!("{SHARED}:{name}"));
@@ -386,7 +405,10 @@ mod tests {
     #[test]
     fn a_step_drops_only_the_platform_archive_images_it_does_not_name() {
         let target = agent().0;
-        assert_eq!(unused(&[target]), [HERMES, DUMMY, "proxy-a", "proxy-b"]);
+        assert_eq!(
+            unused(&[target]),
+            [HERMES, terminal_agent().0, DUMMY, "proxy-a", "proxy-b"]
+        );
         assert!(unused(&names()).is_empty());
     }
 }

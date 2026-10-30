@@ -1028,13 +1028,19 @@ fn explicit_base_bypasses_pr_discovery() {
 /// The references `v1` pushes for `commit` that the live suites pull: the
 /// agent, the reference image, and the proxy, on both Linux architectures.
 fn pushed(commit: &str) -> Vec<String> {
-    ["openclaw", "hermes", "dummy", "ollama-proxy"]
-        .iter()
-        .flat_map(|name| {
-            ["arm64", "amd64"]
-                .map(|arch| format!("ghcr.io/nvidia/nemoclaw/v1-ci:{name}-{commit}-{arch}"))
-        })
-        .collect()
+    [
+        "openclaw",
+        "hermes",
+        "deepagents-code",
+        "dummy",
+        "ollama-proxy",
+    ]
+    .iter()
+    .flat_map(|name| {
+        ["arm64", "amd64"]
+            .map(|arch| format!("ghcr.io/nvidia/nemoclaw/v1-ci:{name}-{commit}-{arch}"))
+    })
+    .collect()
 }
 
 impl Repo {

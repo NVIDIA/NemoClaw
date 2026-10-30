@@ -360,7 +360,7 @@ The test checks managed runtime bindings as well as the hosted agent identity ac
 
 ## Docker Live Suite
 
-`cargo ci live-docker` builds the images and writes the owned inputs for the Docker provider, standalone cache, dummy agent, and Docker gateway tests below, then runs them; see [Run each layer](testing.md#run-each-layer).
+`cargo ci live-docker` builds the images and writes the owned inputs for the Docker provider, standalone cache, dummy agent, agent interface, Deep Agents Code terminal, and Docker gateway tests below, then runs them; see [Run each layer](testing.md#run-each-layer).
 To run one of them by hand, supply its inputs as its section describes.
 
 ## Docker Provider Lifecycle
@@ -454,6 +454,31 @@ cargo test -p nemoclaw-e2e --test integration \
 
 The stand-in listens on every host address at that port while the test runs.
 A failed run keeps the state directory and prints its path; remove the deployment with the bundle's `nemoclaw destroy --state-dir PATH` and the same variable set to any value.
+
+## Deep Agents Code Terminal
+
+nemoclaw-e2e's `deepagents_code_terminal::the_deep_agents_code_terminal_answers_a_prompt_with_the_generated_configuration` test deploys the Deep Agents Code image through a managed Docker gateway with `harness.settings.interfaces.terminal` enabled.
+It starts an OpenAI-compatible stand-in on the default Docker bridge's gateway address, which needs no credential and answers `Reply with token TOKEN` with `REPLY-` and the token in capitals, and points the document's inference provider at it.
+It checks:
+
+- An invocation through Fabric's bridge gets the stand-in's reply.
+- Running the reported command in a pseudo-terminal from util-linux's `script` opens `dcode`'s terminal UI; after Escape skips its first-run questions, one prompt gets the stand-in's reply, which the stand-in received for the configured model.
+- Destroy succeeds.
+
+OpenShell's access control is the only authentication.
+It runs no model and needs no credentials.
+
+Supply a verified bundle, the pinned OpenShell CLI, and an owned document like the dummy's, with the local Deep Agents Code image by digest, `harness.kind: nvidia.fabric.langchain.deepagents-code`, and `harness.settings` of `{"approval_mode": "auto", "interfaces": {"terminal": {}}}`; the test replaces the provider's endpoint:
+
+```sh
+NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
+NEMOCLAW_TEST_TERMINAL_DOCUMENT=/absolute/path/to/terminal.yaml \
+NEMOCLAW_TEST_OPENSHELL=/absolute/path/to/openshell \
+cargo test -p nemoclaw-e2e --test integration \
+  deepagents_code_terminal:: -- --ignored
+```
+
+Its state directory and retained storage follow the [dummy agent's](#dummy-agent-lifecycle).
 
 ## Docker Gateway Recovery
 

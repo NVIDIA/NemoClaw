@@ -75,7 +75,8 @@ Pass `--platform linux/arm64` or `--platform linux/amd64` to the agent image bui
 Direct Bake builds and checks use the host's platform unless the `AGENT_PLATFORM` environment variable selects the other one.
 Both platforms build every harness in the Bake file's `HARNESSES` map.
 Agent images share a Python 3.14.9 base without pip.
-Only OpenClaw, Hermes, and Pi add Node.js 24.22.1 LTS: OpenClaw's CLI and Pi's adapter run on it, and Hermes's browser tool and `npx`-launched MCP servers require it.
+Only OpenClaw, Hermes, Pi, and Deep Agents Code add Node.js 24.22.1 LTS: OpenClaw's CLI and the Pi and Deep Agents Code adapters run on it, and Hermes's browser tool and `npx`-launched MCP servers require it.
+The Deep Agents Code image also installs `dcode` in its own Python 3.14 environment, `/opt/deepagents-code`, from [its lock](../image/fabric/deepagents-code/uv.lock).
 Image qualification checks that interpreter against every Python adapter’s declared version range in the pinned Fabric source.
 Build stages use pinned Rust, Node, Python, and uv images, so the host needs no language toolchains for image assembly.
 Initial builds need network access to fetch the pinned base images, source archives, and package dependencies.
@@ -115,7 +116,7 @@ docker image inspect nc-fabric:deepagents --format '{{index .RepoDigests 0}}'
 ```
 
 Use the printed immutable reference in `sandboxes.<name>.image.ref`.
-Replace `deepagents` with another harness name, or use `agents` to build all ten.
+Replace `deepagents` with another harness name, or use `agents` to build them all.
 The AMD64 builds and image tests do not establish successful gateway provisioning or an end-to-end agent response.
 
 On ARM64, select `hermes`, `pi`, or another name from the [harness matrix](reference/fabric-harnesses.md), or build every agent with `cargo images build --platform linux/arm64 agents`.
@@ -187,7 +188,7 @@ It removes that container on success, failure, or timeout; the built image remai
 The suite starts, invokes, and stops one runtime through `fabric-agent-ctl` with NemoClaw's test adapter, under the conditions an OpenShell sandbox imposes.
 The [contract description](design/fabric-management.md#image-contract-and-reference-implementation) defines the dummy's settings.
 
-To build all ten production adapter images on a native Linux ARM64 host, run:
+To build every production adapter image on a native Linux ARM64 host, run:
 
 ```sh
 IMAGE_PREFIX=nc-contract cargo images build --platform linux/arm64 agents

@@ -26,6 +26,14 @@ Hermes plugin placement remains in the Dockerfile because the pinned Fabric supp
 Pi's builder follows Fabric's focused installation recipe and packs its adapter, common, and contract packages; those pinned packages are not published on npm.
 The runtime contains their packed code and npm's locked dependencies, including Pi's declared peers, without the Fabric source tests.
 Fabric owns those source tests.
+The Deep Agents Code image packs Fabric's adapter the same way.
+
+The Deep Agents Code image installs LangChain's `deepagents-code` 0.2.2 (MIT), which runs as `dcode`, in its own Python 3.14 environment at `/opt/deepagents-code`, apart from Fabric's, because it pins exact versions of packages Fabric also uses.
+NemoClaw locks it in [`fabric/deepagents-code/uv.lock`](fabric/deepagents-code/uv.lock), and the image installs that lock's `uv export --frozen` with every hash required and without re-resolving.
+The one source distribution in the lock, forbiddenfruit 0.1.4 (dual MIT and GPLv3), builds with the lock's own hash-checked setuptools.
+The image retains the lock and its project file under `/opt/nemoclaw/source/local/deepagents-code/` and the exported requirements as `/opt/nemoclaw/source/deepagents-code-requirements.txt`; each installed package keeps the license files its wheel ships in its `dist-info` directory, and five of the six wheels that ship none name their license in `METADATA`; `textual-speedups` 0.2.1 names none.
+Not every package is under an OSI-approved license: `langgraph-runtime-inmem` 0.37.0, which runs the local agent server `dcode`'s terminal UI starts, is under the Elastic License 2.0.
+The image never installs or updates `dcode` at runtime.
 
 
 The [image metadata contract](../docs/design/fabric-management.md#image-metadata) describes the catalog labels and runtime manifests these recipes produce.

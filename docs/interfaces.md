@@ -63,6 +63,58 @@ After [selecting the gateway and workspace](#select-the-gateway-and-workspace), 
 [Run one request](agents.md#run-one-deep-agents-or-pi-request) shows the command and its input.
 The selected Fabric adapter owns how the harness handles the request.
 
+## Open Deep Agents Code's Terminal
+
+Deep Agents Code's adapter can write a launcher for `dcode`'s terminal UI. Enable it in the sandbox's harness settings, as the [example](../examples/fabric-deepagents-code.yaml) does:
+
+```yaml
+harness:
+  kind: nvidia.fabric.langchain.deepagents-code
+  settings:
+    approval_mode: auto
+    interfaces:
+      terminal: {}
+```
+
+After apply, [select the gateway and workspace](#select-the-gateway-and-workspace), read the agent's runtime ID from the deployment's state directory, and run the launcher from a terminal on the client host.
+This example's sandbox is `assistant` and its agent is `main`:
+
+```sh
+RUNTIME_ID=$(jq -r '.resources[] | select(.type == "fabric_agent") | .instances[].attributes | select(.name == "main") | .runtime_id' .local/deployment/terraform.tfstate)
+openshell sandbox exec -n assistant --tty -- "/sandbox/artifacts/.fabric/deepagents-code/runtimes/$RUNTIME_ID/interfaces/terminal"
+```
+
+`openshell sandbox connect` attaches to the sandbox's main process, `fabric-agent-ctl serve`, not to a shell, so it can't open the terminal UI.
+If the artifacts directory is mounted `noexec`, run the launcher through `sh`: `openshell sandbox exec -n assistant --tty -- sh "/sandbox/artifacts/..."`.
+OpenShell's access control is the only authentication: anyone who can run `openshell sandbox exec` in the workspace can open the terminal UI.
+Quit it with Ctrl-D.
+
+The terminal UI runs a separate session from Fabric's invocations, with the runtime's `dcode` configuration, home, and workspace:
+
+- It uses the configured model and endpoint.
+  The launcher holds no secret; `dcode` reads the model key from the variable the configuration names, which OpenShell sets in each `sandbox exec` session.
+  For a provider with a credential, that variable holds OpenShell's placeholder, which OpenShell replaces with the key in requests to the endpoint.
+- The first time it opens in a runtime's home, it asks for a name and then offers to choose a model; Escape skips both and keeps the configured model.
+- It uses `dcode`'s own approval behavior, which asks before gated actions, not `approval_mode`, which applies only to invocations.
+- It doesn't show invocations as they run.
+  The runtime's thread ID is in `interfaces/terminal.running` beside the launcher, and `LAUNCHER -r THREAD_ID` resumes that thread; writing to it while an invocation runs can conflict.
+- Each runtime has its own launcher path, so after apply starts a new runtime, read the runtime ID again.
+
+The launcher refuses to start, printing `This NeMo Fabric runtime is not running.`, when `terminal.running` is absent: the adapter writes it once the runtime's session starts and removes it when the runtime stops.
+Terminal sessions already open when the runtime stops keep running.
+If the runtime's process is killed instead of stopped, the marker stays, and the launcher still opens a session with that runtime's configuration until the sandbox is replaced.
+
+Before opening it, consider what runs:
+
+- The launcher is a file in `/sandbox/artifacts`, readable and writable by the agent's own tools, which run as the same user.
+  The agent can change what the launcher runs; it still runs inside the sandbox, under the sandbox's policy.
+- `dcode`'s terminal UI starts its own agent server on `127.0.0.1` in the sandbox, on a port it chooses, without authentication, as `dcode` always does ([its threat model](https://github.com/langchain-ai/deepagents/blob/0cc119a70ac9df9aaac4ef0939a1141a92b75af0/libs/code/THREAT_MODEL.md), T6).
+  While the terminal UI runs, any process in the sandbox, including the agent's tools, can use that server.
+  Don't forward or expose it.
+  Fabric's invocations use ACP over standard input and output and open no listener.
+
+Apply output doesn't print the launcher command yet; [#14011](https://github.com/NVIDIA/NemoClaw/issues/14011) tracks it.
+
 ## Forward a Native Service
 
 An adapter that serves a native listener inside the sandbox can be reached by forwarding it from a private terminal on the client host:

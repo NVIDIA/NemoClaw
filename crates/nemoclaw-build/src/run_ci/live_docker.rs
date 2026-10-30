@@ -231,12 +231,15 @@ fn prepare(
                 .extend(names.map(|name| format!("{prefix}:{name}")));
             live_images::build_agent(platform, &prefix)?;
             live_images::build_hermes(platform, &prefix)?;
+            live_images::build_terminal_agent(platform, &prefix)?;
             live_images::build_dummy(platform, &prefix)?;
             live_images::build_proxies(platform, &prefix)?;
         }
     }
     let agent = by_digest(&prefix, target)?;
     let hermes = by_digest(&prefix, live_images::HERMES)?;
+    let (terminal_target, terminal_harness) = live_images::terminal_agent();
+    let terminal_agent = by_digest(&prefix, terminal_target)?;
     // The lifecycle runs an image derived from the reference image, so it
     // also checks that derived images deploy.
     live_images::build_derived(&prefix)?;
@@ -303,6 +306,14 @@ fn prepare(
     let first = document("live-isolation-a")?;
     let second = document("live-isolation-b")?;
     let profiles = document("live-profiles")?;
+    // The terminal test replaces the inference endpoint with its own model
+    // stand-in, which it starts on an address only it knows.
+    let terminal = document_for(
+        "live-terminal",
+        &terminal_agent,
+        terminal_harness,
+        serde_json::json!({"approval_mode": "auto", "interfaces": {"terminal": {}}}).as_object(),
+    )?;
     // OpenClaw's and Hermes's interfaces share one gateway and model stand-in.
     let interfaces = {
         let uid = live::uuid()?;
@@ -348,6 +359,7 @@ fn prepare(
             path(&second),
         ),
         ("NEMOCLAW_TEST_DUMMY_DOCUMENT".into(), path(&lifecycle)),
+        ("NEMOCLAW_TEST_TERMINAL_DOCUMENT".into(), path(&terminal)),
         (
             "NEMOCLAW_TEST_INTERFACES_DOCUMENT".into(),
             path(&interfaces),
