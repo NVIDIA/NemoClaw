@@ -52,10 +52,10 @@ It adds a `vision-operator` sub-agent backed by an Omni vision model.
 | OpenClaw field     | Omni example value                                          |
 | ------------------ | ----------------------------------------------------------- |
 | Primary agent      | `main`                                                      |
-| Primary model      | `inference/nvidia/nemotron-3-super-120b-a12b`               |
+| Primary model      | Existing `main` model or configured default                 |
 | Auxiliary provider | `nvidia-omni`                                               |
 | Sub-agent          | `vision-operator`                                           |
-| Sub-agent model    | `nvidia-omni/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning` |
+| Sub-agent model    | Model specified by the demo helper                          |
 | Delegation tool    | `sessions_spawn`                                            |
 
 The sub-agent uses Omni as the specialist model for image tasks.
@@ -110,6 +110,8 @@ Create `openclaw.updated.json` in the private temporary directory with the OpenC
 For the Omni example, the demo provides `vlm-demo/vlm-subagent/openclaw-patch.py`.
 The helper expects strict JSON, so first use OpenClaw's pinned JSON5 parser to normalize the exported config without putting its contents in an argument or environment variable.
 The wrapper reads the key without echoing it and keeps the value out of the child process's operating-system argument list.
+The helper replaces the agent roster. The wrapper stops if the roster contains an agent other than `main`.
+For an existing multi-agent configuration, adapt the helper output manually instead.
 Set `VLM_DEMO_DIR` to the local `vlm-demo` directory from the demo assets, then run the patch helper.
 
 ```bash
@@ -132,13 +134,39 @@ process.stdin.on("end", () => {
   printf '\n'
   export NVIDIA_API_KEY
   python3 -c '
+import io
+import json
 import os
 import runpy
 import sys
 
+original = json.load(sys.stdin)
+agents = original.get("agents", {})
+if "entries" in agents and "list" in agents:
+    raise SystemExit("Both agent roster formats are present; adapt the helper output manually")
+if "entries" in agents:
+    roster = [dict(entry, id=agent_id) for agent_id, entry in agents["entries"].items()]
+else:
+    roster = agents.get("list", [])
+if any(agent.get("id") != "main" for agent in roster):
+    raise SystemExit("Existing roster contains agents other than main; adapt the helper output manually")
 helper = sys.argv[1]
 sys.argv = [helper, os.environ["NVIDIA_API_KEY"]]
+sys.stdin = io.StringIO(json.dumps(original))
+sys.stdout = io.StringIO()
 runpy.run_path(helper, run_name="__main__")
+updated = json.loads(sys.stdout.getvalue())
+main = next(agent for agent in updated["agents"]["list"] if agent["id"] == "main")
+previous = next((agent for agent in roster if agent.get("id") == "main"), None)
+if previous is not None:
+    main.clear()
+    main.update(previous)
+    allowed = main.setdefault("subagents", {}).setdefault("allowAgents", [])
+    if "vision-operator" not in allowed:
+        allowed.append("vision-operator")
+else:
+    main.pop("model", None)
+sys.__stdout__.write(json.dumps(updated, indent=2))
 ' "$VLM_DEMO_DIR/vlm-subagent/openclaw-patch.py" \
     < "$NEMOCLAW_SUBAGENT_TMP/openclaw.strict.json" \
     > "$NEMOCLAW_SUBAGENT_TMP/openclaw.updated.json"
@@ -147,7 +175,12 @@ runpy.run_path(helper, run_name="__main__")
 
 The helper reads the normalized config from standard input.
 It adds the Omni provider and `vision-operator` entry.
-It writes the patched config inside the private temporary directory.
+The wrapper writes the patched config inside the private temporary directory.
+It preserves the existing `main` settings and adds permission to delegate to `vision-operator`.
+If `main` has no model, it uses the configured default.
+A restrictive tool policy can still block `sessions_spawn`.
+Run `/tools` in a `main` session to inspect the effective tool list.
+If your policy permits delegation, configure the tool policy as described in [OpenClaw Sub-Agents](https://docs.openclaw.ai/tools/subagents#tool-sessions-spawn).
 
 For a sub-agent other than the Omni example, copy the exported config to `openclaw.updated.json` in the private temporary directory.
 Use `cp "$NEMOCLAW_SUBAGENT_TMP/openclaw.json" "$NEMOCLAW_SUBAGENT_TMP/openclaw.updated.json"`.
@@ -213,8 +246,20 @@ A parsing or validation error prevents the requested update.
 A write failure or lost Docker connection can leave completion uncertain; do not assume the original configuration remains unchanged.
 Do not restart the gateway while the update result is uncertain.
 Reconnect and inspect the intended non-secret settings.
-Resolve the reported error before repeating this section.
-Restart the gateway only after the update succeeds.
+Inspect the persisted `agents` config, including its `entries` or `list` roster:
+
+```bash
+docker exec --user sandbox "$SANDBOX_CTR" \
+  /usr/bin/env HOME=/sandbox openclaw config get agents --json
+```
+
+If the read fails or the roster is ambiguous, resolve that condition before retrying.
+If the roster includes an agent other than `main`, do not rerun the wrapper.
+Use `openclaw configure`, `openclaw config set`, or `openclaw config patch` to update only the required settings while preserving existing agents.
+Resolve the reported error before retrying the update.
+For a `main`-only roster, run `trap - EXIT; cleanup_nemoclaw_subagent_files` to remove the previous temporary files.
+Then repeat the export and preparation steps to use the current config.
+Restart the gateway only after the update succeeds, then verify the roster again.
 On success, OpenClaw serializes the complete config as standard JSON, so JSON5 comments and formatting in the original file are removed.
 
 After the patch succeeds, confirm that the live gateway loaded the `agents.list` change:
