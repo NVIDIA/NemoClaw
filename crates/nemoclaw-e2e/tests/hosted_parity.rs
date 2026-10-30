@@ -53,14 +53,17 @@ fn authored_document(raw: &[u8], current: &[u8]) -> Document {
         "hermes" => json!("nvidia.fabric.hermes"),
         other => panic!("unexpected historical fixture adapter {other}"),
     };
-    // v0 exposed Hermes's native API; v1 cannot until Fabric's Hermes adapter
-    // serves it (NVIDIA/NemoClaw#13321), so authored intent omits it.
+    // v0 declared Hermes's native API under the harness; v1 passes it to
+    // Fabric's Hermes adapter as an adapter setting.
     let interfaces = harness.remove("interfaces");
     assert_eq!(
         interfaces.is_some(),
         harness["kind"] == "nvidia.fabric.hermes",
         "only the Hermes export declares native interfaces"
     );
+    if let Some(interfaces) = interfaces {
+        harness.insert("settings".into(), json!({ "interfaces": interfaces }));
+    }
     // v0 images ran agents as 1000:1000; v1 images use 10001:10001.
     if let Some(process) = sandbox
         .get_mut("network")
@@ -196,7 +199,13 @@ fn hosted_hermes_scenario_preserves_authored_intent() {
     let harness = v1
         .sandbox_harness(v1.sandbox("assistant").unwrap())
         .unwrap();
-    assert!(harness.settings.is_none(), "{:?}", harness.settings);
+    assert_eq!(
+        harness.settings,
+        serde_json::json!({"interfaces": {"api": {"port": 8643}}})
+            .as_object()
+            .cloned(),
+        "the v0 export's API interface becomes a Hermes adapter setting"
+    );
 }
 
 #[cfg(target_os = "linux")]

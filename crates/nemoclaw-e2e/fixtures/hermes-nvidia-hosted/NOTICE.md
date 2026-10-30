@@ -7,6 +7,6 @@
 It retains the NVIDIA credential environment-variable reference and the explicit Hermes API interface, but contains no credential value.
 
 `v1.yaml` records separately authored current v1 intent using the required singular `agent` shape and inference providers and sandboxes keyed by name.
-It omits the export's Hermes API interface, which Fabric's Hermes adapter does not serve ([#13321](https://github.com/NVIDIA/NemoClaw/issues/13321)).
+It declares the export's Hermes API interface as the adapter setting `harness.settings.interfaces.api`, where Fabric's Hermes adapter reads it.
 The deterministic test converts the historical one-element `agents` list and the named provider and sandbox lists only in memory and requires that projection to equal the parsed v1 document; the raw export is never deployed and no production translator is added.
 The explicitly selected live scenario reports its lifecycle assertions through Cargo and writes no separate evidence report.
