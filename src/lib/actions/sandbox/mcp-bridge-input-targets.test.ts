@@ -284,61 +284,99 @@ require("./src/lib/actions/sandbox/mcp-bridge.js").addMcpBridge("alpha", {
     },
   );
 
-  it("does not adopt a retained same-name provider after remove then add", () => {
+  it("rejects re-add while a retained same-name provider exists and re-adds after the provider is deleted", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-retained-provider-"));
     const sourceRequireHook = path.resolve("test/helpers/onboard-script-mocks.cjs");
     const script = `
 process.env.HOME = ${JSON.stringify(home)};
 process.env.GITHUB_TOKEN = "replacement-host-only-secret";
+process.env.OTHER_TOKEN = "rotated-host-only-secret";
 require("node:dns/promises").lookup = async () => [{ address: "8.8.8.8", family: 4 }];
-const replace = (module, name, value) => Object.defineProperty(module, name, {
-  configurable: true, enumerable: true, value, writable: true,
-});
+const replace = (module, name, value) => Object.defineProperty(module, name, { configurable: true, enumerable: true, value, writable: true });
 const registry = require("./src/lib/state/registry.js");
 const adapters = require("./src/lib/actions/sandbox/mcp-bridge-adapters.js");
 const policies = require("./src/lib/policy/index.js");
+const policyModule = require("./src/lib/actions/sandbox/mcp-bridge-policy.js");
 const provider = require("./src/lib/actions/sandbox/mcp-bridge-provider.js");
 const state = require("./src/lib/actions/sandbox/mcp-bridge-state.js");
 const sourceState = require("./src/lib/actions/sandbox/mcp-bridge-source.js");
 const validation = require("./src/lib/actions/sandbox/mcp-bridge-validation.js");
-const nativeSourceState = {};
+const warnings = [];
+const mutations = [];
+console.warn = (line) => warnings.push(String(line));
+const providerId = "11111111-2222-4333-8444-555555555555";
+let policyState = "bound";
+let providerState = { credentialKeys: ["GITHUB_TOKEN"], exists: true, id: providerId, resourceVersion: 7, type: "nemoclaw-mcp-v1" };
+let attachments = [{ name: "alpha-mcp-github", providerId, credentialKeys: ["GITHUB_TOKEN"] }];
+const nativeSourceState = {
+  github: { server: "github", agent: "openclaw", adapter: "openclaw-config", url: "https://8.8.8.8/mcp", env: ["GITHUB_TOKEN"], providerName: "alpha-mcp-github", providerId, policyName: "mcp-bridge-github", source: "native" },
+};
+const originalSource = { ...nativeSourceState.github };
+const rotatedProviderId = "22222222-3333-4444-8555-666666666666";
+let allowProviderCreate = false;
 replace(adapters, "assertAgentMcpMutationRuntimeCapability", () => {});
-replace(adapters, "inspectAgentAdapterRegistration", () => ({ state: "absent" }));
-replace(adapters, "registerAgentAdapterAtCurrentCredentialRevision", (_sandbox, _adapter, entry) => {
-  nativeSourceState[entry.server] = { ...entry, source: "native" };
-  return "v1";
-});
+replace(adapters, "assertAgentMcpTeardownRuntimeCapability", () => {});
+replace(adapters, "inspectAgentAdapterRegistration", (_sandbox, _adapter, entry) => ({ state: nativeSourceState[entry.server] ? "registered" : "absent" }));
+replace(adapters, "unregisterAgentAdapter", (_sandbox, _adapter, entry) => (delete nativeSourceState[entry.server], "removed"));
+replace(adapters, "registerAgentAdapterAtCurrentCredentialRevision", (_sandbox, _adapter, entry) => (mutations.push("adapter"), (nativeSourceState[entry.server] = { ...entry, source: "native" }), "v2"));
+replace(adapters, "reloadOpenClawGatewayAfterMcpMutation", async () => {});
+replace(policyModule, "applyGeneratedPolicy", () => { mutations.push("policy"); policyState = "bound"; });
+replace(policyModule, "removeGeneratedPolicy", () => { policyState = "absent"; });
 replace(state, "ensureSandboxGatewaySelected", async () => {});
 replace(validation, "assertMcpCredentialBoundaryRuntimeVersion", () => {});
 replace(provider, "assertNoProviderCredentialCollisions", () => {});
-replace(provider, "getMcpProviderInspectionRuntimeSelection", () => ({
-  gatewayName: "nemoclaw-9090", workspace: "default",
-}));
-replace(provider, "inspectMcpProvider", () => ({
-  credentialKeys: ["GITHUB_TOKEN"], exists: true,
-  id: "11111111-2222-4333-8444-555555555555", resourceVersion: 7,
-  type: "nemoclaw-mcp-v1",
-}));
-replace(provider, "inspectMcpProviderAttachments", () => ({ attachments: [] }));
-replace(policies, "getPresetContentGatewayState", () => "absent");
-replace(sourceState, "inspectSourceBridgeState", () => ({
-  bridges: { ...nativeSourceState }, sources: { native: { ...nativeSourceState }, legacy: {} },
-}));
-const sandbox = {
-  name: "alpha", agent: "openclaw", gatewayName: "nemoclaw-9090", gatewayPort: 9090,
-};
+replace(provider, "ensureMcpBridgeProviderProfile", () => {});
+replace(provider, "upsertMcpProvider", () => {
+  mutations.push("provider");
+  if (!allowProviderCreate) throw new Error("unexpected provider mutation");
+  const action = providerState.exists ? "updated" : "created";
+  providerState = { credentialKeys: ["GITHUB_TOKEN"], exists: true, id: rotatedProviderId, resourceVersion: 8, type: "nemoclaw-mcp-v1" };
+  return { action, inspection: { ...providerState } };
+});
+replace(provider, "attachProvider", () => { mutations.push("attach"); attachments = [{ name: "alpha-mcp-github", providerId: providerState.id, credentialKeys: ["GITHUB_TOKEN"] }]; });
+replace(provider, "detachProvider", () => { attachments = []; return "detached"; });
+replace(provider, "observeMcpCredentialRevision", () => "v2");
+replace(provider, "waitForAttachedMcpCredential", () => "v2");
+replace(provider, "refreshMcpProviderEnvironment", () => {});
+replace(provider, "waitForDetachedMcpCredential", () => {});
+replace(provider, "getMcpProviderInspectionRuntimeSelection", () => ({ gatewayName: "nemoclaw-9090", workspace: "default" }));
+replace(provider, "inspectMcpProvider", () => ({ ...providerState }));
+replace(provider, "inspectMcpProviderAttachments", () => ({ attachments: [...attachments] }));
+replace(policies, "getPresetContentGatewayState", () => policyState);
+replace(sourceState, "inspectSourceBridgeState", () => ({ bridges: { ...nativeSourceState }, sources: { native: { ...nativeSourceState }, legacy: {} } }));
+const sandbox = { name: "alpha", agent: "openclaw", gatewayName: "nemoclaw-9090", gatewayPort: 9090 };
 registry.registerSandbox(sandbox);
 const runtimeSelection = { gatewayName: "nemoclaw-9090", workspace: "default" };
-const before = sourceState.inspectSourceBridgeState(sandbox, runtimeSelection).sources.native;
-require("./src/lib/actions/sandbox/mcp-bridge.js").addMcpBridge("alpha", {
-  server: "github",
-  url: "https://8.8.8.8/mcp",
-  env: [{ name: "GITHUB_TOKEN" }],
-}).then(() => process.exit(2), (error) => {
-  const after = sourceState.inspectSourceBridgeState(sandbox, runtimeSelection).sources.native;
-  process.stdout.write(JSON.stringify({
-    message: String(error && error.message ? error.message : error), before, after,
-  }), () => process.exit(0));
+const mcpBridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
+mcpBridge.removeMcpBridge("alpha", "github", { force: true }).then(() => {
+  const before = { policyState, attachments: [...attachments], native: { ...nativeSourceState.github } };
+  return Promise.all([
+    mcpBridge.addMcpBridge("alpha", { server: "github", url: "https://8.8.8.8/mcp", env: [{ name: "GITHUB_TOKEN" }] }).then(() => "resolved", (e) => String(e.message || e)),
+    mcpBridge.addMcpBridge("alpha", { server: "github", url: "https://8.8.8.8/mcp", env: [{ name: "OTHER_TOKEN" }] }).then(() => "resolved", (e) => String(e.message || e)),
+  ]).then(async ([sameEnvMessage, rotatedEnvMessage]) => {
+    providerState = { ...providerState, type: "generic" };
+    const incompatibleMessage = await mcpBridge.addMcpBridge("alpha", { server: "github", url: "https://8.8.8.8/mcp", env: [{ name: "GITHUB_TOKEN" }] }).then(() => "resolved", (e) => String(e.message || e));
+    const after = { policyState, attachments: [...attachments], native: { ...sourceState.inspectSourceBridgeState(sandbox, runtimeSelection).sources.native } };
+    const rejectedMutations = [...mutations];
+    const removalWarnings = [...warnings];
+    providerState = { credentialKeys: null, exists: false, id: null, resourceVersion: null, type: null };
+    allowProviderCreate = true;
+    await mcpBridge.addMcpBridge("alpha", { server: "github", url: "https://8.8.8.8/mcp", env: [{ name: "GITHUB_TOKEN" }] });
+    const readded = {
+      mutations: [...mutations],
+      policyState,
+      attachments: [...attachments],
+      native: { ...sourceState.inspectSourceBridgeState(sandbox, runtimeSelection).sources.native },
+    };
+    allowProviderCreate = false;
+    providerState = { ...providerState, type: "nemoclaw-mcp-v1", credentialKeys: ["OTHER_TOKEN"] };
+    nativeSourceState.github = originalSource;
+    policyState = "bound";
+    warnings.length = 0;
+    await mcpBridge.removeMcpBridge("alpha", "github", { force: true });
+    const unprovenRemoveWarnings = [...warnings];
+    process.stdout.write(JSON.stringify({ warnings: removalWarnings, mutations: rejectedMutations, readded, message: sameEnvMessage, rotatedEnvMessage, incompatibleMessage, unprovenRemoveWarnings, before, after }), () => process.exit(0));
+  });
 });
 `;
     try {
@@ -355,14 +393,78 @@ require("./src/lib/actions/sandbox/mcp-bridge.js").addMcpBridge("alpha", {
         timeout: 30_000,
       });
       expect(result.status, result.stderr).toBe(0);
-      const rejection = JSON.parse(result.stdout) as {
+      const rejection = trailingJsonPayload<{
+        warnings: string[];
+        mutations: string[];
+        readded: {
+          mutations: string[];
+          policyState: string;
+          attachments: Array<Record<string, unknown>>;
+          native: Record<string, unknown>;
+        };
         message: string;
+        rotatedEnvMessage: string;
+        incompatibleMessage: string;
+        unprovenRemoveWarnings: string[];
         before: Record<string, unknown>;
         after: Record<string, unknown>;
-      };
-      expect(rejection.message).toContain("non-prefix partial state");
+      }>(result.stdout);
+      expect(rejection.warnings.join("\n")).toContain("openshell sandbox list -g nemoclaw-9090");
+      expect(rejection.warnings.join("\n")).toContain(
+        "openshell sandbox provider list -g nemoclaw-9090 <sandbox-name>",
+      );
+      expect(rejection.warnings.join("\n")).toContain(
+        "openshell provider delete -g nemoclaw-9090 alpha-mcp-github",
+      );
+      expect(rejection.message).toContain("OpenShell provider 'alpha-mcp-github' already exists");
+      expect(rejection.message).toContain(
+        "after `nemoclaw alpha mcp remove github` or `nemoclaw alpha destroy` preserved the provider",
+      );
+      expect(rejection.message).toContain("openshell sandbox list -g nemoclaw-9090");
+      expect(rejection.message).toContain(
+        "Confirm its type, credential key, and known provider identity; the name alone does not prove ownership",
+      );
+      expect(rejection.message).toContain(
+        "openshell sandbox provider list -g nemoclaw-9090 <sandbox-name>",
+      );
+      expect(rejection.message).toContain(
+        "openshell provider delete -g nemoclaw-9090 alpha-mcp-github",
+      );
       expect(rejection.message).toContain("No source was changed");
+      expect(rejection.rotatedEnvMessage).toContain(
+        "found an incompatible provider 'alpha-mcp-github'",
+      );
+      expect(rejection.rotatedEnvMessage).not.toContain("openshell provider delete");
+      expect(rejection.incompatibleMessage).toContain(
+        "found an incompatible provider 'alpha-mcp-github'",
+      );
+      expect(rejection.incompatibleMessage).not.toContain("openshell provider delete");
+      expect(rejection.unprovenRemoveWarnings.join("\n")).toContain(
+        "could not be proven as the current exact MCP provider",
+      );
+      expect(rejection.unprovenRemoveWarnings.join("\n")).not.toContain(
+        "openshell provider delete",
+      );
+      expect(rejection.mutations).toEqual([]);
       expect(rejection.after).toEqual(rejection.before);
+      expect(rejection.readded).toEqual({
+        mutations: ["policy", "provider", "attach", "policy", "provider", "adapter"],
+        policyState: "bound",
+        attachments: [
+          {
+            name: "alpha-mcp-github",
+            providerId: "22222222-3333-4444-8555-666666666666",
+            credentialKeys: ["GITHUB_TOKEN"],
+          },
+        ],
+        native: {
+          github: expect.objectContaining({
+            server: "github",
+            providerName: "alpha-mcp-github",
+            providerId: "22222222-3333-4444-8555-666666666666",
+          }),
+        },
+      });
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }
