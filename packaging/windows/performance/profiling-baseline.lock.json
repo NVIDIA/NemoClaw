@@ -1,0 +1,74 @@
+{
+  "schemaVersion": 1,
+  "classification": "windows-installed-profiling-baseline",
+  "source": "f8a1d8c702c879d2984d76d2e0419641bb1ccd97",
+  "qualificationStatus": "failed full installed acceptance; earlier OpenClaw stage passed",
+  "setup": {
+    "url": "https://media.githubusercontent.com/media/NVIDIA/NemoClaw/73733de5d960ac2daa06f6a43f184df382d12add/NemoClawSetup-0.1.0-windows-arm64.exe",
+    "sha256": "0377de7a402f266f190b62084ada986612538de3cd6bd7358d267d4432bf3f04",
+    "bytes": 304743283
+  },
+  "files": [
+    {
+      "path": "bin/NemoClaw.exe",
+      "sha256": "b1c57fc9f5e5b5ed0999d8f422db23c6e467ee19539359155f327bcd59bf0cc4",
+      "bytes": 270336
+    },
+    {
+      "path": "bin/node.exe",
+      "sha256": "65044d409333b941086486545992141d1145198d7f0e0fc0c3bf62080fd8ee51",
+      "bytes": 77090120
+    },
+    {
+      "path": "mxc/wxc-host-prep.exe",
+      "sha256": "c8ddcf0461ae3d7ddff4656abb87b51236146742bb711a2e03fdc23cb8a966b0",
+      "bytes": 804664
+    },
+    {
+      "path": "openclaw/node_modules/openclaw/openclaw.mjs",
+      "sha256": "f643b005d6db233a0b45204e8d8e943256874ccc6897b8a6e0cf42a9b376a188",
+      "bytes": 23463
+    },
+    {
+      "path": "qualification/native-broker-relay-protocol.mts",
+      "sha256": "ac362caa3aeeea15d1fd70cb8aad476523db7f2fa62e89d7ca97749fb4819256",
+      "bytes": 17749
+    },
+    {
+      "path": "qualification/native-broker-tunnel.mts",
+      "sha256": "97ebcaede43b97784d36bff31007901d30b126194fb8a27fc9549b3e057f2d25",
+      "bytes": 5199
+    },
+    {
+      "path": "qualification/native-security.mts",
+      "sha256": "e16382777e04efc6bfb056b511edd1d5f12f9267c5f645c96e3ac76557810984",
+      "bytes": 12241
+    },
+    {
+      "path": "qualification/native-ui-lifecycle.mts",
+      "sha256": "e55432b35ce1b33e8d5392ea54b300d4b7cfa4b1198ac82c6bd4e90970ed1b37",
+      "bytes": 4386
+    },
+    {
+      "path": "qualification/native-ui-tunnel.mts",
+      "sha256": "3549748750b6d1306535988ec640904d3dd8efda1b9787f049761301227b3609",
+      "bytes": 7440
+    },
+    {
+      "path": "qualification/run-installed-native-web-ui.mts",
+      "sha256": "1dec4d760c023e973cf908e9f488023843ba5d8038fb6069e87da5e94fa8784a",
+      "bytes": 67969
+    },
+    {
+      "path": "openclaw/node_modules/openclaw/dist/runtime-pr_AayQr.js",
+      "sha256": "e65d6e19fda7cadcfe9a53722e96bba2373fa4220335d836f91efa0d0487a081",
+      "bytes": 33052
+    }
+  ],
+  "liveTavilyTested": false,
+  "pythonBytecode": {
+    "hermesFiles": 1018,
+    "deepAgentsFiles": 1474,
+    "cacheUseVerified": false
+  }
+}
