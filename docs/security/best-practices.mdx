@@ -318,6 +318,9 @@ These labels replace valid explicit QA labels in CI.
 Malformed explicit labels, `VITEST=true`, and `NODE_ENV=test` suppress telemetry.
 CI labels describe source runs and do not authenticate GitHub identity.
 Outside CI, `testLabel` is empty unless `NEMOCLAW_TELEMETRY_TEST_LABEL` supplies a valid QA label.
+Use `qa-<label>:<client>:attempt-<number>`, for example, `qa-telemetry:client:attempt-1`.
+`<label>` allows 1 to 32 lowercase letters, digits, or hyphens; `<client>` allows 1 to 40 of the same characters.
+Each segment must start with a letter or digit, and the attempt number must be 1 to 999 without a leading zero.
 
 ## Filesystem Controls
 

@@ -175,6 +175,7 @@ The image installs hash-locked Deep Agents Code `0.1.87` with NVIDIA provider su
 After the terminal smoke checks, onboarding runs `dcode --version` and compares the result with the version required by the agent manifest.
 Fresh and resumed onboarding exit nonzero instead of reporting the runtime ready when the installed version is too old, uses an incompatible version scheme, or cannot be verified.
 If the version check fails, review the reported version error and run `nemo-deepagents <sandbox-name> rebuild` before resuming onboarding.
+
 NemoClaw writes `/sandbox/.deepagents/config.toml` with an OpenAI-compatible provider and sets `use_responses_api = false` for Chat Completions compatibility.
 NVIDIA Endpoints uses `https://integrate.api.nvidia.com/v1` through a least-privilege OpenShell provider attached to the sandbox.
 Supported fixed hosted providers also use their native endpoints through sandbox-attached providers.
@@ -183,13 +184,16 @@ New hosted compatible endpoints normally use their recorded endpoint through a s
 A fresh Personal-tier hosted compatible selection instead uses `https://inference.local/v1` without creating a native provider attachment.
 Other retained shared selections and owned Local NVIDIA NIM also use `https://inference.local/v1`.
 Each route puts a scoped placeholder in the agent config instead of the real provider key.
+
 When onboarding records a reasoning effort on a `compatible-endpoint` route that uses `openai-completions`, managed startup writes that value to a root-owned file and Deep Agents Code model requests carry it as an `extra_body.reasoning_effort` request parameter.
 Leave `NEMOCLAW_REASONING_EFFORT` unset to keep the endpoint's own default.
 Deep Agents Code has no runtime `inference set` path, so re-onboard the sandbox with `nemo-deepagents onboard --fresh --name <sandbox-name> --recreate-sandbox` to change the recorded effort.
+
 When you use NVIDIA Endpoints without selecting another model, new Deep Agents Code sandboxes default to `nvidia/nemotron-3-ultra-550b-a55b`.
 For this model, the managed image maps the OpenAI-compatible route to Deep Agents `0.7.29`'s native Nemotron 3 Ultra harness profile, including model-specific tool-calling, filesystem, retry, context, and final-answer safeguards.
 Rebuild existing Deep Agents Code sandboxes after upgrading NemoClaw so their image includes the pinned runtime and profile.
 This agent-specific default does not change the shared Nemotron 3.5 Super VL default for OpenClaw and Hermes.
+
 The image launcher normalizes the runtime proxy environment for interactive, login-shell, and direct-exec paths and removes inherited proxy credentials and bypass entries before `dcode` starts.
 Managed interactive sessions pre-complete Deep Agents Code's optional first-run onboarding, skip its dependency and model selection screens, then open the TUI with the model selected during NemoClaw onboarding.
 The image includes `ripgrep` and `dos2unix`, and ordinary sessions suppress the optional Tavily warning unless web search is configured or invoked.
