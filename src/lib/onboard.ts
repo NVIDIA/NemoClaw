@@ -327,9 +327,7 @@ const nim: typeof import("./inference/nim") = require("./inference/nim");
 const onboardSession: typeof import("./state/onboard-session") = require("./state/onboard-session");
 const { markCancellationRecovery: recordRecovery } = onboardSession;
 const portableRetirementAuthority: typeof import("./onboard/portable-retirement-authority") = require("./onboard/portable-retirement-authority");
-const {
-  registerIncompleteOnboardExitHandlerForSession,
-}: typeof import("./onboard/onboard-exit-handler") = require("./onboard/onboard-exit-handler");
+const onboardExitHandler: typeof import("./onboard/onboard-exit-handler") = require("./onboard/onboard-exit-handler");
 const {
   getFutureShellPathHint,
 }: typeof import("./onboard/remediation") = require("./onboard/remediation");
@@ -2571,10 +2569,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     sessionFile: onboardSession.SESSION_FILE,
     withLifecycleLock: sandboxMutationLock.withMcpLifecycleLock,
   });
-  let portableEnvScope = null as
-    | import("./onboard/session-bootstrap").PortableOnboardEnvironmentScope
-    | null;
-  const restorePortableEnvScope = () => portableEnvScope?.restore();
+  let portableScope: Awaited<ReturnType<typeof resumeRuntime.prepare>>["environmentScope"] = null;
+  const restorePortableEnvScope = () => portableScope?.restore();
   let stagedLegacyKeys: string[] = [];
   let onboardTrace: ReturnType<typeof onboardTracing.startOnboardTrace> = {
     collector: null,
@@ -2587,8 +2583,12 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     getSandbox: registry.getSandbox,
     updateSandbox: registry.updateSandbox,
   });
-  registerIncompleteOnboardExitHandlerForSession(
-    { ...onboardSession, releaseOnboardLock: portableRetirementEntry.release },
+  onboardExitHandler.registerIncompleteOnboardExitHandlerForSession(
+    {
+      ...onboardSession,
+      releaseOnboardLock: portableRetirementEntry.release,
+      requestedSandboxName: initialEntryOptions.requestedSandboxName,
+    },
     () => completed || preserveIncompleteSession,
   );
   try {
@@ -2611,7 +2611,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         isNonInteractive(),
         onboardSession.loadSession,
       );
-      portableEnvScope = lockedRuntime.environmentScope;
+      portableScope = lockedRuntime.environmentScope;
       entryDecisions.clearGatewayEnvironmentWithoutBinding(authoritativeGateway, process.env);
       preparedDcodeRuntime.applyGatewayEnv(process.env);
       if (isNonInteractive() && !validatePolicyTierBeforeRuntime) validatePolicyTierEnvEarly();
@@ -3408,7 +3408,7 @@ module.exports = {
   getSandboxPromptDefault,
   getRequestedSandboxAgentName,
   normalizeSandboxAgentName,
-  registerIncompleteOnboardExitHandlerForSession,
+  ...onboardExitHandler,
   hydrateCredentialEnv,
   pruneKnownHostsEntries,
   shouldIncludeBuildContextPath,

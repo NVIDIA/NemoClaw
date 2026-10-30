@@ -104,7 +104,8 @@ describe("terminal step failure helper", () => {
     complete = false;
     listeners[0](1);
     errorSpy.mockRestore();
-    expect(errors.join("\n")).toContain("onboard --resume --name <sandbox>");
+    expect(errors).toContain("    nemoclaw onboard --resume");
+    expect(errors.join("\n")).not.toContain("<sandbox>");
     expect(errors.join("\n")).toContain("onboard --experimental-profile portable --fresh");
 
     const loaded = requireLoadedSession();
@@ -198,7 +199,13 @@ describe("terminal step failure helper", () => {
 });
 
 describe("incomplete-onboard --resume backstop (#6003)", () => {
-  function runExitHandler(code: number, { complete = false } = {}): string {
+  function runExitHandler(
+    code: number,
+    {
+      complete = false,
+      requestedSandboxName,
+    }: { complete?: boolean; requestedSandboxName?: string } = {},
+  ): string {
     const lines: string[] = [];
     const spy = vi.spyOn(console, "error").mockImplementation((message?: unknown) => {
       lines.push(String(message ?? ""));
@@ -209,8 +216,9 @@ describe("incomplete-onboard --resume backstop (#6003)", () => {
         listeners.push(listener);
       },
     };
+    const deps = { ...session, requestedSandboxName };
     registerIncompleteOnboardExitFailureHandler(
-      session,
+      deps,
       () => complete,
       "Onboarding exited before the step completed.",
       processLike,
@@ -220,18 +228,113 @@ describe("incomplete-onboard --resume backstop (#6003)", () => {
     return lines.join("\n");
   }
 
-  it("prints the resume hint when a step was in progress at exit", () => {
+  it("prints a runnable resume command before a name is chosen (#13730)", () => {
     session.saveSession(session.createSession({ lastStepStarted: "inference" }));
-    expect(runExitHandler(1)).toContain("onboard --resume --name <sandbox>");
+    const output = runExitHandler(1);
+
+    expect(output.split("\n")).toContain("    nemoclaw onboard --resume");
+    expect(output).not.toContain("--name");
   });
 
-  it("keeps the short resume hint when the sandbox name was recorded", () => {
+  it("includes a chosen name in the resume hint (#13730)", () => {
     session.saveSession(
       session.createSession({ lastStepStarted: "inference", sandboxName: "alpha" }),
     );
     const output = runExitHandler(1);
-    expect(output).toContain("onboard --resume");
-    expect(output).not.toContain("--name <sandbox>");
+    expect(output.split("\n")).toContain("    nemoclaw onboard --resume --name alpha");
+    expect(output).not.toContain("<sandbox>");
+  });
+
+  it("uses the requested name before the session records one (#13730)", () => {
+    session.saveSession(session.createSession({ lastStepStarted: "inference" }));
+    const beforeExit = requireLoadedSession();
+
+    const output = runExitHandler(1, { requestedSandboxName: "test-b" });
+
+    expect(output.split("\n")).toContain("    nemoclaw onboard --resume --name test-b");
+    expect(output).not.toContain("<sandbox>");
+    const afterExit = requireLoadedSession();
+    expect(afterExit.sandboxName).toBeNull();
+    expect(afterExit.sandboxPromptProgress).toEqual(beforeExit.sandboxPromptProgress);
+    expect(afterExit.steps.inference.status).toBe("failed");
+  });
+
+  it("keeps the recorded name when a different requested name is present (#13730)", () => {
+    session.saveSession(
+      session.createSession({ lastStepStarted: "inference", sandboxName: "chosen-name" }),
+    );
+
+    const output = runExitHandler(1, { requestedSandboxName: "requested-name" });
+
+    expect(output.split("\n")).toContain("    nemoclaw onboard --resume --name chosen-name");
+    expect(output).not.toContain("--name requested-name");
+    expect(requireLoadedSession().sandboxName).toBe("chosen-name");
+  });
+
+  it.each(["invalid_name", "alpha; printf injected", "alpha\n--fresh"])(
+    "uses the requested name when the recorded name is invalid: %s (#13730)",
+    (sandboxName) => {
+      session.saveSession(session.createSession({ lastStepStarted: "inference", sandboxName }));
+      const beforeExit = requireLoadedSession();
+
+      const output = runExitHandler(1, { requestedSandboxName: "requested-name" });
+
+      expect(output.split("\n").filter((line) => line.includes("onboard --resume"))).toEqual([
+        "    nemoclaw onboard --resume --name requested-name",
+      ]);
+      const afterExit = requireLoadedSession();
+      expect(afterExit.sandboxName).toBe(sandboxName);
+      expect(afterExit.sandboxPromptProgress).toEqual(beforeExit.sandboxPromptProgress);
+      expect(afterExit.steps.inference.status).toBe("failed");
+    },
+  );
+
+  it.each([
+    ["SIGINT", 130],
+    ["SIGTERM", 143],
+  ] as const)("prints one named recovery command after %s (#13730)", async (signal, exitCode) => {
+    const signalListeners = new Map<"SIGINT" | "SIGTERM", () => void>();
+    const exitListeners: Array<(code: number) => void> = [];
+    const kill = vi.fn();
+    const processLike = {
+      once: (_event: "exit", listener: (code: number) => void) => exitListeners.push(listener),
+      on: (name: "SIGINT" | "SIGTERM", listener: () => void) => {
+        signalListeners.set(name, listener);
+      },
+      removeListener: (name: "SIGINT" | "SIGTERM", listener: () => void) => {
+        expect(signalListeners.get(name)).toBe(listener);
+        signalListeners.delete(name);
+      },
+      kill,
+      pid: 4242,
+    };
+    const lines: string[] = [];
+    const spy = vi
+      .spyOn(console, "error")
+      .mockImplementation((message = "") => lines.push(String(message)));
+    session.saveSession(session.createSession({ lastStepStarted: "inference" }));
+    const deps = { ...session, requestedSandboxName: "interrupted-name" };
+
+    try {
+      registerIncompleteOnboardExitFailureHandler(
+        deps,
+        () => false,
+        "Onboarding exited before the step completed.",
+        processLike,
+      );
+      signalListeners.get(signal)?.();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      exitListeners[0](exitCode);
+
+      expect(lines.filter((line) => line.includes("onboard --resume"))).toEqual([
+        "    nemoclaw onboard --resume --name interrupted-name",
+      ]);
+      expect(kill).toHaveBeenCalledOnce();
+      expect(kill).toHaveBeenCalledWith(4242, signal);
+      expect(requireLoadedSession().sandboxName).toBeNull();
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("stays silent when no step had started", () => {
