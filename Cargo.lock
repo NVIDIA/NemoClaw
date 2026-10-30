@@ -3167,6 +3167,7 @@ dependencies = [
 name = "nemoclaw-fabric"
 version = "0.1.0"
 dependencies = [
+ "jsonschema 0.56.0",
  "nemo-fabric-core",
  "nemoclaw-backend",
  "nemoclaw-docker",

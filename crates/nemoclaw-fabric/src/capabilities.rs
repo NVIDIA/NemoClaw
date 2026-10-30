@@ -169,12 +169,15 @@ pub fn assess_fabric(catalog: &FabricCatalog, request: &FabricRequirements) -> C
 
 const INTERFACES: &str = "harness.settings.interfaces";
 
-/// Whether the adapter declares each interface and interface field the
-/// configuration sets. Fabric's adapters list their interfaces, and each one's
-/// fields, under `settings_schema.properties.interfaces`, closed at both
-/// levels; an adapter that declares none supports none. Fabric validates the
-/// values, required fields and combinations when it plans the agent, inside
-/// the sandbox; checking names here makes a plan fail before apply.
+/// Whether each interface the configuration sets satisfies the adapter's
+/// descriptor. Fabric's adapters list their interfaces, and each one's schema,
+/// under `settings_schema.properties.interfaces`, closed at both levels; an
+/// adapter that declares none supports none. Each interface object is checked
+/// against its own schema, so a missing port, a wrong type or an out-of-range
+/// value fails the plan before apply instead of failing Fabric's check inside
+/// the sandbox after NemoClaw has created resources. Settings outside the
+/// interfaces, and conditions across them such as OpenClaw's `port_range`
+/// with a dashboard port, are still Fabric's to check when it plans the agent.
 fn interface_checks(descriptor: &Value, configuration: &Value) -> Vec<CapabilityCheck> {
     let Some(requested) = configuration.pointer("/harness/settings/interfaces") else {
         return Vec::new();
@@ -219,6 +222,21 @@ fn interface_checks(descriptor: &Value, configuration: &Value) -> Vec<Capability
                 checks.push(unsupported(format!("{path}.{field}")));
             }
         }
+        let root = descriptor
+            .pointer("/settings_schema")
+            .unwrap_or(&Value::Null);
+        for (field, problem) in schema_problems(root, schema, settings) {
+            let field = format!("{path}{field}");
+            checks.push(CapabilityCheck {
+                requirement: "harness_interfaces".into(),
+                status: Support::Unsupported,
+                reason: if diagnostic_field(&field) == field {
+                    format!("{field}: {problem}")
+                } else {
+                    format!("{path}: does not satisfy the image's adapter schema")
+                },
+            });
+        }
     }
     checks.sort_by(|left, right| left.reason.cmp(&right.reason));
     checks.dedup();
@@ -230,6 +248,75 @@ fn interface_checks(descriptor: &Value, configuration: &Value) -> Vec<Capability
         });
     }
     checks
+}
+
+/// Refuses every schema reference outside the descriptor, so checking a schema
+/// an image advertises never reads the network or the filesystem.
+struct OfflineSchemas;
+
+impl jsonschema::Retrieve for OfflineSchemas {
+    fn retrieve(
+        &self,
+        uri: &jsonschema::Uri<String>,
+    ) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
+        Err(format!("external schema retrieval is disabled: {uri}").into())
+    }
+}
+
+/// Where `settings` breaks `schema`, an interface's schema within the
+/// adapter's `settings_schema` (`root`), as field suffixes such as `.port`
+/// with a fixed description; never the rejected value. Unknown fields are
+/// reported by name elsewhere. A schema that doesn't compile offline is left
+/// to Fabric.
+fn schema_problems(root: &Value, schema: &Value, settings: &Value) -> Vec<(String, &'static str)> {
+    use jsonschema::{error::ValidationErrorKind as Kind, paths::LocationSegment};
+    let mut schema = schema.clone();
+    // The interface's schema can use the dialect and definitions of the
+    // settings schema it came from.
+    if let Some(object) = schema.as_object_mut() {
+        for key in ["$schema", "$defs", "definitions"] {
+            if let Some(value) = root.get(key) {
+                object.entry(key).or_insert_with(|| value.clone());
+            }
+        }
+    }
+    let Ok(validator) = jsonschema::options()
+        .with_retriever(OfflineSchemas)
+        .build(&schema)
+    else {
+        return Vec::new();
+    };
+    let mut problems = Vec::new();
+    for error in validator.iter_errors(settings) {
+        let mut field: String = error
+            .instance_path()
+            .iter()
+            .map(|segment| match segment {
+                LocationSegment::Property(name) => format!(".{name}"),
+                LocationSegment::Index(index) => format!("[{index}]"),
+            })
+            .collect();
+        let problem = match error.kind() {
+            Kind::AdditionalProperties { .. } | Kind::UnevaluatedProperties { .. } => continue,
+            Kind::Required { property } => {
+                field.push('.');
+                field.push_str(property.as_str().unwrap_or_default());
+                "is required by the image's adapter"
+            }
+            Kind::Type { .. } => "has a type the image's adapter does not accept",
+            Kind::Minimum { .. }
+            | Kind::Maximum { .. }
+            | Kind::ExclusiveMinimum { .. }
+            | Kind::ExclusiveMaximum { .. }
+            | Kind::MultipleOf { .. } => "is out of the range the image's adapter accepts",
+            Kind::Enum { .. } | Kind::Constant { .. } => {
+                "is not a value the image's adapter accepts"
+            }
+            _ => "does not satisfy the image's adapter schema",
+        };
+        problems.push((field, problem));
+    }
+    problems
 }
 
 /// A field path or adapter name safe to show in a diagnostic, else `configuration`.

@@ -74,7 +74,7 @@ To reach an agent from the client host, see [agent interfaces](interfaces.md).
 
 OpenClaw's Control UI and Hermes's API server and dashboard are native interfaces that the agent's Fabric runtime serves inside its sandbox.
 Enable them under `harness.settings.interfaces` with an exact `port`, then reach them as [Reach an Agent Interface](interfaces.md#reach-an-agent-interface) describes.
-Fabric's adapter starts each interface, generates its token, and stops it with the runtime; NemoClaw rejects interface names and fields that the image's adapter doesn't declare while planning, and after apply prints the commands that forward each interface and read its token.
+Fabric's adapter starts each interface, generates its token, and stops it with the runtime; NemoClaw checks each interface against its schema in the image's adapter descriptor while planning, and after apply prints the commands that forward each interface and read its token.
 The agent's own tools can read those tokens and reach the interfaces, so the agent can sign in to its own interfaces; Hermes's dashboard has no sign-in, and its browser chat runs the agent without approvals.
 
 ## Native Controls at Initialization

@@ -117,8 +117,9 @@ An interface is on while it is present, unless it sets `enabled: false`.
 OpenClaw reserves the ports from `port` through `port + 110`, and its `port` can't be combined with `port_range`.
 Hermes's `startup_timeout_seconds` setting, 60 by default and at most 75, bounds how long its interfaces have to start.
 
-Planning rejects an interface name or field that the image's adapter doesn't declare, for example `sandbox/claw: adapter/nvidia.fabric.openclaw compatibility rejected; harness_interfaces: harness.settings.interfaces.terminal: the image's adapter does not support this interface setting`.
-Fabric checks the values, such as a port that is out of range or already in use, when it starts the agent, and the agent fails to start if an enabled interface can't start.
+Planning checks each interface against its schema in the image's adapter descriptor.
+It rejects an interface name or field that the adapter doesn't declare, for example `sandbox/claw: adapter/nvidia.fabric.openclaw compatibility rejected; harness_interfaces: harness.settings.interfaces.terminal: the image's adapter does not support this interface setting`, and a missing required field, a wrong type, or an out-of-range value, for example `harness_interfaces: harness.settings.interfaces.api.port: is required by the image's adapter`.
+Fabric checks the rest when it starts the agent: settings outside the interfaces, combinations such as OpenClaw's `port` with `port_range`, and a port that is already in use. The agent fails to start if an enabled interface can't start.
 Changing an agent's settings, including its interfaces, replaces its sandbox, deleting its files and conversations.
 
 ### Forward, Read the Token, and Sign In

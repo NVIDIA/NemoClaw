@@ -300,7 +300,10 @@ fn catalog_with_interfaces() -> FabricCatalog {
             "type": "object",
             "additionalProperties": false,
             "required": ["port"],
-            "properties": {"enabled": {"type": "boolean"}, "port": {"type": "integer"}}
+            "properties": {
+                "enabled": {"type": "boolean"},
+                "port": {"type": "integer", "minimum": 1, "maximum": 65535}
+            }
         }}
     });
     catalog
@@ -354,19 +357,114 @@ fn an_adapter_without_an_interface_declaration_supports_no_interfaces() {
     );
 }
 
-/// Values, required fields and combinations, such as a missing port or one out
-/// of range, are Fabric's to check when it plans the agent.
+/// Planning checks each interface against its own schema in the image's
+/// descriptor: a missing required field, a wrong type or an out-of-range value
+/// fails the plan, naming the field.
 #[test]
-fn interface_values_are_left_to_fabric() {
+fn planning_rejects_interface_values_their_schema_refuses() {
     let catalog = catalog_with_interfaces();
     let adapter = "org.fixture.new-adapter";
-    for interfaces in [
-        json!({"dashboard": {}}),
-        json!({"dashboard": {"port": 0}}),
-        json!({"dashboard": {"port": "9119", "enabled": "yes"}}),
+    let port = "harness.settings.interfaces.dashboard.port";
+    for (interfaces, rejected) in [
+        (json!({"dashboard": {}}), port),
+        (json!({"dashboard": {"enabled": true}}), port),
+        (json!({"dashboard": {"port": "9119"}}), port),
+        (json!({"dashboard": {"port": 0}}), port),
+        (json!({"dashboard": {"port": 65536}}), port),
+        (
+            json!({"dashboard": {"port": 9119, "enabled": "yes"}}),
+            "harness.settings.interfaces.dashboard.enabled",
+        ),
+        (
+            json!({"dashboard": true}),
+            "harness.settings.interfaces.dashboard",
+        ),
     ] {
-        assert!(rejected_interfaces(&catalog, adapter, interfaces).is_empty());
+        assert_eq!(
+            rejected_interfaces(&catalog, adapter, interfaces.clone()),
+            [rejected],
+            "{interfaces}"
+        );
     }
+}
+
+/// Settings that satisfy an interface's schema pass, including an interface,
+/// such as a terminal, whose schema requires no field.
+#[test]
+fn interface_settings_their_schema_accepts_pass() {
+    let mut catalog = catalog_with_interfaces();
+    catalog.adapters[0].descriptor["settings_schema"]["properties"]["interfaces"]["properties"]["terminal"] = json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {"enabled": {"type": "boolean"}}
+    });
+    let adapter = "org.fixture.new-adapter";
+    for interfaces in [
+        json!({"dashboard": {"port": 9119}}),
+        json!({"dashboard": {"port": 1, "enabled": false}}),
+        json!({"terminal": {}}),
+        json!({"terminal": {"enabled": true}, "dashboard": {"port": 65535}}),
+    ] {
+        assert!(
+            rejected_interfaces(&catalog, adapter, interfaces.clone()).is_empty(),
+            "{interfaces}"
+        );
+    }
+}
+
+/// A rejected value is never echoed: the reason names the field only.
+#[test]
+fn a_rejected_interface_value_is_not_echoed() {
+    use nemoclaw_sdk::fabric_capabilities::{FabricRequirements, assess_fabric};
+    let mut configuration = config();
+    configuration["harness"]["settings"] =
+        json!({"interfaces": {"dashboard": {"port": "\u{1b}[31mPRIVATE"}}});
+    let report = assess_fabric(
+        &catalog_with_interfaces(),
+        &FabricRequirements {
+            configuration,
+            filesystem_read: None,
+        },
+    );
+    let reasons: Vec<&str> = report
+        .checks
+        .iter()
+        .map(|check| check.reason.as_str())
+        .collect();
+    assert!(
+        reasons
+            .iter()
+            .any(|reason| reason.starts_with("harness.settings.interfaces.dashboard.port:")),
+        "{reasons:?}"
+    );
+    assert!(
+        reasons
+            .iter()
+            .all(|reason| !reason.contains("PRIVATE") && !reason.contains('\u{1b}')),
+        "{reasons:?}"
+    );
+}
+
+/// Only the interfaces are checked: settings outside them, and combinations
+/// across them, such as OpenClaw's port_range with a dashboard port, are
+/// Fabric's to check when it plans the agent.
+#[test]
+fn settings_outside_the_interfaces_are_left_to_fabric() {
+    use nemoclaw_sdk::fabric_capabilities::{FabricRequirements, Support, assess_fabric};
+    let mut configuration = config();
+    configuration["harness"]["adapter_id"] = "nvidia.fabric.openclaw".into();
+    configuration["harness"]["settings"] = json!({
+        "port_range": {"start": 18789, "end": 18899},
+        "interfaces": {"dashboard": {"port": 18789}}
+    });
+    let report = assess_fabric(
+        &FabricCatalog::bundled(),
+        &FabricRequirements {
+            configuration,
+            filesystem_read: None,
+        },
+    );
+    assert_eq!(report.status, Support::Supported, "{:?}", report.checks);
 }
 
 /// A name that isn't safe to print is reported without echoing it.
@@ -421,6 +519,40 @@ fn the_bundled_adapters_accept_their_p0_interfaces_only() {
         rejected_interfaces(&catalog, "nvidia.fabric.pi", json!({"terminal": {}})),
         ["harness.settings.interfaces.terminal"]
     );
+    // Each HTTP interface needs its exact port, within the adapter's range.
+    for (adapter, interfaces, rejected) in [
+        (
+            hermes,
+            json!({"api": {}}),
+            "harness.settings.interfaces.api.port",
+        ),
+        (
+            hermes,
+            json!({"dashboard": {"enabled": true}}),
+            "harness.settings.interfaces.dashboard.port",
+        ),
+        (
+            openclaw,
+            json!({"dashboard": {}}),
+            "harness.settings.interfaces.dashboard.port",
+        ),
+        (
+            openclaw,
+            json!({"dashboard": {"port": 65426}}),
+            "harness.settings.interfaces.dashboard.port",
+        ),
+        (
+            hermes,
+            json!({"api": {"port": "8642"}}),
+            "harness.settings.interfaces.api.port",
+        ),
+    ] {
+        assert_eq!(
+            rejected_interfaces(&catalog, adapter, interfaces.clone()),
+            [rejected],
+            "{adapter} {interfaces}"
+        );
+    }
 }
 
 #[test]
