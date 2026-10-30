@@ -283,6 +283,16 @@ Then export that text-only sandbox.
 
 </AgentOnly>
 
+<AgentOnly variant="hermes">
+
+V1 can export managed Hermes sources when their stored startup settings match its supported profile.
+A working Hermes sandbox, including one created with default onboarding, can still have startup settings that V1 cannot represent.
+Export rejects direct tool disclosure and other settings outside that profile.
+If export reports an unsupported profile, it writes no YAML or output file.
+Continue using the existing sandbox.
+
+</AgentOnly>
+
 The command reads the provider endpoint from the sandbox's OpenShell gateway and compares it with the registered endpoint.
 For NVIDIA Endpoints, it verifies that the recorded NemoClaw-owned provider attachment matches the live provider, least-privilege profile, and fixed native endpoint.
 A custom NVIDIA provider profile or endpoint override cannot be included in an export.
@@ -580,9 +590,8 @@ Run `$$nemoclaw <sandbox-name> doctor`, correct the reported condition, then run
 
 During finalization, NemoClaw stops onboarding when it cannot complete the process check or a required secret-boundary check refuses.
 It does not report the sandbox as ready.
-For a Portable Hermes receipt and registry authority mismatch, preserve both records and follow [Portable Hermes receipt and registry authority do not match](troubleshooting#portable-hermes-receipt-and-registry-authority-do-not-match).
-Do not resume onboarding for that authority failure.
-For another resumable finalization failure, run `$$nemoclaw <sandbox-name> doctor`, correct the reported condition, then run `$$nemoclaw onboard --resume`.
+If the diagnostic instructs you to stop, preserve the reported records unchanged.
+When the diagnostic permits resume, run `$$nemoclaw <sandbox-name> doctor`, correct the reported condition, then run `$$nemoclaw onboard --resume`.
 
 </AgentOnly>
 
@@ -1437,7 +1446,7 @@ Hermes config resolves under `/sandbox/.hermes`.
 
 ```bash
 nemohermes my-assistant exec -- hermes --version
-nemohermes my-assistant exec --workdir /sandbox/workspace -- ls -la
+nemohermes my-assistant exec --workdir /sandbox/.hermes/workspace -- ls -la
 ```
 
 </AgentOnly>
@@ -1990,15 +1999,8 @@ Expected output:
 ...
 ```
 
-If a non-Portable sandbox runs an older Hermes version than this NemoClaw release expects, `status` and `connect` add an `Update` line that points to `nemohermes <name> rebuild`.
+If a supported managed sandbox runs an older Hermes version than this NemoClaw release expects, `status` and `connect` add an `Update` line that points to `nemohermes <name> rebuild`.
 The rebuild reuses the existing sandbox name and transfers the complete native home while OpenShell keeps credential stores under its lifecycle.
-
-Portable Hermes does not support `rebuild`.
-Replace an older Portable Hermes image through a fresh Portable onboarding run:
-
-```bash
-nemohermes onboard --experimental-profile portable --fresh --name <sandbox-name> --recreate-sandbox
-```
 
 </AgentOnly>
 <AgentOnly variant="deepagents">
@@ -3310,8 +3312,20 @@ $$nemoclaw my-assistant download /sandbox/.openclaw/agents/main/sessions/ ./sess
 </AgentOnly>
 <AgentOnly variant="hermes">
 
+Choose unused paths for `/sandbox/.hermes/workspace/download-example.txt` in the sandbox and `./download-example.txt` on your host.
+Create a sample file, then download it:
+
 ```bash
-$$nemoclaw my-assistant download /sandbox/.hermes/state.db ./
+$$nemoclaw my-assistant exec -- sh -c 'set -C; printf "download example\n" > /sandbox/.hermes/workspace/download-example.txt' && \
+  $$nemoclaw my-assistant download /sandbox/.hermes/workspace/download-example.txt ./download-example.txt
+```
+
+The sample command refuses to replace an existing sandbox file.
+The downloaded file contains `download example`.
+
+Download the Hermes logs directory:
+
+```bash
 $$nemoclaw my-assistant download /sandbox/.hermes/logs/ ./logs/
 ```
 
@@ -3362,13 +3376,6 @@ $$nemoclaw my-assistant upload ./agent-skills/ /sandbox/.deepagents/agent/skills
 ### `$$nemoclaw <name> rebuild`
 
 Upgrade a sandbox to the current agent version while preserving its complete native home/workspace. The command captures that complete tree and the current OpenShell policy in private temporary handoffs, destroys the old sandbox, recreates it with the current image, and restores the complete tree.
-
-<AgentOnly variant="hermes">
-
-Portable Hermes does not support `rebuild`.
-To replace a Portable Hermes sandbox, run `nemohermes onboard --experimental-profile portable --fresh --name <sandbox-name> --recreate-sandbox`.
-
-</AgentOnly>
 
 If the sandbox or its retained recovery record belongs to another local OpenShell gateway registry, NemoClaw runs the rebuild or recovery retirement from that registry.
 It asks for confirmation before it starts the delegated rebuild worker unless you pass `--yes` or `--force`.
