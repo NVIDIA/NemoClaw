@@ -326,16 +326,23 @@ fn opencode_trusts_the_plain_http_model_hosts_the_deployment_names() {
     let config = project(&https);
     assert_eq!(config["harness"]["settings"], json!({}), "{config}");
 
-    // Pi declares no such setting, and Fabric rejects undeclared settings.
-    let pi = include_str!("../../../examples/fabric-pi.yaml");
-    let config = project(pi);
+    // Pi declares the setting too, for its Relay gateway.
+    let pi = project(include_str!("../../../examples/fabric-pi.yaml"));
+    assert_eq!(
+        pi["harness"]["settings"]["insecure_http_model_hosts"],
+        json!(["172.20.0.1"]),
+        "{pi}"
+    );
+
+    // Hermes declares no such setting, and Fabric rejects undeclared settings.
+    let hermes = project(include_str!("../../../examples/fabric-hermes.yaml"));
     assert!(
-        config["models"]["default"]["base_url"]
+        hermes["models"]["default"]["base_url"]
             .as_str()
             .is_some_and(|url| url.starts_with("http://")),
-        "{config}"
+        "{hermes}"
     );
-    assert_eq!(config["harness"]["settings"], json!({}), "{config}");
+    assert_eq!(hermes["harness"]["settings"], json!({}), "{hermes}");
 }
 
 #[test]

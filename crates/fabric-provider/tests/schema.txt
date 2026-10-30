@@ -136,6 +136,111 @@ resource fabric_agent (version 0)
       > Optional temperature.
     top_p: number, optional
       > Optional nucleus sampling probability.
+  block provenance: optional
+    enabled: bool, optional
+      > False skips host and guest collector work and omits result execution evidence.
+    block reports: optional
+      > Caller/owner snapshots, captured at initialization and forwarded unchanged.
+      block infrastructure: optional
+        > Existing provider/engine reports, omitted when none were supplied.
+        block container: optional
+          > Included only when an owner supplied an engine report.
+          context_refs: list(string), required
+            > Installation contexts served by this engine.
+          block engine: single
+            > Engine name.
+            observed_at: string, required
+              > Original RFC 3339 UTC capture time; forwarding does not change it.
+            origin: string, required
+              > How the named source obtained this observation.
+            reason: string, optional
+              > Required when a value is missing.
+            source: string, required
+              > Observer and method, such as `adapter:importlib.metadata`.
+            status: string, required
+              > Availability of this value.
+            value: string, optional
+              > Full value, present only when available; never shortened or hashed.
+          block engine_version: single
+            > Server version, never a CLI or API version.
+            observed_at: string, required
+              > Original RFC 3339 UTC capture time; forwarding does not change it.
+            origin: string, required
+              > How the named source obtained this observation.
+            reason: string, optional
+              > Required when a value is missing.
+            source: string, required
+              > Observer and method, such as `adapter:importlib.metadata`.
+            status: string, required
+              > Availability of this value.
+            value: string, optional
+              > Full value, present only when available; never shortened or hashed.
+        block sandbox: optional
+          > Included only when an owner supplied a sandbox report.
+          context_refs: list(string), required
+            > Installation contexts served by this sandbox.
+          block provider: single
+            > Provider name.
+            observed_at: string, required
+              > Original RFC 3339 UTC capture time; forwarding does not change it.
+            origin: string, required
+              > How the named source obtained this observation.
+            reason: string, optional
+              > Required when a value is missing.
+            source: string, required
+              > Observer and method, such as `adapter:importlib.metadata`.
+            status: string, required
+              > Availability of this value.
+            value: string, optional
+              > Full value, present only when available; never shortened or hashed.
+          block service_version: single
+            > Gateway/service version, not a guest package version.
+            observed_at: string, required
+              > Original RFC 3339 UTC capture time; forwarding does not change it.
+            origin: string, required
+              > How the named source obtained this observation.
+            reason: string, optional
+              > Required when a value is missing.
+            source: string, required
+              > Observer and method, such as `adapter:importlib.metadata`.
+            status: string, required
+              > Availability of this value.
+            value: string, optional
+              > Full value, present only when available; never shortened or hashed.
+      block software_environments: list
+        > One inventory per observed installation/resolution context.
+        complete: bool, required
+          > Every selected target is represented, including unavailable versions.
+        context_ref: string, required
+          > Opaque result-local join key; has no machine or role semantics.
+        participants: list(string), required
+          > Components using this installation, such as `caller_sdk` or `adapter`.
+        reason: string, optional
+          > Why coverage is unavailable or incomplete.
+        status: string, required
+          > Report availability. `not_applicable` is not an inventory status.
+        block entries: list
+          > Selected software only; this is not a dependency scan.
+          kind: string, required
+            > `python_distribution`, `npm_package`, `executable`, or `component`.
+          name: string, required
+            > Distribution, executable, or component name.
+          role: string, required
+            > Component category, such as `fabric_sdk`, `adapter`, or `harness`.
+          block version: single
+            > Full version observation.
+            observed_at: string, required
+              > Original RFC 3339 UTC capture time; forwarding does not change it.
+            origin: string, required
+              > How the named source obtained this observation.
+            reason: string, optional
+              > Required when a value is missing.
+            source: string, required
+              > Observer and method, such as `adapter:importlib.metadata`.
+            status: string, required
+              > Availability of this value.
+            value: string, optional
+              > Full value, present only when available; never shortened or hashed.
   block relay: optional
     extensions: string, optional
       > Undeclared properties, as JSON text.

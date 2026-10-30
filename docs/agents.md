@@ -53,7 +53,7 @@ Check `result.status` as well as the outer `status`: the outer one only reports 
 ### Run One Headless OpenClaw Request
 
 Headless operation follows the same public Fabric invocation boundary.
-The [pinned OpenClaw adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/7aedb66be0d0b7fc5a0d466539d87f835f16b1c1/adapters/python/openclaw/README.md) takes a text prompt and sends it to the native OpenClaw agent selected by `harness.settings.agent_id`, which defaults to `default`.
+The [pinned OpenClaw adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/78e79bfc494d30c56d9af60b22daae66dad4e77c/adapters/python/openclaw/README.md) takes a text prompt and sends it to the native OpenClaw agent selected by `harness.settings.agent_id`, which defaults to `default`.
 A request can incur inference charges and affect retained conversation history.
 
 With a running agent whose YAML `agent.name` is `assistant`, read its runtime ID from the deployment's state directory with `jq`, then send the request from the client host:
@@ -104,7 +104,7 @@ Review [trace data exposure](security.md) before enabling collection for another
 
 Relay configuration belongs to Fabric's public configuration and the exact Hermes adapter contract.
 It does not trigger adapter selection in NemoClaw.
-The Hermes image installs Hermes Agent v0.22.4 on Python 3.14 with its Relay 0.10 dependency and the Switchyard Relay plugin 0.3.1.
+The Hermes image installs Hermes Agent v0.22.5 on Python 3.14 with its Relay 0.10 dependency and the Switchyard Relay plugin 0.3.1.
 Under `harness.config`, enable `telemetry.providers.relay` and add Switchyard under `relay.plugins.dynamic`; NemoClaw passes the configuration to Fabric without interpreting it, and Relay owns validation and activation.
 Set `manifest` to `/opt/nemo-relay/plugins/switchyard/relay-plugin.toml` and provide either `config.switchyard_config` or `config.switchyard_config_path`.
 Do not infer native API availability from a tracing setting.

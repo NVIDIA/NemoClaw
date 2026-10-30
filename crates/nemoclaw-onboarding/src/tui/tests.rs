@@ -205,6 +205,7 @@ fn configured_target_prerequisite_blocks_save_until_observed() {
             "adapter:nvidia.fabric.openclaw:/agent_id",
             "adapter:nvidia.fabric.openclaw:/channel_config",
             "adapter:nvidia.fabric.openclaw:/connect_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/interfaces",
             "adapter:nvidia.fabric.openclaw:/openclaw_command",
             "adapter:nvidia.fabric.openclaw:/port_range",
             "adapter:nvidia.fabric.openclaw:/read_timeout_seconds",
@@ -426,6 +427,7 @@ fn default_journey_asks_route_choices_and_leaves_adapter_settings_at_their_defau
             "/spec/gateway/engine",
             "/spec/sandboxes/assistant/image/ref",
             "/spec/sandboxes/assistant/network/tier",
+            "model:/supports_usage_in_streaming",
         ]
     );
 }
@@ -1029,6 +1031,7 @@ fn review_uses_authoring_readiness_for_an_observed_target_conflict() {
             "adapter:nvidia.fabric.openclaw:/agent_id",
             "adapter:nvidia.fabric.openclaw:/channel_config",
             "adapter:nvidia.fabric.openclaw:/connect_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/interfaces",
             "adapter:nvidia.fabric.openclaw:/openclaw_command",
             "adapter:nvidia.fabric.openclaw:/port_range",
             "adapter:nvidia.fabric.openclaw:/read_timeout_seconds",
@@ -1659,6 +1662,7 @@ fn an_unverified_target_the_journey_requires_blocks_saving_in_the_error_colour()
             "adapter:nvidia.fabric.openclaw:/agent_id",
             "adapter:nvidia.fabric.openclaw:/channel_config",
             "adapter:nvidia.fabric.openclaw:/connect_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/interfaces",
             "adapter:nvidia.fabric.openclaw:/openclaw_command",
             "adapter:nvidia.fabric.openclaw:/port_range",
             "adapter:nvidia.fabric.openclaw:/read_timeout_seconds",
