@@ -11,7 +11,6 @@ use super::{
     AUTH_KIND, GATEWAY_KIND, STORAGE_KIND, Spec,
     auth::{Development, Material},
     cluster::{Cluster, Owned},
-    gateway::Identity,
     issuer,
     receipt::Receipt,
     storage::{Storage, ensure_storage},
@@ -33,8 +32,6 @@ pub struct Response {
     /// Whether Kubernetes still holds a Helm release record. Only the
     /// authentication resource supplies this independent observation.
     pub release_present: Option<bool>,
-    /// Non-secret chart overrides observed before Helm installs the gateway.
-    pub gateway_values: Option<String>,
 }
 
 /// Cluster access and local paths for one deployment's operations.
@@ -42,12 +39,7 @@ pub struct Operations {
     pub client: kube::Client,
     /// Private state directory holding the receipt.
     pub state: PathBuf,
-    /// How long to wait for OpenShift to assign a new namespace its UID range.
-    pub openshift_wait: std::time::Duration,
 }
-
-/// OpenShift writes a namespace's UID range within seconds of creating it.
-pub const OPENSHIFT_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
 
 impl Operations {
     /// Operations from a provider's environment: the kubeconfig the spec
@@ -73,7 +65,6 @@ impl Operations {
         Ok(Self {
             client: super::connect(&cluster).await?,
             state,
-            openshift_wait: OPENSHIFT_WAIT,
         })
     }
     fn target<'a>(
@@ -251,30 +242,6 @@ impl Operations {
         // Ordinary refresh must stop before Helm can recreate a missing
         // StatefulSet or change one with a substituted identity.
         self.read_gateway(spec, removing).await?;
-        let openshift = spec.settings.runtime.provider == crate::config::ComputeDriver::OpenShift;
-        if openshift
-            && !removing
-            && !receipt.issuer.is_empty()
-            && let Some(recorded) = receipt.namespace_identity
-        {
-            let owned = self.namespace(spec, &receipt)?;
-            let namespace = cluster.verify_uid(owned).await?;
-            let identity =
-                Identity::from_annotations(&namespace.metadata.annotations.unwrap_or_default());
-            if identity != Some(recorded) {
-                return Err(range_changed(owned, recorded, identity));
-            }
-        }
-        // Ensure records the namespace identity before it writes an OpenShift
-        // issuer, and teardown uses the recorded identity after annotations disappear.
-        if openshift && !receipt.issuer.is_empty() && receipt.namespace_identity.is_none() {
-            return Err(ObservationError::Incomplete);
-        }
-        let values = if openshift {
-            receipt.namespace_identity.map(Identity::values)
-        } else {
-            None
-        };
         // With an existing OIDC issuer there are no issuer objects; once
         // ready, the resource is identified by its namespace.
         let oidc = self.target(spec)?.authentication.profile
@@ -297,7 +264,6 @@ impl Operations {
                 id,
                 running,
                 release_present: Some(self.release_present(spec).await?),
-                gateway_values: Some(values.unwrap_or_else(|| serde_json::json!({})).to_string()),
             },
             material,
         ))
@@ -420,18 +386,6 @@ impl Operations {
                 }
                 self.read(spec, prior).await?;
                 let cluster = self.cluster(spec);
-                if spec.settings.runtime.provider == crate::config::ComputeDriver::OpenShift {
-                    let namespace = self.namespace(spec, &receipt)?;
-                    let identity =
-                        namespace_identity(&cluster, namespace, self.openshift_wait).await?;
-                    if let Some(recorded) = receipt.namespace_identity
-                        && recorded != identity
-                    {
-                        return Err(range_changed(namespace, recorded, Some(identity)));
-                    }
-                    receipt.namespace_identity = Some(identity);
-                    receipt.save(&self.state)?;
-                }
                 // An existing OIDC issuer needs no development issuer here.
                 let oidc = self.target(spec)?.authentication.profile
                     == crate::config::KubernetesAuthenticationProfile::Oidc;
@@ -647,50 +601,5 @@ impl Operations {
             receipt.save(&self.state)?;
         }
         Ok(())
-    }
-}
-
-/// A refusal naming the namespace whose OpenShift ranges no longer match the
-/// recorded user and group.
-fn range_changed(
-    namespace: &Owned,
-    recorded: Identity,
-    found: Option<Identity>,
-) -> ObservationError {
-    let found = found.map_or_else(
-        || "no valid range".to_owned(),
-        |found| format!("UID {} and group {}", found.user, found.group),
-    );
-    namespace.changed(&format!(
-        "has a different OpenShift UID or group range: recorded UID {} and group {}, found {found}",
-        recorded.user, recorded.group
-    ))
-}
-
-/// OpenShift assigns ranges shortly after creating a namespace. Only the
-/// recorded namespace may supply the identity, and no issuer is written
-/// until the annotation is valid.
-async fn namespace_identity(
-    cluster: &Cluster,
-    namespace: &Owned,
-    wait: std::time::Duration,
-) -> Result<Identity, ObservationError> {
-    let deadline = tokio::time::Instant::now() + wait;
-    loop {
-        let annotations = cluster
-            .verify_uid(namespace)
-            .await?
-            .metadata
-            .annotations
-            .unwrap_or_default();
-        if let Some(identity) = Identity::from_annotations(&annotations) {
-            return Ok(identity);
-        }
-        if tokio::time::Instant::now() >= deadline {
-            return Err(ObservationError::Backend(
-                "OpenShift did not assign the namespace a UID range; check that this is an OpenShift cluster; resources retained",
-            ));
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(500).min(wait)).await;
     }
 }

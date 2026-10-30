@@ -64,12 +64,6 @@ fn row(spec: &Spec, response: Response) -> Result<Option<Row>, ObservationError>
             .release_present
             .ok_or(ObservationError::Incomplete)?;
         result.insert("release_present".into(), release_present.to_string());
-        result.insert(
-            "gateway_values".into(),
-            response
-                .gateway_values
-                .ok_or(ObservationError::Incomplete)?,
-        );
     }
     Ok(Some(result))
 }
@@ -205,26 +199,8 @@ pub(crate) fn definitions() -> [crate::Definition; 3] {
             .refuse_replacement(),
         typed(AUTH_KIND)
             .computed("running", rerun_when_stopped)
-            .computed("release_present", carry_prior)
-            .computed("gateway_values", prepared_gateway_values),
+            .computed("release_present", carry_prior),
     ]
-}
-
-/// Gateway values exist only after identity preparation completes, which the
-/// prior observation reports as running.
-fn prepared_gateway_values(
-    name: &str,
-    prior: &crate::State,
-) -> Option<tf_provider::value::Value<String>> {
-    use tf_provider::value::Value;
-    let prepared = matches!(prior.get("running"), Some(Value::Value(value)) if value == "true");
-    Some(
-        prior
-            .get(name)
-            .filter(|_| prepared)
-            .cloned()
-            .unwrap_or(Value::Unknown),
-    )
 }
 
 #[cfg(test)]
@@ -299,7 +275,6 @@ mod tests {
                     id: Some("uid-1".into()),
                     running: Some(true),
                     release_present: Some(true),
-                    gateway_values: Some("{}".into()),
                 },
             )
             .unwrap()
@@ -318,19 +293,8 @@ mod tests {
             id: Some("issuer-uid".into()),
             running: Some(true),
             release_present: None,
-            gateway_values: Some("{}".into()),
         };
         assert_eq!(row(&source, missing), Err(ObservationError::Incomplete));
-        let missing_values = Response {
-            id: Some("issuer-uid".into()),
-            running: Some(true),
-            release_present: Some(false),
-            gateway_values: None,
-        };
-        assert_eq!(
-            row(&source, missing_values),
-            Err(ObservationError::Incomplete)
-        );
         for present in [false, true] {
             let observed = row(
                 &source,
@@ -338,7 +302,6 @@ mod tests {
                     id: Some("issuer-uid".into()),
                     running: Some(true),
                     release_present: Some(present),
-                    gateway_values: Some("{}".into()),
                 },
             )
             .unwrap()
@@ -368,37 +331,6 @@ mod tests {
     }
 
     #[test]
-    fn authentication_values_are_unknown_until_identity_preparation_is_complete() {
-        use tf_provider::value::Value;
-        let definition = crate::resource_definition(AUTH_KIND).unwrap();
-        for running in ["true", "false"] {
-            let prior = bound(
-                AUTH_KIND,
-                &[
-                    ("id", "issuer-uid"),
-                    ("running", running),
-                    ("release_present", "false"),
-                    ("gateway_values", "{}"),
-                ],
-            );
-            let mut proposed = prior.clone();
-            if running == "true" {
-                proposed.insert("gateway_values".into(), Value::Unknown);
-            }
-            let (planned, replacements) = crate::plan_update(&definition, &prior, proposed);
-            assert_eq!(
-                planned["gateway_values"],
-                if running == "true" {
-                    prior["gateway_values"].clone()
-                } else {
-                    Value::Unknown
-                },
-            );
-            assert!(replacements.is_empty());
-        }
-    }
-
-    #[test]
     fn an_incomplete_apply_retains_a_verified_partial_binding_and_its_error() {
         let source = fixture(AUTH_KIND);
         let observed = row(
@@ -407,7 +339,6 @@ mod tests {
                 id: Some("recorded-issuer-uid".into()),
                 running: Some(false),
                 release_present: Some(false),
-                gateway_values: Some("{}".into()),
             },
         );
         let mutation = failed_mutation(ObservationError::Permission, observed);

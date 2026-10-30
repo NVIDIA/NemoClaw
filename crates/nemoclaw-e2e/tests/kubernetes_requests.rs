@@ -456,7 +456,6 @@ async fn an_agent_whose_earlier_request_was_abandoned_is_not_asked_again() {
         ))
         .unwrap(),
         state: PathBuf::new(),
-        openshift_wait: Duration::ZERO,
     };
     let agents = [agent("assistant"), agent("researcher")];
     let answers = round(

@@ -21,12 +21,12 @@ cargo ci live-kind
 
 The runner builds OpenClaw, exports its metadata bundle, loads it by digest, and installs the pinned Agent Sandbox prerequisite.
 The gateway test checks authentication, forged-token rejection, repeated install/removal, and retained storage without a Helm executable on `PATH`.
-The OpenShift-profile and registry tests share one flow that uses the public SDK to deploy a gateway and agent sandboxes from that image, with one inference profile for all of them as in `examples/kubernetes/managed-development.yaml`.
+The three-agent and registry tests share one flow that uses the public SDK to deploy a gateway and agent sandboxes from that image, with one inference profile for all of them as in `examples/kubernetes/managed-development.yaml`.
 Each sandbox also grants one endpoint named for it, so no two sandboxes have the same policy.
 Before deploying, the flow starts a stub model server in its own namespace, as a platform would: the pinned `nginx-unprivileged` image that the development issuer runs, behind a Service named `model` on port 8000.
 The inference profile names that Service by its cluster DNS name, without a key, as [Use a Model Server in the Cluster](../kubernetes.md#use-a-model-server-in-the-cluster) describes.
 The stub answers every `POST /v1/chat/completions` with the same streamed chat completion, which holds a value unique to the run.
-The OpenShift-profile test deploys three sandboxes, `assistant`, `researcher`, and `reviewer`; the registry test deploys `assistant` alone.
+The three-agent test deploys three sandboxes, `assistant`, `researcher`, and `reviewer`; the registry test deploys `assistant` alone.
 The flow supplies a caller-relative kubeconfig and expects apply to complete with every agent started.
 A second apply must report no changes.
 Its refresh records two values the first apply leaves for later: the sandbox's loaded policy hash and the auth resource's Helm release presence.
@@ -40,7 +40,8 @@ The answer shows that the runtime the first apply started still runs and that th
 Destroy must then remove every `Sandbox` object within 60 seconds and keep the namespace, encryption key, and gateway PVC with unchanged UIDs; afterward the flow deletes the stub's namespace without waiting.
 If an apply fails, the flow prints each pod's phase and container states, the last 40 lines of each container's log, and the namespace's 15 most recent events; if the stub is not ready or a request fails, it prints the same for the stub's namespace and the deployment's.
 CI keeps that output in the suite's JUnit report for 14 days.
-The OpenShift-profile test also supplies namespace UID-range annotations on kind and checks that the gateway pod and each sandbox's agent pod use the assigned UID.
+The three-agent test also supplies OpenShift's namespace UID-range annotations on kind and checks that each sandbox's agent pod uses the assigned UID, which OpenShell sets.
+It deploys with `kubernetes`, because kind can't run a managed `openshift` gateway: that gateway leaves its `fsGroup` for OpenShift to assign, and without one it can't read its signing key.
 Before deploying, it refuses a cluster that serves the `security.openshift.io` API group, where its annotations would replace the range that cluster assigns; on such a cluster, run the gateway test below with `NEMOCLAW_TEST_KUBE_RUNTIME=openshift`, which checks the gateway's pods and deploys no sandbox.
 Its three agents share one gateway to keep the `live-kind` suite within its 270-second budget.
 The registry test starts a pinned, authenticated registry on the run's kind network and uploads only the run's agent fixture there.
@@ -58,7 +59,7 @@ With it, a plan must report no changes, export must reproduce the authored confi
 No regular file in the state directory may contain any of the three tokens in its raw bytes; the search does not follow symbolic links or open saved plans, which are zip archives.
 
 These live tests run no model and need no GPU or user registry credentials; the stub's fixed reply does not establish inference or model compatibility.
-The render tests check the Kubernetes gateway UID, observed OpenShift UID and group, and image pull references in gateway/helper pods and sandbox-driver configuration.
+The render tests check the Kubernetes gateway UID, the OpenShift gateway's unset UID and `fsGroup`, and image pull references in gateway/helper pods and sandbox-driver configuration.
 Kind does not enforce OpenShift security context constraints; these checks do not establish OpenShift admission or platform compatibility.
 
 The runner deletes its cluster and removes its built image tag after success or failure; pulled images and build caches remain.

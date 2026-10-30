@@ -193,7 +193,7 @@ pub mod platform {
         Error, ObservationError,
         kubernetes::{GATEWAY_KIND, Spec, operations::Operations},
     };
-    use serde_json::{Value, json};
+    use serde_json::json;
     use std::path::Path;
 
     pub fn spec(kind: &str) -> Spec {
@@ -231,22 +231,12 @@ pub mod platform {
             "status": {"readyReplicas": 1, "observedGeneration": 1}}));
     }
 
-    /// Replace the annotations of the `agents` Namespace, as OpenShift does when
-    /// it assigns the UID and group ranges.
-    pub fn annotate_namespace(objects: &Objects, annotations: Value) {
-        let mut namespace = objects.get("v1", "Namespace", "", "agents").unwrap();
-        namespace["metadata"]["annotations"] = annotations;
-        objects.insert(namespace);
-    }
-
     /// Operations over `client`, with `state` as the state directory (the receipt
-    /// is `state/receipt.json`) and a short OpenShift wait so a cluster without
-    /// ranges fails fast.
+    /// is `state/receipt.json`).
     pub fn operations(client: kube::Client, state: &Path) -> Operations {
         Operations {
             client,
             state: state.to_owned(),
-            openshift_wait: std::time::Duration::from_millis(50),
         }
     }
 

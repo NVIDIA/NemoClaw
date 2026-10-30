@@ -13,8 +13,7 @@
 //! The unrecorded object stays in the cluster until someone removes it. A later
 //! change that adopts or removes it after verifying ownership is expected to
 //! change these tests. They call the SDK's Kubernetes operations, not the
-//! OpenTofu provider, and they do not cover the OpenShift Namespace identity
-//! step.
+//! OpenTofu provider.
 #![cfg(unix)]
 
 use crate::kube_api::collection;

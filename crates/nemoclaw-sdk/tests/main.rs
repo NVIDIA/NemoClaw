@@ -114,8 +114,6 @@ mod kubernetes_interruption;
 mod kubernetes_lost_create_response;
 #[path = "kubernetes_managed_compile.rs"]
 mod kubernetes_managed_compile;
-#[path = "kubernetes_openshift_reapply.rs"]
-mod kubernetes_openshift_reapply;
 #[path = "kubernetes_operations.rs"]
 mod kubernetes_operations;
 #[path = "kubernetes_read_failures.rs"]

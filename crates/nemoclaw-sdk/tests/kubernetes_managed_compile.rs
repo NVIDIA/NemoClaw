@@ -141,8 +141,12 @@ fn managed_gateway_uses_a_pinned_helm_provider_between_auth_and_readiness() {
     );
 }
 
+/// OpenShift's `restricted-v2` constraint assigns the namespace's first UID
+/// and group to a pod that sets neither, so an OpenShift gateway passes the
+/// chart's documented nulls in its literal values instead of waiting for the
+/// namespace's range.
 #[test]
-fn openshift_chart_values_wait_for_the_observed_namespace_identity() {
+fn openshift_chart_values_leave_the_gateway_uid_to_openshift() {
     let generations = [
         "workspace",
         "provider",
@@ -152,29 +156,33 @@ fn openshift_chart_values_wait_for_the_observed_namespace_identity() {
     ]
     .map(|kind| (kind.into(), "a".repeat(32)))
     .into();
-    let kubernetes = compile_runtime(&document(), &generations, "0.1.0").unwrap();
-    assert_eq!(
-        kubernetes["resource"]["helm_release"]["gateway"]["values"]
+    let chart_values = |document: &Document| -> Vec<serde_json::Value> {
+        compile_runtime(document, &generations, "0.1.0").unwrap()["resource"]["helm_release"]
+            ["gateway"]["values"]
             .as_array()
             .unwrap()
-            .len(),
-        1
-    );
+            .iter()
+            .map(|values| serde_json::from_str(values.as_str().unwrap()).unwrap())
+            .collect()
+    };
+    let [kubernetes] = <[_; 1]>::try_from(chart_values(&document())).unwrap();
+    assert!(kubernetes.get("securityContext").is_none());
+    assert!(kubernetes.get("podSecurityContext").is_none());
 
     let mut value = serde_json::to_value(document()).unwrap();
     value["spec"]["gateway"]["runtime"]["provider"] = json!("openshift");
     let document = Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap();
-    let openshift = compile_runtime(&document, &generations, "0.1.0").unwrap();
-    let values = &openshift["resource"]["helm_release"]["gateway"]["values"];
-    assert_eq!(values.as_array().unwrap().len(), 2);
+    let [mut openshift] = <[_; 1]>::try_from(chart_values(&document)).unwrap();
+    let values = openshift.as_object_mut().unwrap();
     assert_eq!(
-        values[1],
-        "${openshell_kubernetes_auth.runtime.gateway_values}"
+        values.remove("securityContext"),
+        Some(json!({"runAsUser": null}))
     );
     assert_eq!(
-        values[0],
-        kubernetes["resource"]["helm_release"]["gateway"]["values"][0]
+        values.remove("podSecurityContext"),
+        Some(json!({"fsGroup": null}))
     );
+    assert_eq!(openshift, kubernetes);
 }
 
 #[test]

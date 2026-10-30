@@ -271,7 +271,7 @@ These types name the engine or cluster they use instead of taking a gateway `ref
 | `openshell_podman_gateway` | Podman gateway process |
 | `openshell_gateway_storage` | Gateway storage, initialization, and retained bridge |
 | `openshell_kubernetes_storage` | Kubernetes namespace and encryption key |
-| `openshell_kubernetes_auth` | Kubernetes development token issuer and OpenShift chart overrides |
+| `openshell_kubernetes_auth` | Kubernetes development token issuer |
 | `openshell_kubernetes_gateway` | Kubernetes gateway StatefulSet identity and readiness |
 | `openshell_docker_gateway_readiness` data source | [Managed Docker gateway process and health](#gateway-capabilities) |
 | `openshell_docker_gateway_runtime` data source | Nothing; [computes a Docker gateway's launch](#docker-gateway-launch) |
@@ -875,7 +875,6 @@ The runtime graph for a managed Kubernetes or OpenShift gateway declares four re
 
 1. `openshell_kubernetes_storage.runtime` binds the namespace by UID, creating it if it doesn't exist, and creates the encryption key; it retains both, with `prevent_destroy`.
 2. `openshell_kubernetes_auth.runtime` prepares the development token issuer.
-   For OpenShift, its computed `gateway_values` carries the namespace's UID and group ranges as chart overrides.
 3. `helm_release.gateway` installs the pinned OpenShell chart into the prepared namespace without creating the namespace or taking ownership of existing objects.
 4. `openshell_kubernetes_gateway.runtime` records the chart's StatefulSet identity and reports readiness in `running`.
 

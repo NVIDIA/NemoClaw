@@ -585,7 +585,6 @@ async fn the_gateway_installs_authenticates_and_is_removed_keeping_storage() {
     let operations = Operations {
         client: connect(&tofu.target).await.unwrap(),
         state: tofu.directory.join("kubernetes"),
-        openshift_wait: nemoclaw_sdk::kubernetes::operations::OPENSHIFT_WAIT,
     };
     let all = [
         "openshell_kubernetes_storage.runtime",
@@ -1128,7 +1127,6 @@ async fn deploy_image_and_export(
     let operations = Operations {
         client: cluster.clone(),
         state: state.path().join("kubernetes"),
-        openshift_wait: nemoclaw_sdk::kubernetes::operations::OPENSHIFT_WAIT,
     };
     let credentials = Values(BTreeMap::from([
         (
@@ -1336,26 +1334,28 @@ async fn deploy_image_and_export(
     state_snapshot
 }
 
-/// The sandboxes the OpenShift-profile test deploys, with their agents.
+/// The sandboxes the three-agent test deploys, with their agents.
 const THREE_AGENTS: [(&str, &str); 3] = [
     ("assistant", "main"),
     ("researcher", "researcher"),
     ("reviewer", "reviewer"),
 ];
 
-/// Three agents on one gateway with the OpenShift profile, on kind. kind does
-/// not enforce OpenShift's security policy, but the SDK and OpenShell both
-/// read the UID range OpenShift writes on each namespace, and that works on
-/// any cluster. The test writes the range itself once the namespace exists,
-/// as OpenShift would, then checks that the gateway and each sandbox's agent
-/// pod ran as its first UID. The shared flow checks that each agent keeps its
-/// own identities and, after the unchanged apply and the export's apply,
-/// answers a request from the runtime the first apply started; a fixed stub
-/// replies, so no model runs. The agents share this test's gateway to keep
-/// the live-kind suite within its 270-second budget.
+/// Three agents on one gateway, on kind, in a namespace that carries
+/// OpenShift's UID range. kind can't run a managed `openshift` gateway: its
+/// chart values leave the gateway's fsGroup for OpenShift to assign, and
+/// without one the gateway can't read its 0400 signing key. So the test
+/// deploys with `kubernetes`. OpenShell reads the range OpenShift writes on
+/// each namespace on any cluster; the test writes it once the namespace
+/// exists, as OpenShift would, then checks that each sandbox's agent pod ran
+/// as its first UID. The shared flow checks that each agent keeps its own
+/// identities and, after the unchanged apply and the export's apply, answers a
+/// request from the runtime the first apply started; a fixed stub replies, so
+/// no model runs. The agents share this test's gateway to keep the live-kind
+/// suite within its 270-second budget.
 #[tokio::test]
 #[ignore = "needs a Kubernetes cluster with Agent Sandbox and a loaded agent image; run through cargo ci live-kind"]
-async fn on_openshift_three_agents_keep_separate_identities_run_as_the_namespace_uid_and_answer_after_each_reapply()
+async fn three_agents_keep_separate_identities_run_as_the_namespace_uid_and_answer_after_each_reapply()
  {
     use k8s_openapi::api::core::v1::{Namespace, Pod};
     use kube::{
@@ -1387,8 +1387,8 @@ async fn on_openshift_three_agents_keep_separate_identities_run_as_the_namespace
             .any(|group| group.name == "security.openshift.io"),
         "this test writes the namespace's UID range itself; do not run it on a cluster that serves security.openshift.io"
     );
-    let observed = std::sync::Mutex::new(None::<(BTreeMap<&str, Option<i64>>, Option<i64>)>);
-    deploy_and_export("openshift", &THREE_AGENTS, async |namespace| {
+    let observed = std::sync::Mutex::new(None::<BTreeMap<&str, Option<i64>>>);
+    deploy_and_export("kubernetes", &THREE_AGENTS, async |namespace| {
         // Annotate the namespace as soon as the SDK creates it, as OpenShift
         // does when a project is created.
         let namespaces: Api<Namespace> = Api::all(client.clone());
@@ -1412,7 +1412,7 @@ async fn on_openshift_three_agents_keep_separate_identities_run_as_the_namespace
             );
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         }
-        // Read each agent's and the gateway's users while they still run.
+        // Read each agent's user while it still runs.
         let pods: Api<Pod> = Api::namespaced(client.clone(), namespace);
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(300);
         loop {
@@ -1445,33 +1445,27 @@ async fn on_openshift_three_agents_keep_separate_identities_run_as_the_namespace
                 .iter()
                 .map(|(sandbox, _)| Some((*sandbox, user(&format!("--{sandbox}"), "agent")?)))
                 .collect();
-            if let (Some(agents), Some(gateway)) = (agents, user("-gateway-0", "openshell-gateway"))
-            {
-                *observed.lock().unwrap() = Some((agents, gateway));
+            if let Some(agents) = agents {
+                *observed.lock().unwrap() = Some(agents);
                 break;
             }
             assert!(
                 std::time::Instant::now() < deadline,
-                "the agent and gateway pods never appeared"
+                "the agent pods never appeared"
             );
             tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         }
     })
     .await;
-    let (agents, gateway) = observed
+    let agents = observed
         .into_inner()
         .unwrap()
-        .expect("the agent and gateway pods appeared");
+        .expect("the agent pods appeared");
     assert_eq!(
         agents,
         THREE_AGENTS
             .map(|(sandbox, _)| (sandbox, Some(1_000_680_000)))
             .into(),
         "each sandbox's agent pod runs as the namespace's first UID"
-    );
-    assert_eq!(
-        gateway,
-        Some(1_000_680_000),
-        "the gateway runs as the namespace's first UID"
     );
 }

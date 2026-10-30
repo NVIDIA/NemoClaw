@@ -7,7 +7,7 @@
 use nemoclaw_sdk::{
     bundle::Bundle,
     config::ComputeDriver,
-    kubernetes::{GATEWAY_KIND, Spec, auth::Development, gateway, gateway::Identity, issuer},
+    kubernetes::{GATEWAY_KIND, Spec, auth::Development, gateway, issuer},
 };
 use serde_json::{Value, json};
 use std::{fs, path::Path, time::Duration};
@@ -50,7 +50,7 @@ async fn tofu(bundle: &Bundle, directory: &Path, arguments: &[&str]) -> std::pro
 
 /// Pull and render the exact OCI digest with the actual bundled provider.
 /// A data source performs no installation and needs no cluster access.
-async fn render(spec: &Spec, chart: &str, identity: Option<Identity>) -> Option<String> {
+async fn render(spec: &Spec, chart: &str) -> Option<String> {
     let input = std::env::var_os("NEMOCLAW_TEST_BUNDLE")
         .expect("NEMOCLAW_TEST_BUNDLE names a verified bundle");
     let bundle = Bundle::open(Path::new(&input)).unwrap();
@@ -74,12 +74,6 @@ async fn render(spec: &Spec, chart: &str, identity: Option<Identity>) -> Option<
     let mut values = gateway::values(spec).unwrap();
     // Rendering has no cluster from which to observe this existing prerequisite.
     values["agentSandbox"]["preflight"]["enabled"] = json!(false);
-    let mut chart_values = vec![values.to_string()];
-    if let Some(identity) = identity {
-        // Apply the observed namespace identity as a second values document,
-        // just as the native release receives the authentication resource's output.
-        chart_values.push(identity.values().to_string());
-    }
     let graph = json!({
         "terraform": {"required_providers": {"helm": {
             "source": gateway::PROVIDER_ADDRESS,
@@ -88,7 +82,7 @@ async fn render(spec: &Spec, chart: &str, identity: Option<Identity>) -> Option<
         "provider": {"helm": {}},
         "data": {"helm_template": {"gateway": {
             "name": spec.name, "namespace": "agents", "chart": chart,
-            "validate": false, "values": chart_values
+            "validate": false, "values": [values.to_string()]
         }}},
         "output": {"manifest": {"value": "${data.helm_template.gateway.manifest}"}}
     });
@@ -188,7 +182,7 @@ fn assert_release_ownership(rendered: &str, spec: &Spec) {
 async fn the_pinned_chart_renders_with_the_sdk_values() {
     let spec = spec();
     let values = gateway::values(&spec).unwrap();
-    let rendered = render(&spec, gateway::CHART, None)
+    let rendered = render(&spec, gateway::CHART)
         .await
         .expect("the pinned chart renders");
     assert_release_ownership(&rendered, &spec);
@@ -214,7 +208,7 @@ async fn the_pinned_chart_renders_with_the_sdk_values() {
         "0".repeat(64)
     );
     assert!(
-        render(&spec, &unavailable, None).await.is_none(),
+        render(&spec, &unavailable).await.is_none(),
         "the provider refuses an unavailable chart digest"
     );
 }
@@ -229,7 +223,7 @@ async fn the_pinned_chart_passes_pull_secret_names_to_pods_and_the_sandbox_drive
         .as_mut()
         .unwrap()
         .image_pull_secrets = vec!["registry-team".into(), "registry.backup".into()];
-    let rendered = render(&spec, gateway::CHART, None).await.unwrap();
+    let rendered = render(&spec, gateway::CHART).await.unwrap();
     let objects: Vec<Value> = serde_saphyr::from_multiple(&rendered).unwrap();
     let mut pods = 0;
     for object in &objects {
@@ -271,22 +265,18 @@ async fn the_pinned_chart_passes_pull_secret_names_to_pods_and_the_sandbox_drive
     }
 }
 
-/// OpenShift assigns the gateway a UID from its namespace's range.
+/// On OpenShift the chart leaves the gateway's UID and fsGroup unset, so the
+/// cluster's security context constraint assigns them.
 #[tokio::test]
 #[ignore = "pulls the pinned chart; needs NEMOCLAW_TEST_BUNDLE"]
-async fn on_openshift_the_gateway_takes_the_namespace_uid() {
+async fn on_openshift_the_chart_leaves_the_gateway_uid_to_openshift() {
     let mut spec = spec();
     spec.settings.runtime.provider = ComputeDriver::OpenShift;
-    let identity = Identity {
-        user: 1_000_680_000,
-        group: 1_000_690_000,
-    };
-    let rendered = render(&spec, gateway::CHART, Some(identity))
+    let rendered = render(&spec, gateway::CHART)
         .await
         .expect("the pinned chart renders");
     assert_release_ownership(&rendered, &spec);
-    assert!(rendered.contains("runAsUser: 1000680000"), "{rendered}");
-    assert!(rendered.contains("fsGroup: 1000690000"), "{rendered}");
-    assert!(!rendered.contains("runAsUser: 1000\n"));
+    assert!(!rendered.contains("runAsUser:"), "{rendered}");
+    assert!(!rendered.contains("fsGroup:"), "{rendered}");
     assert!(rendered.contains("runAsNonRoot: true"));
 }

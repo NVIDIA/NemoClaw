@@ -57,7 +57,6 @@ resource openshell_kubernetes_auth (version 0)
   context: string, required
   endpoint: string, required
   environment: list(string), optional
-  gateway_values: string, computed
   generation: string, optional, computed
   id: string, computed
   kubeconfig_env: string, required
