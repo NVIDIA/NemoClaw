@@ -147,7 +147,7 @@ jobs:
           sparse-checkout-cone-mode: false
 
       - name: Set up Node for reviewed package download
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24.22.1"
           registry-url: https://npm.pkg.github.com
@@ -252,7 +252,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Node for publication verification
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24.22.1
 
@@ -666,7 +666,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Node for trusted E2E planning
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24.22.1
 
@@ -1156,7 +1156,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Node for trusted qualification planning
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24.22.1
 
@@ -1691,7 +1691,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Node for candidate execution
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24.22.1
 
@@ -2956,7 +2956,7 @@ jobs:
           printf 'job_id=%s\n' "$job_id" >>"$GITHUB_OUTPUT"
 
       - name: Set up Node for qualification aggregation
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24.22.1
 
@@ -4478,7 +4478,7 @@ jobs:
             tools/e2e/openshell-dev-artifact.mts
 
       - name: Set up Node for OpenShell dev artifact resolution
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24.22.1
 
@@ -4542,7 +4542,7 @@ jobs:
       # setup-node probes package managers in the workspace.
       # Run it before candidate checkout with automatic caching disabled.
       - name: Set up Node.js for trusted OpenShell verification
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24.22.1
           package-manager-cache: false
@@ -6448,7 +6448,7 @@ jobs:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Reassert trusted Node runtime
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         env:
           BASH_ENV: /dev/null
           E2E_HERMES_GPU_STARTUP_SCENARIO: ${{ matrix.scenario }}
@@ -6640,7 +6640,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Node for Jetson controller
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24.22.1
 
@@ -6691,7 +6691,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Node for Station controller
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24.22.1
 
