@@ -48,8 +48,10 @@ import {
   assertHermesConfig,
   assertHermesInspectionRejectsUnmanagedFields,
   assertHermesManagedAddSurvivesGatewayRestartAndStateLayout,
+  assertHermesMcpHandleSurvivesProviderRevisionRestart,
   assertHermesReloadRollback,
   assertHermesRemovalSurvivesGatewayRestart,
+  assertSecretAbsentFromSandbox,
 } from "./mcp-bridge-hermes-lifecycle.ts";
 import {
   assertMcpBridgeManagedRegistryReceipt,
@@ -173,27 +175,6 @@ async function onboardAgent(
   });
   expectExitZero(result, `onboard ${options.agent} sandbox for MCP bridge`);
   assertMcpBridgeManagedRegistryReceipt(options.sandboxName, options.agent, REGISTRY_FILE);
-}
-async function assertSecretAbsentFromSandbox(
-  sandbox: SandboxClient,
-  sandboxName: string,
-  paths: string[],
-  secrets: string[] = [HOST_SECRET],
-  artifactName = "assert-secret-absent-from-sandbox",
-): Promise<void> {
-  const script = [
-    "set -eu",
-    ...secrets.map(
-      (secret) => `! grep -R ${JSON.stringify(secret)} ${paths.join(" ")} 2>/dev/null`,
-    ),
-  ].join("\n");
-  const result = await sandbox.execShell(sandboxName, trustedSandboxShellScript(script), {
-    artifactName,
-    env: buildAvailabilityProbeEnv(),
-    redactionValues: [...secrets, Buffer.from(script, "utf8").toString("base64")],
-    timeoutMs: 60_000,
-  });
-  expectExitZero(result, "host MCP secret must not appear in sandbox files");
 }
 
 async function assertConcurrentAddSerialized(
@@ -1218,6 +1199,20 @@ mcpBridgeShardTest("hermes")(
     await restartBridgeWithoutHostSecret(host, HERMES_SANDBOX_NAME, "hermes");
     await assertHermesToolCall("hermes-real-mcp-tool-call-after-rediscovery-restart");
     await assertAuthenticatedMcpRediscovery(survivingMcp, survivingDiscoveryOffset);
+    await assertHermesMcpHandleSurvivesProviderRevisionRestart({
+      cleanup,
+      host,
+      progress,
+      sandbox,
+      sandboxName: HERMES_SANDBOX_NAME,
+      assertToolCall: (artifactName, otherEndpoint) =>
+        assertRealAdapterToolCall(host, sandbox, fakeMcp, {
+          ...bridge,
+          artifactName,
+          otherEndpoint,
+          resultToken: MCP_RESULT,
+        }),
+    });
     await replaceBridgeCredentialConservatively(
       host,
       sandbox,

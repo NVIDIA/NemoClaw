@@ -8,6 +8,10 @@ import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clien
 import { expect } from "../fixtures/e2e-test.ts";
 import { MCP_BRIDGE_TEST_CREDENTIALS } from "../fixtures/mcp-bridge-credentials.ts";
 import { buildMcpCredentialHandleAuthorizationPattern } from "./mcp-provider-rewrite-probe.ts";
+import type { CleanupRegistry } from "../fixtures/cleanup.ts";
+import { cleanupMcpBridge } from "./mcp-bridge-cleanup.ts";
+import { addBridgeAndReadStatus } from "./mcp-bridge-reliability.ts";
+import { startFakeMcpHttpsServer, startPublicMcpHttpsTunnel } from "./mcp-bridge-servers.ts";
 
 const SERVER_NAME = "fake";
 const HOST_SECRET = MCP_BRIDGE_TEST_CREDENTIALS.host;
@@ -356,4 +360,128 @@ export async function assertHermesRemovalSurvivesGatewayRestart(
   expect(config.stdout).toContain('"state": "matched"');
   expect(resultText(config)).not.toContain(HOST_SECRET);
   expect(resultText(config)).not.toContain(ROTATED_HOST_SECRET);
+}
+
+// Live proof for #12594: a retained Hermes MCP entry keeps working after
+// another provider advances the provider environment and the sandbox restarts
+// without MCP re-registration.
+const REVISION_SERVER_NAME = "revision";
+const REVISION_CREDENTIAL_ENV = "REVISION_MCP_SECRET";
+const HANDLE_PATTERN = "openshell:resolve:env:[vs][0-9]*_FAKE_MCP_SECRET";
+
+type FakeMcpServer = Awaited<ReturnType<typeof startFakeMcpHttpsServer>>;
+
+/** Fail when a listed secret appears under any listed sandbox path. */
+export async function assertSecretAbsentFromSandbox(
+  sandbox: SandboxClient,
+  sandboxName: string,
+  paths: string[],
+  secrets: string[] = [HOST_SECRET],
+  artifactName = "assert-secret-absent-from-sandbox",
+): Promise<void> {
+  const script = [
+    "set -eu",
+    ...secrets.map(
+      (secret) => `! grep -R ${JSON.stringify(secret)} ${paths.join(" ")} 2>/dev/null`,
+    ),
+  ].join("\n");
+  const result = await sandbox.execShell(sandboxName, trustedSandboxShellScript(script), {
+    artifactName,
+    env: buildAvailabilityProbeEnv(),
+    redactionValues: [...secrets, Buffer.from(script, "utf8").toString("base64")],
+    timeoutMs: 60_000,
+  });
+  expectExitZero(result, "host MCP secret must not appear in sandbox files");
+}
+
+// Diagnostic evidence only: the authenticated tool call proves the rebinding.
+async function recordFakeAuthorizationHandle(
+  sandbox: SandboxClient,
+  sandboxName: string,
+  artifactName: string,
+): Promise<void> {
+  await sandbox.execShell(
+    sandboxName,
+    trustedSandboxShellScript(`grep -o '${HANDLE_PATTERN}' /sandbox/.hermes/config.yaml || true`),
+    { artifactName, env: buildAvailabilityProbeEnv(), timeoutMs: 60_000 },
+  );
+}
+
+export async function assertHermesMcpHandleSurvivesProviderRevisionRestart(options: {
+  host: HostCliClient;
+  sandbox: SandboxClient;
+  cleanup: CleanupRegistry;
+  progress: Parameters<typeof startPublicMcpHttpsTunnel>[0]["progress"];
+  sandboxName: string;
+  assertToolCall: (artifactName: string, otherEndpoint: FakeMcpServer) => Promise<void>;
+}): Promise<void> {
+  const { host, sandbox, sandboxName } = options;
+  const revisionMcp = await startFakeMcpHttpsServer({ secret: ROTATED_HOST_SECRET });
+  options.cleanup.add("stop Hermes revision MCP HTTPS server", () => revisionMcp.close());
+  const revisionTunnel = await startPublicMcpHttpsTunnel({
+    cleanup: options.cleanup,
+    label: "Hermes revision MCP HTTPS server",
+    progress: options.progress,
+    server: revisionMcp,
+  });
+  await recordFakeAuthorizationHandle(
+    sandbox,
+    sandboxName,
+    "hermes-revision-restart-handle-before",
+  );
+  await addBridgeAndReadStatus(host, sandbox, {
+    sandboxName,
+    mcpUrl: revisionTunnel.url,
+    expectedAdapter: "hermes-config",
+    artifactPrefix: "hermes-revision-restart",
+    credential: ROTATED_HOST_SECRET,
+    serverName: REVISION_SERVER_NAME,
+    credentialEnvName: REVISION_CREDENTIAL_ENV,
+  });
+  await recordFakeAuthorizationHandle(sandbox, sandboxName, "hermes-revision-restart-handle-added");
+  const gateway = process.env.OPENSHELL_GATEWAY ?? "nemoclaw";
+  const env = buildAvailabilityProbeEnv();
+  const stop = await sandbox.openshell(["sandbox", "stop", "-g", gateway, sandboxName], {
+    artifactName: "hermes-revision-restart-openshell-stop",
+    env,
+    timeoutMs: 120_000,
+  });
+  const start = await sandbox.openshell(["sandbox", "start", "-g", gateway, sandboxName], {
+    artifactName: "hermes-revision-restart-openshell-start",
+    env,
+    timeoutMs: 300_000,
+  });
+  expect(
+    stop.exitCode === 0 && start.exitCode === 0,
+    `${resultText(stop)}\n${resultText(start)}`,
+  ).toBe(true);
+  const ready = await sandbox.execShell(
+    sandboxName,
+    trustedSandboxShellScript(
+      [
+        "attempt=0",
+        'while [ "$attempt" -lt 36 ]; do',
+        "  curl -q --noproxy '*' -sf --max-time 5 http://127.0.0.1:8642/health >/dev/null && exit 0",
+        "  attempt=$((attempt + 1)); sleep 5",
+        "done",
+        "exit 1",
+      ].join("\n"),
+    ),
+    { artifactName: "hermes-revision-restart-native-ready", env, timeoutMs: 240_000 },
+  );
+  expectExitZero(ready, "Hermes native gateway readiness after stop and start");
+  await recordFakeAuthorizationHandle(sandbox, sandboxName, "hermes-revision-restart-handle-after");
+  await options.assertToolCall(
+    "hermes-real-mcp-tool-call-after-provider-revision-restart",
+    revisionMcp,
+  );
+  await assertSecretAbsentFromSandbox(
+    sandbox,
+    sandboxName,
+    ["/sandbox/.hermes", "/tmp/nemoclaw-start.log"],
+    [HOST_SECRET, ROTATED_HOST_SECRET],
+    "hermes-assert-secrets-absent-after-provider-revision-restart",
+  );
+  // Later steps expect only the original server, so remove this one now.
+  await cleanupMcpBridge(host, sandboxName, REVISION_SERVER_NAME, "hermes-config");
 }

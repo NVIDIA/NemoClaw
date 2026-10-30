@@ -66,6 +66,7 @@ const OPAQUE_INPUTS = [
   "nemoclaw-blueprint/policies/presets/local-inference.yaml",
   "nemoclaw-blueprint/policies/presets/claude-code.yaml",
   "agents/hermes/runtime-config-guard.py",
+  "agents/hermes/start.sh",
   "agents/hermes/mcp-config-transaction.py",
   "test/e2e/lib/ci-compatible-inference.sh",
   "nemoclaw/src/shared/openshell-policy-boundary.cts",
@@ -273,10 +274,15 @@ describe("Vitest opaque-input watch triggers", () => {
       "src/lib/actions/sandbox/gateway-restart-hermes-drift.test.ts",
       "test/agents/hermes/hermes-restart-config-seal-write-lock.test.ts",
       "test/agents/hermes/hermes-nvidia-restore-validation.test.ts",
+      "test/agents/hermes/hermes-mcp-credential-startup.test.ts",
+    ]);
+    expect(triggeredBy("agents/hermes/start.sh")).toEqual([
+      "test/agents/hermes/hermes-env-secret-boundary-hardening.test.ts",
     ]);
     expect(triggeredBy("agents/hermes/mcp-config-transaction.py")).toEqual([
       "src/lib/actions/sandbox/gateway-restart-hermes-drift.test.ts",
       "test/agents/hermes/hermes-mcp-credential-revision.test.ts",
+      "test/agents/hermes/hermes-mcp-credential-startup.test.ts",
     ]);
     expect(triggeredBy("test/e2e/lib/ci-compatible-inference.sh")).toEqual([
       "test/e2e/support/hosted-inference.test.ts",

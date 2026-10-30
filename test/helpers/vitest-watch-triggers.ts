@@ -239,7 +239,12 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
       "src/lib/actions/sandbox/gateway-restart-hermes-drift.test.ts",
       "test/agents/hermes/hermes-restart-config-seal-write-lock.test.ts",
       "test/agents/hermes/hermes-nvidia-restore-validation.test.ts",
+      "test/agents/hermes/hermes-mcp-credential-startup.test.ts",
     ),
+  },
+  {
+    pattern: /(?:^|\/)agents\/hermes\/start\.sh$/,
+    testsToRun: runTests("test/agents/hermes/hermes-env-secret-boundary-hardening.test.ts"),
   },
   {
     pattern: /(?:^|\/)scripts\/lib\/refresh-openclaw-wechat-placeholder\.py$/,
@@ -250,6 +255,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests(
       "src/lib/actions/sandbox/gateway-restart-hermes-drift.test.ts",
       "test/agents/hermes/hermes-mcp-credential-revision.test.ts",
+      "test/agents/hermes/hermes-mcp-credential-startup.test.ts",
     ),
   },
   {

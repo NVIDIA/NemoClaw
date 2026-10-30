@@ -18,6 +18,7 @@ import {
   assertHermesConfig,
   assertHermesManagedAddSurvivesGatewayRestartAndStateLayout,
   assertHermesReloadRollback,
+  assertSecretAbsentFromSandbox,
 } from "../live/mcp-bridge-hermes-lifecycle.ts";
 
 interface RunnerCall {
@@ -230,5 +231,41 @@ describe("Hermes MCP gateway restart", () => {
     );
     expect(sandboxRunner.calls[0]?.args.at(-1)).toContain('test "$strict_status" -ne 0');
     expect(sandboxRunner.calls[0]?.args.at(-1)).toContain('test "$compat_status" -eq 0');
+  });
+});
+
+describe("Hermes MCP secret-absence check", () => {
+  const secrets = ["first-test-secret", "second-test-secret"];
+
+  it("searches every path for every secret and redacts each secret (#12594)", async () => {
+    const runner = new RecordingRunner([shellResult(0)]);
+
+    await assertSecretAbsentFromSandbox(
+      new SandboxClient(runner),
+      "hermes-e2e",
+      ["/sandbox/.hermes", "/tmp/nemoclaw-start.log"],
+      secrets,
+      "hermes-secret-absence",
+    );
+
+    const script = runner.calls[0]?.args.at(-1) ?? "";
+    expect(script).toContain(
+      '! grep -R "first-test-secret" /sandbox/.hermes /tmp/nemoclaw-start.log',
+    );
+    expect(script).toContain(
+      '! grep -R "second-test-secret" /sandbox/.hermes /tmp/nemoclaw-start.log',
+    );
+    expect(runner.calls[0]?.options?.redactionValues).toEqual(expect.arrayContaining(secrets));
+  });
+
+  it("fails when the sandbox search finds a secret (#12594)", async () => {
+    await expect(
+      assertSecretAbsentFromSandbox(
+        new SandboxClient(new RecordingRunner([shellResult(1)])),
+        "hermes-e2e",
+        ["/sandbox/.hermes"],
+        secrets,
+      ),
+    ).rejects.toThrow("host MCP secret must not appear in sandbox files");
   });
 });

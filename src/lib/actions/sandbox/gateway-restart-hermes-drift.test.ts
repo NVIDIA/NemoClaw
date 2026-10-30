@@ -52,6 +52,7 @@ def load(name, file_path):
     return module
 
 transaction = load("gateway_drift_transaction", sys.argv[1])
+transaction.GUARD_PATH = sys.argv[2]
 guard = load("gateway_drift_guard", sys.argv[2])
 root = sys.argv[3]
 hermes = os.path.join(root, ".hermes")

@@ -2621,10 +2621,10 @@ migrate_legacy_layout() {
 _HERMES_NATIVE_LOCAL_REFRESHED=0
 refresh_hermes_provider_placeholders() {
   local mode="${1:-strict}"
-  local env_file="${HERMES_DIR}/.env"
   local runtime_plan="/usr/local/share/nemoclaw/messaging-runtime-plan.json"
-  [ -f "$env_file" ] || return 0
 
+  # The guard owns the config and env transition, including the MCP credential
+  # refresh, so a missing .env must not skip it. The guard fails closed then.
   local args=(
     "$_HERMES_RUNTIME_CONFIG_GUARD" provider-placeholders
     --hermes-dir "$HERMES_DIR"
