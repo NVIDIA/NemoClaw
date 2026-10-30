@@ -449,6 +449,118 @@ describe("openshell helpers", () => {
     expect(result.signal).toBeTruthy();
   });
 
+  it.each(
+    (
+      [
+        ["SIGINT", 10],
+        ["SIGTERM", 10],
+        ["SIGINT", 25],
+        ["SIGTERM", 25],
+      ] as const
+    ).flatMap(([signal, elapsed]) => [
+      {
+        signal,
+        elapsed,
+        settlement: "close",
+        settle: async (child: ChildProcess) => {
+          child.emit("close", null, "SIGKILL");
+        },
+      },
+      {
+        signal,
+        elapsed,
+        settlement: "deadline",
+        settle: async (_child: ChildProcess) => {
+          await vi.advanceTimersByTimeAsync(20);
+        },
+      },
+    ]),
+  )(
+    "releases policy ownership on $signal after $elapsed ms of timeout escalation ($settlement)",
+    async ({ signal, elapsed, settle }) => {
+      vi.useFakeTimers();
+      const child = new EventEmitter() as EventEmitter & ChildProcess;
+      const signals = new EventEmitter();
+      const kill = vi.fn((_signal: NodeJS.Signals) => true as const);
+      const groupKill = vi
+        .spyOn(process, "kill")
+        .mockImplementation((_pid, forwarded) => kill(forwarded as NodeJS.Signals));
+      Object.assign(child, { pid: 12345, kill, unref: vi.fn(), exitCode: null, signalCode: null });
+      try {
+        const pending = captureOpenshellCommandAsyncResult("openshell", ["policy", "set"], {
+          spawnImpl: (() => child) as never,
+          timeoutMilliseconds: 10,
+          killGraceMs: 10,
+          forceKillOnInterrupt: true,
+          signalSource: {
+            add: (name, listener) => {
+              signals.on(name, listener);
+            },
+            remove: (name, listener) => {
+              signals.off(name, listener);
+            },
+          },
+        });
+        await vi.advanceTimersByTimeAsync(elapsed);
+        const callsBeforeInterrupt = kill.mock.calls.length;
+        signals.emit(signal);
+        expect(kill.mock.calls.slice(callsBeforeInterrupt)).toEqual([[signal], ["SIGKILL"]]);
+        expect(signals.eventNames()).toEqual([]);
+        await settle(child);
+        await expect(pending).resolves.toMatchObject({
+          timedOut: true,
+          error: expect.objectContaining({ code: "ETIMEDOUT" }),
+        });
+        const callsAfterClose = kill.mock.calls.length;
+        await vi.advanceTimersByTimeAsync(100);
+        expect(kill).toHaveBeenCalledTimes(callsAfterClose);
+      } finally {
+        groupKill.mockRestore();
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it.each(["SIGINT", "SIGTERM"] as const)(
+    "retains ordinary capture signal ownership until an unresponsive child is reaped on %s",
+    async (signal) => {
+      vi.useFakeTimers();
+      const child = new EventEmitter() as EventEmitter & ChildProcess;
+      const signals = new EventEmitter();
+      const kill = vi.fn((_signal: NodeJS.Signals) => true as const);
+      const groupKill = vi
+        .spyOn(process, "kill")
+        .mockImplementation((_pid, forwarded) => kill(forwarded as NodeJS.Signals));
+      Object.assign(child, { pid: 12345, kill, exitCode: null, signalCode: null });
+      try {
+        const pending = captureOpenshellCommandAsyncResult("openshell", ["sandbox", "list"], {
+          spawnImpl: (() => child) as never,
+          killGraceMs: 10,
+          signalSource: {
+            add: (name, listener) => {
+              signals.on(name, listener);
+            },
+            remove: (name, listener) => {
+              signals.off(name, listener);
+            },
+          },
+        });
+        expect(signals.emit(signal)).toBe(true);
+        expect(signals.emit(signal)).toBe(true);
+        await vi.advanceTimersByTimeAsync(20);
+        await expect(pending).resolves.toMatchObject({
+          signal: "SIGKILL",
+          error: expect.objectContaining({ code: "ECANCELED" }),
+        });
+        expect(kill.mock.calls).toEqual([[signal], ["SIGKILL"]]);
+        expect(signals.eventNames()).toEqual([]);
+      } finally {
+        groupKill.mockRestore();
+        vi.useRealTimers();
+      }
+    },
+  );
+
   it("ignores empty async input so EPIPE cannot replace a successful close", async () => {
     const child = new EventEmitter() as EventEmitter & ChildProcess;
     const stdin = new EventEmitter() as EventEmitter & {
