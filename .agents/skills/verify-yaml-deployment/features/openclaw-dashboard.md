@@ -8,8 +8,8 @@ With a Control UI-enabled image, a browser at that URL signs in with the gateway
 
 ## Sub-features
 
-- **DB1:** Apply creates the declared exposure, with its port and authorization mode, with no `openshell service expose`.
-- **DB2:** The gateway's service URL serves the Control UI page.
+- **DB1:** Apply creates the declared exposure, with its port and authorization mode, with no `openshell service expose`, and lists its URL under **Service URLs**.
+- **DB2:** The URL apply lists serves the Control UI page.
 - **DB3:** A request through the exposure without the gateway token is rejected, and one with it gets a reply from the chat endpoint (`BEARER_PASSTHROUGH`).
 - **DB4:** A browser at the URL signs in and gets a chat reply.
 
@@ -22,7 +22,7 @@ With a Control UI-enabled image, a browser at that URL signs in with the gateway
 ## Driving it with curl, the OpenShell CLI, and Chromium
 
 Preconditions: the Control UI-enabled image, built before writing the YAML so `image.ref` uses its digest.
-The allowed origin is the exposure's URL, which derives from the workspace, sandbox, service name, and gateway port:
+The allowed origin is the exposure's URL, which derives from the workspace, sandbox, service name, and gateway port; the image needs it before apply can report the URL:
 
 ```sh
 HOST=$WORKSPACE--assistant--dashboard.openshell.localhost
@@ -49,11 +49,15 @@ docker run --rm --entrypoint cat nc-fabric:openclaw "$ADAPTER" | diff - "$RUN_DI
 `docker commit` keeps the Fabric catalog labels NemoClaw reads.
 `adapter.diff` must show only the `controlUi` line.
 
-1. **DB1:**
+1. **DB1:** take the URL from apply output, check it matches the origin the image allows, and check the mode:
    ```sh
+   APPLY_URL=$(sed -n 's|^  assistant/dashboard: \(http[^ ]*\)/$|\1|p' "$EVIDENCE/apply.txt")
+   echo "$APPLY_URL" | tee "$EVIDENCE/service-url.txt"
+   [ "$APPLY_URL" = "$URL" ] && echo matches
    openshell service list assistant | tee "$EVIDENCE/services.txt"
    ```
-   Result: `dashboard`, target `127.0.0.1:43000`, `bearer_passthrough`, and `$URL/`.
+   Result: the URL, then `matches`; `openshell service list` shows `dashboard`, target `127.0.0.1:43000`, and `bearer_passthrough`.
+   Apply doesn't print the mode, so the mode check still uses the OpenShell CLI.
 2. **DB2:**
    ```sh
    curl -s -m 10 --resolve "$HOST:$GATEWAY_PORT:127.0.0.1" "$URL/" | grep -c 'data-openclaw-control-ui-base-path=' | tee "$EVIDENCE/ui-page.txt"

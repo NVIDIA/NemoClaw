@@ -9,7 +9,7 @@ The plan says so before apply, the gateway records the exposure after it, and th
 ## Sub-features
 
 - **XC1:** Plan shows `delete → create` for the sandbox and warns that its files and history are deleted.
-- **XC2:** After apply, `openshell service list` shows the exposure with its port and mode, and the agent answers in the new sandbox.
+- **XC2:** After apply, the output lists the exposure's URL under **Service URLs**, `openshell service list` shows its port and mode, and the agent answers in the new sandbox.
 
 ## How to get to it (user POV)
 
@@ -44,9 +44,10 @@ Preconditions: [export-reapply](export-reapply.md) passed; this feature deletes 
    ```sh
    nc apply "$RUN_DIR/deployment.yaml" --progress off > "$EVIDENCE/change-apply.txt" 2>&1
    grep -c 'Apply complete' "$EVIDENCE/change-apply.txt"
+   grep -A3 'Service URLs:' "$EVIDENCE/change-apply.txt"
    openshell service list assistant | tee "$EVIDENCE/services-changed.txt"
    ```
-   Result: `1`, and the exposure's row shows `$EXPECT`.
+   Result: `1`, an `assistant/SERVICE: URL` line for the exposure, and the exposure's row shows `$EXPECT`.
    An omitted mode lists as OpenShell's default, `strip`.
    Rerun the doctor to pick up the new sandbox container, then [deploy-and-answer](deploy-and-answer.md)'s DA1 with the word `CHANGED_OK` and the file `answer-changed.json`.
 
@@ -54,5 +55,5 @@ Preconditions: [export-reapply](export-reapply.md) passed; this feature deletes 
 
 - YAML rejects a key repeated in one mapping, so `serviceExposures` can't name a service twice.
 - OpenShell checks names only when it creates the sandbox: an invalid name such as `Probe` passes plan, and a replacing apply then deletes the old sandbox before the create fails. Use lowercase DNS labels.
-- An exposure to a port nothing listens on still appears in `openshell service list`; this feature checks the gateway's record, not a response.
+- An exposure to a port nothing listens on still gets a URL in apply output and in `openshell service list`; this feature checks the gateway's record, not a response.
 - After `STRIP`, an interface that needs the caller's `Authorization` header loses it; the agent's interface feature names the mode it needs.

@@ -10,7 +10,7 @@ The adapter runs OpenClaw's gateway inside the sandbox; Fabric invocations reach
 
 | Target | Inference source | Features | Revision | Date |
 |---|---|---|---|---|
-| dgx-spark | existing endpoint | all, including [openclaw-dashboard](../features/openclaw-dashboard.md) with the patched image | `691bf43c51` | 2026-10-30 |
+| dgx-spark | existing endpoint | all, including [openclaw-dashboard](../features/openclaw-dashboard.md) with the patched image and the URL from apply output | `783b7ae247` | 2026-10-30 |
 
 ## YAML Edits
 

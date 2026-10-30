@@ -9,7 +9,7 @@ Reapplying the export changes nothing, so the authored YAML stays the source of 
 ## Sub-features
 
 - **EX1:** `nemoclaw export` prints the deployment, with `serviceExposures` and the credential reference, and no secret value.
-- **EX2:** Applying the exported document reports no resource changes and keeps the same sandbox.
+- **EX2:** Applying the exported document reports no resource changes, keeps the same sandbox, and lists the same service URLs as the first apply.
 
 ## How to get to it (user POV)
 
@@ -33,8 +33,13 @@ Preconditions: the launch applied, and [deploy-and-answer](deploy-and-answer.md)
    nc apply "$EVIDENCE/exported.yaml" --progress off > "$EVIDENCE/reapply.txt" 2>&1
    grep -c 'No resource changes.' "$EVIDENCE/reapply.txt"
    docker ps --format '{{.Names}}' | grep -cx "$SANDBOX_BEFORE"
+   sed -n '/^Service URLs:/,/^$/p' "$EVIDENCE/apply.txt" > "$RUN_DIR/urls-first.txt"
+   sed -n '/^Service URLs:/,/^$/p' "$EVIDENCE/reapply.txt" > "$RUN_DIR/urls-reapply.txt"
+   diff "$RUN_DIR/urls-first.txt" "$RUN_DIR/urls-reapply.txt" && echo same-urls
+   nc apply "$EVIDENCE/exported.yaml" --progress off -o json 2> /dev/null | jq -c '{changes: (.changes | length), serviceUrls, warnings}' | tee "$EVIDENCE/reapply-json.txt"
    ```
-   Result: both counts are `1`.
+   Result: both counts are `1`, then `same-urls`, then `changes: 0` with the same URLs under `serviceUrls` and no `warnings`.
+   A deployment without exposures prints no **Service URLs** section and no `serviceUrls` field, so the diff is empty and still passes.
 
 ## Gotchas
 
