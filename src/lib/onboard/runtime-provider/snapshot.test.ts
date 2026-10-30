@@ -12,6 +12,7 @@ import type {
   RuntimeProviderSnapshotPreflightReceipt,
 } from "./contract";
 import {
+  canRestoreAcceleration,
   createDockerRuntimeProviderSnapshotSurface,
   createRuntimeProviderSnapshotSurface,
   observeDockerRuntimeSnapshot,
@@ -1157,5 +1158,26 @@ describe("Docker provider snapshot evidence", () => {
     expect(() => denied.restore(target, preflight, source, managedProfile)).toThrow(
       /status=1; error=spawn failed; output=profile mismatch\)/u,
     );
+  });
+});
+
+describe("canRestoreAcceleration", () => {
+  const none = { kind: "none" } as const;
+  const gpu = { kind: "gpu", vendor: "nvidia", devices: ["nvidia.com/gpu=0"] } as const;
+  const never = () => false;
+
+  it("accepts a CPU-only snapshot for a deliberate GPU enable only", () => {
+    expect(canRestoreAcceleration(never, none, gpu, { allowAccelerationEnable: true })).toBe(true);
+    expect(canRestoreAcceleration(never, none, gpu)).toBe(false);
+    expect(canRestoreAcceleration(never, none, gpu, { allowAccelerationEnable: false })).toBe(
+      false,
+    );
+  });
+
+  it("keeps provider equality for every other transition", () => {
+    const options = { allowAccelerationEnable: true };
+    expect(canRestoreAcceleration(never, gpu, none, options)).toBe(false);
+    expect(canRestoreAcceleration(never, gpu, gpu, options)).toBe(false);
+    expect(canRestoreAcceleration(() => true, gpu, gpu, options)).toBe(true);
   });
 });

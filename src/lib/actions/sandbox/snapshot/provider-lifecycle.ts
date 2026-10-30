@@ -9,11 +9,13 @@ import type {
   RuntimeProviderManagedProfileRestoreAuthority,
   RuntimeProviderRuntimeReceipt,
   RuntimeProviderSnapshotPreflightReceipt,
+  RuntimeProviderSnapshotRestoreOptions,
   RuntimeProviderSnapshotRestoreReceipt,
   RuntimeProviderSnapshotSurface,
   RuntimeProviderStoppedStateCapture,
   RuntimeProviderStoppedStateProjection,
 } from "../../../onboard/runtime-provider/contract";
+import { canRestoreAcceleration } from "../../../onboard/runtime-provider/snapshot";
 import {
   normalizeRuntimeProviderManagedProfileRestoreAuthority,
   normalizeRuntimeProviderRuntimeReceipt,
@@ -92,6 +94,7 @@ function requireRuntimeReceipt(
   return receipt;
 }
 
+/** Require a restore receipt that matches the prepared target, profile, and acceleration rules. */
 function requireRestoreReceipt(
   bundle: RuntimeProviderBundle,
   surface: SupportedSnapshotSurface,
@@ -100,6 +103,7 @@ function requireRestoreReceipt(
   preflight: RuntimeProviderSnapshotPreflightReceipt,
   source: SandboxRuntimeSnapshot,
   value: unknown,
+  restoreOptions?: RuntimeProviderSnapshotRestoreOptions,
 ): RuntimeProviderSnapshotRestoreReceipt {
   const receipt = normalizeRuntimeProviderSnapshotRestoreReceipt(value);
   if (
@@ -110,9 +114,11 @@ function requireRestoreReceipt(
     receipt.managedProfile.profileFingerprint !== authority.profileFingerprint ||
     receipt.lifecycleState !== preflight.lifecycleState ||
     receipt.lifecycleGeneration !== preflight.lifecycleGeneration ||
-    !(surface.canRepresentAcceleration ?? isDeepStrictEqual)(
+    !canRestoreAcceleration(
+      surface.canRepresentAcceleration ?? isDeepStrictEqual,
       cloneAndDeepFreeze(source.runtime.acceleration),
       cloneAndDeepFreeze(receipt.runtime.acceleration),
+      restoreOptions,
     )
   ) {
     throw new SandboxSnapshotProviderError(
@@ -204,6 +210,7 @@ export interface PreparedSandboxRuntimeRestore {
   readonly source: SandboxRuntimeSnapshot;
   readonly preflight: RuntimeProviderSnapshotPreflightReceipt;
   readonly managedProfile: RuntimeProviderManagedProfileRestoreAuthority;
+  readonly allowAccelerationEnable?: boolean;
 }
 
 export interface ValidatedSandboxRuntimeRestore {
@@ -224,6 +231,7 @@ export function prepareSandboxRuntimeRestore(
   target: SandboxEntry,
   sourceValue: unknown,
   managedProfileValue: unknown,
+  restoreOptions?: RuntimeProviderSnapshotRestoreOptions,
 ): PreparedSandboxRuntimeRestore {
   const source = cloneSandboxRuntimeSnapshot(sourceValue);
   if (!source) {
@@ -267,6 +275,7 @@ export function prepareSandboxRuntimeRestore(
     immutablePreflight,
     immutableSource,
     immutableManagedProfile,
+    ...(restoreOptions ? [restoreOptions] : []),
   );
   return cloneAndDeepFreeze({
     phase: "preflighted" as const,
@@ -275,9 +284,11 @@ export function prepareSandboxRuntimeRestore(
     source: immutableSource,
     preflight: immutablePreflight,
     managedProfile: immutableManagedProfile,
+    ...(restoreOptions?.allowAccelerationEnable === true ? { allowAccelerationEnable: true } : {}),
   });
 }
 
+/** Re-normalize prepared restore authority, preserving the acceleration-enable decision. */
 function normalizePreparedRestore(
   bundle: RuntimeProviderBundle,
   target: SandboxEntry,
@@ -309,6 +320,7 @@ function normalizePreparedRestore(
     source: cloneAndDeepFreeze(source),
     preflight: cloneAndDeepFreeze(preflight),
     managedProfile: cloneAndDeepFreeze(managedProfile),
+    ...(prepared.allowAccelerationEnable === true ? { allowAccelerationEnable: true } : {}),
   });
 }
 
@@ -326,6 +338,9 @@ export function confirmSandboxRuntimeRestore(
   const authority = normalizePreparedRestore(bundle, target, prepared);
   const surface = requireSnapshotSurface(bundle, "restore");
   const providerTarget = cloneAndDeepFreeze(target);
+  const restoreOptions = authority.allowAccelerationEnable
+    ? { allowAccelerationEnable: true }
+    : undefined;
   const restoreReceipt = requireRestoreReceipt(
     bundle,
     surface,
@@ -338,7 +353,9 @@ export function confirmSandboxRuntimeRestore(
       authority.preflight,
       authority.source,
       authority.managedProfile,
+      ...(restoreOptions ? [restoreOptions] : []),
     ),
+    restoreOptions,
   );
   return cloneAndDeepFreeze({
     phase: "validated" as const,

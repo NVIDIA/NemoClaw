@@ -83,6 +83,9 @@ export async function restoreRecreatedSandboxStateWithManagedAuthority(
     return failure("managed snapshot is missing provider runtime authority");
   }
 
+  const accelerationOptions = options.allowAccelerationEnable
+    ? { allowAccelerationEnable: true }
+    : undefined;
   let preparedRuntime: PreparedSandboxRuntimeRestore | null = null;
   let preparedHostLocal: PreparedHostLocalInferenceAuthority | null = null;
   let providerId: string;
@@ -108,6 +111,7 @@ export async function restoreRecreatedSandboxStateWithManagedAuthority(
         target,
         manifest.runtimeSnapshot!,
         profileRestore.providerRestoreAuthority,
+        accelerationOptions,
       );
     }
     if (typeof hostLocalInferenceReceipt === "string") {
@@ -162,6 +166,7 @@ export async function restoreRecreatedSandboxStateWithManagedAuthority(
           current,
           preparedRuntime.source,
           profileRestore.providerRestoreAuthority,
+          accelerationOptions,
         );
       }
       if (typeof hostLocalInferenceReceipt === "string") {
