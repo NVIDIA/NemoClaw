@@ -3377,10 +3377,7 @@ runner.runCapture = (command) => {
   const cmd = Array.isArray(command) ? command.join(" ") : command;
   if (cmd.includes("command -v ollama")) return "";
   if (cmd.includes("127.0.0.1:11434")) return "";
-  if (cmd.includes("127.0.0.1:8000/v1/models")) {
-    const body = JSON.stringify({ data: [{ id: "meta-llama/Llama-3.3-70B-Instruct" }] });
-    return cmd.includes("--write-out") ? body + "\n200" : body;
-  }
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return JSON.stringify({ data: [{ id: "meta-llama/Llama-3.3-70B-Instruct" }] }) + (cmd.includes("--write-out") ? "\n200" : "");
   return "";
 };
 

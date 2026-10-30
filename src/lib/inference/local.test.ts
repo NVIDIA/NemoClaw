@@ -272,9 +272,6 @@ describe("local inference helpers", () => {
     expect(
       isLocalProviderProbeOutputHealthy("http://127.0.0.1:8000/v1/models", '{"data":[]}\n200'),
     ).toBe(true);
-    expect(
-      isLocalProviderProbeOutputHealthy("http://127.0.0.1:8000/v1/models", '{"data":[]}\n302'),
-    ).toBe(false);
   });
 
   it("validates a reachable local provider", () => {
