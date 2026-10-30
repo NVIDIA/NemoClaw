@@ -119,7 +119,7 @@ fn example_configurations_are_valid_fabric_configurations() {
     .into();
     let mut checked = 0;
     let mut failures = Vec::new();
-    for path in examples::yaml_files(&root.join("examples")) {
+    for path in examples::nemoclaw_config_files(&root.join("examples")) {
         let document = Document::parse(std::fs::File::open(&path).unwrap()).unwrap();
         let _rows = targets(&document, &generations).unwrap();
         for definition in document.sandboxes() {

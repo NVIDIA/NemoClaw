@@ -177,7 +177,7 @@ fn input_schema_preserves_defaults_strict_objects_and_opaque_route_settings() {
 fn every_example_is_accepted_and_round_trips_without_changing_intent() {
     let validator = jsonschema::validator_for(&input_schema()).unwrap();
     let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples");
-    let paths = examples::yaml_files(&directory);
+    let paths = examples::nemoclaw_config_files(&directory);
     assert!(!paths.is_empty());
     for path in paths {
         let text = std::fs::read_to_string(&path).unwrap();
