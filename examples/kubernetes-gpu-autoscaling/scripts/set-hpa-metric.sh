@@ -4,13 +4,10 @@
 #
 # Switch the GPU chart's HPA metric between gpu_utilization and latency_avg
 # without touching the inference runtime, the sandboxes, or any other value.
-# The v0 recipe does this inside agentscaling_hermes_{gpuutil,latency}.sh, which
-# also create v0 sandboxes. A v1 deployment owns its own sandboxes, so this
-# script only changes the chart's HPA.
 #
 # Usage:
-#   ./scripts/v1-set-hpa-metric.sh gpu_utilization
-#   ./scripts/v1-set-hpa-metric.sh latency_avg
+#   ./scripts/set-hpa-metric.sh gpu_utilization
+#   ./scripts/set-hpa-metric.sh latency_avg
 #
 # Env: NAMESPACE (nemoclaw-gpu), RELEASE (nemoclaw-gpu), GPU_TARGET (40),
 # HPA_TARGET_LATENCY_MS (3000).
@@ -18,9 +15,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CHART_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-# shellcheck source=../../scripts/hpa-common.sh
-source "${CHART_DIR}/scripts/hpa-common.sh"
+CHART_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+# shellcheck source=hpa-common.sh
+source "${SCRIPT_DIR}/hpa-common.sh"
 export PATH="${HOME}/.local/bin:${PATH}"
 
 NAMESPACE="${NAMESPACE:-nemoclaw-gpu}"

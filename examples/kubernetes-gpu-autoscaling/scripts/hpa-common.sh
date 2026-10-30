@@ -702,7 +702,7 @@ hpa_common_require_live_runtime() {
   got="$(hpa_common_live_inference_runtime "${ns}" "${deploy}")"
   if [[ "${got}" != "${expected}" ]]; then
     echo "ERROR: GPU Deployment ${ns}/${deploy} is ${got:-missing}, not ${expected}." >&2
-    echo "Set INFERENCE_RUNTIME=${expected} and re-run the pairing agentscaling_* script so Helm points this same release at ${expected}. uninstall-e2e.sh removes sandboxes only." >&2
+    echo "Set INFERENCE_RUNTIME=${expected} and re-run ./scripts/install-hpa.sh so Helm points this same release at ${expected}." >&2
     return 1
   fi
   echo "Live GPU runtime is ${expected}"
@@ -904,12 +904,11 @@ hpa_common_metrics_proxy_service_base_url() {
   printf 'http://%s.%s.svc.cluster.local:%s/v1' "${service}" "${ns}" "${port}"
 }
 
-# OpenShell inference.local backend. Same reason as files/load-generator.ts:
-# ClusterIP + kube-proxy iptables hairpin on a DGX H100 node drops SYNs from sandbox
-# supervisors (curl 35 / OpenClaw "network connection error"). The Job talks
-# HTTP to metrics-proxy pod IPs. With Envoy LeastRequest, use the Envoy
-# dataplane pod IP:targetPort so traffic still goes Envoy → Ollama HPA.
-# When ENABLE_ENVOY_LB is unset at runtime, auto-detect from an existing Gateway.
+# ClusterIP + kube-proxy iptables hairpin on a DGX H100 node drops SYNs from
+# pods on the same node. The HPA Job talks HTTP to metrics-proxy pod IPs.
+# With Envoy LeastRequest, use the Envoy dataplane pod IP:targetPort so traffic
+# still goes Envoy to the inference HPA. When ENABLE_ENVOY_LB is unset at
+# runtime, auto-detect from an existing Gateway.
 hpa_common_openshell_inference_base_url() {
   local gateway_ns="${1:-${NAMESPACE:-nemoclaw-gpu}}"
   local gateway_name="${2:-}"

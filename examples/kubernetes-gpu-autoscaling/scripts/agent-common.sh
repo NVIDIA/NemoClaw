@@ -2,9 +2,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Per-agent configuration for the generic build/create/verify/run-agent-*.sh scripts.
-# Adding a fourth agent means extending the case statements below — not adding new script
-# files. See ../AGENT-SELECTION.md for the agent comparison and shared policy notes.
+# Shared agent settings for the GPU chart and the Fabric load clients.
+# See ../AGENT-SELECTION.md and ../README.md.
 
 agent_common_validate() {
   case "${1:-}" in
@@ -500,8 +499,7 @@ agent_common_output_has_embedded_fallback() {
     <<<"${output}"
 }
 
-# True (exit 0) if this agent's upstream policy grants integrate.api.nvidia.com and
-# create-agent-sandbox.sh must remove it, since this recipe is on-premises-only.
+# True (exit 0) when this agent's upstream policy grants integrate.api.nvidia.com.
 agent_common_grants_nvidia_endpoint() {
   case "$1" in
     openclaw | hermes) return 0 ;;
@@ -516,43 +514,6 @@ agent_common_extra_build_args() {
     openclaw) printf '%s\n' "NEMOCLAW_PRIMARY_MODEL_REF=inference/${model}" ;;
     hermes | deepagents) ;;
   esac
-}
-
-# In-sandbox GET of https://inference.local/v1/models.
-# Hermes managed_inference allows python3, not curl (curl would inherit injected credentials).
-# Usage: openshell sandbox exec -n NAME --no-tty -- python3 -c "${AGENT_COMMON_INFERENCE_MODELS_PY}" [timeout]
-AGENT_COMMON_INFERENCE_MODELS_PY='import urllib.request,sys; t=float(sys.argv[1]) if len(sys.argv)>1 else 5.0; print(urllib.request.urlopen("https://inference.local/v1/models", timeout=t).read().decode())'
-
-# Fast smoke test run immediately after `openshell sandbox create` in
-# create-agent-sandbox.sh. No retries/timeouts here — hpa_common_verify_target_node /
-# openshell already waited for the sandbox to be Ready; verify-agent-sandbox.sh is the
-# place for timeout-guarded, logged checks.
-agent_common_create_smoke_test() {
-  local agent="${1:?agent}" sandbox_name="${2:?sandbox_name}"
-  case "${agent}" in
-    openclaw)
-      openshell sandbox exec -n "${sandbox_name}" --no-tty -- \
-        openclaw plugins inspect nemoclaw --json >/dev/null
-      ;;
-    hermes)
-      # NOT a gateway health probe: OpenShell keeps sandboxes idle (`sleep infinity`)
-      # until run-agent-sandbox.sh execs nemoclaw-start in the foreground, so nothing
-      # listens on Hermes's gateway port (8642) yet at this point. Mirror the deepagents
-      # check below instead — confirm the build-time-generated config is present.
-      openshell sandbox exec -n "${sandbox_name}" --no-tty -- \
-        hermes --version >/dev/null
-      openshell sandbox exec -n "${sandbox_name}" --no-tty -- \
-        bash -c 'test -s /sandbox/.hermes/config.yaml && echo NEMOCLAW_HERMES_CONFIG_OK' >/dev/null
-      ;;
-    deepagents)
-      openshell sandbox exec -n "${sandbox_name}" --no-tty -- \
-        dcode --version >/dev/null
-      openshell sandbox exec -n "${sandbox_name}" --no-tty -- \
-        bash -c 'test -s /sandbox/.deepagents/config.toml && echo NEMOCLAW_DEEPAGENTS_CONFIG_OK' >/dev/null
-      ;;
-  esac
-  openshell sandbox exec -n "${sandbox_name}" --no-tty -- \
-    python3 -c "${AGENT_COMMON_INFERENCE_MODELS_PY}" 5 >/dev/null
 }
 
 # GHCR Hermes images bake NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b.

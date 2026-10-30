@@ -833,10 +833,14 @@ fn helm_chart_files_are_not_onboarding_journeys() {
         !generated.contains("templates/deployment.yaml"),
         "Helm templates must not become onboarding journeys"
     );
-    assert!(generated.contains("kubernetes-gpu-autoscaling/v1/hermes-vllm.yaml"));
-    assert!(generated.contains("kubernetes-gpu-autoscaling/v1/hermes-nim.yaml"));
-    assert!(generated.contains("kubernetes-gpu-autoscaling/v1/openclaw-ollama.yaml"));
-    assert!(generated.contains("kubernetes-gpu-autoscaling/v1/deepagents-nim.yaml"));
+    assert!(generated.contains("kubernetes-gpu-autoscaling/hermes-vllm.yaml"));
+    assert!(generated.contains("kubernetes-gpu-autoscaling/hermes-nim.yaml"));
+    assert!(generated.contains("kubernetes-gpu-autoscaling/openclaw-ollama.yaml"));
+    assert!(generated.contains("kubernetes-gpu-autoscaling/deepagents-nim.yaml"));
+    assert!(
+        !generated.contains("kubernetes-gpu-autoscaling/v1/"),
+        "pairing files live in the recipe root"
+    );
 }
 
 #[test]

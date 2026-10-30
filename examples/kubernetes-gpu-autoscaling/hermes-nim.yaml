@@ -1,14 +1,17 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-# yaml-language-server: $schema=../../../schemas/nemoclaw-v1alpha1.schema.json
-# Experimental v1 step 6c (Deep Agents + NIM). NemoClaw v1 has no managed NIM
-# service ([#12649](https://github.com/NVIDIA/NemoClaw/issues/12649)). Point
-# this provider at the operator-owned GPU chart. Replace metadata.uid and every
-# image digest before apply. Set NEMOCLAW_AGENT_IMAGE_METADATA from
-# `cargo images export-metadata`.
+# yaml-language-server: $schema=../../schemas/nemoclaw-v1alpha1.schema.json
+# Hermes when the operator-owned GPU chart already serves NIM. Use this file
+# on a live NIM release. Do not helm-upgrade the GPU chart to vLLM for a smoke.
+# NemoClaw does not place NIM
+# ([#12649](https://github.com/NVIDIA/NemoClaw/issues/12649)).
+# Replace metadata.uid and every image digest before apply. Write the image
+# metadata bundle with `cargo images export-metadata` and set
+# NEMOCLAW_AGENT_IMAGE_METADATA. Apply installs a managed OpenShell 0.1.4
+# gateway in namespace nemoclaw-v1-gpu-autoscaling.
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
-metadata: {name: gpu-autoscaling-deepagents-nim, uid: ba1a1fdf-b00f-4de1-abd4-09e61494e16e}
+metadata: {name: gpu-autoscaling-hermes-nim, uid: 21c4e343-e6a9-4a8f-9d72-3c862b0b627b}
 spec:
   gateway:
     management: managed
@@ -30,11 +33,11 @@ spec:
   sandboxes:
     user-0000:
       harness:
-        kind: nvidia.fabric.langchain.deepagents
+        kind: nvidia.fabric.hermes
         execution: {timeoutSeconds: 300}
       image:
         metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
-        ref: registry.example.com/nemoclaw/deepagents@sha256:0000000000000000000000000000000000000000000000000000000000000000
+        ref: registry.example.com/nemoclaw/hermes@sha256:0000000000000000000000000000000000000000000000000000000000000000
       network: {tier: isolated}
       agent:
         name: assistant
@@ -42,14 +45,14 @@ spec:
           routes:
           - name: primary
             providerRef: gpu-nim
-            overrides: {model: nvidia/nemotron-3-nano, maxTokens: 1024}
+            overrides: {model: nvidia/nemotron-3-nano, maxTokens: 2048}
     user-0001:
       harness:
-        kind: nvidia.fabric.langchain.deepagents
+        kind: nvidia.fabric.hermes
         execution: {timeoutSeconds: 300}
       image:
         metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
-        ref: registry.example.com/nemoclaw/deepagents@sha256:0000000000000000000000000000000000000000000000000000000000000000
+        ref: registry.example.com/nemoclaw/hermes@sha256:0000000000000000000000000000000000000000000000000000000000000000
       network: {tier: isolated}
       agent:
         name: assistant
@@ -57,4 +60,4 @@ spec:
           routes:
           - name: primary
             providerRef: gpu-nim
-            overrides: {model: nvidia/nemotron-3-nano, maxTokens: 1024}
+            overrides: {model: nvidia/nemotron-3-nano, maxTokens: 2048}

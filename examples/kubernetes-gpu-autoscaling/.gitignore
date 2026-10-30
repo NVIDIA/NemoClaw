@@ -17,3 +17,7 @@ client-timeline.jsonl
 hpa-timeline.jsonl
 hpa-timeline.pid
 *.token
+
+# nemoclaw apply state, rendered YAML, and image metadata. Never commit.
+.local/
+*.metadata.json

@@ -2,20 +2,19 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """
-Hermes v1 client: N end users send prompts into N NemoClaw v1 sandboxes.
-GPU inference is the operator-owned GPU chart (vLLM or NIM) behind the HPA.
+Load client: N end users send prompts into N Fabric sandboxes.
+GPU inference is the operator-owned GPU chart (Ollama, vLLM, or NIM) behind the HPA.
 
-Derived from scripts/e2e-hermes-load-test.py. Only the transport differs.
-v0 runs `openshell sandbox exec ... hermes -z` through the v0.0.85 gateway.
-A v1 sandbox runs Fabric. Official operator invoke is v1-invoke.sh through the
-OpenShell gateway after oidc. This load client is a development-profile bypass:
+Official operator invoke is invoke.sh through the OpenShell gateway after oidc.
+This load client is a development-profile bypass:
 
     kubectl exec -i POD -c agent -- /opt/fabric/bin/fabric-agent-ctl invoke \
         --agent assistant --runtime-id RUNTIME_ID --input -
 
 Runtime ids come from the nemoclaw state directory (NEMOCLAW_V1_STATE_DIR).
-Start it with ./scripts/v1-client-hermes.sh. The client does not set the HPA
-metric. Inference stays on the GPU chart Service /v1, not inference.local.
+Start it with ./scripts/client-hermes.sh, client-openclaw.sh, or
+client-deepagents.sh. The client does not set the HPA metric. Inference stays
+on the GPU chart Service /v1.
 """
 
 from __future__ import annotations
@@ -34,10 +33,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 _SCRIPT_DIR = Path(__file__).resolve().parent
-# e2e_timeline.py lives in the recipe's scripts/ folder, two levels up.
-for _dir in (_SCRIPT_DIR, _SCRIPT_DIR.parents[1] / "scripts"):
-    if str(_dir) not in sys.path:
-        sys.path.insert(0, str(_dir))
+if str(_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR))
 import e2e_timeline as timeline
 
 FALLBACK_RE = re.compile(
@@ -63,8 +60,8 @@ else:
         "Write a long summary of transformer inference on NVIDIA GPUs.",
         "Describe how vLLM serves models and batches concurrent chat requests.",
     ]
-# v0 OpenClaw client prefixes every prompt. llama3.2:3b otherwise emits
-# ask_user/msg tool JSON and the Fabric invoke hits timeoutSeconds with {}.
+# llama3.2:3b otherwise emits ask_user/msg tool JSON and the Fabric invoke
+# hits timeoutSeconds with {}. Prefix OpenClaw prompts so it does not call tools.
 if os.environ.get("V1_AGENT_KIND") == "openclaw":
     PROMPTS = [
         prompt if prompt.startswith("Do not use tools.") else f"Do not use tools. {prompt}"

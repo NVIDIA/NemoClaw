@@ -1,13 +1,14 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-# yaml-language-server: $schema=../../../schemas/nemoclaw-v1alpha1.schema.json
-# Experimental v1 step 6a (OpenClaw + Ollama). Deploy the GPU Helm chart with
-# INFERENCE_RUNTIME=ollama first. Point this provider at the operator-owned
-# GPU chart. Replace metadata.uid and every image digest before apply. Set
-# NEMOCLAW_AGENT_IMAGE_METADATA from `cargo images export-metadata`.
+# yaml-language-server: $schema=../../schemas/nemoclaw-v1alpha1.schema.json
+# Deep Agents + NIM. NemoClaw does not place NIM
+# ([#12649](https://github.com/NVIDIA/NemoClaw/issues/12649)). Point this
+# provider at the operator-owned GPU chart. Replace metadata.uid and every
+# image digest before apply. Set NEMOCLAW_AGENT_IMAGE_METADATA from
+# `cargo images export-metadata`.
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
-metadata: {name: gpu-autoscaling-openclaw-ollama, uid: c4b1ce21-b7a8-450e-9052-12bd88f5a00a}
+metadata: {name: gpu-autoscaling-deepagents-nim, uid: ba1a1fdf-b00f-4de1-abd4-09e61494e16e}
 spec:
   gateway:
     management: managed
@@ -16,11 +17,11 @@ spec:
     kubernetes:
       kubeconfig: {env: NEMOCLAW_CLUSTER_KUBECONFIG}
       context: default
-      namespace: nemoclaw-v1-gpu-autoscaling-openclaw
+      namespace: nemoclaw-v1-gpu-autoscaling-dagent
       # NemoClaw apply only. Operator openshell invoke needs oidc (docs/kubernetes.md).
       authentication: {profile: development}
   inferenceProviders:
-    gpu-ollama:
+    gpu-nim:
       provider: openai
       api: openai-completions
       # Cluster Service /v1; same pattern as examples/kubernetes/in-cluster-vllm.yaml.
@@ -29,31 +30,31 @@ spec:
   sandboxes:
     user-0000:
       harness:
-        kind: nvidia.fabric.openclaw
+        kind: nvidia.fabric.langchain.deepagents
         execution: {timeoutSeconds: 300}
       image:
         metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
-        ref: registry.example.com/nemoclaw/openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000
+        ref: registry.example.com/nemoclaw/deepagents@sha256:0000000000000000000000000000000000000000000000000000000000000000
       network: {tier: isolated}
       agent:
         name: assistant
         inference:
           routes:
           - name: primary
-            providerRef: gpu-ollama
-            overrides: {model: 'llama3.2:3b', maxTokens: 2048}
+            providerRef: gpu-nim
+            overrides: {model: nvidia/nemotron-3-nano, maxTokens: 1024}
     user-0001:
       harness:
-        kind: nvidia.fabric.openclaw
+        kind: nvidia.fabric.langchain.deepagents
         execution: {timeoutSeconds: 300}
       image:
         metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
-        ref: registry.example.com/nemoclaw/openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000
+        ref: registry.example.com/nemoclaw/deepagents@sha256:0000000000000000000000000000000000000000000000000000000000000000
       network: {tier: isolated}
       agent:
         name: assistant
         inference:
           routes:
           - name: primary
-            providerRef: gpu-ollama
-            overrides: {model: 'llama3.2:3b', maxTokens: 2048}
+            providerRef: gpu-nim
+            overrides: {model: nvidia/nemotron-3-nano, maxTokens: 1024}

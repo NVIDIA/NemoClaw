@@ -8,5 +8,12 @@ hpa-tls-values.yaml
 .git
 *.tgz
 e2e-results/
-# NemoClaw v1 files and state (the nemoclaw state directory symlinks provider binaries).
-v1/
+.local/
+*.metadata.json
+openclaw-ollama.yaml
+hermes-vllm.yaml
+hermes-nim.yaml
+deepagents-nim.yaml
+RESULTS-6b.md
+RESULTS-6c.md
+AGENT-SELECTION.md

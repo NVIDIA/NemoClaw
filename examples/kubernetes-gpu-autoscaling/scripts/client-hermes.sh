@@ -2,22 +2,21 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# End-user client for step 6b on NemoClaw v1 (Hermes + vLLM). One simulated user
-# per v1 sandbox (1:1). It is the v1 counterpart of ../../scripts/client_hermes.sh.
+# End-user client for Hermes + vLLM. One simulated user per sandbox (1:1).
 #
 # HPA load client. Each prompt is fabric-agent-ctl invoke inside the sandbox via
 # kubectl exec. That is a development-profile bypass: it skips gateway auth on
-# the prompt hop. Official operator invoke is scripts/v1-invoke.sh after oidc.
+# the prompt hop. Official operator invoke is scripts/invoke.sh after oidc.
 #
 # Apply a deployment with at least E2E_USERS sandboxes first:
-#   E2E_USERS=10 ./scripts/v1-render-sandboxes.sh hermes-vllm > .local/hermes-vllm-10.yaml
+#   E2E_USERS=10 ./scripts/render-sandboxes.sh hermes-vllm > .local/hermes-vllm-10.yaml
 #   nemoclaw apply --non-interactive --state-dir .local/gpu-autoscaling .local/hermes-vllm-10.yaml
 #
 # GPU util (HPA metric gpu_utilization_percent, target 40%):
-#   INFLIGHT=2 MAX_TOKENS=1024 E2E_USERS=10 ./scripts/v1-client-hermes.sh
+#   INFLIGHT=2 MAX_TOKENS=1024 E2E_USERS=10 ./scripts/client-hermes.sh
 # LLM latency (HPA metric latency_avg, target 3000 ms). Switch the metric first:
-#   ./scripts/v1-set-hpa-metric.sh latency_avg
-#   E2E_USERS=10 ./scripts/v1-client-hermes.sh
+#   ./scripts/set-hpa-metric.sh latency_avg
+#   E2E_USERS=10 ./scripts/client-hermes.sh
 #
 # Env: NEMOCLAW_V1_STATE_DIR (default .local/gpu-autoscaling), V1_NAMESPACE,
 # E2E_OUTPUT_DIR, TARGET_PODS (default 8), DURATION_SEC.
@@ -25,13 +24,11 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-V1_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-CHART_DIR="$(cd "${V1_DIR}/.." && pwd)"
-RECIPE_SCRIPTS="${CHART_DIR}/scripts"
-# shellcheck source=../../scripts/agent-common.sh
-source "${RECIPE_SCRIPTS}/agent-common.sh"
-# shellcheck source=../../scripts/hpa-common.sh
-source "${RECIPE_SCRIPTS}/hpa-common.sh"
+RECIPE_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+# shellcheck source=agent-common.sh
+source "${SCRIPT_DIR}/agent-common.sh"
+# shellcheck source=hpa-common.sh
+source "${SCRIPT_DIR}/hpa-common.sh"
 
 fail() {
   echo "ERROR: $*" >&2
@@ -41,8 +38,8 @@ fail() {
 export PATH="${HOME}/.local/bin:${PATH}"
 export E2E_USERS="${E2E_USERS:-10}"
 export V1_NAMESPACE="${V1_NAMESPACE:-nemoclaw-v1-gpu-autoscaling}"
-export NEMOCLAW_V1_STATE_DIR="${NEMOCLAW_V1_STATE_DIR:-${V1_DIR}/.local/gpu-autoscaling}"
-# hermes (default) or deepagents. v1-client-deepagents.sh sets it.
+export NEMOCLAW_V1_STATE_DIR="${NEMOCLAW_V1_STATE_DIR:-${RECIPE_DIR}/.local/gpu-autoscaling}"
+# hermes (default) or deepagents. client-deepagents.sh sets it.
 AGENT_KIND="${V1_AGENT_KIND:-hermes}"
 INFERENCE_RUNTIME="${INFERENCE_RUNTIME:-$(agent_common_default_inference_runtime "${AGENT_KIND}")}"
 export INFERENCE_RUNTIME
@@ -60,7 +57,7 @@ agent_common_export_client_inflight
 # Stop new chats at the target GPU count. Do not hold replicas or pause scale-down.
 export MAX_REPLICAS_HOLD_SEC="${MAX_REPLICAS_HOLD_SEC:-0}"
 export SCALE_DOWN_WAIT_LOOPS="${SCALE_DOWN_WAIT_LOOPS:-40}"
-export E2E_OUTPUT_DIR="${E2E_OUTPUT_DIR:-${CHART_DIR}/e2e-results/${AGENT_KIND}-v1}"
+export E2E_OUTPUT_DIR="${E2E_OUTPUT_DIR:-${RECIPE_DIR}/e2e-results/${AGENT_KIND}}"
 
 command -v kubectl >/dev/null 2>&1 || fail "missing command: kubectl"
 command -v python3 >/dev/null 2>&1 || fail "missing command: python3"
@@ -96,8 +93,7 @@ for ((i = 0; i < E2E_USERS; i += 1)); do
 done
 ((unhealthy == 0)) || fail "client will not send chats until every sandbox pod is Ready"
 
-# v0 client.sh pins tools.profile=minimal before load. Fabric OpenClaw
-# writes /sandbox/tmp/nemo-fabric-openclaw-*/openclaw.json with no tools
+# Fabric OpenClaw writes /sandbox/tmp/nemo-fabric-openclaw-*/openclaw.json with no tools
 # block, so llama3.2:3b hangs on ask_user until the 290s Fabric deadline.
 if [[ "${AGENT_KIND}" == "openclaw" ]]; then
   echo "Pin OpenClaw tools.profile=minimal on ${E2E_USERS} sandboxes."
@@ -150,9 +146,9 @@ fi
 
 mkdir -p "${E2E_OUTPUT_DIR}"
 agent_common_start_hpa_timeline "${E2E_OUTPUT_DIR}" 0
-cd "${CHART_DIR}" || fail "cannot cd to ${CHART_DIR}"
+cd "${RECIPE_DIR}" || fail "cannot cd to ${RECIPE_DIR}"
 hpa_common_arm_hpa_for_client "${NAMESPACE}" "${HPA_NAME}" "${TARGET_PODS}"
-exec python3 "${SCRIPT_DIR}/e2e-hermes-v1-load-test.py" \
+exec python3 "${SCRIPT_DIR}/e2e-fabric-load-test.py" \
   --users "${E2E_USERS}" \
   --prefix "${SANDBOX_PREFIX}" \
   --output "${E2E_OUTPUT_DIR}" \
