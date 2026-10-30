@@ -14,13 +14,22 @@ import {
 } from "../../../state/portable-uninstall-retirement";
 import { resolveHermesPortableLifecycleLockOptions } from "../../../onboard/experimental/portable-lifecycle-lock";
 
+/** Host-boundary sink for the one-time "still waiting on the lock" notice. */
+export function writeLifecycleLockWaitNoticeToStderr(message: string): void {
+  process.stderr.write(`${message}\n`);
+}
+
 function resolveLifecycleLockOptions(
   sandboxName: string,
   options: McpLifecycleLockOptions,
 ): McpLifecycleLockOptions {
-  if (options.stateDir !== undefined) return options;
+  const withNotice: McpLifecycleLockOptions = {
+    onWaitNotice: writeLifecycleLockWaitNoticeToStderr,
+    ...options,
+  };
+  if (options.stateDir !== undefined) return withNotice;
   const portable = resolveHermesPortableLifecycleLockOptions(sandboxName);
-  return portable ? { ...options, ...portable } : options;
+  return portable ? { ...withNotice, ...portable } : withNotice;
 }
 
 /** Select the sandbox lock domain while holding the host fence, then serialize the operation. */
@@ -31,9 +40,7 @@ export async function withSandboxLifecycleLock<T>(
 ): Promise<T> {
   return await withCurrentPortableHostFence(async () => {
     const resolved = resolveLifecycleLockOptions(sandboxName, options);
-    return Object.keys(resolved).length === 0
-      ? await withMcpLifecycleLock(sandboxName, operation)
-      : await withMcpLifecycleLock(sandboxName, operation, resolved);
+    return await withMcpLifecycleLock(sandboxName, operation, resolved);
   });
 }
 
@@ -45,9 +52,7 @@ export function withSandboxLifecycleLockSync<T>(
 ): T {
   assertCurrentPortableHostFenceHeld(process.env.HOME || os.homedir());
   const resolved = resolveLifecycleLockOptions(sandboxName, options);
-  return Object.keys(resolved).length === 0
-    ? withMcpLifecycleLockSync(sandboxName, operation)
-    : withMcpLifecycleLockSync(sandboxName, operation, resolved);
+  return withMcpLifecycleLockSync(sandboxName, operation, resolved);
 }
 
 export const withConnectSandboxLifecycleLock = withSandboxLifecycleLock;
