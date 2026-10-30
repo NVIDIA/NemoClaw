@@ -35,6 +35,7 @@ import {
 import { getPersistedSandboxTargetGatewayName } from "./gateway-target";
 import {
   type McpRebuildPreparation,
+  applyRestoredDirectToolDisclosure,
   postRestoreCompleted,
   printMcpRestoreRecovery,
   restoreMcpAfterRebuild,
@@ -95,6 +96,7 @@ export interface RebuildPostRestorePhaseInput {
     onConflict: RebuildBail,
   ) => Promise<void>;
   restoreSucceeded: boolean;
+  forceDirectToolDisclosure?: boolean;
   openClawDoctorWindow?: OpenClawPostRestoreDoctorWindow;
   hermesCronRestoreIdentity?: HermesCronRestoreIdentity;
   preparedBackupRecovery: boolean;
@@ -219,6 +221,34 @@ async function abortOpenClawPostRestoreWindowAfterFailure(
   }
 }
 
+function printDirectToolDisclosureRestoreRecovery(input: RebuildPostRestorePhaseInput): void {
+  const {
+    sandboxName,
+    targetAgentName,
+    backupManifest,
+    hermesCronRestoreIdentity,
+    preparedBackupRecovery,
+  } = input;
+  console.error("  Direct tool disclosure configuration remains incomplete.");
+  if (backupManifest) {
+    console.error(`  Backup is preserved at: ${backupManifest.backupPath}`);
+  }
+  if (hermesCronRestoreIdentity) {
+    console.error(
+      "  Hermes cron dispatch remains drained because rebuild configuration did not complete.",
+    );
+  }
+  console.error(
+    `  Correct the configuration problem, then run \`${CLI_NAME} ${sandboxName} rebuild --yes --tool-disclosure direct\` to complete the rebuild.`,
+  );
+  if (targetAgentName === "hermes" && (hermesCronRestoreIdentity || preparedBackupRecovery)) {
+    console.error("  If the retry still requires Hermes gateway or cron recovery:");
+    printHermesCronRestoreRecoveryCommand(sandboxName);
+    console.error("  Recovery alone does not complete direct tool disclosure configuration.");
+    console.error("  Then retry the rebuild command above to complete configuration.");
+  }
+}
+
 /**
  * Repair agent state, restore MCP/forwarding, reconcile non-MCP registry state, and report
  * the final transaction result. Boundary coverage: rebuild-flow.test.ts covers
@@ -236,6 +266,7 @@ export async function runRebuildPostRestorePhase(
     mcpEntries,
     mcpRuntimeSelection,
     restoreSucceeded,
+    forceDirectToolDisclosure,
     openClawDoctorWindow: preparedOpenClawDoctorWindow,
     hermesCronRestoreIdentity,
     preparedBackupRecovery,
@@ -382,6 +413,19 @@ export async function runRebuildPostRestorePhase(
         if (backupManifest) console.error(`  Backup is preserved at: ${backupManifest.backupPath}`);
         bail(message);
         return;
+      }
+    }
+
+    if (
+      forceDirectToolDisclosure &&
+      (targetAgentName === "openclaw" || targetAgentName === "hermes")
+    ) {
+      try {
+        applyRestoredDirectToolDisclosure(recreatedEntry, targetAgentName, mcpRuntimeSelection);
+      } catch (error) {
+        printDirectToolDisclosureRestoreRecovery(input);
+        // Unwind the owned OpenClaw maintenance window before the caller can exit.
+        throw error;
       }
     }
 
