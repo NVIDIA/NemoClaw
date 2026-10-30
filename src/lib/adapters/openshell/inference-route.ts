@@ -4,6 +4,8 @@
 import { isSafeModelId } from "../../validation";
 import type { OpenShellGatewayTarget } from "./sandbox-observer";
 
+export const MAX_INFERENCE_ROUTE_TIMEOUT_SECONDS = 3_600;
+
 const MAX_PROVIDER_LENGTH = 128;
 const MAX_MODEL_LENGTH = 512;
 const SAFE_PROVIDER = /^[A-Za-z0-9._:-]+$/u;

@@ -21,7 +21,6 @@ import {
 import { withModelRouterPortLifecycleLock } from "../../../inference/gateway-route-mutation-lock";
 import { getOllamaContextWindowFloorForAgent } from "../../../inference/ollama-runtime-context";
 import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../../../inference/ollama/contract";
-import { OPENROUTER_PROVIDER_NAME } from "../../../inference/openrouter";
 import type { InferenceEndpointSource } from "../../../inference/selection";
 import type { ServingProfileProvenance } from "../../../inference/serving/types";
 import type { WebSearchConfig } from "../../../inference/web-search";
@@ -35,6 +34,11 @@ import {
 import { checkpointSandboxIdentityMatches } from "../../checkpoint-replay";
 import type { OnboardInferenceCapabilityCache } from "../../inference-capability-cache";
 import type { RepairLocalInferenceSystemdOverrideOptions } from "../../local-inference-topology";
+import {
+  canResumeInferenceRoute,
+  shouldRefreshCompatibleEndpointRouteForMessaging,
+  shouldReuseRetainedOpenRouterCredential,
+} from "../../local-inference-route";
 import { resolveModelRouterPort } from "../../model-router";
 import { promptOnboardConfigurationReview } from "../../prompt-helpers";
 import {
@@ -595,43 +599,6 @@ async function resolveHostLocalResumeSetup(input: {
   return { sandboxName, setupOptions };
 }
 
-function canResumeInferenceRoute(input: {
-  needsBedrockRuntimeAdapter: boolean;
-  provider: string;
-  hasHostLocalInference: boolean;
-  forceProviderSelection: boolean;
-  forceInferenceSetup: boolean;
-  effectiveResume: boolean;
-  selectsNativeLocal: boolean;
-  nativeLocalAttached(): boolean;
-  routeReady(): boolean;
-}): boolean {
-  // A ready shared route does not prove a native local provider attachment:
-  // another sandbox on a reused gateway can own the same shared route.
-  return (
-    !input.needsBedrockRuntimeAdapter &&
-    input.provider !== OPENROUTER_PROVIDER_NAME &&
-    !input.hasHostLocalInference &&
-    !input.forceProviderSelection &&
-    !input.forceInferenceSetup &&
-    input.effectiveResume &&
-    input.routeReady() &&
-    (!input.selectsNativeLocal || input.nativeLocalAttached())
-  );
-}
-
-function shouldReuseRetainedOpenRouterCredential(input: {
-  provider: string | null;
-  forceInferenceSetup: boolean;
-  hydratedCredential: string | null | undefined;
-}): boolean {
-  return (
-    input.provider === OPENROUTER_PROVIDER_NAME &&
-    !input.forceInferenceSetup &&
-    !input.hydratedCredential
-  );
-}
-
 function hostLocalToolCallingRequirement(
   deriveFromDurableAuthority: boolean,
   allowToolsIncompatible: boolean,
@@ -984,33 +951,6 @@ function resolveInitialHostLocalPolicyRoute(input: {
       setupOptions,
     },
   };
-}
-
-function hasActiveMessagingChannels(
-  selectedMessagingChannels: string[],
-  session: Session | null,
-): boolean {
-  if (selectedMessagingChannels.length > 0) return true;
-  const channels = session?.messagingPlan?.channels;
-  return Boolean(
-    Array.isArray(channels) &&
-    channels.some((channel) => channel.active === true && channel.disabled !== true),
-  );
-}
-
-function shouldRefreshCompatibleEndpointRouteForMessaging(
-  provider: string | null,
-  selectedMessagingChannels: string[],
-  session: Session | null,
-  agent: unknown,
-  nativeCustomSetup: boolean | undefined,
-): boolean {
-  return (
-    !nativeCustomSetup &&
-    provider === "compatible-endpoint" &&
-    agentName(agent) === "openclaw" &&
-    hasActiveMessagingChannels(selectedMessagingChannels, session)
-  );
 }
 
 function assertOnboardReasoningEffortRoute(
@@ -1740,8 +1680,8 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         shouldRefreshCompatibleEndpointRouteForMessaging(
           provider,
           selectedMessagingChannels,
-          session,
-          agent,
+          session?.messagingPlan,
+          agentName(agent),
           recovery.nativeCustomSetup,
         )
       ) {

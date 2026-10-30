@@ -1,6 +1,22 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { resolveAgentProviderInferenceApi } from "../../inference/anthropic/openai-surface";
+import { isBedrockRuntimeEndpoint } from "../../inference/bedrock-runtime";
+import {
+  isPersistedPiSharedLocalInferenceRoute,
+  usesNativeLocalInferenceForAgent,
+} from "../../inference/native-local/eligibility";
+import { fixedNativeProvider } from "../../inference/native-provider/fixed";
+import { usesCustomNativeOnboarding } from "../../inference/native-provider/custom-setup";
+import type { SandboxMessagingPlan } from "../../messaging/manifest";
+import {
+  canResumeInferenceRoute,
+  localInferenceRouteTimeoutError,
+  shouldRefreshCompatibleEndpointRouteForMessaging,
+} from "../../onboard/local-inference-route";
+import { rebuildOnboardDependencies } from "./rebuild-onboard-dependencies";
+import type { RebuildTargetConfig } from "./rebuild-target-config";
 import { hydrateMessagingChannelConfig } from "../../messaging-channel-config";
 import {
   isN1xManagedVllmProviderModel,
@@ -172,4 +188,85 @@ export function hydrateMessagingConfigForRebuild(
   if (hydratedMessagingConfig) {
     log(`Stashed messaging config for rebuild: ${Object.keys(hydratedMessagingConfig).join(",")}`);
   }
+}
+
+/** Resolve the resumed route before a rebuild can stop or delete its source. */
+export function rebuildInferenceRouteTimeoutError(
+  target: RebuildTargetConfig,
+  sandboxEntry: RebuildSandboxEntry,
+  messagingPlan: SandboxMessagingPlan | null,
+  recreateOptions: Pick<
+    RebuildRecreateOnboardOpts,
+    "targetGatewayName" | "rebuildProviderReconfigure"
+  >,
+): string | null {
+  const selection = target.resumeConfig;
+  const needsBedrockRuntimeAdapter =
+    selection.provider === "compatible-anthropic-endpoint" &&
+    isBedrockRuntimeEndpoint(selection.endpointUrl);
+  const rangeError = localInferenceRouteTimeoutError(
+    selection.provider,
+    needsBedrockRuntimeAdapter,
+  );
+  if (!rangeError) return null;
+
+  const agentName = selection.agent || "openclaw";
+  const nativeCustomSetup = usesCustomNativeOnboarding(
+    selection.provider,
+    selection.endpointUrl,
+    sandboxEntry.name,
+    sandboxEntry,
+  );
+  const selectsNativeLocal =
+    usesNativeLocalInferenceForAgent(
+      agentName,
+      selection.provider,
+      selection.endpointUrl,
+      Boolean(selection.nimContainer),
+    ) && !isPersistedPiSharedLocalInferenceRoute(sandboxEntry, selection);
+  if (
+    selection.nativeHostedProviderAttachment ||
+    selection.nativeLocalProviderAttachment ||
+    fixedNativeProvider(selection.provider) ||
+    nativeCustomSetup ||
+    selectsNativeLocal
+  )
+    return null;
+
+  const preferredInferenceApi = resolveAgentProviderInferenceApi(
+    agentName,
+    target.agentDefinition,
+    selection.provider,
+    selection.preferredInferenceApi,
+  );
+  const forceInferenceSetup =
+    recreateOptions.rebuildProviderReconfigure !== undefined ||
+    preferredInferenceApi !== selection.preferredInferenceApi ||
+    shouldRefreshCompatibleEndpointRouteForMessaging(
+      selection.provider,
+      [],
+      messagingPlan,
+      agentName,
+      nativeCustomSetup,
+    );
+  return canResumeInferenceRoute({
+    needsBedrockRuntimeAdapter,
+    provider: selection.provider,
+    // Only Portable Hermes injects host-local startup; its rebuild is denied at entry.
+    hasHostLocalInference: false,
+    // Authoritative rebuild resumes its validated, recorded provider selection.
+    forceProviderSelection: false,
+    forceInferenceSetup,
+    effectiveResume: true,
+    selectsNativeLocal: false,
+    nativeLocalAttached: () => false,
+    routeReady: () =>
+      rebuildOnboardDependencies.isInferenceRouteReady(
+        recreateOptions.targetGatewayName,
+        selection.provider,
+        selection.model,
+      ),
+  })
+    ? null
+    : rangeError;
 }
