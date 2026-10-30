@@ -15,13 +15,14 @@ network_policies:
         enforcement: enforce
         # host.openshell.internal resolves to the Docker host gateway, which
         # is intentionally private. Keep the L7 broker path allowlist, and
-        # explicitly allow only RFC1918 host-gateway resolutions for this
-        # fixed hostname/port so OpenShell SSRF protection still blocks other
-        # private destinations.
+        # explicitly allow only RFC1918 and IPv6 unique-local host-gateway
+        # resolutions for this fixed hostname/port so OpenShell SSRF
+        # protection still blocks other private destinations.
         allowed_ips:
           - 10.0.0.0/8
           - 172.16.0.0/12
           - 192.168.0.0/16
+          - fc00::/7
         rules:
           - allow: { method: GET, path: "/browser-use" }
           - allow: { method: GET, path: "/browser-use/**" }
