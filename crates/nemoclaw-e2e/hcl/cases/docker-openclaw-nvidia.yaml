@@ -5,7 +5,7 @@ apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
 metadata:
   name: hcl-openclaw
-  # The wrapper replaces only the template identity for every new run.
+  # CI gives each run a fresh identity.
   uid: 4ab96c36-f96c-4f58-9e14-a97e0b3c4269
 spec:
   gateway:

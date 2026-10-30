@@ -38,7 +38,6 @@ default-filter = '''
 ((package(nemoclaw-provider) | package(openshell-provider) | package(fabric-provider)) & binary(=contract))
 | (package(nemoclaw-test-fixtures) & binary(=ssh_relay))
 | (package(nemoclaw-fixture-provider) & binary(=archive))
-| (package(nemoclaw-e2e) & binary(=nemoclaw-hcl-e2e) & test(shared_hcl_assertions_))
 | (package(nemoclaw-e2e) & binary(=integration) & (
     test(/^deployment::/)
     | test(/^export_observations::/) | test(/^fabric_deployment::/)

@@ -19,7 +19,7 @@ run "openclaw_vllm" {
   }
 
   assert {
-    condition     = alltrue([for target in output.targets : target.response.attempted && target.response.valid])
-    error_message = "outcome: ${join(", ", [for name, target in output.targets : name if !(target.response.attempted && target.response.valid)])}"
+    condition     = length(output.failed) == 0
+    error_message = "failed: ${join(", ", output.failed)}"
   }
 }

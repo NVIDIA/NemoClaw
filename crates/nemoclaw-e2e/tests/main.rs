@@ -30,6 +30,8 @@ mod fabric_live;
 // Unix only, as before it moved here from nemoclaw-sdk.
 #[cfg(target_os = "linux")]
 mod docker_registry;
+#[path = "hcl_live.rs"]
+mod hcl_live;
 #[cfg(unix)]
 #[path = "helm_recovery.rs"]
 mod helm_recovery;

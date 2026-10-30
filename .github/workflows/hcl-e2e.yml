@@ -15,13 +15,55 @@ defaults:
   run:
     shell: bash
 
+env:
+  CARGO_INCREMENTAL: "0"
+  CANDIDATE: hcl-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+
 jobs:
-  e2e:
-    name: ${{ matrix.case }}
+  build:
+    name: Build
     if: >-
       github.repository == 'NVIDIA/NemoClaw' &&
       ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/v1') ||
        (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/run-hcl-e2e/')))
+    # Like Live / Brev, build against the older glibc so every lane runner can run the executables.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    env:
+      TEST_PLATFORM: linux_amd64
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+        with:
+          platform: linux_amd64
+          cache-prefix: hcl-deps-v1
+      - uses: ./.github/actions/containerd-store
+      - name: Build the bundle, test executable, and OpenClaw image
+        run: |
+          cargo ci bundle
+          executable=$(cargo test --locked -p nemoclaw-e2e --test integration --no-run --message-format=json |
+            jq -r 'select(.reason == "compiler-artifact" and .target.name == "integration" and .profile.test) | .executable' | tail -1)
+          mkdir candidate
+          cp "$executable" candidate/integration
+          cp -a "dist/$TEST_PLATFORM" candidate/bundle
+          cargo images build --platform linux/amd64 openclaw
+          docker save nc-fabric:openclaw -o candidate/openclaw.tar
+          # Tar keeps the executable bits that artifact transfer drops.
+          tar -cf "$RUNNER_TEMP/candidate.tar" candidate
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ env.CANDIDATE }}
+          path: ${{ runner.temp }}/candidate.tar
+          retention-days: 1
+          if-no-files-found: error
+
+  e2e:
+    name: ${{ matrix.case }}
+    needs: build
+    # Runs only when the build ran, as on v1 dispatch or a run-hcl-e2e branch.
+    if: needs.build.result == 'success'
     strategy:
       fail-fast: false
       matrix:
@@ -34,94 +76,55 @@ jobs:
             runner: linux-amd64-gpu-rtxpro6000-latest-1
             secret: ""
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 75
+    timeout-minutes: 60
     # These cases use fixed gateway ports; finish cleanup before another run starts.
     concurrency:
       group: live-hcl-${{ matrix.case }}
       cancel-in-progress: false
     env:
-      CASE: ${{ matrix.case }}
-      TEST_PLATFORM: linux_amd64
-      AGENT_PLATFORM: linux/amd64
-      CARGO_INCREMENTAL: "0"
-      E2E_RUN_NAME: hcl-e2e-${{ github.run_id }}-${{ github.run_attempt }}
+      NEMOCLAW_HCL_CASE: ${{ matrix.case }}
+      NEMOCLAW_TEST_BUNDLE: ${{ github.workspace }}/candidate/bundle
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install the pinned Rust toolchain on the GPU runner
-        if: matrix.case == 'docker-openclaw-vllm'
-        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
-        with:
-          cache: false
-          rustflags: ""
-      - uses: ./.github/actions/setup-rust
-        with:
-          platform: linux_amd64
-          save-cache: "false"
       - uses: ./.github/actions/containerd-store
-      - name: Require the hosted inference credential
-        if: matrix.case == 'docker-openclaw-nvidia'
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ env.CANDIDATE }}
+          path: ${{ runner.temp }}
+      - name: Load the images and bind the case to them
+        run: |
+          tar -xf "$RUNNER_TEMP/candidate.tar"
+          docker load -i candidate/openclaw.tar
+          if [[ $NEMOCLAW_HCL_CASE == *vllm ]]; then docker buildx bake vllm; fi
+          id() { docker image inspect --format '{{.Id}}' "$1" 2>/dev/null; }
+          # Pin this run's images and give it a fresh deployment identity; plan rejects an unbound image.
+          sed -i -e "s#nc-fabric@sha256:0\{64\}#nc-fabric@$(id nc-fabric:openclaw)#" \
+            -e "s#nc-prototype-vllm@sha256:0\{64\}#nc-prototype-vllm@$(id nc-prototype-vllm:rust-v1)#" \
+            -e "s#^  uid: .*#  uid: $(cat /proc/sys/kernel/random/uuid)#" \
+            "crates/nemoclaw-e2e/hcl/cases/$NEMOCLAW_HCL_CASE.yaml"
+      - name: Apply and verify
+        working-directory: crates/nemoclaw-e2e
         env:
-          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-        run: |
-          if [[ -z "$NVIDIA_INFERENCE_API_KEY" ]]; then
-            echo '::error::NVIDIA_API_KEY is required for the hosted inference case.'
-            exit 1
-          fi
-      - name: Build the candidate bundle and shared wrapper
-        run: |
-          cargo ci bundle
-          cargo build --locked -p nemoclaw-e2e --bin nemoclaw-hcl-e2e
-      - name: Build the OpenClaw image
-        run: cargo images build --platform "$AGENT_PLATFORM" openclaw
-      - name: Prepare deployment inputs
-        run: |
-          deployment="$RUNNER_TEMP/hcl-e2e-deployment.yaml"
-          agent_digest=$(docker image inspect --format '{{.Id}}' nc-fabric:openclaw)
-          [[ "$agent_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
-          # Match the existing live suites' local image-ID pins in the containerd store.
-          sed "s#nc-fabric@sha256:[0-9a-f]\{64\}#nc-fabric@$agent_digest#g" \
-            "crates/nemoclaw-e2e/hcl/cases/$CASE.yaml" > "$deployment"
-          if [[ "$CASE" == docker-openclaw-vllm ]]; then
-            docker buildx bake vllm --load
-            digest=$(docker image inspect --format '{{.Id}}' nc-prototype-vllm:rust-v1)
-            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
-            # Bind the test to this checkout's runtime image without changing the template.
-            sed -i "s#nc-prototype-vllm@sha256:[0-9a-f]\{64\}#nc-prototype-vllm@$digest#" "$deployment"
-          fi
-      - name: Plan, apply, verify, and destroy
-        env:
+          NEMOCLAW_HCL_RUN: ${{ runner.temp }}/hcl
           # Only the hosted case receives the inference credential.
           NVIDIA_INFERENCE_API_KEY: ${{ secrets[matrix.secret] }}
-        run: |
-          target/debug/nemoclaw-hcl-e2e run \
-            --deployment "$RUNNER_TEMP/hcl-e2e-deployment.yaml" \
-            --suite crates/nemoclaw-e2e/hcl \
-            --filter "tests/$CASE.tftest.hcl" \
-            --bundle "$GITHUB_WORKSPACE/dist/$TEST_PLATFORM" \
-            --candidate-revision "$GITHUB_SHA" \
-            --run-dir "$RUNNER_TEMP/$E2E_RUN_NAME"
-      - name: Select shareable failure evidence
+        run: '"$GITHUB_WORKSPACE/candidate/integration" hcl_live::case --exact --ignored --nocapture'
+      # A cancelled or timed-out job still runs this step; the test's process does not survive.
+      - name: Destroy
         if: always()
         run: |
-          run_dir="$RUNNER_TEMP/$E2E_RUN_NAME"
-          evidence="$RUNNER_TEMP/hcl-e2e-evidence"
-          mkdir -p "$evidence"
-          if [[ -f "$run_dir/result.json" ]]; then
-            jq '{candidate_revision, deployment_uid, succeeded, failed_phase, failure, cleanup}' \
-              "$run_dir/result.json" > "$evidence/result.json"
-          fi
-          for report in "$run_dir"/verifier/reports/*.json; do
-            [[ -f "$report" && "$report" != *.request.json ]] || continue
-            jq '{target, health, response, failure}' "$report" > "$evidence/$(basename "$report")"
-          done
-          # Requests, state, raw command logs, and backend diagnostics stay private.
+          state="$RUNNER_TEMP/hcl/deployment"
+          [[ -d $state ]] || exit 0
+          candidate/bundle/bin/nemoclaw destroy --output json --progress off --state-dir "$state" \
+            > "$RUNNER_TEMP/hcl/reports/destroy.json"
+      # Reports hold outcomes only; requests, replies, state, and credentials stay on the runner.
       - name: Upload observations and cleanup receipt
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: hcl-e2e-${{ matrix.case }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/hcl-e2e-evidence/*.json
+          path: ${{ runner.temp }}/hcl/reports/*.json
           if-no-files-found: ignore
           retention-days: 7
