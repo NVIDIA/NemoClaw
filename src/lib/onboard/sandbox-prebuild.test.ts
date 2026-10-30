@@ -122,6 +122,7 @@ describe("sandbox BuildKit prebuild", () => {
     vi.stubEnv("PATH", "/usr/bin");
     vi.stubEnv("HOME", "/home/user");
     vi.stubEnv("CONTAINERS_CONF", "/home/user/.config/nemoclaw/portable/containers.conf");
+    vi.stubEnv("CONTAINERS_STORAGE_CONF", "/home/user/.config/containers/storage.conf");
     vi.stubEnv("DOCKER_CONFIG", "/home/user/.docker-ci");
     vi.stubEnv("DOCKER_CONTEXT", "remote-builder");
     vi.stubEnv("BUILDX_BUILDER", "external-builder");
@@ -142,6 +143,7 @@ describe("sandbox BuildKit prebuild", () => {
       PATH: "/usr/bin",
       HOME: "/home/user",
       CONTAINERS_CONF: "/home/user/.config/nemoclaw/portable/containers.conf",
+      CONTAINERS_STORAGE_CONF: "/home/user/.config/containers/storage.conf",
       DOCKER_CONFIG: "/home/user/.docker-ci",
       DOCKER_CONTEXT: "remote-builder",
       XDG_CONFIG_HOME: "/home/user/.config",
@@ -1110,10 +1112,16 @@ describe("sandbox BuildKit prebuild", () => {
       .spyOn(globalThis, "fetch")
       .mockResolvedValue(new Response("{}", { status: 200 }));
     const { buildCtx, createArgs } = createBuildContext();
-    const buildImage = vi.fn().mockResolvedValue(0);
+    const storageConfig = path.join(buildCtx, "selected-podman-storage.conf");
+    vi.stubEnv("CONTAINERS_STORAGE_CONF", "/ambient/storage.conf");
+    const buildImage = vi.fn(async (_args, options) => {
+      expect(options.env.CONTAINERS_STORAGE_CONF).toBe(storageConfig);
+      return 0;
+    });
     let credentialConfig = "";
     /** Inspect the temporary credential boundary before publication removes it. */
     const publishImage = vi.fn(async (_args, options) => {
+      expect(options.env.CONTAINERS_STORAGE_CONF).toBe(storageConfig);
       credentialConfig = String(options.env.DOCKER_CONFIG);
       expect(credentialConfig).toContain("nemoclaw-portable-docker-config-");
       expect(options.env.REGISTRY_AUTH_FILE).toBe(path.join(credentialConfig, "config.json"));
@@ -1131,7 +1139,10 @@ describe("sandbox BuildKit prebuild", () => {
       createArgs,
       sandboxName: "alpha",
       dockerDriverGateway: true,
-      env: { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
+      env: {
+        NEMOCLAW_EXPERIMENTAL_PROFILE: "portable",
+        CONTAINERS_STORAGE_CONF: storageConfig,
+      },
       buildImage,
       publishImage,
       inspectImageId: () => IMAGE_ID.slice("sha256:".length),

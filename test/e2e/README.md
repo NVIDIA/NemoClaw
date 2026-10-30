@@ -118,7 +118,9 @@ The install refuses package removals, preserving the runner's Docker and contain
   runs the portable-profile scenario on the reviewed x86-64 NVIDIA GPU runner with
   rootless Podman 5.7. It builds Podman and rootlessport from the pinned v5.7.0
   source commit. It reuses the reviewed native pasta, netavark, and aardvark-dns
-  components. The scenario proves that mismatched receipt and registry authority
+  components. The scenario retains the trusted job's compatible crun selection
+  when host preparation replaces the client configuration, so local image builds
+  and the managed registry use the reviewed runtime. It proves that mismatched receipt and registry authority
   pauses onboarding and makes `doctor` fail. It then restores valid authority
   and requires finalization and `doctor` to accept the same authenticated
   readiness evidence. Deterministic finalization tests own unhealthy gateway,
@@ -731,7 +733,10 @@ It runs the Ubuntu 26.04 compatibility contracts and the full Vitest suite in fo
 The matrix disables `fail-fast`.
 Each macOS Vitest shard has a 30-minute budget. The independent macOS live E2E
 job has a 150-minute budget, including its 70-minute live test and cleanup.
-The first WSL shard has a 180-minute budget for root-required contracts and live E2E; the other shards have 90 minutes.
+The first WSL shard has a 300-minute budget: 90 minutes for shared setup and non-live tests,
+100 minutes for full E2E, 50 minutes for the selected Hermes dashboard case, and 15 minutes
+after each live suite for cleanup and artifact retention. A further 30 minutes covers shard-1
+root contracts, runtime startup, and live-evidence upload. The other shards have 90 minutes.
 
 WSL setup checks the systemd manager after package installation. An unavailable bus or a timed-out
 probe permits one restart of the job's Ubuntu distro, followed by bounded readiness probes.
@@ -740,6 +745,8 @@ distro so the masks survive a restart. The test script checks Docker again immed
 Vitest. The helper removes the masks and requires Docker health before the live step.
 
 The independent macOS job and WSL shard 1 run focused live E2E only when the run tests `main` and Docker is available.
+WSL shard 1 also runs the Hermes case from `dashboard-remote-bind` through the production installer and OpenShell CLI.
+It checks remote dashboard reachability, loopback API health, and non-loopback API refusal before and after sandbox restart.
 Otherwise, the workflow records the skip and retains the platform contract evidence.
 Therefore, the workflow is platform evidence, not `Release qualification`.
 Only a full manual `.github/workflows/e2e.yaml` run can publish the release check.
@@ -763,7 +770,7 @@ and staging Launchable job own its product coverage:
 | `telegram-injection` | Unified E2E | `telegram-injection` |
 | `messaging-providers` | Unified E2E | `messaging-providers` |
 | `messaging-compatible-endpoint` | Unified E2E | `messaging-compatible-endpoint` |
-| `dashboard-remote-bind` | Unified E2E | `dashboard-remote-bind` owns install, onboard, artifacts, and terminal cleanup. |
+| `dashboard-remote-bind` | Unified E2E | `dashboard-remote-bind` owns install, onboard, artifacts, and terminal cleanup for OpenClaw and Hermes. It retains OpenClaw remote-dashboard audit findings and verifies after onboarding and restart that Hermes API health works on loopback while the host non-loopback API port refuses TCP connections. |
 | `gpu` | Unified E2E | `gpu-e2e` runs on the dedicated GPU runner. |
 | `all` | Retired | The selector only duplicated `credential-sanitization` and `telegram-injection`. |
 
@@ -1023,9 +1030,45 @@ The execution profile owns the credentials available to its target step:
 `common-egress-agent` runs 4 isolated scenario shards.
 The Personal public-fetch shard exercises ordinary onboarding with an explicit Personal selection; it does not exercise Portable profile selection.
 It uses OpenClaw as one representative agent witness, runs with `nvidia-inference`, sets web search to `none`, and receives neither a Brave Search nor a Tavily Search API key.
-The Personal agent assertion disables the ordinary agent-attempt shell artifact because OpenClaw stdout can contain fetched content and the complete URL. OpenShell SSH configuration stays in a private temporary file outside the artifact directory. The assertion attempts removal after it finishes and fails if the directory remains. A failed agent attempt retains only schema metadata, the attempt number, failure class, exit code, signal, timeout state, and one allowlisted diagnostic summary.
+The Personal and C2 OpenClaw public-reference agent assertions disable ordinary agent-attempt shell artifacts because OpenClaw stdout can contain fetched content and complete URLs.
+OpenShell SSH configuration stays in a private temporary file outside the artifact directory.
+The assertion attempts removal after it finishes and fails if the directory remains.
+A failed agent attempt retains only schema metadata, the attempt number, failure class, exit code, signal, timeout state, and one allowlisted diagnostic summary.
 Raw OpenClaw session and trajectory JSONL stay inside the sandbox. Reduced agent evidence artifacts retain schema metadata, the source hostname and protocol, bounded aggregate counts, and status booleans while omitting fetched content, complete URLs and queries, tool names, and provider values.
-The live assertions require `web_fetch` for one fixed public reference, reject `web_search` and Brave Search or Tavily Search use, permit public access from curl, and deny loopback and link-local targets.
+Both scenarios collect bounded session tool-result diagnostics even when the agent reply fails its assertion.
+At most 64 tool-result records retain numeric HTTP status, a tool-error flag, and a call-pairing flag.
+HTTP status comes from a numeric tool-result field or the fixed `Web fetch failed (NNN):` prefix in an OpenClaw `web_fetch` error result.
+These records exclude raw content, URLs, and credentials.
+An agent's final text alone does not establish the HTTP result.
+Missing tool-result evidence remains unavailable; collection does not add retries or change the fetch and reply assertions.
+After an unsuccessful agent assertion, both scenarios make one separate sandbox curl request to the same expected HTTPS URL.
+The probe uses a 15-second curl limit within a 20-second command limit and does not follow redirects.
+Its artifact records HTTP status, exit code, signal, and timeout state, or marks the probe unavailable.
+It does not retain response bodies, headers, or raw errors.
+This separate request cannot establish the original `web_fetch` response and never changes success or retry decisions.
+Diagnostic write errors after a failed turn preserve the original retry classification.
+Required evidence for a successful turn must still be saved.
+The Personal live assertions require `web_fetch` for one fixed public reference, reject `web_search` and Brave Search or Tavily Search use, permit public access from curl, and deny loopback and link-local targets.
+C2 retains its expected-reply and parsed-result checks; its tool-result diagnostics do not add the Personal validation contract.
+
+The `concurrent-gateway-ports` target records the original dashboard listener before and after its raw, unscoped OpenShell restart.
+A separate observed forward uses an ephemeral localhost port and records readiness, exit status, signal, and allowlisted sandbox-state or bind-failure flags.
+Its diagnostics exclude raw process output and credentials.
+An unavailable forward or an unset flag does not establish the cause of an earlier dashboard failure.
+The observed forward cannot recover the original dashboard or satisfy its assertions.
+Diagnostic cleanup terminates only the separately owned forward; the target retains its existing sandbox and gateway cleanup.
+Listener inspection and diagnostic write failures do not replace the restart outcome.
+Unconfirmed observer cleanup fails an otherwise successful restart.
+After raw stop/start succeeds and the sandbox reaches Ready or Running, the target waits for OpenClaw's in-sandbox HTTP endpoint.
+It uses the manifest endpoint, `http://localhost:18789/`, independently of the host dashboard forward.
+The read-only poll accepts HTTP 200 or 401 and retries only curl connection-refused or empty-response results (7 or 52 with HTTP 000).
+Transport failures, other curl results, and unexpected HTTP responses fail immediately; each attempt has its own artifact.
+The target then runs one `nemoclaw <sandbox> recover` in the survivor's gateway context.
+The readiness poll and recovery share the existing 120-second recovery deadline; the poll also retains the configured probe-attempt bound.
+Recovery runs after both listener snapshots and observer cleanup, so it cannot hide the original forward's exit.
+Both gateway-cleanup policies require recovery to succeed and the dashboard to answer within the existing probe budget.
+The pre-restart dashboard checks still prove that destroying the alternate sandbox preserves the survivor.
+Raw OpenShell start does not restore a forward that exits when its readiness poll observes the stopped sandbox.
 
 GitHub Actions renders each catalogue execution as `<display name> / <credential boundary>`.
 All catalogue profiles call `.github/workflows/e2e-standard-profile.yaml`.

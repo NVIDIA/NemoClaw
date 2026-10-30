@@ -124,6 +124,7 @@
         "src/lib/onboard/command.test.ts",
         "src/lib/onboard/sandbox-workload-preparation.test.ts",
         "test/e2e/support/managed-image-activation-diagnostics.test.ts",
+        "test/e2e/support/hosted-inference.test.ts",
         "test/inference/managed/managed-image-publication-workflow.test.ts",
         "test/security/admin-approval-helper.test.ts"
       ]
@@ -391,7 +392,8 @@
       "live": "test/e2e/live/dashboard-remote-bind.test.ts",
       "liveSources": [
         "test/e2e/live/dashboard-connect-handoff.ts",
-        "test/e2e/live/json-envelope.ts"
+        "test/e2e/live/json-envelope.ts",
+        "test/e2e/live/dashboard-remote-bind-env.ts"
       ],
       "fast": [
         "src/lib/actions/sandbox/forward-recovery-declared-ports.test.ts",
@@ -400,7 +402,10 @@
         "src/lib/actions/sandbox/launch-readiness-gateway-health.test.ts",
         "test/e2e/support/json-envelope.test.ts",
         "test/e2e/support/dashboard-connect-handoff.test.ts",
-        "test/e2e/support/runtime-provider-fixture.test.ts"
+        "test/e2e/support/runtime-provider-fixture.test.ts",
+        "src/lib/onboard/agent-dashboard-forward.test.ts",
+        "test/onboarding/onboard-finalization-dashboard-forward.test.ts",
+        "test/e2e/support/dashboard-remote-bind-env.test.ts"
       ]
     },
     {
@@ -577,6 +582,8 @@
         "test/onboarding/onboard-policy-suggestions.test.ts",
         "test/e2e/support/workflow-plan.test.ts",
         "test/e2e/support/common-egress-agent-helpers.test.ts",
+        "test/e2e/support/common-egress-agent-retry.test.ts",
+        "test/e2e/support/openclaw-agent-assertion.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/retry-policy.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
@@ -589,14 +596,19 @@
       "live": "test/e2e/live/concurrent-gateway-ports.test.ts",
       "fast": [
         "src/lib/actions/maintenance.test.ts",
+        "src/lib/actions/sandbox/forward-recovery-declared-ports.test.ts",
         "src/lib/actions/sandbox/destroy-gateway-scoping.test.ts",
         "test/cli/destroy-detach-order.test.ts",
         "src/lib/actions/uninstall/all-gateway-ports.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
-        "test/e2e/support/openshell-sandbox-list.test.ts"
+        "test/e2e/support/openshell-sandbox-list.test.ts",
+        "test/e2e/support/forward-restart-observation.test.ts"
       ],
-      "liveSources": ["test/e2e/fixtures/openshell-sandbox-list.ts"]
+      "liveSources": [
+        "test/e2e/fixtures/openshell-sandbox-list.ts",
+        "test/e2e/fixtures/forward-restart-observation.ts"
+      ]
     },
     {
       "live": "test/e2e/live/cron-preflight-inference-local.test.ts",

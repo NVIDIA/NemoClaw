@@ -2193,9 +2193,20 @@ nemohermes my-assistant dashboard-url
 nemohermes my-assistant dashboard-url --quiet
 ```
 
-The Hermes OpenAI-compatible API is separate and serves `/v1` on a per-sandbox port that defaults to `8642`. Run `openshell forward list` to read the host bind for the dashboard and API forwards.
+The Hermes OpenAI-compatible API is separate and serves `/v1` on a per-sandbox port that defaults to `8642`.
+Read the allocated API port from the OpenAI-compatible API URL printed after onboarding.
+`openshell forward list` lists legacy and user-managed forwards; it can omit NemoClaw's receipt-owned API forward.
+Use `nemohermes my-assistant status` to check sandbox readiness.
+Use `nemohermes my-assistant recover` to verify or restore its required forwards.
 When onboarding records a non-loopback `CHAT_UI_URL`, `dashboard-url` returns that browser-facing URL.
-The host forward remains bound to loopback unless you explicitly configure remote binding.
+`NEMOCLAW_DASHBOARD_BIND` controls only the dashboard forward.
+New and successfully migrated Hermes API forwards bind to `127.0.0.1`, including on WSL and when remote dashboard binding is enabled.
+If NemoClaw cannot prove ownership of a legacy wildcard forward, it refuses migration and leaves that listener unchanged.
+A missing or different gateway endpoint in the listener's process command also prevents migration.
+The old listener can remain remotely reachable.
+Run `nemohermes my-assistant status` and `nemohermes my-assistant recover`, then follow any refusal diagnostic.
+Do not assume loopback isolation until recovery succeeds.
+Use the [SSH forwarding procedure](/user-guide/hermes/get-started/quickstart#installation-and-runtime-details) for remote API access.
 
 </AgentOnly>
 <AgentOnly variant="deepagents">
@@ -2232,12 +2243,18 @@ curl -fsS -H "Authorization: Bearer $TOKEN" \
 </AgentOnly>
 <AgentOnly variant="hermes">
 
-Print the Hermes API bearer token for a running sandbox to stdout. NemoClaw retrieves the sandbox's `API_SERVER_KEY`, which authenticates OpenAI-compatible clients on the forwarded API port. During a normal sandbox lifecycle, the token is generated once for each sandbox home. Different sandbox homes receive different tokens. NemoClaw preserves it across a gateway restart, sandbox stop and start, and host OpenShell gateway restart. When you rebuild or replace the sandbox, the replacement home receives a new token. At gateway startup, NemoClaw also generates a new token when `API_SERVER_KEY` is missing or is not exactly 64 lowercase hexadecimal characters. If an ordinary restart changes the token while the existing `API_SERVER_KEY` was present and valid, collect the before and after sandbox identity plus redacted mint logs and report it as a bug. Capture the token and pass it in the `Authorization` header:
+Print the Hermes API bearer token for a running sandbox to stdout. NemoClaw retrieves the sandbox's `API_SERVER_KEY`, which authenticates OpenAI-compatible clients on the forwarded API port. During a normal sandbox lifecycle, the token is generated once for each sandbox home. Different sandbox homes receive different tokens. NemoClaw preserves it across a gateway restart, sandbox stop and start, and host OpenShell gateway restart. When you rebuild or replace the sandbox, the replacement home receives a new token. At gateway startup, NemoClaw also generates a new token when `API_SERVER_KEY` is missing or is not exactly 64 lowercase hexadecimal characters. If an ordinary restart changes the token while the existing `API_SERVER_KEY` was present and valid, collect the before and after sandbox identity plus redacted mint logs and report it as a bug.
+Read the API port from the OpenAI-compatible API URL printed after onboarding.
+Replace `<api-port>` below with that port.
+Before sending the token, run `nemohermes my-assistant recover` to verify or restore the required forwards.
+If recovery refuses a legacy wildcard migration, stop and follow its diagnostic.
+Capture the token and pass it in the `Authorization` header:
 
 ```bash
 TOKEN=$(nemohermes my-assistant gateway-token --quiet)
 curl -fsS -H "Authorization: Bearer $TOKEN" \
-  http://127.0.0.1:8642/v1/models
+  "http://127.0.0.1:<api-port>/v1/models"
+unset TOKEN
 ```
 
 <Warning>
@@ -4452,8 +4469,7 @@ Set `NEMOCLAW_NO_AUTO_AUDIT_LOGS=1` to prevent `$$nemoclaw <name> logs` and fail
 | `NEMOCLAW_GATEWAY_BIND_ADDRESS` | 127.0.0.1                                           | The OpenShell gateway uses this bind address. NemoClaw keeps Docker-driver gateways on loopback while gateway JWT auth is active.                                                                                                  |
 
 <AgentOnly variant="openclaw,hermes">
-  | `NEMOCLAW_DASHBOARD_PORT` | 18789 (auto-derived from `CHAT_UI_URL` port if set) | Dashboard or
-  API forward |
+  | `NEMOCLAW_DASHBOARD_PORT` | 18789 (auto-derived from `CHAT_UI_URL` port if set) | Dashboard forward |
 </AgentOnly>
 | `NEMOCLAW_VLLM_PORT` | 8000 | vLLM / NIM inference | | `NEMOCLAW_OLLAMA_PORT` | 11434 | Ollama
 inference | | `NEMOCLAW_OLLAMA_PROXY_PORT` | 11435 | Ollama auth proxy | |
@@ -4461,7 +4477,7 @@ inference | | `NEMOCLAW_OLLAMA_PROXY_PORT` | 11435 | Ollama auth proxy | |
 `NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT` | 11437 | Host-side adapter for retained legacy OpenRouter shared routes | |
 `NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_PORT` | 11438 | Host-side HTTPS Pin Runtime adapter |
 <AgentOnly variant="openclaw,hermes">
-  | `NEMOCLAW_DASHBOARD_BIND` | *unset* (loopback outside WSL) | Dashboard or API forward bind
+  | `NEMOCLAW_DASHBOARD_BIND` | *unset* (loopback outside WSL) | Dashboard forward bind
   address. WSL uses an all-interface forward for Windows-host reachability. Set to `0.0.0.0` to opt
   in to remote bind on other SSH-deployed hosts. |
 </AgentOnly>
@@ -4488,10 +4504,25 @@ must be recovered through its declared supervisor. On non-WSL hosts, `NEMOCLAW_O
 `NEMOCLAW_GATEWAY_BIND_ADDRESS` accepts only `127.0.0.1` and `0.0.0.0`, but NemoClaw rejects `0.0.0.0` for Docker-driver gateways while gateway JWT auth is active.
 
 <AgentOnly variant="openclaw,hermes">
-Keep the OpenShell gateway on loopback and use `NEMOCLAW_DASHBOARD_BIND` when you need remote browser/API access.
+Keep the OpenShell gateway on loopback and use `NEMOCLAW_DASHBOARD_BIND` when you need remote browser access.
 
-`NEMOCLAW_DASHBOARD_BIND` controls the dashboard or API port forward bind address. Outside WSL, the forward stays on `127.0.0.1` (loopback only) by default. On WSL, NemoClaw binds the host-side forward on all interfaces so the Windows host can reach it, while the ready summary continues to print a loopback dashboard URL. On non-WSL SSH-deployed hosts, set `NEMOCLAW_DASHBOARD_BIND=0.0.0.0` before `$$nemoclaw onboard` to prepare the sandbox for remote exposure and bind the forward on all interfaces. Use the same setting for later `$$nemoclaw <sandbox> connect` calls. A sandbox created without this opt-in must be recreated with `NEMOCLAW_DASHBOARD_BIND=0.0.0.0 $$nemoclaw onboard --recreate-sandbox` before a remote-bind connect is allowed. Only `0.0.0.0` enables the remote bind; onboarding rejects any other non-empty value.
+`NEMOCLAW_DASHBOARD_BIND` controls the dashboard port forward bind address.
+Outside WSL, the dashboard forward stays on `127.0.0.1` (loopback only) by default.
+On WSL, NemoClaw binds the host-side dashboard forward on all interfaces so the Windows host can reach it.
+The ready summary continues to print a loopback dashboard URL.
+On non-WSL SSH-deployed hosts, set `NEMOCLAW_DASHBOARD_BIND=0.0.0.0` before `$$nemoclaw onboard` to prepare the sandbox for remote exposure.
+This binds the dashboard forward on all interfaces.
+Use the same setting for later `$$nemoclaw <sandbox> connect` calls.
+A sandbox created without this opt-in must be recreated with `NEMOCLAW_DASHBOARD_BIND=0.0.0.0 $$nemoclaw onboard --recreate-sandbox` before a remote-bind connect is allowed.
+Only `0.0.0.0` enables the remote bind; onboarding rejects any other non-empty value.
 
+</AgentOnly>
+
+<AgentOnly variant="hermes">
+New and successfully migrated Hermes API forwards bind to `127.0.0.1`, including on WSL and when `NEMOCLAW_DASHBOARD_BIND=0.0.0.0` is set.
+If migration is refused, NemoClaw leaves the legacy listener unchanged; it can remain remotely reachable.
+Use the [Hermes API recovery guidance](#nemoclaw-name-dashboard-url) before assuming loopback isolation.
+Use [SSH port forwarding](/user-guide/hermes/get-started/quickstart#installation-and-runtime-details) for remote API access.
 </AgentOnly>
 
 <AgentOnly variant="openclaw">
