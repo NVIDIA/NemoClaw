@@ -4,6 +4,7 @@
 export {
   usesNativeLocalInference,
   usesNativeLocalInferenceForAgent,
+  isPersistedHermesPortableSharedLocalInferenceRoute,
   isPersistedPiSharedLocalInferenceRoute,
 } from "./eligibility";
 import { createHash } from "node:crypto";

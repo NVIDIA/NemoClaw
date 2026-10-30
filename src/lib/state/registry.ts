@@ -558,6 +558,10 @@ export function registerSandbox(
           ? entry.webSearchProvider
           : null,
       agent: entry.agent || null,
+      portableLifecycleProfile:
+        entry.agent === "hermes" && entry.portableLifecycleProfile === "hermes"
+          ? "hermes"
+          : undefined,
       agentVersion: entry.agentVersion || null,
       nemoclawVersion: entry.nemoclawVersion || null,
       fromDockerfile: entry.fromDockerfile || null,
